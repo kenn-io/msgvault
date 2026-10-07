@@ -13560,6 +13560,31 @@ components:
         - id
         - title
       type: object
+    TelemetryEventRequest:
+      additionalProperties: false
+      properties:
+        event:
+          description: Allowlisted event name, such as app_opened
+          type: string
+        properties:
+          additionalProperties:
+            x-go-type: any
+          description: Event properties; the daemon drops any its allowlist omits
+          type: object
+      required:
+        - event
+      type: object
+    TelemetryEventResponse:
+      properties:
+        status:
+          description: queued when the daemon queued the event to send; disabled when telemetry is off
+          enum:
+            - queued
+            - disabled
+          type: string
+      required:
+        - status
+      type: object
     TemperatureSignals:
       properties:
         meeting_signal:
@@ -14192,7 +14217,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.2.0
+  version: 3.3.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:
@@ -29491,6 +29516,29 @@ paths:
       security:
         - apiKey: []
       summary: Trigger account sync
+      tags:
+        - API
+  /api/v1/telemetry/events:
+    post:
+      operationId: captureTelemetryEvent
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TelemetryEventRequest"
+        required: true
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TelemetryEventResponse"
+          description: Accepted
+        default:
+          description: Error
+      security:
+        - apiKey: []
+      summary: Report a web UI usage event
       tags:
         - API
   /api/v1/text/aggregates:

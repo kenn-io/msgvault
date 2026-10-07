@@ -1686,6 +1686,7 @@ ownership and permission checks to the target directory.
 | `MSGVAULT_REMOTE_API_KEY_FILE` | Mounted remote key file |
 | `MSGVAULT_REMOTE_API_KEY_ENV` | Name of the environment variable holding the remote key |
 | `MSGVAULT_REMOTE_ALLOW_INSECURE` | Allow plaintext HTTP to the remote daemon |
+| `MSGVAULT_TELEMETRY_ENABLED` | Set to `0` to turn off anonymous telemetry; any value overrides `[telemetry] enabled` ([Telemetry](#telemetry)) |
 
 These runtime controls are available on unreleased `main`. Environment values
 override TOML. For each server or remote credential group, setting any of its
@@ -1713,6 +1714,50 @@ published stock image is `ghcr.io/kenn-io/msgvault`; it runs as UID/GID `1000`
 and stores its home at `/data`. Use an image containing these unreleased
 features once published. No startup hook or entrypoint wrapper is required.
 
+## Telemetry
+
+`msgvault serve` sends anonymous usage telemetry to PostHog:
+
+- `daemon_active` when the daemon starts, then once on each later UTC day
+  while it runs.
+- `app_opened` when the web UI opens, then on its first window focus on a later
+  UTC day. The browser reports it to the daemon, never to PostHog.
+
+The web UI records the day it last reported in browser storage, which the
+browser keeps separately for each daemon address. With the default
+`api_port = 0`, the daemon picks a new port each time it starts, so the web UI
+reports again after a daemon restart. Tabs that open together, or a browser
+that blocks storage, can also each send one. Each event carries only:
+
+- the product name and source (`msgvault`, `daemon`)
+- on `app_opened`, the surface (`web`)
+- the msgvault version and commit
+- the operating system and CPU architecture
+- a random install ID kept in `telemetry-install.json` in the data directory, and
+  the whole hours since it was created
+- metadata the PostHog Go library adds itself: library name and version (`$lib`,
+  `$lib_version`), OS name, Go version, and where available the OS version and
+  distribution
+
+Events never include messages, contacts, accounts, sources, file names or search
+queries. They ask PostHog not to build person profiles or look up location. The
+daemon queues each event and sends it in the background, so an event can be lost
+if the network is down or the daemon stops first.
+
+When telemetry is on, `msgvault serve` says so in its startup output and log.
+To turn it off, set this in `config.toml` and restart a running daemon:
+
+```toml
+[telemetry]
+enabled = false
+```
+
+`MSGVAULT_TELEMETRY_ENABLED` in the environment that starts the daemon
+overrides the config: `0`, `false`, `no` or `off` turns telemetry off, and any
+other value turns it on. `TELEMETRY_ENABLED=0` also turns it off. A CLI command
+that starts a local daemon passes its environment to it. Builds made with the
+`kit_posthog_disabled` tag never send telemetry.
+
 ## File Locations
 
 The default home is `~/.msgvault` on macOS/Linux and `C:\Users\<you>\.msgvault`
@@ -1730,6 +1775,7 @@ home; `[log].dir` can override the log location.
 | `tokens/server-api-key` | Persisted daemon API key, reused on later loopback and non-loopback starts |
 | `logs/` | Structured log files (when [file logging](/docs/configuration/#log) is enabled) |
 | `analytics/` | Parquet cache files for Web UI and TUI analytical views |
+| `telemetry-install.json` | Random anonymous install ID for [telemetry](#telemetry); created only while telemetry is on |
 
 ## Example configuration
 
@@ -1910,4 +1956,7 @@ folder_id = "google-drive-folder-id"
 google_account = "you@gmail.com"
 owner_phone = "+14155551234"
 schedule = "30 4 * * *"
+
+[telemetry]
+enabled = true # false turns off anonymous usage telemetry
 ```

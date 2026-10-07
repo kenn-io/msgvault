@@ -43,6 +43,8 @@ profile automation, and external enrichment can send selected data to your
 configured providers. A supported local embedding endpoint keeps that embedding
 work local; it does not automatically change the providers used by other
 features. See [recommended configuration](usage/recommended-configuration.md).
+The daemon also sends anonymous usage telemetry without archive content; see
+[Telemetry](configuration.md#telemetry).
 
 <p class="faq-question">Why is a documented feature missing from my binary?</p>
 

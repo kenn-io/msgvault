@@ -8,6 +8,14 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- msgvault sends anonymous usage telemetry: a daemon ping at startup and once
+  each later UTC day, and an `app_opened` event the web UI reports through the
+  daemon when it opens and on its first focus on a later UTC day. Events carry
+  the version, commit, OS, architecture and a random install ID, never archive
+  content. `[telemetry] enabled = false` in `config.toml` or
+  `MSGVAULT_TELEMETRY_ENABLED=0` turns it off, and `serve` says so at startup
+  while it's on. See [telemetry](configuration.md#telemetry).
+
 - `list-accounts` and `embeddings list` keep working while a sync, import, or
   embedding build runs. Accounts whose counts aren't ready yet show `pending`.
 

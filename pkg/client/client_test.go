@@ -1395,3 +1395,30 @@ func TestStageDeletionAcceptsDryRunOK(t *testing.T) {
 	assert.Equal(int64(3), got.MessageCount, "message_count")
 	assert.Len(got.SampleGmailIds, 3, "sample ids")
 }
+
+func TestCaptureTelemetryEventSendsPropertyValues(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	var got map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"status":"queued"}`))
+	}))
+	t.Cleanup(server.Close)
+
+	c, err := New(server.URL)
+	require.NoError(err, "New")
+	_, err = c.CaptureTelemetryEvent(context.Background(), &generated.CaptureTelemetryEventRequestOptions{
+		Body: &generated.CaptureTelemetryEventBody{
+			Event:      "app_opened",
+			Properties: map[string]any{"surface": "web"},
+		},
+	})
+	require.NoError(err, "CaptureTelemetryEvent")
+	assert.Equal(t, map[string]any{"event": "app_opened", "properties": map[string]any{"surface": "web"}}, got)
+}

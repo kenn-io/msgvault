@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"go.kenn.io/kit/telemetry/posthog"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/carddav"
 	"go.kenn.io/msgvault/internal/circleback"
@@ -50,6 +51,7 @@ import (
 	"go.kenn.io/msgvault/internal/syncerr"
 	"go.kenn.io/msgvault/internal/synctechsms"
 	"go.kenn.io/msgvault/internal/teams"
+	"go.kenn.io/msgvault/internal/telemetry"
 	"go.kenn.io/msgvault/internal/twilio"
 	"golang.org/x/oauth2"
 )
@@ -254,6 +256,15 @@ func runServe(cmd *cobra.Command, args []string) error {
 		<-heartbeatDone
 		if err := ownership.Close(); err != nil {
 			logger.Warn("release daemon ownership failed", "error", err)
+		}
+	}()
+	telemetryReporter := telemetry.NewReporterOrDisabled(telemetry.Options{
+		DataDir: cfg.Data.DataDir, Version: Version, Commit: Commit,
+		ConfigEnabled: cfg.Telemetry.EnabledOrDefault(),
+	}, logger)
+	defer func() {
+		if err := telemetryReporter.Close(); err != nil {
+			logger.Warn("close telemetry reporter", "error", err)
 		}
 	}()
 	setStartupPhase := func(phase string) {
@@ -828,6 +839,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		OperationGate:                 operationGate,
 		OperationHistoryReader:        storeAdapter,
 		BlobStore:                     blobStore,
+		TelemetryCapture:              telemetry.CaptureHandler(telemetryReporter),
 	}
 	apiOpts.GmailProfileAddress = func(ctx context.Context, source *store.Source) (string, error) {
 		client, serviceAccount, err := newDaemonGmailClient(
@@ -911,11 +923,25 @@ func runServe(cmd *cobra.Command, args []string) error {
 			combineWorkTrackers(idleTracker, labelWorkTracker(operationGate, "background embedding work")),
 			apiServer, sched, blobStore,
 		)
+		telemetryHeartbeatDone := make(chan struct{})
+		go func() {
+			defer close(telemetryHeartbeatDone)
+			posthog.RunHeartbeat(ctx, telemetryReporter, logger)
+		}()
+		// Stop the heartbeat before the deferred telemetryReporter.Close.
+		defer func() {
+			cancel()
+			<-telemetryHeartbeatDone
+		}()
 
 		fmt.Printf("msgvault daemon started\n")
 		fmt.Printf("  API server: http://%s\n", apiAddr)
 		fmt.Printf("  Scheduled accounts: %d\n", count)
 		fmt.Printf("  Data directory: %s\n", cfg.Data.DataDir)
+		if telemetryReporter.Enabled() {
+			fmt.Printf("  Anonymous telemetry: on ([telemetry] enabled = false or %s=0 turns it off)\n",
+				telemetry.EnabledEnv)
+		}
 		fmt.Println()
 		fmt.Println("Press Ctrl+C to stop.")
 		fmt.Println()
