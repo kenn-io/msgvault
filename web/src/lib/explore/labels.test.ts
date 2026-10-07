@@ -90,6 +90,7 @@ describe('entryKindPresentation', () => {
     ['slack', 'Conversation'],
     ['inline', 'Conversation'],
     ['fbmessenger', 'Conversation'],
+    ['matrix', 'Conversation'],
     ['chat', 'Conversation'],
     ['meeting_transcript', 'Meeting'],
     ['calendar_event', 'Calendar event'],

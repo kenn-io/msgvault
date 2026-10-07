@@ -3,6 +3,8 @@ package beeper
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"strings"
 	"sync"
@@ -325,17 +327,29 @@ func TestImportStopsAfterIncrementalPageAndResumesFromCursor(t *testing.T) {
 	assert.Equal(8, countBeeperMessages(t, imp), "the next run resumes after the checkpointed page")
 }
 
+// handlerTransport serves requests in process, so a synctest bubble sees a
+// blocked provider request as durably blocked and advances its fake clock.
+type handlerTransport http.HandlerFunc
+
+func (h handlerTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	rec := httptest.NewRecorder()
+	h(rec, r)
+	if err := r.Context().Err(); err != nil {
+		return nil, err
+	}
+	return rec.Result(), nil
+}
+
 func TestImportBudgetCancelsBlockedMessagePageAndResumes(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
 	base := time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
 	f := newFakeBeeper(t)
 	chat := budgetTestChat("!deadline:beeper.local", 2, base)
 	f.addChat(chat)
-	imp, _, done := newTestImporter(t, f)
-	defer done()
+	client := NewClient("http://beeper.test", testToken, 10000)
+	client.http.Transport = handlerTransport(f.handler())
+	imp := NewImporter(testutil.NewTestStore(t), client)
 	_, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
-	require.NoError(err)
+	require.NoError(t, err)
 	f.appendMsg(chat.ID, fakeMsg{
 		ID: chat.ID + "-new", SortKey: 2, Timestamp: base.Add(2 * time.Minute),
 		Text: "new message", SenderID: "@signal_ann:beeper.local", SenderName: "Ann",
@@ -346,27 +360,20 @@ func TestImportBudgetCancelsBlockedMessagePageAndResumes(t *testing.T) {
 	f.messageListStarted = started
 	f.mu.Unlock()
 
-	sumCh := make(chan *ImportSummary, 1)
-	errCh := make(chan error, 1)
-	go func() {
-		sum, importErr := imp.Import(context.Background(), ImportOptions{
-			AccountID: "signal", StopAt: time.Now().Add(150 * time.Millisecond),
-		})
-		sumCh <- sum
-		errCh <- importErr
-	}()
+	// The fake clock only moves once the import blocks, so setup time cannot spend the budget.
+	synctest.Test(t, func(t *testing.T) {
+		start := time.Now()
+		sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", StopAt: start.Add(30 * time.Second)})
+		require.NoError(t, err, "a spent request budget completes as resumable work")
+		assert.True(t, sum.Stopped)
+		assert.Equal(t, 30*time.Second, time.Since(start), "the request context cancels at the scheduled budget")
+	})
+	require := require.New(t)
+	assert := assert.New(t)
 	select {
 	case <-started:
-	case <-time.After(2 * time.Second):
+	default:
 		require.FailNow("scheduled import did not enter the blocked provider request")
-	}
-	select {
-	case sum := <-sumCh:
-		require.NoError(<-errCh, "a spent request budget completes as resumable work")
-		require.NotNil(sum)
-		assert.True(sum.Stopped)
-	case <-time.After(2 * time.Second):
-		require.FailNow("request context did not cancel at the scheduled budget")
 	}
 	assert.Equal(2, countBeeperMessages(t, imp), "the interrupted page must not advance its cursor")
 

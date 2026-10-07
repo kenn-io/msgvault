@@ -115,6 +115,10 @@ func TestCardDAVCredentialsRoundTripInPrivateTokenFile(t *testing.T) {
 
 	home := t.TempDir()
 	require.NoError(SavePassword(testCredentialTokenDir(home), "first-secret"))
+	// A concurrent reader must not block the replacement.
+	reader, err := openCredentialFile(testCredentialTokenDir(home))
+	require.NoError(err)
+	defer reader.Close() //nolint:errcheck // read-only file
 	require.NoError(SavePassword(testCredentialTokenDir(home), "replacement-secret"))
 
 	password, err := LoadPassword(testCredentialTokenDir(home))

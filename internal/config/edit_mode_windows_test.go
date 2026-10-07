@@ -18,12 +18,13 @@ import (
 // treat every writable mode as equivalent and still flag read-only drift;
 // the owner-only DACL is verified separately by validateOpenedConfigSecurity.
 func TestSameConfigModePermComparesObservableWindowsMode(t *testing.T) {
-	assert.True(t, sameConfigModePerm(fs.FileMode(0o600), fs.FileMode(0o666)),
+	assert := assert.New(t)
+	assert.True(sameConfigModePerm(fs.FileMode(0o600), fs.FileMode(0o666)),
 		"creation requests 0600 while Windows observes 0666 for the same writable file")
-	assert.True(t, sameConfigModePerm(fs.FileMode(0o666), fs.FileMode(0o600)))
-	assert.False(t, sameConfigModePerm(fs.FileMode(0o600), fs.FileMode(0o444)),
+	assert.True(sameConfigModePerm(fs.FileMode(0o666), fs.FileMode(0o600)))
+	assert.False(sameConfigModePerm(fs.FileMode(0o600), fs.FileMode(0o444)),
 		"a read-only flip must still be detected")
-	assert.False(t, sameConfigModePerm(fs.FileMode(0o444), fs.FileMode(0o666)))
+	assert.False(sameConfigModePerm(fs.FileMode(0o444), fs.FileMode(0o666)))
 }
 
 // TestEditConfigCreatesMissingConfigOnWindows reproduces the creation path
@@ -32,18 +33,20 @@ func TestSameConfigModePermComparesObservableWindowsMode(t *testing.T) {
 // 0666 Windows stat of the published file, so every config creation rejected
 // its own publication. The same flow backs CardDAV account save.
 func TestEditConfigCreatesMissingConfigOnWindows(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	path := filepath.Join(t.TempDir(), "config.toml")
 	before, err := ReadConfigFile(path)
-	require.NoError(t, err)
-	require.False(t, before.Exists)
+	require.NoError(err)
+	require.False(before.Exists)
 
 	after, err := EditConfigFile(path, before.ETag, []Edit{{Key: "web.theme", Value: "dark"}})
-	require.NoError(t, err)
-	require.True(t, after.Exists)
-	assert.Equal(t, "[web]\ntheme = \"dark\"\n", string(mustReadFile(t, path)))
+	require.NoError(err)
+	require.True(after.Exists)
+	assert.Equal("[web]\ntheme = \"dark\"\n", string(mustReadFile(t, path)))
 	current, err := ReadConfigFile(path)
-	require.NoError(t, err)
-	assert.True(t, SameConfigFileVersion(current, after),
+	require.NoError(err)
+	assert.True(SameConfigFileVersion(current, after),
 		"a freshly created config must verify against its returned snapshot")
-	require.NoError(t, verifyConfigOwnerOnly(path))
+	require.NoError(verifyConfigOwnerOnly(path))
 }

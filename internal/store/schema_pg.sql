@@ -1455,6 +1455,15 @@ CREATE TABLE IF NOT EXISTS reactions (
     UNIQUE(message_id, participant_id, reaction_type, reaction_value)
 );
 
+CREATE TABLE IF NOT EXISTS reaction_source_events (
+    source_id BIGINT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    source_reaction_id TEXT NOT NULL,
+    reaction_id BIGINT NOT NULL REFERENCES reactions(id) ON DELETE CASCADE,
+    PRIMARY KEY(source_id, source_reaction_id)
+);
+CREATE INDEX IF NOT EXISTS idx_reaction_source_events_reaction
+    ON reaction_source_events(reaction_id);
+
 -- ============================================================================
 -- ATTACHMENTS
 -- ============================================================================

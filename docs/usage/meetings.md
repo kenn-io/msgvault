@@ -1,7 +1,7 @@
 ---
-last_edited: "2026-10-02"
+last_edited: "2026-10-04"
 title: Meeting Transcripts
-description: Archive AI meeting notes and transcripts from Granola, Plaud, Circleback, Notion, and Muesli into your searchable local archive.
+description: Archive call recordings, AI meeting notes, and transcripts from Twilio, Granola, Plaud, Circleback, Notion, and Muesli into your searchable local archive.
 ---
 
 Find meeting decisions and transcripts in the same archive as your email and
@@ -13,6 +13,7 @@ emails connect meetings to the people you already know in msgvault.
 
 | Source | Connection | Main coverage limit |
 |---|---|---|
+| [Twilio](#twilio) (unreleased) | Account auth token or API key | Recordings and transcripts Twilio still retains |
 | [Granola](#granola) | API key | Requires access to Granola's public API |
 | [Notion AI Meeting Notes](#notion-ai-meeting-notes) | Notion integration token | At most 50 attendee-visible meetings per discovery query |
 | [Plaud](#plaud) | Browser authorization to its hosted MCP server | Requires Cloud Sync and existing Plaud transcription |
@@ -243,6 +244,93 @@ use RFC 3339 with an explicit offset, request bodies are limited to 16 MiB, and
 provider-specific fields belong under `meeting.metadata`. These sources are
 on-demand: import through the API again to add or update meetings rather than
 using **Sync now** or a scheduler.
+
+## Twilio
+
+This integration is unreleased. Each recorded Twilio call becomes one meeting
+with its recordings saved as audio attachments, so you keep the audio after
+Twilio deletes it. Calls without a recording aren't archived. Sync only reads: it never places calls, turns on recording, or
+starts paid transcription.
+
+### Connect and sync
+
+Add a [`[[twilio]]` entry](../configuration.md#twilio-sources) for each account
+or subaccount, then register and sync it:
+
+```bash
+msgvault add-twilio work
+msgvault sync-twilio work --probe        # check access without showing calls
+msgvault sync-twilio work
+msgvault sync-twilio work --limit 20     # process at most 20 calls
+msgvault sync-twilio work --full         # revisit every call Twilio still lists
+```
+
+`sync-twilio` with no identifier syncs every configured account. Set `schedule`
+on the entry to let the daemon sync it. See the
+[CLI reference](../cli-reference.md#sync-twilio) for every flag.
+
+A `--limit` run that stops before the end of the call list says so and prints
+the command to continue, for example `Run: msgvault sync-twilio work --limit 20`.
+Run it again until the summary says the sync is complete.
+
+### What gets stored
+
+- **Audio.** Each completed recording is downloaded as WAV, in two channels
+  when Twilio has them. WAV takes about 1 MB per minute of a mono recording
+  and 2 MB for dual-channel. The default limit is 250 MiB per recording.
+  An opened meeting in the Web UI links each stored recording for download.
+- **Transcripts.** Legacy recording transcriptions and completed Conversation
+  Intelligence transcripts. When a recording has both, the Intelligence
+  transcript is the one you read and search. Transcripts are stored as
+  Twilio serves them, so an Intelligence service with PII redaction on
+  stores redacted text.
+- **Call details.** Phone numbers, direction, status and duration stay as
+  provider evidence. A phone number is not treated as proof of who spoke.
+
+Summaries and action items are not available from Twilio. A call with audio
+but no transcript shows the transcript as unavailable. An encrypted recording
+is archived as an unavailable attachment with no audio. Recordings kept on
+external storage, Relay and Batch transcripts, and recordings without a call
+SID aren't archived.
+
+### Late recordings, failures, and coverage
+
+Twilio adds recordings and transcripts after a call ends. Each sync lists every
+recording created since seven days before the previous sync started, and
+fetches each listed recording's call again, so audio and transcripts that
+arrive within seven days of a recording's creation reach its meeting on a later
+sync. Ones that arrive after that need `msgvault sync-twilio work --full`,
+which reaches calls whose recordings Twilio still lists, including ones
+deleted within the last 40 days. Each listed call costs about 4 to 6 Twilio requests per sync, which
+suits a schedule of every few hours for up to a few hundred calls a day.
+
+If Twilio refuses a recording download (HTTP 400, 401, 403, 404 or 410) or
+returns something other than audio, the sync still completes and the recording
+shows as failed. A refused transcript read (an HTTP 4xx other than 429), or a
+completed transcription with no text, leaves that transcript unavailable with a note. A
+network, rate-limit or server error on a call marks the sync failed and names
+the call; other calls still sync. Failed calls stay queued for later syncs,
+even when they are older than seven days. Runs without `--after` retry them,
+and pending recordings are not aged out while a retry is queued.
+Retries count toward `--limit`. Limited runs resume unfinished discovery before
+retrying failed calls. Once a call leaves the window with no queued
+failure, recordings still waiting for audio are marked failed, or unavailable
+if Twilio never finished them, and the sync summary says how many; only `--full`
+tries them again. A full sync bounded by `--after` advances the incremental
+starting point only if it covers the previous incremental window.
+A local storage failure
+stops the sync. A recording over the size cap is skipped with a note naming
+it; raise `max_media_mb` and run `--full` to fetch it. Recordings skipped while
+`media = false` are not retried either; after turning `media` back on, run
+`--full` to download them.
+
+Twilio can delete call details while keeping the recording. msgvault then
+reports `call_metadata_unavailable` and archives the audio and transcript
+without the phone numbers. Archived audio and text survive later deletions.
+
+US1, IE1 (Dublin) and AU1 (Sydney) each use their own regional credentials.
+Conversation Intelligence transcripts are read in US1 only, so an IE1 or AU1
+account archives legacy transcriptions alone.
 
 ## Granola
 

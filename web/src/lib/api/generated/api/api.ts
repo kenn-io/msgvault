@@ -239,6 +239,7 @@ import type {
   ListPersonFactEvidenceStatusEventsPathParameters,
   ListPersonFactPinsPathParameters,
   ListPersonFactTargetsParams,
+  ListPersonIdentitiesPathParameters,
   ListPersonMatchJudgmentsParams,
   ListPersonMergesParams,
   ListPersonMergesPathParameters,
@@ -318,6 +319,7 @@ import type {
   PersonFactEvidenceStatusEventsResponse,
   PersonFactPinWrite,
   PersonFactPinsResponse,
+  PersonIdentitiesResponse,
   PersonInboxResponse,
   PersonMatchConsentDecisionRequest,
   PersonMatchConsentDecisionResponse,
@@ -412,6 +414,8 @@ import type {
   TaskLinkMutationRequest,
   TaskLinkMutationResponse,
   TaskSearchResponse,
+  TelemetryEventRequest,
+  TelemetryEventResponse,
   TextConversationsResponse,
   TextMessagesResponse,
   TextSearchResponse,
@@ -2985,6 +2989,22 @@ export const setPersonFactPin = (
   );
 };
 /**
+ * Lists the identities of the person's current participants. Email addresses are supported draft recipients; phone numbers and chat identifiers are not. Curated contact points and postal addresses are not listed.
+ * @summary List a durable person's archived identities
+ */
+export const listPersonIdentities = (
+  { id }: ListPersonIdentitiesPathParameters,
+  options?: SecondParameter<typeof orvalFetch<PersonIdentitiesResponse>>,
+) => {
+  return orvalFetch<PersonIdentitiesResponse>(
+    {
+      url: `/api/v1/people/${encodeURIComponent(String(id))}/identities`,
+      method: "GET",
+    },
+    options,
+  );
+};
+/**
  * @summary Merge one durable person profile into another
  */
 export const mergePersons = (
@@ -3990,6 +4010,23 @@ export const triggerSync = (
       url: `/api/v1/sync/${encodeURIComponent(String(account))}`,
       method: "POST",
       params,
+    },
+    options,
+  );
+};
+/**
+ * @summary Report a web UI usage event
+ */
+export const captureTelemetryEvent = (
+  telemetryEventRequest: TelemetryEventRequest,
+  options?: SecondParameter<typeof orvalFetch<TelemetryEventResponse>>,
+) => {
+  return orvalFetch<TelemetryEventResponse>(
+    {
+      url: `/api/v1/telemetry/events`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: telemetryEventRequest,
     },
     options,
   );

@@ -198,6 +198,11 @@ func TestStore_GetLatestSync(t *testing.T) {
 	require.NotNil(run, "expected sync run")
 	assert.Equal(secondID, run.ID, "ID")
 	assert.Equal(store.SyncStatusRunning, run.Status, "Status")
+
+	previous, err := f.Store.GetLatestSyncContext(t.Context(), f.Source.ID, secondID)
+	require.NoError(err, "GetLatestSyncContext excluding the running sync")
+	assert.Equal(firstID, previous.ID, "ID")
+	assert.Equal(store.SyncStatusCompleted, previous.Status, "Status")
 }
 
 func TestStore_StartSyncRejectsConcurrentRun(t *testing.T) {

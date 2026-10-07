@@ -12,12 +12,14 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib" // pgx driver for PostgreSQL metadata commands.
-	_ "github.com/mattn/go-sqlite3"    // SQLite driver for vectors.db metadata commands.
+	"github.com/mattn/go-sqlite3"      // SQLite driver for vectors.db metadata commands.
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/scheduler"
+	"go.kenn.io/msgvault/internal/sqliteutil"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/pgvector"
@@ -69,37 +71,65 @@ type embeddingAcceleratorRow struct {
 }
 
 // fillFullCoverage populates the complete live/embedded/blank/missing split
-// for the generation. The main DB supplies live, stamped (embed_gen=id),
-// and missing; the vector backend supplies embedded (COUNT(DISTINCT
-// message_id) in the embeddings table for this generation). blank is the
-// remainder, stamped - embedded, clamped >= 0 — messages stamped terminal
-// DONE but with no vector (the empty/unembeddable case). The invariant
-// live == embedded + blank + missing holds. The backend handle is passed
-// in by the caller (which already opened it for the generation listing).
+// for the generation. Stamped messages carry embed_gen=id; embedded counts the
+// stamped messages with at least one vector. blank is the remainder, stamped -
+// embedded, clamped >= 0 — messages stamped terminal DONE but with no vector
+// (the empty/unembeddable case). The invariant live == embedded + blank +
+// missing holds. The backend handle is passed in by the caller (which already
+// opened it for the generation listing).
 func fillFullCoverage(ctx context.Context, backend vector.Backend, scope vector.BuildScope, row *embeddingGenerationRow) error {
-	state := invocationFromContext(ctx)
-	if state == nil || state.cfg == nil {
-		return errors.New("configuration is unavailable")
-	}
-	s, err := store.Open(state.cfg.DatabaseDSN())
-	if err != nil {
-		return fmt.Errorf("open main db for coverage: %w", err)
-	}
-	defer func() { _ = s.Close() }()
-	live, stamped, _, missing, err := s.CoverageCountsScoped(ctx, int64(row.ID), scope.MessageTypes, scope.SourceIDs)
+	coverage, err := countEmbeddingCoverage(ctx, backend, scope, row.ID)
 	if err != nil {
 		return err
 	}
-	embedded, err := backend.EmbeddedMessageCount(ctx, row.ID)
-	if err != nil {
-		return fmt.Errorf("count embedded messages for generation %d: %w", row.ID, err)
-	}
-	blank := max(stamped-embedded, 0)
-	row.LiveCount = live
-	row.EmbeddedCount = embedded
-	row.BlankCount = blank
-	row.MissingCount = missing
+	row.LiveCount = coverage.Live
+	row.EmbeddedCount = coverage.Embedded
+	row.BlankCount = max(coverage.Stamped-coverage.Embedded, 0)
+	row.MissingCount = max(coverage.Live-coverage.Stamped, 0)
 	return nil
+}
+
+// countEmbeddingCoverage reads coverage from one main-database snapshot. A
+// backend sharing the main database counts everything in one statement;
+// otherwise the stamped IDs stream from the snapshot to the vector database in
+// bounded batches.
+func countEmbeddingCoverage(
+	ctx context.Context, backend vector.Backend, scope vector.BuildScope, gen vector.GenerationID,
+) (vector.EmbeddingCoverage, error) {
+	if counter, ok := backend.(vector.CoverageCountingBackend); ok {
+		return counter.EmbeddingCoverage(ctx, gen, scope)
+	}
+	snapshotBackend, ok := backend.(vector.CoverageSnapshotBackend)
+	if !ok {
+		return vector.EmbeddingCoverage{}, errors.New("embedding backend does not support snapshot coverage")
+	}
+	state := invocationFromContext(ctx)
+	if state == nil || state.cfg == nil {
+		return vector.EmbeddingCoverage{}, errors.New("configuration is unavailable")
+	}
+	s, err := store.OpenReadOnlyContext(ctx, state.cfg.DatabaseDSN())
+	if err != nil {
+		return vector.EmbeddingCoverage{}, fmt.Errorf("open main db for coverage: %w", err)
+	}
+	defer func() { _ = s.Close() }()
+	var coverage vector.EmbeddingCoverage
+	coverage.Live, coverage.Stamped, err = s.ScanEmbeddingCoverage(ctx, int64(gen), store.EmbeddingCoverageScan{
+		MessageTypes: scope.MessageTypes,
+		SourceIDs:    scope.SourceIDs,
+		BatchSize:    vector.FilteredCoverageBatchSize,
+		VisitStamped: func(messageIDs []int64) error {
+			embedded, err := snapshotBackend.EmbeddedMessageCountForSnapshot(ctx, gen, messageIDs)
+			if err != nil {
+				return fmt.Errorf("count embedded messages for generation %d: %w", gen, err)
+			}
+			coverage.Embedded += embedded
+			return nil
+		},
+	})
+	if err != nil {
+		return vector.EmbeddingCoverage{}, err
+	}
+	return coverage, nil
 }
 
 // ensureMainSchema opens the main DB and runs InitSchema so that an
@@ -123,25 +153,21 @@ func ensureMainSchema(state *invocation) error {
 	return nil
 }
 
-func runEmbeddingsList(cmd *cobra.Command, _ []string) error {
+func runEmbeddingsList(cmd *cobra.Command, _ []string) (resultErr error) {
+	defer func() {
+		if isMissingSchemaErr(resultErr) {
+			resultErr = fmt.Errorf("embedding metadata requires an upgrade; %s: %w", embeddingsUpgradeHint(invocationFromCommand(cmd)), resultErr)
+		}
+	}()
 	state := invocationFromCommand(cmd)
 	if state == nil || state.cfg == nil {
 		return errors.New("configuration is unavailable")
 	}
 	cfg := state.cfg
-	release, err := acquireDirectSQLiteWriteLock(cfg, state)
-	if err != nil {
+	if err := ensureEmbedScopeResolved(cmd.Context(), state); err != nil {
 		return err
 	}
-	defer release()
-
-	if err := ensureMainSchema(state); err != nil {
-		return err
-	}
-	if err := ensureEmbedScopeResolved(state); err != nil {
-		return err
-	}
-	db, rebind, closeDB, err := openEmbeddingsMetadataDB(cmd.Context())
+	db, rebind, closeDB, err := openEmbeddingsMetadataDBWithMode(cmd.Context(), true)
 	if err != nil {
 		return err
 	}
@@ -169,8 +195,22 @@ func runEmbeddingsList(cmd *cobra.Command, _ []string) error {
 		}
 	}
 	sqliteAcceleratorOnly := !store.IsPostgresURL(cfg.DatabaseDSN()) && sqlitevec.Available()
+	if needCoverage {
+		reader, err := store.OpenReadOnlyContext(cmd.Context(), cfg.DatabaseDSN())
+		if err != nil {
+			return err
+		}
+		applied, err := reader.IsMigrationAppliedContext(cmd.Context(), vector.EmbedGenBackfillMigration, 1)
+		_ = reader.Close()
+		if err != nil {
+			return err
+		}
+		if !applied {
+			return fmt.Errorf("embedding coverage requires an upgrade; %s", embeddingsUpgradeHint(state))
+		}
+	}
 	if needCoverage || sqliteAcceleratorOnly {
-		backend, closeBackend, err := openEmbeddingsBackend(cmd.Context())
+		backend, closeBackend, err := openEmbeddingsBackendWithMode(cmd.Context(), true)
 		if err != nil {
 			return err
 		}
@@ -387,7 +427,7 @@ func runEmbeddingsActivate(cmd *cobra.Command, args []string) error {
 	if err := ensureMainSchema(state); err != nil {
 		return err
 	}
-	if err := ensureEmbedScopeResolved(state); err != nil {
+	if err := ensureEmbedScopeResolved(cmd.Context(), state); err != nil {
 		return err
 	}
 
@@ -689,6 +729,9 @@ func remainingCoverageHint(gen vector.GenerationID, remaining int64) string {
 // rebind converts ? placeholders to $1, $2, … for PostgreSQL; it is the
 // identity function for SQLite so all query helpers can use it unconditionally.
 func openEmbeddingsMetadataDB(ctx context.Context) (*sql.DB, func(string) string, func(), error) {
+	return openEmbeddingsMetadataDBWithMode(ctx, false)
+}
+func openEmbeddingsMetadataDBWithMode(ctx context.Context, readOnly bool) (*sql.DB, func(string) string, func(), error) {
 	state := invocationFromContext(ctx)
 	if state == nil || state.cfg == nil {
 		return nil, nil, nil, errors.New("configuration is unavailable")
@@ -700,7 +743,7 @@ func openEmbeddingsMetadataDB(ctx context.Context) (*sql.DB, func(string) string
 		// (statement_timeout) and the pgx stdlib registration are applied
 		// consistently with the rest of the codebase. Raw sql.Open("pgx",
 		// dsn) bypasses those settings.
-		db, cleanup, err := store.OpenPostgresDB(dsn)
+		db, cleanup, err := openEmbeddingsPostgres(ctx, dsn, readOnly)
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("open postgres for embeddings metadata: %w", err)
 		}
@@ -736,12 +779,56 @@ func openEmbeddingsMetadataDB(ctx context.Context) (*sql.DB, func(string) string
 		}
 		return nil, nil, nil, fmt.Errorf("stat vectors.db: %w", err)
 	}
-	db, err := sql.Open("sqlite3", sqliteDSNWithBusyTimeout(vecPath))
+	metadataDSN := sqliteDSNWithBusyTimeout(vecPath)
+	if readOnly {
+		var err error
+		if metadataDSN, _, err = sqliteutil.QueryOnlyDSN(vecPath); err != nil {
+			return nil, nil, nil, fmt.Errorf("resolve vectors.db: %w", err)
+		}
+	}
+	db, err := sql.Open("sqlite3", metadataDSN)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("open vectors.db: %w", err)
 	}
 	rebind := (&store.SQLiteDialect{}).Rebind
 	return db, rebind, func() { _ = db.Close() }, nil
+}
+
+// isMissingSchemaErr reports whether err comes from a table or column that an
+// unapplied upgrade would add. go-sqlite3 reports both as a generic
+// SQLITE_ERROR, so only its message tells them apart.
+func isMissingSchemaErr(err error) bool {
+	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok {
+		return pgErr.Code == "42P01" || pgErr.Code == "42703" // undefined_table, undefined_column
+	}
+	sqliteErr, ok := errors.AsType[sqlite3.Error](err)
+	if !ok || sqliteErr.Code != sqlite3.ErrError {
+		return false
+	}
+	message := sqliteErr.Error()
+	return strings.Contains(message, "no such table") || strings.Contains(message, "no such column")
+}
+
+// embeddingsUpgradeHint names the step that applies pending embedding upgrades:
+// the daemon runs them at startup, but only with a vector lane enabled.
+func embeddingsUpgradeHint(state *invocation) string {
+	if state != nil && state.cfg != nil && !state.cfg.Vector.AnyLaneEnabled() {
+		return "enable [vector] in config.toml, then run \"msgvault daemon restart\" to apply it"
+	}
+	return "run \"msgvault daemon restart\" to apply it"
+}
+
+// openEmbeddingsPostgres opens the main PostgreSQL database for embedding
+// management; readOnly returns a query-only handle.
+func openEmbeddingsPostgres(ctx context.Context, dsn string, readOnly bool) (*sql.DB, func(), error) {
+	if !readOnly {
+		return store.OpenPostgresDB(dsn)
+	}
+	reader, err := store.OpenReadOnlyContext(ctx, dsn)
+	if err != nil {
+		return nil, nil, err
+	}
+	return reader.DB(), func() { _ = reader.Close() }, nil
 }
 
 // openEmbeddingsBackend constructs the vector backend for the active dialect,
@@ -755,6 +842,9 @@ func openEmbeddingsMetadataDB(ctx context.Context) (*sql.DB, func(string) string
 // Returns the backend and a close callback. On a build without the relevant
 // vector tag the package stubs' Open returns ErrNotBuilt.
 func openEmbeddingsBackend(ctx context.Context) (vector.Backend, func(), error) {
+	return openEmbeddingsBackendWithMode(ctx, false)
+}
+func openEmbeddingsBackendWithMode(ctx context.Context, readOnly bool) (vector.Backend, func(), error) {
 	state := invocationFromContext(ctx)
 	if state == nil || state.cfg == nil {
 		return nil, nil, errors.New("configuration is unavailable")
@@ -762,25 +852,17 @@ func openEmbeddingsBackend(ctx context.Context) (vector.Backend, func(), error) 
 	cfg := state.cfg
 	dsn := cfg.DatabaseDSN()
 	if store.IsPostgresURL(dsn) {
-		db, cleanup, err := store.OpenPostgresDB(dsn)
+		db, cleanup, err := openEmbeddingsPostgres(ctx, dsn, readOnly)
 		if err != nil {
 			return nil, nil, fmt.Errorf("open postgres for embeddings backend: %w", err)
 		}
-		// SkipMigrate skips only the privileged CREATE EXTENSION + full
-		// migrate: the extension + metadata tables already exist (the caller's
-		// openEmbeddingsMetadataDB pre-checks index_generations), so a
-		// management command must not attempt the privileged extension step.
-		// This open is WRITABLE management, NOT read-only — ReadOnly stays
-		// false so Open still applies the extension-less schema (bringing up
-		// embed_watermark etc. if missing) and runs the one-time embed_gen
-		// upgrade backfill, matching the SQLite management path (which always
-		// migrates vectors.db + backfills). Without this, a post-upgrade PG
-		// archive would report its whole corpus as missing on the first
-		// writable management command.
+		// Writable management opens still apply extension-less upgrades. Listing
+		// sets both ReadOnly and SkipMigrate to avoid schema work and backfills.
 		b, err := pgvector.Open(ctx, pgvector.Options{
 			DB:          db,
 			Dimension:   cfg.Vector.Embeddings.Dimension,
 			SkipMigrate: true,
+			ReadOnly:    readOnly,
 			BuildScope:  cfg.Vector.Embed.Scope.BuildScope(),
 		})
 		if err != nil {
@@ -811,19 +893,26 @@ func openEmbeddingsBackend(ctx context.Context) (vector.Backend, func(), error) 
 	// the management path must open and pass a main-DB handle just like
 	// embed_vector.go does. Omitting it leaves b.mainDB nil and panics on
 	// `msgvault embeddings activate`. Close it in the returned cleanup.
-	mainStore, err := store.Open(dsn)
+	var mainStore *store.Store
+	var err error
+	if readOnly {
+		mainStore, err = store.OpenReadOnlyContext(ctx, dsn)
+	} else {
+		mainStore, err = store.Open(dsn)
+	}
 	if err != nil {
 		return nil, nil, fmt.Errorf("open main db for embeddings backend: %w", err)
 	}
 	b, err := sqlitevec.Open(ctx, sqlitevec.Options{
-		Path:            vecPath,
-		MainPath:        dsn,
-		Dimension:       cfg.Vector.Embeddings.Dimension,
-		MainDB:          mainStore.DB(),
-		BuildScope:      cfg.Vector.Embed.Scope.BuildScope(),
-		ANNOversample:   cfg.Vector.Search.ANNOversample,
-		ANNNProbe:       cfg.Vector.Search.ANNNProbe,
-		AcceleratorMode: cfg.Vector.Search.SQLiteAccelerator,
+		Path:             vecPath,
+		MetadataReadOnly: readOnly,
+		MainPath:         dsn,
+		Dimension:        cfg.Vector.Embeddings.Dimension,
+		MainDB:           mainStore.DB(),
+		BuildScope:       cfg.Vector.Embed.Scope.BuildScope(),
+		ANNOversample:    cfg.Vector.Search.ANNOversample,
+		ANNNProbe:        cfg.Vector.Search.ANNNProbe,
+		AcceleratorMode:  cfg.Vector.Search.SQLiteAccelerator,
 	})
 	if err != nil {
 		_ = mainStore.Close()

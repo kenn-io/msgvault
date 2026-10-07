@@ -2445,6 +2445,14 @@ func (s *SearchPersonFilesErrorResponseJSON503) UnmarshalJSON(data []byte) error
 	return nil
 }
 
+type ListPersonIdentitiesResponse = PersonIdentitiesResponse
+
+type ListPersonIdentitiesErrorResponse = ErrorResponse
+
+type ListPersonIdentitiesErrorResponseJSON = ErrorResponse
+
+type ListPersonIdentitiesErrorResponseJSON503 = ErrorResponse
+
 type MergePersonsResponse = PersonMergeResult
 
 type MergePersonsErrorResponse = ErrorResponse
@@ -3318,6 +3326,8 @@ type GetTotalStatsErrorResponse = ErrorResponse
 type TriggerSyncResponse = StatusMessageResponse
 
 type TriggerSyncErrorResponse = ErrorResponse
+
+type CaptureTelemetryEventResponse = TelemetryEventResponse
 
 type GetTextAggregatesResponse = AggregateResponse
 
@@ -5517,6 +5527,16 @@ type SearchPersonFilesResp struct {
 	JSON503      *SearchPersonFilesErrorResponseJSON503
 }
 
+type ListPersonIdentitiesResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListPersonIdentitiesResponse
+	JSON400      *ListPersonIdentitiesErrorResponse
+	JSON404      *ListPersonIdentitiesErrorResponseJSON
+	JSON503      *ListPersonIdentitiesErrorResponseJSON503
+}
+
 type MergePersonsResp200Headers struct {
 	ETag string `header:"ETag"`
 }
@@ -6402,6 +6422,13 @@ type TriggerSyncResp struct {
 	Body         []byte
 	StatusCode   int
 	JSON202      *TriggerSyncResponse
+}
+
+type CaptureTelemetryEventResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON202      *CaptureTelemetryEventResponse
 }
 
 type GetTextAggregatesResp struct {

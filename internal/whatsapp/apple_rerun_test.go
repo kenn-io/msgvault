@@ -14,13 +14,13 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
-func execAppleFixture(t *testing.T, path, statements string) {
-	t.Helper()
+func execAppleFixture(tb testing.TB, path, statements string) {
+	tb.Helper()
 	db, err := sql.Open("sqlite3", path)
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	_, err = db.Exec(statements)
-	require.NoError(t, err)
-	require.NoError(t, db.Close())
+	require.NoError(tb, err)
+	require.NoError(tb, db.Close())
 }
 
 var appleRerunSentinel = time.Date(2001, 2, 3, 4, 5, 6, 0, time.UTC)
@@ -473,4 +473,146 @@ func TestImportAppleLimitSkipsUnchangedPrefix(t *testing.T) {
 	final, err := importer.Import(context.Background(), chatDBPath, appleTestOptions())
 	require.NoError(err)
 	assert.Equal(int64(0), final.MessagesAdded)
+}
+
+func appleStoredSourceIDs(t *testing.T, st *store.Store) []string {
+	t.Helper()
+	rows, err := st.DB().Query(`SELECT source_message_id FROM messages ORDER BY source_message_id`)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, rows.Close()) }()
+	var ids []string
+	for rows.Next() {
+		var id string
+		require.NoError(t, rows.Scan(&id))
+		ids = append(ids, id)
+	}
+	require.NoError(t, rows.Err())
+	return ids
+}
+
+// The importable fixture messages direct-in, direct-out, group-in and lid-in
+// are sent at Core Data seconds 700000000.25, ...01, ...02 and ...04.
+func appleFixtureTime(seconds int64) time.Time {
+	return time.Unix(seconds+appleEpochOffset, 0)
+}
+
+func TestImportAppleDateWindowThenFullImport(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	chatDBPath := createAppleMarkerFixture(t)
+	createAppleLIDFixture(t, filepath.Dir(chatDBPath))
+	st := testutil.NewTestStore(t)
+	importer := NewImporter(st, nil)
+
+	windowed := appleTestOptions()
+	windowed.After = appleFixtureTime(700000002)
+	first, err := importer.Import(context.Background(), chatDBPath, windowed)
+	require.NoError(err)
+	assert.Equal(int64(2), first.MessagesAdded)
+	assert.Equal([]string{"group-in", "lid-in"}, appleStoredSourceIDs(t, st))
+	markAppleMessagesUnwritten(t, st)
+
+	full, err := importer.Import(context.Background(), chatDBPath, appleTestOptions())
+	require.NoError(err)
+	assert.Equal(int64(2), full.MessagesAdded)
+	assert.Equal([]string{"direct-in", "direct-out"}, rewrittenAppleMessages(t, st))
+	assert.Equal(
+		[]string{"direct-in", "direct-out", "group-in", "lid-in"},
+		appleStoredSourceIDs(t, st),
+	)
+	var deleted int
+	require.NoError(st.DB().QueryRow(
+		`SELECT COUNT(*) FROM messages WHERE deleted_from_source_at IS NOT NULL`,
+	).Scan(&deleted))
+	assert.Equal(0, deleted)
+
+	again, err := importer.Import(context.Background(), chatDBPath, appleTestOptions())
+	require.NoError(err)
+	assert.Equal(int64(0), again.MessagesAdded)
+
+	// The result matches an import that never used a window.
+	reference := testutil.NewTestStore(t)
+	_, err = NewImporter(reference, nil).Import(context.Background(), chatDBPath, appleTestOptions())
+	require.NoError(err)
+	senders := func(s *store.Store) []string {
+		rows, err := s.DB().Query(`
+			SELECT m.source_message_id || '|' || c.source_conversation_id || '|' || COALESCE(p.phone_number, '')
+			FROM messages m
+			JOIN conversations c ON c.id = m.conversation_id
+			LEFT JOIN participants p ON p.id = m.sender_id
+			ORDER BY m.source_message_id`)
+		require.NoError(err)
+		defer func() { require.NoError(rows.Close()) }()
+		var out []string
+		for rows.Next() {
+			var row string
+			require.NoError(rows.Scan(&row))
+			out = append(out, row)
+		}
+		require.NoError(rows.Err())
+		return out
+	}
+	assert.Equal(senders(reference), senders(st))
+}
+
+func TestImportAppleBeforeWindowIsExclusiveAndDoesNotRemove(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	chatDBPath := createAppleChatFixture(t)
+	createAppleLIDFixture(t, filepath.Dir(chatDBPath))
+	st := testutil.NewTestStore(t)
+	importer := NewImporter(st, nil)
+
+	_, err := importer.Import(context.Background(), chatDBPath, appleTestOptions())
+	require.NoError(err)
+	markAppleMessagesUnwritten(t, st)
+
+	windowed := appleTestOptions()
+	windowed.Before = appleFixtureTime(700000002)
+	summary, err := importer.Import(context.Background(), chatDBPath, windowed)
+	require.NoError(err)
+	assert.Equal(int64(0), summary.MessagesAdded)
+	assert.Equal(int64(2), summary.MessagesProcessed)
+	assert.Empty(rewrittenAppleMessages(t, st))
+	assertStoreCount(t, st.DB(), "messages", 4)
+}
+
+func TestImportAppleDateWindowSkipsUndatedMessage(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	chatDBPath := createAppleChatFixture(t)
+	createAppleLIDFixture(t, filepath.Dir(chatDBPath))
+	execAppleFixture(t, chatDBPath, `UPDATE ZWAMESSAGE SET ZMESSAGEDATE = NULL WHERE Z_PK = 1`)
+	st := testutil.NewTestStore(t)
+	importer := NewImporter(st, nil)
+
+	windowed := appleTestOptions()
+	windowed.Before = appleFixtureTime(800000000)
+	_, err := importer.Import(context.Background(), chatDBPath, windowed)
+	require.NoError(err)
+	assert.Equal([]string{"direct-out", "group-in", "lid-in"}, appleStoredSourceIDs(t, st))
+
+	full, err := importer.Import(context.Background(), chatDBPath, appleTestOptions())
+	require.NoError(err)
+	assert.Equal(int64(1), full.MessagesAdded)
+	assert.Equal(
+		[]string{"direct-in", "direct-out", "group-in", "lid-in"},
+		appleStoredSourceIDs(t, st),
+	)
+}
+
+func TestImportAndroidRejectsDateWindow(t *testing.T) {
+	waDBPath := createGroupParticipantsImportFixture(t, func(*sql.DB) {})
+	st := testutil.NewTestStore(t)
+
+	opts := DefaultOptions()
+	opts.Phone = "+15555550100"
+	opts.After = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	_, err := NewImporter(st, nil).Import(context.Background(), waDBPath, opts)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "only supported for Apple")
+	assertStoreCount(t, st.DB(), "messages", 0)
 }

@@ -45,8 +45,12 @@ func TestStoreUsesOwnerOnlyAtomicPublicationAndSeparateETag(t *testing.T) {
 
 	_, err = Delete(dir, empty.ETag, VectorEmbeddingsID)
 	requirements.ErrorIs(err, ErrConflict)
+	// A concurrent Read must not block publication on Windows.
+	reader, err := openStoreFile(filepath.Join(dir, Filename))
+	requirements.NoError(err)
 	cleared, err := Delete(dir, loaded.ETag, VectorEmbeddingsID)
 	requirements.NoError(err)
+	requirements.NoError(reader.Close())
 	value, state, err = cleared.Resolve(VectorEmbeddingsID,
 		"https://embeddings.example.test/v1", "TEXT_KEY", func(string) (string, bool) {
 			return "environment-secret", true

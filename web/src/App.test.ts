@@ -162,6 +162,7 @@ describe('application foundation', () => {
         });
       }
       if (request.method === 'GET') return settingsResponse('system', '"etag-a"');
+      if (path === '/api/v1/telemetry/events') return Response.json({ status: 'disabled' }, { status: 202 });
       return Response.json({ error: 'unauthorized', message: 'Session expired' }, { status: 401 });
     });
     const session = createSessionController(fetchFn);
@@ -215,6 +216,44 @@ describe('application foundation', () => {
     expect(settingsRequests).toBe(1);
     await new Promise((resolve) => setTimeout(resolve));
     expect(settingsRequests).toBe(1);
+  });
+  it('reports app_opened once after interactive login and never from the login screen', async () => {
+    window.history.replaceState(null, '', '/');
+    const telemetryRequests: Request[] = [];
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = new URL(request.url).pathname;
+      if (path === '/api/session') {
+        return Response.json({ auth_mode: 'required', https: true, plain_http_warning: false });
+      }
+      if (path === '/api/session/login') {
+        return Response.json({
+          auth_mode: 'session',
+          csrf_token: 'csrf-token',
+          https: true,
+          plain_http_warning: false,
+        });
+      }
+      if (path === '/api/v1/telemetry/events') {
+        telemetryRequests.push(request);
+        return Response.json({ status: 'disabled' }, { status: 202 });
+      }
+      if (path === '/api/v1/settings') return Response.json({ settings: [], pending_restart: false });
+      if (path === '/api/v1/explore') {
+        return Response.json({ rows: [], total_count: 0, cache_revision: 'login', search_provenance: {} });
+      }
+      return Response.json({}, { status: 404 });
+    });
+    const session = createSessionController(fetchFn);
+    render(App, { session });
+    expect(await screen.findByRole('form', { name: 'Log in' })).toBeDefined();
+    expect(telemetryRequests).toHaveLength(0);
+    await fireEvent.input(screen.getByLabelText('API key'), { target: { value: 'test-key' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Log in' }));
+    expect(await screen.findByRole('main', { name: 'Relationships' })).toBeDefined();
+    await waitFor(() => expect(telemetryRequests).toHaveLength(1));
+    expect(telemetryRequests[0].method).toBe('POST');
+    expect(telemetryRequests[0].headers.get('X-CSRF-Token')).toBe('csrf-token');
   });
   it.each([
     ['semantic', 'Semantic'],

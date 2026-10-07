@@ -386,7 +386,7 @@ func lookupGmailAccountBinding(ctx context.Context, email string) (sql.NullStrin
 		return sql.NullString{}, false, err
 	}
 	defer func() { _ = st.Close() }()
-	accounts, err := st.GetCLIAccounts(ctx)
+	accounts, _, err := st.GetCLIAccounts(ctx)
 	if err != nil {
 		return sql.NullString{}, false, fmt.Errorf("look up existing source: %w", err)
 	}

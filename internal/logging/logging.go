@@ -40,6 +40,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"go.kenn.io/kit/atomicfile"
 )
 
 // Options controls how BuildHandler constructs the slog handler.
@@ -433,7 +435,7 @@ func rotate(path string, keep int) error {
 			}
 			return err
 		}
-		if err := os.Rename(src, dst); err != nil {
+		if err := atomicfile.Replace(src, dst); err != nil {
 			return err
 		}
 	}

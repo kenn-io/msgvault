@@ -80,8 +80,7 @@ func SaveCredential(tokenDir string, credential Credential) error {
 // CaptureCredentialFile snapshots the current credential without requiring it
 // to be valid. A missing credential is a valid empty snapshot.
 func CaptureCredentialFile(tokenDir string) (CredentialFileSnapshot, error) {
-	path := filepath.Join(tokenDir, cardDAVTokenFilename)
-	file, err := os.Open(path)
+	file, err := openCredentialFile(tokenDir)
 	if errors.Is(err, os.ErrNotExist) {
 		return CredentialFileSnapshot{}, nil
 	}
@@ -156,8 +155,7 @@ func saveCredentialBytesWithPermissions(tokenDir string, contents []byte, permis
 	if err := temporary.Close(); err != nil {
 		return fmt.Errorf("close CardDAV token file: %w", err)
 	}
-	target := filepath.Join(tokenDir, cardDAVTokenFilename)
-	if err := os.Rename(temporaryPath, target); err != nil {
+	if err := replaceCredentialFile(tokenDir, filepath.Base(temporaryPath)); err != nil {
 		return fmt.Errorf("replace CardDAV token file: %w", err)
 	}
 	// Rename publishes the already-hardened filesystem object; its mode/DACL
@@ -165,6 +163,27 @@ func saveCredentialBytesWithPermissions(tokenDir string, contents []byte, permis
 	// error before replacement always leaves the prior credential intact.
 	keep = true
 	return nil
+}
+
+// The token file is opened and replaced through os.Root because on Windows it
+// opens with delete sharing and renames with POSIX semantics, so a save can
+// replace the file while another request is still reading it.
+func openCredentialFile(tokenDir string) (*os.File, error) {
+	root, err := os.OpenRoot(tokenDir)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close() //nolint:errcheck // the opened file keeps its own handle
+	return root.Open(cardDAVTokenFilename)
+}
+
+func replaceCredentialFile(tokenDir, temporaryName string) error {
+	root, err := os.OpenRoot(tokenDir)
+	if err != nil {
+		return err
+	}
+	defer root.Close() //nolint:errcheck // rename result is returned below
+	return root.Rename(temporaryName, cardDAVTokenFilename)
 }
 
 // LoadPassword reads the private CardDAV token file and rejects files exposed
@@ -209,8 +228,7 @@ func LoadLegacyPassword(tokenDir string) (string, error) {
 }
 
 func loadCredentialWithPermissions(tokenDir string, permissions credentialPermissionBackend) (Credential, error) {
-	path := filepath.Join(tokenDir, cardDAVTokenFilename)
-	file, err := os.Open(path)
+	file, err := openCredentialFile(tokenDir)
 	if err != nil {
 		return Credential{}, fmt.Errorf("open CardDAV token file: %w", err)
 	}

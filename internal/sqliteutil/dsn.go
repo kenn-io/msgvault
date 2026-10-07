@@ -9,6 +9,26 @@ import (
 	"strings"
 )
 
+// QueryOnlyDSN resolves dsn like ResolveDSN and returns a DSN that rejects
+// write SQL. It uses _query_only instead of mode=ro because WAL databases may
+// need to create -wal/-shm sidecars on open, which SQLITE_OPEN_READONLY forbids.
+func QueryOnlyDSN(dsn string) (queryDSN, filesystemPath string, err error) {
+	normalized, path, err := ResolveDSN(dsn)
+	if err != nil {
+		return "", "", err
+	}
+	base, rawQuery, _ := strings.Cut(normalized, "?")
+	params, err := url.ParseQuery(rawQuery)
+	if err != nil {
+		return "", "", fmt.Errorf("parse SQLite options in %q: %w", dsn, err)
+	}
+	params.Set("_query_only", "true")
+	if !params.Has("_busy_timeout") {
+		params.Set("_busy_timeout", "5000")
+	}
+	return base + "?" + params.Encode(), path, nil
+}
+
 // ResolveDSN returns the SQLite DSN to open and its backing filesystem path.
 // It accepts plain paths, canonical file: URIs, and the file://C:%5C... form
 // produced when net/url renders a raw Windows path as URL.Path.

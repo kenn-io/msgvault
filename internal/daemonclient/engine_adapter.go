@@ -1343,7 +1343,7 @@ func (e *Engine) SearchByDomains(ctx context.Context, domains []string, after, b
 
 // ListAccounts returns all archive source accounts.
 func (e *Engine) ListAccounts(ctx context.Context) ([]query.AccountInfo, error) {
-	accounts, err := e.store.GetCLIAccounts(ctx)
+	accounts, _, err := e.store.GetCLIAccounts(ctx)
 	if err != nil {
 		return nil, err
 	}

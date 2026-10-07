@@ -238,9 +238,19 @@ the daemon host.
 The parent must have its original email stored in the archive. Reply-all uses
 Reply-To or From, then visible To and Cc recipients. It removes confirmed
 identities for the selected destination and never reads a parent's Bcc as a
-reply recipient. `--from` must be a confirmed identity for that source, and it
-can be omitted when one eligible identity remains. The IMAP server must support
-UIDPLUS, which returns a receipt that identifies the stored draft.
+reply recipient. The IMAP server must support UIDPLUS, which returns a receipt
+that identifies the stored draft.
+
+Msgvault picks the draft's From address in this order:
+
+1. An explicit `--from`. It must be a confirmed identity for the destination.
+2. For replies, the confirmed identity the parent was addressed to. Msgvault
+    checks the parent's archived To, Cc, and Bcc recipients and every To and
+    Cc header in the original email. If several identities match, an agent's
+    grant must allow exactly one of them; otherwise pass `--from`. A sole
+    match outside the agent's grant returns an authorization error.
+3. The destination's only eligible confirmed identity. Compose and forward
+    start here.
 
 For delegated callers, the token freezes the allowed sender identities when an
 owner issues it. A draft From header is a local choice and does not prove

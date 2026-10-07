@@ -1581,7 +1581,7 @@ func (s *Server) sourceStatus(ctx context.Context, statusStore SourceStatusStore
 		status.CanSync = true
 	}
 
-	latest, err := statusStore.GetLatestSyncContext(ctx, source.ID)
+	latest, err := statusStore.GetLatestSyncContext(ctx, source.ID, 0)
 	if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
 		return SourceStatus{}, fmt.Errorf("get latest sync: %w", err)
 	}

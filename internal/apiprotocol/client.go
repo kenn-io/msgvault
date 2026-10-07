@@ -10,4 +10,7 @@ const (
 	// AgentTokenHeader carries a restricted agent grant secret. Header name, not a credential.
 	// #nosec G101
 	AgentTokenHeader = "X-Msgvault-Agent-Token"
+	// AllowPendingCountsHeader opts a client into account lists whose counts
+	// are still pending; older clients would read those zeros as real counts.
+	AllowPendingCountsHeader = "X-Msgvault-Allow-Pending-Counts"
 )

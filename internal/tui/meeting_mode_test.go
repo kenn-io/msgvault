@@ -100,18 +100,21 @@ func TestMeetingAccountsExcludeUnrelatedSources(t *testing.T) {
 		query.AccountInfo{ID: 5, SourceType: meetingSourceImported, Identifier: "local-meetings"},
 		query.AccountInfo{ID: 6, SourceType: meetingSourceNotion, Identifier: "notion-notes"},
 		query.AccountInfo{ID: 7, SourceType: "muesli", Identifier: "mac"},
+		query.AccountInfo{ID: 8, SourceType: "twilio", Identifier: "twilio-calls"},
 	).Build()
 
 	accounts := model.meetingAccounts()
 
-	require.Len(t, accounts, 5)
-	assert.Equal(t, []string{"work-notes", "team-meetings", "local-meetings", "notion-notes", "mac"}, []string{
+	require.Len(t, accounts, 6)
+	assert.Equal(t, []string{"work-notes", "team-meetings", "local-meetings", "notion-notes", "mac", "twilio-calls"}, []string{
 		accounts[0].Identifier,
 		accounts[1].Identifier,
 		accounts[2].Identifier,
 		accounts[3].Identifier,
 		accounts[4].Identifier,
+		accounts[5].Identifier,
 	})
+	assert.Equal(t, "Twilio", model.meetingSourceLabel(8))
 }
 
 func TestMeetingImportedSourceLabelUsesDisplayNameAndFallbacks(t *testing.T) {

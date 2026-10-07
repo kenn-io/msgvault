@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/meetingarchive"
+	"go.kenn.io/msgvault/internal/meetingidentity"
 )
 
 const rawSchemaVersion = 1
@@ -274,13 +275,13 @@ func (m Meeting) ArchiveSnapshot(sourceID int64, identifier, accountEmail string
 	}
 
 	var organizer *meetingarchive.Person
-	if email := strings.ToLower(strings.TrimSpace(accountEmail)); email != "" {
+	if email := meetingidentity.Normalize(accountEmail); email != "" {
 		organizer = &meetingarchive.Person{Email: email}
 	}
 	return meetingarchive.Snapshot{
 		SourceID: sourceID, AccountEmail: accountEmail,
 		SourceMessageID: key, SourceConversationID: key,
-		Title: title, StartedAt: started, Body: body, Snippet: snippet(body),
+		Title: title, StartedAt: started, Body: body, Snippet: meetingarchive.Snippet(body),
 		Metadata: metadata, Raw: raw, RawFormat: RawFormat,
 		Organizer: organizer, Attendees: attendees,
 	}, nil
@@ -306,7 +307,7 @@ func dedupeParticipants(participants []Participant) []Participant {
 	index := map[string]int{}
 	for _, person := range participants {
 		person.Name = strings.TrimSpace(person.Name)
-		person.Email = strings.ToLower(strings.TrimSpace(person.Email))
+		person.Email = meetingidentity.Normalize(person.Email)
 		if person.Name == "" && person.Email == "" && len(person.ContactEmails) == 0 && len(person.ContactPhones) == 0 {
 			continue
 		}
@@ -354,12 +355,4 @@ func formatOptionalTime(value time.Time) string {
 		return ""
 	}
 	return value.UTC().Format(time.RFC3339Nano)
-}
-
-func snippet(body string) string {
-	runes := []rune(strings.TrimSpace(body))
-	if len(runes) > 200 {
-		runes = runes[:200]
-	}
-	return string(runes)
 }

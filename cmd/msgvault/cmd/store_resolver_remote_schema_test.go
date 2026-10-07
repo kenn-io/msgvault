@@ -15,6 +15,7 @@ import (
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
+	"go.kenn.io/msgvault/internal/telemetry"
 )
 
 // TestMain disables the remote API schema probe for the package: CLI tests
@@ -23,6 +24,8 @@ import (
 // TestOpenRemoteStore*APISchema* tests, which re-enable it per test.
 // It also blocks real daemon launches, which would rerun this test binary as "serve".
 func TestMain(m *testing.M) {
+	// Tests that run serve must never report to PostHog.
+	_ = os.Setenv(telemetry.EnabledEnv, "0")
 	remoteAPISchemaCheckEnabled = false
 	startServeBackgroundProcessForRun = func(*config.Config, backgroundServeStartOptions) (*backgroundServeProcess, error) {
 		return nil, errors.New("test reached the real background daemon launcher; stub it with stubStartServeBackgroundProcess or disable daemon auto-start")

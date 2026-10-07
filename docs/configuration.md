@@ -1056,6 +1056,27 @@ currently reports `owner` or `writer` for that calendar. `primary` resolves to t
 live primary calendar ID before the daemon checks policy. List the actual ID in
 both permission lists; neither list supports wildcards or alias names.
 
+### `[matrix]`
+
+Archive joined rooms from native [Matrix](/docs/usage/matrix/) accounts. One
+block controls every account registered with `msgvault add-matrix`; credentials
+never belong in `config.toml`.
+
+```toml
+[matrix]
+enabled = true                    # gate for the daemon schedule
+schedule = "*/30 * * * *"         # 5-field cron; empty = manual sync only
+rooms = []                        # exact room-ID include filter (empty = all)
+exclude_rooms = []                # exact room IDs to skip; wins over rooms
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `enabled` | `false` | Whether the daemon schedules Matrix sync |
+| `schedule` | — | Cron expression used by `msgvault serve` |
+| `rooms` | all joined rooms | Exact Matrix room IDs to sync |
+| `exclude_rooms` | — | Exact Matrix room IDs to skip; exclusions win over inclusions |
+
 ### `[beeper]`
 
 Archive chats from a locally running [Beeper Desktop](/docs/usage/beeper/). A single
@@ -1391,6 +1412,37 @@ scheduler from recreating it. See [Meeting Transcripts](/docs/usage/meetings/) f
 the 50-result discovery limit, attendee visibility, transcript retries, and
 stored data.
 
+### Twilio Sources
+
+Unreleased: configure one `[[twilio]]` entry per Twilio account or subaccount.
+See the [Twilio meeting guide](usage/meetings.md#twilio) for what sync stores.
+
+```toml
+[[twilio]]
+identifier = "work"
+account_email = "you@example.com"
+account_sid = "AC00000000000000000000000000000001"
+api_key_sid = "SK00000000000000000000000000000001"
+api_key_secret = "your-key-secret"
+region = "us1"
+enabled = true
+schedule = "15 */6 * * *"
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `identifier` | `default` (single entry) | Stable source label; required with several entries |
+| `account_email` | Required | Your primary identity; not treated as a caller |
+| `account_sid` | Required | Account or subaccount SID |
+| `api_key_sid`, `api_key_secret` | — | API key credentials, set together |
+| `auth_token` | — | Account auth token instead of an API key |
+| `region` | `us1` | `us1`, `ie1` or `au1`; credentials must belong to that region |
+| `intelligence_service_sid` | — | Only read Conversation Intelligence transcripts from this service; without it, transcripts from every service are read |
+| `enabled` | `false` | Allow daemon scheduling |
+| `schedule` | — | Five-field cron expression |
+| `media` | `true` | Download recordings; `false` archives calls and transcripts only. After turning it back on, run `sync-twilio --full` to fetch the skipped recordings |
+| `max_media_mb` | `250` | Per-recording size cap in MiB; `0` uses the default |
+
 ### Muesli Sources
 
 Muesli meeting sync uses one top-level `[[muesli]]` entry per Muesli database.
@@ -1696,6 +1748,7 @@ ownership and permission checks to the target directory.
 | `MSGVAULT_REMOTE_API_KEY_FILE` | Mounted remote key file |
 | `MSGVAULT_REMOTE_API_KEY_ENV` | Name of the environment variable holding the remote key |
 | `MSGVAULT_REMOTE_ALLOW_INSECURE` | Allow plaintext HTTP to the remote daemon |
+| `MSGVAULT_TELEMETRY_ENABLED` | Set to `0` to turn off anonymous telemetry; any value overrides `[telemetry] enabled` ([Telemetry](#telemetry)) |
 
 These runtime controls are available on unreleased `main`. Environment values
 override TOML. For each server or remote credential group, setting any of its
@@ -1723,6 +1776,50 @@ published stock image is `ghcr.io/kenn-io/msgvault`; it runs as UID/GID `1000`
 and stores its home at `/data`. Use an image containing these unreleased
 features once published. No startup hook or entrypoint wrapper is required.
 
+## Telemetry
+
+`msgvault serve` sends anonymous usage telemetry to PostHog:
+
+- `daemon_active` when the daemon starts, then once on each later UTC day
+  while it runs.
+- `app_opened` when the web UI opens, then on its first window focus on a later
+  UTC day. The browser reports it to the daemon, never to PostHog.
+
+The web UI records the day it last reported in browser storage, which the
+browser keeps separately for each daemon address. With the default
+`api_port = 0`, the daemon picks a new port each time it starts, so the web UI
+reports again after a daemon restart. Tabs that open together, or a browser
+that blocks storage, can also each send one. Each event carries only:
+
+- the product name and source (`msgvault`, `daemon`)
+- on `app_opened`, the surface (`web`)
+- the msgvault version and commit
+- the operating system and CPU architecture
+- a random install ID kept in `telemetry-install.json` in the data directory, and
+  the whole hours since it was created
+- metadata the PostHog Go library adds itself: library name and version (`$lib`,
+  `$lib_version`), OS name, Go version, and where available the OS version and
+  distribution
+
+Events never include messages, contacts, accounts, sources, file names or search
+queries. They ask PostHog not to build person profiles or look up location. The
+daemon queues each event and sends it in the background, so an event can be lost
+if the network is down or the daemon stops first.
+
+When telemetry is on, `msgvault serve` says so in its startup output and log.
+To turn it off, set this in `config.toml` and restart a running daemon:
+
+```toml
+[telemetry]
+enabled = false
+```
+
+`MSGVAULT_TELEMETRY_ENABLED` in the environment that starts the daemon
+overrides the config: `0`, `false`, `no` or `off` turns telemetry off, and any
+other value turns it on. `TELEMETRY_ENABLED=0` also turns it off. A CLI command
+that starts a local daemon passes its environment to it. Builds made with the
+`kit_posthog_disabled` tag never send telemetry.
+
 ## File Locations
 
 The default home is `~/.msgvault` on macOS/Linux and `C:\Users\<you>\.msgvault`
@@ -1740,6 +1837,7 @@ home; `[log].dir` can override the log location.
 | `tokens/server-api-key` | Persisted daemon API key, reused on later loopback and non-loopback starts |
 | `logs/` | Structured log files (when [file logging](/docs/configuration/#log) is enabled) |
 | `analytics/` | Parquet cache files for Web UI and TUI analytical views |
+| `telemetry-install.json` | Random anonymous install ID for [telemetry](#telemetry); created only while telemetry is on |
 
 ## Example configuration
 
@@ -1920,4 +2018,7 @@ folder_id = "google-drive-folder-id"
 google_account = "you@gmail.com"
 owner_phone = "+14155551234"
 schedule = "30 4 * * *"
+
+[telemetry]
+enabled = true # false turns off anonymous usage telemetry
 ```

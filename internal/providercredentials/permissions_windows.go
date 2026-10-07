@@ -210,18 +210,3 @@ func withStoreLock(tokenDir string, fn func() error) error {
 	defer windows.UnlockFileEx(windows.Handle(file.Fd()), 0, 1, 0, &overlapped) //nolint:errcheck
 	return fn()
 }
-
-func replaceStoreFile(source, target string) error {
-	from, err := windows.UTF16PtrFromString(source)
-	if err != nil {
-		return fmt.Errorf("encode provider credential source: %w", err)
-	}
-	to, err := windows.UTF16PtrFromString(target)
-	if err != nil {
-		return fmt.Errorf("encode provider credential target: %w", err)
-	}
-	if err := windows.MoveFileEx(from, to, windows.MOVEFILE_REPLACE_EXISTING|windows.MOVEFILE_WRITE_THROUGH); err != nil {
-		return fmt.Errorf("replace provider credential store: %w", err)
-	}
-	return nil
-}

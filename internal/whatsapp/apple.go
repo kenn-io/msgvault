@@ -171,6 +171,39 @@ func (imp *Importer) importApple(
 		return nil, fmt.Errorf("fetch Apple chats: %w", err)
 	}
 
+	aggregates, markersAvailable, err := fetchAppleChatAggregates(ctx, db)
+	if err != nil {
+		return nil, fmt.Errorf("read Apple chat change markers: %w", err)
+	}
+	// Without a store identity, markers cannot tell one database from another,
+	// so every chat is read.
+	storeIdentity, err := fetchAppleStoreIdentity(ctx, db)
+	if err != nil {
+		return nil, fmt.Errorf("read Apple chat change markers: %w", err)
+	}
+	if storeIdentity == "" {
+		markersAvailable, aggregates = false, nil
+	}
+	importContext, err := appleImportContext(
+		storeIdentity, selfParticipantID, lidMap, pushNames, duplicateStanzas,
+	)
+	if err != nil {
+		return nil, err
+	}
+	var previousMarkers map[int64]string
+	if !opts.Full && markersAvailable {
+		previousMarkers, err = imp.previousAppleChatMarkers(ctx, source, syncID, importContext)
+		if err != nil {
+			return nil, err
+		}
+	}
+	nextMarkers := make(map[int64]string, len(chats))
+	for _, chat := range chats {
+		if marker, ok := previousMarkers[chat.RowID]; ok {
+			nextMarkers[chat.RowID] = marker
+		}
+	}
+
 	batchSize := opts.BatchSize
 	if batchSize <= 0 {
 		batchSize = 1000
@@ -264,6 +297,13 @@ func (imp *Importer) importApple(
 			}
 		}
 
+		marker := appleChatMarker(aggregates, chat, conversationID)
+		if marker != "" && previousMarkers[chat.RowID] == marker {
+			imp.progress.OnChatComplete(canonicalChatJID, 0)
+			continue
+		}
+		delete(nextMarkers, chat.RowID)
+
 		var afterRowID int64
 		var chatAdded int64
 		for {
@@ -286,7 +326,8 @@ func (imp *Importer) importApple(
 
 			var stanzaIDs []string
 			for _, sourceMessage := range messages {
-				if isImportableAppleMessage(sourceMessage, duplicateStanzas) {
+				if appleMessageInWindow(sourceMessage, opts) &&
+					isImportableAppleMessage(sourceMessage, duplicateStanzas) {
 					stanzaIDs = append(stanzaIDs, sourceMessage.StanzaID)
 				}
 			}
@@ -302,6 +343,9 @@ func (imp *Importer) importApple(
 					break
 				}
 				afterRowID = sourceMessage.RowID
+				if !appleMessageInWindow(sourceMessage, opts) {
+					continue
+				}
 				summary.MessagesProcessed++
 				if !isImportableAppleMessage(sourceMessage, duplicateStanzas) {
 					summary.MessagesSkipped++
@@ -386,6 +430,13 @@ func (imp *Importer) importApple(
 				break
 			}
 		}
+		// A chat cut short by --limit may still hold unread changes. A date
+		// window leaves older messages unwritten on purpose, so those chats
+		// stay unmarked and a later unfiltered run still imports them.
+		windowed := !opts.After.IsZero() || !opts.Before.IsZero()
+		if marker != "" && !windowed && (totalLimit == 0 || totalAdded < totalLimit) {
+			nextMarkers[chat.RowID] = marker
+		}
 		imp.progress.OnChatComplete(canonicalChatJID, chatAdded)
 	}
 	for phone, pushName := range pendingPushNames {
@@ -398,6 +449,13 @@ func (imp *Importer) importApple(
 
 	if err := imp.store.RecomputeConversationStats(source.ID); err != nil {
 		return summary, fmt.Errorf("recompute Apple conversation stats: %w", err)
+	}
+	if markersAvailable {
+		if err := imp.saveAppleChatMarkers(
+			ctx, source.ID, syncID, importContext, nextMarkers,
+		); err != nil {
+			return summary, err
+		}
 	}
 	summary.Duration = time.Since(startedAt)
 	imp.progress.OnComplete(summary)
@@ -700,6 +758,9 @@ func ensureAppleParticipant(
 	return participantID, nil
 }
 
+// mapAppleMessage derives a stored message from an Apple row. Bump
+// appleChatMarkerVersion when it or isImportableAppleMessage changes, or
+// unchanged chats keep the old derivation.
 func mapAppleMessage(
 	message appleMessage,
 	conversationID, sourceID int64,
@@ -769,6 +830,26 @@ func appleMessageTimestamp(value appleTimestampValue) sql.NullTime {
 		Time:  time.Unix(int64(seconds)+appleEpochOffset, nanoseconds).UTC(),
 		Valid: true,
 	}
+}
+
+// appleMessageInWindow reports whether the message falls within the optional
+// [After, Before) window. A message without a valid timestamp is outside any
+// bounded window.
+func appleMessageInWindow(message appleMessage, opts ImportOptions) bool {
+	if opts.After.IsZero() && opts.Before.IsZero() {
+		return true
+	}
+	sent := appleMessageTimestamp(message.MessageDate)
+	if !sent.Valid {
+		return false
+	}
+	if !opts.After.IsZero() && sent.Time.Before(opts.After) {
+		return false
+	}
+	if !opts.Before.IsZero() && !sent.Time.Before(opts.Before) {
+		return false
+	}
+	return true
 }
 
 func appleMessageSnippet(text sql.NullString) sql.NullString {

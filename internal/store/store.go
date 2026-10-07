@@ -396,7 +396,7 @@ func OpenReadOnlyContext(ctx context.Context, dbPath string) (*Store, error) {
 		return openPostgresReadOnly(ctx, dbPath)
 	}
 
-	normalizedDSN, filesystemPath, err := sqliteutil.ResolveDSN(dbPath)
+	dsn, filesystemPath, err := sqliteutil.QueryOnlyDSN(dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("resolve SQLite database path: %w", err)
 	}
@@ -407,11 +407,6 @@ func OpenReadOnlyContext(ctx context.Context, dbPath string) (*Store, error) {
 		)
 	}
 
-	// Use _query_only instead of mode=ro. WAL-mode databases may need
-	// to create or update -wal/-shm sidecar files on open, which fails
-	// under SQLITE_OPEN_READONLY. _query_only opens normally (so SQLite
-	// can manage sidecars) but rejects all write SQL at the query layer.
-	dsn := appendSQLiteParams(normalizedDSN, "?_query_only=true&_busy_timeout=5000")
 	db, err := sql.Open(sqliteutil.DriverName(), dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open database (read-only): %w", err)

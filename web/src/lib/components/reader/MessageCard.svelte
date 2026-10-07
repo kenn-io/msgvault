@@ -118,6 +118,22 @@
         {/if}
       </section>
     </div>
+
+    {#if message.messageType === 'meeting_transcript' && message.attachments.length > 0}
+      <ul class="attachments" aria-label="Attachments">
+        {#each message.attachments as attachment (attachment.id)}
+          <li>
+            {#if attachment.stored}
+              <a href={`/api/v1/files/${attachment.id}/content`} download={attachment.filename}>
+                {attachment.filename || '(unnamed file)'}
+              </a>
+            {:else}
+              <span>{attachment.filename || '(unnamed file)'} (not downloaded)</span>
+            {/if}
+          </li>
+        {/each}
+      </ul>
+    {/if}
   </article>
 {:else}
   <button
@@ -327,6 +343,13 @@
 
   .card-body {
     padding: var(--space-3) var(--space-4) var(--space-4);
+  }
+
+  .attachments {
+    margin: 0;
+    padding: 0 var(--space-4) var(--space-4);
+    font-size: var(--font-size-sm);
+    list-style: none;
   }
 
   /* Plain text renders on the theme surface with theme text, in the same

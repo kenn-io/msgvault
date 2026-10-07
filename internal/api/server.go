@@ -21,6 +21,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"go.kenn.io/kit/telemetry/posthog"
 	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
@@ -192,7 +193,7 @@ type SourceStatusStore interface {
 	ListSources(sourceType string) ([]*store.Source, error)
 	ListSourcesContext(ctx context.Context, sourceType string) ([]*store.Source, error)
 	GetActiveSyncReadOnly(ctx context.Context, sourceID int64) (*store.SyncRun, error)
-	GetLatestSyncContext(ctx context.Context, sourceID int64) (*store.SyncRun, error)
+	GetLatestSyncContext(ctx context.Context, sourceID, excludeID int64) (*store.SyncRun, error)
 	GetLastSuccessfulSyncContext(ctx context.Context, sourceID int64) (*store.SyncRun, error)
 	CountSyncRunItemsContext(ctx context.Context, syncRunID int64, status string) (int64, error)
 	ListSyncRunItemsContext(ctx context.Context, syncRunID int64, status string, limit int) ([]store.SyncRunItem, error)
@@ -419,8 +420,10 @@ type Server struct {
 	// that result, collapsing the per-cid fan-out (see inline_cache.go).
 	inlineCache *inlineParseCache
 	spaHandler  http.Handler
-	sessions    *sessionStore
-	agentGrants *agentgrant.Registry
+	// telemetryCapture serves POST /api/v1/telemetry/events.
+	telemetryCapture http.Handler
+	sessions         *sessionStore
+	agentGrants      *agentgrant.Registry
 	// trustedProxies contains only explicitly configured direct proxy peers.
 	// Forwarded scheme/host data is ignored for every other RemoteAddr.
 	trustedProxies   []netip.Prefix
@@ -570,6 +573,8 @@ type ServerOptions struct {
 	// internal/web.Handler and is the production default. Tests may inject a
 	// handler built over an in-memory filesystem.
 	SPAHandler http.Handler
+	// TelemetryCapture serves POST /api/v1/telemetry/events. Nil admits no event.
+	TelemetryCapture http.Handler
 	// TaskIntegrationProbe overrides provider-neutral task discovery for tests.
 	// Nil uses taskclient.Evaluate.
 	TaskIntegrationProbe   TaskIntegrationProbe
@@ -644,6 +649,7 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 		remoteImages:           remoteimage.NewFetcher(),
 		inlineCache:            newInlineParseCache(inlineCacheMaxEntries, inlineCacheMaxBytes),
 		spaHandler:             opts.SPAHandler,
+		telemetryCapture:       opts.TelemetryCapture,
 		sessions:               newSessionStore(defaultSessionTTL),
 		agentGrants: func() *agentgrant.Registry {
 			if opts.Config != nil && opts.Config.Server.AgentAccess {
@@ -667,6 +673,10 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 		engine: opts.Engine, mode: opts.AnalyticsMode,
 		analyticsInitializationActive: opts.AnalyticsInitializationActive,
 	})
+	if s.telemetryCapture == nil {
+		// kit's nil-reporter handler admits no event.
+		s.telemetryCapture = posthog.NewCaptureHandler(nil)
+	}
 	if s.taskIdentityResolver == nil {
 		s.taskIdentityResolver = s.resolveTaskMessageIdentity
 	}

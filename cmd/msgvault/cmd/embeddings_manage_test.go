@@ -420,3 +420,109 @@ func TestRunEmbeddingsActivate_ContextualLifecycleRefusalsStayNonActivating(t *t
 		assertManualGenerationState(t, gen, vector.GenerationRetired)
 	})
 }
+
+func TestRunEmbeddingsListDoesNotWriteDuringEmbeddingJob(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	dir := t.TempDir()
+	cfg := config.NewDefaultConfig()
+	cfg.HomeDir = dir
+	cfg.Data.DataDir = dir
+	cfg.Vector.DBPath = filepath.Join(dir, "vectors.db")
+	cfg.Vector.Embeddings.Dimension = 4
+	cfg.Vector.Embed.Scope.Accounts = []string{"catalogue@example.test"}
+	ctx := withTestConfig(t, cfg)
+	main, err := store.Open(cfg.DatabaseDSN())
+	require.NoError(err)
+	defer func() { require.NoError(main.Close()) }()
+	require.NoError(main.InitSchema())
+	_, err = main.GetOrCreateSource("gmail", "catalogue@example.test")
+	require.NoError(err)
+	backend, err := sqlitevec.Open(ctx, sqlitevec.Options{Path: cfg.Vector.DBPath, MainDB: main.DB(), Dimension: 4})
+	require.NoError(err)
+	defer func() { require.NoError(backend.Close()) }()
+	_, err = backend.CreateGeneration(ctx, "example-model", 4, "example-fingerprint")
+	require.NoError(err)
+	writer, err := backend.DB().Conn(ctx)
+	require.NoError(err)
+	defer func() { require.NoError(writer.Close()) }()
+	_, err = writer.ExecContext(ctx, "BEGIN IMMEDIATE")
+	require.NoError(err)
+	defer func() {
+		_, err := writer.ExecContext(ctx, "ROLLBACK")
+		require.NoError(err)
+	}()
+	mainWriter, err := main.DB().Conn(ctx)
+	require.NoError(err)
+	defer func() { require.NoError(mainWriter.Close()) }()
+	_, err = mainWriter.ExecContext(ctx, "BEGIN IMMEDIATE")
+	require.NoError(err)
+	defer func() {
+		_, err := mainWriter.ExecContext(ctx, "ROLLBACK")
+		require.NoError(err)
+	}()
+	var output bytes.Buffer
+	cmd := &cobra.Command{Use: "list"}
+	cmd.SetContext(ctx)
+	cmd.SetOut(&output)
+	require.NoError(runEmbeddingsList(cmd, nil))
+	assert.Contains(output.String(), "example-model")
+}
+
+func TestEmbeddingsListRequiresUpgradeWithoutWritingOldMetadata(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	dir := t.TempDir()
+	cfg := config.NewDefaultConfig()
+	cfg.HomeDir = dir
+	cfg.Data.DataDir = dir
+	cfg.Vector.DBPath = filepath.Join(dir, "vectors.db")
+	cfg.Vector.Embeddings.Dimension = 4
+	ctx := withTestConfig(t, cfg)
+	main, err := store.Open(cfg.DatabaseDSN())
+	require.NoError(err)
+	defer func() { require.NoError(main.Close()) }()
+	require.NoError(main.InitSchema())
+	backend, err := sqlitevec.Open(ctx, sqlitevec.Options{Path: cfg.Vector.DBPath, MainDB: main.DB(), Dimension: 4})
+	require.NoError(err)
+	defer func() { require.NoError(backend.Close()) }()
+	_, err = backend.CreateGeneration(ctx, "example-model", 4, "example")
+	require.NoError(err)
+	_, err = main.DB().Exec("DELETE FROM applied_migrations WHERE name='embed_gen_backfill_active_v1'")
+	require.NoError(err)
+	cmd := &cobra.Command{Use: "list"}
+	cmd.SetContext(ctx)
+	err = runEmbeddingsList(cmd, nil)
+	require.ErrorContains(err, "requires an upgrade")
+	require.ErrorContains(err, "enable [vector]", "a restart alone skips vector upgrades while vector search is off")
+	var marked bool
+	require.NoError(main.DB().QueryRow("SELECT EXISTS (SELECT 1 FROM applied_migrations WHERE name='embed_gen_backfill_active_v1')").Scan(&marked))
+	assert.False(marked)
+}
+
+func TestEmbeddingsListReportsOldSchemaWithoutMigrating(t *testing.T) {
+	require := require.New(t)
+	dir := t.TempDir()
+	cfg := config.NewDefaultConfig()
+	cfg.HomeDir = dir
+	cfg.Data.DataDir = dir
+	cfg.Vector.DBPath = filepath.Join(dir, "vectors.db")
+	cfg.Vector.Embeddings.Dimension = 4
+	cfg.Vector.Enabled = true
+	ctx := withTestConfig(t, cfg)
+	backend, err := sqlitevec.Open(ctx, sqlitevec.Options{Path: cfg.Vector.DBPath, Dimension: 4})
+	require.NoError(err)
+	defer func() { require.NoError(backend.Close()) }()
+	_, err = backend.CreateGeneration(ctx, "example-model", 4, "example")
+	require.NoError(err)
+	_, err = backend.DB().Exec("ALTER TABLE index_generations DROP COLUMN seeded_at")
+	require.NoError(err)
+	cmd := &cobra.Command{Use: "list"}
+	cmd.SetContext(ctx)
+	err = runEmbeddingsList(cmd, nil)
+	require.ErrorContains(err, "requires an upgrade")
+	require.NotContains(err.Error(), "enable [vector]")
+	require.ErrorContains(err, "msgvault daemon restart")
+	_, err = backend.DB().Exec("SELECT seeded_at FROM index_generations")
+	require.ErrorContains(err, "no such column", "listing must leave the old schema unchanged")
+}

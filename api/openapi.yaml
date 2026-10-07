@@ -2266,6 +2266,8 @@ components:
         as_of:
           format: date-time
           type: string
+        counts_pending:
+          type: boolean
         stale:
           type: boolean
       required:
@@ -10492,6 +10494,37 @@ components:
         - provenance
         - participant_id
       type: object
+    PersonIdentitiesResponse:
+      additionalProperties: true
+      properties:
+        identities:
+          items:
+            $ref: "#/components/schemas/PersonIdentity"
+          type: array
+        person_id:
+          format: int64
+          type: integer
+      required:
+        - person_id
+        - identities
+      type: object
+    PersonIdentity:
+      additionalProperties: true
+      properties:
+        kind:
+          description: Identity kind, such as email, phone, or a chat service
+          type: string
+        supported:
+          description: Whether the value can be a draft recipient
+          type: boolean
+        value:
+          description: Archived value; a supported email is ready to pass as a draft recipient
+          type: string
+      required:
+        - kind
+        - value
+        - supported
+      type: object
     PersonInboxResponse:
       additionalProperties: true
       properties:
@@ -13834,6 +13867,31 @@ components:
         - id
         - title
       type: object
+    TelemetryEventRequest:
+      additionalProperties: false
+      properties:
+        event:
+          description: Allowlisted event name, such as app_opened
+          type: string
+        properties:
+          additionalProperties: {}
+          description: Event properties; the daemon drops any its allowlist omits
+          type: object
+      required:
+        - event
+      type: object
+    TelemetryEventResponse:
+      additionalProperties: true
+      properties:
+        status:
+          description: queued when the daemon queued the event to send; disabled when telemetry is off
+          enum:
+            - queued
+            - disabled
+          type: string
+      required:
+        - status
+      type: object
     TemperatureSignals:
       additionalProperties: true
       properties:
@@ -14485,7 +14543,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.1.0
+  version: 3.3.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -25264,6 +25322,54 @@ paths:
       summary: Search one durable person's analytical files
       tags:
         - Exploration
+  /api/v1/people/{id}/identities:
+    get:
+      description: Lists the identities of the person's current participants. Email addresses are supported draft recipients; phone numbers and chat identifiers are not. Curated contact points and postal addresses are not listed.
+      operationId: listPersonIdentities
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonIdentitiesResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List a durable person's archived identities
+      tags:
+        - API
   /api/v1/people/{id}/merge:
     post:
       operationId: mergePersons
@@ -29710,6 +29816,29 @@ paths:
       security:
         - apiKey: []
       summary: Trigger account sync
+      tags:
+        - API
+  /api/v1/telemetry/events:
+    post:
+      operationId: captureTelemetryEvent
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TelemetryEventRequest"
+        required: true
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TelemetryEventResponse"
+          description: Accepted
+        default:
+          description: Error
+      security:
+        - apiKey: []
+      summary: Report a web UI usage event
       tags:
         - API
   /api/v1/text/aggregates:

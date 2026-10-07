@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"go.kenn.io/kit/telemetry/posthog"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/carddav"
 	"go.kenn.io/msgvault/internal/circleback"
@@ -50,6 +51,8 @@ import (
 	"go.kenn.io/msgvault/internal/syncerr"
 	"go.kenn.io/msgvault/internal/synctechsms"
 	"go.kenn.io/msgvault/internal/teams"
+	"go.kenn.io/msgvault/internal/telemetry"
+	"go.kenn.io/msgvault/internal/twilio"
 	"golang.org/x/oauth2"
 )
 
@@ -253,6 +256,15 @@ func runServe(cmd *cobra.Command, args []string) error {
 		<-heartbeatDone
 		if err := ownership.Close(); err != nil {
 			logger.Warn("release daemon ownership failed", "error", err)
+		}
+	}()
+	telemetryReporter := telemetry.NewReporterOrDisabled(telemetry.Options{
+		DataDir: cfg.Data.DataDir, Version: Version, Commit: Commit,
+		ConfigEnabled: cfg.Telemetry.EnabledOrDefault(),
+	}, logger)
+	defer func() {
+		if err := telemetryReporter.Close(); err != nil {
+			logger.Warn("close telemetry reporter", "error", err)
 		}
 	}()
 	setStartupPhase := func(phase string) {
@@ -552,6 +564,25 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	if cfg.Matrix.Enabled && cfg.Matrix.Schedule == "" {
+		logger.Warn("matrix is enabled but has no schedule — the daemon will not sync it",
+			"hint", `set a cron schedule (e.g. "*/30 * * * *") on the [matrix] entry`)
+	}
+	if cfg.Matrix.Enabled && cfg.Matrix.Schedule != "" {
+		if err := sched.AddJob(scheduler.Job{
+			Name: api.MatrixJobName, Schedule: cfg.Matrix.Schedule, Preemptible: true,
+			Run: invocationBoundJobRun(state, func(ctx context.Context) error {
+				return runScheduledSource(ctx, attachmentMaint, false, func(ctx context.Context) error {
+					return runConfiguredMatrixSync(ctx, s)
+				})
+			}),
+		}); err != nil {
+			logger.Error("failed to schedule matrix sync", "error", err)
+		} else {
+			logger.Info("scheduled matrix sync", "schedule", cfg.Matrix.Schedule)
+		}
+	}
+
 	if cfg.Slack.Enabled && cfg.Slack.Schedule == "" {
 		logger.Warn("slack is enabled but has no schedule — the daemon will not sync it; its freshness will eventually go stale",
 			"hint", `set a cron schedule (e.g. "*/30 * * * *") on the [slack] entry`)
@@ -701,6 +732,34 @@ func runServe(cmd *cobra.Command, args []string) error {
 			logger.Info("scheduled notion meeting source", "source", source.Identifier, "schedule", source.Schedule)
 		}
 	}
+	for _, src := range cfg.Twilio {
+		if src.Enabled && src.Schedule == "" {
+			logger.Warn("twilio source is enabled but has no schedule — the daemon will not sync it; its freshness will eventually go stale",
+				"source", src.Identifier,
+				"hint", `set a cron schedule (e.g. "15 */6 * * *") on the [[twilio]] entry`)
+		}
+	}
+	for _, src := range cfg.ScheduledTwilioSources() {
+		source := src
+		jobName, ok := api.SchedulerJobNameForSource(twilio.SourceType, source.Identifier)
+		if !ok {
+			logger.Error("no scheduler job mapping for twilio source", "source", source.Identifier)
+			continue
+		}
+		if err := sched.AddJob(scheduler.Job{
+			Name:     jobName,
+			Schedule: source.Schedule,
+			Run: invocationBoundJobRun(state, func(ctx context.Context) error {
+				return runScheduledSource(ctx, attachmentMaint, true, func(ctx context.Context) error {
+					return runConfiguredTwilioSync(ctx, s, source)
+				})
+			}),
+		}); err != nil {
+			logger.Error("failed to schedule twilio source", "source", source.Identifier, "error", err)
+		} else {
+			logger.Info("scheduled twilio source", "source", source.Identifier, "schedule", source.Schedule)
+		}
+	}
 	for _, src := range cfg.Muesli {
 		if src.Enabled && src.Schedule == "" {
 			logger.Warn("muesli source is enabled but has no schedule — the daemon will not sync it; its freshness will eventually go stale",
@@ -796,6 +855,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		OperationGate:                 operationGate,
 		OperationHistoryReader:        storeAdapter,
 		BlobStore:                     blobStore,
+		TelemetryCapture:              telemetry.CaptureHandler(telemetryReporter),
 	}
 	apiOpts.GmailProfileAddress = func(ctx context.Context, source *store.Source) (string, error) {
 		client, serviceAccount, err := newDaemonGmailClient(
@@ -879,11 +939,25 @@ func runServe(cmd *cobra.Command, args []string) error {
 			combineWorkTrackers(idleTracker, labelWorkTracker(operationGate, "background embedding work")),
 			apiServer, sched, blobStore,
 		)
+		telemetryHeartbeatDone := make(chan struct{})
+		go func() {
+			defer close(telemetryHeartbeatDone)
+			posthog.RunHeartbeat(ctx, telemetryReporter, logger)
+		}()
+		// Stop the heartbeat before the deferred telemetryReporter.Close.
+		defer func() {
+			cancel()
+			<-telemetryHeartbeatDone
+		}()
 
 		fmt.Printf("msgvault daemon started\n")
 		fmt.Printf("  API server: http://%s\n", apiAddr)
 		fmt.Printf("  Scheduled accounts: %d\n", count)
 		fmt.Printf("  Data directory: %s\n", cfg.Data.DataDir)
+		if telemetryReporter.Enabled() {
+			fmt.Printf("  Anonymous telemetry: on ([telemetry] enabled = false or %s=0 turns it off)\n",
+				telemetry.EnabledEnv)
+		}
 		fmt.Println()
 		fmt.Println("Press Ctrl+C to stop.")
 		fmt.Println()
@@ -3546,8 +3620,8 @@ func (a *storeAPIAdapter) GetActiveSyncReadOnly(ctx context.Context, sourceID in
 	return a.store.GetActiveSyncReadOnly(ctx, sourceID)
 }
 
-func (a *storeAPIAdapter) GetLatestSyncContext(ctx context.Context, sourceID int64) (*store.SyncRun, error) {
-	return a.store.GetLatestSyncContext(ctx, sourceID)
+func (a *storeAPIAdapter) GetLatestSyncContext(ctx context.Context, sourceID, excludeID int64) (*store.SyncRun, error) {
+	return a.store.GetLatestSyncContext(ctx, sourceID, excludeID)
 }
 
 func (a *storeAPIAdapter) GetSyncOperation(operationID string) (*store.SyncOperation, error) {

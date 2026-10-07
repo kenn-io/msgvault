@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/gofrs/flock"
+	"go.kenn.io/kit/atomicfile"
 	"go.kenn.io/msgvault/internal/fileutil"
 )
 
@@ -458,7 +459,7 @@ func (m *Manager) FinalizeInProgress(id string, target Status) error {
 	}
 	fromPath := filepath.Join(m.dirForStatus(StatusInProgress), id+".json")
 	toPath := filepath.Join(m.dirForStatus(target), id+".json")
-	if err := os.Rename(fromPath, toPath); err != nil {
+	if err := atomicfile.Replace(fromPath, toPath); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return ErrManifestCancelled
 		}
@@ -878,7 +879,7 @@ func (m *Manager) MoveManifest(id string, fromStatus, toStatus Status) error {
 
 	fromPath := filepath.Join(m.dirForStatus(fromStatus), id+".json")
 	toPath := filepath.Join(m.dirForStatus(toStatus), id+".json")
-	return os.Rename(fromPath, toPath)
+	return atomicfile.Replace(fromPath, toPath)
 }
 
 // CancelManifest moves a pending or in-progress manifest to the

@@ -1999,6 +1999,23 @@ func TestEditConfigRejectsInvalidSlackSchedule(t *testing.T) {
 	assert.Equal(before, string(got))
 }
 
+func TestEditConfigRejectsInvalidMatrixSchedule(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	path := filepath.Join(t.TempDir(), "config.toml")
+	before := "[matrix]\nenabled = true\nschedule = \"0 * * * *\"\n"
+	require.NoError(os.WriteFile(path, []byte(before), 0o600))
+	snapshot, err := ReadConfigFile(path)
+	require.NoError(err)
+
+	_, err = EditConfigFile(path, snapshot.ETag, []Edit{{Key: "matrix.schedule", Value: "not a cron"}})
+	require.ErrorIs(err, ErrInvalidConfigCandidate)
+	assert.Contains(err.Error(), "invalid matrix.schedule")
+	got, readErr := os.ReadFile(path)
+	require.NoError(readErr)
+	assert.Equal(before, string(got))
+}
+
 func TestEditConfigRejectsInvalidNotionMeetingsSchedule(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -2205,17 +2222,23 @@ func TestEditConfigRejectsInvalidMuesliSchedule(t *testing.T) {
 }
 
 func TestEditConfigRejectsInvalidPlaudSchedule(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	path := filepath.Join(t.TempDir(), "config.toml")
-	before := "[[plaud]]\nidentifier = \"work\"\naccount_email = \"owner@example.com\"\nschedule = \"15 */6 * * *\"\nenabled = true\n"
-	require.NoError(os.WriteFile(path, []byte(before), 0600))
-	snapshot, err := ReadConfigFile(path)
-	require.NoError(err)
-	_, err = EditConfigFile(path, snapshot.ETag, []Edit{{Key: "plaud.schedule", Value: "not a cron"}})
-	require.ErrorIs(err, ErrInvalidConfigCandidate)
-	assert.Contains(err.Error(), "invalid plaud[0].schedule")
-	got, err := os.ReadFile(path)
-	require.NoError(err)
-	assert.Equal(before, string(got))
+	for kind, before := range map[string]string{
+		"plaud":  "[[plaud]]\nidentifier = \"work\"\naccount_email = \"owner@example.com\"\nschedule = \"15 */6 * * *\"\nenabled = true\n",
+		"twilio": "[[twilio]]\naccount_email='user@example.com'\naccount_sid='AC00000000000000000000000000000001'\nauth_token='synthetic'\nschedule='15 */6 * * *'\n",
+	} {
+		t.Run(kind, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			path := filepath.Join(t.TempDir(), "config.toml")
+			require.NoError(os.WriteFile(path, []byte(before), 0600))
+			snapshot, err := ReadConfigFile(path)
+			require.NoError(err)
+			_, err = EditConfigFile(path, snapshot.ETag, []Edit{{Key: kind + ".schedule", Value: "not a cron"}})
+			require.ErrorIs(err, ErrInvalidConfigCandidate)
+			assert.Contains(err.Error(), "invalid "+kind+"[0].schedule")
+			got, err := os.ReadFile(path)
+			require.NoError(err)
+			assert.Equal(before, string(got))
+		})
+	}
 }

@@ -466,7 +466,8 @@ func attachmentProducingCommand(args []string) bool {
 		"sync-inline",
 		"sync-slack",
 		"sync-synctech-sms",
-		"sync-teams":
+		"sync-teams",
+		"sync-twilio":
 		return true
 	default:
 		return false

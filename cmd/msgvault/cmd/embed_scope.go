@@ -164,8 +164,8 @@ func configuredEmbedBuildScope(s *store.Store, state *invocation) (vector.BuildS
 //
 // It mutates the invocation's config, so daemon code paths (HTTP handlers,
 // the background vector init) must use resolvedVectorConfig instead.
-func ensureEmbedScopeResolved(state *invocation) error {
-	state = invocationState(context.Background(), state)
+func ensureEmbedScopeResolved(ctx context.Context, state *invocation) error {
+	state = invocationState(ctx, state)
 	if state == nil || state.cfg == nil {
 		return errors.New("configuration is unavailable")
 	}
@@ -173,7 +173,7 @@ func ensureEmbedScopeResolved(state *invocation) error {
 	if len(cfg.Vector.Embed.Scope.Accounts) == 0 {
 		return nil
 	}
-	s, err := store.Open(cfg.DatabaseDSN())
+	s, err := store.OpenReadOnlyContext(ctx, cfg.DatabaseDSN())
 	if err != nil {
 		return fmt.Errorf("open main db for embed scope resolution: %w", err)
 	}

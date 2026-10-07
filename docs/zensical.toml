@@ -40,6 +40,7 @@ nav = [
     {"Discord" = "usage/discord.md"},
     {"Beeper" = "usage/beeper.md"},
     {"Inline" = "usage/inline.md"},
+    {"Matrix" = "usage/matrix.md"},
     {"Slack" = "usage/slack.md"},
     {"Meeting Notes and Transcripts" = "usage/meetings.md"},
   ]},

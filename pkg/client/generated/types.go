@@ -2086,9 +2086,10 @@ func (c CliAccountResponse) Validate() error {
 }
 
 type CliAccountsResponse struct {
-	Accounts []CliAccountResponse `json:"accounts" validate:"required"`
-	AsOf     *time.Time           `json:"as_of,omitempty"`
-	Stale    *bool                `json:"stale,omitempty"`
+	Accounts      []CliAccountResponse `json:"accounts" validate:"required"`
+	AsOf          *time.Time           `json:"as_of,omitempty"`
+	CountsPending *bool                `json:"counts_pending,omitempty"`
+	Stale         *bool                `json:"stale,omitempty"`
 }
 
 func (c CliAccountsResponse) Validate() error {
@@ -9801,6 +9802,41 @@ func (p PersonIdentifier) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(p))
 }
 
+type PersonIdentitiesResponse struct {
+	Identities []PersonIdentity `json:"identities" validate:"required"`
+	PersonID   int64            `json:"person_id"`
+}
+
+func (p PersonIdentitiesResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range p.Identities {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Identities[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonIdentity struct {
+	// Kind Identity kind, such as email, phone, or a chat service
+	Kind string `json:"kind" validate:"required"`
+
+	// Supported Whether the value can be a draft recipient
+	Supported bool `json:"supported"`
+
+	// Value Archived value; a supported email is ready to pass as a draft recipient
+	Value string `json:"value" validate:"required"`
+}
+
+func (p PersonIdentity) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
 type PersonInboxResponse struct {
 	CacheRevision    string           `json:"cache_revision" validate:"required"`
 	IdentityRevision int64            `json:"identity_revision"`
@@ -13179,6 +13215,36 @@ type TaskSummary struct {
 
 func (t TaskSummary) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(t))
+}
+
+type TelemetryEventRequest struct {
+	// Event Allowlisted event name, such as app_opened
+	Event string `json:"event" validate:"required"`
+
+	// Properties Event properties; the daemon drops any its allowlist omits
+	Properties map[string]any `json:"properties,omitempty"`
+}
+
+func (t TelemetryEventRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(t))
+}
+
+type TelemetryEventResponse struct {
+	// Status queued when the daemon queued the event to send; disabled when telemetry is off
+	Status TelemetryEventResponseStatus `json:"status" validate:"required"`
+}
+
+func (t TelemetryEventResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(t.Status).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Status", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type TemperatureSignals struct {

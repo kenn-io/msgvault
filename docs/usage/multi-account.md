@@ -301,7 +301,7 @@ collection; selections spanning sources are rejected. Deduplication remains
 available through the collection-scoped CLI commands, not through the TUI.
 
 Meetings mode uses the same key for a separate source selector. It lists
-Granola, Plaud, Circleback, Notion, and Muesli meeting sources. Changing it does
+Granola, Plaud, Circleback, Notion, Muesli, and Twilio meeting sources. Changing it does
 not replace the Email account filter.
 
 ## Command Reference

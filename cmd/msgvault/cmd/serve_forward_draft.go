@@ -97,7 +97,7 @@ func (a *storeAPIAdapter) runCLIForwardDraft(
 	}
 	target, from, _, err := a.resolveDraftTarget(
 		ctx, &intent.MessageID, intent.Account, intent.SourceID, intent.SourceIDSet,
-		intent.From, nil,
+		intent.From, nil, false,
 	)
 	if err != nil {
 		return err

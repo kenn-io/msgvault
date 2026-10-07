@@ -607,6 +607,75 @@ func TestGeneratedResponseDecodeErrorDetection(t *testing.T) {
 	assert.False(t, responseDecodeError(errors.New("other")), "other error")
 }
 
+func TestRunCLICommandTypesDaemonReportedFailures(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		status           int
+		body, want       string
+		typed, truncated bool
+	}{
+		{name: "daemon refusal", status: 400, body: `{"error":"command_not_allowed","message":"command is not allowed through the daemon CLI runner"}`, want: "command is not allowed through the daemon CLI runner", typed: true},
+		{name: "stream event", status: 200, body: "{\"type\":\"error\",\"error\":\"not_permitted\"}\n", want: "not_permitted", typed: true},
+		{name: "empty stream error", status: 200, body: "{\"type\":\"error\"}\n", want: "run failed", typed: true},
+		{name: "malformed HTML", status: 400, body: "<html>private-body</html>", want: "API error (400): <html>private-body</html>"},
+		{name: "truncated body", status: 400, body: `{"message":"private-body"}`, want: "API error (400): could not read response body: unexpected EOF", truncated: true},
+		{name: "truncated stream", status: 200, body: `{"type":`, want: "decode CLI run stream:"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				if tc.truncated {
+					w.Header().Set("Content-Length", "1000")
+				}
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			t.Cleanup(server.Close)
+			client, err := New(Config{URL: server.URL, AllowInsecure: true})
+			require.NoError(err)
+			t.Cleanup(func() { _ = client.Close() })
+			err = client.RunCLICommand(t.Context(), CLIRunRequest{Args: []string{"draft-get", "d1"}}, nil)
+			require.Error(err)
+			_, typed := errors.AsType[*CLIRunError](err)
+			assert.Equal(tc.typed, typed)
+			if tc.name == "truncated stream" {
+				assert.Contains(err.Error(), tc.want)
+			} else {
+				assert.EqualError(err, tc.want)
+			}
+		})
+	}
+	t.Run("transport", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		server := httptest.NewServer(http.NotFoundHandler())
+		server.Close()
+		client, err := New(Config{URL: server.URL, AllowInsecure: true})
+		require.NoError(err)
+		t.Cleanup(func() { _ = client.Close() })
+		err = client.RunCLICommand(t.Context(), CLIRunRequest{}, nil)
+		require.Error(err)
+		_, typed := errors.AsType[*CLIRunError](err)
+		assert.False(typed)
+	})
+	t.Run("cancellation", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		server := httptest.NewServer(http.NotFoundHandler())
+		t.Cleanup(server.Close)
+		client, err := New(Config{URL: server.URL, AllowInsecure: true})
+		require.NoError(err)
+		t.Cleanup(func() { _ = client.Close() })
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		err = client.RunCLICommand(ctx, CLIRunRequest{}, nil)
+		require.ErrorIs(err, context.Canceled)
+		_, typed := errors.AsType[*CLIRunError](err)
+		assert.False(typed)
+	})
+}
+
 func TestRunCLICommandRetriesWhileOperationInProgress(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

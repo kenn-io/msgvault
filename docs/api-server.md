@@ -100,9 +100,13 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.1.0**.
+it is separate from the binary release version. The current schema is **3.3.0**.
 Upgrade clients and daemon together across incompatible schema versions,
 including remote deployments.
+
+Schema 3.3.0 adds `POST /api/v1/telemetry/events`, which the web UI uses to
+report anonymous usage events through the daemon. See
+[Telemetry](configuration.md#telemetry).
 
 Schema 3.0.0 removes the unguarded
 `POST /api/v1/identity/match-candidates/{id}/accept` and `/reject` routes.
@@ -114,6 +118,9 @@ This schema also adds consented identity scoring. See
 
 Schema 3.1.0 adds unreleased [calendar event control](#calendar-control),
 availability queries, and opt-in `write` on Calendar consent plans.
+
+Schema 3.2.0 adds `counts_pending` to `GET /api/v1/cli/accounts`. See
+[archive statistics](#get-apiv1stats) for when it appears.
 
 Schema 2.35.0 adds `scope_escalation_source_type` (`gmail` or `msmail`) to
 `POST /api/v1/cli/delete-staged/plan` responses that require a permission
@@ -725,7 +732,11 @@ archive:
   `"vector_stats_unavailable": true` instead of failing.
 
 `GET /api/v1/cli/accounts` bounds its message counts the same way, reporting
-`stale` and `as_of` at the top level.
+`stale` and `as_of` at the top level. Before the first counts finish there is
+no earlier snapshot to serve, so the request fails with `503 query_timeout`.
+Send the header `X-Msgvault-Allow-Pending-Counts: true` to get the accounts
+anyway: the response sets `"counts_pending": true`, and every account's
+`message_count` and `source_deleted_count` is a placeholder `0`.
 
 **Response (vector search disabled):**
 

@@ -667,7 +667,7 @@ func withAgentFlags(t *testing.T) context.Context {
 // draft commands with agent flags pass the PersistentPreRunE early-return path.
 func TestAgentDelegatedCapableCommandSucceeds(t *testing.T) {
 	for _, name := range []string{
-		"draft-reply", "draft-compose", "draft-get", "draft-edit", "draft-delete",
+		"draft-reply", "draft-compose", "draft-get", "draft-edit", "draft-delete", "mcp",
 	} {
 		t.Run(name, func(t *testing.T) {
 			ctx := withAgentFlags(t)

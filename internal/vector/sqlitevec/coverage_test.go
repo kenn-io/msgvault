@@ -459,3 +459,26 @@ func TestActivateGeneration_RefusesEmptySourceScope(t *testing.T) {
 
 	require.NoError(b.ActivateGeneration(ctx, empty, true), "force overrides the guard")
 }
+
+func TestSnapshotCoverageCountsSuppliedIDsWithinBatchLimit(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := context.Background()
+	b, err := Open(ctx, Options{Path: filepath.Join(t.TempDir(), "vectors.db"), Dimension: 4})
+	require.NoError(err)
+	t.Cleanup(func() { _ = b.Close() })
+	gen, err := b.CreateGeneration(ctx, "test-model", 4, "fp")
+	require.NoError(err)
+	require.NoError(b.Upsert(ctx, gen, []vector.Chunk{
+		{MessageID: 1, ChunkIndex: 0, Vector: []float32{1, 0, 0, 0}},
+		{MessageID: 1, ChunkIndex: 1, Vector: []float32{0, 1, 0, 0}},
+		{MessageID: 2, Vector: []float32{0, 0, 1, 0}},
+	}))
+
+	count, err := b.EmbeddedMessageCountForSnapshot(ctx, gen, []int64{1, 3})
+	require.NoError(err)
+	assert.Equal(int64(1), count, "a multi-chunk message counts once; unsupplied vectors are ignored")
+
+	_, err = b.EmbeddedMessageCountForSnapshot(ctx, gen, make([]int64, vector.FilteredCoverageBatchSize+1))
+	assert.ErrorIs(err, vector.ErrCoverageBatchTooLarge)
+}

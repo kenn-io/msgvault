@@ -2,6 +2,7 @@ package attachmentpolicy
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -103,4 +104,11 @@ func TestRetryEligible(t *testing.T) {
 func TestOversizeMarkerSize(t *testing.T) {
 	assert.Equal(t, 11, OversizeMarkerSize(10, 0))
 	assert.Equal(t, 12, OversizeMarkerSize(10, 12))
+}
+
+func TestDownloadTimeoutScalesWithCap(t *testing.T) {
+	assert := assert.New(t)
+	assert.Equal(10*time.Minute, DownloadTimeout(1<<20), "small caps get the floor")
+	assert.Equal(2000*time.Second, DownloadTimeout(DefaultChatMaxBytes), "default 250 MiB cap is about 33m20s")
+	assert.Equal(8192*time.Second, DownloadTimeout(1<<30), "bigger caps scale up")
 }

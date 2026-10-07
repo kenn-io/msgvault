@@ -622,6 +622,7 @@ func TestAttachmentProducingCommandExactAllowlist(t *testing.T) {
 		"sync-slack",
 		"sync-synctech-sms",
 		"sync-teams",
+		"sync-twilio",
 	}
 	for _, command := range allowlisted {
 		t.Run("allows "+command, func(t *testing.T) {
