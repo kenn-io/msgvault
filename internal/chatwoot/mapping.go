@@ -121,7 +121,7 @@ func (imp *Importer) persistMessage(ctx context.Context, sourceID int64, c Conve
 	messageID, err := imp.store.PersistMessageContext(ctx, &store.MessagePersistData{
 		Message: &store.Message{SourceID: sourceID, SourceMessageID: sourceMessageID, MessageType: SourceType,
 			SentAt:   sql.NullTime{Time: time.Unix(m.CreatedAt, 0).UTC(), Valid: m.CreatedAt > 0},
-			SenderID: sql.NullInt64{Int64: senderID, Valid: senderID > 0}, IsFromMe: imp.personalActor(sender), IdentityDerivedIsFromMe: true,
+			SenderID: sql.NullInt64{Int64: senderID, Valid: senderID > 0}, IdentityDerivedIsFromMe: true,
 			Subject: sql.NullString{String: title, Valid: true}, Snippet: sql.NullString{String: meetingarchive.Snippet(body), Valid: body != ""}, SizeEstimate: int64(len(body)), PreserveAttachmentStats: true},
 		Conversation: &store.ConversationPersistData{SourceConversationID: strconv.FormatInt(c.ID, 10), ConversationType: "direct_chat", Title: title, Participants: members, PreserveExistingParticipants: true},
 		Metadata:     &meta, BodyText: sql.NullString{String: body, Valid: body != ""}, RawMIME: raw, RawFormat: "chatwoot_json", Recipients: recipients, PreserveLabels: true,

@@ -59,10 +59,6 @@ type Snapshot struct {
 	RawFormat            string
 	Organizer            *Person
 	Attendees            []Person
-	// OwnerAttribution is the caller's identity match for an organizer resolved
-	// by provider ID. Store recomputes it from identities, so it stays reversible.
-	// Nil preserves canonical email/phone-derived ownership.
-	OwnerAttribution *bool
 }
 
 type Result struct {
@@ -132,13 +128,14 @@ func (a *Archiver) Upsert(
 		organizerAddress = organizer.Phone
 	}
 	expectedIsFromMe := organizerAddress != "" && identities.Contains(organizerAddress)
-	if snapshot.OwnerAttribution != nil {
-		expectedIsFromMe = *snapshot.OwnerAttribution
-	}
 
 	if existed && !opts.Force {
 		storedRaw, rawErr := a.store.GetMessageRaw(existingMessageID)
 		storedIsFromMe, attributionErr := a.store.GetMessageIsFromMe(existingMessageID)
+		if organizer.ParticipantID > 0 {
+			// Store synchronously repairs ownership when identities or participants change.
+			expectedIsFromMe = storedIsFromMe
+		}
 		if rawErr == nil && attributionErr == nil && bytes.Equal(storedRaw, snapshot.Raw) &&
 			storedIsFromMe == expectedIsFromMe && equalMetadata([]byte(existingMessage.Metadata.String), snapshot.Metadata) {
 			if err := a.store.RecomputeConversationStatsForMessageContext(ctx, existingMessageID); err != nil {

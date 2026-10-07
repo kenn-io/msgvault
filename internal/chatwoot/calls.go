@@ -29,19 +29,22 @@ func providerTime(raw jsontext.Value) time.Time {
 func callEvidence(m Message) Call {
 	var call Call
 	if data, ok := m.ContentAttributes["data"]; ok {
-		_ = json.Unmarshal(data, &call)
 		var fallback struct {
-			CallID     int64  `json:"call_id"`
-			CallSID    string `json:"call_sid"`
-			Source     string `json:"call_source"`
-			Direction  string `json:"call_direction"`
-			AcceptedBy Actor  `json:"accepted_by"`
+			CallID          int64    `json:"call_id"`
+			CallSID         string   `json:"call_sid"`
+			Source          string   `json:"call_source"`
+			Direction       string   `json:"call_direction"`
+			AcceptedBy      Actor    `json:"accepted_by"`
+			Status          string   `json:"status"`
+			DurationSeconds *float64 `json:"duration_seconds"`
 		}
 		_ = json.Unmarshal(data, &fallback)
 		call.ID = fallback.CallID
 		call.ProviderCallID = fallback.CallSID
 		call.Provider = fallback.Source
 		call.Direction = fallback.Direction
+		call.Status = fallback.Status
+		call.DurationSeconds = fallback.DurationSeconds
 		if call.AcceptedByAgentID == 0 {
 			call.AcceptedByAgentID = fallback.AcceptedBy.ID
 			call.AcceptedByAgentName = actorName(fallback.AcceptedBy)
@@ -73,24 +76,6 @@ func callEvidence(m Message) Call {
 		}
 		if call.AcceptedByAgentName == "" && call.AcceptedByAgentID == fallback.AcceptedByAgentID {
 			call.AcceptedByAgentName = fallback.AcceptedByAgentName
-		}
-		if len(call.StartedAt) == 0 || string(call.StartedAt) == "null" {
-			call.StartedAt = fallback.StartedAt
-		}
-		if len(call.EndedAt) == 0 || string(call.EndedAt) == "null" {
-			call.EndedAt = fallback.EndedAt
-		}
-		if call.FromNumber == "" {
-			call.FromNumber = fallback.FromNumber
-		}
-		if call.ToNumber == "" {
-			call.ToNumber = fallback.ToNumber
-		}
-		if call.RecordingURL == "" {
-			call.RecordingURL = fallback.RecordingURL
-		}
-		if call.Transcript == "" {
-			call.Transcript = fallback.Transcript
 		}
 	}
 	switch call.Direction {
@@ -183,14 +168,18 @@ func (imp *Importer) persistCall(ctx context.Context, sourceID int64, c Conversa
 	if err != nil {
 		return 0, 0, err
 	}
+	canonical := jsontext.Value(raw)
+	if err = canonical.Canonicalize(); err != nil {
+		return 0, 0, err
+	}
+	raw = canonical
 	occurred := started
 	if occurred.IsZero() && m.CreatedAt > 0 {
 		occurred = time.Unix(m.CreatedAt, 0).UTC()
 	}
-	fromMe := imp.personalActor(organizer)
 	result, err := meetingarchive.New(imp.store).Upsert(ctx, meetingarchive.Snapshot{
 		SourceID: sourceID, SourceMessageID: "call:" + strconv.FormatInt(m.ID, 10), SourceConversationID: "call:" + strconv.FormatInt(c.ID, 10) + ":" + strconv.FormatInt(m.ID, 10),
-		Title: title, StartedAt: occurred, Body: strings.TrimSpace(transcript), Snippet: meetingarchive.Snippet(transcript), Raw: raw, RawFormat: "meeting_json", Metadata: metadata, Organizer: owner, Attendees: attendees, OwnerAttribution: &fromMe,
+		Title: title, StartedAt: occurred, Body: strings.TrimSpace(transcript), Snippet: meetingarchive.Snippet(transcript), Raw: raw, RawFormat: "meeting_json", Metadata: metadata, Organizer: owner, Attendees: attendees,
 	}, meetingarchive.UpsertOptions{})
 	if err != nil {
 		return result.MessageID, 0, err

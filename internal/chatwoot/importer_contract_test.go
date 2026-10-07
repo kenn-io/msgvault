@@ -388,6 +388,22 @@ func TestImportContractCallFallbackAndLifecycleKeepsOneLinkedMeeting(t *testing.
 	body, err := st.GetMessageBodyText(meetingID)
 	require.NoError(err)
 	assert.Contains(body, "Updated call transcript words")
+	aliasID, err := st.EnsureParticipantContext(t.Context(), "owner.alias@example.com", "Example Owner", "example.com")
+	require.NoError(err)
+	require.NoError(st.AddAccountIdentity(source.ID, "owner.alias@example.com", "manual"))
+	require.NoError(st.MergeParticipants(contractSender(t, st, meetingID).Int64, aliasID))
+	_, err = NewImporter(st, api.client(t)).Import(t.Context(), ImportOptions{InboxID: 7, IncludePrivate: true})
+	require.NoError(err)
+	for range 2 {
+		sum, err := NewImporter(st, api.client(t)).Import(t.Context(), ImportOptions{InboxID: 7, IncludePrivate: true})
+		require.NoError(err)
+		assert.Zero(sum.Meetings, "unchanged calls keep Store's merged owner attribution")
+		for _, id := range []int64{chatID, meetingID} {
+			owned, err := st.GetMessageIsFromMe(id)
+			require.NoError(err)
+			assert.True(owned)
+		}
+	}
 }
 
 func TestImportContractLateAudioTranscriptAndCredentialFreeCAS(t *testing.T) {

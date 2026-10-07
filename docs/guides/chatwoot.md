@@ -63,7 +63,7 @@ fetched only by `sync-chatwoot --full` after turning it back on.
 Employees remain distinct from contacts and bots. The current conversation
 assignee describes routing and does not replace historical sender attribution.
 An outgoing customer reply is not automatically attributed to the archive
-owner. Set `self_agent_ids` only for Chatwoot users who represent that owner.
+owner. Set `self_agent_ids` for Chatwoot users whose sent replies and outgoing calls represent that owner. An inbound call uses the customer as organizer and the handling agent as an attendee.
 Removing an account identity un-marks its earlier messages and calls and stays
 removed during sync. Removing an agent from configuration drops importer-owned
 identity evidence. Removing then reintroducing its configured ID grants ownership

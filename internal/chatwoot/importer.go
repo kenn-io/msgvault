@@ -39,7 +39,6 @@ type Importer struct {
 	store          *store.Store
 	client         *Client
 	agents         map[int64]Actor
-	identities     []store.AccountIdentity
 	resolvedActors map[string]int64
 	requestBudget  int
 	boundsProbed   bool
@@ -196,10 +195,6 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		}
 	}
 	if err = imp.syncSelfAgents(ctx, source.ID, opts.SelfAgentIDs); err != nil {
-		return sum, err
-	}
-	imp.identities, err = imp.store.ListAccountIdentities(source.ID)
-	if err != nil {
 		return sum, err
 	}
 	budget := imp.requestBudget

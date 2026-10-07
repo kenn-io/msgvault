@@ -3,7 +3,6 @@ package chatwoot
 import (
 	"context"
 	"fmt"
-	"slices"
 	"strings"
 
 	"go.kenn.io/msgvault/internal/store"
@@ -110,16 +109,4 @@ func (imp *Importer) resolveActor(ctx context.Context, sourceID int64, a Actor) 
 	}
 	imp.resolvedActors[cacheKey] = pid
 	return pid, nil
-}
-
-// personalActor mirrors Store's identity attribution, which matches the
-// actor's provider identifier against the inbox's account identities.
-func (imp *Importer) personalActor(a Actor) bool {
-	if actorKind(a) != actorUser || a.ID <= 0 {
-		return false
-	}
-	identifier := imp.actorIdentifier(a)
-	return slices.ContainsFunc(imp.identities, func(identity store.AccountIdentity) bool {
-		return store.EqualIdentifier(identity.Address, identifier)
-	})
 }
