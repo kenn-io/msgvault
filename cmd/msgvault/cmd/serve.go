@@ -2877,6 +2877,10 @@ func (a *storeAPIAdapter) HasSuccessfulPersonInferenceCheck(ctx context.Context,
 	return a.store.HasSuccessfulPersonInferenceCheck(ctx, fingerprint)
 }
 
+func (a *storeAPIAdapter) ListPersonInferenceProfiles(ctx context.Context) ([]peoplesweep.ProviderProfile, error) {
+	return a.store.ListPersonInferenceProfiles(ctx)
+}
+
 func (a *storeAPIAdapter) InvalidatePersonInferenceCheck(ctx context.Context, fingerprint string) (bool, error) {
 	return a.store.InvalidatePersonInferenceCheck(ctx, fingerprint)
 }

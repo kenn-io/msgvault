@@ -453,9 +453,9 @@ func (s countingCredentialStore) DeleteIfRevision(string, string) (string, error
 	return "", nil
 }
 
-func (s countingCredentialStore) DeleteUnconfigured(string) (bool, error) {
+func (s countingCredentialStore) UnconfiguredRevision(string) (string, bool, error) {
 	*s.calls++
-	return false, nil
+	return "", false, nil
 }
 
 func TestPersonProviderAddCatalogResolvesUnambiguousTransportBeforeCredentialOrState(t *testing.T) {
@@ -2475,14 +2475,30 @@ func TestPersonProviderAddRefusesToOverwriteExactCredential(t *testing.T) {
 
 // TestPersonProviderRemoveDeletesKeyOfUnconfiguredProfile covers a key left
 // behind when its profile was removed from the config by hand. Nothing else
-// can delete it, and it would block adding a profile with the same name.
+// can delete it, it would block adding a profile with the same name, and its
+// policies' consent must not carry over to a new key.
 func TestPersonProviderRemoveDeletesKeyOfUnconfiguredProfile(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	path, loaded := providerSetupConfigFile(t)
+	orphan := configuredPersonProvider(loaded.People.Sweep)
+	orphan.Endpoint = "https://orphan.example.test/v1"
+	orphan.Credential = peoplesweep.CredentialStored
+	orphan.CredentialEnv = ""
+	policy := loaded.People.Sweep
+	policy.Providers = map[string]peoplesweep.ProviderConfig{"orphan": orphan}
+	policy.Provider = peoplesweep.ProviderSelection{Name: "orphan"}
+	policy.Enabled = true
+	profile, err := policy.Profile()
+	require.NoError(err)
+	st := testutil.NewSQLiteTestStore(t)
+	_, err = st.EnsurePersonInferenceProfile(t.Context(), profile)
+	require.NoError(err)
+	_, _, err = st.GrantPersonInferenceConsent(t.Context(), profile.Fingerprint, "cli")
+	require.NoError(err)
 	credentialStore := peoplesweep.NewStoredCredentials(loaded.TokensDir())
-	savePeopleCredentialForTest(t, credentialStore, "orphan", "https://orphan.example.test/v1", providerSetupSecretCanary)
-	deps := localPersonProviderDeps(loaded.People.Sweep, testutil.NewSQLiteTestStore(t), nil)
+	savePeopleCredentialForTest(t, credentialStore, "orphan", orphan.Endpoint, providerSetupSecretCanary)
+	deps := localPersonProviderDeps(loaded.People.Sweep, st, nil)
 	deps.readConfigFile = func() (config.ConfigFile, error) { return config.ReadConfigFile(path) }
 	deps.setup.credentials = credentialStore
 
@@ -2490,9 +2506,12 @@ func TestPersonProviderRemoveDeletesKeyOfUnconfiguredProfile(t *testing.T) {
 	require.NoError(err)
 	assert.Contains(output, `Deleted the stored key of unconfigured people provider profile "orphan"`)
 	assert.NotContains(output, providerSetupSecretCanary)
-	_, present, err := credentialStore.Revision("orphan", "https://orphan.example.test/v1")
+	_, present, err := credentialStore.UnconfiguredRevision("orphan")
 	require.NoError(err)
 	assert.False(present)
+	active, err := st.HasActivePersonInferenceConsent(t.Context(), profile.Fingerprint)
+	require.NoError(err)
+	assert.False(active, "consent granted for the deleted key must not carry over")
 
 	_, err = executePersonProviderCommand(t, deps, "remove", "orphan")
 	require.ErrorContains(err, `people provider profile "orphan" is not configured`)

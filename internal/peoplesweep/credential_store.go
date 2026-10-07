@@ -76,7 +76,7 @@ type CredentialStore interface {
 	Load(profileName, endpoint string) (string, error)
 	SaveIfRevision(profileName, endpoint, value, expected string) (string, error)
 	DeleteIfRevision(profileName, expected string) (string, error)
-	DeleteUnconfigured(profileName string) (bool, error)
+	UnconfiguredRevision(profileName string) (string, bool, error)
 }
 
 var ErrCredentialRevisionConflict = providercredentials.ErrConflict
@@ -171,27 +171,20 @@ func (s StoredCredentials) DeleteIfRevision(profileName, expected string) (strin
 	return s.deleteObserved(snapshot, profileName, expected)
 }
 
-// DeleteUnconfigured deletes the key of a profile that is no longer
-// configured. It reports false when neither store holds a key.
-func (s StoredCredentials) DeleteUnconfigured(profileName string) (bool, error) {
+// UnconfiguredRevision observes the key of a profile that is no longer
+// configured. It never imports a legacy key file, because no endpoint is left
+// to bind it to; DeleteIfRevision removes that file too.
+func (s StoredCredentials) UnconfiguredRevision(profileName string) (string, bool, error) {
 	if err := validateCredentialProfileName(profileName); err != nil {
-		return false, err
+		return "", false, err
 	}
 	snapshot, err := providercredentials.Read(s.tokensDir)
 	if err != nil {
-		return false, err
+		return "", false, err
 	}
-	expected, err := snapshot.Revision(providercredentials.PeopleProviderID(profileName))
-	if err != nil {
-		return false, err
-	}
-	if _, err := s.deleteObserved(snapshot, profileName, expected); err != nil {
-		if errors.Is(err, ErrCredentialNotFound) {
-			return false, nil
-		}
-		return false, err
-	}
-	return true, nil
+	id := providercredentials.PeopleProviderID(profileName)
+	revision, err := snapshot.Revision(id)
+	return revision, snapshot.Stored(id) || fileExists(s.legacyPath(profileName)), err
 }
 
 func (s StoredCredentials) deleteObserved(

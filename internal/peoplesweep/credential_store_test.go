@@ -337,7 +337,7 @@ func TestStoredCredentialsBrokenLegacyFileCanBeReplacedOrDeleted(t *testing.T) {
 	})
 }
 
-func TestStoredCredentialsDeleteUnconfigured(t *testing.T) {
+func TestStoredCredentialsUnconfiguredRevision(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	tokensDir := t.TempDir()
@@ -346,19 +346,22 @@ func TestStoredCredentialsDeleteUnconfigured(t *testing.T) {
 	saveStoredCredential(t, store, "kept", "https://api.example.test/v1", "kept-value")
 	path := writeLegacyCredential(t, tokensDir, "gone", `{"scheme":"bearer","value":"legacy"}`)
 
-	deleted, err := store.DeleteUnconfigured("gone")
+	revision, present, err := store.UnconfiguredRevision("gone")
 	require.NoError(err)
-	assert.True(deleted)
+	assert.True(present)
+	assert.FileExists(path, "observing a key without an endpoint must not import the legacy file")
+	_, err = store.DeleteIfRevision("gone", revision)
+	require.NoError(err)
 	assert.NoFileExists(path)
 	snapshot, err := providercredentials.Read(tokensDir)
 	require.NoError(err)
 	assert.False(snapshot.Stored(providercredentials.PeopleProviderID("gone")))
 	assert.True(snapshot.Stored(providercredentials.PeopleProviderID("kept")))
 
-	deleted, err = store.DeleteUnconfigured("gone")
+	_, present, err = store.UnconfiguredRevision("gone")
 	require.NoError(err)
-	assert.False(deleted)
-	_, err = store.DeleteUnconfigured("../escape")
+	assert.False(present)
+	_, _, err = store.UnconfiguredRevision("../escape")
 	require.Error(err)
 }
 

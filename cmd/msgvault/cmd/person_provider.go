@@ -20,6 +20,7 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/peoplesweep"
+	"go.kenn.io/msgvault/internal/personenrollment"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/pkg/client/generated"
@@ -923,9 +924,6 @@ func runPersonProviderRemove(
 		return err
 	}
 	provider, exists := configured.Providers[name]
-	if !exists {
-		return removeUnconfiguredPersonProviderKey(command, deps, name, jsonOutput)
-	}
 	directStore, daemonRunning, err := personProviderMutationScope(command.Context(), deps)
 	if err != nil {
 		return err
@@ -937,7 +935,15 @@ func runPersonProviderRemove(
 		if err := deps.removeWithDaemon(command.Context(), name, before.ETag); err != nil {
 			return err
 		}
+		if !exists {
+			return writeUnconfiguredPersonProviderKeyRemoved(command, name, jsonOutput)
+		}
 		return writePersonProviderRemoved(command, name, true, jsonOutput)
+	}
+	if !exists {
+		// Revoking every saved policy that used the key also covers a running
+		// one, so this needs no running-policy fingerprint.
+		return removeUnconfiguredPersonProviderKey(command, deps, name, jsonOutput)
 	}
 	if daemonRunning {
 		return errors.New("cannot identify the running people provider policy; stop the daemon before removing a profile")
@@ -1038,20 +1044,44 @@ func removeUnconfiguredPersonProviderKey(
 	if err != nil {
 		return err
 	}
-	deleted, err := credentials.DeleteUnconfigured(name)
+	st, cleanup, err := deps.openStore()
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	err = personenrollment.RemoveUnconfiguredKey(command.Context(), personenrollment.UnconfiguredKeyRemoval{
+		Name: name, Actor: personProviderConsentActor, Store: st, Credentials: credentials,
+		Unconfigured: func() (bool, error) {
+			current, err := deps.readConfigFile()
+			if err != nil {
+				return false, err
+			}
+			configured, err := personProviderConfigFromSnapshot(deps, current)
+			if err != nil {
+				return false, err
+			}
+			_, exists := configured.Providers[name]
+			return !exists, nil
+		},
+	})
+	if errors.Is(err, personenrollment.ErrProfileMissing) {
+		return fmt.Errorf("people provider profile %q is not configured", name)
+	}
 	if err != nil {
 		return fmt.Errorf("delete stored key of unconfigured people provider profile %q: %w", name, err)
 	}
-	if !deleted {
-		return fmt.Errorf("people provider profile %q is not configured", name)
-	}
+	return writeUnconfiguredPersonProviderKeyRemoved(command, name, jsonOutput)
+}
+
+func writeUnconfiguredPersonProviderKeyRemoved(command *cobra.Command, name string, jsonOutput bool) error {
 	if jsonOutput {
 		return json.MarshalEncode(jsontext.NewEncoder(command.OutOrStdout()), personProviderRemoveOutput{
 			Name: name, Removed: true,
 		}, json.Deterministic(true))
 	}
 	_, _ = fmt.Fprintf(command.OutOrStdout(),
-		"Deleted the stored key of unconfigured people provider profile %q.\n", name)
+		"Deleted the stored key of unconfigured people provider profile %q and revoked consent for policies that used it.\n",
+		name)
 	return nil
 }
 
