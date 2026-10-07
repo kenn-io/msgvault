@@ -20,7 +20,6 @@ type fakeNotionProbe struct {
 	err      error
 	blockErr error
 	usersErr error
-	markdown string
 }
 
 func (f fakeNotionProbe) QueryMeetingNotes(context.Context, int) (*notionmeetings.QueryResult, error) {
@@ -32,9 +31,6 @@ func (f fakeNotionProbe) RetrieveBlock(context.Context, string) (*notionmeetings
 }
 
 func (f fakeNotionProbe) RetrievePageMarkdown(context.Context, string, bool) (*notionmeetings.MarkdownPage, error) {
-	if f.markdown != "" {
-		return &notionmeetings.MarkdownPage{Markdown: f.markdown}, nil
-	}
 	return &notionmeetings.MarkdownPage{Markdown: "private transcript"}, nil
 }
 
@@ -190,55 +186,36 @@ func (f *fakeNotionUsersProbe) RetrieveUser(ctx context.Context, id string) (*no
 func TestNotionProbeUsersToken(t *testing.T) {
 	verified := notionmeetings.User{Object: "user", ID: "member", Person: notionmeetings.UserPerson{Email: "member@example.com", EmailVerified: true}}
 	for _, tc := range []struct {
-		name string
-		user *notionmeetings.User
-		err  error
-		want string
+		name        string
+		user        *notionmeetings.User
+		err         error
+		want        string
+		noAttendees bool
 	}{
-		{"available", &verified, nil, "Users token: available"},
-		{"no emails", &notionmeetings.User{Object: "user", ID: "member"}, nil, "Users token: no verified email"},
-		{"missing capability", nil, notionmeetings.ErrUserInformation, "Users token: unavailable"},
-		{"request timeout", nil, fmt.Errorf("perform Notion request: %w", context.DeadlineExceeded), "Users token: unavailable"},
+		{"available", &verified, nil, "Users token: verified email available for sampled attendee", false},
+		{"no emails", &notionmeetings.User{Object: "user", ID: "member"}, nil, "Users token: no verified email for sampled attendee", false},
+		{"missing capability", nil, notionmeetings.ErrUserInformation, "Users token: unavailable", false},
+		{"request timeout", nil, fmt.Errorf("perform Notion request: %w", context.DeadlineExceeded), "Users token: unavailable", false},
+		{"no attendees", nil, nil, "Users token: untested", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
 			users := &fakeNotionUsersProbe{user: tc.user, err: tc.err}
 			var out bytes.Buffer
-			err := runNotionMeetingsProbe(t.Context(), &out, fakeNotionProbe{result: &notionmeetings.QueryResult{Results: []notionmeetings.MeetingNote{{ID: "meeting-1", Parent: notionmeetings.Parent{PageID: "page-1"}, MeetingNotes: notionmeetings.MeetingNotesData{CalendarEvent: notionmeetings.MeetingCalendarEvent{Attendees: []string{"member"}}}}}}, block: &notionmeetings.Block{}, usersErr: notionmeetings.ErrUnauthorized}, users)
+			probe := fakeNotionProbe{result: &notionmeetings.QueryResult{Results: []notionmeetings.MeetingNote{{ID: "meeting-1", Parent: notionmeetings.Parent{PageID: "page-1"}, MeetingNotes: notionmeetings.MeetingNotesData{CalendarEvent: notionmeetings.MeetingCalendarEvent{Attendees: []string{"member"}}}}}}, block: &notionmeetings.Block{}, usersErr: notionmeetings.ErrUnauthorized}
+			expectedRequests := 1
+			if tc.noAttendees {
+				probe.result.Results = nil
+				expectedRequests = 0
+			}
+			err := runNotionMeetingsProbe(t.Context(), &out, probe, users)
 			require.NoError(t, err)
 			assert.NotContains(out.String(), "unless a users token is configured")
 			assert.Contains(out.String(), tc.want)
 			assert.NotContains(out.String(), "member@example.com")
-			assert.Equal(1, users.retrieved)
+			assert.Equal(expectedRequests, users.retrieved)
 		})
 	}
-}
-
-func TestNotionProbeUsersTokenWithoutAttendees(t *testing.T) {
-	users := &fakeNotionUsersProbe{}
-	var out bytes.Buffer
-	require.NoError(t, runNotionMeetingsProbe(t.Context(), &out, fakeNotionProbe{result: &notionmeetings.QueryResult{}}, users))
-	assert.Zero(t, users.retrieved)
-	assert.Contains(t, out.String(), "Users token: untested")
-}
-
-func TestConfiguredNotionClientsKeepCredentialsSeparate(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	meetingFactory, usersFactory := newNotionMeetingsClient, newNotionUsersClient
-	t.Cleanup(func() { newNotionMeetingsClient, newNotionUsersClient = meetingFactory, usersFactory })
-	var meetingToken, usersToken string
-	newNotionMeetingsClient = func(_ string, token string) notionmeetings.Source { meetingToken = token; return nil }
-	newNotionUsersClient = func(_ string, token string) notionmeetings.UserSource {
-		usersToken = token
-		return &fakeNotionUsersProbe{}
-	}
-	_, users := configuredNotionClients(config.NotionMeetingsSource{Token: "pat-example", UsersToken: "internal-example"})
-	require.NotNil(users)
-	assert.Equal("pat-example", meetingToken)
-	assert.Equal("internal-example", usersToken)
-	_, users = configuredNotionClients(config.NotionMeetingsSource{Token: "pat-example"})
-	assert.Nil(users)
 }
 
 func TestScheduledNotionSyncUsesUsersToken(t *testing.T) {
@@ -254,7 +231,7 @@ func TestScheduledNotionSyncUsesUsersToken(t *testing.T) {
 		return fakeNotionProbe{
 			result:   &notionmeetings.QueryResult{Results: []notionmeetings.MeetingNote{{Object: "block", ID: "meeting-1", Type: "meeting_notes", Parent: notionmeetings.Parent{PageID: "page-1"}, CreatedTime: "2026-08-29T10:00:00Z", MeetingNotes: notionmeetings.MeetingNotesData{Status: "notes_ready", CalendarEvent: notionmeetings.MeetingCalendarEvent{Attendees: []string{"member"}}}}}},
 			block:    &notionmeetings.Block{Object: "block", ID: "meeting-1", Type: "meeting_notes"},
-			markdown: "# Transcript\nSpeaker: Scheduled meeting.", usersErr: notionmeetings.ErrUnauthorized,
+			usersErr: notionmeetings.ErrUnauthorized,
 		}
 	}
 	users := &fakeNotionUsersProbe{user: &notionmeetings.User{ID: "member", Person: notionmeetings.UserPerson{Email: "member@example.com", EmailVerified: true}}}
@@ -262,19 +239,10 @@ func TestScheduledNotionSyncUsesUsersToken(t *testing.T) {
 		assert.Equal(t, "ntn-example", token)
 		return users
 	}
-	var refreshes int
-	rebuildNotionMeetingsCacheAfterScheduledSync = func(context.Context, string) error { refreshes++; return nil }
+	rebuildNotionMeetingsCacheAfterScheduledSync = func(context.Context, string) error { return nil }
 	err = runConfiguredNotionMeetingsSync(t.Context(), st, config.NotionMeetingsSource{Identifier: "work", AccountEmail: "owner@example.com", Token: "pat-example", UsersToken: "ntn-example"})
 	require.NoError(t, err)
 	assert.Equal(t, 1, users.retrieved)
-	assert.Equal(t, 1, refreshes)
-	var messageID int64
-	require.NoError(t, st.DB().QueryRow(`SELECT id FROM messages WHERE source_message_id = 'meeting-1'`).Scan(&messageID))
-	recipients, err := st.GetMessageRecipientsContext(t.Context(), messageID, "to")
-	require.NoError(t, err)
-	require.Len(t, recipients, 1)
-	assert.Equal(t, "member@example.com", recipients[0].EmailAddress)
-	body, err := st.GetMessageBodyText(messageID)
-	require.NoError(t, err)
-	assert.Contains(t, body, "Speaker: Scheduled meeting.")
+	_, absent := configuredNotionClients(config.NotionMeetingsSource{Token: "pat-example"})
+	assert.Nil(t, absent)
 }

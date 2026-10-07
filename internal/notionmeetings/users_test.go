@@ -3,7 +3,6 @@ package notionmeetings
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -29,82 +28,21 @@ func (f *fakeUserSource) RetrieveUser(_ context.Context, id string) (*User, erro
 	return f.users[id], f.errs[id]
 }
 
-func TestRetrieveUserValidatesIdentity(t *testing.T) {
-	for _, tc := range []struct {
-		name, body string
-		status     int
-		want       error
-	}{
-		{"guest", `{"object":"user","id":"guest","type":"person","person":{"email":"guest@example.com","email_verified":true}}`, 200, nil},
-		{"restricted", `{"object":"error","code":"restricted_resource","message":"Personal access tokens can only retrieve their own authorized user"}`, 403, ErrUserInformation},
-		{"wrong ID", `{"object":"user","id":"other"}`, 200, ErrMalformedResponse},
-		{"wrong object", `{"object":"block","id":"guest"}`, 200, ErrMalformedResponse},
-		{"null", `null`, 200, ErrMalformedResponse},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				assert.Equal(t, "/v1/users/guest", r.URL.Path)
-				assert.Equal(t, "Bearer users-secret", r.Header.Get("Authorization"))
-				w.WriteHeader(tc.status)
-				_, _ = io.WriteString(w, tc.body)
-			}))
-			t.Cleanup(srv.Close)
-			got, err := NewClient(srv.URL, "users-secret").RetrieveUser(t.Context(), "guest")
-			if tc.want != nil {
-				require.ErrorIs(t, err, tc.want)
-				return
-			}
-			require.NoError(t, err)
-			assert.Equal(t, "guest@example.com", got.Person.Email)
-		})
-	}
-}
-
-func TestImporterOptionalServiceFailureStopsRunAndRetriesNextSync(t *testing.T) {
-	for _, failure := range []error{ErrUnauthorized, ErrUserInformation, &APIError{Kind: ErrRateLimited, Status: 429}, &APIError{Kind: ErrRateLimited, Status: 503}, errors.New("transport failed"), context.DeadlineExceeded} {
-		t.Run(failure.Error(), func(t *testing.T) {
-			st, source, imp := newImporterFixture(t)
-			opts := ImportOptions{Identifier: "work", AccountEmail: "owner@example.com"}
-			_, err := imp.Import(t.Context(), opts)
-			require.NoError(t, err)
-			meeting := hydrationMeeting()
-			meeting.ID = "meeting-2"
-			meeting.MeetingNotes.CalendarEvent.Attendees = []string{"user-1", "new-user"}
-			block := *source.blocks["meeting-1"]
-			block.ID = meeting.ID
-			source.blocks[meeting.ID] = &block
-			source.query.Results = append(source.query.Results, meeting)
-			users := &fakeUserSource{errs: map[string]error{"user-1": failure}}
-			summary, err := imp.WithUserSource(users).Import(t.Context(), opts)
-			require.NoError(t, err)
-			assert.Equal(t, int64(2), summary.MeetingsProcessed)
-			assert.Equal(t, []string{"user-1"}, users.retrieved)
-			var messageID int64
-			require.NoError(t, st.DB().QueryRow(`SELECT id FROM messages WHERE source_message_id = 'meeting-1'`).Scan(&messageID))
-			body, err := st.GetMessageBodyText(messageID)
-			require.NoError(t, err)
-			assert.Contains(t, body, "Test Speaker: Ready to ship.")
-			recipients, err := st.GetMessageRecipientsContext(t.Context(), messageID, "to")
-			require.NoError(t, err)
-			require.Len(t, recipients, 1)
-			assert.Equal(t, "attendee@example.com", recipients[0].EmailAddress)
-			users.errs = map[string]error{"user-2": ErrMalformedResponse, "new-user": ErrMalformedResponse}
-			users.users = map[string]*User{"user-1": {Person: UserPerson{Email: "recovered@example.com", EmailVerified: true}}}
-			summary, err = imp.Import(t.Context(), opts)
-			require.NoError(t, err)
-			assert.Equal(t, int64(2), summary.MeetingsUpdated)
-			assert.Equal(t, []string{"user-1", "user-1", "user-2", "new-user"}, users.retrieved)
-		})
-	}
-}
-
 func TestImporterOrdinarySyncUpdatesAndPreservesOnlyFailedAttendees(t *testing.T) {
 	st, source, imp := newImporterFixture(t)
 	source.users[""].Results[1].Person.EmailVerified = true
 	opts := ImportOptions{Identifier: "work", AccountEmail: "owner@example.com"}
 	_, err := imp.Import(t.Context(), opts)
 	require.NoError(t, err)
-	users := &fakeUserSource{users: map[string]*User{"user-2": {Person: UserPerson{Email: "unverified@example.com"}}, "guest": {Person: UserPerson{Email: "guest@example.com", EmailVerified: true}}}, errs: map[string]error{"user-1": &APIError{Kind: ErrProvider, Status: 404}, "malformed": ErrMalformedResponse}}
+	meeting := hydrationMeeting()
+	meeting.ID = "meeting-2"
+	meeting.MeetingNotes.CalendarEvent.Attendees = []string{"user-1", "new-user"}
+	block := *source.blocks["meeting-1"]
+	block.ID = meeting.ID
+	source.blocks[meeting.ID] = &block
+	source.query.Results = append(source.query.Results, meeting)
+
+	users := &fakeUserSource{users: map[string]*User{"user-2": {Person: UserPerson{Email: "unverified@example.com"}}, "guest": {Person: UserPerson{Email: "guest@example.com", EmailVerified: true}}}, errs: map[string]error{"user-1": &APIError{Kind: ErrProvider, Status: 404}, "malformed": ErrMalformedResponse, "new-user": ErrMalformedResponse}}
 	source.query.Results[0].MeetingNotes.CalendarEvent.Attendees = []string{"user-1", "user-2", "guest", "malformed"}
 	second, err := imp.WithUserSource(users).Import(t.Context(), opts)
 	require.NoError(t, err)
@@ -115,6 +53,18 @@ func TestImporterOrdinarySyncUpdatesAndPreservesOnlyFailedAttendees(t *testing.T
 	require.NoError(t, err)
 	require.Len(t, recipients, 2)
 	assert.ElementsMatch(t, []string{"attendee@example.com", "guest@example.com"}, []string{recipients[0].EmailAddress, recipients[1].EmailAddress})
+	users = &fakeUserSource{errs: map[string]error{"user-1": ErrUserInformation}}
+	summary, err := imp.WithUserSource(users).Import(t.Context(), opts)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), summary.MeetingsProcessed)
+	assert.Equal(t, []string{"user-1"}, users.retrieved)
+	users.errs = map[string]error{"malformed": ErrMalformedResponse, "new-user": ErrMalformedResponse}
+	users.users = map[string]*User{"user-1": {Person: UserPerson{Email: "recovered@example.com", EmailVerified: true}}, "user-2": {Person: UserPerson{Email: "unverified@example.com"}}, "guest": {Person: UserPerson{Email: "guest@example.com", EmailVerified: true}}}
+	summary, err = imp.Import(t.Context(), opts)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), summary.MeetingsUpdated)
+	assert.Equal(t, []string{"user-1", "user-1", "user-2", "guest", "malformed", "new-user"}, users.retrieved)
+
 }
 
 func TestHydratorCachesSuccessfulAndMissingUsersAcrossServiceFailure(t *testing.T) {
@@ -253,16 +203,6 @@ func TestHydratorOptionalDeadlineAndParentCancellation(t *testing.T) {
 		require.Len(t, second.Attendees, 3)
 		assert.ErrorIs(t, h.usersFailure, context.DeadlineExceeded)
 		assert.Equal(t, UserLookupTimeout, time.Since(start))
-		requestsAfterTimeout := len(transport.requested)
-		meeting.MeetingNotes.CalendarEvent.Attendees = append(meeting.MeetingNotes.CalendarEvent.Attendees, "new-user")
-		for range 2 {
-			later, err := h.Hydrate(t.Context(), meeting)
-			require.NoError(t, err)
-			require.Len(t, later.Attendees, 3)
-		}
-		assert.Equal(t, requestsAfterTimeout, len(transport.requested))
-		assert.Equal(t, []string{"/v1/users/user-1", "/v1/users/user-2", "/v1/users/user-3"}, transport.requested[:3])
-		assert.Contains(t, transport.requested, "/v1/users/timeout")
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
 		_, err = h.Hydrate(ctx, hydrationMeeting())

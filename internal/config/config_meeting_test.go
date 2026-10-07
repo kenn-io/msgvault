@@ -45,6 +45,7 @@ enabled = true
 identifier = "notion-work"
 account_email = " Notion.User@Example.COM "
 token = "ntn_test"
+users_token = "ntn-example"
 schedule = "15 */6 * * *"
 enabled = true
 `)
@@ -72,6 +73,7 @@ enabled = true
 	require.NotNil(notion)
 	assert.Equal("notion.user@example.com", notion.AccountEmail)
 	assert.Equal("ntn_test", notion.Token)
+	assert.Equal("ntn-example", notion.UsersToken)
 	require.Len(cfg.ScheduledNotionMeetingsSources(), 1)
 }
 

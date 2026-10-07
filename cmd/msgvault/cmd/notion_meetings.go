@@ -142,9 +142,9 @@ func runNotionMeetingsProbe(ctx context.Context, out io.Writer, client notionMee
 	if err != nil {
 		_, _ = fmt.Fprintf(out, "  Users token: unavailable (%v)\n", err)
 	} else if user.Person.EmailVerified && strings.TrimSpace(user.Person.Email) != "" {
-		_, _ = fmt.Fprintln(out, "  Users token: available")
+		_, _ = fmt.Fprintln(out, "  Users token: verified email available for sampled attendee")
 	} else {
-		_, _ = fmt.Fprintln(out, "  Users token: no verified email (check Read user information including email addresses)")
+		_, _ = fmt.Fprintln(out, "  Users token: no verified email for sampled attendee (check Read user information including email addresses)")
 	}
 
 	return nil

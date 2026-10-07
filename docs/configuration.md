@@ -1350,12 +1350,9 @@ enabled = true
 | `enabled` | `false` | Whether the source is daemon-scheduled |
 
 Manual and scheduled sync use the same optional users token from config.
-Token values stay out of diagnostics and archived evidence. Without a users
-token, the meeting token lists users and guests stay unresolved. Optional user
-requests resolve known attendee IDs directly. Each lookup has a 60-second timeout
-including retries. Credential and service failures stop
-further uncached lookups. Failed or skipped lookups preserve previously verified
-attendees and meeting content. The next sync retries.
+Token values stay out of diagnostics and archived evidence. See
+[Notion attendee emails](https://msgvault.io/docs/usage/meetings/#notion-attendee-emails)
+for lookup timeouts, failures, and retries.
 
 Run `msgvault add-notion-meetings <identifier>` to validate access and register
 the source before enabling a schedule. Removing the source prevents the

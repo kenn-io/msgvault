@@ -456,8 +456,8 @@ msgvault sync-notion-meetings notion-personal --probe
 
 Both commands print capability and result-count diagnostics without printing
 meeting titles, notes, transcripts, attendee details, block IDs, page URLs, or
-the tokens. Probe output reports the optional users token separately, including
-whether it returns email addresses.
+the tokens. Probe output checks the optional users token on one sampled attendee
+and reports whether that attendee has a verified email.
 
 ### Notion attendee emails
 
