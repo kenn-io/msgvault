@@ -2,31 +2,20 @@ package config
 
 import (
 	"fmt"
-	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"math"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
 )
-
-func loadChatwootConfig(t *testing.T, content string) (*Config, error) {
-	t.Helper()
-	home := t.TempDir()
-	t.Setenv("MSGVAULT_HOME", home)
-	path := filepath.Join(home, "config.toml")
-	require.NoError(t, os.WriteFile(path, []byte(content), 0600))
-	return Load(path, "")
-}
 
 func TestChatwootConfigDefaultsAndSelection(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	got, err := loadChatwootConfig(t, `[[chatwoot]]
+	got := loadConfigText(t, `[[chatwoot]]
 identifier="support"
 url="https://CHATWOOT.example.com:443/support/"
 account_id=9
@@ -46,7 +35,6 @@ max_media_mb=3
 reconcile_interval_hours=2
 api_key_env="EXAMPLE_CHATWOOT_TOKEN"
 `)
-	require.NoError(err)
 	require.Len(got.Chatwoot, 2)
 	first := got.Chatwoot[0]
 	assert.Equal("https://chatwoot.example.com/support", first.URL)
@@ -95,7 +83,7 @@ func TestChatwootConfigRejectsInvalidProfiles(t *testing.T) {
 				content.WriteString(field)
 				content.WriteByte('\n')
 			}
-			_, err := loadChatwootConfig(t, content.String())
+			err := loadConfigTextError(t, content.String())
 			require.ErrorContains(t, err, tc.want)
 		})
 	}
@@ -111,7 +99,7 @@ account_id=10`,
 url="https://CHATWOOT.example.com:443/"
 account_id=9`,
 	} {
-		_, err := loadChatwootConfig(t, `[[chatwoot]]
+		err := loadConfigTextError(t, `[[chatwoot]]
 identifier="support"
 url="https://chatwoot.example.com"
 account_id=9

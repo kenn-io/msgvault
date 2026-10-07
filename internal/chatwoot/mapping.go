@@ -151,7 +151,7 @@ func (imp *Importer) persistMessage(ctx context.Context, sourceID int64, c Conve
 	}
 	refreshFrom = max(refreshFrom, failedSince)
 	if m.ContentType == "voice_call" {
-		chatMedia, mediaErr := imp.store.MessageChatwootAttachments(messageID)
+		chatMedia, mediaErr := imp.store.MessageProviderAttachments(messageID, "chatwoot:")
 		if mediaErr != nil {
 			return 0, mediaErr
 		}

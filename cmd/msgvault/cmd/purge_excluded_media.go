@@ -13,7 +13,6 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/chatwoot"
 	"go.kenn.io/msgvault/internal/config"
@@ -227,11 +226,11 @@ func mediaPolicyForSource(cfg *config.Config, sourceType, identifier string) (at
 	case sourceTypeTeams:
 		return cfg.Teams.MediaPolicy(identifier), true
 	case chatwoot.SourceType:
-		job, ok := api.SchedulerJobNameForSource(sourceType, identifier)
+		baseURL, accountID, _, ok := chatwoot.ParseSourceIdentifier(identifier)
 		if ok {
 			for _, source := range cfg.Chatwoot {
-				configured, valid := api.ChatwootJobNameForAccount(source.URL, source.AccountID)
-				if valid && configured == job {
+				canonical, err := chatwoot.CanonicalURL(source.URL)
+				if err == nil && canonical == baseURL && source.AccountID == accountID {
 					return source.MediaPolicy(), true
 				}
 			}

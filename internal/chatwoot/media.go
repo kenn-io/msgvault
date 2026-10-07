@@ -68,7 +68,7 @@ func isAudio(a Attachment) bool {
 
 // persistMedia returns the latest eligible failure start and whether files are pending.
 func (imp *Importer) persistMedia(ctx context.Context, messageID int64, attachments []Attachment, opts ImportOptions, sum *ImportSummary, reusable map[string]store.AttachmentRef) (failedSince int64, waiting bool, err error) {
-	existing, err := imp.store.MessageChatwootAttachments(messageID)
+	existing, err := imp.store.MessageProviderAttachments(messageID, "chatwoot:")
 	if err != nil {
 		return 0, false, err
 	}

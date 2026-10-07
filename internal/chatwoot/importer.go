@@ -385,8 +385,7 @@ func (imp *Importer) enqueue(ctx context.Context, sourceID int64, state *syncSta
 		if err != nil {
 			return err
 		}
-		// The listing names the newest message, so an archive holding it is
-		// current. A newest private note excluded by policy is reread when listed.
+		// Daily updated_at reconciliation recovers lower IDs missed by the created_at seed.
 		if c.LastMessageID <= head {
 			return nil
 		}

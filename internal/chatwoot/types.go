@@ -40,7 +40,7 @@ type Conversation struct {
 	// LastActivityAt is the creation time of the newest message, in epoch seconds.
 	LastActivityAt int64    `json:"last_activity_at"`
 	Labels         []string `json:"labels"`
-	// LastMessageID is the newest message's ID from the listing's message seed.
+	// LastMessageID comes from the listing's newest message by created_at.
 	// Only the ID is read, so excluded private content never reaches the archive.
 	LastMessageID int64 `json:"-"`
 	Meta          struct {

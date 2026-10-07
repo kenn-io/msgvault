@@ -2,7 +2,6 @@ package api
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 
 	"go.kenn.io/msgvault/internal/chatwoot"
@@ -97,25 +96,8 @@ func classifySourceScheduling(sourceType, identifier string) sourceScheduleClass
 func SchedulerJobNameForSource(sourceType, identifier string) (string, bool) {
 	switch sourceType {
 	case chatwoot.SourceType:
-		inboxSeparator := strings.LastIndex(identifier, "/inboxes/")
-		if inboxSeparator < 0 {
-			return "", false
-		}
-		accountScope, inbox := identifier[:inboxSeparator], identifier[inboxSeparator+len("/inboxes/"):]
-		if strings.Contains(inbox, "/") {
-			return "", false
-		}
-		inboxID, err := strconv.ParseInt(inbox, 10, 64)
-		if err != nil || inboxID <= 0 {
-			return "", false
-		}
-		separator := strings.LastIndex(accountScope, "/accounts/")
-		if separator < 0 {
-			return "", false
-		}
-		baseURL := accountScope[:separator]
-		accountID, err := strconv.ParseInt(accountScope[separator+len("/accounts/"):], 10, 64)
-		if err != nil || identifier != chatwoot.SourceIdentifier(baseURL, accountID, inboxID) {
+		baseURL, accountID, _, ok := chatwoot.ParseSourceIdentifier(identifier)
+		if !ok {
 			return "", false
 		}
 		return ChatwootJobNameForAccount(baseURL, accountID)

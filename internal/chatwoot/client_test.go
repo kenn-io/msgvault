@@ -62,6 +62,22 @@ func TestCanonicalURL(t *testing.T) {
 	}
 }
 
+func TestParseSourceIdentifier(t *testing.T) {
+	for _, identifier := range []string{
+		"support", "https://chatwoot.example.com/accounts/0/inboxes/7",
+		"https://chatwoot.example.com/accounts/9/inboxes/0", "https://chatwoot.example.com/accounts/9/inboxes/07",
+		"https://CHATWOOT.example.com/accounts/9/inboxes/7", "https://chatwoot.example.com/accounts/9/inboxes/7/extra",
+	} {
+		_, _, _, ok := ParseSourceIdentifier(identifier)
+		assert.False(t, ok, identifier)
+	}
+	baseURL, accountID, inboxID, ok := ParseSourceIdentifier("https://chatwoot.example.com/support/accounts/9/inboxes/7")
+	require.True(t, ok)
+	assert.Equal(t, "https://chatwoot.example.com/support", baseURL)
+	assert.Equal(t, int64(9), accountID)
+	assert.Equal(t, int64(7), inboxID)
+}
+
 func TestClientAPIDoesNotFollowRedirects(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

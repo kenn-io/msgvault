@@ -92,6 +92,29 @@ func SourceIdentifier(baseURL string, accountID, inboxID int64) string {
 	return fmt.Sprintf("%s/accounts/%d/inboxes/%d", canonical, accountID, inboxID)
 }
 
+// ParseSourceIdentifier accepts only canonical registered inbox identifiers.
+func ParseSourceIdentifier(identifier string) (baseURL string, accountID, inboxID int64, ok bool) {
+	inboxSeparator := strings.LastIndex(identifier, "/inboxes/")
+	if inboxSeparator < 0 {
+		return
+	}
+	accountScope := identifier[:inboxSeparator]
+	inboxID, err := strconv.ParseInt(identifier[inboxSeparator+len("/inboxes/"):], 10, 64)
+	if err != nil {
+		return "", 0, 0, false
+	}
+	separator := strings.LastIndex(accountScope, "/accounts/")
+	if separator < 0 {
+		return "", 0, 0, false
+	}
+	baseURL = accountScope[:separator]
+	accountID, err = strconv.ParseInt(accountScope[separator+len("/accounts/"):], 10, 64)
+	if err != nil || identifier != SourceIdentifier(baseURL, accountID, inboxID) {
+		return "", 0, 0, false
+	}
+	return baseURL, accountID, inboxID, true
+}
+
 func NewClient(baseURL string, accountID int64, token string) (*Client, error) {
 	canonical, err := CanonicalURL(baseURL)
 	if err != nil {

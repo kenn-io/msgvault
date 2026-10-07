@@ -89,7 +89,7 @@ func mediaRefreshOptions(t *testing.T) ImportOptions {
 
 func readMediaRefreshBytes(t *testing.T, st *store.Store, messageID int64, dir string) (map[string]store.AttachmentRef, []string) {
 	t.Helper()
-	refs, err := st.MessageChatwootAttachments(messageID)
+	refs, err := st.MessageProviderAttachments(messageID, "chatwoot:")
 	require.NoError(t, err)
 	var payloads []string
 	for _, ref := range refs {
@@ -288,7 +288,7 @@ func TestDeferredMediaRetriesAndLocalWritesFail(t *testing.T) {
 			}
 			_, err := imp.Import(t.Context(), opts)
 			require.NoError(err)
-			refs, err := st.MessageChatwootAttachments(contractArchivedMessageID(t, st, "901"))
+			refs, err := st.MessageProviderAttachments(contractArchivedMessageID(t, st, "901"), "chatwoot:")
 			require.NoError(err)
 			for _, ref := range refs {
 				if disabled {
@@ -333,7 +333,7 @@ func TestStreamOversizeRetainsMimeAndSizeEvidence(t *testing.T) {
 	for range 2 {
 		_, err := imp.Import(t.Context(), opts)
 		require.NoError(err)
-		refs, err := st.MessageChatwootAttachments(contractArchivedMessageID(t, st, "901"))
+		refs, err := st.MessageProviderAttachments(contractArchivedMessageID(t, st, "901"), "chatwoot:")
 		require.NoError(err)
 		for _, ref := range refs {
 			assert.Equal(attachmentpolicy.SkipSizeCap, ref.SkipReason)

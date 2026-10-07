@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"slices"
-	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -89,16 +88,11 @@ func resolveChatwootSyncInboxes(st *store.Store, src config.ChatwootSource, requ
 	if err != nil {
 		return nil, err
 	}
-	prefix := fmt.Sprintf("%s/accounts/%d/inboxes/", canonical, src.AccountID)
 	registered := map[int64]bool{}
 	var ids []int64
 	for _, source := range sources {
-		value, ok := strings.CutPrefix(source.Identifier, prefix)
-		if !ok {
-			continue
-		}
-		id, err := strconv.ParseInt(value, 10, 64)
-		if err != nil || id <= 0 || source.Identifier != chatwoot.SourceIdentifier(canonical, src.AccountID, id) {
+		baseURL, accountID, id, ok := chatwoot.ParseSourceIdentifier(source.Identifier)
+		if !ok || baseURL != canonical || accountID != src.AccountID {
 			continue
 		}
 		registered[id] = true
