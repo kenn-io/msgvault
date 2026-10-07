@@ -1,12 +1,14 @@
 package carddav
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"time"
 
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/vcard"
 )
 
 type ResolutionChoice string
@@ -438,11 +440,15 @@ func (s *Service) resolveConflictKeepLocal(
 	if err != nil {
 		return err
 	}
+	metadata, err := s.conflictLocalEnvelopeMetadata(operationCtx, conflict)
+	if err != nil {
+		return err
+	}
 	prepared, err := s.store.PrepareCardDAVConflictLocalContext(operationCtx,
 		store.CardDAVConflictLocalPlan{
 			ConflictID: conflict.ID, ExpectedMappingRevision: conflict.MappingRevision, ExpectedPersonID: conflictGuardPersonID(operationCtx),
 			RemoteETag: remote.RemoteETag, RemoteTombstone: tombstone,
-			OutgoingSemanticHash: semanticHash,
+			OutgoingSemanticHash: semanticHash, OutgoingEnvelopeMetadata: metadata,
 		})
 	if err != nil {
 		return err
@@ -452,6 +458,26 @@ func (s *Service) resolveConflictKeepLocal(
 	}
 	_, err = s.store.SweepResolvedCardDAVConflictsContext(operationCtx, time.Now())
 	return err
+}
+
+// conflictLocalEnvelopeMetadata renders the publication envelope again so an
+// unreviewed keep_local records which card lines it owns, as a publish does.
+func (s *Service) conflictLocalEnvelopeMetadata(ctx context.Context, conflict *store.CardDAVConflict) ([]byte, error) {
+	if len(conflict.LocalEnvelopeMetadata) > 0 {
+		return nil, nil
+	}
+	source, err := s.store.LoadCardDAVConflictReviewSourceContext(ctx, conflict.ID)
+	if err != nil {
+		return nil, err
+	}
+	envelope, err := s.preparePublicationEnvelope(source)
+	if err != nil {
+		return nil, err
+	}
+	if !bytes.Equal(envelope.StoredBody, conflict.LocalBody) {
+		return nil, nil
+	}
+	return vcard.MarshalResourceMetadata(envelope)
 }
 
 func conflictGuardPersonID(ctx context.Context) int64 {

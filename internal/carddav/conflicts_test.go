@@ -1523,3 +1523,36 @@ func TestAmbiguousUpdateRecoveryCapturesConflictWithoutReplay(t *testing.T) {
 	assert.Contains(string(conflict.RemoteBody), "PRODID:-//Server//EN")
 	assert.Contains(string(conflict.LocalBody), "EMAIL:alice-local@example.test")
 }
+
+func TestKeepLocalRecordsLineMappingSoNextSyncDoesNotDuplicateEmail(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	fixture := &mutationFixture{}
+	service, st, personID, _ := seededMutationService(t, fixture)
+	require.NoError(service.PublishPerson(t.Context(), personID))
+	_, err := service.Sync(t.Context(), SyncOptions{Full: true})
+	require.NoError(err)
+
+	addProjectedEmail(t, st, personID)
+	fixture.mu.Lock()
+	fixture.body = bytes.Replace(fixture.body, []byte("FN:Alice Example"), []byte("FN:Alice Renamed"), 1)
+	fixture.etag = `"remote-renamed"`
+	fixture.mu.Unlock()
+
+	_, err = service.Sync(t.Context(), SyncOptions{Full: true})
+	require.NoError(err)
+	conflicts, err := service.ListConflicts(t.Context())
+	require.NoError(err)
+	require.Len(conflicts, 1)
+	require.NoError(service.ResolveConflict(t.Context(), conflicts[0].ID, ResolutionKeepLocal))
+	fixture.mu.Lock()
+	assert.Equal(1, strings.Count(string(fixture.body), "alice.updated@example.test"))
+	fixture.mu.Unlock()
+
+	_, err = service.Sync(t.Context(), SyncOptions{Full: true})
+	require.NoError(err)
+	fixture.mu.Lock()
+	defer fixture.mu.Unlock()
+	assert.Equal(1, strings.Count(string(fixture.body), "alice.updated@example.test"), string(fixture.body))
+}

@@ -129,6 +129,9 @@ type CardDAVConflictLocalPlan struct {
 	RemoteETag              string
 	RemoteTombstone         bool
 	OutgoingSemanticHash    string
+	// OutgoingEnvelopeMetadata maps LocalBody lines to fields when the
+	// conflict has no reviewed metadata of its own.
+	OutgoingEnvelopeMetadata []byte
 }
 
 type cardDAVConflictIdentity struct {
@@ -260,6 +263,13 @@ func (s *Store) PrepareCardDAVConflictLocalContext(
 		}
 		if mapping.MappingRevision != plan.ExpectedMappingRevision {
 			return ErrCardDAVConflictStale
+		}
+		if len(conflict.LocalEnvelopeMetadata) == 0 && len(plan.OutgoingEnvelopeMetadata) > 0 {
+			if _, err := validateCardDAVPublicationMetadata(conflict.LocalBody, plan.OutgoingEnvelopeMetadata,
+				fmt.Sprintf("carddav:%d", book.ID), mapping.Href, source.Person.VCardUID); err != nil {
+				return err
+			}
+			conflict.LocalEnvelopeMetadata = plan.OutgoingEnvelopeMetadata
 		}
 		if !book.IsWriteTarget || publication == nil || !publication.Desired || publication.AddressBookID != conflict.AddressBookID || publication.Href != conflict.Href {
 			prepared, err = s.prepareCardDAVConflictIntentTx(ctx, tx, source, operation, remoteETag, plan.OutgoingSemanticHash)
