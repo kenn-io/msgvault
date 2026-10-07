@@ -1,11 +1,17 @@
 package chatwoot
 
 import (
+	"context"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -39,6 +45,130 @@ func TestLimitBoundsHistoryNotArtifactRefresh(t *testing.T) {
 	require.NotNil(conversation)
 	assert.Empty(conversation.Pending)
 	assert.Len(conversation.Artifacts, 2)
+}
+
+func TestSavedWorkAccessFailuresKeepHealthyProgress(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		count, budget  int
+		messages, full bool
+	}{
+		{"detail", 1, 100, false, false}, {"messages", 1, 100, true, false},
+		{"budget_full", 1, 7, false, true}, {"failed_batch", 100, 1000, true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			api := newContractAPI(t, 1000, nil)
+			for id := int64(1); id <= int64(tc.count+1); id++ {
+				api.addMessage(id, id*10+1, now())
+				api.addMessage(id, id*10+2, now().Add(time.Second))
+			}
+			st := testutil.NewTestStore(t)
+			imp, source := contractRegister(t, st, api)
+			_, err := imp.Import(t.Context(), ImportOptions{InboxID: 7, Limit: 1})
+			require.NoError(err)
+			api.hidden, api.deniedDetails, api.deniedMessages = map[int64]bool{}, map[int64]bool{}, map[int64]bool{}
+			for id := int64(1); id <= int64(tc.count); id++ {
+				api.hidden[id] = !tc.messages
+				api.deniedDetails[id] = !tc.messages
+				api.deniedMessages[id] = tc.messages
+			}
+			api.addMessage(int64(tc.count+2), 9001, now().Add(2*time.Second))
+			opts := ImportOptions{InboxID: 7, Full: tc.full}
+			api.takeRequests()
+			for attempt := range 3 {
+				restarted := NewImporter(st, api.client(t))
+				restarted.requestBudget = tc.budget
+				if attempt > 0 {
+					restarted.requestBudget = 1000
+				}
+				sum, err := restarted.Import(t.Context(), opts)
+				if attempt > 0 || err != nil {
+					require.ErrorContains(err, "HTTP 401")
+				}
+				assert.True(sum.Partial)
+				assert.LessOrEqual(len(api.takeRequests()), restarted.requestBudget+1)
+			}
+			archived := contractMessageIDs(t, st)
+			assert.Contains(archived, int64((tc.count+1)*10+2), "healthy saved history progresses")
+			assert.Contains(archived, int64(9001), "later listing pages progress")
+			state, err := NewImporter(st, api.client(t)).resumeState(source.ID, source.Identifier)
+			require.NoError(err)
+			require.Contains(state.Conversations, "1")
+			assert.NotEmpty(state.Conversations["1"].Pending)
+			assert.Empty(state.Walk, "attempted failures retain history without holding completed discovery open")
+			assert.Equal(now().UTC(), state.ReconciledAt)
+			api.hidden, api.deniedDetails, api.deniedMessages = nil, nil, nil
+			_, err = NewImporter(st, api.client(t)).Import(t.Context(), ImportOptions{InboxID: 7})
+			require.NoError(err)
+			assert.Len(contractMessageIDs(t, st), (tc.count+1)*2+1)
+		})
+	}
+}
+
+func TestSavedWorkFatalErrorsStopReads(t *testing.T) {
+	for _, kind := range []string{"checkpoint", "database", "filesystem", "cancellation"} {
+		t.Run(kind, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			media := newMediaRefreshServer(t)
+			router := newChatwootMediaRouter(t, media.server)
+			api := newContractAPI(t, 1000, nil)
+			api.mediaRouter = router
+			for id := int64(1); id <= 3; id++ {
+				api.addMessage(id, id*10, now())
+			}
+			api.deniedMessages = map[int64]bool{1: true}
+			st := testutil.NewTestStore(t)
+			imp, source := contractRegister(t, st, api)
+			opts := mediaRefreshOptions(t)
+			if kind == "filesystem" {
+				blocked := filepath.Join(opts.AttachmentsDir, "blocked")
+				require.NoError(os.WriteFile(blocked, []byte("file"), 0600))
+				opts.AttachmentsDir = blocked
+				api.conversations[2][0]["attachments"] = []any{map[string]any{"id": int64(2001), "file_type": "image", "data_url": router.url(t, media.server, "/recording-a.ogg")}}
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			var setupErr error
+			api.onRequest = func(path string) {
+				if path != "/conversations/2/messages" && (kind != "checkpoint" || path != "/conversations/1/messages") {
+					return
+				}
+				api.onRequest = nil
+				switch kind {
+				case "checkpoint":
+					trigger := `CREATE TRIGGER reject_checkpoint BEFORE UPDATE OF cursor_before ON sync_runs BEGIN SELECT CASE WHEN NEW.status = 'failed' THEN RAISE(ABORT, 'synthetic failed checkpoint') ELSE RAISE(ABORT, 'synthetic checkpoint failure') END; END`
+					if store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
+						trigger = `CREATE FUNCTION reject_checkpoint() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.status = 'failed' THEN RAISE EXCEPTION 'synthetic failed checkpoint'; END IF; RAISE EXCEPTION 'synthetic checkpoint failure'; END $$; CREATE TRIGGER reject_checkpoint BEFORE UPDATE OF cursor_before ON sync_runs FOR EACH ROW EXECUTE FUNCTION reject_checkpoint()`
+					}
+					_, setupErr = st.DB().Exec(trigger)
+				case "database":
+					_, setupErr = st.DB().Exec(`DROP TABLE message_bodies`)
+				case "cancellation":
+					cancel()
+				}
+			}
+			_, err := imp.Import(ctx, opts)
+			requests := api.takeRequests()
+			require.NoError(setupErr)
+			require.Error(err)
+			assert.Contains(err.Error(), "conversation 1", "earlier provider errors survive a fatal error")
+			for _, request := range requests {
+				assert.False(strings.HasPrefix(request, "messages 3 "), "fatal errors stop later reads")
+			}
+			if kind == "checkpoint" {
+				assert.Contains(err.Error(), "synthetic checkpoint failure")
+				assert.Contains(err.Error(), "synthetic failed checkpoint", "failure-checkpoint errors remain visible")
+			} else {
+				if kind == "cancellation" {
+					require.ErrorIs(err, context.Canceled)
+				}
+				state, stateErr := NewImporter(st, api.client(t)).resumeState(source.ID, source.Identifier)
+				require.NoError(stateErr)
+				assert.NotEmpty(state.Conversations["2"].Pending)
+			}
+		})
+	}
 }
 
 func TestSavedArtifactCheckpointRetiresPrivateMessageWhenExcluded(t *testing.T) {

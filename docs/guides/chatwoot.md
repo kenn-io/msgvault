@@ -125,6 +125,8 @@ listing, plus range reads and exact-ID reads for capped or oversized responses.
 The saved artifact position gives later IDs a turn even while earlier calls
 remain pending. A 10,000-request budget bounds each inbox sync. Unfinished history and
 new conversations take turns, so a long history can't hold up newer ones.
+If a conversation becomes inaccessible, sync reports the error, retains its
+unfinished work, and continues archiving accessible conversations.
 
 A recording or transcript can arrive after a call or voice note without
 updating the conversation's activity. msgvault rechecks every call, and audio

@@ -3,6 +3,8 @@ package chatwoot
 import (
 	"context"
 	"errors"
+	"fmt"
+	"maps"
 	"math"
 	"slices"
 	"strconv"
@@ -121,7 +123,16 @@ func (imp *Importer) resumeState(sourceID int64, scope string) (*syncState, erro
 	return state, nil
 }
 
-func (imp *Importer) checkpoint(ctx context.Context, syncID int64, state *syncState, sum *ImportSummary) error {
+type fatalImportError struct{ error }
+
+func (e *fatalImportError) Unwrap() error { return e.error }
+
+func (imp *Importer) checkpoint(ctx context.Context, syncID int64, state *syncState, sum *ImportSummary) (resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			resultErr = &fatalImportError{resultErr}
+		}
+	}()
 	blob, err := state.marshal()
 	if err != nil {
 		return err
@@ -174,10 +185,22 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	scoped.boundsProbed = false
 	imp = &scoped
 	sum = &ImportSummary{SourceID: source.ID, Sources: 1}
+	failures := map[string]error{}
 	defer func() {
+		errorCount := int64(sum.MediaFailures) + int64(len(failures))
 		if resultErr != nil {
-			blob, _ := state.marshal()
-			_ = imp.store.FailSyncWithCheckpoint(syncID, "Chatwoot sync did not complete", &store.Checkpoint{PageToken: blob, MessagesAdded: int64(sum.MessagesAdded), MessagesProcessed: int64(sum.MessagesProcessed), ErrorsCount: int64(sum.MediaFailures) + 1})
+			errorCount++
+		}
+		for _, key := range slices.Sorted(maps.Keys(failures)) {
+			resultErr = errors.Join(resultErr, failures[key])
+		}
+		if resultErr != nil {
+			sum.Partial = true
+			blob, marshalErr := state.marshal()
+			resultErr = errors.Join(resultErr, marshalErr)
+			if marshalErr == nil {
+				resultErr = errors.Join(resultErr, imp.store.FailSyncWithCheckpoint(syncID, "Chatwoot sync did not complete", &store.Checkpoint{PageToken: blob, MessagesAdded: int64(sum.MessagesAdded), MessagesProcessed: int64(sum.MessagesProcessed), ErrorsCount: errorCount}))
+			}
 		}
 	}()
 	// Preserve resumed progress before any network request can fail.
@@ -211,13 +234,13 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	visited := map[string]bool{}
 	for {
 		before := requests
-		if err = imp.listNextPages(ctx, source.ID, opts.InboxID, state, listed, &requests, budget); err != nil {
+		if err = imp.listNextPages(ctx, source.ID, opts.InboxID, state, listed, failures, &requests, budget); err != nil {
 			return sum, err
 		}
 		if err = imp.checkpoint(ctx, syncID, state, sum); err != nil {
 			return sum, err
 		}
-		if err = imp.processSavedWork(ctx, source.ID, syncID, state, listed, visited, opts, sum, &requests, budget); err != nil {
+		if err = imp.processSavedWork(ctx, source.ID, syncID, state, listed, visited, failures, opts, sum, &requests, budget); err != nil {
 			return sum, err
 		}
 		if state.Walk == "" || state.NextPage == 0 || requests >= budget || requests == before {
@@ -227,19 +250,23 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	if state.Walk != "" && state.NextPage > 0 {
 		sum.Partial = true
 	}
-	for _, cs := range state.Conversations {
+	healthyPending := false
+	for key, cs := range state.Conversations {
 		if len(cs.Pending) > 0 {
 			sum.Partial = true
-			break
+			healthyPending = healthyPending || failures[key] == nil
 		}
 	}
-	if state.Walk != "" && state.NextPage == 0 && !sum.Partial {
+	if state.Walk != "" && state.NextPage == 0 && !healthyPending {
 		// The next reconcile rereads what was written since this one started.
 		state.Walk, state.ReconciledAt = "", state.WalkStartedAt
 	}
 	// A scan that ran out of budget leaves changed conversations for the next
 	// sync, but the listing's own completion doesn't depend on it.
 	sum.Partial = sum.Partial || !reached
+	if len(failures) > 0 {
+		return sum, nil
+	}
 	blob, err := state.marshal()
 	if err != nil {
 		return sum, err
@@ -329,11 +356,11 @@ func (imp *Importer) scanActivity(ctx context.Context, sourceID, inboxID int64, 
 
 // listNextPages continues the listing of every conversation, which runs only
 // for --full and the periodic reconcile, until a batch is queued.
-func (imp *Importer) listNextPages(ctx context.Context, sourceID, inboxID int64, state *syncState, listed map[int64]Conversation, requests *int, budget int) error {
+func (imp *Importer) listNextPages(ctx context.Context, sourceID, inboxID int64, state *syncState, listed map[int64]Conversation, failures map[string]error, requests *int, budget int) error {
 	for state.Walk != "" && state.NextPage > 0 {
 		queued := 0
-		for _, cs := range state.Conversations {
-			if len(cs.Pending) > 0 {
+		for key, cs := range state.Conversations {
+			if len(cs.Pending) > 0 && failures[key] == nil {
 				queued++
 			}
 		}
@@ -397,7 +424,7 @@ func (imp *Importer) enqueue(ctx context.Context, sourceID int64, state *syncSta
 
 // processSavedWork rotates through conversations with pending history or live
 // artifacts, so a bounded run cannot starve any of them.
-func (imp *Importer) processSavedWork(ctx context.Context, sourceID, syncID int64, state *syncState, listed map[int64]Conversation, visited map[string]bool, opts ImportOptions, sum *ImportSummary, requests *int, budget int) error {
+func (imp *Importer) processSavedWork(ctx context.Context, sourceID, syncID int64, state *syncState, listed map[int64]Conversation, visited map[string]bool, failures map[string]error, opts ImportOptions, sum *ImportSummary, requests *int, budget int) error {
 	expired := now().Add(-artifactWindow).Unix()
 	keys := make([]string, 0, len(state.Conversations))
 	for key, cs := range state.Conversations {
@@ -423,6 +450,9 @@ func (imp *Importer) processSavedWork(ctx context.Context, sourceID, syncID int6
 		}
 	}
 	for _, key := range keys {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if *requests >= budget {
 			sum.Partial = true
 			break
@@ -441,22 +471,26 @@ func (imp *Importer) processSavedWork(ctx context.Context, sourceID, syncID int6
 				// Deleted or no longer visible conversations cannot supply new history.
 				// Keep their archived records, and retire the unavailable work item.
 				cs = &conversationState{}
-			case err != nil:
-				return err
-			case c.InboxID <= 0 || (c.AccountID != 0 && c.AccountID != imp.client.accountID):
-				return errors.New("chatwoot saved conversation scope mismatch")
-			case c.InboxID != opts.InboxID:
+				err = nil
+			case err == nil && (c.InboxID <= 0 || (c.AccountID != 0 && c.AccountID != imp.client.accountID)):
+				err = errors.New("chatwoot saved conversation scope mismatch")
+			case err == nil && c.InboxID != opts.InboxID:
 				// A moved conversation is discoverable under its new inbox. Retire
 				// this source's saved work while keeping its archived records.
 				cs = &conversationState{}
 			}
 		}
-		if !cs.idle() {
-			if err = imp.processConversation(ctx, sourceID, syncID, c, cs, state, opts, sum, requests, budget); err != nil {
+		if err == nil && !cs.idle() {
+			err = imp.processConversation(ctx, sourceID, syncID, c, cs, state, opts, sum, requests, budget)
+		}
+		if err != nil {
+			var fatal *fatalImportError
+			if ctx.Err() != nil || errors.As(err, &fatal) {
 				return err
 			}
-		}
-		if cs.idle() {
+			failures[key] = fmt.Errorf("chatwoot conversation %d: %w", id, err)
+			sum.Partial = true
+		} else if cs.idle() {
 			delete(state.Conversations, key)
 		}
 		state.LastSavedConversation = key

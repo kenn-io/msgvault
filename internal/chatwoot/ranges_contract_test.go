@@ -41,6 +41,10 @@ type contractAPI struct {
 	updatedAt           map[int64]float64
 	activityAt          map[int64]int64
 	mediaRouter         *chatwootMediaRouter
+	hidden              map[int64]bool
+	deniedDetails       map[int64]bool
+	deniedMessages      map[int64]bool
+	onRequest           func(string)
 }
 
 // newContractAPI serves messages as conversation 42 of inbox 7.
@@ -64,6 +68,9 @@ func newContractAPI(t *testing.T, pageCap int, messages []map[string]any) *contr
 		}
 		var result any
 		path := strings.TrimPrefix(r.URL.Path, "/api/v1/accounts/3")
+		if api.onRequest != nil {
+			api.onRequest(path)
+		}
 		var id int64
 		switch {
 		case path == "/agents":
@@ -78,6 +85,7 @@ func newContractAPI(t *testing.T, pageCap int, messages []map[string]any) *contr
 				return
 			}
 			ids := slices.Sorted(maps.Keys(api.conversations))
+			ids = slices.DeleteFunc(ids, func(id int64) bool { return api.hidden[id] })
 			if sortBy == sortByActivity {
 				slices.SortStableFunc(ids, func(a, b int64) int { return cmp.Compare(api.activity(b), api.activity(a)) })
 			}
@@ -95,6 +103,10 @@ func newContractAPI(t *testing.T, pageCap int, messages []map[string]any) *contr
 			after, _ := strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
 			before, _ := strconv.ParseInt(r.URL.Query().Get("before"), 10, 64)
 			api.requests = append(api.requests, fmt.Sprintf("messages %d %d %d", id, after, before))
+			if api.deniedMessages[id] {
+				http.Error(w, "synthetic access denied", http.StatusUnauthorized)
+				return
+			}
 			payload := []map[string]any{}
 			for _, message := range api.conversations[id] {
 				if messageID := fixtureInt(message, "id"); api.ignoreBounds || (messageID >= after && messageID < before) {
@@ -111,6 +123,10 @@ func newContractAPI(t *testing.T, pageCap int, messages []map[string]any) *contr
 				return
 			}
 			api.requests = append(api.requests, fmt.Sprintf("conversation %d", id))
+			if api.deniedDetails[id] {
+				http.Error(w, "synthetic access denied", http.StatusUnauthorized)
+				return
+			}
 			result = api.conversation(id)
 		}
 		encoded, err := json.Marshal(result)

@@ -27,7 +27,12 @@ func messageBody(m Message) string {
 // persistMessage returns when the message's refresh window starts, or zero
 // once nothing about it can change without new conversation activity. A failed
 // download counts from its first failure; a pending recording or transcript from the message.
-func (imp *Importer) persistMessage(ctx context.Context, sourceID int64, c Conversation, m Message, opts ImportOptions, sum *ImportSummary) (int64, error) {
+func (imp *Importer) persistMessage(ctx context.Context, sourceID int64, c Conversation, m Message, opts ImportOptions, sum *ImportSummary) (refreshFrom int64, resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			resultErr = &fatalImportError{resultErr}
+		}
+	}()
 	var sender Actor
 	if m.Sender != nil {
 		sender = *m.Sender
@@ -140,7 +145,6 @@ func (imp *Importer) persistMessage(ctx context.Context, sourceID int64, c Conve
 	if err != nil {
 		return 0, err
 	}
-	var refreshFrom int64
 	if waiting {
 		refreshFrom = m.CreatedAt
 	}
