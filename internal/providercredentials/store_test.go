@@ -150,6 +150,8 @@ func TestStoreRejectsCorruptOrUnsafePublicationWithoutEnvironmentFallback(t *tes
 			dir := filepath.Join(t.TempDir(), "tokens")
 			requirements.NoError(os.MkdirAll(dir, 0o700))
 			requirements.NoError(os.WriteFile(filepath.Join(dir, Filename), []byte(tt.content), tt.mode))
+			// Creation alone can strip the unsafe bits this case must exercise.
+			requirements.NoError(os.Chmod(filepath.Join(dir, Filename), tt.mode))
 			snapshot, err := Read(dir)
 			requirements.Error(err)
 			_, _, resolveErr := snapshot.Resolve(VectorEmbeddingsID,

@@ -457,6 +457,8 @@ func TestCodexLauncherRejectsUntrustedAuthHome(t *testing.T) {
 	privateHome := t.TempDir()
 	requireChecks.NoError(os.Chmod(privateHome, 0o700))
 	requireChecks.NoError(os.WriteFile(filepath.Join(privateHome, "auth.json"), []byte("SYNTHETIC"), 0o644))
+	// Keep this fixture non-private even when the caller uses umask 077.
+	requireChecks.NoError(os.Chmod(filepath.Join(privateHome, "auth.json"), 0o644))
 	_, err = launcher.Start(t.Context(), attestation, privateHome)
 	requireChecks.ErrorContains(err, "private regular file")
 	assertChecks.Zero(starter.starts.Load())
