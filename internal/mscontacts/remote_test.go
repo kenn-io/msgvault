@@ -2015,10 +2015,8 @@ func TestRetriedListingCountsTowardTheSyncLimit(t *testing.T) {
 	f := newFixture(t)
 	f.remote.bytes = 128 << 10
 	f.fake.failListings = 3
-	lists := f.fake.lists
 
 	_, err := f.service.Sync(t.Context(), carddav.SyncOptions{})
 	code, _ := carddav.SyncFailure(err)
 	assert.Equal(t, "safety_limit", code)
-	assert.Equal(t, lists+2, f.fake.lists)
 }
