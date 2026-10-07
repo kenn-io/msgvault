@@ -147,7 +147,7 @@ func (imp *Importer) persistMessage(ctx context.Context, sourceID int64, c Conve
 	if err = imp.store.RecomputeConversationStatsForMessageContext(ctx, messageID); err != nil {
 		return 0, err
 	}
-	failed, waiting, err := imp.persistMedia(ctx, messageID, m.Attachments, opts, sum, nil)
+	failedSince, waiting, err := imp.persistMedia(ctx, messageID, m.Attachments, opts, sum, nil)
 	if err != nil {
 		return 0, err
 	}
@@ -160,9 +160,7 @@ func (imp *Importer) persistMessage(ctx context.Context, sourceID int64, c Conve
 			refreshFrom = m.CreatedAt
 		}
 	}
-	if failed {
-		refreshFrom = now().Unix()
-	}
+	refreshFrom = max(refreshFrom, failedSince)
 	if m.ContentType == "voice_call" {
 		chatMedia, mediaErr := imp.store.MessageChatwootAttachments(messageID)
 		if mediaErr != nil {

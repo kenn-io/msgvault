@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/export"
@@ -65,13 +66,11 @@ func isAudio(a Attachment) bool {
 	return a.FileType == "audio" || strings.HasPrefix(a.ContentType, "audio/")
 }
 
-// persistMedia reports whether a download failed and whether a file has no
-// URL yet, as Chatwoot attaches files after creating their message. Either
-// keeps the message on the refresh list.
-func (imp *Importer) persistMedia(ctx context.Context, messageID int64, attachments []Attachment, opts ImportOptions, sum *ImportSummary, reusable map[string]store.AttachmentRef) (failed, waiting bool, err error) {
+// persistMedia returns the latest eligible failure start and whether files are pending.
+func (imp *Importer) persistMedia(ctx context.Context, messageID int64, attachments []Attachment, opts ImportOptions, sum *ImportSummary, reusable map[string]store.AttachmentRef) (failedSince int64, waiting bool, err error) {
 	existing, err := imp.store.MessageChatwootAttachments(messageID)
 	if err != nil {
-		return false, false, err
+		return 0, false, err
 	}
 	own := maps.Clone(existing)
 	for key, ref := range reusable {
@@ -82,7 +81,7 @@ func (imp *Importer) persistMedia(ctx context.Context, messageID int64, attachme
 	refs := make([]store.AttachmentRef, 0, len(attachments))
 	for index, a := range attachments {
 		if err = ctx.Err(); err != nil {
-			return false, false, err
+			return 0, false, err
 		}
 		key := attachmentKey(a, index)
 		remote := a.DataURL
@@ -116,6 +115,21 @@ func (imp *Importer) persistMedia(ctx context.Context, messageID int64, attachme
 				}
 			}
 		}
+		var failure struct {
+			FailedURL   string `json:"failed_url"`
+			FailedSince int64  `json:"failed_since"`
+		}
+		for _, candidate := range existing {
+			var saved struct {
+				FailedURL   string `json:"failed_url"`
+				FailedSince int64  `json:"failed_since"`
+			}
+			if json.Unmarshal([]byte(candidate.Metadata), &saved) == nil && saved.FailedSince > 0 &&
+				(saved.FailedURL == currentURL || (currentURL == "" && candidate.SourceAttachmentID == key)) &&
+				(failure.FailedSince == 0 || saved.FailedSince < failure.FailedSince) {
+				failure = saved
+			}
+		}
 		storedURL := ""
 		retain := func() {
 			ref.StoragePath = previous.StoragePath
@@ -139,6 +153,9 @@ func (imp *Importer) persistMedia(ctx context.Context, messageID int64, attachme
 		switch {
 		case unchanged:
 			ref.State = attachmentpolicy.StateStored
+			if currentURL == storedURL && currentURL != "" {
+				failure.FailedSince, failure.FailedURL = 0, ""
+			}
 		case reason != "":
 			ref.State = attachmentpolicy.StateSkipped
 			ref.SkipReason = reason
@@ -147,6 +164,9 @@ func (imp *Importer) persistMedia(ctx context.Context, messageID int64, attachme
 		case a.FileType != "location" && remote == "":
 			waiting = true
 		case a.FileType == "location" || opts.AttachmentsDir == "":
+		case failure.FailedSince > 0 && now().Sub(time.Unix(failure.FailedSince, 0)) >= artifactWindow && !opts.Full:
+			ref.State = attachmentpolicy.StateFailed
+			ref.SkipReason = attachmentpolicy.SkipFetchFailure
 		default:
 			storage, hash, size, mimeType, fetchErr := imp.downloadMedia(ctx, remote, opts.AttachmentsDir, maxBytes, ref.MimeType)
 			ref.MimeType = mimeType
@@ -156,9 +176,10 @@ func (imp *Importer) persistMedia(ctx context.Context, messageID int64, attachme
 				ref.Size = size
 				ref.State = attachmentpolicy.StateStored
 				storedURL = currentURL
+				failure.FailedSince, failure.FailedURL = 0, ""
 			} else {
 				if ctx.Err() != nil {
-					return false, false, ctx.Err()
+					return 0, false, ctx.Err()
 				}
 				if errors.Is(fetchErr, export.ErrAttachmentTooLarge) {
 					ref.State = attachmentpolicy.StateSkipped
@@ -170,17 +191,23 @@ func (imp *Importer) persistMedia(ctx context.Context, messageID int64, attachme
 					ref.State = attachmentpolicy.StateFailed
 					ref.SkipReason = attachmentpolicy.SkipFetchFailure
 					sum.MediaFailures++
-					failed = true
+					failure.FailedURL = currentURL
+					if failure.FailedSince == 0 {
+						failure.FailedSince = now().Unix()
+					}
 				} else {
-					return false, false, fetchErr
+					return 0, false, fetchErr
 				}
 				// Retain the successful URL separately from current evidence. Otherwise a
 				// failed replacement would falsely appear downloaded on the next sync.
 			}
 		}
-		metadata, marshalErr := json.Marshal(map[string]any{"provider": SourceType, "source": a.Raw, "url": remote, "stored_url": storedURL, "source_transcript": map[string]string{"provider": SourceType, "text": a.TranscribedText}}, json.Deterministic(true))
+		if attachmentpolicy.RetryEligible(ref.State) && failure.FailedSince > 0 && now().Sub(time.Unix(failure.FailedSince, 0)) < artifactWindow {
+			failedSince = max(failedSince, failure.FailedSince)
+		}
+		metadata, marshalErr := json.Marshal(map[string]any{"provider": SourceType, "source": a.Raw, "url": remote, "stored_url": storedURL, "failed_url": failure.FailedURL, "failed_since": failure.FailedSince, "source_transcript": map[string]string{"provider": SourceType, "text": a.TranscribedText}}, json.Deterministic(true))
 		if marshalErr != nil {
-			return false, false, marshalErr
+			return 0, false, marshalErr
 		}
 		ref.Metadata = string(metadata)
 		refs = append(refs, ref)
@@ -198,12 +225,12 @@ func (imp *Importer) persistMedia(ctx context.Context, messageID int64, attachme
 		}
 	}
 	if len(refs) == 0 && len(existing) == 0 {
-		return failed, waiting, nil
+		return failedSince, waiting, nil
 	}
 	if err = imp.store.ReplaceMessageChatwootAttachments(messageID, refs); err != nil {
-		return false, false, err
+		return 0, false, err
 	}
-	return failed, waiting, imp.store.RecomputeMessageAttachmentStats(messageID)
+	return failedSince, waiting, imp.store.RecomputeMessageAttachmentStats(messageID)
 }
 
 func (imp *Importer) downloadMedia(ctx context.Context, remote, dir string, maxBytes int64, mimeType string) (string, string, int, string, error) {

@@ -133,55 +133,44 @@ func (c *Client) get(ctx context.Context, path string, query url.Values, out any
 	if len(query) > 0 {
 		endpoint += "?" + query.Encode()
 	}
-	for attempt := range 3 {
+	resp, err := httpretry.Do(ctx, 3, time.Minute, func() (*http.Response, error) {
 		if err := c.limiter.Wait(ctx); err != nil {
-			return fmt.Errorf("wait for Chatwoot API: %w", err)
+			return nil, fmt.Errorf("wait for Chatwoot API: %w", err)
 		}
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 		if err != nil {
-			return errors.New("construct Chatwoot API request")
+			return nil, errors.New("construct Chatwoot API request")
 		}
 		req.Header.Set("Api_access_token", c.token)
 		req.Header.Set("Accept", "application/json")
-		resp, err := c.api.Do(req)
-		if err != nil {
-			return safeHTTPError(ctx, "Chatwoot API request", err)
-		}
-		body, readErr := io.ReadAll(io.LimitReader(resp.Body, maxAPIBytes+1))
-		closeErr := resp.Body.Close()
-		if readErr != nil {
-			return safeHTTPError(ctx, "read Chatwoot API response", readErr)
-		}
-		if closeErr != nil {
-			return safeHTTPError(ctx, "close Chatwoot API response", closeErr)
-		}
-		if len(body) > maxAPIBytes {
-			return ErrResponseTooLarge
-		}
-		if resp.StatusCode == http.StatusOK {
-			if err := json.Unmarshal(body, out); err != nil {
-				// Parser errors may include source text; do not echo provider content.
-				return errors.New("invalid Chatwoot API JSON response")
-			}
-			return nil
-		}
-		if resp.StatusCode == http.StatusNotFound {
-			return ErrNotFound
-		}
-		if attempt < 2 && (resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= http.StatusInternalServerError) {
-			delay := httpretry.RetryAfter(resp.Header.Get("Retry-After"), attempt, time.Minute)
-			timer := time.NewTimer(delay)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				return ctx.Err()
-			case <-timer.C:
-			}
-			continue
-		}
+		return c.api.Do(req)
+	}, func(resp *http.Response) bool {
+		return resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= http.StatusInternalServerError
+	})
+	if err != nil {
+		return safeHTTPError(ctx, "Chatwoot API request", err)
+	}
+	body, readErr := io.ReadAll(io.LimitReader(resp.Body, maxAPIBytes+1))
+	closeErr := resp.Body.Close()
+	if readErr != nil {
+		return safeHTTPError(ctx, "read Chatwoot API response", readErr)
+	}
+	if closeErr != nil {
+		return safeHTTPError(ctx, "close Chatwoot API response", closeErr)
+	}
+	if len(body) > maxAPIBytes {
+		return ErrResponseTooLarge
+	}
+	if resp.StatusCode == http.StatusNotFound {
+		return ErrNotFound
+	}
+	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("chatwoot API HTTP %d", resp.StatusCode)
 	}
-	return errors.New("chatwoot API retries exhausted")
+	if err := json.Unmarshal(body, out); err != nil {
+		return errors.New("invalid Chatwoot API JSON response")
+	}
+	return nil
 }
 
 func (c *Client) ListInboxes(ctx context.Context) ([]Inbox, error) {

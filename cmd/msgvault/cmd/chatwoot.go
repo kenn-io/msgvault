@@ -249,7 +249,7 @@ func newSyncChatwootCmd() *cobra.Command {
 	run := chatwootRunOptions{}
 	cmd := &cobra.Command{
 		Use: "sync-chatwoot [identifier]", Short: "Sync Chatwoot messages, media and call meetings",
-		Long: "Sync all selected registered inboxes. With no identifier, process all configured profiles. Interrupted history resumes; old audio and calls are reconciled independently.",
+		Long: "Sync selected registered inboxes, or all configured profiles with no identifier. Discover new messages through activity scans, resume unfinished history, and recheck recent files and calls for seven days. Daily reconciliation recovers messages committed out of order. --limit bounds history; artifact refreshes run additionally.",
 		Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 			if run.Limit < 0 {
 				return usageErr(cmd, errors.New("--limit must be nonnegative"))

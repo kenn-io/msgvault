@@ -64,8 +64,10 @@ Employees remain distinct from contacts and bots. The current conversation
 assignee describes routing and does not replace historical sender attribution.
 An outgoing customer reply is not automatically attributed to the archive
 owner. Set `self_agent_ids` only for Chatwoot users who represent that owner.
-Removing an agent from the list, or removing its account identity, un-marks
-its earlier messages and calls. Captain assistant replies keep their own sender.
+Removing an account identity un-marks its earlier messages and calls and stays
+removed during sync. Removing an agent from configuration drops importer-owned
+identity evidence. Removing then reintroducing its configured ID grants ownership
+again. Manually confirmed identities remain. Captain assistant replies keep their own sender.
 Contacts without an email address retain their phone or provider identity.
 
 Media downloads are enabled by default, with a 250 MiB cap per attachment.
@@ -75,7 +77,9 @@ retry during normal syncs for seven days; older files need `--full`.
 Location and fallback attachments can
 contain metadata without downloadable files. Source access, unavailable files,
 size limits, and download failures can leave metadata without stored bytes.
-Failed downloads retry during later syncs for seven days.
+Failed downloads retry for seven days from the resource's first failure.
+Signed URL rotation and reconciliation preserve that deadline. `--full` permits
+another attempt after expiry without extending automatic retries.
 Media destinations are checked against the shared network safety policy and
 each redirect is checked and pinned before connecting. Private media addresses
 are allowed only when the URL origin exactly matches the configured Chatwoot
@@ -112,10 +116,14 @@ and consent; see [document indexing](../usage/document-indexing.md).
 
 ## Understand sync limits
 
-Each sync lists conversations by latest activity and stops at the ones it has
-already archived, so an unchanged inbox costs a couple of requests no matter
-how large it is, plus one for each conversation still on the recheck list
-below. Only conversations with new messages are read. Unfinished history and
+Each sync lists conversations by latest activity. Equal timestamps keep a
+ten-minute overlap open until a completed scan settles it. Afterward, a quiet
+inbox costs one activity listing plus the account's agent lookup. An inbox that
+was initially empty archives its first conversation on the next sync.
+Saved artifact work adds a conversation detail request when absent from the
+listing, plus range reads and exact-ID reads for capped or oversized responses.
+The saved artifact position gives later IDs a turn even while earlier calls
+remain pending. The request budget bounds each run. Unfinished history and
 new conversations take turns, so a long history can't hold up newer ones.
 
 A recording or transcript can arrive after a call or voice note without

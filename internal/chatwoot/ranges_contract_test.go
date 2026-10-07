@@ -330,16 +330,23 @@ func TestOversizedResponsesSplitAndResume(t *testing.T) {
 			st := testutil.NewTestStore(t)
 			imp, source := contractRegister(t, st, api)
 			opts := ImportOptions{InboxID: 7}
+			var lastAttachment map[string]any
 			if artifact {
 				for _, m := range api.conversations[1] {
-					m["attachments"] = []any{map[string]any{"id": m["id"], "file_type": "audio"}}
+					lastAttachment = map[string]any{"id": m["id"], "file_type": "audio"}
+					m["attachments"] = []any{lastAttachment}
 				}
 				_, err := imp.Import(t.Context(), opts)
 				require.NoError(err)
 			}
 			for _, m := range api.conversations[1] {
 				m["content"] = strings.Repeat("x", 150000)
-				delete(m, "attachments")
+				if !artifact {
+					delete(m, "attachments")
+				}
+			}
+			if artifact {
+				lastAttachment["transcribed_text"] = "latequartz transcript"
 			}
 			imp.requestBudget = 8
 			sum, err := imp.Import(t.Context(), opts)
@@ -351,11 +358,24 @@ func TestOversizedResponsesSplitAndResume(t *testing.T) {
 				restarted.requestBudget = 20
 				sum, err = restarted.Import(t.Context(), opts)
 				require.NoError(err)
-				if !sum.Partial {
+				if artifact {
+					body, err := st.GetMessageBodyText(contractArchivedMessageID(t, st, "359"))
+					require.NoError(err)
+					if strings.Contains(body, "latequartz") {
+						break
+					}
+				} else if !sum.Partial {
 					break
 				}
 			}
-			assert.False(sum.Partial)
+			if artifact {
+				body, err := st.GetMessageBodyText(contractArchivedMessageID(t, st, "359"))
+				require.NoError(err)
+				assert.Contains(body, "latequartz")
+				assert.Contains(savedState(t, st, source).Conversations["1"].Artifacts, "100", "early artifacts remain live")
+			} else {
+				assert.False(sum.Partial)
+			}
 			assert.Len(contractMessageIDs(t, st), 260)
 		})
 	}

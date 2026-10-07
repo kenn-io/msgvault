@@ -440,3 +440,72 @@ func TestListingProgressesWhenTheActivityScanRunsOutOfBudget(t *testing.T) {
 	assert.Len(archived, 15)
 	assert.Empty(savedState(t, st, source).Walk, "the listing finishes even while the scan can't")
 }
+
+func TestQuietOverlapSettlesAndEmptyInboxDiscoversImmediately(t *testing.T) {
+	for _, empty := range []bool{false, true} {
+		t.Run(strconv.FormatBool(empty), func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			fixed := now
+			clock := fixed()
+			now = func() time.Time { return clock }
+			t.Cleanup(func() { now = fixed })
+			api := newContractAPI(t, 1000, nil)
+			if !empty {
+				for id := int64(1); id <= 60; id++ {
+					api.addMessage(id, id+100, clock)
+				}
+			}
+			st := testutil.NewTestStore(t)
+			imp, source := contractRegister(t, st, api)
+			_, err := imp.Import(t.Context(), ImportOptions{InboxID: 7})
+			require.NoError(err)
+			if empty {
+				api.addMessage(1, 101, clock)
+				sum, err := NewImporter(st, api.client(t)).Import(t.Context(), ImportOptions{InboxID: 7})
+				require.NoError(err)
+				assert.Equal(1, sum.MessagesAdded)
+				return
+			}
+			clock = clock.Add(11 * time.Minute)
+			imp.requestBudget = 4
+			_, err = imp.Import(t.Context(), ImportOptions{InboxID: 7})
+			require.NoError(err)
+			assert.Zero(savedState(t, st, source).ActivitySettled, "incomplete scans keep the overlap open")
+			imp.requestBudget = 100
+			_, err = imp.Import(t.Context(), ImportOptions{InboxID: 7})
+			require.NoError(err)
+			api.takeRequests()
+			_, err = NewImporter(st, api.client(t)).Import(t.Context(), ImportOptions{InboxID: 7})
+			require.NoError(err)
+			assert.Equal([]string{"agents", "list " + sortByActivity}, api.takeRequests())
+		})
+	}
+}
+
+func TestCappedArtifactRotationKeepsLivePrefix(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	api := newContractAPI(t, 2, nil)
+	var latest map[string]any
+	for id := int64(100); id <= 112; id++ {
+		attachment := map[string]any{"id": id, "file_type": "audio"}
+		api.addMessage(1, id, now().Add(time.Duration(112-id)*time.Second), attachment)
+		if id == 111 {
+			latest = attachment
+		}
+	}
+	st := testutil.NewTestStore(t)
+	imp, source := contractRegister(t, st, api)
+	_, err := imp.Import(t.Context(), ImportOptions{InboxID: 7})
+	require.NoError(err)
+	latest["transcribed_text"] = "cappedquartz transcript"
+	for range 8 {
+		imp = NewImporter(st, api.client(t))
+		imp.requestBudget = 6
+		_, err = imp.Import(t.Context(), ImportOptions{InboxID: 7})
+		require.NoError(err)
+	}
+	body, err := st.GetMessageBodyText(contractArchivedMessageID(t, st, "111"))
+	require.NoError(err)
+	assert.Contains(body, "cappedquartz")
+	assert.Contains(savedState(t, st, source).Conversations["1"].Artifacts, "100")
+}

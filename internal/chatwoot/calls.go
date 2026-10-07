@@ -214,7 +214,7 @@ func (imp *Importer) persistCall(ctx context.Context, sourceID int64, c Conversa
 	if !sameRecording && call.RecordingURL != "" {
 		audio = append(audio, Attachment{ID: -m.ID, FileType: "audio", DataURL: call.RecordingURL, TranscribedText: call.Transcript})
 	}
-	failed, _, err := imp.persistMedia(ctx, result.MessageID, audio, opts, sum, chatMedia)
+	failedSince, _, err := imp.persistMedia(ctx, result.MessageID, audio, opts, sum, chatMedia)
 	if err != nil {
 		return result.MessageID, 0, err
 	}
@@ -222,8 +222,6 @@ func (imp *Importer) persistCall(ctx context.Context, sourceID int64, c Conversa
 		sum.Meetings++
 	}
 	refreshFrom := m.CreatedAt
-	if failed {
-		refreshFrom = now().Unix()
-	}
+	refreshFrom = max(refreshFrom, failedSince)
 	return result.MessageID, refreshFrom, nil
 }

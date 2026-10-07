@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -347,4 +348,70 @@ func TestStreamOversizeRetainsMimeAndSizeEvidence(t *testing.T) {
 	require.NoError(err)
 	_, payloads := readMediaRefreshBytes(t, st, contractArchivedMessageID(t, st, "901"), opts.AttachmentsDir)
 	assert.Equal([]string{"synthetic recording A bytes"}, payloads)
+}
+
+func TestReconcileDoesNotRenewFailedDownload(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	fixed := now
+	clock := fixed()
+	now = func() time.Time { return clock }
+	t.Cleanup(func() { now = fixed })
+	media := newMediaRefreshServer(t)
+	router := newChatwootMediaRouter(t, media.server)
+	media.failures["/recording-a.ogg"] = true
+	old := contractMessage(901, clock.Add(-30*24*time.Hour).Unix(), nil)
+	attachment := map[string]any{"id": int64(2001), "file_type": "image", "data_url": router.url(t, media.server, "/recording-a.ogg")}
+	old["attachments"] = []any{attachment}
+	api := newContractAPI(t, 1000, []map[string]any{old})
+	api.mediaRouter = router
+	st := testutil.NewTestStore(t)
+	imp, source := contractRegister(t, st, api)
+	opts := mediaRefreshOptions(t)
+	start := clock.Unix()
+	attempts := 0
+	for day := range 10 {
+		clock = fixed().Add(time.Duration(day) * 24 * time.Hour)
+		api.addMessage(42, int64(1000+day), clock)
+		attachment["data_url"] = router.url(t, media.server, "/recording-a.ogg") + "?signature=" + strconv.Itoa(day)
+		if day == 3 {
+			attachment["id"] = int64(2003)
+		}
+		if day == 2 {
+			opts.Policy.DisabledReason = attachmentpolicy.SkipAccountPolicy
+		} else {
+			opts.Policy.DisabledReason = ""
+		}
+		_, err := NewImporter(st, api.client(t)).Import(t.Context(), opts)
+		require.NoError(err)
+		state := savedState(t, st, source)
+		if day == 2 {
+			assert.NotContains(state.Conversations, "42")
+			continue
+		}
+		if day < 7 {
+			attempts = media.requestCount("/recording-a.ogg")
+			require.Contains(state.Conversations, "42")
+			assert.Equal(start, state.Conversations["42"].Artifacts["901"])
+		} else {
+			assert.NotContains(state.Conversations, "42")
+		}
+	}
+	assert.Equal(attempts, media.requestCount("/recording-a.ogg"))
+	opts.Full = true
+	_, err := imp.Import(t.Context(), opts)
+	require.NoError(err)
+	assert.Equal(attempts+1, media.requestCount("/recording-a.ogg"))
+	opts.Full = false
+	clock = clock.Add(24 * time.Hour)
+	api.addMessage(42, 1100, clock)
+	_, err = imp.Import(t.Context(), opts)
+	require.NoError(err)
+	assert.Equal(attempts+1, media.requestCount("/recording-a.ogg"), "explicit full retry does not renew automatic expiry")
+	attachment["data_url"] = router.url(t, media.server, "/recording-b.ogg")
+	attachment["id"] = int64(2002)
+	opts.Full = true
+	_, err = imp.Import(t.Context(), opts)
+	require.NoError(err)
+	_, payloads := readMediaRefreshBytes(t, st, contractArchivedMessageID(t, st, "901"), opts.AttachmentsDir)
+	assert.Equal([]string{"synthetic replacement recording B bytes"}, payloads)
 }

@@ -61,8 +61,7 @@ const (
 	artifactWindow = callsync.LateArtifactWindow
 	// walkQueueLimit is how many conversations a listing queues before they are
 	// processed, which keeps the checkpoint small.
-	walkQueueLimit  = 100
-	selfAgentSignal = "chatwoot_self_agent"
+	walkQueueLimit = 100
 )
 
 func NewImporter(s *store.Store, c *Client) *Importer { return &Importer{store: s, client: c} }
@@ -258,10 +257,9 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	return sum, nil
 }
 
-// syncSelfAgents keeps the importer's own identities equal to self_agent_ids.
-// Store derives ownership from identities, so removal un-marks earlier records.
+// syncSelfAgents applies configured owner changes without reversing manual removals.
 func (imp *Importer) syncSelfAgents(ctx context.Context, sourceID int64, selfAgentIDs []int64) error {
-	wanted := map[string]bool{}
+	var wanted []string
 	for _, id := range selfAgentIDs {
 		a := Actor{ID: id, Type: actorUser}
 		if enriched, ok := imp.agents[id]; ok {
@@ -271,23 +269,9 @@ func (imp *Importer) syncSelfAgents(ctx context.Context, sourceID int64, selfAge
 			return err
 		}
 		address := imp.actorIdentifier(a)
-		wanted[address] = true
-		if err := imp.store.AddAccountIdentityContext(ctx, sourceID, address, selfAgentSignal); err != nil {
-			return err
-		}
+		wanted = append(wanted, address)
 	}
-	identities, err := imp.store.ListAccountIdentities(sourceID)
-	if err != nil {
-		return err
-	}
-	for _, identity := range identities {
-		if identity.SourceSignal == selfAgentSignal && !wanted[identity.Address] {
-			if _, err = imp.store.RemoveAccountIdentityContext(ctx, sourceID, identity.Address); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
+	return imp.store.SyncChatwootSelfAgents(ctx, sourceID, wanted)
 }
 
 func (imp *Importer) listConversations(ctx context.Context, page int, inboxID int64, sortBy string) ([]Conversation, error) {
@@ -314,6 +298,10 @@ func (imp *Importer) listConversations(ctx context.Context, page int, inboxID in
 // reached it within budget.
 func (imp *Importer) scanActivity(ctx context.Context, sourceID, inboxID int64, state *syncState, listed map[int64]Conversation, requests *int, budget int) (bool, error) {
 	cutoff := state.ActivityWatermark - int64(activityOverlap/time.Second)
+	if state.ActivityWatermark > 0 && state.ActivitySettled == state.ActivityWatermark {
+		cutoff = state.ActivityWatermark + 1
+	}
+	initial := state.ActivityWatermark == 0 && state.ReconciledAt.IsZero()
 	newest := state.ActivityWatermark
 	for page, done := 1, false; !done; page++ {
 		if *requests >= budget {
@@ -325,17 +313,22 @@ func (imp *Importer) scanActivity(ctx context.Context, sourceID, inboxID int64, 
 			return false, err
 		}
 		// The first sync only records the watermark; its listing covers the rest.
-		done = len(batch) == 0 || state.ActivityWatermark == 0
+		done = len(batch) == 0 || initial
 		for _, c := range batch {
 			newest = max(newest, c.LastActivityAt)
 			if c.LastActivityAt < cutoff {
 				done = true
-			} else if state.ActivityWatermark > 0 && c.InboxID == inboxID {
+			} else if !initial && c.InboxID == inboxID {
 				if err = imp.enqueue(ctx, sourceID, state, c, "", listed); err != nil {
 					return false, err
 				}
 			}
 		}
+	}
+	if newest != state.ActivityWatermark || state.ActivitySeenAt.IsZero() {
+		state.ActivitySeenAt = now().UTC()
+	} else if now().Sub(state.ActivitySeenAt) >= activityOverlap {
+		state.ActivitySettled = newest
 	}
 	state.ActivityWatermark = newest
 	return true, nil
@@ -502,89 +495,82 @@ func (imp *Importer) processConversation(ctx context.Context, sourceID, syncID i
 	if len(cs.Pending) > 0 {
 		sum.Partial = true
 	}
-	// Recordings and transcripts change without conversation activity. One range
-	// read covers a conversation's artifacts. A capped read resumes past its last
-	// ID; one it skipped below that is read on its own, since creation order can
-	// put it past the cap on every read.
-	for len(artifactIDs) > 0 {
-		if *requests >= budget {
-			sum.Partial = true
-			return nil
-		}
-		r := idRange{artifactIDs[0], artifactIDs[len(artifactIDs)-1] + 1}
-		single := len(artifactIDs) == 1
-		*requests++
-		messages, err := imp.client.ListMessages(ctx, c.ID, r.After, r.Before)
-		if errors.Is(err, ErrNotFound) {
-			clear(cs.Artifacts)
-			return nil
-		}
-		if errors.Is(err, ErrResponseTooLarge) && !single {
-			for _, id := range artifactIDs {
-				if *requests >= budget {
-					sum.Partial = true
-					return nil
-				}
-				if err = imp.refreshArtifact(ctx, sourceID, c, cs, id, opts, sum, requests); err != nil {
-					return err
-				}
-				if err = imp.checkpoint(ctx, syncID, state, sum); err != nil {
-					return err
-				}
-			}
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		if _, err = subtractHandled(r, messageIDs(messages)); err != nil {
-			return err
-		}
-		returned := make(map[int64]Message, len(messages))
-		var last int64
-		for _, m := range messages {
-			returned[m.ID] = m
-			last = max(last, m.ID)
-		}
-		capped := len(messages) >= imp.client.messageRangeCap && !single
-		var below, above []int64
-		for _, id := range artifactIDs {
-			idText := strconv.FormatInt(id, 10)
-			m, ok := returned[id]
-			switch {
-			case !ok && capped && id > last:
-				above = append(above, id)
-			case !ok && capped:
-				below = append(below, id)
-			case !ok:
-				delete(cs.Artifacts, idText)
-			case m.Private && !opts.IncludePrivate:
-				delete(cs.Artifacts, idText)
-			default:
-				if err = imp.validateMessage(c, m, opts); err != nil {
-					return err
-				}
-				refreshFrom, persistErr := imp.persistMessage(ctx, sourceID, c, m, opts, sum)
-				if persistErr != nil {
-					return persistErr
-				}
-				// The window counts from first sighting, so rechecks never extend it.
-				if refreshFrom == 0 {
-					delete(cs.Artifacts, idText)
-				}
-				sum.MessagesProcessed++
-			}
-		}
-		for _, id := range below {
+	split, _ := slices.BinarySearch(artifactIDs, cs.LastArtifact+1)
+	for _, segment := range [][]int64{artifactIDs[split:], artifactIDs[:split]} {
+		artifactIDs = segment
+		// Recordings and transcripts change without conversation activity. One range
+		// read covers a conversation's artifacts. A capped read resumes past its last
+		// ID; one it skipped below that is read on its own, since creation order can
+		// put it past the cap on every read.
+		for len(artifactIDs) > 0 {
 			if *requests >= budget {
 				sum.Partial = true
 				return nil
 			}
-			if err = imp.refreshArtifact(ctx, sourceID, c, cs, id, opts, sum, requests); err != nil {
+			r := idRange{artifactIDs[0], artifactIDs[len(artifactIDs)-1] + 1}
+			single := len(artifactIDs) == 1
+			*requests++
+			messages, err := imp.client.ListMessages(ctx, c.ID, r.After, r.Before)
+			if errors.Is(err, ErrNotFound) {
+				clear(cs.Artifacts)
+				return nil
+			}
+			oversized := errors.Is(err, ErrResponseTooLarge) && !single
+			if err != nil && !oversized {
 				return err
 			}
+			if _, err = subtractHandled(r, messageIDs(messages)); err != nil {
+				return err
+			}
+			returned := make(map[int64]Message, len(messages))
+			var last int64
+			for _, m := range messages {
+				returned[m.ID] = m
+				last = max(last, m.ID)
+			}
+			capped := len(messages) >= imp.client.messageRangeCap && !single
+			var above []int64
+			for _, id := range artifactIDs {
+				idText := strconv.FormatInt(id, 10)
+				m, ok := returned[id]
+				switch {
+				case !oversized && !ok && capped && id > last:
+					above = append(above, id)
+					continue
+				case oversized || (!ok && capped):
+					if *requests >= budget {
+						sum.Partial = true
+						return nil
+					}
+					if err = imp.refreshArtifact(ctx, sourceID, c, cs, id, opts, sum, requests); err != nil {
+						return err
+					}
+				case !ok:
+					delete(cs.Artifacts, idText)
+				case m.Private && !opts.IncludePrivate:
+					delete(cs.Artifacts, idText)
+				default:
+					if err = imp.validateMessage(c, m, opts); err != nil {
+						return err
+					}
+					refreshFrom, persistErr := imp.persistMessage(ctx, sourceID, c, m, opts, sum)
+					if persistErr != nil {
+						return persistErr
+					}
+					if refreshFrom == 0 || now().Sub(time.Unix(refreshFrom, 0)) >= artifactWindow {
+						delete(cs.Artifacts, idText)
+					} else {
+						cs.Artifacts[idText] = refreshFrom
+					}
+					sum.MessagesProcessed++
+				}
+				cs.LastArtifact = id
+				if err = imp.checkpoint(ctx, syncID, state, sum); err != nil {
+					return err
+				}
+			}
+			artifactIDs = above
 		}
-		artifactIDs = above
 	}
 	return nil
 }
@@ -615,8 +601,10 @@ func (imp *Importer) refreshArtifact(ctx context.Context, sourceID int64, c Conv
 	if err != nil {
 		return err
 	}
-	if refreshFrom == 0 {
+	if refreshFrom == 0 || now().Sub(time.Unix(refreshFrom, 0)) >= artifactWindow {
 		delete(cs.Artifacts, idText)
+	} else {
+		cs.Artifacts[idText] = refreshFrom
 	}
 	sum.MessagesProcessed++
 	return nil

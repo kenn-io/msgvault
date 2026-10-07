@@ -20,8 +20,9 @@ type idRange struct {
 // A conversation keeps state only while it has unfinished history or recent
 // media and calls whose recordings or transcripts may still change.
 type conversationState struct {
-	Pending   []idRange        `json:"pending,omitempty"`
-	Artifacts map[string]int64 `json:"artifacts,omitempty"`
+	LastArtifact int64            `json:"last_artifact,omitempty"`
+	Pending      []idRange        `json:"pending,omitempty"`
+	Artifacts    map[string]int64 `json:"artifacts,omitempty"`
 }
 
 func (cs *conversationState) idle() bool { return len(cs.Pending) == 0 && len(cs.Artifacts) == 0 }
@@ -37,6 +38,8 @@ type syncState struct {
 	Conversations map[string]*conversationState `json:"conversations"`
 	// ActivityWatermark is the newest conversation last_activity_at seen by a
 	// completed activity pass, in Chatwoot's epoch seconds.
+	ActivitySeenAt    time.Time `json:"activity_seen_at,omitzero"`
+	ActivitySettled   int64     `json:"activity_settled,omitempty"`
 	ActivityWatermark int64     `json:"activity_watermark,omitempty"`
 	Walk              string    `json:"walk,omitempty"`
 	NextPage          int       `json:"next_page,omitempty"`
@@ -59,12 +62,12 @@ func parseSyncState(blob, scope string) (*syncState, error) {
 	if err := json.Unmarshal([]byte(blob), s); err != nil {
 		return nil, errors.New("invalid Chatwoot sync checkpoint")
 	}
-	if s.Version != stateVersion || s.Scope != scope || s.Conversations == nil || s.NextPage < 0 || s.ActivityWatermark < 0 ||
+	if s.Version != stateVersion || s.Scope != scope || s.Conversations == nil || s.NextPage < 0 || s.ActivityWatermark < 0 || s.ActivitySettled < 0 || s.ActivitySettled > s.ActivityWatermark ||
 		(s.Walk != "" && s.Walk != walkReconcile && s.Walk != walkFull) {
 		return nil, errors.New("chatwoot checkpoint scope or version mismatch")
 	}
 	for _, cs := range s.Conversations {
-		if cs == nil {
+		if cs == nil || cs.LastArtifact < 0 || cs.LastArtifact >= openBound {
 			return nil, errors.New("invalid Chatwoot conversation checkpoint")
 		}
 		ordered := slices.Clone(cs.Pending)

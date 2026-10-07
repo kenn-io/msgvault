@@ -151,11 +151,12 @@ func TestImportContractSelfAgentOwnershipFollowsIdentities(t *testing.T) {
 	api := newContractAPI(t, 3, []map[string]any{call, reply})
 	st := testutil.NewTestStore(t)
 	importer, source := contractRegister(t, st, api)
+	providerIDs := []string{"202", "call:201"}
 	owned := func(selfAgents []int64) []bool {
 		_, err := importer.Import(t.Context(), ImportOptions{InboxID: 7, SelfAgentIDs: selfAgents})
 		require.NoError(err)
 		var flags []bool
-		for _, providerID := range []string{"202", "call:201"} {
+		for _, providerID := range providerIDs {
 			fromMe, err := st.GetMessageIsFromMe(contractArchivedMessageID(t, st, providerID))
 			require.NoError(err)
 			flags = append(flags, fromMe)
@@ -179,6 +180,109 @@ func TestImportContractSelfAgentOwnershipFollowsIdentities(t *testing.T) {
 		require.NoError(err)
 		assert.False(fromMe, "removing the identity un-marks %s", providerID)
 	}
+	importer = NewImporter(st, api.client(t))
+	assert.Equal([]bool{false, false}, owned([]int64{8}), "normal sync preserves removed call and reply ownership")
+	for _, id := range []int64{203, 204} {
+		message := contractMessage(id, now().Unix(), owner)
+		message["message_type"] = 1
+		if id == 204 {
+			message["content_type"] = "voice_call"
+			message["call"] = map[string]any{"id": 602, "direction": "outgoing", "status": "completed"}
+		}
+		api.conversations[42] = append(api.conversations[42], message)
+	}
+	providerIDs = append(providerIDs, "203", "call:204")
+	assert.Equal([]bool{false, false, false, false}, owned([]int64{8}))
+}
+
+func TestSelfAgentRemovalAndAtomicConfig(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	api := newContractAPI(t, 1000, nil)
+	for id := int64(7); id <= 8; id++ {
+		m := contractMessage(100+id, now().Unix(), map[string]any{"id": id, "type": "user"})
+		m["message_type"] = 1
+		api.conversations[42] = append(api.conversations[42], m)
+	}
+	st := testutil.NewTestStore(t)
+	imp, source := contractRegister(t, st, api)
+	opts := ImportOptions{InboxID: 7, SelfAgentIDs: []int64{7, 8}}
+	_, err := imp.Import(t.Context(), opts)
+	require.NoError(err)
+	seven, eight := imp.actorIdentifier(Actor{ID: 7, Type: actorUser}), imp.actorIdentifier(Actor{ID: 8, Type: actorUser})
+	_, err = st.RemoveAccountIdentity(source.ID, eight)
+	require.NoError(err)
+	for range 2 {
+		_, err = NewImporter(st, api.client(t)).Import(t.Context(), opts)
+		require.NoError(err)
+		owned, err := st.GetMessageIsFromMe(contractArchivedMessageID(t, st, "108"))
+		require.NoError(err)
+		assert.False(owned)
+	}
+	opts.SelfAgentIDs = []int64{7}
+	_, err = imp.Import(t.Context(), opts)
+	require.NoError(err)
+	opts.SelfAgentIDs = []int64{7, 8}
+	_, err = imp.Import(t.Context(), opts)
+	require.NoError(err)
+	owned, err := st.GetMessageIsFromMe(contractArchivedMessageID(t, st, "108"))
+	require.NoError(err)
+	assert.True(owned)
+	require.NoError(st.AddAccountIdentity(source.ID, seven, "manual"))
+	opts.SelfAgentIDs = []int64{8}
+	_, err = imp.Import(t.Context(), opts)
+	require.NoError(err)
+	identities, err := st.ListAccountIdentities(source.ID)
+	require.NoError(err)
+	assert.Len(identities, 2, "manual evidence survives removal from configuration")
+	before, err := st.GetSourceByTypeAndIdentifier(SourceType, source.Identifier)
+	require.NoError(err)
+	trigger := `CREATE TRIGGER reject_chatwoot_config BEFORE UPDATE OF sync_config ON sources BEGIN SELECT RAISE(ABORT, 'synthetic config failure'); END`
+	if store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
+		trigger = `CREATE FUNCTION reject_chatwoot_config() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'synthetic config failure'; END $$; CREATE TRIGGER reject_chatwoot_config BEFORE UPDATE OF sync_config ON sources FOR EACH ROW EXECUTE FUNCTION reject_chatwoot_config()`
+	}
+	_, err = st.DB().Exec(trigger)
+	require.NoError(err)
+	nine := imp.actorIdentifier(Actor{ID: 9, Type: actorUser})
+	require.Error(st.SyncChatwootSelfAgents(t.Context(), source.ID, []string{nine}))
+	after, err := st.GetSourceByTypeAndIdentifier(SourceType, source.Identifier)
+	require.NoError(err)
+	assert.Equal(before.SyncConfig, after.SyncConfig)
+	afterIdentities, err := st.ListAccountIdentities(source.ID)
+	require.NoError(err)
+	assert.Equal(identities, afterIdentities, "config-write failure rolls back grants and removals together")
+	_, err = st.DB().Exec(`DROP TRIGGER reject_chatwoot_config` + func() string {
+		if store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
+			return " ON sources"
+		}
+		return ""
+	}())
+	require.NoError(err)
+	_, err = st.RemoveAccountIdentity(source.ID, eight)
+	require.NoError(err)
+	require.NoError(st.UpdateSourceSyncConfig(source.ID, `{"unrelated":true}`))
+	_, err = NewImporter(st, api.client(t)).Import(t.Context(), opts)
+	require.NoError(err)
+	afterIdentities, err = st.ListAccountIdentities(source.ID)
+	require.NoError(err)
+	require.Len(afterIdentities, 1, "legacy imported sources adopt config without restoring removed identities")
+	assert.Equal(seven, afterIdentities[0].Address)
+	fresh, err := st.GetOrCreateSource(SourceType, SourceIdentifier(api.server.URL, 3, 8))
+	require.NoError(err)
+	require.NoError(st.UpdateSourceSyncConfig(fresh.ID, `{"no_default_identity":true,"unrelated":true}`))
+	require.NoError(st.SyncChatwootSelfAgents(t.Context(), fresh.ID, []string{seven}))
+	empty, err := st.ListAccountIdentities(fresh.ID)
+	require.NoError(err)
+	assert.Empty(empty)
+	require.NoError(st.SyncChatwootSelfAgents(t.Context(), fresh.ID, []string{seven, eight}))
+	confirmed, err := st.ListAccountIdentities(fresh.ID)
+	require.NoError(err)
+	require.Len(confirmed, 1)
+	assert.Equal(eight, confirmed[0].Address, "a changed configured set explicitly grants a new owner")
+	fresh, err = st.GetSourceByTypeAndIdentifier(SourceType, fresh.Identifier)
+	require.NoError(err)
+	var config map[string]any
+	require.NoError(json.Unmarshal([]byte(fresh.SyncConfig.String), &config))
+	assert.Equal(true, config["unrelated"])
 }
 
 func TestImportContractPrivateExclusionKeepsActivityAndResumes(t *testing.T) {
