@@ -1987,6 +1987,16 @@ Trigger a manual sync for an account. Returns immediately with a 202 status whil
 }
 ```
 
+For sources scheduled as generic jobs (`source_type` set), the body also carries `disposition`:
+
+| Disposition | Meaning |
+|---|---|
+| `started` | The job was idle and a run started. |
+| `queued` | The job was already running; one follow-up run is queued. |
+| `coalesced` | The request was merged into a run still waiting to start or into a follow-up already pending; no additional run was added. |
+
+Repeated triggers never run the job concurrently. A generic-job trigger does not wait on the daemon's operation gate, so it is answered even while a long import of the same job holds it.
+
 ---
 
 ### Scheduler status {#get-apiv1schedulerstatus}

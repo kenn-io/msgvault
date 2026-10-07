@@ -22,7 +22,14 @@ type messageRow struct {
 
 // ImportSummary holds statistics from a completed import run.
 type ImportSummary struct {
-	MessagesImported      int
+	// MessagesImported counts messages written, new and already archived.
+	MessagesImported int
+	// MessagesUpdated counts the written messages that were already archived
+	// and whose archived content changed.
+	MessagesUpdated int
+	// MessagesUnchanged counts the written messages that were already archived
+	// and came out identical.
+	MessagesUnchanged     int
 	ConversationsImported int
 	ParticipantsResolved  int
 	// DatesCleared counts existing archived dates removed for invalid source timestamps.

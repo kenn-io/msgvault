@@ -13449,6 +13449,16 @@ func (t TranscriptSegment) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(t))
 }
 
+type TriggerSyncResponse struct {
+	Disposition *string `json:"disposition,omitzero"`
+	Message     string  `json:"message" validate:"required"`
+	Status      string  `json:"status" validate:"required"`
+}
+
+func (t TriggerSyncResponse) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(t))
+}
+
 type UpdateRequest struct {
 	Account     *string `json:"account,omitzero"`
 	DisplayName string  `json:"display_name" validate:"required"`
