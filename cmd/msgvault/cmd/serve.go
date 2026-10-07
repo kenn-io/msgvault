@@ -1069,8 +1069,11 @@ func reconcileCardDAVSchedulerJob(sched *scheduler.Scheduler, cardDAVConfig conf
 	if service == nil {
 		sched.RemoveJob(jobName)
 		hint := "save the CardDAV account with its password to repair the connection"
-		if cardDAVConfig.Provider == "google" {
+		switch cardDAVConfig.Provider {
+		case "google":
 			hint = "connect Google in CardDAV account settings, then test and save the account"
+		case "microsoft":
+			hint = "run msgvault carddav authorize-microsoft with the account email, then test and save the account"
 		}
 		logger.Warn("carddav credentials are unavailable or do not match saved discovery; skipping scheduled sync",
 			"connection", name, "hint", hint)

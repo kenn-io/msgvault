@@ -36,7 +36,7 @@ func TestSafeMCPErrorPreservesServedRouteCodesWithoutProse(t *testing.T) {
 	for _, code := range []string{
 		"invalid_if_match", "invalid_idempotency_key", "if_match_required", "idempotency_key_required",
 		"person_profile_not_found", "person_merge_invalid", "person_merge_failed",
-		"carddav_unavailable", "google_authorization_required", "carddav_preview_too_large",
+		"carddav_unavailable", "google_authorization_required", "microsoft_authorization_required", "carddav_preview_too_large",
 		"carddav_conflict_stale", "carddav_conflict_pending", "carddav_publication_pending",
 		"carddav_retry_after", "carddav_upstream_failed", "carddav_storage_failed", "carddav_failed",
 		"bad_request", "not_found", "conflict", "invalid_request",
@@ -50,6 +50,11 @@ func TestSafeMCPErrorPreservesServedRouteCodesWithoutProse(t *testing.T) {
 			require.EqualError(t, err, fmt.Sprintf("daemon request failed (400, %s)", code))
 		})
 	}
+}
+
+func TestSafeMCPErrorGivesFixedGuidanceForAContactTooLargeForOutlook(t *testing.T) {
+	err := SafeMCPError(&APIError{Status: 413, Code: "microsoft_contact_too_large", Message: "Synthetic private failure detail"})
+	require.EqualError(t, err, "daemon request failed (413, microsoft_contact_too_large): A published contact is over Outlook's 4 MB limit, and each sync reports it until it fits. The daemon log names its person ID. Removing stored photos or other media currently needs the profile API; the CLI and Web UI have no control for it.")
 }
 
 func TestSafeMCPErrorHidesUnknownDaemonCodeAndMessage(t *testing.T) {

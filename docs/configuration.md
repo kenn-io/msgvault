@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-05"
+last_edited: "2026-10-06"
 title: Configuration
 description: Configuration file reference, environment variables, and file locations.
 ---
@@ -481,10 +481,10 @@ Removing a config table retains the account's archive data; see
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `provider` | `""` | Empty for a password-based server, or `google` for Google Contacts |
+| `provider` | `""` | Empty for a password-based server, `google` for Google Contacts, or `microsoft` for Microsoft 365 and Outlook.com contacts |
 | `oauth_app` | `""` | Named Google OAuth app; empty selects `[oauth]` |
-| `base_url` | `""` | CardDAV discovery URL; Google setup supplies its canonical URL |
-| `username` | `""` | Server username or Google account email |
+| `base_url` | `""` | CardDAV discovery URL; Google and Microsoft setup supply their canonical URL |
+| `username` | `""` | Server username, or Google or Microsoft account email |
 | `schedule` | `""` | Cron schedule; empty disables scheduled sync |
 | `enabled` | `false` | Enable the configured connection |
 | `trusted_origin` | `""` | Exact HTTPS origin approved for private access, including its port; a trailing `/` is accepted. Applies only when it matches the account URL's origin. |

@@ -1733,7 +1733,7 @@ func TestCardDAVOpenAPIDocumentsPositiveIDsAndOperationalErrors(t *testing.T) {
 	}{
 		{path: "/api/v1/carddav/books/{id}", method: http.MethodPatch, parameter: "id", statuses: []string{"400", "404", "409", "500", "503"}},
 		{path: "/api/v1/carddav/conflicts/{id}", method: http.MethodGet, parameter: "id", statuses: []string{"400", "404", "500", "503"}},
-		{path: "/api/v1/carddav/conflicts/{id}/resolve", method: http.MethodPost, parameter: "id", statuses: []string{"400", "404", "409", "500", "502", "503"}},
+		{path: "/api/v1/carddav/conflicts/{id}/resolve", method: http.MethodPost, parameter: "id", statuses: []string{"400", "404", "409", "413", "500", "502", "503"}},
 		{path: "/api/v1/carddav/publications/{person_id}", method: http.MethodGet, parameter: "person_id", statuses: []string{"400", "404", "500", "503"}},
 	} {
 		operation := pathOperation(doc.Paths[tc.path], tc.method)
@@ -1795,7 +1795,7 @@ func TestCardDAVStatusAndRunHistoryOpenAPIContract(t *testing.T) {
 	requirements.NotNil(run)
 	assertions.Equal([]any{"manual", "scheduled"}, run.Properties["trigger"].Enum)
 	assertions.Equal([]any{"running", "succeeded", "failed", "cancelled", "partial"}, run.Properties["state"].Enum)
-	assertions.Equal([]any{"cancelled", "retry_after", "authentication_failed", "google_authorization_required", "upstream_failed", "safety_limit", "sync_failed", "unsafe_error_redacted", "daemon_restarted"}, run.Properties["error_code"].Enum)
+	assertions.Equal([]any{"cancelled", "retry_after", "authentication_failed", "google_authorization_required", "microsoft_authorization_required", "microsoft_contact_too_large", "upstream_failed", "safety_limit", "sync_failed", "unsafe_error_redacted", "daemon_restarted"}, run.Properties["error_code"].Enum)
 	page := doc.Components.Schemas.Map()["CardDAVRunsResponse"]
 	requirements.NotNil(page)
 	assertions.Contains(page.Required, "runs")
@@ -1805,7 +1805,7 @@ func TestCardDAVStatusAndRunHistoryOpenAPIContract(t *testing.T) {
 	assertions.NotContains(statusSchema.Required, "repair_reason")
 	assertions.NotContains(statusSchema.Required, "next_scheduled_at")
 	assertions.NotContains(statusSchema.Required, "active")
-	assertions.Equal([]any{"account_missing", "credential_missing", "credential_mismatch", "credential_unavailable", "google_authorization_required", "runtime_unavailable"}, statusSchema.Properties["repair_reason"].Enum)
+	assertions.Equal([]any{"account_missing", "credential_missing", "credential_mismatch", "credential_unavailable", "google_authorization_required", "microsoft_authorization_required", "runtime_unavailable"}, statusSchema.Properties["repair_reason"].Enum)
 }
 
 func TestOpenAPIOperationRoutesParametersAndFailures(t *testing.T) {

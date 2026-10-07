@@ -53,6 +53,12 @@ All notable changes to msgvault, grouped by release.
   you can pick an email address for `draft-compose --to`. Phone numbers and
   chat IDs show as unsupported. See
   [Draft to a person](cli-reference.md#draft-to-a-person).
+- CardDAV sync supports Microsoft 365 and Outlook.com contacts through
+  Microsoft Graph. `msgvault add-carddav --microsoft <email>` signs in and
+  saves the connection. Contacts and each folder inside it are address books.
+  See [Microsoft contacts](usage/people-carddav.md#microsoft-contacts).
+- A CardDAV update or unpublish attempted while the Google sign-in is missing
+  goes out after sign-in, instead of turning into a conflict to review.
 
 ## 0.21.0
 <small>2026-10-02</small>

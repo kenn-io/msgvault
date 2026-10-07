@@ -44,6 +44,16 @@ describe('CardDAVAccountSettings', () => {
     expect((screen.getByLabelText('Password') as HTMLInputElement).required).toBe(baseURL !== 'https://old.example.test/');
   });
 
+  it('shows a sign-in command that does not save connection', async () => {
+    render(CardDAVAccountSettings, { client: createAPIClient(async () => Response.json({})), values, connection: 'work' });
+
+    await chooseSelectOption(screen.getByRole('combobox', { name: /^CardDAV provider/ }), 'Microsoft 365 or Outlook.com');
+
+    expect(screen.getByText("msgvault carddav authorize-microsoft 'alice'")).toBeTruthy();
+    expect(screen.queryByLabelText('Base URL')).toBeNull();
+    expect(screen.queryByLabelText('Password')).toBeNull();
+  });
+
   it('shows Save CardDAV account as the solid blue primary action', () => {
     render(CardDAVAccountSettings, { client: createAPIClient(async () => Response.json({})), values });
 

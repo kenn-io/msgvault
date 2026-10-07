@@ -30,7 +30,10 @@
   let persistedProvider = $state(initialValues.provider);
   let persistedOAuthApp = $state(initialValues.oauthApp);
   const googleURL = 'https://www.googleapis.com/.well-known/carddav';
+  const graphURL = 'https://graph.microsoft.com/v1.0';
   const google = $derived(provider === 'google');
+  const microsoft = $derived(provider === 'microsoft');
+  const oauth = $derived(google || microsoft);
   function shellQuote(value: string): string { return "'" + value.replaceAll("'", "'\\''") + "'"; }
   function selectProvider(value: string) {
     provider = value;
@@ -40,6 +43,8 @@
   let baseURL = $state(initialValues.baseURL);
   let username = $state(initialValues.username);
   const authorizationCommand = $derived(`msgvault carddav authorize-google ${shellQuote(username || 'you@example.com')}${oauthApp ? ` --oauth-app ${shellQuote(oauthApp)}` : ''}`);
+  // Sign-in only: saving stays with this form, so a connection keeps its schedule.
+  const microsoftCommand = $derived(`msgvault carddav authorize-microsoft ${shellQuote(username || 'you@example.com')}`);
   let password = $state('');
   let persistedBaseURL = $state(initialValues.baseURL);
   let persistedUsername = $state(initialValues.username);
@@ -98,6 +103,7 @@
       schedule,
     };
     if (google) { body.provider = 'google'; body.oauth_app = oauthApp; body.base_url = googleURL; }
+    else if (microsoft) { body.provider = 'microsoft'; body.base_url = graphURL; }
     else if (password !== '') body.password = password;
     return body;
   }
@@ -113,10 +119,10 @@
     return provider === persistedProvider && oauthApp === persistedOAuthApp && !enabled && persistedBaseURL !== '' && baseURL === persistedBaseURL && username === persistedUsername;
   }
   function passwordRequiredForSave(): boolean {
-    return !google && !canReusePersistedPassword() && !canDisableWithoutPassword();
+    return !oauth && !canReusePersistedPassword() && !canDisableWithoutPassword();
   }
   function validatePassword(allowCredentialFreeDisable: boolean): boolean {
-    if (google || canReusePersistedPassword() || password !== '' || (allowCredentialFreeDisable && canDisableWithoutPassword()))
+    if (oauth || canReusePersistedPassword() || password !== '' || (allowCredentialFreeDisable && canDisableWithoutPassword()))
       return true;
     status = '';
     error = 'Password is required for a new or changed CardDAV account.';
@@ -242,17 +248,17 @@
   >
     <label>
       Provider
-      <SelectDropdown title="CardDAV provider" value={provider} options={[{ value: '', label: 'Other CardDAV server' }, { value: 'google', label: 'Google Contacts' }]} onchange={selectProvider} disabled={activeAction !== undefined} />
+      <SelectDropdown title="CardDAV provider" value={provider} options={[{ value: '', label: 'Other CardDAV server' }, { value: 'google', label: 'Google Contacts' }, { value: 'microsoft', label: 'Microsoft 365 or Outlook.com' }]} onchange={selectProvider} disabled={activeAction !== undefined} />
     </label>
     <div class="fields">
-      {#if !google}
+      {#if !oauth}
       <div class="field">
         <label class="field__label" for={`${uid}-url`}>Base URL</label>
         <TextInput id={`${uid}-url`} type="url" bind:value={baseURL} disabled={activeAction !== undefined} required block />
       </div>
       {/if}
       <div class="field">
-        <label class="field__label" for={`${uid}-username`}>{google ? 'Google account email' : 'Username'}</label>
+        <label class="field__label" for={`${uid}-username`}>{google ? 'Google account email' : microsoft ? 'Microsoft account email' : 'Username'}</label>
         <TextInput
           id={`${uid}-username`}
           autocomplete="username"
@@ -277,6 +283,9 @@
         <code class="authorization-command">{authorizationCommand}</code>
         <p>For a remote daemon, copy the authorized token to that host before testing. <a href="https://msgvault.io/docs/usage/people-carddav/#google-contacts" target="_blank" rel="noreferrer">Google Contacts setup</a></p>
       </details>
+    {:else if microsoft}
+      <p>Sign in from the terminal before you save: <code class="authorization-command">{microsoftCommand}</code></p>
+      <p>Your Microsoft app registration needs the delegated <code>Contacts.ReadWrite</code> permission. <a href="https://msgvault.io/docs/usage/people-carddav/#microsoft-contacts" target="_blank" rel="noreferrer">Microsoft contacts setup</a></p>
     {:else}
       <div class="field">
         <label class="field__label" for={`${uid}-password`}>Password</label>

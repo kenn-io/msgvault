@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-04"
+last_edited: "2026-10-06"
 title: Web UI & API Server
 description: Daemon-served analytical Web UI and REST API for your msgvault archive, with optional background sync scheduling.
 ---
@@ -117,6 +117,13 @@ This schema also adds consented identity scoring. See
 [identity match review and scoring](#identity-match-review-and-scoring).
 
 Schema 3.4.0 adds [Kata issues from archive evidence](usage/kata-issues.md).
+It also adds the `microsoft` CardDAV account provider, the
+`microsoft_authorization_required` CardDAV error and repair codes, and the
+`microsoft_contact_too_large` error code, which publish, approve, conflict
+resolution and a sync of one selected connection return with 413 when a card
+exceeds Outlook's 4 MB write limit. A sync of all connections returns 200 and
+reports the code as that connection's failure, and run history records it as
+the failure code.
 
 Schema 3.1.0 adds unreleased [calendar event control](#calendar-control),
 availability queries, and opt-in `write` on Calendar consent plans.

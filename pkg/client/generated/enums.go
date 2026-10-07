@@ -178,14 +178,15 @@ func (c CandidateClassification) Validate() error {
 type CardDAVAccountRequestProvider string
 
 const (
-	Empty  CardDAVAccountRequestProvider = ""
-	Google CardDAVAccountRequestProvider = "google"
+	Empty     CardDAVAccountRequestProvider = ""
+	Google    CardDAVAccountRequestProvider = "google"
+	Microsoft CardDAVAccountRequestProvider = "microsoft"
 )
 
 // Validate checks if the CardDAVAccountRequestProvider value is valid
 func (c CardDAVAccountRequestProvider) Validate() error {
 	switch c {
-	case Empty, Google:
+	case Empty, Google, Microsoft:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid CardDAVAccountRequestProvider value, got: %v", c))
@@ -439,21 +440,23 @@ func (c CardDAVResolveRequestChoice) Validate() error {
 type CardDAVRunResponseErrorCode string
 
 const (
-	AuthenticationFailed        CardDAVRunResponseErrorCode = "authentication_failed"
-	Cancelled                   CardDAVRunResponseErrorCode = "cancelled"
-	DaemonRestarted             CardDAVRunResponseErrorCode = "daemon_restarted"
-	GoogleAuthorizationRequired CardDAVRunResponseErrorCode = "google_authorization_required"
-	RetryAfter                  CardDAVRunResponseErrorCode = "retry_after"
-	SafetyLimit                 CardDAVRunResponseErrorCode = "safety_limit"
-	SyncFailed                  CardDAVRunResponseErrorCode = "sync_failed"
-	UnsafeErrorRedacted         CardDAVRunResponseErrorCode = "unsafe_error_redacted"
-	UpstreamFailed              CardDAVRunResponseErrorCode = "upstream_failed"
+	AuthenticationFailed           CardDAVRunResponseErrorCode = "authentication_failed"
+	Cancelled                      CardDAVRunResponseErrorCode = "cancelled"
+	DaemonRestarted                CardDAVRunResponseErrorCode = "daemon_restarted"
+	GoogleAuthorizationRequired    CardDAVRunResponseErrorCode = "google_authorization_required"
+	MicrosoftAuthorizationRequired CardDAVRunResponseErrorCode = "microsoft_authorization_required"
+	MicrosoftContactTooLarge       CardDAVRunResponseErrorCode = "microsoft_contact_too_large"
+	RetryAfter                     CardDAVRunResponseErrorCode = "retry_after"
+	SafetyLimit                    CardDAVRunResponseErrorCode = "safety_limit"
+	SyncFailed                     CardDAVRunResponseErrorCode = "sync_failed"
+	UnsafeErrorRedacted            CardDAVRunResponseErrorCode = "unsafe_error_redacted"
+	UpstreamFailed                 CardDAVRunResponseErrorCode = "upstream_failed"
 )
 
 // Validate checks if the CardDAVRunResponseErrorCode value is valid
 func (c CardDAVRunResponseErrorCode) Validate() error {
 	switch c {
-	case AuthenticationFailed, Cancelled, DaemonRestarted, GoogleAuthorizationRequired, RetryAfter, SafetyLimit, SyncFailed, UnsafeErrorRedacted, UpstreamFailed:
+	case AuthenticationFailed, Cancelled, DaemonRestarted, GoogleAuthorizationRequired, MicrosoftAuthorizationRequired, MicrosoftContactTooLarge, RetryAfter, SafetyLimit, SyncFailed, UnsafeErrorRedacted, UpstreamFailed:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid CardDAVRunResponseErrorCode value, got: %v", c))
@@ -500,18 +503,19 @@ func (c CardDAVRunResponseTrigger) Validate() error {
 type CardDAVStatusResponseRepairReason string
 
 const (
-	AccountMissing                                               CardDAVStatusResponseRepairReason = "account_missing"
-	CardDAVStatusResponseRepairReasonGoogleAuthorizationRequired CardDAVStatusResponseRepairReason = "google_authorization_required"
-	CredentialMismatch                                           CardDAVStatusResponseRepairReason = "credential_mismatch"
-	CredentialMissing                                            CardDAVStatusResponseRepairReason = "credential_missing"
-	CredentialUnavailable                                        CardDAVStatusResponseRepairReason = "credential_unavailable"
-	RuntimeUnavailable                                           CardDAVStatusResponseRepairReason = "runtime_unavailable"
+	AccountMissing                                                  CardDAVStatusResponseRepairReason = "account_missing"
+	CardDAVStatusResponseRepairReasonGoogleAuthorizationRequired    CardDAVStatusResponseRepairReason = "google_authorization_required"
+	CardDAVStatusResponseRepairReasonMicrosoftAuthorizationRequired CardDAVStatusResponseRepairReason = "microsoft_authorization_required"
+	CredentialMismatch                                              CardDAVStatusResponseRepairReason = "credential_mismatch"
+	CredentialMissing                                               CardDAVStatusResponseRepairReason = "credential_missing"
+	CredentialUnavailable                                           CardDAVStatusResponseRepairReason = "credential_unavailable"
+	RuntimeUnavailable                                              CardDAVStatusResponseRepairReason = "runtime_unavailable"
 )
 
 // Validate checks if the CardDAVStatusResponseRepairReason value is valid
 func (c CardDAVStatusResponseRepairReason) Validate() error {
 	switch c {
-	case AccountMissing, CardDAVStatusResponseRepairReasonGoogleAuthorizationRequired, CredentialMismatch, CredentialMissing, CredentialUnavailable, RuntimeUnavailable:
+	case AccountMissing, CardDAVStatusResponseRepairReasonGoogleAuthorizationRequired, CardDAVStatusResponseRepairReasonMicrosoftAuthorizationRequired, CredentialMismatch, CredentialMissing, CredentialUnavailable, RuntimeUnavailable:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid CardDAVStatusResponseRepairReason value, got: %v", c))
@@ -1293,44 +1297,46 @@ func (o OperationPublicCounterUnit) Validate() error {
 type OperationPublicErrorCode string
 
 const (
-	ArchiveGap                                          OperationPublicErrorCode = "archive_gap"
-	Budget                                              OperationPublicErrorCode = "budget"
-	CarddavSyncFailed                                   OperationPublicErrorCode = "carddav_sync_failed"
-	Internal                                            OperationPublicErrorCode = "internal"
-	InvalidOutput                                       OperationPublicErrorCode = "invalid_output"
-	InvocationArchiveDrift                              OperationPublicErrorCode = "invocation_archive_drift"
-	InvocationAuthenticationFailed                      OperationPublicErrorCode = "invocation_authentication_failed"
-	InvocationCancelled                                 OperationPublicErrorCode = "invocation_cancelled"
-	InvocationDaemonRestarted                           OperationPublicErrorCode = "invocation_daemon_restarted"
-	InvocationInternal                                  OperationPublicErrorCode = "invocation_internal"
-	InvocationInvalidOutput                             OperationPublicErrorCode = "invocation_invalid_output"
-	InvocationRateLimited                               OperationPublicErrorCode = "invocation_rate_limited"
-	InvocationSafetyLimit                               OperationPublicErrorCode = "invocation_safety_limit"
-	InvocationTimeout                                   OperationPublicErrorCode = "invocation_timeout"
-	InvocationUnsafeErrorRedacted                       OperationPublicErrorCode = "invocation_unsafe_error_redacted"
-	InvocationUpstreamFailed                            OperationPublicErrorCode = "invocation_upstream_failed"
-	LeaseLost                                           OperationPublicErrorCode = "lease_lost"
-	OperationPublicErrorCodeAuthenticationFailed        OperationPublicErrorCode = "authentication_failed"
-	OperationPublicErrorCodeCancelled                   OperationPublicErrorCode = "cancelled"
-	OperationPublicErrorCodeDaemonRestarted             OperationPublicErrorCode = "daemon_restarted"
-	OperationPublicErrorCodeGoogleAuthorizationRequired OperationPublicErrorCode = "google_authorization_required"
-	OperationPublicErrorCodeRetryAfter                  OperationPublicErrorCode = "retry_after"
-	OperationPublicErrorCodeSafetyLimit                 OperationPublicErrorCode = "safety_limit"
-	OperationPublicErrorCodeSyncFailed                  OperationPublicErrorCode = "sync_failed"
-	OperationPublicErrorCodeUnsafeErrorRedacted         OperationPublicErrorCode = "unsafe_error_redacted"
-	OperationPublicErrorCodeUpstreamFailed              OperationPublicErrorCode = "upstream_failed"
-	PersonSweepFailed                                   OperationPublicErrorCode = "person_sweep_failed"
-	Policy                                              OperationPublicErrorCode = "policy"
-	ProviderHTTP                                        OperationPublicErrorCode = "provider_http"
-	RateLimited                                         OperationPublicErrorCode = "rate_limited"
-	SourceSyncFailed                                    OperationPublicErrorCode = "source_sync_failed"
-	Timeout                                             OperationPublicErrorCode = "timeout"
+	ArchiveGap                                             OperationPublicErrorCode = "archive_gap"
+	Budget                                                 OperationPublicErrorCode = "budget"
+	CarddavSyncFailed                                      OperationPublicErrorCode = "carddav_sync_failed"
+	Internal                                               OperationPublicErrorCode = "internal"
+	InvalidOutput                                          OperationPublicErrorCode = "invalid_output"
+	InvocationArchiveDrift                                 OperationPublicErrorCode = "invocation_archive_drift"
+	InvocationAuthenticationFailed                         OperationPublicErrorCode = "invocation_authentication_failed"
+	InvocationCancelled                                    OperationPublicErrorCode = "invocation_cancelled"
+	InvocationDaemonRestarted                              OperationPublicErrorCode = "invocation_daemon_restarted"
+	InvocationInternal                                     OperationPublicErrorCode = "invocation_internal"
+	InvocationInvalidOutput                                OperationPublicErrorCode = "invocation_invalid_output"
+	InvocationRateLimited                                  OperationPublicErrorCode = "invocation_rate_limited"
+	InvocationSafetyLimit                                  OperationPublicErrorCode = "invocation_safety_limit"
+	InvocationTimeout                                      OperationPublicErrorCode = "invocation_timeout"
+	InvocationUnsafeErrorRedacted                          OperationPublicErrorCode = "invocation_unsafe_error_redacted"
+	InvocationUpstreamFailed                               OperationPublicErrorCode = "invocation_upstream_failed"
+	LeaseLost                                              OperationPublicErrorCode = "lease_lost"
+	OperationPublicErrorCodeAuthenticationFailed           OperationPublicErrorCode = "authentication_failed"
+	OperationPublicErrorCodeCancelled                      OperationPublicErrorCode = "cancelled"
+	OperationPublicErrorCodeDaemonRestarted                OperationPublicErrorCode = "daemon_restarted"
+	OperationPublicErrorCodeGoogleAuthorizationRequired    OperationPublicErrorCode = "google_authorization_required"
+	OperationPublicErrorCodeMicrosoftAuthorizationRequired OperationPublicErrorCode = "microsoft_authorization_required"
+	OperationPublicErrorCodeMicrosoftContactTooLarge       OperationPublicErrorCode = "microsoft_contact_too_large"
+	OperationPublicErrorCodeRetryAfter                     OperationPublicErrorCode = "retry_after"
+	OperationPublicErrorCodeSafetyLimit                    OperationPublicErrorCode = "safety_limit"
+	OperationPublicErrorCodeSyncFailed                     OperationPublicErrorCode = "sync_failed"
+	OperationPublicErrorCodeUnsafeErrorRedacted            OperationPublicErrorCode = "unsafe_error_redacted"
+	OperationPublicErrorCodeUpstreamFailed                 OperationPublicErrorCode = "upstream_failed"
+	PersonSweepFailed                                      OperationPublicErrorCode = "person_sweep_failed"
+	Policy                                                 OperationPublicErrorCode = "policy"
+	ProviderHTTP                                           OperationPublicErrorCode = "provider_http"
+	RateLimited                                            OperationPublicErrorCode = "rate_limited"
+	SourceSyncFailed                                       OperationPublicErrorCode = "source_sync_failed"
+	Timeout                                                OperationPublicErrorCode = "timeout"
 )
 
 // Validate checks if the OperationPublicErrorCode value is valid
 func (o OperationPublicErrorCode) Validate() error {
 	switch o {
-	case ArchiveGap, Budget, CarddavSyncFailed, Internal, InvalidOutput, InvocationArchiveDrift, InvocationAuthenticationFailed, InvocationCancelled, InvocationDaemonRestarted, InvocationInternal, InvocationInvalidOutput, InvocationRateLimited, InvocationSafetyLimit, InvocationTimeout, InvocationUnsafeErrorRedacted, InvocationUpstreamFailed, LeaseLost, OperationPublicErrorCodeAuthenticationFailed, OperationPublicErrorCodeCancelled, OperationPublicErrorCodeDaemonRestarted, OperationPublicErrorCodeGoogleAuthorizationRequired, OperationPublicErrorCodeRetryAfter, OperationPublicErrorCodeSafetyLimit, OperationPublicErrorCodeSyncFailed, OperationPublicErrorCodeUnsafeErrorRedacted, OperationPublicErrorCodeUpstreamFailed, PersonSweepFailed, Policy, ProviderHTTP, RateLimited, SourceSyncFailed, Timeout:
+	case ArchiveGap, Budget, CarddavSyncFailed, Internal, InvalidOutput, InvocationArchiveDrift, InvocationAuthenticationFailed, InvocationCancelled, InvocationDaemonRestarted, InvocationInternal, InvocationInvalidOutput, InvocationRateLimited, InvocationSafetyLimit, InvocationTimeout, InvocationUnsafeErrorRedacted, InvocationUpstreamFailed, LeaseLost, OperationPublicErrorCodeAuthenticationFailed, OperationPublicErrorCodeCancelled, OperationPublicErrorCodeDaemonRestarted, OperationPublicErrorCodeGoogleAuthorizationRequired, OperationPublicErrorCodeMicrosoftAuthorizationRequired, OperationPublicErrorCodeMicrosoftContactTooLarge, OperationPublicErrorCodeRetryAfter, OperationPublicErrorCodeSafetyLimit, OperationPublicErrorCodeSyncFailed, OperationPublicErrorCodeUnsafeErrorRedacted, OperationPublicErrorCodeUpstreamFailed, PersonSweepFailed, Policy, ProviderHTTP, RateLimited, SourceSyncFailed, Timeout:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid OperationPublicErrorCode value, got: %v", o))
