@@ -75,10 +75,11 @@ func runMatrixSync(ctx context.Context, s *store.Store, cfg *config.Config, acco
 			if loadErr != nil {
 				return loadErr
 			}
-			runtime, openErr := matrixsource.Open(creds)
+			runtime, openErr := openMatrixRuntime(ctx, creds, matrixsource.CryptoStorePath(cfg.Data.DataDir, current.Identifier, creds.DeviceID))
 			if openErr != nil {
 				return openErr
 			}
+			defer func() { _ = runtime.Close() }()
 			imp := matrixsource.NewImporter(s, runtime)
 			var importErr error
 			summary, importErr = imp.Import(ctx, matrixsource.ImportOptions{
@@ -92,8 +93,9 @@ func runMatrixSync(ctx context.Context, s *store.Store, cfg *config.Config, acco
 			failures = append(failures, fmt.Sprintf("%s: %v", source.Identifier, syncErr))
 			continue
 		}
-		_, _ = fmt.Fprintf(out, "Matrix %s: %d rooms, %d messages, %d encrypted placeholders, %d unsupported events skipped\n",
-			source.Identifier, summary.RoomsProcessed, summary.MessagesProcessed, summary.Undecryptable, summary.EventsSkipped)
+		_, _ = fmt.Fprintf(out, "Matrix %s: %d rooms, %d messages, %d encrypted placeholders (%d recovered), %d unsupported events skipped\n",
+			source.Identifier, summary.RoomsProcessed, summary.MessagesProcessed,
+			summary.Undecryptable, summary.UndecryptableRecovered, summary.EventsSkipped)
 	}
 	if account != "" {
 		found := false
@@ -121,6 +123,9 @@ func runConfiguredMatrixSync(ctx context.Context, s *store.Store) error {
 	cacheErr := rebuildMatrixCacheAfterScheduledSync(context.WithoutCancel(ctx), "matrix")
 	return errors.Join(syncErr, cacheErr)
 }
+
+// openMatrixRuntime is replaced in tests to observe the runtime's lifetime.
+var openMatrixRuntime = matrixsource.Open
 
 var rebuildMatrixCacheAfterScheduledSync = rebuildCacheAfterScheduledSync
 

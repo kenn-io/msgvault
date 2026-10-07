@@ -403,6 +403,11 @@ func runRemoveAccountLocalWithMatrixLock(cmd *cobra.Command, args []string, matr
 	case sourceTypeMatrix:
 		// The dedicated device and local credential were revoked before the
 		// source cascade so a remote failure could abort removal safely.
+		if err := matrixsource.DeleteAccountCryptoStores(cfg.Data.DataDir, source.Identifier); err != nil {
+			fmt.Fprintf(os.Stderr,
+				"Warning: could not remove Matrix crypto stores: %v\n", err,
+			)
+		}
 	case sourceTypeSlack:
 		if teamID, userID, ok := splitSlackIdentifier(source.Identifier); ok {
 			if err := slack.DeleteToken(cfg.TokensDir(), teamID, userID); err != nil {

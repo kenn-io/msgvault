@@ -85,7 +85,7 @@ export const test = base.extend<{ daemon: MeetingDaemon }>({
           [
             "run",
             "-tags",
-            "fts5 sqlite_vec",
+            "fts5 sqlite_vec goolm",
             "./scripts/meeting-fixture",
             archive,
           ],

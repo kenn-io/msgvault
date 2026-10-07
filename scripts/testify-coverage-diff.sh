@@ -15,7 +15,7 @@ OUT="${DIR}/${MODE}-${SAFE_PKG}.out"
 FUNCS="${DIR}/${MODE}-${SAFE_PKG}.funcs.txt"
 LOG="${DIR}/${MODE}-${SAFE_PKG}.log"
 
-go test -tags "fts5 sqlite_vec" -count=1 \
+go test -tags "fts5 sqlite_vec goolm" -count=1 \
     -coverprofile="$OUT" \
     "$PKG" 2>&1 | tee "$LOG"
 

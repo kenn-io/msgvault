@@ -438,12 +438,12 @@ func precheckVectorFeatures(mainPath string, cfg *config.Config) error {
 	}
 	if store.IsPostgresURL(mainPath) && !pgvector.Available() {
 		return errors.New("vector search is enabled in config but this binary was built without vector support; " +
-			"to use vector search on PostgreSQL, rebuild with `go build -tags \"fts5 sqlite_vec pgvector\"` " +
+			"to use vector search on PostgreSQL, rebuild with `go build -tags \"fts5 sqlite_vec goolm pgvector\"` " +
 			"or set [vector] enabled = false")
 	}
 	if !store.IsPostgresURL(mainPath) && !sqlitevec.Available() {
 		return errors.New("vector search is enabled in config but this binary was built without sqlite-vec support; " +
-			"to use vector search on SQLite, rebuild with `go build -tags \"fts5 sqlite_vec\"` or `make build`, " +
+			"to use vector search on SQLite, rebuild with `go build -tags \"fts5 sqlite_vec goolm\"` or `make build`, " +
 			"or set [vector] enabled = false")
 	}
 	if err := cfg.Vector.Validate(); err != nil {

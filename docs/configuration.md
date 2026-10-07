@@ -1060,7 +1060,7 @@ both permission lists; neither list supports wildcards or alias names.
 
 Archive joined rooms from native [Matrix](/docs/usage/matrix/) accounts. One
 block controls every account registered with `msgvault add-matrix`; credentials
-never belong in `config.toml`.
+and encryption keys never belong in `config.toml`.
 
 ```toml
 [matrix]

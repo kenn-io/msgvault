@@ -4979,3 +4979,45 @@ func TestCopySubsetReleasesReviewMappingsWhoseAcceptedEdgeWasFiltered(t *testing
 	require.Len(copied.Residue, 2)
 	assert.Equal("RELATED", copied.Residue[1].Property.Name)
 }
+
+func TestCopySubset_KeepsCiphertextOfEditsToCopiedMessages(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	srcDir := t.TempDir()
+	dstDir := filepath.Join(t.TempDir(), "dst")
+	srcDB := createTestSourceDB(t, srcDir, 5)
+
+	db, err := sql.Open("sqlite3", srcDB+"?_foreign_keys=OFF")
+	require.NoError(err)
+	_, err = db.Exec(`UPDATE sources SET source_type = 'matrix'
+		WHERE id = (SELECT source_id FROM messages WHERE id = 1)`)
+	require.NoError(err)
+	_, err = db.Exec(`UPDATE messages SET metadata = '{"matrix_edit_event_id":"$edit","matrix_edit_ts":1}'
+		WHERE id = 1`)
+	require.NoError(err)
+	_, err = db.Exec(`INSERT INTO matrix_encrypted_events (source_id, event_id, room_id, raw_event)
+		SELECT source_id, '$edit', '!room:example.org', x'01' FROM messages WHERE id = 1`)
+	require.NoError(err)
+	_, err = db.Exec(`INSERT INTO matrix_encrypted_events (source_id, event_id, room_id, raw_event)
+		SELECT source_id, '$unrelated', '!room:example.org', x'02' FROM messages WHERE id = 1`)
+	require.NoError(err)
+	require.NoError(db.Close())
+
+	_, err = CopySubset(srcDB, dstDir, 5, false)
+	require.NoError(err)
+
+	dstDB, err := sql.Open("sqlite3", filepath.Join(dstDir, "msgvault.db"))
+	require.NoError(err)
+	defer func() { _ = dstDB.Close() }()
+	rows, err := dstDB.Query(`SELECT event_id FROM matrix_encrypted_events ORDER BY event_id`)
+	require.NoError(err)
+	defer func() { _ = rows.Close() }()
+	var got []string
+	for rows.Next() {
+		var id string
+		require.NoError(rows.Scan(&id))
+		got = append(got, id)
+	}
+	require.NoError(rows.Err())
+	assert.Equal([]string{"$edit"}, got)
+}

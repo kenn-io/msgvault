@@ -72,7 +72,7 @@ func record(t *testing.T) {
 		output := t.TempDir()
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
-		args := append([]string{"-NoProfile", "-File", script, "-Package", ".", "-ShardCount", "4", "-Tags", "fts5 sqlite_vec", "-Timeout", timeout}, extra...)
+		args := append([]string{"-NoProfile", "-File", script, "-Package", ".", "-ShardCount", "4", "-Tags", "fts5 sqlite_vec goolm", "-Timeout", timeout}, extra...)
 		cmd := exec.CommandContext(ctx, pwsh, args...)
 		cmd.Dir = dir
 		cmd.Env = append(os.Environ(), "GOWORK=off", "SHARD_OUTPUT="+output, "SHARD_FAIL="+fail)

@@ -139,6 +139,10 @@ func TestExclusiveLockTablesCoverCascade(t *testing.T) {
 		"source_import_items must be a direct cascade target (sanity)")
 	assert.Contains(cascadeTables, "sync_checkpoints",
 		"sync_checkpoints must be a direct cascade target (sanity)")
+	assert.Contains(cascadeTables, "matrix_encrypted_events",
+		"matrix_encrypted_events must be a direct cascade target (sanity)")
+	assert.Contains(cascadeTables, "matrix_undecryptable_events",
+		"matrix_undecryptable_events must be a direct cascade target (sanity)")
 
 	var missing []string
 	for _, tbl := range cascadeTables {
@@ -158,6 +162,14 @@ func TestExclusiveLockTablesCoverCascade(t *testing.T) {
 		"identity_match_candidates must be locked for source observation cleanup")
 	assert.True(lockSet["identity_match_evidence"],
 		"identity_match_evidence must be locked for candidate cascade cleanup")
+}
+
+// TestExclusiveLockTablesIncludeMatrixEventTables runs without PostgreSQL. The
+// Matrix event stores cascade from sources, so RemoveSourceSerialized must lock
+// them before deleting a Matrix source.
+func TestExclusiveLockTablesIncludeMatrixEventTables(t *testing.T) {
+	assert.Subset(t, exclusiveLockTables,
+		[]string{"matrix_encrypted_events", "matrix_undecryptable_events"})
 }
 
 // TestMaintenanceTimeoutResetSQL pins the exact statement the PG dialect uses

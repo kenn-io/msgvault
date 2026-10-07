@@ -2142,7 +2142,7 @@ func TestDaemonCLIRunCannotUseServerRemoteDeleteConfigOrEnvironment(t *testing.T
 		binaryName += ".exe"
 	}
 	binaryPath := filepath.Join(t.TempDir(), binaryName)
-	build := exec.Command("go", "build", "-tags", "fts5 sqlite_vec", "-o", binaryPath, "./cmd/msgvault")
+	build := exec.Command("go", "build", "-tags", "fts5 sqlite_vec goolm", "-o", binaryPath, "./cmd/msgvault")
 	build.Dir = repoRoot
 	buildOutput, err := build.CombinedOutput()
 	require.NoError(err, "build real msgvault binary: %s", buildOutput)

@@ -415,7 +415,7 @@ try {
     $env:GOARCH = $Architecture
     $env:CGO_ENABLED = '1'
 
-    $tags = @('fts5', 'sqlite_vec')
+    $tags = @('fts5', 'sqlite_vec', 'goolm')
     $includeDir = Initialize-SqliteHeader $cacheRoot
     Add-CgoFlag 'CGO_CFLAGS' (Format-CgoPathFlag '-I' $includeDir)
     Add-CgoFlag 'CGO_CFLAGS' '-fgnu89-inline'

@@ -14,11 +14,14 @@ import (
 )
 
 // Credentials are the durable credentials for one dedicated Matrix device.
+// PickleKey protects the local Olm store and is generated independently for
+// every account. Recovery keys and passphrases are deliberately absent.
 type Credentials struct {
 	Homeserver  string `json:"homeserver"`
 	UserID      string `json:"user_id"`
 	DeviceID    string `json:"device_id"`
 	AccessToken string `json:"access_token"`
+	PickleKey   string `json:"pickle_key"`
 }
 
 var secureReplaceCredentials = fileutil.SecureReplaceFile
@@ -61,7 +64,7 @@ func SaveCredentials(tokensDir string, creds Credentials) error {
 
 // LoadCredentials loads and identity-checks one Matrix credential file.
 func LoadCredentials(tokensDir, userID string) (Credentials, error) {
-	creds, err := readCredentials(tokenPath(tokensDir, userID), userID)
+	creds, err := readCredentials(tokensDir, tokenPath(tokensDir, userID), userID)
 	if os.IsNotExist(err) {
 		return Credentials{}, fmt.Errorf("no Matrix credentials for %s (run 'add-matrix' first)", userID)
 	}
@@ -76,7 +79,7 @@ func SavePendingCredentials(tokensDir string, creds Credentials) error {
 
 // LoadPendingCredentials returns the unfinished renewal for an account, if any.
 func LoadPendingCredentials(tokensDir, userID string) (Credentials, bool, error) {
-	creds, err := readCredentials(pendingTokenPath(tokensDir, userID), userID)
+	creds, err := readCredentials(tokensDir, pendingTokenPath(tokensDir, userID), userID)
 	if os.IsNotExist(err) {
 		return Credentials{}, false, nil
 	}
@@ -118,7 +121,7 @@ func writeCredentials(tokensDir, path string, creds Credentials) error {
 	return nil
 }
 
-func readCredentials(path, userID string) (Credentials, error) {
+func readCredentials(tokensDir, path, userID string) (Credentials, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -132,6 +135,15 @@ func readCredentials(path, userID string) (Credentials, error) {
 	}
 	if creds.UserID != userID || creds.Homeserver == "" || creds.DeviceID == "" || creds.AccessToken == "" {
 		return Credentials{}, fmt.Errorf("matrix credential file for %s is incomplete or belongs to %s", userID, creds.UserID)
+	}
+	if creds.PickleKey == "" {
+		creds.PickleKey, err = generatePickleKey()
+		if err != nil {
+			return Credentials{}, err
+		}
+		if err := writeCredentials(tokensDir, path, creds); err != nil {
+			return Credentials{}, fmt.Errorf("upgrade Matrix credentials with crypto key: %w", err)
+		}
 	}
 	return creds, nil
 }
@@ -159,4 +171,29 @@ func fileExists(path string) (bool, error) {
 		return false, nil
 	}
 	return false, fmt.Errorf("check Matrix credentials: %w", err)
+}
+
+// CryptoStorePath returns the per-device persistent crypto database path.
+// Device scoping lets a failed or intentional re-login start with a clean Olm
+// identity without colliding with the previous dedicated device.
+func CryptoStorePath(dataDir, userID, deviceID string) string {
+	return filepath.Join(dataDir, "matrix", accountKey(userID), accountKey(deviceID), "crypto.db")
+}
+
+// DeleteCryptoStore removes local crypto state for one dedicated device.
+func DeleteCryptoStore(dataDir, userID, deviceID string) error {
+	path := filepath.Dir(CryptoStorePath(dataDir, userID, deviceID))
+	if err := os.RemoveAll(path); err != nil {
+		return fmt.Errorf("remove Matrix crypto store: %w", err)
+	}
+	return nil
+}
+
+// DeleteAccountCryptoStores removes all local crypto state for an account.
+func DeleteAccountCryptoStores(dataDir, userID string) error {
+	path := filepath.Join(dataDir, "matrix", accountKey(userID))
+	if err := os.RemoveAll(path); err != nil {
+		return fmt.Errorf("remove Matrix account crypto stores: %w", err)
+	}
+	return nil
 }
