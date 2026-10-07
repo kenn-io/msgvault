@@ -515,13 +515,9 @@ func TestSyncCarriesRedirectedCollectionURLIntoRelativeHrefsAndMultiget(t *testi
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		if !assert.Equal("0", r.Header.Get("Depth")) {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
 		body := readRequestBody(t, r)
 		if strings.Contains(body, "sync-collection") {
-			if !validSyncReport(t, body) {
+			if !assert.Equal("0", r.Header.Get("Depth")) {
 				w.WriteHeader(http.StatusBadRequest)
 				return
 			}

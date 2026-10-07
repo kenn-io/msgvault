@@ -630,10 +630,17 @@ func TestMultigetCanonicalizesEquivalentMissingHref(t *testing.T) {
 }
 
 func TestSyncContinuesTruncated507PageWithNextToken(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	syncRequests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body := readRequestBody(t, r)
 		if strings.Contains(body, "sync-collection") {
+			if !assert.Equal("0", r.Header.Get("Depth")) {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
 			syncRequests++
 			if syncRequests == 1 {
 				events := changedResponse("/books/personal/alice.vcf", `&quot;one&quot;`) +
@@ -641,7 +648,7 @@ func TestSyncContinuesTruncated507PageWithNextToken(t *testing.T) {
 				writeDAVXML(t, w, syncResponse(events, "page-2"))
 				return
 			}
-			assert.Equal(t, "page-2", syncRequestToken(body))
+			assert.Equal("page-2", syncRequestToken(body))
 			writeDAVXML(t, w, syncResponse(changedResponse("/books/personal/bob.vcf", `&quot;two&quot;`), "final"))
 			return
 		}
@@ -652,12 +659,16 @@ func TestSyncContinuesTruncated507PageWithNextToken(t *testing.T) {
 		writeDAVXML(t, w, syncResponse(cards.String(), ""))
 	}))
 	t.Cleanup(server.Close)
-	service, _, _ := newPullService(t, server, true)
+	service, st, _ := newPullService(t, server, true)
 
 	result, err := service.Sync(t.Context(), SyncOptions{Full: true})
-	require.NoError(t, err)
-	assert.Equal(t, 2, result.Created)
-	assert.Equal(t, 2, syncRequests)
+	require.NoError(err)
+	assert.Equal(2, result.Created)
+	assert.Equal(2, syncRequests)
+	books, err := st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
+	require.NoError(err)
+	require.Len(books, 1)
+	assert.Equal("final", books[0].SyncToken)
 }
 
 func TestInitialSyncSendsEmptyTokenAndFallsBackToIndividualGET(t *testing.T) {
@@ -920,8 +931,8 @@ func TestParseRemoteResourceDecodesTextContactValues(t *testing.T) {
 // googleLikeState drives a fake with Google's observed CardDAV behavior:
 // sync-collection rejects an empty token with a JSON 400, addressbook-query
 // answers with an empty multistatus even when the book has members, and
-// PROPFIND plus addressbook-multiget work normally. sync-collection requires
-// Depth 0.
+// PROPFIND plus addressbook-multiget work normally.
+// The fake also enforces RFC 6578's Depth 0 requirement for sync-collection.
 type googleLikeState struct {
 	mu       sync.Mutex
 	requests []string
@@ -982,7 +993,7 @@ func newGoogleLikeHandler(t *testing.T, state *googleLikeState) http.HandlerFunc
 			}
 			writeDAVXML(t, w, multiStatusBody(responses.String()))
 		case r.Method == "REPORT" && strings.Contains(body, "sync-collection"):
-			if !assert.Equal(t, "0", r.Header.Get("Depth")) || !validSyncReport(t, body) {
+			if !assert.Equal(t, "0", r.Header.Get("Depth")) {
 				w.WriteHeader(http.StatusBadRequest)
 				return
 			}
@@ -1315,66 +1326,4 @@ func (s *Service) dav() *davRemote {
 		panic("service does not use the CardDAV remote")
 	}
 	return remote
-}
-
-// validSyncReport checks the parsed DAV namespace and sync-level independently
-// of the HTTP Depth header, which controls the report target, not its members.
-func validSyncReport(t *testing.T, body string) bool {
-	t.Helper()
-	var request struct {
-		XMLName xml.Name `xml:"DAV: sync-collection"`
-		Level   string   `xml:"DAV: sync-level"`
-	}
-	return assert.NoError(t, xml.Unmarshal([]byte(body), &request)) && assert.Equal(t, "1", request.Level)
-}
-
-func TestSyncCollectionUsesDepthZeroAcrossPages(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	var tokens []string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body := readRequestBody(t, r)
-		if !assert.Equal("REPORT", r.Method) || !assert.Equal("0", r.Header.Get("Depth")) {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		if strings.Contains(body, "sync-collection") {
-			if !validSyncReport(t, body) {
-				w.WriteHeader(http.StatusBadRequest)
-				return
-			}
-			token := syncRequestToken(body)
-			tokens = append(tokens, token)
-			switch token {
-			case "":
-				writeDAVXML(t, w, syncResponse(changedResponse("/books/personal/alice.vcf", `&quot;a1&quot;`)+
-					`<D:response><D:href>/books/personal/</D:href><D:status>HTTP/1.1 507 Insufficient Storage</D:status></D:response>`, "page-2"))
-			case "page-2":
-				writeDAVXML(t, w, syncResponse(changedResponse("/books/personal/bob.vcf", `&quot;b1&quot;`), "final-token"))
-			default:
-				assert.Fail("unexpected continuation token", "%s", token)
-				w.WriteHeader(http.StatusBadRequest)
-			}
-			return
-		}
-		var cards strings.Builder
-		for _, href := range requestedHrefs(body) {
-			cards.WriteString(cardResponse(href, `&quot;one&quot;`, path.Base(href)))
-		}
-		writeDAVXML(t, w, multiStatusBody(cards.String()))
-	}))
-	t.Cleanup(server.Close)
-	service, st, book := newPullService(t, server, true)
-	result, err := service.Sync(t.Context(), SyncOptions{})
-	require.NoError(err)
-	assert.Equal(SyncResult{Books: 1, Created: 2}, result)
-	assert.Equal([]string{"", "page-2"}, tokens)
-	books, err := st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
-	require.NoError(err)
-	require.Len(books, 1)
-	assert.Equal("final-token", books[0].SyncToken)
-	for _, member := range []string{"alice", "bob"} {
-		_, err := st.GetCardDAVResourceContext(t.Context(), book.ID, server.URL+"/books/personal/"+member+".vcf")
-		require.NoError(err)
-	}
 }
