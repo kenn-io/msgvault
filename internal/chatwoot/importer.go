@@ -295,7 +295,7 @@ func (imp *Importer) syncSelfAgents(ctx context.Context, sourceID int64, selfAge
 }
 
 func (imp *Importer) listConversations(ctx context.Context, page int, inboxID int64, sortBy string) ([]Conversation, error) {
-	if page <= 0 || page == math.MaxInt {
+	if page == math.MaxInt {
 		return nil, errors.New("chatwoot conversation page overflow")
 	}
 	batch, err := imp.client.ListConversations(ctx, page, inboxID, sortBy)

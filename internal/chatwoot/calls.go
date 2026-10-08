@@ -45,10 +45,8 @@ func callEvidence(m Message) Call {
 		call.Direction = fallback.Direction
 		call.Status = fallback.Status
 		call.DurationSeconds = fallback.DurationSeconds
-		if call.AcceptedByAgentID == 0 {
-			call.AcceptedByAgentID = fallback.AcceptedBy.ID
-			call.AcceptedByAgentName = actorName(fallback.AcceptedBy)
-		}
+		call.AcceptedByAgentID = fallback.AcceptedBy.ID
+		call.AcceptedByAgentName = actorName(fallback.AcceptedBy)
 	}
 	if m.Call != nil {
 		fallback := call

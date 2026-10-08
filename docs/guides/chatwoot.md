@@ -127,6 +127,7 @@ remain pending. A 10,000-request budget bounds each inbox sync. Unfinished histo
 new conversations take turns, so a long history can't hold up newer ones.
 If a conversation becomes inaccessible, sync reports the error, retains its
 unfinished work, and continues archiving accessible conversations.
+Restore the token user's inbox or team access to resume it; `--full` uses the same authorization.
 
 A recording or transcript can arrive after a call or voice note without
 updating the conversation's activity. msgvault rechecks every call, and audio
