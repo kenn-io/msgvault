@@ -36,6 +36,7 @@ async function openCalendar(page: Page, firstAt: string | Promise<string> = pers
     participant_id: 1, canonical_id: 1, year: route.request().postDataJSON().year,
     timezone: route.request().postDataJSON().timezone,
     days: [
+      { ...baseDay, date: '2018-11-04', email: 1, total: 1, level: 'FIRST_QUARTILE' },
       { ...baseDay, date: '2026-01-01', email: 1, chat: 2, total: 3, level: 'FOURTH_QUARTILE' },
       { ...baseDay, date: '2026-03-08', email: 1, total: 1, level: 'FIRST_QUARTILE' },
       { ...baseDay, date: '2026-03-09' },
@@ -102,6 +103,27 @@ test('calendar fills its card at medium and narrow widths without clipping edge 
       expect(tipBox!.y + tipBox!.height).toBeLessThanOrEqual(cellBox!.y - 3);
     }
   }
+});
+
+test.describe('day selection when midnight is skipped', () => {
+  test.use({ timezoneId: 'America/Sao_Paulo' });
+
+  test('excludes the following day from the timeline request', async ({ page }) => {
+    await page.clock.setFixedTime(new Date('2018-11-05T12:00:00Z'));
+    await openCalendar(page);
+    const calendar = page.getByRole('region', { name: 'Relationship activity calendar' });
+    const timelineRequest = page.waitForRequest((request) =>
+      request.url().endsWith('/api/v1/relationships/1/timeline') && request.method() === 'POST'
+    );
+    await calendar.getByRole('button', { name: '1 message on Nov 4, 2018' }).filter({ visible: true }).click();
+    expect((await timelineRequest).postDataJSON()).toMatchObject({
+      timezone: 'America/Sao_Paulo',
+      filters: [
+        { dimension: 'after', values: ['2018-11-04T03:00:00.000Z'] },
+        { dimension: 'before', values: ['2018-11-05T02:00:00.000Z'] }
+      ]
+    });
+  });
 });
 
 test('Escape dismisses the current day but hovering another day reopens the tooltip', async ({ page }) => {
