@@ -98,6 +98,11 @@
       {/if}
     </div>
 
+    {#if message.relatedMessageId}
+      <a class="related-message" href={`/messages/${message.relatedMessageId}`}>
+        {message.messageType === 'meeting_transcript' ? 'Open conversation' : 'Open meeting'}
+      </a>
+    {/if}
     {#if client}<KataIssueAction {client} selector={{ kind: 'message', message_id: message.id, start_rune: 0, max_chars: EVIDENCE_WINDOW }} defaultTitle={message.subject || 'Follow up on this message'} />{/if}
 
     {#if sanitizationFailed}
@@ -235,6 +240,11 @@
     font-size: var(--font-size-xs);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
+  }
+
+  .related-message {
+    display: inline-block;
+    margin: var(--space-3) var(--space-4) 0;
   }
 
   .card-header {

@@ -16,7 +16,10 @@ func decodeGeneric(fields map[string]jsontext.Value) Content {
 	content.SourceParticipants = providerParticipants(fields)
 	start, startOK := rawTime(fields["started_at"], false)
 	end, endOK := rawTime(fields["ended_at"], false)
-	if startOK && endOK && end.After(start) {
+	if value, ok := rawFiniteFloat(fields["duration_seconds"]); ok && value >= 0 {
+		content.DurationSeconds = &value
+		content.DurationBasis = DurationProvider
+	} else if startOK && endOK && end.After(start) {
 		setDuration(&content, end.Sub(start).Seconds(), DurationProvider)
 	} else if value, ok := transcriptDuration(content.Transcript.Segments); ok {
 		setDuration(&content, value, DurationTranscriptSpan)

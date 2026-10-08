@@ -10,6 +10,7 @@ import (
 	"encoding/json/jsontext"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -29,11 +30,14 @@ var ErrUnavailable = errors.New("meeting archiver is unavailable")
 // further identities of the same human; with an Anchor they are linked to the
 // recipient identity through LinkIdentities. Names never match anything.
 type Person struct {
-	Name        string
-	Email       string
-	Phone       string // E.164
-	OtherEmails []string
-	OtherPhones []string
+	Name  string
+	Email string
+	Phone string // E.164
+	// ParticipantID references an existing participant resolved by the provider.
+	// Zero retains the canonical email/phone resolution path.
+	ParticipantID int64
+	OtherEmails   []string
+	OtherPhones   []string
 	// Anchor is a stable, provider-scoped identifier for this human, built
 	// with Anchor(). Empty means the provider asserts no stable identity.
 	Anchor string
@@ -95,6 +99,14 @@ func (a *Archiver) Upsert(
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
 	}
+	if snapshot.Organizer != nil && snapshot.Organizer.ParticipantID < 0 {
+		return Result{}, errors.New("meeting organizer participant ID cannot be negative")
+	}
+	for _, attendee := range snapshot.Attendees {
+		if attendee.ParticipantID < 0 {
+			return Result{}, errors.New("meeting attendee participant ID cannot be negative")
+		}
+	}
 
 	existing, err := a.store.MessageMetadataBatch(snapshot.SourceID, []string{snapshot.SourceMessageID})
 	if err != nil {
@@ -118,11 +130,92 @@ func (a *Archiver) Upsert(
 	}
 	expectedIsFromMe := organizerAddress != "" && identities.Contains(organizerAddress)
 
+	participants := make([]store.ParticipantPersistData, 0, len(snapshot.Attendees)+1)
+	hasOrganizer := organizer.ParticipantID > 0 || organizer.PrimaryKey() != ""
+	organizerOffset := -1
+	if hasOrganizer && organizer.ParticipantID == 0 {
+		organizerOffset = len(participants)
+		participants = append(participants, persistData(organizer))
+	}
+
+	attendeeNames := make([]string, 0, len(snapshot.Attendees))
+	attendeeEmails := make([]string, 0, len(snapshot.Attendees))
+	attendeeAddresses := make([]string, 0, len(snapshot.Attendees))
+	attendeeOffsets := make([]int, 0, len(snapshot.Attendees))
+	resolvedAttendeeIDs := make([]int64, 0, len(snapshot.Attendees))
+	seenAttendees := make(map[string]bool, len(snapshot.Attendees))
+	for _, raw := range snapshot.Attendees {
+		if err := ctx.Err(); err != nil {
+			return Result{}, err
+		}
+		attendee := raw.Normalized()
+		key := archiveParticipantKey(attendee)
+		if key == "" || seenAttendees[key] {
+			continue
+		}
+		seenAttendees[key] = true
+		offset := -1
+		if attendee.ParticipantID == 0 {
+			offset = len(participants)
+			participants = append(participants, persistData(attendee))
+		}
+		attendeeOffsets = append(attendeeOffsets, offset)
+		resolvedAttendeeIDs = append(resolvedAttendeeIDs, attendee.ParticipantID)
+		attendeeNames = append(attendeeNames, attendee.Name)
+		attendeeEmails = append(attendeeEmails, attendee.Email)
+		if attendee.Email != "" {
+			attendeeAddresses = append(attendeeAddresses, attendee.Email)
+		} else {
+			attendeeAddresses = append(attendeeAddresses, attendee.Phone)
+		}
+	}
+
+	recipients := func(senderID int64, attendeeIDs []int64) []store.RecipientSet {
+		from := store.RecipientSet{Type: "from"}
+		if hasOrganizer {
+			from.ParticipantIDs = []int64{senderID}
+			from.DisplayNames = []string{organizerName}
+			from.EmailAddresses = []string{organizerEmail}
+		}
+		return []store.RecipientSet{from, {Type: "to", ParticipantIDs: attendeeIDs, DisplayNames: attendeeNames, EmailAddresses: attendeeEmails}}
+	}
+	resolvedPeople := organizer.ParticipantID > 0 || slices.ContainsFunc(resolvedAttendeeIDs, func(id int64) bool { return id > 0 })
+
 	if existed && !opts.Force {
 		storedRaw, rawErr := a.store.GetMessageRaw(existingMessageID)
 		storedIsFromMe, attributionErr := a.store.GetMessageIsFromMe(existingMessageID)
-		if rawErr == nil && attributionErr == nil && bytes.Equal(storedRaw, snapshot.Raw) &&
-			storedIsFromMe == expectedIsFromMe && equalMetadata([]byte(existingMessage.Metadata.String), snapshot.Metadata) {
+		if organizer.ParticipantID > 0 {
+			// Store synchronously repairs ownership when identities or participants change.
+			expectedIsFromMe = storedIsFromMe
+		}
+		unchanged := rawErr == nil && attributionErr == nil && bytes.Equal(storedRaw, snapshot.Raw) &&
+			storedIsFromMe == expectedIsFromMe && JSONEvidenceEqual([]byte(existingMessage.Metadata.String), snapshot.Metadata)
+		if unchanged && resolvedPeople && len(participants) > 0 {
+			unchanged = false
+		}
+		if unchanged {
+			sets := recipients(organizer.ParticipantID, resolvedAttendeeIDs)
+			if organizerOffset >= 0 {
+				sets = sets[1:]
+			}
+			if slices.ContainsFunc(attendeeOffsets, func(offset int) bool { return offset >= 0 }) {
+				sets = slices.DeleteFunc(sets, func(set store.RecipientSet) bool { return set.Type == "to" })
+			}
+			if len(sets) > 0 {
+				unchanged, err = a.store.MessageRecipientsMatchContext(ctx, existingMessageID, sets)
+				if err != nil {
+					return Result{}, fmt.Errorf("compare meeting recipients: %w", err)
+				}
+			}
+			if unchanged && organizerOffset < 0 {
+				stored, err := a.store.StoredMessagesContext(ctx, snapshot.SourceID, snapshot.RawFormat, []string{snapshot.SourceMessageID})
+				if err != nil {
+					return Result{}, err
+				}
+				unchanged = stored[snapshot.SourceMessageID].SenderID == (sql.NullInt64{Int64: organizer.ParticipantID, Valid: organizer.ParticipantID > 0})
+			}
+		}
+		if unchanged {
 			if err := a.store.RecomputeConversationStatsForMessageContext(ctx, existingMessageID); err != nil {
 				return Result{}, fmt.Errorf("recompute meeting conversation stats: %w", err)
 			}
@@ -135,36 +228,6 @@ func (a *Archiver) Upsert(
 		}
 	}
 
-	participants := make([]store.ParticipantPersistData, 0, len(snapshot.Attendees)+1)
-	hasOrganizer := organizer.PrimaryKey() != ""
-	if hasOrganizer {
-		participants = append(participants, persistData(organizer))
-	}
-
-	attendeeNames := make([]string, 0, len(snapshot.Attendees))
-	attendeeEmails := make([]string, 0, len(snapshot.Attendees))
-	attendeeAddresses := make([]string, 0, len(snapshot.Attendees))
-	seenAttendees := make(map[string]bool, len(snapshot.Attendees))
-	for _, raw := range snapshot.Attendees {
-		if err := ctx.Err(); err != nil {
-			return Result{}, err
-		}
-		attendee := raw.Normalized()
-		key := attendee.PrimaryKey()
-		if key == "" || seenAttendees[key] {
-			continue
-		}
-		seenAttendees[key] = true
-		participants = append(participants, persistData(attendee))
-		attendeeNames = append(attendeeNames, attendee.Name)
-		attendeeEmails = append(attendeeEmails, attendee.Email)
-		if attendee.Email != "" {
-			attendeeAddresses = append(attendeeAddresses, attendee.Email)
-		} else {
-			attendeeAddresses = append(attendeeAddresses, attendee.Phone)
-		}
-	}
-
 	conversationID := strings.TrimSpace(snapshot.SourceConversationID)
 	if conversationID == "" {
 		conversationID = snapshot.SourceMessageID
@@ -174,19 +237,19 @@ func (a *Archiver) Upsert(
 		ctx,
 		participants,
 		func(participantIDs []int64) *store.MessagePersistData {
-			attendeeOffset := 0
 			var senderID int64
-			var fromIDs []int64
-			var fromNames []string
-			var fromEmails []string
 			if hasOrganizer {
-				senderID = participantIDs[0]
-				attendeeOffset = 1
-				fromIDs = []int64{senderID}
-				fromNames = []string{organizerName}
-				fromEmails = []string{organizerEmail}
+				senderID = organizer.ParticipantID
+				if organizerOffset >= 0 {
+					senderID = participantIDs[organizerOffset]
+				}
 			}
-			attendeeIDs := participantIDs[attendeeOffset:]
+			attendeeIDs := append([]int64{}, resolvedAttendeeIDs...)
+			for index, offset := range attendeeOffsets {
+				if offset >= 0 {
+					attendeeIDs[index] = participantIDs[offset]
+				}
+			}
 			conversationParticipants := make([]store.ConversationParticipantRef, 0, len(attendeeIDs))
 			for _, participantID := range attendeeIDs {
 				conversationParticipants = append(conversationParticipants, store.ConversationParticipantRef{
@@ -215,24 +278,11 @@ func (a *Archiver) Upsert(
 					Title:                snapshot.Title,
 					Participants:         conversationParticipants,
 				},
-				Metadata:  &metadata,
-				BodyText:  sql.NullString{String: snapshot.Body, Valid: snapshot.Body != ""},
-				RawMIME:   snapshot.Raw,
-				RawFormat: snapshot.RawFormat,
-				Recipients: []store.RecipientSet{
-					{
-						Type:           "from",
-						ParticipantIDs: fromIDs,
-						DisplayNames:   fromNames,
-						EmailAddresses: fromEmails,
-					},
-					{
-						Type:           "to",
-						ParticipantIDs: attendeeIDs,
-						DisplayNames:   attendeeNames,
-						EmailAddresses: attendeeEmails,
-					},
-				},
+				Metadata:       &metadata,
+				BodyText:       sql.NullString{String: snapshot.Body, Valid: snapshot.Body != ""},
+				RawMIME:        snapshot.Raw,
+				RawFormat:      snapshot.RawFormat,
+				Recipients:     recipients(senderID, attendeeIDs),
 				PreserveLabels: true,
 				FTS: &store.FTSDoc{
 					Subject:  snapshot.Title,
@@ -257,7 +307,8 @@ func (a *Archiver) Upsert(
 	return result, nil
 }
 
-func equalMetadata(stored, incoming []byte) bool {
+// JSONEvidenceEqual compares JSON evidence while ignoring object order and whitespace.
+func JSONEvidenceEqual(stored, incoming []byte) bool {
 	if bytes.Equal(stored, incoming) {
 		return true
 	}
@@ -315,4 +366,13 @@ func snapshotPeople(snapshot Snapshot) []Person {
 		people = append(people, *snapshot.Organizer)
 	}
 	return append(people, snapshot.Attendees...)
+}
+
+// archiveParticipantKey keeps explicitly resolved people distinct even when
+// they share an address. Canonical providers retain primary-address deduping.
+func archiveParticipantKey(person Person) string {
+	if person.ParticipantID > 0 {
+		return fmt.Sprintf("participant:%d", person.ParticipantID)
+	}
+	return person.PrimaryKey()
 }

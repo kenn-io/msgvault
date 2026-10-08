@@ -1,0 +1,116 @@
+package config
+
+import (
+	"fmt"
+	"math"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
+)
+
+func TestChatwootConfigDefaultsAndSelection(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	got := loadConfigText(t, `[[chatwoot]]
+identifier="support"
+url="https://CHATWOOT.example.com:443/support/"
+account_id=9
+enabled=true
+schedule="*/30 * * * *"
+inboxes=[7,8]
+exclude_inboxes=[8]
+self_agent_ids=[201]
+
+[[chatwoot]]
+identifier="other"
+url="https://chatwoot.example.com/support"
+account_id=10
+include_private=false
+media=false
+max_media_mb=3
+reconcile_interval_hours=2
+api_key_env="EXAMPLE_CHATWOOT_TOKEN"
+`)
+	require.Len(got.Chatwoot, 2)
+	first := got.Chatwoot[0]
+	assert.Equal("https://chatwoot.example.com/support", first.URL)
+	assert.Equal("MSGVAULT_CHATWOOT_TOKEN", first.APIKeyEnv)
+	assert.True(first.PrivateIncluded())
+	assert.Empty(first.MediaPolicy().DisabledReason)
+	assert.Equal(int64(250<<20), first.MediaPolicy().MaxBytes)
+	assert.Equal(24*time.Hour, first.ReconcileInterval())
+	assert.True(first.InboxIncluded(7))
+	assert.False(first.InboxIncluded(8))
+	assert.False(first.InboxIncluded(99))
+	assert.Equal([]int64{201}, first.SelfAgentIDs)
+	assert.Equal(first, *got.GetChatwootSource("SUPPORT"))
+	assert.Nil(got.GetChatwootSource("missing"))
+	assert.Equal([]ChatwootSource{first}, got.ScheduledChatwootSources())
+	second := got.Chatwoot[1]
+	assert.False(second.PrivateIncluded())
+	assert.Equal(attachmentpolicy.SkipAccountPolicy, second.MediaPolicy().DisabledReason)
+	assert.Equal(int64(3<<20), second.MediaPolicy().MaxBytes)
+	assert.Equal(2*time.Hour, second.ReconcileInterval())
+	assert.True(second.InboxIncluded(99))
+}
+
+func TestChatwootConfigRejectsInvalidProfiles(t *testing.T) {
+	cases := []struct{ name, field, want string }{
+		{"missing label", `identifier=""`, "identifier"},
+		{"credentials", `url="https://secret@chatwoot.example.com"`, "URL"},
+		{"nonpositive account", `account_id=0`, "account_id"},
+		{"negative media", `max_media_mb=-1`, "max_media_mb"},
+		{"overflow media", fmt.Sprintf("max_media_mb=%d", int64(math.MaxInt64)), "max_media_mb"},
+		{"negative reconcile", `reconcile_interval_hours=-1`, "reconcile_interval_hours"},
+		{"invalid schedule", `schedule="tomorrow"`, "schedule"},
+		{"invalid inbox", `inboxes=[0]`, "inboxes"},
+		{"invalid exclude", `exclude_inboxes=[-7]`, "exclude_inboxes"},
+		{"invalid agent", `self_agent_ids=[0]`, "self_agent_ids"},
+		{"invalid env", `api_key_env="TOKEN=secret"`, "api_key_env"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fields := map[string]string{"identifier": `identifier="support"`, "url": `url="https://chatwoot.example.com"`, "account_id": `account_id=9`}
+			key, _, _ := strings.Cut(tc.field, "=")
+			fields[key] = tc.field
+			var content strings.Builder
+			content.WriteString("[[chatwoot]]\n")
+			for _, field := range fields {
+				content.WriteString(field)
+				content.WriteByte('\n')
+			}
+			err := loadConfigTextError(t, content.String())
+			require.ErrorContains(t, err, tc.want)
+		})
+	}
+}
+
+func TestChatwootConfigRejectsDuplicateIdentity(t *testing.T) {
+	require := require.New(t)
+	for _, tc := range []struct{ base, other string }{
+		{"https://chatwoot.example.com", `identifier="SUPPORT"
+url="https://other.example.com"
+account_id=10`},
+		{"https://chatwoot.example.com", `identifier="different-label"
+url="https://CHATWOOT.example.com:443/"
+account_id=9`},
+		{"https://chatwoot.example.com", `identifier="padded-port"
+url="https://chatwoot.example.com:0443"
+account_id=9`},
+		{"https://chatwoot.example.com:8443", `identifier="padded-nondefault-port"
+url="https://chatwoot.example.com:08443"
+account_id=9`},
+	} {
+		err := loadConfigTextError(t, `[[chatwoot]]
+identifier="support"
+url="`+tc.base+`"
+account_id=9
+[[chatwoot]]
+`+tc.other)
+		require.ErrorContains(err, "duplicate")
+	}
+}

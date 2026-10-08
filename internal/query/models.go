@@ -63,6 +63,7 @@ type DeletionTarget struct {
 
 // MessageDetail represents a full message with body and attachments.
 type MessageDetail struct {
+	RelatedMessageID *int64 `json:"related_message_id,omitempty"`
 	// WebURL is derived by the daemon client for browser navigation.
 	WebURL               string     `json:"web_url,omitempty"`
 	ID                   int64      `json:"id"`

@@ -1914,6 +1914,7 @@ func TestGetCLIMessage_Success(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
 			"id": 42,
+            "related_message_id": 43,
 			"source_message_id": "remote-42",
 			"conversation_id": 7,
 			"subject": "Test Subject",
@@ -1936,6 +1937,7 @@ func TestGetCLIMessage_Success(t *testing.T) {
 
 	require.NotNil(t, msg, "message")
 	assert.Equal(int64(42), msg.ID, "ID")
+	assert.Equal(new(int64(43)), msg.RelatedMessageID)
 	assert.Equal("remote-42", msg.SourceMessageID, "SourceMessageID")
 	assert.Empty(msg.RFC822MessageID, "older daemons may omit the RFC Message-ID")
 	assert.Equal("Test Subject", msg.Subject, "Subject")
@@ -2170,14 +2172,15 @@ func TestGetMessage_Success(t *testing.T) {
 		assert.Equal("/api/v1/messages/42", r.URL.Path, "path")
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(generated.MessageDetail{
-			ID:      42,
-			Subject: "Test Subject",
-			From:    "sender@example.com",
-			To:      []string{"receiver@example.com"},
-			SentAt:  "2024-01-15T10:30:00Z",
-			Snippet: "preview",
-			Labels:  []string{"INBOX"},
-			Body:    "Hello, world!",
+			ID:               42,
+			RelatedMessageID: new(int64(43)),
+			Subject:          "Test Subject",
+			From:             "sender@example.com",
+			To:               []string{"receiver@example.com"},
+			SentAt:           "2024-01-15T10:30:00Z",
+			Snippet:          "preview",
+			Labels:           []string{"INBOX"},
+			Body:             "Hello, world!",
 			Attachments: []generated.AttachmentInfo{
 				{Filename: "doc.pdf", MimeType: "application/pdf", SizeBytes: 1024},
 			},
@@ -2191,6 +2194,8 @@ func TestGetMessage_Success(t *testing.T) {
 	require.NotNil(msg, "GetMessage returned nil")
 	assert.Equal("Test Subject", msg.Subject, "Subject")
 	assert.Equal("Hello, world!", msg.Body, "Body")
+	assert.Equal(new(int64(43)), msg.RelatedMessageID)
+	assert.Equal(msg.RelatedMessageID, queryDetailFromAPIMessage(msg).RelatedMessageID)
 	require.Len(msg.Attachments, 1, "len(Attachments)")
 	assert.Equal("doc.pdf", msg.Attachments[0].Filename, "Attachments[0].Filename")
 }

@@ -489,7 +489,8 @@ func getMessageByQueryShared(ctx context.Context, db *sql.DB, rebind rebindFunc,
 			COALESCE(m.size_estimate, 0),
 			m.has_attachments,
 			COALESCE(m.is_from_me, FALSE),
-			m.deleted_from_source_at
+			m.deleted_from_source_at,
+			CASE WHEN m.message_type IN ('chatwoot', 'meeting_transcript') THEN m.metadata ELSE NULL END
 		FROM %smessages m
 		LEFT JOIN %sconversations conv ON conv.id = m.conversation_id
 		WHERE %s
@@ -497,6 +498,7 @@ func getMessageByQueryShared(ctx context.Context, db *sql.DB, rebind rebindFunc,
 
 	var msg MessageDetail
 	var sentAt, receivedAt, deletedAt sql.NullTime
+	var metadata sql.NullString
 	err := db.QueryRowContext(ctx, rebind(query), args...).Scan(
 		&msg.ID,
 		&msg.SourceID,
@@ -513,6 +515,7 @@ func getMessageByQueryShared(ctx context.Context, db *sql.DB, rebind rebindFunc,
 		&msg.HasAttachments,
 		&msg.IsFromMe,
 		&deletedAt,
+		&metadata,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil //nolint:nilnil // Engine.GetMessage/GetMessageBySourceID use (nil, nil) for not-found; callers chain fallback lookups on the nil result
@@ -521,6 +524,19 @@ func getMessageByQueryShared(ctx context.Context, db *sql.DB, rebind rebindFunc,
 		return nil, fmt.Errorf("get message: %w", err)
 	}
 
+	msg.RelatedMessageID = store.RelatedMessageCandidate(msg.ID, msg.MessageType, metadata.String)
+	if msg.RelatedMessageID != nil {
+		var sourceID int64
+		var messageType string
+		lookup := fmt.Sprintf("SELECT m.source_id, COALESCE(m.message_type, '') FROM %smessages m WHERE m.id = ? AND %s", tablePrefix, store.LiveMessagesWhere("m", true))
+		lookupErr := db.QueryRowContext(ctx, rebind(lookup), *msg.RelatedMessageID).Scan(&sourceID, &messageType)
+		if lookupErr != nil && !errors.Is(lookupErr, sql.ErrNoRows) {
+			return nil, fmt.Errorf("get related message target: %w", lookupErr)
+		}
+		if lookupErr != nil || !store.RelatedMessageTargetMatches(msg.SourceID, msg.MessageType, sourceID, messageType) {
+			msg.RelatedMessageID = nil
+		}
+	}
 	if sentAt.Valid {
 		msg.SentAt = sentAt.Time
 	}

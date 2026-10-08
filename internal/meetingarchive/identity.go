@@ -13,6 +13,7 @@ import (
 func (p Person) Normalized() Person {
 	out := Person{
 		Name:                  strings.TrimSpace(p.Name),
+		ParticipantID:         p.ParticipantID,
 		Email:                 normalizePersonEmail(p.Email),
 		Phone:                 normalizePersonPhone(p.Phone),
 		Anchor:                strings.TrimSpace(p.Anchor),

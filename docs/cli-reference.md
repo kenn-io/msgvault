@@ -1139,6 +1139,47 @@ the source message has since been deleted. See
 
 ---
 
+## add-chatwoot
+
+Register permitted Chatwoot inboxes from configured `[[chatwoot]]` profiles.
+Available on `main`. The daemon reads each profile's token environment variable
+and validates access with the account API.
+
+```bash
+msgvault add-chatwoot [identifier]
+```
+
+With no identifier, register all configured profiles. Include/exclude inbox
+filters apply; no selected inboxes is an error. Re-run after adding inboxes.
+See [Chatwoot setup](guides/chatwoot.md).
+
+---
+
+## sync-chatwoot
+
+Sync Chatwoot conversations, media, and linked voice-call meetings. Available
+on `main`. Only registered inboxes selected by the profile's filters are synced.
+No identifier selects all configured profiles. Partial success is retained and
+healthy inboxes continue after another inbox fails.
+
+```bash
+msgvault sync-chatwoot [identifier] [--inbox 7] [--limit 100] [--full] [--no-media]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--inbox` | all included registered inboxes | Numeric inbox ID to sync; repeat for multiple inboxes; requires an identifier with several profiles; excluded or unregistered IDs are rejected |
+| `--limit` | `0` | History messages per conversation this run; artifact refreshes run additionally; zero means no history limit; unfinished history resumes |
+| `--full` | `false` | Reread all available history and update existing rows in place |
+| `--no-media` | `false` | Defer attachment downloads while retaining metadata and available transcripts; recent files retry on later syncs |
+
+Sync discovers the first conversation of a previously empty inbox on the next sync. Activity scans use a bounded ten-minute overlap, then a quiet inbox with no saved history or recent artifact work needs one listing plus the account agent lookup. Pending artifacts add conversation detail and message-range reads within the request budget; saved traversal progress gives every artifact a turn. Calls remain eligible for seven days, and failed files retry for seven days from their first failure. `--full` permits expired files to retry without extending automatic retries.
+Conversation-detail 404 retires conversation work; artifact-range 404 clears artifacts; exact-artifact 404 retires one artifact. History-range 404 and other access errors retain pending work and report failure.
+See [Chatwoot](guides/chatwoot.md) for attribution, privacy, and API compatibility.
+Reconciliation defaults to every 24 hours; set `reconcile_interval_hours` in [Chatwoot configuration](configuration.md#chatwoot).
+
+---
+
 ## add-beeper
 
 Register the chat accounts connected to a locally running

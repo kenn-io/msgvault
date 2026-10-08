@@ -4317,9 +4317,10 @@ func TestMCPHTTPServerMountsProtectedEndpoint(t *testing.T) {
 
 func TestGetMessagePreservesBrowserURL(t *testing.T) {
 	const link = "https://archive.example/?explore=%7B%22workspace%22%3A%22everything%22%2C%22selectedRow%22%3A%22message%3A42%22%7D"
-	h := newTestHandlers(&querytest.MockEngine{Messages: map[int64]*query.MessageDetail{42: {ID: 42, WebURL: link}}})
+	h := newTestHandlers(&querytest.MockEngine{Messages: map[int64]*query.MessageDetail{42: {ID: 42, WebURL: link, RelatedMessageID: new(int64(43))}}})
 	result := runTool[map[string]any](t, "get_message", h.getMessage, map[string]any{"id": float64(42)})
 	assert.Equal(t, link, result["web_url"])
+	assert.InDelta(t, 43, result["related_message_id"], 0)
 }
 
 func TestGetStats_AccountLastSyncAt(t *testing.T) {

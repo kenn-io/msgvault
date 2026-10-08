@@ -21,6 +21,7 @@ export interface MessageDetail {
   is_from_me?: boolean;
   labels: string[];
   message_type?: string;
+  related_message_id?: number;
   sent_at: string;
   size_bytes: number;
   snippet: string;

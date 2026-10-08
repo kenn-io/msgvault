@@ -14,6 +14,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
+	"go.kenn.io/msgvault/internal/chatwoot"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/twilio"
@@ -224,6 +225,17 @@ func mediaPolicyForSource(cfg *config.Config, sourceType, identifier string) (at
 		return cfg.Discord.MediaPolicy(identifier), true
 	case sourceTypeTeams:
 		return cfg.Teams.MediaPolicy(identifier), true
+	case chatwoot.SourceType:
+		baseURL, accountID, _, ok := chatwoot.ParseSourceIdentifier(identifier)
+		if ok {
+			for _, source := range cfg.Chatwoot {
+				canonical, err := chatwoot.CanonicalURL(source.URL)
+				if err == nil && canonical == baseURL && source.AccountID == accountID {
+					return source.MediaPolicy(), true
+				}
+			}
+		}
+		return attachmentpolicy.Policy{}, false
 	case twilio.SourceType:
 		source := cfg.GetTwilioSource(identifier)
 		if source == nil {

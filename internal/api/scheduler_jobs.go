@@ -1,8 +1,10 @@
 package api
 
 import (
+	"fmt"
 	"strings"
 
+	"go.kenn.io/msgvault/internal/chatwoot"
 	"go.kenn.io/msgvault/internal/circleback"
 	"go.kenn.io/msgvault/internal/gcal"
 	"go.kenn.io/msgvault/internal/granola"
@@ -93,6 +95,12 @@ func classifySourceScheduling(sourceType, identifier string) sourceScheduleClass
 // they are governed by the account scheduler, not a generic job.
 func SchedulerJobNameForSource(sourceType, identifier string) (string, bool) {
 	switch sourceType {
+	case chatwoot.SourceType:
+		baseURL, accountID, _, ok := chatwoot.ParseSourceIdentifier(identifier)
+		if !ok {
+			return "", false
+		}
+		return ChatwootJobNameForAccount(baseURL, accountID)
 	case synctechsms.SourceType:
 		// Store identifier == config OwnerPhone (see
 		// internal/synctechsms/importer.go GetOrCreateSource call).
@@ -156,4 +164,14 @@ func gcalJobName(normalizedEmail string) string {
 // account — under this exact name.
 func GCalJobNameForAccountEmail(normalizedEmail string) string {
 	return gcalJobName(normalizedEmail)
+}
+
+// ChatwootJobNameForAccount groups every registered inbox of one account under
+// the same stable job, independently of the local configuration label.
+func ChatwootJobNameForAccount(baseURL string, accountID int64) (string, bool) {
+	canonical, err := chatwoot.CanonicalURL(baseURL)
+	if err != nil || accountID <= 0 {
+		return "", false
+	}
+	return fmt.Sprintf("chatwoot:%s/accounts/%d", canonical, accountID), true
 }

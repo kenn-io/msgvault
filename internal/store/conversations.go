@@ -171,7 +171,8 @@ func (s *Store) GetConversationWindowContext(
 			COALESCE(LENGTH(mb.body_text), 0) + COALESCE(LENGTH(mb.body_html), 0),
 			selected.position,
 			selected.total_count,
-			selected.anchor_position
+			selected.anchor_position,
+			CASE WHEN m.message_type IN ('chatwoot', 'meeting_transcript') THEN m.metadata ELSE NULL END
 		FROM selected
 		JOIN messages m ON m.id = selected.id
 		LEFT JOIN message_recipients mr ON mr.id = (
@@ -203,6 +204,7 @@ func (s *Store) GetConversationWindowContext(
 		var message APIMessage
 		var sentAt, deletedAt nullableTimestamp
 		var isFromMe sql.NullBool
+		var metadata sql.NullString
 		var position, bodySize int64
 		if err := rows.Scan(
 			&message.ID,
@@ -226,9 +228,11 @@ func (s *Store) GetConversationWindowContext(
 			&position,
 			&window.Total,
 			&window.AnchorPosition,
+			&metadata,
 		); err != nil {
 			return nil, fmt.Errorf("scan conversation message: %w", err)
 		}
+		message.RelatedMessageID = RelatedMessageCandidate(message.ID, message.MessageType, metadata.String)
 		message.IsFromMe = isFromMe.Bool
 		if sentAt.Valid {
 			message.SentAt = sentAt.Time
@@ -247,6 +251,12 @@ func (s *Store) GetConversationWindowContext(
 	}
 	if len(ids) == 0 {
 		return window, nil
+	}
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("close conversation messages: %w", err)
+	}
+	if err := s.populateRelatedMessages(ctx, window.Messages); err != nil {
+		return nil, err
 	}
 	inlineIDs := applyConversationBodyBudget(window.Messages, bodySizes, anchorID)
 	if err := s.batchPopulateBodies(ctx, window.Messages, inlineIDs); err != nil {

@@ -1,6 +1,6 @@
 import { test as base, expect, type Page } from "@playwright/test";
 import { spawn, execFile, type ChildProcess } from "node:child_process";
-import { access, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { access, copyFile, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,6 +14,7 @@ const userAgent = "OpenAI File Downloader, XaiImageApiFetch/1.0";
 
 type MeetingRef = { message_id: number; source_id: number };
 type SeedManifest = {
+  chatwoot: [number, number];
   meetings: Record<"granola" | "notion" | "circleback", MeetingRef>;
   participant_id: number;
 };
@@ -47,12 +48,14 @@ export const test = base.extend<{ daemon: MeetingDaemon }>({
     async ({}, use, testInfo) => {
       const scratch = await mkdtemp(join(tmpdir(), "msgvault-meeting-e2e-"));
       const archive = join(scratch, "archive");
+      const executable = process.platform === "win32" ? join(scratch, "msgvault.exe") : binary;
       let child: ChildProcess | undefined;
       let logs = "";
       const capture = (data: Buffer) => {
         logs = (logs + data.toString()).slice(-64 * 1024);
       };
       try {
+        if (executable !== binary) await copyFile(binary, executable);
         await mkdir(archive);
         await mkdir(join(scratch, "os-home"));
         const env: NodeJS.ProcessEnv = {
@@ -68,7 +71,7 @@ export const test = base.extend<{ daemon: MeetingDaemon }>({
         // Reuse immutable compiler caches without giving the daemon any ambient
         // provider/remote/archive configuration or credentials.
         const cacheEnv = Object.fromEntries(
-          ["PATH", "HOME", "GOPATH", "GOCACHE", "GOMODCACHE"].flatMap((key) =>
+          ["PATH", "HOME", "GOPATH", "GOCACHE", "GOMODCACHE", "CGO_CFLAGS", "CGO_LDFLAGS"].flatMap((key) =>
             process.env[key] ? [[key, process.env[key]]] : [],
           ),
         );
@@ -92,7 +95,7 @@ export const test = base.extend<{ daemon: MeetingDaemon }>({
           ],
           {
             cwd: repo,
-            env: { ...env, ...caches, CGO_ENABLED: "1" },
+            env: { ...env, ...cacheEnv, ...caches, CGO_ENABLED: "1" },
             timeout: 120_000,
             maxBuffer: 256 * 1024,
           },
@@ -107,7 +110,7 @@ export const test = base.extend<{ daemon: MeetingDaemon }>({
         let origin = "";
         const startDaemon = async () => {
           let startupLog = "";
-          child = spawn(binary, ["--home", archive, "serve"], {
+          child = spawn(executable, ["--home", archive, "serve"], {
             cwd: repo,
             env,
             stdio: ["ignore", "pipe", "pipe"],

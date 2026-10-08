@@ -6,7 +6,6 @@ import (
 	"net/netip"
 	"net/url"
 	"slices"
-	"strconv"
 )
 
 var explicitPrivatePrefixes = []netip.Prefix{
@@ -41,11 +40,8 @@ func ValidateTrustedDestination(origin *url.URL, addresses []netip.Addr) (*url.U
 	case len(addresses) == 0:
 		return nil, nil, errors.New("trusted_addresses must contain at least one address")
 	}
-	if rawPort := origin.Port(); rawPort != "" {
-		port, err := strconv.ParseUint(rawPort, 10, 16)
-		if err != nil || port == 0 {
-			return nil, nil, errors.New("trusted_origin port must be between 1 and 65535")
-		}
+	if _, err := TargetPort(origin); err != nil {
+		return nil, nil, errors.New("trusted_origin port must be between 1 and 65535")
 	}
 	validated := make([]netip.Addr, 0, len(addresses))
 	for _, address := range addresses {
@@ -53,10 +49,7 @@ func ValidateTrustedDestination(origin *url.URL, addresses []netip.Addr) (*url.U
 		if address.Zone() != "" {
 			return nil, nil, fmt.Errorf("trusted_addresses: address %s must not include a zone", address)
 		}
-		allowed := slices.ContainsFunc(explicitPrivatePrefixes, func(prefix netip.Prefix) bool {
-			return prefix.Contains(address)
-		})
-		if !allowed {
+		if !ExplicitPrivateAddress(address) {
 			return nil, nil, fmt.Errorf("trusted_addresses: address %s is not in an allowed private range", address)
 		}
 		if slices.Contains(validated, address) {
@@ -67,4 +60,17 @@ func ValidateTrustedDestination(origin *url.URL, addresses []netip.Addr) (*url.U
 	copyOrigin := *origin
 	copyOrigin.Path = ""
 	return &copyOrigin, validated, nil
+}
+
+// ExplicitPrivateAddress reports whether addr belongs to a private range that
+// an exact, operator-configured origin may use. It does not allow loopback,
+// link-local, multicast, or other prohibited address classes.
+func ExplicitPrivateAddress(addr netip.Addr) bool {
+	if !addr.IsValid() || addr.Zone() != "" {
+		return false
+	}
+	addr = addr.Unmap()
+	return slices.ContainsFunc(explicitPrivatePrefixes, func(prefix netip.Prefix) bool {
+		return prefix.Contains(addr)
+	})
 }
