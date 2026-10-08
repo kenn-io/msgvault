@@ -42,6 +42,7 @@ type Importer struct {
 	client         *Client
 	agents         map[int64]Actor
 	resolvedActors map[string]int64
+	failedMedia    map[string]int64
 	requestBudget  int
 	boundsProbed   bool
 }
@@ -182,6 +183,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	scoped.store = imp.store.ScopedToSync(source.ID, syncID)
 	scoped.agents = map[int64]Actor{}
 	scoped.resolvedActors = map[string]int64{}
+	scoped.failedMedia = map[string]int64{}
 	scoped.boundsProbed = false
 	imp = &scoped
 	sum = &ImportSummary{SourceID: source.ID, Sources: 1}

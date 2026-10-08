@@ -59,7 +59,7 @@ func TestImportContractActorsSendersAndRecipients(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	contact := map[string]any{"id": int64(7), "type": "contact", "name": "Example Contact", "phone_number": "+12025550101"}
-	agent := map[string]any{"id": int64(7), "type": "user", "name": "Example Agent"}
+	agent := map[string]any{"id": int64(7), "type": "user", "name": "Example Agent", "email": "staffquartz@example.com"}
 	bot := map[string]any{"id": int64(7), "type": "agent_bot", "name": "Example Bot"}
 	owner := map[string]any{"id": int64(8), "type": "user", "name": "Example Owner"}
 	assistant := map[string]any{"id": int64(7), "type": "captain_assistant", "name": "Example Assistant"}
@@ -137,6 +137,15 @@ func TestImportContractActorsSendersAndRecipients(t *testing.T) {
 	var name string
 	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COALESCE(display_name, '') FROM participants WHERE id = ?`), contractSender(t, st, ids[109]).Int64).Scan(&name))
 	assert.Equal("Late Agent", name, "a later sighting fills a blank name")
+	for _, rebuilt := range []bool{false, true} {
+		if rebuilt {
+			_, err := st.RebuildFTSContext(t.Context(), nil)
+			require.NoError(err)
+		}
+		_, matches, err := st.SearchMessages("staffquartz", 0, 10)
+		require.NoError(err)
+		assert.Zero(matches, "staff observations stay outside the sender-address index before and after rebuilding")
+	}
 }
 
 func TestImportContractSelfAgentOwnershipFollowsIdentities(t *testing.T) {

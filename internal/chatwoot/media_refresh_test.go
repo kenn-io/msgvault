@@ -112,13 +112,17 @@ func readMediaRefreshBytes(t *testing.T, st *store.Store, messageID int64, dir s
 
 func TestMediaRefreshCallKeepsDistinctRecordingsAndDeduplicatesSameURL(t *testing.T) {
 	for _, tc := range []struct {
-		name          string
-		recordingPath string
-		want          []string
-		wantRequests  int
+		name                               string
+		recordingPath                      string
+		want                               []string
+		wantRequests                       int
+		initialFailure, replacementFailure bool
 	}{
-		{"distinct_recordings", "/recording-b.ogg", []string{"synthetic recording A bytes", "synthetic replacement recording B bytes"}, 2},
-		{"same_recording", "/recording-a.ogg", []string{"synthetic recording A bytes"}, 1},
+		{"distinct_recordings", "/recording-b.ogg", []string{"synthetic recording A bytes", "synthetic replacement recording B bytes"}, 2, false, false},
+		{"same_recording", "/recording-a.ogg", []string{"synthetic recording A bytes"}, 1, false, false},
+		{"new_failed_attachment", "/recording-a.ogg", []string{"synthetic recording A bytes"}, 1, true, false},
+		{"retained_failed_replacement", "/recording-a.ogg", []string{"synthetic replacement recording B bytes"}, 1, false, true},
+		{"successful_same_key_replacement", "/recording-a.ogg", []string{"synthetic replacement recording B bytes"}, 2, false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
@@ -126,13 +130,77 @@ func TestMediaRefreshCallKeepsDistinctRecordingsAndDeduplicatesSameURL(t *testin
 			media := newMediaRefreshServer(t)
 			router := newChatwootMediaRouter(t, media.server)
 			message := mediaRefreshCall(router.url(t, media.server, tc.recordingPath), router.url(t, media.server, "/recording-a.ogg"))
+			call, ok := message["call"].(map[string]any)
+			require.True(ok)
+			attachments, ok := message["attachments"].([]any)
+			require.True(ok)
+			require.Len(attachments, 1)
+			attachment, ok := attachments[0].(map[string]any)
+			require.True(ok)
 			api := newContractAPI(t, 2, []map[string]any{message})
 			api.mediaRouter = router
 			st := testutil.NewTestStore(t)
 			importer, _ := contractRegister(t, st, api)
 			opts := mediaRefreshOptions(t)
-			_, err := importer.Import(t.Context(), opts)
+			media.failures["/recording-a.ogg"] = tc.initialFailure
+			summary, err := importer.Import(t.Context(), opts)
 			require.NoError(err)
+			path := "/recording-a.ogg"
+			if tc.replacementFailure || tc.name == "successful_same_key_replacement" {
+				path = "/recording-b.ogg"
+				call["recording_url"] = router.url(t, media.server, path)
+				attachment["data_url"] = call["recording_url"]
+				media.failures[path] = tc.replacementFailure
+				summary, err = NewImporter(st, api.client(t)).Import(t.Context(), opts)
+				require.NoError(err)
+			}
+			if tc.initialFailure || tc.replacementFailure {
+				assert.Equal(1, media.requestCount(path), "one failed resource is attempted once per import")
+				assert.Equal(1, summary.MediaFailures, "one failed resource is counted once per import")
+				for _, id := range []string{"901", "call:901"} {
+					archivedID := contractArchivedMessageID(t, st, id)
+					refs, err := st.MessageProviderAttachments(archivedID, "chatwoot:")
+					require.NoError(err)
+					require.Len(refs, 1)
+					assert.Equal(attachmentpolicy.StateFailed, refs["chatwoot:attachment:2001"].State)
+					if tc.replacementFailure {
+						_, payloads := readMediaRefreshBytes(t, st, archivedID, opts.AttachmentsDir)
+						assert.Equal([]string{"synthetic recording A bytes"}, payloads)
+					}
+				}
+				attachment["data_url"] = router.url(t, media.server, path) + "?signature=next"
+				if tc.initialFailure {
+					attachment["id"] = int64(2002)
+				}
+				summary, err = importer.Import(t.Context(), opts)
+				require.NoError(err)
+				assert.Equal(2, media.requestCount(path), "a later import gets one fresh attempt")
+				assert.Equal(1, summary.MediaFailures)
+				if tc.replacementFailure {
+					message["attachments"] = nil
+					for _, full := range []bool{false, true} {
+						opts.Full = full
+						attempts := media.requestCount(path)
+						summary, err = importer.Import(t.Context(), opts)
+						require.NoError(err)
+						assert.Equal(attempts+1, media.requestCount(path), "unlisted retained failure cannot suppress the call-only retry")
+						assert.Equal(1, summary.MediaFailures)
+					}
+				}
+				media.failures[path] = false
+				summary, err = importer.Import(t.Context(), opts)
+				require.NoError(err)
+				assert.Zero(summary.MediaFailures)
+				_, payloads := readMediaRefreshBytes(t, st, contractArchivedMessageID(t, st, "call:901"), opts.AttachmentsDir)
+				assert.Contains(payloads, tc.want[0])
+				return
+			}
+			if tc.name == "successful_same_key_replacement" {
+				assert.Zero(summary.MediaFailures)
+				assert.Equal(1, media.requestCount(path))
+				_, payloads := readMediaRefreshBytes(t, st, contractArchivedMessageID(t, st, "901"), opts.AttachmentsDir)
+				assert.Equal(tc.want, payloads)
+			}
 			assert.Equal(tc.wantRequests, media.requestCount("/recording-a.ogg")+media.requestCount("/recording-b.ogg"), "each unique audio URL should be fetched once across the chat and linked meeting")
 			meetingID := contractArchivedMessageID(t, st, "call:901")
 			refs, payloads := readMediaRefreshBytes(t, st, meetingID, opts.AttachmentsDir)

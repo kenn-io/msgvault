@@ -135,7 +135,7 @@ func (imp *Importer) persistMessage(ctx context.Context, sourceID int64, c Conve
 			Subject: sql.NullString{String: title, Valid: true}, Snippet: sql.NullString{String: meetingarchive.Snippet(body), Valid: body != ""}, SizeEstimate: int64(len(body)), PreserveAttachmentStats: true},
 		Conversation: &store.ConversationPersistData{SourceConversationID: strconv.FormatInt(c.ID, 10), ConversationType: "direct_chat", Title: title, Participants: members, PreserveExistingParticipants: true},
 		Metadata:     &meta, BodyText: sql.NullString{String: body, Valid: body != ""}, RawMIME: raw, RawFormat: "chatwoot_json", Recipients: recipients, PreserveLabels: true,
-		FTS: &store.FTSDoc{Subject: title, Body: body, FromAddr: sender.Email, ToAddrs: strings.Join(toEmails, " ")},
+		FTS: &store.FTSDoc{Subject: title, Body: body, FromAddr: envelopeEmail(sender), ToAddrs: strings.Join(toEmails, " ")},
 	})
 	if err != nil {
 		return 0, err

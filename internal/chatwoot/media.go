@@ -113,10 +113,13 @@ func (imp *Importer) persistMedia(ctx context.Context, messageID int64, attachme
 		// A live call recording can later appear as a provider attachment. Keep
 		// its stored bytes across occurrence IDs while retaining current metadata.
 		if currentURL != "" && (previous.ContentHash == "" || storedMediaIdentity(previous) != currentURL) {
-			for _, candidate := range existing {
-				if candidate.ContentHash != "" && storedMediaIdentity(candidate) == currentURL {
-					previous, hadPrevious = candidate, true
-					break
+		findStored:
+			for _, candidates := range []map[string]store.AttachmentRef{existing, reusable} {
+				for _, candidate := range candidates {
+					if candidate.ContentHash != "" && storedMediaIdentity(candidate) == currentURL {
+						previous, hadPrevious = candidate, true
+						break findStored
+					}
 				}
 			}
 		}
@@ -194,6 +197,13 @@ func (imp *Importer) persistMedia(ctx context.Context, messageID int64, attachme
 		case failure.FailedSince > 0 && now().Sub(time.Unix(failure.FailedSince, 0)) >= artifactWindow && !opts.Full:
 			ref.State = attachmentpolicy.StateFailed
 			ref.SkipReason = attachmentpolicy.SkipFetchFailure
+		case imp.failedMedia[currentURL] > 0:
+			ref.State = attachmentpolicy.StateFailed
+			ref.SkipReason = attachmentpolicy.SkipFetchFailure
+			failure.FailedURL = currentURL
+			if failedAt := imp.failedMedia[currentURL]; failure.FailedSince == 0 || failedAt < failure.FailedSince {
+				failure.FailedSince = failedAt
+			}
 		default:
 			storage, hash, size, mimeType, fetchErr := imp.downloadMedia(ctx, remote, opts.AttachmentsDir, maxBytes, ref.MimeType)
 			ref.MimeType = mimeType
@@ -224,6 +234,7 @@ func (imp *Importer) persistMedia(ctx context.Context, messageID int64, attachme
 					if failure.FailedSince == 0 {
 						failure.FailedSince = now().Unix()
 					}
+					imp.failedMedia[currentURL] = failure.FailedSince
 				} else {
 					return 0, false, fetchErr
 				}
