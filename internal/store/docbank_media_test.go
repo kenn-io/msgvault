@@ -1028,6 +1028,39 @@ func TestMessageMediaOccurrences(t *testing.T) {
 		}
 	}
 
+	// Older releases stored duplicate Slack and Discord bytes as hashless rows
+	// pointing at a trusted CAS path. Those bytes are archived; a provider
+	// placeholder path is not.
+	slack, err := f.Store.GetOrCreateSource("slack", "T01:U01")
+	require.NoError(err)
+	slackConversation, err := f.Store.EnsureConversation(slack.ID, "slack-channel", "Channel")
+	require.NoError(err)
+	for _, alias := range []struct {
+		sourceAttachmentID, state, placeholder string
+		archived                               bool
+	}{
+		{"slack:F01", "", "", true},
+		{"slack:F02", "stored", "", true},
+		{"discord:A03", "", "", true},
+		{"slack:F04", "", "slack:pending:F04", false},
+	} {
+		audio := addBeeperAudio(t, f.Store, slack.ID, slackConversation, "alias-"+alias.sourceAttachmentID,
+			digestString(alias.sourceAttachmentID))
+		storagePath := alias.placeholder
+		if storagePath == "" {
+			storagePath = audio.hash[:2] + "/" + audio.hash
+		}
+		_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE attachments
+			SET content_hash = '', storage_path = ?, attachment_state = NULLIF(?, ''), source_attachment_id = ?,
+			    filename = 'voice.ogg', mime_type = 'audio/ogg'
+			WHERE id = ?`), storagePath, alias.state, alias.sourceAttachmentID, audio.attachmentID)
+		require.NoError(err)
+		listed = list(audio.messageID)
+		require.Len(listed, 1, alias.sourceAttachmentID)
+		assert.Equal(alias.archived, listed[0].BytesArchived, alias.sourceAttachmentID)
+		assert.Empty(listed[0].OccurrenceRef, alias.sourceAttachmentID)
+	}
+
 	legacyMissing := addBeeperAudio(t, f.Store, f.Source.ID, f.ConvID, "legacy-missing-reader", strings.Repeat("c", 64))
 	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE attachments SET attachment_state = NULL, storage_path = '' WHERE id = ?`), legacyMissing.attachmentID)
 	require.NoError(err)

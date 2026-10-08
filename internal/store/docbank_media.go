@@ -60,6 +60,14 @@ const attachmentBytesArchived = `(length(COALESCE(a.content_hash, '')) = 64
 	  AND COALESCE(a.size, 0) > 0
 	  AND COALESCE(a.storage_path, '') <> '')`
 
+// hashlessProviderAlias matches a Slack or Discord row that older releases
+// stored without a hash for duplicate bytes. Its bytes are archived when
+// storage_path is a trusted CAS path, which only casPathHash can check.
+const hashlessProviderAlias = `(COALESCE(a.content_hash, '') = ''
+	  AND COALESCE(a.size, 0) > 0
+	  AND (COALESCE(a.source_attachment_id, '') LIKE 'slack:%'
+	    OR COALESCE(a.source_attachment_id, '') LIKE 'discord:%'))`
+
 // beeperMediaEligible is the shared provider, capture and role predicate. It
 // assumes a (attachments), m (messages), c (conversations) and src (sources).
 // Archives older than attachment_state leave it NULL on stored Beeper audio.
@@ -635,15 +643,16 @@ func (s *Store) ListMessageMediaOccurrences(
 			return nil, err
 		}
 	}
-	archived, err := s.listMessageAudio(ctx, "list archived message audio", `
-		SELECT a.id, COALESCE(a.filename, ''), COALESCE(a.size, 0), COALESCE(a.attachment_state, '')
+	archived, err := s.listMessageAudio(ctx, "list archived message audio", true, `
+		SELECT a.id, COALESCE(a.filename, ''), COALESCE(a.size, 0), COALESCE(a.attachment_state, ''),
+		       CASE WHEN `+hashlessProviderAlias+` THEN COALESCE(a.storage_path, '') ELSE '' END
 		FROM attachments a
 		JOIN messages m ON m.id = a.message_id
 		WHERE m.id = ? AND `+LiveMessagesWhere("m", true)+`
 		  AND (`+messageAudioHint+` OR a.id IN (
 		    SELECT a.id FROM beeper_media_occurrences o`+beeperMediaCurrentJoin+`
 		      AND m.id = ? AND `+messageRecordingMapping+`))
-		  AND `+attachmentBytesArchived+`
+		  AND (`+attachmentBytesArchived+` OR `+hashlessProviderAlias+`)
 		  AND COALESCE(a.attachment_state, '') IN ('', 'stored')
 		ORDER BY a.id`, messageID, messageID)
 	if err != nil {
@@ -657,8 +666,10 @@ func (s *Store) ListMessageMediaOccurrences(
 	for i := range archived {
 		archived[i].BytesArchived = true
 	}
-	uncaptured, err := s.listMessageAudio(ctx, "list uncaptured message audio", `
-		SELECT a.id, COALESCE(a.filename, ''), COALESCE(a.size, 0), COALESCE(a.attachment_state, '')
+	uncaptured, err := s.listMessageAudio(ctx, "list uncaptured message audio", false, `
+		SELECT a.id, COALESCE(a.filename, ''), COALESCE(a.size, 0), COALESCE(a.attachment_state, ''),
+		       CASE WHEN COALESCE(a.attachment_state, '') = '' AND `+hashlessProviderAlias+`
+		         THEN COALESCE(a.storage_path, '') ELSE '' END
 		FROM attachments a
 		JOIN messages m ON m.id = a.message_id
 		WHERE m.id = ? AND `+LiveMessagesWhere("m", true)+`
@@ -712,8 +723,12 @@ func (s *Store) listMessageOccurrenceRows(
 }
 
 // listMessageAudio reads attachment rows that have no occurrence identity.
+// listMessageAudio reads attachment rows without occurrence identity. Each row
+// ends with a hashless provider alias's storage path, or "" for other rows.
+// The archived list keeps an alias only when that path is trusted CAS storage,
+// and the uncaptured list only when it is not.
 func (s *Store) listMessageAudio(
-	ctx context.Context, operation, query string, args ...any,
+	ctx context.Context, operation string, archived bool, query string, args ...any,
 ) ([]MessageMediaOccurrence, error) {
 	rows, err := s.db.QueryContext(ctx, s.Rebind(query), args...)
 	if err != nil {
@@ -723,8 +738,14 @@ func (s *Store) listMessageAudio(
 	var audio []MessageMediaOccurrence
 	for rows.Next() {
 		var o MessageMediaOccurrence
-		if err := rows.Scan(&o.AttachmentID, &o.Filename, &o.Size, &o.AttachmentState); err != nil {
+		var aliasPath string
+		if err := rows.Scan(&o.AttachmentID, &o.Filename, &o.Size, &o.AttachmentState, &aliasPath); err != nil {
 			return nil, fmt.Errorf("scan %s: %w", operation, err)
+		}
+		if aliasPath != "" {
+			if _, trusted := casPathHash(aliasPath); trusted != archived {
+				continue
+			}
 		}
 		audio = append(audio, o)
 	}
