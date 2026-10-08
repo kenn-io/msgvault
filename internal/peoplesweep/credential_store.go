@@ -7,8 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
+	"log/slog"
 	"os"
+	"path/filepath"
 	"regexp"
+
+	"go.kenn.io/msgvault/internal/providercredentials"
 )
 
 var (
@@ -16,7 +21,11 @@ var (
 	ErrCredentialNotFound        = errors.New("people provider credential not found")
 )
 
-const credentialNamespace = "people-providers"
+const (
+	legacyCredentialNamespace = "people-providers"
+	// Older releases took keys of any size, so read up to the shared store's own limit.
+	maxLegacyCredentialBytes = 1 << 20
+)
 
 // Credential carries an authentication scheme and an opaque secret. The
 // pointer-backed secret prevents fmt's value-%p special case from inspecting
@@ -60,180 +69,263 @@ func (c Credential) Format(state fmt.State, _ rune) {
 	_, _ = io.WriteString(state, c.String())
 }
 
-// CredentialStore owns private credential lifecycle independently of config.
+// CredentialStore maps people provider profiles onto the shared provider
+// credential store. Revisions cover one credential, absent included.
 type CredentialStore interface {
-	Save(profileName string, credential Credential) error
-	Load(profileName string) (Credential, error)
-	PreflightDelete(profileName string) (CredentialDeleteGuard, error)
-	Delete(profileName string, guard CredentialDeleteGuard) error
+	Revision(profileName, endpoint string) (string, bool, error)
+	Load(profileName, endpoint string) (string, error)
+	SaveIfRevision(profileName, endpoint, value, expected string) (string, error)
+	DeleteIfRevision(profileName, expected string) (string, error)
+	UnconfiguredRevision(profileName string) (string, bool, error)
 }
 
-// CredentialDeleteGuard is an opaque, single-use authorization to retire the
-// exact credential-store objects pinned by PreflightDelete. Close releases the
-// pinned resources without deleting the credential.
-type CredentialDeleteGuard interface {
-	io.Closer
-	credentialDeleteGuard()
-}
-
-// CredentialCleanupGuard is an opaque, single-use authorization to retire
-// only the exact credential object published by one successful SaveNew call.
-// Close releases its pinned identity without deleting the credential.
-type CredentialCleanupGuard interface {
-	io.Closer
-	credentialCleanupGuard()
-}
+var ErrCredentialRevisionConflict = providercredentials.ErrConflict
 
 // CredentialResolver resolves only the source fingerprinted into a profile.
 type CredentialResolver interface {
 	Resolve(profileName string, profile ProviderProfile) (Credential, error)
 }
 
-type credentialStoreRoot interface {
-	save(profileName string, data []byte) error
-	load(profileName string) ([]byte, error)
-	pinCleanup(owner *FileCredentialStore, profileName string) (CredentialCleanupGuard, error)
-	retirePublished(profileName string) error
-}
-
+// credentialFile is the format of legacy <tokens>/people-providers files.
 type credentialFile struct {
 	Scheme AuthScheme `json:"scheme"`
 	Value  string     `json:"value"`
 }
 
-// NewFileCredentialStore constructs a store rooted at
-// <tokensDir>/people-providers.
-func NewFileCredentialStore(tokensDir string) *FileCredentialStore {
-	return &FileCredentialStore{tokensDir: tokensDir}
+// StoredCredentials keeps people provider keys in provider-credentials.json
+// under people.provider/<name>, bound to the profile endpoint's origin.
+type StoredCredentials struct {
+	tokensDir string
 }
 
-// Save validates and atomically publishes one exact named credential.
-func (s *FileCredentialStore) Save(profileName string, credential Credential) error {
-	if err := validateCredentialProfileName(profileName); err != nil {
-		return err
-	}
-	if err := validateStoredCredential(credential); err != nil {
-		return err
-	}
-	data, err := json.Marshal(credentialFile{Scheme: credential.Scheme, Value: credential.Value()}, json.Deterministic(true))
-	if err != nil {
-		return errors.New("serialize people provider credential")
-	}
-	return s.withCredentialRoot("save", func(root credentialStoreRoot) error {
-		return root.save(profileName, data)
-	})
+func NewStoredCredentials(tokensDir string) StoredCredentials {
+	return StoredCredentials{tokensDir: tokensDir}
 }
 
-// SaveNew atomically publishes a credential only when the exact named record
-// is absent. The existence check and publication share the credential-root
-// lock so concurrent setup processes cannot overwrite the winner.
-func (s *FileCredentialStore) SaveNew(
-	profileName string, credential Credential,
-) (CredentialCleanupGuard, bool, error) {
+// read imports any legacy key file before reading the shared store. A file
+// that cannot be imported stays in place and only Load refuses it, so the
+// profile can still be inspected, given a new key, or removed.
+func (s StoredCredentials) read(profileName, endpoint string) (providercredentials.Snapshot, string, error) {
 	if err := validateCredentialProfileName(profileName); err != nil {
-		return nil, false, err
+		return providercredentials.Snapshot{}, "", err
 	}
-	if err := validateStoredCredential(credential); err != nil {
-		return nil, false, err
+	if err := s.importLegacy(profileName, endpoint); err != nil {
+		slog.Warn("people provider key file was not imported", "profile", profileName, "error", err)
 	}
-	data, err := json.Marshal(credentialFile{Scheme: credential.Scheme, Value: credential.Value()}, json.Deterministic(true))
+	snapshot, err := providercredentials.Read(s.tokensDir)
+	return snapshot, providercredentials.PeopleProviderID(profileName), err
+}
+
+// Revision reports a key as present when either store holds one, so a legacy
+// file that could not be imported still blocks a new key and gets removed.
+func (s StoredCredentials) Revision(profileName, endpoint string) (string, bool, error) {
+	snapshot, id, err := s.read(profileName, endpoint)
 	if err != nil {
-		return nil, false, errors.New("serialize people provider credential")
+		return "", false, err
 	}
-	created := false
-	var cleanup CredentialCleanupGuard
-	err = s.withCredentialRoot("save-new", func(root credentialStoreRoot) error {
-		if _, loadErr := root.load(profileName); loadErr == nil {
-			return nil
-		} else if !errors.Is(loadErr, ErrCredentialNotFound) {
-			return loadErr
+	revision, err := snapshot.Revision(id)
+	return revision, snapshot.Stored(id) || fileExists(s.legacyPath(profileName)), err
+}
+
+func (s StoredCredentials) Load(profileName, endpoint string) (string, error) {
+	if err := validateCredentialProfileName(profileName); err != nil {
+		return "", err
+	}
+	if err := s.importLegacy(profileName, endpoint); err != nil {
+		return "", err
+	}
+	snapshot, err := providercredentials.Read(s.tokensDir)
+	if err != nil {
+		return "", err
+	}
+	id := providercredentials.PeopleProviderID(profileName)
+	if !snapshot.Stored(id) {
+		return "", fmt.Errorf("%w for profile %q", ErrCredentialNotFound, profileName)
+	}
+	value, _, err := snapshot.Resolve(id, endpoint, "", nil)
+	return value, err
+}
+
+func (s StoredCredentials) SaveIfRevision(profileName, endpoint, value, expected string) (string, error) {
+	if err := validateCredentialProfileName(profileName); err != nil {
+		return "", err
+	}
+	id := providercredentials.PeopleProviderID(profileName)
+	saved, err := providercredentials.PutIfRevision(s.tokensDir, expected, id, endpoint, value)
+	if err != nil {
+		return "", err
+	}
+	return saved.Revision(id)
+}
+
+// DeleteIfRevision deletes the key observed at expected, together with any
+// legacy key file for the profile.
+func (s StoredCredentials) DeleteIfRevision(profileName, expected string) (string, error) {
+	if err := validateCredentialProfileName(profileName); err != nil {
+		return "", err
+	}
+	snapshot, err := providercredentials.Read(s.tokensDir)
+	if err != nil {
+		return "", err
+	}
+	return s.deleteObserved(snapshot, profileName, expected)
+}
+
+// UnconfiguredRevision observes the key of a profile that is no longer
+// configured. It never imports a legacy key file, because no endpoint is left
+// to bind it to; DeleteIfRevision removes that file too.
+func (s StoredCredentials) UnconfiguredRevision(profileName string) (string, bool, error) {
+	if err := validateCredentialProfileName(profileName); err != nil {
+		return "", false, err
+	}
+	snapshot, err := providercredentials.Read(s.tokensDir)
+	if err != nil {
+		return "", false, err
+	}
+	id := providercredentials.PeopleProviderID(profileName)
+	revision, err := snapshot.Revision(id)
+	return revision, snapshot.Stored(id) || fileExists(s.legacyPath(profileName)), err
+}
+
+func (s StoredCredentials) deleteObserved(
+	snapshot providercredentials.Snapshot, profileName, expected string,
+) (string, error) {
+	id := providercredentials.PeopleProviderID(profileName)
+	legacy := s.legacyPath(profileName)
+	if !snapshot.Stored(id) && !fileExists(legacy) {
+		return "", fmt.Errorf("%w for profile %q", ErrCredentialNotFound, profileName)
+	}
+	deleted, err := providercredentials.DeleteIfRevision(s.tokensDir, expected, id, func() error {
+		if err := retireLegacyCredential(legacy); err != nil {
+			return fmt.Errorf("remove legacy people provider key file %s: %w", legacy, err)
 		}
-		if saveErr := root.save(profileName, data); saveErr != nil {
-			return saveErr
-		}
-		var pinErr error
-		cleanup, pinErr = root.pinCleanup(s, profileName)
-		if pinErr != nil {
-			// The publication is durable but unusable without its cleanup guard,
-			// so retire the exact published identity before the root lock drops.
-			if retireErr := root.retirePublished(profileName); retireErr != nil {
-				return errors.Join(pinErr, retireErr)
-			}
-			return pinErr
-		}
-		created = true
 		return nil
 	})
-	if err != nil && cleanup != nil {
-		err = errors.Join(err, cleanup.Close())
-		cleanup = nil
+	if err != nil {
+		return "", err
 	}
-	return cleanup, created, err
+	return deleted.Revision(id)
 }
 
-// Load reads and validates one exact named credential without creating files
-// or directories or repairing their permissions.
-func (s *FileCredentialStore) Load(profileName string) (Credential, error) {
-	if err := validateCredentialProfileName(profileName); err != nil {
-		return Credential{}, err
+// importLegacy moves a key written by an older release into the shared store,
+// then removes the old file. A key already stored wins over the old file, and
+// an empty file is how older releases recorded a deleted key.
+func (s StoredCredentials) importLegacy(profileName, endpoint string) error {
+	path := s.legacyPath(profileName)
+	if !fileExists(path) {
+		return nil
 	}
-	var credential Credential
-	err := s.withCredentialRoot("load", func(root credentialStoreRoot) error {
-		data, err := root.load(profileName)
+	load := func() (string, bool, error) {
+		raw, err := readLegacyCredential(path)
+		if errors.Is(err, fs.ErrNotExist) || (err == nil && len(bytes.TrimSpace(raw)) == 0) {
+			return "", false, nil
+		}
 		if err != nil {
-			return err
+			return "", false, err
 		}
 		var stored credentialFile
-		decoder := jsontext.NewDecoder(bytes.NewReader(data), json.RejectUnknownMembers(true))
-
-		if err := json.UnmarshalDecode(decoder, &stored); err != nil {
-			return fmt.Errorf("parse people provider credential for profile %q: malformed JSON", profileName)
+		decoder := jsontext.NewDecoder(bytes.NewReader(raw), json.RejectUnknownMembers(true))
+		if json.UnmarshalDecode(decoder, &stored) != nil || requireCredentialJSONEnd(decoder) != nil {
+			return "", false, errors.New("malformed JSON")
 		}
-		if err := requireCredentialJSONEnd(decoder); err != nil {
-			return fmt.Errorf("parse people provider credential for profile %q: malformed JSON", profileName)
-		}
-		credential = NewCredential(stored.Scheme, stored.Value)
-		if err := validateStoredCredential(credential); err != nil {
-			return fmt.Errorf("validate people provider credential for profile %q: %w", profileName, err)
-		}
-		return nil
-	})
-	if errors.Is(err, os.ErrNotExist) {
-		return Credential{}, fmt.Errorf("%w for profile %q: %w", ErrCredentialNotFound, profileName, err)
+		return stored.Value, true, nil
 	}
-	return credential, err
+	var retireErr error
+	retire := func() error {
+		retireErr = retireLegacyCredential(path)
+		return retireErr
+	}
+	id := providercredentials.PeopleProviderID(profileName)
+	_, err := providercredentials.ImportIfAbsent(s.tokensDir, id, endpoint, load, retire)
+	if retireErr != nil && errors.Is(err, retireErr) {
+		// The shared store already holds the outcome, so the key stays usable.
+		slog.Warn("could not remove imported legacy people provider key file", "path", path, "error", retireErr)
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("import legacy people provider credential %s (left in place): %w", path, err)
+	}
+	return nil
 }
 
-// PreflightDelete read-only validates and pins an existing credential
-// namespace and exact target without reading credential contents. The returned
-// guard must be closed on every path.
-func (s *FileCredentialStore) PreflightDelete(profileName string) (CredentialDeleteGuard, error) {
-	if err := validateCredentialProfileName(profileName); err != nil {
+func (s StoredCredentials) legacyPath(profileName string) string {
+	return filepath.Join(s.tokensDir, legacyCredentialNamespace, profileName+".json")
+}
+
+func fileExists(path string) bool {
+	_, err := os.Lstat(path)
+	return !errors.Is(err, fs.ErrNotExist)
+}
+
+// retireLegacyCredential empties a legacy key file durably before unlinking
+// it. If a crash loses the unlink, the empty file reads as a deleted key, so
+// the secret cannot be imported again.
+func retireLegacyCredential(path string) error {
+	info, err := os.Lstat(path) // #nosec G703 -- validated profile name under the tokens directory.
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if info.Mode().IsRegular() {
+		if err := emptyLegacyCredential(path, info); err != nil {
+			return err
+		}
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) { // #nosec G703 -- validated profile name under the tokens directory.
+		return err
+	}
+	return nil
+}
+
+func emptyLegacyCredential(path string, info fs.FileInfo) error {
+	file, err := os.OpenFile(path, os.O_WRONLY|legacyCredentialNoFollow, 0) // #nosec G304 G703 -- validated profile name under the tokens directory.
+	if err != nil {
+		return err
+	}
+	defer file.Close() //nolint:errcheck // the explicit Close below reports the result
+	opened, err := file.Stat()
+	if err != nil {
+		return err
+	}
+	if !opened.Mode().IsRegular() || !os.SameFile(info, opened) {
+		return errors.New("legacy key file changed while it was removed")
+	}
+	if err := file.Truncate(0); err != nil {
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		return err
+	}
+	return file.Close()
+}
+
+func readLegacyCredential(path string) ([]byte, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
 		return nil, err
 	}
-	return s.preflightExistingCredentialDelete(profileName)
-}
-
-// Delete securely retires only the exact named record pinned by guard. It
-// never bootstraps or repairs credential-store infrastructure. Every guarded
-// deletion attempt consumes guard, including a failed attempt.
-func (s *FileCredentialStore) Delete(profileName string, guard CredentialDeleteGuard) error {
-	if err := validateCredentialProfileName(profileName); err != nil {
-		// A supplied guard authorizes one attempt, even when local validation
-		// rejects that attempt before a credential path can be used.
-		_ = s.deleteExistingCredential(profileName, guard)
-		return err
+	if !info.Mode().IsRegular() {
+		return nil, errors.New("legacy key file is not a regular file")
 	}
-	return s.deleteExistingCredential(profileName, guard)
-}
-
-// CleanupNew retires only the exact credential published by the SaveNew call
-// that returned guard. It never discovers a cleanup target by path.
-func (s *FileCredentialStore) CleanupNew(profileName string, guard CredentialCleanupGuard) error {
-	if err := validateCredentialProfileName(profileName); err != nil {
-		return err
+	file, err := os.OpenFile(path, os.O_RDONLY|legacyCredentialNoFollow, 0) // #nosec G304 -- validated profile name under the tokens directory.
+	if err != nil {
+		return nil, err
 	}
-	return s.cleanupNewCredential(profileName, guard)
+	defer file.Close() //nolint:errcheck // read-only file
+	opened, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !opened.Mode().IsRegular() || !os.SameFile(info, opened) {
+		return nil, errors.New("legacy key file changed while it was read")
+	}
+	raw, err := io.ReadAll(io.LimitReader(file, maxLegacyCredentialBytes+1))
+	if err == nil && len(raw) > maxLegacyCredentialBytes {
+		return nil, errors.New("legacy key file is too large")
+	}
+	return raw, err
 }
 
 // ValidateProviderProfileName applies the single grammar used by provider
@@ -250,18 +342,6 @@ func validateCredentialProfileName(profileName string) error {
 		return fmt.Errorf("invalid people provider credential profile name: %w", err)
 	}
 	return nil
-}
-
-func validateStoredCredential(credential Credential) error {
-	if credential.Value() == "" {
-		return errors.New("people provider credential value is empty")
-	}
-	switch credential.Scheme {
-	case AuthBearer, AuthXAPIKey, AuthGoogleAPIKey:
-		return nil
-	default:
-		return errors.New("people provider credential has an invalid authentication scheme")
-	}
 }
 
 func requireCredentialJSONEnd(decoder *jsontext.Decoder) error {
@@ -297,14 +377,11 @@ func (r *credentialResolver) Resolve(profileName string, profile ProviderProfile
 		if r.store == nil {
 			return Credential{}, errors.New("people provider credential store is unavailable")
 		}
-		credential, err := r.store.Load(profileName)
+		value, err := r.store.Load(profileName, profile.Endpoint)
 		if err != nil {
 			return Credential{}, err
 		}
-		if credential.Scheme != profile.Auth {
-			return Credential{}, errors.New("stored people provider credential scheme does not match the fingerprinted profile")
-		}
-		return credential, nil
+		return NewCredential(profile.Auth, value), nil
 	case CredentialEnv:
 		if r.lookup == nil {
 			return Credential{}, errors.New("people provider credential environment lookup is unavailable")

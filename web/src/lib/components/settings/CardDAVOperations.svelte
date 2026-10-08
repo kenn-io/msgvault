@@ -46,6 +46,7 @@
     credential_mismatch: 'The stored credential belongs to different CardDAV account settings. Connect the account again and save.',
     credential_unavailable: 'The stored CardDAV credential cannot be read. Connect the account again and save.',
     google_authorization_required: 'Connect Google in CardDAV account settings, or run msgvault carddav authorize-google with your account email and OAuth app, then try again.',
+    microsoft_authorization_required: 'Run msgvault carddav authorize-microsoft with your account email, then try again.',
     runtime_unavailable:
       'CardDAV is configured but unavailable in this daemon session. Test and save the account again, or restart the daemon.',
   };

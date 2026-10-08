@@ -2,41 +2,13 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"strconv"
 	"strings"
-	"time"
 
 	"go.kenn.io/msgvault/internal/personenrichment"
 )
-
-// PersonEnrichmentConsent is one preserved grant and its optional revocation.
-type PersonEnrichmentConsent struct {
-	ID                 int64      `json:"id"`
-	ProfileFingerprint string     `json:"profile_fingerprint"`
-	GrantedBy          string     `json:"granted_by"`
-	GrantedAt          time.Time  `json:"granted_at"`
-	RevokedBy          *string    `json:"revoked_by,omitzero" nullable:"false"`
-	RevokedAt          *time.Time `json:"revoked_at,omitempty"`
-}
-
-// PersonEnrichmentConsentStatus reports authority for one exact enrichment
-// policy fingerprint without exposing credential values.
-type PersonEnrichmentConsentStatus struct {
-	Fingerprint   string                   `json:"fingerprint"`
-	ProfileExists bool                     `json:"profile_exists"`
-	Active        bool                     `json:"active"`
-	Consent       *PersonEnrichmentConsent `json:"consent,omitzero" nullable:"false"`
-	LastRevoked   *PersonEnrichmentConsent `json:"last_revoked,omitzero" nullable:"false"`
-}
-
-const personEnrichmentConsentColumns = `
-	id, profile_fingerprint, granted_by, granted_at, revoked_by, revoked_at`
-
-var errPersonEnrichmentConsentChangedConcurrent = errors.New(
-	"person enrichment consent changed concurrently")
 
 // EnsurePersonEnrichmentProfile inserts one immutable canonical policy or
 // verifies that the row already stored under its fingerprint is identical.
@@ -133,8 +105,8 @@ func (s *Store) ListPersonEnrichmentProfilesContext(
 func (s *Store) GrantPersonEnrichmentConsent(
 	ctx context.Context,
 	fingerprint, actor string,
-) (*PersonEnrichmentConsent, bool, error) {
-	actor, err := validatePersonEnrichmentConsentInput(fingerprint, actor)
+) (*ProviderConsent, bool, error) {
+	actor, err := validateConsentInput(ConsentPersonEnrichment, fingerprint, actor)
 	if err != nil {
 		return nil, false, err
 	}
@@ -144,7 +116,7 @@ func (s *Store) GrantPersonEnrichmentConsent(
 		if grantErr == nil {
 			return consent, created, nil
 		}
-		if !errors.Is(grantErr, errPersonEnrichmentConsentChangedConcurrent) &&
+		if !errors.Is(grantErr, errConsentChangedConcurrent) &&
 			!s.dialect.IsBusyError(grantErr) {
 			return nil, false, grantErr
 		}
@@ -155,34 +127,22 @@ func (s *Store) GrantPersonEnrichmentConsent(
 
 func (s *Store) grantPersonEnrichmentConsentOnce(
 	ctx context.Context, fingerprint, actor string,
-) (*PersonEnrichmentConsent, bool, error) {
-	var consent *PersonEnrichmentConsent
+) (*ProviderConsent, bool, error) {
+	var consent *ProviderConsent
 	created := false
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
 		if err := s.lockPersonEnrichmentAuthorityMutationTx(ctx, tx); err != nil {
 			return err
 		}
-		var profileExists bool
-		if err := tx.QueryRowContext(ctx,
-			`SELECT EXISTS (SELECT 1 FROM person_enrichment_profiles WHERE fingerprint = ?)`,
-			fingerprint,
-		).Scan(&profileExists); err != nil {
+		profileExists, err := consentProfileExists(ctx, tx, ConsentPersonEnrichment, fingerprint)
+		if err != nil {
 			return fmt.Errorf("check person enrichment profile: %w", err)
 		}
 		if !profileExists {
 			return errors.New("person enrichment consent profile does not exist")
 		}
-		var insertErr error
-		consent, insertErr = scanPersonEnrichmentConsent(tx.QueryRowContext(ctx, `
-			INSERT INTO person_enrichment_consents
-				(profile_fingerprint, granted_by)
-			VALUES (?, ?)
-			ON CONFLICT DO NOTHING
-			RETURNING `+personEnrichmentConsentColumns,
-			fingerprint, actor,
-		))
-		if insertErr == nil {
-			created = true
+		consent, created, err = grantConsentOnce(ctx, tx, ConsentPersonEnrichment, fingerprint, actor)
+		if err == nil && created {
 			generation := "consent:" + strconv.FormatInt(consent.ID, 10)
 			dueAt := s.personEnrichmentTime()
 			if _, err := tx.ExecContext(ctx, `
@@ -193,24 +153,8 @@ func (s *Store) grantPersonEnrichmentConsentOnce(
 				fingerprint, generation, dueAt); err != nil {
 				return fmt.Errorf("publish person enrichment consent work: %w", err)
 			}
-			return nil
 		}
-		if !errors.Is(insertErr, sql.ErrNoRows) {
-			return fmt.Errorf("grant person enrichment consent: %w", insertErr)
-		}
-		var readErr error
-		consent, readErr = scanPersonEnrichmentConsent(tx.QueryRowContext(ctx, `
-			SELECT `+personEnrichmentConsentColumns+`
-			FROM person_enrichment_consents
-			WHERE profile_fingerprint = ? AND revoked_at IS NULL
-			ORDER BY id DESC LIMIT 1`, fingerprint))
-		if readErr == nil {
-			return nil
-		}
-		if !errors.Is(readErr, sql.ErrNoRows) {
-			return fmt.Errorf("read active person enrichment consent: %w", readErr)
-		}
-		return errPersonEnrichmentConsentChangedConcurrent
+		return err
 	})
 	return consent, created, err
 }
@@ -221,7 +165,7 @@ func (s *Store) RevokePersonEnrichmentConsent(
 	ctx context.Context,
 	fingerprint, actor string,
 ) (bool, error) {
-	actor, err := validatePersonEnrichmentConsentInput(fingerprint, actor)
+	actor, err := validateConsentInput(ConsentPersonEnrichment, fingerprint, actor)
 	if err != nil {
 		return false, err
 	}
@@ -291,17 +235,9 @@ func (s *Store) revokePersonEnrichmentConsentTx(
 			s.personEnrichmentTxBarrier("revoke_person_locked")
 		}
 	}
-	var id int64
-	err = tx.QueryRowContext(ctx, `
-			UPDATE person_enrichment_consents
-			SET revoked_by = ?, revoked_at = CURRENT_TIMESTAMP
-			WHERE profile_fingerprint = ? AND revoked_at IS NULL
-			RETURNING id`, actor, fingerprint).Scan(&id)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("revoke person enrichment consent: %w", err)
+	revoked, err := revokeConsent(ctx, tx, ConsentPersonEnrichment, fingerprint, actor)
+	if err != nil || !revoked {
+		return false, err
 	}
 	if s.personEnrichmentTxBarrier != nil {
 		s.personEnrichmentTxBarrier("revoke_authority_removed")
@@ -339,27 +275,9 @@ func (s *Store) revokeAllPersonEnrichmentConsentsOnce(
 		if err := s.lockPersonEnrichmentAuthorityMutationTx(ctx, tx); err != nil {
 			return err
 		}
-		rows, err := tx.QueryContext(ctx, `SELECT profile_fingerprint
-			FROM person_enrichment_consents WHERE revoked_at IS NULL
-			ORDER BY profile_fingerprint`)
+		fingerprints, err := activeConsentFingerprints(ctx, tx, ConsentPersonEnrichment)
 		if err != nil {
-			return fmt.Errorf("list active person enrichment consents: %w", err)
-		}
-		fingerprints := make([]string, 0)
-		for rows.Next() {
-			var fingerprint string
-			if err := rows.Scan(&fingerprint); err != nil {
-				_ = rows.Close()
-				return fmt.Errorf("read active person enrichment consent: %w", err)
-			}
-			fingerprints = append(fingerprints, fingerprint)
-		}
-		if err := rows.Err(); err != nil {
-			_ = rows.Close()
-			return fmt.Errorf("iterate active person enrichment consents: %w", err)
-		}
-		if err := rows.Close(); err != nil {
-			return fmt.Errorf("close active person enrichment consents: %w", err)
+			return err
 		}
 		if s.personEnrichmentTxBarrier != nil {
 			s.personEnrichmentTxBarrier("revoke_all_consents_snapshotted")
@@ -382,107 +300,13 @@ func (s *Store) revokeAllPersonEnrichmentConsentsOnce(
 }
 
 // PersonEnrichmentConsentStatus reports exact current and historical state.
-func (s *Store) PersonEnrichmentConsentStatus(
-	ctx context.Context,
-	fingerprint string,
-) (*PersonEnrichmentConsentStatus, error) {
-	if !validLowerSHA256(fingerprint) {
-		return nil, errors.New("person enrichment consent requires a lowercase SHA-256 fingerprint")
-	}
-	status := &PersonEnrichmentConsentStatus{Fingerprint: fingerprint}
-	if err := s.db.QueryRowContext(ctx,
-		`SELECT EXISTS (SELECT 1 FROM person_enrichment_profiles WHERE fingerprint = ?)`,
-		fingerprint,
-	).Scan(&status.ProfileExists); err != nil {
-		return nil, fmt.Errorf("check person enrichment profile status: %w", err)
-	}
-	if !status.ProfileExists {
-		return status, nil
-	}
-	active, err := s.activePersonEnrichmentConsent(ctx, fingerprint)
-	if err == nil {
-		status.Active = true
-		status.Consent = active
-	} else if !errors.Is(err, sql.ErrNoRows) {
-		return nil, fmt.Errorf("read active person enrichment consent status: %w", err)
-	}
-	lastRevoked, err := scanPersonEnrichmentConsent(s.db.QueryRowContext(ctx, `
-		SELECT `+personEnrichmentConsentColumns+`
-		FROM person_enrichment_consents
-		WHERE profile_fingerprint = ? AND revoked_at IS NOT NULL
-		ORDER BY revoked_at DESC, id DESC LIMIT 1`, fingerprint))
-	if err == nil {
-		status.LastRevoked = lastRevoked
-	} else if !errors.Is(err, sql.ErrNoRows) {
-		return nil, fmt.Errorf("read revoked person enrichment consent status: %w", err)
-	}
-	return status, nil
+func (s *Store) PersonEnrichmentConsentStatus(ctx context.Context, fingerprint string) (*ProviderConsentStatus, error) {
+	return consentStatus(ctx, s.db, ConsentPersonEnrichment, fingerprint)
 }
 
 // HasActivePersonEnrichmentConsent is the narrow exact-purpose egress gate.
-func (s *Store) HasActivePersonEnrichmentConsent(
-	ctx context.Context,
-	fingerprint string,
-) (bool, error) {
-	if !validLowerSHA256(fingerprint) {
-		return false, errors.New("person enrichment consent requires a lowercase SHA-256 fingerprint")
-	}
-	var active bool
-	err := s.db.QueryRowContext(ctx, `
-		SELECT EXISTS (
-			SELECT 1 FROM person_enrichment_consents
-			WHERE profile_fingerprint = ? AND revoked_at IS NULL
-		)`, fingerprint).Scan(&active)
-	if err != nil {
-		return false, fmt.Errorf("check active person enrichment consent: %w", err)
-	}
-	return active, nil
-}
-
-func (s *Store) activePersonEnrichmentConsent(
-	ctx context.Context,
-	fingerprint string,
-) (*PersonEnrichmentConsent, error) {
-	return scanPersonEnrichmentConsent(s.db.QueryRowContext(ctx, `
-		SELECT `+personEnrichmentConsentColumns+`
-		FROM person_enrichment_consents
-		WHERE profile_fingerprint = ? AND revoked_at IS NULL
-		ORDER BY id DESC LIMIT 1`, fingerprint))
-}
-
-func scanPersonEnrichmentConsent(row scanner) (*PersonEnrichmentConsent, error) {
-	var (
-		consent              PersonEnrichmentConsent
-		grantedAt, revokedAt nullableTimestamp
-		revokedBy            sql.NullString
-	)
-	if err := row.Scan(
-		&consent.ID, &consent.ProfileFingerprint, &consent.GrantedBy,
-		&grantedAt, &revokedBy, &revokedAt,
-	); err != nil {
-		return nil, err
-	}
-	if !grantedAt.Valid {
-		return nil, errors.New("person enrichment consent has invalid granted_at")
-	}
-	consent.GrantedAt = grantedAt.Time
-	if revokedBy.Valid {
-		value := revokedBy.String
-		consent.RevokedBy = &value
-	}
-	consent.RevokedAt = optionalTimestamp(revokedAt)
-	return &consent, nil
-}
-
-func validatePersonEnrichmentConsentInput(fingerprint, actor string) (string, error) {
-	if !validLowerSHA256(fingerprint) {
-		return "", errors.New("person enrichment consent requires a lowercase SHA-256 fingerprint")
-	}
-	actor = strings.TrimSpace(actor)
-	if actor == "" {
-		return "", errors.New("person enrichment consent actor is required")
-	}
-	return actor, nil
+func (s *Store) HasActivePersonEnrichmentConsent(ctx context.Context, fingerprint string) (bool, error) {
+	return s.hasActiveConsent(ctx, ConsentPersonEnrichment, fingerprint)
 }
 
 func validPersonEnrichmentProviderNamespace(namespace, kind string) bool {

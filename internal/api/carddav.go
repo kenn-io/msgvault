@@ -21,6 +21,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/msgvault/internal/carddav"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -128,6 +129,10 @@ func (c *CardDAVController) reconcileCurrentSchedule() error {
 			service = nil
 		}
 	}
+	// A Microsoft connection keeps its schedule without a token. The service
+	// reads the token on each request, so a sign-in through carddav
+	// authorize-microsoft takes effect without the daemon, and a run before
+	// it reports microsoft_authorization_required.
 	if reconcileConnection != nil {
 		return reconcileConnection(c.connection(), configured, service)
 	}
@@ -221,7 +226,7 @@ func (c *CardDAVController) loadStartupService(logger *slog.Logger) error {
 	}
 	service, err := c.serviceForCredential(credential, configured)
 	if err != nil {
-		if !credential.Google {
+		if !credential.OAuth() {
 			return err
 		}
 		logger.Warn("CardDAV authorization configuration is unavailable; repair the account settings", "error", err)
@@ -458,7 +463,7 @@ func (c *CardDAVController) Save(ctx context.Context, req CardDAVAccountRequest)
 		!slices.Equal(current.TrustedAddresses, previousSnapshot.TrustedAddresses)
 	// An unchanged Google save refreshes discovery; schedule edits stay offline.
 	if req.Password == "" && !identityChanged && !enabling && !policyChanged &&
-		(req.Provider != cardDAVProviderGoogle || !next.Enabled || (c.Current() != nil && current.Schedule != next.Schedule)) {
+		(!cardDAVOAuthProvider(req.Provider) || !next.Enabled || (c.Current() != nil && current.Schedule != next.Schedule)) {
 		return c.saveCardDAVConfigOnly(ctx, current, next)
 	}
 	credential, err := c.credentialForRequest(ctx, req)
@@ -477,7 +482,7 @@ func (c *CardDAVController) Save(ctx context.Context, req CardDAVAccountRequest)
 	hadPreviousCredential := previousCredentialErr == nil
 	var previousCredentialFile carddav.CredentialFileSnapshot
 	hadPreviousCredentialFile := false
-	if (req.Password != "" || req.Provider == cardDAVProviderGoogle) && previousCredentialErr != nil {
+	if (req.Password != "" || cardDAVOAuthProvider(req.Provider)) && previousCredentialErr != nil {
 		previousCredentialFile, err = carddav.CaptureCredentialFile(tokenDir)
 		if err != nil {
 			return CardDAVAccountResponse{}, errors.Join(errCardDAVStorage, err)
@@ -486,7 +491,7 @@ func (c *CardDAVController) Save(ctx context.Context, req CardDAVAccountRequest)
 	} else if previousCredentialErr != nil && !errors.Is(previousCredentialErr, os.ErrNotExist) {
 		return CardDAVAccountResponse{}, errors.Join(errCardDAVStorage, previousCredentialErr)
 	}
-	credentialsChanged := !hadPreviousCredential || previousCredential.Password != credential.Password || previousCredential.Google != credential.Google || previousCredential.OAuthApp != credential.OAuthApp ||
+	credentialsChanged := !hadPreviousCredential || previousCredential.Password != credential.Password || previousCredential.Google != credential.Google || previousCredential.Microsoft != credential.Microsoft || previousCredential.OAuthApp != credential.OAuthApp ||
 		previousCredential.BaseURL != req.BaseURL || previousCredential.Username != req.Username
 	if err := c.store.ValidateCardDAVConnectionChangeContext(
 		ctx, req.BaseURL, req.Username, credentialsChanged, c.connection(),
@@ -601,6 +606,9 @@ func (c *CardDAVController) passwordForRequest(ctx context.Context, req CardDAVA
 	if credential.Google {
 		return "", fmt.Errorf("%w: select Google Contacts to reuse Google authorization", errCardDAVValidation)
 	}
+	if credential.Microsoft {
+		return "", fmt.Errorf("%w: select Microsoft contacts to reuse Microsoft authorization", errCardDAVValidation)
+	}
 	return credential.Password, nil
 }
 
@@ -644,11 +652,14 @@ func (c *CardDAVController) passwordConfigured(ctx context.Context, baseURL, use
 }
 
 func validateCardDAVAccountRequest(req CardDAVAccountRequest) error {
-	if req.Provider != "" && req.Provider != cardDAVProviderGoogle {
+	if !config.ValidCardDAVProvider(req.Provider) {
 		return fmt.Errorf("%w: unknown CardDAV provider", errCardDAVValidation)
 	}
 	if req.Provider == cardDAVProviderGoogle && req.Password != "" {
 		return fmt.Errorf("%w: Google Contacts uses OAuth, not a password", errCardDAVValidation)
+	}
+	if req.Provider == cardDAVProviderMicrosoft && req.Password != "" {
+		return fmt.Errorf("%w: Microsoft contacts use OAuth, not a password", errCardDAVValidation)
 	}
 	if req.Provider != cardDAVProviderGoogle && req.OAuthApp != "" {
 		return fmt.Errorf("%w: OAuth app requires Google Contacts", errCardDAVValidation)
@@ -673,7 +684,7 @@ func validateCardDAVAccountRequest(req CardDAVAccountRequest) error {
 
 type CardDAVAccountRequest struct {
 	Connection string `json:"connection,omitempty"`
-	Provider   string `json:"provider,omitempty" enum:",google"`
+	Provider   string `json:"provider,omitempty" enum:",google,microsoft"`
 	OAuthApp   string `json:"oauth_app,omitempty"`
 	BaseURL    string `json:"base_url"`
 	Username   string `json:"username"`
@@ -794,7 +805,7 @@ type CardDAVRunResponse struct {
 	Created      int64      `json:"created"`
 	Updated      int64      `json:"updated"`
 	Removed      int64      `json:"removed"`
-	ErrorCode    string     `json:"error_code,omitempty" enum:"cancelled,retry_after,authentication_failed,google_authorization_required,upstream_failed,safety_limit,sync_failed,unsafe_error_redacted,daemon_restarted"`
+	ErrorCode    string     `json:"error_code,omitempty" enum:"cancelled,retry_after,authentication_failed,google_authorization_required,microsoft_authorization_required,microsoft_contact_too_large,upstream_failed,safety_limit,sync_failed,unsafe_error_redacted,daemon_restarted"`
 	ErrorMessage string     `json:"error_message,omitempty"`
 }
 
@@ -811,7 +822,7 @@ type CardDAVStatusResponse struct {
 	Scheduled            bool                  `json:"scheduled"`
 	Schedule             string                `json:"schedule"`
 	NextScheduledAt      *time.Time            `json:"next_scheduled_at,omitempty"`
-	RepairReason         string                `json:"repair_reason,omitempty" enum:"account_missing,credential_missing,credential_mismatch,credential_unavailable,google_authorization_required,runtime_unavailable"`
+	RepairReason         string                `json:"repair_reason,omitempty" enum:"account_missing,credential_missing,credential_mismatch,credential_unavailable,google_authorization_required,microsoft_authorization_required,runtime_unavailable"`
 	Account              *CardDAVStatusAccount `json:"account,omitzero" nullable:"false"`
 	Active               *CardDAVRunResponse   `json:"active,omitzero" nullable:"false"`
 	Latest               *CardDAVRunResponse   `json:"latest,omitzero" nullable:"false"`
@@ -848,6 +859,10 @@ func cardDAVRunPublicFailure(code string) (string, string) {
 		return code, "CardDAV authentication failed."
 	case "google_authorization_required":
 		return code, "Google Contacts authorization is required. Connect Google in CardDAV account settings."
+	case "microsoft_authorization_required":
+		return code, "Microsoft contacts authorization is required. Run msgvault carddav authorize-microsoft with your account email."
+	case "microsoft_contact_too_large":
+		return code, operations.FixedPublicError(operations.PublicErrorMicrosoftContactTooLarge).Message
 	case "upstream_failed":
 		return code, "CardDAV server request failed."
 	case "safety_limit":
@@ -935,6 +950,13 @@ func (c *CardDAVController) scopedStatus(ctx context.Context) (CardDAVStatusResp
 			status.CredentialConfigured = false
 			status.RepairReason = "google_authorization_required"
 			return status, nil //nolint:nilerr // Status reports missing Google authorization without contacting Google.
+		}
+	}
+	if credential.Microsoft {
+		if _, err := c.microsoftContactsManager(credential.Username); err != nil {
+			status.CredentialConfigured = false
+			status.RepairReason = "microsoft_authorization_required"
+			return status, nil //nolint:nilerr // Status reports missing Microsoft authorization without contacting Microsoft.
 		}
 	}
 	if !status.Available {
@@ -1030,8 +1052,8 @@ func (s *Server) registerCardDAVRoutes(api huma.API) {
 	registerCardDAVIDJSONRoute[CardDAVPublicationResponse](api, "unpublishCardDAVPerson", http.MethodDelete, "/carddav/publications/{person_id}", "person_id", "Unpublish a person from CardDAV", s.handleCardDAVUnpublish, http.StatusBadRequest, http.StatusNotFound, http.StatusConflict, http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable)
 	registerCardDAVJSONRoute[CardDAVConflictsResponse](api, "listCardDAVConflicts", http.MethodGet, "/carddav/conflicts", "List unresolved CardDAV conflicts", s.handleCardDAVConflicts, http.StatusInternalServerError, http.StatusServiceUnavailable)
 	registerCardDAVIDJSONRoute[CardDAVConflictDetailResponse](api, "getCardDAVConflict", http.MethodGet, "/carddav/conflicts/{id}", "id", "Inspect a CardDAV conflict", s.handleCardDAVConflict, http.StatusBadRequest, http.StatusNotFound, http.StatusInternalServerError, http.StatusServiceUnavailable)
-	registerCardDAVIDJSONRouteWithRequest[CardDAVResolveRequest, CardDAVConflictResolutionResponse](api, "resolveCardDAVConflict", http.MethodPost, "/carddav/conflicts/{id}/resolve", "id", "Resolve a CardDAV conflict", s.handleCardDAVResolve, http.StatusBadRequest, http.StatusNotFound, http.StatusConflict, http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable)
-	registerCardDAVJSONRouteWithRequest[CardDAVSyncRequest, carddav.SyncResult](api, "syncCardDAV", http.MethodPost, "/carddav/sync", "Trigger CardDAV synchronization", s.handleCardDAVSync, http.StatusBadRequest, http.StatusConflict, http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable)
+	registerCardDAVIDJSONRouteWithRequest[CardDAVResolveRequest, CardDAVConflictResolutionResponse](api, "resolveCardDAVConflict", http.MethodPost, "/carddav/conflicts/{id}/resolve", "id", "Resolve a CardDAV conflict", s.handleCardDAVResolve, http.StatusBadRequest, http.StatusNotFound, http.StatusConflict, http.StatusRequestEntityTooLarge, http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable)
+	registerCardDAVJSONRouteWithRequest[CardDAVSyncRequest, carddav.SyncResult](api, "syncCardDAV", http.MethodPost, "/carddav/sync", "Trigger CardDAV synchronization", s.handleCardDAVSync, http.StatusBadRequest, http.StatusConflict, http.StatusRequestEntityTooLarge, http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable)
 }
 
 func (s *Server) handleCardDAVStatus(w http.ResponseWriter, r *http.Request) {
@@ -1255,6 +1277,8 @@ func (s *Server) writeCardDAVAccountError(
 		writeError(w, http.StatusBadRequest, "bad_request", "This CardDAV account already belongs to another connection. Use carddav connections or CardDAV settings to find and restore it.")
 	case errors.Is(err, carddav.ErrGoogleAuthorizationRequired):
 		writeError(w, http.StatusBadGateway, "google_authorization_required", "Connect Google in CardDAV settings, or run msgvault carddav authorize-google with your account email and OAuth app, then try again")
+	case errors.Is(err, carddav.ErrMicrosoftAuthorizationRequired):
+		writeError(w, http.StatusBadGateway, "microsoft_authorization_required", "Run msgvault carddav authorize-microsoft with your account email, then try again")
 	case errors.Is(err, errCardDAVValidation):
 		writeError(w, http.StatusBadRequest, "bad_request", message)
 	case errors.Is(err, store.ErrCardDAVCredentialChangePending),
@@ -1280,6 +1304,8 @@ func (s *Server) writeCardDAVOperationError(
 	switch {
 	case errors.Is(err, carddav.ErrGoogleAuthorizationRequired):
 		writeError(w, http.StatusBadGateway, "google_authorization_required", "Connect Google in CardDAV settings, or run msgvault carddav authorize-google with your account email and OAuth app, then try again")
+	case errors.Is(err, carddav.ErrMicrosoftAuthorizationRequired):
+		writeError(w, http.StatusBadGateway, "microsoft_authorization_required", "Run msgvault carddav authorize-microsoft with your account email, then try again")
 	case errors.Is(err, carddav.ErrConnectionUnavailable):
 		writeError(w, http.StatusServiceUnavailable, "carddav_unavailable", "CardDAV connection is unavailable")
 	case errors.Is(err, errCardDAVValidation):
@@ -1288,6 +1314,12 @@ func (s *Server) writeCardDAVOperationError(
 		writeError(w, http.StatusBadRequest, "bad_request", message)
 	case errors.Is(err, carddav.ErrCardDAVPreviewTooLarge):
 		writeError(w, http.StatusRequestEntityTooLarge, "carddav_preview_too_large", "CardDAV publication preview exceeds the 32 MiB limit")
+	case errors.Is(err, carddav.ErrMicrosoftContactTooLarge):
+		message := operations.FixedPublicError(operations.PublicErrorMicrosoftContactTooLarge).Message
+		if tooLarge, ok := errors.AsType[*carddav.ContactTooLargeError](err); ok {
+			message = operations.MicrosoftContactTooLargeMessage(tooLarge.PersonID)
+		}
+		writeError(w, http.StatusRequestEntityTooLarge, "microsoft_contact_too_large", message)
 	case errors.Is(err, store.ErrCardDAVAddressBookNotFound),
 		errors.Is(err, store.ErrCardDAVPublicationNotFound),
 		errors.Is(err, store.ErrCardDAVConflictNotFound),
@@ -1621,6 +1653,11 @@ func (s *Server) handleCardDAVSync(w http.ResponseWriter, r *http.Request) {
 		result, err = service.Sync(r.Context(), carddav.SyncOptions{Full: req.Full, Trigger: store.CardDAVSyncTriggerManual})
 	} else {
 		result, err = s.cardDAV.Sync(r.Context(), req)
+	}
+	// Sync can fail for several people, so it keeps the fixed message.
+	if errors.Is(err, carddav.ErrMicrosoftContactTooLarge) {
+		writeError(w, http.StatusRequestEntityTooLarge, "microsoft_contact_too_large", operations.FixedPublicError(operations.PublicErrorMicrosoftContactTooLarge).Message)
+		return
 	}
 	if err != nil {
 		s.writeCardDAVOperationError(w, err, "CardDAV synchronization failed")

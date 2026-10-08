@@ -1085,8 +1085,11 @@ func reconcileCardDAVSchedulerJob(sched *scheduler.Scheduler, cardDAVConfig conf
 	if service == nil {
 		sched.RemoveJob(jobName)
 		hint := "save the CardDAV account with its password to repair the connection"
-		if cardDAVConfig.Provider == "google" {
+		switch cardDAVConfig.Provider {
+		case "google":
 			hint = "connect Google in CardDAV account settings, then test and save the account"
+		case "microsoft":
+			hint = "run msgvault carddav authorize-microsoft with the account email, then test and save the account"
 		}
 		logger.Warn("carddav credentials are unavailable or do not match saved discovery; skipping scheduled sync",
 			"connection", name, "hint", hint)
@@ -2958,11 +2961,15 @@ func (a *storeAPIAdapter) HasSuccessfulPersonInferenceCheck(ctx context.Context,
 	return a.store.HasSuccessfulPersonInferenceCheck(ctx, fingerprint)
 }
 
+func (a *storeAPIAdapter) ListPersonInferenceProfiles(ctx context.Context) ([]peoplesweep.ProviderProfile, error) {
+	return a.store.ListPersonInferenceProfiles(ctx)
+}
+
 func (a *storeAPIAdapter) InvalidatePersonInferenceCheck(ctx context.Context, fingerprint string) (bool, error) {
 	return a.store.InvalidatePersonInferenceCheck(ctx, fingerprint)
 }
 
-func (a *storeAPIAdapter) GrantPersonInferenceConsent(ctx context.Context, fingerprint, actor string) (*store.PersonInferenceConsent, bool, error) {
+func (a *storeAPIAdapter) GrantPersonInferenceConsent(ctx context.Context, fingerprint, actor string) (*store.ProviderConsent, bool, error) {
 	return a.store.GrantPersonInferenceConsent(ctx, fingerprint, actor)
 }
 
@@ -3928,7 +3935,7 @@ func (a *schedulerAdapter) TriggerJob(name string) error {
 	return a.jobScheduler(name).TriggerJob(name)
 }
 
-func (a *schedulerAdapter) StartJob(name string) error {
+func (a *schedulerAdapter) StartJob(name string) (scheduler.JobDisposition, error) {
 	return a.jobScheduler(name).StartJob(name)
 }
 

@@ -1408,6 +1408,11 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		return fmt.Errorf("migrate people inference provider profiles: %w", err)
 	}
 	if err := s.runOnceMigration(
+		ctx, migrationProviderConsentsV1, 1, false, s.migrateProviderConsents,
+	); err != nil {
+		return fmt.Errorf("migrate provider consents: %w", err)
+	}
+	if err := s.runOnceMigration(
 		ctx, migrationPersonSweepCallsV2, 1, false,
 		s.migratePersonSweepCallsV2,
 	); err != nil {

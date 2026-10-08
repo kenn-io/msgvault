@@ -462,6 +462,54 @@ func readOnlyPostRouteRequest(r *http.Request) bool {
 	return pattern != ""
 }
 
+// syncTriggerRoutePattern is the route handleTriggerSync serves.
+const syncTriggerRoutePattern = "/api/v1/sync/{account}"
+
+var (
+	syncTriggerRouteOnce sync.Once
+	syncTriggerRouteMux  *http.ServeMux
+)
+
+// genericSyncTriggerRequest reports whether r triggers a generic
+// (non-account) scheduled job, such as the Apple WhatsApp or iMessage import.
+// handleTriggerSync only reserves or queues such a job in the scheduler and
+// returns; the run itself takes the gate later, in the scheduler. The request
+// therefore must not wait on the gate: while a long import holds it, a
+// gated trigger would be turned away with operation_in_progress before it
+// could coalesce into a follow-up run or return its disposition. It must not
+// count as a request waiter either, or the running job would yield to it.
+//
+// Account-sync triggers stay gated: they answer 409 on a running sync and
+// their gate behaviour is unchanged.
+//
+// The account is matched through a ServeMux built from the route pattern so
+// an escaped identifier (a calendar source is "<email>/<calendar>") resolves
+// exactly as the API router resolves it.
+func genericSyncTriggerRequest(r *http.Request) bool {
+	if r.Method != http.MethodPost {
+		return false
+	}
+	syncTriggerRouteOnce.Do(func() {
+		syncTriggerRouteMux = http.NewServeMux()
+		syncTriggerRouteMux.HandleFunc("POST "+syncTriggerRoutePattern, func(http.ResponseWriter, *http.Request) {})
+	})
+	// ServeMux.Handler does not expose path values, so serve a shallow copy
+	// and read them from it; r itself is left for the real router.
+	probe := r.WithContext(r.Context())
+	syncTriggerRouteMux.ServeHTTP(discardResponseWriter{}, probe)
+	account := probe.PathValue("account")
+	if account == "" {
+		return false
+	}
+	return classifySourceScheduling(r.URL.Query().Get("source_type"), account).kind == sourceScheduleGeneric
+}
+
+type discardResponseWriter struct{}
+
+func (discardResponseWriter) Header() http.Header         { return http.Header{} }
+func (discardResponseWriter) Write(p []byte) (int, error) { return len(p), nil }
+func (discardResponseWriter) WriteHeader(int)             {}
+
 func operationGateRequest(r *http.Request, auth requestAuthentication) (bool, string, error) {
 	if r.URL.Path == DaemonShutdownPath {
 		return false, "", nil
@@ -474,6 +522,9 @@ func operationGateRequest(r *http.Request, auth requestAuthentication) (bool, st
 		return false, "", nil
 	}
 	if readOnlyPostRouteRequest(r) {
+		return false, "", nil
+	}
+	if genericSyncTriggerRequest(r) {
 		return false, "", nil
 	}
 	// Provider handlers take the gate only for their local mutations. Device

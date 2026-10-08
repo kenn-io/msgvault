@@ -247,7 +247,7 @@ func TestCredentialsImportEnvironmentPreservesStoredEntries(t *testing.T) { //no
 	assert.Equal("initial-environment-key", key)
 }
 
-func TestCredentialsRejectInvalidInputsAndUnusedSweepID(t *testing.T) {
+func TestCredentialsRejectInvalidInputsAndPeopleProviderID(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name, input string
@@ -256,7 +256,7 @@ func TestCredentialsRejectInvalidInputsAndUnusedSweepID(t *testing.T) {
 		{"missing input", "", []string{"set", providercredentials.VectorEmbeddingsID}},
 		{"empty input", " \n", []string{"set", providercredentials.VectorEmbeddingsID, "--stdin"}},
 		{"oversized input", strings.Repeat("x", 65537), []string{"set", providercredentials.VectorEmbeddingsID, "--stdin"}},
-		{"unused sweep store", "key", []string{"set", providercredentials.PeopleSweepID, "--stdin", "--endpoint", "https://provider.example.test"}},
+		{"people provider key", "key", []string{"set", providercredentials.PeopleProviderID("remote"), "--stdin", "--endpoint", "https://provider.example.test"}},
 		{"suppression endpoint", "key", []string{"set", providercredentials.PersonEnrichmentSuppressionID, "--stdin", "--endpoint", "https://provider.example.test"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

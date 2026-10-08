@@ -234,9 +234,7 @@ func newBriefWorkerEndToEndFixture(
 	requirements.NoError(err)
 	_, err = f.store.EnsurePersonInferenceProfile(t.Context(), profile)
 	requirements.NoError(err)
-	_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(
-		`INSERT INTO person_inference_consents (profile_fingerprint, granted_by)
-		 VALUES (?, 'test-owner')`), profile.Fingerprint)
+	_, _, err = f.store.GrantPersonInferenceConsent(t.Context(), profile.Fingerprint, "test-owner")
 	requirements.NoError(err)
 
 	runner := &scriptedBriefRunner{t: t}

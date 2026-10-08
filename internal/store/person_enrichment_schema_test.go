@@ -152,44 +152,7 @@ func TestPersonEnrichmentBackendParityMatrix(t *testing.T) {
 	})
 }
 
-func TestPersonEnrichmentSchemaEnforcesConsentAuditState(t *testing.T) {
-	require := require.New(t)
-	st := testutil.NewTestStore(t)
-	profile := enrichmentTestProfile(t)
-	_, err := st.EnsurePersonEnrichmentProfile(t.Context(), profile)
-	require.NoError(err)
-
-	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
-		INSERT INTO person_enrichment_consents
-			(profile_fingerprint, granted_by, revoked_by)
-		VALUES (?, 'cli', 'cli')`), profile.Fingerprint)
-	require.Error(err, "revocation actor without timestamp must fail")
-
-	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
-		INSERT INTO person_enrichment_consents
-			(profile_fingerprint, granted_by)
-		VALUES (?, 'cli')`), profile.Fingerprint)
-	require.NoError(err)
-	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
-		INSERT INTO person_enrichment_consents
-			(profile_fingerprint, granted_by)
-		VALUES (?, 'second')`), profile.Fingerprint)
-	require.Error(err, "only one active consent is allowed")
-
-	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
-		UPDATE person_enrichment_consents
-		SET revoked_by = 'cli', revoked_at = CURRENT_TIMESTAMP
-		WHERE profile_fingerprint = ? AND revoked_at IS NULL`), profile.Fingerprint)
-	require.NoError(err)
-	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
-		INSERT INTO person_enrichment_consents
-			(profile_fingerprint, granted_by)
-		VALUES (?, 'second')`), profile.Fingerprint)
-	require.NoError(err, "a revoked consent must not block regrant")
-}
-
 func TestPersonEnrichmentSchemaSQLiteForeignKeysAndIndexes(t *testing.T) {
-	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewSQLiteTestStore(t)
 
@@ -206,19 +169,8 @@ func TestPersonEnrichmentSchemaSQLiteForeignKeysAndIndexes(t *testing.T) {
 	suppressionFKs := pragmaTextColumn(
 		t, st.DB(), `PRAGMA foreign_key_list(person_enrichment_suppressions)`, 2)
 	assert.Empty(suppressionFKs, "suppressions must survive person deletion")
-	consentFKs := pragmaTextColumn(
-		t, st.DB(), `PRAGMA foreign_key_list(person_enrichment_consents)`, 2)
-	assert.Equal([]string{"person_enrichment_profiles"}, consentFKs)
 
-	indexes := pragmaIndexes(t, st.DB(), "person_enrichment_consents")
-	active, ok := indexes["person_enrichment_consents_active"]
-	require.True(ok)
-	assert.True(active.unique)
-	assert.True(active.partial)
-	assert.Equal([]string{"profile_fingerprint"}, pragmaIndexColumns(
-		t, st.DB(), "person_enrichment_consents_active"))
-
-	indexes = pragmaIndexes(t, st.DB(), "person_enrichment_suppressions")
+	indexes := pragmaIndexes(t, st.DB(), "person_enrichment_suppressions")
 	wantUniqueColumns := []string{
 		"provider_namespace", "identifier_class", "normalization_version", "key_id", "digest",
 	}

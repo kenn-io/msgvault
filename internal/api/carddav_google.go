@@ -14,14 +14,19 @@ import (
 	"go.kenn.io/msgvault/internal/carddav"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/httpretry"
+	"go.kenn.io/msgvault/internal/mscontacts"
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/syncerr"
 	"golang.org/x/oauth2"
 )
 
 func normalizeCardDAVAccountRequest(req CardDAVAccountRequest) CardDAVAccountRequest {
-	if req.Provider == cardDAVProviderGoogle {
+	switch req.Provider {
+	case cardDAVProviderGoogle:
 		req.BaseURL = carddav.GoogleDiscoveryURL
+		req.Username = strings.ToLower(strings.TrimSpace(req.Username))
+	case cardDAVProviderMicrosoft:
+		req.BaseURL = mscontacts.GraphBaseURL
 		req.Username = strings.ToLower(strings.TrimSpace(req.Username))
 	}
 	return req
@@ -29,12 +34,16 @@ func normalizeCardDAVAccountRequest(req CardDAVAccountRequest) CardDAVAccountReq
 
 func cardDAVCredentialMatchesConfig(credential carddav.Credential, cfg config.CardDAVConfig) bool {
 	return credential.OAuthApp == cfg.OAuthApp &&
-		((cfg.Provider == "" && !credential.Google) || (cfg.Provider == cardDAVProviderGoogle && credential.Google))
+		((cfg.Provider == "" && !credential.OAuth()) || (cfg.Provider == cardDAVProviderGoogle && credential.Google) ||
+			(cfg.Provider == cardDAVProviderMicrosoft && credential.Microsoft))
 }
 
 func (c *CardDAVController) credentialForRequest(ctx context.Context, req CardDAVAccountRequest) (carddav.Credential, error) {
-	credential := carddav.Credential{BaseURL: req.BaseURL, Username: req.Username, Google: req.Provider == cardDAVProviderGoogle, OAuthApp: req.OAuthApp}
-	if credential.Google {
+	credential := carddav.Credential{
+		BaseURL: req.BaseURL, Username: req.Username, OAuthApp: req.OAuthApp,
+		Google: req.Provider == cardDAVProviderGoogle, Microsoft: req.Provider == cardDAVProviderMicrosoft,
+	}
+	if credential.OAuth() {
 		return credential, nil
 	}
 	password, err := c.passwordForRequest(ctx, req)
@@ -43,6 +52,9 @@ func (c *CardDAVController) credentialForRequest(ctx context.Context, req CardDA
 }
 
 func (c *CardDAVController) serviceForCredential(credential carddav.Credential, configured config.CardDAVConfig) (cardDAVCandidate, error) {
+	if credential.Microsoft {
+		return c.microsoftService(credential)
+	}
 	if !credential.Google {
 		candidate, err := c.factory(c.store, configured, credential.Password)
 		if err != nil {
@@ -87,6 +99,8 @@ func (c *CardDAVController) googleBearerToken(ctx context.Context, credential ca
 	return token.AccessToken, nil
 }
 
+// googleCardDAVTokenError classifies a failure to get a Google token. No
+// request reached Google's contacts, so a pending write is sent later.
 func googleCardDAVTokenError(err error) error {
 	if retrieveErr, ok := errors.AsType[*oauth2.RetrieveError](err); ok && retrieveErr.Response != nil {
 		if retrieveErr.ErrorCode == "invalid_grant" {
@@ -100,6 +114,7 @@ func googleCardDAVTokenError(err error) error {
 		return fmt.Errorf("obtain Google access token: %w", errors.Join(
 			err,
 			carddav.ErrGoogleTokenUnavailable,
+			carddav.ErrWriteNotSent,
 			&carddav.StatusError{StatusCode: code, RetryAfter: retryAfter},
 		))
 	}
@@ -107,7 +122,7 @@ func googleCardDAVTokenError(err error) error {
 	bodyReadFailure := strings.Contains(err.Error(), "oauth2: cannot fetch token: ")
 	if _, ok := errors.AsType[net.Error](err); ok || syncerr.IsTransientNetwork(err) || errors.Is(err, context.Canceled) || bodyReadFailure {
 		return fmt.Errorf("obtain Google access token: %w", errors.Join(
-			err, carddav.ErrGoogleTokenUnavailable, &carddav.StatusError{StatusCode: http.StatusBadGateway},
+			err, carddav.ErrGoogleTokenUnavailable, carddav.ErrWriteNotSent, &carddav.StatusError{StatusCode: http.StatusBadGateway},
 		))
 	}
 	return fmt.Errorf("%w: %w", carddav.ErrGoogleAuthorizationRequired, err)

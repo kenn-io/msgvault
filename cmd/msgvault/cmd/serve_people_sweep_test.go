@@ -123,9 +123,6 @@ func TestProductionPersonSweepConstructsEveryHTTPProtocolAndCredentialSource(t *
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if test.provider.Credential == peoplesweep.CredentialStored {
-				requireStoredCredentialStorePlatform(t)
-			}
 			must := require.New(t)
 			checks := assert.New(t)
 			st := testutil.NewTestStore(t)
@@ -136,8 +133,8 @@ func TestProductionPersonSweepConstructsEveryHTTPProtocolAndCredentialSource(t *
 				t.Setenv(test.provider.CredentialEnv, "environment-test-value")
 			}
 			if test.provider.Credential == peoplesweep.CredentialStored {
-				must.NoError(peoplesweep.NewFileCredentialStore(fullConfig.TokensDir()).
-					Save("production", test.credential))
+				savePeopleCredentialForTest(t, peoplesweep.NewStoredCredentials(fullConfig.TokensDir()),
+					"production", test.provider.Endpoint, test.credential.Value())
 			}
 
 			runner, err := newProductionStructuredRunner(fullConfig, st)

@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-05"
+last_edited: "2026-10-06"
 title: Configuration
 description: Configuration file reference, environment variables, and file locations.
 ---
@@ -161,14 +161,15 @@ subscription-backed endpoints, including local gateways, must be used within
 their provider terms.
 
 Credentials are not stored in this TOML. `credential = "stored"` keeps a
-profile-specific secret under the private tokens directory and is supported
-on Linux and macOS only; `credential = "env"` stores only the selected
-environment-variable name and works everywhere. Environment-variable names are
-host-only settings: configure them through the CLI or TOML, not the Web UI.
-On hosts without stored-key support, the Web UI hides profile enrollment and
-key fields. Run [`msgvault person provider add`](cli-reference.md#person-provider-add)
-with `--credential-env` on the daemon host, then reload the Web settings to
-check and select the profile.
+profile-specific secret in `tokens/provider-credentials.json` on every
+platform, sent only to the endpoint origin of the profile it was saved for.
+If you edit a profile's endpoint to a different origin, its stored key stops
+working; remove the profile and add it again with the new endpoint.
+Keys that an older release stored under `tokens/people-providers/` on Linux or
+macOS move into that file the first time msgvault uses the profile.
+`credential = "env"` stores only the selected environment-variable name.
+Environment-variable names are host-only settings: configure them through the
+CLI or TOML, not the Web UI.
 `credential = "none"` is restricted to credentialless local or Codex paths.
 Changing a credential value does not change the profile fingerprint, but
 changing its source or reference does.
@@ -481,10 +482,10 @@ Removing a config table retains the account's archive data; see
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `provider` | `""` | Empty for a password-based server, or `google` for Google Contacts |
+| `provider` | `""` | Empty for a password-based server, `google` for Google Contacts, or `microsoft` for Microsoft 365 and Outlook.com contacts |
 | `oauth_app` | `""` | Named Google OAuth app; empty selects `[oauth]` |
-| `base_url` | `""` | CardDAV discovery URL; Google setup supplies its canonical URL |
-| `username` | `""` | Server username or Google account email |
+| `base_url` | `""` | CardDAV discovery URL; Google and Microsoft setup supply their canonical URL |
+| `username` | `""` | Server username, or Google or Microsoft account email |
 | `schedule` | `""` | Cron schedule; empty disables scheduled sync |
 | `enabled` | `false` | Enable the configured connection |
 | `trusted_origin` | `""` | Exact HTTPS origin approved for private access, including its port; a trailing `/` is accepted. Applies only when it matches the account URL's origin. |

@@ -74,7 +74,7 @@ func TestPersonInferenceProviderV2RemovesPreProfileRows(t *testing.T) {
 	var profiles, checks, consents int
 	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM person_inference_profiles`).Scan(&profiles))
 	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM person_inference_checks`).Scan(&checks))
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM person_inference_consents`).Scan(&consents))
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM provider_consents`).Scan(&consents))
 	assert.Zero(profiles)
 	assert.Zero(checks)
 	assert.Zero(consents)
@@ -124,30 +124,30 @@ func TestPersonInferenceConsentSchemaEnforcesAuditState(t *testing.T) {
 	require.NoError(err)
 
 	_, err = st.DB().Exec(st.Rebind(`
-		INSERT INTO person_inference_consents
-			(profile_fingerprint, granted_by, revoked_by)
-		VALUES (?, 'cli', 'cli')`), profile.Fingerprint)
+		INSERT INTO provider_consents
+			(purpose, id, fingerprint, granted_by, revoked_by)
+		VALUES ('people_inference', 1, ?, 'cli', 'cli')`), profile.Fingerprint)
 	require.Error(err, "revocation actor without timestamp must fail")
 
 	_, err = st.DB().Exec(st.Rebind(`
-		INSERT INTO person_inference_consents
-			(profile_fingerprint, granted_by)
-		VALUES (?, 'cli')`), profile.Fingerprint)
+		INSERT INTO provider_consents
+			(purpose, id, fingerprint, granted_by)
+		VALUES ('people_inference', 1, ?, 'cli')`), profile.Fingerprint)
 	require.NoError(err)
 	_, err = st.DB().Exec(st.Rebind(`
-		INSERT INTO person_inference_consents
-			(profile_fingerprint, granted_by)
-		VALUES (?, 'second')`), profile.Fingerprint)
+		INSERT INTO provider_consents
+			(purpose, id, fingerprint, granted_by)
+		VALUES ('people_inference', 2, ?, 'second')`), profile.Fingerprint)
 	require.Error(err, "only one active consent is allowed")
 
 	_, err = st.DB().Exec(st.Rebind(`
-		UPDATE person_inference_consents
+		UPDATE provider_consents
 		SET revoked_by = 'cli', revoked_at = CURRENT_TIMESTAMP
-		WHERE profile_fingerprint = ? AND revoked_at IS NULL`), profile.Fingerprint)
+		WHERE purpose = 'people_inference' AND fingerprint = ? AND revoked_at IS NULL`), profile.Fingerprint)
 	require.NoError(err)
 	_, err = st.DB().Exec(st.Rebind(`
-		INSERT INTO person_inference_consents
-			(profile_fingerprint, granted_by)
-		VALUES (?, 'second')`), profile.Fingerprint)
+		INSERT INTO provider_consents
+			(purpose, id, fingerprint, granted_by)
+		VALUES ('people_inference', 2, ?, 'second')`), profile.Fingerprint)
 	require.NoError(err, "a revoked consent must not block regrant")
 }

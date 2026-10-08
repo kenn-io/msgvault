@@ -299,7 +299,6 @@ func TestPersonProviderRealDaemonSyntheticCheckAndRevoke(t *testing.T) {
 func TestPersonProviderStoredCheckKeepsSecretOutOfDaemonMetadata(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	requireStoredCredentialStorePlatform(t)
 	const secretCanary = "stored-daemon-secret-canary"
 	requests := make(chan api.CLIRunRequest, 1)
 	providerRequests := make(chan string, 1)
@@ -321,9 +320,8 @@ func TestPersonProviderStoredCheckKeepsSecretOutOfDaemonMetadata(t *testing.T) {
 	stored.CredentialEnv = ""
 	peopleConfig.Provider = peoplesweep.ProviderSelection{Name: "stored"}
 	peopleConfig.Providers = map[string]peoplesweep.ProviderConfig{"stored": stored}
-	credentialStore := peoplesweep.NewFileCredentialStore(t.TempDir())
-	require.NoError(credentialStore.Save("stored", peoplesweep.NewCredential(
-		peoplesweep.AuthBearer, secretCanary)))
+	credentialStore := peoplesweep.NewStoredCredentials(t.TempDir())
+	savePeopleCredentialForTest(t, credentialStore, "stored", stored.Endpoint, secretCanary)
 	st := testutil.NewSQLiteTestStore(t)
 	daemonConfig := &config.Config{People: config.PeopleConfig{Sweep: peopleConfig}}
 	daemonStore := &inProcessPersonProviderDaemonStore{

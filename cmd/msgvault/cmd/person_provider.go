@@ -20,6 +20,7 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/peoplesweep"
+	"go.kenn.io/msgvault/internal/personenrollment"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/pkg/client/generated"
@@ -34,10 +35,10 @@ const (
 type personProviderStore interface {
 	EnsurePersonInferenceProfile(ctx context.Context, profile peoplesweep.ProviderProfile) (bool, error)
 	ListPersonInferenceProfiles(ctx context.Context) ([]peoplesweep.ProviderProfile, error)
-	GrantPersonInferenceConsent(ctx context.Context, fingerprint, actor string) (*store.PersonInferenceConsent, bool, error)
+	GrantPersonInferenceConsent(ctx context.Context, fingerprint, actor string) (*store.ProviderConsent, bool, error)
 	RevokePersonInferenceConsent(ctx context.Context, fingerprint, actor string) (bool, error)
 	RevokeAllPersonInferenceConsents(ctx context.Context, actor string) (int64, error)
-	GetPersonInferenceConsentStatus(ctx context.Context, fingerprint string) (*store.PersonInferenceConsentStatus, error)
+	GetPersonInferenceConsentStatus(ctx context.Context, fingerprint string) (*store.ProviderConsentStatus, error)
 	HasSuccessfulPersonInferenceCheck(ctx context.Context, fingerprint string) (bool, error)
 	InvalidatePersonInferenceCheck(ctx context.Context, fingerprint string) (bool, error)
 	RecordPersonInferenceCheck(ctx context.Context, check store.PersonInferenceCheck) error
@@ -47,10 +48,10 @@ type personProviderStore interface {
 	ListPersonSweepAttempts(ctx context.Context, filter peoplesweep.AttemptFilter) ([]peoplesweep.AttemptSummary, error)
 	EnsurePersonSemanticEmbeddingProfile(ctx context.Context, profile vector.SemanticPersonEmbeddingProfile) (bool, error)
 	ListPersonSemanticEmbeddingProfiles(ctx context.Context) ([]vector.SemanticPersonEmbeddingProfile, error)
-	GrantPersonSemanticEmbeddingConsent(ctx context.Context, fingerprint, actor string) (*store.PersonSemanticEmbeddingConsent, bool, error)
+	GrantPersonSemanticEmbeddingConsent(ctx context.Context, fingerprint, actor string) (*store.ProviderConsent, bool, error)
 	RevokePersonSemanticEmbeddingConsent(ctx context.Context, fingerprint, actor string) (bool, error)
 	RevokeAllPersonSemanticEmbeddingConsents(ctx context.Context, actor string) (int64, error)
-	GetPersonSemanticEmbeddingConsentStatus(ctx context.Context, fingerprint string) (*store.PersonSemanticEmbeddingConsentStatus, error)
+	GetPersonSemanticEmbeddingConsentStatus(ctx context.Context, fingerprint string) (*store.ProviderConsentStatus, error)
 	HasActivePersonSemanticEmbeddingConsent(ctx context.Context, fingerprint string) (bool, error)
 }
 
@@ -94,7 +95,7 @@ type personProviderStatusOutput struct {
 	Name                string                              `json:"name,omitempty"`
 	Profile             peoplesweep.ProviderProfile         `json:"profile"`
 	Check               *store.PersonInferenceCheck         `json:"check,omitzero"`
-	Consent             store.PersonInferenceConsentStatus  `json:"consent"`
+	Consent             store.ProviderConsentStatus         `json:"consent"`
 	StaleProgramCheck   bool                                `json:"stale_program_check,omitzero"`
 	StaleProgramConsent bool                                `json:"stale_program_consent,omitzero"`
 	CodexIsolation      *personProviderCodexIsolationStatus `json:"codex_isolation,omitzero"`
@@ -167,8 +168,8 @@ type personProviderRevokeFingerprintOutput struct {
 }
 
 type personSemanticProviderStatusOutput struct {
-	Profile vector.SemanticPersonEmbeddingProfile      `json:"profile"`
-	Consent store.PersonSemanticEmbeddingConsentStatus `json:"consent"`
+	Profile vector.SemanticPersonEmbeddingProfile `json:"profile"`
+	Consent store.ProviderConsentStatus           `json:"consent"`
 }
 
 type personSemanticProviderStatusesOutput struct {
@@ -225,7 +226,7 @@ func defaultPersonProviderCommandDeps(contexts ...context.Context) personProvide
 				if currentCfg == nil {
 					return nil, errors.New("configuration is unavailable")
 				}
-				return peoplesweep.NewFileCredentialStore(currentCfg.TokensDir()), nil
+				return peoplesweep.NewStoredCredentials(currentCfg.TokensDir()), nil
 			}
 			deps.remoteConfigured = func() bool { return IsRemoteMode(state) }
 			deps.readConfigFile = func() (config.ConfigFile, error) {
@@ -904,7 +905,7 @@ func runPersonProviderRemove(
 	deps personProviderCommandDeps,
 	name string,
 	jsonOutput bool,
-) (retErr error) {
+) error {
 	if err := rejectRemotePersonProviderMutation(deps, "remove"); err != nil {
 		return err
 	}
@@ -918,6 +919,11 @@ func runPersonProviderRemove(
 	if err != nil {
 		return err
 	}
+	configured, err := personProviderConfigFromSnapshot(deps, before)
+	if err != nil {
+		return err
+	}
+	provider, exists := configured.Providers[name]
 	directStore, daemonRunning, err := personProviderMutationScope(command.Context(), deps)
 	if err != nil {
 		return err
@@ -929,21 +935,21 @@ func runPersonProviderRemove(
 		if err := deps.removeWithDaemon(command.Context(), name, before.ETag); err != nil {
 			return err
 		}
+		if !exists {
+			return writeUnconfiguredPersonProviderKeyRemoved(command, name, jsonOutput)
+		}
 		return writePersonProviderRemoved(command, name, true, jsonOutput)
+	}
+	if !exists {
+		// Revoking every saved policy that used the key also covers a running
+		// one, so this needs no running-policy fingerprint.
+		return removeUnconfiguredPersonProviderKey(command, deps, name, jsonOutput)
 	}
 	if daemonRunning {
 		return errors.New("cannot identify the running people provider policy; stop the daemon before removing a profile")
 	}
 	if deps.editConfigTables == nil || deps.restoreConfigFile == nil {
 		return errors.New("people provider config editing is unavailable")
-	}
-	configured, err := personProviderConfigFromSnapshot(deps, before)
-	if err != nil {
-		return err
-	}
-	provider, exists := configured.Providers[name]
-	if !exists {
-		return fmt.Errorf("people provider profile %q is not configured", name)
 	}
 	active := configured.Provider.Name == name
 	if active && configured.Enabled {
@@ -979,22 +985,20 @@ func runPersonProviderRemove(
 		return err
 	}
 	var credentials peoplesweep.CredentialStore
-	var deletionGuard peoplesweep.CredentialDeleteGuard
+	var credentialRevision string
 	if provider.Credential == peoplesweep.CredentialStored {
 		credentials, err = deps.setup.resolveCredentialStore()
 		if err != nil {
 			return err
 		}
-		deletionGuard, err = credentials.PreflightDelete(name)
+		var present bool
+		credentialRevision, present, err = credentials.Revision(name, provider.Endpoint)
+		if err == nil && !present {
+			err = fmt.Errorf("%w for profile %q", peoplesweep.ErrCredentialNotFound, name)
+		}
 		if err != nil {
 			return fmt.Errorf("preflight stored people provider credential deletion: %w", err)
 		}
-		defer func() {
-			if closeErr := deletionGuard.Close(); closeErr != nil {
-				retErr = errors.Join(retErr,
-					fmt.Errorf("close stored people provider credential deletion guard: %w", closeErr))
-			}
-		}()
 	}
 	after, err := deps.editConfigTables(before.ETag, edits)
 	if err != nil {
@@ -1021,13 +1025,64 @@ func runPersonProviderRemove(
 		return rollback(err)
 	}
 	if provider.Credential == peoplesweep.CredentialStored {
-		if err := credentials.Delete(name, deletionGuard); err != nil {
+		if _, err := credentials.DeleteIfRevision(name, credentialRevision); err != nil {
 			restoreErr := restoreRemovedPersonProviderConfig(deps, after, before)
 			return errors.Join(err, restoreErr,
 				errors.New("exact people provider consent remains revoked"))
 		}
 	}
 	return writePersonProviderRemoved(command, name, false, jsonOutput)
+}
+
+// removeUnconfiguredPersonProviderKey deletes a stored key left behind when
+// its profile was removed from the config by other means. Nothing else can
+// delete it, and it would block adding a profile with the same name.
+func removeUnconfiguredPersonProviderKey(
+	command *cobra.Command, deps personProviderCommandDeps, name string, jsonOutput bool,
+) error {
+	credentials, err := deps.setup.resolveCredentialStore()
+	if err != nil {
+		return err
+	}
+	st, cleanup, err := deps.openStore()
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	err = personenrollment.RemoveUnconfiguredKey(command.Context(), personenrollment.UnconfiguredKeyRemoval{
+		Name: name, Actor: personProviderConsentActor, Store: st, Credentials: credentials,
+		Unconfigured: func() (bool, error) {
+			current, err := deps.readConfigFile()
+			if err != nil {
+				return false, err
+			}
+			configured, err := personProviderConfigFromSnapshot(deps, current)
+			if err != nil {
+				return false, err
+			}
+			_, exists := configured.Providers[name]
+			return !exists, nil
+		},
+	})
+	if errors.Is(err, personenrollment.ErrProfileMissing) {
+		return fmt.Errorf("people provider profile %q is not configured", name)
+	}
+	if err != nil {
+		return fmt.Errorf("delete stored key of unconfigured people provider profile %q: %w", name, err)
+	}
+	return writeUnconfiguredPersonProviderKeyRemoved(command, name, jsonOutput)
+}
+
+func writeUnconfiguredPersonProviderKeyRemoved(command *cobra.Command, name string, jsonOutput bool) error {
+	if jsonOutput {
+		return json.MarshalEncode(jsontext.NewEncoder(command.OutOrStdout()), personProviderRemoveOutput{
+			Name: name, Removed: true,
+		}, json.Deterministic(true))
+	}
+	_, _ = fmt.Fprintf(command.OutOrStdout(),
+		"Deleted the stored key of unconfigured people provider profile %q and revoked consent for policies that used it.\n",
+		name)
+	return nil
 }
 
 func writePersonProviderRemoved(command *cobra.Command, name string, daemonRunning, jsonOutput bool) error {
@@ -2064,7 +2119,7 @@ func writePersonProviderStatus(
 func writePersonSemanticProviderStatus(
 	w io.Writer,
 	profile vector.SemanticPersonEmbeddingProfile,
-	status *store.PersonSemanticEmbeddingConsentStatus,
+	status *store.ProviderConsentStatus,
 	jsonOutput bool,
 ) error {
 	if status == nil {

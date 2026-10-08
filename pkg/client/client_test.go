@@ -1422,3 +1422,35 @@ func TestCaptureTelemetryEventSendsPropertyValues(t *testing.T) {
 	require.NoError(err, "CaptureTelemetryEvent")
 	assert.Equal(t, map[string]any{"event": "app_opened", "properties": map[string]any{"surface": "web"}}, got)
 }
+
+// TestGeneratedTriggerSyncExposesDisposition proves the published triggerSync
+// schema carries the optional disposition: a generic-source 202 decodes it, and
+// an account-sync 202 without it still validates.
+func TestGeneratedTriggerSyncExposesDisposition(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		body string
+		want *string
+	}{
+		{"generic", `{"status":"accepted","message":"follow-up recorded","disposition":"pending"}`, new("pending")},
+		{"account", `{"status":"accepted","message":"Sync started for a@b.c"}`, nil},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusAccepted)
+				_, _ = w.Write([]byte(tt.body))
+			}))
+			defer server.Close()
+			c, err := New(server.URL)
+			require.NoError(t, err)
+
+			got, err := c.TriggerSync(t.Context(), &generated.TriggerSyncRequestOptions{
+				PathParams: &generated.TriggerSyncPath{Account: "acct"},
+			})
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got.Disposition)
+		})
+	}
+}

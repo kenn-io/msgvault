@@ -14,7 +14,7 @@ const profile: PeopleInferenceProfileSetting = {
   allow_sensitive: true, retention_posture: 'No retention', training_posture: 'No training',
 };
 const status: PeopleInferenceSettingsResponse = {
-  stored_credentials_supported: true, profiles: [profile], configured_enabled: false, running_enabled: false, pending_restart: false,
+  profiles: [profile], configured_enabled: false, running_enabled: false, pending_restart: false,
 };
 const preset = {
   preset_id: 'openrouter' as const, model: 'model-one', allowed_sources: ['conversation_text'],
@@ -62,30 +62,16 @@ async function checkAndConsent(controller: PeopleInferenceController): Promise<v
 }
 
 describe('PeopleInferenceSettings', () => {
-  it('hides stored-key enrollment on unsupported hosts while retaining host-managed profiles', async () => {
-    const { client, requests } = fixture({ ...status, stored_credentials_supported: false,
+  it('checks host-managed environment profiles without offering a replacement key', async () => {
+    const { client, requests } = fixture({ ...status,
       profiles: [{ ...profile, credential_source: 'env', credential_env: 'PEOPLE_API_KEY' }] });
     render(PeopleInferenceSettings, { client });
-    await screen.findByText(/Configure an environment credential with/);
-    expect(screen.getByText('msgvault person provider add')).toBeDefined();
-    expect(screen.getByText('--credential-env')).toBeDefined();
-    expect(screen.getByText(/on the daemon host/)).toBeDefined();
-    expect(screen.queryByRole('button', { name: 'Create profile' })).toBeNull();
-    expect(screen.queryByLabelText('API key')).toBeNull();
+    await screen.findByRole('button', { name: 'Check provider' });
     expect(screen.queryByLabelText('Replacement API key')).toBeNull();
     await fireEvent.click(screen.getByRole('button', { name: 'Check provider' }));
     await screen.findByRole('region', { name: 'Archive disclosure' });
     expect(requests.some((request) => request.url.endsWith('/check'))).toBe(true);
     expect(requests.some((request) => request.method === 'PUT')).toBe(false);
-  });
-
-  it('hides replacement keys for saved stored-key profiles on unsupported hosts', async () => {
-    const { client } = fixture({ ...status, stored_credentials_supported: false,
-      profiles: [{ ...profile, credential_configured: false, credential_revision: undefined }] });
-    render(PeopleInferenceSettings, { client });
-    await screen.findByText(/Configure an environment credential with/);
-    expect(screen.queryByLabelText('Replacement API key')).toBeNull();
-    expect((screen.getByRole('button', { name: 'Check provider' }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it('keeps a newly saved profile visible when saving its key fails and lets the user retry', async () => {

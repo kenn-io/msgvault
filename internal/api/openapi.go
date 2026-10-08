@@ -345,7 +345,9 @@ import (
 // 3.2.0 adds counts_pending to CLI account listing for callers that opt in by
 // header while the first count refresh runs.
 // 3.3.0 adds POST /api/v1/telemetry/events for web UI usage events. Additive (minor bump).
-// 3.4.0 adds Kata issues that quote exact message and file evidence.
+// 3.4.0 adds Kata issues that quote exact message and file evidence, the
+// microsoft CardDAV provider, microsoft_authorization_required and
+// microsoft_contact_too_large.
 const APISchemaVersion = "3.4.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration

@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/carddav"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/mscontacts"
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -206,28 +207,69 @@ func TestGoogleCardDAVRefreshFailuresReachAPIAndSyncHistory(t *testing.T) {
 	}
 }
 
-func TestCardDAVGoogleAccountSelection(t *testing.T) {
+func TestCardDAVAccountSelection(t *testing.T) {
 	t.Parallel()
-	assertions := assert.New(t)
-	required := require.New(t)
-	req := normalizeCardDAVAccountRequest(CardDAVAccountRequest{Provider: "google", Username: "person@example.com", OAuthApp: "contacts", Enabled: new(true)})
-	required.NoError(validateCardDAVAccountRequest(req))
-	assertions.Equal(carddav.GoogleDiscoveryURL, req.BaseURL)
-	controller := &CardDAVController{}
-	credential, err := controller.credentialForRequest(t.Context(), req)
-	required.NoError(err)
-	assertions.True(credential.Google)
-	assertions.Empty(credential.Password)
-	assertions.Equal("contacts", credential.OAuthApp)
-	credential.ConnectionGeneration = 1
-	dir := t.TempDir()
-	required.NoError(carddav.SaveCredential(dir, credential))
-	saved, err := carddav.LoadCredential(dir)
-	required.NoError(err)
-	assertions.True(cardDAVCredentialMatchesConfig(saved, config.CardDAVConfig{Provider: "google", OAuthApp: "contacts"}))
-	assertions.False(cardDAVCredentialMatchesConfig(saved, config.CardDAVConfig{}))
-	req.Password = "synthetic-password"
-	required.Error(validateCardDAVAccountRequest(req))
+	for _, tc := range []struct {
+		request      CardDAVAccountRequest
+		baseURL      string
+		wantUsername string
+		matches      config.CardDAVConfig
+		// otherProvider is a config of another provider, which the credential
+		// must not match.
+		otherProvider *config.CardDAVConfig
+		// refusesOAuthApp: an OAuth app is a Google setting.
+		refusesOAuthApp bool
+	}{
+		{
+			request: CardDAVAccountRequest{Provider: "google", Username: "person@example.com", OAuthApp: "contacts", Enabled: new(true)},
+			baseURL: carddav.GoogleDiscoveryURL,
+			matches: config.CardDAVConfig{Provider: "google", OAuthApp: "contacts"},
+		},
+		{
+			request:         CardDAVAccountRequest{Provider: "microsoft", Username: "Person@Example.com", Enabled: new(true)},
+			baseURL:         mscontacts.GraphBaseURL,
+			wantUsername:    "person@example.com",
+			matches:         config.CardDAVConfig{Provider: "microsoft"},
+			otherProvider:   &config.CardDAVConfig{Provider: "google"},
+			refusesOAuthApp: true,
+		},
+	} {
+		t.Run(tc.request.Provider, func(t *testing.T) {
+			t.Parallel()
+			assertions := assert.New(t)
+			required := require.New(t)
+			req := normalizeCardDAVAccountRequest(tc.request)
+			required.NoError(validateCardDAVAccountRequest(req))
+			assertions.Equal(tc.baseURL, req.BaseURL)
+			if tc.wantUsername != "" {
+				assertions.Equal(tc.wantUsername, req.Username)
+			}
+			controller := &CardDAVController{}
+			credential, err := controller.credentialForRequest(t.Context(), req)
+			required.NoError(err)
+			assertions.Equal(tc.request.Provider == "google", credential.Google)
+			assertions.Equal(tc.request.Provider == "microsoft", credential.Microsoft)
+			assertions.Empty(credential.Password)
+			assertions.Equal(tc.request.OAuthApp, credential.OAuthApp)
+			credential.ConnectionGeneration = 1
+			dir := t.TempDir()
+			required.NoError(carddav.SaveCredential(dir, credential))
+			saved, err := carddav.LoadCredential(dir)
+			required.NoError(err)
+			assertions.True(cardDAVCredentialMatchesConfig(saved, tc.matches))
+			if tc.otherProvider != nil {
+				assertions.False(cardDAVCredentialMatchesConfig(saved, *tc.otherProvider))
+			}
+			assertions.False(cardDAVCredentialMatchesConfig(saved, config.CardDAVConfig{}))
+
+			req.Password = "synthetic-password"
+			required.Error(validateCardDAVAccountRequest(req))
+			if tc.refusesOAuthApp {
+				req.Password, req.OAuthApp = "", "contacts"
+				required.Error(validateCardDAVAccountRequest(req), "an OAuth app is a Google setting")
+			}
+		})
+	}
 }
 
 func TestCardDAVGoogleAuthorizationConsumedOnceAndExpires(t *testing.T) {
@@ -404,4 +446,13 @@ func TestGoogleAuthorizationCallbackReportsTransientProviderFailures(t *testing.
 			assertions.Contains(response.Body.String(), `"error":"oauth_unavailable"`)
 		})
 	}
+}
+
+func TestGoogleTokenFailureKeepsPendingWrite(t *testing.T) {
+	t.Parallel()
+	err := googleCardDAVTokenError(&net.OpError{Op: "dial", Err: errors.New("connection refused")})
+	require.ErrorIs(t, err, carddav.ErrWriteNotSent)
+	require.ErrorIs(t, err, carddav.ErrGoogleTokenUnavailable)
+	err = googleCardDAVTokenError(&oauth2.RetrieveError{Response: &http.Response{StatusCode: http.StatusServiceUnavailable, Header: http.Header{}}})
+	require.ErrorIs(t, err, carddav.ErrWriteNotSent, "a token endpoint failure sends no contacts write")
 }

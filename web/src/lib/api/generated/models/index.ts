@@ -903,6 +903,7 @@ export * from "./totalStatsResponse";
 export * from "./transcriptSegment";
 export * from "./triggerSyncParams";
 export * from "./triggerSyncPathParameters";
+export * from "./triggerSyncResponse";
 export * from "./unlinkMessageTaskPathParameters";
 export * from "./unlinkPersonAgendaItemPathParameters";
 export * from "./unpublishCardDAVPersonPathParameters";

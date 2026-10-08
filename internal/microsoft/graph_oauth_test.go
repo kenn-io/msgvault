@@ -209,27 +209,59 @@ func TestGraphManager_TokenSource_Concurrent(t *testing.T) {
 	wg.Wait()
 }
 
-// Mail and Teams tokens live in separate files with separate scope sets, so a
-// Teams token never satisfies the mail manager and the reverse.
-func TestGraphMailManager_SeparateTokenAndScopes(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	dir := t.TempDir()
-	teamsMgr := NewGraphManager("test-client", "common", "", dir, slog.Default())
-	mailMgr := NewGraphMailManager("test-client", "common", "", dir, slog.Default())
-	assert.Equal(filepath.Join(dir, "msmail_user@company.com.json"), mailMgr.TokenPath("user@company.com"))
+// Each Graph product's token lives in its own file with its own scope set, so
+// another product's token never satisfies it, and its re-authorization hint
+// names its own command.
+func TestGraphManager_SeparateTokenAndScopes(t *testing.T) {
+	type newManager func(clientID, tenantID, redirectURI, tokensDir string, logger *slog.Logger) *GraphManager
+	for _, tc := range []struct {
+		name        string
+		manager     newManager
+		file        string
+		other       newManager
+		otherScopes []string
+		// otherWorks checks that the other product's token still serves it.
+		otherWorks bool
+		// wrongScopes is a grant that lacks this product's scope.
+		wrongScopes []string
+		wantScope   string
+		wantHint    string
+	}{
+		{
+			name: "mail", manager: NewGraphMailManager, file: "msmail_user@company.com.json",
+			other: NewGraphManager, otherScopes: GraphScopes(), otherWorks: true,
+			wrongScopes: []string{"https://graph.microsoft.com/User.Read", scopeOfflineAccess, "openid", scopeEmail},
+			wantScope:   "https://graph.microsoft.com/Mail.Read", wantHint: "msgvault add-o365 user@company.com --graph",
+		},
+		{
+			name: "contacts", manager: NewGraphContactsManager, file: "mscontacts_user@company.com.json",
+			other: NewGraphMailManager, otherScopes: GraphMailScopes(),
+			wrongScopes: GraphMailScopes(),
+			wantScope:   "https://graph.microsoft.com/Contacts.ReadWrite", wantHint: "msgvault carddav authorize-microsoft user@company.com",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			dir := t.TempDir()
+			otherMgr := tc.other("test-client", "common", "", dir, slog.Default())
+			mgr := tc.manager("test-client", "common", "", dir, slog.Default())
+			assert.Equal(filepath.Join(dir, tc.file), mgr.TokenPath("user@company.com"))
 
-	token := &oauth2.Token{AccessToken: "graph-access", RefreshToken: "graph-refresh", TokenType: "Bearer"}
-	require.NoError(teamsMgr.saveToken("user@company.com", token, GraphScopes(), "org-tid"))
-	_, err := teamsMgr.TokenSource(t.Context(), "user@company.com")
-	require.NoError(err)
-	assert.False(mailMgr.HasToken("user@company.com"))
+			token := &oauth2.Token{AccessToken: "graph-access", RefreshToken: "graph-refresh", TokenType: "Bearer"}
+			require.NoError(otherMgr.saveToken("user@company.com", token, tc.otherScopes, "org-tid"))
+			if tc.otherWorks {
+				_, err := otherMgr.TokenSource(t.Context(), "user@company.com")
+				require.NoError(err)
+			}
+			assert.False(mgr.HasToken("user@company.com"))
 
-	withoutMail := []string{"https://graph.microsoft.com/User.Read", scopeOfflineAccess, "openid", scopeEmail}
-	require.NoError(mailMgr.saveToken("user@company.com", token, withoutMail, "org-tid"))
-	_, err = mailMgr.TokenSource(t.Context(), "user@company.com")
-	require.ErrorContains(err, "https://graph.microsoft.com/Mail.Read")
-	require.ErrorContains(err, "msgvault add-o365 user@company.com --graph")
+			require.NoError(mgr.saveToken("user@company.com", token, tc.wrongScopes, "org-tid"))
+			_, err := mgr.TokenSource(t.Context(), "user@company.com")
+			require.ErrorContains(err, tc.wantScope)
+			require.ErrorContains(err, tc.wantHint)
+		})
+	}
 }
 
 // The write manager shares the mail token. It refuses a read-only grant, and

@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/carddav"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -1345,6 +1346,14 @@ func TestCardDAVPublicationTooLargeResponses(t *testing.T) {
 				"/api/v1/carddav/publications/7"+route.suffix, route.body)
 			require.Equal(http.StatusRequestEntityTooLarge, resp.Code, resp.Body.String())
 			assert.Contains(resp.Body.String(), `"error":"carddav_preview_too_large"`)
+			if route.method == http.MethodPost {
+				tooLarge := &carddav.ContactTooLargeError{PersonID: 7, Err: errors.Join(carddav.ErrMicrosoftContactTooLarge, &carddav.StatusError{StatusCode: http.StatusRequestEntityTooLarge})}
+				resp = cardDAVRouteResponse(t, cardDAVErrorFixture{mutateErr: tooLarge}, route.method,
+					"/api/v1/carddav/publications/7"+route.suffix, route.body)
+				require.Equal(http.StatusRequestEntityTooLarge, resp.Code, resp.Body.String())
+				assert.Contains(resp.Body.String(), `"error":"microsoft_contact_too_large"`)
+				assert.Contains(resp.Body.String(), operations.MicrosoftContactTooLargeMessage(7))
+			}
 			path := document.Paths["/api/v1/carddav/publications/{person_id}"+route.suffix]
 			require.NotNil(path)
 			operation := path.Post
@@ -1355,6 +1364,20 @@ func TestCardDAVPublicationTooLargeResponses(t *testing.T) {
 			assert.Contains(operation.Responses, "413")
 		})
 	}
+	t.Run("POST sync", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		tooLarge := &carddav.ContactTooLargeError{PersonID: 7, Err: carddav.ErrMicrosoftContactTooLarge}
+		resp := cardDAVRouteResponse(t, cardDAVErrorFixture{syncErr: tooLarge}, http.MethodPost, "/api/v1/carddav/sync", `{}`)
+		require.Equal(http.StatusRequestEntityTooLarge, resp.Code, resp.Body.String())
+		assert.Contains(resp.Body.String(), `"error":"microsoft_contact_too_large"`)
+		assert.Contains(resp.Body.String(), operations.FixedPublicError(operations.PublicErrorMicrosoftContactTooLarge).Message)
+		assert.NotContains(resp.Body.String(), "Person 7")
+		path := document.Paths["/api/v1/carddav/sync"]
+		require.NotNil(path)
+		require.NotNil(path.Post)
+		assert.Contains(path.Post.Responses, "413")
+	})
 }
 
 func TestCardDAVPublicationPreviewAndApprovalRoutes(t *testing.T) {

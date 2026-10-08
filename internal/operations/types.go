@@ -478,6 +478,8 @@ const (
 	PublicErrorRetryAfter                     PublicErrorCode = "retry_after"
 	PublicErrorAuthenticationFailed           PublicErrorCode = "authentication_failed"
 	PublicErrorGoogleAuthorizationRequired    PublicErrorCode = "google_authorization_required"
+	PublicErrorMicrosoftAuthorizationRequired PublicErrorCode = "microsoft_authorization_required"
+	PublicErrorMicrosoftContactTooLarge       PublicErrorCode = "microsoft_contact_too_large"
 	PublicErrorUpstreamFailed                 PublicErrorCode = "upstream_failed"
 	PublicErrorSafetyLimit                    PublicErrorCode = "safety_limit"
 	PublicErrorSyncFailed                     PublicErrorCode = "sync_failed"
@@ -525,6 +527,8 @@ var fixedPublicErrorMessages = map[PublicErrorCode]string{
 	PublicErrorRetryAfter:                     "CardDAV sync is temporarily paused.",
 	PublicErrorAuthenticationFailed:           "CardDAV authentication failed.",
 	PublicErrorGoogleAuthorizationRequired:    "Google Contacts authorization is required. Connect Google in CardDAV account settings.",
+	PublicErrorMicrosoftAuthorizationRequired: "Microsoft contacts authorization is required. Run msgvault carddav authorize-microsoft with your account email.",
+	PublicErrorMicrosoftContactTooLarge:       "A published contact is over Outlook's 4 MB limit, and each sync reports it until it fits. The daemon log names its person ID. " + contactTooLargeRemedy,
 	PublicErrorUpstreamFailed:                 "CardDAV server request failed.",
 	PublicErrorSafetyLimit:                    "CardDAV sync exceeded its safety limits.",
 	PublicErrorSyncFailed:                     "CardDAV sync failed.",
@@ -594,6 +598,14 @@ func (e PublicError) Validate() error {
 		return errors.New("operation public error message must be nonempty, valid UTF-8, and bounded")
 	}
 	return nil
+}
+
+const contactTooLargeRemedy = "Removing stored photos or other media currently needs the profile API; the CLI and Web UI have no control for it."
+
+// MicrosoftContactTooLargeMessage names the person whose card a publish,
+// approval or conflict resolution could not write to Outlook.
+func MicrosoftContactTooLargeMessage(personID int64) string {
+	return fmt.Sprintf("Person %d's contact is over Outlook's 4 MB limit. %s", personID, contactTooLargeRemedy)
 }
 
 func newPublicError(code PublicErrorCode) *PublicError {
@@ -674,6 +686,10 @@ func ProjectCardDAVFailure(durableCode string) *PublicError {
 		code = PublicErrorAuthenticationFailed
 	case "google_authorization_required":
 		code = PublicErrorGoogleAuthorizationRequired
+	case "microsoft_authorization_required":
+		code = PublicErrorMicrosoftAuthorizationRequired
+	case "microsoft_contact_too_large":
+		code = PublicErrorMicrosoftContactTooLarge
 	case "upstream_failed":
 		code = PublicErrorUpstreamFailed
 	case "safety_limit":
@@ -967,8 +983,8 @@ func isPersonSweepError(code PublicErrorCode) bool {
 func isCardDAVError(code PublicErrorCode) bool {
 	switch code {
 	case PublicErrorCancelled, PublicErrorRetryAfter, PublicErrorAuthenticationFailed,
-		PublicErrorGoogleAuthorizationRequired,
-		PublicErrorUpstreamFailed, PublicErrorSafetyLimit, PublicErrorSyncFailed,
+		PublicErrorGoogleAuthorizationRequired, PublicErrorMicrosoftAuthorizationRequired,
+		PublicErrorMicrosoftContactTooLarge, PublicErrorUpstreamFailed, PublicErrorSafetyLimit, PublicErrorSyncFailed,
 		PublicErrorUnsafeErrorRedacted, PublicErrorDaemonRestarted,
 		PublicErrorCardDAVSyncFailed:
 		return true

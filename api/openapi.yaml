@@ -1545,6 +1545,7 @@ components:
           enum:
             - ""
             - google
+            - microsoft
           type: string
         schedule:
           type: string
@@ -1981,6 +1982,8 @@ components:
             - retry_after
             - authentication_failed
             - google_authorization_required
+            - microsoft_authorization_required
+            - microsoft_contact_too_large
             - upstream_failed
             - safety_limit
             - sync_failed
@@ -2084,6 +2087,7 @@ components:
             - credential_mismatch
             - credential_unavailable
             - google_authorization_required
+            - microsoft_authorization_required
             - runtime_unavailable
           type: string
         schedule:
@@ -7424,6 +7428,8 @@ components:
             - invocation_unsafe_error_redacted
             - invocation_upstream_failed
             - lease_lost
+            - microsoft_authorization_required
+            - microsoft_contact_too_large
             - person_sweep_failed
             - policy
             - provider_http
@@ -9139,10 +9145,7 @@ components:
           type: string
         running_name:
           type: string
-        stored_credentials_supported:
-          type: boolean
       required:
-        - stored_credentials_supported
         - profiles
         - configured_enabled
         - running_enabled
@@ -14564,6 +14567,19 @@ components:
         - speaker
         - text
       type: object
+    TriggerSyncResponse:
+      additionalProperties: true
+      properties:
+        disposition:
+          type: string
+        message:
+          type: string
+        status:
+          type: string
+      required:
+        - status
+        - message
+      type: object
     UpdateRequest:
       additionalProperties: false
       properties:
@@ -16213,6 +16229,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Error
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
         "500":
           content:
             application/json:
@@ -16896,6 +16918,12 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Error
         "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "413":
           content:
             application/json:
               schema:
@@ -30301,7 +30329,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/StatusMessageResponse"
+                $ref: "#/components/schemas/TriggerSyncResponse"
           description: Accepted
         default:
           content:

@@ -221,7 +221,7 @@ type SyncScheduler interface {
 	// acquires the daemon's operation gate, avoiding a self-deadlock when
 	// the request itself is holding that gate.
 	IsJobScheduled(name string) bool
-	StartJob(name string) error
+	StartJob(name string) (scheduler.JobDisposition, error)
 	TriggerJob(name string) error
 }
 

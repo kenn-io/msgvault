@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"slices"
 	"strings"
@@ -57,7 +58,7 @@ func (s *Service) recoverPendingPublications(ctx context.Context) (map[int64]boo
 			recovered[personID] = true
 		}
 
-		if errors.Is(err, store.ErrCardDAVRetryAfter) || retryStatus(err) != nil {
+		if isGlobalSyncFailure(ctx, err) || retryStatus(err) != nil {
 			return recovered, err
 		}
 		if errors.Is(err, ErrCardDAVConflictPending) || errors.Is(err, store.ErrCardDAVInferenceReviewRequired) {
@@ -82,7 +83,7 @@ func (s *Service) reconcilePublications(ctx context.Context, skip map[int64]bool
 		}
 		_, err := s.reconcilePersonPublication(ctx, personID, false)
 
-		if errors.Is(err, store.ErrCardDAVRetryAfter) || retryStatus(err) != nil {
+		if isGlobalSyncFailure(ctx, err) || retryStatus(err) != nil {
 			return err
 		}
 		if errors.Is(err, ErrCardDAVConflictPending) || errors.Is(err, store.ErrCardDAVInferenceReviewRequired) {
@@ -344,7 +345,13 @@ func stripServerOwnedProperties(body []byte, version vcard.Version) ([]byte, err
 	return envelope.RenderView(version)
 }
 
-func (s *Service) executeMutation(ctx context.Context, pending *store.CardDAVPublication) error {
+func (s *Service) executeMutation(ctx context.Context, pending *store.CardDAVPublication) (err error) {
+	defer func() {
+		if pending.PersonID > 0 && errors.Is(err, ErrMicrosoftContactTooLarge) {
+			slog.WarnContext(ctx, "CardDAV contact is over Outlook's 4 MB limit", "person_id", pending.PersonID)
+			err = &ContactTooLargeError{PersonID: pending.PersonID, Err: err}
+		}
+	}()
 	if err := s.requireOwnBook(ctx, pending.AddressBookID); err != nil {
 		return err
 	}
@@ -404,7 +411,11 @@ func (s *Service) executeMutation(ctx context.Context, pending *store.CardDAVPub
 	}
 	err = s.gate(ctx, write)
 	if err != nil {
-		if status := retryStatus(err); status != nil {
+		if status := retryStatus(err); status != nil || notSent(err) {
+			// The rollback runs even when the caller's context is gone, or the
+			// next run would take the unsent write for an ambiguous one.
+			ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+			defer cancel()
 			if pending.ConflictOwned {
 				return errors.Join(err, s.store.RollbackCardDAVConflictLocalIntentContext(ctx, *pending))
 			}
@@ -414,7 +425,12 @@ func (s *Service) executeMutation(ctx context.Context, pending *store.CardDAVPub
 				}
 				return err
 			}
-			gate := time.Now().Add(status.RetryAfter).UTC()
+			// A write that was never sent keeps its intent, so reconcile sends
+			// it later, without pausing the connection.
+			var gate time.Time
+			if status != nil {
+				gate = time.Now().Add(status.RetryAfter).UTC()
+			}
 			if rollbackErr := s.store.RollbackCardDAVPublicationThrottleContext(ctx, pending, gate); rollbackErr != nil {
 				return errors.Join(err, rollbackErr)
 			}
@@ -604,6 +620,13 @@ func isStatus(err error, code int) bool {
 	return errors.As(err, &status) && status.StatusCode == code
 }
 
+// notSent reports a write that failed before it was sent: the connection
+// needs a new OAuth sign-in, or the Remote said so.
+func notSent(err error) bool {
+	return errors.Is(err, ErrGoogleAuthorizationRequired) || errors.Is(err, ErrMicrosoftAuthorizationRequired) ||
+		errors.Is(err, ErrWriteNotSent)
+}
+
 func retryStatus(err error) *StatusError {
 	status, ok := errors.AsType[*StatusError](err)
 	if !ok || (status.StatusCode != http.StatusTooManyRequests && status.RetryAfter <= 0) {
@@ -631,7 +654,7 @@ func (s *Service) recoverPendingConflictMutations(ctx context.Context) error {
 			continue
 		}
 		err := s.ResolveConflict(ctx, conflict.ID, ResolutionKeepLocal)
-		if errors.Is(err, store.ErrCardDAVRetryAfter) || retryStatus(err) != nil {
+		if isGlobalSyncFailure(ctx, err) || retryStatus(err) != nil {
 			return err
 		}
 		if errors.Is(err, ErrCardDAVConflictPending) || errors.Is(err, store.ErrCardDAVInferenceReviewRequired) {

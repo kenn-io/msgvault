@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vcard"
 )
@@ -216,8 +217,14 @@ func cardDAVSyncPublicFailure(err error) (string, string) {
 	if errors.Is(err, ErrGoogleAuthorizationRequired) {
 		return "google_authorization_required", "Google Contacts authorization is required. Connect Google in CardDAV account settings."
 	}
+	if errors.Is(err, ErrMicrosoftAuthorizationRequired) {
+		return "microsoft_authorization_required", "Microsoft contacts authorization is required. Run msgvault carddav authorize-microsoft with your account email."
+	}
 	if errors.Is(err, store.ErrCardDAVRetryAfter) {
 		return "retry_after", "CardDAV sync is temporarily paused."
+	}
+	if errors.Is(err, ErrMicrosoftContactTooLarge) {
+		return "microsoft_contact_too_large", operations.FixedPublicError(operations.PublicErrorMicrosoftContactTooLarge).Message
 	}
 	if status, ok := errors.AsType[*StatusError](err); ok {
 		if status.RetryAfter > 0 {
@@ -244,7 +251,8 @@ func isGlobalSyncFailure(ctx context.Context, err error) bool {
 	}
 	if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) ||
 		errors.Is(err, ErrOperationLimit) || errors.Is(err, store.ErrCardDAVRetryAfter) || errors.Is(err, ErrGoogleAuthorizationRequired) ||
-		errors.Is(err, ErrGoogleTokenUnavailable) {
+		errors.Is(err, ErrMicrosoftAuthorizationRequired) || errors.Is(err, ErrGoogleTokenUnavailable) ||
+		errors.Is(err, ErrMicrosoftTokenUnavailable) {
 		return true
 	}
 	var status *StatusError

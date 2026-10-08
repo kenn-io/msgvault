@@ -8368,15 +8368,14 @@ func (p PeopleInferenceSelectionRequest) Validate() error {
 }
 
 type PeopleInferenceSettingsResponse struct {
-	ConfiguredEnabled          bool                            `json:"configured_enabled"`
-	ConfiguredFingerprint      *string                         `json:"configured_fingerprint,omitzero"`
-	ConfiguredName             *string                         `json:"configured_name,omitzero"`
-	PendingRestart             bool                            `json:"pending_restart"`
-	Profiles                   []PeopleInferenceProfileSetting `json:"profiles" validate:"required"`
-	RunningEnabled             bool                            `json:"running_enabled"`
-	RunningFingerprint         *string                         `json:"running_fingerprint,omitzero"`
-	RunningName                *string                         `json:"running_name,omitzero"`
-	StoredCredentialsSupported bool                            `json:"stored_credentials_supported"`
+	ConfiguredEnabled     bool                            `json:"configured_enabled"`
+	ConfiguredFingerprint *string                         `json:"configured_fingerprint,omitzero"`
+	ConfiguredName        *string                         `json:"configured_name,omitzero"`
+	PendingRestart        bool                            `json:"pending_restart"`
+	Profiles              []PeopleInferenceProfileSetting `json:"profiles" validate:"required"`
+	RunningEnabled        bool                            `json:"running_enabled"`
+	RunningFingerprint    *string                         `json:"running_fingerprint,omitzero"`
+	RunningName           *string                         `json:"running_name,omitzero"`
 }
 
 func (p PeopleInferenceSettingsResponse) Validate() error {
@@ -13824,6 +13823,16 @@ type TranscriptSegment struct {
 }
 
 func (t TranscriptSegment) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(t))
+}
+
+type TriggerSyncResponse struct {
+	Disposition *string `json:"disposition,omitzero"`
+	Message     string  `json:"message" validate:"required"`
+	Status      string  `json:"status" validate:"required"`
+}
+
+func (t TriggerSyncResponse) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(t))
 }
 

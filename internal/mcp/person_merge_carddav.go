@@ -217,6 +217,9 @@ func (h *handlers) approveCardDAVPublication(ctx context.Context, req toolReques
 		return confirmationToolError(err)
 	}
 	value, err := h.personCardDAV.ApproveCardDAVPublication(ctx, id, token)
+	if err != nil {
+		return toolErrorResult(daemonclient.SafeMCPErrorForPerson(err, id).Error()), nil
+	}
 	return mcpPersonCardDAVResult(value, err)
 }
 
