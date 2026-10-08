@@ -37,7 +37,7 @@ type Conversation struct {
 	Status    string  `json:"status"`
 	CreatedAt int64   `json:"created_at"`
 	UpdatedAt float64 `json:"updated_at"`
-	// LastActivityAt is the creation time of the newest message, in epoch seconds.
+	// LastActivityAt is the conversation activity time used for ordering, in epoch seconds.
 	LastActivityAt int64    `json:"last_activity_at"`
 	Labels         []string `json:"labels"`
 	// LastMessageID comes from the listing's newest message by created_at.
