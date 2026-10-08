@@ -134,57 +134,76 @@ func TestMediaRefreshCallKeepsDistinctRecordingsAndDeduplicatesSameURL(t *testin
 }
 
 func TestMediaRefreshFailedReplacementRetainsBytesAndRetriesNextSync(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	media := newMediaRefreshServer(t)
-	router := newChatwootMediaRouter(t, media.server)
-	message := mediaRefreshCall(router.url(t, media.server, "/recording-a.ogg"), "")
-	call, ok := message["call"].(map[string]any)
-	require.True(ok)
-	api := newContractAPI(t, 2, []map[string]any{message})
-	api.mediaRouter = router
-	st := testutil.NewTestStore(t)
-	importer, _ := contractRegister(t, st, api)
-	opts := mediaRefreshOptions(t)
-	_, err := importer.Import(t.Context(), opts)
-	require.NoError(err)
-	meetingID := contractArchivedMessageID(t, st, "call:901")
-	before, payloads := readMediaRefreshBytes(t, st, meetingID, opts.AttachmentsDir)
-	require.Len(before, 1)
-	assert.Equal([]string{"synthetic recording A bytes"}, payloads)
+	for _, dropped := range []bool{false, true} {
+		name := "replacement_fails"
+		if dropped {
+			name = "recording_dropped"
+		}
+		t.Run(name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			media := newMediaRefreshServer(t)
+			router := newChatwootMediaRouter(t, media.server)
+			message := mediaRefreshCall(router.url(t, media.server, "/recording-a.ogg"), "")
+			call, ok := message["call"].(map[string]any)
+			require.True(ok)
+			api := newContractAPI(t, 2, []map[string]any{message})
+			api.mediaRouter = router
+			st := testutil.NewTestStore(t)
+			importer, _ := contractRegister(t, st, api)
+			opts := mediaRefreshOptions(t)
+			_, err := importer.Import(t.Context(), opts)
+			require.NoError(err)
+			meetingID := contractArchivedMessageID(t, st, "call:901")
+			before, payloads := readMediaRefreshBytes(t, st, meetingID, opts.AttachmentsDir)
+			require.Len(before, 1)
+			assert.Equal([]string{"synthetic recording A bytes"}, payloads)
 
-	media.mu.Lock()
-	media.failures["/recording-b.ogg"] = true
-	media.mu.Unlock()
-	api.Mu.Lock()
-	call["recording_url"] = router.url(t, media.server, "/recording-b.ogg")
-	api.Mu.Unlock()
-	summary, err := NewImporter(st, api.client(t)).Import(t.Context(), opts)
-	require.NoError(err, "a media failure must not discard the archived call")
-	assert.Positive(summary.MediaFailures)
-	failedAttempts := media.requestCount("/recording-b.ogg")
-	assert.Positive(failedAttempts, "the changed recording must actually be attempted")
-	preserved, payloads := readMediaRefreshBytes(t, st, meetingID, opts.AttachmentsDir)
-	require.Len(preserved, 1)
-	assert.Equal([]string{"synthetic recording A bytes"}, payloads)
-	for key, old := range before {
-		assert.Equal(old.ContentHash, preserved[key].ContentHash)
-		assert.Equal(old.StoragePath, preserved[key].StoragePath)
-	}
+			if dropped {
+				api.Mu.Lock()
+				delete(call, "recording_url")
+				api.Mu.Unlock()
+				_, err = NewImporter(st, api.client(t)).Import(t.Context(), opts)
+				require.NoError(err)
+				refs, payloads := readMediaRefreshBytes(t, st, meetingID, opts.AttachmentsDir)
+				assert.Len(refs, 1)
+				assert.Equal([]string{"synthetic recording A bytes"}, payloads, "the archive keeps a recording the provider stops listing")
+				return
+			}
+			media.mu.Lock()
+			media.failures["/recording-b.ogg"] = true
+			media.mu.Unlock()
+			api.Mu.Lock()
+			call["recording_url"] = router.url(t, media.server, "/recording-b.ogg")
+			api.Mu.Unlock()
+			summary, err := NewImporter(st, api.client(t)).Import(t.Context(), opts)
+			require.NoError(err, "a media failure must not discard the archived call")
+			assert.Positive(summary.MediaFailures)
+			failedAttempts := media.requestCount("/recording-b.ogg")
+			assert.Positive(failedAttempts, "the changed recording must actually be attempted")
+			preserved, payloads := readMediaRefreshBytes(t, st, meetingID, opts.AttachmentsDir)
+			require.Len(preserved, 1)
+			assert.Equal([]string{"synthetic recording A bytes"}, payloads)
+			for key, old := range before {
+				assert.Equal(old.ContentHash, preserved[key].ContentHash)
+				assert.Equal(old.StoragePath, preserved[key].StoragePath)
+			}
 
-	media.mu.Lock()
-	media.failures["/recording-b.ogg"] = false
-	media.mu.Unlock()
-	// Keep the same provider URL and conversation timestamp. The failed refresh
-	// must not relabel the old blob as already downloaded from this new URL.
-	_, err = NewImporter(st, api.client(t)).Import(t.Context(), opts)
-	require.NoError(err)
-	assert.Greater(media.requestCount("/recording-b.ogg"), failedAttempts)
-	after, payloads := readMediaRefreshBytes(t, st, meetingID, opts.AttachmentsDir)
-	require.Len(after, 1)
-	assert.Equal([]string{"synthetic replacement recording B bytes"}, payloads)
-	for key, old := range before {
-		assert.NotEqual(old.ContentHash, after[key].ContentHash)
+			media.mu.Lock()
+			media.failures["/recording-b.ogg"] = false
+			media.mu.Unlock()
+			// Keep the same provider URL and conversation timestamp. The failed refresh
+			// must not relabel the old blob as already downloaded from this new URL.
+			_, err = NewImporter(st, api.client(t)).Import(t.Context(), opts)
+			require.NoError(err)
+			assert.Greater(media.requestCount("/recording-b.ogg"), failedAttempts)
+			after, payloads := readMediaRefreshBytes(t, st, meetingID, opts.AttachmentsDir)
+			require.Len(after, 1)
+			assert.Equal([]string{"synthetic replacement recording B bytes"}, payloads)
+			for key, old := range before {
+				assert.NotEqual(old.ContentHash, after[key].ContentHash)
+			}
+		})
 	}
 }
 

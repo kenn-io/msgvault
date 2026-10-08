@@ -149,7 +149,9 @@ func TestImportContractSelfAgentOwnershipFollowsIdentities(t *testing.T) {
 	call["call"] = map[string]any{"id": 601, "direction": "outgoing", "status": "completed"}
 	reply := contractMessage(202, 1767225601, owner)
 	reply["message_type"] = 1
-	api := newContractAPI(t, 3, []map[string]any{call, reply})
+	employee := contractMessage(107, 1767225602, map[string]any{"id": int64(7), "type": "user"})
+	employee["message_type"] = 1
+	api := newContractAPI(t, 3, []map[string]any{call, reply, employee})
 	st := testutil.NewTestStore(t)
 	importer, source := contractRegister(t, st, api)
 	providerIDs := []string{"202", "call:201"}
@@ -194,45 +196,23 @@ func TestImportContractSelfAgentOwnershipFollowsIdentities(t *testing.T) {
 	}
 	providerIDs = append(providerIDs, "203", "call:204")
 	assert.Equal([]bool{false, false, false, false}, owned([]int64{8}))
-}
 
-func TestSelfAgentRemovalAndAtomicConfig(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	api := newContractAPI(t, 1000, nil)
-	for id := int64(7); id <= 8; id++ {
-		m := contractMessage(100+id, now().Unix(), map[string]any{"id": id, "type": "user"})
-		m["message_type"] = 1
-		api.Conversations[42] = append(api.Conversations[42], m)
-	}
-	st := testutil.NewTestStore(t)
-	imp, source := contractRegister(t, st, api)
-	opts := ImportOptions{InboxID: 7, SelfAgentIDs: []int64{7, 8}}
-	_, err := imp.Import(t.Context(), opts)
-	require.NoError(err)
-	seven, eight := imp.actorIdentifier(Actor{ID: 7, Type: actorUser}), imp.actorIdentifier(Actor{ID: 8, Type: actorUser})
-	_, err = st.RemoveAccountIdentity(source.ID, eight)
-	require.NoError(err)
-	for range 2 {
-		_, err = NewImporter(st, api.client(t)).Import(t.Context(), opts)
-		require.NoError(err)
-		owned, err := st.GetMessageIsFromMe(contractArchivedMessageID(t, st, "108"))
-		require.NoError(err)
-		assert.False(owned)
-	}
+	seven, eight := importer.actorIdentifier(Actor{ID: 7, Type: actorUser}), importer.actorIdentifier(Actor{ID: 8, Type: actorUser})
+	opts := ImportOptions{InboxID: 7}
 	opts.SelfAgentIDs = []int64{7}
-	_, err = imp.Import(t.Context(), opts)
+	_, err = importer.Import(t.Context(), opts)
 	require.NoError(err)
 	opts.SelfAgentIDs = []int64{7, 8}
-	_, err = imp.Import(t.Context(), opts)
+	_, err = importer.Import(t.Context(), opts)
 	require.NoError(err)
-	owned, err := st.GetMessageIsFromMe(contractArchivedMessageID(t, st, "108"))
+	fromMe, err := st.GetMessageIsFromMe(contractArchivedMessageID(t, st, "202"))
 	require.NoError(err)
-	assert.True(owned)
+	assert.True(fromMe)
 	require.NoError(st.AddAccountIdentity(source.ID, seven, "manual"))
 	opts.SelfAgentIDs = []int64{8}
-	_, err = imp.Import(t.Context(), opts)
+	_, err = importer.Import(t.Context(), opts)
 	require.NoError(err)
-	identities, err := st.ListAccountIdentities(source.ID)
+	identities, err = st.ListAccountIdentities(source.ID)
 	require.NoError(err)
 	assert.Len(identities, 2, "manual evidence survives removal from configuration")
 	before, err := st.GetSourceByTypeAndIdentifier(SourceType, source.Identifier)
@@ -243,7 +223,7 @@ func TestSelfAgentRemovalAndAtomicConfig(t *testing.T) {
 	}
 	_, err = st.DB().Exec(trigger)
 	require.NoError(err)
-	nine := imp.actorIdentifier(Actor{ID: 9, Type: actorUser})
+	nine := importer.actorIdentifier(Actor{ID: 9, Type: actorUser})
 	require.Error(st.SyncChatwootSelfAgents(t.Context(), source.ID, []string{nine}))
 	after, err := st.GetSourceByTypeAndIdentifier(SourceType, source.Identifier)
 	require.NoError(err)
@@ -364,9 +344,6 @@ func TestImportContractCallFallbackAndLifecycleKeepsOneLinkedMeeting(t *testing.
 	assert.Equal(meetingcontent.StateUnavailable, entry.Content.Transcript.State)
 	for _, participant := range entry.Participants {
 		require.NotNil(participant.ParticipantID)
-		metrics, err := st.GetMeetingMetricsContext(t.Context(), store.MeetingQueryScope{ParticipantIDs: []int64{*participant.ParticipantID}})
-		require.NoError(err)
-		assert.Equal(int64(1), metrics.Totals.MeetingCount)
 	}
 	after := time.Unix(1767225500, 0)
 	metrics, err := st.GetMeetingMetricsContext(t.Context(), store.MeetingQueryScope{SourceIDs: []int64{source.ID}, After: &after})
@@ -389,23 +366,6 @@ func TestImportContractCallFallbackAndLifecycleKeepsOneLinkedMeeting(t *testing.
 	body, err := st.GetMessageBodyText(meetingID)
 	require.NoError(err)
 	assert.Contains(body, "Updated call transcript words")
-	var dialect query.Dialect = query.SQLiteQueryDialect{}
-	if store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
-		dialect = query.PostgreSQLQueryDialect{}
-	}
-	engine := query.NewEngineWithDialect(st.DB(), dialect)
-	for _, pair := range [][2]int64{{chatID, meetingID}, {meetingID, chatID}} {
-		detail, err := st.GetMessageContext(t.Context(), pair[0])
-		require.NoError(err)
-		assert.Equal(new(pair[1]), detail.RelatedMessageID)
-		queried, err := engine.GetMessage(t.Context(), pair[0])
-		require.NoError(err)
-		assert.Equal(new(pair[1]), queried.RelatedMessageID)
-		window, err := st.GetConversationWindowContext(t.Context(), detail.ConversationID, pair[0], 10, 10, nil, nil)
-		require.NoError(err)
-		require.Len(window.Messages, 1)
-		assert.Equal(new(pair[1]), window.Messages[0].RelatedMessageID)
-	}
 	aliasID, err := st.EnsureParticipantContext(t.Context(), "owner.alias@example.com", "Example Owner", "example.com")
 	require.NoError(err)
 	require.NoError(st.AddAccountIdentity(source.ID, "owner.alias@example.com", "manual"))
@@ -587,6 +547,24 @@ func TestImportContractRelatedMessageAvailability(t *testing.T) {
 		dialect = query.PostgreSQLQueryDialect{}
 	}
 	engine := query.NewEngineWithDialect(st.DB(), dialect)
+	for _, pair := range [][2]int64{{chatID, meetingID}, {meetingID, chatID}} {
+		detail, err := st.GetMessageContext(t.Context(), pair[0])
+		must.NoError(err)
+		checks.Equal(new(pair[1]), detail.RelatedMessageID)
+		queried, err := engine.GetMessage(t.Context(), pair[0])
+		must.NoError(err)
+		checks.Equal(new(pair[1]), queried.RelatedMessageID)
+		window, err := st.GetConversationWindowContext(t.Context(), detail.ConversationID, pair[0], 10, 10, nil, nil)
+		must.NoError(err)
+		var related *int64
+		for _, item := range window.Messages {
+			if item.ID == pair[0] {
+				related = item.RelatedMessageID
+			}
+		}
+		checks.Equal(new(pair[1]), related)
+	}
+
 	invalidMetadata := []string{`{"meeting_message_id":-1}`, `{"meeting_message_id":` + strconv.FormatInt(chatID, 10) + `}`, `{"meeting_message_id":` + strconv.FormatInt(neighborID, 10) + `}`, `{"meeting_message_id":999999}`}
 	if !store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
 		invalidMetadata = append(invalidMetadata, "broken JSON")

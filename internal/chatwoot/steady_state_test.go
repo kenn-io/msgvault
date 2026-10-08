@@ -113,33 +113,49 @@ func TestSameSecondMessageIsNotSkipped(t *testing.T) {
 }
 
 func TestFailedOldDownloadRetriesNextSync(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	media := newMediaRefreshServer(t)
-	router := newChatwootMediaRouter(t, media.server)
-	media.failures["/recording-a.ogg"] = true
-	// Far older than the refresh window, as in a first import of old history.
-	message := contractMessage(901, now().Add(-30*24*time.Hour).Unix(), nil)
-	message["attachments"] = []any{map[string]any{"id": 2001, "message_id": 901, "file_type": "file", "data_url": router.url(t, media.server, "/recording-a.ogg")}}
-	api := newContractAPI(t, 1000, []map[string]any{message})
-	api.mediaRouter = router
-	st := testutil.NewTestStore(t)
-	importer, source := contractRegister(t, st, api)
-	opts := mediaRefreshOptions(t)
-	first, err := importer.Import(t.Context(), opts)
-	require.NoError(err)
-	require.Equal(1, first.MediaFailures)
-	assert.Contains(savedState(t, st, source).Conversations["42"].Artifacts, "901")
-
-	media.mu.Lock()
-	media.failures["/recording-a.ogg"] = false
-	media.mu.Unlock()
-	_, err = NewImporter(st, api.client(t)).Import(t.Context(), opts)
-	require.NoError(err)
-	refs, payloads := readMediaRefreshBytes(t, st, contractArchivedMessageID(t, st, "901"), opts.AttachmentsDir)
-	require.Len(refs, 1)
-	assert.Equal([]string{"synthetic recording A bytes"}, payloads)
-	assert.Empty(savedState(t, st, source).Conversations, "a stored download leaves the refresh list")
+	for _, tc := range []struct {
+		name  string
+		age   time.Duration
+		fails bool
+	}{
+		{"no_url", time.Hour, false}, {"failed_old_download", 30 * 24 * time.Hour, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			checks, must := assert.New(t), require.New(t)
+			media := newMediaRefreshServer(t)
+			router := newChatwootMediaRouter(t, media.server)
+			media.failures["/recording-a.ogg"] = tc.fails
+			message := contractMessage(901, now().Add(-tc.age).Unix(), nil)
+			attachment := map[string]any{"id": 2001, "message_id": 901, "file_type": "file"}
+			if tc.fails {
+				attachment["data_url"] = router.url(t, media.server, "/recording-a.ogg")
+			}
+			message["attachments"] = []any{attachment}
+			api := newContractAPI(t, 1000, []map[string]any{message})
+			api.mediaRouter = router
+			st := testutil.NewTestStore(t)
+			importer, source := contractRegister(t, st, api)
+			opts := mediaRefreshOptions(t)
+			first, err := importer.Import(t.Context(), opts)
+			must.NoError(err)
+			if tc.fails {
+				checks.Equal(1, first.MediaFailures)
+			}
+			must.Contains(savedState(t, st, source).Conversations["42"].Artifacts, "901")
+			media.mu.Lock()
+			media.failures["/recording-a.ogg"] = false
+			media.mu.Unlock()
+			api.Mu.Lock()
+			attachment["data_url"] = router.url(t, media.server, "/recording-a.ogg")
+			api.Mu.Unlock()
+			_, err = NewImporter(st, api.client(t)).Import(t.Context(), opts)
+			must.NoError(err)
+			refs, payloads := readMediaRefreshBytes(t, st, contractArchivedMessageID(t, st, "901"), opts.AttachmentsDir)
+			must.Len(refs, 1)
+			checks.Equal([]string{"synthetic recording A bytes"}, payloads)
+			checks.Empty(savedState(t, st, source).Conversations, "a stored download leaves the refresh list")
+		})
+	}
 }
 
 func TestCallsAreRecheckedOnlyInsideTheWindow(t *testing.T) {
@@ -212,129 +228,146 @@ func TestEmailReplyUsesItsAddressedRecipients(t *testing.T) {
 }
 
 func TestCappedRangesCostPagesNotHoles(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	api := newContractAPI(t, 10, nil)
-	at := now().Add(-30 * 24 * time.Hour)
-	// Account-wide IDs leave a hole between every message of one conversation.
-	for index := range int64(35) {
-		api.AddMessage(1, 100+3*index, at.Add(time.Duration(index)*time.Second))
+	for _, tc := range []struct {
+		name              string
+		cap, count, limit int
+	}{
+		{"cap_10", 10, 35, 0}, {"limit_20", 1000, 40, 20},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			checks, must := assert.New(t), require.New(t)
+			api := newContractAPI(t, tc.cap, nil)
+			at := now().Add(-30 * 24 * time.Hour)
+			for index := range int64(tc.count) {
+				api.AddMessage(1, 100+3*index, at.Add(time.Duration(index)*time.Second))
+			}
+			st := testutil.NewTestStore(t)
+			imp, source := contractRegister(t, st, api)
+			opts := ImportOptions{InboxID: 7, Limit: tc.limit}
+			sum, err := imp.Import(t.Context(), opts)
+			must.NoError(err)
+			if tc.limit > 0 {
+				checks.Len(savedState(t, st, source).Conversations["1"].Pending, 1, "holes the response proved empty are not saved")
+				api.TakeRequests()
+				_, err = imp.Import(t.Context(), opts)
+				must.NoError(err)
+			} else {
+				checks.False(sum.Partial)
+			}
+			reads := 0
+			for _, request := range api.TakeRequests() {
+				if strings.HasPrefix(request, "messages ") {
+					reads++
+				}
+			}
+			if tc.limit > 0 {
+				checks.Equal(1+2, reads, "one tail read plus two range probes")
+			} else {
+				checks.Less(reads, 20, "capped history needs reads per page, not per hole")
+			}
+			checks.Len(contractMessageIDs(t, st), tc.count)
+			checks.Empty(savedState(t, st, source).Conversations)
+		})
 	}
-	st := testutil.NewTestStore(t)
-	imp, source := contractRegister(t, st, api)
-	sum, err := imp.Import(t.Context(), ImportOptions{InboxID: 7})
-	require.NoError(err)
-	assert.False(sum.Partial)
-	assert.Len(contractMessageIDs(t, st), 35)
-	var reads int
-	for _, request := range api.TakeRequests() {
-		if strings.HasPrefix(request, "messages ") {
-			reads++
-		}
-	}
-	assert.Less(reads, 20, "35 messages behind a 10-message cap need a few reads per page, not one per hole")
-	assert.Empty(savedState(t, st, source).Conversations)
-}
-
-func TestStoredRecordingSurvivesWhenProviderDropsIt(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	media := newMediaRefreshServer(t)
-	router := newChatwootMediaRouter(t, media.server)
-	message := mediaRefreshCall(router.url(t, media.server, "/recording-a.ogg"), "")
-	call, ok := message["call"].(map[string]any)
-	require.True(ok)
-	api := newContractAPI(t, 1000, []map[string]any{message})
-	api.mediaRouter = router
-	st := testutil.NewTestStore(t)
-	importer, _ := contractRegister(t, st, api)
-	opts := mediaRefreshOptions(t)
-	_, err := importer.Import(t.Context(), opts)
-	require.NoError(err)
-	meetingID := contractArchivedMessageID(t, st, "call:901")
-
-	api.Mu.Lock()
-	delete(call, "recording_url")
-	api.Mu.Unlock()
-	_, err = NewImporter(st, api.client(t)).Import(t.Context(), opts)
-	require.NoError(err)
-	refs, payloads := readMediaRefreshBytes(t, st, meetingID, opts.AttachmentsDir)
-	assert.Len(refs, 1)
-	assert.Equal([]string{"synthetic recording A bytes"}, payloads, "the archive keeps a recording the provider stops listing")
 }
 
 func TestFirstSyncBackfillsPastOneListingBatch(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	api := newContractAPI(t, 1000, nil)
-	at := now().Add(-30 * 24 * time.Hour)
-	for conversation := int64(1); conversation <= 250; conversation++ {
-		api.AddMessage(conversation, 1000+conversation, at.Add(time.Duration(conversation)*time.Minute))
+	for _, tc := range []struct {
+		name                          string
+		count, pageSize, budget, runs int
+		idBase                        int64
+	}{
+		{"queue_batching", 250, 25, 0, 1, 1000}, {"scan_budget", 15, 3, 8, 20, 100},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			checks, must := assert.New(t), require.New(t)
+			api := newContractAPI(t, 1000, nil)
+			api.PageSize = tc.pageSize
+			at := now().Add(-30 * 24 * time.Hour)
+			for id := int64(1); id <= int64(tc.count); id++ {
+				created := at
+				if tc.budget == 0 {
+					created = at.Add(time.Duration(id) * time.Minute)
+				}
+				api.AddMessage(id, tc.idBase+id, created)
+			}
+			st := testutil.NewTestStore(t)
+			imp, source := contractRegister(t, st, api)
+			if tc.budget > 0 {
+				imp.requestBudget = tc.budget
+			}
+			for range tc.runs {
+				sum, err := imp.Import(t.Context(), ImportOptions{InboxID: 7})
+				must.NoError(err)
+				if tc.budget == 0 {
+					checks.False(sum.Partial)
+					checks.Equal(tc.count, sum.MessagesAdded)
+				}
+			}
+			ids := make([]string, 0, tc.count)
+			for id := int64(1); id <= int64(tc.count); id++ {
+				ids = append(ids, strconv.FormatInt(tc.idBase+id, 10))
+			}
+			archived, err := st.MessageExistsBatch(source.ID, ids)
+			must.NoError(err)
+			checks.Len(archived, tc.count)
+			checks.Empty(savedState(t, st, source).Walk)
+		})
 	}
-	st := testutil.NewTestStore(t)
-	imp, source := contractRegister(t, st, api)
-	sum, err := imp.Import(t.Context(), ImportOptions{InboxID: 7})
-	require.NoError(err)
-	assert.False(sum.Partial)
-	assert.Equal(250, sum.MessagesAdded, "one run backfills as far as its request budget allows")
-	assert.Empty(savedState(t, st, source).Walk)
-}
-
-func TestFileWithoutURLWaitsOnRefreshList(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	media := newMediaRefreshServer(t)
-	router := newChatwootMediaRouter(t, media.server)
-	message := contractMessage(901, now().Add(-time.Hour).Unix(), nil)
-	attachment := map[string]any{"id": 2001, "message_id": 901, "file_type": "file"}
-	message["attachments"] = []any{attachment}
-	api := newContractAPI(t, 1000, []map[string]any{message})
-	api.mediaRouter = router
-	st := testutil.NewTestStore(t)
-	importer, source := contractRegister(t, st, api)
-	opts := mediaRefreshOptions(t)
-	_, err := importer.Import(t.Context(), opts)
-	require.NoError(err)
-	assert.Contains(savedState(t, st, source).Conversations["42"].Artifacts, "901", "Chatwoot attaches the file after creating the message")
-
-	api.Mu.Lock()
-	attachment["data_url"] = router.url(t, media.server, "/recording-a.ogg")
-	api.Mu.Unlock()
-	_, err = NewImporter(st, api.client(t)).Import(t.Context(), opts)
-	require.NoError(err)
-	refs, payloads := readMediaRefreshBytes(t, st, contractArchivedMessageID(t, st, "901"), opts.AttachmentsDir)
-	require.Len(refs, 1)
-	assert.Equal([]string{"synthetic recording A bytes"}, payloads)
-	assert.Empty(savedState(t, st, source).Conversations)
 }
 
 func TestCappedArtifactReadStillReachesSkippedIDs(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	var messages, attachments []map[string]any
-	// 901 was created last, so a capped read in creation order never returns it.
-	for id, offset := range map[int64]int64{901: 5, 902: 1, 903: 2} {
-		m := contractMessage(id, now().Add(-time.Hour).Unix()+offset, nil)
-		attachment := map[string]any{"id": id, "file_type": "audio"}
-		m["attachments"] = []any{attachment}
-		messages, attachments = append(messages, m), append(attachments, attachment)
-	}
-	api := newContractAPI(t, 2, messages)
-	st := testutil.NewTestStore(t)
-	importer, _ := contractRegister(t, st, api)
-	_, err := importer.Import(t.Context(), ImportOptions{InboxID: 7})
-	require.NoError(err)
-	api.Mu.Lock()
-	for _, attachment := range attachments {
-		attachment["transcribed_text"] = "late words"
-	}
-	api.Mu.Unlock()
-	_, err = NewImporter(st, api.client(t)).Import(t.Context(), ImportOptions{InboxID: 7})
-	require.NoError(err)
-	for _, id := range []string{"901", "902", "903"} {
-		body, err := st.GetMessageBodyText(contractArchivedMessageID(t, st, id))
-		require.NoError(err)
-		assert.Contains(body, "late words", "message %s", id)
+	for _, rotation := range []bool{false, true} {
+		name := "skipped_id_ordering"
+		if rotation {
+			name = "budgeted_rotation"
+		}
+		t.Run(name, func(t *testing.T) {
+			checks, must := assert.New(t), require.New(t)
+			api := newContractAPI(t, 2, nil)
+			offsets := map[int64]time.Duration{901: -time.Hour + 5*time.Second, 902: -time.Hour + time.Second, 903: -time.Hour + 2*time.Second}
+			if rotation {
+				offsets = map[int64]time.Duration{}
+				for id := int64(100); id <= 112; id++ {
+					offsets[id] = time.Duration(112-id) * time.Second
+				}
+			}
+			attachments := map[int64]map[string]any{}
+			for id, offset := range offsets {
+				attachment := map[string]any{"id": id, "file_type": "audio"}
+				attachments[id] = attachment
+				api.AddMessage(1, id, now().Add(offset), attachment)
+			}
+			st := testutil.NewTestStore(t)
+			imp, source := contractRegister(t, st, api)
+			_, err := imp.Import(t.Context(), ImportOptions{InboxID: 7})
+			must.NoError(err)
+			targets, transcript, runs := []int64{901, 902, 903}, "late words", 1
+			if rotation {
+				targets, transcript, runs = []int64{111}, "cappedquartz transcript", 8
+			}
+			api.Mu.Lock()
+			for _, id := range targets {
+				attachments[id]["transcribed_text"] = transcript
+			}
+			api.Mu.Unlock()
+			for range runs {
+				imp = NewImporter(st, api.client(t))
+				if rotation {
+					imp.requestBudget = 6
+				}
+				_, err = imp.Import(t.Context(), ImportOptions{InboxID: 7})
+				must.NoError(err)
+			}
+			for _, id := range targets {
+				body, err := st.GetMessageBodyText(contractArchivedMessageID(t, st, strconv.FormatInt(id, 10)))
+				must.NoError(err)
+				checks.Contains(body, transcript)
+			}
+			if rotation {
+				checks.Contains(savedState(t, st, source).Conversations["1"].Artifacts, "100")
+			}
+		})
 	}
 }
 
@@ -389,61 +422,6 @@ func TestReconcileRereadsMessagesCommittedOutOfOrder(t *testing.T) {
 	}
 }
 
-func TestLimitedRunSavesOnlyTheUnreadTail(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	api := newContractAPI(t, 1000, nil)
-	at := now().Add(-30 * 24 * time.Hour)
-	for index := range int64(40) {
-		api.AddMessage(1, 100+3*index, at.Add(time.Duration(index)*time.Second))
-	}
-	st := testutil.NewTestStore(t)
-	imp, source := contractRegister(t, st, api)
-	opts := ImportOptions{InboxID: 7, Limit: 20}
-	_, err := imp.Import(t.Context(), opts)
-	require.NoError(err)
-	assert.Len(savedState(t, st, source).Conversations["1"].Pending, 1, "holes the response proved empty are not saved")
-	api.TakeRequests()
-	_, err = imp.Import(t.Context(), opts)
-	require.NoError(err)
-	var reads int
-	for _, request := range api.TakeRequests() {
-		if strings.HasPrefix(request, "messages ") {
-			reads++
-		}
-	}
-	assert.Equal(1+2, reads, "one read of the tail plus the import's two range probes")
-	assert.Len(contractMessageIDs(t, st), 40)
-}
-
-func TestListingProgressesWhenTheActivityScanRunsOutOfBudget(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	api := newContractAPI(t, 1000, nil)
-	api.PageSize = 3
-	// Every conversation sits inside the overlap, so the scan never reaches the
-	// watermark within its half of a small budget.
-	at := now().Add(-30 * 24 * time.Hour)
-	for conversation := int64(1); conversation <= 15; conversation++ {
-		api.AddMessage(conversation, 100+conversation, at)
-	}
-	st := testutil.NewTestStore(t)
-	imp, source := contractRegister(t, st, api)
-	imp.requestBudget = 8
-	for range 20 {
-		_, err := imp.Import(t.Context(), ImportOptions{InboxID: 7})
-		require.NoError(err)
-	}
-	ids := make([]string, 0, 15)
-	for id := int64(101); id <= 115; id++ {
-		ids = append(ids, strconv.FormatInt(id, 10))
-	}
-	archived, err := st.MessageExistsBatch(source.ID, ids)
-	require.NoError(err)
-	assert.Len(archived, 15)
-	assert.Empty(savedState(t, st, source).Walk, "the listing finishes even while the scan can't")
-}
-
 func TestQuietOverlapSettlesAndEmptyInboxDiscoversImmediately(t *testing.T) {
 	for _, empty := range []bool{false, true} {
 		t.Run(strconv.FormatBool(empty), func(t *testing.T) {
@@ -483,34 +461,6 @@ func TestQuietOverlapSettlesAndEmptyInboxDiscoversImmediately(t *testing.T) {
 			assert.Equal([]string{"agents", "list " + sortByActivity}, api.TakeRequests())
 		})
 	}
-}
-
-func TestCappedArtifactRotationKeepsLivePrefix(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	api := newContractAPI(t, 2, nil)
-	var latest map[string]any
-	for id := int64(100); id <= 112; id++ {
-		attachment := map[string]any{"id": id, "file_type": "audio"}
-		api.AddMessage(1, id, now().Add(time.Duration(112-id)*time.Second), attachment)
-		if id == 111 {
-			latest = attachment
-		}
-	}
-	st := testutil.NewTestStore(t)
-	imp, source := contractRegister(t, st, api)
-	_, err := imp.Import(t.Context(), ImportOptions{InboxID: 7})
-	require.NoError(err)
-	latest["transcribed_text"] = "cappedquartz transcript"
-	for range 8 {
-		imp = NewImporter(st, api.client(t))
-		imp.requestBudget = 6
-		_, err = imp.Import(t.Context(), ImportOptions{InboxID: 7})
-		require.NoError(err)
-	}
-	body, err := st.GetMessageBodyText(contractArchivedMessageID(t, st, "111"))
-	require.NoError(err)
-	assert.Contains(body, "cappedquartz")
-	assert.Contains(savedState(t, st, source).Conversations["1"].Artifacts, "100")
 }
 
 func TestFutureActivityDoesNotHideNormalDiscovery(t *testing.T) {

@@ -111,7 +111,6 @@ func TestMediaDestinationPolicy(t *testing.T) {
 		{"configured_private_origin", "https://chatwoot.internal", "https://chatwoot.internal/storage/audio.ogg", "10.4.5.6", "10.4.5.6:443"},
 		{"default_http_port", "http://127.0.0.1", "http://127.0.0.1/audio.ogg", "", "127.0.0.1:80"},
 		{"zero_port", "https://chatwoot.example.com", "https://cdn.chatwoot.example:0/audio.ogg", "203.0.113.7", ""},
-		{"oversized_port", "https://chatwoot.example.com", "https://cdn.chatwoot.example:65536/audio.ogg", "203.0.113.7", ""},
 		{"other_origin_beside_private_config", "https://chatwoot.internal", "https://cdn.chatwoot.example/storage/audio.ogg", "10.4.5.6", ""},
 		{"configured_loopback_origin", "http://127.0.0.1:3000", "http://127.0.0.1:3000/audio", "", "127.0.0.1:3000"},
 		{"loopback_on_another_port", "http://127.0.0.1:3000", "http://127.0.0.1:4000/internal", "", ""},

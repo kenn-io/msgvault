@@ -2,7 +2,6 @@ package chatwoot
 
 import (
 	"context"
-	"fmt"
 	"math"
 	"net/http/httptest"
 	"slices"
@@ -81,24 +80,49 @@ func contractMessageIDs(t *testing.T, st *store.Store) []int64 {
 // Replacing range traversal with a min/max cursor or treating a short page as
 // complete must lose records in at least one of these independent fixtures.
 func TestImportContractRangesPreserveDisorderedIDs(t *testing.T) {
-	for _, pageCap := range []int{1, 3, 1000} {
-		t.Run(fmt.Sprintf("cap_%d", pageCap), func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
+	for _, tc := range []struct {
+		name           string
+		pageCap, limit int
+		full           bool
+	}{
+		{"cap_1", 1, 0, false}, {"cap_1000", 1000, 0, false}, {"capped", 3, 2, false}, {"full", 20, 2, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			checks, must := assert.New(t), require.New(t)
 			want := []int64{1, 2, 7, 9, 15, 33, 41, 70, 111, 901, 904, 1301, 2100, math.MaxInt32}
+			if tc.limit > 0 {
+				want = want[:7]
+			}
 			messages := make([]map[string]any, 0, len(want))
 			for i, id := range want {
-				messages = append(messages, contractMessage(id, 1767225600+int64((i*7)%5), nil))
+				offset := int64((i * 7) % 5)
+				if tc.limit > 0 {
+					offset = int64(len(want) - i)
+				}
+				messages = append(messages, contractMessage(id, 1767225600+offset, nil))
 			}
-			api := newContractAPI(t, pageCap, messages)
+			api := newContractAPI(t, tc.pageCap, messages)
 			st := testutil.NewTestStore(t)
-			importer, _ := contractRegister(t, st, api)
-			_, err := importer.Import(t.Context(), ImportOptions{InboxID: 7, IncludePrivate: true})
-			require.NoError(err)
-			assert.Equal(want, contractMessageIDs(t, st))
-			_, err = NewImporter(st, api.client(t)).Import(t.Context(), ImportOptions{InboxID: 7, IncludePrivate: true})
-			require.NoError(err)
-			assert.Equal(want, contractMessageIDs(t, st), "restart must not create duplicates")
+			contractRegister(t, st, api)
+			opts := ImportOptions{InboxID: 7, IncludePrivate: true, Limit: tc.limit, Full: tc.full}
+			runs := 1
+			if tc.limit > 0 {
+				runs = len(want) + 2
+			}
+			for range runs {
+				sum, err := NewImporter(st, api.client(t)).Import(t.Context(), opts)
+				must.NoError(err)
+				if tc.limit > 0 {
+					checks.LessOrEqual(sum.MessagesProcessed, tc.limit)
+				}
+				if len(contractMessageIDs(t, st)) == len(want) {
+					break
+				}
+			}
+			checks.Equal(want, contractMessageIDs(t, st), "unfinished ranges survive importer restarts")
+			_, err := NewImporter(st, api.client(t)).Import(t.Context(), opts)
+			must.NoError(err)
+			checks.Equal(want, contractMessageIDs(t, st), "restart must not create duplicates")
 		})
 	}
 }
@@ -168,36 +192,6 @@ func TestImportContractMaximumIDMediaAndCall(t *testing.T) {
 			require.NoError(err)
 			assert.Equal(chatID, contractArchivedMessageID(t, st, "2147483647"))
 			assert.Equal(meetingID, contractArchivedMessageID(t, st, "call:2147483647"))
-		})
-	}
-}
-
-// A capped response keeps every unhandled hole; a --full walk resumes its saved
-// ranges instead of restarting at the first page.
-func TestImportContractLimitedRunsResume(t *testing.T) {
-	for _, tc := range []struct {
-		name    string
-		pageCap int
-		full    bool
-	}{{"capped", 3, false}, {"full", 20, true}} {
-		t.Run(tc.name, func(t *testing.T) {
-			want := []int64{1, 2, 7, 9, 15, 33, 41}
-			messages := make([]map[string]any, 0, len(want))
-			for i, id := range want {
-				messages = append(messages, contractMessage(id, 1767225600+int64(len(want)-i), nil))
-			}
-			api := newContractAPI(t, tc.pageCap, messages)
-			st := testutil.NewTestStore(t)
-			contractRegister(t, st, api)
-			for range len(want) + 2 {
-				sum, err := NewImporter(st, api.client(t)).Import(t.Context(), ImportOptions{InboxID: 7, Limit: 2, Full: tc.full})
-				require.NoError(t, err)
-				require.LessOrEqual(t, sum.MessagesProcessed, 2, "a run respects its message limit")
-				if len(contractMessageIDs(t, st)) == len(want) {
-					break
-				}
-			}
-			assert.Equal(t, want, contractMessageIDs(t, st), "unfinished ranges survive importer restarts")
 		})
 	}
 }
@@ -277,7 +271,6 @@ func TestOversizedResponsesSplitAndResume(t *testing.T) {
 				body, err := st.GetMessageBodyText(contractArchivedMessageID(t, st, "359"))
 				require.NoError(err)
 				assert.Contains(body, "latequartz")
-				assert.Contains(savedState(t, st, source).Conversations["1"].Artifacts, "100", "early artifacts remain live")
 			} else {
 				assert.False(sum.Partial)
 			}

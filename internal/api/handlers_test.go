@@ -1809,6 +1809,8 @@ func TestHandleCLIRunBackupSubcommandAdmission(t *testing.T) {
 		{"repair list IDs apply allowed", []string{"repair-list-ids", "--apply"}, true},
 		{"repair-senders apply allowed", []string{"repair-senders", "--apply"}, true},
 		{"repack-attachments allowed", []string{"repack-attachments"}, true},
+		{"add-chatwoot allowed", []string{"add-chatwoot", "support"}, true},
+		{"sync-chatwoot allowed", []string{"sync-chatwoot", "support"}, true},
 		{"add-discord allowed", []string{"add-discord"}, true},
 		{"sync-discord allowed", []string{"sync-discord", "113456789012345678"}, true},
 		{"export-discord allowed", []string{"export-discord", "113456789012345678"}, true},
