@@ -217,6 +217,7 @@ import type {
   ListDeletionsResponse,
   ListDirectoryPeopleParams,
   ListIdentityMatchCandidatesParams,
+  ListMessageRecordingsPathParameters,
   ListMessageTasksPathParameters,
   ListMessagesParams,
   ListOperationRunsParams,
@@ -266,6 +267,7 @@ import type {
   MergePersonsPathParameters,
   MessageDetail,
   MessageListResponse,
+  MessageRecordingsResponse,
   OperationRunDetail,
   OperationRunsResponse,
   OperationStatusResponse,
@@ -2125,6 +2127,21 @@ export const getMessageInlinePart = (
       method: "GET",
       params,
       responseType: "blob",
+    },
+    options,
+  );
+};
+/**
+ * @summary List a message's recordings with transcript state
+ */
+export const listMessageRecordings = (
+  { id }: ListMessageRecordingsPathParameters,
+  options?: SecondParameter<typeof orvalFetch<MessageRecordingsResponse>>,
+) => {
+  return orvalFetch<MessageRecordingsResponse>(
+    {
+      url: `/api/v1/messages/${encodeURIComponent(String(id))}/recordings`,
+      method: "GET",
     },
     options,
   );

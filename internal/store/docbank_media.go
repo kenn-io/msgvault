@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
 )
 
 // beeperMediaLocalGapCodes are source gaps that a daemon restart cannot fix.
@@ -53,12 +55,15 @@ const (
 	beeperMediaPollDelay         = time.Minute
 )
 
+// attachmentBytesArchived matches attachment a when its bytes are in the archive.
+const attachmentBytesArchived = `(length(COALESCE(a.content_hash, '')) = 64
+	  AND COALESCE(a.size, 0) > 0
+	  AND COALESCE(a.storage_path, '') <> '')`
+
 // beeperMediaEligible is the shared provider, capture and role predicate. It
 // assumes a (attachments), m (messages), c (conversations) and src (sources).
 // Archives older than attachment_state leave it NULL on stored Beeper audio.
-const beeperMediaEligible = `length(COALESCE(a.content_hash, '')) = 64
-	  AND COALESCE(a.size, 0) > 0
-	  AND COALESCE(a.storage_path, '') <> ''
+const beeperMediaEligible = attachmentBytesArchived + `
 	  AND COALESCE(src.source_type, '') <> ''
 	  AND COALESCE(src.identifier, '') <> ''
 	  AND COALESCE(m.source_message_id, '') <> ''
@@ -573,6 +578,163 @@ func (s *Store) currentBeeperMediaMessage(ctx context.Context, mapping BeeperMed
 		return false, fmt.Errorf("resolve beeper media occurrence: %w", err)
 	}
 	return true, nil
+}
+
+// MessageMediaOccurrence joins visible local audio with its optional Docbank mapping.
+type MessageMediaOccurrence struct {
+	AttachmentID     int64
+	Filename         string
+	Size             int64
+	OccurrenceRef    string
+	Revision         string
+	RetentionState   string
+	ErrorCode        string
+	VaultUID         string
+	DocbankSourceID  string
+	SourceVersionID  string
+	ContentVersionID string
+	// The delivery of the occurrence's current processing key, which for a
+	// provider transcript is keyed by that transcript's text.
+	DeliveryProfile        string
+	DeliveryPhase          string
+	DeliveryOperationState string
+	SuppliedInputID        string
+	BytesArchived          bool
+	AttachmentState        attachmentpolicy.DownloadState
+}
+
+// messageAudioHint matches attachment a when its metadata says audio.
+const messageAudioHint = `(COALESCE(a.media_type, '') IN ('audio', 'voice_note')
+	OR LOWER(COALESCE(a.mime_type, '')) LIKE 'audio/%'
+	OR LOWER(COALESCE(a.filename, '')) LIKE '%.wav'
+	OR LOWER(COALESCE(a.filename, '')) LIKE '%.mp3'
+	OR LOWER(COALESCE(a.filename, '')) LIKE '%.m4a'
+	OR LOWER(COALESCE(a.filename, '')) LIKE '%.aac'
+	OR LOWER(COALESCE(a.filename, '')) LIKE '%.ogg'
+	OR LOWER(COALESCE(a.filename, '')) LIKE '%.oga'
+	OR LOWER(COALESCE(a.filename, '')) LIKE '%.opus')`
+
+const messageRecordingMapping = `o.retention_state <> 'revoked'
+	  AND NOT (o.retention_state = 'blocked' AND o.retention_operation_id = ''
+	    AND o.error_code = 'unsupported_media' AND NOT ` + messageAudioHint + `)`
+
+// ListMessageMediaOccurrences lists visible archived audio and missing bytes.
+// A destination adds current remote mappings; empty means a local-only read.
+// The media worker owns stale mapping revocation.
+func (s *Store) ListMessageMediaOccurrences(
+	ctx context.Context, destination string, messageID int64,
+) ([]MessageMediaOccurrence, error) {
+	if messageID < 1 {
+		return nil, errors.New("message media occurrence query is invalid")
+	}
+	var occurrences []MessageMediaOccurrence
+	if destination != "" {
+		var err error
+		occurrences, err = s.listMessageOccurrenceRows(ctx, destination, messageID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	archived, err := s.listMessageAudio(ctx, "list archived message audio", `
+		SELECT a.id, COALESCE(a.filename, ''), COALESCE(a.size, 0), COALESCE(a.attachment_state, '')
+		FROM attachments a
+		JOIN messages m ON m.id = a.message_id
+		WHERE m.id = ? AND `+LiveMessagesWhere("m", true)+`
+		  AND (`+messageAudioHint+` OR a.id IN (
+		    SELECT a.id FROM beeper_media_occurrences o`+beeperMediaCurrentJoin+`
+		      AND m.id = ? AND `+messageRecordingMapping+`))
+		  AND `+attachmentBytesArchived+`
+		  AND COALESCE(a.attachment_state, '') IN ('', 'stored')
+		ORDER BY a.id`, messageID, messageID)
+	if err != nil {
+		return nil, err
+	}
+	mapped := make(map[int64]bool, len(occurrences))
+	for _, o := range occurrences {
+		mapped[o.AttachmentID] = true
+	}
+	archived = slices.DeleteFunc(archived, func(o MessageMediaOccurrence) bool { return mapped[o.AttachmentID] })
+	for i := range archived {
+		archived[i].BytesArchived = true
+	}
+	uncaptured, err := s.listMessageAudio(ctx, "list uncaptured message audio", `
+		SELECT a.id, COALESCE(a.filename, ''), COALESCE(a.size, 0), COALESCE(a.attachment_state, '')
+		FROM attachments a
+		JOIN messages m ON m.id = a.message_id
+		WHERE m.id = ? AND `+LiveMessagesWhere("m", true)+`
+		  AND `+messageAudioHint+`
+		  AND (COALESCE(a.attachment_state, '') IN ('pending', 'skipped', 'failed', 'unavailable')
+		    OR (COALESCE(a.attachment_state, '') = '' AND NOT `+attachmentBytesArchived+`))
+		ORDER BY a.id`, messageID)
+	if err != nil {
+		return nil, err
+	}
+	return slices.Concat(occurrences, archived, uncaptured), nil
+}
+
+func (s *Store) listMessageOccurrenceRows(
+	ctx context.Context, destination string, messageID int64,
+) ([]MessageMediaOccurrence, error) {
+	rows, err := s.db.QueryContext(ctx, s.Rebind(`
+		SELECT a.id, COALESCE(a.filename, ''), COALESCE(a.size, 0), o.occurrence_ref, o.revision,
+		       o.retention_state, o.error_code, o.vault_uid, o.source_id, o.source_version_id,
+		       o.content_version_id, COALESCE(d.profile, ''), COALESCE(d.phase, ''),
+		       COALESCE(d.operation_state, ''), COALESCE(d.supplied_input_id, '')
+		FROM beeper_media_occurrences o
+		LEFT JOIN beeper_media_deliveries d
+		  ON d.destination_key = o.destination_key AND d.processing_key = o.processing_key`+
+		beeperMediaCurrentJoin+`
+		  AND o.destination_key = ? AND m.id = ? AND `+messageRecordingMapping+`
+		ORDER BY a.id, o.occurrence_ref, o.revision`), destination, messageID)
+	if err != nil {
+		return nil, fmt.Errorf("list message media occurrences: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var occurrences []MessageMediaOccurrence
+	for rows.Next() {
+		var o MessageMediaOccurrence
+		if err := rows.Scan(&o.AttachmentID, &o.Filename, &o.Size, &o.OccurrenceRef, &o.Revision,
+			&o.RetentionState, &o.ErrorCode, &o.VaultUID, &o.DocbankSourceID, &o.SourceVersionID,
+			&o.ContentVersionID, &o.DeliveryProfile, &o.DeliveryPhase, &o.DeliveryOperationState,
+			&o.SuppliedInputID); err != nil {
+			return nil, fmt.Errorf("scan message media occurrence: %w", err)
+		}
+		o.BytesArchived = true
+		occurrences = append(occurrences, o)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate message media occurrences: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("close message media occurrences: %w", err)
+	}
+	return occurrences, nil
+}
+
+// listMessageAudio reads attachment rows that have no occurrence identity.
+func (s *Store) listMessageAudio(
+	ctx context.Context, operation, query string, args ...any,
+) ([]MessageMediaOccurrence, error) {
+	rows, err := s.db.QueryContext(ctx, s.Rebind(query), args...)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", operation, err)
+	}
+	defer func() { _ = rows.Close() }()
+	var audio []MessageMediaOccurrence
+	for rows.Next() {
+		var o MessageMediaOccurrence
+		if err := rows.Scan(&o.AttachmentID, &o.Filename, &o.Size, &o.AttachmentState); err != nil {
+			return nil, fmt.Errorf("scan %s: %w", operation, err)
+		}
+		audio = append(audio, o)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate %s: %w", operation, err)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("close %s: %w", operation, err)
+	}
+	return audio, nil
 }
 
 // RevokeStaleBeeperMediaMappings moves non-revoked mappings without a current

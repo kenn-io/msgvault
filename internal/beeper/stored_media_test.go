@@ -634,3 +634,42 @@ func processingKeyForDestination(t *testing.T, st *store.Store, destination, pro
 		WHERE destination_key = ? AND profile = ?`), destination, profile).Scan(&key))
 	return key
 }
+
+// TestMediaRevisionMatchesWorker checks that MediaRevision reproduces the
+// revision the worker records, so a reader can trust a match to mean the
+// provider transcript is unchanged.
+func TestMediaRevisionMatchesWorker(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	wav := syntheticWAV(800, 23)
+	world := importVoiceChat(t,
+		voiceSpec{id: "beeper-supplied", asset: "mxc://beeper.local/revision-supplied", mime: "audio/wav",
+			fileName: "supplied.wav", transcript: "provider words", data: wav},
+		voiceSpec{id: "beeper-plain", asset: "mxc://beeper.local/revision-plain", mime: "audio/wav",
+			fileName: "plain.wav", data: syntheticWAV(800, 24)})
+	addStoredMediaSource(t, world, "gmail", "test@example.com", "mail-audio", syntheticWAV(800, 25),
+		"meeting.wav", "audio/wav", "", store.AttachmentRoleStandalone, "", nil,
+		"mail:attachment:1", "mime:1.2")
+	docbank := newFakeDocbank(t)
+	server := httptest.NewServer(docbank)
+	defer server.Close()
+	runPasses(t, world.submitter(t, server, "destination-revision").WithASRProfile("revision-asr"), 3)
+
+	rows, err := world.st.DB().Query(world.st.Rebind(`SELECT source_type, attachment_id, revision
+		FROM beeper_media_occurrences WHERE destination_key = ? ORDER BY source_message_id`),
+		"destination-revision")
+	require.NoError(err)
+	defer func() { require.NoError(rows.Close()) }()
+	var sourceTypes []string
+	for rows.Next() {
+		var sourceType, recorded string
+		var attachmentID int64
+		require.NoError(rows.Scan(&sourceType, &attachmentID, &recorded))
+		revision, err := MediaRevision(t.Context(), world.st, attachmentID)
+		require.NoError(err, sourceType)
+		assert.Equal(recorded, revision, sourceType)
+		sourceTypes = append(sourceTypes, sourceType)
+	}
+	require.NoError(rows.Err())
+	assert.ElementsMatch([]string{"beeper", "beeper", "gmail"}, sourceTypes)
+}

@@ -759,6 +759,7 @@ func TestOpenAPIExportsServerRouteTable(t *testing.T) {
 		"/api/v1/messages":                       {"get"},
 		"/api/v1/messages/{id}":                  {"get"},
 		"/api/v1/messages/{id}/inline":           {"get"},
+		"/api/v1/messages/{id}/recordings":       {"get"},
 		"/api/v1/search":                         {"get"},
 		"/api/v1/query":                          {"post"},
 		"/api/v1/aggregates":                     {"get"},

@@ -349,7 +349,8 @@ import (
 // microsoft CardDAV provider, microsoft_authorization_required and
 // microsoft_contact_too_large.
 // 3.5.0 adds the account: and received: search operators.
-const APISchemaVersion = "3.5.0"
+// 3.6.0 adds GET /api/v1/messages/{id}/recordings for live audio and transcript coverage.
+const APISchemaVersion = "3.6.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -1113,6 +1114,13 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 			schema.Extensions = map[string]any{}
 		}
 		schema.Extensions["x-enum-names"] = enumNames
+	}
+	if recording := schemas["MessageRecording"]; recording != nil {
+		setEnumNames(recording.Properties["state"], qualifiedEnumNames("MessageRecordingState",
+			[]string{recordingReady, recordingProcessing, recordingMissing, recordingFailed, recordingUnsupported, recordingMediaMissing, recordingUnavailable}))
+	}
+	if transcript := schemas["MessageTranscript"]; transcript != nil {
+		setEnumNames(transcript.Properties["origin"], qualifiedEnumNames("MessageTranscriptOrigin", []string{"supplied", "generated"}))
 	}
 	if request := schemas["CalendarRequest"]; request != nil {
 		for property, names := range map[string][]any{

@@ -412,6 +412,9 @@ type Server struct {
 	// and embedded callers that construct a Server without options, which
 	// fall back to the legacy loose-file open.
 	blobStore AttachmentBlobStore
+	// messageRecordings joins recordings with Docbank transcripts. Nil serves
+	// an empty list.
+	messageRecordings *MessageRecordingReader
 	// remoteImages is the SSRF-hardened fetcher behind
 	// POST /api/v1/content/remote-image. Tests replace it to inject a fake
 	// resolver and dialer.
@@ -552,6 +555,9 @@ type ServerOptions struct {
 	// packed CAS storage with a loose-file fallback. Nil keeps the legacy
 	// loose-file-only read path.
 	BlobStore AttachmentBlobStore
+	// MessageRecordings reads recordings and their Docbank transcripts for
+	// GET /api/v1/messages/{id}/recordings. Nil serves an empty list.
+	MessageRecordings *MessageRecordingReader
 	// RequestTimeout caps each request by adding a deadline to the request
 	// context. Zero defaults to 60s. The underlying http.Server's WriteTimeout
 	// is set to RequestTimeout + 5s so handlers that honor cancellation can
@@ -648,6 +654,7 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 		statsSnapshotWait:      statsSnapshotWait,
 		vectorStatsTimeout:     vectorStatsTimeout,
 		blobStore:              opts.BlobStore,
+		messageRecordings:      opts.MessageRecordings,
 		remoteImages:           remoteimage.NewFetcher(),
 		inlineCache:            newInlineParseCache(inlineCacheMaxEntries, inlineCacheMaxBytes),
 		spaHandler:             opts.SPAHandler,

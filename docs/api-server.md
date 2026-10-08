@@ -100,7 +100,7 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.5.0**.
+it is separate from the binary release version. The current schema is **3.6.0**.
 Upgrade clients and daemon together across incompatible schema versions,
 including remote deployments.
 
@@ -132,6 +132,10 @@ availability queries, and opt-in `write` on Calendar consent plans.
 
 Schema 3.2.0 adds `counts_pending` to `GET /api/v1/cli/accounts`. See
 [archive statistics](#get-apiv1stats) for when it appears.
+
+Schema 3.6.0 adds `GET /api/v1/messages/{id}/recordings`, which lists a
+message's recordings with their Docbank transcript state. Existing routes are
+unchanged.
 
 Schema 2.35.0 adds `scope_escalation_source_type` (`gmail` or `msmail`) to
 `POST /api/v1/cli/delete-staged/plan` responses that require a permission
@@ -1565,6 +1569,95 @@ Successful responses set:
 | `Content-Disposition` | `inline` |
 | `Cache-Control` | `private, max-age=31536000, immutable` |
 | `X-Content-Type-Options` | `nosniff` |
+
+---
+
+### Message recordings {#get-apiv1messagesidrecordings}
+
+**Endpoint:** `GET /api/v1/messages/{id}/recordings`
+
+List a message's recordings and their transcript state. msgvault reads the
+transcript from the configured [Docbank destination](usage/beeper.md#send-audio-to-docbank)
+on each request and does not store it.
+
+```json
+{
+  "message_id": 42,
+  "recordings": [
+    {
+      "attachment_id": 5,
+      "filename": "voice.wav",
+      "size_bytes": 48213,
+      "state": "ready",
+      "transcript": {
+        "origin": "supplied",
+        "partial": false,
+        "units": [
+          { "text": "See you at noon.", "start_ms": 0, "end_ms": 1500, "speaker": "alice" }
+        ]
+      }
+    }
+  ]
+}
+```
+
+`state` is one of:
+
+| State | Meaning |
+|---|---|
+| `ready` | Docbank has transcript text; `transcript` is set |
+| `processing` | The transcript is queued or running |
+| `missing` | Docbank has the audio but no transcript |
+| `failed` | Docbank's transcription failed or was cancelled |
+| `unsupported` | Transcription eligibility or limits reject the recording |
+| `media_missing` | The audio bytes are missing from the archive |
+| `unavailable` | msgvault can't show a transcript; see below |
+
+A recording is `unavailable` when:
+
+- Docbank can't be reached in time, or the API key is missing.
+- Docbank returns evidence that msgvault can't attribute to this recording,
+  such as a provider transcript that another message or an earlier edit sent
+  for the same audio.
+- `all_sources_upload_consent` is off, so the media worker won't send audio
+  that is waiting to be sent, including a provider transcript that changed.
+- The media worker blocked the recording for a reason other than transcription eligibility or limits.
+- Capture policy skipped the recording's bytes.
+
+`origin` is `supplied` for a provider transcript and `generated` for speech
+recognition. `partial` is true when Docbank reports truncated, incomplete or
+omitted text. A unit's `start_ms`, `end_ms` and `speaker` are present only when
+Docbank recorded them.
+
+A `supplied` transcript shows only when Docbank identifies the exact input
+msgvault sent for the message's current recording. This requires Docbank's
+[supplied-input attribution](https://github.com/kenn-io/docbank/pull/825).
+Older Docbank servers that omit this identity leave supplied text `unavailable`. Matching evidence can
+show `ready` before the local worker polls completion. An edited transcript
+reads as `processing` while delivery is pending and uploads are allowed.
+A delivery that failed reads as `failed`.
+If Docbank serves another input for the same audio, including after a transcript
+is reverted, supplied text stays `unavailable` until Docbank serves the saved input.
+
+Only live messages list recordings. A message that is hidden as a duplicate or
+deleted from its source returns an empty list. Captured audio without a current
+worker mapping reads as `unavailable` until discovery records processing work.
+When the Docbank integration is off, or its `url`
+is invalid, archived recordings stay visible with transcript state `unavailable`;
+audio whose bytes are absent stays `media_missing`, or `unavailable` when capture policy skipped it. A
+non-positive or non-numeric ID returns `400 invalid_id`.
+
+Person-scoped Media and Files, search, CLI, TUI and MCP readers are later work.
+
+The Web reader refreshes visible recordings while the message stays open.
+Unchanged results increase the interval from 2 seconds up to 30 seconds.
+Returning to the tab refreshes immediately. A changed message clears earlier
+evidence before loading its recordings again.
+
+Each request reads Docbank for retained recordings only, up to four at a time.
+The reads share a budget of 20 seconds or half the remaining request time,
+whichever is shorter. A read that runs out of budget leaves its recording
+`unavailable`.
 
 ---
 

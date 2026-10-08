@@ -75,6 +75,10 @@ All notable changes to msgvault, grouped by release.
 - A CardDAV update or unpublish attempted while the Google sign-in is missing
   goes out after sign-in, instead of turning into a conflict to review.
 
+- **Transcripts beside recordings:** the Web reader shows each recording's
+  Docbank transcript, or why there isn't one, under the expanded message.
+  `GET /api/v1/messages/{id}/recordings` serves the same list (API schema 3.6.0).
+
 ## 0.21.0
 <small>2026-10-02</small>
 

@@ -5,6 +5,7 @@
   import type { ArchiveMessageDetail, MessageViewMode } from '../../archive/types';
   import IdentityAvatar from '../common/IdentityAvatar.svelte';
   import ContentFrame from './ContentFrame.svelte';
+  import MessageRecordings from './MessageRecordings.svelte';
   import KataIssueAction from '../kata/KataIssueAction.svelte';
   import { EVIDENCE_WINDOW } from '../../kata/evidence';
 
@@ -137,6 +138,9 @@
           </li>
         {/each}
       </ul>
+    {/if}
+    {#if client && message.attachments.length > 0}
+      <MessageRecordings {client} {message} messageId={message.id} />
     {/if}
   </article>
 {:else}

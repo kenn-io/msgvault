@@ -434,6 +434,26 @@ func (w *MediaSubmitter) describeCandidate(
 	return configureMediaProcessing(descriptor, "", w.asrProfile), "", nil
 }
 
+// MediaRevision returns the occurrence revision the media worker would record
+// for the attachment now, so a reader can tell when a mapping no longer matches
+// the source message's transcript, timestamp or file metadata.
+func MediaRevision(ctx context.Context, st *store.Store, attachmentID int64) (string, error) {
+	candidate, err := st.GetBeeperMediaCandidate(ctx, attachmentID)
+	if err != nil {
+		return "", err
+	}
+	if candidate.SourceType != "beeper" {
+		descriptor, err := describeStoredMedia(candidate, "")
+		return descriptor.Occurrence.Revision, err
+	}
+	raw, err := st.GetMessageRawContext(ctx, candidate.MessageID)
+	if err != nil {
+		return "", err
+	}
+	descriptor, _, err := describeMedia(raw, candidate, "")
+	return descriptor.Occurrence.Revision, err
+}
+
 func describeStoredMedia(
 	candidate store.BeeperMediaCandidate, archiveUID string,
 ) (MediaDescriptor, error) {

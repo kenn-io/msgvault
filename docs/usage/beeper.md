@@ -307,6 +307,24 @@ FROM beeper_media_deliveries
 GROUP BY phase, coverage_state;
 ```
 
+### Read transcripts in the Web reader
+
+Open a conversation in the Web reader and expand a message with audio. Each
+recording shows its filename, size and transcript state. A ready transcript
+says whether it came from the provider or was generated, and marks partial
+text. Supplied text requires Docbank to identify the exact input sent for this
+recording, using its [supplied-input attribution](https://github.com/kenn-io/docbank/pull/825).
+Older servers that omit the identity show it as unavailable. The same happens
+when Docbank serves another input for the same audio, including after an edit is reverted.
+Lines show their start time and speaker when Docbank recorded them.
+The Web reader is the only client for now. Person-scoped Media and Files,
+search, CLI, TUI and MCP readers are later work. msgvault reads the text from
+Docbank while the message stays open and does not store it. The view refreshes
+every 2 to 30 seconds while visible and immediately when you return to the tab.
+Turning Docbank off keeps archived audio visible with transcript unavailable.
+Unmapped captured audio stays unavailable until discovery records processing work.
+Audio whose bytes are missing still says so; capture policy exclusions read unavailable.
+
 ## Scheduled sync
 
 Let the daemon run incremental syncs on a schedule:
