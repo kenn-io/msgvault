@@ -53,6 +53,9 @@ func CanonicalURL(raw string) (string, error) {
 		u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
 		return "", errors.New("chatwoot URL must be an absolute HTTP(S) instance URL without credentials, query or fragment")
 	}
+	if _, err := netguard.TargetPort(u); err != nil {
+		return "", errors.New("chatwoot URL port must be between 1 and 65535")
+	}
 	host := strings.ToLower(u.Hostname())
 	if u.Scheme == "http" && !isLoopbackHost(host) {
 		return "", errors.New("chatwoot remote URL must use HTTPS")
