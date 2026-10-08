@@ -169,11 +169,10 @@ func (imp *Importer) persistMedia(ctx context.Context, messageID int64, attachme
 			ref.StoragePath = previous.StoragePath
 			ref.ContentHash = previous.ContentHash
 			ref.Size = previous.Size
-			if ref.MimeType == "" {
-				ref.MimeType = previous.MimeType
-			}
+			ref.MimeType = previous.MimeType
 		}
 		stored := hadPrevious && previous.ContentHash != ""
+		hint := ref.MimeType
 		if stored {
 			retain()
 			storedURL = storedMediaIdentity(previous)
@@ -218,8 +217,10 @@ func (imp *Importer) persistMedia(ctx context.Context, messageID int64, attachme
 				evidence.FailedSince = failedAt
 			}
 		default:
-			storage, hash, size, mimeType, fetchErr := imp.downloadMedia(ctx, remote, opts.AttachmentsDir, maxBytes, ref.MimeType)
-			ref.MimeType = mimeType
+			storage, hash, size, mimeType, fetchErr := imp.downloadMedia(ctx, remote, opts.AttachmentsDir, maxBytes, hint)
+			if fetchErr == nil || !stored {
+				ref.MimeType = mimeType
+			}
 			if fetchErr == nil {
 				ref.StoragePath = storage
 				ref.ContentHash = hash

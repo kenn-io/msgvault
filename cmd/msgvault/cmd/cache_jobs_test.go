@@ -173,6 +173,7 @@ func TestManualSyncProbeDoesNotQueueCacheRefresh(t *testing.T) {
 	assert.True(manualSyncCLICommand([]string{"sync-notion-meetings", "--limit", "3"}))
 	assert.True(manualSyncCLICommand([]string{"sync-matrix"}))
 	assert.True(manualSyncCLICommand([]string{"sync-twilio", "work"}))
+	assert.True(manualSyncCLICommand([]string{"sync-chatwoot", "support"}))
 	assert.False(manualSyncCLICommand([]string{"sync-twilio", "--probe"}))
 	assert.False(manualSyncCLICommand([]string{"sync-twilio", "--probe=true"}))
 }

@@ -1,6 +1,7 @@
 package chatwoot
 
 import (
+	"cmp"
 	"context"
 	"encoding/json/v2"
 	"fmt"
@@ -22,12 +23,13 @@ import (
 )
 
 type mediaRefreshServer struct {
-	mu        sync.Mutex
-	server    *httptest.Server
-	failures  map[string]bool
-	requests  map[string]int
-	declared  bool
-	onRequest func(string)
+	mu          sync.Mutex
+	server      *httptest.Server
+	failures    map[string]bool
+	requests    map[string]int
+	declared    bool
+	contentType string
+	onRequest   func(string)
 }
 
 func newMediaRefreshServer(t *testing.T) *mediaRefreshServer {
@@ -55,7 +57,7 @@ func newMediaRefreshServer(t *testing.T) *mediaRefreshServer {
 			http.NotFound(w, r)
 			return
 		}
-		w.Header().Set("Content-Type", "audio/ogg")
+		w.Header().Set("Content-Type", cmp.Or(media.contentType, "audio/ogg"))
 		if media.declared {
 			w.Header().Set("Content-Length", strconv.Itoa(len(payload)))
 		}
@@ -158,6 +160,9 @@ func TestMediaRefreshCallKeepsDistinctRecordingsAndDeduplicatesSameURL(t *testin
 				call["recording_url"] = router.url(t, media.server, path)
 				attachment["data_url"] = call["recording_url"]
 				media.failures[path] = tc.replacementFailure
+				if tc.replacementFailure {
+					attachment["content_type"] = "audio/wav"
+				}
 				opts.Full = tc.replacementFailure
 				summary, err = NewImporter(st, api.client(t)).Import(t.Context(), opts)
 				require.NoError(err)
@@ -173,6 +178,7 @@ func TestMediaRefreshCallKeepsDistinctRecordingsAndDeduplicatesSameURL(t *testin
 					require.Len(refs, 1)
 					assert.Equal(attachmentpolicy.StateFailed, refs["chatwoot:attachment:2001"].State)
 					if tc.replacementFailure {
+						assert.Equal("audio/ogg", refs["chatwoot:attachment:2001"].MimeType)
 						for key, old := range before {
 							assert.Equal(old.ContentHash, refs[key].ContentHash)
 							assert.Equal(old.StoragePath, refs[key].StoragePath)
@@ -441,6 +447,7 @@ func TestMediaRefreshFailedReplacementRetainsBytesAndRetriesNextSync(t *testing.
 			}
 			if dropped {
 				call["recording_url"] = router.url(t, media.server, "/recording-b.ogg")
+				media.contentType = "audio/wav"
 				media.failures["/recording-b.ogg"] = true
 				opts.Full = true
 				_, err = NewImporter(st, api.client(t)).Import(t.Context(), opts)
@@ -461,6 +468,7 @@ func TestMediaRefreshFailedReplacementRetainsBytesAndRetriesNextSync(t *testing.
 				assert.Equal(firstFailure, pending.Artifacts["901"])
 				for _, ref := range refs {
 					assert.Equal(attachmentpolicy.StateFailed, ref.State)
+					assert.Equal("audio/ogg", ref.MimeType)
 					var evidence mediaMetadata
 					require.NoError(json.Unmarshal([]byte(ref.Metadata), &evidence))
 					assert.Equal(firstFailure, evidence.FailedSince)
@@ -469,8 +477,9 @@ func TestMediaRefreshFailedReplacementRetainsBytesAndRetriesNextSync(t *testing.
 				media.failures["/recording-b.ogg"] = false
 				_, err = NewImporter(st, api.client(t)).Import(t.Context(), opts)
 				require.NoError(err)
-				_, payloads = readMediaRefreshBytes(t, st, meetingID, opts.AttachmentsDir)
+				refs, payloads = readMediaRefreshBytes(t, st, meetingID, opts.AttachmentsDir)
 				assert.Equal([]string{"synthetic replacement recording B bytes"}, payloads)
+				assert.Equal("audio/wav", refs["chatwoot:recording:901"].MimeType)
 				return
 			}
 		})
