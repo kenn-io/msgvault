@@ -10,6 +10,7 @@ import (
 	"encoding/json/jsontext"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -129,27 +130,6 @@ func (a *Archiver) Upsert(
 	}
 	expectedIsFromMe := organizerAddress != "" && identities.Contains(organizerAddress)
 
-	if existed && !opts.Force {
-		storedRaw, rawErr := a.store.GetMessageRaw(existingMessageID)
-		storedIsFromMe, attributionErr := a.store.GetMessageIsFromMe(existingMessageID)
-		if organizer.ParticipantID > 0 {
-			// Store synchronously repairs ownership when identities or participants change.
-			expectedIsFromMe = storedIsFromMe
-		}
-		if rawErr == nil && attributionErr == nil && bytes.Equal(storedRaw, snapshot.Raw) &&
-			storedIsFromMe == expectedIsFromMe && equalMetadata([]byte(existingMessage.Metadata.String), snapshot.Metadata) {
-			if err := a.store.RecomputeConversationStatsForMessageContext(ctx, existingMessageID); err != nil {
-				return Result{}, fmt.Errorf("recompute meeting conversation stats: %w", err)
-			}
-			result := Result{MessageID: existingMessageID}
-			result.Links, err = a.LinkIdentities(ctx, snapshot.SourceID, snapshotPeople(snapshot))
-			if err != nil {
-				return result, fmt.Errorf("link meeting attendee identities: %w", err)
-			}
-			return result, nil
-		}
-	}
-
 	participants := make([]store.ParticipantPersistData, 0, len(snapshot.Attendees)+1)
 	hasOrganizer := organizer.ParticipantID > 0 || organizer.PrimaryKey() != ""
 	organizerOffset := -1
@@ -190,6 +170,64 @@ func (a *Archiver) Upsert(
 		}
 	}
 
+	recipients := func(senderID int64, attendeeIDs []int64) []store.RecipientSet {
+		from := store.RecipientSet{Type: "from"}
+		if hasOrganizer {
+			from.ParticipantIDs = []int64{senderID}
+			from.DisplayNames = []string{organizerName}
+			from.EmailAddresses = []string{organizerEmail}
+		}
+		return []store.RecipientSet{from, {Type: "to", ParticipantIDs: attendeeIDs, DisplayNames: attendeeNames, EmailAddresses: attendeeEmails}}
+	}
+	resolvedPeople := organizer.ParticipantID > 0 || slices.ContainsFunc(resolvedAttendeeIDs, func(id int64) bool { return id > 0 })
+
+	if existed && !opts.Force {
+		storedRaw, rawErr := a.store.GetMessageRaw(existingMessageID)
+		storedIsFromMe, attributionErr := a.store.GetMessageIsFromMe(existingMessageID)
+		if organizer.ParticipantID > 0 {
+			// Store synchronously repairs ownership when identities or participants change.
+			expectedIsFromMe = storedIsFromMe
+		}
+		unchanged := rawErr == nil && attributionErr == nil && bytes.Equal(storedRaw, snapshot.Raw) &&
+			storedIsFromMe == expectedIsFromMe && equalMetadata([]byte(existingMessage.Metadata.String), snapshot.Metadata)
+		if unchanged && resolvedPeople && len(participants) > 0 {
+			unchanged = false
+		}
+		if unchanged {
+			sets := recipients(organizer.ParticipantID, resolvedAttendeeIDs)
+			if organizerOffset >= 0 {
+				sets = sets[1:]
+			}
+			if slices.ContainsFunc(attendeeOffsets, func(offset int) bool { return offset >= 0 }) {
+				sets = slices.DeleteFunc(sets, func(set store.RecipientSet) bool { return set.Type == "to" })
+			}
+			if len(sets) > 0 {
+				unchanged, err = a.store.MessageRecipientsMatchContext(ctx, existingMessageID, sets)
+				if err != nil {
+					return Result{}, fmt.Errorf("compare meeting recipients: %w", err)
+				}
+			}
+			if unchanged && organizerOffset < 0 {
+				stored, err := a.store.StoredMessagesContext(ctx, snapshot.SourceID, snapshot.RawFormat, []string{snapshot.SourceMessageID})
+				if err != nil {
+					return Result{}, err
+				}
+				unchanged = stored[snapshot.SourceMessageID].SenderID == (sql.NullInt64{Int64: organizer.ParticipantID, Valid: organizer.ParticipantID > 0})
+			}
+		}
+		if unchanged {
+			if err := a.store.RecomputeConversationStatsForMessageContext(ctx, existingMessageID); err != nil {
+				return Result{}, fmt.Errorf("recompute meeting conversation stats: %w", err)
+			}
+			result := Result{MessageID: existingMessageID}
+			result.Links, err = a.LinkIdentities(ctx, snapshot.SourceID, snapshotPeople(snapshot))
+			if err != nil {
+				return result, fmt.Errorf("link meeting attendee identities: %w", err)
+			}
+			return result, nil
+		}
+	}
+
 	conversationID := strings.TrimSpace(snapshot.SourceConversationID)
 	if conversationID == "" {
 		conversationID = snapshot.SourceMessageID
@@ -200,17 +238,11 @@ func (a *Archiver) Upsert(
 		participants,
 		func(participantIDs []int64) *store.MessagePersistData {
 			var senderID int64
-			var fromIDs []int64
-			var fromNames []string
-			var fromEmails []string
 			if hasOrganizer {
 				senderID = organizer.ParticipantID
 				if organizerOffset >= 0 {
 					senderID = participantIDs[organizerOffset]
 				}
-				fromIDs = []int64{senderID}
-				fromNames = []string{organizerName}
-				fromEmails = []string{organizerEmail}
 			}
 			attendeeIDs := append([]int64{}, resolvedAttendeeIDs...)
 			for index, offset := range attendeeOffsets {
@@ -246,24 +278,11 @@ func (a *Archiver) Upsert(
 					Title:                snapshot.Title,
 					Participants:         conversationParticipants,
 				},
-				Metadata:  &metadata,
-				BodyText:  sql.NullString{String: snapshot.Body, Valid: snapshot.Body != ""},
-				RawMIME:   snapshot.Raw,
-				RawFormat: snapshot.RawFormat,
-				Recipients: []store.RecipientSet{
-					{
-						Type:           "from",
-						ParticipantIDs: fromIDs,
-						DisplayNames:   fromNames,
-						EmailAddresses: fromEmails,
-					},
-					{
-						Type:           "to",
-						ParticipantIDs: attendeeIDs,
-						DisplayNames:   attendeeNames,
-						EmailAddresses: attendeeEmails,
-					},
-				},
+				Metadata:       &metadata,
+				BodyText:       sql.NullString{String: snapshot.Body, Valid: snapshot.Body != ""},
+				RawMIME:        snapshot.Raw,
+				RawFormat:      snapshot.RawFormat,
+				Recipients:     recipients(senderID, attendeeIDs),
 				PreserveLabels: true,
 				FTS: &store.FTSDoc{
 					Subject:  snapshot.Title,

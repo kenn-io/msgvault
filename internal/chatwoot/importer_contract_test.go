@@ -407,10 +407,15 @@ func TestImportContractCallFallbackAndLifecycleKeepsOneLinkedMeeting(t *testing.
 	require.NoError(st.MergeParticipants(contractSender(t, st, meetingID).Int64, aliasID))
 	_, err = NewImporter(st, api.client(t)).Import(t.Context(), ImportOptions{InboxID: 7, IncludePrivate: true})
 	require.NoError(err)
+	var recipientRow int64
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT MIN(id) FROM message_recipients WHERE message_id = ?`), chatID).Scan(&recipientRow))
 	for range 2 {
 		sum, err := NewImporter(st, api.client(t)).Import(t.Context(), ImportOptions{InboxID: 7, IncludePrivate: true})
 		require.NoError(err)
 		assert.Zero(sum.Meetings, "unchanged calls keep Store's merged owner attribution")
+		var currentRow int64
+		require.NoError(st.DB().QueryRow(st.Rebind(`SELECT MIN(id) FROM message_recipients WHERE message_id = ?`), chatID).Scan(&currentRow))
+		assert.Equal(recipientRow, currentRow, "unchanged call refresh leaves recipient rows in place")
 		for _, id := range []int64{chatID, meetingID} {
 			owned, err := st.GetMessageIsFromMe(id)
 			require.NoError(err)
@@ -422,6 +427,53 @@ func TestImportContractCallFallbackAndLifecycleKeepsOneLinkedMeeting(t *testing.
 	require.NoError(json.Unmarshal([]byte(packet.Content), &decoded))
 	require.Len(decoded.Meetings, 1)
 	assert.Len(decoded.Meetings[0].Participants, 2, "the merged customer and handling agent each appear once")
+
+	liveCall, ok := message["call"].(map[string]any)
+	require.True(ok)
+	api.Mu.Lock()
+	message["sender"] = map[string]any{"id": int64(7), "type": "user", "name": "Example Agent"}
+	message["message_type"] = 1
+	liveCall["direction"] = "outgoing"
+	api.Mu.Unlock()
+	_, err = NewImporter(st, api.client(t)).Import(t.Context(), ImportOptions{InboxID: 7, IncludePrivate: true})
+	require.NoError(err)
+	rawBefore, err := st.GetMessageRaw(chatID)
+	require.NoError(err)
+	api.Mu.Lock()
+	api.Contact["name"] = "Renamed Contact"
+	api.Mu.Unlock()
+	_, err = NewImporter(st, api.client(t)).Import(t.Context(), ImportOptions{InboxID: 7, IncludePrivate: true})
+	require.NoError(err)
+	chat, err = st.GetMessage(chatID)
+	require.NoError(err)
+	assert.Equal("Renamed Contact", chat.Subject)
+	var conversationTitle string
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT title FROM conversations WHERE id = ?`), chat.ConversationID).Scan(&conversationTitle))
+	assert.Equal("Renamed Contact", conversationTitle)
+	var previousContactID int64
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT participant_id FROM message_recipients WHERE message_id = ? AND recipient_type = 'to'`), chatID).Scan(&previousContactID))
+	api.Mu.Lock()
+	api.Contact["id"], api.Contact["phone_number"] = int64(50), "+12025550102"
+	api.Mu.Unlock()
+	_, err = NewImporter(st, api.client(t)).Import(t.Context(), ImportOptions{InboxID: 7, IncludePrivate: true})
+	require.NoError(err)
+	rawAfter, err := st.GetMessageRaw(chatID)
+	require.NoError(err)
+	assert.True(sameJSONEvidence(rawBefore, rawAfter), "conversation contact changes leave the outgoing payload unchanged")
+	var chatContactID, meetingContactID int64
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT participant_id FROM message_recipients WHERE message_id = ? AND recipient_type = 'to'`), chatID).Scan(&chatContactID))
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT participant_id FROM message_recipients WHERE message_id = ? AND recipient_type = 'to'`), meetingID).Scan(&meetingContactID))
+	assert.NotEqual(previousContactID, chatContactID)
+	assert.Equal(chatContactID, meetingContactID, "the linked meeting follows the reassigned conversation contact")
+	for _, id := range []int64{chatID, meetingID} {
+		var beforeRow, afterRow int64
+		require.NoError(st.DB().QueryRow(st.Rebind(`SELECT MIN(id) FROM message_recipients WHERE message_id = ?`), id).Scan(&beforeRow))
+		sum, err := NewImporter(st, api.client(t)).Import(t.Context(), ImportOptions{InboxID: 7, IncludePrivate: true})
+		require.NoError(err)
+		assert.Zero(sum.Meetings)
+		require.NoError(st.DB().QueryRow(st.Rebind(`SELECT MIN(id) FROM message_recipients WHERE message_id = ?`), id).Scan(&afterRow))
+		assert.Equal(beforeRow, afterRow, "resolved contact refresh settles without rewriting recipients")
+	}
 }
 
 func TestImportContractLateAudioTranscriptAndCredentialFreeCAS(t *testing.T) {

@@ -108,32 +108,120 @@ func TestArchiverCreatesProviderCanonicalMeeting(t *testing.T) {
 }
 
 func TestArchiverUnchangedSnapshotIsNoOp(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
+	checks := assert.New(t)
+	must := require.New(t)
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("notion_meetings", "work")
-	require.NoError(err)
-	require.NoError(st.AddAccountIdentity(source.ID, "user@example.com", "account-email"))
+	must.NoError(err)
+	must.NoError(st.AddAccountIdentity(source.ID, "user@example.com", "account-email"))
 	archiver := New(st)
 
 	first, err := archiver.Upsert(context.Background(), testSnapshot(source.ID), UpsertOptions{})
-	require.NoError(err)
+	must.NoError(err)
 	var before string
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	must.NoError(st.DB().QueryRow(st.Rebind(
 		`SELECT CAST(last_modified AS TEXT) FROM messages WHERE id = ?`,
 	), first.MessageID).Scan(&before))
 
 	second, err := archiver.Upsert(context.Background(), testSnapshot(source.ID), UpsertOptions{})
-	require.NoError(err)
-	assert.False(second.Created)
-	assert.False(second.Changed)
-	assert.Equal(first.MessageID, second.MessageID)
+	must.NoError(err)
+	checks.False(second.Created)
+	checks.False(second.Changed)
+	checks.Equal(first.MessageID, second.MessageID)
 
 	var after string
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	must.NoError(st.DB().QueryRow(st.Rebind(
 		`SELECT CAST(last_modified AS TEXT) FROM messages WHERE id = ?`,
 	), first.MessageID).Scan(&after))
-	assert.Equal(before, after)
+	checks.Equal(before, after)
+
+	organizerA, err := st.EnsureParticipant("organizer-a@example.com", "Organizer A", "example.com")
+	must.NoError(err)
+	organizerB, err := st.EnsureParticipant("organizer-b@example.com", "Organizer B", "example.com")
+	must.NoError(err)
+	attendeeA, err := st.EnsureParticipant("attendee-a@example.com", "Attendee A", "example.com")
+	must.NoError(err)
+	attendeeB, err := st.EnsureParticipant("attendee-b@example.com", "Attendee B", "example.com")
+	must.NoError(err)
+	for _, change := range []string{"organizer changed", "organizer removed", "attendee changed", "attendee removed", "observed snapshot changed", "mixed resolved and canonical"} {
+		t.Run(change, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			snapshot := testSnapshot(source.ID)
+			snapshot.SourceMessageID += change
+			snapshot.SourceConversationID = snapshot.SourceMessageID
+			snapshot.Organizer = &Person{ParticipantID: organizerA, Name: "Observed Organizer"}
+			snapshot.Attendees = []Person{{ParticipantID: attendeeA, Name: "Observed Attendee"}, {ParticipantID: attendeeA, Name: "Duplicate Attendee"}}
+			first, err := archiver.Upsert(t.Context(), snapshot, UpsertOptions{})
+			require.NoError(err)
+			switch change {
+			case "organizer changed":
+				snapshot.Organizer.ParticipantID = organizerB
+			case "organizer removed":
+				snapshot.Organizer = nil
+			case "attendee changed":
+				snapshot.Attendees = []Person{{ParticipantID: attendeeB, Name: "Observed Attendee"}}
+			case "attendee removed":
+				snapshot.Attendees = nil
+			case "observed snapshot changed":
+				snapshot.Attendees = []Person{{ParticipantID: attendeeA, Name: "Updated observation", Email: "observed@example.com"}}
+			case "mixed resolved and canonical":
+				snapshot.Attendees = []Person{{ParticipantID: attendeeB, Name: "Observed Attendee"}, {Name: "Canonical Attendee", Email: "canonical@example.com"}}
+			}
+			second, err := archiver.Upsert(t.Context(), snapshot, UpsertOptions{})
+			require.NoError(err)
+			assert.True(second.Changed)
+			assert.Equal(first.MessageID, second.MessageID)
+			var sender sql.NullInt64
+			require.NoError(st.DB().QueryRow(st.Rebind(`SELECT sender_id FROM messages WHERE id = ?`), first.MessageID).Scan(&sender))
+			if snapshot.Organizer == nil {
+				assert.False(sender.Valid)
+			} else {
+				assert.Equal(snapshot.Organizer.ParticipantID, sender.Int64)
+			}
+			for _, role := range []string{"from", "to"} {
+				rows, err := st.DB().Query(st.Rebind(`SELECT participant_id, COALESCE(display_name, ''), COALESCE(email_address, '') FROM message_recipients WHERE message_id = ? AND recipient_type = ? ORDER BY id`), first.MessageID, role)
+				require.NoError(err)
+				defer func() { assert.NoError(rows.Close()) }()
+				people := snapshot.Attendees
+				if role == "from" {
+					people = nil
+					if snapshot.Organizer != nil {
+						people = []Person{*snapshot.Organizer}
+					}
+				}
+				var observed []Person
+				for rows.Next() {
+					var person Person
+					require.NoError(rows.Scan(&person.ParticipantID, &person.Name, &person.Email))
+					observed = append(observed, person)
+				}
+				require.NoError(rows.Err())
+				if change == "mixed resolved and canonical" && role == "to" {
+					require.Len(observed, 2)
+					assert.Equal(attendeeB, observed[0].ParticipantID)
+					assert.Equal("canonical@example.com", observed[1].Email)
+					assert.Positive(observed[1].ParticipantID)
+				} else {
+					if len(people) > 1 {
+						people = people[:1]
+					}
+					assert.Equal(people, observed)
+				}
+			}
+			var beforeRow sql.NullInt64
+			require.NoError(st.DB().QueryRow(st.Rebind(`SELECT MIN(id) FROM message_recipients WHERE message_id = ?`), first.MessageID).Scan(&beforeRow))
+			third, err := archiver.Upsert(t.Context(), snapshot, UpsertOptions{})
+			require.NoError(err)
+			if change == "mixed resolved and canonical" {
+				assert.True(third.Changed, "mixed IDs retain the canonical write path")
+			} else {
+				assert.False(third.Changed)
+				var afterRow sql.NullInt64
+				require.NoError(st.DB().QueryRow(st.Rebind(`SELECT MIN(id) FROM message_recipients WHERE message_id = ?`), first.MessageID).Scan(&afterRow))
+				assert.Equal(beforeRow, afterRow)
+			}
+		})
+	}
 }
 
 func TestArchiverWithoutOrganizerDoesNotInventSender(t *testing.T) {

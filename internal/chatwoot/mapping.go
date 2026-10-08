@@ -1,8 +1,10 @@
 package chatwoot
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
 	"slices"
@@ -132,7 +134,7 @@ func (imp *Importer) persistMessage(ctx context.Context, sourceID int64, c Conve
 			toEmails = append(toEmails, recipient.EmailAddresses...)
 		}
 	}
-	messageID, err := imp.store.PersistMessageContext(ctx, &store.MessagePersistData{
+	data := &store.MessagePersistData{
 		Message: &store.Message{SourceID: sourceID, SourceMessageID: sourceMessageID, MessageType: SourceType,
 			SentAt:   sql.NullTime{Time: time.Unix(m.CreatedAt, 0).UTC(), Valid: m.CreatedAt > 0},
 			SenderID: sql.NullInt64{Int64: senderID, Valid: senderID > 0}, IdentityDerivedIsFromMe: true,
@@ -140,15 +142,56 @@ func (imp *Importer) persistMessage(ctx context.Context, sourceID int64, c Conve
 		Conversation: &store.ConversationPersistData{SourceConversationID: strconv.FormatInt(c.ID, 10), ConversationType: "direct_chat", Title: title, Participants: members, PreserveExistingParticipants: true},
 		Metadata:     &meta, BodyText: sql.NullString{String: body, Valid: body != ""}, RawMIME: raw, RawFormat: "chatwoot_json", Recipients: recipients, PreserveLabels: true,
 		FTS: &store.FTSDoc{Subject: title, Body: body, FromAddr: envelopeEmail(sender), ToAddrs: strings.Join(toEmails, " ")},
-	})
-	if err != nil {
-		return 0, err
+	}
+	var messageID int64
+	unchanged := false
+	if previous, found := existing[sourceMessageID]; found {
+		stored, loadErr := imp.store.StoredMessagesContext(ctx, sourceID, "chatwoot_json", []string{sourceMessageID})
+		if loadErr != nil {
+			return 0, loadErr
+		}
+		row := stored[sourceMessageID]
+		message := data.Message
+		if row.SenderID == message.SenderID && row.SourceIsFromMe.Valid && !row.SourceIsFromMe.Bool &&
+			row.MessageType == message.MessageType && row.Subject == message.Subject &&
+			row.SentAt.Valid == message.SentAt.Valid && (!row.SentAt.Valid || row.SentAt.Time.Equal(message.SentAt.Time)) &&
+			row.InternalDate == message.InternalDate &&
+			row.Snippet == message.Snippet && row.SizeEstimate == message.SizeEstimate &&
+			sameJSONEvidence(row.Raw, data.RawMIME) && sameJSONEvidence([]byte(previous.Metadata.String), encoded) {
+			unchanged, err = imp.store.MessageContentMatchesContext(ctx, row.ID, data.BodyText, *data.FTS)
+			if err != nil {
+				return 0, err
+			}
+			if unchanged {
+				unchanged, err = imp.store.MessageRecipientsMatchContext(ctx, row.ID, recipients)
+				if err != nil {
+					return 0, err
+				}
+			}
+		}
+		if unchanged {
+			messageID = row.ID
+			if err = imp.store.SetConversationTitle(sourceID, row.ConversationID, title); err != nil {
+				return 0, err
+			}
+			for _, member := range members {
+				if err = imp.store.EnsureConversationParticipant(row.ConversationID, member.ParticipantID, member.Role); err != nil {
+					return 0, err
+				}
+			}
+		}
+	}
+	if !unchanged {
+		messageID, err = imp.store.PersistMessageContext(ctx, data)
+		if err != nil {
+			return 0, err
+		}
+		if err = imp.store.RecomputeConversationStatsForMessageContext(ctx, messageID); err != nil {
+			return 0, err
+		}
 	}
 	if _, found := existing[sourceMessageID]; !found {
 		sum.MessagesAdded++
-	}
-	if err = imp.store.RecomputeConversationStatsForMessageContext(ctx, messageID); err != nil {
-		return 0, err
 	}
 	failedSince, waiting, err := imp.persistMedia(ctx, messageID, m.Attachments, opts, sum, nil)
 	if err != nil {
@@ -175,6 +218,11 @@ func (imp *Importer) persistMessage(ctx context.Context, sourceID int64, c Conve
 		refreshFrom = max(refreshFrom, callRefreshFrom)
 	}
 	return refreshFrom, nil
+}
+
+func sameJSONEvidence(a, b []byte) bool {
+	left, right := jsontext.Value(bytes.Clone(a)), jsontext.Value(bytes.Clone(b))
+	return left.Canonicalize() == nil && right.Canonicalize() == nil && bytes.Equal(left, right)
 }
 
 // addressedRecipients returns the recipients an email reply or forward names.

@@ -513,6 +513,7 @@ type StoredMessage struct {
 	ConversationID int64
 	SenderID       sql.NullInt64
 	SourceIsFromMe sql.NullBool
+	Subject        sql.NullString
 	MessageType    string
 	SentAt         sql.NullTime
 	InternalDate   sql.NullTime
@@ -532,7 +533,7 @@ func (s *Store) StoredMessagesContext(
 	result := make(map[string]StoredMessage, len(sourceMessageIDs))
 	err := queryInChunksContext(ctx, s.db, sourceMessageIDs, []any{rawFormat, sourceID}, `
 		SELECT m.source_message_id, m.id, m.conversation_id, m.sender_id,
-		       m.source_is_from_me, COALESCE(m.message_type, ''), m.sent_at,
+		       m.source_is_from_me, m.subject, COALESCE(m.message_type, ''), m.sent_at,
 		       m.internal_date, m.snippet, COALESCE(m.size_estimate, 0),
 		       r.raw_data, r.compression
 		FROM messages m
@@ -545,7 +546,7 @@ func (s *Store) StoredMessagesContext(
 			var compression sql.NullString
 			if err := rows.Scan(
 				&sourceMessageID, &stored.ID, &stored.ConversationID, &stored.SenderID,
-				&stored.SourceIsFromMe, &stored.MessageType, &stored.SentAt,
+				&stored.SourceIsFromMe, &stored.Subject, &stored.MessageType, &stored.SentAt,
 				&stored.InternalDate, &stored.Snippet, &stored.SizeEstimate,
 				&raw, &compression,
 			); err != nil {
@@ -2509,6 +2510,31 @@ func replaceMessageRecipientsTx(tx querier, messageID int64, rs RecipientSet) er
 		return nil
 	}
 
+	recipients := normalizedMessageRecipients(rs)
+
+	return insertInChunks(tx, chunkInsert{
+		totalRows:    len(recipients),
+		valuesPerRow: 5,
+		prefix:       "INSERT INTO message_recipients (message_id, participant_id, recipient_type, display_name, email_address) VALUES ",
+	}, func(start, end int) ([]string, []any) {
+		values := make([]string, end-start)
+		args := make([]any, 0, (end-start)*5)
+		for i := start; i < end; i++ {
+			values[i-start] = "(?, ?, ?, ?, ?)"
+			row := recipients[i]
+			args = append(args, messageID, row.participantID, rs.Type, row.displayName, nullIfEmpty(row.email))
+		}
+		return values, args
+	})
+}
+
+type messageRecipientRow struct {
+	participantID int64
+	displayName   string
+	email         string
+}
+
+func normalizedMessageRecipients(rs RecipientSet) []messageRecipientRow {
 	// Collapse duplicates within this set. The table holds at most one row
 	// per (message_id, participant_id, recipient_type, normalized envelope
 	// address) — idx_message_recipients_envelope — so an exact repeat in one
@@ -2521,9 +2547,7 @@ func replaceMessageRecipientsTx(tx querier, messageID int64, rs RecipientSet) er
 		email         string
 	}
 	seen := make(map[recipientRowKey]struct{}, len(rs.ParticipantIDs))
-	ids := make([]int64, 0, len(rs.ParticipantIDs))
-	names := make([]string, 0, len(rs.ParticipantIDs))
-	emails := make([]string, 0, len(rs.ParticipantIDs))
+	rows := make([]messageRecipientRow, 0, len(rs.ParticipantIDs))
 	for i, pid := range rs.ParticipantIDs {
 		email := ""
 		if i < len(rs.EmailAddresses) {
@@ -2534,28 +2558,47 @@ func replaceMessageRecipientsTx(tx querier, messageID int64, rs RecipientSet) er
 			continue
 		}
 		seen[key] = struct{}{}
-		ids = append(ids, pid)
 		name := ""
 		if i < len(rs.DisplayNames) {
 			name = rs.DisplayNames[i]
 		}
-		names = append(names, name)
-		emails = append(emails, email)
+		rows = append(rows, messageRecipientRow{pid, name, email})
 	}
 
-	return insertInChunks(tx, chunkInsert{
-		totalRows:    len(ids),
-		valuesPerRow: 5,
-		prefix:       "INSERT INTO message_recipients (message_id, participant_id, recipient_type, display_name, email_address) VALUES ",
-	}, func(start, end int) ([]string, []any) {
-		values := make([]string, end-start)
-		args := make([]any, 0, (end-start)*5)
-		for i := start; i < end; i++ {
-			values[i-start] = "(?, ?, ?, ?, ?)"
-			args = append(args, messageID, ids[i], rs.Type, names[i], nullIfEmpty(emails[i]))
+	return rows
+}
+
+// MessageRecipientsMatchContext compares the snapshots replaced by the supplied roles.
+func (s *Store) MessageRecipientsMatchContext(ctx context.Context, messageID int64, sets []RecipientSet) (bool, error) {
+	want := make(map[string][]messageRecipientRow, len(sets))
+	for _, set := range sets {
+		want[set.Type] = normalizedMessageRecipients(set)
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT recipient_type, participant_id, COALESCE(display_name, ''), COALESCE(email_address, '') FROM message_recipients WHERE message_id = ? ORDER BY id`, messageID)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = rows.Close() }()
+	got := make(map[string][]messageRecipientRow, len(want))
+	for rows.Next() {
+		var role string
+		var row messageRecipientRow
+		if err := rows.Scan(&role, &row.participantID, &row.displayName, &row.email); err != nil {
+			return false, err
 		}
-		return values, args
-	})
+		if _, supplied := want[role]; supplied {
+			got[role] = append(got[role], row)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return false, err
+	}
+	for role, expected := range want {
+		if !slices.Equal(got[role], expected) {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 // Label represents a Gmail label.
