@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-05"
+last_edited: "2026-10-08"
 title: Slack
 description: Archive Slack workspaces through the Web API or a Slackdump export.
 ---
@@ -199,7 +199,14 @@ response header. Without `search:read`, it revisits each selected conversation's
 history and fetches its threads directly. A message that gains its first reply
 long after the initial sync is discovered by that history walk. Interrupted and
 limited walks retain their cursors, and new channel messages get an incremental
-pass between completed walks. Without `files:read`, sync defers file downloads.
+pass between completed walks. An interrupted sync also remembers which
+conversations it already visited, so retries finish the current pass before
+starting another. The next scheduled pass revisits those conversations to
+catch activity that arrived after their previous visit. A pass with fetch
+failures ends as failed, and the next pass retries those channels while still
+refreshing healthy ones.
+
+Without `files:read`, sync defers file downloads.
 
 With `search:read`, the importer uses the search sweep described below, with
 periodic history audits to cover replies missing from search.
@@ -269,7 +276,13 @@ schedule = "*/30 * * * *"
 media_max_participants = 20   # default; 0 = collect files from every channel
 ```
 
-The daemon then syncs every registered workspace on the schedule. See
+The daemon syncs every registered workspace on the schedule. When another job
+is waiting, a Slack sync can save its progress and yield. The scheduler queues
+its continuation automatically. These handoffs appear as cancelled attempts in
+sync history and as queued work on Sources; fetch failures still appear as
+failures. The last successful sync advances when the pass finishes.
+
+See
 [Configuration](/docs/configuration/#slack) for the full option list
 (channel include/exclude filters, private-channel and DM selection, media scope,
 participant and size caps,

@@ -17,9 +17,37 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
+
+func TestImporterSchedulerYieldResumesWithoutFailure(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	api := newImporterFakeAPI(importerTestChannel("300", "general"))
+	api.messages["300"] = []Message{importerTestMessage("101", "300", "saved after resume")}
+	ctx, cancel := context.WithCancelCause(t.Context())
+	defer cancel(nil)
+	api.guildHook = func() { cancel(jobctx.ErrYieldedToWaiter) }
+	opts := ImportOptions{GuildID: "200", AttachmentsDir: t.TempDir()}
+	summary, err := newTestImporter(st, api).Import(ctx, opts)
+	require.ErrorIs(err, context.Canceled)
+	run, err := st.GetLatestSync(summary.SourceID)
+	require.NoError(err)
+	assert.Equal("cancelled", run.Status)
+	assert.Empty(run.ErrorMessage.String)
+	checkpoint, err := st.GetLatestCheckpointedSync(summary.SourceID)
+	require.NoError(err)
+	assert.Equal(run.ID, checkpoint.ID)
+	api.guildHook = nil
+	_, err = newTestImporter(st, api).Import(t.Context(), opts)
+	require.NoError(err)
+	var count int
+	require.NoError(st.DB().QueryRow("SELECT COUNT(*) FROM messages").Scan(&count))
+	assert.Equal(1, count)
+}
 
 type importerFakeAPI struct {
 	mu sync.Mutex

@@ -214,10 +214,8 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (summary *I
 			return
 		}
 		checkpoint := imp.checkpoint(state, summary)
-		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-		defer cancel()
-		if failErr := imp.store.FailSyncWithCheckpointContext(cleanupCtx, syncID, retErr.Error(), checkpoint); failErr != nil {
-			retErr = errors.Join(retErr, fmt.Errorf("fail Discord sync run: %w", failErr))
+		if failErr := imp.store.InterruptSyncWithCheckpoint(ctx, syncID, retErr, checkpoint); failErr != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("finalize Discord sync run: %w", failErr))
 		}
 	}()
 	// Publish inherited retry state before any remote discovery. StartSync makes

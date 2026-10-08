@@ -563,7 +563,7 @@ func (s *Scheduler) runSync(email string) {
 
 	s.mu.Lock()
 	if yielded {
-		if callbackErr := callbackErrorAfterYield(runCtx, err); callbackErr != nil {
+		if callbackErr := jobctx.ErrorAfterYield(runCtx, err); callbackErr != nil {
 			s.lastErr[email] = callbackErr
 			logScheduledSyncError(s.logger, email, time.Since(start), callbackErr)
 		}
@@ -616,70 +616,6 @@ func (s *Scheduler) runSync(email string) {
 		endDocument()
 	}
 	s.startVisualPostSync()
-}
-
-func callbackErrorAfterYield(ctx context.Context, err error) error {
-	if err == nil {
-		return nil
-	}
-	if yieldedToWaiter(ctx) || errors.Is(context.Cause(ctx), jobctx.ErrRunBudgetExceeded) {
-		_, filtered := filterYieldCancellation(err, errors.Is(ctx.Err(), context.DeadlineExceeded))
-		return filtered
-	}
-	return err
-}
-
-type yieldFilteredError struct {
-	message string
-	cause   error
-}
-
-func (e yieldFilteredError) Error() string { return e.message }
-
-func (e yieldFilteredError) Unwrap() error { return e.cause }
-
-func filterYieldCancellation(err error, deadlineExpired bool) (bool, error) {
-	if err == nil {
-		return false, nil
-	}
-	if joined, ok := err.(interface{ Unwrap() []error }); ok {
-		causes := joined.Unwrap()
-		kept := make([]error, 0, len(causes))
-		changed := false
-		for _, cause := range causes {
-			filteredOut, filtered := filterYieldCancellation(cause, deadlineExpired)
-			changed = changed || filteredOut
-			if filtered != nil {
-				kept = append(kept, filtered)
-			}
-		}
-		if !changed {
-			return false, err
-		}
-		return true, errors.Join(kept...)
-	}
-	if wrapped, ok := err.(interface{ Unwrap() error }); ok {
-		cause := wrapped.Unwrap()
-		changed, filtered := filterYieldCancellation(cause, deadlineExpired)
-		if !changed {
-			return false, err
-		}
-		if filtered == nil {
-			return true, nil
-		}
-		message := err.Error()
-		if causeMessage := cause.Error(); causeMessage != "" {
-			message = strings.Replace(message, causeMessage, filtered.Error(), 1)
-		}
-		if message == err.Error() {
-			message = fmt.Sprintf("%s: %s", message, filtered.Error())
-		}
-		return true, yieldFilteredError{message: message, cause: filtered}
-	}
-	if errors.Is(err, context.Canceled) || (deadlineExpired && (errors.Is(err, context.DeadlineExceeded) || errors.Is(err, jobctx.ErrRunBudgetExceeded))) || errors.Is(err, ErrYieldedToWaiter) {
-		return true, nil
-	}
-	return false, err
 }
 
 // logScheduledSyncError keeps transient network failures below the error
@@ -931,7 +867,7 @@ func (s *Scheduler) runJob(name string, run func(context.Context) error) error {
 	if budgetExpired && !jobctx.HasProgress(runCtx) {
 		delete(s.genericPending, name)
 		err = errors.Join(fmt.Errorf("%w before committing progress", jobctx.ErrRunBudgetExceeded),
-			callbackErrorAfterYield(runCtx, err))
+			jobctx.ErrorAfterYield(runCtx, err))
 		s.genericLastErr[name] = err
 		s.logger.Warn("scheduled job reached its runtime limit before committing progress; waiting for the next trigger",
 			"job", name,
@@ -948,7 +884,7 @@ func (s *Scheduler) runJob(name string, run func(context.Context) error) error {
 	}
 	if yielded {
 		s.genericPending[name] = true
-		if callbackErr := callbackErrorAfterYield(runCtx, err); callbackErr != nil {
+		if callbackErr := jobctx.ErrorAfterYield(runCtx, err); callbackErr != nil {
 			s.genericLastErr[name] = callbackErr
 			s.logger.Error("scheduled job yielded after callback error; queued follow-up",
 				"job", name,

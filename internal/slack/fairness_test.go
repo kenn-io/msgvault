@@ -61,6 +61,7 @@ func TestInterruptedPublicSyncReachesEveryChannel(t *testing.T) {
 
 			// Recreate the importer between attempts: progress must survive
 			// in the store, not just in one process's in-memory rotation.
+			completed := false
 			for range 12 {
 				ctx, cancel := context.WithCancel(context.Background())
 				f.mu.Lock()
@@ -81,9 +82,15 @@ func TestInterruptedPublicSyncReachesEveryChannel(t *testing.T) {
 				resumed.now = func() time.Time { return now }
 				_, err = resumed.Import(ctx, opts)
 				cancel()
+				if err == nil {
+					completed = true
+					break
+				}
 				require.ErrorIs(err, context.Canceled)
 				now = now.Add(time.Minute)
 			}
+
+			require.True(completed, "an interrupted pass must eventually finish")
 
 			for _, channelID := range []string{"C01", "C02", "C03"} {
 				var count int

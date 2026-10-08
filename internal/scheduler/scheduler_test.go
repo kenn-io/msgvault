@@ -2769,14 +2769,14 @@ func TestCallbackErrorAfterYieldPreservesOtherErrors(t *testing.T) {
 	cancel(ErrYieldedToWaiter)
 
 	sourceErr := errors.New("earlier source failed")
-	err := callbackErrorAfterYield(ctx, errors.Join(sourceErr, context.Canceled, ErrYieldedToWaiter))
+	err := jobctx.ErrorAfterYield(ctx, errors.Join(sourceErr, context.Canceled, ErrYieldedToWaiter))
 
 	require.ErrorIs(err, sourceErr)
 	require.NotErrorIs(err, ErrYieldedToWaiter)
 	require.NotErrorIs(err, context.Canceled)
 
 	wrappedErr := fmt.Errorf("source callback: %w", errors.Join(sourceErr, context.Canceled, ErrYieldedToWaiter))
-	err = callbackErrorAfterYield(ctx, wrappedErr)
+	err = jobctx.ErrorAfterYield(ctx, wrappedErr)
 
 	require.ErrorIs(err, sourceErr)
 	require.NotErrorIs(err, ErrYieldedToWaiter)
@@ -3196,7 +3196,7 @@ func TestJobRuntimeBudgetResumesWithoutWaiter(t *testing.T) {
 func TestYieldPreservesIndependentDeadlineFailure(t *testing.T) {
 	ctx, cancel := context.WithCancelCause(t.Context())
 	cancel(ErrYieldedToWaiter)
-	require.ErrorIs(t, callbackErrorAfterYield(ctx, context.DeadlineExceeded), context.DeadlineExceeded)
+	require.ErrorIs(t, jobctx.ErrorAfterYield(ctx, context.DeadlineExceeded), context.DeadlineExceeded)
 }
 
 func TestJobBudgetStartsAfterGateAdmission(t *testing.T) {
@@ -3298,7 +3298,7 @@ func TestBudgetFiltersCancellationCause(t *testing.T) {
 	ctx, cancel := context.WithTimeoutCause(t.Context(), 0, jobctx.ErrRunBudgetExceeded)
 	defer cancel()
 	require.ErrorIs(t, ctx.Err(), context.DeadlineExceeded)
-	assert.NoError(t, callbackErrorAfterYield(ctx, context.Cause(ctx)))
+	assert.NoError(t, jobctx.ErrorAfterYield(ctx, context.Cause(ctx)))
 }
 
 func mustStartJob(tb testing.TB, s *Scheduler, name string) JobDisposition {

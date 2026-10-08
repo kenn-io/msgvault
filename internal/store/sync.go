@@ -7,12 +7,15 @@ import (
 	"fmt"
 	"log/slog"
 	"time"
+
+	"go.kenn.io/msgvault/internal/jobctx"
 )
 
 const (
 	SyncStatusRunning                      = "running"
 	SyncStatusCompleted                    = "completed"
 	SyncStatusFailed                       = "failed"
+	SyncStatusCancelled                    = "cancelled"
 	GmailHistoryRecoveryRequestFingerprint = "gmail-history-recovery:v1"
 
 	SyncRunItemStatusError   = "error"
@@ -1257,12 +1260,29 @@ func (s *Store) FailSyncWithCheckpoint(syncID int64, errMsg string, cp *Checkpoi
 
 // FailSyncWithCheckpointContext honors cancellation during FailSyncWithCheckpoint.
 func (s *Store) FailSyncWithCheckpointContext(ctx context.Context, syncID int64, errMsg string, cp *Checkpoint) error {
+	return s.finishSyncWithCheckpoint(ctx, syncID, SyncStatusFailed, errMsg, cp)
+}
+
+// InterruptSyncWithCheckpoint preserves progress when an importer exits early.
+// A scheduler handoff is cancelled rather than failed only when there are no
+// independent callback or item errors. Finalization must outlive the cancelled
+// worker context so the next attempt can resume its last in-memory progress.
+func (s *Store) InterruptSyncWithCheckpoint(ctx context.Context, syncID int64, syncErr error, cp *Checkpoint) error {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	if jobctx.YieldedToWaiter(ctx) && jobctx.ErrorAfterYield(ctx, syncErr) == nil && cp != nil && cp.ErrorsCount == 0 {
+		return s.finishSyncWithCheckpoint(cleanupCtx, syncID, SyncStatusCancelled, "", cp)
+	}
+	return s.FailSyncWithCheckpointContext(cleanupCtx, syncID, syncErr.Error(), cp)
+}
+
+func (s *Store) finishSyncWithCheckpoint(ctx context.Context, syncID int64, status, errMsg string, cp *Checkpoint) error {
 	if cp == nil {
 		return s.FailSyncContext(ctx, syncID, errMsg)
 	}
 	_, err := s.db.ExecContext(ctx, fmt.Sprintf(`
 		UPDATE sync_runs
-		SET status = 'failed',
+		SET status = ?,
 		    completed_at = %s,
 		    error_message = ?,
 		    cursor_before = ?,
@@ -1271,7 +1291,7 @@ func (s *Store) FailSyncWithCheckpointContext(ctx context.Context, syncID int64,
 		    messages_updated = ?,
 		    errors_count = ?
 		WHERE id = ?
-	`, s.dialect.Now()), errMsg, cp.PageToken, cp.MessagesProcessed,
+	`, s.dialect.Now()), status, errMsg, cp.PageToken, cp.MessagesProcessed,
 		cp.MessagesAdded, cp.MessagesUpdated, cp.ErrorsCount, syncID)
 	return s.finalizeSyncExecution(syncID, err)
 }
@@ -1348,7 +1368,7 @@ func (s *Store) GetLatestSyncContext(ctx context.Context, sourceID, excludeID in
 	return run, err
 }
 
-// GetLatestCheckpointedSync returns the newest running or failed checkpoint
+// GetLatestCheckpointedSync returns the newest running, failed, or cancelled checkpoint
 // since the source's last completed run. A newer uncheckpointed interruption
 // does not hide recoverable state, while completion remains authoritative and
 // makes every preceding checkpoint stale.
@@ -1364,7 +1384,7 @@ func (s *Store) GetLatestCheckpointedSyncContext(ctx context.Context, sourceID i
 		       error_message, cursor_before, cursor_after, request_fingerprint
 		FROM sync_runs sr
 		WHERE sr.source_id = ?
-		  AND status IN ('running', 'failed')
+		  AND status IN ('running', 'failed', 'cancelled')
 		  AND cursor_before IS NOT NULL AND cursor_before != ''
 		  AND id > COALESCE((
 		    SELECT MAX(completed.id)
@@ -1393,7 +1413,7 @@ func (s *Store) GetLatestCheckpointedSyncByType(sourceID int64, syncType string)
 		FROM sync_runs sr
 		WHERE sr.source_id = ?
 		  AND sr.sync_type = ?
-		  AND status IN ('running', 'failed')
+		  AND status IN ('running', 'failed', 'cancelled')
 		  AND cursor_before IS NOT NULL AND cursor_before != ''
 		  AND id > COALESCE((
 		    SELECT MAX(completed.id)
