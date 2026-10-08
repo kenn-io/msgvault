@@ -897,6 +897,7 @@ func validateEditableCandidate(cfg *Config) error {
 		"beeper.schedule":                 cfg.Beeper.Schedule,
 		"matrix.schedule":                 cfg.Matrix.Schedule,
 		"slack.schedule":                  cfg.Slack.Schedule,
+		"inline.schedule":                 cfg.Inline.Schedule,
 	}
 	for index, account := range cfg.Accounts {
 		schedules[fmt.Sprintf("accounts[%d].schedule", index)] = account.Schedule

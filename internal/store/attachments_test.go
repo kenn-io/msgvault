@@ -592,3 +592,58 @@ func TestSetDiscordAttachmentMetadataPreservesMediaState(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(int64(0), changed)
 }
+
+func TestInlineRetryableMediaFailsClosedOnUnknownRoster(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("inline", "api.inline.chat:user:42")
+	require.NoError(err)
+	conversationID, err := st.EnsureConversationWithType(source.ID, "chat:123", "group_chat", "Example group")
+	require.NoError(err)
+	messageID := insertStoreTestMessage(t, st, source.ID, conversationID, "chat:123:message:7")
+	refs := []store.AttachmentRef{{SourceAttachmentID: "inline:photo:70", Filename: "example.jpg", MediaType: "image",
+		StoragePath: "inline:pending:photo:70",
+		State:       attachmentpolicy.StateSkipped, SkipReason: attachmentpolicy.SkipParticipantThreshold}}
+	require.NoError(st.ReplaceMessageInlineProviderAttachments(messageID, refs))
+	stored, err := st.MessageInlineProviderAttachments(messageID)
+	require.NoError(err)
+	require.Contains(stored, "inline:photo:70")
+	assert.Equal(refs[0].SkipReason, stored["inline:photo:70"].SkipReason)
+	blocked, err := st.ListInlineProviderRetryableAttachmentMessages(source.ID, attachmentpolicy.Policy{MaxParticipants: 20})
+	require.NoError(err)
+	assert.Empty(blocked, "observed senders cannot stand in for a complete effective roster")
+	allowed, err := st.ListInlineProviderRetryableAttachmentMessages(source.ID, attachmentpolicy.Policy{})
+	require.NoError(err)
+	require.Len(allowed, 1)
+	assert.Equal(messageID, allowed[0].MessageID)
+	assert.Equal("chat:123", allowed[0].ChatID)
+}
+
+func TestInlineAttachmentReplacementRecomputesStatsAndPreservesOtherOccurrences(t *testing.T) {
+	assertions := assert.New(t)
+	requires := require.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("inline", "api.inline.chat:user:42")
+	requires.NoError(err)
+	conversationID, err := st.EnsureConversationWithType(source.ID, "chat:1", "direct_chat", "Synthetic chat")
+	requires.NoError(err)
+	messageID := insertStoreTestMessage(t, st, source.ID, conversationID, "chat:1:message:1")
+	requires.NoError(st.UpsertAttachment(messageID, "legacy.txt", "text/plain", "legacy:1", "", 1))
+	var has bool
+	var count int
+	requires.NoError(st.ReplaceMessageInlineProviderAttachments(messageID, []store.AttachmentRef{{
+		SourceAttachmentID: "inline:document:1", StoragePath: "inline:pending:document:1", State: attachmentpolicy.StatePending,
+	}}))
+	requires.NoError(st.DB().QueryRow(`SELECT has_attachments, attachment_count FROM messages WHERE id = ?`, messageID).Scan(&has, &count))
+	assertions.True(has)
+	assertions.Equal(2, count)
+	requires.NoError(st.ReplaceMessageInlineProviderAttachments(messageID, nil))
+	requires.NoError(st.DB().QueryRow(`SELECT has_attachments, attachment_count FROM messages WHERE id = ?`, messageID).Scan(&has, &count))
+	assertions.True(has)
+	assertions.Equal(1, count)
+	refs, err := st.MessageInlineProviderAttachments(messageID)
+	requires.NoError(err)
+	assertions.Empty(refs)
+}

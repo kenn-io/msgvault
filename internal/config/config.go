@@ -525,6 +525,7 @@ type Config struct {
 	Beeper             BeeperConfig                    `toml:"beeper"`
 	Matrix             MatrixConfig                    `toml:"matrix"`
 	Slack              SlackConfig                     `toml:"slack"`
+	Inline             InlineConfig                    `toml:"inline"`
 	Granola            []GranolaSource                 `toml:"granola"`
 	Plaud              []PlaudSource                   `toml:"plaud"`
 	Circleback         []CirclebackSource              `toml:"circleback"`
@@ -849,6 +850,7 @@ func NewDefaultConfig() *Config {
 		// Group-room media is capped by default; see DefaultMediaMaxParticipants.
 		Beeper:  BeeperConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
 		Slack:   SlackConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
+		Inline:  InlineConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
 		Discord: DiscordConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
 		Teams:   TeamsConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
 	}
@@ -1154,6 +1156,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		return nil, err
 	}
 	if err := cfg.validateMediaPolicies(); err != nil {
+		return nil, err
+	}
+	if err := cfg.validateInlineAccounts(); err != nil {
 		return nil, err
 	}
 	cfg.applySynctechSMSDefaults()
@@ -1762,6 +1767,8 @@ func (c *Config) validateMediaPolicies() error {
 			accountMaxMedia: mediaAccountMaximums(c.Beeper.AccountsConfig)},
 		{name: "slack", policy: c.Slack.MediaPolicy(""), providerMaxMB: c.Slack.MaxMediaMB,
 			accountMaxMedia: mediaAccountMaximums(c.Slack.AccountsConfig)},
+		{name: "inline", policy: c.Inline.MediaPolicy(""), providerMaxMB: c.Inline.MaxMediaMB,
+			accountMaxMedia: mediaAccountMaximums(c.Inline.AccountsConfig)},
 		{name: "discord", policy: c.Discord.MediaPolicy(""), providerMaxMB: c.Discord.MaxMediaMB,
 			accountMaxMedia: discordGuildMaximums(c.Discord.Guilds)},
 		{name: "teams", policy: c.Teams.MediaPolicy(""), providerMaxMB: c.Teams.MaxMediaMB,

@@ -35,6 +35,7 @@ const (
 	sourceTypeGmail  = "gmail"
 	sourceTypeMatrix = "matrix"
 	sourceTypeSlack  = "slack"
+	sourceTypeInline = "inline"
 )
 
 // BeeperJobName is the single generic-job name that drives every beeper
@@ -48,6 +49,9 @@ const MatrixJobName = sourceTypeMatrix
 // SlackJobName is the single generic-job name that drives the configured
 // Slack workspace source.
 const SlackJobName = sourceTypeSlack
+
+// InlineJobName drives every configured Inline account and its chat selection.
+const InlineJobName = sourceTypeInline
 
 // CardDAVJobName is the scheduler identity for the default CardDAV connection.
 const CardDAVJobName = "carddav"
@@ -130,6 +134,8 @@ func SchedulerJobNameForSource(sourceType, identifier string) (string, bool) {
 		// internal/beeper/importer.go GetOrCreateSource, one store source
 		// per beeper AccountID, all driven by the singleton "beeper" job).
 		return BeeperJobName, true
+	case sourceTypeInline:
+		return InlineJobName, true
 	case sourceTypeMatrix:
 		return MatrixJobName, true
 	case sourceTypeSlack:

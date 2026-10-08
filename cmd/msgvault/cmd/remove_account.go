@@ -16,6 +16,7 @@ import (
 	"go.kenn.io/msgvault/internal/circleback"
 	"go.kenn.io/msgvault/internal/discord"
 	imaplib "go.kenn.io/msgvault/internal/imap"
+	"go.kenn.io/msgvault/internal/inline"
 	matrixsource "go.kenn.io/msgvault/internal/matrix"
 	"go.kenn.io/msgvault/internal/microsoft"
 	"go.kenn.io/msgvault/internal/oauth"
@@ -422,6 +423,10 @@ func runRemoveAccountLocalWithMatrixLock(cmd *cobra.Command, args []string, matr
 			fmt.Fprintf(os.Stderr,
 				"Warning: could not remove Circleback token: %v\n", err,
 			)
+		}
+	case sourceTypeInline:
+		if err := inline.NewOAuthManager("", cfg.TokensDir(), logger).DeleteToken(source.Identifier); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not remove Inline OAuth credentials: %v\n", err)
 		}
 	case sourceTypeIMAP:
 		if source.SyncConfig.Valid && source.SyncConfig.String != "" {

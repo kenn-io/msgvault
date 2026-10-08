@@ -127,6 +127,7 @@ func TestGetSettingsIsSelfDescribingAndIncludesSafeCatalog(t *testing.T) {
 		"beeper.media", "beeper.media_scope", "beeper.media_max_participants", "beeper.max_media_mb",
 		"slack.enabled", "slack.schedule", "slack.channels", "slack.exclude_channels",
 		"slack.dms", "slack.group_dms",
+		"inline.enabled", "inline.schedule", "inline.media", "inline.media_scope", "inline.media_max_participants", "inline.max_media_mb",
 		"slack.media", "slack.media_scope", "slack.media_max_participants", "slack.max_media_mb",
 		"discord.media", "discord.media_scope", "discord.media_max_participants", "discord.max_media_mb",
 		"teams.media", "teams.media_scope", "teams.media_max_participants", "teams.max_media_mb",
@@ -380,6 +381,12 @@ func TestPatchSettingsPersistsSafeScalarAndAttachmentPolicies(t *testing.T) {
 		{"key": "slack.media_scope", "value": map[string]any{"string": "none"}},
 		{"key": "slack.media_max_participants", "value": map[string]any{"integer": 0}},
 		{"key": "slack.max_media_mb", "value": map[string]any{"integer": 90}},
+		{"key": "inline.enabled", "value": map[string]any{"boolean": true}},
+		{"key": "inline.schedule", "value": map[string]any{"string": "*/15 * * * *"}},
+		{"key": "inline.media", "value": map[string]any{"boolean": false}},
+		{"key": "inline.media_scope", "value": map[string]any{"string": "direct"}},
+		{"key": "inline.media_max_participants", "value": map[string]any{"integer": 0}},
+		{"key": "inline.max_media_mb", "value": map[string]any{"integer": 40}},
 		{"key": "discord.media", "value": map[string]any{"boolean": true}},
 		{"key": "discord.media_scope", "value": map[string]any{"string": "all"}},
 		{"key": "discord.media_max_participants", "value": map[string]any{"integer": 10}},
@@ -418,6 +425,13 @@ func TestPatchSettingsPersistsSafeScalarAndAttachmentPolicies(t *testing.T) {
 	assertions.Equal(80, loaded.Beeper.MaxMediaMB)
 	assertions.Equal("none", loaded.Slack.MediaScope)
 	assertions.Equal(90, loaded.Slack.MaxMediaMB)
+	assertions.True(loaded.Inline.Enabled)
+	assertions.Equal("*/15 * * * *", loaded.Inline.Schedule)
+	requirements.NotNil(loaded.Inline.Media)
+	assertions.False(*loaded.Inline.Media)
+	assertions.Equal("direct", loaded.Inline.MediaScope)
+	assertions.Zero(loaded.Inline.MediaMaxParticipants)
+	assertions.Equal(40, loaded.Inline.MaxMediaMB)
 	assertions.Equal(10, loaded.Discord.MediaMaxParticipants)
 	assertions.Equal(60, loaded.Teams.MaxMediaMB)
 	assertions.False(loaded.Vector.Preprocess.StripQuotesEnabled())

@@ -175,6 +175,7 @@ var KnownMessageTypes = []string{
 	"google_voice_voicemail",
 	"beeper",
 	"slack",
+	"inline",
 	"matrix",
 }
 

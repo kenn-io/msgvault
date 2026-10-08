@@ -93,7 +93,7 @@ func truncateRunes(value string, maxRunes int) (string, bool) {
 
 func messageTypeLabel(messageType string) string {
 	switch strings.ToLower(strings.TrimSpace(messageType)) {
-	case "slack", "discord", "beeper", "teams", "imessage", "whatsapp", "chat":
+	case "slack", "inline", "discord", "beeper", "teams", "imessage", "whatsapp", "chat":
 		return "Message type: chat message"
 	case "mms":
 		return "Message type: multimedia message"
