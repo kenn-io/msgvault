@@ -56,7 +56,9 @@ type CacheSyncState struct {
 	// LastRelatedChangeSeq is the highest child-row journal entry represented
 	// by this committed publication. The journal is written transactionally
 	// with SQLite mutations and advances only after marker-last publication.
-	LastRelatedChangeSeq   int64 `json:"last_related_change_seq,omitzero"`
+	LastRelatedChangeSeq int64 `json:"last_related_change_seq,omitzero"`
+	// These interruption watermarks include failed and cancelled attempts.
+	// The field names predate resumable scheduler cancellations.
 	LastFailedSyncRunCount int64 `json:"last_failed_sync_run_count,omitzero"`
 	LastFailedSyncRunIDSum int64 `json:"last_failed_sync_run_id_sum,omitzero"`
 	IdentityRevision       int64 `json:"identity_revision,omitzero"`

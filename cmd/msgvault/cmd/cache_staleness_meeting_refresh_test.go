@@ -184,7 +184,7 @@ func TestCacheNeedsBuild_FailedCirclebackRunWithoutCheckpoint(t *testing.T) {
 	staleness := cacheNeedsBuild(dbPath, analyticsDir)
 	require.True(staleness.NeedsBuild, "zero-counter failed run must invalidate cache: %+v", staleness)
 	require.True(staleness.FullRebuild, "failed-run progress requires a full rebuild: %+v", staleness)
-	require.Contains(staleness.Reason, "failed sync")
+	require.Contains(staleness.Reason, "interrupted sync")
 
 	rebuilt, err := buildCache(dbPath, analyticsDir, false)
 	require.NoError(err)

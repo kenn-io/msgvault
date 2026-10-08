@@ -293,17 +293,19 @@ func readCacheSyncCountersContext(ctx context.Context, db contextSQLRowQuerier) 
 	})
 }
 
+// Cancelled attempts can commit messages before yielding. Like failed runs,
+// they may stop before counting every write, so track interruptions as well.
 func readCacheSyncCountersWithRow(queryRow func(string, ...any) *sql.Row) (cacheSyncCounters, error) {
 	var counters cacheSyncCounters
 	err := queryRow(`
 		SELECT
 			COALESCE(SUM(COALESCE(sr.messages_added, 0)), 0),
 			COALESCE(SUM(COALESCE(sr.messages_updated, 0)), 0),
-			COALESCE(SUM(CASE WHEN sr.status = 'failed' THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN sr.status = 'failed' THEN sr.id ELSE 0 END), 0)
+			COALESCE(SUM(CASE WHEN sr.status IN ('failed', 'cancelled') THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN sr.status IN ('failed', 'cancelled') THEN sr.id ELSE 0 END), 0)
 		FROM sync_runs sr
 		JOIN sources src ON src.id = sr.source_id
-		WHERE sr.status IN ('completed', 'failed')
+		WHERE sr.status IN ('completed', 'failed', 'cancelled')
 		  AND sr.completed_at IS NOT NULL
 	`).Scan(
 		&counters.additions,

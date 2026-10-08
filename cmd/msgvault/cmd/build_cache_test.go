@@ -1490,7 +1490,7 @@ func runBuildCacheSQLiteMutation(t *testing.T, dbPath, operation string) {
 }
 
 func TestBuildCache_PublishesSnapshotWhenTerminalAdditionLandsDuringExport(t *testing.T) {
-	for _, terminalStatus := range []string{"completed", "failed"} {
+	for _, terminalStatus := range []string{"completed", "failed", "cancelled"} {
 		t.Run(terminalStatus, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
@@ -1597,6 +1597,9 @@ func TestBuildCache_PublishesSnapshotWhenTerminalAdditionLandsDuringExport(t *te
 			require.NoError(err)
 			fresh := cacheNeedsBuild(dbPath, analyticsDir)
 			require.False(fresh.NeedsBuild, "retry must capture the terminal addition: %+v", fresh)
+			repaired, err := query.ReadCacheSyncState(analyticsDir)
+			require.NoError(err)
+			assert.Equal(int64(1), repaired.LastCacheAdditionCount)
 
 			duckdb, err := sql.Open("duckdb", "")
 			require.NoError(err)
@@ -1616,62 +1619,66 @@ func TestBuildCache_PublishesSnapshotWhenTerminalAdditionLandsDuringExport(t *te
 	}
 }
 
-func TestBuildCache_PublishesSnapshotWhenZeroCounterRunFailsDuringExport(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	tmpDir := setupTestSQLite(t)
-	dbPath := filepath.Join(tmpDir, "test.db")
-	analyticsDir := filepath.Join(tmpDir, "analytics")
+func TestBuildCache_PublishesSnapshotWhenZeroCounterRunInterruptedDuringExport(t *testing.T) {
+	for _, terminalStatus := range []string{"failed", "cancelled"} {
+		t.Run(terminalStatus, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			tmpDir := setupTestSQLite(t)
+			dbPath := filepath.Join(tmpDir, "test.db")
+			analyticsDir := filepath.Join(tmpDir, "analytics")
 
-	db, err := sql.Open("sqlite3", dbPath)
-	require.NoError(err)
-	_, err = db.Exec(`
-		CREATE TABLE sync_runs (
-			id INTEGER PRIMARY KEY,
-			source_id INTEGER,
-			started_at DATETIME,
-			completed_at DATETIME,
-			status TEXT,
-			messages_processed INTEGER,
-			messages_added INTEGER,
-			messages_updated INTEGER,
-			errors_count INTEGER
-		);
-		INSERT INTO sync_runs (
-			id, source_id, started_at, status,
-			messages_processed, messages_added, messages_updated, errors_count
-		) VALUES (1, 1, datetime('now'), 'running', 0, 0, 0, 0);
-	`)
-	require.NoError(err)
-	require.NoError(db.Close())
+			db, err := sql.Open("sqlite3", dbPath)
+			require.NoError(err)
+			_, err = db.Exec(`
+				CREATE TABLE sync_runs (
+					id INTEGER PRIMARY KEY,
+					source_id INTEGER,
+					started_at DATETIME,
+					completed_at DATETIME,
+					status TEXT,
+					messages_processed INTEGER,
+					messages_added INTEGER,
+					messages_updated INTEGER,
+					errors_count INTEGER
+				);
+				INSERT INTO sync_runs (
+					id, source_id, started_at, status,
+					messages_processed, messages_added, messages_updated, errors_count
+				) VALUES (1, 1, datetime('now'), 'running', 0, 0, 0, 0);
+			`)
+			require.NoError(err)
+			require.NoError(db.Close())
 
-	_, err = buildCache(dbPath, analyticsDir, false)
-	require.NoError(err)
-	stateBefore, err := os.ReadFile(query.CacheStatePath(analyticsDir))
-	require.NoError(err)
+			_, err = buildCache(dbPath, analyticsDir, false)
+			require.NoError(err)
+			stateBefore, err := os.ReadFile(query.CacheStatePath(analyticsDir))
+			require.NoError(err)
 
-	buildCacheBeforeStateWriteHook = func() {
-		hookDB, hookErr := sql.Open("sqlite3", dbPath)
-		require.NoError(hookErr)
-		defer func() { require.NoError(hookDB.Close()) }()
-		_, hookErr = hookDB.Exec(`
-			UPDATE sync_runs
-			SET status = 'failed', completed_at = datetime('now')
-			WHERE id = 1
-		`)
-		require.NoError(hookErr)
+			buildCacheBeforeStateWriteHook = func() {
+				hookDB, hookErr := sql.Open("sqlite3", dbPath)
+				require.NoError(hookErr)
+				defer func() { require.NoError(hookDB.Close()) }()
+				_, hookErr = hookDB.Exec(`
+					UPDATE sync_runs
+					SET status = ?, completed_at = datetime('now')
+					WHERE id = 1
+				`, terminalStatus)
+				require.NoError(hookErr)
+			}
+			t.Cleanup(func() { buildCacheBeforeStateWriteHook = nil })
+
+			_, err = buildCache(dbPath, analyticsDir, true)
+			require.NoError(err, "a counter change during export publishes the snapshot")
+			buildCacheBeforeStateWriteHook = nil
+			stateAfter, readErr := os.ReadFile(query.CacheStatePath(analyticsDir))
+			require.NoError(readErr)
+			assert.NotEqual(stateBefore, stateAfter, "snapshot publication replaces committed state")
+			stale := cacheNeedsBuild(dbPath, analyticsDir)
+			assert.True(stale.NeedsBuild, "run interrupted during export leaves the cache stale: %+v", stale)
+			assert.True(stale.FullRebuild, "partial snapshot needs a full rebuild: %+v", stale)
+		})
 	}
-	t.Cleanup(func() { buildCacheBeforeStateWriteHook = nil })
-
-	_, err = buildCache(dbPath, analyticsDir, true)
-	require.NoError(err, "a counter change during export publishes the snapshot")
-	buildCacheBeforeStateWriteHook = nil
-	stateAfter, readErr := os.ReadFile(query.CacheStatePath(analyticsDir))
-	require.NoError(readErr)
-	assert.NotEqual(stateBefore, stateAfter, "snapshot publication replaces committed state")
-	stale := cacheNeedsBuild(dbPath, analyticsDir)
-	assert.True(stale.NeedsBuild, "run failing during export leaves the cache stale: %+v", stale)
-	assert.True(stale.FullRebuild, "partial snapshot needs a full rebuild: %+v", stale)
 }
 
 func TestCacheNeedsBuild_DetectsOlderRunFailingAfterNewerFailure(t *testing.T) {
@@ -1721,7 +1728,7 @@ func TestCacheNeedsBuild_DetectsOlderRunFailingAfterNewerFailure(t *testing.T) {
 	staleness := cacheNeedsBuild(dbPath, analyticsDir)
 	assert.True(staleness.NeedsBuild, "every newly failed run must invalidate cache: %+v", staleness)
 	assert.True(staleness.FullRebuild, "failed-run progress requires a full rebuild: %+v", staleness)
-	assert.Contains(staleness.Reason, "failed sync")
+	assert.Contains(staleness.Reason, "interrupted sync")
 }
 
 func TestBuildCache_PublishesSnapshotWhenOlderRunFailsDuringExport(t *testing.T) {
