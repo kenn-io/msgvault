@@ -182,12 +182,13 @@ func (s *Server) handleGetConversation(w http.ResponseWriter, r *http.Request) {
 	messages := make([]MessageDetail, 0, len(window.Messages))
 	for _, message := range window.Messages {
 		detail := MessageDetail{
-			MessageSummary: toMessageSummary(message),
-			Body:           message.Body,
-			BodyHTML:       s.archivedRemoteImageHTML(message.ID, message.BodyHTML),
-			BodyOmitted:    message.BodyOmitted,
-			IsFromMe:       message.IsFromMe,
-			Attachments:    make([]AttachmentInfo, 0, len(message.Attachments)),
+			RelatedMessageID: message.RelatedMessageID,
+			MessageSummary:   toMessageSummary(message),
+			Body:             message.Body,
+			BodyHTML:         s.archivedRemoteImageHTML(message.ID, message.BodyHTML),
+			BodyOmitted:      message.BodyOmitted,
+			IsFromMe:         message.IsFromMe,
+			Attachments:      make([]AttachmentInfo, 0, len(message.Attachments)),
 		}
 		for _, attachment := range message.Attachments {
 			detail.Attachments = append(detail.Attachments, attachmentInfoFromStore(attachment))

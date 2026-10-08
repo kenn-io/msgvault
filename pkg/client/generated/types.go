@@ -2340,6 +2340,7 @@ type CliMessageResponse struct {
 	Labels               []string               `json:"labels" validate:"required"`
 	MessageType          *string                `json:"message_type,omitzero"`
 	ReceivedAt           *time.Time             `json:"received_at,omitempty" validate:"required"`
+	RelatedMessageID     *int64                 `json:"related_message_id,omitempty"`
 	Rfc822MessageID      *string                `json:"rfc822_message_id,omitzero"`
 	SentAt               time.Time              `json:"sent_at" validate:"required"`
 	SizeEstimate         int64                  `json:"size_estimate"`
@@ -6534,30 +6535,31 @@ type MergePersonRequest struct {
 }
 
 type MessageDetail struct {
-	Attachments     []AttachmentInfo `json:"attachments" validate:"required"`
-	Bcc             []string         `json:"bcc,omitempty"`
-	Body            string           `json:"body" validate:"required"`
-	BodyHTML        *string          `json:"body_html,omitzero"`
-	BodyOmitted     *bool            `json:"body_omitted,omitempty"`
-	Cc              []string         `json:"cc,omitempty"`
-	ConversationID  *int64           `json:"conversation_id,omitempty"`
-	DeletedAt       *string          `json:"deleted_at,omitzero"`
-	From            string           `json:"from" validate:"required"`
-	FromEmail       *string          `json:"from_email,omitzero"`
-	FromName        *string          `json:"from_name,omitzero"`
-	FromPhone       *string          `json:"from_phone,omitzero"`
-	HasAttachments  bool             `json:"has_attachments"`
-	ID              int64            `json:"id"`
-	IsFromMe        *bool            `json:"is_from_me,omitempty"`
-	Labels          []string         `json:"labels" validate:"required"`
-	MessageType     *string          `json:"message_type,omitzero"`
-	SentAt          string           `json:"sent_at" validate:"required"`
-	SizeBytes       int64            `json:"size_bytes"`
-	Snippet         string           `json:"snippet" validate:"required"`
-	SourceID        *int64           `json:"source_id,omitempty"`
-	SourceMessageID *string          `json:"source_message_id,omitzero"`
-	Subject         string           `json:"subject" validate:"required"`
-	To              []string         `json:"to" validate:"required"`
+	Attachments      []AttachmentInfo `json:"attachments" validate:"required"`
+	Bcc              []string         `json:"bcc,omitempty"`
+	Body             string           `json:"body" validate:"required"`
+	BodyHTML         *string          `json:"body_html,omitzero"`
+	BodyOmitted      *bool            `json:"body_omitted,omitempty"`
+	Cc               []string         `json:"cc,omitempty"`
+	ConversationID   *int64           `json:"conversation_id,omitempty"`
+	DeletedAt        *string          `json:"deleted_at,omitzero"`
+	From             string           `json:"from" validate:"required"`
+	FromEmail        *string          `json:"from_email,omitzero"`
+	FromName         *string          `json:"from_name,omitzero"`
+	FromPhone        *string          `json:"from_phone,omitzero"`
+	HasAttachments   bool             `json:"has_attachments"`
+	ID               int64            `json:"id"`
+	IsFromMe         *bool            `json:"is_from_me,omitempty"`
+	Labels           []string         `json:"labels" validate:"required"`
+	MessageType      *string          `json:"message_type,omitzero"`
+	RelatedMessageID *int64           `json:"related_message_id,omitempty"`
+	SentAt           string           `json:"sent_at" validate:"required"`
+	SizeBytes        int64            `json:"size_bytes"`
+	Snippet          string           `json:"snippet" validate:"required"`
+	SourceID         *int64           `json:"source_id,omitempty"`
+	SourceMessageID  *string          `json:"source_message_id,omitzero"`
+	Subject          string           `json:"subject" validate:"required"`
+	To               []string         `json:"to" validate:"required"`
 }
 
 func (m MessageDetail) Validate() error {

@@ -213,6 +213,9 @@ func (m Model) meetingDetailLines() []string {
 		"Title: " + textutil.SanitizeTerminal(detail.Subject),
 		"When: " + detail.SentAt.Format("Mon, 02 Jan 2006 15:04:05 MST"),
 	}
+	if detail.RelatedMessageID != nil {
+		lines = append(lines, fmt.Sprintf("Related message: %d", *detail.RelatedMessageID))
+	}
 	if len(detail.From) > 0 {
 		lines = append(lines, "Organizer: "+textutil.SanitizeTerminal(formatAddresses(detail.From)))
 	}

@@ -702,6 +702,9 @@ func (m Model) buildDetailLines() []string {
 		"Date: "+msg.SentAt.Format("Mon, 02 Jan 2006 15:04:05 MST"),
 	)
 
+	if msg.RelatedMessageID != nil {
+		lines = append(lines, fmt.Sprintf("Related message: %d", *msg.RelatedMessageID))
+	}
 	// From
 	if len(msg.From) > 0 {
 		from := formatAddresses(msg.From)

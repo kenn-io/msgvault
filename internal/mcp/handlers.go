@@ -1578,6 +1578,7 @@ type getMessageResponse struct {
 	SourceConversationID string                 `json:"source_conversation_id"`
 	Subject              string                 `json:"subject"`
 	MessageType          string                 `json:"message_type,omitempty"`
+	RelatedMessageID     *int64                 `json:"related_message_id,omitempty"`
 	Snippet              string                 `json:"snippet"`
 	SentAt               time.Time              `json:"sent_at"`
 	ReceivedAt           *time.Time             `json:"received_at,omitempty"`
@@ -1673,6 +1674,7 @@ func (h *handlers) getMessage(ctx context.Context, req toolRequest) (*toolResult
 		SourceConversationID: msg.SourceConversationID,
 		Subject:              msg.Subject,
 		MessageType:          msg.MessageType,
+		RelatedMessageID:     msg.RelatedMessageID,
 		Snippet:              msg.Snippet,
 		SentAt:               msg.SentAt,
 		ReceivedAt:           msg.ReceivedAt,

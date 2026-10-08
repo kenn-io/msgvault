@@ -11,9 +11,12 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"go.kenn.io/msgvault/internal/chatwoot"
 	"go.kenn.io/msgvault/internal/circleback"
 	"go.kenn.io/msgvault/internal/granola"
 	"go.kenn.io/msgvault/internal/notionmeetings"
@@ -25,6 +28,7 @@ type meetingRef struct {
 	SourceID  int64 `json:"source_id"`
 }
 type manifest struct {
+	Chatwoot      [2]int64              `json:"chatwoot"`
 	Meetings      map[string]meetingRef `json:"meetings"`
 	ParticipantID int64                 `json:"participant_id"`
 }
@@ -60,6 +64,10 @@ func seed(ctx context.Context, dataDir string) (*manifest, error) {
 		return nil, err
 	}
 	out := &manifest{Meetings: map[string]meetingRef{}}
+	out.Chatwoot, err = importChatwoot(ctx, st, filepath.Join(dataDir, "attachments"))
+	if err != nil {
+		return nil, err
+	}
 	imports := []struct {
 		provider, externalID string
 		run                  func(context.Context, *store.Store) (int64, error)
@@ -123,6 +131,62 @@ func jsonServer(responses map[string]string) *httptest.Server {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(payload))
 	}))
+}
+
+func importChatwoot(ctx context.Context, st *store.Store, attachmentsDir string) ([2]int64, error) {
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/recording.wav" {
+			w.Header().Set("Content-Type", "audio/wav")
+			_, _ = w.Write([]byte("RIFFsynthetic call recording evidence"))
+			return
+		}
+		contact := map[string]any{"id": 7, "type": "contact", "name": "Example Customer", "email": "customer@example.com"}
+		message := map[string]any{"id": int64(201), "conversation_id": 42, "inbox_id": 7, "account_id": 3, "created_at": 1767225600,
+			"message_type": 0, "content_type": "voice_call", "content": "Voice call with Example Customer", "sender": contact,
+			"call": map[string]any{"id": 601, "direction": "incoming", "status": "completed", "duration_seconds": 45,
+				"recording_url": server.URL + "/recording.wav", "transcript": "Example Customer: Please send the meeting recap.\nExample Agent: The recording and transcript are saved."}}
+		neighbor := map[string]any{"id": int64(200), "conversation_id": 42, "inbox_id": 7, "account_id": 3, "created_at": 1767225500,
+			"message_type": 0, "content": "Could we discuss the next delivery?", "sender": contact}
+		conversation := map[string]any{"id": 42, "inbox_id": 7, "account_id": 3, "last_activity_at": 1767225600, "updated_at": 1767225600,
+			"messages": []any{message}, "meta": map[string]any{"sender": contact}}
+		var response any
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/agents"):
+			response = []any{}
+		case strings.HasSuffix(r.URL.Path, "/messages"):
+			after, _ := strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
+			before, _ := strconv.ParseInt(r.URL.Query().Get("before"), 10, 64)
+			payload := []any{}
+			for _, item := range []map[string]any{neighbor, message} {
+				if id, ok := item["id"].(int64); ok && id >= after && id < before {
+					payload = append(payload, item)
+				}
+			}
+			response = map[string]any{"payload": payload}
+		default:
+			response = map[string]any{"data": map[string]any{"payload": []any{}}}
+			if r.URL.Query().Get("page") == "1" {
+				response = map[string]any{"data": map[string]any{"payload": []any{conversation}}}
+			}
+		}
+		_ = json.MarshalWrite(w, response)
+	}))
+	defer server.Close()
+	client, err := chatwoot.NewClient(server.URL, 3, "synthetic-token")
+	if err != nil {
+		return [2]int64{}, err
+	}
+	imp := chatwoot.NewImporter(st, client)
+	sources, err := imp.Register(ctx, []chatwoot.Inbox{{ID: 7, Name: "Example Support"}})
+	if err != nil {
+		return [2]int64{}, err
+	}
+	if _, err = imp.Import(ctx, chatwoot.ImportOptions{InboxID: 7, AttachmentsDir: attachmentsDir}); err != nil {
+		return [2]int64{}, err
+	}
+	ids, err := st.MessageExistsBatch(sources[0].ID, []string{"201", "call:201"})
+	return [2]int64{ids["201"], ids["call:201"]}, err
 }
 
 func importGranola(ctx context.Context, st *store.Store) (int64, error) {

@@ -4325,7 +4325,8 @@ func TestSchedulerJobNameForSource(t *testing.T) {
 func TestHandleGetMessage(t *testing.T) {
 	t.Parallel()
 	assert := assert.New(t)
-	srv, _ := newTestServerWithMockStore(t)
+	srv, mock := newTestServerWithMockStore(t)
+	mock.messages[0].RelatedMessageID = new(int64(43))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages/1", nil)
 	w := httptest.NewRecorder()
@@ -4338,6 +4339,7 @@ func TestHandleGetMessage(t *testing.T) {
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
 
 	assert.Equal(int64(1), resp.ID, "id")
+	assert.Equal(new(int64(43)), resp.RelatedMessageID)
 	assert.Equal("Test Subject", resp.Subject, "subject")
 	assert.Equal("This is the full message body text.", resp.Body, "body")
 }
@@ -4373,16 +4375,17 @@ func TestHandleGetMessage_EngineBodyHTML(t *testing.T) {
 	engine := &querytest.MockEngine{
 		Messages: map[int64]*query.MessageDetail{
 			42: {
-				ID:              42,
-				SourceMessageID: "source-42",
-				Subject:         "HTML Email",
-				IsFromMe:        true,
-				From:            []query.Address{{Email: "sender@example.com", Name: "Sender"}},
-				To:              []query.Address{{Email: "rcpt@example.com"}},
-				SentAt:          time.Date(2024, 6, 1, 12, 0, 0, 0, time.UTC),
-				Labels:          []string{"INBOX"},
-				BodyText:        "plain fallback",
-				BodyHTML:        "<p>Hello</p>",
+				ID:               42,
+				RelatedMessageID: new(int64(43)),
+				SourceMessageID:  "source-42",
+				Subject:          "HTML Email",
+				IsFromMe:         true,
+				From:             []query.Address{{Email: "sender@example.com", Name: "Sender"}},
+				To:               []query.Address{{Email: "rcpt@example.com"}},
+				SentAt:           time.Date(2024, 6, 1, 12, 0, 0, 0, time.UTC),
+				Labels:           []string{"INBOX"},
+				BodyText:         "plain fallback",
+				BodyHTML:         "<p>Hello</p>",
 			},
 		},
 	}
@@ -4402,6 +4405,7 @@ func TestHandleGetMessage_EngineBodyHTML(t *testing.T) {
 	assert.Equal("HTML Email", resp["subject"], "subject")
 	assert.Equal("Sender <sender@example.com>", resp["from"], "from")
 	assert.Equal(true, resp["is_from_me"], "is_from_me")
+	assert.InDelta(43, resp["related_message_id"], 0)
 	assert.NotContains(resp, "deleted_at", "deleted_at should be omitted for live message")
 }
 

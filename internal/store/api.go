@@ -48,6 +48,7 @@ const participantSummarySenderSQL = participantDisplaySQL + ` as from_display,
 
 // APIMessage represents a message for API responses.
 type APIMessage struct {
+	RelatedMessageID     *int64
 	ID                   int64
 	SourceID             int64
 	SourceMessageID      string
@@ -217,7 +218,8 @@ func (s *Store) GetMessageContext(ctx context.Context, id int64) (*APIMessage, e
 			m.has_attachments,
 			m.size_estimate,
 			m.is_from_me,
-			m.deleted_from_source_at
+			m.deleted_from_source_at,
+			m.metadata
 		FROM messages m
 		LEFT JOIN message_recipients mr ON mr.id = (
 			SELECT mr2.id FROM message_recipients mr2
@@ -236,6 +238,7 @@ func (s *Store) GetMessageContext(ctx context.Context, id int64) (*APIMessage, e
 	// keeps the API consistent and tolerant of either driver.
 	var sentAt, deletedAt nullableTimestamp
 	var isFromMe sql.NullBool
+	var metadata sql.NullString
 	err := s.db.QueryRowContext(ctx, query, id).Scan(
 		&m.ID,
 		&m.SourceID,
@@ -254,6 +257,7 @@ func (s *Store) GetMessageContext(ctx context.Context, id int64) (*APIMessage, e
 		&m.SizeEstimate,
 		&isFromMe,
 		&deletedAt,
+		&metadata,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("message %d: %w", id, ErrMessageNotFound)
@@ -261,6 +265,12 @@ func (s *Store) GetMessageContext(ctx context.Context, id int64) (*APIMessage, e
 	if err != nil {
 		return nil, err
 	}
+	m.RelatedMessageID = RelatedMessageCandidate(m.ID, m.MessageType, metadata.String)
+	messages := []APIMessage{m}
+	if err := s.populateRelatedMessages(ctx, messages); err != nil {
+		return nil, err
+	}
+	m.RelatedMessageID = messages[0].RelatedMessageID
 	m.IsFromMe = isFromMe.Bool
 	if sentAt.Valid {
 		m.SentAt = sentAt.Time

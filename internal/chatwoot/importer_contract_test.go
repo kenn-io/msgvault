@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/meetingcontent"
+	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -388,6 +389,23 @@ func TestImportContractCallFallbackAndLifecycleKeepsOneLinkedMeeting(t *testing.
 	body, err := st.GetMessageBodyText(meetingID)
 	require.NoError(err)
 	assert.Contains(body, "Updated call transcript words")
+	var dialect query.Dialect = query.SQLiteQueryDialect{}
+	if store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
+		dialect = query.PostgreSQLQueryDialect{}
+	}
+	engine := query.NewEngineWithDialect(st.DB(), dialect)
+	for _, pair := range [][2]int64{{chatID, meetingID}, {meetingID, chatID}} {
+		detail, err := st.GetMessageContext(t.Context(), pair[0])
+		require.NoError(err)
+		assert.Equal(new(pair[1]), detail.RelatedMessageID)
+		queried, err := engine.GetMessage(t.Context(), pair[0])
+		require.NoError(err)
+		assert.Equal(new(pair[1]), queried.RelatedMessageID)
+		window, err := st.GetConversationWindowContext(t.Context(), detail.ConversationID, pair[0], 10, 10, nil, nil)
+		require.NoError(err)
+		require.Len(window.Messages, 1)
+		assert.Equal(new(pair[1]), window.Messages[0].RelatedMessageID)
+	}
 	aliasID, err := st.EnsureParticipantContext(t.Context(), "owner.alias@example.com", "Example Owner", "example.com")
 	require.NoError(err)
 	require.NoError(st.AddAccountIdentity(source.ID, "owner.alias@example.com", "manual"))
@@ -536,4 +554,98 @@ func TestImportContractMetadataOnlyAndUnknownAttachmentTypes(t *testing.T) {
 	assert.Contains(metadata[1], "coordinates_lat")
 	assert.Contains(metadata[1], "Synthetic origin")
 	assert.Contains(metadata[2], "Synthetic fallback")
+}
+
+func TestImportContractRelatedMessageAvailability(t *testing.T) {
+	checks, must := assert.New(t), require.New(t)
+	message := contractMessage(201, 1767225600, nil)
+	message["content_type"] = "voice_call"
+	message["call"] = map[string]any{"id": 601, "direction": "incoming", "status": "completed", "transcript": "Synthetic transcript"}
+	neighbor := contractMessage(200, 1767225500, nil)
+	neighbor["content"] = strings.Repeat("x", store.ConversationInlineBodyBudget+1)
+	api := newContractAPI(t, 3, []map[string]any{neighbor, message})
+	st := testutil.NewTestStore(t)
+	importer, source := contractRegister(t, st, api)
+	_, err := importer.Import(t.Context(), ImportOptions{InboxID: 7, IncludePrivate: true})
+	must.NoError(err)
+	chatID, meetingID := contractArchivedMessageID(t, st, "201"), contractArchivedMessageID(t, st, "call:201")
+	neighborID := contractArchivedMessageID(t, st, "200")
+	detail, err := st.GetMessage(neighborID)
+	must.NoError(err)
+	checks.Nil(detail.RelatedMessageID)
+	window, err := st.GetConversationWindowContext(t.Context(), detail.ConversationID, neighborID, 10, 10, nil, nil)
+	must.NoError(err)
+	must.Len(window.Messages, 2)
+	for _, item := range window.Messages {
+		if item.ID == chatID {
+			checks.True(item.BodyOmitted)
+			checks.Equal(new(meetingID), item.RelatedMessageID)
+		}
+	}
+	var dialect query.Dialect = query.SQLiteQueryDialect{}
+	if store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
+		dialect = query.PostgreSQLQueryDialect{}
+	}
+	engine := query.NewEngineWithDialect(st.DB(), dialect)
+	invalidMetadata := []string{`{"meeting_message_id":-1}`, `{"meeting_message_id":` + strconv.FormatInt(chatID, 10) + `}`, `{"meeting_message_id":` + strconv.FormatInt(neighborID, 10) + `}`, `{"meeting_message_id":999999}`}
+	if !store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
+		invalidMetadata = append(invalidMetadata, "broken JSON")
+	}
+	for _, metadata := range invalidMetadata {
+		must.NoError(st.SetMessageMetadata(chatID, sql.NullString{String: metadata, Valid: true}))
+		got, err := st.GetMessage(chatID)
+		must.NoError(err)
+		checks.Nil(got.RelatedMessageID, metadata)
+		queried, err := engine.GetMessage(t.Context(), chatID)
+		must.NoError(err)
+		checks.Nil(queried.RelatedMessageID, metadata)
+	}
+	must.NoError(st.SetMessageMetadata(chatID, sql.NullString{String: `{"meeting_message_id":` + strconv.FormatInt(meetingID, 10) + `}`, Valid: true}))
+	other, err := st.GetOrCreateSource("chatwoot", "synthetic-other-inbox")
+	must.NoError(err)
+	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET source_id = ? WHERE id = ?`), other.ID, meetingID)
+	must.NoError(err)
+	got, err := st.GetMessage(chatID)
+	must.NoError(err)
+	checks.Nil(got.RelatedMessageID)
+	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET source_id = ? WHERE id = ?`), source.ID, meetingID)
+	must.NoError(err)
+	must.NoError(st.MarkMessageDeleted(source.ID, "call:201"))
+	got, err = st.GetMessage(chatID)
+	must.NoError(err)
+	checks.Nil(got.RelatedMessageID)
+	queried, err := engine.GetMessage(t.Context(), chatID)
+	must.NoError(err)
+	checks.Nil(queried.RelatedMessageID)
+}
+
+func TestImportContractRelatedMessageSubset(t *testing.T) {
+	must, checks := require.New(t), assert.New(t)
+	sourcePath := filepath.Join(t.TempDir(), "source.db")
+	st, err := store.Open(sourcePath)
+	must.NoError(err)
+	must.NoError(st.InitSchema())
+	message := contractMessage(201, 1767225600, nil)
+	message["content_type"] = "voice_call"
+	message["call"] = map[string]any{"id": 601, "direction": "incoming", "status": "completed", "transcript": "Synthetic transcript"}
+	api := newContractAPI(t, 3, []map[string]any{message})
+	importer, _ := contractRegister(t, st, api)
+	_, err = importer.Import(t.Context(), ImportOptions{InboxID: 7, IncludePrivate: true})
+	must.NoError(err)
+	must.NoError(st.Close())
+	destination := t.TempDir()
+	_, err = store.CopySubset(sourcePath, destination, 1, false)
+	must.NoError(err)
+	subset, err := store.Open(filepath.Join(destination, "msgvault.db"))
+	must.NoError(err)
+	t.Cleanup(func() { must.NoError(subset.Close()) })
+	var id int64
+	must.NoError(subset.DB().QueryRow(`SELECT id FROM messages`).Scan(&id))
+	detail, err := subset.GetMessage(id)
+	must.NoError(err)
+	checks.Nil(detail.RelatedMessageID)
+	engine := query.NewEngineWithDialect(subset.DB(), query.SQLiteQueryDialect{})
+	queried, err := engine.GetMessage(t.Context(), id)
+	must.NoError(err)
+	checks.Nil(queried.RelatedMessageID)
 }

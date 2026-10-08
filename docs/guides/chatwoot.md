@@ -60,6 +60,9 @@ before your first sync to exclude private notes. This controls ingestion; it
 does not remove notes already archived. Notes skipped while it was off are
 fetched only by `sync-chatwoot --full` after turning it back on.
 
+Call details offer **Open meeting** for the recording and transcript. Meeting
+details offer **Open conversation** to return to the original call and its messages.
+
 Employees remain distinct from contacts and bots. The current conversation
 assignee describes routing and does not replace historical sender attribution.
 An outgoing customer reply is not automatically attributed to the archive

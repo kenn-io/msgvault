@@ -2550,6 +2550,9 @@ components:
           type:
             - string
             - "null"
+        related_message_id:
+          format: int64
+          type: integer
         rfc822_message_id:
           type: string
         sent_at:
@@ -6981,6 +6984,9 @@ components:
           type: array
         message_type:
           type: string
+        related_message_id:
+          format: int64
+          type: integer
         sent_at:
           type: string
         size_bytes:

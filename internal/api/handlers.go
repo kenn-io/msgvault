@@ -315,6 +315,8 @@ type MessageSummary struct {
 type MessageDetail struct {
 	MessageSummary
 
+	RelatedMessageID *int64 `json:"related_message_id,omitempty"`
+
 	Body     string `json:"body"`
 	BodyHTML string `json:"body_html,omitempty"`
 	IsFromMe bool   `json:"is_from_me,omitzero"`
@@ -537,28 +539,29 @@ func messageDetailFromQuery(qMsg *query.MessageDetail) MessageDetail {
 	}
 
 	return MessageDetail{
-		ID:              qMsg.ID,
-		SourceID:        qMsg.SourceID,
-		SourceMessageID: qMsg.SourceMessageID,
-		ConversationID:  qMsg.ConversationID,
-		Subject:         qMsg.Subject,
-		MessageType:     qMsg.MessageType,
-		From:            from,
-		FromEmail:       fromEmail,
-		FromName:        fromName,
-		To:              toAddrs,
-		Cc:              ccAddrs,
-		Bcc:             bccAddrs,
-		SentAt:          qMsg.SentAt.UTC().Format(time.RFC3339),
-		DeletedAt:       formatDeletedAt(qMsg.DeletedAt),
-		Snippet:         qMsg.Snippet,
-		Labels:          labels,
-		HasAttach:       qMsg.HasAttachments,
-		SizeBytes:       qMsg.SizeEstimate,
-		IsFromMe:        qMsg.IsFromMe,
-		Body:            body,
-		BodyHTML:        qMsg.BodyHTML,
-		Attachments:     attachments,
+		RelatedMessageID: qMsg.RelatedMessageID,
+		ID:               qMsg.ID,
+		SourceID:         qMsg.SourceID,
+		SourceMessageID:  qMsg.SourceMessageID,
+		ConversationID:   qMsg.ConversationID,
+		Subject:          qMsg.Subject,
+		MessageType:      qMsg.MessageType,
+		From:             from,
+		FromEmail:        fromEmail,
+		FromName:         fromName,
+		To:               toAddrs,
+		Cc:               ccAddrs,
+		Bcc:              bccAddrs,
+		SentAt:           qMsg.SentAt.UTC().Format(time.RFC3339),
+		DeletedAt:        formatDeletedAt(qMsg.DeletedAt),
+		Snippet:          qMsg.Snippet,
+		Labels:           labels,
+		HasAttach:        qMsg.HasAttachments,
+		SizeBytes:        qMsg.SizeEstimate,
+		IsFromMe:         qMsg.IsFromMe,
+		Body:             body,
+		BodyHTML:         qMsg.BodyHTML,
+		Attachments:      attachments,
 	}
 }
 
@@ -762,10 +765,11 @@ func (s *Server) handleGetMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	detail := MessageDetail{
-		MessageSummary: toMessageSummary(*msg),
-		Body:           msg.Body,
-		BodyHTML:       msg.BodyHTML,
-		IsFromMe:       msg.IsFromMe,
+		RelatedMessageID: msg.RelatedMessageID,
+		MessageSummary:   toMessageSummary(*msg),
+		Body:             msg.Body,
+		BodyHTML:         msg.BodyHTML,
+		IsFromMe:         msg.IsFromMe,
 	}
 
 	attachments := make([]AttachmentInfo, 0, len(msg.Attachments))
