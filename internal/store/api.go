@@ -219,7 +219,7 @@ func (s *Store) GetMessageContext(ctx context.Context, id int64) (*APIMessage, e
 			m.size_estimate,
 			m.is_from_me,
 			m.deleted_from_source_at,
-			m.metadata
+			CASE WHEN m.message_type IN ('chatwoot', 'meeting_transcript') THEN m.metadata ELSE NULL END
 		FROM messages m
 		LEFT JOIN message_recipients mr ON mr.id = (
 			SELECT mr2.id FROM message_recipients mr2

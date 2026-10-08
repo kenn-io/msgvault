@@ -172,7 +172,7 @@ func (s *Store) GetConversationWindowContext(
 			selected.position,
 			selected.total_count,
 			selected.anchor_position,
-			m.metadata
+			CASE WHEN m.message_type IN ('chatwoot', 'meeting_transcript') THEN m.metadata ELSE NULL END
 		FROM selected
 		JOIN messages m ON m.id = selected.id
 		LEFT JOIN message_recipients mr ON mr.id = (

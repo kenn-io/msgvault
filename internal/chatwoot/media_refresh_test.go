@@ -1,6 +1,7 @@
 package chatwoot
 
 import (
+	"context"
 	"encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
@@ -19,11 +20,12 @@ import (
 )
 
 type mediaRefreshServer struct {
-	mu       sync.Mutex
-	server   *httptest.Server
-	failures map[string]bool
-	requests map[string]int
-	declared bool
+	mu        sync.Mutex
+	server    *httptest.Server
+	failures  map[string]bool
+	requests  map[string]int
+	declared  bool
+	onRequest func(string)
 }
 
 func newMediaRefreshServer(t *testing.T) *mediaRefreshServer {
@@ -35,6 +37,9 @@ func newMediaRefreshServer(t *testing.T) *mediaRefreshServer {
 		assert.Empty(t, r.Header.Get("Api_access_token"))
 		assert.Empty(t, r.Header.Get("Authorization"))
 		media.requests[r.URL.Path]++
+		if media.onRequest != nil {
+			media.onRequest(r.URL.Path)
+		}
 		if media.failures[r.URL.Path] {
 			http.Error(w, "synthetic temporary media failure", http.StatusServiceUnavailable)
 			return
@@ -138,11 +143,8 @@ func TestMediaRefreshCallKeepsDistinctRecordingsAndDeduplicatesSameURL(t *testin
 }
 
 func TestMediaRefreshFailedReplacementRetainsBytesAndRetriesNextSync(t *testing.T) {
-	for _, dropped := range []bool{false, true} {
-		name := "replacement_fails"
-		if dropped {
-			name = "recording_dropped"
-		}
+	for _, name := range []string{"replacement_fails", "recording_dropped", "replacement_canceled", "first_import_canceled"} {
+		dropped := name == "recording_dropped"
 		t.Run(name, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
@@ -156,13 +158,62 @@ func TestMediaRefreshFailedReplacementRetainsBytesAndRetriesNextSync(t *testing.
 			st := testutil.NewTestStore(t)
 			importer, _ := contractRegister(t, st, api)
 			opts := mediaRefreshOptions(t)
-			_, err := importer.Import(t.Context(), opts)
+			ctx := t.Context()
+			if name == "first_import_canceled" {
+				canceled, cancel := context.WithCancel(ctx)
+				defer cancel()
+				ctx = canceled
+				media.onRequest = func(string) { cancel() }
+			}
+			_, err := importer.Import(ctx, opts)
+			if name == "first_import_canceled" {
+				require.ErrorIs(err, context.Canceled)
+				chatID := contractArchivedMessageID(t, st, "901")
+				meetingID := contractArchivedMessageID(t, st, "call:901")
+				for _, pair := range [][2]int64{{chatID, meetingID}, {meetingID, chatID}} {
+					detail, err := st.GetMessageContext(t.Context(), pair[0])
+					require.NoError(err)
+					assert.Equal(new(pair[1]), detail.RelatedMessageID)
+				}
+				source, err := st.GetSourceByTypeAndIdentifier(SourceType, SourceIdentifier(api.server.URL, 3, 7))
+				require.NoError(err)
+				require.NotNil(source)
+				state, err := importer.resumeState(source.ID, source.Identifier)
+				require.NoError(err)
+				assert.NotEmpty(state.Conversations["42"].Pending, "cancellation retains unfinished saved work")
+				media.mu.Lock()
+				media.onRequest = nil
+				media.mu.Unlock()
+				_, err = NewImporter(st, api.client(t)).Import(t.Context(), opts)
+				require.NoError(err)
+				_, payloads := readMediaRefreshBytes(t, st, meetingID, opts.AttachmentsDir)
+				assert.Equal([]string{"synthetic recording A bytes"}, payloads)
+				return
+			}
 			require.NoError(err)
 			meetingID := contractArchivedMessageID(t, st, "call:901")
 			before, payloads := readMediaRefreshBytes(t, st, meetingID, opts.AttachmentsDir)
 			require.Len(before, 1)
 			assert.Equal([]string{"synthetic recording A bytes"}, payloads)
 
+			if name == "replacement_canceled" {
+				call["recording_url"] = router.url(t, media.server, "/recording-b.ogg")
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				media.onRequest = func(string) { cancel() }
+				opts.Full = true
+				_, err = NewImporter(st, api.client(t)).Import(ctx, opts)
+				require.ErrorIs(err, context.Canceled)
+				chatID := contractArchivedMessageID(t, st, "901")
+				for _, pair := range [][2]int64{{chatID, meetingID}, {meetingID, chatID}} {
+					detail, err := st.GetMessageContext(t.Context(), pair[0])
+					require.NoError(err)
+					assert.Equal(new(pair[1]), detail.RelatedMessageID, "a canceled reread keeps its existing meeting link")
+				}
+				_, payloads := readMediaRefreshBytes(t, st, meetingID, opts.AttachmentsDir)
+				assert.Equal([]string{"synthetic recording A bytes"}, payloads)
+				return
+			}
 			if dropped {
 				api.Mu.Lock()
 				delete(call, "recording_url")

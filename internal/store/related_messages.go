@@ -8,6 +8,9 @@ import (
 
 // RelatedMessageCandidate decodes an alternate representation of an archived call.
 func RelatedMessageCandidate(id int64, messageType, metadata string) *int64 {
+	if messageType != "chatwoot" && messageType != "meeting_transcript" {
+		return nil
+	}
 	var fields struct {
 		Provider  string `json:"provider"`
 		MeetingID int64  `json:"meeting_message_id"`

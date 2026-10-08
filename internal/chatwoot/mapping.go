@@ -95,12 +95,7 @@ func (imp *Importer) persistMessage(ctx context.Context, sourceID int64, c Conve
 	if m.Private {
 		body = "[Private note]\n\n" + body
 	}
-	metadata := map[string]any{"provider": SourceType, "inbox_id": opts.InboxID, "conversation_id": c.ID, "message_type": m.MessageType, "private": m.Private, "status": m.Status, "sender": sender, "conversation": c}
-	encoded, err := json.Marshal(metadata, json.Deterministic(true))
-	if err != nil {
-		return 0, err
-	}
-	meta := sql.NullString{String: string(encoded), Valid: true}
+	metadata := map[string]any{"provider": SourceType, "inbox_id": opts.InboxID, "conversation_id": c.ID, "message_type": m.MessageType, "private": m.Private, "status": m.Status, "sender": sender}
 	raw := []byte(m.Raw)
 	if len(raw) == 0 {
 		raw, err = json.Marshal(m)
@@ -109,10 +104,20 @@ func (imp *Importer) persistMessage(ctx context.Context, sourceID int64, c Conve
 		}
 	}
 	sourceMessageID := strconv.FormatInt(m.ID, 10)
-	existing, err := imp.store.MessageExistsBatch(sourceID, []string{sourceMessageID})
+	existing, err := imp.store.MessageMetadataBatch(sourceID, []string{sourceMessageID})
 	if err != nil {
 		return 0, err
 	}
+	if previous, found := existing[sourceMessageID]; found && m.ContentType == "voice_call" {
+		if linked := store.RelatedMessageCandidate(previous.ID, SourceType, previous.Metadata.String); linked != nil {
+			metadata["meeting_message_id"] = *linked
+		}
+	}
+	encoded, err := json.Marshal(metadata, json.Deterministic(true))
+	if err != nil {
+		return 0, err
+	}
+	meta := sql.NullString{String: string(encoded), Valid: true}
 	title := actorName(contact)
 	if title == "" {
 		title = fmt.Sprintf("Chatwoot conversation %d", c.ID)
@@ -159,19 +164,11 @@ func (imp *Importer) persistMessage(ctx context.Context, sourceID int64, c Conve
 		if mediaErr != nil {
 			return 0, mediaErr
 		}
-		meetingID, callRefreshFrom, callErr := imp.persistCall(ctx, sourceID, c, m, messageID, contact, contactID, sender, senderID, chatMedia, opts, sum)
+		_, callRefreshFrom, callErr := imp.persistCall(ctx, sourceID, c, m, messageID, contact, contactID, sender, senderID, metadata, chatMedia, opts, sum)
 		if callErr != nil {
 			return 0, callErr
 		}
 		refreshFrom = max(refreshFrom, callRefreshFrom)
-		metadata["meeting_message_id"] = meetingID
-		encoded, err = json.Marshal(metadata, json.Deterministic(true))
-		if err != nil {
-			return 0, err
-		}
-		if err = imp.store.SetMessageMetadata(messageID, sql.NullString{String: string(encoded), Valid: true}); err != nil {
-			return 0, err
-		}
 	}
 	return refreshFrom, nil
 }

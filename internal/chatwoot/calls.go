@@ -2,8 +2,10 @@ package chatwoot
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
+	"errors"
 	"math"
 	"strconv"
 	"strings"
@@ -88,7 +90,7 @@ func callEvidence(m Message) Call {
 // persistCall returns the meeting and when its refresh window starts. Chatwoot
 // can replace a recording or transcript after the call without new activity,
 // so a call is rechecked through the whole window.
-func (imp *Importer) persistCall(ctx context.Context, sourceID int64, c Conversation, m Message, chatMessageID int64, contact Actor, contactID int64, sender Actor, senderID int64, chatMedia map[string]store.AttachmentRef, opts ImportOptions, sum *ImportSummary) (int64, int64, error) {
+func (imp *Importer) persistCall(ctx context.Context, sourceID int64, c Conversation, m Message, chatMessageID int64, contact Actor, contactID int64, sender Actor, senderID int64, chatMetadata map[string]any, chatMedia map[string]store.AttachmentRef, opts ImportOptions, sum *ImportSummary) (int64, int64, error) {
 	call := callEvidence(m)
 	transcript := call.Transcript
 	for _, a := range m.Attachments {
@@ -133,22 +135,10 @@ func (imp *Importer) persistCall(ctx context.Context, sourceID int64, c Conversa
 		title += " with " + actorName(contact)
 	}
 	started, ended := providerTime(call.StartedAt), providerTime(call.EndedAt)
-	normalized := map[string]any{"title": title, "transcript": transcript, "status": call.Status, "direction": call.Direction, "chatwoot": m.Raw, "organizer": owner, "attendees": attendees}
+	normalized := map[string]any{"title": title, "transcript": transcript, "status": call.Status, "direction": call.Direction, "chatwoot": m.Raw}
 	if transcript == "" {
 		delete(normalized, "transcript")
 	}
-	// Marshal provider-resolved people with the canonical lower-case wire keys.
-	personWire := func(p meetingarchive.Person) map[string]any {
-		return map[string]any{"participant_id": p.ParticipantID, "name": p.Name, "email": p.Email, "phone": p.Phone}
-	}
-	if owner != nil {
-		normalized["organizer"] = personWire(*owner)
-	}
-	people := make([]map[string]any, 0, len(attendees))
-	for _, p := range attendees {
-		people = append(people, personWire(p))
-	}
-	normalized["attendees"] = people
 	if !started.IsZero() {
 		normalized["started_at"] = started
 	}
@@ -179,6 +169,16 @@ func (imp *Importer) persistCall(ctx context.Context, sourceID int64, c Conversa
 		SourceID: sourceID, SourceMessageID: "call:" + strconv.FormatInt(m.ID, 10), SourceConversationID: "call:" + strconv.FormatInt(c.ID, 10) + ":" + strconv.FormatInt(m.ID, 10),
 		Title: title, StartedAt: occurred, Body: strings.TrimSpace(transcript), Snippet: meetingarchive.Snippet(transcript), Raw: raw, RawFormat: "meeting_json", Metadata: metadata, Organizer: owner, Attendees: attendees,
 	}, meetingarchive.UpsertOptions{})
+	if result.MessageID > 0 {
+		chatMetadata["meeting_message_id"] = result.MessageID
+		encoded, linkErr := json.Marshal(chatMetadata, json.Deterministic(true))
+		if linkErr == nil {
+			linkErr = imp.store.SetMessageMetadata(chatMessageID, sql.NullString{String: string(encoded), Valid: true})
+		}
+		if linkErr != nil {
+			return result.MessageID, 0, errors.Join(err, linkErr)
+		}
+	}
 	if err != nil {
 		return result.MessageID, 0, err
 	}

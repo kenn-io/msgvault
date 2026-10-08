@@ -490,7 +490,7 @@ func getMessageByQueryShared(ctx context.Context, db *sql.DB, rebind rebindFunc,
 			m.has_attachments,
 			COALESCE(m.is_from_me, FALSE),
 			m.deleted_from_source_at,
-			m.metadata
+			CASE WHEN m.message_type IN ('chatwoot', 'meeting_transcript') THEN m.metadata ELSE NULL END
 		FROM %smessages m
 		LEFT JOIN %sconversations conv ON conv.id = m.conversation_id
 		WHERE %s

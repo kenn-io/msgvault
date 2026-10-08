@@ -133,10 +133,9 @@ func providerParticipants(fields map[string]jsontext.Value) []Participant {
 }
 
 type personWire struct {
-	Name          string `json:"name"`
-	Email         string `json:"email"`
-	Phone         string `json:"phone"`
-	ParticipantID *int64 `json:"participant_id,omitempty"`
+	Name  string `json:"name"`
+	Email string `json:"email"`
+	Phone string `json:"phone"`
 }
 
 func participantsFromPeople(organizer *personWire, attendees []personWire) []Participant {
@@ -316,14 +315,6 @@ func participantFromPerson(person personWire, role string) (Participant, bool) {
 	participant := Participant{
 		Name: strings.TrimSpace(person.Name), Email: normalizeExplicitEmail(person.Email),
 		Phone: strings.TrimSpace(person.Phone), Role: role,
-		ParticipantID: positiveParticipantID(person.ParticipantID),
 	}
-	return participant, participant.Name != "" || participant.Email != "" || participant.Phone != "" || participant.ParticipantID != nil
-}
-
-func positiveParticipantID(id *int64) *int64 {
-	if id == nil || *id <= 0 {
-		return nil
-	}
-	return id
+	return participant, participant.Name != "" || participant.Email != "" || participant.Phone != ""
 }

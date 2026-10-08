@@ -382,6 +382,11 @@ func TestImportContractCallFallbackAndLifecycleKeepsOneLinkedMeeting(t *testing.
 			assert.True(owned)
 		}
 	}
+	packet, err = st.GetMeetingContextContext(t.Context(), store.MeetingQueryScope{MessageIDs: new([]int64{meetingID})}, meetingcontent.PacketOptions{Format: meetingcontent.FormatJSON, MaxBytes: 64 << 10})
+	require.NoError(err)
+	require.NoError(json.Unmarshal([]byte(packet.Content), &decoded))
+	require.Len(decoded.Meetings, 1)
+	assert.Len(decoded.Meetings[0].Participants, 2, "the merged customer and handling agent each appear once")
 }
 
 func TestImportContractLateAudioTranscriptAndCredentialFreeCAS(t *testing.T) {
