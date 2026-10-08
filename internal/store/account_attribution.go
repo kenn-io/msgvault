@@ -285,17 +285,23 @@ func outboundEvidenceLabelSQL(l, src string) string {
 // draft even in a mailbox the server gives no Drafts role, or a draft record
 // naming it as the current or replaced snapshot. src must be m's source row.
 func draftEvidenceSQL(m, src string) string {
-	return `(EXISTS (SELECT 1 FROM message_labels ml JOIN labels l ON l.id = ml.label_id
+	return draftEvidenceInSchemaSQL("", m, src)
+}
+
+// draftEvidenceInSchemaSQL is draftEvidenceSQL reading its evidence tables
+// from schema, such as "src." for an attached source archive.
+func draftEvidenceInSchemaSQL(schema, m, src string) string {
+	return `(EXISTS (SELECT 1 FROM ` + schema + `message_labels ml JOIN ` + schema + `labels l ON l.id = ml.label_id
 		WHERE ml.message_id = ` + m + `.id AND l.source_id = ` + m + `.source_id
 		  AND (l.system_role = '` + LabelSystemRoleDrafts + `'
 		       OR (` + src + `.source_type = 'gmail' AND l.source_label_id = 'DRAFT')))
-		OR EXISTS (SELECT 1 FROM imap_message_memberships imm
+		OR EXISTS (SELECT 1 FROM ` + schema + `imap_message_memberships imm
 		WHERE imm.message_id = ` + m + `.id AND imm.source_id = ` + m + `.source_id
 		  AND LOWER(CAST(imm.flags AS TEXT)) LIKE '%"\\draft"%' ESCAPE '!')
-		OR EXISTS (SELECT 1 FROM imap_drafts d WHERE d.current_message_id = ` + m + `.id)
-		OR EXISTS (SELECT 1 FROM imap_drafts d WHERE d.pending_original_message_id = ` + m + `.id)
-		OR EXISTS (SELECT 1 FROM gmail_drafts d WHERE d.current_message_id = ` + m + `.id)
-		OR EXISTS (SELECT 1 FROM gmail_drafts d WHERE d.pending_original_message_id = ` + m + `.id))`
+		OR EXISTS (SELECT 1 FROM ` + schema + `imap_drafts d WHERE d.current_message_id = ` + m + `.id)
+		OR EXISTS (SELECT 1 FROM ` + schema + `imap_drafts d WHERE d.pending_original_message_id = ` + m + `.id)
+		OR EXISTS (SELECT 1 FROM ` + schema + `gmail_drafts d WHERE d.current_message_id = ` + m + `.id)
+		OR EXISTS (SELECT 1 FROM ` + schema + `gmail_drafts d WHERE d.pending_original_message_id = ` + m + `.id))`
 }
 
 // sourceHasSentFolderSQL is true when source src has a Sent folder, so

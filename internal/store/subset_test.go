@@ -5042,3 +5042,41 @@ func TestCopySubsetKeepsAccountAttributionConsistent(t *testing.T) {
 		"1:charlie@example.com", "1:hidden@example.org", "1:unused@example.org", "2:work@example.org",
 	}, copiedIdentities(true), "--include-identity copies every confirmed address of an included source")
 }
+
+func TestCopySubsetKeepsPendingDraftOutOfReceived(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	srcDB := createTestSourceDB(t, t.TempDir(), 3)
+	db, err := sql.Open("sqlite3", srcDB)
+	require.NoError(err)
+	// Message 1 (alice to bob) is a draft archived before attribution: its
+	// only draft evidence is an IMAP \Draft flag, which subsets do not copy.
+	for _, stmt := range []string{
+		`UPDATE messages SET account_address = NULL, account_path = NULL, draft_authored = FALSE`,
+		`INSERT INTO imap_message_memberships (source_id, mailbox, uidvalidity, uid, message_id, flags)
+		 VALUES (1, 'Scratch', 7, 1, 1, '["\\Draft"]')`,
+		`INSERT INTO account_identities (source_id, address, address_key, source_signal)
+		 VALUES (1, 'bob@example.com', 'bob@example.com', 'manual')`,
+	} {
+		_, err = db.Exec(stmt)
+		require.NoError(err, stmt)
+	}
+	require.NoError(db.Close())
+
+	dstDir := filepath.Join(t.TempDir(), "dst")
+	_, err = CopySubset(srcDB, dstDir, 3, false)
+	require.NoError(err)
+	dst, err := Open(filepath.Join(dstDir, "msgvault.db"))
+	require.NoError(err)
+	t.Cleanup(func() { _ = dst.Close() })
+	require.NoError(dst.InitSchema())
+	_, err = dst.RepairAccountAttributionContext(t.Context(), 1, nil)
+	require.NoError(err)
+
+	var authored bool
+	var path sql.NullString
+	require.NoError(dst.DB().QueryRow(`SELECT draft_authored, account_path FROM messages WHERE id = 1`).
+		Scan(&authored, &path))
+	assert.True(authored, "the subset keeps the draft mark its IMAP flag gave it")
+	assert.Equal(accountPathSent, path.String, "a copied draft is written, not received")
+}

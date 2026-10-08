@@ -848,6 +848,9 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 	if err := copySubsetAccountIdentities(tx, options.IncludeIdentity, hasDeliveryAddresses); err != nil {
 		return nil, err
 	}
+	if err := markSubsetDraftsAuthored(tx); err != nil {
+		return nil, err
+	}
 
 	if _, err := tx.Exec(`
 		INSERT INTO reactions SELECT * FROM src.reactions
@@ -2859,4 +2862,19 @@ func subsetPendingDeliveryAddresses(tx *sql.Tx) ([]subsetIdentityKey, error) {
 		}
 	}
 	return out, rows.Err()
+}
+
+// markSubsetDraftsAuthored records draft authorship on included messages
+// whose draft evidence the subset does not copy: IMAP \Draft flags and draft
+// records. A message the source has not yet derived would otherwise lose it,
+// and deriving it in the subset could count the draft as received mail.
+func markSubsetDraftsAuthored(tx *sql.Tx) error {
+	if _, err := tx.Exec(`UPDATE messages SET draft_authored = TRUE
+		WHERE draft_authored = FALSE AND id IN (
+			SELECT m.id FROM src.messages m JOIN src.sources s ON s.id = m.source_id
+			WHERE m.id IN (SELECT id FROM selected_messages)
+			  AND ` + draftEvidenceInSchemaSQL("src.", "m", "s") + `)`); err != nil {
+		return fmt.Errorf("record subset draft authorship: %w", err)
+	}
+	return nil
 }
