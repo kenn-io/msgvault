@@ -1610,13 +1610,12 @@ func (s *Store) UpsertMessageBody(messageID int64, bodyText, bodyHTML sql.NullSt
 // cancelled call cannot leave a new body marked as already embedded.
 func (s *Store) UpsertMessageBodyContext(ctx context.Context, messageID int64, bodyText, bodyHTML sql.NullString) error {
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
-		if !s.IsPostgreSQL() {
-			// Reserve SQLite's writer slot before reading the prior body. A
-			// deferred WAL transaction that read first cannot upgrade to a
-			// writer after another connection commits.
-			if _, err := tx.ExecContext(ctx, `UPDATE embedding_change_clock SET sequence = sequence WHERE singleton = 1`); err != nil {
-				return fmt.Errorf("lock message body write: %w", err)
-			}
+		// Lock before reading the prior body: SQLite cannot upgrade a deferred
+		// WAL reader after another commit, and on PostgreSQL a concurrent
+		// message write could change the body between this comparison and
+		// the write, leaving the search document stale.
+		if err := s.lockMeetingEvidenceWith(ctx, tx, messageID); err != nil {
+			return fmt.Errorf("lock message body write: %w", err)
 		}
 		q := boundQuerier{ctx: ctx, q: tx}
 		if s.syncGeneration != nil {
