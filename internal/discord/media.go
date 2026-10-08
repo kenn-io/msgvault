@@ -211,6 +211,25 @@ func (m *MediaArchiver) PersistAttachments(
 	return m.persistAttachments(ctx, messageID, attachments, true, messageFlags)
 }
 
+// keepArchivedAttachment carries an earlier run's stored file into refreshed
+// provider metadata, so rewriting a message's attachment rows never discards
+// a download. It reports whether the attachment's bytes are already archived.
+func keepArchivedAttachment(ref *store.AttachmentRef, previous store.AttachmentRef) bool {
+	if previous.Size > ref.Size {
+		ref.Size = previous.Size
+	}
+	if !store.IsDiscordAttachmentDownloaded(previous) {
+		return false
+	}
+	ref.StoragePath = previous.StoragePath
+	ref.ContentHash = previous.ContentHash
+	ref.Role = store.AttachmentRoleStandalone
+	ref.RoleSource = store.AttachmentRoleSourceProviderExplicit
+	ref.State = attachmentpolicy.StateStored
+	ref.SkipReason = ""
+	return true
+}
+
 // persistAttachments refreshes the complete observed attachment set. When
 // retryExisting is false, known pending rows get fresh metadata without a
 // duplicate download attempt; newly observed rows are still attempted.
@@ -242,16 +261,7 @@ func (m *MediaArchiver) persistAttachments(
 		remainingRefs = remainingRefs[1:]
 		item := attachmentWork{attachment: attachment, ref: ref, download: true, report: true}
 		if previous, ok := existing[ref.SourceAttachmentID]; ok {
-			if previous.Size > ref.Size {
-				ref.Size = previous.Size
-			}
-			if store.IsDiscordAttachmentDownloaded(previous) {
-				ref.StoragePath = previous.StoragePath
-				ref.ContentHash = previous.ContentHash
-				ref.Role = store.AttachmentRoleStandalone
-				ref.RoleSource = store.AttachmentRoleSourceProviderExplicit
-				ref.State = attachmentpolicy.StateStored
-				ref.SkipReason = ""
+			if keepArchivedAttachment(ref, previous) {
 				item.download = false
 				item.report = retryExisting
 			} else if !retryExisting {

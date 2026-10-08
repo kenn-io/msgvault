@@ -1557,17 +1557,26 @@ func (imp *Importer) persistPage(
 				}
 			}
 		} else {
-			pendingCount := len(mapped.Attachments)
-			if alreadyProcessed {
-				existingAttachments, err := imp.store.MessageDiscordAttachmentsContext(ctx, messageID)
-				if err != nil {
-					return fmt.Errorf("load Discord message %s attachment metadata: %w", message.ID, err)
-				}
-				pendingCount = 0
-				for _, attachment := range mapped.Attachments {
-					if _, ok := existingAttachments[attachment.SourceAttachmentID]; !ok {
-						pendingCount++
+			// Without an attachments directory nothing downloads, but an earlier
+			// run may already have archived these files. Keep their stored state.
+			existingAttachments, err := imp.store.MessageDiscordAttachmentsContext(ctx, messageID)
+			if err != nil {
+				return fmt.Errorf("load Discord message %s attachment metadata: %w", message.ID, err)
+			}
+			pendingCount := 0
+			for i := range mapped.Attachments {
+				ref := &mapped.Attachments[i]
+				previous, seen := existingAttachments[ref.SourceAttachmentID]
+				stored := false
+				if seen {
+					stored = keepArchivedAttachment(ref, previous)
+					if !stored {
+						ref.State = previous.State
+						ref.SkipReason = previous.SkipReason
 					}
+				}
+				if !stored && (!alreadyProcessed || !seen) {
+					pendingCount++
 				}
 			}
 			if err := imp.store.ReplaceMessageDiscordAttachmentsContext(ctx, messageID, mapped.Attachments); err != nil {

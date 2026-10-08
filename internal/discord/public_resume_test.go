@@ -2,6 +2,7 @@ package discord
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -122,4 +123,37 @@ func TestEmptyPublicSelectionCollectsNothing(t *testing.T) {
 	require.Empty(api.channelQueries("300"))
 	_, err = st.GetLatestSyncContext(t.Context(), summary.SourceID, 0)
 	require.ErrorIs(err, store.ErrSyncRunNotFound, "an empty selection starts no sync run")
+}
+
+// A library caller may sync without an attachments directory. Refreshing a
+// message must still keep files that an earlier run already archived.
+func TestFullImportWithoutAttachmentsDirKeepsArchivedFiles(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	api := newImporterFakeAPI(importerTestChannel("300", "selected"))
+	message := importerTestMessage(importerTestSnowflake(t, time.Date(2026, 7, 19, 9, 0, 0, 0, time.UTC), 1), "300", "photo")
+	message.Attachments = []Attachment{{ID: "attachment-1", Filename: "photo.png", Size: 12}}
+	api.messages["300"] = []Message{message}
+	imp := newTestImporter(st, api)
+	_, err := imp.Import(t.Context(), ImportOptions{GuildID: "200"})
+	require.NoError(err)
+
+	hash := strings.Repeat("ab", 32)
+	result, err := st.DB().Exec(st.Rebind(`UPDATE attachments SET storage_path = ?, content_hash = ?, attachment_state = 'stored'
+		WHERE source_attachment_id LIKE 'discord:%'`), hash[:2]+"/"+hash, hash)
+	require.NoError(err)
+	rows, err := result.RowsAffected()
+	require.NoError(err)
+	require.Equal(int64(1), rows, "an earlier run archived the attachment")
+
+	summary, err := imp.Import(t.Context(), ImportOptions{GuildID: "200", Full: true})
+	require.NoError(err)
+	assert.Zero(summary.MediaPending, "an archived file is not pending")
+	var storagePath, contentHash, state string
+	require.NoError(st.DB().QueryRow(`SELECT storage_path, content_hash, attachment_state FROM attachments
+		WHERE source_attachment_id LIKE 'discord:%'`).Scan(&storagePath, &contentHash, &state))
+	assert.Equal(hash[:2]+"/"+hash, storagePath)
+	assert.Equal(hash, contentHash)
+	assert.Equal("stored", state)
 }
