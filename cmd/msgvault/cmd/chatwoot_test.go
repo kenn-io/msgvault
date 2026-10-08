@@ -25,6 +25,19 @@ func TestChatwootRegisteredInboxSelection(t *testing.T) {
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	src := config.ChatwootSource{Identifier: "support", URL: "https://chatwoot.example.com", AccountID: 9, ExcludeInboxes: []int64{8}}
+	cfg := &config.Config{Chatwoot: []config.ChatwootSource{src, {Identifier: "sales", URL: src.URL, AccountID: 10}}}
+	_, err := resolveChatwootProfiles(nil, cfg, true)
+	require.ErrorContains(err, "pass an identifier with --inbox")
+	profiles, err := resolveChatwootProfiles(nil, cfg, false)
+	require.NoError(err)
+	assert.Equal(cfg.Chatwoot, profiles)
+	profiles, err = resolveChatwootProfiles([]string{"support"}, cfg, true)
+	require.NoError(err)
+	assert.Equal([]config.ChatwootSource{src}, profiles)
+	cfg.Chatwoot = cfg.Chatwoot[:1]
+	profiles, err = resolveChatwootProfiles(nil, cfg, true)
+	require.NoError(err)
+	assert.Equal(cfg.Chatwoot, profiles)
 	for _, id := range []string{chatwoot.SourceIdentifier(src.URL, 9, 7), chatwoot.SourceIdentifier(src.URL, 9, 8), chatwoot.SourceIdentifier(src.URL, 10, 7)} {
 		_, err := st.GetOrCreateSource(chatwoot.SourceType, id)
 		require.NoError(err)

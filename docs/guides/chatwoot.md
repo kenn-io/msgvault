@@ -47,7 +47,7 @@ transcripts; voice calls also appear as linked meetings.
     ```
 
 See the [configuration reference](../configuration.md#chatwoot) for all fields.
-Re-run `add-chatwoot` after adding inboxes or changing the include filter. Sync
+Re-run `add-chatwoot` after adding or renaming inboxes or changing the include filter. Sync
 processes selected inboxes already registered in the archive. Renaming the
 profile or inbox does not create another archive source; instance URL, account
 ID, and inbox ID determine its identity.

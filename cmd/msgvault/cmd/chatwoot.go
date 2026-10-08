@@ -32,7 +32,7 @@ type chatwootRunOptions struct {
 	NoMedia bool
 }
 
-func resolveChatwootProfiles(args []string, cfg *config.Config) ([]config.ChatwootSource, error) {
+func resolveChatwootProfiles(args []string, cfg *config.Config, inboxScoped bool) ([]config.ChatwootSource, error) {
 	if len(cfg.Chatwoot) == 0 {
 		return nil, errors.New("no [[chatwoot]] profiles configured\n\n" + chatwootConfigHint)
 	}
@@ -42,6 +42,9 @@ func resolveChatwootProfiles(args []string, cfg *config.Config) ([]config.Chatwo
 			return nil, fmt.Errorf("no [[chatwoot]] profile with identifier %q", args[0])
 		}
 		return []config.ChatwootSource{*src}, nil
+	}
+	if inboxScoped && len(cfg.Chatwoot) > 1 {
+		return nil, errors.New("pass an identifier with --inbox when several Chatwoot profiles are configured")
 	}
 	return cfg.Chatwoot, nil
 }
@@ -210,7 +213,7 @@ func newAddChatwootCmd() *cobra.Command {
 			if !isDaemonCLISubprocess() {
 				return runDaemonCLICommandHTTPFromCobra(cmd, args)
 			}
-			profiles, err := resolveChatwootProfiles(args, cfg)
+			profiles, err := resolveChatwootProfiles(args, cfg, false)
 			if err != nil {
 				return err
 			}
@@ -243,7 +246,7 @@ func newSyncChatwootCmd() *cobra.Command {
 	run := chatwootRunOptions{}
 	cmd := &cobra.Command{
 		Use: "sync-chatwoot [identifier]", Short: "Sync Chatwoot messages, media and call meetings",
-		Long: "Sync selected registered inboxes, or all configured profiles with no identifier. Discover new messages through activity scans, resume unfinished history, and recheck recent files and calls for seven days. Daily reconciliation recovers messages committed out of order. --limit bounds history; artifact refreshes run additionally.",
+		Long: "Sync selected registered inboxes, or all configured profiles with no identifier. With several profiles, --inbox requires an identifier. Discover new messages through activity scans, resume unfinished history, and recheck recent files and calls for seven days. Daily reconciliation recovers messages committed out of order. --limit bounds history; artifact refreshes run additionally.",
 		Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 			if run.Limit < 0 {
 				return usageErr(cmd, errors.New("--limit must be nonnegative"))
@@ -261,7 +264,7 @@ func newSyncChatwootCmd() *cobra.Command {
 			if !isDaemonCLISubprocess() {
 				return runDaemonCLICommandHTTPFromCobra(cmd, args)
 			}
-			profiles, err := resolveChatwootProfiles(args, cfg)
+			profiles, err := resolveChatwootProfiles(args, cfg, len(run.Inboxes) > 0)
 			if err != nil {
 				return err
 			}
@@ -292,7 +295,7 @@ func newSyncChatwootCmd() *cobra.Command {
 			}
 			return errors.Join(errs...)
 		}}
-	cmd.Flags().Int64SliceVar(&run.Inboxes, "inbox", nil, "inbox ID to sync (repeatable; default: included registered inboxes)")
+	cmd.Flags().Int64SliceVar(&run.Inboxes, "inbox", nil, "inbox ID to sync (repeatable; requires identifier with several profiles; default: included registered inboxes)")
 	cmd.Flags().IntVar(&run.Limit, "limit", 0, "max history messages per conversation this run; artifact refreshes are additional (0 = no limit)")
 	cmd.Flags().BoolVar(&run.Full, "full", false, "reread all history and update existing rows in place")
 	cmd.Flags().BoolVar(&run.NoMedia, "no-media", false, "defer attachment downloads this run; recent files retry on later syncs")
