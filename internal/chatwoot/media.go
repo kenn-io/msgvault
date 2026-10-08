@@ -16,6 +16,7 @@ import (
 
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/export"
+	"go.kenn.io/msgvault/internal/meetingarchive"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -266,7 +267,21 @@ func (imp *Importer) persistMedia(ctx context.Context, messageID int64, attachme
 			refs = append(refs, ref)
 		}
 	}
-	if len(refs) == 0 && len(existing) == 0 {
+	unchanged := len(refs) == len(own)
+	for _, ref := range refs {
+		previous, ok := own[ref.SourceAttachmentID]
+		if !ok || ref.SourcePartKey == "" || ref.Role == "" || ref.RoleSource == "" ||
+			!meetingarchive.JSONEvidenceEqual([]byte(previous.Metadata), []byte(ref.Metadata)) {
+			unchanged = false
+			break
+		}
+		ref.Metadata, previous.Metadata = "", ""
+		if ref != previous {
+			unchanged = false
+			break
+		}
+	}
+	if unchanged {
 		return failedSince, waiting, nil
 	}
 	if err = imp.store.ReplaceMessageChatwootAttachments(messageID, refs); err != nil {

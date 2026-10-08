@@ -212,6 +212,19 @@ func TestMediaRefreshCallKeepsDistinctRecordingsAndDeduplicatesSameURL(t *testin
 			refs, payloads := readMediaRefreshBytes(t, st, meetingID, opts.AttachmentsDir)
 			assert.Len(refs, len(tc.want), "the message audio does not suppress a different live call recording")
 			assert.ElementsMatch(tc.want, payloads)
+			if tc.name == "same_recording" {
+				var baseline, changes int64
+				postgres := store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB"))
+				if !postgres {
+					require.NoError(st.DB().QueryRow(`SELECT COALESCE(MAX(seq), 0) FROM cache_related_change_journal`).Scan(&baseline))
+				}
+				_, err = NewImporter(st, api.client(t)).Import(t.Context(), opts)
+				require.NoError(err)
+				if !postgres {
+					require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM cache_related_change_journal WHERE seq > ? AND dataset = 'attachments'`, baseline).Scan(&changes))
+					assert.Zero(changes, "unchanged chat and meeting recordings create no cache repair work")
+				}
+			}
 		})
 	}
 }
