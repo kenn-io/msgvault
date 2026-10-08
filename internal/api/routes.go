@@ -286,6 +286,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	s.registerExploreRoutes(apiV1)
 	s.registerFilesRoutes(apiV1)
 	s.registerDocumentSearchRoute(apiV1)
+	registerAPIV1RawHumaJSONRouteWithErrors[MediaSearchResponse](apiV1, "searchMedia", http.MethodGet, "/media/search", "Search source-selected transcripts as visible messages", s.documentSearchGuard("media search", s.handleMediaSearch), http.StatusBadRequest, http.StatusForbidden, http.StatusNotFound, http.StatusConflict, http.StatusUnprocessableEntity, http.StatusTooManyRequests, http.StatusInternalServerError, http.StatusServiceUnavailable)
 	s.registerTelemetryRoutes(apiV1)
 	s.registerPersonProfileRoutes(apiV1)
 	s.registerPersonIdentityRoutes(apiV1)
@@ -784,6 +785,14 @@ func rawRouteParameters(operationID string) []*huma.Param {
 			queryStringParam("message_type", "Message type filter; repeat or comma-separate for multiple values", false),
 			queryStringParam("deletion_scope", "Source deletion scope: active (default), deleted, or any", false),
 		}, scopeParams()...)
+	case "searchMedia":
+		return []*huma.Param{
+			queryStringParam("q", "Spoken words to find in transcripts", true),
+			queryStringParam("mode", "Lexical mode; semantic and hybrid are unavailable", false),
+			queryIntegerParam("person_id", "Durable person ID"),
+			queryRefArrayParam("direction", "Person relation: from_person, to_person, or group"),
+			queryIntegerParam(limitParam, "Maximum occurrences to return, default 20, max 100"),
+		}
 	case "searchDocuments":
 		return []*huma.Param{
 			queryStringParam("q", "Extracted document content or filename query", true),

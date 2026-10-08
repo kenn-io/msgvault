@@ -124,10 +124,14 @@ func (reader *MessageRecordingReader) recheckRevision(
 	ctx context.Context, recording MessageRecording, o store.MessageMediaOccurrence,
 ) MessageRecording {
 	revision, err := beeper.MediaRevision(ctx, reader.Store, o.AttachmentID)
-	if err != nil || revision != o.Revision {
+	if err != nil || !transcriptRevisionMatches(o, "supplied", revision) {
 		recording.State, recording.Transcript = recordingUnavailable, nil
 	}
 	return recording
+}
+
+func transcriptRevisionMatches(o store.MessageMediaOccurrence, origin, revision string) bool {
+	return origin == "generated" || origin == "supplied" && revision != "" && revision == o.Revision
 }
 
 // readAll reads Docbank evidence for every occurrence within one shared budget

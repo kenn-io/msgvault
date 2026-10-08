@@ -1748,6 +1748,21 @@ func (s *Store) GetMessageRawContext(ctx context.Context, messageID int64) ([]by
 	return decodeMessageRaw(compressed, compression)
 }
 
+// GetMessageRawsContext decodes each selected raw message once; missing or invalid data is omitted.
+func (s *Store) GetMessageRawsContext(ctx context.Context, ids []int64) (map[int64][]byte, error) {
+	result := make(map[int64][]byte, len(ids))
+	err := s.StreamMessageRawContext(ctx, ids, func(id int64, compressed []byte, compression string) {
+		raw, err := decodeMessageRaw(compressed, sql.NullString{String: compression, Valid: compression != ""})
+		if err == nil {
+			result[id] = raw
+		}
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
 // GetMessageBodyAndRawContext reads one message's body and MIME in the same
 // snapshot, so callers can authorize the sender of the content they return.
 func (s *Store) GetMessageBodyAndRawContext(ctx context.Context, messageID int64) (string, []byte, error) {

@@ -525,6 +525,27 @@ func (s SearchIntegrationTasksQuery) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(s))
 }
 
+type SearchMediaQuery struct {
+	// Q Spoken words to find in transcripts
+	Q string `json:"q" validate:"required"`
+
+	// Mode Lexical mode; semantic and hybrid are unavailable
+	Mode *string `json:"mode,omitempty"`
+
+	// PersonID Durable person ID
+	PersonID *int64 `json:"person_id,omitempty"`
+
+	// Direction Person relation: from_person, to_person, or group
+	Direction []string `json:"direction,omitempty"`
+
+	// Limit Maximum occurrences to return, default 20, max 100
+	Limit *int64 `json:"limit,omitempty"`
+}
+
+func (s SearchMediaQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(s))
+}
+
 type ListMessagesQuery struct {
 	// Page One-based page number (default 1; values below 1 are clamped to 1). Non-numeric values are rejected with 400.
 	Page *int64 `json:"page,omitempty"`

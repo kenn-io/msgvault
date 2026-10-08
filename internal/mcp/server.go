@@ -112,6 +112,7 @@ type ServeOptions struct {
 	SimilarSearcher     SimilarSearcher
 	DataDir             string
 	DocumentSearcher    DocumentSearcher
+	MediaSearcher       MediaSearcher
 	PersonFileSearcher  PersonFileSearcher
 	PeopleBackend       peoplebrowser.Backend
 	DirectoryBackend    peoplebrowser.DirectoryLister
@@ -354,6 +355,7 @@ func newMCPServerWithPolicy(
 		similarSearcher:     opts.SimilarSearcher,
 		dataDir:             opts.DataDir,
 		documentSearcher:    opts.DocumentSearcher,
+		mediaSearcher:       opts.MediaSearcher,
 		personFileSearcher:  opts.PersonFileSearcher,
 		peopleBackend:       opts.PeopleBackend,
 		directoryBackend:    opts.DirectoryBackend,

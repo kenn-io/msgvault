@@ -6138,6 +6138,67 @@ type MatchSummary struct {
 	StrongestExcerpt  *string  `json:"strongest_excerpt,omitzero"`
 }
 
+type MediaSearchResponse struct {
+	// AttributionUnavailable Current recording occurrences whose selected transcript cannot be attributed, including searches with no hits
+	AttributionUnavailable int64          `json:"attribution_unavailable"`
+	Coverage               SearchCoverage `json:"coverage"`
+
+	// Partial Coverage or occurrence attribution is incomplete, even with no matching excerpts
+	Partial                bool                `json:"partial"`
+	PendingOccurrences     int64               `json:"pending_occurrences"`
+	Results                []MediaSearchResult `json:"results" validate:"required"`
+	Truncated              bool                `json:"truncated"`
+	UnavailableOccurrences int64               `json:"unavailable_occurrences"`
+}
+
+func (m MediaSearchResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(m.Coverage).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Coverage", err)
+		}
+	}
+	for i, item := range m.Results {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Results[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type MediaSearchResult struct {
+	AttachmentID   int64  `json:"attachment_id"`
+	ConversationID int64  `json:"conversation_id"`
+	EndMs          *int64 `json:"end_ms,omitempty"`
+
+	// Excerpt Plain transcript excerpt without search highlight markers
+	Excerpt   string                  `json:"excerpt" validate:"required"`
+	MessageID int64                   `json:"message_id"`
+	Origin    MediaSearchResultOrigin `json:"origin" validate:"required"`
+	StartMs   *int64                  `json:"start_ms,omitempty"`
+}
+
+func (m MediaSearchResult) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(m.Excerpt, "required"); err != nil {
+		errors = errors.Append("Excerpt", err)
+	}
+	if v, ok := any(m.Origin).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Origin", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type Meeting struct {
 	ActionItems        *[]MeetingActionItem `json:"action_items,omitempty" validate:"omitempty,max=1000,dive"`
 	Attendees          []MeetingPerson      `json:"attendees,omitempty"`
@@ -12184,6 +12245,17 @@ type ScoreBreakdown struct {
 	Rrf            *float64 `json:"rrf,omitempty"`
 	SubjectBoosted *bool    `json:"subject_boosted,omitempty"`
 	Vector         *float64 `json:"vector,omitempty"`
+}
+
+type SearchCoverage struct {
+	BindingRequired   bool   `json:"binding_required"`
+	CompleteDocuments int64  `json:"complete_documents"`
+	ScopedDocuments   int64  `json:"scoped_documents"`
+	State             string `json:"state" validate:"required"`
+}
+
+func (s SearchCoverage) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(s))
 }
 
 type SearchCoverageRequest struct {

@@ -6518,6 +6518,72 @@ components:
         strongest_excerpt:
           type: string
       type: object
+    MediaSearchResponse:
+      additionalProperties: true
+      properties:
+        attribution_unavailable:
+          description: Current recording occurrences whose selected transcript cannot be attributed, including searches with no hits
+          format: int64
+          type: integer
+        coverage:
+          $ref: "#/components/schemas/SearchCoverage"
+        partial:
+          description: Coverage or occurrence attribution is incomplete, even with no matching excerpts
+          type: boolean
+        pending_occurrences:
+          format: int64
+          type: integer
+        results:
+          items:
+            $ref: "#/components/schemas/MediaSearchResult"
+          type: array
+        truncated:
+          type: boolean
+        unavailable_occurrences:
+          format: int64
+          type: integer
+      required:
+        - coverage
+        - pending_occurrences
+        - unavailable_occurrences
+        - attribution_unavailable
+        - partial
+        - truncated
+        - results
+      type: object
+    MediaSearchResult:
+      additionalProperties: true
+      properties:
+        attachment_id:
+          format: int64
+          type: integer
+        conversation_id:
+          format: int64
+          type: integer
+        end_ms:
+          format: int64
+          type: integer
+        excerpt:
+          description: Plain transcript excerpt without search highlight markers
+          type: string
+        message_id:
+          format: int64
+          type: integer
+        origin:
+          enum:
+            - supplied
+            - generated
+          type: string
+        start_ms:
+          format: int64
+          type: integer
+      required:
+        - message_id
+        - conversation_id
+        - attachment_id
+        - origin
+        - excerpt
+      type: object
     Meeting:
       additionalProperties: false
       allOf:
@@ -12823,6 +12889,25 @@ components:
           format: double
           type: number
       type: object
+    SearchCoverage:
+      additionalProperties: true
+      properties:
+        binding_required:
+          type: boolean
+        complete_documents:
+          format: int64
+          type: integer
+        scoped_documents:
+          format: int64
+          type: integer
+        state:
+          type: string
+      required:
+        - binding_required
+        - scoped_documents
+        - complete_documents
+        - state
+      type: object
     SearchCoverageRequest:
       additionalProperties: false
       properties:
@@ -14916,7 +15001,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.6.0
+  version: 3.7.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -21574,6 +21659,106 @@ paths:
       security:
         - apiKey: []
       summary: Test task integration discovery, authentication, capabilities, and project
+      tags:
+        - API
+  /api/v1/media/search:
+    get:
+      operationId: searchMedia
+      parameters:
+        - description: Spoken words to find in transcripts
+          in: query
+          name: q
+          required: true
+          schema:
+            type: string
+        - description: Lexical mode; semantic and hybrid are unavailable
+          in: query
+          name: mode
+          schema:
+            type: string
+        - description: Durable person ID
+          in: query
+          name: person_id
+          schema:
+            format: int64
+            type: integer
+        - description: "Person relation: from_person, to_person, or group"
+          in: query
+          name: direction
+          schema:
+            items:
+              type: string
+            type: array
+        - description: Maximum occurrences to return, default 20, max 100
+          in: query
+          name: limit
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MediaSearchResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "429":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Search source-selected transcripts as visible messages
       tags:
         - API
   /api/v1/meetings/actions:

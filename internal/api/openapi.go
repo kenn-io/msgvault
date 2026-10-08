@@ -350,7 +350,8 @@ import (
 // microsoft_contact_too_large.
 // 3.5.0 adds the account: and received: search operators.
 // 3.6.0 adds GET /api/v1/messages/{id}/recordings for live audio and transcript coverage.
-const APISchemaVersion = "3.6.0"
+// 3.7.0 adds scoped lexical transcript search at GET /api/v1/media/search.
+const APISchemaVersion = "3.7.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -1121,6 +1122,9 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 	}
 	if transcript := schemas["MessageTranscript"]; transcript != nil {
 		setEnumNames(transcript.Properties["origin"], qualifiedEnumNames("MessageTranscriptOrigin", []string{"supplied", "generated"}))
+	}
+	if result := schemas["MediaSearchResult"]; result != nil {
+		setEnumNames(result.Properties["origin"], qualifiedEnumNames("MediaSearchResultOrigin", []string{"supplied", "generated"}))
 	}
 	if request := schemas["CalendarRequest"]; request != nil {
 		for property, names := range map[string][]any{

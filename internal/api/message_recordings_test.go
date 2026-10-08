@@ -244,7 +244,8 @@ func (rf *recordingFixture) audio(
 	require.NoError(t, st.ReconcileBeeperMediaMapping(t.Context(), mapping))
 	seed := recordingSeed{messageID: messageID, attachmentID: attachmentID}
 	if processingKey != "" {
-		seed.suppliedInputID = "input-" + processingKey
+		inputDigest := sha256.Sum256([]byte("input-" + processingKey))
+		seed.suppliedInputID = hex.EncodeToString(inputDigest[:])
 		_, err := st.DB().Exec(st.Rebind(`UPDATE beeper_media_deliveries SET supplied_input_id = ?
 			WHERE destination_key = ? AND processing_key = ?`), seed.suppliedInputID, recordingsTestDestination, processingKey)
 		require.NoError(t, err)

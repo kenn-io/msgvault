@@ -252,6 +252,12 @@ Add `--json` for machine-readable output:
 msgvault search from:alice@example.com --json
 ```
 
+## Search spoken words
+
+`msgvault media search "quarterly numbers"` finds matching recording transcripts as their visible messages. A shared recording returns each live message occurrence. Add `--person 7 --direction from_person` to search recordings from one person, or `--json` for IDs, origin, plain excerpts, timing and coverage fields.
+
+Media search uses lexical retrieval through the configured Docbank integration. It searches the full allowed population, up to 4,096 distinct versions and source selectors. Semantic and hybrid modes are unavailable. An empty result proves no match only with complete coverage and `partial=false`. Search requires Docbank's source-selected search contract; older servers report search unavailable. See [the CLI reference](https://github.com/kenn-io/msgvault/blob/main/docs/cli-reference.md#media-search) for flags and [the API contract](https://github.com/kenn-io/msgvault/blob/main/docs/api-server.md#media-transcript-search) for coverage fields. Use `msgvault show-message <message_id>` to read a result in context. Browser search-result presentation follows separately.
+
 ## Semantic / Hybrid Search
 
 The same `msgvault search` command supports semantic search when the

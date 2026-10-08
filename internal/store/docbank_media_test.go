@@ -854,7 +854,8 @@ func TestMessageMediaOccurrences(t *testing.T) {
 	occurrences := list(retained.messageID)
 	require.Len(occurrences, 1)
 	assert.Equal(store.MessageMediaOccurrence{
-		AttachmentID: retained.attachmentID, Filename: "voice.wav", Size: 44,
+		MessageID: retained.messageID, ConversationID: f.ConvID,
+		AttachmentID: retained.attachmentID, Filename: "voice.wav", Size: 44, AttachmentState: attachmentpolicy.StateStored,
 		OccurrenceRef: "msgvault:retained", Revision: "r1", RetentionState: store.BeeperMediaRetentionRetained,
 		VaultUID: "vault", DocbankSourceID: "source-1111", SourceVersionID: "version",
 		ContentVersionID: "content", DeliveryProfile: "supplied-transcript", DeliveryPhase: "pending-artifact", BytesArchived: true,

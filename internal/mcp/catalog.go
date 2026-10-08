@@ -44,6 +44,7 @@ type catalogCapabilities struct {
 	vectorInMessage bool
 	similarMessages bool
 	documentSearch  bool
+	mediaSearch     bool
 	people          bool
 	directoryPeople bool
 	visualSearch    bool
@@ -127,6 +128,7 @@ func capabilitiesFor(opts ServeOptions) catalogCapabilities {
 		vectorInMessage: opts.HybridEngine != nil && opts.Backend != nil,
 		similarMessages: opts.Backend != nil || opts.SimilarSearcher != nil,
 		documentSearch:  opts.DocumentSearcher != nil,
+		mediaSearch:     opts.MediaSearcher != nil,
 		people:          opts.PeopleBackend != nil,
 		directoryPeople: opts.DirectoryBackend != nil,
 		visualSearch:    opts.VisualSearcher != nil,
@@ -218,6 +220,7 @@ func buildOperationCatalog(capabilities catalogCapabilities) []toolDefinition {
 		runSavedViewDefinition(nil),
 		searchByDomainsDefinition(nil),
 		searchDocumentsDefinition(nil),
+		searchMediaDefinition(),
 		searchInMessageDefinition(nil, capabilities.vectorInMessage),
 		searchMessageBodiesDefinition(nil),
 		searchMessagesDefinition(nil, capabilities.semanticSearch),

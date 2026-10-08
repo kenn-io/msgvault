@@ -2040,6 +2040,19 @@ analytics stale for the normal rebuild path.
 
 ---
 
+## media search
+
+Find spoken words in recording transcripts through the daemon's configured Docbank integration:
+
+```bash
+msgvault media search "quarterly numbers"
+msgvault media search "quarterly numbers" --person 7 --direction from_person --limit 20 --json
+```
+
+`--mode lexical` is the default. Semantic and hybrid are unavailable. `--limit` accepts 1 to 100 message occurrences. `--direction` accepts `from_person`, `to_person` or `group` and requires `--person`.
+
+The table shows message, conversation and attachment IDs, supplied or generated origin, plain excerpt, and recorded timing. An empty result proves no match only with complete coverage and `partial=false`. Its coverage line reports pending media, unavailable attribution, partial coverage and truncated results. JSON preserves the same fields. Search requires Docbank's source-selected search contract. Shared audio searches the currently selected transcript; different supplied captions can leave some messages unavailable even when no excerpt matches. A scope may contain at most 4,096 distinct media versions and source selectors; narrow the person scope if it exceeds that ceiling. Use `msgvault show-message <message_id>` to read a result in context. Browser search-result presentation follows separately.
+
 ## documents
 
 Manage hosted extraction and local full-text indexing for standalone document

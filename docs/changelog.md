@@ -85,6 +85,8 @@ All notable changes to msgvault, grouped by release.
   Docbank transcript, or why there isn't one, under the expanded message.
   `GET /api/v1/messages/{id}/recordings` serves the same list (API schema 3.6.0).
 
+- **Search spoken words:** `msgvault media search`, MCP `search_media`, and `GET /api/v1/media/search` find current recording transcripts and show partial coverage when some recordings aren't searchable (API schema 3.7.0).
+
 ## 0.21.0
 <small>2026-10-02</small>
 

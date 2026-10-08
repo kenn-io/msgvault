@@ -235,6 +235,7 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 		AttachmentReader:   st,
 		ManifestSaver:      daemonMCPManifestSaver{client: st},
 		DocumentSearcher:   st,
+		MediaSearcher:      st,
 		PersonFileSearcher: daemonMCPPersonFileSearcher{client: st},
 		Drafts:             daemonMCPDraftRunner{client: st},
 	}

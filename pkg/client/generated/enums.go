@@ -1035,6 +1035,23 @@ func (i ImportJobResponseStatus) Validate() error {
 	}
 }
 
+type MediaSearchResultOrigin string
+
+const (
+	MediaSearchResultOriginGenerated MediaSearchResultOrigin = "generated"
+	MediaSearchResultOriginSupplied  MediaSearchResultOrigin = "supplied"
+)
+
+// Validate checks if the MediaSearchResultOrigin value is valid
+func (m MediaSearchResultOrigin) Validate() error {
+	switch m {
+	case MediaSearchResultOriginGenerated, MediaSearchResultOriginSupplied:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid MediaSearchResultOrigin value, got: %v", m))
+	}
+}
+
 type MeetingActionsRequestStatus string
 
 const (

@@ -259,6 +259,7 @@ import type {
   ListTextConversationMessagesPathParameters,
   ListTextConversationsParams,
   Manifest,
+  MediaSearchResponse,
   MeetingImportRequest,
   MeetingImportResponse,
   MergeOrganizationBody,
@@ -387,6 +388,7 @@ import type {
   SearchDocumentsParams,
   SearchFastResponse,
   SearchIntegrationTasksParams,
+  SearchMediaParams,
   SearchMessagesByDomainsParams,
   SearchMessagesParams,
   SearchResult,
@@ -2047,6 +2049,18 @@ export const testTaskIntegration = (
 ) => {
   return orvalFetch<TaskIntegrationStatusResponse>(
     { url: `/api/v1/integrations/tasks/test`, method: "POST" },
+    options,
+  );
+};
+/**
+ * @summary Search source-selected transcripts as visible messages
+ */
+export const searchMedia = (
+  params: SearchMediaParams,
+  options?: SecondParameter<typeof orvalFetch<MediaSearchResponse>>,
+) => {
+  return orvalFetch<MediaSearchResponse>(
+    { url: `/api/v1/media/search`, method: "GET", params },
     options,
   );
 };

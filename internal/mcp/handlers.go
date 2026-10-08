@@ -141,6 +141,7 @@ type handlers struct {
 	similarSearcher     SimilarSearcher
 	dataDir             string
 	documentSearcher    DocumentSearcher
+	mediaSearcher       MediaSearcher
 	personFileSearcher  PersonFileSearcher
 	peopleBackend       peoplebrowser.Backend
 	directoryBackend    peoplebrowser.DirectoryLister

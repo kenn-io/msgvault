@@ -650,6 +650,10 @@ func (s *Store) StreamMessageRaw(
 	messageIDs []int64,
 	fn func(messageID int64, rawData []byte, compression string),
 ) error {
+	return s.StreamMessageRawContext(context.Background(), messageIDs, fn)
+}
+
+func (s *Store) StreamMessageRawContext(ctx context.Context, messageIDs []int64, fn func(messageID int64, rawData []byte, compression string)) error {
 	const chunkSize = 500
 	for start := 0; start < len(messageIDs); start += chunkSize {
 		end := min(start+chunkSize, len(messageIDs))
@@ -664,7 +668,7 @@ func (s *Store) StreamMessageRaw(
 
 		query := "SELECT message_id, raw_data, compression FROM message_raw WHERE message_id IN (" +
 			strings.Join(placeholders, ",") + ")"
-		rows, err := s.db.Query(query, args...)
+		rows, err := s.db.QueryContext(ctx, s.Rebind(query), args...)
 		if err != nil {
 			return fmt.Errorf("stream message raw: %w", err)
 		}

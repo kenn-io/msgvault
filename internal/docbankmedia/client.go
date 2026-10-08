@@ -170,6 +170,7 @@ type MediaTranscriptUnit struct {
 }
 
 type MediaTranscriptEvidence struct {
+	BuildID         string                `json:"build_id"`
 	SuppliedInputID string                `json:"supplied_input_id,omitempty"`
 	Origin          string                `json:"origin"`
 	Completeness    string                `json:"completeness"`
@@ -419,13 +420,19 @@ func (c *Client) jsonRequest(ctx context.Context, method, endpoint string, body 
 func (c *Client) jsonRequestLimit(
 	ctx context.Context, method, endpoint string, body any, out any, limit int64,
 ) error {
+	return c.jsonRequestLimits(ctx, method, endpoint, body, out, maxMetadataBytes, limit)
+}
+
+func (c *Client) jsonRequestLimits(
+	ctx context.Context, method, endpoint string, body any, out any, requestLimit, limit int64,
+) error {
 	var reader io.Reader
 	if body != nil {
 		encoded, err := json.Marshal(body)
 		if err != nil {
 			return fmt.Errorf("%w: encode request", ErrInvalidRequest)
 		}
-		if len(encoded) > maxMetadataBytes {
+		if int64(len(encoded)) > requestLimit {
 			return fmt.Errorf("%w: request exceeds the size limit", ErrInvalidRequest)
 		}
 		reader = strings.NewReader(string(encoded))
