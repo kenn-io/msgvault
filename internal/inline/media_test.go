@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -70,6 +72,57 @@ func TestMediaDownloadCapsDeclaredAndStreamedBytes(t *testing.T) {
 	content, err := imp.download(t.Context(), "https://api.inline.chat/file", math.MaxInt64)
 	require.NoError(t, err)
 	assert.Equal(t, "bounded", string(content), "maximum cap must not overflow the bounded reader")
+}
+
+func TestMediaDownloadTimeoutScalesWithPolicyCap(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		maxBytes      int64
+		downloadTime  time.Duration
+		callerTimeout time.Duration
+		wantElapsed   time.Duration
+		wantError     bool
+	}{
+		{"small cap remains bounded", 1 << 20, 11 * time.Minute, 0, 10 * time.Minute, true},
+		{"default cap permits slow downloads", attachmentpolicy.DefaultChatMaxBytes, 11 * time.Minute, 0, 11 * time.Minute, false},
+		{"larger cap permits longer downloads", 1 << 30, 40 * time.Minute, 0, 40 * time.Minute, false},
+		{"caller deadline still applies", 1 << 30, 11 * time.Minute, 2 * time.Minute, 2 * time.Minute, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// A virtual slow connection exercises the real HTTP client's deadline
+			// without downloading large files or waiting for real-time timeouts.
+			synctest.Test(t, func(t *testing.T) {
+				ctx := t.Context()
+				if tc.callerTimeout > 0 {
+					var cancel context.CancelFunc
+					ctx, cancel = context.WithTimeout(ctx, tc.callerTimeout)
+					defer cancel()
+				}
+				imp := NewImporter(nil, nil)
+				imp.mediaTransport = mediaRoundTripper(func(request *http.Request) (*http.Response, error) {
+					timer := time.NewTimer(tc.downloadTime)
+					defer timer.Stop()
+					select {
+					case <-request.Context().Done():
+						return nil, request.Context().Err()
+					case <-timer.C:
+						return &http.Response{StatusCode: http.StatusOK, ContentLength: 6,
+							Body: io.NopCloser(strings.NewReader("bytes!")), Request: request}, nil
+					}
+				})
+				started := time.Now()
+				content, err := imp.download(ctx, "https://api.inline.chat/file", tc.maxBytes)
+				if tc.wantError {
+					require.Error(t, err)
+					assert.Empty(t, content)
+				} else {
+					require.NoError(t, err)
+					assert.Equal(t, "bytes!", string(content))
+				}
+				assert.Equal(t, tc.wantElapsed, time.Since(started))
+			})
+		})
+	}
 }
 
 func TestDeferredMediaBackfillRefreshesURLAndPreservesDuplicateOccurrences(t *testing.T) {

@@ -49,7 +49,7 @@ func (imp *Importer) download(ctx context.Context, rawURL string, maxBytes int64
 	}
 	// Signed URLs carry their own limited authorization. Account headers,
 	// cookies, and API transports must never be used by this downloader.
-	client := &http.Client{Timeout: 10 * time.Minute, Transport: imp.mediaTransport, CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+	client := &http.Client{Timeout: attachmentpolicy.DownloadTimeout(maxBytes), Transport: imp.mediaTransport, CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 		return errors.New("inline media redirects are refused")
 	}}
 	response, err := client.Do(request)
