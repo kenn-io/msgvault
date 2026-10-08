@@ -53,3 +53,38 @@ func TestLoadSyncStateRejectsNullConversation(t *testing.T) {
 	require.ErrorContains(err, `conversation "C01" is null`)
 	assert.Nil(state)
 }
+
+func TestMCPNativeSlackProvenanceStateRoundTrip(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	state, err := LoadSyncState(`{"conversations":{"C01":{"cursor":"200.000000","done":true,"backfill_latest":"300.000000","backfill_live_after":"189.999999","pending_threads":[{"root":"100.000000","floor":"210.000000","drained_to":"220.000000","live_after":"200.000000"}]}}}`)
+	require.NoError(err)
+	cs := state.EnsureConv("C01")
+	// A historical full audit expands coverage without expanding live evidence.
+	cs.RecordPendingThread("100.000000", 9)
+	cs.recordThreadLiveAfter("100.000000", "")
+	blob, err := state.Marshal()
+	require.NoError(err)
+	resumed, err := LoadSyncState(blob)
+	require.NoError(err)
+	got := resumed.EnsureConv("C01")
+	assert.Equal("189.999999", got.BackfillLiveAfter)
+	require.Len(got.PendingThreads, 1)
+	assert.Empty(got.PendingThreads[0].Floor)
+	assert.Empty(got.PendingThreads[0].DrainedTo)
+	assert.Equal("200.000000", got.PendingThreads[0].LiveAfter)
+	// A later/narrower sweep must not erase earlier admitted observations.
+	got.recordThreadLiveAfter("100.000000", "250.000000")
+	assert.Equal("200.000000", got.PendingThreads[0].LiveAfter)
+}
+
+func TestMCPNativeSlackLegacyDebtIsHistorical(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	state, err := LoadSyncState(`{"conversations":{"C01":{"cursor":"200.000000","done":true,"backfill_latest":"300.000000","pending_threads":[{"root":"100.000000","drained_to":"220.000000"}]}}}`)
+	require.NoError(err)
+	cs := state.EnsureConv("C01")
+	assert.Empty(cs.BackfillLiveAfter)
+	require.Len(cs.PendingThreads, 1)
+	assert.Empty(cs.PendingThreads[0].LiveAfter)
+}
