@@ -554,10 +554,10 @@ func TestStreamOversizeRetainsMimeAndSizeEvidence(t *testing.T) {
 			require.NoError(err)
 			refs, payloads := readMediaRefreshBytes(t, st, contractArchivedMessageID(t, st, "901"), opts.AttachmentsDir)
 			assert.Equal([]string{payload}, payloads)
-			var rejected rejectedMedia
+			var rejected mediaMetadata
 			require.NoError(json.Unmarshal([]byte(refs["chatwoot:attachment:2001"].Metadata), &rejected))
-			assert.Zero(rejected.Size)
-			assert.Empty(rejected.URL)
+			assert.Zero(rejected.RejectedSize)
+			assert.Empty(rejected.RejectedURL)
 		})
 	}
 }

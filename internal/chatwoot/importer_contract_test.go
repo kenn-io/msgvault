@@ -362,6 +362,30 @@ func TestImportContractCallFallbackAndLifecycleKeepsOneLinkedMeeting(t *testing.
 	assert.Zero(metrics.Totals.TotalKnownSeconds)
 
 	api.Mu.Lock()
+	message["attachments"] = []any{
+		map[string]any{"id": 401, "message_id": 201, "file_type": "audio", "transcribed_text": "firstquartz recording words"},
+		map[string]any{"id": 402, "message_id": 201, "file_type": "audio", "transcribed_text": "secondquartz recording words"},
+	}
+	api.Mu.Unlock()
+	_, err = NewImporter(st, api.client(t)).Import(t.Context(), ImportOptions{InboxID: 7, IncludePrivate: true})
+	require.NoError(err)
+	body, err := st.GetMessageBodyText(meetingID)
+	require.NoError(err)
+	assert.Contains(body, "firstquartz recording words\n\nsecondquartz recording words")
+	assert.NotContains(body, "Voice call")
+	chatBody, err := st.GetMessageBodyText(chatID)
+	require.NoError(err)
+	assert.Contains(chatBody, "Voice call\n\nfirstquartz recording words\n\nsecondquartz recording words")
+	results, _, err := st.SearchMessages("secondquartz", 0, 10)
+	require.NoError(err)
+	var matchingIDs []int64
+	for _, result := range results {
+		matchingIDs = append(matchingIDs, result.ID)
+	}
+	assert.Contains(matchingIDs, meetingID, "all attachment transcripts remain searchable in the linked meeting")
+	assert.Contains(matchingIDs, chatID)
+
+	api.Mu.Lock()
 	message["call"] = map[string]any{"id": 601, "provider_call_id": "CA_synthetic", "provider": "twilio", "direction": "incoming", "status": "completed", "duration_seconds": 45,
 		"accepted_by_agent_id": 7, "accepted_by_agent_name": "Example Agent", "transcript": "Updated call transcript words"}
 	api.Mu.Unlock()
@@ -372,9 +396,11 @@ func TestImportContractCallFallbackAndLifecycleKeepsOneLinkedMeeting(t *testing.
 	require.NoError(err)
 	assert.Equal(int64(1), metrics.Totals.MeetingCount)
 	assert.InDelta(45, metrics.Totals.TotalKnownSeconds, 1e-9)
-	body, err := st.GetMessageBodyText(meetingID)
+	body, err = st.GetMessageBodyText(meetingID)
 	require.NoError(err)
 	assert.Contains(body, "Updated call transcript words")
+	assert.NotContains(body, "firstquartz")
+	assert.NotContains(body, "secondquartz")
 	aliasID, err := st.EnsureParticipantContext(t.Context(), "owner.alias@example.com", "Example Owner", "example.com")
 	require.NoError(err)
 	require.NoError(st.AddAccountIdentity(source.ID, "owner.alias@example.com", "manual"))

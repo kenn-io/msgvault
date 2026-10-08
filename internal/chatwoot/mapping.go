@@ -14,14 +14,18 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
-func messageBody(m Message) string {
-	parts := []string{m.Content}
-	for _, a := range m.Attachments {
+func attachmentTranscript(attachments []Attachment) string {
+	var parts []string
+	for _, a := range attachments {
 		if a.TranscribedText != "" {
 			parts = append(parts, a.TranscribedText)
 		}
 	}
-	return strings.TrimSpace(strings.Join(parts, "\n\n"))
+	return strings.Join(parts, "\n\n")
+}
+
+func messageBody(m Message) string {
+	return strings.TrimSpace(strings.Join([]string{m.Content, attachmentTranscript(m.Attachments)}, "\n\n"))
 }
 
 // persistMessage returns when the message's refresh window starts, or zero

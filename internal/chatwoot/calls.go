@@ -93,12 +93,8 @@ func callEvidence(m Message) Call {
 func (imp *Importer) persistCall(ctx context.Context, sourceID int64, c Conversation, m Message, chatMessageID int64, contact Actor, contactID int64, sender Actor, senderID int64, chatMetadata map[string]any, chatMedia map[string]store.AttachmentRef, opts ImportOptions, sum *ImportSummary) (int64, int64, error) {
 	call := callEvidence(m)
 	transcript := call.Transcript
-	for _, a := range m.Attachments {
-		if a.TranscribedText != "" {
-			if transcript == "" {
-				transcript = a.TranscribedText
-			}
-		}
+	if transcript == "" {
+		transcript = attachmentTranscript(m.Attachments)
 	}
 	handler := Actor{ID: call.AcceptedByAgentID, Type: actorUser, Name: call.AcceptedByAgentName}
 	handlerID, err := imp.resolveActor(ctx, sourceID, handler)

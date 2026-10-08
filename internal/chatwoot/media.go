@@ -2,6 +2,7 @@ package chatwoot
 
 import (
 	"context"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -20,9 +21,19 @@ import (
 
 var errMediaFetch = errors.New("read Chatwoot media failed")
 
-type rejectedMedia struct {
-	URL  string `json:"rejected_url"`
-	Size int64  `json:"rejected_size"`
+type mediaMetadata struct {
+	FailedSince      int64          `json:"failed_since"`
+	FailedURL        string         `json:"failed_url"`
+	Provider         string         `json:"provider"`
+	RejectedSize     int64          `json:"rejected_size"`
+	RejectedURL      string         `json:"rejected_url"`
+	Source           jsontext.Value `json:"source"`
+	SourceTranscript struct {
+		Provider string `json:"provider"`
+		Text     string `json:"text"`
+	} `json:"source_transcript"`
+	StoredURL string `json:"stored_url"`
+	URL       string `json:"url"`
 }
 
 func attachmentKey(a Attachment, index int) string {
@@ -54,10 +65,7 @@ func mediaIdentity(remote string) string {
 }
 
 func storedMediaIdentity(ref store.AttachmentRef) string {
-	var metadata struct {
-		StoredURL string `json:"stored_url"`
-		URL       string `json:"url"`
-	}
+	var metadata mediaMetadata
 	if json.Unmarshal([]byte(ref.Metadata), &metadata) != nil {
 		return ""
 	}
@@ -123,36 +131,27 @@ func (imp *Importer) persistMedia(ctx context.Context, messageID int64, attachme
 				}
 			}
 		}
-		var rejected rejectedMedia
+		var evidence mediaMetadata
 		for _, candidates := range []map[string]store.AttachmentRef{existing, reusable} {
 			for _, candidate := range candidates {
-				var saved rejectedMedia
-				if json.Unmarshal([]byte(candidate.Metadata), &saved) == nil && saved.Size > 0 &&
-					(saved.URL == currentURL || (currentURL == "" && candidate.SourceAttachmentID == key)) && saved.Size > rejected.Size {
-					rejected = saved
+				var saved mediaMetadata
+				if json.Unmarshal([]byte(candidate.Metadata), &saved) != nil {
+					continue
+				}
+				if saved.RejectedSize > 0 &&
+					(saved.RejectedURL == currentURL || (currentURL == "" && candidate.SourceAttachmentID == key)) && saved.RejectedSize > evidence.RejectedSize {
+					evidence.RejectedURL, evidence.RejectedSize = saved.RejectedURL, saved.RejectedSize
+				}
+				if saved.FailedSince > 0 &&
+					(saved.FailedURL == currentURL || (currentURL == "" && candidate.SourceAttachmentID == key)) &&
+					(evidence.FailedSince == 0 || saved.FailedSince < evidence.FailedSince) {
+					evidence.FailedURL, evidence.FailedSince = saved.FailedURL, saved.FailedSince
 				}
 			}
 		}
 		proposedSize := int64(ref.Size)
-		if currentURL != "" && rejected.URL == currentURL {
-			proposedSize = max(proposedSize, rejected.Size)
-		}
-		var failure struct {
-			FailedURL   string `json:"failed_url"`
-			FailedSince int64  `json:"failed_since"`
-		}
-		for _, candidates := range []map[string]store.AttachmentRef{existing, reusable} {
-			for _, candidate := range candidates {
-				var saved struct {
-					FailedURL   string `json:"failed_url"`
-					FailedSince int64  `json:"failed_since"`
-				}
-				if json.Unmarshal([]byte(candidate.Metadata), &saved) == nil && saved.FailedSince > 0 &&
-					(saved.FailedURL == currentURL || (currentURL == "" && candidate.SourceAttachmentID == key)) &&
-					(failure.FailedSince == 0 || saved.FailedSince < failure.FailedSince) {
-					failure = saved
-				}
-			}
+		if currentURL != "" && evidence.RejectedURL == currentURL {
+			proposedSize = max(proposedSize, evidence.RejectedSize)
 		}
 		storedURL := ""
 		retain := func() {
@@ -180,12 +179,12 @@ func (imp *Importer) persistMedia(ctx context.Context, messageID int64, attachme
 		case unchanged:
 			ref.State = attachmentpolicy.StateStored
 			if currentURL == storedURL && currentURL != "" {
-				failure.FailedSince, failure.FailedURL = 0, ""
-				rejected = rejectedMedia{}
+				evidence.FailedSince, evidence.FailedURL = 0, ""
+				evidence.RejectedURL, evidence.RejectedSize = "", 0
 			}
 		case reason != "":
 			if reason == attachmentpolicy.SkipSizeCap && currentURL != "" {
-				rejected = rejectedMedia{URL: currentURL, Size: int64(attachmentpolicy.OversizeMarkerSize(maxBytes, proposedSize))}
+				evidence.RejectedURL, evidence.RejectedSize = currentURL, int64(attachmentpolicy.OversizeMarkerSize(maxBytes, proposedSize))
 			}
 			ref.State = attachmentpolicy.StateSkipped
 			ref.SkipReason = reason
@@ -194,15 +193,15 @@ func (imp *Importer) persistMedia(ctx context.Context, messageID int64, attachme
 		case a.FileType != "location" && remote == "":
 			waiting = true
 		case a.FileType == "location" || opts.AttachmentsDir == "":
-		case failure.FailedSince > 0 && now().Sub(time.Unix(failure.FailedSince, 0)) >= artifactWindow && !opts.Full:
+		case evidence.FailedSince > 0 && now().Sub(time.Unix(evidence.FailedSince, 0)) >= artifactWindow && !opts.Full:
 			ref.State = attachmentpolicy.StateFailed
 			ref.SkipReason = attachmentpolicy.SkipFetchFailure
 		case imp.failedMedia[currentURL] > 0:
 			ref.State = attachmentpolicy.StateFailed
 			ref.SkipReason = attachmentpolicy.SkipFetchFailure
-			failure.FailedURL = currentURL
-			if failedAt := imp.failedMedia[currentURL]; failure.FailedSince == 0 || failedAt < failure.FailedSince {
-				failure.FailedSince = failedAt
+			evidence.FailedURL = currentURL
+			if failedAt := imp.failedMedia[currentURL]; evidence.FailedSince == 0 || failedAt < evidence.FailedSince {
+				evidence.FailedSince = failedAt
 			}
 		default:
 			storage, hash, size, mimeType, fetchErr := imp.downloadMedia(ctx, remote, opts.AttachmentsDir, maxBytes, ref.MimeType)
@@ -213,8 +212,8 @@ func (imp *Importer) persistMedia(ctx context.Context, messageID int64, attachme
 				ref.Size = size
 				ref.State = attachmentpolicy.StateStored
 				storedURL = currentURL
-				failure.FailedSince, failure.FailedURL = 0, ""
-				rejected = rejectedMedia{}
+				evidence.FailedSince, evidence.FailedURL = 0, ""
+				evidence.RejectedURL, evidence.RejectedSize = "", 0
 			} else {
 				if ctx.Err() != nil {
 					return 0, false, ctx.Err()
@@ -222,19 +221,19 @@ func (imp *Importer) persistMedia(ctx context.Context, messageID int64, attachme
 				if errors.Is(fetchErr, export.ErrAttachmentTooLarge) {
 					ref.State = attachmentpolicy.StateSkipped
 					ref.SkipReason = attachmentpolicy.SkipSizeCap
-					rejected = rejectedMedia{URL: currentURL, Size: int64(attachmentpolicy.OversizeMarkerSize(maxBytes, max(proposedSize, int64(size))))}
+					evidence.RejectedURL, evidence.RejectedSize = currentURL, int64(attachmentpolicy.OversizeMarkerSize(maxBytes, max(proposedSize, int64(size))))
 					if !stored {
-						ref.Size = int(rejected.Size)
+						ref.Size = int(evidence.RejectedSize)
 					}
 				} else if errors.Is(fetchErr, errMediaFetch) {
 					ref.State = attachmentpolicy.StateFailed
 					ref.SkipReason = attachmentpolicy.SkipFetchFailure
 					sum.MediaFailures++
-					failure.FailedURL = currentURL
-					if failure.FailedSince == 0 {
-						failure.FailedSince = now().Unix()
+					evidence.FailedURL = currentURL
+					if evidence.FailedSince == 0 {
+						evidence.FailedSince = now().Unix()
 					}
-					imp.failedMedia[currentURL] = failure.FailedSince
+					imp.failedMedia[currentURL] = evidence.FailedSince
 				} else {
 					return 0, false, fetchErr
 				}
@@ -242,10 +241,13 @@ func (imp *Importer) persistMedia(ctx context.Context, messageID int64, attachme
 				// failed replacement would falsely appear downloaded on the next sync.
 			}
 		}
-		if attachmentpolicy.RetryEligible(ref.State) && failure.FailedSince > 0 && now().Sub(time.Unix(failure.FailedSince, 0)) < artifactWindow {
-			failedSince = max(failedSince, failure.FailedSince)
+		if attachmentpolicy.RetryEligible(ref.State) && evidence.FailedSince > 0 && now().Sub(time.Unix(evidence.FailedSince, 0)) < artifactWindow {
+			failedSince = max(failedSince, evidence.FailedSince)
 		}
-		metadata, marshalErr := json.Marshal(map[string]any{"provider": SourceType, "source": a.Raw, "url": remote, "stored_url": storedURL, "failed_url": failure.FailedURL, "failed_since": failure.FailedSince, "rejected_url": rejected.URL, "rejected_size": rejected.Size, "source_transcript": map[string]string{"provider": SourceType, "text": a.TranscribedText}}, json.Deterministic(true))
+		evidence.Provider, evidence.Source = SourceType, a.Raw
+		evidence.URL, evidence.StoredURL = remote, storedURL
+		evidence.SourceTranscript.Provider, evidence.SourceTranscript.Text = SourceType, a.TranscribedText
+		metadata, marshalErr := json.Marshal(evidence, json.Deterministic(true))
 		if marshalErr != nil {
 			return 0, false, marshalErr
 		}
