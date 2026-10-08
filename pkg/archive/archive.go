@@ -17,10 +17,13 @@ import (
 )
 
 // PostgreSQL selects a database and optionally a schema. Empty Schema preserves
-// the connection's search path.
-// URL accepts a PostgreSQL URL or libpq keyword DSN. It may carry credentials and must not be logged. Each concurrent source sync
-// holds a connection for its session advisory lock; reserve additional pool
-// connections for writes and readers. Transaction poolers are not supported.
+// the connection's search path. URL accepts a PostgreSQL URL or libpq keyword
+// DSN. It may carry credentials and must not be logged.
+//
+// Each concurrent source sync or purge holds one connection for its session
+// advisory lock and needs another for its work. MaxOpenConnections is 0 for no
+// limit or at least the number of concurrent syncs and purges plus one; Open
+// rejects 1 and negative values. Transaction poolers are not supported.
 type PostgreSQL struct {
 	URL                string
 	Schema             string
@@ -100,6 +103,10 @@ type Archive struct {
 // Open connects to a previously set up archive. It runs no DDL and can use a
 // runtime role with only USAGE on the schema and DML on its tables/sequences.
 func Open(ctx context.Context, postgres PostgreSQL) (*Archive, error) {
+	if postgres.MaxOpenConnections < 0 || postgres.MaxOpenConnections == 1 {
+		return nil, fmt.Errorf("PostgreSQL MaxOpenConnections %d cannot hold a sync lock and run its work; "+
+			"use 0 for no limit or at least 2", postgres.MaxOpenConnections)
+	}
 	dsn, err := postgres.connectionURL()
 	if err != nil {
 		return nil, err
