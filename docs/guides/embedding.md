@@ -60,9 +60,10 @@ A missing or incompatible schema fails without trying to upgrade it. Serialize
 setup with other upgrades.
 
 Each running sync or purge holds one connection for its session advisory lock
-and needs another for its work. Set `MaxOpenConnections` to 0 for no limit, or
-to at least the number of concurrent syncs and purges plus one, with room for
-readers. Open rejects 1 and negative values. Transaction poolers do not
+and needs another for its work. `MaxOpenConnections` 0 keeps msgvault's default
+pool of 25 connections. Otherwise, set it to at least the number of concurrent
+syncs and purges plus one, with room for readers. Open rejects 1 and negative
+values. Transaction poolers do not
 preserve the lock. Database connections may contain credentials and must not
 be logged.
 

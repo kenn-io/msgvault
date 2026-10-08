@@ -21,9 +21,10 @@ import (
 // DSN. It may carry credentials and must not be logged.
 //
 // Each concurrent source sync or purge holds one connection for its session
-// advisory lock and needs another for its work. MaxOpenConnections is 0 for no
-// limit or at least the number of concurrent syncs and purges plus one; Open
-// rejects 1 and negative values. Transaction poolers are not supported.
+// advisory lock and needs another for its work. MaxOpenConnections 0 keeps
+// msgvault's default pool of 25 connections. Otherwise set it to at least the
+// number of concurrent syncs and purges plus one; Open rejects 1 and negative
+// values. Transaction poolers are not supported.
 type PostgreSQL struct {
 	URL                string
 	Schema             string
@@ -105,7 +106,7 @@ type Archive struct {
 func Open(ctx context.Context, postgres PostgreSQL) (*Archive, error) {
 	if postgres.MaxOpenConnections < 0 || postgres.MaxOpenConnections == 1 {
 		return nil, fmt.Errorf("PostgreSQL MaxOpenConnections %d cannot hold a sync lock and run its work; "+
-			"use 0 for no limit or at least 2", postgres.MaxOpenConnections)
+			"use 0 for the default pool or at least 2", postgres.MaxOpenConnections)
 	}
 	dsn, err := postgres.connectionURL()
 	if err != nil {
