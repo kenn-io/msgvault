@@ -15,7 +15,7 @@ import (
 
 func providerTime(raw jsontext.Value) time.Time {
 	var numeric float64
-	if json.Unmarshal(raw, &numeric) == nil && numeric > 0 && !math.IsInf(numeric, 0) && numeric < float64(math.MaxInt64/1000) {
+	if json.Unmarshal(raw, &numeric) == nil && numeric > 0 && numeric < float64(math.MaxInt64/1000) {
 		return time.UnixMilli(int64(numeric * 1000)).UTC()
 	}
 	var text string
@@ -155,7 +155,7 @@ func (imp *Importer) persistCall(ctx context.Context, sourceID int64, c Conversa
 	if !ended.IsZero() {
 		normalized["ended_at"] = ended
 	}
-	if call.DurationSeconds != nil && *call.DurationSeconds >= 0 && !math.IsNaN(*call.DurationSeconds) && !math.IsInf(*call.DurationSeconds, 0) {
+	if call.DurationSeconds != nil && *call.DurationSeconds >= 0 {
 		normalized["duration_seconds"] = *call.DurationSeconds
 	}
 	metadata, err := json.Marshal(map[string]any{"provider": SourceType, "chat_message_id": chatMessageID, "conversation_id": c.ID, "inbox_id": opts.InboxID, "call": call, "handling_agent": handler, "handling_agent_participant_id": handlerID}, json.Deterministic(true))

@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 
+	"go.kenn.io/msgvault/internal/netguard"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -484,7 +485,7 @@ func sameCollectionURL(left, right *url.URL) bool {
 func canonicalDAVURLIdentity(value *url.URL) string {
 	clone := *value
 	clone.Scheme = strings.ToLower(clone.Scheme)
-	clone.Host = net.JoinHostPort(strings.ToLower(clone.Hostname()), originPort(&clone))
+	clone.Host = net.JoinHostPort(strings.ToLower(clone.Hostname()), netguard.EffectivePort(&clone))
 	clone.Fragment = ""
 	return clone.String()
 }
@@ -492,7 +493,7 @@ func canonicalDAVURLIdentity(value *url.URL) string {
 func canonicalCollectionURL(value *url.URL) string {
 	clone := *value
 	clone.Scheme = strings.ToLower(clone.Scheme)
-	clone.Host = net.JoinHostPort(strings.ToLower(clone.Hostname()), originPort(&clone))
+	clone.Host = net.JoinHostPort(strings.ToLower(clone.Hostname()), netguard.EffectivePort(&clone))
 	clone.Fragment = ""
 	clone.Path = path.Clean(clone.Path)
 	if !strings.HasSuffix(clone.Path, "/") {

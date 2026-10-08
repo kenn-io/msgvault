@@ -233,7 +233,7 @@ func (c *Client) validateTarget(ctx context.Context, target *url.URL) ([]netip.A
 	if !validHTTPURL(target) || !sameOrigin(c.origin, target) {
 		return nil, fmt.Errorf("DAV URL: %w", ErrUnsafeTarget)
 	}
-	port, err := targetPort(target)
+	port, err := netguard.TargetPort(target)
 	if err != nil {
 		return nil, fmt.Errorf("DAV URL port: %w", ErrUnsafeTarget)
 	}
@@ -425,31 +425,7 @@ func sameOrigin(left, right *url.URL) bool {
 	}
 	return strings.EqualFold(left.Scheme, right.Scheme) &&
 		strings.EqualFold(left.Hostname(), right.Hostname()) &&
-		originPort(left) == originPort(right)
-}
-
-func originPort(target *url.URL) string {
-	if port := target.Port(); port != "" {
-		return port
-	}
-	if strings.EqualFold(target.Scheme, "https") {
-		return "443"
-	}
-	return "80"
-}
-
-func targetPort(target *url.URL) (uint16, error) {
-	if rawPort := target.Port(); rawPort != "" {
-		port, err := strconv.ParseUint(rawPort, 10, 16)
-		if err != nil || port == 0 {
-			return 0, errors.New("invalid port")
-		}
-		return uint16(port), nil
-	}
-	if target.Scheme == "https" {
-		return 443, nil
-	}
-	return 80, nil
+		netguard.EffectivePort(left) == netguard.EffectivePort(right)
 }
 
 func isRedirect(status int) bool {

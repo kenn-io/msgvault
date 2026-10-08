@@ -404,7 +404,7 @@ func (imp *Importer) enqueue(ctx context.Context, sourceID int64, state *syncSta
 	// miss one on either side of the archived head. Reconcile rereads the whole
 	// history of each conversation updated since the last one.
 	switch {
-	case walk == walkFull || (walk == walkReconcile && (c.UpdatedAt <= 0 || math.IsNaN(c.UpdatedAt) || math.IsInf(c.UpdatedAt, 0) || c.UpdatedAt >= float64(state.ReconciledAt.Add(-activityOverlap).Unix()))):
+	case walk == walkFull || (walk == walkReconcile && (c.UpdatedAt <= 0 || c.UpdatedAt >= float64(state.ReconciledAt.Add(-activityOverlap).Unix()))):
 		cs.Pending = []idRange{{1, openBound}}
 	case len(cs.Pending) > 0:
 	default:

@@ -295,25 +295,7 @@ func (c *Client) configuredMediaOrigin(u *url.URL) bool {
 	}
 	return strings.EqualFold(c.baseOrigin.Scheme, u.Scheme) &&
 		strings.EqualFold(strings.TrimSuffix(c.baseOrigin.Hostname(), "."), strings.TrimSuffix(u.Hostname(), ".")) &&
-		mediaEffectivePort(c.baseOrigin) == mediaEffectivePort(u)
-}
-
-func mediaEffectivePort(u *url.URL) string {
-	if port := u.Port(); port != "" {
-		return port
-	}
-	if strings.EqualFold(u.Scheme, "https") {
-		return "443"
-	}
-	return "80"
-}
-
-func mediaTargetPort(u *url.URL) (uint16, error) {
-	port, err := strconv.ParseUint(mediaEffectivePort(u), 10, 16)
-	if err != nil || port == 0 {
-		return 0, errors.New("invalid Chatwoot media URL port")
-	}
-	return uint16(port), nil
+		netguard.EffectivePort(c.baseOrigin) == netguard.EffectivePort(u)
 }
 
 func mediaAddressAllowed(addr netip.Addr, configuredOrigin, configuredLoopback bool) bool {
@@ -342,7 +324,7 @@ func (c *Client) validateMediaTarget(ctx context.Context, u *url.URL) ([]netip.A
 		return nil, errors.New("invalid Chatwoot media URL")
 	}
 	u.Scheme = scheme
-	port, err := mediaTargetPort(u)
+	port, err := netguard.TargetPort(u)
 	if err != nil {
 		return nil, errors.New("invalid Chatwoot media URL")
 	}

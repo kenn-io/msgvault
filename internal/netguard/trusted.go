@@ -6,7 +6,6 @@ import (
 	"net/netip"
 	"net/url"
 	"slices"
-	"strconv"
 )
 
 var explicitPrivatePrefixes = []netip.Prefix{
@@ -41,11 +40,8 @@ func ValidateTrustedDestination(origin *url.URL, addresses []netip.Addr) (*url.U
 	case len(addresses) == 0:
 		return nil, nil, errors.New("trusted_addresses must contain at least one address")
 	}
-	if rawPort := origin.Port(); rawPort != "" {
-		port, err := strconv.ParseUint(rawPort, 10, 16)
-		if err != nil || port == 0 {
-			return nil, nil, errors.New("trusted_origin port must be between 1 and 65535")
-		}
+	if _, err := TargetPort(origin); err != nil {
+		return nil, nil, errors.New("trusted_origin port must be between 1 and 65535")
 	}
 	validated := make([]netip.Addr, 0, len(addresses))
 	for _, address := range addresses {
