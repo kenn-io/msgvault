@@ -34,7 +34,7 @@ describe('RelationshipCalendar', () => {
   it('renders the shared five-level calendar with accessible message counts', () => {
     render(RelationshipCalendar, {
       calendar: calendar(), loading: false, error: null,
-      firstYear: 2018, currentYear: 2026, onYearChange: vi.fn()
+      firstYear: 2018, currentYear: 2026, onYearChange: vi.fn(), onDateChange: vi.fn()
     });
 
     expect(screen.getByRole('heading', { name: 'Relationship' })).toBeTruthy();
@@ -57,7 +57,7 @@ describe('RelationshipCalendar', () => {
   it('shows one shared tooltip on hover and keyboard focus', async () => {
     render(RelationshipCalendar, {
       calendar: calendar(), loading: false, error: null,
-      firstYear: 2018, currentYear: 2026, onYearChange: vi.fn()
+      firstYear: 2018, currentYear: 2026, onYearChange: vi.fn(), onDateChange: vi.fn()
     });
     const fullPanel = document.querySelector<HTMLElement>('.calendar-panel.full')!;
     const cell = within(fullPanel).getByRole('button', { name: '3 messages on Jan 2, 2026' });
@@ -77,7 +77,7 @@ describe('RelationshipCalendar', () => {
   it('hides the tooltip when the pointer enters a gap between days', async () => {
     render(RelationshipCalendar, {
       calendar: calendar(), loading: false, error: null,
-      firstYear: 2018, currentYear: 2026, onYearChange: vi.fn()
+      firstYear: 2018, currentYear: 2026, onYearChange: vi.fn(), onDateChange: vi.fn()
     });
     const cell = screen.getAllByRole('button', { name: '3 messages on Jan 2, 2026' })[0];
     await fireEvent.pointerOver(cell);
@@ -90,7 +90,7 @@ describe('RelationshipCalendar', () => {
   it('does not resurrect the tooltip from stale pointer coordinates when scrolling after pointerleave', async () => {
     render(RelationshipCalendar, {
       calendar: calendar(), loading: false, error: null,
-      firstYear: 2018, currentYear: 2026, onYearChange: vi.fn()
+      firstYear: 2018, currentYear: 2026, onYearChange: vi.fn(), onDateChange: vi.fn()
     });
     const fullPanel = document.querySelector<HTMLElement>('.calendar-panel.full')!;
     const cell = within(fullPanel).getByRole('button', { name: '3 messages on Jan 2, 2026' });
@@ -114,7 +114,7 @@ describe('RelationshipCalendar', () => {
   it('keeps the day tooltip visible after a touch tap despite the immediate pointerleave', async () => {
     render(RelationshipCalendar, {
       calendar: calendar(), loading: false, error: null,
-      firstYear: 2018, currentYear: 2026, onYearChange: vi.fn()
+      firstYear: 2018, currentYear: 2026, onYearChange: vi.fn(), onDateChange: vi.fn()
     });
     const fullPanel = document.querySelector<HTMLElement>('.calendar-panel.full')!;
     const cell = within(fullPanel).getByRole('button', { name: '3 messages on Jan 2, 2026' });
@@ -132,7 +132,7 @@ describe('RelationshipCalendar', () => {
   it('hides a touch-activated tooltip when the strip scrolls afterwards', async () => {
     render(RelationshipCalendar, {
       calendar: calendar(), loading: false, error: null,
-      firstYear: 2018, currentYear: 2026, onYearChange: vi.fn()
+      firstYear: 2018, currentYear: 2026, onYearChange: vi.fn(), onDateChange: vi.fn()
     });
     const fullPanel = document.querySelector<HTMLElement>('.calendar-panel.full')!;
     const cell = within(fullPanel).getByRole('button', { name: '3 messages on Jan 2, 2026' });
@@ -156,7 +156,7 @@ describe('RelationshipCalendar', () => {
   it('dismisses the tooltip with Escape without moving focus', async () => {
     render(RelationshipCalendar, {
       calendar: calendar(), loading: false, error: null,
-      firstYear: 2018, currentYear: 2026, onYearChange: vi.fn()
+      firstYear: 2018, currentYear: 2026, onYearChange: vi.fn(), onDateChange: vi.fn()
     });
     const fullPanel = document.querySelector<HTMLElement>('.calendar-panel.full')!;
     const cell = within(fullPanel).getByRole('button', { name: '3 messages on Jan 2, 2026' });
@@ -176,7 +176,7 @@ describe('RelationshipCalendar', () => {
     const onYearChange = vi.fn();
     render(RelationshipCalendar, {
       calendar: calendar(), loading: false, error: null,
-      firstYear: 2018, currentYear: 2026, onYearChange
+      firstYear: 2018, currentYear: 2026, onYearChange, onDateChange: vi.fn()
     });
 
     await fireEvent.click(screen.getByRole('button', { name: 'Previous relationship year' }));
@@ -187,7 +187,7 @@ describe('RelationshipCalendar', () => {
   it('shows the year without chevrons when no other year is available', () => {
     render(RelationshipCalendar, {
       calendar: calendar(), loading: false, error: null,
-      firstYear: 2026, currentYear: 2026, onYearChange: vi.fn()
+      firstYear: 2026, currentYear: 2026, onYearChange: vi.fn(), onDateChange: vi.fn()
     });
     expect(screen.getByText('2026')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Previous relationship year' })).toBeNull();
@@ -197,20 +197,20 @@ describe('RelationshipCalendar', () => {
   it('renders stable loading, failure, and no-interaction regions', async () => {
     const { rerender } = render(RelationshipCalendar, {
       calendar: null, loading: true, error: null,
-      year: 2026, firstYear: 2018, currentYear: 2026, onYearChange: vi.fn()
+      year: 2026, firstYear: 2018, currentYear: 2026, onYearChange: vi.fn(), onDateChange: vi.fn()
     });
     expect(screen.getByText('Loading relationship activity…')).toBeTruthy();
 
     await rerender({
       calendar: null, loading: false, error: 'Analytical cache unavailable',
-      year: 2026, firstYear: 2018, currentYear: 2026, onYearChange: vi.fn()
+      year: 2026, firstYear: 2018, currentYear: 2026, onYearChange: vi.fn(), onDateChange: vi.fn()
     });
     expect(screen.getByRole('alert').textContent).toContain('Analytical cache unavailable');
     expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy();
 
     await rerender({
       calendar: calendar({ days: [] }), loading: false, error: null,
-      firstYear: 2018, currentYear: 2026, onYearChange: vi.fn()
+      firstYear: 2018, currentYear: 2026, onYearChange: vi.fn(), onDateChange: vi.fn()
     });
     expect(screen.getByText('No interactions in 2026.')).toBeTruthy();
   });

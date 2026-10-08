@@ -450,6 +450,14 @@
       : undefined;
   }
 
+  function selectCalendarDate(date: string | null): void {
+    void closeReadingPane();
+    onFilesToggle(false);
+    void controller.selectTimelineDay(date
+      ? { date, ...localDayBoundsUTC(`${date}T00:00:00`) }
+      : null);
+  }
+
   function editableTarget(value: EventTarget | null): boolean {
     const element = value as HTMLElement | null;
     return Boolean(element?.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])'));
@@ -555,7 +563,12 @@
                     year={controller.relationshipCalendarYear}
                     firstYear={controller.relationshipCalendarFirstYear}
                     currentYear={controller.relationshipCalendarCurrentYear}
-                    onYearChange={(year) => { void controller.loadRelationshipYear(year); }}
+                    selectedDate={controller.timelineDay?.date}
+                    onDateChange={selectCalendarDate}
+                    onYearChange={(year) => {
+                      if (controller.timelineDay) selectCalendarDate(null);
+                      void controller.loadRelationshipYear(year);
+                    }}
                   />
                 {/if}
                 {#if meetingContext?.scope}
@@ -595,6 +608,7 @@
                     hasMore={Boolean(controller.timelineCursor)}
                     error={controller.timelineError}
                     restartNotice={controller.timelineRestartNotice}
+                    daySelected={controller.timelineDay !== null}
                     selectedKey={selectedRowKey}
                     onRowOpen={openTimelineRow}
                     onLoadMore={() => { void controller.loadMoreTimeline(); }}
