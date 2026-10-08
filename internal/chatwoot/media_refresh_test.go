@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -204,6 +205,11 @@ func TestMediaRefreshCallKeepsDistinctRecordingsAndDeduplicatesSameURL(t *testin
 					call["recording_url"], attachment["data_url"] = router.url(t, media.server, path), router.url(t, media.server, path)
 				}
 				if tc.initialFailure {
+					attachment["data_url"], call["recording_url"] = "", ""
+					_, err = importer.Import(t.Context(), opts)
+					require.NoError(err)
+					assert.Equal(1, media.requestCount(path))
+					call["recording_url"] = router.url(t, media.server, path)
 					attachment["data_url"] = router.url(t, media.server, path) + "?signature=next"
 					attachment["id"] = int64(2002)
 				}
@@ -296,15 +302,21 @@ func TestMediaRefreshCallKeepsDistinctRecordingsAndDeduplicatesSameURL(t *testin
 }
 
 func TestMediaRefreshFailedReplacementRetainsBytesAndRetriesNextSync(t *testing.T) {
-	for _, name := range []string{"recording_dropped", "replacement_canceled", "first_import_canceled"} {
+	for _, name := range []string{"recording_dropped", "replacement_canceled", "first_import_canceled", "initial_failure_restored", "initial_failure_expired"} {
 		dropped := name == "recording_dropped"
 		t.Run(name, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
+			initialFailure := strings.HasPrefix(name, "initial_failure_")
+			clock, previousNow := now(), now
+			if initialFailure {
+				now = func() time.Time { return clock }
+				t.Cleanup(func() { now = previousNow })
+			}
 			media := newMediaRefreshServer(t)
 			router := newChatwootMediaRouter(t, media.server)
 			message := mediaRefreshCall(router.url(t, media.server, "/recording-a.ogg"), "")
-			if dropped {
+			if dropped || initialFailure {
 				message["created_at"] = now().Add(-30 * 24 * time.Hour).Unix()
 			}
 			call, ok := message["call"].(map[string]any)
@@ -314,6 +326,7 @@ func TestMediaRefreshFailedReplacementRetainsBytesAndRetriesNextSync(t *testing.
 			st := testutil.NewTestStore(t)
 			importer, source := contractRegister(t, st, api)
 			opts := mediaRefreshOptions(t)
+			media.failures["/recording-a.ogg"] = initialFailure
 			ctx := t.Context()
 			if name == "first_import_canceled" {
 				canceled, cancel := context.WithCancel(ctx)
@@ -351,6 +364,50 @@ func TestMediaRefreshFailedReplacementRetainsBytesAndRetriesNextSync(t *testing.
 			}
 			require.NoError(err)
 			meetingID := contractArchivedMessageID(t, st, "call:901")
+			if initialFailure {
+				firstFailure := savedState(t, st, source).Conversations["42"].Artifacts["901"]
+				assert.Equal(clock.Unix(), firstFailure)
+				delete(call, "recording_url")
+				_, err = NewImporter(st, api.client(t)).Import(t.Context(), opts)
+				require.NoError(err)
+				refs, err := st.MessageProviderAttachments(meetingID, "chatwoot:")
+				require.NoError(err)
+				require.Len(refs, 1)
+				for _, ref := range refs {
+					assert.Empty(ref.ContentHash)
+					assert.Equal(attachmentpolicy.StateFailed, ref.State)
+					var evidence mediaMetadata
+					require.NoError(json.Unmarshal([]byte(ref.Metadata), &evidence))
+					assert.Equal(firstFailure, evidence.FailedSince)
+				}
+				pending := savedState(t, st, source).Conversations["42"]
+				require.NotNil(pending)
+				assert.Equal(firstFailure, pending.Artifacts["901"])
+				assert.Equal(1, media.requestCount("/recording-a.ogg"))
+				if name == "initial_failure_expired" {
+					clock = clock.Add(artifactWindow + time.Second)
+					opts.Full = true
+					_, err = NewImporter(st, api.client(t)).Import(t.Context(), opts)
+					require.NoError(err)
+					refs, err = st.MessageProviderAttachments(meetingID, "chatwoot:")
+					require.NoError(err)
+					assert.Empty(refs)
+				}
+				call["recording_url"] = router.url(t, media.server, "/recording-a.ogg")
+				media.failures["/recording-a.ogg"] = false
+				opts.Full = false
+				_, err = NewImporter(st, api.client(t)).Import(t.Context(), opts)
+				require.NoError(err)
+				if name == "initial_failure_expired" {
+					assert.Equal(1, media.requestCount("/recording-a.ogg"))
+				} else {
+					assert.Equal(2, media.requestCount("/recording-a.ogg"))
+					_, payloads := readMediaRefreshBytes(t, st, meetingID, opts.AttachmentsDir)
+					assert.Equal([]string{"synthetic recording A bytes"}, payloads)
+				}
+				assert.NotContains(savedState(t, st, source).Conversations, "42")
+				return
+			}
 			refs, payloads := readMediaRefreshBytes(t, st, meetingID, opts.AttachmentsDir)
 			require.Len(refs, 1)
 			assert.Equal([]string{"synthetic recording A bytes"}, payloads)

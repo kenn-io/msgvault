@@ -76,6 +76,15 @@ func storedMediaIdentity(ref store.AttachmentRef) string {
 	return mediaIdentity(metadata.URL)
 }
 
+func retryingSince(ref store.AttachmentRef) (int64, string) {
+	var evidence mediaMetadata
+	if json.Unmarshal([]byte(ref.Metadata), &evidence) == nil && attachmentpolicy.RetryEligible(ref.State) &&
+		evidence.FailedSince > 0 && now().Sub(time.Unix(evidence.FailedSince, 0)) < artifactWindow {
+		return evidence.FailedSince, evidence.FailedURL
+	}
+	return 0, ""
+}
+
 func isAudio(a Attachment) bool {
 	return a.FileType == "audio" || strings.HasPrefix(a.ContentType, "audio/")
 }
@@ -93,6 +102,7 @@ func (imp *Importer) persistMedia(ctx context.Context, messageID int64, attachme
 		}
 	}
 	refs := make([]store.AttachmentRef, 0, len(attachments))
+	current := map[string]bool{}
 	for index, a := range attachments {
 		if err = ctx.Err(); err != nil {
 			return 0, false, err
@@ -254,25 +264,26 @@ func (imp *Importer) persistMedia(ctx context.Context, messageID int64, attachme
 		}
 		ref.Metadata = string(metadata)
 		refs = append(refs, ref)
+		current[key] = true
+		if ref.ContentHash != "" {
+			current[ref.ContentHash] = true
+		}
+		if currentURL != "" {
+			current[currentURL] = true
+		}
 	}
-	// The archive keeps stored bytes the provider no longer lists, unless a
-	// current occurrence already carries the same content.
-	current := map[string]bool{}
-	for _, ref := range refs {
-		current[ref.SourceAttachmentID] = true
-		current[ref.ContentHash] = ref.ContentHash != ""
-	}
+	// Keep unlisted stored bytes or live failures unless a current occurrence supersedes them.
 	for _, key := range slices.Sorted(maps.Keys(own)) {
-		if ref := own[key]; !current[key] && ref.ContentHash != "" && !current[ref.ContentHash] {
+		ref := own[key]
+		since, identity := retryingSince(ref)
+		if !current[key] && ((ref.ContentHash != "" && !current[ref.ContentHash]) ||
+			(ref.ContentHash == "" && since > 0 && (identity == "" || !current[identity]))) {
 			refs = append(refs, ref)
 		}
 	}
 	for _, ref := range refs {
-		var evidence mediaMetadata
-		if json.Unmarshal([]byte(ref.Metadata), &evidence) == nil && attachmentpolicy.RetryEligible(ref.State) &&
-			evidence.FailedSince > 0 && now().Sub(time.Unix(evidence.FailedSince, 0)) < artifactWindow {
-			failedSince = max(failedSince, evidence.FailedSince)
-		}
+		since, _ := retryingSince(ref)
+		failedSince = max(failedSince, since)
 	}
 	unchanged := len(refs) == len(own)
 	for _, ref := range refs {
