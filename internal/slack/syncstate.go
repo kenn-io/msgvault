@@ -46,6 +46,10 @@ type ConvState struct {
 	BackfillCursor string `json:"backfill_cursor,omitempty"`
 	BackfillLatest string `json:"backfill_latest,omitempty"`
 	Done           bool   `json:"done,omitzero"`
+	// LastSkippedAt lets unreadable conversations rotate behind older work
+	// across interrupted runs. It is only a scheduling marker, not a claim
+	// that any history or replies were archived.
+	LastSkippedAt string `json:"last_skipped_at,omitempty"`
 	// ThreadsPending marks conversation-level thread debt: any initial
 	// walk under --no-threads (unconditionally — a message can become a
 	// thread root after the walk), or a non-channel conversation
