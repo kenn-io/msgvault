@@ -20,6 +20,11 @@ import (
 
 var errMediaFetch = errors.New("read Chatwoot media failed")
 
+type rejectedMedia struct {
+	URL  string `json:"rejected_url"`
+	Size int64  `json:"rejected_size"`
+}
+
 func attachmentKey(a Attachment, index int) string {
 	if a.ID < 0 {
 		return "chatwoot:recording:" + strconv.FormatInt(-a.ID, 10)
@@ -99,7 +104,7 @@ func (imp *Importer) persistMedia(ctx context.Context, messageID int64, attachme
 		maxInt := int64(^uint(0) >> 1)
 		ref := store.AttachmentRef{Filename: filename, MimeType: a.ContentType, SourceAttachmentID: key, SourcePartKey: key, StoragePath: key, Size: int(min(max(a.FileSize, 0), maxInt)), MediaType: a.FileType, Width: int64(a.Width), Height: int64(a.Height), Role: store.AttachmentRoleStandalone, RoleSource: store.AttachmentRoleSourceImporterSemantics, State: attachmentpolicy.StatePending}
 		previous, hadPrevious := existing[key]
-		if previous.SkipReason == attachmentpolicy.SkipSizeCap && storedMediaIdentity(previous) == currentURL {
+		if previous.ContentHash == "" && previous.SkipReason == attachmentpolicy.SkipSizeCap && storedMediaIdentity(previous) == currentURL {
 			ref.Size = max(ref.Size, previous.Size)
 			if ref.MimeType == "" {
 				ref.MimeType = previous.MimeType
@@ -115,19 +120,35 @@ func (imp *Importer) persistMedia(ctx context.Context, messageID int64, attachme
 				}
 			}
 		}
+		var rejected rejectedMedia
+		for _, candidates := range []map[string]store.AttachmentRef{existing, reusable} {
+			for _, candidate := range candidates {
+				var saved rejectedMedia
+				if json.Unmarshal([]byte(candidate.Metadata), &saved) == nil && saved.Size > 0 &&
+					(saved.URL == currentURL || (currentURL == "" && candidate.SourceAttachmentID == key)) && saved.Size > rejected.Size {
+					rejected = saved
+				}
+			}
+		}
+		proposedSize := int64(ref.Size)
+		if currentURL != "" && rejected.URL == currentURL {
+			proposedSize = max(proposedSize, rejected.Size)
+		}
 		var failure struct {
 			FailedURL   string `json:"failed_url"`
 			FailedSince int64  `json:"failed_since"`
 		}
-		for _, candidate := range existing {
-			var saved struct {
-				FailedURL   string `json:"failed_url"`
-				FailedSince int64  `json:"failed_since"`
-			}
-			if json.Unmarshal([]byte(candidate.Metadata), &saved) == nil && saved.FailedSince > 0 &&
-				(saved.FailedURL == currentURL || (currentURL == "" && candidate.SourceAttachmentID == key)) &&
-				(failure.FailedSince == 0 || saved.FailedSince < failure.FailedSince) {
-				failure = saved
+		for _, candidates := range []map[string]store.AttachmentRef{existing, reusable} {
+			for _, candidate := range candidates {
+				var saved struct {
+					FailedURL   string `json:"failed_url"`
+					FailedSince int64  `json:"failed_since"`
+				}
+				if json.Unmarshal([]byte(candidate.Metadata), &saved) == nil && saved.FailedSince > 0 &&
+					(saved.FailedURL == currentURL || (currentURL == "" && candidate.SourceAttachmentID == key)) &&
+					(failure.FailedSince == 0 || saved.FailedSince < failure.FailedSince) {
+					failure = saved
+				}
 			}
 		}
 		storedURL := ""
@@ -149,14 +170,20 @@ func (imp *Importer) persistMedia(ctx context.Context, messageID int64, attachme
 		if maxBytes <= 0 {
 			maxBytes = attachmentpolicy.DefaultChatMaxBytes
 		}
-		reason := opts.Policy.Evaluate(attachmentpolicy.Conversation{}, int64(ref.Size))
+		policy := opts.Policy
+		policy.MaxBytes = maxBytes
+		reason := policy.Evaluate(attachmentpolicy.Conversation{}, proposedSize)
 		switch {
 		case unchanged:
 			ref.State = attachmentpolicy.StateStored
 			if currentURL == storedURL && currentURL != "" {
 				failure.FailedSince, failure.FailedURL = 0, ""
+				rejected = rejectedMedia{}
 			}
 		case reason != "":
+			if reason == attachmentpolicy.SkipSizeCap && currentURL != "" {
+				rejected = rejectedMedia{URL: currentURL, Size: int64(attachmentpolicy.OversizeMarkerSize(maxBytes, proposedSize))}
+			}
 			ref.State = attachmentpolicy.StateSkipped
 			ref.SkipReason = reason
 		case opts.NoMedia && a.FileType != "location":
@@ -177,6 +204,7 @@ func (imp *Importer) persistMedia(ctx context.Context, messageID int64, attachme
 				ref.State = attachmentpolicy.StateStored
 				storedURL = currentURL
 				failure.FailedSince, failure.FailedURL = 0, ""
+				rejected = rejectedMedia{}
 			} else {
 				if ctx.Err() != nil {
 					return 0, false, ctx.Err()
@@ -184,8 +212,9 @@ func (imp *Importer) persistMedia(ctx context.Context, messageID int64, attachme
 				if errors.Is(fetchErr, export.ErrAttachmentTooLarge) {
 					ref.State = attachmentpolicy.StateSkipped
 					ref.SkipReason = attachmentpolicy.SkipSizeCap
+					rejected = rejectedMedia{URL: currentURL, Size: int64(attachmentpolicy.OversizeMarkerSize(maxBytes, max(proposedSize, int64(size))))}
 					if !stored {
-						ref.Size = attachmentpolicy.OversizeMarkerSize(maxBytes, int64(ref.Size))
+						ref.Size = int(rejected.Size)
 					}
 				} else if errors.Is(fetchErr, errMediaFetch) {
 					ref.State = attachmentpolicy.StateFailed
@@ -205,7 +234,7 @@ func (imp *Importer) persistMedia(ctx context.Context, messageID int64, attachme
 		if attachmentpolicy.RetryEligible(ref.State) && failure.FailedSince > 0 && now().Sub(time.Unix(failure.FailedSince, 0)) < artifactWindow {
 			failedSince = max(failedSince, failure.FailedSince)
 		}
-		metadata, marshalErr := json.Marshal(map[string]any{"provider": SourceType, "source": a.Raw, "url": remote, "stored_url": storedURL, "failed_url": failure.FailedURL, "failed_since": failure.FailedSince, "source_transcript": map[string]string{"provider": SourceType, "text": a.TranscribedText}}, json.Deterministic(true))
+		metadata, marshalErr := json.Marshal(map[string]any{"provider": SourceType, "source": a.Raw, "url": remote, "stored_url": storedURL, "failed_url": failure.FailedURL, "failed_since": failure.FailedSince, "rejected_url": rejected.URL, "rejected_size": rejected.Size, "source_transcript": map[string]string{"provider": SourceType, "text": a.TranscribedText}}, json.Deterministic(true))
 		if marshalErr != nil {
 			return 0, false, marshalErr
 		}
@@ -243,7 +272,7 @@ func (imp *Importer) downloadMedia(ctx context.Context, remote, dir string, maxB
 		mimeType = strings.Split(reportedType, ";")[0]
 	}
 	if length > maxBytes {
-		return "", "", 0, mimeType, export.ErrAttachmentTooLarge
+		return "", "", attachmentpolicy.OversizeMarkerSize(maxBytes, length), mimeType, export.ErrAttachmentTooLarge
 	}
 	source := &export.SourceReader{R: body}
 	storage, hash, size, err := export.StoreAttachmentStream(ctx, dir, source, maxBytes)

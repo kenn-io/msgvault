@@ -23,6 +23,7 @@ type mediaRefreshServer struct {
 	server   *httptest.Server
 	failures map[string]bool
 	requests map[string]int
+	declared bool
 }
 
 func newMediaRefreshServer(t *testing.T) *mediaRefreshServer {
@@ -48,6 +49,9 @@ func newMediaRefreshServer(t *testing.T) *mediaRefreshServer {
 			return
 		}
 		w.Header().Set("Content-Type", "audio/ogg")
+		if media.declared {
+			w.Header().Set("Content-Length", strconv.Itoa(len(payload)))
+		}
 		flusher, ok := w.(http.Flusher)
 		if !assert.True(t, ok) {
 			return
@@ -338,35 +342,105 @@ func TestDeferredMediaRetriesAndLocalWritesFail(t *testing.T) {
 }
 
 func TestStreamOversizeRetainsMimeAndSizeEvidence(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	media := newMediaRefreshServer(t)
-	router := newChatwootMediaRouter(t, media.server)
-	message := contractMessage(901, now().Unix(), nil)
-	message["attachments"] = []any{map[string]any{"id": int64(2001), "file_type": "image", "file_size": int64(1), "data_url": router.url(t, media.server, "/recording-a.ogg")}}
-	api := newContractAPI(t, 1000, []map[string]any{message})
-	api.mediaRouter = router
-	st := testutil.NewTestStore(t)
-	imp, _ := contractRegister(t, st, api)
-	opts := mediaRefreshOptions(t)
-	opts.Policy.MaxBytes = 8
-	for range 2 {
-		_, err := imp.Import(t.Context(), opts)
-		require.NoError(err)
-		refs, err := st.MessageProviderAttachments(contractArchivedMessageID(t, st, "901"), "chatwoot:")
-		require.NoError(err)
-		for _, ref := range refs {
-			assert.Equal(attachmentpolicy.SkipSizeCap, ref.SkipReason)
-			assert.Equal("audio/ogg", ref.MimeType)
-			assert.Greater(ref.Size, 8)
-		}
-		opts.Full = true
+	for _, tc := range []struct {
+		name                                   string
+		retained, declared, call, declaredFile bool
+	}{
+		{"initial_chunked", false, false, false, false}, {"replacement_chunked", true, false, false, false}, {"replacement_declared", true, true, false, false}, {"replacement_declared_file", true, false, false, true}, {"replacement_shared_call", true, false, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			media := newMediaRefreshServer(t)
+			media.declared = tc.declared
+			router := newChatwootMediaRouter(t, media.server)
+			attachment := map[string]any{"id": int64(2001), "file_type": "image", "file_size": int64(1), "data_url": router.url(t, media.server, "/recording-a.ogg")}
+			message := contractMessage(901, now().Unix(), nil)
+			if tc.call {
+				message = mediaRefreshCall("", "")
+				attachment["file_type"] = "audio"
+			}
+			message["attachments"] = []any{attachment}
+			api := newContractAPI(t, 1000, []map[string]any{message})
+			api.mediaRouter = router
+			st := testutil.NewTestStore(t)
+			imp, _ := contractRegister(t, st, api)
+			opts := mediaRefreshOptions(t)
+			path, payload := "/recording-a.ogg", "synthetic recording A bytes"
+			var original store.AttachmentRef
+			if tc.retained {
+				_, err := imp.Import(t.Context(), opts)
+				require.NoError(err)
+				refs, _ := readMediaRefreshBytes(t, st, contractArchivedMessageID(t, st, "901"), opts.AttachmentsDir)
+				original = refs["chatwoot:attachment:2001"]
+				path, payload = "/recording-b.ogg", "synthetic replacement recording B bytes"
+				attachment["data_url"] = router.url(t, media.server, path)
+				opts.Policy.MaxBytes = 28
+				if tc.declaredFile {
+					attachment["file_size"] = int64(38)
+				}
+				opts.Full = true
+			} else {
+				opts.Policy.MaxBytes = 8
+			}
+			for range 2 {
+				_, err := NewImporter(st, api.client(t)).Import(t.Context(), opts)
+				require.NoError(err)
+				refs, err := st.MessageProviderAttachments(contractArchivedMessageID(t, st, "901"), "chatwoot:")
+				require.NoError(err)
+				ref := refs["chatwoot:attachment:2001"]
+				assert.Equal(attachmentpolicy.SkipSizeCap, ref.SkipReason)
+				assert.Equal("audio/ogg", ref.MimeType)
+				if tc.retained {
+					assert.Equal(original.Size, ref.Size)
+					assert.Equal(original.ContentHash, ref.ContentHash)
+					assert.Equal(original.StoragePath, ref.StoragePath)
+				} else {
+					assert.Greater(int64(ref.Size), opts.Policy.MaxBytes)
+				}
+				opts.Full = true
+				attachment["data_url"] = router.url(t, media.server, path) + "?signature=rotated"
+			}
+			attempts := 1
+			if tc.declaredFile {
+				attempts = 0
+			}
+			assert.Equal(attempts, media.requestCount(path))
+			if tc.retained {
+				if tc.declared || tc.declaredFile {
+					opts.Policy.MaxBytes = 29
+					_, err := NewImporter(st, api.client(t)).Import(t.Context(), opts)
+					require.NoError(err)
+					assert.Equal(attempts, media.requestCount(path), "a cap below observed size still excludes the replacement")
+					opts.Policy.MaxBytes = 28
+				}
+				opts.NoMedia = true
+				_, err := NewImporter(st, api.client(t)).Import(t.Context(), opts)
+				require.NoError(err)
+				delete(attachment, "data_url")
+				_, err = NewImporter(st, api.client(t)).Import(t.Context(), opts)
+				require.NoError(err)
+				attachment["data_url"] = router.url(t, media.server, path) + "?signature=restored"
+				opts.NoMedia = false
+				_, err = NewImporter(st, api.client(t)).Import(t.Context(), opts)
+				require.NoError(err)
+				assert.Equal(attempts, media.requestCount(path), "deferred reads and missing URLs retain rejection evidence")
+				attachment["data_url"] = router.url(t, media.server, path) + "?resource=next"
+				attachment["file_size"] = int64(1)
+				_, err = NewImporter(st, api.client(t)).Import(t.Context(), opts)
+				require.NoError(err)
+				assert.Equal(attempts+1, media.requestCount(path), "a different resource can be attempted")
+			}
+			opts.Policy.MaxBytes = 4096
+			_, err := NewImporter(st, api.client(t)).Import(t.Context(), opts)
+			require.NoError(err)
+			refs, payloads := readMediaRefreshBytes(t, st, contractArchivedMessageID(t, st, "901"), opts.AttachmentsDir)
+			assert.Equal([]string{payload}, payloads)
+			var rejected rejectedMedia
+			require.NoError(json.Unmarshal([]byte(refs["chatwoot:attachment:2001"].Metadata), &rejected))
+			assert.Zero(rejected.Size)
+			assert.Empty(rejected.URL)
+		})
 	}
-	assert.Equal(1, media.requestCount("/recording-a.ogg"))
-	opts.Policy.MaxBytes = 4096
-	_, err := imp.Import(t.Context(), opts)
-	require.NoError(err)
-	_, payloads := readMediaRefreshBytes(t, st, contractArchivedMessageID(t, st, "901"), opts.AttachmentsDir)
-	assert.Equal([]string{"synthetic recording A bytes"}, payloads)
 }
 
 func TestReconcileDoesNotRenewFailedDownload(t *testing.T) {

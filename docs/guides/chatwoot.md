@@ -80,6 +80,7 @@ retry during normal syncs for seven days; older files need `--full`.
 Location and fallback attachments can
 contain metadata without downloadable files. Source access, unavailable files,
 size limits, and download failures can leave metadata without stored bytes.
+The archive keeps a readable recording when its replacement fails; an oversized replacement retries after you raise `max_media_mb` enough or the resource changes.
 Failed downloads retry for seven days from the resource's first failure.
 Signed URL rotation and reconciliation preserve that deadline. `--full` permits
 another attempt after expiry without extending automatic retries.
