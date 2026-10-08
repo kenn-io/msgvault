@@ -10,6 +10,12 @@ import (
 // the reply fetch was deferred or clipped by the --limit budget.
 type PendingThread struct {
 	RootTS string `json:"root"`
+	// LiveAfter is the exclusive proven incremental boundary. Missing evidence
+	// means historical, even when coverage is widened or progress resumes.
+	LiveAfter string `json:"live_after,omitempty"`
+	// ObservedLiveReply retains the exact live search hit while its root is
+	// unknown. Another historical drain may reach it before reanchoring.
+	ObservedLiveReply string `json:"observed_live_reply,omitempty"`
 	// DrainedTo is the newest reply ts fetched so far ("" = not started):
 	// the drain resumes with oldest=DrainedTo (exclusive), a self-validating
 	// ts bound rather than an opaque page cursor.
@@ -42,10 +48,11 @@ type PendingThread struct {
 // completes and Cursor advances to the pin. Done means the initial walk
 // reached the beginning of history.
 type ConvState struct {
-	Cursor         string `json:"cursor,omitempty"`
-	BackfillCursor string `json:"backfill_cursor,omitempty"`
-	BackfillLatest string `json:"backfill_latest,omitempty"`
-	Done           bool   `json:"done,omitzero"`
+	Cursor            string `json:"cursor,omitempty"`
+	BackfillCursor    string `json:"backfill_cursor,omitempty"`
+	BackfillLatest    string `json:"backfill_latest,omitempty"`
+	BackfillLiveAfter string `json:"backfill_live_after,omitempty"`
+	Done              bool   `json:"done,omitzero"`
 	// LastSkippedAt lets unreadable conversations rotate behind older work
 	// across interrupted runs. It is only a scheduling marker, not a claim
 	// that any history or replies were archived.
@@ -258,4 +265,38 @@ func (s *SyncState) RepairComplete(eligible map[string]bool) bool {
 		}
 	}
 	return true
+}
+
+// recordThreadLiveAfter merges incremental evidence without allowing historical
+// coverage to widen its interval. A recovered parent never uses this marker.
+func (cs *ConvState) recordThreadLiveAfter(rootTS, after string) {
+	if after == "" {
+		return
+	}
+	for i := range cs.PendingThreads {
+		pt := &cs.PendingThreads[i]
+		if pt.RootTS == rootTS {
+			if pt.LiveAfter == "" || tsLess(after, pt.LiveAfter) {
+				pt.LiveAfter = after
+			}
+			return
+		}
+	}
+}
+
+func (cs *ConvState) recordUnanchoredLiveReply(anchor, reply string) {
+	for i := range cs.PendingThreads {
+		if cs.PendingThreads[i].RootTS == anchor {
+			cs.PendingThreads[i].ObservedLiveReply = reply
+			return
+		}
+	}
+}
+
+func (cs *ConvState) clearObservedLiveReply(reply string) {
+	for i := range cs.PendingThreads {
+		if cs.PendingThreads[i].ObservedLiveReply == reply {
+			cs.PendingThreads[i].ObservedLiveReply = ""
+		}
+	}
 }

@@ -92,20 +92,34 @@ type MessageDeliveryEvidence struct {
 // MessagePersistData bundles everything needed to atomically
 // persist a message and its related rows in a single transaction.
 type MessagePersistData struct {
-	Message                   *Message
-	Conversation              *ConversationPersistData
-	Delivery                  *MessageDeliveryEvidence
-	Metadata                  *sql.NullString
-	BodyText                  sql.NullString
-	BodyHTML                  sql.NullString
-	RawMIME                   []byte
-	RawFormat                 string
-	Recipients                []RecipientSet
+	DiscordSnapshot *DiscordMessageSnapshot
+	Message         *Message
+	Conversation    *ConversationPersistData
+	Delivery        *MessageDeliveryEvidence
+	Metadata        *sql.NullString
+	BodyText        sql.NullString
+	BodyHTML        sql.NullString
+	RawMIME         []byte
+	RawFormat       string
+	Recipients      []RecipientSet
+	// Native snapshots are archival state, not independently observed actions.
+	// Nil preserves prior state; a non-nil empty slice clears that snapshot.
+	ReactionSnapshot        *[]ReactionRef
+	SlackAttachmentSnapshot *[]AttachmentRef
+	Edited                  *bool
+	DeletedFromSource       *bool
+	// ReplyToSourceMessageID resolves the parent inside this transaction and
+	// source. Empty preserves the caller's existing reply-link behavior.
+	ReplyToSourceMessageID    string
+	LinkAttachmentSnapshot    *[]AttachmentRef
 	LabelIDs                  []int64
 	LabelRefs                 []MessageLabelRef
 	PreserveLabels            bool
 	MIMEAttachmentReplacement *[]AttachmentWrite
+	EmailInReplyTo            *string
 	FTS                       *FTSDoc
+	// FTSBestEffort isolates derived index errors; canonical writes stay mandatory.
+	FTSBestEffort bool
 }
 
 // MessageIdentityGuard binds repair persistence to the exact archive row that
@@ -404,6 +418,10 @@ type ConversationPersistData struct {
 	Participants                 []ConversationParticipantRef
 	PreserveExistingType         bool
 	PreserveExistingParticipants bool
+	// ClearTitle applies an explicit provider title removal.
+	ClearTitle bool
+	// MemberCount updates only roster-size metadata; nil preserves it.
+	MemberCount *int
 }
 
 // Message represents a message in the database.
@@ -2055,7 +2073,22 @@ func (s *Store) persistMessageWithParticipantsContext(
 	participants []ParticipantPersistData,
 	build func(participantIDs []int64) *MessagePersistData,
 ) (int64, error) {
-	return s.persistMessageWithParticipantsTransaction(ctx, nil, participants, build, nil, nil)
+	afterPersist := func(ctx context.Context, tx *loggedTx, data *MessagePersistData, messageID int64) error {
+		q := boundQuerier{ctx: ctx, q: tx}
+		if data.MIMEAttachmentReplacement != nil {
+			if err := s.replaceMIMEAttachmentsWith(q, messageID, data.MIMEAttachmentReplacement); err != nil {
+				return fmt.Errorf("replace message MIME attachments: %w", err)
+			}
+			if err := recomputeMessageAttachmentStatsWith(q, messageID); err != nil {
+				return fmt.Errorf("recompute message attachment stats: %w", err)
+			}
+		}
+		if data.EmailInReplyTo != nil {
+			return s.mergeMessageReplyHeaderWith(q, messageID, *data.EmailInReplyTo)
+		}
+		return nil
+	}
+	return s.persistMessageWithParticipantsTransaction(ctx, nil, participants, build, nil, afterPersist)
 }
 
 type messagePersistBeforeParticipants func(context.Context, *loggedTx) error
@@ -2221,26 +2254,9 @@ func (s *Store) persistMessageWith(
 	q := boundQuerier{ctx: ctx, q: tx}
 	message := data.Message
 	if data.Conversation != nil {
-		conversationID, err := ensureConversationWithTypePolicy(
-			q, s.dialect, data.Message.SourceID,
-			data.Conversation.SourceConversationID,
-			data.Conversation.ConversationType,
-			data.Conversation.Title,
-			data.Conversation.PreserveExistingType,
-		)
+		conversationID, err := s.persistConversationSnapshotTx(ctx, tx, data.Message.SourceID, data.Conversation)
 		if err != nil {
-			return 0, fmt.Errorf("ensure conversation: %w", err)
-		}
-		if data.Conversation.Participants != nil {
-			if data.Conversation.PreserveExistingParticipants {
-				if err := mergeConversationParticipantsWith(q, s.dialect, conversationID, data.Conversation.Participants); err != nil {
-					return 0, fmt.Errorf("merge conversation participants: %w", err)
-				}
-			} else if err := replaceConversationParticipantsTx(
-				ctx, tx, s.dialect, conversationID, data.Conversation.Participants,
-			); err != nil {
-				return 0, fmt.Errorf("replace conversation participants: %w", err)
-			}
+			return 0, err
 		}
 		messageCopy := *data.Message
 		messageCopy.ConversationID = conversationID
@@ -2250,6 +2266,20 @@ func (s *Store) persistMessageWith(
 	messageID, err := upsertMessageWith(q, s.dialect, message, inserted...)
 	if err != nil {
 		return 0, fmt.Errorf("upsert message: %w", err)
+	}
+	if data.ReplyToSourceMessageID != "" {
+		var parentID sql.NullInt64
+		err := q.QueryRow(`SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?`,
+			message.SourceID, data.ReplyToSourceMessageID).Scan(&parentID)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return 0, fmt.Errorf("resolve native reply parent: %w", err)
+		}
+		if !parentID.Valid && s.ingestContext().Mode == IngestLive {
+			return 0, errors.New("live reply parent is unavailable")
+		}
+		if _, err := q.Exec(`UPDATE messages SET reply_to_message_id = ? WHERE id = ?`, parentID, messageID); err != nil {
+			return 0, fmt.Errorf("persist native reply parent: %w", err)
+		}
 	}
 	if data.Delivery != nil {
 		if err := setMessageDeliveryEvidenceWith(q, messageID, *data.Delivery); err != nil {
@@ -2307,9 +2337,19 @@ func (s *Store) persistMessageWith(
 	if data.FTS != nil && s.fts5Available {
 		fts := *data.FTS
 		fts.MessageID = messageID
-		if err := s.dialect.FTSUpsert(q, fts); err != nil {
+		if data.FTSBestEffort {
+			if err := s.indexBestEffortFTSTx(ctx, tx, messageID, fts); err != nil {
+				return 0, err
+			}
+		} else if err := s.dialect.FTSUpsert(q, fts); err != nil {
 			return 0, fmt.Errorf("upsert fts: %w", err)
 		}
+	}
+	if err := s.persistNativeMessageSnapshot(ctx, tx, messageID, data); err != nil {
+		return 0, err
+	}
+	if err := s.persistDiscordMessageSnapshotTx(ctx, tx, messageID, data); err != nil {
+		return 0, err
 	}
 	return messageID, nil
 }
@@ -5500,11 +5540,40 @@ type ConversationParticipantRef struct {
 	Role          string
 }
 
-func mergeConversationParticipantsWith(
-	q querier, dialect Dialect, conversationID int64, participants []ConversationParticipantRef,
+func mergeConversationParticipantsTx(
+	ctx context.Context, tx *loggedTx, dialect Dialect, conversationID int64, participants []ConversationParticipantRef,
 ) error {
+	ids := make([]int64, 0, len(participants))
+	for _, participant := range participants {
+		if participant.ParticipantID != 0 {
+			ids = append(ids, participant.ParticipantID)
+		}
+	}
+	slices.Sort(ids)
+	ids = slices.Compact(ids)
+	// The outer persistence transaction already holds its writer fences.
+	// Compare only requested members, retaining unmentioned historical members
+	// without issuing one no-op UPSERT per member for every archived message.
+	current := make(map[int64]sql.NullString, len(ids))
+	if err := queryInChunksContext(ctx, tx, ids, []any{conversationID}, `
+		SELECT participant_id, role FROM conversation_participants
+		WHERE conversation_id=? AND participant_id IN (%s)`, func(rows *loggedRows) error {
+		var id int64
+		var role sql.NullString
+		if err := rows.Scan(&id, &role); err != nil {
+			return err
+		}
+		current[id] = role
+		return nil
+	}); err != nil {
+		return err
+	}
+	q := boundQuerier{ctx: ctx, q: tx}
 	for _, participant := range participants {
 		if participant.ParticipantID == 0 {
+			continue
+		}
+		if role := current[participant.ParticipantID]; role.Valid && role.String == participant.Role {
 			continue
 		}
 		if _, err := q.Exec(fmt.Sprintf(`
@@ -5515,6 +5584,7 @@ func mergeConversationParticipantsWith(
 			conversationID, participant.ParticipantID, participant.Role); err != nil {
 			return err
 		}
+		current[participant.ParticipantID] = sql.NullString{String: participant.Role, Valid: true}
 	}
 	return nil
 }
@@ -5559,26 +5629,28 @@ func replaceConversationParticipantsTx(
 		}
 		desired[participant.ParticipantID] = participant.Role
 	}
-	ids := make([]int64, 0, len(desired))
-	for participantID := range desired {
-		ids = append(ids, participantID)
-	}
-	slices.Sort(ids)
 	rows, err := tx.QueryContext(ctx, `
-		SELECT participant_id FROM conversation_participants
+		SELECT participant_id, role FROM conversation_participants
 		WHERE conversation_id = ? ORDER BY participant_id`, conversationID)
 	if err != nil {
 		return err
 	}
 	stale := make([]int64, 0)
+	unchanged := true
+	currentCount := 0
 	for rows.Next() {
 		var participantID int64
-		if err := rows.Scan(&participantID); err != nil {
+		var role sql.NullString
+		if err := rows.Scan(&participantID, &role); err != nil {
 			_ = rows.Close()
 			return err
 		}
-		if _, keep := desired[participantID]; !keep {
+		currentCount++
+		if wantedRole, keep := desired[participantID]; !keep {
 			stale = append(stale, participantID)
+			unchanged = false
+		} else if !role.Valid || role.String != wantedRole {
+			unchanged = false
 		}
 	}
 	if err := rows.Close(); err != nil {
@@ -5587,11 +5659,21 @@ func replaceConversationParticipantsTx(
 	if err := rows.Err(); err != nil {
 		return err
 	}
+	// Every message carries its roster for atomic publication. Keep that
+	// fenced comparison, but avoid one no-op SQL upsert per unchanged member.
+	if unchanged && currentCount == len(desired) {
+		return nil
+	}
 	if err := execInChunksContext(ctx, tx, stale, []any{conversationID}, `
 		DELETE FROM conversation_participants
 		WHERE conversation_id = ? AND participant_id IN (%s)`); err != nil {
 		return err
 	}
+	ids := make([]int64, 0, len(desired))
+	for participantID := range desired {
+		ids = append(ids, participantID)
+	}
+	slices.Sort(ids)
 	for _, participantID := range ids {
 		if _, err := q.Exec(fmt.Sprintf(`
 			INSERT INTO conversation_participants (conversation_id, participant_id, role, joined_at)
@@ -6557,6 +6639,9 @@ func (s *Store) MessageSlackAttachments(messageID int64) (map[string]AttachmentR
 	return refs, nil
 }
 
+const linkAttachmentDeletePredicate = `(storage_path LIKE 'http://%' OR storage_path LIKE 'https://%')
+		 AND COALESCE(source_attachment_id, '') NOT LIKE 'teams:inline:%'`
+
 // ReplaceMessageLinkAttachments replaces URL-backed attachment rows for a message.
 // It intentionally leaves content-addressed local attachment paths (for example
 // downloaded inline media) untouched, and preserves Teams-managed inline marker
@@ -6564,8 +6649,7 @@ func (s *Store) MessageSlackAttachments(messageID int64) (map[string]AttachmentR
 // records a durable pending/skipped/failed outcome, not a link attachment.
 func (s *Store) ReplaceMessageLinkAttachments(messageID int64, refs []AttachmentRef) error {
 	return s.replaceMessageAttachmentsWhere(messageID,
-		`(storage_path LIKE 'http://%' OR storage_path LIKE 'https://%')
-		 AND COALESCE(source_attachment_id, '') NOT LIKE 'teams:inline:%'`, false, refs)
+		linkAttachmentDeletePredicate, false, refs)
 }
 
 // LabelIDContext finds a label by its provider ID within a source.

@@ -256,3 +256,24 @@ func (s *Store) resolveEmailReply(ctx context.Context, sourceID, childID int64) 
 		return err
 	})
 }
+
+// mergeMessageReplyHeaderWith is the snapshot form of imported reply-header
+// recording. Its caller holds the message writer fence and transaction.
+func (s *Store) mergeMessageReplyHeaderWith(q querier, messageID int64, inReplyTo string) error {
+	inReplyTo = mime.NormalizeMessageID(inReplyTo)
+	if inReplyTo == "" {
+		return nil
+	}
+	var metadata sql.NullString
+	if err := q.QueryRow(`SELECT metadata FROM messages WHERE id=?`, messageID).Scan(&metadata); err != nil {
+		return err
+	}
+	encoded, changed, err := mergeEmailHeaderMetadata(metadata, inReplyTo, "")
+	if err != nil {
+		return fmt.Errorf("merge message reply header: %w", err)
+	}
+	if !changed {
+		return nil
+	}
+	return setMessageMetadataWith(q, s.dialect, messageID, sql.NullString{String: encoded, Valid: true})
+}

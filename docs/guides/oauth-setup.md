@@ -656,6 +656,45 @@ A Graph account is a new account. If the same mailbox is also synced over
 IMAP, the vault holds two copies. Run `msgvault dedup --collection` to hide the
 extra copies, and `--undo` to reverse it.
 
+#### Microsoft mail Events
+
+On unreleased `main`, Graph mail can emit `msgvault.message_archived` for newly
+archived messages after a folder's initial sync finishes. Add `msmail` to the
+explicit Events source list, then restart the daemon:
+
+```toml
+[mcp.events]
+enabled = true
+sources = ["gmail", "imap", "gcal", "msmail"]
+```
+
+Subscribe to an exact archive `conversation_id` obtained from a message or
+conversation read. This is an email conversation, not a folder or a mailbox.
+Messages arrive when the native Graph sync runs, so delivery includes sync
+latency. Own messages are excluded unless the subscription sets
+`include_from_me = true`. Microsoft mail advertises message occurrences only;
+this does not add Microsoft draft or reaction events. See
+[MCP Events](../usage/chat.md#events) for authentication, signed receivers,
+subscriptions, receipts, and delivery limits.
+
+Initial downloads, newly discovered folders, and scans recovering an expired
+delta token stay silent, including interrupted scans. Updates and folder moves
+do not create another arrival. A failed download or required archive write
+keeps its original live or historical classification when retried. Older retry
+checkpoints without that evidence remain historical.
+
+A live occurrence commits with its message body, raw MIME, recipients, folder
+labels, reply headers, and parsed attachment metadata. When local attachment
+storage is enabled, files are prepared before that transaction; a required
+file or database failure leaves the previous snapshot intact for retry.
+Search indexing remains best-effort: an index failure does not block archiving
+or Events, and body and raw MIME reads remain available.
+Unparseable MIME retains existing attachment records. With file storage
+disabled, raw MIME remains available without promising local attachment bytes.
+Read paged message content with `get_message` and the receipt's `event_id`.
+Attachment IDs from that message can be read with the existing owner-authorized
+`get_attachment` chunk interface; that tool does not accept an `event_id`.
+
 ### Sync Your Email
 
 After adding the account, sync it the same way as any other account:

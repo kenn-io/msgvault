@@ -104,9 +104,11 @@ func capabilities(enabled bool, sources []string) []store.MCPEventCapability {
 	}
 	for _, source := range sources {
 		switch source {
-		case "gmail", "imap":
+		case "gmail", "imap", "beeper", "slack", "teams", "discord":
 			result = append(result, store.MCPEventCapability{Family: messageFamily, SourceType: source, Kinds: []string{"message"}}, store.MCPEventCapability{Family: draftFamily, SourceType: source, Kinds: []string{"created", "updated", "deleted"}})
-		case "beeper", "slack", "slackdump", "teams", "discord":
+		case "msmail", "matrix":
+			result = append(result, store.MCPEventCapability{Family: messageFamily, SourceType: source, Kinds: []string{"message"}})
+		case "slackdump":
 			result = append(result, store.MCPEventCapability{Family: draftFamily, SourceType: source, Kinds: []string{"created", "updated", "deleted"}})
 		case "gcal":
 			result = append(result, store.MCPEventCapability{Family: calendarFamily, SourceType: source, Kinds: []string{"created", "updated", "cancelled"}})
@@ -140,9 +142,17 @@ func (s *Service) Catalog() ListResult {
 	result := ListResult{Events: make([]Definition, 0)}
 	for _, family := range []string{messageFamily, calendarFamily, draftFamily} {
 		var kinds, draftKinds []string
+		var messageAttachments, matrixMessages bool
 		for _, cap := range s.caps {
 			if cap.Family == family {
 				kinds = append(kinds, cap.Kinds...)
+				if family == messageFamily {
+					if cap.SourceType == "matrix" {
+						matrixMessages = true
+					} else {
+						messageAttachments = true
+					}
+				}
 				if family == draftFamily {
 					switch cap.SourceType {
 					case "gmail", "imap", "beeper":
@@ -164,7 +174,15 @@ func (s *Service) Catalog() ListResult {
 		required := []string{"conversation_id"}
 		payload := map[string]any{"kind": map[string]any{schemaTypeProperty: "string", "enum": kinds}, "conversation_id": schemaID(), "source_id": schemaID()}
 		payloadRequired := []string{"kind", "conversation_id", "source_id"}
-		description := "A newly archived message in one conversation. Read content with get_message and list_thread; read attachments with get_attachment. get_mcp_event recovers a lost payload from eventId."
+		description := "A newly archived message in one conversation. Read content with get_message and list_thread."
+		if messageAttachments {
+			description += " Read available archived attachments with get_attachment"
+			if matrixMessages {
+				description += " (not available for Matrix)"
+			}
+			description += "."
+		}
+		description += " get_mcp_event recovers a lost payload from eventId."
 		switch family {
 		case messageFamily:
 			props["include_from_me"] = map[string]any{schemaTypeProperty: "boolean", "default": false}

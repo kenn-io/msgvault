@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-05"
+last_edited: "2026-10-07"
 title: Slack
 description: Archive Slack workspaces through the Web API or a Slackdump export.
 ---
@@ -259,6 +259,35 @@ size limits, and per-account opt-outs still apply.
 If Slack removes a file before it is downloaded, msgvault keeps the last
 captured filename, size, and permalink as terminal metadata rather than
 deleting the row or retrying an unreachable file forever.
+
+## MCP Events
+
+When [MCP Events](chat.md#events) is enabled, include `slack` in
+`mcp.events.sources` to receive `msgvault.message_archived` for an existing
+conversation. Slack is opt-in; the default source list is unchanged.
+
+Notifications follow incremental sync after the initial history is complete.
+They become available when message content, recipients, thread links and the
+required archive state have committed. Sync scheduling and Slack API limits
+therefore determine delivery delay. Receipts authorize the delivered message
+through `get_message`.
+
+New replies under older messages can produce events when the token has
+`search:read` and incremental search discovers them. With a public-channel-only
+token, canonical history audits still archive these replies, but that recovery
+is silent. Keep the [token scope guidance](#public-channels-only) when choosing
+permissions.
+
+Initial history, full repair, maintenance, historical catch-up and Slackdump
+imports do not produce arrival notifications. Resuming unfinished work preserves
+that distinction. Messages first archived during recovery stay silent even when
+they are recent. Replays and overlapping sync windows do not create duplicate
+occurrences for an already archived message.
+
+Embedded reaction snapshots and media downloads do not produce events. An
+attachment may remain pending after the message is readable. Subscriptions
+select one conversation; source-wide, inbox and thread subscriptions remain
+follow-up work.
 
 ## Daemon scheduling
 

@@ -222,6 +222,15 @@ func (m *MediaArchiver) persistAttachments(
 		return MediaResult{}, fmt.Errorf("load Discord attachment metadata: %w", err)
 	}
 
+	return m.persistAttachmentsWithPrevious(ctx, messageID, attachments, retryExisting, messageFlags, existing)
+}
+
+// The native page writer supplies the pre-snapshot view so new references in a
+// repeated page retain the existing download and summary accounting behavior.
+func (m *MediaArchiver) persistAttachmentsWithPrevious(
+	ctx context.Context, messageID int64, attachments []Attachment, retryExisting bool, messageFlags int,
+	existing map[string]store.AttachmentRef,
+) (MediaResult, error) {
 	refs := mapAttachments(attachments, messageFlags)
 	if len(refs) != len(attachments) {
 		return MediaResult{}, errors.New("map Discord attachment metadata: attachment count changed")

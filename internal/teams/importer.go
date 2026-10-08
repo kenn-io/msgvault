@@ -98,6 +98,20 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 		}
 	}()
 
+	if opts.Full {
+		state.ResetChatBaseline = true
+		blob, marshalErr := state.Marshal()
+		if marshalErr != nil {
+			err = marshalErr
+			return sum, err
+		}
+		// Persist the reset before any chat writes. A crash before the first
+		// completed chat must not revive the previous successful baseline.
+		if err = imp.store.UpdateSyncCheckpoint(syncID, &store.Checkpoint{PageToken: blob}); err != nil {
+			return sum, err
+		}
+	}
+
 	if err = imp.syncChats(ctx, src.ID, syncID, opts, state, sum); err != nil {
 		return sum, err
 	}
@@ -243,12 +257,19 @@ func (imp *Importer) syncChats(ctx context.Context, sourceID, syncID int64, opts
 			for _, m := range members {
 				pid, rerr := imp.res.resolveMember(ctx, m)
 				if rerr != nil || pid == 0 {
+					chatComplete = false
+					sum.Errors++
 					continue
 				}
+				// Empty chats still archive their roster. Messages also carry
+				// this snapshot into their own publication transaction.
 				if cerr := imp.store.EnsureConversationParticipant(convID, pid, "member"); cerr != nil {
-					sum.Errors++
+					return fmt.Errorf("archive teams chat member: %w", cerr)
 				}
 				toRecips = append(toRecips, recipientRef{ID: pid, Name: m.DisplayName})
+			}
+			if !chatComplete {
+				toRecips = nil
 			}
 		} else {
 			chatComplete = false
@@ -260,6 +281,7 @@ func (imp *Importer) syncChats(ctx context.Context, sourceID, syncID int64, opts
 			Type:             conversationType(ch.ChatType),
 			ParticipantCount: roster.policyCount(opts.MediaPolicy),
 		}
+		live := !opts.Full && state.ChatCovered(ch.ID)
 
 		since := state.ChatCursor(ch.ID)
 		msgs, pageTruncated, err := imp.client.ListChatMessages(ctx, ch.ID, chatQuerySince(since), opts.Limit)
@@ -295,7 +317,10 @@ func (imp *Importer) syncChats(ctx context.Context, sourceID, syncID int64, opts
 				break
 			}
 			gm := &msgs[i]
-			messageID, added, perr := imp.persistMessage(ctx, convID, sourceID, chatSourceMessageID(ch.ID, gm.ID), gm, chatOpts, sum, toRecips)
+			messageID, added, perr := imp.persistChatMessage(ctx, sourceID, gm, &chatPersistContext{
+				conversationID: convID, chat: ch, opts: chatOpts, toRecipients: toRecips,
+				live: live,
+			}, sum)
 			if perr != nil {
 				return perr
 			}
@@ -317,8 +342,11 @@ func (imp *Importer) syncChats(ctx context.Context, sourceID, syncID int64, opts
 			}
 		}
 		truncated := pageTruncated || (opts.Limit > 0 && convCount < len(msgs))
-		if chatComplete && !truncated && !maxTime.IsZero() {
-			state.SetChatCursor(ch.ID, maxTime.Format(time.RFC3339Nano))
+		if chatComplete && !truncated {
+			state.CoveredChats[ch.ID] = true
+			if !maxTime.IsZero() {
+				state.SetChatCursor(ch.ID, maxTime.Format(time.RFC3339Nano))
+			}
 		}
 		imp.enqueueEmbeddings(ctx, opts, sum, persistedIDs)
 		sum.ChatsProcessed++

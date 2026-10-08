@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-06"
+last_edited: 2026-10-08
 title: Configuration
 description: Configuration file reference, environment variables, and file locations.
 ---
@@ -710,6 +710,18 @@ sources = ["gmail", "imap", "gcal"]
 | `retention` | `"168h"` | Positive journal retention duration, at most seven days, measured from recording time. Expired occurrences become unavailable immediately; cleanup runs at half the configured duration, capped at one hour and floored at one second. |
 | `sources` | `["gmail", "imap", "gcal"]` | Allowed source types, further limited by implemented producers and readable projections. An empty array advertises no families. |
 | `trusted_callbacks` | `[]` | Explicit private receiver exceptions: objects with an HTTPS `origin` and fixed private IP `addresses`. |
+
+Additional native sources are opt-in. Add the source types you need to `sources`;
+the default list stays unchanged.
+
+| Source | Message capture and limits |
+|---|---|
+| `beeper` | [Exact conversation arrivals](usage/beeper.md#live-message-notifications), with managed draft events. Reaction events are unavailable. |
+| `slack` | [Native Slack arrivals](usage/slack.md#mcp-events). Slackdump imports remain silent. |
+| `teams` | [Teams chat arrivals](usage/teams.md#mcp-events). Channel message events are unavailable. |
+| `discord` | [Native channel and thread conversation arrivals](usage/discord.md#mcp-events), subject to verified sync coverage. |
+| `msmail` | [Native Microsoft mail arrivals](guides/oauth-setup.md#microsoft-mail-events). Initial history and historical recovery stay silent. |
+| `matrix` | [Readable Matrix room arrivals](usage/matrix.md#message-notifications), subject to coverage and encryption limits. |
 
 Callbacks normally require public HTTPS on port 443 or 8443. The daemon rejects
 redirects, reserved destinations, and DNS answers containing an unsafe address.

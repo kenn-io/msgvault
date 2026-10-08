@@ -1561,7 +1561,10 @@ func (s *Server) handleAuthenticatedHealth(w http.ResponseWriter, r *http.Reques
 				tools := []string{"get_message"}
 				switch capability.Family {
 				case "msgvault.message_archived":
-					tools = append(tools, "list_thread", "get_attachment")
+					tools = append(tools, "list_thread")
+					if capability.SourceType != "matrix" {
+						tools = append(tools, "get_attachment")
+					}
 				case "msgvault.draft_changed":
 					tools = []string{"draft_get"}
 					if capability.SourceType == "gmail" || capability.SourceType == "imap" {

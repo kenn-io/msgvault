@@ -3264,28 +3264,29 @@ func TestTombstonePlaceholderRetriesIncompletePersistence(t *testing.T) {
 	imp, opts := testImporter(t, f)
 	st := imp.store
 
-	// Break the final auxiliary snapshot write. The message row and body have
-	// already been upserted, but the tombstone is not complete and must remain
-	// eligible for retry.
+	// Reject a required auxiliary write. The whole tombstone snapshot must
+	// roll back and remain eligible for retry.
 	err := dropReactionsTable(st.DB())
 	require.NoError(err)
 	_, err = imp.Import(context.Background(), opts)
 	require.Error(err, "the auxiliary store failure must abort the run")
 
 	rootID := "C80:" + rootTS
-	var messageID int64
+	var count int
 	require.NoError(st.DB().QueryRow(st.Rebind(
-		`SELECT id FROM messages WHERE source_message_id = ?`), rootID).Scan(&messageID))
-	_, err = st.GetMessageRaw(messageID)
-	require.Error(err, "raw JSON is the completion marker and must be written only after fatal auxiliary snapshots")
+		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), rootID).Scan(&count))
+	assert.Zero(count, "failed mandatory writes must not leave a partial tombstone")
 
-	// Once the store heals, the held cursor re-serves the tombstone. A row
-	// without the completion marker must be processed rather than mistaken
-	// for a previously archived original.
+	// Once the store heals, the held cursor re-serves the tombstone. Its row
+	// is still missing, so it must be processed rather than mistaken for an
+	// archived original.
 	require.NoError(st.InitSchema())
 	sum, err := imp.Import(context.Background(), opts)
 	require.NoError(err)
 	assert.Positive(sum.MessagesProcessed)
+	var messageID int64
+	require.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT id FROM messages WHERE source_message_id = ?`), rootID).Scan(&messageID))
 
 	raw, err := st.GetMessageRaw(messageID)
 	require.NoError(err)

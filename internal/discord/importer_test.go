@@ -372,10 +372,10 @@ func TestImporterPinsBackfillPagesBackwardThenCollectsForwardPerContainer(t *tes
 	state, err := LoadSyncState(run.CursorAfter.String)
 	require.NoError(err)
 	assert.Equal(ContainerState{
-		HighWater: "107", BackfillBefore: "101", BackfillUpper: "105", BackfillComplete: true,
+		EventsCovered: true, HighWater: "107", BackfillBefore: "101", BackfillUpper: "105", BackfillComplete: true,
 	}, state.Containers["300"])
 	assert.Equal(ContainerState{
-		HighWater: "202", BackfillBefore: "201", BackfillUpper: "202", BackfillComplete: true,
+		EventsCovered: true, HighWater: "202", BackfillBefore: "201", BackfillUpper: "202", BackfillComplete: true,
 	}, state.Containers["400"])
 
 	queries := api.channelQueries("300")
@@ -2006,6 +2006,8 @@ func TestImporterAccessFailuresRecordMarkersAndPreserveContainerProgress(t *test
 			afterContainer := afterState.Containers["300"]
 			assert.True(afterContainer.RetryRequired)
 			assert.NotEmpty(afterContainer.RepairLower)
+			assert.Equal("live", afterContainer.EventsForwardMode)
+			afterContainer.EventsForwardMode = ""
 			afterContainer.RetryRequired = false
 			afterContainer.RepairLower = ""
 			afterState.Containers["300"] = afterContainer
@@ -2154,6 +2156,8 @@ func TestImporterCodeZero404FailsWithoutMissingMarkerOrCursorChange(t *testing.T
 	checkpointContainer := checkpointState.Containers["300"]
 	assert.True(checkpointContainer.RetryRequired)
 	assert.NotEmpty(checkpointContainer.RepairLower)
+	assert.Equal("live", checkpointContainer.EventsForwardMode)
+	checkpointContainer.EventsForwardMode = ""
 	checkpointContainer.RetryRequired = false
 	checkpointContainer.RepairLower = ""
 	checkpointState.Containers["300"] = checkpointContainer

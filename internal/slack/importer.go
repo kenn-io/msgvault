@@ -3,6 +3,7 @@ package slack
 import (
 	"context"
 	"database/sql"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"slices"
@@ -33,6 +34,9 @@ const (
 
 // convScope carries per-conversation state through the persist call chain.
 type convScope struct {
+	sweepLive bool
+	// liveAfter is exclusive provenance, independent of coverage/drain progress.
+	liveAfter       string
 	channelID       string
 	convID          int64
 	sourceID        int64
@@ -40,6 +44,7 @@ type convScope struct {
 	opts            ImportOptions
 	cs              *ConvState
 	toRecipients    []messageRecipient
+	conversation    *store.ConversationPersistData
 	membershipReady bool
 	// filesHandledExternally lets the offline Slackdump importer preserve the
 	// shared message mapping while replacing file rows from exported bytes.
@@ -311,7 +316,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 			return sum, err
 		}
 		if cc.membershipReady && state.EnsureConv(c.ID).Done {
-			targets[c.ID] = sweepTarget{convID: cc.convID, toRecipients: cc.toRecipients}
+			targets[c.ID] = sweepTarget{convID: cc.convID, toRecipients: cc.toRecipients, conversation: cc.conversation, live: cc.sweepLive}
 		}
 		sum.ConversationsProcessed++
 		if opts.Progress != nil {
@@ -406,7 +411,7 @@ func (imp *Importer) syncConversation(ctx context.Context, syncID, sourceID int6
 	if err != nil {
 		return nil, err
 	}
-	toRecipients, participantCount, err := imp.ensureMembership(ctx, syncID, convID, c, opts, sum)
+	toRecipients, participantCount, members, err := imp.ensureMembership(ctx, syncID, convID, c, opts, sum)
 	if err != nil {
 		return nil, err
 	}
@@ -415,7 +420,9 @@ func (imp *Importer) syncConversation(ctx context.Context, syncID, sourceID int6
 	cc := &convScope{
 		channelID: c.ID, convID: convID, sourceID: sourceID, syncID: syncID,
 		opts: opts, cs: cs, toRecipients: toRecipients,
+		sweepLive:       cs.Done && cs.Cursor != "" && cs.SweptThrough != "" && !state.RepairPending,
 		membershipReady: !c.IsMpim || toRecipients != nil,
+		conversation:    &store.ConversationPersistData{SourceConversationID: c.ID, ConversationType: conversationType(c), Title: conversationTitle(c, imp.res.displayName), Participants: members},
 	}
 	cc.opts.MediaConversation = attachmentpolicy.Conversation{
 		Type: conversationType(c), ParticipantCount: participantCount,
@@ -492,8 +499,8 @@ func unknownMembershipCount(policy attachmentpolicy.Policy) int {
 // also archived on the conversation: a media backfill re-reads the archive
 // rather than the workspace, so an unreadable listing has to be
 // distinguishable there from a conversation with few members.
-func (imp *Importer) ensureMembership(ctx context.Context, syncID, convID int64, c *Conversation, opts ImportOptions, sum *ImportSummary) ([]messageRecipient, int, error) {
-	var members []store.ConversationParticipantRef
+func (imp *Importer) ensureMembership(ctx context.Context, syncID, convID int64, c *Conversation, opts ImportOptions, sum *ImportSummary) ([]messageRecipient, int, []store.ConversationParticipantRef, error) {
+	members := make([]store.ConversationParticipantRef, 0)
 	directRecipients := make([]messageRecipient, 0)
 	add := func(userID string) error {
 		pid, err := imp.res.resolveID(userID)
@@ -510,15 +517,15 @@ func (imp *Importer) ensureMembership(ctx context.Context, syncID, convID int64,
 	}
 	if c.IsIM {
 		if err := add(c.User); err != nil {
-			return nil, 0, err
+			return nil, 0, nil, err
 		}
 		if err := add(opts.UserID); err != nil {
-			return nil, 0, err
+			return nil, 0, nil, err
 		}
 	} else {
 		if err := imp.client.AllMembers(ctx, c.ID, add); err != nil {
 			if ctx.Err() != nil {
-				return nil, 0, ctx.Err()
+				return nil, 0, nil, ctx.Err()
 			}
 			if errors.Is(err, ErrNotFound) {
 				imp.recordItem(syncID, c.ID, "membership", store.SyncRunItemStatusSkipped, "slack_channel_gone", err)
@@ -526,7 +533,7 @@ func (imp *Importer) ensureMembership(ctx context.Context, syncID, convID int64,
 				// history path confirm/record the gone conversation rather
 				// than parking it forever as missing membership; whatever
 				// roster earlier runs archived is the last one there was.
-				return []messageRecipient{}, 0, nil
+				return []messageRecipient{}, 0, nil, nil
 			}
 			// Isolated (message archiving proceeds) but honest: a members
 			// listing outage is a fetch failure and the run must report
@@ -538,18 +545,18 @@ func (imp *Importer) ensureMembership(ctx context.Context, syncID, convID int64,
 			// roster decides later downloads, so failing to record the outage
 			// would silently restore the fail-open behavior.
 			if merr := imp.store.MarkConversationMemberCountUnknown(convID); merr != nil {
-				return nil, 0, merr
+				return nil, 0, nil, merr
 			}
-			return nil, unknownMembershipCount(opts.MediaPolicy), nil
+			return nil, unknownMembershipCount(opts.MediaPolicy), nil, nil
 		}
 	}
 	if err := imp.store.ReplaceConversationParticipants(convID, members); err != nil {
-		return nil, 0, err
+		return nil, 0, nil, err
 	}
 	if err := imp.store.SetConversationMemberCount(convID, len(members)); err != nil {
-		return nil, 0, err
+		return nil, 0, nil, err
 	}
-	return directRecipients, len(members), nil
+	return directRecipients, len(members), members, nil
 }
 
 // walkWindow walks one pinned window of the conversation's top-level
@@ -569,6 +576,10 @@ func (imp *Importer) walkWindow(ctx context.Context, cc *convScope, state *SyncS
 	initial := !cs.Done
 	if cs.BackfillLatest == "" {
 		cs.BackfillLatest = tsFormat(imp.now())
+		cs.BackfillLiveAfter = ""
+		if cs.Done && cs.Cursor != "" && !state.RepairPending {
+			cs.BackfillLiveAfter = tsMinusMicro(overlapFloor(cs.Cursor))
+		}
 	}
 	pages := 0
 	for {
@@ -624,7 +635,9 @@ func (imp *Importer) walkWindow(ctx context.Context, cc *convScope, state *SyncS
 			return nil
 		}
 		for i := range page.Messages {
-			if err := imp.processMessage(ctx, cc, &page.Messages[i], sum); err != nil {
+			liveScope := *cc
+			liveScope.liveAfter = cs.BackfillLiveAfter
+			if err := imp.processMessage(ctx, &liveScope, &page.Messages[i], sum); err != nil {
 				return err
 			}
 		}
@@ -656,6 +669,7 @@ func (imp *Importer) walkWindow(ctx context.Context, cc *convScope, state *SyncS
 				m := &page.Messages[i]
 				if m.IsThreadRoot() {
 					cs.RecordPendingThread(m.TS, m.ReplyCount)
+					cs.recordThreadLiveAfter(m.TS, cs.BackfillLiveAfter)
 				}
 			}
 			if err := imp.drainPendingThreads(ctx, cc, sum); err != nil {
@@ -683,7 +697,7 @@ func (imp *Importer) walkWindow(ctx context.Context, cc *convScope, state *SyncS
 			if initial && !cc.opts.NoThreads && cs.AuditedThrough == "" {
 				cs.AuditedThrough = cs.BackfillLatest
 			}
-			cs.BackfillLatest = ""
+			cs.BackfillLatest, cs.BackfillLiveAfter = "", ""
 			return nil
 		}
 		cs.BackfillCursor = page.NextCursor
@@ -714,6 +728,15 @@ func (imp *Importer) walkWindow(ctx context.Context, cc *convScope, state *SyncS
 // abort the run.
 func (imp *Importer) drainPendingThreads(ctx context.Context, cc *convScope, sum *ImportSummary) error {
 	cs := cc.cs
+	// Search may know a live reply before its permalink reveals the root.
+	// Preserve that exact evidence even if an older audit drain reaches it
+	// first. This keeps the native debt order and historical siblings intact.
+	observedLive := make(map[string]bool)
+	for _, debt := range cs.PendingThreads {
+		if debt.ObservedLiveReply != "" {
+			observedLive[debt.ObservedLiveReply] = true
+		}
+	}
 	if cc.opts.Progress != nil && len(cs.PendingThreads) > 0 {
 		cc.opts.Progress(fmt.Sprintf("%s: draining %d owed thread(s), ~%d replies remaining",
 			cc.channelID, len(cs.PendingThreads), cs.PendingForecast()))
@@ -759,7 +782,10 @@ func (imp *Importer) drainPendingThreads(ctx context.Context, cc *convScope, sum
 				// draining so the FULL thread is fetched, the parent guard
 				// can fire, and sibling replies are covered.
 				pt.RootTS = m.ThreadTS
+				pt.DrainedTo = preDrained
+				cc.budgetUsed++ // charge discovery, without consuming the first insertion
 				reanchored = true
+				break
 			}
 			if !m.IsThreadReply() {
 				// The response leads with the parent regardless of bounds.
@@ -781,8 +807,17 @@ func (imp *Importer) drainPendingThreads(ctx context.Context, cc *convScope, sum
 				cc.budgetUsed++
 				continue
 			}
-			if err := imp.processMessage(ctx, cc, m, sum); err != nil {
+			liveScope := *cc
+			liveScope.liveAfter = pt.LiveAfter
+			if observedLive[m.TS] {
+				liveScope.liveAfter = tsMinusMicro(m.TS)
+			}
+			if err := imp.processMessage(ctx, &liveScope, m, sum); err != nil {
 				return err
+			}
+			if observedLive[m.TS] {
+				cs.clearObservedLiveReply(m.TS)
+				delete(observedLive, m.TS)
 			}
 			cc.budgetUsed++
 			sum.RepliesFetched++
@@ -794,16 +829,12 @@ func (imp *Importer) drainPendingThreads(ctx context.Context, cc *convScope, sum
 				pt.Forecast--
 			}
 		}
+		if reanchored {
+			// Fetch the canonical parent before the child's first insertion.
+			// The original drain position and provenance survive budget stops.
+			continue
+		}
 		if page.NextCursor == "" {
-			if reanchored {
-				// Re-fetch from the true root before settling — and roll the
-				// resume point back below the solo reply, so the root-
-				// anchored pass re-serves it AFTER its parent (SetReplyTo
-				// resolves at persist time; a reply persisted before its
-				// missing parent would keep a NULL thread link forever).
-				pt.DrainedTo = preDrained
-				continue
-			}
 			cs.PendingThreads = cs.PendingThreads[1:]
 			continue
 		}
@@ -1093,8 +1124,8 @@ func (imp *Importer) processMessage(ctx context.Context, cc *convScope, m *Messa
 		// --full, or --maintenance (the empty tombstone would also wipe
 		// archived reactions via ReplaceReactions). It IS persisted when the
 		// message was never archived: the placeholder gives orphaned replies
-		// a row for SetReplyTo to resolve against. Raw JSON is written only
-		// after every fatal auxiliary snapshot, so row+raw is the durable
+		// a row for SetReplyTo to resolve against. Raw JSON commits together
+		// with every required auxiliary snapshot, so row+raw is the durable
 		// completeness marker; a row alone may be a partial placeholder from
 		// an interrupted attempt and must be retried. The probe cannot swallow
 		// its error toward "missing" — that direction overwrites — so store
@@ -1135,66 +1166,70 @@ func (imp *Importer) processMessage(ctx context.Context, cc *convScope, m *Messa
 	if senderPID != 0 {
 		msg.SenderID = sql.NullInt64{Int64: senderPID, Valid: true}
 	}
-	messageID, err := imp.store.UpsertMessage(&msg)
+	recipients, err := imp.messageRecipients(m, senderPID, cc.toRecipients)
 	if err != nil {
 		return err
 	}
-	if err := imp.store.UpsertMessageBody(messageID, sql.NullString{String: text, Valid: text != ""}, sql.NullString{}); err != nil {
+	reactions, err := imp.messageReactions(m)
+	if err != nil {
 		return err
 	}
-	// FTS is the one warn-and-continue store write: the index is derived
-	// from the (fatally-checked) message row and body, holes are detected
-	// by FTSNeedsBackfill's anti-join, and rebuild-fts repopulates them —
-	// the same policy every other importer follows.
-	if err := imp.store.UpsertFTS(messageID, "", text, imp.res.displayName(m.User), "", ""); err != nil {
-		sum.Errors++
+	metadataBytes, err := json.Marshal(map[string]string{
+		"slack_team_id": cc.opts.TeamID, "slack_user_id": cc.opts.UserID,
+		"slack_channel_id": cc.channelID, "slack_message_ts": m.TS, "slack_thread_ts": m.ThreadTS,
+	})
+	if err != nil {
+		return fmt.Errorf("marshal Slack message metadata: %w", err)
+	}
+	metadata := sql.NullString{String: string(metadataBytes), Valid: true}
+	deleted := m.Subtype == "tombstone"
+	data := &store.MessagePersistData{
+		Message: &msg, Conversation: cc.conversation, Metadata: &metadata, PreserveLabels: true,
+		BodyText: sql.NullString{String: text, Valid: text != ""},
+		RawMIME:  raw, RawFormat: "slack_json", Recipients: recipients,
+		ReactionSnapshot: &reactions, DeletedFromSource: &deleted,
+	}
+	if m.IsThreadReply() {
+		data.ReplyToSourceMessageID = sourceMessageID(cc.channelID, m.ThreadTS)
 	}
 	if m.Edited != nil {
-		if err := imp.store.SetMessageEdited(messageID); err != nil {
-			return fmt.Errorf("set message edited: %w", err)
-		}
+		edited := true
+		data.Edited = &edited
 	}
-
 	if !cc.filesHandledExternally {
-		if err := imp.persistFiles(ctx, cc.syncID, messageID, m, cc.opts, sum); err != nil {
-			return err
+		prior, err := imp.store.MessageSlackAttachments(existing[msg.SourceMessageID])
+		if err != nil {
+			return fmt.Errorf("read Slack attachments: %w", err)
+		}
+		refs := imp.prepareFiles(ctx, cc.syncID, prior, m, cc.opts, sum)
+		if refs != nil {
+			data.SlackAttachmentSnapshot = &refs
 		}
 	}
-
-	if err := imp.persistRecipients(messageID, m, senderPID, cc.toRecipients); err != nil {
-		return err
+	mode := store.IngestBackfill
+	if cc.liveAfter != "" && tsLess(cc.liveAfter, m.TS) && !deleted {
+		mode = store.IngestLive
 	}
-	if err := imp.persistReactions(messageID, m); err != nil {
-		return err
-	}
-
-	// Thread replies link to their root by source-message-ID lookup. Roots
-	// always reach the archive before or with their replies (history pages
-	// carry roots; the replies response carries the root first), and
-	// SetReplyTo resolves to NULL harmlessly if one is missing.
-	if m.IsThreadReply() {
-		if err := imp.store.SetReplyTo(cc.sourceID, sourceMessageID(cc.channelID, m.TS), sourceMessageID(cc.channelID, m.ThreadTS)); err != nil {
-			return fmt.Errorf("link thread reply: %w", err)
+	if mode == store.IngestLive && m.IsThreadReply() {
+		archived, err := imp.parentArchived(cc.sourceID, cc.channelID, m.ThreadTS)
+		if err != nil {
+			return fmt.Errorf("check archived reply parent: %w", err)
+		}
+		if !archived {
+			// History is newest-first and includes broadcast replies. A
+			// missing root must not pin the source to this page forever.
+			// Archive silently; the canonical drain can repair the link
+			// later without publishing an incomplete arrival.
+			mode = store.IngestBackfill
 		}
 	}
-
-	// Keep the shared source-deletion lifecycle in sync without sacrificing
-	// archived Slack content. Tombstones preserve the prior snapshot above,
-	// but still mark it inactive; a live message reappearing later clears a
-	// stale marker, matching the Teams and Discord importers.
-	if m.Subtype == "tombstone" {
-		if err := imp.store.MarkMessageDeleted(cc.sourceID, msg.SourceMessageID); err != nil {
-			return fmt.Errorf("mark Slack message deleted: %w", err)
-		}
-	} else if err := imp.store.ClearMessageDeletedFromSource(cc.sourceID, msg.SourceMessageID); err != nil {
-		return fmt.Errorf("clear Slack message tombstone: %w", err)
+	messageID, err := imp.store.WithIngestContext(store.IngestContext{Mode: mode, ObservedAt: imp.now()}).PersistMessageContext(ctx, data)
+	if err != nil {
+		return fmt.Errorf("archive Slack message snapshot: %w", err)
 	}
-
-	// Archive the exact original message JSON (captured at decode time) only
-	// after every fatal auxiliary write succeeds. Tombstone retries use its
-	// presence as the durable signal that this whole snapshot completed.
-	if err := imp.store.UpsertMessageRawWithFormat(messageID, raw, "slack_json"); err != nil {
-		return fmt.Errorf("archive slack message raw: %w", err)
+	// FTS is derived and recoverable through rebuild-fts.
+	if err := imp.store.UpsertFTS(messageID, "", text, imp.res.displayName(m.User), "", ""); err != nil {
+		sum.Errors++
 	}
 
 	if sum.processedMessageIDs == nil {
@@ -1212,69 +1247,56 @@ func (imp *Importer) processMessage(ctx context.Context, cc *convScope, m *Messa
 	return nil
 }
 
-// persistRecipients writes the shared sender and mention recipient sets.
-// Conversation membership remains in conversation_participants rather than
-// being fanned out into a "to" row on every channel message.
-func (imp *Importer) persistRecipients(messageID int64, m *Message, senderPID int64, toRecipients []messageRecipient) error {
-	var fromIDs []int64
-	var fromNames []string
+// messageRecipients resolves the mandatory recipient snapshot before persistence.
+// A nil direct-chat roster preserves prior addressees; an empty successful
+// roster clears them. Channels carry their roster on the conversation.
+func (imp *Importer) messageRecipients(m *Message, senderPID int64, toRecipients []messageRecipient) ([]store.RecipientSet, error) {
+	from := store.RecipientSet{Type: "from"}
 	if senderPID != 0 {
-		senderName := imp.res.displayName(m.User)
-		if senderName == "" {
-			senderName = m.Username
+		name := imp.res.displayName(m.User)
+		if name == "" {
+			name = m.Username
 		}
-		fromIDs = append(fromIDs, senderPID)
-		fromNames = append(fromNames, senderName)
+		from.ParticipantIDs = []int64{senderPID}
+		from.DisplayNames = []string{name}
 	}
-	if err := imp.store.ReplaceMessageRecipients(messageID, "from", fromIDs, fromNames); err != nil {
-		return err
-	}
-	// Direct-chat membership has a concrete addressee meaning. A nil slice
-	// means membership lookup failed, so preserve any prior snapshot; a
-	// successful empty snapshot (including a channel) deliberately clears it.
+	recipients := []store.RecipientSet{from}
 	if toRecipients != nil {
-		var toIDs []int64
-		var toNames []string
+		to := store.RecipientSet{Type: "to"}
 		for _, recipient := range toRecipients {
-			if recipient.id == 0 || recipient.id == senderPID {
-				continue
+			if recipient.id != 0 && recipient.id != senderPID {
+				to.ParticipantIDs = append(to.ParticipantIDs, recipient.id)
+				to.DisplayNames = append(to.DisplayNames, recipient.name)
 			}
-			toIDs = append(toIDs, recipient.id)
-			toNames = append(toNames, recipient.name)
 		}
-		if err := imp.store.ReplaceMessageRecipients(messageID, "to", toIDs, toNames); err != nil {
-			return err
-		}
+		recipients = append(recipients, to)
 	}
-
-	var ids []int64
-	var names []string
+	mentions := store.RecipientSet{Type: "mention"}
 	for _, uid := range m.MentionedUserIDs() {
 		pid, err := imp.res.resolveID(uid)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		if pid == 0 {
-			continue
+		if pid != 0 {
+			mentions.ParticipantIDs = append(mentions.ParticipantIDs, pid)
+			mentions.DisplayNames = append(mentions.DisplayNames, imp.res.displayName(uid))
 		}
-		ids = append(ids, pid)
-		names = append(names, imp.res.displayName(uid))
 	}
-	return imp.store.ReplaceMessageRecipients(messageID, "mention", ids, names)
+	return append(recipients, mentions), nil
 }
 
-// persistReactions replaces the message's reactions from the embedded
+// messageReactions resolves the message's mandatory reaction snapshot from the embedded
 // aggregates. Slack reactions carry no timestamp; created_at approximates
 // with the target message's timestamp (cosmetic only). The API may truncate
 // a reaction's user list on very popular messages — the archived raw JSON
 // preserves the counts.
-func (imp *Importer) persistReactions(messageID int64, m *Message) error {
+func (imp *Importer) messageReactions(m *Message) ([]store.ReactionRef, error) {
 	var reactions []store.ReactionRef
 	for _, rc := range m.Reactions {
 		for _, uid := range rc.Users {
 			pid, err := imp.res.resolveID(uid)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			if pid == 0 {
 				continue
@@ -1287,7 +1309,7 @@ func (imp *Importer) persistReactions(messageID int64, m *Message) error {
 			})
 		}
 	}
-	return imp.store.ReplaceReactions(messageID, reactions)
+	return reactions, nil
 }
 
 // checkpoint persists the sync state mid-run so an interrupted run resumes.

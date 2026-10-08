@@ -313,7 +313,27 @@ func (s *Store) validateMCPEventScope(ctx context.Context, db cardDAVQueryer, r 
 			return "", 0, mcpStoreError("kind_not_capable")
 		}
 	}
+	if allowed, err := s.mcpTeamsChatAllowed(ctx, db, family, sourceID, scopeID); err != nil {
+		return "", 0, mcpSafeError(err)
+	} else if !allowed {
+		return "", 0, mcpStoreError("source_not_capable")
+	}
 	return sourceType, sourceID, nil
+}
+
+// mcpTeamsChatAllowed applies the native chat-only producer boundary without
+// requiring capture to remain enabled for retained receipt reads. Subscription
+// lifetime checks separately revoke removed scopes and sources.
+func (s *Store) mcpTeamsChatAllowed(ctx context.Context, db cardDAVQueryer, family string, sourceID, conversationID int64) (bool, error) {
+	if family != "msgvault.message_archived" {
+		return true, nil
+	}
+	var allowed bool
+	err := db.QueryRowContext(ctx, s.Rebind(`SELECT
+		NOT EXISTS (SELECT 1 FROM sources WHERE id=? AND source_type='teams')
+		OR EXISTS (SELECT 1 FROM conversations WHERE id=? AND source_id=?
+			AND conversation_type IN ('direct_chat','group_chat'))`), sourceID, conversationID, sourceID).Scan(&allowed)
+	return allowed, err
 }
 
 // appendMCPEventTx runs after the complete archive mutation under the outer
@@ -329,6 +349,11 @@ func (s *Store) appendMCPEventTx(ctx context.Context, logged *loggedTx, event MC
 	}
 	r := s.mcpRoot().mcpConfig.Load()
 	if !r.kinds[event.Family+"\x00"+sourceType][event.Kind] {
+		return nil
+	}
+	if allowed, err := s.mcpTeamsChatAllowed(ctx, tx, event.Family, event.SourceID, event.ConversationID); err != nil {
+		return mcpSafeError(err)
+	} else if !allowed {
 		return nil
 	}
 	var object map[string]jsontext.Value

@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-02"
+last_edited: "2026-10-08"
 title: Matrix
 description: Archive plaintext history from joined Matrix rooms on any homeserver.
 ---
@@ -86,6 +86,45 @@ with their raw ciphertext. They are not silently dropped.
 
 Matrix messages use per-message semantic indexing. Once imported, their text is
 available to keyword, semantic, and people workflows enabled for the archive.
+
+## Message notifications
+
+On unreleased `main`, native Matrix sync can publish `msgvault.message_archived` Events for new
+readable messages in an exact archived room conversation. Enable Events and
+explicitly include `matrix` in the daemon configuration:
+
+```toml
+[mcp.events]
+enabled = true
+sources = ["matrix"]
+```
+
+Restart the daemon after changing these settings. Use the archive's numeric
+`conversation_id` when subscribing, not a Matrix room ID. Events remain off
+by default, and Matrix is not in the default source list. Notifications arrive
+when sync archives a message; they are not a direct homeserver push feed.
+
+The first sync, full history refreshes, newly included or rejoined rooms, and
+older checkpoints without Events coverage are silent. A completed history
+pass establishes coverage for later syncs, including rooms with no messages.
+An interrupted pass keeps its original classification. Missing pages from a
+covered incremental timeline can publish arrivals; an interrupted page walk
+retains that decision when it resumes. Re-reading an archived message does
+not publish it again. Edits, reactions, redactions, and reply repairs do not
+publish message arrivals.
+
+Before publishing an occurrence, msgvault commits the readable body, raw
+event, current room title and membership, and any available reply link
+together. A reply whose parent is unavailable can still publish its own
+arrival. Its delivery receipt grants access to that message, not its parent
+or another room. Use receipt-bound `get_message` pagination to read the
+body. The [MCP Events guide](chat.md#events) owns authentication, signed
+callbacks, receipt expiry, and subscription renewal.
+
+Own messages are excluded unless the subscription sets `include_from_me`.
+Encrypted placeholders remain archived but never publish a readable-message
+notification. These Events do not promise decryption, downloaded media,
+transcripts, reactions, drafts, source-wide subscriptions, or sending.
 
 ## Current limits
 

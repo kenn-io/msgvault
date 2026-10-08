@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-06"
+last_edited: 2026-10-08
 title: MCP Server
 description: Expose your email, chat, calendar, and meeting archive to AI assistants via MCP.
 ---
@@ -39,15 +39,21 @@ stdio, with delegated tokens, in keyless mode, or when either independent
 
 The client discovers the top-level `events` capability through
 `server/discover`, then calls `events/list`. The runtime catalog includes only
-source types with implemented capture and reads. Phase 1 supports Gmail and
-IMAP message and draft occurrences, and Google Calendar event changes.
-Managed Beeper drafts and local chat drafts also have capture and `draft_get`
-reads when their source types are explicitly enabled in `[mcp.events].sources`:
-`beeper`, `slack`, `slackdump`, `teams`, and `discord`.
-Historical imports, full scans, and recovery scans do not emit live occurrences. A newly
-subscribed receiver starts at the current journal head. Keep the daemon running
-with `msgvault serve`, or disable background daemon idle shutdown when callbacks
-must remain available.
+source types with implemented capture and reads. Gmail and IMAP support message
+and draft occurrences; Google Calendar supports event changes. Explicitly enabled
+`beeper`, `slack`, `teams`, `discord`, `msmail`, and `matrix` sources add native
+message arrivals in exact conversations. See the
+[supported source types](../configuration.md#mcpevents) for provider coverage and
+media limits. Their reaction events remain unadvertised.
+
+Managed Beeper drafts and local chat drafts have capture and `draft_get` reads
+when their source types are explicitly enabled: `beeper`, `slack`, `slackdump`,
+`teams`, and `discord`.
+
+Historical imports, full scans, and historical recovery scans do not emit live
+occurrences. A newly subscribed receiver starts at the current journal head.
+Keep the daemon running with `msgvault serve`, or disable background daemon idle
+shutdown when callbacks must remain available.
 
 Choose an exact scope before subscribing:
 

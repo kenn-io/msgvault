@@ -872,7 +872,7 @@ func TestRawArchiveFailureFailsImport(t *testing.T) {
 		IncludeChannels: false,
 	})
 	require.Error(err)
-	assert.Contains(err.Error(), "archive teams message raw")
+	assert.Contains(err.Error(), "raw archive blocked")
 
 	src, err := st.GetOrCreateSource("teams", "me@example.com")
 	require.NoError(err)

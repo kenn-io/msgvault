@@ -100,17 +100,26 @@ func TestManagedDraftCatalogOwnerReadGate(t *testing.T) {
 			s, err := New(t.Context(), f.Store, Options{Enabled: true, Sources: []string{tc.source}, KeyPath: t.TempDir() + "/key", OwnerKey: "synthetic-owner"})
 			require.NoError(err)
 			want := []store.MCPEventCapability{{Family: draftFamily, SourceType: tc.source, Kinds: []string{"created", "updated", "deleted"}}}
-			require.Equal(want, s.Capabilities(), "only drafts are ready on this explicitly enabled source")
+			if tc.source != "slackdump" {
+				want = append([]store.MCPEventCapability{{Family: messageFamily, SourceType: tc.source, Kinds: []string{"message"}}}, want...)
+			}
+			require.Equal(want, s.Capabilities(), "only implemented kinds are ready on this explicitly enabled source")
 			caps := s.Capabilities()
 			caps[0].Kinds[0] = "corrupted"
 			assert.Equal(want, s.Capabilities(), "capability callers cannot change enabled kinds")
 			catalog := s.Catalog().Events
-			require.Len(catalog, 1)
-			assert.Equal(draftFamily, catalog[0].Name)
-			assert.Contains(catalog[0].Description, "draft_get")
-			assert.NotContains(catalog[0].Description, "get_message", "non-email drafts have no archived message read recipe")
-			assert.Contains(catalog[0].Description, "get_mcp_event")
-			encoded, err := json.Marshal(catalog[0].PayloadSchema)
+			require.Len(catalog, len(want))
+			var draft Definition
+			for _, definition := range catalog {
+				if definition.Name == draftFamily {
+					draft = definition
+				}
+			}
+			require.Equal(draftFamily, draft.Name)
+			assert.Contains(draft.Description, "draft_get")
+			assert.NotContains(draft.Description, "get_message", "non-email drafts have no archived message read recipe")
+			assert.Contains(draft.Description, "get_mcp_event")
+			encoded, err := json.Marshal(draft.PayloadSchema)
 			require.NoError(err)
 			var schema jsonschema.Schema
 			require.NoError(json.Unmarshal(encoded, &schema))
@@ -170,6 +179,68 @@ func TestManagedDraftMixedPayloadSchema(t *testing.T) {
 				require.NoError(resolved.Validate(payload))
 				payload["message_id"] = "1"
 				require.Error(resolved.Validate(payload))
+			}
+		})
+	}
+}
+
+func TestCatalogMatrixMessageOnly(t *testing.T) {
+	Assert.Equal(t, []store.MCPEventCapability{{Family: messageFamily, SourceType: "matrix", Kinds: []string{"message"}}}, capabilities(true, []string{"matrix"}))
+	Assert.Empty(t, capabilities(false, []string{"matrix"}))
+}
+
+func TestCatalogMSMailMessageOnly(t *testing.T) {
+	Assert.Equal(t, []store.MCPEventCapability{{Family: messageFamily, SourceType: "msmail", Kinds: []string{"message"}}}, capabilities(true, []string{"msmail"}))
+	Assert.Empty(t, capabilities(false, []string{"msmail"}))
+}
+
+func TestCatalogCombinedNativeProviders(t *testing.T) {
+	got := make(map[string][]string)
+	for _, capability := range capabilities(true, []string{"beeper", "slack", "teams", "discord", "msmail", "matrix", "slackdump"}) {
+		got[capability.SourceType] = append(got[capability.SourceType], capability.Family)
+	}
+	Require.Equal(t, map[string][]string{
+		"beeper":    {messageFamily, draftFamily},
+		"slack":     {messageFamily, draftFamily},
+		"teams":     {messageFamily, draftFamily},
+		"discord":   {messageFamily, draftFamily},
+		"msmail":    {messageFamily},
+		"matrix":    {messageFamily},
+		"slackdump": {draftFamily},
+	}, got)
+}
+
+func TestMessageCatalogAttachmentReadScope(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		sources     []string
+		attachments bool
+		mixedMatrix bool
+	}{
+		{name: "matrix", sources: []string{"matrix"}},
+		{name: "mail", sources: []string{"gmail"}, attachments: true},
+		{name: "mixed", sources: []string{"gmail", "matrix"}, attachments: true, mixedMatrix: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := Assert.New(t)
+			s := Service{caps: capabilities(true, tc.sources)}
+			var message Definition
+			for _, definition := range s.Catalog().Events {
+				if definition.Name == messageFamily {
+					message = definition
+				}
+			}
+			Require.Equal(t, messageFamily, message.Name)
+			assert.Contains(message.Description, "get_message")
+			assert.Contains(message.Description, "list_thread")
+			assert.Contains(message.Description, "get_mcp_event")
+			if tc.attachments {
+				assert.Contains(message.Description, "get_attachment")
+			} else {
+				assert.NotContains(message.Description, "get_attachment")
+			}
+			if tc.mixedMatrix {
+				assert.Contains(message.Description, "not available for Matrix")
 			}
 		})
 	}

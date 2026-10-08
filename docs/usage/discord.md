@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-03
+last_edited: 2026-10-08
 title: Discord
 description: Archive Discord guild channels, threads, and attachments through a read-only bot.
 ---
@@ -173,6 +173,42 @@ Run `msgvault serve` to activate schedules. Discord display names are neither
 stable nor unique, so scheduled entries must use the guild ID. Each guild is
 resolved and synced independently through the same importer as
 `sync-discord`; schedule multiple guilds with separate `[[accounts]]` blocks.
+
+## MCP Events
+
+Subscribe to newly archived Discord messages with [native MCP Events](chat.md#events).
+Each channel, thread, and forum post has its own archive conversation. Use its
+exact `conversation_id`; a parent channel subscription does not include its
+child threads.
+
+Events are off by default. Add `discord` to `[mcp.events].sources` alongside
+any other sources you use, then enable Events on the daemon:
+
+```toml
+[mcp.events]
+enabled = true
+sources = ["gmail", "imap", "gcal", "discord"]
+```
+
+Use the `msgvault.message_archived` family. The [Events guide](chat.md#events)
+owns authentication, receiver verification, renewal, and receipt reads.
+Sync verifies the resolved credential's bot user ID and confirms it for that
+guild source. Own messages are excluded by default; `include_from_me` enables
+delivery for messages attributed to the source's confirmed identities.
+
+Notifications follow REST syncs, so scheduled sync frequency affects delivery
+time. Initial history, `--full` repair, edit/deletion rescans, and changed
+`--after` windows stay silent, including after interruption. A completed empty
+conversation establishes coverage for its first later arrival. Existing checkpoints
+without Events coverage first complete a silent pass for each conversation.
+Re-reading a message, editing it, or updating reaction counts does not create
+another arrival.
+
+Text, source JSON, sender and mention records, known members, native metadata,
+and attachment references commit before the occurrence is published. Optional
+media downloads can finish later; an arrival does not promise media readiness.
+An unavailable reply parent does not delay the child's arrival. Later parent
+link repair is silent, and the child's receipt cannot read the parent's message.
 
 ## What gets archived
 

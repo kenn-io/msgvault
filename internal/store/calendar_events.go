@@ -6,7 +6,6 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"log/slog"
 	"reflect"
 	"strconv"
 	"time"
@@ -105,7 +104,7 @@ func (s *Store) PersistCalendarEventContext(ctx context.Context, data *MessagePe
 				return e
 			}
 			if data.FTS != nil && s.fts5Available {
-				if e := s.indexCalendarEventTx(ctx, tx, id, *data.FTS); e != nil {
+				if e := s.indexBestEffortFTSTx(ctx, tx, id, *data.FTS); e != nil {
 					return e
 				}
 			}
@@ -153,31 +152,4 @@ func (s *Store) PersistCalendarEventContext(ctx context.Context, data *MessagePe
 		return s.appendMCPEventTx(ctx, tx, MCPEvent{Family: "msgvault.calendar_event_changed", Kind: kind, ScopeKind: "source", ScopeID: source, SourceID: source, ConversationID: conversation, MessageID: id, FromMe: fromMe, OccurredAt: changedAt, Data: raw})
 	})
 	return id, inserted, err
-}
-
-// indexCalendarEventTx preserves the calendar syncer's best-effort index write.
-// A PostgreSQL SQL error must be rolled back before the archive transaction can
-// append its occurrence and commit the ready canonical snapshot.
-func (s *Store) indexCalendarEventTx(ctx context.Context, tx *loggedTx, id int64, doc FTSDoc) error {
-	const savepoint = "calendar_event_fts"
-	if _, err := tx.ExecContext(ctx, "SAVEPOINT "+savepoint); err != nil {
-		return fmt.Errorf("create calendar index savepoint: %w", err)
-	}
-	doc.MessageID = id
-	indexErr := s.dialect.FTSUpsert(boundQuerier{ctx: ctx, q: tx}, doc)
-	if indexErr != nil {
-		if _, err := tx.ExecContext(ctx, "ROLLBACK TO SAVEPOINT "+savepoint); err != nil {
-			return fmt.Errorf("rollback calendar index: index: %w; rollback: %w", indexErr, err)
-		}
-	}
-	if _, err := tx.ExecContext(ctx, "RELEASE SAVEPOINT "+savepoint); err != nil {
-		return fmt.Errorf("release calendar index savepoint: %w", err)
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if indexErr != nil {
-		slog.Warn("upsert calendar event fts failed", "message_id", id, "reason", "index_write_failed")
-	}
-	return nil
 }

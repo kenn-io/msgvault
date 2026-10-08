@@ -394,6 +394,11 @@ func (s *Store) mcpAuthorizedEvent(ctx context.Context, db cardDAVQueryer, id st
 	if !mcpEventMatches(*sub, event) {
 		return MCPEvent{}, mcpStoreError("event_unavailable")
 	}
+	if allowed, err := s.mcpTeamsChatAllowed(ctx, db, event.Family, event.SourceID, event.ConversationID); err != nil {
+		return MCPEvent{}, err
+	} else if !allowed {
+		return MCPEvent{}, mcpStoreError("event_unavailable")
+	}
 	return event, nil
 }
 
@@ -439,6 +444,11 @@ func (s *Store) CheckMCPSubscription(ctx context.Context, id string, generation 
 	}
 	r := s.mcpRoot().mcpConfig.Load()
 	if sub == nil || sub.Generation != generation || sub.State != mcpSubscriptionActive || !now.Before(sub.ExpiresAt) || r == nil || !r.config.Enabled || r.config.Principal != sub.Principal {
+		return mcpStoreError("subscription_inactive")
+	}
+	if allowed, err := s.mcpTeamsChatAllowed(ctx, s.DB(), sub.Name, sub.SourceID, sub.ScopeID); err != nil {
+		return mcpSafeError(err)
+	} else if !allowed {
 		return mcpStoreError("subscription_inactive")
 	}
 	return nil
@@ -550,6 +560,14 @@ func (s *Store) PrepareMCPDelivery(ctx context.Context, id string, generation in
 				reason = "retention"
 			}
 			stopMCPSubscription(sub, "stopped", reason, now)
+			return s.saveMCPSubscription(ctx, tx, sub)
+		}
+		allowed, err := s.mcpTeamsChatAllowed(ctx, tx, sub.Name, sub.SourceID, sub.ScopeID)
+		if err != nil {
+			return err
+		}
+		if !allowed {
+			stopMCPSubscription(sub, "stopped", "scope_removed", now)
 			return s.saveMCPSubscription(ctx, tx, sub)
 		}
 		originalCursor := sub.CursorSeq

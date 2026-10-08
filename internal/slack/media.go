@@ -138,6 +138,22 @@ func (imp *Importer) persistFiles(ctx context.Context, syncID, messageID int64, 
 	if err != nil {
 		return fmt.Errorf("read attachment rows: %w", err)
 	}
+	refs := imp.prepareFiles(ctx, syncID, existing, m, opts, sum)
+	if refs == nil {
+		return nil
+	}
+	if err := imp.store.ReplaceMessageSlackAttachments(messageID, refs); err != nil {
+		return fmt.Errorf("replace attachment rows: %w", err)
+	}
+	if err := imp.store.RecomputeMessageAttachmentStats(messageID); err != nil {
+		return fmt.Errorf("recompute attachment stats: %w", err)
+	}
+	return nil
+}
+
+// prepareFiles performs provider and CAS work before the message transaction.
+// Every failed download yields a durable retry marker in the returned snapshot.
+func (imp *Importer) prepareFiles(ctx context.Context, syncID int64, existing map[string]store.AttachmentRef, m *Message, opts ImportOptions, sum *ImportSummary) []store.AttachmentRef {
 	if len(m.Files) == 0 && len(existing) == 0 {
 		return nil
 	}
@@ -317,11 +333,5 @@ func (imp *Importer) persistFiles(ctx context.Context, syncID, messageID int64, 
 		}
 		refs = append(refs, ref)
 	}
-	if err := imp.store.ReplaceMessageSlackAttachments(messageID, refs); err != nil {
-		return fmt.Errorf("replace attachment rows: %w", err)
-	}
-	if err := imp.store.RecomputeMessageAttachmentStats(messageID); err != nil {
-		return fmt.Errorf("recompute attachment stats: %w", err)
-	}
-	return nil
+	return refs
 }

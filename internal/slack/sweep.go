@@ -32,8 +32,10 @@ const (
 
 // sweepTarget is a done conversation eligible for reply archiving.
 type sweepTarget struct {
+	live         bool
 	convID       int64
 	toRecipients []messageRecipient
+	conversation *store.ConversationPersistData
 }
 
 // sweepBudget bounds a limited run's sweep work (limit 0 = unlimited).
@@ -227,6 +229,10 @@ func (imp *Importer) scheduleCanonicalThreadAudit(targets map[string]sweepTarget
 // store/context failures return an error.
 func (imp *Importer) sweepRange(ctx context.Context, syncID int64, scope, floor string, searchEnd time.Time, ceiling string, targets map[string]sweepTarget, loc *time.Location, budget *sweepBudget, state *SyncState, sum *ImportSummary, commit func(certified string)) error {
 	queryFloor := overlapFloor(floor)
+	liveAfter := ""
+	if scope == "" && !state.RepairPending {
+		liveAfter = queryFloor
+	}
 	startedWithCapacity := !budget.exhausted()
 	// The boundary only ever advances: overlap-region parks and yesterday's
 	// day-end sit below the stored floor and must not regress it.
@@ -310,7 +316,7 @@ func (imp *Importer) sweepRange(ctx context.Context, syncID int64, scope, floor 
 			overlapBudget.used++
 			debtBudget = &overlapBudget
 		}
-		debtErr := imp.recordSweepDebt(ctx, syncID, hits, queryFloor, targets, debtBudget, state, sum)
+		debtErr := imp.recordSweepDebt(ctx, syncID, hits, queryFloor, liveAfter, targets, debtBudget, state, sum)
 		if reservedDayCharge {
 			budget.used = debtBudget.used - 1
 		}
@@ -447,11 +453,12 @@ func (imp *Importer) sweepQuery(scope, day string, syncID int64) string {
 // drain-first step pays. Fetching is entirely the drain's job:
 // budget-sized pages, reply-granular resume, gone-thread churn handling,
 // and the guarded parent skip all come with it.
-func (imp *Importer) recordSweepDebt(ctx context.Context, syncID int64, hits []SearchMatch, queryFloor string, targets map[string]sweepTarget, budget *sweepBudget, state *SyncState, sum *ImportSummary) error {
+func (imp *Importer) recordSweepDebt(ctx context.Context, syncID int64, hits []SearchMatch, queryFloor, liveAfter string, targets map[string]sweepTarget, budget *sweepBudget, state *SyncState, sum *ImportSummary) error {
 	type group struct {
-		channelID string
-		anchorTS  string // any ts within the thread; replies resolves it
-		minHit    string
+		channelID  string
+		anchorTS   string // any ts within the thread; replies resolves it
+		minHit     string
+		unanchored bool
 	}
 	var groups []group
 	index := map[string]int{}
@@ -480,12 +487,19 @@ func (imp *Importer) recordSweepDebt(ctx context.Context, syncID int64, hits []S
 		if anchor == "" {
 			anchor = h.TS
 		}
-		groups = append(groups, group{channelID: h.ChannelID, anchorTS: anchor, minHit: h.TS})
+		groups = append(groups, group{channelID: h.ChannelID, anchorTS: anchor, minHit: h.TS, unanchored: h.RootTS == ""})
 	}
 
 	touched := map[string]bool{}
 	for _, g := range groups {
-		state.EnsureConv(g.channelID).RecordPendingThreadTail(g.anchorTS, tsMinusMicro(g.minHit))
+		cs := state.EnsureConv(g.channelID)
+		cs.RecordPendingThreadTail(g.anchorTS, tsMinusMicro(g.minHit))
+		if targets[g.channelID].live {
+			cs.recordThreadLiveAfter(g.anchorTS, liveAfter)
+			if liveAfter != "" && g.unanchored {
+				cs.recordUnanchoredLiveReply(g.anchorTS, g.minHit)
+			}
+		}
 		touched[g.channelID] = true
 	}
 	ids := make([]string, 0, len(touched))
@@ -504,7 +518,7 @@ func (imp *Importer) recordSweepDebt(ctx context.Context, syncID int64, hits []S
 		cc := &convScope{
 			channelID: cid, convID: target.convID, sourceID: imp.sourceID,
 			syncID: syncID, opts: imp.opts, cs: state.Conversations[cid],
-			toRecipients: target.toRecipients, budgetUsed: budget.used,
+			toRecipients: target.toRecipients, conversation: target.conversation, budgetUsed: budget.used,
 		}
 		if err := imp.drainPendingThreads(ctx, cc, sum); err != nil {
 			return err
