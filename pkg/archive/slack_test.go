@@ -75,8 +75,12 @@ func (p *slackPeer) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		messages := []any{}
-		if oldest := r.Form.Get("oldest"); oldest == "" || oldest < p.rootTS {
+		oldest := r.Form.Get("oldest")
+		if oldest == "" || oldest < p.rootTS {
 			messages = append(messages, root)
+		}
+		if ownerTS := p.ownerTS(); r.Form.Get("channel") == "CSELECTED" && (oldest == "" || oldest < ownerTS) {
+			messages = append(messages, map[string]any{"type": "message", "ts": ownerTS, "user": "UFIRST", "text": "Owner calibration note"})
 		}
 		body = map[string]any{"ok": true, "messages": messages, "has_more": false}
 	case "/conversations.replies":
@@ -99,6 +103,12 @@ func (p *slackPeer) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = json.MarshalWrite(w, body)
+}
+
+// ownerTS is a message the first credential's user sent before the root.
+func (p *slackPeer) ownerTS() string {
+	seconds, _ := strconv.ParseInt(strings.Split(p.rootTS, ".")[0], 10, 64)
+	return fmt.Sprintf("%d.000001", seconds-60)
 }
 
 func TestSlackInspectionReportsCredentialScopes(t *testing.T) {
@@ -128,7 +138,8 @@ func exerciseSlackReplacement(t *testing.T, runtime *archive.Archive) {
 	first, err := runtime.SyncSlack(t.Context(), opts)
 	require.NoError(err)
 	assert.Equal(1, first.ConversationsProcessed)
-	assert.Equal(1, first.MessagesAdded)
+	assert.Equal(2, first.MessagesAdded)
+	assertFromMe(t, runtime, "CSELECTED:"+peer.ownerTS(), true)
 	firstIDs := searchIDs(t, runtime, "telescope", 1)
 	peer.mu.Lock()
 	peer.reply = true
@@ -151,6 +162,8 @@ func exerciseSlackReplacement(t *testing.T, runtime *archive.Archive) {
 	assert.Equal("USECOND", progress.Slack.PrincipalID)
 	retainedIDs := searchIDs(t, runtime, "telescope", 2)
 	assert.Contains(retainedIDs, firstIDs[0], "credential replacement preserves message identity")
+	assertFromMe(t, runtime, "CSELECTED:"+peer.ownerTS(), true)
+	assertFromMe(t, runtime, "CSELECTED:"+peer.rootTS, false)
 	require.NoError(runtime.PurgeChannel(t.Context(), sourceID, "CSELECTED"))
 	searchIDs(t, runtime, "telescope", 0)
 	searchIDs(t, runtime, "observatory", 1)
@@ -168,6 +181,17 @@ func exerciseSlackReplacement(t *testing.T, runtime *archive.Archive) {
 	searchIDs(t, runtime, "telescope", 0)
 	_, err = runtime.SyncSlack(t.Context(), opts)
 	require.Error(err, "a retried run must not recreate a purged source")
+}
+
+// assertFromMe checks sender attribution, which stays with the source owner
+// when another user's credential replaces the original one.
+func assertFromMe(t *testing.T, runtime *archive.Archive, sourceMessageID string, want bool) {
+	t.Helper()
+	st := runtime.Store()
+	var fromMe bool
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(
+		"SELECT is_from_me FROM messages WHERE source_message_id = ?"), sourceMessageID).Scan(&fromMe))
+	assert.Equal(t, want, fromMe, sourceMessageID)
 }
 
 func searchIDs(t *testing.T, runtime *archive.Archive, query string, want int) []int64 {

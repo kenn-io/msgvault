@@ -317,7 +317,9 @@ type ImportOptions struct {
 	ExcludeChannels []string
 	// ChannelIDs adds an exact ID selection before all other filters. Nil
 	// retains normal selection; a non-nil empty slice selects nothing. Reply
-	// searches stay within each selected public channel instead of the workspace.
+	// searches stay within each selected channel (C-prefixed IDs, public or
+	// private) instead of the workspace; selected DMs and group DMs audit
+	// their threads directly.
 	ChannelIDs []string
 	// ExcludePrivateChannels skips private channels without affecting DMs.
 	ExcludePrivateChannels bool
@@ -344,6 +346,10 @@ type ImportSummary struct {
 	AttachmentsSkipped     int
 	FetchErrors            int
 	Errors                 int
-	Duration               time.Duration
-	processedMessageIDs    map[string]struct{}
+	// UnavailableChannels lists selected ChannelIDs the credential user's
+	// conversation listing did not return. The run skips them without
+	// failing; their archived history is unchanged.
+	UnavailableChannels []string
+	Duration            time.Duration
+	processedMessageIDs map[string]struct{}
 }

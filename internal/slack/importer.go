@@ -117,6 +117,9 @@ type Importer struct {
 	// set at the top of Import/BackfillMedia).
 	opts     ImportOptions
 	sourceID int64
+	// ownerID is the source owner's Slack user ID, which may differ from
+	// opts.UserID after a credential replacement.
+	ownerID string
 }
 
 // NewImporter creates an Importer backed by the given store and Slack client.
@@ -195,20 +198,10 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (_ *ImportS
 	if opts.TeamID == "" || opts.UserID == "" {
 		return nil, errors.New("slack team and user IDs required")
 	}
-	var src *store.Source
-	var err error
-	if opts.SourceID == 0 {
-		src, err = imp.store.GetOrCreateSourceContext(ctx, sourceTypeSlack, opts.TeamID+":"+opts.UserID)
-	} else {
-		src, err = imp.store.GetSourceByIDContext(ctx, opts.SourceID)
-		if err == nil && (src.SourceType != sourceTypeSlack || !strings.HasPrefix(src.Identifier, opts.TeamID+":")) {
-			err = errors.New("slack source does not match the credential workspace")
-		}
-	}
+	src, err := imp.bindSource(ctx, opts)
 	if err != nil {
 		return nil, err
 	}
-	imp.opts, imp.sourceID = opts, src.ID
 	sum := &ImportSummary{SourceID: src.ID}
 
 	// Own the source before reading resume state: a purge that commits after
@@ -225,6 +218,11 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (_ *ImportS
 			return nil, fmt.Errorf("load Slack resume state: %w", err)
 		}
 		state = NewSyncState()
+	}
+	// Checkpoints from before principal tracking were written by the
+	// source's own user; only a different credential user needs a re-walk.
+	if state.PrincipalID == "" {
+		state.PrincipalID = imp.ownerID
 	}
 	if opts.RevalidatePrincipal && state.PrincipalID != opts.UserID {
 		state = NewSyncState()
@@ -289,7 +287,9 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (_ *ImportS
 	}
 
 	var convs []Conversation
+	listed := map[string]bool{}
 	err = imp.client.AllConversations(ctx, func(c Conversation) error {
+		listed[c.ID] = true
 		if includeConversation(&c, &opts) {
 			convs = append(convs, c)
 		}
@@ -297,6 +297,14 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (_ *ImportS
 	})
 	if err != nil {
 		return sum, fmt.Errorf("enumerate slack conversations: %w", err)
+	}
+	for _, id := range opts.ChannelIDs {
+		if !listed[id] {
+			// The credential user no longer sees this conversation: it was
+			// deleted, archived away, or the user left it.
+			sum.UnavailableChannels = append(sum.UnavailableChannels, id)
+			imp.recordItem(ctx, syncID, id, "selection", store.SyncRunItemStatusSkipped, "slack_channel_unavailable", nil)
+		}
 	}
 
 	// Spend interrupted runs on the oldest uncovered history first. In
@@ -400,6 +408,30 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (_ *ImportS
 	}
 	sum.Duration = imp.now().Sub(start)
 	return sum, nil
+}
+
+// bindSource resolves the run's source and records its owner, the user whose
+// messages are "from me". A supplied SourceID keeps the owner from the source
+// identifier, so replacing the credential user does not reattribute history.
+func (imp *Importer) bindSource(ctx context.Context, opts ImportOptions) (*store.Source, error) {
+	if opts.SourceID == 0 {
+		src, err := imp.store.GetOrCreateSourceContext(ctx, sourceTypeSlack, opts.TeamID+":"+opts.UserID)
+		if err != nil {
+			return nil, err
+		}
+		imp.opts, imp.sourceID, imp.ownerID = opts, src.ID, opts.UserID
+		return src, nil
+	}
+	src, err := imp.store.GetSourceByIDContext(ctx, opts.SourceID)
+	if err != nil {
+		return nil, err
+	}
+	owner, ok := strings.CutPrefix(src.Identifier, opts.TeamID+":")
+	if src.SourceType != sourceTypeSlack || !ok || owner == "" {
+		return nil, errors.New("slack source does not match the credential workspace")
+	}
+	imp.opts, imp.sourceID, imp.ownerID = opts, src.ID, owner
+	return src, nil
 }
 
 // includeConversation applies the conversation selection policy. DMs and
@@ -1143,7 +1175,7 @@ func (imp *Importer) processMessage(ctx context.Context, cc *convScope, m *Messa
 		}
 	}
 
-	msg, text := mapMessage(m, cc.channelID, cc.convID, cc.sourceID, m.User == cc.opts.UserID, imp.res.displayName)
+	msg, text := mapMessage(m, cc.channelID, cc.convID, cc.sourceID, m.User == imp.ownerID, imp.res.displayName)
 	existing, err := imp.store.MessageExistsBatchContext(ctx, cc.sourceID, []string{msg.SourceMessageID})
 	if err != nil {
 		return fmt.Errorf("check existing Slack message: %w", err)
@@ -1411,11 +1443,10 @@ func (imp *Importer) BackfillMedia(ctx context.Context, opts ImportOptions) (_ *
 	if opts.AttachmentsDir == "" {
 		return nil, errors.New("attachments dir required")
 	}
-	src, err := imp.store.GetOrCreateSourceContext(ctx, sourceTypeSlack, opts.TeamID+":"+opts.UserID)
+	src, err := imp.bindSource(ctx, opts)
 	if err != nil {
 		return nil, err
 	}
-	imp.opts, imp.sourceID = opts, src.ID
 	sum := &ImportSummary{SourceID: src.ID}
 	// Own the source before reading the state this run carries forward, so
 	// a concurrent purge cannot be undone by the copied checkpoint.

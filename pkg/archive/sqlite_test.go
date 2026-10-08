@@ -83,3 +83,28 @@ func TestSlackCallerSelectsPrivateConversation(t *testing.T) {
 	require.Equal(1, summary.MessagesAdded)
 	searchIDs(t, runtime, "telescope", 1)
 }
+
+func TestSQLiteRuntimeCollectsAcrossCredentialReplacement(t *testing.T) {
+	require := require.New(t)
+	path := filepath.Join(t.TempDir(), "archive.db")
+	require.NoError(archive.SetupSQLite(t.Context(), path))
+	st, err := store.Open(path)
+	require.NoError(err)
+	source, err := st.GetOrCreateSource("slack", "TEXAMPLE:UEXAMPLE")
+	require.NoError(err)
+	conversation, err := st.EnsureConversation(source.ID, "CEXAMPLE", "Announcements")
+	require.NoError(err)
+	id, err := st.UpsertMessage(&store.Message{
+		SourceID: source.ID, ConversationID: conversation, SourceMessageID: "1704110400.000001", MessageType: "slack",
+		Subject: sql.NullString{String: "Launch", Valid: true},
+	})
+	require.NoError(err)
+	require.NoError(st.UpsertMessageBody(id, sql.NullString{String: "The observatory opens tomorrow.", Valid: true}, sql.NullString{}))
+	require.NoError(st.UpsertFTS(id, "Launch", "The observatory opens tomorrow.", "", "", ""))
+	require.NoError(st.Close())
+	runtime, err := archive.OpenSQLite(t.Context(), path)
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(runtime.Close()) })
+	exerciseSlackReplacement(t, runtime)
+	exerciseDiscordCollection(t, runtime)
+}

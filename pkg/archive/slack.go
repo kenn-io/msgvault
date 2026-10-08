@@ -72,7 +72,10 @@ func SlackChannels(ctx context.Context, credential SlackCredential, workspaceID 
 			IsPrivate: channel.IsPrivate, IsIM: channel.IsIM, IsGroupIM: channel.IsMpim})
 		return nil
 	})
-	return channels, err
+	if err != nil {
+		return nil, err
+	}
+	return channels, nil
 }
 
 // BindSlack validates a credential and returns its archive source. Pass an
@@ -120,6 +123,10 @@ type SlackSummary = slack.ImportSummary
 
 // SyncSlack performs one cancellable run. Zero SourceID discovers the source;
 // a supplied source ID keeps its identity across credential replacement.
+// Messages count as "from me" when the source's original user sent them, so
+// a replacement credential's user does not reattribute retained history.
+// Selected ChannelIDs that the credential user cannot list are returned in
+// the summary's UnavailableChannels.
 func (a *Archive) SyncSlack(ctx context.Context, opts SlackSync) (*SlackSummary, error) {
 	c, identity, err := slackClient(ctx, opts.Credential)
 	if err != nil {

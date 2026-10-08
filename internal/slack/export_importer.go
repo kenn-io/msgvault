@@ -131,7 +131,7 @@ func ImportSlackdump(
 		AttachmentsDir: opts.AttachmentsDir,
 		Progress:       opts.Progress,
 	}
-	importer.sourceID = source.ID
+	importer.sourceID, importer.ownerID = source.ID, me.ID
 	defer func() {
 		if err != nil {
 			_ = scopedStore.FailSyncWithCheckpoint(syncID, err.Error(), slackdumpCheckpoint(summary))
