@@ -1003,7 +1003,7 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 		}
 	}
 
-	for _, schemaName := range []string{"FileSearchRow", "FileMetadataResponse", "PersonFileSearchRow"} {
+	for _, schemaName := range []string{"FileSearchRow", "FileMetadataResponse", "PersonFileSearchRow", "MessageRecording"} {
 		if schema := schemas[schemaName]; schema != nil {
 			for _, property := range []string{"filename", "mime_type"} {
 				if schema.Properties[property] != nil {

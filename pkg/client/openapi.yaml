@@ -6963,6 +6963,7 @@ components:
           format: int64
           type: integer
         filename:
+          nullable: true
           type: string
         size_bytes:
           format: int64

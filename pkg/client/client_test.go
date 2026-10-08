@@ -621,6 +621,24 @@ func TestGeneratedExploreGroupingValidatesExactlyOneDimension(t *testing.T) {
 	}}).Validate(), "multiple file grouping dimensions")
 }
 
+func TestGeneratedMessageRecordingsAcceptUnnamedAudio(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	var response generated.MessageRecordingsResponse
+	requirements.NoError(json.Unmarshal([]byte(
+		`{"message_id":9,"recordings":[{"attachment_id":1,"filename":"","size_bytes":44,"state":"media_missing"}]}`,
+	), &response))
+	requirements.Len(response.Recordings, 1)
+	requirements.NotNil(response.Recordings[0].Filename)
+	assertions.Empty(*response.Recordings[0].Filename)
+	requirements.NoError(response.Validate(), "audio without a filename is a legitimate recording")
+
+	missing := response
+	missing.Recordings = []generated.MessageRecording{response.Recordings[0]}
+	missing.Recordings[0].Filename = nil
+	requirements.Error(missing.Validate(), "missing required filename")
+}
+
 func TestGeneratedFileMetadataRequiresPresenceButAcceptsEmptyLegacyStrings(t *testing.T) {
 	t.Run("metadata response", func(t *testing.T) {
 		assertions := assert.New(t)

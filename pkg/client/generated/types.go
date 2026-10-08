@@ -6635,7 +6635,7 @@ func (m MessageRecord) Validate() error {
 
 type MessageRecording struct {
 	AttachmentID int64                 `json:"attachment_id"`
-	Filename     string                `json:"filename" validate:"required"`
+	Filename     *string               `json:"filename,omitzero" validate:"required"`
 	SizeBytes    int64                 `json:"size_bytes"`
 	State        MessageRecordingState `json:"state" validate:"required"`
 	Transcript   *MessageTranscript    `json:"transcript,omitempty"`

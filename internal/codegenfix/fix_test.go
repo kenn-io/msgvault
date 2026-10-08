@@ -17,6 +17,7 @@ func TestRewriteGeneratedValidatorsRepairsKnownGeneratorGaps(t *testing.T) {
 	assertions.NotContains(string(got), "if p.Filename != nil")
 	assertions.NotContains(string(got), "if p.MimeType != nil")
 	assertions.NotContains(string(got), "if p.SourceRef != nil")
+	assertions.NotContains(string(got), "if m.Filename != nil")
 	assertions.NotContains(string(got), "if p.SourceURL != nil")
 	assertions.NotContains(string(got), "if p.ContentSha256 != nil")
 	assertions.NotContains(string(got), "if p.SourceVersion != nil")
@@ -129,6 +130,7 @@ func (f FileGroupsHTTPRequest) Validate() error {
 }
 ` + pointerValidatorFixture("FileMetadataResponse", "f") + pointerValidatorFixture("FileSearchRow", "f") +
 		pointerValidatorFixture("PersonFileSearchRow", "p") +
+		requiredStringPointerValidatorFixture("MessageRecording", "m", "Filename") +
 		requiredStringPointerValidatorFixture("PersonFactEvidence", "p",
 			"SourceRef", "SourceURL", "ContentSha256", "SourceVersion", "SubjectRef", "Excerpt") + `
 func (c CreateDailyNoteEntryRequest) Validate() error {
