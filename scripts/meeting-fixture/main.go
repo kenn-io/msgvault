@@ -11,8 +11,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -21,6 +19,7 @@ import (
 	"go.kenn.io/msgvault/internal/granola"
 	"go.kenn.io/msgvault/internal/notionmeetings"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil/chatwootapi"
 )
 
 type meetingRef struct {
@@ -134,45 +133,27 @@ func jsonServer(responses map[string]string) *httptest.Server {
 }
 
 func importChatwoot(ctx context.Context, st *store.Store, attachmentsDir string) ([2]int64, error) {
-	var server *httptest.Server
-	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	contact := map[string]any{"id": int64(7), "type": "contact", "name": "Example Customer", "email": "customer@example.com"}
+	message := chatwootapi.Message(201, 1767225600, contact)
+	message["content_type"] = "voice_call"
+	message["content"] = "Voice call with Example Customer"
+	call := map[string]any{"id": 601, "direction": "incoming", "status": "completed", "duration_seconds": 45,
+		"transcript": "Example Customer: Please send the meeting recap.\nExample Agent: The recording and transcript are saved."}
+	message["call"] = call
+	neighbor := chatwootapi.Message(200, 1767225500, contact)
+	neighbor["content"] = "Could we discuss the next delivery?"
+	fixture := chatwootapi.New(3, []map[string]any{neighbor, message}, time.Now)
+	fixture.Contact = contact
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/recording.wav" {
 			w.Header().Set("Content-Type", "audio/wav")
 			_, _ = w.Write([]byte("RIFFsynthetic call recording evidence"))
 			return
 		}
-		contact := map[string]any{"id": 7, "type": "contact", "name": "Example Customer", "email": "customer@example.com"}
-		message := map[string]any{"id": int64(201), "conversation_id": 42, "inbox_id": 7, "account_id": 3, "created_at": 1767225600,
-			"message_type": 0, "content_type": "voice_call", "content": "Voice call with Example Customer", "sender": contact,
-			"call": map[string]any{"id": 601, "direction": "incoming", "status": "completed", "duration_seconds": 45,
-				"recording_url": server.URL + "/recording.wav", "transcript": "Example Customer: Please send the meeting recap.\nExample Agent: The recording and transcript are saved."}}
-		neighbor := map[string]any{"id": int64(200), "conversation_id": 42, "inbox_id": 7, "account_id": 3, "created_at": 1767225500,
-			"message_type": 0, "content": "Could we discuss the next delivery?", "sender": contact}
-		conversation := map[string]any{"id": 42, "inbox_id": 7, "account_id": 3, "last_activity_at": 1767225600, "updated_at": 1767225600,
-			"messages": []any{message}, "meta": map[string]any{"sender": contact}}
-		var response any
-		switch {
-		case strings.HasSuffix(r.URL.Path, "/agents"):
-			response = []any{}
-		case strings.HasSuffix(r.URL.Path, "/messages"):
-			after, _ := strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
-			before, _ := strconv.ParseInt(r.URL.Query().Get("before"), 10, 64)
-			payload := []any{}
-			for _, item := range []map[string]any{neighbor, message} {
-				if id, ok := item["id"].(int64); ok && id >= after && id < before {
-					payload = append(payload, item)
-				}
-			}
-			response = map[string]any{"payload": payload}
-		default:
-			response = map[string]any{"data": map[string]any{"payload": []any{}}}
-			if r.URL.Query().Get("page") == "1" {
-				response = map[string]any{"data": map[string]any{"payload": []any{conversation}}}
-			}
-		}
-		_ = json.MarshalWrite(w, response)
+		fixture.ServeHTTP(w, r)
 	}))
 	defer server.Close()
+	call["recording_url"] = server.URL + "/recording.wav"
 	client, err := chatwoot.NewClient(server.URL, 3, "synthetic-token")
 	if err != nil {
 		return [2]int64{}, err

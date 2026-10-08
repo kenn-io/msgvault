@@ -116,3 +116,11 @@ func subtractHandled(r idRange, ids []int64) ([]idRange, error) {
 	}
 	return gaps, nil
 }
+
+func (cs *conversationState) trackArtifact(messageID string, refreshFrom int64) {
+	if refreshFrom == 0 || now().Sub(time.Unix(refreshFrom, 0)) >= artifactWindow {
+		delete(cs.Artifacts, messageID)
+	} else {
+		cs.Artifacts[messageID] = refreshFrom
+	}
+}

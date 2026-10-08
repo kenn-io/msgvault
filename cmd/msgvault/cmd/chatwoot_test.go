@@ -3,10 +3,8 @@ package cmd
 import (
 	"bytes"
 	"context"
-	"encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -19,6 +17,7 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/internal/testutil/chatwootapi"
 )
 
 func TestChatwootRegisteredInboxSelection(t *testing.T) {
@@ -148,49 +147,14 @@ func TestChatwootLimitedProfileSyncReportsResumableWork(t *testing.T) {
 	cfg.HomeDir = t.TempDir()
 	st := testutil.NewTestStore(t)
 	t.Setenv("EXAMPLE_CHATWOOT_TOKEN", "synthetic-token")
-	messages := []chatwoot.Message{
-		{ID: 101, InboxID: 7, ConversationID: 42, Content: "First synthetic message", ContentType: "text", CreatedAt: 1700000000},
-		{ID: 102, InboxID: 7, ConversationID: 42, Content: "Second synthetic message", ContentType: "text", CreatedAt: 1700000001},
-	}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch r.URL.Path {
-		case "/api/v1/accounts/9/agents":
-			_, _ = w.Write([]byte(`[]`))
-		case "/api/v1/accounts/9/conversations":
-			if r.URL.Query().Get("page") == "1" {
-				_, _ = w.Write([]byte(`{"data":{"payload":[{"id":42,"inbox_id":7,"status":"resolved","created_at":1700000000,"last_activity_at":1700000001,"messages":[{"id":102}]}]}}`))
-			} else {
-				_, _ = w.Write([]byte(`{"data":{"payload":[]}}`))
-			}
-		case "/api/v1/accounts/9/conversations/42/messages":
-			after, err := strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
-			if !assert.NoError(err) {
-				return
-			}
-			before, err := strconv.ParseInt(r.URL.Query().Get("before"), 10, 64)
-			if !assert.NoError(err) {
-				return
-			}
-			// Match the verified account API's inclusive after / exclusive before contract.
-			page := []chatwoot.Message{}
-			for _, message := range messages {
-				if message.ID >= after && message.ID < before {
-					page = append(page, message)
-				}
-			}
-			body, err := json.Marshal(map[string]any{"payload": page})
-			if !assert.NoError(err) {
-				return
-			}
-			_, _ = w.Write(body)
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer server.Close()
-	src := config.ChatwootSource{Identifier: "support", URL: server.URL, AccountID: 9, APIKeyEnv: "EXAMPLE_CHATWOOT_TOKEN"}
-	_, err := st.GetOrCreateSource(chatwoot.SourceType, chatwoot.SourceIdentifier(src.URL, 9, 7))
+	fixture := chatwootapi.New(20, []map[string]any{
+		chatwootapi.Message(101, 1700000000, nil),
+		chatwootapi.Message(102, 1700000001, nil),
+	}, time.Now)
+	server := httptest.NewServer(fixture)
+	t.Cleanup(server.Close)
+	src := config.ChatwootSource{Identifier: "support", URL: server.URL, AccountID: 3, APIKeyEnv: "EXAMPLE_CHATWOOT_TOKEN"}
+	_, err := st.GetOrCreateSource(chatwoot.SourceType, chatwoot.SourceIdentifier(src.URL, 3, 7))
 	require.NoError(err)
 	sum, err := importChatwootProfile(context.Background(), st, src, chatwootRunOptions{Limit: 1}, cfg)
 	require.NoError(err)

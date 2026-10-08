@@ -129,9 +129,9 @@ func TestImportContractActorsSendersAndRecipients(t *testing.T) {
 	require.Len(note, 1)
 	assert.Equal(incoming[0].ParticipantID, note[0].ParticipantID, "private notes address the shared inbox")
 
-	api.mu.Lock()
-	api.conversations[42] = append(api.conversations[42], contractMessage(110, 1767225610, map[string]any{"id": int64(50), "type": "user", "name": "Late Agent"}))
-	api.mu.Unlock()
+	api.Mu.Lock()
+	api.Conversations[42] = append(api.Conversations[42], contractMessage(110, 1767225610, map[string]any{"id": int64(50), "type": "user", "name": "Late Agent"}))
+	api.Mu.Unlock()
 	_, err = NewImporter(st, api.client(t)).Import(t.Context(), ImportOptions{InboxID: 7, IncludePrivate: true, SelfAgentIDs: []int64{8}})
 	require.NoError(err)
 	var name string
@@ -190,7 +190,7 @@ func TestImportContractSelfAgentOwnershipFollowsIdentities(t *testing.T) {
 			message["content_type"] = "voice_call"
 			message["call"] = map[string]any{"id": 602, "direction": "outgoing", "status": "completed"}
 		}
-		api.conversations[42] = append(api.conversations[42], message)
+		api.Conversations[42] = append(api.Conversations[42], message)
 	}
 	providerIDs = append(providerIDs, "203", "call:204")
 	assert.Equal([]bool{false, false, false, false}, owned([]int64{8}))
@@ -202,7 +202,7 @@ func TestSelfAgentRemovalAndAtomicConfig(t *testing.T) {
 	for id := int64(7); id <= 8; id++ {
 		m := contractMessage(100+id, now().Unix(), map[string]any{"id": id, "type": "user"})
 		m["message_type"] = 1
-		api.conversations[42] = append(api.conversations[42], m)
+		api.Conversations[42] = append(api.Conversations[42], m)
 	}
 	st := testutil.NewTestStore(t)
 	imp, source := contractRegister(t, st, api)
@@ -375,10 +375,10 @@ func TestImportContractCallFallbackAndLifecycleKeepsOneLinkedMeeting(t *testing.
 	assert.Equal(int64(1), metrics.Totals.KnownDurationCount, "explicit zero differs from unknown duration")
 	assert.Zero(metrics.Totals.TotalKnownSeconds)
 
-	api.mu.Lock()
+	api.Mu.Lock()
 	message["call"] = map[string]any{"id": 601, "provider_call_id": "CA_synthetic", "provider": "twilio", "direction": "incoming", "status": "completed", "duration_seconds": 45,
 		"accepted_by_agent_id": 7, "accepted_by_agent_name": "Example Agent", "transcript": "Updated call transcript words"}
-	api.mu.Unlock()
+	api.Mu.Unlock()
 	_, err = NewImporter(st, api.client(t)).Import(t.Context(), ImportOptions{InboxID: 7, IncludePrivate: true})
 	require.NoError(err)
 	assert.Equal(meetingID, contractArchivedMessageID(t, st, "call:201"))
@@ -468,9 +468,9 @@ func TestImportContractLateAudioTranscriptAndCredentialFreeCAS(t *testing.T) {
 	// arrives or changes. A normal run revisits audio still waiting for one; a
 	// transcript settles it, so a later correction needs a full sync.
 	for index, transcript := range []string{"firstquartz source transcript", "revisedquartz source transcript"} {
-		api.mu.Lock()
+		api.Mu.Lock()
 		attachment["transcribed_text"] = transcript
-		api.mu.Unlock()
+		api.Mu.Unlock()
 		runOpts := opts
 		runOpts.Full = index > 0
 		_, err = NewImporter(st, api.client(t)).Import(t.Context(), runOpts)

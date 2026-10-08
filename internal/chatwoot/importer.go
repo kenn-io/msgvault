@@ -317,6 +317,12 @@ func (imp *Importer) listConversations(ctx context.Context, page int, inboxID in
 // It runs every sync, stops at the saved watermark, and reports whether it
 // reached it within budget.
 func (imp *Importer) scanActivity(ctx context.Context, sourceID, inboxID int64, state *syncState, listed map[int64]Conversation, requests *int, budget int) (bool, error) {
+	scanNow := now().UTC()
+	if state.ActivityWatermark > scanNow.Unix() {
+		state.ActivityWatermark = 0
+		state.ActivitySettled = 0
+		state.ActivitySeenAt = time.Time{}
+	}
 	cutoff := state.ActivityWatermark - int64(activityOverlap/time.Second)
 	if state.ActivityWatermark > 0 && state.ActivitySettled == state.ActivityWatermark {
 		cutoff = state.ActivityWatermark + 1
@@ -335,7 +341,9 @@ func (imp *Importer) scanActivity(ctx context.Context, sourceID, inboxID int64, 
 		// The first sync only records the watermark; its listing covers the rest.
 		done = len(batch) == 0 || initial
 		for _, c := range batch {
-			newest = max(newest, c.LastActivityAt)
+			if c.LastActivityAt <= scanNow.Unix() {
+				newest = max(newest, c.LastActivityAt)
+			}
 			if c.LastActivityAt < cutoff {
 				done = true
 			} else if !initial && c.InboxID == inboxID {
@@ -346,8 +354,8 @@ func (imp *Importer) scanActivity(ctx context.Context, sourceID, inboxID int64, 
 		}
 	}
 	if newest != state.ActivityWatermark || state.ActivitySeenAt.IsZero() {
-		state.ActivitySeenAt = now().UTC()
-	} else if now().Sub(state.ActivitySeenAt) >= activityOverlap {
+		state.ActivitySeenAt = scanNow
+	} else if scanNow.Sub(state.ActivitySeenAt) >= activityOverlap {
 		state.ActivitySettled = newest
 	}
 	state.ActivityWatermark = newest
@@ -583,11 +591,7 @@ func (imp *Importer) processConversation(ctx context.Context, sourceID, syncID i
 					if persistErr != nil {
 						return persistErr
 					}
-					if refreshFrom == 0 || now().Sub(time.Unix(refreshFrom, 0)) >= artifactWindow {
-						delete(cs.Artifacts, idText)
-					} else {
-						cs.Artifacts[idText] = refreshFrom
-					}
+					cs.trackArtifact(idText, refreshFrom)
 					sum.MessagesProcessed++
 				}
 				cs.LastArtifact = id
@@ -624,11 +628,7 @@ func (imp *Importer) refreshArtifact(ctx context.Context, sourceID int64, c Conv
 	if err != nil {
 		return err
 	}
-	if refreshFrom == 0 || now().Sub(time.Unix(refreshFrom, 0)) >= artifactWindow {
-		delete(cs.Artifacts, idText)
-	} else {
-		cs.Artifacts[idText] = refreshFrom
-	}
+	cs.trackArtifact(idText, refreshFrom)
 	sum.MessagesProcessed++
 	return nil
 }
@@ -733,9 +733,7 @@ func (imp *Importer) walkConversation(ctx context.Context, sourceID, syncID int6
 				if persistErr != nil {
 					return persistErr
 				}
-				if refreshFrom > 0 && now().Sub(time.Unix(refreshFrom, 0)) < artifactWindow {
-					cs.Artifacts[strconv.FormatInt(m.ID, 10)] = refreshFrom
-				}
+				cs.trackArtifact(strconv.FormatInt(m.ID, 10), refreshFrom)
 			}
 			used++
 			sum.MessagesProcessed++

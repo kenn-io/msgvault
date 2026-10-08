@@ -140,10 +140,14 @@ Stored files and account-policy skips leave the file refresh list.
 Every 24 hours by default, a reconcile lists every conversation. It rereads the
 whole history of each conversation updated since the previous reconcile began.
 Chatwoot's commit-time `updated_at` catches messages saved out of order even
-when their creation times move activity backward. Missing update evidence causes
+when their creation times move activity backward. Backdated or out-of-order activity
+can wait up to `reconcile_interval_hours` (24 hours by default). Missing update evidence causes
 a conservative reread. Reconcile also reads any other
-conversation whose newest message is missing from the archive. History of
-quiet conversations that is already archived is reread only by `--full`.
+conversation whose newest message is missing from the archive. Archived history of
+quiet conversations is reread only by `--full`.
+An excluded private tail can still cause a range reread during overlap or reconciliation.
+Future-dated conversations can add listing and head checks until clocks agree,
+within the existing request budget.
 
 Chatwoot's combined message-ID range API is required to enumerate history
 reliably when message timestamps and IDs have different order. The importer

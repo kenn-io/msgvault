@@ -33,7 +33,7 @@ func TestSteadyStateSyncRequestsOnlyChangedWork(t *testing.T) {
 		for range 2 {
 			messageID++
 			image := map[string]any{"id": messageID, "file_type": "image", "content_type": "image/png", "data_url": "https://chatwoot.example.com/image.png"}
-			api.addMessage(conversation, messageID, recent.Add(time.Duration(messageID-1000)*time.Minute), image)
+			api.AddMessage(conversation, messageID, recent.Add(time.Duration(messageID-1000)*time.Minute), image)
 		}
 	}
 	st := testutil.NewTestStore(t)
@@ -43,21 +43,21 @@ func TestSteadyStateSyncRequestsOnlyChangedWork(t *testing.T) {
 	require.NoError(err)
 	require.False(first.Partial)
 	require.Equal(120, first.MessagesProcessed)
-	api.takeRequests()
+	api.TakeRequests()
 
 	second, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 	assert.False(second.Partial)
 	assert.Zero(second.MessagesProcessed)
-	assert.Equal([]string{"agents", "list " + sortByActivity}, api.takeRequests(), "an unchanged inbox costs one activity page")
+	assert.Equal([]string{"agents", "list " + sortByActivity}, api.TakeRequests(), "an unchanged inbox costs one activity page")
 	assert.Empty(savedState(t, st, source).Conversations, "settled conversations keep no checkpoint state")
 
-	api.addMessage(17, 5000, time.Now())
+	api.AddMessage(17, 5000, time.Now())
 	third, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 	assert.False(third.Partial)
 	assert.Equal(1, third.MessagesAdded)
-	for _, request := range api.takeRequests() {
+	for _, request := range api.TakeRequests() {
 		assert.True(slices.Contains([]string{"agents", "list " + sortByActivity}, request) || strings.HasPrefix(request, "messages 17 "), "unexpected request %q", request)
 	}
 	assert.Empty(savedState(t, st, source).Conversations)
@@ -69,7 +69,7 @@ func TestNewConversationsDoNotWaitForSavedHistory(t *testing.T) {
 	api := newContractAPI(t, 1, nil)
 	at := time.Now().Add(-30 * 24 * time.Hour)
 	for id := int64(101); id <= 120; id++ {
-		api.addMessage(1, id, at)
+		api.AddMessage(1, id, at)
 	}
 	st := testutil.NewTestStore(t)
 	imp, source := contractRegister(t, st, api)
@@ -80,7 +80,7 @@ func TestNewConversationsDoNotWaitForSavedHistory(t *testing.T) {
 	require.True(first.Partial)
 	require.NotEmpty(savedState(t, st, source).Conversations["1"].Pending, "the first run leaves a saved tail")
 
-	api.addMessage(2, 500, time.Now())
+	api.AddMessage(2, 500, time.Now())
 	second, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 	assert.True(second.Partial)
@@ -94,14 +94,14 @@ func TestSameSecondMessageIsNotSkipped(t *testing.T) {
 	require := require.New(t)
 	api := newContractAPI(t, 1000, nil)
 	second := time.Now().Truncate(time.Second)
-	api.addMessage(1, 101, second)
+	api.AddMessage(1, 101, second)
 	st := testutil.NewTestStore(t)
 	imp, source := contractRegister(t, st, api)
 	_, err := imp.Import(t.Context(), ImportOptions{InboxID: 7})
 	require.NoError(err)
 
 	// A reply in the same second leaves the conversation's activity unchanged.
-	api.addMessage(1, 102, second)
+	api.AddMessage(1, 102, second)
 	_, err = imp.Import(t.Context(), ImportOptions{InboxID: 7})
 	require.NoError(err)
 	archived, err := st.MessageExistsBatch(source.ID, []string{"102"})
@@ -157,9 +157,9 @@ func TestCallsAreRecheckedOnlyInsideTheWindow(t *testing.T) {
 	assert.Contains(artifacts, "901", "a recent call is rechecked")
 	assert.NotContains(artifacts, "902", "a call older than the window is not")
 
-	api.mu.Lock()
+	api.Mu.Lock()
 	recent["call"] = map[string]any{"id": 1001, "direction": "incoming", "status": "completed", "transcript": "Synthetic call words"}
-	api.mu.Unlock()
+	api.Mu.Unlock()
 	_, err = NewImporter(st, api.client(t)).Import(t.Context(), ImportOptions{InboxID: 7})
 	require.NoError(err)
 	assert.Contains(savedState(t, st, source).Conversations["42"].Artifacts, "901", "a later recording can still replace this one")
@@ -196,10 +196,10 @@ func TestEmailReplyUsesItsAddressedRecipients(t *testing.T) {
 	require.Len(copiedTo, 1)
 	assert.Equal(replyTo[0].ParticipantID, copiedTo[0].ParticipantID, "a reply with only copies still reaches the contact")
 
-	api.mu.Lock()
+	api.Mu.Lock()
 	forward["content_attributes"] = map[string]any{"to_emails": []string{"forward@example.com"}}
 	delete(copied, "sender")
-	api.mu.Unlock()
+	api.Mu.Unlock()
 	_, err = NewImporter(st, api.client(t)).Import(t.Context(), ImportOptions{InboxID: 7, Full: true})
 	require.NoError(err)
 	assert.Empty(contractRecipients(t, st, forwardID, "cc"), "a refreshed message drops copies it no longer lists")
@@ -215,7 +215,7 @@ func TestCappedRangesCostPagesNotHoles(t *testing.T) {
 	at := time.Now().Add(-30 * 24 * time.Hour)
 	// Account-wide IDs leave a hole between every message of one conversation.
 	for index := range int64(35) {
-		api.addMessage(1, 100+3*index, at.Add(time.Duration(index)*time.Second))
+		api.AddMessage(1, 100+3*index, at.Add(time.Duration(index)*time.Second))
 	}
 	st := testutil.NewTestStore(t)
 	imp, source := contractRegister(t, st, api)
@@ -224,7 +224,7 @@ func TestCappedRangesCostPagesNotHoles(t *testing.T) {
 	assert.False(sum.Partial)
 	assert.Len(contractMessageIDs(t, st), 35)
 	var reads int
-	for _, request := range api.takeRequests() {
+	for _, request := range api.TakeRequests() {
 		if strings.HasPrefix(request, "messages ") {
 			reads++
 		}
@@ -250,9 +250,9 @@ func TestStoredRecordingSurvivesWhenProviderDropsIt(t *testing.T) {
 	require.NoError(err)
 	meetingID := contractArchivedMessageID(t, st, "call:901")
 
-	api.mu.Lock()
+	api.Mu.Lock()
 	delete(call, "recording_url")
-	api.mu.Unlock()
+	api.Mu.Unlock()
 	_, err = NewImporter(st, api.client(t)).Import(t.Context(), opts)
 	require.NoError(err)
 	refs, payloads := readMediaRefreshBytes(t, st, meetingID, opts.AttachmentsDir)
@@ -266,7 +266,7 @@ func TestFirstSyncBackfillsPastOneListingBatch(t *testing.T) {
 	api := newContractAPI(t, 1000, nil)
 	at := time.Now().Add(-30 * 24 * time.Hour)
 	for conversation := int64(1); conversation <= 250; conversation++ {
-		api.addMessage(conversation, 1000+conversation, at.Add(time.Duration(conversation)*time.Minute))
+		api.AddMessage(conversation, 1000+conversation, at.Add(time.Duration(conversation)*time.Minute))
 	}
 	st := testutil.NewTestStore(t)
 	imp, source := contractRegister(t, st, api)
@@ -294,9 +294,9 @@ func TestFileWithoutURLWaitsOnRefreshList(t *testing.T) {
 	require.NoError(err)
 	assert.Contains(savedState(t, st, source).Conversations["42"].Artifacts, "901", "Chatwoot attaches the file after creating the message")
 
-	api.mu.Lock()
+	api.Mu.Lock()
 	attachment["data_url"] = router.url(t, media.server, "/recording-a.ogg")
-	api.mu.Unlock()
+	api.Mu.Unlock()
 	_, err = NewImporter(st, api.client(t)).Import(t.Context(), opts)
 	require.NoError(err)
 	refs, payloads := readMediaRefreshBytes(t, st, contractArchivedMessageID(t, st, "901"), opts.AttachmentsDir)
@@ -321,11 +321,11 @@ func TestCappedArtifactReadStillReachesSkippedIDs(t *testing.T) {
 	importer, _ := contractRegister(t, st, api)
 	_, err := importer.Import(t.Context(), ImportOptions{InboxID: 7})
 	require.NoError(err)
-	api.mu.Lock()
+	api.Mu.Lock()
 	for _, attachment := range attachments {
 		attachment["transcribed_text"] = "late words"
 	}
-	api.mu.Unlock()
+	api.Mu.Unlock()
 	_, err = NewImporter(st, api.client(t)).Import(t.Context(), ImportOptions{InboxID: 7})
 	require.NoError(err)
 	for _, id := range []string{"901", "902", "903"} {
@@ -344,20 +344,20 @@ func TestReconcileRereadsMessagesCommittedOutOfOrder(t *testing.T) {
 			now = func() time.Time { return clock }
 			t.Cleanup(func() { now = fixed })
 			api := newContractAPI(t, 1000, nil)
-			api.addMessage(1, 101, clock.Add(-time.Minute))
+			api.AddMessage(1, 101, clock.Add(-time.Minute))
 			st := testutil.NewTestStore(t)
 			imp, source := contractRegister(t, st, api)
 			opts := ImportOptions{InboxID: 7}
 			_, err := imp.Import(t.Context(), opts)
 			require.NoError(err)
 			clock = clock.Add(20 * time.Hour)
-			api.addMessage(1, 100, clock.Add(-20*time.Hour-20*time.Minute))
-			api.activityAt[1] = clock.Add(-20*time.Hour - 20*time.Minute).Unix()
+			api.AddMessage(1, 100, clock.Add(-20*time.Hour-20*time.Minute))
+			api.ActivityAt[1] = clock.Add(-20*time.Hour - 20*time.Minute).Unix()
 			switch evidence {
 			case "missing":
-				delete(api.updatedAt, 1)
+				delete(api.UpdatedAt, 1)
 			case "invalid":
-				api.updatedAt[1] = -1
+				api.UpdatedAt[1] = -1
 			}
 			_, err = imp.Import(t.Context(), opts)
 			require.NoError(err)
@@ -371,7 +371,7 @@ func TestReconcileRereadsMessagesCommittedOutOfOrder(t *testing.T) {
 			require.True(partial.Partial)
 			start := savedState(t, st, source).WalkStartedAt
 			clock = clock.Add(time.Hour)
-			api.addMessage(1, 99, clock.Add(-26*time.Hour-30*time.Minute))
+			api.AddMessage(1, 99, clock.Add(-26*time.Hour-30*time.Minute))
 			opts.Limit = 0
 			_, err = imp.Import(t.Context(), opts)
 			require.NoError(err)
@@ -392,7 +392,7 @@ func TestLimitedRunSavesOnlyTheUnreadTail(t *testing.T) {
 	api := newContractAPI(t, 1000, nil)
 	at := time.Now().Add(-30 * 24 * time.Hour)
 	for index := range int64(40) {
-		api.addMessage(1, 100+3*index, at.Add(time.Duration(index)*time.Second))
+		api.AddMessage(1, 100+3*index, at.Add(time.Duration(index)*time.Second))
 	}
 	st := testutil.NewTestStore(t)
 	imp, source := contractRegister(t, st, api)
@@ -400,11 +400,11 @@ func TestLimitedRunSavesOnlyTheUnreadTail(t *testing.T) {
 	_, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 	assert.Len(savedState(t, st, source).Conversations["1"].Pending, 1, "holes the response proved empty are not saved")
-	api.takeRequests()
+	api.TakeRequests()
 	_, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
 	var reads int
-	for _, request := range api.takeRequests() {
+	for _, request := range api.TakeRequests() {
 		if strings.HasPrefix(request, "messages ") {
 			reads++
 		}
@@ -417,12 +417,12 @@ func TestListingProgressesWhenTheActivityScanRunsOutOfBudget(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	api := newContractAPI(t, 1000, nil)
-	api.pageSize = 3
+	api.PageSize = 3
 	// Every conversation sits inside the overlap, so the scan never reaches the
 	// watermark within its half of a small budget.
 	at := time.Now().Add(-30 * 24 * time.Hour)
 	for conversation := int64(1); conversation <= 15; conversation++ {
-		api.addMessage(conversation, 100+conversation, at)
+		api.AddMessage(conversation, 100+conversation, at)
 	}
 	st := testutil.NewTestStore(t)
 	imp, source := contractRegister(t, st, api)
@@ -452,7 +452,7 @@ func TestQuietOverlapSettlesAndEmptyInboxDiscoversImmediately(t *testing.T) {
 			api := newContractAPI(t, 1000, nil)
 			if !empty {
 				for id := int64(1); id <= 60; id++ {
-					api.addMessage(id, id+100, clock)
+					api.AddMessage(id, id+100, clock)
 				}
 			}
 			st := testutil.NewTestStore(t)
@@ -460,7 +460,7 @@ func TestQuietOverlapSettlesAndEmptyInboxDiscoversImmediately(t *testing.T) {
 			_, err := imp.Import(t.Context(), ImportOptions{InboxID: 7})
 			require.NoError(err)
 			if empty {
-				api.addMessage(1, 101, clock)
+				api.AddMessage(1, 101, clock)
 				sum, err := NewImporter(st, api.client(t)).Import(t.Context(), ImportOptions{InboxID: 7})
 				require.NoError(err)
 				assert.Equal(1, sum.MessagesAdded)
@@ -474,10 +474,10 @@ func TestQuietOverlapSettlesAndEmptyInboxDiscoversImmediately(t *testing.T) {
 			imp.requestBudget = 100
 			_, err = imp.Import(t.Context(), ImportOptions{InboxID: 7})
 			require.NoError(err)
-			api.takeRequests()
+			api.TakeRequests()
 			_, err = NewImporter(st, api.client(t)).Import(t.Context(), ImportOptions{InboxID: 7})
 			require.NoError(err)
-			assert.Equal([]string{"agents", "list " + sortByActivity}, api.takeRequests())
+			assert.Equal([]string{"agents", "list " + sortByActivity}, api.TakeRequests())
 		})
 	}
 }
@@ -488,7 +488,7 @@ func TestCappedArtifactRotationKeepsLivePrefix(t *testing.T) {
 	var latest map[string]any
 	for id := int64(100); id <= 112; id++ {
 		attachment := map[string]any{"id": id, "file_type": "audio"}
-		api.addMessage(1, id, now().Add(time.Duration(112-id)*time.Second), attachment)
+		api.AddMessage(1, id, now().Add(time.Duration(112-id)*time.Second), attachment)
 		if id == 111 {
 			latest = attachment
 		}
@@ -508,4 +508,65 @@ func TestCappedArtifactRotationKeepsLivePrefix(t *testing.T) {
 	require.NoError(err)
 	assert.Contains(body, "cappedquartz")
 	assert.Contains(savedState(t, st, source).Conversations["1"].Artifacts, "100")
+}
+
+func TestFutureActivityDoesNotHideNormalDiscovery(t *testing.T) {
+	for _, poisoned := range []bool{false, true} {
+		t.Run(strconv.FormatBool(poisoned), func(t *testing.T) {
+			checks, must := assert.New(t), require.New(t)
+			previousNow := now
+			clock := previousNow().UTC().Truncate(time.Second)
+			now = func() time.Time { return clock }
+			t.Cleanup(func() { now = previousNow })
+			api := newContractAPI(t, 20, nil)
+			api.PageSize = 1
+			api.AddMessage(1, 101, clock.Add(-time.Hour))
+			st := testutil.NewTestStore(t)
+			imp, source := contractRegister(t, st, api)
+			opts := ImportOptions{InboxID: 7, ReconcileInterval: 24 * time.Hour}
+			_, err := imp.Import(t.Context(), opts)
+			must.NoError(err)
+			reconciledAt := savedState(t, st, source).ReconciledAt
+			api.AddMessage(2, 201, clock.Add(72*time.Hour))
+			if poisoned {
+				state := savedState(t, st, source)
+				state.ActivityWatermark = clock.Add(72 * time.Hour).Unix()
+				state.ActivitySettled = state.ActivityWatermark
+				state.ActivitySeenAt = clock.Add(-time.Hour)
+				blob, err := state.marshal()
+				must.NoError(err)
+				syncID, err := st.StartSyncContext(t.Context(), source.ID, SourceType)
+				must.NoError(err)
+				must.NoError(st.CompleteSyncAndUpdateSourceCursorContext(t.Context(), syncID, source.ID, blob))
+				api.AddMessage(3, 301, clock.Add(-2*time.Hour))
+			} else {
+				_, err = imp.Import(t.Context(), opts)
+				must.NoError(err)
+				checks.LessOrEqual(savedState(t, st, source).ActivityWatermark, clock.Unix())
+				clock = clock.Add(11 * time.Minute)
+				_, err = imp.Import(t.Context(), opts)
+				must.NoError(err)
+				state := savedState(t, st, source)
+				checks.Equal(state.ActivityWatermark, state.ActivitySettled)
+				api.AddMessage(3, 301, clock)
+			}
+			api.TakeRequests()
+			sum, err := NewImporter(st, api.client(t)).Import(t.Context(), opts)
+			must.NoError(err)
+			checks.False(sum.Partial)
+			checks.Contains(contractMessageIDs(t, st), int64(301))
+			checks.Contains(contractMessageIDs(t, st), int64(201), "future conversations still archive")
+			state := savedState(t, st, source)
+			checks.LessOrEqual(state.ActivityWatermark, clock.Unix())
+			checks.Equal(reconciledAt, state.ReconciledAt, "discovery succeeds before reconciliation is due")
+			listingPages := 0
+			for _, request := range api.TakeRequests() {
+				if request == "list "+sortByActivity {
+					listingPages++
+				}
+				checks.NotEqual("list "+sortByCreated, request)
+			}
+			checks.GreaterOrEqual(listingPages, 2, "traverse past the future-dated first page")
+		})
+	}
 }

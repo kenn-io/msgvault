@@ -60,22 +60,22 @@ func TestSavedWorkAccessFailuresKeepHealthyProgress(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			api := newContractAPI(t, 1000, nil)
 			for id := int64(1); id <= int64(tc.count+1); id++ {
-				api.addMessage(id, id*10+1, now())
-				api.addMessage(id, id*10+2, now().Add(time.Second))
+				api.AddMessage(id, id*10+1, now())
+				api.AddMessage(id, id*10+2, now().Add(time.Second))
 			}
 			st := testutil.NewTestStore(t)
 			imp, source := contractRegister(t, st, api)
 			_, err := imp.Import(t.Context(), ImportOptions{InboxID: 7, Limit: 1})
 			require.NoError(err)
-			api.hidden, api.deniedDetails, api.deniedMessages = map[int64]bool{}, map[int64]bool{}, map[int64]bool{}
+			api.Hidden, api.DeniedDetails, api.DeniedMessages = map[int64]bool{}, map[int64]bool{}, map[int64]bool{}
 			for id := int64(1); id <= int64(tc.count); id++ {
-				api.hidden[id] = !tc.messages
-				api.deniedDetails[id] = !tc.messages
-				api.deniedMessages[id] = tc.messages
+				api.Hidden[id] = !tc.messages
+				api.DeniedDetails[id] = !tc.messages
+				api.DeniedMessages[id] = tc.messages
 			}
-			api.addMessage(int64(tc.count+2), 9001, now().Add(2*time.Second))
+			api.AddMessage(int64(tc.count+2), 9001, now().Add(2*time.Second))
 			opts := ImportOptions{InboxID: 7, Full: tc.full}
-			api.takeRequests()
+			api.TakeRequests()
 			for attempt := range 3 {
 				restarted := NewImporter(st, api.client(t))
 				restarted.requestBudget = tc.budget
@@ -87,7 +87,7 @@ func TestSavedWorkAccessFailuresKeepHealthyProgress(t *testing.T) {
 					require.ErrorContains(err, "HTTP 401")
 				}
 				assert.True(sum.Partial)
-				assert.LessOrEqual(len(api.takeRequests()), restarted.requestBudget+1)
+				assert.LessOrEqual(len(api.TakeRequests()), restarted.requestBudget+1)
 			}
 			archived := contractMessageIDs(t, st)
 			assert.Contains(archived, int64((tc.count+1)*10+2), "healthy saved history progresses")
@@ -98,7 +98,7 @@ func TestSavedWorkAccessFailuresKeepHealthyProgress(t *testing.T) {
 			assert.NotEmpty(state.Conversations["1"].Pending)
 			assert.Empty(state.Walk, "attempted failures retain history without holding completed discovery open")
 			assert.Equal(now().UTC(), state.ReconciledAt)
-			api.hidden, api.deniedDetails, api.deniedMessages = nil, nil, nil
+			api.Hidden, api.DeniedDetails, api.DeniedMessages = nil, nil, nil
 			_, err = NewImporter(st, api.client(t)).Import(t.Context(), ImportOptions{InboxID: 7})
 			require.NoError(err)
 			assert.Len(contractMessageIDs(t, st), (tc.count+1)*2+1)
@@ -115,9 +115,9 @@ func TestSavedWorkFatalErrorsStopReads(t *testing.T) {
 			api := newContractAPI(t, 1000, nil)
 			api.mediaRouter = router
 			for id := int64(1); id <= 3; id++ {
-				api.addMessage(id, id*10, now())
+				api.AddMessage(id, id*10, now())
 			}
-			api.deniedMessages = map[int64]bool{1: true}
+			api.DeniedMessages = map[int64]bool{1: true}
 			st := testutil.NewTestStore(t)
 			imp, source := contractRegister(t, st, api)
 			opts := mediaRefreshOptions(t)
@@ -125,16 +125,16 @@ func TestSavedWorkFatalErrorsStopReads(t *testing.T) {
 				blocked := filepath.Join(opts.AttachmentsDir, "blocked")
 				require.NoError(os.WriteFile(blocked, []byte("file"), 0600))
 				opts.AttachmentsDir = blocked
-				api.conversations[2][0]["attachments"] = []any{map[string]any{"id": int64(2001), "file_type": "image", "data_url": router.url(t, media.server, "/recording-a.ogg")}}
+				api.Conversations[2][0]["attachments"] = []any{map[string]any{"id": int64(2001), "file_type": "image", "data_url": router.url(t, media.server, "/recording-a.ogg")}}
 			}
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			var setupErr error
-			api.onRequest = func(path string) {
+			api.OnRequest = func(path string) {
 				if path != "/conversations/2/messages" && (kind != "checkpoint" || path != "/conversations/1/messages") {
 					return
 				}
-				api.onRequest = nil
+				api.OnRequest = nil
 				switch kind {
 				case "checkpoint":
 					trigger := `CREATE TRIGGER reject_checkpoint BEFORE UPDATE OF cursor_before ON sync_runs BEGIN SELECT CASE WHEN NEW.status = 'failed' THEN RAISE(ABORT, 'synthetic failed checkpoint') ELSE RAISE(ABORT, 'synthetic checkpoint failure') END; END`
@@ -149,7 +149,7 @@ func TestSavedWorkFatalErrorsStopReads(t *testing.T) {
 				}
 			}
 			_, err := imp.Import(ctx, opts)
-			requests := api.takeRequests()
+			requests := api.TakeRequests()
 			require.NoError(setupErr)
 			require.Error(err)
 			assert.Contains(err.Error(), "conversation 1", "earlier provider errors survive a fatal error")
@@ -192,11 +192,11 @@ func TestSavedArtifactCheckpointRetiresPrivateMessageWhenExcluded(t *testing.T) 
 	_, err = NewImporter(st, api.client(t)).Import(t.Context(), opts)
 	require.NoError(err)
 	assert.NotContains(savedState(t, st, source).Conversations, "42", "excluded private media must be retired from saved refresh work")
-	api.takeRequests()
+	api.TakeRequests()
 
 	_, err = NewImporter(st, api.client(t)).Import(t.Context(), opts)
 	require.NoError(err)
-	for _, request := range api.takeRequests() {
+	for _, request := range api.TakeRequests() {
 		assert.NotContains(request, "messages ", "later syncs must not refetch excluded private artifacts")
 	}
 }
@@ -217,12 +217,12 @@ func TestSavedConversationMovedToAnotherInboxRetiresOldWork(t *testing.T) {
 	require.NoError(err)
 	require.Contains(savedState(t, st, source7).Conversations["42"].Artifacts, "901")
 
-	api.mu.Lock()
-	api.conversationInboxID = 8
-	for _, message := range api.conversations[42] {
+	api.Mu.Lock()
+	api.ConversationInboxID = 8
+	for _, message := range api.Conversations[42] {
 		message["inbox_id"] = int64(8)
 	}
-	api.mu.Unlock()
+	api.Mu.Unlock()
 
 	_, err = NewImporter(st, api.client(t)).Import(t.Context(), opts)
 	require.NoError(err, "moving a saved conversation must not fail sync for its former inbox")

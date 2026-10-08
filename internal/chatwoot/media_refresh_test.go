@@ -156,9 +156,9 @@ func TestMediaRefreshFailedReplacementRetainsBytesAndRetriesNextSync(t *testing.
 	media.mu.Lock()
 	media.failures["/recording-b.ogg"] = true
 	media.mu.Unlock()
-	api.mu.Lock()
+	api.Mu.Lock()
 	call["recording_url"] = router.url(t, media.server, "/recording-b.ogg")
-	api.mu.Unlock()
+	api.Mu.Unlock()
 	summary, err := NewImporter(st, api.client(t)).Import(t.Context(), opts)
 	require.NoError(err, "a media failure must not discard the archived call")
 	assert.Positive(summary.MediaFailures)
@@ -224,12 +224,12 @@ func TestMediaRefreshRecordingRepresentationMigration(t *testing.T) {
 			if tc.rotateQuery {
 				attachmentURL += "?signature=synthetic-new"
 			}
-			api.mu.Lock()
+			api.Mu.Lock()
 			message["attachments"] = []any{map[string]any{
 				"id": 2001, "message_id": 901, "file_type": "audio", "content_type": "audio/ogg", "extension": "ogg",
 				"data_url": attachmentURL, "transcribed_text": "Synthetic newly exposed transcript",
 			}}
-			api.mu.Unlock()
+			api.Mu.Unlock()
 			media.mu.Lock()
 			media.failures["/recording-a.ogg"] = true
 			media.mu.Unlock()
@@ -371,7 +371,7 @@ func TestReconcileDoesNotRenewFailedDownload(t *testing.T) {
 	attempts := 0
 	for day := range 10 {
 		clock = fixed().Add(time.Duration(day) * 24 * time.Hour)
-		api.addMessage(42, int64(1000+day), clock)
+		api.AddMessage(42, int64(1000+day), clock)
 		attachment["data_url"] = router.url(t, media.server, "/recording-a.ogg") + "?signature=" + strconv.Itoa(day)
 		if day == 3 {
 			attachment["id"] = int64(2003)
@@ -403,7 +403,7 @@ func TestReconcileDoesNotRenewFailedDownload(t *testing.T) {
 	assert.Equal(attempts+1, media.requestCount("/recording-a.ogg"))
 	opts.Full = false
 	clock = clock.Add(24 * time.Hour)
-	api.addMessage(42, 1100, clock)
+	api.AddMessage(42, 1100, clock)
 	_, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
 	assert.Equal(attempts+1, media.requestCount("/recording-a.ogg"), "explicit full retry does not renew automatic expiry")
