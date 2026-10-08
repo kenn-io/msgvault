@@ -63,19 +63,18 @@ func TestLibraryHandlerAuthorizesBeforeGate(t *testing.T) { //nolint:paralleltes
 	assert.Equal(t, Operation{ID: "rebuildCLIFTS", Method: http.MethodPost, Path: "/api/v1/cli/rebuild-fts"}, seen)
 }
 
-func TestLibraryHandlerTimeoutUsesCallerAuthorization(t *testing.T) {
+func TestLibraryHandlerClientClassDoesNotLiftTimeout(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name       string
-		cli        bool
-		header     string
-		value      string
-		wantStatus int
+		name   string
+		cli    bool
+		header string
+		value  string
 	}{
-		{name: "CLI without daemon credentials", cli: true, wantStatus: http.StatusOK},
-		{name: "CLI with daemon key", cli: true, header: "X-Api-Key", value: "synthetic-key", wantStatus: http.StatusOK},
-		{name: "CLI with invalid daemon credentials", cli: true, header: "X-Msgvault-Agent-Token", value: "invalid", wantStatus: http.StatusOK},
-		{name: "ordinary request keeps timeout", wantStatus: http.StatusServiceUnavailable},
+		{name: "CLI without daemon credentials", cli: true},
+		{name: "CLI with daemon key", cli: true, header: "X-Api-Key", value: "synthetic-key"},
+		{name: "CLI with invalid daemon credentials", cli: true, header: "X-Msgvault-Agent-Token", value: "invalid"},
+		{name: "ordinary request"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
@@ -106,7 +105,7 @@ func TestLibraryHandlerTimeoutUsesCallerAuthorization(t *testing.T) {
 				w := httptest.NewRecorder()
 				handler.ServeHTTP(w, r)
 				assert.True(t, called, "request must reach the operation")
-				assert.Equal(t, tc.wantStatus, w.Code, w.Body.String())
+				assert.Equal(t, http.StatusServiceUnavailable, w.Code, w.Body.String())
 			})
 		})
 	}

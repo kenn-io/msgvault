@@ -24,7 +24,13 @@ type Operation struct {
 // Authorized operations then pass through the configured OperationGate, so
 // rejected requests never wait on or observe archive work. The handler also
 // applies RequestTimeout, request IDs, panic recovery, and default no-store
-// response headers as Router does.
+// response headers as Router does. Unlike Router, the CLI client-class header
+// never lifts RequestTimeout or the host server's connection deadlines: a
+// request header must not override the caller's server policy.
+//
+// An admitted request acts as the archive owner. That includes daemon
+// shutdown through ServerOptions' shutdown callback, backup freezes, and agent
+// token management, without the daemon's shutdown token or same-host checks.
 func (s *Server) Handler(authorize func(http.ResponseWriter, *http.Request, Operation) bool) http.Handler {
 	mux := http.NewServeMux()
 	api := s.setupHumaAPI(mux)
@@ -38,7 +44,7 @@ func (s *Server) Handler(authorize func(http.ResponseWriter, *http.Request, Oper
 		// The humago context retains this request pointer. Update it after
 		// admission so both raw handlers and the gate see caller authorization.
 		security, _ := securityFromRequest(r)
-		security.auth = requestAuthentication{Mode: AuthModeCaller, trustedForCLIDuration: true}
+		security.auth = requestAuthentication{Mode: AuthModeCaller}
 		*r = *r.WithContext(context.WithValue(r.Context(), requestSecurityContextKey{}, security))
 		// Select timeout policy after admission. Keep Huma's request pointer in
 		// sync with the context and body passed through timeout and gate handling.
