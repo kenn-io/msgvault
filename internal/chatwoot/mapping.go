@@ -1,10 +1,8 @@
 package chatwoot
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
-	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
 	"slices"
@@ -157,7 +155,7 @@ func (imp *Importer) persistMessage(ctx context.Context, sourceID int64, c Conve
 			row.SentAt.Valid == message.SentAt.Valid && (!row.SentAt.Valid || row.SentAt.Time.Equal(message.SentAt.Time)) &&
 			row.InternalDate == message.InternalDate &&
 			row.Snippet == message.Snippet && row.SizeEstimate == message.SizeEstimate &&
-			sameJSONEvidence(row.Raw, data.RawMIME) && sameJSONEvidence([]byte(previous.Metadata.String), encoded) {
+			meetingarchive.JSONEvidenceEqual(row.Raw, data.RawMIME) && meetingarchive.JSONEvidenceEqual([]byte(previous.Metadata.String), encoded) {
 			unchanged, err = imp.store.MessageContentMatchesContext(ctx, row.ID, data.BodyText, *data.FTS)
 			if err != nil {
 				return 0, err
@@ -218,11 +216,6 @@ func (imp *Importer) persistMessage(ctx context.Context, sourceID int64, c Conve
 		refreshFrom = max(refreshFrom, callRefreshFrom)
 	}
 	return refreshFrom, nil
-}
-
-func sameJSONEvidence(a, b []byte) bool {
-	left, right := jsontext.Value(bytes.Clone(a)), jsontext.Value(bytes.Clone(b))
-	return left.Canonicalize() == nil && right.Canonicalize() == nil && bytes.Equal(left, right)
 }
 
 // addressedRecipients returns the recipients an email reply or forward names.

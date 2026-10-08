@@ -60,7 +60,7 @@ before your first sync to exclude private notes. This controls ingestion; it
 does not remove notes already archived. Notes skipped while it was off are
 fetched only by `sync-chatwoot --full` after turning it back on.
 
-Call details offer **Open meeting** for the recording and transcript. Meeting
+In the web UI, call details offer **Open meeting** for the recording and transcript. Meeting
 details offer **Open conversation** to return to the original call and its messages.
 
 Employees remain distinct from contacts and bots. The current conversation
@@ -122,15 +122,18 @@ and consent; see [document indexing](../usage/document-indexing.md).
 
 Each sync lists conversations by latest activity. Equal timestamps keep a
 ten-minute overlap open until a completed scan settles it. Afterward, a quiet
-inbox costs one activity listing plus the account's agent lookup. An inbox that
+inbox with no saved history or recent artifact work costs one activity listing
+plus the account's agent lookup. An inbox that
 was initially empty archives its first conversation on the next sync.
 Saved artifact work adds a conversation detail request when absent from the
 listing, plus range reads and exact-ID reads for capped or oversized responses.
 The saved artifact position gives later IDs a turn even while earlier calls
 remain pending. A 10,000-request budget bounds each inbox sync. Unfinished history and
 new conversations take turns, so a long history can't hold up newer ones.
-If a conversation becomes inaccessible, sync reports the error, retains its
-unfinished work, and continues archiving accessible conversations.
+Sync continues archiving accessible conversations when another becomes inaccessible.
+A conversation-detail 404 retires that conversation's saved work; an artifact-range
+404 clears its artifacts, and an exact-artifact 404 retires that artifact.
+A history-range 404 retains pending history and reports failure, as do other access errors.
 Restore the token user's inbox or team access to resume it; `--full` uses the same authorization.
 
 A recording or transcript can arrive after a call or voice note without

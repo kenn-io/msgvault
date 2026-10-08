@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
+	"go.kenn.io/msgvault/internal/meetingarchive"
 	"go.kenn.io/msgvault/internal/meetingcontent"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
@@ -459,7 +460,7 @@ func TestImportContractCallFallbackAndLifecycleKeepsOneLinkedMeeting(t *testing.
 	require.NoError(err)
 	rawAfter, err := st.GetMessageRaw(chatID)
 	require.NoError(err)
-	assert.True(sameJSONEvidence(rawBefore, rawAfter), "conversation contact changes leave the outgoing payload unchanged")
+	assert.True(meetingarchive.JSONEvidenceEqual(rawBefore, rawAfter), "conversation contact changes leave the outgoing payload unchanged")
 	var chatContactID, meetingContactID int64
 	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT participant_id FROM message_recipients WHERE message_id = ? AND recipient_type = 'to'`), chatID).Scan(&chatContactID))
 	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT participant_id FROM message_recipients WHERE message_id = ? AND recipient_type = 'to'`), meetingID).Scan(&meetingContactID))

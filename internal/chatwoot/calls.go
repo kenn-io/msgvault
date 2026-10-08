@@ -144,7 +144,7 @@ func (imp *Importer) persistCall(ctx context.Context, sourceID int64, c Conversa
 	if call.DurationSeconds != nil && *call.DurationSeconds >= 0 {
 		normalized["duration_seconds"] = *call.DurationSeconds
 	}
-	metadata, err := json.Marshal(map[string]any{"provider": SourceType, "chat_message_id": chatMessageID, "conversation_id": c.ID, "inbox_id": opts.InboxID, "call": call, "handling_agent": handler, "handling_agent_participant_id": handlerID}, json.Deterministic(true))
+	metadata, err := json.Marshal(map[string]any{"provider": SourceType, "chat_message_id": chatMessageID, "conversation_id": c.ID, "inbox_id": opts.InboxID, "handling_agent": handler, "handling_agent_participant_id": handlerID}, json.Deterministic(true))
 	if err != nil {
 		return 0, 0, err
 	}

@@ -189,7 +189,7 @@ func (a *Archiver) Upsert(
 			expectedIsFromMe = storedIsFromMe
 		}
 		unchanged := rawErr == nil && attributionErr == nil && bytes.Equal(storedRaw, snapshot.Raw) &&
-			storedIsFromMe == expectedIsFromMe && equalMetadata([]byte(existingMessage.Metadata.String), snapshot.Metadata)
+			storedIsFromMe == expectedIsFromMe && JSONEvidenceEqual([]byte(existingMessage.Metadata.String), snapshot.Metadata)
 		if unchanged && resolvedPeople && len(participants) > 0 {
 			unchanged = false
 		}
@@ -307,7 +307,8 @@ func (a *Archiver) Upsert(
 	return result, nil
 }
 
-func equalMetadata(stored, incoming []byte) bool {
+// JSONEvidenceEqual compares JSON evidence while ignoring object order and whitespace.
+func JSONEvidenceEqual(stored, incoming []byte) bool {
 	if bytes.Equal(stored, incoming) {
 		return true
 	}

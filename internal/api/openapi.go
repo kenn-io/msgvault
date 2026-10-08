@@ -348,7 +348,8 @@ import (
 // 3.4.0 adds Kata issues that quote exact message and file evidence, the
 // microsoft CardDAV provider, microsoft_authorization_required and
 // microsoft_contact_too_large.
-const APISchemaVersion = "3.4.0"
+// 3.5.0 adds optional related_message_id to message detail and conversation windows.
+const APISchemaVersion = "3.5.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
