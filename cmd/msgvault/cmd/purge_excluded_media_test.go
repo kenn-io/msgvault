@@ -28,7 +28,7 @@ type purgeMediaFixture struct {
 	fullPath    string
 }
 
-func newPurgeMediaFixture(t *testing.T) purgeMediaFixture {
+func newPurgeMediaFixture(t *testing.T, provider string) purgeMediaFixture {
 	t.Helper()
 	st := testutil.NewTestStore(t)
 	dataDir := t.TempDir()
@@ -38,9 +38,17 @@ func newPurgeMediaFixture(t *testing.T) purgeMediaFixture {
 	}
 	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 	_ = testCtx
-	source, err := st.GetOrCreateSource(sourceTypeBeeper, "signal")
-	require.NoError(t, err)
 	newMessage := func(sourceMessageID, conversationType string, participants int) int64 {
+		identifier, messageType := "signal", provider
+		if provider == chatwoot.SourceType {
+			accountID := int64(9)
+			if sourceMessageID == "retained" {
+				accountID, messageType = 10, "meeting_transcript"
+			}
+			identifier = chatwoot.SourceIdentifier("https://chatwoot.example.com", accountID, 8)
+		}
+		source, err := st.GetOrCreateSource(provider, identifier)
+		require.NoError(t, err)
 		conversationID, err := st.EnsureConversationWithType(
 			source.ID, "conversation-"+sourceMessageID, conversationType, sourceMessageID,
 		)
@@ -49,7 +57,7 @@ func newPurgeMediaFixture(t *testing.T) purgeMediaFixture {
 		require.NoError(t, err)
 		messageID, err := st.UpsertMessage(&store.Message{
 			SourceID: source.ID, ConversationID: conversationID,
-			SourceMessageID: sourceMessageID, MessageType: sourceTypeBeeper,
+			SourceMessageID: sourceMessageID, MessageType: messageType,
 		})
 		require.NoError(t, err)
 		return messageID
@@ -58,11 +66,15 @@ func newPurgeMediaFixture(t *testing.T) purgeMediaFixture {
 	retainedMessageID := newMessage("retained", "direct_chat", 2)
 	hash := strings.Repeat("ab", 32)
 	path := hash[:2] + "/" + hash
+	replaceAttachments := st.ReplaceMessageBeeperAttachments
+	if provider == chatwoot.SourceType {
+		replaceAttachments = st.ReplaceMessageChatwootAttachments
+	}
 	for messageID, sourceAttachmentID := range map[int64]string{
-		excludedMessageID: "beeper:excluded",
-		retainedMessageID: "beeper:retained",
+		excludedMessageID: provider + ":excluded",
+		retainedMessageID: provider + ":retained",
 	} {
-		require.NoError(t, st.ReplaceMessageBeeperAttachments(messageID, []store.AttachmentRef{{
+		require.NoError(t, replaceAttachments(messageID, []store.AttachmentRef{{
 			SourceAttachmentID: sourceAttachmentID,
 			StoragePath:        path,
 			ContentHash:        hash,
@@ -106,7 +118,7 @@ func (f purgeMediaFixture) state(t *testing.T, attachmentID int64) attachmentpol
 func TestPurgeExcludedMediaDryRunAndApplyPreservesSharedBlob(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	f := newPurgeMediaFixture(t)
+	f := newPurgeMediaFixture(t, sourceTypeBeeper)
 
 	dryRun := newPurgeExcludedMediaLocalCmd(f.deps())
 	var dryOutput bytes.Buffer
@@ -162,7 +174,7 @@ func TestMediaPolicyForSlackdumpUsesSlackWorkspaceConfig(t *testing.T) {
 func TestPurgeExcludedMediaPreservesBlobReferencedByThumbnail(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	f := newPurgeMediaFixture(t)
+	f := newPurgeMediaFixture(t, sourceTypeBeeper)
 	require.NoError(f.store.DB().QueryRow(f.store.Rebind(`
 		UPDATE attachments
 		SET content_hash = NULL, storage_path = ?, thumbnail_hash = ?, thumbnail_path = ?
@@ -183,7 +195,7 @@ func TestPurgeExcludedMediaPreservesBlobReferencedByThumbnail(t *testing.T) {
 func TestPurgeExcludedMediaRefusalLeavesArchiveUnchanged(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	f := newPurgeMediaFixture(t)
+	f := newPurgeMediaFixture(t, sourceTypeBeeper)
 	command := newPurgeExcludedMediaLocalCmd(f.deps())
 	var output bytes.Buffer
 	command.SetIn(strings.NewReader("n\n"))
@@ -199,7 +211,7 @@ func TestPurgeExcludedMediaRefusalLeavesArchiveUnchanged(t *testing.T) {
 func TestPurgeExcludedMediaRetriesAndContinuesLooseBlobCleanup(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	f := newPurgeMediaFixture(t)
+	f := newPurgeMediaFixture(t, sourceTypeBeeper)
 	f.config.Beeper.MediaScope = string(attachmentpolicy.ScopeNone)
 	orphanHash := strings.Repeat("cd", 32)
 	orphanPath := orphanHash[:2] + "/" + orphanHash
@@ -330,20 +342,11 @@ func TestChatwootPurgeResolvesExcludedInboxesAndSharedMeetings(t *testing.T) {
 	for _, state := range []attachmentpolicy.DownloadState{attachmentpolicy.StateStored, attachmentpolicy.StateFailed, attachmentpolicy.StatePending, attachmentpolicy.StateSkipped} {
 		t.Run(string(state), func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
-			f := newPurgeMediaFixture(t)
+			f := newPurgeMediaFixture(t, chatwoot.SourceType)
 			disabled := false
 			f.config.Chatwoot = []config.ChatwootSource{
 				{Identifier: "renamed", URL: "https://chatwoot.example.com/", AccountID: 9, ExcludeInboxes: []int64{8}, Media: &disabled},
 				{Identifier: "other", URL: "https://chatwoot.example.com", AccountID: 10},
-			}
-			for _, item := range []struct {
-				attachment, account int64
-				kind                string
-			}{{f.excludedID, 9, "chatwoot"}, {f.retainedID, 10, "meeting_transcript"}} {
-				source, err := f.store.GetOrCreateSource(chatwoot.SourceType, chatwoot.SourceIdentifier("https://chatwoot.example.com", item.account, 8))
-				require.NoError(err)
-				_, err = f.store.DB().Exec(f.store.Rebind(`UPDATE messages SET source_id = ?, message_type = ? WHERE id = (SELECT message_id FROM attachments WHERE id = ?)`), source.ID, item.kind, item.attachment)
-				require.NoError(err)
 			}
 			for _, invalid := range []string{"https://chatwoot.example.com/accounts/9/inboxes/08", "https://chatwoot.example.com/accounts/99/inboxes/8"} {
 				_, ok := mediaPolicyForSource(f.config, chatwoot.SourceType, invalid)

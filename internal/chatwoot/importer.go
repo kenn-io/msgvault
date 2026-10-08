@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"math"
 	"slices"
@@ -217,6 +218,8 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		for _, a := range agents {
 			imp.agents[a.ID] = a
 		}
+	} else {
+		slog.Warn("Chatwoot agent lookup failed; continuing with message sender evidence", "error", agentErr)
 	}
 	if err = imp.syncSelfAgents(ctx, source.ID, opts.SelfAgentIDs); err != nil {
 		return sum, err

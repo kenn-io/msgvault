@@ -588,6 +588,8 @@ included parent. `exclude` wins when the same ID is in both lists. See
 vocabulary. It decides which chat media is downloaded during sync and backfill;
 message text is always archived.
 
+[Chatwoot](#chatwoot) supports `media` and `max_media_mb` for each configured account.
+
 | Key | Default | Description |
 |---|---|---|
 | `media` | `true` | Download attachment bytes. `false` archives messages without their media and records a `policy_scope` skip marker |

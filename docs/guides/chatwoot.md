@@ -137,6 +137,8 @@ A recording or transcript can arrive after a call or voice note without
 updating the conversation's activity. msgvault rechecks every call, and audio
 still waiting for a transcript, for seven days after the message, then stops.
 Stored files and account-policy skips leave the file refresh list.
+After raising a size cap, use `--full` to reread skipped files; recording replacements
+can also retry during the seven-day call window.
 
 Every 24 hours by default, a reconcile lists every conversation. It rereads the
 whole history of each conversation updated since the previous reconcile began.
@@ -160,3 +162,4 @@ visible archive scope.
 The integration reads messages and media. Its sync command does not send
 messages or delete source records. Read the [CLI reference](../cli-reference.md#sync-chatwoot)
 for flags and the [meeting guide](../usage/meetings.md) for meeting queries.
+Use [purge-excluded-media](../cli-reference.md#purge-excluded-media) to remove archived bytes now excluded by your media settings while keeping message text.

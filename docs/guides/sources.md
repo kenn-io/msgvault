@@ -46,7 +46,8 @@ also a separate opt-in because downloading an image can activate email tracking.
 Some chat providers apply size and room-participant limits to media. A message can be archived
 without all its media. Review [media policy](../configuration.md#media-policy)
 before a large sync. Providers with a backfill command use it to retry eligible
-missing downloads; Chatwoot retries through its normal sync.
+missing downloads. [Chatwoot](chatwoot.md) retries recent `--no-media` downloads
+through normal sync; use `--full` after raising a size cap or to retry older quiet files.
 
 ## Meetings, calendars, and contacts
 

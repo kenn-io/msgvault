@@ -81,7 +81,7 @@ func (m Model) meetingAccounts() []query.AccountInfo {
 	accounts := make([]query.AccountInfo, 0, len(m.accounts))
 	for _, account := range m.accounts {
 		switch strings.ToLower(strings.TrimSpace(account.SourceType)) {
-		case meetingSourceGranola, meetingSourceCircleback, meetingSourcePlaud, meetingSourceNotion, meetingSourceMuesli, meetingSourceTwilio, meetingSourceImported:
+		case meetingSourceGranola, meetingSourceCircleback, meetingSourcePlaud, meetingSourceNotion, meetingSourceMuesli, meetingSourceTwilio, meetingSourceImported, "chatwoot":
 			accounts = append(accounts, account)
 		}
 	}
