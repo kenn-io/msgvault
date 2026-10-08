@@ -165,7 +165,7 @@ func (imp *Importer) persistCall(ctx context.Context, sourceID int64, c Conversa
 		SourceID: sourceID, SourceMessageID: "call:" + strconv.FormatInt(m.ID, 10), SourceConversationID: "call:" + strconv.FormatInt(c.ID, 10) + ":" + strconv.FormatInt(m.ID, 10),
 		Title: title, StartedAt: occurred, Body: strings.TrimSpace(transcript), Snippet: meetingarchive.Snippet(transcript), Raw: raw, RawFormat: "meeting_json", Metadata: metadata, Organizer: owner, Attendees: attendees,
 	}, meetingarchive.UpsertOptions{})
-	if result.MessageID > 0 {
+	if result.MessageID > 0 && chatMetadata["meeting_message_id"] != result.MessageID {
 		chatMetadata["meeting_message_id"] = result.MessageID
 		encoded, linkErr := json.Marshal(chatMetadata, json.Deterministic(true))
 		if linkErr == nil {

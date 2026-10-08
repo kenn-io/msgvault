@@ -3,6 +3,7 @@ package chatwoot
 import (
 	"context"
 	"encoding/json/v2"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -247,6 +248,36 @@ func TestMediaRefreshCallKeepsDistinctRecordingsAndDeduplicatesSameURL(t *testin
 			refs, payloads := readMediaRefreshBytes(t, st, meetingID, opts.AttachmentsDir)
 			assert.Len(refs, len(tc.want), "the message audio does not suppress a different live call recording")
 			assert.ElementsMatch(tc.want, payloads)
+			if tc.name == "distinct_recordings" {
+				var count int
+				var has bool
+				require.NoError(st.DB().QueryRow(st.Rebind(`SELECT attachment_count, has_attachments FROM messages WHERE id = ?`), meetingID).Scan(&count, &has))
+				assert.Equal(2, count)
+				assert.True(has)
+				trigger := fmt.Sprintf(`CREATE TRIGGER reject_chatwoot_stats BEFORE UPDATE OF attachment_count ON messages WHEN NEW.id = %d BEGIN SELECT RAISE(ABORT, 'synthetic stats failure'); END`, meetingID)
+				drop := `DROP TRIGGER reject_chatwoot_stats`
+				if store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
+					trigger = fmt.Sprintf(`CREATE FUNCTION reject_chatwoot_stats() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.id = %d THEN RAISE EXCEPTION 'synthetic stats failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER reject_chatwoot_stats BEFORE UPDATE OF attachment_count ON messages FOR EACH ROW EXECUTE FUNCTION reject_chatwoot_stats()`, meetingID)
+					drop += ` ON messages`
+				}
+				_, err = st.DB().Exec(trigger)
+				require.NoError(err)
+				err = st.ReplaceMessageChatwootAttachments(meetingID, []store.AttachmentRef{refs["chatwoot:attachment:2001"]})
+				require.ErrorContains(err, "synthetic stats failure")
+				retained, err := st.MessageProviderAttachments(meetingID, "chatwoot:")
+				require.NoError(err)
+				assert.Len(retained, 2, "failed statistics update rolls back replacement rows")
+				require.NoError(st.DB().QueryRow(st.Rebind(`SELECT attachment_count FROM messages WHERE id = ?`), meetingID).Scan(&count))
+				assert.Equal(2, count)
+				_, err = st.DB().Exec(drop)
+				require.NoError(err)
+				_, err = NewImporter(st, api.client(t)).Import(t.Context(), opts)
+				require.NoError(err)
+				_, payloads := readMediaRefreshBytes(t, st, meetingID, opts.AttachmentsDir)
+				assert.ElementsMatch(tc.want, payloads)
+				require.NoError(st.DB().QueryRow(st.Rebind(`SELECT attachment_count FROM messages WHERE id = ?`), meetingID).Scan(&count))
+				assert.Equal(2, count, "identical replay keeps committed rows and counts aligned")
+			}
 			if tc.name == "same_recording" {
 				var baseline, changes int64
 				postgres := store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB"))
@@ -273,12 +304,15 @@ func TestMediaRefreshFailedReplacementRetainsBytesAndRetriesNextSync(t *testing.
 			media := newMediaRefreshServer(t)
 			router := newChatwootMediaRouter(t, media.server)
 			message := mediaRefreshCall(router.url(t, media.server, "/recording-a.ogg"), "")
+			if dropped {
+				message["created_at"] = now().Add(-30 * 24 * time.Hour).Unix()
+			}
 			call, ok := message["call"].(map[string]any)
 			require.True(ok)
 			api := newContractAPI(t, 2, []map[string]any{message})
 			api.mediaRouter = router
 			st := testutil.NewTestStore(t)
-			importer, _ := contractRegister(t, st, api)
+			importer, source := contractRegister(t, st, api)
 			opts := mediaRefreshOptions(t)
 			ctx := t.Context()
 			if name == "first_import_canceled" {
@@ -349,6 +383,13 @@ func TestMediaRefreshFailedReplacementRetainsBytesAndRetriesNextSync(t *testing.
 				return
 			}
 			if dropped {
+				call["recording_url"] = router.url(t, media.server, "/recording-b.ogg")
+				media.failures["/recording-b.ogg"] = true
+				opts.Full = true
+				_, err = NewImporter(st, api.client(t)).Import(t.Context(), opts)
+				require.NoError(err)
+				opts.Full = false
+				firstFailure := savedState(t, st, source).Conversations["42"].Artifacts["901"]
 				api.Mu.Lock()
 				delete(call, "recording_url")
 				api.Mu.Unlock()
@@ -357,6 +398,22 @@ func TestMediaRefreshFailedReplacementRetainsBytesAndRetriesNextSync(t *testing.
 				refs, payloads := readMediaRefreshBytes(t, st, meetingID, opts.AttachmentsDir)
 				assert.Len(refs, 1)
 				assert.Equal([]string{"synthetic recording A bytes"}, payloads, "the archive keeps a recording the provider stops listing")
+				assert.Equal(1, media.requestCount("/recording-b.ogg"), "missing recording URL makes no request")
+				pending := savedState(t, st, source).Conversations["42"]
+				require.NotNil(pending)
+				assert.Equal(firstFailure, pending.Artifacts["901"])
+				for _, ref := range refs {
+					assert.Equal(attachmentpolicy.StateFailed, ref.State)
+					var evidence mediaMetadata
+					require.NoError(json.Unmarshal([]byte(ref.Metadata), &evidence))
+					assert.Equal(firstFailure, evidence.FailedSince)
+				}
+				call["recording_url"] = router.url(t, media.server, "/recording-b.ogg")
+				media.failures["/recording-b.ogg"] = false
+				_, err = NewImporter(st, api.client(t)).Import(t.Context(), opts)
+				require.NoError(err)
+				_, payloads = readMediaRefreshBytes(t, st, meetingID, opts.AttachmentsDir)
+				assert.Equal([]string{"synthetic replacement recording B bytes"}, payloads)
 				return
 			}
 		})

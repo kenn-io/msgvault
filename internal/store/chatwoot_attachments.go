@@ -11,7 +11,15 @@ import (
 )
 
 func (s *Store) ReplaceMessageChatwootAttachments(messageID int64, refs []AttachmentRef) error {
-	return s.replaceMessageProviderAttachments(messageID, "chatwoot:", refs)
+	return s.withTx(func(tx *loggedTx) error {
+		if err := s.requireSyncMessageSourceTx(tx, messageID); err != nil {
+			return err
+		}
+		if err := s.replaceMessageAttachmentsWhereTx(tx, messageID, `source_attachment_id LIKE ?`, false, refs, "chatwoot:%"); err != nil {
+			return err
+		}
+		return recomputeMessageAttachmentStatsWith(tx, messageID)
+	})
 }
 
 // ChatwootConversationHead returns the highest archived Chatwoot message ID in

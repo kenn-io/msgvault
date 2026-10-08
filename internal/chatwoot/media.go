@@ -245,9 +245,6 @@ func (imp *Importer) persistMedia(ctx context.Context, messageID int64, attachme
 				// failed replacement would falsely appear downloaded on the next sync.
 			}
 		}
-		if attachmentpolicy.RetryEligible(ref.State) && evidence.FailedSince > 0 && now().Sub(time.Unix(evidence.FailedSince, 0)) < artifactWindow {
-			failedSince = max(failedSince, evidence.FailedSince)
-		}
 		evidence.Provider, evidence.Source = SourceType, a.Raw
 		evidence.URL, evidence.StoredURL = remote, storedURL
 		evidence.SourceTranscript.Provider, evidence.SourceTranscript.Text = SourceType, a.TranscribedText
@@ -270,6 +267,13 @@ func (imp *Importer) persistMedia(ctx context.Context, messageID int64, attachme
 			refs = append(refs, ref)
 		}
 	}
+	for _, ref := range refs {
+		var evidence mediaMetadata
+		if json.Unmarshal([]byte(ref.Metadata), &evidence) == nil && attachmentpolicy.RetryEligible(ref.State) &&
+			evidence.FailedSince > 0 && now().Sub(time.Unix(evidence.FailedSince, 0)) < artifactWindow {
+			failedSince = max(failedSince, evidence.FailedSince)
+		}
+	}
 	unchanged := len(refs) == len(own)
 	for _, ref := range refs {
 		previous, ok := own[ref.SourceAttachmentID]
@@ -287,10 +291,7 @@ func (imp *Importer) persistMedia(ctx context.Context, messageID int64, attachme
 	if unchanged {
 		return failedSince, waiting, nil
 	}
-	if err = imp.store.ReplaceMessageChatwootAttachments(messageID, refs); err != nil {
-		return 0, false, err
-	}
-	return failedSince, waiting, imp.store.RecomputeMessageAttachmentStats(messageID)
+	return failedSince, waiting, imp.store.ReplaceMessageChatwootAttachments(messageID, refs)
 }
 
 func (imp *Importer) downloadMedia(ctx context.Context, remote, dir string, maxBytes int64, mimeType string) (string, string, int, string, error) {

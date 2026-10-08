@@ -699,7 +699,7 @@ func (imp *Importer) walkConversation(ctx context.Context, sourceID, syncID int6
 				return probeErr
 			}
 			if len(exact) != 1 || exact[0].ID != id {
-				return errors.New("chatwoot API does not support exact combined message bounds")
+				return &fatalImportError{errors.New("chatwoot API does not support exact combined message bounds")}
 			}
 			empty, probeErr := imp.client.ListMessages(ctx, c.ID, id, id)
 			*requests++
@@ -707,7 +707,7 @@ func (imp *Importer) walkConversation(ctx context.Context, sourceID, syncID int6
 				return probeErr
 			}
 			if len(empty) != 0 {
-				return errors.New("chatwoot API does not support empty combined message bounds")
+				return &fatalImportError{errors.New("chatwoot API does not support empty combined message bounds")}
 			}
 			imp.boundsProbed = true
 		}

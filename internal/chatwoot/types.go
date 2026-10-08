@@ -99,6 +99,23 @@ func (m *Message) UnmarshalJSON(b []byte) error {
 	}
 	*m = Message(value)
 	m.Raw = append(jsontext.Value(nil), b...)
+	var raw map[string]jsontext.Value
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	var sender map[string]jsontext.Value
+	if json.Unmarshal(raw["sender"], &sender) == nil {
+		if _, live := sender["availability_status"]; live {
+			delete(sender, "availability_status")
+			var err error
+			raw["sender"], err = json.Marshal(sender, json.Deterministic(true))
+			if err != nil {
+				return err
+			}
+			m.Raw, err = json.Marshal(raw, json.Deterministic(true))
+			return err
+		}
+	}
 	return nil
 }
 

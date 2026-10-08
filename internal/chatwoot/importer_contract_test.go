@@ -427,7 +427,7 @@ func TestImportContractCallFallbackAndLifecycleKeepsOneLinkedMeeting(t *testing.
 	liveCall, ok := message["call"].(map[string]any)
 	require.True(ok)
 	api.Mu.Lock()
-	message["sender"] = map[string]any{"id": int64(7), "type": "user", "name": "Example Agent"}
+	message["sender"] = map[string]any{"id": int64(7), "type": "user", "name": "Example Agent", "availability_status": "online"}
 	message["message_type"] = 1
 	liveCall["direction"] = "outgoing"
 	api.Mu.Unlock()
@@ -461,9 +461,16 @@ func TestImportContractCallFallbackAndLifecycleKeepsOneLinkedMeeting(t *testing.
 	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT participant_id FROM message_recipients WHERE message_id = ? AND recipient_type = 'to'`), meetingID).Scan(&meetingContactID))
 	assert.NotEqual(previousContactID, chatContactID)
 	assert.Equal(chatContactID, meetingContactID, "the linked meeting follows the reassigned conversation contact")
+	sender, ok := message["sender"].(map[string]any)
+	require.True(ok)
+	sender["availability_status"] = "offline"
 	sum, err := NewImporter(st, api.client(t)).Import(t.Context(), ImportOptions{InboxID: 7, IncludePrivate: true})
 	require.NoError(err)
 	assert.Zero(sum.Meetings)
+	rawAfter, err = st.GetMessageRaw(chatID)
+	require.NoError(err)
+	assert.True(meetingarchive.JSONEvidenceEqual(rawBefore, rawAfter), "presence changes preserve message evidence")
+	assert.NotContains(string(rawAfter), "availability_status")
 }
 
 func TestImportContractLateAudioTranscriptAndCredentialFreeCAS(t *testing.T) {
