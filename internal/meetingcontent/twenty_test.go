@@ -51,8 +51,7 @@ func TestTwentyMarkersAndInvalidTranscriptPreserveSummary(t *testing.T) {
 		{`null`, StateUnavailable, reasonMissingField},
 		{`[]`, StateEmpty, ""},
 		{`"not a transcript"`, StateUnavailable, reasonInvalidSection},
-		{`[{"words":[{"text":42}]}]`, StateUnavailable, reasonInvalidSection},
-		{`[{"words":[{"text":"Hello","start_timestamp":{"relative":-1}}]}]`, StateUnavailable, reasonInvalidSection},
+		{`[{"words":[{"text":42}]}]`, StateEmpty, ""},
 	} {
 		t.Run(tc.raw, func(t *testing.T) {
 			assert := assert.New(t)
@@ -64,6 +63,27 @@ func TestTwentyMarkersAndInvalidTranscriptPreserveSummary(t *testing.T) {
 			assert.Empty(c.Transcript.Text)
 		})
 	}
+}
+
+// Like Twenty's own transcript parser, a malformed entry or word drops only
+// itself rather than the whole transcript.
+func TestTwentyTranscriptSkipsMalformedWords(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	transcript := `[` +
+		`{"participant":{"name":"Speaker Example"},"words":[{"text":42},"bare",{"text":"Kept","start_timestamp":{"relative":-1}},{"text":"words","start_timestamp":{"relative":2}}]},` +
+		`{"words":"not a list"},` +
+		`{"participant":"not an object","words":[{"text":"Next","start_timestamp":"not an object"}]}]`
+	c := Decode("twenty_json", []byte(`{"schema_version":1,"recording":{"transcript":`+transcript+`}}`), nil)
+	assert.Equal(StateAvailable, c.Transcript.State)
+	require.Len(c.Transcript.Segments, 2)
+	assert.Equal("Kept words", c.Transcript.Segments[0].Text)
+	assert.Equal("Speaker Example", c.Transcript.Segments[0].Speaker)
+	require.NotNil(c.Transcript.Segments[0].OffsetSeconds, "a negative offset is ignored, not used")
+	assert.InDelta(2, *c.Transcript.Segments[0].OffsetSeconds, 1e-9)
+	assert.Equal("Next", c.Transcript.Segments[1].Text)
+	assert.Equal("Unknown speaker", c.Transcript.Segments[1].Speaker)
+	assert.Nil(c.Transcript.Segments[1].OffsetSeconds)
 }
 
 func TestTwentyDurationFallback(t *testing.T) {

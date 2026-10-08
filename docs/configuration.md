@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-06"
+last_edited: "2026-10-08"
 title: Configuration
 description: Configuration file reference, environment variables, and file locations.
 ---
@@ -1295,10 +1295,10 @@ recreating it automatically.
 
 ### Twenty Sources
 
-Top-level `[[twenty]]` entries connect Twenty Call Recorder workspaces through
+Top-level `[[twenty]]` entries connect Twenty workspaces' call recordings through
 read-only API keys. Keep these entries on the daemon host. Register each source
 with `msgvault add-twenty` before syncing or scheduling it. See
-[Meeting Transcripts](/docs/usage/meetings/#twenty-call-recorder) for API permissions.
+[Meeting Transcripts](/docs/usage/meetings/#twenty-call-recordings) for API permissions.
 
 ```toml
 [[twenty]]

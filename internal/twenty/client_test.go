@@ -90,7 +90,7 @@ func TestClientRecordingPage(t *testing.T) {
 		assert.Equal("cursor-1", request.Variables["after"])
 		assert.InDelta(2, request.Variables["first"], 1e-9)
 		assert.Equal(map[string]any{"updatedAt": map[string]any{"gte": "2026-09-01T10:00:00Z"}}, request.Variables["filter"])
-		_, _ = fmt.Fprint(w, `{"data":{"callRecordings":{"edges":[{"node":{"id":"recording-1","title":"Planning","status":"COMPLETED","updatedAt":"2026-09-02T10:00:00Z","transcript":null,"summary":{"markdown":"Summary"},"calendarEventId":null,"calendarEvent":null}}],"pageInfo":{"hasNextPage":true,"endCursor":"cursor-2"}}}}`)
+		_, _ = fmt.Fprint(w, `{"data":{"callRecordings":{"edges":[{"node":{"id":"recording-1","title":"Planning","status":"COMPLETED","applicationId":"app-1","updatedAt":"2026-09-02T10:00:00Z","transcript":null,"summary":{"markdown":"Summary"},"calendarEventId":null,"calendarEvent":null}}],"pageInfo":{"hasNextPage":true,"endCursor":"cursor-2"}}}}`)
 	}))
 	defer srv.Close()
 	client, err := NewClient(srv.URL, "example-key")
@@ -100,6 +100,7 @@ func TestClientRecordingPage(t *testing.T) {
 	require.Len(page.Records, 1)
 	assert.Equal("recording-1", page.Records[0].ID)
 	assert.Equal("Planning", page.Records[0].Title)
+	assert.Equal("app-1", page.Records[0].ApplicationID)
 	assert.Equal("2026-09-02T10:00:00Z", page.Records[0].UpdatedAt)
 	assert.Empty(page.Records[0].CalendarEventID)
 	assert.Nil(page.Records[0].Calendar)
@@ -200,7 +201,6 @@ func TestClientRetriesTransientFailures(t *testing.T) {
 
 func TestClientRejectsBrokenAndPartialResponses(t *testing.T) {
 	for _, body := range []string{
-		`{"data":{"callRecordings":{"edges":[],"pageInfo":{"hasNextPage":false}}},"errors":[{"message":"example-key secret response"}]}`,
 		`{"data":null}`, `{"data":{}}`, `{"data":{"callRecordings":null}}`,
 		`{"data":{"callRecordings":{"edges":null,"pageInfo":{"hasNextPage":false}}}}`,
 		`{"data":{"callRecordings":{"edges":[{"node":null}],"pageInfo":{"hasNextPage":false}}}}`,
@@ -223,6 +223,65 @@ func TestClientRejectsBrokenAndPartialResponses(t *testing.T) {
 			assert.NotContains(err.Error(), "secret response")
 		})
 	}
+}
+
+// Twenty's messages name the missing permission or field, such as one an
+// older self-hosted version lacks, so a partial response reports them.
+func TestClientReportsGraphQLErrors(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprint(w, `{"data":{"callRecordings":null},"errors":[`+
+			`{"message":"Cannot query field \"applicationId\" on type \"CallRecording\".","extensions":{"code":"GRAPHQL_VALIDATION_FAILED"}},`+
+			`{"message":"Forbidden"},{"message":"third"},{"message":"fourth"},{"message":"fifth"}]}`)
+	}))
+	defer srv.Close()
+	client, err := NewClient(srv.URL, "graphql-errors-example-key")
+	require.NoError(err)
+	_, err = client.ListRecordings(t.Context(), epoch, "", 1)
+	require.Error(err)
+	assert.Contains(err.Error(), `GRAPHQL_VALIDATION_FAILED: Cannot query field "applicationId" on type "CallRecording".`)
+	assert.Contains(err.Error(), "Forbidden")
+	assert.Contains(err.Error(), "2 more")
+	assert.NotContains(err.Error(), "fourth")
+}
+
+// After a page overflows, later pages start at the size that fit instead of
+// downloading oversized pages again.
+func TestClientKeepsReducedPageSizeAfterOverflow(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	var sizes []int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Variables struct {
+				First int `json:"first"`
+			} `json:"variables"`
+		}
+		if !assert.NoError(json.UnmarshalRead(r.Body, &request)) {
+			return
+		}
+		sizes = append(sizes, request.Variables.First)
+		if request.Variables.First > 10 {
+			chunk := strings.Repeat(" ", 1<<20)
+			for range 65 {
+				if _, err := fmt.Fprint(w, chunk); err != nil {
+					return
+				}
+			}
+			return
+		}
+		_, _ = fmt.Fprint(w, `{"data":{"callRecordings":{"edges":[],"pageInfo":{"hasNextPage":false}}}}`)
+	}))
+	defer srv.Close()
+	client, err := NewClient(srv.URL, "page-size-example-key")
+	require.NoError(err)
+	client.limiter = rate.NewLimiter(rate.Inf, 1)
+	for range 2 {
+		_, err = client.ListRecordings(t.Context(), epoch, "", 20)
+		require.NoError(err)
+	}
+	assert.Equal([]int{20, 10, 10}, sizes)
 }
 
 func TestClientProbeChecksAllObjects(t *testing.T) {
@@ -308,10 +367,17 @@ func TestValidateBaseURL(t *testing.T) {
 		require.Error(err)
 		assert.NotContains(err.Error(), "secret")
 	}
-	for _, value := range []string{"https://workspace.twenty.example/", "http://127.0.0.1:3000", "http://[::1]:3000", "http://localhost:3000"} {
+	for value, want := range map[string]string{
+		"https://workspace.twenty.example/":     "https://workspace.twenty.example",
+		"http://127.0.0.1:3000":                 "http://127.0.0.1:3000",
+		"http://[::1]:3000":                     "http://[::1]:3000",
+		"http://localhost:3000":                 "http://localhost:3000",
+		"https://Workspace.Twenty.Example:443/": "https://workspace.twenty.example",
+		"HTTP://[::1]:80":                       "http://[::1]",
+	} {
 		out, err := ValidateBaseURL(value)
 		require.NoError(err)
-		assert.Equal(strings.TrimSuffix(value, "/"), out)
+		assert.Equal(want, out, value)
 	}
 }
 
@@ -486,6 +552,13 @@ func TestClientRetriesNetworkFailuresAndStopsOnCancel(t *testing.T) {
 		_, err = client.ListRecordings(t.Context(), epoch, "", 1)
 		require.NoError(err)
 		assert.Equal(3, requests)
+
+		errCertificate := errors.New("x509: certificate signed by unknown authority")
+		client.http.Transport = twentyTransport(func(*http.Request) (*http.Response, error) {
+			return nil, errCertificate
+		})
+		_, err = client.ListRecordings(t.Context(), epoch, "", 1)
+		require.ErrorIs(err, errCertificate, "the cause of a persistent network failure is reported")
 
 		ctx, cancel := context.WithCancel(t.Context())
 		client.http.Transport = twentyTransport(func(*http.Request) (*http.Response, error) {

@@ -79,30 +79,21 @@ func decodeTwenty(fields map[string]jsontext.Value) Content {
 // A diarized entry may cover an entire speech turn, so the last word's end
 // offset supplies duration even when the transcript has just one segment.
 func twentyTranscriptSpan(raw jsontext.Value) (float64, bool) {
-	var entries []struct {
-		Words []struct {
-			Text  string                    `json:"text"`
-			Start map[string]jsontext.Value `json:"start_timestamp"`
-			End   map[string]jsontext.Value `json:"end_timestamp"`
-		} `json:"words"`
-	}
-	if json.Unmarshal(raw, &entries) != nil {
+	entries, ok := twentyEntries(raw)
+	if !ok {
 		return 0, false
 	}
 	var first, last float64
 	found := false
 	var absolute []time.Time
 	for _, entry := range entries {
-		for _, word := range entry.Words {
-			if strings.TrimSpace(word.Text) == "" {
-				continue
-			}
-			for _, stamp := range []map[string]jsontext.Value{word.Start, word.End} {
+		for _, word := range entry.words {
+			for _, stamp := range []map[string]jsontext.Value{word.start, word.end} {
 				if instant, ok := rawTime(stamp["absolute"], false); ok {
 					absolute = append(absolute, instant)
 				}
-				offset, ok := rawFiniteFloat(stamp["relative"])
-				if !ok || offset < 0 {
+				offset, ok := twentyOffset(stamp)
+				if !ok {
 					continue
 				}
 				if !found || offset < first {
@@ -135,6 +126,78 @@ func twentyEmail(value string) string {
 	return email
 }
 
+type twentyEntry struct {
+	speaker string
+	words   []twentyWord
+}
+
+type twentyWord struct {
+	text       string
+	start, end map[string]jsontext.Value
+}
+
+// twentyEntries reads a diarized transcript the way Twenty's own parser
+// does: a malformed entry or word drops only itself, and an entry needs at
+// least one word with nonblank text. ok is false when raw isn't an array.
+func twentyEntries(raw jsontext.Value) ([]twentyEntry, bool) {
+	var values []jsontext.Value
+	if json.Unmarshal(raw, &values) != nil {
+		return nil, false
+	}
+	entries := make([]twentyEntry, 0, len(values))
+	for _, value := range values {
+		var fields struct {
+			Participant jsontext.Value   `json:"participant"`
+			Words       []jsontext.Value `json:"words"`
+		}
+		if json.Unmarshal(value, &fields) != nil {
+			continue
+		}
+		entry := twentyEntry{words: twentyWords(fields.Words)}
+		if len(entry.words) == 0 {
+			continue
+		}
+		var participant struct {
+			Name string `json:"name"`
+		}
+		if json.Unmarshal(fields.Participant, &participant) == nil {
+			entry.speaker = strings.TrimSpace(participant.Name)
+		}
+		entries = append(entries, entry)
+	}
+	return entries, true
+}
+
+func twentyWords(values []jsontext.Value) []twentyWord {
+	words := make([]twentyWord, 0, len(values))
+	for _, value := range values {
+		var fields map[string]jsontext.Value
+		if json.Unmarshal(value, &fields) != nil {
+			continue
+		}
+		var text string
+		if json.Unmarshal(fields["text"], &text) != nil || strings.TrimSpace(text) == "" {
+			continue
+		}
+		word := twentyWord{text: strings.TrimSpace(text)}
+		if json.Unmarshal(fields["start_timestamp"], &word.start) != nil {
+			word.start = nil
+		}
+		if json.Unmarshal(fields["end_timestamp"], &word.end) != nil {
+			word.end = nil
+		}
+		words = append(words, word)
+	}
+	return words
+}
+
+// twentyOffset returns a word timestamp's offset from the recording start.
+// A negative or nonfinite offset is ignored like a missing one.
+func twentyOffset(stamp map[string]jsontext.Value) (float64, bool) {
+	offset, ok := rawFiniteFloat(stamp["relative"])
+	return offset, ok && offset >= 0
+}
+
 func decodeTwentyTranscript(raw jsontext.Value) Transcript {
 	if len(raw) == 0 || isNull(raw) {
 		return Transcript{State: StateUnavailable, Reason: reasonMissingField}
@@ -155,54 +218,32 @@ func decodeTwentyTranscript(raw jsontext.Value) Transcript {
 		}
 		return Transcript{State: StateUnavailable, Reason: reasonInvalidSection}
 	}
-	var entries []struct {
-		Participant *struct {
-			Name string `json:"name"`
-		} `json:"participant"`
-		Words []struct {
-			Text  string                    `json:"text"`
-			Start map[string]jsontext.Value `json:"start_timestamp"`
-			End   map[string]jsontext.Value `json:"end_timestamp"`
-		} `json:"words"`
-	}
-	if json.Unmarshal(raw, &entries) != nil {
+	entries, ok := twentyEntries(raw)
+	if !ok {
 		return Transcript{State: StateUnavailable, Reason: reasonInvalidSection}
 	}
 	transcript := Transcript{State: StateEmpty}
 	for _, entry := range entries {
-		var words []string
 		segment := Segment{Speaker: "Unknown speaker"}
-		if entry.Participant != nil && strings.TrimSpace(entry.Participant.Name) != "" {
-			segment.Speaker = strings.TrimSpace(entry.Participant.Name)
+		if entry.speaker != "" {
+			segment.Speaker = entry.speaker
 		}
-		for _, word := range entry.Words {
-			text := strings.TrimSpace(word.Text)
-			if text == "" {
-				continue
-			}
-			words = append(words, text)
-			if value, present := word.Start["relative"]; present && !isNull(value) {
-				offset, valid := rawFiniteFloat(value)
-				if !valid || offset < 0 {
-					return Transcript{State: StateUnavailable, Reason: reasonInvalidSection}
-				}
-				if segment.OffsetSeconds == nil {
-					segment.OffsetSeconds = &offset
-				}
+		texts := make([]string, 0, len(entry.words))
+		for _, word := range entry.words {
+			texts = append(texts, word.text)
+			if offset, ok := twentyOffset(word.start); ok && segment.OffsetSeconds == nil {
+				segment.OffsetSeconds = &offset
 			}
 			if segment.StartedAt == nil {
-				if start, ok := rawTime(word.Start["absolute"], false); ok {
+				if start, ok := rawTime(word.start["absolute"], false); ok {
 					segment.StartedAt = &start
 				}
 			}
-			if end, ok := rawTime(word.End["absolute"], false); ok {
+			if end, ok := rawTime(word.end["absolute"], false); ok {
 				segment.EndedAt = &end
 			}
 		}
-		if len(words) == 0 {
-			continue
-		}
-		segment.Text = strings.Join(words, " ")
+		segment.Text = strings.Join(texts, " ")
 		transcript.Segments = append(transcript.Segments, segment)
 	}
 	if len(transcript.Segments) > 0 {

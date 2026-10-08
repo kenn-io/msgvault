@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-25"
+last_edited: "2026-10-08"
 title: Vector Search
 description: Find messages by meaning and set up separate people, visual, and document search indexes.
 ---
@@ -429,9 +429,9 @@ trigger).
 |---|---|
 | Manual `sync-full` / `sync` (Gmail, IMAP) | No. Run `msgvault embeddings build` afterward |
 | Manual `sync-calendar` / `sync-teams` / `sync-discord` | No. Run `msgvault embeddings build` afterward |
-| Manual `sync-slack` / `sync-beeper` / `sync-granola` / `sync-plaud` / `sync-circleback` / `sync-notion-meetings` / `sync-muesli` / `sync-twilio` | No. Run `msgvault embeddings build` afterward |
+| Manual `sync-slack` / `sync-beeper` / `sync-granola` / `sync-plaud` / `sync-circleback` / `sync-notion-meetings` / `sync-muesli` / `sync-twilio` / `sync-twenty` | No. Run `msgvault embeddings build` afterward |
 | Scheduled account syncs in `msgvault serve` (Gmail, IMAP, Teams, Discord) | Yes, when `[vector.embed.schedule].run_after_sync = true` |
-| Scheduled calendar, Slack, Beeper, Granola, Plaud, Circleback, Notion, Muesli, and Twilio syncs in `msgvault serve` | No immediate post-sync run. Picked up by the embed worker's `[vector.embed.schedule].cron` schedule |
+| Scheduled calendar, Slack, Beeper, Granola, Plaud, Circleback, Notion, Muesli, Twilio, and Twenty syncs in `msgvault serve` | No immediate post-sync run. Picked up by the embed worker's `[vector.embed.schedule].cron` schedule |
 | Local email imports (`import-pst`, `import-emlx`, `import-eml`, `import-mbox`) | No. Run `msgvault embeddings build` afterward |
 | Local chat/text imports | No. Run `msgvault embeddings build` afterward |
 

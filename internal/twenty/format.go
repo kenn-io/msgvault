@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"go.kenn.io/msgvault/internal/meetingarchive"
 	"go.kenn.io/msgvault/internal/meetingcontent"
@@ -91,19 +92,33 @@ func archiveSnapshot(sourceID int64, accountEmail string, recording Recording, c
 		}
 	}
 	snapshot.Body = body.String()
-	var snippet strings.Builder
-	snippet.WriteString(content.Summary.Text)
-	if snippet.Len() == 0 {
-		for _, segment := range content.Transcript.Segments {
-			snippet.WriteString(segment.Text)
-			snippet.WriteByte(' ')
-		}
+	snapshot.Snippet = snippet(content)
+	metadata := map[string]any{"provider": SourceType, "recording_id": recording.ID}
+	if recording.ApplicationID != "" {
+		metadata["application_id"] = recording.ApplicationID
 	}
-	preview := []rune(strings.TrimSpace(snippet.String()))
-	if len(preview) > 200 {
-		preview = preview[:200]
-	}
-	snapshot.Snippet = string(preview)
-	snapshot.Metadata, err = json.Marshal(map[string]any{"provider": SourceType, "recording_id": recording.ID}, json.Deterministic(true))
+	snapshot.Metadata, err = json.Marshal(metadata, json.Deterministic(true))
 	return snapshot, true, err
+}
+
+// snippet previews the summary, or else the opening of the transcript,
+// without joining a whole long transcript first.
+func snippet(content meetingcontent.Content) string {
+	const limit = 200
+	text := strings.TrimSpace(content.Summary.Text)
+	if text == "" {
+		var opening strings.Builder
+		for _, segment := range content.Transcript.Segments {
+			if utf8.RuneCountInString(opening.String()) > limit {
+				break
+			}
+			opening.WriteString(segment.Text)
+			opening.WriteByte(' ')
+		}
+		text = strings.TrimSpace(opening.String())
+	}
+	if runes := []rune(text); len(runes) > limit {
+		return string(runes[:limit])
+	}
+	return text
 }

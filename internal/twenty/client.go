@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.kenn.io/msgvault/internal/httpretry"
@@ -24,10 +25,15 @@ import (
 )
 
 const maxResponseBytes = 64 << 20
-const pageSize = 100
-const maxAttempts = 5
+const maxPageSize = 100
 
-const recordingFields = `id title status createdAt updatedAt startedAt endedAt calendarEventId transcript summary { markdown } calendarEvent { ` + calendarFields + ` }`
+// defaultPageSize keeps a page of hour-long recordings well under the
+// response bound: word-level transcripts run about 1.3 MB per hour.
+const defaultPageSize = 20
+const maxAttempts = 5
+const maxReportedGraphQLErrors = 3
+
+const recordingFields = `id title status applicationId createdAt updatedAt startedAt endedAt calendarEventId transcript summary { markdown } calendarEvent { ` + calendarFields + ` }`
 const calendarFields = `id title startsAt endsAt`
 const participantFields = `id calendarEventId displayName handle isOrganizer`
 const recordingQuery = `query Recordings($after: String, $first: Int!, $filter: CallRecordingFilterInput) {
@@ -64,24 +70,9 @@ var sharedRateLimiters = struct {
 	byIdentity map[rateLimitIdentity]*rate.Limiter
 }{byIdentity: make(map[rateLimitIdentity]*rate.Limiter)}
 
-func rateLimiterFor(baseURL, apiKey string) *rate.Limiter {
-	u, err := url.Parse(baseURL)
-	if err != nil {
-		return rate.NewLimiter(rate.Every(650*time.Millisecond), 1)
-	}
-	scheme := strings.ToLower(u.Scheme)
-	hostname := strings.ToLower(u.Hostname())
-	port := u.Port()
-	if (scheme == "https" && port == "443") || (scheme == "http" && port == "80") {
-		port = ""
-	}
-	host := hostname
-	if port != "" {
-		host = net.JoinHostPort(hostname, port)
-	} else if strings.Contains(hostname, ":") {
-		host = "[" + hostname + "]"
-	}
-	identity := rateLimitIdentity{origin: scheme + "://" + host, credential: sha256.Sum256([]byte(apiKey))}
+// rateLimiterFor takes a root normalized by ValidateBaseURL.
+func rateLimiterFor(root, apiKey string) *rate.Limiter {
+	identity := rateLimitIdentity{origin: root, credential: sha256.Sum256([]byte(apiKey))}
 	sharedRateLimiters.Lock()
 	defer sharedRateLimiters.Unlock()
 	if limiter := sharedRateLimiters.byIdentity[identity]; limiter != nil {
@@ -97,10 +88,16 @@ type Client struct {
 	key      string
 	http     *http.Client
 	limiter  *rate.Limiter
+	// pageLimit is the largest recording page that can still fit the
+	// response bound. It shrinks after an overflow so later pages don't
+	// repeat the oversized downloads.
+	pageLimit atomic.Int64
 }
 
 // ValidateBaseURL accepts an API root, never an API path or a URL with
-// credentials. Plain HTTP is limited to local development deployments.
+// credentials. Plain HTTP is limited to local development deployments. The
+// result has a lowercase host and no default port, so one origin has one
+// spelling.
 func ValidateBaseURL(value string) (string, error) {
 	u, err := url.Parse(strings.TrimSpace(value))
 	if err != nil || u == nil || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.RawFragment != "" || (u.Path != "" && u.Path != "/") || u.RawPath != "" {
@@ -112,6 +109,18 @@ func ValidateBaseURL(value string) (string, error) {
 		if u.Scheme != "http" || !local {
 			return "", errors.New("twenty base_url requires HTTPS except for loopback HTTP")
 		}
+	}
+	host, port := strings.ToLower(u.Hostname()), u.Port()
+	if (u.Scheme == "https" && port == "443") || (u.Scheme == "http" && port == "80") {
+		port = ""
+	}
+	switch {
+	case port != "":
+		u.Host = net.JoinHostPort(host, port)
+	case strings.Contains(host, ":"):
+		u.Host = "[" + host + "]"
+	default:
+		u.Host = host
 	}
 	u.Path = ""
 	return u.String(), nil
@@ -126,13 +135,24 @@ func NewClient(baseURL, apiKey string) (*Client, error) {
 	if key == "" || strings.ContainsAny(key, "\r\n") {
 		return nil, errors.New("twenty api_key is required and must not contain newlines")
 	}
+	// The header timeout catches an unresponsive server quickly; the overall
+	// timeout leaves room to download a page close to the response bound on
+	// a slow link.
+	transport := &http.Transport{Proxy: http.ProxyFromEnvironment}
+	if base, ok := http.DefaultTransport.(*http.Transport); ok {
+		transport = base.Clone()
+	}
+	transport.ResponseHeaderTimeout = 30 * time.Second
 	// Twenty documents 100 requests/minute. Share pacing across clients that
 	// use the same origin and credential so configured sources cannot each
 	// spend a separate burst token.
-	return &Client{endpoint: root + "/graphql", key: key, limiter: rateLimiterFor(root, key), http: &http.Client{
-		Timeout:       30 * time.Second,
+	client := &Client{endpoint: root + "/graphql", key: key, limiter: rateLimiterFor(root, key), http: &http.Client{
+		Transport:     transport,
+		Timeout:       5 * time.Minute,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-	}}, nil
+	}}
+	client.pageLimit.Store(maxPageSize)
+	return client, nil
 }
 
 // query retries throttling, server errors and network failures, the way the
@@ -181,7 +201,9 @@ func (c *Client) send(ctx context.Context, body []byte) (map[string]jsontext.Val
 		if ctx.Err() != nil {
 			return nil, nil, ctx.Err()
 		}
-		return nil, new(string), errors.New("twenty request failed (network or timeout)")
+		// The key travels in a header, so the transport error names only the
+		// endpoint and the failure, such as a DNS or certificate problem.
+		return nil, new(string), fmt.Errorf("twenty request failed: %w", err)
 	}
 	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode == http.StatusTooManyRequests || response.StatusCode >= 500 {
@@ -193,19 +215,14 @@ func (c *Client) send(ctx context.Context, body []byte) (map[string]jsontext.Val
 	}
 	data, err := io.ReadAll(io.LimitReader(response.Body, maxResponseBytes+1))
 	if err != nil {
-		return nil, new(string), errors.New("read Twenty response")
+		return nil, new(string), fmt.Errorf("read Twenty response: %w", err)
 	}
 	if len(data) > maxResponseBytes {
 		return nil, nil, errResponseTooLarge
 	}
 	var wire struct {
 		Data   map[string]jsontext.Value `json:"data"`
-		Errors []struct {
-			Extensions struct {
-				Code         string  `json:"code"`
-				RetryAfterMS float64 `json:"retryAfterMs"`
-			} `json:"extensions"`
-		} `json:"errors"`
+		Errors []graphQLError            `json:"errors"`
 	}
 	if json.Unmarshal(data, &wire) != nil {
 		return nil, nil, errors.New("invalid Twenty response JSON")
@@ -221,12 +238,42 @@ func (c *Client) send(ctx context.Context, body []byte) (map[string]jsontext.Val
 				return nil, &retryAfter, errors.New("twenty API rate limit reached")
 			}
 		}
-		return nil, nil, errors.New("twenty GraphQL request failed; check API key permissions and Call Recorder availability")
+		return nil, nil, graphQLFailure(wire.Errors)
 	}
 	if wire.Data == nil {
 		return nil, nil, errors.New("twenty response has no data")
 	}
 	return wire.Data, nil, nil
+}
+
+type graphQLError struct {
+	Message    string `json:"message"`
+	Extensions struct {
+		Code         string  `json:"code"`
+		RetryAfterMS float64 `json:"retryAfterMs"`
+	} `json:"extensions"`
+}
+
+// graphQLFailure reports Twenty's own error codes and messages, which name
+// the missing permission or unknown field, such as a field an older
+// self-hosted version doesn't have.
+func graphQLFailure(errs []graphQLError) error {
+	reported := errs[:min(len(errs), maxReportedGraphQLErrors)]
+	details := make([]string, 0, len(reported)+1)
+	for _, graphqlErr := range reported {
+		detail := strings.TrimSpace(graphqlErr.Message)
+		if runes := []rune(detail); len(runes) > 200 {
+			detail = string(runes[:200]) + "…"
+		}
+		if code := graphqlErr.Extensions.Code; code != "" {
+			detail = code + ": " + detail
+		}
+		details = append(details, detail)
+	}
+	if hidden := len(errs) - len(reported); hidden > 0 {
+		details = append(details, fmt.Sprintf("%d more", hidden))
+	}
+	return fmt.Errorf("twenty GraphQL request failed (%s); check that the API key can read call recordings, calendar events and participants", strings.Join(details, "; "))
 }
 
 type connection struct {
@@ -277,9 +324,10 @@ func (c *Client) Probe(ctx context.Context) error {
 }
 
 func (c *Client) ListRecordings(ctx context.Context, updatedSince, after string, first int) (*Page, error) {
-	if first < 1 || first > pageSize {
+	if first < 1 || first > maxPageSize {
 		return nil, errors.New("twenty page size must be between 1 and 100")
 	}
+	first = int(min(int64(first), c.pageLimit.Load()))
 	var cursor any
 	if after != "" {
 		cursor = after
@@ -291,6 +339,7 @@ func (c *Client) ListRecordings(ctx context.Context, updatedSince, after string,
 	// recording that alone exceeds it so the importer can skip it.
 	if errors.Is(err, errResponseTooLarge) {
 		if first > 1 {
+			c.pageLimit.Store(int64(first / 2))
 			return c.ListRecordings(ctx, updatedSince, after, first/2)
 		}
 		return c.nextRecordingAlone(ctx, variables, after)

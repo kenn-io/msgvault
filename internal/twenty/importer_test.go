@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -136,7 +137,8 @@ func TestImportTwentyArchivesAndConverges(t *testing.T) {
 	sum, err = imp.Import(context.Background(), opts)
 	require.NoError(err)
 	assert.Zero(sum.MeetingsUpdated)
-	assert.Equal([]string{"1970-01-01T00:00:00Z", "2026-09-01T11:00:00Z"}, f.since, "the second run lists only recordings updated since the first")
+	assert.Zero(sum.MeetingsProcessed, "the overlap re-read skips the recording already handled")
+	assert.Equal([]string{"1970-01-01T00:00:00Z", "2026-09-01T10:55:00Z"}, f.since, "the second run lists recordings updated since the first, less the overlap")
 	f.pages[""].Records[0].Calendar.Participants[1] = jsontext.Value(`{"id":"p2","handle":"updated@example.com","displayName":"Updated Example"}`)
 	opts.Full = true
 	sum, err = imp.Import(context.Background(), opts)
@@ -185,7 +187,7 @@ func TestImportTwentyLimitedRunResumesFromWatermark(t *testing.T) {
 	opts.Limit = 0
 	sum, err = NewImporter(st, f).Import(t.Context(), opts)
 	require.NoError(err)
-	assert.Equal("2026-09-01T11:00:00Z", f.since[1])
+	assert.Equal("2026-09-01T10:55:00Z", f.since[1])
 	assert.Equal(int64(1), sum.MeetingsAdded)
 	assert.NotZero(archivedID(t, st, "r2"))
 	// A run filtered by --after leaves the watermark where it was.
@@ -195,7 +197,77 @@ func TestImportTwentyLimitedRunResumesFromWatermark(t *testing.T) {
 	opts.StartedAfter = time.Time{}
 	_, err = NewImporter(st, f).Import(t.Context(), opts)
 	require.NoError(err)
-	assert.Equal("2026-09-01T12:00:00Z", f.since[3])
+	assert.Equal("2026-09-01T11:55:00Z", f.since[3])
+}
+
+// An edit that commits after a scan passed its updatedAt still arrives on the
+// next run, without reprocessing recordings already handled in the overlap.
+func TestImportTwentyOverlapCatchesLateCommits(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st, f, opts := newImportFixture(t)
+	f.pages[""].Records = []Recording{updated(t, recordingFixture(t, "r1", `[]`), "2026-09-01T12:00:00Z")}
+	_, err := NewImporter(st, f).Import(t.Context(), opts)
+	require.NoError(err)
+	late := updated(t, recordingFixture(t, "late", `[]`), "2026-09-01T11:58:00Z")
+	f.pages[""].Records = []Recording{late, f.pages[""].Records[0]}
+	sum, err := NewImporter(st, f).Import(t.Context(), opts)
+	require.NoError(err)
+	assert.Equal(int64(1), sum.MeetingsProcessed, "only the late recording is processed")
+	assert.NotZero(archivedID(t, st, "late"))
+	tooOld := updated(t, recordingFixture(t, "too-old", `[]`), "2026-09-01T11:00:00Z")
+	f.pages[""].Records = append([]Recording{tooOld}, f.pages[""].Records...)
+	sum, err = NewImporter(st, f).Import(t.Context(), opts)
+	require.NoError(err)
+	assert.Zero(sum.MeetingsProcessed, "commits older than the overlap wait for a full rescan")
+}
+
+// A full rescan stopped by --limit resumes on later runs, including ordinary
+// ones, instead of restarting or yielding to the incremental watermark.
+func TestImportTwentyLimitedFullRescanResumes(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st, f, opts := newImportFixture(t)
+	r1 := recordingFixture(t, "r1", `[]`)
+	r2 := updated(t, recordingFixture(t, "r2", `[]`), "2026-09-01T12:00:00Z")
+	r3 := updated(t, recordingFixture(t, "r3", `[]`), "2026-09-01T13:00:00Z")
+	f.pages[""].Records = []Recording{r1, r2, r3}
+	sum, err := NewImporter(st, f).Import(t.Context(), opts)
+	require.NoError(err)
+	require.Equal(int64(3), sum.MeetingsAdded)
+
+	// Attendee edits don't change a recording's updatedAt.
+	for _, recording := range []*Recording{&f.pages[""].Records[1], &f.pages[""].Records[2]} {
+		edited := *recording.Calendar
+		edited.Participants = append(slices.Clone(edited.Participants), jsontext.Value(`{"id":"p4","handle":"added@example.com","displayName":"Added Example"}`))
+		recording.Calendar = &edited
+	}
+	full := opts
+	full.Full, full.Limit = true, 1
+	sum, err = NewImporter(st, f).Import(t.Context(), full)
+	require.NoError(err)
+	assert.True(sum.PartialCoverage)
+	assert.True(sum.FullRescan)
+	assert.Equal(int64(1), sum.MeetingsProcessed)
+
+	sum, err = NewImporter(st, f).Import(t.Context(), full)
+	require.NoError(err)
+	assert.Equal(int64(1), sum.MeetingsUpdated, "a repeated limited rescan continues with r2 instead of restarting at r1")
+	assert.Equal(1, attendeeCount(t, st, archivedID(t, st, "r2"), "added@example.com"))
+	assert.Zero(attendeeCount(t, st, archivedID(t, st, "r3"), "added@example.com"))
+
+	sum, err = NewImporter(st, f).Import(t.Context(), opts)
+	require.NoError(err)
+	assert.True(sum.FullRescan, "an ordinary run finishes the pending rescan")
+	assert.False(sum.PartialCoverage)
+	assert.Equal(int64(1), sum.MeetingsUpdated)
+	assert.Equal(1, attendeeCount(t, st, archivedID(t, st, "r3"), "added@example.com"))
+
+	sum, err = NewImporter(st, f).Import(t.Context(), opts)
+	require.NoError(err)
+	assert.False(sum.FullRescan, "the completed rescan hands over to incremental sync")
+	assert.Zero(sum.MeetingsProcessed)
+	assert.Equal("2026-09-01T12:55:00Z", f.since[len(f.since)-1])
 }
 
 func TestImportTwentyPaginationFiltersAndLimit(t *testing.T) {
@@ -449,6 +521,28 @@ func TestImportTwentyKeepsAttendeesWhenCalendarEventDisappears(t *testing.T) {
 	}
 }
 
+// A recording relinked to an event the key can't read doesn't keep the
+// attendees of the event it was archived with.
+func TestImportTwentyDropsArchivedCalendarAfterRelink(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st, f, opts := newImportFixture(t)
+	imp := NewImporter(st, f)
+	_, err := imp.Import(t.Context(), opts)
+	require.NoError(err)
+	id := archivedID(t, st, "r1")
+	require.Equal(1, attendeeCount(t, st, id, "attendee@example.com"))
+	relinked := updated(t, recordingFixture(t, "r1", `[]`), "2026-09-01T12:00:00Z")
+	relinked.CalendarEventID, relinked.Calendar = "event-2", nil
+	f.pages[""].Records = []Recording{relinked}
+	_, err = imp.Import(t.Context(), opts)
+	require.NoError(err)
+	raw, err := st.GetMessageRaw(id)
+	require.NoError(err)
+	assert.Contains(string(raw), `"calendar_event":null`)
+	assert.Zero(attendeeCount(t, st, id, "attendee@example.com"))
+}
+
 func TestImportTwentyOccurrenceFallbackAndMissingTime(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -470,6 +564,23 @@ func TestImportTwentyOccurrenceFallbackAndMissingTime(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(int64(1), sum.SkippedInvalid)
 	assert.NotZero(archivedID(t, st, "r3"))
+}
+
+// Several Twenty apps write call recordings, so metadata names the app that
+// wrote each one.
+func TestTwentyArchiveRecordsWritingApplication(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	recording := recordingFixture(t, "r1", `[]`)
+	recording.ApplicationID = "app-1"
+	snapshot, eligible, err := archiveSnapshot(1, "recorder@example.com", recording, recording.Calendar)
+	require.NoError(err)
+	require.True(eligible)
+	assert.JSONEq(`{"application_id":"app-1","provider":"twenty","recording_id":"r1"}`, string(snapshot.Metadata))
+	recording.ApplicationID = ""
+	snapshot, _, err = archiveSnapshot(1, "recorder@example.com", recording, recording.Calendar)
+	require.NoError(err)
+	assert.JSONEq(`{"provider":"twenty","recording_id":"r1"}`, string(snapshot.Metadata))
 }
 
 func TestTwentyArchiveBoundsUnicodeSnippet(t *testing.T) {

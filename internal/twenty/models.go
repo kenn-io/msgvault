@@ -1,4 +1,4 @@
-// Package twenty reads Call Recorder evidence from a Twenty workspace.
+// Package twenty reads call recording evidence from a Twenty workspace.
 package twenty
 
 import (
@@ -19,8 +19,11 @@ type Source interface {
 }
 
 type Recording struct {
-	ID              string         `json:"id"`
-	Title           string         `json:"title"`
+	ID    string `json:"id"`
+	Title string `json:"title"`
+	// ApplicationID names the installed Twenty app that wrote the recording,
+	// such as Call Recorder or a Granola, Fathom or Fireflies integration.
+	ApplicationID   string         `json:"applicationId"`
 	CreatedAt       string         `json:"createdAt"`
 	UpdatedAt       string         `json:"updatedAt"`
 	StartedAt       string         `json:"startedAt"`

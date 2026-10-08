@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -34,28 +33,27 @@ const twentyConfigHint = `Add to your daemon's config.toml:
   enabled = true
   # schedule = "15 */6 * * *"`
 
+func twentySources(cfg *config.Config) meetingSources[config.TwentySource] {
+	sources := meetingSources[config.TwentySource]{table: "twenty", hint: twentyConfigHint}
+	if cfg != nil {
+		sources.configured, sources.lookup = cfg.Twenty, cfg.GetTwentySource
+		sources.identifier = func(s config.TwentySource) string { return s.Identifier }
+	}
+	return sources
+}
+
+// resolveTwentySources requires one source for registration and probes;
+// sync visits every configured source when no identifier is given.
 func resolveTwentySources(args []string, single bool, cfg *config.Config) ([]config.TwentySource, error) {
-	if cfg == nil {
-		return nil, errors.New("configuration is unavailable")
+	sources := twentySources(cfg)
+	if !single {
+		return sources.selected(args)
 	}
-	if len(cfg.Twenty) == 0 {
-		return nil, errors.New("no [[twenty]] sources configured\n\n" + twentyConfigHint)
+	source, err := sources.one(args)
+	if err != nil {
+		return nil, err
 	}
-	if len(args) > 0 {
-		source := cfg.GetTwentySource(args[0])
-		if source != nil {
-			return []config.TwentySource{*source}, nil
-		}
-		var identifiers []string
-		for _, s := range cfg.Twenty {
-			identifiers = append(identifiers, s.Identifier)
-		}
-		return nil, fmt.Errorf("no [[twenty]] entry with identifier %q (configured: %s)", args[0], strings.Join(identifiers, ", "))
-	}
-	if single && len(cfg.Twenty) > 1 {
-		return nil, errors.New("multiple [[twenty]] sources configured; pass an identifier")
-	}
-	return cfg.Twenty, nil
+	return []config.TwentySource{*source}, nil
 }
 
 func runTwentyProbe(ctx context.Context, out io.Writer, client twenty.Source) error {
@@ -76,11 +74,10 @@ var addTwentyCmd = &cobra.Command{
 		if !isDaemonCLISubprocess() {
 			return runDaemonCLICommandHTTPFromCobra(cmd, args)
 		}
-		sources, err := resolveTwentySources(args, true, state.cfg)
+		source, err := twentySources(state.cfg).one(args)
 		if err != nil {
 			return err
 		}
-		source := sources[0]
 		email, err := source.EffectiveAccountEmail()
 		if err != nil {
 			return err
@@ -113,7 +110,8 @@ var syncTwentyCmd = &cobra.Command{
 	Long: `Sync summaries and diarized transcripts from Twenty's read-only API.
 
 Each run reads recordings updated since the last successful run. --full
-rescans every recording, which also picks up later attendee edits. --after
+rescans every recording, which also picks up later attendee edits; when
+--limit stops a full rescan, later runs continue it until it completes. --after
 filters meeting dates locally. --limit caps eligible meetings and reports
 incomplete scans. --probe validates access without archive writes.`,
 	Args: cobra.MaximumNArgs(1),
@@ -183,8 +181,7 @@ incomplete scans. --probe validates access without archive writes.`,
 			return err
 		}
 		defer cleanup()
-		pendingWrites := &twenty.ImportSummary{}
-		refresh := func() error { return rebuildTwentyCacheAfterWrite(state.cfg.DatabaseDSN(), state) }
+		var pendingWrites int64
 		var syncErrors []error
 		importFailed := false
 		for i, source := range sources {
@@ -199,10 +196,15 @@ incomplete scans. --probe validates access without archive writes.`,
 			email := emails[i]
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Syncing Twenty meetings for %s\n", source.Identifier)
 			summary, importErr := twenty.NewImporter(st, clients[i]).Import(cmd.Context(), twenty.ImportOptions{Identifier: source.Identifier, AccountEmail: email, Full: syncTwentyFull, Limit: syncTwentyLimit, StartedAfter: after, Progress: func(line string) { _, _ = fmt.Fprintln(cmd.OutOrStdout(), "  "+line) }})
-			accumulateTwentyWrites(pendingWrites, summary)
+			if summary != nil {
+				pendingWrites += summary.MeetingsAdded + summary.MeetingsUpdated
+			}
 			if importErr != nil {
 				importFailed = true
-				syncErrors = append(syncErrors, finishTwentyImport(source.Identifier, summary, importErr, nil))
+				// Later sources still run; the cache refresh below covers
+				// every source's writes once.
+				run := meetingSyncRun{provider: "twenty", identifier: source.Identifier, err: importErr}
+				syncErrors = append(syncErrors, run.finish(nil))
 				if cmd.Context().Err() != nil {
 					break
 				}
@@ -210,8 +212,8 @@ incomplete scans. --probe validates access without archive writes.`,
 			}
 			writeTwentySummary(cmd.OutOrStdout(), summary)
 		}
-		if !importFailed || pendingWrites.MeetingsAdded+pendingWrites.MeetingsUpdated > 0 {
-			if err := refresh(); err != nil {
+		if !importFailed || pendingWrites > 0 {
+			if err := rebuildTwentyCacheAfterWrite(state.cfg.DatabaseDSN(), state); err != nil {
 				syncErrors = append(syncErrors, err)
 			}
 		}
@@ -219,37 +221,21 @@ incomplete scans. --probe validates access without archive writes.`,
 	},
 }
 
-func accumulateTwentyWrites(total, current *twenty.ImportSummary) {
-	if total == nil || current == nil {
-		return
-	}
-	total.MeetingsAdded += current.MeetingsAdded
-	total.MeetingsUpdated += current.MeetingsUpdated
-}
-func finishTwentyImport(identifier string, summary *twenty.ImportSummary, importErr error, refresh func() error) error {
-	if importErr == nil {
-		return nil
-	}
-	var refreshErr error
-	if summary != nil && summary.MeetingsAdded+summary.MeetingsUpdated > 0 && refresh != nil {
-		refreshErr = refresh()
-	}
-	return errors.Join(fmt.Errorf("twenty sync %s failed: %w", identifier, importErr), refreshErr)
-}
 func writeTwentySummary(out io.Writer, summary *twenty.ImportSummary) {
 	_, _ = fmt.Fprintf(out, "\nTwenty sync complete!\n  Meetings processed: %d\n  Meetings added: %d\n  Meetings updated: %d\n  Empty: %d\n", summary.MeetingsProcessed, summary.MeetingsAdded, summary.MeetingsUpdated, summary.SkippedEmpty)
 	if summary.SkippedInvalid > 0 {
 		_, _ = fmt.Fprintf(out, "  Skipped (invalid evidence): %d\n", summary.SkippedInvalid)
 	}
-	if summary.PartialCoverage {
+	switch {
+	case summary.PartialCoverage && summary.FullRescan:
+		_, _ = fmt.Fprintln(out, "  Coverage: partial (limit stopped the full rescan; the next run continues it)")
+	case summary.PartialCoverage:
 		_, _ = fmt.Fprintln(out, "  Coverage: partial (limit stopped catalog scan)")
 	}
 }
 func runConfiguredTwentySync(ctx context.Context, st *store.Store, source config.TwentySource) error {
-	if _, err := st.GetSourceByTypeAndIdentifier(twenty.SourceType, source.Identifier); err != nil {
-		if errors.Is(err, store.ErrSourceNotFound) {
-			return fmt.Errorf("twenty source %q is not registered; run msgvault add-twenty %s first", source.Identifier, source.Identifier)
-		}
+	notRegistered := fmt.Errorf("twenty source %q is not registered; run msgvault add-twenty %s first", source.Identifier, source.Identifier)
+	if err := requireRegisteredMeetingSource(st, twenty.SourceType, source.Identifier, notRegistered); err != nil {
 		return err
 	}
 	email, err := source.EffectiveAccountEmail()
@@ -261,13 +247,11 @@ func runConfiguredTwentySync(ctx context.Context, st *store.Store, source config
 		return err
 	}
 	summary, importErr := twenty.NewImporter(st, client).Import(ctx, twenty.ImportOptions{Identifier: source.Identifier, AccountEmail: email})
-	refresh := func() error {
-		return rebuildTwentyCacheAfterScheduledSync(context.WithoutCancel(ctx), "twenty:"+source.Identifier)
+	run := meetingSyncRun{provider: "twenty", identifier: source.Identifier, err: importErr}
+	if summary != nil {
+		run.writes = summary.MeetingsAdded + summary.MeetingsUpdated
 	}
-	if err := finishTwentyImport(source.Identifier, summary, importErr, refresh); err != nil {
-		return err
-	}
-	return refresh()
+	return run.finishScheduled(ctx, "twenty:"+source.Identifier, rebuildTwentyCacheAfterScheduledSync)
 }
 
 func init() {

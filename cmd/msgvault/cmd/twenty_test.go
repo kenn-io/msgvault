@@ -127,18 +127,6 @@ func TestConfiguredTwentySyncRefreshesWithUncanceledContext(t *testing.T) {
 	require.ErrorIs(runConfiguredTwentySync(ctx, st, twentySourceConfig("work")), context.Canceled)
 	assert.Equal(1, refreshes)
 }
-func TestTwentyPartialWritesRefreshOnFailure(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	writes := &twenty.ImportSummary{MeetingsAdded: 1}
-	accumulateTwentyWrites(writes, &twenty.ImportSummary{MeetingsUpdated: 1})
-	refreshed := 0
-	err := finishTwentyImport("other", writes, context.Canceled, func() error { refreshed++; return nil })
-	require.ErrorIs(err, context.Canceled)
-	assert.Equal(1, refreshed)
-	assert.Equal(int64(1), writes.MeetingsUpdated)
-}
-
 func TestServeTwentySyncNowCompletes(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

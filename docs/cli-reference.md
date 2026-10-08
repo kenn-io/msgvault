@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-07"
+last_edited: "2026-10-08"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -1024,7 +1024,7 @@ See [Meeting Transcripts](/docs/usage/meetings/) for setup and what gets stored.
 
 ## add-twenty
 
-Validate read access and register a configured Twenty Call Recorder source.
+Validate read access and register a configured Twenty call recording source.
 
 ```bash
 msgvault add-twenty [identifier]
@@ -1038,7 +1038,7 @@ recording, calendar, and participant access before creating the source.
 
 ## sync-twenty
 
-Archive Twenty Call Recorder summaries and diarized transcripts.
+Archive summaries and diarized transcripts from Twenty call recordings.
 
 ```bash
 msgvault sync-twenty [identifier]
@@ -1047,21 +1047,21 @@ msgvault sync-twenty work --full
 msgvault sync-twenty work --probe
 ```
 
-Each run reads recordings updated since the last successful run; late
-summaries and transcripts update the existing meeting. Recordings that can't be
+Each run reads recordings updated since the last successful run, plus a
+five-minute overlap; late summaries and transcripts update the existing meeting. Recordings that can't be
 archived are skipped and reported instead of failing the run. With no identifier, sync visits all configured sources.
 API failures fail the run while retaining previously committed meetings.
 
 | Flag | Default | Description |
 |---|---|---|
-| `--limit` | `0` | Maximum eligible meetings processed (`0` = unlimited); stopped scans report partial coverage, and the next run without `--after` continues |
-| `--after` | — | Inclusive local UTC occurrence-date lower bound (`YYYY-MM-DD`); leaves the sync position unchanged |
-| `--full` | `false` | Rescan every recording and refresh archive projections and attribution |
+| `--limit` | `0` | Maximum eligible meetings processed (`0` = unlimited); stopped scans report partial coverage, and the next run without `--after` continues, including a stopped `--full` rescan |
+| `--after` | — | Inclusive UTC occurrence-date lower bound (`YYYY-MM-DD`) applied after reading; leaves the sync position unchanged |
+| `--full` | `false` | Rescan every recording and refresh archive projections and attribution; resumes an unfinished limited rescan instead of restarting it |
 | `--probe` | `false` | Check read access without printing content or writing the archive; requires one source |
 | `--build-cache` | `false` | Request a cache build after manual sync |
 | `--no-build-cache` | `false` | Skip the cache build after manual sync |
 
-See [Meeting Transcripts](/docs/usage/meetings/#twenty-call-recorder) for setup,
+See [Meeting Transcripts](/docs/usage/meetings/#twenty-call-recordings) for setup,
 stored evidence, duration fallbacks, and retained source deletions.
 
 ---
