@@ -585,7 +585,7 @@ func TestDeferredReplyResolutionDoesNotOverwriteEditedBody(t *testing.T) {
 	})
 	require.NoError(err)
 	reply := &event.Event{
-		ID: "$reply", Type: event.EventMessage,
+		ID: "$reply", RoomID: "!room:example.org", Type: event.EventMessage,
 		Content: event.Content{Parsed: &event.MessageEventContent{
 			MsgType: event.MsgText, Body: "original reply",
 			RelatesTo: &event.RelatesTo{InReplyTo: &event.InReplyTo{EventID: "$target"}},
@@ -774,7 +774,7 @@ func TestImporterFillsLimitedIncrementalTimelineGap(t *testing.T) {
 	require.NoError(err)
 	state, err := loadSyncState(run.CursorAfter.String)
 	require.NoError(err)
-	assert.Equal(&RoomState{Backfilled: true, SyncedTo: "next-2"}, state.Rooms["!room:example.org"])
+	assert.Equal(&RoomState{Backfilled: true, SyncedTo: "next-2", EventsCovered: true, EventsSince: "next-1", EventsMode: store.IngestLive, GapMode: store.IngestLive}, state.Rooms["!room:example.org"])
 }
 
 func TestImporterResumesInterruptedGapFromSavedPage(t *testing.T) {
@@ -888,7 +888,7 @@ func TestImporterResumesInterruptedGapFromSavedPage(t *testing.T) {
 	require.NoError(err)
 	state, err := loadSyncState(run.CursorAfter.String)
 	require.NoError(err)
-	assert.Equal(&RoomState{Backfilled: true, SyncedTo: "next-4"}, state.Rooms["!room:example.org"])
+	assert.Equal(&RoomState{Backfilled: true, SyncedTo: "next-4", EventsCovered: true, EventsSince: "next-1", EventsMode: store.IngestLive, GapMode: store.IngestLive}, state.Rooms["!room:example.org"])
 }
 
 func TestImporterEditMustKeepEventType(t *testing.T) {

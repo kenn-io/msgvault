@@ -106,11 +106,13 @@ func canonicalArguments(name string, input map[string]any) (arguments, error) {
 var sourceFamilies = map[string][]store.MCPEventCapability{
 	"gmail":     {{Family: messageFamily, Kinds: []string{"message"}}, {Family: draftFamily, Kinds: []string{"created", "updated", "deleted"}}},
 	"imap":      {{Family: messageFamily, Kinds: []string{"message"}}, {Family: draftFamily, Kinds: []string{"created", "updated", "deleted"}}},
-	"beeper":    {{Family: draftFamily, Kinds: []string{"created", "updated", "deleted"}}},
-	"slack":     {{Family: draftFamily, Kinds: []string{"created", "updated", "deleted"}}},
+	"beeper":    {{Family: messageFamily, Kinds: []string{"message"}}, {Family: draftFamily, Kinds: []string{"created", "updated", "deleted"}}},
+	"slack":     {{Family: messageFamily, Kinds: []string{"message"}}, {Family: draftFamily, Kinds: []string{"created", "updated", "deleted"}}},
 	"slackdump": {{Family: draftFamily, Kinds: []string{"created", "updated", "deleted"}}},
-	"teams":     {{Family: draftFamily, Kinds: []string{"created", "updated", "deleted"}}},
-	"discord":   {{Family: draftFamily, Kinds: []string{"created", "updated", "deleted"}}},
+	"teams":     {{Family: messageFamily, Kinds: []string{"message"}}, {Family: draftFamily, Kinds: []string{"created", "updated", "deleted"}}},
+	"discord":   {{Family: messageFamily, Kinds: []string{"message"}}, {Family: draftFamily, Kinds: []string{"created", "updated", "deleted"}}},
+	"msmail":    {{Family: messageFamily, Kinds: []string{"message"}}},
+	"matrix":    {{Family: messageFamily, Kinds: []string{"message"}}},
 	"gcal":      {{Family: calendarFamily, Kinds: []string{"created", "updated", "cancelled"}}},
 }
 
@@ -163,9 +165,17 @@ func (s *Service) Catalog() ListResult {
 	result := ListResult{Events: make([]Definition, 0)}
 	for _, family := range []string{messageFamily, calendarFamily, draftFamily} {
 		var kinds, draftKinds []string
+		var messageAttachments, matrixMessages bool
 		for _, cap := range s.caps {
 			if cap.Family == family {
 				kinds = append(kinds, cap.Kinds...)
+				if family == messageFamily {
+					if cap.SourceType == "matrix" {
+						matrixMessages = true
+					} else {
+						messageAttachments = true
+					}
+				}
 				if family == draftFamily {
 					switch cap.SourceType {
 					case "gmail", "imap", "beeper":
@@ -187,7 +197,15 @@ func (s *Service) Catalog() ListResult {
 		required := []string{"conversation_id"}
 		payload := map[string]any{"kind": map[string]any{schemaTypeProperty: "string", "enum": kinds}, "conversation_id": schemaID(), "source_id": schemaID()}
 		payloadRequired := []string{"kind", "conversation_id", "source_id"}
-		description := "A newly archived message in one conversation. Read content with get_message and list_thread; read attachments with get_attachment. get_mcp_event recovers a lost payload from eventId."
+		description := "A newly archived message in one conversation. Read content with get_message and list_thread."
+		if messageAttachments {
+			description += " Read available archived attachments with get_attachment"
+			if matrixMessages {
+				description += " (not available for Matrix)"
+			}
+			description += "."
+		}
+		description += " get_mcp_event recovers a lost payload from eventId."
 		switch family {
 		case messageFamily:
 			props["include_from_me"] = map[string]any{schemaTypeProperty: "boolean", "default": false}
