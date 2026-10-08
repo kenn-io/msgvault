@@ -5,7 +5,6 @@ import (
 	"net"
 	"strconv"
 	"testing"
-	"time"
 
 	emersionimap "github.com/emersion/go-imap/v2"
 	"github.com/stretchr/testify/assert"
@@ -123,10 +122,8 @@ func TestAppendDraftCancellation(t *testing.T) {
 func TestAppendDraftConnectionFailureIsRejected(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
-	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
-	defer cancel()
 	client := NewClient(&Config{Host: "127.0.0.1", Port: 1, Username: testutil.IMAPTestUsername}, testutil.IMAPTestPassword)
-	result, err := client.AppendDraft(ctx, "Drafts", []byte("From: alice@example.com\r\n\r\nbody\r\n"))
+	result, err := client.AppendDraft(t.Context(), "Drafts", []byte("From: alice@example.com\r\n\r\nbody\r\n"))
 	requirements.Error(err)
 	assertions.Equal(DraftStateRejected, result.State)
 	assertions.Equal("connection_failed", result.Code)

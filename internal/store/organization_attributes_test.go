@@ -406,7 +406,7 @@ func TestOrganizationAttributeWriteUsesTransactionalDefinitionState(t *testing.T
 			"an attribute write must not use stale definition state")
 		require.NoError(definitionUpdate.Commit())
 		return
-	case <-time.After(200 * time.Millisecond):
+	case <-time.After(200 * time.Millisecond): //nolint:kennlint // absence check: the open definition update keeps the write waiting
 	}
 	require.NoError(definitionUpdate.Commit())
 

@@ -903,7 +903,7 @@ func TestCodexCleanupKillsEOFIgnoringProcessAndClosesStreams(t *testing.T) {
 	select {
 	case err = <-done:
 		must.NoError(err)
-	case <-time.After(750 * time.Millisecond):
+	case <-time.After(5 * time.Second):
 		checks.Fail("cleanup did not terminate EOF-ignoring process")
 		_ = process.Kill()
 		<-done
@@ -1068,7 +1068,7 @@ func TestCodexCleanupCancellationKillsAndJoinsOnce(t *testing.T) {
 	select {
 	case err = <-done:
 		must.ErrorIs(err, context.Canceled)
-	case <-time.After(500 * time.Millisecond):
+	case <-time.After(5 * time.Second):
 		checks.Fail("cleanup ignored context cancellation")
 		_ = process.Kill()
 		<-done

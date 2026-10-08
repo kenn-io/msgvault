@@ -507,7 +507,7 @@ func TestEmbeddingChangeJournal_MembershipSnapshotAcquiresSQLiteWriterBeforeRead
 	var replaceErr error
 	select {
 	case replaceErr = <-result:
-	case <-time.After(100 * time.Millisecond):
+	case <-time.After(100 * time.Millisecond): //nolint:kennlint // absence check: the open writer transaction keeps the replacement waiting
 	}
 	_, err = conn.ExecContext(t.Context(), "COMMIT")
 	require.NoError(err)

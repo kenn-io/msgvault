@@ -157,7 +157,7 @@ func TestCacheBuildJobsWaitsForShutdown(t *testing.T) {
 	require.NoError(err)
 	<-started
 	cancel()
-	waitCtx, stopWait := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	waitCtx, stopWait := context.WithTimeout(context.Background(), 20*time.Millisecond) //nolint:kennlint // the deadline is the expected result; the job blocks on release past the wait
 	defer stopWait()
 	require.False(jobs.waitContext(waitCtx))
 	close(release)

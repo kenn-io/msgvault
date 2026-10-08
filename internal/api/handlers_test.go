@@ -2838,7 +2838,7 @@ func TestHandleCLIRebuildFTSFlushesProgressThroughMiddleware(t *testing.T) {
 	case resp = <-respCh:
 	case err := <-errCh:
 		require.NoError(err, "post rebuild-fts")
-	case <-time.After(500 * time.Millisecond):
+	case <-time.After(5 * time.Second):
 		require.FailNow("rebuild-fts response did not flush before completion")
 	}
 	defer func() { _ = resp.Body.Close() }()
@@ -2861,7 +2861,7 @@ func TestHandleCLIRebuildFTSFlushesProgressThroughMiddleware(t *testing.T) {
 	case event = <-decodeCh:
 	case err := <-decodeErrCh:
 		require.NoError(err, "decode first progress event")
-	case <-time.After(500 * time.Millisecond):
+	case <-time.After(5 * time.Second):
 		require.FailNow("rebuild-fts progress event was not flushed before completion")
 	}
 	assert.Equal("progress", event.Type, "event type")
@@ -3816,12 +3816,14 @@ func TestHandleSourceStatusStopsWaitingForDatabaseAfterCancellation(t *testing.T
 
 	deadline := time.NewTimer(2 * time.Second)
 	defer deadline.Stop()
+	poll := time.NewTicker(10 * time.Millisecond)
+	defer poll.Stop()
 	for db.Stats().WaitCount == initialWaits {
 		select {
 		case <-deadline.C:
 			_ = conn.Close()
 			require.FailNow("status request did not wait for the held database connection")
-		case <-time.After(10 * time.Millisecond):
+		case <-poll.C:
 		}
 	}
 	cancel()

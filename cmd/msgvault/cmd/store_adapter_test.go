@@ -275,12 +275,12 @@ func TestMarkedCLISearchCancellationReturnsFromProductionQuickFTSProbe(t *testin
 
 	select {
 	case <-returned:
-	case <-time.After(500 * time.Millisecond):
+	case <-time.After(5 * time.Second):
 		require.FailNow("production quick FTS probe continued after marked request cancellation")
 	}
 	select {
 	case <-requestDone:
-	case <-time.After(500 * time.Millisecond):
+	case <-time.After(5 * time.Second):
 		require.FailNow("marked CLI search did not return after cancellation")
 	}
 }

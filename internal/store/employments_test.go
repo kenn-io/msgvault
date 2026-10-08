@@ -131,7 +131,7 @@ func TestConcurrentPrimaryRotationDoesNotLeakDatabaseConflicts(t *testing.T) {
 	select {
 	case early := <-results:
 		require.FailNow("promotion bypassed held target row", "error: %v", early)
-	case <-time.After(200 * time.Millisecond):
+	case <-time.After(200 * time.Millisecond): //nolint:kennlint // absence check: the held row locks keep both promotions waiting
 	}
 	require.NoError(firstLock.Commit())
 	require.NoError(secondLock.Commit())

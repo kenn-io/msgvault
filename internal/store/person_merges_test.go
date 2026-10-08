@@ -2374,7 +2374,7 @@ func TestPostgresMergePersonsFencesConcurrentReferenceSupersede(t *testing.T) {
 		release()
 		require.FailNow("reference supersede did not wait for merge identity lock",
 			"result=%v err=%v", early.write, early.err)
-	case <-time.After(500 * time.Millisecond):
+	case <-time.After(500 * time.Millisecond): //nolint:kennlint // absence check: the held merge identity lock keeps the supersede waiting
 	}
 	release()
 	merged := <-mergeDone

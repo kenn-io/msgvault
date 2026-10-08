@@ -20,6 +20,7 @@ import (
 	"time"
 
 	_ "github.com/duckdb/duckdb-go/v2"
+	"github.com/gofrs/flock"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -880,78 +881,53 @@ func TestBuildCacheScheduledReevaluatesIntervalUnderLock(t *testing.T) {
 		"the lock-held recheck must build after the interval elapses")
 }
 
-// TestBuildCache_WaitsForCrossProcessBuildLock verifies buildCache blocks on
-// the inter-process build lock: buildCacheMu only serializes one process,
-// while daemon-owned CLI children rebuild the cache in their own processes.
-// The test holds the lock through an independent file handle, which conflicts
-// exactly like another process's holder would.
-func TestBuildCache_WaitsForCrossProcessBuildLock(t *testing.T) {
-	require := require.New(t)
-	tmpDir := setupTestSQLite(t)
-	dbPath := filepath.Join(tmpDir, "test.db")
-	analyticsDir := filepath.Join(tmpDir, "analytics")
-
-	held, err := cacheBuildFileLock(analyticsDir)
-	require.NoError(err, "cacheBuildFileLock")
-	locked, err := held.TryLock()
-	require.NoError(err, "hold build lock")
-	require.True(locked, "hold build lock")
-
-	done := make(chan error, 1)
-	go func() {
-		_, err := buildCache(dbPath, analyticsDir, false)
-		done <- err
-	}()
-
-	select {
-	case <-done:
-		require.FailNow("buildCache must wait for the cross-process build lock")
-	case <-time.After(150 * time.Millisecond):
+// TestBuildCache_WaitsForCacheLockHolders verifies buildCache blocks on the
+// inter-process cache lock. An exclusive holder stands in for another
+// process's build, since buildCacheMu only serializes one process. A shared
+// holder stands in for a running query, whose Parquet files a build must not
+// delete. Each holder uses an independent file handle, which conflicts exactly
+// like another process's holder would.
+func TestBuildCache_WaitsForCacheLockHolders(t *testing.T) {
+	tests := []struct {
+		name string
+		hold func(*flock.Flock) (bool, error)
+	}{
+		{name: "exclusive build", hold: (*flock.Flock).TryLock},
+		{name: "shared reader", hold: (*flock.Flock).TryRLock},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require := require.New(t)
+			tmpDir := setupTestSQLite(t)
+			dbPath := filepath.Join(tmpDir, "test.db")
+			analyticsDir := filepath.Join(tmpDir, "analytics")
 
-	require.NoError(held.Unlock(), "release build lock")
-	select {
-	case err := <-done:
-		require.NoError(err, "buildCache after lock release")
-	case <-time.After(30 * time.Second):
-		require.FailNow("buildCache did not finish after the lock was released")
-	}
-}
+			holder, err := cacheBuildFileLock(analyticsDir)
+			require.NoError(err, "cacheBuildFileLock")
+			locked, err := tt.hold(holder)
+			require.NoError(err, "hold cache lock")
+			require.True(locked, "hold cache lock")
 
-// TestBuildCache_WaitsForCacheReaders verifies the writer side of the
-// reader/writer protocol: a build's exclusive lock must wait for a query's
-// shared hold to release, so it cannot delete Parquet files out from under a
-// running query.
-func TestBuildCache_WaitsForCacheReaders(t *testing.T) {
-	require := require.New(t)
-	tmpDir := setupTestSQLite(t)
-	dbPath := filepath.Join(tmpDir, "test.db")
-	analyticsDir := filepath.Join(tmpDir, "analytics")
+			done := make(chan error, 1)
+			go func() {
+				_, err := buildCache(dbPath, analyticsDir, false)
+				done <- err
+			}()
 
-	reader, err := cacheBuildFileLock(analyticsDir)
-	require.NoError(err, "cacheBuildFileLock")
-	locked, err := reader.TryRLock()
-	require.NoError(err, "hold shared reader lock")
-	require.True(locked, "hold shared reader lock")
+			select {
+			case <-done:
+				require.FailNow("buildCache must wait for the cache lock holder")
+			case <-time.After(150 * time.Millisecond): //nolint:kennlint // absence check: the held cache lock keeps buildCache waiting
+			}
 
-	done := make(chan error, 1)
-	go func() {
-		_, err := buildCache(dbPath, analyticsDir, false)
-		done <- err
-	}()
-
-	select {
-	case <-done:
-		require.FailNow("buildCache must wait for shared reader locks")
-	case <-time.After(150 * time.Millisecond):
-	}
-
-	require.NoError(reader.Unlock(), "release reader lock")
-	select {
-	case err := <-done:
-		require.NoError(err, "buildCache after reader release")
-	case <-time.After(30 * time.Second):
-		require.FailNow("buildCache did not finish after the reader released")
+			require.NoError(holder.Unlock(), "release cache lock")
+			select {
+			case err := <-done:
+				require.NoError(err, "buildCache after lock release")
+			case <-time.After(30 * time.Second):
+				require.FailNow("buildCache did not finish after the lock was released")
+			}
+		})
 	}
 }
 

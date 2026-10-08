@@ -66,7 +66,7 @@ func assertNoSend[T any](t *testing.T, ch <-chan T, chanName string) {
 	select {
 	case v := <-ch:
 		assert.Failf(t, "unexpected value", "unexpected value on %s: %v", chanName, v)
-	case <-time.After(noSendTimeout):
+	case <-time.After(noSendTimeout): //nolint:kennlint // absence check: callers assert nothing sends on the channel
 		// expected: no value arrived
 	}
 }

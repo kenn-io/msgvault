@@ -65,7 +65,7 @@ func TestDuckDBQueryConcurrencyCap(t *testing.T) {
 
 	// The slot is held: a second acquirer must wait, and its context deadline
 	// must free it rather than block forever.
-	waitCtx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	waitCtx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond) //nolint:kennlint // the deadline is the expected result; the held query slot keeps the second acquirer waiting
 	defer cancel()
 	start := time.Now()
 	_, err = engine.acquireQuerySlot(waitCtx)

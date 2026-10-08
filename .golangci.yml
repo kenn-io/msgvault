@@ -214,11 +214,12 @@ linters:
 
     custom:
       # Kit's analyzers, built into custom-gcl by `make lint`. Only sleeptest
-      # runs. The stock sqlclosecheck and rowserrcheck above stay; Kit's
-      # copies and its other analyzers are off until they get their own pass.
+      # and deadlinetest run. The stock sqlclosecheck and rowserrcheck above
+      # stay; Kit's copies and its other analyzers are off until they get
+      # their own pass.
       kennlint:
         type: module
-        description: Kit sleeptest, time.Sleep in tests outside synctest.
+        description: Kit sleeptest and deadlinetest, time.Sleep and sub-second wall-clock budgets in tests outside synctest.
         original-url: go.kenn.io/kit/lint
         settings:
           disable:

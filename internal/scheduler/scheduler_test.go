@@ -483,14 +483,14 @@ func TestSchedulerStopCancelsWorkTrackerWait(t *testing.T) {
 
 	select {
 	case <-tracker.begin:
-	case <-time.After(500 * time.Millisecond):
+	case <-time.After(5 * time.Second):
 		require.FailNow("sync did not start waiting on tracker")
 	}
 
 	stopCtx := s.Stop()
 	select {
 	case <-stopCtx.Done():
-	case <-time.After(500 * time.Millisecond):
+	case <-time.After(5 * time.Second):
 		close(tracker.release)
 		require.FailNow("Stop did not cancel work tracker wait")
 	}

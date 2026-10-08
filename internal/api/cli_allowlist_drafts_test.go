@@ -309,7 +309,7 @@ func TestDelegatedDraftLifecycleCommandsSkipBusyOperationGate(t *testing.T) { //
 
 			select {
 			case <-done:
-			case <-time.After(200 * time.Millisecond):
+			case <-time.After(5 * time.Second):
 				requirements.FailNow("delegated lifecycle rejection must not wait on a held operation gate")
 			}
 
@@ -358,7 +358,7 @@ func TestDelegatedDraftGetSkipsBusyOperationGate(t *testing.T) { //nolint:parall
 
 	select {
 	case <-done:
-	case <-time.After(200 * time.Millisecond):
+	case <-time.After(5 * time.Second):
 		requirements.FailNow("delegated draft-get must not wait on a held operation gate")
 	}
 

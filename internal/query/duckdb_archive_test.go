@@ -39,7 +39,7 @@ func TestArchiveDuckDBEngineStartupHonorsDeadlineDuringPublication(t *testing.T)
 	publicationLock := flock.New(CacheBuildLockPath(dir))
 	requirements.NoError(publicationLock.Lock())
 	spillDir := filepath.Join(t.TempDir(), "spill")
-	ctx, cancel := context.WithTimeout(t.Context(), 500*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 500*time.Millisecond) //nolint:kennlint // the deadline is the expected result; the held publication lock keeps startup waiting
 	defer cancel()
 	done := make(chan error, 1)
 	finished := make(chan struct{})

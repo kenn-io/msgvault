@@ -612,7 +612,7 @@ func TestPersonEnrichmentSuppressionSerializesAttemptCreation(t *testing.T) {
 	select {
 	case <-suppressionSnapshotted:
 		require.Fail("suppression acquired authority before attempt creation released it")
-	case <-time.After(250 * time.Millisecond):
+	case <-time.After(250 * time.Millisecond): //nolint:kennlint // absence check: attempt creation holds authority, keeping the suppression waiting
 	}
 	close(releaseBegin)
 	result := <-beginDone

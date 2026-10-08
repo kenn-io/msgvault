@@ -174,11 +174,11 @@ func TestClientTransportBounds(t *testing.T) {
 	})
 
 	t.Run("timeout", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			select {
-			case <-time.After(250 * time.Millisecond):
+			case <-r.Context().Done():
+			case <-time.After(time.Second):
 				writeTestJSON(t, w, capabilities)
-			case <-t.Context().Done():
 			}
 		}))
 		t.Cleanup(server.Close)

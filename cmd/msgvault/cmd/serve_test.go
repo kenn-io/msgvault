@@ -493,7 +493,7 @@ func TestRunServeImmediateCancellationWaitsForAPIStart(t *testing.T) {
 	select {
 	case err := <-errCh:
 		require.FailNow("runServe returned before listener-start barrier", "error: %v", err)
-	case <-time.After(50 * time.Millisecond):
+	case <-time.After(50 * time.Millisecond): //nolint:kennlint // absence check: the listener-start barrier keeps runServe from returning
 	}
 
 	close(release)

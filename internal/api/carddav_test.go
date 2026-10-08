@@ -1063,7 +1063,7 @@ func TestCardDAVAccountSaveSerializesCompleteCredentialTransition(t *testing.T) 
 	select {
 	case <-secondFactoryCalled:
 		assert.Fail("second save entered the transition while the first save was in discovery")
-	case <-time.After(50 * time.Millisecond):
+	case <-time.After(50 * time.Millisecond): //nolint:kennlint // absence check: the first save holds the transition in discovery
 	}
 	close(firstRelease)
 	for range 2 {

@@ -3,6 +3,7 @@ package personmatch
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -93,15 +94,16 @@ func TestJevRetriesOverloadOnlyWithinBound(t *testing.T) {
 }
 
 func TestJevHonorsCanceledContext(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
 		select {
 		case <-r.Context().Done():
-		case <-time.After(100 * time.Millisecond):
+		case <-time.After(5 * time.Second):
 		}
 	}))
 	defer server.Close()
 	client := JevClient{Endpoint: server.URL + "/v1/systemone", ModelID: "jev-1.13.0", Key: "fixture-key", HTTPClient: server.Client()}
-	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond) //nolint:kennlint // the deadline is the expected result; the handler blocks past it
 	defer cancel()
 	_, err := client.Score(ctx, PairPacket{})
 	require.ErrorIs(t, err, context.DeadlineExceeded)

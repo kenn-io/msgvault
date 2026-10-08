@@ -997,7 +997,7 @@ func TestPersonTrackingUntrackWaitsForInFlightFactGeneration(t *testing.T) {
 	select {
 	case outcome := <-untrackDone:
 		early = &outcome
-	case <-time.After(150 * time.Millisecond):
+	case <-time.After(150 * time.Millisecond): //nolint:kennlint // absence check: the held commit gate keeps untracking waiting
 	}
 	release()
 

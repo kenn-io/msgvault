@@ -741,7 +741,7 @@ func TestMCPModernHTTPCancellation(t *testing.T) {
 	select {
 	case <-canceled:
 		wasCanceled = true
-	case <-time.After(500 * time.Millisecond):
+	case <-time.After(5 * time.Second):
 	}
 	close(release)
 	select {

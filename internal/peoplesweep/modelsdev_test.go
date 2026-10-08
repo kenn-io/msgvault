@@ -112,7 +112,7 @@ func TestModelsDevFetchHonorsCallerTimeoutWithSafeError(t *testing.T) {
 		}
 	}))
 	t.Cleanup(server.Close)
-	ctx, cancel := context.WithTimeout(t.Context(), 25*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 25*time.Millisecond) //nolint:kennlint // the deadline is the expected result; the handler blocks until the request ends
 	defer cancel()
 
 	got, err := client.Fetch(ctx)

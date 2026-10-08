@@ -191,6 +191,9 @@ func (s *Store) GetOrganizationProfileContext(
 		if err != nil {
 			return err
 		}
+		if s.organizationProfileRootReadHook != nil {
+			s.organizationProfileRootReadHook()
+		}
 		profile, err = s.loadOrganizationProfileContext(
 			ctx, tx, organization, includeSuperseded)
 		return err

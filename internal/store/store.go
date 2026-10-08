@@ -98,6 +98,7 @@ type Store struct {
 	initSchemaWindowHook                  func()
 	beforeLargeIndexBuildHook             func()
 	attributeSeedReadHook                 func(slug string)
+	organizationProfileRootReadHook       func()
 	contentChangedBackfillBatchHook       func(fromID, toID int64) error
 	backfillFTSBatchErrHook               func(fromID, toID int64) error
 	attachmentRoleRepairPreparedHook      func()

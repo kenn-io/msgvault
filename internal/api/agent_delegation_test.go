@@ -348,7 +348,7 @@ func TestDelegationNotReachableOverHTTP(t *testing.T) {
 // A delegated POST /api/v1/cli/run for draft-reply must register as a gate
 // waiter (gate label: "msgvault draft-reply"); an unauthenticated request with
 // the same body must bypass the gate entirely and return without waiting.
-func TestDelegatedDraftAcquiresOperationGate(t *testing.T) { //nolint:paralleltest // expects the request to return inside a 200ms real-time window
+func TestDelegatedDraftAcquiresOperationGate(t *testing.T) { //nolint:paralleltest // subtests take turns holding one shared operation gate
 	var gate LabeledOperationGate = NewSerialOperationGate()
 	cfg := &config.Config{Server: config.ServerConfig{APIKey: "owner-key"}}
 	srv := NewServerWithOptions(ServerOptions{
@@ -448,60 +448,83 @@ func TestDelegatedDraftAcquiresOperationGate(t *testing.T) { //nolint:parallelte
 		// bypassed and the request returns immediately (401 from the auth layer).
 		select {
 		case <-reqDone:
-		case <-time.After(200 * time.Millisecond):
+		case <-time.After(5 * time.Second):
 			require.FailNow(t, "unauthenticated request must not block on the operation gate")
 		}
 		assert.False(t, gate.HasRequestWaiters(),
 			"unauthenticated request must not register as a gate waiter")
 	})
-}
 
-// TestDelegatedNonAllowlistedRouteDoesNotRegisterAsWaiter verifies that a
-// delegated caller targeting a gated route outside the two-operation allowlist
-// (e.g. POST /api/v1/accounts) is not admitted to the operation gate and
-// receives 401 directly from the auth layer without ever queuing as a waiter.
-func TestDelegatedNonAllowlistedRouteDoesNotRegisterAsWaiter(t *testing.T) { //nolint:paralleltest // expects the request to return inside a 200ms real-time window
-	assert := assert.New(t)
-	require := require.New(t)
-	var gate LabeledOperationGate = NewSerialOperationGate()
-	cfg := &config.Config{Server: config.ServerConfig{APIKey: "owner-key"}}
-	srv := NewServerWithOptions(ServerOptions{
-		Config:        cfg,
-		Store:         &stubSourceStore{},
-		Logger:        testLogger(),
-		Scheduler:     newMockScheduler(),
-		OperationGate: gate,
+	// A gated route outside the two-operation allowlist gets 401 from the auth
+	// layer without ever queuing as a waiter.
+	t.Run("delegated non-allowlisted route does not register as gate waiter", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		done, ok := gate.BeginWork()
+		require.True(ok, "must acquire the gate to hold it for this subtest")
+		defer done()
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/accounts", nil)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set(apiprotocol.AgentTokenHeader, secret)
+		w := httptest.NewRecorder()
+
+		reqDone := make(chan struct{})
+		go func() {
+			defer close(reqDone)
+			srv.Router().ServeHTTP(w, req)
+		}()
+
+		select {
+		case <-reqDone:
+		case <-time.After(5 * time.Second):
+			require.FailNow("delegated request on non-allowlisted gated route must not block on the operation gate")
+		}
+		assert.Equal(http.StatusUnauthorized, w.Code,
+			"delegated caller on non-allowlisted route must get 401, not 503")
+		assert.False(gate.HasRequestWaiters(),
+			"delegated caller on non-allowlisted route must not register as a gate waiter")
 	})
-	reg := agentgrant.NewRegistry()
-	srv.agentGrants = reg
-	src := agentgrant.SourceRef{ID: 1, Type: "imap", Identifier: "alice@example.com"}
-	_, secret, _, err := reg.Issue("gate-nonallowed", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{src})
-	require.NoError(err)
 
-	done, ok := gate.BeginWork()
-	require.True(ok, "must acquire the gate to hold it for this subtest")
-	defer done()
+	// A non-draft-reply body bypasses the gate entirely, gets
+	// command_not_allowed, and cannot change the holder label. Proof-matrix row 32.
+	t.Run("delegated non-draft-reply does not register as gate waiter", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		holderDone, ok := gate.BeginRequestWorkContext(context.Background(), "owner-msgvault-sync")
+		require.True(ok)
+		defer holderDone()
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/accounts", nil)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set(apiprotocol.AgentTokenHeader, secret)
-	w := httptest.NewRecorder()
+		body := `{"args":["sync","alice@example.com"]}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set(apiprotocol.AgentTokenHeader, secret)
+		w := httptest.NewRecorder()
 
-	reqDone := make(chan struct{})
-	go func() {
-		defer close(reqDone)
-		srv.Router().ServeHTTP(w, req)
-	}()
+		reqDone := make(chan struct{})
+		go func() {
+			defer close(reqDone)
+			srv.Router().ServeHTTP(w, req)
+		}()
 
-	select {
-	case <-reqDone:
-	case <-time.After(200 * time.Millisecond):
-		require.FailNow("delegated request on non-allowlisted gated route must not block on the operation gate")
-	}
-	assert.Equal(http.StatusUnauthorized, w.Code,
-		"delegated caller on non-allowlisted route must get 401, not 503")
-	assert.False(gate.HasRequestWaiters(),
-		"delegated caller on non-allowlisted route must not register as a gate waiter")
+		select {
+		case <-reqDone:
+		case <-time.After(5 * time.Second):
+			require.FailNow("delegated non-draft-reply must not block on the operation gate")
+		}
+		assert.False(gate.HasRequestWaiters(),
+			"delegated non-draft-reply must not register as a gate waiter")
+		var resp ErrorResponse
+		require.NoError(json.NewDecoder(w.Body).Decode(&resp))
+		assert.Equal("command_not_allowed", resp.Error,
+			"delegated non-draft-reply must return command_not_allowed")
+
+		// The gate label must not reflect caller-supplied args.
+		label, _, held := gate.Holder()
+		assert.True(held, "gate must still be held by the owner")
+		assert.Equal("owner-msgvault-sync", label,
+			"gate label must not be overwritten by the delegated caller's args")
+	})
 }
 
 // TestDelegatedGateBusyRedactsHolderLabel verifies that when a delegated caller
@@ -548,65 +571,6 @@ func TestDelegatedGateBusyRedactsHolderLabel(t *testing.T) { //nolint:parallelte
 		"busy response must use operation_in_progress code")
 	assert.NotContains(body503, "owner-msgvault-sync",
 		"holder label must be redacted for delegated callers")
-}
-
-// TestDelegatedNonDraftReplyDoesNotRegisterAsGateWaiter verifies that a
-// delegated /api/v1/cli/run request carrying a non-draft-reply body bypasses
-// the operation gate entirely: the request must return immediately (no waiter
-// registered, no gate slot taken), the gate label is not influenced by the
-// caller-supplied args, and the response is 400 command_not_allowed.
-// Proof-matrix row 32.
-func TestDelegatedNonDraftReplyDoesNotRegisterAsGateWaiter(t *testing.T) { //nolint:paralleltest // expects the request to return inside a 200ms real-time window
-	assert := assert.New(t)
-	require := require.New(t)
-	var gate LabeledOperationGate = NewSerialOperationGate()
-	cfg := &config.Config{Server: config.ServerConfig{APIKey: "owner-key"}}
-	srv := NewServerWithOptions(ServerOptions{
-		Config:        cfg,
-		Store:         &stubSourceStore{},
-		Logger:        testLogger(),
-		Scheduler:     newMockScheduler(),
-		OperationGate: gate,
-	})
-	reg := agentgrant.NewRegistry()
-	srv.agentGrants = reg
-	src := agentgrant.SourceRef{ID: 1, Type: "imap", Identifier: "alice@example.com"}
-	_, secret, _, err := reg.Issue("gate-nondraft", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{src})
-	require.NoError(err)
-
-	holderDone, ok := gate.BeginRequestWorkContext(context.Background(), "owner-msgvault-sync")
-	require.True(ok)
-	defer holderDone()
-
-	body := `{"args":["sync","alice@example.com"]}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set(apiprotocol.AgentTokenHeader, secret)
-	w := httptest.NewRecorder()
-
-	reqDone := make(chan struct{})
-	go func() {
-		defer close(reqDone)
-		srv.Router().ServeHTTP(w, req)
-	}()
-
-	select {
-	case <-reqDone:
-	case <-time.After(200 * time.Millisecond):
-		require.FailNow("delegated non-draft-reply must not block on the operation gate")
-	}
-	assert.False(gate.HasRequestWaiters(),
-		"delegated non-draft-reply must not register as a gate waiter")
-	var resp ErrorResponse
-	require.NoError(json.NewDecoder(w.Body).Decode(&resp))
-	assert.Equal("command_not_allowed", resp.Error,
-		"delegated non-draft-reply must return command_not_allowed")
-
-	// The gate label must not reflect caller-supplied args.
-	label, _, held := gate.Holder()
-	assert.True(held, "gate must still be held by the owner")
-	assert.Equal("owner-msgvault-sync", label,
-		"gate label must not be overwritten by the delegated caller's args")
 }
 
 // TestDelegationDefaultOff verifies that delegation is off when agent_access is

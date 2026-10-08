@@ -382,48 +382,50 @@ func TestOpenHTTPStoreDisabledAutoStartReportsIncompatibleDaemonWithoutStopping(
 }
 
 func TestOpenHTTPStoreDisabledAutoStartWaitsForStartingDaemon(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
+	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
 
-	dataDir := t.TempDir()
-	c := lifecycleTestConfig(dataDir)
-	c.Server.DaemonAutoStart = new(false)
-	testCtx := withStoreResolverConfig(t, c)
-	_, err := daemonRuntimeStore(dataDir).Write(daemon.RuntimeRecord{
-		PID:     os.Getpid(),
-		Network: daemon.NetworkTCP,
-		Address: "127.0.0.1:1",
-		Service: daemonService,
-		Version: Version,
-		Metadata: map[string]string{
-			runtimeHost:             "127.0.0.1",
-			runtimePort:             "1",
-			runtimeAPIVersion:       strconv.Itoa(daemonAPIVersion),
-			runtimeAPISchemaVersion: api.APISchemaVersion,
-		},
-	})
-	require.NoError(err, "write runtime")
+		dataDir := t.TempDir()
+		c := lifecycleTestConfig(dataDir)
+		c.Server.DaemonAutoStart = new(false)
+		testCtx := withStoreResolverConfig(t, c)
+		_, err := daemonRuntimeStore(dataDir).Write(daemon.RuntimeRecord{
+			PID:     os.Getpid(),
+			Network: daemon.NetworkTCP,
+			Address: "127.0.0.1:1",
+			Service: daemonService,
+			Version: Version,
+			Metadata: map[string]string{
+				runtimeHost:             "127.0.0.1",
+				runtimePort:             "1",
+				runtimeAPIVersion:       strconv.Itoa(daemonAPIVersion),
+				runtimeAPISchemaVersion: api.APISchemaVersion,
+			},
+		})
+		require.NoError(err, "write runtime")
 
-	stubStartServeBackgroundProcess(t, func(*config.Config, backgroundServeStartOptions) (*backgroundServeProcess, error) {
-		require.FailNow("disabled auto-start must wait instead of starting a daemon")
-		return nil, errors.New("unreachable")
-	})
+		stubStartServeBackgroundProcess(t, func(*config.Config, backgroundServeStartOptions) (*backgroundServeProcess, error) {
+			require.FailNow("disabled auto-start must wait instead of starting a daemon")
+			return nil, errors.New("unreachable")
+		})
 
-	ctx, cancel := context.WithTimeout(testCtx, 300*time.Millisecond)
-	t.Cleanup(cancel)
-	var st *daemonclient.Client
-	var info HTTPStoreInfo
-	var openErr error
-	stderr := captureStderrDuring(t, func() {
-		st, info, openErr = OpenHTTPStore(ctx)
+		ctx, cancel := context.WithTimeout(testCtx, 300*time.Millisecond)
+		t.Cleanup(cancel)
+		var st *daemonclient.Client
+		var info HTTPStoreInfo
+		var openErr error
+		stderr := captureStderrDuring(t, func() {
+			st, info, openErr = OpenHTTPStore(ctx)
+		})
+		assert.Nil(st)
+		assert.Equal(HTTPStoreInfo{}, info)
+		require.ErrorIs(openErr, context.DeadlineExceeded)
+		assert.Contains(stderr, "Another msgvault daemon start is in progress")
+		launchLock, ok := acquireBackgroundLaunchLock(dataDir)
+		require.True(ok, "disabled auto-start must release the launch lock after waiting")
+		require.NoError(launchLock.Unlock())
 	})
-	assert.Nil(st)
-	assert.Equal(HTTPStoreInfo{}, info)
-	require.ErrorIs(openErr, context.DeadlineExceeded)
-	assert.Contains(stderr, "Another msgvault daemon start is in progress")
-	launchLock, ok := acquireBackgroundLaunchLock(dataDir)
-	require.True(ok, "disabled auto-start must release the launch lock after waiting")
-	require.NoError(launchLock.Unlock())
 }
 
 func TestOpenHTTPStoreDisabledAutoStartLocalFlagStaysLocal(t *testing.T) {
@@ -739,54 +741,56 @@ func TestOrdinaryDaemonAutostartCancellationLeavesDetachedDaemonRunning(t *testi
 }
 
 func TestOpenHTTPStoreTakesOverWhenConcurrentDaemonStartExits(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
+	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
 
-	dataDir := t.TempDir()
-	testCtx := withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
-	heldLock, ok := acquireBackgroundLaunchLock(dataDir)
-	require.True(ok, "test should hold background launch lock")
-	t.Cleanup(func() { _ = heldLock.Unlock() })
-	time.AfterFunc(50*time.Millisecond, func() {
-		_ = heldLock.Unlock()
+		dataDir := t.TempDir()
+		testCtx := withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
+		heldLock, ok := acquireBackgroundLaunchLock(dataDir)
+		require.True(ok, "test should hold background launch lock")
+		t.Cleanup(func() { _ = heldLock.Unlock() })
+		time.AfterFunc(50*time.Millisecond, func() {
+			_ = heldLock.Unlock()
+		})
+
+		started := make(chan struct{})
+		waitCh := make(chan error)
+		stubStartServeBackgroundProcess(t, func(*config.Config, backgroundServeStartOptions) (*backgroundServeProcess, error) {
+			close(started)
+			return &backgroundServeProcess{
+				PID:     4242,
+				LogPath: filepath.Join(dataDir, "serve.log"),
+				Wait:    waitCh,
+			}, nil
+		})
+		stubWaitForBackgroundServeReady(t, func(
+			context.Context,
+			string,
+			<-chan error,
+			time.Duration,
+		) (*DaemonRuntime, bool, error) {
+			return &DaemonRuntime{
+				Record: daemon.RuntimeRecord{PID: 4242},
+				Host:   "127.0.0.1",
+				Port:   9911,
+				API:    daemonAPIVersion,
+			}, true, nil
+		})
+
+		ctx, cancel := context.WithTimeout(testCtx, 2*time.Second)
+		defer cancel()
+		st, info, err := OpenHTTPStore(ctx)
+		require.NoError(err, "OpenHTTPStore")
+		t.Cleanup(func() { _ = st.Close() })
+
+		assert.Equal(HTTPStoreLocalDaemon, info.Kind)
+		select {
+		case <-started:
+		case <-ctx.Done():
+			require.Fail("local daemon was not started after launch lock released")
+		}
 	})
-
-	started := make(chan struct{})
-	waitCh := make(chan error)
-	stubStartServeBackgroundProcess(t, func(*config.Config, backgroundServeStartOptions) (*backgroundServeProcess, error) {
-		close(started)
-		return &backgroundServeProcess{
-			PID:     4242,
-			LogPath: filepath.Join(dataDir, "serve.log"),
-			Wait:    waitCh,
-		}, nil
-	})
-	stubWaitForBackgroundServeReady(t, func(
-		context.Context,
-		string,
-		<-chan error,
-		time.Duration,
-	) (*DaemonRuntime, bool, error) {
-		return &DaemonRuntime{
-			Record: daemon.RuntimeRecord{PID: 4242},
-			Host:   "127.0.0.1",
-			Port:   9911,
-			API:    daemonAPIVersion,
-		}, true, nil
-	})
-
-	ctx, cancel := context.WithTimeout(testCtx, 2*time.Second)
-	defer cancel()
-	st, info, err := OpenHTTPStore(ctx)
-	require.NoError(err, "OpenHTTPStore")
-	t.Cleanup(func() { _ = st.Close() })
-
-	assert.Equal(HTTPStoreLocalDaemon, info.Kind)
-	select {
-	case <-started:
-	case <-ctx.Done():
-		require.Fail("local daemon was not started after launch lock released")
-	}
 }
 
 func TestOpenHTTPStoreUsesServerAPIKeyForLocalDaemon(t *testing.T) {
@@ -1198,7 +1202,7 @@ func TestProbeLocalDaemonAuthRespectsParentDeadline(t *testing.T) {
 	rt := daemonRuntimeForHTTPServer(t, server, daemonAPIKeyFingerprint("secret"))
 	c := lifecycleTestConfig(t.TempDir())
 	c.Server.APIKey = "secret"
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond) //nolint:kennlint // the deadline is the expected result; the health handler blocks until the request ends
 	t.Cleanup(cancel)
 
 	err := probeLocalDaemonAuth(ctx, rt, c)

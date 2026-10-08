@@ -323,7 +323,7 @@ func testPersonEnrichmentMissingPersonRevocation(t *testing.T, st *store.Store, 
 	select {
 	case <-trackingPersonLocked:
 		earlyPersonMutation = true
-	case <-time.After(250 * time.Millisecond):
+	case <-time.After(250 * time.Millisecond): //nolint:kennlint // absence check: the authority gate keeps tracking from locking the person
 	}
 	if manual && earlyPersonMutation {
 		select {
@@ -804,7 +804,7 @@ func TestPersonEnrichmentCatchUpSerializesWithConsentRevocation(t *testing.T) {
 	select {
 	case revokeErr = <-revokeDone:
 		earlyRemoval = true
-	case <-time.After(250 * time.Millisecond):
+	case <-time.After(250 * time.Millisecond): //nolint:kennlint // absence check: the held catch-up keeps the revoke waiting
 	}
 	release()
 	require.NoError(<-catchUpDone)

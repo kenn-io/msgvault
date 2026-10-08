@@ -22,10 +22,8 @@ func TestOpenSystemTargetReturnsAfterLauncherStarts(t *testing.T) {
 	require.NoError(t, os.WriteFile(launcher, []byte("#!/bin/sh\nsleep 2\n"), 0o700))
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
-	defer cancel()
 	started := time.Now()
-	err := openSystemTarget(ctx, "document.pdf")
+	err := openSystemTarget(t.Context(), "document.pdf")
 
 	require.NoError(t, err)
 	assert.Less(t, time.Since(started), time.Second, "launcher handoff must not wait for the opened application")

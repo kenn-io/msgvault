@@ -245,7 +245,7 @@ func TestSQLiteOccurrenceReconciliationReadsAfterWriterSlot(t *testing.T) {
 	select {
 	case <-result:
 		require.Fail("reconciliation returned while the SQLite writer slot was held")
-	case <-time.After(50 * time.Millisecond):
+	case <-time.After(50 * time.Millisecond): //nolint:kennlint // absence check: the held SQLite writer slot keeps reconciliation waiting
 	}
 	_, err = holder.ExecContext(t.Context(), `
 		UPDATE attachments SET attachment_role = ? WHERE id = ?`,

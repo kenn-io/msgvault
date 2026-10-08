@@ -457,7 +457,7 @@ func TestRepairListIDsSerializesSQLiteWriterBeforeSnapshot(t *testing.T) {
 				case <-time.After(time.Second):
 					return errors.New("concurrent SQLite writer did not commit")
 				}
-			case <-time.After(200 * time.Millisecond):
+			case <-time.After(200 * time.Millisecond): //nolint:kennlint // absence check: the repair holds the SQLite writer slot, so the writer cannot lock
 				return nil
 			}
 		})

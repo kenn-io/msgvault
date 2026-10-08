@@ -432,7 +432,7 @@ vuln-tools:
 vulncheck: vuln-tools
 	"$(GOVULNCHECK_BIN)" -tags "$(BUILD_TAGS)" ./...
 
-# Enforce testify helper usage and named sub-second polling budgets in tests
+# Enforce testify helper usage in assertion-heavy tests
 testify-helper-check:
 	go run ./cmd/testify-helper-check -tags="$(BUILD_TAGS)" ./...
 
@@ -547,7 +547,7 @@ help:
 	@echo "  lint           - Run linter (auto-fix)"
 	@echo "  lint-ci        - Run linter (CI, no auto-fix; also runs testify-helper-check)"
 	@echo "  vulncheck      - Run the pinned Go vulnerability scanner"
-	@echo "  testify-helper-check - Enforce testify helpers and polling budgets in tests"
+	@echo "  testify-helper-check - Enforce testify helper usage in assertion-heavy tests"
 	@echo "  tidy           - Tidy go.mod"
 	@echo "  vcard-registry-check - Network-check IANA registry drift (manual; not CI)"
 	@echo "  vcard-registry-update - Update the vendored IANA vCard registry"
