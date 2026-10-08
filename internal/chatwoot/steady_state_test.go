@@ -27,13 +27,15 @@ func TestSteadyStateSyncRequestsOnlyChangedWork(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	api := newContractAPI(t, 1000, nil)
-	recent := time.Now().Add(-3 * time.Hour)
+	recent := now().Add(-3 * time.Hour)
 	messageID := int64(1000)
 	for conversation := int64(1); conversation <= 60; conversation++ {
 		for range 2 {
 			messageID++
 			image := map[string]any{"id": messageID, "file_type": "image", "content_type": "image/png", "data_url": "https://chatwoot.example.com/image.png"}
-			api.AddMessage(conversation, messageID, recent.Add(time.Duration(messageID-1000)*time.Minute), image)
+			at := recent.Add(time.Duration(messageID-1000) * time.Minute)
+			api.AddMessage(conversation, messageID, at, image)
+			api.ActivityAt[conversation] = at.Unix()
 		}
 	}
 	st := testutil.NewTestStore(t)
@@ -52,7 +54,8 @@ func TestSteadyStateSyncRequestsOnlyChangedWork(t *testing.T) {
 	assert.Equal([]string{"agents", "list " + sortByActivity}, api.TakeRequests(), "an unchanged inbox costs one activity page")
 	assert.Empty(savedState(t, st, source).Conversations, "settled conversations keep no checkpoint state")
 
-	api.AddMessage(17, 5000, time.Now())
+	api.AddMessage(17, 5000, now())
+	api.ActivityAt[17] = now().Unix()
 	third, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 	assert.False(third.Partial)
@@ -67,7 +70,7 @@ func TestNewConversationsDoNotWaitForSavedHistory(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	api := newContractAPI(t, 1, nil)
-	at := time.Now().Add(-30 * 24 * time.Hour)
+	at := now().Add(-30 * 24 * time.Hour)
 	for id := int64(101); id <= 120; id++ {
 		api.AddMessage(1, id, at)
 	}
@@ -80,7 +83,7 @@ func TestNewConversationsDoNotWaitForSavedHistory(t *testing.T) {
 	require.True(first.Partial)
 	require.NotEmpty(savedState(t, st, source).Conversations["1"].Pending, "the first run leaves a saved tail")
 
-	api.AddMessage(2, 500, time.Now())
+	api.AddMessage(2, 500, now())
 	second, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 	assert.True(second.Partial)
@@ -93,7 +96,7 @@ func TestSameSecondMessageIsNotSkipped(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	api := newContractAPI(t, 1000, nil)
-	second := time.Now().Truncate(time.Second)
+	second := now().Truncate(time.Second)
 	api.AddMessage(1, 101, second)
 	st := testutil.NewTestStore(t)
 	imp, source := contractRegister(t, st, api)
@@ -212,7 +215,7 @@ func TestCappedRangesCostPagesNotHoles(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	api := newContractAPI(t, 10, nil)
-	at := time.Now().Add(-30 * 24 * time.Hour)
+	at := now().Add(-30 * 24 * time.Hour)
 	// Account-wide IDs leave a hole between every message of one conversation.
 	for index := range int64(35) {
 		api.AddMessage(1, 100+3*index, at.Add(time.Duration(index)*time.Second))
@@ -264,7 +267,7 @@ func TestFirstSyncBackfillsPastOneListingBatch(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	api := newContractAPI(t, 1000, nil)
-	at := time.Now().Add(-30 * 24 * time.Hour)
+	at := now().Add(-30 * 24 * time.Hour)
 	for conversation := int64(1); conversation <= 250; conversation++ {
 		api.AddMessage(conversation, 1000+conversation, at.Add(time.Duration(conversation)*time.Minute))
 	}
@@ -390,7 +393,7 @@ func TestLimitedRunSavesOnlyTheUnreadTail(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	api := newContractAPI(t, 1000, nil)
-	at := time.Now().Add(-30 * 24 * time.Hour)
+	at := now().Add(-30 * 24 * time.Hour)
 	for index := range int64(40) {
 		api.AddMessage(1, 100+3*index, at.Add(time.Duration(index)*time.Second))
 	}
@@ -420,7 +423,7 @@ func TestListingProgressesWhenTheActivityScanRunsOutOfBudget(t *testing.T) {
 	api.PageSize = 3
 	// Every conversation sits inside the overlap, so the scan never reaches the
 	// watermark within its half of a small budget.
-	at := time.Now().Add(-30 * 24 * time.Hour)
+	at := now().Add(-30 * 24 * time.Hour)
 	for conversation := int64(1); conversation <= 15; conversation++ {
 		api.AddMessage(conversation, 100+conversation, at)
 	}

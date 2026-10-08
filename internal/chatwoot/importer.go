@@ -642,7 +642,7 @@ func messageIDs(messages []Message) []int64 {
 }
 
 func (imp *Importer) validateMessage(c Conversation, m Message, opts ImportOptions) error {
-	if m.ID <= 0 || m.ID > math.MaxInt32 || (m.ConversationID != 0 && m.ConversationID != c.ID) || (m.InboxID != 0 && m.InboxID != opts.InboxID) || (m.AccountID != 0 && m.AccountID != imp.client.accountID) {
+	if (m.ConversationID != 0 && m.ConversationID != c.ID) || (m.InboxID != 0 && m.InboxID != opts.InboxID) || (m.AccountID != 0 && m.AccountID != imp.client.accountID) {
 		return errors.New("chatwoot message scope does not match the selected inbox conversation")
 	}
 	for _, a := range m.Attachments {
