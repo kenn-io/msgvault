@@ -2,8 +2,9 @@ import type { ChipTone } from '@kenn-io/kit-ui';
 import type { SourceStatus } from '../api/generated/models';
 import { sentenceCase } from '../explore/labels';
 
-// Source types the daemon stores (internal/api/scheduler_jobs.go and the
-// importers). An empty type shows no label: the identifier stands alone.
+// Curated friendly labels for daemon source types. Other codes use
+// sentenceCase, including twenty → Twenty. An empty type shows no label:
+// the identifier stands alone.
 const SOURCE_TYPES: Readonly<Record<string, string>> = {
   '': '', gmail: 'Gmail', imap: 'IMAP', msmail: 'Microsoft mail', teams: 'Teams',
   discord: 'Discord', meeting_import: 'Meeting import', synctech_sms: 'SMS backup',

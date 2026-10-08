@@ -39,6 +39,8 @@ func Decode(rawFormat string, raw, _ []byte) Content {
 		return decodeMuesli(fields)
 	case "twilio_call_json":
 		return decodeTwilio(fields)
+	case "twenty_json":
+		return decodeTwenty(fields)
 	case "meeting_json":
 		return decodeGeneric(fields)
 	default:
