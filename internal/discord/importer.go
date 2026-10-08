@@ -38,7 +38,9 @@ type ImportOptions struct {
 	// PublicChannels selects exact parent IDs and excludes private threads.
 	// Nil retains standalone selection; non-nil empty collects nothing.
 	// Containers absent from the refreshed catalog pause instead of using
-	// historical membership/visibility evidence to fetch them.
+	// historical membership/visibility evidence to fetch them. A selected
+	// parent the guild no longer lists is reported as a non-fatal
+	// unknown_channel catalog issue.
 	PublicChannels   []string
 	GuildID          string
 	GuildConfig      config.DiscordGuildConfig

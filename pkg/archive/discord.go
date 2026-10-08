@@ -94,7 +94,8 @@ func (a *Archive) BindDiscord(ctx context.Context, credential DiscordCredential,
 // history bounds, repair, attachments, and progress callbacks.
 type DiscordOptions = discord.ImportOptions
 
-// DiscordGuildConfig selects conversations by ID or name.
+// DiscordGuildConfig includes or excludes conversations by channel ID. Threads
+// follow their parent unless their own ID is listed.
 type DiscordGuildConfig = config.DiscordGuildConfig
 
 // DiscordSync supplies a credential and the options for one synchronization run.

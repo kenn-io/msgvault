@@ -138,6 +138,9 @@ func discoverCatalog(
 			addCatalogContainer(&result, containerIndexes, channel, nil)
 		}
 	}
+	if publicOnly {
+		result.Issues = append(result.Issues, unlistedSelectedParents(guildID, guildConfig.Include, parents)...)
+	}
 
 	var fatalErrors []error
 	active, activeErr := api.ActiveThreads(ctx, guildID)
@@ -465,6 +468,26 @@ func mergeThreadMetadata(existing, incoming *ThreadMetadata) *ThreadMetadata {
 		merged.CreateTimestamp = incoming.CreateTimestamp
 	}
 	return &merged
+}
+
+// unlistedSelectedParents reports selected parents the guild no longer lists.
+// Public collection never probes them with older access evidence, so the
+// issue is the caller's only signal that the channel was deleted or hidden.
+func unlistedSelectedParents(guildID string, selected []string, listed map[string]Channel) []CatalogIssue {
+	var issues []CatalogIssue
+	for _, id := range selected {
+		if channel, ok := listed[id]; ok && IsThreadCatalogParent(channel.Type) {
+			continue
+		}
+		issues = append(issues, CatalogIssue{
+			Scope:    CatalogScopeGuildChannels,
+			Kind:     CatalogIssueUnknownChannel,
+			GuildID:  guildID,
+			ParentID: id,
+			Err:      fmt.Errorf("selected Discord channel %s is not a listed message or thread parent", id),
+		})
+	}
+	return issues
 }
 
 func newCatalogIssue(scope CatalogScope, guildID, parentID string, err error) CatalogIssue {

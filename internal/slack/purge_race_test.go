@@ -28,10 +28,8 @@ func TestPurgeCannotInterleaveWithLoadedSlackResumeState(t *testing.T) {
 	_, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
 	imp.resumeLoaded = nil
-	if racedPurge != nil {
-		require.ErrorIs(racedPurge, store.ErrSyncAlreadyActive)
-		require.NoError(imp.store.PurgeChannelContext(t.Context(), source.ID, "C01"))
-	}
+	require.ErrorIs(racedPurge, store.ErrSyncAlreadyActive, "purge must not interleave with a running import")
+	require.NoError(imp.store.PurgeChannelContext(t.Context(), source.ID, "C01"))
 
 	_, err = imp.Import(t.Context(), opts)
 	require.NoError(err)

@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -56,4 +57,69 @@ func TestPublicImportResumesOlderArchivedThreadAndRepairsItsMessages(t *testing.
 	var body string
 	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT body_text FROM message_bodies WHERE message_id=?`), messageIDBySource(t, st, source.ID, messageID)).Scan(&body))
 	assert.Equal("repaired astronomy history", body, "completed older threads remain in the repair walk")
+}
+
+func TestPublicImportDoesNotResumePrivateThreadState(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	api := newImporterFakeAPI(importerTestChannel("300", "selected"))
+	api.active = []Channel{{ID: "402", GuildID: "200", ParentID: "300", Type: channelTypePrivateThread}}
+	api.messageHook = func(channel string, _ MessageQuery) ([]Message, error, bool) {
+		if channel == "402" {
+			return nil, errors.New("provider interrupted private thread backfill"), true
+		}
+		return nil, nil, false
+	}
+	imp := newTestImporter(st, api)
+	_, err := imp.Import(t.Context(), ImportOptions{GuildID: "200"})
+	require.ErrorContains(err, "provider interrupted", "standalone collection leaves the private thread resumable")
+	privateRequests := len(api.channelQueries("402"))
+	require.Positive(privateRequests)
+
+	api.messageHook = nil
+	summary, err := imp.Import(t.Context(), ImportOptions{GuildID: "200", PublicChannels: []string{"300"}})
+	require.NoError(err)
+	assert.Len(api.channelQueries("402"), privateRequests,
+		"public collection must not resume a private thread from saved state")
+	assert.Empty(summary.CatalogIssues)
+}
+
+func TestPublicImportReportsUnlistedSelectedChannel(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	api := newImporterFakeAPI(importerTestChannel("300", "selected"))
+	imp := newTestImporter(st, api)
+	summary, err := imp.Import(t.Context(), ImportOptions{GuildID: "200", PublicChannels: []string{"300", "301"}})
+	require.NoError(err)
+	require.Len(summary.CatalogIssues, 1)
+	issue := summary.CatalogIssues[0]
+	assert.Equal(CatalogIssueUnknownChannel, issue.Kind)
+	assert.Equal("301", issue.ParentID)
+	assert.False(issue.Fatal)
+	assert.Empty(api.channelQueries("301"), "an unlisted channel is reported, not probed")
+}
+
+func TestImportRejectsSourceFromAnotherGuild(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	other, err := st.GetOrCreateSource(sourceTypeDiscord, "201")
+	require.NoError(err)
+	api := newImporterFakeAPI(importerTestChannel("300", "selected"))
+	_, err = newTestImporter(st, api).Import(t.Context(), ImportOptions{GuildID: "200", SourceID: other.ID})
+	require.ErrorContains(err, "does not match the credential guild")
+	require.Empty(api.channelQueries("300"))
+}
+
+func TestEmptyPublicSelectionCollectsNothing(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	api := newImporterFakeAPI(importerTestChannel("300", "selected"))
+	summary, err := newTestImporter(st, api).Import(t.Context(), ImportOptions{GuildID: "200", PublicChannels: []string{}})
+	require.NoError(err)
+	require.Zero(summary.ContainersProcessed)
+	require.Empty(api.channelQueries("300"))
+	_, err = st.GetLatestSyncContext(t.Context(), summary.SourceID, 0)
+	require.ErrorIs(err, store.ErrSyncRunNotFound, "an empty selection starts no sync run")
 }

@@ -52,7 +52,7 @@ func exerciseDiscordCollection(t *testing.T, runtime *archive.Archive) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.MarshalWrite(w, body)
+		assert.NoError(json.MarshalWrite(w, body))
 	}))
 	defer server.Close()
 	credential := archive.DiscordCredential{Token: "test-bot", BaseURL: server.URL}

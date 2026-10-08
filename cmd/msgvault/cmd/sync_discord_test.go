@@ -227,6 +227,7 @@ func TestSyncDiscordRebuildsCacheAfterRepairBeforeSyncSetupFailure(t *testing.T)
 			require.NoError(err)
 			if !tt.wantRepaired {
 				assert.False(metadata.Valid, "an import without source ownership must not repair messages")
+				assert.Zero(rebuilds, "an import that repaired nothing must not rebuild analytics")
 				return
 			}
 			assert.JSONEq(`{"discord_message_type":0,"discord_message_flags":8192}`, metadata.String)
