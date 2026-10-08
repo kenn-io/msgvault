@@ -53,14 +53,15 @@ func CanonicalURL(raw string) (string, error) {
 		u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
 		return "", errors.New("chatwoot URL must be an absolute HTTP(S) instance URL without credentials, query or fragment")
 	}
-	if _, err := netguard.TargetPort(u); err != nil {
+	targetPort, err := netguard.TargetPort(u)
+	if err != nil {
 		return "", errors.New("chatwoot URL port must be between 1 and 65535")
 	}
 	host := strings.ToLower(u.Hostname())
 	if u.Scheme == "http" && !isLoopbackHost(host) {
 		return "", errors.New("chatwoot remote URL must use HTTPS")
 	}
-	port := u.Port()
+	port := strconv.Itoa(int(targetPort))
 	if (u.Scheme == "https" && port == "443") || (u.Scheme == "http" && port == "80") {
 		port = ""
 	}
@@ -292,13 +293,13 @@ func (c *Client) ListMessages(ctx context.Context, conversationID, after, before
 	return *result.Payload, nil
 }
 
-func (c *Client) configuredMediaOrigin(u *url.URL) bool {
+func (c *Client) configuredMediaOrigin(u *url.URL, port uint16) bool {
 	if u == nil || c.baseOrigin == nil {
 		return false
 	}
 	return strings.EqualFold(c.baseOrigin.Scheme, u.Scheme) &&
 		strings.EqualFold(strings.TrimSuffix(c.baseOrigin.Hostname(), "."), strings.TrimSuffix(u.Hostname(), ".")) &&
-		netguard.EffectivePort(c.baseOrigin) == netguard.EffectivePort(u)
+		netguard.EffectivePort(c.baseOrigin) == strconv.Itoa(int(port))
 }
 
 func mediaAddressAllowed(addr netip.Addr, configuredOrigin, configuredLoopback bool) bool {
@@ -332,7 +333,7 @@ func (c *Client) validateMediaTarget(ctx context.Context, u *url.URL) ([]netip.A
 		return nil, errors.New("invalid Chatwoot media URL")
 	}
 	host := u.Hostname()
-	configuredOrigin := c.configuredMediaOrigin(u)
+	configuredOrigin := c.configuredMediaOrigin(u, port)
 	configuredLoopback := configuredOrigin && isLoopbackHost(c.baseOrigin.Hostname())
 	if literal, parseErr := netip.ParseAddr(host); parseErr == nil {
 		literal = literal.Unmap()

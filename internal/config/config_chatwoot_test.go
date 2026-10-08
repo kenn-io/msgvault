@@ -91,20 +91,26 @@ func TestChatwootConfigRejectsInvalidProfiles(t *testing.T) {
 
 func TestChatwootConfigRejectsDuplicateIdentity(t *testing.T) {
 	require := require.New(t)
-	for _, other := range []string{
-		`identifier="SUPPORT"
+	for _, tc := range []struct{ base, other string }{
+		{"https://chatwoot.example.com", `identifier="SUPPORT"
 url="https://other.example.com"
-account_id=10`,
-		`identifier="different-label"
+account_id=10`},
+		{"https://chatwoot.example.com", `identifier="different-label"
 url="https://CHATWOOT.example.com:443/"
-account_id=9`,
+account_id=9`},
+		{"https://chatwoot.example.com", `identifier="padded-port"
+url="https://chatwoot.example.com:0443"
+account_id=9`},
+		{"https://chatwoot.example.com:8443", `identifier="padded-nondefault-port"
+url="https://chatwoot.example.com:08443"
+account_id=9`},
 	} {
 		err := loadConfigTextError(t, `[[chatwoot]]
 identifier="support"
-url="https://chatwoot.example.com"
+url="`+tc.base+`"
 account_id=9
 [[chatwoot]]
-`+other)
+`+tc.other)
 		require.ErrorContains(err, "duplicate")
 	}
 }

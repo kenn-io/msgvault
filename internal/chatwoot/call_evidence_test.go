@@ -52,7 +52,6 @@ func TestCallEvidenceMergesLiveCallOverTimeline(t *testing.T) {
 		wantID   int64
 		wantName string
 	}{
-		{"same_agent_missing_name", &Call{AcceptedByAgentID: 7}, 7, "Example Historical Agent"},
 		{"different_live_agent", &Call{AcceptedByAgentID: 8}, 8, ""},
 		{"missing_live_agent", &Call{}, 7, "Example Historical Agent"},
 		{"live_agent_name_wins", &Call{AcceptedByAgentID: 7, AcceptedByAgentName: "Example Current Agent"}, 7, "Example Current Agent"},

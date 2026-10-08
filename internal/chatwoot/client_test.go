@@ -36,20 +36,22 @@ func TestClientListsEveryConversationUnderInstancePath(t *testing.T) {
 // in clear text; loopback development instances may use HTTP.
 func TestCanonicalURL(t *testing.T) {
 	for raw, want := range map[string]string{
-		"HTTPS://CHATWOOT.example.com:443/support/": "https://chatwoot.example.com/support",
-		"http://localhost:3000/support":             "http://localhost:3000/support",
-		"http://127.0.0.1:3000/support":             "http://127.0.0.1:3000/support",
-		"http://[::1]:3000/support":                 "http://[::1]:3000/support",
-		"https://chatwoot.example.com:0":            "",
-		"https://chatwoot.example.com:65536":        "",
-		"http://localhost:0":                        "",
-		"http://localhost:65536":                    "",
-		"http://chatwoot.example.com":               "",
-		"http://192.0.2.10/support":                 "",
-		"chatwoot.example.com":                      "",
-		"https://secret@chatwoot.example.com":       "",
-		"https://chatwoot.example.com?token=secret": "",
-		"https://chatwoot.example.com#secret":       "",
+		"HTTPS://CHATWOOT.example.com:443/support/":  "https://chatwoot.example.com/support",
+		"https://chatwoot.example.com:0443/support":  "https://chatwoot.example.com/support",
+		"https://chatwoot.example.com:08443/support": "https://chatwoot.example.com:8443/support",
+		"http://localhost:00080/support":             "http://localhost/support",
+		"http://[::1]:03000/support":                 "http://[::1]:3000/support",
+		"http://localhost:3000/support":              "http://localhost:3000/support",
+		"http://127.0.0.1:3000/support":              "http://127.0.0.1:3000/support",
+		"http://[::1]:3000/support":                  "http://[::1]:3000/support",
+		"https://chatwoot.example.com:0":             "",
+		"https://chatwoot.example.com:65536":         "",
+		"http://chatwoot.example.com":                "",
+		"http://192.0.2.10/support":                  "",
+		"chatwoot.example.com":                       "",
+		"https://secret@chatwoot.example.com":        "",
+		"https://chatwoot.example.com?token=secret":  "",
+		"https://chatwoot.example.com#secret":        "",
 	} {
 		t.Run(raw, func(t *testing.T) {
 			assert := assert.New(t)

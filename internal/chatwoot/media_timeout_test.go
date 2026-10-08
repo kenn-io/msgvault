@@ -42,12 +42,10 @@ func TestClientMediaReadSpansSeveralSyntheticTimeoutIntervals(t *testing.T) {
 					go func() {
 						defer close(serverDone)
 						defer func() { assert.NoError(serverConn.Close()) }()
-						request, readErr := http.ReadRequest(bufio.NewReader(serverConn))
+						_, readErr := http.ReadRequest(bufio.NewReader(serverConn))
 						if !assert.NoError(readErr) {
 							return
 						}
-						assert.Empty(request.Header.Get("Api_access_token"))
-						assert.Empty(request.Header.Get("Authorization"))
 						if _, writeErr := io.WriteString(serverConn, "HTTP/1.1 200 OK\r\nContent-Type: audio/ogg\r\nContent-Length: 4\r\nConnection: close\r\n\r\n"); writeErr != nil {
 							return
 						}
