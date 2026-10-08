@@ -416,8 +416,8 @@ go.kenn.io/docbank v0.14.1-0.20261001015536-a212ec3d2e4a h1:g4KdBhGQ7Snti64JWsi+
 go.kenn.io/docbank v0.14.1-0.20261001015536-a212ec3d2e4a/go.mod h1:M7V2C3ysfJr4zRYU5fE2cmO/NG3v54RQb+Ius0E2VUk=
 go.kenn.io/kata v0.18.1-0.20261001005735-0bf1e54c63d3 h1:8oega4wck83f4J71auZkCOyXP79l3ELs96MlBlY4OH8=
 go.kenn.io/kata v0.18.1-0.20261001005735-0bf1e54c63d3/go.mod h1:RoD5oU7ZI/Q2oyzqEmYEd/hj48OqRcGXD85ujLxdlt8=
-go.kenn.io/kit v0.31.1 h1:sOR8g97pcCSib8BgIdJtOhLqnpDS2YbvKU38npV+fBc=
-go.kenn.io/kit v0.31.1/go.mod h1:1dwPTub5BoAcdZT8dL6O4juFULzZ38b9tqHxiniduVk=
+go.kenn.io/kit v0.32.2 h1:O4v+vm+OsrbCkaJDN98O3Gmg/YA+7TmpFq2mb1xgZ+4=
+go.kenn.io/kit v0.32.2/go.mod h1:1dwPTub5BoAcdZT8dL6O4juFULzZ38b9tqHxiniduVk=
 go.mau.fi/util v0.10.1 h1:1oSqb4TwzLA0cUDY0aomyBPFKkZ3J5fqCmrXV3VH3GQ=
 go.mau.fi/util v0.10.1/go.mod h1:40TDo7/ekSeOjgr8KAmX31Yf4zrOF94j83WQB+u5ZPc=
 go.opentelemetry.io/auto/sdk v1.2.1 h1:jXsnJ4Lmnqd11kwkBV2LgLoFMZKizbCi5fNZ/ipaZ64=
