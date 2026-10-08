@@ -211,6 +211,8 @@ type ResolveCardDAVConflictErrorResponseJSON = ErrorResponse
 
 type ResolveCardDAVConflictErrorResponseJSON409 = ErrorResponse
 
+type ResolveCardDAVConflictErrorResponseJSON413 = ErrorResponse
+
 type ResolveCardDAVConflictErrorResponseJSON500 = ErrorResponse
 
 type ResolveCardDAVConflictErrorResponseJSON502 = ErrorResponse
@@ -328,6 +330,8 @@ type SyncCardDAVResponse = SyncResult
 type SyncCardDAVErrorResponse = ErrorResponse
 
 type SyncCardDAVErrorResponseJSON = ErrorResponse
+
+type SyncCardDAVErrorResponseJSON413 = ErrorResponse
 
 type SyncCardDAVErrorResponseJSON500 = ErrorResponse
 
@@ -1532,6 +1536,50 @@ type GetImportJobResponse = ImportJobResponse
 type GetImportJobErrorResponse = ErrorResponse
 
 type GetImportJobErrorResponseJSON = ErrorResponse
+
+type PrepareKataEvidenceResponse = KataEvidencePrepareResponse
+
+type PrepareKataEvidenceErrorResponse = ErrorResponse
+
+type PrepareKataEvidenceErrorResponseJSON = ErrorResponse
+
+type PrepareKataEvidenceErrorResponseJSON404 = ErrorResponse
+
+type PrepareKataEvidenceErrorResponseJSON409 = ErrorResponse
+
+type PrepareKataEvidenceErrorResponseJSON422 = ErrorResponse
+
+type PrepareKataEvidenceErrorResponseJSON503 = ErrorResponse
+
+type CreateKataIssueResponse = KataIssueResponse
+
+type CreateKataIssueErrorResponse = ErrorResponse
+
+type CreateKataIssueErrorResponseJSON = ErrorResponse
+
+type CreateKataIssueErrorResponseJSON404 = ErrorResponse
+
+type CreateKataIssueErrorResponseJSON409 = KataIssueConflictResponse
+
+type CreateKataIssueErrorResponseJSON422 = ErrorResponse
+
+type CreateKataIssueErrorResponseJSON428 = ErrorResponse
+
+type CreateKataIssueErrorResponseJSON503 = ErrorResponse
+
+type LinkKataEvidenceResponse = KataIssueResponse
+
+type LinkKataEvidenceErrorResponse = ErrorResponse
+
+type LinkKataEvidenceErrorResponseJSON = ErrorResponse
+
+type LinkKataEvidenceErrorResponseJSON404 = ErrorResponse
+
+type LinkKataEvidenceErrorResponseJSON409 = ErrorResponse
+
+type LinkKataEvidenceErrorResponseJSON422 = ErrorResponse
+
+type LinkKataEvidenceErrorResponseJSON503 = ErrorResponse
 
 type GetKataIntegrationStatusResponse = TaskIntegrationStatusResponse
 
@@ -3323,7 +3371,7 @@ type GetTotalStatsResponse = TotalStatsResponse
 
 type GetTotalStatsErrorResponse = ErrorResponse
 
-type TriggerSyncResponse = StatusMessageResponse
+type TriggerSyncResponseJSON = TriggerSyncResponse
 
 type TriggerSyncErrorResponse = ErrorResponse
 
@@ -3677,6 +3725,7 @@ type ResolveCardDAVConflictResp struct {
 	JSON400      *ResolveCardDAVConflictErrorResponse
 	JSON404      *ResolveCardDAVConflictErrorResponseJSON
 	JSON409      *ResolveCardDAVConflictErrorResponseJSON409
+	JSON413      *ResolveCardDAVConflictErrorResponseJSON413
 	JSON500      *ResolveCardDAVConflictErrorResponseJSON500
 	JSON502      *ResolveCardDAVConflictErrorResponseJSON502
 	JSON503      *ResolveCardDAVConflictErrorResponseJSON503
@@ -3852,6 +3901,7 @@ type SyncCardDAVResp struct {
 	JSON200      *SyncCardDAVResponse
 	JSON400      *SyncCardDAVErrorResponse
 	JSON409      *SyncCardDAVErrorResponseJSON
+	JSON413      *SyncCardDAVErrorResponseJSON413
 	JSON500      *SyncCardDAVErrorResponseJSON500
 	JSON502      *SyncCardDAVErrorResponseJSON502
 	JSON503      *SyncCardDAVErrorResponseJSON503
@@ -4710,6 +4760,46 @@ type GetImportJobResp struct {
 	JSON200      *GetImportJobResponse
 	JSON401      *GetImportJobErrorResponse
 	JSON404      *GetImportJobErrorResponseJSON
+}
+
+type PrepareKataEvidenceResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *PrepareKataEvidenceResponse
+	JSON400      *PrepareKataEvidenceErrorResponse
+	JSON401      *PrepareKataEvidenceErrorResponseJSON
+	JSON404      *PrepareKataEvidenceErrorResponseJSON404
+	JSON409      *PrepareKataEvidenceErrorResponseJSON409
+	JSON422      *PrepareKataEvidenceErrorResponseJSON422
+	JSON503      *PrepareKataEvidenceErrorResponseJSON503
+}
+
+type CreateKataIssueResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON201      *CreateKataIssueResponse
+	JSON400      *CreateKataIssueErrorResponse
+	JSON401      *CreateKataIssueErrorResponseJSON
+	JSON404      *CreateKataIssueErrorResponseJSON404
+	JSON409      *CreateKataIssueErrorResponseJSON409
+	JSON422      *CreateKataIssueErrorResponseJSON422
+	JSON428      *CreateKataIssueErrorResponseJSON428
+	JSON503      *CreateKataIssueErrorResponseJSON503
+}
+
+type LinkKataEvidenceResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *LinkKataEvidenceResponse
+	JSON400      *LinkKataEvidenceErrorResponse
+	JSON401      *LinkKataEvidenceErrorResponseJSON
+	JSON404      *LinkKataEvidenceErrorResponseJSON404
+	JSON409      *LinkKataEvidenceErrorResponseJSON409
+	JSON422      *LinkKataEvidenceErrorResponseJSON422
+	JSON503      *LinkKataEvidenceErrorResponseJSON503
 }
 
 type GetKataIntegrationStatusResp struct {
@@ -6421,7 +6511,7 @@ type TriggerSyncResp struct {
 	HTTPResponse *http.Response
 	Body         []byte
 	StatusCode   int
-	JSON202      *TriggerSyncResponse
+	JSON202      *TriggerSyncResponseJSON
 }
 
 type CaptureTelemetryEventResp struct {

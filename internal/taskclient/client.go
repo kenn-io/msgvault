@@ -83,6 +83,16 @@ type Client struct {
 type httpStatusError struct {
 	statusCode     int
 	classification error
+	code           string
+}
+
+// ErrorCode returns the service's error code for a rejected request, such as
+// Kata's idempotency_mismatch, or "" when it gave none.
+func ErrorCode(err error) string {
+	if status, ok := errors.AsType[*httpStatusError](err); ok {
+		return status.code
+	}
+	return ""
 }
 
 func (e *httpStatusError) Error() string {
@@ -381,6 +391,7 @@ func (c *Client) doJSONWithHeaders(ctx context.Context, method, path string, req
 		return nil, &httpStatusError{
 			statusCode:     resp.StatusCode,
 			classification: classifyHTTPStatus(resp.StatusCode),
+			code:           errorCode(resp),
 		}
 	}
 	data, err := readBounded(resp.Body, c.maxResponseBytes)
@@ -564,4 +575,21 @@ func boundedLimit(limit int) int {
 
 func containsStatus(statuses []int, candidate int) bool {
 	return slices.Contains(statuses, candidate)
+}
+
+// errorCode reads the code from a conflict's error envelope; other failures
+// are classified by status alone.
+func errorCode(resp *http.Response) string {
+	if resp.StatusCode != http.StatusConflict {
+		return ""
+	}
+	var envelope struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if json.UnmarshalRead(io.LimitReader(resp.Body, 64<<10), &envelope) != nil {
+		return ""
+	}
+	return envelope.Error.Code
 }

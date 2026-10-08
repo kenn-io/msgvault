@@ -35,6 +35,7 @@ const (
 	toolSecurityPersonMerge
 	toolSecurityCardDAVWrite
 	toolSecurityCalendarWrite
+	toolSecurityKataWrite
 )
 
 type catalogCapabilities struct {
@@ -49,6 +50,7 @@ type catalogCapabilities struct {
 	savedViews      bool
 	meetings        bool
 	personAgenda    bool
+	kata            bool
 	identityReview  bool
 	personCardDAV   bool
 }
@@ -131,6 +133,7 @@ func capabilitiesFor(opts ServeOptions) catalogCapabilities {
 		savedViews:      opts.SavedViews != nil,
 		meetings:        opts.Meetings != nil,
 		personAgenda:    opts.PersonAgendaBackend != nil,
+		kata:            opts.Kata != nil,
 		identityReview:  opts.IdentityReview != nil,
 		personCardDAV:   opts.PersonCardDAV != nil,
 	}
@@ -233,6 +236,7 @@ func buildOperationCatalog(capabilities catalogCapabilities) []toolDefinition {
 		updatePersonNotesDefinition(nil),
 		updateSavedViewDefinition(nil),
 	}
+	definitions = append(definitions, kataDefinitions()...)
 
 	available := definitions[:0]
 	for _, definition := range definitions {

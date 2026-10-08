@@ -13,6 +13,7 @@
   } from '@kenn-io/kit-ui';
   import { onDestroy, onMount, setContext, tick, type Snippet, untrack } from 'svelte';
   import type { APIClient } from '../../api/client';
+  import { startScreenViewReporting } from '../../telemetry/screen-views';
   import type {
     MeetingRef,
     ExplorePreflightResponse as GeneratedExplorePreflightResponse,
@@ -107,6 +108,11 @@
   }: Props = $props();
   const ownsState = untrack(() => providedState === undefined);
   const exploreState = untrack(() => providedState ?? new ExploreState());
+  const reportedWorkspace = $derived(exploreState.current.workspace);
+  $effect(() => {
+    if (!enabled) return;
+    return startScreenViewReporting(client, reportedWorkspace);
+  });
   const archivedMeeting = new ArchiveMeetingNavigation(untrack(() => client));
   let archiveReturnFocus: HTMLElement | undefined;
   let archiveReturnSelection = $state<string | null>(null);

@@ -8,4 +8,5 @@ export type CardDAVAccountRequestProvider =
 export const CardDAVAccountRequestProvider = {
   "": "",
   google: "google",
+  microsoft: "microsoft",
 } as const;

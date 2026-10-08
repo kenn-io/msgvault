@@ -2522,7 +2522,7 @@ grant consent to a provider or enroll a person in briefs.
 | `person provider check [name]` | Run fixed synthetic input without granting consent |
 | `person provider consent [name] --yes` | Grant consent to the exact checked policy |
 | `person provider revoke [name]` | Revoke that policy's consent; `--all` revokes all stored sweep policies |
-| `person provider remove <name>` | Remove a configured profile |
+| `person provider remove <name>` | Remove a configured profile and its stored key. For a profile no longer in the config, delete its leftover stored key and revoke consent for the policies that used it |
 | `person provider history [name] [--person <id>]` | Inspect redacted runs and attempts |
 | `person sweep run [--person <id>] [--limit 25]` | Run a bounded maintenance pass for tracked people |
 | `person sweep status` | Read redacted progress and usage |
@@ -2640,7 +2640,9 @@ book; see the [CardDAV guide](/docs/usage/people-carddav/).
 |---|---|
 | `add-carddav <base-url> <username> [--connection <name>] [--schedule <cron>] [--disabled]` | Discover and save an account; password is prompted or read from piped stdin |
 | `add-carddav --google <email> [--connection <name>] [--oauth-app <name>] [--schedule <cron>] [--disabled]` | Connect Google Contacts using an authorized account token |
+| `add-carddav --microsoft <email> [--headless] [--connection <name>] [--schedule <cron>] [--disabled]` | Sign in to Microsoft and connect Microsoft 365 or Outlook.com contacts through Microsoft Graph |
 | `carddav authorize-google <email> [--oauth-app <name>] [--no-browser]` | Authorize Google Contacts in the browser, preserving existing Google permissions |
+| `carddav authorize-microsoft <email> [--headless]` | Sign in to Microsoft for contacts without saving a connection |
 | `sync-carddav [--connection <name>] [--full]` | Synchronize all enabled connections, or the selected connection; `--full` reconciles complete books |
 | `carddav connections` | List connection names, enablement, runtime availability and orphaned accounts |
 | `person publish <person-id>` / `person unpublish <person-id>` | Publish a saved profile or remove its remote card |
@@ -2847,6 +2849,27 @@ UID and aliases. JSON includes `truncated` when more items remain; use Kata to
 view the rest. Oversized Kata responses produce an explicit error. See the
 [Kata configuration](configuration.md#integrationskata) for metadata and
 response limits.
+
+---
+
+## kata
+
+Create Kata issues that quote exact message or file text. Configure
+[`[integrations.kata]`](configuration.md#integrationskata) on the daemon first.
+
+```bash
+msgvault kata evidence prepare [--input FILE]
+msgvault kata create --idempotency-key KEY [--input FILE] [--json]
+msgvault kata link <ref> [--input FILE] [--json]
+```
+
+Each command reads one JSON request from `--input`, or stdin by default.
+`prepare` prints exact excerpts and the references that `create` and `link`
+accept. `create` requires `--idempotency-key`, a key you choose to name the
+issue; running it again with the same key and input returns the issue it filed
+instead of a duplicate.
+`link` adds evidence to an existing issue in the configured project, given
+as `project#ref` or a bare ref. See [Kata issues](usage/kata-issues.md) for request shapes and limits.
 
 ---
 
@@ -3601,8 +3624,9 @@ msgvault mcp [flags]
 | `--http-token-file` | — | On unreleased `main`, read an independent inbound bearer key from an owner-only file; takes priority over `--http-token-env`. Requires `--http`. |
 | `--http-token-env` | — | On unreleased `main`, name the environment variable holding an independent inbound bearer key. Requires `--http`. |
 | `--http-allow-insecure` | `false` | Allow non-loopback HTTP binding without an effective inbound key. A configured key is still enforced; without one, use only behind a trusted network boundary or authenticated reverse proxy. |
-| `--http-allow-writes` | `false` | Expose Saved View management, attachment export, deletion staging, and managed draft writes over StreamableHTTP. Calendar event mutations also require `--allow-calendar-writes`. Enable only for trusted, authenticated clients. |
+| `--http-allow-writes` | `false` | Expose Saved View management, attachment export, deletion staging, and managed draft writes over StreamableHTTP. Calendar event mutations also require `--allow-calendar-writes`, and Kata issue writes `--allow-kata-writes`. Enable only for trusted, authenticated clients. |
 | `--allow-calendar-writes` | `false` | Expose calendar event mutation tools. HTTP also requires `--http-allow-writes`; only enable for sessions where the user explicitly authorizes calendar writes. |
+| `--allow-kata-writes` | `false` | Expose `create_kata_issue` and `link_kata_evidence`. HTTP also requires `--http-allow-writes`; archive text is untrusted input, so only enable for sessions where the user explicitly authorizes Kata issue writes. See [Kata issues](usage/kata-issues.md). |
 
 See [MCP Server](/docs/usage/chat/) for configuration and tool reference.
 

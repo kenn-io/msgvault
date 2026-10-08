@@ -363,6 +363,31 @@ describe('CardDAVConflictsController', () => {
     controller.destroy();
   });
 
+  it('shows the reason when keeping a local card that is too large and keeps the conflict', async () => {
+    const message = 'This contact is too large for Outlook, which accepts up to 4 MB. Remove a photo or other large data, then publish again.';
+    let posts = 0;
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = requestOf(input);
+      const path = new URL(request.url).pathname;
+      if (request.method === 'POST') {
+        posts += 1;
+        return Response.json({ error: 'microsoft_contact_too_large', message }, { status: 413 });
+      }
+      if (path.endsWith('/41')) return Response.json(detail(41));
+      return Response.json({ conflicts: [listItem(41)] });
+    });
+    const controller = new CardDAVConflictsController(createAPIClient(fetchFn));
+    await controller.load();
+    await controller.select(41);
+
+    expect(await controller.resolve(41, 'keep_local')).toEqual({ kind: 'error' });
+
+    expect(posts).toBe(1);
+    expect(controller.resolutionError).toBe(message);
+    expect(controller.conflicts.map(({ id }) => id)).toEqual([41]);
+    controller.destroy();
+  });
+
   it('locks mutation after failed reconciliation and a GET-only retry recovers both snapshots', async () => {
     let posts = 0;
     let listReads = 0;

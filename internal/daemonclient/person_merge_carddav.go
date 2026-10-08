@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"go.kenn.io/msgvault/internal/operations"
 	apiclient "go.kenn.io/msgvault/pkg/client"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
@@ -124,18 +125,29 @@ func (c *Client) GetCardDAVSyncStatus(ctx context.Context) (*generated.CardDAVSt
 	return response.JSON200, nil
 }
 
+// SafeMCPErrorForPerson is SafeMCPError, except that a contact over Outlook's
+// limit names personID, which the caller validated.
+func SafeMCPErrorForPerson(err error, personID int64) error {
+	if apiErr, ok := errors.AsType[*APIError](err); ok && apiErr.Code == "microsoft_contact_too_large" {
+		return fmt.Errorf("daemon request failed (%d, %s): %s", apiErr.Status, apiErr.Code, operations.MicrosoftContactTooLargeMessage(personID))
+	}
+	return SafeMCPError(err)
+}
+
 // SafeMCPError keeps daemon-provided prose out of MCP tool errors: upstream
 // failure details can include private contact data. The stable code and HTTP
 // status still identify conflicts and blockers.
 func SafeMCPError(err error) error {
 	if apiErr, ok := errors.AsType[*APIError](err); ok {
 		switch apiErr.Code {
+		case "microsoft_contact_too_large":
+			return fmt.Errorf("daemon request failed (%d, %s): %s", apiErr.Status, apiErr.Code, operations.FixedPublicError(operations.PublicErrorMicrosoftContactTooLarge).Message)
 		case "person_merge_revision_conflict", "person_merge_idempotency_conflict",
 			"invalid_if_match", "invalid_idempotency_key", "if_match_required", "idempotency_key_required",
 			"person_profile_not_found", "person_merge_invalid", "person_merge_failed",
 			"person_carddav_published", "person_merge_required",
 			"carddav_review_stale", "carddav_inference_review_required",
-			"carddav_unavailable", "google_authorization_required", "carddav_preview_too_large",
+			"carddav_unavailable", "google_authorization_required", "microsoft_authorization_required", "carddav_preview_too_large",
 			"carddav_conflict_stale", "carddav_conflict_pending", "carddav_publication_pending",
 			"carddav_retry_after", "carddav_upstream_failed", "carddav_storage_failed", "carddav_failed",
 			"bad_request", "not_found", "conflict", "invalid_request",
@@ -148,7 +160,13 @@ func SafeMCPError(err error) error {
 			"identity_match_review_stale", "identity_match_not_acceptable",
 			"identity_match_already_accepted", "identity_match_already_applied",
 			"identity_match_state_changed", "identity_match_endpoint_unsupported",
-			"identity_match_failed", "person_binding_conflict":
+			"identity_match_failed", "person_binding_conflict",
+			"archive_unavailable", "authentication_required", "evidence_changed", "evidence_limit",
+			"evidence_unavailable", "evidence_unprocessed", "evidence_unsupported", "idempotency_conflict",
+			"invalid_evidence", "issue_evidence_full", "kata_conflict", "kata_issue_changed", "kata_issue_deleted",
+			"kata_issue_not_found", "kata_issue_outside_project", "kata_request_rejected", "kata_unavailable", "person_identity_required",
+			"person_identity_unavailable", "quote_ambiguous", "quote_not_found", "ref_required",
+			"unsupported_issue_evidence", "wrong_project":
 			return fmt.Errorf("daemon request failed (%d, %s)", apiErr.Status, apiErr.Code)
 		default:
 			return fmt.Errorf("daemon request failed (%d)", apiErr.Status)

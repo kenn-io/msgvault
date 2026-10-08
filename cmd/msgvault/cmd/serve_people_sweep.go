@@ -121,7 +121,7 @@ func newProductionStructuredRunner(
 		return nil, err
 	}
 	credentials := peoplesweep.NewCredentialResolver(
-		peoplesweep.NewFileCredentialStore(cfg.TokensDir()), os.LookupEnv,
+		peoplesweep.NewStoredCredentials(cfg.TokensDir()), os.LookupEnv,
 	)
 	return peoplesweep.NewRunner(cfg.People.Sweep, st, registry, credentials)
 }

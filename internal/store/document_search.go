@@ -73,25 +73,27 @@ type DocumentSearchResponse struct {
 }
 
 type DocumentSearchResult struct {
-	AttachmentID                int64                   `json:"attachment_id"`
-	MessageID                   int64                   `json:"message_id"`
-	ConversationID              int64                   `json:"conversation_id"`
-	SourceID                    int64                   `json:"source_id"`
-	SourceMessageID             string                  `json:"source_message_id,omitempty"`
-	OccurredAt                  *time.Time              `json:"occurred_at,omitempty"`
-	OccurrenceKey               string                  `json:"occurrence_key"`
-	SourcePartKey               string                  `json:"source_part_key,omitempty"`
-	Filename                    string                  `json:"filename,omitempty"`
-	ContainingTitle             string                  `json:"containing_title,omitempty"`
-	MIMEType                    string                  `json:"mime_type,omitempty"`
-	CanonicalBlobHash           string                  `json:"canonical_blob_hash"`
-	OtherLiveCopies             int                     `json:"other_live_copies"`
-	ChunkKey                    string                  `json:"chunk_key"`
-	ChunkOrdinal                int                     `json:"chunk_ordinal"`
-	HeadingPath                 []string                `json:"heading_path,omitempty"`
-	FirstUnitIndex              int                     `json:"first_unit_index"`
-	LastUnitIndex               int                     `json:"last_unit_index"`
-	Excerpt                     string                  `json:"excerpt"`
+	AttachmentID      int64      `json:"attachment_id"`
+	MessageID         int64      `json:"message_id"`
+	ConversationID    int64      `json:"conversation_id"`
+	SourceID          int64      `json:"source_id"`
+	SourceMessageID   string     `json:"source_message_id,omitempty"`
+	OccurredAt        *time.Time `json:"occurred_at,omitempty"`
+	OccurrenceKey     string     `json:"occurrence_key"`
+	SourcePartKey     string     `json:"source_part_key,omitempty"`
+	Filename          string     `json:"filename,omitempty"`
+	ContainingTitle   string     `json:"containing_title,omitempty"`
+	MIMEType          string     `json:"mime_type,omitempty"`
+	CanonicalBlobHash string     `json:"canonical_blob_hash"`
+	OtherLiveCopies   int        `json:"other_live_copies"`
+	ChunkKey          string     `json:"chunk_key"`
+	ChunkOrdinal      int        `json:"chunk_ordinal"`
+	HeadingPath       []string   `json:"heading_path,omitempty"`
+	FirstUnitIndex    int        `json:"first_unit_index"`
+	LastUnitIndex     int        `json:"last_unit_index"`
+	Excerpt           string     `json:"excerpt"`
+	// ExcerptStartRune is the zero-based start of Excerpt in the matched chunk.
+	ExcerptStartRune            int                     `json:"excerpt_start_rune"`
 	HighlightStart              int                     `json:"highlight_start"`
 	HighlightEnd                int                     `json:"highlight_end"`
 	ProfileID                   string                  `json:"profile_id"`
@@ -343,7 +345,7 @@ func (s *Store) ResolveDocumentVectorSearchOccurrences(
 		if err := json.Unmarshal([]byte(headingJSON), &result.HeadingPath); err != nil {
 			return nil, false, fmt.Errorf("decode document vector search heading path: %w", err)
 		}
-		result.Excerpt, result.HighlightStart, result.HighlightEnd = documentSearchExcerpt(text, nil)
+		result.Excerpt, result.ExcerptStartRune, result.HighlightStart, result.HighlightEnd = documentSearchExcerpt(text, nil)
 		result.MatchedSignals = []string{"semantic"}
 		results = append(results, result)
 	}
@@ -866,7 +868,7 @@ func fuseDocumentSearchRows(
 	}
 	results := make([]documentSearchRow, 0, len(byOccurrence))
 	for _, row := range byOccurrence {
-		row.Excerpt, row.HighlightStart, row.HighlightEnd = documentSearchExcerpt(row.Text, terms)
+		row.Excerpt, row.ExcerptStartRune, row.HighlightStart, row.HighlightEnd = documentSearchExcerpt(row.Text, terms)
 		row.Text = ""
 		results = append(results, row)
 	}
@@ -885,7 +887,7 @@ func fuseDocumentSearchRows(
 	return results, false
 }
 
-func documentSearchExcerpt(text string, terms []string) (string, int, int) {
+func documentSearchExcerpt(text string, terms []string) (string, int, int, int) {
 	runes := []rune(text)
 	matchStart, matchEnd := 0, 0
 	lower := []rune(strings.ToLower(text))
@@ -911,6 +913,7 @@ func documentSearchExcerpt(text string, terms []string) (string, int, int) {
 	}
 	excerpt := strings.TrimSpace(string(runes[start:end]))
 	trimmedPrefix := utf8.RuneCountInString(string(runes[start:end])) - utf8.RuneCountInString(strings.TrimLeftFunc(string(runes[start:end]), unicode.IsSpace))
+	excerptStartRune := start + trimmedPrefix
 	highlightStart := max(matchStart-start-trimmedPrefix, 0)
 	highlightEnd := max(matchEnd-start-trimmedPrefix, highlightStart)
 	if matchEnd == matchStart || highlightStart > utf8.RuneCountInString(excerpt) {
@@ -918,7 +921,7 @@ func documentSearchExcerpt(text string, terms []string) (string, int, int) {
 	} else {
 		highlightEnd = min(highlightEnd, utf8.RuneCountInString(excerpt))
 	}
-	return excerpt, highlightStart, highlightEnd
+	return excerpt, excerptStartRune, highlightStart, highlightEnd
 }
 
 func hashDocumentSearchRequest(request DocumentSearchRequest) (string, error) {

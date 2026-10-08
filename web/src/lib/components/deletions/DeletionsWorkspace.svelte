@@ -313,14 +313,15 @@
   </PageHeader>
   {#if error}<p class="notice notice--error" role="alert">{error}</p>{/if}
 
-  {#if !selection}
-    <EmptyState
-      title="Nothing selected for deletion"
-      description="Select items in Everything, then choose Review for deletion…"
-    />
-  {:else}
-    <Card padding="sm">
-      <section class="staging" aria-labelledby="deletion-review-title">
+  <section class="selection-review" aria-label="Deletion selection">
+    {#if !selection}
+      <EmptyState
+        title="Nothing selected for deletion"
+        description="Select items in Everything, then choose Review for deletion…"
+      />
+    {:else}
+      <Card padding="sm">
+        <section class="staging" aria-labelledby="deletion-review-title">
         <div class="staging-header">
           <h2 id="deletion-review-title">Review selection</h2>
           <Button
@@ -370,9 +371,10 @@
           <p class="result" role="status">{resultSummary(preview)}</p>
           {#if stageCounts(preview).skipped > 0}<p class="warning" role="alert">{partialWarning(preview)}</p>{/if}
         {/if}
-      </section>
-    </Card>
-  {/if}
+        </section>
+      </Card>
+    {/if}
+  </section>
 
   {#if loading}<p role="status">Loading deletion manifests…</p>
   {:else if manifests.length === 0}
@@ -520,6 +522,22 @@
     display: flex;
     align-items: center;
     gap: var(--space-3);
+  }
+  .selection-review {
+    flex: none;
+    overflow: hidden;
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+  }
+  .selection-review :global(.kit-empty-state) {
+    margin: 0;
+    padding: var(--space-6);
+  }
+  .selection-review :global(.kit-card) {
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
   }
   .staging {
     display: grid;

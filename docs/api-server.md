@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-04"
+last_edited: "2026-10-06"
 title: Web UI & API Server
 description: Daemon-served analytical Web UI and REST API for your msgvault archive, with optional background sync scheduling.
 ---
@@ -100,11 +100,11 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.3.0**.
+it is separate from the binary release version. The current schema is **3.4.0**.
 Upgrade clients and daemon together across incompatible schema versions,
 including remote deployments.
 
-Schema 3.3.0 adds `POST /api/v1/telemetry/events`, which the web UI uses to
+Schema 3.3.0 adds `POST /api/v1/telemetry/events`, which the web and terminal UIs use to
 report anonymous usage events through the daemon. See
 [Telemetry](configuration.md#telemetry).
 
@@ -115,6 +115,15 @@ review token. Upgrade the CLI and daemon together; clients with an incompatible
 schema fail before issuing archive requests. The HTTP prefix remains `/api/v1`.
 This schema also adds consented identity scoring. See
 [identity match review and scoring](#identity-match-review-and-scoring).
+
+Schema 3.4.0 adds [Kata issues from archive evidence](usage/kata-issues.md).
+It also adds the `microsoft` CardDAV account provider, the
+`microsoft_authorization_required` CardDAV error and repair codes, and the
+`microsoft_contact_too_large` error code, which publish, approve, conflict
+resolution and a sync of one selected connection return with 413 when a card
+exceeds Outlook's 4 MB write limit. A sync of all connections returns 200 and
+reports the code as that connection's failure, and run history records it as
+the failure code.
 
 Schema 3.1.0 adds unreleased [calendar event control](#calendar-control),
 availability queries, and opt-in `write` on Calendar consent plans.
@@ -1990,6 +1999,16 @@ Trigger a manual sync for an account. Returns immediately with a 202 status whil
   "message": "Sync started for you@gmail.com"
 }
 ```
+
+For sources scheduled as generic jobs (`source_type` set), the body also carries `disposition`:
+
+| Disposition | Meaning |
+|---|---|
+| `started` | The job was idle and a run started. |
+| `pending` | The job was already running; one follow-up run is recorded. Scheduler status reports it as `pending`. |
+| `coalesced` | The request was merged into a run still waiting to start or into a follow-up already pending; no additional run was added. |
+
+Repeated triggers never run the job concurrently. A generic-job trigger does not wait on the daemon's operation gate, so it is answered even while a long import of the same job holds it.
 
 ---
 

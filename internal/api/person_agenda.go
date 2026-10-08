@@ -221,7 +221,11 @@ func (s *Server) requirePersonAgenda(w http.ResponseWriter) bool {
 }
 
 func decodePersonAgendaRequest(w http.ResponseWriter, r *http.Request, target any, message string) bool {
-	r.Body = http.MaxBytesReader(w, r.Body, maxPersonAgendaRequestBytes)
+	return decodeBoundedRequest(w, r, target, message, maxPersonAgendaRequestBytes)
+}
+
+func decodeBoundedRequest(w http.ResponseWriter, r *http.Request, target any, message string, limit int64) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
 	decoder := jsontext.NewDecoder(r.Body, json.RejectUnknownMembers(true))
 	if err := json.UnmarshalDecode(decoder, target); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", message)

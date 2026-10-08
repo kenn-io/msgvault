@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-30"
+last_edited: "2026-10-06"
 title: CardDAV Contacts
 description: Bring address-book contacts into msgvault, publish selected profiles, and resolve competing edits.
 ---
@@ -138,6 +138,81 @@ Google's canonical entry point is
 collection from Google's response and uses vCard 3.0 and incremental sync.
 Test and save the account again to rediscover its URLs; Google recommends
 rediscovery every two to four weeks. See [Google's CardDAV reference](https://developers.google.com/people/carddav).
+
+## Microsoft contacts
+
+Microsoft 365 and Outlook.com do not support CardDAV. msgvault reads and
+writes their contacts through Microsoft Graph instead, with the same roles,
+publishing and conflict review as a CardDAV server. The default **Contacts**
+folder and each folder inside it is one address book. Microsoft Graph does
+not list contact folders outside **Contacts**. Graph can't make a delete
+conditional, so an Outlook edit made in the moment before an unpublish is
+deleted without a conflict; the contact stays in Outlook's Deleted Items.
+
+1. Set up the Microsoft app registration from the
+   [Microsoft Graph mail setup](../guides/oauth-setup.md#microsoft-graph-mail-sync), and add the delegated
+   Microsoft Graph permission `Contacts.ReadWrite`.
+2. Sign in and save the connection:
+
+   ```bash
+   msgvault add-carddav --microsoft you@example.com --schedule "*/30 * * * *"
+   msgvault carddav books
+   ```
+
+   `add-carddav --microsoft` opens a browser for Microsoft sign-in. Use
+   `--headless` to sign in with a device code instead. The token is saved as
+   `tokens/mscontacts_<email>.json`, separate from mail and Teams tokens.
+   For a remote daemon, copy that file to the daemon's token directory,
+   preserving private file permissions, before the connection is saved.
+3. Review the roles of each folder, then run `msgvault sync-carddav`.
+
+To sign in without saving a connection, run
+`msgvault carddav authorize-microsoft you@example.com`. Then save the
+connection with the **Microsoft 365 or Outlook.com** provider in
+**Settings → CardDAV account**. An existing connection keeps its schedule.
+
+Graph stores fewer fields than vCard. msgvault maps names, nickname, email
+addresses, phone numbers, organization, job title, postal addresses, a
+birthday with a year, notes, and categories. msgvault saves the full vCard of a card it
+writes in a hidden property of the contact. After an edit in Outlook,
+Outlook's fields win, and the saved vCard adds back what Outlook never held:
+every property msgvault doesn't map, such as a website, a photo, an
+anniversary, a birthday without a year or a phonetic name, and emails, phones
+and addresses past Outlook's limits of three email addresses, two business
+phones, two home phones and three addresses. Fax and pager numbers count as
+such phones. A value that stays in its Outlook field keeps its saved form and
+labels; a moved value takes the form Outlook gives it. Outlook holds one
+display name, name, nickname, title, organization, note and birthday, so
+msgvault logs a second one when it publishes the card. A card whose vCard
+exceeds Graph's 4 MB write limit, for example with a large photo, is refused.
+A publish, approval or conflict resolution names the person in its error. A
+sync reports a fixed message, and the daemon log names the person with a
+warning, `CardDAV contact is over Outlook's 4 MB limit`, and its `person_id`.
+The CLI and Web UI can't remove
+stored media yet, so use the profile API. Read the profile, note its `ETag`
+and the `envelope.id` of each entry in `media` (`byte_size` shows its size),
+then supersede the ones to drop:
+
+```bash
+curl -i -H "Authorization: Bearer $MSGVAULT_API_KEY" \
+  http://localhost:8080/api/v1/people/42/profile
+
+curl -X PATCH -H "Authorization: Bearer $MSGVAULT_API_KEY" \
+  -H 'If-Match: "person-42-r7"' -H "Content-Type: application/json" \
+  -d '{"media": {"supersede": [123]}}' \
+  http://localhost:8080/api/v1/people/42/profile
+```
+
+The next sync publishes the smaller card.
+Outlook's contact photo is not synced.
+After any change in a folder, the next sync lists the whole folder again, one
+request for each 100 contacts, with each card's saved vCard and its photo.
+Graph can leave a large saved vCard out of a listing; each such contact costs
+one more request to read it alone. A
+sync stops at 256 MB, so a folder with many large photos may need fewer
+published photos.
+If Outlook returns a published contact without its saved vCard even when read
+alone, the sync fails instead of overwriting the person.
 
 ## Choose what each book does
 

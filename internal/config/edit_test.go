@@ -524,6 +524,8 @@ source_since = "2025-01-01"
 answer = 42
 `
 	requirements.NoError(os.WriteFile(path, []byte(before), 0o640))
+	// Set the mode being preserved explicitly; creation honors the caller's umask.
+	requirements.NoError(os.Chmod(path, 0o640))
 	snapshot, err := ReadConfigFile(path)
 	requirements.NoError(err)
 

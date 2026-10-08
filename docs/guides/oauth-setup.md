@@ -537,6 +537,8 @@ The `add-o365` command connects Outlook.com, Hotmail, Live.com, and Microsoft 36
 
 You need to register an application in Microsoft Entra (Azure AD) before using `add-o365`.
 
+An Outlook.com-only account can't register an app on its own. Register it in a tenant you can use, such as a work tenant or a free Azure/Entra directory, and allow personal Microsoft accounts under supported account types.
+
 1. Go to [Azure Portal](https://portal.azure.com/) and navigate to **Microsoft Entra ID > App registrations > New registration**
 2. Set the fields:
    - **Name:** `msgvault`
@@ -646,6 +648,9 @@ To delete messages at the source with `delete-staged`, also add the delegated
 permission `Mail.ReadWrite`. Sync does not use it. The first `delete-staged`
 for the account asks to upgrade the token. See
 [Deleting Email](/docs/usage/deletion/).
+
+To sync Microsoft contacts, also add the delegated permission
+`Contacts.ReadWrite`. See [CardDAV Contacts](/docs/usage/people-carddav/#microsoft-contacts).
 
 A Graph account is a new account. If the same mailbox is also synced over
 IMAP, the vault holds two copies. Run `msgvault dedup --collection` to hide the

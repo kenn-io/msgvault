@@ -184,7 +184,10 @@ export class CardDAVConflictsController {
       if (result.data || isAmbiguousResolution(result.response.status, result.error?.error)) {
         return await this.reconcileResolution(id, context, mutation);
       }
-      this.resolutionError = 'Unable to resolve this CardDAV conflict.';
+      this.resolutionError =
+        result.response.status === 413 && result.error?.message
+          ? result.error.message
+          : 'Unable to resolve this CardDAV conflict.';
       return { kind: 'error' };
     } catch {
       if (!this.currentMutation(context, mutation, controller.signal)) return { kind: 'ignored' };

@@ -869,6 +869,8 @@ func TestOperationRunsCardDAVProjectsOnlyFixedFailureMessages(t *testing.T) {
 		{"retry_after", store.CardDAVSyncRunFailed, operations.PublicErrorRetryAfter, "CardDAV sync is temporarily paused."},
 		{"authentication_failed", store.CardDAVSyncRunFailed, operations.PublicErrorAuthenticationFailed, "CardDAV authentication failed."},
 		{"google_authorization_required", store.CardDAVSyncRunFailed, operations.PublicErrorGoogleAuthorizationRequired, "Google Contacts authorization is required. Connect Google in CardDAV account settings."},
+		{"microsoft_authorization_required", store.CardDAVSyncRunFailed, operations.PublicErrorMicrosoftAuthorizationRequired, "Microsoft contacts authorization is required. Run msgvault carddav authorize-microsoft with your account email."},
+		{"microsoft_contact_too_large", store.CardDAVSyncRunFailed, operations.PublicErrorMicrosoftContactTooLarge, "A published contact is over Outlook's 4 MB limit, and each sync reports it until it fits. The daemon log names its person ID. Removing stored photos or other media currently needs the profile API; the CLI and Web UI have no control for it."},
 		{"upstream_failed", store.CardDAVSyncRunFailed, operations.PublicErrorUpstreamFailed, "CardDAV server request failed."},
 		{"safety_limit", store.CardDAVSyncRunFailed, operations.PublicErrorSafetyLimit, "CardDAV sync exceeded its safety limits."},
 		{"sync_failed", store.CardDAVSyncRunFailed, operations.PublicErrorSyncFailed, "CardDAV sync failed."},

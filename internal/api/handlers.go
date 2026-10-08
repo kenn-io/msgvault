@@ -249,6 +249,19 @@ type StatusMessageResponse struct {
 	Message string `json:"message"`
 }
 
+// TriggerSyncResponse is the 202 body of the sync trigger route, published in
+// OpenAPI so generated clients expose Disposition. Disposition says what a
+// generic-source trigger did: "started", "pending" (one follow-up run recorded
+// behind the active run) or "coalesced" (merged into a run that is still
+// waiting to start or a follow-up already pending; no additional run). It is
+// optional by design: the account sync path keeps its {status, message} body
+// and omits it.
+type TriggerSyncResponse struct {
+	Status      string `json:"status"`
+	Message     string `json:"message"`
+	Disposition string `json:"disposition,omitempty"`
+}
+
 type FilteredMessagesResponse struct {
 	Count            int              `json:"count"`
 	HasMore          bool             `json:"has_more"`
@@ -1716,16 +1729,28 @@ func (s *Server) handleTriggerSync(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "not_found", "Account is not scheduled: "+account)
 			return
 		}
-		if err := s.scheduler.StartJob(scheduling.jobName); err != nil {
+		disp, err := s.scheduler.StartJob(scheduling.jobName)
+		if err != nil {
 			s.logger.Error("failed to trigger generic sync job",
 				"job", scheduling.jobName, "identifier", account, "error", err)
 			writeError(w, http.StatusConflict, "sync_error", err.Error())
 			return
 		}
-		s.logger.Info("generic sync triggered via API", "job", scheduling.jobName, "identifier", account)
-		writeJSON(w, http.StatusAccepted, StatusMessageResponse{
-			Status:  "accepted",
-			Message: "Sync started for " + account,
+		s.logger.Info("generic sync triggered via API",
+			"job", scheduling.jobName, "identifier", account, "disposition", disp)
+		var message string
+		switch disp {
+		case scheduler.JobStarted:
+			message = "Sync started for " + account
+		case scheduler.JobPending:
+			message = "Sync already running for " + account + "; one follow-up run queued"
+		default:
+			message = "Sync for " + account + " is already queued or has a follow-up pending; request merged, no additional run"
+		}
+		writeJSON(w, http.StatusAccepted, TriggerSyncResponse{
+			Status:      "accepted",
+			Message:     message,
+			Disposition: string(disp),
 		})
 		return
 	case sourceScheduleAccount:
@@ -1739,7 +1764,7 @@ func (s *Server) handleTriggerSync(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.logger.Info("sync triggered via API", "account", account)
-		writeJSON(w, http.StatusAccepted, StatusMessageResponse{
+		writeJSON(w, http.StatusAccepted, TriggerSyncResponse{
 			Status:  "accepted",
 			Message: "Sync started for " + account,
 		})

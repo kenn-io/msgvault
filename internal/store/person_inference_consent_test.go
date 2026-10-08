@@ -136,8 +136,8 @@ func TestPersonInferenceConsentLifecycle(t *testing.T) {
 
 	var history int
 	require.NoError(st.DB().QueryRow(st.Rebind(`
-		SELECT COUNT(*) FROM person_inference_consents
-		WHERE profile_fingerprint = ?`), profile.Fingerprint).Scan(&history))
+		SELECT COUNT(*) FROM provider_consents
+		WHERE purpose = 'people_inference' AND fingerprint = ?`), profile.Fingerprint).Scan(&history))
 	assert.Equal(2, history)
 }
 
@@ -230,7 +230,7 @@ func TestPersonInferenceProfilesCanBeListedAfterProgramChange(t *testing.T) {
 		DELETE FROM person_inference_checks WHERE profile_fingerprint = ?`), current.Fingerprint)
 	require.NoError(err)
 	_, err = st.DB().Exec(st.Rebind(`
-		DELETE FROM person_inference_consents WHERE profile_fingerprint = ?`), current.Fingerprint)
+		DELETE FROM provider_consents WHERE purpose = 'people_inference' AND fingerprint = ?`), current.Fingerprint)
 	require.NoError(err)
 	_, err = st.DB().Exec(st.Rebind(`
 		UPDATE person_inference_profiles
@@ -245,8 +245,8 @@ func TestPersonInferenceProfilesCanBeListedAfterProgramChange(t *testing.T) {
 		historical.DriverVersion, historical.OutputMode, "test-model-v1")
 	require.NoError(err)
 	_, err = st.DB().Exec(st.Rebind(`
-		INSERT INTO person_inference_consents (profile_fingerprint, granted_by)
-		VALUES (?, ?)`), historical.Fingerprint, "cli")
+		INSERT INTO provider_consents (purpose, id, fingerprint, granted_by)
+		VALUES ('people_inference', 2, ?, ?)`), historical.Fingerprint, "cli")
 	require.NoError(err)
 
 	profiles, err := st.ListPersonInferenceProfiles(t.Context())

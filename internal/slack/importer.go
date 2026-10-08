@@ -270,6 +270,22 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 		return sum, fmt.Errorf("enumerate slack conversations: %w", err)
 	}
 
+	// Spend interrupted runs on the oldest uncovered history first. In
+	// enumeration order, already-refreshed channels can consume every run's
+	// budget auditing old threads while later channels never get a turn.
+	// A recent skip also yields its turn without claiming history coverage.
+	// Both markers persist across daemon restarts.
+	schedulingTime := func(c Conversation) time.Time {
+		cs := state.EnsureConv(c.ID)
+		if tsLess(cs.Cursor, cs.LastSkippedAt) {
+			return tsTime(cs.LastSkippedAt)
+		}
+		return tsTime(cs.Cursor)
+	}
+	slices.SortStableFunc(convs, func(a, b Conversation) int {
+		return schedulingTime(a).Compare(schedulingTime(b))
+	})
+
 	total := len(convs)
 	targets := map[string]sweepTarget{}
 	for idx := range convs {
@@ -596,6 +612,7 @@ func (imp *Importer) walkWindow(ctx context.Context, cc *convScope, state *SyncS
 				imp.recordItem(cc.syncID, cc.channelID, "fetch", store.SyncRunItemStatusSkipped, "slack_channel_gone", err)
 				cs.Done = true
 				cs.BackfillCursor, cs.BackfillLatest = "", ""
+				cs.LastSkippedAt = tsFormat(imp.now())
 				if cs.SweptThrough == "" {
 					cs.SweptThrough = tsFormat(imp.now())
 				}
@@ -862,6 +879,7 @@ func (imp *Importer) threadCatchUp(ctx context.Context, cc *convScope, state *Sy
 				cs.CatchUpCursor, cs.CatchUpLatest = "", ""
 				cs.AuditPending = false
 				cs.AuditedThrough = tsFormat(imp.now())
+				cs.LastSkippedAt = tsFormat(imp.now())
 				if cs.SweptThrough == "" {
 					cs.SweptThrough = tsFormat(imp.now())
 				}

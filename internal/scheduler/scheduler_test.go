@@ -212,6 +212,7 @@ func TestStartJobIsAsync(t *testing.T) {
 		assert := assert.New(t)
 
 		started := make(chan struct{})
+		var startedOnce sync.Once
 		release := make(chan struct{})
 		var releaseOnce sync.Once
 		releaseJob := func() { releaseOnce.Do(func() { close(release) }) }
@@ -225,7 +226,7 @@ func TestStartJobIsAsync(t *testing.T) {
 			Name:     "granola:default",
 			Schedule: "0 0 1 1 *",
 			Run: func(context.Context) error {
-				close(started)
+				startedOnce.Do(func() { close(started) })
 				<-release
 				ran.Add(1)
 				return nil
@@ -233,7 +234,10 @@ func TestStartJobIsAsync(t *testing.T) {
 		}), "AddJob")
 
 		returned := make(chan error, 1)
-		go func() { returned <- s.StartJob("granola:default") }()
+		go func() {
+			_, err := s.StartJob("granola:default")
+			returned <- err
+		}()
 
 		select {
 		case err := <-returned:
@@ -256,14 +260,15 @@ func TestStartJobIsAsync(t *testing.T) {
 		assert.True(status[0].Running, "job should be recorded as running while blocked")
 		assert.True(s.IsJobScheduled("granola:default"), "job remains scheduled while running")
 
-		// A second StartJob while the first is still running must be a no-op:
-		// no error, and it must not spawn a second concurrent run.
-		require.NoError(s.StartJob("granola:default"), "second StartJob while running")
+		// A second StartJob while the first is still running must not spawn a
+		// concurrent run: it queues exactly one follow-up and says so.
+		assert.Equal(JobPending, mustStartJob(t, s, "granola:default"))
+		assert.True(s.JobStatus()[0].Pending, "queued follow-up is visible in JobStatus")
 
 		releaseJob()
 		synctest.Wait()
 		assert.False(s.JobStatus()[0].Running, "job finishes after release")
-		assert.Equal(int32(1), ran.Load(), "job body must run exactly once")
+		assert.Equal(int32(2), ran.Load(), "one run plus exactly one follow-up")
 	})
 }
 
@@ -2685,7 +2690,7 @@ func TestJobTickWhileExecutingQueuesOneFollowUp(t *testing.T) {
 		close(release)
 		synctest.Wait()
 		assert.Equal(int32(2), runs.Load())
-		require.NoError(s.StartJob("job"))
+		mustStartJob(t, s, "job")
 		synctest.Wait()
 		assert.Equal(int32(3), runs.Load(), "manual start still runs when idle")
 	})
@@ -2807,7 +2812,7 @@ func TestPreemptedDailyRunResumesBehindWaiter(t *testing.T) {
 					require.NoError(t, s.TriggerSync("daily@example.com"))
 				} else {
 					require.NoError(t, s.AddJob(Job{Name: "daily", Preemptible: true, Schedule: "0 0 * * *", Run: run}))
-					require.NoError(t, s.StartJob("daily"))
+					mustStartJob(t, s, "daily")
 				}
 				synctest.Wait()
 
@@ -2820,7 +2825,7 @@ func TestPreemptedDailyRunResumesBehindWaiter(t *testing.T) {
 					}
 					return nil
 				}}))
-				require.NoError(t, s.StartJob("waiter"))
+				mustStartJob(t, s, "waiter")
 				time.Sleep(preemptAfter + yieldPollInterval)
 				synctest.Wait()
 				require.ErrorIs(t, cause, ErrYieldedToWaiter)
@@ -2858,7 +2863,7 @@ func TestBoundedMaintenanceCompletesWithQueuedWork(t *testing.T) {
 		}}))
 
 		started := time.Now()
-		require.NoError(s.StartJob("maintenance"))
+		mustStartJob(t, s, "maintenance")
 		synctest.Wait()
 		require.NoError(s.TriggerSync("short@example.com"))
 		time.Sleep(90 * time.Second)
@@ -3100,9 +3105,9 @@ func TestBoundedJobReschedulesBehindWaiter(t *testing.T) {
 			order = append(order, "waiter")
 			return nil
 		}}))
-		require.NoError(s.StartJob("bounded"))
+		mustStartJob(t, s, "bounded")
 		synctest.Wait()
-		require.NoError(s.StartJob("waiter"))
+		mustStartJob(t, s, "waiter")
 		synctest.Wait()
 		close(finishPass)
 		synctest.Wait()
@@ -3177,7 +3182,7 @@ func TestJobRuntimeBudgetResumesWithoutWaiter(t *testing.T) {
 			}
 			return nil
 		}}))
-		require.NoError(s.StartJob("maintenance"))
+		mustStartJob(t, s, "maintenance")
 		synctest.Wait()
 		time.Sleep(31 * time.Second)
 		synctest.Wait()
@@ -3209,7 +3214,7 @@ func TestJobBudgetStartsAfterGateAdmission(t *testing.T) {
 			assert.NoError(ctx.Err(), "time spent queued does not consume the runtime budget")
 			return nil
 		}}))
-		require.NoError(s.StartJob("bounded"))
+		mustStartJob(t, s, "bounded")
 		synctest.Wait()
 		time.Sleep(2 * time.Minute)
 		assert.True(s.JobStatus()[0].Queued)
@@ -3244,7 +3249,7 @@ func TestJobBudgetPreservesCallbackFailure(t *testing.T) {
 				return ctx.Err()
 			}
 		}}))
-		require.NoError(s.StartJob("bounded-error"))
+		mustStartJob(t, s, "bounded-error")
 		time.Sleep(time.Minute + time.Second)
 		synctest.Wait()
 		// The follow-up is still running, so LastError comes from the first pass.
@@ -3273,7 +3278,7 @@ func TestJobBudgetWithoutCheckpointReportsFailureAndWaitsForTick(t *testing.T) {
 			}
 			return nil
 		}}))
-		require.NoError(s.StartJob("slow-batch"))
+		mustStartJob(t, s, "slow-batch")
 		time.Sleep(5 * time.Minute)
 		synctest.Wait()
 		assert.Equal(1, runs, "a pass without a checkpoint must not spin in immediate retries")
@@ -3294,4 +3299,152 @@ func TestBudgetFiltersCancellationCause(t *testing.T) {
 	defer cancel()
 	require.ErrorIs(t, ctx.Err(), context.DeadlineExceeded)
 	assert.NoError(t, callbackErrorAfterYield(ctx, context.Cause(ctx)))
+}
+
+func mustStartJob(tb testing.TB, s *Scheduler, name string) JobDisposition {
+	tb.Helper()
+	disp, err := s.StartJob(name)
+	require.NoError(tb, err, "StartJob %s", name)
+	return disp
+}
+
+// TestStartJobCoalescesDuringRun proves manual triggers coalesce like cron
+// ticks: many concurrent StartJob calls during a run produce exactly one
+// extra run, never a concurrent one, and each reply says what happened.
+func TestStartJobCoalescesDuringRun(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+
+		started := make(chan struct{}, 8)
+		release := make(chan struct{})
+		var releaseOnce sync.Once
+		releaseJob := func() { releaseOnce.Do(func() { close(release) }) }
+		var runs, active, maxActive atomic.Int32
+		s := New(func(context.Context, string) error { return nil })
+		defer func() {
+			releaseJob()
+			<-s.Stop().Done()
+		}()
+		require.NoError(s.AddJob(Job{
+			Name:     "job",
+			Schedule: "0 0 1 1 *",
+			Run: func(context.Context) error {
+				n := active.Add(1)
+				for {
+					m := maxActive.Load()
+					if n <= m || maxActive.CompareAndSwap(m, n) {
+						break
+					}
+				}
+				runs.Add(1)
+				started <- struct{}{}
+				<-release
+				active.Add(-1)
+				return nil
+			},
+		}))
+
+		assert.Equal(JobStarted, mustStartJob(t, s, "job"))
+		<-started
+
+		const callers = 10
+		type result struct {
+			disp JobDisposition
+			err  error
+		}
+		results := make(chan result, callers)
+		var wg sync.WaitGroup
+		for range callers {
+			wg.Go(func() {
+				disp, err := s.StartJob("job")
+				results <- result{disp, err}
+			})
+		}
+		wg.Wait()
+		close(results)
+		counts := map[JobDisposition]int{}
+		for r := range results {
+			require.NoError(r.err, "concurrent StartJob")
+			counts[r.disp]++
+		}
+		assert.Equal(1, counts[JobPending], "exactly one trigger records the follow-up")
+		assert.Equal(callers-1, counts[JobCoalesced], "the rest merge into it")
+		assert.Zero(counts[JobStarted], "nothing is reported started while the job runs")
+		assert.True(s.JobStatus()[0].Pending, "follow-up is visible in JobStatus")
+
+		releaseJob()
+		synctest.Wait()
+		assert.Equal(int32(2), runs.Load(), "one run plus exactly one follow-up")
+		assert.Equal(int32(1), maxActive.Load(), "runs never overlap")
+		assert.False(s.JobStatus()[0].Pending)
+		assert.False(s.JobStatus()[0].Running)
+	})
+}
+
+// TestStartJobWhileInitialRunWaitsForGate proves a trigger that arrives while
+// the first run is still queued behind the operation gate is reported as
+// coalesced, not queued: no follow-up is recorded and only the original run
+// executes.
+func TestStartJobWhileInitialRunWaitsForGate(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		gate := newSerialWorkTracker()
+		release, ok := gate.BeginWork()
+		require.True(ok)
+		var runs atomic.Int32
+		s := New(nil).WithWorkTracker(gate)
+		defer func() { <-s.Stop().Done() }()
+		require.NoError(s.AddJob(Job{Name: "job", Schedule: "0 0 1 1 *", Run: func(context.Context) error {
+			runs.Add(1)
+			return nil
+		}}))
+
+		assert.Equal(JobStarted, mustStartJob(t, s, "job"))
+		synctest.Wait()
+		require.True(s.JobStatus()[0].Queued, "initial run waits for the gate")
+
+		assert.Equal(JobCoalesced, mustStartJob(t, s, "job"))
+		assert.False(s.JobStatus()[0].Pending, "no follow-up is recorded")
+
+		release()
+		synctest.Wait()
+		assert.Equal(int32(1), runs.Load(), "only the original run executes")
+	})
+}
+
+// TestStartJobDroppedFollowUpIsLogged proves a follow-up that cannot run
+// (job removed while it was pending) is reported, not discarded silently.
+func TestStartJobDroppedFollowUpIsLogged(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+
+		started := make(chan struct{}, 1)
+		release := make(chan struct{})
+		var logs bytes.Buffer
+		s := New(func(context.Context, string) error { return nil })
+		s.logger = slog.New(slog.NewTextHandler(&logs, nil))
+		defer func() { <-s.Stop().Done() }()
+		require.NoError(s.AddJob(Job{
+			Name:     "job",
+			Schedule: "0 0 1 1 *",
+			Run: func(context.Context) error {
+				started <- struct{}{}
+				<-release
+				return nil
+			},
+		}))
+
+		mustStartJob(t, s, "job")
+		<-started
+		assert.Equal(JobPending, mustStartJob(t, s, "job"))
+		s.RemoveJob("job")
+		close(release)
+		synctest.Wait()
+
+		assert.Contains(logs.String(), "follow-up dropped without running")
+		assert.Contains(logs.String(), "job removed")
+	})
 }

@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-05"
+last_edited: "2026-10-06"
 title: Configuration
 description: Configuration file reference, environment variables, and file locations.
 ---
@@ -161,14 +161,15 @@ subscription-backed endpoints, including local gateways, must be used within
 their provider terms.
 
 Credentials are not stored in this TOML. `credential = "stored"` keeps a
-profile-specific secret under the private tokens directory and is supported
-on Linux and macOS only; `credential = "env"` stores only the selected
-environment-variable name and works everywhere. Environment-variable names are
-host-only settings: configure them through the CLI or TOML, not the Web UI.
-On hosts without stored-key support, the Web UI hides profile enrollment and
-key fields. Run [`msgvault person provider add`](cli-reference.md#person-provider-add)
-with `--credential-env` on the daemon host, then reload the Web settings to
-check and select the profile.
+profile-specific secret in `tokens/provider-credentials.json` on every
+platform, sent only to the endpoint origin of the profile it was saved for.
+If you edit a profile's endpoint to a different origin, its stored key stops
+working; remove the profile and add it again with the new endpoint.
+Keys that an older release stored under `tokens/people-providers/` on Linux or
+macOS move into that file the first time msgvault uses the profile.
+`credential = "env"` stores only the selected environment-variable name.
+Environment-variable names are host-only settings: configure them through the
+CLI or TOML, not the Web UI.
 `credential = "none"` is restricted to credentialless local or Codex paths.
 Changing a credential value does not change the profile fingerprint, but
 changing its source or reference does.
@@ -481,10 +482,10 @@ Removing a config table retains the account's archive data; see
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `provider` | `""` | Empty for a password-based server, or `google` for Google Contacts |
+| `provider` | `""` | Empty for a password-based server, `google` for Google Contacts, or `microsoft` for Microsoft 365 and Outlook.com contacts |
 | `oauth_app` | `""` | Named Google OAuth app; empty selects `[oauth]` |
-| `base_url` | `""` | CardDAV discovery URL; Google setup supplies its canonical URL |
-| `username` | `""` | Server username or Google account email |
+| `base_url` | `""` | CardDAV discovery URL; Google and Microsoft setup supply their canonical URL |
+| `username` | `""` | Server username, or Google or Microsoft account email |
 | `schedule` | `""` | Cron schedule; empty disables scheduled sync |
 | `enabled` | `false` | Enable the configured connection |
 | `trusted_origin` | `""` | Exact HTTPS origin approved for private access, including its port; a trailing `/` is accepted. Applies only when it matches the account URL's origin. |
@@ -819,16 +820,17 @@ and ready states.
 
 ### `[integrations.kata]`
 
-Optional live person agendas backed by Kata. Tasks stay in Kata; msgvault shows
-their current state when you open a person's agenda. This integration is built
+Optional live person agendas backed by Kata, and the connection that files
+[Kata issues from archive evidence](usage/kata-issues.md). Tasks stay in Kata;
+msgvault shows their current state when you open a person's agenda. This integration is built
 against Kata v0.18.0 and requires Kata API schema version 0.21.0 or later.
 
 | Key | Default | Description |
 |---|---|---|
-| `enabled` | `false` | Enable Kata person agendas |
+| `enabled` | `false` | Enable Kata person agendas and evidence issues |
 | `endpoint` | — | Required when enabled: an explicit HTTPS URL, loopback HTTP URL, or Unix socket URL |
 | `api_key` | — | Bearer credential sent by the daemon to Kata; Settings returns only its configured state and a masked hint |
-| `default_project` | `msgvault` | Existing active Kata project used for person agendas |
+| `default_project` | `msgvault` | Existing active Kata project used for person agendas and evidence issues |
 
 Create the project in Kata, then configure its endpoint and credential on the
 machine running the msgvault daemon:
@@ -1784,8 +1786,11 @@ features once published. No startup hook or entrypoint wrapper is required.
   while it runs.
 - `app_opened` when the web UI opens, then on its first window focus on a later
   UTC day. The browser reports it to the daemon, never to PostHog.
+- `screen_viewed` when a web or terminal screen opens, counted once per installation
+  per UTC day across both interfaces and daemon restarts. The daemon keeps the
+  current day's screens in `telemetry-screen-views.json` beside its install ID.
 
-The web UI records the day it last reported in browser storage, which the
+For `app_opened`, the web UI records the day it last reported in browser storage, which the
 browser keeps separately for each daemon address. With the default
 `api_port = 0`, the daemon picks a new port each time it starts, so the web UI
 reports again after a daemon restart. Tabs that open together, or a browser
@@ -1793,6 +1798,10 @@ that blocks storage, can also each send one. Each event carries only:
 
 - the product name and source (`msgvault`, `daemon`)
 - on `app_opened`, the surface (`web`)
+- on `screen_viewed`, the first surface (`web` or `tui`) and a fixed screen name:
+  `everything`, `directory`, `directory_review`, `files`, `operations`,
+  `relationships`, `saved_views`, `sources`, `deletions`, `settings`, `message`,
+  `email`, `texts`, or `meetings`. Unknown names are dropped.
 - the msgvault version and commit
 - the operating system and CPU architecture
 - a random install ID kept in `telemetry-install.json` in the data directory, and
@@ -1801,8 +1810,8 @@ that blocks storage, can also each send one. Each event carries only:
   `$lib_version`), OS name, Go version, and where available the OS version and
   distribution
 
-Events never include messages, contacts, accounts, sources, file names or search
-queries. They ask PostHog not to build person profiles or look up location. The
+Events exclude message content, contact records, account or source identifiers,
+filenames, and search text. They ask PostHog to skip person profiles and location lookup. The
 daemon queues each event and sends it in the background, so an event can be lost
 if the network is down or the daemon stops first.
 
@@ -1838,6 +1847,7 @@ home; `[log].dir` can override the log location.
 | `logs/` | Structured log files (when [file logging](/docs/configuration/#log) is enabled) |
 | `analytics/` | Parquet cache files for Web UI and TUI analytical views |
 | `telemetry-install.json` | Random anonymous install ID for [telemetry](#telemetry); created only while telemetry is on |
+| `telemetry-screen-views.json` | Current UTC day's screen claims shared by web and terminal UIs; created only while telemetry is on |
 
 ## Example configuration
 

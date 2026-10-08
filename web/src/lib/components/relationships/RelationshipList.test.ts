@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { DomainSummary, PersonSummary } from '../../explore/models';
+import { ExploreSelectionState } from '../../explore/state.svelte';
 import type { RelationshipRow } from '../../relationships/models';
 import RelationshipList from './RelationshipList.svelte';
 
@@ -183,6 +184,41 @@ describe('RelationshipList', () => {
     await fireEvent.keyDown(grid, { key: 'k' });
     await fireEvent.keyDown(grid, { key: 'Enter' });
     expect(props.onSelect).toHaveBeenLastCalledWith('cluster:1');
+  });
+
+  it('toggles the focused person with Space and extends a range with Shift+Space', async () => {
+    render(RelationshipList, {
+      ...baseProps(),
+      rows: [relationshipRow(1, 'Alice Example'), relationshipRow(2, 'Bob Example'), relationshipRow(3, 'Cara Example')]
+    });
+    const grid = screen.getByRole('grid', { name: 'Relationship results' });
+    grid.focus();
+
+    await fireEvent.keyDown(grid, { key: ' ' });
+    expect(screen.getByRole('checkbox', { name: 'Unselect Alice Example' })).toHaveProperty('checked', true);
+
+    await fireEvent.keyDown(grid, { key: 'j' });
+    await fireEvent.keyDown(grid, { key: 'j' });
+    await fireEvent.keyDown(grid, { key: ' ', shiftKey: true });
+    expect(screen.getByText('3 selected')).toBeDefined();
+
+    await fireEvent.keyDown(grid, { key: ' ' });
+    expect(screen.getByRole('checkbox', { name: 'Select Cara Example' })).toHaveProperty('checked', false);
+    expect(screen.getByText('2 selected')).toBeDefined();
+  });
+
+  it('ignores Space while a bulk link runs and under the domains facet', async () => {
+    const selection = new ExploreSelectionState();
+    const { rerender } = render(RelationshipList, { ...baseProps(), selection, bulkPending: true });
+    const grid = screen.getByRole('grid', { name: 'Relationship results' });
+    grid.focus();
+
+    await fireEvent.keyDown(grid, { key: ' ' });
+    expect(selection.count).toBe(0);
+
+    await rerender({ ...baseProps(), selection, bulkPending: false, facet: 'domains', rows: [domain('example.com')] });
+    await fireEvent.keyDown(screen.getByRole('grid', { name: 'Relationship results' }), { key: ' ' });
+    expect(selection.count).toBe(0);
   });
 
   it('selects a row by clicking it', async () => {

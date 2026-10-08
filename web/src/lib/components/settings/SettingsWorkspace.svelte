@@ -788,9 +788,13 @@
     flex-direction: column;
     min-height: 0;
     width: 100%;
+    background: var(--bg-surface);
   }
   .settings-header {
     padding: var(--space-5) var(--page-gutter) var(--space-4);
+  }
+  .settings :global(.kit-settings) {
+    background: var(--bg-surface);
   }
   .settings :global(.kit-settings__nav-item--active),
   .settings :global(.kit-settings__nav-item--active:hover) {

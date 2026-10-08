@@ -34,6 +34,15 @@ All notable changes to msgvault, grouped by release.
 - `import-whatsapp` accepts `--after` and `--before` for Apple databases, so a
   first import can fetch recent messages before the full run. Android imports
   reject both flags.
+- People provider keys stored with `msgvault person provider add --api-key-stdin`
+  or the Web UI now work on Windows. Every stored people provider key lives in
+  `tokens/provider-credentials.json` with the other provider keys, and keys an
+  older release kept under `tokens/people-providers/` move there the first time
+  msgvault uses the profile. After a people key is stored this way, an older
+  release rejects the credential file, so downgrading makes every stored
+  provider key unavailable. Before downgrading, run
+  `msgvault person provider remove <name>` for each profile with a stored key.
+  `remove` also deletes a stored key whose profile is no longer in the config.
 - [Calendar event control](usage/calendar.md#control-events-unreleased) adds
   create, update, delete, move, self RSVP, and availability commands, plus HTTP
   and MCP interfaces. Write consent and exact source permissions are opt-in;
@@ -41,6 +50,10 @@ All notable changes to msgvault, grouped by release.
   and archives successful changes immediately.
 - [Twilio calls](usage/meetings.md#twilio) archive as searchable meetings with
   their recordings saved locally.
+- [Kata issues](usage/kata-issues.md) can quote an exact passage from a
+  message, transcript, or file, from the Web UI, `msgvault kata`, HTTP, or MCP
+  (`--allow-kata-writes`). Retrying a create returns the original issue.
+  Person agenda writes now work with a static Kata token.
 - Adding Calendar to a Gmail token recognizes Google's short and expanded
   `email`/`profile` scope names, avoiding false missing-scope errors on re-consent.
 - Prepare and manage drafts through MCP with the caller's own daemon permissions, including restricted agent grants. Msgvault never sends.
@@ -49,6 +62,12 @@ All notable changes to msgvault, grouped by release.
   you can pick an email address for `draft-compose --to`. Phone numbers and
   chat IDs show as unsupported. See
   [Draft to a person](cli-reference.md#draft-to-a-person).
+- CardDAV sync supports Microsoft 365 and Outlook.com contacts through
+  Microsoft Graph. `msgvault add-carddav --microsoft <email>` signs in and
+  saves the connection. Contacts and each folder inside it are address books.
+  See [Microsoft contacts](usage/people-carddav.md#microsoft-contacts).
+- A CardDAV update or unpublish attempted while the Google sign-in is missing
+  goes out after sign-in, instead of turning into a conflict to review.
 
 ## 0.21.0
 <small>2026-10-02</small>

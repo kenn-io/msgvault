@@ -27,6 +27,7 @@ const (
 	scopeGraphChannelMemberRead = "https://graph.microsoft.com/ChannelMember.Read.All"
 	scopeGraphMailRead          = "https://graph.microsoft.com/Mail.Read"
 	scopeGraphMailReadWrite     = "https://graph.microsoft.com/Mail.ReadWrite"
+	scopeGraphContactsReadWrite = "https://graph.microsoft.com/Contacts.ReadWrite"
 )
 
 // GraphScopes returns the OAuth scopes requested for Microsoft Teams ingestion
@@ -52,6 +53,13 @@ func GraphMailScopes() []string {
 // token granted with these scopes.
 func GraphMailWriteScopes() []string {
 	return append(GraphMailScopes(), scopeGraphMailReadWrite)
+}
+
+// GraphContactsScopes returns the OAuth scopes requested for two-way contact
+// sync via the Graph API. CardDAV sync can publish at any time, so the write
+// scope is requested at sign-in.
+func GraphContactsScopes() []string {
+	return []string{scopeGraphContactsReadWrite, scopeGraphUserRead, scopeOfflineAccess, "openid", scopeEmail}
 }
 
 // GraphManager is a sibling of Manager that runs the same interactive browser
@@ -96,6 +104,14 @@ func NewGraphManager(clientID, tenantID, redirectURI, tokensDir string, logger *
 func NewGraphMailManager(clientID, tenantID, redirectURI, tokensDir string, logger *slog.Logger) *GraphManager {
 	m := newGraphManager(clientID, tenantID, redirectURI, tokensDir, logger)
 	m.scopes, m.tokenPrefix, m.reauthCmd = GraphMailScopes(), "msmail_", "msgvault add-o365 %s --graph"
+	return m
+}
+
+// NewGraphContactsManager constructs a GraphManager for contact sync. Its
+// tokens are saved under an "mscontacts_" prefix.
+func NewGraphContactsManager(clientID, tenantID, redirectURI, tokensDir string, logger *slog.Logger) *GraphManager {
+	m := newGraphManager(clientID, tenantID, redirectURI, tokensDir, logger)
+	m.scopes, m.tokenPrefix, m.reauthCmd = GraphContactsScopes(), "mscontacts_", "msgvault carddav authorize-microsoft %s"
 	return m
 }
 

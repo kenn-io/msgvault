@@ -208,6 +208,13 @@ export class DirectoryController {
   async selectPerson(personID: number | null): Promise<void> {
     await this.loadSelection(personID, true);
   }
+  /** Bulk deletion can empty the loaded page or remove the next-page cursor
+   * anchor, so reload page one instead of only dropping rows. */
+  async removeDeletedPeople(personIDs: readonly number[]): Promise<void> {
+    if (personIDs.length === 0) return;
+    for (const personID of personIDs) this.removeDeletedPerson(personID);
+    await this.reloadFirstPage();
+  }
   /** Re-read server-owned Directory projections after a committed split. */
   async reconcilePersonSplit(_context: PersonSplitCommittedContext): Promise<void> {
     await this.reloadFirstPage();

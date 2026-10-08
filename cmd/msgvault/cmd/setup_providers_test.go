@@ -747,7 +747,7 @@ func TestSetupReportsResolveStoredVectorCredentials(t *testing.T) {
 					providercredentials.VectorMultimodalID: loaded.Vector.Multimodal.Endpoint,
 				} {
 					if test.stored == "other provider" {
-						id = providercredentials.PeopleSweepID
+						id = providercredentials.PersonEnrichmentID("other-provider")
 					}
 					if test.stored == "other endpoint" {
 						endpoint = "https://other.example.com/v1"
@@ -793,11 +793,8 @@ func TestSetupReportsResolveStoredVectorCredentials(t *testing.T) {
 }
 
 func TestSetupReportsCheckStoredPeopleCredential(t *testing.T) {
-	for _, kind := range []string{"valid", "missing", "malformed", "wrong scheme"} {
+	for _, kind := range []string{"valid", "missing", "malformed", "legacy scheme"} {
 		t.Run(kind, func(t *testing.T) {
-			if kind != "missing" {
-				requireStoredCredentialStorePlatform(t)
-			}
 			assert := assert.New(t)
 			require := require.New(t)
 			fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig)
@@ -806,16 +803,16 @@ func TestSetupReportsCheckStoredPeopleCredential(t *testing.T) {
 				peoplesweep.ProtocolOpenAIResponses, peoplesweep.AuthBearer,
 				peoplesweep.CredentialStored, peoplesweep.OutputModeNativeJSONSchema,
 			))
-			if kind != "missing" {
-				scheme := peoplesweep.AuthBearer
-				if kind == "wrong scheme" {
-					scheme = peoplesweep.AuthXAPIKey
-				}
-				require.NoError(peoplesweep.NewFileCredentialStore(loaded.TokensDir()).Save(
-					"production", peoplesweep.NewCredential(scheme, "synthetic-sweep-key")))
-				if kind == "malformed" {
-					require.NoError(os.WriteFile(filepath.Join(loaded.TokensDir(), "people-providers", "production.json"), []byte("invalid JSON"), 0o600))
-				}
+			// The key's scheme comes from the profile, so a legacy file's scheme is ignored.
+			switch kind {
+			case "valid":
+				savePeopleCredentialForTest(t, peoplesweep.NewStoredCredentials(loaded.TokensDir()), "production",
+					loaded.People.Sweep.Providers["production"].Endpoint, "synthetic-sweep-key")
+			case "malformed":
+				writeLegacyPeopleCredentialForTest(t, loaded.TokensDir(), "production", "invalid JSON")
+			case "legacy scheme":
+				writeLegacyPeopleCredentialForTest(t, loaded.TokensDir(), "production",
+					`{"scheme":"x_api_key","value":"synthetic-sweep-key"}`)
 			}
 			consent := &setupConsentState{PersonInference: true}
 			deps := defaultSetupStatusDeps()
@@ -842,7 +839,7 @@ func TestSetupReportsCheckStoredPeopleCredential(t *testing.T) {
 			require.NoError(json.Unmarshal(out.Bytes(), &result))
 			for _, report := range []laneReport{status, result.Report} {
 				lane := findLane(t, report, lanePeopleInference)
-				if kind == "valid" {
+				if kind == "valid" || kind == "legacy scheme" {
 					assert.Equal(laneStateOn, lane.State)
 				} else {
 					assert.Equal(laneStatePending, lane.State)

@@ -26,6 +26,9 @@ schedule = "0 */2 * * *"
 enabled = true
 trusted_origin = "https://contacts.example"
 trusted_addresses = ["10.1.2.3"]
+[carddav_connections.outlook]
+provider = "microsoft"
+username = "outlook@example.com"
 [carddav_connections.google]
 provider = "google"
 oauth_app = "contacts"
@@ -35,7 +38,8 @@ enabled = false
 `), 0o600))
 	cfg, err := Load(path, "")
 	require.NoError(err)
-	require.Len(cfg.CardDAVConnections, 2)
+	require.Len(cfg.CardDAVConnections, 3)
+	assertions.Equal("microsoft", cfg.CardDAVConnections["outlook"].Provider)
 	assertions.Equal("personal@example.com", cfg.CardDAV.Username)
 	assertions.Equal("work@example.com", cfg.CardDAVConnections["work"].Username)
 	assertions.Equal([]string{"10.1.2.3"}, cfg.CardDAVConnections["work"].TrustedAddresses)
@@ -83,6 +87,7 @@ func TestCardDAVConnectionsRejectDuplicateAccounts(t *testing.T) {
 		{"default and named", "[carddav]\nbase_url = 'https://contacts.example/dav/'\nusername = 'person'", "base_url = 'https://contacts.example/dav/'\nusername = 'person'"},
 		{"named and disabled", "[carddav_connections.personal]\nbase_url = 'https://contacts.example/dav/'\nusername = 'person'", "base_url = 'https://contacts.example/dav/'\nusername = 'person'\nenabled = false"},
 		{"Google email and different apps", "[carddav_connections.personal]\nprovider = 'google'\nusername = 'Person@example.com'\noauth_app = 'personal'", "provider = 'google'\nusername = 'person@example.com'\noauth_app = 'work'"},
+		{"Microsoft email case", "[carddav_connections.personal]\nprovider = 'microsoft'\nusername = 'Person@example.com'", "provider = 'microsoft'\nusername = 'person@example.com'"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "config.toml")

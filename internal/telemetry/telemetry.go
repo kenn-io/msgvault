@@ -1,4 +1,4 @@
-// Package telemetry sends anonymous, opt-out daemon and web UI usage events.
+// Package telemetry sends anonymous, opt-out daemon and UI usage events.
 package telemetry
 
 import (
@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"go.kenn.io/kit/telemetry/posthog"
 )
@@ -16,7 +17,9 @@ const (
 	EnabledEnv = "MSGVAULT_TELEMETRY_ENABLED"
 	// EventAppOpened is reported by the web UI through the daemon.
 	EventAppOpened = "app_opened"
-	// propertySurface names where the web UI was opened; only "web" passes.
+	// EventScreenViewed counts a fixed screen once per installation per UTC day.
+	EventScreenViewed = "screen_viewed"
+	// propertySurface names the interface that reported an event.
 	propertySurface = "surface"
 	application     = "msgvault"
 	envPrefix       = "MSGVAULT"
@@ -53,15 +56,18 @@ func newReporterOrDisabled(opts Options, endpoint string, logger *slog.Logger) *
 	return reporter
 }
 
-// CaptureHandler serves the web UI's event posts through reporter. A nil reporter admits no event.
-func CaptureHandler(reporter *posthog.Reporter) http.Handler {
-	return posthog.NewCaptureHandler(reporter)
+// CaptureHandler serves UI events and persists daily screen claims in dataDir.
+func CaptureHandler(reporter *posthog.Reporter, dataDir string) http.Handler {
+	return &screenCaptureHandler{reporter: reporter, capture: posthog.NewCaptureHandler(reporter), dir: dataDir, now: time.Now}
 }
 
 func buildReporter(opts Options, endpoint string, logger *slog.Logger) (*posthog.Reporter, error) {
 	allowed := []posthog.Option{
 		posthog.WithAllowedEvent(posthog.EventDaemonActive),
 		posthog.WithAllowedEvent(EventAppOpened, posthog.AllowProperty(propertySurface, posthog.AllowStringValues("web"))),
+		posthog.WithAllowedEvent(EventScreenViewed,
+			posthog.AllowProperty("screen", posthog.AllowStringValues(screenNames...)),
+			posthog.AllowProperty(propertySurface, posthog.AllowStringValues("web", "tui"))),
 	}
 	if strings.TrimSpace(os.Getenv(EnabledEnv)) == "" && !opts.ConfigEnabled {
 		// Only the daemon reports, so the process-wide switch is this reporter's switch.
