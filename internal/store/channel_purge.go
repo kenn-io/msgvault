@@ -314,6 +314,34 @@ func withoutChannelCoverage(cursor sql.NullString, provider string, ids []string
 		}
 		state[field] = encoded
 	}
+	if raw, exists := state["history_pass"]; provider == "slack" && exists {
+		var pass map[string]jsontext.Value
+		if err := json.Unmarshal(raw, &pass); err != nil {
+			return cursor, nil //nolint:nilerr // Leave malformed state for explicit full repair.
+		}
+		if raw, exists := pass["visited"]; exists {
+			var visited map[string]jsontext.Value
+			if err := json.Unmarshal(raw, &visited); err != nil {
+				return cursor, nil //nolint:nilerr // Leave malformed state for explicit full repair.
+			}
+			for _, id := range ids {
+				if _, exists := visited[id]; exists {
+					delete(visited, id)
+					changed = true
+				}
+			}
+			encoded, err := json.Marshal(visited)
+			if err != nil {
+				return cursor, err
+			}
+			pass["visited"] = encoded
+			encoded, err = json.Marshal(pass)
+			if err != nil {
+				return cursor, err
+			}
+			state["history_pass"] = encoded
+		}
+	}
 	if !changed {
 		return cursor, nil
 	}

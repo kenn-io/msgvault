@@ -416,23 +416,22 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (_ *ImportS
 			state.RepairPending = false
 		}
 	}
+	var fetchErr error
 	if fetchErrors > 0 {
-		// Every selected channel has had a turn, even if some visits failed.
-		// Leave per-channel debt intact and start a fresh pass on retry.
+		// Retain the failure after clearing traversal state: cancellation of
+		// the final checkpoint must not turn this pass into a clean handoff.
+		fetchErr = fmt.Errorf("partial Slack sync: %d fetch error(s)", fetchErrors)
 		state.HistoryPass = nil
 	}
 	// Mid-run checkpoints are throttled, so persist the final counters before
 	// completing (CompleteSync only writes status and cursor).
 	if err = imp.checkpointNow(ctx, syncID, state, sum); err != nil {
-		return sum, err
+		return sum, errors.Join(err, fetchErr)
 	}
-	if fetchErrors > 0 {
-		// Fetch failures are isolated so healthy conversations still sync,
-		// but the run must remain failed and caller-visible; the checkpoint
-		// above preserves all partial progress for the next attempt.
+	if fetchErr != nil {
+		// Keep per-channel debt for the next pass while reporting this failure.
 		sum.Duration = imp.now().Sub(start)
-		err = fmt.Errorf("partial Slack sync: %d fetch error(s)", fetchErrors)
-		return sum, err
+		return sum, fetchErr
 	}
 	completedState := *state
 	completedState.HistoryPass = nil

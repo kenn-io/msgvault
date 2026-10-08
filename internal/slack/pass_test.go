@@ -6,9 +6,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/jobctx"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 func TestInterruptedPublicSyncCompletesPass(t *testing.T) {
@@ -242,4 +244,58 @@ func TestInterruptedPublicPassWithFetchFailureStillRefreshesHealthyChannels(t *t
 			assert.Equal(1, count, "late replies must also refresh despite the persistent failure")
 		}
 	}
+}
+
+func TestFinalCheckpointYieldPreservesEarlierFetchFailure(t *testing.T) {
+	testutil.SkipIfPostgres(t, "uses a SQLite trigger to cancel the final checkpoint")
+	require := require.New(t)
+	assert := assert.New(t)
+	f := testWorkspace(t)
+	f.scopes = "channels:read,channels:history,users:read,users:read.email"
+	f.convs = append(f.convs, &fakeConv{ID: "C03", Name: "other", Kind: "public", Members: []string{"UME"}})
+	f.failReplies[ts(5)] = true
+	imp, opts := testImporter(t, f)
+	firstCtx, firstCancel := context.WithCancelCause(t.Context())
+	defer firstCancel(nil)
+	opts.Progress = func(line string) {
+		if strings.HasPrefix(line, "conversation ") {
+			firstCancel(jobctx.ErrYieldedToWaiter)
+		}
+	}
+	first, err := imp.Import(firstCtx, opts)
+	require.ErrorIs(err, context.Canceled)
+	require.Positive(first.FetchErrors)
+
+	ctx, cancel := context.WithCancelCause(t.Context())
+	defer cancel(nil)
+	imp.store.DB().SetMaxOpenConns(1)
+	conn, err := imp.store.DB().Conn(t.Context())
+	require.NoError(err)
+	err = conn.Raw(func(driverConn any) error {
+		sqliteConn, ok := driverConn.(*sqlite3.SQLiteConn)
+		require.True(ok, "cancellation trigger requires SQLite")
+		return sqliteConn.RegisterFunc("yield_final_checkpoint", func() int {
+			cancel(jobctx.ErrYieldedToWaiter)
+			return 0
+		}, false)
+	})
+	require.NoError(err)
+	require.NoError(conn.Close())
+	// The first and per-channel checkpoints still contain history_pass.
+	// Cancel only when the final checkpoint clears it after a failed pass.
+	_, err = imp.store.DB().Exec(`CREATE TEMP TRIGGER yield_final_checkpoint
+		BEFORE UPDATE OF cursor_before ON sync_runs
+		WHEN NEW.status = 'running' AND json_extract(NEW.cursor_before, '$.history_pass') IS NULL
+		BEGIN SELECT yield_final_checkpoint(); END`)
+	require.NoError(err)
+	opts.Progress = nil
+	resumed, err := imp.Import(ctx, opts)
+	require.ErrorIs(err, context.Canceled)
+	require.ErrorContains(err, "write sync checkpoint")
+	assert.Zero(resumed.FetchErrors, "the failed fetch occurred in the previous attempt")
+	latest, readErr := imp.store.GetLatestSync(first.SourceID)
+	require.NoError(readErr)
+	assert.Equal("failed", latest.Status)
+	assert.Contains(latest.ErrorMessage.String, "fetch error", "the queued continuation must retain the pass failure")
+	assert.ErrorContains(err, "fetch error", "the scheduler must receive the failure as well as the cancellation")
 }
