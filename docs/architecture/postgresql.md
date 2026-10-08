@@ -23,7 +23,7 @@ stores embeddings in the same database as the message archive.
 
 ## Prerequisites
 
-- PostgreSQL 16 and 17 are tested targets.
+- PostgreSQL 16 is the tested target.
 - The `pgvector` extension must be available if `[vector].enabled = true`.
 - The standalone msgvault database role needs normal DDL privileges so msgvault
   can create its schema on first connection. The [Go library](../guides/embedding.md)

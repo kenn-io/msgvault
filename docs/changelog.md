@@ -8,6 +8,12 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- Go programs can use msgvault as a library through `go.kenn.io/msgvault/pkg/archive`.
+  It sets up and opens SQLite or PostgreSQL archives, runs the Slack and Discord
+  importers with caller-supplied credentials, purges channels and sources, and
+  mounts the HTTP API in the program's own server. PostgreSQL-only programs can
+  build without CGO. See the [Go library guide](guides/embedding.md).
+
 - msgvault sends anonymous usage telemetry: a daemon ping at startup and once
   each later UTC day, and an `app_opened` event the web UI reports through the
   daemon when it opens and on its first focus on a later UTC day. Events carry
