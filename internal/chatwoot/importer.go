@@ -661,6 +661,9 @@ func (imp *Importer) validateMessage(c Conversation, m Message, opts ImportOptio
 func (imp *Importer) walkConversation(ctx context.Context, sourceID, syncID int64, c Conversation, cs *conversationState, state *syncState, opts ImportOptions, sum *ImportSummary, requests *int, budget int) error {
 	used := 0
 	for len(cs.Pending) > 0 && *requests < budget && (opts.Limit == 0 || used < opts.Limit) {
+		if !imp.boundsProbed && *requests+3 > budget {
+			return nil
+		}
 		r := cs.Pending[0]
 		*requests++
 		messages, err := imp.client.ListMessages(ctx, c.ID, r.After, r.Before)
@@ -689,9 +692,6 @@ func (imp *Importer) walkConversation(ctx context.Context, sourceID, syncID int6
 			continue
 		}
 		if !imp.boundsProbed {
-			if *requests+2 > budget {
-				return nil
-			}
 			id := messages[0].ID
 			exact, probeErr := imp.client.ListMessages(ctx, c.ID, id, id+1)
 			*requests++
