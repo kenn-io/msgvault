@@ -134,7 +134,7 @@ func (c *Client) DownloadFile(ctx context.Context, rawURL string, maxBytes int64
 // leaves downloaded bytes orphaned in CAS with no marker, invisible to
 // backfill forever, so the run must stop rather than advance past it.
 func (imp *Importer) persistFiles(ctx context.Context, syncID, messageID int64, m *Message, opts ImportOptions, sum *ImportSummary) error {
-	existing, err := imp.store.MessageSlackAttachments(messageID)
+	existing, err := imp.store.MessageSlackAttachmentsContext(ctx, messageID)
 	if err != nil {
 		return fmt.Errorf("read attachment rows: %w", err)
 	}
@@ -197,7 +197,7 @@ func (imp *Importer) persistFiles(ctx context.Context, syncID, messageID int64, 
 
 		// pend leaves a retryable marker; link records metadata permanently.
 		pend := func(status, kind string, err error) {
-			imp.recordItem(syncID, sourceMessageID("", m.TS), "attachment", status, kind, err)
+			imp.recordItem(ctx, syncID, sourceMessageID("", m.TS), "attachment", status, kind, err)
 			if status == store.SyncRunItemStatusSkipped {
 				pendingRow.State = attachmentpolicy.StateSkipped
 				pendingRow.SkipReason = attachmentpolicy.SkipSizeCap
@@ -239,7 +239,7 @@ func (imp *Importer) persistFiles(ctx context.Context, syncID, messageID int64, 
 			}
 			pendingRow.State = attachmentpolicy.StateSkipped
 			pendingRow.SkipReason = reason
-			imp.recordItem(syncID, sourceMessageID("", m.TS), "attachment",
+			imp.recordItem(ctx, syncID, sourceMessageID("", m.TS), "attachment",
 				store.SyncRunItemStatusSkipped, "slack_media_policy", nil)
 			refs = append(refs, pendingRow)
 			sum.AttachmentsSkipped++
@@ -262,7 +262,7 @@ func (imp *Importer) persistFiles(ctx context.Context, syncID, messageID int64, 
 			// Slack can keep file metadata after the backing bytes have been
 			// deleted. Preserve the permalink and file provenance as a
 			// metadata-only link, but terminate retry debt that can never pay.
-			imp.recordItem(syncID, sourceMessageID("", m.TS), "attachment",
+			imp.recordItem(ctx, syncID, sourceMessageID("", m.TS), "attachment",
 				store.SyncRunItemStatusSkipped, "slack_media_gone", derr)
 			refs = append(refs, linkRow)
 			continue
@@ -317,10 +317,10 @@ func (imp *Importer) persistFiles(ctx context.Context, syncID, messageID int64, 
 		}
 		refs = append(refs, ref)
 	}
-	if err := imp.store.ReplaceMessageSlackAttachments(messageID, refs); err != nil {
+	if err := imp.store.ReplaceMessageSlackAttachmentsContext(ctx, messageID, refs); err != nil {
 		return fmt.Errorf("replace attachment rows: %w", err)
 	}
-	if err := imp.store.RecomputeMessageAttachmentStats(messageID); err != nil {
+	if err := imp.store.RecomputeMessageAttachmentStatsContext(ctx, messageID); err != nil {
 		return fmt.Errorf("recompute attachment stats: %w", err)
 	}
 	return nil

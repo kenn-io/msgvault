@@ -325,7 +325,7 @@ func ownerCredentialPresented(r *http.Request) bool {
 
 func (s *Server) apiRequestAuthorized(r *http.Request) bool {
 	switch s.requestAuthentication(r).Mode {
-	case AuthModeLoopback, AuthModeAPIKey, AuthModeSession:
+	case AuthModeLoopback, AuthModeAPIKey, AuthModeSession, AuthModeCaller:
 		return true
 	default:
 		return false

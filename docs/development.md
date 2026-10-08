@@ -145,6 +145,13 @@ in tests outside a `synctest.Test` bubble. A kept real wait carries
 tests. pgvector tests require a PostgreSQL instance with the `vector`
 extension and the `pgvector` build tag.
 
+`MSGVAULT_TEST_DB=postgres://... make test-pg-nocgo` checks the PostgreSQL-only
+library profile. It builds the store, query engine, Slack and Discord importers,
+and HTTP API with `CGO_ENABLED=0`, then tests archive writes, full-text search,
+and reads against PostgreSQL. It deliberately omits the `fts5` and `sqlite_vec`
+build tags. SQLite archives, local SQLite imports, and DuckDB/Parquet analytics
+require the normal CGO build; this profile does not build the standalone CLI.
+
 The PostgreSQL deadlock tests also require permission to set
 `deadlock_timeout`. They defer the blocker transaction's deadlock detector
 so the write under test is the deadlock victim. For a non-superuser test

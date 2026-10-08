@@ -15,8 +15,14 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
-      - name: Install documentation tools
-        run: sudo apt-get update && sudo apt-get install -y ripgrep
+      - name: Install ripgrep
+        run: |
+          curl -fsSL --retry 3 --max-time 120 \
+            https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/ripgrep-14.1.1-x86_64-unknown-linux-musl.tar.gz \
+            -o "$RUNNER_TEMP/ripgrep.tar.gz"
+          echo "4cf9f2741e6c465ffdb7c26f38056a59e2a2544b51f7cc128ef28337eeae4d8e  $RUNNER_TEMP/ripgrep.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/ripgrep.tar.gz" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/ripgrep-14.1.1-x86_64-unknown-linux-musl" >> "$GITHUB_PATH"
 
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
 

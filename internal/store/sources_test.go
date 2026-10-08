@@ -1472,3 +1472,9 @@ func TestInitSchema_AddsDeletedAtToLegacyMessagesTable(t *testing.T) {
 	)
 	require.NoError(err, "post-migration delete_batch_id query")
 }
+
+func TestRemoveSourceSerializedReportsMissingSource(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	_, _, err := st.RemoveSourceSerialized(t.Context(), 99999)
+	require.ErrorIs(t, err, store.ErrSourceNotFound)
+}

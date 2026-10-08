@@ -14,8 +14,6 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/vcard"
-
-	_ "github.com/mattn/go-sqlite3" // SQLite driver
 )
 
 // CopyResult holds the summary of a subset copy operation.

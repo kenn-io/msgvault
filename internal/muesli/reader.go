@@ -9,8 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	_ "github.com/mattn/go-sqlite3" // registers the "sqlite3" database/sql driver
-
 	"go.kenn.io/msgvault/internal/meetingidentity"
 )
 

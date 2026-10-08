@@ -1471,13 +1471,14 @@ func (s *Server) logUnauthorizedAPIRequest(r *http.Request) {
 }
 
 func (s *Server) handleDaemonShutdown(w http.ResponseWriter, r *http.Request) {
-	if s.shutdownToken == "" || s.shutdownFunc == nil {
+	callerAuthorized := s.requestAuthentication(r).Mode == AuthModeCaller
+	if s.shutdownFunc == nil || (!callerAuthorized && s.shutdownToken == "") {
 		writeError(w, http.StatusNotFound, "shutdown_unavailable", "Daemon shutdown is not available")
 		return
 	}
 
 	got := r.Header.Get(DaemonShutdownTokenHeader)
-	if subtle.ConstantTimeCompare([]byte(got), []byte(s.shutdownToken)) != 1 {
+	if !callerAuthorized && subtle.ConstantTimeCompare([]byte(got), []byte(s.shutdownToken)) != 1 {
 		s.logger.Warn("unauthorized daemon shutdown request", "remote_addr", r.RemoteAddr)
 		writeError(w, http.StatusUnauthorized, "unauthorized", "Invalid or missing daemon shutdown token")
 		return

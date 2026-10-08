@@ -31,14 +31,19 @@ type DiscordPendingAttachmentMessage = PendingAttachmentMessage
 // attachment rows, regardless of whether every row is already downloaded.
 type DiscordAttachmentMessage = PendingAttachmentMessage
 
-func (s *Store) replaceMessageProviderAttachments(messageID int64, providerPrefix string, refs []AttachmentRef) error {
-	return s.replaceMessageAttachmentsWhere(
+func (s *Store) replaceMessageProviderAttachmentsContext(ctx context.Context, messageID int64, providerPrefix string, refs []AttachmentRef) error {
+	return s.replaceMessageAttachmentsWhereContext(ctx,
 		messageID, `source_attachment_id LIKE ?`, false, refs, providerPrefix+"%",
 	)
 }
 
 func (s *Store) messageProviderAttachments(messageID int64, providerPrefix string) (map[string]AttachmentRef, error) {
-	refs, err := s.messageAttachmentsWhere(context.Background(), messageID, `source_attachment_id LIKE ?`, providerPrefix+"%")
+	return s.messageProviderAttachmentsContext(context.Background(), messageID, providerPrefix)
+}
+
+// messageProviderAttachmentsContext honors cancellation during messageProviderAttachments.
+func (s *Store) messageProviderAttachmentsContext(ctx context.Context, messageID int64, providerPrefix string) (map[string]AttachmentRef, error) {
+	refs, err := s.messageAttachmentsWhere(ctx, messageID, `source_attachment_id LIKE ?`, providerPrefix+"%")
 	if err != nil {
 		return nil, err
 	}
@@ -93,7 +98,14 @@ func (s *Store) messageAttachmentsWhere(ctx context.Context, messageID int64, wh
 func (s *Store) listRetryableAttachmentMessages(
 	sourceID int64, providerPrefix string, policy attachmentpolicy.Policy,
 ) ([]PendingAttachmentMessage, error) {
-	rows, err := s.db.Query(`
+	return s.listRetryableAttachmentMessagesContext(context.Background(), sourceID, providerPrefix, policy)
+}
+
+// listRetryableAttachmentMessagesContext honors cancellation during listRetryableAttachmentMessages.
+func (s *Store) listRetryableAttachmentMessagesContext(ctx context.Context,
+	sourceID int64, providerPrefix string, policy attachmentpolicy.Policy,
+) ([]PendingAttachmentMessage, error) {
+	rows, err := s.db.QueryContext(ctx, `
 		SELECT m.id, m.source_message_id, c.source_conversation_id,
 		       c.conversation_type, COALESCE(c.participant_count, 0),
 		       COALESCE(a.attachment_state, ''), COALESCE(a.size, 0),
@@ -259,7 +271,12 @@ func (s *Store) ApplyBeeperRetryableAttachmentPolicy(
 
 // ListSlackRetryableAttachmentMessages returns only unfinished Slack media.
 func (s *Store) ListSlackRetryableAttachmentMessages(sourceID int64, policy attachmentpolicy.Policy) ([]PendingAttachmentMessage, error) {
-	return s.listRetryableAttachmentMessages(sourceID, "slack:", policy)
+	return s.ListSlackRetryableAttachmentMessagesContext(context.Background(), sourceID, policy)
+}
+
+// ListSlackRetryableAttachmentMessagesContext honors cancellation during ListSlackRetryableAttachmentMessages.
+func (s *Store) ListSlackRetryableAttachmentMessagesContext(ctx context.Context, sourceID int64, policy attachmentpolicy.Policy) ([]PendingAttachmentMessage, error) {
+	return s.listRetryableAttachmentMessagesContext(ctx, sourceID, "slack:", policy)
 }
 
 // ListDiscordRetryableAttachmentMessages returns only unfinished Discord media.
@@ -281,17 +298,27 @@ type ConversationMembership struct {
 
 // AttachmentConversation returns the archived context used by media policy.
 func (s *Store) AttachmentConversation(messageID int64) (attachmentpolicy.Conversation, error) {
-	membership, err := s.AttachmentConversationMembership(messageID)
+	return s.AttachmentConversationContext(context.Background(), messageID)
+}
+
+// AttachmentConversationContext honors cancellation during AttachmentConversation.
+func (s *Store) AttachmentConversationContext(ctx context.Context, messageID int64) (attachmentpolicy.Conversation, error) {
+	membership, err := s.AttachmentConversationMembershipContext(ctx, messageID)
 	return membership.Conversation, err
 }
 
 // AttachmentConversationMembership returns the archived context used by media
 // policy together with the state of the provider's membership record.
 func (s *Store) AttachmentConversationMembership(messageID int64) (ConversationMembership, error) {
+	return s.AttachmentConversationMembershipContext(context.Background(), messageID)
+}
+
+// AttachmentConversationMembershipContext honors cancellation during AttachmentConversationMembership.
+func (s *Store) AttachmentConversationMembershipContext(ctx context.Context, messageID int64) (ConversationMembership, error) {
 	var conversation attachmentpolicy.Conversation
 	var observedParticipants int
 	var sourceType, metadata string
-	err := s.db.QueryRow(`
+	err := s.db.QueryRowContext(ctx, `
 		SELECT c.conversation_type, COALESCE(c.participant_count, 0),
 		       (SELECT COUNT(DISTINCT cp.participant_id)
 		        FROM conversation_participants cp WHERE cp.conversation_id = c.id),
@@ -461,8 +488,13 @@ func (s *Store) listPendingAttachmentMessages(sourceID int64, providerPrefix str
 // Pending rows retain an observed CDN URL or deterministic provider sentinel.
 // Hashless rows with a trusted local CAS path are duplicate-content aliases.
 func (s *Store) ReplaceMessageDiscordAttachments(messageID int64, refs []AttachmentRef) error {
+	return s.ReplaceMessageDiscordAttachmentsContext(context.Background(), messageID, refs)
+}
+
+// ReplaceMessageDiscordAttachmentsContext honors cancellation during ReplaceMessageDiscordAttachments.
+func (s *Store) ReplaceMessageDiscordAttachmentsContext(ctx context.Context, messageID int64, refs []AttachmentRef) error {
 	refs = normalizeDiscordAttachmentRefs(refs)
-	return s.replaceMessageProviderAttachments(messageID, "discord:", refs)
+	return s.replaceMessageProviderAttachmentsContext(ctx, messageID, "discord:", refs)
 }
 
 // SetDiscordAttachmentMetadata refreshes only derived Discord attachment JSON.
@@ -470,9 +502,16 @@ func (s *Store) ReplaceMessageDiscordAttachments(messageID int64, refs []Attachm
 func (s *Store) SetDiscordAttachmentMetadata(
 	messageID int64, metadata map[string]string,
 ) (int64, error) {
+	return s.SetDiscordAttachmentMetadataContext(context.Background(), messageID, metadata)
+}
+
+// SetDiscordAttachmentMetadataContext honors cancellation during SetDiscordAttachmentMetadata.
+func (s *Store) SetDiscordAttachmentMetadataContext(ctx context.Context,
+	messageID int64, metadata map[string]string,
+) (int64, error) {
 	if len(metadata) == 0 {
 		var exists bool
-		if err := s.db.QueryRow(`
+		if err := s.db.QueryRowContext(ctx, `
 			SELECT EXISTS (
 				SELECT 1 FROM attachments
 				WHERE message_id = ? AND source_attachment_id LIKE 'discord:%'
@@ -487,7 +526,7 @@ func (s *Store) SetDiscordAttachmentMetadata(
 	}
 
 	var changed int64
-	err := s.withTx(func(tx *loggedTx) error {
+	err := s.withTxContext(ctx, func(tx *loggedTx) error {
 		resetQuery := fmt.Sprintf(`
 			UPDATE attachments
 			SET attachment_metadata = %s
@@ -504,7 +543,7 @@ func (s *Store) SetDiscordAttachmentMetadata(
 				resetArgs = append(resetArgs, sourceAttachmentID)
 			}
 		}
-		result, err := tx.Exec(resetQuery, resetArgs...)
+		result, err := tx.ExecContext(ctx, resetQuery, resetArgs...)
 		if err != nil {
 			return fmt.Errorf("clear stale Discord attachment metadata: %w", err)
 		}
@@ -515,7 +554,7 @@ func (s *Store) SetDiscordAttachmentMetadata(
 		changed += n
 
 		for sourceAttachmentID, value := range metadata {
-			result, err := tx.Exec(fmt.Sprintf(`
+			result, err := tx.ExecContext(ctx, fmt.Sprintf(`
 				UPDATE attachments
 				SET attachment_metadata = %s
 				WHERE message_id = ? AND source_attachment_id = ?
@@ -532,7 +571,7 @@ func (s *Store) SetDiscordAttachmentMetadata(
 			changed += n
 		}
 		if changed > 0 {
-			if err := s.bumpDerivedDataRevision(tx, true); err != nil {
+			if err := s.bumpDerivedDataRevisionContext(ctx, tx, true); err != nil {
 				return fmt.Errorf("advance Discord attachment metadata revision: %w", err)
 			}
 		}
@@ -604,7 +643,12 @@ func casPathHash(storagePath string) (string, bool) {
 
 // MessageDiscordAttachments returns Discord-managed rows keyed by source ID.
 func (s *Store) MessageDiscordAttachments(messageID int64) (map[string]AttachmentRef, error) {
-	refs, err := s.messageProviderAttachments(messageID, "discord:")
+	return s.MessageDiscordAttachmentsContext(context.Background(), messageID)
+}
+
+// MessageDiscordAttachmentsContext honors cancellation during MessageDiscordAttachments.
+func (s *Store) MessageDiscordAttachmentsContext(ctx context.Context, messageID int64) (map[string]AttachmentRef, error) {
+	refs, err := s.messageProviderAttachmentsContext(ctx, messageID, "discord:")
 	if err != nil {
 		return nil, err
 	}

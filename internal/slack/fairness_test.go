@@ -95,7 +95,7 @@ func TestInterruptedPublicSyncReachesEveryChannel(t *testing.T) {
 				assert.Equal(3, count, "%s must retain its original, new message, and late reply", channelID)
 			}
 			if tc.unreadable {
-				state, err := imp.loadResumeState(sum.SourceID)
+				state, err := imp.loadResumeState(t.Context(), sum.SourceID)
 				require.NoError(err)
 				assert.Empty(state.EnsureConv("C_GONE").Cursor, "skipping must not claim history coverage")
 

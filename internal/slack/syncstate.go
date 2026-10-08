@@ -102,7 +102,11 @@ type ConvState struct {
 // those fields no longer exist (an upgraded mid-window checkpoint re-walks
 // at most one window into idempotent upserts).
 type SyncState struct {
-	Conversations map[string]*ConvState `json:"conversations"` // key = channel ID
+	// ScopedSweepAfter resumes channel-scoped search after the last attempted
+	// channel so a limited run cannot spend every budget on the same channel.
+	ScopedSweepAfter string                `json:"scoped_sweep_after,omitempty"`
+	PrincipalID      string                `json:"principal_id,omitempty"`
+	Conversations    map[string]*ConvState `json:"conversations"` // key = channel ID
 	// SweepWatermark is the pin of the last completed workspace sweep for
 	// the current target set (each conversation's own boundary is its
 	// SweptThrough). The trailing margin is re-covered by the next sweep,

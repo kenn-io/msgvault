@@ -314,7 +314,7 @@ func (s *Store) RemoveSourceSerialized(
 		return hadActiveSync, 0, fmt.Errorf("check rows affected: %w", err)
 	}
 	if deletedSources == 0 {
-		return hadActiveSync, 0, fmt.Errorf("source %d not found", sourceID)
+		return hadActiveSync, 0, fmt.Errorf("source %d: %w", sourceID, ErrSourceNotFound)
 	}
 	if err := s.deleteUnsupportedObservationIdentityConflictsContext(ctx, conn); err != nil {
 		return hadActiveSync, 0, err
@@ -411,7 +411,7 @@ func (s *Store) removeSourceExec(
 		return fmt.Errorf("check rows affected: %w", err)
 	}
 	if rows == 0 {
-		return fmt.Errorf("source %d not found", sourceID)
+		return fmt.Errorf("source %d: %w", sourceID, ErrSourceNotFound)
 	}
 	if err := s.deleteUnsupportedObservationIdentityConflictsContext(ctx, tx); err != nil {
 		return err

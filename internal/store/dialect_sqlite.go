@@ -12,7 +12,6 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/mattn/go-sqlite3"
 	"go.kenn.io/msgvault/internal/sqliteutil"
 )
 
@@ -2251,24 +2250,6 @@ func (d *SQLiteDialect) RowWriterLockSQL(table, column string) string {
 // so Store.runMaintenance issues no reset statement and SQLite's
 // transactional behavior is unchanged.
 func (d *SQLiteDialect) MaintenanceTimeoutResetSQL() string { return "" }
-
-// IsBusyError returns true for SQLITE_BUSY and SQLITE_LOCKED. Matching on
-// the result code is more robust than substring matching: BUSY surfaces as
-// "database is locked" but LOCKED surfaces as "database table is locked",
-// so a single substring cannot catch both.
-func (d *SQLiteDialect) IsBusyError(err error) bool {
-	if err == nil {
-		return false
-	}
-	if serr, ok := errors.AsType[sqlite3.Error](err); ok {
-		return serr.Code == sqlite3.ErrBusy || serr.Code == sqlite3.ErrLocked
-	}
-	var serrPtr *sqlite3.Error
-	if errors.As(err, &serrPtr) && serrPtr != nil {
-		return serrPtr.Code == sqlite3.ErrBusy || serrPtr.Code == sqlite3.ErrLocked
-	}
-	return false
-}
 
 // IsSerializationFailureError always returns false for SQLite. Only one write
 // transaction runs at a time, so a locked row can never have been changed and

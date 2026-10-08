@@ -11,8 +11,6 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
-
-	_ "github.com/duckdb/duckdb-go/v2" // Register the DuckDB database/sql driver.
 )
 
 var duckDBSizePattern = regexp.MustCompile(`(?i)^[1-9][0-9]*(B|KB|MB|GB|TB|KIB|MIB|GIB|TIB)$`)
@@ -98,6 +96,9 @@ func BuilderPolicyWithOverrides(tempDirectory string, overrides BuilderOverrides
 // Open creates one in-memory DuckDB connection and applies policy before any
 // analytical work can run.
 func Open(ctx context.Context, policy Policy) (*sql.DB, error) {
+	if !Available {
+		return nil, errors.New("DuckDB requires a build with CGO enabled")
+	}
 	db, err := sql.Open("duckdb", "")
 	if err != nil {
 		return nil, fmt.Errorf("open duckdb: %w", err)

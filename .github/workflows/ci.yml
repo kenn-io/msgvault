@@ -653,6 +653,9 @@ jobs:
       - name: Test (PostgreSQL)
         run: make test-pg-shipped-unsharded
 
+      - name: Test PostgreSQL library without CGO
+        run: make test-pg-nocgo
+
       - name: Concurrency tests (-count=5)
         run: |
           go test -tags fts5 -count=5 -run 'Concurrent' ./internal/store

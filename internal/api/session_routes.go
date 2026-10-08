@@ -23,6 +23,8 @@ const (
 	AuthModeAPIKey   AuthMode = "api_key"
 	AuthModeSession  AuthMode = "session"
 	AuthModeRequired AuthMode = "required"
+	// AuthModeCaller marks an operation admitted by the library handler's caller.
+	AuthModeCaller AuthMode = "caller"
 	// AuthModeDelegated marks a caller authenticated by a restricted agent grant. Never an owner mode: see apiRequestAuthorized.
 	AuthModeDelegated AuthMode = "delegated"
 )
@@ -37,7 +39,7 @@ type SessionLoginRequest struct {
 // token is returned only for a valid browser session so mutation middleware
 // can enforce session-bound requests without exposing it to other auth modes.
 type SessionStatus struct {
-	AuthMode         AuthMode `json:"auth_mode" enum:"loopback,api_key,session,required,delegated"`
+	AuthMode         AuthMode `json:"auth_mode" enum:"loopback,api_key,session,required,delegated,caller"`
 	CSRFToken        string   `json:"csrf_token,omitempty"`
 	HTTPS            bool     `json:"https"`
 	PlainHTTPWarning bool     `json:"plain_http_warning"`

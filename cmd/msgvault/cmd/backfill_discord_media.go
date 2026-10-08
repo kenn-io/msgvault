@@ -155,7 +155,7 @@ func backfillDiscordSourceMedia(
 	// unreadable roster as unresolved rather than trust a stale count, and a
 	// readable one has to reconcile the archived floor before retry selection
 	// decides which skips the current membership releases.
-	if err := discord.NewImporter(st, client).ArchiveGuildMembership(
+	if err := discord.NewImporter(st, client).ArchiveGuildMembership(ctx,
 		source.ID, guildParticipants, membershipErr,
 	); err != nil {
 		return summary, fmt.Errorf("archive Discord guild membership: %w", err)

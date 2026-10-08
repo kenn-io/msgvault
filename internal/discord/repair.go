@@ -41,7 +41,7 @@ func (imp *Importer) RepairSource(
 		if err := ctx.Err(); err != nil {
 			return sum, err
 		}
-		batch, err := imp.store.ScanArchivedRawMessages(
+		batch, err := imp.store.ScanArchivedRawMessagesContext(ctx,
 			sourceID, discordRawFormat, afterID, discordRepairBatchSize,
 		)
 		if err != nil {
@@ -57,7 +57,7 @@ func (imp *Importer) RepairSource(
 			item := &batch[i]
 			afterID = item.MessageID
 			sum.MessagesScanned++
-			imp.repairMessage(item, sourceID, sum)
+			imp.repairMessage(ctx, item, sourceID, sum)
 		}
 		if progress != nil {
 			progress(fmt.Sprintf("%d scanned, %d message metadata rewritten, %d attachments tagged",
@@ -68,7 +68,7 @@ func (imp *Importer) RepairSource(
 	return sum, nil
 }
 
-func (imp *Importer) repairMessage(
+func (imp *Importer) repairMessage(ctx context.Context,
 	item *store.ArchivedRawMessage, sourceID int64, sum *rederive.Summary,
 ) {
 	var message Message
@@ -82,7 +82,7 @@ func (imp *Importer) repairMessage(
 		sum.Errors++
 		return
 	}
-	if err := imp.repairMessageMetadata(item.MessageID, mapped.Metadata, sum); err != nil {
+	if err := imp.repairMessageMetadata(ctx, item.MessageID, mapped.Metadata, sum); err != nil {
 		sum.Errors++
 		return
 	}
@@ -93,7 +93,7 @@ func (imp *Importer) repairMessage(
 			attachmentMetadata[attachment.SourceAttachmentID] = attachment.Metadata
 		}
 	}
-	changed, err := imp.store.SetDiscordAttachmentMetadata(item.MessageID, attachmentMetadata)
+	changed, err := imp.store.SetDiscordAttachmentMetadataContext(ctx, item.MessageID, attachmentMetadata)
 	if err != nil {
 		sum.Errors++
 		return
@@ -101,17 +101,17 @@ func (imp *Importer) repairMessage(
 	sum.AttachmentsTagged += changed
 }
 
-func (imp *Importer) repairMessageMetadata(
+func (imp *Importer) repairMessageMetadata(ctx context.Context,
 	messageID int64, wanted jsontext.Value, sum *rederive.Summary,
 ) error {
-	current, err := imp.store.GetMessageMetadata(messageID)
+	current, err := imp.store.GetMessageMetadataContext(ctx, messageID)
 	if err != nil {
 		return err
 	}
 	if current.Valid && jsonValuesEqual([]byte(current.String), wanted) {
 		return nil
 	}
-	if err := imp.store.SetMessageMetadata(messageID, sql.NullString{
+	if err := imp.store.SetMessageMetadataContext(ctx, messageID, sql.NullString{
 		String: string(wanted), Valid: len(wanted) > 0,
 	}); err != nil {
 		return err

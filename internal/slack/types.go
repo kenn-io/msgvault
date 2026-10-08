@@ -276,11 +276,19 @@ func tsLess(a, b string) bool {
 
 // ImportOptions configures one Import run.
 type ImportOptions struct {
+	// SourceID pins an existing source. Zero keeps standalone source discovery;
+	// a supplied ID must match the authenticated workspace and is never
+	// recreated if removed while a run is waiting to start.
+	SourceID int64
 	// TeamID is the workspace to sync; with UserID it forms the msgvault
 	// source identifier ("<team_id>:<user_id>").
 	TeamID string
 	// UserID is the archiving user (from auth.test at add-slack time).
 	UserID string
+	// RevalidatePrincipal restarts scoped history/reply discovery when the
+	// credential user differs from the checkpoint's principal. Message IDs
+	// remain stable; this is used by archives that can replace a credential.
+	RevalidatePrincipal bool
 	// Limit caps messages processed per conversation this run (0 = no
 	// limit). A limited backfill leaves the conversation resumable.
 	Limit int
@@ -307,6 +315,10 @@ type ImportOptions struct {
 	// DMs or group DMs; ExcludeDMs/ExcludeGroupDMs select those.
 	IncludeChannels []string
 	ExcludeChannels []string
+	// ChannelIDs adds an exact ID selection before all other filters. Nil
+	// retains normal selection; a non-nil empty slice selects nothing. Reply
+	// searches stay within each selected public channel instead of the workspace.
+	ChannelIDs []string
 	// ExcludePrivateChannels skips private channels without affecting DMs.
 	ExcludePrivateChannels bool
 	// ExcludeDMs skips one-to-one DMs and ExcludeGroupDMs skips group DMs.

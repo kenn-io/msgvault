@@ -12981,6 +12981,7 @@ components:
             - session
             - required
             - delegated
+            - caller
           type: string
         csrf_token:
           type: string

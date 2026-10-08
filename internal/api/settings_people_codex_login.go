@@ -111,6 +111,8 @@ func (s *Server) peopleCodexLoginOwner(w http.ResponseWriter, r *http.Request) (
 		}
 	case AuthModeAPIKey:
 		return "owner-api-key", true
+	case AuthModeCaller:
+		return "caller", true
 	case AuthModeLoopback:
 		return "loopback", true
 	case AuthModeRequired, AuthModeDelegated:

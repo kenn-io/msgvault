@@ -65,6 +65,7 @@ nav = [
     {"CLI Reference" = "cli-reference.md"},
     {"Configuration" = "configuration.md"},
     {"HTTP API" = "api-server.md"},
+    {"Go library" = "guides/embedding.md"},
     {"MCP Server" = "usage/chat.md"},
     {"Agent Skills" = "guides/agent-skills.md"},
     {"FAQ" = "faq.md"},

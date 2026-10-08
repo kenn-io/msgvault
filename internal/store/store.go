@@ -20,7 +20,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
-	"github.com/mattn/go-sqlite3"
 	"go.kenn.io/kit/atomicfile"
 	"go.kenn.io/msgvault/internal/sqliteutil"
 )
@@ -145,24 +144,6 @@ type Store struct {
 // fcntl) and a no-op on other platforms.
 const defaultSQLiteParams = "?_journal_mode=WAL&_busy_timeout=30000&_synchronous=FULL&_fullfsync=true&_foreign_keys=ON"
 
-// isSQLiteError checks if err is a sqlite3.Error with a message containing substr.
-// This is more robust than strings.Contains on err.Error() because it first
-// type-asserts to the specific driver error type using errors.As.
-// Handles both value (sqlite3.Error) and pointer (*sqlite3.Error) forms.
-//
-// SQLiteDialect's error predicates are thin wrappers around this helper; it also
-// services subset.go (which has not been migrated to Dialect).
-func isSQLiteError(err error, substr string) bool {
-	if sqliteErr, ok := errors.AsType[sqlite3.Error](err); ok {
-		return strings.Contains(sqliteErr.Error(), substr)
-	}
-	var sqliteErrPtr *sqlite3.Error
-	if errors.As(err, &sqliteErrPtr) && sqliteErrPtr != nil {
-		return strings.Contains(sqliteErrPtr.Error(), substr)
-	}
-	return false
-}
-
 // IsPostgresURL returns true if the path looks like a PostgreSQL connection URL.
 // Exported so cmd-side helpers can decide whether to skip SQLite-only code
 // paths (e.g., the Parquet analytics cache) without first opening a Store.
@@ -192,7 +173,7 @@ func OpenContext(ctx context.Context, dbPath string) (*Store, error) {
 		return nil, err
 	}
 	if IsPostgresURL(dbPath) {
-		return openPostgresContext(ctx, dbPath)
+		return OpenPostgresContext(ctx, dbPath)
 	}
 	return openSQLiteContext(ctx, dbPath, defaultSQLiteParams)
 }
@@ -219,6 +200,9 @@ func openSQLite(dbPath, params string) (*Store, error) {
 func openSQLiteContext(ctx context.Context, dbPath, params string) (*Store, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
+	}
+	if !sqliteutil.Available {
+		return nil, errors.New("SQLite requires a build with CGO enabled; use PostgreSQL with this build")
 	}
 	normalizedDSN, filesystemPath, err := sqliteutil.ResolveDSN(dbPath)
 	if err != nil {
@@ -305,10 +289,12 @@ func appendSQLiteParams(dsn, params string) string {
 
 // openPostgres opens a PostgreSQL database using the given connection URL.
 func openPostgres(dbURL string) (*Store, error) {
-	return openPostgresContext(context.Background(), dbURL)
+	return OpenPostgresContext(context.Background(), dbURL)
 }
 
-func openPostgresContext(ctx context.Context, dbURL string) (*Store, error) {
+// OpenPostgresContext opens PostgreSQL explicitly, accepting a URL or libpq keyword DSN.
+// Unlike OpenContext, it does not interpret a non-URL input as a SQLite path.
+func OpenPostgresContext(ctx context.Context, dbURL string) (*Store, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -400,6 +386,9 @@ func OpenReadOnlyContext(ctx context.Context, dbPath string) (*Store, error) {
 		return openPostgresReadOnly(ctx, dbPath)
 	}
 
+	if !sqliteutil.Available {
+		return nil, errors.New("SQLite requires a build with CGO enabled; use PostgreSQL with this build")
+	}
 	dsn, filesystemPath, err := sqliteutil.QueryOnlyDSN(dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("resolve SQLite database path: %w", err)
@@ -694,21 +683,6 @@ func (s *Store) optimizeAfterSync(ctx context.Context) {
 		}
 		s.optimizeSQLiteBestEffort(ctx, "successful sync")
 	}
-}
-
-// isSQLiteContention reports errors that mean the database was busy rather
-// than broken: expected on a loaded archive and retried later.
-func isSQLiteContention(err error) bool {
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return true
-	}
-	if sqliteErr, ok := errors.AsType[sqlite3.Error](err); ok {
-		switch sqliteErr.Code {
-		case sqlite3.ErrBusy, sqlite3.ErrLocked, sqlite3.ErrInterrupt:
-			return true
-		}
-	}
-	return false
 }
 
 func logSQLiteOptimizeError(trigger string, err error) {
@@ -1372,6 +1346,13 @@ func (s *Store) InitSchema() error {
 // for the other ledger-gated migrations: a cancelled one is not marked applied,
 // so the next open runs it again.
 func (s *Store) InitSchemaContext(ctx context.Context) error {
+	version, err := s.schemaVersion(ctx)
+	if err != nil {
+		return fmt.Errorf("read archive schema version: %w", err)
+	}
+	if version > SchemaVersion {
+		return fmt.Errorf("archive schema version %d is newer than supported version %d", version, SchemaVersion)
+	}
 	// A missing messages table identifies a fresh PostgreSQL schema. Build the
 	// canonical Message-ID expression index inline after the schema files create
 	// the empty table: CREATE INDEX is cheap there, while making every fresh test
@@ -2233,6 +2214,10 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	// the archive's actual data distribution.
 	s.optimizeSQLiteBestEffort(ctx, "schema initialization")
 
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO archive_metadata (key, value)
+		VALUES ('schema_version', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value`, strconv.Itoa(SchemaVersion)); err != nil {
+		return fmt.Errorf("record completed archive schema version: %w", err)
+	}
 	return nil
 }
 

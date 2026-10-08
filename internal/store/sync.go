@@ -559,6 +559,9 @@ func (s *Store) recoverAbandonedSyncSourceQueries(
 		s.Rebind(`SELECT id FROM sources WHERE id = ?`+s.dialect.SelectForUpdate()),
 		sourceID,
 	).Scan(&lockedID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrSourceNotFound
+		}
 		return fmt.Errorf("lock source row: %w", err)
 	}
 	if _, err := q.ExecContext(ctx, s.Rebind(fmt.Sprintf(`
@@ -876,7 +879,12 @@ func (s *Store) PinSyncHandoffCursorContext(ctx context.Context, syncID int64, c
 
 // RecordSyncRunItem records a per-item sync outcome for diagnostics.
 func (s *Store) RecordSyncRunItem(item SyncRunItem) error {
-	_, err := s.db.Exec(fmt.Sprintf(`
+	return s.RecordSyncRunItemContext(context.Background(), item)
+}
+
+// RecordSyncRunItemContext honors cancellation during RecordSyncRunItem.
+func (s *Store) RecordSyncRunItemContext(ctx context.Context, item SyncRunItem) error {
+	_, err := s.db.ExecContext(ctx, fmt.Sprintf(`
 		INSERT INTO sync_run_items (
 			sync_run_id, source_message_id, phase, status,
 			error_kind, error_message, created_at
@@ -1244,10 +1252,15 @@ func (s *Store) FailSyncAndClearSourceCursorContext(
 // much work and how many item errors occurred when failure finalization remains
 // reachable.
 func (s *Store) FailSyncWithCheckpoint(syncID int64, errMsg string, cp *Checkpoint) error {
+	return s.FailSyncWithCheckpointContext(context.Background(), syncID, errMsg, cp)
+}
+
+// FailSyncWithCheckpointContext honors cancellation during FailSyncWithCheckpoint.
+func (s *Store) FailSyncWithCheckpointContext(ctx context.Context, syncID int64, errMsg string, cp *Checkpoint) error {
 	if cp == nil {
-		return s.FailSync(syncID, errMsg)
+		return s.FailSyncContext(ctx, syncID, errMsg)
 	}
-	_, err := s.db.Exec(fmt.Sprintf(`
+	_, err := s.db.ExecContext(ctx, fmt.Sprintf(`
 		UPDATE sync_runs
 		SET status = 'failed',
 		    completed_at = %s,
@@ -1340,7 +1353,12 @@ func (s *Store) GetLatestSyncContext(ctx context.Context, sourceID, excludeID in
 // does not hide recoverable state, while completion remains authoritative and
 // makes every preceding checkpoint stale.
 func (s *Store) GetLatestCheckpointedSync(sourceID int64) (*SyncRun, error) {
-	row := s.db.QueryRow(`
+	return s.GetLatestCheckpointedSyncContext(context.Background(), sourceID)
+}
+
+// GetLatestCheckpointedSyncContext honors cancellation during GetLatestCheckpointedSync.
+func (s *Store) GetLatestCheckpointedSyncContext(ctx context.Context, sourceID int64) (*SyncRun, error) {
+	row := s.db.QueryRowContext(ctx, `
 		SELECT id, source_id, started_at, completed_at, status,
 		       messages_processed, messages_added, messages_updated, errors_count,
 		       error_message, cursor_before, cursor_after, request_fingerprint
@@ -1554,8 +1572,14 @@ type Source struct {
 // conflict path so the second caller receives the existing row's
 // fields instead of a unique-violation error.
 func (s *Store) GetOrCreateSource(sourceType, identifier string) (*Source, error) {
+	return s.GetOrCreateSourceContext(context.Background(), sourceType, identifier)
+}
+
+// GetOrCreateSourceContext carries cancellation through source creation and
+// default collection membership. A retry reuses an already committed source.
+func (s *Store) GetOrCreateSourceContext(ctx context.Context, sourceType, identifier string) (*Source, error) {
 	now := s.dialect.Now()
-	row := s.db.QueryRow(fmt.Sprintf(`
+	row := s.db.QueryRowContext(ctx, fmt.Sprintf(`
 		INSERT INTO sources (source_type, identifier, created_at, updated_at)
 		VALUES (?, ?, %s, %s)
 		ON CONFLICT (source_type, identifier) DO UPDATE
@@ -1580,13 +1604,16 @@ func (s *Store) GetOrCreateSource(sourceType, identifier string) (*Source, error
 	// on next CLI invocation; until then collection-scoped reads of
 	// All would miss this source. Acceptable for a single-user tool;
 	// a future refactor can fold this into a withTx.
-	if _, err := s.db.Exec(
+	if _, err := s.db.ExecContext(ctx,
 		s.dialect.InsertOrIgnore(
 			`INSERT OR IGNORE INTO collection_sources (collection_id, source_id)
 			 SELECT id, ? FROM collections WHERE name = ?`,
 		),
 		source.ID, DefaultCollectionName,
 	); err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		slog.Warn("failed to add source to default collection (self-heals on next InitSchema)",
 			sourceIDColumnName, source.ID,
 			"identifier", identifier,

@@ -162,11 +162,11 @@ func senderKeysForSource(
 	return keys, nil
 }
 
-// ownerAPIKeyPresented returns true when the request carries the owner API key.
-// Routes through the classifier cached by requestSecurityMiddleware so header
-// normalization is handled in exactly one place.
-func (s *Server) ownerAPIKeyPresented(r *http.Request) bool {
-	return s.requestAuthentication(r).Mode == AuthModeAPIKey
+// ownerAccessAuthorized accepts the daemon owner API key or the library
+// caller's admission of this operation.
+func (s *Server) ownerAccessAuthorized(r *http.Request) bool {
+	mode := s.requestAuthentication(r).Mode
+	return mode == AuthModeAPIKey || mode == AuthModeCaller
 }
 
 // handleIssueAgentToken issues a new restricted agent grant.
@@ -176,7 +176,7 @@ func (s *Server) handleIssueAgentToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "Invalid or missing API key")
 		return
 	}
-	if !s.ownerAPIKeyPresented(r) {
+	if !s.ownerAccessAuthorized(r) {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "Agent token management requires the owner API key")
 		return
 	}
@@ -307,7 +307,7 @@ func (s *Server) handleListAgentTokens(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "Invalid or missing API key")
 		return
 	}
-	if !s.ownerAPIKeyPresented(r) {
+	if !s.ownerAccessAuthorized(r) {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "Agent token management requires the owner API key")
 		return
 	}
@@ -331,7 +331,7 @@ func (s *Server) handleRevokeAgentToken(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusUnauthorized, "unauthorized", "Invalid or missing API key")
 		return
 	}
-	if !s.ownerAPIKeyPresented(r) {
+	if !s.ownerAccessAuthorized(r) {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "Agent token management requires the owner API key")
 		return
 	}
