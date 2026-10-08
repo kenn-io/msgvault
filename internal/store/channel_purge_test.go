@@ -101,3 +101,47 @@ func TestPurgeChannelToleratesMalformedSQLiteMetadata(t *testing.T) {
 	require.NoError(st.DB().QueryRow("SELECT id FROM conversations WHERE source_id = ?", source.ID).Scan(&kept))
 	assert.Equal(malformed, kept, "the unreadable row stays")
 }
+
+// Analytics caches stamp the derived-data revision and rebuild when it moves,
+// which is the only way they drop already exported rows.
+func TestPurgesAdvanceDerivedDataRevision(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("slack", "T01:U01")
+	require.NoError(err)
+	conversation, err := st.EnsureConversation(source.ID, "C01", "Removed channel")
+	require.NoError(err)
+	_, err = st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: "C01:1", MessageType: "slack"})
+	require.NoError(err)
+
+	before, err := st.DerivedDataRevisionContext(t.Context())
+	require.NoError(err)
+	require.NoError(st.PurgeChannelContext(t.Context(), source.ID, "C01"))
+	afterChannel, err := st.DerivedDataRevisionContext(t.Context())
+	require.NoError(err)
+	assert.Equal(t, before+1, afterChannel, "channel purge")
+
+	_, _, err = st.RemoveSourceSerialized(t.Context(), source.ID)
+	require.NoError(err)
+	afterSource, err := st.DerivedDataRevisionContext(t.Context())
+	require.NoError(err)
+	assert.Equal(t, afterChannel+1, afterSource, "source removal")
+}
+
+func TestPurgeChannelRefusesQueuedSyncOperation(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("slack", "T01:U01")
+	require.NoError(err)
+	conversation, err := st.EnsureConversation(source.ID, "C01", "Selected channel")
+	require.NoError(err)
+	_, err = st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: "C01:1", MessageType: "slack"})
+	require.NoError(err)
+	_, err = st.CreateSyncOperation(source.ID, "pending-operation")
+	require.NoError(err)
+
+	require.ErrorIs(st.PurgeChannelContext(t.Context(), source.ID, "C01"), store.ErrSyncAlreadyActive)
+	var remaining int
+	require.NoError(st.DB().QueryRow(st.Rebind("SELECT count(*) FROM messages WHERE conversation_id = ?"), conversation).Scan(&remaining))
+	assert.Equal(t, 1, remaining, "a refused purge removes nothing")
+}

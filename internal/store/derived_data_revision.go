@@ -25,17 +25,18 @@ func (s *Store) bumpDerivedDataRevision(tx *loggedTx, relatedOnly ...bool) error
 }
 
 // bumpDerivedDataRevisionContext honors cancellation during bumpDerivedDataRevision.
-func (s *Store) bumpDerivedDataRevisionContext(ctx context.Context, tx *loggedTx, relatedOnly ...bool) error {
-	if _, err := tx.ExecContext(ctx, s.dialect.InsertOrIgnore(
-		`INSERT OR IGNORE INTO archive_metadata (key, value) VALUES (?, '0')`),
+// tx may be a transaction or an exclusive connection that has begun one.
+func (s *Store) bumpDerivedDataRevisionContext(ctx context.Context, tx contextStatementQuerier, relatedOnly ...bool) error {
+	if _, err := tx.ExecContext(ctx, s.Rebind(s.dialect.InsertOrIgnore(
+		`INSERT OR IGNORE INTO archive_metadata (key, value) VALUES (?, '0')`)),
 		derivedDataRevisionKey); err != nil {
 		return fmt.Errorf("seed derived-data revision: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `
+	if _, err := tx.ExecContext(ctx, s.Rebind(`
 		UPDATE archive_metadata
 		SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT)
 		WHERE key = ?
-	`, derivedDataRevisionKey); err != nil {
+	`), derivedDataRevisionKey); err != nil {
 		return fmt.Errorf("bump derived-data revision: %w", err)
 	}
 	if len(relatedOnly) > 0 && relatedOnly[0] && !s.IsPostgreSQL() {

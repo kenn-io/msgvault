@@ -1605,18 +1605,19 @@ func (s *Store) UpsertMessageBody(messageID int64, bodyText, bodyHTML sql.NullSt
 	return s.UpsertMessageBodyContext(context.Background(), messageID, bodyText, bodyHTML)
 }
 
-// UpsertMessageBodyContext honors cancellation during UpsertMessageBody.
+// UpsertMessageBodyContext honors cancellation during UpsertMessageBody. The
+// body write and its search and embedding invalidation commit together, so a
+// cancelled call cannot leave a new body marked as already embedded.
 func (s *Store) UpsertMessageBodyContext(ctx context.Context, messageID int64, bodyText, bodyHTML sql.NullString) error {
-	if s.syncGeneration != nil {
-		return s.withTxContext(ctx, func(tx *loggedTx) error {
-			if err := s.requireSyncMessageSourceTx(boundQuerier{ctx: ctx, q: tx}, messageID); err != nil {
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		q := boundQuerier{ctx: ctx, q: tx}
+		if s.syncGeneration != nil {
+			if err := s.requireSyncMessageSourceTx(q, messageID); err != nil {
 				return err
 			}
-			return upsertMessageBody(boundQuerier{ctx: ctx, q: tx}, s.dialect, s.fts5Available,
-				messageID, bodyText, bodyHTML)
-		})
-	}
-	return upsertMessageBody(boundQuerier{ctx: ctx, q: s.db}, s.dialect, s.fts5Available, messageID, bodyText, bodyHTML)
+		}
+		return upsertMessageBody(q, s.dialect, s.fts5Available, messageID, bodyText, bodyHTML)
+	})
 }
 
 func upsertMessageBody(
@@ -1631,8 +1632,7 @@ func upsertMessageBody(
 		return err
 	}
 	if textChanged && ftsAvailable {
-		// Invalidate first. UpsertMessageBody is also used outside a wider
-		// transaction; if the body write then fails, a missing index entry is
+		// Invalidate before the body write: a missing index entry is
 		// recoverable by backfill, while a stale entry could produce a false hit.
 		if err := dialect.InvalidateFTSForMessage(q, messageID); err != nil {
 			return fmt.Errorf("invalidate message FTS document: %w", err)

@@ -322,6 +322,10 @@ func (s *Store) RemoveSourceSerialized(
 	if err := s.recomputeUnsupportedGeneratedIdentityMatchesConnContext(ctx, conn); err != nil {
 		return hadActiveSync, 0, err
 	}
+	// Analytics caches cannot unpublish exported rows incrementally.
+	if err := s.bumpDerivedDataRevisionContext(ctx, conn); err != nil {
+		return hadActiveSync, 0, err
+	}
 
 	const deleteChunkSize = 500
 	for start := 0; start < len(uniquePackedHashes); start += deleteChunkSize {
@@ -419,7 +423,7 @@ func (s *Store) removeSourceExec(
 	if err := s.recomputeUnsupportedGeneratedIdentityMatchesTxContext(ctx, tx); err != nil {
 		return err
 	}
-	return nil
+	return s.bumpDerivedDataRevisionContext(ctx, tx)
 }
 
 // sourceIdentityQuery returns the common rowsScanner shape used by *loggedTx and

@@ -15,6 +15,7 @@ import (
 type purgeQuerier interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
 // channelPurge selects one Slack channel or one Discord parent and its threads.
@@ -87,6 +88,11 @@ func (s *Store) PurgeChannelContext(ctx context.Context, sourceID int64, channel
 			_, _ = conn.ExecContext(context.WithoutCancel(ctx), "ROLLBACK")
 		}
 	}()
+	// A queued or running daemon operation would restore the channel from
+	// its own resume state; refuse like source removal does.
+	if err := s.rejectConflictingSyncOperation(ctx, conn, sourceID, ""); err != nil {
+		return err
+	}
 	if err := s.purgeChannelExec(ctx, conn, purge); err != nil {
 		return err
 	}
@@ -110,8 +116,10 @@ func (s *Store) purgeChannelExec(ctx context.Context, q purgeQuerier, purge chan
 		return err
 	}
 	if !s.IsPostgreSQL() && s.fts5Available {
+		// FTS rows use the message ID as their rowid; message_id itself is
+		// unindexed, so filtering on it would scan the whole index.
 		if _, err := q.ExecContext(ctx, s.dialect.Rebind(
-			"DELETE FROM messages_fts WHERE message_id IN ("+purge.targetMessages()+")"), purge.args...); err != nil {
+			"DELETE FROM messages_fts WHERE rowid IN ("+purge.targetMessages()+")"), purge.args...); err != nil {
 			return fmt.Errorf("purge channel full-text entries: %w", err)
 		}
 	}
@@ -126,7 +134,12 @@ func (s *Store) purgeChannelExec(ctx context.Context, q purgeQuerier, purge chan
 		"DELETE FROM conversations WHERE id IN ("+purge.targets()+")"), purge.args...); err != nil {
 		return fmt.Errorf("purge channel conversations: %w", err)
 	}
-	return s.deleteUnreferencedPackMappings(ctx, q, packedHashes)
+	if err := s.deleteUnreferencedPackMappings(ctx, q, packedHashes); err != nil {
+		return err
+	}
+	// Analytics caches cannot unpublish exported rows incrementally; a new
+	// revision makes the next cache pass rebuild without the purged messages.
+	return s.bumpDerivedDataRevisionContext(ctx, q)
 }
 
 func (s *Store) purgedConversationIDs(ctx context.Context, q purgeQuerier, purge channelPurge) ([]string, error) {
