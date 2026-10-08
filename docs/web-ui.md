@@ -264,7 +264,8 @@ identities that belong together.
 Select a day in a person's relationship calendar to show that day's activity
 in the message timeline. Dates use your browser's local time zone. Select the
 same day again or **Clear date** to restore the previous date range. Other
-filters stay active; switching people or calendar years clears the day selection.
+filters stay active; switching people, calendar years, or to **Files** clears
+the day selection.
 
 People in this workspace are observed identity clusters. Source identities
 that mean “me,” explicit durable profile promotion, display-name overrides, and

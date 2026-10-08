@@ -56,6 +56,7 @@ export interface RelationshipsMergeContext {
 type ListRow = RelationshipRow | PersonSummary | DomainSummary;
 type ListRows = RelationshipRow[] | PersonSummary[] | DomainSummary[];
 type TimelineDay = { date: string; start: string; end: string };
+type TargetRestore = { year?: number; restarted?: boolean; day?: TimelineDay | null };
 /** Snapshot of the query context a list page belongs to, captured by
  * loadList so loadMoreList replays the exact same endpoint and body (plus
  * the cursor) even if `facet`/`query`/`showAll` have since been reassigned. */
@@ -369,8 +370,7 @@ export class RelationshipsController {
   private async openTargetWithCalendarState(
     target: string,
     predicate: ExplorePredicate,
-    selectedCalendarYear?: number,
-    calendarRestarted = false,
+    restore: TargetRestore = {},
   ): Promise<void> {
     this.clearDetailCacheBuildRetry();
     this.detailAbort?.abort();
@@ -388,7 +388,8 @@ export class RelationshipsController {
     this.timelineLoadingMore = false;
     this.canonicalID = null;
     this.identityRevision = null;
-    this.resetRelationshipCalendar(selectedCalendarYear, calendarRestarted);
+    this.resetRelationshipCalendar(restore.year, restore.restarted);
+    this.timelineDay = restore.day ?? null;
     this.seenCursors = new Set<string>();
     const clusterID = parseClusterID(target);
     const domainName = parseDomainName(target);
@@ -444,7 +445,7 @@ export class RelationshipsController {
             signal,
           },
         ),
-        this.fetchClusterPage(id, predicate.filters ?? undefined, generation, undefined,
+        this.fetchClusterPage(id, this.timelineFilters(), generation, undefined,
           AbortSignal.any([signal, this.timelineAbort.signal])),
         hasActiveFilters(context)
           ? generatedGetParticipantContextSummary({ id: id }, context, {
@@ -613,7 +614,7 @@ export class RelationshipsController {
       if (changed) {
         this.relationshipCalendarCache.clear();
         if (!this.relationshipCalendarRestarted && target !== null && this.lastPredicate) {
-          await this.openTargetWithCalendarState(target, this.lastPredicate, year, true);
+          await this.openTargetWithCalendarState(target, this.lastPredicate, { year, restarted: true });
           return;
         }
         this.relationshipCalendarError = 'Relationship activity changed again. Retry when the archive settles.';
@@ -666,7 +667,6 @@ export class RelationshipsController {
   async selectTimelineDay(day: TimelineDay | null): Promise<void> {
     const id = this.target ? parseClusterID(this.target) : undefined;
     if (id === undefined || !this.lastPredicate || !this.detailAbort) return;
-    this.clearDetailCacheBuildRetry();
     this.timelineAbort.abort();
     this.timelineAbort = new AbortController();
     const signal = AbortSignal.any([this.detailAbort.signal, this.timelineAbort.signal]);
@@ -891,12 +891,16 @@ export class RelationshipsController {
     if (this.detailCacheBuildRetry === undefined && this.target && this.lastPredicate) {
       const target = this.target;
       const predicate = this.lastPredicate;
+      // Reload the header and timeline together, keeping the calendar year
+      // and selected day. Every path that changes the generation also
+      // clears this timer, so the timer does not need the request signal.
       this.detailCacheBuildRetry = setTimeout(() => {
         this.detailCacheBuildRetry = undefined;
-        if (generation === this.detailGeneration && !signal.aborted) {
-          if (this.timelineDay) void this.selectTimelineDay(this.timelineDay);
-          else void this.openTarget(target, predicate);
-        }
+        if (generation !== this.detailGeneration) return;
+        void this.openTargetWithCalendarState(target, predicate, {
+          year: this.relationshipCalendarYear,
+          day: this.timelineDay,
+        });
       }, 1000);
     }
     return true;

@@ -242,6 +242,7 @@ test.describe('day selection', () => {
     await expect(timeline.getByText('Spring planning')).toBeVisible();
     await expect(page.getByRole('radio', { name: 'Messages', exact: true })).toBeChecked();
     await expect(day).toHaveAttribute('aria-pressed', 'true');
+    const historyLength = await page.evaluate(() => history.length);
     expect(requests.at(-1)).toMatchObject({
       timezone: 'America/New_York',
       filters: [
@@ -266,6 +267,15 @@ test.describe('day selection', () => {
     await expect(timeline.getByText('All relationship activity')).toBeVisible();
     expect(requests.at(-1)?.filters ?? []).toEqual([]);
     await expect(emptyDay).toHaveAttribute('aria-pressed', 'false');
+    expect(await page.evaluate(() => history.length)).toBe(historyLength);
+
+    await day.click();
+    await expect(timeline.getByText('Spring planning')).toBeVisible();
+    await page.getByRole('radio', { name: 'Files 0' }).click();
+    await expect(day).toHaveAttribute('aria-pressed', 'false');
+    await expect(calendar.getByRole('button', { name: 'Clear date' })).toHaveCount(0);
+    await page.getByRole('radio', { name: 'Messages', exact: true }).click();
+    await expect(timeline.getByText('All relationship activity')).toBeVisible();
 
     await day.click();
     await expect(day).toHaveAttribute('aria-pressed', 'true');

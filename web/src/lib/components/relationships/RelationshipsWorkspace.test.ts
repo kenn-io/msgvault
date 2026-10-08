@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
-import { describe, expect, it, vi } from 'vitest';
+import { tick } from 'svelte';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
 import { KataReadiness, kataReadinessKey } from '../../kata/kata-ready.svelte';
@@ -117,6 +118,74 @@ describe('RelationshipsWorkspace relationship calendar', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Previous relationship year' }));
     await waitFor(() => expect(years).toEqual([2026, 2025]));
     expect(await within(calendarSection).findAllByRole('button', { name: '1 message on Jan 1, 2025' })).not.toHaveLength(0);
+  });
+
+  it('changes the Files view only when a day is selected from Files, and clears the day when Files opens', async () => {
+    vi.stubEnv('TZ', 'UTC');
+    onTestFinished(() => { vi.unstubAllEnvs(); });
+    const timelineFilters: unknown[] = [];
+    const { fetchFn } = fetchHandler({
+      '/api/v1/participants/1': async () => Response.json(person(1, 'Alice Example')),
+      '/api/v1/relationships/1/timeline': async (request) => {
+        timelineFilters.push((await request.clone().json()).filters);
+        return Response.json({
+          canonical_id: 1, identity_revision: 3, cache_revision: 'cache-rel', rows: [], total_count: 0
+        });
+      },
+      '/api/v1/relationships/1/calendar': async () => Response.json(relationshipCalendar(1, 2026)),
+      '/api/v1/participants/1/files/search': async () => Response.json({
+        files: [], total_count: 0, cache_revision: 'cache-rel', search_provenance: {}
+      })
+    });
+    const props = { ...baseProps(fetchFn), target: 'cluster:1' };
+    const { rerender } = render(RelationshipsWorkspace, { props });
+    await props.controller.openTarget('cluster:1', props.predicate);
+    const calendarSection = await screen.findByRole('region', { name: 'Relationship activity calendar' });
+    const day = () => within(calendarSection).getAllByRole('button', { name: '1 message on Jan 1, 2026' })[0];
+
+    await fireEvent.click(await waitFor(day));
+    await waitFor(() => expect(day().getAttribute('aria-pressed')).toBe('true'));
+    await waitFor(() => expect(timelineFilters.at(-1)).toEqual([
+      { dimension: 'after', values: ['2026-01-01T00:00:00.000Z'] },
+      { dimension: 'before', values: ['2026-01-02T00:00:00.000Z'] }
+    ]));
+    expect(props.onFilesToggle).not.toHaveBeenCalled();
+
+    await rerender({ ...props, filesOpen: true });
+    await waitFor(() => expect(day().getAttribute('aria-pressed')).toBe('false'));
+    expect(within(calendarSection).queryByRole('button', { name: 'Clear date' })).toBeNull();
+    await waitFor(() => expect(timelineFilters.at(-1)).toEqual([]));
+
+    await fireEvent.click(day());
+    expect(props.onFilesToggle).toHaveBeenCalledExactlyOnceWith(false);
+  });
+
+  it('closes the reading pane without taking focus from the selected day', async () => {
+    const { fetchFn } = fetchHandler({
+      '/api/v1/participants/1': async () => Response.json(person(1, 'Alice Example')),
+      '/api/v1/relationships/1/timeline': async () => Response.json({
+        canonical_id: 1, identity_revision: 3, cache_revision: 'cache-rel',
+        rows: [{ key: 'message:1', kind: 'email', occurred_at: when, preview: 'Preview text', source_id: 1, title: 'Subject line', has_attachments: false, message_count: 1, anchor_message_id: 9, conversation_id: 70 }],
+        total_count: 1
+      }),
+      '/api/v1/relationships/1/calendar': async () => Response.json(relationshipCalendar(1, 2026)),
+      '/api/v1/conversations/70': async () => Response.json({
+        id: 70, anchor_id: 9, has_before: false, has_after: false, total: 0, messages: []
+      })
+    });
+    const props = { ...baseProps(fetchFn), target: 'cluster:1' };
+    render(RelationshipsWorkspace, { props });
+    await props.controller.openTarget('cluster:1', props.predicate);
+    await fireEvent.click((await screen.findByText('Subject line')).closest('[role="row"]')!);
+    await screen.findByRole('complementary', { name: /Reading pane/ });
+    const calendarSection = screen.getByRole('region', { name: 'Relationship activity calendar' });
+    const day = (await within(calendarSection).findAllByRole('button', { name: '1 message on Jan 1, 2026' }))[0];
+
+    day.focus();
+    await fireEvent.click(day);
+    await waitFor(() => expect(screen.queryByRole('complementary', { name: /Reading pane/ })).toBeNull());
+    await tick();
+    expect(document.activeElement).toBe(day);
   });
 
   it('does not render or request a calendar for domain targets', async () => {

@@ -297,11 +297,15 @@
   // shape): only re-focus the timeline when a pane was actually open, so
   // this stays a no-op when called defensively (e.g. from selectListRow).
   async function closeReadingPane(): Promise<void> {
+    if (clearReadingPane()) await focusTimelinePane();
+  }
+
+  function clearReadingPane(): boolean {
     const wasOpen = selection !== undefined;
     selection = undefined;
     conversationAnchorId = undefined;
     conversationBounds = undefined;
-    if (wasOpen) await focusTimelinePane();
+    return wasOpen;
   }
 
   function selectListRow(nextTarget: string): void {
@@ -420,9 +424,7 @@
   $effect(() => {
     if (target === previousTarget) return;
     previousTarget = target;
-    selection = undefined;
-    conversationAnchorId = undefined;
-    conversationBounds = undefined;
+    clearReadingPane();
   });
 
   async function closeDrawer(): Promise<void> {
@@ -450,13 +452,20 @@
       : undefined;
   }
 
+  // Focus stays on the calendar control the person just used.
   function selectCalendarDate(date: string | null): void {
-    void closeReadingPane();
-    onFilesToggle(false);
+    clearReadingPane();
+    if (filesOpen) onFilesToggle(false);
     void controller.selectTimelineDay(date
       ? { date, ...localDayBoundsUTC(`${date}T00:00:00`) }
       : null);
   }
+
+  // The day filters only the message timeline, so Files never shows a day.
+  $effect(() => {
+    if (!filesOpen || !controller.timelineDay) return;
+    untrack(() => { void controller.selectTimelineDay(null); });
+  });
 
   function editableTarget(value: EventTarget | null): boolean {
     const element = value as HTMLElement | null;

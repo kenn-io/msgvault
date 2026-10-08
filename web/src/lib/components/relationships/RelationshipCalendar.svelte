@@ -416,9 +416,17 @@
     cursor: pointer;
   }
 
-  button.heat-cell:hover,
-  button.heat-cell:focus-visible,
+  button.heat-cell:hover {
+    outline: 1px solid var(--border-strong);
+    outline-offset: 1px;
+  }
+
   button.heat-cell[aria-pressed='true'] {
+    outline: 2px solid var(--text-primary);
+    outline-offset: 1px;
+  }
+
+  button.heat-cell:focus-visible {
     outline: 2px solid var(--accent-blue);
     outline-offset: 1px;
   }

@@ -1162,6 +1162,53 @@ describe('RelationshipsController calendar day selection', () => {
     controller.destroy();
   });
 
+  it('keeps the selected day and calendar year when retrying a header that was still building', async () => {
+    vi.useFakeTimers();
+    let summaryCalls = 0;
+    const timelineFilters: unknown[] = [];
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = pathOf(request);
+      if (path === '/api/v1/participants/1') return Response.json({ ...person(1), first_at: '2018-01-02T00:00:00Z' });
+      if (path === '/api/v1/participants/1/summary') {
+        summaryCalls += 1;
+        if (summaryCalls === 1) return Response.json({
+          error: 'analytical_cache_unavailable', message: 'The analytical cache is being prepared',
+          readiness: 'building', recovery_action: ''
+        }, { status: 503 });
+        return Response.json({ summary: { ...person(1), activity_count: 7 } });
+      }
+      if (path === '/api/v1/relationships/1/calendar') return Response.json({}, { status: 404 });
+      if (path === '/api/v1/relationships/1/timeline') {
+        timelineFilters.push((await request.json()).filters);
+        return Response.json({
+          canonical_id: 1, identity_revision: 1, cache_revision: 'cache-rel', rows: [timelineRow('row')]
+        });
+      }
+      throw new Error(`unexpected path ${path}`);
+    });
+    const controller = new RelationshipsController(createAPIClient(fetchFn), () => 'UTC');
+    const sourceFilter = { dimension: 'source' as const, values: ['2'] };
+    await controller.openTarget('cluster:1', { presentation: 'table', filters: [sourceFilter] });
+    await controller.loadRelationshipYear(2025);
+    await controller.selectTimelineDay({
+      date: '2025-03-08', start: '2025-03-08T00:00:00.000Z', end: '2025-03-09T00:00:00.000Z'
+    });
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.waitFor(() => expect(controller.detail?.activity_count).toBe(7));
+    expect(controller.timelineDay?.date).toBe('2025-03-08');
+    expect(controller.relationshipCalendarYear).toBe(2025);
+    expect(timelineFilters.at(-1)).toEqual([
+      sourceFilter,
+      { dimension: 'after', values: ['2025-03-08T00:00:00.000Z'] },
+      { dimension: 'before', values: ['2025-03-09T00:00:00.000Z'] }
+    ]);
+
+    controller.destroy();
+    vi.useRealTimers();
+  });
+
   it.each(['another day', 'clear date', 'another person'])(
     'discards a late day response after selecting %s', async (action) => {
       let resolveDay!: (response: Response) => void;
