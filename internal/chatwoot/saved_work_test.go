@@ -125,7 +125,9 @@ func TestSavedWorkFatalErrorsStopReads(t *testing.T) {
 				blocked := filepath.Join(opts.AttachmentsDir, "blocked")
 				require.NoError(os.WriteFile(blocked, []byte("file"), 0600))
 				opts.AttachmentsDir = blocked
-				api.Conversations[2][0]["attachments"] = []any{map[string]any{"id": int64(2001), "file_type": "image", "data_url": router.url(t, media.server, "/recording-a.ogg")}}
+				api.Conversations[2][0]["content_type"] = "voice_call"
+				api.Conversations[2][0]["call"] = map[string]any{"id": 601, "status": "completed", "duration_seconds": 30, "transcript": "filesystemquartz source transcript"}
+				api.Conversations[2][0]["attachments"] = []any{map[string]any{"id": int64(2001), "file_type": "audio", "data_url": router.url(t, media.server, "/recording-a.ogg")}}
 			}
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
@@ -166,6 +168,29 @@ func TestSavedWorkFatalErrorsStopReads(t *testing.T) {
 				state, stateErr := NewImporter(st, api.client(t)).resumeState(source.ID, source.Identifier)
 				require.NoError(stateErr)
 				assert.NotEmpty(state.Conversations["2"].Pending)
+			}
+			if kind == "filesystem" {
+				chatID := contractArchivedMessageID(t, st, "20")
+				meetingID := contractArchivedMessageID(t, st, "call:20")
+				body, err := st.GetMessageBodyText(meetingID)
+				require.NoError(err)
+				assert.Contains(body, "filesystemquartz source transcript")
+				raw, err := st.GetMessageRaw(meetingID)
+				require.NoError(err)
+				assert.Contains(string(raw), `"duration_seconds":30`)
+				for _, pair := range [][2]int64{{chatID, meetingID}, {meetingID, chatID}} {
+					detail, err := st.GetMessageContext(t.Context(), pair[0])
+					require.NoError(err)
+					assert.Equal(new(pair[1]), detail.RelatedMessageID)
+				}
+				opts.AttachmentsDir = filepath.Dir(opts.AttachmentsDir)
+				api.DeniedMessages = nil
+				_, err = NewImporter(st, api.client(t)).Import(t.Context(), opts)
+				require.NoError(err)
+				for _, id := range []int64{chatID, meetingID} {
+					_, payloads := readMediaRefreshBytes(t, st, id, opts.AttachmentsDir)
+					assert.Equal([]string{"synthetic recording A bytes"}, payloads)
+				}
 			}
 		})
 	}

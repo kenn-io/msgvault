@@ -11,7 +11,7 @@ import (
 const stateVersion = 1
 
 // Both bounds are necessary: Chatwoot orders pages by creation time, while
-// bounds filter numeric IDs. A short page never proves that a range is complete.
+// bounds filter numeric IDs. Fully handled short responses complete ranges; capped responses retain unresolved ranges.
 type idRange struct {
 	After  int64 `json:"after"`
 	Before int64 `json:"before"`

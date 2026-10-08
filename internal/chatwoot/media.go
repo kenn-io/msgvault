@@ -177,6 +177,9 @@ func (imp *Importer) persistMedia(ctx context.Context, messageID int64, attachme
 		policy.MaxBytes = maxBytes
 		reason := policy.Evaluate(attachmentpolicy.Conversation{}, proposedSize)
 		switch {
+		case remote == "" && evidence.FailedSince > 0:
+			ref.State = attachmentpolicy.StateFailed
+			ref.SkipReason = attachmentpolicy.SkipFetchFailure
 		case unchanged:
 			ref.State = attachmentpolicy.StateStored
 			if currentURL == storedURL && currentURL != "" {

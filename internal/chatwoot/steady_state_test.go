@@ -191,9 +191,23 @@ func TestEmailReplyUsesItsAddressedRecipients(t *testing.T) {
 	replyTo := contractRecipients(t, st, contractArchivedMessageID(t, st, "302"), "to")
 	require.Len(replyTo, 1)
 	assert.NotEqual(to[0].ParticipantID, replyTo[0].ParticipantID, "an ordinary reply still reaches the contact")
-	copiedTo := contractRecipients(t, st, contractArchivedMessageID(t, st, "303"), "to")
+	copiedID := contractArchivedMessageID(t, st, "303")
+	copiedTo := contractRecipients(t, st, copiedID, "to")
 	require.Len(copiedTo, 1)
 	assert.Equal(replyTo[0].ParticipantID, copiedTo[0].ParticipantID, "a reply with only copies still reaches the contact")
+	for stage := range 3 {
+		switch stage {
+		case 1:
+			_, err = st.RebuildFTS(nil)
+			require.NoError(err)
+		case 2:
+			_, err = NewImporter(st, api.client(t)).Import(t.Context(), ImportOptions{InboxID: 7, Full: true})
+			require.NoError(err)
+		}
+		results, _, err := st.SearchMessages("copy", 0, 10)
+		require.NoError(err)
+		assert.True(slices.ContainsFunc(results, func(row store.APIMessage) bool { return row.ID == copiedID }), "CC-only recipient stays searchable at stage %d", stage)
+	}
 
 	api.Mu.Lock()
 	forward["content_attributes"] = map[string]any{"to_emails": []string{"forward@example.com"}}
@@ -202,7 +216,6 @@ func TestEmailReplyUsesItsAddressedRecipients(t *testing.T) {
 	_, err = NewImporter(st, api.client(t)).Import(t.Context(), ImportOptions{InboxID: 7, Full: true})
 	require.NoError(err)
 	assert.Empty(contractRecipients(t, st, forwardID, "cc"), "a refreshed message drops copies it no longer lists")
-	copiedID := contractArchivedMessageID(t, st, "303")
 	assert.False(contractSender(t, st, copiedID).Valid)
 	assert.Empty(contractRecipients(t, st, copiedID, "from"), "a refreshed message drops a sender it lost")
 }

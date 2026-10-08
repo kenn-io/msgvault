@@ -269,7 +269,7 @@ func (c *Client) GetConversation(ctx context.Context, conversationID int64) (Con
 
 // ListMessages uses provider ID bounds. With both bounds, after is inclusive;
 // alone it is exclusive. Oversized before is unbounded on pinned Chatwoot.
-// Response size never proves a range complete; use empty-range observations.
+// A fully handled response below the verified cap completes its range; capped responses retain unresolved ranges.
 func (c *Client) ListMessages(ctx context.Context, conversationID, after, before int64) ([]Message, error) {
 	if conversationID <= 0 || after < 0 || before < 0 {
 		return nil, errors.New("invalid Chatwoot conversation or message bounds")

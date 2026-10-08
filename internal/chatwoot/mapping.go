@@ -126,10 +126,13 @@ func (imp *Importer) persistMessage(ctx context.Context, sourceID int64, c Conve
 	if title == "" {
 		title = fmt.Sprintf("Chatwoot conversation %d", c.ID)
 	}
-	var toEmails []string
+	var toEmails, ccEmails []string
 	for _, recipient := range recipients {
-		if recipient.Type == "to" {
+		switch recipient.Type {
+		case "to":
 			toEmails = append(toEmails, recipient.EmailAddresses...)
+		case "cc":
+			ccEmails = append(ccEmails, recipient.EmailAddresses...)
 		}
 	}
 	data := &store.MessagePersistData{
@@ -139,7 +142,7 @@ func (imp *Importer) persistMessage(ctx context.Context, sourceID int64, c Conve
 			Subject: sql.NullString{String: title, Valid: true}, Snippet: sql.NullString{String: meetingarchive.Snippet(body), Valid: body != ""}, SizeEstimate: int64(len(body)), PreserveAttachmentStats: true},
 		Conversation: &store.ConversationPersistData{SourceConversationID: strconv.FormatInt(c.ID, 10), ConversationType: "direct_chat", Title: title, Participants: members, PreserveExistingParticipants: true},
 		Metadata:     &meta, BodyText: sql.NullString{String: body, Valid: body != ""}, RawMIME: raw, RawFormat: "chatwoot_json", Recipients: recipients, PreserveLabels: true,
-		FTS: &store.FTSDoc{Subject: title, Body: body, FromAddr: envelopeEmail(sender), ToAddrs: strings.Join(toEmails, " ")},
+		FTS: &store.FTSDoc{Subject: title, Body: body, FromAddr: envelopeEmail(sender), ToAddrs: strings.Join(toEmails, " "), CcAddrs: strings.Join(ccEmails, " ")},
 	}
 	var messageID int64
 	unchanged := false
@@ -191,30 +194,35 @@ func (imp *Importer) persistMessage(ctx context.Context, sourceID int64, c Conve
 	if _, found := existing[sourceMessageID]; !found {
 		sum.MessagesAdded++
 	}
-	failedSince, waiting, err := imp.persistMedia(ctx, messageID, m.Attachments, opts, sum, nil)
-	if err != nil {
-		return 0, err
-	}
-	if waiting {
-		refreshFrom = m.CreatedAt
-	}
-	for _, a := range m.Attachments {
-		if isAudio(a) && a.TranscribedText == "" {
-			refreshFrom = m.CreatedAt
-		}
-	}
-	refreshFrom = max(refreshFrom, failedSince)
+	var callMedia map[string]store.AttachmentRef
 	if m.ContentType == "voice_call" {
 		chatMedia, mediaErr := imp.store.MessageProviderAttachments(messageID, "chatwoot:")
 		if mediaErr != nil {
 			return 0, mediaErr
 		}
-		_, callRefreshFrom, callErr := imp.persistCall(ctx, sourceID, c, m, messageID, contact, contactID, sender, senderID, metadata, chatMedia, opts, sum)
+		meetingID, callRefreshFrom, callErr := imp.persistCall(ctx, sourceID, c, m, messageID, contact, contactID, sender, senderID, metadata, chatMedia, opts, sum)
 		if callErr != nil {
 			return 0, callErr
 		}
 		refreshFrom = max(refreshFrom, callRefreshFrom)
+		callMedia, err = imp.store.MessageProviderAttachments(meetingID, "chatwoot:")
+		if err != nil {
+			return 0, err
+		}
 	}
+	failedSince, waiting, err := imp.persistMedia(ctx, messageID, m.Attachments, opts, sum, callMedia)
+	if err != nil {
+		return 0, err
+	}
+	if waiting {
+		refreshFrom = max(refreshFrom, m.CreatedAt)
+	}
+	for _, a := range m.Attachments {
+		if isAudio(a) && a.TranscribedText == "" {
+			refreshFrom = max(refreshFrom, m.CreatedAt)
+		}
+	}
+	refreshFrom = max(refreshFrom, failedSince)
 	return refreshFrom, nil
 }
 
