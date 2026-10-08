@@ -34,7 +34,7 @@ func TestBuildCache_RefreshesReplyUpdatedBeforeSlackYield(t *testing.T) {
 	var replyRequests atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("X-OAuth-Scopes", "channels:read,channels:history,users:read")
+		w.Header().Set("X-Oauth-Scopes", "channels:read,channels:history,users:read")
 		response := map[string]any{"ok": true}
 		root := map[string]any{
 			"type": "message", "user": "UME", "ts": "1750000000.000001",

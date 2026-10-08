@@ -3,6 +3,7 @@ package slack
 import (
 	"context"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -298,4 +299,78 @@ func TestFinalCheckpointYieldPreservesEarlierFetchFailure(t *testing.T) {
 	assert.Equal("failed", latest.Status)
 	assert.Contains(latest.ErrorMessage.String, "fetch error", "the queued continuation must retain the pass failure")
 	assert.ErrorContains(err, "fetch error", "the scheduler must receive the failure as well as the cancellation")
+}
+
+func TestScheduledYieldDuringFTSWrite(t *testing.T) {
+	testutil.SkipIfPostgres(t, "uses a SQLite authorizer to interrupt the FTS write")
+	for _, tc := range []struct {
+		name       string
+		failFTS    bool
+		wantStatus string
+		wantErrors int
+	}{
+		{name: "yield during write", wantStatus: "cancelled"},
+		{name: "independent failure before yield", failFTS: true, wantStatus: "failed", wantErrors: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			f := testWorkspace(t)
+			f.scopes = "channels:read,channels:history,users:read,users:read.email"
+			f.convs = []*fakeConv{{ID: "C01", Name: "general", Kind: "public", Members: []string{"UME"},
+				Msgs: []fakeMsg{{TS: ts(1), User: "UME", Text: "recoverable message"}}}}
+			imp, opts := testImporter(t, f)
+			ctx, cancel := context.WithCancelCause(t.Context())
+			defer cancel(nil)
+			var reachedFTS atomic.Bool
+			imp.store.DB().SetMaxOpenConns(1)
+			conn, err := imp.store.DB().Conn(t.Context())
+			require.NoError(err)
+			require.NoError(conn.Raw(func(driverConn any) error {
+				sqliteConn, ok := driverConn.(*sqlite3.SQLiteConn)
+				require.True(ok)
+				sqliteConn.RegisterAuthorizer(func(action int, table, _, _ string) int {
+					if action == sqlite3.SQLITE_INSERT && table == "messages_fts" && reachedFTS.CompareAndSwap(false, true) {
+						if tc.failFTS {
+							return sqlite3.SQLITE_DENY
+						}
+						cancel(jobctx.ErrYieldedToWaiter)
+					}
+					return sqlite3.SQLITE_OK
+				})
+				return nil
+			}))
+			require.NoError(conn.Close())
+			if tc.failFTS {
+				// A genuine index failure remains visible when the scheduler
+				// subsequently yields after the message has been archived.
+				opts.Progress = func(line string) {
+					if strings.HasPrefix(line, "conversation ") {
+						cancel(jobctx.ErrYieldedToWaiter)
+					}
+				}
+			}
+
+			sum, err := imp.Import(ctx, opts)
+			require.ErrorIs(err, context.Canceled)
+			require.True(reachedFTS.Load(), "the interruption must occur at the FTS write")
+			assert.Equal(tc.wantErrors, sum.Errors)
+			latest, err := imp.store.GetLatestSync(sum.SourceID)
+			require.NoError(err)
+			assert.Equal(tc.wantStatus, latest.Status)
+			assert.Equal(int64(tc.wantErrors), latest.ErrorsCount)
+			checkpoint, err := imp.store.GetLatestCheckpointedSync(sum.SourceID)
+			require.NoError(err)
+			assert.Equal(latest.ID, checkpoint.ID)
+			if !tc.failFTS {
+				assert.Empty(latest.ErrorMessage.String)
+				_, err = imp.Import(t.Context(), opts)
+				require.NoError(err)
+				var matches int
+				require.NoError(imp.store.DB().QueryRow(`SELECT COUNT(*) FROM messages_fts
+					WHERE messages_fts MATCH 'recoverable'`).Scan(&matches))
+				assert.Equal(1, matches, "the continuation must index the interrupted message")
+			}
+		})
+	}
 }

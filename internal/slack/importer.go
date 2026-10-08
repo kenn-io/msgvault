@@ -1244,6 +1244,9 @@ func (imp *Importer) processMessage(ctx context.Context, cc *convScope, m *Messa
 	// by FTSNeedsBackfill's anti-join, and rebuild-fts repopulates them —
 	// the same policy every other importer follows.
 	if err := imp.store.UpsertFTSContext(ctx, messageID, "", text, imp.res.displayName(m.User), "", ""); err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return err
+		}
 		sum.Errors++
 	}
 	if m.Edited != nil {
