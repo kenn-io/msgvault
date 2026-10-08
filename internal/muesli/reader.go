@@ -3,6 +3,7 @@ package muesli
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"strings"
 
 	"go.kenn.io/msgvault/internal/meetingidentity"
+	"go.kenn.io/msgvault/internal/sqliteutil"
 )
 
 // maxFolderDepth bounds folder-path resolution so a corrupt parent cycle
@@ -29,6 +31,9 @@ type Reader struct {
 // Muesli database. SQLite may use the WAL sidecar files to coordinate with a
 // running Muesli app; query_only prevents this connection from changing data.
 func Open(ctx context.Context, path string) (*Reader, error) {
+	if !sqliteutil.Available {
+		return nil, errors.New("reading a Muesli database requires a msgvault build with CGO enabled")
+	}
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return nil, fmt.Errorf("open Muesli database %s: %w", path, err)

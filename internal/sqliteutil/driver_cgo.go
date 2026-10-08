@@ -1,7 +1,5 @@
 //go:build cgo
 
-// Package sqliteutil provides the SQLite driver variant shared by msgvault's
-// production store and tests that exercise SQLite query behavior.
 package sqliteutil
 
 import (
@@ -48,4 +46,24 @@ func DriverName() string {
 		})
 	})
 	return driverName
+}
+
+// timestampKey returns an exact sortable instant, or SQL NULL for absent,
+// invalid and zero timestamps, matching the Store's nullable timestamp reader.
+// Separate seconds and nanoseconds retain dates outside UnixNano's range.
+func timestampKey(value any) []byte {
+	var text string
+	switch value := value.(type) {
+	case string:
+		text = value
+	case []byte:
+		text = string(value)
+	default:
+		return nil
+	}
+	parsed := ParseTime(text)
+	if parsed.IsZero() {
+		return nil
+	}
+	return TimestampKey(parsed)
 }

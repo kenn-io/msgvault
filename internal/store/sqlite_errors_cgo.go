@@ -5,8 +5,9 @@ package store
 import (
 	"context"
 	"errors"
-	"github.com/mattn/go-sqlite3"
 	"strings"
+
+	"github.com/mattn/go-sqlite3"
 )
 
 // isSQLiteError checks if err is a sqlite3.Error with a message containing substr.

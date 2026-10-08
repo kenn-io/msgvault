@@ -4,6 +4,7 @@ package duckdbutil
 
 import (
 	"errors"
+
 	"github.com/duckdb/duckdb-go/v2"
 )
 
