@@ -65,6 +65,7 @@ const attachmentBytesArchived = `(length(COALESCE(a.content_hash, '')) = 64
 // storage_path is a trusted CAS path, which only casPathHash can check.
 const hashlessProviderAlias = `(COALESCE(a.content_hash, '') = ''
 	  AND COALESCE(a.size, 0) > 0
+	  AND COALESCE(a.storage_path, '') <> ''
 	  AND (COALESCE(a.source_attachment_id, '') LIKE 'slack:%'
 	    OR COALESCE(a.source_attachment_id, '') LIKE 'discord:%'))`
 

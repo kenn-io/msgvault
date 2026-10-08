@@ -1043,12 +1043,16 @@ func TestMessageMediaOccurrences(t *testing.T) {
 		{"slack:F02", "stored", "", true},
 		{"discord:A03", "", "", true},
 		{"slack:F04", "", "slack:pending:F04", false},
+		{"slack:F05", "", "none", false},
 	} {
 		audio := addBeeperAudio(t, f.Store, slack.ID, slackConversation, "alias-"+alias.sourceAttachmentID,
 			digestString(alias.sourceAttachmentID))
 		storagePath := alias.placeholder
-		if storagePath == "" {
+		switch storagePath {
+		case "":
 			storagePath = audio.hash[:2] + "/" + audio.hash
+		case "none":
+			storagePath = ""
 		}
 		_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE attachments
 			SET content_hash = '', storage_path = ?, attachment_state = NULLIF(?, ''), source_attachment_id = ?,
