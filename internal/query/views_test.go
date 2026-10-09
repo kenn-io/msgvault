@@ -303,15 +303,18 @@ func TestRegisterViews_ConvenienceViews(t *testing.T) {
 }
 
 // TestRegisterViews_RecipientAddressColumns proves the message_recipients
-// view exposes both address columns of cache schema v26: envelope_address
+// view exposes the address columns, source row ID, and recipient order:
+// envelope_address
 // keeps NULL for rows where no header address was recorded instead of
 // coercing them to the empty string, while email_address resolves those rows
 // to the participant's current address. A legacy cache lacking both columns
-// reads as NULL for each.
+// reads as NULL for each address and defaults its order fields to zero.
 func TestRegisterViews_RecipientAddressColumns(t *testing.T) {
 	type addresses struct {
 		resolved sql.NullString
 		envelope sql.NullString
+		id       int64
+		order    int
 	}
 	scan := func(t *testing.T, builder *TestDataBuilder) (populated, absent addresses) {
 		t.Helper()
@@ -322,12 +325,12 @@ func TestRegisterViews_RecipientAddressColumns(t *testing.T) {
 		require.NoError(t, RegisterViews(t.Context(), engine.db, dir), "RegisterViews")
 
 		err := engine.db.QueryRowContext(context.Background(),
-			`SELECT email_address, envelope_address FROM message_recipients WHERE recipient_type = 'from'`,
-		).Scan(&populated.resolved, &populated.envelope)
+			`SELECT email_address, envelope_address, recipient_id, recipient_order FROM message_recipients WHERE recipient_type = 'from'`,
+		).Scan(&populated.resolved, &populated.envelope, &populated.id, &populated.order)
 		require.NoError(t, err, "scan populated row")
 		err = engine.db.QueryRowContext(context.Background(),
-			`SELECT email_address, envelope_address FROM message_recipients WHERE recipient_type = 'to'`,
-		).Scan(&absent.resolved, &absent.envelope)
+			`SELECT email_address, envelope_address, recipient_id, recipient_order FROM message_recipients WHERE recipient_type = 'to'`,
+		).Scan(&absent.resolved, &absent.envelope, &absent.id, &absent.order)
 		require.NoError(t, err, "scan absent row")
 		return populated, absent
 	}
@@ -339,18 +342,22 @@ func TestRegisterViews_RecipientAddressColumns(t *testing.T) {
 		alice := builder.AddParticipant("alice@example.com", "example.com", "Alice")
 		bob := builder.AddParticipant("bob@example.com", "example.com", "Bob")
 		msgID := builder.AddMessage(MessageOpt{Subject: "Hello", SourceID: srcID})
-		builder.AddRecipientWithEnvelope(msgID, alice, "from", "Alice", "alice-alias@example.com")
-		builder.AddRecipient(msgID, bob, "to", "Bob")
+		builder.AddRecipientWithOrder(msgID, alice, "from", "Alice", "alice-alias@example.com", 4)
+		builder.AddRecipientWithOrder(msgID, bob, "to", "Bob", "", 7)
 
 		populated, absent := scan(t, builder)
 		alias := sql.NullString{String: "alice-alias@example.com", Valid: true}
 		assert.Equal(alias, populated.envelope)
 		assert.Equal(alias, populated.resolved,
 			"a recorded header address is also the resolved address")
+		assert.Equal(int64(1), populated.id)
+		assert.Equal(4, populated.order)
 		assert.Equal(sql.NullString{}, absent.envelope,
 			"row without a recorded address reads as NULL, not ''")
 		assert.Equal(sql.NullString{String: "bob@example.com", Valid: true}, absent.resolved,
 			"row without a recorded address resolves to the participant's address")
+		assert.Equal(int64(2), absent.id)
+		assert.Equal(7, absent.order)
 	})
 
 	t.Run("legacy cache without the columns", func(t *testing.T) {
@@ -364,7 +371,7 @@ func TestRegisterViews_RecipientAddressColumns(t *testing.T) {
 		builder.AddTo(msgID, bob, "Bob")
 
 		populated, absent := scan(t, builder)
-		assert.Equal(t, addresses{}, populated, "legacy cache carries neither column")
-		assert.Equal(t, addresses{}, absent)
+		assert.Equal(t, addresses{order: 0}, populated, "legacy cache carries neither address column, recipient ID, or recipient order")
+		assert.Equal(t, addresses{order: 0}, absent)
 	})
 }

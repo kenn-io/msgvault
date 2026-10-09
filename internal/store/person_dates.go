@@ -81,7 +81,7 @@ func (s *Store) ListPersonDatesContext(
 	ctx context.Context, personID int64, currentOnly bool,
 ) ([]PersonDate, error) {
 	var dates []PersonDate
-	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
 		var err error
 		dates, err = s.listPersonDatesTx(ctx, tx, personID, currentOnly)
 		return err

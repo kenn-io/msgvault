@@ -83,6 +83,37 @@ func searchFast(t *testing.T, engine *DuckDBEngine, queryStr string, filter Mess
 	return results
 }
 
+func TestDuckDBMessageResultsFollowStoredRecipientOrder(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	b := NewTestDataBuilder(t)
+	sourceID := b.AddSource("owner@example.test")
+	firstSender := b.AddParticipant("first-sender@example.test", "example.test", "First Stored Sender")
+	headerFirstSender := b.AddParticipant("header-first-sender@example.test", "example.test", "Header First Sender")
+	firstRecipient := b.AddParticipant("first-recipient@example.test", "example.test", "First Stored Recipient")
+	headerFirstRecipient := b.AddParticipant("header-first-recipient@example.test", "example.test", "Header First Recipient")
+	messageID := b.AddMessage(MessageOpt{SourceID: sourceID, Subject: "ordered headers", Snippet: "ordered headers"})
+	b.AddRecipientWithOrder(messageID, firstSender, "from", "First Stored Sender", "", 1)
+	b.AddRecipientWithOrder(messageID, headerFirstSender, "from", "Header First Sender", "", 0)
+	b.AddRecipientWithOrder(messageID, firstRecipient, "to", "First Stored Recipient", "", 1)
+	b.AddRecipientWithOrder(messageID, headerFirstRecipient, "to", "Header First Recipient", "", 0)
+	engine := b.BuildEngine()
+	ctx := context.Background()
+
+	listed, err := engine.ListMessages(ctx, MessageFilter{})
+	requirements.NoError(err)
+	requirements.Len(listed, 1)
+	assertions.Equal("header-first-sender@example.test", listed[0].FromEmail)
+	assertions.Equal([]Address{
+		{Email: "header-first-recipient@example.test", Name: "Header First Recipient"},
+		{Email: "first-recipient@example.test", Name: "First Stored Recipient"},
+	}, listed[0].To)
+
+	searched, err := engine.SearchFast(ctx, search.Parse("ordered"), MessageFilter{}, 100, 0)
+	requirements.NoError(err)
+	requirements.Len(searched, 1)
+	assertions.Equal("header-first-sender@example.test", searched[0].FromEmail)
+}
+
 // requireAggregateRow finds an AggregateRow by key or fails the test.
 func requireAggregateRow(t *testing.T, rows []AggregateRow, key string) AggregateRow {
 	t.Helper()

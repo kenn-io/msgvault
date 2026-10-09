@@ -123,6 +123,40 @@ func (p PutOrganizationProfileHeaders) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(p))
 }
 
+type ClearDeliveryPolicyHeaders struct {
+	XMsgvaultDeliveryPolicyWrite ClearDeliveryPolicyHeaderXMsgvaultDeliveryPolicyWrite `json:"X-Msgvault-Delivery-Policy-Write" validate:"required"`
+}
+
+func (c ClearDeliveryPolicyHeaders) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(c.XMsgvaultDeliveryPolicyWrite).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("XMsgvaultDeliveryPolicyWrite", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type SetDeliveryPolicyHeaders struct {
+	XMsgvaultDeliveryPolicyWrite SetDeliveryPolicyHeaderXMsgvaultDeliveryPolicyWrite `json:"X-Msgvault-Delivery-Policy-Write" validate:"required"`
+}
+
+func (s SetDeliveryPolicyHeaders) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(s.XMsgvaultDeliveryPolicyWrite).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("XMsgvaultDeliveryPolicyWrite", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type DeletePersonHeaders struct {
 	// IfMatch Strong ETag returned by the latest person profile read. Must be the exact single tag from that read; the RFC 7232 forms `*` and comma-separated tag lists are not supported.
 	IfMatch string `json:"If-Match" validate:"required"`

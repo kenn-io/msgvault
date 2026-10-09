@@ -479,9 +479,9 @@ func (e *DuckDBEngine) listConversationMessages(
 		),
 		msg_sender AS (
 			SELECT mr.message_id,
-				FIRST(p.email_address) AS from_email,
-				FIRST(COALESCE(NULLIF(TRIM(mr.display_name), ''), NULLIF(TRIM(p.display_name), ''), NULLIF(p.phone_number, ''), p.email_address, '')) AS from_name,
-				FIRST(COALESCE(p.phone_number, '')) AS from_phone
+				FIRST(p.email_address ORDER BY mr.recipient_order, mr.recipient_id) AS from_email,
+				FIRST(COALESCE(NULLIF(TRIM(mr.display_name), ''), NULLIF(TRIM(p.display_name), ''), NULLIF(p.phone_number, ''), p.email_address, '') ORDER BY mr.recipient_order, mr.recipient_id) AS from_name,
+				FIRST(COALESCE(p.phone_number, '') ORDER BY mr.recipient_order, mr.recipient_id) AS from_phone
 			FROM mr
 			JOIN p ON p.id = mr.participant_id
 			WHERE mr.recipient_type = 'from'

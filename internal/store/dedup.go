@@ -287,6 +287,7 @@ const duplicateGroupMessageColumns = `m.id, m.source_id, s.source_type, s.identi
 		             ON p_from.id = mr_from.participant_id
 		           WHERE mr_from.message_id = m.id
 		             AND mr_from.recipient_type = 'from'
+		           ORDER BY mr_from.recipient_order, mr_from.id
 		           LIMIT 1
 		       ), '') AS from_email`
 
@@ -593,6 +594,7 @@ func (s *Store) GetAllRawMIMECandidates(
 		             ON p_from.id = mr_from.participant_id
 		           WHERE mr_from.message_id = m.id
 		             AND mr_from.recipient_type = 'from'
+		           ORDER BY mr_from.recipient_order, mr_from.id
 		           LIMIT 1
 		       ), '') AS from_email
 		FROM messages m
@@ -702,7 +704,7 @@ func (s *Store) StreamMessageRawContext(ctx context.Context, messageIDs []int64,
 // reversed — those changes are additive enrichment that leaves
 // survivors strictly better off.
 func (s *Store) UndoDedup(batchID string) (int64, error) {
-	result, err := s.db.Exec(`
+	result, err := s.execStoreWriteContext(context.Background(), `
 		UPDATE messages
 		SET deleted_at = NULL, delete_batch_id = NULL
 		WHERE delete_batch_id = ?
@@ -1083,6 +1085,9 @@ func (s *Store) ApplyRFC822IDBackfill(
 	defer func() {
 		retErr = finishRFC822IDBackfillTransaction(ctx, conn, committed, retErr)
 	}()
+	if err := s.enterDeliveryAdmissionFenceContext(ctx, conn); err != nil {
+		return 0, fmt.Errorf("enter RFC822 ID backfill delivery fence: %w", err)
+	}
 
 	applied, digest, err := s.applyRFC822IDBackfillRows(ctx, conn, sourceIDs)
 	if err != nil {

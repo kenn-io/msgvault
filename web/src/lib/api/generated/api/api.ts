@@ -110,6 +110,10 @@ import type {
   DeleteSettingsPeopleInferenceProviderPathParameters,
   DeleteSettingsProviderCredentialPathParameters,
   DeletionManifestDetail,
+  DeliveryPolicyQuery,
+  DeliveryPolicyReceipt,
+  DeliveryPolicyState,
+  DeliveryPolicyWrite,
   DirectoryPeopleResponse,
   DiscoverEvent,
   DiscoverRequest,
@@ -2593,6 +2597,60 @@ export const createPerson = (
       method: "POST",
       headers: { "Content-Type": "application/json" },
       data: createPersonRequest,
+    },
+    options,
+  );
+};
+/**
+ * Owner only. Requires daemon policy-write opt-in and X-Msgvault-Delivery-Policy-Write: true. No drafting, sending or delegated credential grants policy-write. Writes require expected_revision; send_allowed additionally requires the current person revision and reviewed binding digest. Setting the person-wide default requires scope_acknowledgement person_all_routes. send_allowed never sends or disables drafting. Clear restores inheritance; clearing the default restores draft_only.
+ * @summary Clear an exact delivery policy override
+ */
+export const clearDeliveryPolicy = (
+  deliveryPolicyWrite: DeliveryPolicyWrite,
+  options?: SecondParameter<typeof orvalFetch<DeliveryPolicyReceipt>>,
+) => {
+  return orvalFetch<DeliveryPolicyReceipt>(
+    {
+      url: `/api/v1/people/delivery-policy/clear`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: deliveryPolicyWrite,
+    },
+    options,
+  );
+};
+/**
+ * Returns stored and effective policy, inheritance, canonical UID, exact native route identifiers and revisions. Policy is one app gate; archive evidence is not live reachability or provider authorization. No target inspects the person-wide default.
+ * @summary Inspect an exact delivery policy
+ */
+export const getDeliveryPolicy = (
+  deliveryPolicyQuery: DeliveryPolicyQuery,
+  options?: SecondParameter<typeof orvalFetch<DeliveryPolicyState>>,
+) => {
+  return orvalFetch<DeliveryPolicyState>(
+    {
+      url: `/api/v1/people/delivery-policy/read`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: deliveryPolicyQuery,
+    },
+    options,
+  );
+};
+/**
+ * Owner only. Requires daemon policy-write opt-in and X-Msgvault-Delivery-Policy-Write: true. No drafting, sending or delegated credential grants policy-write. Writes require expected_revision; send_allowed additionally requires the current person revision and reviewed binding digest. Setting the person-wide default requires scope_acknowledgement person_all_routes. send_allowed never sends or disables drafting. Clear restores inheritance; clearing the default restores draft_only.
+ * @summary Explicitly approve or restrict a delivery policy
+ */
+export const setDeliveryPolicy = (
+  deliveryPolicyWrite: DeliveryPolicyWrite,
+  options?: SecondParameter<typeof orvalFetch<DeliveryPolicyReceipt>>,
+) => {
+  return orvalFetch<DeliveryPolicyReceipt>(
+    {
+      url: `/api/v1/people/delivery-policy/set`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: deliveryPolicyWrite,
     },
     options,
   );

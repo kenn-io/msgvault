@@ -242,7 +242,7 @@ func (s *Store) scanIdentityObservationsContext(
 		  AND m.id IN (%s)
 		  AND mr.recipient_type IN ('from', 'to', 'cc', 'bcc')
 		  AND COALESCE(NULLIF(mr.email_address, ''), p.email_address) IS NOT NULL
-		ORDER BY m.id, mr.id
+		ORDER BY m.id, mr.recipient_type, mr.recipient_order, mr.id
 	`, func(rows *loggedRows) error {
 		var observation IdentityObservation
 		if err := rows.Scan(

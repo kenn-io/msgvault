@@ -158,6 +158,12 @@ type GetParticipantTimelineBody = ExploreHTTPRequest
 
 type CreatePersonBody = CreatePersonRequest
 
+type ClearDeliveryPolicyBody = DeliveryPolicyWrite
+
+type GetDeliveryPolicyBody = DeliveryPolicyQuery
+
+type SetDeliveryPolicyBody = DeliveryPolicyWrite
+
 type SearchPeopleBody = PersonSearchRequest
 
 type PatchPersonBody = PatchPersonRequest

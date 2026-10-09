@@ -367,7 +367,7 @@ func (s *Store) exportMessageRows(
 			LEFT JOIN message_recipients mr_from ON mr_from.id = (
 				SELECT mr.id FROM message_recipients mr
 				WHERE mr.message_id = m.id AND mr.recipient_type = 'from'
-				ORDER BY mr.id LIMIT 1
+				ORDER BY mr.recipient_order, mr.id LIMIT 1
 			)
 			LEFT JOIN participants p_sender
 			       ON p_sender.id = COALESCE(m.sender_id, mr_from.participant_id)

@@ -1369,6 +1369,22 @@ func buildCacheLockedAttempt(
 		return nil, fmt.Errorf("inspect recipient envelope schema: %w", err)
 	}
 	sourceSnapshot.hasRecipientEnvelope = recipientEnvelopeColumnCount > 0
+	var recipientIDColumnCount int
+	if err := sourceSnapshot.QueryRow(`
+		SELECT COUNT(*) FROM pragma_table_info('message_recipients')
+		WHERE name = 'id'
+	`).Scan(&recipientIDColumnCount); err != nil {
+		return nil, fmt.Errorf("inspect recipient ID schema: %w", err)
+	}
+	sourceSnapshot.hasRecipientID = recipientIDColumnCount > 0
+	var recipientOrderColumnCount int
+	if err := sourceSnapshot.QueryRow(`
+		SELECT COUNT(*) FROM pragma_table_info('message_recipients')
+		WHERE name = 'recipient_order'
+	`).Scan(&recipientOrderColumnCount); err != nil {
+		return nil, fmt.Errorf("inspect recipient order schema: %w", err)
+	}
+	sourceSnapshot.hasRecipientOrder = recipientOrderColumnCount > 0
 	if err := sourceSnapshot.Prepare(); err != nil {
 		return nil, err
 	}
@@ -1879,6 +1895,8 @@ type cacheSourceSnapshot struct {
 	hasMessageSourceAttribution bool
 	hasAccountAttribution       bool
 	hasRecipientEnvelope        bool
+	hasRecipientID              bool
+	hasRecipientOrder           bool
 	// csvSnapshot records that the sqlite_db tables are CSV views exported
 	// from SQLite, not the attached database itself. It is set once at
 	// construction: prepareTables closes the SQLite transaction before the
@@ -2054,6 +2072,14 @@ func (s *cacheSourceSnapshot) tables() []cacheSnapshotTable {
 		recipientEnvelopeColumn = "email_address"
 		recipientEnvelopePresence = emailPresence + " AS envelope_present"
 	}
+	recipientOrderColumn := "CAST(0 AS INTEGER) AS recipient_order"
+	if s.hasRecipientOrder {
+		recipientOrderColumn = "CAST(recipient_order AS INTEGER) AS recipient_order"
+	}
+	recipientIDColumn := "rowid AS recipient_id"
+	if s.hasRecipientID {
+		recipientIDColumn = "id AS recipient_id"
+	}
 	messageColumns := "id, source_id, source_message_id, rfc822_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments, attachment_count, deleted_from_source_at, deleted_at, sender_id, message_type, list_id, is_from_me"
 	messageTypes := "types={'id': 'BIGINT', 'source_id': 'BIGINT', 'source_message_id': 'VARCHAR', 'rfc822_message_id': 'VARCHAR', 'conversation_id': 'BIGINT', 'subject': 'VARCHAR', 'snippet': 'VARCHAR', 'sent_at': 'TIMESTAMP', 'size_estimate': 'BIGINT', 'has_attachments': 'BOOLEAN', 'attachment_count': 'INTEGER', 'deleted_from_source_at': 'TIMESTAMP', 'deleted_at': 'TIMESTAMP', 'sender_id': 'BIGINT', 'message_type': 'VARCHAR', 'list_id': 'VARCHAR', 'is_from_me': 'BOOLEAN'"
 	if s.hasMessageSourceAttribution {
@@ -2076,8 +2102,8 @@ func (s *cacheSourceSnapshot) tables() []cacheSnapshotTable {
 		// on the sqlite_scanner path; otherwise DuckDB binds against a
 		// CSV view that lacks the column and the export fails on Windows.
 		{tableMessages, "SELECT " + messageColumns + " FROM messages WHERE sent_at IS NOT NULL", messageTypes, identityColumns("source_message_id", "rfc822_message_id", "list_id")},
-		{"message_recipients", "SELECT message_id, participant_id, recipient_type, display_name, " + recipientEnvelopeColumn + ", " + recipientEnvelopePresence + " FROM message_recipients",
-			"types={'message_id': 'BIGINT', 'participant_id': 'BIGINT', 'recipient_type': 'VARCHAR', 'display_name': 'VARCHAR', 'email_address': 'VARCHAR', 'envelope_present': 'BOOLEAN'}",
+		{"message_recipients", "SELECT " + recipientIDColumn + ", message_id, participant_id, recipient_type, display_name, " + recipientEnvelopeColumn + ", " + recipientEnvelopePresence + ", " + recipientOrderColumn + " FROM message_recipients",
+			"types={'recipient_id': 'BIGINT', 'message_id': 'BIGINT', 'participant_id': 'BIGINT', 'recipient_type': 'VARCHAR', 'display_name': 'VARCHAR', 'email_address': 'VARCHAR', 'envelope_present': 'BOOLEAN', 'recipient_order': 'INTEGER'}",
 			identityColumns("recipient_type", "email_address")},
 		{"message_labels", "SELECT message_id, label_id FROM message_labels",
 			"types={'message_id': 'BIGINT', 'label_id': 'BIGINT'}", nil},

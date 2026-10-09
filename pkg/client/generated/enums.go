@@ -2697,6 +2697,38 @@ func (l ListOperationRunsQueryState) Validate() error {
 	}
 }
 
+type ClearDeliveryPolicyHeaderXMsgvaultDeliveryPolicyWrite string
+
+const (
+	True ClearDeliveryPolicyHeaderXMsgvaultDeliveryPolicyWrite = "true"
+)
+
+// Validate checks if the ClearDeliveryPolicyHeaderXMsgvaultDeliveryPolicyWrite value is valid
+func (c ClearDeliveryPolicyHeaderXMsgvaultDeliveryPolicyWrite) Validate() error {
+	switch c {
+	case True:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid ClearDeliveryPolicyHeaderXMsgvaultDeliveryPolicyWrite value, got: %v", c))
+	}
+}
+
+type SetDeliveryPolicyHeaderXMsgvaultDeliveryPolicyWrite string
+
+const (
+	SetDeliveryPolicyHeaderXMsgvaultDeliveryPolicyWriteTrue SetDeliveryPolicyHeaderXMsgvaultDeliveryPolicyWrite = "true"
+)
+
+// Validate checks if the SetDeliveryPolicyHeaderXMsgvaultDeliveryPolicyWrite value is valid
+func (s SetDeliveryPolicyHeaderXMsgvaultDeliveryPolicyWrite) Validate() error {
+	switch s {
+	case SetDeliveryPolicyHeaderXMsgvaultDeliveryPolicyWriteTrue:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid SetDeliveryPolicyHeaderXMsgvaultDeliveryPolicyWrite value, got: %v", s))
+	}
+}
+
 type ListDirectoryPeopleQuerySort string
 
 const (

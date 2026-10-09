@@ -30,6 +30,7 @@ const (
 	toolSecurityRead toolSecurityClass = iota
 	toolSecurityWrite
 	toolSecurityProfileWrite
+	toolSecurityDeliveryPolicyWrite
 	toolSecurityIdentityDecision
 	toolSecurityIdentityScoring
 	toolSecurityPersonMerge
@@ -169,6 +170,9 @@ func operationCatalog(opts ServeOptions, _ *handlers) []toolDefinition {
 	definitions := []toolDefinition{}
 	if !opts.DelegatedOnly {
 		definitions = slices.Clone(stableOperationCatalogs.get(capabilitiesFor(opts)))
+		if opts.DeliveryPolicies != nil {
+			definitions = append(definitions, stableDeliveryPolicyDefinitions...)
+		}
 		if opts.IdentityScoring != nil {
 			definitions = append(definitions, stableIdentityScoringDefinitions...)
 		}

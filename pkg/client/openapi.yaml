@@ -3294,6 +3294,154 @@ components:
         - source_identifier
         - source_message_id
       type: object
+    DeliveryPolicyAudit:
+      properties:
+        actor:
+          type: string
+        after_policy:
+          nullable: true
+          type: string
+        before_policy:
+          nullable: true
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        reason:
+          type: string
+        scope:
+          type: string
+      required:
+        - actor
+        - reason
+        - created_at
+        - scope
+        - before_policy
+        - after_policy
+      type: object
+    DeliveryPolicyQuery:
+      additionalProperties: false
+      properties:
+        person_uid:
+          type: string
+        target:
+          $ref: "#/components/schemas/DeliveryTarget"
+      required:
+        - person_uid
+      type: object
+    DeliveryPolicyReceipt:
+      properties:
+        after:
+          $ref: "#/components/schemas/DeliveryPolicyState"
+        audit:
+          $ref: "#/components/schemas/DeliveryPolicyAudit"
+        before:
+          $ref: "#/components/schemas/DeliveryPolicyState"
+      required:
+        - before
+        - after
+        - audit
+      type: object
+    DeliveryPolicyState:
+      properties:
+        binding_digest:
+          type: string
+        effective_policy:
+          type: string
+        identity_revision:
+          format: int64
+          type: integer
+        inheritance_source:
+          type: string
+        person_id:
+          format: int64
+          type: integer
+        person_revision:
+          format: int64
+          type: integer
+        person_uid:
+          type: string
+        policy_revision:
+          format: int64
+          type: integer
+        reason:
+          type: string
+        scope:
+          type: string
+        stored_policy:
+          nullable: true
+          type: string
+        target:
+          $ref: "#/components/schemas/DeliveryTarget"
+      required:
+        - person_uid
+        - person_id
+        - person_revision
+        - identity_revision
+        - policy_revision
+        - binding_digest
+        - stored_policy
+        - effective_policy
+        - inheritance_source
+        - reason
+        - scope
+      type: object
+    DeliveryPolicyWrite:
+      additionalProperties: false
+      properties:
+        binding_digest:
+          type: string
+        expected_person_revision:
+          format: int64
+          type: integer
+        expected_revision:
+          format: int64
+          type: integer
+        policy:
+          type: string
+        query:
+          $ref: "#/components/schemas/DeliveryPolicyQuery"
+        reason:
+          type: string
+        scope_acknowledgement:
+          type: string
+      required:
+        - query
+        - expected_revision
+        - reason
+      type: object
+    DeliveryTarget:
+      additionalProperties: false
+      properties:
+        account_id:
+          type: string
+        contact_point_id:
+          format: int64
+          type: integer
+        conversation_id:
+          format: int64
+          type: integer
+        endpoint:
+          type: string
+        network:
+          type: string
+        participant_id:
+          format: int64
+          type: integer
+        provider_chat_id:
+          type: string
+        source_id:
+          format: int64
+          type: integer
+        source_type:
+          type: string
+      required:
+        - source_id
+        - source_type
+        - account_id
+        - network
+        - endpoint
+      type: object
     DirectoryPeopleResponse:
       properties:
         next_cursor:
@@ -14673,7 +14821,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.8.0
+  version: 3.9.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:
@@ -23899,6 +24047,208 @@ paths:
       security:
         - apiKey: []
       summary: Promote a participant cluster to a durable person
+      tags:
+        - API
+  /api/v1/people/delivery-policy/clear:
+    post:
+      description: "Owner only. Requires daemon policy-write opt-in and X-Msgvault-Delivery-Policy-Write: true. No drafting, sending or delegated credential grants policy-write. Writes require expected_revision; send_allowed additionally requires the current person revision and reviewed binding digest. Setting the person-wide default requires scope_acknowledgement person_all_routes. send_allowed never sends or disables drafting. Clear restores inheritance; clearing the default restores draft_only."
+      operationId: clearDeliveryPolicy
+      parameters:
+        - in: header
+          name: X-Msgvault-Delivery-Policy-Write
+          required: true
+          schema:
+            enum:
+              - "true"
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeliveryPolicyWrite"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeliveryPolicyReceipt"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Conflict
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Service Unavailable
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Clear an exact delivery policy override
+      tags:
+        - API
+  /api/v1/people/delivery-policy/read:
+    post:
+      description: Returns stored and effective policy, inheritance, canonical UID, exact native route identifiers and revisions. Policy is one app gate; archive evidence is not live reachability or provider authorization. No target inspects the person-wide default.
+      operationId: getDeliveryPolicy
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeliveryPolicyQuery"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeliveryPolicyState"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Inspect an exact delivery policy
+      tags:
+        - API
+  /api/v1/people/delivery-policy/set:
+    post:
+      description: "Owner only. Requires daemon policy-write opt-in and X-Msgvault-Delivery-Policy-Write: true. No drafting, sending or delegated credential grants policy-write. Writes require expected_revision; send_allowed additionally requires the current person revision and reviewed binding digest. Setting the person-wide default requires scope_acknowledgement person_all_routes. send_allowed never sends or disables drafting. Clear restores inheritance; clearing the default restores draft_only."
+      operationId: setDeliveryPolicy
+      parameters:
+        - in: header
+          name: X-Msgvault-Delivery-Policy-Write
+          required: true
+          schema:
+            enum:
+              - "true"
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeliveryPolicyWrite"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeliveryPolicyReceipt"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Conflict
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Service Unavailable
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Explicitly approve or restrict a delivery policy
       tags:
         - API
   /api/v1/people/directory:

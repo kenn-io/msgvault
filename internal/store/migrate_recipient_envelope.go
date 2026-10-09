@@ -32,13 +32,12 @@ func (c recipientOrphanCleanup) total() int64 {
 // SQLite enforces a table-level UNIQUE through an undroppable
 // sqlite_autoindex, so a legacy table is rebuilt: copy into a
 // constraint-free twin, swap, and recreate the plain indexes the DROP TABLE
-// took with it. The copy preserves ids, so mr.id-based ordering is stable
-// across the rebuild. A fresh database — created by the current schema files,
-// which no longer declare the table-level UNIQUE — has no autoindex and
-// skips the rebuild; it only needs the unique index built here, because on
-// upgraded databases email_address is a late ADD COLUMN that does not exist
-// yet when the schema files run (so the index cannot live there), and this
-// migration must therefore run after the legacy ADD COLUMN loop.
+// took with it. The copy preserves ids and recipient_order, so recipient
+// ordering remains stable across the rebuild. Current schema files omit the
+// table-level UNIQUE, so fresh databases skip this rebuild and need only the
+// unique index built here. On upgraded databases email_address is a late ADD
+// COLUMN that does not exist when the schema files run, so the index cannot
+// live there and this migration must run after the legacy ADD COLUMN loop.
 //
 // Everything runs in one runMaintenance transaction: the copy and the
 // unique-index build over the archive's largest-row-count table exceed the
@@ -85,6 +84,22 @@ func (s *Store) ensureRecipientEnvelopeUniqueIndex(ctx context.Context) error {
 						return fmt.Errorf(
 							"restore activity triggers after rebuilding message_recipients: %w", err,
 						)
+					}
+					var hasDeliveryEmailEvidence bool
+					if err := tx.QueryRowContext(ctx, `
+						SELECT EXISTS (
+							SELECT 1 FROM sqlite_master
+							WHERE type = 'table' AND name = 'delivery_source_email_evidence'
+						)
+					`).Scan(&hasDeliveryEmailEvidence); err != nil {
+						return fmt.Errorf("check delivery email evidence table after recipient rebuild: %w", err)
+					}
+					if hasDeliveryEmailEvidence {
+						if err := s.installSQLiteDeliveryEmailEvidenceTracking(
+							boundQuerier{ctx: ctx, q: tx},
+						); err != nil {
+							return fmt.Errorf("restore delivery evidence triggers after rebuilding message_recipients: %w", err)
+						}
 					}
 				}
 				return nil
@@ -185,15 +200,15 @@ func dropRecipientTableUniqueConstraintsPG(ctx context.Context, tx *loggedTx) er
 // the current shape and there is nothing to rebuild — robust against
 // comments in the stored DDL, unlike matching sqlite_master.sql text.
 //
-// Person-sweep triggers read message_recipients from mutations on several
-// other tables. SQLite rewrites those trigger bodies when a legacy fixture or
-// older migration renames the recipient table, then rejects this swap after
-// the renamed table is gone. Drop the complete repairable sweep set before
-// the swap; the caller reinstalls its canonical definitions in this same
-// transaction. Triggers attached directly to message_recipients disappear
-// with the old table and are restored by that same pass. The two plain indexes
-// still need explicit recreation (the unique index is built by the caller for
-// rebuilt and fresh paths alike).
+// Person-sweep and delivery-evidence triggers read message_recipients from
+// mutations on other tables. SQLite rewrites those trigger bodies when a
+// legacy fixture or older migration renames the recipient table, then rejects
+// this swap after the renamed table is gone. Drop those external trigger sets
+// before the swap; the caller reinstalls their canonical definitions in this
+// same transaction. Triggers attached directly to message_recipients
+// disappear with the old table and are restored by that same pass. The two
+// plain indexes still need explicit recreation (the unique index is built by
+// the caller for rebuilt and fresh paths alike).
 //
 // Before the FK-checked copy, dangling legacy rows are removed. Rows missing
 // messages go first so a row missing both parents is counted once, under the
@@ -222,6 +237,11 @@ func rebuildRecipientTableWithoutUniqueSQLite(
 
 	if err := dropPersonSweepSQLiteTriggers(tx); err != nil {
 		return recipientOrphanCleanup{}, false, err
+	}
+	if err := dropSQLiteDeliveryEmailEvidenceTracking(boundQuerier{ctx: ctx, q: tx}); err != nil {
+		return recipientOrphanCleanup{}, false, fmt.Errorf(
+			"drop delivery email evidence triggers before recipient rebuild: %w", err,
+		)
 	}
 
 	cleanup := recipientOrphanCleanup{}
@@ -263,11 +283,12 @@ func rebuildRecipientTableWithoutUniqueSQLite(
 			participant_id INTEGER NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
 			recipient_type TEXT NOT NULL,
 			display_name TEXT,
-			email_address TEXT
+			email_address TEXT,
+			recipient_order INTEGER NOT NULL DEFAULT 0
 		)`,
 		`INSERT INTO message_recipients_new
-			(id, message_id, participant_id, recipient_type, display_name, email_address)
-			SELECT id, message_id, participant_id, recipient_type, display_name, email_address
+			(id, message_id, participant_id, recipient_type, display_name, email_address, recipient_order)
+			SELECT id, message_id, participant_id, recipient_type, display_name, email_address, recipient_order
 			FROM message_recipients`,
 		`DROP TABLE message_recipients`,
 		`ALTER TABLE message_recipients_new RENAME TO message_recipients`,

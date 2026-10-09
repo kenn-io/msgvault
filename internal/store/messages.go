@@ -337,7 +337,7 @@ func (s *Store) loadGmailAuditEvidenceTx(
 		SELECT recipient_type, email_address
 		FROM message_recipients
 		WHERE message_id = ?
-		ORDER BY recipient_type, id
+		ORDER BY recipient_type, recipient_order, id
 	`, id)
 	if err != nil {
 		return item, fmt.Errorf("list Gmail audit recipients: %w", err)
@@ -1045,10 +1045,6 @@ func (s *Store) RekeyMessageSourceID(
 		rekeyed = affected == 1
 		return nil
 	}
-	if s.syncGeneration == nil {
-		err := write(s.db)
-		return rekeyed, err
-	}
 	err := s.withTx(func(tx *loggedTx) error { return write(tx) })
 	return rekeyed, err
 }
@@ -1272,16 +1268,13 @@ func (s *Store) EnsureConversation(sourceID int64, sourceConversationID, title s
 	if err := s.requireSyncSource(sourceID); err != nil {
 		return 0, err
 	}
-	if s.syncGeneration != nil {
-		var id int64
-		err := s.withTx(func(tx *loggedTx) error {
-			var err error
-			id, err = ensureConversation(tx, s.dialect, sourceID, sourceConversationID, title)
-			return err
-		})
-		return id, err
-	}
-	return ensureConversation(s.db, s.dialect, sourceID, sourceConversationID, title)
+	var id int64
+	err := s.withTx(func(tx *loggedTx) error {
+		var err error
+		id, err = ensureConversation(tx, s.dialect, sourceID, sourceConversationID, title)
+		return err
+	})
+	return id, err
 }
 
 func ensureConversation(
@@ -1500,6 +1493,12 @@ func upsertMessageWith(q querier, d Dialect, msg *Message) (int64, error) {
 	if journalCandidate && !prior.found && d.DriverName() != postgresDriverName {
 		if err := appendPersonSweepMessageInsert(q, d, id); err != nil {
 			return 0, err
+		}
+	}
+	if journalCandidate && !prior.found && d.DriverName() != postgresDriverName &&
+		msg.MessageType == "email" && msg.SenderID.Valid {
+		if err := recordSQLiteDeliverySourceEmailEvidence(q, msg.SenderID.Int64, msg.SourceID); err != nil {
+			return 0, fmt.Errorf("record delivery email sender evidence: %w", err)
 		}
 	}
 	return id, nil
@@ -2339,9 +2338,31 @@ func (s *Store) persistMessageWith(
 		}
 	}
 
-	for _, rs := range data.Recipients {
-		if err := replaceMessageRecipientsTx(q, messageID, rs); err != nil {
+	lastRecipientSet := make(map[string]int, len(data.Recipients))
+	for i, rs := range data.Recipients {
+		lastRecipientSet[rs.Type] = i
+	}
+	type staleRecipientSet struct {
+		typ string
+		ids []int64
+	}
+	staleRecipients := make([]staleRecipientSet, 0, len(lastRecipientSet))
+	for i, rs := range data.Recipients {
+		if lastRecipientSet[rs.Type] != i {
+			continue
+		}
+		staleIDs, err := upsertMessageRecipientsTx(q, messageID, rs)
+		if err != nil {
 			return 0, fmt.Errorf("store %s recipients: %w", rs.Type, err)
+		}
+		staleRecipients = append(staleRecipients, staleRecipientSet{typ: rs.Type, ids: staleIDs})
+	}
+	// Reconcile every desired type before deleting stale rows. A participant
+	// that moves between To/Cc/Bcc remains present as source evidence throughout
+	// the transaction, so a reprocessed snapshot does not revoke approval.
+	for _, stale := range staleRecipients {
+		if err := deleteStaleMessageRecipientsTx(q, stale.ids); err != nil {
+			return 0, fmt.Errorf("remove stale %s recipients: %w", stale.typ, err)
 		}
 	}
 
@@ -2606,18 +2627,34 @@ func (s *Store) lockMessageForRecipientWrite(q querier, messageID int64) error {
 	return nil
 }
 
-func replaceMessageRecipientsTx(tx querier, messageID int64, rs RecipientSet) error {
-	_, err := tx.Exec(`
-		DELETE FROM message_recipients WHERE message_id = ? AND recipient_type = ?
-	`, messageID, rs.Type)
+type recipientRowsQuerier interface {
+	querier
+	queryRecipientRows(query string, args ...any) (rowsScanner, error)
+}
+
+func (tx *loggedTx) queryRecipientRows(query string, args ...any) (rowsScanner, error) {
+	return tx.Query(query, args...)
+}
+
+func (q boundQuerier) queryRecipientRows(query string, args ...any) (rowsScanner, error) {
+	queryer, ok := q.q.(interface {
+		QueryContext(ctx context.Context, query string, args ...any) (*loggedRows, error)
+	})
+	if !ok {
+		return nil, errors.New("recipient query requires a logged database connection")
+	}
+	return queryer.QueryContext(q.ctx, query, args...)
+}
+
+func replaceMessageRecipientsTx(tx recipientRowsQuerier, messageID int64, rs RecipientSet) error {
+	staleIDs, err := upsertMessageRecipientsTx(tx, messageID, rs)
 	if err != nil {
 		return err
 	}
+	return deleteStaleMessageRecipientsTx(tx, staleIDs)
+}
 
-	if len(rs.ParticipantIDs) == 0 {
-		return nil
-	}
-
+func upsertMessageRecipientsTx(tx recipientRowsQuerier, messageID int64, rs RecipientSet) ([]int64, error) {
 	// Collapse duplicates within this set. The table holds at most one row
 	// per (message_id, participant_id, recipient_type, normalized envelope
 	// address) — idx_message_recipients_envelope — so an exact repeat in one
@@ -2629,10 +2666,14 @@ func replaceMessageRecipientsTx(tx querier, messageID int64, rs RecipientSet) er
 		participantID int64
 		email         string
 	}
+	type desiredRecipient struct {
+		participantID int64
+		displayName   string
+		email         string
+		order         int
+	}
 	seen := make(map[recipientRowKey]struct{}, len(rs.ParticipantIDs))
-	ids := make([]int64, 0, len(rs.ParticipantIDs))
-	names := make([]string, 0, len(rs.ParticipantIDs))
-	emails := make([]string, 0, len(rs.ParticipantIDs))
+	desired := make([]desiredRecipient, 0, len(rs.ParticipantIDs))
 	for i, pid := range rs.ParticipantIDs {
 		email := ""
 		if i < len(rs.EmailAddresses) {
@@ -2643,28 +2684,123 @@ func replaceMessageRecipientsTx(tx querier, messageID int64, rs RecipientSet) er
 			continue
 		}
 		seen[key] = struct{}{}
-		ids = append(ids, pid)
 		name := ""
 		if i < len(rs.DisplayNames) {
 			name = rs.DisplayNames[i]
 		}
-		names = append(names, name)
-		emails = append(emails, email)
+		desired = append(desired, desiredRecipient{
+			participantID: pid, displayName: name, email: email, order: len(desired),
+		})
 	}
 
-	return insertInChunks(tx, chunkInsert{
-		totalRows:    len(ids),
-		valuesPerRow: 5,
-		prefix:       "INSERT INTO message_recipients (message_id, participant_id, recipient_type, display_name, email_address) VALUES ",
+	rows, err := tx.queryRecipientRows(`
+		SELECT id, participant_id, display_name, email_address, recipient_order
+		FROM message_recipients
+		WHERE message_id = ? AND recipient_type = ?
+		ORDER BY recipient_order, id
+	`, messageID, rs.Type)
+	if err != nil {
+		return nil, fmt.Errorf("read existing message recipients: %w", err)
+	}
+	type existingRecipient struct {
+		id          int64
+		displayName sql.NullString
+		email       sql.NullString
+		order       int
+	}
+	existingByKey := make(map[recipientRowKey]existingRecipient)
+	existing := make([]existingRecipient, 0, len(desired))
+	for rows.Next() {
+		var row existingRecipient
+		var participantID int64
+		if err := rows.Scan(&row.id, &participantID, &row.displayName, &row.email, &row.order); err != nil {
+			_ = rows.Close()
+			return nil, fmt.Errorf("scan existing message recipient: %w", err)
+		}
+		existing = append(existing, row)
+		key := recipientRowKey{participantID: participantID, email: strings.ToLower(row.email.String)}
+		if _, found := existingByKey[key]; !found {
+			existingByKey[key] = row
+		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, fmt.Errorf("read existing message recipients: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("close existing message recipients: %w", err)
+	}
+
+	keepIDs := make(map[int64]struct{}, len(desired))
+	missing := make([]desiredRecipient, 0, len(desired))
+	for _, recipient := range desired {
+		key := recipientRowKey{participantID: recipient.participantID, email: strings.ToLower(recipient.email)}
+		old, found := existingByKey[key]
+		if !found {
+			missing = append(missing, recipient)
+			continue
+		}
+		keepIDs[old.id] = struct{}{}
+		name := sql.NullString{String: recipient.displayName, Valid: true}
+		email := nullIfEmpty(recipient.email)
+		if old.order == recipient.order && nullableStringEqual(old.displayName, name) && nullableStringEqual(old.email, email) {
+			continue
+		}
+		if _, err := tx.Exec(`
+			UPDATE message_recipients
+			SET recipient_order = ?, display_name = ?, email_address = ?
+			WHERE id = ?
+		`, recipient.order, name, email, old.id); err != nil {
+			return nil, fmt.Errorf("update message recipient %d: %w", old.id, err)
+		}
+	}
+
+	// Add new rows before removing stale ones so changing an envelope alias for
+	// the same participant never creates a transient source-evidence loss.
+	if err := insertInChunks(tx, chunkInsert{
+		totalRows:    len(missing),
+		valuesPerRow: 6,
+		prefix:       "INSERT INTO message_recipients (message_id, participant_id, recipient_type, display_name, email_address, recipient_order) VALUES ",
 	}, func(start, end int) ([]string, []any) {
 		values := make([]string, end-start)
-		args := make([]any, 0, (end-start)*5)
+		args := make([]any, 0, (end-start)*6)
 		for i := start; i < end; i++ {
-			values[i-start] = "(?, ?, ?, ?, ?)"
-			args = append(args, messageID, ids[i], rs.Type, names[i], nullIfEmpty(emails[i]))
+			recipient := missing[i]
+			values[i-start] = "(?, ?, ?, ?, ?, ?)"
+			args = append(args, messageID, recipient.participantID, rs.Type, recipient.displayName, nullIfEmpty(recipient.email), recipient.order)
 		}
 		return values, args
-	})
+	}); err != nil {
+		return nil, err
+	}
+
+	staleIDs := make([]int64, 0, len(existing)-len(keepIDs))
+	for _, row := range existing {
+		if _, keep := keepIDs[row.id]; !keep {
+			staleIDs = append(staleIDs, row.id)
+		}
+	}
+	return staleIDs, nil
+}
+
+func deleteStaleMessageRecipientsTx(tx recipientRowsQuerier, staleIDs []int64) error {
+	const deleteChunkSize = 500
+	for start := 0; start < len(staleIDs); start += deleteChunkSize {
+		end := min(start+deleteChunkSize, len(staleIDs))
+		placeholders := strings.TrimSuffix(strings.Repeat("?,", end-start), ",")
+		args := make([]any, 0, end-start)
+		for _, id := range staleIDs[start:end] {
+			args = append(args, id)
+		}
+		if _, err := tx.Exec("DELETE FROM message_recipients WHERE id IN ("+placeholders+")", args...); err != nil {
+			return fmt.Errorf("delete stale message recipients: %w", err)
+		}
+	}
+	return nil
+}
+
+func nullableStringEqual(a, b sql.NullString) bool {
+	return a.Valid == b.Valid && (!a.Valid || a.String == b.String)
 }
 
 // Label represents a Gmail label.
@@ -3299,9 +3435,6 @@ func (s *Store) MarkMessageDeletedContext(ctx context.Context, sourceID int64, s
 		`, s.dialect.Now()), sourceID, sourceMessageID)
 		return err
 	}
-	if s.syncGeneration == nil {
-		return write(boundQuerier{ctx: ctx, q: s.db})
-	}
 	return s.withTxContext(ctx, func(tx *loggedTx) error { return write(boundQuerier{ctx: ctx, q: tx}) })
 }
 
@@ -3324,9 +3457,6 @@ func (s *Store) ClearMessageDeletedFromSourceContext(ctx context.Context, source
 		`, sourceID, sourceMessageID)
 		return err
 	}
-	if s.syncGeneration == nil {
-		return write(boundQuerier{ctx: ctx, q: s.db})
-	}
 	return s.withTxContext(ctx, func(tx *loggedTx) error { return write(boundQuerier{ctx: ctx, q: tx}) })
 }
 
@@ -3341,9 +3471,6 @@ func (s *Store) MarkMessagesDeletedBatch(sourceID int64, sourceMessageIDs []stri
 	write := func(q chunkQuerier) error {
 		return execInChunks(q, sourceMessageIDs, []any{sourceID},
 			fmt.Sprintf(`UPDATE messages SET deleted_from_source_at = %s WHERE source_id = ? AND source_message_id IN (%%s) AND deleted_from_source_at IS NULL`, s.dialect.Now()))
-	}
-	if s.syncGeneration == nil {
-		return write(s.db)
 	}
 	return s.withTx(func(tx *loggedTx) error { return write(tx) })
 }
@@ -3482,7 +3609,7 @@ func (s *Store) MarkMessageDeletedBySourceMessageID(sourceID int64, _ bool, gmai
 		sourceClause = " AND source_id = ?"
 		args = append(args, sourceID)
 	}
-	_, err := s.db.Exec(fmt.Sprintf(`
+	_, err := s.execStoreWriteContext(context.Background(), fmt.Sprintf(`
 		UPDATE messages
 		SET deleted_from_source_at = %s
 		WHERE source_message_id = ?%s AND deleted_from_source_at IS NULL
@@ -3534,7 +3661,7 @@ func (s *Store) MarkMessagesDeletedBySourceMessageIDBatch(sourceID int64, gmailI
 			`UPDATE messages SET deleted_from_source_at = %s WHERE source_message_id IN (%s)%s AND deleted_from_source_at IS NULL`,
 			s.dialect.Now(), strings.Join(placeholders, ","), sourceClause)
 
-		if _, err := s.db.Exec(query, args...); err != nil {
+		if _, err := s.execStoreWriteContext(context.Background(), query, args...); err != nil {
 			if firstErr == nil {
 				firstErr = err
 			}
@@ -3898,7 +4025,7 @@ func (s *Store) backfillFTSRowByRowContext(
 			slog.Warn("skipping message in FTS backfill",
 				slog.Int64("message_id", id),
 				slog.Any("error", err))
-			if _, uerr := s.db.ExecContext(ctx,
+			if _, uerr := s.execStoreWriteContext(ctx,
 				`UPDATE messages SET search_fts = ''::tsvector, indexing_version = ? WHERE id = ?`,
 				CurrentFTSIndexingVersion, id,
 			); uerr != nil {
@@ -3970,12 +4097,9 @@ func (s *Store) RecomputeConversationStatsContext(ctx context.Context, sourceID 
 	write := func(q querier) error {
 		return s.recomputeConversationStatsWith(q, "source_id = ?", sourceID)
 	}
-	if s.syncGeneration != nil {
-		return s.withTxContext(ctx, func(tx *loggedTx) error {
-			return write(boundQuerier{ctx: ctx, q: tx})
-		})
-	}
-	return write(boundQuerier{ctx: ctx, q: s.db})
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		return write(boundQuerier{ctx: ctx, q: tx})
+	})
 }
 
 // RecomputeConversationStatsForMessage updates the denormalized stats only for
@@ -3994,12 +4118,9 @@ func (s *Store) RecomputeConversationStatsForMessageContext(ctx context.Context,
 		return s.recomputeConversationStatsWith(q,
 			"id = (SELECT conversation_id FROM messages WHERE id = ?)", messageID)
 	}
-	if s.syncGeneration != nil {
-		return s.withTxContext(ctx, func(tx *loggedTx) error {
-			return write(boundQuerier{ctx: ctx, q: tx})
-		})
-	}
-	return write(boundQuerier{ctx: ctx, q: s.db})
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		return write(boundQuerier{ctx: ctx, q: tx})
+	})
 }
 
 // RecomputeConversationStatsForConversationContext refreshes one touched chat,
@@ -4011,12 +4132,9 @@ func (s *Store) RecomputeConversationStatsForConversationContext(ctx context.Con
 		}
 		return s.recomputeConversationStatsWith(q, "id = ?", conversationID)
 	}
-	if s.syncGeneration != nil {
-		return s.withTxContext(ctx, func(tx *loggedTx) error {
-			return write(boundQuerier{ctx: ctx, q: tx})
-		})
-	}
-	return write(boundQuerier{ctx: ctx, q: s.db})
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		return write(boundQuerier{ctx: ctx, q: tx})
+	})
 }
 
 func (s *Store) recomputeConversationStatsWith(q querier, whereClause string, arg any) error {
@@ -4048,9 +4166,9 @@ func (s *Store) recomputeConversationStatsWith(q querier, whereClause string, ar
 // from current message state only if it still equals expected. It returns
 // whether the guarded row was updated.
 func (s *Store) RecomputeConversationPreviewIfMatches(conversationID int64, expected string) (bool, error) {
-	result, err := s.db.Exec(s.Rebind(fmt.Sprintf(`UPDATE conversations
+	result, err := s.execStoreWriteContext(context.Background(), fmt.Sprintf(`UPDATE conversations
 		SET last_message_preview = %s
-		WHERE id = ? AND last_message_preview = ?`, latestConversationPreviewSubquery)),
+		WHERE id = ? AND last_message_preview = ?`, latestConversationPreviewSubquery),
 		conversationID, expected)
 	if err != nil {
 		return false, fmt.Errorf("recompute conversation preview: %w", err)
@@ -4268,16 +4386,13 @@ func (s *Store) EnsureConversationWithTypeContext(ctx context.Context, sourceID 
 	if err := s.requireSyncSource(sourceID); err != nil {
 		return 0, err
 	}
-	if s.syncGeneration != nil {
-		var id int64
-		err := s.withTxContext(ctx, func(tx *loggedTx) error {
-			var err error
-			id, err = ensureConversationWithType(boundQuerier{ctx: ctx, q: tx}, s.dialect, sourceID, sourceConversationID, conversationType, title)
-			return err
-		})
-		return id, err
-	}
-	return ensureConversationWithType(boundQuerier{ctx: ctx, q: s.db}, s.dialect, sourceID, sourceConversationID, conversationType, title)
+	var id int64
+	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		var err error
+		id, err = ensureConversationWithType(boundQuerier{ctx: ctx, q: tx}, s.dialect, sourceID, sourceConversationID, conversationType, title)
+		return err
+	})
+	return id, err
 }
 
 // SetConversationTitle applies an explicit provider title, including removal.
@@ -4291,10 +4406,7 @@ func (s *Store) SetConversationTitle(sourceID, conversationID int64, title strin
 			title, conversationID, sourceID, title)
 		return err
 	}
-	if s.syncGeneration != nil {
-		return s.withTx(func(tx *loggedTx) error { return write(tx) })
-	}
-	return write(s.db)
+	return s.withTx(func(tx *loggedTx) error { return write(tx) })
 }
 
 func ensureConversationWithType(q querier, dialect Dialect, sourceID int64, sourceConversationID, conversationType, title string) (int64, error) {
@@ -4459,7 +4571,7 @@ func (s *Store) ensureParticipantByPhoneTx(
 				if err != nil {
 					return fmt.Errorf("backfill participant by phone: %w", err)
 				}
-				displayNameChanged, err = s.bumpParticipantDisplayNameRevisionIfChangedContext(ctx, tx, updateResult)
+				displayNameChanged, err = participantDisplayNameRowsChanged(updateResult)
 				if err != nil {
 					return err
 				}
@@ -4513,8 +4625,7 @@ func (s *Store) ensureParticipantByPhoneTx(
 			if !displayNameChanged {
 				return nil
 			}
-			return s.invalidateParticipantPersonEnrichmentTx(
-				ctx, tx, id)
+			return s.bumpDisplayNameRevisionAfterEnrichment(ctx, tx, id)
 		}
 		// One identifier row per number keeps profiles from listing it twice.
 		// Owner attribution matches any identifier value, so the generic
@@ -5171,13 +5282,10 @@ func (s *Store) EnsureParticipantByIdentifierContext(ctx context.Context, identi
 				if err != nil {
 					return fmt.Errorf("backfill participant display name: %w", err)
 				}
-				changed, err := s.bumpParticipantDisplayNameRevisionIfChangedContext(ctx, tx, result)
+				_, err = s.invalidateParticipantEnrichmentThenBumpDisplayNameRevision(
+					ctx, tx, result, participantID)
 				if err != nil {
 					return err
-				}
-				if changed {
-					return s.invalidateParticipantPersonEnrichmentTx(
-						ctx, tx, participantID)
 				}
 			}
 			return nil
@@ -5261,12 +5369,9 @@ func (s *Store) UpdateParticipantDisplayNameByPhone(phone, displayName string) (
 		if err != nil {
 			return err
 		}
-		updated, err = s.bumpParticipantDisplayNameRevisionIfChanged(tx, result)
-		if err != nil || !updated {
-			return err
-		}
-		return s.invalidateParticipantPersonEnrichmentTx(
-			context.Background(), tx, participantIDs...)
+		updated, err = s.invalidateParticipantEnrichmentThenBumpDisplayNameRevision(
+			context.Background(), tx, result, participantIDs...)
+		return err
 	})
 	if err != nil {
 		return false, err
@@ -5320,12 +5425,9 @@ func (s *Store) UpdateImessageParticipantDisplayNameByPhone(phone, displayName s
 		if err != nil {
 			return err
 		}
-		updated, err = s.bumpParticipantDisplayNameRevisionIfChanged(tx, result)
-		if err != nil || !updated {
-			return err
-		}
-		return s.invalidateParticipantPersonEnrichmentTx(
-			context.Background(), tx, participantIDs...)
+		updated, err = s.invalidateParticipantEnrichmentThenBumpDisplayNameRevision(
+			context.Background(), tx, result, participantIDs...)
+		return err
 	})
 	if err != nil {
 		return false, err
@@ -5356,7 +5458,7 @@ func (s *Store) RetitleImessageChats() (int64, error) {
 }
 
 func (s *Store) retitleImessageDirectChats() (int64, error) {
-	result, err := s.db.Exec(fmt.Sprintf(`
+	result, err := s.execStoreWriteContext(context.Background(), fmt.Sprintf(`
 		UPDATE conversations
 		SET title = (
 		    SELECT p.display_name
@@ -5448,7 +5550,7 @@ func (s *Store) retitleImessageGroupChats() (int64, error) {
 			continue
 		}
 
-		result, err := s.db.Exec(fmt.Sprintf(`
+		result, err := s.execStoreWriteContext(context.Background(), fmt.Sprintf(`
 			UPDATE conversations SET title = ?, updated_at = %s
 			WHERE id = ? AND title = ?
 		`, s.dialect.Now()), newTitle, group.id, group.title)
@@ -5610,12 +5712,9 @@ func (s *Store) UpdateParticipantDisplayNameByEmail(email, displayName string) (
 		if err != nil {
 			return err
 		}
-		updated, err = s.bumpParticipantDisplayNameRevisionIfChanged(tx, result)
-		if err != nil || !updated {
-			return err
-		}
-		return s.invalidateParticipantPersonEnrichmentTx(
-			context.Background(), tx, participantIDs...)
+		updated, err = s.invalidateParticipantEnrichmentThenBumpDisplayNameRevision(
+			context.Background(), tx, result, participantIDs...)
+		return err
 	})
 	if err != nil {
 		return false, err
@@ -5660,9 +5759,6 @@ func (s *Store) EnsureConversationParticipantContext(ctx context.Context, conver
 		_, err := q.Exec(s.dialect.InsertOrIgnore(fmt.Sprintf(`INSERT OR IGNORE INTO conversation_participants (conversation_id, participant_id, role, joined_at)
 			VALUES (?, ?, ?, %s)`, s.dialect.Now())), conversationID, participantID, role)
 		return err
-	}
-	if s.syncGeneration == nil {
-		return write(boundQuerier{ctx: ctx, q: s.db})
 	}
 	return s.withTxContext(ctx, func(tx *loggedTx) error { return write(boundQuerier{ctx: ctx, q: tx}) })
 }
@@ -6118,9 +6214,6 @@ func (s *Store) RecomputeMessageAttachmentStatsContext(ctx context.Context, mess
 			return err
 		}
 		return recomputeMessageAttachmentStatsWith(q, messageID)
-	}
-	if s.syncGeneration == nil {
-		return write(boundQuerier{ctx: ctx, q: s.db})
 	}
 	return s.withTxContext(ctx, func(tx *loggedTx) error { return write(boundQuerier{ctx: ctx, q: tx}) })
 }

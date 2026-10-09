@@ -305,6 +305,16 @@ func createBaseViews(ctx context.Context, db *sql.DB, analyticsDir string, optCo
 						replaceExpr: "CAST(envelope_address AS VARCHAR) AS envelope_address",
 						defaultExpr: "NULL::VARCHAR AS envelope_address",
 					},
+					{
+						name:        "recipient_id",
+						replaceExpr: "TRY_CAST(recipient_id AS BIGINT) AS recipient_id",
+						defaultExpr: "0::BIGINT AS recipient_id",
+					},
+					{
+						name:        "recipient_order",
+						replaceExpr: "COALESCE(TRY_CAST(recipient_order AS INTEGER), 0) AS recipient_order",
+						defaultExpr: "0 AS recipient_order",
+					},
 				},
 			},
 			probe: colsFor("message_recipients"),
@@ -664,12 +674,13 @@ FROM messages m
 LEFT JOIN (
     SELECT
         mr.message_id,
-        FIRST(p.email_address) AS from_email,
+        FIRST(p.email_address ORDER BY mr.recipient_order, mr.recipient_id) AS from_email,
         FIRST(
             COALESCE(NULLIF(TRIM(mr.display_name), ''), NULLIF(TRIM(p.display_name), ''), NULLIF(p.phone_number, ''), p.email_address, '')
+            ORDER BY mr.recipient_order, mr.recipient_id
         ) AS from_name,
-        FIRST(p.domain) AS from_domain,
-        FIRST(COALESCE(p.phone_number, '')) AS from_phone
+        FIRST(p.domain ORDER BY mr.recipient_order, mr.recipient_id) AS from_domain,
+        FIRST(COALESCE(p.phone_number, '') ORDER BY mr.recipient_order, mr.recipient_id) AS from_phone
     FROM message_recipients mr
     JOIN participants p ON p.id = mr.participant_id
     WHERE mr.recipient_type = 'from'

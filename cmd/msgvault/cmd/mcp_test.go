@@ -31,6 +31,11 @@ func TestMCPWriteHelpDisclosesMutationClassesAndProfileOptIn(t *testing.T) {
 		require.NotNil(mcpCmd.Flags().Lookup(name))
 	}
 	require.NotNil(mcpCmd.Flags().Lookup("allow-calendar-writes"))
+	deliveryPolicyWriteFlag := mcpCmd.Flags().Lookup("allow-delivery-policy-writes")
+	require.NotNil(deliveryPolicyWriteFlag)
+	httpWritesFlag := mcpCmd.Flags().Lookup("http-allow-writes")
+	require.NotNil(httpWritesFlag)
+	assert.Contains(httpWritesFlag.Usage, "--allow-delivery-policy-writes")
 	var output bytes.Buffer
 	previousOutput := mcpCmd.OutOrStdout()
 	mcpCmd.SetOut(&output)
@@ -425,6 +430,37 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 			assert.Equal(tt.wantReview, opts.IdentityReview != nil)
 			assert.Equal(tt.wantCardDAV, opts.PersonCardDAV != nil)
 			assert.Equal(tt.wantScoring, opts.IdentityScoring != nil)
+		})
+	}
+}
+
+func TestDaemonMCPServeOptionsGatesDeliveryPolicyToolsByAPISchema(t *testing.T) {
+	testCtx := withStoreResolverConfig(t, &config.Config{
+		Data: config.DataConfig{DataDir: t.TempDir()},
+	})
+	for _, tt := range []struct {
+		name          string
+		schemaVersion string
+		wantEnabled   bool
+	}{
+		{name: "routes absent", schemaVersion: "3.5.0"},
+		{name: "routes available", schemaVersion: "3.6.0", wantEnabled: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal("/api/v1/health", r.URL.Path)
+				_ = json.NewEncoder(w).Encode(map[string]string{
+					"status": "ok", "api_schema_version": tt.schemaVersion,
+				})
+			})
+
+			opts := daemonMCPServeOptions(testCtx, client, invocationFromContext(testCtx))
+			if tt.wantEnabled {
+				assert.NotNil(opts.DeliveryPolicies)
+			} else {
+				assert.Nil(opts.DeliveryPolicies)
+			}
 		})
 	}
 }

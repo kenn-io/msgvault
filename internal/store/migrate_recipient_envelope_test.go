@@ -68,10 +68,11 @@ func TestEnsureRecipientEnvelopeUniqueIndex_LegacyTableRebuild(t *testing.T) {
 			recipient_type TEXT NOT NULL,
 			display_name TEXT,
 			email_address TEXT,
+			recipient_order INTEGER NOT NULL DEFAULT 0,
 			UNIQUE(message_id, participant_id, recipient_type)
 		)`,
-		`INSERT INTO message_recipients (id, message_id, participant_id, recipient_type, display_name, email_address)
-			SELECT id, message_id, participant_id, recipient_type, display_name, email_address
+		`INSERT INTO message_recipients (id, message_id, participant_id, recipient_type, display_name, email_address, recipient_order)
+			SELECT id, message_id, participant_id, recipient_type, display_name, email_address, recipient_order
 			FROM message_recipients_current`,
 		`DROP TABLE message_recipients_current`,
 	} {
@@ -173,6 +174,20 @@ func TestEnsureRecipientEnvelopeUniqueIndex_LegacyTableRebuild(t *testing.T) {
 	require.NoError(st.db.QueryRow(`SELECT COUNT(*) FROM cache_related_change_journal
 		WHERE dataset = 'message_facts' AND message_id = ?`, msgID).Scan(&factsCount))
 	assert.Equal(factsBaseline+1, factsCount, "From-facts trigger must survive legacy table swap")
+
+	var evidencePresent bool
+	require.NoError(st.db.QueryRow(`
+		SELECT evidence_present FROM delivery_source_email_evidence
+		WHERE participant_id = ? AND source_id = ?
+	`, participantID, source.ID).Scan(&evidencePresent), "read delivery email evidence after recipient rebuild")
+	assert.True(evidencePresent, "recipient inserts after the rebuild must restore source email evidence")
+	_, err = st.db.Exec(`DELETE FROM messages WHERE id = ?`, msgID)
+	require.NoError(err, "delete message after restoring delivery evidence triggers")
+	require.NoError(st.db.QueryRow(`
+		SELECT evidence_present FROM delivery_source_email_evidence
+		WHERE participant_id = ? AND source_id = ?
+	`, participantID, source.ID).Scan(&evidencePresent), "read delivery email evidence after message deletion")
+	assert.False(evidencePresent, "message deletion must clear source email evidence after the rebuild")
 }
 
 func TestInitSchema_RepairsDanglingLegacyRecipients(t *testing.T) {
@@ -225,11 +240,12 @@ func TestInitSchema_RepairsDanglingLegacyRecipients(t *testing.T) {
 			recipient_type TEXT NOT NULL,
 			display_name TEXT,
 			email_address TEXT,
+			recipient_order INTEGER NOT NULL DEFAULT 0,
 			UNIQUE(message_id, participant_id, recipient_type)
 		)`,
 		`INSERT INTO message_recipients
-			(id, message_id, participant_id, recipient_type, display_name, email_address)
-		 SELECT id, message_id, participant_id, recipient_type, display_name, email_address
+			(id, message_id, participant_id, recipient_type, display_name, email_address, recipient_order)
+		 SELECT id, message_id, participant_id, recipient_type, display_name, email_address, recipient_order
 		 FROM message_recipients_current`,
 		`DROP TABLE message_recipients_current`,
 	} {
@@ -376,11 +392,12 @@ func TestInitSchema_LegacyRecipientRebuildRestoresActivityTriggers(t *testing.T)
 			recipient_type TEXT NOT NULL,
 			display_name TEXT,
 			email_address TEXT,
+			recipient_order INTEGER NOT NULL DEFAULT 0,
 			UNIQUE(message_id, participant_id, recipient_type)
 		)`,
 		`INSERT INTO message_recipients
-			(id, message_id, participant_id, recipient_type, display_name, email_address)
-		 SELECT id, message_id, participant_id, recipient_type, display_name, email_address
+			(id, message_id, participant_id, recipient_type, display_name, email_address, recipient_order)
+		 SELECT id, message_id, participant_id, recipient_type, display_name, email_address, recipient_order
 		 FROM message_recipients_current`,
 		`DROP TABLE message_recipients_current`,
 	} {

@@ -100,7 +100,7 @@ func (s *Store) ListPersonAddressesContext(
 	ctx context.Context, personID int64, currentOnly bool,
 ) ([]PersonAddress, error) {
 	var addresses []PersonAddress
-	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
 		var err error
 		addresses, err = s.listPersonAddressesTx(ctx, tx, personID, currentOnly)
 		return err

@@ -635,7 +635,7 @@ func (s *Store) BeginAttempt(
 	var attempt *personenrichment.DurableAttempt
 	var created bool
 	var stalePublication bool
-	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+	err := s.withTxContextWithoutDeliveryFence(ctx, func(tx *loggedTx) error {
 		if s.personEnrichmentTxBarrier != nil {
 			s.personEnrichmentTxBarrier("begin_before_authority_lock")
 		}

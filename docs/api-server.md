@@ -100,7 +100,7 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.8.0**.
+it is separate from the binary release version. The current schema is **3.9.0**.
 Upgrade clients and daemon together across incompatible schema versions,
 including remote deployments.
 
@@ -140,6 +140,10 @@ message's recordings with their Docbank transcript state. Existing routes are
 unchanged.
 
 Schema 3.7.0 adds `GET /api/v1/media/search` for scoped lexical transcript search.
+
+Schema 3.9.0 adds unreleased [contact delivery policies](#contact-delivery-policies):
+owner-authorized read/set/clear routes, exact endpoint scopes, revision checks,
+and audit receipts. Policy editing requires its own write opt-in.
 
 Schema 2.35.0 adds `scope_escalation_source_type` (`gmail` or `msmail`) to
 `POST /api/v1/cli/delete-staged/plan` responses that require a permission
@@ -2737,3 +2741,72 @@ policy and deletion visibility. Changes under
 | `enabled` | `true` | Whether scheduled sync is active |
 
 See the [Configuration](/docs/configuration/) page for the full config file reference.
+
+## Contact delivery policies
+
+On unreleased `main`, every person starts with `draft_only`. An owner can explicitly approve
+`send_allowed` for a person or one exact contact method. This permits admission
+of an explicit send without a draft first. It does not send anything, disable
+drafting, change existing drafts, or replace provider credentials, platform
+confirmation, or recipient and data restrictions.
+
+These owner-only routes require API schema 3.9.0:
+
+| Operation | POST path | Request |
+| --- | --- | --- |
+| Inspect | `/api/v1/people/delivery-policy/read` | `person_uid`, optional `target` |
+| Set | `/api/v1/people/delivery-policy/set` | `query`, `policy`, `expected_revision`, `expected_person_revision`, `binding_digest`, `reason` |
+| Clear | `/api/v1/people/delivery-policy/clear` | `query`, `expected_revision`, `reason` |
+
+The owner starts `msgvault serve --allow-delivery-policy-writes` to enable
+editing, and sends `X-Msgvault-Delivery-Policy-Write: true` for each mutation.
+Drafting and delegated credentials cannot enable this capability. Reads return
+the stored policy, effective policy, inheritance source, canonical person UID,
+exact target identifiers, person and identity revisions, policy revision,
+binding digest, and reason. Writes use optimistic policy revisions and return
+before/after state plus a durable actor, timestamp, scope, and reason receipt.
+A stale revision returns `revision_conflict`; a stale permissive binding returns
+`target_changed`. Restricting or clearing an existing exact scope remains
+possible after its endpoint becomes unavailable.
+
+A target contains `source_id`, `source_type`, `account_id`, `network`, and
+`endpoint`, plus exactly one native `contact_point_id` or `participant_id`.
+Conversation routes also identify `conversation_id` and `provider_chat_id`.
+Omitting the target means the broader person-wide default. Setting that default
+requires `scope_acknowledgement: "person_all_routes"`. The exact method override
+wins, then the approved person default, then `draft_only`. A method approval
+never authorizes another address, account, network, chat, or future endpoint.
+Native binding changes invalidate permissive approvals rather than widening
+them. Person-wide approvals cover the reviewed native bindings; changed or newly
+added bindings need explicit reauthorization. A restrictive exact override
+continues to win even when its endpoint becomes unavailable. Clearing it
+restores inheritance; clearing the person default restores `draft_only`.
+
+Current verified targets are native curated email mailboxes or source-evidenced
+email participants on an exact Gmail or IMAP account. A shared mailbox bound to
+another person is ambiguous and blocked. Display names, retired UIDs, phone
+shapes, and merged chat containers never authorize delivery. Chat admission
+remains closed until the native exact child-route evidence and account lifecycle
+contracts are available. Archive verification alone is not live reachability or
+permission. CardDAV publication is outside this policy.
+
+Msgvault currently has draft operations and no messaging send or outbox command.
+Future send adapters must call
+`Store.WithDeliveryAdmissionContext(ctx, recipients, attempt)` immediately before
+every provider attempt, including retries and queued work. They must enumerate
+all recipients, including cc/bcc; unresolved groups fail closed. The callback
+uses the immutable recipient snapshot from `AdmittedDeliveryRecipients` and
+makes one synchronous attempt, without spawning or retrying a send. Policy and
+native route changes wait for that attempt to finish. A revocation committed
+before admission blocks it; a later revocation blocks subsequent attempts.
+`internal/delivery.Execute` keeps draft and send modes explicit. A denied send
+returns `draft_required` and recoverable content with zero provider calls. A
+caller cancelled before the provider attempt receives `admission_cancelled`. A
+provider or completion failure after admission returns `delivery_uncertain`,
+requiring provider-native reconciliation before any retry.
+
+The admission callback has a 30-second context deadline and must honor it.
+Cancellation does not release the database fence while the callback remains in
+flight. Native generations prevent detach/restore changes from reviving an old
+approval. Restoring a whole database snapshot also restores its approvals and
+generations; operators must review permissions before using a restored archive.

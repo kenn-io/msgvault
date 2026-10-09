@@ -53,12 +53,13 @@ type syncGeneration struct {
 func (s *Store) ScopedToSync(sourceID, syncRunID int64) *Store {
 	base := s.withoutSyncScope()
 	return &Store{
-		db:                   base.db,
-		dbPath:               base.dbPath,
-		sqliteFilesystemPath: base.sqliteFilesystemPath,
-		dialect:              base.dialect,
-		readOnly:             base.readOnly,
-		fts5Available:        base.fts5Available,
+		db:                                base.db,
+		dbPath:                            base.dbPath,
+		sqliteFilesystemPath:              base.sqliteFilesystemPath,
+		dialect:                           base.dialect,
+		readOnly:                          base.readOnly,
+		fts5Available:                     base.fts5Available,
+		deliveryPolicyInfrastructureReady: base.deliveryPolicyInfrastructureReady,
 
 		syncGeneration:     &syncGeneration{sourceID: sourceID, runID: syncRunID},
 		syncBase:           base,
@@ -156,7 +157,9 @@ func (s *Store) withSyncMessageWriteContext(
 	write func(querier) error,
 ) error {
 	if s.syncGeneration == nil {
-		return write(boundQuerier{ctx: ctx, q: s.db})
+		return s.withTxContext(ctx, func(tx *loggedTx) error {
+			return write(boundQuerier{ctx: ctx, q: tx})
+		})
 	}
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
 		q := boundQuerier{ctx: ctx, q: tx}
@@ -173,7 +176,9 @@ func (s *Store) withSyncConversationWriteContext(
 	write func(querier) error,
 ) error {
 	if s.syncGeneration == nil {
-		return write(boundQuerier{ctx: ctx, q: s.db})
+		return s.withTxContext(ctx, func(tx *loggedTx) error {
+			return write(boundQuerier{ctx: ctx, q: tx})
+		})
 	}
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
 		q := boundQuerier{ctx: ctx, q: tx}
@@ -193,7 +198,9 @@ func (s *Store) withSyncSourceWriteContext(
 		return err
 	}
 	if s.syncGeneration == nil {
-		return write(boundQuerier{ctx: ctx, q: s.db})
+		return s.withTxContext(ctx, func(tx *loggedTx) error {
+			return write(boundQuerier{ctx: ctx, q: tx})
+		})
 	}
 	base := s.withoutSyncScope()
 	return base.withTxContext(ctx, func(tx *loggedTx) error {
@@ -472,6 +479,9 @@ func (s *Store) startSyncOnce(
 			_, _ = conn.ExecContext(rollbackCtx, "ROLLBACK")
 		}
 	}()
+	if err := s.enterDeliveryAdmissionFenceContext(ctx, conn); err != nil {
+		return 0, fmt.Errorf("enter sync delivery fence: %w", err)
+	}
 
 	rebind := s.dialect.Rebind
 	now := s.dialect.Now()
@@ -1601,7 +1611,9 @@ func (s *Store) GetOrCreateSource(sourceType, identifier string) (*Source, error
 // default collection membership. A retry reuses an already committed source.
 func (s *Store) GetOrCreateSourceContext(ctx context.Context, sourceType, identifier string) (*Source, error) {
 	now := s.dialect.Now()
-	row := s.db.QueryRowContext(ctx, fmt.Sprintf(`
+	var source *Source
+	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		row := tx.QueryRowContext(ctx, fmt.Sprintf(`
 		INSERT INTO sources (source_type, identifier, created_at, updated_at)
 		VALUES (?, ?, %s, %s)
 		ON CONFLICT (source_type, identifier) DO UPDATE
@@ -1609,11 +1621,16 @@ func (s *Store) GetOrCreateSourceContext(ctx context.Context, sourceType, identi
 		RETURNING id, source_type, identifier, display_name, google_user_id,
 		          last_sync_at, sync_cursor, sync_config, oauth_app,
 		          created_at, updated_at
-	`, now, now), sourceType, identifier)
-
-	source, err := scanSource(row)
+		`, now, now), sourceType, identifier)
+		var err error
+		source, err = scanSource(row)
+		if err != nil {
+			return fmt.Errorf("upsert source: %w", err)
+		}
+		return nil
+	})
 	if err != nil {
-		return nil, fmt.Errorf("upsert source: %w", err)
+		return nil, err
 	}
 
 	// Add to the default "All" collection if it exists.
@@ -1649,7 +1666,7 @@ func (s *Store) GetOrCreateSourceContext(ctx context.Context, sourceType, identi
 // UpdateSourceSyncCursor updates the sync cursor (historyId) for a source.
 func (s *Store) UpdateSourceSyncCursor(sourceID int64, cursor string) error {
 	now := s.dialect.Now()
-	_, err := s.db.Exec(fmt.Sprintf(`
+	_, err := s.execStoreWriteContext(context.Background(), fmt.Sprintf(`
 		UPDATE sources
 		SET sync_cursor = ?, last_sync_at = %s, updated_at = %s
 		WHERE id = ?

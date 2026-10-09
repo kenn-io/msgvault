@@ -493,7 +493,7 @@ func (s *Store) GetPerson(id int64) (*Person, error) {
 
 func (s *Store) GetPersonContext(ctx context.Context, id int64) (*Person, error) {
 	var person *Person
-	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
 		var err error
 		person, err = s.getPersonTx(ctx, tx, id)
 		return err
@@ -509,7 +509,7 @@ func (s *Store) GetPersonContext(ctx context.Context, id int64) (*Person, error)
 // links can keep using an old UID across a merge and split reversal.
 func (s *Store) ListPersonUIDsContext(ctx context.Context, id int64) ([]string, error) {
 	var result []string
-	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
 		person, err := s.getPersonTx(ctx, tx, id)
 		if err != nil {
 			return err
@@ -547,7 +547,7 @@ func (s *Store) ListPersons() ([]Person, error) {
 
 func (s *Store) ListPersonsContext(ctx context.Context) ([]Person, error) {
 	var persons []Person
-	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
 		var err error
 		persons, err = s.listPersonsTx(ctx, tx)
 		return err
@@ -802,7 +802,7 @@ func (s *Store) PersonForParticipantsContext(
 	ctx context.Context, participantIDs []int64,
 ) (*Person, error) {
 	var person *Person
-	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
 		personIDs, err := personIDsForParticipantsTx(ctx, tx, participantIDs)
 		if err != nil {
 			return err

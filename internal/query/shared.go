@@ -141,7 +141,7 @@ var sqliteSenderNameExpr = recipientNameExpr("mr_from", "p_sender")
 const sqliteSenderJoin = `LEFT JOIN message_recipients mr_from ON mr_from.id = (
 			SELECT mr.id FROM message_recipients mr
 			WHERE mr.message_id = m.id AND mr.recipient_type = 'from'
-			ORDER BY mr.id LIMIT 1
+			ORDER BY mr.recipient_order, mr.id LIMIT 1
 		)
 		LEFT JOIN participants p_sender ON p_sender.id = COALESCE(mr_from.participant_id, m.sender_id)`
 
@@ -225,7 +225,7 @@ func fetchParticipantsForMessageList(ctx context.Context, db *sql.DB, rebind reb
 		JOIN %sparticipants p ON p.id = mr.participant_id
 		WHERE mr.message_id IN (%s)
 		  AND mr.recipient_type IN ('to', 'cc', 'bcc')
-		ORDER BY mr.message_id, mr.id
+		ORDER BY mr.message_id, mr.recipient_order, mr.id
 	`, recipientNameExpr("mr", "p"), tablePrefix, tablePrefix, strings.Join(placeholders, ","))), ids...)
 	if err != nil {
 		return err
@@ -290,9 +290,13 @@ func fetchMessageLabelsDetail(ctx context.Context, db *sql.DB, rebind rebindFunc
 // rebind rewrites the ? placeholders for the driver in use.
 func fetchParticipantsShared(ctx context.Context, db *sql.DB, rebind rebindFunc, tablePrefix string, msg *MessageDetail) error {
 	rows, err := db.QueryContext(ctx, rebind(fmt.Sprintf(`
-		SELECT mr.recipient_type,
-		       COALESCE(NULLIF(p.email_address, ''), NULLIF(p.phone_number, ''), ''),
-		       %s
+		SELECT recipient_type, address, name
+		FROM (
+		SELECT mr.recipient_type AS recipient_type,
+		       COALESCE(NULLIF(p.email_address, ''), NULLIF(p.phone_number, ''), '') AS address,
+		       %s AS name,
+		       mr.recipient_order AS recipient_order,
+		       mr.id AS recipient_id
 		FROM %smessage_recipients mr
 		JOIN %sparticipants p ON p.id = mr.participant_id
 		WHERE mr.message_id = ?
@@ -300,7 +304,9 @@ func fetchParticipantsShared(ctx context.Context, db *sql.DB, rebind rebindFunc,
 		UNION ALL
 		SELECT 'from',
 		       COALESCE(NULLIF(p.email_address, ''), NULLIF(p.phone_number, ''), ''),
-		       COALESCE(%s, '')
+		       COALESCE(%s, ''),
+		       0,
+		       0
 		FROM %smessages m
 		JOIN %sparticipants p ON p.id = m.sender_id
 		WHERE m.id = ?
@@ -310,6 +316,8 @@ func fetchParticipantsShared(ctx context.Context, db *sql.DB, rebind rebindFunc,
 			WHERE mr_explicit.message_id = m.id
 			  AND mr_explicit.recipient_type = 'from'
 		  )
+		) recipients
+		ORDER BY recipient_type, recipient_order, recipient_id
 	`,
 		recipientNameExpr("mr", "p"), tablePrefix, tablePrefix,
 		participantNameExpr("p"), tablePrefix, tablePrefix, tablePrefix,

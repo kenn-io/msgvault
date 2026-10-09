@@ -123,6 +123,9 @@ func (s *Store) ReplaceCardDAVDiscoveryContext(
 			_ = tx.Rollback()
 		}
 	}()
+	if err := s.enterDeliveryAdmissionFenceContext(ctx, tx); err != nil {
+		return nil, nil, fmt.Errorf("enter CardDAV discovery delivery fence: %w", err)
+	}
 	logged := &loggedTx{Tx: tx, rebind: s.Rebind}
 	if err := lockCardDAVDiscoveryReplacement(ctx, tx, s.Rebind, s.IsPostgreSQL()); err != nil {
 		return nil, nil, err

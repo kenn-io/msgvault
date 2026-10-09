@@ -103,21 +103,23 @@ const (
 // the search_message_bodies tool, and Backend additionally enables the
 // find_similar_messages tool.
 type ServeOptions struct {
-	downloads           *downloadCache
-	Engine              query.Engine
-	AttachmentsDir      string
-	AttachmentReader    AttachmentReader
-	ManifestSaver       DeletionManifestSaver
-	HybridSearcher      HybridSearcher
-	SimilarSearcher     SimilarSearcher
-	DataDir             string
-	DocumentSearcher    DocumentSearcher
-	MediaSearcher       MediaSearcher
-	PersonFileSearcher  PersonFileSearcher
-	PeopleBackend       peoplebrowser.Backend
-	DirectoryBackend    peoplebrowser.DirectoryLister
-	PersonAgendaBackend PersonAgendaBackend
-	Kata                KataBackend
+	DeliveryPolicies          DeliveryPolicyBackend
+	AllowDeliveryPolicyWrites bool
+	downloads                 *downloadCache
+	Engine                    query.Engine
+	AttachmentsDir            string
+	AttachmentReader          AttachmentReader
+	ManifestSaver             DeletionManifestSaver
+	HybridSearcher            HybridSearcher
+	SimilarSearcher           SimilarSearcher
+	DataDir                   string
+	DocumentSearcher          DocumentSearcher
+	MediaSearcher             MediaSearcher
+	PersonFileSearcher        PersonFileSearcher
+	PeopleBackend             peoplebrowser.Backend
+	DirectoryBackend          peoplebrowser.DirectoryLister
+	PersonAgendaBackend       PersonAgendaBackend
+	Kata                      KataBackend
 	// AllowProfileWrites exposes person promotion and Notes mutation tools.
 	// It remains false unless the operator explicitly opts in.
 	AllowProfileWrites bool
@@ -371,6 +373,7 @@ func newMCPServerWithPolicy(
 		identityReview:      opts.IdentityReview,
 		personCardDAV:       opts.PersonCardDAV,
 		identityScoring:     opts.IdentityScoring,
+		deliveryPolicies:    opts.DeliveryPolicies,
 		drafts:              opts.Drafts,
 	}
 
@@ -392,6 +395,9 @@ func newMCPServerWithPolicy(
 		}
 		if definition.security == toolSecurityPersonMerge &&
 			(!allowWrites || !opts.AllowPersonMerges) {
+			continue
+		}
+		if definition.security == toolSecurityDeliveryPolicyWrite && (!allowWrites || !opts.AllowDeliveryPolicyWrites) {
 			continue
 		}
 		if definition.security == toolSecurityCardDAVWrite &&
@@ -513,6 +519,7 @@ func newMCPHTTPServerWithPolicy(
 				requestOpts.AllowIdentityDecisions = false
 				requestOpts.AllowIdentityScoring = false
 				requestOpts.AllowPersonMerges = false
+				requestOpts.AllowDeliveryPolicyWrites = false
 				requestOpts.AllowCardDAVWrites = false
 				requestOpts.AllowCalendarWrites = false
 			}

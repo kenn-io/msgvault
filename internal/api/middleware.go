@@ -48,11 +48,13 @@ func defaultCORSAllowedMethods() []string {
 
 // defaultCORSAllowedHeaders lists the request headers cross-origin clients
 // send: If-Match carries concurrency tokens, Idempotency-Key carries person
-// merge and split retry keys, and X-Request-Id carries task creation retry keys.
+// merge and split retry keys, X-Request-Id carries task creation retry keys,
+// and DeliveryPolicyWriteHeader opts browser requests into policy mutations.
 func defaultCORSAllowedHeaders() []string {
 	return []string{
 		"Accept", "Authorization", "Content-Type", ifMatchHeaderName,
 		idempotencyKeyHeaderName, "X-API-Key", "X-Request-Id", csrfHeaderName,
+		DeliveryPolicyWriteHeader,
 	}
 }
 

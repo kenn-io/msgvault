@@ -1316,6 +1316,38 @@ func TestCopySubset_Basic(t *testing.T) {
 	assert.False(hasViolation, "foreign key violations found in destination database")
 }
 
+func TestCopySubsetBackfillsSenderOnlyEmailEvidence(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	sourcePath := createTestSourceDB(t, t.TempDir(), 4)
+	sourceDB, err := sql.Open("sqlite3", sourcePath+"?_foreign_keys=OFF")
+	requirements.NoError(err)
+	_, err = sourceDB.Exec(`
+		INSERT INTO participants (id, email_address, display_name, domain)
+		VALUES (4, 'sender-only@example.test', 'Synthetic Sender', 'example.test');
+		INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, sender_id)
+		VALUES (5, 1, 1, 'subset-sender-only-evidence', 'email', '2025-01-01 00:00:00', 4);
+	`)
+	requirements.NoError(err)
+	requirements.NoError(sourceDB.Close())
+
+	destinationDir := filepath.Join(t.TempDir(), "subset")
+	_, err = CopySubset(sourcePath, destinationDir, 5, false)
+	requirements.NoError(err)
+
+	destination, err := Open(filepath.Join(destinationDir, "msgvault.db"))
+	requirements.NoError(err)
+	t.Cleanup(func() { requirements.NoError(destination.Close()) })
+	var present bool
+	err = destination.DB().QueryRowContext(t.Context(), `
+		SELECT EXISTS (
+			SELECT 1 FROM delivery_source_email_evidence
+			WHERE participant_id = 4 AND source_id = 1 AND evidence_present = TRUE
+		)
+	`).Scan(&present)
+	requirements.NoError(err)
+	assertions.True(present, "the copied sender-only email message supplies source identity evidence")
+}
+
 func TestCopySubsetExcludesDocumentDerivativesAndHostedConsent(t *testing.T) {
 	require := require.New(t)
 	srcDir := t.TempDir()
@@ -4057,6 +4089,8 @@ func TestCopySubset_UpgradedAuxiliaryColumnOrder(t *testing.T) {
 		`DROP INDEX IF EXISTS idx_participants_phone`,
 		`DROP INDEX IF EXISTS idx_participants_canonical`,
 		`DROP TRIGGER IF EXISTS trg_embedding_changes_participant_display_name`,
+		`DROP TRIGGER IF EXISTS delivery_participants_update`,
+		`DROP TRIGGER IF EXISTS delivery_participants_update_epoch`,
 		`ALTER TABLE participants DROP COLUMN phone_number`,
 		`ALTER TABLE participants DROP COLUMN canonical_id`,
 		`ALTER TABLE participants ADD COLUMN phone_number TEXT`,
@@ -4065,6 +4099,8 @@ func TestCopySubset_UpgradedAuxiliaryColumnOrder(t *testing.T) {
 		`DROP INDEX IF EXISTS idx_conversations_type`,
 		`DROP TRIGGER IF EXISTS trg_embedding_changes_conversation_title`,
 		`DROP TRIGGER IF EXISTS trg_activity_queue_conversation_type_update`,
+		`DROP TRIGGER IF EXISTS delivery_conversations_update`,
+		`DROP TRIGGER IF EXISTS delivery_conversations_update_epoch`,
 		`ALTER TABLE conversations DROP COLUMN conversation_type`,
 		`ALTER TABLE conversations DROP COLUMN title`,
 		`ALTER TABLE conversations ADD COLUMN title TEXT`,
@@ -4259,6 +4295,14 @@ func TestCopySubset_LegacyMessageRecipientsWithoutEnvelopeAddress(t *testing.T) 
 	// triggers. The fixture is constructed backwards from today's schema, so
 	// remove those later triggers before rebuilding the legacy table.
 	require.NoError(dropPersonSweepSQLiteTriggers(db), "drop sweep triggers before legacy recipient rebuild")
+	for _, name := range []string{
+		"delivery_source_email_message_delete",
+		"delivery_source_email_message_insert",
+		"delivery_source_email_message_update",
+	} {
+		_, err := db.Exec(`DROP TRIGGER IF EXISTS ` + name)
+		require.NoError(err, "drop %s before legacy recipient rebuild", name)
+	}
 	for _, stmt := range []string{
 		`DROP INDEX IF EXISTS idx_message_recipients_envelope`,
 		`DROP INDEX IF EXISTS idx_message_recipients_message`,

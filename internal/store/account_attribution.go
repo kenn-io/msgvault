@@ -108,8 +108,8 @@ func (st *attributionLockState) holds(sourceID int64) bool {
 
 // withAttributionTxContext opens every transaction that derives attribution
 // or changes an input some message's attribution reads. Lock order is the
-// identity row (shared or exclusive), then each listed source row ascending,
-// then the sync fence, then fn.
+// delivery fence, the identity row (shared or exclusive), each listed source
+// row ascending, the sync fence, then fn.
 func (s *Store) withAttributionTxContext(
 	ctx context.Context, lock attributionLock, fn func(*loggedTx) error,
 ) error {

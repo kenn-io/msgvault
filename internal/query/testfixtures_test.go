@@ -88,9 +88,11 @@ type ParticipantIdentifierFixture struct {
 
 // RecipientFixture defines a message_recipients row for Parquet test data.
 type RecipientFixture struct {
+	RecipientID   int64
 	MessageID     int64
 	ParticipantID int64
 	Type          string // "from", "to", "cc", "bcc"
+	Order         int
 	DisplayName   string
 	// EmailAddress is the header address recorded at email ingest. Empty
 	// models rows where none was recorded (legacy ingests, non-email
@@ -346,9 +348,22 @@ func (b *TestDataBuilder) AddRecipient(messageID, participantID int64, recipient
 // AddRecipientWithEnvelope adds a message_recipients row carrying the
 // envelope address as it appeared in the message.
 func (b *TestDataBuilder) AddRecipientWithEnvelope(messageID, participantID int64, recipientType, displayName, emailAddress string) {
+	order := 0
+	for _, recipient := range b.recipients {
+		if recipient.MessageID == messageID && recipient.Type == recipientType {
+			order++
+		}
+	}
+	b.AddRecipientWithOrder(messageID, participantID, recipientType, displayName, emailAddress, order)
+}
+
+// AddRecipientWithOrder adds a message_recipients row with an explicit header
+// order, allowing Parquet fixtures to model reconciled recipient ordering.
+func (b *TestDataBuilder) AddRecipientWithOrder(messageID, participantID int64, recipientType, displayName, emailAddress string, order int) {
 	b.recipients = append(b.recipients, RecipientFixture{
-		MessageID: messageID, ParticipantID: participantID,
-		Type: recipientType, DisplayName: displayName, EmailAddress: emailAddress,
+		RecipientID: int64(len(b.recipients) + 1),
+		MessageID:   messageID, ParticipantID: participantID,
+		Type: recipientType, Order: order, DisplayName: displayName, EmailAddress: emailAddress,
 	})
 }
 
@@ -607,9 +622,9 @@ func (b *TestDataBuilder) recipientsSQL() string {
 		} else if email := b.participantEmail(r.ParticipantID); email != "" {
 			resolved = sqlStr(email)
 		}
-		return fmt.Sprintf("(%d::BIGINT, %d::BIGINT, %s, %s, %s, %s)",
-			r.MessageID, r.ParticipantID, sqlStr(r.Type), sqlStr(r.DisplayName),
-			resolved, envelope)
+		return fmt.Sprintf("(%d::BIGINT, %d::BIGINT, %d::BIGINT, %s, %s, %s, %s, %d::INTEGER)",
+			r.RecipientID, r.MessageID, r.ParticipantID, sqlStr(r.Type), sqlStr(r.DisplayName),
+			resolved, envelope, r.Order)
 	})
 }
 
@@ -680,10 +695,10 @@ const (
 	participantsCols           = "id, email_address, domain, display_name, phone_number"
 	participantIdentifiersCols = "participant_id, identifier_type, identifier_value, display_value, is_primary"
 	messageRecipientsCols      = "message_id, participant_id, recipient_type, display_name"
-	// messageRecipientsColsWithEnvelope adds the resolved recipient address
-	// and the raw header address (cache schema v26). messageRecipientsCols
-	// stays for fixtures that model pre-v17 caches without either column.
-	messageRecipientsColsWithEnvelope = "message_id, participant_id, recipient_type, display_name, email_address, envelope_address"
+	// messageRecipientsColsWithEnvelope models current recipient Parquet rows,
+	// including their source row ID, header order, and address columns.
+	// messageRecipientsCols stays for fixtures that model older caches.
+	messageRecipientsColsWithEnvelope = "recipient_id, message_id, participant_id, recipient_type, display_name, email_address, envelope_address, recipient_order"
 	labelsCols                        = "id, name"
 	messageLabelsCols                 = "message_id, label_id"
 	attachmentsCols                   = "attachment_id, message_id, size, filename, mime_type"
@@ -764,7 +779,7 @@ func (b *TestDataBuilder) recipientDummyRow() string {
 	if b.legacyRecipientSchema {
 		return "(0::BIGINT, 0::BIGINT, '', '')"
 	}
-	return "(0::BIGINT, 0::BIGINT, '', '', '', '')"
+	return "(0::BIGINT, 0::BIGINT, 0::BIGINT, '', '', '', '', 0::INTEGER)"
 }
 
 // addAuxiliaryTables adds sources, participants, recipients, labels, message_labels, and conversations.

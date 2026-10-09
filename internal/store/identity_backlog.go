@@ -128,7 +128,7 @@ func (s *Store) ClearIdentityDiscoveryBacklogContext(ctx context.Context, source
 	if sourceID <= 0 {
 		return fmt.Errorf("clear identity discovery backlog: %w", errIdentityBacklogSourceID)
 	}
-	if _, err := s.db.ExecContext(ctx,
+	if _, err := s.execStoreWriteContext(ctx,
 		`DELETE FROM archive_metadata WHERE key = ?`, identityDiscoveryBacklogKey(sourceID),
 	); err != nil {
 		return fmt.Errorf("clear identity discovery backlog: %w", err)

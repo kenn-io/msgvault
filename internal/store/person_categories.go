@@ -54,7 +54,7 @@ func (s *Store) ListPersonCategoriesContext(
 	ctx context.Context, personID int64, currentOnly bool,
 ) ([]PersonCategory, error) {
 	var categories []PersonCategory
-	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
 		var err error
 		categories, err = s.listPersonCategoriesTx(ctx, tx, personID, currentOnly)
 		return err

@@ -76,7 +76,7 @@ func (s *Store) ListPersonContactPointsContext(
 	ctx context.Context, personID int64, currentOnly bool,
 ) ([]PersonContactPoint, error) {
 	var points []PersonContactPoint
-	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
 		var err error
 		points, err = s.listPersonContactPointsTx(ctx, tx, personID, currentOnly)
 		return err

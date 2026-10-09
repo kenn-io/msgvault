@@ -241,7 +241,7 @@ func (s *Store) canonicalRelationshipEndpointsTx(
 
 func (s *Store) GetPersonRelationshipContext(ctx context.Context, id int64) (*PersonRelationship, error) {
 	var edge *PersonRelationship
-	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
 		var txErr error
 		edge, txErr = s.personRelationshipTx(ctx, tx, id)
 		return txErr

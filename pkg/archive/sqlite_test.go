@@ -57,6 +57,28 @@ func TestOpenSQLiteRequiresExistingArchive(t *testing.T) {
 	require.ErrorContains(archive.SetupSQLite(t.Context(), "postgres://archive.invalid/msgvault"), "use Setup for PostgreSQL")
 }
 
+func TestSQLiteRuntimeRejectsArchiveBeforeSchemaSetup(t *testing.T) {
+	require := require.New(t)
+	path := filepath.Join(t.TempDir(), "archive.db")
+	require.NoError(archive.SetupSQLite(t.Context(), path))
+
+	st, err := store.Open(path)
+	require.NoError(err)
+	_, err = st.DB().ExecContext(t.Context(),
+		`UPDATE archive_metadata SET value = '1' WHERE key = 'schema_version'`)
+	require.NoError(err, "mark the archive as using the previous schema")
+	require.NoError(st.Close())
+
+	_, err = archive.OpenSQLite(t.Context(), path)
+	require.ErrorContains(err, "archive schema version 1 does not match",
+		"runtime opens must reject archives until setup applies the new schema")
+
+	require.NoError(archive.SetupSQLite(t.Context(), path), "setup upgrades the archive")
+	runtime, err := archive.OpenSQLite(t.Context(), path)
+	require.NoError(err, "runtime open succeeds after setup records the current schema")
+	require.NoError(runtime.Close())
+}
+
 func TestSlackCallerSelectsPrivateConversation(t *testing.T) {
 	require := require.New(t)
 	path := filepath.Join(t.TempDir(), "archive.db")

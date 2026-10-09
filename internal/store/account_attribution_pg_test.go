@@ -163,6 +163,8 @@ func TestAccountAttributionConcurrentSourceSyncsPG(t *testing.T) {
 }
 
 func TestAccountAttributionScopedPersistVsSourceRemovalPG(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	st := requirePostgreSQLStore(t)
 	f := newAttrFixtureOn(t, st, "gmail", "persist@example.net")
 	victim := newAttrFixtureOn(t, st, "gmail", "victim@example.net")
@@ -179,22 +181,26 @@ func TestAccountAttributionScopedPersistVsSourceRemovalPG(t *testing.T) {
 		persistDone <- err
 	}()
 	pid := waitForLockWait(t, st, "FOR SHARE", "the scoped persist must wait at its identity share lock")
-	assert.False(t, holdsRelationLock(t, st, pid, "sync_runs"), "the waiting persist must not hold sync_runs")
+	assert.False(holdsRelationLock(t, st, pid, "sync_runs"), "the waiting persist must not hold sync_runs")
 
 	removeDone := make(chan error, 1)
 	go func() {
 		_, _, err := st.RemoveSourceSerialized(context.Background(), victim.source.ID)
 		removeDone <- err
 	}()
-	require.Eventually(t, func() bool {
-		var waiting int
-		return st.DB().QueryRowContext(context.Background(), `SELECT COUNT(*) FROM pg_stat_activity
-			WHERE wait_event_type = 'Lock' AND POSITION('archive_metadata' IN query) > 0`).Scan(&waiting) == nil && waiting >= 2
-	}, pgWaitBudget, 10*time.Millisecond, "source removal must wait for the identity row")
+	var removePID int
+	require.Eventually(func() bool {
+		return st.DB().QueryRowContext(context.Background(), `
+			SELECT COALESCE(MIN(pid), 0) FROM pg_stat_activity
+			WHERE wait_event_type = 'Lock'
+			  AND POSITION('pg_advisory_xact_lock' IN query) > 0
+			  AND $1 = ANY(pg_blocking_pids(pid))`, pid).Scan(&removePID) == nil && removePID > 0
+	}, pgWaitBudget, 10*time.Millisecond, "source removal must wait for the scoped persist's delivery fence")
+	assert.False(holdsRelationLock(t, st, removePID, "sources"), "source removal must wait before taking table locks")
 	release()
 	assertNoDeadlock(t, waitResult(t, persistDone, "scoped persist"))
 	assertNoDeadlock(t, waitResult(t, removeDone, "source removal"))
-	assert.Len(t, searchIDs(t, st, "received:persist@example.net"), 1)
+	assert.Len(searchIDs(t, st, "received:persist@example.net"), 1)
 }
 
 func TestAccountAttributionPersistVsIMAPLabelRepairPG(t *testing.T) {

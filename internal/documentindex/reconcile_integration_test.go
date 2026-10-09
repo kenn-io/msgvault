@@ -2,6 +2,8 @@ package documentindex
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"strconv"
 	"strings"
 	"sync"
@@ -280,6 +282,8 @@ func TestPostgreSQLOccurrenceReconciliationSerializesEligibilityRead(t *testing.
 	holder, err := f.Store.DB().Conn(t.Context())
 	require.NoError(err)
 	lockName := "msgvault.document_occurrence.attachment:" + strconv.FormatInt(attachmentID, 10)
+	var holderPID int
+	require.NoError(holder.QueryRowContext(t.Context(), `SELECT pg_backend_pid()`).Scan(&holderPID))
 	held := true
 	t.Cleanup(func() {
 		if held {
@@ -291,10 +295,133 @@ func TestPostgreSQLOccurrenceReconciliationSerializesEligibilityRead(t *testing.
 	_, err = holder.ExecContext(t.Context(), f.Store.Rebind(`
 		SELECT pg_advisory_lock(hashtextextended(CAST(? AS TEXT), 0))`), lockName)
 	require.NoError(err)
-	var waitingBefore int
+	var deliveryFenceKey int64
+	var deliveryFenceOID int64
 	require.NoError(f.Store.DB().QueryRow(`
-		SELECT COUNT(*) FROM pg_locks
-		WHERE locktype = 'advisory' AND NOT granted`).Scan(&waitingBefore))
+		SELECT hashtextextended('msgvault.delivery_admission:' || current_schema(), 0),
+		       'delivery_admission_lock'::regclass::oid
+	`).Scan(&deliveryFenceKey, &deliveryFenceOID))
+	advisoryWaiterCount := func() (int, error) {
+		var waiting int
+		err := f.Store.DB().QueryRow(f.Store.Rebind(`
+			SELECT COUNT(*) FROM pg_stat_activity activity
+			WHERE activity.datname = current_database()
+			  AND activity.wait_event_type = 'Lock'
+			  AND ? = ANY(pg_blocking_pids(activity.pid))
+			  AND activity.query LIKE '%pg_advisory_xact_lock%'
+			  AND EXISTS (
+				SELECT 1 FROM pg_locks fence_lock
+				WHERE fence_lock.pid = activity.pid
+				  AND fence_lock.locktype = 'advisory'
+				  AND fence_lock.mode = 'ShareLock'
+				  AND fence_lock.granted
+				  AND fence_lock.classid = ((CAST(? AS BIGINT) >> 32) & 4294967295)::oid
+				  AND fence_lock.objid = (CAST(? AS BIGINT) & 4294967295)::oid
+				  AND fence_lock.objsubid = 1
+			  )`), holderPID, deliveryFenceKey, deliveryFenceKey).Scan(&waiting)
+		return waiting, err
+	}
+	unscopedAdvisoryWaiterCount := func(pid int) (int, error) {
+		var waiting int
+		err := f.Store.DB().QueryRow(f.Store.Rebind(`
+			SELECT COUNT(*) FROM pg_stat_activity activity
+			WHERE activity.datname = current_database()
+			  AND activity.pid = ?
+			  AND activity.wait_event_type = 'Lock'
+			  AND ? = ANY(pg_blocking_pids(activity.pid))
+			  AND activity.query LIKE '%pg_advisory_xact_lock%'`), pid, holderPID).Scan(&waiting)
+		return waiting, err
+	}
+	var waitingBefore int
+	waitingBefore, err = advisoryWaiterCount()
+	require.NoError(err)
+
+	decoySchemaBytes := make([]byte, 8)
+	_, err = rand.Read(decoySchemaBytes)
+	require.NoError(err)
+	decoySchema := "documentindex_decoy_" + hex.EncodeToString(decoySchemaBytes)
+	_, err = f.Store.DB().Exec("CREATE SCHEMA " + decoySchema)
+	require.NoError(err)
+	t.Cleanup(func() {
+		_, _ = f.Store.DB().ExecContext(context.Background(), "DROP SCHEMA IF EXISTS "+decoySchema+" CASCADE")
+	})
+	_, err = f.Store.DB().Exec("CREATE TABLE " + decoySchema + `.delivery_admission_lock (
+		singleton INTEGER PRIMARY KEY)`)
+	require.NoError(err)
+	_, err = f.Store.DB().Exec("INSERT INTO " + decoySchema + `.delivery_admission_lock (singleton) VALUES (1)`)
+	require.NoError(err)
+	var decoyFenceOID int64
+	require.NoError(f.Store.DB().QueryRow(
+		"SELECT '" + decoySchema + ".delivery_admission_lock'::regclass::oid",
+	).Scan(&decoyFenceOID))
+	assert.NotEqual(deliveryFenceOID, decoyFenceOID)
+
+	decoyCtx, cancelDecoy := context.WithCancel(context.Background())
+	decoyTx, err := f.Store.DB().BeginTx(decoyCtx, nil)
+	require.NoError(err)
+	decoyStarted := false
+	decoyFinished := make(chan struct{})
+	stopDecoy := func() {
+		cancelDecoy()
+		if decoyStarted {
+			select {
+			case <-decoyFinished:
+			case <-time.After(5 * time.Second):
+				if held {
+					_, _ = holder.ExecContext(context.Background(), f.Store.Rebind(`
+						SELECT pg_advisory_unlock(hashtextextended(CAST(? AS TEXT), 0))`), lockName)
+					held = false
+				}
+				<-decoyFinished
+			}
+		}
+		_ = decoyTx.Rollback()
+	}
+	t.Cleanup(stopDecoy)
+	var decoyPID int
+	require.NoError(decoyTx.QueryRowContext(decoyCtx, `SELECT pg_backend_pid()`).Scan(&decoyPID))
+	unscopedWaitingBefore, err := unscopedAdvisoryWaiterCount(decoyPID)
+	require.NoError(err)
+	require.Equal(0, unscopedWaitingBefore)
+	var singleton int
+	require.NoError(decoyTx.QueryRowContext(decoyCtx, "SELECT singleton FROM "+decoySchema+
+		`.delivery_admission_lock WHERE singleton = 1 FOR UPDATE`).Scan(&singleton))
+	require.Equal(1, singleton)
+	decoyStarted = true
+	go func() {
+		defer close(decoyFinished)
+		_, _ = decoyTx.ExecContext(decoyCtx, f.Store.Rebind(`
+			SELECT pg_advisory_xact_lock(hashtextextended(CAST(? AS TEXT), 0))`), lockName)
+	}()
+	require.Eventually(func() bool {
+		var decoyWaitingOnHolder bool
+		err := f.Store.DB().QueryRow(f.Store.Rebind(`
+			SELECT EXISTS (
+				SELECT 1 FROM pg_stat_activity activity
+				WHERE activity.pid = ?
+				  AND activity.wait_event_type = 'Lock'
+				  AND ? = ANY(pg_blocking_pids(activity.pid))
+				  AND activity.query LIKE '%pg_advisory_xact_lock%'
+				  AND EXISTS (
+					SELECT 1 FROM pg_locks relation_lock
+					WHERE relation_lock.pid = activity.pid
+					  AND relation_lock.locktype = 'relation'
+					  AND relation_lock.relation::bigint = ?
+					  AND relation_lock.granted
+				  )
+			)`), decoyPID, holderPID, decoyFenceOID).Scan(&decoyWaitingOnHolder)
+		return err == nil && decoyWaitingOnHolder
+	}, 5*time.Second, 10*time.Millisecond,
+		"the decoy writer must hold its fence-table lock while waiting on this holder")
+	unscopedWaitingAfter, err := unscopedAdvisoryWaiterCount(decoyPID)
+	require.NoError(err)
+	require.Equal(unscopedWaitingBefore+1, unscopedWaitingAfter,
+		"the unscoped observation must count the decoy schema's advisory waiter")
+	fixtureWaiters, err := advisoryWaiterCount()
+	require.NoError(err)
+	require.Equal(waitingBefore, fixtureWaiters,
+		"the fixture-scoped observation must ignore the decoy schema's advisory waiter")
+	stopDecoy()
 
 	type reconcileResult struct {
 		eligible bool
@@ -308,10 +435,7 @@ func TestPostgreSQLOccurrenceReconciliationSerializesEligibilityRead(t *testing.
 		lower <- reconcileResult{eligible: reconciledEligible, err: reconcileErr}
 	}()
 	require.Eventually(func() bool {
-		var waiting int
-		err := f.Store.DB().QueryRow(`
-			SELECT COUNT(*) FROM pg_locks
-			WHERE locktype = 'advisory' AND NOT granted`).Scan(&waiting)
+		waiting, err := advisoryWaiterCount()
 		return err == nil && waiting >= waitingBefore+1
 	}, time.Second, time.Millisecond)
 
@@ -327,11 +451,43 @@ func TestPostgreSQLOccurrenceReconciliationSerializesEligibilityRead(t *testing.
 		higher <- reconcileResult{eligible: reconciledEligible, err: reconcileErr}
 	}()
 	require.Eventually(func() bool {
-		var waiting int
-		err := f.Store.DB().QueryRow(`
-			SELECT COUNT(*) FROM pg_locks
-			WHERE locktype = 'advisory' AND NOT granted`).Scan(&waiting)
-		return len(higher) > 0 || err == nil && waiting >= waitingBefore+2
+		waiting, err := advisoryWaiterCount()
+		if err != nil {
+			return false
+		}
+		if waiting >= waitingBefore+2 {
+			return true
+		}
+		var secondWriterWaitingOnDeliveryFence bool
+		err = f.Store.DB().QueryRow(f.Store.Rebind(`
+			SELECT EXISTS (
+				SELECT 1
+				FROM pg_stat_activity waiter
+				JOIN LATERAL unnest(pg_blocking_pids(waiter.pid)) blockers(pid) ON TRUE
+				JOIN pg_stat_activity blocker ON blocker.pid = blockers.pid
+				WHERE waiter.datname = current_database()
+				  AND waiter.wait_event_type = 'Lock'
+				  AND waiter.query LIKE '%delivery_admission_lock%'
+				  AND blocker.datname = current_database()
+				  AND blocker.wait_event_type = 'Lock'
+				  AND blocker.query LIKE '%pg_advisory_xact_lock%'
+				  AND ? = ANY(pg_blocking_pids(blocker.pid))
+				  AND EXISTS (
+					SELECT 1 FROM pg_locks relation_lock
+					WHERE relation_lock.pid = waiter.pid
+					  AND relation_lock.locktype = 'relation'
+					  AND relation_lock.relation::bigint = ?
+					  AND relation_lock.granted
+				  )
+				  AND EXISTS (
+					SELECT 1 FROM pg_locks relation_lock
+					WHERE relation_lock.pid = blocker.pid
+					  AND relation_lock.locktype = 'relation'
+					  AND relation_lock.relation::bigint = ?
+					  AND relation_lock.granted
+				  )
+			)`), holderPID, deliveryFenceOID, deliveryFenceOID).Scan(&secondWriterWaitingOnDeliveryFence)
+		return err == nil && secondWriterWaitingOnDeliveryFence
 	}, time.Second, time.Millisecond)
 
 	_, err = holder.ExecContext(t.Context(), f.Store.Rebind(`

@@ -57,6 +57,10 @@ type Store struct {
 	// the projection tables and dirty-marking triggers. Every writable Store
 	// transaction then refreshes its affected Directory rows before commit.
 	directoryProjectionReady bool
+	// deliveryPolicyInfrastructureReady is set after InitSchema has created the
+	// native admission fence. Writable PostgreSQL transactions enter it before
+	// taking archive row or relation locks.
+	deliveryPolicyInfrastructureReady bool
 
 	// syncGeneration is immutable metadata on a per-run Store view.
 	// Mutating transactions on that view fence the exact running source
@@ -349,6 +353,11 @@ func OpenPostgresContext(ctx context.Context, dbURL string) (*Store, error) {
 		cleanup()
 		return nil, err
 	}
+	if err := s.detectDeliveryPolicyInfrastructureReadiness(ctx); err != nil {
+		_ = db.Close()
+		cleanup()
+		return nil, err
+	}
 
 	return s, nil
 }
@@ -366,6 +375,23 @@ func (s *Store) detectDirectoryProjectionReadiness(ctx context.Context) error {
 		return fmt.Errorf("detect directory projection: %w", err)
 	}
 	s.directoryProjectionReady = installed
+	return nil
+}
+
+// detectDeliveryPolicyInfrastructureReadiness lets stores opened on an already
+// initialized database use the native admission fence without rerunning schema
+// initialization. InitSchema sets the same flag after installing the tables.
+func (s *Store) detectDeliveryPolicyInfrastructureReadiness(ctx context.Context) error {
+	if !s.IsPostgreSQL() {
+		return nil
+	}
+	var installed bool
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT to_regclass('delivery_admission_lock') IS NOT NULL`,
+	).Scan(&installed); err != nil {
+		return fmt.Errorf("detect delivery policy infrastructure: %w", err)
+	}
+	s.deliveryPolicyInfrastructureReady = installed
 	return nil
 }
 
@@ -842,6 +868,28 @@ func (s *Store) withTxContext(ctx context.Context, fn func(tx *loggedTx) error) 
 	return s.withTxOptionsContext(ctx, nil, fn)
 }
 
+// withTxContextWithoutDeliveryFence runs a write transaction for internal
+// state that cannot change delivery bindings or route evidence. Use only when
+// the callback's writes are outside the delivery admission boundary.
+func (s *Store) withTxContextWithoutDeliveryFence(ctx context.Context, fn func(tx *loggedTx) error) error {
+	return s.withTxOptionsAndDeliveryFenceContext(ctx, nil, false, fn)
+}
+
+// execStoreWriteContext executes one Store write through the gate-first
+// transaction path. Use it for single-statement writes that need to return a
+// RowsAffected result without taking a relation lock before delivery admission.
+func (s *Store) execStoreWriteContext(
+	ctx context.Context, query string, args ...any,
+) (sql.Result, error) {
+	var result sql.Result
+	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		var err error
+		result, err = tx.ExecContext(ctx, query, args...)
+		return err
+	})
+	return result, err
+}
+
 // withReadSnapshotContext gives a multi-statement aggregate read one stable,
 // read-only database snapshot. PostgreSQL needs REPEATABLE READ because its
 // default READ COMMITTED isolation takes a new snapshot for each statement.
@@ -855,16 +903,68 @@ func (s *Store) withReadSnapshotContext(
 	}, fn)
 }
 
+// enterDeliveryAdmissionFenceContext establishes a consistent PostgreSQL lock
+// order for Store writers: the shared delivery fence first, then archive row
+// and relation locks. Ordinary writers can share the fence; delivery admission
+// and maintenance take it exclusively. SQLite already reserves its single
+// writer at BEGIN IMMEDIATE or its first write.
+func (s *Store) enterDeliveryAdmissionFenceContext(
+	ctx context.Context, tx interface {
+		ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	},
+) error {
+	if !s.deliveryPolicyInfrastructureReady || s.readOnly || !s.IsPostgreSQL() {
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx,
+		`SELECT pg_advisory_xact_lock_shared(
+			hashtextextended('msgvault.delivery_admission:' || current_schema(), 0))`,
+	); err != nil {
+		return fmt.Errorf("enter delivery admission fence: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) enterDeliveryAdmissionExclusiveFenceContext(
+	ctx context.Context, tx interface {
+		ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	},
+) error {
+	if !s.deliveryPolicyInfrastructureReady || s.readOnly || !s.IsPostgreSQL() {
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx,
+		`SELECT pg_advisory_xact_lock(
+			hashtextextended('msgvault.delivery_admission:' || current_schema(), 0))`,
+	); err != nil {
+		return fmt.Errorf("enter exclusive delivery admission fence: %w", err)
+	}
+	return nil
+}
+
 func (s *Store) withTxOptionsContext(
 	ctx context.Context, opts *sql.TxOptions, fn func(tx *loggedTx) error,
 ) error {
 	return s.withTxLockedContext(ctx, opts, nil, fn)
 }
 
-// withTxLockedContext runs preFence after BEGIN and before the sync-generation
-// fence, so locks that must precede sync_runs are taken first.
+// withTxLockedContext takes the delivery fence before preFence, then runs
+// preFence before the sync-generation fence so every lock follows one order.
 func (s *Store) withTxLockedContext(
 	ctx context.Context, opts *sql.TxOptions,
+	preFence func(*loggedTx) error, fn func(tx *loggedTx) error,
+) error {
+	return s.withTxOptionsAndDeliveryFenceLockedContext(ctx, opts, true, preFence, fn)
+}
+
+func (s *Store) withTxOptionsAndDeliveryFenceContext(
+	ctx context.Context, opts *sql.TxOptions, deliveryFence bool, fn func(tx *loggedTx) error,
+) error {
+	return s.withTxOptionsAndDeliveryFenceLockedContext(ctx, opts, deliveryFence, nil, fn)
+}
+
+func (s *Store) withTxOptionsAndDeliveryFenceLockedContext(
+	ctx context.Context, opts *sql.TxOptions, deliveryFence bool,
 	preFence func(*loggedTx) error, fn func(tx *loggedTx) error,
 ) error {
 	start := time.Now()
@@ -873,6 +973,12 @@ func (s *Store) withTxLockedContext(
 	if err != nil {
 		slog.Warn("sql tx begin failed", "error", err.Error())
 		return fmt.Errorf("begin tx: %w", err)
+	}
+	if deliveryFence && (opts == nil || !opts.ReadOnly) {
+		if err := s.enterDeliveryAdmissionFenceContext(ctx, tx); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
 	}
 	if preFence != nil {
 		if err := preFence(tx); err != nil {
@@ -944,14 +1050,14 @@ func (s *Store) withTxLockedContext(
 // 30s statement_timeout (postgresConnConfig) with SQLSTATE 57014 on a large
 // archive.
 //
-// On PostgreSQL the first statement issued on the transaction is
-// `SET LOCAL statement_timeout = 0`; SET LOCAL auto-resets at COMMIT/ROLLBACK,
-// so the disabled timeout is scoped to this transaction and can never leak to
-// another pooled connection. On SQLite MaintenanceTimeoutResetSQL is "" so no
-// reset statement runs, and fn simply executes inside an ordinary transaction —
-// SQLite has no statement_timeout, so behavior is unchanged. The reset and all
-// of fn's statements run on the SAME tx (one connection), which is required for
-// SET LOCAL to take effect.
+// On PostgreSQL `SET LOCAL statement_timeout = 0` runs before the delivery
+// fence wait and disables the timeout for this transaction's maintenance work.
+// SET LOCAL auto-resets at COMMIT/ROLLBACK, so it cannot leak to another pooled
+// connection. On SQLite MaintenanceTimeoutResetSQL is "" so no reset statement
+// runs, and fn executes inside an ordinary transaction — SQLite has no
+// statement_timeout, so behavior is unchanged. The reset and all of fn's
+// statements run on the SAME tx (one connection), which is required for SET
+// LOCAL to take effect.
 //
 // fn receives a *loggedTx, so its Exec/Query calls are Rebind-translated
 // (? → $N on PG) just like withTx. The reset statement itself has no
@@ -967,11 +1073,13 @@ func (s *Store) runMaintenance(ctx context.Context, fn func(ctx context.Context,
 			_ = tx.Rollback()
 		}
 	}()
-
 	if reset := s.dialect.MaintenanceTimeoutResetSQL(); reset != "" {
 		if _, err := tx.ExecContext(ctx, reset); err != nil {
 			return fmt.Errorf("disable maintenance statement timeout: %w", err)
 		}
+	}
+	if err := s.enterDeliveryAdmissionExclusiveFenceContext(ctx, tx); err != nil {
+		return err
 	}
 
 	if err := fn(ctx, tx); err != nil {
@@ -1654,9 +1762,10 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	// legacy table-level UNIQUE away; installing the triggers first lets SQLite
 	// rewrite their definitions during that swap and leaves them pointing at a
 	// temporary table after it is dropped. The migration itself restores any
-	// pre-existing sweep definitions transactionally, while this ordering keeps
-	// fresh and normally upgraded archives on the simple repair-before-install
-	// path. PostgreSQL does not rebuild the table but shares the ordering.
+	// pre-existing sweep and delivery-evidence definitions transactionally. This
+	// ordering keeps fresh and normally upgraded archives on the
+	// repair-before-install path. PostgreSQL does not rebuild the table but
+	// shares the ordering.
 	if err := s.ensureRecipientEnvelopeUniqueIndex(ctx); err != nil {
 		return fmt.Errorf("ensure idx_message_recipients_envelope unique: %w", err)
 	}
@@ -2210,6 +2319,11 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	if err := s.EnsureDefaultCollectionContext(ctx); err != nil {
 		return fmt.Errorf("ensure default collection: %w", err)
 	}
+
+	if err := s.ensureDeliveryPolicyInfrastructure(ctx); err != nil {
+		return fmt.Errorf("initialize delivery policy fencing: %w", err)
+	}
+	s.deliveryPolicyInfrastructureReady = true
 
 	// Schema initialization can add indexes to an existing archive. Refresh
 	// statistics after all schema work so SQLite can cost those indexes against

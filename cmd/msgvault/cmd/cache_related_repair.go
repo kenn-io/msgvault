@@ -96,6 +96,8 @@ func inspectRelatedSnapshotColumns(snapshot *cacheSourceSnapshot) error {
 		present *bool
 	}{
 		{"message_recipients", "email_address", &snapshot.hasRecipientEnvelope},
+		{"message_recipients", "id", &snapshot.hasRecipientID},
+		{"message_recipients", "recipient_order", &snapshot.hasRecipientOrder},
 		{"attachments", "mime_type", &snapshot.hasAttachmentMIME},
 		{"attachments", "attachment_metadata", &snapshot.hasAttachmentMetadata},
 	} {
@@ -143,6 +145,16 @@ func exportRelatedDatasets(
 			" = '' THEN NULL ELSE " + snapshot.identityExportSQL("mr.email_address") + " END"
 		presence = snapshot.identityPresenceSQL("mr.email_address", "mr.envelope_present")
 	}
+	recipientOrder := "0::INTEGER"
+	if snapshot.hasRecipientOrder {
+		recipientOrder = "COALESCE(TRY_CAST(mr.recipient_order AS INTEGER), 0)"
+	}
+	recipientID := "mr.rowid"
+	if snapshot.csvSnapshot {
+		recipientID = "mr.recipient_id"
+	} else if snapshot.hasRecipientID {
+		recipientID = "mr.id"
+	}
 	mimeType := "'' AS mime_type"
 	if snapshot.hasAttachmentMIME {
 		mimeType = "COALESCE(" + snapshot.textSQL("mime_type") + ", '') AS mime_type"
@@ -157,14 +169,15 @@ func exportRelatedDatasets(
 	}{
 		{tableLabels, `SELECT id, COALESCE(` + snapshot.textSQL("name") + `, '') AS name
 			FROM sqlite_db.labels`},
-		{"message_recipients", fmt.Sprintf(`SELECT mr.message_id, mr.participant_id,
+		{"message_recipients", fmt.Sprintf(`SELECT %[9]s AS recipient_id, mr.message_id, mr.participant_id,
 			%[4]s AS recipient_type,
 			COALESCE(%[5]s, '') AS display_name,
 			CASE WHEN %[6]s THEN %[1]s ELSE %[7]s END AS email_address,
-			%[1]s AS envelope_address
+			%[1]s AS envelope_address,
+			%[8]s AS recipient_order
 			FROM sqlite_db.message_recipients mr
 			LEFT JOIN sqlite_db.participants p ON p.id = mr.participant_id
-			WHERE mr.message_id > %[3]d AND TRY_CAST(mr.message_id AS BIGINT) IN (%[2]s)`, envelope, parentFilter("message_recipients"), afterMessageIDs["message_recipients"], snapshot.identityExportSQL("mr.recipient_type"), snapshot.textSQL("mr.display_name"), presence, participant)},
+			WHERE mr.message_id > %[3]d AND TRY_CAST(mr.message_id AS BIGINT) IN (%[2]s)`, envelope, parentFilter("message_recipients"), afterMessageIDs["message_recipients"], snapshot.identityExportSQL("mr.recipient_type"), snapshot.textSQL("mr.display_name"), presence, participant, recipientOrder, recipientID)},
 		{"message_labels", fmt.Sprintf(`SELECT message_id, label_id
 			FROM sqlite_db.message_labels WHERE message_id > %d AND TRY_CAST(message_id AS BIGINT) IN (%s)`, afterMessageIDs["message_labels"], parentFilter("message_labels"))},
 		{tableAttachments, fmt.Sprintf(`SELECT id AS attachment_id, message_id, size,

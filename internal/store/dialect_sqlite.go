@@ -2030,6 +2030,9 @@ func (d *SQLiteDialect) LegacyColumnMigrations() []ColumnMigration {
 		// Legacy rows stay NULL (unfillable without re-parsing raw MIME) and
 		// discovery falls back to the participant's email for them.
 		{`ALTER TABLE message_recipients ADD COLUMN email_address TEXT`, "message_recipients.email_address"},
+		// Legacy rows retain their id ordering through a zero default; imported
+		// recipient snapshots write the actual header position.
+		{`ALTER TABLE message_recipients ADD COLUMN recipient_order INTEGER NOT NULL DEFAULT 0`, "message_recipients.recipient_order"},
 		{`ALTER TABLE attachments ADD COLUMN attachment_role TEXT NOT NULL DEFAULT 'unknown' CHECK (attachment_role IN ('standalone', 'inline', 'avatar', 'thumbnail', 'preview', 'sticker', 'ui_asset', 'unknown'))`, "attachments.attachment_role"},
 		{`ALTER TABLE attachments ADD COLUMN role_source TEXT NOT NULL DEFAULT 'unknown' CHECK (role_source IN ('mime_disposition', 'provider_explicit', 'importer_semantics', 'legacy_api', 'raw_mime_repair', 'unknown'))`, "attachments.role_source"},
 		{`ALTER TABLE attachments ADD COLUMN source_part_key TEXT CHECK (source_part_key IS NULL OR source_part_key != '')`, "attachments.source_part_key"},
