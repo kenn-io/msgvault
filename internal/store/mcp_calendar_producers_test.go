@@ -149,7 +149,7 @@ func TestMCPCalendarProducerSparseCancellationPreservesKnownState(t *testing.T) 
 		// PostgreSQL stores JSONB in its own canonical form.
 		assert.JSONEq(wantMetadata, metadata.String)
 	} else {
-		assert.Equal(wantMetadata, metadata.String, "a cancellation merge stores stable metadata bytes") //nolint:testifylint // Byte order is the behavior under test; JSONEq would ignore it.
+		assert.Equal(wantMetadata, metadata.String, "a cancellation merge stores stable metadata bytes")
 	}
 
 	_, _, err = persister.PersistCalendarEventContext(t.Context(), calendarSnapshot(f, `{"status":"confirmed","start":"2026-10-06","end":"2026-10-07","all_day":true,"time_zone":"Etc/UTC","sequence":4,"ical_uid":"event@example.test"}`), producerObservedAt.Add(3*time.Minute), false)
