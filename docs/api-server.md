@@ -100,7 +100,7 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.8.0**.
+it is separate from the binary release version. The current schema is **3.9.0**.
 Upgrade clients and daemon together across incompatible schema versions,
 including remote deployments.
 
@@ -108,7 +108,7 @@ Schema 3.3.0 adds `POST /api/v1/telemetry/events`, which the web and terminal UI
 report anonymous usage events through the daemon. See
 [Telemetry](configuration.md#telemetry).
 
-Schema 3.8.0 adds account aliases and lifecycle fields, account merging, and
+Schema 3.9.0 adds account aliases and lifecycle fields, account merging, and
 owner source-maintenance requests. Existing source identifiers and account
 requests remain valid.
 

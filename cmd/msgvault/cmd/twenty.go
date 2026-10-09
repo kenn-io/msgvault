@@ -235,8 +235,12 @@ func writeTwentySummary(out io.Writer, summary *twenty.ImportSummary) {
 }
 func runConfiguredTwentySync(ctx context.Context, st *store.Store, source config.TwentySource) error {
 	notRegistered := fmt.Errorf("twenty source %q is not registered; run msgvault add-twenty %s first", source.Identifier, source.Identifier)
-	if err := requireRegisteredMeetingSource(st, twenty.SourceType, source.Identifier, notRegistered); err != nil {
+	registered, err := requireRegisteredMeetingSource(st, twenty.SourceType, source.Identifier, notRegistered)
+	if err != nil {
 		return err
+	}
+	if registered.MergedIntoSourceID != 0 {
+		return nil
 	}
 	email, err := source.EffectiveAccountEmail()
 	if err != nil {

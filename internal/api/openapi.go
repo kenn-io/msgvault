@@ -352,10 +352,10 @@ import (
 // 3.6.0 adds GET /api/v1/messages/{id}/recordings for live audio and transcript coverage.
 // 3.7.0 adds scoped lexical transcript search at GET /api/v1/media/search.
 // 3.8.0 adds reader credentials, HTTP 409 for ambiguous raw references, and HTTP 413 for remote read limits.
-// 3.8.0 adds account aliases, source lifecycle fields, account merging, and
+// 3.9.0 adds account aliases, source lifecycle fields, account merging, and
 // owner source-maintenance requests. Existing source identifiers and account
 // requests remain valid.
-const APISchemaVersion = "3.8.0"
+const APISchemaVersion = "3.9.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

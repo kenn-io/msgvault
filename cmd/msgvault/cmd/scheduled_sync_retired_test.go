@@ -16,6 +16,7 @@ import (
 	"go.kenn.io/msgvault/internal/notionmeetings"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/internal/twenty"
 )
 
 func retireScheduledSyncSourceForTest(t *testing.T, st *store.Store, sourceType string) {
@@ -68,6 +69,17 @@ func TestConfiguredScheduledSyncSkipsMergedSources(t *testing.T) {
 		retireScheduledSyncSourceForTest(t, st, notionmeetings.SourceType)
 
 		err := runConfiguredNotionMeetingsSync(context.Background(), st, config.NotionMeetingsSource{
+			Identifier: "history",
+		})
+
+		require.NoError(t, err)
+	})
+
+	t.Run("Twenty before credential validation", func(t *testing.T) {
+		st := testutil.NewTestStore(t)
+		retireScheduledSyncSourceForTest(t, st, twenty.SourceType)
+
+		err := runConfiguredTwentySync(t.Context(), st, config.TwentySource{
 			Identifier: "history",
 		})
 
