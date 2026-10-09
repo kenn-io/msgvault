@@ -67,6 +67,9 @@ type Executor struct {
 	logger   *slog.Logger
 	progress Progress
 	sourceID int64
+	// beforeSourceExecutionAcquireForTest lets tests reproduce a source
+	// retirement between manifest validation and ownership acquisition.
+	beforeSourceExecutionAcquireForTest func()
 }
 
 // WithSourceID scopes legacy version-1 manifests to the source selected by
@@ -154,18 +157,71 @@ func (e *Executor) deleteOne(ctx context.Context, sourceID int64, gmailID string
 	return resultFailed, err
 }
 
-func (e *Executor) manifestSourceID(manifest *Manifest) (int64, error) {
+func (e *Executor) manifestSourceID(ctx context.Context, manifest *Manifest) (int64, error) {
 	if err := manifest.ValidateVersion(); err != nil {
-		return 0, err
+		return 0, permanentManifestValidationError{err: err}
 	}
 	if manifest.Version == 1 {
-		return e.sourceID, nil
+		sourceID, err := e.requireManifestSourceWritable(ctx, e.sourceID)
+		return sourceID, classifyManifestSourceLifecycleError(err)
 	}
 	source, err := e.store.GetSourceByTypeAndIdentifier(manifest.Source.Type, manifest.Source.Identifier)
 	if err != nil {
-		return 0, fmt.Errorf("resolve manifest source: %w", err)
+		err = fmt.Errorf("resolve manifest source: %w", err)
+		if errors.Is(err, store.ErrSourceNotFound) {
+			return 0, permanentManifestValidationError{err: err}
+		}
+		return 0, err
 	}
-	return source.ID, nil
+	sourceID, err := e.requireManifestSourceWritable(ctx, source.ID)
+	return sourceID, classifyManifestSourceLifecycleError(err)
+}
+
+func classifyManifestSourceLifecycleError(err error) error {
+	if errors.Is(err, store.ErrSourceRetired) || errors.Is(err, store.ErrSourceNotFound) {
+		return permanentManifestValidationError{err: err}
+	}
+	return err
+}
+
+func (e *Executor) acquireSourceExecution(ctx context.Context, sourceID int64) (*store.SyncExecution, error) {
+	execution, err := e.store.AcquireSyncExecutionContext(ctx, sourceID)
+	if err != nil {
+		return nil, fmt.Errorf("acquire source %d execution lock for deletion: %w", sourceID, err)
+	}
+	return execution, nil
+}
+
+func (e *Executor) rejectArchiveOnlyTargets(ctx context.Context, sourceID int64, manifest *Manifest) error {
+	if sourceID <= 0 {
+		return nil
+	}
+	ids := slices.Clone(manifest.GmailIDs)
+	if manifest.Execution != nil {
+		ids = slices.Concat(ids, manifest.Execution.FailedIDs, manifest.Execution.TombstoneIDs)
+	}
+	if err := e.store.RejectArchiveOnlyDeletionTargetsContext(ctx, sourceID, ids); err != nil {
+		if errors.Is(err, store.ErrArchiveOnlyDeletionTarget) {
+			return permanentManifestValidationError{err: err}
+		}
+		return err
+	}
+	return nil
+}
+
+// Saved manifests retain their original provider identity after a merge.
+func (e *Executor) requireManifestSourceWritable(ctx context.Context, sourceID int64) (int64, error) {
+	if sourceID == 0 {
+		return sourceID, nil
+	} // Legacy callers without an archive binding.
+	settings, err := e.store.GetSourceSettingsContext(ctx, sourceID)
+	if err != nil {
+		return 0, fmt.Errorf("read manifest source lifecycle: %w", err)
+	}
+	if settings.MergedIntoSourceID != 0 {
+		return 0, fmt.Errorf("manifest source %d: %w", sourceID, store.ErrSourceRetired)
+	}
+	return sourceID, nil
 }
 
 // manifestCancelled reports whether the manifest was cancelled by a concurrent
@@ -265,15 +321,6 @@ func (e *Executor) prepareExecution(manifestID string, method Method) (*Manifest
 // reverse order could report success while leaving a completed manifest
 // serialized as in_progress.
 func (e *Executor) finalizeExecution(manifestID string, manifest *Manifest, succeeded, failed int, failedIDs []string, failOnAllErrors bool) error {
-	// A durable cancelled/ marker is authoritative: even in the pathological
-	// case where a stray write recreated in_progress/<id>.json, completing here
-	// would leave the manifest in both cancelled/ and completed/ (a double
-	// copy). Refuse to finalize when cancellation is on record.
-	if e.manager.ManifestCancelled(manifestID) {
-		e.logger.Info("manifest cancelled; not finalizing", "manifest", manifestID)
-		return ErrManifestCancelled
-	}
-
 	var targetStatus Status
 	if failed == 0 || succeeded > 0 || !failOnAllErrors {
 		targetStatus = StatusCompleted
@@ -290,21 +337,8 @@ func (e *Executor) finalizeExecution(manifestID string, manifest *Manifest, succ
 	manifest.Execution.Succeeded = succeeded
 	manifest.Execution.Failed = failed
 	manifest.Execution.FailedIDs = failedIDs
-	manifest.Status = targetStatus
-	if err := e.manager.WriteInProgressCheckpoint(manifest, manifestID); err != nil {
-		if errors.Is(err, ErrManifestCancelled) {
-			e.logger.Info("manifest cancelled during finalize; not completing", "manifest", manifestID)
-			return ErrManifestCancelled
-		}
-		return fmt.Errorf("persist final state for manifest %s: %w", manifestID, err)
-	}
-
-	if err := e.manager.FinalizeInProgress(manifestID, targetStatus); err != nil {
-		if errors.Is(err, ErrManifestCancelled) || errors.Is(err, os.ErrNotExist) {
-			e.logger.Info("manifest cancelled during finalize; not completing", "manifest", manifestID)
-			return ErrManifestCancelled
-		}
-		return fmt.Errorf("finalize manifest %s: %w", manifestID, err)
+	if err := e.persistTerminalManifest(manifestID, manifest, targetStatus); err != nil {
+		return err
 	}
 
 	e.progress.OnComplete(succeeded, failed)
@@ -317,8 +351,66 @@ func (e *Executor) finalizeExecution(manifestID string, manifest *Manifest, succ
 	return nil
 }
 
+// rejectManifestValidation terminalizes a claimed manifest when permanent
+// source or target validation fails before any provider deletion begins.
+func (e *Executor) rejectManifestValidation(
+	ctx context.Context, manifestID string, manifest *Manifest, validationErr error,
+) error {
+	if ctx.Err() != nil {
+		return errors.Join(validationErr, ctx.Err())
+	}
+	if _, ok := errors.AsType[permanentManifestValidationError](validationErr); !ok {
+		return validationErr
+	}
+	if manifest.Execution == nil {
+		manifest.Execution = &Execution{StartedAt: time.Now(), Method: "unknown"}
+	}
+	now := time.Now()
+	manifest.Execution.CompletedAt = &now
+	if err := e.persistTerminalManifest(manifestID, manifest, StatusFailed); err != nil {
+		return errors.Join(validationErr, fmt.Errorf("finalize rejected manifest %s: %w", manifestID, err))
+	}
+	return validationErr
+}
+
+type permanentManifestValidationError struct {
+	err error
+}
+
+func (e permanentManifestValidationError) Error() string { return e.err.Error() }
+
+func (e permanentManifestValidationError) Unwrap() error { return e.err }
+
+// persistTerminalManifest writes the chosen terminal status before moving the
+// manifest out of in_progress. The checkpoint and rename share the manager's
+// cancellation lock so a concurrent cancel cannot resurrect the manifest.
+func (e *Executor) persistTerminalManifest(manifestID string, manifest *Manifest, status Status) error {
+	// A durable cancelled/ marker is authoritative: even a stray in_progress
+	// file must not create a second terminal copy.
+	if e.manager.ManifestCancelled(manifestID) {
+		e.logger.Info("manifest cancelled; not finalizing", "manifest", manifestID)
+		return ErrManifestCancelled
+	}
+	manifest.Status = status
+	if err := e.manager.WriteInProgressCheckpoint(manifest, manifestID); err != nil {
+		if errors.Is(err, ErrManifestCancelled) {
+			e.logger.Info("manifest cancelled during finalize; not completing", "manifest", manifestID)
+			return ErrManifestCancelled
+		}
+		return fmt.Errorf("persist final state for manifest %s: %w", manifestID, err)
+	}
+	if err := e.manager.FinalizeInProgress(manifestID, status); err != nil {
+		if errors.Is(err, ErrManifestCancelled) || errors.Is(err, os.ErrNotExist) {
+			e.logger.Info("manifest cancelled during finalize; not completing", "manifest", manifestID)
+			return ErrManifestCancelled
+		}
+		return fmt.Errorf("finalize manifest %s: %w", manifestID, err)
+	}
+	return nil
+}
+
 // Execute performs the deletion for a manifest.
-func (e *Executor) Execute(ctx context.Context, manifestID string, opts *ExecuteOptions) error {
+func (e *Executor) Execute(ctx context.Context, manifestID string, opts *ExecuteOptions) (retErr error) {
 	if opts == nil {
 		opts = DefaultExecuteOptions()
 	}
@@ -327,9 +419,24 @@ func (e *Executor) Execute(ctx context.Context, manifestID string, opts *Execute
 	if err != nil {
 		return err
 	}
-	sourceID, err := e.manifestSourceID(manifest)
+	sourceID, err := e.manifestSourceID(ctx, manifest)
 	if err != nil {
-		return fmt.Errorf("validate manifest source: %w", err)
+		return e.rejectManifestValidation(ctx, manifestID, manifest, fmt.Errorf("validate manifest source: %w", err))
+	}
+	if sourceID > 0 {
+		if e.beforeSourceExecutionAcquireForTest != nil {
+			e.beforeSourceExecutionAcquireForTest()
+		}
+		execution, err := e.acquireSourceExecution(ctx, sourceID)
+		if err != nil {
+			return e.rejectManifestValidation(
+				ctx, manifestID, manifest, classifyManifestSourceLifecycleError(err),
+			)
+		}
+		defer func() { retErr = errors.Join(retErr, execution.Release()) }()
+	}
+	if err := e.rejectArchiveOnlyTargets(ctx, sourceID, manifest); err != nil {
+		return e.rejectManifestValidation(ctx, manifestID, manifest, fmt.Errorf("validate manifest targets: %w", err))
 	}
 
 	// Determine starting point
@@ -482,14 +589,29 @@ func (e *Executor) Execute(ctx context.Context, manifestID string, opts *Execute
 }
 
 // ExecuteBatch performs batch deletion (more efficient but permanent).
-func (e *Executor) ExecuteBatch(ctx context.Context, manifestID string) error {
+func (e *Executor) ExecuteBatch(ctx context.Context, manifestID string) (retErr error) {
 	manifest, err := e.prepareExecution(manifestID, MethodDelete)
 	if err != nil {
 		return err
 	}
-	sourceID, err := e.manifestSourceID(manifest)
+	sourceID, err := e.manifestSourceID(ctx, manifest)
 	if err != nil {
-		return fmt.Errorf("validate manifest source: %w", err)
+		return e.rejectManifestValidation(ctx, manifestID, manifest, fmt.Errorf("validate manifest source: %w", err))
+	}
+	if sourceID > 0 {
+		if e.beforeSourceExecutionAcquireForTest != nil {
+			e.beforeSourceExecutionAcquireForTest()
+		}
+		execution, err := e.acquireSourceExecution(ctx, sourceID)
+		if err != nil {
+			return e.rejectManifestValidation(
+				ctx, manifestID, manifest, classifyManifestSourceLifecycleError(err),
+			)
+		}
+		defer func() { retErr = errors.Join(retErr, execution.Release()) }()
+	}
+	if err := e.rejectArchiveOnlyTargets(ctx, sourceID, manifest); err != nil {
+		return e.rejectManifestValidation(ctx, manifestID, manifest, fmt.Errorf("validate manifest targets: %w", err))
 	}
 
 	if e.manifestCancelled(manifestID) {

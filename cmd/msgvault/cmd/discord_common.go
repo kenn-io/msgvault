@@ -92,6 +92,11 @@ func (d discordCommandDeps) client(token string) (*discord.Client, error) {
 	return discord.NewClient(d.apiBaseURL(), token)
 }
 
+func matchesDiscordSourceAliasOrDisplayName(source *store.Source, selector string) bool {
+	return (source.Alias != "" && strings.EqualFold(source.Alias, selector)) ||
+		(source.DisplayName.Valid && strings.EqualFold(source.DisplayName.String, selector))
+}
+
 func resolveDiscordSources(st *store.Store, selector string) ([]*store.Source, error) {
 	sources, err := st.ListSources(sourceTypeDiscord)
 	if err != nil {
@@ -112,7 +117,7 @@ func resolveDiscordSources(st *store.Store, selector string) ([]*store.Source, e
 	}
 	var matches []*store.Source
 	for _, source := range sources {
-		if source.DisplayName.Valid && strings.EqualFold(source.DisplayName.String, selector) {
+		if matchesDiscordSourceAliasOrDisplayName(source, selector) {
 			matches = append(matches, source)
 		}
 	}
@@ -121,6 +126,58 @@ func resolveDiscordSources(st *store.Store, selector string) ([]*store.Source, e
 		return nil, fmt.Errorf("discord guild %q is not registered", selector)
 	case 1:
 		return matches, nil
+	default:
+		return nil, fmt.Errorf("discord guild name %q is ambiguous; use a guild ID", selector)
+	}
+}
+
+// resolveDiscordSyncSources keeps retired archive sources available to
+// history-oriented commands while preventing provider sync from reopening
+// them.
+func resolveDiscordSyncSources(st *store.Store, selector string) ([]*store.Source, error) {
+	sources, err := st.ListSources(sourceTypeDiscord)
+	if err != nil {
+		return nil, fmt.Errorf("list Discord sources: %w", err)
+	}
+	sort.Slice(sources, func(i, j int) bool { return sources[i].ID < sources[j].ID })
+	if selector == "" {
+		if len(sources) == 0 {
+			return nil, errors.New("no Discord guilds are registered; run 'msgvault add-discord' first")
+		}
+		active := activeSyncSources(sources)
+		if len(active) == 0 {
+			return nil, fmt.Errorf("no active Discord guilds are registered: %w", store.ErrSourceRetired)
+		}
+		return active, nil
+	}
+
+	for _, source := range sources {
+		if source.Identifier != selector {
+			continue
+		}
+		if source.MergedIntoSourceID != 0 {
+			return nil, fmt.Errorf("discord guild %q is retired: %w", selector, store.ErrSourceRetired)
+		}
+		return []*store.Source{source}, nil
+	}
+
+	var matches, activeMatches []*store.Source
+	for _, source := range sources {
+		if matchesDiscordSourceAliasOrDisplayName(source, selector) {
+			matches = append(matches, source)
+			if source.MergedIntoSourceID == 0 {
+				activeMatches = append(activeMatches, source)
+			}
+		}
+	}
+	switch len(activeMatches) {
+	case 0:
+		if len(matches) > 0 {
+			return nil, fmt.Errorf("discord guild %q is retired: %w", selector, store.ErrSourceRetired)
+		}
+		return nil, fmt.Errorf("discord guild %q is not registered", selector)
+	case 1:
+		return activeMatches, nil
 	default:
 		return nil, fmt.Errorf("discord guild name %q is ambiguous; use a guild ID", selector)
 	}

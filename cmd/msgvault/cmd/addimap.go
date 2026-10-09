@@ -161,7 +161,7 @@ Examples:
 			}
 
 			// Set display name from username
-			if err := s.UpdateSourceDisplayName(source.ID, imapUsername); err != nil {
+			if err := updateSourceDisplayNameForRegistration(s, source.ID, imapUsername, logger); err != nil {
 				return fmt.Errorf("set display name: %w", err)
 			}
 

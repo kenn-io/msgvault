@@ -2219,22 +2219,33 @@ components:
       type: object
     CliAccountResponse:
       properties:
+        alias:
+          type: string
         display_name:
           type: string
         email:
           type: string
+        history_only:
+          type: boolean
         id:
           format: int64
           type: integer
+        identifier:
+          type: string
         last_sync:
           format: date-time
           nullable: true
           type: string
+        merged_into_source_id:
+          format: int64
+          type: integer
         message_count:
           format: int64
           type: integer
         oauth_app:
           type: string
+        reanchor_required:
+          type: boolean
         source_deleted_count:
           format: int64
           type: integer
@@ -2248,6 +2259,11 @@ components:
         - message_count
         - source_deleted_count
         - last_sync
+        - identifier
+        - alias
+        - history_only
+        - reanchor_required
+        - merged_into_source_id
       type: object
     CliAccountsResponse:
       properties:
@@ -6895,6 +6911,24 @@ components:
           type: integer
       required:
         - absorbed_person_id
+      type: object
+    MergeRequest:
+      additionalProperties: false
+      properties:
+        dry_run:
+          type: boolean
+        from:
+          type: string
+        from_source_id:
+          format: int64
+          type: integer
+        into:
+          type: string
+        into_source_id:
+          format: int64
+          type: integer
+      required:
+        - dry_run
       type: object
     MessageDetail:
       properties:
@@ -13283,6 +13317,52 @@ components:
         - signals
         - confirmed_at
       type: object
+    SourceMergeResult:
+      properties:
+        already_merged:
+          type: boolean
+        ambiguous_matches:
+          format: int64
+          type: integer
+        attachments_copied:
+          format: int64
+          type: integer
+        checkpoint_conflicts:
+          format: int64
+          type: integer
+        conversations_moved:
+          format: int64
+          type: integer
+        dry_run:
+          type: boolean
+        duplicates_hidden:
+          format: int64
+          type: integer
+        from_source_id:
+          format: int64
+          type: integer
+        identities_merged:
+          format: int64
+          type: integer
+        into_source_id:
+          format: int64
+          type: integer
+        messages_moved:
+          format: int64
+          type: integer
+      required:
+        - from_source_id
+        - into_source_id
+        - messages_moved
+        - duplicates_hidden
+        - ambiguous_matches
+        - conversations_moved
+        - attachments_copied
+        - identities_merged
+        - checkpoint_conflicts
+        - already_merged
+        - dry_run
+      type: object
     SourceReference:
       additionalProperties: false
       properties:
@@ -14418,27 +14498,43 @@ components:
     UpdateRequest:
       additionalProperties: false
       properties:
+        accept_reanchor:
+          type: boolean
         account:
           type: string
         display_name:
           type: string
         email:
           type: string
+        history_only:
+          type: boolean
+        identifier:
+          type: string
         source_id:
           format: int64
           type: integer
-      required:
-        - display_name
       type: object
     UpdateResult:
       properties:
+        alias:
+          type: string
         display_name:
           type: string
         email:
           type: string
+        history_only:
+          type: boolean
+        identifier:
+          type: string
+        reanchor_required:
+          type: boolean
       required:
         - email
         - display_name
+        - identifier
+        - alias
+        - history_only
+        - reanchor_required
       type: object
     Usage:
       properties:
@@ -16866,6 +16962,57 @@ paths:
       security:
         - apiKey: []
       summary: Update an account for CLI use
+      tags:
+        - CLI
+  /api/v1/cli/account/merge:
+    post:
+      operationId: mergeCLIAccounts
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MergeRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceMergeResult"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Service Unavailable
+      security:
+        - apiKey: []
+      summary: Merge one archive source into another
       tags:
         - CLI
   /api/v1/cli/accounts:

@@ -762,6 +762,27 @@ func TestGetDeletionTargetsByFilter_Label(t *testing.T) {
 	}
 }
 
+func TestGetDeletionTargetsByFilterExcludesPortableArchiveOnlyMarker(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	env := newTestEnv(t)
+	_, err := env.DB.Exec(`
+		INSERT INTO source_merge_archive_only_messages (message_id) VALUES (1)
+	`)
+	require.NoError(err)
+
+	var provenanceCount int
+	require.NoError(env.DB.QueryRow(
+		`SELECT COUNT(*) FROM source_merge_messages WHERE message_id = 1`,
+	).Scan(&provenanceCount))
+	assert.Zero(provenanceCount, "subset archives may retain a portable marker without merge provenance")
+
+	targets, err := deletionTargetSourceMessageIDs(env.Engine.GetDeletionTargetsByFilter(env.Ctx, MessageFilter{}))
+	require.NoError(err, "GetDeletionTargetsByFilter")
+	assert.NotContains(targets, "msg1", "portable archive-only markers must exclude provider deletion targets")
+	assert.Contains(targets, "msg2", "ordinary provider messages remain eligible")
+}
+
 func TestGetDeletionTargetsByFilter_DomainIsCaseInsensitive(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
@@ -2372,6 +2393,37 @@ func TestGetDeletionTargetsByMessageIDsPreservesDuplicateGmailIDSource(t *testin
 		MessageID: messageID, SourceID: sourceID, SourceType: "gmail",
 		SourceIdentifier: "other@example.invalid", SourceMessageID: "msg1",
 	}, targets[0])
+}
+
+func TestDeletionTargetResolversExcludeArchiveOnlyMergeHistory(t *testing.T) {
+	env := newTestEnv(t)
+	// Subsets preserve this portable marker even when merge provenance is omitted.
+	_, err := env.DB.Exec(`INSERT INTO source_merge_archive_only_messages(message_id) VALUES (1)`)
+	require.NoError(t, err)
+	_, err = env.DB.Exec(`UPDATE messages SET list_id = ? WHERE id IN (1, 2)`, "<dev@example.test>")
+	require.NoError(t, err)
+	env.EnableFTS()
+
+	assertNoArchivedTarget := func(name string, targets []DeletionTarget, err error) {
+		t.Helper()
+		require.NoError(t, err, name)
+		for _, target := range targets {
+			assert.NotEqual(t, int64(1), target.MessageID, "%s must exclude archive-only merge history", name)
+		}
+	}
+
+	sourceID := int64(1)
+	targets, err := env.Engine.GetDeletionTargetsByFilter(env.Ctx, MessageFilter{SourceID: &sourceID})
+	assertNoArchivedTarget("filter", targets, err)
+	targets, err = env.Engine.GetDeletionTargetsByMessageIDs(env.Ctx, []int64{1, 2})
+	assertNoArchivedTarget("message IDs", targets, err)
+	for _, mode := range []DeletionSearchMode{DeletionSearchFast, DeletionSearchDeep} {
+		targets, err = env.Engine.GetDeletionTargetsBySearch(env.Ctx, search.Parse("Hello"), MessageFilter{}, mode)
+		assertNoArchivedTarget(string(mode), targets, err)
+	}
+	targets, err = env.Engine.GetDeletionTargetsByAggregateSearch(
+		env.Ctx, "Hello", MessageFilter{}, ViewLists, "<dev@example.test>")
+	assertNoArchivedTarget("aggregate search", targets, err)
 }
 
 func TestGetDeletionTargetsByFilterPreservesSource(t *testing.T) {

@@ -29,6 +29,7 @@ const (
 	migrationMessageAttributionProvenance     = "message_attribution_provenance_v3"
 	migrationArchiveIdentity                  = "archive_identity_v1"
 	migrationMessagesContentChangedAtBackfill = "messages_content_changed_at_backfill"
+	migrationSourceMergeArchiveMessageID      = "source_merge_archive_message_id_v1"
 	// v4: the visual invalidation triggers record a cleared pending vector
 	// token in the visual_obsolete_tokens ledger, clear durable outcomes on
 	// message context changes, and cover message_bodies deletion.
@@ -50,7 +51,9 @@ const (
 	// v10: List-ID became a message content column. Archives that recorded v9
 	// retain a trigger definition without list_id until this migration replaces
 	// it, leaving consumers on stale mailing-list routing data.
-	migrationMessageWatermarkTriggers       = "message_and_attachment_triggers_v10"
+	// v11: attachment media interpretation changes when a live message moves to
+	// another source or conversation, even when its attachment row is unchanged.
+	migrationMessageWatermarkTriggers       = "message_and_attachment_triggers_v11"
 	migrationEmbeddingChangeJournalTriggers = "embedding_change_journal_triggers_v7"
 	// v2: message updates share the content-column/value guard, participant
 	// scope mirrors personscope, and metadata-only edge edits are not identity

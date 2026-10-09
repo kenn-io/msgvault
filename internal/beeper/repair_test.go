@@ -15,6 +15,107 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
+func TestRepairAfterMergePreservesCopiedAttachmentClassification(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	const (
+		liveAccount     = "signal-live"
+		historyAccount  = "signal-history"
+		liveMediaRef    = "mxc://beeper.local/live-photo"
+		historyMediaRef = "mxc://beeper.local/history-photo"
+	)
+	mediaBytes := []byte("same synthetic media bytes")
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	chat := func(accountID, mediaRef string) *fakeChat {
+		return &fakeChat{
+			ID: "!merge-repair:beeper.local", AccountID: accountID, Network: "Signal",
+			Title: "Merge repair", Type: "single", LastActivity: base,
+			Participants: []map[string]any{
+				{"id": "@self:beeper.local", "fullName": "Example Owner", "isSelf": true},
+				{"id": "@sender:beeper.local", "fullName": "Example Sender", "email": "sender@example.test"},
+			},
+			Msgs: []fakeMsg{{
+				ID: "message-1", SortKey: 1, Timestamp: base, Text: "same synthetic message",
+				SenderID: "@sender:beeper.local", SenderName: "Example Sender",
+				Attachments: []map[string]any{{
+					"id": mediaRef, "type": "img", "mimeType": "image/png",
+					"fileName": "photo.png", "fileSize": len(mediaBytes),
+				}},
+			}},
+		}
+	}
+
+	f := newFakeBeeper(t)
+	ch := chat(liveAccount, liveMediaRef)
+	f.addChat(ch)
+	f.setAsset(liveMediaRef, mediaBytes)
+	f.setAsset(historyMediaRef, mediaBytes)
+	imp, st, done := newTestImporter(t, f)
+	defer done()
+	attachmentsDir := t.TempDir()
+
+	_, err := imp.Import(t.Context(), ImportOptions{AccountID: liveAccount, AttachmentsDir: attachmentsDir})
+	require.NoError(err)
+	ch.AccountID = historyAccount
+	ch.Msgs[0].Attachments[0]["id"] = historyMediaRef
+	_, err = imp.Import(t.Context(), ImportOptions{AccountID: historyAccount, AttachmentsDir: attachmentsDir})
+	require.NoError(err)
+
+	liveSource, err := st.GetOrCreateSource("beeper", liveAccount)
+	require.NoError(err)
+	historySource, err := st.GetOrCreateSource("beeper", historyAccount)
+	require.NoError(err)
+	merge, err := st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{
+		FromSourceID: historySource.ID, IntoSourceID: liveSource.ID,
+	})
+	require.NoError(err)
+	assert.Equal(int64(1), merge.DuplicatesHidden)
+	assert.Equal(int64(1), merge.AttachmentsCopied)
+
+	var liveMessageID, liveAttachmentID, preservedAttachmentID int64
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+			SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?`),
+		liveSource.ID, "message-1").Scan(&liveMessageID))
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+			SELECT id FROM attachments WHERE message_id = ? AND source_attachment_id = ?`),
+		liveMessageID, beeperAttachmentID(liveMediaRef)).Scan(&liveAttachmentID))
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+			SELECT a.id FROM attachments a
+			JOIN source_merge_preserved_attachments spa ON spa.attachment_id = a.id
+			WHERE a.message_id = ?`), liveMessageID).Scan(&preservedAttachmentID))
+	var preservedSourceAttachmentID, preservedRoleBefore, preservedRoleSourceBefore string
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+			SELECT source_attachment_id, attachment_role, role_source
+			FROM attachments WHERE id = ?`), preservedAttachmentID).
+		Scan(&preservedSourceAttachmentID, &preservedRoleBefore, &preservedRoleSourceBefore))
+	assert.Equal(beeperAttachmentID(historyMediaRef), preservedSourceAttachmentID)
+	assert.Equal("standalone", preservedRoleBefore)
+	assert.Equal("importer_semantics", preservedRoleSourceBefore)
+	_, err = st.DB().Exec(st.Rebind(`
+		UPDATE attachments SET attachment_role = 'unknown', role_source = 'unknown'
+		WHERE id = ?`), liveAttachmentID)
+	require.NoError(err)
+
+	sum, err := imp.RepairSource(t.Context(), liveSource.ID, nil)
+	require.NoError(err)
+	assert.Positive(sum.MessagesScanned)
+	assert.Positive(sum.AttachmentsTagged)
+	assert.Zero(sum.Errors)
+
+	var preservedRole, preservedRoleSource string
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+			SELECT attachment_role, role_source FROM attachments WHERE id = ?`),
+		preservedAttachmentID).Scan(&preservedRole, &preservedRoleSource))
+	assert.Equal("standalone", preservedRole)
+	assert.Equal("importer_semantics", preservedRoleSource)
+
+	var liveRole string
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+			SELECT attachment_role FROM attachments WHERE message_id = ? AND source_attachment_id = ?`),
+		liveMessageID, beeperAttachmentID(liveMediaRef)).Scan(&liveRole))
+	assert.Equal("standalone", liveRole)
+}
+
 // TestRepairArchiveRewritesStaleDerivedRows covers repairing an archive
 // written before HTML was converted and before shares were classified: the
 // pass must reach both from the stored payload alone, without contacting

@@ -17,6 +17,10 @@ func (r *imapMembershipResolver) resolveLegacyMessageID(value string) (int64, er
 		rows, err := r.tx.QueryContext(r.ctx, `
 			SELECT id, rfc822_message_id FROM messages
 			WHERE source_id = ? AND rfc822_message_id IS NOT NULL
+			  AND NOT EXISTS (
+				SELECT 1 FROM source_merge_archive_only_messages marker
+				WHERE marker.message_id = messages.id
+			  )
 		`, r.sourceID)
 		if err != nil {
 			return 0, fmt.Errorf("load legacy IMAP identities: %w", err)

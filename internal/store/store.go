@@ -117,6 +117,8 @@ type Store struct {
 	identityMatchReviewAfterDecisionHook  func()
 	senderRepairMessageLockHook           func()
 	personOperationBeforeIdentityLockHook func()
+	sourceMergeBeforeIdentityLockHook     func()
+	sourceMergeAfterJournalCheckHook      func()
 	personMergeAfterSnapshotHook          func()
 	personMatchBlockingBeforeLockHook     func()
 	personEnrichmentClock                 func() time.Time
@@ -1575,6 +1577,26 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 			}
 		}
 	}
+	if err := s.runOnceMigration(
+		ctx, migrationSourceMergeArchiveMessageID, 1, false,
+		func(ctx context.Context) error {
+			return s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+				_, err := tx.ExecContext(ctx, `
+					UPDATE source_merge_archive_only_messages
+					SET original_source_message_id = COALESCE((
+						SELECT NULLIF(smm.original_message_id, '')
+						FROM source_merge_messages smm
+						WHERE smm.message_id = source_merge_archive_only_messages.message_id
+						  AND smm.archive_only = TRUE
+					), original_source_message_id)
+					WHERE original_source_message_id = ''
+				`)
+				return err
+			})
+		},
+	); err != nil {
+		return fmt.Errorf("backfill portable source merge message identities: %w", err)
+	}
 	if err := s.runOnceMigration(ctx, migrationCardDAVMultipleAccounts, 1, false, s.ensureCardDAVMultiAccountSchema); err != nil {
 		return fmt.Errorf("migrate CardDAV connections: %w", err)
 	}
@@ -1709,12 +1731,12 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		return fmt.Errorf("validate message watermarks: %w", err)
 	}
 	watermarkTriggersAlreadyApplied, err := s.IsMigrationAppliedContext(
-		ctx, migrationMessageWatermarkTriggers, 1)
+		ctx, migrationMessageWatermarkTriggers, 2)
 	if err != nil {
 		return fmt.Errorf("check message watermark trigger migration: %w", err)
 	}
 	if err := s.runOnceMigration(
-		ctx, migrationMessageWatermarkTriggers, 1, false,
+		ctx, migrationMessageWatermarkTriggers, 2, false,
 		func(ctx context.Context) error {
 			return s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
 				return s.dialect.EnsureTriggers(boundQuerier{ctx: ctx, q: tx})

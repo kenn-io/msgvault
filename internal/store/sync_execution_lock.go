@@ -127,6 +127,9 @@ func (s *Store) acquireSyncExecutionLock(
 	state.mu.Lock()
 	state.bySource[sourceID] = lock
 	state.mu.Unlock()
+	if err := requireSourceWritableWith(base.db, sourceID); err != nil {
+		return nil, errors.Join(err, base.abandonSyncExecutionLock(sourceID, lock))
+	}
 	return lock, nil
 }
 

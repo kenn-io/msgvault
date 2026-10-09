@@ -48,6 +48,7 @@ type DuplicateMessageRow struct {
 	SourceType       string
 	SourceIdentifier string
 	SourceMessageID  string
+	ArchiveOnly      bool
 	MetadataQuality  int
 	Subject          string
 	SentAt           time.Time
@@ -80,6 +81,7 @@ type ContentHashCandidate struct {
 	SourceType       string
 	SourceIdentifier string
 	SourceMessageID  string
+	ArchiveOnly      bool
 	MetadataQuality  int
 	Subject          string
 	SentAt           time.Time
@@ -253,11 +255,12 @@ func (s *Store) FindDuplicatesByRFC822ID(sourceIDs ...int64) ([]DuplicateGroupKe
 
 // duplicateGroupMessageColumns is the SELECT column list shared by
 // GetDuplicateGroupMessages and GetDuplicateGroupMessagesBatch: the message
-// metadata, the two correlated subqueries (label count, from address), and
-// the EXISTS clause used to detect the Gmail SENT label. Both methods build
-// their SELECT clause from this constant so the two queries can't drift
-// apart; GetDuplicateGroupMessagesBatch prepends m.rfc822_message_id (needed
-// to key its result map) since it has no per-call rfc822ID to bind.
+// metadata, correlated subqueries (label count and from address), and EXISTS
+// checks for the Gmail SENT label and the source-merge archive-only marker.
+// Both methods build their SELECT clause from this constant so the two queries
+// can't drift apart; GetDuplicateGroupMessagesBatch prepends
+// m.rfc822_message_id (needed to key its result map) since it has no per-call
+// rfc822ID to bind.
 const duplicateGroupMessageColumns = `m.id, m.source_id, s.source_type, s.identifier,
 		       m.source_message_id,
 		       COALESCE(m.subject, ''), m.sent_at, m.archived_at,
@@ -288,7 +291,11 @@ const duplicateGroupMessageColumns = `m.id, m.source_id, s.source_type, s.identi
 		           WHERE mr_from.message_id = m.id
 		             AND mr_from.recipient_type = 'from'
 		           LIMIT 1
-		       ), '') AS from_email`
+		       ), '') AS from_email,
+	       CASE WHEN EXISTS (
+	           SELECT 1 FROM source_merge_archive_only_messages am
+	           WHERE am.message_id = m.id
+	       ) THEN 1 ELSE 0 END AS archive_only`
 
 // GetDuplicateGroupMessages fetches every message row for a single RFC822
 // duplicate group in one query. It is retained as the reference
@@ -337,14 +344,14 @@ func (s *Store) GetDuplicateGroupMessages(
 		var dm DuplicateMessageRow
 		var sentAt, archivedAt sql.NullTime
 		var evidence duplicateMetadataEvidence
-		var hasRaw, hasAttachments, isFromMe, hasSent int
+		var hasRaw, hasAttachments, isFromMe, hasSent, archiveOnly int
 		if err := rows.Scan(
 			&dm.ID, &dm.SourceID, &dm.SourceType, &dm.SourceIdentifier,
 			&dm.SourceMessageID, &dm.Subject, &sentAt, &archivedAt,
 			&evidence.rfc822ID, &evidence.metadata, &evidence.hasReplyParent, &evidence.providerThreadKey,
 			&hasRaw, &dm.PayloadBytes, &dm.AttachmentCount, &hasAttachments,
 			&dm.LabelCount, &isFromMe, &hasSent,
-			&dm.FromEmail,
+			&dm.FromEmail, &archiveOnly,
 		); err != nil {
 			return nil, err
 		}
@@ -359,6 +366,7 @@ func (s *Store) GetDuplicateGroupMessages(
 		dm.HasAttachments = hasAttachments == 1
 		dm.IsFromMe = isFromMe == 1
 		dm.HasSentLabel = hasSent == 1
+		dm.ArchiveOnly = archiveOnly == 1
 		msgs = append(msgs, dm)
 	}
 	return msgs, rows.Err()
@@ -443,14 +451,14 @@ func (s *Store) GetDuplicateGroupMessagesBatchContext(
 			var rfc822ID string
 			var sentAt, archivedAt sql.NullTime
 			var evidence duplicateMetadataEvidence
-			var hasRaw, hasAttachments, isFromMe, hasSent int
+			var hasRaw, hasAttachments, isFromMe, hasSent, archiveOnly int
 			if err := rows.Scan(
 				&rfc822ID, &dm.ID, &dm.SourceID, &dm.SourceType, &dm.SourceIdentifier,
 				&dm.SourceMessageID, &dm.Subject, &sentAt, &archivedAt,
 				&evidence.rfc822ID, &evidence.metadata, &evidence.hasReplyParent, &evidence.providerThreadKey,
 				&hasRaw, &dm.PayloadBytes, &dm.AttachmentCount, &hasAttachments,
 				&dm.LabelCount, &isFromMe, &hasSent,
-				&dm.FromEmail,
+				&dm.FromEmail, &archiveOnly,
 			); err != nil {
 				return err
 			}
@@ -465,6 +473,7 @@ func (s *Store) GetDuplicateGroupMessagesBatchContext(
 			dm.HasAttachments = hasAttachments == 1
 			dm.IsFromMe = isFromMe == 1
 			dm.HasSentLabel = hasSent == 1
+			dm.ArchiveOnly = archiveOnly == 1
 			groupID, ok := groupByStorageForm[rfc822ID]
 			if !ok {
 				return fmt.Errorf("unexpected RFC822 Message-ID storage form %q", rfc822ID)
@@ -594,7 +603,11 @@ func (s *Store) GetAllRawMIMECandidates(
 		           WHERE mr_from.message_id = m.id
 		             AND mr_from.recipient_type = 'from'
 		           LIMIT 1
-		       ), '') AS from_email
+		       ), '') AS from_email,
+		       CASE WHEN EXISTS (
+		           SELECT 1 FROM source_merge_archive_only_messages am
+		           WHERE am.message_id = m.id
+		       ) THEN 1 ELSE 0 END AS archive_only
 		FROM messages m
 		JOIN sources s ON s.id = m.source_id
 		JOIN message_raw mr ON mr.message_id = m.id
@@ -621,13 +634,13 @@ func (s *Store) GetAllRawMIMECandidates(
 		var c ContentHashCandidate
 		var sentAt, archivedAt sql.NullTime
 		var evidence duplicateMetadataEvidence
-		var hasAttachments, isFromMe, hasSent int
+		var hasAttachments, isFromMe, hasSent, archiveOnly int
 		if err := rows.Scan(
 			&c.ID, &c.SourceID, &c.SourceType, &c.SourceIdentifier,
 			&c.SourceMessageID, &c.Subject, &sentAt, &archivedAt,
 			&evidence.rfc822ID, &evidence.metadata, &evidence.hasReplyParent, &evidence.providerThreadKey,
 			&c.PayloadBytes, &c.AttachmentCount, &hasAttachments,
-			&c.LabelCount, &isFromMe, &hasSent, &c.FromEmail,
+			&c.LabelCount, &isFromMe, &hasSent, &c.FromEmail, &archiveOnly,
 		); err != nil {
 			return nil, err
 		}
@@ -641,6 +654,7 @@ func (s *Store) GetAllRawMIMECandidates(
 		c.HasAttachments = hasAttachments == 1
 		c.IsFromMe = isFromMe == 1
 		c.HasSentLabel = hasSent == 1
+		c.ArchiveOnly = archiveOnly == 1
 		candidates = append(candidates, c)
 	}
 	return candidates, rows.Err()

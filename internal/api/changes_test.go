@@ -1498,7 +1498,7 @@ func decodeGeneratedChangesPage(t *testing.T, srv *Server, target string) genera
 func TestChangesResponseFieldsAreAllTracked(t *testing.T) {
 	t.Parallel()
 	assert := assert.New(t)
-	exempt := []string{"id", "source_id", "content_changed_at"}
+	exempt := []string{"id", "content_changed_at"}
 
 	for field := range reflect.TypeFor[ChangedMessageJSON]().Fields() {
 		name, _, _ := strings.Cut(field.Tag.Get("json"), ",")

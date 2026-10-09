@@ -302,10 +302,14 @@ func runConfiguredNotionMeetingsSync(ctx context.Context, st *store.Store, sourc
 	notRegistered := fmt.Errorf(
 		"notion meeting source %q is not registered; run msgvault add-notion-meetings %s first",
 		source.Identifier, source.Identifier)
-	if err := requireRegisteredMeetingSource(
+	registered, err := requireRegisteredMeetingSource(
 		st, notionmeetings.SourceType, source.Identifier, notRegistered,
-	); err != nil {
+	)
+	if err != nil {
 		return err
+	}
+	if registered.MergedIntoSourceID != 0 {
+		return nil
 	}
 	if strings.TrimSpace(source.Token) == "" {
 		return fmt.Errorf("notion meeting source %q has no token", source.Identifier)

@@ -494,6 +494,10 @@ func captureUntrackedIMAPMessageIDs(
 		WHERE messages.source_id = ?
 		  AND messages.deleted_from_source_at IS NULL
 		  AND NOT EXISTS (
+			SELECT 1 FROM source_merge_archive_only_messages marker
+			WHERE marker.message_id = messages.id
+		  )
+		  AND NOT EXISTS (
 			SELECT 1 FROM imap_message_memberships membership
 			WHERE membership.source_id = messages.source_id
 			  AND membership.message_id = messages.id
@@ -524,6 +528,10 @@ func captureUntrackedIMAPMessageIDs(
 			JOIN messages ON messages.id = message_labels.message_id
 			WHERE messages.source_id = ?
 			  AND messages.deleted_from_source_at IS NOT NULL
+			  AND NOT EXISTS (
+				SELECT 1 FROM source_merge_archive_only_messages marker
+				WHERE marker.message_id = messages.id
+			  )
 		`, sourceID,
 	); err != nil {
 		return fmt.Errorf("capture initial IMAP baseline messages: %w", err)
@@ -881,7 +889,15 @@ func (r *imapMembershipResolver) resolveIdentity(observation IMAPMembershipObser
 		if independent {
 			ids := make(map[int64]struct{})
 			for _, candidate := range imapRFC822MessageIDCandidates(observation.RFC822MessageID) {
-				if err := captureIMAPMembershipMessageIDs(r.tx, ids, `SELECT id FROM messages WHERE source_id = ? AND rfc822_message_id = ? LIMIT 2`, r.sourceID, candidate); err != nil {
+				if err := captureIMAPMembershipMessageIDs(r.tx, ids, `
+					SELECT id FROM messages
+					WHERE source_id = ? AND rfc822_message_id = ?
+					  AND NOT EXISTS (
+						SELECT 1 FROM source_merge_archive_only_messages marker
+						WHERE marker.message_id = messages.id
+					  )
+					LIMIT 2
+				`, r.sourceID, candidate); err != nil {
 					return 0, fmt.Errorf("resolve independent IMAP identity: %w", err)
 				}
 			}
@@ -899,6 +915,10 @@ func (r *imapMembershipResolver) resolveIdentity(observation IMAPMembershipObser
 				err := r.tx.QueryRow(`
 				SELECT id FROM messages
 				WHERE source_id = ? AND rfc822_message_id = ?
+				  AND NOT EXISTS (
+					SELECT 1 FROM source_merge_archive_only_messages marker
+					WHERE marker.message_id = messages.id
+				  )
 				ORDER BY id
 				LIMIT 1
 			`, r.sourceID, candidate).Scan(&messageID)
@@ -1168,6 +1188,10 @@ func distinctIMAPMembershipMessageIDs(ctx context.Context, tx *loggedTx, sourceI
 	rows, err := tx.QueryContext(ctx, `
 		SELECT DISTINCT message_id FROM imap_message_memberships
 		WHERE source_id = ?
+		  AND NOT EXISTS (
+			SELECT 1 FROM source_merge_archive_only_messages marker
+			WHERE marker.message_id = imap_message_memberships.message_id
+		  )
 		ORDER BY message_id
 	`, sourceID)
 	if err != nil {

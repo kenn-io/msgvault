@@ -3148,7 +3148,7 @@ func TestFindScheduledSyncSources(t *testing.T) {
 
 	// Unknown identifier returns empty slice (not nil), enabling the
 	// Gmail token-first fallback in runScheduledSync.
-	got, err := findScheduledSyncSources(s, "missing@example.com")
+	got, _, err := findScheduledSyncSources(s, "missing@example.com")
 	require.NoError(err, "findScheduledSyncSources(missing)")
 	assert.Empty(got, "findScheduledSyncSources(missing) should be empty")
 
@@ -3165,7 +3165,7 @@ func TestFindScheduledSyncSources(t *testing.T) {
 	teamsSrc, err := s.GetOrCreateSource("teams", sharedEmail)
 	require.NoError(err, "create teams source")
 
-	got, err = findScheduledSyncSources(s, sharedEmail)
+	got, _, err = findScheduledSyncSources(s, sharedEmail)
 	require.NoError(err, "findScheduledSyncSources(imap+teams)")
 	require.Len(got, 2, "findScheduledSyncSources(imap+teams) should return 2 sources")
 	assert.Equal("imap", got[0].SourceType, "first source should be imap")
@@ -3178,7 +3178,7 @@ func TestFindScheduledSyncSources(t *testing.T) {
 	gmailSrc, err := s.GetOrCreateSource("gmail", gmailAddr)
 	require.NoError(err, "create gmail source")
 
-	got, err = findScheduledSyncSources(s, gmailAddr)
+	got, _, err = findScheduledSyncSources(s, gmailAddr)
 	require.NoError(err, "findScheduledSyncSources(gmail)")
 	require.Len(got, 1, "findScheduledSyncSources(gmail) should return 1 source")
 	assert.Equal("gmail", got[0].SourceType, "source should be gmail")
@@ -3189,7 +3189,7 @@ func TestFindScheduledSyncSources(t *testing.T) {
 	_, err = s.GetOrCreateSource("mbox", mboxAddr)
 	require.NoError(err, "create mbox source")
 
-	got, err = findScheduledSyncSources(s, mboxAddr)
+	got, _, err = findScheduledSyncSources(s, mboxAddr)
 	require.NoError(err, "findScheduledSyncSources(mbox-only)")
 	assert.Empty(got, "findScheduledSyncSources(mbox-only) should be empty")
 
@@ -3202,14 +3202,70 @@ func TestFindScheduledSyncSources(t *testing.T) {
 	require.NoError(err, "create second Discord source")
 	require.NoError(s.UpdateSourceDisplayName(discordB.ID, "Shared Guild"), "name second Discord source")
 
-	got, err = findScheduledSyncSources(s, discordB.Identifier)
+	got, _, err = findScheduledSyncSources(s, discordB.Identifier)
 	require.NoError(err, "find Discord source by guild ID")
 	require.Len(got, 1, "exact guild ID selects one Discord source")
 	assert.Equal(discordB.ID, got[0].ID)
 
-	got, err = findScheduledSyncSources(s, "Shared Guild")
+	got, _, err = findScheduledSyncSources(s, "Shared Guild")
 	require.NoError(err, "do not resolve Discord source by display name")
 	assert.Empty(got, "duplicate guild display names must not select an arbitrary source")
+}
+
+func TestScheduledSyncSkipsRetiredSourcesWithoutGmailFallback(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	retired, err := f.Store.GetOrCreateSource(sourceTypeGmail, "history@example.test")
+	require.NoError(err)
+	destination, err := f.Store.GetOrCreateSource(sourceTypeGmail, "current@example.test")
+	require.NoError(err)
+	_, err = f.Store.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{
+		FromSourceID: retired.ID, IntoSourceID: destination.ID,
+	})
+	require.NoError(err)
+
+	sources, retiredMatch, err := findScheduledSyncSources(f.Store, retired.Identifier)
+	require.NoError(err)
+	assert.Empty(sources)
+	assert.True(retiredMatch)
+
+	state := &invocation{cfg: &config.Config{}, logger: slog.New(slog.DiscardHandler)}
+	ctx := withInvocation(t.Context(), state)
+	err = runScheduledSync(ctx, retired.Identifier, f.Store, func(string) (*oauth.Manager, error) {
+		return nil, errors.New("retired source incorrectly reached Gmail fallback")
+	}, state)
+	assert.NoError(err, "retired source should be skipped instead of entering the token-first fallback")
+}
+
+func TestScheduledSyncSkipsRetiredLegacyGmailSourceWithoutFallback(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	retired, err := f.Store.GetOrCreateSource(sourceTypeGmail, "legacy-history@example.test")
+	require.NoError(err)
+	destination, err := f.Store.GetOrCreateSource(sourceTypeGmail, "legacy-current@example.test")
+	require.NoError(err)
+	_, err = f.Store.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{
+		FromSourceID: retired.ID, IntoSourceID: destination.ID,
+	})
+	require.NoError(err)
+	_, err = f.Store.DB().Exec(
+		f.Store.Rebind(`UPDATE sources SET source_type = '' WHERE id = ?`), retired.ID,
+	)
+	require.NoError(err)
+
+	sources, retiredMatch, err := findScheduledSyncSources(f.Store, retired.Identifier)
+	require.NoError(err)
+	assert.Empty(sources)
+	assert.True(retiredMatch, "legacy source type still marks the account as retired")
+
+	state := &invocation{cfg: &config.Config{}, logger: slog.New(slog.DiscardHandler)}
+	ctx := withInvocation(t.Context(), state)
+	err = runScheduledSync(ctx, retired.Identifier, f.Store, func(string) (*oauth.Manager, error) {
+		return nil, errors.New("retired legacy source incorrectly reached Gmail fallback")
+	}, state)
+	assert.NoError(err, "retired legacy source should be skipped instead of entering the token-first fallback")
 }
 
 func TestScheduledTeamsImportOptionsApplyMediaPolicy(t *testing.T) {

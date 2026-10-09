@@ -72,8 +72,11 @@ const hashlessProviderAlias = `(COALESCE(a.content_hash, '') = ''
 
 // beeperMediaEligible is the shared provider, capture and role predicate. It
 // assumes a (attachments), m (messages), c (conversations) and src (sources).
-// Archives older than attachment_state leave it NULL on stored Beeper audio.
+// Merge-preserved copies retain old provider attachment references and are
+// archive evidence rather than current media occurrences. Archives older than
+// attachment_state leave it NULL on stored Beeper audio.
 const beeperMediaEligible = attachmentBytesArchived + `
+	  AND NOT EXISTS (SELECT 1 FROM source_merge_preserved_attachments spa WHERE spa.attachment_id = a.id)
 	  AND COALESCE(src.source_type, '') <> ''
 	  AND COALESCE(src.identifier, '') <> ''
 	  AND COALESCE(m.source_message_id, '') <> ''
@@ -106,25 +109,26 @@ var beeperMediaCurrentJoin = `
 // BeeperMediaCandidate is the current archive evidence for a stored attachment
 // to inspect for audio. The source tuple, rather than AttachmentID, is stable.
 type BeeperMediaCandidate struct {
-	AttachmentID         int64
-	MessageID            int64
-	SentAt               sql.NullTime
-	ConversationID       int64
-	SourceID             int64
-	SourceType           string
-	SourceIdentifier     string
-	SourceConversationID string
-	SourceMessageID      string
-	SourceAttachmentID   string
-	SourcePartKey        string
-	Filename             string
-	MIMEType             string
-	MediaType            string
-	Role                 string
-	ContentHash          string
-	ByteLength           int64
-	AttachmentState      string
-	AttachmentMetadata   string
+	AttachmentID            int64
+	MessageID               int64
+	SentAt                  sql.NullTime
+	ConversationID          int64
+	SourceID                int64
+	SourceType              string
+	SourceIdentifier        string
+	SourceConversationID    string
+	SourceMessageID         string
+	OriginalSourceMessageID string
+	SourceAttachmentID      string
+	SourcePartKey           string
+	Filename                string
+	MIMEType                string
+	MediaType               string
+	Role                    string
+	ContentHash             string
+	ByteLength              int64
+	AttachmentState         string
+	AttachmentMetadata      string
 }
 
 // BeeperMediaMapping is one occurrence row together with the optional shared
@@ -237,6 +241,11 @@ type BeeperMediaScan struct {
 const beeperMediaCandidateColumns = `
 	SELECT a.id, m.id, c.id, src.id, src.source_type, src.identifier,
 	       COALESCE(c.source_conversation_id, ''), COALESCE(m.source_message_id, ''),
+	       COALESCE(NULLIF((SELECT marker.original_source_message_id
+	                        FROM source_merge_archive_only_messages marker
+	                        WHERE marker.message_id = m.id), ''),
+	                (SELECT smm.original_message_id FROM source_merge_messages smm
+	                 WHERE smm.message_id = m.id AND smm.archive_only = TRUE), ''),
 	       COALESCE(a.source_attachment_id, ''),
 	       COALESCE(NULLIF(a.source_part_key, ''), a.source_attachment_id, ''),
 	       COALESCE(a.filename, ''), COALESCE(a.mime_type, ''),
@@ -308,6 +317,7 @@ func (s *Store) readBeeperMediaCandidates(ctx context.Context, idFilter string, 
 			&candidate.AttachmentID, &candidate.MessageID, &candidate.ConversationID,
 			&candidate.SourceID, &candidate.SourceType, &candidate.SourceIdentifier,
 			&candidate.SourceConversationID, &candidate.SourceMessageID,
+			&candidate.OriginalSourceMessageID,
 			&candidate.SourceAttachmentID, &candidate.SourcePartKey,
 			&candidate.Filename, &candidate.MIMEType, &candidate.MediaType,
 			&candidate.Role, &candidate.ContentHash, &candidate.ByteLength,

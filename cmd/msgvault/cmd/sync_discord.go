@@ -66,7 +66,7 @@ func runSyncDiscord(cmd *cobra.Command, deps discordCommandDeps, selector string
 		return err
 	}
 	defer cleanup()
-	sources, err := resolveDiscordSources(st, selector)
+	sources, err := resolveDiscordSyncSources(st, selector)
 	if err != nil {
 		return usageErr(cmd, err)
 	}

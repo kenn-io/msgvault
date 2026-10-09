@@ -57,12 +57,22 @@ func runMatrixSync(ctx context.Context, s *store.Store, cfg *config.Config, acco
 	if len(sources) == 0 {
 		return errors.New("no Matrix accounts registered (run 'add-matrix' first)")
 	}
+	if account == "" {
+		sources = activeSyncSources(sources)
+	} else {
+		for _, source := range sources {
+			if source.Identifier == account && source.MergedIntoSourceID != 0 {
+				return fmt.Errorf("matrix account %q is retired: %w", account, store.ErrSourceRetired)
+			}
+		}
+	}
 	var failures []string
 	for _, source := range sources {
 		if account != "" && source.Identifier != account {
 			continue
 		}
 		var summary *matrixsource.ImportSummary
+		skippedRetired := false
 		syncErr := matrixsource.WithCredentialLifecycleLock(cfg.TokensDir(), func() error {
 			current, lookupErr := s.GetSourceByID(source.ID)
 			if lookupErr != nil {
@@ -70,6 +80,13 @@ func runMatrixSync(ctx context.Context, s *store.Store, cfg *config.Config, acco
 			}
 			if current.SourceType != sourceTypeMatrix || current.Identifier != source.Identifier {
 				return fmt.Errorf("matrix source %d changed before sync", source.ID)
+			}
+			if current.MergedIntoSourceID != 0 {
+				if account != "" {
+					return fmt.Errorf("matrix account %q is retired: %w", current.Identifier, store.ErrSourceRetired)
+				}
+				skippedRetired = true
+				return nil
 			}
 			creds, loadErr := matrixsource.LoadCredentials(cfg.TokensDir(), current.Identifier)
 			if loadErr != nil {
@@ -88,6 +105,9 @@ func runMatrixSync(ctx context.Context, s *store.Store, cfg *config.Config, acco
 			})
 			return importErr
 		})
+		if skippedRetired {
+			continue
+		}
 		if syncErr != nil {
 			failures = append(failures, fmt.Sprintf("%s: %v", source.Identifier, syncErr))
 			continue

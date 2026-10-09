@@ -108,7 +108,10 @@ func runSyncIncrementalLocal(cmd *cobra.Command, args []string) error {
 		if lookupErr != nil {
 			return lookupErr
 		}
-		for _, src := range allMatches {
+		if err := rejectExplicitlyRetiredSyncSources(allMatches, selector, isIncrementalSyncableSource); err != nil {
+			return err
+		}
+		for _, src := range activeSyncSources(allMatches) {
 			switch src.SourceType {
 			case sourceTypeGmail:
 				gmailTargets = append(gmailTargets, syncTarget{source: src, email: src.Identifier})
@@ -136,6 +139,7 @@ func runSyncIncrementalLocal(cmd *cobra.Command, args []string) error {
 		if len(allSources) == 0 {
 			return errors.New("no accounts configured - run 'add-account' or 'add-imap' first")
 		}
+		allSources = activeSyncSources(allSources)
 		for _, src := range allSources {
 			switch src.SourceType {
 			case sourceTypeGmail:

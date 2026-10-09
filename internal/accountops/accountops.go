@@ -19,11 +19,14 @@ type Store interface {
 
 // UpdateRequest updates CLI-facing account settings.
 type UpdateRequest struct {
-	Account     string `json:"account,omitempty"`
-	Email       string `json:"email,omitempty"`
-	SourceID    int64  `json:"source_id,omitzero"`
-	SourceIDSet bool   `json:"-"`
-	DisplayName string `json:"display_name"`
+	Account        string  `json:"account,omitempty"`
+	Email          string  `json:"email,omitempty"`
+	SourceID       int64   `json:"source_id,omitzero"`
+	SourceIDSet    bool    `json:"-"`
+	DisplayName    string  `json:"display_name,omitempty"`
+	Identifier     *string `json:"identifier,omitempty"`
+	HistoryOnly    *bool   `json:"history_only,omitempty"`
+	AcceptReanchor bool    `json:"accept_reanchor,omitempty"`
 }
 
 func (r *UpdateRequest) UnmarshalJSON(data []byte) error {
@@ -43,8 +46,12 @@ func (r *UpdateRequest) UnmarshalJSON(data []byte) error {
 
 // UpdateResult is returned after updating CLI-facing account settings.
 type UpdateResult struct {
-	Email       string `json:"email"`
-	DisplayName string `json:"display_name"`
+	Email            string `json:"email"`
+	DisplayName      string `json:"display_name"`
+	Identifier       string `json:"identifier"`
+	Alias            string `json:"alias"`
+	HistoryOnly      bool   `json:"history_only"`
+	ReanchorRequired bool   `json:"reanchor_required"`
 }
 
 // UpdateDisplayName updates one account's display name.

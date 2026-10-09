@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"go.kenn.io/msgvault/internal/jobctx"
@@ -75,6 +76,8 @@ func (s *Store) ScopedToSync(sourceID, syncRunID int64) *Store {
 		identityMatchAcceptBeforeDecisionHook: base.identityMatchAcceptBeforeDecisionHook,
 		identityMatchReviewAfterDecisionHook:  base.identityMatchReviewAfterDecisionHook,
 		personOperationBeforeIdentityLockHook: base.personOperationBeforeIdentityLockHook,
+		sourceMergeBeforeIdentityLockHook:     base.sourceMergeBeforeIdentityLockHook,
+		sourceMergeAfterJournalCheckHook:      base.sourceMergeAfterJournalCheckHook,
 		personMergeAfterSnapshotHook:          base.personMergeAfterSnapshotHook,
 		attributionAfterLockHook:              base.attributionAfterLockHook,
 
@@ -207,6 +210,33 @@ func (s *Store) withSyncSourceWriteContext(
 	})
 }
 
+// withSyncSourceMaintenanceWriteContext serializes source-wide settings with
+// other maintenance writes before taking the per-source lock. Keep the source
+// lock ahead of the sync-generation fence, matching sync start and ordinary
+// scoped source writes.
+func (s *Store) withSyncSourceMaintenanceWriteContext(
+	ctx context.Context,
+	sourceID int64,
+	write func(querier) error,
+) error {
+	if err := s.requireSyncSource(sourceID); err != nil {
+		return err
+	}
+	base := s.withoutSyncScope()
+	return base.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := lockSourceMaintenance(ctx, tx); err != nil {
+			return err
+		}
+		if err := lockSyncSourceTx(ctx, tx, sourceID); err != nil {
+			return err
+		}
+		if err := s.fenceSyncGenerationTx(ctx, tx); err != nil {
+			return err
+		}
+		return write(boundQuerier{ctx: ctx, q: tx})
+	})
+}
+
 // ErrSourceImportItemNotFound is returned by GetSourceImportItem when no
 // import-item row matches. Wrapped via fmt.Errorf for errors.Is checks.
 var ErrSourceImportItemNotFound = errors.New("source import item not found")
@@ -272,6 +302,7 @@ func scanSource(sc scanner) (*Source, error) {
 		&source.ID, &source.SourceType, &source.Identifier, &source.DisplayName,
 		&source.GoogleUserID, &source.LastSyncAt, &source.SyncCursor, &source.SyncConfig,
 		&source.OAuthApp, &createdAt, &updatedAt,
+		&source.Alias, &source.HistoryOnly, &source.MergedIntoSourceID, &source.ReanchorRequired,
 	)
 	if err != nil {
 		return nil, err
@@ -1575,17 +1606,21 @@ func (s *Store) getLastSuccessfulSyncContext(ctx context.Context, sourceID int64
 
 // Source represents a Gmail account or other message source.
 type Source struct {
-	ID           int64
-	SourceType   string // "gmail" or "imap"
-	Identifier   string // email address or IMAP identifier URL
-	DisplayName  sql.NullString
-	GoogleUserID sql.NullString
-	LastSyncAt   sql.NullTime
-	SyncCursor   sql.NullString // historyId for Gmail
-	SyncConfig   sql.NullString // JSON config for IMAP sources
-	OAuthApp     sql.NullString // named OAuth app binding (NULL = default)
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	ID                 int64
+	SourceType         string // "gmail" or "imap"
+	Identifier         string // email address or IMAP identifier URL
+	DisplayName        sql.NullString
+	GoogleUserID       sql.NullString
+	LastSyncAt         sql.NullTime
+	SyncCursor         sql.NullString // historyId for Gmail
+	SyncConfig         sql.NullString // JSON config for IMAP sources
+	OAuthApp           sql.NullString // named OAuth app binding (NULL = default)
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+	Alias              string
+	HistoryOnly        bool
+	MergedIntoSourceID int64
+	ReanchorRequired   bool
 }
 
 // GetOrCreateSource gets or creates a source by type and identifier.
@@ -1600,20 +1635,33 @@ func (s *Store) GetOrCreateSource(sourceType, identifier string) (*Source, error
 // GetOrCreateSourceContext carries cancellation through source creation and
 // default collection membership. A retry reuses an already committed source.
 func (s *Store) GetOrCreateSourceContext(ctx context.Context, sourceType, identifier string) (*Source, error) {
-	now := s.dialect.Now()
-	row := s.db.QueryRowContext(ctx, fmt.Sprintf(`
-		INSERT INTO sources (source_type, identifier, created_at, updated_at)
-		VALUES (?, ?, %s, %s)
-		ON CONFLICT (source_type, identifier) DO UPDATE
-		SET identifier = sources.identifier
-		RETURNING id, source_type, identifier, display_name, google_user_id,
-		          last_sync_at, sync_cursor, sync_config, oauth_app,
-		          created_at, updated_at
-	`, now, now), sourceType, identifier)
-
-	source, err := scanSource(row)
+	var source *Source
+	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := lockSourceMaintenance(ctx, tx); err != nil {
+			return err
+		}
+		var shadowed bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM source_settings ss WHERE ss.alias_key = ?
+   AND NOT EXISTS (SELECT 1 FROM sources existing WHERE existing.id = ss.source_id AND existing.source_type = ? AND existing.identifier = ?))`,
+			strings.ToLower(identifier), sourceType, identifier).Scan(&shadowed); err != nil {
+			return err
+		}
+		if shadowed {
+			return fmt.Errorf("%w: provider identifier conflicts with an archive alias", ErrSourceSettingsInvalid)
+		}
+		now := s.dialect.Now()
+		row := tx.QueryRowContext(ctx, fmt.Sprintf(`INSERT INTO sources (source_type, identifier, created_at, updated_at)
+   VALUES (?, ?, %s, %s) ON CONFLICT (source_type, identifier) DO UPDATE SET identifier = sources.identifier
+   RETURNING `+sourceCatalogColumns, now, now), sourceType, identifier)
+		var err error
+		source, err = scanSource(row)
+		if err != nil {
+			return fmt.Errorf("upsert source: %w", err)
+		}
+		return requireSourceWritableWith(boundQuerier{ctx: ctx, q: tx}, source.ID)
+	})
 	if err != nil {
-		return nil, fmt.Errorf("upsert source: %w", err)
+		return nil, err
 	}
 
 	// Add to the default "All" collection if it exists.
@@ -1697,18 +1745,14 @@ func (s *Store) ListSourcesContext(ctx context.Context, sourceType string) ([]*S
 
 	if sourceType != "" {
 		rows, err = s.db.QueryContext(ctx, `
-			SELECT id, source_type, identifier, display_name, google_user_id,
-			       last_sync_at, sync_cursor, sync_config, oauth_app,
-			       created_at, updated_at
+			SELECT `+sourceCatalogColumns+`
 			FROM sources
 			WHERE source_type = ?
 			ORDER BY identifier
 		`, sourceType)
 	} else {
 		rows, err = s.db.QueryContext(ctx, `
-			SELECT id, source_type, identifier, display_name, google_user_id,
-			       last_sync_at, sync_cursor, sync_config, oauth_app,
-			       created_at, updated_at
+			SELECT `+sourceCatalogColumns+`
 			FROM sources
 			ORDER BY identifier
 		`)
@@ -1745,7 +1789,10 @@ func (s *Store) UpdateSourceDisplayNameContext(
 	sourceID int64,
 	displayName string,
 ) error {
-	return s.withSyncSourceWriteContext(ctx, sourceID, func(q querier) error {
+	return s.withSyncSourceMaintenanceWriteContext(ctx, sourceID, func(q querier) error {
+		if err := checkSourceDisplayNameSelectorConflict(q, sourceID, displayName); err != nil {
+			return err
+		}
 		_, err := q.Exec(fmt.Sprintf(`
 			UPDATE sources
 			SET display_name = ?, updated_at = %s
@@ -1801,6 +1848,24 @@ func (s *Store) UpdateSourceIdentifier(sourceID int64, identifier string) error 
 	var pending []int64
 	err := s.withAttributionTxContext(ctx, attributionLock{Exclusive: true}, func(tx *loggedTx) error {
 		pending = nil
+		if reset := s.dialect.MaintenanceTimeoutResetSQL(); reset != "" {
+			if _, err := tx.ExecContext(ctx, reset); err != nil {
+				return fmt.Errorf("disable maintenance statement timeout: %w", err)
+			}
+		}
+		if err := lockSourceMaintenance(ctx, tx); err != nil {
+			return err
+		}
+		if err := requireSourceWritableWith(boundQuerier{ctx: ctx, q: tx}, sourceID); err != nil {
+			return err
+		}
+		var shadowed bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM source_settings WHERE alias_key = ? AND source_id <> ?)`, strings.ToLower(identifier), sourceID).Scan(&shadowed); err != nil {
+			return fmt.Errorf("check identifier alias conflict: %w", err)
+		}
+		if shadowed {
+			return fmt.Errorf("%w: provider identifier conflicts with an archive alias", ErrSourceSettingsInvalid)
+		}
 		var sourceType, oldIdentifier string
 		err := tx.QueryRowContext(ctx,
 			`SELECT source_type, COALESCE(identifier, '') FROM sources WHERE id = ?`, sourceID,
@@ -1835,9 +1900,7 @@ func (s *Store) UpdateSourceIdentifier(sourceID int64, identifier string) error 
 // GetSourceByIdentifier returns a source by its identifier (email address).
 func (s *Store) GetSourceByIdentifier(identifier string) (*Source, error) {
 	row := s.db.QueryRow(`
-		SELECT id, source_type, identifier, display_name, google_user_id,
-		       last_sync_at, sync_cursor, sync_config, oauth_app,
-		       created_at, updated_at
+		SELECT `+sourceCatalogColumns+`
 		FROM sources
 		WHERE identifier = ?
 	`, identifier)

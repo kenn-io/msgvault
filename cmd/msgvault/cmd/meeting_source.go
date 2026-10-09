@@ -30,7 +30,7 @@ func registerMeetingSource(
 	if err != nil {
 		return nil, fmt.Errorf("create source: %w", err)
 	}
-	if err := s.UpdateSourceDisplayName(source.ID, identifier); err != nil {
+	if err := updateSourceDisplayNameForRegistration(s, source.ID, identifier, nil); err != nil {
 		return nil, fmt.Errorf("set display name: %w", err)
 	}
 	if err := s.AddAccountIdentity(source.ID, primary, "account-email"); err != nil {
@@ -155,10 +155,10 @@ func (r meetingSyncRun) finishScheduled(
 // GetOrCreateSource would create a source the user never added.
 func requireRegisteredMeetingSource(
 	st *store.Store, sourceType, identifier string, missing error,
-) error {
-	_, err := st.GetSourceByTypeAndIdentifier(sourceType, identifier)
+) (*store.Source, error) {
+	source, err := st.GetSourceByTypeAndIdentifier(sourceType, identifier)
 	if errors.Is(err, store.ErrSourceNotFound) {
-		return missing
+		return nil, missing
 	}
-	return err
+	return source, err
 }

@@ -108,6 +108,10 @@ Schema 3.3.0 adds `POST /api/v1/telemetry/events`, which the web and terminal UI
 report anonymous usage events through the daemon. See
 [Telemetry](configuration.md#telemetry).
 
+Schema 3.8.0 adds account aliases and lifecycle fields, account merging, and
+owner source-maintenance requests. Existing source identifiers and account
+requests remain valid.
+
 Schema 3.0.0 removes the unguarded
 `POST /api/v1/identity/match-candidates/{id}/accept` and `/reject` routes.
 Use the corresponding `/review/accept` and `/review/reject` routes with a fresh

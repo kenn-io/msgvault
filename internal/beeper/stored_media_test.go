@@ -235,6 +235,190 @@ func TestStoredMediaProviderMatrix(t *testing.T) {
 	assert.Contains(profiles, "configured-asr")
 }
 
+func TestBeeperMediaProcessesStoredAudioAfterSourceMerge(t *testing.T) {
+	require, assert := require.New(t), assert.New(t)
+	wav := syntheticWAV(800, 93)
+	world := importVoiceChat(t, voiceSpec{
+		id: "merged-voice", asset: "mxc://beeper.local/merged-voice", mime: "audio/wav",
+		fileName: "voice.wav", transcript: "merged provider words", data: wav,
+	})
+
+	from, err := world.st.GetSourceByTypeAndIdentifier("beeper", "signal")
+	require.NoError(err)
+	into, err := world.st.GetOrCreateSource("beeper", "signal-main")
+	require.NoError(err)
+	_, err = world.st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{
+		FromSourceID: from.ID, IntoSourceID: into.ID,
+	})
+	require.NoError(err)
+
+	var archivedMessageID string
+	require.NoError(world.st.DB().QueryRow(world.st.Rebind(`
+		SELECT source_message_id FROM messages WHERE source_id = ? AND message_type = 'beeper'
+	`), into.ID).Scan(&archivedMessageID))
+	assert.Contains(archivedMessageID, "msgvault-archive:")
+	candidates, err := world.st.ListBeeperMediaCandidates(t.Context(), 0, 10)
+	require.NoError(err)
+	require.Len(candidates, 1)
+	assert.Equal("merged-voice", candidates[0].OriginalSourceMessageID)
+
+	docbank := newFakeDocbank(t)
+	server := newTestDocbankServer(t, docbank)
+	defer server.Close()
+	runPasses(t, world.submitter(t, server, "merged-beeper-audio"), 12)
+
+	rows := occurrenceRows(t, world.st, "merged-beeper-audio")
+	require.Len(rows, 1)
+	assert.Equal("retained", rows[0].State)
+	assert.Empty(rows[0].ErrorCode)
+	assert.Equal(archivedMessageID, rows[0].MessageID)
+	docbank.mu.Lock()
+	assert.Equal([][]byte{wav}, docbank.uploads)
+	docbank.mu.Unlock()
+}
+
+func TestBeeperMediaPreservesOriginalMessageIDAcrossChainedSourceMerges(t *testing.T) {
+	require, assert := require.New(t), assert.New(t)
+	wav := syntheticWAV(800, 94)
+	world := importVoiceChat(t, voiceSpec{
+		id: "chained-merged-voice", asset: "mxc://beeper.local/chained-merged-voice", mime: "audio/wav",
+		fileName: "voice.wav", transcript: "chained provider words", data: wav,
+	})
+
+	from, err := world.st.GetSourceByTypeAndIdentifier("beeper", "signal")
+	require.NoError(err)
+	middle, err := world.st.GetOrCreateSource("beeper", "signal-intermediate")
+	require.NoError(err)
+	into, err := world.st.GetOrCreateSource("beeper", "signal-main")
+	require.NoError(err)
+	_, err = world.st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{
+		FromSourceID: from.ID, IntoSourceID: middle.ID,
+	})
+	require.NoError(err)
+	_, err = world.st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{
+		FromSourceID: middle.ID, IntoSourceID: into.ID,
+	})
+	require.NoError(err)
+
+	candidates, err := world.st.ListBeeperMediaCandidates(t.Context(), 0, 10)
+	require.NoError(err)
+	require.Len(candidates, 1)
+	assert.Equal("chained-merged-voice", candidates[0].OriginalSourceMessageID)
+
+	docbank := newFakeDocbank(t)
+	server := newTestDocbankServer(t, docbank)
+	defer server.Close()
+	worker := world.submitter(t, server, "chained-merged-beeper-audio")
+	runPasses(t, worker, 12)
+
+	rows := occurrenceRows(t, world.st, "chained-merged-beeper-audio")
+	require.Len(rows, 1)
+	assert.Equal("retained", rows[0].State)
+	assert.Empty(rows[0].ErrorCode)
+	docbank.mu.Lock()
+	assert.Equal([][]byte{wav}, docbank.uploads)
+	docbank.mu.Unlock()
+}
+
+func TestBeeperMediaProcessesMergedAudioAfterSubsetExport(t *testing.T) {
+	testutil.SkipIfPostgres(t, "subset export uses SQLite database attachment")
+	require, assert := require.New(t), assert.New(t)
+	wav := syntheticWAV(800, 95)
+	world := importVoiceChat(t, voiceSpec{
+		id: "subset-merged-voice", asset: "mxc://beeper.local/subset-merged-voice", mime: "audio/wav",
+		fileName: "voice.wav", transcript: "subset provider words", data: wav,
+	})
+
+	from, err := world.st.GetSourceByTypeAndIdentifier("beeper", "signal")
+	require.NoError(err)
+	into, err := world.st.GetOrCreateSource("beeper", "signal-main")
+	require.NoError(err)
+	_, err = world.st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{
+		FromSourceID: from.ID, IntoSourceID: into.ID,
+	})
+	require.NoError(err)
+
+	var sequence int
+	var databaseName, sourcePath string
+	require.NoError(world.st.DB().QueryRow("PRAGMA database_list").Scan(&sequence, &databaseName, &sourcePath))
+	assert.Equal("main", databaseName)
+	require.NotEmpty(sourcePath)
+	subsetDir := filepath.Join(t.TempDir(), "subset")
+	_, err = store.CopySubset(sourcePath, subsetDir, 1, false)
+	require.NoError(err)
+	subset, err := store.Open(filepath.Join(subsetDir, "msgvault.db"))
+	require.NoError(err)
+	t.Cleanup(func() { assert.NoError(subset.Close()) })
+
+	candidates, err := subset.ListBeeperMediaCandidates(t.Context(), 0, 10)
+	require.NoError(err)
+	require.Len(candidates, 1)
+	assert.Equal("subset-merged-voice", candidates[0].OriginalSourceMessageID)
+
+	docbank := newFakeDocbank(t)
+	server := newTestDocbankServer(t, docbank)
+	defer server.Close()
+	worker := world.submitter(t, server, "subset-merged-beeper-audio")
+	worker.store = subset
+	runPasses(t, worker, 12)
+
+	rows := occurrenceRows(t, subset, "subset-merged-beeper-audio")
+	require.Len(rows, 1)
+	assert.Equal("retained", rows[0].State)
+	assert.Empty(rows[0].ErrorCode)
+	assert.Equal(candidates[0].SourceMessageID, rows[0].MessageID)
+	docbank.mu.Lock()
+	assert.Equal([][]byte{wav}, docbank.uploads)
+	docbank.mu.Unlock()
+}
+
+func TestBeeperMediaJournalReconcilesSourceMergeOwnershipChange(t *testing.T) {
+	require, assert := require.New(t), assert.New(t)
+	world := importVoiceChat(t, voiceSpec{
+		id: "journal-merged-voice", asset: "mxc://beeper.local/journal-merged-voice", mime: "audio/wav",
+		fileName: "voice.wav", transcript: "journal provider words", data: syntheticWAV(800, 96),
+	})
+	worker := NewMediaSubmitter(world.st, world.blobs, nil, "merge-journal", world.dir)
+	initial, err := worker.RunBatch(t.Context())
+	require.NoError(err)
+	assert.Equal(1, initial.Examined)
+	consumer, err := world.st.GetAttachmentChangeConsumer(t.Context(), store.BeeperMediaAttachmentConsumerKey)
+	require.NoError(err)
+	assert.True(consumer.ReconciliationComplete)
+
+	from, err := world.st.GetSourceByTypeAndIdentifier("beeper", "signal")
+	require.NoError(err)
+	into, err := world.st.GetOrCreateSource("beeper", "signal-main")
+	require.NoError(err)
+	_, err = world.st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{
+		FromSourceID: from.ID, IntoSourceID: into.ID,
+	})
+	require.NoError(err)
+
+	changes, err := world.st.ListAttachmentChanges(t.Context(), store.BeeperMediaAttachmentConsumerKey, 10)
+	require.NoError(err)
+	require.Len(changes, 1, "merge ownership must be journaled after the completed scan baseline")
+	assert.Equal("attachment_update", changes[0].EventKind)
+	result, err := worker.RunBatch(t.Context())
+	require.NoError(err)
+	assert.Equal(1, result.Journaled)
+	changes, err = world.st.ListAttachmentChanges(t.Context(), store.BeeperMediaAttachmentConsumerKey, 10)
+	require.NoError(err)
+	assert.Empty(changes, "the media worker must acknowledge the ownership event after reconciling it")
+
+	var currentMappings, staleMappings int
+	require.NoError(world.st.DB().QueryRow(world.st.Rebind(`
+		SELECT COUNT(*) FROM beeper_media_occurrences
+		WHERE destination_key = ? AND source_identifier = 'signal-main' AND retention_state = 'pending'
+	`), worker.destination).Scan(&currentMappings))
+	require.NoError(world.st.DB().QueryRow(world.st.Rebind(`
+		SELECT COUNT(*) FROM beeper_media_occurrences
+		WHERE destination_key = ? AND source_identifier = 'signal' AND retention_state = 'revoked'
+	`), worker.destination).Scan(&staleMappings))
+	assert.Equal(1, currentMappings)
+	assert.Equal(1, staleMappings)
+}
+
 func TestStoredMediaEmptySlackExportDoesNotBlockLaterAudio(t *testing.T) {
 	require, assert := require.New(t), assert.New(t)
 	world := importVoiceChat(t)

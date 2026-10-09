@@ -351,6 +351,18 @@ type UpdateCLIAccountErrorResponseJSON500 = APIHTTPError
 
 type UpdateCLIAccountErrorResponseJSON503 = APIHTTPError
 
+type MergeCLIAccountsResponse = SourceMergeResult
+
+type MergeCLIAccountsErrorResponse = APIHTTPError
+
+type MergeCLIAccountsErrorResponseJSON = APIHTTPError
+
+type MergeCLIAccountsErrorResponseJSON422 = APIHTTPError
+
+type MergeCLIAccountsErrorResponseJSON500 = APIHTTPError
+
+type MergeCLIAccountsErrorResponseJSON503 = APIHTTPError
+
 type ListCLIAccountsResponse = CliAccountsResponse
 
 type ListCLIAccountsErrorResponse = ErrorResponse
@@ -3948,6 +3960,18 @@ type UpdateCLIAccountResp struct {
 	JSON422      *UpdateCLIAccountErrorResponseJSON422
 	JSON500      *UpdateCLIAccountErrorResponseJSON500
 	JSON503      *UpdateCLIAccountErrorResponseJSON503
+}
+
+type MergeCLIAccountsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *MergeCLIAccountsResponse
+	JSON400      *MergeCLIAccountsErrorResponse
+	JSON404      *MergeCLIAccountsErrorResponseJSON
+	JSON422      *MergeCLIAccountsErrorResponseJSON422
+	JSON500      *MergeCLIAccountsErrorResponseJSON500
+	JSON503      *MergeCLIAccountsErrorResponseJSON503
 }
 
 type ListCLIAccountsResp struct {

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"sort"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -474,6 +475,140 @@ func TestApplyIMAPMailboxDeltas_RetiresMailboxesAbsentFromAuthoritativeTopology(
 		assert.Equal([]string{"Preserved"}, messageLabels(t, f.store, messageID))
 		assert.False(messageTombstoned(t, f.store, messageID))
 	})
+}
+
+func TestMergeSourcesIMAPArchiveHistorySurvivesDestinationMembershipReconciliation(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newIMAPMembershipFixture(t)
+	destination, err := f.store.GetOrCreateSource("imap", "destination@example.test")
+	require.NoError(err)
+	liveID := f.createMessage(t, "live-history", "<live-history@example.test>")
+	tombstonedID := f.createMessage(t, "removed-history", "<removed-history@example.test>")
+	require.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{{
+		Mailbox: "INBOX",
+		State:   store.IMAPFolderState{Mailbox: "INBOX", UIDValidity: 8, UIDNext: 3},
+		Memberships: []store.IMAPMembershipObservation{
+			{UID: 1, SourceMessageID: "live-history"},
+			{UID: 2, SourceMessageID: "removed-history"},
+		},
+	}}))
+	tombstoneAt := time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
+	_, err = f.store.DB().Exec(f.store.Rebind(`
+		UPDATE messages SET deleted_from_source_at = ? WHERE id = ?
+	`), tombstoneAt, tombstonedID)
+	require.NoError(err)
+
+	_, err = f.store.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{
+		FromSourceID: f.source.ID,
+		IntoSourceID: destination.ID,
+	})
+	require.NoError(err)
+
+	var liveBefore, tombstonedBefore sql.NullTime
+	require.NoError(f.store.DB().QueryRow(f.store.Rebind(`
+		SELECT deleted_from_source_at FROM messages WHERE id = ?
+	`), liveID).Scan(&liveBefore))
+	require.NoError(f.store.DB().QueryRow(f.store.Rebind(`
+		SELECT deleted_from_source_at FROM messages WHERE id = ?
+	`), tombstonedID).Scan(&tombstonedBefore))
+	assert.False(liveBefore.Valid)
+	assert.True(tombstonedBefore.Valid)
+	assert.Equal(tombstoneAt, tombstonedBefore.Time.UTC())
+
+	require.NoError(f.store.ApplyIMAPMailboxDeltas(destination.ID, []store.IMAPMailboxDelta{{
+		Mailbox: "INBOX",
+		State:   store.IMAPFolderState{Mailbox: "INBOX", UIDValidity: 9, UIDNext: 1},
+		Reset:   true,
+	}}))
+
+	var liveAfter, tombstonedAfter sql.NullTime
+	require.NoError(f.store.DB().QueryRow(f.store.Rebind(`
+		SELECT deleted_from_source_at FROM messages WHERE id = ?
+	`), liveID).Scan(&liveAfter))
+	require.NoError(f.store.DB().QueryRow(f.store.Rebind(`
+		SELECT deleted_from_source_at FROM messages WHERE id = ?
+	`), tombstonedID).Scan(&tombstonedAfter))
+	assert.Equal([]string{"INBOX"}, messageLabels(t, f.store, liveID))
+	assert.Equal([]string{"INBOX"}, messageLabels(t, f.store, tombstonedID))
+	assert.Equal(liveBefore, liveAfter)
+	assert.Equal(tombstonedBefore, tombstonedAfter)
+}
+
+func TestApplyIMAPMailboxDeltas_MergedRFC822HistoryResolvesToLiveMessage(t *testing.T) {
+	for _, scenario := range []string{"ordinary secondary mailbox", "UIDVALIDITY reset"} {
+		t.Run(scenario, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			f := newIMAPMembershipFixture(t)
+
+			// The older source's row sorts first by ID after the merge. Its marker
+			// must keep RFC822 fallback pointed at the destination's live copy.
+			historyID := f.createMessage(t, "history|1", "<shared-history@example.test>")
+			destination, err := f.store.GetOrCreateSource("imap", "destination@example.test")
+			require.NoError(err)
+			liveConversationID, err := f.store.EnsureConversation(
+				destination.ID, "destination-thread", "Destination thread",
+			)
+			require.NoError(err)
+			liveID, err := f.store.UpsertMessage(&store.Message{
+				ConversationID:  liveConversationID,
+				SourceID:        destination.ID,
+				SourceMessageID: "INBOX|1",
+				RFC822MessageID: sql.NullString{String: "<shared-history@example.test>", Valid: true},
+				MessageType:     "email",
+			})
+			require.NoError(err)
+
+			_, err = f.store.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{
+				FromSourceID: f.source.ID,
+				IntoSourceID: destination.ID,
+			})
+			require.NoError(err)
+			f.source = destination
+			var archiveOnly int
+			require.NoError(f.store.DB().QueryRow(f.store.Rebind(`
+				SELECT COUNT(*) FROM source_merge_archive_only_messages WHERE message_id = ?
+			`), historyID).Scan(&archiveOnly))
+			require.Equal(1, archiveOnly, "the merged history row must be archive-only")
+
+			var uidValidity uint32 = 12
+			uid := uint32(1)
+			observation := store.IMAPMembershipObservation{
+				UID: uid, SourceMessageID: "secondary|1",
+				RFC822MessageID: "<shared-history@example.test>",
+			}
+			mailbox := "INBOX"
+			if scenario == "UIDVALIDITY reset" {
+				uidValidity = 20
+				require.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{{
+					Mailbox: mailbox,
+					State:   store.IMAPFolderState{Mailbox: mailbox, UIDValidity: uidValidity, UIDNext: 2},
+					Memberships: []store.IMAPMembershipObservation{{
+						UID: uid, SourceMessageID: "INBOX|1",
+						RFC822MessageID: "<shared-history@example.test>",
+					}},
+				}}))
+				gotID, _ := membershipMessageAndFlags(t, f.store, f.source.ID, uidValidity, uid)
+				assert.Equal(liveID, gotID)
+				uidValidity = 21
+			}
+
+			require.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{{
+				Mailbox: mailbox,
+				State:   store.IMAPFolderState{Mailbox: mailbox, UIDValidity: uidValidity, UIDNext: 2},
+				Reset:   scenario == "UIDVALIDITY reset",
+				Memberships: []store.IMAPMembershipObservation{{
+					UID: uid, SourceMessageID: observation.SourceMessageID,
+					RFC822MessageID: observation.RFC822MessageID,
+				}},
+			}}))
+
+			gotID, _ := membershipMessageAndFlags(t, f.store, f.source.ID, uidValidity, uid)
+			assert.Equal(liveID, gotID)
+			assert.NotEqual(historyID, gotID)
+		})
+	}
 }
 
 func TestApplyIMAPMailboxDeltas_InitialBaselineReconcilesPreviouslyArchivedMessages(t *testing.T) {

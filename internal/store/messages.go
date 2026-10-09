@@ -362,6 +362,10 @@ func (s *Store) loadGmailAuditEvidenceTx(
 		SELECT content_hash, source_part_key
 		FROM attachments
 		WHERE message_id = ? AND source_attachment_id IS NULL
+		  AND NOT EXISTS (
+			SELECT 1 FROM source_merge_preserved_attachments marker
+			WHERE marker.attachment_id = attachments.id
+		  )
 		ORDER BY id
 	`, id)
 	if err != nil {
@@ -1001,13 +1005,51 @@ func (s *Store) GetMessageIDByRFC822ID(
 	var id int64
 	err := s.db.QueryRow(
 		`SELECT id FROM messages
-		 WHERE source_id = ? AND rfc822_message_id = ?`,
+		 WHERE source_id = ? AND rfc822_message_id = ?
+		   AND NOT EXISTS (
+		     SELECT 1 FROM source_merge_archive_only_messages am
+		     WHERE am.message_id = messages.id
+		   )`,
 		sourceID, rfc822ID,
 	).Scan(&id)
 	if err == sql.ErrNoRows {
 		return 0, nil
 	}
 	return id, err
+}
+
+// RejectArchiveOnlyDeletionTargetsContext prevents a staged provider deletion
+// from treating a namespaced history ID as a current provider ID after source
+// merge. Unknown IDs are left to the provider's normal not-found handling.
+func (s *Store) RejectArchiveOnlyDeletionTargetsContext(
+	ctx context.Context, sourceID int64, sourceMessageIDs []string,
+) error {
+	if sourceID <= 0 || len(sourceMessageIDs) == 0 {
+		return nil
+	}
+	found := false
+	err := queryInChunksContext(ctx, s.db, sourceMessageIDs, []any{sourceID}, `
+		SELECT m.source_message_id
+		FROM messages m
+		WHERE m.source_id = ? AND m.source_message_id IN (%s)
+		  AND EXISTS (
+		    SELECT 1 FROM source_merge_archive_only_messages am
+		    WHERE am.message_id = m.id
+		  )`, func(rows *loggedRows) error {
+		var ignored string
+		if err := rows.Scan(&ignored); err != nil {
+			return err
+		}
+		found = true
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("check deletion targets against source merge history: %w", err)
+	}
+	if found {
+		return ErrArchiveOnlyDeletionTarget
+	}
+	return nil
 }
 
 // GetMessageSourceID returns the provider-specific identifier for a message.
@@ -3370,6 +3412,10 @@ func (s *Store) ReconcileSourceMessageSnapshot(
 			WHERE source_id = ?
 			  AND deleted_at IS NULL
 			  AND deleted_from_source_at IS NULL
+			  AND NOT EXISTS (
+			    SELECT 1 FROM source_merge_archive_only_messages am
+			    WHERE am.message_id = messages.id
+			  )
 		`, sourceID)
 		if err != nil {
 			return fmt.Errorf("reconcile source message snapshot: list live messages: %w", err)
@@ -3949,6 +3995,7 @@ func (s *Store) backfillFTSBatchContext(
 
 const latestConversationPreviewSubquery = `(SELECT snippet FROM messages
 	WHERE conversation_id = conversations.id
+	  AND deleted_at IS NULL AND deleted_from_source_at IS NULL
 	ORDER BY COALESCE(sent_at, received_at, internal_date) DESC, id DESC
 	LIMIT 1)`
 
@@ -4025,6 +4072,7 @@ func (s *Store) recomputeConversationStatsWith(q querier, whereClause string, ar
 			message_count = (
 				SELECT COUNT(*) FROM messages
 				WHERE conversation_id = conversations.id
+				  AND deleted_at IS NULL AND deleted_from_source_at IS NULL
 			),
 			participant_count = (
 				SELECT COUNT(*) FROM conversation_participants
@@ -4034,6 +4082,7 @@ func (s *Store) recomputeConversationStatsWith(q querier, whereClause string, ar
 				SELECT MAX(COALESCE(sent_at, received_at, internal_date))
 				FROM messages
 				WHERE conversation_id = conversations.id
+				  AND deleted_at IS NULL AND deleted_from_source_at IS NULL
 			),
 			last_message_preview = %s
 		WHERE %s
@@ -4070,7 +4119,9 @@ func (s *Store) ForEachTeamsHostedContentBody(sourceID int64, fn func(messageID 
 		SELECT mb.message_id, mb.body_html
 		FROM message_bodies mb
 		JOIN messages m ON m.id = mb.message_id
-		WHERE m.source_id = ? AND mb.body_html LIKE '%hostedContents%'
+		WHERE m.source_id = ?
+		  AND NOT EXISTS (SELECT 1 FROM source_merge_archive_only_messages am WHERE am.message_id = m.id)
+		  AND mb.body_html LIKE '%hostedContents%'
 	`, sourceID, fn)
 }
 
@@ -4100,17 +4151,21 @@ func (s *Store) ForEachTeamsIncompleteHostedContentBody(
 		SELECT mb.message_id, mb.body_html,
 		       (SELECT COUNT(*) FROM attachments a
 		        WHERE a.message_id = mb.message_id
+		          AND NOT EXISTS (SELECT 1 FROM source_merge_preserved_attachments spa WHERE spa.attachment_id = a.id)
 		          AND a.storage_path NOT LIKE 'http%' AND a.storage_path != ''
 		          AND a.content_hash != ''),
 		       EXISTS (
 		         SELECT 1 FROM attachments a
 		         WHERE a.message_id = mb.message_id
+		           AND NOT EXISTS (SELECT 1 FROM source_merge_preserved_attachments spa WHERE spa.attachment_id = a.id)
 		           AND a.source_attachment_id LIKE 'teams:inline:%'
 		           AND COALESCE(a.content_hash, '') = ''
 		       )
 		FROM message_bodies mb
 		JOIN messages m ON m.id = mb.message_id
-		WHERE m.source_id = ? AND mb.body_html LIKE '%hostedContents%'
+		WHERE m.source_id = ?
+		  AND NOT EXISTS (SELECT 1 FROM source_merge_archive_only_messages am WHERE am.message_id = m.id)
+		  AND mb.body_html LIKE '%hostedContents%'
 	`, sourceID)
 	if err != nil {
 		return err
@@ -6233,6 +6288,7 @@ func (s *Store) replaceMessageAttachmentsWhereTxContext(ctx context.Context,
 			if _, err := tx.ExecContext(ctx, `
 				UPDATE attachments SET source_part_key = ?
 				WHERE message_id = ? AND source_attachment_id = ? AND source_part_key IS NULL
+				  AND NOT EXISTS (SELECT 1 FROM source_merge_preserved_attachments spa WHERE spa.attachment_id = attachments.id)
 			`, write.SourcePartKey, messageID, write.SourceAttachmentID); err != nil {
 				return fmt.Errorf("assign provider attachment source-part key: %w", err)
 			}
@@ -6242,7 +6298,8 @@ func (s *Store) replaceMessageAttachmentsWhereTxContext(ctx context.Context,
 			keys = append(keys, write.SourcePartKey)
 		}
 	}
-	deleteQuery := `DELETE FROM attachments WHERE message_id = ? AND (` + deleteWhere + `)`
+	deleteQuery := `DELETE FROM attachments WHERE message_id = ? AND (` + deleteWhere + `)
+		AND NOT EXISTS (SELECT 1 FROM source_merge_preserved_attachments spa WHERE spa.attachment_id = attachments.id)`
 	args := append([]any{messageID}, deleteArgs...)
 	if len(keys) > 0 {
 		deleteQuery += ` AND (source_part_key IS NULL OR source_part_key NOT IN (?` +
@@ -6633,6 +6690,8 @@ func (s *Store) ListRecentMessagesForSource(sourceID int64, limit int) ([]Source
 		FROM messages m
 		JOIN conversations c ON c.id = m.conversation_id
 		WHERE m.source_id = ? AND m.sent_at IS NOT NULL AND m.deleted_from_source_at IS NULL
+ AND m.deleted_at IS NULL
+ AND NOT EXISTS (SELECT 1 FROM source_merge_archive_only_messages am WHERE am.message_id = m.id)
 		ORDER BY m.sent_at DESC, m.id DESC
 		LIMIT ?
 	`, sourceID, limit)
@@ -6712,6 +6771,8 @@ func (s *Store) ListSlackPendingAttachmentMessages(sourceID int64) ([]PendingAtt
 		JOIN attachments a ON a.message_id = m.id
 		WHERE m.source_id = ?
 		  AND a.source_attachment_id LIKE ?
+		  AND NOT EXISTS (SELECT 1 FROM source_merge_archive_only_messages am WHERE am.message_id = m.id)
+		  AND NOT EXISTS (SELECT 1 FROM source_merge_preserved_attachments spa WHERE spa.attachment_id = a.id)
 		ORDER BY m.id, a.id
 	`, sourceID, "slack:%")
 	if err != nil {
@@ -6817,7 +6878,11 @@ func (s *Store) MessageIDsWithLabelContext(ctx context.Context, sourceID, labelI
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT m.source_message_id, m.id FROM messages m
 		JOIN message_labels ml ON ml.message_id = m.id
-		WHERE m.source_id = ? AND ml.label_id = ? AND m.deleted_from_source_at IS NULL`, sourceID, labelID)
+		WHERE m.source_id = ? AND ml.label_id = ? AND m.deleted_from_source_at IS NULL
+		AND NOT EXISTS (
+			SELECT 1 FROM source_merge_archive_only_messages marker
+			WHERE marker.message_id = m.id
+		)`, sourceID, labelID)
 	if err != nil {
 		return nil, fmt.Errorf("list messages in label: %w", err)
 	}

@@ -628,6 +628,7 @@ func sameBeeperMediaCandidate(a, b store.BeeperMediaCandidate) bool {
 		a.ConversationID == b.ConversationID && a.SourceID == b.SourceID &&
 		a.SourceType == b.SourceType && a.SourceIdentifier == b.SourceIdentifier &&
 		a.SourceConversationID == b.SourceConversationID && a.SourceMessageID == b.SourceMessageID &&
+		a.OriginalSourceMessageID == b.OriginalSourceMessageID &&
 		a.SourceAttachmentID == b.SourceAttachmentID && a.SourcePartKey == b.SourcePartKey &&
 		a.Filename == b.Filename && a.MIMEType == b.MIMEType && a.MediaType == b.MediaType &&
 		a.Role == b.Role && a.ContentHash == b.ContentHash && a.ByteLength == b.ByteLength &&
@@ -1253,7 +1254,11 @@ func describeMedia(raw []byte, candidate store.BeeperMediaCandidate, archiveUID 
 }
 
 func describeMediaEnvelope(envelope mediaEnvelope, candidate store.BeeperMediaCandidate, archiveUID string) (MediaDescriptor, string, error) {
-	if candidate.SourceMessageID != "" && envelope.ID != candidate.SourceMessageID {
+	messageIDMatches := envelope.ID == candidate.SourceMessageID
+	if !messageIDMatches && candidate.OriginalSourceMessageID != "" {
+		messageIDMatches = envelope.ID == candidate.OriginalSourceMessageID
+	}
+	if candidate.SourceMessageID != "" && !messageIDMatches {
 		return MediaDescriptor{}, "", errBeeperMediaSourceChanged
 	}
 	part := candidate.SourcePartKey

@@ -474,7 +474,8 @@ func cliAccountsFromGenerated(resp *generated.ListCLIAccountsResponse) []CLIAcco
 	out := make([]CLIAccount, len(resp.Accounts))
 	for i, account := range resp.Accounts {
 		out[i] = CLIAccount{
-			ID:                 account.ID,
+			ID:         account.ID,
+			Identifier: account.Identifier, Alias: account.Alias, HistoryOnly: account.HistoryOnly, ReanchorRequired: account.ReanchorRequired, MergedIntoSourceID: account.MergedIntoSourceID,
 			Email:              account.Email,
 			Type:               account.Type,
 			DisplayName:        account.DisplayName,

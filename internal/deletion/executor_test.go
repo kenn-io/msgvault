@@ -85,6 +85,267 @@ func NewTestContext(t *testing.T) *TestContext {
 	}
 }
 
+func TestExecutorValidationFailuresFinalizeClaimedManifest(t *testing.T) {
+	testCases := []struct {
+		name    string
+		wantErr error
+		prepare func(t *testing.T, tc *TestContext) (*store.Source, string)
+	}{
+		{
+			name:    "retired source",
+			wantErr: store.ErrSourceRetired,
+			prepare: func(t *testing.T, tc *TestContext) (*store.Source, string) {
+				t.Helper()
+				history, err := tc.Store.GetOrCreateSource("gmail", "history@example.test")
+				require.NoError(t, err)
+				live, err := tc.Store.GetOrCreateSource("gmail", "live@example.test")
+				require.NoError(t, err)
+				_, err = tc.Store.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{
+					FromSourceID: history.ID,
+					IntoSourceID: live.ID,
+				})
+				require.NoError(t, err)
+				return history, "provider-message"
+			},
+		},
+		{
+			name:    "archive-only target",
+			wantErr: store.ErrArchiveOnlyDeletionTarget,
+			prepare: func(t *testing.T, tc *TestContext) (*store.Source, string) {
+				t.Helper()
+				history, err := tc.Store.GetOrCreateSource("gmail", "history@example.test")
+				require.NoError(t, err)
+				live, err := tc.Store.GetOrCreateSource("gmail", "live@example.test")
+				require.NoError(t, err)
+				conversationID, err := tc.Store.EnsureConversation(history.ID, "history-thread", "History")
+				require.NoError(t, err)
+				messageID, err := tc.Store.UpsertMessage(&store.Message{
+					SourceID: history.ID, ConversationID: conversationID,
+					SourceMessageID: "provider-message", MessageType: "email",
+				})
+				require.NoError(t, err)
+				_, err = tc.Store.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{
+					FromSourceID: history.ID,
+					IntoSourceID: live.ID,
+				})
+				require.NoError(t, err)
+				var archiveID string
+				require.NoError(t, tc.Store.DB().QueryRow(tc.Store.Rebind(
+					`SELECT source_message_id FROM messages WHERE id = ?`), messageID).Scan(&archiveID))
+				return live, archiveID
+			},
+		},
+	}
+	methods := []struct {
+		name string
+		run  func(*TestContext, string) error
+	}{
+		{name: "single", run: func(tc *TestContext, id string) error { return tc.Execute(id) }},
+		{name: "batch", run: func(tc *TestContext, id string) error { return tc.ExecuteBatch(id) }},
+	}
+	for _, testCase := range testCases {
+		for _, method := range methods {
+			t.Run(testCase.name+"/"+method.name, func(t *testing.T) {
+				require := require.New(t)
+				assert := assert.New(t)
+				tc := NewTestContext(t)
+				source, targetID := testCase.prepare(t, tc)
+				manifest := NewManifestForSource(
+					"merge rejection",
+					[]string{targetID},
+					SourceReference{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier},
+				)
+				require.NoError(tc.Mgr.SaveManifest(manifest))
+
+				err := method.run(tc, manifest.ID)
+				require.ErrorIs(err, testCase.wantErr)
+				inProgress, err := tc.Mgr.ListInProgress()
+				require.NoError(err)
+				assert.Empty(inProgress, "rejected manifest must not remain resumable")
+				failed, status, err := tc.Mgr.GetManifestWithStatus(manifest.ID)
+				require.NoError(err)
+				assert.Equal(StatusFailed, status)
+				assert.Equal(StatusFailed, failed.Status)
+				require.NotNil(failed.Execution)
+				assert.NotNil(failed.Execution.CompletedAt)
+				tc.AssertTrashCalls(0)
+				tc.AssertDeleteCalls(0)
+				assert.Empty(tc.MockAPI.BatchDeleteCalls)
+			})
+		}
+	}
+}
+
+func TestExecutorRetiredDuringLockAcquisitionFinalizesClaimedManifest(t *testing.T) {
+	methods := []struct {
+		name string
+		run  func(*TestContext, string) error
+	}{
+		{name: "single", run: func(tc *TestContext, id string) error { return tc.Execute(id) }},
+		{name: "batch", run: func(tc *TestContext, id string) error { return tc.ExecuteBatch(id) }},
+	}
+	for _, method := range methods {
+		t.Run(method.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			tc := NewTestContext(t)
+			history, err := tc.Store.GetOrCreateSource("gmail", "history@example.test")
+			require.NoError(err)
+			live, err := tc.Store.GetOrCreateSource("gmail", "live@example.test")
+			require.NoError(err)
+			manifest := NewManifestForSource("retire during lock acquisition", []string{"provider-message"}, SourceReference{
+				ID: history.ID, Type: history.SourceType, Identifier: history.Identifier,
+			})
+			require.NoError(tc.Mgr.SaveManifest(manifest))
+
+			var mergeErr error
+			tc.Exec.beforeSourceExecutionAcquireForTest = func() {
+				_, mergeErr = tc.Store.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{
+					FromSourceID: history.ID,
+					IntoSourceID: live.ID,
+				})
+			}
+			err = method.run(tc, manifest.ID)
+			require.NoError(mergeErr, "source merge during validation/lock gap")
+			require.ErrorIs(err, store.ErrSourceRetired)
+
+			inProgress, err := tc.Mgr.ListInProgress()
+			require.NoError(err)
+			assert.Empty(inProgress, "retired-source manifest must not remain resumable")
+			failed, status, err := tc.Mgr.GetManifestWithStatus(manifest.ID)
+			require.NoError(err)
+			assert.Equal(StatusFailed, status)
+			assert.Equal(StatusFailed, failed.Status)
+			require.NotNil(failed.Execution)
+			assert.NotNil(failed.Execution.CompletedAt)
+			tc.AssertTrashCalls(0)
+			tc.AssertDeleteCalls(0)
+			assert.Empty(tc.MockAPI.BatchDeleteCalls)
+		})
+	}
+}
+
+func TestExecutorValidationCancellationRemainsResumable(t *testing.T) {
+	methods := []struct {
+		name string
+		run  func(*Executor, context.Context, string) error
+	}{
+		{
+			name: "single",
+			run: func(e *Executor, ctx context.Context, id string) error {
+				return e.Execute(ctx, id, nil)
+			},
+		},
+		{
+			name: "batch",
+			run:  (*Executor).ExecuteBatch,
+		},
+	}
+	for _, method := range methods {
+		t.Run(method.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			tc := NewTestContext(t)
+			source, err := tc.Store.GetOrCreateSource("gmail", "resume@example.test")
+			require.NoError(err)
+			manifest := NewManifestForSource("cancel validation", []string{"provider-message"}, SourceReference{
+				ID: source.ID, Type: source.SourceType, Identifier: source.Identifier,
+			})
+			require.NoError(tc.Mgr.SaveManifest(manifest))
+
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			require.ErrorIs(method.run(tc.Exec, ctx, manifest.ID), context.Canceled)
+			inProgress, err := tc.Mgr.ListInProgress()
+			require.NoError(err)
+			assert.Len(inProgress, 1, "canceled validation must remain resumable")
+			claimed, status, err := tc.Mgr.GetManifestWithStatus(manifest.ID)
+			require.NoError(err)
+			assert.Equal(StatusInProgress, status)
+			require.NotNil(claimed.Execution)
+			assert.Nil(claimed.Execution.CompletedAt)
+			tc.AssertTrashCalls(0)
+			tc.AssertDeleteCalls(0)
+			assert.Empty(tc.MockAPI.BatchDeleteCalls)
+
+			require.NoError(method.run(tc.Exec, context.Background(), manifest.ID), "resume after context cancellation")
+			_, status, err = tc.Mgr.GetManifestWithStatus(manifest.ID)
+			require.NoError(err)
+			assert.Equal(StatusCompleted, status)
+			inProgress, err = tc.Mgr.ListInProgress()
+			require.NoError(err)
+			assert.Empty(inProgress)
+		})
+	}
+}
+
+func TestExecutorMissingLegacySourceFinalizesClaimedManifest(t *testing.T) {
+	methods := []struct {
+		name string
+		run  func(*Executor, context.Context, string) error
+	}{
+		{
+			name: "single",
+			run: func(e *Executor, ctx context.Context, id string) error {
+				return e.Execute(ctx, id, nil)
+			},
+		},
+		{
+			name: "batch",
+			run:  (*Executor).ExecuteBatch,
+		},
+	}
+	for _, method := range methods {
+		t.Run(method.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			tc := NewTestContext(t)
+			source, err := tc.Store.GetOrCreateSource("gmail", "removed@example.test")
+			require.NoError(err)
+			require.NoError(tc.Store.RemoveSource(source.ID))
+			manifest := NewManifest("removed legacy source", []string{"provider-message"})
+			require.NoError(tc.Mgr.SaveManifest(manifest))
+			tc.Exec.WithSourceID(source.ID)
+
+			require.ErrorIs(method.run(tc.Exec, context.Background(), manifest.ID), store.ErrSourceNotFound)
+			inProgress, err := tc.Mgr.ListInProgress()
+			require.NoError(err)
+			assert.Empty(inProgress, "a deleted source cannot be resumed")
+			failed, status, err := tc.Mgr.GetManifestWithStatus(manifest.ID)
+			require.NoError(err)
+			assert.Equal(StatusFailed, status)
+			assert.Equal(StatusFailed, failed.Status)
+			require.NotNil(failed.Execution)
+			assert.NotNil(failed.Execution.CompletedAt)
+			tc.AssertTrashCalls(0)
+			tc.AssertDeleteCalls(0)
+			assert.Empty(tc.MockAPI.BatchDeleteCalls)
+		})
+	}
+}
+
+func TestManifestSourceLifecycleLookupErrorsAreClassifiedForFinalization(t *testing.T) {
+	testCases := []struct {
+		name      string
+		err       error
+		permanent bool
+	}{
+		{name: "retired source", err: store.ErrSourceRetired, permanent: true},
+		{name: "removed source", err: store.ErrSourceNotFound, permanent: true},
+		{name: "context cancellation", err: context.Canceled},
+		{name: "transient database failure", err: errors.New("database busy")},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			require := require.New(t)
+			classified := classifyManifestSourceLifecycleError(testCase.err)
+			var permanentErr permanentManifestValidationError
+			require.Equal(testCase.permanent, errors.As(classified, &permanentErr))
+			require.ErrorIs(classified, testCase.err)
+		})
+	}
+}
+
 // CreateManifest creates a manifest with the given name and Gmail IDs.
 func (c *TestContext) CreateManifest(name string, ids []string) *Manifest {
 	c.t.Helper()

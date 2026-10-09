@@ -43,7 +43,8 @@ func (s *Store) messageProviderAttachments(messageID int64, providerPrefix strin
 
 // messageProviderAttachmentsContext honors cancellation during messageProviderAttachments.
 func (s *Store) messageProviderAttachmentsContext(ctx context.Context, messageID int64, providerPrefix string) (map[string]AttachmentRef, error) {
-	refs, err := s.messageAttachmentsWhere(ctx, messageID, `source_attachment_id LIKE ?`, providerPrefix+"%")
+	refs, err := s.messageAttachmentsWhere(ctx, messageID, `source_attachment_id LIKE ?
+		AND NOT EXISTS (SELECT 1 FROM source_merge_preserved_attachments spa WHERE spa.attachment_id = attachments.id)`, providerPrefix+"%")
 	if err != nil {
 		return nil, err
 	}
@@ -57,7 +58,11 @@ func (s *Store) messageProviderAttachmentsContext(ctx context.Context, messageID
 // MessageMIMEAttachmentsContext returns a message's MIME attachment rows in
 // row order, including pending and skipped occurrences.
 func (s *Store) MessageMIMEAttachmentsContext(ctx context.Context, messageID int64) ([]AttachmentRef, error) {
-	return s.messageAttachmentsWhere(ctx, messageID, `source_attachment_id IS NULL`)
+	return s.messageAttachmentsWhere(ctx, messageID, `source_attachment_id IS NULL
+		AND NOT EXISTS (
+			SELECT 1 FROM source_merge_preserved_attachments spa
+			WHERE spa.attachment_id = attachments.id
+		)`)
 }
 
 func (s *Store) messageAttachmentsWhere(ctx context.Context, messageID int64, where string, args ...any) ([]AttachmentRef, error) {
@@ -115,7 +120,9 @@ func (s *Store) listRetryableAttachmentMessagesContext(ctx context.Context,
 		JOIN conversations c ON c.id = m.conversation_id
 		JOIN attachments a ON a.message_id = m.id
 		WHERE m.source_id = ?
-		  AND a.source_attachment_id LIKE ?
+ AND NOT EXISTS (SELECT 1 FROM source_merge_archive_only_messages am WHERE am.message_id = m.id)
+		  AND NOT EXISTS (SELECT 1 FROM source_merge_preserved_attachments spa WHERE spa.attachment_id = a.id)
+ AND a.source_attachment_id LIKE ?
 		ORDER BY m.id, a.id
 	`, sourceID, providerPrefix+"%")
 	if err != nil {
@@ -192,7 +199,9 @@ func (s *Store) ApplyBeeperRetryableAttachmentPolicy(
 			JOIN messages m ON m.id = a.message_id
 			JOIN conversations c ON c.id = m.conversation_id
 			WHERE m.source_id = ?
-			  AND a.source_attachment_id LIKE 'beeper:%'
+ AND NOT EXISTS (SELECT 1 FROM source_merge_archive_only_messages am WHERE am.message_id = m.id)
+			  AND NOT EXISTS (SELECT 1 FROM source_merge_preserved_attachments spa WHERE spa.attachment_id = a.id)
+ AND a.source_attachment_id LIKE 'beeper:%'
 			  AND COALESCE(a.content_hash, '') = ''
 			  AND COALESCE(a.media_type, '') <> 'link'
 			  AND COALESCE(a.attachment_state, '') IN ('', ?, ?, ?)
@@ -459,10 +468,12 @@ func (s *Store) listPendingAttachmentMessages(sourceID int64, providerPrefix str
 		FROM messages m
 		JOIN conversations c ON c.id = m.conversation_id
 		WHERE m.source_id = ?
+ AND NOT EXISTS (SELECT 1 FROM source_merge_archive_only_messages am WHERE am.message_id = m.id)
 		  AND EXISTS (
 		    SELECT 1 FROM attachments a
 		    WHERE a.message_id = m.id
-		      AND a.source_attachment_id LIKE ?
+		      AND NOT EXISTS (SELECT 1 FROM source_merge_preserved_attachments spa WHERE spa.attachment_id = a.id)
+ AND a.source_attachment_id LIKE ?
 		      AND (a.content_hash IS NULL OR a.content_hash = '')
 		      AND COALESCE(a.media_type, '') <> 'link'
 		      AND COALESCE(a.attachment_state, '') <> ?
@@ -673,7 +684,9 @@ func (s *Store) ListDiscordPendingAttachmentMessages(sourceID int64) ([]DiscordP
 		JOIN conversations c ON c.id = m.conversation_id
 		JOIN attachments a ON a.message_id = m.id
 		WHERE m.source_id = ?
-		  AND a.source_attachment_id LIKE ?
+ AND NOT EXISTS (SELECT 1 FROM source_merge_archive_only_messages am WHERE am.message_id = m.id)
+		  AND NOT EXISTS (SELECT 1 FROM source_merge_preserved_attachments spa WHERE spa.attachment_id = a.id)
+ AND a.source_attachment_id LIKE ?
 		ORDER BY m.id, a.id
 	`, sourceID, "discord:%")
 	if err != nil {
@@ -727,11 +740,13 @@ func (s *Store) ListDiscordAttachmentMessages(sourceID int64) ([]DiscordAttachme
 		FROM messages m
 		JOIN conversations c ON c.id = m.conversation_id
 		WHERE m.source_id = ?
+ AND NOT EXISTS (SELECT 1 FROM source_merge_archive_only_messages am WHERE am.message_id = m.id)
 		  AND EXISTS (
 		    SELECT 1
 		    FROM attachments a
 		    WHERE a.message_id = m.id
-		      AND a.source_attachment_id LIKE ?
+		      AND NOT EXISTS (SELECT 1 FROM source_merge_preserved_attachments spa WHERE spa.attachment_id = a.id)
+ AND a.source_attachment_id LIKE ?
 		  )
 		ORDER BY m.id
 	`, sourceID, "discord:%")

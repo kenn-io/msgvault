@@ -183,6 +183,7 @@ type DuplicateMessage struct {
 	SourceType       string
 	SourceIdentifier string
 	SourceMessageID  string
+	ArchiveOnly      bool
 	MetadataQuality  int
 	Subject          string
 	SentAt           time.Time
@@ -435,6 +436,7 @@ func (e *Engine) duplicateMessage(
 	return DuplicateMessage{
 		ID: row.ID, SourceID: row.SourceID, SourceType: row.SourceType,
 		SourceIdentifier: row.SourceIdentifier, SourceMessageID: row.SourceMessageID,
+		ArchiveOnly:     row.ArchiveOnly,
 		MetadataQuality: row.MetadataQuality,
 		Subject:         row.Subject, SentAt: row.SentAt, HasRawMIME: row.HasRawMIME,
 		PayloadBytes: row.PayloadBytes, AttachmentCount: row.AttachmentCount,
@@ -597,6 +599,7 @@ func (e *Engine) scanNormalizedHashGroups(
 						SourceType:       item.candidate.SourceType,
 						SourceIdentifier: item.candidate.SourceIdentifier,
 						SourceMessageID:  item.candidate.SourceMessageID,
+						ArchiveOnly:      item.candidate.ArchiveOnly,
 						MetadataQuality:  item.candidate.MetadataQuality,
 						Subject:          item.candidate.Subject,
 						SentAt:           item.candidate.SentAt,
@@ -847,6 +850,15 @@ func (e *Engine) selectSurvivor(group *DuplicateGroup) {
 	}
 
 	candidates := allIndexes(len(group.Messages))
+	var currentIndexes []int
+	for _, i := range candidates {
+		if !group.Messages[i].ArchiveOnly {
+			currentIndexes = append(currentIndexes, i)
+		}
+	}
+	if len(currentIndexes) > 0 {
+		candidates = currentIndexes
+	}
 	var sentIdxs []int
 	for _, i := range candidates {
 		if group.Messages[i].IsSentCopy() {
@@ -960,8 +972,12 @@ func remoteDeletionTargets(ctx context.Context, report *Report) (map[remoteKey][
 			return nil, err
 		}
 		survivor := group.Messages[group.Survivor]
+		if survivor.ArchiveOnly {
+			continue
+		}
 		for i, message := range group.Messages {
-			if i == group.Survivor || !remoteSourceTypes[message.SourceType] || message.SourceID != survivor.SourceID {
+			if i == group.Survivor || message.ArchiveOnly ||
+				!remoteSourceTypes[message.SourceType] || message.SourceID != survivor.SourceID {
 				continue
 			}
 			if !hasEquivalentContent(message, survivor) {

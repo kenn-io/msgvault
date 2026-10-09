@@ -119,6 +119,9 @@ type Service struct {
 	Persist func(context.Context, gcal.Calendar, gcal.Event) (int64, error)
 	// AcquireWrite serializes mutations after planning and confirmation checks.
 	AcquireWrite func(context.Context) (func(), error)
+	// ValidateWritableSources checks archive lifecycle for each affected
+	// calendar while the mutation gate is held and before provider writes begin.
+	ValidateWritableSources func(context.Context, []string) error
 }
 
 func invalid(format string, args ...any) error {
@@ -404,6 +407,20 @@ func (s *Service) Execute(ctx context.Context, r Request, grant *agentgrant.Gran
 			return nil, err
 		}
 		defer release()
+	}
+	if s.ValidateWritableSources != nil {
+		calendarIDs := make([]string, 0, len(plan)*2)
+		for _, step := range plan {
+			if step.CalendarID != "" && !slices.Contains(calendarIDs, step.CalendarID) {
+				calendarIDs = append(calendarIDs, step.CalendarID)
+			}
+			if step.Action == actionMove && step.Destination != "" && !slices.Contains(calendarIDs, step.Destination) {
+				calendarIDs = append(calendarIDs, step.Destination)
+			}
+		}
+		if err := s.ValidateWritableSources(ctx, calendarIDs); err != nil {
+			return nil, err
+		}
 	}
 	opts := gcal.MutationOptions{SendUpdates: updates}
 	if existing != nil {

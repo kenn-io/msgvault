@@ -98,6 +98,26 @@ func TestAddDiscordPromotesSoleBindingAndExistingNullSources(t *testing.T) {
 	}
 }
 
+func TestRegisterDiscordGuildContinuesWhenDisplayNameConflictsWithAlias(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := newDiscordCLIStore(t)
+	selector, err := st.GetOrCreateSource(sourceTypeGmail, "reader@example.test")
+	require.NoError(err)
+	alias := "Alpha Guild"
+	_, err = st.UpdateSourceSettingsContext(t.Context(), selector.ID, store.SourceSettingsUpdate{Alias: &alias})
+	require.NoError(err)
+
+	err = registerDiscordGuild(st, discord.Guild{ID: testDiscordGuildA, Name: alias}, "archive-bot")
+	require.NoError(err, "a name conflict must not interrupt source registration")
+
+	source, err := st.GetSourceByTypeAndIdentifier(sourceTypeDiscord, testDiscordGuildA)
+	require.NoError(err)
+	assert.False(source.DisplayName.Valid, "the conflicting display name should keep its prior empty value")
+	assert.Equal(sql.NullString{String: "archive-bot", Valid: true}, source.OAuthApp,
+		"credential binding must still be written after the display name is skipped")
+}
+
 func TestAddDiscordReportsPermissionDiagnosticsWithoutExposingToken(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

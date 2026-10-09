@@ -21,7 +21,9 @@ func newUpdateAccountCmd() *cobra.Command {
 		Short: "Update account settings",
 		Long: `Update settings for an existing account.
 
-Currently supports updating the display name for an account.
+Set a display name or archive identifier alias. Provider credentials and identifiers
+remain unchanged. Beeper sources can be marked history-only, or have their
+re-anchor marker accepted after manual verification.
 
 Examples:
   msgvault update-account you@gmail.com --display-name "Work"
@@ -31,12 +33,22 @@ Examples:
 	}
 	cmd.Flags().StringVar(&updateDisplayName, "display-name", "", "Set the display name for the account")
 	cmd.Flags().Int64Var(&updateAccountSourceID, "source-id", 0, "Exact source ID to update")
+	cmd.Flags().String("identifier", "", "Set an archive identifier alias")
+	cmd.Flags().Bool("history-only", false, "Exclude a Beeper source from scheduled sync")
+	cmd.Flags().Bool("accept-reanchor", false, "Accept manual anchor verification and clear the Beeper marker")
 	return cmd
 }
 
 func runUpdateAccount(cmd *cobra.Command, args []string) error {
-	if updateDisplayName == "" {
-		return usageErr(cmd, errors.New("nothing to update: use --display-name to set a display name"))
+	acceptReanchor, _ := cmd.Flags().GetBool("accept-reanchor")
+	if updateDisplayName == "" && !cmd.Flags().Changed("identifier") && !cmd.Flags().Changed("history-only") && !acceptReanchor {
+		return usageErr(cmd, errors.New("nothing to update: set a display name, identifier, history-only, or accept-reanchor"))
+	}
+	if cmd.Flags().Changed("identifier") {
+		identifier, _ := cmd.Flags().GetString("identifier")
+		if identifier == "" {
+			return usageErr(cmd, errors.New("identifier alias must be nonempty"))
+		}
 	}
 	account := ""
 	if len(args) == 1 {
@@ -58,18 +70,33 @@ func runUpdateAccount(cmd *cobra.Command, args []string) error {
 	}
 	defer func() { _ = st.Close() }()
 
+	var identifier *string
+	if cmd.Flags().Changed("identifier") {
+		value, _ := cmd.Flags().GetString("identifier")
+		identifier = &value
+	}
+	var historyOnly *bool
+	if cmd.Flags().Changed("history-only") {
+		value, _ := cmd.Flags().GetBool("history-only")
+		historyOnly = &value
+	}
 	result, err := st.UpdateCLIAccount(cmd.Context(), daemonclient.CLIAccountUpdateRequest{
 		Email:       account,
 		SourceID:    updateAccountSourceID,
 		SourceIDSet: sourceIDSet,
 		DisplayName: updateDisplayName,
+		Identifier:  identifier, HistoryOnly: historyOnly, AcceptReanchor: acceptReanchor,
 	})
 	if err != nil {
 		return err
 	}
 
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Updated account %s: display name set to %q\n",
-		result.Email, result.DisplayName)
+	if identifier == nil && historyOnly == nil && !acceptReanchor {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Updated account %s: display name set to %q\n", result.Email, result.DisplayName)
+		return nil
+	}
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Updated account %s: display name %q, alias %q, history-only %t, re-anchor required %t\n",
+		result.Email, result.DisplayName, result.Alias, result.HistoryOnly, result.ReanchorRequired)
 	return nil
 }
 

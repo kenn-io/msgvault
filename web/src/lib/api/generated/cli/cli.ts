@@ -17,10 +17,12 @@ import type {
   ImportRequest,
   ImportResult,
   ListCLIIdentitiesParams,
+  MergeRequest,
   MutationResult,
   RemoveCLICollectionSourcesPathParameters,
   RemoveRequest,
   RemoveResult,
+  SourceMergeResult,
   SourcesRequest,
   UpdateRequest,
   UpdateResult,
@@ -43,6 +45,23 @@ export const updateCLIAccount = (
       method: "POST",
       headers: { "Content-Type": "application/json" },
       data: updateRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary Merge one archive source into another
+ */
+export const mergeCLIAccounts = (
+  mergeRequest: MergeRequest,
+  options?: SecondParameter<typeof orvalFetch<SourceMergeResult>>,
+) => {
+  return orvalFetch<SourceMergeResult>(
+    {
+      url: `/api/v1/cli/account/merge`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: mergeRequest,
     },
     options,
   );

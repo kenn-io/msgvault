@@ -116,7 +116,10 @@ func runSyncFullLocal(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
-		for _, src := range allMatches {
+		if err := rejectExplicitlyRetiredSyncSources(allMatches, selector, isFullSyncableSource); err != nil {
+			return err
+		}
+		for _, src := range activeSyncSources(allMatches) {
 			if src.SourceType == sourceTypeGmail || src.SourceType == sourceTypeIMAP || src.SourceType == "" {
 				sources = append(sources, src)
 			}
@@ -145,6 +148,7 @@ func runSyncFullLocal(cmd *cobra.Command, args []string) error {
 		if len(allSources) == 0 {
 			return errors.New("no accounts configured - run 'add-account' or 'add-imap' first")
 		}
+		allSources = activeSyncSources(allSources)
 		for _, src := range allSources {
 			switch src.SourceType {
 			case sourceTypeGmail:
