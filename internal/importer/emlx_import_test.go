@@ -562,7 +562,7 @@ func TestImportEmlxDir_ObsoleteIndexRechecksDiscovery(t *testing.T) {
 	assert.Equal(t, int64(1), summary.MessagesAdded)
 }
 
-func TestImportEmlxDir_RootMismatchRejectsResume(t *testing.T) {
+func TestImportEmlxDir_RootMismatchDoesNotResume(t *testing.T) {
 	require := require.New(t)
 	st, tmp := openTestStore(t)
 
@@ -589,16 +589,17 @@ func TestImportEmlxDir_RootMismatchRejectsResume(t *testing.T) {
 	mboxB := filepath.Join(rootB, "Mailboxes", "Other.mbox")
 	mkMailboxDir(t, mboxB, map[string][]byte{"1.emlx": raw})
 
-	// Attempt import from root B without --no-resume.
-	_, err = ImportEmlxDir(
+	// Receipts, not the interrupted root's position, decide what is complete,
+	// so another root imports without carrying that run's counters.
+	summary, err := ImportEmlxDir(
 		context.Background(), st, rootB, EmlxImportOptions{
 			Identifier:         "alice@example.com",
-			NoResume:           false,
 			CheckpointInterval: 1,
 		},
 	)
-	require.Error(err, "expected error for root mismatch")
-	assert.ErrorContains(t, err, "--no-resume")
+	require.NoError(err)
+	assert.False(t, summary.WasResumed)
+	assert.Equal(t, int64(1), summary.MessagesAdded)
 }
 
 func TestImportEmlxDir_CheckpointBlockedOnIngestFailure(t *testing.T) {
@@ -773,8 +774,8 @@ func TestImportEmlxDir_PartialAttachmentRestoredFromSiblingDir(t *testing.T) {
 		require.NoError(err)
 		require.Zero(summary.Errors)
 		assert.Zero(summary.MessagesAdded)
-		assert.Equal(updated[run], summary.MessagesUpdated)
-		assert.Equal(2-updated[run], summary.MessagesSkipped)
+		assert.Equal(updated[run], summary.MessagesUpdated, "run %d", run)
+		assert.Equal(2-updated[run], summary.MessagesSkipped, "run %d", run)
 		assert.Equal(parsedCounts[run], summary.PartialFiles)
 		assert.Equal(restored, summary.AttachmentsRestored)
 		var count int
@@ -832,7 +833,7 @@ func TestImportEmlxDir_WarnsOnAttachmentReadFailure(t *testing.T) {
 			require.NoError(err)
 			assert.Equal(int64(1), summary.MessagesAdded)
 			assert.Zero(summary.AttachmentsRestored)
-			assert.True(summary.HardErrors)
+			assert.False(summary.HardErrors, "an unreadable cache file leaves the file pending, not a failed run")
 			assert.Positive(summary.Errors)
 			assert.Zero(countEmlxLedgerEntries(t, st, summary.SourceID, "emlx-occurrence", "imported"))
 			assert.Contains(logs.String(), "level=WARN")

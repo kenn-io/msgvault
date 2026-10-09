@@ -13,7 +13,7 @@ import (
 func TestEmlxReceiptStrictIdentity(t *testing.T) {
 	r, a := require.New(t), assert.New(t)
 	id := strings.Repeat("a", 64) + "/Messages/1.emlx"
-	receipt := emlxReceipt{Version: 1, ID: id, Signature: strings.Repeat("b", 64), SourceParts: map[string]string{"2": strings.Repeat("d", 64)}, Target: "emlx-" + strings.Repeat("c", 64), RFCID: "synthetic@example.test"}
+	receipt := emlxReceipt{Version: 1, ID: id, Signature: strings.Repeat("b", 64), SourceParts: map[string]string{"2": strings.Repeat("d", 64)}, Target: "emlx-" + strings.Repeat("c", 64)}
 	encoded, err := encodeEmlxReceipt(receipt)
 	r.NoError(err)
 	got, ok := decodeEmlxReceipt(encoded, id)
@@ -28,14 +28,15 @@ func TestEmlxReceiptStrictIdentity(t *testing.T) {
 }
 
 func FuzzEmlxReceiptRoundTrip(f *testing.F) {
-	f.Add("Messages/1.emlx", "synthetic@example.test", "")
-	f.Add("Archive.mbox/子/2.emlx", "id@example.test", "parent@example.test")
-	f.Fuzz(func(t *testing.T, rel, rfc, parent string) {
+	f.Add("Messages/1.emlx")
+	f.Add("Archive.mbox/子/2.emlx")
+	f.Fuzz(func(t *testing.T, rel string) {
 		// Bound materialized strings while keeping every drawn byte class.
 		rel = "Messages/" + base64.RawURLEncoding.EncodeToString([]byte(rel)[:min(len(rel), 512)]) + ".emlx"
-		rfc = strings.ToValidUTF8(rfc[:min(len(rfc), 1024)], "�")
-		parent = strings.ToValidUTF8(parent[:min(len(parent), 1024)], "�")
-		receipt := emlxReceipt{Version: 1, ID: strings.Repeat("a", 64) + "/" + rel, Signature: strings.Repeat("b", 64), SourceParts: map[string]string{"2": strings.Repeat("d", 64)}, Target: "emlx-" + strings.Repeat("c", 64), RFCID: rfc, Reply: parent}
+		receipt := emlxReceipt{
+			Version: 1, ID: strings.Repeat("a", 64) + "/" + rel, Signature: strings.Repeat("b", 64),
+			SourceParts: map[string]string{"2": strings.Repeat("d", 64)}, Target: "emlx-" + strings.Repeat("c", 64),
+		}
 		encoded, err := encodeEmlxReceipt(receipt)
 		require.NoError(t, err)
 		decoded, ok := decodeEmlxReceipt(encoded, receipt.ID)

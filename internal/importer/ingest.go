@@ -54,21 +54,25 @@ func ingestRawMessage(
 	raw []byte, fallbackDate time.Time,
 	log *slog.Logger, images *remoteimage.Fetcher, threadID string,
 ) error {
-	return ingestRawMessageWithCompletion(ctx, st, sourceID, identifier, attachmentsDir, labelIDs, sourceMsgID, rawHash, raw, fallbackDate, log, images, threadID, false)
+	return ingestRawMessageWithCompletion(ctx, st, sourceID, identifier, attachmentsDir, labelIDs,
+		sourceMsgID, rawHash, raw, fallbackDate, log, images, threadID, false)
 }
 
-// EMLX completion is strict even though raw/salvaged metadata may already commit.
+// ingestRawMessageWithCompletion reports, when strict, attachment storage and
+// search-index failures as retryable errors after the raw message commits.
 // Other importers retain the shared path's best-effort postcommit behavior.
+// Fatally malformed MIME is complete once its raw and salvaged headers are
+// archived: the same bytes always fail the same way.
 func ingestRawMessageWithCompletion(ctx context.Context, st *store.Store,
 	sourceID int64, identifier, attachmentsDir string, labelIDs []int64,
 	sourceMsgID, rawHash string, raw []byte, fallbackDate time.Time,
 	log *slog.Logger, images *remoteimage.Fetcher, threadID string, strict bool,
 ) error {
 	parsed, parseErr := mime.ParseWithRecovery(raw, "(MIME parse error)")
-	var completionErr error
-	if strict {
-		completionErr = parseErr
+	if strict && parseErr != nil {
+		log.Warn("archived malformed MIME with salvaged headers", "source_msg", sourceMsgID, "error", parseErr)
 	}
+	var completionErr error
 	incomplete := func(err error) {
 		if strict {
 			completionErr = errors.Join(completionErr, err)
@@ -273,7 +277,7 @@ func ingestRawMessageWithCompletion(ctx context.Context, st *store.Store,
 	}
 
 	if strict {
-		return errors.Join(completionErr, ctx.Err())
+		return errors.Join(emlxRetryable(completionErr), ctx.Err())
 	}
 	return nil
 }

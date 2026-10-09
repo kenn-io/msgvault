@@ -108,7 +108,7 @@ func MergeAttachmentsFromFile(ctx context.Context, original, archived []byte, me
 		// A post-Stat growth exclusion is retryable; it is not the source capability
 		// decision made above. A post-read fingerprint also rejects publication.
 		for _, part := range parts {
-			if part.State == "source-excluded" {
+			if part.State == RestorationSourceExcluded {
 				merged.Incomplete = true
 			}
 		}

@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-06"
+last_edited: "2026-10-08"
 title: Data Storage
 description: Database schema, Parquet analytics cache, content-addressed attachments, and token storage.
 ---
@@ -112,21 +112,27 @@ part of the envelope.
 
 **source_import_items** -- Durable import receipts.
 
-On unreleased `main`, Apple Mail imports reserve `emlx-occurrence` for
-root/relative-path acknowledgments and `emlx-target` for shared message
-completion. A target is marked dirty before content, attachments or search
-mutations, then complete only after required ingestion succeeds. Recovery
-finishes the current committed raw, preserving accumulated labels. Each
-occurrence retains hashes of acknowledged source attachment parts, independently
-of completion settings and optional filesystem fingerprints. Unchanged parts
-cannot replace newer archived bytes when the size limit changes or another
-sibling appears. Root reconciliation retains that evidence while marking
-occurrences pending until ingestion succeeds. Without a filesystem fingerprint,
-every visit still reads content.
-Pending receipts also retain committed attachment contributions when other work
-fails; budget-rejected replacements remain retryable.
-The ledger reuses the existing schema and sync-generation fencing.
-These receipts are metadata cache hints, not continuous archive-integrity checks; see
+On unreleased `main`, Apple Mail imports keep two kinds of rows here:
+
+- `emlx-target` rows track one archived message, which several `.emlx` files
+  can share. The importer marks the row `pending` before it writes the message,
+  its attachments or its search entry, and `imported` once all of that work
+  succeeds. The completion records the attachment and search settings it used;
+  a later import with different settings finishes the message again from its
+  archived raw.
+- `emlx-occurrence` rows track one `.emlx` file, keyed by a digest of the
+  import root plus the file's relative path. An `imported` row stores a
+  filesystem fingerprint of the file and its cached attachments, and a hash of
+  each attachment the file contributed. A `pending` row means the file still
+  has work to finish.
+
+A repeat import skips reading a file when its fingerprint matches and its
+message is complete. The attachment hashes stop a file from replacing an
+attachment that another file has since updated. Platforms without a supported
+fingerprint still record completed rows but always read the file.
+
+The rows reuse the existing table and the sync run's ownership check, without a
+schema migration. They are cache hints rather than integrity checks; see
 [repeat imports](../usage/importing.md#repeat-apple-mail-imports-unreleased).
 
 **participants** -- Observed addresses and handles from source data. These are

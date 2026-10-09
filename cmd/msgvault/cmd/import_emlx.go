@@ -65,15 +65,10 @@ Examples:
 	`,
 	Args: cobra.MaximumNArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// Cobra commands are reused by daemon invocations. Keep this limit
-		// local to the invocation so an omitted flag restores the default.
-		defer func() {
-			importEmlxMaxMessageBytes = 0
-			cmd.Flags().Lookup("max-message-bytes").Changed = false
-		}()
 		if cmd.Flags().Changed("max-message-bytes") &&
 			(importEmlxMaxMessageBytes <= 0 || importEmlxMaxMessageBytes == math.MaxInt64) {
-			return usageErr(cmd, fmt.Errorf("--max-message-bytes must be positive and at most %d bytes", int64(math.MaxInt64-1)))
+			return usageErr(cmd, fmt.Errorf("--max-message-bytes must be positive and at most %d bytes",
+				int64(math.MaxInt64-1)))
 		}
 		state := invocationFromCommand(cmd)
 		if state == nil || state.cfg == nil {
@@ -191,21 +186,6 @@ Examples:
 
 		return errors.Join(importErr, rebuildCacheAfterWrite(dbPath, state))
 	},
-}
-
-// Clear this command's opt-in limit even when parsing or pre-run validation
-// fails before RunE. Other commands and their flags keep their own lifecycle.
-func clearImportEmlxMaxMessageBytes(root *cobra.Command) {
-	for _, cmd := range root.Commands() {
-		if cmd.Name() != "import-emlx" {
-			continue
-		}
-		if flag := cmd.Flags().Lookup("max-message-bytes"); flag != nil {
-			_ = flag.Value.Set(flag.DefValue)
-			flag.Changed = false
-		}
-		return
-	}
 }
 
 func importSingleAccount(
