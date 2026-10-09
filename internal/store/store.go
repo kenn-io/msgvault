@@ -894,9 +894,11 @@ func (s *Store) withTxLockedContext(
 		// Match the native writers' outer identity fence. Taking the clock
 		// before identity or the source generation can deadlock with source
 		// removal and providers that write their attributed message state.
+		// These fixed statements carry no archive content, so the driver
+		// error stays visible to busy/deadlock retry loops and logs.
 		if err := s.mcpIdentityFence(ctx, tx.Tx); err != nil {
 			_ = tx.Rollback()
-			return mcpSafeError(err)
+			return fmt.Errorf("lock Events identity fence: %w", err)
 		}
 	}
 	if preFence != nil {
@@ -914,7 +916,7 @@ func (s *Store) withTxLockedContext(
 	if captureEvents {
 		if _, err := s.mcpClockLock(ctx, tx.Tx); err != nil {
 			_ = tx.Rollback()
-			return mcpSafeError(err)
+			return fmt.Errorf("lock Events clock: %w", err)
 		}
 	}
 	if err := fn(tx); err != nil {
