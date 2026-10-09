@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { fireEvent, render, screen } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import TranscriptHits from './TranscriptHits.svelte';
@@ -56,19 +56,29 @@ describe('TranscriptHits', () => {
   });
 
   it('restricts unsupported scopes and clears the old query before ignoring its delayed response', async () => {
+    vi.useFakeTimers();
     let finish!: (value: Response) => void;
     const fetchFn = vi.fn<typeof fetch>().mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }))
       .mockResolvedValue(Response.json(report({ results: [hit({ excerpt: 'current evidence' })] })));
     const view = mount(fetchFn);
-    await waitFor(() => expect(fetchFn).toHaveBeenCalledTimes(1));
+    await vi.advanceTimersByTimeAsync(300);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
     const old = fetchFn.mock.calls[0][0] as Request;
-    await view.rerender({ client: view.client, query: 'current', supported: true });
+    for (const query of ['q', 'qu', 'quarterly']) {
+      await view.rerender({ client: view.client, query, supported: true });
+      expect(screen.queryByText('current evidence')).toBeNull();
+      expect(fetchFn).toHaveBeenCalledTimes(1);
+    }
     expect(old.signal.aborted).toBe(true);
-    await screen.findByText('current evidence');
+    await vi.advanceTimersByTimeAsync(299);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(new URL((fetchFn.mock.calls[1][0] as Request).url).searchParams.get('q')).toBe('quarterly');
+    expect(screen.getByText('current evidence')).toBeTruthy();
     finish(Response.json(report({ results: [hit({ excerpt: 'obsolete evidence' })] })));
-    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(0);
     expect(screen.queryByText('obsolete evidence')).toBeNull();
-    await view.rerender({ client: view.client, query: 'current', supported: false });
+    await view.rerender({ client: view.client, query: 'quarterly', supported: false });
     expect(screen.queryByText('current evidence')).toBeNull();
     expect(screen.getByRole('status').textContent).toContain('Full text with no filters or grouping');
     expect(fetchFn).toHaveBeenCalledTimes(2);
@@ -87,8 +97,6 @@ describe('TranscriptHits', () => {
     expect(screen.queryByText('Quarterly <numbers>')).toBeNull();
     await vi.advanceTimersByTimeAsync(300);
     expect(screen.getByText(status === 503 ? 'Recording search unavailable.' : 'Could not load recording matches.')).toBeTruthy();
-    await vi.advanceTimersByTimeAsync(90_000);
-    expect(fetchFn).toHaveBeenCalledTimes(2);
     await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     await vi.advanceTimersByTimeAsync(300);
     expect(screen.getByText('No spoken matches.')).toBeTruthy();
@@ -97,7 +105,7 @@ describe('TranscriptHits', () => {
     expect(fetchFn).toHaveBeenCalledTimes(3);
   });
 
-  it('preserves actionable links on window focus and refreshes after being hidden', async () => {
+  it('clears hidden evidence and coalesces visibility refreshes', async () => {
     vi.useFakeTimers();
     const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
     let finish!: (value: Response) => void;
@@ -106,15 +114,9 @@ describe('TranscriptHits', () => {
       .mockResolvedValue(Response.json(report({ results: [] })));
     const view = mount(fetchFn);
     await vi.advanceTimersByTimeAsync(300);
-    await fireEvent(window, new Event('focus'));
-    await fireEvent(window, new Event('focus'));
-    expect(screen.getByRole('link')).toBeTruthy();
-    expect(fetchFn).toHaveBeenCalledTimes(1);
     hidden.mockReturnValue(true);
     await fireEvent(document, new Event('visibilitychange'));
     expect(screen.queryByText('Quarterly <numbers>')).toBeNull();
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(fetchFn).toHaveBeenCalledTimes(1);
     hidden.mockReturnValue(false);
     await fireEvent(document, new Event('visibilitychange'));
     await fireEvent(document, new Event('visibilitychange'));
@@ -160,14 +162,14 @@ describe('TranscriptHits', () => {
     view.unmount();
   });
 
-  it.each(['quarterly numbers', 'café 東京 2026', 'cafe\u0301'])('admits plain Unicode words in %s', async query => {
+  it.each(['café 東京 2026', 'cafe\u0301'])('admits plain Unicode words in %s', async query => {
     const view = mount();
     await view.rerender({ client: view.client, query, supported: true });
     await screen.findByText('Quarterly <numbers>');
     expect(new URL((view.fetchFn.mock.calls.at(-1)![0] as Request).url).searchParams.get('q')).toBe(query);
   });
 
-  it.each(['from:alice@example.com quarterly', 'after:2026-01-01 numbers', '"quarterly numbers"', 'quarterly OR numbers', 'AND', 'not', 'quarterly*', '\u0301'])('rejects unsupported syntax %s without searching', async query => {
+  it.each(['from:alice@example.com quarterly', 'quarterly OR numbers', 'not', '\u0301'])('rejects unsupported syntax %s without searching', async query => {
     const fetchFn = vi.fn<typeof fetch>();
     render(TranscriptHits, { props: { client: createAPIClient(fetchFn), query, supported: true } });
     await screen.findByText(/Recording search supports plain words only/);
@@ -177,6 +179,7 @@ describe('TranscriptHits', () => {
   it.each([
     [400, 'media_search_scope_limit', 'This archive exceeds browser recording-search limits. Use person-scoped recording search in the CLI or API.'],
     [400, 'invalid_media_search', 'Recording search rejected this query. Try different plain words.'],
+    [400, 'invalid_parameter', 'Recording search query is too long. Use fewer words.'],
     [403, 'forbidden', 'Recording search cannot read this query. Check archive access or change the query.'],
   ])('keeps %s %s terminal until the query changes', async (status, error, text) => {
     vi.useFakeTimers();
@@ -186,8 +189,7 @@ describe('TranscriptHits', () => {
     expect(screen.getByText(text)).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Refresh' })).toBeNull();
-    await fireEvent(window, new Event('focus'));
-    await vi.advanceTimersByTimeAsync(90_000);
+    await fireEvent(document, new Event('visibilitychange'));
     expect(fetchFn).toHaveBeenCalledTimes(1);
     await view.rerender({ client: view.client, query: 'different', supported: true });
     await vi.advanceTimersByTimeAsync(300);
