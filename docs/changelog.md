@@ -8,7 +8,7 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
-- Edits to imported emails and phones on CardDAV contacts published back into their source book reach msgvault on the next sync; cards with values added in msgvault and cards published into a different book keep the old behavior.
+- Edits to imported emails and phones on CardDAV contacts published back into their source book reach msgvault on the next sync; cards with values added in msgvault, contacts merged from several books, and cards published into a different book keep the old behavior.
 
 - Go programs can use msgvault as a library through `go.kenn.io/msgvault/pkg/archive`.
   It sets up and opens SQLite or PostgreSQL archives, runs the Slack and Discord

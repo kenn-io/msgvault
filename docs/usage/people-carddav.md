@@ -377,7 +377,7 @@ connection's credential needs repair.
 
 When you edit an imported email or phone on a contact msgvault published
 back into its source address book, the next sync copies the change into msgvault.
-Cards with values added in msgvault and cards published into a different book keep the old behavior.
+Cards with values added in msgvault, contacts merged from several books, and cards published into a different book keep the old behavior.
 
 ## Resolve competing edits
 

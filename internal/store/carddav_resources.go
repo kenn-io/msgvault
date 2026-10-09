@@ -473,13 +473,15 @@ func (s *Store) cardDAVResourceNeedsConflictTx(
 func (s *Store) cardDAVImportedPersonPublishedTx(
 	ctx context.Context, tx *loggedTx, bookID, personID int64, resource *CardDAVResource,
 ) (bool, error) {
-	var userOwned bool
+	var otherOwned bool
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM person_contact_points
-		WHERE person_id = ? AND source = ? AND address_kind IN (?, ?))`,
-		personID, ProvenanceUser, ContactAddressEmail, ContactAddressPhone).Scan(&userOwned); err != nil {
-		return false, fmt.Errorf("check published CardDAV user contact points: %w", err)
+		WHERE person_id = ? AND address_kind IN (?, ?) AND active_until IS NULL AND superseded_at IS NULL
+		  AND (source <> ? OR COALESCE(source_ref, '') <> ? OR COALESCE(source_resource_uid, '') <> ?))`,
+		personID, ContactAddressEmail, ContactAddressPhone, ProvenanceCardDAVImport,
+		fmt.Sprintf("carddav:%d", bookID), resource.Href).Scan(&otherOwned); err != nil {
+		return false, fmt.Errorf("check published CardDAV contact point ownership: %w", err)
 	}
-	if userOwned {
+	if otherOwned {
 		return false, nil
 	}
 	if resource.Governance != CardDAVGovernanceRemote {

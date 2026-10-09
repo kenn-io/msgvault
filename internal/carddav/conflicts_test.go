@@ -1821,6 +1821,69 @@ func TestRemoteEditToPublishedImportWithUserAddedValueKeepsOldBehavior(t *testin
 	}
 }
 
+func TestRemoteTypeEditToPublishedCrossBookMergeKeepsOldBehavior(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	primary := &mutationFixture{body: publishedImportCard(), etag: `"primary-1"`}
+	secondary := &mutationFixture{body: conflictCardWithEmail("other", "Alice Other", "other@example.test"), etag: `"secondary-1"`, href: "/books/other/person.vcf"}
+	primaryHandler, secondaryHandler := primary.handler(t), secondary.handler(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/books/other/") {
+			secondaryHandler(w, r)
+		} else {
+			primaryHandler(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	service, st, primaryBook := newPullService(t, server, false)
+	allowed := true
+	_, books, err := st.ReplaceCardDAVDiscoveryContext(t.Context(), store.CardDAVDiscoveryInput{
+		BaseURL: server.URL, Username: "alice", PrincipalURL: server.URL + "/principal/", HomeURL: server.URL + "/books/",
+		Books: []store.CardDAVDiscoveredBook{
+			{CanonicalURL: primaryBook.CanonicalURL, DisplayName: "Personal", SupportsMultiget: true, CanCreate: &allowed},
+			{CanonicalURL: server.URL + "/books/other/", DisplayName: "Other", DiscoveryIndex: 1, SupportsMultiget: true, CanCreate: &allowed},
+		},
+	})
+	require.NoError(err)
+	require.Len(books, 2)
+	require.NoError(st.SetCardDAVBookRolesContext(t.Context(), books[1].ID, store.CardDAVBookRoles{IsSubscribed: true}))
+	_, err = service.Sync(t.Context(), SyncOptions{Full: true})
+	require.NoError(err)
+	first, err := st.GetCardDAVResourceContext(t.Context(), books[0].ID, books[0].CanonicalURL+"person.vcf")
+	require.NoError(err)
+	second, err := st.GetCardDAVResourceContext(t.Context(), books[1].ID, books[1].CanonicalURL+"person.vcf")
+	require.NoError(err)
+	require.NotNil(first.PersonID)
+	require.NotNil(second.PersonID)
+	survivor, err := st.GetPersonContext(t.Context(), *first.PersonID)
+	require.NoError(err)
+	absorbed, err := st.GetPersonContext(t.Context(), *second.PersonID)
+	require.NoError(err)
+	_, err = st.MergePersonsContext(t.Context(), store.PersonMergeRequest{
+		SurvivorID: survivor.ID, AbsorbedID: absorbed.ID,
+		ExpectedSurvivorRevision: survivor.Revision, ExpectedAbsorbedRevision: absorbed.Revision,
+		Actor: "test", IdempotencyKey: "cross-book-merge",
+	})
+	require.NoError(err)
+	require.NoError(service.PublishPerson(t.Context(), survivor.ID))
+	before, err := st.ListPersonContactPointsContext(t.Context(), survivor.ID, true)
+	require.NoError(err)
+	require.Len(before, 3)
+	require.Equal(1, strings.Count(string(primary.body), "other@example.test"))
+	edited := bytes.Replace(primary.body, []byte("EMAIL:other@example.test"), []byte("EMAIL;TYPE=work:other@example.test"), 1)
+	require.NotEqual(primary.body, edited)
+	primary.setRemote(edited, `"primary-2"`)
+	_, err = service.Sync(t.Context(), SyncOptions{Full: true})
+	require.NoError(err)
+	require.NoError(service.ReconcilePublications(t.Context()))
+	after, err := st.ListPersonContactPointsContext(t.Context(), survivor.ID, true)
+	require.NoError(err)
+	assert.Equal(before, after)
+	conflicts, err := service.ListConflicts(t.Context())
+	require.NoError(err)
+	assert.Empty(conflicts)
+}
+
 func TestRemoteEditToPublishedImportUsesDecodedProperties(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
