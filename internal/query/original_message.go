@@ -473,7 +473,7 @@ func (e *SQLiteEngine) fillThreadParticipants(ctx context.Context, messages []Th
 		FROM (
 			SELECT mr.message_id, mr.recipient_type,
 			       COALESCE(NULLIF(p.email_address, ''), NULLIF(p.phone_number, ''), '') AS address,
-			       %[1]s AS display_name, mr.id AS recipient_id
+			       %[1]s AS display_name, mr.recipient_order, mr.id AS recipient_id
 			FROM message_recipients mr
 			JOIN participants p ON p.id = mr.participant_id
 			WHERE mr.message_id IN (%[2]s)
@@ -481,7 +481,7 @@ func (e *SQLiteEngine) fillThreadParticipants(ctx context.Context, messages []Th
 			UNION ALL
 			SELECT m.id, 'from',
 			       COALESCE(NULLIF(p.email_address, ''), NULLIF(p.phone_number, ''), ''),
-			       COALESCE(%[3]s, ''), 0
+			       COALESCE(%[3]s, ''), 0, 0
 			FROM messages m
 			JOIN participants p ON p.id = m.sender_id
 			WHERE m.id IN (%[2]s)
@@ -490,7 +490,7 @@ func (e *SQLiteEngine) fillThreadParticipants(ctx context.Context, messages []Th
 				WHERE mr.message_id = m.id AND mr.recipient_type = 'from'
 			  )
 		) participants
-		ORDER BY message_id, recipient_id
+		ORDER BY message_id, recipient_order, recipient_id
 	`, recipientNameExpr("mr", "p"), strings.Join(placeholders, ","), participantNameExpr("p")), slices.Concat(ids, ids)...)
 	if err != nil {
 		return fmt.Errorf("fetch thread participants: %w", err)

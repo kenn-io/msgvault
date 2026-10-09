@@ -268,8 +268,11 @@ func (s *Store) lockIdentityMutationTxContext(
 	ctx context.Context,
 	tx *loggedTx,
 ) error {
+	if err := s.enterDeliveryAdmissionFenceContext(ctx, tx); err != nil {
+		return fmt.Errorf("enter identity mutation delivery fence: %w", err)
+	}
 	if tx.attribution != nil {
-		// The attribution entry already took the identity row before the fence.
+		// The attribution entry already took the identity row under the delivery fence.
 		if tx.attribution.exclusive {
 			return nil
 		}

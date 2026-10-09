@@ -7,13 +7,15 @@ import (
 	"fmt"
 )
 
+const beeperReanchorRequiredMarkerPrefix = "beeper.reanchor_required:"
+
 // SetArchiveMarker stores value under key in archive_metadata, replacing any
 // previous value. Markers record durable operator-visible conditions, such as
 // a source that must be re-anchored before it syncs again.
 func (s *Store) SetArchiveMarker(ctx context.Context, key, value string) error {
-	if _, err := s.db.ExecContext(ctx, s.Rebind(`
+	if _, err := s.execStoreWriteContext(ctx, `
 		INSERT INTO archive_metadata (key, value) VALUES (?, ?)
-		ON CONFLICT (key) DO UPDATE SET value = excluded.value`), key, value); err != nil {
+		ON CONFLICT (key) DO UPDATE SET value = excluded.value`, key, value); err != nil {
 		return fmt.Errorf("set archive marker %s: %w", key, err)
 	}
 	return nil
@@ -34,7 +36,7 @@ func (s *Store) GetArchiveMarker(ctx context.Context, key string) (string, bool,
 
 // DeleteArchiveMarker removes key. Removing a missing marker is a no-op.
 func (s *Store) DeleteArchiveMarker(ctx context.Context, key string) error {
-	if _, err := s.db.ExecContext(ctx, s.Rebind(`DELETE FROM archive_metadata WHERE key = ?`), key); err != nil {
+	if _, err := s.execStoreWriteContext(ctx, `DELETE FROM archive_metadata WHERE key = ?`, key); err != nil {
 		return fmt.Errorf("delete archive marker %s: %w", key, err)
 	}
 	return nil
@@ -44,5 +46,5 @@ func (s *Store) DeleteArchiveMarker(ctx context.Context, key string) error {
 // whose installation must be manually re-verified before scheduled syncs
 // resume.
 func BeeperReanchorMarkerKey(sourceID int64) string {
-	return fmt.Sprintf("beeper.reanchor_required:%d", sourceID)
+	return fmt.Sprintf(beeperReanchorRequiredMarkerPrefix+"%d", sourceID)
 }

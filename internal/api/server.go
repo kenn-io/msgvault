@@ -250,6 +250,7 @@ type analyticsEngineContextKey struct{}
 
 // Server represents the HTTP API server.
 type Server struct {
+	allowDeliveryPolicyWrites bool
 	// statsSnapshots and accountCountSnapshots bound /stats and
 	// /cli/accounts latency under load (see snapshotCache). Background
 	// computations run on importContext, the server-lifetime context that
@@ -517,8 +518,10 @@ const (
 
 // ServerOptions configures the API server.
 type ServerOptions struct {
-	Config *config.Config
-	Store  MessageStore
+	// AllowDeliveryPolicyWrites is a separate owner-only operator opt-in.
+	AllowDeliveryPolicyWrites bool
+	Config                    *config.Config
+	Store                     MessageStore
 	// SavedViewStore owns durable analytical view definitions. It is separate
 	// from the minimal MessageStore so API consumers do not need to implement
 	// unrelated persistence methods.
@@ -623,43 +626,44 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 	}
 	importContext, cancelImports := context.WithCancel(context.Background())
 	s := &Server{
-		cfg:                    opts.Config,
-		store:                  opts.Store,
-		savedViewStore:         opts.SavedViewStore,
-		sqlQueryRunner:         opts.SQLQueryRunner,
-		archiveSQLQueryRunner:  opts.ArchiveSQLQueryRunner,
-		cacheBuildStatusReader: opts.CacheBuildStatusReader,
-		shutdownToken:          opts.ShutdownToken,
-		shutdownFunc:           opts.ShutdownFunc,
-		hybridEngine:           opts.HybridEngine,
-		vectorCfg:              opts.VectorCfg,
-		backend:                opts.Backend,
-		personSearchEngine:     opts.PersonSearchEngine,
-		scheduler:              opts.Scheduler,
-		cardDAV:                opts.CardDAV,
-		logger:                 opts.Logger,
-		requestTimeout:         timeout,
-		readTimeout:            daemonReadTimeout,
-		queryTimeout:           QueryEndpointTimeout,
-		inProgressThreshold:    inProgressLogThreshold,
-		inProgressInterval:     inProgressLogInterval,
-		daemonVersion:          opts.DaemonVersion,
-		idleTracker:            opts.IdleTracker,
-		operationGate:          opts.OperationGate,
-		operationHistoryReader: opts.OperationHistoryReader,
-		importContext:          importContext,
-		cancelImports:          cancelImports,
-		statsSnapshots:         snapshotCache[*StoreStats]{logger: opts.Logger},
-		accountCountSnapshots:  snapshotCache[map[int64]store.SourceMessageCounts]{logger: opts.Logger},
-		statsSnapshotWait:      statsSnapshotWait,
-		vectorStatsTimeout:     vectorStatsTimeout,
-		blobStore:              opts.BlobStore,
-		messageRecordings:      opts.MessageRecordings,
-		remoteImages:           remoteimage.NewFetcher(),
-		inlineCache:            newInlineParseCache(inlineCacheMaxEntries, inlineCacheMaxBytes),
-		spaHandler:             opts.SPAHandler,
-		telemetryCapture:       opts.TelemetryCapture,
-		sessions:               newSessionStore(defaultSessionTTL),
+		allowDeliveryPolicyWrites: opts.AllowDeliveryPolicyWrites,
+		cfg:                       opts.Config,
+		store:                     opts.Store,
+		savedViewStore:            opts.SavedViewStore,
+		sqlQueryRunner:            opts.SQLQueryRunner,
+		archiveSQLQueryRunner:     opts.ArchiveSQLQueryRunner,
+		cacheBuildStatusReader:    opts.CacheBuildStatusReader,
+		shutdownToken:             opts.ShutdownToken,
+		shutdownFunc:              opts.ShutdownFunc,
+		hybridEngine:              opts.HybridEngine,
+		vectorCfg:                 opts.VectorCfg,
+		backend:                   opts.Backend,
+		personSearchEngine:        opts.PersonSearchEngine,
+		scheduler:                 opts.Scheduler,
+		cardDAV:                   opts.CardDAV,
+		logger:                    opts.Logger,
+		requestTimeout:            timeout,
+		readTimeout:               daemonReadTimeout,
+		queryTimeout:              QueryEndpointTimeout,
+		inProgressThreshold:       inProgressLogThreshold,
+		inProgressInterval:        inProgressLogInterval,
+		daemonVersion:             opts.DaemonVersion,
+		idleTracker:               opts.IdleTracker,
+		operationGate:             opts.OperationGate,
+		operationHistoryReader:    opts.OperationHistoryReader,
+		importContext:             importContext,
+		cancelImports:             cancelImports,
+		statsSnapshots:            snapshotCache[*StoreStats]{logger: opts.Logger},
+		accountCountSnapshots:     snapshotCache[map[int64]store.SourceMessageCounts]{logger: opts.Logger},
+		statsSnapshotWait:         statsSnapshotWait,
+		vectorStatsTimeout:        vectorStatsTimeout,
+		blobStore:                 opts.BlobStore,
+		messageRecordings:         opts.MessageRecordings,
+		remoteImages:              remoteimage.NewFetcher(),
+		inlineCache:               newInlineParseCache(inlineCacheMaxEntries, inlineCacheMaxBytes),
+		spaHandler:                opts.SPAHandler,
+		telemetryCapture:          opts.TelemetryCapture,
+		sessions:                  newSessionStore(defaultSessionTTL),
 		agentGrants: func() *agentgrant.Registry {
 			if opts.Config != nil && opts.Config.Server.AgentAccess {
 				return agentgrant.NewRegistry()

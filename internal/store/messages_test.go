@@ -493,7 +493,7 @@ func readSiblingMessageSnapshot(t *testing.T, st *store.Store, messageID int64) 
 		FROM message_recipients mr
 		JOIN participants p ON p.id = mr.participant_id
 		WHERE mr.message_id = ?
-		ORDER BY mr.recipient_type, mr.id
+		ORDER BY mr.recipient_type, mr.recipient_order, mr.id
 	`), messageID)
 	require.NoError(t, err, "read sibling recipients")
 	defer func() { require.NoError(t, rows.Close(), "close sibling recipient rows") }()
@@ -937,6 +937,100 @@ func TestPersistMessageWithParticipantsKeepsSiblingDependentsIsolatedOnUpsert(t 
 	assert.Equal("Message A updated", updatedA.Subject.String, "A subject")
 	assert.Equal("Message A updated body", updatedA.BodyText.String, "A body")
 	assert.Equal([]byte("raw-message-a-v2"), updatedA.RawMIME, "A raw MIME")
+}
+
+func TestPersistMessageRecipientReconciliationPreservesHeaderOrder(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	f := storetest.New(t)
+	ctx := t.Context()
+	participants := []struct {
+		id    int64
+		name  string
+		email string
+	}{
+		{name: "Sender A", email: "sender-a@example.test"},
+		{name: "Sender B", email: "sender-b@example.test"},
+		{name: "Sender C", email: "sender-c@example.test"},
+	}
+	for i := range participants {
+		id, err := f.Store.EnsureParticipant(participants[i].email, participants[i].name, "example.test")
+		requirements.NoError(err)
+		participants[i].id = id
+	}
+	persistFrom := func(indexes ...int) (int64, error) {
+		ids := make([]int64, len(indexes))
+		names := make([]string, len(indexes))
+		emails := make([]string, len(indexes))
+		for i, index := range indexes {
+			ids[i], names[i], emails[i] = participants[index].id, participants[index].name, participants[index].email
+		}
+		return f.Store.PersistMessageContext(ctx, &store.MessagePersistData{
+			Message: &store.Message{
+				SourceID: f.Source.ID, ConversationID: f.ConvID,
+				SourceMessageID: "recipient-order-message", MessageType: "email",
+			},
+			Recipients: []store.RecipientSet{{
+				Type: "from", ParticipantIDs: ids, DisplayNames: names, EmailAddresses: emails,
+			}},
+		})
+	}
+	messageID, err := persistFrom(0, 1)
+	requirements.NoError(err)
+
+	readFromNames := func() []string {
+		recipients, readErr := f.Store.GetMessageRecipientsContext(ctx, messageID, "from")
+		requirements.NoError(readErr)
+		names := make([]string, len(recipients))
+		for i, recipient := range recipients {
+			names[i] = recipient.DisplayName
+		}
+		return names
+	}
+	readSummary := func() *store.APIMessage {
+		messages, _, readErr := f.Store.ListMessagesContext(ctx, 0, 10)
+		requirements.NoError(readErr)
+		for i := range messages {
+			if messages[i].ID == messageID {
+				return &messages[i]
+			}
+		}
+		requirements.FailNow("persisted message missing from list summary")
+		return nil
+	}
+	readRecipientIDs := func() map[int64]int64 {
+		rows, queryErr := f.Store.DB().QueryContext(ctx, f.Store.Rebind(`
+			SELECT id, participant_id FROM message_recipients
+			WHERE message_id = ? AND recipient_type = 'from'
+		`), messageID)
+		requirements.NoError(queryErr)
+		defer func() { _ = rows.Close() }()
+		ids := make(map[int64]int64)
+		for rows.Next() {
+			var rowID, participantID int64
+			requirements.NoError(rows.Scan(&rowID, &participantID))
+			ids[participantID] = rowID
+		}
+		requirements.NoError(rows.Err())
+		return ids
+	}
+	initialIDs := readRecipientIDs()
+	assertions.Equal([]string{"Sender A", "Sender B"}, readFromNames())
+	assertions.Equal("Sender A", readSummary().FromName)
+
+	_, err = persistFrom(1, 0)
+	requirements.NoError(err)
+	assertions.Equal([]string{"Sender B", "Sender A"}, readFromNames())
+	assertions.Equal("Sender B", readSummary().FromName)
+	assertions.Equal(initialIDs, readRecipientIDs(), "reordering must retain existing recipient row IDs")
+
+	_, err = persistFrom(2, 1, 0)
+	requirements.NoError(err)
+	assertions.Equal([]string{"Sender C", "Sender B", "Sender A"}, readFromNames())
+	assertions.Equal("Sender C", readSummary().FromName,
+		"a newly added first author must lead the message summary")
+	updatedIDs := readRecipientIDs()
+	assertions.Equal(initialIDs[participants[0].id], updatedIDs[participants[0].id])
+	assertions.Equal(initialIDs[participants[1].id], updatedIDs[participants[1].id])
 }
 
 type repairStoreFixture struct {

@@ -99,7 +99,7 @@ func (s *Store) AddPersonNameContext(ctx context.Context, personID int64, input 
 
 func (s *Store) ListPersonNamesContext(ctx context.Context, personID int64, currentOnly bool) ([]PersonName, error) {
 	var names []PersonName
-	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
 		var err error
 		names, err = s.listPersonNamesTx(ctx, tx, personID, currentOnly)
 		return err

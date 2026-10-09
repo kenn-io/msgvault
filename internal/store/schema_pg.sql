@@ -1404,7 +1404,10 @@ CREATE TABLE IF NOT EXISTS message_recipients (
     -- identity discovery reads it so merges cannot rewrite evidence.
     -- NULL on rows from writers without envelope addresses (non-email
     -- importers, legacy rows).
-    email_address TEXT
+    email_address TEXT,
+    -- Position within this recipient_type header as it appeared in the latest
+    -- source snapshot. The id remains stable when a recipient moves.
+    recipient_order INTEGER NOT NULL DEFAULT 0
 
     -- Uniqueness spans the normalized envelope address so one participant
     -- can carry several alias snapshots on the same message (two aliases of
@@ -4092,3 +4095,57 @@ CREATE TABLE IF NOT EXISTS message_delivery_addresses (
 );
 CREATE INDEX IF NOT EXISTS idx_message_delivery_addresses_address
     ON message_delivery_addresses(address, message_id);
+
+-- Delivery authorization is separate from draft state and provider credentials.
+-- No person row here means draft_only, revision 1. Audit is retained by UID.
+CREATE TABLE IF NOT EXISTS delivery_policy_persons (
+    person_uid TEXT PRIMARY KEY,
+    policy TEXT NOT NULL DEFAULT 'draft_only' CHECK (policy IN ('draft_only','send_allowed')),
+    default_explicit BOOLEAN NOT NULL DEFAULT false,
+    identity_revision BIGINT NOT NULL DEFAULT 0,
+    revision BIGINT NOT NULL DEFAULT 1 CHECK (revision > 0),
+    person_revision BIGINT NOT NULL DEFAULT 0,
+    person_binding_version BIGINT NOT NULL DEFAULT 0,
+    approved_generation BIGINT NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS delivery_policy_overrides (
+    person_uid TEXT NOT NULL,
+    scope_key TEXT NOT NULL,
+    target_json TEXT NOT NULL,
+    policy TEXT NOT NULL CHECK (policy IN ('draft_only','send_allowed')),
+    binding_digest TEXT NOT NULL,
+    PRIMARY KEY (person_uid, scope_key)
+);
+CREATE TABLE IF NOT EXISTS delivery_policy_audit (
+    person_uid TEXT NOT NULL,
+    revision BIGINT NOT NULL,
+    scope_key TEXT NOT NULL,
+    target_json TEXT NOT NULL,
+    before_policy TEXT,
+    after_policy TEXT,
+    actor TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (person_uid, revision)
+);
+CREATE TABLE IF NOT EXISTS delivery_admission_lock (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    generation BIGINT NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS delivery_binding_versions (
+    kind TEXT NOT NULL,
+    target_id BIGINT NOT NULL,
+    version BIGINT NOT NULL DEFAULT 1,
+    generation BIGINT NOT NULL,
+    PRIMARY KEY (kind, target_id)
+);
+CREATE TABLE IF NOT EXISTS delivery_source_email_evidence (
+    participant_id BIGINT NOT NULL,
+    source_id BIGINT NOT NULL,
+    evidence_present BOOLEAN NOT NULL,
+    version BIGINT NOT NULL DEFAULT 1,
+    generation BIGINT NOT NULL DEFAULT 0,
+    PRIMARY KEY (participant_id, source_id)
+);
+
+INSERT INTO delivery_admission_lock (singleton) VALUES (1) ON CONFLICT DO NOTHING;

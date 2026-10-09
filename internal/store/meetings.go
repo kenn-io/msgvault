@@ -322,7 +322,7 @@ func loadMeetingContextParticipants(
 		FROM message_recipients mr
 		JOIN participants p ON p.id = mr.participant_id
 		WHERE mr.message_id = ?
-		ORDER BY mr.id`, id)
+		ORDER BY mr.recipient_type, mr.recipient_order, mr.id`, id)
 	if err != nil {
 		return nil, fmt.Errorf("load meeting recipients %d: %w", id, err)
 	}

@@ -958,22 +958,29 @@ func TestStore_GetDuplicateGroupMessages_PreservesFromCase(t *testing.T) {
 	f := storetest.New(t)
 
 	mxid := "@Alice:matrix.org"
+	previousPID := f.EnsureParticipant("previous@example.test", "Previous Sender", "example.test")
 	pid := f.EnsureParticipant(mxid, "", "")
 
 	id := newRFC822Message(t, f, "msg-mxid", "rfc822-mxid")
 
 	_, err := f.Store.DB().Exec(
 		f.Store.Rebind(`INSERT INTO message_recipients
-			(message_id, participant_id, recipient_type)
-			VALUES (?, ?, 'from')`),
-		id, pid,
+			(message_id, participant_id, recipient_type, recipient_order)
+			VALUES (?, ?, 'from', ?), (?, ?, 'from', ?)`),
+		id, previousPID, 1, id, pid, 0,
 	)
-	require.NoError(err, "insert from recipient")
+	require.NoError(err, "insert ordered from recipients")
 
 	rows, err := f.Store.GetDuplicateGroupMessages("rfc822-mxid")
 	require.NoError(err, "GetDuplicateGroupMessages")
 	require.Len(rows, 1)
-	assert.Equal(t, mxid, rows[0].FromEmail, "FromEmail (case must be preserved)")
+	require.Equal(mxid, rows[0].FromEmail, "FromEmail must use the current first sender and preserve its case")
+
+	batched, err := f.Store.GetDuplicateGroupMessagesBatch([]string{"rfc822-mxid"})
+	require.NoError(err, "GetDuplicateGroupMessagesBatch")
+	require.Len(batched["rfc822-mxid"], 1)
+	require.Equal(mxid, batched["rfc822-mxid"][0].FromEmail,
+		"batched FromEmail must use the current first sender and preserve its case")
 }
 
 // TestStore_GetAllRawMIMECandidates_PreservesFromCase mirrors
@@ -988,6 +995,7 @@ func TestStore_GetAllRawMIMECandidates_PreservesFromCase(t *testing.T) {
 	f := storetest.New(t)
 
 	mxid := "@Bob:matrix.org"
+	previousPID := f.EnsureParticipant("previous-raw@example.test", "Previous Sender", "example.test")
 	pid := f.EnsureParticipant(mxid, "", "")
 
 	id := newRFC822Message(t, f, "msg-mxid-raw", "rfc822-mxid-raw")
@@ -1001,11 +1009,11 @@ func TestStore_GetAllRawMIMECandidates_PreservesFromCase(t *testing.T) {
 
 	_, err = f.Store.DB().Exec(
 		f.Store.Rebind(`INSERT INTO message_recipients
-			(message_id, participant_id, recipient_type)
-			VALUES (?, ?, 'from')`),
-		id, pid,
+			(message_id, participant_id, recipient_type, recipient_order)
+			VALUES (?, ?, 'from', ?), (?, ?, 'from', ?)`),
+		id, previousPID, 1, id, pid, 0,
 	)
-	require.NoError(err, "insert from recipient")
+	require.NoError(err, "insert ordered from recipients")
 
 	// GetAllRawMIMECandidates only returns messages that have a raw
 	// MIME row, so synthesize one.

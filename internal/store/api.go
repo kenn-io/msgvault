@@ -138,7 +138,7 @@ func (s *Store) ListMessagesContext(ctx context.Context, offset, limit int) ([]A
 		LEFT JOIN message_recipients mr ON mr.id = (
 			SELECT mr2.id FROM message_recipients mr2
 			WHERE mr2.message_id = m.id AND mr2.recipient_type = 'from'
-			ORDER BY mr2.id LIMIT 1
+			ORDER BY mr2.recipient_order, mr2.id LIMIT 1
 		)
 		LEFT JOIN participants p ON p.id = COALESCE(m.sender_id, mr.participant_id)
 		LEFT JOIN conversations c ON c.id = m.conversation_id
@@ -222,7 +222,7 @@ func (s *Store) GetMessageContext(ctx context.Context, id int64) (*APIMessage, e
 		LEFT JOIN message_recipients mr ON mr.id = (
 			SELECT mr2.id FROM message_recipients mr2
 			WHERE mr2.message_id = m.id AND mr2.recipient_type = 'from'
-			ORDER BY mr2.id LIMIT 1
+			ORDER BY mr2.recipient_order, mr2.id LIMIT 1
 		)
 		LEFT JOIN participants p ON p.id = COALESCE(m.sender_id, mr.participant_id)
 		LEFT JOIN conversations c ON c.id = m.conversation_id
@@ -392,7 +392,7 @@ func (s *Store) GetMessagesSummariesByIDsContext(ctx context.Context, ids []int6
 		LEFT JOIN message_recipients mr ON mr.id = (
 			SELECT mr2.id FROM message_recipients mr2
 			WHERE mr2.message_id = m.id AND mr2.recipient_type = 'from'
-			ORDER BY mr2.id LIMIT 1
+			ORDER BY mr2.recipient_order, mr2.id LIMIT 1
 		)
 		LEFT JOIN participants p ON p.id = COALESCE(m.sender_id, mr.participant_id)
 		LEFT JOIN conversations c ON c.id = m.conversation_id
@@ -839,7 +839,7 @@ func (s *Store) searchMessagesQueryImpl(
 		LEFT JOIN message_recipients mr ON mr.id = (
 			SELECT mr2.id FROM message_recipients mr2
 			WHERE mr2.message_id = m.id AND mr2.recipient_type = 'from'
-			ORDER BY mr2.id LIMIT 1
+			ORDER BY mr2.recipient_order, mr2.id LIMIT 1
 		)
 		LEFT JOIN participants p ON p.id = COALESCE(m.sender_id, mr.participant_id)
 		LEFT JOIN conversations c ON c.id = m.conversation_id
@@ -934,7 +934,7 @@ func (s *Store) searchMessagesLike(query string, offset, limit int) ([]APIMessag
 		LEFT JOIN message_recipients mr ON mr.id = (
 			SELECT mr2.id FROM message_recipients mr2
 			WHERE mr2.message_id = m.id AND mr2.recipient_type = 'from'
-			ORDER BY mr2.id LIMIT 1
+			ORDER BY mr2.recipient_order, mr2.id LIMIT 1
 		)
 		LEFT JOIN participants p ON p.id = COALESCE(m.sender_id, mr.participant_id)
 		LEFT JOIN conversations c ON c.id = m.conversation_id
@@ -1156,6 +1156,7 @@ func (s *Store) fetchRecipientsInto(
 		FROM message_recipients mr
 		JOIN participants p ON p.id = mr.participant_id
 		WHERE mr.message_id IN (%s) AND mr.recipient_type = ?
+		ORDER BY mr.message_id, mr.recipient_order, mr.id
 	`, participantDisplaySQL, strings.Join(placeholders, ","))
 
 	rows, err := s.db.QueryContext(ctx, query, args...)
@@ -1241,6 +1242,7 @@ func (s *Store) getRecipients(ctx context.Context, messageID int64, recipientTyp
 		FROM message_recipients mr
 		JOIN participants p ON p.id = mr.participant_id
 		WHERE mr.message_id = ? AND mr.recipient_type = ?
+		ORDER BY mr.recipient_order, mr.id
 	`, participantDisplaySQL)
 	rows, err := s.db.QueryContext(ctx, query, messageID, recipientType)
 	if err != nil {
@@ -1279,7 +1281,7 @@ func (s *Store) GetMessageRecipientsContext(
 		FROM message_recipients mr
 		JOIN participants p ON p.id = mr.participant_id
 		WHERE mr.message_id = ? AND mr.recipient_type = ?
-		ORDER BY mr.id
+		ORDER BY mr.recipient_order, mr.id
 	`, messageID, recipientType)
 	if err != nil {
 		return nil, fmt.Errorf("get structured recipients: %w", err)

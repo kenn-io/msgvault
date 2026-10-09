@@ -28,6 +28,20 @@ func skipUnlessPostgresInternal(t *testing.T) string {
 	return testDB
 }
 
+func holdExclusiveDeliveryAdmissionFenceForTest(
+	ctx context.Context,
+	t *testing.T,
+	tx interface {
+		ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	},
+) {
+	t.Helper()
+	_, err := tx.ExecContext(ctx,
+		`SELECT pg_advisory_xact_lock(
+			hashtextextended('msgvault.delivery_admission:' || current_schema(), 0))`)
+	require.NoError(t, err, "hold the exclusive delivery admission fence")
+}
+
 // newPGStoreInternal opens a schema-isolated PostgreSQL store for an internal
 // (package store) test. It mirrors testutil.newPostgresTestStore but lives in
 // package store so tests can reach unexported symbols. The schema is dropped
@@ -204,6 +218,515 @@ func TestRemoveSourceSerializedDoesNotDeadlockWithPersonMerge(t *testing.T) {
 		require.NoError(removeErr, "iteration %d: remove source", i)
 		require.NoError(mergeErr, "iteration %d: merge participants", i)
 	}
+}
+
+func TestNativeMessageWritersWaitForDeliveryFenceBeforeLockingMessages(t *testing.T) {
+	requirements := require.New(t)
+	dbURL := skipUnlessPostgresInternal(t)
+	st := newPGStoreInternal(t, dbURL)
+	ctx := context.Background()
+	source, err := st.GetOrCreateSource("gmail", "delivery-lock-order@example.test")
+	requirements.NoError(err)
+	conversationID, err := st.EnsureConversationWithType(
+		source.ID, "delivery-lock-order-thread", "email_thread", "Lock Order")
+	requirements.NoError(err)
+	participant, err := st.EnsureParticipant("delivery-lock-peer@example.test", "Lock Order", "example.test")
+	requirements.NoError(err)
+	messageID, err := st.UpsertMessage(&Message{
+		SourceID: source.ID, ConversationID: conversationID, SourceMessageID: "delivery-lock-order-message",
+		MessageType: "email", SenderID: sql.NullInt64{Int64: participant, Valid: true},
+	})
+	requirements.NoError(err)
+
+	tests := []struct {
+		name  string
+		write func() error
+	}{
+		{
+			name: "upsert",
+			write: func() error {
+				_, err := st.UpsertMessage(&Message{
+					SourceID: source.ID, ConversationID: conversationID, SourceMessageID: "delivery-lock-order-new-message",
+					MessageType: "email", SenderID: sql.NullInt64{Int64: participant, Valid: true},
+				})
+				return err
+			},
+		},
+		{
+			name: "replace recipients",
+			write: func() error {
+				return st.ReplaceMessageRecipients(messageID, "to", []int64{participant}, []string{"Lock Order"})
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			require := require.New(t)
+			blocker, err := st.DB().BeginTx(ctx, nil)
+			require.NoError(err)
+			defer func() { _ = blocker.Rollback() }()
+			var blockerPID int
+			require.NoError(blocker.QueryRowContext(ctx, `SELECT pg_backend_pid()`).Scan(&blockerPID))
+			holdExclusiveDeliveryAdmissionFenceForTest(ctx, t, blocker)
+
+			writerDone := make(chan error, 1)
+			go func() { writerDone <- test.write() }()
+			var writerPID int
+			require.Eventually(func() bool {
+				err := st.DB().QueryRowContext(ctx, st.Rebind(`
+					SELECT activity.pid FROM pg_stat_activity activity
+					WHERE activity.datname=current_database()
+					  AND ? = ANY(pg_blocking_pids(activity.pid))
+					  AND activity.wait_event_type='Lock'
+					  AND (activity.query LIKE '%pg_advisory_xact_lock_shared%'
+					       OR activity.query LIKE '%delivery_admission_lock%'
+					       OR activity.query LIKE '%messages%'
+					       OR activity.query LIKE '%message_recipients%')
+					LIMIT 1`), blockerPID).Scan(&writerPID)
+				return err == nil
+			}, 5*time.Second, 10*time.Millisecond,
+				"message writer did not wait on the delivery fence")
+
+			_, lockErr := blocker.ExecContext(ctx, `LOCK TABLE messages IN ACCESS EXCLUSIVE MODE NOWAIT`)
+			if lockErr != nil {
+				_ = blocker.Rollback()
+				writeErr := <-writerDone
+				require.NoError(writeErr, "writer should finish after the held fence is released")
+				require.NoError(lockErr, "writer must wait for the delivery fence before taking a messages lock")
+			}
+			require.NoError(blocker.Commit())
+			require.NoError(<-writerDone)
+		})
+	}
+}
+
+func TestNativeDirectWritersWaitForDeliveryFenceBeforeTableLocks(t *testing.T) {
+	requirements := require.New(t)
+	dbURL := skipUnlessPostgresInternal(t)
+	st := newPGStoreInternal(t, dbURL)
+	ctx := context.Background()
+	source, err := st.GetOrCreateSource("gmail", "delivery-direct-lock-order@example.test")
+	requirements.NoError(err)
+	conversationID, err := st.EnsureConversationWithType(
+		source.ID, "delivery-direct-lock-order-thread", "email_thread", "Lock Order")
+	requirements.NoError(err)
+	participantID, err := st.EnsureParticipant("delivery-direct-lock-peer@example.test", "Lock Order", "example.test")
+	requirements.NoError(err)
+	messageID, err := st.UpsertMessage(&Message{
+		SourceID: source.ID, ConversationID: conversationID, SourceMessageID: "delivery-direct-lock-order-message",
+		MessageType: "email", SenderID: sql.NullInt64{Int64: participantID, Valid: true},
+	})
+	requirements.NoError(err)
+
+	tests := []struct {
+		name  string
+		table string
+		write func() error
+	}{
+		{
+			name:  "source insert returning",
+			table: "sources",
+			write: func() error {
+				_, err := st.GetOrCreateSource("gmail", "delivery-direct-lock-order-new@example.test")
+				return err
+			},
+		},
+		{
+			name:  "source update",
+			table: "sources",
+			write: func() error { return st.UpdateSourceSyncCursor(source.ID, "cursor") },
+		},
+		{
+			name:  "message update",
+			table: "messages",
+			write: func() error {
+				return st.MarkMessageDeletedBySourceMessageID(source.ID, false, "delivery-direct-lock-order-message")
+			},
+		},
+		{
+			name:  "conversation update",
+			table: "conversations",
+			write: func() error {
+				_, err := st.RecomputeConversationPreviewIfMatches(conversationID, "")
+				return err
+			},
+		},
+		{
+			name:  "conversation statistics recompute",
+			table: "conversations",
+			write: func() error {
+				return st.RecomputeConversationStatsContext(ctx, source.ID)
+			},
+		},
+		{
+			name:  "conversation statistics by message",
+			table: "conversations",
+			write: func() error {
+				return st.RecomputeConversationStatsForMessageContext(ctx, messageID)
+			},
+		},
+		{
+			name:  "conversation statistics by conversation",
+			table: "conversations",
+			write: func() error {
+				return st.RecomputeConversationStatsForConversationContext(ctx, conversationID)
+			},
+		},
+		{
+			name:  "conversation title update",
+			table: "conversations",
+			write: func() error {
+				return st.SetConversationTitle(source.ID, conversationID, "Updated lock order title")
+			},
+		},
+		{
+			name:  "email conversation ensure",
+			table: "conversations",
+			write: func() error {
+				_, err := st.EnsureConversation(source.ID, "delivery-direct-lock-order-new-email-thread", "Lock Order")
+				return err
+			},
+		},
+		{
+			name:  "conversation ensure",
+			table: "conversations",
+			write: func() error {
+				_, err := st.EnsureConversationWithType(
+					source.ID, "delivery-direct-lock-order-new-thread", "email_thread", "Lock Order")
+				return err
+			},
+		},
+		{
+			name:  "conversation participant ensure",
+			table: "conversation_participants",
+			write: func() error {
+				return st.EnsureConversationParticipant(conversationID, participantID, "to")
+			},
+		},
+		{
+			name:  "conversation metadata update",
+			table: "conversations",
+			write: func() error {
+				return st.SetConversationMetadata(conversationID,
+					sql.NullString{String: `{"messaging_route":{"kind":"email"}}`, Valid: true})
+			},
+		},
+		{
+			name:  "source sync state update",
+			table: "sources",
+			write: func() error {
+				return st.UpdateSourceSyncState(source.ID, "delivery-direct-lock-order-state")
+			},
+		},
+		{
+			name:  "message size estimate update",
+			table: "messages",
+			write: func() error {
+				return st.SetMessageSizeEstimate(messageID, 123)
+			},
+		},
+		{
+			name:  "message body update",
+			table: "messages",
+			write: func() error {
+				return st.UpsertMessageBody(messageID,
+					sql.NullString{String: "delivery fence lock-order body", Valid: true}, sql.NullString{})
+			},
+		},
+		{
+			name:  "message source ID rekey",
+			table: "messages",
+			write: func() error {
+				_, err := st.RekeyMessageSourceID(
+					messageID, "delivery-direct-lock-order-message", "delivery-direct-lock-order-rekeyed")
+				return err
+			},
+		},
+		{
+			name:  "message deletion mark",
+			table: "messages",
+			write: func() error {
+				return st.MarkMessageDeleted(source.ID, "delivery-direct-lock-order-rekeyed")
+			},
+		},
+		{
+			name:  "message deletion clear",
+			table: "messages",
+			write: func() error {
+				return st.ClearMessageDeletedFromSource(source.ID, "delivery-direct-lock-order-rekeyed")
+			},
+		},
+		{
+			name:  "message batch deletion mark",
+			table: "messages",
+			write: func() error {
+				return st.MarkMessagesDeletedBatch(source.ID, []string{"delivery-direct-lock-order-rekeyed"})
+			},
+		},
+		{
+			name:  "message attachment statistics recompute",
+			table: "messages",
+			write: func() error {
+				return st.RecomputeMessageAttachmentStats(messageID)
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			require := require.New(t)
+			blocker, err := st.DB().BeginTx(ctx, nil)
+			require.NoError(err)
+			defer func() { _ = blocker.Rollback() }()
+			var blockerPID int
+			require.NoError(blocker.QueryRowContext(ctx, `SELECT pg_backend_pid()`).Scan(&blockerPID))
+			holdExclusiveDeliveryAdmissionFenceForTest(ctx, t, blocker)
+
+			writerDone := make(chan error, 1)
+			go func() { writerDone <- test.write() }()
+			require.Eventually(func() bool {
+				var writerPID int
+				err := st.DB().QueryRowContext(ctx, st.Rebind(`
+					SELECT activity.pid FROM pg_stat_activity activity
+					WHERE activity.datname=current_database()
+					  AND ? = ANY(pg_blocking_pids(activity.pid))
+					  AND activity.wait_event_type='Lock'
+					LIMIT 1`), blockerPID).Scan(&writerPID)
+				return err == nil
+			}, 5*time.Second, 10*time.Millisecond,
+				"native writer did not wait on the delivery fence")
+
+			_, lockErr := blocker.ExecContext(ctx,
+				`LOCK TABLE `+test.table+` IN ACCESS EXCLUSIVE MODE NOWAIT`)
+			if lockErr != nil {
+				_ = blocker.Rollback()
+				writeErr := <-writerDone
+				require.NoError(writeErr, "writer should finish after the held fence is released")
+				require.NoError(lockErr, "writer must wait for the delivery fence before taking a "+test.table+" lock")
+			}
+			require.NoError(blocker.Commit())
+			require.NoError(<-writerDone)
+		})
+	}
+}
+
+func TestScopedSyncStoreWaitsForDeliveryFenceBeforeTransactionCallback(t *testing.T) {
+	requirements := require.New(t)
+	checks := assert.New(t)
+	dbURL := skipUnlessPostgresInternal(t)
+	st := newPGStoreInternal(t, dbURL)
+	ctx := context.Background()
+	source, err := st.GetOrCreateSource("gmail", "scoped-delivery-fence@example.test")
+	requirements.NoError(err)
+	syncRunID, err := st.StartSync(source.ID, "full")
+	requirements.NoError(err)
+	scoped := st.ScopedToSync(source.ID, syncRunID)
+
+	blocker, err := st.DB().BeginTx(ctx, nil)
+	requirements.NoError(err)
+	defer func() { _ = blocker.Rollback() }()
+	var blockerPID int
+	requirements.NoError(blocker.QueryRowContext(ctx, `SELECT pg_backend_pid()`).Scan(&blockerPID))
+	holdExclusiveDeliveryAdmissionFenceForTest(ctx, t, blocker)
+
+	callbackStarted := make(chan struct{}, 1)
+	writerDone := make(chan error, 1)
+	go func() {
+		writerDone <- scoped.withTxContext(ctx, func(*loggedTx) error {
+			callbackStarted <- struct{}{}
+			return nil
+		})
+	}()
+
+	var writerPID int
+	requirements.Eventually(func() bool {
+		err := st.DB().QueryRowContext(ctx, st.Rebind(`
+			SELECT activity.pid FROM pg_stat_activity activity
+			WHERE activity.datname=current_database()
+			  AND ? = ANY(pg_blocking_pids(activity.pid))
+			  AND activity.wait_event_type='Lock'
+			  AND activity.query LIKE '%pg_advisory_xact_lock_shared%'
+			LIMIT 1`), blockerPID).Scan(&writerPID)
+		return err == nil
+	}, 5*time.Second, 10*time.Millisecond,
+		"scoped sync writer did not wait on the delivery fence")
+
+	select {
+	case <-callbackStarted:
+		checks.Fail("transaction callback ran before the delivery fence was released")
+	default:
+	}
+
+	requirements.NoError(blocker.Commit())
+	select {
+	case <-callbackStarted:
+	case <-time.After(5 * time.Second):
+		requirements.FailNow("transaction callback did not run after the delivery fence was released")
+	}
+	select {
+	case err := <-writerDone:
+		requirements.NoError(err)
+	case <-time.After(5 * time.Second):
+		requirements.FailNow("scoped sync writer did not finish after the delivery fence was released")
+	}
+}
+
+func TestStoreWritersShareDeliveryFence(t *testing.T) {
+	requirements := require.New(t)
+	dbURL := skipUnlessPostgresInternal(t)
+	st := newPGStoreInternal(t, dbURL)
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+	firstSource, err := st.GetOrCreateSource("gmail", "delivery-shared-writer-one@example.test")
+	requirements.NoError(err)
+	secondSource, err := st.GetOrCreateSource("gmail", "delivery-shared-writer-two@example.test")
+	requirements.NoError(err)
+
+	firstEntered := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseFirst) }) }
+	t.Cleanup(release)
+	firstDone := make(chan error, 1)
+	go func() {
+		firstDone <- st.withTxContext(ctx, func(tx *loggedTx) error {
+			if _, err := tx.ExecContext(ctx,
+				`UPDATE sources SET sync_cursor=? WHERE id=?`, "shared-writer-one", firstSource.ID); err != nil {
+				return err
+			}
+			close(firstEntered)
+			<-releaseFirst
+			return nil
+		})
+	}()
+	select {
+	case <-firstEntered:
+	case <-ctx.Done():
+		requirements.FailNow("first writer did not enter its transaction", ctx.Err())
+	}
+
+	secondEntered := make(chan struct{})
+	secondDone := make(chan error, 1)
+	go func() {
+		secondDone <- st.withTxContext(ctx, func(tx *loggedTx) error {
+			if _, err := tx.ExecContext(ctx,
+				`UPDATE sources SET sync_cursor=? WHERE id=?`, "shared-writer-two", secondSource.ID); err != nil {
+				return err
+			}
+			close(secondEntered)
+			return nil
+		})
+	}()
+	select {
+	case <-secondEntered:
+		release()
+	case <-time.After(2 * time.Second):
+		release()
+		requirements.NoError(<-firstDone)
+		requirements.NoError(<-secondDone)
+		requirements.FailNow("an ordinary writer waited behind another writer's delivery fence")
+	}
+	requirements.NoError(<-firstDone)
+	requirements.NoError(<-secondDone)
+}
+
+func TestDeliveryFenceIsScopedToNativeSchema(t *testing.T) {
+	requirements := require.New(t)
+	dbURL := skipUnlessPostgresInternal(t)
+	firstStore := newPGStoreInternal(t, dbURL)
+	secondStore := newPGStoreInternal(t, dbURL)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+
+	var firstSchema, secondSchema string
+	requirements.NoError(firstStore.DB().QueryRowContext(ctx, `SELECT current_schema()`).Scan(&firstSchema))
+	requirements.NoError(secondStore.DB().QueryRowContext(ctx, `SELECT current_schema()`).Scan(&secondSchema))
+	requirements.NotEqual(firstSchema, secondSchema)
+	secondSource, err := secondStore.GetOrCreateSource("gmail", "delivery-other-schema@example.test")
+	requirements.NoError(err)
+
+	blocker, err := firstStore.DB().BeginTx(ctx, nil)
+	requirements.NoError(err)
+	t.Cleanup(func() { _ = blocker.Rollback() })
+	holdExclusiveDeliveryAdmissionFenceForTest(ctx, t, blocker)
+
+	writerDone := make(chan error, 1)
+	go func() {
+		writerDone <- secondStore.withTxContext(ctx, func(tx *loggedTx) error {
+			_, err := tx.ExecContext(ctx,
+				`UPDATE sources SET sync_cursor=? WHERE id=?`, "other-schema-writer", secondSource.ID)
+			return err
+		})
+	}()
+
+	select {
+	case err := <-writerDone:
+		requirements.NoError(err, "a fence in one schema must not block another schema")
+	case <-time.After(2 * time.Second):
+		_ = blocker.Rollback()
+		requirements.NoError(<-writerDone)
+		requirements.FailNow("a delivery fence in one schema blocked a writer in a separate schema")
+	}
+	requirements.NoError(blocker.Commit())
+}
+
+func TestRemoveSourceSerializedWaitsForDeliveryFenceBeforeExclusiveTables(t *testing.T) {
+	requirements := require.New(t)
+	dbURL := skipUnlessPostgresInternal(t)
+	st := newPGStoreInternal(t, dbURL)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	source, err := st.GetOrCreateSource("gmail", "delivery-exclusive-lock-order@example.test")
+	requirements.NoError(err)
+
+	writerHasFence := make(chan struct{})
+	releaseWriter := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseWriter) }) }
+	t.Cleanup(release)
+	var writerPID int
+	writerDone := make(chan error, 1)
+	go func() {
+		writerDone <- st.withTxContext(ctx, func(tx *loggedTx) error {
+			if err := tx.QueryRowContext(ctx, `SELECT pg_backend_pid()`).Scan(&writerPID); err != nil {
+				return err
+			}
+			close(writerHasFence)
+			<-releaseWriter
+			_, err := tx.ExecContext(ctx,
+				`UPDATE sources SET sync_cursor=? WHERE id=?`, "exclusive-lock-order-cursor", source.ID)
+			return err
+		})
+	}()
+
+	select {
+	case <-writerHasFence:
+	case <-ctx.Done():
+		requirements.FailNow("writer did not acquire the delivery fence", ctx.Err())
+	}
+	removeDone := make(chan error, 1)
+	go func() {
+		_, _, removeErr := st.RemoveSourceSerialized(ctx, source.ID)
+		removeDone <- removeErr
+	}()
+	requirements.Eventually(func() bool {
+		var removerPID int
+		err := st.DB().QueryRowContext(ctx, st.Rebind(`
+			SELECT activity.pid FROM pg_stat_activity activity
+			WHERE activity.datname=current_database()
+			  AND ? = ANY(pg_blocking_pids(activity.pid))
+			  AND activity.wait_event_type='Lock'
+			  AND (activity.query LIKE '%pg_advisory_xact_lock%'
+			       OR activity.query LIKE '%delivery_admission_lock%'
+			       OR activity.query LIKE '%archive_metadata%'
+			       OR activity.query LIKE '%sources%')
+			LIMIT 1`), writerPID).Scan(&removerPID)
+		return err == nil
+	}, 5*time.Second, 10*time.Millisecond,
+		"source removal did not wait behind the writer's delivery fence")
+
+	release()
+	requirements.NoError(<-writerDone, "writer should finish before exclusive source removal")
+	requirements.NoError(<-removeDone, "source removal should finish after the writer commits")
 }
 
 // TestRemoveSourceSerializedDoesNotDeadlockWithLegacyIdentityMigration pins
@@ -393,6 +916,89 @@ func TestMaintenanceHatchLiftsStatementTimeout(t *testing.T) {
 		})
 		require.NoError(err, "runMaintenance must lift the session timeout and let pg_sleep(0.3) complete")
 	})
+}
+
+func TestMaintenanceResetsTimeoutBeforeWaitingForDeliveryFence(t *testing.T) {
+	requirements := require.New(t)
+	dbURL := skipUnlessPostgresInternal(t)
+	st := newPGStoreInternal(t, dbURL)
+	ctx := context.Background()
+	st.DB().SetMaxOpenConns(3)
+	st.DB().SetMaxIdleConns(3)
+
+	holder, err := st.DB().Conn(ctx)
+	requirements.NoError(err)
+	worker, err := st.DB().Conn(ctx)
+	requirements.NoError(err)
+	monitor, err := st.DB().Conn(ctx)
+	requirements.NoError(err)
+	_, err = worker.ExecContext(ctx, `SET statement_timeout = '100ms'`)
+	requirements.NoError(err)
+	var workerTimeout string
+	requirements.NoError(worker.QueryRowContext(ctx, `SHOW statement_timeout`).Scan(&workerTimeout))
+	requirements.Equal("100ms", workerTimeout)
+	_, err = holder.ExecContext(ctx, `SELECT pg_advisory_lock(
+		hashtextextended('msgvault.delivery_admission:' || current_schema(), 0))`)
+	requirements.NoError(err)
+	var holderPID int
+	requirements.NoError(holder.QueryRowContext(ctx, `SELECT pg_backend_pid()`).Scan(&holderPID))
+	requirements.NoError(worker.Close(), "return the low-timeout worker connection to the pool")
+
+	maintenanceDone := make(chan error, 1)
+	maintenanceStarted := true
+	maintenanceFinished := false
+	barrierHeld := true
+	defer func() {
+		if barrierHeld {
+			_, _ = holder.ExecContext(context.Background(), `SELECT pg_advisory_unlock(
+				hashtextextended('msgvault.delivery_admission:' || current_schema(), 0))`)
+		}
+		if maintenanceStarted && !maintenanceFinished {
+			select {
+			case <-maintenanceDone:
+			case <-time.After(5 * time.Second):
+			}
+		}
+		_ = monitor.Close()
+		_ = holder.Close()
+	}()
+
+	callbackRan := false
+	var callbackTimeout string
+	go func() {
+		maintenanceDone <- st.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+			callbackRan = true
+			return tx.QueryRowContext(ctx, `SHOW statement_timeout`).Scan(&callbackTimeout)
+		})
+	}()
+	requirements.Eventually(func() bool {
+		var waiting bool
+		err := monitor.QueryRowContext(ctx, st.Rebind(`
+			SELECT EXISTS (
+				SELECT 1 FROM pg_stat_activity activity
+				WHERE activity.wait_event_type='Lock'
+				  AND ?=ANY(pg_blocking_pids(activity.pid))
+			)`), holderPID).Scan(&waiting)
+		return err == nil && waiting
+	}, 5*time.Second, 10*time.Millisecond,
+		"maintenance must reset the statement timeout before blocking on the delivery fence")
+
+	// Keep the blocker past the worker connection's statement timeout. A fence
+	// wait that still inherits the session timeout must return SQLSTATE 57014.
+	<-time.NewTimer(150 * time.Millisecond).C
+	_, err = holder.ExecContext(ctx, `SELECT pg_advisory_unlock(
+		hashtextextended('msgvault.delivery_admission:' || current_schema(), 0))`)
+	requirements.NoError(err)
+	barrierHeld = false
+	select {
+	case err = <-maintenanceDone:
+		maintenanceFinished = true
+	case <-time.After(5 * time.Second):
+		requirements.FailNow("maintenance did not continue after the delivery fence was released")
+	}
+	requirements.NoError(err)
+	requirements.True(callbackRan)
+	requirements.Equal("0", callbackTimeout)
 }
 
 // TestRepackMetadataMaintenanceLiftsStatementTimeout proves the public repack

@@ -89,31 +89,56 @@ func (s *Store) bumpParticipantDisplayNameRevisionContext(
 	return nil
 }
 
-func (s *Store) bumpParticipantDisplayNameRevisionIfChanged(
-	tx *loggedTx,
-	result sql.Result,
-) (bool, error) {
-	return s.bumpParticipantDisplayNameRevisionIfChangedContext(
-		context.Background(), tx, result,
-	)
-}
-
-func (s *Store) bumpParticipantDisplayNameRevisionIfChangedContext(
-	ctx context.Context,
-	tx *loggedTx,
-	result sql.Result,
-) (bool, error) {
+func participantDisplayNameRowsChanged(result sql.Result) (bool, error) {
 	changed, err := result.RowsAffected()
 	if err != nil {
 		return false, fmt.Errorf("check participant display-name change: %w", err)
 	}
-	if changed <= 0 {
-		return false, nil
+	return changed > 0, nil
+}
+
+// invalidateParticipantEnrichmentThenBumpDisplayNameRevision preserves the
+// delivery-generation-before-metadata lock order shared by participant
+// insertion and tracked-person identity invalidation.
+func (s *Store) invalidateParticipantEnrichmentThenBumpDisplayNameRevision(
+	ctx context.Context,
+	tx *loggedTx,
+	result sql.Result,
+	participantIDs ...int64,
+) (bool, error) {
+	changed, err := participantDisplayNameRowsChanged(result)
+	if err != nil || !changed {
+		return changed, err
+	}
+	if err := s.invalidateParticipantPersonEnrichmentTx(ctx, tx, participantIDs...); err != nil {
+		return false, err
 	}
 	if err := s.bumpParticipantDisplayNameRevisionContext(ctx, tx); err != nil {
 		return false, err
 	}
 	return true, nil
+}
+
+func (s *Store) bumpDisplayNameRevisionAfterEnrichment(
+	ctx context.Context,
+	tx *loggedTx,
+	participantIDs ...int64,
+) error {
+	if err := s.invalidateParticipantPersonEnrichmentTx(ctx, tx, participantIDs...); err != nil {
+		return err
+	}
+	return s.bumpParticipantDisplayNameRevisionContext(ctx, tx)
+}
+
+func (s *Store) repairParticipantDisplayNameRevision(
+	ctx context.Context,
+	tx *loggedTx,
+	participantIDs []int64,
+) error {
+	if len(participantIDs) == 0 {
+		return nil
+	}
+	return s.bumpDisplayNameRevisionAfterEnrichment(ctx, tx, participantIDs...)
 }
 
 // RepairParticipantDisplayNames applies one maintenance batch and advances the
@@ -152,10 +177,7 @@ func (s *Store) RepairParticipantDisplayNames(
 		if len(changedParticipantIDs) == 0 {
 			return nil
 		}
-		if err := s.bumpParticipantDisplayNameRevision(tx); err != nil {
-			return err
-		}
-		return s.invalidateParticipantPersonEnrichmentTx(
-			context.Background(), tx, changedParticipantIDs...)
+		return s.repairParticipantDisplayNameRevision(
+			context.Background(), tx, changedParticipantIDs)
 	})
 }

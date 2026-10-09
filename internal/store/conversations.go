@@ -177,7 +177,7 @@ func (s *Store) GetConversationWindowContext(
 		LEFT JOIN message_recipients mr ON mr.id = (
 			SELECT mr2.id FROM message_recipients mr2
 			WHERE mr2.message_id = m.id AND mr2.recipient_type = 'from'
-			ORDER BY mr2.id LIMIT 1
+			ORDER BY mr2.recipient_order, mr2.id LIMIT 1
 		)
 		LEFT JOIN participants p ON p.id = COALESCE(m.sender_id, mr.participant_id)
 		LEFT JOIN conversations c ON c.id = m.conversation_id

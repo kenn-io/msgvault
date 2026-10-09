@@ -213,6 +213,64 @@ func TestSetEmbedGenGroupIfUnchanged_PostgresAvoidsPersistenceLockInversion(t *t
 	}
 }
 
+func TestSetEmbedGenGroupWaitsForAdmissionBeforeEmbeddingClock(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	f := newEmbedGenGroupFixture(t, 1)
+	if !f.store.IsPostgreSQL() {
+		t.Skip("PostgreSQL-only admission and embedding lock ordering")
+	}
+	versions, metadata := f.snapshot()
+
+	admission, err := f.store.DB().BeginTx(t.Context(), nil)
+	requirements.NoError(err)
+	defer func() { _ = admission.Rollback() }()
+	var admissionPID int
+	requirements.NoError(admission.QueryRowContext(t.Context(), `SELECT pg_backend_pid()`).Scan(&admissionPID))
+	_, err = admission.ExecContext(t.Context(),
+		`SELECT pg_advisory_xact_lock(
+			hashtextextended('msgvault.delivery_admission:' || current_schema(), 0))`)
+	requirements.NoError(err, "hold the exclusive delivery admission fence")
+
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	type groupResult struct {
+		stamped bool
+		err     error
+	}
+	finished := make(chan groupResult, 1)
+	go func() {
+		stamped, err := f.store.SetEmbedGenGroupIfUnchanged(ctx, versions, metadata, 4)
+		finished <- groupResult{stamped: stamped, err: err}
+	}()
+	requirements.Eventually(func() bool {
+		var waiting int
+		err := f.store.DB().QueryRowContext(ctx, f.store.Rebind(`
+			SELECT activity.pid FROM pg_stat_activity activity
+			WHERE activity.datname=current_database()
+			  AND ? = ANY(pg_blocking_pids(activity.pid))
+			  AND activity.wait_event_type='Lock'
+			  AND (activity.query LIKE '%delivery_admission_lock%'
+			       OR activity.query LIKE '%pg_advisory_xact_lock%'
+			       OR activity.query LIKE '%messages%')
+			LIMIT 1`), admissionPID).Scan(&waiting)
+		return err == nil && waiting > 0
+	}, 5*time.Second, 10*time.Millisecond, "group CAS did not wait on the held admission fence")
+
+	probe, err := f.store.DB().BeginTx(ctx, nil)
+	requirements.NoError(err)
+	var advisoryAvailable bool
+	requirements.NoError(probe.QueryRowContext(ctx, `SELECT pg_try_advisory_xact_lock_shared(
+		hashtextextended('msgvault.embedding_change_clock', 0))`).Scan(&advisoryAvailable))
+	requirements.NoError(probe.Commit())
+	requirements.NoError(admission.Commit())
+
+	result := <-finished
+	requirements.NoError(result.err)
+	assertions.True(result.stamped)
+	assertions.True(advisoryAvailable,
+		"group CAS must wait on the delivery fence before taking the exclusive embedding clock")
+}
+
 func TestSetEmbedGenGroupIfUnchanged_OneMissStampsNone(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

@@ -3562,6 +3562,16 @@ listeners were found in this application's configured data directory.
 
 Start the Model Context Protocol server for AI assistant integration.
 
+On unreleased `main`, contact delivery policy tools require daemon API schema 3.9.0. The owner can
+inspect `get_delivery_policy`. Expose `set_delivery_policy` and
+`clear_delivery_policy` with `msgvault mcp --allow-delivery-policy-writes` and
+separately enable daemon edits with
+`msgvault serve --allow-delivery-policy-writes`. Each MCP edit requires client
+confirmation of its exact scope and revisions. Delegated draft credentials do
+not gain these tools. See [contact delivery policies](api-server.md#contact-delivery-policies)
+for inheritance, exact targets, and the admission boundary. These tools do not
+send messages or change existing drafts.
+
 Draft tools prepare and manage drafts through the selected daemon, using the same commands and permissions as the CLI. Msgvault never sends. A daemon with API schema 3.0.0 or newer exposes eight draft tools to the owner.
 
 With `--agent-url` and `--agent-token-file`, `msgvault mcp` exposes only the six delegated draft tools and, on daemons with API schema 3.1.0 or newer, the calendar tools over stdio. The daemon checks the token's permissions and source scope on every call. Delegated sessions refuse `--http`.

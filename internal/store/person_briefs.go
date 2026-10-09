@@ -145,7 +145,7 @@ func (s *Store) GetPersonBriefEnrollmentContext(
 	ctx context.Context, personID int64,
 ) (*PersonBriefEnrollment, error) {
 	var enrollment *PersonBriefEnrollment
-	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
 		var err error
 		enrollment, err = s.getPersonBriefEnrollmentTx(ctx, tx, personID)
 		return err

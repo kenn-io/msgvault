@@ -808,17 +808,37 @@ func (e *DuckDBEngine) parquetCTEs() string {
 	}
 	srcCTE += fmt.Sprintf(" FROM read_parquet('%s')", e.parquetPath("sources"))
 
+	// Recipient order and row identity were added to the Parquet cache in
+	// schema v32. Keep readers safe while an older cache is awaiting rebuild.
+	mrReplace := []string{
+		"CAST(message_id AS BIGINT) AS message_id",
+		"CAST(participant_id AS BIGINT) AS participant_id",
+		"CAST(recipient_type AS VARCHAR) AS recipient_type",
+		"CAST(display_name AS VARCHAR) AS display_name",
+	}
+	var mrExtra []string
+	if e.hasCol("message_recipients", "recipient_id") {
+		mrReplace = append(mrReplace, "TRY_CAST(recipient_id AS BIGINT) AS recipient_id")
+	} else {
+		mrExtra = append(mrExtra, "0::BIGINT AS recipient_id")
+	}
+	if e.hasCol("message_recipients", "recipient_order") {
+		mrReplace = append(mrReplace, "COALESCE(TRY_CAST(recipient_order AS INTEGER), 0) AS recipient_order")
+	} else {
+		mrExtra = append(mrExtra, "0 AS recipient_order")
+	}
+	mrCTE := fmt.Sprintf("SELECT * REPLACE (\n\t\t\t\t%s\n\t\t\t)", strings.Join(mrReplace, ",\n\t\t\t\t"))
+	if len(mrExtra) > 0 {
+		mrCTE += ", " + strings.Join(mrExtra, ", ")
+	}
+	mrCTE += fmt.Sprintf(" FROM read_parquet('%s')", e.parquetPath("message_recipients"))
+
 	return fmt.Sprintf(`
 		msg AS (
 			%s
 		),
 		mr AS (
-			SELECT * REPLACE (
-				CAST(message_id AS BIGINT) AS message_id,
-				CAST(participant_id AS BIGINT) AS participant_id,
-				CAST(recipient_type AS VARCHAR) AS recipient_type,
-				CAST(display_name AS VARCHAR) AS display_name
-			) FROM read_parquet('%s')
+			%s
 		),
 		p AS (
 			%s
@@ -855,7 +875,7 @@ func (e *DuckDBEngine) parquetCTEs() string {
 			FROM read_parquet('%s')
 		)
 		`, msgCTE,
-		e.parquetPath("message_recipients"),
+		mrCTE,
 		pCTE,
 		e.parquetPath("labels"),
 		e.parquetPath("message_labels"),
@@ -1960,9 +1980,9 @@ func (e *DuckDBEngine) ListMessages(ctx context.Context, filter MessageFilter) (
 		),
 		msg_sender AS (
 			SELECT mr.message_id,
-				   FIRST(p.email_address) as from_email,
-				   FIRST(COALESCE(NULLIF(TRIM(mr.display_name), ''), NULLIF(TRIM(p.display_name), ''), NULLIF(p.phone_number, ''), p.email_address, '')) as from_name,
-				   FIRST(COALESCE(p.phone_number, '')) as from_phone
+				   FIRST(p.email_address ORDER BY mr.recipient_order, mr.recipient_id) as from_email,
+				   FIRST(COALESCE(NULLIF(TRIM(mr.display_name), ''), NULLIF(TRIM(p.display_name), ''), NULLIF(p.phone_number, ''), p.email_address, '') ORDER BY mr.recipient_order, mr.recipient_id) as from_name,
+				   FIRST(COALESCE(p.phone_number, '') ORDER BY mr.recipient_order, mr.recipient_id) as from_phone
 			FROM mr
 			JOIN p ON p.id = mr.participant_id
 			WHERE mr.recipient_type = 'from'
@@ -2089,7 +2109,7 @@ func (e *DuckDBEngine) fetchParticipantsForMessages(ctx context.Context, message
 		JOIN p ON p.id = mr.participant_id
 		WHERE mr.message_id IN (%s)
 		  AND mr.recipient_type IN ('to', 'cc', 'bcc')
-		ORDER BY mr.message_id
+		ORDER BY mr.message_id, mr.recipient_order, mr.recipient_id
 	`, e.parquetCTEs(), recipientNameExpr("mr", "p"), strings.Join(placeholders, ",")), ids...)
 	if err != nil {
 		return err
@@ -2382,7 +2402,11 @@ func (e *DuckDBEngine) Search(ctx context.Context, q *search.Query, limit, offse
 			m.deleted_from_source_at,
 			COALESCE(m.message_type, '')
 		FROM sqlite_db.messages m
-		LEFT JOIN sqlite_db.message_recipients mr_sender ON mr_sender.message_id = m.id AND mr_sender.recipient_type = 'from'
+		LEFT JOIN sqlite_db.message_recipients mr_sender ON mr_sender.id = (
+			SELECT mr.id FROM sqlite_db.message_recipients mr
+			WHERE mr.message_id = m.id AND mr.recipient_type = 'from'
+			ORDER BY mr.recipient_order, mr.id LIMIT 1
+		)
 		LEFT JOIN sqlite_db.participants p_sender ON p_sender.id = mr_sender.participant_id
 		LEFT JOIN sqlite_db.conversations conv ON conv.id = m.conversation_id
 		%s
@@ -2657,9 +2681,9 @@ func (e *DuckDBEngine) SearchFast(ctx context.Context, q *search.Query, filter M
 		),
 		msg_sender AS (
 			SELECT mr.message_id,
-				   FIRST(p.email_address) as from_email,
-				   FIRST(COALESCE(NULLIF(TRIM(mr.display_name), ''), NULLIF(TRIM(p.display_name), ''), NULLIF(p.phone_number, ''), p.email_address, '')) as from_name,
-				   FIRST(COALESCE(p.phone_number, '')) as from_phone
+			   FIRST(p.email_address ORDER BY mr.recipient_order, mr.recipient_id) as from_email,
+			   FIRST(COALESCE(NULLIF(TRIM(mr.display_name), ''), NULLIF(TRIM(p.display_name), ''), NULLIF(p.phone_number, ''), p.email_address, '') ORDER BY mr.recipient_order, mr.recipient_id) as from_name,
+			   FIRST(COALESCE(p.phone_number, '') ORDER BY mr.recipient_order, mr.recipient_id) as from_phone
 			FROM mr
 			JOIN p ON p.id = mr.participant_id
 			WHERE mr.recipient_type = 'from'
@@ -2775,9 +2799,9 @@ func (e *DuckDBEngine) SearchFastCount(ctx context.Context, q *search.Query, fil
 		WITH %s,
 		msg_sender AS (
 			SELECT mr.message_id,
-				   FIRST(p.email_address) as from_email,
-				   FIRST(COALESCE(NULLIF(TRIM(mr.display_name), ''), NULLIF(TRIM(p.display_name), ''), NULLIF(p.phone_number, ''), p.email_address, '')) as from_name,
-				   FIRST(COALESCE(p.phone_number, '')) as from_phone
+			   FIRST(p.email_address ORDER BY mr.recipient_order, mr.recipient_id) as from_email,
+			   FIRST(COALESCE(NULLIF(TRIM(mr.display_name), ''), NULLIF(TRIM(p.display_name), ''), NULLIF(p.phone_number, ''), p.email_address, '') ORDER BY mr.recipient_order, mr.recipient_id) as from_name,
+			   FIRST(COALESCE(p.phone_number, '') ORDER BY mr.recipient_order, mr.recipient_id) as from_phone
 			FROM mr
 			JOIN p ON p.id = mr.participant_id
 			WHERE mr.recipient_type = 'from'
@@ -3054,9 +3078,9 @@ func (e *DuckDBEngine) SearchFastWithStats(ctx context.Context, q *search.Query,
 		WITH %s,
 		msg_sender AS (
 			SELECT mr.message_id,
-				   FIRST(p.email_address) as from_email,
-				   FIRST(COALESCE(NULLIF(TRIM(mr.display_name), ''), NULLIF(TRIM(p.display_name), ''), NULLIF(p.phone_number, ''), p.email_address, '')) as from_name,
-				   FIRST(COALESCE(p.phone_number, '')) as from_phone
+			   FIRST(p.email_address ORDER BY mr.recipient_order, mr.recipient_id) as from_email,
+			   FIRST(COALESCE(NULLIF(TRIM(mr.display_name), ''), NULLIF(TRIM(p.display_name), ''), NULLIF(p.phone_number, ''), p.email_address, '') ORDER BY mr.recipient_order, mr.recipient_id) as from_name,
+			   FIRST(COALESCE(p.phone_number, '') ORDER BY mr.recipient_order, mr.recipient_id) as from_phone
 			FROM mr
 			JOIN p ON p.id = mr.participant_id
 			WHERE mr.recipient_type = 'from'

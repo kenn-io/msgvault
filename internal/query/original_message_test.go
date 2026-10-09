@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"math"
+	"runtime"
 	"strconv"
 	"testing"
 	"time"
@@ -344,6 +345,71 @@ func TestListThread(t *testing.T) {
 		must.NoError(err)
 		checks.Equal([]int64{otherMsg}, ids(page))
 	})
+}
+
+func TestMessageAndThreadRecipientsFollowStoredHeaderOrder(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	f := storetest.New(t)
+	engine := originalEngine(f)
+	ctx := context.Background()
+
+	firstSender := f.EnsureParticipant("first-sender@example.test", "First Stored Sender", "example.test")
+	firstRecipient := f.EnsureParticipant("first-recipient@example.test", "First Stored Recipient", "example.test")
+	secondSender := f.EnsureParticipant("second-sender@example.test", "Header First Sender", "example.test")
+	secondRecipient := f.EnsureParticipant("second-recipient@example.test", "Header First Recipient", "example.test")
+	messageID := f.NewMessage().WithSourceMessageID("ordered-headers").Create(t, f.Store)
+
+	requirements.NoError(f.Store.ReplaceMessageRecipients(messageID, "from",
+		[]int64{firstSender, secondSender}, []string{"First Stored Sender", "Header First Sender"}))
+	requirements.NoError(f.Store.ReplaceMessageRecipients(messageID, "to",
+		[]int64{firstRecipient, secondRecipient}, []string{"First Stored Recipient", "Header First Recipient"}))
+	for _, recipientType := range []string{"from", "to"} {
+		_, err := f.Store.DB().Exec(f.Store.Rebind(`
+			UPDATE message_recipients
+			SET recipient_order = CASE WHEN participant_id = ? THEN 1 ELSE 0 END
+			WHERE message_id = ? AND recipient_type = ?
+		`), map[string]int64{"from": firstSender, "to": firstRecipient}[recipientType], messageID, recipientType)
+		requirements.NoError(err)
+	}
+
+	listed, err := engine.ListMessages(ctx, query.MessageFilter{})
+	requirements.NoError(err)
+	requirements.Len(listed, 1)
+	assertions.Equal("Header First Sender", listed[0].FromName)
+	assertions.Equal([]query.Address{
+		{Email: "second-recipient@example.test", Name: "Header First Recipient"},
+		{Email: "first-recipient@example.test", Name: "First Stored Recipient"},
+	}, listed[0].To)
+
+	thread, err := engine.ListThread(ctx, query.ThreadQuery{ID: messageID})
+	requirements.NoError(err)
+	requirements.Len(thread.Messages, 1)
+	assertions.Equal([]query.Address{
+		{Email: "second-sender@example.test", Name: "Header First Sender"},
+		{Email: "first-sender@example.test", Name: "First Stored Sender"},
+	}, thread.Messages[0].From)
+	assertions.Equal(listed[0].To, thread.Messages[0].To)
+
+	detail, err := engine.GetMessage(ctx, messageID)
+	requirements.NoError(err)
+	assertions.Equal(thread.Messages[0].From, detail.From)
+	assertions.Equal(thread.Messages[0].To, detail.To)
+	// Windows builds do not ship DuckDB's sqlite_scanner extension, so message
+	// detail reads use the direct SQLite engine instead of this scanner path.
+	if !f.Store.IsPostgreSQL() && runtime.GOOS != "windows" {
+		var databaseSequence int
+		var databaseName, databasePath string
+		requirements.NoError(f.Store.DB().QueryRow("PRAGMA database_list").Scan(
+			&databaseSequence, &databaseName, &databasePath,
+		))
+		scannedEngine, err := query.NewDuckDBEngine("", databasePath, nil)
+		requirements.NoError(err)
+		t.Cleanup(func() { _ = scannedEngine.Close() })
+		scannedDetail, err := scannedEngine.GetMessage(ctx, messageID)
+		requirements.NoError(err)
+		assertions.Equal(detail.From, scannedDetail.From)
+		assertions.Equal(detail.To, scannedDetail.To)
+	}
 }
 
 func TestListThreadAllowsNullSourceMessageID(t *testing.T) {

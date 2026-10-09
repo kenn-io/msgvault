@@ -166,6 +166,8 @@ func SafeMCPError(err error) error {
 			"invalid_evidence", "issue_evidence_full", "kata_conflict", "kata_issue_changed", "kata_issue_deleted",
 			"kata_issue_not_found", "kata_issue_outside_project", "kata_request_rejected", "kata_unavailable", "person_identity_required",
 			"person_identity_unavailable", "quote_ambiguous", "quote_not_found", "ref_required",
+			"revision_conflict", "target_changed", "unknown_person", "invalid_policy",
+			"policy_read_forbidden", "policy_write_forbidden", "delivery_policy_unavailable",
 			"unsupported_issue_evidence", "wrong_project":
 			return fmt.Errorf("daemon request failed (%d, %s)", apiErr.Status, apiErr.Code)
 		default:

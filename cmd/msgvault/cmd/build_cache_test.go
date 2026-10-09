@@ -1021,8 +1021,20 @@ func TestBuildCache_ExportsRecipientEnvelopeAddress(t *testing.T) {
 			tmpDir := setupTestSQLite(t)
 			dbPath := filepath.Join(tmpDir, "test.db")
 			analyticsDir := filepath.Join(tmpDir, "analytics")
+			sourceDB, err := sql.Open("sqlite3", dbPath)
+			require.NoError(err)
+			_, err = sourceDB.Exec(`ALTER TABLE message_recipients ADD COLUMN recipient_order INTEGER NOT NULL DEFAULT 0`)
+			require.NoError(err)
+			_, err = sourceDB.Exec(`UPDATE message_recipients SET recipient_order = 4 WHERE message_id = 1 AND recipient_type = 'from'`)
+			require.NoError(err)
+			var expectedRecipientID int64
+			var expectedRecipientOrder int
+			err = sourceDB.QueryRow(`SELECT id, recipient_order FROM message_recipients WHERE message_id = 1 AND recipient_type = 'from'`).
+				Scan(&expectedRecipientID, &expectedRecipientOrder)
+			require.NoError(err)
+			require.NoError(sourceDB.Close())
 
-			_, err := buildCache(dbPath, analyticsDir, false)
+			_, err = buildCache(dbPath, analyticsDir, false)
 			require.NoError(err)
 
 			duckdb, err := sql.Open("duckdb", "")
@@ -1039,6 +1051,15 @@ func TestBuildCache_ExportsRecipientEnvelopeAddress(t *testing.T) {
 			assert.Equal("alice-envelope@example.com", envelope)
 			assert.Equal("alice-envelope@example.com", resolved,
 				"a recorded header address is also the resolved address")
+			var recipientID int64
+			var recipientOrder int
+			err = duckdb.QueryRow(
+				`SELECT recipient_id, recipient_order FROM read_parquet(?)
+				 WHERE message_id = 1 AND recipient_type = 'from'`, glob,
+			).Scan(&recipientID, &recipientOrder)
+			require.NoError(err, "exported message_recipients must carry stable IDs and stored header order")
+			assert.Equal(expectedRecipientID, recipientID)
+			assert.Equal(expectedRecipientOrder, recipientOrder)
 
 			var withoutSnapshot int64
 			err = duckdb.QueryRow(
@@ -1078,6 +1099,33 @@ func TestBuildCache_ExportsRecipientEnvelopeAddress(t *testing.T) {
 			assert.Equal(int64(0), emptyString, "no row exports an empty-string address")
 		})
 	}
+}
+
+func TestBuildCacheCSVSnapshotSupportsLegacyRecipientOrderSchema(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	t.Setenv("MSGVAULT_FORCE_CSV_SNAPSHOT", "1")
+	tmpDir := setupTestSQLite(t)
+	dbPath := filepath.Join(tmpDir, "test.db")
+	analyticsDir := filepath.Join(tmpDir, "analytics")
+
+	_, err := buildCache(dbPath, analyticsDir, false)
+	require.NoError(err)
+
+	duckdb, err := sql.Open("duckdb", "")
+	require.NoError(err)
+	defer func() { _ = duckdb.Close() }()
+
+	var order int
+	var orderType string
+	err = duckdb.QueryRow(
+		`SELECT recipient_order, typeof(recipient_order) FROM read_parquet(?)
+		 WHERE message_id = 1 AND recipient_type = 'from'`,
+		filepath.Join(analyticsDir, "message_recipients", "*.parquet"),
+	).Scan(&order, &orderType)
+	require.NoError(err)
+	assert.Zero(order)
+	assert.Equal("INTEGER", orderType)
 }
 
 // TestBuildCache_ExportsListID proves the cache retains the scalar List-Id

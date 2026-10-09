@@ -93,6 +93,7 @@ const (
 	migrationPersonSweepAttemptBriefFailure = "person_sweep_attempt_brief_failure_v1"
 	migrationCardDAVMultipleAccounts        = "carddav_multiple_accounts_v1"
 	migrationCardDAVInferenceExportState    = "carddav_inference_export_state_v1"
+	migrationDeliverySourceEmailEvidenceV1  = "delivery_source_email_evidence_v1"
 )
 
 func (s *Store) backfillSyncRunResumeMetadata(

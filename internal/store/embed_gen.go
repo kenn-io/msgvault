@@ -107,7 +107,7 @@ func (s *Store) SetEmbedGen(ctx context.Context, ids []int64, target int64) erro
 		}
 		q := `UPDATE messages SET embed_gen = ? WHERE id IN (` +
 			strings.Join(placeholders, ",") + `)`
-		if _, err := s.db.ExecContext(ctx, q, args...); err != nil {
+		if _, err := s.execStoreWriteContext(ctx, q, args...); err != nil {
 			return fmt.Errorf("set embed_gen: %w", err)
 		}
 	}
@@ -207,6 +207,9 @@ func (s *Store) SetEmbedGenGroupIfUnchanged(
 			retErr = fmt.Errorf("rollback embed_gen group transaction: %w", rollbackErr)
 		}
 	}()
+	if err := s.enterDeliveryAdmissionFenceContext(ctx, conn); err != nil {
+		return false, fmt.Errorf("enter embed_gen group delivery fence: %w", err)
+	}
 	if s.IsPostgreSQL() {
 		if _, err := conn.ExecContext(ctx, `SELECT pg_advisory_xact_lock(
 			hashtextextended('msgvault.embedding_change_clock', 0))`); err != nil {
@@ -401,7 +404,7 @@ func (s *Store) embedGenMetadataDigest(
 func (s *Store) SetEmbedGenIfUnchanged(ctx context.Context, items []EmbedGenStamp, target int64) (missed []int64, err error) {
 	for _, it := range items {
 		q := `UPDATE messages SET embed_gen = ? WHERE id = ? AND last_modified = ?`
-		res, err := s.db.ExecContext(ctx, q, target, it.ID, it.LastModified)
+		res, err := s.execStoreWriteContext(ctx, q, target, it.ID, it.LastModified)
 		if err != nil {
 			return missed, fmt.Errorf("set embed_gen if unchanged (id=%d): %w", it.ID, err)
 		}
@@ -437,7 +440,7 @@ func (s *Store) ResetEmbedGen(ctx context.Context, ids []int64) error {
 		}
 		q := `UPDATE messages SET embed_gen = NULL WHERE id IN (` +
 			strings.Join(placeholders, ",") + `)`
-		if _, err := s.db.ExecContext(ctx, q, args...); err != nil {
+		if _, err := s.execStoreWriteContext(ctx, q, args...); err != nil {
 			return fmt.Errorf("reset embed_gen: %w", err)
 		}
 	}

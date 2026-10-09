@@ -57,7 +57,7 @@ func (s *Store) GetPersonTrackingContext(
 	ctx context.Context, personID int64,
 ) (*PersonTracking, error) {
 	var state *PersonTracking
-	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
 		var err error
 		state, err = s.getPersonTrackingTx(ctx, tx, personID)
 		return err

@@ -183,6 +183,8 @@ func TestCORSPreflightHeaders(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodOptions, "/api/v1/settings", nil)
 	req.Header.Set("Origin", "http://localhost:3000")
+	req.Header.Set("Access-Control-Request-Method", http.MethodPost)
+	req.Header.Set("Access-Control-Request-Headers", DeliveryPolicyWriteHeader)
 	w := httptest.NewRecorder()
 
 	handler.ServeHTTP(w, req)
@@ -200,6 +202,8 @@ func TestCORSPreflightHeaders(t *testing.T) {
 		"preflight must allow X-Request-Id for task-creation idempotency keys")
 	assert.Contains(headers, "Idempotency-Key",
 		"preflight must allow person merge and split idempotency keys")
+	assert.Contains(headers, DeliveryPolicyWriteHeader,
+		"preflight must allow the explicit delivery policy write opt-in")
 	assert.NotEmpty(w.Header().Get("Access-Control-Max-Age"), "missing Access-Control-Max-Age")
 }
 

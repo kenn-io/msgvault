@@ -227,6 +227,14 @@ func CopySubsetWithOptions(
 		closeAndCleanup()
 		return nil, fmt.Errorf("reset copied meeting projection migration: %w", err)
 	}
+	// The empty destination marked this backfill before its messages existed.
+	// SQLite intentionally has no message INSERT trigger for this evidence, so
+	// the final InitSchema must rebuild sender-only evidence after the copy.
+	if _, err := tx.Exec(`DELETE FROM applied_migrations WHERE name = ?`, migrationDeliverySourceEmailEvidenceV1); err != nil {
+		_ = tx.Rollback()
+		closeAndCleanup()
+		return nil, fmt.Errorf("reset copied delivery email evidence migration: %w", err)
+	}
 
 	if err := tx.Commit(); err != nil {
 		_, _ = db.Exec("DETACH DATABASE src")
