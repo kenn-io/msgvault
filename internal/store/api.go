@@ -48,6 +48,7 @@ const participantSummarySenderSQL = participantDisplaySQL + ` as from_display,
 
 // APIMessage represents a message for API responses.
 type APIMessage struct {
+	Calendar             *CalendarProjection
 	ID                   int64
 	SourceID             int64
 	SourceMessageID      string
@@ -226,7 +227,8 @@ func (s *Store) GetMessageContext(ctx context.Context, id int64) (*APIMessage, e
 			m.has_attachments,
 			m.size_estimate,
 			m.is_from_me,
-			m.deleted_from_source_at
+			m.deleted_from_source_at,
+			m.metadata
 		FROM messages m
 		LEFT JOIN message_recipients mr ON mr.id = (
 			SELECT mr2.id FROM message_recipients mr2
@@ -245,6 +247,7 @@ func (s *Store) GetMessageContext(ctx context.Context, id int64) (*APIMessage, e
 	// keeps the API consistent and tolerant of either driver.
 	var sentAt, deletedAt nullableTimestamp
 	var isFromMe sql.NullBool
+	var metadata sql.NullString
 	err := s.db.QueryRowContext(ctx, query, id).Scan(
 		&m.ID,
 		&m.SourceID,
@@ -263,6 +266,7 @@ func (s *Store) GetMessageContext(ctx context.Context, id int64) (*APIMessage, e
 		&m.SizeEstimate,
 		&isFromMe,
 		&deletedAt,
+		&metadata,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("message %d: %w", id, ErrMessageNotFound)
@@ -271,6 +275,9 @@ func (s *Store) GetMessageContext(ctx context.Context, id int64) (*APIMessage, e
 		return nil, err
 	}
 	m.IsFromMe = isFromMe.Bool
+	if m.MessageType == messageTypeCalendarEvent {
+		m.Calendar = ParseCalendarProjection(metadata.String)
+	}
 	if sentAt.Valid {
 		m.SentAt = sentAt.Time
 	}

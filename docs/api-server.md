@@ -100,9 +100,11 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.10.0**.
+it is separate from the binary release version. The current schema is **3.11.0**.
 Upgrade clients and daemon together across incompatible schema versions,
 including remote deployments.
+
+Schema 3.11.0 adds owner-only [MCP Events](#mcp-events) and typed calendar projections on message details.
 
 Schema 3.9.0 adds source-scoped agent read permissions and optional `expires_at`. Admitted FTS search responses, including aggregates, filtered messages and total statistics with search text, carry optional `index_state`. Agent checks are bounded; owner CLI searches retain automatic verification and repair.
 See [scoped archive reads](cli-reference.md#scoped-archive-reads).
@@ -461,6 +463,31 @@ Messages already committed remain archived after a failure. Submit a new job
 with the same account and bounds to continue through the normal resumable
 importer. Leave `noresume` false when you want to reuse available progress.
 There is no dedicated cancellation endpoint for these jobs.
+
+## MCP Events
+
+Schema 3.11.0 adds these owner-key-only endpoints. They accept no
+caller-supplied principal. Browser sessions, delegated agent tokens, and keyless
+access cannot use them. Disabled Events has no advertised capability.
+
+| Method | Path under `/api/v1/mcp/events` | Result |
+|---|---|---|
+| POST | `/list` | Runtime catalog; request body `{}` |
+| POST | `/subscribe` | Verified subscription ID, cursor, refresh deadline, and truncation flag |
+| POST | `/unsubscribe` | End the selected subscription; `204` on success |
+| GET | `/status` | Safe subscription delivery state |
+| GET | `/calendar-sources` | Subscribable calendar source IDs, summaries, and accounts |
+| GET | `/event?event_id=...` | Retained occurrence envelope |
+| GET | `/messages/{id}?event_id=...` | Full message details authorized by that occurrence |
+
+POST bodies reject unknown fields. Callback destinations and encrypted secrets
+are never returned by status. Authenticated owner health includes `mcp_events`
+and, when enabled, `mcp_event_capabilities`; public and delegated health omit
+these fields. All Events responses use `Cache-Control: no-store`.
+
+The [MCP Events guide](usage/chat.md#events) owns scope arguments, signed
+verification, delivery and replay behavior, read authority, and transport limits.
+The generated OpenAPI document owns the exact request and error schemas.
 
 ## API Endpoints
 

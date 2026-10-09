@@ -1,0 +1,42 @@
+{
+  "description": "Synthetic native MCP Events profile; no message content or real identities.",
+  "identity_length_encoding": "uint64 big-endian byte length",
+  "server_key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "owner_key": "synthetic-owner-key",
+  "principal": "owner:4cd17a121a2f1b3f",
+  "name": "msgvault.message_archived",
+  "arguments": {
+    "conversation_id": "7",
+    "include_from_me": false
+  },
+  "canonical_arguments": "{\"conversation_id\":\"7\",\"include_from_me\":false}",
+  "callback_url": "https://receiver.example.net/events",
+  "subscription_id": "sub_723e944014d0ea331a679167b7c0a87d1ea970a1f958bdb9373d3fbfdfca5edb",
+  "epoch": 3,
+  "sequence": 42,
+  "event_id": "evt1.sub_723e944014d0ea331a679167b7c0a87d1ea970a1f958bdb9373d3fbfdfca5edb.42.QQjPtfKeiCccoo-wh4Hy0g",
+  "cursor": "c1.3.42.7uQTC0pyha5MU9vGBaEKTg",
+  "webhook_secret": "whsec_oKGio6SlpqeoqaqrrK2ur7CxsrO0tba3uLm6u7y9vr8=",
+  "envelope": {
+    "eventId": "evt1.sub_723e944014d0ea331a679167b7c0a87d1ea970a1f958bdb9373d3fbfdfca5edb.42.QQjPtfKeiCccoo-wh4Hy0g",
+    "name": "msgvault.message_archived",
+    "timestamp": "2026-10-05T12:00:00Z",
+    "data": {
+      "kind": "message",
+      "conversation_id": "7",
+      "source_id": "2",
+      "from_me": false,
+      "message_id": "11",
+      "sent_at": null,
+      "archived_at": "2026-10-05T12:00:00Z"
+    },
+    "cursor": "c1.3.42.7uQTC0pyha5MU9vGBaEKTg"
+  },
+  "body": "{\"eventId\":\"evt1.sub_723e944014d0ea331a679167b7c0a87d1ea970a1f958bdb9373d3fbfdfca5edb.42.QQjPtfKeiCccoo-wh4Hy0g\",\"name\":\"msgvault.message_archived\",\"timestamp\":\"2026-10-05T12:00:00Z\",\"data\":{\"kind\":\"message\",\"conversation_id\":\"7\",\"source_id\":\"2\",\"from_me\":false,\"message_id\":\"11\",\"sent_at\":null,\"archived_at\":\"2026-10-05T12:00:00Z\"},\"cursor\":\"c1.3.42.7uQTC0pyha5MU9vGBaEKTg\"}",
+  "headers": {
+    "webhook-id": "evt1.sub_723e944014d0ea331a679167b7c0a87d1ea970a1f958bdb9373d3fbfdfca5edb.42.QQjPtfKeiCccoo-wh4Hy0g",
+    "webhook-timestamp": "1791201600",
+    "webhook-signature": "v1,AoEpos1+k5UvY4UtQcyCyyg/hAmYUaLBbgu7W8DLktA=",
+    "X-MCP-Subscription-Id": "sub_723e944014d0ea331a679167b7c0a87d1ea970a1f958bdb9373d3fbfdfca5edb"
+  }
+}

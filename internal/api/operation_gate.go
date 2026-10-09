@@ -362,6 +362,10 @@ func writeOperationGateBusy(w http.ResponseWriter, r *http.Request, gate Operati
 // DELETE /api/v1/agent-tokens/{id} uses a dynamic path; its exemption is
 // handled by the strings.HasPrefix check in operationGateRequest below.
 var operationGateExemptPaths = map[string]bool{
+	// Events take the gate for short Store steps, outside callback I/O.
+	mcpEventsPath + "/list":        true,
+	mcpEventsPath + "/subscribe":   true,
+	mcpEventsPath + "/unsubscribe": true,
 	// Calendar control acquires the gate after parsing, authorization, and preview.
 	"/api/v1/calendar/control": true,
 	// Scoring coordinates the gate around local mutations, never provider I/O.

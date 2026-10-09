@@ -6,6 +6,107 @@ CREATE TABLE IF NOT EXISTS archive_metadata (
     value TEXT NOT NULL
 );
 
+-- Native MCP Events use one transaction-owned clock for commit ordering.
+-- Store writes these timestamps as fixed-width UTC text on both backends.
+CREATE TABLE IF NOT EXISTS mcp_event_clock (
+    singleton SMALLINT PRIMARY KEY CHECK (singleton = 1),
+    head_seq BIGINT NOT NULL DEFAULT 0 CHECK (head_seq >= 0),
+    pruned_through_seq BIGINT NOT NULL DEFAULT 0 CHECK (pruned_through_seq >= 0),
+    capture_epoch BIGINT NOT NULL DEFAULT 0 CHECK (capture_epoch >= 0),
+    epoch_started_at TEXT NOT NULL DEFAULT '',
+    coverage_fingerprint TEXT NOT NULL DEFAULT '',
+    enabled BOOLEAN NOT NULL DEFAULT FALSE
+);
+INSERT INTO mcp_event_clock (singleton) VALUES (1)
+ON CONFLICT (singleton) DO NOTHING;
+
+-- Retained occurrences deliberately have no archive foreign keys: deletion
+-- of a message or draft does not destroy a subscriber's receipt.
+CREATE TABLE IF NOT EXISTS mcp_event_log (
+    seq BIGINT PRIMARY KEY CHECK (seq > 0),
+    epoch BIGINT NOT NULL,
+    family TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    scope_kind TEXT NOT NULL,
+    scope_id BIGINT NOT NULL,
+    item_key TEXT NOT NULL,
+    message_id BIGINT,
+    message_reference_seq BIGINT,
+    conversation_id BIGINT NOT NULL,
+    source_id BIGINT NOT NULL,
+    attachment_id BIGINT,
+    from_me BOOLEAN NOT NULL,
+    occurred_at TEXT NOT NULL,
+    recorded_at TEXT NOT NULL,
+    data TEXT NOT NULL CHECK (jsonb_typeof(data::jsonb) = 'object')
+);
+CREATE INDEX IF NOT EXISTS idx_mcp_event_log_scope
+    ON mcp_event_log(epoch, family, scope_kind, scope_id, seq);
+CREATE INDEX IF NOT EXISTS idx_mcp_event_log_source ON mcp_event_log(source_id);
+CREATE INDEX IF NOT EXISTS idx_mcp_event_log_retention ON mcp_event_log(recorded_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mcp_event_log_occurrence
+    ON mcp_event_log(family, scope_kind, scope_id, item_key)
+    WHERE family IN (
+        'msgvault.draft_changed', 'msgvault.kata_issue_filed',
+        'msgvault.attachment_processed');
+
+CREATE TABLE IF NOT EXISTS mcp_event_subscriptions (
+    id TEXT PRIMARY KEY,
+    principal_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    arguments TEXT NOT NULL,
+    scope_kind TEXT NOT NULL,
+    scope_id BIGINT NOT NULL,
+    source_id BIGINT NOT NULL,
+    conversation_reference_id BIGINT NOT NULL DEFAULT 0,
+    callback_url TEXT NOT NULL,
+    secret_enc BYTEA NOT NULL,
+    previous_secret_enc BYTEA,
+    previous_secret_until TEXT,
+    secret_revision BIGINT NOT NULL CHECK (secret_revision > 0),
+    verified_revision BIGINT NOT NULL,
+    verified_at TEXT NOT NULL,
+    generation BIGINT NOT NULL CHECK (generation > 0),
+    state TEXT NOT NULL CHECK (state IN ('active', 'expired', 'unsubscribed', 'gone', 'stopped')),
+    stop_reason TEXT NOT NULL DEFAULT '',
+    expires_at TEXT NOT NULL,
+    cursor_epoch BIGINT NOT NULL,
+    cursor_seq BIGINT NOT NULL CHECK (cursor_seq >= 0),
+    pending_seq BIGINT,
+    pending_envelope BYTEA,
+    pending_generation BIGINT,
+    attempt_count BIGINT NOT NULL DEFAULT 0 CHECK (attempt_count BETWEEN 0 AND 12),
+    next_attempt_at TEXT,
+    from_me_window_start TEXT,
+    from_me_window_count BIGINT NOT NULL DEFAULT 0 CHECK (from_me_window_count >= 0),
+    loop_guard_skips BIGINT NOT NULL DEFAULT 0 CHECK (loop_guard_skips >= 0),
+    dead_letter_count BIGINT NOT NULL DEFAULT 0 CHECK (dead_letter_count >= 0),
+    last_outcome TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    CHECK ((pending_seq IS NULL AND pending_envelope IS NULL AND pending_generation IS NULL)
+        OR (pending_seq IS NOT NULL AND pending_seq > 0
+            AND pending_envelope IS NOT NULL
+            AND pending_generation IS NOT NULL AND pending_generation > 0))
+);
+CREATE INDEX IF NOT EXISTS idx_mcp_event_subscriptions_scope
+    ON mcp_event_subscriptions(scope_kind, scope_id) WHERE state = 'active';
+CREATE INDEX IF NOT EXISTS idx_mcp_event_subscriptions_due
+    ON mcp_event_subscriptions(state, next_attempt_at);
+CREATE INDEX IF NOT EXISTS idx_mcp_event_subscriptions_principal
+    ON mcp_event_subscriptions(principal_id, state);
+
+CREATE TABLE IF NOT EXISTS mcp_event_dead_letters (
+    subscription_id TEXT NOT NULL,
+    seq BIGINT NOT NULL,
+    attempts BIGINT NOT NULL CHECK (attempts BETWEEN 1 AND 12),
+    last_status_class TEXT NOT NULL,
+    failed_at TEXT NOT NULL,
+    PRIMARY KEY (subscription_id, seq)
+);
+CREATE INDEX IF NOT EXISTS idx_mcp_event_dead_letters_cleanup
+    ON mcp_event_dead_letters(failed_at);
+
 -- Open catalog of communication services. Seeded slugs are presentation and
 -- normalization metadata, NOT a database enum and not a compatibility
 -- ceiling: an unknown bridge type or a custom service is registered as a new
@@ -4094,3 +4195,16 @@ CREATE TABLE IF NOT EXISTS message_delivery_addresses (
 );
 CREATE INDEX IF NOT EXISTS idx_message_delivery_addresses_address
     ON message_delivery_addresses(address, message_id);
+
+-- Live references disappear on physical deletion; retained receipts keep
+-- their original reference sequence independently of archive row ID reuse.
+CREATE TABLE IF NOT EXISTS mcp_event_message_refs (
+    message_id BIGINT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+    reference_seq BIGINT NOT NULL UNIQUE CHECK (reference_seq > 0)
+);
+
+-- Scope references survive in subscriptions, but cascade from live conversations.
+CREATE TABLE IF NOT EXISTS mcp_event_conversation_refs (
+    reference_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    conversation_id BIGINT NOT NULL UNIQUE REFERENCES conversations(id) ON DELETE CASCADE
+);

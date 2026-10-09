@@ -126,17 +126,17 @@ func (s *Store) PersistGmailDraftContext(
 		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
 			INSERT INTO gmail_drafts (
 				draft_id, source_id, gmail_draft_id, current_message_id,
-				current_gmail_message_id, thread_id, revision, created_at, updated_at
-			) VALUES (?, ?, ?, ?, ?, ?, 1, %s, %s)
+				current_gmail_message_id, thread_id, revision, created_by_principal, created_at, updated_at
+			) VALUES (?, ?, ?, ?, ?, ?, 1, ?, %s, %s)
 		`, s.dialect.Now(), s.dialect.Now()), draftID, receipt.SourceID,
-			receipt.GmailDraftID, messageID, receipt.GmailMessageID, receipt.ThreadID); err != nil {
+			receipt.GmailDraftID, messageID, receipt.GmailMessageID, receipt.ThreadID, draftCreatorSQL(ctx)); err != nil {
 			return fmt.Errorf("persist Gmail draft ownership: %w", err)
 		}
 		draft = GmailDraft{
 			DraftID: draftID, SourceID: receipt.SourceID, CurrentMessageID: messageID,
 			CurrentReceipt: receipt, Revision: 1,
 		}
-		return nil
+		return s.appendDraftEventTx(ctx, tx, "gmail", draftID, "created")
 	}
 	lock := attributionLock{Sources: []int64{receipt.SourceID}}
 	if _, err := s.persistMessageWithParticipantsTransaction(ctx, lock, before, participants, build, prepare, after); err != nil {
@@ -415,7 +415,7 @@ func (s *Store) PublishGmailDraftReplacementContext(
 		published.CurrentReceipt.GmailMessageID = newGmailMessageID
 		published.Revision++
 		published.Pending = nil
-		return nil
+		return s.appendDraftEventTx(ctx, tx, "gmail", draftID, "updated")
 	})
 	if err != nil {
 		return GmailDraft{}, err
@@ -568,7 +568,7 @@ func (s *Store) FinishGmailDraftDeleteContext(
 		finished.Revision++
 		finished.DiscardedAt = ptrTimeNow()
 		finished.Pending = nil
-		return nil
+		return s.appendDraftEventTx(ctx, tx, "gmail", draftID, "deleted")
 	})
 	if err != nil {
 		return GmailDraft{}, err

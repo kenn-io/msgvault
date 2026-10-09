@@ -410,6 +410,9 @@ func cliMessageDetailFromGenerated(resp *generated.GetCLIMessageResponse) *query
 	}
 	return &query.MessageDetail{
 		ID:                   resp.ID,
+		SourceID:             resp.SourceID,
+		IsFromMe:             resp.IsFromMe,
+		Calendar:             calendarProjectionFromGenerated(resp.Calendar),
 		SourceMessageID:      resp.SourceMessageID,
 		RFC822MessageID:      stringValue(resp.Rfc822MessageID),
 		ConversationID:       resp.ConversationID,
@@ -430,6 +433,21 @@ func cliMessageDetailFromGenerated(resp *generated.GetCLIMessageResponse) *query
 		Attachments:          cliMessageAttachmentsFromGenerated(resp.Attachments),
 		BodyText:             resp.BodyText,
 		BodyHTML:             resp.BodyHTML,
+	}
+}
+
+func calendarProjectionFromGenerated(calendar *generated.CalendarProjection) *store.CalendarProjection {
+	if calendar == nil {
+		return nil
+	}
+	return &store.CalendarProjection{
+		Status:   calendar.Status,
+		Sequence: calendar.Sequence,
+		Start:    calendar.Start,
+		End:      calendar.End,
+		AllDay:   calendar.AllDay,
+		TimeZone: calendar.TimeZone,
+		ICalUID:  calendar.IcalUID,
 	}
 }
 

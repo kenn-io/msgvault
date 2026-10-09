@@ -59,6 +59,8 @@ func (s *Store) ScopedToSync(sourceID, syncRunID int64) *Store {
 		dialect:              base.dialect,
 		readOnly:             base.readOnly,
 		fts5Available:        base.fts5Available,
+		mcpBase:              base.mcpRoot(),
+		mcpIngest:            s.mcpIngest,
 
 		syncGeneration:     &syncGeneration{sourceID: sourceID, runID: syncRunID},
 		syncBase:           base,

@@ -33,6 +33,7 @@ import (
 	imaplib "go.kenn.io/msgvault/internal/imap"
 	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/kataevidence"
+	"go.kenn.io/msgvault/internal/mcpevents"
 	"go.kenn.io/msgvault/internal/meetingimport"
 	"go.kenn.io/msgvault/internal/muesli"
 	"go.kenn.io/msgvault/internal/notionmeetings"
@@ -802,8 +803,6 @@ func runServe(cmd *cobra.Command, args []string) error {
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
 	// Start the schedulers
-	sched.Start()
-	mediaSched.Start()
 
 	// Create adapters for the API interfaces
 	refreshCacheAfterWrite := func(_ context.Context, label string) error {
@@ -897,6 +896,44 @@ func runServe(cmd *cobra.Command, args []string) error {
 		apiOpts.VectorStatus = api.VectorStatusInitializing
 	}
 	apiServer = api.NewServerWithOptions(apiOpts)
+	mcpEventService, eventsErr := newDaemonMCPEventsService(ctx, cfg, s, apiServer)
+	if eventsErr != nil {
+		keyFailure, ok := errors.AsType[*mcpevents.Error](eventsErr)
+		if !ok || keyFailure.Reason != "events_key_unavailable" {
+			return fmt.Errorf("start MCP Events: %w", eventsErr)
+		}
+		// Disable coverage before any scheduled writer starts, while retaining
+		// the fixed key failure for the owner's status command.
+		disabledConfig := *cfg
+		disabledConfig.MCP.Events.Enabled = false
+		mcpEventService, err = newDaemonMCPEventsService(ctx, &disabledConfig, s, apiServer)
+		if err != nil {
+			return fmt.Errorf("disable MCP Events after key failure: %w", err)
+		}
+		apiServer.SetMCPEventsUnavailable(keyFailure)
+		logger.Warn("MCP Events unavailable", "reason", keyFailure.Reason)
+	} else {
+		apiServer.SetMCPEvents(mcpEventService)
+	}
+	storeAdapter.mcpEventsCapture = eventsErr == nil && cfg.MCP.Events.Enabled
+	if storeAdapter.mcpEventsCapture {
+		captureConfig, err := daemonMCPEventsStoreConfig(cfg)
+		if err != nil {
+			return fmt.Errorf("snapshot MCP Events capture configuration: %w", err)
+		}
+		storeAdapter.mcpEventsCaptureConfig = &captureConfig
+	}
+	var mcpEventsDone chan error
+	if eventsErr == nil && cfg.MCP.Events.Enabled && len(mcpEventService.Capabilities()) > 0 {
+		mcpEventsDone = make(chan error, 1)
+		go func() {
+			mcpEventsDone <- mcpEventService.Run(ctx)
+			close(mcpEventsDone)
+		}()
+	}
+	// Coverage is published before scheduled providers may write live data.
+	sched.Start()
+	mediaSched.Start()
 	if cfg.People.Sweep.Enabled {
 		// The daemon owns the people sweep worker, so it owns manual brief
 		// generation: POST /api/v1/people/{id}/brief/generate reports
@@ -1001,6 +1038,12 @@ func runServe(cmd *cobra.Command, args []string) error {
 				serverStartupErr = err
 				cancel()
 			}
+		case eventsRunErr := <-mcpEventsDone:
+			if eventsRunErr != nil {
+				serverStartupErr = eventsRunErr
+				logger.Warn("MCP Events stopped", "reason", "events_storage_unavailable")
+			}
+			cancel()
 		case <-ctx.Done():
 			logger.Info("context cancelled")
 		}
@@ -1013,6 +1056,14 @@ func runServe(cmd *cobra.Command, args []string) error {
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), serveOperationDrainTimeout)
 	defer shutdownCancel()
 	shutdownErr := shutdownServeRuntime(shutdownCtx, cmd.OutOrStdout(), apiServer, serveSchedulers{sched, mediaSched}, operationGate)
+	if mcpEventsDone != nil {
+		select {
+		case eventsRunErr := <-mcpEventsDone:
+			shutdownErr = errors.Join(shutdownErr, eventsRunErr)
+		case <-shutdownCtx.Done():
+			shutdownErr = errors.Join(shutdownErr, errors.New("MCP Events workers did not stop during shutdown"))
+		}
+	}
 	if !cacheJobs.waitContext(shutdownCtx) {
 		logger.Warn("analytics cache build did not stop within the shutdown drain timeout")
 		shutdownErr = errors.Join(shutdownErr, errors.New("analytics cache build did not stop during shutdown"))
@@ -1703,6 +1754,8 @@ type storeAPIAdapter struct {
 	store                   *store.Store
 	config                  *config.Config
 	options                 invocationOptions
+	mcpEventsCapture        bool
+	mcpEventsCaptureConfig  *store.MCPEventsConfig
 	logger                  *slog.Logger
 	draftPolicy             []config.IMAPDraftSource
 	draftClientFactory      func(context.Context, *store.Source) (*imaplib.Client, error)
@@ -1730,6 +1783,11 @@ func (a *storeAPIAdapter) invocationContext(ctx context.Context) context.Context
 	state := newInvocation()
 	state.cfg = a.config
 	state.options = a.options
+	state.mcpEventsCapture = a.mcpEventsCapture
+	if a.mcpEventsCaptureConfig != nil {
+		captureConfig := cloneMCPEventsConfig(*a.mcpEventsCaptureConfig)
+		state.mcpEventsCaptureConfig = &captureConfig
+	}
 	if a.logger != nil {
 		state.logger = a.logger
 	}

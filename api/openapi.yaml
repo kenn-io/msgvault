@@ -1325,6 +1325,47 @@ components:
         - action
         - calendar_id
       type: object
+    CalendarProjection:
+      additionalProperties: true
+      properties:
+        all_day:
+          type:
+            - boolean
+            - "null"
+        end:
+          type:
+            - string
+            - "null"
+        ical_uid:
+          type:
+            - string
+            - "null"
+        sequence:
+          format: int64
+          type:
+            - integer
+            - "null"
+        start:
+          type:
+            - string
+            - "null"
+        status:
+          type:
+            - string
+            - "null"
+        time_zone:
+          type:
+            - string
+            - "null"
+      required:
+        - status
+        - sequence
+        - start
+        - end
+        - all_day
+        - time_zone
+        - ical_uid
+      type: object
     CalendarRequest:
       additionalProperties: false
       not:
@@ -1457,6 +1498,20 @@ components:
         - dry_run
         - plan
         - writes
+      type: object
+    CalendarSource:
+      additionalProperties: true
+      properties:
+        account:
+          type: string
+        source_id:
+          type: string
+        summary:
+          type: string
+      required:
+        - source_id
+        - summary
+        - account
       type: object
     CalendarWriteReceipt:
       additionalProperties: true
@@ -2553,6 +2608,8 @@ components:
           type: string
         body_text:
           type: string
+        calendar:
+          $ref: "#/components/schemas/CalendarProjection"
         cc:
           items:
             $ref: "#/components/schemas/CliMessageAddress"
@@ -2574,6 +2631,8 @@ components:
         id:
           format: int64
           type: integer
+        is_from_me:
+          type: boolean
         labels:
           items:
             type: string
@@ -2597,6 +2656,9 @@ components:
           type: string
         source_conversation_id:
           type: string
+        source_id:
+          format: int64
+          type: integer
         source_message_id:
           type: string
         subject:
@@ -2606,6 +2668,8 @@ components:
             $ref: "#/components/schemas/CliMessageAddress"
           type: array
       required:
+        - source_id
+        - is_from_me
         - id
         - source_message_id
         - conversation_id
@@ -3284,6 +3348,30 @@ components:
         - offset
         - limit
       type: object
+    Definition:
+      additionalProperties: true
+      properties:
+        delivery:
+          items:
+            type: string
+          type: array
+        description:
+          type: string
+        inputSchema:
+          additionalProperties: {}
+          type: object
+        name:
+          type: string
+        payloadSchema:
+          additionalProperties: {}
+          type: object
+      required:
+        - name
+        - description
+        - delivery
+        - inputSchema
+        - payloadSchema
+      type: object
     DeletionManifestDetail:
       additionalProperties: true
       properties:
@@ -3363,6 +3451,19 @@ components:
         - source_type
         - source_identifier
         - source_message_id
+      type: object
+    Delivery:
+      additionalProperties: false
+      properties:
+        mode:
+          type: string
+        secret:
+          type: string
+        url:
+          type: string
+      required:
+        - mode
+        - url
       type: object
     DirectoryPeopleResponse:
       additionalProperties: true
@@ -4523,6 +4624,25 @@ components:
         - attachment_count
         - attachment_size
         - deleted_from_source
+      type: object
+    Envelope:
+      additionalProperties: true
+      properties:
+        cursor:
+          type: string
+        data: {}
+        eventId:
+          type: string
+        name:
+          type: string
+        timestamp:
+          type: string
+      required:
+        - eventId
+        - name
+        - timestamp
+        - data
+        - cursor
       type: object
     ErrorResponse:
       additionalProperties: true
@@ -5728,6 +5848,12 @@ components:
           type: string
         api_schema_version:
           type: string
+        mcp_event_capabilities:
+          items:
+            $ref: "#/components/schemas/MCPEventCapability"
+          type: array
+        mcp_events:
+          type: boolean
         operation:
           $ref: "#/components/schemas/OperationHealth"
         status:
@@ -6509,6 +6635,56 @@ components:
       required:
         - manifests
       type: object
+    ListResult:
+      additionalProperties: true
+      properties:
+        events:
+          items:
+            $ref: "#/components/schemas/Definition"
+          type: array
+      required:
+        - events
+      type: object
+    MCPEventCapability:
+      additionalProperties: true
+      properties:
+        family:
+          type: string
+        kinds:
+          items:
+            type: string
+          type: array
+        read_tools:
+          items:
+            type: string
+          type: array
+        source_type:
+          type: string
+      required:
+        - family
+        - source_type
+        - kinds
+        - read_tools
+      type: object
+    MCPEventsErrorResponse:
+      additionalProperties: true
+      properties:
+        code:
+          format: int64
+          type: integer
+        error:
+          type: string
+        message:
+          type: string
+        reason:
+          type: string
+      required:
+        - error
+        - message
+      type: object
+    MCPEventsListRequest:
+      additionalProperties: false
+      type: object
     Manifest:
       additionalProperties: false
       properties:
@@ -7064,6 +7240,8 @@ components:
           type: string
         body_omitted:
           type: boolean
+        calendar:
+          $ref: "#/components/schemas/CalendarProjection"
         cc:
           items:
             type: string
@@ -14176,6 +14354,96 @@ components:
         - categories
         - media
       type: object
+    SubscribeRequest:
+      additionalProperties: false
+      properties:
+        arguments:
+          additionalProperties: {}
+          type: object
+        cursor:
+          type: string
+        delivery:
+          $ref: "#/components/schemas/Delivery"
+        name:
+          type: string
+        ttlMs:
+          format: int64
+          type: integer
+      required:
+        - name
+        - arguments
+        - delivery
+      type: object
+    SubscribeResult:
+      additionalProperties: true
+      properties:
+        cursor:
+          type: string
+        id:
+          type: string
+        refreshBefore:
+          format: int64
+          type: integer
+        truncated:
+          type: boolean
+      required:
+        - id
+        - refreshBefore
+        - cursor
+        - truncated
+      type: object
+    SubscriptionStatus:
+      additionalProperties: true
+      properties:
+        cursor:
+          type: string
+        cursor_epoch:
+          format: int64
+          type: integer
+        cursor_seq:
+          format: int64
+          type: integer
+        dead_letter_count:
+          format: int64
+          type: integer
+        id:
+          type: string
+        last_delivery_outcome:
+          type: string
+        loop_guard_skips:
+          format: int64
+          type: integer
+        name:
+          type: string
+        pending_attempt:
+          format: int64
+          type: integer
+        refreshBefore:
+          format: int64
+          type: integer
+        scope_id:
+          type: string
+        scope_kind:
+          type: string
+        state:
+          type: string
+        stop_reason:
+          type: string
+      required:
+        - id
+        - name
+        - scope_kind
+        - scope_id
+        - state
+        - refreshBefore
+        - cursor
+        - cursor_epoch
+        - cursor_seq
+        - pending_attempt
+        - last_delivery_outcome
+        - dead_letter_count
+        - loop_guard_skips
+      type: object
     Summary:
       additionalProperties: false
       properties:
@@ -14955,6 +15223,21 @@ components:
         - status
         - message
       type: object
+    UnsubscribeRequest:
+      additionalProperties: false
+      properties:
+        arguments:
+          additionalProperties: {}
+          type: object
+        delivery:
+          $ref: "#/components/schemas/Delivery"
+        name:
+          type: string
+      required:
+        - name
+        - arguments
+        - delivery
+      type: object
     UpdateRequest:
       additionalProperties: false
       properties:
@@ -15218,7 +15501,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.10.0
+  version: 3.11.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -21960,6 +22243,189 @@ paths:
       security:
         - apiKey: []
       summary: Test task integration discovery, authentication, capabilities, and project
+      tags:
+        - API
+  /api/v1/mcp/events/calendar-sources:
+    get:
+      operationId: listMCPCalendarSources
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: "#/components/schemas/CalendarSource"
+                type: array
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MCPEventsErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List subscribable archive calendars
+      tags:
+        - API
+  /api/v1/mcp/events/event:
+    get:
+      operationId: getMCPEvent
+      parameters:
+        - in: query
+          name: event_id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MCPEventsErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Recover a retained MCP occurrence
+      tags:
+        - API
+  /api/v1/mcp/events/list:
+    post:
+      operationId: listMCPEvents
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MCPEventsListRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListResult"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MCPEventsErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List scoped MCP Events
+      tags:
+        - API
+  /api/v1/mcp/events/messages/{id}:
+    get:
+      operationId: getMCPEventMessage
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            pattern: ^[1-9][0-9]{0,18}$
+            type: string
+        - in: query
+          name: event_id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CliMessageResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MCPEventsErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Read a message authorized by a retained MCP occurrence
+      tags:
+        - API
+  /api/v1/mcp/events/status:
+    get:
+      operationId: getMCPEventsStatus
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: "#/components/schemas/SubscriptionStatus"
+                type: array
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MCPEventsErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get owner MCP Events delivery status
+      tags:
+        - API
+  /api/v1/mcp/events/subscribe:
+    post:
+      operationId: subscribeMCPEvents
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SubscribeRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubscribeResult"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MCPEventsErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Verify and subscribe an owner callback
+      tags:
+        - API
+  /api/v1/mcp/events/unsubscribe:
+    post:
+      operationId: unsubscribeMCPEvents
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UnsubscribeRequest"
+        required: true
+      responses:
+        "204":
+          description: No Content
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MCPEventsErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: End an owner MCP Events subscription
       tags:
         - API
   /api/v1/media/search:

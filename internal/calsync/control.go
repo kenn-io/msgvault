@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"go.kenn.io/msgvault/internal/gcal"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 // PersistEvent writes a live mutation through the same archive path as sync.
@@ -28,12 +30,9 @@ func (s *Syncer) PersistEvent(ctx context.Context, cal gcal.Calendar, event gcal
 	if err := s.updateCalendarSourceOAuthApp(source.ID, cal.ID); err != nil {
 		return 0, err
 	}
-	var id int64
-	if event.IsCancelled() {
-		id, _, err = s.flagCancelled(source.ID, cal, event)
-	} else {
-		id, err = s.ingestEvent(source.ID, cal, event)
-	}
+	scoped := *s
+	scoped.store = s.store.WithIngestContext(store.IngestContext{Mode: store.IngestLive, ObservedAt: time.Now().UTC()})
+	id, _, err := scoped.persistCalendarSnapshot(ctx, source.ID, cal, event)
 	if err != nil {
 		return id, err
 	}

@@ -184,6 +184,26 @@ func TestPostgreSQLKeywordConnection(t *testing.T) {
 	require.NoError(instance.Close())
 }
 
+func TestOpenPostgreSQLRequiresEventsSchemaUpgrade(t *testing.T) {
+	dsn := os.Getenv("MSGVAULT_TEST_DB")
+	if !store.IsPostgresURL(dsn) {
+		t.Skip("requires a disposable PostgreSQL database")
+	}
+	admin, err := sql.Open("pgx", dsn)
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, admin.Close()) })
+	schema := "archive_" + strings.ToLower(rand.Text())
+	t.Cleanup(func() {
+		_, err := admin.Exec("DROP SCHEMA IF EXISTS " + pgx.Identifier{schema}.Sanitize() + " CASCADE")
+		assert.NoError(t, err)
+	})
+	opts := archive.PostgreSQL{URL: dsn, Schema: schema}
+	exercisePreEventsSchemaUpgrade(t,
+		func() error { return archive.Setup(t.Context(), opts) },
+		func() (*archive.Archive, error) { return archive.Open(t.Context(), opts) },
+	)
+}
+
 func archiveAPI(t *testing.T, runtime *archive.Archive) *archive.Server {
 	t.Helper()
 	server := archive.NewServer(archive.ServerOptions{Store: runtime.Store(), Engine: runtime.QueryEngine()})

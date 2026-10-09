@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
@@ -149,6 +150,19 @@ func openWritableStoreAndInitWithInvocation(state *invocation, migrate func(*sto
 	if err != nil {
 		release()
 		return nil, nil, err
+	}
+	if isDaemonCLISubprocess() && os.Getenv(daemonMCPEventsCaptureEnv) == "1" {
+		if err := configureDaemonMCPEventsCapture(context.Background(), st); err != nil {
+			_ = st.Close()
+			release()
+			return nil, nil, fmt.Errorf("configure daemon MCP Events capture: %w", err)
+		}
+	} else if !isDaemonCLISubprocess() {
+		if err := configureDirectWriteMCPEventsCapture(context.Background(), currentCfg, st); err != nil {
+			_ = st.Close()
+			release()
+			return nil, nil, fmt.Errorf("configure MCP Events capture: %w", err)
+		}
 	}
 
 	cleanup := func() {
