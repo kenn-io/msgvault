@@ -213,7 +213,7 @@ func ingestRawMessageWithCompletion(ctx context.Context, st *store.Store,
 	for i := range parsed.Attachments {
 		att := &parsed.Attachments[i]
 		if err := storeAttachment(
-			st, attachmentsDir, messageID, att,
+			st, attachmentsDir, messageID, att, strict,
 		); err != nil {
 			incomplete(fmt.Errorf("store attachment: %w", err))
 			log.Warn("failed to store attachment",
@@ -367,9 +367,13 @@ func buildRecipientSet(recipientType string, addresses []mime.Address, participa
 
 func storeAttachment(
 	st *store.Store, attachmentsDir string,
-	messageID int64, att *mime.Attachment,
+	messageID int64, att *mime.Attachment, includeEmpty bool,
 ) error {
-	storagePath, err := export.StoreAttachmentFile(attachmentsDir, att)
+	storeFile := export.StoreAttachmentFile
+	if includeEmpty && !att.IsApplePlaceholder {
+		storeFile = export.StoreAttachmentFileIncludingEmpty
+	}
+	storagePath, err := storeFile(attachmentsDir, att)
 	if err != nil || storagePath == "" {
 		return err
 	}

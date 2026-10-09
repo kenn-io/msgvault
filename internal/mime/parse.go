@@ -70,6 +70,9 @@ type Attachment struct {
 	ContentHash string // SHA-256 of content
 	Content     []byte
 	IsInline    bool
+	// IsApplePlaceholder marks a part whose body Apple Mail keeps in a sibling
+	// cache file. Its empty Content is unavailable data, not a zero-byte file.
+	IsApplePlaceholder bool
 }
 
 // DistinctAttachments drops the second copy of a part that enmime lists as
@@ -619,15 +622,16 @@ func makeAttachment(part *enmime.Part, isInline bool) Attachment {
 	}
 
 	return Attachment{
-		Filename:    part.FileName,
-		ContentType: contentType,
-		ContentID:   part.ContentID,
-		Disposition: disposition,
-		PartKey:     partKey,
-		Size:        len(content),
-		ContentHash: hex.EncodeToString(hash[:]),
-		Content:     content,
-		IsInline:    isInline || disposition == "inline",
+		Filename:           part.FileName,
+		ContentType:        contentType,
+		ContentID:          part.ContentID,
+		Disposition:        disposition,
+		PartKey:            partKey,
+		Size:               len(content),
+		ContentHash:        hex.EncodeToString(hash[:]),
+		Content:            content,
+		IsInline:           isInline || disposition == "inline",
+		IsApplePlaceholder: len(part.Header.Values("X-Apple-Content-Length")) > 0,
 	}
 }
 
