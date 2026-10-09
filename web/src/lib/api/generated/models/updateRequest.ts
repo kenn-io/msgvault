@@ -3,8 +3,11 @@
  */
 
 export interface UpdateRequest {
+  accept_reanchor?: boolean;
   account?: string;
-  display_name: string;
+  display_name?: string;
   email?: string;
+  history_only?: boolean;
+  identifier?: string;
   source_id?: number;
 }

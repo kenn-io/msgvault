@@ -1307,8 +1307,9 @@ func (s *Store) GetMessageRecipientsContext(
 // ChangedMessage is one row of the content-change feed. Every field is a column
 // of `messages`, but the feed's fields and the watermark's columns are not the
 // same set: sender_id and metadata move the watermark without appearing here,
-// and id, source_id and content_changed_at appear here without moving it — the
-// first two are immutable identity and the third is the watermark itself. See
+// and id and content_changed_at appear here without moving it — the first is
+// immutable identity and the second is the watermark itself. source_id moves
+// the watermark when archive ownership changes during consolidation. See
 // MessagesContentColumns. Labels and recipients live in child tables the
 // watermark does not cover and are deliberately absent: a consumer handed them
 // here would cache them stale forever.

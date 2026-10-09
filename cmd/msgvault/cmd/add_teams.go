@@ -138,7 +138,7 @@ func runAddTeamsLocal(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("create source: %w", err)
 	}
-	if err := s.UpdateSourceDisplayName(source.ID, email); err != nil {
+	if err := updateSourceDisplayNameForRegistration(s, source.ID, email, state.logger); err != nil {
 		return fmt.Errorf("set display name: %w", err)
 	}
 

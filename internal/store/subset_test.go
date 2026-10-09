@@ -1316,6 +1316,196 @@ func TestCopySubset_Basic(t *testing.T) {
 	assert.False(hasViolation, "foreign key violations found in destination database")
 }
 
+func TestCopySubsetCopiesPortableSourceMergeMarkersForSelectedRows(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	sourcePath := createTestSourceDB(t, t.TempDir(), 2)
+	sourceDB, err := sql.Open("sqlite3", sourcePath+"?_foreign_keys=ON")
+	require.NoError(err)
+	_, err = sourceDB.Exec(`
+		INSERT INTO attachments (id, message_id, storage_path)
+		VALUES (11, 1, '11/attachment'), (22, 2, '22/attachment');
+		INSERT INTO source_merge_archive_only_messages (message_id)
+		VALUES (1), (2);
+		INSERT INTO source_merge_preserved_attachments (attachment_id)
+		VALUES (11), (22);
+	`)
+	require.NoError(err)
+	require.NoError(sourceDB.Close())
+
+	destinationDir := filepath.Join(t.TempDir(), "subset")
+	_, err = CopySubset(sourcePath, destinationDir, 1, false)
+	require.NoError(err)
+	destination, err := Open(filepath.Join(destinationDir, "msgvault.db"))
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(destination.Close()) })
+
+	var selectedMessageMarker, excludedMessageMarker int
+	require.NoError(destination.DB().QueryRow(`
+		SELECT COUNT(*) FROM source_merge_archive_only_messages WHERE message_id = 2
+	`).Scan(&selectedMessageMarker))
+	require.NoError(destination.DB().QueryRow(`
+		SELECT COUNT(*) FROM source_merge_archive_only_messages WHERE message_id = 1
+	`).Scan(&excludedMessageMarker))
+	assert.Equal(1, selectedMessageMarker, "the selected message marker must survive the subset")
+	assert.Zero(excludedMessageMarker, "a marker for an unselected message must not cross the subset")
+
+	var selectedAttachmentMarker, excludedAttachmentMarker int
+	require.NoError(destination.DB().QueryRow(`
+		SELECT COUNT(*) FROM source_merge_preserved_attachments WHERE attachment_id = 22
+	`).Scan(&selectedAttachmentMarker))
+	require.NoError(destination.DB().QueryRow(`
+		SELECT COUNT(*) FROM source_merge_preserved_attachments WHERE attachment_id = 11
+	`).Scan(&excludedAttachmentMarker))
+	assert.Equal(1, selectedAttachmentMarker, "the selected attachment marker must survive the subset")
+	assert.Zero(excludedAttachmentMarker, "a marker for an unselected attachment must not cross the subset")
+}
+
+func TestCopySubsetPreservesSourceMergeLifecycleMarkers(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := t.Context()
+	sourcePath := filepath.Join(t.TempDir(), "source", "msgvault.db")
+	source, err := Open(sourcePath)
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(source.Close()) })
+	require.NoError(source.InitSchema())
+
+	history, err := source.GetOrCreateSource("gmail", "history@example.test")
+	require.NoError(err)
+	destination, err := source.GetOrCreateSource("gmail", "current@example.test")
+	require.NoError(err)
+	alias := "Primary mailbox"
+	_, err = source.UpdateSourceSettingsContext(ctx, destination.ID, SourceSettingsUpdate{
+		Alias: &alias,
+	})
+	require.NoError(err)
+
+	senderID, err := source.EnsureParticipant(
+		"sender@example.test", "Example Sender", "example.test")
+	require.NoError(err)
+	createMessage := func(sourceID int64, conversationID, providerID, rfc822ID string, sentAt time.Time) int64 {
+		t.Helper()
+		conversation, err := source.EnsureConversationWithType(
+			sourceID, conversationID, "email_thread", "Example subject")
+		require.NoError(err)
+		messageID, err := source.UpsertMessage(&Message{
+			SourceID: sourceID, ConversationID: conversation,
+			SourceMessageID: providerID,
+			RFC822MessageID: sql.NullString{String: rfc822ID, Valid: rfc822ID != ""},
+			MessageType:     "email",
+			SentAt:          sql.NullTime{Time: sentAt, Valid: true},
+			SenderID:        sql.NullInt64{Int64: senderID, Valid: true},
+			Subject:         sql.NullString{String: "Example subject", Valid: true},
+		})
+		require.NoError(err)
+		require.NoError(source.UpsertMessageBody(messageID,
+			sql.NullString{String: "Synthetic message body", Valid: true}, sql.NullString{}))
+		return messageID
+	}
+
+	baseTime := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	survivorMessageID := createMessage(
+		destination.ID, "destination-thread", "destination-copy", "<shared@example.test>", baseTime)
+	duplicateMessageID := createMessage(
+		history.ID, "history-thread", "history-copy", "<shared@example.test>", baseTime)
+	historicalMessageID := createMessage(
+		history.ID, "unique-history-thread", "history-unique", "<unique@example.test>", baseTime.Add(time.Hour))
+	recipientID, err := source.EnsureParticipant(
+		"recipient@example.test", "Example Recipient", "example.test")
+	require.NoError(err)
+	for _, messageID := range []int64{survivorMessageID, duplicateMessageID} {
+		_, err = source.DB().Exec(source.Rebind(`
+			INSERT INTO message_recipients(message_id, participant_id, recipient_type, email_address)
+			VALUES (?, ?, 'to', 'recipient@example.test')
+		`), messageID, recipientID)
+		require.NoError(err)
+	}
+	for _, attachment := range []struct {
+		messageID int64
+		partKey   string
+		path      string
+	}{
+		{messageID: survivorMessageID, partKey: "mime:destination", path: "d/" + strings.Repeat("c", 64)},
+		{messageID: duplicateMessageID, partKey: "mime:history", path: strings.Repeat("c", 2) + "/" + strings.Repeat("c", 64)},
+	} {
+		_, err = source.DB().Exec(source.Rebind(`
+			INSERT INTO attachments (
+				message_id, filename, mime_type, size, content_hash, storage_path,
+				source_part_key, attachment_state, attachment_role, role_source
+			) VALUES (?, 'history.txt', 'text/plain', 17, ?, ?, ?, 'stored', 'standalone', 'mime_disposition')
+		`), attachment.messageID, strings.Repeat("c", 64), attachment.path, attachment.partKey)
+		require.NoError(err)
+	}
+
+	_, err = source.MergeSourcesContext(ctx, MergeSourcesRequest{
+		FromSourceID: history.ID, IntoSourceID: destination.ID,
+	})
+	require.NoError(err)
+	countRows := func(db *sql.DB, query string, args ...any) int64 {
+		t.Helper()
+		var count int64
+		require.NoError(db.QueryRow(query, args...).Scan(&count))
+		return count
+	}
+	for _, record := range []struct {
+		table string
+		count int64
+	}{
+		{table: "source_merge_messages", count: 2},
+		{table: "source_merge_conversations", count: 2},
+		{table: "source_merge_attachments", count: 1},
+		{table: "source_merges", count: 1},
+		{table: "source_settings", count: 2},
+	} {
+		require.Equal(record.count, countRows(source.DB(), "SELECT COUNT(*) FROM "+record.table),
+			"the merge fixture must contain source %s rows", record.table)
+	}
+	var archiveOnlyMarkerCount, protectedAttachmentMarkerCount int
+	require.NoError(source.DB().QueryRow(source.Rebind(`
+		SELECT COUNT(*) FROM source_merge_archive_only_messages WHERE message_id = ?
+	`), historicalMessageID).Scan(&archiveOnlyMarkerCount))
+	require.NoError(source.DB().QueryRow(source.Rebind(`
+		SELECT COUNT(*) FROM source_merge_preserved_attachments marker
+		JOIN attachments attachment ON attachment.id = marker.attachment_id
+		WHERE attachment.message_id = ?
+	`), survivorMessageID).Scan(&protectedAttachmentMarkerCount))
+	require.Equal(1, archiveOnlyMarkerCount)
+	require.Equal(1, protectedAttachmentMarkerCount)
+
+	destinationDir := filepath.Join(t.TempDir(), "subset")
+	_, err = CopySubset(sourcePath, destinationDir, 2, false)
+	require.NoError(err)
+	subset, err := Open(filepath.Join(destinationDir, "msgvault.db"))
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(subset.Close()) })
+
+	settings, err := subset.GetSourceSettingsContext(ctx, destination.ID)
+	require.NoError(err)
+	assert.Equal(alias, settings.Alias)
+	assert.Equal(int64(1), countRows(subset.DB(), `
+		SELECT COUNT(*) FROM source_settings
+	`), "only the selected source's settings should cross the subset boundary")
+	assert.Equal(int64(2), countRows(subset.DB(), `
+		SELECT COUNT(*) FROM messages WHERE id IN (?, ?)
+	`, survivorMessageID, historicalMessageID))
+	assert.Equal(int64(1), countRows(subset.DB(), `
+		SELECT COUNT(*) FROM source_merge_archive_only_messages WHERE message_id = ?
+	`, historicalMessageID))
+	assert.Equal(int64(1), countRows(subset.DB(), `
+		SELECT COUNT(*) FROM source_merge_preserved_attachments marker
+		JOIN attachments attachment ON attachment.id = marker.attachment_id
+		WHERE attachment.message_id = ?
+	`, survivorMessageID))
+	for _, table := range []string{
+		"source_merge_messages", "source_merge_conversations",
+		"source_merge_attachments", "source_merges",
+	} {
+		assert.Equal(int64(0), countRows(subset.DB(), "SELECT COUNT(*) FROM "+table),
+			"incomplete %s provenance must not be copied", table)
+	}
+}
+
 func TestCopySubsetExcludesDocumentDerivativesAndHostedConsent(t *testing.T) {
 	require := require.New(t)
 	srcDir := t.TempDir()

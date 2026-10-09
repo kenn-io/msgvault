@@ -183,16 +183,31 @@ func resolveBeeperSyncAccounts(s *store.Store, flagAccounts []string, cfg *confi
 		return nil, fmt.Errorf("list beeper sources: %w", err)
 	}
 	if len(flagAccounts) > 0 {
-		registered := make(map[string]struct{}, len(sources))
+		registered := make(map[string]*store.Source, len(sources))
+		aliases := make(map[string]*store.Source, len(sources))
 		for _, src := range sources {
-			registered[src.Identifier] = struct{}{}
+			registered[src.Identifier] = src
+			if src.Alias != "" {
+				aliases[strings.ToLower(src.Alias)] = src
+			}
 		}
 		seen := make(map[string]struct{}, len(flagAccounts))
 		out := make([]string, 0, len(flagAccounts))
 		for _, accountID := range flagAccounts {
-			if _, ok := registered[accountID]; !ok {
+			src, ok := registered[accountID]
+			if !ok {
+				src, ok = aliases[strings.ToLower(accountID)]
+			}
+			if !ok {
 				return nil, fmt.Errorf("beeper account %q is not registered (run 'add-beeper' first)", accountID)
 			}
+			if src.MergedIntoSourceID != 0 {
+				return nil, fmt.Errorf("beeper source %d: %w", src.ID, store.ErrSourceRetired)
+			}
+			if src.HistoryOnly {
+				return nil, fmt.Errorf("beeper source %d is history-only; use update-account --source-id %d --history-only=false before syncing", src.ID, src.ID)
+			}
+			accountID = src.Identifier
 			if _, duplicate := seen[accountID]; duplicate {
 				continue
 			}
@@ -206,11 +221,14 @@ func resolveBeeperSyncAccounts(s *store.Store, flagAccounts []string, cfg *confi
 		return nil, errors.New("configuration is unavailable")
 	}
 	for _, src := range sources {
+		if src.HistoryOnly || src.MergedIntoSourceID != 0 {
+			continue
+		}
 		if cfg.Beeper.AccountIncluded(src.Identifier) {
 			out = append(out, src.Identifier)
 		}
 	}
-	if len(out) == 0 {
+	if len(sources) == 0 {
 		return nil, errors.New("no Beeper accounts registered (run 'add-beeper' first)")
 	}
 	return out, nil
@@ -229,6 +247,9 @@ func filterBeeperReanchorMarkedAccounts(
 		source, err := s.GetSourceByTypeAndIdentifier(sourceTypeBeeper, accountID)
 		if err != nil {
 			return nil, fmt.Errorf("resolve beeper source %q for anchor marker: %w", accountID, err)
+		}
+		if source.HistoryOnly || source.MergedIntoSourceID != 0 {
+			continue
 		}
 		reason, marked, err := s.GetArchiveMarker(ctx, store.BeeperReanchorMarkerKey(source.ID))
 		if err != nil {
@@ -277,6 +298,10 @@ func openBeeperImporter(flagAccounts []string, state *invocation) (imp *beeper.I
 	if err != nil {
 		cleanup()
 		return nil, nil, "", nil, err
+	}
+	if len(accountIDs) == 0 {
+		cleanup()
+		return nil, nil, "", nil, errors.New("no active Beeper accounts to sync")
 	}
 	return beeper.NewImporter(s, beeperClient(cfg, token)), accountIDs, cfg.DatabaseDSN(), cleanup, nil
 }

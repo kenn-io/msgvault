@@ -282,7 +282,11 @@ func (s *Store) DeleteKeyedAttachmentsExceptContext(
 func (s *Store) DeleteMIMEAttachmentsExceptContext(
 	ctx context.Context, messageID int64, keep []string,
 ) error {
-	query := `DELETE FROM attachments WHERE message_id = ? AND source_attachment_id IS NULL`
+	query := `DELETE FROM attachments
+		WHERE message_id = ? AND source_attachment_id IS NULL
+		  AND NOT EXISTS (
+			SELECT 1 FROM source_merge_preserved_attachments spa WHERE spa.attachment_id = attachments.id
+		  )`
 	args := []any{messageID}
 	if len(keep) > 0 {
 		query += ` AND COALESCE(source_part_key, '') NOT IN (?` + strings.Repeat(`, ?`, len(keep)-1) + `)`
@@ -363,6 +367,10 @@ func (s *Store) upsertAttachmentRecordWithPolicy(
 			  AND source_part_key IS NULL
 			  AND content_hash = ?
 			  AND attachment_role = 'unknown'
+			  AND NOT EXISTS (
+				SELECT 1 FROM source_merge_preserved_attachments spa
+				WHERE spa.attachment_id = attachments.id
+			  )
 			  %s
 			  AND NOT EXISTS (
 				SELECT 1 FROM attachments keyed
@@ -526,6 +534,9 @@ func (s *Store) replaceMIMEAttachmentsWith(
 	if _, err := q.Exec(`
 		DELETE FROM attachments
 		WHERE message_id = ? AND source_attachment_id IS NULL
+		  AND NOT EXISTS (
+			SELECT 1 FROM source_merge_preserved_attachments spa WHERE spa.attachment_id = attachments.id
+		  )
 	`, messageID); err != nil {
 		return err
 	}

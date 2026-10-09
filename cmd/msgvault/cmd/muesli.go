@@ -240,9 +240,12 @@ func runConfiguredMuesliSync(ctx context.Context, st *store.Store, source config
 	notRegistered := fmt.Errorf(
 		"muesli source %q is not registered; run msgvault add-muesli %s first",
 		source.Identifier, source.Identifier)
-	err := requireRegisteredMeetingSource(st, muesli.SourceType, source.Identifier, notRegistered)
+	registered, err := requireRegisteredMeetingSource(st, muesli.SourceType, source.Identifier, notRegistered)
 	if err != nil {
 		return err
+	}
+	if registered.MergedIntoSourceID != 0 {
+		return nil
 	}
 	accountEmail, err := source.EffectiveAccountEmail()
 	if err != nil {

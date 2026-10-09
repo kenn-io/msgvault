@@ -14,7 +14,7 @@ in your installed binary. This reference follows current `main`; see
 | Import local exports | [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [import-imazing-csv](#import-imazing-csv), [text imports](usage/text-messages.md) |
 | Search and browse | [search](#search), [tui](#tui), [show-message](#show-message), [documents](#documents), [embeddings](#embeddings), [multimodal](#multimodal), [eval](#eval) |
 | Maintain people and contacts | [person](#person), [people guide](usage/people.md), [CardDAV](usage/people-carddav.md) |
-| Organize accounts | [identity](#identity), [collection](#collection), [update-account](#update-account) |
+| Organize accounts | [identity](#identity), [collection](#collection), [update-account](#update-account), [merge-account](#merge-account) |
 | Read meeting evidence | [meetings](#meetings), [meeting workflow](usage/meetings.md) |
 | Export | [export-messages](#export-messages), [export-eml](#export-eml), [export-attachments](#export-attachments), [create-subset](#create-subset) |
 | Review and remove mail | [stage-delete](#stage-delete), [delete-staged](#delete-staged), [deduplicate](#deduplicate), [gc](#gc) |
@@ -3805,9 +3805,11 @@ link for the message.
 
 ## list-accounts
 
-List archived accounts. While the daemon's first message-count refresh is
-still running, the table shows `pending` in the messages column, and JSON
-entries carry `"counts_pending": true` in place of `message_count` and
+List archived accounts across source types. The table and JSON output include
+the archive alias, history-only state, retirement destination, and Beeper
+re-anchor marker. While the daemon's first message-count refresh is still
+running, the table shows `pending` in the messages column, and JSON entries
+carry `"counts_pending": true` in place of `message_count` and
 `source_deleted_count`. Later calls show the finished counts or a cached
 snapshot.
 
@@ -3833,10 +3835,85 @@ msgvault update-account [account] [flags]
 | Flag | Description |
 |---|---|
 | `--display-name` | Set a display name for the account |
+| `--identifier ALIAS` | Set a unique archive alias without changing the provider identifier, credentials, or sync cursors |
+| `--history-only=true` | Keep a Beeper source in the archive and exclude it from scheduled sync |
+| `--history-only=false` | Make a Beeper source eligible for sync again |
+| `--accept-reanchor` | Clear a Beeper re-anchor marker after manually verifying the replacement account's anchors |
 | `--source-id ID` | Update exactly one source by numeric ID; mutually exclusive with the account argument |
 
-The account argument accepts an identifier or a unique display name. Supply
-either an account or `--source-id`.
+The account argument accepts an identifier, alias, or unique display name.
+Supply either an account or `--source-id`. Aliases must be nonempty, have no
+surrounding whitespace or control characters, and cannot conflict with another
+source's identifier or alias. A request applies all settings atomically.
+
+For a Beeper account that no longer exists, keep its history and suppress
+scheduled sync warnings with:
+
+```bash
+msgvault update-account --source-id 42 --history-only=true
+```
+
+History-only retains the re-anchor marker for inspection. It also rejects manual
+sync until you set `--history-only=false`. After verifying the live account and
+its anchors, accept the marker explicitly:
+
+```bash
+msgvault update-account --source-id 42 --history-only=false --accept-reanchor
+```
+
+Accepting the marker does not verify anchors or change provider cursors. It
+records the owner's decision by clearing the marker. Retired sources cannot
+be reactivated or updated.
+
+---
+
+## merge-account
+
+Move one source's archived messages into a compatible destination and retire
+the original source. This functionality is available on `main`.
+
+```bash
+msgvault merge-account --from historical-alias --into live-account --dry-run --json
+msgvault merge-account --from-source-id 42 --into-source-id 43 --yes
+```
+
+| Flag | Description |
+|---|---|
+| `--from ACCOUNT` | Historical source identifier, alias, or unique display name |
+| `--into ACCOUNT` | Destination identifier, alias, or unique display name |
+| `--from-source-id ID` | Exact historical source ID; mutually exclusive with `--from` |
+| `--into-source-id ID` | Exact destination source ID; mutually exclusive with `--into` |
+| `--dry-run` | Run the compatibility and duplicate checks and report counts without changing archive data |
+| `--yes` | Confirm and perform the source-retiring merge; required unless `--dry-run` is set |
+| `--json` | Output the merge report as JSON |
+
+Both sources must have the same source type and be idle. Known conflicting
+Beeper networks are incompatible. Pending provider drafts on the historical
+source must finish first. The destination must not be retired; it may be
+history-only. Cancel or finish staged deletions before merging, because
+batches targeting a retired source cannot execute. Restage them against the
+destination if needed.
+
+The merge namespaces incoming provider message and conversation identifiers.
+It hides only unambiguous duplicate pairs established by an email Message-ID
+or a complete payload fingerprint. Ambiguous matches remain visible and appear
+in `ambiguous_matches`. Original message bodies, raw payloads, attachments,
+deletions, and provider receipts remain available as evidence. Historical
+attachments cannot use the destination's provider endpoints.
+
+The daemon recalculates conversation counts and previews, identity direction,
+and derived-data revisions. Embeddings are invalidated for rebuilding. Provider
+cursors, checkpoints, and completed sync runs stay on their original source;
+the merge does not transfer resume state. Destination re-anchor markers remain
+unchanged. The retired source cannot sync or receive new imports.
+
+A committed retry into the same destination returns the saved report. A retry
+into another destination fails. A later Beeper history backfill may fetch a
+new live copy of a namespaced historical message; those copies remain visible
+because the archive cannot infer provider identity from content alone.
+
+These maintenance commands require owner access. Delegated API keys cannot
+preview or apply them.
 
 ---
 
@@ -3857,6 +3934,10 @@ msgvault remove-account --source-id 42
 | `--source-id ID` | Remove exactly one source by numeric ID; mutually exclusive with the account argument and `--type` |
 
 The account argument accepts an identifier or a unique display name.
+
+On current `main`, removal refuses any source that participated in a merge.
+The source records preserve merge provenance and prevent later imports from
+recreating a retired account.
 
 Attachment files are only deleted when no other account references the same
 content hash. A Discord bot token is preserved while another registered guild

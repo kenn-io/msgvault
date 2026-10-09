@@ -369,9 +369,12 @@ func runConfiguredCirclebackSync(ctx context.Context, st *store.Store, src confi
 	notRegistered := fmt.Errorf(
 		"circleback source %q is not registered; run msgvault add-circleback %s first",
 		src.Identifier, src.Identifier)
-	err := requireRegisteredMeetingSource(st, circleback.SourceType, src.Identifier, notRegistered)
+	registered, err := requireRegisteredMeetingSource(st, circleback.SourceType, src.Identifier, notRegistered)
 	if err != nil {
 		return err
+	}
+	if registered.MergedIntoSourceID != 0 {
+		return nil
 	}
 	accountEmail, err := src.EffectiveAccountEmail()
 	if err != nil {

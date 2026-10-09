@@ -2,7 +2,10 @@ package deletion
 
 import (
 	"context"
+	"fmt"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -349,4 +352,133 @@ func newE2EContext(t *testing.T, f *e2eFixture) *e2eContext {
 		t:        t,
 	}
 	return &e2eContext{TestContext: tc, fix: f}
+}
+
+func TestExecutorRejectsRetiredManifestSourceBeforeProviderCall(t *testing.T) {
+	for _, version := range []int{1, 2} {
+		t.Run(fmt.Sprintf("version-%d", version), func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			f := newE2EFixture(t)
+			tc := newE2EContext(t, f)
+			manifest := NewManifestForSource("historical source", []string{"msg-a1"}, SourceReference{ID: f.sourceA.ID, Type: f.sourceA.SourceType, Identifier: f.sourceA.Identifier})
+			manifest.Version = version
+			if version == 1 {
+				manifest.Source = nil
+			}
+			require.NoError(tc.Mgr.SaveManifest(manifest))
+			_, err := f.store.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: f.sourceA.ID, IntoSourceID: f.sourceB.ID})
+			require.NoError(err)
+			tc.Exec.WithSourceID(f.sourceA.ID)
+			err = tc.Exec.Execute(t.Context(), manifest.ID, DefaultExecuteOptions())
+			require.ErrorIs(err, store.ErrSourceRetired)
+			assert.Empty(tc.MockAPI.TrashCalls)
+			assert.Empty(tc.MockAPI.DeleteCalls)
+		})
+	}
+}
+
+func TestExecutorRejectsArchiveOnlyProviderTargetBeforeRemoteCall(t *testing.T) {
+	tests := []struct {
+		name    string
+		execute func(*Executor, context.Context, string) error
+	}{
+		{name: "trash", execute: func(e *Executor, ctx context.Context, id string) error {
+			return e.Execute(ctx, id, DefaultExecuteOptions())
+		}},
+		{name: "batch delete", execute: func(e *Executor, ctx context.Context, id string) error {
+			return e.ExecuteBatch(ctx, id)
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			f := newE2EFixture(t)
+			tc := newE2EContext(t, f)
+			_, err := f.store.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{
+				FromSourceID: f.sourceA.ID, IntoSourceID: f.sourceB.ID,
+			})
+			require.NoError(err)
+			var archiveID string
+			require.NoError(f.store.DB().QueryRow(f.store.Rebind(
+				`SELECT source_message_id FROM messages WHERE id = ?`), f.msgIDs["msg-a1"]).Scan(&archiveID))
+
+			manifest := NewManifestForSource("merged archive target", []string{archiveID}, SourceReference{
+				ID: f.sourceB.ID, Type: f.sourceB.SourceType, Identifier: f.sourceB.Identifier,
+			})
+			require.NoError(tc.Mgr.SaveManifest(manifest))
+			tc.Exec.WithSourceID(f.sourceB.ID)
+			err = test.execute(tc.Exec, t.Context(), manifest.ID)
+			require.ErrorIs(err, store.ErrArchiveOnlyDeletionTarget)
+			assert.Empty(tc.MockAPI.TrashCalls)
+			assert.Empty(tc.MockAPI.DeleteCalls)
+		})
+	}
+}
+
+func TestExecutorOwnsSourceExecutionLockUntilRemoteDeletionFinishes(t *testing.T) {
+	tests := []struct {
+		name    string
+		execute func(*Executor, context.Context, string) error
+	}{
+		{name: "trash", execute: func(e *Executor, ctx context.Context, id string) error {
+			return e.Execute(ctx, id, DefaultExecuteOptions())
+		}},
+		{name: "batch delete", execute: func(e *Executor, ctx context.Context, id string) error {
+			return e.ExecuteBatch(ctx, id)
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			f := newE2EFixture(t)
+			tc := newE2EContext(t, f)
+			manifest := NewManifestForSource("serialized deletion", []string{"msg-a1"}, SourceReference{
+				ID: f.sourceA.ID, Type: f.sourceA.SourceType, Identifier: f.sourceA.Identifier,
+			})
+			require.NoError(tc.Mgr.SaveManifest(manifest))
+
+			entered := make(chan struct{}, 1)
+			release := make(chan struct{})
+			var releaseOnce sync.Once
+			releaseRemote := func() { releaseOnce.Do(func() { close(release) }) }
+			defer releaseRemote()
+			blockRemote := func() {
+				entered <- struct{}{}
+				<-release
+			}
+			switch test.name {
+			case "trash":
+				tc.MockAPI.BeforeTrash = func(string) error { blockRemote(); return nil }
+			case "batch delete":
+				tc.MockAPI.BeforeBatchDelete = func([]string) error { blockRemote(); return nil }
+			}
+
+			executionResult := make(chan error, 1)
+			go func() { executionResult <- test.execute(tc.Exec, t.Context(), manifest.ID) }()
+			select {
+			case <-entered:
+			case err := <-executionResult:
+				assert.Failf("executor returned before the provider request", "error: %v", err)
+				return
+			case <-time.After(10 * time.Second):
+				assert.Fail("executor did not reach the provider request")
+				return
+			}
+
+			_, mergeErr := f.store.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{
+				FromSourceID: f.sourceA.ID, IntoSourceID: f.sourceB.ID,
+			})
+			require.ErrorIs(mergeErr, store.ErrSyncAlreadyActive)
+			releaseRemote()
+			require.NoError(<-executionResult)
+
+			_, err := f.store.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{
+				FromSourceID: f.sourceA.ID, IntoSourceID: f.sourceB.ID,
+			})
+			require.NoError(err)
+		})
+	}
 }

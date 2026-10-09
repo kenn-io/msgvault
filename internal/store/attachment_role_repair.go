@@ -132,6 +132,10 @@ func (s *Store) RepairHistoricalAttachmentRolesBatch(
 				  AND source_part_key IS NULL
 				  AND content_hash = ?
 				  AND NOT EXISTS (
+					SELECT 1 FROM source_merge_preserved_attachments spa
+					WHERE spa.attachment_id = attachments.id
+				  )
+				  AND NOT EXISTS (
 					SELECT 1 FROM attachments keyed
 					WHERE keyed.message_id = ? AND keyed.source_part_key = ?
 				  )
@@ -199,6 +203,10 @@ func mergeDuplicateAttachmentRoleRepair(
 		  AND attachment_role = 'unknown'
 		  AND source_part_key IS NULL
 		  AND content_hash = ?
+		  AND NOT EXISTS (
+			SELECT 1 FROM source_merge_preserved_attachments spa
+			WHERE spa.attachment_id = attachments.id
+		  )
 	`, update.attachmentID, update.messageID, update.contentHash)
 	if err != nil {
 		return false, err
@@ -237,6 +245,10 @@ func (s *Store) nextAttachmentRoleRepairMessageIDs(
 		  AND EXISTS (
 			SELECT 1 FROM attachments a
 			WHERE a.message_id = m.id AND a.attachment_role = 'unknown'
+			  AND NOT EXISTS (
+				SELECT 1 FROM source_merge_preserved_attachments spa
+				WHERE spa.attachment_id = a.id
+			  )
 		  )
 		ORDER BY m.id
 		LIMIT ?
@@ -335,6 +347,10 @@ func (s *Store) prepareAttachmentRoleRepair(messageID int64, raw []byte) ([]atta
 		SELECT id, COALESCE(content_hash, '')
 		FROM attachments
 		WHERE message_id = ? AND attachment_role = 'unknown'
+		  AND NOT EXISTS (
+			SELECT 1 FROM source_merge_preserved_attachments spa
+			WHERE spa.attachment_id = attachments.id
+		  )
 	`, messageID)
 	if err != nil {
 		return nil, err

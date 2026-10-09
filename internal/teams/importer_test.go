@@ -533,6 +533,117 @@ func TestBackfillInlineMedia(t *testing.T) {
 	assert.EqualValues(12, sizeEstimate, "backfill includes five UTF-8 body bytes and seven image bytes")
 }
 
+func TestBackfillInlineMediaSkipsMergedHistoryAndPreservesCopiedAttachments(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	var requestedPaths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestedPaths = append(requestedPaths, r.URL.Path)
+		if r.URL.Path == "/v1.0/chats/shared/messages/live/hostedContents/1/$value" {
+			_, _ = w.Write([]byte("current-image"))
+			return
+		}
+		if r.URL.Path == "/v1.0/chats/history/messages/old/hostedContents/1/$value" {
+			_, _ = w.Write([]byte("old-image"))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	st := testutil.NewTestStore(t)
+	from, err := st.GetOrCreateSource("teams", "history@example.test")
+	require.NoError(err)
+	into, err := st.GetOrCreateSource("teams", "current@example.test")
+	require.NoError(err)
+	sender, err := st.EnsureParticipant("sender@example.test", "Example Sender", "example.test")
+	require.NoError(err)
+	makeConversation := func(sourceID int64, chatID string) int64 {
+		t.Helper()
+		conversationID, err := st.EnsureConversationWithType(sourceID, chatID, "direct_chat", "Example chat")
+		require.NoError(err)
+		return conversationID
+	}
+	makeMessage := func(sourceID, conversationID int64, providerID, bodyURL string, withIdentity bool) int64 {
+		t.Helper()
+		message := &store.Message{SourceID: sourceID, ConversationID: conversationID,
+			SourceMessageID: providerID, MessageType: "teams"}
+		if withIdentity {
+			message.SenderID = sql.NullInt64{Int64: sender, Valid: true}
+			message.SentAt = sql.NullTime{Time: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), Valid: true}
+		}
+		messageID, err := st.UpsertMessage(message)
+		require.NoError(err)
+		html := `<img src="` + bodyURL + `">`
+		require.NoError(st.UpsertMessageBody(messageID,
+			sql.NullString{String: "same body", Valid: true}, sql.NullString{String: html, Valid: true}))
+		return messageID
+	}
+	liveConversation := makeConversation(into.ID, "!shared:example.test")
+	historyConversation := makeConversation(from.ID, "!shared:example.test")
+	liveURL := srv.URL + "/v1.0/chats/shared/messages/live/hostedContents/1/$value"
+	liveMessage := makeMessage(into.ID, liveConversation, "live", liveURL, true)
+	historyDuplicate := makeMessage(from.ID, historyConversation, "history-duplicate", liveURL, true)
+	historyOnlyURL := srv.URL + "/v1.0/chats/history/messages/old/hostedContents/1/$value"
+	historyOnly := makeMessage(from.ID, makeConversation(from.ID, "!history:example.test"), "history-only", historyOnlyURL, false)
+
+	const contentHash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	_, err = st.DB().Exec(st.Rebind(`INSERT INTO attachments(
+		message_id, storage_path, content_hash, size, source_attachment_id,
+		attachment_state, attachment_role, role_source, source_part_key
+	) VALUES (?, 'live-image', ?, 12, 'teams:inline:/chats/shared/messages/previous/hostedContents/1/$value',
+		'stored', 'inline', 'importer_semantics', 'teams:live-image')`), liveMessage, contentHash)
+	require.NoError(err)
+	_, err = st.DB().Exec(st.Rebind(`INSERT INTO attachments(
+		message_id, storage_path, content_hash, size, source_attachment_id,
+		attachment_state, attachment_role, role_source, source_part_key
+	) VALUES (?, 'historical-image', ?, 12, 'teams:inline:/historical-copy',
+		'stored', 'inline', 'importer_semantics', 'teams:historical-copy')`), historyDuplicate, contentHash)
+	require.NoError(err)
+
+	merge, err := st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{
+		FromSourceID: from.ID, IntoSourceID: into.ID,
+	})
+	require.NoError(err)
+	assert.Equal(int64(1), merge.DuplicatesHidden)
+	var historyIsArchiveOnly bool
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT archive_only FROM source_merge_messages WHERE message_id = ?`),
+		historyOnly).Scan(&historyIsArchiveOnly))
+	assert.True(historyIsArchiveOnly)
+	var duplicateHidden bool
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT deleted_at IS NOT NULL FROM messages WHERE id = ?`),
+		historyDuplicate).Scan(&duplicateHidden))
+	assert.True(duplicateHidden)
+	var copiedAttachmentID int64
+	var copiedPath string
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT a.id, a.storage_path
+		FROM source_merge_attachments sa JOIN attachments a ON a.id = sa.attachment_id
+		WHERE a.message_id = ?`), liveMessage).Scan(&copiedAttachmentID, &copiedPath))
+
+	client := NewClient(srv.URL+"/v1.0", func(context.Context) (string, error) { return "token", nil }, 50)
+	imp := NewImporter(st, client)
+	summary, err := imp.BackfillInlineMedia(t.Context(), ImportOptions{
+		Email: into.Identifier, AttachmentsDir: t.TempDir(),
+	})
+	require.NoError(err)
+	assert.Equal(int64(1), summary.MessagesProcessed, "only the live destination message should be refreshed")
+	assert.Equal([]string{"/v1.0/chats/shared/messages/live/hostedContents/1/$value"}, requestedPaths,
+		"the destination backfill must not fetch archive-only provider URLs")
+
+	var retainedCopyPath string
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT storage_path FROM attachments WHERE id = ?`),
+		copiedAttachmentID).Scan(&retainedCopyPath))
+	assert.Equal(copiedPath, retainedCopyPath, "refresh must preserve copied historical attachment evidence")
+
+	requestedPaths = nil
+	incomplete, err := imp.BackfillInlineMedia(t.Context(), ImportOptions{
+		Email: into.Identifier, AttachmentsDir: t.TempDir(), OnlyIncomplete: true,
+	})
+	require.NoError(err)
+	assert.Zero(incomplete.MessagesProcessed, "archive-only incomplete bodies must not reach the retry path")
+	assert.Empty(requestedPaths, "incomplete backfill must not fetch archive-only provider URLs")
+}
+
 func TestBackfillInlineMediaPolicySkipsChannelWithoutFetch(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

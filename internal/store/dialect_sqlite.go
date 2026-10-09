@@ -703,7 +703,7 @@ func (d *SQLiteDialect) EnsureTriggers(q querier) error {
 		`DROP TRIGGER IF EXISTS trg_embedding_changes_message_insert`,
 		`DROP TRIGGER IF EXISTS trg_embedding_changes_message_update`,
 		`CREATE TRIGGER trg_embedding_changes_message_update
-		    AFTER UPDATE OF message_type, conversation_id, subject, sent_at, received_at, internal_date, sender_id, deleted_at, deleted_from_source_at, embed_gen
+		    AFTER UPDATE OF source_id, message_type, conversation_id, subject, sent_at, received_at, internal_date, sender_id, deleted_at, deleted_from_source_at, embed_gen
 		    ON messages FOR EACH ROW
 		    WHEN (EXISTS (
 		        SELECT 1 FROM message_bodies WHERE message_id = NEW.id
@@ -721,6 +721,7 @@ func (d *SQLiteDialect) EnsureTriggers(q querier) error {
 		                )
 		            ) AND (
 		                OLD.message_type IS NOT NEW.message_type
+		                OR OLD.source_id IS NOT NEW.source_id
 		                OR OLD.conversation_id IS NOT NEW.conversation_id
 		                OR OLD.sent_at IS NOT NEW.sent_at
 		                OR OLD.received_at IS NOT NEW.received_at
@@ -737,6 +738,7 @@ func (d *SQLiteDialect) EnsureTriggers(q querier) error {
 		                OR (NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL)
 		            ) AND (
 		                OLD.message_type IS NOT NEW.message_type
+		                OR OLD.source_id IS NOT NEW.source_id
 		                OR OLD.conversation_id IS NOT NEW.conversation_id
 		                OR OLD.subject IS NOT NEW.subject
 		                OR OLD.deleted_at IS NOT NEW.deleted_at
@@ -1085,11 +1087,15 @@ func (d *SQLiteDialect) EnsureTriggers(q querier) error {
 		    END`,
 		`DROP TRIGGER IF EXISTS trg_attachment_message_live_change`,
 		`CREATE TRIGGER trg_attachment_message_live_change
-		    AFTER UPDATE OF deleted_at, deleted_from_source_at ON messages FOR EACH ROW
+		    AFTER UPDATE OF source_id, conversation_id, deleted_at, deleted_from_source_at ON messages FOR EACH ROW
 		    WHEN EXISTS (SELECT 1 FROM attachment_change_consumers)
-		      AND ((OLD.deleted_at IS NULL AND OLD.deleted_from_source_at IS NULL)
-		           IS NOT
-		           (NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL))
+		      AND (((OLD.deleted_at IS NULL AND OLD.deleted_from_source_at IS NULL)
+		            IS NOT
+		            (NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL))
+		        OR ((OLD.deleted_at IS NULL AND OLD.deleted_from_source_at IS NULL)
+		            AND (NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL)
+		            AND (OLD.source_id IS NOT NEW.source_id
+		              OR OLD.conversation_id IS NOT NEW.conversation_id)))
 		    BEGIN
 		        INSERT INTO attachment_change_log
 		            (event_kind, old_message_id, new_message_id,
@@ -1098,8 +1104,12 @@ func (d *SQLiteDialect) EnsureTriggers(q querier) error {
 		             old_source_part_key, new_source_part_key,
 		             old_role, new_role)
 		        SELECT
-		            CASE WHEN NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL
-		                 THEN 'message_live_enter' ELSE 'message_live_exit' END,
+		            CASE WHEN (OLD.deleted_at IS NULL AND OLD.deleted_from_source_at IS NULL)
+		                       IS NOT
+		                       (NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL)
+		                 THEN CASE WHEN NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL
+		                           THEN 'message_live_enter' ELSE 'message_live_exit' END
+		                 ELSE 'attachment_update' END,
 		            CASE WHEN OLD.deleted_at IS NULL AND OLD.deleted_from_source_at IS NULL
 		                 THEN OLD.id END,
 		            CASE WHEN NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL
@@ -2075,6 +2085,7 @@ func (d *SQLiteDialect) LegacyColumnMigrations() []ColumnMigration {
 		{`ALTER TABLE person_enrichment_attempts ADD COLUMN provider_started_at DATETIME`, "person_enrichment_attempts.provider_started_at"},
 		{`ALTER TABLE person_enrichment_attempts ADD COLUMN dispatch_authorized_at DATETIME`, "person_enrichment_attempts.dispatch_authorized_at"},
 		{`ALTER TABLE person_enrichment_work ADD COLUMN has_fresh_trigger BOOLEAN NOT NULL DEFAULT FALSE`, "person_enrichment_work.has_fresh_trigger"},
+		{`ALTER TABLE source_merge_archive_only_messages ADD COLUMN original_source_message_id TEXT NOT NULL DEFAULT ''`, "source_merge_archive_only_messages.original_source_message_id"},
 	}
 }
 

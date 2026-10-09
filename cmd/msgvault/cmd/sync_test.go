@@ -213,6 +213,89 @@ func TestResolveSyncSourcesNumericTokenDoesNotBecomeSourceID(t *testing.T) {
 	assert.Equal(numeric.ID, sources[0].ID)
 }
 
+func TestSyncSelectionSkipsRetiredImplicitSourcesAndRejectsExplicitSelection(t *testing.T) {
+	require := require.New(t)
+	retired := &store.Source{ID: 3, SourceType: sourceTypeIMAP, Identifier: "history@example.test", MergedIntoSourceID: 8}
+	active := &store.Source{ID: 8, SourceType: sourceTypeIMAP, Identifier: "current@example.test"}
+
+	assert.Equal(t, []*store.Source{active}, activeSyncSources([]*store.Source{retired, active}))
+	err := rejectExplicitlyRetiredSyncSources([]*store.Source{retired}, sourceops.Selector{SourceID: retired.ID, SourceIDSet: true}, isIncrementalSyncableSource)
+	require.ErrorIs(err, store.ErrSourceRetired)
+	assert.Contains(t, err.Error(), "source ID 3")
+
+	activeImport := &store.Source{ID: 9, SourceType: "meeting_import", Identifier: "history@example.test"}
+	err = rejectExplicitlyRetiredSyncSources([]*store.Source{retired, activeImport}, sourceops.Selector{Account: retired.Identifier}, isIncrementalSyncableSource)
+	require.ErrorIs(err, store.ErrSourceRetired,
+		"an active non-syncable source must not mask a retired syncable match")
+
+	retiredGraph := &store.Source{ID: 10, SourceType: sourceTypeMSMail, Identifier: "history@example.test", MergedIntoSourceID: 11}
+	err = rejectExplicitlyRetiredSyncSources([]*store.Source{retiredGraph}, sourceops.Selector{Account: retiredGraph.Identifier}, isFullSyncableSource)
+	require.ErrorIs(err, store.ErrSourceRetired,
+		"sync-full must continue to reject a retired source that only sync can service")
+	err = rejectExplicitlyRetiredSyncSources([]*store.Source{retiredGraph, active}, sourceops.Selector{Account: retiredGraph.Identifier}, isFullSyncableSource)
+	require.NoError(err,
+		"an active full-syncable match must permit sync-full to skip a retired provider match")
+}
+
+func TestSyncExplicitAccountSkipsRetiredProviderWhenActiveMatchExists(t *testing.T) {
+	cfg := testConfigValue()
+	logger := testLoggerValue()
+	require := require.New(t)
+	assert := assert.New(t)
+	tmpDir := t.TempDir()
+	st, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
+	require.NoError(err)
+	require.NoError(st.InitSchema())
+
+	active, err := st.GetOrCreateSource(sourceTypeGmail, "shared@example.test")
+	require.NoError(err)
+	require.NoError(st.UpdateSourceSyncCursor(active.ID, "1"))
+	retired, err := st.GetOrCreateSource(sourceTypeMSMail, "shared@example.test")
+	require.NoError(err)
+	destination, err := st.GetOrCreateSource(sourceTypeMSMail, "live@example.test")
+	require.NoError(err)
+	_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{
+		FromSourceID: retired.ID, IntoSourceID: destination.ID,
+	})
+	require.NoError(err)
+	require.NoError(st.Close())
+
+	secretsPath := filepath.Join(tmpDir, "client_secret.json")
+	require.NoError(os.WriteFile(secretsPath, []byte(fakeClientSecrets), 0600))
+	savedCfg := cfg
+	savedLogger := logger
+	t.Cleanup(func() {
+		cfg = savedCfg
+		logger = savedLogger
+	})
+	cfg = &config.Config{
+		HomeDir: tmpDir,
+		Data:    config.DataConfig{DataDir: tmpDir},
+		OAuth:   config.OAuthConfig{ClientSecrets: secretsPath},
+	}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
+
+	testCmd := &cobra.Command{
+		Use:  "sync [email]",
+		Args: cobra.MaximumNArgs(1),
+		RunE: runSyncIncrementalLocal,
+	}
+	root := newTestRootCmd()
+	root.SetContext(testCtx)
+	root.AddCommand(testCmd)
+	root.SetArgs([]string{"sync", "shared@example.test"})
+
+	getOutput := captureStdout(t)
+	execErr := root.Execute()
+	output := getOutput()
+	require.Error(execErr, "the active Gmail source should be attempted without a token")
+	require.NotErrorIs(execErr, store.ErrSourceRetired)
+	assert.Contains(execErr.Error(), "1 account(s) failed")
+	assert.Contains(output, "add-account", "the live Gmail source must be routed to sync")
+	assert.NotContains(output, "retired", "the merged Microsoft source must be skipped")
+}
+
 // TestSyncCmd_SingleSourceNoAmbiguity verifies that a single
 // source for an identifier works without the legacy fallback.
 func TestSyncCmd_SingleSourceNoAmbiguity(t *testing.T) {

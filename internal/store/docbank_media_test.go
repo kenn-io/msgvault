@@ -771,6 +771,70 @@ func TestBeeperMediaCandidateAttachmentStates(t *testing.T) {
 	assert.Empty(want)
 }
 
+func TestBeeperMediaMergeSkipsPreservedAudioWithOldProviderReference(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newBeeperMediaFixture(t)
+
+	conversationIdentity := "!merge:beeper.local"
+	historicalConversation, err := f.Store.EnsureConversation(f.Source.ID, conversationIdentity, "Thread")
+	require.NoError(err)
+	destination, err := f.Store.GetOrCreateSource("beeper", "signal-main")
+	require.NoError(err)
+	destinationConversation, err := f.Store.EnsureConversation(destination.ID, conversationIdentity, "Thread")
+	require.NoError(err)
+
+	hash := strings.Repeat("a", 64)
+	historical := addBeeperAudio(t, f.Store, f.Source.ID, historicalConversation, "history-audio", hash)
+	live := addBeeperAudio(t, f.Store, destination.ID, destinationConversation, "live-audio", hash)
+	senderID, err := f.Store.EnsureParticipant("sender@example.test", "Example Sender", "example.test")
+	require.NoError(err)
+	sentAt := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	_, err = f.Store.DB().Exec(f.Store.Rebind(`
+		UPDATE messages SET sender_id = ?, sent_at = ? WHERE id IN (?, ?)
+	`), senderID, sentAt, historical.messageID, live.messageID)
+	require.NoError(err)
+
+	merged, err := f.Store.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{
+		FromSourceID: f.Source.ID, IntoSourceID: destination.ID,
+	})
+	require.NoError(err)
+	assert.Equal(int64(1), merged.DuplicatesHidden)
+
+	var copiedID int64
+	var copiedPartKey string
+	var copiedProviderAttachmentID string
+	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+		SELECT attachment.id, attachment.source_part_key, attachment.source_attachment_id
+		FROM attachments attachment
+		JOIN source_merge_preserved_attachments marker ON marker.attachment_id = attachment.id
+		WHERE attachment.message_id = ?
+	`), live.messageID).Scan(&copiedID, &copiedPartKey, &copiedProviderAttachmentID))
+	assert.Contains(copiedProviderAttachmentID, "history-audio")
+	assert.Contains(copiedPartKey, "msgvault-archive:")
+
+	candidates, err := f.Store.ListBeeperMediaCandidates(t.Context(), 0, 10)
+	require.NoError(err)
+	require.Len(candidates, 1, "the survivor's provider reference is the only current audio candidate")
+	assert.Equal(live.attachmentID, candidates[0].AttachmentID)
+	assert.Equal("beeper:mxc://audio/live-audio", candidates[0].SourceAttachmentID)
+
+	stale := live.mapping("preserved-copy", "revision", "")
+	stale.OccurrenceRef = "msgvault:preserved-copy"
+	stale.SourceAttachmentID = copiedProviderAttachmentID
+	stale.SourcePartKey = copiedPartKey
+	stale.AttachmentID = copiedID
+	require.NoError(f.Store.ReconcileBeeperMediaMapping(t.Context(), stale))
+	require.NoError(f.Store.RevokeStaleBeeperMediaMappings(t.Context(), stale.DestinationKey))
+	var state, errorCode string
+	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+		SELECT retention_state, error_code FROM beeper_media_occurrences
+		WHERE destination_key = ? AND occurrence_ref = ? AND revision = ?
+	`), stale.DestinationKey, stale.OccurrenceRef, stale.Revision).Scan(&state, &errorCode))
+	assert.Equal(store.BeeperMediaRetentionRevoked, state)
+	assert.Equal("no_live_occurrence", errorCode)
+}
+
 func TestBeeperMediaSchemaReopen(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

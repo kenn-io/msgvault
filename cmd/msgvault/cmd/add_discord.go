@@ -157,7 +157,7 @@ func registerDiscordGuild(st *store.Store, guild discord.Guild, binding string) 
 	if err != nil {
 		return fmt.Errorf("register Discord guild %s: %w", guild.ID, err)
 	}
-	if err := st.UpdateSourceDisplayName(source.ID, guild.Name); err != nil {
+	if err := updateSourceDisplayNameForRegistration(st, source.ID, guild.Name, nil); err != nil {
 		return fmt.Errorf("set Discord guild name %s: %w", guild.ID, err)
 	}
 	if err := st.UpdateSourceOAuthApp(source.ID, nullableDiscordBinding(binding)); err != nil {

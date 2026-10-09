@@ -28,6 +28,12 @@ type SQLiteEngine struct {
 	ftsChecked bool
 }
 
+// The portable marker survives subsets that cannot retain full merge provenance.
+const archiveOnlyDeletionTargetGuard = `NOT EXISTS (
+	SELECT 1 FROM source_merge_archive_only_messages marker
+	WHERE marker.message_id = m.id
+)`
+
 // NewSQLiteEngine creates a new SQLite-backed query engine.
 func NewSQLiteEngine(db *sql.DB) *SQLiteEngine {
 	return &SQLiteEngine{db: db, dialect: SQLiteQueryDialect{}}
@@ -1487,7 +1493,7 @@ func (e *SQLiteEngine) GetDeletionTargetsByFilter(ctx context.Context, filter Me
 	// Exclude remote-deleted and dedup-soft-deleted messages.
 	// Always pass true: this surface feeds remote-deletion staging and
 	// must never honor an opt-in.
-	conditions = append(conditions, store.LiveMessagesWhere("m", true))
+	conditions = append(conditions, store.LiveMessagesWhere("m", true), archiveOnlyDeletionTargetGuard)
 	if filter.HasEmptyTargets() {
 		_, emptyConditions, emptyArgs := e.buildFilterJoinsAndConditions(MessageFilter{
 			EmptyValueTargets:     filter.EmptyValueTargets,
@@ -1726,6 +1732,7 @@ func (e *SQLiteEngine) GetDeletionTargetsBySearch(
 	default:
 		return nil, fmt.Errorf("unsupported deletion search mode %q", mode)
 	}
+	searchConditions = append(searchConditions, archiveOnlyDeletionTargetGuard)
 
 	queryText := fmt.Sprintf(`
 		SELECT m.id, m.source_id, s_gmail.source_type, s_gmail.identifier,
@@ -1764,6 +1771,7 @@ func (e *SQLiteEngine) GetDeletionTargetsByAggregateSearch(
 	filter.Pagination = Pagination{}
 	filter.HideDeletedFromSource = true
 	filterJoins, conditions, args := e.buildFilterJoinsAndConditions(filter)
+	conditions = append(conditions, archiveOnlyDeletionTargetGuard)
 	timeGranularity := filter.TimeRange.Granularity
 	if groupBy == ViewTime {
 		timeGranularity = inferTimeGranularity(timeGranularity, key)
@@ -1834,7 +1842,7 @@ func (e *SQLiteEngine) deletionTargetsForMessageIDChunk(ctx context.Context, ids
 		       m.source_message_id, m.sent_at
 		FROM messages m
 		JOIN sources s_gmail ON s_gmail.id = m.source_id AND s_gmail.source_type IN `+deletableSourceTypesSQL+`
-			WHERE %s AND %s AND COALESCE(m.source_message_id, '') <> '' AND m.id IN (%s)
+			WHERE %s AND %s AND `+archiveOnlyDeletionTargetGuard+` AND COALESCE(m.source_message_id, '') <> '' AND m.id IN (%s)
 	`, store.LiveMessagesWhere("m", true), emailOnlyFilterM, strings.Join(placeholders, ","))
 	rows, err := e.queryContext(ctx, q, args...)
 	if err != nil {

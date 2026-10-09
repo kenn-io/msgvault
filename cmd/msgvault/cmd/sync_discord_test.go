@@ -49,6 +49,105 @@ func TestSyncDiscordNoArgumentContinuesAfterFailureInSourceIDOrder(t *testing.T)
 	assert.Equal([]string{"/guilds/" + testDiscordGuildA, "/guilds/" + testDiscordGuildB}, guildRequests)
 }
 
+func TestSyncDiscordNoArgumentSkipsRetiredGuilds(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := newDiscordCLIStore(t)
+	tokensDir := t.TempDir()
+	require.NoError(discord.NewTokenManager(tokensDir).Save(discord.NewTokenRecord(testDiscordBotID, "archive-bot", testDiscordBotToken, "")))
+	retired, err := st.GetOrCreateSource("discord", testDiscordGuildA)
+	require.NoError(err)
+	active, err := st.GetOrCreateSource("discord", testDiscordGuildB)
+	require.NoError(err)
+	_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{
+		FromSourceID: retired.ID,
+		IntoSourceID: active.ID,
+	})
+	require.NoError(err)
+	historical, err := resolveDiscordSources(st, "")
+	require.NoError(err)
+	assert.Len(historical, 2, "history-oriented selection retains both source records")
+	api := newDiscordCLIServer(t)
+
+	cmd := newSyncDiscordLocalCmd(testDiscordCommandDeps(t, st, tokensDir, api.server.URL))
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	require.NoError(cmd.Execute())
+
+	var guildRequests []string
+	for _, request := range api.requestURIs() {
+		if request == "/guilds/"+testDiscordGuildA || request == "/guilds/"+testDiscordGuildB {
+			guildRequests = append(guildRequests, request)
+		}
+	}
+	assert.Equal([]string{"/guilds/" + testDiscordGuildB}, guildRequests)
+}
+
+func TestSyncDiscordExplicitRetiredGuildFailsBeforeCredentialLookup(t *testing.T) {
+	require := require.New(t)
+	st := newDiscordCLIStore(t)
+	retired, err := st.GetOrCreateSource("discord", testDiscordGuildA)
+	require.NoError(err)
+	active, err := st.GetOrCreateSource("discord", testDiscordGuildB)
+	require.NoError(err)
+	_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{
+		FromSourceID: retired.ID,
+		IntoSourceID: active.ID,
+	})
+	require.NoError(err)
+	api := newDiscordCLIServer(t)
+
+	cmd := newSyncDiscordLocalCmd(testDiscordCommandDeps(t, st, t.TempDir(), api.server.URL))
+	cmd.SetArgs([]string{testDiscordGuildA})
+	err = cmd.Execute()
+	require.ErrorIs(err, store.ErrSourceRetired)
+	require.NotContains(err.Error(), "credential")
+}
+
+func TestSyncDiscordResolvesAliasSelector(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := newDiscordCLIStore(t)
+	tokensDir := t.TempDir()
+	require.NoError(discord.NewTokenManager(tokensDir).Save(discord.NewTokenRecord(testDiscordBotID, "archive-bot", testDiscordBotToken, "")))
+	source, err := st.GetOrCreateSource("discord", testDiscordGuildA)
+	require.NoError(err)
+	alias := "Archive Guild"
+	_, err = st.UpdateSourceSettingsContext(t.Context(), source.ID, store.SourceSettingsUpdate{Alias: &alias})
+	require.NoError(err)
+	api := newDiscordCLIServer(t)
+
+	cmd := newSyncDiscordLocalCmd(testDiscordCommandDeps(t, st, tokensDir, api.server.URL))
+	cmd.SetArgs([]string{"archive guild"})
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	require.NoError(cmd.Execute())
+
+	var guildRequests []string
+	for _, request := range api.requestURIs() {
+		if request == "/guilds/"+testDiscordGuildA {
+			guildRequests = append(guildRequests, request)
+		}
+	}
+	assert.Equal([]string{"/guilds/" + testDiscordGuildA}, guildRequests)
+}
+
+func TestResolveDiscordSourcesResolvesAliasSelector(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := newDiscordCLIStore(t)
+	source, err := st.GetOrCreateSource("discord", testDiscordGuildA)
+	require.NoError(err)
+	alias := "Archive Guild"
+	_, err = st.UpdateSourceSettingsContext(t.Context(), source.ID, store.SourceSettingsUpdate{Alias: &alias})
+	require.NoError(err)
+
+	sources, err := resolveDiscordSources(st, "archive guild")
+	require.NoError(err)
+	require.Len(sources, 1)
+	assert.Equal(source.ID, sources[0].ID)
+}
+
 func TestSyncDiscordResolvesUnambiguousDisplayNameAndForwardsBounds(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

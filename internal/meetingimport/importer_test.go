@@ -138,6 +138,37 @@ func TestImporterCreatesCanonicalMeetingAndSyncRun(t *testing.T) {
 	assert.Equal(int64(0), latest.MessagesUpdated)
 }
 
+func TestImporterContinuesWhenDisplayNameConflictsWithAccountSelector(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	_, err := st.GetOrCreateSource("gmail", "owner@example.test")
+	require.NoError(err)
+
+	req := validImportRequest(t)
+	req.Source.DisplayName = "owner@example.test"
+	meetingSource, err := st.GetOrCreateSource(SourceType, req.Source.Identifier)
+	require.NoError(err)
+	originalDisplayName := meetingSource.DisplayName.String
+
+	var logOutput bytes.Buffer
+	importer := NewImporter(st, Hooks{}).WithLogger(
+		slog.New(slog.NewTextHandler(&logOutput, nil)),
+	)
+	result, err := importer.Import(t.Context(), req)
+	require.NoError(err, "a selector collision must not prevent archiving the meeting")
+	assert.Equal(StatusCreated, result.Status)
+	assert.NotZero(result.MessageID)
+
+	updatedSource, err := st.GetSourceByID(result.SourceID)
+	require.NoError(err)
+	assert.Equal(originalDisplayName, updatedSource.DisplayName.String,
+		"the meeting import must retain its prior safe display name")
+	assert.Contains(logOutput.String(), "display name")
+	assert.NotContains(logOutput.String(), "owner@example.test",
+		"the warning must not include the colliding identifier")
+}
+
 func TestImporterRejectsConcurrentStartWhileWriterIsBlocked(t *testing.T) {
 	checks := assert.New(t)
 	requirements := require.New(t)

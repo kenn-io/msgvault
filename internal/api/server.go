@@ -1245,6 +1245,7 @@ func (s *Server) requestTimeoutForPath(path string) (time.Duration, bool) {
 func isLongDaemonRequest(path string) bool {
 	switch path {
 	case "/api/v1/cli/build-cache",
+		"/api/v1/cli/account/merge",
 		importJobsEndpointPath,
 		"/api/v1/carddav/sync",
 		"/api/v1/cli/deduplicate/plan",

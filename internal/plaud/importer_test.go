@@ -89,6 +89,29 @@ func TestRegisterSourceSetsDisplayNameAndPreservesOwner(t *testing.T) {
 	assert.NoError(ValidateOwner(src, "user@example.com"))
 }
 
+func TestRegisterSourceContinuesWhenIdentifierConflictsWithArchiveAlias(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	selectorSource, err := st.GetOrCreateSource("gmail", "owner@example.test")
+	require.NoError(err)
+	_, err = st.GetOrCreateSource(SourceType, "personal")
+	require.NoError(err)
+	// Seed a persisted alias collision to exercise a store state that the
+	// current public settings API prevents from being created.
+	_, err = st.DB().Exec(st.Rebind(`INSERT INTO source_settings (source_id, alias, alias_key, history_only) VALUES (?, ?, ?, FALSE)`),
+		selectorSource.ID, "personal", "personal")
+	require.NoError(err)
+
+	src, err := RegisterSource(st, "personal", "owner@example.test")
+	require.NoError(err, "a display-name selector collision must not prevent account registration")
+	assert.False(src.DisplayName.Valid, "the conflicting display name should keep its prior empty value")
+	assert.NoError(ValidateOwner(src, "owner@example.test"), "the owner binding must still be retained")
+	var identityCount int
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM account_identities WHERE source_id = ?`), src.ID).Scan(&identityCount))
+	assert.Equal(1, identityCount, "account identity registration must continue after the display-name conflict")
+}
+
 func TestImporterReconcilesEditsAndPreservesMissingEvidence(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

@@ -100,6 +100,22 @@ CREATE TABLE IF NOT EXISTS sources (
     UNIQUE(source_type, identifier)
 );
 
+
+-- Archive aliases/lifecycle never rewrite provider account identity.
+CREATE TABLE IF NOT EXISTS source_settings (
+    source_id BIGINT PRIMARY KEY REFERENCES sources(id) ON DELETE CASCADE,
+    alias TEXT NOT NULL DEFAULT '',
+    alias_key TEXT UNIQUE,
+    history_only BOOLEAN NOT NULL DEFAULT FALSE,
+    merged_into_source_id BIGINT REFERENCES sources(id),
+    retired_at TIMESTAMPTZ,
+    CHECK (merged_into_source_id IS NULL OR merged_into_source_id <> source_id)
+);
+CREATE TABLE IF NOT EXISTS source_maintenance_lock (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1)
+);
+INSERT INTO source_maintenance_lock(singleton) VALUES (1) ON CONFLICT (singleton) DO NOTHING;
+
 -- External CardDAV connections. Passwords remain in the private token file
 -- and are never persisted here.
 CREATE TABLE IF NOT EXISTS carddav_discovery_lock (
@@ -4092,3 +4108,64 @@ CREATE TABLE IF NOT EXISTS message_delivery_addresses (
 );
 CREATE INDEX IF NOT EXISTS idx_message_delivery_addresses_address
     ON message_delivery_addresses(address, message_id);
+
+
+-- A source retirement and its report are one atomic archive mutation.
+CREATE TABLE IF NOT EXISTS source_merges (
+    from_source_id BIGINT PRIMARY KEY REFERENCES sources(id) ON DELETE CASCADE,
+    into_source_id BIGINT NOT NULL REFERENCES sources(id),
+    report TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS source_merge_messages (
+    message_id BIGINT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+    original_source_id BIGINT NOT NULL REFERENCES sources(id),
+    original_message_id TEXT,
+    survivor_message_id BIGINT REFERENCES messages(id) ON DELETE SET NULL,
+    archive_only BOOLEAN NOT NULL DEFAULT FALSE,
+    match_basis TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_source_merge_messages_original ON source_merge_messages(original_source_id);
+-- These owning-row markers survive subsets that omit merge provenance. The
+-- original provider message ID lets media consumers verify imported raw data.
+CREATE TABLE IF NOT EXISTS source_merge_archive_only_messages (
+    message_id BIGINT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+    original_source_message_id TEXT NOT NULL DEFAULT ''
+);
+INSERT INTO source_merge_archive_only_messages(message_id)
+SELECT message_id FROM source_merge_messages WHERE archive_only = TRUE
+ON CONFLICT (message_id) DO NOTHING;
+
+CREATE OR REPLACE FUNCTION reject_retired_source_write() RETURNS TRIGGER AS $body$
+BEGIN
+    IF EXISTS (SELECT 1 FROM source_settings WHERE source_id = NEW.source_id AND merged_into_source_id IS NOT NULL) THEN
+        RAISE EXCEPTION 'source is retired';
+    END IF;
+    RETURN NEW;
+END;
+$body$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS source_retired_conversations ON conversations;
+CREATE TRIGGER source_retired_conversations BEFORE INSERT OR UPDATE OF source_id ON conversations
+    FOR EACH ROW EXECUTE FUNCTION reject_retired_source_write();
+DROP TRIGGER IF EXISTS source_retired_messages ON messages;
+CREATE TRIGGER source_retired_messages BEFORE INSERT OR UPDATE OF source_id ON messages
+    FOR EACH ROW EXECUTE FUNCTION reject_retired_source_write();
+
+-- Historical conversation and attachment endpoints never become provider IDs.
+CREATE TABLE IF NOT EXISTS source_merge_conversations (
+ conversation_id BIGINT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
+ original_source_id BIGINT NOT NULL REFERENCES sources(id),
+ original_conversation_id TEXT,
+ destination_conversation_id BIGINT NOT NULL REFERENCES conversations(id)
+);
+CREATE TABLE IF NOT EXISTS source_merge_attachments (
+ attachment_id BIGINT PRIMARY KEY REFERENCES attachments(id) ON DELETE CASCADE,
+ original_attachment_id BIGINT NOT NULL REFERENCES attachments(id) ON DELETE CASCADE,
+ original_source_id BIGINT NOT NULL REFERENCES sources(id)
+);
+CREATE TABLE IF NOT EXISTS source_merge_preserved_attachments (
+    attachment_id BIGINT PRIMARY KEY REFERENCES attachments(id) ON DELETE CASCADE
+);
+INSERT INTO source_merge_preserved_attachments(attachment_id)
+SELECT attachment_id FROM source_merge_attachments WHERE attachment_id IS NOT NULL
+ON CONFLICT (attachment_id) DO NOTHING;

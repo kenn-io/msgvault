@@ -82,7 +82,13 @@ func (i *Importer) Import(ctx context.Context, req Request) (result Result, retE
 	}
 	if displayName != "" && (!source.DisplayName.Valid || source.DisplayName.String != displayName) {
 		if err := i.store.UpdateSourceDisplayNameContext(ctx, source.ID, displayName); err != nil {
-			return result, fmt.Errorf("update meeting source display name: %w", err)
+			if !errors.Is(err, store.ErrSourceSettingsInvalid) {
+				return result, fmt.Errorf("update meeting source display name: %w", err)
+			}
+			i.logger.WarnContext(ctx,
+				"meeting source display name conflicts with another source selector; keeping current name",
+				"source_id", source.ID,
+			)
 		}
 	}
 	if err := i.store.AddAccountIdentityAndRefreshMessageAttributionContext(

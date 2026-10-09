@@ -27,6 +27,10 @@ func (s *Store) SetBeeperAttachmentClassifications(
 			    attachment_role = ?,
 			    role_source = ?
 			WHERE message_id = ? AND source_attachment_id LIKE 'beeper:%%'
+			  AND NOT EXISTS (
+			      SELECT 1 FROM source_merge_preserved_attachments spa
+			      WHERE spa.attachment_id = attachments.id
+			  )
 			  AND (
 			      %s
 			      OR attachment_role != ?
@@ -69,6 +73,10 @@ func (s *Store) SetBeeperAttachmentClassifications(
 				    attachment_role = ?,
 				    role_source = ?
 				WHERE message_id = ? AND source_attachment_id = ?
+				  AND NOT EXISTS (
+				      SELECT 1 FROM source_merge_preserved_attachments spa
+				      WHERE spa.attachment_id = attachments.id
+				  )
 				  AND (
 				      %s
 				      OR attachment_role != ?

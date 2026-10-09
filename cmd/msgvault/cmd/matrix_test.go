@@ -60,6 +60,59 @@ func TestRunConfiguredMatrixSyncRefreshesCacheAfterFailedAttempt(t *testing.T) {
 	assert.Equal(t, 1, calls)
 }
 
+func retiredMatrixSyncFixture(t *testing.T) (*store.Store, *store.Source) {
+	t.Helper()
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	retired, err := st.GetOrCreateSource(sourceTypeMatrix, "@history:example.org")
+	require.NoError(err)
+	active, err := st.GetOrCreateSource(sourceTypeMatrix, "@active:example.org")
+	require.NoError(err)
+	_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{
+		FromSourceID: retired.ID,
+		IntoSourceID: active.ID,
+	})
+	require.NoError(err)
+	return st, retired
+}
+
+func TestRunMatrixSyncSkipsRetiredSourcesForAllAccounts(t *testing.T) {
+	require := require.New(t)
+	st, _ := retiredMatrixSyncFixture(t)
+	dataDir := t.TempDir()
+	cfg := &config.Config{HomeDir: dataDir, Data: config.DataConfig{DataDir: dataDir}}
+	active, err := st.GetSourceByTypeAndIdentifier(sourceTypeMatrix, "@active:example.org")
+	require.NoError(err)
+	var syncRequests int
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /_matrix/client/v3/sync", func(w http.ResponseWriter, _ *http.Request) {
+		syncRequests++
+		_, _ = w.Write([]byte(`{"next_batch":"next-1","rooms":{"join":{}}}`))
+	})
+	mux.HandleFunc("GET /_matrix/client/v3/user/@active:example.org/account_data/m.direct", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{}`))
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	require.NoError(matrixsource.SaveCredentials(cfg.TokensDir(), matrixsource.Credentials{
+		Homeserver: server.URL, UserID: active.Identifier, DeviceID: "device", AccessToken: "token",
+	}))
+
+	err = runMatrixSync(t.Context(), st, cfg, "", false, nil, io.Discard)
+	require.NoError(err)
+	assert.Equal(t, 1, syncRequests, "only the active source is synced")
+}
+
+func TestRunMatrixSyncRejectsExplicitRetiredAccountBeforeCredentials(t *testing.T) {
+	require := require.New(t)
+	st, retired := retiredMatrixSyncFixture(t)
+	dataDir := t.TempDir()
+	cfg := &config.Config{HomeDir: dataDir, Data: config.DataConfig{DataDir: dataDir}}
+
+	err := runMatrixSync(t.Context(), st, cfg, retired.Identifier, false, nil, io.Discard)
+	require.ErrorIs(err, store.ErrSourceRetired)
+}
+
 func TestAddMatrixRenewsExistingAccountInPlace(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

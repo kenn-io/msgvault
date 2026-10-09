@@ -3,7 +3,11 @@
  */
 
 export interface UpdateResult {
+  alias: string;
   display_name: string;
   email: string;
+  history_only: boolean;
+  identifier: string;
+  reanchor_required: boolean;
   [key: string]: unknown;
 }

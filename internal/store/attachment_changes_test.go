@@ -77,6 +77,49 @@ func TestAttachmentChangeJournalCapturesOnlyRelevantCommittedMutations(t *testin
 	assert.Nil(changes[2].NewAttachmentID)
 }
 
+func TestAttachmentChangeJournalCapturesSourceMergeOwnershipChange(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newBeeperMediaFixture(t)
+
+	conversationIdentity := "!media-merge:beeper.local"
+	historicalConversation, err := f.Store.EnsureConversation(f.Source.ID, conversationIdentity, "Thread")
+	require.NoError(err)
+	destination, err := f.Store.GetOrCreateSource("beeper", "signal-main")
+	require.NoError(err)
+	destinationConversation, err := f.Store.EnsureConversation(destination.ID, conversationIdentity, "Thread")
+	require.NoError(err)
+	messageID, err := f.Store.UpsertMessage(&store.Message{
+		SourceID: f.Source.ID, ConversationID: historicalConversation,
+		SourceMessageID: "history-audio", MessageType: "beeper",
+	})
+	require.NoError(err)
+	attachmentID := createJournalAttachment(t, f, messageID, "beeper:audio", "a")
+
+	consumer, _, err := f.Store.RegisterAttachmentChangeConsumer(t.Context(), store.BeeperMediaAttachmentConsumerKey)
+	require.NoError(err)
+	require.NoError(f.Store.CompleteAttachmentChangeReconciliation(
+		t.Context(), consumer.ConsumerKey, consumer.BaselineSequence,
+	))
+	_, err = f.Store.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{
+		FromSourceID: f.Source.ID, IntoSourceID: destination.ID,
+	})
+	require.NoError(err)
+
+	changes, err := f.Store.ListAttachmentChanges(t.Context(), store.BeeperMediaAttachmentConsumerKey, 10)
+	require.NoError(err)
+	require.Len(changes, 1, "changing a live message's source tuple must invalidate media after the scan baseline")
+	assert.Equal("attachment_update", changes[0].EventKind)
+	assert.Equal(messageID, requireInt64Pointer(t, changes[0].OldMessageID))
+	assert.Equal(messageID, requireInt64Pointer(t, changes[0].NewMessageID))
+	assert.Equal(attachmentID, requireInt64Pointer(t, changes[0].OldAttachmentID))
+	assert.Equal(attachmentID, requireInt64Pointer(t, changes[0].NewAttachmentID))
+	var actualConversationID int64
+	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+		`SELECT conversation_id FROM messages WHERE id = ?`), messageID).Scan(&actualConversationID))
+	assert.Equal(destinationConversation, actualConversationID)
+}
+
 func TestAttachmentChangeConsumersPruneOnlySharedConsumedPrefix(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

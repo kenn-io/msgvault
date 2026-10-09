@@ -171,7 +171,11 @@ func (a *storeAPIAdapter) runGmailReplyDraft(
 	if err := validateGmailSendAs(sendAs, reply.Parsed.From[0].Email); err != nil {
 		return err
 	}
-	draft, err := client.CreateDraft(ctx, reply.Raw, target.parent.SourceConversationID)
+	threadID := target.parent.SourceConversationID
+	if strings.HasPrefix(threadID, "msgvault-archive:") {
+		threadID = ""
+	}
+	draft, err := client.CreateDraft(ctx, reply.Raw, threadID)
 	if err != nil {
 		return emitGmailDraftReplyFailure(emit, intent.JSON, target, messageIDValue, err)
 	}

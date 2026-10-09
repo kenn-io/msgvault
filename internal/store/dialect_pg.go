@@ -779,6 +779,7 @@ func (d *PostgreSQLDialect) LegacyColumnMigrations() []ColumnMigration {
 		{`ALTER TABLE person_enrichment_attempts ADD COLUMN IF NOT EXISTS provider_started_at TIMESTAMPTZ`, "person_enrichment_attempts.provider_started_at"},
 		{`ALTER TABLE person_enrichment_attempts ADD COLUMN IF NOT EXISTS dispatch_authorized_at TIMESTAMPTZ`, "person_enrichment_attempts.dispatch_authorized_at"},
 		{`ALTER TABLE person_enrichment_work ADD COLUMN IF NOT EXISTS has_fresh_trigger BOOLEAN NOT NULL DEFAULT FALSE`, "person_enrichment_work.has_fresh_trigger"},
+		{`ALTER TABLE source_merge_archive_only_messages ADD COLUMN IF NOT EXISTS original_source_message_id TEXT NOT NULL DEFAULT ''`, "source_merge_archive_only_messages.original_source_message_id"},
 	}
 }
 
@@ -1040,7 +1041,8 @@ func (d *PostgreSQLDialect) EnsureTriggers(q querier) error {
 		                 )
 		             ) AND (
 		                 OLD.message_type IS DISTINCT FROM NEW.message_type
-		                 OR OLD.conversation_id IS DISTINCT FROM NEW.conversation_id
+		                 OR OLD.source_id IS DISTINCT FROM NEW.source_id
+		                OR OLD.conversation_id IS DISTINCT FROM NEW.conversation_id
 		                 OR OLD.sent_at IS DISTINCT FROM NEW.sent_at
 		                 OR OLD.received_at IS DISTINCT FROM NEW.received_at
 		                 OR OLD.internal_date IS DISTINCT FROM NEW.internal_date
@@ -1056,7 +1058,8 @@ func (d *PostgreSQLDialect) EnsureTriggers(q querier) error {
 		                 OR (NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL)
 		             ) AND (
 		                 OLD.message_type IS DISTINCT FROM NEW.message_type
-		                 OR OLD.conversation_id IS DISTINCT FROM NEW.conversation_id
+		                 OR OLD.source_id IS DISTINCT FROM NEW.source_id
+		                OR OLD.conversation_id IS DISTINCT FROM NEW.conversation_id
 		                 OR OLD.subject IS DISTINCT FROM NEW.subject
 		                 OR OLD.deleted_at IS DISTINCT FROM NEW.deleted_at
 		                 OR OLD.deleted_from_source_at IS DISTINCT FROM NEW.deleted_from_source_at
@@ -1349,8 +1352,12 @@ func (d *PostgreSQLDialect) EnsureTriggers(q querier) error {
 		          old_source_part_key, new_source_part_key,
 		          old_role, new_role)
 		     SELECT
-		         CASE WHEN NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL
-		              THEN 'message_live_enter' ELSE 'message_live_exit' END,
+		         CASE WHEN (OLD.deleted_at IS NULL AND OLD.deleted_from_source_at IS NULL)
+		                    IS DISTINCT FROM
+		                    (NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL)
+		              THEN CASE WHEN NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL
+		                        THEN 'message_live_enter' ELSE 'message_live_exit' END
+		              ELSE 'attachment_update' END,
 		         CASE WHEN OLD.deleted_at IS NULL AND OLD.deleted_from_source_at IS NULL
 		              THEN OLD.id END,
 		         CASE WHEN NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL
@@ -1377,10 +1384,16 @@ func (d *PostgreSQLDialect) EnsureTriggers(q querier) error {
 		 $$ LANGUAGE plpgsql`,
 		`DROP TRIGGER IF EXISTS trg_attachment_message_live_change ON messages`,
 		`CREATE TRIGGER trg_attachment_message_live_change
-		     AFTER UPDATE OF deleted_at, deleted_from_source_at ON messages FOR EACH ROW
-		     WHEN ((OLD.deleted_at IS NULL AND OLD.deleted_from_source_at IS NULL)
-		           IS DISTINCT FROM
-		           (NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL))
+		     AFTER UPDATE OF source_id, conversation_id, deleted_at, deleted_from_source_at ON messages FOR EACH ROW
+		     WHEN (
+		         ((OLD.deleted_at IS NULL AND OLD.deleted_from_source_at IS NULL)
+		          IS DISTINCT FROM
+		          (NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL))
+		         OR ((OLD.deleted_at IS NULL AND OLD.deleted_from_source_at IS NULL)
+		             AND (NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL)
+		             AND (OLD.source_id IS DISTINCT FROM NEW.source_id
+		               OR OLD.conversation_id IS DISTINCT FROM NEW.conversation_id))
+		     )
 		     EXECUTE FUNCTION capture_attachment_message_live_change()`,
 		`CREATE OR REPLACE FUNCTION invalidate_visual_publication_attachment() RETURNS trigger AS $$
 		 BEGIN
@@ -2368,6 +2381,7 @@ var exclusiveLockTables = []string{
 	"activity_events", "activity_event_persons", "person_contact_state",
 	"activity_projection_queue",
 	"collections", "collection_sources", "account_identities", "applied_migrations",
+	"source_merges", "source_settings",
 	"sync_operations",
 	"source_import_items", "sync_run_items", "sync_checkpoints",
 	"imap_folder_state", "imap_message_memberships", "imap_drafts", "gmail_drafts", "chat_drafts", "beeper_drafts",

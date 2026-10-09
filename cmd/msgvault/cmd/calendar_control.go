@@ -16,6 +16,7 @@ import (
 	"go.kenn.io/msgvault/internal/calcontrol"
 	"go.kenn.io/msgvault/internal/calsync"
 	"go.kenn.io/msgvault/internal/gcal"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 func init() { rootCmd.AddCommand(newCalendarControlCmd(nil)) }
@@ -342,7 +343,18 @@ func (a *storeAPIAdapter) ControlCalendar(ctx context.Context, request calcontro
 	if a.logger != nil {
 		syncer.WithLogger(a.logger)
 	}
-	service := calcontrol.Service{Source: *source, Client: client, Persist: syncer.PersistEvent, AcquireWrite: acquireWrite}
+	service := calcontrol.Service{
+		Source: *source, Client: client, Persist: syncer.PersistEvent, AcquireWrite: acquireWrite,
+		ValidateWritableSources: func(ctx context.Context, calendarIDs []string) error {
+			if err := syncer.ValidateWritableCalendars(ctx, calendarIDs); err != nil {
+				if errors.Is(err, store.ErrSourceRetired) {
+					return fmt.Errorf("%w: calendar archive source is retired", calcontrol.ErrDenied)
+				}
+				return fmt.Errorf("%w: validate calendar archive source lifecycle", calcontrol.ErrInternal)
+			}
+			return nil
+		},
+	}
 	result, err := service.Execute(ctx, request, grant)
 	if grant != nil && errors.Is(err, calcontrol.ErrDenied) {
 		return nil, calcontrol.ErrDenied

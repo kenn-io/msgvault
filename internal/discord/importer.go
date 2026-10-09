@@ -9,6 +9,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"math"
 	"net/http"
@@ -233,7 +234,13 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (summary *I
 	}
 	if guild.Name != "" {
 		if err := imp.store.UpdateSourceDisplayNameContext(ctx, source.ID, guild.Name); err != nil {
-			return summary, fmt.Errorf("update Discord guild name: %w", err)
+			if !errors.Is(err, store.ErrSourceSettingsInvalid) {
+				return summary, fmt.Errorf("update Discord guild name: %w", err)
+			}
+			slog.WarnContext(ctx,
+				"Discord guild display name conflicts with another source selector; keeping current name",
+				"source_id", source.ID,
+			)
 		}
 	}
 

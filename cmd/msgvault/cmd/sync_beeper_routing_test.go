@@ -33,6 +33,46 @@ func TestResolveBeeperSyncAccountsValidatesAndDeduplicatesExplicitIDs(t *testing
 	require.ErrorContains(err, `beeper account "typo" is not registered`)
 }
 
+func TestResolveBeeperSyncAccountsMatchesAliasCaseInsensitively(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource(sourceTypeBeeper, "signal")
+	require.NoError(err)
+	alias := "Work Chat"
+	_, err = st.UpdateSourceSettingsContext(t.Context(), source.ID, store.SourceSettingsUpdate{Alias: &alias})
+	require.NoError(err)
+
+	accounts, err := resolveBeeperSyncAccounts(st, []string{"work chat"}, testConfigValue())
+	require.NoError(err)
+	assert.Equal([]string{"signal"}, accounts)
+}
+
+func TestOpenBeeperImporterExplainsFilteredAccountsWithoutBlamingHistoryOnly(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	cfg := lifecycleTestConfig(t.TempDir())
+	cfg.Beeper.ExcludeAccounts = []string{"signal"}
+	require.NoError(beeper.SaveToken(cfg.TokensDir(), "synthetic-token"))
+
+	st, err := store.Open(cfg.DatabaseDSN())
+	require.NoError(err)
+	require.NoError(st.InitSchema())
+	_, err = st.GetOrCreateSource(sourceTypeBeeper, "signal")
+	require.NoError(err)
+	require.NoError(st.Close())
+
+	importer, accountIDs, dbPath, cleanup, err := openBeeperImporter(nil, testInvocationWithConfig(cfg))
+	if cleanup != nil {
+		cleanup()
+	}
+	require.ErrorContains(err, "no active Beeper accounts to sync")
+	assert.Nil(importer)
+	assert.Empty(accountIDs)
+	assert.Empty(dbPath)
+	assert.NotContains(err.Error(), "history-only")
+}
+
 func TestFilterBeeperReanchorMarkedAccounts(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -272,4 +312,31 @@ func TestScheduledBeeperAttemptsRotateWhenEveryAccountStops(t *testing.T) {
 			}, func() error { return nil }))
 	}
 	assert.Equal(t, []string{"a", "b", "c"}, attempted, "each stopped account yields the next tick")
+}
+
+func TestScheduledBeeperHistoryOnlyDoesNotWarnOrClearMarker(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	history, err := st.GetOrCreateSource(sourceTypeBeeper, "historical-example")
+	require.NoError(err)
+	_, err = st.GetOrCreateSource(sourceTypeBeeper, "live-example")
+	require.NoError(err)
+	value := true
+	_, err = st.UpdateSourceSettingsContext(t.Context(), history.ID, store.SourceSettingsUpdate{HistoryOnly: &value})
+	require.NoError(err)
+	require.NoError(st.SetArchiveMarker(t.Context(), store.BeeperReanchorMarkerKey(history.ID), "synthetic verification required"))
+	previous := slog.Default()
+	var logs bytes.Buffer
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	eligible, err := filterBeeperReanchorMarkedAccounts(t.Context(), st, []string{history.Identifier, "live-example"})
+	require.NoError(err)
+	assert.Equal([]string{"live-example"}, eligible)
+	assert.NotContains(logs.String(), "skipping scheduled Beeper sync")
+	_, marked, err := st.GetArchiveMarker(t.Context(), store.BeeperReanchorMarkerKey(history.ID))
+	require.NoError(err)
+	assert.True(marked)
+	_, err = resolveBeeperSyncAccounts(st, []string{history.Identifier}, testConfigValue())
+	require.Error(err, "manual sync requires clearing history-only first")
 }
