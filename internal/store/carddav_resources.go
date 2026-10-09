@@ -72,8 +72,8 @@ type CardDAVRemoteResource struct {
 	PhoneIdentities     []VCardIdentity
 	// EquivalentLocalHash is sync-plan evidence that the current local
 	// projection and this remote body have the same CardDAV semantic hash.
-	EquivalentLocalHash        string
-	preserveClearedDisplayName bool
+	EquivalentLocalHash string
+	rebaseContactsOnly  bool
 }
 
 type CardDAVSyncPlan struct {
@@ -567,7 +567,7 @@ func (s *Store) applyCardDAVResourceTx(
 			if err != nil {
 				return false, false, err
 			}
-			input.preserveClearedDisplayName = shouldRebase
+			input.rebaseContactsOnly = shouldRebase
 		}
 		if shouldRebase {
 			if rebasedEnvelope == nil {
@@ -1003,7 +1003,7 @@ func (s *Store) addCardDAVImportedProjectionTx(
 	return nil
 }
 
-// Published-import sync preserves local display clears while the imported FN advances.
+// Published imports rebase contact points while retaining their existing names.
 func (s *Store) rebaseCardDAVImportedProjectionTx(
 	ctx context.Context, tx *loggedTx, bookID, personID int64, input CardDAVRemoteResource, incoming vcard.ResourceEnvelope,
 ) (bool, error) {
@@ -1021,13 +1021,13 @@ func (s *Store) rebaseCardDAVImportedProjectionTx(
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return false, fmt.Errorf("load prior CardDAV display projection: %w", err)
 	}
-	remoteOwnsDisplay := !currentDisplay.Valid ||
-		(priorImportedDisplay.Valid && currentDisplay.String == priorImportedDisplay.String)
-	if input.preserveClearedDisplayName && !currentDisplay.Valid {
-		remoteOwnsDisplay = false
-	}
+	remoteOwnsDisplay := !input.rebaseContactsOnly && (!currentDisplay.Valid ||
+		(priorImportedDisplay.Valid && currentDisplay.String == priorImportedDisplay.String))
 
-	for _, table := range []string{"person_names", "person_contact_points"} {
+	for _, table := range []string{personNamesTableName, personContactPointsTableName} {
+		if input.rebaseContactsOnly && table == personNamesTableName {
+			continue
+		}
 		if _, err := tx.ExecContext(ctx, `UPDATE `+table+` SET
 			superseded_at = `+s.dialect.Now()+`, updated_at = `+s.dialect.Now()+`
 			WHERE person_id = ? AND source = ? AND source_ref = ? AND source_resource_uid = ?
@@ -1039,7 +1039,7 @@ func (s *Store) rebaseCardDAVImportedProjectionTx(
 	// Rows still active after superseding this import retain their matched occurrences.
 	skipped := make(map[string]bool)
 	for _, mapping := range incoming.NativeMappings {
-		if mapping.Table != "person_names" && mapping.Table != "person_contact_points" {
+		if mapping.Table != personNamesTableName && mapping.Table != personContactPointsTableName {
 			continue
 		}
 		var active bool
@@ -1053,6 +1053,9 @@ func (s *Store) rebaseCardDAVImportedProjectionTx(
 		}
 	}
 	projection := input
+	if input.rebaseContactsOnly {
+		projection.DisplayName, projection.DisplayNameIdentity = "", VCardIdentity{}
+	}
 	if input.ProjectionIndexes != nil {
 		projection.Emails, projection.EmailIdentities = nil, nil
 		projection.Phones, projection.PhoneIdentities = nil, nil
@@ -1071,10 +1074,6 @@ func (s *Store) rebaseCardDAVImportedProjectionTx(
 		}
 		skip := skipped[occurrence.Identity.Key()]
 		switch strings.ToUpper(occurrence.Property.Name) {
-		case "FN":
-			if skip {
-				projection.DisplayName, projection.DisplayNameIdentity = "", VCardIdentity{}
-			}
 		case "EMAIL":
 			if !skip {
 				projection.Emails = append(projection.Emails, input.Emails[index])
@@ -1255,10 +1254,42 @@ func (s *Store) prepareCardDAVEnvelopeTx(
 		return envelope, loadErr
 	}
 	if current != nil && len(current.NativeMappings) > 0 {
+		priorMappings := current.NativeMappings
 		envelope, err = vcard.RebindResourceOwnership(current.ResourceEnvelope, envelope, false)
 		if err != nil {
 			return envelope, err
 		}
+		for _, mapping := range priorMappings {
+			if mapping.Table != personContactPointsTableName {
+				continue
+			}
+			var userOwned bool
+			if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM person_contact_points
+				WHERE id = ? AND person_id = ? AND source = ? AND active_until IS NULL AND superseded_at IS NULL)`,
+				mapping.RowID, personID, ProvenanceUser).Scan(&userOwned); err != nil {
+				return envelope, fmt.Errorf("load prior CardDAV contact owner: %w", err)
+			}
+			if !userOwned || slices.ContainsFunc(envelope.NativeMappings, func(bound vcard.NativeMapping) bool {
+				return bound.Table == mapping.Table && bound.RowID == mapping.RowID
+			}) {
+				continue
+			}
+			var matches []vcard.PropertyIdentity
+			for _, occurrence := range envelope.PropertyTree {
+				before, after := mapping.Identity, occurrence.Identity
+				if before.PropID != nil || len(before.PID) > 0 || before.Group != "" {
+					before.Ordinal, after.Ordinal = 0, 0
+				}
+				if before.Equal(after) {
+					matches = append(matches, occurrence.Identity)
+				}
+			}
+			if len(matches) == 1 {
+				mapping.Identity = matches[0]
+				envelope.NativeMappings = append(envelope.NativeMappings, mapping)
+			}
+		}
+		envelope.Residue = vcard.ResidueWithMappings(envelope.PropertyTree, envelope.NativeMappings)
 	}
 	return envelope, nil
 }

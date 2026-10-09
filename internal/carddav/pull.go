@@ -387,7 +387,6 @@ func parseRemoteResource(href, etag string, body []byte) (store.CardDAVRemoteRes
 				}
 				resource.DisplayName = strings.TrimSpace(value)
 				resource.DisplayNameIdentity = identity
-				resource.ProjectionIndexes[occurrence.Identity.Key()] = 0
 			}
 		case "EMAIL":
 			value, err := cardDAVPropertyValue(envelope.RenderMetadata.StoredVersion, property)

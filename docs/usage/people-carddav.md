@@ -375,7 +375,7 @@ Publication and conflict routes use global IDs and route network operations to
 the persisted owner's connection. Store-only views stay available even when a
 connection's credential needs repair.
 
-When you edit an imported email, phone or name on a contact msgvault published
+When you edit an imported email or phone on a contact msgvault published
 back into its source address book, the next sync copies the change into msgvault.
 This also works after msgvault publishes values you added locally.
 Values added in msgvault and cards published into a different book keep the old behavior.

@@ -291,6 +291,8 @@ func TestCardDAVDisplayNameRevisionTracksRebaseAndRetirement(t *testing.T) {
 }
 
 func TestCardDAVUntouchedImportWithoutProjectionIndexesUsesOriginalRebase(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	st, account, book := newCardDAVResourceStore(t)
 	href := book.CanonicalURL + "alice.vcf"
 	initial := remoteResource(t, href, "remote-alice", "Alice Initial", "initial@example.test", `"one"`)
@@ -298,10 +300,10 @@ func TestCardDAVUntouchedImportWithoutProjectionIndexesUsesOriginalRebase(t *tes
 		AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration,
 		SyncRevision: book.SyncRevision, Upserts: []store.CardDAVRemoteResource{initial},
 	})
-	require.NoError(t, err)
+	require.NoError(err)
 	mapping, err := st.GetCardDAVResourceContext(t.Context(), book.ID, href)
-	require.NoError(t, err)
-	require.NotNil(t, mapping.PersonID)
+	require.NoError(err)
+	require.NotNil(mapping.PersonID)
 	updated := remoteResource(t, href, "remote-alice", "Alice Remote", "remote@example.test", `"two"`)
 	updated.SemanticHash += "-updated"
 	updated.ProjectionIndexes = nil
@@ -309,14 +311,14 @@ func TestCardDAVUntouchedImportWithoutProjectionIndexesUsesOriginalRebase(t *tes
 		AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration,
 		SyncRevision: book.SyncRevision + 1, Upserts: []store.CardDAVRemoteResource{updated},
 	})
-	require.NoError(t, err)
+	require.NoError(err)
 	person, err := st.GetPersonContext(t.Context(), *mapping.PersonID)
-	require.NoError(t, err)
-	assert.Equal(t, new("Alice Remote"), person.DisplayName)
+	require.NoError(err)
+	assert.Equal(new("Alice Remote"), person.DisplayName)
 	points, err := st.ListPersonContactPointsContext(t.Context(), *mapping.PersonID, true)
-	require.NoError(t, err)
-	require.Len(t, points, 1)
-	assert.Equal(t, "remote@example.test", points[0].OriginalValue)
+	require.NoError(err)
+	require.Len(points, 1)
+	assert.Equal("remote@example.test", points[0].OriginalValue)
 }
 
 func TestCardDAVApplyDoesNotRebaseOnETagOnlyOrUserOwnedState(t *testing.T) {
