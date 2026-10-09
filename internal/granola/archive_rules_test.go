@@ -11,7 +11,7 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
-func parityStrings(t *testing.T, st *store.Store, query string) []string {
+func archiveStrings(t *testing.T, st *store.Store, query string) []string {
 	t.Helper()
 	rows, err := st.DB().Query(query)
 	require.NoError(t, err)
@@ -79,12 +79,12 @@ func TestGranolaAdoptsArchiverRules(t *testing.T) {
 	require.NoError(err)
 
 	assert.Equal([]string{"from:bob@example.com:Bob Jones", "to:carol@example.com:Carol Diaz"},
-		parityStrings(t, st, `
+		archiveStrings(t, st, `
 			SELECT mr.recipient_type || ':' || p.email_address || ':' || COALESCE(mr.display_name, '')
 			FROM message_recipients mr
 			JOIN participants p ON p.id = mr.participant_id
 			ORDER BY 1`))
-	assert.Equal([]string{"from:bob@example.com:bob@example.com", "to:carol@example.com:carol@example.com"}, parityStrings(t, st, `
+	assert.Equal([]string{"from:bob@example.com:bob@example.com", "to:carol@example.com:carol@example.com"}, archiveStrings(t, st, `
 		SELECT mr.recipient_type || ':' || p.email_address || ':' || COALESCE(mr.email_address, '')
 		FROM message_recipients mr
 		JOIN participants p ON p.id = mr.participant_id
