@@ -58,6 +58,7 @@ func TestImportEmlxRemoteImageFailureIsWarning(t *testing.T) {
 			assertions.False(summary.HardErrors, "optional image fetching must remain best-effort")
 			assertions.Zero(summary.Errors)
 			assertions.Equal(int64(1), summary.MessagesProcessed)
+			assertions.Zero(summary.FilesUnchanged, "remote image dependencies cannot authorize filesystem cache hits")
 			if phase != "repeat" {
 				assertions.Contains(logs.String(), "failed to archive remote image")
 			}
@@ -69,11 +70,9 @@ func TestImportEmlxRemoteImageFailureIsWarning(t *testing.T) {
 			labels, err := st.MessageLabelIDsContext(t.Context(), messageID)
 			requirements.NoError(err)
 			assertions.Len(labels, 1)
-			var indexed, receipts int
+			var indexed int
 			requirements.NoError(st.DB().QueryRow("SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'optionalimageneedle'").Scan(&indexed))
 			assertions.Equal(1, indexed)
-			requirements.NoError(st.DB().QueryRow("SELECT COUNT(*) FROM source_import_items WHERE provider = 'emlx-occurrence' AND COALESCE(checksum, '') <> ''").Scan(&receipts))
-			assertions.Zero(receipts, "remote image dependencies cannot authorize reusable filesystem receipts")
 			refs, err := st.MessageRemoteImages(messageID)
 			requirements.NoError(err)
 			assertions.Empty(refs)

@@ -339,8 +339,11 @@ func TestImportEmlxTargetTransitionFailures(t *testing.T) {
 // A clean occurrence cannot hide unfinished work from a same-hash occurrence
 // that later committed new attachment bytes and disappeared from the source.
 func TestImportEmlxSharedTargetRecoversCurrentRaw(t *testing.T) {
-	for _, layout := range []string{"same batch", "earlier path", "later batch", "later mailbox", "different roots"} {
+	for _, layout := range []string{"same batch", "earlier path", "later batch", "later mailbox", "different roots", "enable attachments", "symlink root", "full reconciliation"} {
 		for _, fault := range []string{"attachment record", "FTS"} {
+			if layout == "enable attachments" && fault == "attachment record" {
+				continue // No attachment rows exist until recovery enables storage.
+			}
 			t.Run(layout+"/"+fault, func(t *testing.T) {
 				assertions := assert.New(t)
 				requirements := require.New(t)
@@ -378,6 +381,14 @@ func TestImportEmlxSharedTargetRecoversCurrentRaw(t *testing.T) {
 				cacheAttachment(t, mboxA, numberA, "2", "part.bin", oldPart)
 				opts := EmlxImportOptions{
 					Identifier: "owner@example.test", AttachmentsDir: filepath.Join(tmp, "archive-attachments"),
+				}
+				if layout == "enable attachments" {
+					opts.AttachmentsDir = ""
+				}
+				if layout == "symlink root" {
+					link := filepath.Join(tmp, "linked.mbox")
+					requirements.NoError(os.Symlink(mboxA, link))
+					rootA, rootB = link, link
 				}
 				first, err := ImportEmlxDir(t.Context(), st, rootA, opts)
 				requirements.NoError(err)
@@ -440,6 +451,10 @@ func TestImportEmlxSharedTargetRecoversCurrentRaw(t *testing.T) {
 				if layout == "different roots" {
 					opts.NoResume = true
 				}
+				if layout == "enable attachments" {
+					opts.AttachmentsDir = filepath.Join(tmp, "archive-attachments")
+				}
+				opts.FullReconcile = layout == "full reconciliation"
 				recovered, err := ImportEmlxDir(t.Context(), reopened, rootA, opts)
 				requirements.NoError(err)
 				assertions.False(recovered.HardErrors)
@@ -472,6 +487,7 @@ func TestImportEmlxSharedTargetRecoversCurrentRaw(t *testing.T) {
  WHERE source_id = ? AND provider = 'emlx-target' AND provider_id = ? AND status = 'imported'`),
 					first.SourceID, sourceMessageID).Scan(&completedTarget))
 				assertions.Equal(1, completedTarget)
+				opts.FullReconcile = false
 				warm, err := ImportEmlxDir(t.Context(), reopened, rootA, opts)
 				requirements.NoError(err)
 				assertions.False(warm.HardErrors)
@@ -479,6 +495,96 @@ func TestImportEmlxSharedTargetRecoversCurrentRaw(t *testing.T) {
 				again, err := reopened.GetMessageRawContext(t.Context(), messageID)
 				requirements.NoError(err)
 				assertions.Equal(committed, again)
+
+				changedPart := []byte("A changed after recovery")
+				cacheAttachment(t, mboxA, numberA, "2", "part.bin", changedPart)
+				changed, err := ImportEmlxDir(t.Context(), reopened, rootA, opts)
+				requirements.NoError(err)
+				assertions.False(changed.HardErrors)
+				archived, err = reopened.GetMessageRawContext(t.Context(), messageID)
+				requirements.NoError(err)
+				parsed, err = mime.Parse(archived)
+				requirements.NoError(err)
+				requirements.Len(parsed.Attachments, 1)
+				assertions.Equal(changedPart, parsed.Attachments[0].Content, "a changed source still replaces archived parts")
+			})
+		}
+	}
+}
+
+func TestImportEmlxBackslashInMailboxName(t *testing.T) {
+	r, a := require.New(t), assert.New(t)
+	st, tmp := openTestStore(t)
+	root := filepath.Join(tmp, "Mail")
+	raw := email.NewMessage().From("sender@example.test").Body("synthetic backslash mailbox").Bytes()
+	mkMailboxDir(t, filepath.Join(root, `Work\Archive.mbox`), map[string][]byte{"1.emlx": raw})
+	opts := EmlxImportOptions{Identifier: "owner@example.test"}
+	first, err := ImportEmlxDir(t.Context(), st, root, opts)
+	r.NoError(err)
+	a.False(first.HardErrors)
+	a.Equal(int64(1), first.MessagesAdded)
+	warm, err := ImportEmlxDir(t.Context(), st, root, opts)
+	r.NoError(err)
+	a.False(warm.HardErrors)
+	a.Equal(int64(1), warm.FilesUnchanged)
+}
+
+func TestImportEmlxSharedTargetRetainsUnchangedParts(t *testing.T) {
+	for _, mode := range []string{"lower limit", "changed sibling"} {
+		for _, newerSize := range []int{100, 200} {
+			t.Run(fmt.Sprintf("%s/%d", mode, newerSize), func(t *testing.T) {
+				r, a := require.New(t), assert.New(t)
+				st, tmp := openTestStore(t)
+				mailbox := filepath.Join(tmp, "Inbox.mbox")
+				raw := partialRaw(nil, "one.bin", "two.bin")
+				mkMailboxDir(t, mailbox, map[string][]byte{"1.partial.emlx": raw})
+				oldFirst, oldSecond := bytes.Repeat([]byte("a"), 200), bytes.Repeat([]byte("b"), 200)
+				newFirst := bytes.Repeat([]byte("c"), newerSize)
+				cacheAttachment(t, mailbox, "1", "2", "one.bin", oldFirst)
+				cacheAttachment(t, mailbox, "1", "3", "two.bin", oldSecond)
+				root := filepath.Join(tmp, "linked.mbox")
+				r.NoError(os.Symlink(mailbox, root))
+				opts := EmlxImportOptions{Identifier: "owner@example.test"}
+				first, err := ImportEmlxDir(t.Context(), st, root, opts)
+				r.NoError(err)
+				r.False(first.HardErrors)
+				mkEmlx(t, filepath.Join(mailbox, "Messages"), "2.partial.emlx", raw)
+				cacheAttachment(t, mailbox, "2", "2", "one.bin", newFirst)
+				newer, err := ImportEmlxDir(t.Context(), st, root, opts)
+				r.NoError(err)
+				r.False(newer.HardErrors)
+				var messageID int64
+				r.NoError(st.DB().QueryRow("SELECT id FROM messages").Scan(&messageID))
+				archived, err := st.GetMessageRawContext(t.Context(), messageID)
+				r.NoError(err)
+				parsed, err := mime.Parse(archived)
+				r.NoError(err)
+				r.Len(parsed.Attachments, 2)
+				r.Equal(newFirst, parsed.Attachments[0].Content)
+				r.NoError(os.Remove(filepath.Join(mailbox, "Messages", "2.partial.emlx")))
+				wantSecond := oldSecond
+				if mode == "lower limit" {
+					opts.MaxMessageBytes = int64(len(raw) + 350)
+					candidate, err := emlx.ParseFile(filepath.Join(mailbox, "Messages", "1.partial.emlx"), opts.MaxMessageBytes)
+					r.NoError(err)
+					r.Equal(1, candidate.RestoredAttachments, "the new limit excludes A's second sibling")
+				} else {
+					wantSecond = []byte("changed second sibling")
+					cacheAttachment(t, mailbox, "1", "3", "two.bin", wantSecond)
+				}
+				for range 2 {
+					retry, err := ImportEmlxDir(t.Context(), st, root, opts)
+					r.NoError(err)
+					a.False(retry.HardErrors)
+					retained, err := st.GetMessageRawContext(t.Context(), messageID)
+					r.NoError(err)
+					parsed, err = mime.Parse(retained)
+					r.NoError(err)
+					r.Len(parsed.Attachments, 2)
+					a.Equal(newFirst, parsed.Attachments[0].Content, "unchanged first sibling must not replace B's newer bytes")
+					a.Equal(wantSecond, parsed.Attachments[1].Content)
+					opts.MaxMessageBytes = 0 // Restore the default limit on the next pass.
+				}
 			})
 		}
 	}
@@ -594,9 +700,6 @@ func TestImportEmlxReconcileInvalidatesUnvisitedOccurrences(t *testing.T) {
 			_, err = importEmlxDir(ctx, st, root, opts, io)
 			r.ErrorIs(err, context.Canceled)
 			a.Zero(countEmlxLedgerEntries(t, st, first.SourceID, "emlx-occurrence", "imported"))
-			var checksums int
-			r.NoError(st.DB().QueryRow("SELECT COUNT(*) FROM source_import_items WHERE provider='emlx-occurrence' AND checksum IS NOT NULL").Scan(&checksums))
-			a.Zero(checksums)
 			if mode == "becomes cold" {
 				file := filepath.Join(root, "Messages", "2.emlx")
 				r.NoError(os.Rename(file, file+".original"))
