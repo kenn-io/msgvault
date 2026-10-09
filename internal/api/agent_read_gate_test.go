@@ -803,6 +803,8 @@ func TestAgentReadSnapshotPoolPressure(t *testing.T) {
 			srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}, Store: barrier, Engine: engine, Logger: testLogger()})
 			t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.Background())) })
 			t.Cleanup(srv.agentGrants.Close)
+			// Background index verification would race the snapshot connection counts.
+			srv.ftsIndexComplete.Store(true)
 			_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{tc.permission}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
 			requirements.NoError(err)
 			responses := make(chan *httptest.ResponseRecorder, 4)
