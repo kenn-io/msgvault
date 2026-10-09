@@ -185,7 +185,9 @@ export class CardDAVConflictsController {
         return await this.reconcileResolution(id, context, mutation);
       }
       this.resolutionError =
-        result.response.status === 413 && result.error?.message
+        (result.response.status === 413 ||
+          result.error?.error === 'carddav_remote_protected' ||
+          result.error?.error === 'carddav_remote_invalid') && result.error?.message
           ? result.error.message
           : 'Unable to resolve this CardDAV conflict.';
       return { kind: 'error' };

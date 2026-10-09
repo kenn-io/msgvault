@@ -1951,6 +1951,11 @@ func TestPublishedImportRemoteOwnership(t *testing.T) {
 				assert.Equal(t, edited, conflicts[0].RemoteBody)
 				err = assertKeepRemoteRejected(t, fixture, service, st, personID, conflicts[0].ID)
 				if tc.local {
+					require.ErrorIs(t, err, store.ErrCardDAVRemoteProtected)
+				} else {
+					require.ErrorIs(t, err, store.ErrCardDAVRemoteInvalid)
+				}
+				if tc.local {
 					require.ErrorIs(t, err, vcard.ErrResourceOwnershipMismatch)
 				}
 				if tc.name == "moved-local-value" {

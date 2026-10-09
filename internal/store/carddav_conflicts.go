@@ -33,6 +33,8 @@ var (
 	ErrCardDAVConflictStale      = errors.New("CardDAV conflict is stale or already resolved")
 	ErrCardDAVConflictTooLarge   = errors.New("CardDAV conflict snapshots exceed 32 MiB")
 	ErrCardDAVConflictResolution = errors.New("invalid CardDAV conflict resolution")
+	ErrCardDAVRemoteProtected    = errors.New("remote card would overwrite a protected value")
+	ErrCardDAVRemoteInvalid      = errors.New("remote card cannot be published safely")
 )
 
 type CardDAVConflict struct {
@@ -1320,7 +1322,7 @@ func (s *Store) ResolveCardDAVConflictRemoteContext(
 					return err
 				}
 				if unsafe {
-					return fmt.Errorf("keep remote would republish a value owned locally or by another address book: %w", vcard.ErrResourceOwnershipMismatch)
+					return fmt.Errorf("%w: %w", ErrCardDAVRemoteProtected, vcard.ErrResourceOwnershipMismatch)
 				}
 				publication, publicationErr := getCardDAVPublicationFrom(ctx, tx, *mapping.PersonID, "")
 				if publicationErr != nil && !errors.Is(publicationErr, ErrCardDAVPublicationNotFound) {
@@ -1330,7 +1332,7 @@ func (s *Store) ResolveCardDAVConflictRemoteContext(
 					publicationEnvelope := envelope
 					publicationEnvelope.RenderMetadata.RenderRequired = true
 					if _, err := publicationEnvelope.PrepareCanonicalRender(); err != nil {
-						return err
+						return fmt.Errorf("%w: %w", ErrCardDAVRemoteInvalid, err)
 					}
 				}
 				preparedEnvelope = &envelope

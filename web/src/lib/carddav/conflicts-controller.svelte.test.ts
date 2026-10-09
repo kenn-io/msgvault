@@ -363,15 +363,18 @@ describe('CardDAVConflictsController', () => {
     controller.destroy();
   });
 
-  it('shows the reason when keeping a local card that is too large and keeps the conflict', async () => {
-    const message = 'This contact is too large for Outlook, which accepts up to 4 MB. Remove a photo or other large data, then publish again.';
+  it.each([
+    { choice: 'keep_local' as const, status: 413, code: 'microsoft_contact_too_large', message: 'This contact is too large for Outlook, which accepts up to 4 MB. Remove a photo or other large data, then publish again.' },
+    { choice: 'keep_remote' as const, status: 409, code: 'carddav_remote_protected', message: 'The remote card would overwrite a value added in msgvault or another address book. Keep local, or restore that value in the address book and sync again.' },
+    { choice: 'keep_remote' as const, status: 409, code: 'carddav_remote_invalid', message: 'The remote card has values that cannot be published, such as an invalid preference or location. Fix them in the address book and sync again, or keep local.' }
+  ])('shows $code without retrying or losing the conflict', async ({ choice, status, code, message }) => {
     let posts = 0;
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
       const path = new URL(request.url).pathname;
       if (request.method === 'POST') {
         posts += 1;
-        return Response.json({ error: 'microsoft_contact_too_large', message }, { status: 413 });
+        return Response.json({ error: code, message }, { status });
       }
       if (path.endsWith('/41')) return Response.json(detail(41));
       return Response.json({ conflicts: [listItem(41)] });
@@ -380,9 +383,12 @@ describe('CardDAVConflictsController', () => {
     await controller.load();
     await controller.select(41);
 
-    expect(await controller.resolve(41, 'keep_local')).toEqual({ kind: 'error' });
+    expect(await controller.resolve(41, choice)).toEqual({ kind: 'error' });
 
     expect(posts).toBe(1);
+    expect(fetchFn).toHaveBeenCalledTimes(3);
+    expect(controller.resolutionUnknown).toBe(false);
+    expect(controller.isResolutionAllowed('keep_local')).toBe(true);
     expect(controller.resolutionError).toBe(message);
     expect(controller.conflicts.map(({ id }) => id)).toEqual([41]);
     controller.destroy();
