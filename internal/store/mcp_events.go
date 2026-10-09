@@ -265,6 +265,18 @@ func (s *Store) ConfigureMCPEvents(ctx context.Context, cfg MCPEventsConfig) (MC
 		return MCPEventClock{}, mcpStoreError("owner_required")
 	}
 	runtime, fingerprint := mcpNewRuntime(cfg)
+	if !cfg.Enabled {
+		clock, unchanged, err := root.mcpCaptureAlreadyDisabled(ctx)
+		if err != nil {
+			return MCPEventClock{}, mcpSafeError(err)
+		}
+		if unchanged {
+			// Nothing was captured and no subscription can be waiting, so
+			// there is no gap to record. Disabled Events never write.
+			root.mcpConfig.Store(runtime)
+			return clock, nil
+		}
+	}
 	var result MCPEventClock
 	err := root.withMCPEventTx(ctx, func(tx *sql.Tx, clock MCPEventClock) error {
 		result = clock
@@ -290,6 +302,21 @@ func (s *Store) ConfigureMCPEvents(ctx context.Context, cfg MCPEventsConfig) (MC
 	}
 	root.mcpConfig.Store(runtime)
 	return result, nil
+}
+
+// mcpCaptureAlreadyDisabled reports whether the archive's stored capture
+// state is already off with no active subscription, without taking a write
+// lock.
+func (s *Store) mcpCaptureAlreadyDisabled(ctx context.Context) (MCPEventClock, bool, error) {
+	var clock MCPEventClock
+	var enabled, active bool
+	err := s.DB().QueryRowContext(ctx, `SELECT head_seq, pruned_through_seq, capture_epoch, enabled,
+		EXISTS (SELECT 1 FROM mcp_event_subscriptions WHERE state='active')
+		FROM mcp_event_clock WHERE singleton=1`).Scan(&clock.HeadSeq, &clock.PrunedThroughSeq, &clock.Epoch, &enabled, &active)
+	if err != nil {
+		return MCPEventClock{}, false, fmt.Errorf("read Events capture state: %w", err)
+	}
+	return clock, !enabled && !active, nil
 }
 
 func (s *Store) ValidateMCPEventScope(ctx context.Context, family, scopeKind string, scopeID int64, kinds []string) (string, int64, error) {
