@@ -1981,6 +1981,8 @@ func TestPublishedImportRemoteOwnership(t *testing.T) {
 		{"cleared-label", "e2@example.test", "updated@example.test", false, false, "clear"},
 		{"active-user-name", "e2@example.test", "updated@example.test", false, false, "user-name"},
 		{"inactive-user-name", "END:VCARD", "EMAIL:added@example.test\r\nEND:VCARD", false, true, "inactive-user"},
+		{"inactive-user-email", "e2@example.test", "updated@example.test", true, true, "inactive-email"},
+		{"inactive-user-phone", "e2@example.test", "updated@example.test", true, true, "inactive-phone"},
 		{"name-and-email", "FN:Alice", "FN:Alice Remote", false, false, ""},
 		{"inserted-first-name", "FN:Alice", "FN:Alice Remote\r\nFN:Alice", false, false, ""},
 		{"local-removal", "EMAIL:local@example.test\r\n", "", true, true, ""},
@@ -2041,11 +2043,18 @@ func TestPublishedImportRemoteOwnership(t *testing.T) {
 				require.NoError(service.ReconcilePublications(t.Context()))
 			}
 			if tc.local {
-				_, err := st.AddPersonContactPointContext(t.Context(), personID, store.PersonContactPointInput{
-					AddressKind: store.ContactAddressEmail, OriginalValue: "local@example.test", Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
+				kind, value := store.ContactAddressEmail, "local@example.test"
+				if tc.mode == "inactive-phone" {
+					kind, value = store.ContactAddressPhone, "+12025550123"
+				}
+				point, err := st.AddPersonContactPointContext(t.Context(), personID, store.PersonContactPointInput{
+					AddressKind: kind, OriginalValue: value, Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
 				})
 				require.NoError(err)
 				require.NoError(service.ReconcilePublications(t.Context()))
+				if tc.mode == "inactive-email" || tc.mode == "inactive-phone" {
+					require.NoError(st.SupersedePersonContactPointContext(t.Context(), personID, point.Envelope.ID, nil))
+				}
 			}
 			before, err := st.LoadPersonVCardSnapshotContext(t.Context(), personID)
 			require.NoError(err)

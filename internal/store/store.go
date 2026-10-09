@@ -1616,9 +1616,12 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	if err := s.runOnceMigration(ctx, migrationCardDAVDisplayNameOwnership, 1, false, func(ctx context.Context) error {
 		return s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
 			_, err := tx.ExecContext(ctx, `UPDATE carddav_resources SET owns_display_name = TRUE
-				WHERE governance = 'remote' AND person_id IS NOT NULL
+				WHERE person_id IS NOT NULL AND (governance = 'remote' OR EXISTS (
+				  SELECT 1 FROM carddav_publications publication WHERE publication.person_id = carddav_resources.person_id
+				  AND publication.address_book_id = carddav_resources.address_book_id AND publication.href = carddav_resources.href
+				  AND publication.desired = TRUE AND publication.pending_operation IS NULL))
 				AND NOT EXISTS (SELECT 1 FROM carddav_resources other WHERE other.person_id = carddav_resources.person_id
-				  AND other.governance = 'remote' AND other.id <> carddav_resources.id) AND EXISTS (
+				  AND other.id <> carddav_resources.id) AND EXISTS (
 					SELECT 1 FROM persons p JOIN person_names n ON n.person_id = p.id
 					WHERE p.id = carddav_resources.person_id AND p.revision = carddav_resources.person_revision_at_bind
 					  AND p.display_name = n.formatted AND n.source = 'carddav_import'

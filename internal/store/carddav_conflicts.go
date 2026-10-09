@@ -1333,6 +1333,13 @@ func (s *Store) ResolveCardDAVConflictRemoteContext(
 					}
 				}
 				preparedEnvelope = &envelope
+				if _, err := tx.ExecContext(ctx, `UPDATE carddav_resources SET owns_display_name = TRUE
+					WHERE id = ? AND EXISTS (SELECT 1 FROM persons WHERE id = ? AND display_name IS NULL)
+					AND EXISTS (SELECT 1 FROM person_names WHERE `+cardDAVImportedSourceFilter+` AND name_kind = ?)`,
+					mapping.ID, *mapping.PersonID, *mapping.PersonID, ProvenanceCardDAVImport,
+					fmt.Sprintf("carddav:%d", book.ID), mapping.Href, PersonNameFormatted); err != nil {
+					return fmt.Errorf("accept remote ownership of cleared imported display name: %w", err)
+				}
 			}
 			_, changed, err := s.applyCardDAVResourceTx(ctx, tx, book, input.Remote, false, preparedEnvelope)
 			if err != nil {

@@ -271,6 +271,7 @@ func TestCardDAVKeepRemoteResolutionAppliesRetainedSnapshotAndAuditsChoice(t *te
 	assert.Equal(capture.RemoteBody, after.RemoteBody)
 	assert.Equal(capture.RemoteETag, after.RemoteETag)
 	require.NotNil(after.PersonID)
+	assert.True(after.OwnsDisplayName)
 	person, err = st.GetPersonContext(t.Context(), *after.PersonID)
 	require.NoError(err)
 	assert.Equal(new("Remote"), person.DisplayName)

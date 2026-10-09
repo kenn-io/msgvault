@@ -670,7 +670,6 @@ func TestCardDAVApplyNeverRebasesLocalGovernedProjection(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(baseline, mapping.LocalHash)
 	assert.NotEqual(snapshot.Fingerprint, mapping.LocalHash)
-
 }
 
 func TestCardDAVEmailBindingStoresLocalCanonicalUIDInEnvelope(t *testing.T) {
@@ -1498,7 +1497,7 @@ func TestCardDAVRelatedRemoteUpdatesUseOneTransactionSnapshot(t *testing.T) {
 }
 
 func TestCardDAVDisplayNameOwnershipUpgrade(t *testing.T) {
-	for _, local := range []string{"untouched", "renamed", "cleared", "same-text", "ambiguous"} {
+	for _, local := range []string{"untouched", "published", "renamed", "cleared", "same-text", "ambiguous"} {
 		t.Run(local, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
@@ -1509,7 +1508,10 @@ func TestCardDAVDisplayNameOwnershipUpgrade(t *testing.T) {
 			resource, err := st.GetCardDAVResourceContext(t.Context(), book.ID, input.Href)
 			require.NoError(err)
 			assert.True(resource.OwnsDisplayName)
-			if local != "untouched" {
+			if local == "published" {
+				input = publishCardDAVResource(t, st, book, input)
+			}
+			if local != "untouched" && local != "published" {
 				person, err := st.GetPersonContext(t.Context(), *resource.PersonID)
 				require.NoError(err)
 				label := new("Alice")
@@ -1544,11 +1546,22 @@ func TestCardDAVDisplayNameOwnershipUpgrade(t *testing.T) {
 			require.NoError(st.InitSchema())
 			resource, err = st.GetCardDAVResourceContext(t.Context(), book.ID, input.Href)
 			require.NoError(err)
-			assert.Equal(local == "untouched", resource.OwnsDisplayName)
+			assert.Equal(local == "untouched" || local == "published", resource.OwnsDisplayName)
 			require.NoError(st.InitSchema())
 			resource, err = st.GetCardDAVResourceContext(t.Context(), book.ID, input.Href)
 			require.NoError(err)
-			assert.Equal(local == "untouched", resource.OwnsDisplayName)
+			assert.Equal(local == "untouched" || local == "published", resource.OwnsDisplayName)
+			if local == "published" {
+				input.RemoteBody = bytes.Replace(input.RemoteBody, []byte("FN:Alice"), []byte("FN:Alicia"), 1)
+				input.DisplayName, input.SemanticHash, input.RemoteETag = "Alicia", "renamed", `"two"`
+				books, err := st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
+				require.NoError(err)
+				_, err = st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration, SyncRevision: books[0].SyncRevision, Upserts: []store.CardDAVRemoteResource{input}})
+				require.NoError(err)
+				person, err := st.GetPersonContext(t.Context(), *resource.PersonID)
+				require.NoError(err)
+				assert.Equal(new("Alicia"), person.DisplayName)
+			}
 		})
 	}
 }

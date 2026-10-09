@@ -536,6 +536,13 @@ func (s *Store) cardDAVResourceNeedsConflictTx(
 			return false, nil, err
 		}
 		imported = imported || resource.OwnsDisplayName
+		if imported && !published && resource.PersonRevisionAtBind != nil {
+			userOwned, err := s.personHasUserOwnedStateTx(ctx, tx, *resource.PersonID, *resource.PersonRevisionAtBind)
+			if err != nil {
+				return false, nil, err
+			}
+			imported = !userOwned
+		}
 		if published || imported {
 			envelope, dropped, err := s.prepareCardDAVEnvelopeTx(ctx, tx, bookID, *resource.PersonID, CardDAVRemoteResource{Href: href, RemoteBody: remoteBody})
 			if err != nil {
@@ -598,11 +605,11 @@ func (s *Store) cardDAVRebaseDisplacesOwnerTx(ctx context.Context, tx *loggedTx,
 		}
 	}
 	for _, mapping := range incoming.NativeMappings {
-		if mapping.Table != personNamesTableName || mapping.Field != "formatted" {
+		if mapping.Table != personContactPointsTableName && (mapping.Table != personNamesTableName || mapping.Field != "formatted") {
 			continue
 		}
 		var protectedInactive bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM person_names WHERE id = ? AND person_id = ?
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM `+mapping.Table+` WHERE id = ? AND person_id = ?
 			AND (active_until IS NOT NULL OR superseded_at IS NOT NULL)
 			AND NOT (source = ? AND COALESCE(source_ref, '') = ? AND COALESCE(source_resource_uid, '') = ?))`,
 			mapping.RowID, personID, ProvenanceCardDAVImport, fmt.Sprintf("carddav:%d", bookID), href).Scan(&protectedInactive); err != nil {
@@ -1263,18 +1270,13 @@ func (s *Store) rebaseCardDAVImportedProjectionTx(
 	return remoteOwnsDisplay, nil
 }
 
-// retireCardDAVImportedProjectionTx removes one resource's current semantic
-// projection while retaining its history. The scalar display label is cleared
-// only when it still matches the imported formatted name being retired.
+// retireCardDAVImportedProjectionTx retains source history and clears only the resource-owned scalar.
 func (s *Store) retireCardDAVImportedProjectionTx(
-	ctx context.Context, tx *loggedTx, bookID, personID int64, href string,
+	ctx context.Context, tx *loggedTx, resource *CardDAVResource,
 ) error {
+	bookID, personID, href := resource.AddressBookID, *resource.PersonID, resource.Href
 	sourceRef := fmt.Sprintf("carddav:%d", bookID)
-	var remoteOwnsDisplay bool
-	if err := tx.QueryRowContext(ctx, `SELECT owns_display_name FROM carddav_resources
-		WHERE address_book_id = ? AND href = ? AND person_id = ?`, bookID, href, personID).Scan(&remoteOwnsDisplay); err != nil {
-		return fmt.Errorf("load retired CardDAV display-name ownership: %w", err)
-	}
+	remoteOwnsDisplay := resource.OwnsDisplayName
 
 	for _, table := range []string{"person_names", "person_contact_points"} {
 		if _, err := tx.ExecContext(ctx, `UPDATE `+table+` SET
@@ -1528,7 +1530,7 @@ func (s *Store) removeCardDAVResourceWithModeTx(
 	}
 	if mode == cardDAVRemovalRetireProjection && personHasUserOwnedState {
 		if err := s.retireCardDAVImportedProjectionTx(
-			ctx, tx, bookID, *resource.PersonID, href,
+			ctx, tx, resource,
 		); err != nil {
 			return false, err
 		}
