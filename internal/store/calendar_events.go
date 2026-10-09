@@ -73,7 +73,7 @@ func (s *Store) PersistCalendarEventContext(ctx context.Context, data *MessagePe
 				merged = map[string]any{}
 			}
 			merged["status"] = "cancelled"
-			raw, e := json.Marshal(merged)
+			raw, e := json.Marshal(merged, json.Deterministic(true))
 			if e != nil {
 				return e
 			}
@@ -95,7 +95,7 @@ func (s *Store) PersistCalendarEventContext(ctx context.Context, data *MessagePe
 					merged = map[string]any{}
 				}
 				merged["status"] = "cancelled"
-				raw, e := json.Marshal(merged)
+				raw, e := json.Marshal(merged, json.Deterministic(true))
 				if e != nil {
 					return e
 				}
