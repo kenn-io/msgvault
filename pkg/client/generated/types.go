@@ -6896,6 +6896,161 @@ func (m MonthTotals) Validate() error {
 	return errors
 }
 
+type MuesliRemoteMeeting struct {
+	ContactsState MuesliRemoteMeetingContactsState `json:"contacts_state" validate:"required"`
+	Participants  []MuesliRemoteParticipant        `json:"participants,omitempty"`
+	Record        MuesliRemoteRecord               `json:"record"`
+}
+
+func (m MuesliRemoteMeeting) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(m.ContactsState).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("ContactsState", err)
+		}
+	}
+	for i, item := range m.Participants {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Participants[%d]", i), err)
+			}
+		}
+	}
+	if v, ok := any(m.Record).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Record", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type MuesliRemoteParticipant struct {
+	Anchor                *string                            `json:"anchor,omitzero" validate:"omitempty,max=78"`
+	ContactReviewPhones   []string                           `json:"contact_review_phones,omitempty"`
+	Email                 *string                            `json:"email,omitzero"`
+	Emails                []string                           `json:"emails,omitempty"`
+	LinkExcludedAddresses []string                           `json:"link_excluded_addresses,omitempty"`
+	Name                  *string                            `json:"name,omitzero" validate:"omitempty,max=1024"`
+	Phones                []string                           `json:"phones,omitempty"`
+	Ref                   *string                            `json:"ref,omitzero" validate:"omitempty,max=16"`
+	Resolution            *MuesliRemoteParticipantResolution `json:"resolution,omitempty"`
+	SkippedPhones         *int64                             `json:"skipped_phones,omitempty"`
+	Source                *string                            `json:"source,omitzero"`
+}
+
+func (m MuesliRemoteParticipant) Validate() error {
+	var errors runtime.ValidationErrors
+	if m.Anchor != nil {
+		if err := typesValidator.Var(m.Anchor, "omitempty,max=78"); err != nil {
+			errors = errors.Append("Anchor", err)
+		}
+	}
+	if m.Name != nil {
+		if err := typesValidator.Var(m.Name, "omitempty,max=1024"); err != nil {
+			errors = errors.Append("Name", err)
+		}
+	}
+	if m.Ref != nil {
+		if err := typesValidator.Var(m.Ref, "omitempty,max=16"); err != nil {
+			errors = errors.Append("Ref", err)
+		}
+	}
+	if m.Resolution != nil {
+		if v, ok := any(m.Resolution).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Resolution", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type MuesliRemoteRecord struct {
+	CalendarEventID  *string  `json:"calendar_event_id,omitzero"`
+	CalendarSeriesID *string  `json:"calendar_series_id,omitzero"`
+	CalendarSource   *string  `json:"calendar_source,omitzero"`
+	CreatedAt        string   `json:"created_at" validate:"required"`
+	DurationSeconds  *float64 `json:"duration_seconds,omitempty"`
+	EndTime          *string  `json:"end_time,omitzero"`
+	Folder           *string  `json:"folder,omitzero"`
+	FollowUpToID     *int64   `json:"follow_up_to_id,omitempty"`
+	FormattedNotes   *string  `json:"formatted_notes,omitzero"`
+	ID               int64    `json:"id"`
+	ManualNotes      *string  `json:"manual_notes,omitzero"`
+	RawTranscript    *string  `json:"raw_transcript,omitzero"`
+	Source           *string  `json:"source,omitzero"`
+	StartTime        string   `json:"start_time" validate:"required"`
+	Status           *string  `json:"status,omitzero"`
+	TemplateKind     *string  `json:"template_kind,omitzero"`
+	TemplateName     *string  `json:"template_name,omitzero"`
+	Title            string   `json:"title" validate:"required"`
+	WordCount        *int64   `json:"word_count,omitempty"`
+}
+
+func (m MuesliRemoteRecord) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(m))
+}
+
+type MuesliRemoteRequest struct {
+	Action       MuesliRemoteRequestAction `json:"action" validate:"required"`
+	BuildCache   *bool                     `json:"build_cache,omitempty"`
+	Full         *bool                     `json:"full,omitempty"`
+	Meeting      *MuesliRemoteMeeting      `json:"meeting,omitempty"`
+	NoBuildCache *bool                     `json:"no_build_cache,omitempty"`
+	Source       Source                    `json:"source"`
+}
+
+func (m MuesliRemoteRequest) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(m.Action).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Action", err)
+		}
+	}
+	if m.Meeting != nil {
+		if v, ok := any(m.Meeting).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Meeting", err)
+			}
+		}
+	}
+	if v, ok := any(m.Source).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Source", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type MuesliRemoteResult struct {
+	Changed   bool                     `json:"changed"`
+	MessageID *int64                   `json:"message_id,omitempty"`
+	SourceID  int64                    `json:"source_id"`
+	Status    MuesliRemoteResultStatus `json:"status" validate:"required"`
+}
+
+func (m MuesliRemoteResult) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(m.Status).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Status", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type MutationResult struct {
 	Name        string `json:"name" validate:"required"`
 	SourceCount *int64 `json:"source_count,omitempty"`

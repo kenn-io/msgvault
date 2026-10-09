@@ -45,6 +45,13 @@ type ImportOptions struct {
 	ContactsPath     string
 	PhoneCountryCode string
 	Progress         func(string)
+	// MeetingID restricts a completion-hook pass to one local row.
+	MeetingID int64
+	// LockDir holds a remote scan's source lock and upload record.
+	LockDir string
+	// RemoteTarget names the daemon a remote scan uploads to. It scopes the
+	// record of acknowledged meetings.
+	RemoteTarget string
 }
 
 type ImportSummary struct {
@@ -131,7 +138,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	sum.ContactsState = contacts.State()
 	sharedAddresses := contacts.sharedAddresses(opts.PhoneCountryCode)
 
-	meetings, err := reader.ListMeetings(ctx)
+	meetings, err := reader.listMeetings(ctx, opts.MeetingID)
 	if err != nil {
 		sum.Errors++
 		return sum, err
@@ -184,7 +191,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		case result.Created:
 			sum.MeetingsAdded++
 			progress(fmt.Sprintf("added Muesli meeting %d", meeting.ID))
-		case result.Changed:
+		case result.Changed || result.Links.Linked > 0:
 			sum.MeetingsUpdated++
 			progress(fmt.Sprintf("updated Muesli meeting %d", meeting.ID))
 		}
@@ -192,6 +199,9 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			sum.Errors++
 			meetingErrors = append(meetingErrors, fmt.Errorf("muesli meeting %d: %w", meeting.ID, err))
 			continue
+		}
+		if err := imp.recordContactReviewCandidates(ctx, source.ID, meeting); err != nil {
+			return sum, err
 		}
 		if sum.MeetingsProcessed%checkpointInterval == 0 {
 			if err := scoped.UpdateSyncCheckpoint(syncID, checkpoint()); err != nil {

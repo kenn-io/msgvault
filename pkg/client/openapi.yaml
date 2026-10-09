@@ -7246,6 +7246,170 @@ components:
         - month
         - totals
       type: object
+    MuesliRemoteMeeting:
+      additionalProperties: false
+      properties:
+        contacts_state:
+          enum:
+            - complete
+            - partial
+            - unavailable
+            - "off"
+          type: string
+        participants:
+          items:
+            $ref: "#/components/schemas/MuesliRemoteParticipant"
+          maxItems: 200
+          type: array
+        record:
+          $ref: "#/components/schemas/MuesliRemoteRecord"
+      required:
+        - record
+        - contacts_state
+      type: object
+    MuesliRemoteParticipant:
+      additionalProperties: false
+      properties:
+        anchor:
+          maxLength: 78
+          type: string
+        contact_review_phones:
+          items:
+            type: string
+          maxItems: 50
+          type: array
+        email:
+          type: string
+        emails:
+          items:
+            type: string
+          maxItems: 50
+          type: array
+        link_excluded_addresses:
+          items:
+            type: string
+          maxItems: 50
+          type: array
+        name:
+          maxLength: 1024
+          type: string
+        phones:
+          items:
+            type: string
+          maxItems: 50
+          type: array
+        ref:
+          maxLength: 16
+          type: string
+        resolution:
+          enum:
+            - ""
+            - resolved
+            - carried_forward
+          type: string
+        skipped_phones:
+          format: int64
+          type: integer
+        source:
+          type: string
+      type: object
+    MuesliRemoteRecord:
+      additionalProperties: false
+      properties:
+        calendar_event_id:
+          type: string
+        calendar_series_id:
+          type: string
+        calendar_source:
+          type: string
+        created_at:
+          type: string
+        duration_seconds:
+          format: double
+          type: number
+        end_time:
+          type: string
+        folder:
+          type: string
+        follow_up_to_id:
+          format: int64
+          type: integer
+        formatted_notes:
+          type: string
+        id:
+          format: int64
+          type: integer
+        manual_notes:
+          type: string
+        raw_transcript:
+          type: string
+        source:
+          type: string
+        start_time:
+          type: string
+        status:
+          type: string
+        template_kind:
+          type: string
+        template_name:
+          type: string
+        title:
+          type: string
+        word_count:
+          format: int64
+          type: integer
+      required:
+        - id
+        - title
+        - start_time
+        - created_at
+      type: object
+    MuesliRemoteRequest:
+      additionalProperties: false
+      properties:
+        action:
+          enum:
+            - register
+            - upsert
+            - refresh
+          type: string
+        build_cache:
+          type: boolean
+        full:
+          type: boolean
+        meeting:
+          $ref: "#/components/schemas/MuesliRemoteMeeting"
+        no_build_cache:
+          type: boolean
+        source:
+          $ref: "#/components/schemas/Source"
+      required:
+        - action
+        - source
+      type: object
+    MuesliRemoteResult:
+      properties:
+        changed:
+          type: boolean
+        message_id:
+          format: int64
+          type: integer
+        source_id:
+          format: int64
+          type: integer
+        status:
+          enum:
+            - registered
+            - created
+            - updated
+            - unchanged
+            - refreshed
+          type: string
+      required:
+        - status
+        - source_id
+        - changed
+      type: object
     MutationResult:
       properties:
         name:
@@ -20959,6 +21123,39 @@ paths:
       security:
         - apiKey: []
       summary: Import one meeting
+      tags:
+        - API
+  /api/v1/import/muesli:
+    post:
+      operationId: importMuesli
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MuesliRemoteRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MuesliRemoteResult"
+          description: OK
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MuesliRemoteResult"
+          description: Created
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Import one recorder-local Muesli meeting
       tags:
         - API
   /api/v1/imports:

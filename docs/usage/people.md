@@ -44,6 +44,9 @@ create profiles when imported.
 ## Review identity matches
 
 Msgvault can retain uncertain identity suggestions for a person to review.
+Muesli sync supplies review-only suggestions when duplicate Contacts cards share
+an attendee email and a proposed phone already exists in the archive. See
+[duplicate Contacts review](/docs/usage/meetings/#review-duplicate-contacts-cards).
 Inspect the endpoints, archive evidence, and blockers before deciding.
 
 The archive-observation seeder skips email addresses seen on more than 20

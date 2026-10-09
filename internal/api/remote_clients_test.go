@@ -109,6 +109,8 @@ func TestRemoteClientRoutes(t *testing.T) { //nolint:paralleltest // swaps the p
 		routeCase{reader, remoteClientTestReaderKey, http.MethodPost, "/health", "", http.StatusForbidden},
 		routeCase{reader, remoteClientTestReaderKey, http.MethodGet, "/api/v1/settings", "", http.StatusForbidden},
 		routeCase{reader, remoteClientTestReaderKey, http.MethodGet, "/api/session", "", http.StatusForbidden},
+		// Recorder uploads write the archive and need the owner key.
+		routeCase{writer, remoteClientTestReaderKey, http.MethodPost, "/api/v1/import/muesli", `{"action":"register","source":{"identifier":"recorder","account_email":"owner@example.com"}}`, http.StatusForbidden},
 		routeCase{writer, remoteClientTestReaderKey, http.MethodPost, "/api/v1/cli/collections", create, http.StatusOK},
 		routeCase{writer, remoteClientTestReaderKey, http.MethodGet, "/api/v1/cli/collection?name=reader", "", http.StatusOK},
 		routeCase{writer, remoteClientTestReaderKey, http.MethodPatch, "/api/v1/cli/collections/reader/sources", sources, http.StatusOK},

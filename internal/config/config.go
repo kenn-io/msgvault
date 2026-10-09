@@ -1950,12 +1950,13 @@ func (s NotionMeetingsSource) EffectiveAccountEmail() (string, error) {
 }
 
 // MuesliSource is one local Muesli meeting database. Each entry is a
-// top-level [[muesli]] table. The daemon reads the database on its own host.
+// top-level [[muesli]] table. In remote mode the client reads local files;
+// same-host mode uses the daemon reader.
 type MuesliSource struct {
 	Identifier   string `toml:"identifier"`    // stable source label for add-/sync-muesli; defaults to "default" for a single entry
 	AccountEmail string `toml:"account_email"` // the person who records; attributed as each meeting's organizer
 	DBPath       string `toml:"db_path"`       // muesli.db path; empty = the stable app's default location
-	Schedule     string `toml:"schedule"`      // 5-field cron; empty = not daemon-scheduled
+	Schedule     string `toml:"schedule"`      // 5-field cron for the daemon or remote --watch; empty = manual only
 	Enabled      bool   `toml:"enabled"`
 	// Contacts resolves attendees through the Mac's Contacts app; nil = on.
 	Contacts *bool `toml:"contacts"`

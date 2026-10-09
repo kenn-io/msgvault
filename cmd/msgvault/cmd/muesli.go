@@ -14,13 +14,15 @@ import (
 )
 
 var (
-	syncMuesliLimit int
-	syncMuesliAfter string
-	syncMuesliFull  bool
+	syncMuesliLimit     int
+	syncMuesliAfter     string
+	syncMuesliFull      bool
+	syncMuesliWatch     bool
+	syncMuesliMeetingID int64
 )
 
 var (
-	rebuildMuesliCacheAfterWrite         = rebuildCacheAfterWrite
+	rebuildMuesliCacheAfterWrite         = rebuildCacheAfterManualSync
 	rebuildMuesliCacheAfterScheduledSync = rebuildCacheAfterScheduledSync
 )
 
@@ -31,7 +33,7 @@ const muesliConfigHint = `Add to your config.toml:
   account_email = "you@example.com"   # you, the person who records the meetings
   enabled = true
   # db_path = "~/Library/Application Support/Muesli/muesli.db"  # default shown
-  # schedule = "*/30 * * * *"         # optional daemon schedule
+  # schedule = "*/30 * * * *"         # daemon schedule, or remote client --watch
   # phone_country_code = "1"          # convert national-format Contacts phones
   # contacts = false                  # skip Apple Contacts attendee lookup`
 
@@ -52,7 +54,7 @@ func probeMuesliDatabase(ctx context.Context, path string) error {
 	reader, err := muesli.Open(ctx, path)
 	if err != nil {
 		return fmt.Errorf("%w\n\nCheck db_path in the [[muesli]] entry. msgvault reads the database on the "+
-			"daemon's host; if macOS blocks the read, grant the daemon Full Disk Access", err)
+			"recorder's host in remote mode, or daemon's host in same-host mode; grant the reader Full Disk Access", err)
 	}
 	return reader.Close()
 }
@@ -64,8 +66,9 @@ var addMuesliCmd = &cobra.Command{
 
 Reads db_path from the matching [[muesli]] entry in config.toml (default:
 ~/Library/Application Support/Muesli/muesli.db) and checks that it opens
-read-only as a Muesli database. The daemon reads the file on its own host,
-so msgvault must run on the Mac where Muesli records.
+read-only as a Muesli database. In remote mode the client reads local files
+and securely registers the source with the configured daemon. In same-host
+mode the daemon reads the files.
 
 Examples:
   msgvault add-muesli
@@ -78,6 +81,9 @@ Examples:
 		}
 		cfg := state.cfg
 		if !isDaemonCLISubprocess() {
+			if isRemoteModeFor(state) {
+				return runMuesliClientAdd(cmd, args)
+			}
 			return runDaemonCLICommandHTTPFromCobra(cmd, args)
 		}
 		source, err := muesliSources(cfg).one(args)
@@ -99,7 +105,7 @@ Examples:
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Apple Contacts: %s\n", contacts.State())
 			if contacts.State() != muesli.ContactsComplete {
 				_, _ = fmt.Fprintln(cmd.OutOrStdout(),
-					"Grant the msgvault daemon Full Disk Access so attendees picked from Contacts link to people.")
+					"Grant the process reading Muesli Full Disk Access so attendees picked from Contacts link to people.")
 			}
 		}
 		st, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
@@ -143,7 +149,16 @@ Examples:
 			return errors.New("configuration is unavailable")
 		}
 		cfg := state.cfg
+		if syncMuesliMeetingID < 0 {
+			return errors.New("--meeting-id must be positive")
+		}
 		if !isDaemonCLISubprocess() {
+			if syncMuesliWatch && !isRemoteModeFor(state) {
+				return errors.New("--watch requires a configured remote archive; same-host sync uses the daemon schedule")
+			}
+			if isRemoteModeFor(state) {
+				return runMuesliClientSync(cmd, args, syncMuesliMeetingID)
+			}
 			return runDaemonCLICommandHTTPFromCobra(cmd, args)
 		}
 		sources, err := muesliSources(cfg).selected(args)
@@ -181,6 +196,7 @@ Examples:
 			options := muesliImportOptions(source)
 			options.AccountEmail = accountEmail
 			options.Full, options.Limit, options.StartedAfter = syncMuesliFull, syncMuesliLimit, after
+			options.MeetingID = syncMuesliMeetingID
 			options.Progress = func(line string) { _, _ = fmt.Fprintln(cmd.OutOrStdout(), "  "+line) }
 			summary, importErr := muesli.NewImporter(st).Import(ctx, options)
 			if summary != nil {
@@ -196,7 +212,10 @@ Examples:
 			}
 			writeMuesliSummary(cmd.OutOrStdout(), summary)
 		}
-		return rebuildMuesliCacheAfterWrite(dbPath, state)
+		if pendingWrites > 0 {
+			return rebuildMuesliCacheAfterWrite(dbPath, state)
+		}
+		return nil
 	},
 }
 
@@ -219,7 +238,7 @@ func writeMuesliSummary(out io.Writer, summary *muesli.ImportSummary) {
 		_, _ = fmt.Fprintf(out, "  Contacts:           %s\n", summary.ContactsState)
 	}
 	if summary.ContactsState == muesli.ContactsUnavailable || summary.ContactsState == muesli.ContactsPartial {
-		_, _ = fmt.Fprintln(out, "  Grant the msgvault daemon Full Disk Access so attendees picked from Contacts link to people.")
+		_, _ = fmt.Fprintln(out, "  Grant the process reading Muesli Full Disk Access so attendees picked from Contacts link to people.")
 	}
 }
 
@@ -258,6 +277,9 @@ func runConfiguredMuesliSync(ctx context.Context, st *store.Store, source config
 	run := meetingSyncRun{
 		provider: "muesli", identifier: source.Identifier, writes: writes, err: importErr,
 	}
+	// Check the cache even when this scan wrote nothing: a hook or manual
+	// import may have been throttled by min_rebuild_interval, and the
+	// background refresher schedules the retry that import did not.
 	return run.finishScheduled(ctx, "muesli:"+source.Identifier,
 		rebuildMuesliCacheAfterScheduledSync)
 }
@@ -266,6 +288,10 @@ func init() {
 	syncMuesliCmd.Flags().IntVar(&syncMuesliLimit, "limit", 0, "max meetings processed per run (0 = no limit)")
 	syncMuesliCmd.Flags().StringVar(&syncMuesliAfter, "after", "", "only meetings that start on or after this UTC date (YYYY-MM-DD)")
 	syncMuesliCmd.Flags().BoolVar(&syncMuesliFull, "full", false, "rewrite every archived meeting, even unchanged ones (refreshes attribution)")
+	syncMuesliCmd.Flags().BoolVar(&syncMuesliWatch, "watch", false, "keep rescanning enabled remote recorder sources using their schedules")
+	syncMuesliCmd.Flags().Int64Var(&syncMuesliMeetingID, "meeting-id", 0, "only sync the completion-hook meeting")
+	_ = syncMuesliCmd.Flags().MarkHidden("meeting-id")
+	addManualSyncCacheFlags(syncMuesliCmd)
 	rootCmd.AddCommand(addMuesliCmd)
 	rootCmd.AddCommand(syncMuesliCmd)
 }

@@ -149,6 +149,12 @@ func (r *Reader) column(table, alias, column string) string {
 // deleted and in-progress rows; callers decide what to archive. All reads
 // share one transaction so they see a single WAL snapshot.
 func (r *Reader) ListMeetings(ctx context.Context) ([]Meeting, error) {
+	return r.listMeetings(ctx, 0)
+}
+
+// listMeetings reads every meeting, or only the one with id when it is
+// positive, so a completion hook does not load every transcript.
+func (r *Reader) listMeetings(ctx context.Context, id int64) ([]Meeting, error) {
 	tx, err := r.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return nil, fmt.Errorf("read Muesli meetings: %w", err)
@@ -159,11 +165,11 @@ func (r *Reader) ListMeetings(ctx context.Context) ([]Meeting, error) {
 	if err != nil {
 		return nil, err
 	}
-	meetings, err := r.meetings(ctx, tx, folders)
+	meetings, err := r.meetings(ctx, tx, folders, id)
 	if err != nil {
 		return nil, err
 	}
-	participants, err := r.participants(ctx, tx)
+	participants, err := r.participants(ctx, tx, id)
 	if err != nil {
 		return nil, err
 	}
@@ -173,7 +179,7 @@ func (r *Reader) ListMeetings(ctx context.Context) ([]Meeting, error) {
 	return meetings, nil
 }
 
-func (r *Reader) meetings(ctx context.Context, tx *sql.Tx, folders map[int64]string) ([]Meeting, error) {
+func (r *Reader) meetings(ctx context.Context, tx *sql.Tx, folders map[int64]string, id int64) ([]Meeting, error) {
 	col := func(name string) string { return r.column("meetings", "m", name) }
 	query := `SELECT m.id, m.title, m.start_time, ` +
 		col("end_time") + `, ` +
@@ -193,8 +199,8 @@ func (r *Reader) meetings(ctx context.Context, tx *sql.Tx, folders map[int64]str
 		col("folder_id") + `, ` +
 		col("follow_up_to_id") + `, ` +
 		col("deleted_at") + ` IS NOT NULL
-		FROM meetings m ORDER BY m.id`
-	rows, err := tx.QueryContext(ctx, query)
+		FROM meetings m WHERE (? = 0 OR m.id = ?) ORDER BY m.id`
+	rows, err := tx.QueryContext(ctx, query, id, id)
 	if err != nil {
 		return nil, fmt.Errorf("read Muesli meetings: %w", err)
 	}
@@ -236,7 +242,7 @@ func (r *Reader) meetings(ctx context.Context, tx *sql.Tx, folders map[int64]str
 // participants returns non-suppressed participants keyed by meeting id, in
 // Muesli's display order. Older databases kept suppressions in a separate
 // table that Muesli later folded into is_suppressed.
-func (r *Reader) participants(ctx context.Context, tx *sql.Tx) (map[int64][]Participant, error) {
+func (r *Reader) participants(ctx context.Context, tx *sql.Tx, id int64) (map[int64][]Participant, error) {
 	out := map[int64][]Participant{}
 	if !r.has("meeting_participants", "meeting_id") {
 		return out, nil
@@ -255,9 +261,9 @@ func (r *Reader) participants(ctx context.Context, tx *sql.Tx) (map[int64][]Part
 		r.column("meeting_participants", "p", "email_address") + `, ` +
 		r.column("meeting_participants", "p", "source") + `
 		FROM meeting_participants p
-		WHERE ` + suppressed + `
+		WHERE ` + suppressed + ` AND (? = 0 OR p.meeting_id = ?)
 		ORDER BY p.meeting_id, p.insertion_order, p.participant_identifier`
-	rows, err := tx.QueryContext(ctx, query)
+	rows, err := tx.QueryContext(ctx, query, id, id)
 	if err != nil {
 		return nil, fmt.Errorf("read Muesli participants: %w", err)
 	}

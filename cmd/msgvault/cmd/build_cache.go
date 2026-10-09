@@ -2605,8 +2605,13 @@ func rebuildCacheAfterScheduledSync(ctx context.Context, identifier string) erro
 	return rebuildCacheNow(ctx, identifier, nil)
 }
 
+// cacheBuildFailureRetryDelay spaces automatic retries after a failed
+// post-sync cache build.
+const cacheBuildFailureRetryDelay = 15 * time.Minute
+
 // rebuildCacheNow runs the locked staleness check and, when a build is due
-// and not throttled, the build subprocess.
+// and not throttled, the build subprocess. scheduleRetry, when set, receives a
+// follow-up request for a throttled or failed build.
 func rebuildCacheNow(
 	ctx context.Context,
 	identifier string,
@@ -2655,6 +2660,11 @@ func rebuildCacheNow(
 		"full_rebuild", staleness.FullRebuild)
 	if err := runScheduledBuildCacheSubprocess(ctx); err != nil {
 		logger.Error("cache build failed", "error", err)
+		if scheduleRetry != nil && ctx.Err() == nil {
+			// Later syncs that write nothing request no build, so a failed
+			// build would otherwise leave the cache stale until the next write.
+			scheduleRetry(cacheBuildFailureRetryDelay, identifier)
+		}
 		return fmt.Errorf("refresh analytics cache: %w", err)
 	}
 	staleness = cacheNeedsBuildContext(ctx, dbPath, analyticsDir)

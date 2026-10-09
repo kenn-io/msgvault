@@ -1775,6 +1775,7 @@ var _ api.MessageIdentityStore = (*storeAPIAdapter)(nil)
 var _ api.PersonFactStore = (*storeAPIAdapter)(nil)
 var _ api.PersonBriefStore = (*storeAPIAdapter)(nil)
 var _ api.MeetingImporter = (*storeAPIAdapter)(nil)
+var _ api.MuesliImporter = (*storeAPIAdapter)(nil)
 var _ api.SourceStatusStore = (*storeAPIAdapter)(nil)
 var _ api.CLIStore = (*storeAPIAdapter)(nil)
 var _ api.ContextCLIStore = (*storeAPIAdapter)(nil)
@@ -2022,6 +2023,24 @@ func (a *storeAPIAdapter) ImportMeeting(
 		return meetingimport.Result{}, meetingimport.ErrUnavailable
 	}
 	return a.meetingImporter.Import(ctx, req)
+}
+
+// ImportMuesli receives bounded recorder-local evidence under the API gate.
+func (a *storeAPIAdapter) ImportMuesli(ctx context.Context, req muesli.RemoteRequest) (muesli.RemoteResult, error) {
+	if a == nil || a.store == nil {
+		return muesli.RemoteResult{}, errors.New("muesli import unavailable")
+	}
+	result, err := muesli.NewImporter(a.store).ImportRemote(ctx, req)
+	refreshCtx := context.WithoutCancel(a.invocationContext(ctx))
+	if req.Action == "refresh" && err == nil && req.BuildCache {
+		err = a.queueCacheRefreshAfterManualSync(true, req.NoBuildCache)
+	} else if result.Changed && !req.NoBuildCache {
+		// A committed write still needs a refresh when checkpoint/link work fails.
+		if refreshErr := rebuildMuesliCacheAfterScheduledSync(refreshCtx, "muesli"); refreshErr != nil && a.logger != nil {
+			a.logger.Warn("Muesli cache refresh deferred", "error_class", "internal")
+		}
+	}
+	return result, err
 }
 
 func (a *storeAPIAdapter) GetStatsContext(ctx context.Context) (*api.StoreStats, error) {
