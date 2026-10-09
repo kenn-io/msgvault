@@ -200,8 +200,8 @@ func normalizeRepairSender(sender mime.Address) (repairSender, error) {
 func lenientRepairAddress(addr mime.Address) repairSender {
 	email := strings.ToLower(strings.TrimSpace(addr.Email))
 	domain := strings.ToLower(strings.TrimSpace(addr.Domain))
-	if at := strings.LastIndex(email, "@"); at >= 0 {
-		domain = email[at+1:]
+	if _, suffix, ok := strings.CutLast(email, "@"); ok {
+		domain = suffix
 	}
 	return repairSender{
 		email:       email,

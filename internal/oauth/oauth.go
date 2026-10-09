@@ -919,12 +919,12 @@ func SameGoogleAccount(expected, canonical string) bool {
 // from the local part, and mapping googlemail.com → gmail.com.
 // Returns "" for non-Gmail addresses.
 func normalizeGmailAddress(email string) string {
-	at := strings.LastIndex(email, "@")
-	if at < 0 {
+	local, domain, ok := strings.CutLast(email, "@")
+	if !ok {
 		return ""
 	}
-	local := strings.ToLower(email[:at])
-	domain := strings.ToLower(email[at+1:])
+	local = strings.ToLower(local)
+	domain = strings.ToLower(domain)
 
 	if domain != "gmail.com" && domain != "googlemail.com" {
 		return ""

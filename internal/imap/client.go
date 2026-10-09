@@ -1718,15 +1718,15 @@ func compositeID(mailbox string, uid imap.UID) string {
 
 // parseCompositeID splits a composite message ID into mailbox and UID.
 func parseCompositeID(id string) (mailbox string, uid imap.UID, err error) {
-	idx := strings.LastIndexByte(id, '|')
-	if idx < 0 {
+	mailbox, rawUID, ok := strings.CutLast(id, "|")
+	if !ok {
 		return "", 0, fmt.Errorf("invalid IMAP message ID %q (expected mailbox|uid)", id)
 	}
-	n, parseErr := strconv.ParseUint(id[idx+1:], 10, 32)
+	n, parseErr := strconv.ParseUint(rawUID, 10, 32)
 	if parseErr != nil {
 		return "", 0, fmt.Errorf("invalid UID in message ID %q: %w", id, parseErr)
 	}
-	return id[:idx], imap.UID(n), nil
+	return mailbox, imap.UID(n), nil
 }
 
 // GetProfile returns the IMAP account profile.
