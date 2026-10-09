@@ -375,13 +375,15 @@ Publication and conflict routes use global IDs and route network operations to
 the persisted owner's connection. Store-only views stay available even when a
 connection's credential needs repair.
 
-When you edit a value imported from a contact published back into its source address book, sync updates that value and preserves values added in msgvault or imported from other books. A remote edit that would replace another owner creates a conflict before publication can overwrite it.
-
 ## Resolve competing edits
 
-If both msgvault and the address book changed the same card, msgvault records a
-conflict for review. It also records edit/delete conflicts instead of silently
-choosing a side.
+When a contact is published back into its source address book, remote edits
+update its imported values and preserve values added in msgvault or imported
+from other books.
+
+If both msgvault and the address book changed the same card, or a remote edit
+would overwrite another owner's value, msgvault records a conflict for review.
+It also records edit/delete conflicts instead of silently choosing a side.
 
 ```bash
 msgvault carddav conflicts list

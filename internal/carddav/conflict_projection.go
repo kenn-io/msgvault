@@ -93,7 +93,7 @@ func projectConflictContact(body []byte, tombstone bool) ContactSummary {
 		} else {
 			value, uri, err = vcard.ContactPointValue(envelope.RenderMetadata.StoredVersion, property)
 			if uri != "" {
-				value = uri
+				value = uri[len("tel:"):]
 			}
 		}
 		if err != nil {
