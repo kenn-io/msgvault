@@ -1496,8 +1496,8 @@ External OpenAI-compatible embedding endpoint used to convert message text into 
 |---|---|---|
 | `api_format` | `openai` | Request contract: `openai` (OpenAI-compatible `/embeddings`, one vector per message chunk) or `voyage-contextual` (Voyage `/contextualizedembeddings`; pins `model = "voyage-context-4"` and embeds chat conversation windows and turn-aware meeting chunks as contextual documents). |
 | `endpoint` | (required) | HTTP(S) base URL for an OpenAI-compatible embeddings API. msgvault appends `/embeddings` (for example, set `http://localhost:11434/v1`, not `.../embeddings`). |
-| `model` | (required) | Model name to pass in each request (e.g., `nomic-embed-text`). |
-| `dimension` | (required) | Vector dimension. Must match the model's output dimension. |
+| `model` | (required) | Model name or serving alias to pass in each request (e.g., `nomic-embed-text`). Use a new alias when the served weights or vector recipe change; Msgvault does not verify the checkpoint behind an alias. |
+| `dimension` | (required) | Expected vector width. Responses with a different width are rejected. The OpenAI-compatible client does not send a `dimensions` field or slice returned vectors; configure the server to return the desired width. |
 | `document_prefix` | `""` | Model-specific instruction prepended to every document chunk after chunking (for example, `"search_document: "` for `nomic-embed-text`). The prefix does not reduce `max_input_chars`; maximum 4096 UTF-8 bytes. |
 | `query_prefix` | `""` | Model-specific instruction prepended to every vector-search query (for example, `"search_query: "` for `nomic-embed-text`); maximum 4096 UTF-8 bytes. |
 | `api_key_env` | — | Name of an environment variable containing the API key. Omit for anonymous endpoints. |
@@ -1506,6 +1506,13 @@ External OpenAI-compatible embedding endpoint used to convert message text into 
 | `max_retries` | `3` | Retries per batch on transient failures. |
 | `max_input_chars` | `32768` | Character cap per embedding chunk, counted in characters rather than tokens. Too high and chunks are rejected or silently truncated; too low and long messages split into more chunks, adding embedding overhead. For example, start around `6000` for a 2k-token model such as Ollama's `nomic-embed-text`, then check representative content. See [Matching `max_input_chars` to your embedder's context window](usage/vector-search.md#matching-max_input_chars-to-your-embedders-context-window). |
 | `eta_window` | `10` | Number of recent progress samples used for ETA smoothing. |
+
+See the [EmbeddingGemma 2 text example](usage/vector-search.md#optional-embeddinggemma-2-text-endpoint)
+for native 768-dimensional retrieval through these existing fields. Literal
+prefix spaces are preserved. Changing the model, dimension or either prefix
+changes message and attachment-document generation identities, including the
+document corpus's consent policy. Valid provider values are preserved;
+normalization belongs to the serving recipe.
 
 ##### Stored provider credentials
 

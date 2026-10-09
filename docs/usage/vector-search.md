@@ -232,6 +232,70 @@ reduce the `max_input_chars` content budget. Changing either prefix marks
 the existing vector generation stale so prefixed queries cannot be mixed
 with an index built from unprefixed documents.
 
+### Optional EmbeddingGemma 2 text endpoint
+
+EmbeddingGemma 2 can use the existing OpenAI-compatible text path with
+768-dimensional output and literal retrieval prefixes. Msgvault does not load
+or serve the model. First configure a trusted endpoint to accept the fully
+formatted text below, with automatic prompt insertion disabled.
+
+```toml
+[vector]
+enabled = true
+backend = "sqlite-vec"
+
+[vector.embeddings]
+api_format = "openai"
+endpoint = "http://127.0.0.1:8080/v1"
+# Example serving alias; the operator must bind it to this revision and recipe.
+model = "embeddinggemma-2-914f7f89142e33e77833254d9c9b90c3cef7303b-text-fp32-768-v1"
+dimension = 768
+document_prefix = "title: none | text: "
+query_prefix = "task: search result | query: "
+batch_size = 4
+timeout = "120s"
+max_input_chars = 6000
+```
+
+Preserve the trailing spaces inside both prefix strings. Msgvault adds each
+prefix once, after preparing the content. `title: none` is a literal fallback;
+it does not interpolate the message subject into the prompt.
+Batch size 4 and a 120-second timeout are initial settings for local CPU
+serving, not a tested performance guarantee. They do not change the defaults.
+
+The endpoint operator must bind that example alias to
+[`google/embeddinggemma-2` revision
+`914f7f89142e33e77833254d9c9b90c3cef7303b`](https://huggingface.co/google/embeddinggemma-2/tree/914f7f89142e33e77833254d9c9b90c3cef7303b)
+and a fixed tokenizer, pooling, precision and output recipe. An alias is an
+operator convention; Msgvault does not verify the loaded checkpoint through
+HTTP. Give a changed serving recipe a new alias. Changing `model`, `dimension`
+or either prefix separates message generations and requires a full rebuild.
+Extracted document vectors have their own generation and consent policy;
+those settings change that identity too. Follow the separate
+[document setup](document-indexing.md#semantic-and-hybrid-document-search).
+
+The [model card](https://ai.google.dev/gemma/docs/embeddinggemma/model_card_2)
+specifies mean pooling including prompts, L2-normalized output, and
+`bfloat16` or `float32` activations rather than `float16`. Require the server
+to enforce the shared **8192-token input limit including formatting**.
+`max_input_chars = 6000` is a conservative starting point, not a token count
+or admission check. Check the server's tokenizer and oversized-input policy
+before embedding an archive.
+
+Msgvault rejects wrong-width, nonfinite and zero-norm vectors. It preserves
+valid provider values, so the server must return unit-length vectors for this
+recipe. `dimension` checks response width; Msgvault neither sends an OpenAI
+`dimensions` request nor slices vectors. Reduced 512/256/128-dimensional
+output needs an explicitly configured serving recipe that truncates and
+L2-normalizes again, with a separate alias and matching query/document width.
+The example above covers native 768 only.
+
+The model recipe and native dimension are source-verified. Msgvault's
+configuration, literal prompts and vector validation are tested with synthetic
+HTTP responses. Actual serving, checkpoint loading, prompt handling, pooling,
+tokenization and inference remain untested. This text configuration adds no
+image, video or audio transport.
+
 ### Matching `max_input_chars` to your embedder's context window
 
 `max_input_chars` is an upper bound in characters per embedding
@@ -293,10 +357,11 @@ representative content before starting a full rebuild.
     `num_ctx` does not help. Check both with `ollama show <model>`
     before raising `max_input_chars`.
 
-If `msgvault embeddings build` logs `HTTP 400`, msgvault includes the
-response body from the embedder when available. Check both the CLI log
-and the embedder's own logs. A body such as `the input length exceeds
-the context length` confirms you need to lower `max_input_chars`.
+If `msgvault embeddings build` reports `HTTP 400`, check the embedder's own
+logs for the reason. The OpenAI-compatible client reports the HTTP status
+without echoing the provider's response body. A server log such as
+`the input length exceeds the context length` confirms you need to lower
+`max_input_chars`.
 Do not rely on this error to detect oversized inputs through Ollama's
 OpenAI-compatible endpoint; see the warning above.
 
@@ -705,12 +770,16 @@ body keywords.
 | `invalid_mode` | The requested mode is not supported by that surface. | Use `fts`, `vector`, or `hybrid` on the CLI or HTTP; use `vector`, `hybrid`, or omitted `mode` in MCP. |
 | `embedding_timeout` | The embedding endpoint did not respond before the request deadline (transient: slow/cold model, network blip). | Retry; if persistent, raise `[vector.embeddings].timeout` or use a faster endpoint. |
 
-For non-429 HTTP 4xx errors, msgvault treats the response as
-permanent and includes up to the first few KiB of the response body in
-the error. If a batch contains both good and bad rows, the worker
+The OpenAI-compatible client retries HTTP 408 and 429; its other HTTP 4xx
+errors are permanent. The Voyage contextual client retries HTTP 429; its
+other HTTP 4xx errors are permanent.
+The OpenAI-compatible client reports the HTTP status and a classified
+reason; check the embedder's own logs for the response body. The Voyage
+contextual client includes up to the first few KiB of the response body
+in the error. If a batch contains both good and bad rows, the worker
 downshifts to smaller batches and then single-message requests so
 valid messages can still be embedded while the failing row is dropped
-or reported. If the body says `the input length exceeds the context
+or reported. If the server log or error body says `the input length exceeds the context
 length` (Ollama) or an equivalent token-limit error, lower
 `max_input_chars` to match the model's context window. See the sizing
 guidance above.
