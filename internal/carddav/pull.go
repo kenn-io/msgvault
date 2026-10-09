@@ -403,13 +403,6 @@ func parseRemoteResource(href, etag string, body []byte) (store.CardDAVRemoteRes
 	return resource, nil
 }
 
-func trimPrefixFold(value, prefix string) string {
-	if len(value) >= len(prefix) && strings.EqualFold(value[:len(prefix)], prefix) {
-		return value[len(prefix):]
-	}
-	return value
-}
-
 // SyncCollectionBody builds the RFC 6578 level-1 incremental request.
 func SyncCollectionBody(token string) ([]byte, error) {
 	var body bytes.Buffer

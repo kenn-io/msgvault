@@ -1938,9 +1938,14 @@ func TestPublishedImportRemoteOwnership(t *testing.T) {
 		{"pref-zero", "EMAIL:e2@example.test", "EMAIL;PREF=0:e2b@example.test", false, true},
 		{"pref-range", "EMAIL:e2@example.test", "EMAIL;PREF=101:e2b@example.test", false, true},
 		{"pref-text", "EMAIL:e2@example.test", "EMAIL;PREF=abc:e2b@example.test", false, true},
+		{"legacy-geo", "EMAIL:e2@example.test", "EMAIL:e2b@example.test\r\nGEO:north;west", false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			fixture, service, st, personID := publishedImportFixture(t)
+			initial := publishedImportCard()
+			if tc.name == "legacy-geo" {
+				initial = bytes.Replace(initial, []byte("VERSION:4.0"), []byte("VERSION:3.0"), 1)
+			}
+			fixture, service, st, personID := publishedImportFixture(t, initial)
 			if tc.local {
 				_, err := st.AddPersonContactPointContext(t.Context(), personID, store.PersonContactPointInput{
 					AddressKind: store.ContactAddressEmail, OriginalValue: "local@example.test", Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
@@ -1948,8 +1953,13 @@ func TestPublishedImportRemoteOwnership(t *testing.T) {
 				require.NoError(t, err)
 				require.NoError(t, service.ReconcilePublications(t.Context()))
 			}
+			before, err := st.LoadPersonVCardSnapshotContext(t.Context(), personID)
+			require.NoError(t, err)
 			puts := fixture.puts
 			edited := bytes.Replace(fixture.body, []byte(tc.before), []byte(tc.after), 1)
+			if tc.name == "legacy-geo" {
+				edited = bytes.Replace(edited, []byte("VERSION:4.0"), []byte("VERSION:3.0"), 1)
+			}
 			if tc.name == "name-and-email" {
 				edited = bytes.Replace(edited, []byte("e2@example.test"), []byte("e2b@example.test"), 1)
 			}
@@ -1965,6 +1975,11 @@ func TestPublishedImportRemoteOwnership(t *testing.T) {
 				require.NoError(t, service.ReconcilePublications(t.Context()))
 				assert.Equal(t, puts, fixture.puts)
 				assert.Equal(t, edited, fixture.body)
+				if tc.name == "legacy-geo" {
+					after, err := st.LoadPersonVCardSnapshotContext(t.Context(), personID)
+					require.NoError(t, err)
+					assert.Equal(t, before.Fingerprint, after.Fingerprint)
+				}
 			}
 			conflicts, err := service.ListConflicts(t.Context())
 			require.NoError(t, err)

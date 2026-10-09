@@ -478,11 +478,9 @@ func (s *Store) cardDAVResourceNeedsConflictTx(
 			if err != nil {
 				return false, nil, err
 			}
-			card := vcard.Card{}
-			for _, occurrence := range envelope.PropertyTree {
-				card.Properties = append(card.Properties, occurrence.Property)
-			}
-			if vcard.Validate(vcard.Document{Cards: []vcard.Card{card}}) != nil {
+			publicationEnvelope := envelope
+			publicationEnvelope.RenderMetadata.RenderRequired = true
+			if _, err := publicationEnvelope.PrepareCanonicalRender(); err != nil {
 				return true, nil, nil
 			}
 			unsafe, err := s.cardDAVRebaseDisplacesOwnerTx(ctx, tx, bookID, *resource.PersonID, href, dropped)

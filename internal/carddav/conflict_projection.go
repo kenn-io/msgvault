@@ -87,15 +87,17 @@ func projectConflictContact(body []byte, tombstone bool) ContactSummary {
 		if name != "FN" && name != "EMAIL" && name != "TEL" {
 			continue
 		}
-		value, err := vcard.PropertyValue(envelope.RenderMetadata.StoredVersion, property)
+		var value, uri string
+		if name == "FN" {
+			value, err = vcard.PropertyValue(envelope.RenderMetadata.StoredVersion, property)
+		} else {
+			value, uri, err = vcard.ContactPointValue(envelope.RenderMetadata.StoredVersion, property)
+			if uri != "" {
+				value = uri
+			}
+		}
 		if err != nil {
 			return emptyContactSummary(ConflictSideUnavailable)
-		}
-		switch name {
-		case "EMAIL":
-			value = trimPrefixFold(strings.TrimSpace(value), "mailto:")
-		case "TEL":
-			value = trimPrefixFold(strings.TrimSpace(value), "tel:")
 		}
 		value = normalizePublicCardDAVText(value)
 		if value == "" {
