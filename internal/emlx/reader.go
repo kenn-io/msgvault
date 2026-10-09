@@ -13,6 +13,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -23,6 +24,10 @@ import (
 type Message struct {
 	// Raw is the RFC 5322 MIME content.
 	Raw []byte
+
+	// OriginalRaw retains the source identity/layout before sibling restoration.
+	OriginalRaw      []byte
+	RestorationParts []RestorationPart
 
 	// SourceHash is the SHA-256 of the original MIME bytes, before restoring
 	// attachments. It remains stable when Apple Mail downloads attachments.
@@ -84,6 +89,7 @@ func Parse(data []byte) (*Message, error) {
 	msg := &Message{
 		Raw: data[mimeStart:mimeEnd],
 	}
+	msg.OriginalRaw = msg.Raw
 	sum := sha256.Sum256(msg.Raw)
 	msg.SourceHash = hex.EncodeToString(sum[:])
 
@@ -107,7 +113,15 @@ func Parse(data []byte) (*Message, error) {
 // restored parts base64-encoded, stays within maxBytes; a part that would
 // exceed the remaining budget keeps its placeholder.
 func ParseFile(path string, maxBytes int64) (*Message, error) {
-	data, err := os.ReadFile(path)
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("emlx: open %q: %w", path, err)
+	}
+	defer func() { _ = f.Close() }()
+	data, err := io.ReadAll(io.LimitReader(f, maxBytes+1))
+	if err == nil && int64(len(data)) > maxBytes {
+		return nil, fmt.Errorf("emlx: file exceeds size limit %d", maxBytes)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("emlx: read %q: %w", path, err)
 	}
@@ -115,7 +129,7 @@ func ParseFile(path string, maxBytes int64) (*Message, error) {
 	if err != nil {
 		return nil, err
 	}
-	msg.Raw, msg.RestoredAttachments, msg.RestorationError = RestoreAttachments(msg.Raw, path, maxBytes)
+	msg.Raw, msg.RestoredAttachments, msg.RestorationParts, msg.RestorationError = restoreAttachments(msg.Raw, path, maxBytes)
 	return msg, nil
 }
 

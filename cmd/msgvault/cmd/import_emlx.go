@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -20,7 +21,9 @@ import (
 var (
 	importEmlxSourceType         string
 	importEmlxNoResume           bool
+	importEmlxFullReconcile      bool
 	importEmlxCheckpointInterval int
+	importEmlxMaxMessageBytes    int64
 	importEmlxNoAttachments      bool
 	importEmlxAccountsDB         string
 	importEmlxAccounts           []string
@@ -62,6 +65,16 @@ Examples:
 	`,
 	Args: cobra.MaximumNArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// Cobra commands are reused by daemon invocations. Keep this limit
+		// local to the invocation so an omitted flag restores the default.
+		defer func() {
+			importEmlxMaxMessageBytes = 0
+			cmd.Flags().Lookup("max-message-bytes").Changed = false
+		}()
+		if cmd.Flags().Changed("max-message-bytes") &&
+			(importEmlxMaxMessageBytes <= 0 || importEmlxMaxMessageBytes == math.MaxInt64) {
+			return usageErr(cmd, fmt.Errorf("--max-message-bytes must be positive and at most %d bytes", int64(math.MaxInt64-1)))
+		}
 		state := invocationFromCommand(cmd)
 		if state == nil || state.cfg == nil {
 			return errors.New("configuration is unavailable")
@@ -180,6 +193,21 @@ Examples:
 	},
 }
 
+// Clear this command's opt-in limit even when parsing or pre-run validation
+// fails before RunE. Other commands and their flags keep their own lifecycle.
+func clearImportEmlxMaxMessageBytes(root *cobra.Command) {
+	for _, cmd := range root.Commands() {
+		if cmd.Name() != "import-emlx" {
+			continue
+		}
+		if flag := cmd.Flags().Lookup("max-message-bytes"); flag != nil {
+			_ = flag.Value.Set(flag.DefValue)
+			flag.Changed = false
+		}
+		return
+	}
+}
+
 func importSingleAccount(
 	ctx context.Context,
 	cmd *cobra.Command,
@@ -197,7 +225,9 @@ func importSingleAccount(
 			SourceType:         importEmlxSourceType,
 			Identifier:         identifier,
 			NoResume:           importEmlxNoResume,
+			FullReconcile:      importEmlxFullReconcile,
 			CheckpointInterval: importEmlxCheckpointInterval,
+			MaxMessageBytes:    importEmlxMaxMessageBytes,
 			AttachmentsDir:     attachmentsDir,
 			RemoteImages:       configuredRemoteImageFetcher(cfg),
 			Logger:             logger,
@@ -337,7 +367,9 @@ func importAutoAccounts(
 				SourceType:         importEmlxSourceType,
 				Identifier:         identifier,
 				NoResume:           importEmlxNoResume,
+				FullReconcile:      importEmlxFullReconcile,
 				CheckpointInterval: importEmlxCheckpointInterval,
+				MaxMessageBytes:    importEmlxMaxMessageBytes,
 				AttachmentsDir:     attachmentsDir,
 				RemoteImages:       configuredRemoteImageFetcher(cfg),
 				Logger:             logger,
@@ -348,7 +380,7 @@ func importAutoAccounts(
 			continue
 		}
 
-		if summary.MailboxesTotal == 0 {
+		if summary.MailboxesTotal == 0 && !summary.HardErrors {
 			_, _ = fmt.Fprintf(out, "Skipping %s: no mailboxes found\n", identifier)
 			continue
 		}
@@ -389,6 +421,7 @@ func importAutoAccounts(
 		grandTotal.MessagesAdded += summary.MessagesAdded
 		grandTotal.MessagesUpdated += summary.MessagesUpdated
 		grandTotal.MessagesSkipped += summary.MessagesSkipped
+		grandTotal.FilesUnchanged += summary.FilesUnchanged
 		grandTotal.PartialFiles += summary.PartialFiles
 		grandTotal.AttachmentsRestored += summary.AttachmentsRestored
 		grandTotal.Errors += summary.Errors
@@ -465,6 +498,9 @@ func printImportStats(out io.Writer, summary importer.EmlxImportSummary) {
 		"  Skipped (dup):  %d messages\n",
 		summary.MessagesSkipped,
 	)
+	if summary.FilesUnchanged > 0 {
+		_, _ = fmt.Fprintf(out, "  Unchanged:      %d files (content reads avoided)\n", summary.FilesUnchanged)
+	}
 	if summary.PartialFiles > 0 {
 		_, _ = fmt.Fprintf(out,
 			"  Partial files:  %d (%d attachments restored from Apple Mail's Attachments/ directory)\n",
@@ -487,12 +523,16 @@ func init() {
 	)
 	importEmlxCmd.Flags().BoolVar(
 		&importEmlxNoResume, "no-resume", false,
-		"Do not resume from an interrupted import",
+		"Ignore interrupted progress; completed file receipts remain usable (use --full-reconcile to revisit every file)",
 	)
+	importEmlxCmd.Flags().BoolVar(&importEmlxFullReconcile, "full-reconcile", false,
+		"Revisit every file and reconcile archived content, attachments, and search")
 	importEmlxCmd.Flags().IntVar(
 		&importEmlxCheckpointInterval, "checkpoint-interval", 200,
 		"Save progress every N messages",
 	)
+	importEmlxCmd.Flags().Int64Var(&importEmlxMaxMessageBytes, "max-message-bytes", 0,
+		"Maximum EMLX file and merged MIME bytes, including encoding (1..9223372036854775806; default 128 MiB)")
 	importEmlxCmd.Flags().BoolVar(
 		&importEmlxNoAttachments, "no-attachments", false,
 		"Do not store attachments on disk",

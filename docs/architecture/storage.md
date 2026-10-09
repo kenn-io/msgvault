@@ -110,6 +110,17 @@ resolved users, canonical text used for safe transcript preservation, and
 hydration warnings. Integration tokens and authorization headers are never
 part of the envelope.
 
+**source_import_items** -- Durable import receipts.
+
+On unreleased `main`, Apple Mail imports reserve `emlx-occurrence` for
+root/relative-path acknowledgments and `emlx-target` for shared message
+completion. A target is marked dirty before content, attachments or search
+mutations, then complete only after required ingestion succeeds. Recovery
+finishes the current committed raw, preserving accumulated labels. The ledger
+reuses the existing schema and sync-generation fencing. These receipts are
+metadata cache hints, not continuous archive-integrity checks; see
+[repeat imports](../usage/importing.md#repeat-apple-mail-imports-unreleased).
+
 **participants** -- Observed addresses and handles from source data. These are
 separate from the curated `persons` table.
 
