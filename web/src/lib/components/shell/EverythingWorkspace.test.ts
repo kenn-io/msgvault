@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { appShortcuts } from '@kenn-io/kit-ui';
+import { tick } from 'svelte';
 import { describe, expect, it, vi } from 'vitest';
 
 import { meetingFixtureResponse } from '../../meetings/fixtures.test-support';
@@ -21,8 +22,9 @@ function exploreResponse(overrides: Record<string, unknown> = {}) {
 }
 
 describe('EverythingWorkspace', () => {
-  it('searches recordings only for committed Full text queries without filters or grouping', async () => {
-    window.history.replaceState(null, '', '/');
+  it('debounces live recording queries and excludes filtered or grouped scopes', async () => {
+    vi.useFakeTimers();
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', query: 'restored', searchMode: 'full_text' }))}`);
     const fetchFn = vi.fn<typeof fetch>(async input => {
       const path = new URL((input as Request).url).pathname;
       if (path.endsWith('/media/search')) return Response.json({
@@ -33,20 +35,35 @@ describe('EverythingWorkspace', () => {
     });
     const state = new ExploreState(window);
     const view = render(AppShell, { client: createAPIClient(fetchFn), state });
-    expect(screen.queryByRole('region', { name: 'Spoken in recordings' })).toBeNull();
-    state.replaceSearchDraft('uncommitted', 'full_text');
-    expect(screen.queryByRole('region', { name: 'Spoken in recordings' })).toBeNull();
-    state.replaceTransient({ workspace: 'everything', query: 'quarterly', searchMode: 'full_text' });
-    await screen.findByText('No spoken matches.');
     const mediaRequests = () => fetchFn.mock.calls.filter(([input]) => new URL((input as Request).url).pathname.endsWith('/media/search'));
-    expect(mediaRequests()).toHaveLength(1);
-    for (const patch of [{ searchMode: 'semantic' as const }, { searchMode: 'full_text' as const, filters: [{ dimension: 'source' as const, values: ['1'] }] }, { filters: [], groupingChain: ['kind' as const] }]) {
-      state.replaceTransient(patch);
-      await screen.findByText('Recording search requires Full text with no filters or grouping.');
+    try {
+      await vi.advanceTimersByTimeAsync(300);
+      expect(screen.getByText('No spoken matches.')).toBeTruthy();
       expect(mediaRequests()).toHaveLength(1);
+      const input = screen.getByRole('searchbox', { name: 'Search everything' });
+      for (const value of ['q', 'qu', 'quarterly']) {
+        await fireEvent.input(input, { target: { value } });
+        await tick();
+        expect(screen.queryByText('No spoken matches.')).toBeNull();
+        expect(mediaRequests()).toHaveLength(1);
+      }
+      await vi.advanceTimersByTimeAsync(299);
+      expect(mediaRequests()).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(mediaRequests()).toHaveLength(2);
+      expect(new URL((mediaRequests()[1][0] as Request).url).searchParams.get('q')).toBe('quarterly');
+      for (const patch of [{ searchMode: 'semantic' as const }, { searchMode: 'full_text' as const, filters: [{ dimension: 'source' as const, values: ['1'] }] }, { filters: [], groupingChain: ['kind' as const] }]) {
+        state.replaceTransient(patch);
+        await tick();
+        expect(screen.getByText('Recording search requires Full text with no filters or grouping.')).toBeTruthy();
+        await vi.advanceTimersByTimeAsync(300);
+        expect(mediaRequests()).toHaveLength(2);
+      }
+    } finally {
+      view.unmount();
+      state.destroy();
+      vi.useRealTimers();
     }
-    view.unmount();
-    state.destroy();
   });
 
   it.each(['everything', 'files'] as const)('keeps non-filterable groups in %s visible without opening an unavailable inspector', async (workspace) => {
