@@ -1322,10 +1322,16 @@ func (s *Store) ResolveCardDAVConflictRemoteContext(
 				if unsafe {
 					return fmt.Errorf("keep remote would republish a value owned locally or by another address book: %w", vcard.ErrResourceOwnershipMismatch)
 				}
-				publicationEnvelope := envelope
-				publicationEnvelope.RenderMetadata.RenderRequired = true
-				if _, err := publicationEnvelope.PrepareCanonicalRender(); err != nil {
-					return err
+				publication, publicationErr := getCardDAVPublicationFrom(ctx, tx, *mapping.PersonID, "")
+				if publicationErr != nil && !errors.Is(publicationErr, ErrCardDAVPublicationNotFound) {
+					return publicationErr
+				}
+				if publicationErr == nil && publication.Desired && publication.AddressBookID == book.ID && publication.Href == input.Remote.Href {
+					publicationEnvelope := envelope
+					publicationEnvelope.RenderMetadata.RenderRequired = true
+					if _, err := publicationEnvelope.PrepareCanonicalRender(); err != nil {
+						return err
+					}
 				}
 				preparedEnvelope = &envelope
 			}

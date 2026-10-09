@@ -402,9 +402,9 @@ msgvault carddav conflicts resolve 18 keep_remote
 `keep_local` applies the local choice to the remote card. `keep_remote` accepts
 the remote choice locally. Either choice may represent a deletion. If the
 remote state changed again, reload the conflict and review the new comparison.
-If a remote choice would restore a protected value during publication or cannot
-be rendered safely, it leaves the conflict unresolved. An unresolved conflict
-prevents conflicting publication work from proceeding.
+For contacts with an active publication, a remote choice that would restore a
+protected value or cannot be rendered safely leaves the conflict unresolved.
+An unresolved conflict prevents conflicting publication work from proceeding.
 
 A saved person with an active CardDAV publication cannot be merged with another
 profile. Remove the publication and settle pending work before following the

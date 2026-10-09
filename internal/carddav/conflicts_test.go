@@ -471,6 +471,7 @@ func TestKeepRemoteRebasesImportedPersonCleanupBaseline(t *testing.T) {
 		wantPersonRetained bool
 		publish            bool
 		remoteName         string
+		remotePref         string
 	}{
 		{
 			name: "discarded imported projection edit advances cleanup baseline",
@@ -496,6 +497,18 @@ func TestKeepRemoteRebasesImportedPersonCleanupBaseline(t *testing.T) {
 			publish:            true,
 			makeLocalChange:    removeFormattedName,
 			wantPersonRetained: true,
+		},
+		{
+			name:       "unpublished malformed preference accepts remote source edit",
+			remoteName: "Alice Remote Base",
+			remotePref: "abc",
+			makeLocalChange: func(t *testing.T, st *store.Store, personID int64) {
+				t.Helper()
+				person, err := st.GetPersonContext(t.Context(), personID)
+				require.NoError(t, err)
+				_, err = st.UpdatePersonDisplayNameContext(t.Context(), personID, person.Revision, new("Alice Local Label"))
+				require.NoError(t, err)
+			},
 		},
 		{
 			name: "explicit user state keeps cleanup baseline",
@@ -547,6 +560,9 @@ func TestKeepRemoteRebasesImportedPersonCleanupBaseline(t *testing.T) {
 			fixture.body = conflictCardWithEmail(
 				"person", remoteName, "alice.retained@example.test",
 			)
+			if tt.remotePref != "" {
+				fixture.body = bytes.Replace(fixture.body, []byte("EMAIL:"), []byte("EMAIL;PREF="+tt.remotePref+":"), 1)
+			}
 			fixture.etag = `"remote-2"`
 			fixture.mu.Unlock()
 			_, err = service.Sync(t.Context(), SyncOptions{Full: true})
@@ -574,6 +590,18 @@ func TestKeepRemoteRebasesImportedPersonCleanupBaseline(t *testing.T) {
 				}
 			}
 			assert.Equal(t, 1, fnMappings)
+			if tt.remotePref != "" {
+				assert.Equal(t, fixture.body, envelope.StoredBody)
+				person, err := st.GetPersonContext(t.Context(), personID)
+				require.NoError(err)
+				assert.Equal(t, new("Alice Local Label"), person.DisplayName)
+				_, err = service.Sync(t.Context(), SyncOptions{Full: true})
+				require.NoError(err)
+				_, err = st.GetCardDAVPublicationContext(t.Context(), personID)
+				require.ErrorIs(err, store.ErrCardDAVPublicationNotFound)
+				assert.Zero(t, fixture.puts)
+				return
+			}
 
 			fixture.mu.Lock()
 			fixture.body = nil
