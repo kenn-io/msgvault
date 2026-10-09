@@ -44,6 +44,10 @@ type MCPActivation struct {
 type MCPDelivery struct {
 	Subscription MCPSubscription
 	Event        MCPEvent
+	// More reports that PrepareMCPDelivery advanced past its per-call row
+	// budget without finding an occurrence to send. The caller should call
+	// again without waiting; Subscription and Event are empty.
+	More bool
 }
 
 const mcpSubscriptionColumns = `id,principal_id,name,arguments,scope_kind,scope_id,source_id,conversation_reference_id,callback_url,secret_enc,previous_secret_enc,previous_secret_until,secret_revision,verified_revision,verified_at,generation,state,stop_reason,expires_at,cursor_epoch,cursor_seq,pending_seq,pending_envelope,pending_generation,attempt_count,next_attempt_at,from_me_window_start,from_me_window_count,loop_guard_skips,dead_letter_count,last_outcome,created_at,updated_at`
@@ -716,7 +720,11 @@ func (s *Store) PrepareMCPDelivery(ctx context.Context, id string, generation in
 			result = &MCPDelivery{Subscription: *sub, Event: event}
 			return nil
 		}
-		return s.saveMCPSubscription(ctx, tx, sub)
+		if err := s.saveMCPSubscription(ctx, tx, sub); err != nil {
+			return err
+		}
+		result = &MCPDelivery{More: true}
+		return nil
 	})
 	return result, err
 }

@@ -56,6 +56,11 @@ func New(ctx context.Context, st *store.Store, opts Options) (*Service, error) {
 	if opts.Enabled && (opts.Retention <= 0 || opts.Retention > 7*24*time.Hour) {
 		return nil, invalid("invalid_retention")
 	}
+	if opts.Enabled {
+		if err := validateSources(opts.Sources); err != nil {
+			return nil, err
+		}
+	}
 	s := &Service{st: st, opts: opts, principal: Principal(opts.OwnerKey), caps: capabilities(opts.Enabled, opts.Sources), wake: make(chan struct{}, 1), deliveryHints: make(chan struct{}, 1), workers: make(map[string]*worker)}
 	if opts.Enabled {
 		var rows []store.MCPSubscription

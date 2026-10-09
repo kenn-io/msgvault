@@ -6,11 +6,32 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/netip"
+	"os"
+	"path/filepath"
 	"testing"
 
 	Assert "github.com/stretchr/testify/assert" //nolint:importas // Keep package constructors available to assertion helpers in nested scopes.
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
+
+func TestEnabledEventsRejectUnknownSourceTypes(t *testing.T) {
+	assert := Assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	opts := Options{Enabled: true, Sources: []string{"gmail", "gmial"}, KeyPath: filepath.Join(t.TempDir(), "key"), OwnerKey: "synthetic-owner"}
+	_, err := New(t.Context(), f.Store, opts)
+	require.Error(err)
+	assert.Contains(err.Error(), `"gmial"`, "the error must name the unknown source type")
+	for _, supported := range []string{"gmail", "imap", "gcal", "beeper", "slack", "slackdump", "teams", "discord"} {
+		assert.Contains(err.Error(), supported, "the error must list supported source types")
+	}
+	_, statErr := os.Stat(opts.KeyPath)
+	assert.True(os.IsNotExist(statErr), "validation must fail before Events state is created")
+	opts.Enabled = false
+	_, err = New(t.Context(), f.Store, opts)
+	require.NoError(err, "disabled Events ignore source settings")
+}
 
 func TestOptionsNetworkInjectionPreservesGuardedTLS(t *testing.T) {
 	s, f, req := eventService(t)

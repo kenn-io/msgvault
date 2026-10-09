@@ -16,7 +16,7 @@ func TestCatalogReflectsOnlyEnabledReadyFamilies(t *testing.T) {
 	assert := Assert.New(t)
 	require := Require.New(t)
 	f := storetest.New(t)
-	s, err := New(t.Context(), f.Store, Options{Enabled: true, Sources: []string{"gmail", "gcal", "caldav", "google_calendar"}, KeyPath: t.TempDir() + "/key", OwnerKey: "synthetic-owner"})
+	s, err := New(t.Context(), f.Store, Options{Enabled: true, Sources: []string{"gmail", "gcal"}, KeyPath: t.TempDir() + "/key", OwnerKey: "synthetic-owner"})
 	require.NoError(err)
 	definitions := s.Catalog().Events
 	require.Len(definitions, 3)
