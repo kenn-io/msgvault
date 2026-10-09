@@ -147,6 +147,9 @@ func (s *Store) WithIngestContext(ingest IngestContext) *Store {
 	view.syncBase = s.syncBase
 	view.mcpBase = s.mcpRoot()
 	view.mcpIngest = ingest
+	// ScopedToSync views defer Directory refreshes; an ingest view keeps the
+	// policy of the Store it was derived from.
+	view.directoryProjectionReady = s.directoryProjectionReady
 	return view
 }
 
