@@ -1605,7 +1605,7 @@ Successful responses set:
 
 ### Media transcript search
 
-`GET /api/v1/media/search?q=quarterly%20numbers&mode=lexical&limit=20` finds spoken words and returns every matching live message occurrence. Results include message, conversation and attachment IDs, supplied or generated origin, an excerpt, and timing when Docbank recorded it. Optional `person_id` and repeated `direction` values select `from_person`, `to_person` or `group` relations.
+`GET /api/v1/media/search?q=quarterly%20numbers&mode=lexical&limit=20` finds spoken words and returns every matching live message occurrence. Results include message, conversation and attachment IDs, optional `filename`, `containing_title` and `occurred_at`, supplied or generated origin, an excerpt, and timing when Docbank recorded it. Optional `person_id` and repeated `direction` values select `from_person`, `to_person` or `group` relations.
 
 The daemon searches the complete allowed population, with a ceiling of 4,096 distinct versions and source selectors and 64 distinct current supplied transcript input IDs per recording source. Repeated occurrences of the same input count once. Oversized scopes return `media_search_scope_limit` before contacting Docbank; set `person_id` to narrow the scope. Semantic and hybrid modes return `media_search_mode_unavailable`. A disabled or unreachable integration returns `media_search_unavailable`.
 

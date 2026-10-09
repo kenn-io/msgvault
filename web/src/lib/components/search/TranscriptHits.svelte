@@ -5,27 +5,33 @@
   import { searchMedia } from '../../api/generated/api/api';
   import type { MediaSearchResponse } from '../../api/generated/models';
   import { createStaleRequestGuard } from '../../archive/stale-request';
-  import { formatDateTime } from '../../util/format';
+  import { formatDateTime, formatOffset } from '../../util/format';
 
   let { client, query, supported }: { client: APIClient; query: string; supported: boolean } = $props();
   let result = $state<MediaSearchResponse>();
-  let unavailable = $state(false);
+  const admitted = $derived(query.trim().split(/\s+/u).every(term => /^[\p{L}\p{M}\p{N}]+$/u.test(term) && /[\p{L}\p{N}]/u.test(term) && !/^(AND|OR|NOT)$/i.test(term)));
+  const incomplete = $derived(Boolean(result && (result.partial || result.coverage.state !== 'complete' || result.coverage.binding_required || result.pending_occurrences || result.unavailable_occurrences || result.attribution_unavailable || result.truncated)));
+  let notice = $state('');
+  let expired = $state(false);
+  let retryable = $state(false);
   let retry = $state(0);
 
   $effect(() => {
     const requestedQuery = query.trim();
     const requestedClient = client;
-    const allowed = supported;
+    const allowed = supported && admitted;
     void retry;
     result = undefined;
-    unavailable = false;
+    notice = '';
+    expired = false;
+    retryable = false;
     if (!allowed || !requestedQuery) return;
 
     const freshness = createStaleRequestGuard();
     let controller: AbortController | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    let delay = 2000;
     let disposed = false;
+    let blocked = false;
 
     function stop(): void {
       freshness.invalidate();
@@ -37,30 +43,56 @@
 
     async function load(): Promise<void> {
       if (disposed || document.hidden || controller) return;
-      if (timer !== undefined) clearTimeout(timer);
-      timer = undefined;
+      stop();
+      result = undefined;
+      notice = '';
+      expired = false;
+      retryable = false;
       const generation = freshness.begin();
       controller = new AbortController();
+      const deadline = Date.now() + 30_000;
+      timer = setTimeout(() => {
+        stop();
+        result = undefined;
+        expired = true;
+      }, 30_000);
       const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]);
       try {
-        const { data } = await searchMedia(
+        const { data, error, response } = await searchMedia(
           { q: requestedQuery, mode: 'lexical', limit: 20 },
           { ...requestedClient, signal },
         );
         if (!freshness.isCurrent(generation) || disposed) return;
+        if (Date.now() >= deadline) {
+          stop();
+          expired = true;
+          return;
+        }
+        if (response.status >= 400 && response.status < 500) {
+          blocked = true;
+          notice = error?.error === 'media_search_scope_limit'
+            ? 'This archive exceeds browser recording-search limits. Use person-scoped recording search in the CLI or API.'
+            : error?.error === 'invalid_media_search'
+              ? 'Recording search rejected this query. Try different plain words.'
+              : 'Recording search cannot read this query. Check archive access or change the query.';
+          return;
+        }
+        if (error?.error === 'media_search_unavailable') {
+          blocked = true;
+          notice = 'Recording search unavailable.';
+          return;
+        }
         if (signal.aborted || !data?.results || !data.coverage) throw new Error('Transcript search unavailable');
-        delay = JSON.stringify(data) === JSON.stringify(result) ? Math.min(30_000, delay * 2) : 2000;
         result = data;
-        unavailable = false;
       } catch {
         if (!freshness.isCurrent(generation) || disposed) return;
         result = undefined;
-        unavailable = true;
-        delay = Math.min(30_000, delay * 2);
+        notice = 'Could not load recording matches.';
+        retryable = true;
       } finally {
         if (freshness.isCurrent(generation) && !disposed) {
           controller = undefined;
-          if (!document.hidden) timer = setTimeout(() => void load(), delay);
+          if (!result && timer !== undefined) clearTimeout(timer);
         }
       }
     }
@@ -69,8 +101,7 @@
       if (document.hidden) {
         stop();
         result = undefined;
-      } else {
-        delay = 2000;
+      } else if (!blocked) {
         void load();
       }
     }
@@ -85,26 +116,27 @@
     };
   });
 
-  function offset(ms: number): string {
-    const seconds = Math.floor(ms / 1000);
-    return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
-  }
 </script>
 
 <section class="transcript-hits" aria-label="Spoken in recordings" data-scroll>
   <header>
     <h2><FileVolume size={16} aria-hidden="true" />Spoken in recordings</h2>
     {#if result}<span class="count">{result.results.length} {result.results.length === 1 ? 'match' : 'matches'}</span>{/if}
+    {#if result || expired}<Button label="Refresh" size="sm" surface="soft" onclick={() => retry += 1} />{/if}
   </header>
   {#if !supported}
     <p role="status">Recording search requires Full text with no filters or grouping.</p>
-  {:else if unavailable}
+  {:else if !admitted}
+    <p role="status">Recording search supports plain words only. Operators, punctuation and quoted phrases are unavailable.</p>
+  {:else if expired}
+    <p role="status">Recording results expired.</p>
+  {:else if notice}
     <div class="unavailable" role="status">
-      <span>Recording search unavailable.</span>
-      <Button label="Retry" size="sm" surface="soft" onclick={() => retry += 1} />
+      <span>{notice}</span>
+      {#if retryable}<Button label="Retry" size="sm" surface="soft" onclick={() => retry += 1} />{/if}
     </div>
   {:else if result}
-    {#if result.partial || result.coverage.state !== 'complete' || result.coverage.binding_required || result.pending_occurrences || result.unavailable_occurrences || result.attribution_unavailable || result.truncated}
+    {#if incomplete}
       <p class="coverage" role="status">
         {#if result.partial || result.coverage.state !== 'complete' || result.coverage.binding_required}Coverage incomplete.{/if}
         {#if result.pending_occurrences}{' '}{result.pending_occurrences} pending.{/if}
@@ -124,14 +156,14 @@
             <span class="provenance">
               <span class="filename">{hit.filename || 'Unnamed recording'}</span>
               <Chip size="xs" tone="neutral" uppercase={false}>{hit.origin === 'supplied' ? 'Provider transcript' : 'Generated transcript'}</Chip>
-              {#if hit.start_ms !== undefined}<time datetime={`PT${hit.start_ms / 1000}S`}>{offset(hit.start_ms)}{#if hit.end_ms !== undefined}{' to '}{offset(hit.end_ms)}{/if}</time>{/if}
+              {#if hit.start_ms !== undefined}<time datetime={`PT${hit.start_ms / 1000}S`}>{formatOffset(hit.start_ms)}{#if hit.end_ms !== undefined}{' to '}{formatOffset(hit.end_ms)}{/if}</time>{/if}
             </span>
             <span class="excerpt">{hit.excerpt}</span>
           </a>
         </li>
       {/each}
     </ol>
-    {#if result.results.length === 0}<p>{result.partial || result.coverage.state !== 'complete' || result.coverage.binding_required || result.pending_occurrences || result.unavailable_occurrences || result.attribution_unavailable || result.truncated ? 'No matching excerpts returned.' : 'No spoken matches.'}</p>{/if}
+    {#if result.results.length === 0}<p>{incomplete ? 'No matching excerpts returned.' : 'No spoken matches.'}</p>{/if}
   {:else}
     <p role="status">Searching recordings…</p>
   {/if}
