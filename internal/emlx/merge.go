@@ -57,16 +57,10 @@ func MergeAttachments(original, restored, archived []byte, parts []RestorationPa
 		}
 		switch part.State {
 		case "supplied":
-			if part.ContentHash != "" {
-				if result.SourceParts == nil {
-					result.SourceParts = make(map[string]string)
-				}
-				result.SourceParts[part.Key] = part.ContentHash
-				// A previously acknowledged source part cannot replay older bytes
-				// over another occurrence's newer contribution to the archive.
-				if len(archived) > 0 && acknowledged[part.Key] == part.ContentHash {
-					continue
-				}
+			// A previously acknowledged source part cannot replay older bytes
+			// over another occurrence's newer contribution to the archive.
+			if part.ContentHash != "" && len(archived) > 0 && acknowledged[part.Key] == part.ContentHash {
+				continue
 			}
 			if !bytes.Equal(fresh[i], old[i]) {
 				candidates = append(candidates, i)
@@ -98,6 +92,20 @@ func MergeAttachments(original, restored, archived []byte, parts []RestorationPa
 		size = next
 		chosen[i] = fresh[i]
 		result.ChangedParts++
+	}
+	for _, part := range parts {
+		if part.State != "supplied" || part.ContentHash == "" {
+			continue
+		}
+		i, _ := strconv.Atoi(part.Key) // Every key was validated above.
+		// Only selected bytes can become new contribution evidence. Rejected
+		// replacements retain their previous acknowledgment and remain retryable.
+		if bytes.Equal(chosen[i], fresh[i]) {
+			if result.SourceParts == nil {
+				result.SourceParts = make(map[string]string)
+			}
+			result.SourceParts[part.Key] = part.ContentHash
+		}
 	}
 	result.Raw = bytes.Join(chosen, nil)
 	return result, nil

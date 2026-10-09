@@ -123,6 +123,8 @@ cannot replace newer archived bytes when the size limit changes or another
 sibling appears. Root reconciliation retains that evidence while marking
 occurrences pending until ingestion succeeds. Without a filesystem fingerprint,
 every visit still reads content.
+Pending receipts also retain committed attachment contributions when other work
+fails; budget-rejected replacements remain retryable.
 The ledger reuses the existing schema and sync-generation fencing.
 These receipts are metadata cache hints, not continuous archive-integrity checks; see
 [repeat imports](../usage/importing.md#repeat-apple-mail-imports-unreleased).

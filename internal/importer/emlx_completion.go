@@ -240,10 +240,51 @@ func processEmlxOccurrence(ctx context.Context, st *store.Store, sourceID int64,
 		merged.Raw = msg.Raw
 	}
 	rfc, reply := mime.ParseMessageIDs(msg.OriginalRaw)
+	progress := emlxReceipt{Version: emlxReceiptVersion, ID: id, SourceParts: merged.SourceParts, Target: targetID, RFCID: rfc, Reply: reply}
+	defer func() {
+		if retErr == nil {
+			return
+		}
+		// Ingestion may commit raw before attachment/index work fails. Retain
+		// only evidence for that committed candidate, even after cancellation.
+		progressCtx := context.WithoutCancel(ctx)
+		states, err := st.EmlxTargetsContext(progressCtx, sourceID, []string{targetID})
+		if err != nil {
+			retErr = errors.Join(retErr, err)
+			return
+		}
+		state := states[targetID]
+		if !state.HasRaw || state.Deleted {
+			return
+		}
+		saved, err := io.raw(progressCtx, st, state.MessageID)
+		if err != nil {
+			retErr = errors.Join(retErr, err)
+			return
+		}
+		if !bytes.Equal(saved, merged.Raw) {
+			return
+		}
+		checksum, err := encodeEmlxReceipt(progress)
+		if err != nil {
+			retErr = errors.Join(retErr, err)
+			return
+		}
+		pending := store.SourceImportItem{SourceID: sourceID, Provider: "emlx-occurrence", ProviderID: id, Name: rel, Checksum: checksum, Size: info.Size(), Status: "pending"}
+		if err := st.PutEmlxLedgerItemContext(progressCtx, pending); err != nil {
+			retErr = errors.Join(retErr, err)
+			return
+		}
+		item = &pending // Do not overwrite new progress with the old receipt.
+	}()
+	fallbackDate := msg.PlistDate
+	if fallbackDate.IsZero() {
+		fallbackDate = target.InternalDate.Time
+	}
 	_, parseErr := mime.ParseWithRecovery(merged.Raw, "(MIME parse error)")
 	needsIngest := !target.HasRaw || !bytes.Equal(current, merged.Raw) || opts.FullReconcile || reconcile || parseErr != nil
 	if needsIngest {
-		if err := completeEmlxTarget(ctx, st, sourceID, targetID, policy, merged.Raw, all, msg.PlistDate, opts, io, log); err != nil {
+		if err := completeEmlxTarget(ctx, st, sourceID, targetID, policy, merged.Raw, all, fallbackDate, opts, io, log); err != nil {
 			return out, err
 		}
 		out.kind = "added"
@@ -253,7 +294,7 @@ func processEmlxOccurrence(ctx context.Context, st *store.Store, sourceID int64,
 		out.restored = int64(merged.ChangedParts)
 	} else {
 		if err := st.AddMessageLabels(target.MessageID, labels); err != nil {
-			if err := completeEmlxTarget(ctx, st, sourceID, targetID, policy, current, all, msg.PlistDate, opts, io, log); err != nil {
+			if err := completeEmlxTarget(ctx, st, sourceID, targetID, policy, current, all, fallbackDate, opts, io, log); err != nil {
 				return out, err
 			}
 			out.kind = "updated"
@@ -285,7 +326,7 @@ func processEmlxOccurrence(ctx context.Context, st *store.Store, sourceID int64,
 	if eligible && (!afterEligible || signature != after) {
 		return out, errors.New("EMLX dependencies changed during import")
 	}
-	receipt = emlxReceipt{Version: emlxReceiptVersion, ID: id, SourceParts: merged.SourceParts, Target: targetID, RFCID: rfc, Reply: reply}
+	receipt = progress
 	if cacheAllowed && eligible && afterEligible {
 		receipt.Signature = signature
 	}
