@@ -10,11 +10,12 @@ import (
 	"strings"
 )
 
-// EmlxTargetState reads completion evidence alongside live message/raw metadata.
+// EmlxTargetState reads completion evidence alongside retained message/raw metadata.
 // It deliberately does not read MIME or message bodies.
 type EmlxTargetState struct {
 	MessageID    int64
 	HasRaw       bool
+	Deleted      bool
 	InternalDate sql.NullTime
 	Item         *SourceImportItem
 }
@@ -121,14 +122,14 @@ func (s *Store) EmlxTargetsContext(ctx context.Context, sourceID int64, ids []st
 			out[id] = EmlxTargetState{}
 		}
 		marks := strings.TrimSuffix(strings.Repeat("?,", n), ",")
-		rows, err := s.db.QueryContext(ctx, `SELECT source_message_id,id,internal_date,EXISTS(SELECT 1 FROM message_raw r WHERE r.message_id=m.id) FROM messages m WHERE source_id=? AND deleted_at IS NULL AND source_message_id IN (`+marks+`)`, args...)
+		rows, err := s.db.QueryContext(ctx, `SELECT source_message_id,id,internal_date,EXISTS(SELECT 1 FROM message_raw r WHERE r.message_id=m.id),deleted_at IS NOT NULL FROM messages m WHERE source_id=? AND source_message_id IN (`+marks+`)`, args...)
 		if err != nil {
 			return nil, err
 		}
 		for rows.Next() {
 			var id string
 			var st EmlxTargetState
-			if err = rows.Scan(&id, &st.MessageID, &st.InternalDate, &st.HasRaw); err != nil {
+			if err = rows.Scan(&id, &st.MessageID, &st.InternalDate, &st.HasRaw, &st.Deleted); err != nil {
 				break
 			}
 			out[id] = st

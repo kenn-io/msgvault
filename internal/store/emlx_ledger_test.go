@@ -54,7 +54,7 @@ func TestEmlxLedgerAtomicRootInvalidation(t *testing.T) {
 	a.Equal("imported", entries[0].Status)
 }
 
-func TestEmlxTargetsLiveRawAndState(t *testing.T) {
+func TestEmlxTargetsRawAndDeletionState(t *testing.T) {
 	r, a := require.New(t), assert.New(t)
 	f := storetest.New(t)
 	id := "emlx-" + strings.Repeat("c", 64)
@@ -63,6 +63,7 @@ func TestEmlxTargetsLiveRawAndState(t *testing.T) {
 	r.NoError(err)
 	a.Equal(mid, states[id].MessageID)
 	a.False(states[id].HasRaw)
+	a.False(states[id].Deleted)
 	r.NoError(f.Store.UpsertMessageRaw(mid, []byte("Subject: synthetic\r\n\r\nbody")))
 	states, err = f.Store.EmlxTargetsContext(t.Context(), f.Source.ID, []string{id})
 	r.NoError(err)
@@ -71,8 +72,9 @@ func TestEmlxTargetsLiveRawAndState(t *testing.T) {
 	r.NoError(err)
 	states, err = f.Store.EmlxTargetsContext(t.Context(), f.Source.ID, []string{id})
 	r.NoError(err)
-	a.Zero(states[id].MessageID)
-	a.False(states[id].HasRaw)
+	a.Equal(mid, states[id].MessageID)
+	a.True(states[id].HasRaw)
+	a.True(states[id].Deleted)
 }
 
 func TestEmlxLedgerBoundedCancellation(t *testing.T) {

@@ -117,8 +117,10 @@ root/relative-path acknowledgments and `emlx-target` for shared message
 completion. A target is marked dirty before content, attachments or search
 mutations, then complete only after required ingestion succeeds. Recovery
 finishes the current committed raw, preserving accumulated labels. The ledger
-reuses the existing schema and sync-generation fencing. These receipts are
-metadata cache hints, not continuous archive-integrity checks; see
+also records occurrences without cacheable fingerprints so an interrupted
+reconciliation can still repair them. Their empty checksums never allow content
+reads to be skipped. It reuses the existing schema and sync-generation fencing.
+These receipts are metadata cache hints, not continuous archive-integrity checks; see
 [repeat imports](../usage/importing.md#repeat-apple-mail-imports-unreleased).
 
 **participants** -- Observed addresses and handles from source data. These are

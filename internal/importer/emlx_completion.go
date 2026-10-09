@@ -60,7 +60,7 @@ func completeEmlxTarget(ctx context.Context, st *store.Store, sourceID int64, ta
 		return err
 	}
 	state := states[target]
-	if state.MessageID == 0 || !state.HasRaw {
+	if state.MessageID == 0 || !state.HasRaw || state.Deleted {
 		return errors.New("EMLX target has no live archived raw")
 	}
 	return putEmlxTarget(ctx, st, sourceID, target, policy, "imported")
@@ -100,6 +100,9 @@ func processEmlxOccurrence(ctx context.Context, st *store.Store, sourceID int64,
 	if item != nil {
 		receipt, decoded = decodeEmlxReceipt(item.Checksum, id)
 	}
+	// Root invalidation clears the checksum before visiting any files. Keep
+	// that repair request effective across interruption and a normal retry.
+	reconcile := item != nil && item.Status == "pending" && item.Checksum == ""
 	signature, eligible, fingerprintErr := emlx.Fingerprint(ctx, file)
 	if fingerprintErr != nil {
 		eligible = false
@@ -120,6 +123,10 @@ func processEmlxOccurrence(ctx context.Context, st *store.Store, sourceID int64,
 			return out, err
 		}
 		target := states[receipt.Target]
+		if target.Deleted {
+			out.kind = "skipped"
+			return out, nil
+		}
 		recovered := false
 		if target.MessageID != 0 && target.HasRaw && !targetComplete(target, receipt.Target, policy) {
 			current, err := io.raw(ctx, st, target.MessageID)
@@ -185,6 +192,10 @@ func processEmlxOccurrence(ctx context.Context, st *store.Store, sourceID int64,
 		return out, err
 	}
 	target := states[targetID]
+	if target.Deleted {
+		out.kind = "skipped"
+		return out, nil
+	}
 	all, err := emlxAllLabels(ctx, st, target.MessageID, labels)
 	if err != nil {
 		return out, err
@@ -212,7 +223,9 @@ func processEmlxOccurrence(ctx context.Context, st *store.Store, sourceID int64,
 	}
 	merged, err := emlx.MergeAttachments(msg.OriginalRaw, msg.Raw, current, msg.RestorationParts, opts.MaxMessageBytes)
 	restorationErr := msg.RestorationError
-	if len(current) > 0 && len(msg.RestorationParts) > 0 {
+	// An identical restored candidate already satisfies the source budget;
+	// only differing archived parts need a separate combined-budget merge.
+	if len(current) > 0 && len(msg.RestorationParts) > 0 && !bytes.Equal(msg.Raw, current) {
 		merged, err = emlx.MergeAttachmentsFromFile(ctx, msg.OriginalRaw, current, file, opts.MaxMessageBytes)
 		restorationErr = err
 		// Preserve feasible progress even when another sibling could not be read.
@@ -227,7 +240,7 @@ func processEmlxOccurrence(ctx context.Context, st *store.Store, sourceID int64,
 	}
 	rfc, reply := mime.ParseMessageIDs(msg.OriginalRaw)
 	_, parseErr := mime.ParseWithRecovery(merged.Raw, "(MIME parse error)")
-	needsIngest := !target.HasRaw || !bytes.Equal(current, merged.Raw) || opts.FullReconcile || parseErr != nil
+	needsIngest := !target.HasRaw || !bytes.Equal(current, merged.Raw) || opts.FullReconcile || reconcile || parseErr != nil
 	if needsIngest {
 		if err := completeEmlxTarget(ctx, st, sourceID, targetID, policy, merged.Raw, all, msg.PlistDate, opts, io, log); err != nil {
 			return out, err
@@ -271,15 +284,15 @@ func processEmlxOccurrence(ctx context.Context, st *store.Store, sourceID int64,
 	if eligible && (!afterEligible || signature != after) {
 		return out, errors.New("EMLX dependencies changed during import")
 	}
+	checksum := ""
 	if cacheAllowed && eligible && afterEligible {
 		receipt = emlxReceipt{Version: emlxReceiptVersion, ID: id, Signature: signature, Target: targetID, RFCID: rfc, Reply: reply}
-		checksum, err := encodeEmlxReceipt(receipt)
+		checksum, err = encodeEmlxReceipt(receipt)
 		if err != nil {
 			return out, err
 		}
-		if err := st.PutEmlxLedgerItemContext(ctx, store.SourceImportItem{SourceID: sourceID, Provider: "emlx-occurrence", ProviderID: id, Name: rel, Checksum: checksum, Size: info.Size(), Status: "imported"}); err != nil {
-			return out, err
-		}
 	}
-	return out, nil
+	// Remember cold occurrences so reconciliation can invalidate them too.
+	// An empty checksum never authorizes a future content-read shortcut.
+	return out, st.PutEmlxLedgerItemContext(ctx, store.SourceImportItem{SourceID: sourceID, Provider: "emlx-occurrence", ProviderID: id, Name: rel, Checksum: checksum, Size: info.Size(), Status: "imported"})
 }

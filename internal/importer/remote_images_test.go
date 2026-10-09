@@ -72,7 +72,7 @@ func TestImportEmlxRemoteImageFailureIsWarning(t *testing.T) {
 			var indexed, receipts int
 			requirements.NoError(st.DB().QueryRow("SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'optionalimageneedle'").Scan(&indexed))
 			assertions.Equal(1, indexed)
-			requirements.NoError(st.DB().QueryRow("SELECT COUNT(*) FROM source_import_items WHERE provider = 'emlx-occurrence'").Scan(&receipts))
+			requirements.NoError(st.DB().QueryRow("SELECT COUNT(*) FROM source_import_items WHERE provider = 'emlx-occurrence' AND COALESCE(checksum, '') <> ''").Scan(&receipts))
 			assertions.Zero(receipts, "remote image dependencies cannot authorize reusable filesystem receipts")
 			refs, err := st.MessageRemoteImages(messageID)
 			requirements.NoError(err)

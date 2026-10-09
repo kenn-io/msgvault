@@ -561,42 +561,153 @@ func TestImportEmlxReconcileRepairsEqualRaw(t *testing.T) {
 }
 
 func TestImportEmlxReconcileInvalidatesUnvisitedOccurrences(t *testing.T) {
-	r, a := require.New(t), assert.New(t)
-	st, tmp := openTestStore(t)
-	root := filepath.Join(tmp, "Inbox.mbox")
-	mkMailboxDir(t, root, map[string][]byte{
-		"1.emlx": email.NewMessage().From("sender@example.test").Body("synthetic first").Bytes(),
-		"2.emlx": email.NewMessage().From("sender@example.test").Body("synthetic second").Bytes(),
-	})
-	opts := EmlxImportOptions{Identifier: "owner@example.test"}
-	first, err := ImportEmlxDir(t.Context(), st, root, opts)
-	r.NoError(err)
-	r.False(first.HardErrors)
-	opts.FullReconcile = true
-	io := defaultEmlxImportIO(opts)
-	ingest := io.ingest
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	io.ingest = func(ctx context.Context, s *store.Store, sid int64, identifier, dest string, labels []int64, target, hash string, raw []byte, date time.Time, log *slog.Logger) error {
-		err := ingest(ctx, s, sid, identifier, dest, labels, target, hash, raw, date, log)
-		cancel()
-		return err
+	for _, mode := range []string{"cacheable", "becomes cold", "always cold"} {
+		t.Run(mode, func(t *testing.T) {
+			r, a := require.New(t), assert.New(t)
+			st, tmp := openTestStore(t)
+			root := filepath.Join(tmp, "Inbox.mbox")
+			mkMailboxDir(t, root, map[string][]byte{
+				"1.emlx": email.NewMessage().From("sender@example.test").Body("synthetic first").Bytes(),
+				"2.emlx": email.NewMessage().From("sender@example.test").Body("unvisitedreconciliationneedle").Bytes(),
+			})
+			if mode == "always cold" {
+				link := filepath.Join(tmp, "linked.mbox")
+				r.NoError(os.Symlink(root, link))
+				root = link
+			}
+			opts := EmlxImportOptions{Identifier: "owner@example.test"}
+			first, err := ImportEmlxDir(t.Context(), st, root, opts)
+			r.NoError(err)
+			r.False(first.HardErrors)
+			_, err = st.DB().Exec("DELETE FROM messages_fts")
+			r.NoError(err)
+			opts.FullReconcile = true
+			io := defaultEmlxImportIO(opts)
+			ingest := io.ingest
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			io.ingest = func(ctx context.Context, s *store.Store, sid int64, identifier, dest string, labels []int64, target, hash string, raw []byte, date time.Time, log *slog.Logger) error {
+				err := ingest(ctx, s, sid, identifier, dest, labels, target, hash, raw, date, log)
+				cancel()
+				return err
+			}
+			_, err = importEmlxDir(ctx, st, root, opts, io)
+			r.ErrorIs(err, context.Canceled)
+			a.Zero(countEmlxLedgerEntries(t, st, first.SourceID, "emlx-occurrence", "imported"))
+			var checksums int
+			r.NoError(st.DB().QueryRow("SELECT COUNT(*) FROM source_import_items WHERE provider='emlx-occurrence' AND checksum IS NOT NULL").Scan(&checksums))
+			a.Zero(checksums)
+			if mode == "becomes cold" {
+				file := filepath.Join(root, "Messages", "2.emlx")
+				r.NoError(os.Rename(file, file+".original"))
+				r.NoError(os.Symlink(file+".original", file))
+			}
+			opts.FullReconcile = false
+			parses := 0
+			io = defaultEmlxImportIO(opts)
+			parse := io.parse
+			io.parse = func(path string, byteLimit int64) (*emlx.Message, error) { parses++; return parse(path, byteLimit) }
+			retried, err := importEmlxDir(t.Context(), st, root, opts, io)
+			r.NoError(err)
+			a.False(retried.HardErrors)
+			a.Equal(2, parses)
+			var matches int
+			r.NoError(st.DB().QueryRow("SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'unvisitedreconciliationneedle'").Scan(&matches))
+			a.Equal(1, matches, "retry must repair the unvisited message before acknowledging it")
+			again, err := ImportEmlxDir(t.Context(), st, root, opts)
+			r.NoError(err)
+			a.False(again.HardErrors)
+			a.Zero(again.MessagesUpdated, "a completed repair must not be repeated, even without a cacheable fingerprint")
+		})
 	}
-	_, err = importEmlxDir(ctx, st, root, opts, io)
-	r.ErrorIs(err, context.Canceled)
-	a.Zero(countEmlxLedgerEntries(t, st, first.SourceID, "emlx-occurrence", "imported"))
-	var checksums int
-	r.NoError(st.DB().QueryRow("SELECT COUNT(*) FROM source_import_items WHERE provider='emlx-occurrence' AND checksum IS NOT NULL").Scan(&checksums))
-	a.Zero(checksums)
-	opts.FullReconcile = false
-	parses := 0
-	io = defaultEmlxImportIO(opts)
-	parse := io.parse
-	io.parse = func(path string, byteLimit int64) (*emlx.Message, error) { parses++; return parse(path, byteLimit) }
-	retried, err := importEmlxDir(t.Context(), st, root, opts, io)
-	r.NoError(err)
-	a.False(retried.HardErrors)
-	a.Equal(2, parses)
+}
+
+func TestImportEmlxSourceBudgetColdRetries(t *testing.T) {
+	for _, mode := range []string{"symlink", "full reconciliation"} {
+		t.Run(mode, func(t *testing.T) {
+			r, a := require.New(t), assert.New(t)
+			st, tmp := openTestStore(t)
+			root := filepath.Join(tmp, "Inbox.mbox")
+			raw := partialRaw(nil, "one.bin", "two.bin")
+			mkMailboxDir(t, root, map[string][]byte{"1.partial.emlx": raw})
+			firstPart := bytes.Repeat([]byte("a"), 200)
+			cacheAttachment(t, root, "1", "2", "one.bin", firstPart)
+			cacheAttachment(t, root, "1", "3", "two.bin", bytes.Repeat([]byte("b"), 200))
+			if mode == "symlink" {
+				link := filepath.Join(tmp, "linked.mbox")
+				r.NoError(os.Symlink(root, link))
+				root = link
+			}
+			opts := EmlxImportOptions{Identifier: "owner@example.test", MaxMessageBytes: int64(len(raw) + 350)}
+			first, err := ImportEmlxDir(t.Context(), st, root, opts)
+			r.NoError(err)
+			r.False(first.HardErrors)
+			var mid int64
+			r.NoError(st.DB().QueryRow("SELECT id FROM messages").Scan(&mid))
+			archived, err := st.GetMessageRawContext(t.Context(), mid)
+			r.NoError(err)
+			parsed, err := mime.Parse(archived)
+			r.NoError(err)
+			r.Len(parsed.Attachments, 2)
+			r.Equal(firstPart, parsed.Attachments[0].Content)
+			r.Empty(parsed.Attachments[1].Content)
+			opts.FullReconcile = mode == "full reconciliation"
+			for range 2 {
+				retry, err := ImportEmlxDir(t.Context(), st, root, opts)
+				r.NoError(err)
+				a.False(retry.HardErrors, "unchanged source exclusions must remain complete at the same limit")
+				retained, err := st.GetMessageRawContext(t.Context(), mid)
+				r.NoError(err)
+				a.Equal(archived, retained)
+			}
+		})
+	}
+}
+
+func TestImportEmlxPreservesDedupTombstone(t *testing.T) {
+	for _, mode := range []string{"warm", "changed sibling", "full reconciliation"} {
+		t.Run(mode, func(t *testing.T) {
+			r, a := require.New(t), assert.New(t)
+			st, tmp := openTestStore(t)
+			root := filepath.Join(tmp, "Inbox.mbox")
+			raw := partialRaw([]string{"Message-ID: <dedup-import@example.test>"}, "one.bin")
+			mkMailboxDir(t, root, map[string][]byte{"1.partial.emlx": raw})
+			cacheAttachment(t, root, "1", "2", "one.bin", []byte("original attachment"))
+			opts := EmlxImportOptions{Identifier: "survivor@example.test", AttachmentsDir: filepath.Join(tmp, "blobs")}
+			survivor, err := ImportEmlxDir(t.Context(), st, root, opts)
+			r.NoError(err)
+			r.False(survivor.HardErrors)
+			opts.Identifier = "duplicate@example.test"
+			duplicate, err := ImportEmlxDir(t.Context(), st, root, opts)
+			r.NoError(err)
+			r.False(duplicate.HardErrors)
+			var survivorID, duplicateID int64
+			r.NoError(st.DB().QueryRow("SELECT id FROM messages WHERE source_id = ?", survivor.SourceID).Scan(&survivorID))
+			r.NoError(st.DB().QueryRow("SELECT id FROM messages WHERE source_id = ?", duplicate.SourceID).Scan(&duplicateID))
+			archived, err := st.GetMessageRawContext(t.Context(), duplicateID)
+			r.NoError(err)
+			_, err = st.MergeDuplicates(survivorID, []int64{duplicateID}, "synthetic-emlx-dedup")
+			r.NoError(err)
+			if mode == "changed sibling" {
+				cacheAttachment(t, root, "1", "2", "one.bin", []byte("replacement attachment"))
+			}
+			opts.FullReconcile = mode == "full reconciliation"
+			for range 2 {
+				retry, err := ImportEmlxDir(t.Context(), st, root, opts)
+				r.NoError(err)
+				a.False(retry.HardErrors)
+				a.Equal(int64(1), retry.MessagesSkipped)
+				a.Zero(retry.MessagesAdded)
+				a.Zero(retry.MessagesUpdated)
+				retained, err := st.GetMessageRawContext(t.Context(), duplicateID)
+				r.NoError(err)
+				a.Equal(archived, retained, "deduplication keeps the archived duplicate intact")
+				var tombstones int
+				r.NoError(st.DB().QueryRow("SELECT COUNT(*) FROM messages WHERE id = ? AND deleted_at IS NOT NULL AND delete_batch_id = ?", duplicateID, "synthetic-emlx-dedup").Scan(&tombstones))
+				a.Equal(1, tombstones)
+			}
+		})
+	}
 }
 
 func TestImportEmlxPostReadMutationRemainsRetryable(t *testing.T) {
