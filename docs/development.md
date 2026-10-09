@@ -289,6 +289,90 @@ without an accelerator, embedding calls, or HTTP result projection. Use the
 request timing headers to determine which phase needs attention on a real
 archive before comparing it with this narrower benchmark.
 
+## MCP memory measurements
+
+Use a fresh process to measure MCP startup. The package keeps tool catalogs and
+resolved SDK schemas for reuse, so measurements after unrelated tests include
+those earlier allocations. Run the startup guard and allocation benchmarks:
+
+```bash
+go test -tags 'fts5 sqlite_vec' ./internal/mcp -run '^TestMCPMemory$' -count=1 -v
+go test -tags 'fts5 sqlite_vec' ./internal/mcp -run '^$' \
+  -bench '^BenchmarkOperationCatalogMemory$' -benchtime=3x -benchmem
+```
+
+The guard samples two separate processes: package startup before a server exists,
+and an initialized server after `initialize` and `tools/list` over OS pipes. The
+initialized sample uses a synthetic query backend with the basic tool catalog;
+it keeps the server alive while collecting garbage. Neither sample opens an
+archive or models allocations from later tool calls. The 64 MiB retained Go heap
+budget catches eager catalog construction without setting a startup-time target.
+
+The cold benchmark builds one requested catalog. Cached lookup reuses its schema
+pointers. The server benchmark measures construction with warmed catalog and SDK
+schema caches, as used by the shared stateless HTTP listener. Its allocation count
+is not a retained-heap measurement.
+
+### Historical allocation cause
+
+Version 0.20.0 constructed all 256 capability combinations during package
+initialization, inferring new output schemas for every catalog. Every stdio proxy
+paid that cost even though it forwarded archive operations to the shared daemon.
+Commit `a7c7c532a` (#889) made catalog construction lazy; `3389746d8` (#929)
+made the capability map itself lazy. Both changes are in v0.21.0.
+
+On Linux amd64 with Go 1.27.2, fresh-process samples after garbage collection
+produced the following results. The historical sample uses the actual v0.20.0
+source; current samples use `d79390015` with the memory tests in this change.
+
+| Source and phase | Retained Go heap | Cumulative allocated bytes |
+|---|---:|---:|
+| v0.20.0 package startup | 316 MiB | 502 MiB |
+| Current package startup | 3.7 MiB | 6.4 MiB |
+| Current basic server after protocol exchange | 6.3 MiB | 15.7 MiB |
+
+The historical probe called `runtime.GC()` and `runtime.ReadMemStats` from a
+single test selected with `-run '^TestHistoricalMemoryProbe$'`, before constructing
+a server. It failed the same 64 MiB retained-heap budget used by the new guard. A sampled
+heap profile attributed about 99% of retained memory to `buildOperationCatalog`,
+mostly JSON Schema inference. This ties the retained heap to eager tool catalog
+construction rather than an independent archive engine.
+Separately, restoring the old 256-catalog algorithm with today's larger schemas
+retained about 507 MiB and also failed the guard; that regression experiment is
+not a measurement of the v0.20.0 binary.
+
+To inspect package initialization in a built binary without opening an archive:
+
+```bash
+make build
+GODEBUG=inittrace=1 ./msgvault version
+```
+
+`inittrace` reports cumulative allocation during initialization of each package,
+not retained heap. To compare historical startup, build from the `v0.20.0` tag in
+a separate checkout. For a retained-heap sample, add a temporary diagnostic test
+to `internal/mcp` that collects garbage and logs `HeapAlloc` and `TotalAlloc` from
+`runtime.ReadMemStats`, then select only that test with the required build tags.
+Add `-memprofile=/tmp/mcp-startup.heap` to retain a sampled heap profile, and
+inspect it with `go tool pprof -top -cum -inuse_space /tmp/mcp-startup.heap`.
+
+A three-iteration current benchmark allocated about 3.2 MiB for a cold catalog,
+zero bytes for cached lookup, and 700 KiB for a server using warmed schemas.
+These samples describe the named phases and synthetic capabilities, not a
+universal per-proxy memory guarantee.
+
+`runtime.MemStats.HeapAlloc` measures live Go heap after collection; `TotalAlloc`
+counts cumulative allocation, including memory already reclaimed. Neither counts
+all native allocations or executable mappings. Linux RSS and macOS `top` MEM
+measure different process properties; macOS physical footprint also accounts for
+compressed memory. Do not equate these numbers or add process physical footprints
+to system compressor usage. The allocation evidence identifies an excessive
+startup cost, but does not establish a leak or reproduce the exact macOS workload
+reported in #1186. Profile an initialized proxy and its tool-call history on the
+affected platform if a current binary still has a large footprint.
+
+For several simultaneous clients, see [transport selection](usage/chat.md#choose-a-transport-for-concurrent-sessions).
+
 ## Evaluate search quality
 
 Use [`msgvault eval`](cli-reference.md#eval) to compare keyword, semantic, and
