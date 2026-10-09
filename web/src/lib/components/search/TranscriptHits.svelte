@@ -41,6 +41,14 @@
       timer = undefined;
     }
 
+    function expire(): void {
+      expired = Boolean(result);
+      stop();
+      result = undefined;
+      notice = expired ? '' : 'Recording search timed out.';
+      retryable = !expired;
+    }
+
     async function load(): Promise<void> {
       if (disposed || document.hidden || controller) return;
       stop();
@@ -51,11 +59,7 @@
       const generation = freshness.begin();
       controller = new AbortController();
       const deadline = Date.now() + 30_000;
-      timer = setTimeout(() => {
-        stop();
-        result = undefined;
-        expired = true;
-      }, 30_000);
+      timer = setTimeout(expire, 30_000);
       const signal = controller.signal;
       try {
         const { data, error, response } = await searchMedia(
@@ -64,8 +68,7 @@
         );
         if (!freshness.isCurrent(generation) || disposed) return;
         if (Date.now() >= deadline) {
-          stop();
-          expired = true;
+          expire();
           return;
         }
         if (response.status >= 400 && response.status < 500 && response.status !== 429) {
