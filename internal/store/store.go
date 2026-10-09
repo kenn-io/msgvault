@@ -877,7 +877,11 @@ func (s *Store) withTxLockedContext(
 	slog.Debug("sql tx begin")
 	tx, err := s.db.BeginTx(ctx, opts)
 	if err != nil {
-		slog.Warn("sql tx begin failed", "error", err.Error())
+		level := slog.LevelWarn
+		if errors.Is(err, context.Canceled) {
+			level = slog.LevelDebug
+		}
+		slog.Log(ctx, level, "sql tx begin failed", "error", err.Error())
 		return fmt.Errorf("begin tx: %w", err)
 	}
 	if preFence != nil {

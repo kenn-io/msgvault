@@ -817,6 +817,9 @@ func (m chatMembership) policyCount(policy attachmentpolicy.Policy) int {
 func (imp *Importer) ensureConversation(
 	ctx context.Context, syncID, sourceID int64, ch *Chat, opts ImportOptions, sum *ImportSummary,
 ) (int64, bool, chatMembership, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, false, chatMembership{}, err
+	}
 	detail := ch
 	membershipComplete := !ch.Participants.HasMore
 	if ch.Participants.HasMore {
@@ -840,14 +843,14 @@ func (imp *Importer) ensureConversation(
 		}
 	}
 	membership := chatMembershipOf(detail, membershipComplete)
-	convID, err := imp.store.EnsureConversationWithType(sourceID, ch.ID, conversationType(ch.Type), ch.Title)
+	convID, err := imp.store.EnsureConversationWithTypeContext(ctx, sourceID, ch.ID, conversationType(ch.Type), ch.Title)
 	if err != nil {
 		return 0, false, chatMembership{}, err
 	}
 	if membership.known {
-		err = imp.store.SetConversationMemberCount(convID, membership.count)
+		err = imp.store.SetConversationMemberCountContext(ctx, convID, membership.count)
 	} else {
-		err = imp.store.MarkConversationMemberCountUnknown(convID)
+		err = imp.store.MarkConversationMemberCountUnknownContext(ctx, convID)
 	}
 	if err != nil {
 		return 0, false, chatMembership{}, err
@@ -867,6 +870,9 @@ func (imp *Importer) ensureConversation(
 	// ensureConversation that do not go through Import's cache reset.
 	imp.res.accountID = opts.AccountID
 	for i := range detail.Participants.Items {
+		if err := ctx.Err(); err != nil {
+			return 0, false, chatMembership{}, err
+		}
 		p := &detail.Participants.Items[i]
 		pid, rerr := imp.res.resolveUser(&p.User)
 		if rerr != nil {
@@ -882,13 +888,19 @@ func (imp *Importer) ensureConversation(
 		members = append(members, store.ConversationParticipantRef{ParticipantID: pid, Role: role})
 		resolvedMembers = append(resolvedMembers, resolvedMember{participantID: pid, user: &p.User})
 	}
+	if err := ctx.Err(); err != nil {
+		return 0, false, chatMembership{}, err
+	}
 	if membershipComplete {
-		if err := imp.store.ReplaceConversationParticipants(convID, members); err != nil {
+		if err := imp.store.ReplaceConversationParticipantsContext(ctx, convID, members); err != nil {
 			return 0, false, chatMembership{}, err
 		}
 	} else {
 		for _, member := range members {
-			if cerr := imp.store.EnsureConversationParticipant(convID, member.ParticipantID, member.Role); cerr != nil {
+			if err := ctx.Err(); err != nil {
+				return 0, false, chatMembership{}, err
+			}
+			if cerr := imp.store.EnsureConversationParticipantContext(ctx, convID, member.ParticipantID, member.Role); cerr != nil {
 				sum.Errors++
 			}
 		}
@@ -899,10 +911,16 @@ func (imp *Importer) ensureConversation(
 	// evidence immediately. Recording observations first would omit this chat
 	// from every candidate created on its first import.
 	for _, member := range resolvedMembers {
+		if err := ctx.Err(); err != nil {
+			return 0, false, chatMembership{}, err
+		}
 		imp.captureObservations(
 			ctx, member.participantID, member.user, detail,
 			sourceID, opts.AccountID, bridgePrefix, sum,
 		)
+	}
+	if err := ctx.Err(); err != nil {
+		return 0, false, chatMembership{}, err
 	}
 	return convID, membershipComplete, membership, nil
 }
@@ -1039,6 +1057,9 @@ func (imp *Importer) captureObservations(
 		sum.Errors++
 	}
 	for _, result := range results {
+		if ctx.Err() != nil {
+			return
+		}
 		if result.Created {
 			sum.ObservationsRecorded++
 		}
@@ -1327,6 +1348,9 @@ func (imp *Importer) reconcileChat(ctx context.Context, cc *chatScope, cutoff ti
 // target (when refetchReactionTarget is set), deletions tombstone, hidden
 // events are skipped, and everything else persists.
 func (imp *Importer) processMessage(ctx context.Context, cc *chatScope, m *Message, refetchReactionTarget bool, sum *ImportSummary) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if m.Type == "REACTION" {
 		// The target message's embedded reactions[] are the authoritative
 		// current state. Backfill and reconcile walks visit the target
