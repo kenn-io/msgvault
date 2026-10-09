@@ -693,9 +693,10 @@ configuration cannot turn a Drafts folder into the account's Sent folder.
 ### `[mcp.events]`
 
 On unreleased `main`, the daemon can send scoped MCP Events to HTTPS
-receivers. Enable this only when you want outbound callbacks. The MCP listener
-must use the daemon owner's effective API key. Browser sessions, delegated
-agent tokens, keyless access, and independent MCP listener keys cannot use Events.
+receivers. Enable this only when you want outbound callbacks. The MCP
+listener's inbound `[server]` key must be the selected daemon's owner API key.
+Browser sessions, delegated agent tokens, keyless access, and independent MCP
+listener keys cannot use Events.
 
 ```toml
 [mcp.events]

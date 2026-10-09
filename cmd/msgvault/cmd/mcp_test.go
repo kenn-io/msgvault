@@ -173,11 +173,12 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 	assert.True(gotServeOpts.AllowCardDAVWrites)
 	assert.True(gotServeOpts.AllowCalendarWrites)
 	assert.Equal(mcpserver.HTTPOptions{
-		Addr:               "0.0.0.0:8081",
-		DiscoveryDirectory: filepath.Join(home, "mcp"),
-		BackendURL:         daemon.URL,
-		APIKey:             "daemon-key",
-		AllowWrites:        true,
+		Addr:                  "0.0.0.0:8081",
+		DiscoveryDirectory:    filepath.Join(home, "mcp"),
+		BackendURL:            daemon.URL,
+		APIKey:                "mcp-http-key",
+		AllowWrites:           true,
+		IndependentCredential: true,
 	}, gotHTTPOpts)
 }
 

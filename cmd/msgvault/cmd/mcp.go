@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -82,7 +83,7 @@ Add to Claude Desktop config:
 			if !cmd.Flags().Changed("http-token-file") && !cmd.Flags().Changed("http-token-env") {
 				// Local startup may have created the key. OpenHTTPStore refreshes
 				// it after discovering or starting the daemon that owns the archive.
-				inboundKey = httpStoreAPIKey(info, cfg)
+				inboundKey = cfg.Server.AuthenticationKey()
 			}
 			httpAddr, err = normalizeMCPHTTPAddr(httpAddr, mcpHTTPAllowInsecure, inboundKey != "")
 			if err != nil {
@@ -105,7 +106,10 @@ Add to Claude Desktop config:
 		} else {
 			opts = daemonMCPServeOptions(ctx, st, state)
 		}
-		independentCredential := cmd.Flags().Changed("http-token-file") || cmd.Flags().Changed("http-token-env")
+		// Events act with the daemon owner credential, so the MCP bearer must
+		// be that same credential. Explicit token flags never qualify.
+		independentCredential := cmd.Flags().Changed("http-token-file") || cmd.Flags().Changed("http-token-env") ||
+			subtle.ConstantTimeCompare([]byte(inboundKey), []byte(httpStoreAPIKey(info, cfg))) != 1
 		if httpAddr == "" || independentCredential {
 			opts.Events = nil
 		}
@@ -159,15 +163,11 @@ func prepareMCPHTTP(cmd *cobra.Command, cfg *config.Config) (string, string, err
 		}
 		key, err = providercredentials.ResolveSecret("", "", name)
 	default:
-		if isRemoteModeFor(invocationFromCommand(cmd)) {
-			key = cfg.Remote.AuthenticationKey()
-		} else {
-			err = cfg.ResolveServerKey()
-			key = cfg.Server.AuthenticationKey()
-		}
-		// Daemon resolution selects the remote owner key or creates a local
-		// default key. Enforce its presence after OpenHTTPStore resolves it.
-		deferKeyCheck = true
+		err = cfg.ResolveServerKey()
+		key = cfg.Server.AuthenticationKey()
+		// A local daemon may create the default key during startup. Enforce
+		// the inbound key requirement after OpenHTTPStore has resolved it.
+		deferKeyCheck = !isRemoteModeFor(invocationFromCommand(cmd))
 	}
 	if err != nil {
 		return "", "", fmt.Errorf("MCP inbound credential: %w", err)
@@ -229,7 +229,7 @@ const calendarControlMinAPISchemaVersion = "3.1.0"
 const kataIssuesMinAPISchemaVersion = "3.4.0"
 
 // mcpEventsMinAPISchemaVersion adds owner-only native MCP Events.
-const mcpEventsMinAPISchemaVersion = "3.5.0"
+const mcpEventsMinAPISchemaVersion = "3.9.0"
 
 // Schema 2.28.0 adds independent configured-lane facts to authenticated
 // health. Older health responses cannot distinguish text from visual search.

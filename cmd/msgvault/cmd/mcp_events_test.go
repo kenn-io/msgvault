@@ -5,12 +5,10 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
 
-	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
@@ -37,7 +35,7 @@ func TestDaemonMCPEventsRequireAuthorizedRuntimeCatalog(t *testing.T) {
 			c := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
 				case "/api/v1/health":
-					_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"3.5.0","mcp_events":true}`))
+					_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"3.9.0","mcp_events":true}`))
 				case "/api/v1/mcp/events/list":
 					w.WriteHeader(tc.status)
 					_, _ = w.Write([]byte(tc.body))
@@ -55,7 +53,7 @@ func TestDaemonMCPEventsDisabledHealthSkipsCatalogProbe(t *testing.T) {
 		name   string
 		health string
 	}{
-		{name: "API 3.4 with Events flag is denied", health: `{"status":"ok","api_schema_version":"3.4.0","mcp_events":true}`},
+		{name: "API 3.8 with Events flag is denied", health: `{"status":"ok","api_schema_version":"3.8.0","mcp_events":true}`},
 		{name: "schema without Events field", health: `{"status":"ok","api_schema_version":"3.4.0"}`},
 		{name: "Events disabled", health: `{"status":"ok","api_schema_version":"3.4.0","mcp_events":false}`},
 		{name: "older schema 3.3", health: `{"status":"ok","api_schema_version":"3.3.0","mcp_events":true}`},
@@ -106,7 +104,7 @@ func TestMCPIndependentCredentialAlwaysSuppressesEvents(t *testing.T) {
 			daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
 				case "/api/v1/health":
-					_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"3.5.0","mcp_events":true}`))
+					_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"3.9.0","mcp_events":true}`))
 				case "/api/v1/mcp/events/list":
 					_, _ = w.Write([]byte(`{"events":[{"name":"msgvault.message_archived"}]}`))
 				default:
@@ -154,48 +152,62 @@ func TestMCPIndependentCredentialAlwaysSuppressesEvents(t *testing.T) {
 	}
 }
 
-func TestMCPDefaultRemoteKeyIsCheckedAfterDaemonResolution(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	for _, name := range []string{"MSGVAULT_API_KEY", "MSGVAULT_API_KEY_FILE", "MSGVAULT_API_KEY_ENV"} {
-		t.Setenv(name, "")
-		require.NoError(os.Unsetenv(name))
-	}
-	savedAddr, savedInsecure := mcpHTTPAddr, mcpHTTPAllowInsecure
-	t.Cleanup(func() { mcpHTTPAddr = savedAddr; mcpHTTPAllowInsecure = savedInsecure })
-	mcpHTTPAddr = "0.0.0.0:9876"
-	mcpHTTPAllowInsecure = false
-	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Remote: config.RemoteConfig{URL: "https://daemon.example", APIKey: "fixture-owner"}}
-	ctx := withStoreResolverConfig(t, cfg)
-	command := &cobra.Command{}
-	command.SetContext(ctx)
-	command.Flags().String("http-token-file", "", "")
-	command.Flags().String("http-token-env", "", "")
-	command.Flags().String("http", "", "")
-	address, _, err := prepareMCPHTTP(command, cfg)
-	require.NoError(err)
-	assert.Equal("0.0.0.0:9876", address)
-}
+func TestMCPRemoteEventsRequireInboundKeyToBeRemoteOwnerKey(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		serverKey  string
+		wantEvents bool
+	}{
+		{name: "distinct server key", serverKey: "fixture-server-key", wantEvents: false},
+		{name: "server key equals remote owner key", serverKey: "fixture-owner-key", wantEvents: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/v1/health":
+					_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"3.9.0","mcp_events":true}`))
+				case "/api/v1/mcp/events/list":
+					_, _ = w.Write([]byte(`{"events":[{"name":"msgvault.message_archived"}]}`))
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer daemon.Close()
+			cfg := &config.Config{
+				HomeDir: t.TempDir(),
+				Data:    config.DataConfig{DataDir: t.TempDir()},
+				Server:  config.ServerConfig{APIKey: tc.serverKey},
+				Remote:  config.RemoteConfig{URL: daemon.URL, APIKey: "fixture-owner-key", AllowInsecure: true},
+			}
+			ctx := withStoreResolverConfig(t, cfg)
+			prevAddr, prevServe, prevCtx := mcpHTTPAddr, serveMCPHTTPWithOptions, mcpCmd.Context()
+			fileFlag, envFlag := mcpCmd.Flags().Lookup("http-token-file"), mcpCmd.Flags().Lookup("http-token-env")
+			fileChanged, envChanged := fileFlag.Changed, envFlag.Changed
+			t.Cleanup(func() {
+				mcpHTTPAddr = prevAddr
+				serveMCPHTTPWithOptions = prevServe
+				mcpCmd.SetContext(prevCtx)
+				fileFlag.Changed = fileChanged
+				envFlag.Changed = envChanged
+			})
+			fileFlag.Changed = false
+			envFlag.Changed = false
+			mcpHTTPAddr = "127.0.0.1:9876"
+			mcpCmd.SetContext(ctx)
+			var gotOpts mcpserver.ServeOptions
+			var gotHTTPOpts mcpserver.HTTPOptions
+			serveMCPHTTPWithOptions = func(_ context.Context, opts mcpserver.ServeOptions, httpOpts mcpserver.HTTPOptions) error {
+				gotOpts, gotHTTPOpts = opts, httpOpts
+				return nil
+			}
 
-func TestMCPRemoteOwnerKeyDoesNotReadUnusedServerCredential(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	for _, name := range []string{"MSGVAULT_API_KEY", "MSGVAULT_API_KEY_FILE", "MSGVAULT_API_KEY_ENV"} {
-		t.Setenv(name, "")
-		require.NoError(os.Unsetenv(name))
+			require.NoError(mcpCmd.RunE(mcpCmd, nil))
+
+			assert.Equal(tc.serverKey, gotHTTPOpts.APIKey)
+			assert.Equal(tc.wantEvents, gotOpts.Events != nil)
+			assert.Equal(!tc.wantEvents, gotHTTPOpts.IndependentCredential)
+		})
 	}
-	savedAddr, savedInsecure := mcpHTTPAddr, mcpHTTPAllowInsecure
-	t.Cleanup(func() { mcpHTTPAddr = savedAddr; mcpHTTPAllowInsecure = savedInsecure })
-	mcpHTTPAddr = "0.0.0.0:9876"
-	mcpHTTPAllowInsecure = false
-	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKeyFile: filepath.Join(t.TempDir(), "unused-missing.key")}, Remote: config.RemoteConfig{URL: "https://daemon.example", APIKey: "fixture-owner"}}
-	ctx := withStoreResolverConfig(t, cfg)
-	command := &cobra.Command{}
-	command.SetContext(ctx)
-	command.Flags().String("http-token-file", "", "")
-	command.Flags().String("http-token-env", "", "")
-	command.Flags().String("http", "", "")
-	address, _, err := prepareMCPHTTP(command, cfg)
-	require.NoError(err)
-	assert.Equal("0.0.0.0:9876", address)
 }
