@@ -986,7 +986,7 @@ func (s *Store) createCardDAVImportedPersonTx(
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	if err := s.addCardDAVImportedProjectionTx(ctx, tx, bookID, personID, input, &incoming, nil, true); err != nil {
+	if err := s.addCardDAVImportedProjectionTx(ctx, tx, bookID, personID, input, &incoming, nil); err != nil {
 		return nil, nil, nil, err
 	}
 	revision := int64(1)
@@ -994,7 +994,7 @@ func (s *Store) createCardDAVImportedPersonTx(
 }
 
 func (s *Store) addCardDAVImportedProjectionTx(
-	ctx context.Context, tx *loggedTx, bookID, personID int64, input CardDAVRemoteResource, incoming *vcard.ResourceEnvelope, skipped map[string]bool, fresh bool,
+	ctx context.Context, tx *loggedTx, bookID, personID int64, input CardDAVRemoteResource, incoming *vcard.ResourceEnvelope, skipped map[string]bool,
 ) error {
 	sourceRef := fmt.Sprintf("carddav:%d", bookID)
 	baseEnvelope := ValueEnvelopeInput{
@@ -1022,7 +1022,7 @@ func (s *Store) addCardDAVImportedProjectionTx(
 		if value == "" {
 			continue
 		}
-		if skipped[occurrence.Identity.Key()] || !fresh && occurrence.GeneratedFullName {
+		if skipped[occurrence.Identity.Key()] || occurrence.GeneratedFullName {
 			nameAdded = nameAdded || name == "FN"
 			continue
 		}
@@ -1128,7 +1128,7 @@ func (s *Store) rebaseCardDAVImportedProjectionTx(
 			skipped[mapping.Identity.Key()] = true
 		}
 	}
-	if err := s.addCardDAVImportedProjectionTx(ctx, tx, bookID, personID, input, incoming, skipped, false); err != nil {
+	if err := s.addCardDAVImportedProjectionTx(ctx, tx, bookID, personID, input, incoming, skipped); err != nil {
 		return false, err
 	}
 	displayChanged := false
