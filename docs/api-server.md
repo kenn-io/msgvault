@@ -487,7 +487,7 @@ There is no dedicated cancellation endpoint for these jobs.
 
 ## MCP Events
 
-Schema 3.10.0 adds these owner-key-only endpoints. They accept no
+Schema 3.11.0 adds these owner-key-only endpoints. They accept no
 caller-supplied principal. Browser sessions, delegated agent tokens, and keyless
 access cannot use them. Disabled Events has no advertised capability.
 
