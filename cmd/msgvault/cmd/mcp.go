@@ -193,8 +193,13 @@ func delegatedMCPServeOptions(ctx context.Context, st *daemonclient.Client) (mcp
 		Drafts: daemonMCPDraftRunner{client: st}, DraftCommands: mcpDraftCommands(true), DelegatedOnly: true,
 	}
 	if daemonclient.APISchemaVersionAtLeast(schemaVersion, daemonclient.AgentReadMinAPISchemaVersion) {
+		grant, err := st.AgentTokenSelf(ctx)
+		if err != nil {
+			return mcpserver.ServeOptions{}, fmt.Errorf("read agent grant: %w", err)
+		}
 		opts.Engine = daemonclient.NewEngineAdapter(st)
 		opts.AttachmentReader = st
+		opts.GrantPermissions = grant.Permissions
 	}
 	if daemonclient.APISchemaVersionAtLeast(schemaVersion, calendarControlMinAPISchemaVersion) {
 		opts.Calendar = st

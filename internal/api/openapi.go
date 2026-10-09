@@ -352,7 +352,7 @@ import (
 // 3.6.0 adds GET /api/v1/messages/{id}/recordings for live audio and transcript coverage.
 // 3.7.0 adds scoped lexical transcript search at GET /api/v1/media/search.
 // 3.8.0 adds reader credentials, HTTP 409 for ambiguous raw references, and HTTP 413 for remote read limits.
-// 3.9.0 adds source-scoped agent read permissions and optional expires_at.
+// 3.9.0 adds source-scoped agent read permissions, optional expires_at, and GET /api/v1/agent-tokens/self.
 const APISchemaVersion = "3.9.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration

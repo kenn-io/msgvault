@@ -15207,6 +15207,27 @@ paths:
       summary: Issue a restricted agent grant
       tags:
         - API
+  /api/v1/agent-tokens/self:
+    get:
+      operationId: getAgentTokenSelf
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentTokenView"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get the calling agent's grant
+      tags:
+        - API
   /api/v1/agent-tokens/{id}:
     delete:
       operationId: revokeAgentToken

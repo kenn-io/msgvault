@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -61,7 +62,7 @@ func TestAgentReadsThroughMCPSDK(t *testing.T) {
 	agent, err := daemonclient.New(daemonclient.Config{URL: server.URL, AgentToken: grant.Secret, AllowInsecure: true})
 	requirements.NoError(err)
 	t.Cleanup(func() { _ = agent.Close() })
-	session := task5ConnectClient(t, ServeOptions{Engine: daemonclient.NewEngineAdapter(agent), DelegatedOnly: true}, true)
+	session := task5ConnectClient(t, agentServeOptions(t, agent), true)
 	tools, err := session.ListTools(t.Context(), nil)
 	requirements.NoError(err)
 	templates, err := session.ListResourceTemplates(t.Context(), nil)
@@ -75,6 +76,9 @@ func TestAgentReadsThroughMCPSDK(t *testing.T) {
 	assertions.NotContains(names, ToolExportEML)
 	assertions.NotContains(names, ToolExportAttachment)
 	assertions.NotContains(names, ToolQuerySQL)
+	assertions.Contains(names, ToolGetMessage)
+	assertions.Contains(names, ToolGetStats)
+	assertions.NotContains(names, ToolGetAttachment, "the grant lacks attachment.read")
 	for _, tc := range []struct {
 		name   string
 		args   map[string]any
@@ -119,12 +123,13 @@ func TestAgentReadsThroughMCPSDK(t *testing.T) {
 	requirements.NoError(err)
 	assertions.True(denied.IsError)
 	assertions.Contains(task5SDKResultText(denied), "permission_denied")
+	assertions.Contains(task5SDKResultText(denied), "message.read", "the agent must learn which permission to request")
 	multi, err := owner.IssueAgentToken(t.Context(), "multiple accounts", []string{"search.read", "message.read"}, []int64{src.ID, other.ID}, nil, time.Time{})
 	requirements.NoError(err)
 	multiAgent, err := daemonclient.New(daemonclient.Config{URL: server.URL, AgentToken: multi.Secret, AllowInsecure: true})
 	requirements.NoError(err)
 	t.Cleanup(func() { _ = multiAgent.Close() })
-	multiSession := task5ConnectClient(t, ServeOptions{Engine: daemonclient.NewEngineAdapter(multiAgent), DelegatedOnly: true}, true)
+	multiSession := task5ConnectClient(t, agentServeOptions(t, multiAgent), true)
 	result, err := multiSession.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: ToolSearchMessageBodies, Arguments: map[string]any{"query": "glacier"}})
 	requirements.NoError(err)
 	assertions.True(result.IsError, task5SDKResultText(result))
@@ -134,6 +139,59 @@ func TestAgentReadsThroughMCPSDK(t *testing.T) {
 		assertions.False(result.IsError, task5SDKResultText(result))
 		assertions.Contains(task5SDKResultText(result), "glacier")
 		assertions.Contains(task5SDKResultText(result), source.Identifier)
+	}
+}
+
+// agentServeOptions mirrors the delegated stdio setup: it reads the grant from the daemon.
+func agentServeOptions(t *testing.T, agent *daemonclient.Client) ServeOptions {
+	t.Helper()
+	grant, err := agent.AgentTokenSelf(t.Context())
+	require.NoError(t, err)
+	return ServeOptions{Engine: daemonclient.NewEngineAdapter(agent), DelegatedOnly: true, GrantPermissions: grant.Permissions}
+}
+
+func TestAgentToolsFollowGrantPermissions(t *testing.T) {
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("test", "reader@example.test")
+	requirements.NoError(err)
+	srv := api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: slog.New(slog.DiscardHandler)})
+	server := httptest.NewServer(srv.Router())
+	t.Cleanup(server.Close)
+	owner, err := daemonclient.New(daemonclient.Config{URL: server.URL, APIKey: "owner", AllowInsecure: true})
+	requirements.NoError(err)
+	t.Cleanup(func() { _ = owner.Close() })
+	readTools := []string{ToolSearchMessages, ToolSearchMetadata, ToolSearchMessageBodies, ToolListMessages, ToolAggregate, ToolSearchByDomains, ToolGetMessage, ToolListThread, ToolSearchInMessage, ToolGetAttachment, ToolGetStats}
+	for _, tc := range []struct {
+		permission string
+		want       []string
+	}{
+		{"draft.create", nil},
+		{"search.read", []string{ToolSearchMessages, ToolSearchMetadata, ToolSearchMessageBodies, ToolListMessages, ToolAggregate, ToolSearchByDomains}},
+		{"message.read", []string{ToolGetMessage, ToolListThread, ToolSearchInMessage}},
+		{"attachment.read", []string{ToolGetAttachment}},
+		{"stats.read", []string{ToolGetStats}},
+	} {
+		t.Run(tc.permission, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			grant, err := owner.IssueAgentToken(t.Context(), tc.permission, []string{tc.permission}, []int64{source.ID}, nil, time.Time{})
+			requirements.NoError(err)
+			agent, err := daemonclient.New(daemonclient.Config{URL: server.URL, AgentToken: grant.Secret, AllowInsecure: true})
+			requirements.NoError(err)
+			t.Cleanup(func() { _ = agent.Close() })
+			opts := agentServeOptions(t, agent)
+			opts.AttachmentReader = agent
+			tools, err := task5ConnectClient(t, opts, true).ListTools(t.Context(), nil)
+			requirements.NoError(err)
+			var listed []string
+			for _, tool := range tools.Tools {
+				if slices.Contains(readTools, tool.Name) {
+					listed = append(listed, tool.Name)
+				}
+			}
+			assertions.ElementsMatch(tc.want, listed)
+		})
 	}
 }
 
@@ -173,7 +231,9 @@ func TestAgentAttachmentChunksReauthorize(t *testing.T) {
 			agent, err := daemonclient.New(daemonclient.Config{URL: server.URL, AgentToken: grant.Secret, AllowInsecure: true})
 			requirements.NoError(err)
 			t.Cleanup(func() { _ = agent.Close() })
-			session := task5ConnectClient(t, ServeOptions{Engine: daemonclient.NewEngineAdapter(agent), AttachmentReader: agent, DelegatedOnly: true}, true)
+			opts := agentServeOptions(t, agent)
+			opts.AttachmentReader = agent
+			session := task5ConnectClient(t, opts, true)
 			call := func(offset int) *sdkmcp.CallToolResult {
 				result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: ToolGetAttachment, Arguments: map[string]any{"attachment_id": attachmentID, "offset": offset, "length": 4, "sha256": digest}})
 				requirements.NoError(err)

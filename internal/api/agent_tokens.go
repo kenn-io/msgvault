@@ -342,6 +342,17 @@ func (s *Server) handleListAgentTokens(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, agentTokenListResponse{Tokens: views})
 }
 
+// handleGetAgentTokenSelf returns the calling agent's grant so clients can offer
+// only the tools it authorizes.
+func (s *Server) handleGetAgentTokenSelf(w http.ResponseWriter, r *http.Request) {
+	grant := s.requestAuthentication(r).Grant
+	if grant == nil {
+		writeError(w, http.StatusBadRequest, "agent_token_required", "Only an agent token can read its own grant")
+		return
+	}
+	writeJSON(w, http.StatusOK, grantToView(*grant))
+}
+
 // handleRevokeAgentToken removes a grant by ID.
 // Returns 204 regardless of whether the ID existed (to prevent enumeration).
 func (s *Server) handleRevokeAgentToken(w http.ResponseWriter, r *http.Request) {

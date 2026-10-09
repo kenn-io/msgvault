@@ -521,10 +521,9 @@ func translateDaemonRequestError(err error) *toolResult {
 
 	var message string
 	switch coded.APIErrorCode() {
-	case "permission_denied":
-		message = "permission_denied: grant does not authorize this operation or account scope"
-	case "unsupported_agent_scope":
-		message = "unsupported_agent_scope: use FTS search; body searches require one granted account"
+	case "permission_denied", "unsupported_agent_scope":
+		// The daemon's message names the missing permission or the supported scope.
+		message = coded.APIErrorCode() + ": " + daemonErrorMessage(err)
 	case "unauthorized":
 		message = "unauthorized: Archive authentication failed"
 	case "visual_search_not_ready":
@@ -557,6 +556,13 @@ func translateDaemonRequestError(err error) *toolResult {
 		return nil
 	}
 	return toolErrorResult(message)
+}
+
+func daemonErrorMessage(err error) string {
+	if apiErr, ok := errors.AsType[*daemonclient.APIError](err); ok && apiErr.Message != "" {
+		return apiErr.Message
+	}
+	return "grant does not authorize this operation or account scope"
 }
 
 func dependencyError(operation string, err error) (*toolResult, error) {

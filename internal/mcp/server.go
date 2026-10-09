@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
+	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/mcpdiscovery"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -160,6 +161,9 @@ type ServeOptions struct {
 	Calendar CalendarBackend
 	// DelegatedOnly limits an agent-delegated caller to scoped reads, calendars and drafts.
 	DelegatedOnly bool
+	// GrantPermissions holds the agent grant's permissions. In DelegatedOnly
+	// mode, a read tool is listed only when the grant holds its permission.
+	GrantPermissions []string
 	// ArchiveSQLQuerier exposes query_sql when the daemon supports restricted SQL.
 	ArchiveSQLQuerier ArchiveSQLQuerier
 	// IdentityReview is present only when the daemon serves token-guarded
@@ -612,10 +616,17 @@ func bearerAuthHandler(apiKey string, next http.Handler) http.Handler {
 	})
 }
 
-func agentReadToolAllowed(name string) bool {
+// agentReadToolPermission names the grant permission the daemon requires for a read tool.
+func agentReadToolPermission(name string) (agentgrant.Permission, bool) {
 	switch name {
-	case ToolSearchMessages, ToolSearchMetadata, ToolSearchMessageBodies, ToolGetMessage, ToolGetAttachment, ToolListThread, ToolListMessages, ToolGetStats, ToolAggregate, ToolSearchByDomains, ToolSearchInMessage:
-		return true
+	case ToolSearchMessages, ToolSearchMetadata, ToolSearchMessageBodies, ToolListMessages, ToolAggregate, ToolSearchByDomains:
+		return agentgrant.PermissionSearchRead, true
+	case ToolGetMessage, ToolListThread, ToolSearchInMessage:
+		return agentgrant.PermissionMessageRead, true
+	case ToolGetAttachment:
+		return agentgrant.PermissionAttachmentRead, true
+	case ToolGetStats:
+		return agentgrant.PermissionStatsRead, true
 	}
-	return false
+	return "", false
 }

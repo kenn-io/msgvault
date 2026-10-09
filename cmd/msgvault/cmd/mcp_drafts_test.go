@@ -142,7 +142,11 @@ func TestMCPDelegatedDraftToolsUseAgentGrant(t *testing.T) {
 
 		session := mcpDraftTestSession(mcpDraftAgentContext(t, server, fixture.source.ID, []string{"draft.create"}), t)
 		names := mcpDraftToolNames(t, session)
-		assert.Subset(names, []string{"calendar_conflicts", "calendar_freebusy", "draft_compose", "draft_delete", "draft_edit", "draft_get", "draft_recover", "draft_reply", "search_metadata", "search_message_bodies", "get_message"})
+		assert.Subset(names, []string{"calendar_conflicts", "calendar_freebusy", "draft_compose", "draft_delete", "draft_edit", "draft_get", "draft_recover", "draft_reply"})
+		// A draft-only grant cannot read the archive, so its read tools are not offered.
+		for _, readTool := range []string{"search_metadata", "search_message_bodies", "get_message"} {
+			assert.NotContains(names, readTool)
+		}
 		assert.NotContains(names, "draft_send_as")
 		assert.NotContains(names, "calendar_create")
 		result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: mcpserver.ToolDraftReply, Arguments: map[string]any{"message_id": fixture.parentID, "from": testutil.IMAPTestUsername, "body": "reply body"}})

@@ -4366,7 +4366,7 @@ Agent searches start a background index check and clear the status once the inde
 
 Scoped archive reads return a consistent authorized view. Scoped aggregates read live SQL tables and may take longer on large archives. Unknown or ungranted account and collection selectors return 403 `permission_denied`. A check started by an agent that exceeds two minutes reports `unverified` to agents until the owner searches, runs `rebuild-fts`, or the daemon restarts. Owner searches check without that limit and repair automatically. An owner check that fails also reports `unverified`; the next owner search checks again. Each MCP attachment chunk is authorized again, including cached continuations.
 
-The delegated MCP catalog includes scoped read, draft, and calendar tools. The daemon checks each call against the token; a listed tool can still require an additional permission.
+The delegated MCP catalog lists a read tool only when the grant holds its permission. Draft and calendar tools are listed for every grant. The daemon checks each call against the token, and a denial names the permission the call needs.
 
 Sync, deletion, configuration, account and token administration, SQL, exports,
 people administration, and all other ungranted routes are rejected. Existing

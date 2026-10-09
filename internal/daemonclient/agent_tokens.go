@@ -89,3 +89,14 @@ func (c *Client) RevokeAgentToken(ctx context.Context, id string) error {
 	})
 	return err
 }
+
+// AgentTokenSelf returns the grant behind the client's agent token.
+func (c *Client) AgentTokenSelf(ctx context.Context) (*generated.AgentTokenView, error) {
+	resp, err := APIResponse(c, func(client *apiclient.Client) (*generated.GetAgentTokenSelfResp, error) {
+		return client.GetAgentTokenSelfWithResponse(ctx)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return resp.JSON200, nil
+}

@@ -43,6 +43,10 @@ type IssueAgentTokenResponse = AgentTokenIssueResponse
 
 type IssueAgentTokenErrorResponse = ErrorResponse
 
+type GetAgentTokenSelfResponse = AgentTokenView
+
+type GetAgentTokenSelfErrorResponse = ErrorResponse
+
 type GetAggregatesResponse = AggregateResponse
 
 type GetAggregatesErrorResponse = ErrorResponse
@@ -3498,6 +3502,13 @@ type IssueAgentTokenResp struct {
 	Body         []byte
 	StatusCode   int
 	JSON201      *IssueAgentTokenResponse
+}
+
+type GetAgentTokenSelfResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetAgentTokenSelfResponse
 }
 
 type RevokeAgentTokenResp struct {

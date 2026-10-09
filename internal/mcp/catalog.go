@@ -175,7 +175,7 @@ func operationCatalog(opts ServeOptions, _ *handlers) []toolDefinition {
 	}
 	if opts.DelegatedOnly && opts.Engine != nil {
 		for _, definition := range stableOperationCatalogs.get(capabilitiesFor(opts)) {
-			if agentReadToolAllowed(definition.name) {
+			if permission, ok := agentReadToolPermission(definition.name); ok && slices.Contains(opts.GrantPermissions, string(permission)) {
 				definitions = append(definitions, definition)
 			}
 		}

@@ -538,6 +538,44 @@ func TestAgentTokenExpiryAPI(t *testing.T) {
 	assertions.Equal(401, w.Code, "revocation must take effect immediately")
 }
 
+func TestAgentTokenSelf(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	src, err := st.GetOrCreateSource("test", "reader@example.test")
+	requirements.NoError(err)
+	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}, Store: st, Logger: testLogger()})
+	t.Cleanup(srv.agentGrants.Close)
+	ref := []agentgrant.SourceRef{{ID: src.ID, Type: src.SourceType, Identifier: src.Identifier}}
+	readerID, reader, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionMessageRead}, ref, time.Time{})
+	requirements.NoError(err)
+	_, drafter, _, err := srv.agentGrants.Issue("drafter", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, ref, time.Time{})
+	requirements.NoError(err)
+	get := func(header, value string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodGet, agentTokensPath+"/self", nil)
+		r.Header.Set(header, value)
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, r)
+		return w
+	}
+
+	w := get(apiprotocol.AgentTokenHeader, reader)
+	requirements.Equal(http.StatusOK, w.Code, w.Body.String())
+	var view agentTokenView
+	requirements.NoError(json.Unmarshal(w.Body.Bytes(), &view))
+	assertions.Equal(readerID, view.ID)
+	assertions.Equal([]string{"message.read"}, view.Permissions)
+	assertions.NotContains(w.Body.String(), reader, "the view must not echo the secret")
+
+	w = get(apiprotocol.AgentTokenHeader, drafter)
+	requirements.Equal(http.StatusOK, w.Code, w.Body.String())
+	assertions.Contains(w.Body.String(), `"draft.create"`)
+	assertions.NotContains(w.Body.String(), `"message.read"`)
+
+	requireErrorCode(t, get("X-Api-Key", "owner"), http.StatusBadRequest, "agent_token_required")
+	assertions.Equal(http.StatusUnauthorized, get(apiprotocol.AgentTokenHeader, "not-a-token").Code)
+}
+
 func TestAgentReadScopeCounts(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
