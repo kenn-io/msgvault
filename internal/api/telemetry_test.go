@@ -91,7 +91,7 @@ func TestTelemetryEventRouteAuthentication(t *testing.T) {
 	assert.Equal(http.StatusAccepted, serveTelemetry(srv, keyed).Code)
 
 	src := agentgrant.SourceRef{ID: 1, Type: "imap", Identifier: "alice@example.com"}
-	_, secret, _, err := reg.Issue("telemetry-test", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{src})
+	_, secret, _, err := reg.Issue("telemetry-test", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{src}, time.Time{})
 	require.NoError(err)
 	delegated := telemetryRequest("application/json")
 	delegated.Header.Set(apiprotocol.AgentTokenHeader, secret)

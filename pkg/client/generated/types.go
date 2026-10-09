@@ -237,6 +237,7 @@ func (a Address) Validate() error {
 }
 
 type AgentTokenIssueRequest struct {
+	ExpiresAt        *time.Time          `json:"expires_at,omitempty"`
 	Label            string              `json:"label" validate:"required"`
 	Permissions      []string            `json:"permissions" validate:"required"`
 	SenderSelections map[string][]string `json:"sender_selections,omitempty"`
@@ -250,6 +251,7 @@ func (a AgentTokenIssueRequest) Validate() error {
 type AgentTokenIssueResponse struct {
 	CreatedAt   time.Time              `json:"created_at" validate:"required"`
 	DaemonURL   string                 `json:"daemon_url" validate:"required"`
+	ExpiresAt   *time.Time             `json:"expires_at,omitempty"`
 	ID          string                 `json:"id" validate:"required"`
 	Label       string                 `json:"label" validate:"required"`
 	Permissions []string               `json:"permissions" validate:"required"`
@@ -322,6 +324,7 @@ func (a AgentTokenSourceView) Validate() error {
 
 type AgentTokenView struct {
 	CreatedAt   time.Time              `json:"created_at" validate:"required"`
+	ExpiresAt   *time.Time             `json:"expires_at,omitempty"`
 	ID          string                 `json:"id" validate:"required"`
 	Label       string                 `json:"label" validate:"required"`
 	Permissions []string               `json:"permissions" validate:"required"`
@@ -357,6 +360,7 @@ func (a AgentTokenView) Validate() error {
 
 type AggregateResponse struct {
 	AppliedSourceIds []int64            `json:"applied_source_ids,omitempty"`
+	IndexState       *string            `json:"index_state,omitzero"`
 	Rows             []AggregateRowJSON `json:"rows" validate:"required"`
 	ViewType         string             `json:"view_type" validate:"required"`
 }
@@ -2945,6 +2949,7 @@ type DeepSearchResponse struct {
 	BodyContexts []BodySearchContext `json:"body_contexts,omitempty"`
 	Count        int64               `json:"count"`
 	HasMore      bool                `json:"has_more"`
+	IndexState   *string             `json:"index_state,omitzero"`
 	Limit        int64               `json:"limit"`
 	Messages     []MessageSummary    `json:"messages" validate:"required"`
 	Offset       int64               `json:"offset"`
@@ -4903,6 +4908,7 @@ type FilteredMessagesResponse struct {
 	AppliedSourceIds []int64          `json:"applied_source_ids,omitempty"`
 	Count            int64            `json:"count"`
 	HasMore          bool             `json:"has_more"`
+	IndexState       *string          `json:"index_state,omitzero"`
 	Limit            int64            `json:"limit"`
 	Messages         []MessageSummary `json:"messages" validate:"required"`
 	Offset           int64            `json:"offset"`
@@ -12314,6 +12320,7 @@ func (s SearchCoverageResponse) Validate() error {
 
 type SearchFastResponse struct {
 	AppliedSourceIds []int64             `json:"applied_source_ids,omitempty"`
+	IndexState       *string             `json:"index_state,omitzero"`
 	Messages         []MessageSummary    `json:"messages" validate:"required"`
 	Query            string              `json:"query" validate:"required"`
 	Stats            *TotalStatsResponse `json:"stats,omitempty"`
@@ -12386,11 +12393,12 @@ func (s SearchResponse) Validate() error {
 }
 
 type SearchResult struct {
-	Messages []MessageSummary `json:"messages" validate:"required"`
-	Page     int64            `json:"page"`
-	PageSize int64            `json:"page_size"`
-	Query    string           `json:"query" validate:"required"`
-	Total    int64            `json:"total"`
+	IndexState *string          `json:"index_state,omitzero"`
+	Messages   []MessageSummary `json:"messages" validate:"required"`
+	Page       int64            `json:"page"`
+	PageSize   int64            `json:"page_size"`
+	Query      string           `json:"query" validate:"required"`
+	Total      int64            `json:"total"`
 }
 
 func (s SearchResult) Validate() error {
@@ -13156,7 +13164,7 @@ func (s StageDeletionResponse) Validate() error {
 type StatsResponse struct {
 	ActiveMessages         int64      `json:"active_messages"`
 	AsOf                   *time.Time `json:"as_of,omitempty"`
-	DatabaseSizeBytes      int64      `json:"database_size_bytes"`
+	DatabaseSizeBytes      *int64     `json:"database_size_bytes,omitempty"`
 	SourceDeletedMessages  int64      `json:"source_deleted_messages"`
 	Stale                  *bool      `json:"stale,omitempty"`
 	TotalAccounts          int64      `json:"total_accounts"`
@@ -13968,6 +13976,7 @@ type TotalStatsResponse struct {
 	AppliedSourceIds      []int64 `json:"applied_source_ids,omitempty"`
 	AttachmentCount       int64   `json:"attachment_count"`
 	AttachmentSize        int64   `json:"attachment_size"`
+	IndexState            *string `json:"index_state,omitzero"`
 	LabelCount            int64   `json:"label_count"`
 	MessageCount          int64   `json:"message_count"`
 	SourceDeletedMessages int64   `json:"source_deleted_messages"`

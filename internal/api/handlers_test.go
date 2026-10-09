@@ -182,6 +182,12 @@ func TestHandleStats(t *testing.T) {
 	require.NoError(json.Unmarshal(bodyBytes, &raw), "decode raw")
 	_, exists := raw["vector_search"]
 	assert.False(exists, "vector_search key present in JSON; want omitted entirely (raw=%s)", string(raw["vector_search"]))
+	for _, size := range []int64{0, 1024} {
+		body, err := json.Marshal(statsResponseFromStore(&store.Stats{DatabaseSize: size}))
+		require.NoError(err)
+		require.NoError(json.Unmarshal(body, &raw))
+		assert.JSONEq(strconv.FormatInt(size, 10), string(raw["database_size_bytes"]))
+	}
 }
 
 func TestHandleCLIStatsCollectionScope(t *testing.T) {
@@ -5546,7 +5552,7 @@ func TestHandleSearchByDomainsUsesQueryEngine(t *testing.T) {
 	var gotAfter, gotBefore *time.Time
 	var gotLimit, gotOffset int
 	engine := &querytest.MockEngine{
-		SearchByDomainsFunc: func(_ context.Context, domains []string, after, before *time.Time, limit, offset int) ([]query.MessageSummary, error) {
+		SearchByDomainsFunc: func(_ context.Context, domains []string, after, before *time.Time, limit, offset int, _ []int64) ([]query.MessageSummary, error) {
 			gotDomains = domains
 			gotAfter = after
 			gotBefore = before
@@ -6505,8 +6511,12 @@ type bodySearchTestEngine struct {
 
 func (e *bodySearchTestEngine) SearchMessageBodies(
 	ctx context.Context, q *search.Query, limit, offset int,
-) ([]query.MessageSummary, error) {
-	return e.searchMessageBodiesFunc(ctx, q, limit, offset)
+) (*query.SearchFastResult, error) {
+	messages, err := e.searchMessageBodiesFunc(ctx, q, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	return &query.SearchFastResult{Messages: messages}, nil
 }
 
 func TestHandleDeepSearchBodyScope(t *testing.T) {

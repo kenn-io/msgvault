@@ -53,7 +53,7 @@ func storeStatsFromGenerated(stats generated.StatsResponse) *store.Stats {
 		SourceCount:        stats.TotalAccounts,
 		LabelCount:         stats.TotalLabels,
 		AttachmentCount:    stats.TotalAttachments,
-		DatabaseSize:       stats.DatabaseSizeBytes,
+		DatabaseSize:       int64Value(stats.DatabaseSizeBytes),
 	}
 }
 

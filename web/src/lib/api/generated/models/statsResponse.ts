@@ -6,7 +6,7 @@ import type { StatsView } from "./statsView";
 export interface StatsResponse {
   active_messages: number;
   as_of?: string;
-  database_size_bytes: number;
+  database_size_bytes?: number;
   source_deleted_messages: number;
   stale?: boolean;
   total_accounts: number;

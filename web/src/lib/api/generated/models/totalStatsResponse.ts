@@ -9,6 +9,7 @@ export interface TotalStatsResponse {
   applied_source_ids?: number[];
   attachment_count: number;
   attachment_size: number;
+  index_state?: string;
   label_count: number;
   message_count: number;
   source_deleted_messages: number;

@@ -443,7 +443,7 @@ func TestStoreAPIAdapterContextReadsHonorCancellation(t *testing.T) {
 	_, err = adapter.GetStatsContext(ctx)
 	require.ErrorIs(err, context.Canceled, "GetStatsContext must honor a cancelled context")
 
-	_, _, err = adapter.ListMessagesContext(ctx, 0, 10)
+	_, _, err = adapter.ListMessagesContext(ctx, 0, 10, nil)
 	require.ErrorIs(err, context.Canceled, "ListMessagesContext must honor a cancelled context")
 
 	_, err = adapter.GetMessageContext(ctx, 1)

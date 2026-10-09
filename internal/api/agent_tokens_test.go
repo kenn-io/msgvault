@@ -29,7 +29,7 @@ func TestAgentTokensDoNotSurviveRestart(t *testing.T) {
 	// First "instance": issue a grant.
 	_, reg1 := newAgentTokenTestServer(t)
 	src := agentgrant.SourceRef{ID: 1, Type: "imap", Identifier: "alice@example.com"}
-	_, secret, _, err := reg1.Issue("pre-restart", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{src})
+	_, secret, _, err := reg1.Issue("pre-restart", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{src}, time.Time{})
 	require.NoError(t, err)
 
 	// Confirm the grant is valid in the first registry.
@@ -75,7 +75,7 @@ func TestDelegatedHealthUsesPublicProjection(t *testing.T) {
 	srv.agentGrants = reg
 
 	src := agentgrant.SourceRef{ID: 1, Type: "imap", Identifier: "alice@example.com"}
-	_, secret, _, err := reg.Issue("health-check", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{src})
+	_, secret, _, err := reg.Issue("health-check", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{src}, time.Time{})
 	require.NoError(err)
 
 	// Hold the gate with a label so operationHealth() returns a labelled entry
@@ -264,7 +264,7 @@ func TestAgentTokenIssueRequiresOwnerKey(t *testing.T) {
 	t.Run("delegated token gets 401", func(t *testing.T) {
 		// Issue a grant first
 		src := agentgrant.SourceRef{ID: 1, Type: "imap", Identifier: "alice@example.com"}
-		_, secret, _, issuErr := reg.Issue("delegated-caller", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{src})
+		_, secret, _, issuErr := reg.Issue("delegated-caller", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{src}, time.Time{})
 		require.NoError(t, issuErr)
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/agent-tokens", bytes.NewReader(bodyBytes))

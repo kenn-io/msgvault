@@ -1211,6 +1211,12 @@ func (d DeepSearchQuery) Validate() error {
 }
 
 type SearchMessagesByDomainsQuery struct {
+	// SourceID Source account ID
+	SourceID *int64 `json:"source_id,omitempty"`
+
+	// SourceIds Source account IDs
+	SourceIds []int64 `json:"source_ids,omitempty"`
+
 	// Domains Comma-separated participant domains
 	Domains string `json:"domains" validate:"required"`
 

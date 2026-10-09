@@ -1144,6 +1144,7 @@ func TestEngineSearchByDomainsUsesGeneratedClientAdapter(t *testing.T) {
 		assert.Equal(before.Format(time.RFC3339), r.URL.Query().Get("before"), "before")
 		assert.Equal("25", r.URL.Query().Get("limit"), "limit")
 		assert.Equal("50", r.URL.Query().Get("offset"), "offset")
+		assert.Equal([]string{"4", "7"}, r.URL.Query()["source_ids"], "source scope")
 		writeJSONResponse(t, w, map[string]any{
 			"count":    1,
 			"has_more": false,
@@ -1174,6 +1175,7 @@ func TestEngineSearchByDomainsUsesGeneratedClientAdapter(t *testing.T) {
 		&before,
 		25,
 		50,
+		[]int64{4, 7},
 	)
 	require.NoError(err, "SearchByDomains")
 	require.Len(results, 1, "results")
@@ -1216,7 +1218,7 @@ func TestEngineTimeFiltersPreserveUTCNanoseconds(t *testing.T) {
 		After: &after, Before: &before,
 	})
 	require.NoError(err)
-	_, err = engine.SearchByDomains(context.Background(), []string{"example.com"}, &after, &before, 10, 0)
+	_, err = engine.SearchByDomains(context.Background(), []string{"example.com"}, &after, &before, 10, 0, nil)
 	require.NoError(err)
 	assert.True(seen["/api/v1/aggregates"])
 	assert.True(seen["/api/v1/search/domains"])
@@ -1968,7 +1970,11 @@ func TestEngineDeepSearchExplicitEmptyScopeSkipsHTTP(t *testing.T) {
 		{
 			name: "body search",
 			run: func(engine *Engine, q *search.Query) ([]query.MessageSummary, error) {
-				return engine.SearchMessageBodies(context.Background(), q, 10, 0)
+				result, err := engine.SearchMessageBodies(context.Background(), q, 10, 0)
+				if err != nil {
+					return nil, err
+				}
+				return result.Messages, nil
 			},
 		},
 	}
@@ -2120,12 +2126,13 @@ func TestEngineSearchMessageBodiesForwardsAndRequiresScopeEcho(t *testing.T) {
 		assert.Equal("bodyneedle", r.URL.Query().Get("q"), "q")
 		assert.Equal("7", r.URL.Query().Get("source_id"), "source_id")
 		writeJSONResponse(t, w, map[string]any{
-			"query":    "bodyneedle",
-			"scope":    "body",
-			"count":    1,
-			"has_more": false,
-			"offset":   2,
-			"limit":    5,
+			"query":       "bodyneedle",
+			"scope":       "body",
+			"index_state": "unverified",
+			"count":       1,
+			"has_more":    false,
+			"offset":      2,
+			"limit":       5,
 			"messages": []map[string]any{{
 				"id":         42,
 				"subject":    "body hit",
@@ -2149,10 +2156,11 @@ func TestEngineSearchMessageBodiesForwardsAndRequiresScopeEcho(t *testing.T) {
 		AccountIDs: []int64{7},
 	}, 5, 2)
 	require.NoError(t, err, "SearchMessageBodies")
-	require.Len(t, messages, 1)
-	assert.Equal(int64(42), messages[0].ID, "body hit ID")
-	assert.Equal([]string{"exact daemon context"}, messages[0].BodyContextSnippets)
-	assert.True(messages[0].BodyContextSnippetsTruncated)
+	require.Len(t, messages.Messages, 1)
+	assert.Equal("unverified", messages.IndexState)
+	assert.Equal(int64(42), messages.Messages[0].ID, "body hit ID")
+	assert.Equal([]string{"exact daemon context"}, messages.Messages[0].BodyContextSnippets)
+	assert.True(messages.Messages[0].BodyContextSnippetsTruncated)
 }
 
 func TestBodySearchSummariesFromGeneratedRejectsInvalidCompanions(t *testing.T) {

@@ -480,7 +480,7 @@ func (s *Store) GetCardDAVAccountForBookContext(ctx context.Context, bookID int6
 	return getCardDAVAccountForBookFrom(ctx, s.db.DB, s.Rebind, bookID)
 }
 
-func getCardDAVAccountForBookFrom(ctx context.Context, queryer cardDAVQueryer, rebind func(string) string, bookID int64) (*CardDAVAccount, error) {
+func getCardDAVAccountForBookFrom(ctx context.Context, queryer SQLReader, rebind func(string) string, bookID int64) (*CardDAVAccount, error) {
 	return getCardDAVAccountMatchingFrom(ctx, queryer, rebind,
 		"id = (SELECT account_id FROM carddav_address_books WHERE id = ?)", bookID, "")
 }
@@ -675,18 +675,13 @@ func cardDAVCapabilityDenied(capability sql.NullBool) bool {
 	return capability.Valid && !capability.Bool
 }
 
-type cardDAVQueryer interface {
-	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
-	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
-}
-
 func getCardDAVAccountForUpdateFrom(
-	ctx context.Context, queryer cardDAVQueryer, rebind func(string) string, suffix, name string,
+	ctx context.Context, queryer SQLReader, rebind func(string) string, suffix, name string,
 ) (*CardDAVAccount, error) {
 	return getCardDAVAccountMatchingFrom(ctx, queryer, rebind, "connection_name = ?", name, suffix)
 }
 
-func getCardDAVAccountMatchingFrom(ctx context.Context, queryer cardDAVQueryer, rebind func(string) string, predicate string, value any, suffix string) (*CardDAVAccount, error) {
+func getCardDAVAccountMatchingFrom(ctx context.Context, queryer SQLReader, rebind func(string) string, predicate string, value any, suffix string) (*CardDAVAccount, error) {
 	var account CardDAVAccount
 	err := queryer.QueryRowContext(ctx, rebind(`
 		SELECT id, connection_name, base_url, username, principal_url, home_url,
@@ -725,7 +720,7 @@ func getCardDAVAccountMatchingFrom(ctx context.Context, queryer cardDAVQueryer, 
 }
 
 func listCardDAVBooksFrom(
-	ctx context.Context, queryer cardDAVQueryer, rebind func(string) string, accountID int64,
+	ctx context.Context, queryer SQLReader, rebind func(string) string, accountID int64,
 ) ([]CardDAVAddressBook, error) {
 	predicate := ""
 	var args []any

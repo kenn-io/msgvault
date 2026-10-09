@@ -158,7 +158,7 @@ type ServeOptions struct {
 	// metric reads. Leave it nil when the daemon predates those routes.
 	Meetings MeetingBackend
 	Calendar CalendarBackend
-	// DelegatedOnly limits an agent-delegated caller to calendar and draft tools.
+	// DelegatedOnly limits an agent-delegated caller to scoped reads, calendars and drafts.
 	DelegatedOnly bool
 	// ArchiveSQLQuerier exposes query_sql when the daemon supports restricted SQL.
 	ArchiveSQLQuerier ArchiveSQLQuerier
@@ -227,7 +227,10 @@ func officialToolHandler(
 					RequestState:  state,
 				}, nil, nil
 			}
-			return nil, nil, mapInternalError(err)
+			result = translateDaemonRequestError(err)
+			if result == nil {
+				return nil, nil, mapInternalError(err)
+			}
 		}
 		if result == nil {
 			slog.Error("MCP tool returned a nil result")
@@ -345,6 +348,7 @@ func newMCPServerWithPolicy(
 		opts.downloads = &downloadCache{}
 	}
 	h := &handlers{
+		delegatedOnly:       opts.DelegatedOnly,
 		downloads:           opts.downloads,
 		engine:              opts.Engine,
 		archiveSQLQuerier:   opts.ArchiveSQLQuerier,
@@ -606,4 +610,12 @@ func bearerAuthHandler(apiKey string, next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func agentReadToolAllowed(name string) bool {
+	switch name {
+	case ToolSearchMessages, ToolSearchMetadata, ToolSearchMessageBodies, ToolGetMessage, ToolGetAttachment, ToolListThread, ToolListMessages, ToolGetStats, ToolAggregate, ToolSearchByDomains, ToolSearchInMessage:
+		return true
+	}
+	return false
 }

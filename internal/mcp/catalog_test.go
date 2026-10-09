@@ -675,9 +675,9 @@ func (e *numericCaptureEngine) SearchMessageBodies(
 	_ *search.Query,
 	limit int,
 	offset int,
-) ([]query.MessageSummary, error) {
+) (*query.SearchFastResult, error) {
 	e.limit, e.offset = limit-1, offset // The handler requests one extra row for has_more.
-	return []query.MessageSummary{}, nil
+	return &query.SearchFastResult{Messages: []query.MessageSummary{}}, nil
 }
 
 func (e *numericCaptureEngine) ListMessages(
@@ -703,6 +703,7 @@ func (e *numericCaptureEngine) SearchByDomains(
 	_, _ *time.Time,
 	limit int,
 	offset int,
+	_ []int64,
 ) ([]query.MessageSummary, error) {
 	e.limit, e.offset = limit, offset
 	return []query.MessageSummary{}, nil

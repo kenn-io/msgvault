@@ -7,6 +7,7 @@ export interface FilteredMessagesResponse {
   applied_source_ids?: number[];
   count: number;
   has_more: boolean;
+  index_state?: string;
   limit: number;
   messages: MessageSummary[];
   offset: number;

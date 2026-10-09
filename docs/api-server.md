@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-06"
+last_edited: "2026-10-08"
 title: Web UI & API Server
 description: Daemon-served analytical Web UI and REST API for your msgvault archive, with optional background sync scheduling.
 ---
@@ -100,9 +100,12 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.8.0**.
+it is separate from the binary release version. The current schema is **3.9.0**.
 Upgrade clients and daemon together across incompatible schema versions,
 including remote deployments.
+
+Schema 3.9.0 adds source-scoped agent read permissions and optional `expires_at`. Admitted FTS search responses, including aggregates, filtered messages and total statistics with search text, carry optional `index_state`. Agent checks are bounded; owner CLI searches retain automatic verification and repair.
+See [scoped archive reads](cli-reference.md#scoped-archive-reads).
 
 Schema 3.3.0 adds `POST /api/v1/telemetry/events`, which the web and terminal UIs use to
 report anonymous usage events through the daemon. See
@@ -2673,6 +2676,21 @@ The server is designed for local use:
 
 !!! warning
     Exposing the server on a network without authentication gives anyone on that network access to your entire email archive. Keep authentication enabled when binding to non-loopback addresses.
+
+### Restricted agent reads
+
+Agent requests use `X-Msgvault-Agent-Token` instead of the owner key. The
+daemon checks `search.read`, `message.read`, `attachment.read`, or `stats.read`
+and the live source identity before serving supported archive reads. Unscoped
+reads select only granted sources. Explicit accounts, collections, and source ID
+sets must fit entirely inside the grant. Missing authority returns
+`403 permission_denied` and names the permission. Unsupported routes remain
+owner-only, including SQL, exports, writes, configuration, and grant management.
+
+Delegated reads use the daemon's ordinary request deadline, normally 60 seconds.
+
+See [agent-token](cli-reference.md#agent-token) for grant lifetime, expiry,
+revocation, issuance, remote CLI and MCP usage, and supported read capabilities.
 
 ## Configuration Reference
 

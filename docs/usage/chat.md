@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-04"
+last_edited: "2026-10-08"
 title: MCP Server
 description: Expose your email, chat, calendar, and meeting archive to AI assistants via MCP.
 ---
@@ -58,7 +58,7 @@ Availability needs `time_min` and `time_max`, and accepts optional `calendar_ids
 [Calendar setup](calendar.md#control-events-unreleased) owns write consent,
 configured calendar permissions, recurrence limits, and archive failure recovery.
 MCP forwards requests to that same daemon path. A delegated stdio bridge, invoked
-with `--agent-url` and `--agent-token-file`, exposes only calendar and draft tools. The daemon
+with `--agent-url` and `--agent-token-file`, exposes scoped read, calendar and draft tools. The daemon
 checks the grant's exact calendar source identity. `calendar.read` permits
 availability; `calendar.event.read` permits provider-derived event details in
 delegated plans and write receipts; `calendar.write` permits event changes; and
@@ -89,7 +89,7 @@ These tools run the matching CLI commands through your selected daemon. They req
 
 Recipient parameters `to`, `cc`, and `bcc` are arrays of strings. Use `draft_get` to read the current revision before editing, deleting, or recovering a draft. Conversation lists return a `data` array. `draft_send_as` returns a `send_as` list.
 
-Owner sessions expose all eight tools alongside the archive tools. Delegated sessions expose only `draft_reply`, `draft_compose`, `draft_get`, `draft_edit`, `draft_delete`, and `draft_recover` from this list, alongside the [calendar tools](#calendar-control). Each call uses the agent token, and the daemon checks its permissions and source scope.
+Owner sessions expose all eight tools alongside the archive tools. Delegated sessions expose only `draft_reply`, `draft_compose`, `draft_get`, `draft_edit`, `draft_delete`, and `draft_recover` from this list, alongside scoped read tools on daemons with API schema 3.9.0 or newer and the [calendar tools](#calendar-control). Each call uses the agent token, and the daemon checks its permissions and source scope.
 
 For a delegated Claude Desktop session, use these arguments with the daemon URL and token file you received from the owner:
 

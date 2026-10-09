@@ -2176,10 +2176,10 @@ func (e *DuckDBEngine) GetMessage(ctx context.Context, id int64) (*MessageDetail
 
 // GetMessageBySourceID retrieves a message by source ID from SQLite.
 // Uses direct SQLite connection when available for better BLOB handling.
-func (e *DuckDBEngine) GetMessageBySourceID(ctx context.Context, sourceMessageID string) (*MessageDetail, error) {
+func (e *DuckDBEngine) GetMessageBySourceID(ctx context.Context, sourceMessageID string, sourceIDs []int64) (*MessageDetail, error) {
 	// Prefer direct SQLite for body/BLOB retrieval
 	if e.sqliteEngine != nil {
-		return e.sqliteEngine.GetMessageBySourceID(ctx, sourceMessageID)
+		return e.sqliteEngine.GetMessageBySourceID(ctx, sourceMessageID, sourceIDs)
 	}
 
 	// Fall back to sqlite_scan
@@ -2187,7 +2187,8 @@ func (e *DuckDBEngine) GetMessageBySourceID(ctx context.Context, sourceMessageID
 		return nil, errors.New("GetMessageBySourceID requires SQLite: pass sqlitePath to NewDuckDBEngine")
 	}
 
-	return e.getMessageByQuery(ctx, "m.source_message_id = ?", sourceMessageID)
+	conditions, args := appendSourceFilter([]string{"m.source_message_id = ?"}, []any{sourceMessageID}, "m.", nil, sourceIDs)
+	return e.getMessageByQuery(ctx, strings.Join(conditions, " AND "), args...)
 }
 
 // GetAttachment retrieves attachment metadata by ID.
@@ -2471,7 +2472,7 @@ func (e *DuckDBEngine) SearchDeepWithStats(
 // SearchMessageBodies delegates to the direct SQLite engine so FTS5 can scope
 // MATCH to the indexed body column. The sqlite_scanner fallback is
 // intentionally unsupported: exact body search must never scan message_bodies.
-func (e *DuckDBEngine) SearchMessageBodies(ctx context.Context, q *search.Query, limit, offset int) ([]MessageSummary, error) {
+func (e *DuckDBEngine) SearchMessageBodies(ctx context.Context, q *search.Query, limit, offset int) (*SearchFastResult, error) {
 	if e.sqliteEngine == nil {
 		return nil, fmt.Errorf("%w: a direct SQLite engine is required; reopen the query engine with a SQLite connection", ErrMessageBodySearchUnavailable)
 	}
@@ -2481,11 +2482,11 @@ func (e *DuckDBEngine) SearchMessageBodies(ctx context.Context, q *search.Query,
 // SearchByDomains returns message summaries for the given sender domains.
 // It delegates to SQLite because domain search needs JOINs across
 // participants and message_recipients that the Parquet cache doesn't carry.
-func (e *DuckDBEngine) SearchByDomains(ctx context.Context, domains []string, after, before *time.Time, limit, offset int) ([]MessageSummary, error) {
+func (e *DuckDBEngine) SearchByDomains(ctx context.Context, domains []string, after, before *time.Time, limit, offset int, sourceIDs []int64) ([]MessageSummary, error) {
 	// Delegate to SQLite — domain search requires JOINs across participants
 	// and message_recipients which are not available in the Parquet cache.
 	if e.sqliteEngine != nil {
-		return e.sqliteEngine.SearchByDomains(ctx, domains, after, before, limit, offset)
+		return e.sqliteEngine.SearchByDomains(ctx, domains, after, before, limit, offset, sourceIDs)
 	}
 	return nil, errors.New("SearchByDomains requires SQLite engine (participant data not in Parquet cache)")
 }

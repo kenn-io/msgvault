@@ -1,6 +1,8 @@
 package api
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json/jsontext"
 	jsonv2 "encoding/json/v2"
 	"fmt"
@@ -207,6 +209,42 @@ func (s *Server) humaAuthMiddleware(ctx huma.Context, next func(huma.Context)) {
 	auth := s.requestAuthentication(req)
 	if auth.Mode == AuthModeDelegated {
 		if op := ctx.Operation(); op != nil && delegatedOperationAllowed(op.OperationID) {
+			permission, err := agentReadPermission(op.OperationID, auth.Grant)
+			if err != nil {
+				writeHumaError(ctx, err.status, err.ErrorResponse.Error, err.Message)
+				return
+			}
+			if permission != "" {
+				snapshotStore, ok := s.store.(interface {
+					BeginReadSnapshotContext(ctx context.Context) (context.Context, func(), error)
+					DB() *sql.DB
+					IsPostgreSQL() bool
+				})
+				if !ok {
+					writeHumaError(ctx, 503, "source_scope_unavailable", "Source authorization is unavailable")
+					return
+				}
+				indexGeneration := s.ftsRebuildGen.Load()
+				indexComplete := s.ftsIndexComplete.Load()
+				readContext, release, err := snapshotStore.BeginReadSnapshotContext(req.Context())
+				if err != nil {
+					writeHumaError(ctx, 503, "source_scope_unavailable", "Source authorization is unavailable")
+					return
+				}
+				defer release()
+				if boundary, ok := req.Context().Value(readResponseKey{}).(*readResponseWriter); ok {
+					boundary.release = release
+				}
+				if s.queryEngineForContext(readContext) != nil {
+					readContext = context.WithValue(readContext, analyticsEngineContextKey{}, &analyticsEngineState{engine: query.NewEngine(snapshotStore.DB(), snapshotStore.IsPostgreSQL()), mode: AnalyticsModeSQL})
+				}
+				*req = *req.WithContext(readContext)
+				if err := s.authorizeAgentRead(req, op.OperationID, auth.Grant, permission, indexGeneration, indexComplete); err != nil {
+					release()
+					writeHumaError(ctx, err.status, err.ErrorResponse.Error, err.Message)
+					return
+				}
+			}
 			next(ctx)
 			return
 		}
@@ -379,7 +417,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 		http.StatusBadRequest, http.StatusNotFound, http.StatusConflict, http.StatusRequestEntityTooLarge, http.StatusServiceUnavailable)
 	// Agent-token management routes: owner API key required.
 	registerAPIV1RawHumaJSONRouteWithRequest[agentTokenIssueRequest, agentTokenIssueResponse](apiV1, "issueAgentToken", http.MethodPost, "/agent-tokens", "Issue a restricted agent grant", s.handleIssueAgentToken, http.StatusCreated)
-	registerAPIV1RawHumaJSONRoute[agentTokenListResponse](apiV1, "listAgentTokens", http.MethodGet, "/agent-tokens", "List active agent grants", s.handleListAgentTokens)
+	registerAPIV1RawHumaJSONRoute[agentTokenListResponse](apiV1, "listAgentTokens", http.MethodGet, "/agent-tokens", "List agent grants", s.handleListAgentTokens)
 	{
 		op := rawAPIV1Operation("revokeAgentToken", http.MethodDelete, "/agent-tokens/{id}", "Revoke an agent grant by ID")
 		op.Responses = rawHumaResponses(http.StatusNoContent)
@@ -992,6 +1030,8 @@ func rawRouteParameters(operationID string) []*huma.Param {
 		)
 	case "searchMessagesByDomains":
 		return []*huma.Param{
+			queryIntegerParam("source_id", "Source account ID"),
+			queryIntegerArrayParam("source_ids", "Source account IDs"),
 			queryStringParam("domains", "Comma-separated participant domains", true),
 			queryStringParam("after", "Lower date/time bound (RFC3339 or YYYY-MM-DD)", false),
 			queryStringParam("before", "Upper date/time bound (RFC3339 or YYYY-MM-DD)", false),

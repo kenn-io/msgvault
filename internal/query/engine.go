@@ -38,7 +38,7 @@ type Engine interface {
 	// Message queries
 	ListMessages(ctx context.Context, filter MessageFilter) ([]MessageSummary, error)
 	GetMessage(ctx context.Context, id int64) (*MessageDetail, error)
-	GetMessageBySourceID(ctx context.Context, sourceMessageID string) (*MessageDetail, error)
+	GetMessageBySourceID(ctx context.Context, sourceMessageID string, sourceIDs []int64) (*MessageDetail, error)
 	GetAttachment(ctx context.Context, id int64) (*AttachmentInfo, error)
 
 	// GetAttachmentsByHash returns every attachment matching the given content
@@ -96,8 +96,8 @@ type Engine interface {
 	GetDeletionTargetsByFilter(ctx context.Context, filter MessageFilter) ([]DeletionTarget, error)
 
 	// SearchByDomains returns messages where any participant (from, to, cc, or bcc)
-	// belongs to one of the given domains.
-	SearchByDomains(ctx context.Context, domains []string, after, before *time.Time, limit, offset int) ([]MessageSummary, error)
+	// belongs to one of the given domains. Non-empty sourceIDs limit results to those accounts.
+	SearchByDomains(ctx context.Context, domains []string, after, before *time.Time, limit, offset int, sourceIDs []int64) ([]MessageSummary, error)
 
 	// Account queries
 	ListAccounts(ctx context.Context) ([]AccountInfo, error)
@@ -224,13 +224,12 @@ type PeopleInboxAnalyzer interface {
 // message bodies. It is deliberately separate from Engine so generic Search
 // retains its composite subject/body/participant semantics.
 type MessageBodySearcher interface {
-	SearchMessageBodies(ctx context.Context, query *search.Query, limit, offset int) ([]MessageSummary, error)
+	SearchMessageBodies(ctx context.Context, query *search.Query, limit, offset int) (*SearchFastResult, error)
 }
 
-// SearchFastResult holds the combined results of a fast search:
-// paginated messages, total count, and aggregate stats — all from a single
-// materialized scan of the matching message IDs.
+// SearchFastResult carries messages and index status, with optional totals and aggregate stats.
 type SearchFastResult struct {
+	IndexState string
 	Messages   []MessageSummary
 	TotalCount int64
 	Stats      *TotalStats

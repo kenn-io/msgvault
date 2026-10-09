@@ -3,10 +3,32 @@ package agentgrant
 import (
 	"strings"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestExpiredGrantsRemainManageable(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		requirements := require.New(t)
+		assertions := assert.New(t)
+		registry := NewRegistry()
+		id, secret, _, err := registry.Issue("reader", []Permission{PermissionSearchRead}, []SourceRef{{ID: 1, Type: "test", Identifier: "reader@example.test"}}, time.Now().Add(time.Hour))
+		requirements.NoError(err)
+		time.Sleep(2 * time.Hour)
+		_, allowed := registry.Lookup(secret)
+		assertions.False(allowed)
+		listed := registry.List()
+		requirements.Len(listed, 1, "expired grants must remain visible to the owner")
+		assertions.Equal(id, listed[0].ID)
+		assertions.True(listed[0].ExpiresAt.Before(time.Now()))
+		requirements.True(registry.Revoke(id))
+		assertions.Empty(registry.List())
+	})
+}
 
 // TestGrantPermissionsDoNotImply covers proof matrix rows 12 and 13.
 func TestGrantPermissionsDoNotImply(t *testing.T) {
@@ -57,49 +79,49 @@ func TestRegistryLifecycle(t *testing.T) {
 
 	t.Run("Issue rejects empty label", func(t *testing.T) {
 		r := NewRegistry()
-		_, _, _, err := r.Issue("", perms, []SourceRef{src})
+		_, _, _, err := r.Issue("", perms, []SourceRef{src}, time.Time{})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "label")
 	})
 
 	t.Run("Issue rejects empty permissions", func(t *testing.T) {
 		r := NewRegistry()
-		_, _, _, err := r.Issue("test", []Permission{}, []SourceRef{src})
+		_, _, _, err := r.Issue("test", []Permission{}, []SourceRef{src}, time.Time{})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "permission")
 	})
 
 	t.Run("Issue rejects empty sources", func(t *testing.T) {
 		r := NewRegistry()
-		_, _, _, err := r.Issue("test", perms, []SourceRef{})
+		_, _, _, err := r.Issue("test", perms, []SourceRef{}, time.Time{})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "source")
 	})
 
 	t.Run("Issue rejects nonpositive source ID", func(t *testing.T) {
 		r := NewRegistry()
-		_, _, _, err := r.Issue("test", perms, []SourceRef{{ID: 0, Type: "imap", Identifier: "x"}})
+		_, _, _, err := r.Issue("test", perms, []SourceRef{{ID: 0, Type: "imap", Identifier: "x"}}, time.Time{})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "positive")
 	})
 
 	t.Run("Issue rejects negative source ID", func(t *testing.T) {
 		r := NewRegistry()
-		_, _, _, err := r.Issue("test", perms, []SourceRef{{ID: -1, Type: "imap", Identifier: "x"}})
+		_, _, _, err := r.Issue("test", perms, []SourceRef{{ID: -1, Type: "imap", Identifier: "x"}}, time.Time{})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "positive")
 	})
 
 	t.Run("Issue rejects empty source Type", func(t *testing.T) {
 		r := NewRegistry()
-		_, _, _, err := r.Issue("test", perms, []SourceRef{{ID: 1, Type: "", Identifier: "x"}})
+		_, _, _, err := r.Issue("test", perms, []SourceRef{{ID: 1, Type: "", Identifier: "x"}}, time.Time{})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "Type")
 	})
 
 	t.Run("Issue rejects empty source Identifier", func(t *testing.T) {
 		r := NewRegistry()
-		_, _, _, err := r.Issue("test", perms, []SourceRef{{ID: 1, Type: "imap", Identifier: ""}})
+		_, _, _, err := r.Issue("test", perms, []SourceRef{{ID: 1, Type: "imap", Identifier: ""}}, time.Time{})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "Identifier")
 	})
@@ -107,7 +129,7 @@ func TestRegistryLifecycle(t *testing.T) {
 	t.Run("Issue rejects duplicate source Type+Identifier", func(t *testing.T) {
 		r := NewRegistry()
 		sources := []SourceRef{src, {ID: src.ID + 1, Type: src.Type, Identifier: src.Identifier}}
-		_, _, _, err := r.Issue("test", perms, sources)
+		_, _, _, err := r.Issue("test", perms, sources, time.Time{})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "duplicate")
 	})
@@ -115,27 +137,27 @@ func TestRegistryLifecycle(t *testing.T) {
 	t.Run("Issue allows same ID with different Type+Identifier", func(t *testing.T) {
 		r := NewRegistry()
 		sources := []SourceRef{src, {ID: src.ID, Type: "imap", Identifier: "bob@example.com"}}
-		_, _, _, err := r.Issue("test", perms, sources)
+		_, _, _, err := r.Issue("test", perms, sources, time.Time{})
 		require.NoError(t, err, "same ID with different (Type, Identifier) must be accepted")
 	})
 
 	t.Run("Issue rejects unknown permission", func(t *testing.T) {
 		r := NewRegistry()
-		_, _, _, err := r.Issue("test", []Permission{"unknown.perm"}, []SourceRef{src})
+		_, _, _, err := r.Issue("test", []Permission{"unknown.perm"}, []SourceRef{src}, time.Time{})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "unknown")
 	})
 
 	t.Run("Issue rejects wildcard permission", func(t *testing.T) {
 		r := NewRegistry()
-		_, _, _, err := r.Issue("test", []Permission{"*"}, []SourceRef{src})
+		_, _, _, err := r.Issue("test", []Permission{"*"}, []SourceRef{src}, time.Time{})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid")
 	})
 
 	t.Run("secret has expected prefix", func(t *testing.T) {
 		r := NewRegistry()
-		_, secret, _, err := r.Issue("test", perms, []SourceRef{src})
+		_, secret, _, err := r.Issue("test", perms, []SourceRef{src}, time.Time{})
 		require.NoError(t, err)
 		assert.True(t, strings.HasPrefix(secret, secretPrefix), "secret should start with %s", secretPrefix)
 	})
@@ -143,7 +165,7 @@ func TestRegistryLifecycle(t *testing.T) {
 	t.Run("revoked grant fails next Lookup", func(t *testing.T) {
 		assert := assert.New(t)
 		r := NewRegistry()
-		id, secret, _, err := r.Issue("test", perms, []SourceRef{src})
+		id, secret, _, err := r.Issue("test", perms, []SourceRef{src}, time.Time{})
 		require.NoError(t, err)
 
 		// Confirm it works before revocation
@@ -165,7 +187,7 @@ func TestRegistryLifecycle(t *testing.T) {
 
 	t.Run("Lookup with wrong secret returns false", func(t *testing.T) {
 		r := NewRegistry()
-		_, _, _, err := r.Issue("test", perms, []SourceRef{src})
+		_, _, _, err := r.Issue("test", perms, []SourceRef{src}, time.Time{})
 		require.NoError(t, err)
 		_, ok := r.Lookup("wrongsecret")
 		assert.False(t, ok)
@@ -173,7 +195,7 @@ func TestRegistryLifecycle(t *testing.T) {
 
 	t.Run("Close empties the registry", func(t *testing.T) {
 		r := NewRegistry()
-		_, _, _, err := r.Issue("test", perms, []SourceRef{src})
+		_, _, _, err := r.Issue("test", perms, []SourceRef{src}, time.Time{})
 		require.NoError(t, err)
 		require.Len(t, r.List(), 1)
 		r.Close()
@@ -219,7 +241,7 @@ func TestCalendarEventReadPermissionCanBeIssued(t *testing.T) {
 	assertions.Equal(permission, mustKnownPermission(t, string(permission)))
 
 	source := SourceRef{ID: 1, Type: "gcal", Identifier: "person@example.com/team@example.com"}
-	_, _, grant, err := NewRegistry().Issue("calendar-details", []Permission{permission}, []SourceRef{source})
+	_, _, grant, err := NewRegistry().Issue("calendar-details", []Permission{permission}, []SourceRef{source}, time.Time{})
 	requirements.NoError(err)
 	assertions.True(grant.Allows(permission, source))
 }
@@ -257,7 +279,7 @@ func TestGrantSenderKeysAreFrozenAndDeepCopied(t *testing.T) {
 	r := NewRegistry()
 	senders := []string{"alice@example.com", "alias@example.com"}
 	source := SourceRef{ID: 5, Type: "imap", Identifier: "imap://alice@example.com", SenderKeys: senders}
-	id, secret, issued, err := r.Issue("sender-test", []Permission{PermissionDraftCreate}, []SourceRef{source})
+	id, secret, issued, err := r.Issue("sender-test", []Permission{PermissionDraftCreate}, []SourceRef{source}, time.Time{})
 	requirements.NoError(err)
 	senders[0] = "changed@example.com"
 	issued.Sources[0].SenderKeys[0] = "mutated@example.com"

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -108,8 +109,32 @@ func (s *Server) handleCLIMessageThread(w http.ResponseWriter, r *http.Request) 
 	} else if present {
 		q.Offset = value
 	}
+	delegated := s.requestAuthentication(r).Grant != nil
+	if delegated {
+		q.SourceIDs = agentReadSourceIDs(r)
+	}
 	page, err := reader.ListThread(r.Context(), q)
+	if delegated && (errors.Is(err, store.ErrMessageNotFound) || errors.Is(err, query.ErrThreadNotFound)) {
+		unscoped := q
+		unscoped.SourceIDs = nil
+		// Denial probes only need to establish that the reference exists.
+		unscoped.All = false
+		unscoped.Offset = 0
+		unscoped.Limit = 1
+		_, outsideErr := reader.ListThread(r.Context(), unscoped)
+		if outsideErr == nil || errors.Is(outsideErr, query.ErrAmbiguousReference) {
+			writeAPIHTTPError(w, agentReadDenied(agentgrant.PermissionMessageRead))
+			return
+		}
+		if !errors.Is(outsideErr, store.ErrMessageNotFound) && !errors.Is(outsideErr, query.ErrThreadNotFound) {
+			err = outsideErr
+		}
+	}
 	if err != nil {
+		if s.requestAuthentication(r).Grant != nil && errors.Is(err, query.ErrAmbiguousReference) {
+			writeError(w, http.StatusConflict, "message_ambiguous", "Reference matches several accounts; select an account")
+			return
+		}
 		s.writeOriginalExportError(w, "list thread", err)
 		return
 	}

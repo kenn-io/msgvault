@@ -100,20 +100,29 @@ type APIAttachment struct {
 // ListMessages returns a paginated list of messages with batch-loaded
 // recipients and labels.
 func (s *Store) ListMessages(offset, limit int) ([]APIMessage, int64, error) {
-	return s.ListMessagesContext(context.Background(), offset, limit)
+	return s.ListMessagesContext(context.Background(), offset, limit, nil)
 }
 
 // ListMessagesContext is the context-aware form of ListMessages. Request
 // paths pass the request context so the count, list, and hydration queries
 // carry the request_id for SQL logging and are cancelled together when the
 // request is abandoned or times out.
-func (s *Store) ListMessagesContext(ctx context.Context, offset, limit int) ([]APIMessage, int64, error) {
+func (s *Store) ListMessagesContext(ctx context.Context, offset, limit int, sourceIDs []int64) ([]APIMessage, int64, error) {
+	scope := ""
+	var args []any
+	if sourceIDs != nil {
+		predicate := "0 = 1"
+		if len(sourceIDs) > 0 {
+			predicate, args = messageExportInClause("m.source_id", sourceIDs)
+		}
+		scope = " AND " + predicate
+	}
 	// Get total count. Use the canonical live-messages predicate so
 	// dedup-hidden rows (deleted_at) are excluded alongside source-
 	// deleted rows.
 	var total int64
 	err := s.db.QueryRowContext(ctx,
-		"SELECT COUNT(*) FROM messages WHERE "+LiveMessagesWhere("", true),
+		"SELECT COUNT(*) FROM messages m WHERE "+LiveMessagesWhere("m", true)+scope, args...,
 	).Scan(&total)
 	if err != nil {
 		return nil, 0, err
@@ -145,9 +154,9 @@ func (s *Store) ListMessagesContext(ctx context.Context, offset, limit int) ([]A
 		WHERE %s
 		ORDER BY COALESCE(m.sent_at, m.received_at, m.internal_date) DESC, m.id DESC
 		LIMIT ? OFFSET ?
-	`, participantSummarySenderSQL, LiveMessagesWhere("m", true))
+	`, participantSummarySenderSQL, LiveMessagesWhere("m", true)+scope)
 
-	rows, err := s.db.QueryContext(ctx, query, limit, offset)
+	rows, err := s.db.QueryContext(ctx, query, append(args, limit, offset)...)
 	if err != nil {
 		return nil, 0, err
 	}

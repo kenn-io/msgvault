@@ -4,6 +4,7 @@
 import type { AgentTokenIssueRequestSenderSelections } from "./agentTokenIssueRequestSenderSelections";
 
 export interface AgentTokenIssueRequest {
+  expires_at?: string;
   label: string;
   permissions: string[];
   sender_selections?: AgentTokenIssueRequestSenderSelections;

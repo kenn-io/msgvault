@@ -575,13 +575,17 @@ func postgresFTSNeedsBackfillSQL() string {
 // partial btree index created by EnsureFTSIndex makes even the false
 // case index-served and self-pruning as backfill completes.
 func (d *PostgreSQLDialect) FTSNeedsBackfill(db *sql.DB) bool {
+	needs, _ := d.FTSNeedsBackfillContext(context.Background(), db)
+	return needs
+}
+func (d *PostgreSQLDialect) FTSNeedsBackfillContext(ctx context.Context, db *sql.DB) (bool, error) {
 	var exists bool
-	if err := db.QueryRow(
+	if err := ReadDBContext(ctx, db).QueryRowContext(ctx,
 		postgresFTSNeedsBackfillSQL(),
 	).Scan(&exists); err != nil {
-		return false
+		return false, fmt.Errorf("probe FTS completeness: %w", err)
 	}
-	return exists
+	return exists, nil
 }
 
 // FTSNeedsBackfillQuick uses the same exact EXISTS probe as FTSNeedsBackfill:

@@ -382,7 +382,7 @@ func (c *Client) AddAccountWithResponse(ctx context.Context, options *AddAccount
 	}
 }
 
-// ListAgentTokens List active agent grants
+// ListAgentTokens List agent grants
 func (c *Client) ListAgentTokensWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListAgentTokensResp, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{
