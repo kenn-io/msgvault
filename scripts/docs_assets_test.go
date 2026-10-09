@@ -72,6 +72,7 @@ type publisherScriptCase struct {
 }
 
 func TestHydrateAssetsForceFetchesRemoteAssetBranches(t *testing.T) {
+	isolateGitFixture(t)
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -133,6 +134,7 @@ func TestHydrateAssetsForceFetchesRemoteAssetBranches(t *testing.T) {
 }
 
 func TestAssetPublishersRejectUnexpectedFiles(t *testing.T) {
+	isolateGitFixture(t)
 	for _, tc := range publisherScriptCases() {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
@@ -163,6 +165,7 @@ func TestAssetPublishersRejectUnexpectedFiles(t *testing.T) {
 }
 
 func TestAssetPublishersRejectSymlinks(t *testing.T) {
+	isolateGitFixture(t)
 	for _, tc := range publisherScriptCases() {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
@@ -196,6 +199,7 @@ func TestAssetPublishersRejectSymlinks(t *testing.T) {
 }
 
 func TestAssetPublishersRejectProtectedBranchNames(t *testing.T) {
+	isolateGitFixture(t)
 	for _, tc := range publisherScriptCases() {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
@@ -257,6 +261,7 @@ func TestDocsScreenshotDemoDataUsesIntegratedRepoSchemaPath(t *testing.T) {
 }
 
 func TestDocsScreenshotGenerateAllDoesNotRequireDockerIgnorefileFlag(t *testing.T) {
+	isolateGitFixture(t)
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -456,6 +461,7 @@ func TestDocsScreenshotCapturesLegacyTimeAsset(t *testing.T) {
 
 func runCheckDocsMediaReferenceTest(t *testing.T, docsLine, wantMessage string) {
 	t.Helper()
+	isolateGitFixture(t)
 	tempDir := t.TempDir()
 	repo := filepath.Join(tempDir, "repo")
 	binDir := filepath.Join(tempDir, "bin")
@@ -758,6 +764,22 @@ func assertBranchRefUnchanged(t *testing.T, repo, branch, beforeRef string, befo
 	}
 	require.True(t, afterExists, branch)
 	assert.Equal(t, beforeRef, afterRef, branch)
+}
+
+// Isolate both fixture setup and the scripts' Git subprocesses from the caller.
+func isolateGitFixture(t *testing.T) {
+	t.Helper()
+	for _, entry := range os.Environ() {
+		name, _, _ := strings.Cut(entry, "=")
+		if strings.HasPrefix(name, "GIT_") {
+			t.Setenv(name, "") // Register restoration before unsetting it.
+			require.NoError(t, os.Unsetenv(name))
+		}
+	}
+	globalConfig := filepath.Join(t.TempDir(), "gitconfig")
+	require.NoError(t, os.WriteFile(globalConfig, nil, 0o600))
+	t.Setenv("GIT_CONFIG_GLOBAL", globalConfig)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 }
 
 func gitRef(t *testing.T, dir, ref string) (string, bool) {
