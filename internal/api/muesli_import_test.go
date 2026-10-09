@@ -66,7 +66,7 @@ func TestMuesliImportRejectsDelegatedToken(t *testing.T) {
 	server := NewServer(&config.Config{Server: config.ServerConfig{APIKey: meetingImportTestAPIKey, AgentAccess: true}}, st, nil, testLogger())
 	registry := agentgrant.NewRegistry()
 	server.agentGrants = registry
-	_, secret, _, err := registry.Issue("synthetic agent", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{{ID: 1, Type: "imap", Identifier: "user@example.com"}})
+	_, secret, _, err := registry.Issue("synthetic agent", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{{ID: 1, Type: "imap", Identifier: "user@example.com"}}, time.Time{})
 	require.NoError(err)
 	health := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
 	health.Header.Set(apiprotocol.AgentTokenHeader, secret)
