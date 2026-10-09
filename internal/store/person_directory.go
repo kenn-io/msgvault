@@ -50,14 +50,16 @@ type DirectoryPeopleQuery struct {
 // a durable person root. ContactState is "active" when a contact projection
 // has a last-contact timestamp and "inactive" otherwise.
 type DirectoryPersonSummary struct {
-	ID             int64      `json:"id"`
-	DisplayName    *string    `json:"display_name,omitzero" nullable:"false"`
-	Revision       int64      `json:"revision"`
-	PrimaryChannel string     `json:"primary_channel,omitempty"`
-	ContactState   string     `json:"contact_state"`
-	LastContactAt  *time.Time `json:"last_contact_at,omitempty"`
-	Categories     []string   `json:"categories" nullable:"false"`
-	Organizations  []string   `json:"organizations" nullable:"false"`
+	ID              int64            `json:"id"`
+	VCardUID        string           `json:"vcard_uid"`
+	CardDAVBindings []CardDAVBinding `json:"carddav_bindings"`
+	DisplayName     *string          `json:"display_name,omitzero" nullable:"false"`
+	Revision        int64            `json:"revision"`
+	PrimaryChannel  string           `json:"primary_channel,omitempty"`
+	ContactState    string           `json:"contact_state"`
+	LastContactAt   *time.Time       `json:"last_contact_at,omitempty"`
+	Categories      []string         `json:"categories" nullable:"false"`
+	Organizations   []string         `json:"organizations" nullable:"false"`
 }
 
 // DirectoryPeoplePage is one stable keyset page of directory people.
@@ -560,7 +562,7 @@ func (s *Store) hydrateDirectoryPeopleTx(ctx context.Context, tx *loggedTx, cand
 		byID[candidates[index].summary.ID] = index
 	}
 	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
-	rows, err := tx.QueryContext(ctx, `SELECT person.id, person.display_name, person.revision,
+	rows, err := tx.QueryContext(ctx, `SELECT person.id, person.vcard_uid, person.display_name, person.revision,
 		projection.primary_channel, projection.contact_state, projection.last_contact_key
 		FROM persons person JOIN directory_people projection ON projection.person_id = person.id
 		WHERE person.id IN (`+placeholders+`)`, ids...)
@@ -569,13 +571,17 @@ func (s *Store) hydrateDirectoryPeopleTx(ctx context.Context, tx *loggedTx, cand
 	}
 	for rows.Next() {
 		var id int64
+		var vcardUID string
 		var displayName sql.NullString
+		var revision int64
 		var primaryChannel, contactState, lastContactKey string
-		if err := rows.Scan(&id, &displayName, &candidates[byID[id]].summary.Revision, &primaryChannel, &contactState, &lastContactKey); err != nil {
+		if err := rows.Scan(&id, &vcardUID, &displayName, &revision, &primaryChannel, &contactState, &lastContactKey); err != nil {
 			_ = rows.Close()
 			return fmt.Errorf("scan hydrated directory person: %w", err)
 		}
 		candidate := &candidates[byID[id]]
+		candidate.summary.VCardUID = vcardUID
+		candidate.summary.Revision = revision
 		candidate.summary.PrimaryChannel = primaryChannel
 		candidate.summary.ContactState = contactState
 		if lastContactKey != "" {
@@ -599,6 +605,17 @@ func (s *Store) hydrateDirectoryPeopleTx(ctx context.Context, tx *loggedTx, cand
 	}
 	if err := rows.Close(); err != nil {
 		return fmt.Errorf("close hydrated directory people: %w", err)
+	}
+	personIDs := make([]int64, len(candidates))
+	for index := range candidates {
+		personIDs[index] = candidates[index].summary.ID
+	}
+	bindings, err := s.listCardDAVBindingsTx(ctx, tx, personIDs)
+	if err != nil {
+		return err
+	}
+	for index := range candidates {
+		candidates[index].summary.CardDAVBindings = bindings[candidates[index].summary.ID]
 	}
 	if err := hydrateDirectoryValuesTx(ctx, tx, `SELECT person_id, original_value
 		FROM person_categories WHERE active_until IS NULL AND superseded_at IS NULL

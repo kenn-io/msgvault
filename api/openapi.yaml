@@ -1604,6 +1604,26 @@ components:
         - id
         - name
       type: object
+    CardDAVBinding:
+      additionalProperties: true
+      properties:
+        book:
+          type: string
+        connection:
+          type: string
+        href:
+          type: string
+        mapping_status:
+          type: string
+        remote_uid:
+          type: string
+      required:
+        - connection
+        - book
+        - href
+        - remote_uid
+        - mapping_status
+      type: object
     CardDAVBookResponse:
       additionalProperties: true
       properties:
@@ -3359,6 +3379,10 @@ components:
     DirectoryPersonSummary:
       additionalProperties: true
       properties:
+        carddav_bindings:
+          items:
+            $ref: "#/components/schemas/CardDAVBinding"
+          type: array
         categories:
           items:
             type: string
@@ -3382,8 +3406,12 @@ components:
         revision:
           format: int64
           type: integer
+        vcard_uid:
+          type: string
       required:
         - id
+        - vcard_uid
+        - carddav_bindings
         - revision
         - contact_state
         - categories
@@ -9482,6 +9510,10 @@ components:
     Person:
       additionalProperties: true
       properties:
+        carddav_bindings:
+          items:
+            $ref: "#/components/schemas/CardDAVBinding"
+          type: array
         created_at:
           format: date-time
           type: string
@@ -15186,7 +15218,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.9.0
+  version: 3.10.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -24444,6 +24476,60 @@ paths:
       security:
         - apiKey: []
       summary: Promote a participant cluster to a durable person
+      tags:
+        - API
+  /api/v1/people/by-uid:
+    get:
+      description: Resolves the person's current vCard UID, a retired UID that still aliases the person, or the UID of a CardDAV resource mapped to the person. Returns a conflict when one remote UID maps to different people.
+      operationId: getPersonByUID
+      parameters:
+        - description: Exact vCard UID or CardDAV resource UID
+          in: query
+          name: uid
+          required: true
+          schema:
+            minLength: 1
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Person"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Look up a durable person by vCard or CardDAV UID
       tags:
         - API
   /api/v1/people/directory:

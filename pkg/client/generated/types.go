@@ -1415,6 +1415,18 @@ func (c CardDAVAddressBookIdentityResponse) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(c))
 }
 
+type CardDAVBinding struct {
+	Book          string `json:"book" validate:"required"`
+	Connection    string `json:"connection" validate:"required"`
+	Href          string `json:"href" validate:"required"`
+	MappingStatus string `json:"mapping_status" validate:"required"`
+	RemoteUID     string `json:"remote_uid" validate:"required"`
+}
+
+func (c CardDAVBinding) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(c))
+}
+
 type CardDAVBookResponse struct {
 	AccountID          *int64  `json:"account_id,omitempty"`
 	Connection         *string `json:"connection,omitzero"`
@@ -3094,18 +3106,43 @@ func (d DirectoryPeopleResponse) Validate() error {
 }
 
 type DirectoryPersonSummary struct {
-	Categories     []string   `json:"categories" validate:"required"`
-	ContactState   string     `json:"contact_state" validate:"required"`
-	DisplayName    *string    `json:"display_name,omitzero"`
-	ID             int64      `json:"id"`
-	LastContactAt  *time.Time `json:"last_contact_at,omitempty"`
-	Organizations  []string   `json:"organizations" validate:"required"`
-	PrimaryChannel *string    `json:"primary_channel,omitzero"`
-	Revision       int64      `json:"revision"`
+	CarddavBindings []CardDAVBinding `json:"carddav_bindings" validate:"required"`
+	Categories      []string         `json:"categories" validate:"required"`
+	ContactState    string           `json:"contact_state" validate:"required"`
+	DisplayName     *string          `json:"display_name,omitzero"`
+	ID              int64            `json:"id"`
+	LastContactAt   *time.Time       `json:"last_contact_at,omitempty"`
+	Organizations   []string         `json:"organizations" validate:"required"`
+	PrimaryChannel  *string          `json:"primary_channel,omitzero"`
+	Revision        int64            `json:"revision"`
+	VcardUID        string           `json:"vcard_uid" validate:"required"`
 }
 
 func (d DirectoryPersonSummary) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(d))
+	var errors runtime.ValidationErrors
+	for i, item := range d.CarddavBindings {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("CarddavBindings[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(d.Categories, "required"); err != nil {
+		errors = errors.Append("Categories", err)
+	}
+	if err := typesValidator.Var(d.ContactState, "required"); err != nil {
+		errors = errors.Append("ContactState", err)
+	}
+	if err := typesValidator.Var(d.Organizations, "required"); err != nil {
+		errors = errors.Append("Organizations", err)
+	}
+	if err := typesValidator.Var(d.VcardUID, "required"); err != nil {
+		errors = errors.Append("VcardUID", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type Disclosure struct {
@@ -8721,17 +8758,41 @@ func (p PeopleResponse) Validate() error {
 }
 
 type Person struct {
-	CreatedAt      time.Time `json:"created_at" validate:"required"`
-	DisplayName    *string   `json:"display_name,omitzero"`
-	ID             int64     `json:"id"`
-	ParticipantIds []int64   `json:"participant_ids" validate:"required"`
-	Revision       int64     `json:"revision"`
-	UpdatedAt      time.Time `json:"updated_at" validate:"required"`
-	VcardUID       string    `json:"vcard_uid" validate:"required"`
+	CarddavBindings []CardDAVBinding `json:"carddav_bindings,omitempty"`
+	CreatedAt       time.Time        `json:"created_at" validate:"required"`
+	DisplayName     *string          `json:"display_name,omitzero"`
+	ID              int64            `json:"id"`
+	ParticipantIds  []int64          `json:"participant_ids" validate:"required"`
+	Revision        int64            `json:"revision"`
+	UpdatedAt       time.Time        `json:"updated_at" validate:"required"`
+	VcardUID        string           `json:"vcard_uid" validate:"required"`
 }
 
 func (p Person) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+	var errors runtime.ValidationErrors
+	for i, item := range p.CarddavBindings {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("CarddavBindings[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(p.CreatedAt, "required"); err != nil {
+		errors = errors.Append("CreatedAt", err)
+	}
+	if err := typesValidator.Var(p.ParticipantIds, "required"); err != nil {
+		errors = errors.Append("ParticipantIds", err)
+	}
+	if err := typesValidator.Var(p.UpdatedAt, "required"); err != nil {
+		errors = errors.Append("UpdatedAt", err)
+	}
+	if err := typesValidator.Var(p.VcardUID, "required"); err != nil {
+		errors = errors.Append("VcardUID", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type PersonAddress struct {

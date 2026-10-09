@@ -515,7 +515,9 @@ func (s *Store) applyCardDAVResourceTx(
 		case len(ambiguous) > 0:
 			status, governance = CardDAVMappingAmbiguous, CardDAVGovernanceNone
 		case book.IsSubscribed:
-			personID, personRevision, err = s.createCardDAVImportedPersonTx(ctx, tx, book.ID, input)
+			personID, personRevision, err = s.createCardDAVImportedPersonTx(
+				ctx, tx, book.ID, resourceID, input,
+			)
 			if err != nil {
 				return false, false, err
 			}
@@ -886,9 +888,9 @@ func (s *Store) resolveCardDAVPersonTx(
 }
 
 func (s *Store) createCardDAVImportedPersonTx(
-	ctx context.Context, tx *loggedTx, bookID int64, input CardDAVRemoteResource,
+	ctx context.Context, tx *loggedTx, bookID, resourceID int64, input CardDAVRemoteResource,
 ) (*int64, *int64, error) {
-	uid, err := newVCardUID()
+	uid, err := s.cardDAVImportedPersonUIDTx(ctx, tx, resourceID, input)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1417,11 +1419,13 @@ func (s *Store) deleteUntouchedCardDAVImportedPersonTx(
 	if err := s.deleteIdentityMatchCandidatesForPersonTx(ctx, tx, *resource.PersonID); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM persons WHERE id = ? AND revision = ?`,
-		*resource.PersonID, revision); err != nil {
+	var deletedUID string
+	if err := tx.QueryRowContext(ctx,
+		`DELETE FROM persons WHERE id = ? AND revision = ? RETURNING vcard_uid`,
+		*resource.PersonID, revision).Scan(&deletedUID); err != nil {
 		return fmt.Errorf("delete untouched CardDAV imported person: %w", err)
 	}
-	return nil
+	return retireDeletedPersonUIDTx(ctx, tx, deletedUID)
 }
 
 func (s *Store) personHasCardDAVImportedProjectionTx(

@@ -2,6 +2,7 @@ package daemonclient
 
 import (
 	"net/http"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -272,4 +273,26 @@ func TestDaemonPeopleBrowserImplementsProfileReader(t *testing.T) {
 	var backend peoplebrowser.Backend = &PeopleBrowser{}
 	_, ok := backend.(peoplebrowser.ProfileReader)
 	assert.True(t, ok)
+}
+
+func TestPeopleBrowserGetPersonProfileByUIDRequiresCurrentDaemonSchema(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	var uidLookups atomic.Int32
+	engine := newPeopleBrowserTestEngine(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/health" {
+			writePeopleBrowserJSON(t, w, http.StatusOK,
+				`{"status":"ok","api_schema_version":"3.9.0"}`)
+			return
+		}
+		if r.URL.Path == "/api/v1/people/by-uid" {
+			uidLookups.Add(1)
+		}
+		http.NotFound(w, r)
+	}))
+
+	_, err := engine.GetPersonProfileByUID(t.Context(), "urn:uuid:person-example")
+	require.Error(err)
+	assert.Contains(err.Error(), "daemon API schema 3.10.0 or newer")
+	assert.Zero(uidLookups.Load(), "the unsupported route must not be sent to an older daemon")
 }

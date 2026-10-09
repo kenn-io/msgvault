@@ -15,6 +15,12 @@ type ProfileReader interface {
 	GetPersonProfile(ctx context.Context, personID int64) (*PersonProfile, error)
 }
 
+// ProfileUIDReader looks up a durable person by its canonical vCard UID or a
+// UID from a bound CardDAV resource. Implementations may reject ambiguous UIDs.
+type ProfileUIDReader interface {
+	GetPersonProfileByUID(ctx context.Context, uid string) (*PersonProfile, error)
+}
+
 // PersonProfile is one durable person's overview. Nil ContactState means the
 // activity projection has not computed a row for the person yet; Tracked is
 // nil when the daemon could not report tracking state; Brief is nil when the
