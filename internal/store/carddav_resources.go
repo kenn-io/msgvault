@@ -589,7 +589,7 @@ func (s *Store) applyCardDAVResourceTx(
 				}
 				rebasedEnvelope = &envelope
 			}
-			remoteOwnsDisplay, err = s.rebaseCardDAVImportedProjectionTx(ctx, tx, book.ID, *personID, input, *rebasedEnvelope)
+			remoteOwnsDisplay, err = s.rebaseCardDAVImportedProjectionTx(ctx, tx, book.ID, *personID, input, rebasedEnvelope)
 			if err != nil {
 				return false, false, err
 			}
@@ -961,7 +961,7 @@ func (s *Store) createCardDAVImportedPersonTx(
 			return nil, nil, err
 		}
 	}
-	if err := s.addCardDAVImportedProjectionTx(ctx, tx, bookID, personID, input, nil); err != nil {
+	if err := s.addCardDAVImportedProjectionTx(ctx, tx, bookID, personID, input, nil, nil); err != nil {
 		return nil, nil, err
 	}
 	revision := int64(1)
@@ -969,7 +969,7 @@ func (s *Store) createCardDAVImportedPersonTx(
 }
 
 func (s *Store) addCardDAVImportedProjectionTx(
-	ctx context.Context, tx *loggedTx, bookID, personID int64, input CardDAVRemoteResource, envelopes map[ContactAddressKind][]ValueEnvelopeInput,
+	ctx context.Context, tx *loggedTx, bookID, personID int64, input CardDAVRemoteResource, occurrences map[ContactAddressKind][]vcard.PropertyOccurrence, incoming *vcard.ResourceEnvelope,
 ) error {
 	sourceRef := fmt.Sprintf("carddav:%d", bookID)
 	baseEnvelope := ValueEnvelopeInput{
@@ -999,17 +999,38 @@ func (s *Store) addCardDAVImportedProjectionTx(
 			if index < len(point.identities) {
 				envelope.VCard = point.identities[index]
 			}
-			if index < len(envelopes[point.kind]) {
-				envelope.TypeTokens = envelopes[point.kind][index].TypeTokens
-				envelope.Pref = envelopes[point.kind][index].Pref
+			if index < len(occurrences[point.kind]) {
+				for _, parameter := range occurrences[point.kind][index].Property.Parameters {
+					for _, value := range parameter.Values {
+						switch strings.ToUpper(parameter.Name) {
+						case "TYPE":
+							envelope.TypeTokens = append(envelope.TypeTokens, value.Decoded)
+						case "PREF":
+							pref, err := strconv.Atoi(strings.TrimSpace(value.Decoded))
+							if err != nil {
+								return fmt.Errorf("parse CardDAV projection PREF: %w", err)
+							}
+							envelope.Pref = &pref
+						}
+					}
+				}
 			}
-			if _, err := s.addPersonContactPointTx(ctx, tx, personID, PersonContactPointInput{
+			added, err := s.addPersonContactPointTx(ctx, tx, personID, PersonContactPointInput{
 				AddressKind: point.kind, OriginalValue: value, Envelope: envelope,
-			}); err != nil {
+			})
+			if err != nil {
 				if point.kind == ContactAddressPhone && errors.Is(err, ErrNormalizationRejected) {
 					continue
 				}
 				return err
+			}
+			if incoming != nil && index < len(occurrences[point.kind]) {
+				identity := occurrences[point.kind][index].Identity
+				incoming.NativeMappings = slices.DeleteFunc(incoming.NativeMappings, func(mapping vcard.NativeMapping) bool { return mapping.Identity.Equal(identity) })
+				incoming.NativeMappings = append(incoming.NativeMappings, vcard.NativeMapping{
+					Identity: identity, SourceRef: incoming.SourceRef, Table: personContactPointsTableName,
+					RowID: added.Envelope.ID, Field: "original_value", Kind: vcard.HandlingNative,
+				})
 			}
 		}
 	}
@@ -1018,7 +1039,7 @@ func (s *Store) addCardDAVImportedProjectionTx(
 
 // Published imports rebase contact points while retaining their existing names.
 func (s *Store) rebaseCardDAVImportedProjectionTx(
-	ctx context.Context, tx *loggedTx, bookID, personID int64, input CardDAVRemoteResource, incoming vcard.ResourceEnvelope,
+	ctx context.Context, tx *loggedTx, bookID, personID int64, input CardDAVRemoteResource, incoming *vcard.ResourceEnvelope,
 ) (bool, error) {
 	sourceRef := fmt.Sprintf("carddav:%d", bookID)
 	var currentDisplay, priorImportedDisplay sql.NullString
@@ -1073,46 +1094,27 @@ func (s *Store) rebaseCardDAVImportedProjectionTx(
 		projection.Emails, projection.EmailIdentities = nil, nil
 		projection.Phones, projection.PhoneIdentities = nil, nil
 	}
-	envelopes := make(map[ContactAddressKind][]ValueEnvelopeInput)
+	occurrences := make(map[ContactAddressKind][]vcard.PropertyOccurrence)
 	for _, occurrence := range incoming.PropertyTree {
-		var envelope ValueEnvelopeInput
-		for _, parameter := range occurrence.Property.ParametersNamed("TYPE") {
-			for _, value := range parameter.Values {
-				envelope.TypeTokens = append(envelope.TypeTokens, value.Decoded)
-			}
-		}
-		for _, parameter := range occurrence.Property.ParametersNamed("PREF") {
-			for _, value := range parameter.Values {
-				pref, err := strconv.Atoi(value.Decoded)
-				if err != nil {
-					return false, fmt.Errorf("parse CardDAV projection PREF: %w", err)
-				}
-				envelope.Pref = &pref
-			}
-		}
 		index, ok := input.ProjectionIndexes[occurrence.Identity.Key()]
-		if !ok {
+		if !ok || skipped[occurrence.Identity.Key()] {
 			continue
 		}
-		skip := skipped[occurrence.Identity.Key()]
 		switch strings.ToUpper(occurrence.Property.Name) {
 		case "EMAIL":
-			if !skip {
-				projection.Emails = append(projection.Emails, input.Emails[index])
-				projection.EmailIdentities = append(projection.EmailIdentities, input.EmailIdentities[index])
-				envelopes[ContactAddressEmail] = append(envelopes[ContactAddressEmail], envelope)
-			}
+			projection.Emails = append(projection.Emails, input.Emails[index])
+			projection.EmailIdentities = append(projection.EmailIdentities, input.EmailIdentities[index])
+			occurrences[ContactAddressEmail] = append(occurrences[ContactAddressEmail], occurrence)
 		case "TEL":
-			if !skip {
-				projection.Phones = append(projection.Phones, input.Phones[index])
-				projection.PhoneIdentities = append(projection.PhoneIdentities, input.PhoneIdentities[index])
-				envelopes[ContactAddressPhone] = append(envelopes[ContactAddressPhone], envelope)
-			}
+			projection.Phones = append(projection.Phones, input.Phones[index])
+			projection.PhoneIdentities = append(projection.PhoneIdentities, input.PhoneIdentities[index])
+			occurrences[ContactAddressPhone] = append(occurrences[ContactAddressPhone], occurrence)
 		}
 	}
-	if err := s.addCardDAVImportedProjectionTx(ctx, tx, bookID, personID, projection, envelopes); err != nil {
+	if err := s.addCardDAVImportedProjectionTx(ctx, tx, bookID, personID, projection, occurrences, incoming); err != nil {
 		return false, err
 	}
+	incoming.Residue = vcard.ResidueWithMappings(incoming.PropertyTree, incoming.NativeMappings)
 	displayChanged := false
 	if remoteOwnsDisplay {
 		result, err := tx.ExecContext(ctx, `UPDATE persons SET display_name = NULLIF(?, '')

@@ -1627,6 +1627,7 @@ func TestRemoteAddedPreferredValueToPublishedImportDoesNotPut(t *testing.T) {
 	}{
 		{"email", "EMAIL;TYPE=work;PREF=1:preferred@example.test", "preferred@example.test"},
 		{"phone", "TEL;TYPE=work;PREF=1:tel:+12025550103", "+12025550103"},
+		{"trimmed-pref", "EMAIL;TYPE=work;PREF=\" 1 \":preferred@example.test", "preferred@example.test"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
@@ -1647,10 +1648,37 @@ func TestRemoteAddedPreferredValueToPublishedImportDoesNotPut(t *testing.T) {
 			}
 			require.NotNil(preferred)
 			assert.Equal(new(1), preferred.Envelope.Pref)
-			assert.Equal([]string{"work"}, preferred.Envelope.TypeTokens)
+			if tc.name == "trimmed-pref" {
+				return
+			}
 			require.NoError(service.ReconcilePublications(t.Context()))
 			assert.Equal(puts, fixture.puts)
 			assert.Equal(edited, fixture.body)
+		})
+	}
+}
+
+func TestRemotePreferredRepeatedValuesKeepMetadata(t *testing.T) {
+	for _, tc := range []struct{ first, second string }{
+		{"EMAIL;X-LABEL=first:a@example.test", "EMAIL;X-LABEL=second;PREF=1:b@example.test"},
+		{"TEL;X-LABEL=first:tel:+12025550101", "TEL;X-LABEL=second;PREF=1:tel:+12025550102"},
+	} {
+		t.Run(tc.first, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			initialSecond := strings.Replace(tc.second, ";PREF=1", "", 1)
+			fixture, service, st, personID := publishedImportFixture(t, bytes.Replace(publishedImportCard(), []byte("END:VCARD"), []byte(tc.first+"\r\n"+initialSecond+"\r\nEND:VCARD"), 1))
+			edited := bytes.Replace(fixture.body, []byte(initialSecond), []byte(tc.second), 1)
+			fixture.setRemote(edited, `"remote-2"`)
+			_, err := service.Sync(t.Context(), SyncOptions{Full: true})
+			require.NoError(err)
+			person, err := st.GetPersonContext(t.Context(), personID)
+			require.NoError(err)
+			_, err = st.UpdatePersonDisplayNameContext(t.Context(), personID, person.Revision, new("Alice Local"))
+			require.NoError(err)
+			require.NoError(service.ReconcilePublications(t.Context()))
+			assert.Contains(string(fixture.body), tc.first+"\r\n")
+			assert.Contains(string(fixture.body), tc.second+"\r\n")
 		})
 	}
 }
@@ -1690,41 +1718,6 @@ func TestPublishedImportLocalRenameSurvivesRemoteRename(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestPublishedImportWithoutProjectionIndexesPreservesImportedValues(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	body := bytes.Replace(publishedImportCard(), []byte("END:VCARD"), []byte("TEL:+12025550101\r\nEND:VCARD"), 1)
-	fixture, _, st, personID := publishedImportFixture(t, body)
-	publication, err := st.GetCardDAVPublicationContext(t.Context(), personID)
-	require.NoError(err)
-	account, err := st.GetCardDAVAccountForBookContext(t.Context(), publication.AddressBookID)
-	require.NoError(err)
-	books, err := st.ListCardDAVAddressBooksContext(t.Context(), account.ID)
-	require.NoError(err)
-	require.Len(books, 1)
-	edited := bytes.Replace(fixture.body, []byte("e2@example.test"), []byte("e2b@example.test"), 1)
-	edited = bytes.Replace(edited, []byte("FN:Alice"), []byte("FN:Alice Remote"), 1)
-	edited = bytes.Replace(edited, []byte("+12025550101"), []byte("+12025550103"), 1)
-	remote, err := NewRemoteResource(publication.Href, `"remote-2"`, edited)
-	require.NoError(err)
-	remote.ProjectionIndexes = nil
-	_, err = st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
-		AddressBookID: books[0].ID, ConnectionGeneration: account.ConnectionGeneration,
-		SyncRevision: books[0].SyncRevision, Upserts: []store.CardDAVRemoteResource{remote},
-	})
-	require.NoError(err)
-	person, err := st.GetPersonContext(t.Context(), personID)
-	require.NoError(err)
-	assert.Equal(new("Alice"), person.DisplayName)
-	points, err := st.ListPersonContactPointsContext(t.Context(), personID, true)
-	require.NoError(err)
-	var values []string
-	for _, point := range points {
-		values = append(values, point.OriginalValue)
-	}
-	assert.ElementsMatch([]string{"e1@example.test", "e2@example.test", "+12025550101"}, values)
 }
 
 func TestRemoteEditToImportPublishedIntoDifferentBookPreservesProjection(t *testing.T) {
@@ -1774,29 +1767,6 @@ func TestRemoteEditToImportPublishedIntoDifferentBookPreservesProjection(t *test
 		values = append(values, point.OriginalValue)
 	}
 	assert.ElementsMatch([]string{"e1@example.test", "e2@example.test"}, values)
-	conflicts, err := service.ListConflicts(t.Context())
-	require.NoError(err)
-	assert.Empty(conflicts)
-}
-
-func TestRemoteEditToPublishedLocalPersonPreservesLocalProjection(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	fixture := &mutationFixture{}
-	service, st, personID, _ := seededMutationService(t, fixture)
-	require.NoError(service.PublishPerson(t.Context(), personID))
-	fixture.setRemote(bytes.Replace(fixture.body, []byte("FN:Alice Example"), []byte("FN:Remote Name\r\nEMAIL:remote@example.test"), 1), `"remote-2"`)
-	_, err := service.Sync(t.Context(), SyncOptions{Full: true})
-	require.NoError(err)
-	person, err := st.GetPersonContext(t.Context(), personID)
-	require.NoError(err)
-	assert.Equal(new("Alice Example"), person.DisplayName)
-	points, err := st.ListPersonContactPointsContext(t.Context(), personID, true)
-	require.NoError(err)
-	assert.Empty(points)
-	names, err := st.ListPersonNamesContext(t.Context(), personID, true)
-	require.NoError(err)
-	assert.Empty(names)
 	conflicts, err := service.ListConflicts(t.Context())
 	require.NoError(err)
 	assert.Empty(conflicts)

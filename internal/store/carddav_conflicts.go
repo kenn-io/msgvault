@@ -1318,7 +1318,7 @@ func (s *Store) ResolveCardDAVConflictRemoteContext(
 				}
 				preparedEnvelope = &envelope
 				remoteOwnsDisplay, err = s.rebaseCardDAVImportedProjectionTx(
-					ctx, tx, book.ID, *mapping.PersonID, input.Remote, envelope,
+					ctx, tx, book.ID, *mapping.PersonID, input.Remote, &envelope,
 				)
 				if err != nil {
 					return err
