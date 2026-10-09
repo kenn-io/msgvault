@@ -151,7 +151,9 @@ describe('TranscriptHits', () => {
     expect(request.signal.aborted).toBe(true);
     finish(Response.json(report()));
     await vi.advanceTimersByTimeAsync(0);
-    expect(screen.getByText('Recording results expired.')).toBeTruthy();
+    expect(screen.getByText('Recording search timed out.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Refresh' })).toBeNull();
     expect(screen.queryByRole('link')).toBeNull();
     expect(fetchFn).toHaveBeenCalledTimes(1);
     view.unmount();
