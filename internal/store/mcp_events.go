@@ -68,11 +68,21 @@ type mcpStoreError string
 
 func (e mcpStoreError) Error() string { return string(e) }
 
+// mcpRedactedError prints only a fixed reason, but keeps the driver error
+// reachable through errors.Is/As so busy and deadlock retry loops still work.
+type mcpRedactedError struct{ cause error }
+
+func (e mcpRedactedError) Error() string { return "events_storage_unavailable" }
+func (e mcpRedactedError) Unwrap() error { return e.cause }
+
 // Driver messages can contain callback URLs, ciphertext, or archive content.
 // Only fixed reasons and cancellation cross the Events Store boundary.
 func mcpSafeError(err error) error {
 	if err == nil {
 		return nil
+	}
+	if redacted, ok := errors.AsType[mcpRedactedError](err); ok {
+		return redacted
 	}
 	if safe, ok := errors.AsType[mcpStoreError](err); ok {
 		return safe
@@ -83,7 +93,7 @@ func mcpSafeError(err error) error {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return context.DeadlineExceeded
 	}
-	return mcpStoreError("events_storage_unavailable")
+	return mcpRedactedError{cause: err}
 }
 
 const mcpTimeLayout = "2006-01-02T15:04:05.000000000Z"
