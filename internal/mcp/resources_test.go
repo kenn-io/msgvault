@@ -634,7 +634,7 @@ func TestMCPDaemonRequestErrorsBecomeSafeToolResults(t *testing.T) {
 			name: "hybrid account operator", path: "/api/v1/search", code: "unsupported_filter_mode",
 			status: http.StatusBadRequest, tool: ToolSemanticSearchMessages,
 			args: map[string]any{"query": "needle", "mode": searchModeHybrid},
-			want: "unsupported_filter_mode: a filter is not supported in this search mode; account: and received: work only in search_metadata and search_message_bodies",
+			want: "unsupported_filter_mode: a filter is not supported in this search mode",
 			opts: func(client *daemonclient.Client) ServeOptions {
 				return ServeOptions{Engine: &querytest.MockEngine{}, HybridSearcher: task4DaemonHybridErrorSearcher{client}}
 			},

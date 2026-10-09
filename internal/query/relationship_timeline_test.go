@@ -3,6 +3,7 @@ package query
 import (
 	"context"
 	"fmt"
+	"go.kenn.io/msgvault/internal/search"
 	"strconv"
 	"testing"
 	"time"
@@ -492,4 +493,32 @@ func TestRelationshipTimelineHasAttachmentsUsesMessageFlag(t *testing.T) {
 	assert.False(result.Rows[1].HasAttachments, "an unflagged email must not gain an indicator")
 	assert.True(result.Rows[2].HasAttachments,
 		"a chat burst must inherit the flag from its messages")
+}
+
+// TestRelationshipTimelineHonorsAccountScopes verifies an Explore account
+// pick narrows a person's timeline. The fixture's messages carry no account:
+// an address pick keeps none of them, and an Unattributed pick keeps the
+// email and calendar rows but not the chat burst, which no account covers.
+func TestRelationshipTimelineHonorsAccountScopes(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	engine, canonicalID, emailID, meetingID := buildTimelineFixture(t)
+	keys := func(scope search.AccountScope) []string {
+		result, err := engine.RelationshipTimeline(context.Background(), RelationshipTimelineRequest{
+			CanonicalID: canonicalID, Timezone: "America/Chicago", Limit: 10,
+			Context: Context{AccountScopes: []search.AccountScope{scope}},
+		})
+		require.NoError(err)
+		out := make([]string, 0, len(result.Rows))
+		for _, row := range result.Rows {
+			out = append(out, row.Key)
+		}
+		return out
+	}
+	assert.Empty(keys(search.AccountScope{Addresses: []string{"work@example.org"}}),
+		"an address pick excludes mail attributed to no address")
+	assert.ElementsMatch([]string{
+		"message:" + strconv.FormatInt(emailID, 10), "message:" + strconv.FormatInt(meetingID, 10),
+	}, keys(search.AccountScope{Unattributed: true}))
 }

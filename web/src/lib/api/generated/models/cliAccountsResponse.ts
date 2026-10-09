@@ -8,5 +8,6 @@ export interface CliAccountsResponse {
   as_of?: string;
   counts_pending?: boolean;
   stale?: boolean;
+  virtual_accounts_unavailable?: boolean;
   [key: string]: unknown;
 }

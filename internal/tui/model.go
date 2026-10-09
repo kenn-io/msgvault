@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"strings"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"go.kenn.io/msgvault/internal/peoplebrowser"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/update"
 )
 
@@ -98,9 +100,12 @@ const (
 	sourceScopeAll sourceScopeKind = iota
 	sourceScopeAccount
 	sourceScopeCollection
+	sourceScopeVirtual
 )
 
 type sourceScope struct {
+	virtualAccount *store.VirtualAccount
+
 	kind           sourceScopeKind
 	accountID      *int64
 	collectionName string
@@ -113,9 +118,12 @@ const (
 	scopeOptionAll scopeOptionKind = iota
 	scopeOptionAccount
 	scopeOptionCollection
+	scopeOptionVirtual
 )
 
 type scopeOption struct {
+	virtualAccount *store.VirtualAccount
+
 	kind       scopeOptionKind
 	label      string
 	accountID  *int64
@@ -132,6 +140,58 @@ func accountSourceScope(id *int64) sourceScope {
 	return sourceScope{kind: sourceScopeAccount, accountID: &idCopy}
 }
 
+func virtualSourceScope(v store.VirtualAccount) sourceScope {
+	id := v.SourceID
+	return sourceScope{kind: sourceScopeVirtual, accountID: &id, virtualAccount: &v}
+}
+
+func virtualAccountLabel(v store.VirtualAccount) string {
+	if !v.Unattributed {
+		return v.AccountAddress
+	}
+	if v.PendingCount > 0 {
+		return fmt.Sprintf("Unattributed (%d awaiting repair)", v.PendingCount)
+	}
+	return "Unattributed"
+}
+
+// showVirtualChildren reports whether a source's picker entry should list
+// its identities and unattributed rows: when they divide its mail, or when
+// some of it has no confirmed account or is still waiting for repair.
+func showVirtualChildren(account query.AccountInfo) bool {
+	named := 0
+	for _, v := range account.VirtualAccounts {
+		switch {
+		case v.Unattributed:
+			if v.MessageCount+v.SourceDeletedCount > 0 || v.PendingCount > 0 {
+				return true
+			}
+		case !strings.EqualFold(v.AccountAddress, sourceMailbox(account.Identifier)):
+			return true
+		default:
+			named++
+		}
+	}
+	return named > 1
+}
+
+// sourceMailbox returns the mailbox of a source identifier, reading the
+// username of an "imaps://user@host" identifier.
+func sourceMailbox(identifier string) string {
+	_, rest, ok := strings.Cut(identifier, "://")
+	if !ok {
+		return identifier
+	}
+	at := strings.LastIndex(rest, "@")
+	if at <= 0 {
+		return identifier
+	}
+	if user, err := url.PathUnescape(rest[:at]); err == nil {
+		return user
+	}
+	return rest[:at]
+}
+
 func collectionSourceScope(collection query.CollectionScope) sourceScope {
 	return sourceScope{
 		kind:           sourceScopeCollection,
@@ -141,6 +201,9 @@ func collectionSourceScope(collection query.CollectionScope) sourceScope {
 }
 
 func (s sourceScope) title(accounts []query.AccountInfo) string {
+	if s.virtualAccount != nil {
+		return virtualAccountLabel(*s.virtualAccount)
+	}
 	if s.kind == sourceScopeCollection {
 		return "Collection: " + s.collectionName
 	}
@@ -158,9 +221,20 @@ func (s sourceScope) title(accounts []query.AccountInfo) string {
 func (s sourceScope) apply(filter *query.MessageFilter) {
 	filter.SourceID = nil
 	filter.SourceIDs = nil
+	filter.AccountScopes = nil
 	switch s.kind {
 	case sourceScopeAll:
 		return
+	case sourceScopeVirtual:
+		if s.virtualAccount != nil {
+			id := s.virtualAccount.SourceID
+			filter.SourceID = &id
+			scope := search.AccountScope{SourceID: &id, Unattributed: s.virtualAccount.Unattributed}
+			if !s.virtualAccount.Unattributed {
+				scope.Addresses = []string{s.virtualAccount.AccountAddress}
+			}
+			filter.AccountScopes = []search.AccountScope{scope}
+		}
 	case sourceScopeAccount:
 		if s.accountID != nil {
 			id := *s.accountID
@@ -190,6 +264,14 @@ func (m Model) scopeOptions() []scopeOption {
 	for _, account := range m.accounts {
 		id := account.ID
 		options = append(options, scopeOption{kind: scopeOptionAccount, label: account.Identifier, accountID: &id})
+		if showVirtualChildren(account) {
+			for _, v := range account.VirtualAccounts {
+				child := v
+				options = append(options, scopeOption{
+					kind: scopeOptionVirtual, label: "  " + virtualAccountLabel(v), virtualAccount: &child, accountID: &id,
+				})
+			}
+		}
 	}
 	for _, collection := range m.collectionScopes {
 		options = append(options, scopeOption{kind: scopeOptionCollection, label: collection.Name,
@@ -214,6 +296,9 @@ func (s sourceScope) matches(option scopeOption) bool {
 	switch option.kind {
 	case scopeOptionAll:
 		return s.kind == sourceScopeAll
+	case scopeOptionVirtual:
+		return s.kind == sourceScopeVirtual && s.virtualAccount != nil && option.virtualAccount != nil &&
+			s.virtualAccount.Key == option.virtualAccount.Key
 	case scopeOptionAccount:
 		return s.kind == sourceScopeAccount && s.accountID != nil && option.accountID != nil && *s.accountID == *option.accountID
 	case scopeOptionCollection:
@@ -338,6 +423,10 @@ type Model struct {
 	collectionScopeLister query.CollectionScopeLister
 	collectionScopes      []query.CollectionScope
 	sourceScope           sourceScope
+
+	// accountCatalogRetries counts catalog rereads after the daemon reported
+	// the virtual account catalog unavailable.
+	accountCatalogRetries int
 
 	// Content filters
 	filters struct {
@@ -565,10 +654,22 @@ type statsLoadedMsg struct {
 	presentationGeneration uint64
 }
 
-// accountsLoadedMsg is sent when accounts are loaded.
+// accountsLoadedMsg is sent when accounts are loaded. catalogUnavailable
+// reports that the virtual account catalog could not be read, so accounts
+// carry no receiving-address children.
 type accountsLoadedMsg struct {
-	accounts []query.AccountInfo
-	err      error
+	accounts           []query.AccountInfo
+	catalogUnavailable bool
+	err                error
+}
+
+// accountCatalogRetryMsg rereads accounts after an unavailable catalog.
+type accountCatalogRetryMsg struct{}
+
+// accountCatalogRetryDelays spaces catalog rereads, so receiving addresses
+// appear once a slow first catalog read finishes.
+var accountCatalogRetryDelays = []time.Duration{
+	2 * time.Second, 5 * time.Second, 10 * time.Second, 20 * time.Second, 30 * time.Second,
 }
 
 type collectionScopesLoadedMsg struct {
@@ -709,6 +810,11 @@ func (m Model) loadStats() tea.Cmd {
 			}
 			opts.SourceID = m.sourceScope.accountID
 			opts.SourceIDs = copySourceIDs(m.sourceScope.sourceIDs)
+			if m.sourceScope.virtualAccount != nil {
+				filter := emailScopedMessageFilter(query.MessageFilter{})
+				m.sourceScope.apply(&filter)
+				opts.Filter = &filter
+			}
 			stats, err := m.engine.GetTotalStats(context.Background(), opts)
 			return statsLoadedMsg{stats: stats, err: err, requestID: requestID, presentationGeneration: presentationGeneration}
 		},
@@ -729,9 +835,21 @@ func (m Model) loadAccounts() tea.Cmd {
 					"error", err)
 				return accountsLoadedMsg{err: err}
 			}
+			catalogUnavailable := false
+			if lister, ok := m.engine.(query.VirtualAccountLister); ok {
+				// The picker still works without children when the catalog fails.
+				if virtual, err := lister.ListVirtualAccounts(ctx); err != nil {
+					slog.Warn("tui loadAccounts: ListVirtualAccounts failed", "error", err)
+					catalogUnavailable = true
+				} else {
+					for i := range accounts {
+						accounts[i].VirtualAccounts = virtual[accounts[i].ID]
+					}
+				}
+			}
 			slog.Info("tui loadAccounts ok",
 				"accounts", len(accounts))
-			return accountsLoadedMsg{accounts: accounts}
+			return accountsLoadedMsg{accounts: accounts, catalogUnavailable: catalogUnavailable}
 		},
 		func(r any) tea.Msg {
 			return accountsLoadedMsg{err: fmt.Errorf("accounts panic: %v", r)}
@@ -1281,6 +1399,8 @@ func (m Model) Update(msg tea.Msg) (result tea.Model, command tea.Cmd) {
 		return m.handleStatsLoaded(msg)
 	case accountsLoadedMsg:
 		return m.handleAccountsLoaded(msg)
+	case accountCatalogRetryMsg:
+		return m, m.loadAccounts()
 	case collectionScopesLoadedMsg:
 		return m.handleCollectionScopesLoaded(msg)
 	case updateCheckMsg:
@@ -1613,10 +1733,90 @@ func (m Model) handleStatsLoaded(msg statsLoadedMsg) (tea.Model, tea.Cmd) {
 
 // handleAccountsLoaded processes accounts load completion.
 func (m Model) handleAccountsLoaded(msg accountsLoadedMsg) (tea.Model, tea.Cmd) {
-	if msg.err == nil {
-		m.accounts = msg.accounts
+	if msg.err != nil {
+		// A failed reread during catalog recovery keeps to the backoff.
+		if m.accountCatalogRetries > 0 {
+			return m.scheduleAccountCatalogRetry()
+		}
+		return m, nil
 	}
-	return m, nil
+	if msg.catalogUnavailable {
+		keepKnownVirtualAccounts(msg.accounts, m.accounts)
+	}
+	m.replaceAccounts(msg.accounts)
+	if !msg.catalogUnavailable {
+		m.accountCatalogRetries = 0
+		return m, nil
+	}
+	return m.scheduleAccountCatalogRetry()
+}
+
+// scheduleAccountCatalogRetry rereads accounts after the next backoff delay,
+// until the delays run out.
+func (m Model) scheduleAccountCatalogRetry() (tea.Model, tea.Cmd) {
+	if m.accountCatalogRetries >= len(accountCatalogRetryDelays) {
+		return m, nil
+	}
+	delay := accountCatalogRetryDelays[m.accountCatalogRetries]
+	m.accountCatalogRetries++
+	return m, tea.Tick(delay, func(time.Time) tea.Msg { return accountCatalogRetryMsg{} })
+}
+
+// keepKnownVirtualAccounts gives an account that arrived without receiving
+// addresses the ones previous held. The daemon already passes along its last
+// known children, so only accounts it has none for fall back.
+func keepKnownVirtualAccounts(accounts, previous []query.AccountInfo) {
+	known := make(map[int64][]store.VirtualAccount, len(previous))
+	for _, account := range previous {
+		known[account.ID] = account.VirtualAccounts
+	}
+	for i := range accounts {
+		if len(accounts[i].VirtualAccounts) == 0 {
+			accounts[i].VirtualAccounts = known[accounts[i].ID]
+		}
+	}
+}
+
+// replaceAccounts swaps in a new account list and keeps an open account
+// selector on the option it highlighted, whose position the new list can
+// shift.
+func (m *Model) replaceAccounts(accounts []query.AccountInfo) {
+	var highlighted *scopeOption
+	if m.modal == modalAccountSelector {
+		if options := m.selectorOptions(); m.modalCursor >= 0 && m.modalCursor < len(options) {
+			highlighted = &options[m.modalCursor]
+		}
+	}
+	m.accounts = accounts
+	if highlighted == nil {
+		return
+	}
+	for i, option := range m.selectorOptions() {
+		if sameScopeOption(*highlighted, option) {
+			m.modalCursor = i
+			return
+		}
+	}
+	m.modalCursor = 0
+}
+
+// sameScopeOption reports whether two selector options pick the same scope.
+func sameScopeOption(a, b scopeOption) bool {
+	if a.kind != b.kind {
+		return false
+	}
+	switch a.kind {
+	case scopeOptionAll:
+		return true
+	case scopeOptionVirtual:
+		return a.virtualAccount != nil && b.virtualAccount != nil && a.virtualAccount.Key == b.virtualAccount.Key
+	case scopeOptionAccount:
+		return a.accountID != nil && b.accountID != nil && *a.accountID == *b.accountID
+	case scopeOptionCollection:
+		return a.collection.Name == b.collection.Name
+	default:
+		return false
+	}
 }
 
 func (m Model) handleCollectionScopesLoaded(msg collectionScopesLoadedMsg) (tea.Model, tea.Cmd) {

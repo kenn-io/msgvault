@@ -95,7 +95,14 @@ address and calendar events of that calendar.
 - Confirming or removing an address updates the messages it affects before
   the command returns. If that update is interrupted, the next sync finishes
   it.
-- `--mode=vector` and `--mode=hybrid` reject both operators; use `--mode=fts`.
+- Both operators work in full-text, vector, and hybrid search.
+
+In the TUI account picker and the Web UI's Explore account filter, a source
+whose confirmed addresses split its mail lists each address under it, plus an
+Unattributed entry for mail no confirmed address claims. The Unattributed
+entry also appears while older mail still waits for repair. MCP tools take the
+same entries as their `account` argument: the keys that `get_stats` lists
+(`identity:...` or `unattributed:...`), or an exact address.
 
 Delivery headers are routing hints, not proof that you own an address, and
 attribution never lets msgvault send from it. The

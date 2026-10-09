@@ -45,6 +45,7 @@ import {
 
 const STATE_PARAMETER = 'explore';
 const FILTER_DIMENSIONS = new Set([
+  'account',
   'source',
   'identity',
   'participant',
