@@ -170,6 +170,7 @@ import type {
   GetPersonActivityDayPathParameters,
   GetPersonBriefEnrollmentPathParameters,
   GetPersonBriefPathParameters,
+  GetPersonByUIDParams,
   GetPersonContactStatePathParameters,
   GetPersonMergePathParameters,
   GetPersonMergeSnapshotPathParameters,
@@ -270,6 +271,8 @@ import type {
   MessageDetail,
   MessageListResponse,
   MessageRecordingsResponse,
+  MuesliRemoteRequest,
+  MuesliRemoteResult,
   OperationRunDetail,
   OperationRunsResponse,
   OperationStatusResponse,
@@ -1935,6 +1938,23 @@ export const importMeeting = (
   );
 };
 /**
+ * @summary Import one recorder-local Muesli meeting
+ */
+export const importMuesli = (
+  muesliRemoteRequest: MuesliRemoteRequest,
+  options?: SecondParameter<typeof orvalFetch<MuesliRemoteResult>>,
+) => {
+  return orvalFetch<MuesliRemoteResult>(
+    {
+      url: `/api/v1/import/muesli`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: muesliRemoteRequest,
+    },
+    options,
+  );
+};
+/**
  * @summary Start a bounded historical import
  */
 export const createImportJob = (
@@ -2606,6 +2626,19 @@ export const createPerson = (
       headers: { "Content-Type": "application/json" },
       data: createPersonRequest,
     },
+    options,
+  );
+};
+/**
+ * Resolves the person's current vCard UID, a retired UID that still aliases the person, or the UID of a CardDAV resource mapped to the person. Returns a conflict when one remote UID maps to different people.
+ * @summary Look up a durable person by vCard or CardDAV UID
+ */
+export const getPersonByUID = (
+  params: GetPersonByUIDParams,
+  options?: SecondParameter<typeof orvalFetch<Person>>,
+) => {
+  return orvalFetch<Person>(
+    { url: `/api/v1/people/by-uid`, method: "GET", params },
     options,
   );
 };

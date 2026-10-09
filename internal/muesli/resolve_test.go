@@ -395,3 +395,21 @@ func TestPreviouslyObservedSharedPhoneDoesNotGainNewLinks(t *testing.T) {
 	require.NoError(err)
 	assert.NotContains(t, members, f.phoneID, "an earlier observation cannot link a currently shared address")
 }
+
+func TestImportCountsIdentityOnlyChanges(t *testing.T) {
+	assert := assert.New(t)
+	f := newResolveFixture(t, fixtureCard{uniqueID: "CARD-A:ABPerson", emails: []string{"alex@example.com"}, phones: []string{"+16045550100"}})
+	duplicatePath := filepath.Join(f.contacts, "Sources", "B", addressBookFile)
+	newAddressBookStore(t, duplicatePath, fixtureCard{uniqueID: "CARD-B:ABPerson", phones: []string{"+16045550100"}})
+	meetingID := insertRow(t, f.muesli, "meetings", completedMeeting(nil))
+	f.addContactParticipant(t, meetingID, "contact:CARD-A:ABPerson", "Alex Example")
+	first := f.sync(t, ImportOptions{})
+	assert.Equal(int64(1), first.MeetingsAdded)
+	duplicate := newFixtureDB(t, duplicatePath, "")
+	_, err := duplicate.Exec(`DELETE FROM ZABCDPHONENUMBER`)
+	require.NoError(t, err)
+	second := f.sync(t, ImportOptions{})
+	assert.Equal(int64(1), second.MeetingsUpdated, "identity-only link must refresh cache policy")
+	third := f.sync(t, ImportOptions{})
+	assert.Zero(third.MeetingsUpdated)
+}

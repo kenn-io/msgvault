@@ -1415,6 +1415,18 @@ func (c CardDAVAddressBookIdentityResponse) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(c))
 }
 
+type CardDAVBinding struct {
+	Book          string `json:"book" validate:"required"`
+	Connection    string `json:"connection" validate:"required"`
+	Href          string `json:"href" validate:"required"`
+	MappingStatus string `json:"mapping_status" validate:"required"`
+	RemoteUID     string `json:"remote_uid" validate:"required"`
+}
+
+func (c CardDAVBinding) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(c))
+}
+
 type CardDAVBookResponse struct {
 	AccountID          *int64  `json:"account_id,omitempty"`
 	Connection         *string `json:"connection,omitzero"`
@@ -3094,18 +3106,43 @@ func (d DirectoryPeopleResponse) Validate() error {
 }
 
 type DirectoryPersonSummary struct {
-	Categories     []string   `json:"categories" validate:"required"`
-	ContactState   string     `json:"contact_state" validate:"required"`
-	DisplayName    *string    `json:"display_name,omitzero"`
-	ID             int64      `json:"id"`
-	LastContactAt  *time.Time `json:"last_contact_at,omitempty"`
-	Organizations  []string   `json:"organizations" validate:"required"`
-	PrimaryChannel *string    `json:"primary_channel,omitzero"`
-	Revision       int64      `json:"revision"`
+	CarddavBindings []CardDAVBinding `json:"carddav_bindings" validate:"required"`
+	Categories      []string         `json:"categories" validate:"required"`
+	ContactState    string           `json:"contact_state" validate:"required"`
+	DisplayName     *string          `json:"display_name,omitzero"`
+	ID              int64            `json:"id"`
+	LastContactAt   *time.Time       `json:"last_contact_at,omitempty"`
+	Organizations   []string         `json:"organizations" validate:"required"`
+	PrimaryChannel  *string          `json:"primary_channel,omitzero"`
+	Revision        int64            `json:"revision"`
+	VcardUID        string           `json:"vcard_uid" validate:"required"`
 }
 
 func (d DirectoryPersonSummary) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(d))
+	var errors runtime.ValidationErrors
+	for i, item := range d.CarddavBindings {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("CarddavBindings[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(d.Categories, "required"); err != nil {
+		errors = errors.Append("Categories", err)
+	}
+	if err := typesValidator.Var(d.ContactState, "required"); err != nil {
+		errors = errors.Append("ContactState", err)
+	}
+	if err := typesValidator.Var(d.Organizations, "required"); err != nil {
+		errors = errors.Append("Organizations", err)
+	}
+	if err := typesValidator.Var(d.VcardUID, "required"); err != nil {
+		errors = errors.Append("VcardUID", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type Disclosure struct {
@@ -6902,6 +6939,161 @@ func (m MonthTotals) Validate() error {
 	return errors
 }
 
+type MuesliRemoteMeeting struct {
+	ContactsState MuesliRemoteMeetingContactsState `json:"contacts_state" validate:"required"`
+	Participants  []MuesliRemoteParticipant        `json:"participants,omitempty"`
+	Record        MuesliRemoteRecord               `json:"record"`
+}
+
+func (m MuesliRemoteMeeting) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(m.ContactsState).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("ContactsState", err)
+		}
+	}
+	for i, item := range m.Participants {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Participants[%d]", i), err)
+			}
+		}
+	}
+	if v, ok := any(m.Record).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Record", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type MuesliRemoteParticipant struct {
+	Anchor                *string                            `json:"anchor,omitzero" validate:"omitempty,max=78"`
+	ContactReviewPhones   []string                           `json:"contact_review_phones,omitempty"`
+	Email                 *string                            `json:"email,omitzero"`
+	Emails                []string                           `json:"emails,omitempty"`
+	LinkExcludedAddresses []string                           `json:"link_excluded_addresses,omitempty"`
+	Name                  *string                            `json:"name,omitzero" validate:"omitempty,max=1024"`
+	Phones                []string                           `json:"phones,omitempty"`
+	Ref                   *string                            `json:"ref,omitzero" validate:"omitempty,max=16"`
+	Resolution            *MuesliRemoteParticipantResolution `json:"resolution,omitempty"`
+	SkippedPhones         *int64                             `json:"skipped_phones,omitempty"`
+	Source                *string                            `json:"source,omitzero"`
+}
+
+func (m MuesliRemoteParticipant) Validate() error {
+	var errors runtime.ValidationErrors
+	if m.Anchor != nil {
+		if err := typesValidator.Var(m.Anchor, "omitempty,max=78"); err != nil {
+			errors = errors.Append("Anchor", err)
+		}
+	}
+	if m.Name != nil {
+		if err := typesValidator.Var(m.Name, "omitempty,max=1024"); err != nil {
+			errors = errors.Append("Name", err)
+		}
+	}
+	if m.Ref != nil {
+		if err := typesValidator.Var(m.Ref, "omitempty,max=16"); err != nil {
+			errors = errors.Append("Ref", err)
+		}
+	}
+	if m.Resolution != nil {
+		if v, ok := any(m.Resolution).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Resolution", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type MuesliRemoteRecord struct {
+	CalendarEventID  *string  `json:"calendar_event_id,omitzero"`
+	CalendarSeriesID *string  `json:"calendar_series_id,omitzero"`
+	CalendarSource   *string  `json:"calendar_source,omitzero"`
+	CreatedAt        string   `json:"created_at" validate:"required"`
+	DurationSeconds  *float64 `json:"duration_seconds,omitempty"`
+	EndTime          *string  `json:"end_time,omitzero"`
+	Folder           *string  `json:"folder,omitzero"`
+	FollowUpToID     *int64   `json:"follow_up_to_id,omitempty"`
+	FormattedNotes   *string  `json:"formatted_notes,omitzero"`
+	ID               int64    `json:"id"`
+	ManualNotes      *string  `json:"manual_notes,omitzero"`
+	RawTranscript    *string  `json:"raw_transcript,omitzero"`
+	Source           *string  `json:"source,omitzero"`
+	StartTime        string   `json:"start_time" validate:"required"`
+	Status           *string  `json:"status,omitzero"`
+	TemplateKind     *string  `json:"template_kind,omitzero"`
+	TemplateName     *string  `json:"template_name,omitzero"`
+	Title            string   `json:"title" validate:"required"`
+	WordCount        *int64   `json:"word_count,omitempty"`
+}
+
+func (m MuesliRemoteRecord) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(m))
+}
+
+type MuesliRemoteRequest struct {
+	Action       MuesliRemoteRequestAction `json:"action" validate:"required"`
+	BuildCache   *bool                     `json:"build_cache,omitempty"`
+	Full         *bool                     `json:"full,omitempty"`
+	Meeting      *MuesliRemoteMeeting      `json:"meeting,omitempty"`
+	NoBuildCache *bool                     `json:"no_build_cache,omitempty"`
+	Source       Source                    `json:"source"`
+}
+
+func (m MuesliRemoteRequest) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(m.Action).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Action", err)
+		}
+	}
+	if m.Meeting != nil {
+		if v, ok := any(m.Meeting).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Meeting", err)
+			}
+		}
+	}
+	if v, ok := any(m.Source).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Source", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type MuesliRemoteResult struct {
+	Changed   bool                     `json:"changed"`
+	MessageID *int64                   `json:"message_id,omitempty"`
+	SourceID  int64                    `json:"source_id"`
+	Status    MuesliRemoteResultStatus `json:"status" validate:"required"`
+}
+
+func (m MuesliRemoteResult) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(m.Status).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Status", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type MutationResult struct {
 	Name        string `json:"name" validate:"required"`
 	SourceCount *int64 `json:"source_count,omitempty"`
@@ -8566,17 +8758,41 @@ func (p PeopleResponse) Validate() error {
 }
 
 type Person struct {
-	CreatedAt      time.Time `json:"created_at" validate:"required"`
-	DisplayName    *string   `json:"display_name,omitzero"`
-	ID             int64     `json:"id"`
-	ParticipantIds []int64   `json:"participant_ids" validate:"required"`
-	Revision       int64     `json:"revision"`
-	UpdatedAt      time.Time `json:"updated_at" validate:"required"`
-	VcardUID       string    `json:"vcard_uid" validate:"required"`
+	CarddavBindings []CardDAVBinding `json:"carddav_bindings,omitempty"`
+	CreatedAt       time.Time        `json:"created_at" validate:"required"`
+	DisplayName     *string          `json:"display_name,omitzero"`
+	ID              int64            `json:"id"`
+	ParticipantIds  []int64          `json:"participant_ids" validate:"required"`
+	Revision        int64            `json:"revision"`
+	UpdatedAt       time.Time        `json:"updated_at" validate:"required"`
+	VcardUID        string           `json:"vcard_uid" validate:"required"`
 }
 
 func (p Person) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+	var errors runtime.ValidationErrors
+	for i, item := range p.CarddavBindings {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("CarddavBindings[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(p.CreatedAt, "required"); err != nil {
+		errors = errors.Append("CreatedAt", err)
+	}
+	if err := typesValidator.Var(p.ParticipantIds, "required"); err != nil {
+		errors = errors.Append("ParticipantIds", err)
+	}
+	if err := typesValidator.Var(p.UpdatedAt, "required"); err != nil {
+		errors = errors.Append("UpdatedAt", err)
+	}
+	if err := typesValidator.Var(p.VcardUID, "required"); err != nil {
+		errors = errors.Append("VcardUID", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type PersonAddress struct {

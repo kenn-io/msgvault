@@ -1082,7 +1082,10 @@ msgvault add-muesli [identifier]
 The matching `[[muesli]]` entry requires `account_email`; `db_path` defaults
 to `~/Library/Application Support/Muesli/muesli.db`. With one entry, the
 identifier may be omitted. The command fails unless the file opens read-only
-as a Muesli database on the daemon's host.
+as a Muesli database on the recorder in remote mode, or on the daemon's host
+in same-host mode. Remote mode registers the stable source with the daemon
+without transferring database paths, and the next sync uploads every meeting. It rejects changes to a source's recorder
+identity.
 
 ---
 
@@ -1109,9 +1112,66 @@ identifier, every configured `[[muesli]]` source is synced.
 | `--limit` | `0` | Maximum meetings processed per run (`0` = unlimited) |
 | `--after` | — | Only meetings that start on or after this UTC date (`YYYY-MM-DD`) |
 | `--full` | `false` | Rewrite every archived meeting, even unchanged ones, to refresh attribution |
+| `--watch` | `false` | In remote mode, run an initial scan and serial rescans using enabled sources' 5-field cron schedules |
+| `--build-cache` | `false` | Explicitly request an analytics cache refresh after the run, including an empty run |
+| `--no-build-cache` | `false` | Skip the cache refresh request |
 
-See [Meeting Transcripts](/docs/usage/meetings/#muesli) for setup and what gets
-stored.
+`--watch` requires an enabled source with a schedule and a configured remote
+archive. Keep the process running. It cannot combine with `--limit`, `--after`,
+`--full`, or `--build-cache`. Transport failures retry on the next scheduled
+scan, including a daemon that is unreachable or rate limiting when watch
+starts. An API schema mismatch or rejected credentials stop the watcher. Watch reports a failure category and a suggested next step without logging
+meeting or Contacts values. Run a manual sync for detailed diagnostics. Same-host
+automatic sync continues to use the daemon scheduler.
+
+Routine imports respect the existing automatic cache-refresh policy. Unchanged
+remote uploads do not request a refresh. A same-host scheduled scan always
+checks the cache, so a build that `min_rebuild_interval` held back after a hook
+or manual import still runs once the interval ends. Cache flags are mutually
+exclusive. Remote transfers are limited to 16 MiB per request, 200 participants,
+and 50 distinct identities and 50 enrichment entries per participant. Review-only
+Contacts suggestions that would exceed either limit are dropped, and the meeting
+still imports. Other invalid or oversized records do not prevent later valid
+meetings from importing; the run still reports failure and names each skipped
+meeting's Muesli row ID.
+
+Remote scans read every meeting but upload only those that are new or changed
+since the daemon acknowledged them, plus meetings with pending duplicate-card
+suggestions. The record of acknowledged meetings lives in
+`<data_dir>/muesli-sync` on the recorder. `--full` uploads every meeting, and
+`add-muesli` clears the record.
+
+Remote sync, watch, and the native hook are available on `main` and are not yet
+released. See [Meeting Transcripts](/docs/usage/meetings/#muesli) for setup and
+what gets stored.
+
+---
+
+## muesli-hook
+
+Archive the completed meeting named by Muesli's executable-launcher event.
+
+```bash
+msgvault muesli-hook < completion-event.json
+msgvault muesli-hook --install /path/to/launchers
+```
+
+The command accepts up to 4 KiB on stdin. It requires `schemaVersion: 1`,
+`event: "meeting.completed"`, `kind: "meeting"`, a positive integer `id`, and an
+RFC 3339 `completedAt`. Unknown or duplicate fields are rejected. Exactly one
+`[[muesli]]` source must be configured because the event has no database identity.
+
+`--install DIR` creates a `msgvault-muesli-hook` symlink to the path used to run
+msgvault, preserving its `.exe` suffix when present. Installing from a package
+manager's stable path, such as Homebrew's `bin` entry, keeps the hook working
+across upgrades. Creating the symlink requires the platform's symlink
+permissions. Reinstalling replaces an earlier hook symlink; it refuses to
+replace any other file. Select
+that executable in Muesli's completion-hook setting. The launcher uses msgvault's default configuration;
+manual invocation can use the normal `--config` flag. It reads the meeting and
+Contacts locally in remote mode and uses the existing authenticated transport.
+Same-host hooks delegate the selected row to the local daemon. Scheduled full
+rescans recover missed hooks and import later edits.
 
 ---
 
@@ -2687,6 +2747,7 @@ msgvault person promote <participant-id>
 msgvault person list [--json]
 msgvault person directory [flags]
 msgvault person get <person-id> [--json]
+msgvault person get --vcard-uid <uid> [--json]
 msgvault person identities <person-id> [--json]
 msgvault person set-display-name <person-id> <display-name> [--json]
 msgvault person set-display-name <person-id> --clear [--json]
@@ -2709,6 +2770,17 @@ including an edited or cleared value. `set-display-name` preserves the
 profile's stable ID and vCard UID. `delete` permanently retires that UID and
 removes the profile's participant bindings. A person with active merge lineage
 cannot be deleted until that lineage is fully split.
+
+`person get --vcard-uid` resolves the person's current UID, a retired UID that
+still aliases the person after a merge, or a UID on a CardDAV card currently
+mapped to that person. This lookup requires daemon API schema 3.10.0 or newer.
+JSON person responses
+include `vcard_uid` and `carddav_bindings`; each binding names its connection and
+address book and includes the resource `href`, `remote_uid`, and `mapping_status`.
+Directory JSON includes the same UID and binding fields. Importing a subscribed
+CardDAV card adopts its UID when that UID is a UUID (bare or `urn:uuid:`) that no
+current, merged, or deleted profile has used. Existing profiles
+keep their UID.
 
 `identities` lists the email addresses, phone numbers, and chat identifiers
 that the person's current participants have used in your archive, so a merge or
@@ -2858,7 +2930,7 @@ Date-only bounds mean midnight UTC on that date. RFC3339 bounds accept offsets a
 
 Human output shows `ID`, `DISPLAY NAME`, and `LAST CONTACT` in daemon order. Timestamps use UTC RFC3339 at seconds precision; JSON preserves fractional seconds. Missing display names and timestamps show `-`. A page with more results prints `Next cursor`. Pass that value unchanged to `--cursor` and repeat the same bounds and sort to continue.
 
-JSON contains a `people` array and optional `next_cursor`. Each person retains the Directory fields, including categories, organizations, contact state, ID, and revision. Optional fields stay absent when the daemon omits them, including `last_contact_at` for people without a contact timestamp. `person list` continues to return the full unpaginated profile collection, with its existing human columns and JSON array output.
+JSON contains a `people` array and optional `next_cursor`. Each person retains the Directory fields, including categories, organizations, contact state, ID, revision, `vcard_uid`, and `carddav_bindings`. Optional fields stay absent when the daemon omits them, including `last_contact_at` for people without a contact timestamp. `person list` continues to return the full unpaginated profile collection, with its existing human columns and JSON array output.
 
 ---
 

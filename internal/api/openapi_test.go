@@ -1370,7 +1370,7 @@ func TestOpenAPIDocumentsAllExplorationOperations(t *testing.T) {
 	}, clientFilter.Properties["dimension"].Extensions["x-enum-names"])
 	for schemaName, properties := range map[string][]string{
 		"DirectoryPeopleResponse":    {"people"},
-		"DirectoryPersonSummary":     {"categories", "organizations"},
+		"DirectoryPersonSummary":     {"categories", "organizations", "carddav_bindings", "vcard_uid"},
 		"ExploreFilter":              {"values"},
 		"ExploreHTTPResponse":        {"rows"},
 		"EntryRow":                   {"matched_sender_identities", "matched_recipient_identities"},
@@ -1705,7 +1705,7 @@ func TestOpenAPIDirectoryArraysAreRequiredAndNonNullInRenderedDocuments(t *testi
 			requirements.NoError(json.Unmarshal(raw, &document))
 			for schemaName, properties := range map[string][]string{
 				"DirectoryPeopleResponse": {"people"},
-				"DirectoryPersonSummary":  {"categories", "organizations"},
+				"DirectoryPersonSummary":  {"categories", "organizations", "carddav_bindings"},
 			} {
 				schema, ok := document.Components.Schemas[schemaName]
 				requirements.True(ok, schemaName)

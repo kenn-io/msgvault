@@ -284,6 +284,33 @@ func (c *Client) ImportMeeting(
 	return nil, fmt.Errorf("import meeting: %w", err)
 }
 
+// ImportMuesli accepts both documented success statuses. The generated
+// convenience method treats only 201 as success; registration and idempotent
+// updates return 200.
+func (c *Client) ImportMuesli(
+	ctx context.Context,
+	options *generated.ImportMuesliRequestOptions,
+	reqEditors ...runtime.RequestEditorFn,
+) (*generated.ImportMuesliResponseJSON, error) {
+	resp, err := c.ImportMuesliWithResponse(ctx, options, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	if len(resp.Body) == 0 {
+		return nil, errors.New("import muesli: empty response")
+	}
+	if resp.JSON201 != nil {
+		return resp.JSON201, nil
+	}
+	if resp.JSON200 != nil {
+		return resp.JSON200, nil
+	}
+	err = runtime.NewClientAPIError(
+		fmt.Errorf("unexpected status code: %d", resp.StatusCode),
+		runtime.WithStatusCode(resp.StatusCode))
+	return nil, fmt.Errorf("import muesli: %w", err)
+}
+
 // StageDeletion accepts both documented success statuses. The generated
 // convenience method treats only 201 as success even though the daemon
 // returns 200 for dry-run staging requests.

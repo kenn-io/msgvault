@@ -794,13 +794,16 @@ and it does not call `muesli-cli`, which updates the database whenever it runs.
 
 ### Prerequisites
 
-The msgvault daemon reads the database on its own host, so run msgvault on the
-Mac where Muesli records. If your archive lives on another machine, send each
-meeting to that daemon with the [import API](#import-from-any-meeting-source)
-from a Muesli post-meeting hook instead.
+Run the normal msgvault client on the Mac where Muesli records. The archive
+can stay on another host: configure the existing [remote connection](../configuration.md#remote)
+on the Mac. The client reads Muesli and Contacts locally; the daemon owns the
+archive and accepts authenticated, bounded meeting transfers. It never receives
+a Muesli or Contacts database. This native remote workflow is available on
+`main` and is not yet released.
 
-If macOS blocks the read, grant the process that runs `msgvault serve` Full
-Disk Access in System Settings.
+Without remote mode, same-host sync continues through the local daemon. If
+macOS blocks the read, grant Full Disk Access to the process reading the files:
+the client in remote mode, or `msgvault serve` in same-host mode.
 
 ### Configure and register
 
@@ -809,7 +812,7 @@ Disk Access in System Settings.
 identifier = "mac"
 account_email = "you@example.com"   # you, the person who records
 # db_path = "~/Library/Application Support/Muesli/muesli.db"  # default
-schedule = "*/30 * * * *"           # optional daemon schedule
+schedule = "*/30 * * * *"           # daemon schedule, or remote recorder --watch
 enabled = true
 ```
 
@@ -827,7 +830,8 @@ with only a phone number therefore reaches the person you already chat with at
 that number.
 
 - Reading Contacts needs Full Disk Access for the process that runs
-  `msgvault serve`. Without it, meetings still sync, and `sync-muesli` reports
+  the client in remote mode or `msgvault serve` in same-host mode. Without it,
+  meetings still sync, and `sync-muesli` reports
   `Contacts: unavailable`.
 - Phone numbers typed with `+` or `00` always work. Set `phone_country_code`
   (for example `"1"` or `"44"`) to also use numbers typed without a country
@@ -869,6 +873,77 @@ meetings are skipped.
 - `--full` rewrites every archived meeting, which refreshes attribution after
   you add an identity.
 
+### Automatic sync on a remote recorder
+
+After registration, keep the native watcher running on the Mac:
+
+```bash
+msgvault sync-muesli --watch
+```
+
+It immediately scans enabled sources with a `schedule`, then rescans on their
+5-field cron schedules. The process must remain running; msgvault does not
+install a service. Each rescan reads the whole database, so late transcript,
+notes, and participant edits import. It uploads only meetings that are new or
+changed since the daemon acknowledged them, plus meetings with pending
+duplicate-card suggestions. The record of acknowledged meetings lives in
+`<data_dir>/muesli-sync` on the Mac; `add-muesli` clears it and `--full`
+ignores it. Source locks in the same directory serialize overlapping native
+watcher, hook, and manual processes before they read a snapshot. A lost acknowledgement is safe to retry:
+the source label, meeting row ID, and creation time preserve archive identity.
+
+For prompt import after recording, install the native executable launcher:
+
+```bash
+msgvault muesli-hook --install /path/to/launchers
+```
+
+Select the resulting `msgvault-muesli-hook` executable in Muesli. Its event
+contains a meeting ID, not an archive export or webhook URL. The launcher reads
+that row using msgvault's default configuration and requires exactly one Muesli
+source. The link points at the `msgvault` you ran, such as Homebrew's `bin`
+entry, so upgrades keep it working; rerun the install to repoint it. Keep
+scheduled rescanning enabled to recover missed hooks and later edits. See the [CLI contract](../cli-reference.md#muesli-hook) for event fields,
+limits, and failure behavior.
+
+### Review duplicate Contacts cards
+
+When an attendee's email appears on multiple unlinked Contacts cards, msgvault
+keeps the ambiguity and offers matches to phone identities already in your
+archive. This built-in path works with local and remote sync when every Contacts
+store is readable. Unknown phones do not create archive identities. An email
+shared by so many cards that its phones exceed the 50-identity transfer limit
+gets no suggestions; its meetings still import.
+
+Inspect the suggested email and phone in Directory's identity review or the CLI:
+
+```bash
+msgvault identity matches list
+msgvault identity matches show <candidate-id>
+msgvault identity matches accept <candidate-id> --review-token <token>
+# Keep an incorrect suggestion apart instead:
+msgvault identity matches reject <candidate-id> --review-token <token>
+```
+
+Use the token from `show` after checking its evidence. Acceptance connects the
+meeting attendee to the existing phone-backed person; the next activity update
+includes the meeting without reimporting its transcript. Repeated scans preserve
+accepted and rejected choices. An unchanged meeting can gain a suggestion when
+its phone identity arrives in the archive later.
+
+Evidence describes a historical Contacts observation. It does not establish
+current ownership. Sync never chooses between divergent phones or merges two
+curated people. If both endpoints already have curated profiles, use the
+[explicit profile merge workflow](/docs/usage/people/#merge-duplicate-profiles-and-reverse-a-merge)
+after reviewing them. Duplicate-card review is available on `main` and is not
+yet released.
+
+Routine imports follow the existing automatic analytics-refresh policy. An
+unchanged remote upload does not request a build. A same-host scheduled scan
+checks the cache even when nothing changed, so a build that
+`min_rebuild_interval` delayed after a hook or manual import still happens. Use
+`--build-cache` for an explicit refresh or `--no-build-cache` to skip it.
+
 ### What gets stored (Muesli)
 
 Each meeting becomes one `meeting_transcript` message in a `meeting`
@@ -883,7 +958,8 @@ such as a contact picked by name, appear only by name.
 
 The raw archive (`muesli_json`) keeps the meeting's text, times, status,
 template name, calendar event ID, folder path, and participant names, emails,
-phones, and sources. It never stores audio or audio file paths, screen text,
+phones, review-only phone suggestions, and sources. Suggestions never become
+attendee recipients or automatic links. It never stores audio or audio file paths, screen text,
 template prompts, or Apple Contacts identifiers.
 
 Remove the archive source with:

@@ -4,9 +4,9 @@ import { describe, expect, it, vi } from 'vitest';
 import DirectoryList from './DirectoryList.svelte';
 
 const rows = [
-  { id: 1, revision: 1, display_name: 'Alpha Fixture', contact_state: 'active', categories: [], organizations: [] },
-  { id: 2, revision: 1, display_name: 'Bravo Fixture', contact_state: 'active', categories: [], organizations: [] },
-  { id: 3, revision: 1, display_name: 'Charlie Fixture', contact_state: 'inactive', categories: [], organizations: [] }
+  { id: 1, revision: 1, vcard_uid: 'person-1', carddav_bindings: [], display_name: 'Alpha Fixture', contact_state: 'active', categories: [], organizations: [] },
+  { id: 2, revision: 1, vcard_uid: 'person-2', carddav_bindings: [], display_name: 'Bravo Fixture', contact_state: 'active', categories: [], organizations: [] },
+  { id: 3, revision: 1, vcard_uid: 'person-3', carddav_bindings: [], display_name: 'Charlie Fixture', contact_state: 'inactive', categories: [], organizations: [] }
 ];
 
 describe('DirectoryList', () => {

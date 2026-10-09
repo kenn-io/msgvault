@@ -49,9 +49,22 @@ describe('CardDAVAccountSettings', () => {
 
     await chooseSelectOption(screen.getByRole('combobox', { name: /^CardDAV provider/ }), 'Microsoft 365 or Outlook.com');
 
-    expect(screen.getByText("msgvault carddav authorize-microsoft 'alice'")).toBeTruthy();
     expect(screen.queryByLabelText('Base URL')).toBeNull();
     expect(screen.queryByLabelText('Password')).toBeNull();
+  });
+
+  it.each([
+    ['google', `msgvault carddav authorize-google 'bob@example.com' --oauth-app 'Work App'`, 'msgvault carddav authorize-google "bob@example.com" --oauth-app "Work App"'],
+    ['microsoft', `msgvault carddav authorize-microsoft 'bob@example.com'`, 'msgvault carddav authorize-microsoft "bob@example.com"'],
+  ])('shows labeled commands for both shells for %s', (provider, posixCommand, cmdCommand) => {
+    const oauthValues = { ...values, provider, oauthApp: 'Work App', username: 'bob@example.com' };
+    render(CardDAVAccountSettings, { client: createAPIClient(async () => Response.json({})), values: oauthValues });
+
+    expect(screen.getByText('POSIX shell')).toBeDefined();
+    expect(screen.getByText('Command Prompt')).toBeDefined();
+    expect(screen.getByText(posixCommand)).toBeDefined();
+    expect(screen.getByText(cmdCommand)).toBeDefined();
+    expect(screen.getByText(/Start Command Prompt with/).textContent).toBe('Start Command Prompt with cmd /d /v:off, then paste:');
   });
 
   it('shows Save CardDAV account as the solid blue primary action', () => {

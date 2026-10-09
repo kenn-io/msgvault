@@ -184,11 +184,13 @@ const personDirectoryCLIPayload = `{
 	"people": [
 		{
 			"id": 9007199254740993, "revision": 9007199254740995, "display_name": "Zulu Example",
+			"vcard_uid": "person-9007199254740993", "carddav_bindings": [],
 			"categories": ["friend", "colleague"], "organizations": ["Example Org", "Test Org"],
 			"contact_state": "active", "primary_channel": "email",
 			"last_contact_at": "2026-06-01T12:34:56.123456789+02:00"
 		},
-		{"id": 7, "revision": 9, "categories": [], "organizations": [], "contact_state": "inactive"}
+		{"id": 7, "revision": 9, "vcard_uid": "person-7", "carddav_bindings": [],
+			"categories": [], "organizations": [], "contact_state": "inactive"}
 	],
 	"next_cursor": "opaque+/=&% cursor"
 }`
@@ -245,6 +247,7 @@ func TestPersonDirectoryCommandSanitizesDaemonSuppliedText(t *testing.T) {
 	const payload = `{
 		"people": [{
 			"id": 7, "revision": 9, "display_name": "\u001b[31mAlice\u001b[0m\r\n\u0007\u009b Example",
+			"vcard_uid": "", "carddav_bindings": [],
 			"categories": [], "organizations": [], "contact_state": "active"
 		}],
 		"next_cursor": "\u001b]8;;https://example.test\u0007opaque\u001b]8;;\u0007\u001b[31m-cursor\u001b[0m\r\n"

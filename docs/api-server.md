@@ -100,7 +100,7 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.9.0**.
+it is separate from the binary release version. The current schema is **3.10.0**.
 Upgrade clients and daemon together across incompatible schema versions,
 including remote deployments.
 
@@ -131,6 +131,12 @@ the failure code.
 Schema 3.5.0 adds the `account:` and `received:` search operators.
 
 Schema 3.8.0 adds [read-only remote client credentials](guides/remote-deployment.md#read-only-remote-clients), HTTP 409 for ambiguous raw-message references, and HTTP 413 for remote read limits.
+
+Schema 3.10.0 adds `GET /api/v1/people/by-uid`, which resolves current person
+UIDs, retired person UIDs, and UIDs on mapped CardDAV resources. It returns a
+conflict when one UID resolves to multiple people. Person responses expose
+`carddav_bindings`; directory responses now include both `vcard_uid` and
+`carddav_bindings`.
 
 Schema 3.1.0 adds unreleased [calendar event control](#calendar-control),
 availability queries, and opt-in `write` on Calendar consent plans.
@@ -242,6 +248,20 @@ responses are bounded projections that omit raw vCards and resource hrefs;
 only the explicit publication preview route returns a raw vCard.
 See [release changes](changelog.md#upgrade-and-compatibility) for removed paths
 and the 1.x/2.x transition.
+
+### Person UIDs and CardDAV bindings
+
+Person responses, including `GET /api/v1/people/{id}`, `GET /api/v1/people`,
+person updates, and semantic person search, return `vcard_uid` for each person
+and `carddav_bindings` when the person has mapped CardDAV cards. Directory rows
+always include both fields; `carddav_bindings` is an empty array when no card
+is mapped. A binding names the CardDAV `connection` and `book` and
+includes the resource `href`, its `remote_uid`, and `mapping_status`.
+
+Use `GET /api/v1/people/by-uid?uid={uid}` to resolve an exact current person UID, a
+retired UID that still aliases a person, or the UID of a CardDAV card mapped to
+that person. If the same CardDAV UID is mapped to different people, the API
+returns `409 person_uid_ambiguous`.
 
 ### Identity match review and scoring
 
@@ -1968,6 +1988,48 @@ An `explore` scope carries the complete `predicate`, `cache_revision`,
 exclusive with direct `scope`. The server resolves the full matching population,
 with a 10000-ID transfer ceiling. A stale authority requires reloading; an
 oversized scope must be narrowed. Neither case widens the request.
+
+### Import a recorder-local Muesli meeting
+
+**Endpoint:** `POST /api/v1/import/muesli`
+
+The native client uses this owner-authenticated endpoint for remote Muesli sync.
+Agent-delegated credentials and read-only remote client keys are denied. It is available on `main` and is not yet
+released. Prefer the native [Muesli commands](cli-reference.md#sync-muesli);
+applications do not need an export script.
+
+The strict JSON contract accepts `action` (`register`, `upsert`, or `refresh`),
+`source` (`identifier`, optional `display_name`, and `account_email`), an optional
+normalized `meeting`, and optional `full`, `build_cache`, and `no_build_cache`
+flags. The client probes its local database before sending `register` to create the stable source.
+`upsert` requires a registered source and a nonempty meeting that is not
+still recording or processing.
+`build_cache` requires the `refresh` action, which permits an explicit cache
+request even when a scan contains no eligible meetings. The recorder email must match the source's existing primary identity.
+Database paths and raw Contacts identifiers are not accepted.
+
+Requests are limited to 16 MiB, 200 participants, and 50 distinct identities per
+participant. Unknown/duplicate JSON members, trailing input, and invalid UTF-8
+are rejected. Invalid JSON returns `400`, validation failures `422`, oversized
+requests `413`, and a missing source `404`. Validation errors omit field values.
+When combined new and archived Contacts evidence would exceed these limits, the
+daemon drops that attendee's review-only phone suggestions and imports the
+meeting. A meeting the daemon cannot archive returns `422` /
+`record_validation_failed`; native clients skip it and continue the scan. Source or request errors use `validation_failed`
+and stop the scan so the owner can correct registration or configuration.
+The body is bounded and validated before acquiring the operation gate. A busy
+gate returns `503` / `operation_in_progress`, and the off-host rate limit
+returns `429` with `Retry-After`. Native clients wait and retry the same body
+until cancelled.
+
+Responses contain `status`, `source_id`, optional `message_id`, and `changed`.
+Statuses are `registered`, `created`, `updated`, `unchanged`, and `refreshed`.
+Creation returns `201`; other successful actions return `200`. Meetings preserve
+the existing Muesli key derived from row ID and creation time, so lost responses
+can be retried safely and later edits update the same archive message. Each
+new or edited meeting records one `muesli_push` sync run; an unchanged
+retransmission records none. Routine changed writes request an automatic
+background refresh; unchanged writes do not.
 
 ### Import a meeting {#post-apiv1importmeeting}
 

@@ -20,6 +20,7 @@ var (
 	ErrPersonReferenced                   = errors.New("person is referenced by another profile")
 	ErrPersonCardDAVPublished             = errors.New("person has CardDAV publication state")
 	ErrPersonMergeActive                  = errors.New("person has active merge lineage")
+	ErrPersonUIDAmbiguous                 = errors.New("person UID resolves to multiple people")
 	ErrPersonEnrichmentDispatchInProgress = errors.New("person enrichment provider dispatch is in progress")
 	ErrInvalidDirectoryQuery              = errors.New("invalid directory query")
 	ErrInvalidDirectoryCursor             = errors.New("invalid directory cursor")
@@ -46,13 +47,14 @@ func (e *PersonBindingConflictError) Unwrap() error {
 // edge never deletes or moves them, so one person may intentionally span
 // multiple clusters until the user re-links or unbinds those participants.
 type Person struct {
-	ID             int64     `json:"id"`
-	VCardUID       string    `json:"vcard_uid"`
-	DisplayName    *string   `json:"display_name,omitzero" nullable:"false"`
-	Revision       int64     `json:"revision"`
-	ParticipantIDs []int64   `json:"participant_ids"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	ID              int64            `json:"id"`
+	VCardUID        string           `json:"vcard_uid"`
+	CardDAVBindings []CardDAVBinding `json:"carddav_bindings,omitempty"`
+	DisplayName     *string          `json:"display_name,omitzero" nullable:"false"`
+	Revision        int64            `json:"revision"`
+	ParticipantIDs  []int64          `json:"participant_ids"`
+	CreatedAt       time.Time        `json:"created_at"`
+	UpdatedAt       time.Time        `json:"updated_at"`
 }
 
 func (s *Store) CreatePersonFromParticipant(participantID int64) (*Person, bool, error) {
@@ -451,19 +453,33 @@ func (s *Store) deletePersonOnce(ctx context.Context, input DeletePersonEnrichme
 		if err := s.bumpPersonDeletionCounterpartVCardProjectionsTx(ctx, tx, id); err != nil {
 			return err
 		}
-		var deletedID int64
+		var deletedUID string
 		err = tx.QueryRowContext(ctx,
-			`DELETE FROM persons WHERE id = ? AND revision = ? RETURNING id`,
-			id, expectedRevision).Scan(&deletedID)
+			`DELETE FROM persons WHERE id = ? AND revision = ? RETURNING vcard_uid`,
+			id, expectedRevision).Scan(&deletedUID)
 		if errors.Is(err, sql.ErrNoRows) {
 			return s.personCASMissTx(ctx, tx, id)
 		}
 		if err != nil {
 			return fmt.Errorf("delete person %d: %w", id, err)
 		}
+		if err := retireDeletedPersonUIDTx(ctx, tx, deletedUID); err != nil {
+			return err
+		}
 		_, err = s.bumpIdentityRevisionContext(ctx, tx)
 		return err
 	})
+}
+
+// retireDeletedPersonUIDTx reserves a deleted person's UID so no later
+// person, including one imported from a CardDAV card, can adopt it.
+func retireDeletedPersonUIDTx(ctx context.Context, tx *loggedTx, uid string) error {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO person_uid_aliases
+		(retired_uid, surviving_person_id, reason) VALUES (?, NULL, 'deletion')
+		ON CONFLICT (retired_uid) DO NOTHING`, uid); err != nil {
+		return fmt.Errorf("retire deleted person UID: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) deleteIdentityMatchCandidatesForPersonTx(
@@ -496,6 +512,59 @@ func (s *Store) GetPersonContext(ctx context.Context, id int64) (*Person, error)
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
 		var err error
 		person, err = s.getPersonTx(ctx, tx, id)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return person, nil
+}
+
+// GetPersonByUIDContext resolves a current person UID, a retired UID that
+// still aliases a surviving person, or a UID on a CardDAV resource bound to
+// one person. It rejects a remote UID that identifies different people in
+// different address books.
+func (s *Store) GetPersonByUIDContext(ctx context.Context, uid string) (*Person, error) {
+	uid = strings.TrimSpace(uid)
+	if uid == "" {
+		return nil, ErrPersonNotFound
+	}
+	var person *Person
+	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
+		rows, err := tx.QueryContext(ctx, `SELECT person_id FROM (
+			SELECT id AS person_id FROM persons WHERE vcard_uid = ?
+			UNION
+			SELECT surviving_person_id AS person_id FROM person_uid_aliases
+				WHERE retired_uid = ? AND surviving_person_id IS NOT NULL
+			UNION
+			SELECT person_id FROM carddav_resources
+				WHERE remote_uid = ? AND person_id IS NOT NULL
+		) resolved ORDER BY person_id`, uid, uid, uid)
+		if err != nil {
+			return fmt.Errorf("resolve person UID: %w", err)
+		}
+		defer func() { _ = rows.Close() }()
+		var personID int64
+		count := 0
+		for rows.Next() {
+			if err := rows.Scan(&personID); err != nil {
+				return fmt.Errorf("scan person UID resolution: %w", err)
+			}
+			count++
+			if count > 1 {
+				return ErrPersonUIDAmbiguous
+			}
+		}
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("iterate person UID resolution: %w", err)
+		}
+		if err := rows.Close(); err != nil {
+			return fmt.Errorf("close person UID resolution: %w", err)
+		}
+		if count == 0 {
+			return ErrPersonNotFound
+		}
+		person, err = s.getPersonTx(ctx, tx, personID)
 		return err
 	})
 	if err != nil {
@@ -686,6 +755,16 @@ func (s *Store) getPersonTx(ctx context.Context, tx *loggedTx, id int64) (*Perso
 	if person == nil {
 		return nil, ErrPersonNotFound
 	}
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("close person %d rows: %w", id, err)
+	}
+	bindings, err := s.listCardDAVBindingsTx(ctx, tx, []int64{id})
+	if err != nil {
+		return nil, err
+	}
+	if len(bindings[id]) > 0 {
+		person.CardDAVBindings = bindings[id]
+	}
 	return person, nil
 }
 
@@ -720,6 +799,18 @@ func (s *Store) listPersonsTx(ctx context.Context, tx *loggedTx) ([]Person, erro
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate persons: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("close person list rows: %w", err)
+	}
+	bindings, err := s.listAllCardDAVBindingsTx(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+	for index := range persons {
+		if len(bindings[persons[index].ID]) > 0 {
+			persons[index].CardDAVBindings = bindings[persons[index].ID]
+		}
 	}
 	return persons, nil
 }

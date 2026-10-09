@@ -1523,6 +1523,12 @@ type ImportMeetingResponseJSON = MeetingImportResponse
 
 type ImportMeetingErrorResponse = ErrorResponse
 
+type ImportMuesliResponse = MuesliRemoteResult
+
+type ImportMuesliResponseJSON = MuesliRemoteResult
+
+type ImportMuesliErrorResponse = ErrorResponse
+
 type CreateImportJobResponse = ImportJobResponse
 
 type CreateImportJobErrorResponse = ErrorResponse
@@ -2194,6 +2200,16 @@ type CreatePersonResponseJSON = Person
 type CreatePersonErrorResponse = ErrorResponse
 
 type CreatePersonErrorResponseJSON = ErrorResponse
+
+type GetPersonByUIDResponse = Person
+
+type GetPersonByUIDErrorResponse = ErrorResponse
+
+type GetPersonByUIDErrorResponseJSON = ErrorResponse
+
+type GetPersonByUIDErrorResponseJSON409 = ErrorResponse
+
+type GetPersonByUIDErrorResponseJSON503 = ErrorResponse
 
 type ListDirectoryPeopleResponse = DirectoryPeopleResponse
 
@@ -4783,6 +4799,14 @@ type ImportMeetingResp struct {
 	JSON201      *ImportMeetingResponseJSON
 }
 
+type ImportMuesliResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ImportMuesliResponse
+	JSON201      *ImportMuesliResponseJSON
+}
+
 type CreateImportJobResp struct {
 	HTTPResponse *http.Response
 	Body         []byte
@@ -5345,6 +5369,17 @@ type CreatePersonResp struct {
 	Headers201   *CreatePersonResp201Headers
 	JSON409      *CreatePersonErrorResponse
 	JSON503      *CreatePersonErrorResponseJSON
+}
+
+type GetPersonByUIDResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetPersonByUIDResponse
+	JSON400      *GetPersonByUIDErrorResponse
+	JSON404      *GetPersonByUIDErrorResponseJSON
+	JSON409      *GetPersonByUIDErrorResponseJSON409
+	JSON503      *GetPersonByUIDErrorResponseJSON503
 }
 
 type ListDirectoryPeopleResp struct {

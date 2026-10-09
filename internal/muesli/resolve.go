@@ -52,7 +52,8 @@ func (p Participant) archivePerson() meetingarchive.Person {
 
 func (p Participant) raw(person meetingarchive.Person) rawParticipant {
 	raw := rawParticipant{
-		Ref: participantRef(p.Identifier), Name: p.Name, Email: p.Email, Source: p.Source,
+		Ref: p.stableRef(), Name: p.Name, Email: p.Email, Source: p.Source,
+		ContactReviewPhones: slices.Clone(p.ContactReviewPhones),
 	}
 	if p.Resolution == "" {
 		return raw
@@ -65,9 +66,17 @@ func (p Participant) raw(person meetingarchive.Person) rawParticipant {
 	return raw
 }
 
+func (p Participant) stableRef() string {
+	if p.ref != "" {
+		return p.ref
+	}
+	return participantRef(p.Identifier)
+}
+
 // resolveParticipants fills each participant's Contacts identities. A still
 // present participant whose card cannot be resolved keeps its earlier archived
-// identities, without asserting current ownership of those addresses.
+// identities, without asserting current ownership of those addresses. A nil
+// Importer, as on a remote client, resolves Contacts without archive evidence.
 func (imp *Importer) resolveParticipants(
 	sourceID int64, meeting *Meeting, contacts *Contacts, countryCode string, sharedAddresses map[string]bool,
 ) error {
@@ -103,6 +112,11 @@ func (imp *Importer) resolveParticipants(
 			participant.Resolution = resolutionResolved
 			continue
 		}
+		participant.ContactReviewPhones = contacts.reviewPhones(participant.Email, countryCode)
+		// A remote client has no archive; the daemon carries evidence forward.
+		if imp == nil || imp.store == nil {
+			continue
+		}
 		if !loaded {
 			loaded = true
 			// An unkeyable meeting is reported when its snapshot is built.
@@ -114,7 +128,7 @@ func (imp *Importer) resolveParticipants(
 				}
 			}
 		}
-		earlier, ok := previous[participantRef(participant.Identifier)]
+		earlier, ok := previous[participant.stableRef()]
 		if !ok || (len(earlier.Emails) == 0 && len(earlier.Phones) == 0) {
 			continue
 		}
@@ -122,6 +136,7 @@ func (imp *Importer) resolveParticipants(
 		participant.ContactPhones = earlier.Phones
 		participant.Resolution = resolutionCarried
 	}
+	dropOversizedContactReview(meeting)
 	return nil
 }
 

@@ -1571,6 +1571,25 @@ components:
         - id
         - name
       type: object
+    CardDAVBinding:
+      properties:
+        book:
+          type: string
+        connection:
+          type: string
+        href:
+          type: string
+        mapping_status:
+          type: string
+        remote_uid:
+          type: string
+      required:
+        - connection
+        - book
+        - href
+        - remote_uid
+        - mapping_status
+      type: object
     CardDAVBookResponse:
       properties:
         account_id:
@@ -3320,6 +3339,10 @@ components:
       type: object
     DirectoryPersonSummary:
       properties:
+        carddav_bindings:
+          items:
+            $ref: "#/components/schemas/CardDAVBinding"
+          type: array
         categories:
           items:
             type: string
@@ -3343,8 +3366,12 @@ components:
         revision:
           format: int64
           type: integer
+        vcard_uid:
+          type: string
       required:
         - id
+        - vcard_uid
+        - carddav_bindings
         - revision
         - contact_state
         - categories
@@ -7261,6 +7288,170 @@ components:
         - month
         - totals
       type: object
+    MuesliRemoteMeeting:
+      additionalProperties: false
+      properties:
+        contacts_state:
+          enum:
+            - complete
+            - partial
+            - unavailable
+            - "off"
+          type: string
+        participants:
+          items:
+            $ref: "#/components/schemas/MuesliRemoteParticipant"
+          maxItems: 200
+          type: array
+        record:
+          $ref: "#/components/schemas/MuesliRemoteRecord"
+      required:
+        - record
+        - contacts_state
+      type: object
+    MuesliRemoteParticipant:
+      additionalProperties: false
+      properties:
+        anchor:
+          maxLength: 78
+          type: string
+        contact_review_phones:
+          items:
+            type: string
+          maxItems: 50
+          type: array
+        email:
+          type: string
+        emails:
+          items:
+            type: string
+          maxItems: 50
+          type: array
+        link_excluded_addresses:
+          items:
+            type: string
+          maxItems: 50
+          type: array
+        name:
+          maxLength: 1024
+          type: string
+        phones:
+          items:
+            type: string
+          maxItems: 50
+          type: array
+        ref:
+          maxLength: 16
+          type: string
+        resolution:
+          enum:
+            - ""
+            - resolved
+            - carried_forward
+          type: string
+        skipped_phones:
+          format: int64
+          type: integer
+        source:
+          type: string
+      type: object
+    MuesliRemoteRecord:
+      additionalProperties: false
+      properties:
+        calendar_event_id:
+          type: string
+        calendar_series_id:
+          type: string
+        calendar_source:
+          type: string
+        created_at:
+          type: string
+        duration_seconds:
+          format: double
+          type: number
+        end_time:
+          type: string
+        folder:
+          type: string
+        follow_up_to_id:
+          format: int64
+          type: integer
+        formatted_notes:
+          type: string
+        id:
+          format: int64
+          type: integer
+        manual_notes:
+          type: string
+        raw_transcript:
+          type: string
+        source:
+          type: string
+        start_time:
+          type: string
+        status:
+          type: string
+        template_kind:
+          type: string
+        template_name:
+          type: string
+        title:
+          type: string
+        word_count:
+          format: int64
+          type: integer
+      required:
+        - id
+        - title
+        - start_time
+        - created_at
+      type: object
+    MuesliRemoteRequest:
+      additionalProperties: false
+      properties:
+        action:
+          enum:
+            - register
+            - upsert
+            - refresh
+          type: string
+        build_cache:
+          type: boolean
+        full:
+          type: boolean
+        meeting:
+          $ref: "#/components/schemas/MuesliRemoteMeeting"
+        no_build_cache:
+          type: boolean
+        source:
+          $ref: "#/components/schemas/Source"
+      required:
+        - action
+        - source
+      type: object
+    MuesliRemoteResult:
+      properties:
+        changed:
+          type: boolean
+        message_id:
+          format: int64
+          type: integer
+        source_id:
+          format: int64
+          type: integer
+        status:
+          enum:
+            - registered
+            - created
+            - updated
+            - unchanged
+            - refreshed
+          type: string
+      required:
+        - status
+        - source_id
+        - changed
+      type: object
     MutationResult:
       properties:
         name:
@@ -9107,6 +9298,10 @@ components:
       type: object
     Person:
       properties:
+        carddav_bindings:
+          items:
+            $ref: "#/components/schemas/CardDAVBinding"
+          type: array
         created_at:
           format: date-time
           type: string
@@ -14693,7 +14888,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.9.0
+  version: 3.10.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:
@@ -21002,6 +21197,39 @@ paths:
       summary: Import one meeting
       tags:
         - API
+  /api/v1/import/muesli:
+    post:
+      operationId: importMuesli
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MuesliRemoteRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MuesliRemoteResult"
+          description: OK
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MuesliRemoteResult"
+          description: Created
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Import one recorder-local Muesli meeting
+      tags:
+        - API
   /api/v1/imports:
     post:
       operationId: createImportJob
@@ -23940,6 +24168,60 @@ paths:
       security:
         - apiKey: []
       summary: Promote a participant cluster to a durable person
+      tags:
+        - API
+  /api/v1/people/by-uid:
+    get:
+      description: Resolves the person's current vCard UID, a retired UID that still aliases the person, or the UID of a CardDAV resource mapped to the person. Returns a conflict when one remote UID maps to different people.
+      operationId: getPersonByUID
+      parameters:
+        - description: Exact vCard UID or CardDAV resource UID
+          in: query
+          name: uid
+          required: true
+          schema:
+            minLength: 1
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Person"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Look up a durable person by vCard or CardDAV UID
       tags:
         - API
   /api/v1/people/directory:
