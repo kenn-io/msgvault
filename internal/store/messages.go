@@ -5970,6 +5970,9 @@ func (s *Store) ReplaceReactions(messageID int64, reactions []ReactionRef) error
 // ReplaceReactionsContext honors cancellation during ReplaceReactions.
 func (s *Store) ReplaceReactionsContext(ctx context.Context, messageID int64, reactions []ReactionRef) error {
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.requireSyncMessageSourceTx(tx, messageID); err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM reactions WHERE message_id = ?`, messageID); err != nil {
 			return err
 		}
