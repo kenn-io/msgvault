@@ -18,6 +18,14 @@ All notable changes to msgvault, grouped by release.
 - `export-messages` reports missing `--start` and `--end` before contacting the
   daemon.
 
+- Opt-in [MCP Events](usage/chat.md#events) let an MCP client subscribe to one
+  conversation or calendar and receive signed HTTPS callbacks when msgvault
+  archives a live Gmail or IMAP message, a Google Calendar event changes, or a
+  managed draft is created, updated, or deleted. Imports, full syncs, and
+  recovery scans stay silent. Events are off by default; enable them with
+  [`[mcp.events]`](configuration.md#mcpevents). They need the daemon owner's
+  API key on `msgvault mcp --http` and API schema 3.9.0.
+
 - Go programs can use msgvault as a library through `go.kenn.io/msgvault/pkg/archive`.
   It sets up and opens SQLite or PostgreSQL archives, runs the Slack and Discord
   importers with caller-supplied credentials, purges channels and sources, and
