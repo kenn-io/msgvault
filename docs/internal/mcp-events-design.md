@@ -535,8 +535,8 @@ Payload (required unless noted): `kind`, `message_id`, `attachment_id`,
 `extraction_id` (text kinds, else omitted) or `docbank_occurrence_id` and
 `content_version` (media kinds, else omitted).
 
-Durable live eligibility: a message admitted under live provenance while
-its `(family, source type)` is enabled gets a row in
+Durable live eligibility (Phase 2, not built): a message admitted under live
+provenance while its `(family, source type)` is enabled gets a row in
 `mcp_live_admissions(message_id PK, source_id, message_reference_seq, epoch,
 admitted_at)` inside its persistence transaction. Admission persists the
 current message reference. Asynchronous processing emits for an occurrence
@@ -617,8 +617,7 @@ human message rates this is acceptable and measured in the rollout.
 The mutation helper returns a reliable outcome: an insert-if-absent inside
 the transaction followed by the existing update path reports `inserted`
 versus `updated`; a stale prior read is never treated as the insertion
-result. Calendar and reaction comparisons run under the same transaction and
-row locks. All of this stays in Store.
+result. Calendar comparisons run under the same transaction and row locks. All of this stays in Store.
 
 ### Log schema
 
@@ -629,7 +628,7 @@ row locks. All of this stays in Store.
 retained occurrence outlives its message. Indexes: `(epoch, family,
 scope_kind, scope_id, seq)`, `(source_id)` for source removal, and a
 partial unique index on `(family, scope_kind, scope_id, item_key)` for the
-`reaction` kind and the `draft`, `kata`, and `attachment` families, which
+`draft`, `kata`, and `attachment` families, which
 makes every repeatable publication path idempotent at the database.
 Messages are deduplicated by the insert outcome; calendar transitions are
 intentionally repeatable and excluded from the index.
@@ -668,8 +667,8 @@ through each source phase and composite persistence; `unknown` is muted. It
 is never inferred from the currently running sync: Beeper and Slack runs
 mix history and live phases, calendar write-through has no run, and
 reconciliation inside an incremental run is not its live delta. `ScopedToSync`
-views keep their generation fence and may carry the context immutably. Live
-admission is also persisted (`mcp_live_admissions`) so asynchronous Phase 2
+views keep their generation fence and may carry the context immutably.
+Phase 2 also persists live admission (`mcp_live_admissions`) so asynchronous
 work inherits it after the context is gone.
 
 The ready boundary is the commit of the core archived message — header,
@@ -1004,9 +1003,8 @@ New tables in both `internal/store/schema.sql` and `schema_pg.sql`
 migration, since no existing row is rewritten):
 
 - `mcp_event_clock` (singleton), `mcp_event_log`, `mcp_event_subscriptions`,
-  `mcp_event_dead_letters`, `mcp_live_admissions`, `mcp_event_message_refs`;
-  Phase 2 adds
-  `mcp_action_records`.
+  `mcp_event_dead_letters`, `mcp_event_message_refs`; Phase 2 adds
+  `mcp_live_admissions` and `mcp_action_records`.
 - `mcp_event_subscriptions`: `id`, `principal_id`, `name`, `arguments`,
   `scope_kind`, `scope_id`, `source_id`, `callback_url`, `secret_enc`,
   `previous_secret_enc`, `previous_secret_until`, `secret_revision`,
@@ -1053,9 +1051,8 @@ Consent, each recorded in the PR that makes it:
    and security pages.
 3. The key file and encrypted secrets at rest.
 4. `IngestContext` plumbing through source phases and composite persistence,
-   per source family, with `mcp_live_admissions`; the Beeper
-   persistence-boundary correction; the `PersistCalendarEvent` and
-   reaction-diff refactors.
+   per source family; the Beeper persistence-boundary correction; the
+   `PersistCalendarEvent` refactor.
 5. `created_by_principal` on the four draft tables.
 6. The daemon API additions, read-projection changes, and Events-owned
    reference checks that prevent a retained receipt from reading a

@@ -483,8 +483,6 @@ func TestMCPEventsSourceRemovalCleansReceiptsAfterMessageDeletion(t *testing.T) 
 	require.NoError(err)
 	messageID := f.CreateMessage("synthetic-receipt-target")
 	appendMCPSubscriptionFixture(t, f, clock.Epoch, now)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`INSERT INTO mcp_live_admissions (message_id,source_id,message_reference_seq,epoch,admitted_at) VALUES (?,?,1,?,?)`), messageID, f.Source.ID, clock.Epoch, now.Format(time.RFC3339Nano))
-	require.NoError(err)
 	_, err = f.Store.DB().Exec(f.Store.Rebind(`DELETE FROM messages WHERE id=?`), messageID)
 	require.NoError(err)
 	require.NoError(f.Store.RemoveSource(f.Source.ID))
@@ -494,7 +492,7 @@ func TestMCPEventsSourceRemovalCleansReceiptsAfterMessageDeletion(t *testing.T) 
 	assert.Equal("stopped", stopped.State)
 	assert.Equal("scope_removed", stopped.StopReason)
 	assert.Greater(stopped.Generation, active.Generation)
-	for _, table := range []string{"mcp_event_log", "mcp_live_admissions"} {
+	for _, table := range []string{"mcp_event_log"} {
 		var count int
 		require.NoError(f.Store.DB().QueryRow(`SELECT COUNT(*) FROM ` + table).Scan(&count))
 		assert.Zero(count)

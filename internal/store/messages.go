@@ -5845,14 +5845,18 @@ func consolidateConversationParticipantJournal(tx querier, dialect Dialect, conv
 
 // UpsertReaction inserts or ignores a reaction.
 func (s *Store) UpsertReaction(messageID, participantID int64, reactionType, reactionValue string, createdAt time.Time) error {
-	ctx := context.Background()
-	return s.withTxContext(ctx, func(tx *loggedTx) error {
-		if err := s.requireSyncMessageSourceTx(tx, messageID); err != nil {
+	write := func(q querier) error {
+		if err := s.requireSyncMessageSourceTx(q, messageID); err != nil {
 			return err
 		}
-		r := ReactionRef{ParticipantID: participantID, Type: reactionType, Value: reactionValue, CreatedAt: createdAt}
-		return s.insertReactionTx(ctx, tx, messageID, r, true)
-	})
+		_, err := q.Exec(s.dialect.InsertOrIgnore(`INSERT OR IGNORE INTO reactions (message_id, participant_id, reaction_type, reaction_value, created_at)
+			VALUES (?, ?, ?, ?, ?)`), messageID, participantID, reactionType, reactionValue, createdAt)
+		return err
+	}
+	if s.syncGeneration != nil {
+		return s.withTx(func(tx *loggedTx) error { return write(tx) })
+	}
+	return write(s.db)
 }
 
 // UpsertReactionWithSourceID inserts a reaction and records the provider event
@@ -5953,26 +5957,12 @@ func (s *Store) MessageIDByMetadataValue(conversationID int64, key, value string
 
 type ReactionRef struct {
 	ParticipantID int64
-	Type, Value   string
+	Type          string
+	Value         string
 	CreatedAt     time.Time
 }
 
-func (s *Store) insertReactionTx(ctx context.Context, tx *loggedTx, messageID int64, r ReactionRef, emit bool) error {
-	result, err := tx.ExecContext(ctx, s.dialect.InsertOrIgnore(`INSERT OR IGNORE INTO reactions (message_id, participant_id, reaction_type, reaction_value, created_at) VALUES (?, ?, ?, ?, ?)`), messageID, r.ParticipantID, r.Type, r.Value, r.CreatedAt)
-	if err != nil {
-		return err
-	}
-	count, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if count > 0 && emit {
-		return s.appendReactionTx(ctx, tx, messageID, r)
-	}
-	return nil
-}
-
-// ReplaceReactions compares additions against the prior set inside the mutation transaction.
+// ReplaceReactions replaces all reactions for a message atomically.
 func (s *Store) ReplaceReactions(messageID int64, reactions []ReactionRef) error {
 	return s.ReplaceReactionsContext(context.Background(), messageID, reactions)
 }
@@ -5980,28 +5970,6 @@ func (s *Store) ReplaceReactions(messageID int64, reactions []ReactionRef) error
 // ReplaceReactionsContext honors cancellation during ReplaceReactions.
 func (s *Store) ReplaceReactionsContext(ctx context.Context, messageID int64, reactions []ReactionRef) error {
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
-		if err := s.requireSyncMessageSourceTx(tx, messageID); err != nil {
-			return err
-		}
-		rows, err := tx.QueryContext(ctx, `SELECT participant_id, reaction_type, reaction_value FROM reactions WHERE message_id = ?`, messageID)
-		if err != nil {
-			return err
-		}
-		defer func() { _ = rows.Close() }()
-		old := map[reactionIdentity]bool{}
-		for rows.Next() {
-			var key reactionIdentity
-			if err := rows.Scan(&key.ParticipantID, &key.Type, &key.Value); err != nil {
-				return err
-			}
-			old[key] = true
-		}
-		if err := rows.Err(); err != nil {
-			return err
-		}
-		if err := rows.Close(); err != nil {
-			return err
-		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM reactions WHERE message_id = ?`, messageID); err != nil {
 			return err
 		}
@@ -6009,7 +5977,8 @@ func (s *Store) ReplaceReactionsContext(ctx context.Context, messageID int64, re
 			if r.ParticipantID == 0 {
 				continue
 			}
-			if err := s.insertReactionTx(ctx, tx, messageID, r, !old[reactionIdentity{r.ParticipantID, r.Type, r.Value}]); err != nil {
+			if _, err := tx.ExecContext(ctx, s.dialect.InsertOrIgnore(`INSERT OR IGNORE INTO reactions (message_id, participant_id, reaction_type, reaction_value, created_at)
+				VALUES (?, ?, ?, ?, ?)`), messageID, r.ParticipantID, r.Type, r.Value, r.CreatedAt); err != nil {
 				return err
 			}
 		}

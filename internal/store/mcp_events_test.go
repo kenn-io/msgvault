@@ -20,7 +20,7 @@ func TestMCPEventsSchemaStartsDisabled(t *testing.T) {
 	assert.Equal(int64(0), floor)
 	assert.Equal(int64(0), epoch)
 	assert.False(enabled)
-	for _, table := range []string{"mcp_event_log", "mcp_event_subscriptions", "mcp_event_dead_letters", "mcp_live_admissions", "mcp_event_message_refs"} {
+	for _, table := range []string{"mcp_event_log", "mcp_event_subscriptions", "mcp_event_dead_letters", "mcp_event_message_refs"} {
 		var count int
 		require.NoError(f.Store.DB().QueryRow(`SELECT COUNT(*) FROM ` + table).Scan(&count))
 		assert.Zero(count)

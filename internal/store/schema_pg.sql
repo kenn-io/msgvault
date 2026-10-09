@@ -46,7 +46,7 @@ CREATE INDEX IF NOT EXISTS idx_mcp_event_log_source ON mcp_event_log(source_id);
 CREATE INDEX IF NOT EXISTS idx_mcp_event_log_retention ON mcp_event_log(recorded_at);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_mcp_event_log_occurrence
     ON mcp_event_log(family, scope_kind, scope_id, item_key)
-    WHERE kind = 'reaction' OR family IN (
+    WHERE family IN (
         'msgvault.draft_changed', 'msgvault.kata_issue_filed',
         'msgvault.attachment_processed');
 
@@ -106,15 +106,6 @@ CREATE TABLE IF NOT EXISTS mcp_event_dead_letters (
 );
 CREATE INDEX IF NOT EXISTS idx_mcp_event_dead_letters_cleanup
     ON mcp_event_dead_letters(failed_at);
-
-CREATE TABLE IF NOT EXISTS mcp_live_admissions (
-    message_id BIGINT PRIMARY KEY,
-    source_id BIGINT NOT NULL,
-    message_reference_seq BIGINT NOT NULL CHECK (message_reference_seq > 0),
-    epoch BIGINT NOT NULL,
-    admitted_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_mcp_live_admissions_source ON mcp_live_admissions(source_id);
 
 -- Open catalog of communication services. Seeded slugs are presentation and
 -- normalization metadata, NOT a database enum and not a compatibility
