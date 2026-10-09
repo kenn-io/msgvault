@@ -172,6 +172,16 @@ func importEmlxDir(ctx context.Context, st *store.Store, rootDir string, opts Em
 		return nil, fmt.Errorf("start sync: %w", err)
 	}
 	st = st.ScopedToSync(src.ID, syncID)
+	// Fatal returns must finish the started run; cancellation keeps its checkpoint
+	// available for the next invocation.
+	defer func() {
+		if retErr == nil || errors.Is(retErr, context.Canceled) || errors.Is(retErr, context.DeadlineExceeded) {
+			return
+		}
+		if err := st.FailSyncContext(ownershipCtx, syncID, retErr.Error()); err != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("fail sync: %w", err))
+		}
+	}()
 	if opts.FullReconcile {
 		if err := st.InvalidateEmlxRootContext(ctx, src.ID, rootPrefix); err != nil {
 			return summary, fmt.Errorf("invalidate EMLX root: %w", err)
