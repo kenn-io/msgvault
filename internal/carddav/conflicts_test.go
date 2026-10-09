@@ -1604,19 +1604,21 @@ func TestRemoteEditsToPublishedImportedValues(t *testing.T) {
 }
 
 func TestRemoteEditToPublishedImportWithMultipleTypesDoesNotPut(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	fixture, service, _, _ := publishedImportFixture(t)
 	puts := fixture.puts
 	edited := bytes.Replace(fixture.body, []byte("EMAIL:e2@example.test"), []byte("EMAIL;TYPE=home,work:e2b@example.test"), 1)
 	fixture.setRemote(edited, `"remote-2"`)
 	_, err := service.Sync(t.Context(), SyncOptions{Full: true})
-	require.NoError(t, err)
-	require.NoError(t, service.ReconcilePublications(t.Context()))
-	assert.Equal(t, puts, fixture.puts)
-	assert.Equal(t, edited, fixture.body)
+	require.NoError(err)
+	require.NoError(service.ReconcilePublications(t.Context()))
+	assert.Equal(puts, fixture.puts)
+	assert.Equal(edited, fixture.body)
 	_, err = service.Sync(t.Context(), SyncOptions{Full: true})
-	require.NoError(t, err)
-	require.NoError(t, service.ReconcilePublications(t.Context()))
-	assert.Equal(t, puts, fixture.puts)
+	require.NoError(err)
+	require.NoError(service.ReconcilePublications(t.Context()))
+	assert.Equal(puts, fixture.puts)
 }
 
 func TestPublishedImportLocalRenameSurvivesRemoteRename(t *testing.T) {
