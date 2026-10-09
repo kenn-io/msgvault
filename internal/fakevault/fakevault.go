@@ -739,6 +739,12 @@ func (g *generator) convMember(convID int64, j int) int64 {
 // finalize backfills the denormalized conversation stats and checkpoints
 // the WAL so the finished vault is a compact, self-contained database file.
 func (g *generator) finalize(ctx context.Context) error {
+	// Direct inserts bypass the Store paths that queue chats for discovery;
+	// the first search rebuilds every queued conversation that is a chat.
+	if _, err := g.db.ExecContext(ctx, `INSERT OR IGNORE INTO chat_members_dirty (conversation_id)
+		SELECT id FROM conversations`); err != nil {
+		return fmt.Errorf("fakevault: queueing chat members: %w", err)
+	}
 	if g.opts.ParticipantEdges > 0 {
 		if _, err := g.db.ExecContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
 			return fmt.Errorf("fakevault: checkpointing WAL: %w", err)

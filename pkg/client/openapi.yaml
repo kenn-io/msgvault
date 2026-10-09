@@ -2237,6 +2237,75 @@ components:
         - server_time
         - complete_through
       type: object
+    ChatDiscoveryPage:
+      properties:
+        has_more:
+          type: boolean
+        results:
+          items:
+            $ref: "#/components/schemas/ChatDiscoveryResult"
+          type: array
+      required:
+        - results
+        - has_more
+      type: object
+    ChatDiscoveryResult:
+      properties:
+        conversation_id:
+          format: int64
+          type: integer
+        conversation_type:
+          type: string
+        evidence_truncated:
+          type: boolean
+        match_kind:
+          type: string
+        matched_names:
+          items:
+            type: string
+          type: array
+        matched_tokens:
+          items:
+            type: string
+          type: array
+        message_id:
+          format: int64
+          type: integer
+        network:
+          type: string
+        source_conversation_id:
+          nullable: true
+          type: string
+        source_display_name:
+          nullable: true
+          type: string
+        source_id:
+          format: int64
+          type: integer
+        source_identifier:
+          nullable: true
+          type: string
+        source_type:
+          type: string
+        title:
+          nullable: true
+          type: string
+      required:
+        - conversation_id
+        - message_id
+        - source_conversation_id
+        - source_id
+        - source_type
+        - source_identifier
+        - source_display_name
+        - network
+        - title
+        - conversation_type
+        - matched_tokens
+        - matched_names
+        - evidence_truncated
+        - match_kind
+      type: object
     ChoiceDescriptor:
       properties:
         label:
@@ -14888,7 +14957,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.10.0
+  version: 3.11.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:
@@ -18792,6 +18861,49 @@ paths:
       security:
         - apiKey: []
       summary: Fetch a consented remote mail image through the SSRF-hardened daemon proxy
+      tags:
+        - API
+  /api/v1/conversations/search:
+    get:
+      operationId: searchChats
+      parameters:
+        - description: Name or title tokens; OR matching, exact matches ranked first
+          in: query
+          name: q
+          required: true
+          schema:
+            type: string
+        - description: Maximum results (default 20, max 100)
+          in: query
+          name: limit
+          schema:
+            format: int64
+            maximum: 100
+            minimum: 1
+            type: integer
+        - description: Restrict to one archived source
+          in: query
+          name: source_id
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatDiscoveryPage"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Find archived chats by ranked name tokens
       tags:
         - API
   /api/v1/conversations/{id}:

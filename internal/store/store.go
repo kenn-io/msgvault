@@ -108,6 +108,7 @@ type Store struct {
 	imapLabelRepairPerMessageHook         func(messageID int64)
 	attributionAfterLockHook              func(sourceIDs []int64)
 	accountAttributionAfterReadHook       func(messageID int64)
+	chatMembersAfterClaimHook             func()
 	cardDAVConflictResolveSnapshotHook    func()
 	cardDAVTombstonePrepareSnapshotHook   func()
 	cardDAVReviewPersonLockHook           func()
@@ -2201,6 +2202,9 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	}
 	if err := s.runOnceMigration(ctx, migrationMeetingProjectionV1, meetingProjectionVersion, false, s.backfillMeetingProjectionsContext); err != nil {
 		return fmt.Errorf("initialize meeting projections: %w", err)
+	}
+	if err := s.runOnceMigration(ctx, migrationChatMembers, 1, false, s.rebuildChatMembersContext); err != nil {
+		return fmt.Errorf("initialize chat members projection: %w", err)
 	}
 
 	// Probe availability through the dialect so it works uniformly for

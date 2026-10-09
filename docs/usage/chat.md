@@ -290,6 +290,7 @@ The MCP server exposes the following tools to connected AI clients:
 | `update_saved_view` | Patch supplied Saved View fields using optimistic revision checking. Write-class. | `id` (int, required), `revision` (int, required), at least one of `name`, `description`, `canonical_state`, `schema_version` |
 | `delete_saved_view` | Delete a Saved View definition, not archive messages. Write-class and destructive. | `id` (int, required), `revision` (int, required) |
 | `stage_deletion` | Stage messages for deletion (creates manifest only) | `query` (string) OR structured filters: `from` (string), `domain` (string), `label` (string), `after` (string), `before` (string), `has_attachment` (bool); optional: `account` (string) |
+| `find_chat` | Find archived chats by whole query tokens in names, aliases, identifiers and titles, ranked by the best matching name. Owner clients only; requires unreleased API schema 3.11.0. Returns archive/provider chat IDs, network labels and bounded match evidence. | `query` (string, required), `limit` (int, default 20, max 100), `source_id` (positive int, optional) |
 | `search_people` | Find observed contacts and saved profiles by name or identity. Saved-profile rows include `vcard_uid` and `carddav_bindings`; older daemons return no CardDAV binding entries. This is a local lookup, not semantic profile search. | `query` (string), `limit` (int, default 20), `cursor` (string) |
 | `get_person_notes` | Read a saved person's private Notes, including provenance and current value ID. | `person_id` (int, required) |
 | `get_person_relationship` | Read interaction-based relationship scores and optional daily activity. These describe archive patterns, not emotional closeness or permission to contact someone. | `participant_id` (int, required), `year` (int), `timezone` (IANA name, default UTC) |
@@ -307,6 +308,16 @@ and, after `published`, repeat the tool call with `fresh=false`. A fresh request
 includes archive writes committed before the request, queuing a follow-up check
 if another build is running. Older daemons omit the tool; a failed restricted
 query never falls back to privileged SQL.
+
+Use `find_chat` before reading a thread when a person's full name finds only
+one network. A query for `Jordan Lee Chen` can also find a chat named `Lee Chen`.
+Call `list_thread(id=result.message_id)` for chronological reading from the
+live archive on SQLite or PostgreSQL. Each result carries the chat's newest
+visible message ID, including when provider identifiers are missing or
+ambiguous. Partial matches are candidates, not proof of shared identity. Discovery uses chat metadata and current saved
+names; message text search keeps its existing query semantics. See
+[chat discovery](../cli-reference.md#find-chat) for matching, ranking and archive
+scope, and the [HTTP contract](../api-server.md#find-archived-chats) for fields.
 
 `search_people` returns `rows`, `total_count`, `next_cursor`, and
 `cache_revision`. A row includes `person_id`, `vcard_uid`, and

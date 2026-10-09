@@ -3044,6 +3044,50 @@ func (o *GetRemoteImageRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
+// SearchChatsRequestOptions is the options needed to make a request to SearchChats.
+type SearchChatsRequestOptions struct {
+	Query *SearchChatsQuery
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *SearchChatsRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Query != nil {
+		if v, ok := any(o.Query).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Query", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *SearchChatsRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *SearchChatsRequestOptions) GetQuery() (map[string]any, error) {
+	return runtime.AsMap[any](o.Query)
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *SearchChatsRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *SearchChatsRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // GetConversationRequestOptions is the options needed to make a request to GetConversation.
 type GetConversationRequestOptions struct {
 	PathParams *GetConversationPath

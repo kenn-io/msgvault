@@ -355,7 +355,8 @@ import (
 // 3.9.0 adds source-scoped agent read permissions, optional expires_at, and GET /api/v1/agent-tokens/self.
 // 3.10.0 adds person UID lookup and exposes current vCard UIDs and CardDAV
 // bindings on person and directory responses.
-const APISchemaVersion = "3.10.0"
+// 3.11.0 adds archived chat discovery ranked by the best matching name or title.
+const APISchemaVersion = "3.11.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -1008,9 +1009,18 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 		}
 	}
 
-	for _, schemaName := range []string{"FileSearchRow", "FileMetadataResponse", "PersonFileSearchRow", "MessageRecording"} {
-		if schema := schemas[schemaName]; schema != nil {
-			for _, property := range []string{"filename", "mime_type"} {
+	for _, fields := range []struct {
+		name       string
+		properties []string
+	}{
+		{"FileSearchRow", []string{"filename", "mime_type"}},
+		{"FileMetadataResponse", []string{"filename", "mime_type"}},
+		{"PersonFileSearchRow", []string{"filename", "mime_type"}},
+		{"MessageRecording", []string{"filename", "mime_type"}},
+		{"ChatDiscoveryResult", []string{"title", "source_display_name", "source_conversation_id", "source_identifier"}},
+	} {
+		if schema := schemas[fields.name]; schema != nil {
+			for _, property := range fields.properties {
 				if schema.Properties[property] != nil {
 					schema.Properties[property].Nullable = true
 				}

@@ -359,17 +359,18 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 	})
 	_ = testCtx
 	tests := []struct {
-		name           string
-		schemaVersion  string
-		wantPeople     bool
-		wantDirectory  bool
-		wantSavedViews bool
-		wantMeetings   bool
-		wantAgenda     bool
-		wantArchiveSQL bool
-		wantReview     bool
-		wantScoring    bool
-		wantCardDAV    bool
+		name              string
+		schemaVersion     string
+		wantPeople        bool
+		wantDirectory     bool
+		wantChatDiscovery bool
+		wantSavedViews    bool
+		wantMeetings      bool
+		wantAgenda        bool
+		wantArchiveSQL    bool
+		wantReview        bool
+		wantScoring       bool
+		wantCardDAV       bool
 	}{
 		{name: "people schema", schemaVersion: "2.10.0", wantPeople: true},
 		{name: "directory predecessor", schemaVersion: "2.12.9", wantPeople: true},
@@ -387,6 +388,9 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 		{name: "person CardDAV schema", schemaVersion: "2.32.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true},
 		{name: "identity review and scoring predecessor", schemaVersion: "2.35.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true},
 		{name: "identity review and scoring schema", schemaVersion: "3.0.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true},
+		{name: "archive evidence schema", schemaVersion: "3.4.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true},
+		{name: "chat discovery predecessor", schemaVersion: "3.10.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true},
+		{name: "chat discovery schema", schemaVersion: "3.11.0", wantPeople: true, wantDirectory: true, wantChatDiscovery: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true},
 		{name: "older same-major schema", schemaVersion: "2.9.9"},
 		{name: "malformed schema", schemaVersion: "not-a-version"},
 		{name: "missing schema"},
@@ -419,6 +423,7 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 				assert.Nil(opts.SavedViews, "an older daemon cannot run Saved Views")
 			}
 			assert.Equal(tt.wantDirectory, opts.DirectoryBackend != nil)
+			assert.Equal(tt.wantChatDiscovery, opts.ChatDiscoveryBackend != nil)
 			assert.Equal(tt.wantMeetings, opts.Meetings != nil)
 			assert.Equal(tt.wantAgenda, opts.PersonAgendaBackend != nil)
 			assert.Equal(tt.wantArchiveSQL, opts.ArchiveSQLQuerier != nil)
@@ -456,6 +461,7 @@ func TestDaemonMCPServeOptionsWarnsWhenPeopleCapabilityProbeFails(t *testing.T) 
 	opts := daemonMCPServeOptions(testCtx, client, invocationFromContext(testCtx))
 	assert.Nil(opts.PeopleBackend)
 	assert.Nil(opts.DirectoryBackend)
+	assert.Nil(opts.ChatDiscoveryBackend)
 	assert.Nil(opts.ArchiveSQLQuerier)
 	assert.Contains(logs.String(), "people tools disabled")
 }

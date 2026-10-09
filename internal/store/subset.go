@@ -279,6 +279,13 @@ func CopySubsetWithOptions(
 		cleanup()
 		return nil, fmt.Errorf("reconcile copied subset derived data: %w", err)
 	}
+	// The copy bypassed UpsertMessage, which queues chats for the member
+	// projection, and schema creation ledgered the rebuild while empty.
+	if err := normalized.rebuildChatMembersContext(context.Background()); err != nil {
+		_ = normalized.Close()
+		cleanup()
+		return nil, fmt.Errorf("rebuild copied subset chat members: %w", err)
+	}
 	// Initial schema creation ledgered the inference migration before any
 	// people existed. Recheck the transferred projection for legacy source
 	// rows without state, preserving every copied positive revision.
