@@ -172,7 +172,7 @@ func (s *Store) MigrateLegacyIdentityConfigContext(
 				}
 			}
 			if len(insertedForSource) > 0 {
-				if err := refreshSourceMessageAttributionContext(ctx, tx, src.ID, ""); err != nil {
+				if err := refreshSourceMessageAttributionContext(ctx, tx, src.ID); err != nil {
 					return fmt.Errorf("refresh migrated identity attribution (source=%d): %w", src.ID, err)
 				}
 				// A file import migrates after storing its messages, so

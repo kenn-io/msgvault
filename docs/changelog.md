@@ -20,6 +20,10 @@ All notable changes to msgvault, grouped by release.
 
 - Agent tokens grant scoped archive reads through the remote CLI and MCP, with optional `--expires`. Search responses report index uncertainty; owner searches retain automatic index repair.
 
+- Owned-address changes recheck only matching messages. SQLite upgrades may
+  take several minutes to build a one-time From-address index. See
+  [startup progress](guides/daemon-migration.md#what-you-will-see).
+
 - msgvault sends anonymous usage telemetry: a daemon ping at startup and once
   each later UTC day, and an `app_opened` event the web UI reports through the
   daemon when it opens and on its first focus on a later UTC day. Events carry

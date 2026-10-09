@@ -1005,6 +1005,28 @@ const messagesAccountIndexDefinition = "ON messages(account_address, account_pat
 // rows without scanning the source; it holds only rows awaiting attribution.
 const messagesAccountPendingIndexDefinition = "ON messages(source_id, id) WHERE " + accountPendingPredicate
 
+// The first SQLite index build can take minutes, so log its start and finish.
+func (s *Store) ensureFromAddressIndex(ctx context.Context) error {
+	const name = "idx_message_recipients_email_from"
+	var exists bool
+	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?)`, name).Scan(&exists); err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+	started := time.Now()
+	slog.Info("building index", slog.String("index", name), slog.String("table", "message_recipients"))
+	if err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+		_, err := tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS `+name+` ON message_recipients(LOWER(email_address), message_id) WHERE recipient_type = 'from'`)
+		return err
+	}); err != nil {
+		return err
+	}
+	slog.Info("built index", slog.String("index", name), slog.Duration("elapsed", time.Since(started)))
+	return nil
+}
+
 // buildLargeIndexesConcurrently creates big-table indexes without blocking
 // writers. CREATE INDEX CONCURRENTLY cannot run inside a transaction (unlike
 // the runMaintenance escape hatch, which only disables the pool-wide
@@ -1071,6 +1093,7 @@ func (s *Store) buildLargeIndexesConcurrently(ctx context.Context) {
 		{"idx_participant_identifiers_value_lower", "ON participant_identifiers(LOWER(identifier_value))"},
 		{"idx_person_match_scoring_contact_lookup", "ON participant_contact_observations(address_kind, normalized_value, participant_id) WHERE active_until IS NULL AND superseded_at IS NULL"},
 		{"idx_beeper_media_occurrences_source", "ON beeper_media_occurrences(source_type, source_identifier, source_message_id, destination_key)"},
+		{"idx_message_recipients_email_from", "ON message_recipients(LOWER(email_address), message_id) WHERE recipient_type = 'from'"},
 	}
 	for _, index := range concurrentIndexes {
 		if dropErr := dropInvalidIndexConcurrently(ctx, conn, index.name); dropErr != nil {
@@ -1148,6 +1171,11 @@ func queryInChunks[T any](db chunkQuerier, ids []T, prefixArgs []any, queryTempl
 }
 
 func queryInChunksContext[T any](ctx context.Context, db chunkQuerier, ids []T, prefixArgs []any, queryTemplate string, fn func(*loggedRows) error) error {
+	return queryInChunksWithValueExprContext(ctx, db, ids, prefixArgs, queryTemplate, "?", fn)
+}
+
+// valueExpr is trusted SQL with one bind, so indexed lookups can use database case folding.
+func queryInChunksWithValueExprContext[T any](ctx context.Context, db chunkQuerier, ids []T, prefixArgs []any, queryTemplate, valueExpr string, fn func(*loggedRows) error) error {
 	const chunkSize = 500
 	for i := 0; i < len(ids); i += chunkSize {
 		if err := ctx.Err(); err != nil {
@@ -1160,7 +1188,7 @@ func queryInChunksContext[T any](ctx context.Context, db chunkQuerier, ids []T, 
 		placeholders := make([]string, len(chunk))
 		args := slices.Clone(prefixArgs)
 		for j, id := range chunk {
-			placeholders[j] = "?"
+			placeholders[j] = valueExpr
 			args = append(args, id)
 		}
 
@@ -1936,6 +1964,10 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 			return err
 		}); err != nil {
 			return fmt.Errorf("create deletion timestamp indexes: %w", err)
+		}
+
+		if err := s.ensureFromAddressIndex(ctx); err != nil {
+			return fmt.Errorf("create identity From-envelope index: %w", err)
 		}
 	}
 

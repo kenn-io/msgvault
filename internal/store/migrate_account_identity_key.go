@@ -204,7 +204,7 @@ func (s *Store) repairAccountIdentityAddressKeys(ctx context.Context) error {
 			return err
 		}
 		for sourceID := range collapsedSources {
-			if err := refreshSourceMessageAttributionContext(ctx, tx, sourceID, ""); err != nil {
+			if err := refreshSourceMessageAttributionContext(ctx, tx, sourceID); err != nil {
 				return fmt.Errorf("refresh attribution after identity collapse (source=%d): %w", sourceID, err)
 			}
 		}

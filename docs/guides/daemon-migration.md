@@ -43,6 +43,10 @@ ready, then runs your command as usual. The daemon stays alive for 20 minutes
 after the last request (`[server].daemon_idle_timeout`, `"0s"` to disable) and
 then exits on its own; the next command starts it again.
 
+If the SQLite archive lacks the From-address index, startup builds it once.
+Large archives may take several minutes. The daemon logs `building index` and
+`built index` for `idx_message_recipients_email_from` in `serve.log`.
+
 Command output is unchanged: syncs, imports, and other long operations stream
 their normal stdout/stderr through the daemon back to your terminal, and
 Ctrl+C still cancels them.

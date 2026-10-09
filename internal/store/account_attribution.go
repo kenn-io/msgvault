@@ -1066,11 +1066,7 @@ func (s *Store) markAccountAttributionPendingForAddressesTx(
 		}
 	}
 
-	confirmations := make([]normalizedIdentityConfirmation, 0, len(normalized))
-	for _, a := range normalized {
-		confirmations = append(confirmations, normalizedIdentityConfirmation{identifier: a, normalized: a})
-	}
-	participantIDs, err := participantIDsForConfirmationsContext(ctx, tx, sourceID, confirmations)
+	participantIDs, err := participantIDsForAddressesContext(ctx, tx, normalized)
 	if err != nil {
 		return nil, err
 	}

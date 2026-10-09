@@ -158,8 +158,8 @@ func (s *Store) AddAccountIdentityContext(
 		sourceID,
 		address,
 		signal,
-		func(ctx context.Context, tx *loggedTx) error {
-			return refreshSourceMessageAttributionContext(ctx, tx, sourceID, "")
+		func(ctx context.Context, tx *loggedTx, address string) error {
+			return refreshIdentityMessageAttributionContext(ctx, tx, sourceID, []string{address}, "")
 		},
 	)
 }
@@ -179,15 +179,15 @@ func (s *Store) AddAccountIdentityAndRefreshMessageAttributionContext(
 		sourceID,
 		address,
 		signal,
-		func(ctx context.Context, tx *loggedTx) error {
-			return refreshSourceMessageAttributionContext(
-				ctx, tx, sourceID, excludeSourceMessageID,
+		func(ctx context.Context, tx *loggedTx, address string) error {
+			return refreshIdentityMessageAttributionContext(
+				ctx, tx, sourceID, []string{address}, excludeSourceMessageID,
 			)
 		},
 	)
 }
 
-type accountIdentityInsertHook func(context.Context, *loggedTx) error
+type accountIdentityInsertHook func(context.Context, *loggedTx, string) error
 
 func (s *Store) addAccountIdentityContext(
 	ctx context.Context,
@@ -245,7 +245,7 @@ func (s *Store) addAccountIdentityOnce(
 				return err
 			}
 			if onInsert != nil {
-				if err := onInsert(ctx, tx); err != nil {
+				if err := onInsert(ctx, tx, addr); err != nil {
 					return err
 				}
 			}
@@ -587,7 +587,7 @@ func (s *Store) RemoveAccountIdentityContext(
 		if err := s.bumpAccountIdentityRevisionContext(ctx, tx); err != nil {
 			return err
 		}
-		if err := refreshSourceMessageAttributionContext(ctx, tx, sourceID, ""); err != nil {
+		if err := refreshIdentityMessageAttributionContext(ctx, tx, sourceID, removedAddresses, ""); err != nil {
 			return err
 		}
 		pending, err = s.markAccountAttributionPendingForAddressesTx(ctx, tx, sourceID, removedAddresses)

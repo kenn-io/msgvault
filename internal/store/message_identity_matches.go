@@ -63,42 +63,11 @@ func (s *Store) ResolveAccountIdentityContext(
 			"source %d identity %q: %w", sourceID, identifier, ErrAccountIdentityNotFound)
 	}
 
-	// Shares messageIdentityAttributionMatch's owner builders: the primary
-	// email matches only when nonblank, email identifiers only when the
-	// participant has no primary email, other identifiers byte-exact, and
-	// participants.phone_number is never consulted because
-	// EnsureParticipantByPhone always backs a phone with an identifier row.
-	query := `
-		SELECT p.id FROM participants p
-		WHERE ` + ownerEmailMatch("p.email_address", "?") + `
-		UNION
-		SELECT pi.participant_id FROM participant_identifiers pi
-		WHERE ` + ownerIdentifierMatch("pi.identifier_type", "pi.identifier_value", "?", identifierWithoutPrimaryEmail) + `
-		ORDER BY 1
-	`
-	rows, err := s.db.QueryContext(
-		ctx,
-		query,
-		storedIdentifier,
-		storedIdentifier,
-		storedIdentifier,
-	)
+	participantIDs, err := participantIDsForAddressesContext(ctx, s.db, []string{storedIdentifier})
 	if err != nil {
 		return ResolvedAccountIdentity{}, fmt.Errorf("resolve account identity participants: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
-
-	participantIDs := make([]int64, 0)
-	for rows.Next() {
-		var participantID int64
-		if err := rows.Scan(&participantID); err != nil {
-			return ResolvedAccountIdentity{}, fmt.Errorf("scan account identity participant: %w", err)
-		}
-		participantIDs = append(participantIDs, participantID)
-	}
-	if err := rows.Err(); err != nil {
-		return ResolvedAccountIdentity{}, fmt.Errorf("iterate account identity participants: %w", err)
-	}
+	slices.Sort(participantIDs)
 
 	return ResolvedAccountIdentity{
 		SourceID:          sourceID,

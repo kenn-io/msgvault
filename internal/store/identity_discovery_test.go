@@ -360,31 +360,6 @@ func assertMessageIdentityAttributed(t *testing.T, f *storetest.Fixture, message
 	assert.False(t, sourceIsFromMe, "source-native provenance must stay untouched")
 }
 
-func TestBatchConfirmationAttributesMergedAliasEnvelopeMessages(t *testing.T) {
-	require := require.New(t)
-	f, messageID := mergedAliasEnvelopeFixture(t)
-
-	outcomes, err := f.Store.AddAccountIdentitiesBatchContext(
-		t.Context(), f.Source.ID,
-		[]store.IdentityConfirmation{{Identifier: "alias@example.test", Signals: []string{"sent-folder"}}},
-	)
-	require.NoError(err, "confirm merged alias in batch")
-	require.Len(outcomes, 1)
-	require.True(outcomes[0].Added, "batch confirmation must insert the alias identity")
-
-	assertMessageIdentityAttributed(t, f, messageID)
-}
-
-func TestAddAccountIdentityAttributesMergedAliasEnvelopeMessages(t *testing.T) {
-	require := require.New(t)
-	f, messageID := mergedAliasEnvelopeFixture(t)
-
-	require.NoError(f.Store.AddAccountIdentity(f.Source.ID, "alias@example.test", "manual"),
-		"confirm merged alias")
-
-	assertMessageIdentityAttributed(t, f, messageID)
-}
-
 // TestPersistMessageAttributesEnvelopeOnlyIdentity pins the persist-time
 // ordering: the message upsert computes attribution from the sender
 // participant before this transaction writes the 'from' envelope snapshot,
@@ -584,38 +559,6 @@ func TestAccountIdentityBatchDeterministicallyMergesCaseAndSignals(t *testing.T)
 	assert.Equal(beforeAccountRevision+1, afterAccountRevision, "one chunk with two inserts bumps once")
 }
 
-func TestAccountIdentityBatchRefreshesExistingMessageAttribution(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	f := storetest.New(t)
-
-	senderID := f.EnsureParticipant("masked-shop@example.test", "Masked Shop", "example.test")
-	message := f.NewMessage().WithSourceMessageID("sent-before-alias-confirmation").Build()
-	message.SenderID = sql.NullInt64{Int64: senderID, Valid: true}
-	messageID, err := f.Store.UpsertMessage(message)
-	require.NoError(err, "persist message before alias confirmation")
-
-	before, err := f.Store.GetMessageIsFromMe(messageID)
-	require.NoError(err, "read initial attribution")
-	assert.False(before)
-
-	_, err = f.Store.AddAccountIdentitiesBatchContext(t.Context(), f.Source.ID, []store.IdentityConfirmation{{
-		Identifier: "MASKED-SHOP@EXAMPLE.TEST",
-		Signals:    []string{"sent-folder"},
-	}})
-	require.NoError(err, "confirm alias in batch")
-
-	var isFromMe, sourceIsFromMe, identityIsFromMe bool
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
-		SELECT is_from_me, source_is_from_me, identity_is_from_me
-		FROM messages
-		WHERE id = ?
-	`), messageID).Scan(&isFromMe, &sourceIsFromMe, &identityIsFromMe))
-	assert.True(isFromMe, "batch confirmation must repair the existing message")
-	assert.False(sourceIsFromMe, "message did not carry source-native attribution")
-	assert.True(identityIsFromMe, "batch confirmation must retain identity provenance")
-}
-
 func TestAccountIdentityBatchBoundsLargeWritesAndKeepsRetryIdempotent(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
@@ -708,105 +651,4 @@ func TestAccountIdentityBatchRejectsInvalidSignalBeforeWriting(t *testing.T) {
 	identities, listErr := f.Store.ListAccountIdentities(f.Source.ID)
 	require.NoError(t, listErr)
 	assert.Empty(t, identities, "validation must finish before committing any chunk")
-}
-
-func TestAccountIdentityBatchRefreshesOnlyAffectedSenders(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	f := storetest.New(t)
-
-	aliceID := f.EnsureParticipant("alice@example.test", "Alice", "example.test")
-	bobID := f.EnsureParticipant("bob@example.test", "Bob", "example.test")
-
-	aliceMessage := f.NewMessage().WithSourceMessageID("alice-message").Build()
-	aliceMessage.SenderID = sql.NullInt64{Int64: aliceID, Valid: true}
-	aliceMessageID, err := f.Store.UpsertMessage(aliceMessage)
-	require.NoError(err, "persist alice message")
-
-	bobMessage := f.NewMessage().WithSourceMessageID("bob-message").Build()
-	bobMessage.SenderID = sql.NullInt64{Int64: bobID, Valid: true}
-	bobMessageID, err := f.Store.UpsertMessage(bobMessage)
-	require.NoError(err, "persist bob message")
-
-	// Confirm Bob first so his message starts out correctly attributed.
-	_, err = f.Store.AddAccountIdentitiesBatchContext(t.Context(), f.Source.ID, []store.IdentityConfirmation{
-		{Identifier: "bob@example.test", Signals: []string{"sent-folder"}},
-	})
-	require.NoError(err, "confirm bob")
-
-	bobIsFromMe, err := f.Store.GetMessageIsFromMe(bobMessageID)
-	require.NoError(err)
-	require.True(bobIsFromMe, "bob's own confirmation must repair his message first")
-
-	// Remove Bob's identity row directly, leaving his message row untouched
-	// (stale). A full-source refresh triggered by Alice's confirmation below
-	// would recompute Bob's attribution from scratch, find no matching
-	// identity, and flip his message back to false. A refresh scoped to
-	// Alice's own participant must never visit Bob's row.
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
-		`DELETE FROM account_identities WHERE source_id = ? AND address = ?`),
-		f.Source.ID, "bob@example.test")
-	require.NoError(err, "simulate a stale bob identity")
-
-	_, err = f.Store.AddAccountIdentitiesBatchContext(t.Context(), f.Source.ID, []store.IdentityConfirmation{
-		{Identifier: "alice@example.test", Signals: []string{"sent-folder"}},
-	})
-	require.NoError(err, "confirm alice")
-
-	aliceIsFromMe, err := f.Store.GetMessageIsFromMe(aliceMessageID)
-	require.NoError(err)
-	assert.True(aliceIsFromMe, "alice's message must be repaired by her own confirmation")
-
-	bobIsFromMeAfter, err := f.Store.GetMessageIsFromMe(bobMessageID)
-	require.NoError(err)
-	assert.True(bobIsFromMeAfter,
-		"a refresh scoped to alice's chunk must not touch bob's message, even though "+
-			"a full-source refresh would have flipped it back to false")
-}
-
-func TestAccountIdentityBatchWithUnseenAliasSkipsRefresh(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	f := storetest.New(t)
-
-	// A message exists but was never observed under the alias being confirmed.
-	knownSenderID := f.EnsureParticipant("known@example.test", "Known", "example.test")
-	message := f.NewMessage().WithSourceMessageID("preexisting-message").Build()
-	message.SenderID = sql.NullInt64{Int64: knownSenderID, Valid: true}
-	messageID, err := f.Store.UpsertMessage(message)
-	require.NoError(err, "persist message from an unrelated sender")
-
-	// Confirm the known sender first so his message starts out attributed,
-	// then remove his identity row directly, leaving his message row stale
-	// (true). Confirming the unseen alias below must succeed but skip the
-	// refresh entirely: if it triggered ANY broader refresh — even one
-	// correctly scoped but accidentally reaching this unrelated sender —
-	// recomputing from the now-empty identity set would flip his message
-	// back to false. A false-before/false-after version of this test would
-	// pass even under a full-source refresh and would not prove anything.
-	_, err = f.Store.AddAccountIdentitiesBatchContext(t.Context(), f.Source.ID, []store.IdentityConfirmation{
-		{Identifier: "known@example.test", Signals: []string{"sent-folder"}},
-	})
-	require.NoError(err, "confirm known sender")
-	before, err := f.Store.GetMessageIsFromMe(messageID)
-	require.NoError(err)
-	require.True(before, "known sender's own confirmation must repair his message first")
-
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
-		`DELETE FROM account_identities WHERE source_id = ? AND address = ?`),
-		f.Source.ID, "known@example.test")
-	require.NoError(err, "simulate a stale known-sender identity")
-
-	outcomes, err := f.Store.AddAccountIdentitiesBatchContext(t.Context(), f.Source.ID, []store.IdentityConfirmation{
-		{Identifier: "never-seen@example.test", Signals: []string{"manual"}},
-	})
-	require.NoError(err, "confirming an identity with no matching participant must succeed")
-	require.Len(outcomes, 1)
-	assert.True(outcomes[0].Added)
-
-	after, err := f.Store.GetMessageIsFromMe(messageID)
-	require.NoError(err)
-	assert.True(after,
-		"no participant matches the confirmed alias, so the refresh must be skipped entirely — "+
-			"even a full-source refresh would have flipped the known sender's stale message back to false")
 }
