@@ -2,12 +2,15 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"net/http"
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 
 	"go.kenn.io/msgvault/internal/agentgrant"
+	"go.kenn.io/msgvault/internal/query"
 )
 
 // Every admitted read has either a source filter or an object-source check.
@@ -50,6 +53,57 @@ func agentReadPermission(operation string, grant *agentgrant.Grant) (agentgrant.
 		return "", agentReadDenied(permission)
 	}
 	return permission, nil
+}
+
+// agentReadConcurrency stays below the SQLite pool size (4) because each agent
+// read holds one connection for its snapshot; sync writes and owner reads keep the rest.
+const agentReadConcurrency = 2
+
+type agentReadSnapshotStore interface {
+	BeginReadSnapshotContext(ctx context.Context) (context.Context, func(), error)
+	DB() *sql.DB
+	IsPostgreSQL() bool
+}
+
+// beginAgentRead binds req to one read snapshot and authorizes its source scope.
+// The returned release frees the snapshot and its concurrency slot.
+func (s *Server) beginAgentRead(req *http.Request, operation string, grant *agentgrant.Grant, permission agentgrant.Permission) (func(), *apiHTTPError) {
+	snapshotStore, ok := s.store.(agentReadSnapshotStore)
+	if !ok {
+		return nil, newAPIHTTPError(http.StatusServiceUnavailable, "source_scope_unavailable", "Source authorization is unavailable")
+	}
+	select {
+	case s.agentReadSlots <- struct{}{}:
+	case <-req.Context().Done():
+		return nil, newAPIHTTPError(http.StatusServiceUnavailable, "agent_read_busy", "Agent reads are at capacity; retry later")
+	}
+	indexGeneration := s.ftsRebuildGen.Load()
+	indexComplete := s.ftsIndexComplete.Load()
+	readContext, releaseSnapshot, err := snapshotStore.BeginReadSnapshotContext(req.Context())
+	if err != nil {
+		<-s.agentReadSlots
+		return nil, newAPIHTTPError(http.StatusServiceUnavailable, "source_scope_unavailable", "Source authorization is unavailable")
+	}
+	var once sync.Once
+	release := func() {
+		once.Do(func() {
+			releaseSnapshot()
+			<-s.agentReadSlots
+		})
+	}
+	if boundary, ok := req.Context().Value(readResponseKey{}).(*readResponseWriter); ok {
+		boundary.release = release
+	}
+	if s.queryEngineForContext(readContext) != nil {
+		engine := query.NewEngine(snapshotStore.DB(), snapshotStore.IsPostgreSQL())
+		readContext = context.WithValue(readContext, analyticsEngineContextKey{}, &analyticsEngineState{engine: engine, mode: AnalyticsModeSQL})
+	}
+	*req = *req.WithContext(readContext)
+	if apiErr := s.authorizeAgentRead(req, operation, grant, permission, indexGeneration, indexComplete); apiErr != nil {
+		release()
+		return nil, apiErr
+	}
+	return release, nil
 }
 
 type agentReadScopeKey struct{}

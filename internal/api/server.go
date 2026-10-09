@@ -332,6 +332,8 @@ type Server struct {
 	ftsIndexState      atomic.Value
 	ftsEnsureMu        sync.Mutex
 	ftsEnsureMayRepair bool
+	// agentReadSlots bounds concurrent agent read snapshots; see agentReadConcurrency.
+	agentReadSlots chan struct{}
 	// changesStallLoggedAt throttles the WARN handleMessageChanges emits when
 	// the content-change feed is held back by a long-lived write transaction.
 	// Unix nanoseconds of the last such line, so a consumer polling once a
@@ -683,6 +685,7 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 		fastmailInventoryFactory: fastmailInventoryFactory,
 		gmailProfileAddress:      opts.GmailProfileAddress,
 		started:                  make(chan struct{}),
+		agentReadSlots:           make(chan struct{}, agentReadConcurrency),
 	}
 	s.analyticsState.Store(&analyticsEngineState{
 		engine: opts.Engine, mode: opts.AnalyticsMode,

@@ -817,38 +817,24 @@ func TestAgentReadSnapshotPoolPressure(t *testing.T) {
 					responses <- w
 				}()
 			}
-			for range 4 {
+			for range agentReadConcurrency {
 				select {
 				case <-ready:
 				case <-ctx.Done():
-					requirements.FailNow("four snapshots did not reach the barrier")
+					requirements.FailNow("agent snapshots did not reach the barrier")
 				}
 			}
-			assertions.Equal(4, st.DB().Stats().InUse)
-			ownerDone := make(chan *httptest.ResponseRecorder, 1)
+			// Waiting agent reads hold no connection, so owner work keeps the rest of the pool.
+			assertions.Equal(agentReadConcurrency, st.DB().Stats().InUse)
 			ownerPath := "/api/v1/stats"
-			quickStarted := make(chan struct{})
-			initialWaits := st.DB().Stats().WaitCount
 			if tc.name == "search" {
 				ownerPath = tc.path
-				var once sync.Once
-				barrier.onQuick = func() { once.Do(func() { close(quickStarted) }) }
 			}
-			go func() {
-				req := httptest.NewRequest(http.MethodGet, ownerPath, nil).WithContext(ctx)
-				req.Header.Set("Authorization", "Bearer owner")
-				w := httptest.NewRecorder()
-				srv.Router().ServeHTTP(w, req)
-				ownerDone <- w
-			}()
-			if tc.name == "search" {
-				select {
-				case <-quickStarted:
-				case <-ctx.Done():
-					requirements.FailNow("owner quick probe did not start")
-				}
-				requirements.Eventually(func() bool { return st.DB().Stats().WaitCount > initialWaits }, 10*time.Second, time.Millisecond)
-			}
+			ownerReq := httptest.NewRequest(http.MethodGet, ownerPath, nil).WithContext(ctx)
+			ownerReq.Header.Set("Authorization", "Bearer owner")
+			ownerResponse := httptest.NewRecorder()
+			srv.Router().ServeHTTP(ownerResponse, ownerReq)
+			requirements.Equal(200, ownerResponse.Code, ownerResponse.Body.String())
 			close(resume)
 			for range 4 {
 				select {
@@ -872,12 +858,6 @@ func TestAgentReadSnapshotPoolPressure(t *testing.T) {
 				case <-ctx.Done():
 					requirements.FailNow("scoped reads did not release their snapshots")
 				}
-			}
-			select {
-			case response := <-ownerDone:
-				requirements.Equal(200, response.Code, response.Body.String())
-			case <-ctx.Done():
-				requirements.FailNow("owner read did not progress")
 			}
 			requirements.Eventually(func() bool { return st.DB().Stats().InUse == 0 }, 10*time.Second, time.Millisecond)
 			canceled, cancel := context.WithCancel(t.Context())
@@ -1042,3 +1022,29 @@ func testAgentPackingSnapshot(t *testing.T) {
 }
 
 type readPackingValueKey struct{}
+
+func TestAgentReadAtCapacityFailsWhenRequestEnds(t *testing.T) {
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("test", "reader@example.test")
+	requirements.NoError(err)
+	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
+	t.Cleanup(srv.agentGrants.Close)
+	_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionStatsRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
+	requirements.NoError(err)
+	for range agentReadConcurrency {
+		srv.agentReadSlots <- struct{}{}
+	}
+
+	ended, cancel := context.WithCancel(t.Context())
+	cancel()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/stats", nil).WithContext(ended)
+	req.Header.Set(apiprotocol.AgentTokenHeader, token)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+	assert.Contains(t, w.Body.String(), "agent_read_busy")
+	assert.Zero(t, st.DB().Stats().InUse)
+	assert.Len(t, srv.agentReadSlots, agentReadConcurrency)
+}

@@ -1,8 +1,6 @@
 package api
 
 import (
-	"context"
-	"database/sql"
 	"encoding/json/jsontext"
 	jsonv2 "encoding/json/v2"
 	"fmt"
@@ -215,35 +213,12 @@ func (s *Server) humaAuthMiddleware(ctx huma.Context, next func(huma.Context)) {
 				return
 			}
 			if permission != "" {
-				snapshotStore, ok := s.store.(interface {
-					BeginReadSnapshotContext(ctx context.Context) (context.Context, func(), error)
-					DB() *sql.DB
-					IsPostgreSQL() bool
-				})
-				if !ok {
-					writeHumaError(ctx, 503, "source_scope_unavailable", "Source authorization is unavailable")
-					return
-				}
-				indexGeneration := s.ftsRebuildGen.Load()
-				indexComplete := s.ftsIndexComplete.Load()
-				readContext, release, err := snapshotStore.BeginReadSnapshotContext(req.Context())
+				release, err := s.beginAgentRead(req, op.OperationID, auth.Grant, permission)
 				if err != nil {
-					writeHumaError(ctx, 503, "source_scope_unavailable", "Source authorization is unavailable")
-					return
-				}
-				defer release()
-				if boundary, ok := req.Context().Value(readResponseKey{}).(*readResponseWriter); ok {
-					boundary.release = release
-				}
-				if s.queryEngineForContext(readContext) != nil {
-					readContext = context.WithValue(readContext, analyticsEngineContextKey{}, &analyticsEngineState{engine: query.NewEngine(snapshotStore.DB(), snapshotStore.IsPostgreSQL()), mode: AnalyticsModeSQL})
-				}
-				*req = *req.WithContext(readContext)
-				if err := s.authorizeAgentRead(req, op.OperationID, auth.Grant, permission, indexGeneration, indexComplete); err != nil {
-					release()
 					writeHumaError(ctx, err.status, err.ErrorResponse.Error, err.Message)
 					return
 				}
+				defer release()
 			}
 			next(ctx)
 			return
