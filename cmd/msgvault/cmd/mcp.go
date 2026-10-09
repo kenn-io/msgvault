@@ -229,7 +229,7 @@ const calendarControlMinAPISchemaVersion = "3.1.0"
 const kataIssuesMinAPISchemaVersion = "3.4.0"
 
 // mcpEventsMinAPISchemaVersion adds owner-only native MCP Events.
-const mcpEventsMinAPISchemaVersion = "3.10.0"
+const mcpEventsMinAPISchemaVersion = "3.11.0"
 
 // Schema 2.28.0 adds independent configured-lane facts to authenticated
 // health. Older health responses cannot distinguish text from visual search.

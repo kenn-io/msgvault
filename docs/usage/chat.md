@@ -31,7 +31,7 @@ View never deletes archive messages.
 
 On unreleased `main`, native MCP Events can notify an HTTPS receiver when
 msgvault archives a live message, changes an archived calendar event, or changes
-a draft. This requires daemon API schema 3.10.0, protocol `2026-07-28`, Streamable
+a draft. This requires daemon API schema 3.11.0, protocol `2026-07-28`, Streamable
 HTTP, and [`[mcp.events].enabled`](../configuration.md#mcpevents). The
 listener's inbound key must be the selected daemon's owner API key. For a local
 daemon, the effective `[server]` key qualifies. For a remote daemon, Events is
