@@ -3852,8 +3852,8 @@ func (s *Server) handleFastSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get view type for stats grouping (optional, defaults to senders)
-	var statsGroupBy query.ViewType
+	// Aggregates are opt-in through an explicit grouping view.
+	statsGroupBy := query.ViewNoStats
 	if v := r.URL.Query().Get("view_type"); v != "" {
 		var ok bool
 		statsGroupBy, ok = parseViewType(v)
@@ -3885,7 +3885,7 @@ func (s *Server) handleFastSearch(w http.ResponseWriter, r *http.Request) {
 				"The analytics cache contains invalid UTF-8. Run 'msgvault build-cache --full-rebuild' and retry.")
 			return
 		}
-		s.logger.Error("fast search failed", "query", queryStr, "error", err)
+		s.logger.Error("fast search failed", "query_shape", queryShapeForRequest(r), "error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "Search failed")
 		return
 	}

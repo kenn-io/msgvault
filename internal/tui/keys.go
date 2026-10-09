@@ -1524,6 +1524,8 @@ func (m *Model) resetViewState() {
 // setDrillFilterForView sets the appropriate filter field on drillFilter based on the current viewType.
 func (m *Model) setDrillFilterForView(key string) {
 	switch m.viewType {
+	case query.ViewNoStats:
+		return // This sentinel is not an aggregate view to drill into.
 	case query.ViewSenders:
 		m.drillFilter.Sender = key
 		if key == "" {

@@ -88,6 +88,7 @@ type Engine interface {
 	//
 	// queryStr is the raw search string (needed for stats; search.Query doesn't store it).
 	// statsGroupBy controls which view's key columns are used for stats search filtering.
+	// ViewNoStats omits aggregates; limit=0 returns the count without a page.
 	SearchFastWithStats(ctx context.Context, query *search.Query, queryStr string,
 		filter MessageFilter, statsGroupBy ViewType, limit, offset int) (*SearchFastResult, error)
 

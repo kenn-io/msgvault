@@ -274,9 +274,6 @@ func TestSearchMetadata(t *testing.T) {
 		SearchFastResults: []query.MessageSummary{
 			testutil.NewMessageSummary(1).WithSubject("Hello").WithFromEmail("alice@example.com").WithSourceConversationID("thread-abc").WithConversationID(99).Build(),
 		},
-		SearchFastCountFunc: func(_ context.Context, _ *search.Query, _ query.MessageFilter) (int64, error) {
-			return 1, nil
-		},
 	}
 	h := newTestHandlers(eng)
 
@@ -349,12 +346,10 @@ func TestSearchMetadata(t *testing.T) {
 			require := require.New(t)
 			var got *search.Query
 			eng := &querytest.MockEngine{
-				SearchFastFunc: func(_ context.Context, q *search.Query, _ query.MessageFilter, _, _ int) ([]query.MessageSummary, error) {
+				SearchFastWithStatsFunc: func(_ context.Context, q *search.Query, _ string, _ query.MessageFilter, group query.ViewType, _, _ int) (*query.SearchFastResult, error) {
+					assert.Equal(query.ViewNoStats, group)
 					got = q
-					return []query.MessageSummary{testutil.NewMessageSummary(1).Build()}, nil
-				},
-				SearchFastCountFunc: func(_ context.Context, _ *search.Query, _ query.MessageFilter) (int64, error) {
-					return 1, nil
+					return &query.SearchFastResult{Messages: []query.MessageSummary{testutil.NewMessageSummary(1).Build()}, TotalCount: 1}, nil
 				},
 			}
 
@@ -555,9 +550,9 @@ func TestSearchRejectsInvalidQueryBeforeDispatch(t *testing.T) {
 				var backendCalled bool
 				engine := &listAccountsTrackingEngine{MockEngine: &querytest.MockEngine{
 					Accounts: []query.AccountInfo{{ID: 1, Identifier: "alice@example.com"}},
-					SearchFastFunc: func(context.Context, *search.Query, query.MessageFilter, int, int) ([]query.MessageSummary, error) {
+					SearchFastWithStatsFunc: func(context.Context, *search.Query, string, query.MessageFilter, query.ViewType, int, int) (*query.SearchFastResult, error) {
 						backendCalled = true
-						return nil, nil
+						return &query.SearchFastResult{}, nil
 					},
 				}}
 				h := &handlers{engine: engine}
@@ -617,9 +612,6 @@ func TestSearchMetadata_MetadataOnly(t *testing.T) {
 		SearchResults: []query.MessageSummary{
 			testutil.NewMessageSummary(2).WithSubject("Body match").WithFromEmail("bob@example.com").Build(),
 		},
-		SearchFastCountFunc: func(_ context.Context, _ *search.Query, _ query.MessageFilter) (int64, error) {
-			return 1, nil
-		},
 	}
 	h := newTestHandlers(eng)
 
@@ -640,15 +632,11 @@ func TestSearchMetadata_NonPositiveLimitUsesDefault(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			assert := assert.New(t)
 			eng := &querytest.MockEngine{
-				SearchFastFunc: func(_ context.Context, _ *search.Query, _ query.MessageFilter, gotLimit, offset int) ([]query.MessageSummary, error) {
-					assert.Equal(defaultSearchLimit, gotLimit, "limit")
+				SearchFastWithStatsFunc: func(_ context.Context, _ *search.Query, _ string, _ query.MessageFilter, group query.ViewType, gotLimit, offset int) (*query.SearchFastResult, error) {
+					assert.Equal(query.ViewNoStats, group)
+					assert.Equal(defaultSearchLimit+1, gotLimit, "limit")
 					assert.Equal(0, offset, "offset")
-					return []query.MessageSummary{
-						testutil.NewMessageSummary(1).WithSubject("Hello").Build(),
-					}, nil
-				},
-				SearchFastCountFunc: func(context.Context, *search.Query, query.MessageFilter) (int64, error) {
-					return 1, nil
+					return &query.SearchFastResult{Messages: []query.MessageSummary{testutil.NewMessageSummary(1).WithSubject("Hello").Build()}, TotalCount: 1}, nil
 				},
 			}
 			h := newTestHandlers(eng)
@@ -667,9 +655,6 @@ func TestSearchMessagesCompatibilityDispatchesMetadata(t *testing.T) {
 	eng := &querytest.MockEngine{
 		SearchFastResults: []query.MessageSummary{
 			testutil.NewMessageSummary(3).WithSubject("legacy metadata result").Build(),
-		},
-		SearchFastCountFunc: func(context.Context, *search.Query, query.MessageFilter) (int64, error) {
-			return 1, nil
 		},
 	}
 	h := newTestHandlers(eng)
@@ -2985,9 +2970,6 @@ func TestAccountFilter(t *testing.T) {
 	h := newTestHandlers(eng)
 
 	t.Run("search with valid account", func(t *testing.T) {
-		eng.SearchFastCountFunc = func(_ context.Context, _ *search.Query, _ query.MessageFilter) (int64, error) {
-			return 1, nil
-		}
 		resp := runTool[paginatedSearchMessages](t, "search_metadata", h.searchMetadata, map[string]any{
 			"query":   "test",
 			"account": "alice@gmail.com",
@@ -3038,9 +3020,6 @@ func TestAccountFilter(t *testing.T) {
 
 	t.Run("empty account means no filter", func(t *testing.T) {
 		// Empty string should not filter - return all results
-		eng.SearchFastCountFunc = func(_ context.Context, _ *search.Query, _ query.MessageFilter) (int64, error) {
-			return 1, nil
-		}
 		resp := runTool[paginatedSearchMessages](t, "search_metadata", h.searchMetadata, map[string]any{
 			"query":   "test",
 			"account": "",

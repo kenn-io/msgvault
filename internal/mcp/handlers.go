@@ -749,31 +749,21 @@ func (h *handlers) searchMetadata(ctx context.Context, req toolRequest) (*toolRe
 
 	filter := query.MessageFilter{SourceID: sourceID}
 
-	if h.delegatedOnly {
-		result, err := h.engine.SearchFastWithStats(ctx, q, queryStr, filter, query.ViewSenders, limit+1, offset)
-		if err != nil {
-			return nil, newInternalError("search metadata", err)
-		}
-		hasMore := len(result.Messages) > limit
-		if hasMore {
-			result.Messages = result.Messages[:limit]
-		}
-		if result.TotalCount < 0 {
-			return jsonResult(searchMetadataResponse{
-				paginatedResponse: newPaginatedResponseNoTotal(result.Messages, offset, hasMore), IndexState: result.IndexState,
-			})
-		}
-		return metadataSearchResult(result.Messages, result.TotalCount, offset, result.IndexState)
-	}
-	results, err := h.engine.SearchFast(ctx, q, filter, limit, offset)
+	// Fetch one extra row so unknown totals still support reliable pagination.
+	result, err := h.engine.SearchFastWithStats(ctx, q, queryStr, filter, query.ViewNoStats, limit+1, offset)
 	if err != nil {
 		return nil, newInternalError("search metadata", err)
 	}
-	totalMatched, err := h.engine.SearchFastCount(ctx, q, filter)
-	if err != nil {
-		return nil, newInternalError("count metadata search", err)
+	hasMore := len(result.Messages) > limit
+	if hasMore {
+		result.Messages = result.Messages[:limit]
 	}
-	return metadataSearchResult(results, totalMatched, offset, "")
+	if result.TotalCount < 0 {
+		return jsonResult(searchMetadataResponse{
+			paginatedResponse: newPaginatedResponseNoTotal(result.Messages, offset, hasMore), IndexState: result.IndexState,
+		})
+	}
+	return metadataSearchResult(result.Messages, result.TotalCount, offset, result.IndexState)
 }
 
 func metadataSearchResult(messages []query.MessageSummary, total int64, offset int, state string) (*toolResult, error) {
