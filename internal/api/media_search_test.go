@@ -411,7 +411,7 @@ func TestMediaSearchRemoteErrors(t *testing.T) {
 			r := httptest.NewRequest(http.MethodGet, "/api/v1/media/search?q=words", nil)
 			r.Header.Set("X-Api-Key", recordingsTestAPIKey)
 			if name == "timeout" {
-				ctx, cancel := context.WithTimeout(r.Context(), 300*time.Millisecond)
+				ctx, cancel := context.WithTimeout(r.Context(), 300*time.Millisecond) //nolint:kennlint // the deadline is the expected result; the remote blocks until cancellation
 				defer cancel()
 				r = r.WithContext(ctx)
 			}
