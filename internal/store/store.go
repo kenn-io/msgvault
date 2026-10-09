@@ -2636,7 +2636,7 @@ func (s *Store) GetStatsContext(ctx context.Context) (*Stats, error) {
 }
 
 // GetStatsForScope returns statistics scoped to the given source IDs.
-// When sourceIDs is nil or empty, returns global counts.
+// A nil slice returns global counts; an empty non-nil slice matches no source.
 // All message-derived counts (threads, attachments, labels) exclude
 // dedup-hidden and source-deleted messages via LiveMessagesWhere.
 // DatabaseSize is global and omitted within a read snapshot.
@@ -2647,6 +2647,9 @@ func (s *Store) GetStatsForScope(sourceIDs []int64) (*Stats, error) {
 // GetStatsForScopeContext is the context-aware form of GetStatsForScope.
 func (s *Store) GetStatsForScopeContext(ctx context.Context, sourceIDs []int64) (*Stats, error) {
 	stats := &Stats{}
+	if sourceIDs != nil && len(sourceIDs) == 0 {
+		return stats, nil
+	}
 
 	var queries []struct {
 		query string
@@ -2654,7 +2657,7 @@ func (s *Store) GetStatsForScopeContext(ctx context.Context, sourceIDs []int64) 
 		dest  *int64
 	}
 
-	if len(sourceIDs) == 0 {
+	if sourceIDs == nil {
 		// Unscoped: global catalog counts, matching pre-slice-3 semantics.
 		// All message-linked counts apply LiveMessagesWhere so dedup-hidden
 		// and source-deleted rows aren't reported as live rows.
