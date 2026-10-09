@@ -104,6 +104,8 @@ it is separate from the binary release version. The current schema is **3.14.0**
 Upgrade clients and daemon together across incompatible schema versions,
 including remote deployments.
 
+Schema 3.14.0 adds owner-only [MCP Events](#mcp-events) and typed calendar projections on message details.
+
 Schema 3.11.0 adds `GET /media/search/status` to report whether Docbank transcript search is configured. It also adds source filename, title and date to transcript search results and optional `conversation_title` to `GET /messages/{id}`.
 
 Schema 3.9.0 adds source-scoped agent read permissions and optional `expires_at`. Admitted FTS search responses, including aggregates, filtered messages and total statistics with search text, carry optional `index_state`. Agent checks are bounded; owner CLI searches retain automatic verification and repair.
@@ -485,7 +487,7 @@ There is no dedicated cancellation endpoint for these jobs.
 
 ## MCP Events
 
-Schema 3.9.0 adds these owner-key-only endpoints. They accept no
+Schema 3.10.0 adds these owner-key-only endpoints. They accept no
 caller-supplied principal. Browser sessions, delegated agent tokens, and keyless
 access cannot use them. Disabled Events has no advertised capability.
 
