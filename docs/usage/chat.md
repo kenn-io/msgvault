@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-08"
+last_edited: "2026-10-09"
 title: MCP Server
 description: Expose your email, chat, calendar, and meeting archive to AI assistants via MCP.
 ---
@@ -101,8 +101,10 @@ occurrence becomes unavailable to reads and delivery once its recorded time
 falls outside the retention window, even if the next cleanup sweep has not yet
 removed its row. Startup and replay activation prune expired rows before
 workers or a replay cursor can use them. Pruning advances a global sequence
-floor; a subscription behind that floor stops with reason `retention`, and its
-next refresh starts at the current head with `truncated: true`. A recent
+floor. A subscription stops with reason `retention` only when pruning removes an
+occurrence in its own scope that it has not yet processed; its next refresh
+starts at the current head with `truncated: true`. A quiet subscription's cursor
+moves up to the floor and keeps running. A recent
 receipt that remains physically stored below the floor can still authorize its
 own read until it expires.
 

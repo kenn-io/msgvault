@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-08"
+last_edited: "2026-10-09"
 title: Configuration
 description: Configuration file reference, environment variables, and file locations.
 ---
@@ -732,6 +732,12 @@ subscription secrets. A missing key with retained encrypted state, or a corrupt
 key, disables Events without replacing it. Events status reports
 `events_key_unavailable`. Keep Events disabled when opening an archive clone; rotate
 the clone's owner API key before enabling callbacks. Run one daemon per archive.
+
+CLI commands that write the archive without the daemon apply the same
+`[mcp.events]` settings. With the daemon's settings, their live writes are
+recorded for the daemon to deliver. With Events disabled, or without a readable
+owner key, a CLI writer cannot record them; the archive starts a new capture
+epoch and active subscriptions stop with reason `capture_gap`.
 
 See [MCP Events](usage/chat.md#events) for transport requirements, scope selection,
 renewal, and delivery limits.
