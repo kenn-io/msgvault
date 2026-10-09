@@ -640,8 +640,10 @@ func translateVectorErr(err error) *toolResult {
 	return nil
 }
 
-// getAccountID looks up a source ID by email address.
-// Returns nil if account is empty (no filter), or an error if not found.
+// getAccountID looks up a source ID by its identifier, preferring an exact
+// match and otherwise ignoring letter case, so "Me@gmail.com" names the same
+// source as "me@gmail.com". Returns nil if account is empty (no filter), or an
+// error if not found.
 func (h *handlers) getAccountID(ctx context.Context, account string) (*int64, error) {
 	if account == "" {
 		return nil, nil //nolint:nilnil // empty input -> no filter, not an error
@@ -650,18 +652,24 @@ func (h *handlers) getAccountID(ctx context.Context, account string) (*int64, er
 	if err != nil {
 		return nil, newInternalError("list accounts", err)
 	}
-	var matched *int64
-	for _, acc := range accounts {
-		if acc.Identifier == account {
+	for _, same := range []func(string) bool{
+		func(identifier string) bool { return identifier == account },
+		func(identifier string) bool { return strings.EqualFold(identifier, account) },
+	} {
+		var matched *int64
+		for _, acc := range accounts {
+			if !same(acc.Identifier) {
+				continue
+			}
 			if matched != nil {
 				return nil, &expectedHandlerError{message: "account matches multiple sources: " + account}
 			}
 			id := acc.ID
 			matched = &id
 		}
-	}
-	if matched != nil {
-		return matched, nil
+		if matched != nil {
+			return matched, nil
+		}
 	}
 	return nil, &expectedHandlerError{message: "account not found: " + account}
 }
@@ -2150,13 +2158,15 @@ func (h *handlers) getStats(ctx context.Context, _ toolRequest) (*toolResult, er
 		return nil, newInternalError("list archive accounts", err)
 	}
 	if lister, ok := h.engine.(query.VirtualAccountLister); ok {
-		// The catalog is extra detail; get_stats answers without it.
+		// The catalog is extra detail; get_stats answers without it, keeping
+		// the last known children the account list already carries.
 		virtual, err := lister.ListVirtualAccounts(ctx)
 		if err != nil {
-			slog.Warn("MCP statistics omit virtual accounts", "error", err)
-		}
-		for i := range accounts {
-			accounts[i].VirtualAccounts = virtual[accounts[i].ID]
+			slog.Warn("MCP statistics use the last known virtual accounts", "error", err)
+		} else {
+			for i := range accounts {
+				accounts[i].VirtualAccounts = virtual[accounts[i].ID]
+			}
 		}
 	}
 

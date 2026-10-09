@@ -19,7 +19,7 @@ type accountSelection struct {
 }
 
 var errAccountSelectionConflict = errors.New(
-	"the account argument and the query's account: operator select different addresses")
+	"the account argument and the query's account: or received: operator select different addresses")
 
 // resolveAccount reads the account argument. A physical source identifier
 // keeps its old meaning; a virtual account key from get_stats selects one
@@ -110,25 +110,43 @@ func (a accountSelection) applyToQuery(q *search.Query) error {
 		return nil
 	}
 	if a.scope.Unattributed {
+		// Unattributed mail has no address for an operator to match.
+		if len(q.AccountAddrs) > 0 || len(q.ReceivedAddrs) > 0 {
+			return errAccountSelectionConflict
+		}
 		q.AccountScopes = append(q.AccountScopes, a.scopes()...)
 		return nil
+	}
+	if len(q.ReceivedAddrs) > 0 {
+		// received: values are alternatives; keep those the selection allows.
+		received := intersectAddresses(q.ReceivedAddrs, a.scope.Addresses)
+		if len(received) == 0 {
+			return errAccountSelectionConflict
+		}
+		q.ReceivedAddrs = received
 	}
 	if len(q.AccountAddrs) == 0 {
 		q.AccountAddrs = slices.Clone(a.scope.Addresses)
 		return nil
 	}
 	// account: values are alternatives, so the selection must intersect them.
-	var kept []string
-	for _, address := range q.AccountAddrs {
-		if slices.Contains(a.scope.Addresses, address) {
-			kept = append(kept, address)
-		}
-	}
+	kept := intersectAddresses(q.AccountAddrs, a.scope.Addresses)
 	if len(kept) == 0 {
 		return errAccountSelectionConflict
 	}
 	q.AccountAddrs = kept
 	return nil
+}
+
+// intersectAddresses returns the values that allowed also lists.
+func intersectAddresses(values, allowed []string) []string {
+	var kept []string
+	for _, address := range values {
+		if slices.Contains(allowed, address) {
+			kept = append(kept, address)
+		}
+	}
+	return kept
 }
 
 // resolveForwardedAccount resolves the account argument for requests the

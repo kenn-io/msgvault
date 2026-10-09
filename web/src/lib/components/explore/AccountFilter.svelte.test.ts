@@ -127,4 +127,35 @@ describe('AccountFilter', () => {
       vi.useRealTimers();
     }
   });
+
+  it('labels a saved pick of a source that lists no entries', async () => {
+    const inboxKey = 'identity:7:aW5ib3hAZXhhbXBsZS5uZXQ';
+    const fetchFn = accountsResponse([
+      { key: inboxKey, source_id: 7, account_address: 'inbox@example.net', message_count: 3, source_deleted_count: 0 },
+    ]);
+    render(AccountFilter, {
+      client: createAPIClient(fetchFn),
+      filters: [{ dimension: 'account', values: [inboxKey] }],
+      onChange: vi.fn(),
+    });
+    const select = await screen.findByRole('combobox', { name: /^Account:/ });
+    await waitFor(() => expect(select).toHaveProperty('disabled', false));
+    expect(select.textContent).toContain('inbox@example.net / inbox@example.net (3)');
+    expect(select.textContent).not.toContain('unavailable');
+  });
+
+  it('drops a pick from a source the source filter excludes', async () => {
+    const fetchFn = accountsResponse([
+      { key: 'identity:7:d29ya0BleGFtcGxlLm9yZw', source_id: 7, account_address: 'work@example.org', message_count: 3, source_deleted_count: 0 },
+      { key: 'unattributed:7', source_id: 7, unattributed: true, message_count: 2, source_deleted_count: 0 },
+    ]);
+    const onChange = vi.fn();
+    const source = { dimension: 'source' as const, values: ['9'] };
+    render(AccountFilter, {
+      client: createAPIClient(fetchFn),
+      filters: [source, { dimension: 'account', values: ['unattributed:7'] }],
+      onChange,
+    });
+    await waitFor(() => expect(onChange).toHaveBeenCalledWith([source]));
+  });
 });

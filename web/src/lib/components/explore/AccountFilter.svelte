@@ -21,6 +21,9 @@
   const retryDelaysMs = [2000, 5000, 10000, 20000, 30000];
 
   let options = $state<Option[]>([]);
+  // Every catalog entry by key, including those a source does not list
+  // because its mail is not divided, so a saved pick keeps its label.
+  let known = $state(new Map<string, Option>());
   let loading = $state(true);
   let error = $state('');
   let pending = $state(0);
@@ -32,9 +35,17 @@
     { value: '', label: 'All accounts' },
     ...options.filter((o) => sourceIDs.length === 0 || sourceIDs.includes(o.sourceID) || o.value === selected),
     ...(selected && !loading && !options.some((o) => o.value === selected)
-      ? [{ value: selected, label: `${selected} (unavailable)` }]
+      ? [known.get(selected) ?? { value: selected, label: `${selected} (unavailable)` }]
       : []),
   ]);
+
+  // A pick from a source the source filter no longer includes would only
+  // empty the results, so it is dropped.
+  $effect(() => {
+    if (!selected || sourceIDs.length === 0) return;
+    const pick = known.get(selected);
+    if (pick && !sourceIDs.includes(pick.sourceID)) select('');
+  });
 
   // The username of an "imaps://user@host" identifier, or the identifier.
   function sourceMailbox(identifier: string): string {
@@ -68,13 +79,17 @@
     return named > 1;
   }
 
-  function readOptions(accounts: CliAccountResponse[]): { options: Option[]; pending: number } {
+  function readOptions(accounts: CliAccountResponse[]): {
+    options: Option[];
+    known: Map<string, Option>;
+    pending: number;
+  } {
     let pendingCount = 0;
+    const all = new Map<string, Option>();
     const read = accounts.flatMap((account) => {
       const children = account.virtual_accounts ?? [];
       pendingCount += children.reduce((total, child) => total + (child.pending_count ?? 0), 0);
-      if (!showChildren(account)) return [];
-      return children.map((child) => {
+      const entries = children.map((child) => {
         const name = child.unattributed ? 'Unattributed' : (child.account_address ?? '');
         return {
           value: child.key,
@@ -82,8 +97,10 @@
           sourceID: String(child.source_id),
         };
       });
+      for (const entry of entries) all.set(entry.value, entry);
+      return showChildren(account) ? entries : [];
     });
-    return { options: read, pending: pendingCount };
+    return { options: read, known: all, pending: pendingCount };
   }
 
   $effect(() => {
@@ -122,6 +139,7 @@
           // An unavailable catalog may come back empty; keep what is shown.
           if (!unavailable || read.options.length > 0 || shown === 0) {
             options = read.options;
+            known = read.known;
             pending = read.pending;
             shown = read.options.length;
           }

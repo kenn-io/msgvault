@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -100,12 +101,59 @@ func TestForwardedAccountResolvesAddressesAndKeys(t *testing.T) {
 }
 
 func TestAccountSelectionIntersectsQueryAccounts(t *testing.T) {
+	require := require.New(t)
 	assert := assert.New(t)
 	selection := accountSelection{scope: &search.AccountScope{Addresses: []string{"work@example.org"}}}
 	q := search.Parse("invoice account:work@example.org account:other@example.org")
-	require.NoError(t, selection.applyToQuery(q))
+	require.NoError(selection.applyToQuery(q))
 	assert.Equal([]string{"work@example.org"}, q.AccountAddrs)
-	assert.ErrorIs(selection.applyToQuery(search.Parse("invoice account:other@example.org")), errAccountSelectionConflict)
+	require.ErrorIs(selection.applyToQuery(search.Parse("invoice account:other@example.org")), errAccountSelectionConflict)
+
+	q = search.Parse("invoice received:work@example.org received:other@example.org")
+	require.NoError(selection.applyToQuery(q))
+	assert.Equal([]string{"work@example.org"}, q.ReceivedAddrs)
+	require.ErrorIs(selection.applyToQuery(search.Parse("received:other@example.org")), errAccountSelectionConflict)
+
+	source := int64(1)
+	unattributed := accountSelection{sourceID: &source, scope: &search.AccountScope{SourceID: &source, Unattributed: true}}
+	for _, text := range []string{"account:work@example.org", "received:work@example.org"} {
+		assert.ErrorIs(unattributed.applyToQuery(search.Parse(text)), errAccountSelectionConflict,
+			"unattributed mail has no address for %s to match", text)
+	}
+}
+
+func TestResolveAccountIgnoresSourceLetterCase(t *testing.T) {
+	require := require.New(t)
+	h := &handlers{engine: &querytest.MockEngine{
+		Accounts: []query.AccountInfo{{ID: 1, Identifier: "alice@example.com", SourceType: "gmail"}},
+	}}
+	for _, account := range []string{"alice@example.com", "Alice@Example.com"} {
+		selection, err := h.resolveAccount(t.Context(), account)
+		require.NoError(err, account)
+		require.NotNil(selection.sourceID, account)
+		assert.Equal(t, int64(1), *selection.sourceID, account)
+		assert.Nil(t, selection.scope, "%s selects the whole source", account)
+	}
+}
+
+// unavailableCatalogEngine reports the virtual account catalog unavailable,
+// while its account list still carries the daemon's last known children.
+type unavailableCatalogEngine struct {
+	*querytest.MockEngine
+}
+
+func (unavailableCatalogEngine) ListVirtualAccounts(context.Context) (map[int64][]store.VirtualAccount, error) {
+	return nil, errors.New("virtual account catalog unavailable")
+}
+
+func TestGetStatsKeepsLastKnownVirtualAccounts(t *testing.T) {
+	known := []store.VirtualAccount{{Key: store.VirtualIdentityKey(1, "work@example.org"), SourceID: 1, AccountAddress: "work@example.org"}}
+	h := &handlers{engine: unavailableCatalogEngine{MockEngine: &querytest.MockEngine{
+		Accounts: []query.AccountInfo{{ID: 1, Identifier: "alice@example.com", VirtualAccounts: known}},
+	}}}
+	resp := runTool[getStatsResponse](t, ToolGetStats, h.getStats, map[string]any{})
+	require.Len(t, resp.Accounts, 1)
+	assert.Equal(t, known, resp.Accounts[0].VirtualAccounts)
 }
 
 func TestUnattributedAccountNarrowsTextQueries(t *testing.T) {
