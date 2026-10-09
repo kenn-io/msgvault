@@ -74,18 +74,21 @@ describe('TranscriptHits', () => {
     expect(fetchFn).toHaveBeenCalledTimes(2);
   });
 
-  it('clears stale excerpts after a failed refresh and allows retry', async () => {
+  it.each([0, 429, 500, 503])('clears stale excerpts after a failed refresh (%s) and allows retry', async status => {
     vi.useFakeTimers();
-    const fetchFn = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json(report()))
-      .mockRejectedValueOnce(new Error('connection lost'))
-      .mockResolvedValue(Response.json(report({ results: [] })));
+    const fetchFn = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json(report()));
+    if (status === 0) fetchFn.mockRejectedValueOnce(new Error('connection lost'));
+    else fetchFn.mockResolvedValueOnce(Response.json({ error: status === 503 ? 'media_search_unavailable' : 'rate_limit_exceeded' }, { status }));
+    fetchFn.mockResolvedValue(Response.json(report({ results: [] })));
     const view = mount(fetchFn);
     await vi.advanceTimersByTimeAsync(300);
     expect(screen.getByText('Quarterly <numbers>')).toBeTruthy();
     await fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
     expect(screen.queryByText('Quarterly <numbers>')).toBeNull();
     await vi.advanceTimersByTimeAsync(300);
-    expect(screen.getByText('Could not load recording matches.')).toBeTruthy();
+    expect(screen.getByText(status === 503 ? 'Recording search unavailable.' : 'Could not load recording matches.')).toBeTruthy();
+    await vi.advanceTimersByTimeAsync(90_000);
+    expect(fetchFn).toHaveBeenCalledTimes(2);
     await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     await vi.advanceTimersByTimeAsync(300);
     expect(screen.getByText('No spoken matches.')).toBeTruthy();
@@ -169,7 +172,6 @@ describe('TranscriptHits', () => {
   });
 
   it.each([
-    [503, 'media_search_unavailable', 'Recording search unavailable.'],
     [400, 'media_search_scope_limit', 'This archive exceeds browser recording-search limits. Use person-scoped recording search in the CLI or API.'],
     [400, 'invalid_media_search', 'Recording search rejected this query. Try different plain words.'],
     [403, 'forbidden', 'Recording search cannot read this query. Check archive access or change the query.'],

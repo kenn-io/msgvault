@@ -68,7 +68,7 @@
           expired = true;
           return;
         }
-        if (response.status >= 400 && response.status < 500) {
+        if (response.status >= 400 && response.status < 500 && response.status !== 429) {
           blocked = true;
           notice = error?.error === 'media_search_scope_limit'
             ? 'This archive exceeds browser recording-search limits. Use person-scoped recording search in the CLI or API.'
@@ -78,8 +78,8 @@
           return;
         }
         if (error?.error === 'media_search_unavailable') {
-          blocked = true;
           notice = 'Recording search unavailable.';
+          retryable = true;
           return;
         }
         if (signal.aborted || !data?.results || !data.coverage) throw new Error('Transcript search unavailable');
