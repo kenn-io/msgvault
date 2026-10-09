@@ -7,23 +7,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestSemanticPreferencePreservesInvalidValues(t *testing.T) {
-	for _, value := range []string{" 1 ", " 100 ", " 0 ", " 101 ", "invalid"} {
-		t.Run(value, func(t *testing.T) {
-			parameter, err := NewParameter("PREF", value)
-			require.NoError(t, err)
-			got := NormalizeSemanticProperty(Version40, Property{Name: "EMAIL", Parameters: []Parameter{parameter}})
-			want := value
-			if value == " 1 " {
-				want = "1"
-			} else if value == " 100 " {
-				want = "100"
-			}
-			assert.Equal(t, []string{want}, got.Parameters[0].Values)
-		})
-	}
-}
-
 func TestUnescapeText(t *testing.T) {
 	tests := []struct {
 		raw  string

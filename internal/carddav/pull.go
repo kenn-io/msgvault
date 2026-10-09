@@ -400,7 +400,7 @@ func parseRemoteResource(href, etag string, body []byte) (store.CardDAVRemoteRes
 			if err != nil {
 				return store.CardDAVRemoteResource{}, fmt.Errorf("decode CardDAV TEL: %w", err)
 			}
-			value = vcard.TelephoneNumber(value)
+			value = strings.TrimSpace(trimPrefixFold(value, "tel:"))
 			if value != "" {
 				resource.Phones = append(resource.Phones, value)
 			}

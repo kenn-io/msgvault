@@ -331,7 +331,7 @@ func TestCardDAVApplyDoesNotRebaseOnETagOnlyOrUserOwnedState(t *testing.T) {
 		AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration,
 		SyncRevision: book.SyncRevision + 2, Upserts: []store.CardDAVRemoteResource{remoteEdit},
 	})
-	require.NoError(err)
+	require.ErrorIs(err, store.ErrCardDAVStalePlan)
 	afterUserState, err := st.GetPersonContext(t.Context(), personID)
 	require.NoError(err)
 	require.NotNil(afterUserState.DisplayName)
@@ -342,8 +342,8 @@ func TestCardDAVApplyDoesNotRebaseOnETagOnlyOrUserOwnedState(t *testing.T) {
 	assert.Equal(1, links)
 	envelope, err := st.GetVCardResourceEnvelopeContext(t.Context(), "carddav:1", href)
 	require.NoError(err)
-	assert.Equal(remoteEdit.RemoteBody, envelope.StoredBody,
-		"the lossless remote ledger still advances while user-owned state blocks projection rebasing")
+	assert.Equal(initial.RemoteBody, envelope.StoredBody,
+		"an unsafe remote update needs conflict capture before the ledger advances")
 }
 
 func TestCardDAVETagRefreshPreservesLocallyDeletedMapping(t *testing.T) {

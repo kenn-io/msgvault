@@ -475,6 +475,9 @@ func projectContactPoint(point store.PersonContactPoint) (projectedProperty, boo
 		return projectedProperty{}, false, err
 	}
 	projected := ownedProjection(ownerContactPoint, point.Envelope, valueOwnedParameters, property)
+	if point.Envelope.Source == store.ProvenanceCardDAVImport {
+		projected.CarriedParameters = []string{"TYPE", "PREF"}
+	}
 	return projected, true, nil
 }
 
@@ -1106,15 +1109,11 @@ func newOwnedProperty(
 	if err != nil {
 		return vcard.Property{}, err
 	}
-	var typeTokens []string
 	for _, token := range envelope.TypeTokens {
 		if strings.TrimSpace(token) == "" {
 			continue
 		}
-		typeTokens = append(typeTokens, token)
-	}
-	if len(typeTokens) > 0 {
-		parameter, err := vcard.NewParameter("TYPE", typeTokens...)
+		parameter, err := vcard.NewParameter("TYPE", token)
 		if err != nil {
 			return vcard.Property{}, err
 		}
