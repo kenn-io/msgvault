@@ -185,3 +185,21 @@ func TestUnattributedAccountNarrowsTextQueries(t *testing.T) {
 		assert.Equal(want, fastQuery.AccountScopes)
 	}
 }
+
+func TestForwardedAccountKeepsDaemonNameResolution(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	h := &handlers{engine: &querytest.MockEngine{
+		Accounts: []query.AccountInfo{{ID: 1, Identifier: "alice@example.com", DisplayName: "Work Inbox", SourceType: "gmail"}},
+	}}
+	// The daemon resolves display names and account families; MCP passes a
+	// name it cannot place through unchanged.
+	name, scopes, err := h.resolveForwardedAccount(t.Context(), "Work Inbox")
+	require.NoError(err)
+	assert.Equal("Work Inbox", name)
+	assert.Empty(scopes)
+
+	_, _, err = h.resolveForwardedAccount(t.Context(), store.VirtualIdentityKey(9, "x@example.org"))
+	require.Error(err, "an unknown virtual account key is rejected before the daemon")
+	assert.Contains(err.Error(), "account not found")
+}

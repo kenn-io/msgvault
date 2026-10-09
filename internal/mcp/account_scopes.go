@@ -47,7 +47,7 @@ func (h *handlers) resolveAccount(ctx context.Context, account string) (accountS
 	if err == nil {
 		return accountSelection{sourceID: sourceID}, nil
 	}
-	if expected, ok := errors.AsType[*expectedHandlerError](err); !ok || !strings.HasPrefix(expected.message, "account not found") {
+	if !isAccountNotFound(err) {
 		return accountSelection{}, err
 	}
 	address, parseErr := search.ParseAccountAddress(account)
@@ -151,13 +151,18 @@ func intersectAddresses(values, allowed []string) []string {
 
 // resolveForwardedAccount resolves the account argument for requests the
 // daemon answers: a physical source stays an account name, and anything else
-// becomes a scope.
+// becomes a scope. A name MCP cannot place, such as a source's display name,
+// goes to the daemon unchanged, which resolves names and account families
+// itself; an unknown virtual account key is still rejected here.
 func (h *handlers) resolveForwardedAccount(ctx context.Context, account string) (string, []search.AccountScope, error) {
 	if account == "" || h.engine == nil {
 		return virtualAccountScopes(account)
 	}
 	selection, err := h.resolveAccount(ctx, account)
 	if err != nil {
+		if _, scopes, _ := virtualAccountScopes(account); len(scopes) == 0 && isAccountNotFound(err) {
+			return account, nil, nil
+		}
 		return "", nil, err
 	}
 	if selection.scope == nil {
@@ -185,4 +190,11 @@ func virtualAccountScopes(account string) (string, []search.AccountScope, error)
 		scope.Addresses = []string{address}
 	}
 	return "", []search.AccountScope{scope}, nil
+}
+
+// isAccountNotFound reports whether err is the "account not found" answer
+// resolveAccount gives for a value it cannot place.
+func isAccountNotFound(err error) bool {
+	expected, ok := errors.AsType[*expectedHandlerError](err)
+	return ok && strings.HasPrefix(expected.message, "account not found")
 }

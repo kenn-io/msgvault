@@ -725,13 +725,11 @@ type sourceMessageCounter interface {
 	CountMessagesBySourceContext(ctx context.Context) (map[int64]store.SourceMessageCounts, error)
 }
 
+// virtualAccountLister reads the virtual account catalog. Its freshness
+// depends on the confirmed identities, so a store that offers the catalog
+// also reports the revision that changes when one is added or removed.
 type virtualAccountLister interface {
 	ListVirtualAccountsContext(ctx context.Context) (map[int64][]store.VirtualAccount, error)
-}
-
-// accountIdentityRevisionReader reports the revision that changes whenever a
-// confirmed account identity is added or removed.
-type accountIdentityRevisionReader interface {
 	AccountIdentityRevisionContext(ctx context.Context) (int64, error)
 }
 
@@ -741,12 +739,8 @@ const virtualAccountCatalogFreshFor = 2 * time.Minute
 
 // virtualAccountCatalogVersion is the identity revision a catalog read
 // depends on, so a read from before an identity change is never fresh.
-func (s *Server) virtualAccountCatalogVersion(ctx context.Context) string {
-	reader, ok := s.store.(accountIdentityRevisionReader)
-	if !ok {
-		return ""
-	}
-	revision, err := reader.AccountIdentityRevisionContext(ctx)
+func (s *Server) virtualAccountCatalogVersion(ctx context.Context, lister virtualAccountLister) string {
+	revision, err := lister.AccountIdentityRevisionContext(ctx)
 	if err != nil {
 		s.logger.Warn("reading account identity revision for the account catalog", "error", err)
 		return ""
@@ -2790,10 +2784,19 @@ func (s *Server) handleCLIAccounts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if lister, ok := s.store.(virtualAccountLister); ok {
-		virtual, _, stale, err := s.virtualAccountSnapshots.getVersion(
-			r.Context(), s.importContext, "", s.virtualAccountCatalogVersion(r.Context()), s.statsSnapshotWait,
-			lister.ListVirtualAccountsContext,
-		)
+		var virtual map[int64][]store.VirtualAccount
+		var stale bool
+		var err error
+		if s.requestAuthentication(r).Grant != nil {
+			// An agent reads the catalog inside its authorization snapshot:
+			// the shared cache may predate a source whose ID was reused.
+			virtual, err = lister.ListVirtualAccountsContext(r.Context())
+		} else {
+			virtual, _, stale, err = s.virtualAccountSnapshots.getVersion(
+				r.Context(), s.importContext, "", s.virtualAccountCatalogVersion(r.Context(), lister),
+				s.statsSnapshotWait, lister.ListVirtualAccountsContext,
+			)
+		}
 		// The catalog is extra detail; a slow or failed read still returns
 		// the accounts with whatever children the last snapshot held.
 		if err != nil && s.writeIfContextError(w, r.Context().Err()) {

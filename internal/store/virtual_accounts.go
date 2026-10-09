@@ -71,7 +71,9 @@ func (s *Store) ListVirtualAccountsContext(ctx context.Context) (map[int64][]Vir
 
 // ReadVirtualAccountsContext lists, per source with email or calendar rows,
 // one child per confirmed identity and one for unattributed rows. Counts
-// group in SQL, so the read is one pass over messages.
+// group in SQL, so the read is one pass over messages. A read snapshot bound
+// to ctx is used when it belongs to db, so an agent read sees the same sources
+// its authorization checked.
 func ReadVirtualAccountsContext(
 	ctx context.Context, db *sql.DB, rebind func(string) string,
 ) (map[int64][]VirtualAccount, error) {
@@ -99,7 +101,7 @@ func ReadVirtualAccountsContext(
 	if rebind != nil {
 		stmt = rebind(stmt)
 	}
-	rows, err := db.QueryContext(ctx, stmt)
+	rows, err := ReadDBContext(ctx, db).QueryContext(ctx, stmt)
 	if err != nil {
 		return nil, fmt.Errorf("list virtual accounts: %w", err)
 	}
