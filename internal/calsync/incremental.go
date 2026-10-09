@@ -6,6 +6,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"time"
 
 	"go.kenn.io/msgvault/internal/gcal"
 	"go.kenn.io/msgvault/internal/rederive"
@@ -109,7 +110,7 @@ func (s *Syncer) incrementalCalendar(ctx context.Context, src *store.Source, cal
 		return fmt.Errorf("start sync: %w", err)
 	}
 	scoped := *s
-	scoped.store = s.store.ScopedToSync(src.ID, syncID)
+	scoped.store = s.store.ScopedToSync(src.ID, syncID).WithIngestContext(store.IngestContext{Mode: store.IngestLive, ObservedAt: time.Now().UTC()})
 	s = &scoped
 	fail := func(e error) error {
 		_ = s.store.FailSync(syncID, e.Error())
@@ -146,7 +147,7 @@ func (s *Syncer) incrementalCalendar(ctx context.Context, src *store.Source, cal
 
 		for i := range page.Items {
 			ev := page.Items[i]
-			added, cancelled, perr := s.persistOne(src.ID, cal, ev, result)
+			added, cancelled, perr := s.persistOne(ctx, src.ID, cal, ev, result)
 			if perr != nil {
 				cp.ErrorsCount++
 				s.recordItemError(syncID, ev.ID, perr)

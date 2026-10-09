@@ -82,7 +82,7 @@ Add to Claude Desktop config:
 			if !cmd.Flags().Changed("http-token-file") && !cmd.Flags().Changed("http-token-env") {
 				// Local startup may have created the key. OpenHTTPStore refreshes
 				// it after discovering or starting the daemon that owns the archive.
-				inboundKey = cfg.Server.AuthenticationKey()
+				inboundKey = httpStoreAPIKey(info, cfg)
 			}
 			httpAddr, err = normalizeMCPHTTPAddr(httpAddr, mcpHTTPAllowInsecure, inboundKey != "")
 			if err != nil {
@@ -105,6 +105,10 @@ Add to Claude Desktop config:
 		} else {
 			opts = daemonMCPServeOptions(ctx, st, state)
 		}
+		independentCredential := cmd.Flags().Changed("http-token-file") || cmd.Flags().Changed("http-token-env")
+		if httpAddr == "" || independentCredential {
+			opts.Events = nil
+		}
 		opts.AllowProfileWrites = mcpAllowProfileWrites
 		opts.AllowIdentityDecisions = mcpAllowIdentityDecisions
 		opts.AllowIdentityScoring = mcpAllowIdentityScoring
@@ -115,11 +119,12 @@ Add to Claude Desktop config:
 
 		if httpAddr != "" {
 			return serveMCPHTTPWithOptions(ctx, opts, mcpserver.HTTPOptions{
-				Addr:               httpAddr,
-				DiscoveryDirectory: filepath.Join(cfg.HomeDir, "mcp"),
-				BackendURL:         info.URL,
-				APIKey:             inboundKey,
-				AllowWrites:        mcpHTTPAllowWrites,
+				Addr:                  httpAddr,
+				DiscoveryDirectory:    filepath.Join(cfg.HomeDir, "mcp"),
+				BackendURL:            info.URL,
+				APIKey:                inboundKey,
+				AllowWrites:           mcpHTTPAllowWrites,
+				IndependentCredential: independentCredential,
 			})
 		}
 		return serveMCPStdioWithOptions(ctx, opts)
@@ -154,11 +159,15 @@ func prepareMCPHTTP(cmd *cobra.Command, cfg *config.Config) (string, string, err
 		}
 		key, err = providercredentials.ResolveSecret("", "", name)
 	default:
-		err = cfg.ResolveServerKey()
-		key = cfg.Server.AuthenticationKey()
-		// A local daemon may create the default key during startup. Enforce
-		// the inbound key requirement after OpenHTTPStore has resolved it.
-		deferKeyCheck = !isRemoteModeFor(invocationFromCommand(cmd))
+		if isRemoteModeFor(invocationFromCommand(cmd)) {
+			key = cfg.Remote.AuthenticationKey()
+		} else {
+			err = cfg.ResolveServerKey()
+			key = cfg.Server.AuthenticationKey()
+		}
+		// Daemon resolution selects the remote owner key or creates a local
+		// default key. Enforce its presence after OpenHTTPStore resolves it.
+		deferKeyCheck = true
 	}
 	if err != nil {
 		return "", "", fmt.Errorf("MCP inbound credential: %w", err)
@@ -218,6 +227,9 @@ const calendarControlMinAPISchemaVersion = "3.1.0"
 
 // kataIssuesMinAPISchemaVersion adds Kata issues that quote archive evidence.
 const kataIssuesMinAPISchemaVersion = "3.4.0"
+
+// mcpEventsMinAPISchemaVersion adds owner-only native MCP Events.
+const mcpEventsMinAPISchemaVersion = "3.5.0"
 
 // Schema 2.28.0 adds independent configured-lane facts to authenticated
 // health. Older health responses cannot distinguish text from visual search.
@@ -315,6 +327,12 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 		opts.DraftCommands = mcpDraftCommands(false)
 	}
 
+	if capabilityErr == nil && health != nil && health.McpEvents != nil && *health.McpEvents &&
+		daemonclient.APISchemaVersionAtLeast(schemaVersion, mcpEventsMinAPISchemaVersion) && st.MCPEventsOwnerCredential() {
+		if catalog, err := st.MCPEventsList(ctx); err == nil && len(catalog.Events) > 0 {
+			opts.Events = st
+		}
+	}
 	return opts
 }
 
@@ -456,7 +474,7 @@ func (s daemonMCPSimilarSearcher) FindSimilar(
 }
 
 func init() {
-	mcpCmd.AddCommand(newMCPStatusCommand())
+	mcpCmd.AddCommand(newMCPStatusCommand(), newMCPEventsCommand())
 	rootCmd.AddCommand(mcpCmd)
 	mcpCmd.Flags().BoolVar(&mcpForceSQL, "force-sql", false, "Deprecated in 0.17.0: set [analytics].engine = \"sql\" in config.toml")
 	mcpCmd.Flags().BoolVar(&mcpNoSQLiteScanner, "no-sqlite-scanner", false, "Deprecated in 0.17.0: cache engine selection is daemon-managed")

@@ -95,11 +95,14 @@ func (p *invocationPolicy) release() {
 func invocationPolicyMiddleware(policy *invocationPolicy) sdkmcp.Middleware {
 	return func(next sdkmcp.MethodHandler) sdkmcp.MethodHandler {
 		return func(ctx context.Context, method string, req sdkmcp.Request) (sdkmcp.Result, error) {
-			if method != "tools/call" && method != "resources/read" {
+			if method != "tools/call" && method != "resources/read" && method != "events/list" && method != "events/subscribe" && method != "events/unsubscribe" {
 				return next(ctx, method, req)
 			}
 			if !policy.acquire() {
-				if method == "resources/read" {
+				if method == "events/list" || method == "events/subscribe" || method == "events/unsubscribe" {
+					return nil, eventUnavailableRPCError()
+				}
+				if method != "tools/call" {
 					return nil, &jsonrpc.Error{
 						Code:    resourceLimitErrorCode,
 						Message: resourceLimitErrorMessage,

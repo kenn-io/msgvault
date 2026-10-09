@@ -19,6 +19,7 @@ import (
 	imap "github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
 	gmailapi "go.kenn.io/msgvault/internal/gmail"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 // Option is a functional option for Client.
@@ -1981,4 +1982,31 @@ func (c *Client) Close() error {
 		return fmt.Errorf("IMAP logout: %w", err)
 	}
 	return nil
+}
+
+// MessageIngestContext identifies new UIDs from a proven incremental mailbox
+// baseline. Full enumeration, epoch resets, and recovery never become live
+// merely because the generic Syncer calls this listing a full run.
+func (c *Client) MessageIngestContext(sourceMessageID string) store.IngestContext {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	observation := store.IngestContext{Mode: store.IngestBackfill, ObservedAt: time.Now().UTC()}
+	if c.forceFullEnumeration || !c.since.IsZero() || !c.before.IsZero() {
+		return observation
+	}
+	mailbox, uid, err := parseCompositeID(sourceMessageID)
+	if err != nil {
+		return observation
+	}
+	prior, ok := c.priorFolderStates[mailbox]
+	if !ok || prior.KnownUIDs == nil || uint32(uid) < prior.UIDNext || slices.Contains(prior.KnownUIDs, uint32(uid)) {
+		return observation
+	}
+	for _, delta := range c.observedMailboxDeltas {
+		if delta.Mailbox == mailbox && !delta.Reset && delta.State.UIDValidity == prior.UIDValidity && slices.Contains(delta.ChangedUIDs, uid) {
+			observation.Mode = store.IngestLive
+			return observation
+		}
+	}
+	return observation
 }

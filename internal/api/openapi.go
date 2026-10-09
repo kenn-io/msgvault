@@ -355,7 +355,8 @@ import (
 // 3.9.0 adds source-scoped agent read permissions, optional expires_at, and GET /api/v1/agent-tokens/self.
 // 3.10.0 adds person UID lookup and exposes current vCard UIDs and CardDAV
 // bindings on person and directory responses.
-const APISchemaVersion = "3.10.0"
+// 3.11.0 adds owner-only native MCP Events and typed calendar message projections.
+const APISchemaVersion = "3.11.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -918,6 +919,39 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 	}
 	schemas := doc.Components.Schemas.Map()
 	const emailProperty = "email"
+	// Events arguments and schema documents contain arbitrary JSON values.
+	// Empty object schemas otherwise generate struct{} and discard that data.
+	for schemaName, properties := range map[string][]string{
+		"SubscribeRequest":   {"arguments"},
+		"UnsubscribeRequest": {"arguments"},
+		"Definition":         {"inputSchema", "payloadSchema"},
+	} {
+		if schema := schemas[schemaName]; schema != nil {
+			for _, name := range properties {
+				if property := schema.Properties[name]; property != nil {
+					setCodegenGoType(property, "map[string]any")
+				}
+			}
+		}
+	}
+	if envelope := schemas["Envelope"]; envelope != nil {
+		if data := envelope.Properties["data"]; data != nil {
+			setCodegenGoType(data, "jsontext.Value")
+			data.Extensions["x-go-type-import"] = map[string]any{pathKey: "encoding/json/jsontext"}
+		}
+	}
+	if calendar := schemas["CalendarProjection"]; calendar != nil {
+		for name, goType := range map[string]string{"all_day": "*bool", "sequence": "*int64"} {
+			if property := calendar.Properties[name]; property != nil {
+				setCodegenGoType(property, goType)
+			}
+		}
+		// Unknown provider fields are present as null, including zero-capable
+		// scalar fields. Keep every nullable field through parsing and encoding.
+		for _, name := range []string{statusFieldName, "sequence", "start", "end", "all_day", "time_zone", "ical_uid"} {
+			nullableSchemaProperty(calendar, name)
+		}
+	}
 	if input := schemas["GCalEventInput"]; input != nil {
 		for name, goType := range map[string]string{"attendees": "*[]GCalAttendee", "recurrence": "*[]string"} {
 			if field := input.Properties[name]; field != nil {

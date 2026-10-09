@@ -525,6 +525,22 @@ func (s SearchIntegrationTasksQuery) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(s))
 }
 
+type GetMCPEventQuery struct {
+	EventID string `json:"event_id" validate:"required"`
+}
+
+func (g GetMCPEventQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+}
+
+type GetMCPEventMessageQuery struct {
+	EventID string `json:"event_id" validate:"required"`
+}
+
+func (g GetMCPEventMessageQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+}
+
 type SearchMediaQuery struct {
 	// Q Spoken words to find in transcripts
 	Q string `json:"q" validate:"required"`

@@ -20,7 +20,7 @@ func TestBoundedDuckDBMessageDetails(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 	_, err = db.Exec(`
  CREATE SCHEMA sqlite_db;
- CREATE TABLE sqlite_db.messages (id BIGINT, source_id BIGINT, source_message_id VARCHAR, rfc822_message_id VARCHAR, conversation_id BIGINT, subject VARCHAR, message_type VARCHAR, snippet VARCHAR, sent_at TIMESTAMP, received_at TIMESTAMP, size_estimate BIGINT, has_attachments BOOLEAN, is_from_me BOOLEAN, deleted_from_source_at TIMESTAMP, deleted_at TIMESTAMP, sender_id BIGINT);
+ CREATE TABLE sqlite_db.messages (id BIGINT, source_id BIGINT, source_message_id VARCHAR, rfc822_message_id VARCHAR, conversation_id BIGINT, subject VARCHAR, message_type VARCHAR, snippet VARCHAR, sent_at TIMESTAMP, received_at TIMESTAMP, size_estimate BIGINT, has_attachments BOOLEAN, is_from_me BOOLEAN, deleted_from_source_at TIMESTAMP, deleted_at TIMESTAMP, sender_id BIGINT, metadata VARCHAR);
  CREATE TABLE sqlite_db.conversations (id BIGINT, source_conversation_id VARCHAR);
  CREATE TABLE sqlite_db.message_bodies (message_id BIGINT, body_text VARCHAR, body_html VARCHAR);
  CREATE TABLE sqlite_db.message_raw (message_id BIGINT, raw_data BLOB, compression VARCHAR);

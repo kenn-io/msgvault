@@ -1615,6 +1615,32 @@ type TestTaskIntegrationResponse = TaskIntegrationStatusResponse
 
 type TestTaskIntegrationErrorResponse = ErrorResponse
 
+type ListMCPCalendarSourcesResponse []CalendarSource
+
+type ListMCPCalendarSourcesErrorResponse = MCPEventsErrorResponse
+
+type GetMCPEventResponse = Envelope
+
+type GetMCPEventErrorResponse = MCPEventsErrorResponse
+
+type ListMCPEventsResponse = ListResult
+
+type ListMCPEventsErrorResponse = MCPEventsErrorResponse
+
+type GetMCPEventMessageResponse = CliMessageResponse
+
+type GetMCPEventMessageErrorResponse = MCPEventsErrorResponse
+
+type GetMCPEventsStatusResponse []SubscriptionStatus
+
+type GetMCPEventsStatusErrorResponse = MCPEventsErrorResponse
+
+type SubscribeMCPEventsResponse = SubscribeResult
+
+type SubscribeMCPEventsErrorResponse = MCPEventsErrorResponse
+
+type UnsubscribeMCPEventsErrorResponse = MCPEventsErrorResponse
+
 type SearchMediaResponse = MediaSearchResponse
 
 type SearchMediaErrorResponse = ErrorResponse
@@ -4898,6 +4924,54 @@ type TestTaskIntegrationResp struct {
 	Body         []byte
 	StatusCode   int
 	JSON200      *TestTaskIntegrationResponse
+}
+
+type ListMCPCalendarSourcesResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListMCPCalendarSourcesResponse
+}
+
+type GetMCPEventResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetMCPEventResponse
+}
+
+type ListMCPEventsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListMCPEventsResponse
+}
+
+type GetMCPEventMessageResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetMCPEventMessageResponse
+}
+
+type GetMCPEventsStatusResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetMCPEventsStatusResponse
+}
+
+type SubscribeMCPEventsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *SubscribeMCPEventsResponse
+}
+
+type UnsubscribeMCPEventsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
 }
 
 type SearchMediaResp struct {
