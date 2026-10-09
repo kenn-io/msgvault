@@ -13,11 +13,18 @@ This page covers what's specific to msgvault's use of the engine: how `backup cr
 
 To capture a transactionally consistent database image while the daemon is running:
 
-1. The backup subprocess calls the daemon's same-host-only (loopback, or the daemon's own bind address), authenticated `POST /api/v1/backup/freeze/begin`, which acquires the daemon's serial operation gate (pausing conflicting maintenance work) and returns a token. A 60-second watchdog on the daemon auto-releases the gate if the backup dies.
+1. The backup subprocess calls the daemon's same-host-only (loopback, or the daemon's own bind address), authenticated `POST /api/v1/backup/freeze/begin`, which acquires the daemon's serial operation gate (pausing conflicting maintenance work) and returns a token. A five-minute watchdog on the daemon auto-releases the gate if the backup dies. This allows the engine's checkpoint retry waits, which can total about 260 seconds when another reader holds a snapshot.
 2. The subprocess opens its own SQLite connection, runs `PRAGMA wal_checkpoint(TRUNCATE)` (with bounded retries) until the WAL is empty, then pins a read transaction — from this point the main database file bytes cannot change under it.
 3. It immediately calls `freeze/end` with the token. The gate is released and normal daemon writes resume; the pinned transaction alone keeps the file image stable for the page scan. Database geometry, statistics, and attachment locators are all read inside the pinned transaction.
 
-The freeze window is therefore milliseconds-to-seconds regardless of archive size. `backup create` refuses to run unfrozen against a live daemon: if the daemon's runtime record cannot be resolved, the backup fails rather than risking a torn read.
+The freeze window covers checkpointing and pinning the read transaction, not
+the full backup. It can take minutes when a cache rebuild or another long-lived
+reader delays the checkpoint. If the watchdog expires, the backup fails; it
+never continues with an expired token. A crashed backup can hold conflicting
+daemon writes for up to five minutes before the watchdog releases the gate.
+`backup create` refuses to run unfrozen against a live daemon: if the daemon's
+runtime record cannot be resolved, the backup fails rather than risking a torn
+read.
 
 ## Restore
 
