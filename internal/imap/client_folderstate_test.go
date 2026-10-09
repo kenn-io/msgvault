@@ -12,6 +12,7 @@ import (
 	imapv2 "github.com/emersion/go-imap/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -1319,4 +1320,22 @@ func TestConfiguredSentPlacementSurvivesDiscoveryReset(t *testing.T) {
 	assert.True(t, client.isSentPlacementMailboxLocked("Gesendete Elemente"),
 		"rediscovery must not discard the per-source Sent configuration")
 	assert.False(t, client.isSentPlacementMailboxLocked("INBOX"))
+}
+
+func TestMessageIngestContextAcceptsUnsortedSavedUIDs(t *testing.T) {
+	assert := assert.New(t)
+	client := NewClient(&Config{Host: "imap.example.test", Port: 993, Username: "user@example.test"}, "",
+		WithFolderStates(map[string]FolderState{
+			"INBOX": {UIDValidity: 7, UIDNext: 5, KnownUIDs: []uint32{9, 3, 7}},
+		}))
+	client.observedMailboxDeltas = []MailboxDelta{
+		{Mailbox: "INBOX", State: FolderState{UIDValidity: 7}, ChangedUIDs: []imapv2.UID{8, 9}},
+	}
+
+	assert.Equal(store.IngestBackfill, client.MessageIngestContext(compositeID("INBOX", 9)).Mode,
+		"a UID in the saved baseline is not live")
+	assert.Equal(store.IngestLive, client.MessageIngestContext(compositeID("INBOX", 8)).Mode,
+		"a changed UID above the baseline is live")
+	assert.Equal(store.IngestBackfill, client.MessageIngestContext(compositeID("INBOX", 4)).Mode,
+		"a UID below the saved UIDNEXT is not live")
 }

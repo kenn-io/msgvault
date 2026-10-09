@@ -124,7 +124,9 @@ func WithFolderStates(states map[string]FolderState) Option {
 	return func(c *Client) {
 		c.priorFolderStates = make(map[string]FolderState, len(states))
 		for mailbox, state := range states {
+			// MessageIngestContext binary-searches the saved baseline.
 			state.KnownUIDs = cloneKnownUIDs(state.KnownUIDs)
+			slices.Sort(state.KnownUIDs)
 			c.priorFolderStates[mailbox] = state
 		}
 	}
