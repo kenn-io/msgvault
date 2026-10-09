@@ -60,10 +60,11 @@ func TestMCPEventsCaptureKeepsBusyWritesRetryable(t *testing.T) {
 // retry loops still see the cause.
 func TestMCPSafeErrorRedactsMessageButKeepsCause(t *testing.T) {
 	assert := assert.New(t)
+	require := require.New(t)
 	driverErr := errors.New("synthetic-private-driver-text")
 	safe := mcpSafeError(fmt.Errorf("commit: %w", driverErr))
 	assert.Equal("events_storage_unavailable", safe.Error())
-	assert.ErrorIs(safe, driverErr)
+	require.ErrorIs(safe, driverErr)
 	assert.Equal(safe, mcpSafeError(safe))
 	assert.Equal(mcpStoreError("unknown_scope"), mcpSafeError(mcpStoreError("unknown_scope")))
 }
