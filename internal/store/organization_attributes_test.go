@@ -623,3 +623,20 @@ func TestAttributeWriteErrorPrecedence(t *testing.T) {
 	})
 	require.ErrorIs(err, store.ErrAttributeDefinitionNotFound)
 }
+
+func TestOrganizationAttributeCreatedAtUsesColumnDefault(t *testing.T) {
+	require := require.New(t)
+	ctx := context.Background()
+	st := testutil.NewTestStore(t)
+	if st.IsPostgreSQL() {
+		t.Skip("PostgreSQL CURRENT_TIMESTAMP keeps sub-second precision")
+	}
+	organization := mustAttributeOrganization(t, st)
+	mustOrganizationAttributeDefinition(t, st, "industry_focus")
+	write, err := st.SetOrganizationAttributeValueContext(ctx, store.OrganizationAttributeValueInput{
+		OrganizationID: organization.ID, DefinitionSlug: "industry_focus",
+		Value: textAttributeValue("x"), Source: store.ProvenanceUser,
+	})
+	require.NoError(err)
+	require.Zero(write.Value.CreatedAt.Nanosecond())
+}

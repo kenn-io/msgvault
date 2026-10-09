@@ -488,6 +488,18 @@ func TestImport_IdempotentAndRefresh(t *testing.T) {
 	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&count))
 	assert.Equal(1, count)
 
+	var snippet string
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT snippet FROM messages WHERE source_message_id = ?`), "not_Ab12Cd34Ef56Gh").Scan(&snippet))
+	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET snippet = ? WHERE source_message_id = ?`), "stale", "not_Ab12Cd34Ef56Gh")
+	require.NoError(err)
+	forced, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com", Full: true})
+	require.NoError(err)
+	assert.EqualValues(0, forced.NotesAdded)
+	assert.EqualValues(1, forced.NotesUpdated)
+	var repaired string
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT snippet FROM messages WHERE source_message_id = ?`), "not_Ab12Cd34Ef56Gh").Scan(&repaired))
+	assert.Equal(snippet, repaired)
+
 	// Server-side edit with a newer updated_at: row refreshes in place.
 	edited := strings.ReplaceAll(string(api.notes["not_Ab12Cd34Ef56Gh"]),
 		"Quarterly Planning Review", "Quarterly Planning Review v2")
