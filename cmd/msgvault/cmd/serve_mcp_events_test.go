@@ -127,3 +127,76 @@ func TestDaemonSyncChildStoreCapturesLiveEventsWithoutResettingCoverage(t *testi
 	require.NoError(childStore.DB().QueryRowContext(t.Context(), `SELECT capture_epoch FROM mcp_event_clock WHERE singleton=1`).Scan(&finalEpoch))
 	assert.Equal(initialEpoch, finalEpoch, "reapplying identical child capture coverage must not reset its epoch")
 }
+
+func TestDirectWriteStoreJournalsLiveEventsWithDaemonSettings(t *testing.T) {
+	assert := Assert.New(t)
+	require := Require.New(t)
+	cfg := config.NewDefaultConfig()
+	cfg.HomeDir = t.TempDir()
+	cfg.Data.DataDir = cfg.HomeDir
+	cfg.Server.APIKey = "synthetic-events-owner"
+	cfg.MCP.Events.Enabled = true
+	cfg.MCP.Events.Sources = []string{"gmail"}
+	daemonStore, err := store.Open(cfg.DatabaseDSN())
+	require.NoError(err)
+	require.NoError(daemonStore.InitSchema())
+	require.NoError(runStartupMigrationsForIngest(daemonStore))
+	source, err := daemonStore.GetOrCreateSource("gmail", "direct-write@example.test")
+	require.NoError(err)
+	conversationID, err := daemonStore.EnsureConversation(source.ID, "direct-write-thread", "Direct write fixture")
+	require.NoError(err)
+	server := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: daemonStore, Logger: testLoggerValue(), OperationGate: api.NewSerialOperationGate()})
+	_, err = newDaemonMCPEventsService(t.Context(), cfg, daemonStore, server)
+	require.NoError(err)
+	require.NoError(server.Shutdown(context.Background()))
+	var initialEpoch int64
+	require.NoError(daemonStore.DB().QueryRowContext(t.Context(), `SELECT capture_epoch FROM mcp_event_clock WHERE singleton=1`).Scan(&initialEpoch))
+	require.NoError(daemonStore.Close())
+
+	// A standalone CLI process with the daemon's settings journals its live
+	// writes for the daemon to deliver later.
+	cliStore, cleanup, err := openWritableStoreAndInitWithInvocation(&invocation{cfg: cfg, logger: testDiscardLogger()}, runStartupMigrationsForIngest)
+	require.NoError(err)
+	t.Cleanup(cleanup)
+	message := storetest.NewMessage(source.ID, conversationID).WithSourceMessageID("direct-write-live-message").Build()
+	view := cliStore.WithIngestContext(store.IngestContext{Mode: store.IngestLive, ObservedAt: time.Now().UTC()})
+	messageID, err := view.PersistMessageContext(t.Context(), &store.MessagePersistData{Message: message})
+	require.NoError(err)
+	var count int
+	require.NoError(cliStore.DB().QueryRowContext(t.Context(), cliStore.Rebind(`SELECT COUNT(*) FROM mcp_event_log WHERE family=? AND message_id=?`), "msgvault.message_archived", messageID).Scan(&count))
+	assert.Equal(1, count)
+	var finalEpoch int64
+	require.NoError(cliStore.DB().QueryRowContext(t.Context(), `SELECT capture_epoch FROM mcp_event_clock WHERE singleton=1`).Scan(&finalEpoch))
+	assert.Equal(initialEpoch, finalEpoch, "matching settings keep the daemon's capture epoch")
+}
+
+func TestDirectWriteStoreWithoutEventsRecordsCaptureGap(t *testing.T) {
+	require := Require.New(t)
+	cfg := config.NewDefaultConfig()
+	cfg.HomeDir = t.TempDir()
+	cfg.Data.DataDir = cfg.HomeDir
+	cfg.Server.APIKey = "synthetic-events-owner"
+	cfg.MCP.Events.Enabled = true
+	daemonStore, err := store.Open(cfg.DatabaseDSN())
+	require.NoError(err)
+	require.NoError(daemonStore.InitSchema())
+	server := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: daemonStore, Logger: testLoggerValue(), OperationGate: api.NewSerialOperationGate()})
+	_, err = newDaemonMCPEventsService(t.Context(), cfg, daemonStore, server)
+	require.NoError(err)
+	require.NoError(server.Shutdown(context.Background()))
+	var initialEpoch int64
+	require.NoError(daemonStore.DB().QueryRowContext(t.Context(), `SELECT capture_epoch FROM mcp_event_clock WHERE singleton=1`).Scan(&initialEpoch))
+	require.NoError(daemonStore.Close())
+
+	// A CLI process that does not capture must not let subscribers resume as
+	// if nothing happened: its writes start a new capture epoch.
+	cfg.MCP.Events.Enabled = false
+	cliStore, cleanup, err := openWritableStoreAndInitWithInvocation(&invocation{cfg: cfg, logger: testDiscardLogger()}, runStartupMigrationsForIngest)
+	require.NoError(err)
+	t.Cleanup(cleanup)
+	var epoch int64
+	var enabled bool
+	require.NoError(cliStore.DB().QueryRowContext(t.Context(), `SELECT capture_epoch, enabled FROM mcp_event_clock WHERE singleton=1`).Scan(&epoch, &enabled))
+	Assert.Greater(t, epoch, initialEpoch)
+	Assert.False(t, enabled)
+}
