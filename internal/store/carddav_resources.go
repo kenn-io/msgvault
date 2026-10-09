@@ -519,7 +519,14 @@ func (s *Store) cardDAVRebaseDisplacesOwnerTx(ctx context.Context, tx *loggedTx,
 			return false, err
 		}
 		if !replaceable {
-			return true, nil
+			var inactive bool
+			if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM `+mapping.Table+`
+				WHERE id = ? AND person_id = ? AND (active_until IS NOT NULL OR superseded_at IS NOT NULL))`, mapping.RowID, personID).Scan(&inactive); err != nil {
+				return false, err
+			}
+			if !inactive {
+				return true, nil
+			}
 		}
 	}
 	return false, nil

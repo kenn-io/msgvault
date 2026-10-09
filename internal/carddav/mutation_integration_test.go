@@ -38,6 +38,7 @@ type mutationFixture struct {
 	deleteStatus        int
 	putFailures         int
 	href                string
+	exactGet            bool
 }
 
 func (f *mutationFixture) handler(t *testing.T) http.HandlerFunc {
@@ -105,7 +106,11 @@ func (f *mutationFixture) handler(t *testing.T) http.HandlerFunc {
 				return
 			}
 			w.Header().Set("ETag", f.etag)
-			_, err := w.Write(append(append([]byte(nil), f.body[:len(f.body)-len("END:VCARD\r\n")]...), []byte("PRODID:-//Server//EN\r\nEND:VCARD\r\n")...))
+			body := f.body
+			if !f.exactGet {
+				body = append(append([]byte(nil), f.body[:len(f.body)-len("END:VCARD\r\n")]...), []byte("PRODID:-//Server//EN\r\nEND:VCARD\r\n")...)
+			}
+			_, err := w.Write(body)
 			assert.NoError(t, err)
 		case http.MethodDelete:
 			f.deletes++

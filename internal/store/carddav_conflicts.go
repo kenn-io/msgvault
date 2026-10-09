@@ -1311,8 +1311,20 @@ func (s *Store) ResolveCardDAVConflictRemoteContext(
 			}
 			var preparedEnvelope *vcard.ResourceEnvelope
 			if mapping.PersonID != nil {
-				envelope, _, err := s.prepareCardDAVEnvelopeTx(ctx, tx, book.ID, *mapping.PersonID, input.Remote)
+				envelope, dropped, err := s.prepareCardDAVEnvelopeTx(ctx, tx, book.ID, *mapping.PersonID, input.Remote)
 				if err != nil {
+					return err
+				}
+				unsafe, err := s.cardDAVRebaseDisplacesOwnerTx(ctx, tx, book.ID, *mapping.PersonID, input.Remote.Href, dropped)
+				if err != nil {
+					return err
+				}
+				if unsafe {
+					return fmt.Errorf("keep remote would republish a value owned locally or by another address book: %w", vcard.ErrResourceOwnershipMismatch)
+				}
+				publicationEnvelope := envelope
+				publicationEnvelope.RenderMetadata.RenderRequired = true
+				if _, err := publicationEnvelope.PrepareCanonicalRender(); err != nil {
 					return err
 				}
 				preparedEnvelope = &envelope
