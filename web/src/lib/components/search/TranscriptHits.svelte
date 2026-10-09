@@ -10,7 +10,7 @@
   let { client, query, supported }: { client: APIClient; query: string; supported: boolean } = $props();
   let result = $state<MediaSearchResponse>();
   const admitted = $derived(query.trim().split(/\s+/u).every(term => /^[\p{L}\p{M}\p{N}]+$/u.test(term) && /[\p{L}\p{N}]/u.test(term) && !/^(AND|OR|NOT)$/i.test(term)));
-  const incomplete = $derived(Boolean(result && (result.partial || result.coverage.state !== 'complete' || result.coverage.binding_required || result.pending_occurrences || result.unavailable_occurrences || result.attribution_unavailable || result.truncated)));
+  const incomplete = $derived(Boolean(result && (result.partial || result.truncated)));
   let notice = $state('');
   let expired = $state(false);
   let retryable = $state(false);
@@ -141,7 +141,7 @@
   {:else if result}
     {#if incomplete}
       <p class="coverage" role="status">
-        {#if result.partial || result.coverage.state !== 'complete' || result.coverage.binding_required}Coverage incomplete.{/if}
+        {#if result.partial}Coverage incomplete.{/if}
         {#if result.pending_occurrences}{' '}{result.pending_occurrences} pending.{/if}
         {#if result.unavailable_occurrences}{' '}{result.unavailable_occurrences} unavailable.{/if}
         {#if result.attribution_unavailable}{' '}{result.attribution_unavailable} with unavailable attribution.{/if}
