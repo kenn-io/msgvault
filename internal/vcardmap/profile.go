@@ -1106,11 +1106,15 @@ func newOwnedProperty(
 	if err != nil {
 		return vcard.Property{}, err
 	}
+	var typeTokens []string
 	for _, token := range envelope.TypeTokens {
 		if strings.TrimSpace(token) == "" {
 			continue
 		}
-		parameter, err := vcard.NewParameter("TYPE", token)
+		typeTokens = append(typeTokens, token)
+	}
+	if len(typeTokens) > 0 {
+		parameter, err := vcard.NewParameter("TYPE", typeTokens...)
 		if err != nil {
 			return vcard.Property{}, err
 		}
