@@ -491,7 +491,12 @@ func (a *deliveryAttempt) send(ctx context.Context, current, previous []byte) (s
 		err := a.check(ctx, true)
 		if err == nil {
 			guard := a.s.dialGuard(a.w.generation, a.sub, a.priority)
-			status, header, err = a.s.webhook.post(ctx, a.sub.CallbackURL, a.sub.ID, eventID, a.sub.PendingEnvelope, current, previous, guard)
+			signing := previous
+			if !time.Now().Before(a.sub.PreviousSecretUntil) {
+				// Checks and retries can outlast the rotation overlap.
+				signing = nil
+			}
+			status, header, err = a.s.webhook.post(ctx, a.sub.CallbackURL, a.sub.ID, eventID, a.sub.PendingEnvelope, current, signing, guard)
 			if ctx.Err() != nil {
 				return 0, "", false, false
 			}

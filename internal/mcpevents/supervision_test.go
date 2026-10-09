@@ -564,3 +564,39 @@ func TestGuardRefusalDoesNotHideFailureFromAnotherConnection(t *testing.T) {
 		return err == nil && row != nil && row.LastOutcome == "retry_transport_error"
 	}, 10*time.Second, 10*time.Millisecond, "a request that failed after it could have been sent counts as a transport failure")
 }
+
+// A rotation's previous secret signs only within its overlap window. A send
+// retried after the window closes, with the old secret already in hand, must
+// sign with the current secret alone.
+func TestSendDropsPreviousSecretAfterOverlapEnds(t *testing.T) {
+	assert := Assert.New(t)
+	require := Require.New(t)
+	s, f, req := eventService(t)
+	result, err := s.Subscribe(t.Context(), s.principal, req)
+	require.NoError(err)
+	appendReceipt(t, s, f, 1)
+	prepared, err := s.st.PrepareMCPDelivery(t.Context(), result.ID, 1, time.Now(), func(sub store.MCPSubscription, event store.MCPEvent) ([]byte, error) {
+		return json.Marshal(s.envelope(sub, event))
+	})
+	require.NoError(err)
+	require.NotNil(prepared)
+	signatures := make(chan string, 1)
+	s.webhook = tlsWebhook(t, func(rw http.ResponseWriter, r *http.Request) {
+		_, err := io.Copy(io.Discard, r.Body)
+		Assert.NoError(t, err)
+		signatures <- r.Header.Get("Webhook-Signature")
+		rw.WriteHeader(http.StatusNoContent)
+	})
+	current, _, err := s.deliverySecrets(prepared.Subscription)
+	require.NoError(err)
+	previous := bytes.Repeat([]byte{7}, 32)
+	sub := prepared.Subscription
+	sub.PreviousSecretUntil = time.Now().Add(-time.Second)
+	attempt := &deliveryAttempt{s: s, w: &worker{generation: sub.Generation, wake: make(chan struct{}, 1), deliveryWake: make(chan struct{}, 1)}, sub: sub}
+
+	status, _, sent, _ := attempt.send(t.Context(), current, previous)
+	require.True(sent)
+	assert.Equal(http.StatusNoContent, status)
+	signature := <-signatures
+	assert.NotContains(signature, " ", "an expired previous secret must not add a second signature")
+}
