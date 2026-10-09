@@ -426,12 +426,15 @@ func TestCommittedOccurrencePromotesReconciliationBeforeWorkerExists(t *testing.
 				return err
 			}
 			if call == 2 {
+				// Scheduled work has its own lifetime, independent of the
+				// Events operation that observed it.
+				scheduledCtx := t.Context()
 				go func() {
-					_ = gate.operation(ctx, false, func() error {
+					_ = gate.operation(scheduledCtx, false, func() error {
 						close(scheduledAcquired)
 						select {
-						case <-ctx.Done():
-							return ctx.Err()
+						case <-scheduledCtx.Done():
+							return scheduledCtx.Err()
 						case <-releaseScheduled:
 							return nil
 						}
@@ -688,89 +691,65 @@ func TestIndependentWorkersAndShutdownJoin(t *testing.T) {
 	}
 }
 
-func TestWorkerRetriesAfterPostDeliveryAuthorizationStorageError(t *testing.T) {
+func TestWorkerRetriesPostDeliveryCheckWithoutRedelivery(t *testing.T) {
 	assert := Assert.New(t)
 	require := Require.New(t)
 	s, f, req := eventService(t)
 	result, err := s.Subscribe(t.Context(), s.principal, req)
 	require.NoError(err)
-	firstAckWritten := make(chan struct{})
-	releaseFirstAck := make(chan struct{})
-	type receivedDelivery struct {
-		eventID string
-		body    []byte
-	}
-	deliveries := make(chan receivedDelivery, 2)
-	var attempts atomic.Int32
+	before, err := s.st.GetMCPSubscription(t.Context(), result.ID)
+	require.NoError(err)
+	require.NotNil(before)
+	deliveries := make(chan string, 2)
+	var receiverAcked atomic.Bool
 	s.webhook = tlsWebhook(t, func(rw http.ResponseWriter, r *http.Request) {
-		body, err := io.ReadAll(r.Body)
+		_, err := io.Copy(io.Discard, r.Body)
 		if !Assert.NoError(t, err) {
 			return
 		}
-		deliveries <- receivedDelivery{eventID: r.Header.Get("Webhook-Id"), body: body}
+		deliveries <- r.Header.Get("Webhook-Id")
+		receiverAcked.Store(true)
 		rw.WriteHeader(http.StatusNoContent)
-		if attempts.Add(1) == 1 {
-			close(firstAckWritten)
-			<-releaseFirstAck
-		}
 	})
-	var failNextOperation atomic.Bool
+	// The worker runs without the supervisor, so only its own Store
+	// operations reach the gate. After the ACK, the first two are the
+	// authorization recheck; both fail transiently.
+	var postAckOperations atomic.Int32
 	injected := make(chan struct{})
 	s.opts.WithOperation = func(ctx context.Context, fn func() error) error {
-		if failNextOperation.CompareAndSwap(true, false) {
-			close(injected)
-			return errors.New("synthetic transient operation gate failure")
+		if receiverAcked.Load() {
+			switch postAckOperations.Add(1) {
+			case 1:
+				return errors.New("synthetic transient operation gate failure")
+			case 2:
+				close(injected)
+				return errors.New("synthetic transient operation gate failure")
+			}
 		}
 		return fn()
 	}
 	appendReceipt(t, s, f, 1)
-	before, err := s.st.GetMCPSubscription(t.Context(), result.ID)
-	require.NoError(err)
-
-	ctx, cancel := context.WithCancel(t.Context())
-	done := make(chan error, 1)
-	go func() { done <- s.Run(ctx) }()
-	var first receivedDelivery
-	select {
-	case first = <-deliveries:
-	case <-time.After(10 * time.Second):
-		require.FailNow("first receiver delivery did not arrive")
-	}
-	select {
-	case <-firstAckWritten:
-	case <-time.After(10 * time.Second):
-		require.FailNow("receiver did not write the first ACK")
-	}
-	failNextOperation.Store(true)
-	close(releaseFirstAck)
+	startWorker(t, s, result.ID, before.Generation)
 	select {
 	case <-injected:
 	case <-time.After(10 * time.Second):
-		require.FailNow("post-delivery authorization check did not hit the injected gate error")
+		require.FailNow("post-delivery authorization check did not hit the injected gate errors")
 	}
-	var second receivedDelivery
-	select {
-	case second = <-deliveries:
-	case <-time.After(10 * time.Second):
-		require.FailNow("worker did not retry the pending delivery")
-	}
-	assert.Equal(first.eventID, second.eventID, "retry must reuse the event ID")
-	assert.Equal(first.body, second.body, "retry must reuse the durable envelope")
+	pending, err := s.st.GetMCPSubscription(t.Context(), result.ID)
+	require.NoError(err)
+	require.NotNil(pending)
+	assert.Equal(1, pending.AttemptCount, "rechecking an acknowledged delivery must not consume an attempt")
 	require.Eventually(func() bool {
 		row, err := s.st.GetMCPSubscription(t.Context(), result.ID)
-		return err == nil && row.CursorSeq == 1 && row.PendingSeq == 0
+		return err == nil && row != nil && row.CursorSeq == 1 && row.PendingSeq == 0
 	}, 10*time.Second, 10*time.Millisecond)
 	after, err := s.st.GetMCPSubscription(t.Context(), result.ID)
 	require.NoError(err)
-	assert.Equal(before.Generation, after.Generation, "a delivery retry must not renew the subscription")
-	assert.Equal(before.ExpiresAt, after.ExpiresAt, "a delivery retry must not extend subscription expiry")
-	cancel()
-	select {
-	case err := <-done:
-		require.NoError(err)
-	case <-time.After(10 * time.Second):
-		require.FailNow("Run did not join the retried worker")
-	}
+	require.NotNil(after)
+	assert.Equal("acknowledged", after.LastOutcome)
+	assert.Equal(before.Generation, after.Generation, "a receipt retry must not renew the subscription")
+	assert.Equal(before.ExpiresAt, after.ExpiresAt, "a receipt retry must not extend subscription expiry")
+	assert.Len(deliveries, 1, "an acknowledged occurrence must not be resent")
 }
 
 func TestWorkerRetryWaitStopsWhenSubscriptionIsRevoked(t *testing.T) {

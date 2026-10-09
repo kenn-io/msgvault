@@ -2,7 +2,10 @@ package mcpevents
 
 import (
 	"encoding/json/v2"
+	"fmt"
+	"maps"
 	"slices"
+	"strings"
 
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -97,22 +100,42 @@ func canonicalArguments(name string, input map[string]any) (arguments, error) {
 	a.bytes, err = json.Marshal(canonical, json.Deterministic(true))
 	return a, err
 }
+
+// sourceFamilies lists every source type Events can capture and the families
+// and kinds each one produces. SourceType is filled in by capabilities.
+var sourceFamilies = map[string][]store.MCPEventCapability{
+	"gmail":     {{Family: messageFamily, Kinds: []string{"message"}}, {Family: draftFamily, Kinds: []string{"created", "updated", "deleted"}}},
+	"imap":      {{Family: messageFamily, Kinds: []string{"message"}}, {Family: draftFamily, Kinds: []string{"created", "updated", "deleted"}}},
+	"beeper":    {{Family: draftFamily, Kinds: []string{"created", "updated", "deleted"}}},
+	"slack":     {{Family: draftFamily, Kinds: []string{"created", "updated", "deleted"}}},
+	"slackdump": {{Family: draftFamily, Kinds: []string{"created", "updated", "deleted"}}},
+	"teams":     {{Family: draftFamily, Kinds: []string{"created", "updated", "deleted"}}},
+	"discord":   {{Family: draftFamily, Kinds: []string{"created", "updated", "deleted"}}},
+	"gcal":      {{Family: calendarFamily, Kinds: []string{"created", "updated", "cancelled"}}},
+}
+
 func capabilities(enabled bool, sources []string) []store.MCPEventCapability {
 	result := make([]store.MCPEventCapability, 0)
 	if !enabled {
 		return result
 	}
 	for _, source := range sources {
-		switch source {
-		case "gmail", "imap":
-			result = append(result, store.MCPEventCapability{Family: messageFamily, SourceType: source, Kinds: []string{"message"}}, store.MCPEventCapability{Family: draftFamily, SourceType: source, Kinds: []string{"created", "updated", "deleted"}})
-		case "beeper", "slack", "slackdump", "teams", "discord":
-			result = append(result, store.MCPEventCapability{Family: draftFamily, SourceType: source, Kinds: []string{"created", "updated", "deleted"}})
-		case "gcal":
-			result = append(result, store.MCPEventCapability{Family: calendarFamily, SourceType: source, Kinds: []string{"created", "updated", "cancelled"}})
+		for _, c := range sourceFamilies[source] {
+			result = append(result, store.MCPEventCapability{Family: c.Family, SourceType: source, Kinds: slices.Clone(c.Kinds)})
 		}
 	}
 	return result
+}
+
+// validateSources rejects configured source types that Events cannot capture.
+func validateSources(sources []string) error {
+	for _, source := range sources {
+		if _, ok := sourceFamilies[source]; !ok {
+			supported := slices.Sorted(maps.Keys(sourceFamilies))
+			return fmt.Errorf("invalid [mcp.events] sources: unknown source type %q; supported: %s", source, strings.Join(supported, ", "))
+		}
+	}
+	return nil
 }
 
 func (s *Service) Capabilities() []store.MCPEventCapability {

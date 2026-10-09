@@ -100,8 +100,8 @@ func newWebhookClient(trusted []TrustedCallback) (*webhookClient, error) {
 		}
 		var last error
 		for _, address := range addresses {
-			if check, ok := ctx.Value(callbackGuardKey{}).(func(context.Context) error); ok {
-				if err := check(ctx); err != nil {
+			if check, ok := ctx.Value(callbackGuardKey{}).(func() error); ok {
+				if err := check(); err != nil {
 					return nil, err
 				}
 			}
@@ -160,18 +160,28 @@ func callbackError(err error) *Error {
 	}
 	return &Error{Code: -32015, Reason: "connection_refused"}
 }
-func (w *webhookClient) request(ctx context.Context, callback, id, eventID string, body, current, previous []byte, check func(context.Context) error) (*http.Response, error) {
+
+// request sends one signed callback. dialGuard runs before each new
+// connection's dial. The transport may dial on its own goroutine with a context
+// detached from the request, and that dial can outlive the request, so the
+// guard must not touch caller-owned state. Its context ends when request
+// returns, which bounds any wait inside the guard by the request's lifetime.
+func (w *webhookClient) request(ctx context.Context, callback, id, eventID string, body, current, previous []byte, dialGuard func(context.Context) error) (*http.Response, error) {
 	if _, err := callbackURL(callback); err != nil {
 		return nil, err
 	}
 	if len(body) > 262144 {
 		return nil, invalid("payload_too_large")
 	}
-	if check != nil {
-		if err := check(ctx); err != nil {
-			return nil, err
-		}
-		ctx = context.WithValue(ctx, callbackGuardKey{}, check)
+	if dialGuard != nil {
+		guardCtx, cancelGuard := context.WithCancel(ctx)
+		defer cancelGuard()
+		ctx = context.WithValue(ctx, callbackGuardKey{}, func() error {
+			if err := guardCtx.Err(); err != nil {
+				return err
+			}
+			return dialGuard(guardCtx)
+		})
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, callback, bytes.NewReader(body))
 	if err != nil {
@@ -206,6 +216,11 @@ func (w *webhookClient) verify(ctx context.Context, callback, id string, secret 
 	if err != nil {
 		return &Error{Code: -32015, Reason: "challenge_failed"}
 	}
+	if check != nil {
+		if err := check(ctx); err != nil {
+			return err
+		}
+	}
 	resp, err := w.request(ctx, callback, id, "msg_verification_"+encoded, body, secret, nil, check)
 	if err != nil {
 		return err
@@ -232,8 +247,11 @@ func (w *webhookClient) verify(ctx context.Context, callback, id string, secret 
 	}
 	return nil
 }
-func (w *webhookClient) post(ctx context.Context, callback, id, eventID string, body, current, previous []byte, check func(context.Context) error) (int, string, error) {
-	resp, err := w.request(ctx, callback, id, eventID, body, current, previous, check)
+
+// post sends a delivery. Callers check authorization before calling post;
+// dialGuard repeats that check before each new connection's dial.
+func (w *webhookClient) post(ctx context.Context, callback, id, eventID string, body, current, previous []byte, dialGuard func(context.Context) error) (int, string, error) {
+	resp, err := w.request(ctx, callback, id, eventID, body, current, previous, dialGuard)
 	if err != nil {
 		return 0, "", err
 	}
