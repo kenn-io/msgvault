@@ -2706,12 +2706,13 @@ cannot be deleted until that lineage is fully split.
 
 `person get --vcard-uid` resolves the person's current UID, a retired UID that
 still aliases the person after a merge, or a UID on a CardDAV card currently
-mapped to that person. This lookup requires daemon API schema 3.6.0 or newer.
+mapped to that person. This lookup requires daemon API schema 3.9.0 or newer.
 JSON person responses
 include `vcard_uid` and `carddav_bindings`; each binding names its connection and
 address book and includes the resource `href`, `remote_uid`, and `mapping_status`.
 Directory JSON includes the same UID and binding fields. Importing a subscribed
-CardDAV card adopts its valid UID when the UID is available. Existing profiles
+CardDAV card adopts its UID when that UID is a UUID (bare or `urn:uuid:`) that no
+current, merged, or deleted profile has used. Existing profiles
 keep their UID.
 
 `identities` lists the email addresses, phone numbers, and chat identifiers

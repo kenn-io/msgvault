@@ -3,10 +3,7 @@ package store
 import (
 	"context"
 	"fmt"
-	"net/url"
 	"strings"
-	"unicode"
-	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"go.kenn.io/msgvault/internal/vcard"
@@ -56,22 +53,18 @@ func cardDAVResourceHasOneUID(body []byte, uid string) bool {
 	return count == 1
 }
 
+// isUsableCardDAVUID accepts only a canonical UUID, bare or as a urn:uuid:
+// URI. Those values need no vCard escaping and are safe in a publication
+// href, so the adopted UID round-trips unchanged through later publication.
 func isUsableCardDAVUID(value string) bool {
-	if value == "" || value != strings.TrimSpace(value) || !utf8.ValidString(value) {
+	if len(value) > len(urnUUIDPrefix) && strings.EqualFold(value[:len(urnUUIDPrefix)], urnUUIDPrefix) {
+		value = value[len(urnUUIDPrefix):]
+	}
+	if len(value) != canonicalUUIDLength {
 		return false
 	}
-	for _, char := range value {
-		if unicode.IsControl(char) || unicode.IsSpace(char) {
-			return false
-		}
-	}
-	if _, err := uuid.Parse(value); err == nil {
-		return true
-	}
-	parsed, err := url.Parse(value)
-	if err != nil || !parsed.IsAbs() || parsed.Scheme == "" {
-		return false
-	}
-	return parsed.Opaque != "" || parsed.Host != "" || parsed.Path != "" ||
-		parsed.RawQuery != "" || parsed.Fragment != ""
+	_, err := uuid.Parse(value)
+	return err == nil
 }
+
+const canonicalUUIDLength = 36

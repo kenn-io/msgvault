@@ -208,8 +208,8 @@ func TestPersonUIDLookupReturnsConflictForAmbiguousCardDAVUID(t *testing.T) {
 	for i, book := range books {
 		name := fmt.Sprintf("Example Person %d", i+1)
 		var personID int64
-		require.NoError(st.DB().QueryRowContext(t.Context(), `INSERT INTO persons (vcard_uid, display_name)
-			VALUES (?, ?) RETURNING id`, fmt.Sprintf("person-uid-%d", i+1), name).Scan(&personID))
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`INSERT INTO persons (vcard_uid, display_name)
+			VALUES (?, ?) RETURNING id`), fmt.Sprintf("person-uid-%d", i+1), name).Scan(&personID))
 		body := []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:" + remoteUID +
 			"\r\nFN:" + name + "\r\nEND:VCARD\r\n")
 		_, err := st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO carddav_resources (

@@ -2086,7 +2086,7 @@ func reconcilePersonEnrichmentCostTx(
 func (s *Store) LoadRequestInput(
 	ctx context.Context, lease personenrichment.WorkLease,
 ) (personenrichment.RequestInput, error) {
-	person, err := s.getPersonCoreContext(ctx, lease.PersonID)
+	person, err := s.GetPersonContext(ctx, lease.PersonID)
 	if err != nil {
 		return personenrichment.RequestInput{}, err
 	}

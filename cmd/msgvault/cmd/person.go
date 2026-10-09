@@ -67,10 +67,12 @@ var personGetCmd = &cobra.Command{
 	Short: "Get a durable person profile",
 	Args:  personGetArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		uid, _ := cmd.Flags().GetString("vcard-uid")
+		uid, err := personGetUID(cmd)
+		if err != nil {
+			return err
+		}
 		var id int64
-		if strings.TrimSpace(uid) == "" {
-			var err error
+		if uid == "" {
 			id, err = positivePersonCLIArg(cmd, args[0], personValue)
 			if err != nil {
 				return err
@@ -81,7 +83,7 @@ var personGetCmd = &cobra.Command{
 			return err
 		}
 		defer func() { _ = client.Close() }()
-		if strings.TrimSpace(uid) != "" {
+		if uid != "" {
 			resp, err := getCLIPersonByUID(cmd, client, uid)
 			if err != nil {
 				return err
@@ -96,9 +98,20 @@ var personGetCmd = &cobra.Command{
 	},
 }
 
+func personGetUID(cmd *cobra.Command) (string, error) {
+	uid, err := cmd.Flags().GetString("vcard-uid")
+	if err != nil {
+		return "", fmt.Errorf("read --vcard-uid: %w", err)
+	}
+	return strings.TrimSpace(uid), nil
+}
+
 func personGetArgs(cmd *cobra.Command, args []string) error {
-	uid, _ := cmd.Flags().GetString("vcard-uid")
-	if strings.TrimSpace(uid) != "" {
+	uid, err := personGetUID(cmd)
+	if err != nil {
+		return err
+	}
+	if uid != "" {
 		if len(args) != 0 {
 			return usageErr(cmd, errors.New("--vcard-uid cannot be combined with a person ID"))
 		}

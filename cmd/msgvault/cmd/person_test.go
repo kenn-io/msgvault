@@ -55,7 +55,7 @@ func TestPersonGetLooksUpVCardUIDAndJSONIncludesCardDAVBindings(t *testing.T) {
 		assert.Equal(http.MethodGet, r.Method)
 		if r.URL.Path == "/api/v1/health" {
 			w.Header().Set("Content-Type", "application/json")
-			_, err := w.Write([]byte(`{"status":"ok","api_schema_version":"3.6.0"}`))
+			_, err := w.Write([]byte(`{"status":"ok","api_schema_version":"3.9.0"}`))
 			assert.NoError(err)
 			return
 		}
@@ -104,7 +104,7 @@ func TestPersonGetByUIDRequiresCurrentDaemonSchema(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v1/health" {
 			w.Header().Set("Content-Type", "application/json")
-			_, err := w.Write([]byte(`{"status":"ok","api_schema_version":"3.5.0"}`))
+			_, err := w.Write([]byte(`{"status":"ok","api_schema_version":"3.8.0"}`))
 			assert.NoError(err)
 			return
 		}
@@ -125,7 +125,7 @@ func TestPersonGetByUIDRequiresCurrentDaemonSchema(t *testing.T) {
 	command.SetArgs([]string{"--vcard-uid", "urn:uuid:person-example"})
 	err := command.Execute()
 	require.Error(err)
-	assert.Contains(err.Error(), "daemon API schema 3.6.0 or newer")
+	assert.Contains(err.Error(), "daemon API schema 3.9.0 or newer")
 	assert.Zero(uidLookups.Load(), "the unsupported route must not be sent to an older daemon")
 }
 
@@ -587,6 +587,7 @@ func TestPersonPromoteSeedsNameThroughDaemonAdapter(t *testing.T) {
 	assert.Contains(directory, "Alex Example")
 	output.Reset()
 	get := &cobra.Command{Use: personGetCmd.Use, Args: personGetCmd.Args, RunE: personGetCmd.RunE}
+	get.Flags().String("vcard-uid", "", "")
 	get.SetOut(&output)
 	get.SetArgs([]string{strconv.FormatInt(person.ID, 10)})
 	require.NoError(get.ExecuteContext(testCtx))

@@ -275,9 +275,6 @@ func (s *Store) getPersonProfileTx(
 	if err != nil {
 		return nil, err
 	}
-	if err := s.attachCardDAVBindingsTx(ctx, tx, person); err != nil {
-		return nil, err
-	}
 	profile := &PersonProfile{Person: *person}
 	if profile.Names, err = s.listPersonNamesTx(ctx, tx, personID, currentOnly); err != nil {
 		return nil, err

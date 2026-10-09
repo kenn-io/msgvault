@@ -282,7 +282,7 @@ func TestPeopleBrowserGetPersonProfileByUIDRequiresCurrentDaemonSchema(t *testin
 	engine := newPeopleBrowserTestEngine(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v1/health" {
 			writePeopleBrowserJSON(t, w, http.StatusOK,
-				`{"status":"ok","api_schema_version":"3.5.0"}`)
+				`{"status":"ok","api_schema_version":"3.8.0"}`)
 			return
 		}
 		if r.URL.Path == "/api/v1/people/by-uid" {
@@ -293,6 +293,6 @@ func TestPeopleBrowserGetPersonProfileByUIDRequiresCurrentDaemonSchema(t *testin
 
 	_, err := engine.GetPersonProfileByUID(t.Context(), "urn:uuid:person-example")
 	require.Error(err)
-	assert.Contains(err.Error(), "daemon API schema 3.6.0 or newer")
+	assert.Contains(err.Error(), "daemon API schema 3.9.0 or newer")
 	assert.Zero(uidLookups.Load(), "the unsupported route must not be sent to an older daemon")
 }

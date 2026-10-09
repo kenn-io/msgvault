@@ -19,7 +19,7 @@ var _ peoplebrowser.ProfileUIDReader = (*PeopleBrowser)(nil)
 
 // PersonUIDLookupMinAPISchemaVersion is the first daemon schema that supports
 // resolving a person profile by current or CardDAV UID.
-const PersonUIDLookupMinAPISchemaVersion = "3.6.0"
+const PersonUIDLookupMinAPISchemaVersion = "3.9.0"
 
 // maxProfileOrganizationLookups bounds the per-organization name resolution
 // a single profile read may perform beyond the primary-employment projection.

@@ -128,6 +128,7 @@ the failure code.
 Schema 3.5.0 adds the `account:` and `received:` search operators.
 
 Schema 3.8.0 adds [read-only remote client credentials](guides/remote-deployment.md#read-only-remote-clients), HTTP 409 for ambiguous raw-message references, and HTTP 413 for remote read limits.
+
 Schema 3.9.0 adds `GET /api/v1/people/by-uid`, which resolves current person
 UIDs, retired person UIDs, and UIDs on mapped CardDAV resources. It returns a
 conflict when one UID resolves to multiple people. Person responses expose
@@ -247,9 +248,11 @@ and the 1.x/2.x transition.
 
 ### Person UIDs and CardDAV bindings
 
-`GET /api/v1/people/{id}`, `GET /api/v1/people`, and semantic person search
-return `vcard_uid` and `carddav_bindings` for each person. Directory pages also
-include those fields. A binding names the CardDAV `connection` and `book` and
+Person responses, including `GET /api/v1/people/{id}`, `GET /api/v1/people`,
+person updates, and semantic person search, return `vcard_uid` for each person
+and `carddav_bindings` when the person has mapped CardDAV cards. Directory rows
+always include both fields; `carddav_bindings` is an empty array when no card
+is mapped. A binding names the CardDAV `connection` and `book` and
 includes the resource `href`, its `remote_uid`, and `mapping_status`.
 
 Use `GET /api/v1/people/by-uid?uid={uid}` to resolve an exact current person UID, a

@@ -1276,6 +1276,8 @@ CREATE INDEX IF NOT EXISTS idx_carddav_conflicts_resolved_at
     ON carddav_conflicts(status, resolved_at);
 CREATE INDEX IF NOT EXISTS idx_carddav_resources_person
     ON carddav_resources(person_id) WHERE person_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_carddav_resources_remote_uid
+    ON carddav_resources(remote_uid) WHERE remote_uid IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_person_uid_aliases_survivor
     ON person_uid_aliases(surviving_person_id)
     WHERE surviving_person_id IS NOT NULL;

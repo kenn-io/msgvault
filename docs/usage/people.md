@@ -42,12 +42,13 @@ creates a profile from an observed person. Subscribed CardDAV contacts can also
 create profiles when imported.
 
 Each saved profile also has a vCard UID. A new profile imported from a subscribed
-CardDAV book adopts the card's UID when it is valid and available. Existing
-profiles keep their UID. Use `msgvault person get --vcard-uid <uid>` with a
-current or retired profile UID, or a UID from one of its bound CardDAV cards. JSON profile reads
-include `vcard_uid` and `carddav_bindings`, which show the connection, book,
-resource href, remote UID, and mapping status. UID lookup needs daemon API
-schema 3.6.0 or newer.
+CardDAV book adopts the card's UID when it is a UUID that no other profile uses
+or has used. Existing profiles keep their UID. Use
+`msgvault person get --vcard-uid <uid>` with a current or retired profile UID,
+or a UID from one of its bound CardDAV cards. JSON profile reads include
+`vcard_uid` and `carddav_bindings`, which show the connection, book, resource
+href, remote UID, and mapping status. UID lookup needs daemon API schema 3.9.0
+or newer.
 
 ## Review identity matches
 

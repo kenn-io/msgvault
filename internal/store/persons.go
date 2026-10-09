@@ -453,19 +453,33 @@ func (s *Store) deletePersonOnce(ctx context.Context, input DeletePersonEnrichme
 		if err := s.bumpPersonDeletionCounterpartVCardProjectionsTx(ctx, tx, id); err != nil {
 			return err
 		}
-		var deletedID int64
+		var deletedUID string
 		err = tx.QueryRowContext(ctx,
-			`DELETE FROM persons WHERE id = ? AND revision = ? RETURNING id`,
-			id, expectedRevision).Scan(&deletedID)
+			`DELETE FROM persons WHERE id = ? AND revision = ? RETURNING vcard_uid`,
+			id, expectedRevision).Scan(&deletedUID)
 		if errors.Is(err, sql.ErrNoRows) {
 			return s.personCASMissTx(ctx, tx, id)
 		}
 		if err != nil {
 			return fmt.Errorf("delete person %d: %w", id, err)
 		}
+		if err := retireDeletedPersonUIDTx(ctx, tx, deletedUID); err != nil {
+			return err
+		}
 		_, err = s.bumpIdentityRevisionContext(ctx, tx)
 		return err
 	})
+}
+
+// retireDeletedPersonUIDTx reserves a deleted person's UID so no later
+// person, including one imported from a CardDAV card, can adopt it.
+func retireDeletedPersonUIDTx(ctx context.Context, tx *loggedTx, uid string) error {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO person_uid_aliases
+		(retired_uid, surviving_person_id, reason) VALUES (?, NULL, 'deletion')
+		ON CONFLICT (retired_uid) DO NOTHING`, uid); err != nil {
+		return fmt.Errorf("retire deleted person UID: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) deleteIdentityMatchCandidatesForPersonTx(
@@ -493,28 +507,12 @@ func (s *Store) GetPerson(id int64) (*Person, error) {
 	return s.GetPersonContext(context.Background(), id)
 }
 
-func (s *Store) getPersonCoreContext(ctx context.Context, id int64) (*Person, error) {
-	var person *Person
-	err := s.withTxContext(ctx, func(tx *loggedTx) error {
-		var err error
-		person, err = s.getPersonTx(ctx, tx, id)
-		return err
-	})
-	if err != nil {
-		return nil, err
-	}
-	return person, nil
-}
-
 func (s *Store) GetPersonContext(ctx context.Context, id int64) (*Person, error) {
 	var person *Person
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
 		var err error
 		person, err = s.getPersonTx(ctx, tx, id)
-		if err != nil {
-			return err
-		}
-		return s.attachCardDAVBindingsTx(ctx, tx, person)
+		return err
 	})
 	if err != nil {
 		return nil, err
@@ -532,7 +530,7 @@ func (s *Store) GetPersonByUIDContext(ctx context.Context, uid string) (*Person,
 		return nil, ErrPersonNotFound
 	}
 	var person *Person
-	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
 		rows, err := tx.QueryContext(ctx, `SELECT person_id FROM (
 			SELECT id AS person_id FROM persons WHERE vcard_uid = ?
 			UNION
@@ -567,10 +565,7 @@ func (s *Store) GetPersonByUIDContext(ctx context.Context, uid string) (*Person,
 			return ErrPersonNotFound
 		}
 		person, err = s.getPersonTx(ctx, tx, personID)
-		if err != nil {
-			return err
-		}
-		return s.attachCardDAVBindingsTx(ctx, tx, person)
+		return err
 	})
 	if err != nil {
 		return nil, err
@@ -763,6 +758,13 @@ func (s *Store) getPersonTx(ctx context.Context, tx *loggedTx, id int64) (*Perso
 	if err := rows.Close(); err != nil {
 		return nil, fmt.Errorf("close person %d rows: %w", id, err)
 	}
+	bindings, err := s.listCardDAVBindingsTx(ctx, tx, []int64{id})
+	if err != nil {
+		return nil, err
+	}
+	if len(bindings[id]) > 0 {
+		person.CardDAVBindings = bindings[id]
+	}
 	return person, nil
 }
 
@@ -801,11 +803,7 @@ func (s *Store) listPersonsTx(ctx context.Context, tx *loggedTx) ([]Person, erro
 	if err := rows.Close(); err != nil {
 		return nil, fmt.Errorf("close person list rows: %w", err)
 	}
-	ids := make([]int64, len(persons))
-	for index := range persons {
-		ids[index] = persons[index].ID
-	}
-	bindings, err := s.listCardDAVBindingsTx(ctx, tx, ids)
+	bindings, err := s.listAllCardDAVBindingsTx(ctx, tx)
 	if err != nil {
 		return nil, err
 	}
