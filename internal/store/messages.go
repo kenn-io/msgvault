@@ -6833,3 +6833,55 @@ func (s *Store) MessageIDsWithLabelContext(ctx context.Context, sourceID, labelI
 	}
 	return ids, rows.Err()
 }
+
+// PhoneParticipantContext finds the one participant holding an E.164 phone,
+// as its primary number or as an alias kept by a merge or service identifier.
+// It never creates an identity from unconfirmed evidence. A missing phone, or
+// one held by more than one participant, returns zero.
+func (s *Store) PhoneParticipantContext(ctx context.Context, phone string) (int64, error) {
+	id, err := s.soleAddressParticipantContext(ctx, `
+		SELECT id FROM participants WHERE phone_number = ?
+		UNION
+		SELECT participant_id FROM participant_identifiers WHERE identifier_value = ?`, phone)
+	if err != nil {
+		return 0, fmt.Errorf("look up phone participant: %w", err)
+	}
+	return id, nil
+}
+
+// EmailParticipantContext finds the one participant holding an email address,
+// as its primary address or as an alias, without creating identities from
+// review-only evidence. A missing or ambiguous email returns zero.
+func (s *Store) EmailParticipantContext(ctx context.Context, email string) (int64, error) {
+	id, err := s.soleAddressParticipantContext(ctx, `
+		SELECT id FROM participants WHERE LOWER(email_address) = LOWER(?)
+		UNION
+		SELECT participant_id FROM participant_identifiers WHERE LOWER(identifier_value) = LOWER(?)`, email)
+	if err != nil {
+		return 0, fmt.Errorf("look up email participant: %w", err)
+	}
+	return id, nil
+}
+
+func (s *Store) soleAddressParticipantContext(ctx context.Context, query, address string) (int64, error) {
+	rows, err := s.db.QueryContext(ctx, query+` LIMIT 2`, address, address)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = rows.Close() }()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return 0, err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	if len(ids) != 1 {
+		return 0, nil
+	}
+	return ids[0], nil
+}

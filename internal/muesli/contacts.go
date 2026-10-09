@@ -363,3 +363,21 @@ func (c *Contacts) readAddresses(ctx context.Context, tx *sql.Tx, owners map[int
 	}
 	return rows.Err()
 }
+
+// reviewPhones retains ambiguous email evidence without choosing a Contacts card.
+// It supplies suggestions only; it never asserts address ownership.
+func (c *Contacts) reviewPhones(email, countryCode string) []string {
+	if c == nil || c.state != ContactsComplete {
+		return nil
+	}
+	groups := c.byEmail[strings.ToLower(strings.TrimSpace(email))]
+	if len(groups) < 2 {
+		return nil
+	}
+	var raw []string
+	for key := range groups {
+		raw = append(raw, c.card(key).Phones...)
+	}
+	phones, _ := normalizedPhones(raw, countryCode)
+	return phones
+}

@@ -270,6 +270,8 @@ import type {
   MessageDetail,
   MessageListResponse,
   MessageRecordingsResponse,
+  MuesliRemoteRequest,
+  MuesliRemoteResult,
   OperationRunDetail,
   OperationRunsResponse,
   OperationStatusResponse,
@@ -1930,6 +1932,23 @@ export const importMeeting = (
       method: "POST",
       headers: { "Content-Type": "application/json" },
       data: meetingImportRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary Import one recorder-local Muesli meeting
+ */
+export const importMuesli = (
+  muesliRemoteRequest: MuesliRemoteRequest,
+  options?: SecondParameter<typeof orvalFetch<MuesliRemoteResult>>,
+) => {
+  return orvalFetch<MuesliRemoteResult>(
+    {
+      url: `/api/v1/import/muesli`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: muesliRemoteRequest,
     },
     options,
   );

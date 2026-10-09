@@ -87,6 +87,37 @@ func TestReaderReadsCurrentSchema(t *testing.T) {
 	assert.InDelta(beforeUpdated, afterUpdated, 0)
 }
 
+func TestReaderReadsOneMeetingByID(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	path := filepath.Join(t.TempDir(), "muesli.db")
+	db := newFixtureDB(t, path, currentSchemaDDL)
+	first := insertRow(t, db, "meetings", completedMeeting(nil))
+	second := insertRow(t, db, "meetings", completedMeeting(map[string]any{"title": "Second", "created_at": "2026-09-02 09:00:00"}))
+	insertRow(t, db, "meeting_participants", map[string]any{
+		"meeting_id": first, "participant_identifier": "email:alice@example.com",
+		"display_name": "Alice Example", "insertion_order": 0, "source": "calendar",
+	})
+	insertRow(t, db, "meeting_participants", map[string]any{
+		"meeting_id": second, "participant_identifier": "email:bob@example.com",
+		"display_name": "Bob Example", "insertion_order": 0, "source": "calendar",
+	})
+	reader, err := Open(t.Context(), path)
+	require.NoError(err)
+	t.Cleanup(func() { _ = reader.Close() })
+
+	meetings, err := reader.listMeetings(t.Context(), second)
+	require.NoError(err)
+	require.Len(meetings, 1, "a completion hook reads only the named meeting")
+	assert.Equal("Second", meetings[0].Title)
+	require.Len(meetings[0].Participants, 1)
+	assert.Equal("bob@example.com", meetings[0].Participants[0].Email)
+
+	missing, err := reader.listMeetings(t.Context(), second+100)
+	require.NoError(err)
+	assert.Empty(missing)
+}
+
 func TestReaderReadsLegacySchema(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

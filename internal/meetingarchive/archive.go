@@ -103,10 +103,6 @@ func (a *Archiver) Upsert(
 	existingMessage, existed := existing[snapshot.SourceMessageID]
 	existingMessageID := existingMessage.ID
 
-	identities, err := meetingidentity.ForSource(a.store, snapshot.SourceID, snapshot.AccountEmail)
-	if err != nil {
-		return Result{}, err
-	}
 	var organizer Person
 	if snapshot.Organizer != nil {
 		organizer = snapshot.Organizer.Normalized()
@@ -116,13 +112,13 @@ func (a *Archiver) Upsert(
 	if organizerAddress == "" {
 		organizerAddress = organizer.Phone
 	}
-	expectedIsFromMe := organizerAddress != "" && identities.Contains(organizerAddress)
+	expectedIsFromMe, err := a.expectedIsFromMe(snapshot, organizer)
+	if err != nil {
+		return Result{}, err
+	}
 
 	if existed && !opts.Force {
-		storedRaw, rawErr := a.store.GetMessageRaw(existingMessageID)
-		storedIsFromMe, attributionErr := a.store.GetMessageIsFromMe(existingMessageID)
-		if rawErr == nil && attributionErr == nil && bytes.Equal(storedRaw, snapshot.Raw) &&
-			storedIsFromMe == expectedIsFromMe && equalMetadata([]byte(existingMessage.Metadata.String), snapshot.Metadata) {
+		if a.storedMatches(snapshot, existingMessage, expectedIsFromMe) {
 			if err := a.store.RecomputeConversationStatsForMessageContext(ctx, existingMessageID); err != nil {
 				return Result{}, fmt.Errorf("recompute meeting conversation stats: %w", err)
 			}
@@ -255,6 +251,51 @@ func (a *Archiver) Upsert(
 		return result, fmt.Errorf("link meeting attendee identities: %w", err)
 	}
 	return result, nil
+}
+
+// Unchanged reports whether Upsert without Force would leave the archived
+// meeting's content and sender attribution as they are. It only reads.
+func (a *Archiver) Unchanged(snapshot Snapshot) (bool, error) {
+	if a == nil || a.store == nil {
+		return false, ErrUnavailable
+	}
+	existing, err := a.store.MessageMetadataBatch(snapshot.SourceID, []string{snapshot.SourceMessageID})
+	if err != nil {
+		return false, fmt.Errorf("lookup existing meeting: %w", err)
+	}
+	existingMessage, existed := existing[snapshot.SourceMessageID]
+	if !existed {
+		return false, nil
+	}
+	var organizer Person
+	if snapshot.Organizer != nil {
+		organizer = snapshot.Organizer.Normalized()
+	}
+	expectedIsFromMe, err := a.expectedIsFromMe(snapshot, organizer)
+	if err != nil {
+		return false, err
+	}
+	return a.storedMatches(snapshot, existingMessage, expectedIsFromMe), nil
+}
+
+func (a *Archiver) expectedIsFromMe(snapshot Snapshot, organizer Person) (bool, error) {
+	identities, err := meetingidentity.ForSource(a.store, snapshot.SourceID, snapshot.AccountEmail)
+	if err != nil {
+		return false, err
+	}
+	organizerAddress := organizer.Email
+	if organizerAddress == "" {
+		organizerAddress = organizer.Phone
+	}
+	return organizerAddress != "" && identities.Contains(organizerAddress), nil
+}
+
+// storedMatches treats an unreadable stored copy as changed so Upsert repairs it.
+func (a *Archiver) storedMatches(snapshot Snapshot, existing store.MessageMetadataRecord, expectedIsFromMe bool) bool {
+	storedRaw, rawErr := a.store.GetMessageRaw(existing.ID)
+	storedIsFromMe, attributionErr := a.store.GetMessageIsFromMe(existing.ID)
+	return rawErr == nil && attributionErr == nil && bytes.Equal(storedRaw, snapshot.Raw) &&
+		storedIsFromMe == expectedIsFromMe && equalMetadata([]byte(existing.Metadata.String), snapshot.Metadata)
 }
 
 func equalMetadata(stored, incoming []byte) bool {

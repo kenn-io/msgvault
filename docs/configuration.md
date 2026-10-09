@@ -926,8 +926,9 @@ the activity projection; changing it does not change relationship membership.
 The daemon starts HTTP health and API routing before analytics cache
 maintenance. With `engine = "duckdb"`, analytics remain unavailable until a
 usable cache is ready. If no usable cache can be built or opened, `msgvault serve`
-fails instead of silently falling back. A failed automatic refresh keeps serving
-the last usable publication. With `auto_build_cache = false`, use
+fails instead of silently falling back. A failed automatic refresh after a sync
+keeps serving the last usable publication, and the daemon checks again 15
+minutes later even if later syncs write nothing. With `auto_build_cache = false`, use
 `msgvault build-cache`, `query --fresh`, or sync `--build-cache` for explicit
 cache maintenance. Deprecated in 0.17.0:
 per-command analytics flags such as `msgvault tui --force-sql`,
@@ -1447,8 +1448,11 @@ schedule = "15 */6 * * *"
 ### Muesli Sources
 
 Muesli meeting sync uses one top-level `[[muesli]]` entry per Muesli database.
-The daemon reads the database read-only on its own host, so msgvault must run
-on the Mac where Muesli records. No credential is needed.
+Configure these entries on the Mac where Muesli records. With `[remote]`
+configured, the native client reads the local database and Contacts, then sends
+selected meetings using the existing remote API credentials. Without remote
+mode, the daemon reads the files on its own host. Remote Muesli sync and the
+native completion hook are available on `main` and are not yet released.
 
 ```toml
 [[muesli]]
@@ -1465,14 +1469,16 @@ enabled = true
 | `identifier` | `default` (single entry) | Source name used by `sync-muesli <identifier>` and scheduler logs |
 | `account_email` | (required) | Normalized primary identity; attributed as the organizer of every meeting |
 | `db_path` | `~/Library/Application Support/Muesli/muesli.db` | Muesli database path; `~` expands, and a relative path resolves against the config directory when `--config` is used |
-| `contacts` | `true` | Resolve attendees through Apple Contacts; needs Full Disk Access for the daemon |
+| `contacts` | `true` | Resolve attendees through Apple Contacts; the process reading the files needs Full Disk Access |
 | `contacts_path` | `~/Library/Application Support/AddressBook` | Apple Contacts data folder; expands like `db_path` |
 | `phone_country_code` | — | Country calling code (1–3 digits, such as `"1"` or `"44"`) used for Contacts phone numbers typed without one; unset means only international numbers are used |
-| `schedule` | — | Cron expression used by `msgvault serve` |
-| `enabled` | `false` | Whether the source is daemon-scheduled |
+| `schedule` | — | 5-field cron used by the local daemon or recorder-side `sync-muesli --watch` |
+| `enabled` | `false` | Whether automatic rescanning includes this source |
 
 Run `msgvault add-muesli <identifier>` to check the database and register the
-source before enabling a schedule. Run `msgvault sync-muesli <identifier> --full`
+source before enabling a schedule. On a remote recorder, keep
+`msgvault sync-muesli --watch` running to use enabled schedules. Run
+`msgvault sync-muesli <identifier> --full`
 after identity changes to repair existing meeting attribution. Removing the
 source prevents the scheduler from recreating it. See
 [Meeting Transcripts](/docs/usage/meetings/#muesli) for what gets stored.
