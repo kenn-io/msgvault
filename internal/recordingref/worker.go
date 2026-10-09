@@ -185,52 +185,49 @@ func (w *Worker) RunBatch(ctx context.Context) error {
 }
 
 func (w *Worker) deliver(ctx context.Context, claim store.RecordingReferenceClaim) error {
-	var m store.RecordingMessage
-	var exists bool
+	var ref Ref
+	var occurrence docbankmedia.Occurrence
+	var rebuildable, recoverReceipt, marked bool
+	var now time.Time
 	if err := w.gated(ctx, func() error {
-		var err error
-		m, exists, err = w.st.ReadRecordingMessage(ctx, claim.MessageID)
-		return err
+		m, exists, err := w.st.ReadRecordingMessage(ctx, claim.MessageID)
+		if err != nil {
+			return err
+		}
+		if exists && m.Live {
+			for _, r := range messageRefs(m, w.origins) {
+				if r.RouteKey == claim.RouteKey && r.ReferenceSHA256() == claim.RefSHA256 {
+					ref, rebuildable = r, true
+					break
+				}
+			}
+		}
+		recoverReceipt = claim.State == "uncertain" && (!rebuildable || strings.HasPrefix(claim.ErrorCode, "receipt_"))
+		if claim.State == "uncertain" {
+			switch claim.ErrorCode {
+			case "unauthorized", "forbidden", "validation", "bad_request", "conflict", "not_found", "http_error":
+				recoverReceipt = true
+			}
+		}
+		now = time.Now().UTC()
+		if rebuildable && !recoverReceipt {
+			if err := json.Unmarshal([]byte(claim.OccurrenceJSON), &occurrence); err != nil {
+				return errors.New("invalid recording reference occurrence")
+			}
+			marked, err = w.st.MarkRecordingReferenceSending(ctx, claim, now)
+			return err
+		}
+		return nil
 	}); err != nil {
 		return err
 	}
-	var ref Ref
-	rebuildable := false
-	if exists && m.Live {
-		for _, r := range messageRefs(m, w.origins) {
-			if r.RouteKey == claim.RouteKey && r.ReferenceSHA256() == claim.RefSHA256 {
-				ref, rebuildable = r, true
-				break
-			}
-		}
-	}
-	now := time.Now().UTC()
 	result := store.RecordingReferenceResult{State: claim.State, NextActionAt: now.Add(5 * time.Minute), LastSendAt: claim.LastSendAt, RetryCount: claim.RetryCount}
 	var receipt docbankmedia.Receipt
 	var err error
 	requestCtx, cancel := context.WithTimeout(ctx, referenceRequestTimeout)
 	defer cancel()
-	recoverReceipt := claim.State == "uncertain" && (!rebuildable || strings.HasPrefix(claim.ErrorCode, "receipt_"))
-	if claim.State == "uncertain" {
-		switch claim.ErrorCode {
-		case "unauthorized", "forbidden", "validation", "bad_request", "conflict", "not_found", "http_error":
-			recoverReceipt = true
-		}
-	}
 	switch {
 	case rebuildable && !recoverReceipt:
-		var occurrence docbankmedia.Occurrence
-		if err := json.Unmarshal([]byte(claim.OccurrenceJSON), &occurrence); err != nil {
-			return errors.New("invalid recording reference occurrence")
-		}
-		var marked bool
-		if err := w.gated(ctx, func() error {
-			var err error
-			marked, err = w.st.MarkRecordingReferenceSending(ctx, claim, now)
-			return err
-		}); err != nil {
-			return err
-		}
 		if !marked {
 			return nil
 		}
