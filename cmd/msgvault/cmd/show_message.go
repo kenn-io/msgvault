@@ -137,6 +137,9 @@ func outputMessageText(msg *query.MessageDetail) error {
 	if len(msg.Attachments) > 0 {
 		fmt.Println("\nAttachments:")
 		for _, att := range msg.Attachments {
+			for _, ref := range att.Docbank {
+				fmt.Printf("    Docbank node %d (%s%s)\n", ref.NodeID, ref.Endpoint, ref.Collection)
+			}
 			if att.URL != "" {
 				fmt.Printf("  • %s (%s, link) %s\n", att.Filename, att.MimeType, att.URL)
 			} else {
@@ -187,6 +190,9 @@ func outputMessageJSON(msg *query.MessageDetail) error {
 			"mime_type":    att.MimeType,
 			"size":         att.Size,
 			"content_hash": att.ContentHash,
+		}
+		if len(att.Docbank) > 0 {
+			attachments[i]["docbank"] = att.Docbank
 		}
 		if att.URL != "" {
 			attachments[i]["url"] = att.URL

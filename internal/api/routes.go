@@ -243,6 +243,7 @@ func writeHumaError(ctx huma.Context, status int, code string, message string) {
 
 func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	s.registerSessionRoutes(api)
+	s.registerDocbankAttachmentRoutes(apiV1)
 	registerRawHumaJSONRoute[HealthResponse](api, huma.Operation{
 		OperationID: "health",
 		Method:      http.MethodGet,

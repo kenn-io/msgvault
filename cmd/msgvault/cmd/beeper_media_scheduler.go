@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	beeperMediaSubmitJob  = "beeper-media-submit"
+	beeperMediaSubmitJob  = scheduler.StoredMediaSubmitJob
 	beeperMediaSubmitCron = "* * * * *"
 	beeperMediaGateLabel  = "Stored media submission"
 )
@@ -110,6 +110,15 @@ func addBeeperMediaRoute(
 			return err
 		}
 	}
+	var mirror *beeper.AttachmentMirror
+	if cfg.AttachmentMirror {
+		archiveUID, err := st.ArchiveUIDContext(ctx)
+		if err != nil {
+			return err
+		}
+		mirrorDestination := docbankmedia.AttachmentDestinationKey(cfg.URL, archiveUID, cfg.MirrorCollection())
+		mirror = beeper.NewAttachmentMirror(st, blobs, client, mirrorDestination, cfg).WithOperationGate(beeperMediaGate(gate))
+	}
 	submitter := beeper.NewMediaSubmitter(st, blobs, submitClient, destination, spoolDir).
 		WithASRProfile(cfg.ASRProfile).WithOperationGate(beeperMediaGate(gate))
 	return sched.AddJob(scheduler.Job{
@@ -117,6 +126,9 @@ func addBeeperMediaRoute(
 		Schedule: beeperMediaSubmitCron,
 		Run: func(ctx context.Context) error {
 			result, err := submitter.RunBatch(ctx)
+			if err == nil && mirror != nil {
+				_, err = mirror.RunBatch(ctx)
+			}
 			if err != nil {
 				return err
 			}

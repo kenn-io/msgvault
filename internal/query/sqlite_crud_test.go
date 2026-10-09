@@ -333,8 +333,9 @@ func TestGetAttachmentsByHashUsesDialectRebind(t *testing.T) {
 	attachments, err := engine.GetAttachmentsByHash(env.Ctx, hash)
 	require.NoError(err, "GetAttachmentsByHash")
 	require.Len(attachments, 1, "attachments")
-	require.NotEmpty(dialect.queries, "dialect Rebind calls")
-	assert.Contains(dialect.queries[len(dialect.queries)-1], "content_hash = $1", "rebound query")
+	require.Len(dialect.queries, 2, "attachment and receipt queries")
+	assert.Contains(dialect.queries[0], "content_hash = $1", "rebound attachment query")
+	assert.Contains(dialect.queries[1], "a.id=$1", "rebound receipt query")
 }
 
 func TestDuplicateCASAliasRetainsHashAcrossAttachmentQueries(t *testing.T) {

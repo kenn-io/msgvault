@@ -578,6 +578,7 @@ func queryAttachmentFromGenerated(att *generated.AttachmentInfo) *query.Attachme
 		MimeType:    att.MimeType,
 		Size:        att.SizeBytes,
 		ContentHash: stringValue(att.ContentHash),
+		Docbank:     docbankRefsFromGenerated(att.Docbank),
 		URL:         stringValue(att.URL),
 	}
 }
@@ -827,6 +828,7 @@ func queryDetailFromAPIMessage(msg *store.APIMessage) *query.MessageDetail {
 			MimeType:    att.MimeType,
 			Size:        att.Size,
 			ContentHash: att.ContentHash,
+			Docbank:     att.Docbank,
 			URL:         att.URL,
 		})
 	}

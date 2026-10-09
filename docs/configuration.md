@@ -1138,6 +1138,69 @@ max_media_mb = 250                # per-attachment download cap (MiB)
 | `max_media_mb` | `250` | Per-attachment download cap in MiB (over-cap media is recorded as a `size_cap` skip and retried only after the cap changes) |
 | `accounts_config` | — | Per-accountID `media` and `max_media_mb` overrides |
 
+#### Mirror stored attachments to Docbank (unreleased)
+
+Msgvault can mirror stored attachment bytes from every source to a Docbank
+collection. The daemon discovers a bounded page each minute and uploads at most
+one unique content hash per pass. Enable the integration, mirror mode, and its
+separate upload consent:
+
+```toml
+[integrations.docbank]
+enabled = true
+url = "http://127.0.0.1:8080"
+api_key_env = "DOCBANK_API_KEY"
+attachment_mirror = true
+attachment_upload_consent = true
+attachment_collection = "/msgvault"
+# attachment_mime_classes = ["application", "image"]
+# attachment_source_ids = [1, 2]
+# attachment_max_bytes = 104857600
+# attachment_after = "2026-01-01"
+```
+
+| Setting | Default | Effect |
+|---------|---------|--------|
+| `attachment_mirror` | `false` | Discover all attachment occurrences, including inline files, for the collection mirror |
+| `attachment_upload_consent` | `false` | Allow attachment bytes from all sources, including future imports, to leave msgvault. Without consent discovery records local state and sends no mirror requests |
+| `attachment_collection` | `/msgvault` | Clean absolute virtual directory path; missing directories are created in Docbank |
+| `attachment_mime_classes` | all | Optional MIME classes such as `application`, `image`, `audio`, or `text` |
+| `attachment_source_ids` | all | Optional positive msgvault source IDs |
+| `attachment_max_bytes` | no additional limit | Optional maximum size; the upload API's 2 GiB ceiling always applies |
+| `attachment_after` | all dates | Optional inclusive UTC message date in `YYYY-MM-DD` form; undated messages are skipped when set |
+
+The mirror uses the same URL and credential rules as the audio route below.
+Its consent covers file transport; Docbank controls document processing consent
+and profiles. `all_sources_upload_consent` continues to control the existing
+audio and transcript route independently.
+
+Run `msgvault docbank attachments backfill` to restart discovery and retry
+failed uploads. Run `msgvault docbank attachments status` for consent state,
+collection, and delivered, pending, failed, and skipped occurrence counts with
+reason codes. Both commands use the selected msgvault daemon. Backfill requires
+mirror consent and the stored-media scheduled job. Progress continues in
+`msgvault serve`; each pass is bounded. Failed transport and server requests
+retry after five minutes. Permanent request failures wait for explicit backfill.
+Old occurrences are revisited after each rolling pass, with a one-hour delay;
+new rows are discovered without waiting for that delay.
+
+Each content hash has one durable delivery per archive, Docbank URL, and
+collection. Duplicate bytes in many messages share the same node. Upload names
+use the full SHA-256 followed by the first occurrence's safe filename basename.
+Saved names make interrupted uploads converge on the same Docbank node.
+Completed deliveries make no further upload requests. Changing the destination
+starts a separate mirror; disabling it preserves receipts and remote files.
+
+Docbank's digest-checked upload endpoint accepts one file part and does not
+accept message metadata. The upload name preserves the first filename basename.
+Msgvault retains exact filename, message, source, sender,
+and date provenance in the archive. Attachment and message details in CLI,
+HTTP API, and MCP expose `docbank` receipts containing `endpoint`, `collection`,
+`node_id`, `version_id`, and `blob_hash`, so callers can open the corresponding
+Docbank node. URL-only attachments and rows without stored byte identity are
+skipped. Missing or corrupt archive bytes produce a failed delivery. Msgvault's
+own document indexing remains independently available.
+
 #### Send stored audio to Docbank
 
 The daemon can send stored WAV and MP3 audio from any captured source, including

@@ -14,6 +14,7 @@ import (
 	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 func TestOutputMessageTextSanitizesMultilineBody(t *testing.T) {
@@ -317,4 +318,26 @@ func TestOutputMessageJSONIncludesBrowserURL(t *testing.T) {
 	var result map[string]any
 	require.NoError(t, json.Unmarshal([]byte(done()), &result))
 	assert.Equal(t, "https://archive.example/messages/42", result["web_url"])
+}
+
+func TestMessageAttachmentDocbankViews(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	done := captureStdout(t)
+	msg := &query.MessageDetail{Attachments: []query.AttachmentInfo{{ID: 1, Filename: "report.pdf", Docbank: []store.DocbankAttachmentRef{{Endpoint: "https://docbank.example.com", Collection: "/msgvault", NodeID: 8, BlobHash: "hash"}}}}}
+	require.NoError(outputMessageJSON(msg))
+	var got struct {
+		Attachments []struct {
+			Docbank []struct {
+				NodeID int64 `json:"node_id"`
+			} `json:"docbank"`
+		} `json:"attachments"`
+	}
+	require.NoError(json.Unmarshal([]byte(done()), &got))
+	require.Len(got.Attachments, 1)
+	require.Len(got.Attachments[0].Docbank, 1)
+	assert.Equal(int64(8), got.Attachments[0].Docbank[0].NodeID)
+	done = captureStdout(t)
+	require.NoError(outputMessageText(msg))
+	assert.Contains(done(), "Docbank node 8 (https://docbank.example.com/msgvault)")
 }

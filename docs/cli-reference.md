@@ -3786,6 +3786,21 @@ msgvault setup status --json
 
 ---
 
+## docbank attachments (unreleased)
+
+Manage the optional Docbank collection mirror through the selected msgvault daemon.
+
+```bash
+msgvault docbank attachments status
+msgvault docbank attachments backfill
+```
+
+`status` returns JSON with the enabled flag, upload consent, destination
+collection, and occurrence counts for delivered, pending, failed, and skipped
+attachments, including reason codes. `backfill` schedules rediscovery and retries
+failed uploads. It requires the configured mirror, its upload consent, and a
+running stored-media scheduler. See [attachment mirror configuration](configuration.md#mirror-stored-attachments-to-docbank-unreleased).
+
 ## show-message
 
 Show full message details.

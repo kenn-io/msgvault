@@ -1545,6 +1545,28 @@ type GetImportJobErrorResponse = ErrorResponse
 
 type GetImportJobErrorResponseJSON = ErrorResponse
 
+type GetDocbankAttachmentStatusResponse = DocbankAttachmentStatus
+
+type GetDocbankAttachmentStatusErrorResponse = APIHTTPError
+
+type GetDocbankAttachmentStatusErrorResponseJSON = APIHTTPError
+
+type GetDocbankAttachmentStatusErrorResponseJSON500 = APIHTTPError
+
+type GetDocbankAttachmentStatusErrorResponseJSON503 = APIHTTPError
+
+type BackfillDocbankAttachmentsResponse = DocbankAttachmentBackfillResponse
+
+type BackfillDocbankAttachmentsErrorResponse = APIHTTPError
+
+type BackfillDocbankAttachmentsErrorResponseJSON = APIHTTPError
+
+type BackfillDocbankAttachmentsErrorResponseJSON409 = APIHTTPError
+
+type BackfillDocbankAttachmentsErrorResponseJSON500 = APIHTTPError
+
+type BackfillDocbankAttachmentsErrorResponseJSON503 = APIHTTPError
+
 type PrepareKataEvidenceResponse = KataEvidencePrepareResponse
 
 type PrepareKataEvidenceErrorResponse = ErrorResponse
@@ -4795,6 +4817,29 @@ type GetImportJobResp struct {
 	JSON200      *GetImportJobResponse
 	JSON401      *GetImportJobErrorResponse
 	JSON404      *GetImportJobErrorResponseJSON
+}
+
+type GetDocbankAttachmentStatusResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetDocbankAttachmentStatusResponse
+	JSON400      *GetDocbankAttachmentStatusErrorResponse
+	JSON401      *GetDocbankAttachmentStatusErrorResponseJSON
+	JSON500      *GetDocbankAttachmentStatusErrorResponseJSON500
+	JSON503      *GetDocbankAttachmentStatusErrorResponseJSON503
+}
+
+type BackfillDocbankAttachmentsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON202      *BackfillDocbankAttachmentsResponse
+	JSON400      *BackfillDocbankAttachmentsErrorResponse
+	JSON401      *BackfillDocbankAttachmentsErrorResponseJSON
+	JSON409      *BackfillDocbankAttachmentsErrorResponseJSON409
+	JSON500      *BackfillDocbankAttachmentsErrorResponseJSON500
+	JSON503      *BackfillDocbankAttachmentsErrorResponseJSON503
 }
 
 type PrepareKataEvidenceResp struct {
