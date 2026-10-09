@@ -200,3 +200,47 @@ func TestDirectWriteStoreWithoutEventsRecordsCaptureGap(t *testing.T) {
 	Assert.Greater(t, epoch, initialEpoch)
 	Assert.False(t, enabled)
 }
+
+func TestDirectWriteStoreWithEventsOffKeepsOwnerSubscriptions(t *testing.T) {
+	require := Require.New(t)
+	cfg := config.NewDefaultConfig()
+	cfg.HomeDir = t.TempDir()
+	cfg.Data.DataDir = cfg.HomeDir
+	cfg.Server.APIKey = "synthetic-events-owner"
+	cfg.MCP.Events.Enabled = true
+	cfg.MCP.Events.Sources = []string{"gmail"}
+	daemonStore, err := store.Open(cfg.DatabaseDSN())
+	require.NoError(err)
+	require.NoError(daemonStore.InitSchema())
+	source, err := daemonStore.GetOrCreateSource("gmail", "direct-write-owner@example.test")
+	require.NoError(err)
+	conversationID, err := daemonStore.EnsureConversation(source.ID, "direct-write-owner-thread", "Owner fixture")
+	require.NoError(err)
+	server := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: daemonStore, Logger: testLoggerValue(), OperationGate: api.NewSerialOperationGate()})
+	_, err = newDaemonMCPEventsService(t.Context(), cfg, daemonStore, server)
+	require.NoError(err)
+	require.NoError(server.Shutdown(context.Background()))
+	now := time.Now().UTC()
+	subscription := store.MCPSubscription{
+		ID: "sub_" + strings.Repeat("0", 63) + "1", Principal: mcpevents.Principal(cfg.Server.APIKey),
+		Name: "msgvault.message_archived", Arguments: []byte(`{"conversation_id":"` + strconv.FormatInt(conversationID, 10) + `","include_from_me":false}`),
+		ScopeKind: "conversation", ScopeID: conversationID, SourceID: source.ID,
+		CallbackURL: "https://receiver.example.net/hook", SecretEnc: []byte("synthetic-encrypted-secret"),
+		SecretRevision: 1, VerifiedRevision: 1, ExpiresAt: now.Add(24 * time.Hour),
+	}
+	require.NoError(daemonStore.BindMCPSubscriptionScope(t.Context(), &subscription))
+	_, _, err = daemonStore.ActivateMCPSubscription(t.Context(), store.MCPActivation{Subscription: subscription, Now: now})
+	require.NoError(err)
+	require.NoError(daemonStore.Close())
+
+	// A CLI writer with Events off records a capture gap for the same owner;
+	// it is not an owner change, so the owner can renew after re-enabling.
+	cfg.MCP.Events.Enabled = false
+	cliStore, cleanup, err := openWritableStoreAndInitWithInvocation(&invocation{cfg: cfg, logger: testDiscardLogger()}, runStartupMigrationsForIngest)
+	require.NoError(err)
+	t.Cleanup(cleanup)
+	stopped, err := cliStore.GetMCPSubscription(t.Context(), subscription.ID)
+	require.NoError(err)
+	require.NotNil(stopped)
+	Assert.Equal(t, "capture_gap", stopped.StopReason)
+}
