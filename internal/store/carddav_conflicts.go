@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"go.kenn.io/msgvault/internal/vcard"
 )
 
 const MaxCardDAVConflictSnapshotBytes = 32 << 20
@@ -1308,15 +1310,21 @@ func (s *Store) ResolveCardDAVConflictRemoteContext(
 				return ErrCardDAVConflictStale
 			}
 			remoteOwnsDisplay := false
+			var preparedEnvelope *vcard.ResourceEnvelope
 			if mapping.PersonID != nil {
+				envelope, err := s.prepareCardDAVEnvelopeTx(ctx, tx, book.ID, *mapping.PersonID, input.Remote)
+				if err != nil {
+					return err
+				}
+				preparedEnvelope = &envelope
 				remoteOwnsDisplay, err = s.rebaseCardDAVImportedProjectionTx(
-					ctx, tx, book.ID, *mapping.PersonID, input.Remote,
+					ctx, tx, book.ID, *mapping.PersonID, input.Remote, envelope,
 				)
 				if err != nil {
 					return err
 				}
 			}
-			_, changed, err := s.applyCardDAVResourceTx(ctx, tx, book, input.Remote, false)
+			_, changed, err := s.applyCardDAVResourceTx(ctx, tx, book, input.Remote, false, false, preparedEnvelope)
 			if err != nil {
 				return err
 			}

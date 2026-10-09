@@ -137,7 +137,7 @@ func standaloneConflict(t *testing.T, inferred bool) (*store.Store, *store.CardD
 	st, account, book := newCardDAVResourceStore(t)
 	_, seedErr := st.DB().Exec(`INSERT INTO persons(vcard_uid,display_name) VALUES ('standalone','Standalone')`)
 	require.NoError(t, seedErr)
-	remote := remoteResource(book.CanonicalURL+"standalone.vcf", "standalone", "Standalone", "", `"base"`)
+	remote := remoteResource(t, book.CanonicalURL+"standalone.vcf", "standalone", "Standalone", "", `"base"`)
 	remote.RemoteBody = []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:standalone\r\nFN:Standalone\r\nEND:VCARD\r\n")
 	remote.Emails = nil
 	_, err := st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration, SyncRevision: book.SyncRevision, Upserts: []store.CardDAVRemoteResource{remote}})

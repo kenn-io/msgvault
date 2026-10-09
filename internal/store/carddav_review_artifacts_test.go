@@ -275,7 +275,7 @@ func TestArtifactApprovalRejectsConcurrentPostgresInference(t *testing.T) {
 			} else {
 				account, err := st.GetCardDAVAccountByIDContext(t.Context(), store.DefaultCardDAVAccountID)
 				require.NoError(err)
-				remote := remoteResource(book.CanonicalURL+"race.vcf", "race", "Race Person", "race@example.test", `"base"`)
+				remote := remoteResource(t, book.CanonicalURL+"race.vcf", "race", "Race Person", "race@example.test", `"base"`)
 				_, err = st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration, SyncRevision: book.SyncRevision, Upserts: []store.CardDAVRemoteResource{remote}})
 				require.NoError(err)
 				mapping, err := st.GetCardDAVResourceContext(t.Context(), book.ID, remote.Href)

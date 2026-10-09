@@ -2,6 +2,7 @@ package carddav
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -1555,4 +1556,305 @@ func TestKeepLocalRecordsLineMappingSoNextSyncDoesNotDuplicateEmail(t *testing.T
 	fixture.mu.Lock()
 	defer fixture.mu.Unlock()
 	assert.Equal(1, strings.Count(string(fixture.body), "alice.updated@example.test"), string(fixture.body))
+}
+
+func TestRemoteEditsToPublishedImportedValues(t *testing.T) {
+	for _, tc := range []struct {
+		name, before, after, wantName string
+		wantValues                    []string
+	}{
+		{"email", "e2@example.test", "e2b@example.test", "Alice", []string{"e1@example.test", "e2b@example.test", "+12025550101"}},
+		{"phone", "+12025550101", "+12025550103", "Alice", []string{"e1@example.test", "e2@example.test", "+12025550103"}},
+		{"name", "FN:Alice", "FN:Alice Remote", "Alice Remote", []string{"e1@example.test", "e2@example.test", "+12025550101"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := bytes.Replace(publishedImportCard(), []byte("END:VCARD"), []byte("TEL;TYPE=cell:+12025550101\r\nEND:VCARD"), 1)
+			fixture, service, st, personID := publishedImportFixture(t, body)
+			puts := fixture.puts
+			edited := bytes.Replace(fixture.body, []byte(tc.before), []byte(tc.after), 1)
+			if tc.name == "phone" {
+				edited = bytes.Replace(edited, []byte("TEL:"), []byte("TEL;TYPE=work:"), 1)
+			}
+			fixture.setRemote(edited, `"remote-2"`)
+			_, err := service.Sync(t.Context(), SyncOptions{Full: true})
+			require.NoError(t, err)
+			require.NoError(t, service.ReconcilePublications(t.Context()))
+			assert.Equal(t, puts, fixture.puts)
+			assert.Equal(t, edited, fixture.body)
+			person, err := st.GetPersonContext(t.Context(), personID)
+			require.NoError(t, err)
+			require.NotNil(t, person.DisplayName)
+			assert.Equal(t, tc.wantName, *person.DisplayName)
+			points, err := st.ListPersonContactPointsContext(t.Context(), personID, true)
+			require.NoError(t, err)
+			var values []string
+			for _, point := range points {
+				values = append(values, point.OriginalValue)
+				if tc.name == "phone" && point.AddressKind == store.ContactAddressPhone {
+					assert.Equal(t, []string{"work"}, point.Envelope.TypeTokens)
+				}
+			}
+			assert.ElementsMatch(t, tc.wantValues, values)
+			conflicts, err := service.ListConflicts(t.Context())
+			require.NoError(t, err)
+			assert.Empty(t, conflicts)
+		})
+	}
+}
+
+func TestPublishedImportLocalRenameSurvivesRemoteRename(t *testing.T) {
+	for _, published := range []bool{false, true} {
+		t.Run(fmt.Sprintf("local rename published=%t", published), func(t *testing.T) {
+			fixture, service, st, personID := publishedImportFixture(t)
+			person, err := st.GetPersonContext(t.Context(), personID)
+			require.NoError(t, err)
+			_, err = st.UpdatePersonDisplayNameContext(t.Context(), personID, person.Revision, new("Alice Local"))
+			require.NoError(t, err)
+			if published {
+				require.NoError(t, service.ReconcilePublications(t.Context()))
+			}
+			fixture.setRemote(bytes.Replace(fixture.body, []byte("FN:Alice"), []byte("FN:Alice Remote"), 1), `"remote-2"`)
+			_, err = service.Sync(t.Context(), SyncOptions{Full: true})
+			require.NoError(t, err)
+			person, err = st.GetPersonContext(t.Context(), personID)
+			require.NoError(t, err)
+			assert.Equal(t, new("Alice Local"), person.DisplayName)
+			conflicts, err := service.ListConflicts(t.Context())
+			require.NoError(t, err)
+			if published {
+				assert.Empty(t, conflicts)
+			} else {
+				require.Len(t, conflicts, 1)
+			}
+		})
+	}
+}
+
+func TestPublishedImportWithoutProjectionIndexesPreservesImportedValues(t *testing.T) {
+	body := bytes.Replace(publishedImportCard(), []byte("END:VCARD"), []byte("TEL:+12025550101\r\nEND:VCARD"), 1)
+	fixture, _, st, personID := publishedImportFixture(t, body)
+	publication, err := st.GetCardDAVPublicationContext(t.Context(), personID)
+	require.NoError(t, err)
+	account, err := st.GetCardDAVAccountForBookContext(t.Context(), publication.AddressBookID)
+	require.NoError(t, err)
+	books, err := st.ListCardDAVAddressBooksContext(t.Context(), account.ID)
+	require.NoError(t, err)
+	require.Len(t, books, 1)
+	edited := bytes.Replace(fixture.body, []byte("e2@example.test"), []byte("e2b@example.test"), 1)
+	edited = bytes.Replace(edited, []byte("FN:Alice"), []byte("FN:Alice Remote"), 1)
+	edited = bytes.Replace(edited, []byte("+12025550101"), []byte("+12025550103"), 1)
+	remote, err := NewRemoteResource(publication.Href, `"remote-2"`, edited)
+	require.NoError(t, err)
+	remote.ProjectionIndexes = nil
+	_, err = st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
+		AddressBookID: books[0].ID, ConnectionGeneration: account.ConnectionGeneration,
+		SyncRevision: books[0].SyncRevision, Upserts: []store.CardDAVRemoteResource{remote},
+	})
+	require.NoError(t, err)
+	person, err := st.GetPersonContext(t.Context(), personID)
+	require.NoError(t, err)
+	assert.Equal(t, new("Alice"), person.DisplayName)
+	points, err := st.ListPersonContactPointsContext(t.Context(), personID, true)
+	require.NoError(t, err)
+	var values []string
+	for _, point := range points {
+		values = append(values, point.OriginalValue)
+	}
+	assert.ElementsMatch(t, []string{"e1@example.test", "e2@example.test", "+12025550101"}, values)
+}
+
+func TestRemoteEditToImportPublishedIntoDifferentBookPreservesProjection(t *testing.T) {
+	source := &mutationFixture{body: publishedImportCard(), etag: `"source-1"`}
+	target := &mutationFixture{}
+	sourceHandler, targetHandler := source.handler(t), target.handler(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/books/copy/") {
+			targetHandler(w, r)
+		} else {
+			sourceHandler(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	service, st, sourceBook := newPullService(t, server, false)
+	_, err := service.Sync(t.Context(), SyncOptions{Full: true})
+	require.NoError(t, err)
+	mapping, err := st.GetCardDAVResourceContext(t.Context(), sourceBook.ID, sourceBook.CanonicalURL+"person.vcf")
+	require.NoError(t, err)
+	require.NotNil(t, mapping.PersonID)
+	allowed := true
+	_, books, err := st.ReplaceCardDAVDiscoveryContext(t.Context(), store.CardDAVDiscoveryInput{
+		BaseURL: server.URL, Username: "alice", PrincipalURL: server.URL + "/principal/", HomeURL: server.URL + "/books/",
+		Books: []store.CardDAVDiscoveredBook{
+			{CanonicalURL: sourceBook.CanonicalURL, DisplayName: "Personal", SupportsMultiget: true, CanCreate: &allowed},
+			{CanonicalURL: server.URL + "/books/copy/", DisplayName: "Copy", DiscoveryIndex: 1, SupportsMultiget: true, CanCreate: &allowed},
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, books, 2)
+	require.NoError(t, st.SetCardDAVBookRolesContext(t.Context(), books[1].ID, store.CardDAVBookRoles{IsWriteTarget: true, IsSubscribed: true}))
+	require.NoError(t, service.PublishPerson(t.Context(), *mapping.PersonID))
+	before, err := st.LoadPersonVCardSnapshotContext(t.Context(), *mapping.PersonID)
+	require.NoError(t, err)
+	target.setRemote(bytes.Replace(target.body, []byte("e2@example.test"), []byte("e2b@example.test"), 1), `"target-2"`)
+	_, err = service.Sync(t.Context(), SyncOptions{Full: true})
+	require.NoError(t, err)
+	after, err := st.LoadPersonVCardSnapshotContext(t.Context(), *mapping.PersonID)
+	require.NoError(t, err)
+	assert.Equal(t, before.Fingerprint, after.Fingerprint)
+	points, err := st.ListPersonContactPointsContext(t.Context(), *mapping.PersonID, true)
+	require.NoError(t, err)
+	var values []string
+	for _, point := range points {
+		values = append(values, point.OriginalValue)
+	}
+	assert.ElementsMatch(t, []string{"e1@example.test", "e2@example.test"}, values)
+	conflicts, err := service.ListConflicts(t.Context())
+	require.NoError(t, err)
+	assert.Empty(t, conflicts)
+}
+
+func TestPublishedImportClearedDisplayNameSurvivesRemoteEmailEdit(t *testing.T) {
+	fixture, service, st, personID := publishedImportFixture(t)
+	person, err := st.GetPersonContext(t.Context(), personID)
+	require.NoError(t, err)
+	_, err = st.UpdatePersonDisplayNameContext(t.Context(), personID, person.Revision, nil)
+	require.NoError(t, err)
+	require.NoError(t, service.ReconcilePublications(t.Context()))
+	puts := fixture.puts
+	fixture.setRemote(bytes.Replace(fixture.body, []byte("e2@example.test"), []byte("e2b@example.test"), 1), `"remote-2"`)
+	_, err = service.Sync(t.Context(), SyncOptions{Full: true})
+	require.NoError(t, err)
+	person, err = st.GetPersonContext(t.Context(), personID)
+	require.NoError(t, err)
+	assert.Nil(t, person.DisplayName)
+	points, err := st.ListPersonContactPointsContext(t.Context(), personID, true)
+	require.NoError(t, err)
+	var values []string
+	for _, point := range points {
+		values = append(values, point.OriginalValue)
+	}
+	assert.ElementsMatch(t, []string{"e1@example.test", "e2b@example.test"}, values)
+	require.NoError(t, service.ReconcilePublications(t.Context()))
+	assert.Equal(t, puts, fixture.puts)
+	conflicts, err := service.ListConflicts(t.Context())
+	require.NoError(t, err)
+	assert.Empty(t, conflicts)
+}
+
+func TestRemoteEditToPublishedLocalPersonPreservesLocalProjection(t *testing.T) {
+	fixture := &mutationFixture{}
+	service, st, personID, _ := seededMutationService(t, fixture)
+	require.NoError(t, service.PublishPerson(t.Context(), personID))
+	fixture.setRemote(bytes.Replace(fixture.body, []byte("FN:Alice Example"), []byte("FN:Remote Name\r\nEMAIL:remote@example.test"), 1), `"remote-2"`)
+	_, err := service.Sync(t.Context(), SyncOptions{Full: true})
+	require.NoError(t, err)
+	person, err := st.GetPersonContext(t.Context(), personID)
+	require.NoError(t, err)
+	assert.Equal(t, new("Alice Example"), person.DisplayName)
+	points, err := st.ListPersonContactPointsContext(t.Context(), personID, true)
+	require.NoError(t, err)
+	assert.Empty(t, points)
+	names, err := st.ListPersonNamesContext(t.Context(), personID, true)
+	require.NoError(t, err)
+	assert.Empty(t, names)
+	conflicts, err := service.ListConflicts(t.Context())
+	require.NoError(t, err)
+	assert.Empty(t, conflicts)
+}
+
+func publishedImportCard() []byte {
+	return bytes.Replace(conflictCardWithEmail("person", "Alice", "e1@example.test"), []byte("END:VCARD"), []byte("EMAIL:e2@example.test\r\nEND:VCARD"), 1)
+}
+
+func publishedImportFixture(t *testing.T, bodies ...[]byte) (*mutationFixture, *Service, *store.Store, int64) {
+	t.Helper()
+	fixture := &mutationFixture{body: publishedImportCard(), etag: `"remote-1"`}
+	if len(bodies) > 0 {
+		fixture.body = bodies[0]
+	}
+	server := httptest.NewServer(fixture.handler(t))
+	t.Cleanup(server.Close)
+	service, st, book := newPullService(t, server, false)
+	_, err := service.Sync(t.Context(), SyncOptions{Full: true})
+	require.NoError(t, err)
+	mapping, err := st.GetCardDAVResourceContext(t.Context(), book.ID, book.CanonicalURL+"person.vcf")
+	require.NoError(t, err)
+	require.NotNil(t, mapping.PersonID)
+	require.NoError(t, service.PublishPerson(t.Context(), *mapping.PersonID))
+	return fixture, service, st, *mapping.PersonID
+}
+
+func (f *mutationFixture) setRemote(body []byte, etag string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.body, f.etag = body, etag
+}
+
+func TestRemoteEditToPublishedImportReachesPerson(t *testing.T) {
+	for _, tc := range []struct {
+		kind  store.ContactAddressKind
+		value string
+	}{
+		{store.ContactAddressEmail, "alice-local@example.test"},
+		{store.ContactAddressPhone, "+1 (202) 555-0101"},
+	} {
+		t.Run(string(tc.kind), func(t *testing.T) {
+			fixture, service, st, personID := publishedImportFixture(t)
+			want := []string{"e1@example.test", "e2b@example.test"}
+			added, err := st.AddPersonContactPointContext(t.Context(), personID, store.PersonContactPointInput{
+				AddressKind: tc.kind, OriginalValue: tc.value,
+				Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
+			})
+			require.NoError(t, err)
+			require.NoError(t, service.ReconcilePublications(t.Context()))
+			require.Equal(t, 1, fixture.puts)
+			want = append(want, tc.value)
+			puts := fixture.puts
+			edited := bytes.Replace(fixture.body, []byte("e2@example.test"), []byte("e2b@example.test"), 1)
+			fixture.setRemote(edited, `"remote-2"`)
+			_, err = service.Sync(t.Context(), SyncOptions{Full: true})
+			require.NoError(t, err)
+			require.NoError(t, service.ReconcilePublications(t.Context()))
+			assert.Equal(t, puts, fixture.puts)
+			points, err := st.ListPersonContactPointsContext(t.Context(), personID, true)
+			require.NoError(t, err)
+			var values []string
+			for _, point := range points {
+				values = append(values, point.OriginalValue)
+				if point.Envelope.ID == added.Envelope.ID {
+					assert.Equal(t, *added, point)
+				}
+			}
+			assert.ElementsMatch(t, want, values)
+			conflicts, err := service.ListConflicts(t.Context())
+			require.NoError(t, err)
+			assert.Empty(t, conflicts)
+		})
+	}
+}
+
+func TestRemoteEditToPublishedImportUsesDecodedProperties(t *testing.T) {
+	fixture, service, st, personID := publishedImportFixture(t)
+	_, err := st.AddPersonContactPointContext(t.Context(), personID, store.PersonContactPointInput{
+		AddressKind: store.ContactAddressEmail, OriginalValue: "local@example.test",
+		Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
+	})
+	require.NoError(t, err)
+	require.NoError(t, service.ReconcilePublications(t.Context()))
+	edited := bytes.Replace(fixture.body, []byte("FN:Alice"), []byte(`FN:Alice\, Remote`), 1)
+	edited = bytes.Replace(edited, []byte("EMAIL:e2@example.test"), []byte("EMAIL;VALUE=uri:MAILTO:e2b@example.test\r\nTEL;VALUE=text:TeL:+12025550103"), 1)
+	fixture.setRemote(edited, `"remote-2"`)
+	_, err = service.Sync(t.Context(), SyncOptions{Full: true})
+	require.NoError(t, err)
+	require.NoError(t, service.ReconcilePublications(t.Context()))
+	person, err := st.GetPersonContext(t.Context(), personID)
+	require.NoError(t, err)
+	assert.Equal(t, new("Alice, Remote"), person.DisplayName)
+	points, err := st.ListPersonContactPointsContext(t.Context(), personID, true)
+	require.NoError(t, err)
+	var values []string
+	for _, point := range points {
+		values = append(values, point.OriginalValue)
+	}
+	assert.ElementsMatch(t, []string{"e1@example.test", "e2b@example.test", "local@example.test", "+12025550103"}, values)
 }

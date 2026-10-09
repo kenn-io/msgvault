@@ -369,7 +369,7 @@ func parseRemoteResource(href, etag string, body []byte) (store.CardDAVRemoteRes
 	}
 	resource := store.CardDAVRemoteResource{
 		Href: href, RemoteETag: etag, RemoteBody: append([]byte(nil), body...),
-		SemanticHash: semanticHash,
+		SemanticHash: semanticHash, ProjectionIndexes: make(map[string]int),
 	}
 	for _, occurrence := range envelope.PropertyTree {
 		property := occurrence.Property
@@ -387,6 +387,7 @@ func parseRemoteResource(href, etag string, body []byte) (store.CardDAVRemoteRes
 				}
 				resource.DisplayName = strings.TrimSpace(value)
 				resource.DisplayNameIdentity = identity
+				resource.ProjectionIndexes[occurrence.Identity.Key()] = 0
 			}
 		case "EMAIL":
 			value, err := cardDAVPropertyValue(envelope.RenderMetadata.StoredVersion, property)
@@ -397,6 +398,7 @@ func parseRemoteResource(href, etag string, body []byte) (store.CardDAVRemoteRes
 			if value != "" {
 				resource.Emails = append(resource.Emails, value)
 				resource.EmailIdentities = append(resource.EmailIdentities, identity)
+				resource.ProjectionIndexes[occurrence.Identity.Key()] = len(resource.Emails) - 1
 			}
 		case "TEL":
 			value, err := cardDAVPropertyValue(envelope.RenderMetadata.StoredVersion, property)
@@ -407,6 +409,7 @@ func parseRemoteResource(href, etag string, body []byte) (store.CardDAVRemoteRes
 			if value != "" {
 				resource.Phones = append(resource.Phones, value)
 				resource.PhoneIdentities = append(resource.PhoneIdentities, identity)
+				resource.ProjectionIndexes[occurrence.Identity.Key()] = len(resource.Phones) - 1
 			}
 		}
 	}

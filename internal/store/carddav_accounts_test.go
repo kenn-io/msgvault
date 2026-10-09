@@ -67,7 +67,7 @@ func importCardDAVRoleTestPeople(
 	book = books[1]
 	resources := make([]store.CardDAVRemoteResource, 0, len(slugs))
 	for _, slug := range slugs {
-		resources = append(resources, remoteResource(
+		resources = append(resources, remoteResource(t,
 			book.CanonicalURL+slug+".vcf", slug, slug, slug+"@example.test", `"one"`,
 		))
 	}
@@ -250,11 +250,11 @@ func TestCardDAVSetBookRolesUnsubscribeDeletesOnlyUntouchedImportedPeople(t *tes
 	book = books[1]
 
 	resources := []store.CardDAVRemoteResource{
-		remoteResource(book.CanonicalURL+"untouched.vcf", "untouched", "Untouched", "untouched@example.test", `"one"`),
-		remoteResource(book.CanonicalURL+"edited.vcf", "edited", "Edited", "edited@example.test", `"one"`),
-		remoteResource(book.CanonicalURL+"linked.vcf", "linked", "Linked", "linked@example.test", `"one"`),
-		remoteResource(book.CanonicalURL+"relationship-source.vcf", "relationship-source", "Relationship Source", "relationship-source@example.test", `"one"`),
-		remoteResource(book.CanonicalURL+"relationship-target.vcf", "relationship-target", "Relationship Target", "relationship-target@example.test", `"one"`),
+		remoteResource(t, book.CanonicalURL+"untouched.vcf", "untouched", "Untouched", "untouched@example.test", `"one"`),
+		remoteResource(t, book.CanonicalURL+"edited.vcf", "edited", "Edited", "edited@example.test", `"one"`),
+		remoteResource(t, book.CanonicalURL+"linked.vcf", "linked", "Linked", "linked@example.test", `"one"`),
+		remoteResource(t, book.CanonicalURL+"relationship-source.vcf", "relationship-source", "Relationship Source", "relationship-source@example.test", `"one"`),
+		remoteResource(t, book.CanonicalURL+"relationship-target.vcf", "relationship-target", "Relationship Target", "relationship-target@example.test", `"one"`),
 	}
 	_, err = st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
 		AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration,
@@ -332,11 +332,11 @@ func TestCardDAVSetBookRolesUnsubscribePreservesUserLinkedImports(t *testing.T) 
 	book = books[1]
 
 	resources := []store.CardDAVRemoteResource{
-		remoteResource(book.CanonicalURL+"untouched.vcf", "untouched", "Untouched", "untouched@example.test", `"one"`),
-		remoteResource(book.CanonicalURL+"user-employment.vcf", "user-employment", "User Employment", "user-employment@example.test", `"one"`),
-		remoteResource(book.CanonicalURL+"remote-employment.vcf", "remote-employment", "Remote Employment", "remote-employment@example.test", `"one"`),
-		remoteResource(book.CanonicalURL+"daily-note.vcf", "daily-note", "Daily Note", "daily-note@example.test", `"one"`),
-		remoteResource(book.CanonicalURL+"user-attribute.vcf", "user-attribute", "User Attribute", "user-attribute@example.test", `"one"`),
+		remoteResource(t, book.CanonicalURL+"untouched.vcf", "untouched", "Untouched", "untouched@example.test", `"one"`),
+		remoteResource(t, book.CanonicalURL+"user-employment.vcf", "user-employment", "User Employment", "user-employment@example.test", `"one"`),
+		remoteResource(t, book.CanonicalURL+"remote-employment.vcf", "remote-employment", "Remote Employment", "remote-employment@example.test", `"one"`),
+		remoteResource(t, book.CanonicalURL+"daily-note.vcf", "daily-note", "Daily Note", "daily-note@example.test", `"one"`),
+		remoteResource(t, book.CanonicalURL+"user-attribute.vcf", "user-attribute", "User Attribute", "user-attribute@example.test", `"one"`),
 	}
 	_, err = st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
 		AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration,
@@ -614,7 +614,7 @@ func TestCardDAVIgnoredBookDropsLedgerOnceAndSurvivesAliasRediscovery(t *testing
 	books, err = st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
 	require.NoError(err)
 	book = books[1]
-	input := remoteResource(book.CanonicalURL+"ignored.vcf", "ignored", "Ignored", "ignored@example.test", `"one"`)
+	input := remoteResource(t, book.CanonicalURL+"ignored.vcf", "ignored", "Ignored", "ignored@example.test", `"one"`)
 	_, err = st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
 		AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration,
 		SyncRevision: book.SyncRevision, Upserts: []store.CardDAVRemoteResource{input},
@@ -691,8 +691,8 @@ func TestCardDAVDiscoveryPruneUsesGovernanceAwareImportedCleanup(t *testing.T) {
 	require := require.New(t)
 
 	st, account, book := newCardDAVResourceStore(t)
-	input := remoteResource(book.CanonicalURL+"removed.vcf", "removed", "Removed", "removed@example.test", `"one"`)
-	preserved := remoteResource(book.CanonicalURL+"preserved.vcf", "preserved", "Preserved", "preserved@example.test", `"one"`)
+	input := remoteResource(t, book.CanonicalURL+"removed.vcf", "removed", "Removed", "removed@example.test", `"one"`)
+	preserved := remoteResource(t, book.CanonicalURL+"preserved.vcf", "preserved", "Preserved", "preserved@example.test", `"one"`)
 	_, err := st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
 		AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration,
 		SyncRevision: book.SyncRevision, Upserts: []store.CardDAVRemoteResource{input, preserved},
@@ -825,7 +825,7 @@ func TestCardDAVDiscoveryRetainsBookWithClearedPublicationRetryState(t *testing.
 		VALUES ('retry-owner', 'Retry Owner') RETURNING id`).Scan(&personID))
 	snapshot, err := st.LoadPersonVCardSnapshotContext(t.Context(), personID)
 	require.NoError(err)
-	remote := remoteResource(book.CanonicalURL+"retry-owner.vcf", "retry-owner", "Retry Owner", "retry@example.test", `"retry"`)
+	remote := remoteResource(t, book.CanonicalURL+"retry-owner.vcf", "retry-owner", "Retry Owner", "retry@example.test", `"retry"`)
 	pending, err := st.PrepareCardDAVPublicationContext(t.Context(), store.CardDAVPublicationPlan{
 		PersonID: personID, Desired: true, AddressBookID: book.ID, Href: remote.Href,
 		OutgoingBody: remote.RemoteBody, OutgoingSemanticHash: remote.SemanticHash,
@@ -867,7 +867,7 @@ func TestCardDAVDiscoveryRetainsBookWithUnresolvedConflictIntent(t *testing.T) {
 	require := require.New(t)
 
 	st, account, book := newCardDAVResourceStore(t)
-	initial := remoteResource(book.CanonicalURL+"conflicted.vcf", "conflicted", "Initial", "initial@example.test", `"one"`)
+	initial := remoteResource(t, book.CanonicalURL+"conflicted.vcf", "conflicted", "Initial", "initial@example.test", `"one"`)
 	_, err := st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
 		AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration,
 		SyncRevision: book.SyncRevision, Upserts: []store.CardDAVRemoteResource{initial},
@@ -883,7 +883,7 @@ func TestCardDAVDiscoveryRetainsBookWithUnresolvedConflictIntent(t *testing.T) {
 	require.NoError(err)
 	local, err := st.LoadPersonVCardSnapshotContext(t.Context(), *mapping.PersonID)
 	require.NoError(err)
-	remote := remoteResource(initial.Href, "conflicted", "Remote", "remote@example.test", `"two"`)
+	remote := remoteResource(t, initial.Href, "conflicted", "Remote", "remote@example.test", `"two"`)
 	remote.SemanticHash = "semantic-conflicted-remote"
 	_, err = st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
 		AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration,
@@ -1312,7 +1312,7 @@ func settleCardDAVTestPublication(
 		VALUES (?, ?) RETURNING id`), slug, "Settled Owner").Scan(&personID))
 	snapshot, err := st.LoadPersonVCardSnapshotContext(t.Context(), personID)
 	require.NoError(t, err)
-	remote := remoteResource(book.CanonicalURL+slug+".vcf", slug, "Settled Owner", slug+"@example.test", `"settled"`)
+	remote := remoteResource(t, book.CanonicalURL+slug+".vcf", slug, "Settled Owner", slug+"@example.test", `"settled"`)
 	pending, err := st.PrepareCardDAVPublicationContext(t.Context(), store.CardDAVPublicationPlan{
 		PersonID: personID, Desired: true, AddressBookID: book.ID, Href: remote.Href,
 		OutgoingBody: remote.RemoteBody, OutgoingSemanticHash: remote.SemanticHash,
@@ -1696,8 +1696,8 @@ func TestCardDAVConnectionIdentityChangeCreatesFreshBooksAndCleansOldImportState
 			require := require.New(t)
 
 			st, account, book := newCardDAVResourceStore(t)
-			removed := remoteResource(book.CanonicalURL+"removed.vcf", "removed-identity", "Removed", "removed@example.test", `"one"`)
-			preserved := remoteResource(book.CanonicalURL+"preserved.vcf", "preserved-identity", "Preserved", "preserved@example.test", `"one"`)
+			removed := remoteResource(t, book.CanonicalURL+"removed.vcf", "removed-identity", "Removed", "removed@example.test", `"one"`)
+			preserved := remoteResource(t, book.CanonicalURL+"preserved.vcf", "preserved-identity", "Preserved", "preserved@example.test", `"one"`)
 			_, err := st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
 				AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration,
 				SyncRevision: book.SyncRevision, NextSyncToken: "old-account-token",
@@ -1778,7 +1778,7 @@ func TestCardDAVConnectionIdentityChangeCreatesFreshBooksAndCleansOldImportState
 				t.Context(), fmt.Sprintf("carddav:%d", book.ID), preserved.Href)
 			require.ErrorIs(err, store.ErrVCardResourceNotFound)
 
-			rematch := remoteResource(books[0].CanonicalURL+"rematch.vcf", "rematch-identity", "Rematch", preserved.Emails[0], `"one"`)
+			rematch := remoteResource(t, books[0].CanonicalURL+"rematch.vcf", "rematch-identity", "Rematch", preserved.Emails[0], `"one"`)
 			_, err = st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
 				AddressBookID: books[0].ID, ConnectionGeneration: afterAccount.ConnectionGeneration,
 				SyncRevision: books[0].SyncRevision, Upserts: []store.CardDAVRemoteResource{rematch},

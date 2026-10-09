@@ -71,7 +71,7 @@ func assertCardDAVConflictPendingUpgrade(t *testing.T, st *store.Store) {
 	require.NoError(t, err)
 	require.Len(t, books, 1)
 	book := books[0]
-	remote := remoteResource(
+	remote := remoteResource(t,
 		book.CanonicalURL+"alice.vcf", "remote-alice", "Alice", "alice@example.test", `"one"`,
 	)
 	_, err = st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
@@ -95,7 +95,7 @@ func assertCardDAVConflictPendingUpgrade(t *testing.T, st *store.Store) {
 	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, TRUE, FALSE) RETURNING id`),
 		book.ID, mapping.Href, mapping.LocalHash, mapping.LocalHash,
 		mapping.RemoteSemanticHash, mapping.RemoteETag, `"two"`, mapping.MappingRevision,
-		remoteResource(mapping.Href, "remote-alice", "Alice Remote", "remote@example.test", `"two"`).RemoteBody,
+		remoteResource(t, mapping.Href, "remote-alice", "Alice Remote", "remote@example.test", `"two"`).RemoteBody,
 	).Scan(&conflictID)
 	require.NoError(t, err, "seed an e7-era unresolved tombstone conflict")
 
@@ -111,7 +111,7 @@ func assertCardDAVConflictPendingUpgrade(t *testing.T, st *store.Store) {
 		SET pending_operation = 'delete' WHERE id = ?`), conflictID)
 	require.Error(t, err, "the upgraded table must enforce the complete pending-intent invariant")
 
-	retained := remoteResource(
+	retained := remoteResource(t,
 		mapping.Href, "remote-alice", "Alice Remote", "remote@example.test", `"two"`,
 	)
 	retained.SemanticHash = "semantic-remote-two"

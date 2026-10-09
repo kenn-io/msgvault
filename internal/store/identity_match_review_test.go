@@ -541,7 +541,7 @@ func TestIdentityMatchReviewCardDAVResourceRevision(t *testing.T) {
 		})
 		require.NoError(err)
 	}
-	input := remoteResource(book.CanonicalURL+"review-card.vcf", "remote-review-card",
+	input := remoteResource(t, book.CanonicalURL+"review-card.vcf", "remote-review-card",
 		"Review Card", "shared@example.test", `"one"`)
 	_, err = st.ApplyCardDAVSyncPlanContext(ctx, store.CardDAVSyncPlan{
 		AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration,
