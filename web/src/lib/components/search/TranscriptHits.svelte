@@ -56,7 +56,7 @@
         result = undefined;
         expired = true;
       }, 30_000);
-      const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]);
+      const signal = controller.signal;
       try {
         const { data, error, response } = await searchMedia(
           { q: requestedQuery, mode: 'lexical', limit: 20 },
@@ -107,7 +107,7 @@
     }
     document.addEventListener('visibilitychange', refresh);
     window.addEventListener('focus', refresh);
-    void load();
+    timer = setTimeout(() => void load(), 300);
     return () => {
       disposed = true;
       stop();

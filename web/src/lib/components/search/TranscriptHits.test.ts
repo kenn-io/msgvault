@@ -80,14 +80,14 @@ describe('TranscriptHits', () => {
       .mockRejectedValueOnce(new Error('connection lost'))
       .mockResolvedValue(Response.json(report({ results: [] })));
     const view = mount(fetchFn);
-    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(300);
     expect(screen.getByText('Quarterly <numbers>')).toBeTruthy();
     await fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
     expect(screen.queryByText('Quarterly <numbers>')).toBeNull();
-    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(300);
     expect(screen.getByText('Could not load recording matches.')).toBeTruthy();
     await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(300);
     expect(screen.getByText('No spoken matches.')).toBeTruthy();
     view.unmount();
     await vi.advanceTimersByTimeAsync(60_000);
@@ -102,7 +102,7 @@ describe('TranscriptHits', () => {
       .mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }))
       .mockResolvedValue(Response.json(report({ results: [] })));
     const view = mount(fetchFn);
-    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(300);
     await fireEvent(window, new Event('focus'));
     await fireEvent(window, new Event('focus'));
     await fireEvent(document, new Event('visibilitychange'));
@@ -124,14 +124,14 @@ describe('TranscriptHits', () => {
   it('expires evidence without polling and manually refreshes it', async () => {
     vi.useFakeTimers();
     const view = mount();
-    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(300);
     await vi.advanceTimersByTimeAsync(30_000);
     expect(screen.queryByText('Quarterly <numbers>')).toBeNull();
     expect(screen.getByText('Recording results expired.')).toBeTruthy();
     await vi.advanceTimersByTimeAsync(60_000);
     expect(view.fetchFn).toHaveBeenCalledTimes(1);
     await fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
-    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(300);
     expect(screen.getByText('Quarterly <numbers>')).toBeTruthy();
     expect(view.fetchFn).toHaveBeenCalledTimes(2);
     view.unmount();
@@ -142,7 +142,7 @@ describe('TranscriptHits', () => {
     let finish!: (value: Response) => void;
     const fetchFn = vi.fn<typeof fetch>(() => new Promise(resolve => { finish = resolve; }));
     const view = mount(fetchFn);
-    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(300);
     const request = fetchFn.mock.calls[0][0] as Request;
     await vi.advanceTimersByTimeAsync(30_000);
     expect(request.signal.aborted).toBe(true);
@@ -177,7 +177,7 @@ describe('TranscriptHits', () => {
     vi.useFakeTimers();
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ error }, { status }));
     const view = mount(fetchFn);
-    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(300);
     expect(screen.getByText(text)).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Refresh' })).toBeNull();
@@ -185,7 +185,7 @@ describe('TranscriptHits', () => {
     await vi.advanceTimersByTimeAsync(90_000);
     expect(fetchFn).toHaveBeenCalledTimes(1);
     await view.rerender({ client: view.client, query: 'different', supported: true });
-    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(300);
     expect(fetchFn).toHaveBeenCalledTimes(2);
     view.unmount();
   });
