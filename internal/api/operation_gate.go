@@ -24,6 +24,8 @@ var operationGateWaitLimit = 10 * time.Second
 
 var errCLIRunGateInspectionBodyTooLarge = errors.New("cli run request body is too large to inspect before routing")
 
+var errMutationGateBusy = errors.New("archive is busy or shutting down")
+
 // OperationGate serializes daemon-owned mutating work.
 type OperationGate interface {
 	BeginWork() (func(), bool)
@@ -324,6 +326,19 @@ func beginGateWorkBounded(ctx context.Context, gate OperationGate, label string)
 	return gate.BeginWorkContext(waitCtx)
 }
 
+func (s *Server) beginMutation(label string) func(context.Context) (func(), error) {
+	return func(ctx context.Context) (func(), error) {
+		if s.operationGate == nil {
+			return func() {}, nil
+		}
+		done, ok := beginGateWorkBounded(ctx, s.operationGate, label)
+		if !ok {
+			return nil, errMutationGateBusy
+		}
+		return done, nil
+	}
+}
+
 func writeOperationGateBusy(w http.ResponseWriter, r *http.Request, gate OperationGate) {
 	lg, ok := gate.(LabeledOperationGate)
 	if !ok {
@@ -526,6 +541,10 @@ func operationGateRequest(r *http.Request, auth requestAuthentication) (bool, st
 		return false, "", nil
 	}
 	if genericSyncTriggerRequest(r) {
+		return false, "", nil
+	}
+	// Tag reads and previews change nothing; the handler gates real writes.
+	if r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/v1/messages/") && strings.HasSuffix(r.URL.Path, "/tags") {
 		return false, "", nil
 	}
 	// Provider handlers take the gate only for their local mutations. Device

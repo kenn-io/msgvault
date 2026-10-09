@@ -2877,7 +2877,7 @@ func TestDaemonGmailClientUsesSourceCredentialsWithoutScopeUpgrade(t *testing.T)
 		client, _, err := newDaemonGmailClient(ctx, source.Identifier, source, func(app string) (*oauth.Manager, error) {
 			selected = app
 			return oauth.NewManager(cfg.OAuth.Apps[app].ClientSecrets, cfg.TokensDir(), logger)
-		}, invocationFromContext(ctx))
+		}, invocationFromContext(ctx), oauth.Scopes)
 		require.NoError(err)
 		t.Cleanup(func() { _ = client.Close() })
 		assert.Equal("archive", selected)
@@ -2898,7 +2898,7 @@ func TestDaemonGmailClientUsesSourceCredentialsWithoutScopeUpgrade(t *testing.T)
 		client, _, err := newDaemonGmailClient(ctx, source.Identifier, source, func(string) (*oauth.Manager, error) {
 			called = true
 			return nil, errors.New("unexpected OAuth fallback")
-		}, invocationFromContext(ctx))
+		}, invocationFromContext(ctx), oauth.Scopes)
 		require.ErrorContains(err, "service account")
 		credentialErr, ok := errors.AsType[*provideridentity.GmailCredentialError](err)
 		require.True(ok)
@@ -2942,7 +2942,7 @@ func TestDaemonGmailClientCredentialFailures(t *testing.T) {
 			}
 			ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 			source := &store.Source{SourceType: "gmail", Identifier: scopeEscalationAccount}
-			client, _, err := newDaemonGmailClient(ctx, source.Identifier, source, oauthManagerCache(invocationFromContext(ctx)), invocationFromContext(ctx))
+			client, _, err := newDaemonGmailClient(ctx, source.Identifier, source, oauthManagerCache(invocationFromContext(ctx)), invocationFromContext(ctx), oauth.Scopes)
 			require.Error(err)
 			assert.Nil(client)
 			credentialErr, ok := errors.AsType[*provideridentity.GmailCredentialError](err)
@@ -2961,7 +2961,7 @@ func TestDaemonGmailClientCredentialFailures(t *testing.T) {
 		cfg := &config.Config{}
 		ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 		source := &store.Source{SourceType: "gmail", Identifier: "owner@example.test"}
-		client, _, err := newDaemonGmailClient(ctx, source.Identifier, source, oauthManagerCache(invocationFromContext(ctx)), invocationFromContext(ctx))
+		client, _, err := newDaemonGmailClient(ctx, source.Identifier, source, oauthManagerCache(invocationFromContext(ctx)), invocationFromContext(ctx), oauth.Scopes)
 		require.Error(err)
 		assert.Nil(client)
 		credentialErr, ok := errors.AsType[*provideridentity.GmailCredentialError](err)

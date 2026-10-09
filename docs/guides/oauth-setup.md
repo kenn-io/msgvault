@@ -275,7 +275,7 @@ By default `add-account` requests read and modify access. To request read access
 msgvault add-account you@gmail.com --readonly
 ```
 
-Sync, search, and the TUI all work on a read-only grant. Deletion does not.
+Sync, search, the TUI, and tag reads and previews work on a read-only grant. Deletion and tag edits need write access.
 
 Running `--readonly` against an account that is already read-only does nothing and reuses the existing token. A plain `add-account` run against one warns before requesting write access again.
 

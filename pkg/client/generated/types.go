@@ -6824,6 +6824,103 @@ func (m MessageSummary) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(m))
 }
 
+type MessageTag struct {
+	ID   string `json:"id" validate:"required"`
+	Name string `json:"name" validate:"required"`
+}
+
+func (m MessageTag) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(m))
+}
+
+type MessageTagChange struct {
+	Add     []string `json:"add,omitempty"`
+	DryRun  *bool    `json:"dry_run,omitempty"`
+	Mailbox *string  `json:"mailbox,omitzero"`
+	Remove  []string `json:"remove,omitempty"`
+}
+
+type MessageTagError struct {
+	ErrorData string            `json:"error" validate:"required"`
+	Message   string            `json:"message" validate:"required"`
+	Result    *MessageTagResult `json:"result,omitempty"`
+}
+
+func (m MessageTagError) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(m.ErrorData, "required"); err != nil {
+		errors = errors.Append("ErrorData", err)
+	}
+	if err := typesValidator.Var(m.Message, "required"); err != nil {
+		errors = errors.Append("Message", err)
+	}
+	if m.Result != nil {
+		if v, ok := any(m.Result).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Result", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+func (s MessageTagError) Error() string {
+	return "unmapped client error"
+}
+
+type MessageTagResult struct {
+	AvailableTags     []MessageTag `json:"available_tags" validate:"required"`
+	Before            []string     `json:"before" validate:"required"`
+	CanCreateKeywords *bool        `json:"can_create_keywords,omitempty"`
+	DryRun            bool         `json:"dry_run"`
+	Flags             []string     `json:"flags,omitempty"`
+	Mailbox           *string      `json:"mailbox,omitzero"`
+	MessageID         int64        `json:"message_id"`
+	Provider          string       `json:"provider" validate:"required"`
+	SourceID          int64        `json:"source_id"`
+	Tags              []string     `json:"tags" validate:"required"`
+	UID               *int64       `json:"uid,omitempty" validate:"omitempty,gte=0,lte=4294967295"`
+	Uidvalidity       *int64       `json:"uidvalidity,omitempty" validate:"omitempty,gte=0,lte=4294967295"`
+	Verified          bool         `json:"verified"`
+}
+
+func (m MessageTagResult) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range m.AvailableTags {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("AvailableTags[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(m.Before, "required"); err != nil {
+		errors = errors.Append("Before", err)
+	}
+	if err := typesValidator.Var(m.Provider, "required"); err != nil {
+		errors = errors.Append("Provider", err)
+	}
+	if err := typesValidator.Var(m.Tags, "required"); err != nil {
+		errors = errors.Append("Tags", err)
+	}
+	if m.UID != nil {
+		if err := typesValidator.Var(m.UID, "omitempty,gte=0,lte=4294967295"); err != nil {
+			errors = errors.Append("UID", err)
+		}
+	}
+	if m.Uidvalidity != nil {
+		if err := typesValidator.Var(m.Uidvalidity, "omitempty,gte=0,lte=4294967295"); err != nil {
+			errors = errors.Append("Uidvalidity", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type MessageTranscript struct {
 	Origin  MessageTranscriptOrigin `json:"origin" validate:"required"`
 	Partial bool                    `json:"partial"`

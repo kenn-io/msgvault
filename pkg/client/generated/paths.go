@@ -331,6 +331,16 @@ type ListMessageRecordingsPath struct {
 	ID int64 `json:"id"`
 }
 
+type GetMessageTagsPath struct {
+	// ID Archived message ID
+	ID int `json:"id"`
+}
+
+type UpdateMessageTagsPath struct {
+	// ID Archived message ID
+	ID int `json:"id"`
+}
+
 type ListMessageTasksPath struct {
 	// ID Archived email message ID
 	ID int64 `json:"id"`
