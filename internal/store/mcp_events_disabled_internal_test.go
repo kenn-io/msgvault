@@ -18,6 +18,7 @@ func TestDisabledMCPEventsConfigureWithoutWriting(t *testing.T) {
 		t.Skip("the writer-slot holder needs SQLite")
 	}
 	require := require.New(t)
+	check := assert.New(t)
 	path := filepath.Join(t.TempDir(), "events-disabled.db")
 	st, err := openSQLite(path, "?_journal_mode=WAL&_busy_timeout=0&_foreign_keys=ON")
 	require.NoError(err)
@@ -35,8 +36,8 @@ func TestDisabledMCPEventsConfigureWithoutWriting(t *testing.T) {
 
 	clock, err := st.ConfigureMCPEvents(t.Context(), MCPEventsConfig{})
 	require.NoError(err, "a never-enabled archive configures Events off without a write")
-	assert.Equal(t, int64(0), clock.Epoch)
-	assert.False(t, st.captureMCPEnabled())
+	check.Equal(int64(0), clock.Epoch)
+	check.False(st.captureMCPEnabled())
 
 	_, err = held.ExecContext(t.Context(), "ROLLBACK")
 	require.NoError(err)
@@ -46,15 +47,15 @@ func TestDisabledMCPEventsConfigureWithoutWriting(t *testing.T) {
 	}
 	clock, err = st.ConfigureMCPEvents(t.Context(), enabled)
 	require.NoError(err)
-	assert.Equal(t, int64(1), clock.Epoch)
+	check.Equal(int64(1), clock.Epoch)
 	clock, err = st.ConfigureMCPEvents(t.Context(), MCPEventsConfig{})
 	require.NoError(err)
-	assert.Equal(t, int64(2), clock.Epoch, "turning capture off still records the gap")
+	check.Equal(int64(2), clock.Epoch, "turning capture off still records the gap")
 
 	_, err = held.ExecContext(t.Context(), "BEGIN IMMEDIATE")
 	require.NoError(err)
 	t.Cleanup(func() { _, _ = held.ExecContext(t.Context(), "ROLLBACK") })
 	clock, err = st.ConfigureMCPEvents(t.Context(), MCPEventsConfig{})
 	require.NoError(err, "an archive already off configures Events off without a write")
-	assert.Equal(t, int64(2), clock.Epoch)
+	check.Equal(int64(2), clock.Epoch)
 }
