@@ -458,6 +458,7 @@ func TestTranscript_AliasesAndBlankEntries(t *testing.T) {
 			"transcript":[
 				{"speakerName":"Alice Example","content":"Content alias","start":"0"},
 				{"speaker":"Bob Example","words":"Words alias","startTimestamp":"65"},
+				{"text":"Unnamed speaker","start":66},
 				{"speaker":"Blank Example","text":"   ","start":70},
 				{"speaker":"Also Blank","content":"\t","timestamp":75}
 			]
@@ -472,6 +473,7 @@ func TestTranscript_AliasesAndBlankEntries(t *testing.T) {
 	body := buildBody(&Meeting{Name: "Aliases"}, tr)
 	assert.Contains(body, "[00:00] Alice Example: Content alias")
 	assert.Contains(body, "[01:05] Bob Example: Words alias")
+	assert.Contains(body, "[01:06] Unknown: Unnamed speaker")
 	assert.NotContains(body, "Blank Example:")
 	assert.NotContains(body, "Also Blank:")
 }

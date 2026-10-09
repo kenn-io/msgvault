@@ -1303,6 +1303,18 @@ func TestImport_IdempotentRefreshAndWatermark(t *testing.T) {
 	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&count))
 	assert.Equal(1, count)
 
+	var snippet string
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT snippet FROM messages WHERE source_message_id = ?`), "meeting:42").Scan(&snippet))
+	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET snippet = ? WHERE source_message_id = ?`), "stale", "meeting:42")
+	require.NoError(err)
+	forced, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com", Full: true})
+	require.NoError(err)
+	assert.EqualValues(0, forced.MeetingsAdded)
+	assert.EqualValues(1, forced.MeetingsUpdated)
+	var repaired string
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT snippet FROM messages WHERE source_message_id = ?`), "meeting:42").Scan(&repaired))
+	assert.Equal(snippet, repaired)
+
 	// Failing run: watermark holds.
 	f.failRead = true
 	sum3, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})

@@ -203,6 +203,8 @@ func TestOrganizationAttributeDryRunCASAndMultiOrdinal(t *testing.T) {
 			ExpectedValueID: &staleID,
 		})
 	require.ErrorIs(err, store.ErrAttributeValueConflict)
+	var conflict *store.AttributeValueConflictError
+	assert.NotErrorAs(err, &conflict)
 
 	preview, err := st.SetOrganizationAttributeValueContext(
 		ctx, store.OrganizationAttributeValueInput{
@@ -257,6 +259,11 @@ func TestOrganizationMultiAttributeAppendsAfterSupersede(t *testing.T) {
 			Ordinal: &second.Value.Ordinal,
 		})
 	require.NoError(err)
+	_, err = st.SupersedeOrganizationAttributeValueContext(ctx, store.OrganizationAttributeSupersedeInput{
+		OrganizationID: organization.ID, DefinitionSlug: definition.Slug,
+		Ordinal: &second.Value.Ordinal,
+	})
+	require.ErrorIs(err, store.ErrAttributeValueNotFound)
 	third, err := st.SetOrganizationAttributeValueContext(ctx,
 		store.OrganizationAttributeValueInput{
 			OrganizationID: organization.ID, DefinitionSlug: definition.Slug,

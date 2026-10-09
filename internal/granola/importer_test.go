@@ -248,7 +248,7 @@ func TestImport_TranscriptTimestampFallbacksRemainSearchable(t *testing.T) {
 			Owner:     User{Name: "Test User", Email: "user@example.com"},
 			CreatedAt: createdAt, UpdatedAt: createdAt,
 			Transcript: []TranscriptSegment{
-				{Speaker: Speaker{Name: "Untimed"}, Text: "No timestamp"},
+				{Speaker: Speaker{Source: "microphone"}, Text: "No timestamp"},
 				{Speaker: Speaker{Name: "Timed"}, Text: "First timestamp", StartTime: firstTranscriptAt},
 				{Speaker: Speaker{Name: "Later"}, Text: "Thirty seconds later", StartTime: firstTranscriptAt.Add(30 * time.Second), EndTime: firstTranscriptAt.Add(45 * time.Second)},
 			},
@@ -285,7 +285,7 @@ func TestImport_TranscriptTimestampFallbacksRemainSearchable(t *testing.T) {
 		&sparseSentAt, &sparseBody, &sparseMetadata,
 	))
 	assert.Equal(firstTranscriptAt, sparseSentAt.UTC())
-	assert.Contains(sparseBody, "[00:00] Untimed: No timestamp")
+	assert.Contains(sparseBody, "[00:00] Me: No timestamp")
 	assert.Contains(sparseBody, "[00:00] Timed: First timestamp")
 	assert.Contains(sparseBody, "[00:30] Later: Thirty seconds later")
 	var sparseMeta meetingMetadata
