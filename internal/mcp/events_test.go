@@ -201,6 +201,27 @@ func TestEventsErrorsAndReadTools(t *testing.T) {
 	}
 }
 
+func TestEventsReadToolsAnnounceReadOnlyAnnotations(t *testing.T) {
+	assert := Assert.New(t)
+	require := Require.New(t)
+	h := newMCPHTTPServer(ServeOptions{Events: eventsTestBackend{}}, HTTPOptions{APIKey: "owner-fixture"}).Handler
+	rec, wire := eventsHTTPCall(t, h, "2026-07-28", "tools/list", `{}`)
+	require.Equal(http.StatusOK, rec.Code)
+	require.Nil(wire["error"])
+	annotations := map[string]any{}
+	for _, item := range eventsWireArray(t, eventsWireObject(t, wire["result"])["tools"]) {
+		tool := eventsWireObject(t, item)
+		annotations[eventsWireString(t, tool["name"])] = tool["annotations"]
+	}
+	require.Contains(annotations, "get_message")
+	getMessage := eventsWireObject(t, annotations["get_message"])
+	assert.Equal(true, getMessage["readOnlyHint"])
+	for _, name := range []string{"get_mcp_event", "list_calendar_sources"} {
+		require.Contains(annotations, name)
+		assert.Equal(getMessage, eventsWireObject(t, annotations[name]), name)
+	}
+}
+
 func TestEventMessageReadRetainsSafeRPCError(t *testing.T) {
 	assert := Assert.New(t)
 	require := Require.New(t)
