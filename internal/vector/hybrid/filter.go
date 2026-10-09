@@ -101,6 +101,7 @@ func BuildFilter(ctx context.Context, db *sql.DB, rebind func(string) string, q 
 	if len(q.SubjectTerms) > 0 {
 		f.SubjectSubstrings = append([]string(nil), q.SubjectTerms...)
 	}
+	f.FilenameSubstrings = append([]string(nil), q.Filenames...)
 	if len(q.ListIDs) > 0 {
 		f.ListIDSubstrings = append([]string(nil), q.ListIDs...)
 	}

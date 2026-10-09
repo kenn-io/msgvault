@@ -481,3 +481,40 @@ func TestResolveMessageID(t *testing.T) {
 		})
 	}
 }
+
+func TestListThreadMixedOffsetsBeforePagination(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	f := storetest.New(t)
+	if f.Store.IsPostgreSQL() {
+		t.Skip("mixed textual timestamps are specific to SQLite")
+	}
+	earlier := f.NewMessage().WithSourceMessageID("thread-earlier").Create(t, f.Store)
+	later := f.NewMessage().WithSourceMessageID("thread-later").Create(t, f.Store)
+	_, err := f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET sent_at = CASE id WHEN ? THEN '2026-01-15 14:00:00+00:00' WHEN ? THEN '2026-01-15 11:00:00-05:00' END WHERE id IN (?, ?)`, earlier, later, earlier, later)
+	require.NoError(err)
+	page, err := originalEngine(f).ListThread(t.Context(), query.ThreadQuery{ID: earlier, Limit: 1})
+	require.NoError(err)
+	require.Len(page.Messages, 1)
+	assert.Equal(earlier, page.Messages[0].ID)
+	assert.True(page.HasMore)
+	page, err = originalEngine(f).ListThread(t.Context(), query.ThreadQuery{ID: earlier, Limit: 1, Offset: 1})
+	require.NoError(err)
+	require.Len(page.Messages, 1)
+	assert.Equal(later, page.Messages[0].ID)
+
+	firstID := func(earlierSentAt, laterSentAt string) int64 {
+		_, err := f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET sent_at = CASE id WHEN ? THEN ? WHEN ? THEN ? END WHERE id IN (?, ?)`, earlier, earlierSentAt, later, laterSentAt, earlier, later)
+		require.NoError(err)
+		page, err := originalEngine(f).ListThread(t.Context(), query.ThreadQuery{ID: earlier, Limit: 1})
+		require.NoError(err)
+		require.Len(page.Messages, 1)
+		return page.Messages[0].ID
+	}
+	// Sub-millisecond instants sort by time, not by id or raw text.
+	assert.Equal(later, firstID("2026-01-15 14:00:00.000200+00:00", "2026-01-15 14:00:00.000100+00:00"))
+	assert.Equal(earlier, firstID("2026-01-15 14:00:00.000100+00:00", "2026-01-15 09:00:00.000200-05:00"))
+	// Equal instants written with different offsets fall back to id.
+	assert.Equal(earlier, firstID("2026-01-15 14:00:00+00:00", "2026-01-15 09:00:00-05:00"))
+}

@@ -241,6 +241,7 @@ func cliSearchFromGenerated(resp *generated.SearchCLIResponse) *CLISearch {
 	}
 	return &CLISearch{
 		Results:          results,
+		HybridAvailable:  boolValue(resp.HybridAvailable),
 		ScopeLabel:       stringValue(resp.ScopeLabel),
 		ScopeSourceCount: intValue(resp.ScopeSourceCount),
 		IndexBuilt:       boolValue(resp.IndexBuilt),
@@ -307,6 +308,8 @@ func cliHybridSearchResultFromGenerated(item generated.HybridSearchItem) (CLIHyb
 			ConversationID:  int64Value(item.ConversationID),
 			Subject:         item.Subject,
 			Snippet:         item.Snippet,
+			AttachmentCount: intValue(item.AttachmentCount),
+			AttachmentNames: item.AttachmentNames,
 			FromEmail:       stringValue(item.FromEmail),
 			FromName:        stringValue(item.FromName),
 			FromPhone:       stringValue(item.FromPhone),
@@ -320,6 +323,7 @@ func cliHybridSearchResultFromGenerated(item generated.HybridSearchItem) (CLIHyb
 			DeletedAt:       deletedAt,
 			MessageType:     stringValue(item.MessageType),
 		},
+		AttachmentCount:  item.AttachmentCount,
 		ID:               item.ID,
 		Subject:          item.Subject,
 		FromEmail:        stringValue(item.FromEmail),
@@ -372,6 +376,8 @@ func queryMessageSummaryFromGenerated(msg generated.CLIQueryMessageSummary) quer
 		SourceConversationID: msg.SourceConversationID,
 		Subject:              msg.Subject,
 		Snippet:              msg.Snippet,
+		MatchSnippet:         stringValue(msg.MatchSnippet),
+		AttachmentNames:      msg.AttachmentNames,
 		FromEmail:            msg.FromEmail,
 		FromName:             msg.FromName,
 		FromPhone:            stringValue(msg.FromPhone),

@@ -24,6 +24,7 @@ import (
 	"go.kenn.io/msgvault/internal/contentverify"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
 	apiclient "go.kenn.io/msgvault/pkg/client"
 	"go.kenn.io/msgvault/pkg/client/generated"
@@ -1944,7 +1945,9 @@ func TestGetCLIMessage_Success(t *testing.T) {
 }
 
 func TestGetCLIMessage_NotFound(t *testing.T) {
+	var requests atomic.Int32
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
 		w.WriteHeader(http.StatusNotFound)
 		_, _ = w.Write([]byte(`{"error":"not_found","message":"Message not found"}`))
 	}))
@@ -1953,6 +1956,71 @@ func TestGetCLIMessage_NotFound(t *testing.T) {
 	s := newTestStore(srv, "key")
 	_, err := s.GetCLIMessage(context.Background(), "missing")
 	require.ErrorIs(t, err, store.ErrMessageNotFound, "GetCLIMessage(missing)")
+	assert.Equal(t, int32(1), requests.Load(), "a missing message must not be retried")
+}
+
+func TestGetCLIMessageRateLimitRetryAfter(t *testing.T) {
+	for _, dateHeader := range []bool{false, true} {
+		t.Run(fmt.Sprintf("date=%t", dateHeader), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				assert := assert.New(t)
+				require := require.New(t)
+				start := time.Now()
+				retryAfter := "2"
+				if dateHeader {
+					retryAfter = start.Add(2 * time.Second).UTC().Format(http.TimeFormat)
+				}
+				var requests atomic.Int32
+				srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					assert.Equal("/api/v1/cli/message", r.URL.Path)
+					assert.Equal("42", r.URL.Query().Get("id"))
+					w.Header().Set("Content-Type", "application/json")
+					if requests.Add(1) == 1 {
+						w.Header().Set("Retry-After", retryAfter)
+						w.WriteHeader(http.StatusTooManyRequests)
+						_, _ = w.Write([]byte(`{"error":"rate_limit_exceeded","message":"Try again later"}`))
+						return
+					}
+					_, _ = w.Write([]byte(`{"id":42,"conversation_id":7,"body_text":"Synthetic reply"}`))
+				}))
+				httpClient := srv.Client()
+				client, err := New(Config{URL: srv.URL, AllowInsecure: true, HTTPClient: httpClient})
+				require.NoError(err)
+
+				message, err := client.GetCLIMessage(t.Context(), "42")
+				require.NoError(err)
+				assert.Equal(int64(42), message.ID)
+				assert.Equal(int32(2), requests.Load())
+				assert.Equal(2*time.Second, time.Since(start))
+			})
+		})
+	}
+}
+
+func TestGetCLIMessageRateLimitCancellation(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		var requests atomic.Int32
+		srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requests.Add(1)
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Retry-After", "30")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(`{"error":"rate_limit_exceeded","message":"Try again later"}`))
+		}))
+		httpClient := srv.Client()
+		client, err := New(Config{URL: srv.URL, AllowInsecure: true, HTTPClient: httpClient})
+		require.NoError(err)
+		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+		defer cancel()
+		start := time.Now()
+
+		_, err = client.GetCLIMessage(ctx, "42")
+		require.ErrorIs(err, context.DeadlineExceeded)
+		assert.Equal(time.Second, time.Since(start))
+		assert.Equal(int32(1), requests.Load(), "cancellation must stop the wait before another request")
+	})
 }
 
 func TestGetCLIMessageRaw_Success(t *testing.T) {
@@ -2518,4 +2586,76 @@ type readCloserImpl struct {
 
 func (rc *readCloserImpl) Close() error {
 	return nil
+}
+
+func TestGetCLISearchRejectsFilenameOnOlderDaemon(t *testing.T) {
+	for _, version := range []string{"3.3.0", "3.4.0", "3.5.0", "3.7.0", "3.8.0", "3.9.0", "3.10.0", "3.11.0"} {
+		t.Run(version, func(t *testing.T) {
+			require := require.New(t)
+			var searches atomic.Int64
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/v1/health" {
+					writeJSONResponse(t, w, map[string]any{"status": "ok", "api_schema_version": version})
+					return
+				}
+				searches.Add(1)
+				writeJSONResponse(t, w, map[string]any{"results": []any{}, "messages": []any{}})
+			}))
+			t.Cleanup(srv.Close)
+			client := newTestStore(srv, "")
+			check := func(err error) {
+				t.Helper()
+				if version == "3.11.0" {
+					require.NoError(err)
+				} else {
+					require.ErrorContains(err, "filename filter requires daemon API schema 3.11.0")
+				}
+			}
+			_, err := client.GetCLISearch(t.Context(), CLISearchRequest{Query: "filename:plan.pdf"})
+			check(err)
+			_, err = client.GetCLIHybridSearch(t.Context(), CLIHybridSearchRequest{Query: "intent filename:plan.pdf", Mode: "hybrid"})
+			check(err)
+			_, err = NewEngineAdapter(client).Search(t.Context(), search.Parse("filename:plan.pdf"), 1, 0)
+			check(err)
+			if version == "3.11.0" {
+				assert.Equal(t, int64(3), searches.Load())
+			} else {
+				assert.Zero(t, searches.Load())
+			}
+		})
+	}
+}
+
+func TestGetCLIHybridSearchAttachmentMetadataAvailability(t *testing.T) {
+	zero, three := int64(0), int64(3)
+	for _, tc := range []struct {
+		name  string
+		count *int64
+		names []string
+	}{
+		{name: "unavailable"},
+		{name: "known empty", count: &zero, names: []string{}},
+		{name: "partial names", count: &three, names: []string{"plan.pdf", "budget.csv"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			s := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
+				item := map[string]any{"id": 42, "subject": "Plan", "from": "sender@example.com", "sent_at": "2026-01-01T00:00:00Z", "snippet": "preview", "has_attachments": true, "size_bytes": 12}
+				if tc.count != nil {
+					item["attachment_count"] = *tc.count
+				}
+				if tc.names != nil {
+					item["attachment_names"] = tc.names
+				}
+				writeJSONResponse(t, w, map[string]any{"query": "plan", "mode": "hybrid", "returned": 1, "took_ms": 0, "pool_saturated": false, "scope_source_count": 0, "generation": map[string]any{"id": 1, "model": "synthetic", "dimension": 4, "fingerprint": "synthetic:4", "state": "active"}, "results": []any{item}})
+			})
+			page, err := s.GetCLIHybridSearch(t.Context(), CLIHybridSearchRequest{Query: "plan", Mode: "hybrid"})
+			require.NoError(err)
+			require.Len(page.Results, 1)
+			assert.Equal(tc.count, page.Results[0].AttachmentCount)
+			assert.Equal(tc.names, page.Results[0].Message.AttachmentNames)
+			assert.True(page.Results[0].Message.HasAttachments)
+		})
+	}
 }

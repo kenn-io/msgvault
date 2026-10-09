@@ -858,6 +858,7 @@ type CLIEmbeddingsPlanResponse struct {
 
 type CLIQueryMessageSummary struct {
 	AttachmentCount      int64      `json:"attachment_count"`
+	AttachmentNames      []string   `json:"attachment_names,omitempty"`
 	Bcc                  []Address  `json:"bcc,omitempty"`
 	BodyText             *string    `json:"body_text,omitzero"`
 	Cc                   []Address  `json:"cc,omitempty"`
@@ -870,6 +871,7 @@ type CLIQueryMessageSummary struct {
 	HasAttachments       bool       `json:"has_attachments"`
 	ID                   int64      `json:"id"`
 	Labels               []string   `json:"labels" validate:"required"`
+	MatchSnippet         *string    `json:"match_snippet,omitzero"`
 	MessageType          *string    `json:"message_type,omitzero"`
 	SentAt               time.Time  `json:"sent_at" validate:"required"`
 	SizeEstimate         int64      `json:"size_estimate"`
@@ -2477,6 +2479,7 @@ func (c CliRebuildFTSEvent) Validate() error {
 }
 
 type CliSearchResponse struct {
+	HybridAvailable  *bool                    `json:"hybrid_available,omitempty"`
 	IndexBuilt       *bool                    `json:"index_built,omitempty"`
 	IndexState       *string                  `json:"index_state,omitzero"`
 	IndexedMessages  *int64                   `json:"indexed_messages,omitempty"`
@@ -5346,6 +5349,8 @@ func (h HybridGenerationSummary) Validate() error {
 }
 
 type HybridSearchItem struct {
+	AttachmentCount  *int64              `json:"attachment_count,omitempty"`
+	AttachmentNames  []string            `json:"attachment_names,omitempty"`
 	Bcc              []string            `json:"bcc,omitempty"`
 	Cc               []string            `json:"cc,omitempty"`
 	ConversationID   *int64              `json:"conversation_id,omitempty"`

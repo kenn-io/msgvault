@@ -353,6 +353,21 @@ func (b *Backend) fusedSearchExact(ctx context.Context, req vector.FusedRequest)
 			sqliteutil.UnicodeLowerFunction, sqliteutil.UnicodeLowerFunction)
 	}
 
+	filenameSQL := ""
+	var filenamePatterns string
+	if len(req.Filter.FilenameSubstrings) > 0 {
+		patterns := make([]string, len(req.Filter.FilenameSubstrings))
+		for i, term := range req.Filter.FilenameSubstrings {
+			patterns[i] = "%" + escapeLikeSubject(term) + "%"
+		}
+		buf, err := json.Marshal(patterns, json.Deterministic(true))
+		if err != nil {
+			return nil, false, fmt.Errorf("encode filename filters: %w", err)
+		}
+		filenamePatterns = string(buf)
+		filenameSQL = fmt.Sprintf(`AND NOT EXISTS (SELECT 1 FROM json_each(:filename_patterns) fp WHERE NOT EXISTS (SELECT 1 FROM attachments fa WHERE fa.message_id = m.id AND %s(fa.filename) LIKE %s(fp.value) ESCAPE '\'))`, sqliteutil.UnicodeLowerFunction, sqliteutil.UnicodeLowerFunction)
+	}
+
 	filterWhere := fmt.Sprintf(`%s
        AND (:message_ids IS NULL OR m.id IN (SELECT value FROM json_each(:message_ids)))
        AND (:source_ids IS NULL OR m.source_id IN (SELECT value FROM json_each(:source_ids)))
@@ -375,7 +390,7 @@ func (b *Backend) fusedSearchExact(ctx context.Context, req vector.FusedRequest)
 	   %s
 	   %s`,
 		store.LiveMessagesWhere("m", true), conversationSQL, messageTypeSQL, senderGroupSQL, senderExactGroupSQL,
-		recipientAnyGroupSQL, toGroupSQL, ccGroupSQL, bccGroupSQL, labelGroupSQL, listIDSQL)
+		recipientAnyGroupSQL, toGroupSQL, ccGroupSQL, bccGroupSQL, labelGroupSQL, listIDSQL+"\n"+filenameSQL)
 
 	// buildQuery interpolates a fresh query string for a given chunkK,
 	// so the widening loop below can re-issue the fused CTE with a
@@ -507,6 +522,10 @@ SELECT message_id, rrf_score, bm25_score, vector_score,
 			sql.Named("list_id_exact_groups", exactListIDGroups),
 		)
 	}
+	if filenameSQL != "" {
+		filterArgs = append(filterArgs, sql.Named("filename_patterns", filenamePatterns))
+	}
+
 	filterArgs = append(filterArgs, senderGroupArgs...)
 	filterArgs = append(filterArgs, senderExactGroupArgs...)
 	filterArgs = append(filterArgs, recipientAnyGroupArgs...)

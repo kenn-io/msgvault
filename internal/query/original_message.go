@@ -364,7 +364,7 @@ func (e *SQLiteEngine) ListThread(ctx context.Context, q ThreadQuery) (*ThreadPa
 		       ) THEN 1 ELSE 0 END
 		FROM messages m
 		WHERE m.conversation_id = ? AND ` + live + `
-		ORDER BY CASE WHEN m.sent_at IS NULL THEN 1 ELSE 0 END, m.sent_at, m.id`
+		ORDER BY CASE WHEN ` + e.dialect.DateOrderExpression("m.sent_at") + ` IS NULL THEN 1 ELSE 0 END, ` + e.dialect.DateOrderExpression("m.sent_at") + `, m.id`
 	args := []any{header.ConversationID}
 	if !q.All {
 		statement += " LIMIT ? OFFSET ?"

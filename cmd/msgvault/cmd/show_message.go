@@ -18,12 +18,15 @@ import (
 )
 
 var (
-	showMessageJSON bool
+	showMessageJSON        bool
+	showMessageBodyOnly    bool
+	showMessageStripQuoted bool
 )
 
 var showMessageCmd = &cobra.Command{
-	Use:   "show-message <id>",
-	Short: "Show full message details",
+	Use:     "show-message <id>",
+	Aliases: []string{"show"},
+	Short:   "Show full message details",
 	Long: `Show the complete details of a message by its internal ID or Gmail ID.
 
 Uses configured remote server or the local daemon by default.
@@ -32,6 +35,14 @@ Use --local to use the local daemon even when a remote is configured.
 This command displays the full message including headers, body, labels,
 and attachment information. Use --json for programmatic output, including
 a web_url that opens the message in the selected daemon browser UI.
+
+Use --body-only to print just body text. Add --strip-quoted to remove quoted
+lines, complete single-line dated reply headers above them, and "-- " signatures.
+Inline replies, uncertain wrapped headers, and complete URLs are preserved.
+Only ">" quoting and English "On ... wrote:" headers are recognized; Outlook
+"Original Message" blocks and other languages stay as written.
+--strip-quoted also cleans body_text in JSON; the archived body and body_html
+are unchanged. --body-only and --json cannot be combined.
 
 Examples:
   msgvault show-message 12345
@@ -92,6 +103,18 @@ func showHTTPMessage(cmd *cobra.Command, idStr string) error {
 // nil error return mirrors outputMessageJSON so callers can return either
 // uniformly; text printing never fails.
 func outputMessageText(msg *query.MessageDetail) error {
+	originalHasBody := msg.BodyText != ""
+	if showMessageStripQuoted {
+		msg = readableMessageDetail(msg)
+	}
+	if showMessageBodyOnly {
+		body := msg.BodyText
+		if body == "" && !originalHasBody {
+			body = msg.Snippet
+		}
+		fmt.Println(textutil.SanitizeTerminalMultiline(body))
+		return nil
+	}
 	// Header section
 	fmt.Println("═══════════════════════════════════════════════════════════════════════════════")
 	fmt.Printf("Message ID: %d (Gmail: %s)\n", msg.ID, msg.SourceMessageID)
@@ -148,7 +171,7 @@ func outputMessageText(msg *query.MessageDetail) error {
 
 	// Body
 	fmt.Println("\n═══════════════════════════════════════════════════════════════════════════════")
-	if msg.BodyText != "" {
+	if msg.BodyText != "" || originalHasBody {
 		fmt.Println(textutil.SanitizeTerminalMultiline(msg.BodyText))
 	} else if msg.Snippet != "" {
 		fmt.Printf("[No body text available. Snippet: %s]\n", textutil.SanitizeTerminal(msg.Snippet))
@@ -160,7 +183,7 @@ func outputMessageText(msg *query.MessageDetail) error {
 	return nil
 }
 
-func outputMessageJSON(msg *query.MessageDetail) error {
+func messageJSONValue(msg *query.MessageDetail) map[string]any {
 	// Build address arrays
 	fromAddrs := make([]map[string]string, len(msg.From))
 	for i, addr := range msg.From {
@@ -225,9 +248,15 @@ func outputMessageJSON(msg *query.MessageDetail) error {
 		output["deleted_from_source_at"] = msg.DeletedAt.UTC().Format(time.RFC3339)
 	}
 
-	enc := jsontext.NewEncoder(os.Stdout, jsontext.WithIndentPrefix(""), jsontext.WithIndent("  "))
+	return output
+}
 
-	return json.MarshalEncode(enc, output, json.Deterministic(true))
+func outputMessageJSON(msg *query.MessageDetail) error {
+	if showMessageStripQuoted {
+		msg = readableMessageDetail(msg)
+	}
+	enc := jsontext.NewEncoder(os.Stdout, jsontext.WithIndent("  "))
+	return json.MarshalEncode(enc, messageJSONValue(msg), json.Deterministic(true))
 }
 
 func formatAddresses(addrs []query.Address) string {
@@ -245,4 +274,7 @@ func formatAddresses(addrs []query.Address) string {
 func init() {
 	rootCmd.AddCommand(showMessageCmd)
 	showMessageCmd.Flags().BoolVar(&showMessageJSON, flagJSON, false, "Output as JSON")
+	showMessageCmd.Flags().BoolVar(&showMessageBodyOnly, "body-only", false, "Print only the text body")
+	showMessageCmd.Flags().BoolVar(&showMessageStripQuoted, "strip-quoted", false, "Remove quoted history and conventional signatures")
+	showMessageCmd.MarkFlagsMutuallyExclusive("body-only", flagJSON)
 }

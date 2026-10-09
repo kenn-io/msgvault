@@ -806,6 +806,7 @@ func rawRouteParameters(operationID string) []*huma.Param {
 		return []*huma.Param{pathStringParam("job_id", "Historical import job ID")}
 	case "searchCLI":
 		return append([]*huma.Param{
+			queryBooleanParam("include_snippet", "Include attachment names and bounded FTS match context"),
 			queryStringParam("q", "Search query", true),
 			queryIntegerParam(limitParam, "Maximum number of rows to return"),
 			queryIntegerParam("offset", "Zero-based row offset"),

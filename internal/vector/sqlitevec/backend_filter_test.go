@@ -7,7 +7,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/vector"
+	"go.kenn.io/msgvault/internal/vector/hybrid"
 )
 
 func TestVectorFilterMessageIDsBeforeRanking(t *testing.T) {
@@ -152,4 +154,30 @@ func TestVectorFilterListIDsBeforeRanking(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, unicodeFused, 1)
 	assert.Equal(t, int64(4), unicodeFused[0].MessageID)
+}
+
+func TestVectorFilenameFilterBeforeRanking(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	b, ctx := newFusedBackendForTest(t)
+	gen := seedAndEmbed(t, b, map[int64][]float32{1: unitVec(768, 0), 2: unitVec(768, 1)})
+	_, err := b.mainDB.ExecContext(ctx, `CREATE TABLE attachments (id INTEGER PRIMARY KEY, message_id INTEGER, filename TEXT)`)
+	require.NoError(err)
+	_, err = b.mainDB.ExecContext(ctx, `INSERT INTO attachments(message_id,filename) VALUES (2,'Budget%_Plan.PDF'),(2,'界.csv'),(1,'BudgetXXPlan.pdf')`)
+	require.NoError(err)
+	filter, err := hybrid.BuildFilter(ctx, b.mainDB, nil, search.Parse(`filename:budget%_ filename:界`))
+	require.NoError(err)
+	hits, err := b.Search(ctx, gen, unitVec(768, 0), 1, filter)
+	require.NoError(err)
+	require.Len(hits, 1)
+	assert.Equal(int64(2), hits[0].MessageID)
+	fused, _, err := b.FusedSearch(ctx, vector.FusedRequest{QueryVec: unitVec(768, 0), Generation: gen, KPerSignal: 10, Limit: 1, RRFK: 60, Filter: filter})
+	require.NoError(err)
+	require.Len(fused, 1)
+	assert.Equal(int64(2), fused[0].MessageID)
+
+	lexical, _, err := b.FusedSearch(ctx, vector.FusedRequest{FTSTerms: []string{"lunch"}, Generation: gen, KPerSignal: 10, Limit: 1, RRFK: 60, Filter: filter})
+	require.NoError(err)
+	assert.Empty(lexical, "filename filters apply to the lexical leg before fusion")
 }

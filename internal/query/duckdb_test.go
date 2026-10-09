@@ -4861,3 +4861,42 @@ func TestDuckDBEngine_GetDeletionTargetsByMessageIDs_ChunkedLargeSelection(t *te
 	require.NoError(t, err)
 	assert.Equal(t, []string{"msg5", "msg1"}, gmailIDs, "newest-first across chunks")
 }
+
+// The daemon runs DuckDB without the SQLite scanner, so filename: must read Parquet.
+func TestDuckDBFilenameFilterParquet(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	b := NewTestDataBuilder(t)
+	b.AddSource("archive@example.com")
+	alice := b.AddParticipant("alice@example.com", "example.com", "Alice")
+	match := b.AddMessage(MessageOpt{Subject: "Plan", SentAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)})
+	other := b.AddMessage(MessageOpt{Subject: "Plan", SentAt: time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)})
+	b.AddFrom(match, alice, "Alice")
+	b.AddFrom(other, alice, "Alice")
+	b.AddAttachment(match, 10, "Budget%_Plan.PDF")
+	b.AddAttachment(match, 10, "界.csv")
+	b.AddAttachment(other, 10, "BudgetXXPlan.pdf")
+	analyticsDir, cleanup := b.Build()
+	t.Cleanup(cleanup)
+	engine, err := NewDuckDBEngine(analyticsDir, "", nil, DuckDBOptions{DisableSQLiteScanner: true})
+	require.NoError(err)
+	t.Cleanup(func() { assert.NoError(engine.Close()) })
+
+	const raw = `filename:budget%_ filename:界`
+	q := search.Parse(raw)
+	rows, err := engine.SearchFast(t.Context(), q, MessageFilter{}, 10, 0)
+	require.NoError(err)
+	require.Len(rows, 1)
+	assert.Equal(match, rows[0].ID)
+
+	count, err := engine.SearchFastCount(t.Context(), q, MessageFilter{})
+	require.NoError(err)
+	assert.Equal(int64(1), count)
+
+	opts := DefaultAggregateOptions()
+	opts.SearchQuery = raw
+	agg, err := engine.Aggregate(t.Context(), ViewSenders, opts)
+	require.NoError(err)
+	assertAggregateCounts(t, agg, map[string]int64{"alice@example.com": 1})
+}

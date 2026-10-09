@@ -30,6 +30,13 @@ All notable changes to msgvault, grouped by release.
 
 - `list-accounts` and `embeddings list` keep working while a sync, import, or
   embedding build runs. Accounts whose counts aren't ready yet show `pending`.
+- `search --help` explains the fts, vector and hybrid modes, and an empty
+  keyword search suggests `--mode hybrid` when embeddings can answer it. Search
+  adds `--snippet`, `--sort date` for semantic pages, and a `filename:` operator
+  that needs daemon API 3.5.0. `show` aliases `show-message`, which gains
+  `--body-only` and `--strip-quoted`, and `show-thread` reads a conversation
+  oldest first with quoted history removed. The reading view keeps complete
+  URLs and uncertain wrapped headers.
 
 - Granola and Circleback save meetings through the same path as Muesli, Notion,
   and meeting file import. Organizer and attendee names are trimmed, a value

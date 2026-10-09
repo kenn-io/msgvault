@@ -1598,6 +1598,10 @@ func (b *Backend) filteredMessageIDsLimit(ctx context.Context, f vector.Filter, 
 		clauses = append(clauses, `m.subject LIKE ? ESCAPE '\'`)
 		args = append(args, "%"+escapeLikeSubject(term)+"%")
 	}
+	for _, filename := range f.FilenameSubstrings {
+		clauses = append(clauses, `EXISTS (SELECT 1 FROM attachments fa WHERE fa.message_id = m.id AND `+sqliteutil.UnicodeLowerFunction+`(fa.filename) LIKE `+sqliteutil.UnicodeLowerFunction+`(?) ESCAPE '\')`)
+		args = append(args, "%"+escapeLikeSubject(filename)+"%")
+	}
 	for _, term := range f.ListIDSubstrings {
 		clauses = append(clauses, sqliteutil.UnicodeLowerFunction+`(m.list_id) LIKE `+sqliteutil.UnicodeLowerFunction+`(?) ESCAPE '\'`)
 		args = append(args, "%"+escapeLikeSubject(term)+"%")

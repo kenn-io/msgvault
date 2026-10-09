@@ -485,7 +485,7 @@ func offsetProperty() *jsonschema.Schema {
 }
 
 const (
-	searchMetadataOperatorDoc = "Supported operators: from:, to:, cc:, bcc:, subject:, label: (or l:), has:attachment, " +
+	searchMetadataOperatorDoc = "Supported operators: from:, to:, cc:, bcc:, subject:, label: (or l:), filename: (attachment name substring), has:attachment, " +
 		"before:/after: (YYYY-MM-DD), older_than:/newer_than: (e.g. 7d, 2w, 1m, 1y), larger:/smaller: (e.g. 5M), " +
 		"account:, received: (exact addresses; received: excludes sent mail and calendar events). " +
 		"Bare domains on from:/to: match any address at that domain. Different operators are ANDed; " +

@@ -7432,6 +7432,8 @@ func TestHandleSearch_HybridResponseItemShape(t *testing.T) {
 	assert.Equal("Alice", fromName, "from_name")
 	hasA, _ := got["has_attachments"].(bool)
 	assert.True(hasA, "has_attachments")
+	assert.NotContains(got, "attachment_count")
+	assert.NotContains(got, "attachment_names")
 }
 
 func TestHandleSearch_VectorExplainAcceptsBooleanQueryValue(t *testing.T) {
@@ -8976,4 +8978,75 @@ func TestOperationGateStillGatesAccountSyncTrigger(t *testing.T) { //nolint:para
 	resp := servePOSTTestRequest(srv, "/api/v1/sync/test@gmail.com")
 
 	require.Equal(http.StatusServiceUnavailable, resp.Code, resp.Body.String())
+}
+
+func TestCLISearchHybridHintAvailability(t *testing.T) {
+	for _, tc := range []struct {
+		name, q, scope string
+		active, want   bool
+		offset         int
+		stale, scoped  bool
+	}{
+		{name: "usable generation", q: "intent", active: true, want: true},
+		{name: "account filter", q: "intent account:archive@example.org", active: true},
+		{name: "received filter", q: "intent received:archive@example.org", active: true},
+		{name: "no generation", q: "intent"},
+		{name: "filters only", q: "from:sender@example.com", active: true},
+		{name: "deleted scope", q: "intent", scope: "deleted", active: true},
+		{name: "later page", q: "intent", active: true, offset: 50},
+		{name: "stale generation", q: "intent", active: true, stale: true},
+		{name: "scoped index without matching type", q: "intent", active: true, scoped: true},
+		{name: "scoped index with matching type", q: "intent message_type:sms", active: true, scoped: true, want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			backend := &fakeVectorBackend{}
+			vectorCfg := vector.Config{}
+			if tc.scoped {
+				vectorCfg.Embed.Scope.MessageTypes = []string{"sms"}
+			}
+			if tc.active {
+				fingerprint := vectorCfg.GenerationFingerprint()
+				if tc.stale {
+					fingerprint = "synthetic-stale-generation"
+				}
+				backend.active = &vector.Generation{ID: 1, State: vector.GenerationActive, Fingerprint: fingerprint}
+			}
+			engine := hybrid.NewEngine(backend, nil, stubEmbedder{}, hybrid.Config{})
+			srv := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: &mockStore{}, Engine: &querytest.MockEngine{SearchFunc: func(context.Context, *search.Query, int, int) ([]query.MessageSummary, error) { return nil, nil }}, HybridEngine: engine, Backend: backend, VectorCfg: vectorCfg, Logger: testLogger()})
+			t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.Background())) })
+			w := httptest.NewRecorder()
+			srv.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/cli/search?q="+url.QueryEscape(tc.q)+"&deletion_scope="+tc.scope+"&offset="+strconv.Itoa(tc.offset), nil))
+			require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+			var out struct {
+				HybridAvailable bool `json:"hybrid_available"`
+			}
+			require.NoError(t, json.NewDecoder(w.Body).Decode(&out))
+			assert.Equal(t, tc.want, out.HybridAvailable)
+		})
+	}
+}
+
+func TestHybridSearchAttachmentMetadataJSON(t *testing.T) {
+	zero, three := 0, 3
+	for _, tc := range []struct {
+		name  string
+		count *int
+		names []string
+	}{
+		{name: "known empty", count: &zero, names: []string{}},
+		{name: "partial names", count: &three, names: []string{"plan.pdf", "budget.csv"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			writeJSON(w, http.StatusOK, hybridSearchItem{AttachmentCount: tc.count, AttachmentNames: tc.names})
+			var got map[string]any
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
+			assert.InDelta(t, float64(*tc.count), got["attachment_count"], 0)
+			names := make([]any, len(tc.names))
+			for i, name := range tc.names {
+				names[i] = name
+			}
+			assert.Equal(t, names, got["attachment_names"])
+		})
+	}
 }

@@ -20,6 +20,7 @@ func TestFormatRoundTripsRepresentableQueryFields(t *testing.T) {
 		ToAddrs:         []string{"bob@example.com"},
 		CcAddrs:         []string{"carol@example.com"},
 		BccAddrs:        []string{"archive@example.com"},
+		Filenames:       []string{"Budget Plan%.pdf", "界.csv"},
 		SubjectTerms:    []string{"project update"},
 		Labels:          []string{`Important "Review"`},
 		HasAttachment:   &hasAttachment,

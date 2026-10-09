@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-06"
+last_edited: "2026-10-08"
 title: Searching
 description: Find archived messages by words, meaning, account, conversation, or message type.
 ---
@@ -7,7 +7,8 @@ description: Find archived messages by words, meaning, account, conversation, or
 Use `msgvault search` to find archived email, chats, calendar events, and
 meeting transcripts. Keyword search works without an embedding provider.
 Combine words with filters to narrow the result, then use `msgvault show-message <id>`
-to read a message.
+to read a message. On newer `main` builds, `show` is an alias; use
+`show <id> --body-only --strip-quoted` for a shorter reading view.
 
 | What you want to find | Where to search |
 |---|---|
@@ -50,6 +51,7 @@ msgvault supports a local subset of Gmail-like search syntax.
 | `received:` | Exact address that received inbound mail | `received:work@example.org` |
 | `account:` | Exact account of received mail, sent mail, or a calendar event | `account:work@example.org` |
 | `has:attachment` | Has attachments | `has:attachment` |
+| `filename:` (newer `main`) | Attachment filename literal substring | `filename:"budget plan.pdf"` |
 | `before:` | Before date | `before:2024-06-01` |
 | `after:` | After date | `after:2024-01-01` |
 | `older_than:` | Relative date | `older_than:7d`, `2w`, `1m`, `1y` |
@@ -258,6 +260,34 @@ msgvault search from:alice@example.com --json
 
 Media search uses lexical retrieval through the configured Docbank integration. It searches the full allowed population within [the API scope limits](https://github.com/kenn-io/msgvault/blob/main/docs/api-server.md#media-transcript-search). Semantic and hybrid modes are unavailable. An empty result proves no match only with complete coverage and `partial=false`. Search requires Docbank's source-selected search contract; older servers report search unavailable. See [the CLI reference](https://github.com/kenn-io/msgvault/blob/main/docs/cli-reference.md#media-search) for flags and [the API contract](https://github.com/kenn-io/msgvault/blob/main/docs/api-server.md#media-transcript-search) for coverage fields. Use `msgvault show-message <message_id>` to read a result in context. Browser search-result presentation follows separately.
 
+## Read matches and conversations
+
+On newer `main` builds, `--snippet` adds a context column without changing the
+default table. SQLite uses a full-text index excerpt where available; other
+backends and semantic searches use the stored message preview. Snippets are
+bounded on Unicode character boundaries. JSON keeps `snippet` as the stored
+preview and adds optional `match_snippet` for SQLite query-specific context. It
+also includes available attachment names and counts, and `conversation_id`.
+
+```bash
+msgvault search 'project filename:budget' --snippet
+msgvault search 'filename:"budget plan.pdf"' --json
+msgvault show 42 --body-only --strip-quoted
+msgvault show-thread 7
+```
+
+`filename:` matches case-insensitive literal substrings, including `%` and `_`.
+Repeating it requires every value to match an attachment of the message.
+It searches filenames, not document contents.
+Filename filters require daemon API schema 3.11.0 or newer.
+
+`show-thread` takes a message ID as the conversation anchor. It shows up to
+100 archived messages in chronological order, strips quoted history, and
+reports truncation on stderr. Raise `--limit` up to 500, use `--offset` for later
+pages, or use `--json` for structured output. See the [CLI reference](../cli-reference.md#show-thread)
+for the exact contract.
+The shorter reading view preserves complete URLs and uncertain wrapped headers.
+
 ## Semantic / Hybrid Search
 
 The same `msgvault search` command supports semantic search when the
@@ -266,3 +296,22 @@ an embedding endpoint. Pass
 `--mode vector` for pure semantic search, or `--mode hybrid` to fuse
 BM25 and vector ranking. See [Vector Search](/docs/usage/vector-search/)
 for setup, initial embedding, and incremental update workflows.
+
+Choose `fts` (the default) when you know the words or an exact phrase. Choose
+`vector` when you remember the meaning but not the wording. Choose `hybrid`
+when both clues matter. Vector and hybrid need a usable active embedding
+generation on the selected daemon. Filter-only queries use FTS.
+
+```bash
+msgvault search 'how did we decide the project budget after:2026-01-01' --mode hybrid --snippet
+msgvault search 'project approval from:sender@example.com newer_than:90d' --mode hybrid --explain
+msgvault search 'planning the next release after:2026-01-01' --mode vector --sort date
+```
+
+`after:` and `newer_than:` narrow candidates before semantic ranking. On newer
+`main` builds, `--sort date` displays the retrieved vector/hybrid page newest
+first; it does not select the newest messages from the entire archive. Increase
+`--limit` to consider more ranked hits. Leaving `--sort` unset preserves ranking.
+
+When a first-page FTS query with free text finds nothing and hybrid is usable,
+newer `main` builds suggest `--mode hybrid` on stderr. JSON stdout stays parseable.

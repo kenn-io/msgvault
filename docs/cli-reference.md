@@ -2072,6 +2072,8 @@ msgvault search <query> [flags]
 | `--deletion-scope` | Source-deletion scope: `active` (default), `deleted`, or `any`. Non-active scopes require `--mode fts`. |
 | `--mode` | Search mode: `fts` (default), `vector`, or `hybrid`. `vector` and `hybrid` require vector search to be configured. |
 | `--explain` | Include per-signal scores (RRF, BM25, vector) in the output. Only applies to `--mode vector` and `--mode hybrid`. |
+| `--snippet` | Add a bounded match-context column (newer `main` builds). |
+| `--sort date` | Display the retrieved vector/hybrid page newest first; requires `--mode vector` or `--mode hybrid` (newer `main` builds). |
 
 Search and stats reject an explicitly empty collection with `empty_scope` for owners and agents.
 
@@ -2086,6 +2088,27 @@ filters. Values are case-insensitive literal substrings; quote values that
 contain spaces. Repeating either alias requires every value to match.
 
 `--mode vector` and `--mode hybrid` require at least one free-text term in the query (filter-only queries use `--mode fts`). They do not support pagination (`--offset` is rejected) or non-active deletion scopes because the vector index covers active messages only. Bump `--limit` to retrieve a larger candidate pool instead. See [Searching](/docs/usage/searching/) for the operator reference and [Vector Search](/docs/usage/vector-search/) for semantic setup.
+
+On newer `main` builds, `filename:` matches a case-insensitive literal substring
+of an attachment filename. Quote spaces; repeated values must all match
+attachments of the message. JSON includes `snippet` (the stored preview) and `conversation_id` in every mode. `attachment_names` and `attachment_count` appear when available. Omitted fields mean unavailable metadata; `[]` and `0` mean known empty values. Names list the rows currently available; the stored count can be higher while sync is still writing them.
+The `filename:` operator requires daemon API schema 3.11.0 or newer.
+FTS adds `match_snippet` when SQLite can supply a query-specific excerpt. FTS keeps
+its array output; vector/hybrid keep their object containing `results`.
+
+Use hybrid for natural-language intent with lexical clues, and vector for
+meaning alone. Date operators filter before ranking; `--sort date` only sorts
+the retrieved page. For example:
+
+```bash
+msgvault search 'how did we approve the budget from:sender@example.com after:2026-01-01' --mode hybrid --explain
+msgvault search 'release planning newer_than:90d' --mode vector --sort date --snippet
+```
+
+Newer `main` builds suggest hybrid on stderr when a first-page FTS search with
+free text has zero results and a usable embedding generation. Non-active
+source-deletion searches do not receive that suggestion. JSON stdout stays
+machine-readable.
 
 Search tables show the subject, or the message snippet when the subject is blank.
 Redirected or piped output keeps the full sender and subject/snippet on one line,
@@ -3867,18 +3890,52 @@ msgvault setup status --json
 
 ## show-message
 
-Show full message details.
+Show full message details. On newer `main` builds, `show` is an alias.
 
 ```bash
 msgvault show-message <id> [flags]
+msgvault show <id> --body-only --strip-quoted
 ```
 
 | Flag | Description |
 |---|---|
-| `--json` | Output as JSON |
+| `--json` | Output as JSON; cannot be combined with `--body-only`. |
+| `--body-only` | Print plain body text without metadata or borders; fall back to the stored snippet (newer `main` builds). |
+| `--strip-quoted` | Remove quoted reply history and conventional signatures; preserve complete URLs and uncertain wrapped headers (newer `main` builds). |
 
-JSON output includes `web_url` when the selected daemon can provide a browser
-link for the message.
+Default output keeps the full message. Cleaning is a display heuristic and
+never changes the archive. It removes `>` lines, complete single-line dated `On ... wrote:`
+headers that introduce quoted lines, and `-- ` signature blocks.
+Outlook `-----Original Message-----` blocks and non-English headers are left as
+written.
+Unquoted inline and bottom-posted replies, complete URLs, uncertain wrapped headers, and ordinary prose are
+preserved. With JSON, cleaning changes
+`body_text`; the original `body_html` remains available.
+
+JSON includes `web_url` when the selected daemon can provide a browser link.
+
+## show-thread
+
+On newer `main` builds, read a conversation in chronological order with quoted
+history stripped. Use any message ID in the conversation as the anchor.
+
+```bash
+msgvault show-thread <message-id> [--limit N] [--offset N] [--json] [--strip-quoted=false]
+```
+
+The default limit is 100; the maximum is 500. Messages are ordered by timestamp
+instant and ID, with undated messages last. Use `--offset` for later pages.
+Archived source-deleted messages remain included; dedup-hidden rows are excluded.
+A notice goes to stderr when more messages remain. The command uses the selected
+daemon; unsupported older daemons return an upgrade error.
+
+A positive numeric argument selects an internal message ID first, then tries a
+provider ID if the message is missing. Ambiguous provider IDs require an internal
+message ID from search output. An offset beyond the thread returns an empty page.
+JSON includes `conversation_id`, `total`, `offset`, `has_more`, and `messages`
+containing message details with cleaned `body_text`. Text and JSON use the same
+`--strip-quoted` policy. Pass `--strip-quoted=false` to
+keep the archived body text unchanged.
 
 ---
 

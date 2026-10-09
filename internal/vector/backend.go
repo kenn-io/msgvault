@@ -216,6 +216,7 @@ type Filter struct {
 	LargerThan         *int64   // `larger:` — strictly greater than
 	SmallerThan        *int64   // `smaller:` — strictly less than
 	SubjectSubstrings  []string // one per `subject:` term (ANDed)
+	FilenameSubstrings []string // ANDed literal attachment-name substrings
 	ListIDSubstrings   []string // one per `list:` term (ANDed, literal substring)
 	ListID             string   // exact structured List-Id; empty = unrestricted
 	MessageTypes       []string // exact m.message_type values; empty = unrestricted
@@ -242,6 +243,7 @@ func (f Filter) IsEmpty() bool {
 		f.LargerThan == nil &&
 		f.SmallerThan == nil &&
 		len(f.SubjectSubstrings) == 0 &&
+		len(f.FilenameSubstrings) == 0 &&
 		len(f.ListIDSubstrings) == 0 &&
 		len(f.ListIDExactGroups) == 0 &&
 		f.ListID == "" &&

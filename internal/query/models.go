@@ -23,6 +23,8 @@ type AggregateRow struct {
 // MessageSummary represents a message in list views.
 // Contains enough information for display without fetching the full body.
 type MessageSummary struct {
+	AttachmentNames []string `json:"attachment_names,omitzero"`
+	MatchSnippet    string   `json:"match_snippet,omitempty"`
 	// WebURL is derived by the daemon client for browser navigation.
 	WebURL                       string     `json:"web_url,omitempty"`
 	ID                           int64      `json:"id"`
