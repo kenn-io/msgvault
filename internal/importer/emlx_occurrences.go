@@ -60,7 +60,7 @@ func decodeEmlxReceipt(s, id string) (emlxReceipt, bool) {
 	return r, err == nil && r.Version == emlxReceiptVersion && r.ID == id && validEmlxOccurrence(id) && validEmlxDigest(r.Signature) && validEmlxTarget(r.Target)
 }
 func targetComplete(st store.EmlxTargetState, id, policy string) bool {
-	if st.MessageID == 0 || !st.HasRaw || st.Item == nil || st.Item.Status != "imported" {
+	if st.MessageID == 0 || !st.HasRaw || st.Deleted || st.Item == nil || st.Item.Status != "imported" {
 		return false
 	}
 	var c emlxCompletion
