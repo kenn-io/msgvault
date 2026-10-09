@@ -56,7 +56,7 @@ func MergeAttachments(original, restored, archived []byte, parts []RestorationPa
 			return result, errors.New("invalid EMLX part key")
 		}
 		switch part.State {
-		case "supplied":
+		case RestorationSupplied:
 			// A previously acknowledged source part cannot replay older bytes
 			// over another occurrence's newer contribution to the archive.
 			if part.ContentHash != "" && len(archived) > 0 && acknowledged[part.Key] == part.ContentHash {
@@ -65,9 +65,9 @@ func MergeAttachments(original, restored, archived []byte, parts []RestorationPa
 			if !bytes.Equal(fresh[i], old[i]) {
 				candidates = append(candidates, i)
 			}
-		case "error", "excluded":
+		case RestorationError:
 			result.Incomplete = true
-		case "missing", "unsupported", "source-excluded":
+		case RestorationMissing, RestorationSourceExcluded:
 		default:
 			return result, errors.New("invalid EMLX restoration state")
 		}
@@ -94,7 +94,7 @@ func MergeAttachments(original, restored, archived []byte, parts []RestorationPa
 		result.ChangedParts++
 	}
 	for _, part := range parts {
-		if part.State != "supplied" || part.ContentHash == "" {
+		if part.State != RestorationSupplied || part.ContentHash == "" {
 			continue
 		}
 		i, _ := strconv.Atoi(part.Key) // Every key was validated above.
@@ -158,22 +158,13 @@ func splitParts(raw []byte) ([][]byte, error) {
 	return out, nil
 }
 
+// stablePartKey identifies a part by its headers, ignoring the ones that
+// restoration rewrites.
 func stablePartKey(part []byte) string {
 	lines := strings.Split(string(part), "\n")
 	end := indexBlank(lines, 0)
 	if end < 0 {
 		return string(part)
 	}
-	var out []string
-	drop := false
-	for _, line := range lines[:end] {
-		if !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") {
-			name, _, _ := strings.Cut(line, ":")
-			drop = strings.EqualFold(name, "X-Apple-Content-Length") || strings.EqualFold(name, "Content-Transfer-Encoding")
-		}
-		if !drop {
-			out = append(out, line)
-		}
-	}
-	return strings.Join(out, "\n")
+	return strings.Join(withoutEncodingHeaders(lines[:end]), "\n")
 }

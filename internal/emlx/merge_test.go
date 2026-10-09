@@ -38,7 +38,7 @@ func TestEmlxMergeBudgetPreservesArchived(t *testing.T) {
 	newRaw := append([]byte(nil), original...)
 	at := bytes.LastIndex(newRaw, []byte("X-Apple-Content-Length: 3\r\n\r\n\r\n"))
 	newRaw = append(append(append([]byte(nil), newRaw[:at]...), []byte("Content-Transfer-Encoding: base64\r\n\r\nbmV3\r\n")...), newRaw[at+len("X-Apple-Content-Length: 3\r\n\r\n\r\n"):]...)
-	parts := []RestorationPart{{Key: "1", State: "missing"}, {Key: "2", State: "supplied"}}
+	parts := []RestorationPart{{Key: "1", State: RestorationMissing}, {Key: "2", State: RestorationSupplied}}
 	limited, err := MergeAttachments(original, newRaw, old, parts, int64(len(old)), nil)
 	r.NoError(err)
 	a.True(limited.Incomplete)
@@ -48,7 +48,7 @@ func TestEmlxMergeBudgetPreservesArchived(t *testing.T) {
 	a.False(merged.Incomplete)
 	a.Contains(string(merged.Raw), "b2xk")
 	a.Contains(string(merged.Raw), "bmV3")
-	lowered, err := MergeAttachments(original, original, merged.Raw, []RestorationPart{{Key: "1", State: "missing"}, {Key: "2", State: "missing"}}, 1, nil)
+	lowered, err := MergeAttachments(original, original, merged.Raw, []RestorationPart{{Key: "1", State: RestorationMissing}, {Key: "2", State: RestorationMissing}}, 1, nil)
 	r.NoError(err)
 	a.Equal(merged.Raw, lowered.Raw)
 }
@@ -58,7 +58,7 @@ func TestEmlxMergePartIdentityAndAmbiguousLayout(t *testing.T) {
 	original := []byte("Content-Type: multipart/mixed; boundary=b\r\n\r\n--b\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=same.bin\r\nX-Apple-Content-Length: 3\r\n\r\n\r\n--b\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=same.bin\r\nX-Apple-Content-Length: 3\r\n\r\n\r\n--b--\r\n")
 	old := bytes.Replace(original, []byte("X-Apple-Content-Length: 3\r\n\r\n\r\n"), []byte("Content-Transfer-Encoding: base64\r\n\r\nb2xk\r\n"), 1)
 	candidate := bytes.ReplaceAll(original, []byte("X-Apple-Content-Length: 3\r\n\r\n\r\n"), []byte("Content-Transfer-Encoding: base64\r\n\r\nbmV3\r\n"))
-	merged, err := MergeAttachments(original, candidate, old, []RestorationPart{{Key: "1", State: "missing"}, {Key: "2", State: "supplied"}}, 4096, nil)
+	merged, err := MergeAttachments(original, candidate, old, []RestorationPart{{Key: "1", State: RestorationMissing}, {Key: "2", State: RestorationSupplied}}, 4096, nil)
 	r.NoError(err)
 	parsed, err := mime.Parse(merged.Raw)
 	r.NoError(err)
@@ -66,7 +66,7 @@ func TestEmlxMergePartIdentityAndAmbiguousLayout(t *testing.T) {
 	a.Equal([]byte("old"), parsed.Attachments[0].Content)
 	a.Equal([]byte("new"), parsed.Attachments[1].Content)
 	broken := bytes.Replace(old, []byte("--b--"), []byte("--different--"), 1)
-	rejected, err := MergeAttachments(original, candidate, broken, []RestorationPart{{Key: "2", State: "supplied"}}, 4096, nil)
+	rejected, err := MergeAttachments(original, candidate, broken, []RestorationPart{{Key: "2", State: RestorationSupplied}}, 4096, nil)
 	r.Error(err)
 	a.Equal(broken, rejected.Raw)
 }

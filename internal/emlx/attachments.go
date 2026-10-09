@@ -53,10 +53,24 @@ func RestoreAttachments(raw []byte, messagePath string, maxBytes int64) ([]byte,
 	return restored, n, err
 }
 
+// RestorationState says what happened to one cached attachment placeholder.
+type RestorationState string
+
+const (
+	// RestorationSupplied: the cached file filled the placeholder.
+	RestorationSupplied RestorationState = "supplied"
+	// RestorationMissing: Apple Mail has no cached file for the part.
+	RestorationMissing RestorationState = "missing"
+	// RestorationError: the cached file exists but could not be read.
+	RestorationError RestorationState = "error"
+	// RestorationSourceExcluded: the part would exceed the byte limit.
+	RestorationSourceExcluded RestorationState = "source-excluded"
+)
+
 // RestorationPart records why each supported placeholder was or was not filled.
 type RestorationPart struct {
 	Key         string
-	State       string
+	State       RestorationState
 	ContentHash string
 	Err         error
 }
@@ -165,12 +179,12 @@ func restoreSelectedAttachments(raw []byte, messagePath string, maxBytes int64, 
 			cost = restoredCost(int64(len(content)))
 		}
 		if err != nil || file == "" || cost > remaining {
-			state := "source-excluded"
+			state := RestorationSourceExcluded
 			if file == "" {
-				state = "missing"
+				state = RestorationMissing
 			}
 			if err != nil {
-				state = "error"
+				state = RestorationError
 			}
 			parts = append(parts, RestorationPart{Key: strconv.Itoa(partIndex), State: state, Err: err})
 			restoreErr = errors.Join(restoreErr, err)
@@ -188,7 +202,9 @@ func restoreSelectedAttachments(raw []byte, messagePath string, maxBytes int64, 
 		}
 		i = bodyEnd
 		sum := sha256.Sum256(content)
-		parts = append(parts, RestorationPart{Key: strconv.Itoa(partIndex), State: "supplied", ContentHash: hex.EncodeToString(sum[:])})
+		parts = append(parts, RestorationPart{
+			Key: strconv.Itoa(partIndex), State: RestorationSupplied, ContentHash: hex.EncodeToString(sum[:]),
+		})
 		restored++
 	}
 	return []byte(strings.Join(out, "\n")), restored, parts, restoreErr
@@ -197,18 +213,25 @@ func restoreSelectedAttachments(raw []byte, messagePath string, maxBytes int64, 
 // attachmentHeaders replaces placeholder and encoding headers together with
 // their folded continuations, preserving every other original header byte.
 func attachmentHeaders(header []string, cr string) []string {
+	return append(withoutEncodingHeaders(header), "Content-Transfer-Encoding: base64"+cr)
+}
+
+// withoutEncodingHeaders drops X-Apple-Content-Length and
+// Content-Transfer-Encoding, including folded continuation lines.
+func withoutEncodingHeaders(header []string) []string {
 	var out []string
 	drop := false
 	for _, h := range header {
 		if !strings.HasPrefix(h, " ") && !strings.HasPrefix(h, "\t") {
 			name, _, _ := strings.Cut(h, ":")
-			drop = strings.EqualFold(name, "X-Apple-Content-Length") || strings.EqualFold(name, "Content-Transfer-Encoding")
+			drop = strings.EqualFold(name, "X-Apple-Content-Length") ||
+				strings.EqualFold(name, "Content-Transfer-Encoding")
 		}
 		if !drop {
 			out = append(out, h)
 		}
 	}
-	return append(out, "Content-Transfer-Encoding: base64"+cr)
+	return out
 }
 
 // readAttachment reads at most maxBytes+1 bytes. The extra byte ensures that

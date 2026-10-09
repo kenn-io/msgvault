@@ -1,87 +1,88 @@
 package importer
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json/v2"
 	"fmt"
-	"path"
 	"path/filepath"
 	"strconv"
-	"strings"
 
 	"go.kenn.io/msgvault/internal/store"
 )
 
 const emlxReceiptVersion = 1
 
+// emlxReceipt is the checksum payload of an emlx-occurrence ledger row.
 type emlxReceipt struct {
 	Version     int               `json:"version"`
 	ID          string            `json:"id"`
 	Signature   string            `json:"signature"`
 	SourceParts map[string]string `json:"source_parts"`
 	Target      string            `json:"target"`
-	RFCID       string            `json:"rfc_id"`
-	Reply       string            `json:"reply"`
 }
+
+// emlxCompletion is the checksum payload of an emlx-target ledger row. Run
+// records the sync run that completed the target, so one run completes a
+// shared target once even when it forces reconciliation of every occurrence.
 type emlxCompletion struct {
 	Version int    `json:"version"`
 	Target  string `json:"target"`
 	Policy  string `json:"policy"`
+	Run     int64  `json:"run,omitzero"`
 }
 
-func emlxDigest(s string) string { sum := sha256.Sum256([]byte(s)); return hex.EncodeToString(sum[:]) }
-func validEmlxDigest(s string) bool {
-	if len(s) != 64 {
-		return false
-	}
-	for _, c := range s {
-		if (c < 'a' || c > 'f') && (c < '0' || c > '9') {
-			return false
-		}
-	}
-	return true
+func emlxDigest(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:])
 }
-func validEmlxRelative(s string) bool {
-	return filepath.IsLocal(s) && filepath.ToSlash(s) == s && path.Clean(s) == s && !strings.ContainsRune(s, '\x00')
-}
-func validEmlxTarget(s string) bool {
-	return strings.HasPrefix(s, "emlx-") && validEmlxDigest(strings.TrimPrefix(s, "emlx-"))
-}
-func validEmlxOccurrence(s string) bool {
-	return len(s) > 65 && s[64] == '/' && validEmlxDigest(s[:64]) && validEmlxRelative(s[65:])
-}
+
 func encodeEmlxReceipt(r emlxReceipt) (string, error) {
 	b, err := json.Marshal(r, json.Deterministic(true))
 	return string(b), err
 }
+
 func decodeEmlxReceipt(s, id string) (emlxReceipt, bool) {
 	var r emlxReceipt
-	err := json.Unmarshal([]byte(s), &r, json.RejectUnknownMembers(true))
+	if err := json.Unmarshal([]byte(s), &r, json.RejectUnknownMembers(true)); err != nil {
+		return r, false
+	}
 	for key, hash := range r.SourceParts {
-		i, parseErr := strconv.Atoi(key)
-		if parseErr != nil || i <= 0 || strconv.Itoa(i) != key || !validEmlxDigest(hash) {
+		i, err := strconv.Atoi(key)
+		if err != nil || i <= 0 || strconv.Itoa(i) != key || !store.IsEmlxDigest(hash) {
 			return r, false
 		}
 	}
-	return r, err == nil && r.Version == emlxReceiptVersion && r.ID == id && validEmlxOccurrence(id) &&
-		(r.Signature == "" || validEmlxDigest(r.Signature)) && validEmlxTarget(r.Target)
+	return r, r.Version == emlxReceiptVersion && r.ID == id && store.IsEmlxOccurrenceID(id) &&
+		(r.Signature == "" || store.IsEmlxDigest(r.Signature)) && store.IsEmlxTargetID(r.Target)
 }
-func targetComplete(st store.EmlxTargetState, id, policy string) bool {
-	if st.MessageID == 0 || !st.HasRaw || st.Deleted || st.Item == nil || st.Item.Status != "imported" {
-		return false
-	}
+
+// emlxTargetCompletion returns the target's completion record when its archived
+// raw is live and was completed under policy.
+func emlxTargetCompletion(st store.EmlxTargetState, id, policy string) (emlxCompletion, bool) {
 	var c emlxCompletion
-	return json.Unmarshal([]byte(st.Item.Checksum), &c, json.RejectUnknownMembers(true)) == nil && c.Version == emlxReceiptVersion && c.Target == id && c.Policy == policy && validEmlxDigest(c.Policy)
-}
-func putEmlxTarget(ctx context.Context, st *store.Store, sourceID int64, id, policy, status string) error {
-	data, err := json.Marshal(emlxCompletion{Version: emlxReceiptVersion, Target: id, Policy: policy}, json.Deterministic(true))
-	if err != nil {
-		return err
+	if st.MessageID == 0 || !st.HasRaw || st.Deleted || st.Item == nil || st.Item.Status != "imported" {
+		return c, false
 	}
-	return st.PutEmlxLedgerItemContext(ctx, store.SourceImportItem{SourceID: sourceID, Provider: "emlx-target", ProviderID: id, Checksum: string(data), Status: status})
+	if err := json.Unmarshal([]byte(st.Item.Checksum), &c, json.RejectUnknownMembers(true)); err != nil {
+		return c, false
+	}
+	return c, c.Version == emlxReceiptVersion && c.Target == id && c.Policy == policy
 }
+
+func targetComplete(st store.EmlxTargetState, id, policy string) bool {
+	_, ok := emlxTargetCompletion(st, id, policy)
+	return ok
+}
+
+func emlxTargetItem(sourceID int64, c emlxCompletion, status string) (store.SourceImportItem, error) {
+	c.Version = emlxReceiptVersion
+	data, err := json.Marshal(c, json.Deterministic(true))
+	return store.SourceImportItem{
+		SourceID: sourceID, Provider: "emlx-target", ProviderID: c.Target, Checksum: string(data), Status: status,
+	}, err
+}
+
 func emlxPolicy(st *store.Store, opts EmlxImportOptions) string {
 	dest := opts.AttachmentsDir
 	if dest != "" {
@@ -89,5 +90,12 @@ func emlxPolicy(st *store.Store, opts EmlxImportOptions) string {
 			dest = abs
 		}
 	}
-	return emlxDigest(fmt.Sprintf("completion:%d;attachments:%q;fts:%t", emlxReceiptVersion, dest, st.FTS5Available()))
+	return emlxDigest(fmt.Sprintf("completion:%d;attachments:%q;fts:%t",
+		emlxReceiptVersion, dest, st.FTS5Available()))
+}
+
+// emlxSignature binds a filesystem fingerprint to the settings that decide
+// what a completed occurrence contributed.
+func emlxSignature(fingerprint, label string, maxBytes int64) string {
+	return emlxDigest(fmt.Sprintf("%d:%s:%s:%d", emlxReceiptVersion, fingerprint, label, maxBytes))
 }

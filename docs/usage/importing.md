@@ -247,7 +247,7 @@ msgvault import-emlx me@gmail.com ~/Mail/INBOX.mbox/
 | `--account` | — | Filter to specific account(s) during auto-discover (repeatable) |
 | `--accounts-db` | — | Custom path to macOS `Accounts4.sqlite` |
 | `--identifier` | — | Manual identifier when auto-discover is not suitable |
-| `--no-resume` | `false` | Ignore interrupted progress; retain completed file receipts |
+| `--no-resume` | `false` | Report totals for this run only; completed file receipts still apply |
 | `--full-reconcile` | `false` | Reconcile every file after invalidating the selected root's receipts |
 | `--max-message-bytes` | 128 MiB | Maximum EMLX file and merged MIME bytes, including encoding |
 | `--checkpoint-interval` | `200` | Save progress every N messages |
@@ -255,24 +255,25 @@ msgvault import-emlx me@gmail.com ~/Mail/INBOX.mbox/
 | `--no-default-identity` | `false` | Do not auto-confirm the identifier as this source's "me" identity |
 
 If attachment restoration exceeds the message limit, previously archived
-attachments stay intact and the incomplete file remains retryable. Choose a
-larger limit that fits your available memory, then rerun the same import. For
-example, this allows up to 256 MiB per message in automatic account mode:
+attachments stay intact, the summary counts an error, and the file is retried on
+the next import. Choose a larger limit that fits your available memory, then
+rerun the same import. For example, this allows up to 256 MiB per message in
+automatic account mode:
 
 ```bash
 msgvault import-emlx --max-message-bytes 268435456 ~/Library/Mail/
 ```
 
-The flag also works with `--identifier` in manual mode. Omitting it restores
-the 128 MiB default. See the [CLI reference](/docs/cli-reference/#import-emlx)
-for the accepted byte range. A successfully completed retry can use unchanged
-file receipts on subsequent runs with the same limit.
+The flag also works with `--identifier` in manual mode. Omitting it uses the
+128 MiB default. See the [CLI reference](/docs/cli-reference/#import-emlx)
+for the accepted byte range. Changing the limit makes the next import read each
+file once more.
 
 ### Message identifiers and replies
 
 The importer stores the email's `Message-ID` in `rfc822_message_id`, without surrounding angle brackets and with its original case preserved. `In-Reply-To` links to a message in the same source when exactly one visible parent matches. Missing or ambiguous parents remain unresolved; a later import can link a parent that arrives afterward.
 
-To fill missing identifiers in an existing archive, re-import the same directory and source identifier, then rebuild the analytics cache. For a complete reconciliation on unreleased `main`, use `--full-reconcile`:
+To fill missing identifiers in an archive created by an older msgvault, re-import the same directory and source identifier, then rebuild the analytics cache. On unreleased `main`, messages archived before file receipts existed are finished again automatically on the first import. Use `--full-reconcile` to redo every file, for example after editing archived messages directly:
 
 ```bash
 msgvault import-emlx --full-reconcile me@gmail.com ~/Mail/INBOX.mbox/
@@ -350,25 +351,26 @@ PST imports namespace source message IDs by a stable archive fingerprint, so imp
 
 ### Repeat Apple Mail imports (unreleased)
 
-Completed file receipts let refreshes skip unchanged EMLX content reads while
-continuing directory discovery and metadata checks. Sibling attachment changes
-and newly downloaded files are considered even when the sent date is old.
-Unfinished attachment or search work retries before an older occurrence can
-skip the shared archived message. Removed cache entries preserve archived
-messages and accumulated mailbox labels.
+A repeat Apple Mail import reads only new and changed `.emlx` files. It still
+walks every mailbox and checks each file's metadata, including the attachments
+Apple Mail cached for it, so a newly downloaded attachment or an old message
+added late is still imported. A file whose attachment or search-index work
+failed is retried before the import trusts its receipt. Files removed from
+Apple Mail's cache leave their archived messages and labels in place.
 
-Use `--full-reconcile` with the same source identifier to revoke the selected
-root's receipts before discovery and force ingestion/attachment/search
-completion for every discovered file. This also ignores obsolete interrupted
-positions and reply cursors. An interrupted reconciliation leaves unvisited
-files eligible for work on the next import. `--no-resume` only ignores run
-progress and does not invalidate completed receipts. See
-[import-emlx](../cli-reference.md#import-emlx) for metadata-cache limits and
-remote-image behavior.
+Problems with individual files are counted as errors without failing the run;
+those files are retried on the next import. See
+[import-emlx](../cli-reference.md#import-emlx) for what counts as an error.
+
+Run with `--full-reconcile` and the same source identifier to redo every file
+under the selected directory, even ones whose content matches the archive. If
+that run is interrupted, the next ordinary import finishes the files it did not
+reach. `--no-resume` only resets the run's reported totals; unchanged files are
+still skipped.
 
 ## Resumable Imports
 
-Imports are resumable by default. If an import is interrupted (Ctrl+C, power loss, error), run the same command again and it picks up from the last checkpoint. EMLX imports rescan discovery and use successful file receipts rather than a positional checkpoint to skip completed work. Use `--no-resume` to discard progress and start fresh.
+Imports are resumable by default. If an import is interrupted (Ctrl+C, power loss, error), run the same command again and it picks up from the last checkpoint. Apple Mail (EMLX) imports always revisit every file and use file receipts, rather than a checkpoint position, to skip completed work. Use `--no-resume` to discard progress and start fresh.
 
 During import, a progress summary is printed on completion:
 

@@ -47,7 +47,8 @@ func TestImportEmlxPendingPartsPreserveNewerOccurrence(t *testing.T) {
 				}
 				failed, err := ImportEmlxDir(t.Context(), st, rootA, opts)
 				r.NoError(err)
-				r.True(failed.HardErrors)
+				r.False(failed.HardErrors)
+				r.Positive(failed.Errors)
 				var messageID int64
 				r.NoError(st.DB().QueryRow("SELECT id FROM messages").Scan(&messageID))
 				committed, err := st.GetMessageRawContext(t.Context(), messageID)
@@ -73,7 +74,8 @@ func TestImportEmlxPendingPartsPreserveNewerOccurrence(t *testing.T) {
 
 				retried, err := ImportEmlxDir(t.Context(), st, rootA, opts)
 				r.NoError(err)
-				a.Equal(fault == "sibling lookup", retried.HardErrors)
+				a.False(retried.HardErrors)
+				a.Equal(fault == "sibling lookup", retried.Errors > 0, "a broken sibling stays retryable")
 				warmB, err := ImportEmlxDir(t.Context(), st, rootB, opts)
 				r.NoError(err)
 				a.False(warmB.HardErrors)

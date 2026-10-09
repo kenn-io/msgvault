@@ -148,14 +148,14 @@ func TestImportEmlxFatalUnclosedPlaceholderPreservesRaw(t *testing.T) {
 	for range 2 {
 		result, err := ImportEmlxDir(t.Context(), st, root, EmlxImportOptions{Identifier: "owner@example.test"})
 		r.NoError(err)
-		a.True(result.HardErrors)
-		a.Positive(result.Errors)
-		a.Zero(countEmlxLedgerEntries(t, st, result.SourceID, "emlx-occurrence", "imported"))
-		a.Zero(countEmlxLedgerEntries(t, st, result.SourceID, "emlx-target", "imported"))
+		a.False(result.HardErrors)
+		a.Zero(result.Errors, "fatal MIME completes with salvaged headers")
+		a.Equal(1, countEmlxLedgerEntries(t, st, result.SourceID, "emlx-occurrence", "imported"))
+		a.Equal(1, countEmlxLedgerEntries(t, st, result.SourceID, "emlx-target", "imported"))
 		var mid int64
 		r.NoError(st.DB().QueryRow("SELECT id FROM messages").Scan(&mid))
 		archived, err := st.GetMessageRawContext(t.Context(), mid)
 		r.NoError(err)
-		a.Equal(msg.Raw, archived, "strict failure must still preserve restore-attempted raw")
+		a.Equal(msg.Raw, archived, "salvage must preserve restore-attempted raw")
 	}
 }

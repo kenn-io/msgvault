@@ -52,7 +52,7 @@ func TestImportEmlxDir_DiscoveryPermissions(t *testing.T) {
 			require.NotNil(summary)
 			assert.Equal(int64(1), summary.MessagesAdded)
 			assert.Equal(int64(1), summary.Errors)
-			assert.True(summary.HardErrors)
+			assert.False(summary.HardErrors)
 			assert.Contains(logs.String(), "WARN")
 			assert.Contains(logs.String(), blocked)
 			var errorsCount int64

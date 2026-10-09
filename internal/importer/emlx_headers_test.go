@@ -71,7 +71,7 @@ func TestImportEmlxLinksReplyRegardlessOfOrder(t *testing.T) {
 	}
 }
 
-func TestImportEmlxRepairsMissingMessageIDOnReimport(t *testing.T) {
+func TestImportEmlxFullReconcileRepairsMissingMessageID(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st, tmp := openTestStore(t)
@@ -123,9 +123,11 @@ func TestImportEmlxRepairsMissingMessageIDOnReimport(t *testing.T) {
 		return result
 	}
 	originalContent := snapshot()
-	before, err := st.DerivedDataRevision()
-	requirements.NoError(err)
-	result, err := ImportEmlxDir(t.Context(), st, root, opts)
+	// A completed receipt is a cache hint: full reconciliation repairs archive
+	// changes made behind it.
+	reconcile := opts
+	reconcile.FullReconcile = true
+	result, err := ImportEmlxDir(t.Context(), st, root, reconcile)
 	requirements.NoError(err)
 	assertions.Equal(int64(0), result.MessagesAdded)
 	var gotID int64
@@ -137,7 +139,6 @@ func TestImportEmlxRepairsMissingMessageIDOnReimport(t *testing.T) {
 	assertions.JSONEq(`{"other":"keep"}`, metadata)
 	after, err := st.DerivedDataRevision()
 	requirements.NoError(err)
-	assertions.Greater(after, before)
 	_, err = ImportEmlxDir(t.Context(), st, root, opts)
 	requirements.NoError(err)
 	again, err := st.DerivedDataRevision()
@@ -191,10 +192,11 @@ func TestImportEmlxReplyPhaseRevisitsChangedOccurrences(t *testing.T) {
 	assertions.True(resumed.WasResumed)
 	assertions.Equal(int64(1), resumed.MessagesProcessed)
 	assertions.Equal(int64(1), resumed.Errors)
-	assertions.True(resumed.HardErrors)
+	assertions.False(resumed.HardErrors)
+	assertions.Zero(countEmlxLedgerEntries(t, st, first.SourceID, "emlx-occurrence", "imported"))
 	var status string
 	requirements.NoError(st.DB().QueryRow(`SELECT status FROM sync_runs ORDER BY id DESC LIMIT 1`).Scan(&status))
-	assertions.Equal(store.SyncStatusFailed, status)
+	assertions.Equal(store.SyncStatusCompleted, status, "an unreadable file does not fail the run")
 }
 
 func TestImportEmlxHeaderFailureDoesNotLoseAttachmentsOnResume(t *testing.T) {

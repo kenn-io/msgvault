@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"fmt"
 	"log/slog"
@@ -168,7 +169,7 @@ func TestImportEmlxFTSFailureRemainsRetryable(t *testing.T) {
 	requirements.NoError(err)
 	summary, err := ImportEmlxDir(t.Context(), st, root, opts)
 	requirements.NoError(err)
-	assertions.True(summary.HardErrors, "committed raw does not complete failed FTS work")
+	assertions.False(summary.HardErrors, "a search-index failure is retryable, not a failed run")
 	assertions.Positive(summary.Errors)
 	assertions.Zero(countEmlxLedgerEntries(t, st, summary.SourceID, "emlx-occurrence", "imported"))
 	assertions.Zero(countEmlxLedgerEntries(t, st, summary.SourceID, "emlx-target", "imported"))
@@ -196,9 +197,10 @@ func TestImportEmlxFTSFailureRemainsRetryable(t *testing.T) {
 	assertions.Equal(1, countEmlxLedgerEntries(t, st, summary.SourceID, "emlx-target", "imported"))
 }
 
-// EMLX framing can be valid while MIME parsing is fatally incomplete. Preserve
-// salvage/raw without claiming the missing body and attachment work completed.
-func TestImportEmlxFatalMIMEDoesNotComplete(t *testing.T) {
+// EMLX framing can be valid while MIME parsing is fatally incomplete. The same
+// bytes always fail the same way, so the archived raw and salvaged headers
+// complete the file instead of failing every later run.
+func TestImportEmlxFatalMIMECompletesWithSalvage(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st, tmp := openTestStore(t)
@@ -214,23 +216,36 @@ func TestImportEmlxFatalMIMEDoesNotComplete(t *testing.T) {
 	salvaged, parseErr := mime.ParseWithRecovery(raw, "")
 	requirements.Error(parseErr, "fixture must reach fatal MIME recovery rather than a nonfatal warning")
 	requirements.NotNil(salvaged)
-	mkMailboxDir(t, root, map[string][]byte{"1.emlx": raw})
-	summary, err := ImportEmlxDir(t.Context(), st, root, EmlxImportOptions{Identifier: "owner@example.test"})
+	reply := email.NewMessage().From("sender@example.test").Header("Message-ID", "<reply@example.test>").
+		Header("In-Reply-To", "<malformed-import@example.test>").Subject("Synthetic reply").Body("reply").Bytes()
+	mkMailboxDir(t, root, map[string][]byte{"1.emlx": raw, "2.emlx": reply})
+	opts := EmlxImportOptions{Identifier: "owner@example.test"}
+	summary, err := ImportEmlxDir(t.Context(), st, root, opts)
 	requirements.NoError(err)
-	assertions.True(summary.HardErrors)
-	assertions.Positive(summary.Errors)
-	assertions.Zero(countEmlxLedgerEntries(t, st, summary.SourceID, "emlx-occurrence", "imported"))
-	assertions.Zero(countEmlxLedgerEntries(t, st, summary.SourceID, "emlx-target", "imported"))
+	assertions.False(summary.HardErrors)
+	assertions.Zero(summary.Errors)
+	assertions.Equal(2, countEmlxLedgerEntries(t, st, summary.SourceID, "emlx-occurrence", "imported"))
+	var status string
+	requirements.NoError(st.DB().QueryRow(`SELECT status FROM sync_runs ORDER BY id DESC LIMIT 1`).Scan(&status))
+	assertions.Equal(store.SyncStatusCompleted, status)
 
 	var messageID int64
 	var subject, rfcID string
-	requirements.NoError(st.DB().QueryRow(`SELECT id, subject, rfc822_message_id FROM messages`).
-		Scan(&messageID, &subject, &rfcID))
+	requirements.NoError(st.DB().QueryRow(`SELECT id, subject, rfc822_message_id FROM messages
+ WHERE rfc822_message_id = 'malformed-import@example.test'`).Scan(&messageID, &subject, &rfcID))
 	assertions.Equal("Synthetic malformed import", subject)
-	assertions.Equal("malformed-import@example.test", rfcID)
 	archived, err := st.GetMessageRawContext(t.Context(), messageID)
 	requirements.NoError(err)
 	assertions.Equal(raw, archived)
+	var parent sql.NullInt64
+	requirements.NoError(st.DB().QueryRow(`SELECT reply_to_message_id FROM messages WHERE subject = 'Synthetic reply'`).
+		Scan(&parent))
+	assertions.Equal(sql.NullInt64{Int64: messageID, Valid: true}, parent, "reply resolution still runs")
+
+	again, err := ImportEmlxDir(t.Context(), st, root, opts)
+	requirements.NoError(err)
+	assertions.Zero(again.Errors)
+	assertions.Equal(int64(2), again.FilesUnchanged, "a salvaged file is not reread")
 }
 
 func TestImportEmlxPolicyChangeRetriesAttachmentStorage(t *testing.T) {
@@ -422,7 +437,8 @@ func TestImportEmlxSharedTargetRecoversCurrentRaw(t *testing.T) {
 				requirements.NoError(err)
 				failed, err := ImportEmlxDir(t.Context(), st, rootB, opts)
 				requirements.NoError(err)
-				assertions.True(failed.HardErrors)
+				assertions.False(failed.HardErrors)
+				assertions.Positive(failed.Errors)
 				originalHash := sha256.Sum256(raw)
 				sourceMessageID := "emlx-" + hex.EncodeToString(originalHash[:])
 				var messageID int64
@@ -831,7 +847,8 @@ func TestImportEmlxPostReadMutationRemainsRetryable(t *testing.T) {
 	}
 	first, err := importEmlxDir(t.Context(), st, root, opts, io)
 	r.NoError(err)
-	a.True(first.HardErrors)
+	a.False(first.HardErrors)
+	a.Positive(first.Errors)
 	a.Zero(countEmlxLedgerEntries(t, st, first.SourceID, "emlx-occurrence", "imported"))
 	retried, err := ImportEmlxDir(t.Context(), st, root, opts)
 	r.NoError(err)
@@ -851,8 +868,6 @@ func TestImportEmlxReconcileBypassesDifferentRoot(t *testing.T) {
 	r.NoError(err)
 	r.NoError(st.UpdateSyncCheckpoint(run, &store.Checkpoint{PageToken: `{"root_dir":"/obsolete","phase":"unknown","mailbox_index":-99,"reply_after_id":-99}`}))
 	r.NoError(st.FailSync(run, "synthetic interruption"))
-	_, err = ImportEmlxDir(t.Context(), st, root, opts)
-	r.Error(err)
 	opts.FullReconcile = true
 	fresh, err := ImportEmlxDir(t.Context(), st, root, opts)
 	r.NoError(err)
@@ -878,7 +893,8 @@ func TestImportEmlxMergedBudgetRemainsRetryable(t *testing.T) {
 			cacheAttachment(t, root, "2", "3", "two.bin", newPart)
 			limited, err := ImportEmlxDir(t.Context(), st, root, opts)
 			r.NoError(err)
-			a.True(limited.HardErrors)
+			a.False(limited.HardErrors)
+			a.Positive(limited.Errors)
 			a.Equal(1, countEmlxLedgerEntries(t, st, first.SourceID, "emlx-occurrence", "imported"))
 			var mid int64
 			r.NoError(st.DB().QueryRow("SELECT id FROM messages").Scan(&mid))
@@ -961,7 +977,8 @@ func TestImportEmlxSingleOccurrenceShrinkingReplacement(t *testing.T) {
 	cacheAttachment(t, root, "1", "2", "one.bin", newFirst)
 	changed, err := ImportEmlxDir(t.Context(), st, root, opts)
 	r.NoError(err)
-	a.True(changed.HardErrors, "first replacement still cannot fit; feasible later parts must nevertheless progress")
+	a.False(changed.HardErrors)
+	a.Positive(changed.Errors, "first replacement still cannot fit; feasible later parts must nevertheless progress")
 	var mid int64
 	r.NoError(st.DB().QueryRow("SELECT id FROM messages").Scan(&mid))
 	current, err := st.GetMessageRawContext(t.Context(), mid)
@@ -975,7 +992,8 @@ func TestImportEmlxSingleOccurrenceShrinkingReplacement(t *testing.T) {
 	a.Zero(countEmlxLedgerEntries(t, st, first.SourceID, "emlx-occurrence", "imported"))
 	retry, err := ImportEmlxDir(t.Context(), st, root, opts)
 	r.NoError(err)
-	a.True(retry.HardErrors)
+	a.False(retry.HardErrors)
+	a.Positive(retry.Errors)
 	retained, err := st.GetMessageRawContext(t.Context(), mid)
 	r.NoError(err)
 	a.Equal(current, retained, "feasible parts stay archived on a same-budget retry")
