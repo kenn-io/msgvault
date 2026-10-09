@@ -1,7 +1,7 @@
 # MCP Events — Design
 
 Status: design record for the Phase 1 implementation, which uses API schema
-3.10.0. The design was reviewed before implementation. The
+3.11.0. The design was reviewed before implementation. The
 [MCP guide](../usage/chat.md#events) owns current operating instructions.
 Phase 2 reader and recovery gates remain unbuilt.
 
