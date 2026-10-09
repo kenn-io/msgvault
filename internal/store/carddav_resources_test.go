@@ -1,12 +1,16 @@
 package store_test
 
 import (
+	"bytes"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/internal/vcard"
+	"go.kenn.io/msgvault/internal/vcardmap"
 )
 
 func newCardDAVResourceStore(t *testing.T) (*store.Store, store.CardDAVAccount, store.CardDAVAddressBook) {
@@ -1013,6 +1017,84 @@ func TestCardDAVApplyFenceRollsBackWholePlan(t *testing.T) {
 	books, listErr := st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
 	require.NoError(listErr)
 	assert.Empty(t, books[0].SyncToken)
+}
+
+func TestCardDAVApplyMissingOwnerConflictCaptureRollsBackWholePlan(t *testing.T) {
+	require := require.New(t)
+	st, account, book := newCardDAVResourceStore(t)
+	ordinary := remoteResource(book.CanonicalURL+"ordinary.vcf", "00000000-0000-4000-8000-000000000001", "Ordinary", "source@example.test", `"one"`)
+	protected := remoteResource(book.CanonicalURL+"protected.vcf", "00000000-0000-4000-8000-000000000002", "Protected", "import@example.test", `"one"`)
+	_, err := st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
+		AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration,
+		SyncRevision: book.SyncRevision, NextSyncToken: "before",
+		Upserts: []store.CardDAVRemoteResource{ordinary, protected},
+	})
+	require.NoError(err)
+	mapping, err := st.GetCardDAVResourceContext(t.Context(), book.ID, protected.Href)
+	require.NoError(err)
+	require.NotNil(mapping.PersonID)
+	_, err = st.AddPersonContactPointContext(t.Context(), *mapping.PersonID, store.PersonContactPointInput{
+		AddressKind: store.ContactAddressEmail, OriginalValue: "local@example.test",
+		Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
+	})
+	require.NoError(err)
+	snapshot, err := st.LoadPersonVCardSnapshotContext(t.Context(), *mapping.PersonID)
+	require.NoError(err)
+	sourceRef := fmt.Sprintf("carddav:%d", book.ID)
+	envelope, err := st.GetVCardResourceEnvelopeContext(t.Context(), sourceRef, protected.Href)
+	require.NoError(err)
+	projected, err := vcardmap.ProjectPersonEnvelope(*snapshot, envelope.ResourceEnvelope)
+	require.NoError(err)
+	metadata, err := vcard.MarshalResourceMetadata(projected)
+	require.NoError(err)
+	pending, err := st.PrepareCardDAVPublicationContext(t.Context(), store.CardDAVPublicationPlan{
+		PersonID: *mapping.PersonID, Desired: true, AddressBookID: book.ID, Href: protected.Href,
+		OutgoingBody: projected.StoredBody, OutgoingEnvelopeMetadata: metadata,
+		OutgoingSemanticHash: "published", LocalHash: snapshot.Fingerprint,
+	})
+	require.NoError(err)
+	protected.RemoteBody, protected.SemanticHash, protected.RemoteETag = projected.StoredBody, "published", `"published"`
+	require.NoError(st.CommitCardDAVPublicationContext(t.Context(), store.CardDAVCanonicalMutation{Publication: *pending, Remote: protected}))
+
+	resources := make([]*store.CardDAVResource, 0, 2)
+	snapshots := make([]*store.PersonVCardSnapshot, 0, 2)
+	for _, input := range []store.CardDAVRemoteResource{ordinary, protected} {
+		resource, err := st.GetCardDAVResourceContext(t.Context(), book.ID, input.Href)
+		require.NoError(err)
+		resources = append(resources, resource)
+		native, err := st.LoadPersonVCardSnapshotContext(t.Context(), *resource.PersonID)
+		require.NoError(err)
+		require.Equal(native.Fingerprint, resource.LocalHash)
+		snapshots = append(snapshots, native)
+	}
+	books, err := st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
+	require.NoError(err)
+	beforeBook := books[0]
+	ordinary = remoteResource(ordinary.Href, ordinary.RemoteUID, "Ordinary", "changed@example.test", `"two"`)
+	ordinary.SemanticHash = "source-edit"
+	protected.RemoteBody = bytes.Replace(protected.RemoteBody, []byte("local@example.test"), []byte("edited@example.test"), 1)
+	protected.SemanticHash, protected.RemoteETag = "protected-edit", `"two"`
+	_, err = st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
+		AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration,
+		SyncRevision: beforeBook.SyncRevision, NextSyncToken: "must-not-land",
+		Upserts: []store.CardDAVRemoteResource{ordinary, protected},
+	})
+	require.ErrorIs(err, store.ErrCardDAVStalePlan)
+	for i, before := range resources {
+		after, err := st.GetCardDAVResourceContext(t.Context(), book.ID, before.Href)
+		require.NoError(err)
+		assert.Equal(t, before, after)
+		native, err := st.LoadPersonVCardSnapshotContext(t.Context(), *before.PersonID)
+		require.NoError(err)
+		assert.Equal(t, snapshots[i].Fingerprint, native.Fingerprint)
+	}
+	books, err = st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
+	require.NoError(err)
+	assert.Equal(t, beforeBook.SyncToken, books[0].SyncToken)
+	assert.Equal(t, beforeBook.SyncRevision, books[0].SyncRevision)
+	conflicts, err := st.ListCardDAVConflictsContext(t.Context(), true, store.AllCardDAVAccounts)
+	require.NoError(err)
+	assert.Empty(t, conflicts)
 }
 
 func TestCardDAVTombstoneDeletesOnlyUntouchedRemoteGovernedPerson(t *testing.T) {
