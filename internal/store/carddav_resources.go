@@ -1043,6 +1043,7 @@ func (s *Store) addCardDAVImportedProjectionTx(
 				if err != nil {
 					return err
 				}
+				incoming.NativeMappings = slices.DeleteFunc(incoming.NativeMappings, func(mapping vcard.NativeMapping) bool { return mapping.Identity.Equal(occurrence.Identity) })
 				incoming.NativeMappings = append(incoming.NativeMappings, vcard.NativeMapping{
 					Identity: occurrence.Identity, SourceRef: incoming.SourceRef, Table: personNamesTableName,
 					RowID: added.Envelope.ID, Field: "formatted", Kind: vcard.HandlingNative,

@@ -461,6 +461,8 @@ func TestKeepRemoteRebasesImportedPersonCleanupBaseline(t *testing.T) {
 		name               string
 		makeLocalChange    func(t *testing.T, st *store.Store, personID int64)
 		wantPersonRetained bool
+		publish            bool
+		remoteName         string
 	}{
 		{
 			name: "discarded imported projection edit advances cleanup baseline",
@@ -473,6 +475,19 @@ func TestKeepRemoteRebasesImportedPersonCleanupBaseline(t *testing.T) {
 					t.Context(), personID, points[0].Envelope.ID, nil,
 				))
 			},
+		},
+		{
+			name:       "removed published formatted name is restored before reconciliation",
+			publish:    true,
+			remoteName: "Alice Remote Base",
+			makeLocalChange: func(t *testing.T, st *store.Store, personID int64) {
+				t.Helper()
+				names, err := st.ListPersonNamesContext(t.Context(), personID, true)
+				require.NoError(t, err)
+				require.Len(t, names, 1)
+				require.NoError(t, st.SupersedePersonNameContext(t.Context(), personID, names[0].Envelope.ID, nil))
+			},
+			wantPersonRetained: true,
 		},
 		{
 			name: "explicit user state keeps cleanup baseline",
@@ -511,11 +526,18 @@ func TestKeepRemoteRebasesImportedPersonCleanupBaseline(t *testing.T) {
 			require.NoError(err)
 			require.NotNil(mapping.PersonID)
 			personID := *mapping.PersonID
+			if tt.publish {
+				require.NoError(service.PublishPerson(t.Context(), personID))
+			}
 			tt.makeLocalChange(t, st, personID)
 
+			remoteName := tt.remoteName
+			if remoteName == "" {
+				remoteName = "Alice Remote Retained"
+			}
 			fixture.mu.Lock()
 			fixture.body = conflictCardWithEmail(
-				"person", "Alice Remote Retained", "alice.retained@example.test",
+				"person", remoteName, "alice.retained@example.test",
 			)
 			fixture.etag = `"remote-2"`
 			fixture.mu.Unlock()
@@ -527,6 +549,23 @@ func TestKeepRemoteRebasesImportedPersonCleanupBaseline(t *testing.T) {
 			require.NoError(service.ResolveConflict(
 				t.Context(), conflicts[0].ID, ResolutionKeepRemote,
 			))
+
+			points, err := st.ListPersonContactPointsContext(t.Context(), personID, true)
+			require.NoError(err)
+			require.Len(points, 1)
+			assert.Equal(t, "alice.retained@example.test", points[0].OriginalValue)
+			resolved, err := st.GetCardDAVConflictContext(t.Context(), conflicts[0].ID)
+			require.NoError(err)
+			assert.Equal(t, store.CardDAVConflictResolved, resolved.Status)
+			envelope, err := st.GetVCardResourceEnvelopeContext(t.Context(), fmt.Sprintf("carddav:%d", book.ID), mapping.Href)
+			require.NoError(err)
+			fnMappings := 0
+			for _, native := range envelope.NativeMappings {
+				if native.Identity.OriginalName == "FN" {
+					fnMappings++
+				}
+			}
+			assert.Equal(t, 1, fnMappings)
 
 			fixture.mu.Lock()
 			fixture.body = nil
