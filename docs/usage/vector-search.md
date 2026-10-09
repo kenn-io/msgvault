@@ -267,7 +267,7 @@ The endpoint operator must bind that example alias to
 [`google/embeddinggemma-2` revision
 `914f7f89142e33e77833254d9c9b90c3cef7303b`](https://huggingface.co/google/embeddinggemma-2/tree/914f7f89142e33e77833254d9c9b90c3cef7303b)
 and a fixed tokenizer, pooling, precision and output recipe. An alias is an
-operator convention; Msgvault does not verify the loaded checkpoint through
+operator convention; msgvault does not verify the loaded checkpoint through
 HTTP. Give a changed serving recipe a new alias. Changing `model`, `dimension`
 or either prefix separates message generations and requires a full rebuild.
 Extracted document vectors have their own generation and consent policy;
@@ -284,17 +284,14 @@ before embedding an archive.
 
 Msgvault rejects wrong-width, nonfinite and zero-norm vectors. It preserves
 valid provider values, so the server must return unit-length vectors for this
-recipe. `dimension` checks response width; Msgvault neither sends an OpenAI
+recipe. `dimension` checks response width; msgvault neither sends an OpenAI
 `dimensions` request nor slices vectors. Reduced 512/256/128-dimensional
 output needs an explicitly configured serving recipe that truncates and
 L2-normalizes again, with a separate alias and matching query/document width.
 The example above covers native 768 only.
 
-The model recipe and native dimension are source-verified. Msgvault's
-configuration, literal prompts and vector validation are tested with synthetic
-HTTP responses. Actual serving, checkpoint loading, prompt handling, pooling,
-tokenization and inference remain untested. This text configuration adds no
-image, video or audio transport.
+Msgvault has not been tested against a live EmbeddingGemma 2 server. This
+setup covers text only; it adds no image, video or audio transport.
 
 ### Matching `max_input_chars` to your embedder's context window
 
