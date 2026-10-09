@@ -125,7 +125,8 @@ func (c *CardDAVController) reconcileCurrentSchedule() error {
 	configured := c.cardDAVConfigSnapshot()
 	if service != nil && configured.Provider == cardDAVProviderGoogle {
 		credential := carddav.Credential{Username: configured.Username, OAuthApp: configured.OAuthApp}
-		if _, err := c.googleOAuthManager(credential); err != nil {
+		// Only a missing or rejected grant stops the schedule; other failures retry on the next run.
+		if _, err := c.googleOAuthManager(context.Background(), credential); errors.Is(err, carddav.ErrGoogleAuthorizationRequired) {
 			service = nil
 		}
 	}
@@ -858,7 +859,7 @@ func cardDAVRunPublicFailure(code string) (string, string) {
 	case "authentication_failed":
 		return code, "CardDAV authentication failed."
 	case "google_authorization_required":
-		return code, "Google Contacts authorization is required. Connect Google in CardDAV account settings."
+		return code, "Google Contacts authorization is required. Check the selected OAuth app's client settings. Connect Google in CardDAV account settings."
 	case "microsoft_authorization_required":
 		return code, "Microsoft contacts authorization is required. Run msgvault carddav authorize-microsoft with your account email."
 	case "microsoft_contact_too_large":
@@ -946,10 +947,13 @@ func (c *CardDAVController) scopedStatus(ctx context.Context) (CardDAVStatusResp
 		return status, nil
 	}
 	if credential.Google {
-		if _, err := c.googleOAuthManager(credential); err != nil {
+		if _, err := c.googleOAuthManager(ctx, credential); err != nil {
 			status.CredentialConfigured = false
-			status.RepairReason = "google_authorization_required"
-			return status, nil //nolint:nilerr // Status reports missing Google authorization without contacting Google.
+			status.RepairReason = "credential_unavailable"
+			if errors.Is(err, carddav.ErrGoogleAuthorizationRequired) {
+				status.RepairReason = "google_authorization_required"
+			}
+			return status, nil
 		}
 	}
 	if credential.Microsoft {
@@ -1276,7 +1280,7 @@ func (s *Server) writeCardDAVAccountError(
 	case errors.Is(err, config.ErrDuplicateCardDAVAccount):
 		writeError(w, http.StatusBadRequest, "bad_request", "This CardDAV account already belongs to another connection. Use carddav connections or CardDAV settings to find and restore it.")
 	case errors.Is(err, carddav.ErrGoogleAuthorizationRequired):
-		writeError(w, http.StatusBadGateway, "google_authorization_required", "Connect Google in CardDAV settings, or run msgvault carddav authorize-google with your account email and OAuth app, then try again")
+		writeError(w, http.StatusBadGateway, "google_authorization_required", "Check the selected OAuth app's client settings. Connect Google in CardDAV settings, or run msgvault carddav authorize-google with your account email and OAuth app, then try again")
 	case errors.Is(err, carddav.ErrMicrosoftAuthorizationRequired):
 		writeError(w, http.StatusBadGateway, "microsoft_authorization_required", "Run msgvault carddav authorize-microsoft with your account email, then try again")
 	case errors.Is(err, errCardDAVValidation):
@@ -1303,7 +1307,7 @@ func (s *Server) writeCardDAVOperationError(
 	var networkErr net.Error
 	switch {
 	case errors.Is(err, carddav.ErrGoogleAuthorizationRequired):
-		writeError(w, http.StatusBadGateway, "google_authorization_required", "Connect Google in CardDAV settings, or run msgvault carddav authorize-google with your account email and OAuth app, then try again")
+		writeError(w, http.StatusBadGateway, "google_authorization_required", "Check the selected OAuth app's client settings. Connect Google in CardDAV settings, or run msgvault carddav authorize-google with your account email and OAuth app, then try again")
 	case errors.Is(err, carddav.ErrMicrosoftAuthorizationRequired):
 		writeError(w, http.StatusBadGateway, "microsoft_authorization_required", "Run msgvault carddav authorize-microsoft with your account email, then try again")
 	case errors.Is(err, carddav.ErrConnectionUnavailable):

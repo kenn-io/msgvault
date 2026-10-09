@@ -1,12 +1,14 @@
 package carddav
 
 import (
+	"context"
 	"crypto/sha256"
 	"errors"
 	"fmt"
 	"log/slog"
 	"path/filepath"
 
+	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/oauth"
 )
 
@@ -29,24 +31,30 @@ func googleTokensDir(tokensDir, app string) string {
 	return filepath.Join(tokensDir, "carddav-google", fmt.Sprintf("%x", sha256.Sum256([]byte(app))))
 }
 
-// NewGoogleOAuthManager reuses a mail/calendar authorization only when its
+// NewGoogleOAuthManagerWithCredentials reuses a mail/calendar authorization only when its
 // recorded client matches the selected app. An existing CardDAV authorization
 // takes precedence so later mail setup cannot switch the connection's token.
-func NewGoogleOAuthManager(secrets, tokensDir, app, email string, logger *slog.Logger) (*oauth.Manager, error) {
+func NewGoogleOAuthManagerWithCredentials(ctx context.Context, credentials config.OAuthApp, tokensDir string, commands config.OAuthTokenCommands, app, email string, logger *slog.Logger) (*oauth.Manager, error) {
 	scopes := []string{oauth.ScopeCardDAV, oauth.ScopeUserinfoEmail}
-	dedicated, err := oauth.NewManagerWithScopes(secrets, googleTokensDir(tokensDir, app), logger, scopes)
+	dedicated, err := oauth.NewManagerWithCredentials(ctx, credentials, googleTokensDir(tokensDir, app), commands, logger, scopes)
 	if err != nil {
 		return nil, err
 	}
-	if dedicated.HasToken(email) {
-		return dedicated, nil
+	info, err := dedicated.InspectToken(ctx, email)
+	// A malformed token file counts as absent so a matching shared grant still wins and a new sign-in can repair it.
+	if err != nil && !errors.Is(err, oauth.ErrInvalidTokenJSON) {
+		return nil, fmt.Errorf("inspect dedicated Google Contacts token: %w", err)
 	}
-	shared, err := oauth.NewManagerWithScopes(secrets, tokensDir, logger, scopes)
-	if err != nil {
-		return nil, err
+	if info.Exists {
+		return dedicated.WithTokenInfo(email, info), nil
 	}
-	if shared.TokenMatchesClient(email) {
-		return shared, nil
+	shared := dedicated.WithTokensDir(tokensDir)
+	sharedInfo, err := shared.InspectToken(ctx, email)
+	if err != nil && !errors.Is(err, oauth.ErrInvalidTokenJSON) {
+		return nil, fmt.Errorf("inspect shared Google Contacts token: %w", err)
 	}
-	return dedicated, nil
+	if sharedInfo.ClientMatches {
+		return shared.WithTokenInfo(email, sharedInfo), nil
+	}
+	return dedicated.WithTokenInfo(email, info), nil
 }

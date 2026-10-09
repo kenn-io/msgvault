@@ -2287,8 +2287,9 @@ msgvault export-token <email> [flags]
 | `--to <url>` | Remote msgvault URL (or `MSGVAULT_REMOTE_URL`) |
 | `--api-key <key>` | API key (or `MSGVAULT_REMOTE_API_KEY`) |
 | `--allow-insecure` | Allow HTTP for trusted networks (for example Tailscale) |
+| `--upload-only` | Upload the token without registering an enabled Gmail sync account |
 
-`export-token` uploads `~/.msgvault/tokens/<email>.json` to `/api/v1/auth/token/<email>`, saves it in the remote token store, and posts account metadata to `/api/v1/accounts`.
+`export-token` reads the configured local token backend, uploads the token to `/api/v1/auth/token/<email>`, and saves it through the daemon's configured token backend. Each end uses credential commands when configured, or `~/.msgvault/tokens/<email>.json` otherwise. By default, it also posts account metadata to `/api/v1/accounts`, enabling a daily Gmail sync. Use `--upload-only` when you only need to store a token, such as for Calendar-only access.
 
 ---
 

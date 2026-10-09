@@ -162,10 +162,12 @@ msgvault export-token you@gmail.com \
 
     If you ran `msgvault setup` and configured a remote server, the wizard already set `allow_insecure = true` in your local config, so `--allow-insecure` is not needed on the command line.
 
-The command uploads to `POST /api/v1/auth/token/{email}` and also posts to `POST /api/v1/accounts` to register:
+The command uploads to `POST /api/v1/auth/token/{email}` and, by default, also posts to `POST /api/v1/accounts` to register:
 
 - default sync schedule `0 2 * * *`
 - account enabled
+
+For Calendar-only access, use `msgvault export-token <email> --upload-only` to upload the token without creating a Gmail sync schedule. Then register Calendar on the server with `msgvault add-calendar <email>`.
 
 If you did not configure remote details during setup, you can also set:
 
@@ -427,4 +429,4 @@ Verify the account exists in the server config:
 curl -H "X-API-Key: YOUR_API_KEY" http://remote-host:8080/api/v1/accounts
 ```
 
-If missing, re-run `export-token`, which also posts account metadata.
+If missing, re-run `export-token` without `--upload-only`, which also posts account metadata.

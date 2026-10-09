@@ -3947,7 +3947,7 @@ func (a *schedulerAdapter) StartJob(name string) (scheduler.JobDisposition, erro
 // this is the email address, for IMAP it's the full
 // `imaps://user@host:port` URL recorded by `add-imap`, for Teams it is
 // the UPN/email recorded by `add-o365`.
-func runScheduledSync(ctx context.Context, identifier string, s *store.Store, getOAuthMgr func(string) (*oauth.Manager, error), state *invocation) error {
+func runScheduledSync(ctx context.Context, identifier string, s *store.Store, getOAuthMgr func(ctx context.Context, _ string) (*oauth.Manager, error), state *invocation) error {
 	if state == nil {
 		state = invocationFromContext(ctx)
 	}
@@ -4153,7 +4153,7 @@ func scheduledSyncPreemptible(s *store.Store, identifier string, logger *slog.Lo
 // serviceAccount reports which credentials the returned client uses.
 func newDaemonGmailClient(
 	ctx context.Context, email string, src *store.Source,
-	getOAuthMgr func(string) (*oauth.Manager, error), state *invocation,
+	getOAuthMgr func(ctx context.Context, _ string) (*oauth.Manager, error), state *invocation,
 ) (client gmail.API, serviceAccount bool, err error) {
 	if state == nil {
 		state = invocationFromContext(ctx)
@@ -4188,8 +4188,11 @@ func newDaemonGmailClient(
 			)
 		}
 	} else {
-		oauthMgr, oaErr := getOAuthMgr(appName)
+		oauthMgr, oaErr := getOAuthMgr(ctx, appName)
 		if oaErr != nil {
+			if !errors.Is(oaErr, oauth.ErrClientConfig) {
+				return nil, false, fmt.Errorf("resolve OAuth credentials for %s: %w", email, oaErr)
+			}
 			return nil, false, provideridentity.NewGmailCredentialError(
 				provideridentity.GmailOAuthConfiguration,
 				fmt.Errorf("resolve OAuth credentials for %s: %w", email, oaErr),
@@ -4206,19 +4209,14 @@ func newDaemonGmailClient(
 					"get token source: %w (transient network error; will retry on next schedule)", tsErr,
 				)
 			}
-			if oauthMgr.HasToken(email) {
-				return nil, false, provideridentity.ClassifyGmailProfileError(fmt.Errorf(
-					"get token source: %w (token may be expired; %s)",
-					tsErr, gmailReauthHint(email, accountIsNarrowed(oauthMgr, email)),
-				), false)
-			}
-			missing := fmt.Errorf("get token source: %w (run 'msgvault add-account %s' first)", tsErr, email)
 			if errors.Is(tsErr, os.ErrNotExist) {
-				return nil, false, provideridentity.NewGmailCredentialError(
-					provideridentity.GmailTokenMissing, missing,
-				)
+				return nil, false, provideridentity.NewGmailCredentialError(provideridentity.GmailTokenMissing,
+					fmt.Errorf("get token source: %w (run 'msgvault add-account %s' first)", tsErr, email))
 			}
-			return nil, false, missing
+			if isAuthInvalidError(tsErr) || errors.Is(tsErr, oauth.ErrTokenUnrefreshable) || errors.Is(tsErr, oauth.ErrInvalidTokenJSON) {
+				return nil, false, provideridentity.NewGmailCredentialError(provideridentity.GmailAuthorizationRevoked, fmt.Errorf("get token source: %w (token may be expired; %s)", tsErr, gmailReauthHint(email, accountIsNarrowed(ctx, oauthMgr, email))))
+			}
+			return nil, false, fmt.Errorf("get token source: %w", tsErr)
 		}
 	}
 
@@ -4234,7 +4232,7 @@ func newDaemonGmailClient(
 // getTokenSourceWithReauth) because serve runs as a daemon and cannot
 // open a browser for OAuth — the error path tells the user how to
 // re-authorize from a terminal.
-func runScheduledGmailSync(ctx context.Context, email string, src *store.Source, s *store.Store, getOAuthMgr func(string) (*oauth.Manager, error), state *invocation) (*gmail.SyncSummary, error) {
+func runScheduledGmailSync(ctx context.Context, email string, src *store.Source, s *store.Store, getOAuthMgr func(ctx context.Context, _ string) (*oauth.Manager, error), state *invocation) (*gmail.SyncSummary, error) {
 	if state == nil {
 		state = invocationFromContext(ctx)
 	}

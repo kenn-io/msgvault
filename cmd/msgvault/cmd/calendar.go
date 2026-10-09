@@ -122,16 +122,20 @@ func newAddCalendarLocalCmd() *cobra.Command {
 					oauthAppExplicit || appDecision.BindingChanged)
 			}
 
-			secretsPath, err := cfg.OAuth.ClientSecretsFor(oauthApp)
+			secretsPath, err := cfg.OAuth.CredentialsFor(oauthApp)
 			if err != nil {
 				return err
 			}
-			mgr, err := newCalendarOAuthManager(secretsPath, email, state, calAddWrite)
+			mgr, err := newCalendarOAuthManager(ctx, secretsPath, email, state, calAddWrite)
 			if err != nil {
 				return wrapOAuthError(fmt.Errorf("create oauth manager: %w", err), cfg)
 			}
-			hasToken := mgr.HasToken(email)
-			hasCalendarScope := mgr.HasScope(email, oauth.ScopeCalendarReadonly) && (!calAddWrite || mgr.HasScope(email, oauth.ScopeCalendarEvents))
+			info, err := mgr.SelectedTokenInfo(ctx, email)
+			if err != nil && mgr.CommandTokens() {
+				return err
+			}
+			hasToken := info.Exists
+			hasCalendarScope := info.HasScope(oauth.ScopeCalendarReadonly) && (!calAddWrite || info.HasScope(oauth.ScopeCalendarEvents))
 			tokenReusable := calendarAddTokenReusable(mgr, email, appDecision)
 
 			// A token that exists, carries the calendar scope, and matches the
@@ -151,7 +155,11 @@ func newAddCalendarLocalCmd() *cobra.Command {
 			// token is copied in, re-running add-calendar --headless skips this
 			// and registers the calendars (an API call that needs no browser).
 			if calAddHeadless && (!hasToken || !hasCalendarScope || !tokenReusable || tokenExpiredOrRevoked) {
-				oauth.PrintCalendarHeadlessInstructions(email, cfg.TokensDir(), oauthApp, calAddWrite)
+				if cfg.OAuth.Tokens.Enabled() {
+					printCommandHeadlessInstructions(cmd.OutOrStdout(), email, oauthApp, true, false, calAddWrite)
+				} else {
+					oauth.PrintCalendarHeadlessInstructions(email, cfg.TokensDir(), oauthApp, calAddWrite)
+				}
 				return nil
 			}
 
@@ -168,20 +176,20 @@ func newAddCalendarLocalCmd() *cobra.Command {
 				}
 			case !hasCalendarScope:
 				headline, body, cancelHint := calendarScopeEscalationPrompt(calAddWrite)
-				existingScopes := mgr.GrantedScopes(email)
+				existingScopes := info.Scopes
 				requiredScopes := calendarEscalationScopes(existingScopes,
-					calendarShouldPreserveGmail(hasToken, mgr.HasScopeMetadata(email), existingScopes), calAddWrite)
+					calendarShouldPreserveGmail(hasToken, len(info.Scopes) > 0, existingScopes), calAddWrite)
 				confirmed, err := cmd.Flags().GetBool(calScopeEscalationConfirmedFlag)
 				if err != nil {
 					return fmt.Errorf("read --%s flag: %w", calScopeEscalationConfirmedFlag, err)
 				}
 				if confirmed {
-					if err := authorizeScopeEscalation(ctx, email, requiredScopes, secretsPath); err != nil {
+					if err := authorizeScopeEscalation(ctx, email, requiredScopes, mgr); err != nil {
 						return err
 					}
 				} else {
 					if err := promptScopeEscalation(ctx, email, requiredScopes,
-						headline, body, cancelHint, secretsPath); err != nil {
+						headline, body, cancelHint, mgr); err != nil {
 						if errors.Is(err, errUserCanceled) {
 							return nil
 						}
@@ -355,16 +363,20 @@ func preflightAddCalendarAuthorize(
 	if cfg.OAuth.ServiceAccountKeyFor(oauthApp) != "" {
 		return nil
 	}
-	secretsPath, err := cfg.OAuth.ClientSecretsFor(oauthApp)
+	secretsPath, err := cfg.OAuth.CredentialsFor(oauthApp)
 	if err != nil {
 		return err
 	}
-	mgr, err := newCalendarOAuthManager(secretsPath, email, state, calAddWrite)
+	mgr, err := newCalendarOAuthManager(ctx, secretsPath, email, state, calAddWrite)
 	if err != nil {
 		return wrapOAuthError(fmt.Errorf("create oauth manager: %w", err), cfg)
 	}
-	hasToken := mgr.HasToken(email)
-	hasCalendarScope := mgr.HasScope(email, oauth.ScopeCalendarReadonly) && (!calAddWrite || mgr.HasScope(email, oauth.ScopeCalendarEvents))
+	info, err := mgr.SelectedTokenInfo(ctx, email)
+	if err != nil && mgr.CommandTokens() {
+		return err
+	}
+	hasToken := info.Exists
+	hasCalendarScope := info.HasScope(oauth.ScopeCalendarReadonly) && (!calAddWrite || info.HasScope(oauth.ScopeCalendarEvents))
 	tokenReusable := hasToken && (!needsClientCheck || mgr.TokenMatchesClient(email))
 	tokenExpiredOrRevoked := hasToken && hasCalendarScope && tokenReusable &&
 		calendarTokenExpiredOrRevoked(ctx, mgr, email)
@@ -386,10 +398,10 @@ func preflightAddCalendarAuthorize(
 		if !escalationConfirmed {
 			return nil
 		}
-		existingScopes := mgr.GrantedScopes(email)
+		existingScopes := info.Scopes
 		requiredScopes := calendarEscalationScopes(existingScopes,
-			calendarShouldPreserveGmail(hasToken, mgr.HasScopeMetadata(email), existingScopes), calAddWrite)
-		if err := authorizeScopeEscalation(ctx, email, requiredScopes, secretsPath); err != nil {
+			calendarShouldPreserveGmail(hasToken, len(info.Scopes) > 0, existingScopes), calAddWrite)
+		if err := authorizeScopeEscalation(ctx, email, requiredScopes, mgr); err != nil {
 			return err
 		}
 	case !tokenReusable:
@@ -549,24 +561,24 @@ func calendarAddOAuthScopes(preserveGmail bool, write ...bool) []string {
 	return scopes
 }
 
-func newCalendarOAuthManager(clientSecretsPath, account string, state *invocation, write ...bool) (*oauth.Manager, error) {
-	state = invocationState(context.Background(), state)
+func newCalendarOAuthManager(ctx context.Context, clientSecretsPath config.OAuthApp, account string, state *invocation, write ...bool) (*oauth.Manager, error) {
+	state = invocationState(ctx, state)
 	if state == nil || state.cfg == nil || state.logger == nil {
 		return nil, errors.New("configuration is unavailable")
 	}
 	cfg := state.cfg
 	logger := state.logger
 	account = normalizeCalendarAccountEmail(account)
-	probe, err := oauth.NewManagerWithScopes(clientSecretsPath, cfg.TokensDir(), logger, oauth.ScopesCalendar)
+	probe, err := oauth.NewManagerWithCredentials(ctx, clientSecretsPath, cfg.TokensDir(), cfg.OAuth.Tokens, logger, oauth.ScopesCalendar)
 	if err != nil {
 		return nil, err
 	}
-	existingScopes := probe.GrantedScopes(account)
-	scopes := calendarOAuthScopesForAccount(probe.HasToken(account), probe.HasScopeMetadata(account), existingScopes, write...)
-	if slices.Equal(scopes, oauth.ScopesCalendar) {
-		return probe, nil
+	info, err := probe.InspectToken(ctx, account)
+	if err != nil && probe.CommandTokens() {
+		return nil, err
 	}
-	return oauth.NewManagerWithScopes(clientSecretsPath, cfg.TokensDir(), logger, scopes)
+	scopes := calendarOAuthScopesForAccount(info.Exists, len(info.Scopes) > 0, info.Scopes, write...)
+	return probe.WithScopes(scopes).WithTokenInfo(account, info), nil
 }
 
 func calendarSyncHasFullOnlyOptions(timeMin, timeMax string, limit int) bool {
@@ -682,11 +694,11 @@ func planCLIAddCalendar(
 		}, nil
 	}
 
-	secretsPath, err := cfg.OAuth.ClientSecretsFor(oauthApp)
+	secretsPath, err := cfg.OAuth.CredentialsFor(oauthApp)
 	if err != nil {
 		return api.CLIAddCalendarPlanResponse{}, err
 	}
-	mgr, err := newCalendarOAuthManager(secretsPath, email, state, req.Write)
+	mgr, err := newCalendarOAuthManager(ctx, secretsPath, email, state, req.Write)
 	if err != nil {
 		return api.CLIAddCalendarPlanResponse{}, wrapOAuthError(fmt.Errorf("create oauth manager: %w", err), cfg)
 	}
@@ -733,20 +745,23 @@ func hasAnyScope(scopes []string, candidates []string) bool {
 	return false
 }
 
-func calendarEscalationScopesForAccount(account string, clientSecretsPath string, state *invocation) ([]string, error) {
-	state = invocationState(context.Background(), state)
+func calendarEscalationScopesForAccount(ctx context.Context, account string, clientSecretsPath config.OAuthApp, state *invocation) ([]string, error) {
+	state = invocationState(ctx, state)
 	if state == nil || state.cfg == nil || state.logger == nil {
 		return nil, errors.New("configuration is unavailable")
 	}
 	cfg := state.cfg
 	logger := state.logger
 	account = normalizeCalendarAccountEmail(account)
-	mgr, err := oauth.NewManagerWithScopes(clientSecretsPath, cfg.TokensDir(), logger, oauth.ScopesGmailCalendar)
+	mgr, err := oauth.NewManagerWithCredentials(ctx, clientSecretsPath, cfg.TokensDir(), cfg.OAuth.Tokens, logger, oauth.ScopesGmailCalendar)
 	if err != nil {
 		return nil, fmt.Errorf("create oauth manager: %w", err)
 	}
-	existingScopes := mgr.GrantedScopes(account)
-	return calendarOAuthScopesForAccount(mgr.HasToken(account), mgr.HasScopeMetadata(account), existingScopes), nil
+	info, err := mgr.InspectToken(ctx, account)
+	if err != nil && mgr.CommandTokens() {
+		return nil, err
+	}
+	return calendarOAuthScopesForAccount(info.Exists, len(info.Scopes) > 0, info.Scopes), nil
 }
 
 func calendarStoredOAuthApp(sources []*store.Source) string {
@@ -946,11 +961,11 @@ func buildCalendarClient(ctx context.Context, accountEmail, oauthApp string, int
 			return nil, err
 		}
 	} else {
-		secretsPath, err := cfg.OAuth.ClientSecretsFor(oauthApp)
+		secretsPath, err := cfg.OAuth.CredentialsFor(oauthApp)
 		if err != nil {
 			return nil, err
 		}
-		mgr, err := newCalendarOAuthManager(secretsPath, accountEmail, state, write...)
+		mgr, err := newCalendarOAuthManager(ctx, secretsPath, accountEmail, state, write...)
 		if err != nil {
 			return nil, wrapOAuthError(fmt.Errorf("create oauth manager: %w", err), cfg)
 		}

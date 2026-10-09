@@ -492,7 +492,7 @@ Or copy the file to your msgvault home directory:
 // if the root cause is a missing or unreadable secrets file.
 func wrapOAuthError(err error, cfg *config.Config) error {
 	if errors.Is(err, os.ErrNotExist) || errors.Is(err, os.ErrPermission) {
-		return fmt.Errorf("OAuth client secrets file not accessible.%s", oauthSetupHint(cfg))
+		return fmt.Errorf("OAuth client secrets file not accessible: %w%s", errors.Join(oauth.ErrClientConfig, err), oauthSetupHint(cfg))
 	}
 	return err
 }
@@ -512,7 +512,6 @@ func isAuthInvalidError(err error) bool {
 // getTokenSourceWithReauth, making the function testable without real OAuth.
 type tokenReauthorizer interface {
 	TokenSource(ctx context.Context, email string) (oauth2.TokenSource, error)
-	HasToken(email string) bool
 	Authorize(ctx context.Context, email string) error
 	AuthorizeManual(ctx context.Context, email string) error
 }
@@ -533,7 +532,11 @@ type grantInspector interface {
 // read-only. A manager that cannot report scopes, or a grant with no Gmail
 // scopes at all, is treated as not narrowed, so guidance is unchanged for
 // every pre-existing case.
-func accountIsNarrowed(mgr tokenReauthorizer, email string) bool {
+func accountIsNarrowed(ctx context.Context, mgr tokenReauthorizer, email string) bool {
+	if manager, ok := mgr.(*oauth.Manager); ok {
+		info, err := manager.InspectToken(ctx, email)
+		return err == nil && oauth.IsNarrowedGmailGrant(info.Scopes)
+	}
 	inspector, ok := mgr.(grantInspector)
 	if !ok {
 		return false
@@ -608,8 +611,8 @@ func getTokenSourceWithReauth(
 		return tokenSource, nil
 	}
 
-	// No token at all — user needs to run add-account
-	if !mgr.HasToken(email) {
+	// Missing or malformed token files need a new sign-in.
+	if errors.Is(err, os.ErrNotExist) || errors.Is(err, oauth.ErrInvalidTokenJSON) {
 		return nil, fmt.Errorf("get token source: %w (run 'add-account %s' first)", err, email)
 	}
 
@@ -626,7 +629,7 @@ func getTokenSourceWithReauth(
 	// device-code instructions instead (--force is browser-only).
 	// Read the recorded grant before any reauthorization replaces it, so the
 	// guidance reflects what the account holds now.
-	narrowed := accountIsNarrowed(mgr, email)
+	narrowed := accountIsNarrowed(ctx, mgr, email)
 
 	if !interactive {
 		return nil, fmt.Errorf(
@@ -676,10 +679,10 @@ func authorizeManualForReauth(ctx context.Context, mgr tokenReauthorizer, email 
 // oauthManagerCache returns a resolver function that lazily creates and
 // caches oauth.Manager instances keyed by app name. The cache is safe
 // for concurrent use (serve runs scheduled syncs in goroutines).
-func oauthManagerCache(state *invocation) func(appName string) (*oauth.Manager, error) {
+func oauthManagerCache(state *invocation) func(ctx context.Context, appName string) (*oauth.Manager, error) {
 	var mu sync.Mutex
 	managers := map[string]*oauth.Manager{}
-	return func(appName string) (*oauth.Manager, error) {
+	return func(ctx context.Context, appName string) (*oauth.Manager, error) {
 		mu.Lock()
 		defer mu.Unlock()
 		if mgr, ok := managers[appName]; ok {
@@ -690,11 +693,11 @@ func oauthManagerCache(state *invocation) func(appName string) (*oauth.Manager, 
 		}
 		currentCfg := state.cfg
 		currentLogger := state.logger
-		secretsPath, err := currentCfg.OAuth.ClientSecretsFor(appName)
+		secretsPath, err := currentCfg.OAuth.CredentialsFor(appName)
 		if err != nil {
-			return nil, err
+			return nil, errors.Join(oauth.ErrClientConfig, err)
 		}
-		mgr, err := oauth.NewManager(secretsPath, currentCfg.TokensDir(), currentLogger)
+		mgr, err := oauth.NewManagerWithCredentials(ctx, secretsPath, currentCfg.TokensDir(), currentCfg.OAuth.Tokens, currentLogger, oauth.Scopes)
 		if err != nil {
 			return nil, wrapOAuthError(fmt.Errorf("create oauth manager: %w", err), currentCfg)
 		}

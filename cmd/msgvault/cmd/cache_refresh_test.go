@@ -855,7 +855,7 @@ func TestScheduledCacheRefreshFailurePreservesCompletedSyncRun(t *testing.T) {
 	runScheduledBuildCacheSubprocess = func(context.Context) error { return sentinel }
 	t.Cleanup(func() { runScheduledBuildCacheSubprocess = oldRunBuild })
 
-	getOAuthMgr := func(string) (*oauth.Manager, error) {
+	getOAuthMgr := func(ctx context.Context, _ string) (*oauth.Manager, error) {
 		return nil, errors.New("unexpected Gmail OAuth path")
 	}
 	err = runScheduledSync(testCtx, identifier, st, getOAuthMgr, invocationFromContext(testCtx))

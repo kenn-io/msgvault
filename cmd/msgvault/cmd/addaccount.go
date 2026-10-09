@@ -8,10 +8,10 @@ import (
 	"io"
 	"net/mail"
 	"os"
-	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
+	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -62,7 +62,7 @@ request read access only.
 Access already granted cannot be narrowed. Re-authorizing does not revoke it,
 and revoking applies to the whole grant, so --readonly refuses an account that
 already holds Gmail write access. To make such an account read-only, revoke
-msgvault at https://myaccount.google.com/permissions, delete its token file,
+msgvault at https://myaccount.google.com/permissions, remove its token from the configured backend,
 then add it again with --readonly.
 
 For Google Workspace orgs that require their own OAuth app, use --oauth-app to
@@ -164,27 +164,27 @@ func resolveAddAccountBinding(flagApp string, flagExplicit bool, storedApp sql.N
 // list is derived from the grant on disk, so probing after deletion would find
 // nothing to preserve and quietly discard the account's Calendar/Drive access
 // along with the Gmail scopes --force meant to reset.
-func newAddAccountOAuthManager(clientSecretsPath, email string, state *invocation) (*oauth.Manager, error) {
-	state = invocationState(context.Background(), state)
+func newAddAccountOAuthManager(ctx context.Context, clientSecretsPath config.OAuthApp, email string, state *invocation) (*oauth.Manager, error) {
+	state = invocationState(ctx, state)
 	if state == nil || state.cfg == nil || state.logger == nil {
 		return nil, errors.New("configuration is unavailable")
 	}
 	cfg := state.cfg
 	logger := state.logger
-	scopeProbe, err := oauth.NewManager(clientSecretsPath, cfg.TokensDir(), logger)
+	scopeProbe, err := oauth.NewManagerWithCredentials(ctx, clientSecretsPath, cfg.TokensDir(), cfg.OAuth.Tokens, logger, oauth.Scopes)
 	if err != nil {
 		return nil, wrapOAuthError(fmt.Errorf("create oauth manager: %w", err), cfg)
+	}
+	info, err := scopeProbe.InspectToken(ctx, email)
+	if err != nil && scopeProbe.CommandTokens() {
+		return nil, err
 	}
 	oauthScopes := addAccountOAuthScopesForToken(
-		scopeProbe.HasScopeMetadata(email),
-		scopeProbe.GrantedScopes(email),
+		len(info.Scopes) > 0,
+		info.Scopes,
 		readonlyGrant,
 	)
-	mgr, err := oauth.NewManagerWithScopes(clientSecretsPath, cfg.TokensDir(), logger, oauthScopes)
-	if err != nil {
-		return nil, wrapOAuthError(fmt.Errorf("create oauth manager: %w", err), cfg)
-	}
-	return mgr, nil
+	return scopeProbe.WithScopes(oauthScopes).WithTokenInfo(email, info), nil
 }
 
 // addAccountTokenReusable reports whether the stored token can be reused
@@ -250,10 +250,17 @@ func addAccountAuthorizeError(err error, sourceExists bool) error {
 // obvious retry is refused, because the grant now carries the very write access
 // the refusal exists to catch. Warning keeps the account working and puts the
 // remedy in the operator's hands.
-func readonlyGrantWarning(mgr *oauth.Manager, email, resolvedApp string) string {
-	granted := oauth.GrantedGmailWriteScopes(mgr.GrantedScopes(email))
+func readonlyGrantWarning(ctx context.Context, mgr *oauth.Manager, email, resolvedApp string) string {
+	info, err := mgr.InspectToken(ctx, email)
+	if err != nil {
+		return fmt.Sprintf("Warning: could not verify saved Google permissions: %v", err)
+	}
+	granted := oauth.GrantedGmailWriteScopes(info.Scopes)
 	if len(granted) == 0 {
 		return ""
+	}
+	if mgr.CommandTokens() {
+		return "Warning: authorization returned Gmail write access despite --readonly. Revoke Google access and remove the token from the configured secret store before re-adding."
 	}
 	return fmt.Sprintf(
 		"Warning: authorization for %s returned Gmail write access (%s) despite --readonly.\n"+
@@ -266,11 +273,11 @@ func readonlyGrantWarning(mgr *oauth.Manager, email, resolvedApp string) string 
 }
 
 // warnOnWiderThanRequestedGrant prints the readonly grant warning, if any.
-func warnOnWiderThanRequestedGrant(out io.Writer, mgr *oauth.Manager, email, resolvedApp string) {
+func warnOnWiderThanRequestedGrant(ctx context.Context, out io.Writer, mgr *oauth.Manager, email, resolvedApp string) {
 	if !readonlyGrant {
 		return
 	}
-	if warning := readonlyGrantWarning(mgr, email, resolvedApp); warning != "" {
+	if warning := readonlyGrantWarning(ctx, mgr, email, resolvedApp); warning != "" {
 		_, _ = fmt.Fprintln(out, warning)
 	}
 }
@@ -308,6 +315,7 @@ func runAddAccountHTTP(cmd *cobra.Command, args []string) error {
 }
 
 func preflightAddAccountAuthorize(cmd *cobra.Command, email string) (bool, error) {
+	ctx := cmd.Context()
 	state := invocationFromCommand(cmd)
 	if state == nil || state.cfg == nil {
 		return false, errors.New("configuration is unavailable")
@@ -326,29 +334,29 @@ func preflightAddAccountAuthorize(cmd *cobra.Command, email string) (bool, error
 		// Service accounts mint tokens on demand; no browser involved.
 		return false, nil
 	}
-	clientSecretsPath, err := cfg.OAuth.ClientSecretsFor(binding.resolvedApp)
+	clientSecretsPath, err := cfg.OAuth.CredentialsFor(binding.resolvedApp)
 	if err != nil {
 		// Let the subprocess report the configuration error.
 		return false, nil //nolint:nilerr // deliberate: config errors surface daemon-side
 	}
-	mgr, err := newAddAccountOAuthManager(clientSecretsPath, email, state)
+	mgr, err := newAddAccountOAuthManager(ctx, clientSecretsPath, email, state)
 	if err != nil {
 		return false, err
 	}
-	if err := applyAddAccountGrantDecision(cmd.OutOrStdout(), mgr, email, binding.resolvedApp); err != nil {
+	if err := applyAddAccountGrantDecision(ctx, cmd.OutOrStdout(), mgr, email, binding.resolvedApp); err != nil {
 		return false, err
 	}
 	if forceReauth {
 		if mgr.HasToken(email) {
 			fmt.Printf("Removing existing token for %s...\n", email)
-			if err := mgr.DeleteToken(email); err != nil {
+			if err := mgr.DeleteToken(ctx, email); err != nil {
 				return false, fmt.Errorf("delete existing token: %w", err)
 			}
 		} else {
 			fmt.Printf("No existing token found for %s, proceeding with authorization.\n", email)
 		}
 	}
-	if addAccountTokenReusable(mgr, email, binding, false) {
+	if !forceReauth && addAccountTokenReusable(mgr, email, binding, false) {
 		return false, nil
 	}
 
@@ -360,7 +368,7 @@ func preflightAddAccountAuthorize(cmd *cobra.Command, email string) (bool, error
 	if err := mgr.Authorize(cmd.Context(), email); err != nil {
 		return false, addAccountAuthorizeError(err, sourceExists)
 	}
-	warnOnWiderThanRequestedGrant(cmd.OutOrStdout(), mgr, email, binding.resolvedApp)
+	warnOnWiderThanRequestedGrant(ctx, cmd.OutOrStdout(), mgr, email, binding.resolvedApp)
 	// The grant decision is a pre-authorization gate, and it has now been made
 	// for this run. The daemon request carries a runtime-token-authenticated
 	// proof so its subprocess registers the account instead of
@@ -399,6 +407,7 @@ func lookupGmailAccountBinding(ctx context.Context, email string) (sql.NullStrin
 }
 
 func runAddAccountLocal(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
 	state := invocationFromCommand(cmd)
 	if state == nil || state.cfg == nil {
 		return errors.New("configuration is unavailable")
@@ -411,7 +420,7 @@ func runAddAccountLocal(cmd *cobra.Command, args []string) error {
 	}
 
 	oauthAppExplicit := cmd.Flags().Changed("oauth-app")
-	var clientSecretsPath string
+	var clientSecretsPath config.OAuthApp
 
 	// Initialize database (in case it's new)
 	s, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
@@ -447,7 +456,11 @@ func runAddAccountLocal(cmd *cobra.Command, args []string) error {
 		if err := applyHeadlessGrantDecision(cmd, email, resolvedApp); err != nil {
 			return err
 		}
-		oauth.PrintHeadlessInstructions(email, cfg.TokensDir(), resolvedApp, readonlyGrant)
+		if cfg.OAuth.Tokens.Enabled() {
+			printCommandHeadlessInstructions(cmd.OutOrStdout(), email, resolvedApp, false, readonlyGrant)
+		} else {
+			oauth.PrintHeadlessInstructions(email, cfg.TokensDir(), resolvedApp, readonlyGrant)
+		}
 		return nil
 	}
 
@@ -522,7 +535,7 @@ func runAddAccountLocal(cmd *cobra.Command, args []string) error {
 	}
 
 	// Resolve client secrets path (standard OAuth flow)
-	clientSecretsPath, err = cfg.OAuth.ClientSecretsFor(resolvedApp)
+	clientSecretsPath, err = cfg.OAuth.CredentialsFor(resolvedApp)
 	if err != nil {
 		if !cfg.OAuth.HasAnyConfig() {
 			return errOAuthNotConfigured(cfg)
@@ -533,7 +546,7 @@ func runAddAccountLocal(cmd *cobra.Command, args []string) error {
 	// Create OAuth manager. If a scoped token already exists, preserve those
 	// grants when reauthorizing for Gmail; Google replacement consent would
 	// otherwise drop Calendar/Drive scopes from the shared token file.
-	oauthMgr, err := newAddAccountOAuthManager(clientSecretsPath, email, state)
+	oauthMgr, err := newAddAccountOAuthManager(ctx, clientSecretsPath, email, state)
 	if err != nil {
 		return err
 	}
@@ -544,7 +557,7 @@ func runAddAccountLocal(cmd *cobra.Command, args []string) error {
 	// addAccountGrantDecidedFlag.
 	grantDecided := addAccountGrantDecided(cmd)
 	if !grantDecided {
-		if err := applyAddAccountGrantDecision(cmd.OutOrStdout(), oauthMgr, email, resolvedApp); err != nil {
+		if err := applyAddAccountGrantDecision(ctx, cmd.OutOrStdout(), oauthMgr, email, resolvedApp); err != nil {
 			return err
 		}
 	}
@@ -553,7 +566,7 @@ func runAddAccountLocal(cmd *cobra.Command, args []string) error {
 	if forceReauth {
 		if oauthMgr.HasToken(email) {
 			fmt.Printf("Removing existing token for %s...\n", email)
-			if err := oauthMgr.DeleteToken(email); err != nil {
+			if err := oauthMgr.DeleteToken(ctx, email); err != nil {
 				return fmt.Errorf("delete existing token: %w", err)
 			}
 		} else {
@@ -581,7 +594,7 @@ func runAddAccountLocal(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		if grantDecided {
-			warnOnWiderThanRequestedGrant(cmd.OutOrStdout(), oauthMgr, email, resolvedApp)
+			warnOnWiderThanRequestedGrant(ctx, cmd.OutOrStdout(), oauthMgr, email, resolvedApp)
 		}
 		source, err := s.GetOrCreateSource(sourceTypeGmail, email)
 		if err != nil {
@@ -636,7 +649,7 @@ func runAddAccountLocal(cmd *cobra.Command, args []string) error {
 	if err := oauthMgr.Authorize(cmd.Context(), email); err != nil {
 		return addAccountAuthorizeError(err, existingSource != nil)
 	}
-	warnOnWiderThanRequestedGrant(cmd.OutOrStdout(), oauthMgr, email, resolvedApp)
+	warnOnWiderThanRequestedGrant(ctx, cmd.OutOrStdout(), oauthMgr, email, resolvedApp)
 
 	// Authorization succeeded — now persist the binding and source.
 	source, err := s.GetOrCreateSource(sourceTypeGmail, email)
@@ -845,14 +858,31 @@ func decideAddAccountGrant(
 // revocation at Google clears the account's grant for the client, so both
 // credentials die together — with every duplicate file removed before the
 // single re-add.
-func refuseReadonlyUnderAliasSpelling(mgr *oauth.Manager, email, resolvedApp string) error {
-	equivalents := mgr.FindEquivalentTokenEmails(email)
-	equivalents = slices.DeleteFunc(equivalents, mgr.TokenIssuedByDifferentClient)
+func refuseReadonlyUnderAliasSpelling(ctx context.Context, mgr *oauth.Manager, email, resolvedApp string) error {
+	equivalents, err := mgr.EquivalentTokenEmails(ctx, email)
+	if err != nil {
+		return fmt.Errorf("check equivalent Google credentials: %w", err)
+	}
+	var sameClient []string
+	for _, candidate := range equivalents {
+		info, err := mgr.InspectToken(ctx, candidate)
+		if err != nil && mgr.CommandTokens() {
+			return err
+		}
+		if !info.DifferentClient {
+			sameClient = append(sameClient, candidate)
+		}
+	}
+	equivalents = sameClient
 	if len(equivalents) == 0 {
 		return nil
 	}
 	flags := addAccountReadonlyRemediationFlagSuffix(resolvedApp)
-	if !mgr.HasToken(email) || mgr.TokenIssuedByDifferentClient(email) {
+	info, err := mgr.SelectedTokenInfo(ctx, email)
+	if err != nil && mgr.CommandTokens() {
+		return err
+	}
+	if !info.Exists || info.DifferentClient {
 		return fmt.Errorf(
 			"%s refers to the same Google account as %s, which has a stored token\n"+
 				"A read-only setup under a second spelling would leave that token's "+
@@ -864,6 +894,9 @@ func refuseReadonlyUnderAliasSpelling(mgr *oauth.Manager, email, resolvedApp str
 	removals := []string{"  2. rm " + oauth.ShellQuote(mgr.TokenPath(email))}
 	for _, equivalent := range equivalents {
 		removals = append(removals, "     rm "+oauth.ShellQuote(mgr.TokenPath(equivalent)))
+	}
+	if mgr.CommandTokens() {
+		removals = []string{"  2. Remove the listed account spellings from the configured secret store."}
 	}
 	return fmt.Errorf(
 		"%s and %s hold stored tokens for the same Google account\n"+
@@ -950,26 +983,29 @@ func gmailScopesIn(scopes []string) []string {
 // OAuth credentials are not configured. A read-only run with an exact or
 // equivalent stored token fails closed, because its client cannot be verified.
 func applyHeadlessGrantDecision(cmd *cobra.Command, email, resolvedApp string) error {
+	ctx := cmd.Context()
 	state := invocationFromCommand(cmd)
 	if state == nil || state.cfg == nil {
 		return errors.New("configuration is unavailable")
 	}
 	cfg := state.cfg
 	logger := state.logger
-	clientSecretsPath, err := cfg.OAuth.ClientSecretsFor(resolvedApp)
+	clientSecretsPath, err := cfg.OAuth.CredentialsFor(resolvedApp)
 	if err != nil {
 		if !readonlyGrant {
 			return nil // --headless still prints without configured credentials
 		}
-		if oauth.StoredTokenOrEquivalentExists(cfg.TokensDir(), email) {
-			return fmt.Errorf(
-				"%s has a stored token, but its Gmail access cannot be verified without OAuth client credentials: %w",
-				email, err,
-			)
+		stored := oauth.NewStoredTokenManager(cfg.TokensDir(), cfg.OAuth.Tokens)
+		exists, presenceErr := stored.TokenOrEquivalentExists(cmd.Context(), email)
+		if presenceErr != nil {
+			return presenceErr
+		}
+		if exists {
+			return fmt.Errorf("stored Google access cannot be verified without client credentials: %w", err)
 		}
 		return nil // --headless works without configured credentials for a new account
 	}
-	mgr, err := oauth.NewManager(clientSecretsPath, cfg.TokensDir(), logger)
+	mgr, err := oauth.NewManagerWithCredentials(ctx, clientSecretsPath, cfg.TokensDir(), cfg.OAuth.Tokens, logger, oauth.Scopes)
 	if err != nil {
 		// Unreadable or malformed credentials are a real problem, not the
 		// "no credentials configured" case above, and silently skipping the
@@ -977,51 +1013,39 @@ func applyHeadlessGrantDecision(cmd *cobra.Command, email, resolvedApp string) e
 		// and print nothing rather than guess.
 		return wrapOAuthError(fmt.Errorf("create oauth manager: %w", err), cfg)
 	}
-	return applyAddAccountGrantDecision(cmd.OutOrStdout(), mgr, email, resolvedApp)
+	return applyAddAccountGrantDecision(ctx, cmd.OutOrStdout(), mgr, email, resolvedApp)
 }
 
 // applyAddAccountGrantDecision reports the verdict, returning an error when
 // the run must stop. It must run before any authorization and, critically,
 // before --force deletes the token: once the token is gone there is no grant
 // left to compare against.
-func applyAddAccountGrantDecision(out io.Writer, mgr *oauth.Manager, email, resolvedApp string) error {
+func applyAddAccountGrantDecision(ctx context.Context, out io.Writer, mgr *oauth.Manager, email, resolvedApp string) error {
 	// Authorization accepts Gmail alias spellings (dots, plus-addresses,
 	// case, googlemail.com) as the same account, so a read-only decision
 	// must not treat an exact-match miss as a fresh account while an
 	// equivalent spelling holds a credential. Refused for --readonly only;
 	// default runs keep their existing behavior.
 	if readonlyGrant {
-		if err := refuseReadonlyUnderAliasSpelling(mgr, email, resolvedApp); err != nil {
+		if err := refuseReadonlyUnderAliasSpelling(ctx, mgr, email, resolvedApp); err != nil {
 			return err
 		}
 	}
-	hasToken := mgr.HasToken(email)
-	if readonlyGrant && !hasToken {
+	info, readErr := mgr.SelectedTokenInfo(ctx, email)
+	if readErr != nil && mgr.CommandTokens() {
+		return fmt.Errorf("inspect Google credential: %w", readErr)
+	}
+	hasToken := info.Exists
+	if readonlyGrant && !hasToken && !mgr.CommandTokens() {
 		tokenPath := mgr.TokenPath(email)
 		if _, err := os.Lstat(tokenPath); err == nil || !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf(
-				"%s has a stored token file that cannot be read, so its Gmail access cannot be verified\n%s",
-				email, narrowingRemedy(email, tokenPath, resolvedApp),
-			)
+			return fmt.Errorf("%s has a stored token file that cannot be read, so its Gmail access cannot be verified\n%s", email, narrowingRemedy(email, tokenPath, resolvedApp))
 		}
 	}
-	// The token's own client_id is the whole question: a grant belonging to a
-	// different client is not one --readonly could narrow. Deliberately not
-	// gated on bindingChanged, which requires an existing source row and so
-	// missed both a copied token with no row yet and an inherited binding.
-	// TokenIssuedByDifferentClient already answers conservatively, returning
-	// false when provenance is unknown.
-	freshClient := mgr.TokenIssuedByDifferentClient(email)
-	decision := decideAddAccountGrant(
-		email,
-		hasToken,
-		mgr.HasScopeMetadata(email),
-		mgr.GrantedScopes(email),
-		readonlyGrant,
-		freshClient,
-		mgr.TokenPath(email),
-		resolvedApp,
-	)
+	decision := decideAddAccountGrant(email, hasToken, len(info.Scopes) > 0, info.Scopes, readonlyGrant, info.DifferentClient, mgr.TokenPath(email), resolvedApp)
+	if decision.Err != nil && mgr.CommandTokens() {
+		return fmt.Errorf("%s: existing Google access must be revoked at https://myaccount.google.com/permissions and its token removed from the configured secret store before re-adding with --readonly%s", email, addAccountReadonlyRemediationFlagSuffix(resolvedApp))
+	}
 	if decision.Err != nil {
 		return decision.Err
 	}

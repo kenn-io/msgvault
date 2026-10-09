@@ -150,12 +150,17 @@ func runSyncIncrementalLocal(cmd *cobra.Command, args []string) error {
 				}
 				// Service accounts are always ready
 				if saKey := cfg.OAuth.ServiceAccountKeyFor(appName); saKey == "" {
-					mgr, mgrErr := getOAuthMgr(appName)
+					mgr, mgrErr := getOAuthMgr(ctx, appName)
 					if mgrErr != nil {
 						syncErrors = append(syncErrors, fmt.Sprintf("%s: %v", src.Identifier, mgrErr))
 						continue
 					}
-					if !mgr.HasToken(src.Identifier) {
+					info, readErr := mgr.InspectToken(cmd.Context(), src.Identifier)
+					if readErr != nil && mgr.CommandTokens() {
+						syncErrors = append(syncErrors, fmt.Sprintf("%s: %v", src.Identifier, readErr))
+						continue
+					}
+					if !info.Exists {
 						fmt.Printf("Skipping %s (no OAuth token - run 'add-account' first)\n", src.Identifier)
 						continue
 					}
@@ -249,7 +254,7 @@ func runSyncIncrementalLocal(cmd *cobra.Command, args []string) error {
 	return cacheErr
 }
 
-func runIncrementalSync(ctx context.Context, s *store.Store, getOAuthMgr func(string) (*oauth.Manager, error), source *store.Source, state *invocation) error {
+func runIncrementalSync(ctx context.Context, s *store.Store, getOAuthMgr func(ctx context.Context, _ string) (*oauth.Manager, error), source *store.Source, state *invocation) error {
 	if state == nil {
 		state = invocationFromContext(ctx)
 	}
@@ -277,7 +282,7 @@ func runIncrementalSync(ctx context.Context, s *store.Store, getOAuthMgr func(st
 			return tsErr
 		}
 	} else {
-		oauthMgr, oaErr := getOAuthMgr(appName)
+		oauthMgr, oaErr := getOAuthMgr(ctx, appName)
 		if oaErr != nil {
 			return oaErr
 		}

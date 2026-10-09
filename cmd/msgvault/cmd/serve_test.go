@@ -2846,11 +2846,11 @@ func TestRunScheduledGmailSync_ReauthGuidance(t *testing.T) {
 			defer restore()
 			cfg = testConfigValue()
 			cfg.OAuth.ClientSecrets = filepath.Join(filepath.Dir(filepath.Dir(tokenPath)), "client_secret.json")
-			mgr, err := oauth.NewManager(cfg.OAuth.ClientSecrets, cfg.TokensDir(), logger)
+			mgr, err := oauth.NewManagerWithCredentials(t.Context(), config.OAuthApp{ClientSecrets: cfg.OAuth.ClientSecrets}, cfg.TokensDir(), config.OAuthTokenCommands{}, logger, oauth.Scopes)
 			require.NoError(err)
 			scheduledCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 			_, err = runScheduledGmailSync(scheduledCtx, scopeEscalationAccount, nil, nil,
-				func(string) (*oauth.Manager, error) { return mgr, nil }, invocationFromContext(scheduledCtx))
+				func(ctx context.Context, _ string) (*oauth.Manager, error) { return mgr, nil }, invocationFromContext(scheduledCtx))
 			require.Error(err)
 			assert.Contains(err.Error(), "msgvault add-account user@example.com"+tc.flags+" --force")
 			assert.Contains(err.Error(), "msgvault add-account user@example.com"+tc.flags+" --headless")
@@ -2874,9 +2874,9 @@ func TestDaemonGmailClientUsesSourceCredentialsWithoutScopeUpgrade(t *testing.T)
 		cfg.OAuth.Apps = map[string]config.OAuthApp{"archive": {ClientSecrets: cfg.OAuth.ClientSecrets}}
 		source := &store.Source{SourceType: "gmail", Identifier: scopeEscalationAccount, OAuthApp: sql.NullString{String: "archive", Valid: true}}
 		var selected string
-		client, _, err := newDaemonGmailClient(ctx, source.Identifier, source, func(app string) (*oauth.Manager, error) {
+		client, _, err := newDaemonGmailClient(ctx, source.Identifier, source, func(ctx context.Context, app string) (*oauth.Manager, error) {
 			selected = app
-			return oauth.NewManager(cfg.OAuth.Apps[app].ClientSecrets, cfg.TokensDir(), logger)
+			return oauth.NewManagerWithCredentials(t.Context(), config.OAuthApp{ClientSecrets: cfg.OAuth.Apps[app].ClientSecrets}, cfg.TokensDir(), config.OAuthTokenCommands{}, logger, oauth.Scopes)
 		}, invocationFromContext(ctx))
 		require.NoError(err)
 		t.Cleanup(func() { _ = client.Close() })
@@ -2895,7 +2895,7 @@ func TestDaemonGmailClientUsesSourceCredentialsWithoutScopeUpgrade(t *testing.T)
 		cfg.OAuth.Apps = map[string]config.OAuthApp{"delegated": {ServiceAccountKey: filepath.Join(t.TempDir(), "missing-key.json")}}
 		source := &store.Source{SourceType: "gmail", Identifier: scopeEscalationAccount, OAuthApp: sql.NullString{String: "delegated", Valid: true}}
 		called := false
-		client, _, err := newDaemonGmailClient(ctx, source.Identifier, source, func(string) (*oauth.Manager, error) {
+		client, _, err := newDaemonGmailClient(ctx, source.Identifier, source, func(ctx context.Context, _ string) (*oauth.Manager, error) {
 			called = true
 			return nil, errors.New("unexpected OAuth fallback")
 		}, invocationFromContext(ctx))
@@ -2911,17 +2911,23 @@ func TestDaemonGmailClientUsesSourceCredentialsWithoutScopeUpgrade(t *testing.T)
 func TestDaemonGmailClientCredentialFailures(t *testing.T) {
 	// Token fixtures set process environment; keep these cases sequential.
 	for _, tc := range []struct {
-		name, providerCode, remediation string
-		removeToken                     bool
+		name, providerCode, remediation, tokenJSON string
+		removeToken                                bool
 	}{
-		{"missing token", "", "msgvault add-account", true},
-		{"revoked token", "invalid_grant", "expired or been revoked", false},
-		{"unexpected provider error", "server_error", "", false},
+		{"missing token", "", "msgvault add-account", "", true},
+		{"revoked token", "invalid_grant", "expired or been revoked", "", false},
+		{"expired without refresh token", "", "expired or been revoked", `{"access_token":"expired","expiry":"2000-01-01T00:00:00Z"}`, false},
+		{"malformed file token", "", "expired or been revoked", "{", false},
+		{"unexpected provider error", "server_error", "", "", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
-			tokenPath, restore := seedTokenEnv(t, `{"access_token":"expired","refresh_token":"synthetic-refresh","expiry":"2000-01-01T00:00:00Z"}`)
+			tokenJSON := tc.tokenJSON
+			if tokenJSON == "" {
+				tokenJSON = `{"access_token":"expired","refresh_token":"synthetic-refresh","expiry":"2000-01-01T00:00:00Z"}`
+			}
+			tokenPath, restore := seedTokenEnv(t, tokenJSON)
 			defer restore()
 			cfg := testConfigValue()
 			cfg.OAuth.ClientSecrets = filepath.Join(filepath.Dir(filepath.Dir(tokenPath)), "client_secret.json")
@@ -2998,7 +3004,7 @@ func TestRunScheduledIMAPSync_NoCredentials(t *testing.T) {
 
 	// getOAuthMgr is only invoked on the Gmail path; fail loudly so
 	// any wrong-path dispatch is obvious.
-	getOAuthMgr := func(app string) (*oauth.Manager, error) {
+	getOAuthMgr := func(ctx context.Context, app string) (*oauth.Manager, error) {
 		assert.Fail("Gmail OAuth manager unexpectedly requested for IMAP source", "app=%q", app)
 		// Unreachable: the assert.Fail above already failed the test; the
 		// return only satisfies the signature.
@@ -3045,7 +3051,7 @@ func TestRunScheduledIMAPSync_DispatchByDisplayName(t *testing.T) {
 	require.NoError(err, "create imap source")
 	require.NoError(s.UpdateSourceDisplayName(src.ID, imapEmail), "set display_name")
 
-	getOAuthMgr := func(app string) (*oauth.Manager, error) {
+	getOAuthMgr := func(ctx context.Context, app string) (*oauth.Manager, error) {
 		assert.Fail("Gmail OAuth manager unexpectedly requested for IMAP source", "app=%q", app)
 		// Unreachable: the assert.Fail above already failed the test; the
 		// return only satisfies the signature.
@@ -3101,7 +3107,7 @@ func TestRunScheduledIMAPSync_DefaultIdentityIsDisplayName(t *testing.T) {
 	), "set sync_config")
 	require.NoError(imaplib.SaveCredentials(cfg.TokensDir(), imapID, "unused"), "save credentials")
 
-	getOAuthMgr := func(app string) (*oauth.Manager, error) {
+	getOAuthMgr := func(ctx context.Context, app string) (*oauth.Manager, error) {
 		assert.Fail("Gmail OAuth manager unexpectedly requested", "app=%q", app)
 		// Unreachable: the assert.Fail above already failed the test; the
 		// return only satisfies the signature.
@@ -3271,7 +3277,7 @@ func TestRunScheduledSyncUsesSharedDiscordImporterAndRebuildsOnce(t *testing.T) 
 		return nil
 	}
 
-	err = runScheduledSync(testCtx, source.Identifier, st.Store, func(string) (*oauth.Manager, error) {
+	err = runScheduledSync(testCtx, source.Identifier, st.Store, func(ctx context.Context, _ string) (*oauth.Manager, error) {
 		require.FailNow("Discord scheduled sync must not resolve Gmail OAuth")
 		return nil, errors.New("unreachable Gmail OAuth resolution")
 	}, invocationFromContext(testCtx))
@@ -3308,7 +3314,7 @@ func TestRunScheduledSyncStopsAfterYield(t *testing.T) {
 		return nil
 	}
 
-	err = runScheduledSync(ctx, source.Identifier, st.Store, func(string) (*oauth.Manager, error) {
+	err = runScheduledSync(ctx, source.Identifier, st.Store, func(ctx context.Context, _ string) (*oauth.Manager, error) {
 		return nil, errors.New("unexpected Gmail OAuth resolution")
 	}, testInvocationWithConfig(testConfigValue()))
 	require.ErrorIs(err, scheduler.ErrYieldedToWaiter)
@@ -3362,7 +3368,7 @@ func TestRunScheduledSyncCooperativePreemptionPreservesSourceResult(t *testing.T
 
 			ctx, requestPreemption := jobctx.WithPreemption(context.Background())
 			requestPreemption()
-			err = runScheduledSync(ctx, source.Identifier, st.Store, func(string) (*oauth.Manager, error) {
+			err = runScheduledSync(ctx, source.Identifier, st.Store, func(ctx context.Context, _ string) (*oauth.Manager, error) {
 				require.FailNow("Discord scheduled sync must not resolve Gmail OAuth")
 				return nil, errors.New("unreachable Gmail OAuth resolution")
 			}, testInvocationWithConfig(testConfigValue()))
@@ -3424,7 +3430,7 @@ func TestRunScheduledSyncLogsDiscordImportIssues(t *testing.T) {
 
 	require.NoError(runScheduledSync(
 		testCtx, source.Identifier, st.Store,
-		func(string) (*oauth.Manager, error) {
+		func(ctx context.Context, _ string) (*oauth.Manager, error) {
 			require.FailNow("Discord scheduled sync must not resolve Gmail OAuth")
 			return nil, errors.New("unreachable")
 		},
@@ -3494,7 +3500,7 @@ func TestScheduledDiscordGuildFailureDoesNotBlockLaterGuild(t *testing.T) {
 	completed := make(chan string, 2)
 	sched := scheduler.New(func(ctx context.Context, identifier string) error {
 		scheduledCtx := testInvocationContext(ctx, cfg, invocationOptions{})
-		err := runScheduledSync(scheduledCtx, identifier, st.Store, func(string) (*oauth.Manager, error) {
+		err := runScheduledSync(scheduledCtx, identifier, st.Store, func(ctx context.Context, _ string) (*oauth.Manager, error) {
 			return nil, errors.New("unreachable Gmail OAuth resolution")
 		}, invocationFromContext(scheduledCtx))
 		completed <- identifier
