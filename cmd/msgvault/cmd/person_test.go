@@ -43,6 +43,116 @@ func TestWriteCLIPersonSanitizesTerminalControls(t *testing.T) {
 	assert.Contains(stdout.String(), "Alice Example")
 }
 
+func TestPersonGetLooksUpVCardUIDAndJSONIncludesCardDAVBindings(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	const uid = "urn:uuid:77822e26-3cd5-40d0-a0fd-6f0ff63b204b"
+	var requestedPath string
+	var requestedUID string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestedPath = r.URL.Path
+		requestedUID = r.URL.Query().Get("uid")
+		assert.Equal(http.MethodGet, r.Method)
+		if r.URL.Path == "/api/v1/health" {
+			w.Header().Set("Content-Type", "application/json")
+			_, err := w.Write([]byte(`{"status":"ok","api_schema_version":"3.6.0"}`))
+			assert.NoError(err)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, err := w.Write([]byte(`{
+			"id":7,"vcard_uid":"person-7","revision":2,"participant_ids":[],
+			"carddav_bindings":[{"connection":"personal","book":"Personal",
+			"href":"https://contacts.example.test/book/person.vcf","remote_uid":"` + uid + `",
+			"mapping_status":"mapped"}],
+			"created_at":"2026-07-29T12:00:00Z","updated_at":"2026-07-29T12:00:00Z"
+		}`))
+		assert.NoError(err)
+	}))
+	t.Cleanup(server.Close)
+	testCtx := withStoreResolverConfig(t, &config.Config{
+		Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
+	})
+	savedJSON := personJSON
+	personJSON = true
+	t.Cleanup(func() { personJSON = savedJSON })
+
+	var lookupUID string
+	command := &cobra.Command{
+		Use: personGetCmd.Use, Args: personGetCmd.Args, RunE: personGetCmd.RunE,
+	}
+	command.Flags().StringVar(&lookupUID, "vcard-uid", "", "")
+	command.SetContext(testCtx)
+	command.SetArgs([]string{"--vcard-uid", uid})
+	var stdout bytes.Buffer
+	command.SetOut(&stdout)
+	require.NoError(command.Execute())
+	assert.Equal(uid, lookupUID)
+	assert.Equal("/api/v1/people/by-uid", requestedPath)
+	assert.Equal(uid, requestedUID)
+	assert.JSONEq(`{"id":7,"vcard_uid":"person-7","revision":2,"participant_ids":[],`+
+		`"carddav_bindings":[{"connection":"personal","book":"Personal",`+
+		`"href":"https://contacts.example.test/book/person.vcf","remote_uid":"`+uid+`",`+
+		`"mapping_status":"mapped"}],"created_at":"2026-07-29T12:00:00Z",`+
+		`"updated_at":"2026-07-29T12:00:00Z"}`, stdout.String())
+}
+
+func TestPersonGetByUIDRequiresCurrentDaemonSchema(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	var uidLookups atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/health" {
+			w.Header().Set("Content-Type", "application/json")
+			_, err := w.Write([]byte(`{"status":"ok","api_schema_version":"3.5.0"}`))
+			assert.NoError(err)
+			return
+		}
+		if r.URL.Path == "/api/v1/people/by-uid" {
+			uidLookups.Add(1)
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(server.Close)
+	testCtx := withStoreResolverConfig(t, &config.Config{
+		Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
+	})
+	command := &cobra.Command{
+		Use: personGetCmd.Use, Args: personGetCmd.Args, RunE: personGetCmd.RunE,
+	}
+	command.Flags().String("vcard-uid", "", "")
+	command.SetContext(testCtx)
+	command.SetArgs([]string{"--vcard-uid", "urn:uuid:person-example"})
+	err := command.Execute()
+	require.Error(err)
+	assert.Contains(err.Error(), "daemon API schema 3.6.0 or newer")
+	assert.Zero(uidLookups.Load(), "the unsupported route must not be sent to an older daemon")
+}
+
+func TestPersonGetRejectsInvalidIDBeforeOpeningDaemonConnection(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(server.Close)
+	testCtx := withStoreResolverConfig(t, &config.Config{
+		Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
+	})
+	command := &cobra.Command{
+		Use: personGetCmd.Use, Args: personGetCmd.Args, RunE: personGetCmd.RunE,
+	}
+	command.Flags().String("vcard-uid", "", "")
+	command.SetContext(testCtx)
+	command.SetArgs([]string{"0"})
+	err := command.Execute()
+	require.Error(err)
+	assert.Contains(err.Error(), "person ID must be a positive integer")
+	assert.Zero(requests.Load(), "invalid local input must not open the daemon connection")
+}
+
 func TestPersonPromoteAcceptsCreatedResponse(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

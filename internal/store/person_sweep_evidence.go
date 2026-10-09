@@ -373,7 +373,7 @@ func parsePersonSweepNumericKey(value string) (int64, error) {
 }
 
 func resolvePersonSweepScope(ctx context.Context, s *Store, personID int64) (personscope.Scope, error) {
-	person, err := s.GetPersonContext(ctx, personID)
+	person, err := s.getPersonCoreContext(ctx, personID)
 	if err != nil {
 		return personscope.Scope{}, fmt.Errorf("resolve durable person %d: %w", personID, err)
 	}

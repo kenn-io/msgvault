@@ -69,6 +69,120 @@ func TestCardDAVApplyPersistsLosslessEnvelopeAndMaterializesSubscribedPerson(t *
 	assert.Equal(book.SyncRevision+1, books[0].SyncRevision)
 }
 
+func TestCardDAVImportAdoptsValidRemoteUIDAndKeepsInvalidUIDsLocal(t *testing.T) {
+	tests := []struct {
+		name         string
+		uid          string
+		wantAdopt    bool
+		duplicateUID bool
+	}{
+		{name: "UUID", uid: "77822e26-3cd5-40d0-a0fd-6f0ff63b204b", wantAdopt: true},
+		{name: "absolute URI", uid: "urn:uuid:77822e26-3cd5-40d0-a0fd-6f0ff63b204b", wantAdopt: true},
+		{name: "duplicate UID", uid: "77822e26-3cd5-40d0-a0fd-6f0ff63b204b", duplicateUID: true},
+		{name: "malformed whitespace", uid: "not a valid UID"},
+		{name: "empty", uid: ""},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			st, account, book := newCardDAVResourceStore(t)
+			resource := remoteResource(book.CanonicalURL+"contact.vcf", test.uid,
+				"Example Person", "person@example.test", `"one"`)
+			if test.duplicateUID {
+				resource.RemoteBody = []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:" + test.uid +
+					"\r\nUID:" + test.uid + "\r\nFN:Example Person\r\n" +
+					"EMAIL:person@example.test\r\nEND:VCARD\r\n")
+			}
+
+			_, err := st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
+				AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration,
+				SyncRevision: book.SyncRevision, Upserts: []store.CardDAVRemoteResource{resource},
+			})
+			require.NoError(err)
+			mapping, err := st.GetCardDAVResourceContext(t.Context(), book.ID, resource.Href)
+			require.NoError(err)
+			require.NotNil(mapping.PersonID)
+			person, err := st.GetPersonContext(t.Context(), *mapping.PersonID)
+			require.NoError(err)
+			if test.wantAdopt {
+				assert.Equal(test.uid, person.VCardUID)
+			} else {
+				assert.NotEqual(test.uid, person.VCardUID)
+				assert.NotEmpty(person.VCardUID)
+			}
+		})
+	}
+}
+
+func TestCardDAVImportMintsUIDWhenRemoteUIDIsAlreadyUsed(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	account, books, err := st.ReplaceCardDAVDiscoveryContext(t.Context(), store.CardDAVDiscoveryInput{
+		ConnectionName: "personal", BaseURL: "https://contacts.example.test/dav", Username: "example",
+		PrincipalURL: "https://contacts.example.test/principal/",
+		HomeURL:      "https://contacts.example.test/books/",
+		Books: []store.CardDAVDiscoveredBook{
+			{CanonicalURL: "https://contacts.example.test/books/main/", DisplayName: "Main"},
+			{CanonicalURL: "https://contacts.example.test/books/lookup/", DisplayName: "Lookup"},
+		},
+	})
+	require.NoError(err)
+	require.Len(books, 2)
+	book := books[1]
+	require.NoError(st.SetCardDAVBookRolesContext(t.Context(), book.ID,
+		store.CardDAVBookRoles{IsLookupSource: true}))
+	const takenUID = "77822e26-3cd5-40d0-a0fd-6f0ff63b204b"
+	var existingPersonID int64
+	require.NoError(st.DB().QueryRow(`INSERT INTO persons (vcard_uid, display_name)
+		VALUES (?, ?) RETURNING id`, takenUID, "Existing Person").Scan(&existingPersonID))
+	resource := remoteResource(book.CanonicalURL+"contact.vcf", "unbound-remote-uid", "New Person", "", `"one"`)
+	_, err = st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
+		AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration,
+		SyncRevision: book.SyncRevision, Upserts: []store.CardDAVRemoteResource{resource},
+	})
+	require.NoError(err)
+	mapping, err := st.GetCardDAVResourceContext(t.Context(), book.ID, resource.Href)
+	require.NoError(err)
+	require.Nil(mapping.PersonID)
+	candidate, _, err := st.UpsertIdentityMatchCandidateContext(t.Context(), store.IdentityMatchCandidateInput{
+		LeftKind: store.IdentityMatchCardDAVResource, LeftID: mapping.ID,
+		RightKind: store.IdentityMatchPerson, RightID: existingPersonID,
+		Basis: store.IdentityMatchDisplayName, State: store.IdentityMatchStateCandidate,
+		Source: store.ProvenanceUser,
+	})
+	require.NoError(err)
+	_, err = st.DecideIdentityMatchCandidateContext(t.Context(), candidate.ID,
+		store.IdentityMatchStateRejected, "test", nil)
+	require.NoError(err)
+	require.NoError(st.SetCardDAVBookRolesContext(t.Context(), book.ID,
+		store.CardDAVBookRoles{IsSubscribed: true, IsLookupSource: true}))
+	books, err = st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
+	require.NoError(err)
+	for _, current := range books {
+		if current.ID == book.ID {
+			book = current
+			break
+		}
+	}
+	resource = remoteResource(resource.Href, takenUID, "New Person", "new-person@example.test", `"two"`)
+	resource.SemanticHash = "semantic-new-person"
+	_, err = st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
+		AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration,
+		SyncRevision: book.SyncRevision, Upserts: []store.CardDAVRemoteResource{resource},
+	})
+	require.NoError(err)
+	mapping, err = st.GetCardDAVResourceContext(t.Context(), book.ID, resource.Href)
+	require.NoError(err)
+	require.NotNil(mapping.PersonID)
+	assert.NotEqual(existingPersonID, *mapping.PersonID)
+	person, err := st.GetPersonContext(t.Context(), *mapping.PersonID)
+	require.NoError(err)
+	assert.NotEmpty(person.VCardUID)
+	assert.NotEqual(takenUID, person.VCardUID)
+}
+
 func TestCardDAVResourceMoveRewritesProjectionProvenanceBeforeRemoteEdit(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

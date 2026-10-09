@@ -100,7 +100,7 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.8.0**.
+it is separate from the binary release version. The current schema is **3.9.0**.
 Upgrade clients and daemon together across incompatible schema versions,
 including remote deployments.
 
@@ -128,6 +128,11 @@ the failure code.
 Schema 3.5.0 adds the `account:` and `received:` search operators.
 
 Schema 3.8.0 adds [read-only remote client credentials](guides/remote-deployment.md#read-only-remote-clients), HTTP 409 for ambiguous raw-message references, and HTTP 413 for remote read limits.
+Schema 3.9.0 adds `GET /api/v1/people/by-uid`, which resolves current person
+UIDs, retired person UIDs, and UIDs on mapped CardDAV resources. It returns a
+conflict when one UID resolves to multiple people. Person responses expose
+`carddav_bindings`; directory responses now include both `vcard_uid` and
+`carddav_bindings`.
 
 Schema 3.1.0 adds unreleased [calendar event control](#calendar-control),
 availability queries, and opt-in `write` on Calendar consent plans.
@@ -239,6 +244,18 @@ responses are bounded projections that omit raw vCards and resource hrefs;
 only the explicit publication preview route returns a raw vCard.
 See [release changes](changelog.md#upgrade-and-compatibility) for removed paths
 and the 1.x/2.x transition.
+
+### Person UIDs and CardDAV bindings
+
+`GET /api/v1/people/{id}`, `GET /api/v1/people`, and semantic person search
+return `vcard_uid` and `carddav_bindings` for each person. Directory pages also
+include those fields. A binding names the CardDAV `connection` and `book` and
+includes the resource `href`, its `remote_uid`, and `mapping_status`.
+
+Use `GET /api/v1/people/by-uid?uid={uid}` to resolve an exact current person UID, a
+retired UID that still aliases a person, or the UID of a CardDAV card mapped to
+that person. If the same CardDAV UID is mapped to different people, the API
+returns `409 person_uid_ambiguous`.
 
 ### Identity match review and scoring
 

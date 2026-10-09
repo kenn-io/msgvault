@@ -820,6 +820,15 @@ type ListOrganizationEmploymentsQuery struct {
 	Offset *int64 `json:"offset,omitempty"`
 }
 
+type GetPersonByUIDQuery struct {
+	// UID Exact vCard UID or CardDAV resource UID
+	UID string `json:"uid" validate:"required,min=1"`
+}
+
+func (g GetPersonByUIDQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+}
+
 type ListDirectoryPeopleQuery struct {
 	// Q Lexical query over person names, contact points, and organizations
 	Q *string `json:"q,omitempty"`

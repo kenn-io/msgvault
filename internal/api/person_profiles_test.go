@@ -102,6 +102,135 @@ func TestPersonProfileHTTPPromoteListGetUpdateAndConflictingLink(t *testing.T) {
 	assert.Equal(http.StatusConflict, linkResponse.Code)
 }
 
+func TestPersonProfileHTTPExposesCardDAVBindingAndLooksUpEitherUID(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	srv, st := newIdentityLinkTestServer(t)
+	const (
+		remoteUID = "urn:uuid:77822e26-3cd5-40d0-a0fd-6f0ff63b204b"
+		email     = "person@example.test"
+	)
+	person := createDirectoryHTTPPerson(t, st, "Example Person", email, "friend", "Example", false)
+	personUID := person.VCardUID
+	personID := person.ID
+	account, books, err := st.ReplaceCardDAVDiscoveryContext(t.Context(), store.CardDAVDiscoveryInput{
+		ConnectionName: "personal", BaseURL: "https://contacts.example.test/dav", Username: "example",
+		PrincipalURL: "https://contacts.example.test/principal/",
+		HomeURL:      "https://contacts.example.test/books/",
+		Books: []store.CardDAVDiscoveredBook{{
+			CanonicalURL: "https://contacts.example.test/books/personal/", DisplayName: "Personal",
+		}},
+	})
+	require.NoError(err)
+	require.Len(books, 1)
+	body := []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:" + remoteUID +
+		"\r\nFN:Example Person\r\nEMAIL:" + email + "\r\nEND:VCARD\r\n")
+	_, err = st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
+		AddressBookID: books[0].ID, ConnectionGeneration: account.ConnectionGeneration,
+		SyncRevision: books[0].SyncRevision,
+		Upserts: []store.CardDAVRemoteResource{{
+			Href: books[0].CanonicalURL + "person.vcf", RemoteUID: remoteUID,
+			RemoteETag: `"one"`, RemoteBody: body, SemanticHash: "person-card",
+			DisplayName: "Example Person", Emails: []string{email},
+		}},
+	})
+	require.NoError(err)
+
+	response := personRequest(t, srv, http.MethodGet,
+		fmt.Sprintf("%s/%d", peoplePath, personID), nil, "")
+	require.Equal(http.StatusOK, response.Code, response.Body.String())
+	var responsePerson struct {
+		VCardUID        string `json:"vcard_uid"`
+		CardDAVBindings []struct {
+			Connection    string `json:"connection"`
+			Book          string `json:"book"`
+			Href          string `json:"href"`
+			RemoteUID     string `json:"remote_uid"`
+			MappingStatus string `json:"mapping_status"`
+		} `json:"carddav_bindings"`
+	}
+	require.NoError(json.Unmarshal(response.Body.Bytes(), &responsePerson))
+	assert.Equal(personUID, responsePerson.VCardUID)
+	require.Len(responsePerson.CardDAVBindings, 1)
+	assert.Equal("personal", responsePerson.CardDAVBindings[0].Connection)
+	assert.Equal("Personal", responsePerson.CardDAVBindings[0].Book)
+	assert.Equal(books[0].CanonicalURL+"person.vcf", responsePerson.CardDAVBindings[0].Href)
+	assert.Equal(remoteUID, responsePerson.CardDAVBindings[0].RemoteUID)
+	assert.Equal(string(store.CardDAVMappingMapped), responsePerson.CardDAVBindings[0].MappingStatus)
+
+	for _, uid := range []string{personUID, remoteUID} {
+		lookup := personRequest(t, srv, http.MethodGet, peoplePath+"/by-uid?uid="+url.QueryEscape(uid), nil, "")
+		require.Equal(http.StatusOK, lookup.Code, lookup.Body.String())
+		var resolved struct {
+			ID       int64  `json:"id"`
+			VCardUID string `json:"vcard_uid"`
+		}
+		require.NoError(json.Unmarshal(lookup.Body.Bytes(), &resolved))
+		assert.Equal(personID, resolved.ID)
+		assert.Equal(personUID, resolved.VCardUID)
+	}
+
+	directory := personRequest(t, srv, http.MethodGet, peoplePath+"/directory", nil, "")
+	require.Equal(http.StatusOK, directory.Code, directory.Body.String())
+	var directoryPage struct {
+		People []struct {
+			ID              int64  `json:"id"`
+			VCardUID        string `json:"vcard_uid"`
+			CardDAVBindings []struct {
+				RemoteUID string `json:"remote_uid"`
+			} `json:"carddav_bindings"`
+		} `json:"people"`
+	}
+	require.NoError(json.Unmarshal(directory.Body.Bytes(), &directoryPage))
+	require.Len(directoryPage.People, 1)
+	assert.Equal(personID, directoryPage.People[0].ID)
+	assert.Equal(personUID, directoryPage.People[0].VCardUID)
+	require.Len(directoryPage.People[0].CardDAVBindings, 1)
+	assert.Equal(remoteUID, directoryPage.People[0].CardDAVBindings[0].RemoteUID)
+}
+
+func TestPersonUIDLookupReturnsConflictForAmbiguousCardDAVUID(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	srv, st := newIdentityLinkTestServer(t)
+	_, books, err := st.ReplaceCardDAVDiscoveryContext(t.Context(), store.CardDAVDiscoveryInput{
+		ConnectionName: "personal", BaseURL: "https://contacts.example.test/dav", Username: "example",
+		PrincipalURL: "https://contacts.example.test/principal/",
+		HomeURL:      "https://contacts.example.test/books/",
+		Books: []store.CardDAVDiscoveredBook{
+			{CanonicalURL: "https://contacts.example.test/books/one/", DisplayName: "One"},
+			{CanonicalURL: "https://contacts.example.test/books/two/", DisplayName: "Two"},
+		},
+	})
+	require.NoError(err)
+	require.Len(books, 2)
+	const remoteUID = "urn:uuid:77822e26-3cd5-40d0-a0fd-6f0ff63b204b"
+	for i, book := range books {
+		name := fmt.Sprintf("Example Person %d", i+1)
+		var personID int64
+		require.NoError(st.DB().QueryRowContext(t.Context(), `INSERT INTO persons (vcard_uid, display_name)
+			VALUES (?, ?) RETURNING id`, fmt.Sprintf("person-uid-%d", i+1), name).Scan(&personID))
+		body := []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:" + remoteUID +
+			"\r\nFN:" + name + "\r\nEND:VCARD\r\n")
+		_, err := st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO carddav_resources (
+			address_book_id, href, remote_uid, remote_etag, remote_body,
+			remote_semantic_hash, local_hash, mapping_status, governance, person_id
+		) VALUES (?, ?, ?, ?, ?, ?, ?, 'mapped', 'remote', ?)`),
+			book.ID, book.CanonicalURL+"person.vcf", remoteUID, `"one"`, body,
+			fmt.Sprintf("remote-hash-%d", i+1), fmt.Sprintf("local-hash-%d", i+1), personID)
+		require.NoError(err)
+	}
+
+	response := personRequest(t, srv, http.MethodGet,
+		peoplePath+"/by-uid?uid="+url.QueryEscape(remoteUID), nil, "")
+	require.Equal(http.StatusConflict, response.Code, response.Body.String())
+	var body struct {
+		Error string `json:"error"`
+	}
+	require.NoError(json.Unmarshal(response.Body.Bytes(), &body))
+	assert.Equal("person_uid_ambiguous", body.Error)
+}
+
 func TestDirectoryPeopleHTTPReturnsNoStorePage(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)
@@ -449,6 +578,11 @@ func TestSemanticPersonSearchReturnsRankedDurableRootsWithScores(t *testing.T) {
 		{Person: store.Person{
 			ID: 22, VCardUID: "00000000-0000-4000-8000-000000000022",
 			DisplayName: &firstName, Revision: 4, ParticipantIDs: []int64{220},
+			CardDAVBindings: []store.CardDAVBinding{{
+				Connection: "personal", Book: "Personal",
+				Href:      "https://contacts.example.test/book/person.vcf",
+				RemoteUID: "urn:uuid:remote-22", MappingStatus: store.CardDAVMappingMapped,
+			}},
 		}, Score: 0.91},
 		{Person: store.Person{
 			ID: 11, VCardUID: "00000000-0000-4000-8000-000000000011",
@@ -467,6 +601,8 @@ func TestSemanticPersonSearchReturnsRankedDurableRootsWithScores(t *testing.T) {
 	require.NoError(json.Unmarshal(response.Body.Bytes(), &body))
 	require.Len(body.Results, 2)
 	assert.Equal(int64(22), body.Results[0].Person.ID)
+	require.Len(body.Results[0].Person.CardDAVBindings, 1)
+	assert.Equal("urn:uuid:remote-22", body.Results[0].Person.CardDAVBindings[0].RemoteUID)
 	assert.InDelta(0.91, body.Results[0].Score, 0.00001)
 	assert.Equal(int64(11), body.Results[1].Person.ID)
 	assert.InDelta(0.82, body.Results[1].Score, 0.00001)

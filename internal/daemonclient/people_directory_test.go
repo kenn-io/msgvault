@@ -29,7 +29,11 @@ func TestPeopleBrowserListDirectoryMapsQueryAndResponse(t *testing.T) {
 		writePeopleBrowserJSON(t, w, http.StatusOK, `{
             "next_cursor":"cursor-bytes-%2F%2B",
             "people":[{
-                "id":7,"display_name":"Alice Example","revision":9,
+                "id":7,"vcard_uid":"person-uid-7",
+                "carddav_bindings":[{"connection":"personal","book":"Personal",
+                  "href":"https://contacts.example.test/book/person.vcf",
+                  "remote_uid":"remote-uid-7","mapping_status":"mapped"}],
+                "display_name":"Alice Example","revision":9,
                 "primary_channel":"chat","contact_state":"active",
                 "last_contact_at":"2026-08-20T12:30:00.123456789Z",
                 "categories":null,"organizations":null
@@ -67,7 +71,13 @@ func TestPeopleBrowserListDirectoryMapsQueryAndResponse(t *testing.T) {
 	}, gotQuery)
 	assert.Equal("cursor-bytes-%2F%2B", page.NextCursor)
 	assert.Equal(store.DirectoryPersonSummary{
-		ID: 7, DisplayName: new("Alice Example"), Revision: 9,
+		ID: 7, VCardUID: "person-uid-7",
+		CardDAVBindings: []store.CardDAVBinding{{
+			Connection: "personal", Book: "Personal",
+			Href:      "https://contacts.example.test/book/person.vcf",
+			RemoteUID: "remote-uid-7", MappingStatus: store.CardDAVMappingMapped,
+		}},
+		DisplayName: new("Alice Example"), Revision: 9,
 		PrimaryChannel: "chat", ContactState: "active",
 		LastContactAt: new(time.Date(2026, 8, 20, 12, 30, 0, 123456789, time.UTC)),
 		Categories:    []string{}, Organizations: []string{},

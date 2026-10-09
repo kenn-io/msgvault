@@ -53,14 +53,16 @@ func (b *PeopleBrowser) ListDirectoryPeople(
 	}
 	for i, person := range resp.JSON200.People {
 		page.People[i] = store.DirectoryPersonSummary{
-			ID:             person.ID,
-			DisplayName:    person.DisplayName,
-			Revision:       person.Revision,
-			PrimaryChannel: stringValue(person.PrimaryChannel),
-			ContactState:   person.ContactState,
-			LastContactAt:  copyTime(person.LastContactAt),
-			Categories:     append([]string{}, person.Categories...),
-			Organizations:  append([]string{}, person.Organizations...),
+			ID:              person.ID,
+			VCardUID:        person.VcardUID,
+			CardDAVBindings: cardDAVBindingsFromGenerated(person.CarddavBindings),
+			DisplayName:     person.DisplayName,
+			Revision:        person.Revision,
+			PrimaryChannel:  stringValue(person.PrimaryChannel),
+			ContactState:    person.ContactState,
+			LastContactAt:   copyTime(person.LastContactAt),
+			Categories:      append([]string{}, person.Categories...),
+			Organizations:   append([]string{}, person.Organizations...),
 		}
 	}
 	return page, nil

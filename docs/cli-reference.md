@@ -2680,6 +2680,7 @@ msgvault person promote <participant-id>
 msgvault person list [--json]
 msgvault person directory [flags]
 msgvault person get <person-id> [--json]
+msgvault person get --vcard-uid <uid> [--json]
 msgvault person identities <person-id> [--json]
 msgvault person set-display-name <person-id> <display-name> [--json]
 msgvault person set-display-name <person-id> --clear [--json]
@@ -2702,6 +2703,16 @@ including an edited or cleared value. `set-display-name` preserves the
 profile's stable ID and vCard UID. `delete` permanently retires that UID and
 removes the profile's participant bindings. A person with active merge lineage
 cannot be deleted until that lineage is fully split.
+
+`person get --vcard-uid` resolves the person's current UID, a retired UID that
+still aliases the person after a merge, or a UID on a CardDAV card currently
+mapped to that person. This lookup requires daemon API schema 3.6.0 or newer.
+JSON person responses
+include `vcard_uid` and `carddav_bindings`; each binding names its connection and
+address book and includes the resource `href`, `remote_uid`, and `mapping_status`.
+Directory JSON includes the same UID and binding fields. Importing a subscribed
+CardDAV card adopts its valid UID when the UID is available. Existing profiles
+keep their UID.
 
 `identities` lists the email addresses, phone numbers, and chat identifiers
 that the person's current participants have used in your archive, so a merge or
@@ -2851,7 +2862,7 @@ Date-only bounds mean midnight UTC on that date. RFC3339 bounds accept offsets a
 
 Human output shows `ID`, `DISPLAY NAME`, and `LAST CONTACT` in daemon order. Timestamps use UTC RFC3339 at seconds precision; JSON preserves fractional seconds. Missing display names and timestamps show `-`. A page with more results prints `Next cursor`. Pass that value unchanged to `--cursor` and repeat the same bounds and sort to continue.
 
-JSON contains a `people` array and optional `next_cursor`. Each person retains the Directory fields, including categories, organizations, contact state, ID, and revision. Optional fields stay absent when the daemon omits them, including `last_contact_at` for people without a contact timestamp. `person list` continues to return the full unpaginated profile collection, with its existing human columns and JSON array output.
+JSON contains a `people` array and optional `next_cursor`. Each person retains the Directory fields, including categories, organizations, contact state, ID, revision, `vcard_uid`, and `carddav_bindings`. Optional fields stay absent when the daemon omits them, including `last_contact_at` for people without a contact timestamp. `person list` continues to return the full unpaginated profile collection, with its existing human columns and JSON array output.
 
 ---
 

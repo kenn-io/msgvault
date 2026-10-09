@@ -2964,6 +2964,10 @@ func (a *storeAPIAdapter) GetPersonContext(ctx context.Context, id int64) (*stor
 	return a.store.GetPersonContext(ctx, id)
 }
 
+func (a *storeAPIAdapter) GetPersonByUIDContext(ctx context.Context, uid string) (*store.Person, error) {
+	return a.store.GetPersonByUIDContext(ctx, uid)
+}
+
 func (a *storeAPIAdapter) EnsurePersonInferenceProfile(ctx context.Context, profile peoplesweep.ProviderProfile) (bool, error) {
 	return a.store.EnsurePersonInferenceProfile(ctx, profile)
 }

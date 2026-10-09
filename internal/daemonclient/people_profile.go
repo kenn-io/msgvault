@@ -3,8 +3,10 @@ package daemonclient
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"sort"
+	"strings"
 
 	"go.kenn.io/msgvault/internal/peoplebrowser"
 	"go.kenn.io/msgvault/internal/store"
@@ -13,6 +15,11 @@ import (
 )
 
 var _ peoplebrowser.ProfileReader = (*PeopleBrowser)(nil)
+var _ peoplebrowser.ProfileUIDReader = (*PeopleBrowser)(nil)
+
+// PersonUIDLookupMinAPISchemaVersion is the first daemon schema that supports
+// resolving a person profile by current or CardDAV UID.
+const PersonUIDLookupMinAPISchemaVersion = "3.6.0"
 
 // maxProfileOrganizationLookups bounds the per-organization name resolution
 // a single profile read may perform beyond the primary-employment projection.
@@ -129,6 +136,37 @@ func (b *PeopleBrowser) GetPersonProfile(
 		return nil, err
 	}
 	return profile, nil
+}
+
+// GetPersonProfileByUID resolves either the profile's vCard UID or a UID on a
+// bound CardDAV resource, then assembles the same overview returned by the ID
+// lookup.
+func (b *PeopleBrowser) GetPersonProfileByUID(
+	ctx context.Context, uid string,
+) (*peoplebrowser.PersonProfile, error) {
+	uid = strings.TrimSpace(uid)
+	if uid == "" {
+		return nil, errors.New("vCard UID must not be empty")
+	}
+	supported, err := b.engine.store.SupportsAPISchemaVersion(ctx, PersonUIDLookupMinAPISchemaVersion)
+	if err != nil {
+		return nil, fmt.Errorf("check person UID lookup capability: %w", err)
+	}
+	if !supported {
+		return nil, fmt.Errorf("person UID lookup requires daemon API schema %s or newer; upgrade the daemon",
+			PersonUIDLookupMinAPISchemaVersion)
+	}
+	resp, err := APIResponse(b.engine.store,
+		func(client *apiclient.Client) (*generated.GetPersonByUIDResp, error) {
+			return client.GetPersonByUIDWithResponse(ctx,
+				&generated.GetPersonByUIDRequestOptions{
+					Query: &generated.GetPersonByUIDQuery{UID: uid},
+				})
+		})
+	if err != nil {
+		return nil, err
+	}
+	return b.GetPersonProfile(ctx, resp.JSON200.ID)
 }
 
 // currentEmployments lists current employments and resolves organization

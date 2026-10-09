@@ -19,12 +19,18 @@ type profileReadingPeopleBackend struct {
 	recordingPeopleBackend
 
 	profilePersonID int64
+	profileUID      string
 	profile         *peoplebrowser.PersonProfile
 	profileErr      error
 }
 
 func (b *profileReadingPeopleBackend) GetPersonProfile(_ context.Context, personID int64) (*peoplebrowser.PersonProfile, error) {
 	b.profilePersonID = personID
+	return b.profile, b.profileErr
+}
+
+func (b *profileReadingPeopleBackend) GetPersonProfileByUID(_ context.Context, uid string) (*peoplebrowser.PersonProfile, error) {
+	b.profileUID = uid
 	return b.profile, b.profileErr
 }
 
@@ -35,7 +41,7 @@ func TestMCPGetPersonProfileListedOnlyWithPeopleAndReadOnly(t *testing.T) {
 
 	listed := toolsByName(t, rawListTools(t, peopleToolOptions(&profileReadingPeopleBackend{}), false))
 	require.Contains(t, listed, ToolGetPersonProfile)
-	assert.Equal([]string{"person_id"}, toolPropertyNames(t, listed[ToolGetPersonProfile]))
+	assert.Equal([]string{"person_id", "vcard_uid"}, toolPropertyNames(t, listed[ToolGetPersonProfile]))
 	assert.Equal(true, toolReadOnlyHint(t, listed[ToolGetPersonProfile]))
 }
 
@@ -48,7 +54,13 @@ func TestMCPGetPersonProfileReturnsOverviewAndExcludesSensitiveData(t *testing.T
 	primaryChannel, religion, notes, location := "chat", "must not escape", "private notes", "Test City"
 	tracked := true
 	backend := &profileReadingPeopleBackend{profile: &peoplebrowser.PersonProfile{
-		Person:  store.Person{ID: 7, VCardUID: "person-7", DisplayName: &displayName, Revision: 3, ParticipantIDs: []int64{11}},
+		Person: store.Person{
+			ID: 7, VCardUID: "person-7", DisplayName: &displayName, Revision: 3,
+			ParticipantIDs: []int64{11}, CardDAVBindings: []store.CardDAVBinding{{
+				Connection: "personal", Book: "Personal", Href: "https://contacts.example.test/book/person.vcf",
+				RemoteUID: "urn:uuid:remote-7", MappingStatus: store.CardDAVMappingMapped,
+			}},
+		},
 		Tracked: &tracked,
 		ContactState: &store.ContactState{
 			PersonID: 7, LastContactAt: &now, LastContactChannel: store.ChannelChat,
@@ -95,6 +107,17 @@ func TestMCPGetPersonProfileReturnsOverviewAndExcludesSensitiveData(t *testing.T
 	structured := toolStructuredContent(t, result)
 	assert.Equal("Test Person", structured["display_name"])
 	assert.Equal("person-7", structured["vcard_uid"])
+	assert.Contains(structured, "carddav_bindings")
+	bindings, ok := structured["carddav_bindings"].([]any)
+	require.True(ok)
+	require.Len(bindings, 1)
+	binding, ok := bindings[0].(map[string]any)
+	require.True(ok)
+	assert.Equal("personal", binding["connection"])
+	assert.Equal("Personal", binding["book"])
+	assert.Equal("https://contacts.example.test/book/person.vcf", binding["href"])
+	assert.Equal("urn:uuid:remote-7", binding["remote_uid"])
+	assert.Equal("mapped", binding["mapping_status"])
 	assert.Equal(true, structured["tracked"])
 	assert.Equal("chat", structured["primary_channel"])
 	assert.Equal("chat", structured["inferred_channel"])
@@ -139,6 +162,26 @@ func TestMCPGetPersonProfileReturnsOverviewAndExcludesSensitiveData(t *testing.T
 	assert.Equal("--04-12", date["date"])
 	assert.Equal([]any{"people"}, structured["categories"])
 	assert.Equal([]any{"sensitive_attributes", "notes", "media"}, structured["excluded"])
+}
+
+func TestMCPGetPersonProfileLooksUpByEitherKindOfUID(t *testing.T) {
+	assert := assert.New(t)
+	backend := &profileReadingPeopleBackend{profile: &peoplebrowser.PersonProfile{
+		Person: store.Person{ID: 7, VCardUID: "person-7"},
+	}}
+	for _, uid := range []string{"person-7", "urn:uuid:remote-7"} {
+		result := rawCallTool(t, peopleToolOptions(backend), ToolGetPersonProfile, map[string]any{
+			"vcard_uid": uid,
+		})
+		assert.NotEqual(true, result["isError"], "result: %#v", result)
+		assert.Equal(uid, backend.profileUID)
+		assert.Equal("person-7", toolStructuredContent(t, result)["vcard_uid"])
+	}
+
+	result := rawCallTool(t, peopleToolOptions(backend), ToolGetPersonProfile, map[string]any{
+		"person_id": 7, "vcard_uid": "remote-7",
+	})
+	assert.Equal(true, result["isError"], "result: %#v", result)
 }
 
 func TestMCPGetPersonProfileReportsEmailsPhonesAndAddress(t *testing.T) {
