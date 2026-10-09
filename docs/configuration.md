@@ -712,6 +712,10 @@ sources = ["gmail", "imap", "gcal"]
 | `sources` | `["gmail", "imap", "gcal"]` | Allowed source types, further limited by implemented producers and readable projections. An empty array advertises no families. |
 | `trusted_callbacks` | `[]` | Explicit private receiver exceptions: objects with an HTTPS `origin` and fixed private IP `addresses`. |
 
+Accepted `sources` values are `gmail`, `imap`, `gcal`, `beeper`, `slack`,
+`slackdump`, `teams`, and `discord`. When Events is enabled, the daemon refuses
+to start if `sources` lists any other source type.
+
 Callbacks normally require public HTTPS on port 443 or 8443. The daemon rejects
 redirects, reserved destinations, and DNS answers containing an unsafe address.
 Private receivers require an exact origin and address pins:

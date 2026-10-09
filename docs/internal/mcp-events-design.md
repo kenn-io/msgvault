@@ -1,15 +1,17 @@
 # MCP Events — Design
 
-Status: READY, approved 2026-10-05 after four pre-implementation design reviews.
-The source baseline below is `aa411818`; reconciliation at `9938aa951` adds the
-owner HTTP managed-draft reader recorded in the capability matrix. Reconciliation
-at `5f322c3c6` preserved upstream telemetry schema 3.3.0 and assigned Events
-schema 3.4.0. Reconciliation with main at `e57db7329` preserves Kata schema
-3.4.0 and assigns Events schema 3.5.0. Matrix remains unadvertised without
-live provenance; Phase 2 reader and recovery gates remain unchanged. This document
-preserves the native Events design and unbuilt Phase 2 gates; the
+Status: design record for the Phase 1 implementation, which uses API schema
+3.9.0. The design was reviewed before implementation. The
 [MCP guide](../usage/chat.md#events) owns current operating instructions.
-It describes native support for the MCP Events webhook profile that ChatGPT shipped on
+Phase 2 reader and recovery gates remain unbuilt.
+
+[Existing behavior and invariants](#existing-behavior-and-invariants) records
+the pre-implementation baseline. Some statements there describe `main` before
+Events: separate `ingestEvent` calls and `flagCancelled` merges, a
+non-transactional `UpsertReaction`, and no record of who created a draft.
+Phase 1 produces no reaction occurrences. Matrix remains unadvertised.
+
+This document describes native support for the MCP Events webhook profile that ChatGPT shipped on
 2026-09-29 ([OpenAI guide](https://developers.openai.com/plugins/build/mcp-events)),
 built on the draft Triggers & Events extension. Source facts cite `main` at
 `aa411818` plus the open pull requests cited below. The protocol choices
@@ -247,8 +249,11 @@ v1 is single-owner and the daemon is the only authority:
 - Events requires the MCP inbound key to be the daemon's owner API key (the
   default). When `--http-token-file` or `--http-token-env` is set, the MCP
   process serves its existing tools but registers no `events/*` methods and
-  advertises no `events` capability. The MCP process forwards no principal;
-  the daemon derives it from the credential it authenticated.
+  advertises no `events` capability. With a remote daemon, the default
+  inbound key is still the `[server]` key; Events is offered only when it
+  equals `[remote].api_key`, and a different key is treated as independent.
+  The MCP process forwards no principal; the daemon derives it from the
+  credential it authenticated.
 - The Events routes require `AuthModeAPIKey` explicitly. Keyless-loopback,
   browser-session, and delegated callers receive `403` from the daemon and
   `-32012` from MCP. Delegated calendar authority is not permission to
@@ -603,9 +608,11 @@ about whether capture applies, so SQLite has reserved its writer and PostgreSQL
 has serialized allocation and commit order behind one row lock.
 Subscription transitions take the same row lock without advancing the head.
 Lock order everywhere: identity fence → sync-generation fence → clock row →
-subscription rows → embedding journal locks → source/conversation/message rows. The hot
-row serializes all live writers on PostgreSQL; at human message rates this
-is acceptable and measured in the rollout.
+subscription rows → embedding journal locks → source/conversation/message rows.
+While Events is enabled, every Store write transaction takes the identity
+fence and the clock row lock, so all write transactions serialize, not only
+emitting ones. When Events is disabled, transactions take neither lock. At
+human message rates this is acceptable and measured in the rollout.
 
 The mutation helper returns a reliable outcome: an insert-if-absent inside
 the transaction followed by the existing update path reports `inserted`
@@ -679,11 +686,11 @@ attachments are readable only when already archived, with the existing
 unavailable/retry behavior, and the design does not promise every
 attachment byte at the first wake.
 
-Reactions remain an internal producer design, not an advertised Phase 1 kind;
-keep them hidden until a supported source capability and matching payload
-schema are ready. The old and new sets are diffed inside one transaction before
-replacement; only additions under live provenance emit, and a newly
-backfilled target gets a muted baseline. `UpsertReaction` becomes
+Phase 1 has no reaction producer and writes no reaction occurrences. A future
+reaction producer stays unadvertised until a supported source capability and
+matching payload schema are ready. It must diff the old and new sets inside one
+transaction before replacement, emit only additions under live provenance, give
+a newly backfilled target a muted baseline, and make `UpsertReaction`
 transactional with the same context.
 
 Event time for the advertised Phase 1 families (the envelope `timestamp`,
