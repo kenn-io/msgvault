@@ -11,6 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"go.kenn.io/kit/embedmodel"
 	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/store"
@@ -490,7 +491,7 @@ func (w *Worker) run(
 					w.deps.Log.Warn("messages missing from main DB", "gen", gen, "ids", eb.missing)
 				}
 				if len(eb.empty) > 0 {
-					w.deps.Log.Warn("messages empty after preprocess", "gen", gen, "ids", eb.empty)
+					w.deps.Log.Warn("messages have no embeddable content", "gen", gen, "ids", eb.empty)
 				}
 				missed, serr := w.stampSkipped(ctx, gen, skipIDs, eb.lastModified)
 				if serr != nil {
@@ -599,7 +600,7 @@ func (w *Worker) run(
 			w.deps.Log.Warn("messages missing from main DB", "gen", gen, "ids", eb.missing)
 		}
 		if len(eb.empty) > 0 {
-			w.deps.Log.Warn("messages empty after preprocess", "gen", gen, "ids", eb.empty)
+			w.deps.Log.Warn("messages have no embeddable content", "gen", gen, "ids", eb.empty)
 		}
 
 		// Only rows ACTUALLY stamped count as succeeded. A CAS miss (its
@@ -669,9 +670,9 @@ func (w *Worker) advanceWatermark(ctx context.Context, gen vector.GenerationID, 
 // embedBatchResult carries the output of embedBatch. chunks and
 // embeddedIDs are aligned by position and correspond to messages that
 // were actually fetched and embedded. missing lists ids from the
-// input that had no row in the messages table; empty lists ids whose
-// content preprocessed to empty and therefore should not be sent to
-// embedders that reject blank strings.
+// input that had no row in the messages table; empty lists ids with blank
+// preprocessed text or only blank retained chunk windows. These messages
+// should not be sent to embedders that reject blank strings.
 type embedBatchResult struct {
 	chunks      []vector.Chunk
 	embeddedIDs []int64
@@ -750,7 +751,7 @@ func (w *Worker) embedBatch(ctx context.Context, ids []int64) (embedBatchResult,
 		// embed in a later chunk.
 		txt, bodyTrunc := Preprocess(subject, body, 0, preprocessCfg)
 		fetched[id] = struct{}{}
-		if strings.TrimSpace(txt) == "" {
+		if embedmodel.BlankText(txt) {
 			empty = append(empty, id)
 			continue
 		}
@@ -794,10 +795,17 @@ func (w *Worker) embedBatch(ctx context.Context, ids []int64) (embedBatchResult,
 		//     soft break, in which case the per-chunk hard-cut flag
 		//     wouldn't fire).
 		msgTrunc := m.BodyTruncated || chunkTail
+		chunkIndex := 0
 		for j, sp := range spans {
+			// Visible messages can still produce windows containing only
+			// whitespace, formatting or controls. Match the client's rule
+			// without rewriting text or shifting its source offsets.
+			if embedmodel.BlankText(sp.Text) {
+				continue
+			}
 			ic := inputChunk{
 				ID:         m.ID,
-				ChunkIndex: j,
+				ChunkIndex: chunkIndex,
 				Text:       sp.Text,
 				Chars:      sp.CharEnd - sp.CharStart,
 				CharStart:  sp.CharStart,
@@ -811,7 +819,16 @@ func (w *Worker) embedBatch(ctx context.Context, ids []int64) (embedBatchResult,
 			}
 			pieces = append(pieces, ic)
 			inputs = append(inputs, sp.Text)
+			chunkIndex++
 		}
+		if chunkIndex == 0 {
+			empty = append(empty, m.ID)
+		}
+	}
+	if len(inputs) == 0 {
+		// The chunk cap can discard the only visible content. Cover these
+		// messages through the same CAS-protected skip path as blank text.
+		return embedBatchResult{missing: missing, empty: empty, lastModified: lastModified}, nil
 	}
 
 	// Split chunk inputs into sub-batches of at most BatchSize so a
