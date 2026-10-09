@@ -16,10 +16,16 @@ func RewriteRunQueryClient(source []byte) ([]byte, error) {
 		acceptedType := []byte(name + "ResponseJSON")
 		rowsType := []byte(name + "Response")
 		interfaceSignature := []byte(name + "(ctx context.Context, options *" + name + "RequestOptions, reqEditors ...runtime.RequestEditorFn) (*" + name + "ResponseJSON, error)")
-		if !bytes.Contains(source, interfaceSignature) {
+		fixedInterfaceSignature := bytes.ReplaceAll(interfaceSignature, acceptedType, rowsType)
+		rawInterfaceIndex := bytes.Index(source, interfaceSignature)
+		fixedInterfaceIndex := bytes.Index(source, fixedInterfaceSignature)
+		switch {
+		case rawInterfaceIndex >= 0 && (fixedInterfaceIndex < 0 || rawInterfaceIndex < fixedInterfaceIndex):
+			source = bytes.Replace(source, interfaceSignature, fixedInterfaceSignature, 1)
+		case fixedInterfaceIndex >= 0 && (rawInterfaceIndex < 0 || fixedInterfaceIndex < rawInterfaceIndex):
+		default:
 			return nil, fmt.Errorf("generated %s interface shape changed", name)
 		}
-		source = bytes.Replace(source, interfaceSignature, bytes.ReplaceAll(interfaceSignature, acceptedType, rowsType), 1)
 		start := bytes.Index(source, []byte("func (c *Client) "+name+"("))
 		if start < 0 {
 			return nil, fmt.Errorf("generated %s method shape changed", name)
@@ -30,11 +36,17 @@ func RewriteRunQueryClient(source []byte) ([]byte, error) {
 		}
 		end := start + endOffset
 		method := append([]byte(nil), source[start:end]...)
-		if !bytes.Contains(method, []byte("resp.StatusCode != 202")) || !bytes.Contains(method, acceptedType) {
+		rawResponse := bytes.Contains(method, []byte("resp.StatusCode != 202")) && bytes.Contains(method, acceptedType)
+		fixedResponse := !bytes.Contains(method, []byte("resp.StatusCode != 202")) &&
+			bytes.Contains(method, []byte("resp.StatusCode != 200")) && bytes.Contains(method, rowsType)
+		switch {
+		case rawResponse && !fixedResponse:
+			method = bytes.ReplaceAll(method, acceptedType, rowsType)
+			method = bytes.Replace(method, []byte("resp.StatusCode != 202"), []byte("resp.StatusCode != 200"), 1)
+		case fixedResponse && !rawResponse:
+		default:
 			return nil, fmt.Errorf("generated %s success response shape changed", name)
 		}
-		method = bytes.ReplaceAll(method, acceptedType, rowsType)
-		method = bytes.Replace(method, []byte("resp.StatusCode != 202"), []byte("resp.StatusCode != 200"), 1)
 		result := append([]byte(nil), source[:start]...)
 		result = append(result, method...)
 		source = append(result, source[end:]...)
@@ -77,9 +89,14 @@ func RewriteGeneratedValidators(source []byte) ([]byte, error) {
 		if endOffset < 0 {
 			return nil, fmt.Errorf("generated %s validator shape changed", typeName)
 		}
-		if validator := result[start : start+endOffset]; !bytes.Contains(validator, validation) {
+		validatorEnd := start + endOffset + 1
+		switch bytes.Count(result[start:validatorEnd], validation) {
+		case 0:
 			insertAt := start + len(marker)
 			result = append(append(append([]byte(nil), result[:insertAt]...), validation...), result[insertAt:]...)
+		case 1:
+		default:
+			return nil, fmt.Errorf("generated %s validator has duplicate grouping checks", typeName)
 		}
 	}
 	for _, target := range requiredPointerValidators {
@@ -104,6 +121,20 @@ func RewriteGeneratedValidators(source []byte) ([]byte, error) {
 		case bytes.Contains(validator, required):
 		default:
 			return nil, fmt.Errorf("generated %s.%s validator shape changed", typeName, field)
+		}
+	}
+	for _, target := range [][3]string{
+		{"ContactCandidate", "DisplayName", "c"},
+		{"MessagingRoute", "MergedIntoChatID", "m"},
+		{"MessagingRoute", "Network", "m"},
+		{"MessagingRoute", "NetworkLabel", "m"},
+		{"MessagingRoute", "ProviderChatID", "m"},
+		{"PersonMessagingRoutesPage", "AliasReason", "p"},
+	} {
+		var err error
+		result, err = removeRequiredStringValidator(result, target[0], target[1], target[2])
+		if err != nil {
+			return nil, err
 		}
 	}
 	const cacheUnavailableType = "ExploreCacheUnavailableResponse"
@@ -165,11 +196,38 @@ func RewriteGeneratedValidators(source []byte) ([]byte, error) {
 		return nil, errors.New("generated CreateDailyNoteEntryRequest.PersonIds validator shape changed")
 	}
 	attributeJSON := []byte("*struct{}  `json:\"json,omitempty\"`")
-	if !bytes.Contains(result, attributeJSON) {
+	fixedAttributeJSON := []byte("jsontext.Value `json:\"json,omitzero\"`")
+	switch {
+	case bytes.Count(result, attributeJSON) == 1 && bytes.Count(result, fixedAttributeJSON) == 0:
+		result = bytes.Replace(result, attributeJSON, fixedAttributeJSON, 1)
+	case bytes.Count(result, attributeJSON) == 0 && bytes.Count(result, fixedAttributeJSON) == 1:
+	default:
 		return nil, errors.New("generated AttributeValue.JSON shape changed")
 	}
-	result = bytes.Replace(result, attributeJSON,
-		[]byte("jsontext.Value `json:\"json,omitempty\"`"), 1)
 	result = optionalValueJSONTag.ReplaceAll(result, []byte("${1},omitzero${2}"))
 	return result, nil
+}
+
+func removeRequiredStringValidator(source []byte, typeName, field, receiver string) ([]byte, error) {
+	startMarker := []byte("func (" + receiver + " " + typeName + ") Validate() error {")
+	start := bytes.Index(source, startMarker)
+	if start < 0 {
+		return nil, fmt.Errorf("generated %s.%s validator shape changed", typeName, field)
+	}
+	endOffset := bytes.Index(source[start:], []byte("\n}\n"))
+	if endOffset < 0 {
+		return nil, fmt.Errorf("generated %s.%s validator shape changed", typeName, field)
+	}
+	end := start + endOffset
+	validator := source[start:end]
+	required := []byte("\tif err := typesValidator.Var(" + receiver + "." + field + ", \"required\"); err != nil {\n\t\terrors = errors.Append(\"" + field + "\", err)\n\t}")
+	switch bytes.Count(validator, required) {
+	case 0:
+		return source, nil
+	case 1:
+		rewritten := bytes.Replace(validator, required, nil, 1)
+		return append(append(append([]byte(nil), source[:start]...), rewritten...), source[end:]...), nil
+	default:
+		return nil, fmt.Errorf("generated %s.%s validator shape changed", typeName, field)
+	}
 }

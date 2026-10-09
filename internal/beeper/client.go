@@ -232,6 +232,19 @@ func (c *Client) ListAccounts(ctx context.Context) ([]Account, error) {
 	return out, nil
 }
 
+// GetAccount reads authoritative bridge metadata with a bounded response.
+func (c *Client) GetAccount(ctx context.Context, accountID string) (*Account, error) {
+	body, err := c.fetch(ctx, "/v1/accounts/"+url.PathEscape(accountID), 64<<10, false)
+	if err != nil {
+		return nil, err
+	}
+	var account Account
+	if err := json.Unmarshal(body, &account); err != nil {
+		return nil, err
+	}
+	return &account, nil
+}
+
 // SearchChatsParams filters a chat search page.
 type SearchChatsParams struct {
 	AccountID         string

@@ -464,6 +464,9 @@ func (s *Store) MarkConversationMemberCountUnknownContext(ctx context.Context, c
 	if err != nil {
 		return err
 	}
+	if err := invalidateMessagingRouteMembership(metadata, ""); err != nil {
+		return err
+	}
 	metadata["member_count_unknown"] = jsontext.Value("true")
 	return s.writeConversationMetadataObjectContext(ctx, conversationID, metadata)
 }

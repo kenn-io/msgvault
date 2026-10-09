@@ -28,10 +28,11 @@ const (
 )
 
 type mediaFixture struct {
-	store     *store.Store
-	sourceID  int64
-	messageID int64
-	dir       string
+	store          *store.Store
+	sourceID       int64
+	conversationID int64
+	messageID      int64
+	dir            string
 }
 
 func newMediaFixture(t *testing.T) mediaFixture {
@@ -54,7 +55,7 @@ func newMediaFixture(t *testing.T) mediaFixture {
 		},
 	})
 	require.NoError(t, err)
-	return mediaFixture{store: st, sourceID: source.ID, messageID: messageID, dir: t.TempDir()}
+	return mediaFixture{store: st, sourceID: source.ID, conversationID: conversationID, messageID: messageID, dir: t.TempDir()}
 }
 
 func testDiscordAttachment(rawURL string, size int64) Attachment {
@@ -459,7 +460,7 @@ func TestMediaArchiverPersistsPendingMetadataForEmptyURL(t *testing.T) {
 	pending, err := f.store.ListDiscordPendingAttachmentMessages(f.sourceID)
 	require.NoError(err)
 	assert.Equal([]store.DiscordPendingAttachmentMessage{{
-		MessageID: f.messageID, SourceMessageID: mediaTestMessageID, ChatID: mediaTestChannelID,
+		MessageID: f.messageID, ConversationID: f.conversationID, SourceMessageID: mediaTestMessageID, ChatID: mediaTestChannelID,
 	}}, pending)
 }
 

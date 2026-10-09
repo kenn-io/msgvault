@@ -366,8 +366,14 @@ type chatRefresh struct {
 // than a type or roster the archive predates. The returned error is fatal
 // (store failure); a fetch failure is carried in the result instead.
 func (imp *Importer) refreshChatContext(
-	ctx context.Context, syncID, sourceID int64, chatID string, sum *ImportSummary,
+	ctx context.Context, syncID, sourceID, conversationID int64, chatID string, sum *ImportSummary,
 ) (*chatRefresh, error) {
+	// Media refresh does not reconcile archived participant identities. Invalidate
+	// the earlier roster proof before the provider read so an interruption or
+	// membership change cannot leave that proof usable for route discovery.
+	if err := imp.store.InvalidateConversationMessagingRouteEvidence(ctx, conversationID); err != nil {
+		return nil, err
+	}
 	chat, gerr := imp.client.GetChat(ctx, chatID)
 	if errors.Is(gerr, ErrNotFound) {
 		return &chatRefresh{}, nil
@@ -501,7 +507,7 @@ func (imp *Importer) BackfillMedia(ctx context.Context, opts ImportOptions) (*Im
 		if policy.Scope == attachmentpolicy.ScopeDirect {
 			refresh, cached := chatRefreshes[item.ChatID]
 			if !cached {
-				refresh, err = imp.refreshChatContext(ctx, syncID, src.ID, item.ChatID, sum)
+				refresh, err = imp.refreshChatContext(ctx, syncID, src.ID, item.ConversationID, item.ChatID, sum)
 				if err != nil {
 					return sum, err
 				}

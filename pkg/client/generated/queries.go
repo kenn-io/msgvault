@@ -829,6 +829,17 @@ func (g GetPersonByUIDQuery) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(g))
 }
 
+type FindContactCandidatesQuery struct {
+	// Query Literal name tokens; all tokens must match. 1..256 UTF-8 bytes, at most 16 tokens. Wildcards are literal.
+	Query   string `json:"query" validate:"required"`
+	Limit   *int64 `json:"limit,omitempty" validate:"omitempty,gte=1,lte=100"`
+	AfterID *int64 `json:"after_id,omitempty" validate:"omitempty,gte=0"`
+}
+
+func (f FindContactCandidatesQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(f))
+}
+
 type ListDirectoryPeopleQuery struct {
 	// Q Lexical query over person names, contact points, and organizations
 	Q *string `json:"q,omitempty"`
@@ -874,6 +885,24 @@ func (l ListDirectoryPeopleQuery) Validate() error {
 		return nil
 	}
 	return errors
+}
+
+type GetPersonMessagingRoutesQuery struct {
+	// PersonUID Canonical or retired person UID. Tombstones return 410; unknown UIDs return 404.
+	PersonUID string `json:"person_uid" validate:"required"`
+
+	// Network Canonical lowercase bridge/service slug; unknown networks remain visible as unresolved.
+	Network             *string `json:"network,omitempty"`
+	SourceID            *int64  `json:"source_id,omitempty" validate:"omitempty,gte=0"`
+	Limit               *int64  `json:"limit,omitempty" validate:"omitempty,gte=1,lte=100"`
+	AfterConversationID *int64  `json:"after_conversation_id,omitempty" validate:"omitempty,gte=0"`
+	AfterContactPointID *int64  `json:"after_contact_point_id,omitempty" validate:"omitempty,gte=0"`
+	AfterObservationID  *int64  `json:"after_observation_id,omitempty" validate:"omitempty,gte=0"`
+	AfterSuggestionID   *int64  `json:"after_suggestion_id,omitempty" validate:"omitempty,gte=0"`
+}
+
+func (g GetPersonMessagingRoutesQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
 }
 
 type ListPersonAttributesQuery struct {

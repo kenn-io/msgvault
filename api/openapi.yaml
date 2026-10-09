@@ -2821,6 +2821,88 @@ components:
         - updated
         - removed
       type: object
+    ContactCandidate:
+      additionalProperties: true
+      properties:
+        display_name:
+          type: string
+        match_kinds:
+          items:
+            type: string
+          type: array
+        person_id:
+          format: int64
+          type: integer
+        person_uid:
+          type: string
+        revision:
+          format: int64
+          type: integer
+      required:
+        - person_id
+        - person_uid
+        - display_name
+        - revision
+        - match_kinds
+      type: object
+    ContactCandidatePage:
+      additionalProperties: true
+      properties:
+        ambiguous:
+          type: boolean
+        candidates:
+          items:
+            $ref: "#/components/schemas/ContactCandidate"
+          type: array
+        has_more:
+          type: boolean
+        identity_revision:
+          format: int64
+          type: integer
+        next_after_id:
+          format: int64
+          type: integer
+      required:
+        - candidates
+        - has_more
+        - next_after_id
+        - ambiguous
+        - identity_revision
+      type: object
+    ContactObservationPage:
+      additionalProperties: true
+      properties:
+        has_more:
+          type: boolean
+        items:
+          items:
+            $ref: "#/components/schemas/ParticipantContactObservation"
+          type: array
+        next_after_id:
+          format: int64
+          type: integer
+      required:
+        - items
+        - has_more
+        - next_after_id
+      type: object
+    ContactPointPage:
+      additionalProperties: true
+      properties:
+        has_more:
+          type: boolean
+        items:
+          items:
+            $ref: "#/components/schemas/PersonContactPoint"
+          type: array
+        next_after_id:
+          format: int64
+          type: integer
+      required:
+        - items
+        - has_more
+        - next_after_id
+      type: object
     ContactState:
       additionalProperties: true
       properties:
@@ -6194,6 +6276,52 @@ components:
         - source_id
         - is_conservative
       type: object
+    IdentityRouteSuggestion:
+      additionalProperties: true
+      properties:
+        basis:
+          type: string
+        id:
+          format: int64
+          type: integer
+        left_id:
+          format: int64
+          type: integer
+        left_kind:
+          type: string
+        right_id:
+          format: int64
+          type: integer
+        right_kind:
+          type: string
+        state:
+          type: string
+      required:
+        - id
+        - left_kind
+        - left_id
+        - right_kind
+        - right_id
+        - basis
+        - state
+      type: object
+    IdentityRouteSuggestionPage:
+      additionalProperties: true
+      properties:
+        has_more:
+          type: boolean
+        items:
+          items:
+            $ref: "#/components/schemas/IdentityRouteSuggestion"
+          type: array
+        next_after_id:
+          format: int64
+          type: integer
+      required:
+        - items
+        - has_more
+        - next_after_id
+      type: object
     IdentitySearchHTTPRequest:
       additionalProperties: false
       properties:
@@ -7336,6 +7464,98 @@ components:
           type: string
       required:
         - text
+      type: object
+    MessagingRoute:
+      additionalProperties: true
+      properties:
+        account_id:
+          type: string
+        bound_participant_ids:
+          items:
+            format: int64
+            type: integer
+          type: array
+        conversation_id:
+          format: int64
+          type: integer
+        conversation_type:
+          type: string
+        evidence_truncated:
+          type: boolean
+        member_chat_ids:
+          items:
+            type: string
+          type: array
+        membership_complete:
+          type: boolean
+        merged_into_chat_id:
+          type: string
+        missing_member_chat_ids:
+          items:
+            type: string
+          type: array
+        network:
+          type: string
+        network_label:
+          type: string
+        observed_at:
+          format: date-time
+          type: string
+        provider_chat_id:
+          type: string
+        reasons:
+          items:
+            type: string
+          type: array
+        source_id:
+          format: int64
+          type: integer
+        source_last_sync_at:
+          format: date-time
+          type: string
+        source_type:
+          type: string
+        status:
+          enum:
+            - archive_verified
+            - unresolved
+            - group_context
+            - merged_container
+          type: string
+      required:
+        - conversation_id
+        - provider_chat_id
+        - source_id
+        - source_type
+        - account_id
+        - network
+        - network_label
+        - conversation_type
+        - status
+        - reasons
+        - bound_participant_ids
+        - evidence_truncated
+        - membership_complete
+        - member_chat_ids
+        - missing_member_chat_ids
+        - merged_into_chat_id
+      type: object
+    MessagingRoutePage:
+      additionalProperties: true
+      properties:
+        has_more:
+          type: boolean
+        items:
+          items:
+            $ref: "#/components/schemas/MessagingRoute"
+          type: array
+        next_after_id:
+          format: int64
+          type: integer
+      required:
+        - items
+        - has_more
+        - next_after_id
       type: object
     Metrics:
       additionalProperties: true
@@ -11629,6 +11849,56 @@ components:
         - limit
         - offset
       type: object
+    PersonMessagingRoutesPage:
+      additionalProperties: true
+      properties:
+        alias_reason:
+          type: string
+        checked_at:
+          format: date-time
+          type: string
+        contact_points:
+          $ref: "#/components/schemas/ContactPointPage"
+        freshness:
+          type: string
+        identity_revision:
+          format: int64
+          type: integer
+        observations:
+          $ref: "#/components/schemas/ContactObservationPage"
+        person_id:
+          format: int64
+          type: integer
+        person_revision:
+          format: int64
+          type: integer
+        person_uid:
+          type: string
+        requested_uid:
+          type: string
+        routes:
+          $ref: "#/components/schemas/MessagingRoutePage"
+        unreviewed_suggestions:
+          $ref: "#/components/schemas/IdentityRouteSuggestionPage"
+        warnings:
+          items:
+            type: string
+          type: array
+      required:
+        - requested_uid
+        - person_uid
+        - person_id
+        - person_revision
+        - identity_revision
+        - alias_reason
+        - freshness
+        - checked_at
+        - routes
+        - contact_points
+        - observations
+        - unreviewed_suggestions
+        - warnings
+      type: object
     PersonName:
       additionalProperties: true
       properties:
@@ -15218,7 +15488,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.10.0
+  version: 3.11.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -24532,6 +24802,72 @@ paths:
       summary: Look up a durable person by vCard or CardDAV UID
       tags:
         - API
+  /api/v1/people/contact-candidates:
+    get:
+      operationId: findContactCandidates
+      parameters:
+        - description: Literal name tokens; all tokens must match. 1..256 UTF-8 bytes, at most 16 tokens. Wildcards are literal.
+          in: query
+          name: query
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: limit
+          schema:
+            default: 20
+            format: int64
+            maximum: 100
+            minimum: 1
+            type: integer
+        - in: query
+          name: after_id
+          schema:
+            format: int64
+            minimum: 0
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContactCandidatePage"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Find durable people by saved or archived names without selecting a duplicate
+      tags:
+        - API
   /api/v1/people/directory:
     get:
       description: Returns one stable, non-sensitive page of promoted durable people.
@@ -24622,6 +24958,113 @@ paths:
       security:
         - apiKey: []
       summary: Query durable people for the Directory
+      tags:
+        - API
+  /api/v1/people/messaging-routes:
+    get:
+      operationId: getPersonMessagingRoutes
+      parameters:
+        - description: Canonical or retired person UID. Tombstones return 410; unknown UIDs return 404.
+          in: query
+          name: person_uid
+          required: true
+          schema:
+            type: string
+        - description: Canonical lowercase bridge/service slug; unknown networks remain visible as unresolved.
+          in: query
+          name: network
+          schema:
+            type: string
+        - in: query
+          name: source_id
+          schema:
+            format: int64
+            minimum: 0
+            type: integer
+        - in: query
+          name: limit
+          schema:
+            default: 20
+            format: int64
+            maximum: 100
+            minimum: 1
+            type: integer
+        - in: query
+          name: after_conversation_id
+          schema:
+            format: int64
+            minimum: 0
+            type: integer
+        - in: query
+          name: after_contact_point_id
+          schema:
+            format: int64
+            minimum: 0
+            type: integer
+        - in: query
+          name: after_observation_id
+          schema:
+            format: int64
+            minimum: 0
+            type: integer
+        - in: query
+          name: after_suggestion_id
+          schema:
+            format: int64
+            minimum: 0
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonMessagingRoutesPage"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "410":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Read one person's archived messaging routes and contact evidence by stable UID
       tags:
         - API
   /api/v1/people/search:

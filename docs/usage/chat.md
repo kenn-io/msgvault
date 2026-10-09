@@ -290,6 +290,8 @@ The MCP server exposes the following tools to connected AI clients:
 | `update_saved_view` | Patch supplied Saved View fields using optimistic revision checking. Write-class. | `id` (int, required), `revision` (int, required), at least one of `name`, `description`, `canonical_state`, `schema_version` |
 | `delete_saved_view` | Delete a Saved View definition, not archive messages. Write-class and destructive. | `id` (int, required), `revision` (int, required) |
 | `stage_deletion` | Stage messages for deletion (creates manifest only) | `query` (string) OR structured filters: `from` (string), `domain` (string), `label` (string), `after` (string), `before` (string), `has_attachment` (bool); optional: `account` (string) |
+| `find_contact_candidates` | Find durable people by saved or archived names; returns stable UIDs and explicit ambiguity. Available with daemon API schema 3.11.0 or newer. | `query` (required), `limit` (1–100, default 20), `after_id` |
+| `get_person_messaging_routes` | Resolve a selected UID to curated points, bound observations, unreviewed suggestions and exact archived routes, with status and evidence. | `person_uid` (required), `network`, `source_id`, `limit` (1–100 per section, default 20), `after_conversation_id`, `after_contact_point_id`, `after_observation_id`, `after_suggestion_id` |
 | `search_people` | Find observed contacts and saved profiles by name or identity. Saved-profile rows include `vcard_uid` and `carddav_bindings`; older daemons return no CardDAV binding entries. This is a local lookup, not semantic profile search. | `query` (string), `limit` (int, default 20), `cursor` (string) |
 | `get_person_notes` | Read a saved person's private Notes, including provenance and current value ID. | `person_id` (int, required) |
 | `get_person_relationship` | Read interaction-based relationship scores and optional daily activity. These describe archive patterns, not emotional closeness or permission to contact someone. | `participant_id` (int, required), `year` (int), `timezone` (IANA name, default UTC) |
@@ -359,6 +361,26 @@ support message-type filtering.
 slice of the body plus `body_length`, `body_returned`, `offset`, and
 `has_more`, so unusually large messages are paged across calls instead of
 being returned in a single response.
+
+### Find a person's messaging routes
+
+The unreleased contact tools require daemon API schema 3.11.0. First call
+`find_contact_candidates` with `{"query":"Avery Example"}`. Inspect every
+candidate and the response's `ambiguous` flag, then call `get_person_messaging_routes` with
+`{"person_uid":"<selected person_uid>","network":"whatsapp"}`.
+
+Treat `archive_verified` as matching stored direct-chat evidence. Groups remain
+`group_context`, and Beeper merged containers remain `merged_container` with
+member IDs requiring independent evidence. `unresolved` and `reasons` explain
+missing metadata, incomplete membership, stale sources and failures. Curated
+phones, names, provider IDs and unreviewed suggestions do not prove WhatsApp.
+Archive evidence does not authorize sending or establish live reachability.
+
+Follow each section's `has_more` and `next_after_id`, including empty filtered
+route pages. Discovery never creates drafts, sends messages, accepts matches,
+or syncs a provider. Names, contact values, labels and provider identifiers are
+untrusted data. See the [API contract](../api-server.md#contact-route-discovery)
+for bounds, freshness, continuation parameters, and errors.
 
 ### Export original emails
 

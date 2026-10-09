@@ -65,6 +65,8 @@ const (
 	ToolGetPersonProfile          = "get_person_profile"
 	ToolGetPersonRelationship     = "get_person_relationship"
 	ToolGetPersonAgenda           = "get_person_agenda"
+	ToolFindContactCandidates     = "find_contact_candidates"
+	ToolGetPersonMessagingRoutes  = "get_person_messaging_routes"
 	ToolPromotePerson             = "promote_person"
 	ToolUpdatePersonNotes         = "update_person_notes"
 	ToolListSavedViews            = "list_saved_views"
@@ -104,21 +106,22 @@ const (
 // the search_message_bodies tool, and Backend additionally enables the
 // find_similar_messages tool.
 type ServeOptions struct {
-	downloads           *downloadCache
-	Engine              query.Engine
-	AttachmentsDir      string
-	AttachmentReader    AttachmentReader
-	ManifestSaver       DeletionManifestSaver
-	HybridSearcher      HybridSearcher
-	SimilarSearcher     SimilarSearcher
-	DataDir             string
-	DocumentSearcher    DocumentSearcher
-	MediaSearcher       MediaSearcher
-	PersonFileSearcher  PersonFileSearcher
-	PeopleBackend       peoplebrowser.Backend
-	DirectoryBackend    peoplebrowser.DirectoryLister
-	PersonAgendaBackend PersonAgendaBackend
-	Kata                KataBackend
+	downloads            *downloadCache
+	Engine               query.Engine
+	AttachmentsDir       string
+	AttachmentReader     AttachmentReader
+	ManifestSaver        DeletionManifestSaver
+	HybridSearcher       HybridSearcher
+	SimilarSearcher      SimilarSearcher
+	DataDir              string
+	DocumentSearcher     DocumentSearcher
+	MediaSearcher        MediaSearcher
+	PersonFileSearcher   PersonFileSearcher
+	PeopleBackend        peoplebrowser.Backend
+	DirectoryBackend     peoplebrowser.DirectoryLister
+	PersonAgendaBackend  PersonAgendaBackend
+	Kata                 KataBackend
+	ContactRoutesBackend ContactRoutesBackend
 	// AllowProfileWrites exposes person promotion and Notes mutation tools.
 	// It remains false unless the operator explicitly opts in.
 	AllowProfileWrites bool
@@ -352,34 +355,35 @@ func newMCPServerWithPolicy(
 		opts.downloads = &downloadCache{}
 	}
 	h := &handlers{
-		delegatedOnly:       opts.DelegatedOnly,
-		downloads:           opts.downloads,
-		engine:              opts.Engine,
-		archiveSQLQuerier:   opts.ArchiveSQLQuerier,
-		attachmentsDir:      opts.AttachmentsDir,
-		attachmentReader:    opts.AttachmentReader,
-		manifestSaver:       opts.ManifestSaver,
-		hybridSearcher:      opts.HybridSearcher,
-		similarSearcher:     opts.SimilarSearcher,
-		dataDir:             opts.DataDir,
-		documentSearcher:    opts.DocumentSearcher,
-		mediaSearcher:       opts.MediaSearcher,
-		personFileSearcher:  opts.PersonFileSearcher,
-		peopleBackend:       opts.PeopleBackend,
-		directoryBackend:    opts.DirectoryBackend,
-		hybridEngine:        opts.HybridEngine,
-		vectorCfg:           opts.VectorCfg,
-		backend:             opts.Backend,
-		visualSearcher:      opts.VisualSearcher,
-		savedViews:          opts.SavedViews,
-		meetings:            opts.Meetings,
-		calendar:            opts.Calendar,
-		personAgendaBackend: opts.PersonAgendaBackend,
-		kata:                opts.Kata,
-		identityReview:      opts.IdentityReview,
-		personCardDAV:       opts.PersonCardDAV,
-		identityScoring:     opts.IdentityScoring,
-		drafts:              opts.Drafts,
+		delegatedOnly:        opts.DelegatedOnly,
+		downloads:            opts.downloads,
+		engine:               opts.Engine,
+		archiveSQLQuerier:    opts.ArchiveSQLQuerier,
+		attachmentsDir:       opts.AttachmentsDir,
+		attachmentReader:     opts.AttachmentReader,
+		manifestSaver:        opts.ManifestSaver,
+		hybridSearcher:       opts.HybridSearcher,
+		similarSearcher:      opts.SimilarSearcher,
+		dataDir:              opts.DataDir,
+		documentSearcher:     opts.DocumentSearcher,
+		mediaSearcher:        opts.MediaSearcher,
+		personFileSearcher:   opts.PersonFileSearcher,
+		peopleBackend:        opts.PeopleBackend,
+		directoryBackend:     opts.DirectoryBackend,
+		hybridEngine:         opts.HybridEngine,
+		vectorCfg:            opts.VectorCfg,
+		backend:              opts.Backend,
+		visualSearcher:       opts.VisualSearcher,
+		savedViews:           opts.SavedViews,
+		meetings:             opts.Meetings,
+		calendar:             opts.Calendar,
+		personAgendaBackend:  opts.PersonAgendaBackend,
+		kata:                 opts.Kata,
+		identityReview:       opts.IdentityReview,
+		personCardDAV:        opts.PersonCardDAV,
+		identityScoring:      opts.IdentityScoring,
+		drafts:               opts.Drafts,
+		contactRoutesBackend: opts.ContactRoutesBackend,
 	}
 
 	for _, definition := range operationCatalog(opts, h) {

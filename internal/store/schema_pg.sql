@@ -100,6 +100,14 @@ CREATE TABLE IF NOT EXISTS sources (
     UNIQUE(source_type, identifier)
 );
 
+-- Account-level route proof failures apply to every archived chat, including
+-- quiet chats that an incremental sync does not revisit.
+CREATE TABLE IF NOT EXISTS source_messaging_route_failures (
+    source_id BIGINT PRIMARY KEY REFERENCES sources(id) ON DELETE CASCADE,
+    failure TEXT NOT NULL CHECK (failure IN ('account_lookup_failed', 'account_not_connected', 'account_binding_mismatch', 'network_unverified')),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 -- External CardDAV connections. Passwords remain in the private token file
 -- and are never persisted here.
 CREATE TABLE IF NOT EXISTS carddav_discovery_lock (
