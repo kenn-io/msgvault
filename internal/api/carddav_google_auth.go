@@ -158,7 +158,7 @@ func (s *Server) handleGoogleCardDAVCallback(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, "oauth_failed", "Google authorization failed. Select the requested account and grant all requested permissions, then try again")
 		return
 	}
-	if err := s.cardDAV.reconcileGoogleSchedules(entry); err != nil {
+	if err := s.cardDAV.reconcileGoogleSchedules(r.Context(), entry); err != nil {
 		s.logger.Error("reconcile CardDAV schedule after Google authorization", "error", err)
 		writeError(w, http.StatusServiceUnavailable, "carddav_schedule_failed", "Google Contacts authorized, but scheduling failed. Save the CardDAV account to retry")
 		return

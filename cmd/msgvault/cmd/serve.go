@@ -437,7 +437,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	cardDAVController.SetConnectionScheduleReconciler(func(name string, cardDAVConfig config.CardDAVConfig, service api.CardDAVOperations) error {
 		return reconcileCardDAVSchedulerJob(sched, cardDAVConfig, service, logger, name)
 	})
-	if err := cardDAVController.ReconcileSchedule(); err != nil {
+	if err := cardDAVController.ReconcileSchedule(ctx); err != nil {
 		return err
 	}
 

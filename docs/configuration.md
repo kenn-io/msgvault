@@ -506,15 +506,14 @@ Token commands receive these environment variables:
 
 | Variable | Meaning |
 |---|---|
+| `MSGVAULT_TOKEN_NAMESPACE` | Token namespace: empty for Gmail, Calendar, and Drive tokens; `carddav-google/<hash>` for a separate Google Contacts authorization, where `<hash>` is the lowercase hex SHA-256 of the OAuth app name (empty for the default app) |
 | `MSGVAULT_ACCOUNT` | Account spelling used for this token; empty for listing |
-| `MSGVAULT_TOKEN_PATH` | Logical token path, usable as the secret-store key; empty for listing |
-| `MSGVAULT_TOKEN_DIR` | Logical token directory identifying the namespace |
 
-These paths identify records. msgvault does not write token JSON there in command
-mode. Preserve namespaces: a Google Contacts token can have the same account as
-its Gmail token but a different path and directory. Changing the configured data
-directory also changes these identifiers. Do not collapse distinct account
-spellings or namespaces in a wrapper.
+Key each record by namespace and account. These values do not depend on the data
+directory or machine, so one store can serve several machines. Preserve
+namespaces: a Google Contacts token can have the same account as its Gmail token
+in a different namespace. Do not collapse distinct account spellings or
+namespaces in a wrapper.
 
 Only token reads may exit with status **3** to report a missing record. Other
 nonzero exits fail the operation. Successful empty or malformed JSON is an error.
@@ -526,13 +525,21 @@ checks can detect them. Read or listing failures stop those decisions.
 Commands are executable-and-argument arrays. msgvault does not invoke a shell or
 expand tildes, environment variables, redirects, or pipes. Executables use `PATH`;
 relative executables use the process working directory. Use absolute paths for
-scripts that must run from the daemon. Commands inherit the user's environment
+scripts that must run from the daemon. A command that cannot start, such as a
+missing or non-executable program, is a configuration error; for
+`client_secrets_command`, msgvault asks you to fix the OAuth app settings. Commands inherit the user's environment
 and run with the user's privileges. They must work unattended for scheduled sync.
 
-Each invocation has a 30-second deadline and a 1 MiB stdout limit. Calls with a
-context also honor cancellation. msgvault discards stderr and never includes
-command output or arguments in its errors. Write and delete stdout is ignored.
+Each invocation has a 30-second deadline and a 1 MiB stdout limit, and stops
+when the operation that needs it is cancelled. When msgvault's stderr is a
+terminal, a command's stderr is shown there; otherwise, including in the daemon,
+msgvault discards it. msgvault never includes command output or arguments in its
+errors. Write and delete stdout is ignored.
 Pass secrets through stdin rather than placing them in command arguments.
+
+Google Contacts reuses an access token until it expires, so the daemon runs these
+commands about once per token lifetime rather than for every contacts request.
+Saving or authorizing a Google Contacts connection reads the stored token again.
 
 Keep token JSON unchanged, including `scopes` and `client_id`. A write followed by
 a read must return the same bytes. msgvault uses private local lock files to
@@ -541,7 +548,7 @@ never writes secret temporary files in command mode. Other programs that change
 the store need their own coordination with these operations.
 
 Configure the command backend separately on each machine. To migrate a file
-credential, move its JSON into your store under the corresponding logical key
+credential, move its JSON into your store under its namespace and account
 and verify a sync before removing the old file. Changing configuration leaves
 existing plaintext files in place; msgvault does not migrate them automatically.
 `export-token` reads the selected backend, and the receiving server's token-upload

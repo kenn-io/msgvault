@@ -43,7 +43,7 @@ func newAuthorizeGoogleCardDAVCmd() *cobra.Command {
 				}
 				return fmt.Errorf("prepare Google Contacts authorization: %w", err)
 			}
-			if mgr.HasToken(email) && !mgr.HasScopeMetadata(email) {
+			if mgr.HasToken(cmd.Context(), email) && !mgr.HasScopeMetadata(cmd.Context(), email) {
 				if _, err := fmt.Fprintln(cmd.ErrOrStderr(), "Warning: existing Google permissions are not recorded. This sign-in requests Contacts access; Gmail or Calendar may need separate reauthorization afterward."); err != nil {
 					return fmt.Errorf("write authorization warning: %w", err)
 				}

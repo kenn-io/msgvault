@@ -15,6 +15,7 @@ type OAuthTokenCommands struct {
 	ListCommand   []string `toml:"list_command"`
 }
 
+// Enabled reports whether any token command is configured.
 func (c OAuthTokenCommands) Enabled() bool {
 	return c.ReadCommand != nil || c.WriteCommand != nil || c.DeleteCommand != nil || c.ListCommand != nil
 }
@@ -31,6 +32,7 @@ func validateSecretCommand(argv []string) error {
 	return nil
 }
 
+// Validate requires all four commands once any is configured, without running them.
 func (c OAuthTokenCommands) Validate() error {
 	if !c.Enabled() {
 		return nil
@@ -39,7 +41,10 @@ func (c OAuthTokenCommands) Validate() error {
 		name string
 		argv []string
 	}{
-		{"read_command", c.ReadCommand}, {"write_command", c.WriteCommand}, {"delete_command", c.DeleteCommand}, {"list_command", c.ListCommand},
+		{"read_command", c.ReadCommand},
+		{"write_command", c.WriteCommand},
+		{"delete_command", c.DeleteCommand},
+		{"list_command", c.ListCommand},
 	} {
 		if len(field.argv) == 0 {
 			return fmt.Errorf("tokens.%s: command is required when any token command is configured", field.name)
@@ -64,6 +69,7 @@ func validateOAuthApp(app OAuthApp) error {
 	return nil
 }
 
+// Validate checks client credential sources and token commands without running them.
 func (o *OAuthConfig) Validate() error {
 	if err := validateOAuthApp(OAuthApp{ClientSecrets: o.ClientSecrets, ClientSecretsCommand: o.ClientSecretsCommand}); err != nil {
 		return err

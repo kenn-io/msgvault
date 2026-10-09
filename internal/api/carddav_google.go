@@ -81,8 +81,13 @@ func (c *CardDAVController) serviceForCredential(credential carddav.Credential, 
 }
 
 func (c *CardDAVController) googleBearerToken(ctx context.Context, credential carddav.Credential) (string, error) {
-	// Resolve the token directory on each request: CLI authorization can
-	// switch between a shared mail token and a dedicated Contacts token.
+	key := googleTokenKeyFor(credential)
+	tokens := &c.root().googleTokens
+	if access, ok := tokens.valid(key); ok {
+		return access, nil
+	}
+	// Resolve the grant again once the cached token expires: CLI authorization
+	// can switch between a shared mail token and a dedicated Contacts token.
 	mgr, err := c.googleOAuthManager(ctx, credential)
 	if err != nil {
 		return "", err
@@ -95,6 +100,7 @@ func (c *CardDAVController) googleBearerToken(ctx context.Context, credential ca
 	if err != nil {
 		return "", googleCardDAVTokenError(err)
 	}
+	tokens.store(key, token)
 	return token.AccessToken, nil
 }
 
@@ -123,12 +129,23 @@ func googleCardDAVTokenError(err error) error {
 	return fmt.Errorf("obtain Google access token: %w", errors.Join(err, carddav.ErrGoogleTokenUnavailable, carddav.ErrWriteNotSent, status))
 }
 
+// googleCredentialUsable reports whether requests can get a Google token,
+// reusing a cached access token before running credential commands.
+func (c *CardDAVController) googleCredentialUsable(ctx context.Context, credential carddav.Credential) error {
+	if _, ok := c.root().googleTokens.valid(googleTokenKeyFor(credential)); ok {
+		return nil
+	}
+	_, err := c.googleOAuthManager(ctx, credential)
+	return err
+}
+
 func (c *CardDAVController) googleOAuthManager(ctx context.Context, credential carddav.Credential) (*oauth.Manager, error) {
 	secrets, err := c.cfg.OAuth.CredentialsFor(credential.OAuthApp)
 	if err != nil {
 		return nil, errors.Join(carddav.ErrGoogleAuthorizationRequired, err)
 	}
-	mgr, err := carddav.NewGoogleOAuthManagerWithCredentials(ctx, secrets, c.cfg.TokensDir(), c.cfg.OAuth.Tokens, credential.OAuthApp, credential.Username, slog.Default())
+	mgr, err := carddav.NewGoogleOAuthManagerWithCredentials(ctx, secrets, c.cfg.TokensDir(),
+		c.cfg.OAuth.Tokens, credential.OAuthApp, credential.Username, slog.Default())
 	if errors.Is(err, oauth.ErrClientConfig) {
 		return nil, errors.Join(carddav.ErrGoogleAuthorizationRequired, err)
 	}

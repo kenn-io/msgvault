@@ -525,7 +525,7 @@ type scopePreservingReauthorizer interface {
 // current grant: an account deliberately narrowed to read-only must not be
 // handed a command that would widen it again.
 type grantInspector interface {
-	GrantedScopes(email string) []string
+	GrantedScopes(ctx context.Context, email string) []string
 }
 
 // accountIsNarrowed reports whether the account's recorded grant is Gmail
@@ -533,15 +533,11 @@ type grantInspector interface {
 // scopes at all, is treated as not narrowed, so guidance is unchanged for
 // every pre-existing case.
 func accountIsNarrowed(ctx context.Context, mgr tokenReauthorizer, email string) bool {
-	if manager, ok := mgr.(*oauth.Manager); ok {
-		info, err := manager.InspectToken(ctx, email)
-		return err == nil && oauth.IsNarrowedGmailGrant(info.Scopes)
-	}
 	inspector, ok := mgr.(grantInspector)
 	if !ok {
 		return false
 	}
-	return oauth.IsNarrowedGmailGrant(inspector.GrantedScopes(email))
+	return oauth.IsNarrowedGmailGrant(inspector.GrantedScopes(ctx, email))
 }
 
 // readonlyFlagSuffix renders the grant-affecting flag for inclusion in

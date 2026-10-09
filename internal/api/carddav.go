@@ -67,6 +67,7 @@ type CardDAVController struct {
 	mu                          sync.RWMutex
 	googleAuthMu                sync.Mutex
 	googleAuthorizations        map[string]cardDAVGoogleAuthorization
+	googleTokens                googleAccessTokens
 	saveMu                      sync.Mutex
 	cfg                         *config.Config
 	store                       *store.Store
@@ -91,11 +92,11 @@ func (c *CardDAVController) SetScheduleReconciler(reconcile func(config.CardDAVC
 
 // ReconcileSchedule updates scheduling from the saved connection and current
 // credentials without contacting the CardDAV server.
-func (c *CardDAVController) ReconcileSchedule() error {
+func (c *CardDAVController) ReconcileSchedule(ctx context.Context) error {
 	c.saveLock().Lock()
 	defer c.saveLock().Unlock()
 	if c.manager != nil {
-		return c.reconcileCurrentSchedule()
+		return c.reconcileCurrentSchedule(ctx)
 	}
 	names := c.connectionNames()
 	if !slices.Contains(names, config.DefaultCardDAVConnection) {
@@ -105,7 +106,7 @@ func (c *CardDAVController) ReconcileSchedule() error {
 	for _, name := range names {
 		selected, err := c.Select(name, false)
 		if err == nil {
-			err = selected.reconcileCurrentSchedule()
+			err = selected.reconcileCurrentSchedule(ctx)
 		}
 		failures = append(failures, err)
 	}
@@ -114,7 +115,9 @@ func (c *CardDAVController) ReconcileSchedule() error {
 
 // reconcileCurrentSchedule runs while saveMu is held so an authorization
 // callback cannot schedule a connection that an account save is replacing.
-func (c *CardDAVController) reconcileCurrentSchedule() error {
+// Checking a Google grant can run credential commands, so callers pass the
+// context that bounds the save or authorization holding the lock.
+func (c *CardDAVController) reconcileCurrentSchedule(ctx context.Context) error {
 	c.configLock().RLock()
 	service, reconcile := c.service, c.reconcileSchedule
 	reconcileConnection := c.root().reconcileConnectionSchedule
@@ -125,8 +128,12 @@ func (c *CardDAVController) reconcileCurrentSchedule() error {
 	configured := c.cardDAVConfigSnapshot()
 	if service != nil && configured.Provider == cardDAVProviderGoogle {
 		credential := carddav.Credential{Username: configured.Username, OAuthApp: configured.OAuthApp}
-		// Only a missing or rejected grant stops the schedule; other failures retry on the next run.
-		if _, err := c.googleOAuthManager(context.Background(), credential); errors.Is(err, carddav.ErrGoogleAuthorizationRequired) {
+		// A save or authorization may have changed the grant; read it again.
+		c.root().googleTokens.forget(googleTokenKeyFor(credential))
+		// Only a missing or rejected grant stops the schedule; other failures
+		// retry on the next run.
+		_, err := c.googleOAuthManager(ctx, credential)
+		if errors.Is(err, carddav.ErrGoogleAuthorizationRequired) {
 			service = nil
 		}
 	}
@@ -544,14 +551,14 @@ func (c *CardDAVController) Save(ctx context.Context, req CardDAVAccountRequest)
 		c.configLock().Lock()
 		c.service = nil
 		c.configLock().Unlock()
-		return CardDAVAccountResponse{}, errors.Join(errCardDAVStorage, err, c.reconcileCurrentSchedule())
+		return CardDAVAccountResponse{}, errors.Join(errCardDAVStorage, err, c.reconcileCurrentSchedule(ctx))
 	}
 	if !cardDAVConfigEqual(confirmed, next) {
 		c.publishCardDAVConfig(confirmed)
 		c.configLock().Lock()
 		c.service = nil
 		c.configLock().Unlock()
-		reconcileErr := c.reconcileCurrentSchedule()
+		reconcileErr := c.reconcileCurrentSchedule(ctx)
 		return CardDAVAccountResponse{}, errors.Join(
 			fmt.Errorf("%w: CardDAV settings changed after discovery", config.ErrConfigConflict), reconcileErr,
 		)
@@ -559,7 +566,7 @@ func (c *CardDAVController) Save(ctx context.Context, req CardDAVAccountRequest)
 	c.configLock().Lock()
 	c.service = c.scopedCandidate(service, generation)
 	c.configLock().Unlock()
-	if err := c.reconcileCurrentSchedule(); err != nil {
+	if err := c.reconcileCurrentSchedule(ctx); err != nil {
 		return CardDAVAccountResponse{}, errors.Join(errCardDAVStorage, fmt.Errorf("reconcile CardDAV schedule: %w", err))
 	}
 	return CardDAVAccountResponse{Provider: req.Provider, OAuthApp: req.OAuthApp, BaseURL: req.BaseURL, Username: req.Username, Enabled: *req.Enabled, Schedule: req.Schedule, Books: len(discovery.Books)}, nil
@@ -580,7 +587,7 @@ func (c *CardDAVController) saveCardDAVConfigOnly(
 		}
 		return CardDAVAccountResponse{}, errors.Join(errCardDAVStorage, err, rollbackConfigErr)
 	}
-	if err := c.reconcileCurrentSchedule(); err != nil {
+	if err := c.reconcileCurrentSchedule(ctx); err != nil {
 		return CardDAVAccountResponse{}, errors.Join(errCardDAVStorage,
 			fmt.Errorf("reconcile CardDAV schedule: %w", err))
 	}
@@ -947,7 +954,7 @@ func (c *CardDAVController) scopedStatus(ctx context.Context) (CardDAVStatusResp
 		return status, nil
 	}
 	if credential.Google {
-		if _, err := c.googleOAuthManager(ctx, credential); err != nil {
+		if err := c.googleCredentialUsable(ctx, credential); err != nil {
 			status.CredentialConfigured = false
 			status.RepairReason = "credential_unavailable"
 			if errors.Is(err, carddav.ErrGoogleAuthorizationRequired) {

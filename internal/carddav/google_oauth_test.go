@@ -43,12 +43,12 @@ func TestGoogleAuthorizationReusesOnlyMatchingCredentials(t *testing.T) {
 				required.NoError(os.WriteFile(mailPath, mail, 0600))
 			}
 			if tc.malformedDedicated {
-				isolated := googleTokensDir(dir, "contacts")
+				isolated := filepath.Join(dir, filepath.FromSlash(googleTokenNamespace("contacts")))
 				required.NoError(os.MkdirAll(isolated, 0700))
 				required.NoError(os.WriteFile(filepath.Join(isolated, "person@example.com.json"), []byte("{"), 0600))
 			}
 			if tc.dedicatedClient != "" {
-				isolated := googleTokensDir(dir, "contacts")
+				isolated := filepath.Join(dir, filepath.FromSlash(googleTokenNamespace("contacts")))
 				required.NoError(os.MkdirAll(isolated, 0700))
 				data, err := json.Marshal(map[string]any{"access_token": "contacts-access", "client_id": tc.dedicatedClient, "scopes": []string{oauth.ScopeCalendarReadonly}})
 				required.NoError(err)

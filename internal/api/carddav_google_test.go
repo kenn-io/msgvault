@@ -188,7 +188,7 @@ func TestGoogleCardDAVTokenStoreFailureKeepsScheduleAndStatus(t *testing.T) {
 		scheduled = service
 		return nil
 	})
-	required.NoError(controller.ReconcileSchedule())
+	required.NoError(controller.ReconcileSchedule(t.Context()))
 	assertions.NotNil(scheduled)
 
 	// The same holds when the client secrets command is the part that fails.
@@ -198,7 +198,7 @@ func TestGoogleCardDAVTokenStoreFailureKeepsScheduleAndStatus(t *testing.T) {
 	required.NoError(err)
 	assertions.Equal("credential_unavailable", status.RepairReason)
 	scheduled = nil
-	required.NoError(controller.ReconcileSchedule())
+	required.NoError(controller.ReconcileSchedule(t.Context()))
 	assertions.NotNil(scheduled)
 }
 
@@ -553,8 +553,8 @@ func TestGoogleAuthorizationCompletesWhileArchiveGateHeld(t *testing.T) { //noli
 	assertions.Equal(1, reconciled, "successful authorization must reconcile the schedule without an account save")
 	mgr, err := carddav.NewGoogleOAuthManagerWithCredentials(t.Context(), config.OAuthApp{ClientSecrets: secrets}, cfg.TokensDir(), config.OAuthTokenCommands{}, "", "person@example.com", testLogger())
 	required.NoError(err)
-	assertions.True(mgr.TokenMatchesClient("person@example.com"))
-	assertions.True(mgr.HasScope("person@example.com", oauth.ScopeCardDAV))
+	assertions.True(mgr.TokenMatchesClient(t.Context(), "person@example.com"))
+	assertions.True(mgr.HasScope(t.Context(), "person@example.com", oauth.ScopeCardDAV))
 	saved, err := os.ReadFile(mgr.TokenPath("person@example.com"))
 	required.NoError(err)
 	callback = httptest.NewRequest(http.MethodPost, "https://archive.example/api/v1/carddav/google/callback", strings.NewReader(fmt.Sprintf(`{"state":%q,"code":"synthetic-code"}`, older.State)))

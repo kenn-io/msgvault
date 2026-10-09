@@ -71,7 +71,7 @@ func TestRefreshCannotOverwriteNewAuthorization(t *testing.T) {
 			required.NoError(flow.Complete(t.Context(), flow.State, "synthetic-code"))
 			release()
 			required.NoError(<-refreshed)
-			saved, err := mgr.loadTokenFile(email)
+			saved, err := mgr.loadTokenFile(t.Context(), email)
 			required.NoError(err)
 			assertions.Equal("new-authorization", saved.AccessToken)
 			assertions.Equal("new-refresh", saved.RefreshToken)

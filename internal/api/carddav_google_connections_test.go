@@ -81,7 +81,7 @@ func TestCardDAVGoogleConnectionsRestartRollbackAndSchedules(t *testing.T) {
 		scheduled = append(scheduled, name)
 		return nil
 	})
-	required.NoError(root.reconcileGoogleSchedules(cardDAVGoogleAuthorization{connection: "work", email: "work@example.com", oauthApp: "work"}))
+	required.NoError(root.reconcileGoogleSchedules(t.Context(), cardDAVGoogleAuthorization{connection: "work", email: "work@example.com", oauthApp: "work"}))
 	assertions.ElementsMatch([]string{"work"}, scheduled)
 	work, err := root.Select("work", false)
 	required.NoError(err)

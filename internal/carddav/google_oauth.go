@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"path/filepath"
 
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/oauth"
@@ -25,30 +24,34 @@ var (
 	ErrMicrosoftTokenUnavailable = errors.New("token endpoint for Microsoft contacts is unavailable")
 )
 
-// googleTokensDir separates CardDAV authorizations by configured OAuth app.
+// googleTokenNamespace separates CardDAV authorizations by configured OAuth app.
 // Hashing the app name keeps arbitrary configuration keys out of path segments.
-func googleTokensDir(tokensDir, app string) string {
-	return filepath.Join(tokensDir, "carddav-google", fmt.Sprintf("%x", sha256.Sum256([]byte(app))))
+func googleTokenNamespace(app string) string {
+	return fmt.Sprintf("carddav-google/%x", sha256.Sum256([]byte(app)))
 }
 
 // NewGoogleOAuthManagerWithCredentials reuses a mail/calendar authorization only when its
 // recorded client matches the selected app. An existing CardDAV authorization
 // takes precedence so later mail setup cannot switch the connection's token.
-func NewGoogleOAuthManagerWithCredentials(ctx context.Context, credentials config.OAuthApp, tokensDir string, commands config.OAuthTokenCommands, app, email string, logger *slog.Logger) (*oauth.Manager, error) {
+func NewGoogleOAuthManagerWithCredentials(
+	ctx context.Context, credentials config.OAuthApp, tokensDir string,
+	commands config.OAuthTokenCommands, app, email string, logger *slog.Logger,
+) (*oauth.Manager, error) {
 	scopes := []string{oauth.ScopeCardDAV, oauth.ScopeUserinfoEmail}
-	dedicated, err := oauth.NewManagerWithCredentials(ctx, credentials, googleTokensDir(tokensDir, app), commands, logger, scopes)
+	shared, err := oauth.NewManagerWithCredentials(ctx, credentials, tokensDir, commands, logger, scopes)
 	if err != nil {
 		return nil, err
 	}
+	dedicated := shared.WithTokenNamespace(googleTokenNamespace(app))
 	info, err := dedicated.InspectToken(ctx, email)
-	// A malformed token file counts as absent so a matching shared grant still wins and a new sign-in can repair it.
+	// A malformed token file counts as absent so a matching shared grant still
+	// wins and a new sign-in can repair it.
 	if err != nil && !errors.Is(err, oauth.ErrInvalidTokenJSON) {
 		return nil, fmt.Errorf("inspect dedicated Google Contacts token: %w", err)
 	}
 	if info.Exists {
 		return dedicated.WithTokenInfo(email, info), nil
 	}
-	shared := dedicated.WithTokensDir(tokensDir)
 	sharedInfo, err := shared.InspectToken(ctx, email)
 	if err != nil && !errors.Is(err, oauth.ErrInvalidTokenJSON) {
 		return nil, fmt.Errorf("inspect shared Google Contacts token: %w", err)

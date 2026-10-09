@@ -199,23 +199,24 @@ func newAddAccountOAuthManager(ctx context.Context, clientSecretsPath config.OAu
 // warned about the grant, and reauthorizing cannot narrow it. The current token
 // must still contain the Gmail read scope the frontend requested.
 func addAccountTokenReusable(
+	ctx context.Context,
 	mgr *oauth.Manager,
 	email string,
 	binding addAccountBinding,
 	grantDecided bool,
 ) bool {
-	if !mgr.HasToken(email) || mgr.TokenIssuedByDifferentClient(email) {
+	if !mgr.HasToken(ctx, email) || mgr.TokenIssuedByDifferentClient(ctx, email) {
 		return false
 	}
 	needsClientCheck := grantDecided || binding.bindingChanged || binding.explicit ||
 		binding.resolvedApp != ""
-	if needsClientCheck && !mgr.TokenMatchesClient(email) {
+	if needsClientCheck && !mgr.TokenMatchesClient(ctx, email) {
 		return false
 	}
 	if grantDecided {
-		return mgr.HasScope(email, oauth.ScopeGmailReadonly)
+		return mgr.HasScope(ctx, email, oauth.ScopeGmailReadonly)
 	}
-	return addAccountTokenHasGmailScopes(mgr, email, readonlyGrant)
+	return addAccountTokenHasGmailScopes(ctx, mgr, email, readonlyGrant)
 }
 
 // addAccountAuthorizeError decorates an authorization failure with the
@@ -347,7 +348,7 @@ func preflightAddAccountAuthorize(cmd *cobra.Command, email string) (bool, error
 		return false, err
 	}
 	if forceReauth {
-		if mgr.HasToken(email) {
+		if mgr.HasToken(ctx, email) {
 			fmt.Printf("Removing existing token for %s...\n", email)
 			if err := mgr.DeleteToken(ctx, email); err != nil {
 				return false, fmt.Errorf("delete existing token: %w", err)
@@ -356,7 +357,7 @@ func preflightAddAccountAuthorize(cmd *cobra.Command, email string) (bool, error
 			fmt.Printf("No existing token found for %s, proceeding with authorization.\n", email)
 		}
 	}
-	if !forceReauth && addAccountTokenReusable(mgr, email, binding, false) {
+	if !forceReauth && addAccountTokenReusable(ctx, mgr, email, binding, false) {
 		return false, nil
 	}
 
@@ -457,7 +458,8 @@ func runAddAccountLocal(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		if cfg.OAuth.Tokens.Enabled() {
-			printCommandHeadlessInstructions(cmd.OutOrStdout(), email, resolvedApp, false, readonlyGrant)
+			accountArgs := oauth.HeadlessAccountArgs("add-account", email, resolvedApp, readonlyGrant, false)
+			printCommandHeadlessInstructions(cmd.OutOrStdout(), email, accountArgs, false)
 		} else {
 			oauth.PrintHeadlessInstructions(email, cfg.TokensDir(), resolvedApp, readonlyGrant)
 		}
@@ -564,7 +566,7 @@ func runAddAccountLocal(cmd *cobra.Command, args []string) error {
 
 	// If --force, delete existing token so we re-authorize
 	if forceReauth {
-		if oauthMgr.HasToken(email) {
+		if oauthMgr.HasToken(ctx, email) {
 			fmt.Printf("Removing existing token for %s...\n", email)
 			if err := oauthMgr.DeleteToken(ctx, email); err != nil {
 				return fmt.Errorf("delete existing token: %w", err)
@@ -574,7 +576,7 @@ func runAddAccountLocal(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	tokenReusable := !forceReauth && addAccountTokenReusable(oauthMgr, email, binding, grantDecided)
+	tokenReusable := !forceReauth && addAccountTokenReusable(ctx, oauthMgr, email, binding, grantDecided)
 	if tokenReusable {
 		// A token's filename and OAuth client do not establish which mailbox
 		// it accesses. Verify copied and legacy tokens before changing the source.
@@ -722,8 +724,8 @@ func addAccountOAuthScopesForToken(hasScopeMetadata bool, existingScopes []strin
 // covers what this run needs, so the token can be reused without a fresh
 // consent. Under readonly, gmail.readonly on its own is enough — re-authorizing
 // an account that is already narrowed would be a pointless browser round trip.
-func addAccountTokenHasGmailScopes(mgr *oauth.Manager, email string, readonly bool) bool {
-	if !mgr.HasScopeMetadata(email) {
+func addAccountTokenHasGmailScopes(ctx context.Context, mgr *oauth.Manager, email string, readonly bool) bool {
+	if !mgr.HasScopeMetadata(ctx, email) {
 		// A token predating scope recording satisfies a default run, whose
 		// scope set it almost certainly already matches. It cannot satisfy a
 		// readonly run: reusing an unverifiable grant would treat "unknown" as
@@ -737,16 +739,16 @@ func addAccountTokenHasGmailScopes(mgr *oauth.Manager, email string, readonly bo
 		// too. Reusing one would report success over a grant --readonly exists
 		// to avoid. decideAddAccountGrant refuses that case first, but this
 		// must not depend on the gate upstream staying in place.
-		return mgr.HasScope(email, oauth.ScopeGmailReadonly) &&
-			!oauth.HasGmailWriteScope(mgr.GrantedScopes(email))
+		return mgr.HasScope(ctx, email, oauth.ScopeGmailReadonly) &&
+			!oauth.HasGmailWriteScope(mgr.GrantedScopes(ctx, email))
 	}
 	for _, scope := range oauth.ScopesDeletion {
-		if mgr.HasScope(email, scope) {
+		if mgr.HasScope(ctx, email, scope) {
 			return true
 		}
 	}
 	for _, scope := range oauth.Scopes {
-		if !mgr.HasScope(email, scope) {
+		if !mgr.HasScope(ctx, email, scope) {
 			return false
 		}
 	}

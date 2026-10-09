@@ -101,7 +101,7 @@ func TestCommandManagerSnapshotComparison(t *testing.T) {
 			require.NoError(mgr.saveTokenComparedContext(t.Context(), "reader@example.com", &oauth2.Token{AccessToken: "narrow"}, ScopesGmailReadonly, source.expected))
 			assert.Equal("old", first.AccessToken)
 			require.ErrorIs(mgr.saveTokenComparedContext(t.Context(), "reader@example.com", &oauth2.Token{AccessToken: "stale"}, Scopes, &old), ErrTokenChanged)
-			current, err := mgr.loadTokenFile("reader@example.com")
+			current, err := mgr.loadTokenFile(t.Context(), "reader@example.com")
 			require.NoError(err)
 			assert.Equal("narrow", current.AccessToken)
 			assert.ElementsMatch(ScopesGmailReadonly, current.Scopes)
@@ -132,7 +132,7 @@ func TestCommandManagerRefreshPersistenceRetry(t *testing.T) {
 	mgr, commands := commandManager(t)
 	initial := &oauth2.Token{AccessToken: "same", RefreshToken: "refresh", Expiry: time.Now().Add(time.Hour)}
 	require.NoError(mgr.saveToken("reader@example.com", initial, ScopesGmailReadonly))
-	snapshot, err := mgr.loadTokenFile("reader@example.com")
+	snapshot, err := mgr.loadTokenFile(t.Context(), "reader@example.com")
 	require.NoError(err)
 	changed := *initial
 	changed.Expiry = initial.Expiry.Add(time.Hour)
@@ -147,7 +147,7 @@ func TestCommandManagerRefreshPersistenceRetry(t *testing.T) {
 	mgr.tokenStore = NewTokenStore(mgr.tokensDir, commands)
 	_, err = source.Token()
 	require.NoError(err)
-	saved, err := mgr.loadTokenFile("reader@example.com")
+	saved, err := mgr.loadTokenFile(t.Context(), "reader@example.com")
 	require.NoError(err)
 	assert.True(changed.Expiry.Equal(saved.Expiry))
 	assert.Equal(saved.snapshot, source.expected.snapshot)
@@ -164,7 +164,7 @@ func TestCommandManagerRefreshAdoptsNewerStoredToken(t *testing.T) {
 	mgr, _ := commandManager(t)
 	initial := &oauth2.Token{AccessToken: "initial", RefreshToken: "refresh", Expiry: time.Now().Add(-time.Minute)}
 	require.NoError(mgr.saveToken("reader@example.com", initial, Scopes))
-	snapshot, err := mgr.loadTokenFile("reader@example.com")
+	snapshot, err := mgr.loadTokenFile(t.Context(), "reader@example.com")
 	require.NoError(err)
 	newer := &oauth2.Token{AccessToken: "newer", RefreshToken: "refresh", Expiry: time.Now().Add(time.Hour)}
 	require.NoError(mgr.saveToken("reader@example.com", newer, ScopesGmailReadonly))
@@ -175,7 +175,7 @@ func TestCommandManagerRefreshAdoptsNewerStoredToken(t *testing.T) {
 		require.NoError(err)
 		assert.Equal("newer", token.AccessToken)
 	}
-	stored, err := mgr.loadTokenFile("reader@example.com")
+	stored, err := mgr.loadTokenFile(t.Context(), "reader@example.com")
 	require.NoError(err)
 	assert.Equal("newer", stored.AccessToken)
 	assert.ElementsMatch(ScopesGmailReadonly, stored.Scopes)
@@ -186,7 +186,7 @@ func TestCommandManagerRefreshKeepsOtherClientToken(t *testing.T) {
 	require := require.New(t)
 	mgr, _ := commandManager(t)
 	require.NoError(mgr.saveToken("reader@example.com", &oauth2.Token{AccessToken: "initial", RefreshToken: "refresh", Expiry: time.Now().Add(-time.Minute)}, Scopes))
-	snapshot, err := mgr.loadTokenFile("reader@example.com")
+	snapshot, err := mgr.loadTokenFile(t.Context(), "reader@example.com")
 	require.NoError(err)
 	other := *mgr
 	other.config = &oauth2.Config{ClientID: "other-client"}
@@ -195,7 +195,7 @@ func TestCommandManagerRefreshKeepsOtherClientToken(t *testing.T) {
 	source := &persistingTokenSource{manager: mgr, source: oauth2.StaticTokenSource(refreshed), email: "reader@example.com", expected: snapshot, ctx: t.Context()}
 	_, err = source.Token()
 	require.ErrorIs(err, ErrTokenChanged)
-	stored, err := mgr.loadTokenFile("reader@example.com")
+	stored, err := mgr.loadTokenFile(t.Context(), "reader@example.com")
 	require.NoError(err)
 	require.Equal("other", stored.AccessToken)
 }
@@ -230,7 +230,7 @@ func TestCommandManagerPersistsLaterHTTPRefresh(t *testing.T) {
 	token, err := source.Token()
 	require.NoError(err)
 	assert.Equal("example-refreshed-2", token.AccessToken)
-	saved, err := mgr.loadTokenFile("reader@example.com")
+	saved, err := mgr.loadTokenFile(t.Context(), "reader@example.com")
 	require.NoError(err)
 	assert.Equal("example-refreshed-2", saved.AccessToken)
 	assert.ElementsMatch(ScopesGmailReadonly, saved.Scopes)
@@ -253,9 +253,9 @@ func TestCommandTokenSelectionNormalizesScopes(t *testing.T) {
 	assert.True(snapshot.HasScope("email"))
 	assert.Equal(info.Scopes, snapshot.Scopes)
 	assert.Equal(raw, snapshot.snapshot.data)
-	assert.Equal(info.Scopes, selected.GrantedScopes("reader@example.com"))
-	assert.True(selected.HasScopeMetadata("reader@example.com"))
-	assert.True(selected.TokenMatchesClient("reader@example.com"))
+	assert.Equal(info.Scopes, selected.GrantedScopes(t.Context(), "reader@example.com"))
+	assert.True(selected.HasScopeMetadata(t.Context(), "reader@example.com"))
+	assert.True(selected.TokenMatchesClient(t.Context(), "reader@example.com"))
 	_, _, err = selected.prepareAuthorizationContext(t.Context(), "reader@example.com", false)
 	require.Error(err)
 }
@@ -276,4 +276,33 @@ func TestCommandTokenPresenceFailsClosed(t *testing.T) {
 	mgr.tokenStore = NewTokenStore(mgr.tokensDir, commands)
 	_, err = mgr.TokenOrEquivalentExists(t.Context(), "reader@example.com")
 	require.Error(err)
+}
+
+// A grant-preserving authorization saves through a WithScopes copy; the
+// caller's manager must see that save instead of its pre-authorization snapshot.
+func TestScopedCopySaveUpdatesCallerSelection(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	mgr, _ := commandManager(t)
+	email := "reader@example.com"
+	require.NoError(mgr.tokenStore.Write(t.Context(), email,
+		[]byte(`{"access_token":"before","client_id":"example-client","scopes":["https://www.googleapis.com/auth/gmail.readonly"]}`)))
+	info, err := mgr.InspectToken(t.Context(), email)
+	require.NoError(err)
+	selected := mgr.WithTokenInfo(email, info)
+
+	scoped, expected, err := selected.prepareAuthorizationContext(t.Context(), email, true)
+	require.NoError(err)
+	saved := &oauth2.Token{AccessToken: "after"}
+	require.NoError(scoped.saveTokenComparedContext(t.Context(), email, saved,
+		[]string{ScopeGmailReadonly, ScopeCalendarReadonly}, expected))
+
+	current, err := selected.SelectedTokenInfo(t.Context(), email)
+	require.NoError(err)
+	assert.ElementsMatch([]string{ScopeGmailReadonly, ScopeCalendarReadonly}, current.Scopes)
+	_, _, err = selected.prepareAuthorizationContext(t.Context(), email, false)
+	require.NoError(err, "the caller's selection must match the saved token")
+
+	require.NoError(selected.WithScopes(Scopes).DeleteToken(t.Context(), email))
+	assert.False(selected.HasToken(t.Context(), email))
 }

@@ -17,11 +17,19 @@ import (
 // configuration, a missing client_secrets file, or unparseable client JSON.
 var ErrClientConfig = errors.New("OAuth client configuration is unusable")
 
-func NewManagerWithCredentials(ctx context.Context, credentials config.OAuthApp, tokensDir string, commands config.OAuthTokenCommands, logger *slog.Logger, scopes []string) (*Manager, error) {
+// NewManagerWithCredentials loads Google client credentials from their file or
+// command and stores tokens under tokensDir or the configured token commands.
+func NewManagerWithCredentials(
+	ctx context.Context, credentials config.OAuthApp, tokensDir string,
+	commands config.OAuthTokenCommands, logger *slog.Logger, scopes []string,
+) (*Manager, error) {
 	var data []byte
 	var err error
 	if credentials.ClientSecretsCommand != nil {
 		data, err = runSecretCommand(ctx, credentials.ClientSecretsCommand, nil, nil)
+		if errors.Is(err, ErrSecretCommandStart) {
+			err = fmt.Errorf("%w: client_secrets_command: %w", ErrClientConfig, err)
+		}
 	} else {
 		data, err = os.ReadFile(credentials.ClientSecrets)
 		if err != nil {
@@ -41,19 +49,31 @@ func NewManagerWithCredentials(ctx context.Context, credentials config.OAuthApp,
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Manager{config: parsed, tokensDir: tokensDir, tokenStore: NewTokenStore(tokensDir, commands), logger: logger, webRedirectURIs: redirects}, nil
+	return &Manager{
+		config:          parsed,
+		tokensDir:       tokensDir,
+		tokenStore:      NewTokenStore(tokensDir, commands),
+		logger:          logger,
+		webRedirectURIs: redirects,
+	}, nil
 }
 
 // NewStoredTokenManager allows cleanup/export without reading client credentials.
 func NewStoredTokenManager(tokensDir string, commands config.OAuthTokenCommands) *Manager {
-	return &Manager{tokensDir: tokensDir, tokenStore: NewTokenStore(tokensDir, commands), config: &oauth2.Config{}, logger: slog.Default()}
+	return &Manager{
+		tokensDir:  tokensDir,
+		tokenStore: NewTokenStore(tokensDir, commands),
+		config:     &oauth2.Config{},
+		logger:     slog.Default(),
+	}
 }
 
-// WithTokensDir selects another token namespace with the same client credentials.
-func (m *Manager) WithTokensDir(tokensDir string) *Manager {
+// WithTokenNamespace selects a slash-separated token namespace under the
+// configured tokens directory, keeping the same client credentials.
+func (m *Manager) WithTokenNamespace(namespace string) *Manager {
 	selected := *m
-	selected.tokensDir = tokensDir
-	selected.tokenStore = NewTokenStore(tokensDir, m.tokenStore.commands)
+	selected.tokenStore = m.tokenStore.Namespace(namespace)
+	selected.tokensDir = selected.tokenStore.dir()
 	selected.authorizationExpected = nil
 	return &selected
 }
@@ -78,6 +98,7 @@ func (m *Manager) TokenOrEquivalentExists(ctx context.Context, email string) (bo
 	return len(aliases) > 0, err
 }
 
+// CommandTokens reports whether tokens use the configured commands instead of files.
 func (m *Manager) CommandTokens() bool { return m.tokenStore.commands.Enabled() }
 
 // TokenInfo is one checked snapshot for scope and client-identity decisions.
@@ -94,8 +115,10 @@ type TokenInfo struct {
 // ErrInvalidTokenJSON identifies a stored token that cannot be decoded.
 var ErrInvalidTokenJSON = errors.New("invalid token JSON")
 
+// InspectToken reads the current token. A missing token returns a zero
+// TokenInfo and no error; unreadable or malformed tokens return an error.
 func (m *Manager) InspectToken(ctx context.Context, email string) (TokenInfo, error) {
-	tf, err := m.loadTokenFileContext(ctx, email)
+	tf, err := m.loadTokenFile(ctx, email)
 	return m.tokenInfo(tf, err)
 }
 
@@ -103,7 +126,7 @@ func (m *Manager) InspectToken(ctx context.Context, email string) (TokenInfo, er
 // scopes. Authorization still rereads the backend and rejects any change.
 func (m *Manager) SelectedTokenInfo(ctx context.Context, email string) (TokenInfo, error) {
 	if m.authorizationExpected != nil && m.authorizationExpected.email == email {
-		return m.tokenInfo(m.metadataTokenFile(email))
+		return m.tokenInfo(m.metadataTokenFile(ctx, email))
 	}
 	return m.InspectToken(ctx, email)
 }
@@ -115,8 +138,18 @@ func (m *Manager) tokenInfo(tf *tokenFile, err error) (TokenInfo, error) {
 	if err != nil {
 		return TokenInfo{}, err
 	}
-	return TokenInfo{snapshot: tokenSnapshot{data: tf.snapshot, exists: true}, Exists: true, Scopes: slices.Clone(tf.Scopes), ClientID: tf.ClientID, ClientMatches: tf.ClientID != "" && tf.ClientID == m.config.ClientID, DifferentClient: tf.ClientID != "" && tf.ClientID != m.config.ClientID}, nil
+	return TokenInfo{
+		snapshot:        tokenSnapshot{data: tf.snapshot, exists: true},
+		Exists:          true,
+		Scopes:          slices.Clone(tf.Scopes),
+		ClientID:        tf.ClientID,
+		ClientMatches:   tf.ClientID != "" && tf.ClientID == m.config.ClientID,
+		DifferentClient: tf.ClientID != "" && tf.ClientID != m.config.ClientID,
+	}, nil
 }
+
+// EquivalentTokenEmails returns other stored spellings of the same Google
+// account, using Gmail alias rules. Command storage lists the namespace.
 func (m *Manager) EquivalentTokenEmails(ctx context.Context, email string) ([]string, error) {
 	if !m.CommandTokens() {
 		return findEquivalentTokenEmails(m.tokensDir, email), nil
@@ -174,7 +207,7 @@ func (s *persistingTokenSource) Token() (*oauth2.Token, error) {
 		}
 		if errors.Is(err, ErrTokenChanged) && !reloaded {
 			// Another source saved first; continue from its token instead of overwriting a newer grant.
-			current, loadErr := s.manager.loadTokenFileContext(s.ctx, s.email)
+			current, loadErr := s.manager.loadTokenFile(s.ctx, s.email)
 			// A token from another OAuth client can't be refreshed with this one's credentials.
 			if loadErr == nil && current.ClientID != "" && current.ClientID != s.manager.config.ClientID {
 				loadErr = ErrTokenChanged
@@ -198,6 +231,7 @@ func (s *persistingTokenSource) Token() (*oauth2.Token, error) {
 	}
 }
 
+// HasScope reports whether the snapshot records scope, accepting scope aliases.
 func (i TokenInfo) HasScope(scope string) bool {
 	return slices.Contains(i.Scopes, canonicalScope(scope))
 }

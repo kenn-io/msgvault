@@ -23,7 +23,8 @@ func Run() {
 	}
 	mode := args[1]
 	root := os.Getenv("MSGVAULT_TEST_SECRET_ROOT")
-	key := fmt.Sprintf("%x", sha256.Sum256([]byte(os.Getenv("MSGVAULT_TOKEN_PATH"))))
+	namespace := os.Getenv("MSGVAULT_TOKEN_NAMESPACE")
+	key := fmt.Sprintf("%x", sha256.Sum256([]byte(namespace+"\x00"+os.Getenv("MSGVAULT_ACCOUNT"))))
 	path := filepath.Join(root, key)
 	switch mode {
 	case "read", "read-once", "read-then-wait":
@@ -54,18 +55,18 @@ func Run() {
 			os.Exit(2)
 		}
 		_ = os.WriteFile(path+".account", []byte(os.Getenv("MSGVAULT_ACCOUNT")), 0600) //nolint:gosec // path uses a SHA-256 key beneath the fixture's private temp directory.
-		_ = os.WriteFile(path+".dir", []byte(os.Getenv("MSGVAULT_TOKEN_DIR")), 0600)   //nolint:gosec // path uses a SHA-256 key beneath the fixture's private temp directory.
+		_ = os.WriteFile(path+".namespace", []byte(namespace), 0600)                   //nolint:gosec // path uses a SHA-256 key beneath the fixture's private temp directory.
 	case "delete":
-		_ = os.Remove(path)              //nolint:gosec // path uses a SHA-256 key beneath the fixture's private temp directory.
-		_ = os.Remove(path + ".account") //nolint:gosec // path uses a SHA-256 key beneath the fixture's private temp directory.
-		_ = os.Remove(path + ".dir")     //nolint:gosec // path uses a SHA-256 key beneath the fixture's private temp directory.
+		_ = os.Remove(path)                //nolint:gosec // path uses a SHA-256 key beneath the fixture's private temp directory.
+		_ = os.Remove(path + ".account")   //nolint:gosec // path uses a SHA-256 key beneath the fixture's private temp directory.
+		_ = os.Remove(path + ".namespace") //nolint:gosec // path uses a SHA-256 key beneath the fixture's private temp directory.
 	case "list":
 		entries, _ := os.ReadDir(root)
 		var values []string
 		for _, entry := range entries {
 			if name, ok := strings.CutSuffix(entry.Name(), ".account"); ok {
-				dir, _ := os.ReadFile(filepath.Join(root, name+".dir")) //nolint:gosec // name came from ReadDir and is a single path component under the fixture's private temp directory.
-				if string(dir) == os.Getenv("MSGVAULT_TOKEN_DIR") {
+				stored, _ := os.ReadFile(filepath.Join(root, name+".namespace")) //nolint:gosec // name came from ReadDir and is a single path component under the fixture's private temp directory.
+				if string(stored) == namespace {
 					data, _ := os.ReadFile(filepath.Join(root, entry.Name())) //nolint:gosec // entry.Name came from ReadDir and is a single path component under the fixture's private temp directory.
 					values = append(values, string(data))
 				}

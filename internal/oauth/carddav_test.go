@@ -39,12 +39,12 @@ func TestCardDAVAuthorizationVerifiesAccountAndPreservesGrants(t *testing.T) {
 			err := mgr.AuthorizePreservingGrantedScopes(t.Context(), email)
 			if tc.wantError {
 				required.Error(err)
-				assertions.False(mgr.HasScope(email, ScopeCardDAV))
+				assertions.False(mgr.HasScope(t.Context(), email, ScopeCardDAV))
 				return
 			}
 			required.NoError(err)
-			assertions.ElementsMatch([]string{ScopeCardDAV, ScopeUserinfoEmail, ScopeGmailReadonly, ScopeCalendarReadonly}, mgr.GrantedScopes(email))
-			assertions.Equal("https://www.googleapis.com/oauth2/v2/userinfo", tokenProfileEndpointForScopes(mgr.GrantedScopes(email)).url)
+			assertions.ElementsMatch([]string{ScopeCardDAV, ScopeUserinfoEmail, ScopeGmailReadonly, ScopeCalendarReadonly}, mgr.GrantedScopes(t.Context(), email))
+			assertions.Equal("https://www.googleapis.com/oauth2/v2/userinfo", tokenProfileEndpointForScopes(mgr.GrantedScopes(t.Context(), email)).url)
 		})
 	}
 }

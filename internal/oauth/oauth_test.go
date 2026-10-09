@@ -118,15 +118,15 @@ func TestHasScope(t *testing.T) {
 	})
 
 	// Has a scope that was saved
-	assert.True(t, mgr.HasScope("test@gmail.com", "https://www.googleapis.com/auth/gmail.readonly"),
+	assert.True(t, mgr.HasScope(t.Context(), "test@gmail.com", "https://www.googleapis.com/auth/gmail.readonly"),
 		"expected HasScope to return true for gmail.readonly")
 
 	// Does not have deletion scope
-	assert.False(t, mgr.HasScope("test@gmail.com", "https://mail.google.com/"),
+	assert.False(t, mgr.HasScope(t.Context(), "test@gmail.com", "https://mail.google.com/"),
 		"expected HasScope to return false for mail.google.com")
 
 	// Non-existent account
-	assert.False(t, mgr.HasScope("missing@gmail.com", "https://www.googleapis.com/auth/gmail.readonly"),
+	assert.False(t, mgr.HasScope(t.Context(), "missing@gmail.com", "https://www.googleapis.com/auth/gmail.readonly"),
 		"expected HasScope to return false for missing account")
 }
 
@@ -144,14 +144,14 @@ func TestTokenFileScopesRoundTrip(t *testing.T) {
 	require.NoError(mgr.saveToken("test@gmail.com", token, ScopesDeletion))
 
 	// Load and verify scopes were saved
-	tf, err := mgr.loadTokenFile("test@gmail.com")
+	tf, err := mgr.loadTokenFile(t.Context(), "test@gmail.com")
 	require.NoError(err)
 
 	require.Len(tf.Scopes, 1, "expected ScopesDeletion")
 	assert.Equal("https://mail.google.com/", tf.Scopes[0], "scopes[0]")
 
 	// The context-aware read retains token fields.
-	loaded, err := mgr.loadTokenFileContext(t.Context(), "test@gmail.com")
+	loaded, err := mgr.loadTokenFile(t.Context(), "test@gmail.com")
 	require.NoError(err)
 	assert.Equal("access", loaded.AccessToken, "access token")
 }
@@ -176,7 +176,7 @@ func TestSaveToken_OverwriteExisting(t *testing.T) {
 	require.NoError(mgr.saveToken("test@gmail.com", token2, Scopes),
 		"second saveToken should overwrite existing file")
 
-	loaded, err := mgr.loadTokenFileContext(t.Context(), "test@gmail.com")
+	loaded, err := mgr.loadTokenFile(t.Context(), "test@gmail.com")
 	require.NoError(err)
 	assert.Equal(t, "second", loaded.AccessToken, "access token after overwrite")
 }
@@ -186,7 +186,7 @@ func TestHasScope_LegacyToken(t *testing.T) {
 
 	writeLegacyTokenFile(t, mgr, "legacy@gmail.com", testToken)
 
-	assert.False(t, mgr.HasScope("legacy@gmail.com", "https://www.googleapis.com/auth/gmail.readonly"),
+	assert.False(t, mgr.HasScope(t.Context(), "legacy@gmail.com", "https://www.googleapis.com/auth/gmail.readonly"),
 		"expected HasScope to return false for legacy token")
 }
 
@@ -212,7 +212,7 @@ func TestHasScopeMetadata(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := mgr.HasScopeMetadata(tt.email)
+			got := mgr.HasScopeMetadata(t.Context(), tt.email)
 			assert.Equal(t, tt.want, got, "HasScopeMetadata(%q)", tt.email)
 		})
 	}
@@ -728,12 +728,12 @@ func TestAuthorize_SavesUnderOriginalIdentifier(t *testing.T) {
 	require.NoError(mgr.Authorize(context.Background(), inputEmail), "Authorize")
 
 	// Token must be loadable under the original identifier.
-	loaded, err := mgr.loadTokenFileContext(t.Context(), inputEmail)
+	loaded, err := mgr.loadTokenFile(t.Context(), inputEmail)
 	require.NoError(err, "loadToken(%q)", inputEmail)
 	assert.Equal("test-access-token", loaded.AccessToken, "access token")
 
 	// Token must NOT exist under the canonical email.
-	_, err = mgr.loadTokenFileContext(t.Context(), canonicalEmail)
+	_, err = mgr.loadTokenFile(t.Context(), canonicalEmail)
 	assert.Error(err, "token should NOT exist under canonical %q", canonicalEmail)
 }
 
@@ -763,7 +763,7 @@ func TestAuthorize_CalendarOnlyUsesCalendarProfileID(t *testing.T) {
 
 	require.NoError(mgr.Authorize(context.Background(), "user@gmail.com"), "Authorize")
 
-	loaded, err := mgr.loadTokenFile("user@gmail.com")
+	loaded, err := mgr.loadTokenFile(t.Context(), "user@gmail.com")
 	require.NoError(err, "loadTokenFile")
 	assert.Equal("calendar-token", loaded.AccessToken, "access token")
 	assert.ElementsMatch(ScopesCalendar, loaded.Scopes, "saved scopes")
@@ -795,7 +795,7 @@ func TestAuthorize_SavesActualGrantedScopesFromTokenResponse(t *testing.T) {
 
 	require.NoError(mgr.Authorize(context.Background(), "user@gmail.com"), "Authorize")
 
-	loaded, err := mgr.loadTokenFile("user@gmail.com")
+	loaded, err := mgr.loadTokenFile(t.Context(), "user@gmail.com")
 	require.NoError(err, "loadTokenFile")
 	assert.Equal("actual-scope-token", loaded.AccessToken, "access token")
 	assert.ElementsMatch(granted, loaded.Scopes, "saved scopes")
@@ -834,7 +834,7 @@ func TestAuthorize_RejectsMissingGrantedScopeWithoutOverwritingToken(t *testing.
 	require.Error(err, "Authorize should reject a token missing calendar.readonly")
 	require.ErrorContains(err, ScopeCalendarReadonly)
 
-	loaded, loadErr := mgr.loadTokenFile("user@gmail.com")
+	loaded, loadErr := mgr.loadTokenFile(t.Context(), "user@gmail.com")
 	require.NoError(loadErr, "loadTokenFile")
 	assert.Equal("old-access", loaded.AccessToken, "existing token must not be overwritten")
 	assert.ElementsMatch(Scopes, loaded.Scopes, "existing scopes must be preserved")
@@ -874,7 +874,7 @@ func TestAuthorizeManualPreservingGrantedScopesRejectsTokenMissingPreservedScope
 	require.Error(err)
 	require.ErrorContains(err, ScopeCalendarReadonly)
 
-	loaded, loadErr := mgr.loadTokenFile("user@gmail.com")
+	loaded, loadErr := mgr.loadTokenFile(t.Context(), "user@gmail.com")
 	require.NoError(loadErr, "loadTokenFile")
 	assert.Equal("old-access", loaded.AccessToken, "existing token must not be overwritten")
 	assert.ElementsMatch(existingScopes, loaded.Scopes, "existing scopes must be preserved")
@@ -918,7 +918,7 @@ func TestAuthorizePreservingGrantedScopesRejectsTokenMissingPreservedScope(t *te
 	require.Error(err)
 	require.ErrorContains(err, ScopeCalendarReadonly)
 
-	loaded, loadErr := mgr.loadTokenFile("user@gmail.com")
+	loaded, loadErr := mgr.loadTokenFile(t.Context(), "user@gmail.com")
 	require.NoError(loadErr, "loadTokenFile")
 	assert.Equal("old-access", loaded.AccessToken, "existing token must not be overwritten")
 	assert.ElementsMatch(existingScopes, loaded.Scopes, "existing scopes must be preserved")
@@ -970,7 +970,7 @@ func TestTerminalAuthorizationCannotOverwriteNewerAuthorization(t *testing.T) {
 				err = mgr.AuthorizeManualPreservingGrantedScopes(t.Context(), email)
 			}
 			required.ErrorIs(err, ErrTokenChanged)
-			saved, err := mgr.loadTokenFile(email)
+			saved, err := mgr.loadTokenFile(t.Context(), email)
 			required.NoError(err)
 			assertions.Equal("new-refresh", saved.RefreshToken)
 			assertions.ElementsMatch(newScopes, saved.Scopes)
@@ -1014,9 +1014,9 @@ func TestAuthorize_RejectsMismatch(t *testing.T) {
 	assert.Equal("wrong@gmail.com", mismatch.Actual, "Actual")
 
 	// No token should have been saved under either address.
-	_, loadErr := mgr.loadTokenFileContext(t.Context(), "expected@gmail.com")
+	_, loadErr := mgr.loadTokenFile(t.Context(), "expected@gmail.com")
 	require.Error(loadErr, "token should NOT be saved under expected address")
-	_, loadErr = mgr.loadTokenFileContext(t.Context(), "wrong@gmail.com")
+	_, loadErr = mgr.loadTokenFile(t.Context(), "wrong@gmail.com")
 	assert.Error(loadErr, "token should NOT be saved under profile address")
 }
 
@@ -1056,9 +1056,9 @@ func TestAuthorize_WorkspaceAliasMismatch(t *testing.T) {
 	assert.Equal("primary@company.com", mismatch.Actual, "Actual")
 
 	// No token should exist under either address.
-	_, loadErr := mgr.loadTokenFileContext(t.Context(), "alias@company.com")
+	_, loadErr := mgr.loadTokenFile(t.Context(), "alias@company.com")
 	require.Error(loadErr, "token should NOT be saved under alias address")
-	_, loadErr = mgr.loadTokenFileContext(t.Context(), "primary@company.com")
+	_, loadErr = mgr.loadTokenFile(t.Context(), "primary@company.com")
 	assert.Error(loadErr, "token should NOT be saved under primary address")
 }
 
@@ -1223,7 +1223,7 @@ func TestForceRefreshDetectsRevokedRefreshTokenBehindValidAccessToken(t *testing
 			require.ErrorAs(err, &retrieveErr)
 			assert.Equal("invalid_grant", retrieveErr.ErrorCode)
 			assert.Positive(tokenEndpointHits.Load(), "ForceRefresh must redeem the refresh token")
-			assert.True(mgr.HasToken("test@gmail.com"))
+			assert.True(mgr.HasToken(t.Context(), "test@gmail.com"))
 		})
 	}
 }
@@ -1252,7 +1252,7 @@ func TestForceRefreshSavesRefreshedToken(t *testing.T) {
 
 	require.NoError(mgr.ForceRefresh(context.Background(), "test@gmail.com"))
 
-	tf, err := mgr.loadTokenFile("test@gmail.com")
+	tf, err := mgr.loadTokenFile(t.Context(), "test@gmail.com")
 	require.NoError(err)
 	assert.Equal("new-access", tf.AccessToken, "refreshed access token should be saved")
 	assert.Equal("refresh-1", tf.RefreshToken, "refresh token should be preserved")

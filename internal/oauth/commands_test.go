@@ -42,7 +42,7 @@ func TestCommandTokenStoreRoundTrip(t *testing.T) {
 	assert.Equal([]string{"reader@example.com"}, accounts)
 	_, err = os.Stat(filepath.Join(dir, "reader@example.com.json"))
 	require.ErrorIs(err, os.ErrNotExist)
-	other := NewTokenStore(filepath.Join(dir, "contacts"), commands)
+	other := store.Namespace("contacts")
 	_, err = other.Read(t.Context(), "reader@example.com")
 	require.ErrorIs(err, os.ErrNotExist)
 	accounts, err = other.List(t.Context())
@@ -145,4 +145,40 @@ func TestSecretCommandBoundsInheritedStdout(t *testing.T) {
 	case <-time.After(time.Minute):
 		require.Fail("credential command waited for its stdout-holding descendant")
 	}
+}
+
+// Records are keyed by namespace and account, so moving the data directory or
+// sharing a store between machines keeps finding the same tokens.
+func TestCommandTokenKeysIgnoreLocalTokenDirectory(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	commands := secretStoreFixture(t)
+	data := []byte(`{"access_token":"example-token","client_id":"example-client"}`)
+	require.NoError(NewTokenStore(t.TempDir(), commands).Write(t.Context(), "reader@example.com", data))
+
+	moved := NewTokenStore(filepath.Join(t.TempDir(), "moved"), commands)
+	got, err := moved.Read(t.Context(), "reader@example.com")
+	require.NoError(err)
+	assert.Equal(data, got)
+	accounts, err := moved.List(t.Context())
+	require.NoError(err)
+	assert.Equal([]string{"reader@example.com"}, accounts)
+
+	_, err = moved.Namespace("carddav-google/example").Read(t.Context(), "reader@example.com")
+	require.ErrorIs(err, os.ErrNotExist)
+}
+
+func TestSecretCommandStartFailureIsConfiguration(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	missing := filepath.Join(t.TempDir(), "example-missing-wrapper")
+	_, err := runSecretCommand(t.Context(), []string{missing}, nil, nil)
+	require.ErrorIs(err, ErrSecretCommandStart)
+	assert.NotContains(err.Error(), missing)
+
+	_, err = NewManagerWithCredentials(t.Context(), config.OAuthApp{ClientSecretsCommand: []string{missing}},
+		t.TempDir(), config.OAuthTokenCommands{}, nil, Scopes)
+	require.ErrorIs(err, ErrClientConfig)
+	require.ErrorIs(err, ErrSecretCommandStart)
+	assert.NotContains(err.Error(), missing)
 }

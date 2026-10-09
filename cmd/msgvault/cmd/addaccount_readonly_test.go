@@ -448,7 +448,7 @@ func TestAddAccountTokenHasGmailScopes_Readonly(t *testing.T) {
 			require.NoError(t, err)
 
 			assert.Equal(t, tt.want,
-				addAccountTokenHasGmailScopes(mgr, scopeEscalationAccount, tt.readonly))
+				addAccountTokenHasGmailScopes(t.Context(), mgr, scopeEscalationAccount, tt.readonly))
 		})
 	}
 }

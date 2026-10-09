@@ -28,7 +28,7 @@ func TestGoogleCommandTokenNamespacesAndFailure(t *testing.T) {
 	require.NoError(err)
 	assert.Equal("shared", token.AccessToken)
 	require.NoError(os.Remove(filepath.Join(os.Getenv("MSGVAULT_TEST_SECRET_ROOT"), "client.read")))
-	dedicated := oauth.NewTokenStore(googleTokensDir(dir, "work"), commands)
+	dedicated := shared.Namespace(googleTokenNamespace("work"))
 	require.NoError(dedicated.Write(t.Context(), "reader@example.com", []byte(`{"access_token":"dedicated","expiry":"2099-01-01T00:00:00Z","client_id":"example-client"}`)))
 	mgr, err = NewGoogleOAuthManagerWithCredentials(t.Context(), credentials, dir, commands, "work", "reader@example.com", nil)
 	require.NoError(err)

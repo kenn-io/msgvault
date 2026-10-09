@@ -57,7 +57,7 @@ func TestCommandGmailHeadlessRecoveryForcesBrowserAuthorization(t *testing.T) {
 	saveAddAccountFlags(t)
 	const email = "reader@example.com"
 	var out bytes.Buffer
-	printCommandHeadlessInstructions(&out, email, "work", false, false)
+	printCommandHeadlessInstructions(&out, email, oauth.HeadlessAccountArgs("add-account", email, "work", false, false), false)
 	fixture := testutil.SecretCommand(t, "argv")[0]
 	commands := 0
 	for line := range strings.SplitSeq(out.String(), "\n") {
@@ -77,7 +77,8 @@ func TestCommandGmailHeadlessRecoveryForcesBrowserAuthorization(t *testing.T) {
 
 func TestCommandCalendarHeadlessInstructionsUseUploadOnlyExport(t *testing.T) {
 	var out bytes.Buffer
-	printCommandHeadlessInstructions(&out, "reader@example.com", "work", true, false, true)
+	printCommandHeadlessInstructions(&out, "reader@example.com",
+		oauth.HeadlessAccountArgs("add-calendar", "reader@example.com", "work", false, true), true)
 
 	assert.Contains(t, out.String(), "msgvault export-token reader@example.com --upload-only")
 	assert.Contains(t, out.String(), "msgvault add-calendar reader@example.com --oauth-app work --write")
@@ -116,10 +117,10 @@ func TestCommandMetadataUsesSelectedSnapshot(t *testing.T) {
 	require.NoError(err)
 	mgr, err := newCalendarOAuthManager(t.Context(), source, "reader@example.com", state)
 	require.NoError(err)
-	scopes := mgr.GrantedScopes("reader@example.com")
-	got := calendarEscalationScopes(scopes, calendarShouldPreserveGmail(true, mgr.HasScopeMetadata("reader@example.com"), scopes))
+	scopes := mgr.GrantedScopes(t.Context(), "reader@example.com")
+	got := calendarEscalationScopes(scopes, calendarShouldPreserveGmail(true, mgr.HasScopeMetadata(t.Context(), "reader@example.com"), scopes))
 	assert.ElementsMatch([]string{oauth.ScopeGmailReadonly, "https://www.googleapis.com/auth/drive.readonly", oauth.ScopeCalendarReadonly}, got)
-	assert.False(addAccountTokenHasGmailScopes(mgr, "reader@example.com", false))
+	assert.False(addAccountTokenHasGmailScopes(t.Context(), mgr, "reader@example.com", false))
 }
 
 func TestCommandEscalationKeepsSelectionSnapshot(t *testing.T) {

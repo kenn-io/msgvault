@@ -7,12 +7,10 @@ import (
 	"go.kenn.io/msgvault/internal/oauth"
 )
 
-func printCommandHeadlessInstructions(out io.Writer, email, app string, calendar, readonly bool, write ...bool) {
-	command := "add-account"
-	if calendar {
-		command = "add-calendar"
-	}
-	accountArgs := oauth.HeadlessAccountArgs(command, email, app, readonly, len(write) > 0 && write[0])
+// printCommandHeadlessInstructions explains headless setup with command-backed
+// tokens. accountArgs comes from oauth.HeadlessAccountArgs for add-account or
+// add-calendar; calendar selects the Calendar-only export.
+func printCommandHeadlessInstructions(out io.Writer, email string, accountArgs []string, calendar bool) {
 	browserArgs := append([]string(nil), accountArgs...)
 	if !calendar {
 		browserArgs = append(browserArgs, "--force")

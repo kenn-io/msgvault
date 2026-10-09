@@ -61,11 +61,11 @@ func TestWebAuthorizationExchangesPKCEAndPreservesExistingAccess(t *testing.T) {
 	assertions.Zero(exchanges)
 	required.NoError(flow.Complete(t.Context(), flow.State, "one-time-code"))
 	assertions.Equal(1, exchanges)
-	token, err := mgr.loadTokenFile(email)
+	token, err := mgr.loadTokenFile(t.Context(), email)
 	required.NoError(err)
 	assertions.Equal("synthetic-client", token.ClientID)
 	assertions.Equal("synthetic-refresh", token.RefreshToken)
-	assertions.ElementsMatch([]string{ScopeCardDAV, ScopeUserinfoEmail, ScopeGmailReadonly}, mgr.GrantedScopes(email))
+	assertions.ElementsMatch([]string{ScopeCardDAV, ScopeUserinfoEmail, ScopeGmailReadonly}, mgr.GrantedScopes(t.Context(), email))
 }
 
 func TestWebAuthorizationTokenProvenance(t *testing.T) {
@@ -94,7 +94,7 @@ func TestWebAuthorizationTokenProvenance(t *testing.T) {
 			required.NoError(err)
 			want := append([]string{ScopeCardDAV, ScopeUserinfoEmail}, tc.scopes...)
 			assertions.ElementsMatch(want, strings.Fields(u.Query().Get("scope")))
-			token, err := mgr.loadTokenFile(email)
+			token, err := mgr.loadTokenFile(t.Context(), email)
 			required.NoError(err)
 			assertions.Equal(tc.clientID, token.ClientID)
 			assertions.Equal("synthetic-token", token.AccessToken)
@@ -138,11 +138,11 @@ func TestWebAuthorizationCannotOverwriteNewerAuthorization(t *testing.T) {
 			newer, err := mgr.WithScopes(newScopes).BeginWebAuthorization(t.Context(), email, "https://archive.example/")
 			required.NoError(err)
 			required.NoError(newer.Complete(t.Context(), newer.State, "new"))
-			before, err := mgr.loadTokenFile(email)
+			before, err := mgr.loadTokenFile(t.Context(), email)
 			required.NoError(err)
 
 			required.ErrorIs(older.Complete(t.Context(), older.State, "old"), ErrTokenChanged)
-			after, err := mgr.loadTokenFile(email)
+			after, err := mgr.loadTokenFile(t.Context(), email)
 			required.NoError(err)
 			assertions.Equal(before.snapshot, after.snapshot, "keep the newer token and its Calendar permission")
 		})

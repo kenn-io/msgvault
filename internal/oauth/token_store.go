@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -15,34 +16,49 @@ import (
 	"go.kenn.io/msgvault/internal/fileutil"
 )
 
-// TokenStore owns Google token IO. Command keys never depend on local symlinks.
+// TokenStore owns Google token IO for one namespace beneath the configured
+// tokens directory. Command keys never depend on local paths or symlinks.
 type TokenStore struct {
-	dir      string
-	commands config.OAuthTokenCommands
+	root      string
+	namespace string
+	commands  config.OAuthTokenCommands
 }
 type tokenSnapshot struct {
 	data   []byte
 	exists bool
 }
 
-func NewTokenStore(dir string, commands config.OAuthTokenCommands) *TokenStore {
-	return &TokenStore{dir: dir, commands: commands}
-}
-func (s *TokenStore) path(email string) string {
-	if s.commands.Enabled() {
-		return TokenFilePath(s.dir, email)
-	}
-	return (&Manager{tokensDir: s.dir}).tokenPath(email)
-}
-func (s *TokenStore) environment(email string) []string {
-	env := []string{"MSGVAULT_TOKEN_DIR=" + s.dir, "MSGVAULT_ACCOUNT=", "MSGVAULT_TOKEN_PATH="}
-	if email != "" {
-		env[1] = "MSGVAULT_ACCOUNT=" + email
-		env[2] = "MSGVAULT_TOKEN_PATH=" + s.path(email)
-	}
-	return env
+// NewTokenStore returns the shared Google token namespace under root, the
+// configured tokens directory.
+func NewTokenStore(root string, commands config.OAuthTokenCommands) *TokenStore {
+	return &TokenStore{root: root, commands: commands}
 }
 
+// Namespace returns the store for a slash-separated namespace under the same
+// root, such as a dedicated Google Contacts authorization.
+func (s *TokenStore) Namespace(namespace string) *TokenStore {
+	return &TokenStore{root: s.root, namespace: namespace, commands: s.commands}
+}
+
+func (s *TokenStore) dir() string {
+	return filepath.Join(s.root, filepath.FromSlash(s.namespace))
+}
+
+func (s *TokenStore) path(email string) string {
+	if s.commands.Enabled() {
+		return TokenFilePath(s.dir(), email)
+	}
+	return safeTokenFilePath(s.dir(), email)
+}
+
+// environment identifies a record by namespace and account so stores keep
+// working when the data directory moves or another machine uses them.
+func (s *TokenStore) environment(email string) []string {
+	return []string{"MSGVAULT_TOKEN_NAMESPACE=" + s.namespace, "MSGVAULT_ACCOUNT=" + email}
+}
+
+// Read returns the stored token bytes, or an error matching os.ErrNotExist
+// when the account has no token in this namespace.
 func (s *TokenStore) Read(ctx context.Context, email string) ([]byte, error) {
 	var data []byte
 	var err error
@@ -63,7 +79,7 @@ func (s *TokenStore) Read(ctx context.Context, email string) ([]byte, error) {
 	return data, nil
 }
 func (s *TokenStore) withLock(ctx context.Context, email string, fn func() error) (err error) {
-	if err := fileutil.SecureMkdirAll(s.dir, 0700); err != nil {
+	if err := fileutil.SecureMkdirAll(s.dir(), 0700); err != nil {
 		return err
 	}
 	lock := flock.New(s.path(email)+".lock", flock.SetPermissions(0600))
@@ -77,6 +93,8 @@ func (s *TokenStore) withLock(ctx context.Context, email string, fn func() error
 	defer func() { err = errors.Join(err, lock.Unlock()) }()
 	return fn()
 }
+
+// Write stores data for email without comparing it to the current token.
 func (s *TokenStore) Write(ctx context.Context, email string, data []byte) error {
 	return s.replace(ctx, email, data, nil)
 }
@@ -105,6 +123,7 @@ func (s *TokenStore) replace(ctx context.Context, email string, data []byte, exp
 	})
 }
 
+// Delete removes the token for email. A missing token is not an error.
 func (s *TokenStore) Delete(ctx context.Context, email string) error {
 	return s.withLock(ctx, email, func() error {
 		if s.commands.Enabled() {
