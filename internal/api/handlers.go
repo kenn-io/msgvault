@@ -19,7 +19,6 @@ import (
 	"strings"
 	"time"
 
-	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/deletion"
@@ -753,7 +752,7 @@ func (s *Server) handleGetMessage(w http.ResponseWriter, r *http.Request) {
 			return
 		case err == nil:
 			if !s.agentObjectSourceAllowed(r, qMsg.SourceID) {
-				writeAPIHTTPError(w, agentReadDenied(agentgrant.PermissionMessageRead))
+				writeError(w, http.StatusNotFound, "not_found", "Message not found")
 				return
 			}
 			detail := messageDetailFromQuery(qMsg)
@@ -786,7 +785,7 @@ func (s *Server) handleGetMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !s.agentObjectSourceAllowed(r, msg.SourceID) {
-		writeAPIHTTPError(w, agentReadDenied(agentgrant.PermissionMessageRead))
+		writeError(w, http.StatusNotFound, "not_found", "Message not found")
 		return
 	}
 	detail := MessageDetail{
@@ -3445,7 +3444,7 @@ func (s *Server) handleGetAttachment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.agentObjectSourceAllowed(r, att.SourceID) {
-		writeAPIHTTPError(w, agentReadDenied(agentgrant.PermissionAttachmentRead))
+		writeError(w, http.StatusNotFound, "not_found", "Attachment not found")
 		return
 	}
 
@@ -3470,14 +3469,10 @@ func (s *Server) attachmentCandidatesForRequest(r *http.Request, hash string) ([
 		s.logger.Error("failed to look up attachment by hash", "error", err, "hash", hash)
 		return nil, newAPIHTTPError(http.StatusInternalServerError, "internal_error", "Failed to look up attachment")
 	}
+	// Agents see only attachments in granted accounts, so a hash held elsewhere reads as missing.
+	attachments = slices.DeleteFunc(attachments, func(att query.AttachmentInfo) bool { return !s.agentObjectSourceAllowed(r, att.SourceID) })
 	if len(attachments) == 0 {
 		return nil, newAPIHTTPError(http.StatusNotFound, "not_found", "Attachment not found")
-	}
-	if grant := s.requestAuthentication(r).Grant; grant != nil {
-		attachments = slices.DeleteFunc(attachments, func(att query.AttachmentInfo) bool { return !s.agentObjectSourceAllowed(r, att.SourceID) })
-		if len(attachments) == 0 {
-			return nil, agentReadDenied(agentgrant.PermissionAttachmentRead)
-		}
 	}
 	return attachments, nil
 }

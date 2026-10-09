@@ -2683,8 +2683,11 @@ Agent requests use `X-Msgvault-Agent-Token` instead of the owner key. The
 daemon checks `search.read`, `message.read`, `attachment.read`, or `stats.read`
 and the live source identity before serving supported archive reads. Unscoped
 reads select only granted sources. Explicit accounts, collections, and source ID
-sets must fit entirely inside the grant. Missing authority returns
-`403 permission_denied` and names the permission. Unsupported routes remain
+sets must fit entirely inside the grant. A missing permission or an account
+selector outside the grant returns `403 permission_denied` and names the
+permission. A message, thread, or attachment outside the grant returns the same
+`404` as a missing one. At most two agent reads run at once; others wait, and a
+request that ends while waiting returns `503 agent_read_busy`. Unsupported routes remain
 owner-only, including SQL, exports, writes, configuration, and grant management.
 
 Delegated reads use the daemon's ordinary request deadline, normally 60 seconds.

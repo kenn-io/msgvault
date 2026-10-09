@@ -139,9 +139,9 @@ func TestAgentReadAuthorization(t *testing.T) {
 		path string
 		code int
 	}{
-		{fmt.Sprintf("/api/v1/messages/%d", ids[1]), http.StatusForbidden},
-		{fmt.Sprintf("/api/v1/cli/attachment?id=%d&content_hash=%s", attID, outsideHash), http.StatusForbidden},
-		{"/api/v1/attachments/" + outsideHash + "/content", http.StatusForbidden},
+		{fmt.Sprintf("/api/v1/messages/%d", ids[1]), http.StatusNotFound},
+		{fmt.Sprintf("/api/v1/cli/attachment?id=%d&content_hash=%s", attID, outsideHash), http.StatusNotFound},
+		{"/api/v1/attachments/" + outsideHash + "/content", http.StatusNotFound},
 		{"/api/v1/cli/attachment?content_hash=" + strings.Repeat("c", 64), http.StatusNotFound},
 		{"/api/v1/attachments/" + strings.Repeat("c", 64) + "/content", http.StatusNotFound},
 	} {
@@ -152,6 +152,25 @@ func TestAgentReadAuthorization(t *testing.T) {
 		w := httptest.NewRecorder()
 		srv.Router().ServeHTTP(w, r)
 		assertions.Equal(tc.code, w.Code, tc.path+": "+w.Body.String())
+	}
+	// An object outside the grant must be indistinguishable from a missing one.
+	for _, pair := range [][2]string{
+		{fmt.Sprintf("/api/v1/messages/%d", ids[1]), "/api/v1/messages/999999"},
+		{"/api/v1/attachments/" + outsideHash + "/content", "/api/v1/attachments/" + strings.Repeat("c", 64) + "/content"},
+		{"/api/v1/cli/attachment?content_hash=" + outsideHash, "/api/v1/cli/attachment?content_hash=" + strings.Repeat("c", 64)},
+	} {
+		bodies := [2]string{}
+		for i, path := range pair {
+			r := httptest.NewRequest(http.MethodGet, path, nil)
+			requestCount++
+			r.RemoteAddr = fmt.Sprintf("10.0.0.%d:1234", requestCount)
+			r.Header.Set(apiprotocol.AgentTokenHeader, secret)
+			w := httptest.NewRecorder()
+			srv.Router().ServeHTTP(w, r)
+			assertions.Equal(http.StatusNotFound, w.Code, path+": "+w.Body.String())
+			bodies[i] = w.Body.String()
+		}
+		assertions.Equal(bodies[1], bodies[0], pair[0])
 	}
 	_, multiToken, _, err := srv.agentGrants.Issue("multiple sources", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: src.ID, Type: src.SourceType, Identifier: src.Identifier}, {ID: other.ID, Type: other.SourceType, Identifier: other.Identifier}}, time.Time{})
 	requirements.NoError(err)
@@ -420,7 +439,7 @@ func (e *observedThreadEngine) ListThread(ctx context.Context, q query.ThreadQue
 	return page, err
 }
 
-func TestAgentThreadDenialBoundsFallback(t *testing.T) {
+func TestAgentThreadOutsideGrantLoadsNothing(t *testing.T) {
 	requirements := require.New(t)
 	f := newCLIOriginalFixture(t)
 	allowed, err := f.st.GetOrCreateSource("test", "reader@example.test")
@@ -457,13 +476,13 @@ func TestAgentThreadDenialBoundsFallback(t *testing.T) {
 			r.Header.Set(apiprotocol.AgentTokenHeader, secret)
 			requirements.Nil(srv.authorizeAgentRead(r, "getCLIMessageThread", &grant, agentgrant.PermissionMessageRead, 0, false))
 			w := httptest.NewRecorder()
-			// Observe real query results before the handler discards the denied page.
 			srv.handleCLIMessageThread(w, r)
-			requireErrorCode(t, w, http.StatusForbidden, "permission_denied")
-			requirements.Len(observed.pages, 1)
-			page := observed.pages[0]
-			requirements.Len(page.Messages, 1, "denial must not load the whole ungranted thread")
-			assertions.Equal(f.withRaw, page.Messages[0].ID, "denial must ignore the requested offset")
+			code := cliErrorMessageNotFound
+			if strings.HasPrefix(selector, "thread_id=") {
+				code = "thread_not_found"
+			}
+			requireErrorCode(t, w, http.StatusNotFound, code)
+			assertions.Empty(observed.pages, "an ungranted thread must not be loaded")
 			assertions.NotContains(w.Body.String(), "provider-original")
 		})
 	}
@@ -659,7 +678,7 @@ func TestAgentAttachmentCanonicalFallback(t *testing.T) {
 		}
 	}
 	w := get(fmt.Sprintf("/api/v1/attachments/%d", attachmentIDs[0]))
-	assertions.Equal(http.StatusForbidden, w.Code, w.Body.String())
+	assertions.Equal(http.StatusNotFound, w.Code, w.Body.String())
 	assertions.NotContains(w.Body.String(), "private.bin")
 }
 
@@ -687,7 +706,7 @@ func TestAgentMessageReferenceScope(t *testing.T) {
 	requirements.NoError(err)
 	conv, err := st.EnsureConversation(sources[1].ID, "numeric", "Synthetic")
 	requirements.NoError(err)
-	_, err = st.UpsertMessage(&store.Message{SourceID: sources[1].ID, ConversationID: conv, SourceMessageID: strconv.FormatInt(ids[0], 10), MessageType: "email"})
+	numericSourceMessage, err := st.UpsertMessage(&store.Message{SourceID: sources[1].ID, ConversationID: conv, SourceMessageID: strconv.FormatInt(ids[0], 10), MessageType: "email"})
 	requirements.NoError(err)
 	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
 	t.Cleanup(srv.agentGrants.Close)
@@ -700,7 +719,9 @@ func TestAgentMessageReferenceScope(t *testing.T) {
 		id    int64
 	}{
 		{"shared", true, 200, ids[1]}, {"shared", false, 200, ids[0]},
-		{strconv.FormatInt(ids[0], 10), true, 403, 0}, {"missing", true, 404, 0}, {"outside-only", true, 403, 0},
+		// An ungranted internal ID falls through to the granted message with that source ID.
+		{strconv.FormatInt(ids[0], 10), true, 200, numericSourceMessage}, {strconv.FormatInt(ids[0], 10), false, 200, ids[0]},
+		{"missing", true, 404, 0}, {"outside-only", true, 404, 0},
 	} {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/message?id="+tc.ref, nil)
 		if tc.agent {
@@ -722,7 +743,7 @@ func TestAgentMessageReferenceScope(t *testing.T) {
 		code int
 	}{
 		{"source_message_id=shared", 200}, {"thread_id=thread", 200},
-		{"source_message_id=outside-only", 403}, {"thread_id=outside", 403},
+		{"source_message_id=outside-only", 404}, {"thread_id=outside", 404},
 		{"id=999999&account=" + sources[1].Identifier, 404},
 		{"source_message_id=missing&account=" + sources[1].Identifier, 404},
 		{"thread_id=missing&account=" + sources[1].Identifier, 404},
@@ -733,7 +754,7 @@ func TestAgentMessageReferenceScope(t *testing.T) {
 		{"source_message_id=missing&account=" + sources[0].Identifier, 403},
 		{"thread_id=missing&account=" + sources[0].Identifier, 403},
 		{"source_message_id=shared&account=" + sources[0].Identifier, 403},
-		{"id=" + strconv.FormatInt(ids[0], 10), 403},
+		{"id=" + strconv.FormatInt(ids[0], 10), 404},
 	} {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/message/thread?"+tc.path, nil)
 		req.RemoteAddr = fmt.Sprintf("10.0.0.%d:1234", i+1)

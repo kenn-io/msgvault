@@ -4349,8 +4349,10 @@ and source sets must fit entirely inside that grant. Collection membership is
 resolved for every request; adding an ungranted source makes that collection
 unavailable to the grant. CLI search and stats return `400 empty_scope` for an explicitly empty collection. Other supported reads return no matches, and discovery hides empty collections. Source matching
 uses source type and identifier, so removing and re-adding the same source
-preserves authority. A request outside the grant returns 403 `permission_denied` and names the
-required permission.
+preserves authority. A request without the needed permission, or one that
+selects accounts outside the grant, returns 403 `permission_denied` and names the
+required permission. A message, thread, or attachment outside the grant returns
+the same 404 as one that does not exist.
 
 `--agent-url` and `--agent-token-file` also support `stats` and an `mcp`
 stdio server without local owner configuration. Supported MCP tools include

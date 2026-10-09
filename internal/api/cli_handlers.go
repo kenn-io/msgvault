@@ -3405,11 +3405,6 @@ func (s *Server) handleCLIMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.agentObjectSourceAllowed(r, msg.SourceID) {
-		writeAPIHTTPError(w, agentReadDenied(agentgrant.PermissionMessageRead))
-		return
-	}
-
 	writeJSON(w, http.StatusOK, cliMessageResponseFromQuery(msg))
 }
 
@@ -3574,6 +3569,10 @@ func (s *Server) resolveCLIMessage(r *http.Request, idStr string) (*query.Messag
 			}
 			return nil, err
 		}
+		// An internal ID outside the grant may still name a granted message's source ID.
+		if msg != nil && !s.agentObjectSourceAllowed(r, msg.SourceID) {
+			msg = nil
+		}
 	}
 	if msg == nil {
 		msg, err = s.queryEngineForContext(r.Context()).GetMessageBySourceID(r.Context(), idStr, agentReadSourceIDs(r))
@@ -3583,9 +3582,6 @@ func (s *Server) resolveCLIMessage(r *http.Request, idStr string) (*query.Messag
 			}
 			return nil, err
 		}
-	}
-	if msg == nil && agentReadSourceIDs(r) != nil {
-		return s.queryEngineForContext(r.Context()).GetMessageBySourceID(r.Context(), idStr, nil)
 	}
 	return msg, nil
 }

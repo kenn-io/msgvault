@@ -229,7 +229,7 @@ func TestAgentAttachmentReplacementSnapshot(t *testing.T) {
 			requirements.NoError(<-mutationDone)
 			close(resume)
 			response := <-readDone
-			requirements.Equal(http.StatusForbidden, response.Code, response.Body.String())
+			requirements.Equal(http.StatusNotFound, response.Code, response.Body.String())
 			assertions.NotContains(response.Body.String(), "private.bin")
 		})
 	}
