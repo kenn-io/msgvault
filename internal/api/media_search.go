@@ -94,7 +94,7 @@ func (s *Server) handleMediaSearch(w http.ResponseWriter, r *http.Request) {
 		httpErr, httpError := errors.AsType[*docbankmedia.HTTPError](err)
 		switch {
 		case errors.Is(err, errMediaSearchScope):
-			writeError(w, http.StatusBadRequest, "media_search_scope_limit", "Search supports at most 4096 media versions and source selectors; set --person in the CLI or person_id in the API to narrow the scope")
+			writeError(w, http.StatusBadRequest, "media_search_scope_limit", "Search supports at most 4096 media versions and source selectors, and 64 distinct current captions per recording source; set --person in the CLI or person_id in the API to narrow the scope")
 		case httpError && httpErr.Status == http.StatusBadRequest:
 			writeError(w, http.StatusBadRequest, "invalid_media_search", "Docbank rejected the search query")
 		default:
@@ -176,6 +176,9 @@ func (reader *MessageRecordingReader) search(ctx context.Context, query string, 
 		if transcriptRevisionMatches(o, "supplied", revisions[o.AttachmentID]) {
 			selector := &selectors[selectorIndex[mediaSearchSource(o)]]
 			if !slices.Contains(selector.SuppliedInputIDs, o.SuppliedInputID) {
+				if len(selector.SuppliedInputIDs) == docbankmedia.MaxSearchSuppliedInputs {
+					return response, errMediaSearchScope
+				}
 				selector.SuppliedInputIDs = append(selector.SuppliedInputIDs, o.SuppliedInputID)
 			}
 		}
@@ -210,7 +213,7 @@ func (reader *MessageRecordingReader) search(ctx context.Context, query string, 
 	selections := make(map[docbankmedia.SearchMediaSource]docbankmedia.SearchMediaSelection, len(report.MediaSelections))
 	for _, selection := range report.MediaSelections {
 		selections[selection.SearchMediaSource] = selection
-		response.Partial = response.Partial || selection.Completeness == "partial"
+		response.Partial = response.Partial || selection.Completeness != "complete"
 	}
 	supplied = supplied[:0]
 	fresh := make(map[string]store.MessageMediaOccurrence, len(current))

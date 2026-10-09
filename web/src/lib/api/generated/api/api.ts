@@ -7,6 +7,7 @@ import type {
   AgentTokenIssueRequest,
   AgentTokenIssueResponse,
   AgentTokenListResponse,
+  AgentTokenView,
   AggregateResponse,
   AppendPersonNoteParams,
   AppendPersonNotePathParameters,
@@ -482,7 +483,7 @@ export const addAccount = (
   );
 };
 /**
- * @summary List active agent grants
+ * @summary List agent grants
  */
 export const listAgentTokens = (
   options?: SecondParameter<typeof orvalFetch<AgentTokenListResponse>>,
@@ -506,6 +507,17 @@ export const issueAgentToken = (
       headers: { "Content-Type": "application/json" },
       data: agentTokenIssueRequest,
     },
+    options,
+  );
+};
+/**
+ * @summary Get the calling agent's grant
+ */
+export const getAgentTokenSelf = (
+  options?: SecondParameter<typeof orvalFetch<AgentTokenView>>,
+) => {
+  return orvalFetch<AgentTokenView>(
+    { url: `/api/v1/agent-tokens/self`, method: "GET" },
     options,
   );
 };

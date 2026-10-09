@@ -2309,6 +2309,12 @@ func TestStore_GetStatsForScope_SingleSource(t *testing.T) {
 	require.NoError(err, "GetStatsForScope nil")
 	assert.Equal(int64(5), statsAll.MessageCount, "MessageCount (nil/global)")
 	assert.Equal(int64(2), statsAll.SourceCount, "SourceCount (nil/global)")
+
+	// An explicitly empty scope matches no source; it must never widen to global.
+	statsNone, err := f.Store.GetStatsForScope([]int64{})
+	require.NoError(err, "GetStatsForScope empty")
+	assert.Zero(statsNone.MessageCount, "MessageCount (empty scope)")
+	assert.Zero(statsNone.SourceCount, "SourceCount (empty scope)")
 }
 
 func TestStore_GetStatsForScope_ExcludesDedupHidden(t *testing.T) {

@@ -232,10 +232,10 @@ func TestDuckDBSearchMessageBodies_DelegatesToDirectSQLite(t *testing.T) {
 	messages, err := engine.SearchMessageBodies(context.Background(),
 		&search.Query{TextTerms: []string{"body 1"}}, 50, 0)
 	require.NoError(err, "SearchMessageBodies")
-	require.Len(messages, 1, "body-only hit")
-	assert.Equal(int64(1), messages[0].ID, "body-only hit ID")
-	require.NotEmpty(messages[0].BodyContextSnippets, "body-only hit context")
-	assert.Contains(messages[0].BodyContextSnippets[0], "body 1")
+	require.Len(messages.Messages, 1, "body-only hit")
+	assert.Equal(int64(1), messages.Messages[0].ID, "body-only hit ID")
+	require.NotEmpty(messages.Messages[0].BodyContextSnippets, "body-only hit context")
+	assert.Contains(messages.Messages[0].BodyContextSnippets[0], "body 1")
 }
 
 func TestDuckDBSearchMessageBodies_RequiresDirectSQLite(t *testing.T) {

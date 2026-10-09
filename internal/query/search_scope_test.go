@@ -274,14 +274,14 @@ func TestSearchMessageBodies_BodyColumnOnly(t *testing.T) {
 
 	messages, err := bodySearcher.SearchMessageBodies(ctx, &search.Query{TextTerms: []string{"scopeword"}}, 50, 0)
 	require.NoError(err, "SearchMessageBodies")
-	require.Len(messages, 1, "body-only hits")
-	assert.Equal(bodyID, messages[0].ID, "body-only hit ID")
-	require.NotEmpty(messages[0].BodyContextSnippets, "body-only hit context")
-	assert.Contains(messages[0].BodyContextSnippets[0], "scopeword")
+	require.Len(messages.Messages, 1, "body-only hits")
+	assert.Equal(bodyID, messages.Messages[0].ID, "body-only hit ID")
+	require.NotEmpty(messages.Messages[0].BodyContextSnippets, "body-only hit context")
+	assert.Contains(messages.Messages[0].BodyContextSnippets[0], "scopeword")
 
 	nonBodyIDs := []int64{fromMessageID, toMessageID, ccMessageID}
 	for _, id := range nonBodyIDs {
-		assert.NotEqual(id, messages[0].ID, "metadata-only FTS field must not cross into body scope")
+		assert.NotEqual(id, messages.Messages[0].ID, "metadata-only FTS field must not cross into body scope")
 	}
 }
 
@@ -388,10 +388,10 @@ func TestSearchMessageBodies_SQLiteOversizedBodyDoesNotPoisonFollowingHit(t *tes
 	messages, err := bodySearcher.SearchMessageBodies(context.Background(),
 		&search.Query{TextTerms: []string{"needle"}}, 50, 0)
 	require.NoError(err, "SearchMessageBodies")
-	require.Len(messages, 2, "body hits")
+	require.Len(messages.Messages, 2, "body hits")
 
-	byID := make(map[int64]query.MessageSummary, len(messages))
-	for _, message := range messages {
+	byID := make(map[int64]query.MessageSummary, len(messages.Messages))
+	for _, message := range messages.Messages {
 		byID[message.ID] = message
 	}
 	oversized := byID[oversizedID]
@@ -448,8 +448,8 @@ func TestSearchMessageBodies_PhraseGrouping(t *testing.T) {
 	messages, err := bodySearcher.SearchMessageBodies(ctx,
 		&search.Query{TextTerms: []string{"alpha beta"}}, 50, 0)
 	require.NoError(err, "SearchMessageBodies")
-	require.Len(messages, 1, "phrase body hits")
-	assert.Equal(adjacentID, messages[0].ID, "adjacent phrase hit")
+	require.Len(messages.Messages, 1, "phrase body hits")
+	assert.Equal(adjacentID, messages.Messages[0].ID, "adjacent phrase hit")
 }
 
 func TestSearchMessageBodies_IgnoresUnsearchableContextGroups(t *testing.T) {
@@ -466,10 +466,10 @@ func TestSearchMessageBodies_IgnoresUnsearchableContextGroups(t *testing.T) {
 	messages, err := bodySearcher.SearchMessageBodies(context.Background(),
 		&search.Query{TextTerms: []string{"!!!", "needle"}}, 50, 0)
 	require.NoError(err, "SearchMessageBodies")
-	require.Len(messages, 1, "body hit")
-	assert.Equal(messageID, messages[0].ID)
-	require.NotEmpty(messages[0].BodyContextSnippets)
-	assert.Contains(messages[0].BodyContextSnippets[0], "needle")
+	require.Len(messages.Messages, 1, "body hit")
+	assert.Equal(messageID, messages.Messages[0].ID)
+	require.NotEmpty(messages.Messages[0].BodyContextSnippets)
+	assert.Contains(messages.Messages[0].BodyContextSnippets[0], "needle")
 }
 
 func TestSearchMessageBodies_SQLiteUsesNativeTokenizerForTermGroups(t *testing.T) {
@@ -491,8 +491,8 @@ func TestSearchMessageBodies_SQLiteUsesNativeTokenizerForTermGroups(t *testing.T
 	messages, err := bodySearcher.SearchMessageBodies(context.Background(),
 		&search.Query{TextTerms: []string{"🫨", "needle"}}, 50, 0)
 	require.NoError(err, "SearchMessageBodies")
-	require.Len(messages, 1, "native tokenizer AND terms")
-	assert.Equal(matchedID, messages[0].ID,
+	require.Len(messages.Messages, 1, "native tokenizer AND terms")
+	assert.Equal(matchedID, messages.Messages[0].ID,
 		"a unicode61 token unknown to Go's letter/digit categories must not be dropped")
 }
 
@@ -515,10 +515,10 @@ func TestSearchMessageBodies_SQLiteTermProbeUsesSanitizedLiteral(t *testing.T) {
 	messages, err := bodySearcher.SearchMessageBodies(context.Background(),
 		&search.Query{TextTerms: []string{"foo*bar"}}, 50, 0)
 	require.NoError(err, "SearchMessageBodies")
-	require.Len(messages, 1, "sanitized literal hit")
-	assert.Equal(matchedID, messages[0].ID)
-	require.NotEmpty(messages[0].BodyContextSnippets)
-	assert.Contains(messages[0].BodyContextSnippets[0], "foobar")
+	require.Len(messages.Messages, 1, "sanitized literal hit")
+	assert.Equal(matchedID, messages.Messages[0].ID)
+	require.NotEmpty(messages.Messages[0].BodyContextSnippets)
+	assert.Contains(messages.Messages[0].BodyContextSnippets[0], "foobar")
 }
 
 func createSearchScopeMessage(

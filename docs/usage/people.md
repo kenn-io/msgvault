@@ -47,7 +47,7 @@ or has used. Existing profiles keep their UID. Use
 `msgvault person get --vcard-uid <uid>` with a current or retired profile UID,
 or a UID from one of its bound CardDAV cards. JSON profile reads include
 `vcard_uid` and `carddav_bindings`, which show the connection, book, resource
-href, remote UID, and mapping status. UID lookup needs daemon API schema 3.9.0
+href, remote UID, and mapping status. UID lookup needs daemon API schema 3.10.0
 or newer.
 
 ## Review identity matches

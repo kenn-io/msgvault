@@ -515,12 +515,19 @@ const sqliteFTSNeedsBackfillVirtualSQL = `SELECT EXISTS (SELECT 1 FROM messages 
 // and fall back to the virtual table. Checking every message catches interior
 // holes left when indexing fails during sync but later messages are indexed.
 func (d *SQLiteDialect) FTSNeedsBackfill(db *sql.DB) bool {
+	needs, _ := d.FTSNeedsBackfillContext(context.Background(), db)
+	return needs
+}
+func (d *SQLiteDialect) FTSNeedsBackfillContext(ctx context.Context, db *sql.DB) (bool, error) {
 	var exists bool
-	err := db.QueryRowContext(context.Background(), sqliteFTSNeedsBackfillDocsizeSQL).Scan(&exists)
+	err := ReadDBContext(ctx, db).QueryRowContext(ctx, sqliteFTSNeedsBackfillDocsizeSQL).Scan(&exists)
 	if d.IsNoSuchTableError(err) {
-		err = db.QueryRowContext(context.Background(), sqliteFTSNeedsBackfillVirtualSQL).Scan(&exists)
+		err = ReadDBContext(ctx, db).QueryRowContext(ctx, sqliteFTSNeedsBackfillVirtualSQL).Scan(&exists)
 	}
-	return err == nil && exists
+	if err != nil {
+		return false, fmt.Errorf("probe FTS completeness: %w", err)
+	}
+	return exists, nil
 }
 
 // FTSNeedsBackfillQuick compares maximum message and indexed row IDs. The

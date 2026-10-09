@@ -281,6 +281,9 @@ components:
     AgentTokenIssueRequest:
       additionalProperties: false
       properties:
+        expires_at:
+          format: date-time
+          type: string
         label:
           type: string
         permissions:
@@ -310,6 +313,9 @@ components:
           format: date-time
           type: string
         daemon_url:
+          type: string
+        expires_at:
+          format: date-time
           type: string
         id:
           type: string
@@ -370,6 +376,9 @@ components:
         created_at:
           format: date-time
           type: string
+        expires_at:
+          format: date-time
+          type: string
         id:
           type: string
         label:
@@ -397,6 +406,8 @@ components:
             format: int64
             type: integer
           type: array
+        index_state:
+          type: string
         rows:
           items:
             $ref: "#/components/schemas/AggregateRowJSON"
@@ -3243,6 +3254,8 @@ components:
           type: integer
         has_more:
           type: boolean
+        index_state:
+          type: string
         limit:
           format: int64
           type: integer
@@ -5360,6 +5373,8 @@ components:
           type: integer
         has_more:
           type: boolean
+        index_state:
+          type: string
         limit:
           format: int64
           type: integer
@@ -13001,6 +13016,8 @@ components:
             format: int64
             type: integer
           type: array
+        index_state:
+          type: string
         messages:
           items:
             $ref: "#/components/schemas/MessageSummary"
@@ -13054,6 +13071,8 @@ components:
     SearchResult:
       additionalProperties: true
       properties:
+        index_state:
+          type: string
         messages:
           items:
             $ref: "#/components/schemas/MessageSummary"
@@ -13839,7 +13858,6 @@ components:
         - total_accounts
         - total_labels
         - total_attachments
-        - database_size_bytes
       type: object
     StatsView:
       additionalProperties: true
@@ -14720,6 +14738,8 @@ components:
         attachment_size:
           format: int64
           type: integer
+        index_state:
+          type: string
         label_count:
           format: int64
           type: integer
@@ -15033,7 +15053,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.9.0
+  version: 3.10.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -15190,7 +15210,7 @@ paths:
           description: Error
       security:
         - apiKey: []
-      summary: List active agent grants
+      summary: List agent grants
       tags:
         - API
     post:
@@ -15217,6 +15237,27 @@ paths:
       security:
         - apiKey: []
       summary: Issue a restricted agent grant
+      tags:
+        - API
+  /api/v1/agent-tokens/self:
+    get:
+      operationId: getAgentTokenSelf
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentTokenView"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get the calling agent's grant
       tags:
         - API
   /api/v1/agent-tokens/{id}:
@@ -28852,6 +28893,20 @@ paths:
     get:
       operationId: searchMessagesByDomains
       parameters:
+        - description: Source account ID
+          in: query
+          name: source_id
+          schema:
+            format: int64
+            type: integer
+        - description: Source account IDs
+          in: query
+          name: source_ids
+          schema:
+            items:
+              format: int64
+              type: integer
+            type: array
         - description: Comma-separated participant domains
           in: query
           name: domains

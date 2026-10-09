@@ -158,7 +158,7 @@ func noopRebind(q string) string { return q }
 // fetchLabelsForMessageList adds labels to message summaries using a batch query.
 // tablePrefix is "" for direct SQLite or "sqlite_db." for DuckDB's sqlite_scan.
 // rebind rewrites the ? placeholders for the driver in use.
-func fetchLabelsForMessageList(ctx context.Context, db *sql.DB, rebind rebindFunc, tablePrefix string, messages []MessageSummary) error {
+func fetchLabelsForMessageList(ctx context.Context, db store.SQLReader, rebind rebindFunc, tablePrefix string, messages []MessageSummary) error {
 	if len(messages) == 0 {
 		return nil
 	}
@@ -202,7 +202,7 @@ func fetchLabelsForMessageList(ctx context.Context, db *sql.DB, rebind rebindFun
 // fetchParticipantsForMessageList adds recipients to message summaries using a batch query.
 // tablePrefix is "" for direct SQLite or "sqlite_db." for DuckDB's sqlite_scan.
 // rebind rewrites the ? placeholders for the driver in use.
-func fetchParticipantsForMessageList(ctx context.Context, db *sql.DB, rebind rebindFunc, tablePrefix string, messages []MessageSummary) error {
+func fetchParticipantsForMessageList(ctx context.Context, db store.SQLReader, rebind rebindFunc, tablePrefix string, messages []MessageSummary) error {
 	if len(messages) == 0 {
 		return nil
 	}
@@ -262,7 +262,7 @@ func appendSummaryRecipient(msg *MessageSummary, recipType string, addr Address)
 // fetchMessageLabelsDetail fetches labels for a single message detail.
 // tablePrefix is "" for direct SQLite or "sqlite_db." for DuckDB's sqlite_scan.
 // rebind rewrites the ? placeholders for the driver in use.
-func fetchMessageLabelsDetail(ctx context.Context, db *sql.DB, rebind rebindFunc, tablePrefix string, msg *MessageDetail) error {
+func fetchMessageLabelsDetail(ctx context.Context, db store.SQLReader, rebind rebindFunc, tablePrefix string, msg *MessageDetail) error {
 	rows, err := db.QueryContext(ctx, rebind(fmt.Sprintf(`
 		SELECT l.name
 		FROM %smessage_labels ml
@@ -288,7 +288,7 @@ func fetchMessageLabelsDetail(ctx context.Context, db *sql.DB, rebind rebindFunc
 // fetchParticipantsShared fetches participants for a single message detail.
 // tablePrefix is "" for direct SQLite or "sqlite_db." for DuckDB's sqlite_scan.
 // rebind rewrites the ? placeholders for the driver in use.
-func fetchParticipantsShared(ctx context.Context, db *sql.DB, rebind rebindFunc, tablePrefix string, msg *MessageDetail) error {
+func fetchParticipantsShared(ctx context.Context, db store.SQLReader, rebind rebindFunc, tablePrefix string, msg *MessageDetail) error {
 	rows, err := db.QueryContext(ctx, rebind(fmt.Sprintf(`
 		SELECT mr.recipient_type,
 		       COALESCE(NULLIF(p.email_address, ''), NULLIF(p.phone_number, ''), ''),
@@ -343,7 +343,7 @@ func fetchParticipantsShared(ctx context.Context, db *sql.DB, rebind rebindFunc,
 // fetchAttachmentsShared fetches attachments for a single message detail.
 // tablePrefix is "" for direct SQLite or "sqlite_db." for DuckDB's sqlite_scan.
 // rebind rewrites the ? placeholders for the driver in use.
-func fetchAttachmentsShared(ctx context.Context, db *sql.DB, rebind rebindFunc, tablePrefix string, msg *MessageDetail) error {
+func fetchAttachmentsShared(ctx context.Context, db store.SQLReader, rebind rebindFunc, tablePrefix string, msg *MessageDetail) error {
 	rows, err := db.QueryContext(ctx, rebind(fmt.Sprintf(`
 		SELECT id, COALESCE(filename, ''), COALESCE(mime_type, ''), COALESCE(size, 0), COALESCE(content_hash, ''), COALESCE(storage_path, '')
 		FROM %sattachments
@@ -405,7 +405,7 @@ func attachmentCASPath(contentHash string) string {
 // extractBodyFromRawShared extracts text body from compressed MIME data.
 // tablePrefix is "" for direct SQLite or "sqlite_db." for DuckDB's sqlite_scan.
 // rebind rewrites the ? placeholders for the driver in use.
-func extractBodyFromRawShared(ctx context.Context, db *sql.DB, rebind rebindFunc, tablePrefix string, messageID int64) (string, error) {
+func extractBodyFromRawShared(ctx context.Context, db store.SQLReader, rebind rebindFunc, tablePrefix string, messageID int64) (string, error) {
 	var compressed []byte
 	var compression sql.NullString
 	var storedBytes int64
@@ -443,7 +443,7 @@ func extractBodyFromRawShared(ctx context.Context, db *sql.DB, rebind rebindFunc
 // Returns nil, nil if no raw data is stored or if the message is an internal
 // deduplication loser (deleted_at). Source-deleted rows remain archive data and
 // are available to raw MIME consumers.
-func getMessageRawShared(ctx context.Context, db *sql.DB, rebind rebindFunc, tablePrefix string, messageID int64) ([]byte, error) {
+func getMessageRawShared(ctx context.Context, db store.SQLReader, rebind rebindFunc, tablePrefix string, messageID int64) ([]byte, error) {
 	var compressed []byte
 	var compression sql.NullString
 	var storedBytes int64
@@ -477,7 +477,7 @@ func getMessageRawShared(ctx context.Context, db *sql.DB, rebind rebindFunc, tab
 // tablePrefix is "" for direct SQLite or "sqlite_db." for DuckDB's sqlite_scan.
 // rebind rewrites the ? placeholders for the driver in use; it is applied
 // to every sub-query this function dispatches.
-func getMessageByQueryShared(ctx context.Context, db *sql.DB, rebind rebindFunc, tablePrefix string, whereClause string, args ...any) (*MessageDetail, error) {
+func getMessageByQueryShared(ctx context.Context, db store.SQLReader, rebind rebindFunc, tablePrefix string, whereClause string, args ...any) (*MessageDetail, error) {
 	query := fmt.Sprintf(`
 		SELECT
 			m.id,

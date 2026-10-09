@@ -14,7 +14,7 @@ import (
 )
 
 // GraphBaseURL is the production Graph endpoint.
-const GraphBaseURL = "https://graph.microsoft.com/v1.0"
+const GraphBaseURL = msgraph.GraphBaseURL
 
 // Client adds the mail endpoints to the shared Graph transport.
 type Client struct {

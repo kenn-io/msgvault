@@ -170,7 +170,6 @@ type MediaTranscriptUnit struct {
 }
 
 type MediaTranscriptEvidence struct {
-	BuildID         string                `json:"build_id"`
 	SuppliedInputID string                `json:"supplied_input_id,omitempty"`
 	Origin          string                `json:"origin"`
 	Completeness    string                `json:"completeness"`

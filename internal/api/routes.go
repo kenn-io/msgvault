@@ -207,6 +207,19 @@ func (s *Server) humaAuthMiddleware(ctx huma.Context, next func(huma.Context)) {
 	auth := s.requestAuthentication(req)
 	if auth.Mode == AuthModeDelegated {
 		if op := ctx.Operation(); op != nil && delegatedOperationAllowed(op.OperationID) {
+			permission, err := agentReadPermission(op.OperationID, auth.Grant)
+			if err != nil {
+				writeHumaError(ctx, err.status, err.ErrorResponse.Error, err.Message)
+				return
+			}
+			if permission != "" {
+				release, err := s.beginAgentRead(req, op.OperationID, auth.Grant, permission)
+				if err != nil {
+					writeHumaError(ctx, err.status, err.ErrorResponse.Error, err.Message)
+					return
+				}
+				defer release()
+			}
 			next(ctx)
 			return
 		}
@@ -379,7 +392,8 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 		http.StatusBadRequest, http.StatusNotFound, http.StatusConflict, http.StatusRequestEntityTooLarge, http.StatusServiceUnavailable)
 	// Agent-token management routes: owner API key required.
 	registerAPIV1RawHumaJSONRouteWithRequest[agentTokenIssueRequest, agentTokenIssueResponse](apiV1, "issueAgentToken", http.MethodPost, "/agent-tokens", "Issue a restricted agent grant", s.handleIssueAgentToken, http.StatusCreated)
-	registerAPIV1RawHumaJSONRoute[agentTokenListResponse](apiV1, "listAgentTokens", http.MethodGet, "/agent-tokens", "List active agent grants", s.handleListAgentTokens)
+	registerAPIV1RawHumaJSONRoute[agentTokenListResponse](apiV1, "listAgentTokens", http.MethodGet, "/agent-tokens", "List agent grants", s.handleListAgentTokens)
+	registerAPIV1RawHumaJSONRoute[agentTokenView](apiV1, "getAgentTokenSelf", http.MethodGet, "/agent-tokens/self", "Get the calling agent's grant", s.handleGetAgentTokenSelf)
 	{
 		op := rawAPIV1Operation("revokeAgentToken", http.MethodDelete, "/agent-tokens/{id}", "Revoke an agent grant by ID")
 		op.Responses = rawHumaResponses(http.StatusNoContent)
@@ -992,6 +1006,8 @@ func rawRouteParameters(operationID string) []*huma.Param {
 		)
 	case "searchMessagesByDomains":
 		return []*huma.Param{
+			queryIntegerParam("source_id", "Source account ID"),
+			queryIntegerArrayParam("source_ids", "Source account IDs"),
 			queryStringParam("domains", "Comma-separated participant domains", true),
 			queryStringParam("after", "Lower date/time bound (RFC3339 or YYYY-MM-DD)", false),
 			queryStringParam("before", "Upper date/time bound (RFC3339 or YYYY-MM-DD)", false),

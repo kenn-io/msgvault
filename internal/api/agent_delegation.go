@@ -1,10 +1,11 @@
 package api
 
-// delegatedOperationAllowed is an exact-match allowlist of operation IDs.
+// delegatedOperationAllowed admits only operations with a delegated authorization path.
 func delegatedOperationAllowed(operationID string) bool {
 	switch operationID {
-	case "runCLI", "getHealth", "controlCalendar":
+	case "runCLI", "getHealth", "controlCalendar", "getAgentTokenSelf":
 		return true
 	}
-	return false
+	_, ok := agentReadPermissions[operationID]
+	return ok
 }

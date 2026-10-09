@@ -348,8 +348,8 @@ func (s *Server) apiRequestAuthorized(r *http.Request) bool {
 // holders on any gated route. Delegated callers reach this predicate on
 // /api/v1/cli/run and /api/v1/calendar/control. CLI requests use
 // cliRunGateDecision; calendar control acquires the gate only for actual writes. Other
-// delegated routes skip the gate and their handlers reject them. Remote
-// clients reach the gate only for collection writes they are granted.
+// delegated reads use a SQL snapshot during scoped route admission.
+// Remote clients reach the gate only for collection writes they are granted.
 // Unauthenticated requests (AuthModeRequired) pass straight through so they
 // reach the API auth layer without touching gate state.
 func (s *Server) requestGateEligible(r *http.Request) bool {

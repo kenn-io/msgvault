@@ -605,7 +605,8 @@ func TestMediaSearchSharedSourceAllowedInputs(t *testing.T) {
 		partial           bool
 	}{
 		{"caption A only", 0, 1, true}, {"neither caption", 0, 1, true}, {"caption B", 1, 1, true},
-		{"generated", 2, 0, false}, {"generated nohit", 0, 0, false}, {"partial generated", 0, 0, true}, {"late caption", 0, 2, true}, {"hide unmatched", 0, 0, true}, {"hide selected", 0, 1, true}, {"no-hit bytes", 0, 1, true},
+		{"64 inputs", 0, 0, false}, {"65 inputs", 0, 0, false},
+		{"generated", 2, 0, false}, {"generated nohit", 0, 0, false}, {"partial generated", 0, 0, true}, {"degraded provenance", 0, 0, true}, {"late caption", 0, 2, true}, {"hide unmatched", 0, 0, true}, {"hide selected", 0, 1, true}, {"no-hit bytes", 0, 1, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			assert := assert.New(t)
@@ -617,13 +618,47 @@ func TestMediaSearchSharedSourceAllowedInputs(t *testing.T) {
 			f.transcripts["second-input"] = "caption B"
 			secondID := f.message(t, "second-input")
 			second := f.audio(t, secondID, "second-input", "", "delivery-second-input", &store.BeeperMediaResult{VaultUID: "vault", DocbankSourceID: first.sourceID, ContentVersionID: first.contentVersionID})
+			if test.name == "64 inputs" || test.name == "65 inputs" {
+				count := 64
+				if test.name == "65 inputs" {
+					count = 65
+				}
+				inputs := []string{first.suppliedInputID, second.suppliedInputID}
+				for i := 2; i < count; i++ {
+					id := fmt.Sprintf("caption-%d", i)
+					f.transcripts[id] = id
+					f.sameAudio[id] = "first-input"
+					seed := f.audio(t, f.message(t, id), id, "", "delivery-"+id, &store.BeeperMediaResult{VaultUID: "vault", DocbankSourceID: first.sourceID, ContentVersionID: first.contentVersionID})
+					inputs = append(inputs, seed.suppliedInputID)
+				}
+				// A repeated caption on another occurrence uses the same allowed input.
+				f.transcripts["duplicate"] = "caption A"
+				f.sameAudio["duplicate"] = "first-input"
+				f.audio(t, f.message(t, "duplicate"), "duplicate", "", "delivery-first-input", &store.BeeperMediaResult{VaultUID: "vault", DocbankSourceID: first.sourceID, ContentVersionID: first.contentVersionID})
+				status, _, raw := searchMediaFor(t, f.server(true), "q=words")
+				if count == 65 {
+					require.Equal(http.StatusBadRequest, status, raw)
+					assert.Contains(raw, "media_search_scope_limit")
+					assert.Contains(raw, "64 distinct current captions per recording source")
+					assert.Empty(f.requests)
+					return
+				}
+				require.Equal(http.StatusOK, status, raw)
+				require.Len(f.requests, 1)
+				require.Len(f.requests[0].MediaSources, 1)
+				assert.ElementsMatch(inputs, f.requests[0].MediaSources[0].SuppliedInputIDs)
+				return
+			}
 			source := docbankmedia.SearchMediaSource{SourceID: first.sourceID, SourceVersionID: "version", ContentVersionID: first.contentVersionID}
 			selection := docbankmedia.SearchMediaSelection{SearchMediaSource: source, Origin: "supplied", SuppliedInputID: second.suppliedInputID, Completeness: "complete"}
-			if strings.HasPrefix(test.name, "generated") || test.name == "partial generated" {
+			if strings.HasPrefix(test.name, "generated") || test.name == "partial generated" || test.name == "degraded provenance" {
 				selection.Origin, selection.SuppliedInputID = "generated", ""
 			}
 			if test.name == "partial generated" {
 				selection.Completeness = "partial"
+			}
+			if test.name == "degraded provenance" {
+				selection.Completeness = "degraded_provenance"
 			}
 			f.report.MediaSelections = []docbankmedia.SearchMediaSelection{selection}
 			f.report.Coverage = docbankmedia.SearchCoverage{State: "complete", ScopedDocuments: 1, CompleteDocuments: 1}

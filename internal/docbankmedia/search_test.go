@@ -77,7 +77,7 @@ func TestSearchFenceAndContract(t *testing.T) {
 
 func TestSearchSelectedEvidenceBoundary(t *testing.T) {
 	t.Parallel()
-	for _, name := range []string{"valid", "foreign vault", "foreign version", "wrong mode", "missing results", "null summary", "old producer empty", "malformed", "generated with supplied input", "summary only", "duplicate summary", "foreign summary", "empty summary origin", "empty summary completeness", "supplied allowed", "supplied excluded", "foreign source", "wrong content association", "missing build", "missing segment", "bad time", "duplicate build", "duplicate source across builds"} {
+	for _, name := range []string{"valid", "partial completeness", "degraded provenance", "unsupported completeness", "foreign vault", "foreign version", "wrong mode", "missing results", "null summary", "old producer empty", "malformed", "generated with supplied input", "summary only", "duplicate summary", "foreign summary", "empty summary origin", "empty summary completeness", "supplied allowed", "supplied excluded", "foreign source", "wrong content association", "missing build", "missing segment", "bad time", "duplicate build", "duplicate source across builds"} {
 		t.Run(name, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
@@ -88,6 +88,12 @@ func TestSearchSelectedEvidenceBoundary(t *testing.T) {
 			e := &report.Results[0].Evidence[0]
 			inputs := []string{}
 			switch name {
+			case "partial completeness":
+				report.MediaSelections[0].Completeness = "partial"
+			case "degraded provenance":
+				report.MediaSelections[0].Completeness = "degraded_provenance"
+			case "unsupported completeness":
+				report.MediaSelections[0].Completeness = "uncertain"
 			case "foreign vault":
 				report.Results[0].VaultUID = "foreign"
 			case "foreign version":
@@ -147,7 +153,7 @@ func TestSearchSelectedEvidenceBoundary(t *testing.T) {
 			client, err := NewClient(remote.URL, nil)
 			require.NoError(err)
 			got, err := client.Search(t.Context(), SearchRequest{Query: "words", Mode: "lexical", Profile: "supplied-transcript", ContentFirst: true, Limit: 100, Fence: &SearchFence{VaultUID: "vault", ContentVersionIDs: []string{"123e4567-e89b-42d3-a456-426614174000"}}, MediaSources: []SearchMediaSelector{{SearchMediaSource: source, SuppliedInputIDs: inputs}}})
-			if name == "valid" || name == "summary only" || name == "supplied allowed" {
+			if name == "valid" || name == "summary only" || name == "supplied allowed" || name == "partial completeness" || name == "degraded provenance" {
 				require.NoError(err)
 				if name != "summary only" {
 					assert.Equal("words", got.Results[0].Excerpt)

@@ -581,6 +581,10 @@ This opens your browser for Microsoft OAuth consent. After you authorize, msgvau
 - Auto-detects the correct IMAP host based on account type
 - Configures XOAUTH2 authentication automatically
 
+IMAP checks Microsoft's `email` claim when present, otherwise `preferred_username`. If that username differs from your mailbox address, pass your own sign-in name with `--sign-in`: `msgvault add-o365 john@company.com --sign-in jdoe@company.onmicrosoft.com`. This also sets the browser login hint. Re-authorization needs the flag too; msgvault previously accepted a differing username with a warning. The flag permits that username only when `email` is absent. Failed checks preserve existing credentials.
+
+Graph mail (`--graph`), Teams, and Microsoft contacts consult your Microsoft profile when token identity fields differ or are absent. They accept your mailbox or an SMTP alias listed there and need no `--sign-in` flag.
+
 On a machine without a browser, such as a server or a container, add `--headless`:
 
 ```bash

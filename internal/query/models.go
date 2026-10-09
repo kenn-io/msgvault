@@ -105,6 +105,7 @@ type Address struct {
 // AttachmentInfo represents attachment metadata.
 type AttachmentInfo struct {
 	ID          int64
+	SourceID    int64 `json:"-"`
 	Filename    string
 	MimeType    string
 	Size        int64

@@ -343,6 +343,13 @@ func TestListThread(t *testing.T) {
 		page, err := engine.ListThread(ctx, query.ThreadQuery{ThreadID: "default-thread", Account: "other@example.com"})
 		must.NoError(err)
 		checks.Equal([]int64{otherMsg}, ids(page))
+		page, err = engine.ListThread(ctx, query.ThreadQuery{ThreadID: "default-thread", SourceIDs: []int64{other.ID}})
+		must.NoError(err)
+		checks.Equal([]int64{otherMsg}, ids(page))
+		_, err = engine.ListThread(ctx, query.ThreadQuery{ThreadID: "default-thread", SourceIDs: []int64{}})
+		must.ErrorIs(err, query.ErrThreadNotFound)
+		_, err = engine.ListThread(ctx, query.ThreadQuery{SourceMessageID: "first-a", SourceIDs: []int64{}})
+		must.ErrorIs(err, store.ErrMessageNotFound)
 	})
 }
 

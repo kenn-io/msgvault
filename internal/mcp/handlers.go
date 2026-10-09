@@ -131,6 +131,7 @@ func listLimitArg(args map[string]any) int {
 }
 
 type handlers struct {
+	delegatedOnly       bool
 	downloads           *downloadCache
 	engine              query.Engine
 	archiveSQLQuerier   ArchiveSQLQuerier
@@ -520,6 +521,11 @@ func translateDaemonRequestError(err error) *toolResult {
 
 	var message string
 	switch coded.APIErrorCode() {
+	case "permission_denied", "unsupported_agent_scope":
+		// The daemon's message names the missing permission or the supported scope.
+		message = coded.APIErrorCode() + ": " + daemonErrorMessage(err)
+	case "unauthorized":
+		message = "unauthorized: Archive authentication failed"
 	case "visual_search_not_ready":
 		message = "visual_search_not_ready: visual attachment search is unavailable"
 	case "vector_initializing":
@@ -543,13 +549,20 @@ func translateDaemonRequestError(err error) *toolResult {
 	case "body_search_unavailable":
 		message = "body_search_unavailable: exact message body search is unavailable"
 	case "body_search_index_unavailable":
-		message = "body_search_index_unavailable: message body search index is unavailable"
+		message = "body_search_index_unavailable: message body search index is unavailable; ask the archive owner to search or run rebuild-fts, then retry"
 	case "invalid_message_id":
 		message = "invalid_message_id: seed message ID is invalid"
 	default:
 		return nil
 	}
 	return toolErrorResult(message)
+}
+
+func daemonErrorMessage(err error) string {
+	if apiErr, ok := errors.AsType[*daemonclient.APIError](err); ok && apiErr.Message != "" {
+		return apiErr.Message
+	}
+	return "grant does not authorize this operation or account scope"
 }
 
 func dependencyError(operation string, err error) (*toolResult, error) {
@@ -736,17 +749,35 @@ func (h *handlers) searchMetadata(ctx context.Context, req toolRequest) (*toolRe
 
 	filter := query.MessageFilter{SourceID: sourceID}
 
+	if h.delegatedOnly {
+		result, err := h.engine.SearchFastWithStats(ctx, q, queryStr, filter, query.ViewSenders, limit+1, offset)
+		if err != nil {
+			return nil, newInternalError("search metadata", err)
+		}
+		hasMore := len(result.Messages) > limit
+		if hasMore {
+			result.Messages = result.Messages[:limit]
+		}
+		if result.TotalCount < 0 {
+			return jsonResult(searchMetadataResponse{
+				paginatedResponse: newPaginatedResponseNoTotal(result.Messages, offset, hasMore), IndexState: result.IndexState,
+			})
+		}
+		return metadataSearchResult(result.Messages, result.TotalCount, offset, result.IndexState)
+	}
 	results, err := h.engine.SearchFast(ctx, q, filter, limit, offset)
 	if err != nil {
 		return nil, newInternalError("search metadata", err)
 	}
-
 	totalMatched, err := h.engine.SearchFastCount(ctx, q, filter)
 	if err != nil {
 		return nil, newInternalError("count metadata search", err)
 	}
+	return metadataSearchResult(results, totalMatched, offset, "")
+}
 
-	return jsonResult(searchMetadataResponse(newPaginatedResponse(results, totalMatched, offset)))
+func metadataSearchResult(messages []query.MessageSummary, total int64, offset int, state string) (*toolResult, error) {
+	return jsonResult(searchMetadataResponse{paginatedResponse: newPaginatedResponse(messages, total, offset), IndexState: state})
 }
 
 func (h *handlers) searchDocuments(ctx context.Context, req toolRequest) (*toolResult, error) {
@@ -923,10 +954,11 @@ func (h *handlers) searchMessageBodies(ctx context.Context, req toolRequest) (*t
 	if !ok {
 		return toolErrorResult("search_message_bodies is unavailable: the query engine does not support exact body-only search"), nil
 	}
-	results, err := bodySearcher.SearchMessageBodies(ctx, q, limit+1, offset)
+	result, err := bodySearcher.SearchMessageBodies(ctx, q, limit+1, offset)
 	if err != nil {
 		return bodySearchError(err)
 	}
+	results := result.Messages
 
 	hasMore := len(results) > limit
 	if hasMore {
@@ -953,6 +985,7 @@ func (h *handlers) searchMessageBodies(ctx context.Context, req toolRequest) (*t
 	return jsonResult(searchMessageBodiesResponse{
 		paginatedResponse: newPaginatedResponseNoTotal(data, offset, hasMore),
 		Mode:              searchModeKeyword,
+		IndexState:        result.IndexState,
 	})
 }
 
@@ -1019,6 +1052,7 @@ type hybridGenerationSummary = HybridGeneration
 type searchMessageBodiesResponse struct {
 	paginatedResponse[searchMessageItem]
 
+	IndexState    string                  `json:"index_state,omitempty"`
 	Mode          string                  `json:"mode"`
 	PoolSaturated bool                    `json:"pool_saturated"`
 	Accelerator   string                  `json:"accelerator,omitempty"`
@@ -1900,7 +1934,20 @@ func (h *handlers) getAttachment(ctx context.Context, req toolRequest) (*toolRes
 			if err != nil {
 				return nil, err
 			}
-			return &downloadSnapshot{data: payload.data, attachment: payload}, nil
+			snapshot := &downloadSnapshot{data: payload.data, attachment: payload}
+			if h.delegatedOnly {
+				snapshot.validate = func(ctx context.Context) error {
+					current, err := h.engine.GetAttachment(ctx, id)
+					if err != nil {
+						return newInternalError("authorize attachment chunk", err)
+					}
+					if current == nil || current.ContentHash != payload.metadata.ContentHash {
+						return errDownloadExpired
+					}
+					return nil
+				}
+			}
+			return snapshot, nil
 		})
 		if err == nil {
 			payload = snapshot.attachment
@@ -2503,7 +2550,7 @@ func (h *handlers) searchByDomains(ctx context.Context, req toolRequest) (*toolR
 		return toolErrorResult(err.Error()), nil
 	}
 
-	results, err := h.engine.SearchByDomains(ctx, domains, afterDate, beforeDate, limit, offset)
+	results, err := h.engine.SearchByDomains(ctx, domains, afterDate, beforeDate, limit, offset, nil)
 	if err != nil {
 		return nil, newInternalError("search messages by domain", err)
 	}

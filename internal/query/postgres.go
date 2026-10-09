@@ -82,7 +82,7 @@ func (e *pgEngine) GetDeletionTargetsByAggregateSearch(
 // explicitly.
 func (e *pgEngine) SearchMessageBodies(
 	ctx context.Context, q *search.Query, limit, offset int,
-) ([]MessageSummary, error) {
+) (*SearchFastResult, error) {
 	bodySearcher, ok := e.Engine.(MessageBodySearcher)
 	if !ok {
 		return nil, ErrMessageBodySearchUnavailable

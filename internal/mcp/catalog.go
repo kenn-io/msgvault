@@ -173,6 +173,13 @@ func operationCatalog(opts ServeOptions, _ *handlers) []toolDefinition {
 			definitions = append(definitions, stableIdentityScoringDefinitions...)
 		}
 	}
+	if opts.DelegatedOnly && opts.Engine != nil {
+		for _, definition := range stableOperationCatalogs.get(capabilitiesFor(opts)) {
+			if permission, ok := agentReadToolPermission(definition.name); ok && slices.Contains(opts.GrantPermissions, string(permission)) {
+				definitions = append(definitions, definition)
+			}
+		}
+	}
 	if opts.Calendar != nil {
 		definitions = append(definitions, stableCalendarTools()...)
 	}
@@ -559,7 +566,8 @@ func searchMessageBodiesDefinition(_ *handlers) toolDefinition {
 		searchIntro+
 			"Results are ordered newest-first (by sent date). "+
 			"Paginate with offset/limit (default limit 20, max 50). Response: data, returned, offset, has_more. "+
-			"Body search does not return a total; use has_more to detect more pages.",
+			"Body search does not return a total; use has_more to detect more pages. "+
+			"Delegated body search requires one selected account; pass account when the grant covers several accounts.",
 		closedObject(map[string]*jsonschema.Schema{
 			toolArgQuery:   stringSchema(queryDesc),
 			toolArgAccount: accountProperty(),
@@ -819,7 +827,7 @@ func aggregateDefinition(_ *handlers) toolDefinition {
 func searchByDomainsDefinition(_ *handlers) toolDefinition {
 	return readDefinition(
 		ToolSearchByDomains,
-		"Find messages where any participant (from, to, or cc) belongs to one of the given domains. "+
+		"Find messages where any participant (from, to, or cc) belongs to one of the given domains. Searches all accounts available to this session. "+
 			"Useful for finding all communication with a company regardless of direction. Returns an object with a data array of matching message summaries.",
 		closedObject(map[string]*jsonschema.Schema{
 			toolArgDomains: stringSchema("Comma-separated domain names (e.g. 'gobright.com,ascentae.com')"),
@@ -948,7 +956,11 @@ func searchPersonFilesDefinition(_ *handlers) toolDefinition {
 
 // The following named response types make every catalog output schema visible
 // without changing existing JSON field names.
-type searchMetadataResponse paginatedResponse[query.MessageSummary]
+type searchMetadataResponse struct {
+	paginatedResponse[query.MessageSummary]
+
+	IndexState string `json:"index_state,omitempty"`
+}
 type searchInMessageResponse paginatedResponse[messageMatch]
 type listMessagesResponse paginatedResponse[query.MessageSummary]
 type aggregateResponse struct {

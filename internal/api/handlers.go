@@ -58,7 +58,7 @@ type StatsResponse struct {
 	TotalAccounts         int64             `json:"total_accounts"`
 	TotalLabels           int64             `json:"total_labels"`
 	TotalAttach           int64             `json:"total_attachments"`
-	DatabaseSize          int64             `json:"database_size_bytes"`
+	DatabaseSize          *int64            `json:"database_size_bytes,omitempty" nullable:"false"`
 	VectorSearch          *vector.StatsView `json:"vector_search,omitzero" nullable:"false"`
 	VectorStatus          string            `json:"vector_status,omitempty"`
 	// VectorTextStatus reports the TEXT vector lane specifically. A
@@ -263,6 +263,7 @@ type TriggerSyncResponse struct {
 }
 
 type FilteredMessagesResponse struct {
+	IndexState       string           `json:"index_state,omitempty"`
 	Count            int              `json:"count"`
 	HasMore          bool             `json:"has_more"`
 	Offset           int              `json:"offset"`
@@ -280,6 +281,7 @@ type GmailIDsResponse struct {
 }
 
 type DeepSearchResponse struct {
+	IndexState   string              `json:"index_state,omitempty"`
 	Query        string              `json:"query"`
 	Scope        string              `json:"scope,omitempty"`
 	Messages     []MessageSummary    `json:"messages"`
@@ -362,11 +364,12 @@ func attachmentInfoFromStore(att store.APIAttachment) AttachmentInfo {
 
 // SearchResult represents search results.
 type SearchResult struct {
-	Query    string           `json:"query"`
-	Total    int64            `json:"total"`
-	Page     int              `json:"page"`
-	PageSize int              `json:"page_size"`
-	Messages []MessageSummary `json:"messages"`
+	IndexState string           `json:"index_state,omitempty"`
+	Query      string           `json:"query"`
+	Total      int64            `json:"total"`
+	Page       int              `json:"page"`
+	PageSize   int              `json:"page_size"`
+	Messages   []MessageSummary `json:"messages"`
 }
 
 // hybridSearchResponse represents results from vector or hybrid search.
@@ -610,6 +613,10 @@ func toMessageSummary(m APIMessage) MessageSummary {
 
 // handleStats returns archive statistics.
 func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
+	if s.requestAuthentication(r).Grant != nil {
+		s.agentScopedStats(w, r, false)
+		return
+	}
 	if s.store == nil {
 		writeError(w, http.StatusServiceUnavailable, "store_unavailable", "Database not available")
 		return
@@ -700,7 +707,7 @@ func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
 
 	offset := (page - 1) * pageSize
 
-	messages, total, err := s.listMessages(r.Context(), offset, pageSize)
+	messages, total, err := s.listMessages(r.Context(), offset, pageSize, agentReadSourceIDs(r))
 	if err != nil {
 		if s.writeIfContextError(w, err) {
 			return
@@ -714,7 +721,6 @@ func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
 	for i, m := range messages {
 		summaries[i] = toMessageSummary(m)
 	}
-
 	writeJSON(w, http.StatusOK, MessageListResponse{
 		Total:    total,
 		Page:     page,
@@ -745,8 +751,12 @@ func (s *Server) handleGetMessage(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "not_found", "Message not found")
 			return
 		case err == nil:
+			if !s.agentObjectSourceAllowed(r, qMsg.SourceID) {
+				writeError(w, http.StatusNotFound, "not_found", "Message not found")
+				return
+			}
 			detail := messageDetailFromQuery(qMsg)
-			detail.BodyHTML = s.archivedRemoteImageHTML(id, detail.BodyHTML)
+			detail.BodyHTML = s.archivedRemoteImageHTML(r.Context(), id, detail.BodyHTML)
 			writeJSON(w, http.StatusOK, detail)
 			return
 		}
@@ -774,6 +784,10 @@ func (s *Server) handleGetMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !s.agentObjectSourceAllowed(r, msg.SourceID) {
+		writeError(w, http.StatusNotFound, "not_found", "Message not found")
+		return
+	}
 	detail := MessageDetail{
 		MessageSummary: toMessageSummary(*msg),
 		Body:           msg.Body,
@@ -786,7 +800,7 @@ func (s *Server) handleGetMessage(w http.ResponseWriter, r *http.Request) {
 		attachments = append(attachments, attachmentInfoFromStore(att))
 	}
 	detail.Attachments = attachments
-	detail.BodyHTML = s.archivedRemoteImageHTML(id, detail.BodyHTML)
+	detail.BodyHTML = s.archivedRemoteImageHTML(r.Context(), id, detail.BodyHTML)
 
 	writeJSON(w, http.StatusOK, detail)
 }
@@ -824,6 +838,9 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	parsedQuery.HideDeleted = true
+	if s.requestAuthentication(r).Grant != nil {
+		parsedQuery.AccountIDs = agentReadSourceIDs(r)
+	}
 
 	account := r.URL.Query().Get("account")
 	collection := r.URL.Query().Get("collection")
@@ -980,11 +997,12 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, SearchResult{
-		Query:    searchText,
-		Total:    total,
-		Page:     page,
-		PageSize: pageSize,
-		Messages: summaries,
+		IndexState: agentIndexState(r),
+		Query:      searchText,
+		Total:      total,
+		Page:       page,
+		PageSize:   pageSize,
+		Messages:   summaries,
 	})
 }
 
@@ -2148,6 +2166,7 @@ func (s *Server) writeIfAnalyticsInitializing(ctx context.Context, w http.Respon
 
 // AggregateResponse represents aggregate query results.
 type AggregateResponse struct {
+	IndexState       string             `json:"index_state,omitempty"`
 	ViewType         string             `json:"view_type"`
 	Rows             []AggregateRowJSON `json:"rows"`
 	AppliedSourceIDs []int64            `json:"applied_source_ids,omitempty"`
@@ -2171,6 +2190,7 @@ type AggregateRowJSON struct {
 // SourceDeletedMessages break that total into its two populations so a client
 // can label it rather than guess which semantic the number carries.
 type TotalStatsResponse struct {
+	IndexState            string  `json:"index_state,omitempty"`
 	MessageCount          int64   `json:"message_count"`
 	ActiveMessages        int64   `json:"active_messages"`
 	SourceDeletedMessages int64   `json:"source_deleted_messages"`
@@ -2185,6 +2205,7 @@ type TotalStatsResponse struct {
 
 // SearchFastResponse represents fast search results with stats.
 type SearchFastResponse struct {
+	IndexState       string              `json:"index_state,omitempty"`
 	Query            string              `json:"query"`
 	Messages         []MessageSummary    `json:"messages"`
 	TotalCount       int64               `json:"total_count"`
@@ -2911,6 +2932,7 @@ func (s *Server) handleAggregates(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, AggregateResponse{
+		IndexState:       agentIndexState(r),
 		ViewType:         viewTypeString(viewType),
 		Rows:             jsonRows,
 		AppliedSourceIDs: append([]int64(nil), opts.SourceIDs...),
@@ -2974,6 +2996,7 @@ func (s *Server) handleSubAggregates(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, AggregateResponse{
+		IndexState:       agentIndexState(r),
 		ViewType:         viewTypeString(viewType),
 		Rows:             jsonRows,
 		AppliedSourceIDs: append([]int64(nil), filter.SourceIDs...),
@@ -3029,6 +3052,7 @@ func (s *Server) handleFilteredMessages(w http.ResponseWriter, r *http.Request) 
 	}
 
 	writeJSON(w, http.StatusOK, FilteredMessagesResponse{
+		IndexState:       agentIndexState(r),
 		Count:            len(summaries),
 		HasMore:          hasMore,
 		Offset:           filter.Pagination.Offset,
@@ -3419,6 +3443,10 @@ func (s *Server) handleGetAttachment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "Attachment not found")
 		return
 	}
+	if !s.agentObjectSourceAllowed(r, att.SourceID) {
+		writeError(w, http.StatusNotFound, "not_found", "Attachment not found")
+		return
+	}
 
 	writeJSON(w, http.StatusOK, AttachmentInfo{
 		ID:          att.ID,
@@ -3430,37 +3458,45 @@ func (s *Server) handleGetAttachment(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleGetAttachmentContent streams a stored attachment's raw bytes by its
-// SHA-256 content hash. The /content suffix keeps this binary response distinct
-// from GET /attachments/{id}, which returns attachment metadata as JSON.
-func (s *Server) handleGetAttachmentContent(w http.ResponseWriter, r *http.Request) {
+func (s *Server) attachmentCandidatesForRequest(r *http.Request, hash string) ([]query.AttachmentInfo, *apiHTTPError) {
 	engine := s.queryEngineForContext(r.Context())
 	if engine == nil {
-		writeError(w, http.StatusServiceUnavailable, "engine_unavailable", "Query engine not available")
-		return
-	}
-
-	hash := r.PathValue("hash")
-
-	if err := msgexport.ValidateContentHash(hash); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_hash", "Attachment hash must be a 64-character hex SHA-256")
-		return
+		return nil, newAPIHTTPError(http.StatusServiceUnavailable, "engine_unavailable", "Query engine not available")
 	}
 
 	attachments, err := engine.GetAttachmentsByHash(r.Context(), hash)
 	if err != nil {
 		s.logger.Error("failed to look up attachment by hash", "error", err, "hash", hash)
-		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to look up attachment")
+		return nil, newAPIHTTPError(http.StatusInternalServerError, "internal_error", "Failed to look up attachment")
+	}
+	// Agents see only attachments in granted accounts, so a hash held elsewhere reads as missing.
+	attachments = slices.DeleteFunc(attachments, func(att query.AttachmentInfo) bool { return !s.agentObjectSourceAllowed(r, att.SourceID) })
+	if len(attachments) == 0 {
+		return nil, newAPIHTTPError(http.StatusNotFound, "not_found", "Attachment not found")
+	}
+	return attachments, nil
+}
+
+// handleGetAttachmentContent streams a stored attachment's raw bytes by its
+// SHA-256 content hash. The /content suffix keeps this binary response distinct
+// from GET /attachments/{id}, which returns attachment metadata as JSON.
+func (s *Server) handleGetAttachmentContent(w http.ResponseWriter, r *http.Request) {
+	hash := r.PathValue("hash")
+	if err := msgexport.ValidateContentHash(hash); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_hash", "Attachment hash must be a 64-character hex SHA-256")
 		return
 	}
-	if len(attachments) == 0 {
-		writeError(w, http.StatusNotFound, "not_found", "Attachment not found")
+	attachments, apiErr := s.attachmentCandidatesForRequest(r, hash)
+	if apiErr != nil {
+		writeAPIHTTPError(w, apiErr)
 		return
 	}
 	att := &attachments[0]
+	releaseReadSnapshot(r)
 
 	var content io.ReadCloser
 	var contentLength int64
+	var err error
 	if s.blobStore != nil {
 		content, contentLength, err = s.blobStore.OpenStream(r.Context(), hash)
 	}
@@ -3630,6 +3666,10 @@ func (s *Server) handleSearchByDomains(w http.ResponseWriter, r *http.Request) {
 		filter.Pagination.Limit = maxPageSize
 	}
 
+	sourceIDs := filter.SourceIDs
+	if sourceIDs == nil && filter.SourceID != nil {
+		sourceIDs = []int64{*filter.SourceID}
+	}
 	requestLimit := filter.Pagination.Limit
 	messages, err := engine.SearchByDomains(
 		r.Context(),
@@ -3638,6 +3678,7 @@ func (s *Server) handleSearchByDomains(w http.ResponseWriter, r *http.Request) {
 		filter.Before,
 		requestLimit+1,
 		filter.Pagination.Offset,
+		sourceIDs,
 	)
 	if err != nil {
 		s.logger.Error("domain search failed", "error", err)
@@ -3765,6 +3806,7 @@ func (s *Server) handleTotalStats(w http.ResponseWriter, r *http.Request) {
 
 	response := toTotalStatsResponse(stats)
 	if response != nil {
+		response.IndexState = agentIndexState(r)
 		if opts.SearchScope {
 			response.AppliedSearchScope = &opts.SearchScope
 		}
@@ -3831,6 +3873,7 @@ func (s *Server) handleFastSearch(w http.ResponseWriter, r *http.Request) {
 		limit = maxPageSize
 	}
 
+	indexState := agentIndexState(r)
 	result, err := engine.SearchFastWithStats(r.Context(), q, queryStr, filter, statsGroupBy, limit, offset)
 	if err != nil {
 		if s.writeIfContextError(w, err) {
@@ -3853,6 +3896,7 @@ func (s *Server) handleFastSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, SearchFastResponse{
+		IndexState:       indexState,
 		Query:            queryStr,
 		Messages:         summaries,
 		TotalCount:       result.TotalCount,
@@ -3948,7 +3992,11 @@ func (s *Server) handleDeepSearch(w http.ResponseWriter, r *http.Request) {
 				"Query engine does not support exact message body search")
 			return
 		}
-		messages, err = bodySearcher.SearchMessageBodies(r.Context(), merged, limit+1, offset)
+		var result *query.SearchFastResult
+		result, err = bodySearcher.SearchMessageBodies(r.Context(), merged, limit+1, offset)
+		if err == nil {
+			messages = result.Messages
+		}
 	} else {
 		searchScope := *q
 		if filter.HideDeletedFromSource {
@@ -4011,6 +4059,7 @@ func (s *Server) handleDeepSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, DeepSearchResponse{
+		IndexState:   agentIndexState(r),
 		Query:        queryStr,
 		Scope:        scope,
 		Messages:     summaries,

@@ -519,8 +519,7 @@ func searchHTTPDaemon(t *testing.T) (*httptest.Server, *atomic.Int32) {
 	return server, searchRequests
 }
 
-// TestSearchCmd_PrintsBackgroundIndexNote verifies only known index gaps
-// produce a caveat. An unfinished completeness probe alone stays silent.
+// TestSearchCmd_PrintsBackgroundIndexNote keeps index advice separate from JSON results.
 func TestSearchCmd_PrintsBackgroundIndexNote(t *testing.T) {
 	cfg := testConfigValue()
 	useLocal := false
@@ -530,6 +529,16 @@ func TestSearchCmd_PrintsBackgroundIndexNote(t *testing.T) {
 		indexState string
 		wantNote   string
 	}{
+		{
+			name:       "awaiting owner warns",
+			indexState: "awaiting_owner",
+			wantNote:   "run rebuild-fts with owner access",
+		},
+		{
+			name:       "unverified check warns",
+			indexState: "unverified",
+			wantNote:   "could not be verified for this request; results may be incomplete. Search again to retry the check, or run rebuild-fts.",
+		},
 		{
 			name:       "building warns about rebuilding or awaiting rebuild",
 			indexState: "building",
@@ -594,7 +603,7 @@ func TestSearchCmd_PrintsBackgroundIndexNote(t *testing.T) {
 			root := newTestRootCmd()
 			root.SetContext(testCtx)
 			root.AddCommand(searchCmd)
-			root.SetArgs([]string{"search", "lunch"})
+			root.SetArgs([]string{"search", "lunch", "--json"})
 
 			err := root.Execute()
 			out := doneOut()
@@ -602,6 +611,8 @@ func TestSearchCmd_PrintsBackgroundIndexNote(t *testing.T) {
 			require.NoError(err, "search command")
 
 			assert.Contains(out, "Lunch", "results still print")
+			assert.True(strings.HasPrefix(strings.TrimSpace(out), "["), "JSON remains an array")
+			assert.NotContains(out, "Note:")
 			if tt.wantNote == "" {
 				assert.NotContains(errOut, "Note:", "no index note without a known gap")
 			} else {

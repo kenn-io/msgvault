@@ -104,7 +104,7 @@ type ctxMessageSearcher interface {
 // it fall back to the non-context methods.
 type CtxMessageStore interface {
 	GetStatsContext(ctx context.Context) (*StoreStats, error)
-	ListMessagesContext(ctx context.Context, offset, limit int) ([]APIMessage, int64, error)
+	ListMessagesContext(ctx context.Context, offset, limit int, sourceIDs []int64) ([]APIMessage, int64, error)
 	GetMessageContext(ctx context.Context, id int64) (*APIMessage, error)
 	GetMessagesSummariesByIDsContext(ctx context.Context, ids []int64) ([]APIMessage, error)
 }
@@ -119,9 +119,12 @@ func (s *Server) getStats(ctx context.Context) (*StoreStats, error) {
 }
 
 // listMessages calls the context-aware store variant when available.
-func (s *Server) listMessages(ctx context.Context, offset, limit int) ([]APIMessage, int64, error) {
+func (s *Server) listMessages(ctx context.Context, offset, limit int, sourceIDs []int64) ([]APIMessage, int64, error) {
 	if cs, ok := s.store.(CtxMessageStore); ok {
-		return cs.ListMessagesContext(ctx, offset, limit)
+		return cs.ListMessagesContext(ctx, offset, limit, sourceIDs)
+	}
+	if sourceIDs != nil {
+		return nil, 0, errors.New("store does not support scoped message lists")
 	}
 	return s.store.ListMessages(offset, limit)
 }
@@ -323,10 +326,14 @@ type Server struct {
 	ftsIndexComplete atomic.Bool
 	// ftsEnsureRunning guards the single background probe/backfill worker
 	// spawned by CLI searches; ftsIndexState is what that worker is doing
-	// ("checking", "building", or "" when idle/complete) so search responses
+	// (checking, building, awaiting_owner, or empty when complete) so search responses
 	// can report it. See ensureCLISearchIndexAsync.
-	ftsEnsureRunning atomic.Bool
-	ftsIndexState    atomic.Value
+	ftsEnsureRunning   atomic.Bool
+	ftsIndexState      atomic.Value
+	ftsEnsureMu        sync.Mutex
+	ftsEnsureMayRepair bool
+	// agentReadSlots bounds concurrent agent read snapshots; see agentReadConcurrency.
+	agentReadSlots chan struct{}
 	// changesStallLoggedAt throttles the WARN handleMessageChanges emits when
 	// the content-change feed is held back by a long-lived write transaction.
 	// Unix nanoseconds of the last such line, so a consumer polling once a
@@ -678,6 +685,7 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 		fastmailInventoryFactory: fastmailInventoryFactory,
 		gmailProfileAddress:      opts.GmailProfileAddress,
 		started:                  make(chan struct{}),
+		agentReadSlots:           make(chan struct{}, agentReadConcurrency),
 	}
 	s.analyticsState.Store(&analyticsEngineState{
 		engine: opts.Engine, mode: opts.AnalyticsMode,
@@ -968,6 +976,11 @@ func (s *Server) analyticsEngineMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		state := s.analyticsState.Load()
 		ctx := context.WithValue(r.Context(), analyticsEngineContextKey{}, state)
+		if r.Header.Get(apiprotocol.AgentTokenHeader) != "" {
+			boundary := &readResponseWriter{ResponseWriter: w}
+			ctx = context.WithValue(ctx, readResponseKey{}, boundary)
+			w = boundary
+		}
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
@@ -1171,6 +1184,9 @@ func (s *Server) timeoutMiddleware(next http.Handler) http.Handler {
 		}
 
 		timeout, bounded := s.requestTimeoutForPath(r.URL.Path)
+		if !bounded && (r.Method == http.MethodGet || r.Method == http.MethodHead) && s.requestAuthentication(r).Grant != nil {
+			timeout, bounded = s.requestTimeout, true
+		}
 		if !bounded {
 			serveWithoutWriteDeadline(w, r, next)
 			return

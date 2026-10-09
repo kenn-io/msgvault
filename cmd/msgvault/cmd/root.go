@@ -72,6 +72,8 @@ in a single binary.`,
 				if inv.options.homeDir != "" {
 					return errors.New("--home is not allowed in agent-delegated mode")
 				}
+				inv.cfg = &config.Config{}
+				inv.logger = slog.New(slog.DiscardHandler)
 				cmd.SilenceUsage = false
 				return nil
 			}
@@ -239,13 +241,13 @@ func agentDelegatedCapable(cmd *cobra.Command) bool {
 			return true
 		}
 	}
-	return agentDelegatedCommand(cmd.Name())
+	return agentDelegatedCommand(cmd.Name()) && (!cmd.HasParent() || cmd.Parent() == cmd.Root())
 }
 
 // agentDelegatedCommand owns the command set offered to an agent grant.
 func agentDelegatedCommand(name string) bool {
 	switch name {
-	case "draft-reply", "draft-compose", "draft-get", "draft-edit", "draft-delete", "draft-recover", "mcp":
+	case "search", "show-message", "stats", "draft-reply", "draft-compose", "draft-get", "draft-edit", "draft-delete", "draft-recover", "mcp":
 		return true
 	}
 	return false

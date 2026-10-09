@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-06"
+last_edited: "2026-10-08"
 title: Web UI & API Server
 description: Daemon-served analytical Web UI and REST API for your msgvault archive, with optional background sync scheduling.
 ---
@@ -100,9 +100,12 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.9.0**.
+it is separate from the binary release version. The current schema is **3.10.0**.
 Upgrade clients and daemon together across incompatible schema versions,
 including remote deployments.
+
+Schema 3.9.0 adds source-scoped agent read permissions and optional `expires_at`. Admitted FTS search responses, including aggregates, filtered messages and total statistics with search text, carry optional `index_state`. Agent checks are bounded; owner CLI searches retain automatic verification and repair.
+See [scoped archive reads](cli-reference.md#scoped-archive-reads).
 
 Schema 3.3.0 adds `POST /api/v1/telemetry/events`, which the web and terminal UIs use to
 report anonymous usage events through the daemon. See
@@ -129,7 +132,7 @@ Schema 3.5.0 adds the `account:` and `received:` search operators.
 
 Schema 3.8.0 adds [read-only remote client credentials](guides/remote-deployment.md#read-only-remote-clients), HTTP 409 for ambiguous raw-message references, and HTTP 413 for remote read limits.
 
-Schema 3.9.0 adds `GET /api/v1/people/by-uid`, which resolves current person
+Schema 3.10.0 adds `GET /api/v1/people/by-uid`, which resolves current person
 UIDs, retired person UIDs, and UIDs on mapped CardDAV resources. It returns a
 conflict when one UID resolves to multiple people. Person responses expose
 `carddav_bindings`; directory responses now include both `vcard_uid` and
@@ -1602,9 +1605,11 @@ Successful responses set:
 
 `GET /api/v1/media/search?q=quarterly%20numbers&mode=lexical&limit=20` finds spoken words and returns every matching live message occurrence. Results include message, conversation and attachment IDs, supplied or generated origin, an excerpt, and timing when Docbank recorded it. Optional `person_id` and repeated `direction` values select `from_person`, `to_person` or `group` relations.
 
-The daemon searches the complete allowed population, with a ceiling of 4,096 distinct versions and source selectors. Oversized scopes return `media_search_scope_limit`; set `person_id` to narrow the scope. Semantic and hybrid modes return `media_search_mode_unavailable`. A disabled or unreachable integration returns `media_search_unavailable`.
+The daemon searches the complete allowed population, with a ceiling of 4,096 distinct versions and source selectors and 64 distinct current supplied transcript input IDs per recording source. Repeated occurrences of the same input count once. Oversized scopes return `media_search_scope_limit` before contacting Docbank; set `person_id` to narrow the scope. Semantic and hybrid modes return `media_search_mode_unavailable`. A disabled or unreachable integration returns `media_search_unavailable`.
 
 The response has Docbank `coverage`, local `pending_occurrences` and `unavailable_occurrences`, `attribution_unavailable`, `partial`, and `truncated`. Pending counts require durable worker work; unmapped audio counts as unavailable. Coverage state `unknown` stays unknown. `partial` also reports local gaps and withheld excerpts. An empty result with complete coverage and `partial=false` means the query found no transcript match. The output limit applies after shared recordings expand into messages; `truncated` reports remaining occurrences or Docbank's retrieval limit.
+
+Selected transcript completeness must be `complete`, `partial`, or `degraded_provenance`. The latter two set `partial=true`; unsupported values reject the entire search with HTTP 503 and `media_search_unavailable`.
 
 Media search requires Docbank's source-selected search contract: `media_sources` selectors, a `media_source_selection` report marker and query-independent `media_selections`, including empty results. The daemon sends each source's current supplied-input set; generated transcripts stay eligible while supplied work is queued. Docbank selects each source's current transcript before ranking and returns build and exact source associations with each plain excerpt; source selections carry origin and supplied-input identity. Pending or missing transcripts leave coverage partial while ready matches remain searchable. Older servers and remote lookup failures return `media_search_unavailable`. Supplied text requires `supplied_input_id` to match the occurrence's saved delivery; mismatches count as unavailable attribution even when the query has no hits. The daemon validates supplied transcript revisions before search and rechecks visibility, recording identity, supplied text and person scope afterward.
 
@@ -2693,6 +2698,24 @@ The server is designed for local use:
 
 !!! warning
     Exposing the server on a network without authentication gives anyone on that network access to your entire email archive. Keep authentication enabled when binding to non-loopback addresses.
+
+### Restricted agent reads
+
+Agent requests use `X-Msgvault-Agent-Token` instead of the owner key. The
+daemon checks `search.read`, `message.read`, `attachment.read`, or `stats.read`
+and the live source identity before serving supported archive reads. Unscoped
+reads select only granted sources. Explicit accounts, collections, and source ID
+sets must fit entirely inside the grant. A missing permission or an account
+selector outside the grant returns `403 permission_denied` and names the
+permission. A message, thread, or attachment outside the grant returns the same
+`404` as a missing one. At most two agent reads run at once; others wait, and a
+request that ends while waiting returns `503 agent_read_busy`. Unsupported routes remain
+owner-only, including SQL, exports, writes, configuration, and grant management.
+
+Delegated reads use the daemon's ordinary request deadline, normally 60 seconds.
+
+See [agent-token](cli-reference.md#agent-token) for grant lifetime, expiry,
+revocation, issuance, remote CLI and MCP usage, and supported read capabilities.
 
 ## Configuration Reference
 

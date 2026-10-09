@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -118,6 +119,7 @@ type ContextCLIStore interface {
 	CountMessagesForSourceContext(ctx context.Context, sourceID int64) (int64, error)
 	CountSourceDeletedMessagesContext(ctx context.Context, sourceIDs ...int64) (int64, error)
 	NeedsFTSBackfillQuickContext(ctx context.Context) bool
+	NeedsFTSBackfillContext(ctx context.Context) (bool, error)
 	RebuildFTSContext(ctx context.Context, progress func(done, total int64)) (int64, error)
 }
 
@@ -686,16 +688,16 @@ type cliSearchResponse struct {
 	// schema so new CLIs understand old daemons.
 	IndexBuilt      bool  `json:"index_built,omitzero"`
 	IndexedMessages int64 `json:"indexed_messages,omitzero"`
-	// IndexState is "checking" while the FTS completeness probe runs and
-	// "building" while a backfill is repopulating the index (results may be
-	// incomplete); empty once the index is known complete.
+	// IndexState is checking, building, or awaiting_owner when repair needs owner authority.
 	IndexState string `json:"index_state,omitempty"`
 }
 
 // CLI search index states reported in cliSearchResponse.IndexState.
 const (
-	cliSearchIndexStateChecking = "checking"
-	cliSearchIndexStateBuilding = "building"
+	cliSearchIndexStateUnverified    = "unverified"
+	cliSearchIndexStateChecking      = "checking"
+	cliSearchIndexStateBuilding      = "building"
+	cliSearchIndexStateAwaitingOwner = "awaiting_owner"
 )
 
 type CLIQueryMessageSummary query.MessageSummary
@@ -905,6 +907,10 @@ func (s cliScope) displayName() string {
 }
 
 func (s *Server) handleCLIStats(w http.ResponseWriter, r *http.Request) {
+	if s.requestAuthentication(r).Grant != nil {
+		s.agentScopedStats(w, r, true)
+		return
+	}
 	if s.store == nil {
 		writeError(w, http.StatusServiceUnavailable, "store_unavailable", "Database not available")
 		return
@@ -2359,39 +2365,54 @@ func (s *Server) handleCLISearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var scope cliScope
-	if account != "" || collection != "" {
-		var err error
+	grant := s.requestAuthentication(r).Grant
+	admitted, _ := r.Context().Value(agentReadScopeKey{}).(agentReadScope)
+	if grant != nil {
+		scope = admitted.scope
+		if scope.Collection != nil {
+			collection = scope.Collection.Name
+		}
+	} else if account != "" || collection != "" {
 		scope, err = resolveCLIStatsScope(cliStore, account, collection)
 		if err != nil {
 			writeAPIHTTPError(w, s.cliScopeError(err))
 			return
 		}
-		sourceIDs := scope.sourceIDs()
-		if len(sourceIDs) == 0 {
-			writeError(w, http.StatusBadRequest, "empty_scope", cliEmptyScopeMessage(account, collection))
+	}
+	if scope.Account.Input != "" {
+		if len(scope.sourceIDs()) == 0 {
+			writeError(w, http.StatusBadRequest, "empty_scope", cliEmptyScopeMessage(scope.Account.Input, collection))
 			return
 		}
-		parsed.AccountIDs = append(parsed.AccountIDs, sourceIDs...)
+		parsed.AccountIDs = append(parsed.AccountIDs, scope.sourceIDs()...)
 	}
-
 	if parsed.IsEmpty() {
 		writeError(w, http.StatusBadRequest, "empty_search", "empty search query")
 		return
 	}
-
+	if grant != nil {
+		parsed.AccountIDs = admitted.ids
+	}
 	resp := cliSearchResponse{
 		ScopeLabel:       scope.displayName(),
 		ScopeSourceCount: len(scope.sourceIDs()),
-		// The FTS completeness probe scans every message (a minute on a
-		// large archive, once per daemon process), so the search never
-		// waits on it: the probe and any backfill run in the background
-		// and the response only reports their state so the CLI can warn
-		// that results may be incomplete while a backfill runs.
-		IndexState: s.ensureCLISearchIndexAsync(cliStore),
 	}
 
+	if grant != nil {
+		resp.ScopeSourceCount = admitted.sourceCount()
+		if admitted.scope.Account.Input == "" {
+			resp.ScopeLabel = "agent grant"
+		}
+	}
+	resp.IndexState = admitted.indexState
+	if grant == nil {
+		resp.IndexState = s.ensureCLISearchIndexAsync(cliStore, true)
+	}
 	results, err := s.queryEngineForContext(r.Context()).Search(r.Context(), parsed, limit, offset)
 	if err != nil {
+		if s.writeIfContextError(w, err) {
+			return
+		}
 		s.logger.Error("CLI search failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "search_failed", err.Error())
 		return
@@ -2406,84 +2427,170 @@ func (s *Server) handleCLISearch(w http.ResponseWriter, r *http.Request) {
 // never wait on this work: the completeness probe alone scans every message
 // — a minute on a large archive — and it used to run inline on the first
 // search of every daemon process, which reads as a hung CLI. A failed
-// backfill clears the running flag so a later search retries.
-func (s *Server) ensureCLISearchIndexAsync(cliStore CLIStore) string {
+// backfill clears the running flag so an owner search retries; agents retain
+// uncertainty until owner verification, rebuild or restart.
+func (s *Server) ensureCLISearchIndexAsync(cliStore CLIStore, mayRepair bool) string {
+	s.ftsEnsureMu.Lock()
+	defer s.ftsEnsureMu.Unlock()
 	if s.ftsIndexComplete.Load() {
 		return ""
 	}
-	if s.ftsEnsureRunning.CompareAndSwap(false, true) {
-		// The quick probe (a couple of index lookups) classifies the initial
-		// state: a visibly stale index reports "building" right away, so the
-		// very first search already warns that results may be incomplete
-		// instead of staying silent for the minutes the full probe can take.
-		state := cliSearchIndexStateChecking
-		if cliStore.NeedsFTSBackfillQuick() {
-			state = cliSearchIndexStateBuilding
-		}
-		s.ftsIndexState.Store(state)
-		go s.runCLISearchIndexEnsure(cliStore)
-	}
 	state, _ := s.ftsIndexState.Load().(string)
+	if s.ftsEnsureRunning.Load() {
+		if mayRepair {
+			s.ftsEnsureMayRepair = true
+		}
+		return state
+	}
+	if !mayRepair && (state == cliSearchIndexStateUnverified || state == cliSearchIndexStateAwaitingOwner) {
+		return state
+	}
+	knownIncomplete := state == cliSearchIndexStateAwaitingOwner
+	needsQuick := false
+	if mayRepair && !knownIncomplete {
+		s.ftsEnsureMu.Unlock()
+		needsQuick = cliStore.NeedsFTSBackfillQuick()
+		s.ftsEnsureMu.Lock()
+		if s.ftsIndexComplete.Load() {
+			return ""
+		}
+		state, _ = s.ftsIndexState.Load().(string)
+		if s.ftsEnsureRunning.Load() {
+			s.ftsEnsureMayRepair = true
+			return state
+		}
+		knownIncomplete = state == cliSearchIndexStateAwaitingOwner
+	}
+	failed := state == cliSearchIndexStateUnverified
+	state = cliSearchIndexStateChecking
+	if mayRepair && (knownIncomplete || needsQuick) {
+		state = cliSearchIndexStateBuilding
+	} else if failed {
+		state = cliSearchIndexStateUnverified
+	}
+	if bound, ok := cliStore.(*requestCLIStore); ok {
+		cliStore = bound.CLIStore
+	}
+	s.ftsEnsureMayRepair = mayRepair
+	s.ftsEnsureRunning.Store(true)
+	s.ftsIndexState.Store(state)
+	go s.runCLISearchIndexEnsure(cliStore, knownIncomplete, !mayRepair)
 	return state
 }
 
-func (s *Server) runCLISearchIndexEnsure(cliStore CLIStore) {
-	defer s.ftsEnsureRunning.Store(false)
-	// The probe runs outside the operation gate, so a rebuild-fts can clear
-	// and repopulate the index while it scans. A "complete" observation is
-	// only memoized when no rebuild was in progress at the snapshot (even
-	// generation — an odd one means a rebuild handler is mid-flight and the
-	// probe's read snapshot may predate its index clear) and none started
-	// since; otherwise it is discarded and the next search re-triggers the
-	// worker. The backfill path below needs no generation check: it
-	// re-probes and backfills under the gate, serialized with rebuilds.
+func (s *Server) runCLISearchIndexEnsure(cliStore CLIStore, knownIncomplete, bounded bool) {
 	rebuildGen := s.ftsRebuildGen.Load()
-	if !s.probeFTSBackfillNeeded(cliStore) {
-		if rebuildGen%2 == 0 && s.ftsRebuildGen.Load() == rebuildGen {
-			s.ftsIndexComplete.Store(true)
+	state := ""
+	complete := false
+	published := false
+	defer func() {
+		if published {
+			return
 		}
-		s.ftsIndexState.Store("")
+		s.ftsEnsureMu.Lock()
+		defer s.ftsEnsureMu.Unlock()
+		if rebuildGen%2 == 0 && rebuildGen == s.ftsRebuildGen.Load() {
+			if complete {
+				s.ftsIndexComplete.Store(true)
+			}
+			s.ftsIndexState.Store(state)
+		}
+		s.ftsEnsureRunning.Store(false)
+	}()
+	needs := knownIncomplete
+	for !knownIncomplete {
+		var err error
+		needs, err = s.probeFTSBackfillNeeded(cliStore, bounded)
+		if err == nil {
+			break
+		}
+		s.ftsEnsureMu.Lock()
+		if bounded && s.ftsEnsureMayRepair && s.importContext.Err() == nil {
+			s.ftsEnsureMu.Unlock()
+			bounded = false
+			continue
+		}
+		if rebuildGen%2 == 0 && rebuildGen == s.ftsRebuildGen.Load() {
+			state = cliSearchIndexStateUnverified
+			s.ftsIndexState.Store(state)
+		}
+		s.ftsEnsureRunning.Store(false)
+		published = true
+		s.ftsEnsureMu.Unlock()
+		return
+	}
+	if !needs {
+		complete = true
+		return
+	}
+	state = cliSearchIndexStateAwaitingOwner
+	s.ftsEnsureMu.Lock()
+	if !s.ftsEnsureMayRepair {
+		if rebuildGen%2 == 0 && rebuildGen == s.ftsRebuildGen.Load() {
+			s.ftsIndexState.Store(state)
+		}
+		s.ftsEnsureRunning.Store(false)
+		published = true
+		s.ftsEnsureMu.Unlock()
 		return
 	}
 	s.ftsIndexState.Store(cliSearchIndexStateBuilding)
-	// Background gate work, not request work: a backfill queued behind a
-	// long sync should wait its turn rather than force the sync to yield,
-	// since no request is blocked on it anymore.
-	done, ok := s.beginBackgroundOperationGateWork(context.Background(), "a search index build")
+	s.ftsEnsureMu.Unlock()
+	done, ok := s.beginBackgroundOperationGateWork(s.importContext, "a search index build")
 	if !ok {
-		s.ftsIndexState.Store("")
 		return
 	}
 	defer done()
-	if !cliStore.NeedsFTSBackfill() {
-		s.ftsIndexComplete.Store(true)
-		s.ftsIndexState.Store("")
+	if needed, err := s.probeFTSBackfillNeeded(cliStore, false); err != nil {
+		s.logger.Error("failed to verify CLI search index", "error", err)
+		return
+	} else if !needed {
+		state = ""
+		rebuildGen = s.ftsRebuildGen.Load()
+		complete = true
 		return
 	}
-	if _, err := s.backfillFTSWithActivity(cliStore); err != nil {
+	if _, err := s.backfillFTSWithActivity(bindCLIStoreContext(s.importContext, cliStore)); err != nil {
 		s.logger.Error("failed to build CLI search index", "error", err)
-		s.ftsIndexState.Store("")
 		return
 	}
-	s.ftsIndexComplete.Store(true)
-	s.ftsIndexState.Store("")
+	// Repair ran under the rebuild gate, so its final index supersedes earlier observations.
+	state = ""
+	rebuildGen = s.ftsRebuildGen.Load()
+	complete = true
 }
 
-// probeFTSBackfillNeeded runs the expensive first-search completeness probe
-// as a labeled activity, and logs the duration when it is slow enough to be
-// what a user just sat through.
-func (s *Server) probeFTSBackfillNeeded(cliStore CLIStore) bool {
+func (s *Server) probeFTSBackfillNeeded(cliStore CLIStore, bounded bool) (bool, error) {
+	ctx := s.importContext
+	if bounded {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, QueryEndpointTimeout)
+		defer cancel()
+	}
 	end := s.beginActivity("checking the search index")
 	defer end()
 	started := time.Now()
-	needs := cliStore.NeedsFTSBackfill()
-	if elapsed := time.Since(started); elapsed > time.Second {
-		s.logger.Info("search index completeness probe finished",
-			"needs_backfill", needs,
-			"duration", elapsed.Round(time.Millisecond).String(),
-		)
+	if bounded && bindCLIStoreContext(ctx, cliStore).NeedsFTSBackfillQuick() {
+		s.ftsEnsureMu.Lock()
+		state := cliSearchIndexStateAwaitingOwner
+		if s.ftsEnsureMayRepair {
+			state = cliSearchIndexStateBuilding
+		}
+		s.ftsIndexState.Store(state)
+		s.ftsEnsureMu.Unlock()
 	}
-	return needs
+	var needs bool
+	var err error
+	if st, ok := cliStore.(ContextCLIStore); ok {
+		needs, err = st.NeedsFTSBackfillContext(ctx)
+	} else {
+		needs = cliStore.NeedsFTSBackfill()
+		err = ctx.Err()
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		s.logger.Info("search index completeness probe finished", "needs_backfill", needs, "duration", elapsed.Round(time.Millisecond).String())
+	}
+	return needs, err
 }
 
 // backfillFTSWithActivity runs the FTS backfill with its progress mirrored
@@ -2535,6 +2642,7 @@ func (s *Server) handleCLIRebuildFTS(w http.ResponseWriter, r *http.Request) {
 	s.ftsRebuildGen.Add(1)
 	defer s.ftsRebuildGen.Add(1)
 	s.ftsIndexComplete.Store(false)
+	s.ftsIndexState.Store("")
 
 	var writeErr error
 	indexed, err := cliStore.RebuildFTS(func(done, total int64) {
@@ -2560,6 +2668,7 @@ func (s *Server) handleCLIRebuildFTS(w http.ResponseWriter, r *http.Request) {
 	// The rebuild fully repopulated the index; safe to re-memoize so later CLI
 	// searches skip the expensive backfill probe again.
 	s.ftsIndexComplete.Store(true)
+	s.ftsIndexState.Store("")
 	if writeErr == nil {
 		writeErr = writeEvent(cliRebuildFTSEvent{
 			Type:    "complete",
@@ -2590,9 +2699,12 @@ func (s *Server) handleCLIAccounts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if s.requestAuthentication(r).Grant != nil {
+		sources = slices.DeleteFunc(sources, func(src *store.Source) bool { return !slices.Contains(agentReadSourceIDs(r), src.ID) })
+	}
 	var grouped map[int64]store.SourceMessageCounts
 	var response cliAccountsResponse
-	if counter, ok := s.store.(sourceMessageCounter); ok {
+	if counter, ok := s.store.(sourceMessageCounter); ok && s.requestAuthentication(r).Grant == nil {
 		grouped, response.AsOf, response.Stale, err = s.accountCountSnapshots.get(
 			r.Context(), s.importContext, "", s.statsSnapshotWait, counter.CountMessagesBySourceContext,
 		)
@@ -2703,6 +2815,11 @@ func (s *Server) handleCLICollections(w http.ResponseWriter, r *http.Request) {
 
 	resp := make([]cliCollectionResponse, 0, len(collections))
 	for _, coll := range collections {
+		if s.requestAuthentication(r).Grant != nil {
+			if len(coll.SourceIDs) == 0 || slices.ContainsFunc(coll.SourceIDs, func(id int64) bool { return !slices.Contains(agentReadSourceIDs(r), id) }) {
+				continue
+			}
+		}
 		item, err := cliCollectionResponseFromStore(cliStore, coll)
 		if err != nil {
 			s.logger.Error("failed to hydrate CLI collection", "collection", coll.Name, "error", err)
@@ -3362,7 +3479,14 @@ func (s *Server) handleCLIAttachment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_content_hash", err.Error())
 		return
 	}
+	if s.requestAuthentication(r).Grant != nil {
+		if _, apiErr := s.attachmentCandidatesForRequest(r, contentHash); apiErr != nil {
+			writeAPIHTTPError(w, apiErr)
+			return
+		}
+	}
 
+	releaseReadSnapshot(r)
 	if s.blobStore != nil {
 		rc, size, err := s.blobStore.OpenStream(r.Context(), contentHash)
 		if err != nil {
@@ -3445,9 +3569,13 @@ func (s *Server) resolveCLIMessage(r *http.Request, idStr string) (*query.Messag
 			}
 			return nil, err
 		}
+		// An internal ID outside the grant may still name a granted message's source ID.
+		if msg != nil && !s.agentObjectSourceAllowed(r, msg.SourceID) {
+			msg = nil
+		}
 	}
 	if msg == nil {
-		msg, err = s.queryEngineForContext(r.Context()).GetMessageBySourceID(r.Context(), idStr)
+		msg, err = s.queryEngineForContext(r.Context()).GetMessageBySourceID(r.Context(), idStr, agentReadSourceIDs(r))
 		if err != nil {
 			if !errors.Is(err, query.ErrOriginalMessageTooLarge) {
 				s.logger.Error("failed to get CLI message by source id", "id", idStr, "error", err)
@@ -3610,7 +3738,7 @@ func statsResponseFromStore(stats *store.Stats) StatsResponse {
 		TotalAccounts:         stats.SourceCount,
 		TotalLabels:           stats.LabelCount,
 		TotalAttach:           stats.AttachmentCount,
-		DatabaseSize:          stats.DatabaseSize,
+		DatabaseSize:          &stats.DatabaseSize,
 	}
 }
 

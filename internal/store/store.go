@@ -849,10 +849,16 @@ func (s *Store) withTxContext(ctx context.Context, fn func(tx *loggedTx) error) 
 func (s *Store) withReadSnapshotContext(
 	ctx context.Context, fn func(tx *loggedTx) error,
 ) error {
-	return s.withTxOptionsContext(ctx, &sql.TxOptions{
-		Isolation: sql.LevelRepeatableRead,
-		ReadOnly:  true,
-	}, fn)
+	ctx, release, err := s.BeginReadSnapshotContext(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	snapshot, _ := ctx.Value(readSnapshotKey{}).(*readSnapshot)
+	if err := fn(snapshot.tx); err != nil {
+		return err
+	}
+	return ctx.Err()
 }
 
 func (s *Store) withTxOptionsContext(
@@ -2572,6 +2578,12 @@ func (s *Store) NeedsFTSBackfill() bool {
 	}
 	return s.dialect.FTSNeedsBackfill(s.db.DB)
 }
+func (s *Store) NeedsFTSBackfillContext(ctx context.Context) (bool, error) {
+	if !s.fts5Available {
+		return false, nil
+	}
+	return s.dialect.FTSNeedsBackfillContext(ctx, s.db.DB)
+}
 
 // NeedsFTSBackfillQuick is the cheap, hot-path-safe form of NeedsFTSBackfill:
 // true means a backfill is certainly needed; false may miss interior index
@@ -2624,10 +2636,10 @@ func (s *Store) GetStatsContext(ctx context.Context) (*Stats, error) {
 }
 
 // GetStatsForScope returns statistics scoped to the given source IDs.
-// When sourceIDs is nil or empty, returns global counts.
+// A nil slice returns global counts; an empty non-nil slice matches no source.
 // All message-derived counts (threads, attachments, labels) exclude
 // dedup-hidden and source-deleted messages via LiveMessagesWhere.
-// DatabaseSize is always the global file size — it cannot be decomposed per source.
+// DatabaseSize is global and omitted within a read snapshot.
 func (s *Store) GetStatsForScope(sourceIDs []int64) (*Stats, error) {
 	return s.GetStatsForScopeContext(context.Background(), sourceIDs)
 }
@@ -2635,6 +2647,9 @@ func (s *Store) GetStatsForScope(sourceIDs []int64) (*Stats, error) {
 // GetStatsForScopeContext is the context-aware form of GetStatsForScope.
 func (s *Store) GetStatsForScopeContext(ctx context.Context, sourceIDs []int64) (*Stats, error) {
 	stats := &Stats{}
+	if sourceIDs != nil && len(sourceIDs) == 0 {
+		return stats, nil
+	}
 
 	var queries []struct {
 		query string
@@ -2642,7 +2657,7 @@ func (s *Store) GetStatsForScopeContext(ctx context.Context, sourceIDs []int64) 
 		dest  *int64
 	}
 
-	if len(sourceIDs) == 0 {
+	if sourceIDs == nil {
 		// Unscoped: global catalog counts, matching pre-slice-3 semantics.
 		// All message-linked counts apply LiveMessagesWhere so dedup-hidden
 		// and source-deleted rows aren't reported as live rows.
@@ -2690,9 +2705,9 @@ func (s *Store) GetStatsForScopeContext(ctx context.Context, sourceIDs []int64) 
 		}
 	} else {
 		// Build the IN (?, ?, ...) placeholder list. TrimSuffix is panic-safe
-		// for any len(sourceIDs); the outer guard already routes empty slices
-		// to the unscoped branch, but this avoids a negative slice index if
-		// the guard is ever refactored.
+		// for any len(sourceIDs); the early return already handles empty
+		// slices, but this avoids a negative slice index if that guard is
+		// ever refactored.
 		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(sourceIDs)), ",")
 
 		inClause := "source_id IN (" + placeholders + ")"
@@ -2766,12 +2781,13 @@ func (s *Store) GetStatsForScopeContext(ctx context.Context, sourceIDs []int64) 
 		}
 	}
 
-	// DatabaseSize: logical main-database page allocation for SQLite,
-	// pg_database_size() for PostgreSQL.
-	if size, err := s.dialect.DatabaseSize(ctx, s.db.DB, s.dbPath); err == nil {
-		stats.DatabaseSize = size
-	} else if ctxErr := ctx.Err(); ctxErr != nil {
-		return nil, ctxErr
+	// Scoped snapshots omit global size without acquiring a second connection.
+	if snapshot, ok := ctx.Value(readSnapshotKey{}).(*readSnapshot); !ok || snapshot.db != s.db.DB {
+		if size, err := s.dialect.DatabaseSize(ctx, s.db.DB, s.dbPath); err == nil {
+			stats.DatabaseSize = size
+		} else if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
 	}
 
 	return stats, nil

@@ -4,6 +4,7 @@ package querytest
 import (
 	"context"
 	"errors"
+	"slices"
 	"time"
 
 	"go.kenn.io/msgvault/internal/query"
@@ -36,7 +37,7 @@ type MockEngine struct {
 	SearchDeepWithStatsFunc                 func(context.Context, *search.Query, query.MessageFilter, int, int) (*query.SearchFastResult, error)
 	SearchMessageBodiesFunc                 func(context.Context, *search.Query, int, int) ([]query.MessageSummary, error)
 	GetMessageFunc                          func(context.Context, int64) (*query.MessageDetail, error)
-	GetMessageBySourceIDFunc                func(context.Context, string) (*query.MessageDetail, error)
+	GetMessageBySourceIDFunc                func(context.Context, string, []int64) (*query.MessageDetail, error)
 	GetTotalStatsFunc                       func(context.Context, query.StatsOptions) (*query.TotalStats, error)
 	ListMessagesFunc                        func(context.Context, query.MessageFilter) ([]query.MessageSummary, error)
 	SearchFastCountFunc                     func(context.Context, *search.Query, query.MessageFilter) (int64, error)
@@ -44,7 +45,7 @@ type MockEngine struct {
 	GetDeletionTargetsByMessageIDsFunc      func(context.Context, []int64) ([]query.DeletionTarget, error)
 	GetDeletionTargetsBySearchFunc          func(context.Context, *search.Query, query.MessageFilter, query.DeletionSearchMode) ([]query.DeletionTarget, error)
 	GetDeletionTargetsByAggregateSearchFunc func(context.Context, string, query.MessageFilter, query.ViewType, string) ([]query.DeletionTarget, error)
-	SearchByDomainsFunc                     func(context.Context, []string, *time.Time, *time.Time, int, int) ([]query.MessageSummary, error)
+	SearchByDomainsFunc                     func(context.Context, []string, *time.Time, *time.Time, int, int, []int64) ([]query.MessageSummary, error)
 	SearchFastWithStatsFunc                 func(context.Context, *search.Query, string, query.MessageFilter, query.ViewType, int, int) (*query.SearchFastResult, error)
 	GetMessageRawFunc                       func(context.Context, int64) ([]byte, error)
 	GetMessageSummariesByIDsFunc            func(context.Context, []int64) ([]query.MessageSummary, error)
@@ -114,12 +115,12 @@ func (m *MockEngine) GetMessage(ctx context.Context, id int64) (*query.MessageDe
 	return nil, errors.New("not found")
 }
 
-func (m *MockEngine) GetMessageBySourceID(ctx context.Context, sourceID string) (*query.MessageDetail, error) {
+func (m *MockEngine) GetMessageBySourceID(ctx context.Context, sourceID string, sourceIDs []int64) (*query.MessageDetail, error) {
 	if m.GetMessageBySourceIDFunc != nil {
-		return m.GetMessageBySourceIDFunc(ctx, sourceID)
+		return m.GetMessageBySourceIDFunc(ctx, sourceID, sourceIDs)
 	}
 	if m.MessagesBySourceID != nil {
-		if msg, ok := m.MessagesBySourceID[sourceID]; ok {
+		if msg, ok := m.MessagesBySourceID[sourceID]; ok && (sourceIDs == nil || slices.Contains(sourceIDs, msg.SourceID)) {
 			return msg, nil
 		}
 		return nil, nil //nolint:nilnil // mirrors Engine.GetMessageBySourceID (nil, nil) not-found contract
@@ -193,11 +194,15 @@ func (m *MockEngine) SearchDeepWithStats(
 	}, nil
 }
 
-func (m *MockEngine) SearchMessageBodies(ctx context.Context, q *search.Query, limit, offset int) ([]query.MessageSummary, error) {
+func (m *MockEngine) SearchMessageBodies(ctx context.Context, q *search.Query, limit, offset int) (*query.SearchFastResult, error) {
 	if m.SearchMessageBodiesFunc != nil {
-		return m.SearchMessageBodiesFunc(ctx, q, limit, offset)
+		messages, err := m.SearchMessageBodiesFunc(ctx, q, limit, offset)
+		if err != nil {
+			return nil, err
+		}
+		return &query.SearchFastResult{Messages: messages}, nil
 	}
-	return m.SearchResults, nil
+	return &query.SearchFastResult{Messages: m.SearchResults}, nil
 }
 
 func (m *MockEngine) SearchFast(ctx context.Context, q *search.Query, filter query.MessageFilter, limit, offset int) ([]query.MessageSummary, error) {
@@ -287,9 +292,9 @@ func (m *MockEngine) GetDeletionTargetsByMessageIDs(ctx context.Context, ids []i
 	return m.defaultDeletionTargets(), nil
 }
 
-func (m *MockEngine) SearchByDomains(ctx context.Context, domains []string, after, before *time.Time, limit, offset int) ([]query.MessageSummary, error) {
+func (m *MockEngine) SearchByDomains(ctx context.Context, domains []string, after, before *time.Time, limit, offset int, sourceIDs []int64) ([]query.MessageSummary, error) {
 	if m.SearchByDomainsFunc != nil {
-		return m.SearchByDomainsFunc(ctx, domains, after, before, limit, offset)
+		return m.SearchByDomainsFunc(ctx, domains, after, before, limit, offset, sourceIDs)
 	}
 	return m.SearchResults, nil
 }

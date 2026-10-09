@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-07"
+last_edited: "2026-10-08"
 title: Changelog
 description: Release history for msgvault
 ---
@@ -17,6 +17,8 @@ All notable changes to msgvault, grouped by release.
 - [Read-only remote clients](guides/remote-deployment.md#read-only-remote-clients) get separate reader credentials with response limits and optional collection writes.
 - Single-message [export-eml](cli-reference.md#export-eml) refuses ambiguous provider IDs for owner and reader keys.
 - Consume streamed [export-attachment](cli-reference.md#export-attachment) stdout only after the command succeeds.
+
+- Agent tokens grant scoped archive reads through the remote CLI and MCP, with optional `--expires`. Search responses report index uncertainty; owner searches retain automatic index repair.
 
 - msgvault sends anonymous usage telemetry: a daemon ping at startup and once
   each later UTC day, and an `app_opened` event the web UI reports through the

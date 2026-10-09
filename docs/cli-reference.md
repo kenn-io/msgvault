@@ -107,9 +107,11 @@ Commands that access archive state keep their usual stdout/stderr output while u
 2. Otherwise, archive-access commands discover or start the local background daemon and talk to it over HTTP. With `[server].daemon_auto_start = false`, they use a daemon that is already running or starting and never start one.
 3. `--local` selects the local daemon even when `[remote].url` is configured; it is not a request to open SQLite in the CLI process.
 4. With both `--agent-url` and `--agent-token-file`, the CLI connects to a
-   remote daemon as a restricted caller. `draft-reply`, `draft-compose`,
-   `draft-get`, `draft-edit`, `draft-delete`, `draft-recover`, and `mcp` are
-   available in this mode. The CLI rejects owner
+   remote daemon as a restricted caller. `search`, `show-message`, `stats`,
+   `mcp`, `calendar`, `draft-reply`, `draft-compose`, `draft-get`, `draft-edit`,
+   `draft-delete`, and `draft-recover` are available with their required
+   permissions (see [scoped archive reads](#scoped-archive-reads) and
+   [managed drafts](#draft-get-draft-edit-draft-delete-and-draft-recover)). The CLI rejects owner
    configuration (`--config`, `--home`, `--local`) and never writes the token
    to logs or argv. It sends the token in the `X-Msgvault-Agent-Token` header;
    generated OpenAPI clients do not model this transport detail.
@@ -571,6 +573,9 @@ Requires a `[microsoft]` section with `client_id` in `config.toml`. See the [OAu
 | `--headless` | `false` | Sign in with a device code instead of a local browser |
 | `--no-default-identity` | `false` | Do not auto-confirm the email address as this account's "me" identity. Saved across syncs and re-authorization; only explicit `--no-default-identity=false` clears the choice. See [saved identity choice](#saved-default-identity-choice) |
 | `--graph` | `false` | Sync through the Microsoft Graph mail API instead of IMAP. Creates an `msmail` account. Needs the `Mail.Read` permission. `delete-staged` asks for `Mail.ReadWrite` on first use |
+| `--sign-in` | | Microsoft sign-in name and browser login hint when it differs from the mailbox address. IMAP only; mutually exclusive with `--graph` |
+
+IMAP checks Microsoft's `email` claim when present, otherwise `preferred_username`. A differing username now requires `--sign-in`, including during re-authorization; msgvault previously accepted it with a warning. The flag permits that username only when `email` is absent. Failed checks preserve existing credentials. Graph mail and Teams also consult your Microsoft profile when token identity fields differ or are absent, accepting your mailbox or an SMTP alias listed there.
 
 After adding the account, sync it with `msgvault sync-full`. For a `--graph`
 account, use `msgvault sync`. See
@@ -2008,6 +2013,8 @@ msgvault search <query> [flags]
 | `--mode` | Search mode: `fts` (default), `vector`, or `hybrid`. `vector` and `hybrid` require vector search to be configured. |
 | `--explain` | Include per-signal scores (RRF, BM25, vector) in the output. Only applies to `--mode vector` and `--mode hybrid`. |
 
+Search and stats reject an explicitly empty collection with `empty_scope` for owners and agents.
+
 Without an explicit message-type filter, search intentionally returns all
 matching cached message types, including meeting transcripts and chats.
 Ordinary aggregate views and statistics still default to email-only; use
@@ -2033,7 +2040,7 @@ provide a browser link for that message.
 The daemon checks full-text index completeness in the background. The CLI
 warns that results may be incomplete when the daemon finds an index gap or
 is rebuilding the index. The warning also applies while a rebuild waits for
-other daemon work to finish. A completeness check alone prints no warning.
+other daemon work to finish. An owner completeness check alone prints no warning. Agent searches report checking uncertainty on stderr.
 API clients can still observe `index_state="checking"` while that check runs.
 
 ---
@@ -2095,7 +2102,7 @@ msgvault media search "quarterly numbers" --person 7 --direction from_person --l
 
 `--mode lexical` is the default. Semantic and hybrid are unavailable. `--limit` accepts 1 to 100 message occurrences. `--direction` accepts `from_person`, `to_person` or `group` and requires `--person`.
 
-The table shows message, conversation and attachment IDs, supplied or generated origin, plain excerpt, and recorded timing. An empty result proves no match only with complete coverage and `partial=false`. Its coverage line reports pending media, unavailable attribution, partial coverage and truncated results. JSON preserves the same fields. Search requires Docbank's source-selected search contract. Shared audio searches the currently selected transcript; different supplied captions can leave some messages unavailable even when no excerpt matches. A scope may contain at most 4,096 distinct media versions and source selectors; narrow the person scope if it exceeds that ceiling. Use `msgvault show-message <message_id>` to read a result in context. Browser search-result presentation follows separately.
+The table shows message, conversation and attachment IDs, supplied or generated origin, plain excerpt, and recorded timing. An empty result proves no match only with complete coverage and `partial=false`. Its coverage line reports pending media, unavailable attribution, partial coverage and truncated results. JSON preserves the same fields. Search requires Docbank's source-selected search contract. Shared audio searches the currently selected transcript; different supplied captions can leave some messages unavailable even when no excerpt matches. See [the API scope limits](api-server.md#media-transcript-search) for the version, source and caption ceilings; narrow the person scope if it exceeds a ceiling. Use `msgvault show-message <message_id>` to read a result in context. Browser search-result presentation follows separately.
 
 ## documents
 
@@ -2706,7 +2713,7 @@ cannot be deleted until that lineage is fully split.
 
 `person get --vcard-uid` resolves the person's current UID, a retired UID that
 still aliases the person after a merge, or a UID on a CardDAV card currently
-mapped to that person. This lookup requires daemon API schema 3.9.0 or newer.
+mapped to that person. This lookup requires daemon API schema 3.10.0 or newer.
 JSON person responses
 include `vcard_uid` and `carddav_bindings`; each binding names its connection and
 address book and includes the resource `href`, `remote_uid`, and `mapping_status`.
@@ -3576,7 +3583,7 @@ Start the Model Context Protocol server for AI assistant integration.
 
 Draft tools prepare and manage drafts through the selected daemon, using the same commands and permissions as the CLI. Msgvault never sends. A daemon with API schema 3.0.0 or newer exposes eight draft tools to the owner.
 
-With `--agent-url` and `--agent-token-file`, `msgvault mcp` exposes only the six delegated draft tools and, on daemons with API schema 3.1.0 or newer, the calendar tools over stdio. The daemon checks the token's permissions and source scope on every call. Delegated sessions refuse `--http`.
+With `--agent-url` and `--agent-token-file`, `msgvault mcp` exposes scoped read tools on daemons with API schema 3.9.0 or newer, the six delegated draft tools, and calendar tools on daemons with API schema 3.1.0 or newer, over stdio. The daemon checks the token's permissions and source scope on every call. Delegated sessions refuse `--http`.
 
 ```bash
 msgvault mcp [flags]
@@ -4311,6 +4318,8 @@ Manage restricted agent grants. The daemon must be started with `[server] agent_
 and a non-empty `[server] api_key`. All three subcommands require owner authentication
 (the owner API key; keyless loopback is not sufficient); a delegated caller cannot issue or modify grants.
 
+The daemon keeps grants in memory; restarting it invalidates their tokens.
+
 ### What a token does and does not defend against
 
 A restricted agent token scopes and revokes access for an agent process. It is not a
@@ -4325,9 +4334,58 @@ configuration, and daemon replacement outside the agent's authority — a remote
 user-managed daemon achieves that, and so does an isolated local agent environment, while
 a second daemon or data directory under the same unrestricted user does not.
 
-Tokens are in-memory and process-scoped. All grants are invalidated when the daemon
-restarts. A grant is valid until it is revoked or the daemon restarts.
-There is no persistence to disk and no migration needed.
+A grant is valid until it is revoked, reaches its optional expiry, or the daemon
+restarts. Revocation blocks subsequent authentication; requests already
+authenticated may complete.
+
+### Scoped archive reads
+
+Use a scoped grant for an agent that needs archive reads. Keep the owner key on
+the daemon host for administration. The owner key retains unrestricted access.
+
+```bash
+msgvault agent-token issue --label researcher \
+  --permissions search.read,message.read --source-ids 1,2 --expires 24h
+msgvault --agent-url https://archive.example.test \
+  --agent-token-file ./reader.token search 'subject:meeting' --json
+msgvault --agent-url https://archive.example.test \
+  --agent-token-file ./reader.token show-message 42 --json
+```
+
+| Permission | Granted reads |
+|---|---|
+| `search.read` | Keyword search with snippets and body-match excerpts, metadata lists, fast search, aggregate counts, and domain search |
+| `message.read` | Message bodies and metadata, and containing threads |
+| `attachment.read` | Attachment metadata and stored bytes; message access alone does not grant bytes |
+| `stats.read` | Statistics within the granted sources; global database size is omitted |
+
+Unscoped reads select the grant's live sources. Explicit accounts, collections,
+and source sets must fit entirely inside that grant. Collection membership is
+resolved for every request; adding an ungranted source makes that collection
+unavailable to the grant. CLI search and stats return `400 empty_scope` for an explicitly empty collection. Other supported reads return no matches, and discovery hides empty collections. Source matching
+uses source type and identifier, so removing and re-adding the same source
+preserves authority. A request without the needed permission, or one that
+selects accounts outside the grant, returns 403 `permission_denied` and names the
+required permission. A message, thread, or attachment outside the grant returns
+the same 404 as one that does not exist.
+
+`--agent-url` and `--agent-token-file` also support `stats` and an `mcp`
+stdio server without local owner configuration. Supported MCP tools include
+keyword search, message and thread reads, attachment reads, lists, aggregate,
+and stats. Multi-source metadata lists, fast search, aggregates, and stats keep
+exact per-call scopes. Deep body search requires a single source. Pass `account` when the grant covers
+several accounts. Read grants and expiry require API schema 3.9.0 or newer; vector and
+hybrid reads remain unavailable to scoped grants.
+
+Agent searches start a background index check and clear the status once the index is complete. An incomplete index prompts the owner to run `rebuild-fts` or search once to repair it. Read grants can check the index and cannot rebuild it. With `--json`, the CLI keeps its result array and prints index advice on stderr; Admitted HTTP search, aggregate, filter and total-statistics responses with search text, and MCP keyword search responses, include `index_state`.
+
+Scoped archive reads return a consistent authorized view. Scoped aggregates read live SQL tables and may take longer on large archives. Unknown or ungranted account and collection selectors return 403 `permission_denied`. A check started by an agent that exceeds two minutes reports `unverified` to agents until the owner searches, runs `rebuild-fts`, or the daemon restarts. Owner searches check without that limit and repair automatically. An owner check that fails also reports `unverified`; the next owner search checks again. Each MCP attachment chunk is authorized again, including cached continuations.
+
+The delegated MCP catalog lists a read tool only when the grant holds its permission. Draft and calendar tools are listed for every grant. The daemon checks each call against the token, and a denial names the permission the call needs.
+
+Sync, deletion, configuration, account and token administration, SQL, exports,
+people administration, and all other ungranted routes are rejected. Existing
+`draft.*` and `calendar.*` permissions retain their separate authority.
 
 ### agent-token issue
 
@@ -4345,11 +4403,13 @@ msgvault agent-token issue --label <name> \
 | Flag | Description |
 |---|---|
 | `--label <name>` | (required) Human-readable name for the grant |
-| `--permissions <perms>` | Comma-separated permissions: `calendar.read` for availability, `calendar.event.read` for provider-derived event details in delegated plans and write receipts, `calendar.write` for calendar mutations, and additional `calendar.invite` for guest changes; `draft.create` for `draft-reply`, `draft-compose`, and `draft-get`; `draft.edit` for `draft-get`, `draft-edit`, and `draft-recover`; `draft.delete` for `draft-get`, `draft-delete`, and `draft-recover` (see [managed drafts](#draft-get-draft-edit-draft-delete-and-draft-recover)) |
+| `--permissions <perms>` | Comma-separated permissions: `search.read`, `message.read`, `attachment.read`, `stats.read` (see [scoped archive reads](#scoped-archive-reads)); `calendar.read` for availability, `calendar.event.read` for provider-derived event details in delegated plans and write receipts, `calendar.write` for calendar mutations, and additional `calendar.invite` for guest changes; `draft.create` for `draft-reply`, `draft-compose`, and `draft-get`; `draft.edit` for `draft-get`, `draft-edit`, and `draft-recover`; `draft.delete` for `draft-get`, `draft-delete`, and `draft-recover` (see [managed drafts](#draft-get-draft-edit-draft-delete-and-draft-recover)) |
 | `--source-ids <ids>` | Comma-separated source IDs that the permissions apply to |
+| `--expires <expiry>` | Optional future RFC3339 timestamp or positive duration such as `24h`; the CLI clock converts a duration to absolute expiry |
 | `--sender <source-id>=<address>` | Restrict a source to one confirmed sender identity; repeat for multiple choices |
 
-The grant is valid until revoked or until the daemon restarts.
+The grant is valid until it is revoked, reaches its optional expiry, or the daemon
+restarts.
 
 When `--sender` is omitted for a selected source, issuance snapshots every
 currently confirmed valid mailbox identity. Sender selections are stored as
@@ -4357,8 +4417,7 @@ canonical mailbox keys and remain fixed until the token is revoked. Adding an
 alias later does not expand an existing grant. A source with no selected sender
 has no delegated draft sender authority. Calendar grants use exact calendar source
 identities and do not require a draft sender selection. Delegated callers can run
-`calendar` commands and `mcp` over stdio; the delegated MCP bridge exposes only
-calendar tools.
+`calendar` commands and `mcp` over stdio; the delegated MCP bridge combines scoped read, draft, and calendar tools.
 
 The response includes the daemon address, the secret, and the granted source references.
 Pass `--agent-url <address>` and the file path to `--agent-token-file` when invoking delegated commands.
@@ -4371,7 +4430,7 @@ without transport encryption; use it only on a trusted network.
 
 ### agent-token list
 
-List all active grants. Secrets and digests are never returned.
+List all grants, including expired ones. Secrets and digests are never returned.
 Agent-token commands return an error when `server.agent_access` is disabled.
 
 ```bash
@@ -4379,7 +4438,9 @@ msgvault agent-token list
 ```
 
 Each row shows the grant ID, label, permissions, sources (as
-`id/type/identifier`), frozen sender keys, and creation time.
+`id/type/identifier`), frozen sender keys, creation time, and optional expiry.
+Expired grants remain listed with an `(expired)` marker so the owner can revoke
+them. Expired grants cannot authenticate.
 
 ### agent-token revoke
 

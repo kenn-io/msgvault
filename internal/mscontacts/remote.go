@@ -22,7 +22,7 @@ import (
 )
 
 // GraphBaseURL is the Microsoft Graph v1.0 endpoint.
-const GraphBaseURL = "https://graph.microsoft.com/v1.0"
+const GraphBaseURL = msgraph.GraphBaseURL
 
 // uidProperty is the Graph extended property that holds the vCard UID of a
 // contact that msgvault created. Outlook contacts do not have it.

@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/daemon"
+	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonauth"
@@ -532,7 +533,7 @@ func (m *mockStore) GetStatsContext(ctx context.Context) (*StoreStats, error) {
 	return m.GetStats()
 }
 
-func (m *mockStore) ListMessagesContext(_ context.Context, offset, limit int) ([]APIMessage, int64, error) {
+func (m *mockStore) ListMessagesContext(_ context.Context, offset, limit int, _ []int64) ([]APIMessage, int64, error) {
 	return m.ListMessages(offset, limit)
 }
 
@@ -1272,13 +1273,23 @@ func TestTimeoutMiddlewareDeadlinePolicy(t *testing.T) {
 	const apiKey = "deadline-policy-test-key"
 	srv := NewServerWithOptions(ServerOptions{
 		Config: &config.Config{Server: config.ServerConfig{
-			APIPort: 8080,
-			APIKey:  apiKey,
+			APIPort:     8080,
+			APIKey:      apiKey,
+			AgentAccess: true,
 		}},
 		Logger: testLogger(),
 	})
 
-	handler := srv.timeoutMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	t.Cleanup(srv.agentGrants.Close)
+	_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: 1, Type: "test", Identifier: "reader@example.test"}}, time.Time{})
+	require.NoError(t, err)
+	delegated := httptest.NewRequest(http.MethodGet, "/api/v1/cli/search?q=needle", nil)
+	delegated.Header.Set(apiprotocol.AgentTokenHeader, token)
+	markedDelegated := delegated.Clone(t.Context())
+	markedDelegated.Header.Set(apiprotocol.ClientClassHeader, apiprotocol.ClientClassCLI)
+	var hasDeadline bool
+	handler := srv.timeoutMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, hasDeadline = r.Context().Deadline()
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -1302,11 +1313,12 @@ func TestTimeoutMiddlewareDeadlinePolicy(t *testing.T) {
 	bounded := httptest.NewRequest(http.MethodGet, "/api/v1/cli/stats", nil)
 
 	tests := []struct {
-		name             string
-		request          *http.Request
-		wantReadClear    bool
-		wantReadDeadline bool
-		wantWriteClear   bool
+		name                string
+		request             *http.Request
+		wantReadClear       bool
+		wantReadDeadline    bool
+		wantWriteClear      bool
+		wantContextDeadline bool
 	}{
 		{name: "unmarked long path", request: longPath, wantWriteClear: true},
 		{name: "marked request", request: marked, wantReadClear: true, wantWriteClear: true},
@@ -1327,7 +1339,9 @@ func TestTimeoutMiddlewareDeadlinePolicy(t *testing.T) {
 			request:        unauthorizedMeetingImport,
 			wantWriteClear: true,
 		},
-		{name: "bounded request", request: bounded},
+		{name: "bounded request", request: bounded, wantContextDeadline: true},
+		{name: "delegated search", request: delegated, wantContextDeadline: true},
+		{name: "marked delegated search", request: markedDelegated, wantContextDeadline: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1336,6 +1350,9 @@ func TestTimeoutMiddlewareDeadlinePolicy(t *testing.T) {
 			recorder := &deadlineClearingRecorder{ResponseRecorder: httptest.NewRecorder()}
 			started := time.Now()
 			handler.ServeHTTP(recorder, tt.request)
+			if tt.wantContextDeadline {
+				assert.True(hasDeadline)
+			}
 			finished := time.Now()
 			if tt.wantReadClear {
 				require.Len(recorder.readDeadlines, 1, "read deadline changes")

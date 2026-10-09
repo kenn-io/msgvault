@@ -236,7 +236,7 @@ func TestDuckDBEngine_SQLiteEngineReuse(t *testing.T) {
 	assert.Equal("Hello World", msg.Subject)
 
 	// Test GetMessageBySourceID - should use same sqliteEngine
-	msg, err = engine.GetMessageBySourceID(ctx, "msg3")
+	msg, err = engine.GetMessageBySourceID(ctx, "msg3", nil)
 	require.NoError(err, "GetMessageBySourceID")
 	require.NotNil(msg, "expected message")
 	assert.Equal("Follow up", msg.Subject)
@@ -436,7 +436,7 @@ func TestDuckDBEngine_NoSQLiteDB(t *testing.T) {
 	require.Error(err, "expected error from GetMessage without SQLite")
 
 	// GetMessageBySourceID should return error
-	_, err = engine.GetMessageBySourceID(ctx, "msg1")
+	_, err = engine.GetMessageBySourceID(ctx, "msg1", nil)
 	require.Error(err, "expected error from GetMessageBySourceID without SQLite")
 
 	// Search should return error
@@ -2154,12 +2154,12 @@ func TestDuckDBOffsetDateBoundsMatchSQLite(t *testing.T) {
 	})
 
 	t.Run("domains", func(t *testing.T) {
-		want, err := sqliteEngine.SearchByDomains(ctx, []string{"offset.example"}, parsed.AfterDate, parsed.BeforeDate, 50, 0)
+		want, err := sqliteEngine.SearchByDomains(ctx, []string{"offset.example"}, parsed.AfterDate, parsed.BeforeDate, 50, 0, nil)
 		require.NoError(t, err)
 		assertSubjects(t, want, "inside bound")
 
 		delegatingEngine := &DuckDBEngine{sqliteEngine: sqliteEngine}
-		got, err := delegatingEngine.SearchByDomains(ctx, []string{"offset.example"}, parsed.AfterDate, parsed.BeforeDate, 50, 0)
+		got, err := delegatingEngine.SearchByDomains(ctx, []string{"offset.example"}, parsed.AfterDate, parsed.BeforeDate, 50, 0, nil)
 		require.NoError(t, err)
 		assertSubjects(t, got, "inside bound")
 	})

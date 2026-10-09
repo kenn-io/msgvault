@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"io"
@@ -2028,10 +2029,16 @@ func (a *storeAPIAdapter) GetStatsContext(ctx context.Context) (*api.StoreStats,
 	return a.store.GetStatsContext(ctx)
 }
 
+func (a *storeAPIAdapter) BeginReadSnapshotContext(ctx context.Context) (context.Context, func(), error) {
+	return a.store.BeginReadSnapshotContext(ctx)
+}
+func (a *storeAPIAdapter) DB() *sql.DB        { return a.store.DB() }
+func (a *storeAPIAdapter) IsPostgreSQL() bool { return a.store.IsPostgreSQL() }
+
 func (a *storeAPIAdapter) ListMessagesContext(
-	ctx context.Context, offset, limit int,
+	ctx context.Context, offset, limit int, sourceIDs []int64,
 ) ([]api.APIMessage, int64, error) {
-	return a.store.ListMessagesContext(ctx, offset, limit)
+	return a.store.ListMessagesContext(ctx, offset, limit, sourceIDs)
 }
 
 func (a *storeAPIAdapter) GetMessageContext(ctx context.Context, id int64) (*api.APIMessage, error) {
@@ -2078,8 +2085,8 @@ func (a *storeAPIAdapter) GetMessage(id int64) (*api.APIMessage, error) {
 	return a.store.GetMessage(id)
 }
 
-func (a *storeAPIAdapter) MessageRemoteImages(id int64) (map[string]store.AttachmentRef, error) {
-	return a.store.MessageRemoteImages(id)
+func (a *storeAPIAdapter) MessageRemoteImagesContext(ctx context.Context, id int64) (map[string]store.AttachmentRef, error) {
+	return a.store.MessageRemoteImagesContext(ctx, id)
 }
 
 func (a *storeAPIAdapter) GetMessagesSummariesByIDs(ids []int64) ([]api.APIMessage, error) {
@@ -2108,6 +2115,9 @@ func (a *storeAPIAdapter) SearchMessageIDsQueryContext(
 	return a.store.SearchMessageIDsQueryContext(ctx, q, limit)
 }
 
+func (a *storeAPIAdapter) NeedsFTSBackfillContext(ctx context.Context) (bool, error) {
+	return a.store.NeedsFTSBackfillContext(ctx)
+}
 func (a *storeAPIAdapter) NeedsFTSBackfill() bool {
 	return a.store.NeedsFTSBackfill()
 }

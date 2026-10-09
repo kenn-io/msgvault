@@ -108,8 +108,16 @@ func (s *Server) handleCLIMessageThread(w http.ResponseWriter, r *http.Request) 
 	} else if present {
 		q.Offset = value
 	}
+	delegated := s.requestAuthentication(r).Grant != nil
+	if delegated {
+		q.SourceIDs = agentReadSourceIDs(r)
+	}
 	page, err := reader.ListThread(r.Context(), q)
 	if err != nil {
+		if delegated && errors.Is(err, query.ErrAmbiguousReference) {
+			writeError(w, http.StatusConflict, "message_ambiguous", "Reference matches several accounts; select an account")
+			return
+		}
 		s.writeOriginalExportError(w, "list thread", err)
 		return
 	}

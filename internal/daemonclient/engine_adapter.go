@@ -863,7 +863,7 @@ func apiMessageAddresses(values []string) []query.Address {
 
 // GetMessageBySourceID returns a message by its source message ID.
 // This operation is not supported through the daemon API.
-func (e *Engine) GetMessageBySourceID(ctx context.Context, sourceMessageID string) (*query.MessageDetail, error) {
+func (e *Engine) GetMessageBySourceID(ctx context.Context, sourceMessageID string, sourceIDs []int64) (*query.MessageDetail, error) {
 	return nil, ErrNotSupported
 }
 
@@ -1075,7 +1075,7 @@ func (e *Engine) SearchDeepWithStats(
 // requires the response to echo that scope. Requiring the echo fails closed
 // against older daemons that ignore the additive query parameter and would
 // otherwise return generic composite-search false positives.
-func (e *Engine) SearchMessageBodies(ctx context.Context, q *search.Query, limit, offset int) ([]query.MessageSummary, error) {
+func (e *Engine) SearchMessageBodies(ctx context.Context, q *search.Query, limit, offset int) (*query.SearchFastResult, error) {
 	if err := validateParsedSearchQuery(q); err != nil {
 		return nil, err
 	}
@@ -1086,7 +1086,7 @@ func (e *Engine) SearchMessageBodies(ctx context.Context, q *search.Query, limit
 		return nil, errors.New("message body search requires at least one free-text term")
 	}
 	if hasExplicitEmptyAccountScope(q) {
-		return []query.MessageSummary{}, nil
+		return &query.SearchFastResult{Messages: []query.MessageSummary{}}, nil
 	}
 	queryStr := search.Format(q)
 	queryParams, err := deepSearchQuery(queryStr, q, limit, offset)
@@ -1108,7 +1108,10 @@ func (e *Engine) SearchMessageBodies(ctx context.Context, q *search.Query, limit
 	for i := range messages {
 		messages[i].WebURL = e.store.messageWebURL(messages[i].ID)
 	}
-	return messages, err
+	if err != nil {
+		return nil, err
+	}
+	return &query.SearchFastResult{Messages: messages, IndexState: stringValue(resp.JSON200.IndexState)}, nil
 }
 
 // SearchFast searches message metadata only (no body text).
@@ -1169,6 +1172,7 @@ func (e *Engine) SearchFastWithStats(ctx context.Context, q *search.Query, query
 		return nil, err
 	}
 	return &query.SearchFastResult{
+		IndexState: stringValue(resp.JSON200.IndexState),
 		Messages:   e.store.messageSummariesWithURLs(resp.JSON200.Messages),
 		TotalCount: resp.JSON200.TotalCount,
 		Stats:      totalStatsFromGenerated(resp.JSON200.Stats),
@@ -1340,15 +1344,19 @@ func (c *Client) requireListIDCapability(
 	return nil
 }
 
-func (e *Engine) SearchByDomains(ctx context.Context, domains []string, after, before *time.Time, limit, offset int) ([]query.MessageSummary, error) {
+func (e *Engine) SearchByDomains(ctx context.Context, domains []string, after, before *time.Time, limit, offset int, sourceIDs []int64) ([]query.MessageSummary, error) {
+	if sourceIDs != nil && len(sourceIDs) == 0 {
+		return []query.MessageSummary{}, nil
+	}
 	resp, err := APIResponse(e.store, func(client *apiclient.Client) (*generated.SearchMessagesByDomainsResp, error) {
 		return client.SearchMessagesByDomainsWithResponse(ctx, &generated.SearchMessagesByDomainsRequestOptions{
 			Query: &generated.SearchMessagesByDomainsQuery{
-				Domains: strings.Join(domains, ","),
-				After:   optionalTimeRFC3339(after),
-				Before:  optionalTimeRFC3339(before),
-				Limit:   optionalPositiveInt64(limit),
-				Offset:  optionalPositiveInt64(offset),
+				SourceIds: copyInt64sPreserveNil(sourceIDs),
+				Domains:   strings.Join(domains, ","),
+				After:     optionalTimeRFC3339(after),
+				Before:    optionalTimeRFC3339(before),
+				Limit:     optionalPositiveInt64(limit),
+				Offset:    optionalPositiveInt64(offset),
 			},
 		})
 	})

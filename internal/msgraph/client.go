@@ -21,6 +21,9 @@ import (
 	"golang.org/x/time/rate"
 )
 
+// GraphBaseURL is the production Graph endpoint.
+const GraphBaseURL = "https://graph.microsoft.com/v1.0"
+
 // ErrTooLarge classifies a response body that exceeds the caller's byte cap.
 var ErrTooLarge = errors.New("graph response exceeds the configured size cap")
 

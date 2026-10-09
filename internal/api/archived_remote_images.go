@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -14,15 +15,15 @@ import (
 )
 
 type archivedRemoteImageReader interface {
-	MessageRemoteImages(messageID int64) (map[string]store.AttachmentRef, error)
+	MessageRemoteImagesContext(ctx context.Context, messageID int64) (map[string]store.AttachmentRef, error)
 }
 
-func (s *Server) archivedRemoteImageHTML(id int64, body string) string {
+func (s *Server) archivedRemoteImageHTML(ctx context.Context, id int64, body string) string {
 	reader, ok := s.store.(archivedRemoteImageReader)
 	if !ok || body == "" {
 		return body
 	}
-	refs, err := reader.MessageRemoteImages(id)
+	refs, err := reader.MessageRemoteImagesContext(ctx, id)
 	if err != nil {
 		s.logger.Warn("cannot read archived remote images", "message", id, "error", err)
 		return body
@@ -39,7 +40,7 @@ func (s *Server) serveArchivedRemoteImage(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusServiceUnavailable, "store_unavailable", "Archived images unavailable")
 		return
 	}
-	refs, err := reader.MessageRemoteImages(id)
+	refs, err := reader.MessageRemoteImagesContext(r.Context(), id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", "Cannot read archived images")
 		return
@@ -49,6 +50,7 @@ func (s *Server) serveArchivedRemoteImage(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusNotFound, "not_found", "Archived image not found")
 		return
 	}
+	releaseReadSnapshot(r)
 	var stream io.ReadCloser
 	if s.blobStore != nil {
 		stream, _, err = s.blobStore.OpenStream(r.Context(), ref.ContentHash)

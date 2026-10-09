@@ -48,7 +48,7 @@ draft_reply, draft_compose, draft_forward, draft_get, draft_edit, draft_delete,
 draft_recover, and draft_send_as.
 Draft tools create, read, edit, delete, and recover managed drafts through the
 daemon. Msgvault never sends. With --agent-url and --agent-token-file, stdio
-exposes only delegated draft and calendar tools and the daemon enforces the
+exposes scoped read, draft and calendar tools and the daemon enforces the
 agent grant.
 
 Add to Claude Desktop config:
@@ -191,6 +191,15 @@ func delegatedMCPServeOptions(ctx context.Context, st *daemonclient.Client) (mcp
 	}
 	opts := mcpserver.ServeOptions{
 		Drafts: daemonMCPDraftRunner{client: st}, DraftCommands: mcpDraftCommands(true), DelegatedOnly: true,
+	}
+	if daemonclient.APISchemaVersionAtLeast(schemaVersion, daemonclient.AgentReadMinAPISchemaVersion) {
+		grant, err := st.AgentTokenSelf(ctx)
+		if err != nil {
+			return mcpserver.ServeOptions{}, fmt.Errorf("read agent grant: %w", err)
+		}
+		opts.Engine = daemonclient.NewEngineAdapter(st)
+		opts.AttachmentReader = st
+		opts.GrantPermissions = grant.Permissions
 	}
 	if daemonclient.APISchemaVersionAtLeast(schemaVersion, calendarControlMinAPISchemaVersion) {
 		opts.Calendar = st

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -17,11 +19,14 @@ import (
 	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
+	msgexport "go.kenn.io/msgvault/internal/export"
+	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 // allowedDelegatedOps is the exact set. Keep in sync with delegatedOperationAllowed.
-var allowedDelegatedOps = []string{"runCLI", "getHealth", "controlCalendar"}
+var allowedDelegatedOps = []string{"runCLI", "getHealth", "controlCalendar", "getAgentTokenSelf"}
 
 // stubSourceResolverStore wraps mockStore and adds GetSourceByIDContext.
 type stubSourceStore struct {
@@ -60,7 +65,7 @@ func TestDelegatedFailsPrivilegedPredicate(t *testing.T) {
 	srv, reg := newTestServerWithAgentGrants(t)
 
 	src := agentgrant.SourceRef{ID: 1, Type: "imap", Identifier: "alice@example.com"}
-	_, secret, _, err := reg.Issue("priv-test", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{src})
+	_, secret, _, err := reg.Issue("priv-test", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{src}, time.Time{})
 	require.NoError(t, err)
 
 	makeRequest := func(method, path string) *http.Request {
@@ -90,18 +95,18 @@ func TestDelegatedFailsPrivilegedPredicate(t *testing.T) {
 		assert.Equal(t, http.StatusUnauthorized, w.Code, "beginBackupFreeze must deny delegated callers")
 	})
 
-	t.Run("getStats returns 401", func(t *testing.T) {
+	t.Run("getStats returns 403 without its read permission", func(t *testing.T) {
 		req := makeRequest(http.MethodGet, "/api/v1/stats")
 		w := httptest.NewRecorder()
 		srv.Router().ServeHTTP(w, req)
-		assert.Equal(t, http.StatusUnauthorized, w.Code)
+		assert.Equal(t, http.StatusForbidden, w.Code)
 	})
 
-	t.Run("listMessages returns 401", func(t *testing.T) {
+	t.Run("listMessages returns 403 without its read permission", func(t *testing.T) {
 		req := makeRequest(http.MethodGet, "/api/v1/messages")
 		w := httptest.NewRecorder()
 		srv.Router().ServeHTTP(w, req)
-		assert.Equal(t, http.StatusUnauthorized, w.Code)
+		assert.Equal(t, http.StatusForbidden, w.Code)
 	})
 
 	t.Run("issueAgentToken returns 401", func(t *testing.T) {
@@ -145,7 +150,7 @@ func TestAgentTokenNeverFallsBack(t *testing.T) {
 	srv, reg := newTestServerWithAgentGrants(t)
 
 	src := agentgrant.SourceRef{ID: 1, Type: "imap", Identifier: "alice@example.com"}
-	grantID, validSecret, _, err := reg.Issue("fallback-test", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{src})
+	grantID, validSecret, _, err := reg.Issue("fallback-test", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{src}, time.Time{})
 	require.NoError(t, err)
 
 	// getHealth is in allowedDelegatedOps, so a VALID token returns 200.
@@ -189,7 +194,7 @@ func TestAgentTokenNeverFallsBack(t *testing.T) {
 	})
 
 	t.Run("owner credential alongside agent token", func(t *testing.T) {
-		_, newSecret, _, issErr := reg.Issue("with-key", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{src})
+		_, newSecret, _, issErr := reg.Issue("with-key", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{src}, time.Time{})
 		require.NoError(t, issErr)
 		w := makeHealthReq(func(req *http.Request) {
 			req.Header.Set(apiprotocol.AgentTokenHeader, newSecret)
@@ -199,7 +204,7 @@ func TestAgentTokenNeverFallsBack(t *testing.T) {
 	})
 
 	t.Run("Authorization header alongside agent token", func(t *testing.T) {
-		_, newSecret, _, issErr := reg.Issue("with-auth", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{src})
+		_, newSecret, _, issErr := reg.Issue("with-auth", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{src}, time.Time{})
 		require.NoError(t, issErr)
 		w := makeHealthReq(func(req *http.Request) {
 			req.Header.Set(apiprotocol.AgentTokenHeader, newSecret)
@@ -209,7 +214,7 @@ func TestAgentTokenNeverFallsBack(t *testing.T) {
 	})
 
 	t.Run("session cookie alongside agent token", func(t *testing.T) {
-		_, newSecret, _, issErr := reg.Issue("with-cookie", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{src})
+		_, newSecret, _, issErr := reg.Issue("with-cookie", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{src}, time.Time{})
 		require.NoError(t, issErr)
 		w := makeHealthReq(func(req *http.Request) {
 			req.Header.Set(apiprotocol.AgentTokenHeader, newSecret)
@@ -225,7 +230,7 @@ func TestAgentTokenNeverFallsBack(t *testing.T) {
 	})
 
 	t.Run("daemon runtime token alongside agent token", func(t *testing.T) {
-		_, newSecret, _, issErr := reg.Issue("with-daemon-token", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{src})
+		_, newSecret, _, issErr := reg.Issue("with-daemon-token", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{src}, time.Time{})
 		require.NoError(t, issErr)
 		w := makeHealthReq(func(req *http.Request) {
 			req.Header.Set(apiprotocol.AgentTokenHeader, newSecret)
@@ -235,82 +240,127 @@ func TestAgentTokenNeverFallsBack(t *testing.T) {
 	})
 }
 
-// TestDelegatedOperationAllowlistIsClosed tests proof matrix row 8.
-// It enumerates all operations registered in the live route registry via the
-// OpenAPI spec and verifies that exactly the two allowed operations pass the
-// delegated auth middleware; every other /api/v1/* operation returns 401.
+// TestDelegatedOperationAllowlistIsClosed compares every registered API operation with an independent policy.
 func TestDelegatedOperationAllowlistIsClosed(t *testing.T) {
 	t.Parallel()
-	assert := assert.New(t)
-	require := require.New(t)
-	srv, reg := newTestServerWithAgentGrants(t)
-
-	src := agentgrant.SourceRef{ID: 1, Type: "imap", Identifier: "alice@example.com"}
-	_, secret, _, err := reg.Issue("closedtest", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{src})
-	require.NoError(err)
-
-	// Fetch the live OpenAPI spec to derive all registered operation IDs and their methods/paths.
-	specReq := httptest.NewRequest(http.MethodGet, "/openapi.json", nil)
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	cfg := &config.Config{Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}
+	var src *store.Source
+	var id int64
+	for _, account := range []string{"allowed@example.test", "outside@example.test"} {
+		subject := "glacier " + account
+		source, messageID, err := testutil.CreateIndexedSourceMessage(st, account, "message", subject, subject)
+		requirements.NoError(err)
+		participant, err := st.EnsureParticipant(account, "", "example.test")
+		requirements.NoError(err)
+		requirements.NoError(st.ReplaceMessageRecipients(messageID, "from", []int64{participant}, nil))
+		if src == nil {
+			src, id = source, messageID
+		}
+	}
+	_, err := st.CreateCollection("Selected", "", []int64{src.ID})
+	requirements.NoError(err)
+	hash := strings.Repeat("a", 64)
+	path, err := msgexport.StoragePath(cfg.AttachmentsDir(), hash)
+	requirements.NoError(err)
+	requirements.NoError(os.MkdirAll(filepath.Dir(path), 0700))
+	requirements.NoError(os.WriteFile(path, []byte("permitted bytes"), 0600))
+	requirements.NoError(st.UpsertAttachment(id, "permitted.bin", "application/octet-stream", filepath.ToSlash(path), hash, 15))
+	var attachmentID int64
+	requirements.NoError(st.DB().QueryRow(st.Rebind("SELECT id FROM attachments WHERE message_id=?"), id).Scan(&attachmentID))
+	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
+	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.Background())) })
+	t.Cleanup(srv.agentGrants.Close)
+	_, secret, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionDraftCreate, agentgrant.PermissionSearchRead, agentgrant.PermissionMessageRead, agentgrant.PermissionAttachmentRead, agentgrant.PermissionStatsRead}, []agentgrant.SourceRef{{ID: src.ID, Type: src.SourceType, Identifier: src.Identifier}}, time.Time{})
+	requirements.NoError(err)
+	// These expectations stay independent of the production permission map.
+	reads := map[string]struct{ path, want string }{
+		"searchCLI":               {"/api/v1/cli/search?q=glacier", src.Identifier},
+		"searchMessages":          {"/api/v1/search?q=glacier", src.Identifier},
+		"fastSearch":              {"/api/v1/search/fast?q=glacier", src.Identifier},
+		"deepSearch":              {"/api/v1/search/deep?q=glacier", src.Identifier},
+		"getAggregates":           {"/api/v1/aggregates?view_type=senders", src.Identifier},
+		"getSubAggregates":        {"/api/v1/aggregates/sub?view_type=senders", src.Identifier},
+		"filterMessages":          {"/api/v1/messages/filter", src.Identifier},
+		"listMessages":            {"/api/v1/messages", src.Identifier},
+		"searchMessagesByDomains": {"/api/v1/search/domains?domains=example.test", src.Identifier},
+		"getStats":                {"/api/v1/stats", `"total_messages":1`},
+		"getCLIStats":             {"/api/v1/cli/stats", `"total_messages":1`},
+		"getTotalStats":           {"/api/v1/stats/total", `"message_count":1`},
+		"getCLIMessageThread":     {fmt.Sprintf("/api/v1/cli/message/thread?id=%d", id), src.Identifier},
+		"getMessage":              {fmt.Sprintf("/api/v1/messages/%d", id), src.Identifier},
+		"getCLIMessage":           {fmt.Sprintf("/api/v1/cli/message?id=%d", id), src.Identifier},
+		"getAttachment":           {fmt.Sprintf("/api/v1/attachments/%d", attachmentID), "permitted.bin"},
+		"getAttachmentContent":    {"/api/v1/attachments/" + hash + "/content", "permitted bytes"},
+		"getCLIAttachment":        {"/api/v1/cli/attachment?content_hash=" + hash, "permitted bytes"},
+		"listCLIAccounts":         {"/api/v1/cli/accounts", src.Identifier},
+		"listCLICollections":      {"/api/v1/cli/collections", `"name":"Selected"`},
+	}
+	allowed := make(map[string]bool, len(allowedDelegatedOps))
+	for _, op := range allowedDelegatedOps {
+		allowed[op] = true
+	}
 	specRec := httptest.NewRecorder()
-	srv.Router().ServeHTTP(specRec, specReq)
-	require.Equal(http.StatusOK, specRec.Code, "OpenAPI spec must be available at /openapi.json")
-
+	srv.Router().ServeHTTP(specRec, httptest.NewRequest(http.MethodGet, "/openapi.json", nil))
+	requirements.Equal(http.StatusOK, specRec.Code)
 	var spec struct {
 		Paths map[string]map[string]struct {
 			OperationID string `json:"operationId"`
 		} `json:"paths"`
 	}
-	require.NoError(json.NewDecoder(specRec.Body).Decode(&spec))
-	require.NotEmpty(spec.Paths, "OpenAPI spec must contain paths")
-
-	allowed := make(map[string]bool, len(allowedDelegatedOps))
-	for _, op := range allowedDelegatedOps {
-		allowed[op] = true
-	}
-
+	requirements.NoError(json.Unmarshal(specRec.Body.Bytes(), &spec))
+	requirements.NotEmpty(spec.Paths)
 	pathParamRE := regexp.MustCompile(`\{[^}]+\}`)
-	testedAllowed, testedDenied := 0, 0
-	// Each request uses a unique source IP to avoid tripping the per-IP rate
-	// limiter, which is exercised by a dedicated rate-limit test and is not the
-	// subject of this test.
-	ipCounter := 0
-
+	seen := make(map[string]bool)
+	denied, requests, testedReads := 0, 0, 0
 	for rawPath, methods := range spec.Paths {
-		// Only check /api/v1/* paths — these go through the huma auth middleware.
 		if !strings.HasPrefix(rawPath, "/api/v1/") {
 			continue
 		}
-		testPath := pathParamRE.ReplaceAllString(rawPath, "1")
 		for method, op := range methods {
 			if op.OperationID == "" {
 				continue
 			}
+			seen[op.OperationID] = true
+			testPath := pathParamRE.ReplaceAllString(rawPath, "1")
+			read, isRead := reads[op.OperationID]
+			if isRead {
+				testPath = read.path
+				assertions.Equal("get", method)
+			}
 			req := httptest.NewRequest(strings.ToUpper(method), testPath, nil)
 			req.Header.Set(apiprotocol.AgentTokenHeader, secret)
-			// Use a unique source IP per request so the rate limiter does not
-			// interfere with the auth check we are testing here.
-			req.RemoteAddr = fmt.Sprintf("10.%d.%d.%d:1234",
-				(ipCounter/65536)%256, (ipCounter/256)%256, ipCounter%256)
-			ipCounter++
+			req.RemoteAddr = fmt.Sprintf("10.%d.%d.%d:1234", requests/65536, (requests/256)%256, requests%256)
+			requests++
 			w := httptest.NewRecorder()
 			srv.Router().ServeHTTP(w, req)
-
-			if allowed[op.OperationID] {
-				assert.NotEqual(http.StatusUnauthorized, w.Code,
-					"allowed op %q (%s %s) must not return 401; got %d", op.OperationID, strings.ToUpper(method), rawPath, w.Code)
-				testedAllowed++
+			if isRead {
+				testedReads++
+				requirements.Equal(http.StatusOK, w.Code, op.OperationID+": "+w.Body.String())
+				assertions.Contains(w.Body.String(), read.want, op.OperationID)
+				if op.OperationID == "getAttachmentContent" || op.OperationID == "getCLIAttachment" {
+					assertions.Equal(read.want, w.Body.String())
+				}
+				assertions.NotContains(w.Body.String(), "outside@example.test", op.OperationID)
+			} else if allowed[op.OperationID] {
+				assertions.NotEqual(http.StatusUnauthorized, w.Code, op.OperationID)
 			} else {
-				assert.Equal(http.StatusUnauthorized, w.Code,
-					"non-allowed op %q (%s %s) must return 401; got %d", op.OperationID, strings.ToUpper(method), rawPath, w.Code)
-				testedDenied++
+				assertions.Equal(http.StatusUnauthorized, w.Code, op.OperationID)
+				denied++
 			}
 		}
 	}
-
-	assert.GreaterOrEqual(testedAllowed, len(allowedDelegatedOps),
-		"all two allowed ops must appear under /api/v1/*")
-	assert.Greater(testedDenied, 10,
-		"many non-allowed ops must be registered under /api/v1/")
+	for op := range reads {
+		assertions.True(seen[op], "missing read operation: "+op)
+	}
+	for op := range allowed {
+		assertions.True(seen[op], "missing preexisting delegated operation: "+op)
+	}
+	assertions.Len(reads, 20)
+	assertions.Equal(len(reads), testedReads)
+	assertions.Greater(denied, 10)
 }
 
 // TestDelegationNotReachableOverHTTP tests proof matrix row 21.
@@ -321,7 +371,7 @@ func TestDelegationNotReachableOverHTTP(t *testing.T) {
 	srv, reg := newTestServerWithAgentGrants(t)
 
 	src := agentgrant.SourceRef{ID: 1, Type: "imap", Identifier: "alice@example.com"}
-	_, secret, _, err := reg.Issue("http-test", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{src})
+	_, secret, _, err := reg.Issue("http-test", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{src}, time.Time{})
 	require.NoError(t, err)
 
 	denied := []struct{ method, path string }{
@@ -361,7 +411,7 @@ func TestDelegatedDraftAcquiresOperationGate(t *testing.T) { //nolint:parallelte
 	reg := agentgrant.NewRegistry()
 	srv.agentGrants = reg
 	src := agentgrant.SourceRef{ID: 1, Type: "imap", Identifier: "alice@example.com"}
-	_, secret, _, err := reg.Issue("gate-test", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{src})
+	_, secret, _, err := reg.Issue("gate-test", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{src}, time.Time{})
 	require.NoError(t, err)
 
 	t.Run("delegated request is gate eligible, owner predicate returns false", func(t *testing.T) {
@@ -394,7 +444,7 @@ func TestDelegatedDraftAcquiresOperationGate(t *testing.T) { //nolint:parallelte
 			reg := agentgrant.NewRegistry()
 			srv.agentGrants = reg
 			src := agentgrant.SourceRef{ID: 1, Type: "imap", Identifier: "alice@example.com"}
-			_, secret, _, err := reg.Issue("gate-test", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{src})
+			_, secret, _, err := reg.Issue("gate-test", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{src}, time.Time{})
 			require.NoError(t, err)
 
 			hold, ok := gate.BeginWork()
@@ -545,7 +595,7 @@ func TestDelegatedGateBusyRedactsHolderLabel(t *testing.T) { //nolint:parallelte
 	reg := agentgrant.NewRegistry()
 	srv.agentGrants = reg
 	src := agentgrant.SourceRef{ID: 1, Type: "imap", Identifier: "alice@example.com"}
-	_, secret, _, err := reg.Issue("label-redact", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{src})
+	_, secret, _, err := reg.Issue("label-redact", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{src}, time.Time{})
 	require.NoError(err)
 
 	// Acquire gate with an identifiable holder label.

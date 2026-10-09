@@ -1053,7 +1053,7 @@ func TestGetStats_Success(t *testing.T) {
 			TotalAccounts:     2,
 			TotalLabels:       10,
 			TotalAttachments:  5,
-			DatabaseSizeBytes: 1024,
+			DatabaseSizeBytes: int64Ptr(1024),
 		})
 	}))
 	defer srv.Close()
@@ -1077,7 +1077,7 @@ func TestGetStatsUsesGeneratedClientAdapter(t *testing.T) {
 			TotalAccounts:     2,
 			TotalLabels:       10,
 			TotalAttachments:  5,
-			DatabaseSizeBytes: 1024,
+			DatabaseSizeBytes: int64Ptr(1024),
 		})
 	})
 

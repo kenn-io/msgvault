@@ -51,7 +51,7 @@ func mcpDraftAgentContext(t *testing.T, server *httptest.Server, sourceID int64,
 	owner, err := daemonclient.New(daemonclient.Config{URL: server.URL, APIKey: "owner-test-key", AllowInsecure: true})
 	require.NoError(err)
 	t.Cleanup(func() { _ = owner.Close() })
-	grant, err := owner.IssueAgentToken(t.Context(), "MCP test agent", permissions, []int64{sourceID}, nil)
+	grant, err := owner.IssueAgentToken(t.Context(), "MCP test agent", permissions, []int64{sourceID}, nil, time.Time{})
 	require.NoError(err)
 	tokenFile := filepath.Join(t.TempDir(), "agent.token")
 	require.NoError(os.WriteFile(tokenFile, []byte(grant.Secret+"\n"), 0o600))
@@ -139,8 +139,16 @@ func TestMCPDelegatedDraftToolsUseAgentGrant(t *testing.T) {
 	t.Run("granted source", func(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)
+
 		session := mcpDraftTestSession(mcpDraftAgentContext(t, server, fixture.source.ID, []string{"draft.create"}), t)
-		assert.Equal([]string{"calendar_conflicts", "calendar_freebusy", "draft_compose", "draft_delete", "draft_edit", "draft_get", "draft_recover", "draft_reply"}, mcpDraftToolNames(t, session))
+		names := mcpDraftToolNames(t, session)
+		assert.Subset(names, []string{"calendar_conflicts", "calendar_freebusy", "draft_compose", "draft_delete", "draft_edit", "draft_get", "draft_recover", "draft_reply"})
+		// A draft-only grant cannot read the archive, so its read tools are not offered.
+		for _, readTool := range []string{"search_metadata", "search_message_bodies", "get_message"} {
+			assert.NotContains(names, readTool)
+		}
+		assert.NotContains(names, "draft_send_as")
+		assert.NotContains(names, "calendar_create")
 		result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: mcpserver.ToolDraftReply, Arguments: map[string]any{"message_id": fixture.parentID, "from": testutil.IMAPTestUsername, "body": "reply body"}})
 		require.NoError(err)
 		assert.False(result.IsError)
@@ -153,6 +161,7 @@ func TestMCPDelegatedDraftToolsUseAgentGrant(t *testing.T) {
 	t.Run("not_permitted", func(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)
+
 		other, err := fixture.store.GetOrCreateSource("imap", "other@example.com")
 		require.NoError(err)
 		session := mcpDraftTestSession(mcpDraftAgentContext(t, server, other.ID, []string{"draft.create"}), t)
@@ -169,6 +178,7 @@ func TestMCPDelegatedDraftToolsUseAgentGrant(t *testing.T) {
 	t.Run("command is not allowed through the daemon CLI runner", func(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)
+
 		session := mcpDraftTestSession(mcpDraftAgentContext(t, server, fixture.source.ID, []string{"draft.delete"}), t)
 		before := providerCalls.Load()
 		result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: mcpserver.ToolDraftEdit, Arguments: map[string]any{"draft_id": "test-draft", "revision": 1, "body": "replacement"}})
@@ -366,8 +376,13 @@ func TestMCPDraftCapabilityGate(t *testing.T) {
 					return
 				}
 				session := mcpDraftTestSession(ctx, t)
+				names := mcpDraftToolNames(t, session)
+				if delegated && version == "3.0.0" {
+					assert.NotContains(names, "search_metadata")
+					assert.NotContains(names, "get_message")
+				}
 				var drafts []string
-				for _, name := range mcpDraftToolNames(t, session) {
+				for _, name := range names {
 					if strings.HasPrefix(name, "draft_") {
 						drafts = append(drafts, name)
 					}

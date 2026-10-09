@@ -377,12 +377,24 @@ func TestDuplicateCASAliasRetainsHashAcrossAttachmentQueries(t *testing.T) {
 }
 
 func TestGetMessageBySourceID(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	env := newTestEnv(t)
 
-	msg, err := env.Engine.GetMessageBySourceID(env.Ctx, "msg3")
-	require.NoError(t, err, "GetMessageBySourceID")
-	require.NotNil(t, msg, "expected message")
-	assert.Equal(t, "Follow up", msg.Subject)
+	msg, err := env.Engine.GetMessageBySourceID(env.Ctx, "msg3", nil)
+	requirements.NoError(err, "GetMessageBySourceID")
+	requirements.NotNil(msg, "expected message")
+	assertions.Equal("Follow up", msg.Subject)
+	for _, ids := range [][]int64{{msg.SourceID}, {}, {msg.SourceID + 1000}} {
+		scoped, err := env.Engine.GetMessageBySourceID(env.Ctx, "msg3", ids)
+		requirements.NoError(err)
+		if len(ids) == 1 && ids[0] == msg.SourceID {
+			requirements.NotNil(scoped)
+			assertions.Equal(msg.ID, scoped.ID)
+		} else {
+			assertions.Nil(scoped)
+		}
+	}
 }
 
 func TestListAccounts(t *testing.T) {
@@ -677,11 +689,11 @@ func TestGetMessageBySourceIDIncludesDeleted(t *testing.T) {
 
 	env.MarkDeletedBySourceID("msg3")
 
-	msg, err := env.Engine.GetMessageBySourceID(env.Ctx, "msg3")
+	msg, err := env.Engine.GetMessageBySourceID(env.Ctx, "msg3", nil)
 	require.NoError(err, "GetMessageBySourceID")
 	assert.NotNil(msg, "expected deleted message to be returned")
 
-	msg, err = env.Engine.GetMessageBySourceID(env.Ctx, "msg2")
+	msg, err = env.Engine.GetMessageBySourceID(env.Ctx, "msg2", nil)
 	require.NoError(err, "GetMessageBySourceID")
 	assert.NotNil(msg, "expected message")
 }

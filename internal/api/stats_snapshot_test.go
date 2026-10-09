@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -12,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
@@ -211,4 +213,77 @@ func TestHandleCLIAccountsColdCountsPending(t *testing.T) {
 	assert.EqualValues(1, resp.Accounts[0].MessageCount)
 	legacy = get(false)
 	require.Equal(http.StatusOK, legacy.Code, "older clients get real counts once they exist")
+}
+
+func TestHandleCLIAccountsDelegatedCountsLive(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	srv, slow, sourceID := newSlowAccountsServer(t)
+	t.Cleanup(func() { close(slow.release) })
+	srv.cfg.Server.AgentAccess = true
+	srv.cfg.Server.APIKey = "owner"
+	srv.agentGrants = agentgrant.NewRegistry()
+	t.Cleanup(srv.agentGrants.Close)
+	source, err := slow.GetSourceByID(sourceID)
+	requirements.NoError(err)
+	_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
+	requirements.NoError(err)
+	slow.calls.Store(1)
+	for _, pending := range []bool{false, true} {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/accounts", nil)
+		req.Header.Set(apiprotocol.AgentTokenHeader, token)
+		if pending {
+			req.Header.Set(apiprotocol.AllowPendingCountsHeader, "true")
+		}
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, req)
+		requirements.Equal(200, w.Code, w.Body.String())
+		var response cliAccountsResponse
+		requirements.NoError(json.Unmarshal(w.Body.Bytes(), &response))
+		assertions.False(response.CountsPending)
+		requirements.Len(response.Accounts, 1)
+		assertions.EqualValues(1, response.Accounts[0].MessageCount)
+	}
+	assertions.EqualValues(1, slow.calls.Load())
+}
+
+type failingDirectCountsStore struct {
+	*store.Store
+
+	deleted bool
+	err     error
+}
+
+func (s *failingDirectCountsStore) CountMessagesForSourceContext(ctx context.Context, sourceID int64) (int64, error) {
+	if !s.deleted {
+		return 0, s.err
+	}
+	return s.Store.CountMessagesForSourceContext(ctx, sourceID)
+}
+func (s *failingDirectCountsStore) CountSourceDeletedMessagesContext(_ context.Context, _ ...int64) (int64, error) {
+	return 0, s.err
+}
+func TestHandleCLIAccountsDelegatedCountErrors(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	for _, deleted := range []bool{false, true} {
+		for _, failure := range []error{context.Canceled, errors.New("synthetic count failure")} {
+			srv, slow, sourceID := newSlowAccountsServer(t)
+			source, err := slow.GetSourceByID(sourceID)
+			requirements.NoError(err)
+			srv.store = &failingDirectCountsStore{Store: slow.Store, deleted: deleted, err: failure}
+			srv.cfg.Server.AgentAccess = true
+			srv.cfg.Server.APIKey = "owner"
+			srv.agentGrants = agentgrant.NewRegistry()
+			t.Cleanup(srv.agentGrants.Close)
+			_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
+			requirements.NoError(err)
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/accounts", nil)
+			req.Header.Set(apiprotocol.AgentTokenHeader, token)
+			w := httptest.NewRecorder()
+			srv.Router().ServeHTTP(w, req)
+			assertions.Equal(http.StatusInternalServerError, w.Code, w.Body.String())
+			assertions.NotContains(w.Body.String(), "synthetic count failure")
+		}
+	}
 }

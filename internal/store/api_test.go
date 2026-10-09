@@ -219,7 +219,7 @@ func TestContextAwareReadsHonorCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, _, err = st.ListMessagesContext(ctx, 0, 10)
+	_, _, err = st.ListMessagesContext(ctx, 0, 10, nil)
 	require.ErrorIs(err, context.Canceled, "ListMessagesContext must honor a cancelled context")
 
 	_, err = st.GetMessageContext(ctx, msgID)

@@ -667,12 +667,14 @@ func withAgentFlags(t *testing.T) context.Context {
 // draft commands with agent flags pass the PersistentPreRunE early-return path.
 func TestAgentDelegatedCapableCommandSucceeds(t *testing.T) {
 	for _, name := range []string{
-		"draft-reply", "draft-compose", "draft-get", "draft-edit", "draft-delete", "mcp",
+		"draft-reply", "draft-compose", "draft-get", "draft-edit", "draft-delete", "mcp", "search", "stats", "show-message",
 	} {
 		t.Run(name, func(t *testing.T) {
 			ctx := withAgentFlags(t)
 			cmd := &cobra.Command{Use: name}
-			cmd.SetContext(ctx)
+			root := &cobra.Command{Use: "msgvault"}
+			root.SetContext(ctx)
+			root.AddCommand(cmd)
 			err := rootCmd.PersistentPreRunE(cmd, nil)
 			require.NoError(t, err)
 		})
@@ -701,12 +703,20 @@ func TestAgentDelegatedRecoveryCommandSucceeds(t *testing.T) {
 // not in the delegated-capable set (serve) returns "not available in
 // agent-delegated mode" when agent flags are present.
 func TestAgentDelegatedNonCapableCommandReturnsError(t *testing.T) {
-	ctx := withAgentFlags(t)
-
-	cmd := &cobra.Command{Use: "serve"}
-	cmd.SetContext(ctx)
-	err := rootCmd.PersistentPreRunE(cmd, nil)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not available in agent-delegated mode")
-	assert.Contains(t, err.Error(), "serve")
+	for _, tc := range []struct{ parent, name string }{{"", "serve"}, {"documents", "search"}, {"person", "search"}, {"multimodal", "search"}} {
+		t.Run(strings.TrimSpace(tc.parent+" "+tc.name), func(t *testing.T) {
+			root := &cobra.Command{Use: "msgvault"}
+			root.SetContext(withAgentFlags(t))
+			cmd := &cobra.Command{Use: tc.name}
+			if tc.parent == "" {
+				root.AddCommand(cmd)
+			} else {
+				parent := &cobra.Command{Use: tc.parent}
+				root.AddCommand(parent)
+				parent.AddCommand(cmd)
+			}
+			err := rootCmd.PersistentPreRunE(cmd, nil)
+			require.ErrorContains(t, err, tc.name+" is not available in agent-delegated mode")
+		})
+	}
 }
