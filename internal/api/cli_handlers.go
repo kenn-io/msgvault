@@ -729,6 +729,31 @@ type virtualAccountLister interface {
 	ListVirtualAccountsContext(ctx context.Context) (map[int64][]store.VirtualAccount, error)
 }
 
+// accountIdentityRevisionReader reports the revision that changes whenever a
+// confirmed account identity is added or removed.
+type accountIdentityRevisionReader interface {
+	AccountIdentityRevisionContext(ctx context.Context) (int64, error)
+}
+
+// virtualAccountCatalogFreshFor is how long a completed catalog read serves
+// as current. Confirming or removing an identity starts a new read at once.
+const virtualAccountCatalogFreshFor = 2 * time.Minute
+
+// virtualAccountCatalogVersion is the identity revision a catalog read
+// depends on, so a read from before an identity change is never fresh.
+func (s *Server) virtualAccountCatalogVersion(ctx context.Context) string {
+	reader, ok := s.store.(accountIdentityRevisionReader)
+	if !ok {
+		return ""
+	}
+	revision, err := reader.AccountIdentityRevisionContext(ctx)
+	if err != nil {
+		s.logger.Warn("reading account identity revision for the account catalog", "error", err)
+		return ""
+	}
+	return strconv.FormatInt(revision, 10)
+}
+
 type cliCollectionsResponse struct {
 	Collections []cliCollectionResponse `json:"collections"`
 }
@@ -2765,8 +2790,9 @@ func (s *Server) handleCLIAccounts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if lister, ok := s.store.(virtualAccountLister); ok {
-		virtual, _, stale, err := s.virtualAccountSnapshots.get(
-			r.Context(), s.importContext, "", s.statsSnapshotWait, lister.ListVirtualAccountsContext,
+		virtual, _, stale, err := s.virtualAccountSnapshots.getVersion(
+			r.Context(), s.importContext, "", s.virtualAccountCatalogVersion(r.Context()), s.statsSnapshotWait,
+			lister.ListVirtualAccountsContext,
 		)
 		// The catalog is extra detail; a slow or failed read still returns
 		// the accounts with whatever children the last snapshot held.

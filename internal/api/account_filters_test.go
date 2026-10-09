@@ -93,3 +93,46 @@ func TestHandleCLIAccountsSurvivesCatalogFailure(t *testing.T) {
 	assert.Equal(t, "archive-1", resp.Accounts[0].Email)
 	assert.Empty(t, resp.Accounts[0].VirtualAccounts)
 }
+
+func TestHandleCLIAccountsShowsNewIdentityDespiteCachedCatalog(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:  st,
+		Logger: testLogger(),
+	})
+	src, err := st.GetOrCreateSource("mbox", "archive@example.net")
+	require.NoError(err)
+	conv, err := st.EnsureConversation(src.ID, "thread", "Thread")
+	require.NoError(err)
+	_, err = st.UpsertMessage(&store.Message{
+		SourceID: src.ID, ConversationID: conv, SourceMessageID: "m1", MessageType: "email",
+	})
+	require.NoError(err)
+
+	children := func() []string {
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/cli/accounts", nil))
+		require.Equal(http.StatusOK, w.Code, w.Body.String())
+		var resp struct {
+			Accounts []struct {
+				VirtualAccounts []store.VirtualAccount `json:"virtual_accounts"`
+			} `json:"accounts"`
+		}
+		require.NoError(json.NewDecoder(w.Body).Decode(&resp))
+		require.Len(resp.Accounts, 1)
+		var addresses []string
+		for _, child := range resp.Accounts[0].VirtualAccounts {
+			if !child.Unattributed {
+				addresses = append(addresses, child.AccountAddress)
+			}
+		}
+		return addresses
+	}
+	require.Empty(children())
+	// The first catalog is still fresh, but confirming an address must show
+	// up at once.
+	require.NoError(st.AddAccountIdentity(src.ID, "work@example.org", "manual"))
+	assert.Equal(t, []string{"work@example.org"}, children())
+}
