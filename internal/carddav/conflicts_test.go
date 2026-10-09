@@ -1621,6 +1621,40 @@ func TestRemoteEditToPublishedImportWithMultipleTypesDoesNotPut(t *testing.T) {
 	assert.Equal(puts, fixture.puts)
 }
 
+func TestRemoteAddedPreferredValueToPublishedImportDoesNotPut(t *testing.T) {
+	for _, tc := range []struct {
+		name, line, value string
+	}{
+		{"email", "EMAIL;TYPE=work;PREF=1:preferred@example.test", "preferred@example.test"},
+		{"phone", "TEL;TYPE=work;PREF=1:tel:+12025550103", "+12025550103"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			fixture, service, st, personID := publishedImportFixture(t)
+			puts := fixture.puts
+			edited := bytes.Replace(fixture.body, []byte("END:VCARD"), []byte(tc.line+"\r\nEND:VCARD"), 1)
+			fixture.setRemote(edited, `"remote-2"`)
+			_, err := service.Sync(t.Context(), SyncOptions{Full: true})
+			require.NoError(err)
+			points, err := st.ListPersonContactPointsContext(t.Context(), personID, true)
+			require.NoError(err)
+			var preferred *store.PersonContactPoint
+			for i := range points {
+				if points[i].OriginalValue == tc.value {
+					preferred = &points[i]
+				}
+			}
+			require.NotNil(preferred)
+			assert.Equal(new(1), preferred.Envelope.Pref)
+			assert.Equal([]string{"work"}, preferred.Envelope.TypeTokens)
+			require.NoError(service.ReconcilePublications(t.Context()))
+			assert.Equal(puts, fixture.puts)
+			assert.Equal(edited, fixture.body)
+		})
+	}
+}
+
 func TestPublishedImportLocalRenameSurvivesRemoteRename(t *testing.T) {
 	for _, published := range []bool{false, true} {
 		t.Run(fmt.Sprintf("local rename published=%t", published), func(t *testing.T) {

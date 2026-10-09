@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -968,7 +969,7 @@ func (s *Store) createCardDAVImportedPersonTx(
 }
 
 func (s *Store) addCardDAVImportedProjectionTx(
-	ctx context.Context, tx *loggedTx, bookID, personID int64, input CardDAVRemoteResource, typeTokens map[ContactAddressKind][][]string,
+	ctx context.Context, tx *loggedTx, bookID, personID int64, input CardDAVRemoteResource, envelopes map[ContactAddressKind][]ValueEnvelopeInput,
 ) error {
 	sourceRef := fmt.Sprintf("carddav:%d", bookID)
 	baseEnvelope := ValueEnvelopeInput{
@@ -998,8 +999,9 @@ func (s *Store) addCardDAVImportedProjectionTx(
 			if index < len(point.identities) {
 				envelope.VCard = point.identities[index]
 			}
-			if index < len(typeTokens[point.kind]) {
-				envelope.TypeTokens = typeTokens[point.kind][index]
+			if index < len(envelopes[point.kind]) {
+				envelope.TypeTokens = envelopes[point.kind][index].TypeTokens
+				envelope.Pref = envelopes[point.kind][index].Pref
 			}
 			if _, err := s.addPersonContactPointTx(ctx, tx, personID, PersonContactPointInput{
 				AddressKind: point.kind, OriginalValue: value, Envelope: envelope,
@@ -1071,12 +1073,21 @@ func (s *Store) rebaseCardDAVImportedProjectionTx(
 		projection.Emails, projection.EmailIdentities = nil, nil
 		projection.Phones, projection.PhoneIdentities = nil, nil
 	}
-	typeTokens := make(map[ContactAddressKind][][]string)
+	envelopes := make(map[ContactAddressKind][]ValueEnvelopeInput)
 	for _, occurrence := range incoming.PropertyTree {
-		var tokens []string
+		var envelope ValueEnvelopeInput
 		for _, parameter := range occurrence.Property.ParametersNamed("TYPE") {
 			for _, value := range parameter.Values {
-				tokens = append(tokens, value.Decoded)
+				envelope.TypeTokens = append(envelope.TypeTokens, value.Decoded)
+			}
+		}
+		for _, parameter := range occurrence.Property.ParametersNamed("PREF") {
+			for _, value := range parameter.Values {
+				pref, err := strconv.Atoi(value.Decoded)
+				if err != nil {
+					return false, fmt.Errorf("parse CardDAV projection PREF: %w", err)
+				}
+				envelope.Pref = &pref
 			}
 		}
 		index, ok := input.ProjectionIndexes[occurrence.Identity.Key()]
@@ -1089,17 +1100,17 @@ func (s *Store) rebaseCardDAVImportedProjectionTx(
 			if !skip {
 				projection.Emails = append(projection.Emails, input.Emails[index])
 				projection.EmailIdentities = append(projection.EmailIdentities, input.EmailIdentities[index])
-				typeTokens[ContactAddressEmail] = append(typeTokens[ContactAddressEmail], tokens)
+				envelopes[ContactAddressEmail] = append(envelopes[ContactAddressEmail], envelope)
 			}
 		case "TEL":
 			if !skip {
 				projection.Phones = append(projection.Phones, input.Phones[index])
 				projection.PhoneIdentities = append(projection.PhoneIdentities, input.PhoneIdentities[index])
-				typeTokens[ContactAddressPhone] = append(typeTokens[ContactAddressPhone], tokens)
+				envelopes[ContactAddressPhone] = append(envelopes[ContactAddressPhone], envelope)
 			}
 		}
 	}
-	if err := s.addCardDAVImportedProjectionTx(ctx, tx, bookID, personID, projection, typeTokens); err != nil {
+	if err := s.addCardDAVImportedProjectionTx(ctx, tx, bookID, personID, projection, envelopes); err != nil {
 		return false, err
 	}
 	displayChanged := false
