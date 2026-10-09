@@ -244,3 +244,60 @@ func TestDirectWriteStoreWithEventsOffKeepsOwnerSubscriptions(t *testing.T) {
 	require.NotNil(stopped)
 	Assert.Equal(t, "capture_gap", stopped.StopReason)
 }
+
+func TestDaemonStartWithoutOwnerKeyKeepsSubscriptionsRenewable(t *testing.T) {
+	require := Require.New(t)
+	cfg := config.NewDefaultConfig()
+	cfg.HomeDir = t.TempDir()
+	cfg.Data.DataDir = cfg.HomeDir
+	cfg.Server.APIKey = "synthetic-events-owner"
+	cfg.MCP.Events.Enabled = true
+	cfg.MCP.Events.Sources = []string{"gmail"}
+	st, err := store.Open(cfg.DatabaseDSN())
+	require.NoError(err)
+	t.Cleanup(func() { Assert.NoError(t, st.Close()) })
+	require.NoError(st.InitSchema())
+	source, err := st.GetOrCreateSource("gmail", "owner-key-restart@example.test")
+	require.NoError(err)
+	conversationID, err := st.EnsureConversation(source.ID, "owner-key-restart-thread", "Owner key fixture")
+	require.NoError(err)
+	start := func() {
+		server := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: st, Logger: testLoggerValue(), OperationGate: api.NewSerialOperationGate()})
+		_, err := newDaemonMCPEventsService(t.Context(), cfg, st, server)
+		require.NoError(err)
+		require.NoError(server.Shutdown(context.Background()))
+	}
+	start()
+	now := time.Now().UTC()
+	subscription := store.MCPSubscription{
+		ID: "sub_" + strings.Repeat("0", 63) + "2", Principal: mcpevents.Principal(cfg.Server.APIKey),
+		Name: "msgvault.message_archived", Arguments: []byte(`{"conversation_id":"` + strconv.FormatInt(conversationID, 10) + `","include_from_me":false}`),
+		ScopeKind: "conversation", ScopeID: conversationID, SourceID: source.ID,
+		CallbackURL: "https://receiver.example.net/hook", SecretEnc: []byte("synthetic-encrypted-secret"),
+		SecretRevision: 1, VerifiedRevision: 1, ExpiresAt: now.Add(24 * time.Hour),
+	}
+	require.NoError(st.BindMCPSubscriptionScope(t.Context(), &subscription))
+	_, _, err = st.ActivateMCPSubscription(t.Context(), store.MCPActivation{Subscription: subscription, Now: now})
+	require.NoError(err)
+
+	// One start with Events off and the owner key missing does not reveal a
+	// new owner, so it must not revoke the owner's subscriptions.
+	cfg.MCP.Events.Enabled = false
+	cfg.Server.APIKey = ""
+	start()
+	cfg.MCP.Events.Enabled = true
+	cfg.Server.APIKey = "synthetic-events-owner"
+	restored, err := daemonMCPEventsStoreConfig(cfg)
+	require.NoError(err)
+	_, err = st.ConfigureMCPEvents(t.Context(), restored)
+	require.NoError(err)
+
+	stopped, err := st.GetMCPSubscription(t.Context(), subscription.ID)
+	require.NoError(err)
+	require.NotNil(stopped)
+	Assert.Equal(t, "capture_gap", stopped.StopReason)
+	subscription.ExpiresAt = now.Add(24 * time.Hour)
+	renewed, _, err := st.ActivateMCPSubscription(t.Context(), store.MCPActivation{Subscription: subscription, ExpectedGeneration: stopped.Generation, ExpectedState: stopped.State, ExpectedSecretRevision: stopped.SecretRevision, Now: now.Add(time.Minute)})
+	require.NoError(err, "the restored owner can renew")
+	Assert.Equal(t, "active", renewed.State)
+}
