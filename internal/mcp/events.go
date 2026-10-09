@@ -137,7 +137,7 @@ func registerEvents(s *sdkmcp.Server, b EventsBackend) {
 	}); err != nil {
 		panic(err)
 	}
-	sdkmcp.AddTool(s, &sdkmcp.Tool{Name: "get_mcp_event", Description: "Recover a retained webhook occurrence by event_id. Payload contains identifiers only; use get_message with event_id to read content.", InputSchema: map[string]any{"type": "object", "properties": map[string]any{"event_id": map[string]any{"type": "string", "minLength": 1}}, "required": []string{"event_id"}, "additionalProperties": false}}, func(ctx context.Context, _ *sdkmcp.CallToolRequest, params struct {
+	sdkmcp.AddTool(s, &sdkmcp.Tool{Name: "get_mcp_event", Annotations: toolAnnotations(true), Description: "Recover a retained webhook occurrence by event_id. Payload contains identifiers only; use get_message with event_id to read content.", InputSchema: map[string]any{"type": "object", "properties": map[string]any{"event_id": map[string]any{"type": "string", "minLength": 1}}, "required": []string{"event_id"}, "additionalProperties": false}}, func(ctx context.Context, _ *sdkmcp.CallToolRequest, params struct {
 		EventID string `json:"event_id"`
 	}) (*sdkmcp.CallToolResult, any, error) {
 		v, err := b.GetMCPEvent(ctx, params.EventID)
@@ -146,7 +146,7 @@ func registerEvents(s *sdkmcp.Server, b EventsBackend) {
 		}
 		return &sdkmcp.CallToolResult{}, v, nil
 	})
-	sdkmcp.AddTool(s, &sdkmcp.Tool{Name: "list_calendar_sources", Description: "List calendars that can be subscribed to with calendar_source_id.", InputSchema: map[string]any{"type": "object", "properties": map[string]any{}, "additionalProperties": false}}, func(ctx context.Context, _ *sdkmcp.CallToolRequest, _ struct{}) (*sdkmcp.CallToolResult, any, error) {
+	sdkmcp.AddTool(s, &sdkmcp.Tool{Name: "list_calendar_sources", Annotations: toolAnnotations(true), Description: "List calendars that can be subscribed to with calendar_source_id.", InputSchema: map[string]any{"type": "object", "properties": map[string]any{}, "additionalProperties": false}}, func(ctx context.Context, _ *sdkmcp.CallToolRequest, _ struct{}) (*sdkmcp.CallToolResult, any, error) {
 		v, err := b.ListMCPCalendarSources(ctx)
 		if err != nil {
 			return nil, nil, eventRPCError(err)
