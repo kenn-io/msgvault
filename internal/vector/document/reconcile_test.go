@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -23,7 +24,8 @@ func TestReconcilerRunActivatesCompleteBuildingGeneration(t *testing.T) {
 		Now: func() time.Time { return workerNow },
 	})
 
-	result, err := reconciler.Run(t.Context(), 1, 10)
+	ctx := jobctx.WithProgress(t.Context())
+	result, err := reconciler.Run(ctx, 1, 10)
 	requirements.NoError(err)
 	assertions.True(result.WorkerRan)
 	assertions.Equal(worker.result, result.Worker)
@@ -31,6 +33,7 @@ func TestReconcilerRunActivatesCompleteBuildingGeneration(t *testing.T) {
 	assertions.Equal([]int{10}, worker.limits)
 	assertions.Equal(ledger.coverage, result.Coverage)
 	assertions.True(result.Activated)
+	assertions.True(jobctx.HasProgress(ctx))
 	assertions.True(result.Converged)
 	assertions.Equal(1, ledger.activateCalls)
 	assertions.Zero(ledger.purgeCalls)
@@ -105,6 +108,37 @@ func TestReconcilerRunContinuesSafeWorkAfterWorkerErrorWithoutActivation(t *test
 	assertions.Equal([][]string{{ledger.obsolete[0].Token}}, backend.deletes)
 }
 
+func TestReconcilerRunRetainsWorkerFailureOnCancellation(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	ctx, cancel := context.WithCancelCause(jobctx.WithProgress(t.Context()))
+	defer cancel(nil)
+	publicationErr := errors.New("fenced publication failed")
+	workerLedger := newFakeDocumentVectorLedger(
+		workerClaim("extract-a", 1, "first", "token-a"),
+		workerClaim("extract-a", 2, "second", "token-b"),
+	)
+	workerLedger.commitErr["token-b"] = publicationErr
+	workerLedger.beforeCommit = func(token string) {
+		if token == "token-b" {
+			cancel(jobctx.ErrYieldedToWaiter)
+		}
+	}
+	backend := &fakeDocumentVectorBackend{}
+	worker := newFakeWorker(workerLedger,
+		&fakeDocumentVectorProvider{vectors: [][][]float32{{{1, 2, 3}, {4, 5, 6}}}}, backend)
+	reconciler := NewReconciler(ReconcilerDeps{
+		Ledger: newFakeDocumentVectorReconcileLedger(store.DocumentVectorGenerationBuilding),
+		Worker: worker, Backend: backend,
+	})
+
+	result, err := reconciler.Run(ctx, 1, 2)
+	require.ErrorIs(err, context.Canceled)
+	require.ErrorIs(jobctx.ErrorAfterYield(ctx, err), publicationErr)
+	assert.Equal(1, result.Worker.Published)
+	assert.True(jobctx.HasProgress(ctx))
+}
+
 func TestReconcilerRunReportsTerminalGenerationAsBlocked(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
@@ -144,16 +178,20 @@ func TestReconcilerRunNeverWorksActiveGeneration(t *testing.T) {
 }
 
 func TestReconcilerRunCleansRetiredGenerationWithoutWorkerDependency(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	ledger := newFakeDocumentVectorReconcileLedger(store.DocumentVectorGenerationRetired)
 	ledger.purgeResult = true
 	reconciler := NewReconciler(ReconcilerDeps{
 		Ledger: ledger, Backend: &fakeDocumentVectorBackend{}, Now: func() time.Time { return workerNow },
 	})
 
-	result, err := reconciler.Run(t.Context(), 1, 10)
-	require.NoError(t, err)
-	assert.False(t, result.WorkerRan)
-	assert.True(t, result.Purged)
+	ctx := jobctx.WithProgress(t.Context())
+	result, err := reconciler.Run(ctx, 1, 10)
+	require.NoError(err)
+	assert.False(result.WorkerRan)
+	assert.True(result.Purged)
+	assert.True(jobctx.HasProgress(ctx))
 }
 
 func TestReconcilerRunReplaysRetiredDeleteAfterFinalizeCrashThenPurges(t *testing.T) {
@@ -169,11 +207,13 @@ func TestReconcilerRunReplaysRetiredDeleteAfterFinalizeCrashThenPurges(t *testin
 	backend := &fakeDocumentVectorBackend{}
 	reconciler := NewReconciler(ReconcilerDeps{Ledger: ledger, Worker: worker, Backend: backend, Now: func() time.Time { return workerNow }})
 
-	first, err := reconciler.Run(t.Context(), 1, 10)
+	ctx := jobctx.WithProgress(t.Context())
+	first, err := reconciler.Run(ctx, 1, 10)
 	requirements.ErrorIs(err, finalizeErr)
 	assertions.Zero(worker.calls)
 	assertions.Equal(1, first.CleanupDeleted)
 	assertions.Zero(first.CleanupFinalized)
+	assertions.False(jobctx.HasProgress(ctx), "replayed backend deletes alone commit no ledger progress")
 	assertions.Zero(first.CleanupAfterGenerationID)
 	assertions.Empty(first.CleanupAfterToken)
 	assertions.Zero(ledger.purgeCalls)
@@ -216,9 +256,11 @@ func TestReconcilerRunReplaysParkedPageAfterBackendDeleteFailure(t *testing.T) {
 	assertions.Equal([][]string{{ledger.obsolete[0].Token}, {ledger.obsolete[0].Token}}, backend.deletes)
 }
 
-func TestReconcilerRunDoesNotAdvancePastPartialFinalizeFailure(t *testing.T) {
+func TestReconcilerRunRetainsPartialFinalizeFailureOnCancellation(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
+	ctx, cancel := context.WithCancelCause(jobctx.WithProgress(t.Context()))
+	defer cancel(nil)
 	finalizeErr := errors.New("finalize interrupted")
 	worker := &fakeDocumentVectorWorkerRunner{}
 	ledger := newFakeDocumentVectorReconcileLedger(store.DocumentVectorGenerationBuilding)
@@ -229,16 +271,24 @@ func TestReconcilerRunDoesNotAdvancePastPartialFinalizeFailure(t *testing.T) {
 	ledger.status.CleanupPending = 2
 	ledger.finalizeErrFor = ledger.obsolete[1].Token
 	ledger.finalizeErr = finalizeErr
+	ledger.beforeFinalize = func(token string) {
+		if token == ledger.finalizeErrFor {
+			cancel(jobctx.ErrYieldedToWaiter)
+		}
+	}
 	backend := &fakeDocumentVectorBackend{}
 	reconciler := NewReconciler(ReconcilerDeps{Ledger: ledger, Worker: worker, Backend: backend, Now: func() time.Time { return workerNow }})
 
-	first, err := reconciler.Run(t.Context(), 1, 2)
-	requirements.ErrorIs(err, finalizeErr)
+	first, err := reconciler.Run(ctx, 1, 2)
+	requirements.ErrorIs(err, context.Canceled)
+	requirements.ErrorIs(jobctx.ErrorAfterYield(ctx, err), finalizeErr)
 	assertions.Equal(1, first.CleanupFinalized)
+	assertions.True(jobctx.HasProgress(ctx))
 	assertions.Zero(first.CleanupAfterGenerationID)
 	assertions.Empty(first.CleanupAfterToken)
 
 	ledger.finalizeErr = nil
+	ledger.beforeFinalize = nil
 	second, err := reconciler.Run(t.Context(), 1, 2)
 	requirements.NoError(err)
 	assertions.Equal(1, second.CleanupListed)
@@ -284,10 +334,14 @@ type fakeDocumentVectorWorkerRunner struct {
 	err    error
 	calls  int
 	limits []int
+	before func()
 }
 
 func (w *fakeDocumentVectorWorkerRunner) Run(_ context.Context, _ GenerationID, limit int) (RunResult, error) {
 	w.calls++
+	if w.before != nil {
+		w.before()
+	}
 	w.limits = append(w.limits, limit)
 	return w.result, w.err
 }
@@ -300,6 +354,7 @@ type fakeDocumentVectorReconcileLedger struct {
 	finalized      []string
 	finalizeErr    error
 	finalizeErrFor string
+	beforeFinalize func(string)
 	activateErr    error
 	purgeResult    bool
 	purgeErr       error
@@ -355,6 +410,9 @@ func (l *fakeDocumentVectorReconcileLedger) ParkObsoleteDocumentVectorTokens(_ c
 
 func (l *fakeDocumentVectorReconcileLedger) FinalizeObsoleteDocumentVectorToken(_ context.Context, _ int64, token string, now time.Time) (bool, error) {
 	l.finalizeAt = now
+	if l.beforeFinalize != nil {
+		l.beforeFinalize(token)
+	}
 	if l.finalizeErr != nil && (l.finalizeErrFor == "" || l.finalizeErrFor == token) {
 		return false, l.finalizeErr
 	}
@@ -384,4 +442,20 @@ func (l *fakeDocumentVectorReconcileLedger) ActivateDocumentVectorGeneration(_ c
 func (l *fakeDocumentVectorReconcileLedger) PurgeRetiredDocumentVectorGeneration(context.Context, int64) (bool, error) {
 	l.purgeCalls++
 	return l.purgeResult, l.purgeErr
+}
+
+func TestReconcilerCooperativeYieldStopsBetweenPhases(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	ledger := newFakeDocumentVectorReconcileLedger(store.DocumentVectorGenerationBuilding)
+	ctx, request := jobctx.WithPreemption(jobctx.WithProgress(t.Context()))
+	workerErr := errors.New("synthetic worker error")
+	worker := &fakeDocumentVectorWorkerRunner{err: workerErr, before: func() { jobctx.RecordProgress(ctx); request() }}
+	reconciler := NewReconciler(ReconcilerDeps{Ledger: ledger, Worker: worker, Backend: &fakeDocumentVectorBackend{}})
+	result, err := reconciler.Run(ctx, 1, 1)
+	require.ErrorIs(err, workerErr)
+	assert.True(result.WorkerRan)
+	assert.True(ledger.parkAt.IsZero())
+	assert.Zero(ledger.statusCalls)
+	assert.Zero(ledger.activateCalls)
 }

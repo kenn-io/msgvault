@@ -100,7 +100,8 @@ func seedRelocationFixtureWithSourceType(
 		RoleSource: store.AttachmentRoleSourceProviderExplicit,
 	}))
 	require.NoError(st.RecomputeMessageAttachmentStats(targetID))
-	require.NoError(st.SetEmbedGen(t.Context(), []int64{targetID}, 19))
+	_, stampErr := st.SetEmbedGen(t.Context(), []int64{targetID}, 19)
+	require.NoError(stampErr)
 	syncID, err := st.StartSync(source.ID, "full")
 	require.NoError(err)
 

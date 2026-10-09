@@ -95,10 +95,12 @@ func TestCoverageSplit_EmbeddedBlankMissing(t *testing.T) {
 		{MessageID: embeddedA, Vector: vec(1)},
 		{MessageID: embeddedB, Vector: vec(2)},
 	}), "Upsert embedded vectors")
-	require.NoError(st.SetEmbedGen(ctx, []int64{embeddedA, embeddedB}, int64(gen)), "stamp embedded")
+	_, stampErr := st.SetEmbedGen(ctx, []int64{embeddedA, embeddedB}, int64(gen))
+	require.NoError(stampErr, "stamp embedded")
 
 	// Blank messages: stamped terminal DONE but NO vector row.
-	require.NoError(st.SetEmbedGen(ctx, []int64{blankA, blankB}, int64(gen)), "stamp blank")
+	_, stampErr = st.SetEmbedGen(ctx, []int64{blankA, blankB}, int64(gen))
+	require.NoError(stampErr, "stamp blank")
 
 	// missing: left with embed_gen NULL — nothing to do.
 	_ = missing
@@ -185,7 +187,8 @@ func TestCoverageSplit_NonLiveEmbeddedHoldsInvariant(t *testing.T) {
 		{MessageID: embeddedA, Vector: vec(1)},
 		{MessageID: embeddedB, Vector: vec(2)},
 	}), "Upsert embedded vectors")
-	require.NoError(st.SetEmbedGen(ctx, []int64{embeddedA, embeddedB}, int64(gen)), "stamp embedded")
+	_, stampErr := st.SetEmbedGen(ctx, []int64{embeddedA, embeddedB}, int64(gen))
+	require.NoError(stampErr, "stamp embedded")
 	_ = missing
 
 	// Sanity before the soft-delete: both embedded messages are live.
@@ -262,7 +265,8 @@ func TestCoverageSplit_ScopedEmbeddedHoldsInvariant(t *testing.T) {
 		{MessageID: outOfScopeEmail, Vector: []float32{1, 0, 0, 0, 0, 0, 0, 0}},
 		{MessageID: inScopeSMS, Vector: []float32{0, 1, 0, 0, 0, 0, 0, 0}},
 	}), "Upsert embedded vectors")
-	require.NoError(st.SetEmbedGen(ctx, []int64{outOfScopeEmail, inScopeSMS}, int64(gen)), "stamp embedded")
+	_, stampErr := st.SetEmbedGen(ctx, []int64{outOfScopeEmail, inScopeSMS}, int64(gen))
+	require.NoError(stampErr, "stamp embedded")
 
 	live, stamped, _, missingCount, err := st.CoverageCountsScoped(ctx, int64(gen), []string{"sms"}, nil)
 	require.NoError(err, "CoverageCountsScoped")
@@ -318,8 +322,10 @@ func TestFilteredCoverageRequiresLiveGenerationStampAndVector(t *testing.T) {
 		chunks = append(chunks, vector.Chunk{MessageID: id, Vector: v})
 	}
 	require.NoError(b.Upsert(ctx, gen, chunks))
-	require.NoError(st.SetEmbedGen(ctx, []int64{valid, dedupLoser, sourceDeleted, noVector}, int64(gen)))
-	require.NoError(st.SetEmbedGen(ctx, []int64{wrongGeneration}, int64(gen)+99))
+	_, stampErr := st.SetEmbedGen(ctx, []int64{valid, dedupLoser, sourceDeleted, noVector}, int64(gen))
+	require.NoError(stampErr)
+	_, stampErr = st.SetEmbedGen(ctx, []int64{wrongGeneration}, int64(gen)+99)
+	require.NoError(stampErr)
 	_, err = st.DB().Exec(`UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?`, dedupLoser)
 	require.NoError(err)
 	_, err = st.DB().Exec(`UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?`, sourceDeleted)
@@ -381,7 +387,8 @@ func TestCoverageSplit_SourceScopedEmbeddedHoldsInvariant(t *testing.T) {
 		{MessageID: outOfScopeA, Vector: []float32{1, 0, 0, 0, 0, 0, 0, 0}},
 		{MessageID: inScopeB, Vector: []float32{0, 1, 0, 0, 0, 0, 0, 0}},
 	}), "Upsert embedded vectors")
-	require.NoError(st.SetEmbedGen(ctx, []int64{inScopeB}, int64(gen)), "stamp only the in-scope message")
+	_, stampErr := st.SetEmbedGen(ctx, []int64{inScopeB}, int64(gen))
+	require.NoError(stampErr, "stamp only the in-scope message")
 
 	live, stamped, _, missingCount, err := st.CoverageCountsScoped(ctx, int64(gen), nil, []int64{srcB.ID})
 	require.NoError(err, "CoverageCountsScoped")

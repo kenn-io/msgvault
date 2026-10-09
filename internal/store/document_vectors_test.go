@@ -905,7 +905,11 @@ func testDocumentVectorClaimResumeBounds(t *testing.T) {
 	assert.Equal(t, first.Token, observed.Token)
 	assert.Equal(t, first.LeaseFence, observed.LeaseFence)
 	assert.Equal(t, first.AttemptCount, observed.AttemptCount)
-	assert.Equal(t, first.LeaseUntil, observed.LeaseUntil)
+	assert.Equal(t, now.Add(time.Second+2*time.Minute), observed.LeaseUntil)
+
+	blockedAtOriginalExpiry, err := f.Store.ClaimDocumentVectorChunk(t.Context(), generation.ID, 0, 1, "worker-b", first.LeaseUntil, 2*time.Minute)
+	require.NoError(t, err)
+	assert.Nil(t, blockedAtOriginalExpiry, "the original deadline cannot steal the renewed claim")
 
 	blocked, err := f.Store.ClaimDocumentVectorChunk(t.Context(), generation.ID, 0, 1, "worker-b", now.Add(time.Second), 2*time.Minute)
 	require.NoError(t, err)
@@ -916,7 +920,7 @@ func testDocumentVectorClaimResumeBounds(t *testing.T) {
 	require.NotNil(t, second)
 	assert.Greater(t, second.ChunkID, first.ChunkID)
 
-	takeover, err := f.Store.ClaimDocumentVectorChunk(t.Context(), generation.ID, 0, 1, "worker-b", first.LeaseUntil, 2*time.Minute)
+	takeover, err := f.Store.ClaimDocumentVectorChunk(t.Context(), generation.ID, 0, 1, "worker-b", observed.LeaseUntil, 2*time.Minute)
 	require.NoError(t, err)
 	require.NotNil(t, takeover)
 	assert.Equal(t, first.Token, takeover.Token)

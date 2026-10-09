@@ -1644,6 +1644,20 @@ Empty config disables scheduled embedding; you can still run
 | `cron`           | —       | 5-field cron expression. Empty string disables the standalone cron.                                                                          |
 | `run_after_sync` | `false` | Run an embed pass after successful scheduled Gmail, IMAP, Teams, and Discord syncs. Other sources use the standalone cron or a manual build. |
 
+On unreleased `main`, automatic message and document-vector passes share a
+five-minute runtime budget, starting after they acquire the daemon's work gate.
+After holding the gate for one minute while scheduled syncs or non-vector jobs
+wait, a pass is asked to yield; cancellation follows five seconds later if
+needed. Vector waiters do not preempt other scheduled work. The one-minute
+yield timer starts when each pass acquires the gate. Syncs also wait for work
+already queued ahead of them.
+Committed vectors and scan cursors survive interruption. Ordinary yields resume
+behind queued work immediately. Runtime budget expiry resumes immediately when
+the pass committed progress; expiry without a checkpoint records an error and
+waits for the next trigger. Successful source syncs queue embedding separately,
+releasing the gate before embedding starts.
+These limits are fixed; they do not change manual embedding builds.
+
 `msgvault setup providers` supplies `run_after_sync = true` and
 `cron = "*/15 * * * *"` when it enables a text lane. It preserves either key
 when explicitly set, including `false` and `""`. Already enabled text lanes keep

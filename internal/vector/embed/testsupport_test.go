@@ -7,7 +7,6 @@ import (
 	"database/sql"
 	"fmt"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -54,117 +53,6 @@ BEGIN
     UPDATE messages SET last_modified = CURRENT_TIMESTAMP WHERE id = NEW.message_id;
 END;`
 
-// testWorkStore is a minimal WorkStore backed by the test main DB. It
-// mirrors store.ScanForEmbedding / store.SetEmbedGen against the test's
-// `messages` table (which carries id, subject, deleted_at,
-// deleted_from_source_at, embed_gen, last_modified).
-type testWorkStore struct {
-	db *sql.DB
-}
-
-func (s *testWorkStore) ScanForEmbedding(ctx context.Context, target int64, afterID int64, limit int) ([]int64, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT id FROM messages
-		  WHERE (embed_gen IS NULL OR embed_gen <> ?)
-		    AND deleted_at IS NULL AND deleted_from_source_at IS NULL
-		    AND id > ?
-		  ORDER BY id LIMIT ?`, target, afterID, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		out = append(out, id)
-	}
-	return out, rows.Err()
-}
-
-// ScanForEmbeddingScoped mirrors store.Store.ScanForEmbeddingScoped: the
-// same needs-work and liveness predicates as ScanForEmbedding, narrowed by
-// message_type and/or source_id when those scope dimensions are non-empty.
-func (s *testWorkStore) ScanForEmbeddingScoped(ctx context.Context, target int64, afterID int64, limit int, messageTypes []string, sourceIDs []int64) ([]int64, error) {
-	where := `(embed_gen IS NULL OR embed_gen <> ?)
-	    AND deleted_at IS NULL AND deleted_from_source_at IS NULL
-	    AND id > ?`
-	args := []any{target, afterID}
-	if len(messageTypes) > 0 {
-		ph := make([]string, len(messageTypes))
-		for i, typ := range messageTypes {
-			ph[i] = "?"
-			args = append(args, typ)
-		}
-		where += ` AND message_type IN (` + strings.Join(ph, ",") + `)`
-	}
-	if len(sourceIDs) > 0 {
-		ph := make([]string, len(sourceIDs))
-		for i, id := range sourceIDs {
-			ph[i] = "?"
-			args = append(args, id)
-		}
-		where += ` AND source_id IN (` + strings.Join(ph, ",") + `)`
-	}
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT id FROM messages WHERE `+where+` ORDER BY id LIMIT ?`,
-		append(args, limit)...)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		out = append(out, id)
-	}
-	return out, rows.Err()
-}
-
-func (s *testWorkStore) SetEmbedGen(ctx context.Context, ids []int64, target int64) error {
-	if len(ids) == 0 {
-		return nil
-	}
-	ph := make([]string, len(ids))
-	args := make([]any, 0, 1+len(ids))
-	args = append(args, target)
-	for i, id := range ids {
-		ph[i] = "?"
-		args = append(args, id)
-	}
-	_, err := s.db.ExecContext(ctx,
-		`UPDATE messages SET embed_gen = ? WHERE id IN (`+strings.Join(ph, ",")+`)`, args...)
-	return err
-}
-
-// SetEmbedGenIfUnchanged mirrors store.Store.SetEmbedGenIfUnchanged: a
-// per-row optimistic-CAS stamp gated on last_modified, used by the worker's
-// content read→stamp path. Returns the ids whose UPDATE matched 0 rows (CAS
-// misses) so the worker can log them and exclude them from success accounting.
-func (s *testWorkStore) SetEmbedGenIfUnchanged(ctx context.Context, items []store.EmbedGenStamp, target int64) (missed []int64, err error) {
-	for _, it := range items {
-		res, err := s.db.ExecContext(ctx,
-			`UPDATE messages SET embed_gen = ? WHERE id = ? AND last_modified = ?`,
-			target, it.ID, it.LastModified)
-		if err != nil {
-			return missed, err
-		}
-		n, err := res.RowsAffected()
-		if err != nil {
-			return missed, err
-		}
-		if n == 0 {
-			missed = append(missed, it.ID)
-		}
-	}
-	return missed, nil
-}
-
 // countMissing returns how many live messages still need embedding for
 // gen (embed_gen IS NULL OR embed_gen <> gen) in the test main DB.
 func countMissing(t *testing.T, db *sql.DB, gen int64) int {
@@ -194,7 +82,7 @@ func readWatermark(t *testing.T, db *sql.DB, gen int64) int64 {
 type workerFixture struct {
 	MainDB      *sql.DB
 	VectorsDB   *sql.DB
-	Store       WorkStore
+	Store       *store.Store
 	Backend     vector.Backend
 	BuildingGen vector.GenerationID
 	FakeClient  *fakeEmbeddingClient
@@ -212,9 +100,10 @@ func newWorkerFixture(t *testing.T, n int) *workerFixture {
 	dir := t.TempDir()
 	mainPath := filepath.Join(dir, "main.db")
 	require.NoError(t, sqlitevec.RegisterExtension(), "RegisterExtension")
-	mainDB, err := sql.Open(sqlitevec.DriverName(), mainPath)
+	st, err := store.OpenForTest(mainPath)
 	require.NoError(t, err, "open main")
-	t.Cleanup(func() { _ = mainDB.Close() })
+	t.Cleanup(func() { _ = st.Close() })
+	mainDB := st.DB()
 
 	_, err = mainDB.Exec(testMainSchema)
 	require.NoError(t, err, "schema")
@@ -250,7 +139,7 @@ func newWorkerFixture(t *testing.T, n int) *workerFixture {
 	return &workerFixture{
 		MainDB:      mainDB,
 		VectorsDB:   vecDB,
-		Store:       &testWorkStore{db: mainDB},
+		Store:       st,
 		Backend:     b,
 		BuildingGen: gid,
 		FakeClient:  fc,

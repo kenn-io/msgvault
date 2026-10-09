@@ -7,13 +7,13 @@ import (
 	"database/sql"
 	"fmt"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -21,67 +21,6 @@ import (
 	"go.kenn.io/msgvault/internal/vector/embed"
 	"go.kenn.io/msgvault/internal/vector/sqlitevec"
 )
-
-// e2eWorkStore is a minimal embed.WorkStore over the test main DB,
-// mirroring store.ScanForEmbedding / store.SetEmbedGen.
-type e2eWorkStore struct{ db *sql.DB }
-
-func (s *e2eWorkStore) ScanForEmbedding(ctx context.Context, target, afterID int64, limit int) ([]int64, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT id FROM messages
-		  WHERE (embed_gen IS NULL OR embed_gen <> ?)
-		    AND deleted_at IS NULL AND deleted_from_source_at IS NULL
-		    AND id > ?
-		  ORDER BY id LIMIT ?`, target, afterID, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		out = append(out, id)
-	}
-	return out, rows.Err()
-}
-
-func (s *e2eWorkStore) SetEmbedGen(ctx context.Context, ids []int64, target int64) error {
-	if len(ids) == 0 {
-		return nil
-	}
-	ph := make([]string, len(ids))
-	args := make([]any, 0, 1+len(ids))
-	args = append(args, target)
-	for i, id := range ids {
-		ph[i] = "?"
-		args = append(args, id)
-	}
-	_, err := s.db.ExecContext(ctx,
-		`UPDATE messages SET embed_gen = ? WHERE id IN (`+strings.Join(ph, ",")+`)`, args...)
-	return err
-}
-
-func (s *e2eWorkStore) SetEmbedGenIfUnchanged(ctx context.Context, items []store.EmbedGenStamp, target int64) (missed []int64, err error) {
-	for _, it := range items {
-		res, err := s.db.ExecContext(ctx,
-			`UPDATE messages SET embed_gen = ? WHERE id = ? AND last_modified = ?`,
-			target, it.ID, it.LastModified)
-		if err != nil {
-			return missed, err
-		}
-		n, err := res.RowsAffected()
-		if err != nil {
-			return missed, err
-		}
-		if n == 0 {
-			missed = append(missed, it.ID)
-		}
-	}
-	return missed, nil
-}
 
 // e2eCoverage satisfies EmbedCoverage from the live main DB so the
 // EmbedJob's activation gate reflects real coverage.
@@ -109,6 +48,84 @@ func (c *e2eClient) Embed(_ context.Context, inputs []string) ([][]float32, erro
 		out[i] = v
 	}
 	return out, nil
+}
+
+func (c *e2eClient) EmbedQuery(ctx context.Context, text string) ([]float32, error) {
+	vectors, err := c.Embed(ctx, []string{text})
+	return vectors[0], err
+}
+
+func (c *e2eClient) EmbedDocuments(ctx context.Context, documents []embed.DocumentInput) ([][][]float32, error) {
+	vectors := make([][][]float32, len(documents))
+	for i, document := range documents {
+		var err error
+		vectors[i], err = c.Embed(ctx, document.Chunks)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return vectors, nil
+}
+
+type cancellingBackstopPublisher struct {
+	vector.DocumentPublisher
+
+	cancel context.CancelCauseFunc
+	resets int
+}
+
+func (p *cancellingBackstopPublisher) ResetDocumentReconcileCursor(ctx context.Context, gen vector.GenerationID) error {
+	if p.cancel != nil {
+		p.cancel(jobctx.ErrYieldedToWaiter)
+		p.cancel = nil
+	}
+	if err := p.DocumentPublisher.ResetDocumentReconcileCursor(ctx, gen); err != nil {
+		return err
+	}
+	p.resets++
+	return nil
+}
+
+func TestEmbedJob_Backstop_CancelBeforeCursorResetStaysDue(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	source, err := st.GetOrCreateSource("test", "backstop@example.test")
+	require.NoError(err)
+	conversationID, err := st.EnsureConversation(source.ID, "backstop", "Checkpoint")
+	require.NoError(err)
+	messageID, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conversationID, SourceMessageID: "backstop", MessageType: "email", Subject: sql.NullString{String: "checkpoint", Valid: true}})
+	require.NoError(err)
+	require.NoError(st.UpsertMessageBody(messageID, sql.NullString{String: "synthetic body", Valid: true}, sql.NullString{}))
+	require.NoError(sqlitevec.RegisterExtension())
+	backend, err := sqlitevec.Open(t.Context(), sqlitevec.Options{Path: filepath.Join(t.TempDir(), "vectors.db"), MainDB: st.DB(), Dimension: 4})
+	require.NoError(err)
+	t.Cleanup(func() { _ = backend.Close() })
+	gen, err := backend.CreateGeneration(t.Context(), "synthetic", 4, "synthetic:4")
+	require.NoError(err)
+	publisher := &cancellingBackstopPublisher{DocumentPublisher: backend}
+	worker := embed.NewContextWorker(embed.ContextWorkerDeps{Backend: backend, Publisher: publisher, Store: st, Assembler: embed.CompositeAssembler{}, Client: &e2eClient{dim: 4}, Recorder: st})
+	now := time.Date(2026, time.October, 6, 6, 0, 0, 0, time.UTC)
+	_, err = worker.RunOnce(t.Context(), gen, scheduledEmbeddingPassScope(now, gen, "seed"))
+	require.NoError(err)
+	require.NoError(backend.ActivateGeneration(t.Context(), gen, false))
+	job := &EmbedJob{Worker: worker, Backend: backend, Fingerprint: "synthetic:4", Convergence: &fakeConvergenceChecker{}, BackstopInterval: 24 * time.Hour, Now: func() time.Time { return now }}
+	require.NoError(job.run(t.Context()))
+	require.Equal(1, publisher.resets)
+
+	now = now.Add(25 * time.Hour)
+	ctx, cancel := context.WithCancelCause(t.Context())
+	defer cancel(nil)
+	publisher.cancel = cancel
+	require.ErrorIs(job.run(ctx), context.Canceled)
+	progress, err := backend.GetDocumentProgress(t.Context(), gen)
+	require.NoError(err)
+	assert.Contains(progress.ReconcileCursor, "done:")
+	require.Equal(1, publisher.resets)
+
+	now = now.Add(time.Minute)
+	require.NoError(job.run(t.Context()))
+	assert.Equal(2, publisher.resets, "a backstop cancelled before reset stays due")
 }
 
 func countMissingE2E(t *testing.T, db *sql.DB, gen int64) int {
@@ -140,11 +157,12 @@ func TestEmbedJob_Backstop_RecoversSubWatermarkStraggler(t *testing.T) {
 	require.NoError(
 		sqlitevec.RegisterExtension(), "RegisterExtension")
 
-	mainDB, err := sql.Open(sqlitevec.DriverName(), mainPath)
+	st, err := store.OpenForTest(mainPath)
 	require.NoError(
 		err, "open main")
 
-	t.Cleanup(func() { _ = mainDB.Close() })
+	t.Cleanup(func() { _ = st.Close() })
+	mainDB := st.DB()
 
 	_, err = mainDB.Exec(`
 CREATE TABLE messages (
@@ -203,10 +221,9 @@ END;`)
 
 	t.Cleanup(func() { _ = vecDB.Close() })
 
-	ws := &e2eWorkStore{db: mainDB}
 	worker := embed.NewWorker(embed.WorkerDeps{
 		Backend: backend, VectorsDB: vecDB, MainDB: mainDB,
-		Store: ws, Client: &e2eClient{dim: 4}, BatchSize: 8,
+		Store: st, Client: &e2eClient{dim: 4}, BatchSize: 8,
 		LastModifiedExpr: "CAST(m.last_modified AS TEXT)",
 		Recorder:         testutil.NewTestStore(t),
 	})

@@ -42,76 +42,6 @@ func (c *pgFakeEmbeddingClient) Embed(_ context.Context, inputs []string) ([][]f
 	return out, nil
 }
 
-// pgWorkStore is a minimal WorkStore over the PG test schema, mirroring
-// store.ScanForEmbedding / store.SetEmbedGen with $N placeholders.
-type pgWorkStore struct{ db *sql.DB }
-
-func (s *pgWorkStore) ScanForEmbedding(ctx context.Context, target int64, afterID int64, limit int) ([]int64, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT id FROM messages
-		  WHERE (embed_gen IS NULL OR embed_gen <> $1)
-		    AND deleted_at IS NULL AND deleted_from_source_at IS NULL
-		    AND id > $2
-		  ORDER BY id LIMIT $3`, target, afterID, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		out = append(out, id)
-	}
-	return out, rows.Err()
-}
-
-func (s *pgWorkStore) SetEmbedGen(ctx context.Context, ids []int64, target int64) error {
-	if len(ids) == 0 {
-		return nil
-	}
-	_, err := s.db.ExecContext(ctx,
-		`UPDATE messages SET embed_gen = $1 WHERE id = ANY($2::bigint[])`, target, int64ArrayLiteral(ids))
-	return err
-}
-
-// SetEmbedGenIfUnchanged mirrors store.Store.SetEmbedGenIfUnchanged on the
-// PG test schema: a per-row optimistic-CAS stamp gated on last_modified.
-// Returns the ids whose UPDATE matched 0 rows (CAS misses).
-func (s *pgWorkStore) SetEmbedGenIfUnchanged(ctx context.Context, items []store.EmbedGenStamp, target int64) (missed []int64, err error) {
-	for _, it := range items {
-		res, err := s.db.ExecContext(ctx,
-			`UPDATE messages SET embed_gen = $1 WHERE id = $2 AND last_modified = $3`,
-			target, it.ID, it.LastModified)
-		if err != nil {
-			return missed, err
-		}
-		n, err := res.RowsAffected()
-		if err != nil {
-			return missed, err
-		}
-		if n == 0 {
-			missed = append(missed, it.ID)
-		}
-	}
-	return missed, nil
-}
-
-func int64ArrayLiteral(ids []int64) string {
-	var sb strings.Builder
-	sb.WriteByte('{')
-	for i, id := range ids {
-		if i > 0 {
-			sb.WriteByte(',')
-		}
-		fmt.Fprintf(&sb, "%d", id)
-	}
-	sb.WriteByte('}')
-	return sb.String()
-}
-
 func pgCountMissing(t *testing.T, db *sql.DB, gen int64) int {
 	t.Helper()
 	var n int
@@ -128,7 +58,7 @@ func pgCountMissing(t *testing.T, db *sql.DB, gen int64) int {
 // including embed_gen and the deleted_* columns LiveMessagesWhere
 // references) and seeds n live messages. Returns the *sql.DB; cleanup
 // drops the schema.
-func openPGWorkerDB(t *testing.T, n int) *sql.DB {
+func openPGWorkerDB(t *testing.T, n int) *store.Store {
 	t.Helper()
 	url := os.Getenv("MSGVAULT_TEST_DB")
 	if !strings.HasPrefix(url, "postgres://") && !strings.HasPrefix(url, "postgresql://") {
@@ -153,10 +83,10 @@ func openPGWorkerDB(t *testing.T, n int) *sql.DB {
 	}
 	testURL += sep + "search_path=" + schemaName + ",public"
 
-	db, err := sql.Open("pgx", testURL)
+	st, err := store.OpenForTest(testURL)
 	require.NoError(t, err, "open")
 	t.Cleanup(func() {
-		_ = db.Close()
+		_ = st.Close()
 		cleanup, err := sql.Open("pgx", url)
 		if err != nil {
 			return
@@ -165,6 +95,7 @@ func openPGWorkerDB(t *testing.T, n int) *sql.DB {
 		_, _ = cleanup.Exec("DROP SCHEMA " + schemaName + " CASCADE")
 	})
 
+	db := st.DB()
 	_, err = db.Exec(`
 		CREATE TABLE messages (
 			id BIGINT PRIMARY KEY,
@@ -209,7 +140,7 @@ func openPGWorkerDB(t *testing.T, n int) *sql.DB {
 			`INSERT INTO message_bodies (message_id, body_text) VALUES ($1, $2)`, i, fmt.Sprintf("body %d", i))
 		require.NoError(t, err, "insert body")
 	}
-	return db
+	return st
 }
 
 // TestWorkerPG_RunOnce_EndToEnd drives the full scan-and-fill pipeline
@@ -222,7 +153,8 @@ func TestWorkerPG_RunOnce_EndToEnd(t *testing.T) {
 
 	ctx := context.Background()
 	const n = 5
-	db := openPGWorkerDB(t, n)
+	st := openPGWorkerDB(t, n)
+	db := st.DB()
 
 	backend, err := pgvector.Open(ctx, pgvector.Options{DB: db, Dimension: 4})
 	require.NoError(
@@ -241,7 +173,7 @@ func TestWorkerPG_RunOnce_EndToEnd(t *testing.T) {
 		Backend:          backend,
 		VectorsDB:        db,
 		MainDB:           db,
-		Store:            &pgWorkStore{db: db},
+		Store:            st,
 		Client:           &pgFakeEmbeddingClient{dim: 4},
 		Rebind:           (&store.PostgreSQLDialect{}).Rebind,
 		LastModifiedExpr: "m.last_modified",
@@ -273,7 +205,8 @@ func TestWorkerPG_EmbedBatch_RebindsINClause(t *testing.T) {
 	require := require.New(t)
 
 	ctx := context.Background()
-	db := openPGWorkerDB(t, 3)
+	st := openPGWorkerDB(t, 3)
+	db := st.DB()
 
 	backend, err := pgvector.Open(ctx, pgvector.Options{DB: db, Dimension: 4})
 	require.NoError(
@@ -285,7 +218,7 @@ func TestWorkerPG_EmbedBatch_RebindsINClause(t *testing.T) {
 		Backend:          backend,
 		VectorsDB:        db,
 		MainDB:           db,
-		Store:            &pgWorkStore{db: db},
+		Store:            st,
 		Client:           &pgFakeEmbeddingClient{dim: 4},
 		Rebind:           (&store.PostgreSQLDialect{}).Rebind,
 		LastModifiedExpr: "m.last_modified",
@@ -337,7 +270,8 @@ func TestWorkerPG_TriggersBumpLastModified(t *testing.T) {
 	require := require.New(t)
 
 	ctx := context.Background()
-	db := openPGWorkerDB(t, 0)
+	st := openPGWorkerDB(t, 0)
+	db := st.DB()
 
 	_, err := db.ExecContext(ctx,
 		`INSERT INTO messages (id, subject) VALUES (1, 'subject')`)
@@ -398,7 +332,8 @@ func TestWorkerPG_CASRepairRace(t *testing.T) {
 	require := require.New(t)
 
 	ctx := context.Background()
-	db := openPGWorkerDB(t, 1)
+	st := openPGWorkerDB(t, 1)
+	db := st.DB()
 
 	backend, err := pgvector.Open(ctx, pgvector.Options{DB: db, Dimension: 4})
 	require.NoError(
@@ -432,7 +367,7 @@ func TestWorkerPG_CASRepairRace(t *testing.T) {
 		Backend:          backend,
 		VectorsDB:        db,
 		MainDB:           db,
-		Store:            &pgWorkStore{db: db},
+		Store:            st,
 		Client:           client,
 		Rebind:           (&store.PostgreSQLDialect{}).Rebind,
 		LastModifiedExpr: "m.last_modified",
@@ -474,7 +409,8 @@ func TestWorkerPG_CASNormalPath(t *testing.T) {
 
 	ctx := context.Background()
 	const n = 3
-	db := openPGWorkerDB(t, n)
+	st := openPGWorkerDB(t, n)
+	db := st.DB()
 
 	backend, err := pgvector.Open(ctx, pgvector.Options{DB: db, Dimension: 4})
 	require.NoError(
@@ -489,7 +425,7 @@ func TestWorkerPG_CASNormalPath(t *testing.T) {
 		Backend:          backend,
 		VectorsDB:        db,
 		MainDB:           db,
-		Store:            &pgWorkStore{db: db},
+		Store:            st,
 		Client:           &pgFakeEmbeddingClient{dim: 4},
 		Rebind:           (&store.PostgreSQLDialect{}).Rebind,
 		LastModifiedExpr: "m.last_modified",

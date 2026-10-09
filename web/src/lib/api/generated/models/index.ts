@@ -415,6 +415,7 @@ export * from "./importJobResponseStatus";
 export * from "./importJobSummary";
 export * from "./importRequest";
 export * from "./importResult";
+export * from "./jobStatus";
 export * from "./kataEvidenceLinkRequest";
 export * from "./kataEvidencePrepareRequest";
 export * from "./kataEvidencePrepareResponse";

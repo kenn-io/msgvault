@@ -1802,6 +1802,11 @@ func TestCardDAVStatusAndRunHistoryOpenAPIContract(t *testing.T) {
 	assertions.False(page.Properties["runs"].Nullable)
 	statusSchema := doc.Components.Schemas.Map()["CardDAVStatusResponse"]
 	requirements.NotNil(statusSchema)
+	assertions.Contains(statusSchema.Required, "waiting_for_gate")
+	assertions.Contains(statusSchema.Required, "scheduler_running")
+	assertions.NotContains(statusSchema.Required, "queued_since")
+	requirements.NotNil(statusSchema.Properties["queued_since"])
+	assertions.Equal("date-time", statusSchema.Properties["queued_since"].Format)
 	assertions.NotContains(statusSchema.Required, "repair_reason")
 	assertions.NotContains(statusSchema.Required, "next_scheduled_at")
 	assertions.NotContains(statusSchema.Required, "active")
@@ -2321,4 +2326,17 @@ func TestOpenAPICollectionScopeContracts(t *testing.T) {
 		}
 	}
 	assertions.Fail("deep search documents source_ids rejection")
+}
+
+func TestOpenAPIJobStatusAllowsPostSyncOnlyJobs(t *testing.T) {
+	t.Parallel()
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	for _, build := range []func() *huma.OpenAPI{OpenAPIDocument, openAPIClientDocument} {
+		status := build().Components.Schemas.Map()["JobStatus"]
+		requirements.NotNil(status)
+		requirements.NotNil(status.Properties["next_run"])
+		assertions.NotContains(status.Required, "next_run")
+		assertions.Equal("date-time", status.Properties["next_run"].Format)
+	}
 }

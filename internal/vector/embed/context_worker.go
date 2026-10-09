@@ -13,6 +13,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
@@ -149,23 +150,23 @@ func (w *ContextWorker) runOperationPass(
 
 func (w *ContextWorker) runBackstop(ctx context.Context, gen vector.GenerationID) (RunResult, error) {
 	if err := w.validate(); err != nil {
-		return RunResult{Contextual: &ContextConvergence{}}, err
+		return RunResult{}, err
 	}
 	progress, err := w.deps.Publisher.GetDocumentProgress(ctx, gen)
 	if err != nil {
 		if errors.Is(err, vector.ErrGenerationRetired) {
-			return RunResult{Contextual: &ContextConvergence{}}, err
+			return RunResult{}, err
 		}
-		return RunResult{Contextual: &ContextConvergence{}}, fmt.Errorf("read contextual reconcile cursor: %w", err)
+		return RunResult{}, fmt.Errorf("read contextual reconcile cursor: %w", err)
 	}
 	if !strings.HasPrefix(progress.ReconcileCursor, "done:") {
 		return w.run(ctx, gen)
 	}
 	if err := w.deps.Publisher.ResetDocumentReconcileCursor(ctx, gen); err != nil {
 		if errors.Is(err, vector.ErrGenerationRetired) {
-			return RunResult{Contextual: &ContextConvergence{}}, err
+			return RunResult{}, err
 		}
-		return RunResult{Contextual: &ContextConvergence{}}, fmt.Errorf("reset contextual reconcile cursor: %w", err)
+		return RunResult{}, fmt.Errorf("reset contextual reconcile cursor: %w", err)
 	}
 	return w.run(ctx, gen)
 }
@@ -236,6 +237,9 @@ func (w *ContextWorker) run(ctx context.Context, gen vector.GenerationID) (res R
 			return res, err
 		}
 	}
+	if jobctx.PreemptionRequested(ctx) {
+		return res, nil
+	}
 	needsOrdinaryDiscovery := fresh
 	if !needsOrdinaryDiscovery {
 		progress, err := w.deps.Publisher.GetDocumentProgress(ctx, gen)
@@ -260,6 +264,9 @@ func (w *ContextWorker) run(ctx context.Context, gen vector.GenerationID) (res R
 			return res, err
 		}
 	}
+	if jobctx.PreemptionRequested(ctx) {
+		return res, nil
+	}
 	if err := w.reconcile(ctx, gen, &res); err != nil {
 		if errors.Is(err, errContextRunBudgetExhausted) {
 			return res, nil
@@ -272,6 +279,9 @@ func (w *ContextWorker) run(ctx context.Context, gen vector.GenerationID) (res R
 			return res, nil
 		}
 		return res, err
+	}
+	if jobctx.PreemptionRequested(ctx) {
+		return res, nil
 	}
 	convergence, err := w.convergence(ctx, gen)
 	if err != nil {
@@ -351,6 +361,9 @@ func (w *ContextWorker) initializeFreshGeneration(ctx context.Context, gen vecto
 		}
 		return false, fmt.Errorf("initialize contextual change watermark to %d: %w", latest, err)
 	}
+	if latest > progress.ChangeSequence {
+		jobctx.RecordProgress(ctx)
+	}
 	return true, nil
 }
 
@@ -384,6 +397,9 @@ type preparedDocumentTarget struct {
 
 func (w *ContextWorker) drainJournal(ctx context.Context, gen vector.GenerationID, res *RunResult) error {
 	for {
+		if jobctx.PreemptionRequested(ctx) {
+			return nil
+		}
 		progress, err := w.deps.Publisher.GetDocumentProgress(ctx, gen)
 		if err != nil {
 			return fmt.Errorf("read contextual progress: %w", err)
@@ -405,6 +421,7 @@ func (w *ContextWorker) drainJournal(ctx context.Context, gen vector.GenerationI
 				if err := w.deps.Publisher.SetDocumentJournalCursor(ctx, gen, ""); err != nil {
 					return fmt.Errorf("clear stale contextual journal subcursor: %w", err)
 				}
+				jobctx.RecordProgress(ctx)
 			}
 			return nil
 		}
@@ -451,6 +468,7 @@ func (w *ContextWorker) drainJournal(ctx context.Context, gen vector.GenerationI
 					if err := w.deps.Publisher.SetDocumentJournalCursor(ctx, gen, cursor); err != nil {
 						return fmt.Errorf("persist contextual journal subcursor: %w", err)
 					}
+					jobctx.RecordProgress(ctx)
 				}
 				if publishErr != nil {
 					return fmt.Errorf("publish metadata journal event %d: %w", change.Sequence, publishErr)
@@ -465,9 +483,11 @@ func (w *ContextWorker) drainJournal(ctx context.Context, gen vector.GenerationI
 			if err := w.deps.Publisher.AdvanceDocumentChangeWatermark(ctx, gen, change.Sequence); err != nil {
 				return fmt.Errorf("advance contextual change watermark to %d: %w", change.Sequence, err)
 			}
+			jobctx.RecordProgress(ctx)
 			if err := w.deps.Publisher.SetDocumentJournalCursor(ctx, gen, ""); err != nil {
 				return fmt.Errorf("clear contextual journal subcursor: %w", err)
 			}
+			jobctx.RecordProgress(ctx)
 			continue
 		}
 		normalChanges := changes
@@ -492,6 +512,9 @@ func (w *ContextWorker) drainJournal(ctx context.Context, gen vector.GenerationI
 			scopes = scopes[first:]
 		}
 		for start := 0; start < len(scopes); start += w.deps.ChangeBatchSize {
+			if jobctx.PreemptionRequested(ctx) {
+				return nil
+			}
 			end := min(start+w.deps.ChangeBatchSize, len(scopes))
 			pageSnapshot, err := BeginSourceSnapshot(ctx, w.source)
 			if err != nil {
@@ -511,6 +534,7 @@ func (w *ContextWorker) drainJournal(ctx context.Context, gen vector.GenerationI
 				if err := w.deps.Publisher.SetDocumentJournalCursor(ctx, gen, cursor); err != nil {
 					return fmt.Errorf("persist contextual journal scope cursor: %w", err)
 				}
+				jobctx.RecordProgress(ctx)
 			}
 			if publishErr != nil {
 				return fmt.Errorf("publish journal scope page through sequence %d: %w", last, publishErr)
@@ -519,9 +543,11 @@ func (w *ContextWorker) drainJournal(ctx context.Context, gen vector.GenerationI
 		if err := w.deps.Publisher.AdvanceDocumentChangeWatermark(ctx, gen, last); err != nil {
 			return fmt.Errorf("advance contextual change watermark to %d: %w", last, err)
 		}
+		jobctx.RecordProgress(ctx)
 		if err := w.deps.Publisher.SetDocumentJournalCursor(ctx, gen, ""); err != nil {
 			return fmt.Errorf("clear contextual journal scope cursor: %w", err)
 		}
+		jobctx.RecordProgress(ctx)
 	}
 }
 
@@ -542,6 +568,9 @@ func (w *ContextWorker) drainOrdinaryDiscovery(ctx context.Context, gen vector.G
 		}
 	}
 	for {
+		if jobctx.PreemptionRequested(ctx) {
+			return nil
+		}
 		pageAfter := after
 		ids, err := w.deps.Store.ScanForEmbeddingScoped(
 			ctx, int64(gen), after, w.deps.ChangeBatchSize,
@@ -562,6 +591,7 @@ func (w *ContextWorker) drainOrdinaryDiscovery(ctx context.Context, gen vector.G
 			if err := w.deps.Publisher.SetDocumentReconcileCursor(ctx, gen, "source:0"); err != nil {
 				return fmt.Errorf("complete contextual ordinary discovery: %w", err)
 			}
+			jobctx.RecordProgress(ctx)
 			return nil
 		}
 		res.Claimed += len(ids)
@@ -599,6 +629,7 @@ func (w *ContextWorker) drainOrdinaryDiscovery(ctx context.Context, gen vector.G
 			if err := w.deps.Publisher.SetDocumentReconcileCursor(ctx, gen, cursor); err != nil {
 				return fmt.Errorf("persist contextual ordinary discovery scope cursor: %w", err)
 			}
+			jobctx.RecordProgress(ctx)
 		}
 		if publishErr != nil {
 			return fmt.Errorf("publish discovered scopes: %w", publishErr)
@@ -609,6 +640,7 @@ func (w *ContextWorker) drainOrdinaryDiscovery(ctx context.Context, gen vector.G
 			"discovery:"+strconv.FormatInt(after, 10)); err != nil {
 			return fmt.Errorf("advance contextual ordinary discovery cursor: %w", err)
 		}
+		jobctx.RecordProgress(ctx)
 	}
 }
 
@@ -866,6 +898,7 @@ func (w *ContextWorker) publishPreparedScopes(ctx context.Context, gen vector.Ge
 			}
 			return 0, fmt.Errorf("publish prepared scope page: %w", err)
 		}
+		jobctx.RecordProgress(ctx)
 	}
 	processed := 0
 	for planIndex := range completePlans {
@@ -972,6 +1005,7 @@ func (w *ContextWorker) coverPreparedScopePlan(ctx context.Context, gen vector.G
 		if !stamped {
 			return errors.New("coverage CAS missed; source scope changed after assembly and remains uncovered")
 		}
+		jobctx.RecordProgress(ctx)
 		if w.deps.Hooks.AfterCoverage != nil {
 			if err := w.deps.Hooks.AfterCoverage(); err != nil {
 				return fmt.Errorf("after coverage CAS: %w", err)
@@ -1303,6 +1337,9 @@ func (w *ContextWorker) reconcile(ctx context.Context, gen vector.GenerationID, 
 			}
 		}
 		for {
+			if jobctx.PreemptionRequested(ctx) {
+				return nil
+			}
 			pageAfter := after
 			snapshot, err := BeginSourceSnapshot(ctx, w.source)
 			if err != nil {
@@ -1348,6 +1385,7 @@ func (w *ContextWorker) reconcile(ctx context.Context, gen vector.GenerationID, 
 				if err := w.deps.Publisher.SetDocumentReconcileCursor(ctx, gen, partial); err != nil {
 					return err
 				}
+				jobctx.RecordProgress(ctx)
 			}
 			if publishErr != nil {
 				return fmt.Errorf("reconcile source scopes: %w", publishErr)
@@ -1358,6 +1396,7 @@ func (w *ContextWorker) reconcile(ctx context.Context, gen vector.GenerationID, 
 				if err := w.deps.Publisher.SetDocumentReconcileCursor(ctx, gen, "source:"+strconv.FormatInt(after, 10)); err != nil {
 					return err
 				}
+				jobctx.RecordProgress(ctx)
 			}
 			if !more {
 				break
@@ -1367,9 +1406,13 @@ func (w *ContextWorker) reconcile(ctx context.Context, gen vector.GenerationID, 
 		if err := w.deps.Publisher.SetDocumentReconcileCursor(ctx, gen, cursor); err != nil {
 			return err
 		}
+		jobctx.RecordProgress(ctx)
 	}
 	afterKey, pageEndKey, resumeScope := decodeOrphanReconcileCursor(cursor)
 	for {
+		if jobctx.PreemptionRequested(ctx) {
+			return nil
+		}
 		pageAfterKey := afterKey
 		records, err := w.deps.Publisher.ListDocumentsAfter(ctx, gen, afterKey, w.deps.ReconcileBatchSize)
 		if err != nil {
@@ -1390,6 +1433,7 @@ func (w *ContextWorker) reconcile(ctx context.Context, gen vector.GenerationID, 
 			if err := w.deps.Publisher.SetDocumentReconcileCursor(ctx, gen, "orphan:"+afterKey); err != nil {
 				return err
 			}
+			jobctx.RecordProgress(ctx)
 			continue
 		}
 		scopeMap := make(map[string]contextScope)
@@ -1423,6 +1467,7 @@ func (w *ContextWorker) reconcile(ctx context.Context, gen vector.GenerationID, 
 			if err := w.deps.Publisher.SetDocumentReconcileCursor(ctx, gen, partial); err != nil {
 				return err
 			}
+			jobctx.RecordProgress(ctx)
 		}
 		if publishErr != nil {
 			return fmt.Errorf("reconcile ledger scopes: %w", publishErr)
@@ -1433,12 +1478,17 @@ func (w *ContextWorker) reconcile(ctx context.Context, gen vector.GenerationID, 
 		if err := w.deps.Publisher.SetDocumentReconcileCursor(ctx, gen, "orphan:"+afterKey); err != nil {
 			return err
 		}
+		jobctx.RecordProgress(ctx)
 	}
 	latest, err := w.deps.Store.LatestEmbeddingChangeSequence(ctx)
 	if err != nil {
 		return err
 	}
-	return w.deps.Publisher.SetDocumentReconcileCursor(ctx, gen, "done:"+strconv.FormatInt(latest, 10))
+	if err := w.deps.Publisher.SetDocumentReconcileCursor(ctx, gen, "done:"+strconv.FormatInt(latest, 10)); err != nil {
+		return err
+	}
+	jobctx.RecordProgress(ctx)
+	return nil
 }
 
 func (w *ContextWorker) convergence(ctx context.Context, gen vector.GenerationID) (ContextConvergence, error) {

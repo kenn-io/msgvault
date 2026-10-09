@@ -456,7 +456,7 @@ export class CardDAVController {
     }
   }
   private shouldPoll(): boolean {
-    return !this.disposed && !this.visibilityDocument?.hidden && Boolean(this.status?.active || this.syncPending);
+    return !this.disposed && !this.visibilityDocument?.hidden && Boolean(this.status?.active || this.status?.waiting_for_gate || this.status?.scheduler_running || this.syncPending);
   }
   private schedulePoll(delay: number): void {
     if (!this.shouldPoll()) return;
@@ -474,7 +474,7 @@ export class CardDAVController {
     this.pollAbort?.abort();
     const requestController = new AbortController();
     this.pollAbort = requestController;
-    const priorActive = Boolean(this.status?.active);
+    const priorWork = Boolean(this.status?.active || this.status?.waiting_for_gate || this.status?.scheduler_running);
     try {
       const { data } = await generatedGetCardDAVStatus(
         this.connection ? { connection: this.connection } : undefined,
@@ -502,7 +502,7 @@ export class CardDAVController {
       this.statusError = null;
       this.pollFingerprint = fingerprint;
       this.recordSuccessfulStatusCommit(statusCommit);
-      if (priorActive && !data.active && !this.syncPending) {
+      if (priorWork && !data.active && !data.waiting_for_gate && !data.scheduler_running && !this.syncPending) {
         this.stopPolling(false);
         await Promise.all([...(data.available ? [this.loadBooks(true)] : []), this.refreshRuns()]);
         return;
@@ -579,6 +579,7 @@ function uniqueRuns(runs: CardDAVRun[]): CardDAVRun[] {
 }
 function statusFingerprint(status: CardDAVStatus): string {
   const run = status.active;
-  if (!run) return `idle:${status.latest?.id ?? 0}:${status.latest?.state ?? ''}`;
-  return [run.id, run.state, run.books, run.created, run.updated, run.removed].join(':');
+  const queue = `${status.waiting_for_gate ?? false}:${status.queued_since ?? ''}:${status.scheduler_running ?? false}`;
+  if (!run) return `idle:${status.latest?.id ?? 0}:${status.latest?.state ?? ''}:${queue}`;
+  return [run.id, run.state, run.books, run.created, run.updated, run.removed, queue].join(':');
 }

@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/sqlitevec"
 )
@@ -24,7 +25,7 @@ type orphanFixture struct {
 	MainDB   *sql.DB
 	MainPath string
 	VecPath  string
-	Store    WorkStore
+	Store    *store.Store
 	Client   *fakeEmbeddingClient
 }
 
@@ -37,9 +38,10 @@ func newOrphanFixture(t *testing.T, n int) *orphanFixture {
 	dir := t.TempDir()
 	mainPath := filepath.Join(dir, "main.db")
 	require.NoError(t, sqlitevec.RegisterExtension(), "RegisterExtension")
-	mainDB, err := sql.Open(sqlitevec.DriverName(), mainPath)
+	st, err := store.OpenForTest(mainPath)
 	require.NoError(t, err, "open main")
-	t.Cleanup(func() { _ = mainDB.Close() })
+	t.Cleanup(func() { _ = st.Close() })
+	mainDB := st.DB()
 
 	schema := testMainSchema + `
 CREATE TABLE applied_migrations (
@@ -61,7 +63,7 @@ CREATE TABLE applied_migrations (
 		MainDB:   mainDB,
 		MainPath: mainPath,
 		VecPath:  filepath.Join(dir, "vectors.db"),
-		Store:    &testWorkStore{db: mainDB},
+		Store:    st,
 		Client:   &fakeEmbeddingClient{dim: 4},
 	}
 }
@@ -165,8 +167,8 @@ func TestResetOrphanedEmbedGen_NoFalsePositive(t *testing.T) {
 			{MessageID: 2, Vector: []float32{0, 1, 0, 0}},
 		}), "Upsert")
 
-	require.NoError(
-		f.Store.SetEmbedGen(ctx, []int64{1, 2}, int64(gen)), "stamp")
+	_, stampErr := f.Store.SetEmbedGen(ctx, []int64{1, 2}, int64(gen))
+	require.NoError(stampErr, "stamp")
 
 	require.NoError(
 		b.ActivateGeneration(ctx, gen, true), "Activate")

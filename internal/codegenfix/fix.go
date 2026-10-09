@@ -46,6 +46,7 @@ func RewriteRunQueryClient(source []byte) ([]byte, error) {
 var optionalValueJSONTag = regexp.MustCompile("((?:\\*string|\\*?jsontext\\.Value)\\s+`json:\"[^\"]+),omitempty(\")")
 
 var requiredPointerValidators = [][3]string{
+	{"JobStatus", "Schedule", "j"},
 	{"FileMetadataResponse", "Filename", "f"},
 	{"FileMetadataResponse", "MimeType", "f"},
 	{"FileSearchRow", "Filename", "f"},
@@ -97,11 +98,15 @@ func RewriteGeneratedValidators(source []byte) ([]byte, error) {
 		validator := result[start:end]
 		guarded := []byte("\tif " + receiver + "." + field + " != nil {\n\t\tif err := typesValidator.Var(" + receiver + "." + field + ", \"required\"); err != nil {\n\t\t\terrors = errors.Append(\"" + field + "\", err)\n\t\t}\n\t}")
 		required := []byte("\tif err := typesValidator.Var(" + receiver + "." + field + ", \"required\"); err != nil {\n\t\terrors = errors.Append(\"" + field + "\", err)\n\t}")
+		delegated := []byte("\tif v, ok := any(" + receiver + "." + field + ").(runtime.Validator); ok {\n\t\tif err := v.Validate(); err != nil {\n\t\t\terrors = errors.Append(\"" + field + "\", err)\n\t\t}\n\t}")
 		switch {
 		case bytes.Contains(validator, guarded):
 			rewritten := bytes.Replace(validator, guarded, required, 1)
 			result = append(append(append([]byte(nil), result[:start]...), rewritten...), result[end:]...)
 		case bytes.Contains(validator, required):
+		case bytes.Contains(validator, delegated):
+			rewritten := bytes.Replace(validator, delegated, required, 1)
+			result = append(append(append([]byte(nil), result[:start]...), rewritten...), result[end:]...)
 		default:
 			return nil, fmt.Errorf("generated %s.%s validator shape changed", typeName, field)
 		}

@@ -424,24 +424,34 @@ func TestCardDAVStatusReportsSelectedAndAggregateSchedules(t *testing.T) {
 	cfg := config.NewDefaultConfig()
 	cfg.HomeDir = t.TempDir()
 	cfg.Data.DataDir = cfg.HomeDir
-	cfg.CardDAVConnections = map[string]config.CardDAVConfig{"work": {Enabled: true}, "personal": {Enabled: true}}
+	cfg.CardDAVConnections = map[string]config.CardDAVConfig{"work": {Enabled: true}, "personal": {Enabled: true}, "running": {Enabled: true}}
 	controller := &CardDAVController{cfg: cfg, store: testutil.NewTestStore(t)}
 	next := time.Date(2026, 10, 1, 1, 0, 0, 0, time.UTC)
 	sched := newMockScheduler()
-	sched.jobStatuses = []JobStatus{{Name: "carddav:work", NextRun: next}, {Name: "carddav:personal", NextRun: next.Add(time.Hour)}, {Name: "unrelated", NextRun: next.Add(-time.Hour)}}
+	sched.jobStatuses = []JobStatus{{Name: "carddav:work", NextRun: next, Queued: true, QueuedSince: next.Add(-time.Hour)}, {Name: "carddav:personal", NextRun: next.Add(time.Hour), Queued: true, QueuedSince: next.Add(-2 * time.Hour)}, {Name: "carddav:running", NextRun: next.Add(2 * time.Hour), Running: true}, {Name: "unrelated", NextRun: next.Add(-time.Hour), Running: true, Queued: true, QueuedSince: next.Add(-3 * time.Hour)}}
 	server := cardDAVReadServer(t, cfg, controller, sched)
 	for _, tc := range []struct {
 		query     string
 		scheduled bool
+		running   bool
 		next      time.Time
+		since     time.Time
 	}{
-		{"", true, next}, {"?connection=work", true, next}, {"?connection=personal", true, next.Add(time.Hour)}, {"?connection=default", false, time.Time{}},
+		{"", true, true, next, next.Add(-2 * time.Hour)}, {"?connection=work", true, false, next, next.Add(-time.Hour)}, {"?connection=personal", true, false, next.Add(time.Hour), next.Add(-2 * time.Hour)}, {"?connection=running", true, true, next.Add(2 * time.Hour), time.Time{}}, {"?connection=default", false, false, time.Time{}, time.Time{}},
 	} {
 		response := getCardDAVRead(t, server, "/api/v1/carddav/status"+tc.query)
 		require.Equal(http.StatusOK, response.Code, response.Body.String())
 		var status CardDAVStatusResponse
 		require.NoError(json.NewDecoder(response.Body).Decode(&status))
 		assertions.Equal(tc.scheduled, status.Scheduled)
+		assertions.Equal(tc.running, status.SchedulerRunning)
+		assertions.Equal(!tc.since.IsZero(), status.WaitingForGate)
+		if !tc.since.IsZero() {
+			require.NotNil(status.QueuedSince)
+			assertions.Equal(tc.since, *status.QueuedSince)
+		} else {
+			assertions.Nil(status.QueuedSince)
+		}
 		if tc.scheduled {
 			require.NotNil(status.NextScheduledAt)
 			assertions.Equal(tc.next, *status.NextScheduledAt)
@@ -449,4 +459,30 @@ func TestCardDAVStatusReportsSelectedAndAggregateSchedules(t *testing.T) {
 			assertions.Nil(status.NextScheduledAt)
 		}
 	}
+}
+
+func TestCardDAVStatusTracksSchedulerAdmissionAndCompletion(t *testing.T) {
+	require := require.New(t)
+	assertions := assert.New(t)
+	cfg, st, service := savedCardDAVFixture(t)
+	controller := &CardDAVController{cfg: cfg, store: st, service: service, loadCredential: carddav.LoadCredential}
+	sched := newMockScheduler()
+	server := cardDAVReadServer(t, cfg, controller, sched)
+	var completedID int64
+	sched.jobStatusFn = func() []JobStatus {
+		run, err := st.StartCardDAVSyncRunContext(t.Context(), store.CardDAVSyncRunStart{AccountID: store.DefaultCardDAVAccountID, Trigger: store.CardDAVSyncTriggerScheduled})
+		require.NoError(err)
+		_, err = st.FinishCardDAVSyncRunContext(t.Context(), run.ID, store.CardDAVSyncRunFinish{State: store.CardDAVSyncRunSucceeded})
+		require.NoError(err)
+		completedID = run.ID
+		return nil
+	}
+	response := getCardDAVRead(t, server, "/api/v1/carddav/status")
+	require.Equal(http.StatusOK, response.Code, response.Body.String())
+	var finished CardDAVStatusResponse
+	require.NoError(json.NewDecoder(response.Body).Decode(&finished))
+	assertions.False(finished.SchedulerRunning)
+	require.NotNil(finished.Latest, "archive snapshot must follow the scheduler snapshot")
+	assertions.Equal(completedID, finished.Latest.ID)
+	assertions.Equal("succeeded", finished.Latest.State)
 }

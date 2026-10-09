@@ -114,9 +114,15 @@
               >{scheduleSummary(status.schedule)}</span
             >{:else if status.scheduled}Scheduled · Schedule unavailable{:else}Manual sync only{/if}</span
         >
+        {#if status.waiting_for_gate}
+          <span>Waiting to sync</span>
+          {#if status.queued_since}
+            <span>Queued since <time datetime={status.queued_since} title={status.queued_since}>{formatTimestamp(status.queued_since)}</time></span>
+          {/if}
+        {/if}
         {#if status.next_scheduled_at}
           <span
-            >Next run <time datetime={status.next_scheduled_at} title={status.next_scheduled_at}
+            >Next scheduled time <time datetime={status.next_scheduled_at} title={status.next_scheduled_at}
               >{formatTimestamp(status.next_scheduled_at)}</time
             ></span
           >
@@ -130,6 +136,10 @@
           <time datetime={status.active.started_at} title={status.active.started_at}
             >Started {formatTimestamp(status.active.started_at)}</time
           >
+        </div>
+      {:else if status.scheduler_running}
+        <div class="run-summary" aria-label="Active CardDAV sync">
+          <span class="working"><Spinner size={14} label="CardDAV sync running" /> Running</span>
         </div>
       {:else if status.latest}
         <div class="run-summary" aria-label="Latest CardDAV sync">

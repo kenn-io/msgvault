@@ -76,6 +76,30 @@ func TestGeneratedCalendarEnumsRetainExistingExportedConstants(t *testing.T) {
 	assertions.Equal(generated.CalendarRequestScopeSingle, generated.CalendarRequestScope("single"))
 }
 
+func TestGeneratedSchedulerStatusAcceptsPresentEmptyPostSyncSchedule(t *testing.T) {
+	require := require.New(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"accounts":[],"jobs":[{"name":"embed","running":false,"schedule":""}],"running":true}`))
+	}))
+	t.Cleanup(server.Close)
+
+	client, err := generated.NewDefaultClient(server.URL, runtime.WithHTTPClient(httpClientDoer{client: http.DefaultClient}))
+	require.NoError(err)
+
+	response, err := client.GetSchedulerStatusWithResponse(context.Background())
+	require.NoError(err)
+	require.NotNil(response.JSON200)
+	require.NoError(response.JSON200.Validate(), "a present empty schedule is valid for post-sync-only jobs")
+	require.Len(response.JSON200.Jobs, 1)
+	require.NotNil(response.JSON200.Jobs[0].Schedule)
+	assert.Empty(t, *response.JSON200.Jobs[0].Schedule)
+
+	var missingSchedule generated.JobStatus
+	require.NoError(json.Unmarshal([]byte(`{"name":"embed","running":false}`), &missingSchedule))
+	assert.Error(t, missingSchedule.Validate(), "the required schedule property must still be present")
+}
+
 func generatedSettingGroupForCompatibility(group generated.SettingGroup0) generated.SettingGroup0 {
 	return group
 }

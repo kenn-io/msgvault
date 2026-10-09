@@ -90,9 +90,10 @@ func (s *Store) ScanForEmbeddingScoped(ctx context.Context, target int64, afterI
 // transaction because each chunk's UPDATE is independently idempotent and
 // the cross-DB worker contract already tolerates a partial stamp (the
 // next scan re-finds any unstamped rows and re-runs an idempotent batch).
-func (s *Store) SetEmbedGen(ctx context.Context, ids []int64, target int64) error {
+// SetEmbedGen returns committed stamps, including a prefix before an error.
+func (s *Store) SetEmbedGen(ctx context.Context, ids []int64, target int64) (committed int, err error) {
 	if len(ids) == 0 {
-		return nil
+		return 0, nil
 	}
 	for start := 0; start < len(ids); start += embedGenStampChunkRows {
 		end := min(start+embedGenStampChunkRows, len(ids))
@@ -107,11 +108,18 @@ func (s *Store) SetEmbedGen(ctx context.Context, ids []int64, target int64) erro
 		}
 		q := `UPDATE messages SET embed_gen = ? WHERE id IN (` +
 			strings.Join(placeholders, ",") + `)`
-		if _, err := s.db.ExecContext(ctx, q, args...); err != nil {
-			return fmt.Errorf("set embed_gen: %w", err)
+		res, err := s.db.ExecContext(ctx, q, args...)
+		if err != nil {
+			return committed, fmt.Errorf("set embed_gen: %w", err)
 		}
+		rows, err := res.RowsAffected()
+		if err != nil {
+			// Preserve a possible committed checkpoint when the driver cannot report its count.
+			return committed + len(chunk), fmt.Errorf("count stamped embed_gen rows: %w", err)
+		}
+		committed += int(rows)
 	}
-	return nil
+	return committed, nil
 }
 
 // EmbedGenStamp pairs a message id with the last_modified token captured
@@ -398,22 +406,29 @@ func (s *Store) embedGenMetadataDigest(
 // update) bumps last_modified and clears embed_gen (repair) / re-finds it, and a
 // full rebuild or the auto-backstop re-embeds it regardless. See
 // docs/usage/vector-search.md ("CAS resolution").
-func (s *Store) SetEmbedGenIfUnchanged(ctx context.Context, items []EmbedGenStamp, target int64) (missed []int64, err error) {
+// SetEmbedGenIfUnchanged returns missed IDs and committed stamps, including a prefix before an error.
+func (s *Store) SetEmbedGenIfUnchanged(
+	ctx context.Context, items []EmbedGenStamp, target int64,
+) (missed []int64, committed int, err error) {
 	for _, it := range items {
 		q := `UPDATE messages SET embed_gen = ? WHERE id = ? AND last_modified = ?`
 		res, err := s.db.ExecContext(ctx, q, target, it.ID, it.LastModified)
 		if err != nil {
-			return missed, fmt.Errorf("set embed_gen if unchanged (id=%d): %w", it.ID, err)
+			return missed, committed, fmt.Errorf("set embed_gen if unchanged (id=%d): %w", it.ID, err)
 		}
 		n, err := res.RowsAffected()
 		if err != nil {
-			return missed, fmt.Errorf("rows affected (id=%d): %w", it.ID, err)
+			// The update statement ran successfully; conservatively checkpoint
+			// its outcome because the row count is now unknown.
+			return missed, committed + 1, fmt.Errorf("rows affected (id=%d): %w", it.ID, err)
 		}
 		if n == 0 {
 			missed = append(missed, it.ID)
+		} else {
+			committed++
 		}
 	}
-	return missed, nil
+	return missed, committed, nil
 }
 
 // ResetEmbedGen clears embed_gen (sets it back to NULL) on the given

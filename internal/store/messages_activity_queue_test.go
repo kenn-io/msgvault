@@ -45,7 +45,8 @@ func TestMessageBookkeepingUpdatesDoNotRequeueActivity(t *testing.T) {
 	messageID := builder.Create(t, f.Store)
 	before := activityQueueRevision(t, f.Store, messageID)
 
-	require.NoError(f.Store.SetEmbedGen(t.Context(), []int64{messageID}, 7))
+	_, stampErr := f.Store.SetEmbedGen(t.Context(), []int64{messageID}, 7)
+	require.NoError(stampErr)
 	assert.Equal(before, activityQueueRevision(t, f.Store, messageID),
 		"an embed_gen stamp must not requeue the message")
 

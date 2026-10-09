@@ -280,6 +280,7 @@ type mockScheduler struct {
 	scheduled     map[string]bool
 	running       bool
 	statuses      []AccountStatus
+	jobStatusFn   func() []JobStatus
 	jobStatuses   []JobStatus     // generic (non-account) job statuses, see JobStatus()
 	scheduledJobs map[string]bool // generic job names recognized by IsJobScheduled
 	triggeredJobs []string        // generic job names passed to TriggerJob
@@ -323,6 +324,9 @@ func (m *mockScheduler) IsRunning() bool {
 }
 
 func (m *mockScheduler) JobStatus() []JobStatus {
+	if m.jobStatusFn != nil {
+		return m.jobStatusFn()
+	}
 	return m.jobStatuses
 }
 
@@ -1035,12 +1039,16 @@ func TestSchedulerStatusEndpoint(t *testing.T) {
 	}
 	sched := newMockScheduler()
 	sched.running = true
+	since := time.Date(2026, 10, 1, 1, 0, 0, 0, time.UTC)
+	sched.jobStatuses = []JobStatus{{Name: "carddav", Queued: true, QueuedSince: since}}
 	sched.statuses = []AccountStatus{
 		{
-			Email:    "test@gmail.com",
-			Running:  false,
-			Schedule: "0 2 * * *",
-			NextRun:  time.Now().Add(time.Hour),
+			Email:       "queued@example.test",
+			Running:     false,
+			Queued:      true,
+			QueuedSince: since,
+			Schedule:    "0 2 * * *",
+			NextRun:     time.Now().Add(time.Hour),
 		},
 	}
 
@@ -1057,7 +1065,12 @@ func TestSchedulerStatusEndpoint(t *testing.T) {
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
 
 	assert.True(resp.Running, "expected scheduler to be running")
-	assert.Len(resp.Accounts, 1, "expected 1 account")
+	require.Len(t, resp.Accounts, 1)
+	assert.Equal(since, resp.Accounts[0].QueuedSince)
+	assert.True(resp.Accounts[0].Queued)
+	require.Len(t, resp.Jobs, 1)
+	assert.Equal(since, resp.Jobs[0].QueuedSince)
+	assert.True(resp.Jobs[0].Queued)
 }
 
 func TestSchedulerStatusNotRunning(t *testing.T) {

@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	docbankdocument "go.kenn.io/docbank/document"
+	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector/embed"
 )
@@ -127,7 +128,8 @@ func TestWorkerRunPreservesExactTextAndExtractionBoundaries(t *testing.T) {
 	}
 	worker := newFakeWorker(ledger, provider, backend)
 
-	result, err := worker.Run(t.Context(), 1, 4)
+	ctx := t.Context()
+	result, err := worker.Run(ctx, 1, 4)
 	requirements.NoError(err)
 	requirements.Len(provider.calls, 1)
 	assertions.Equal([]embed.DocumentInput{
@@ -1138,4 +1140,63 @@ func embeddingTokens(embeddings []Embedding) []string {
 		tokens[index] = embeddings[index].Token
 	}
 	return tokens
+}
+
+func TestWorkerCheckpointRequiresFencedPublication(t *testing.T) {
+	for _, prefixCommitted := range []bool{false, true} {
+		label := "failed-publication"
+		if prefixCommitted {
+			label = "committed-prefix-then-failure"
+		}
+		t.Run(label, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			claim := workerClaim("extract-a", 1, "first", "token-a")
+			claims := []*store.DocumentVectorChunkClaim{claim}
+			vectors := [][]float32{{1, 2, 3}}
+			if prefixCommitted {
+				claims = append(claims, workerClaim("extract-a", 2, "second", "token-b"))
+				vectors = append(vectors, []float32{4, 5, 6})
+			}
+			ledger := newFakeDocumentVectorLedger(claims...)
+			failedToken := "token-a"
+			if prefixCommitted {
+				failedToken = "token-b"
+			}
+			publicationErr := errors.New("fenced publication failed")
+			ledger.commitErr = map[string]error{failedToken: publicationErr}
+			worker := newFakeWorker(ledger, &fakeDocumentVectorProvider{vectors: [][][]float32{vectors}}, &fakeDocumentVectorBackend{})
+			ctx := jobctx.WithProgress(t.Context())
+			result, err := worker.Run(ctx, 1, 10)
+			require.ErrorIs(err, publicationErr)
+			assert.Equal(prefixCommitted, jobctx.HasProgress(ctx))
+			if prefixCommitted {
+				assert.Equal(1, result.Published)
+			} else {
+				assert.Zero(result.Published)
+			}
+		})
+	}
+}
+
+func TestWorkerCooperativeYieldFinishesClaimedBatch(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	ledger := newFakeDocumentVectorLedger(workerClaim("extract-a", 1, "alpha", "token-a"))
+	provider := &fakeDocumentVectorProvider{vectors: [][][]float32{{{1, 2, 3}}}}
+	ctx, request := jobctx.WithPreemption(jobctx.WithProgress(t.Context()))
+	provider.call = func(context.Context, []embed.DocumentInput) ([][][]float32, error) {
+		request()
+		return provider.vectors, nil
+	}
+	worker := newFakeWorker(ledger, provider, &fakeDocumentVectorBackend{})
+	result, err := worker.Run(ctx, 1, 1)
+	require.NoError(err)
+	assert.Equal(1, result.Published)
+	assert.True(jobctx.HasProgress(ctx))
+	claimCalls := ledger.claimCalls
+	result, err = worker.Run(ctx, 1, 1)
+	require.NoError(err)
+	assert.Zero(result.Claimed)
+	assert.Equal(claimCalls, ledger.claimCalls)
 }

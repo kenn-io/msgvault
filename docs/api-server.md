@@ -100,7 +100,7 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.10.0**.
+it is separate from the binary release version. The current schema is **3.11.0**.
 Upgrade clients and daemon together across incompatible schema versions,
 including remote deployments.
 
@@ -118,6 +118,8 @@ review token. Upgrade the CLI and daemon together; clients with an incompatible
 schema fail before issuing archive requests. The HTTP prefix remains `/api/v1`.
 This schema also adds consented identity scoring. See
 [identity match review and scoring](#identity-match-review-and-scoring).
+
+Schema 3.11.0 adds queue timestamps in [scheduler status](#get-apiv1schedulerstatus) and gate-wait state in [CardDAV status](#get-apiv1carddavstatus).
 
 Schema 3.4.0 adds [Kata issues from archive evidence](usage/kata-issues.md).
 It also adds the `microsoft` CardDAV account provider, the
@@ -2214,7 +2216,11 @@ Scheduler state and per-account schedule details.
 ```
 
 The daemon runs scheduled work one job at a time. While a sync waits for
-another job to finish, its entry reports `"queued": true` and `"running": false`.
+another job to finish, its entry reports `"queued": true` and `"running": false`. On unreleased `main`,
+`queued_since` records when that invocation began waiting and is omitted after
+gate admission. The `jobs` array reports the same fields for generic jobs,
+including message embedding (`embed`) and document vectors (`document-vector`).
+For post-sync-only jobs, `schedule` is empty and `next_run` is omitted.
 `"running": true` means it acquired the operation gate; `started_at` gives when
 it began. The top-level `running` field reports whether the scheduler is active.
 A schedule tick that fires during a run
@@ -2229,12 +2235,31 @@ stops after its current batch, limits each pass to ten batches, and stops at
 two minutes regardless. It saves its reconciliation progress. Attachment
 packing and daily attachment maintenance stop after one minute and resume
 behind waiting work. IMAP full passes do not support scheduled preemption.
+On unreleased `main`, automatic message and document embedding use five-minute
+passes and support the same one-minute preemption. A budget expiry resumes
+immediately only after committed progress; otherwise `last_error` reports the
+failure and the job waits for the next trigger.
 Other jobs keep their own runtime budgets. Waiting API requests can still
-interrupt scheduled work. `GET /api/v1/sources/status` reports the same
-state for every scheduled source as `scheduler_queued`, `scheduler_pending`,
-and `scheduler_started_at`. Compare queued state and the last successful sync
+interrupt scheduled work. `GET /api/v1/sources/status` reports whether each
+scheduled source is queued (`scheduler_queued`), has a follow-up pending
+(`scheduler_pending`), and when its current run started (`scheduler_started_at`).
+Compare queued state and the last successful sync
 to detect a source that is waiting too long. Health's `operation.label` names
 the job holding the gate, such as `activity-projection` or `attachment-pack`.
+
+---
+
+### CardDAV status {#get-apiv1carddavstatus}
+
+**Endpoint:** `GET /api/v1/carddav/status`
+
+On unreleased `main`, `waiting_for_gate` and optional `queued_since` describe
+the connection selected by `?connection=<name>`. Without a selector, they
+report any waiting CardDAV job and the oldest queue time. `next_scheduled_at`
+is the next cron tick, even while a run waits. `scheduler_running` reports
+matching scheduled work that has started, including before an `active` run
+appears. Keep polling while `waiting_for_gate`, `scheduler_running`, or
+`active` indicates work; refresh address books and history when all three clear.
 
 ---
 
