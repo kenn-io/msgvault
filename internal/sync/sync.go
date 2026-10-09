@@ -1327,7 +1327,7 @@ func (s *Syncer) full(
 		return nil, err
 	}
 	scoped := *s
-	scoped.store = s.store.ScopedToSync(source.ID, state.syncID)
+	scoped.store = s.store.ScopedToSync(source.ID, state.syncID).WithIngestContext(store.IngestContext{Mode: store.IngestBackfill, ObservedAt: time.Now().UTC()})
 	scoped.failedRelocationGuards = newFailedRelocationGuards()
 	s = &scoped
 	summary.SyncRunID = state.syncID
@@ -1843,8 +1843,19 @@ func (s *Syncer) persistMessage(data *messageData, labelMap map[string]int64) (i
 		recipientSets = append(recipientSets, rs)
 	}
 
+	// Provider provenance is attached to the individual listing identity.
+	persistenceStore := s.store
+	if s.opts.SourceType == sourceTypeIMAP {
+		if provider, ok := s.client.(interface {
+			MessageIngestContext(sourceMessageID string) store.IngestContext
+		}); ok {
+			persistenceStore = s.store.WithIngestContext(provider.MessageIngestContext(data.message.SourceMessageID))
+		} else {
+			persistenceStore = s.store.WithIngestContext(store.IngestContext{Mode: store.IngestUnknown})
+		}
+	}
 	// Persist atomically
-	messageID, err := s.store.PersistMessage(&store.MessagePersistData{
+	messageID, err := persistenceStore.PersistMessage(&store.MessagePersistData{
 		Message:    data.message,
 		Metadata:   data.metadata,
 		BodyText:   sql.NullString{String: data.bodyText, Valid: data.bodyText != ""},

@@ -93,6 +93,14 @@ func (s *Store) PurgeChannelContext(ctx context.Context, sourceID int64, channel
 	if err := s.rejectConflictingSyncOperation(ctx, conn, sourceID, ""); err != nil {
 		return err
 	}
+	if s.captureMCPEnabled() {
+		if err := s.mcpIdentityFence(ctx, conn); err != nil {
+			return mcpSafeError(err)
+		}
+		if _, err := s.mcpClockLock(ctx, conn); err != nil {
+			return mcpSafeError(err)
+		}
+	}
 	if err := s.purgeChannelExec(ctx, conn, purge); err != nil {
 		return err
 	}
@@ -109,6 +117,11 @@ func (s *Store) purgeChannelExec(ctx context.Context, q purgeQuerier, purge chan
 		return err
 	}
 	if err := s.forgetChannelCoverage(ctx, q, purge.sourceID, purge.provider, ids); err != nil {
+		return err
+	}
+	// Retained receipts and subscriptions are removed with their scope even
+	// while capture is disabled. Keep this before the conversation cascade.
+	if err := s.removeMCPEventConversations(ctx, q, purge.targets(), purge.args); err != nil {
 		return err
 	}
 	packedHashes, err := s.packedBlobHashes(ctx, q, purge)
