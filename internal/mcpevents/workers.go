@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"math/rand/v2"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"go.kenn.io/msgvault/internal/httpretry"
@@ -491,8 +490,7 @@ func (a *deliveryAttempt) send(ctx context.Context, current, previous []byte) (s
 	for {
 		err := a.check(ctx, true)
 		if err == nil {
-			var refused atomic.Bool
-			guard := a.s.dialGuard(a.w.generation, a.sub, a.priority, &refused)
+			guard := a.s.dialGuard(a.w.generation, a.sub, a.priority)
 			status, header, err = a.s.webhook.post(ctx, a.sub.CallbackURL, a.sub.ID, eventID, a.sub.PendingEnvelope, current, previous, guard)
 			if ctx.Err() != nil {
 				return 0, "", false, false
@@ -500,11 +498,13 @@ func (a *deliveryAttempt) send(ctx context.Context, current, previous []byte) (s
 			if err == nil {
 				return status, header, true, true
 			}
-			if !refused.Load() {
+			if _, refused := errors.AsType[*dialRefusedError](err); !refused {
 				slog.WarnContext(ctx, "MCP Events delivery failed", "subscription_id", a.sub.ID, "seq", a.sub.PendingSeq, "attempt", a.sub.AttemptCount, "reason", errorReason(err))
 				return 0, "", true, true
 			}
-			// The dial guard refused, so nothing was sent. The next pass
+			// The request failed because its own dial guard refused, so nothing
+			// was sent. A refusal on a dial the request abandoned for another
+			// connection does not reach this error. The next pass
 			// rechecks authorization and decides whether to retry in place.
 			slog.WarnContext(ctx, "MCP Events delivery check failed", "subscription_id", a.sub.ID, "seq", a.sub.PendingSeq, "attempt", a.sub.AttemptCount, "reason", errorReason(err))
 			if !waitForWorkerRetry(ctx, time.Second) {
@@ -544,18 +544,13 @@ func (a *deliveryAttempt) record(ctx context.Context, status int, header string)
 
 // dialGuard rechecks authorization before each new connection's dial. It may
 // run on a transport goroutine, so it uses a snapshot of the gate priority and
-// never touches worker state. refused records a refusal while the request was
-// still live, which means this request dialed nothing.
-func (s *Service) dialGuard(generation int64, sub store.MCPSubscription, priority bool, refused *atomic.Bool) func(context.Context) error {
+// never touches worker state.
+func (s *Service) dialGuard(generation int64, sub store.MCPSubscription, priority bool) func(context.Context) error {
 	operation := s.operation
 	if priority {
 		operation = s.deliveryOperation
 	}
 	return func(ctx context.Context) error {
-		err := operation(ctx, func() error { return s.checkDelivery(ctx, generation, sub, true) })
-		if err != nil && ctx.Err() == nil {
-			refused.Store(true)
-		}
-		return err
+		return operation(ctx, func() error { return s.checkDelivery(ctx, generation, sub, true) })
 	}
 }

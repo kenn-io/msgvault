@@ -521,3 +521,46 @@ func TestAckReceiptRetryDoesNotWaitForFailureBackoff(t *testing.T) {
 	assert.Equal("acknowledged", row.LastOutcome)
 	assert.Len(deliveries, 1, "retrying the receipt must not resend the occurrence")
 }
+
+func TestGuardRefusalDoesNotHideFailureFromAnotherConnection(t *testing.T) {
+	require := Require.New(t)
+	s, f, req := eventService(t)
+	result, err := s.Subscribe(t.Context(), s.principal, req)
+	require.NoError(err)
+	before, err := s.st.GetMCPSubscription(t.Context(), result.ID)
+	require.NoError(err)
+	require.NotNil(before)
+	s.webhook = tlsWebhook(t, func(rw http.ResponseWriter, r *http.Request) {
+		_, err := io.Copy(io.Discard, r.Body)
+		Assert.NoError(t, err)
+		rw.WriteHeader(http.StatusNoContent)
+	})
+	var refuse atomic.Bool
+	s.opts.WithOperation = func(ctx context.Context, fn func() error) error {
+		if refuse.CompareAndSwap(true, false) {
+			return errors.New("synthetic transient gate failure")
+		}
+		return fn()
+	}
+	// Model a request that was sent over another worker's connection while
+	// its own abandoned dial's guard refused: the guard refuses while the
+	// request is live, but the request fails for an unrelated reason.
+	var failed atomic.Bool
+	dial := s.webhook.transport.DialContext
+	s.webhook.transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+		if failed.CompareAndSwap(false, true) {
+			guard, ok := ctx.Value(callbackGuardKey{}).(func() error)
+			Require.True(t, ok)
+			refuse.Store(true)
+			Assert.Error(t, guard())
+			return nil, errors.New("synthetic reset on a borrowed connection")
+		}
+		return dial(ctx, network, address)
+	}
+	appendReceipt(t, s, f, 1)
+	startWorker(t, s, result.ID, before.Generation)
+	require.Eventually(func() bool {
+		row, err := s.st.GetMCPSubscription(t.Context(), result.ID)
+		return err == nil && row != nil && row.LastOutcome == "retry_transport_error"
+	}, 10*time.Second, 10*time.Millisecond, "a request that failed after it could have been sent counts as a transport failure")
+}

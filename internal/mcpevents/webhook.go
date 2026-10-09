@@ -180,7 +180,10 @@ func (w *webhookClient) request(ctx context.Context, callback, id, eventID strin
 			if err := guardCtx.Err(); err != nil {
 				return err
 			}
-			return dialGuard(guardCtx)
+			if err := dialGuard(guardCtx); err != nil {
+				return &dialRefusedError{err: err}
+			}
+			return nil
 		})
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, callback, bytes.NewReader(body))
@@ -199,10 +202,23 @@ func (w *webhookClient) request(ctx context.Context, callback, id, eventID strin
 	req.Header.Set("X-Mcp-Subscription-Id", id)
 	resp, err := w.client.Do(req)
 	if err != nil {
+		// The transport returns a dial error only to the request that waited
+		// on that dial, so a refusal here means this request sent nothing.
+		if refused, ok := errors.AsType[*dialRefusedError](err); ok {
+			return nil, &dialRefusedError{err: callbackError(refused.err)}
+		}
 		return nil, callbackError(err)
 	}
 	return resp, nil
 }
+
+// dialRefusedError marks a request that failed because its dial guard refused
+// the connection before anything was sent. It unwraps to the guard's error,
+// which request converts to a callback *Error like any other failure.
+type dialRefusedError struct{ err error }
+
+func (e *dialRefusedError) Error() string { return e.err.Error() }
+func (e *dialRefusedError) Unwrap() error { return e.err }
 func (w *webhookClient) verify(ctx context.Context, callback, id string, secret []byte, check func(context.Context) error) error {
 	challenge := make([]byte, 32)
 	if _, err := rand.Read(challenge); err != nil {
