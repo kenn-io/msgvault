@@ -11,6 +11,7 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -123,16 +124,53 @@ type IntegrationsConfig struct {
 // DocbankIntegrationConfig configures the optional stored-media destination.
 // The selected API key source is read when a request runs.
 type DocbankIntegrationConfig struct {
-	Enabled                 bool   `toml:"enabled"`
-	URL                     string `toml:"url"`
-	APIKeyEnv               string `toml:"api_key_env"`
-	APIKey                  string `toml:"api_key"`
-	APIKeyFile              string `toml:"api_key_file"`
-	AllSourcesUploadConsent bool   `toml:"all_sources_upload_consent"`
-	ASRProfile              string `toml:"asr_profile"`
+	Enabled                 bool     `toml:"enabled"`
+	URL                     string   `toml:"url"`
+	APIKeyEnv               string   `toml:"api_key_env"`
+	APIKey                  string   `toml:"api_key"`
+	APIKeyFile              string   `toml:"api_key_file"`
+	AllSourcesUploadConsent bool     `toml:"all_sources_upload_consent"`
+	ASRProfile              string   `toml:"asr_profile"`
+	AttachmentMirror        bool     `toml:"attachment_mirror"`
+	AttachmentUploadConsent bool     `toml:"attachment_upload_consent"`
+	AttachmentCollection    string   `toml:"attachment_collection"`
+	AttachmentMIMEClasses   []string `toml:"attachment_mime_classes"`
+	AttachmentSourceIDs     []int64  `toml:"attachment_source_ids"`
+	AttachmentMaxBytes      int64    `toml:"attachment_max_bytes"`
+	AttachmentAfter         string   `toml:"attachment_after"`
+}
+
+// MirrorCollection returns the destination virtual directory.
+func (d DocbankIntegrationConfig) MirrorCollection() string {
+	if d.AttachmentCollection == "" {
+		return "/msgvault"
+	}
+	return d.AttachmentCollection
 }
 
 func (d DocbankIntegrationConfig) validate() error {
+	collection := d.MirrorCollection()
+	if !strings.HasPrefix(collection, "/") || path.Clean(collection) != collection {
+		return errors.New("integrations.docbank.attachment_collection must be a clean absolute virtual path")
+	}
+	if d.AttachmentMaxBytes < 0 {
+		return errors.New("integrations.docbank.attachment_max_bytes must be nonnegative")
+	}
+	if d.AttachmentAfter != "" {
+		if _, err := time.Parse("2006-01-02", d.AttachmentAfter); err != nil {
+			return errors.New("integrations.docbank.attachment_after must be YYYY-MM-DD")
+		}
+	}
+	for _, id := range d.AttachmentSourceIDs {
+		if id <= 0 {
+			return errors.New("integrations.docbank.attachment_source_ids must be positive")
+		}
+	}
+	for _, class := range d.AttachmentMIMEClasses {
+		if class == "" || class[0] < 'a' || class[0] > 'z' || strings.Trim(class, "abcdefghijklmnopqrstuvwxyz0123456789.-") != "" {
+			return errors.New("integrations.docbank.attachment_mime_classes must contain MIME classes such as image or application")
+		}
+	}
 	if strings.TrimSpace(d.ASRProfile) == "supplied-transcript" {
 		return errors.New(`integrations.docbank.asr_profile: "supplied-transcript" is reserved for supplied transcript input`)
 	}

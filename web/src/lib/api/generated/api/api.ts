@@ -113,6 +113,8 @@ import type {
   DirectoryPeopleResponse,
   DiscoverEvent,
   DiscoverRequest,
+  DocbankAttachmentBackfillResponse,
+  DocbankAttachmentStatus,
   DocumentIndexStatusResponse,
   DocumentSearchResponse,
   DocumentVectorOperationsResponse,
@@ -1950,6 +1952,33 @@ export const getImportJob = (
     {
       url: `/api/v1/imports/${encodeURIComponent(String(jobId))}`,
       method: "GET",
+    },
+    options,
+  );
+};
+/**
+ * @summary Read attachment mirror status
+ */
+export const getDocbankAttachmentStatus = (
+  options?: SecondParameter<typeof orvalFetch<DocbankAttachmentStatus>>,
+) => {
+  return orvalFetch<DocbankAttachmentStatus>(
+    { url: `/api/v1/integrations/docbank/attachments`, method: "GET" },
+    options,
+  );
+};
+/**
+ * @summary Retry failures and restart attachment mirror discovery
+ */
+export const backfillDocbankAttachments = (
+  options?: SecondParameter<
+    typeof orvalFetch<DocbankAttachmentBackfillResponse>
+  >,
+) => {
+  return orvalFetch<DocbankAttachmentBackfillResponse>(
+    {
+      url: `/api/v1/integrations/docbank/attachments/backfill`,
+      method: "POST",
     },
     options,
   );

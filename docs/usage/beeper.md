@@ -192,6 +192,18 @@ WHERE m.message_type = 'beeper'
 GROUP BY is_share;
 ```
 
+## Mirror all attachments to Docbank (unreleased)
+
+To make every stored attachment available through Docbank, enable the
+[attachment mirror](../configuration.md#mirror-stored-attachments-to-docbank-unreleased).
+It covers all captured sources and MIME types by default, uses `/msgvault`, and
+requires `attachment_upload_consent` separately from audio-route consent.
+
+Use `msgvault docbank attachments backfill` to start a scan and retry failures.
+Use `msgvault docbank attachments status` to follow occurrence counts and skip
+reasons. The daemon uploads each unique file once and exposes its Docbank node
+in attachment and message details. Docbank owns processing of the mirrored file.
+
 ## Send audio to Docbank
 
 The daemon can copy stored audio from any captured source, including messaging

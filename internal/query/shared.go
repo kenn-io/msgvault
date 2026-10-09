@@ -371,7 +371,20 @@ func fetchAttachmentsShared(ctx context.Context, db *sql.DB, rebind rebindFunc, 
 		msg.Attachments = append(msg.Attachments, att)
 	}
 
-	return rows.Err()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for i := range msg.Attachments {
+		refs, err := store.LoadDocbankAttachmentRefs(ctx, db, rebind, tablePrefix, msg.Attachments[i].ID)
+		if err != nil {
+			return err
+		}
+		msg.Attachments[i].Docbank = refs
+	}
+	return nil
 }
 
 func isURLStoragePath(path string) bool {

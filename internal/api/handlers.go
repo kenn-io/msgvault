@@ -341,12 +341,13 @@ type MessageDetail struct {
 
 // AttachmentInfo represents attachment metadata in API responses.
 type AttachmentInfo struct {
-	ID          int64  `json:"id"`
-	Filename    string `json:"filename"`
-	MimeType    string `json:"mime_type"`
-	Size        int64  `json:"size_bytes"`
-	ContentHash string `json:"content_hash,omitempty"`
-	URL         string `json:"url,omitempty"`
+	Docbank     []store.DocbankAttachmentRef `json:"docbank,omitempty"`
+	ID          int64                        `json:"id"`
+	Filename    string                       `json:"filename"`
+	MimeType    string                       `json:"mime_type"`
+	Size        int64                        `json:"size_bytes"`
+	ContentHash string                       `json:"content_hash,omitempty"`
+	URL         string                       `json:"url,omitempty"`
 }
 
 func attachmentInfoFromStore(att store.APIAttachment) AttachmentInfo {
@@ -356,6 +357,7 @@ func attachmentInfoFromStore(att store.APIAttachment) AttachmentInfo {
 		MimeType:    att.MimeType,
 		Size:        att.Size,
 		ContentHash: att.ContentHash,
+		Docbank:     att.Docbank,
 		URL:         att.URL,
 	}
 }
@@ -545,6 +547,7 @@ func messageDetailFromQuery(qMsg *query.MessageDetail) MessageDetail {
 			MimeType:    att.MimeType,
 			Size:        att.Size,
 			ContentHash: att.ContentHash,
+			Docbank:     att.Docbank,
 			URL:         att.URL,
 		})
 	}
@@ -3426,6 +3429,7 @@ func (s *Server) handleGetAttachment(w http.ResponseWriter, r *http.Request) {
 		MimeType:    att.MimeType,
 		Size:        att.Size,
 		ContentHash: att.ContentHash,
+		Docbank:     att.Docbank,
 		URL:         att.URL,
 	})
 }

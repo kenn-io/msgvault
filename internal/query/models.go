@@ -5,6 +5,7 @@
 package query
 
 import (
+	"go.kenn.io/msgvault/internal/store"
 	"maps"
 	"time"
 )
@@ -104,6 +105,7 @@ type Address struct {
 
 // AttachmentInfo represents attachment metadata.
 type AttachmentInfo struct {
+	Docbank     []store.DocbankAttachmentRef `json:"docbank,omitempty"`
 	ID          int64
 	Filename    string
 	MimeType    string

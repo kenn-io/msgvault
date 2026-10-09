@@ -89,6 +89,7 @@ type MessageRecipient struct {
 
 // APIAttachment represents attachment metadata for API responses.
 type APIAttachment struct {
+	Docbank     []DocbankAttachmentRef
 	ID          int64
 	Filename    string
 	MimeType    string
@@ -339,6 +340,16 @@ func (s *Store) GetMessageContext(ctx context.Context, id int64) (*APIMessage, e
 		return nil, fmt.Errorf("iterate attachments: %w", err)
 	}
 
+	if err := attRows.Close(); err != nil {
+		return nil, err
+	}
+	for i := range m.Attachments {
+		refs, err := s.DocbankAttachmentRefs(ctx, m.Attachments[i].ID)
+		if err != nil {
+			return nil, err
+		}
+		m.Attachments[i].Docbank = refs
+	}
 	m.Headers = make(map[string]string)
 
 	return &m, nil

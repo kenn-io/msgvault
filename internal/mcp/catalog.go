@@ -959,9 +959,10 @@ type searchByDomainsResponse struct {
 }
 
 type getAttachmentResponse struct {
-	Filename string `json:"filename"`
-	MIMEType string `json:"mime_type"`
-	Size     int64  `json:"size"`
+	Docbank  []store.DocbankAttachmentRef `json:"docbank,omitempty"`
+	Filename string                       `json:"filename"`
+	MIMEType string                       `json:"mime_type"`
+	Size     int64                        `json:"size"`
 	// Chunk fields are present only when the call passed offset or length.
 	Offset     *int64  `json:"offset,omitzero"`
 	Length     *int64  `json:"length,omitzero"`

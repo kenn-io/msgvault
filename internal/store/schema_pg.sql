@@ -4092,3 +4092,40 @@ CREATE TABLE IF NOT EXISTS message_delivery_addresses (
 );
 CREATE INDEX IF NOT EXISTS idx_message_delivery_addresses_address
     ON message_delivery_addresses(address, message_id);
+
+-- The attachment mirror shares the Docbank integration and receipt lifecycle.
+-- A content digest has one immutable remote upload identity per destination.
+CREATE TABLE IF NOT EXISTS docbank_attachment_deliveries (
+ destination_key TEXT NOT NULL,
+ content_hash TEXT NOT NULL,
+ upload_name TEXT NOT NULL,
+ mime_type TEXT NOT NULL,
+ byte_length BIGINT NOT NULL,
+ state TEXT NOT NULL DEFAULT 'pending',
+ reason TEXT NOT NULL DEFAULT '',
+ next_action_at TIMESTAMPTZ,
+ node_id BIGINT NOT NULL DEFAULT 0,
+ version_id TEXT NOT NULL DEFAULT '',
+ endpoint TEXT NOT NULL,
+ collection TEXT NOT NULL,
+ PRIMARY KEY (destination_key, content_hash)
+);
+CREATE INDEX IF NOT EXISTS idx_docbank_attachments_ready
+ ON docbank_attachment_deliveries(destination_key, state, next_action_at);
+CREATE TABLE IF NOT EXISTS docbank_attachment_occurrences (
+ destination_key TEXT NOT NULL,
+ attachment_id BIGINT NOT NULL REFERENCES attachments(id) ON DELETE CASCADE,
+ content_hash TEXT NOT NULL,
+ reason TEXT NOT NULL DEFAULT '',
+ PRIMARY KEY (destination_key, attachment_id)
+);
+CREATE TABLE IF NOT EXISTS docbank_attachment_scans (
+ destination_key TEXT PRIMARY KEY,
+ after_id BIGINT NOT NULL DEFAULT 0,
+ next_scan_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_docbank_attachment_receipts
+ ON docbank_attachment_deliveries(content_hash, state);
+CREATE INDEX IF NOT EXISTS idx_docbank_attachment_occurrence_hash
+ ON docbank_attachment_occurrences(destination_key, content_hash);

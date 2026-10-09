@@ -1236,7 +1236,9 @@ func TestStore_GetStats_MissingTable(t *testing.T) {
 	st := testutil.NewTestStore(t)
 
 	// Drop a table to simulate missing table scenario
-	_, err := st.DB().Exec("DROP TABLE IF EXISTS document_occurrences")
+	_, err := st.DB().Exec("DROP TABLE IF EXISTS docbank_attachment_occurrences")
+	require.NoError(err, "DROP TABLE docbank_attachment_occurrences")
+	_, err = st.DB().Exec("DROP TABLE IF EXISTS document_occurrences")
 	require.NoError(err, "DROP TABLE document_occurrences")
 	_, err = st.DB().Exec("DROP TABLE IF EXISTS attachments")
 	require.NoError(err, "DROP TABLE attachments")

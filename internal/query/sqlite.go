@@ -1222,7 +1222,7 @@ func (e *SQLiteEngine) GetAttachment(ctx context.Context, id int64) (*Attachment
 		FROM attachments
 		WHERE id = ?
 	`, id).Scan(&att.ID, &att.Filename, &att.MimeType, &att.Size, &att.ContentHash, &att.StoragePath)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil //nolint:nilnil // Engine.GetAttachment uses (nil, nil) for not-found; callers branch on the nil result
 	}
 	if err != nil {
@@ -1236,6 +1236,10 @@ func (e *SQLiteEngine) GetAttachment(ctx context.Context, id int64) (*Attachment
 		if pathHash, ok := attachmentCASPathHash(att.StoragePath); ok {
 			att.ContentHash = pathHash
 		}
+	}
+	att.Docbank, err = store.LoadDocbankAttachmentRefs(ctx, e.db, e.dialect.Rebind, "", att.ID)
+	if err != nil {
+		return nil, err
 	}
 	return &att, nil
 }
@@ -1269,6 +1273,16 @@ func (e *SQLiteEngine) GetAttachmentsByHash(ctx context.Context, contentHash str
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate attachments by hash: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	for i := range attachments {
+		refs, err := store.LoadDocbankAttachmentRefs(ctx, e.db, e.dialect.Rebind, "", attachments[i].ID)
+		if err != nil {
+			return nil, err
+		}
+		attachments[i].Docbank = refs
 	}
 	return attachments, nil
 }

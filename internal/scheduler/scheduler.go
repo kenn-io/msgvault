@@ -17,6 +17,9 @@ import (
 	"go.kenn.io/msgvault/internal/syncerr"
 )
 
+// StoredMediaSubmitJob identifies the shared Docbank audio and attachment job.
+const StoredMediaSubmitJob = "beeper-media-submit"
+
 // SyncFunc is the callback invoked when a scheduled sync should run.
 // It receives the account email and should perform incremental sync + cache build.
 type SyncFunc func(ctx context.Context, email string) error
