@@ -104,7 +104,6 @@
   function summary(recording: MessageRecording): string {
     return recording.transcript?.origin === 'generated' ? 'Generated transcript' : 'Provider transcript';
   }
-
 </script>
 
 {#if error}

@@ -77,6 +77,8 @@
             ? 'This archive exceeds browser recording-search limits. Use person-scoped recording search in the CLI or API.'
             : error?.error === 'invalid_media_search'
               ? 'Recording search rejected this query. Try different plain words.'
+              : error?.error === 'invalid_parameter'
+                ? 'Recording search query is too long. Use fewer words.'
               : 'Recording search cannot read this query. Check archive access or change the query.';
           return;
         }
