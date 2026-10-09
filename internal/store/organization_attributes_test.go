@@ -558,3 +558,68 @@ func TestDeletePersonRejectsOrganizationStoredRecordReferences(t *testing.T) {
 	require.NoError(err,
 		"superseded organization references must not block deletion")
 }
+
+func TestOrganizationAttributeWritesRejectMergedOrganization(t *testing.T) {
+	require := require.New(t)
+	ctx := context.Background()
+	st := testutil.NewTestStore(t)
+	survivor := mustAttributeOrganization(t, st)
+	losing, err := st.CreateOrganizationContext(ctx, store.OrganizationInput{Name: "Other Org"})
+	require.NoError(err)
+	mustOrganizationAttributeDefinition(t, st, "industry_focus")
+	_, err = st.SetOrganizationAttributeValueContext(ctx, store.OrganizationAttributeValueInput{
+		OrganizationID: losing.ID, DefinitionSlug: "industry_focus",
+		Value: textAttributeValue("before merge"), Source: store.ProvenanceUser,
+	})
+	require.NoError(err)
+	_, err = st.MergeOrganizationsContext(ctx, survivor.ID, survivor.Revision, losing.ID, losing.Revision)
+	require.NoError(err)
+
+	_, err = st.SetOrganizationAttributeValueContext(ctx, store.OrganizationAttributeValueInput{
+		OrganizationID: losing.ID, DefinitionSlug: "industry_focus",
+		Value: textAttributeValue("after merge"), Source: store.ProvenanceUser,
+	})
+	require.ErrorIs(err, store.ErrOrganizationInvalid)
+	_, err = st.SupersedeOrganizationAttributeValueContext(ctx, store.OrganizationAttributeSupersedeInput{
+		OrganizationID: losing.ID, DefinitionSlug: "industry_focus",
+	})
+	require.ErrorIs(err, store.ErrOrganizationInvalid, "the row check runs before the current-value lookup")
+}
+
+func TestAttributeWriteErrorPrecedence(t *testing.T) {
+	require := require.New(t)
+	ctx := context.Background()
+	st := testutil.NewTestStore(t)
+	inactive := false
+	for _, input := range []store.AttributeDefinitionInput{
+		personTextDefinition("retired_person_field"), organizationTextDefinition("retired_org_field"),
+	} {
+		created, err := st.CreateAttributeDefinitionContext(ctx, input)
+		require.NoError(err)
+		_, err = st.UpdateAttributeDefinitionContext(ctx, created.ID, created.Revision,
+			store.AttributeDefinitionUpdate{IsActive: &inactive})
+		require.NoError(err)
+	}
+	mustOrganizationAttributeDefinition(t, st, "industry_focus")
+
+	_, err := st.SetOrganizationAttributeValueContext(ctx, store.OrganizationAttributeValueInput{
+		OrganizationID: 999999, DefinitionSlug: "retired_org_field",
+		Value: textAttributeValue("x"), Source: store.ProvenanceUser,
+	})
+	require.ErrorIs(err, store.ErrAttributeDefinitionInactive,
+		"organization definition checks run before the organization row lock")
+	_, err = st.SetPersonAttributeValueContext(ctx, store.PersonAttributeValueInput{
+		PersonID: 999999, DefinitionSlug: "retired_person_field",
+		Value: textAttributeValue("x"), Source: store.ProvenanceUser,
+	})
+	require.ErrorIs(err, store.ErrPersonNotFound)
+	_, err = st.SupersedePersonAttributeValueContext(ctx, store.PersonAttributeSupersedeInput{
+		PersonID: 999999, DefinitionSlug: "retired_person_field",
+	})
+	require.ErrorIs(err, store.ErrAttributeValueNotFound, "only set checks that the person exists")
+	_, err = st.SetPersonAttributeValueContext(ctx, store.PersonAttributeValueInput{
+		PersonID: mustAttributePerson(t, st), DefinitionSlug: "industry_focus",
+		Value: textAttributeValue("x"), Source: store.ProvenanceUser,
+	})
+	require.ErrorIs(err, store.ErrAttributeDefinitionNotFound)
+}
