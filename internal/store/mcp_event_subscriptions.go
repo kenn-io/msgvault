@@ -845,9 +845,11 @@ func (s *Store) pruneMCPEventsTx(ctx context.Context, tx *sql.Tx, clock MCPEvent
 	if _, err := tx.ExecContext(ctx, s.Rebind(`UPDATE mcp_event_subscriptions SET state='stopped',stop_reason='retention',generation=generation+1,pending_seq=NULL,pending_envelope=NULL,pending_generation=NULL,attempt_count=0,next_attempt_at=NULL,updated_at=? WHERE state='active' AND cursor_seq<? AND (pending_seq<=? OR `+mcpScopeEventThroughFloorSQL+`)`), mcpTime(now), floor, floor, floor); err != nil {
 		return clock, err
 	}
-	// Quiet scopes lost nothing; move their cursors to the floor so renewal,
-	// resume and delivery do not report truncation.
-	if _, err := tx.ExecContext(ctx, s.Rebind(`UPDATE mcp_event_subscriptions SET cursor_seq=? WHERE state IN ('active','expired') AND cursor_epoch=? AND cursor_seq<? AND (pending_seq IS NULL OR pending_seq>?) AND NOT `+mcpScopeEventThroughFloorSQL), floor, clock.Epoch, floor, floor, floor); err != nil {
+	// Quiet active scopes lost nothing; move their cursors to the floor so
+	// renewal and delivery do not report truncation. Expired subscriptions
+	// keep their cursors: a loss is not recorded on them, and a later sweep
+	// could no longer see the deleted event.
+	if _, err := tx.ExecContext(ctx, s.Rebind(`UPDATE mcp_event_subscriptions SET cursor_seq=? WHERE state='active' AND cursor_epoch=? AND cursor_seq<? AND (pending_seq IS NULL OR pending_seq>?) AND NOT `+mcpScopeEventThroughFloorSQL), floor, clock.Epoch, floor, floor, floor); err != nil {
 		return clock, err
 	}
 	if _, err := tx.ExecContext(ctx, s.Rebind(`DELETE FROM mcp_event_log WHERE recorded_at<?`), cutoff); err != nil {
