@@ -1,19 +1,15 @@
 package importer
 
 import (
-	"bytes"
 	"context"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"path/filepath"
-	"slices"
 	"time"
 
 	"go.kenn.io/msgvault/internal/emlx"
-	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/rederive"
 	"go.kenn.io/msgvault/internal/remoteimage"
 	"go.kenn.io/msgvault/internal/store"
@@ -28,8 +24,11 @@ type EmlxImportOptions struct {
 	// Identifier is the sources.identifier (e.g. "you@gmail.com").
 	Identifier string
 
-	// NoResume forces a fresh import even if a prior run exists.
+	// NoResume ignores run progress; completed occurrence receipts remain usable.
 	NoResume bool
+
+	// FullReconcile invalidates this root before discovery and forces completion.
+	FullReconcile bool
 
 	// CheckpointInterval controls how often (in messages) to persist
 	// progress. Defaults to 200.
@@ -70,6 +69,7 @@ type EmlxImportSummary struct {
 	MessagesAdded     int64
 	MessagesUpdated   int64
 	MessagesSkipped   int64
+	FilesUnchanged    int64
 
 	// PartialFiles counts *.partial.emlx files parsed. Their bodies are
 	// complete; attachment parts are either restored from Apple Mail's
@@ -96,17 +96,13 @@ type emlxCheckpoint struct {
 
 const defaultMaxEmlxBytes int64 = 128 << 20 // 128 MiB
 
-// ImportEmlxDir imports .emlx files from an Apple Mail directory tree.
-//
-// Messages are deduplicated by the hash of their original on-disk MIME.
-// Restoring attachments preserves that identity and updates existing messages.
-// When the same message appears in multiple mailboxes, the first
-// occurrence is fully ingested; subsequent occurrences add their
-// mailbox label to the existing message.
-func ImportEmlxDir(
-	ctx context.Context, st *store.Store,
-	rootDir string, opts EmlxImportOptions,
-) (retSummary *EmlxImportSummary, retErr error) {
+// ImportEmlxDir archives new/changed filesystem occurrences and cheaply revisits
+// completed ones. Missing local cache entries never delete archived messages.
+func ImportEmlxDir(ctx context.Context, st *store.Store, rootDir string, opts EmlxImportOptions) (*EmlxImportSummary, error) {
+	return importEmlxDir(ctx, st, rootDir, opts, defaultEmlxImportIO(opts))
+}
+
+func importEmlxDir(ctx context.Context, st *store.Store, rootDir string, opts EmlxImportOptions, io emlxImportIO) (retSummary *EmlxImportSummary, retErr error) {
 	if opts.SourceType == "" {
 		opts.SourceType = "apple-mail"
 	}
@@ -119,40 +115,18 @@ func ImportEmlxDir(
 	if opts.MaxMessageBytes <= 0 {
 		opts.MaxMessageBytes = defaultMaxEmlxBytes
 	}
-	ingestFn := opts.IngestFunc
-	if ingestFn == nil {
-		ingestFn = rawMessageIngester(opts.RemoteImages)
-	}
 	log := opts.Logger
 	if log == nil {
 		log = slog.Default()
 	}
-
 	start := time.Now()
 	summary := &EmlxImportSummary{}
-
-	// Discover mailboxes.
-	mailboxes, err := emlx.DiscoverMailboxes(rootDir)
-	if err != nil {
-		discoveryErr, ok := errors.AsType[*emlx.DiscoveryError](err)
-		if len(mailboxes) == 0 || !ok {
-			return nil, fmt.Errorf("discover mailboxes: %w", err)
-		}
-		summary.Errors = int64(len(discoveryErr.Errors))
-		log.Warn("partial mailbox discovery", "error", discoveryErr,
-			"errors", summary.Errors)
-	}
-	summary.MailboxesTotal = len(mailboxes)
-	if len(mailboxes) == 0 {
-		summary.Duration = time.Since(start)
-		return summary, nil
-	}
-
+	defer func() { summary.Duration = time.Since(start) }()
 	absRoot, err := filepath.Abs(rootDir)
 	if err != nil {
 		return nil, fmt.Errorf("abs path: %w", err)
 	}
-
+	rootPrefix := emlxDigest(absRoot) + "/"
 	src, err := st.GetOrCreateSource(opts.SourceType, opts.Identifier)
 	if err != nil {
 		return nil, fmt.Errorf("get/create source: %w", err)
@@ -163,566 +137,152 @@ func ImportEmlxDir(
 	if err != nil {
 		return nil, fmt.Errorf("acquire sync execution: %w", err)
 	}
-	defer func() {
-		retErr = errors.Join(retErr, execution.Release())
-	}()
+	defer func() { retErr = errors.Join(retErr, execution.Release()) }()
 	rederive.Heal(ctx, slog.Default(), st, src)
-
-	// Resume support.
-	var (
-		phase        string
-		replyAfterID int64
-		syncID       int64
-		cp           store.Checkpoint
-		startMbox    int
-		startAfter   string // skip files <= this name within the start mailbox
-	)
-
-	if !opts.NoResume {
+	var cp store.Checkpoint
+	if !opts.NoResume && !opts.FullReconcile {
 		active, err := st.GetLatestCheckpointedSyncByType(src.ID, "import-emlx")
 		if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
 			return nil, fmt.Errorf("check resumable sync: %w", err)
 		}
-		if active != nil {
-			if active.CursorBefore.Valid &&
-				active.CursorBefore.String != "" {
-				var ecp emlxCheckpoint
-				if err := json.Unmarshal(
-					[]byte(active.CursorBefore.String), &ecp,
-				); err == nil {
-					if ecp.RootDir != absRoot {
-						return nil, fmt.Errorf(
-							"active emlx import is for a different directory (%q), not %q; rerun with --no-resume to start fresh",
-							ecp.RootDir, absRoot,
-						)
-					}
-					if ecp.MailboxIndex < 0 ||
-						ecp.MailboxIndex >= len(mailboxes) {
-						return nil, fmt.Errorf(
-							"checkpoint mailbox index %d out of range (%d mailboxes); rerun with --no-resume to start fresh",
-							ecp.MailboxIndex, len(mailboxes),
-						)
-					}
-					// Validate mailbox path if present (added in later versions).
-					if ecp.MailboxPath != "" &&
-						mailboxes[ecp.MailboxIndex].Path != ecp.MailboxPath {
-						return nil, fmt.Errorf(
-							"mailbox at index %d changed (%q -> %q); rerun with --no-resume to start fresh",
-							ecp.MailboxIndex, ecp.MailboxPath,
-							mailboxes[ecp.MailboxIndex].Path,
-						)
-					}
-					if ecp.Phase != "" && ecp.Phase != "email-replies" {
-						return nil, fmt.Errorf("unknown emlx checkpoint phase %q", ecp.Phase)
-					}
-					if ecp.ReplyAfterID < 0 {
-						return nil, errors.New("invalid emlx reply checkpoint")
-					}
-					phase, replyAfterID = ecp.Phase, ecp.ReplyAfterID
-					cp.MessagesProcessed = active.MessagesProcessed
-					cp.MessagesAdded = active.MessagesAdded
-					cp.MessagesUpdated = active.MessagesUpdated
-					cp.ErrorsCount = active.ErrorsCount
-					startMbox = ecp.MailboxIndex
-					startAfter = ecp.LastFile
-					// Legacy checkpoints stored bare filenames
-					// (e.g. "1.emlx"); resolve against the actual
-					// file list to find the full path. This handles
-					// partitioned V10 layouts where files may be in
-					// different Messages/ subdirectories.
-					if startAfter != "" &&
-						!filepath.IsAbs(startAfter) {
-						resolved, resolveErr := resolveCheckpointFile(
-							startAfter,
-							mailboxes[ecp.MailboxIndex].Files,
-						)
-						if resolveErr != nil {
-							return nil, resolveErr
-						}
-						startAfter = resolved
-					}
-					summary.WasResumed = true
-					log.Info("resuming emlx import",
-						"root", absRoot,
-						"mailbox_index", startMbox,
-						"last_file", startAfter,
-						"processed", cp.MessagesProcessed,
-					)
+		if active != nil && active.CursorBefore.Valid && active.CursorBefore.String != "" {
+			var ecp emlxCheckpoint
+			if err := json.Unmarshal([]byte(active.CursorBefore.String), &ecp); err == nil {
+				if ecp.RootDir != absRoot {
+					return nil, fmt.Errorf("active emlx import is for a different directory (%q), not %q; rerun with --no-resume or --full-reconcile", ecp.RootDir, absRoot)
 				}
+				if ecp.Phase != "" && ecp.Phase != "email-replies" {
+					return nil, fmt.Errorf("unknown emlx checkpoint phase %q", ecp.Phase)
+				}
+				if ecp.ReplyAfterID < 0 {
+					return nil, errors.New("invalid emlx reply checkpoint")
+				}
+				// Position is only progress reporting. Files can arrive before it, move,
+				// or disappear. Receipts decide completion after every fresh discovery.
+				cp.MessagesProcessed = active.MessagesProcessed
+				cp.MessagesAdded = active.MessagesAdded
+				cp.MessagesUpdated = active.MessagesUpdated
+				cp.ErrorsCount = active.ErrorsCount
+				summary.WasResumed = true
 			}
 		}
 	}
-
-	// Like message/checkpoint failures, discovery failures count per attempt.
-	// The checkpoint is cumulative across resumes; summary.Errors reports only
-	// this invocation. Skipping this on resume would lose newly denied paths.
-	cp.ErrorsCount += summary.Errors
-	syncID, err = execution.StartSyncContext(ownershipCtx, "import-emlx", "")
+	syncID, err := execution.StartSyncContext(ownershipCtx, "import-emlx", "")
 	if err != nil {
 		return nil, fmt.Errorf("start sync: %w", err)
 	}
 	st = st.ScopedToSync(src.ID, syncID)
-
-	hardErrors := false
-
-	type pendingEmlxMsg struct {
-		Raw          []byte
-		Restored     int // attachments ParseFile restored into Raw
-		RestorePaths []string
-		RawHash      string
-		SourceMsg    string
-		LabelIDs     []int64
-		Fallback     time.Time
-		MboxIdx      int
-		MboxPath     string
-		FileName     string
+	if opts.FullReconcile {
+		if err := st.InvalidateEmlxRootContext(ctx, src.ID, rootPrefix); err != nil {
+			return summary, fmt.Errorf("invalidate EMLX root: %w", err)
+		}
 	}
-
-	const (
-		batchSize  = 200
-		batchBytes = 32 << 20 // 32 MiB
-	)
-
-	var pending []pendingEmlxMsg
-	var pendingBytes int64
-	pendingIdx := make(map[string]int) // SourceMsg → index in pending
-	lastCpMbox := startMbox
-	lastCpMboxPath := ""
-	if startMbox < len(mailboxes) {
-		lastCpMboxPath = mailboxes[startMbox].Path
+	report := func(err error) {
+		summary.Errors++
+		cp.ErrorsCount++
+		summary.HardErrors = true
+		log.Warn("incomplete emlx import", "error", err)
 	}
-	lastCpFile := startAfter
+	// Invalidation precedes even empty/failed discovery; no unvisited old receipt
+	// can claim this reconciliation completed.
+	mailboxes, err := emlx.DiscoverMailboxes(absRoot)
+	if err != nil {
+		discoveryErr, ok := errors.AsType[*emlx.DiscoveryError](err)
+		if !ok {
+			report(err)
+		} else {
+			for _, e := range discoveryErr.Errors {
+				report(e)
+			}
+		}
+	}
+	if err != nil && len(mailboxes) == 0 {
+		return nil, fmt.Errorf("discover mailboxes: %w", err)
+	}
+	summary.MailboxesTotal = len(mailboxes)
+	policy := emlxPolicy(st, opts)
 	checkpointBlocked := false
-
-	if phase != "email-replies" {
-		// Save initial checkpoint.
-		if err := saveEmlxCheckpoint(
-			st, syncID, absRoot, startMbox, lastCpMboxPath,
-			startAfter, &cp,
-		); err != nil {
-			cp.ErrorsCount++
-			summary.Errors++
-			log.Warn("failed to save initial checkpoint", "error", err)
+	lastMbox := 0
+	lastPath, lastFile := "", ""
+	// Work is deliberately sequential: one physical occurrence and fresh target
+	// lookup at a time. No batch/hash map can outlive another target mutation.
+	for mboxIdx, mb := range mailboxes {
+		if err := ctx.Err(); err != nil {
+			break
 		}
-	}
-
-	// flushPending writes the buffered batch and returns true when the
-	// context was cancelled mid-flush so the caller can stop. Per-batch
-	// errors are recorded on the summary and logged, never propagated.
-	flushPending := func() bool {
-		if len(pending) == 0 {
-			return false
-		}
-
-		ids := make([]string, len(pending))
-		for i, p := range pending {
-			ids[i] = p.SourceMsg
-		}
-
-		existingWithRaw, err := st.MessageExistsWithRawBatch(src.ID, ids)
-		batchOK := err == nil
+		labelID, err := st.EnsureLabel(src.ID, mb.Label, mb.Label, "user")
 		if err != nil {
-			cp.ErrorsCount++
-			summary.Errors++
-			log.Warn("existence check failed", "error", err)
-		}
-
-		existingAny, err := st.MessageExistsBatch(src.ID, ids)
-		anyOK := err == nil
-		if err != nil {
-			cp.ErrorsCount++
-			summary.Errors++
-			log.Warn("existence check failed (any)", "error", err)
-		}
-
-		for _, p := range pending {
-			if err := ctx.Err(); err != nil {
-				summary.Duration = time.Since(start)
-				if err := saveEmlxCheckpoint(
-					st, syncID, absRoot, lastCpMbox,
-					lastCpMboxPath, lastCpFile, &cp,
-				); err != nil {
-					log.Warn("checkpoint save failed", "error", err)
-				}
-				return true
-			}
-
-			cp.MessagesProcessed++
-			summary.MessagesProcessed++
-
-			// Check if fully exists (with raw).
-			exists := false
-			var existingID int64
-			labelsAdded := true
-			if batchOK {
-				msgID, ok := existingWithRaw[p.SourceMsg]
-				if ok {
-					exists = true
-					existingID = msgID
-					// Add labels from this mailbox to the existing message.
-					if len(p.LabelIDs) > 0 {
-						if err := st.AddMessageLabels(
-							msgID, p.LabelIDs,
-						); err != nil {
-							labelsAdded = false
-							log.Warn("failed to add labels to existing message",
-								"message_id", msgID, "error", err,
-							)
-						}
-					}
-				}
-			} else {
-				one, err := st.MessageExistsWithRawBatch(
-					src.ID, []string{p.SourceMsg},
-				)
-				if err != nil {
-					cp.ErrorsCount++
-					summary.Errors++
-				} else if msgID, ok := one[p.SourceMsg]; ok {
-					exists = true
-					existingID = msgID
-					if len(p.LabelIDs) > 0 {
-						if err := st.AddMessageLabels(
-							msgID, p.LabelIDs,
-						); err != nil {
-							labelsAdded = false
-							log.Warn("failed to add labels",
-								"message_id", msgID, "error", err,
-							)
-						}
-					}
-				}
-			}
-
-			// An archived message is skipped unless restoring cached
-			// attachments into its stored raw adds something. Filling the
-			// stored placeholders also keeps a smaller Apple Mail cache from
-			// removing attachment content archived on an earlier run.
-			emlxRaw := p.Raw
-			restored := 0
-			skip := exists && len(p.RestorePaths) == 0
-			if exists && !skip {
-				stored, err := st.GetMessageRawContext(ctx, existingID)
-				if err != nil {
-					cp.ErrorsCount++
-					summary.Errors++
-					hardErrors, checkpointBlocked = true, true
-					log.Warn("failed to read message for attachment restoration", "message_id", existingID, "error", err)
-					continue
-				}
-				p.Raw, restored = restoreEmlxAttachments(stored, p.RestorePaths, opts.MaxMessageBytes, log)
-				// Ingestion also applies p.LabelIDs, so it retries a
-				// mailbox label that failed to attach above.
-				skip = labelsAdded && bytes.Equal(p.Raw, stored)
-			} else if !exists {
-				p.Raw, restored = restoreEmlxAttachments(p.Raw, p.RestorePaths, opts.MaxMessageBytes, log)
-				restored += p.Restored
-			}
-
-			if skip {
-				rfcID, inReplyTo := mime.ParseMessageIDs(emlxRaw)
-				if err := st.RecordEmailHeadersContext(ctx, src.ID, existingID, rfcID, inReplyTo); err != nil {
-					cp.ErrorsCount++
-					summary.Errors++
-					hardErrors, checkpointBlocked = true, true
-					log.Warn("failed to repair email headers", "message_id", existingID, "error", err)
-					continue
-				}
-				summary.MessagesSkipped++
-				if !checkpointBlocked {
-					lastCpMbox = p.MboxIdx
-					lastCpMboxPath = p.MboxPath
-					lastCpFile = p.FileName
-					checkpointIfDue(
-						&cp, summary, opts.CheckpointInterval,
-						st, syncID, absRoot, lastCpMbox,
-						lastCpMboxPath, lastCpFile, log,
-					)
-				}
-				continue
-			}
-
-			alreadyExists := exists
-			if anyOK {
-				_, found := existingAny[p.SourceMsg]
-				alreadyExists = alreadyExists || found
-			}
-
-			if exists {
-				// Ingestion replaces labels, so retain labels from earlier
-				// imports as well as those just added for this mailbox.
-				labelIDs, err := st.MessageLabelIDsContext(ctx, existingID)
-				if err != nil {
-					cp.ErrorsCount++
-					summary.Errors++
-					hardErrors, checkpointBlocked = true, true
-					log.Warn("failed to read labels for attachment restoration", "message_id", existingID, "error", err)
-					continue
-				}
-				for _, id := range labelIDs {
-					if !slices.Contains(p.LabelIDs, id) {
-						p.LabelIDs = append(p.LabelIDs, id)
-					}
-				}
-			}
-
-			if err := ingestFn(
-				ctx, st, src.ID, opts.Identifier,
-				opts.AttachmentsDir, p.LabelIDs,
-				p.SourceMsg, p.RawHash,
-				p.Raw, p.Fallback, log,
-			); err != nil {
-				cp.ErrorsCount++
-				summary.Errors++
-				log.Warn("failed to ingest message",
-					"source_msg", p.SourceMsg,
-					"file", p.FileName,
-					"error", err,
-				)
-				checkpointBlocked = true
-				hardErrors = true
-				continue
-			}
-
-			summary.AttachmentsRestored += int64(restored)
-			if alreadyExists {
-				cp.MessagesUpdated++
-				summary.MessagesUpdated++
-			} else {
-				cp.MessagesAdded++
-				summary.MessagesAdded++
-			}
-
-			if !checkpointBlocked {
-				lastCpMbox = p.MboxIdx
-				lastCpMboxPath = p.MboxPath
-				lastCpFile = p.FileName
-				checkpointIfDue(
-					&cp, summary, opts.CheckpointInterval,
-					st, syncID, absRoot, lastCpMbox,
-					lastCpMboxPath, lastCpFile, log,
-				)
-			}
-		}
-
-		clear(pending)
-		pending = pending[:0]
-		pendingBytes = 0
-		clear(pendingIdx)
-		return false
-	}
-
-	for mboxIdx := startMbox; mboxIdx < len(mailboxes) && phase != "email-replies"; mboxIdx++ {
-		mb := mailboxes[mboxIdx]
-
-		labelID, err := st.EnsureLabel(
-			src.ID, mb.Label, mb.Label, "user",
-		)
-		if err != nil {
-			cp.ErrorsCount++
-			summary.Errors++
-			log.Warn("failed to ensure label",
-				"label", mb.Label, "error", err,
-			)
+			report(err)
 			continue
 		}
-		labelIDs := []int64{labelID}
-
-		log.Info("importing mailbox",
-			"label", mb.Label,
-			"files", len(mb.Files),
-			"index", mboxIdx,
-		)
-
-		for _, filePath := range mb.Files {
+		log.Info("importing mailbox", "label", mb.Label, "files", len(mb.Files), "index", mboxIdx)
+		for _, file := range mb.Files {
 			if ctx.Err() != nil {
 				break
 			}
-
-			// Resume: skip files already processed.
-			if mboxIdx == startMbox && startAfter != "" {
-				if filePath <= startAfter {
-					continue
-				}
-			}
-
-			// Check file size before reading to avoid OOM on oversized files.
-			fi, statErr := os.Stat(filePath)
-			if statErr != nil {
-				cp.ErrorsCount++
-				summary.Errors++
-				log.Warn("failed to stat .emlx",
-					"file", filePath, "error", statErr,
-				)
-				continue
-			}
-			if fi.Size() > opts.MaxMessageBytes {
-				cp.ErrorsCount++
-				summary.Errors++
-				log.Warn("file exceeds size limit",
-					"file", filePath,
-					"size", fi.Size(),
-					"limit", opts.MaxMessageBytes,
-				)
-				continue
-			}
-
-			msg, err := emlx.ParseFile(filePath, opts.MaxMessageBytes)
+			cp.MessagesProcessed++
+			summary.MessagesProcessed++
+			outcome, err := processEmlxOccurrence(ctx, st, src.ID, absRoot, rootPrefix, file, mb.Label, []int64{labelID}, policy, opts, io, log)
 			if err != nil {
-				cp.ErrorsCount++
-				summary.Errors++
-				log.Warn("failed to parse .emlx",
-					"file", filePath, "error", err,
-				)
-				continue
+				report(fmt.Errorf("occurrence %q: %w", file, err))
+				checkpointBlocked = true
 			}
-
-			if msg.RestorationError != nil {
-				log.Warn("could not restore cached attachments", "file", filePath, "error", msg.RestorationError)
+			summary.PartialFiles += outcome.partial
+			summary.AttachmentsRestored += outcome.restored
+			switch outcome.kind {
+			case "unchanged":
+				summary.FilesUnchanged++
+				summary.MessagesSkipped++
+			case "skipped":
+				summary.MessagesSkipped++
+			case "added":
+				summary.MessagesAdded++
+				cp.MessagesAdded++
+			case "updated":
+				summary.MessagesUpdated++
+				cp.MessagesUpdated++
 			}
-
-			if emlx.IsPartial(filepath.Base(filePath)) {
-				summary.PartialFiles++
+			if !checkpointBlocked {
+				lastMbox, lastPath, lastFile = mboxIdx, mb.Path, file
 			}
-
-			rawHash := msg.SourceHash
-			sourceMsgID := "emlx-" + rawHash
-
-			var fallbackDate time.Time
-			if !msg.PlistDate.IsZero() {
-				fallbackDate = msg.PlistDate
-			}
-
-			if idx, dup := pendingIdx[sourceMsgID]; dup {
-				// Same content from another mailbox (or duplicate file
-				// within the same mailbox); merge labels, deduplicating
-				// to avoid unique constraint violations in message_labels.
-				existing := pending[idx].LabelIDs
-				for _, lid := range labelIDs {
-					found := slices.Contains(existing, lid)
-					if !found {
-						existing = append(existing, lid)
-					}
-				}
-				pending[idx].LabelIDs = existing
-			} else {
-				pendingIdx[sourceMsgID] = len(pending)
-				pending = append(pending, pendingEmlxMsg{
-					Raw:       msg.Raw,
-					Restored:  msg.RestoredAttachments,
-					RawHash:   rawHash,
-					SourceMsg: sourceMsgID,
-					LabelIDs:  labelIDs,
-					Fallback:  fallbackDate,
-					MboxIdx:   mboxIdx,
-					MboxPath:  mb.Path,
-					FileName:  filePath,
-				})
-				pendingBytes += int64(len(msg.Raw))
-			}
-			if msg.RestoredAttachments > 0 {
-				p := &pending[pendingIdx[sourceMsgID]]
-				p.RestorePaths = append(p.RestorePaths, filePath)
-			}
-
-			if len(pending) >= batchSize || pendingBytes >= batchBytes {
-				if flushPending() {
-					return summary, ctx.Err()
+			if cp.MessagesProcessed%int64(opts.CheckpointInterval) == 0 {
+				if err := saveEmlxCheckpoint(st, syncID, absRoot, lastMbox, lastPath, lastFile, &cp); err != nil {
+					report(err)
 				}
 			}
 		}
-
-		// Flush remaining for this mailbox.
-		if flushPending() {
-			return summary, ctx.Err()
-		}
-
 		summary.MailboxesImported++
-
-		if ctx.Err() != nil {
-			break
-		}
 	}
-
-	summary.Duration = time.Since(start)
-	summary.HardErrors = hardErrors
-
-	if phase != "email-replies" {
-		// Final checkpoint.
-		if err := saveEmlxCheckpoint(
-			st, syncID, absRoot, lastCpMbox, lastCpMboxPath,
-			lastCpFile, &cp,
-		); err != nil {
-			cp.ErrorsCount++
-			summary.Errors++
-			log.Warn("failed to save final checkpoint", "error", err)
-		}
-	}
-
-	// If cancelled, leave the sync run as "running" so resume works.
 	if ctx.Err() != nil {
+		if err := saveEmlxCheckpoint(st, syncID, absRoot, lastMbox, lastPath, lastFile, &cp); err != nil {
+			log.Warn("checkpoint save failed", "error", err)
+		}
 		return summary, ctx.Err()
 	}
-
-	if hardErrors {
-		if err := st.FailSync(syncID, fmt.Sprintf(
-			"completed with %d errors", cp.ErrorsCount,
-		)); err != nil {
+	if err := saveEmlxCheckpoint(st, syncID, absRoot, lastMbox, lastPath, lastFile, &cp); err != nil {
+		report(err)
+	}
+	if summary.HardErrors {
+		if err := st.FailSync(syncID, fmt.Sprintf("completed with %d errors", cp.ErrorsCount)); err != nil {
 			return summary, fmt.Errorf("fail sync: %w", err)
 		}
 		return summary, nil
 	}
-
-	if phase != "email-replies" {
-		replyAfterID = 0
+	// Reply resolution restarts because new old-date parents can precede an old
+	// reply cursor even when all historical occurrence content was skipped.
+	saveReplies := func(after int64) error {
+		return saveEmlxCheckpointPhase(st, syncID, absRoot, lastMbox, lastPath, lastFile, &cp, "email-replies", after)
 	}
-	saveReplies := func(afterID int64) error {
-		return saveEmlxCheckpointPhase(st, syncID, absRoot, lastCpMbox, lastCpMboxPath,
-			lastCpFile, &cp, "email-replies", afterID)
+	if err := saveReplies(0); err != nil {
+		return summary, err
 	}
-	if err := saveReplies(replyAfterID); err != nil {
-		return summary, fmt.Errorf("start email reply resolution: %w", err)
-	}
-	if err := st.ResolveEmailReplyParentsContext(ctx, src.ID, replyAfterID, saveReplies); err != nil {
+	if err := st.ResolveEmailReplyParentsContext(ctx, src.ID, 0, saveReplies); err != nil {
 		return summary, fmt.Errorf("resolve email replies: %w", err)
 	}
-
-	finalMsg := fmt.Sprintf(
-		"mailboxes:%d messages:%d",
-		summary.MailboxesImported, summary.MessagesAdded,
-	)
-	if cp.ErrorsCount > 0 {
-		finalMsg = fmt.Sprintf(
-			"mailboxes:%d messages:%d errors:%d",
-			summary.MailboxesImported, summary.MessagesAdded,
-			cp.ErrorsCount,
-		)
-	}
-	if err := st.CompleteSyncContext(ctx, syncID, finalMsg); err != nil {
+	if err := st.CompleteSyncContext(ctx, syncID, fmt.Sprintf("mailboxes:%d messages:%d", summary.MailboxesImported, summary.MessagesAdded)); err != nil {
 		return summary, fmt.Errorf("complete sync: %w", err)
 	}
-
 	return summary, nil
-}
-
-// resolveCheckpointFile finds the full path in files whose basename
-// matches the legacy bare filename from an older checkpoint. Returns
-// the first matching full path so that no previously-unseen partition
-// files are skipped. Returns an error if no match is found, since
-// comparing a bare filename against absolute paths would produce
-// incorrect resume behavior.
-func resolveCheckpointFile(
-	basename string, files []string,
-) (string, error) {
-	for _, f := range files {
-		if filepath.Base(f) == basename {
-			return f, nil
-		}
-	}
-	return "", fmt.Errorf(
-		"legacy checkpoint file %q not found in current mailbox; rerun with --no-resume to start fresh",
-		basename,
-	)
 }
 
 func saveEmlxCheckpoint(
@@ -750,40 +310,4 @@ func saveEmlxCheckpointPhase(st *store.Store, syncID int64,
 	}
 	cp.PageToken = string(b)
 	return st.UpdateSyncCheckpoint(syncID, cp)
-}
-
-func checkpointIfDue(
-	cp *store.Checkpoint, summary *EmlxImportSummary,
-	interval int,
-	st *store.Store, syncID int64,
-	rootDir string, mboxIdx int, mboxPath string,
-	lastFile string, log *slog.Logger,
-) {
-	if cp.MessagesProcessed%int64(interval) != 0 {
-		return
-	}
-	if err := saveEmlxCheckpoint(
-		st, syncID, rootDir, mboxIdx, mboxPath, lastFile, cp,
-	); err != nil {
-		cp.ErrorsCount++
-		summary.Errors++
-		log.Warn("failed to save checkpoint", "error", err)
-	}
-}
-
-// restoreEmlxAttachments fills raw's attachment placeholders from the Apple
-// Mail cache beside each partial file in paths, and returns the number of
-// attachments it filled.
-func restoreEmlxAttachments(raw []byte, paths []string, maxBytes int64, log *slog.Logger) ([]byte, int) {
-	total := 0
-	for _, path := range paths {
-		var n int
-		var err error
-		raw, n, err = emlx.RestoreAttachments(raw, path, maxBytes)
-		total += n
-		if err != nil {
-			log.Warn("could not restore cached attachments", "file", path, "error", err)
-		}
-	}
-	return raw, total
 }

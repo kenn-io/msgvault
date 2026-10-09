@@ -3,6 +3,7 @@ package importer
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -53,7 +54,26 @@ func ingestRawMessage(
 	raw []byte, fallbackDate time.Time,
 	log *slog.Logger, images *remoteimage.Fetcher, threadID string,
 ) error {
-	parsed, _ := mime.ParseWithRecovery(raw, "(MIME parse error)")
+	return ingestRawMessageWithCompletion(ctx, st, sourceID, identifier, attachmentsDir, labelIDs, sourceMsgID, rawHash, raw, fallbackDate, log, images, threadID, false)
+}
+
+// EMLX completion is strict even though raw/salvaged metadata may already commit.
+// Other importers retain the shared path's best-effort postcommit behavior.
+func ingestRawMessageWithCompletion(ctx context.Context, st *store.Store,
+	sourceID int64, identifier, attachmentsDir string, labelIDs []int64,
+	sourceMsgID, rawHash string, raw []byte, fallbackDate time.Time,
+	log *slog.Logger, images *remoteimage.Fetcher, threadID string, strict bool,
+) error {
+	parsed, parseErr := mime.ParseWithRecovery(raw, "(MIME parse error)")
+	var completionErr error
+	if strict {
+		completionErr = parseErr
+	}
+	incomplete := func(err error) {
+		if strict {
+			completionErr = errors.Join(completionErr, err)
+		}
+	}
 
 	subject := textutil.EnsureUTF8(parsed.Subject)
 	bodyText := textutil.EnsureUTF8(parsed.GetBodyText())
@@ -195,6 +215,7 @@ func ingestRawMessage(
 		if err := storeAttachment(
 			st, attachmentsDir, messageID, att,
 		); err != nil {
+			incomplete(fmt.Errorf("store attachment: %w", err))
 			log.Warn("failed to store attachment",
 				"message", messageID,
 				"filename", att.Filename,
@@ -210,11 +231,13 @@ func ingestRawMessage(
 			st.Rebind(`SELECT COUNT(*) FROM attachments WHERE message_id = ?`),
 			messageID,
 		).Scan(&storedCount); err != nil {
+			incomplete(fmt.Errorf("count attachments: %w", err))
 			log.Warn("failed to count stored attachments",
 				"message", messageID, "error", err,
 			)
 		} else if storedCount != attachmentCount {
 			if err := st.RecomputeMessageAttachmentStats(messageID); err != nil {
+				incomplete(fmt.Errorf("attachment metadata: %w", err))
 				log.Warn("failed to update attachment metadata",
 					"message", messageID, "error", err,
 				)
@@ -238,6 +261,7 @@ func ingestRawMessage(
 			messageID, subject, bodyText,
 			fromAddr, toAddrs, ccAddrs,
 		); err != nil {
+			incomplete(fmt.Errorf("index message: %w", err))
 			log.Warn("failed to upsert FTS",
 				"message", messageID, "error", err,
 			)
@@ -248,6 +272,9 @@ func ingestRawMessage(
 		return fmt.Errorf("record email reply header: %w", err)
 	}
 
+	if strict {
+		return errors.Join(completionErr, ctx.Err())
+	}
 	return nil
 }
 

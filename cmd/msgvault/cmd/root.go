@@ -353,6 +353,7 @@ func executeRootContext(ctx context.Context, root *cobra.Command) error {
 		}
 		inv.cfg = nil
 		clearInvocationFlags(root)
+		clearImportEmlxMaxMessageBytes(root)
 	}()
 	defer recoverAndLogPanic(inv)
 

@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-07"
+last_edited: "2026-10-08"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -1553,10 +1553,10 @@ attachments of these messages outside the MIME payload, in a sibling
 inside the message's outer multipart, within the message size limit.
 Attachments in nested parts, such as inside some forwarded messages, are not
 restored. An attachment without a cached file stays absent; unreadable files
-or directories produce a warning. Re-importing a partial message adds newly
-cached attachments to the existing message without creating another copy.
+or directories produce an error and leave the occurrence retryable. Re-importing
+a partial message adds newly cached attachments to the existing message without creating another copy.
 When the archived message already holds every cached attachment, the rerun
-skips it instead of rewriting it. If both `N.emlx` and
+skips ingestion instead of rewriting it. If both `N.emlx` and
 `N.partial.emlx` exist, the complete `N.emlx` copy wins. The command summary
 reports the number of partial files read and how many attachments the run
 added to the archive.
@@ -1567,10 +1567,34 @@ added to the archive.
 | `--account` | — | Filter to specific account(s) during auto-discover (repeatable) |
 | `--accounts-db` | — | Custom path to macOS `Accounts4.sqlite` |
 | `--identifier` | — | Manual identifier when auto-discover is not suitable |
-| `--no-resume` | `false` | Start fresh, ignoring interrupted progress |
+| `--no-resume` | `false` | Ignore interrupted progress; completed file receipts remain usable |
+| `--full-reconcile` | `false` | Invalidate this root's receipts and reconcile every discovered file |
+| `--max-message-bytes` | `134217728` (128 MiB) | Maximum EMLX file and merged MIME size in bytes, including MIME encoding; explicit values must be 1–9223372036854775806 |
 | `--checkpoint-interval` | `200` | Save progress every N messages |
 | `--no-attachments` | `false` | Skip writing attachments to disk |
 | `--no-default-identity` | `false` | Do not auto-confirm the identifier as this source's "me" identity |
+
+On unreleased `main`, completed imports persist per-path receipts. Repeat
+imports still discover directories and inspect filesystem metadata, including
+sibling attachment dependencies, but skip content reads for confidently
+unchanged files. New files are considered regardless of sent date. Mailbox
+moves and additional occurrences retain accumulated labels; disappearance from
+the local cache never deletes archived data.
+
+A receipt requires completed MIME ingestion, attachment storage under the
+selected policy, header repair and available full-text indexing. Incomplete
+work retries using the current archived raw. Metadata receipts do not provide
+continuous content-integrity checking. The fast path requires supported
+Linux/macOS filesystem metadata and paths without symlinks; other paths still
+use normal content reads. Use `--full-reconcile` after suspected
+stale state or arbitrary archive/blob/index changes; it forces completion even
+when raw content is equal. Remote-image archiving disables file receipt hits.
+
+If restored attachments would exceed the merged message limit, the importer
+preserves previously archived parts and leaves the incomplete occurrence
+retryable. Retry with a larger `--max-message-bytes` value that fits your
+memory budget. The limit applies in both automatic and manual account modes;
+omitting the flag restores the 128 MiB default for that invocation.
 
 See [Importing Local Email](/docs/usage/importing/) for usage examples.
 
