@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -212,31 +213,55 @@ func normalizePhone(raw string) string {
 }
 
 func normalizeLegacyPhone(raw string, normalize func(string) string) string {
-	if len(raw) < len("tel:") || !strings.EqualFold(raw[:len("tel:")], "tel:") {
-		return normalize(raw)
-	}
+	subscriber, _ := decodeTelephoneEndpoint(raw)
+	return normalize(subscriber)
+}
 
+func decodeTelephoneEndpoint(raw string) (string, []string) {
+	if len(raw) < len("tel:") || !strings.EqualFold(raw[:len("tel:")], "tel:") {
+		return raw, nil
+	}
 	parts := strings.Split(raw[len("tel:"):], ";")
 	subscriber, err := url.PathUnescape(parts[0])
 	if err != nil {
-		return ""
+		return "", nil
 	}
-	if strings.HasPrefix(subscriber, "+") {
-		return normalize(subscriber)
-	}
-
+	var parameters []string
 	for _, part := range parts[1:] {
 		name, value, found := strings.Cut(part, "=")
-		if !found || !strings.EqualFold(name, "phone-context") {
+		decoded, err := url.PathUnescape(value)
+		if err != nil {
+			if found && strings.EqualFold(name, "phone-context") && !strings.HasPrefix(subscriber, "+") {
+				return "", nil
+			}
+			decoded = value
+		}
+		name = strings.ToLower(name)
+		if found && name == "phone-context" && strings.HasPrefix(decoded, "+") {
+			if !strings.HasPrefix(subscriber, "+") {
+				subscriber = decoded + subscriber
+			}
 			continue
 		}
-		context, err := url.PathUnescape(value)
-		if err != nil || !strings.HasPrefix(context, "+") {
-			return ""
+		if found && name == "phone-context" {
+			if !strings.HasPrefix(subscriber, "+") {
+				return "", nil
+			}
+			decoded = strings.ToLower(decoded)
 		}
-		return normalize(context + subscriber)
+		if found {
+			name += "=" + decoded
+		}
+		parameters = append(parameters, name)
 	}
-	return normalize(subscriber)
+	slices.Sort(parameters)
+	return subscriber, parameters
+}
+
+// TelephoneParameters returns endpoint parameters after numeric phone-context assembly.
+func TelephoneParameters(raw string) []string {
+	_, parameters := decodeTelephoneEndpoint(strings.TrimSpace(raw))
+	return parameters
 }
 
 // TelephoneNumber extracts the subscriber and phone context without URI parameters.

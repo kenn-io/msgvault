@@ -520,10 +520,11 @@ func (s *Store) cardDAVRebaseDisplacesOwnerTx(ctx context.Context, tx *loggedTx,
 			continue
 		}
 		var coincidence bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM persons p JOIN person_names n ON n.person_id = p.id
-			WHERE p.id = ? AND p.display_name = ? AND p.display_name <> n.formatted
-			  AND n.source = ? AND n.source_ref = ? AND n.source_resource_uid = ?
-			  AND n.name_kind = ? AND n.active_until IS NULL AND n.superseded_at IS NULL)`,
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM persons p
+			WHERE p.id = ? AND p.display_name = ? AND p.display_name <> (
+				SELECT n.formatted FROM person_names n WHERE n.person_id = p.id
+				  AND n.source = ? AND n.source_ref = ? AND n.source_resource_uid = ?
+				  AND n.name_kind = ? ORDER BY n.id DESC LIMIT 1))`,
 			personID, strings.TrimSpace(value), ProvenanceCardDAVImport, fmt.Sprintf("carddav:%d", bookID), href,
 			PersonNameFormatted).Scan(&coincidence); err != nil {
 			return false, err
@@ -647,7 +648,6 @@ func (s *Store) applyCardDAVResourceTx(
 				return false, false, err
 			}
 			projectionRebased = true
-			personRevision = nil
 		}
 	}
 	if personID != nil && personRevision == nil {
@@ -979,9 +979,7 @@ func (s *Store) resolveCardDAVPersonTx(
 					return nil, nil, fmt.Errorf("scan CardDAV contact match: %w", err)
 				}
 				if candidate.kind == ContactAddressPhone {
-					_, requestedParameters, _ := strings.Cut(raw, ";")
-					_, storedParameters, _ := strings.Cut(uri.String, ";")
-					if requestedParameters != storedParameters {
+					if !slices.Equal(vcard.TelephoneParameters(raw), vcard.TelephoneParameters(uri.String)) {
 						continue
 					}
 				}

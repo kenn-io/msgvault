@@ -498,6 +498,17 @@ func TestKeepRemoteRebasesImportedPersonCleanupBaseline(t *testing.T) {
 			wantPersonRetained: true,
 		},
 		{
+			name: "local display rename survives remote resolution and deletion",
+			makeLocalChange: func(t *testing.T, st *store.Store, personID int64) {
+				t.Helper()
+				person, err := st.GetPersonContext(t.Context(), personID)
+				require.NoError(t, err)
+				_, err = st.UpdatePersonDisplayNameContext(t.Context(), personID, person.Revision, new("Alice Local"))
+				require.NoError(t, err)
+			},
+			wantPersonRetained: true,
+		},
+		{
 			name: "explicit user state keeps cleanup baseline",
 			makeLocalChange: func(t *testing.T, st *store.Store, personID int64) {
 				t.Helper()
@@ -588,6 +599,9 @@ func TestKeepRemoteRebasesImportedPersonCleanupBaseline(t *testing.T) {
 			if tt.wantPersonRetained {
 				require.NoError(err)
 				assert.Equal(personID, person.ID)
+				if tt.name == "local display rename survives remote resolution and deletion" {
+					assert.Equal(new("Alice Local"), person.DisplayName)
+				}
 				return
 			}
 			require.ErrorIs(err, store.ErrPersonNotFound)
@@ -1761,8 +1775,9 @@ func TestRemoteContactImportPreservesMetadata(t *testing.T) {
 }
 
 func TestPublishedImportLocalRenameSurvivesRemoteRename(t *testing.T) {
-	for _, published := range []bool{false, true} {
-		t.Run(fmt.Sprintf("local rename published=%t", published), func(t *testing.T) {
+	for _, tc := range []struct{ published, supersedeName bool }{{false, false}, {true, false}, {true, true}} {
+		published := tc.published
+		t.Run(fmt.Sprintf("local rename published=%t superseded=%t", published, tc.supersedeName), func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 			fixture, service, st, personID := publishedImportFixture(t)
@@ -1794,6 +1809,9 @@ func TestPublishedImportLocalRenameSurvivesRemoteRename(t *testing.T) {
 			require.NoError(err)
 			if published {
 				assert.Empty(conflicts)
+				if tc.supersedeName {
+					require.NoError(st.SupersedePersonNameContext(t.Context(), personID, names[0].Envelope.ID, nil))
+				}
 				fixture.setRemote(bytes.Replace(fixture.body, []byte("FN:Alice Remote"), []byte("FN:Alice Local"), 1), `"coincidence"`)
 				_, err = service.Sync(t.Context(), SyncOptions{Full: true})
 				require.NoError(err)
@@ -2151,12 +2169,18 @@ func TestPublishedImportRetainsPreferenceHashBaseline(t *testing.T) {
 }
 
 func TestPhoneURIIdentityReusesImportedPerson(t *testing.T) {
-	for _, tc := range []struct{ phone, second string }{
-		{"+12025550102", "+12025550102"},
-		{"tel:+12025550102;ext=42", "tel:+12025550102;ext=42"},
-		{"tel:5550102;phone-context=+1202;ext=42", "tel:5550102;phone-context=+1202;ext=42"},
-		{"tel:+12025550102;ext=42", "tel:+12025550102;ext=43"},
-		{"tel:+12025550102;ext=42", "+12025550102"},
+	for _, tc := range []struct {
+		phone, second string
+		distinct      bool
+	}{
+		{"+12025550102", "+12025550102", false},
+		{"tel:+12025550102;ext=42", "tel:+12025550102;ext=42", false},
+		{"tel:5550102;phone-context=+1202;ext=42", "tel:5550102;phone-context=+1202;ext=42", false},
+		{"tel:5550102;phone-context=+1202;ext=42", "tel:+12025550102;ext=42", false},
+		{"tel:5550102;phone-context=+1202;ext=42", "TEL:5550102;EXT=42;PHONE-CONTEXT=+1202", false},
+		{"tel:+12025550102;ext=42;isub=7", "tel:+12025550102;ISUB=7;EXT=42", false},
+		{"tel:+12025550102;ext=42", "tel:+12025550102;ext=43", true},
+		{"tel:+12025550102;ext=42", "+12025550102", true},
 	} {
 		phone := tc.phone
 		t.Run(phone+"/"+tc.second, func(t *testing.T) {
@@ -2177,7 +2201,7 @@ func TestPhoneURIIdentityReusesImportedPerson(t *testing.T) {
 			require.NotNil(first.PersonID)
 			second, err := st.GetCardDAVResourceContext(t.Context(), book.ID, book.CanonicalURL+"second.vcf")
 			require.NoError(err)
-			if phone == tc.second {
+			if !tc.distinct {
 				assert.Equal(first.PersonID, second.PersonID)
 			} else {
 				require.NotNil(second.PersonID)
