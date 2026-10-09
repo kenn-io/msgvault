@@ -27,6 +27,101 @@ instructions or authorization to make a change. See [write controls](#write-cont
 Saved View management changes only reusable definitions; deleting a Saved
 View never deletes archive messages.
 
+## Events
+
+On unreleased `main`, native MCP Events can notify an HTTPS receiver when
+msgvault archives a live message, changes an archived calendar event, or changes
+a draft. This requires daemon API schema 3.8.0, protocol `2026-07-28`, Streamable
+HTTP, the selected daemon's owner API key, and
+[`[mcp.events].enabled`](../configuration.md#mcpevents). It is unavailable over
+stdio, with delegated tokens, in keyless mode, or when either independent
+`--http-token-file` or `--http-token-env` is selected.
+
+The client discovers the top-level `events` capability through
+`server/discover`, then calls `events/list`. The runtime catalog includes only
+source types with implemented capture and reads. Phase 1 supports Gmail and
+IMAP message and draft occurrences, and Google Calendar event changes.
+Managed Beeper drafts and local chat drafts also have capture and `draft_get`
+reads when their source types are explicitly enabled in `[mcp.events].sources`:
+`beeper`, `slack`, `slackdump`, `teams`, and `discord`.
+Historical imports, full scans, and recovery scans do not emit live occurrences. A newly
+subscribed receiver starts at the current journal head. Keep the daemon running
+with `msgvault serve`, or disable background daemon idle shutdown when callbacks
+must remain available.
+
+Choose an exact scope before subscribing:
+
+| Family | Scope argument | Find the scope |
+|---|---|---|
+| `msgvault.message_archived` | `conversation_id` | Message or conversation reads |
+| `msgvault.calendar_event_changed` | `calendar_source_id` | `list_calendar_sources` |
+| `msgvault.draft_changed` | `conversation_id` | Draft or conversation reads |
+
+Archive IDs are canonical decimal strings. Subscribe with `events/subscribe`:
+
+```json
+{
+  "name": "msgvault.message_archived",
+  "arguments": {"conversation_id": "42"},
+  "delivery": {
+    "mode": "webhook",
+    "url": "https://receiver.example.net/events",
+    "secret": "whsec_<base64-encoded 32-byte secret>"
+  }
+}
+```
+
+The receiver must echo the signed verification request's `challenge` as JSON.
+Delivery requests contain a signed occurrence envelope. Verify the Standard
+Webhooks signature over the exact body and deduplicate by `eventId`. HTTPS
+receivers normally need public addresses and port 443 or 8443; the
+[configuration reference](../configuration.md#mcpevents) owns private receiver
+exceptions and address checks.
+
+Save the returned `id`, `cursor`, and `refreshBefore`. The MCP `refreshBefore`
+field is an ISO8601 UTC timestamp, such as `2026-10-02T12:00:00.123Z`. Renew
+before that time with the same scope, callback, and secret. `events/unsubscribe`
+ends that subscription. Use a saved cursor for explicit replay; when coverage
+or retention makes it stale, subscribe returns `truncated: true` and starts at
+the current head. Delivery is at least once, ordered within each subscription,
+with one pending occurrence and at most twelve attempts. A `2xx` response
+acknowledges delivery; `410` ends the subscription; `413` drops the occurrence.
+
+Use `get_mcp_event` to recover a retained occurrence. For a message occurrence,
+pass its `eventId` as `event_id` to every `get_message` page. This grants a read
+only for the message identified by that receipt; it cannot authorize another
+message or a replacement using a deleted message's ID. An occurrence receipt
+can survive physical message deletion even when its message read becomes
+unavailable. Ending a subscription removes its read authority immediately;
+expired subscriptions have a 24-hour read grace while the receipt is retained.
+The configured retention defaults to seven days and may be shorter. An
+occurrence becomes unavailable to reads and delivery once its recorded time
+falls outside the retention window, even if the next cleanup sweep has not yet
+removed its row. Startup and replay activation prune expired rows before
+workers or a replay cursor can use them. Pruning advances a global sequence
+floor; a subscription behind that floor stops with reason `retention`, and its
+next refresh starts at the current head with `truncated: true`. A recent
+receipt that remains physically stored below the floor can still authorize its
+own read until it expires.
+
+Use `draft_get` to read a managed draft by its `draft_id`. Deleted drafts can
+return not-found while `get_mcp_event` still returns their retained occurrence.
+
+`msgvault mcp events status --json` shows safe delivery state, cursors, pending
+attempts, and dead-letter and loop-guard counts. It omits callback URLs and
+secrets. Subscriptions expire within 24 hours and the journal retains at most
+seven days. The cleanup sweep runs at half the configured retention, capped at
+one hour and floored at one second. Own-message delivery defaults off; the
+runtime schema describes `include_from_me` and its bounded loop guard. Events
+do not poll provider status or send mail. Attachment processing, action completion, filed Kata issues, and
+Beeper media readiness remain unadvertised until their producer and read gates
+are implemented.
+
+Hosted ChatGPT integration remains experimental: a gateway must forward native
+`events/*` and provide the daemon owner key. An HTTPS webhook receiver receives
+callbacks directly from the daemon. A tunnel does not establish this auth
+bridge or forward callbacks automatically.
+
 ## Calendar control
 
 Unreleased daemon API schema 3.1.0 adds `calendar_create`, `calendar_update`,

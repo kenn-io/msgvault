@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/pflag"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/logging"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 // invocationOptions is the set of root-owned options that belong to one
@@ -43,10 +44,12 @@ type invocationOptions struct {
 }
 
 type invocation struct {
-	options   invocationOptions
-	cfg       *config.Config
-	logger    *slog.Logger
-	logResult *logging.Result
+	options                invocationOptions
+	cfg                    *config.Config
+	logger                 *slog.Logger
+	logResult              *logging.Result
+	mcpEventsCapture       bool
+	mcpEventsCaptureConfig *store.MCPEventsConfig
 }
 
 type invocationContextKey struct{}
