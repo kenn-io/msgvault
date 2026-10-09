@@ -109,13 +109,11 @@
       }
     }
     document.addEventListener('visibilitychange', refresh);
-    window.addEventListener('focus', refresh);
     timer = setTimeout(() => void load(), 300);
     return () => {
       disposed = true;
       stop();
       document.removeEventListener('visibilitychange', refresh);
-      window.removeEventListener('focus', refresh);
     };
   });
 
