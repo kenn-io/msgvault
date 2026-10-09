@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"time"
 
 	"go.kenn.io/msgvault/internal/beeper"
 	"go.kenn.io/msgvault/internal/docbankmedia"
@@ -15,13 +16,16 @@ import (
 )
 
 type MediaSearchResult struct {
-	MessageID      int64  `json:"message_id"`
-	ConversationID int64  `json:"conversation_id"`
-	AttachmentID   int64  `json:"attachment_id"`
-	Origin         string `json:"origin" enum:"supplied,generated"`
-	Excerpt        string `json:"excerpt" doc:"Plain transcript excerpt without search highlight markers"`
-	StartMS        *int64 `json:"start_ms,omitempty"`
-	EndMS          *int64 `json:"end_ms,omitempty"`
+	Filename        string     `json:"filename,omitempty"`
+	ContainingTitle string     `json:"containing_title,omitempty"`
+	OccurredAt      *time.Time `json:"occurred_at,omitempty"`
+	MessageID       int64      `json:"message_id"`
+	ConversationID  int64      `json:"conversation_id"`
+	AttachmentID    int64      `json:"attachment_id"`
+	Origin          string     `json:"origin" enum:"supplied,generated"`
+	Excerpt         string     `json:"excerpt" doc:"Plain transcript excerpt without search highlight markers"`
+	StartMS         *int64     `json:"start_ms,omitempty"`
+	EndMS           *int64     `json:"end_ms,omitempty"`
 }
 
 type MediaSearchResponse struct {
@@ -273,7 +277,8 @@ func (reader *MessageRecordingReader) search(ctx context.Context, query string, 
 					response.Truncated = true
 					return response, nil
 				}
-				result := MediaSearchResult{MessageID: o.MessageID, ConversationID: o.ConversationID, AttachmentID: o.AttachmentID, Origin: selections[source].Origin, Excerpt: hit.Excerpt}
+				result := MediaSearchResult{MessageID: o.MessageID, ConversationID: o.ConversationID, AttachmentID: o.AttachmentID, Origin: selections[source].Origin, Excerpt: hit.Excerpt,
+					Filename: o.Filename, ContainingTitle: o.ContainingTitle, OccurredAt: o.OccurredAt}
 				if evidence.TimeSpan != nil {
 					result.StartMS, result.EndMS = &evidence.TimeSpan.StartMS, &evidence.TimeSpan.EndMS
 				}
