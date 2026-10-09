@@ -17,6 +17,8 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -167,4 +169,114 @@ func TestWebhookDeliveryRotationSignsBothAndBoundsResponses(t *testing.T) {
 	status, _, err = w.post(t.Context(), "https://receiver.example.net/events", "sub_synthetic", "evt_synthetic", make([]byte, 262145), current, nil, nil)
 	require.Error(err)
 	assert.Zero(status)
+}
+
+// stalledLookupWebhook returns a client whose callback lookup waits until
+// release is called, and a channel that receives each dial's result.
+func stalledLookupWebhook(t *testing.T) (w *webhookClient, lookupStarted chan struct{}, release func(), dials chan error) {
+	t.Helper()
+	w = tlsWebhook(t, func(rw http.ResponseWriter, r *http.Request) { rw.WriteHeader(http.StatusNoContent) })
+	lookupStarted, resume, dials := make(chan struct{}), make(chan struct{}), make(chan error, 1)
+	var once sync.Once
+	release = func() { once.Do(func() { close(resume) }) }
+	t.Cleanup(release)
+	w.resolve = func(context.Context, string, string) ([]netip.Addr, error) {
+		close(lookupStarted)
+		<-resume
+		return []netip.Addr{netip.MustParseAddr("203.0.113.7")}, nil
+	}
+	dial := w.transport.DialContext
+	w.transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+		conn, err := dial(ctx, network, address)
+		dials <- err
+		return conn, err
+	}
+	return w, lookupStarted, release, dials
+}
+
+func postInBackground(ctx context.Context, w *webhookClient, guard func(context.Context) error) chan error {
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := w.post(ctx, "https://receiver.example.net/events", "sub_synthetic", "msg_synthetic", []byte(`{}`), make([]byte, 32), nil, guard)
+		done <- err
+	}()
+	return done
+}
+
+func TestDialGuardDoesNotRunAfterRequestEnds(t *testing.T) {
+	require := Require.New(t)
+	w, lookupStarted, release, dials := stalledLookupWebhook(t)
+	var requestEnded atomic.Bool
+	var lateChecks atomic.Int32
+	guard := func(ctx context.Context) error {
+		if requestEnded.Load() && ctx.Err() == nil {
+			lateChecks.Add(1)
+		}
+		return nil
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	done := postInBackground(ctx, w, guard)
+	select {
+	case <-lookupStarted:
+	case <-time.After(10 * time.Second):
+		require.FailNow("callback lookup did not start")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		require.Error(err)
+	case <-time.After(10 * time.Second):
+		require.FailNow("cancelled request did not return")
+	}
+	requestEnded.Store(true)
+	release()
+	select {
+	case err := <-dials:
+		require.Error(err, "a dial that outlives its request must not connect")
+	case <-time.After(10 * time.Second):
+		require.FailNow("orphaned dial did not finish")
+	}
+	Assert.Zero(t, lateChecks.Load(), "the dial guard must not run Store checks for a finished request")
+}
+
+func TestDialGuardWaitEndsWithRequest(t *testing.T) {
+	require := Require.New(t)
+	w := tlsWebhook(t, func(rw http.ResponseWriter, r *http.Request) { rw.WriteHeader(http.StatusNoContent) })
+	var resolved atomic.Bool
+	resolve := w.resolve
+	w.resolve = func(ctx context.Context, network, host string) ([]netip.Addr, error) {
+		resolved.Store(true)
+		return resolve(ctx, network, host)
+	}
+	guardStarted, guardReturned := make(chan struct{}), make(chan error, 1)
+	guard := func(ctx context.Context) error {
+		if !resolved.Load() {
+			return nil
+		}
+		close(guardStarted)
+		// Stands in for a wait on the archive gate.
+		<-ctx.Done()
+		guardReturned <- ctx.Err()
+		return ctx.Err()
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	done := postInBackground(ctx, w, guard)
+	select {
+	case <-guardStarted:
+	case <-time.After(10 * time.Second):
+		require.FailNow("dial guard did not start")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		require.Error(err)
+	case <-time.After(10 * time.Second):
+		require.FailNow("cancelled request did not return")
+	}
+	select {
+	case err := <-guardReturned:
+		require.ErrorIs(err, context.Canceled)
+	case <-time.After(10 * time.Second):
+		require.FailNow("dial guard kept waiting after its request ended")
+	}
 }

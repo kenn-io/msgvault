@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"testing"
 	"time"
 
@@ -53,6 +54,36 @@ func TestKeyCreationDisabledAndRestoreRules(t *testing.T) {
 	require.NoError(os.WriteFile(path, key, 0600))
 	_, err = New(t.Context(), f.Store, s.opts)
 	require.NoError(err)
+}
+
+func TestConcurrentKeyCreationPublishesOneCompleteKey(t *testing.T) {
+	assert := Assert.New(t)
+	require := Require.New(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "events.key")
+	const creators = 16
+	keys := make([][]byte, creators)
+	errs := make([]error, creators)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := range creators {
+		wg.Go(func() {
+			<-start
+			keys[i], errs[i] = loadKey(path, nil)
+		})
+	}
+	close(start)
+	wg.Wait()
+	for i := range creators {
+		require.NoError(errs[i], "creator %d must read a complete key", i)
+		assert.Equal(keys[0], keys[i], "every creator must use the published key")
+	}
+	onDisk, err := os.ReadFile(path)
+	require.NoError(err)
+	assert.Equal(keys[0], onDisk)
+	entries, err := os.ReadDir(dir)
+	require.NoError(err)
+	assert.Len(entries, 1, "staging files must not remain after publication")
 }
 
 func TestKeyFileModePolicy(t *testing.T) {

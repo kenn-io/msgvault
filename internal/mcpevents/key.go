@@ -3,11 +3,13 @@ package mcpevents
 import (
 	"crypto/rand"
 	"errors"
-	"io"
+	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
 
+	"go.kenn.io/kit/atomicfile"
 	"go.kenn.io/msgvault/internal/fileutil"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -27,27 +29,9 @@ func loadKey(path string, rows []store.MCPSubscription) ([]byte, error) {
 		if err := fileutil.SecureMkdirAll(filepath.Dir(path), 0700); err != nil {
 			return fail()
 		}
-		var f *os.File
-		f, err = fileutil.SecureOpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-		if errors.Is(err, os.ErrExist) {
+		key, err = createKey(path)
+		if errors.Is(err, fs.ErrExist) {
 			key, err = os.ReadFile(path)
-		} else if err == nil {
-			key = make([]byte, 32)
-			_, err = rand.Read(key)
-			if err == nil {
-				var n int
-				n, err = f.Write(key)
-				if err == nil && n != len(key) {
-					err = io.ErrShortWrite
-				}
-			}
-			if err == nil {
-				err = f.Sync()
-			}
-			closeErr := f.Close()
-			if err == nil {
-				err = closeErr
-			}
 		}
 	}
 	if err != nil || len(key) != 32 {
@@ -68,6 +52,26 @@ func loadKey(path string, rows []store.MCPSubscription) ([]byte, error) {
 				return fail()
 			}
 		}
+	}
+	return key, nil
+}
+
+// createKey publishes a new key only when path does not exist. The key is
+// staged in a private temporary file, synced, and then linked into place, so
+// a crash cannot leave a partial key and a concurrent creator's key is never
+// replaced. An existing path fails with fs.ErrExist.
+func createKey(path string) ([]byte, error) {
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		return nil, fmt.Errorf("generate MCP Events key: %w", err)
+	}
+	if err := atomicfile.WriteNew(path, key, atomicfile.WithPrivate()); err != nil {
+		return nil, err
+	}
+	// WithPrivate also admits SYSTEM and Administrators on Windows; keep the
+	// repository's current-user-only policy for owner-only files.
+	if err := fileutil.SecureChmod(path, 0600); err != nil {
+		return nil, err
 	}
 	return key, nil
 }
