@@ -97,7 +97,7 @@ describe('TranscriptHits', () => {
     expect(fetchFn).toHaveBeenCalledTimes(3);
   });
 
-  it('refreshes removed evidence on focus and pauses while hidden', async () => {
+  it('preserves actionable links on window focus and refreshes after being hidden', async () => {
     vi.useFakeTimers();
     const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
     let finish!: (value: Response) => void;
@@ -108,19 +108,20 @@ describe('TranscriptHits', () => {
     await vi.advanceTimersByTimeAsync(300);
     await fireEvent(window, new Event('focus'));
     await fireEvent(window, new Event('focus'));
+    expect(screen.getByRole('link')).toBeTruthy();
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    hidden.mockReturnValue(true);
     await fireEvent(document, new Event('visibilitychange'));
     expect(screen.queryByText('Quarterly <numbers>')).toBeNull();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    hidden.mockReturnValue(false);
+    await fireEvent(document, new Event('visibilitychange'));
+    await fireEvent(document, new Event('visibilitychange'));
     expect(fetchFn).toHaveBeenCalledTimes(2);
     finish(Response.json(report({ results: [] })));
     await vi.advanceTimersByTimeAsync(0);
-    hidden.mockReturnValue(true);
-    await fireEvent(document, new Event('visibilitychange'));
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(fetchFn).toHaveBeenCalledTimes(2);
-    hidden.mockReturnValue(false);
-    await fireEvent(document, new Event('visibilitychange'));
-    await vi.advanceTimersByTimeAsync(0);
-    expect(fetchFn).toHaveBeenCalledTimes(3);
+    expect(screen.getByText('No spoken matches.')).toBeTruthy();
     view.unmount();
   });
 
