@@ -481,7 +481,7 @@ func (s *Store) cardDAVResourceNeedsConflictTx(
 			publicationEnvelope := envelope
 			publicationEnvelope.RenderMetadata.RenderRequired = true
 			if _, err := publicationEnvelope.PrepareCanonicalRender(); err != nil {
-				return true, nil, nil
+				return true, nil, nil //nolint:nilerr // Unpublishable remote cards require conflict review.
 			}
 			unsafe, err := s.cardDAVRebaseDisplacesOwnerTx(ctx, tx, bookID, *resource.PersonID, href, dropped)
 			if err != nil || unsafe {
@@ -1106,16 +1106,17 @@ func (s *Store) rebaseCardDAVImportedProjectionTx(
 		(priorImportedDisplay.Valid && currentDisplay.String == priorImportedDisplay.String)
 
 	for _, table := range []string{personNamesTableName, personContactPointsTableName} {
-		query := `UPDATE ` + table + ` SET superseded_at = ` + s.dialect.Now() + `, updated_at = ` + s.dialect.Now() + `
-			WHERE ` + cardDAVImportedRowFilter
+		var query strings.Builder
+		query.WriteString(`UPDATE ` + table + ` SET superseded_at = ` + s.dialect.Now() + `, updated_at = ` + s.dialect.Now() + `
+			WHERE ` + cardDAVImportedRowFilter)
 		args := []any{personID, ProvenanceCardDAVImport, sourceRef, input.Href}
 		for _, mapping := range incoming.NativeMappings {
 			if mapping.Table == table {
-				query += " AND id <> ?"
+				query.WriteString(" AND id <> ?")
 				args = append(args, mapping.RowID)
 			}
 		}
-		if _, err := tx.ExecContext(ctx, query, args...); err != nil {
+		if _, err := tx.ExecContext(ctx, query.String(), args...); err != nil {
 			return false, fmt.Errorf("supersede %s CardDAV projection: %w", table, err)
 		}
 	}

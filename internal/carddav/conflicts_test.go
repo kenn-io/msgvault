@@ -2111,7 +2111,7 @@ func assertKeepRemoteRejected(t *testing.T, fixture *mutationFixture, service *S
 	fixture.mu.Unlock()
 	rejection := service.ResolveConflict(t.Context(), conflictID, ResolutionKeepRemote)
 	require.Error(t, rejection)
-	assert.NotErrorIs(t, rejection, store.ErrCardDAVConflictStale)
+	require.NotErrorIs(t, rejection, store.ErrCardDAVConflictStale)
 	afterPublication, err := st.GetCardDAVPublicationContext(t.Context(), personID)
 	require.NoError(t, err)
 	assert.Equal(t, publication, afterPublication)
