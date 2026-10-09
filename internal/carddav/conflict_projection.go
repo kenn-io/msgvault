@@ -87,7 +87,7 @@ func projectConflictContact(body []byte, tombstone bool) ContactSummary {
 		if name != "FN" && name != "EMAIL" && name != "TEL" {
 			continue
 		}
-		value, err := cardDAVPropertyValue(envelope.RenderMetadata.StoredVersion, property)
+		value, err := vcard.PropertyValue(envelope.RenderMetadata.StoredVersion, property)
 		if err != nil {
 			return emptyContactSummary(ConflictSideUnavailable)
 		}

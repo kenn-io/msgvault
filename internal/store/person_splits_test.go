@@ -208,7 +208,7 @@ func TestSplitPersonMerge_ZeroParticipantProfile(t *testing.T) {
 			assert := assert.New(t)
 			ctx := t.Context()
 			st, account, book := newCardDAVResourceStore(t)
-			remote := remoteResource(t,
+			remote := remoteResource(
 				book.CanonicalURL+test.name+".vcf",
 				"zero-participant-"+test.name,
 				"CardDAV "+test.name,

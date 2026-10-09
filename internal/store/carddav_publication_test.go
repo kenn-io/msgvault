@@ -68,7 +68,7 @@ func TestDeletePersonRejectsCardDAVPublicationState(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 			st, account, book := newCardDAVResourceStore(t)
-			remote := remoteResource(t, book.CanonicalURL+"published.vcf", "published", "Published",
+			remote := remoteResource(book.CanonicalURL+"published.vcf", "published", "Published",
 				"published@example.test", `"one"`)
 			_, err := st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
 				AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration,
@@ -109,7 +109,7 @@ func TestCardDAVPublicationPrepareNoopsWhenMappedSemanticHashMatches(t *testing.
 	require := require.New(t)
 
 	st, account, book := newCardDAVResourceStore(t)
-	input := remoteResource(t, book.CanonicalURL+"same.vcf", "same", "Same", "same@example.test", `"one"`)
+	input := remoteResource(book.CanonicalURL+"same.vcf", "same", "Same", "same@example.test", `"one"`)
 	_, err := st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
 		AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration,
 		SyncRevision: book.SyncRevision, Upserts: []store.CardDAVRemoteResource{input},
@@ -143,7 +143,7 @@ func TestCardDAVPublicationRejectsAmbiguousMappedResource(t *testing.T) {
 	require := require.New(t)
 
 	st, account, book := newCardDAVResourceStore(t)
-	first := remoteResource(t, book.CanonicalURL+"first.vcf", "first", "Duplicate",
+	first := remoteResource(book.CanonicalURL+"first.vcf", "first", "Duplicate",
 		"duplicate@example.test", `"one"`)
 	_, err := st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
 		AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration,
@@ -153,7 +153,7 @@ func TestCardDAVPublicationRejectsAmbiguousMappedResource(t *testing.T) {
 	firstResource, err := st.GetCardDAVResourceContext(t.Context(), book.ID, first.Href)
 	require.NoError(err)
 	require.NotNil(firstResource.PersonID)
-	second := remoteResource(t, book.CanonicalURL+"second.vcf", "second", "Duplicate",
+	second := remoteResource(book.CanonicalURL+"second.vcf", "second", "Duplicate",
 		"duplicate@example.test", `"two"`)
 	_, err = st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
 		AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration,
@@ -182,7 +182,7 @@ func TestCardDAVPublicationThrottleRollbackRestoresMappedRevisionAndPreservesLon
 	require := require.New(t)
 
 	st, account, book := newCardDAVResourceStore(t)
-	input := remoteResource(t, book.CanonicalURL+"local-person.vcf", "local-person", "Local Person", "local@example.test", `"one"`)
+	input := remoteResource(book.CanonicalURL+"local-person.vcf", "local-person", "Local Person", "local@example.test", `"one"`)
 	_, err := st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
 		AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration,
 		SyncRevision: book.SyncRevision, Upserts: []store.CardDAVRemoteResource{input},

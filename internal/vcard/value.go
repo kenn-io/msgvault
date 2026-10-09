@@ -263,3 +263,21 @@ func OrganizationComponents(name, department string) []string {
 	}
 	return components
 }
+
+// PropertyValue decodes text values and retains URI values.
+func PropertyValue(version Version, property Property) (string, error) {
+	valueType := ""
+	for _, parameter := range property.ParametersNamed("VALUE") {
+		if len(parameter.Values) > 0 {
+			valueType = strings.ToLower(strings.TrimSpace(parameter.Values[0].Decoded))
+			break
+		}
+	}
+	name := strings.ToUpper(property.Name)
+	isText := valueType == "text" || valueType == "" &&
+		(name != "TEL" || version != Version40)
+	if !isText {
+		return property.RawValue, nil
+	}
+	return UnescapeText(property.RawValue)
+}

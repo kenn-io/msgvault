@@ -16,7 +16,7 @@ func seededCardDAVConflictMapping(
 ) (*store.Store, store.CardDAVAccount, store.CardDAVAddressBook, *store.CardDAVResource) {
 	t.Helper()
 	st, account, book := newCardDAVResourceStore(t)
-	remote := remoteResource(t,
+	remote := remoteResource(
 		book.CanonicalURL+"alice.vcf", "remote-alice", "Alice", "alice@example.test", `"one"`,
 	)
 	_, err := st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
@@ -132,7 +132,7 @@ func seededCardDAVTombstoneConflict(
 		require.NoError(t, err)
 		mapping, err = st.GetCardDAVResourceContext(t.Context(), book.ID, mapping.Href)
 		require.NoError(t, err)
-		remote := remoteResource(t, mapping.Href, "remote-alice", "Alice Remote", "remote@example.test", `"two"`)
+		remote := remoteResource(mapping.Href, "remote-alice", "Alice Remote", "remote@example.test", `"two"`)
 		remote.SemanticHash = "semantic-remote-two"
 		conflict, err := st.RecordCardDAVPublicationConflictContext(t.Context(), *pending,
 			store.CardDAVConflictCapture{
@@ -155,7 +155,7 @@ func seededCardDAVTombstoneConflict(
 	require.NoError(t, st.DeletePersonContext(t.Context(), person.ID, person.Revision))
 	mapping, err = st.GetCardDAVResourceContext(t.Context(), book.ID, mapping.Href)
 	require.NoError(t, err)
-	remote := remoteResource(t, mapping.Href, "remote-alice", "Alice Remote", "remote@example.test", `"two"`)
+	remote := remoteResource(mapping.Href, "remote-alice", "Alice Remote", "remote@example.test", `"two"`)
 	remote.SemanticHash = "semantic-remote-two"
 	conflict, err := st.RecordCardDAVConflictContext(t.Context(), store.CardDAVConflictCapture{
 		AddressBookID: book.ID, Href: mapping.Href,
@@ -179,7 +179,7 @@ func refreshedCardDAVTombstonePlan(
 	books, err := st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
 	require.NoError(t, err)
 	require.Len(t, books, 1)
-	latest := remoteResource(t, mapping.Href, "remote-alice", "Alice Latest", "latest@example.test", `"latest"`)
+	latest := remoteResource(mapping.Href, "remote-alice", "Alice Latest", "latest@example.test", `"latest"`)
 	latest.SemanticHash = "semantic-remote-latest"
 	return store.CardDAVSyncPlan{
 		AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration,
@@ -490,7 +490,7 @@ func TestCardDAVKeepRemoteAndPullUseCanonicalPostgresLockOrder(t *testing.T) {
 	retained := parseCardDAVRemoteForStoreTest(mapping.Href, firstCapture.RemoteETag, firstCapture.RemoteBody)
 	current, err := st.GetCardDAVResourceContext(t.Context(), book.ID, mapping.Href)
 	require.NoError(err)
-	latestRemote := remoteResource(t, mapping.Href, "remote-alice", "Latest Remote", "latest@example.test", `"latest"`)
+	latestRemote := remoteResource(mapping.Href, "remote-alice", "Latest Remote", "latest@example.test", `"latest"`)
 	latestRemote.SemanticHash = "latest-semantic"
 	latestCapture := conflictCapture(current)
 	latestCapture.RemoteETag = latestRemote.RemoteETag
@@ -572,7 +572,7 @@ func TestCardDAVKeepRemoteReconcilesUnboundMappingByBookRole(t *testing.T) {
 			require := require.New(t)
 
 			st, account, book := newCardDAVResourceStore(t)
-			base := remoteResource(t, book.CanonicalURL+"alice.vcf", "remote-alice", "Alice", "alice@example.test", `"one"`)
+			base := remoteResource(book.CanonicalURL+"alice.vcf", "remote-alice", "Alice", "alice@example.test", `"one"`)
 			_, err := st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
 				AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration,
 				SyncRevision: book.SyncRevision, Upserts: []store.CardDAVRemoteResource{base},
@@ -593,7 +593,7 @@ func TestCardDAVKeepRemoteReconcilesUnboundMappingByBookRole(t *testing.T) {
 			unbound, err := st.GetCardDAVResourceContext(t.Context(), book.ID, base.Href)
 			require.NoError(err)
 			require.Nil(unbound.PersonID)
-			latest := remoteResource(t, base.Href, "remote-alice", "Alice Retained", "alice-new@example.test", `"two"`)
+			latest := remoteResource(base.Href, "remote-alice", "Alice Retained", "alice-new@example.test", `"two"`)
 			latest.SemanticHash = "semantic-latest"
 			conflict, err := st.RecordCardDAVConflictContext(t.Context(), store.CardDAVConflictCapture{
 				AddressBookID: book.ID, Href: unbound.Href,

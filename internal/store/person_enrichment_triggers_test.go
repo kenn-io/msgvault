@@ -1197,7 +1197,7 @@ func TestCardDAVProjectionRetirementInvalidatesEnrichment(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	st, account, book := newCardDAVResourceStore(t)
-	input := remoteResource(t, book.CanonicalURL+"retired.vcf", "remote-retired",
+	input := remoteResource(book.CanonicalURL+"retired.vcf", "remote-retired",
 		"Retired Person", "retired@example.test", `"one"`)
 	_, err := st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
 		AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration,

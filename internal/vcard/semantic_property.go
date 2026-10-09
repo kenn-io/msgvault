@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -30,6 +31,11 @@ func NormalizeSemanticProperty(version Version, property Property) SemanticPrope
 		values := make([]string, 0, len(parameter.Values))
 		for _, value := range parameter.Values {
 			decoded := value.Decoded
+			if strings.EqualFold(parameter.Name, "PREF") {
+				if pref, err := strconv.Atoi(strings.TrimSpace(decoded)); err == nil && pref >= 1 && pref <= 100 {
+					decoded = strconv.Itoa(pref)
+				}
+			}
 			if parameter.Name == "TYPE" || parameter.Name == "ENCODING" ||
 				parameter.Name == "VALUE" || parameter.Name == "MEDIATYPE" {
 				decoded = strings.ToLower(decoded)

@@ -38,7 +38,7 @@ func TestCardDAVMultipleAccountDiscoveryAndFences(t *testing.T) {
 			assertions.Len(accounts, 2)
 			plan := store.CardDAVSyncPlan{AddressBookID: workBooks[0].ID,
 				ConnectionGeneration: work.ConnectionGeneration, SyncRevision: workBooks[0].SyncRevision,
-				Upserts: []store.CardDAVRemoteResource{remoteResource(t, workBooks[0].CanonicalURL+"person.vcf", "work-person", "Work Example", "work-person@example.com", `"one"`)}}
+				Upserts: []store.CardDAVRemoteResource{remoteResource(workBooks[0].CanonicalURL+"person.vcf", "work-person", "Work Example", "work-person@example.com", `"one"`)}}
 			// Changing another connection's fence must not invalidate this plan.
 			defaultInput := cardDAVConcurrentInput("personal@example.com", "shared")
 			defaultInput.Books[0].CanCreate, defaultInput.CredentialsChanged = new(true), true
@@ -74,7 +74,7 @@ func TestCardDAVMultipleAccountOwnershipBlockers(t *testing.T) {
 			input.Books[0].CanCreate = new(true)
 			account, books, err := st.ReplaceCardDAVDiscoveryContext(t.Context(), input)
 			require.NoError(err)
-			resource := remoteResource(t, books[0].CanonicalURL+"person.vcf", "personal-person", "Personal Example", "personal-person@example.com", `"one"`)
+			resource := remoteResource(books[0].CanonicalURL+"person.vcf", "personal-person", "Personal Example", "personal-person@example.com", `"one"`)
 			_, err = st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{AddressBookID: books[0].ID,
 				ConnectionGeneration: account.ConnectionGeneration, SyncRevision: books[0].SyncRevision,
 				Upserts: []store.CardDAVRemoteResource{resource}})

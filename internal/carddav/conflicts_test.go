@@ -1574,7 +1574,7 @@ func TestRemoteEditsToPublishedImportedValues(t *testing.T) {
 			puts := fixture.puts
 			edited := bytes.Replace(fixture.body, []byte(tc.before), []byte(tc.after), 1)
 			if tc.name == "phone" {
-				edited = bytes.Replace(edited, []byte("TEL:"), []byte("TEL;TYPE=work:"), 1)
+				edited = bytes.Replace(edited, []byte("TEL;TYPE=cell:"), []byte("TEL;TYPE=work:"), 1)
 			}
 			fixture.setRemote(edited, `"remote-2"`)
 			_, err := service.Sync(t.Context(), SyncOptions{Full: true})
@@ -1603,82 +1603,64 @@ func TestRemoteEditsToPublishedImportedValues(t *testing.T) {
 	}
 }
 
-func TestRemoteEditToPublishedImportWithMultipleTypesDoesNotPut(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	fixture, service, _, _ := publishedImportFixture(t)
-	puts := fixture.puts
-	edited := bytes.Replace(fixture.body, []byte("EMAIL:e2@example.test"), []byte("EMAIL;TYPE=home,work:e2b@example.test"), 1)
-	fixture.setRemote(edited, `"remote-2"`)
-	_, err := service.Sync(t.Context(), SyncOptions{Full: true})
-	require.NoError(err)
-	require.NoError(service.ReconcilePublications(t.Context()))
-	assert.Equal(puts, fixture.puts)
-	assert.Equal(edited, fixture.body)
-	_, err = service.Sync(t.Context(), SyncOptions{Full: true})
-	require.NoError(err)
-	require.NoError(service.ReconcilePublications(t.Context()))
-	assert.Equal(puts, fixture.puts)
-}
-
-func TestRemoteAddedPreferredValueToPublishedImportDoesNotPut(t *testing.T) {
+func TestRemoteContactImportPreservesMetadata(t *testing.T) {
 	for _, tc := range []struct {
-		name, line, value string
+		name, first, second, value, uri string
+		kind                            store.ContactAddressKind
 	}{
-		{"email", "EMAIL;TYPE=work;PREF=1:preferred@example.test", "preferred@example.test"},
-		{"phone", "TEL;TYPE=work;PREF=1:tel:+12025550103", "+12025550103"},
-		{"trimmed-pref", "EMAIL;TYPE=work;PREF=\" 1 \":preferred@example.test", "preferred@example.test"},
+		{"email", "EMAIL;TYPE=home,work;X-LABEL=first:a@example.test", "EMAIL;TYPE=home,work;X-LABEL=second;PREF=1:b@example.test", "b@example.test", "", store.ContactAddressEmail},
+		{"whitespace-pref", "EMAIL;TYPE=home,work;X-LABEL=first:a@example.test", "EMAIL;TYPE=home,work;X-LABEL=second;PREF=\" 1 \":b@example.test", "b@example.test", "", store.ContactAddressEmail},
+		{"phone-extension", "TEL;TYPE=home,work;X-LABEL=first:tel:+12025550101", "TEL;TYPE=home,work;X-LABEL=second;PREF=1:tel:+12025550102;ext=42", "+12025550102", "tel:+12025550102;ext=42", store.ContactAddressPhone},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
-			fixture, service, st, personID := publishedImportFixture(t)
-			puts := fixture.puts
-			edited := bytes.Replace(fixture.body, []byte("END:VCARD"), []byte(tc.line+"\r\nEND:VCARD"), 1)
-			fixture.setRemote(edited, `"remote-2"`)
-			_, err := service.Sync(t.Context(), SyncOptions{Full: true})
-			require.NoError(err)
-			points, err := st.ListPersonContactPointsContext(t.Context(), personID, true)
-			require.NoError(err)
-			var preferred *store.PersonContactPoint
-			for i := range points {
-				if points[i].OriginalValue == tc.value {
-					preferred = &points[i]
+			initial := bytes.Replace(publishedImportCard(), []byte("END:VCARD"), []byte(tc.first+"\r\n"+tc.second+"\r\nEND:VCARD"), 1)
+			fixture, service, st, personID := publishedImportFixture(t, initial)
+			check := func(value, uri string, pref int) {
+				points, err := st.ListPersonContactPointsContext(t.Context(), personID, true)
+				require.NoError(err)
+				var matched *store.PersonContactPoint
+				for i := range points {
+					if points[i].OriginalValue == value {
+						matched = &points[i]
+					}
+				}
+				require.NotNil(matched)
+				assert.Equal(tc.kind, matched.AddressKind)
+				assert.Equal([]string{"home", "work"}, matched.Envelope.TypeTokens)
+				assert.Equal(new(pref), matched.Envelope.Pref)
+				if uri != "" {
+					assert.Equal(new(uri), matched.URI)
+					assert.Equal(value, matched.NormalizedValue)
 				}
 			}
-			require.NotNil(preferred)
-			assert.Equal(new(1), preferred.Envelope.Pref)
-			if tc.name == "trimmed-pref" {
-				return
-			}
-			require.NoError(service.ReconcilePublications(t.Context()))
-			assert.Equal(puts, fixture.puts)
-			assert.Equal(edited, fixture.body)
-		})
-	}
-}
-
-func TestRemotePreferredRepeatedValuesKeepMetadata(t *testing.T) {
-	for _, tc := range []struct{ first, second string }{
-		{"EMAIL;X-LABEL=first:a@example.test", "EMAIL;X-LABEL=second;PREF=1:b@example.test"},
-		{"TEL;X-LABEL=first:tel:+12025550101", "TEL;X-LABEL=second;PREF=1:tel:+12025550102"},
-	} {
-		t.Run(tc.first, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			initialSecond := strings.Replace(tc.second, ";PREF=1", "", 1)
-			fixture, service, st, personID := publishedImportFixture(t, bytes.Replace(publishedImportCard(), []byte("END:VCARD"), []byte(tc.first+"\r\n"+initialSecond+"\r\nEND:VCARD"), 1))
-			edited := bytes.Replace(fixture.body, []byte(initialSecond), []byte(tc.second), 1)
+			check(tc.value, tc.uri, 1)
+			puts := fixture.puts
+			updatedValue := strings.ReplaceAll(tc.value, "b@example.test", "updated@example.test")
+			updatedValue = strings.ReplaceAll(updatedValue, "+12025550102", "+12025550103")
+			updatedURI := strings.ReplaceAll(tc.uri, "+12025550102", "+12025550103")
+			updatedLine := strings.ReplaceAll(tc.second, tc.value, updatedValue)
+			updatedLine = strings.ReplaceAll(updatedLine, "PREF=1", "PREF=2")
+			updatedLine = strings.ReplaceAll(updatedLine, "PREF=\" 1 \"", "PREF=\" 2 \"")
+			edited := bytes.Replace(initial, []byte(tc.second), []byte(updatedLine), 1)
+			require.NotEqual(fixture.body, edited)
 			fixture.setRemote(edited, `"remote-2"`)
-			_, err := service.Sync(t.Context(), SyncOptions{Full: true})
-			require.NoError(err)
+			for range 2 {
+				_, err := service.Sync(t.Context(), SyncOptions{Full: true})
+				require.NoError(err)
+				require.NoError(service.ReconcilePublications(t.Context()))
+				assert.Equal(puts, fixture.puts)
+				assert.Equal(edited, fixture.body)
+			}
+			check(updatedValue, updatedURI, 2)
 			person, err := st.GetPersonContext(t.Context(), personID)
 			require.NoError(err)
 			_, err = st.UpdatePersonDisplayNameContext(t.Context(), personID, person.Revision, new("Alice Local"))
 			require.NoError(err)
 			require.NoError(service.ReconcilePublications(t.Context()))
 			assert.Contains(string(fixture.body), tc.first+"\r\n")
-			assert.Contains(string(fixture.body), tc.second+"\r\n")
+			assert.Contains(string(fixture.body), updatedLine+"\r\n")
 		})
 	}
 }

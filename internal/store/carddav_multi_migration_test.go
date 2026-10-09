@@ -60,7 +60,7 @@ func TestCardDAVMultiAccountUpgrade(t *testing.T) {
 			input.Books[0].CanCreate = new(true)
 			account, books, err := st.ReplaceCardDAVDiscoveryContext(t.Context(), input)
 			require.NoError(err)
-			resource := remoteResource(t, books[0].CanonicalURL+"person.vcf", "synthetic-person", "Example Person", "person@example.com", `"one"`)
+			resource := remoteResource(books[0].CanonicalURL+"person.vcf", "synthetic-person", "Example Person", "person@example.com", `"one"`)
 			_, err = st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
 				AddressBookID: books[0].ID, ConnectionGeneration: account.ConnectionGeneration,
 				SyncRevision: books[0].SyncRevision, Upserts: []store.CardDAVRemoteResource{resource},
@@ -77,7 +77,7 @@ func TestCardDAVMultiAccountUpgrade(t *testing.T) {
 			})
 			require.NoError(err)
 			require.NotEmpty(pending.PendingOperation)
-			other := remoteResource(t, books[0].CanonicalURL+"other.vcf", "synthetic-other", "Other Example", "other@example.com", `"one"`)
+			other := remoteResource(books[0].CanonicalURL+"other.vcf", "synthetic-other", "Other Example", "other@example.com", `"one"`)
 			currentBooks, err := st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
 			require.NoError(err)
 			_, err = st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{

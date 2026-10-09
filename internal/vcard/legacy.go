@@ -238,3 +238,8 @@ func normalizeLegacyPhone(raw string, normalize func(string) string) string {
 	}
 	return normalize(subscriber)
 }
+
+// TelephoneNumber extracts the subscriber and phone context without URI parameters.
+func TelephoneNumber(raw string) string {
+	return normalizeLegacyPhone(strings.TrimSpace(raw), func(value string) string { return value })
+}
