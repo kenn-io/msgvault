@@ -7749,6 +7749,7 @@ components:
             - cancelled
             - failed
             - partial
+            - paused
             - queued
             - running
             - succeeded
@@ -7822,6 +7823,7 @@ components:
             - cancelled
             - failed
             - partial
+            - paused
             - queued
             - running
             - succeeded
@@ -14888,7 +14890,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.10.0
+  version: 3.11.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:
@@ -22768,6 +22770,7 @@ paths:
               - cancelled
               - failed
               - partial
+              - paused
               - queued
               - running
               - succeeded

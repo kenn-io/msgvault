@@ -1546,13 +1546,14 @@ const (
 	OperationRunDetailStatePartial   OperationRunDetailState = "partial"
 	OperationRunDetailStateRunning   OperationRunDetailState = "running"
 	OperationRunDetailStateSucceeded OperationRunDetailState = "succeeded"
+	Paused                           OperationRunDetailState = "paused"
 	Queued                           OperationRunDetailState = "queued"
 )
 
 // Validate checks if the OperationRunDetailState value is valid
 func (o OperationRunDetailState) Validate() error {
 	switch o {
-	case OperationRunDetailStateCancelled, OperationRunDetailStateFailed, OperationRunDetailStatePartial, OperationRunDetailStateRunning, OperationRunDetailStateSucceeded, Queued:
+	case OperationRunDetailStateCancelled, OperationRunDetailStateFailed, OperationRunDetailStatePartial, OperationRunDetailStateRunning, OperationRunDetailStateSucceeded, Paused, Queued:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid OperationRunDetailState value, got: %v", o))
@@ -1644,6 +1645,7 @@ const (
 	OperationRunSummaryStateCancelled OperationRunSummaryState = "cancelled"
 	OperationRunSummaryStateFailed    OperationRunSummaryState = "failed"
 	OperationRunSummaryStatePartial   OperationRunSummaryState = "partial"
+	OperationRunSummaryStatePaused    OperationRunSummaryState = "paused"
 	OperationRunSummaryStateQueued    OperationRunSummaryState = "queued"
 	OperationRunSummaryStateRunning   OperationRunSummaryState = "running"
 	OperationRunSummaryStateSucceeded OperationRunSummaryState = "succeeded"
@@ -1652,7 +1654,7 @@ const (
 // Validate checks if the OperationRunSummaryState value is valid
 func (o OperationRunSummaryState) Validate() error {
 	switch o {
-	case OperationRunSummaryStateCancelled, OperationRunSummaryStateFailed, OperationRunSummaryStatePartial, OperationRunSummaryStateQueued, OperationRunSummaryStateRunning, OperationRunSummaryStateSucceeded:
+	case OperationRunSummaryStateCancelled, OperationRunSummaryStateFailed, OperationRunSummaryStatePartial, OperationRunSummaryStatePaused, OperationRunSummaryStateQueued, OperationRunSummaryStateRunning, OperationRunSummaryStateSucceeded:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid OperationRunSummaryState value, got: %v", o))
@@ -2757,6 +2759,7 @@ const (
 	ListOperationRunsQueryStateCancelled ListOperationRunsQueryState = "cancelled"
 	ListOperationRunsQueryStateFailed    ListOperationRunsQueryState = "failed"
 	ListOperationRunsQueryStatePartial   ListOperationRunsQueryState = "partial"
+	ListOperationRunsQueryStatePaused    ListOperationRunsQueryState = "paused"
 	ListOperationRunsQueryStateQueued    ListOperationRunsQueryState = "queued"
 	ListOperationRunsQueryStateRunning   ListOperationRunsQueryState = "running"
 	ListOperationRunsQueryStateSucceeded ListOperationRunsQueryState = "succeeded"
@@ -2765,7 +2768,7 @@ const (
 // Validate checks if the ListOperationRunsQueryState value is valid
 func (l ListOperationRunsQueryState) Validate() error {
 	switch l {
-	case ListOperationRunsQueryStateCancelled, ListOperationRunsQueryStateFailed, ListOperationRunsQueryStatePartial, ListOperationRunsQueryStateQueued, ListOperationRunsQueryStateRunning, ListOperationRunsQueryStateSucceeded:
+	case ListOperationRunsQueryStateCancelled, ListOperationRunsQueryStateFailed, ListOperationRunsQueryStatePartial, ListOperationRunsQueryStatePaused, ListOperationRunsQueryStateQueued, ListOperationRunsQueryStateRunning, ListOperationRunsQueryStateSucceeded:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid ListOperationRunsQueryState value, got: %v", l))

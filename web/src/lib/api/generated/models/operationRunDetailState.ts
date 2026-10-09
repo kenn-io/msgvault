@@ -9,6 +9,7 @@ export const OperationRunDetailState = {
   cancelled: "cancelled",
   failed: "failed",
   partial: "partial",
+  paused: "paused",
   queued: "queued",
   running: "running",
   succeeded: "succeeded",

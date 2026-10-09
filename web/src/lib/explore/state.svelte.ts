@@ -121,7 +121,7 @@ const OPERATION_KINDS = new Set<OperationKind>([
   'visual_embedding'
 ]);
 const OPERATION_STATES = new Set<OperationState>([
-  'cancelled', 'failed', 'partial', 'queued', 'running', 'succeeded'
+  'cancelled', 'failed', 'partial', 'paused', 'queued', 'running', 'succeeded'
 ]);
 const OPERATION_STATUS_AUTHORITIES = new Set<OperationStatusAuthority>([
   'getDocumentIndexStatus', 'getDocumentVectorStatus', 'getVisualAttachmentStatus'

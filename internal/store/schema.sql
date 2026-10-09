@@ -1984,7 +1984,7 @@ CREATE TABLE IF NOT EXISTS sync_runs (
 
     started_at DATETIME NOT NULL,
     completed_at DATETIME,
-    status TEXT DEFAULT 'running',  -- 'running', 'completed', 'failed', 'cancelled'
+    status TEXT DEFAULT 'running',  -- 'running', 'completed', 'failed', 'cancelled', 'paused'
 
     messages_processed INTEGER DEFAULT 0,
     messages_added INTEGER DEFAULT 0,
