@@ -100,14 +100,14 @@ func processEmlxOccurrence(ctx context.Context, st *store.Store, sourceID int64,
 	if item != nil {
 		receipt, decoded = decodeEmlxReceipt(item.Checksum, id)
 	}
-	// Root invalidation clears the checksum before visiting any files. Keep
-	// that repair request effective across interruption and a normal retry.
-	reconcile := item != nil && item.Status == "pending" && item.Checksum == ""
+	// Pending occurrences must finish ingestion even when their source has not
+	// changed. This also retains root reconciliation across interrupted runs.
+	reconcile := item != nil && item.Status == "pending"
 	signature, eligible, fingerprintErr := emlx.Fingerprint(ctx, file)
 	if fingerprintErr != nil {
 		eligible = false
 	}
-	signature = emlxDigest(fmt.Sprintf("%d:%s:%s:%s:%d", emlxReceiptVersion, signature, label, policy, opts.MaxMessageBytes))
+	signature = emlxDigest(fmt.Sprintf("%d:%s:%s:%d", emlxReceiptVersion, signature, label, opts.MaxMessageBytes))
 	cacheAllowed := opts.RemoteImages == nil && opts.IngestFunc == nil
 	// Revoke an old receipt on any incomplete attempt. Healthy hits never rewrite
 	// it; target completion evidence governs all receipts of the same target.
@@ -117,7 +117,7 @@ func processEmlxOccurrence(ctx context.Context, st *store.Store, sourceID int64,
 			retErr = errors.Join(retErr, err)
 		}
 	}()
-	if cacheAllowed && !opts.FullReconcile && eligible && decoded && receipt.Signature == signature {
+	if cacheAllowed && !opts.FullReconcile && !reconcile && eligible && decoded && receipt.Signature == signature {
 		states, err := st.EmlxTargetsContext(ctx, sourceID, []string{receipt.Target})
 		if err != nil {
 			return out, err
@@ -153,11 +153,6 @@ func processEmlxOccurrence(ctx context.Context, st *store.Store, sourceID int64,
 			}
 			if err := st.RecordEmailHeadersContext(ctx, sourceID, target.MessageID, receipt.RFCID, receipt.Reply); err != nil {
 				return out, err
-			}
-			if item.Status != "imported" {
-				if err := st.PutEmlxLedgerItemContext(ctx, store.SourceImportItem{SourceID: sourceID, Provider: "emlx-occurrence", ProviderID: id, Name: rel, Checksum: item.Checksum, Status: "imported"}); err != nil {
-					return out, err
-				}
 			}
 			out.kind = "unchanged"
 			if recovered {
@@ -221,12 +216,18 @@ func processEmlxOccurrence(ctx context.Context, st *store.Store, sourceID int64,
 			recovered = true
 		}
 	}
-	merged, err := emlx.MergeAttachments(msg.OriginalRaw, msg.Raw, current, msg.RestorationParts, opts.MaxMessageBytes)
+	// Source-part acknowledgments are independent of completion settings,
+	// filesystem cache eligibility and which parts fit the current budget.
+	var acknowledged map[string]string
+	if target.HasRaw && decoded && receipt.Target == targetID {
+		acknowledged = receipt.SourceParts
+	}
+	merged, err := emlx.MergeAttachments(msg.OriginalRaw, msg.Raw, current, msg.RestorationParts, opts.MaxMessageBytes, acknowledged)
 	restorationErr := msg.RestorationError
 	// An identical restored candidate already satisfies the source budget;
 	// only differing archived parts need a separate combined-budget merge.
 	if len(current) > 0 && len(msg.RestorationParts) > 0 && !bytes.Equal(msg.Raw, current) {
-		merged, err = emlx.MergeAttachmentsFromFile(ctx, msg.OriginalRaw, current, file, opts.MaxMessageBytes)
+		merged, err = emlx.MergeAttachmentsFromFile(ctx, msg.OriginalRaw, current, file, opts.MaxMessageBytes, acknowledged)
 		restorationErr = err
 		// Preserve feasible progress even when another sibling could not be read.
 		// The occurrence stays pending until all supported work succeeds.
@@ -280,19 +281,19 @@ func processEmlxOccurrence(ctx context.Context, st *store.Store, sourceID int64,
 	if err != nil {
 		return out, err
 	}
-	after = emlxDigest(fmt.Sprintf("%d:%s:%s:%s:%d", emlxReceiptVersion, after, label, policy, opts.MaxMessageBytes))
+	after = emlxDigest(fmt.Sprintf("%d:%s:%s:%d", emlxReceiptVersion, after, label, opts.MaxMessageBytes))
 	if eligible && (!afterEligible || signature != after) {
 		return out, errors.New("EMLX dependencies changed during import")
 	}
-	checksum := ""
+	receipt = emlxReceipt{Version: emlxReceiptVersion, ID: id, SourceParts: merged.SourceParts, Target: targetID, RFCID: rfc, Reply: reply}
 	if cacheAllowed && eligible && afterEligible {
-		receipt = emlxReceipt{Version: emlxReceiptVersion, ID: id, Signature: signature, Target: targetID, RFCID: rfc, Reply: reply}
-		checksum, err = encodeEmlxReceipt(receipt)
-		if err != nil {
-			return out, err
-		}
+		receipt.Signature = signature
 	}
-	// Remember cold occurrences so reconciliation can invalidate them too.
-	// An empty checksum never authorizes a future content-read shortcut.
+	checksum, err := encodeEmlxReceipt(receipt)
+	if err != nil {
+		return out, err
+	}
+	// Cold occurrences retain content evidence but have no metadata signature
+	// authorizing a future content-read shortcut.
 	return out, st.PutEmlxLedgerItemContext(ctx, store.SourceImportItem{SourceID: sourceID, Provider: "emlx-occurrence", ProviderID: id, Name: rel, Checksum: checksum, Size: info.Size(), Status: "imported"})
 }

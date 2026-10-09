@@ -2,7 +2,9 @@ package emlx
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"io"
 	"os"
@@ -53,9 +55,10 @@ func RestoreAttachments(raw []byte, messagePath string, maxBytes int64) ([]byte,
 
 // RestorationPart records why each supported placeholder was or was not filled.
 type RestorationPart struct {
-	Key   string
-	State string
-	Err   error
+	Key         string
+	State       string
+	ContentHash string
+	Err         error
 }
 
 func restoreAttachments(raw []byte, messagePath string, maxBytes int64) ([]byte, int, []RestorationPart, error) {
@@ -184,7 +187,8 @@ func restoreSelectedAttachments(raw []byte, messagePath string, maxBytes int64, 
 			out = append(out, l+cr)
 		}
 		i = bodyEnd
-		parts = append(parts, RestorationPart{Key: strconv.Itoa(partIndex), State: "supplied"})
+		sum := sha256.Sum256(content)
+		parts = append(parts, RestorationPart{Key: strconv.Itoa(partIndex), State: "supplied", ContentHash: hex.EncodeToString(sum[:])})
 		restored++
 	}
 	return []byte(strings.Join(out, "\n")), restored, parts, restoreErr

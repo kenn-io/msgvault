@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"maps"
 	"strconv"
 	"strings"
 )
@@ -13,12 +14,13 @@ type MergeResult struct {
 	Raw          []byte
 	ChangedParts int
 	Incomplete   bool
+	SourceParts  map[string]string
 }
 
 // MergeAttachments overlays supported top-level parts using the original layout.
 // It never charges preserved bytes against a lower new-material budget.
-func MergeAttachments(original, restored, archived []byte, parts []RestorationPart, maxBytes int64) (MergeResult, error) {
-	result := MergeResult{Raw: archived}
+func MergeAttachments(original, restored, archived []byte, parts []RestorationPart, maxBytes int64, acknowledged map[string]string) (MergeResult, error) {
+	result := MergeResult{Raw: archived, SourceParts: maps.Clone(acknowledged)}
 	if len(archived) == 0 {
 		result.Raw = original
 	}
@@ -55,6 +57,17 @@ func MergeAttachments(original, restored, archived []byte, parts []RestorationPa
 		}
 		switch part.State {
 		case "supplied":
+			if part.ContentHash != "" {
+				if result.SourceParts == nil {
+					result.SourceParts = make(map[string]string)
+				}
+				result.SourceParts[part.Key] = part.ContentHash
+				// A previously acknowledged source part cannot replay older bytes
+				// over another occurrence's newer contribution to the archive.
+				if len(archived) > 0 && acknowledged[part.Key] == part.ContentHash {
+					continue
+				}
+			}
 			if !bytes.Equal(fresh[i], old[i]) {
 				candidates = append(candidates, i)
 			}

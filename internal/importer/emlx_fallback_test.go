@@ -31,7 +31,4 @@ func TestImportEmlxUnsupportedIdentityUsesRealColdPath(t *testing.T) {
 	a.False(second.HardErrors)
 	a.Zero(second.FilesUnchanged)
 	a.Equal(2, reads)
-	var receipts int
-	r.NoError(st.DB().QueryRow("SELECT COUNT(*) FROM source_import_items WHERE provider='emlx-occurrence' AND status='imported' AND COALESCE(checksum,'') <> ''").Scan(&receipts))
-	a.Zero(receipts)
 }

@@ -116,10 +116,14 @@ On unreleased `main`, Apple Mail imports reserve `emlx-occurrence` for
 root/relative-path acknowledgments and `emlx-target` for shared message
 completion. A target is marked dirty before content, attachments or search
 mutations, then complete only after required ingestion succeeds. Recovery
-finishes the current committed raw, preserving accumulated labels. The ledger
-also records occurrences without cacheable fingerprints so an interrupted
-reconciliation can still repair them. Their empty checksums never allow content
-reads to be skipped. It reuses the existing schema and sync-generation fencing.
+finishes the current committed raw, preserving accumulated labels. Each
+occurrence retains hashes of acknowledged source attachment parts, independently
+of completion settings and optional filesystem fingerprints. Unchanged parts
+cannot replace newer archived bytes when the size limit changes or another
+sibling appears. Root reconciliation retains that evidence while marking
+occurrences pending until ingestion succeeds. Without a filesystem fingerprint,
+every visit still reads content.
+The ledger reuses the existing schema and sync-generation fencing.
 These receipts are metadata cache hints, not continuous archive-integrity checks; see
 [repeat imports](../usage/importing.md#repeat-apple-mail-imports-unreleased).
 

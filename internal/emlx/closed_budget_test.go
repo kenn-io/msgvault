@@ -41,7 +41,7 @@ func TestEmlxAttachmentReplacementFitsExactBudget(t *testing.T) {
 				r.NoError(err)
 				a.Equal(string(want), string(parsed.Raw))
 				a.Equal(1, parsed.RestoredAttachments)
-				merged, err := MergeAttachmentsFromFile(t.Context(), original, original, path, limit)
+				merged, err := MergeAttachmentsFromFile(t.Context(), original, original, path, limit, nil)
 				r.NoError(err)
 				a.Equal(string(want), string(merged.Raw))
 				a.Equal(1, merged.ChangedParts)

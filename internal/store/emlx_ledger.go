@@ -43,7 +43,7 @@ func emlxIdentity(provider, id string) bool {
 			return false
 		}
 		rel := id[65:]
-		return filepath.IsLocal(rel) && path.Clean(rel) == rel && !strings.Contains(rel, "\\")
+		return filepath.IsLocal(rel) && filepath.ToSlash(rel) == rel && path.Clean(rel) == rel && !strings.ContainsRune(rel, '\x00')
 	}
 	return false
 }
@@ -70,13 +70,14 @@ func (s *Store) PutEmlxLedgerItemContext(ctx context.Context, item SourceImportI
 }
 
 // InvalidateEmlxRootContext revokes every selected-root receipt in one statement,
-// including paths that a later discovery cannot visit. Targets and archives remain.
+// including paths that a later discovery cannot visit. Retain source evidence so
+// repair does not replay an unchanged occurrence over newer archived content.
 func (s *Store) InvalidateEmlxRootContext(ctx context.Context, sourceID int64, rootPrefix string) error {
 	if !emlxRoot(rootPrefix) {
 		return errors.New("invalid EMLX root prefix")
 	}
 	return s.withSyncSourceWriteContext(ctx, sourceID, func(q querier) error {
-		_, err := q.Exec(`UPDATE source_import_items SET status='pending',checksum=NULL WHERE source_id=? AND provider='emlx-occurrence' AND substr(provider_id,1,65)=?`, sourceID, rootPrefix)
+		_, err := q.Exec(`UPDATE source_import_items SET status='pending' WHERE source_id=? AND provider='emlx-occurrence' AND substr(provider_id,1,65)=?`, sourceID, rootPrefix)
 		return err
 	})
 }
