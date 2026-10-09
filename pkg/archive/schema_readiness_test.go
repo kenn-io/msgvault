@@ -24,7 +24,7 @@ func exercisePreEventsSchemaUpgrade(t *testing.T, setup func() error, open func(
 	// Recreate version 1's schema, which predates Events tables and draft creators.
 	tables := []string{
 		"mcp_event_clock", "mcp_event_log", "mcp_event_subscriptions",
-		"mcp_event_dead_letters", "mcp_live_admissions", "mcp_event_message_refs",
+		"mcp_event_dead_letters", "mcp_event_message_refs",
 		"mcp_event_conversation_refs",
 	}
 	for _, table := range tables {

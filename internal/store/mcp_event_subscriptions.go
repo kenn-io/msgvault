@@ -681,7 +681,7 @@ func (s *Store) PrepareMCPDelivery(ctx context.Context, id string, generation in
 					sub.CursorSeq = event.Seq
 					continue
 				}
-				if event.FromMe && (event.Kind == "message" || event.Kind == "reaction") {
+				if event.FromMe && event.Kind == "message" {
 					if sub.FromMeWindowStart.IsZero() || !now.Before(sub.FromMeWindowStart.Add(10*time.Minute)) {
 						sub.FromMeWindowStart = now
 						sub.FromMeWindowCount = 0

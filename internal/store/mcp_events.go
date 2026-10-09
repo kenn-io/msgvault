@@ -389,10 +389,7 @@ func (s *Store) appendMCPEventTx(ctx context.Context, logged *loggedTx, event MC
 			return mcpSafeError(err)
 		}
 	}
-	if event.Kind == "reaction" {
-		event.ItemKey += fmt.Sprintf("/ref:%d", event.MessageReferenceSeq)
-	}
-	if event.Kind == "reaction" || event.Family == "msgvault.draft_changed" || event.Family == "msgvault.kata_issue_filed" || event.Family == "msgvault.attachment_processed" {
+	if event.Family == "msgvault.draft_changed" || event.Family == "msgvault.kata_issue_filed" || event.Family == "msgvault.attachment_processed" {
 		var exists bool
 		err := logged.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM mcp_event_log WHERE family=? AND scope_kind=? AND scope_id=? AND item_key=?)`, event.Family, event.ScopeKind, event.ScopeID, event.ItemKey).Scan(&exists)
 		if err != nil {
@@ -421,12 +418,6 @@ func (s *Store) appendMCPEventTx(ctx context.Context, logged *loggedTx, event MC
 	if err != nil {
 		return mcpSafeError(err)
 	}
-	if event.Kind == "message" && event.MessageID > 0 {
-		_, err = logged.ExecContext(ctx, `INSERT INTO mcp_live_admissions (message_id,source_id,message_reference_seq,epoch,admitted_at) VALUES (?,?,?,?,?) ON CONFLICT (message_id) DO UPDATE SET source_id=excluded.source_id,message_reference_seq=excluded.message_reference_seq,epoch=excluded.epoch,admitted_at=excluded.admitted_at`, event.MessageID, event.SourceID, event.MessageReferenceSeq, event.Epoch, mcpTime(event.RecordedAt))
-	}
-	if err != nil {
-		return mcpSafeError(err)
-	}
 	logged.mcpEventsWritten = true
 	return nil
 }
@@ -436,7 +427,6 @@ func (s *Store) appendMCPEventTx(ctx context.Context, logged *loggedTx, event MC
 func (s *Store) removeMCPEventSource(ctx context.Context, db contextQuerier, sourceID int64) error {
 	queries := []string{
 		`DELETE FROM mcp_event_log WHERE source_id=?`,
-		`DELETE FROM mcp_live_admissions WHERE source_id=?`,
 		`DELETE FROM mcp_event_dead_letters WHERE EXISTS (SELECT 1 FROM mcp_event_subscriptions s WHERE s.id=mcp_event_dead_letters.subscription_id AND s.source_id=?)`,
 	}
 	for _, query := range queries {
@@ -451,7 +441,6 @@ func (s *Store) removeMCPEventSource(ctx context.Context, db contextQuerier, sou
 func (s *Store) removeMCPEventConversations(ctx context.Context, db contextQuerier, targets string, args []any) error {
 	queries := []string{
 		`DELETE FROM mcp_event_log WHERE conversation_id IN (` + targets + `)`,
-		`DELETE FROM mcp_live_admissions WHERE message_id IN (SELECT id FROM messages WHERE conversation_id IN (` + targets + `))`,
 		`DELETE FROM mcp_event_dead_letters WHERE EXISTS (SELECT 1 FROM mcp_event_subscriptions s WHERE s.id=mcp_event_dead_letters.subscription_id AND s.scope_kind='conversation' AND s.scope_id IN (` + targets + `))`,
 	}
 	for _, query := range queries {

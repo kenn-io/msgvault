@@ -22,8 +22,6 @@ func TestMCPEventsSerializedSourceRemovalEndsPendingAfterMessageDeletion(t *test
 	require.NoError(err)
 	messageID := f.CreateMessage("synthetic-serialized-source-target")
 	appendMCPSubscriptionFixture(t, f, clock.Epoch, now)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`INSERT INTO mcp_live_admissions (message_id,source_id,message_reference_seq,epoch,admitted_at) VALUES (?,?,1,?,?)`), messageID, f.Source.ID, clock.Epoch, now.Format(time.RFC3339Nano))
-	require.NoError(err)
 	pending, err := f.Store.PrepareMCPDelivery(t.Context(), active.ID, active.Generation, now, func(store.MCPSubscription, store.MCPEvent) ([]byte, error) {
 		return []byte(`{"eventId":"synthetic-pending"}`), nil
 	})
@@ -40,7 +38,7 @@ func TestMCPEventsSerializedSourceRemovalEndsPendingAfterMessageDeletion(t *test
 	assert.Equal("scope_removed", stopped.StopReason)
 	assert.Greater(stopped.Generation, active.Generation)
 	assert.Empty(stopped.PendingEnvelope)
-	for _, table := range []string{"mcp_event_log", "mcp_live_admissions"} {
+	for _, table := range []string{"mcp_event_log"} {
 		var count int
 		require.NoError(f.Store.DB().QueryRow(`SELECT COUNT(*) FROM ` + table).Scan(&count))
 		assert.Zero(count)
