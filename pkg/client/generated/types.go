@@ -6215,15 +6215,18 @@ func (m MediaSearchResponse) Validate() error {
 }
 
 type MediaSearchResult struct {
-	AttachmentID   int64  `json:"attachment_id"`
-	ConversationID int64  `json:"conversation_id"`
-	EndMs          *int64 `json:"end_ms,omitempty"`
+	AttachmentID    int64   `json:"attachment_id"`
+	ContainingTitle *string `json:"containing_title,omitzero"`
+	ConversationID  int64   `json:"conversation_id"`
+	EndMs           *int64  `json:"end_ms,omitempty"`
 
 	// Excerpt Plain transcript excerpt without search highlight markers
-	Excerpt   string                  `json:"excerpt" validate:"required"`
-	MessageID int64                   `json:"message_id"`
-	Origin    MediaSearchResultOrigin `json:"origin" validate:"required"`
-	StartMs   *int64                  `json:"start_ms,omitempty"`
+	Excerpt    string                  `json:"excerpt" validate:"required"`
+	Filename   *string                 `json:"filename,omitzero"`
+	MessageID  int64                   `json:"message_id"`
+	OccurredAt *time.Time              `json:"occurred_at,omitempty"`
+	Origin     MediaSearchResultOrigin `json:"origin" validate:"required"`
+	StartMs    *int64                  `json:"start_ms,omitempty"`
 }
 
 func (m MediaSearchResult) Validate() error {

@@ -33,6 +33,7 @@
   import SplitPane from '../layout/SplitPane.svelte';
   import PersonTimeline from '../people/PersonTimeline.svelte';
   import SearchCoverage from '../search/SearchCoverage.svelte';
+  import TranscriptHits from '../search/TranscriptHits.svelte';
   import ReadingPane, { type ReadingPaneSelection, type ReadingPaneStatus } from '../reader/ReadingPane.svelte';
   import type { SearchCoverageAction } from '../../search/modes';
   import MeetingPanel from '../meetings/MeetingPanel.svelte';
@@ -697,6 +698,14 @@
       <MeetingPanel {client} scope={meetingScope} refreshKey={String(session.meetingOverview?.refreshKey ?? 0)}
         onReloadScope={reloadOverviewMeetings} {onOpenMeeting} />
     </div>
+  {/if}
+
+  {#if enabled && exploreState.current.query.trim()}
+    <TranscriptHits
+      {client}
+      query={exploreState.current.query}
+      supported={exploreState.current.searchMode === 'full_text' && exploreState.current.filters.length === 0 && exploreState.current.groupingChain.length === 0}
+    />
   {/if}
 
   <div

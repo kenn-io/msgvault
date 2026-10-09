@@ -6543,6 +6543,8 @@ components:
         attachment_id:
           format: int64
           type: integer
+        containing_title:
+          type: string
         conversation_id:
           format: int64
           type: integer
@@ -6552,9 +6554,14 @@ components:
         excerpt:
           description: Plain transcript excerpt without search highlight markers
           type: string
+        filename:
+          type: string
         message_id:
           format: int64
           type: integer
+        occurred_at:
+          format: date-time
+          type: string
         origin:
           enum:
             - supplied
@@ -14888,7 +14895,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.10.0
+  version: 3.11.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:

@@ -21,6 +21,34 @@ function exploreResponse(overrides: Record<string, unknown> = {}) {
 }
 
 describe('EverythingWorkspace', () => {
+  it('searches recordings only for committed Full text queries without filters or grouping', async () => {
+    window.history.replaceState(null, '', '/');
+    const fetchFn = vi.fn<typeof fetch>(async input => {
+      const path = new URL((input as Request).url).pathname;
+      if (path.endsWith('/media/search')) return Response.json({
+        results: [], coverage: { state: 'complete' }, partial: false, truncated: false,
+        pending_occurrences: 0, unavailable_occurrences: 0, attribution_unavailable: 0,
+      });
+      return Response.json(exploreResponse());
+    });
+    const state = new ExploreState(window);
+    const view = render(AppShell, { client: createAPIClient(fetchFn), state });
+    expect(screen.queryByRole('region', { name: 'Spoken in recordings' })).toBeNull();
+    state.replaceSearchDraft('uncommitted', 'full_text');
+    expect(screen.queryByRole('region', { name: 'Spoken in recordings' })).toBeNull();
+    state.replaceTransient({ workspace: 'everything', query: 'quarterly', searchMode: 'full_text' });
+    await screen.findByText('No spoken matches.');
+    const mediaRequests = () => fetchFn.mock.calls.filter(([input]) => new URL((input as Request).url).pathname.endsWith('/media/search'));
+    expect(mediaRequests()).toHaveLength(1);
+    for (const patch of [{ searchMode: 'semantic' as const }, { searchMode: 'full_text' as const, filters: [{ dimension: 'source' as const, values: ['1'] }] }, { filters: [], groupingChain: ['kind' as const] }]) {
+      state.replaceTransient(patch);
+      await screen.findByText('Recording search requires Full text with no filters or grouping.');
+      expect(mediaRequests()).toHaveLength(1);
+    }
+    view.unmount();
+    state.destroy();
+  });
+
   it.each(['everything', 'files'] as const)('keeps non-filterable groups in %s visible without opening an unavailable inspector', async (workspace) => {
     window.history.replaceState(null, '', '/');
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json({
@@ -1095,6 +1123,7 @@ describe('EverythingWorkspace', () => {
     const signals: AbortSignal[] = [];
     const fetchFn = vi.fn<typeof fetch>((input) => {
       const request = input instanceof Request ? input : new Request(input);
+      if (new URL(request.url).pathname.endsWith('/media/search')) return Promise.resolve(Response.json({}, { status: 503 }));
       signals.push(request.signal);
       return new Promise<Response>(() => undefined);
     });

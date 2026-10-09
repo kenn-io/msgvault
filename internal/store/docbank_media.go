@@ -613,6 +613,8 @@ type MessageMediaOccurrence struct {
 	ConversationID   int64
 	AttachmentID     int64
 	Filename         string
+	ContainingTitle  string
+	OccurredAt       *time.Time
 	Size             int64
 	OccurrenceRef    string
 	Revision         string
@@ -727,7 +729,9 @@ func (s *Store) listMessageOccurrenceRows(
 		SELECT m.id, c.id, a.id, COALESCE(a.filename, ''), COALESCE(a.size, 0), COALESCE(a.attachment_state, ''), o.occurrence_ref, o.revision,
 		       o.retention_state, o.error_code, o.vault_uid, o.source_id, o.source_version_id,
 		       o.content_version_id, COALESCE(d.profile, ''), COALESCE(d.phase, ''),
-		       COALESCE(d.operation_state, ''), COALESCE(d.supplied_input_id, '')
+		       COALESCE(d.operation_state, ''), COALESCE(d.supplied_input_id, ''),
+		       COALESCE(NULLIF(m.subject, ''), NULLIF(c.title, ''), ''),
+		       COALESCE(m.sent_at, m.received_at, m.internal_date)
 		FROM beeper_media_occurrences o
 		LEFT JOIN beeper_media_deliveries d
 		  ON d.destination_key = o.destination_key AND d.processing_key = o.processing_key`+
@@ -741,13 +745,17 @@ func (s *Store) listMessageOccurrenceRows(
 	var occurrences []MessageMediaOccurrence
 	for rows.Next() {
 		var o MessageMediaOccurrence
+		var occurredAt nullableTimestamp
 		if err := rows.Scan(&o.MessageID, &o.ConversationID, &o.AttachmentID, &o.Filename, &o.Size, &o.AttachmentState, &o.OccurrenceRef, &o.Revision,
 			&o.RetentionState, &o.ErrorCode, &o.VaultUID, &o.DocbankSourceID, &o.SourceVersionID,
 			&o.ContentVersionID, &o.DeliveryProfile, &o.DeliveryPhase, &o.DeliveryOperationState,
-			&o.SuppliedInputID); err != nil {
+			&o.SuppliedInputID, &o.ContainingTitle, &occurredAt); err != nil {
 			return nil, fmt.Errorf("scan message media occurrence: %w", err)
 		}
 		o.BytesArchived = true
+		if occurredAt.Valid {
+			o.OccurredAt = &occurredAt.Time
+		}
 		occurrences = append(occurrences, o)
 	}
 	if err := rows.Err(); err != nil {

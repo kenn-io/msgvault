@@ -148,6 +148,8 @@ Search mode is always explicit:
 - **Hybrid** combines keyword matches with semantic ranking where it is
   available.
 
+With **Full text**, a query with no filters or grouping also searches recording transcripts. **Spoken in recordings** appears above the ordinary results with source title, date, filename, transcript origin and supplied timing. Open a match to read its message and current transcript. Recording matches have independent counts and coverage; incomplete coverage remains visible even with zero matches. Semantic, Hybrid, filtered and grouped searches do not search recordings.
+
 A coverage notice below the toolbar reports semantic coverage. Disabled, building, stale,
 incomplete, unavailable, and ready are different states; msgvault never silently
 changes the requested mode. Semantic-only results cannot include unembedded
