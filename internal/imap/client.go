@@ -1999,7 +1999,10 @@ func (c *Client) MessageIngestContext(sourceMessageID string) store.IngestContex
 		return observation
 	}
 	prior, ok := c.priorFolderStates[mailbox]
-	if !ok || prior.KnownUIDs == nil || uint32(uid) < prior.UIDNext || slices.Contains(prior.KnownUIDs, uint32(uid)) {
+	if !ok || prior.KnownUIDs == nil || uint32(uid) < prior.UIDNext {
+		return observation
+	}
+	if _, known := slices.BinarySearch(prior.KnownUIDs, uint32(uid)); known {
 		return observation
 	}
 	for _, delta := range c.observedMailboxDeltas {
