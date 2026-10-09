@@ -473,6 +473,15 @@ func (s *Store) cardDAVResourceNeedsConflictTx(
 func (s *Store) cardDAVImportedPersonPublishedTx(
 	ctx context.Context, tx *loggedTx, bookID, personID int64, resource *CardDAVResource,
 ) (bool, error) {
+	var userOwned bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM person_contact_points
+		WHERE person_id = ? AND source = ? AND address_kind IN (?, ?))`,
+		personID, ProvenanceUser, ContactAddressEmail, ContactAddressPhone).Scan(&userOwned); err != nil {
+		return false, fmt.Errorf("check published CardDAV user contact points: %w", err)
+	}
+	if userOwned {
+		return false, nil
+	}
 	if resource.Governance != CardDAVGovernanceRemote {
 		var imported bool
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (
@@ -1254,42 +1263,10 @@ func (s *Store) prepareCardDAVEnvelopeTx(
 		return envelope, loadErr
 	}
 	if current != nil && len(current.NativeMappings) > 0 {
-		priorMappings := current.NativeMappings
 		envelope, err = vcard.RebindResourceOwnership(current.ResourceEnvelope, envelope, false)
 		if err != nil {
 			return envelope, err
 		}
-		for _, mapping := range priorMappings {
-			if mapping.Table != personContactPointsTableName {
-				continue
-			}
-			var userOwned bool
-			if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM person_contact_points
-				WHERE id = ? AND person_id = ? AND source = ? AND active_until IS NULL AND superseded_at IS NULL)`,
-				mapping.RowID, personID, ProvenanceUser).Scan(&userOwned); err != nil {
-				return envelope, fmt.Errorf("load prior CardDAV contact owner: %w", err)
-			}
-			if !userOwned || slices.ContainsFunc(envelope.NativeMappings, func(bound vcard.NativeMapping) bool {
-				return bound.Table == mapping.Table && bound.RowID == mapping.RowID
-			}) {
-				continue
-			}
-			var matches []vcard.PropertyIdentity
-			for _, occurrence := range envelope.PropertyTree {
-				before, after := mapping.Identity, occurrence.Identity
-				if before.PropID != nil || len(before.PID) > 0 || before.Group != "" {
-					before.Ordinal, after.Ordinal = 0, 0
-				}
-				if before.Equal(after) {
-					matches = append(matches, occurrence.Identity)
-				}
-			}
-			if len(matches) == 1 {
-				mapping.Identity = matches[0]
-				envelope.NativeMappings = append(envelope.NativeMappings, mapping)
-			}
-		}
-		envelope.Residue = vcard.ResidueWithMappings(envelope.PropertyTree, envelope.NativeMappings)
 	}
 	return envelope, nil
 }

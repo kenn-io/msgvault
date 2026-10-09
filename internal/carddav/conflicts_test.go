@@ -1778,7 +1778,7 @@ func (f *mutationFixture) setRemote(body []byte, etag string) {
 	f.body, f.etag = body, etag
 }
 
-func TestRemoteEditToPublishedImportReachesPerson(t *testing.T) {
+func TestRemoteEditToPublishedImportWithUserAddedValueKeepsOldBehavior(t *testing.T) {
 	for _, tc := range []struct {
 		kind  store.ContactAddressKind
 		value string
@@ -1790,7 +1790,7 @@ func TestRemoteEditToPublishedImportReachesPerson(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 			fixture, service, st, personID := publishedImportFixture(t)
-			want := []string{"e1@example.test", "e2b@example.test"}
+			want := []string{"e1@example.test", "e2@example.test"}
 			added, err := st.AddPersonContactPointContext(t.Context(), personID, store.PersonContactPointInput{
 				AddressKind: tc.kind, OriginalValue: tc.value,
 				Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
@@ -1799,13 +1799,11 @@ func TestRemoteEditToPublishedImportReachesPerson(t *testing.T) {
 			require.NoError(service.ReconcilePublications(t.Context()))
 			require.Equal(1, fixture.puts)
 			want = append(want, tc.value)
-			puts := fixture.puts
 			edited := bytes.Replace(fixture.body, []byte("e2@example.test"), []byte("e2b@example.test"), 1)
 			fixture.setRemote(edited, `"remote-2"`)
 			_, err = service.Sync(t.Context(), SyncOptions{Full: true})
 			require.NoError(err)
 			require.NoError(service.ReconcilePublications(t.Context()))
-			assert.Equal(puts, fixture.puts)
 			points, err := st.ListPersonContactPointsContext(t.Context(), personID, true)
 			require.NoError(err)
 			var values []string
@@ -1827,15 +1825,9 @@ func TestRemoteEditToPublishedImportUsesDecodedProperties(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	fixture, service, st, personID := publishedImportFixture(t)
-	_, err := st.AddPersonContactPointContext(t.Context(), personID, store.PersonContactPointInput{
-		AddressKind: store.ContactAddressEmail, OriginalValue: "local@example.test",
-		Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
-	})
-	require.NoError(err)
-	require.NoError(service.ReconcilePublications(t.Context()))
 	edited := bytes.Replace(fixture.body, []byte("EMAIL:e2@example.test"), []byte("EMAIL;VALUE=uri:MAILTO:e2b@example.test\r\nTEL;VALUE=text:TeL:+12025550103"), 1)
 	fixture.setRemote(edited, `"remote-2"`)
-	_, err = service.Sync(t.Context(), SyncOptions{Full: true})
+	_, err := service.Sync(t.Context(), SyncOptions{Full: true})
 	require.NoError(err)
 	require.NoError(service.ReconcilePublications(t.Context()))
 	person, err := st.GetPersonContext(t.Context(), personID)
@@ -1847,51 +1839,5 @@ func TestRemoteEditToPublishedImportUsesDecodedProperties(t *testing.T) {
 	for _, point := range points {
 		values = append(values, point.OriginalValue)
 	}
-	assert.ElementsMatch([]string{"e1@example.test", "e2b@example.test", "local@example.test", "+12025550103"}, values)
-}
-
-func TestRemoteChangeToPublishedUserContactPreservesOwnership(t *testing.T) {
-	for _, tc := range []struct {
-		name           string
-		kind           store.ContactAddressKind
-		value, changed string
-	}{
-		{"email type", store.ContactAddressEmail, "local@example.test", "local@example.test"},
-		{"email value", store.ContactAddressEmail, "local@example.test", "remote@example.test"},
-		{"phone type", store.ContactAddressPhone, "+12025550101", "+12025550101"},
-		{"phone value", store.ContactAddressPhone, "+12025550101", "+12025550103"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			fixture, service, st, personID := publishedImportFixture(t)
-			added, err := st.AddPersonContactPointContext(t.Context(), personID, store.PersonContactPointInput{
-				AddressKind: tc.kind, OriginalValue: tc.value,
-				Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser, TypeTokens: []string{"home"}},
-			})
-			require.NoError(err)
-			require.NoError(service.ReconcilePublications(t.Context()))
-			edited := bytes.Replace(fixture.body, []byte(tc.value), []byte(tc.changed), 1)
-			edited = bytes.Replace(edited, []byte("TYPE=home"), []byte("TYPE=work"), 1)
-			require.NotEqual(fixture.body, edited)
-			fixture.setRemote(edited, `"remote-2"`)
-			_, err = service.Sync(t.Context(), SyncOptions{Full: true})
-			require.NoError(err)
-			// A later imported edit must retain ownership from the changed remote body.
-			fixture.setRemote(bytes.Replace(edited, []byte("e2@example.test"), []byte("e2b@example.test"), 1), `"remote-3"`)
-			_, err = service.Sync(t.Context(), SyncOptions{Full: true})
-			require.NoError(err)
-			points, err := st.ListPersonContactPointsContext(t.Context(), personID, true)
-			require.NoError(err)
-			require.Len(points, 3)
-			var values []string
-			for _, point := range points {
-				values = append(values, point.OriginalValue)
-				if point.Envelope.ID == added.Envelope.ID {
-					assert.Equal(*added, point)
-				}
-			}
-			assert.ElementsMatch([]string{"e1@example.test", "e2b@example.test", tc.value}, values)
-		})
-	}
+	assert.ElementsMatch([]string{"e1@example.test", "e2b@example.test", "+12025550103"}, values)
 }
