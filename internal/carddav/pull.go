@@ -386,23 +386,17 @@ func parseRemoteResource(href, etag string, body []byte) (store.CardDAVRemoteRes
 				}
 				resource.DisplayName = strings.TrimSpace(value)
 			}
-		case "EMAIL":
-			value, err := vcard.PropertyValue(envelope.RenderMetadata.StoredVersion, property)
+		case "EMAIL", "TEL":
+			value, _, err := vcard.ContactPointValue(envelope.RenderMetadata.StoredVersion, property)
 			if err != nil {
-				return store.CardDAVRemoteResource{}, fmt.Errorf("decode CardDAV EMAIL: %w", err)
+				return store.CardDAVRemoteResource{}, fmt.Errorf("decode CardDAV %s: %w", property.Name, err)
 			}
-			value = strings.TrimSpace(trimPrefixFold(value, "mailto:"))
 			if value != "" {
-				resource.Emails = append(resource.Emails, value)
-			}
-		case "TEL":
-			value, err := vcard.PropertyValue(envelope.RenderMetadata.StoredVersion, property)
-			if err != nil {
-				return store.CardDAVRemoteResource{}, fmt.Errorf("decode CardDAV TEL: %w", err)
-			}
-			value = strings.TrimSpace(trimPrefixFold(value, "tel:"))
-			if value != "" {
-				resource.Phones = append(resource.Phones, value)
+				if strings.EqualFold(property.Name, "EMAIL") {
+					resource.Emails = append(resource.Emails, value)
+				} else {
+					resource.Phones = append(resource.Phones, value)
+				}
 			}
 		}
 	}

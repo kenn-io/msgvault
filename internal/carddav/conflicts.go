@@ -321,7 +321,7 @@ func (s *Service) prepareMappingConflict(
 	unsafe := false
 	if !unresolved && !localChanged && remoteChanged && !remoteTombstone {
 		var err error
-		unsafe, err = s.store.CardDAVRemoteUpdateNeedsConflictContext(ctx, book.ID, *remote)
+		unsafe, err = s.store.CardDAVRemoteUpdateNeedsConflictContext(ctx, book.ID, mapping.Href, *remote)
 		if err != nil {
 			return store.CardDAVConflictCapture{}, false, err
 		}

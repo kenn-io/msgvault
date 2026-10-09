@@ -1309,34 +1309,20 @@ func (s *Store) ResolveCardDAVConflictRemoteContext(
 				!bytes.Equal(input.Remote.RemoteBody, conflict.RemoteBody) || input.Remote.SemanticHash == "" {
 				return ErrCardDAVConflictStale
 			}
-			remoteOwnsDisplay := false
 			var preparedEnvelope *vcard.ResourceEnvelope
 			if mapping.PersonID != nil {
-				envelope, err := s.prepareCardDAVEnvelopeTx(ctx, tx, book.ID, *mapping.PersonID, input.Remote)
+				envelope, _, err := s.prepareCardDAVEnvelopeTx(ctx, tx, book.ID, *mapping.PersonID, input.Remote)
 				if err != nil {
 					return err
 				}
 				preparedEnvelope = &envelope
-				remoteOwnsDisplay, err = s.rebaseCardDAVImportedProjectionTx(
-					ctx, tx, book.ID, *mapping.PersonID, input.Remote, &envelope,
-				)
-				if err != nil {
-					return err
-				}
 			}
-			_, changed, err := s.applyCardDAVResourceTx(ctx, tx, book, input.Remote, false, false, preparedEnvelope)
+			_, changed, err := s.applyCardDAVResourceTx(ctx, tx, book, input.Remote, false, preparedEnvelope)
 			if err != nil {
 				return err
 			}
 			if !changed {
 				return ErrCardDAVConflictStale
-			}
-			if mapping.PersonID != nil && mapping.Governance == CardDAVGovernanceRemote {
-				if err := s.refreshCardDAVImportedPersonBindBaselineTx(
-					ctx, tx, mapping.ID, *mapping.PersonID, remoteOwnsDisplay,
-				); err != nil {
-					return err
-				}
 			}
 			if publicationPersonID != nil {
 				if _, err := tx.ExecContext(ctx, `UPDATE carddav_publications SET

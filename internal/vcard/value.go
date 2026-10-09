@@ -281,3 +281,24 @@ func PropertyValue(version Version, property Property) (string, error) {
 	}
 	return UnescapeText(property.RawValue)
 }
+
+// ContactPointValue decodes contact values and retains complete telephone URIs.
+func ContactPointValue(version Version, property Property) (value, uri string, err error) {
+	value, err = PropertyValue(version, property)
+	if err != nil {
+		return "", "", err
+	}
+	value = strings.TrimSpace(value)
+	switch strings.ToUpper(property.Name) {
+	case "EMAIL":
+		if len(value) >= 7 && strings.EqualFold(value[:7], "mailto:") {
+			value = strings.TrimSpace(value[7:])
+		}
+	case "TEL":
+		if len(value) >= 4 && strings.EqualFold(value[:4], "tel:") {
+			uri = value
+			value = TelephoneNumber(value)
+		}
+	}
+	return value, uri, nil
+}

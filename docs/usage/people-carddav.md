@@ -375,7 +375,7 @@ Publication and conflict routes use global IDs and route network operations to
 the persisted owner's connection. Store-only views stay available even when a
 connection's credential needs repair.
 
-When you edit a value imported from a contact published back into its source address book, sync updates that value and preserves values added in msgvault or imported from other books. A remote edit that would replace another owner or a locally changed name creates a conflict before publication can overwrite it.
+When you edit a value imported from a contact published back into its source address book, sync updates that value and preserves values added in msgvault or imported from other books. A remote edit that would replace another owner creates a conflict before publication can overwrite it.
 
 ## Resolve competing edits
 
