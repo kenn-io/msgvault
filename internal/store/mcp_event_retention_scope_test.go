@@ -86,3 +86,34 @@ func TestMCPEventsPruningOnlyStopsSubscriptionsThatLoseTheirOwnEvents(t *testing
 	assert.Equal("retention", stopped.StopReason)
 	assert.Equal(lossy.CursorSeq, stopped.CursorSeq)
 }
+
+// An expired subscription keeps its cursor through pruning. A later sweep no
+// longer sees the deleted event, so it must not mistake the lost scope for a
+// quiet one; renewal within grace reports the truncation.
+func TestMCPEventsPruningKeepsExpiredSubscriptionLossVisible(t *testing.T) {
+	assert := Assert.New(t)
+	require := Require.New(t)
+	f := storetest.New(t)
+	now := time.Now().UTC()
+	cfg := mcpStoreConfig()
+	cfg.Retention = 9 * 24 * time.Hour
+	clock, err := f.Store.ConfigureMCPEvents(t.Context(), cfg)
+	require.NoError(err)
+	input, active := activateMCPConversationSubscription(t, f, 1, f.ConvID, now)
+	expiredAt := now.Add(25 * time.Hour)
+	require.NoError(f.Store.ExpireMCPSubscriptions(t.Context(), expiredAt))
+	expired, err := f.Store.GetMCPSubscription(t.Context(), active.ID)
+	require.NoError(err)
+	require.NotNil(expired)
+	require.Equal("expired", expired.State)
+	insertMCPConversationEvent(t, f, clock.Epoch, 1, f.ConvID, now.Add(-8*24*time.Hour))
+
+	sweep := expiredAt.Add(time.Minute)
+	require.NoError(f.Store.PruneMCPEvents(t.Context(), sweep, 7*24*time.Hour))
+	require.NoError(f.Store.PruneMCPEvents(t.Context(), sweep.Add(time.Minute), 7*24*time.Hour))
+
+	input.ExpiresAt = sweep.Add(24 * time.Hour)
+	_, truncated, err := f.Store.ActivateMCPSubscription(t.Context(), store.MCPActivation{Subscription: input, ExpectedGeneration: expired.Generation, ExpectedState: expired.State, ExpectedSecretRevision: expired.SecretRevision, Now: sweep.Add(2 * time.Minute)})
+	require.NoError(err)
+	assert.True(truncated, "an event pruned while the subscription was expired is reported on renewal")
+}

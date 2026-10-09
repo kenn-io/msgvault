@@ -103,8 +103,9 @@ removed its row. Startup and replay activation prune expired rows before
 workers or a replay cursor can use them. Pruning advances a global sequence
 floor. A subscription stops with reason `retention` only when pruning removes an
 occurrence in its own scope that it has not yet processed; its next refresh
-starts at the current head with `truncated: true`. A quiet subscription's cursor
-moves up to the floor and keeps running. A recent
+starts at the current head with `truncated: true`. A quiet active subscription's
+cursor moves up to the floor and keeps running. An expired subscription keeps its
+cursor, so renewing it after a sweep returns `truncated: true`. A recent
 receipt that remains physically stored below the floor can still authorize its
 own read until it expires.
 
