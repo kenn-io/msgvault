@@ -16,8 +16,8 @@ import (
 // operation gate without a matching End call. A crashed or hung backup
 // subprocess would otherwise wedge the daemon's gate forever; the watchdog
 // auto-releases the gate and logs at error level so the daemon self-heals.
-// Package var so tests can shorten it.
-var backupFreezeWatchdogTimeout = 60 * time.Second
+// Allow Kit's 51 five-second checkpoint busy waits plus retry backoff and cleanup.
+const backupFreezeWatchdogTimeout = 5 * time.Minute
 
 const (
 	backupFreezeBeginPath = "/api/v1/backup/freeze/begin"
