@@ -492,9 +492,9 @@ func (s *Syncer) handleLabelChange(ctx context.Context, syncID, sourceID int64, 
 				checkpoint.ErrorsCount++
 				return false, false, err
 			}
-			if _, err := s.ingestLiveMessage(
-				ctx, sourceID, raw, threadID, labelMap,
-			); err != nil {
+			// A label change does not mean the message just arrived; a
+			// new arrival in this history page is fetched by messagesAdded.
+			if _, err := s.ingestMessage(ctx, sourceID, raw, threadID, labelMap); err != nil {
 				s.recordSyncItem(syncID, messageID, syncItemPhaseIngest, store.SyncRunItemStatusError, syncItemKindIngestError, err)
 				checkpoint.ErrorsCount++
 				return false, false, err

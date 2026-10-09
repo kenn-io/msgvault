@@ -1,6 +1,7 @@
 package sync
 
 import (
+	"errors"
 	"testing"
 
 	Assert "github.com/stretchr/testify/assert"   //nolint:importas // Keep package constructors available to assertion helpers in nested scopes.
@@ -64,6 +65,28 @@ func TestMCPProviderGmailReplayDebtMutedWithinLiveRun(t *testing.T) {
 	var providerID string
 	require.NoError(env.Store.DB().QueryRow(`SELECT source_message_id FROM messages WHERE id = (SELECT message_id FROM mcp_event_log WHERE family = 'msgvault.message_archived')`).Scan(&providerID))
 	assert.Equal("live-delta", providerID)
+}
+
+func TestMCPProviderGmailLabelChangeRecoveryMuted(t *testing.T) {
+	assert := Assert.New(t)
+
+	env := newTestEnv(t)
+	enableProviderEvents(t, env, "gmail")
+	env.Mock.Profile.MessagesTotal = 2
+	env.Mock.Profile.HistoryID = 1000
+	env.Mock.MessagePages = [][]string{{"historical", "missed-in-full"}}
+	env.Mock.AddMessage("historical", testMIME(), []string{"INBOX"})
+	env.Mock.AddMessage("missed-in-full", testMIME(), []string{"INBOX"})
+	env.Mock.GetMessageError["missed-in-full"] = errors.New("temporary fetch failure")
+	runFullSync(t, env)
+	assertMessageCount(t, env.Store, 1)
+	delete(env.Mock.GetMessageError, "missed-in-full")
+	env.SetHistory(1001, historyLabelAdded("missed-in-full", "STARRED"))
+
+	runIncrementalSync(t, env)
+
+	assertMessageCount(t, env.Store, 2)
+	assert.Zero(providerEventCount(t, env), "a label change on an old message is not a live arrival")
 }
 
 func TestMCPProviderIMAPMailboxDeltaLiveRecoveryMuted(t *testing.T) {
