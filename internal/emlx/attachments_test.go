@@ -476,3 +476,54 @@ func TestFindBoundary_ToleratesWhitespaceAroundEquals(t *testing.T) {
 		assert.Equal(tc.want, findBoundary([]string{tc.header}), tc.header)
 	}
 }
+
+// partWithHeader builds a message with a text part and one part whose header
+// lines are given verbatim.
+func partWithHeader(partHeader, body string) []byte {
+	return []byte("Message-ID: <m@example.test>\r\n" +
+		"Content-Type: multipart/mixed; boundary=b\r\n\r\n" +
+		"--b\r\nContent-Type: text/plain\r\n\r\nSee attached.\r\n" +
+		"--b\r\n" + partHeader + "\r\n" + body + "\r\n--b--\r\n")
+}
+
+func TestHasAttachmentPlaceholders(t *testing.T) {
+	assert := assert.New(t)
+	assert.True(HasAttachmentPlaceholders(partWithHeader(
+		"Content-Type: application/pdf\r\nX-Apple-Content-Length: 12\r\n", "")), "placeholder part header")
+	assert.False(HasAttachmentPlaceholders(partWithHeader(
+		"Content-Type: application/pdf\r\nContent-Transfer-Encoding: base64\r\n", "JVBERi0x")), "restored attachment")
+	assert.False(HasAttachmentPlaceholders(partWithHeader(
+		"Content-Type: text/plain\r\n", "X-Apple-Content-Length: 12 is what Apple Mail writes.")), "line in a body")
+	assert.False(HasAttachmentPlaceholders([]byte("X-Apple-Content-Length: 12\r\n\r\nbody")), "not multipart")
+	assert.False(HasAttachmentPlaceholders(nil), "empty message")
+}
+
+// A partial copy and its restored copy split into the same outer lines and
+// part headers; only the placeholder part's body differs, whatever its type
+// and whether or not it names a file.
+func TestSplitTopLevelParts(t *testing.T) {
+	assert := assert.New(t)
+	for _, tc := range []struct{ name, header string }{
+		{"named pdf", "Content-Type: application/pdf\r\nContent-Disposition: attachment; filename=r.pdf\r\n"},
+		{"unnamed image", "Content-Type: image/png\r\n"},
+		{"unnamed text", "Content-Type: text/plain\r\n"},
+		{"forwarded message", "Content-Type: message/rfc822\r\n"},
+		{"rfc 2231 name", "Content-Type: application/pdf\r\nContent-Disposition: attachment; filename*=UTF-8''r%C3%A9sum%C3%A9.pdf\r\n"},
+	} {
+		outerP, partsP, okP := SplitTopLevelParts(partWithHeader(tc.header+"X-Apple-Content-Length: 12\r\n", ""))
+		outerR, partsR, okR := SplitTopLevelParts(partWithHeader(tc.header+"Content-Transfer-Encoding: base64\r\n", "aGVsbG8="))
+		if !assert.True(okP && okR, tc.name) || !assert.Len(partsP, 2, tc.name) || !assert.Len(partsR, 2, tc.name) {
+			continue
+		}
+		assert.Equal(outerP, outerR, tc.name)
+		assert.Equal(partsP[0], partsR[0], tc.name+": text part")
+		assert.Equal(partsP[1].RestorableHeader, partsR[1].RestorableHeader, tc.name+": attachment header")
+		assert.NotEqual(partsP[1].Header, partsR[1].Header, tc.name+": whole header keeps the rewritten lines")
+		assert.True(partsP[1].Placeholder, tc.name)
+		assert.False(partsR[1].Placeholder, tc.name)
+		assert.NotEqual(partsP[1].Body, partsR[1].Body, tc.name)
+	}
+
+	_, _, ok := SplitTopLevelParts([]byte("Subject: x\r\n\r\nbody"))
+	assert.False(ok, "not multipart")
+}

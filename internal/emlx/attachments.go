@@ -178,6 +178,90 @@ func indexBlank(lines []string, from int) int {
 	return -1
 }
 
+// TopLevelPart is one top-level MIME part, as RestoreAttachments sees it.
+type TopLevelPart struct {
+	// Header holds the part's header lines, line endings dropped.
+	Header []string
+	// RestorableHeader is Header without X-Apple-Content-Length and
+	// Content-Transfer-Encoding (and their continuations), the lines
+	// RestoreAttachments rewrites when it fills a placeholder part.
+	RestorableHeader []string
+	// Body holds the lines up to the next boundary, endings dropped.
+	Body []string
+	// Placeholder is true when the part still has an X-Apple-Content-Length
+	// header: Apple Mail left its body out and it was not restored.
+	Placeholder bool
+}
+
+// SplitTopLevelParts splits a multipart message into the lines outside its
+// top-level parts (message header, preamble, boundaries, epilogue) and the
+// parts themselves. ok is false when raw is not multipart. A .partial.emlx and
+// the same message with attachments restored differ only in the bodies of the
+// parts that carry, or carried, a placeholder.
+func SplitTopLevelParts(raw []byte) (outer []string, parts []TopLevelPart, ok bool) {
+	lines := strings.Split(string(raw), "\n")
+	hdrEnd := indexBlank(lines, 0)
+	if hdrEnd < 0 {
+		return nil, nil, false
+	}
+	boundary := findBoundary(lines[:hdrEnd])
+	if boundary == "" {
+		return nil, nil, false
+	}
+	open, closeB := "--"+boundary, "--"+boundary+"--"
+	trim := func(line string) string { return strings.TrimSuffix(line, "\r") }
+
+	for i := 0; i < len(lines); {
+		line := trim(lines[i])
+		outer = append(outer, line)
+		i++
+		if line != open {
+			continue
+		}
+		phEnd := indexBlank(lines, i)
+		if phEnd < 0 {
+			for ; i < len(lines); i++ {
+				outer = append(outer, trim(lines[i]))
+			}
+			break
+		}
+		part := TopLevelPart{Placeholder: hasPlaceholder(lines[i:phEnd])}
+		drop := false
+		for _, h := range lines[i:phEnd] {
+			if !strings.HasPrefix(h, " ") && !strings.HasPrefix(h, "\t") {
+				name, _, _ := strings.Cut(h, ":")
+				drop = strings.EqualFold(name, "X-Apple-Content-Length") ||
+					strings.EqualFold(name, "Content-Transfer-Encoding")
+			}
+			part.Header = append(part.Header, trim(h))
+			if !drop {
+				part.RestorableHeader = append(part.RestorableHeader, trim(h))
+			}
+		}
+		for i = phEnd + 1; i < len(lines) && trim(lines[i]) != open && trim(lines[i]) != closeB; i++ {
+			part.Body = append(part.Body, trim(lines[i]))
+		}
+		parts = append(parts, part)
+	}
+	return outer, parts, true
+}
+
+// HasAttachmentPlaceholders reports whether a top-level MIME part of raw still
+// carries the X-Apple-Content-Length placeholder header. Only part headers
+// count; a body line that starts the same way does not.
+func HasAttachmentPlaceholders(raw []byte) bool {
+	_, parts, ok := SplitTopLevelParts(raw)
+	if !ok {
+		return false
+	}
+	for _, part := range parts {
+		if part.Placeholder {
+			return true
+		}
+	}
+	return false
+}
+
 func hasPlaceholder(header []string) bool {
 	for _, h := range header {
 		if strings.HasPrefix(h, applePlaceholderHeader) {

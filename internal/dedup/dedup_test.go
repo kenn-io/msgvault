@@ -607,7 +607,7 @@ func TestEngine_FormatMethodology_MentionsSentPolicy(t *testing.T) {
 	)
 	assert.Contains(t,
 		out,
-		"Tiebreakers: has raw MIME > when all eligible copies have matching normalized MIME, more attachments > attachment signal > larger payload; then metadata quality > more labels > earlier archived_at > lower id.",
+		"Tiebreakers: has raw MIME > within one source and otherwise identical content, no Apple Mail attachment placeholders > when all eligible copies have matching normalized MIME, more attachments > attachment signal > larger payload; then metadata quality > more labels > earlier archived_at > lower id.",
 		"methodology missing payload completeness order",
 	)
 }
@@ -1748,4 +1748,143 @@ func TestEngine_MetadataQualityBeforeLabels(t *testing.T) {
 			assert.Equal(t, richer, group.Messages[group.Survivor].ID)
 		})
 	}
+}
+
+// A copy imported from a .partial.emlx before attachments were restored keeps
+// Apple Mail's X-Apple-Content-Length placeholder. A later copy of the same
+// message from the same source has the attachment, so its MIME differs and the
+// attachment-count tier is off. The complete copy must still survive, even
+// though the placeholder copy was archived first (#1111).
+func TestEngine_SurvivorPrefersCopyWithoutApplePlaceholders(t *testing.T) {
+	require := require.New(t)
+	f := storetest.New(t)
+	st := f.Store
+
+	const messageID = "restored-attachment@example.test"
+	placeholderID := addMessage(t, st, f.Source, "placeholder-copy", messageID, false)
+	restoredID := addMessage(t, st, f.Source, "restored-copy", messageID, false)
+
+	header := "Message-ID: <restored-attachment@example.test>\r\n" +
+		"Subject: Report\r\n" +
+		"Content-Type: multipart/mixed; boundary=b\r\n\r\n" +
+		"--b\r\nContent-Type: text/plain\r\n\r\nSee attached.\r\n" +
+		"--b\r\nContent-Type: application/pdf\r\n" +
+		"Content-Disposition: attachment; filename=report.pdf\r\n"
+	require.NoError(st.UpsertMessageRaw(placeholderID, []byte(header+
+		"X-Apple-Content-Length: 4096\r\n\r\n\r\n--b--\r\n")), "store placeholder copy")
+	require.NoError(st.UpsertMessageRaw(restoredID, []byte(header+
+		"Content-Transfer-Encoding: base64\r\n\r\nJVBERi0xLjQK\r\n--b--\r\n")), "store restored copy")
+
+	setArchivedAt := func(id int64, at time.Time) {
+		_, err := st.DB().Exec(
+			st.Rebind("UPDATE messages SET archived_at = ? WHERE id = ?"), at, id,
+		)
+		require.NoError(err, "set archived_at")
+	}
+	setArchivedAt(placeholderID, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+	setArchivedAt(restoredID, time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC))
+
+	eng := dedup.NewEngine(st, dedup.Config{
+		AccountSourceIDs: []int64{f.Source.ID},
+		Account:          "test",
+	}, nil)
+	report, err := eng.Scan(context.Background())
+	require.NoError(err, "Scan")
+	require.Len(report.Groups, 1, "duplicate groups")
+	survivor := report.Groups[0].Messages[report.Groups[0].Survivor]
+	assert.Equal(t, restoredID, survivor.ID, "survivor must be the copy with the attachment")
+}
+
+// rawWithAttachment builds a multipart message whose second part has the
+// given content type, extra header lines and body.
+func rawWithAttachment(messageID, subject, text, contentType, partHeader, body string) []byte {
+	return []byte("Message-ID: <" + messageID + ">\r\n" +
+		"Subject: " + subject + "\r\n" +
+		"Content-Type: multipart/mixed; boundary=b\r\n\r\n" +
+		"--b\r\nContent-Type: text/plain\r\n\r\n" + text + "\r\n" +
+		"--b\r\nContent-Type: " + contentType + "\r\n" +
+		partHeader + "\r\n" + body + "\r\n--b--\r\n")
+}
+
+// scanSurvivor stores two copies of one Message-ID, the first archived
+// earlier, and returns the survivor's ID.
+func scanSurvivor(t *testing.T, messageID string, firstRaw, secondRaw []byte) (first, second, survivor int64) {
+	t.Helper()
+	require := require.New(t)
+	f := storetest.New(t)
+	st := f.Store
+	first = addMessage(t, st, f.Source, "first-copy", messageID, false)
+	second = addMessage(t, st, f.Source, "second-copy", messageID, false)
+	require.NoError(st.UpsertMessageRaw(first, firstRaw), "store first copy")
+	require.NoError(st.UpsertMessageRaw(second, secondRaw), "store second copy")
+	for id, at := range map[int64]time.Time{
+		first:  time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
+		second: time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC),
+	} {
+		_, err := st.DB().Exec(st.Rebind("UPDATE messages SET archived_at = ? WHERE id = ?"), at, id)
+		require.NoError(err, "set archived_at")
+	}
+	eng := dedup.NewEngine(st, dedup.Config{AccountSourceIDs: []int64{f.Source.ID}, Account: "test"}, nil)
+	report, err := eng.Scan(context.Background())
+	require.NoError(err, "Scan")
+	require.Len(report.Groups, 1, "duplicate groups")
+	return first, second, report.Groups[0].Messages[report.Groups[0].Survivor].ID
+}
+
+// A different message that reuses a partial copy's Message-ID must not win on
+// the placeholder tier: the usual order (earlier archived_at) still decides.
+func TestEngine_PlaceholderPreferenceIgnoresDifferentMessageWithSameID(t *testing.T) {
+	const messageID = "reused-id@example.test"
+	partial, _, survivor := scanSurvivor(t, messageID,
+		rawWithAttachment(messageID, "Report", "See attached.", "application/pdf", "X-Apple-Content-Length: 4096\r\n", ""),
+		rawWithAttachment(messageID, "Something else", "Unrelated text.", "application/pdf",
+			"Content-Transfer-Encoding: base64\r\n", "JVBERi0xLjQK"),
+	)
+	assert.Equal(t, partial, survivor, "the placeholder tier must not apply to a different message")
+}
+
+// A text part that quotes the placeholder header in its body must not make
+// the restored copy look incomplete.
+func TestEngine_PlaceholderPreferenceIgnoresBodyMention(t *testing.T) {
+	const messageID = "body-mention@example.test"
+	text := "X-Apple-Content-Length: 12 is what Apple Mail writes."
+	_, restored, survivor := scanSurvivor(t, messageID,
+		rawWithAttachment(messageID, "Report", text, "application/pdf", "X-Apple-Content-Length: 4096\r\n", ""),
+		rawWithAttachment(messageID, "Report", text, "application/pdf", "Content-Transfer-Encoding: base64\r\n", "JVBERi0xLjQK"),
+	)
+	assert.Equal(t, restored, survivor, "the restored copy must survive")
+}
+
+// RestoreAttachments can fill a part that names no file, through its
+// single-file fallback, whatever its type. The restored copy still wins.
+func TestEngine_SurvivorPrefersRestoredCopyOfUnnamedAttachment(t *testing.T) {
+	for _, contentType := range []string{"image/png", "text/plain", "message/rfc822"} {
+		t.Run(contentType, func(t *testing.T) {
+			messageID := "unnamed-" + strings.ReplaceAll(contentType, "/", "-") + "@example.test"
+			_, restored, survivor := scanSurvivor(t, messageID,
+				rawWithAttachment(messageID, "Photo", "See attached.", contentType, "X-Apple-Content-Length: 4096\r\n", ""),
+				rawWithAttachment(messageID, "Photo", "See attached.", contentType, "Content-Transfer-Encoding: base64\r\n", "aGVsbG8="),
+			)
+			assert.Equal(t, restored, survivor, "the restored copy must survive")
+		})
+	}
+}
+
+// Only a placeholder position may differ in its encoding header. The same
+// bytes in a text part marked base64 in one copy and 7bit in the other are
+// different text, so the copies are not the same message.
+func TestEngine_PlaceholderPreferenceComparesEncodingOutsidePlaceholders(t *testing.T) {
+	const messageID = "encoding@example.test"
+	raw := func(textEncoding, partHeader, body string) []byte {
+		return []byte("Message-ID: <" + messageID + ">\r\n" +
+			"Subject: Report\r\n" +
+			"Content-Type: multipart/mixed; boundary=b\r\n\r\n" +
+			"--b\r\nContent-Type: text/plain\r\nContent-Transfer-Encoding: " + textEncoding + "\r\n\r\nSGVsbG8=\r\n" +
+			"--b\r\nContent-Type: application/pdf\r\n" + partHeader + "\r\n" + body + "\r\n--b--\r\n")
+	}
+	partial, _, survivor := scanSurvivor(t, messageID,
+		raw("7bit", "X-Apple-Content-Length: 4096\r\n", ""),
+		raw("base64", "Content-Transfer-Encoding: base64\r\n", "JVBERi0xLjQK"),
+	)
+	assert.Equal(t, partial, survivor, "a different encoding outside the placeholder part must keep the tier off")
 }
