@@ -38,9 +38,15 @@ func StoreCaptureConfig(opts Options) store.MCPEventsConfig {
 	if retention == 0 {
 		retention = 7 * 24 * time.Hour
 	}
+	// Without an owner key the owner is unknown, not changed: the Store
+	// revokes subscriptions only for a known different owner.
+	principal := ""
+	if opts.OwnerKey != "" {
+		principal = Principal(opts.OwnerKey)
+	}
 	return store.MCPEventsConfig{
 		Enabled:      opts.Enabled,
-		Principal:    Principal(opts.OwnerKey),
+		Principal:    principal,
 		Capabilities: capabilities(opts.Enabled, opts.Sources),
 		Retention:    retention,
 	}
