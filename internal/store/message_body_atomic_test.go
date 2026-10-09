@@ -81,6 +81,8 @@ func TestUpsertMessageBodyComparesAfterConcurrentPostgreSQLWrite(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() { done <- st.UpsertMessageBodyContext(ctx, id, original, sql.NullString{}) }()
+	poll := time.NewTicker(10 * time.Millisecond)
+	defer poll.Stop()
 	for {
 		var waiting bool
 		require.NoError(st.DB().QueryRowContext(ctx, `SELECT EXISTS (
@@ -90,7 +92,7 @@ func TestUpsertMessageBodyComparesAfterConcurrentPostgreSQLWrite(t *testing.T) {
 			break
 		}
 		select {
-		case <-time.After(10 * time.Millisecond):
+		case <-poll.C:
 		case <-ctx.Done():
 			require.NoError(ctx.Err(), "the body write never waited for the concurrent write")
 		}
