@@ -22,6 +22,7 @@ import (
 	"github.com/spf13/cobra"
 	"go.kenn.io/kit/telemetry/posthog"
 	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/carddav"
 	"go.kenn.io/msgvault/internal/circleback"
 	"go.kenn.io/msgvault/internal/config"
@@ -820,6 +821,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	cacheJobs := newCacheBuildJobs(ctx, idleTracker, nil)
 	cacheJobs.logger = logger
 	storeAdapter := &storeAPIAdapter{
+		mcpCommands:            registeredMCPCommandDescriptors(),
 		store:                  s,
 		config:                 cfg,
 		options:                state.options,
@@ -1700,6 +1702,7 @@ func newDaemonIdleTracker(c *config.Config, stop context.CancelFunc, logger *slo
 // Since api.APIMessage, api.StoreStats, etc. are type aliases for store types,
 // the adapter methods are simple pass-throughs with no conversion needed.
 type storeAPIAdapter struct {
+	mcpCommands             []apiprotocol.MCPCommandDescriptor
 	store                   *store.Store
 	config                  *config.Config
 	options                 invocationOptions

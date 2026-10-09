@@ -55,6 +55,10 @@ type Client struct {
 	localDaemonToken string
 }
 
+// UsesDelegatedAuthentication reports the fixed authentication mode selected at
+// construction, even when daemon capability discovery is unavailable.
+func (c *Client) UsesDelegatedAuthentication() bool { return c.agentToken != "" }
+
 // SetBusyNotifier registers a callback invoked when the daemon reports that
 // another operation holds its gate and this client is waiting to retry. The
 // message names the running operation.

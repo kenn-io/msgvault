@@ -41,6 +41,22 @@ type recordingPeopleBackend struct {
 	calendarErr          error
 }
 
+type namedPromotionTestBackend struct{ *recordingPeopleBackend }
+
+func (b *namedPromotionTestBackend) PromoteWithDisplayName(ctx context.Context, participantID int64, displayName *string) (*OperationResult, error) {
+	person, err := b.Promote(ctx, participantID)
+	return &OperationResult{Output: person}, err
+}
+
+func TestNamedPromotionSchemaIsLimitedToSupportingBackends(t *testing.T) {
+	legacy := &recordingPeopleBackend{}
+	legacyTools := toolsByName(t, rawListTools(t, peopleToolOptions(legacy), true))
+	assert.Equal(t, []string{"participant_id"}, toolPropertyNames(t, legacyTools[ToolPromotePerson]))
+	named := &namedPromotionTestBackend{recordingPeopleBackend: legacy}
+	namedTools := toolsByName(t, rawListTools(t, peopleToolOptions(named), true))
+	assert.Equal(t, []string{"display_name", "participant_id"}, toolPropertyNames(t, namedTools[ToolPromotePerson]))
+}
+
 func (b *recordingPeopleBackend) GetContact(_ context.Context, participantID int64) (*query.PersonSummary, error) {
 	b.contactParticipantID = participantID
 	return b.contact, b.contactErr
