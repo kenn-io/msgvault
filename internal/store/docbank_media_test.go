@@ -855,12 +855,18 @@ func TestMessageMediaOccurrences(t *testing.T) {
 	require.Len(occurrences, 1)
 	assert.Equal(store.MessageMediaOccurrence{
 		MessageID: retained.messageID, ConversationID: f.ConvID,
-		AttachmentID: retained.attachmentID, Filename: "voice.wav", Size: 44, AttachmentState: attachmentpolicy.StateStored,
+		ContainingTitle: "Default Thread",
+		AttachmentID:    retained.attachmentID, Filename: "voice.wav", Size: 44, AttachmentState: attachmentpolicy.StateStored,
 		OccurrenceRef: "msgvault:retained", Revision: "r1", RetentionState: store.BeeperMediaRetentionRetained,
 		VaultUID: "vault", DocbankSourceID: "source-1111", SourceVersionID: "version",
 		ContentVersionID: "content", DeliveryProfile: "supplied-transcript", DeliveryPhase: "pending-artifact", BytesArchived: true,
 	}, occurrences[0])
-	_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE beeper_media_deliveries SET phase = 'done',
+	_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE conversations SET title = '' WHERE id = ?`), f.ConvID)
+	require.NoError(err)
+	occurrences = list(retained.messageID)
+	assert.Empty(occurrences[0].ContainingTitle)
+	assert.Nil(occurrences[0].OccurredAt)
+	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE beeper_media_deliveries SET phase = 'done',
 		operation_state = 'succeeded', supplied_input_id = 'input-key' WHERE destination_key = 'reader' AND processing_key = 'key'`))
 	require.NoError(err)
 	occurrences = list(retained.messageID)

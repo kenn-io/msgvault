@@ -753,9 +753,7 @@ func (s *Store) listMessageOccurrenceRows(
 			return nil, fmt.Errorf("scan message media occurrence: %w", err)
 		}
 		o.BytesArchived = true
-		if occurredAt.Valid {
-			o.OccurredAt = &occurredAt.Time
-		}
+		o.OccurredAt = optionalTimestamp(occurredAt)
 		occurrences = append(occurrences, o)
 	}
 	if err := rows.Err(); err != nil {
