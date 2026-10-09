@@ -1258,6 +1258,7 @@ func TestImport_RoundTrip(t *testing.T) {
 	assert.Equal("Update mockups", meta.ActionItems[0].Title)
 	assert.Equal([]string{"design"}, meta.Tags)
 	assert.Equal(2, meta.TranscriptSegments)
+	assert.Equal("c0b60658390c9b0405c21a63d672324fe56334dcd3bcfa23918d93ec2bd8489e", meta.SnapshotHash)
 
 	// Raw archive composes both verbatim payloads.
 	raw, err := st.GetMessageRaw(msgID)

@@ -42,7 +42,14 @@ func TestArchiverCreatesProviderCanonicalMeeting(t *testing.T) {
 	require.NoError(err)
 	require.NoError(st.AddAccountIdentity(source.ID, "user@example.com", "account-email"))
 
-	result, err := New(st).Upsert(context.Background(), testSnapshot(source.ID), UpsertOptions{})
+	snapshot := testSnapshot(source.ID)
+	snapshot.Organizer.Name = " Test Organizer "
+	snapshot.Attendees = []Person{
+		{Name: " Test Attendee ", Email: "attendee@example.com"},
+		{Name: "Test Attendee", Email: "Attendee@Example.com"},
+		{Name: "Invalid", Email: "not-an-email"},
+	}
+	result, err := New(st).Upsert(context.Background(), snapshot, UpsertOptions{})
 	require.NoError(err)
 	assert.True(result.Created)
 	assert.True(result.Changed)
@@ -84,23 +91,35 @@ func TestArchiverCreatesProviderCanonicalMeeting(t *testing.T) {
 	assert.Equal(1, messageCount)
 	assert.Equal(1, participantCount)
 
-	var recipient, recipientEnvelope string
+	var recipient, recipientEnvelope, recipientName string
 	require.NoError(st.DB().QueryRow(st.Rebind(`
-		SELECT p.email_address, mr.email_address
+		SELECT p.email_address, mr.email_address, mr.display_name
 		FROM message_recipients mr
 		JOIN participants p ON p.id = mr.participant_id
 		WHERE mr.message_id = ? AND mr.recipient_type = 'to'
-	`), result.MessageID).Scan(&recipient, &recipientEnvelope))
+	`), result.MessageID).Scan(&recipient, &recipientEnvelope, &recipientName))
 	assert.Equal("attendee@example.com", recipient)
 	assert.Equal("attendee@example.com", recipientEnvelope)
+	assert.Equal("Test Attendee", recipientName)
 
-	var organizerEnvelope string
+	var organizerEnvelope, organizerName string
 	require.NoError(st.DB().QueryRow(st.Rebind(`
-		SELECT mr.email_address
+		SELECT mr.email_address, mr.display_name
 		FROM message_recipients mr
 		WHERE mr.message_id = ? AND mr.recipient_type = 'from'
-	`), result.MessageID).Scan(&organizerEnvelope))
+	`), result.MessageID).Scan(&organizerEnvelope, &organizerName))
 	assert.Equal("organizer@example.com", organizerEnvelope)
+	assert.Equal("Test Organizer", organizerName)
+	var recipients, invalid int
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM message_recipients WHERE message_id = ?`), result.MessageID).Scan(&recipients))
+	assert.Equal(2, recipients)
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM participants WHERE email_address = 'not-an-email'`).Scan(&invalid))
+	assert.Zero(invalid)
+	if st.FTS5Available() && !st.IsPostgreSQL() {
+		var to string
+		require.NoError(st.DB().QueryRow(st.Rebind(`SELECT to_addr FROM messages_fts WHERE rowid = ?`), result.MessageID).Scan(&to))
+		assert.Equal("attendee@example.com", to)
+	}
 
 	raw, err := st.GetMessageRaw(result.MessageID)
 	require.NoError(err)

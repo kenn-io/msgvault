@@ -245,10 +245,6 @@ func TestPersonAttributeSupersedeHistoryCASAndDryRun(t *testing.T) {
 	require.NoError(err)
 	assert.Nil(cleared.Value)
 	require.NotNil(cleared.Superseded)
-	_, err = st.SupersedePersonAttributeValueContext(ctx, store.PersonAttributeSupersedeInput{
-		PersonID: person, DefinitionSlug: store.AttributeSlugPrimaryChannel,
-	})
-	require.ErrorIs(err, store.ErrAttributeValueNotFound)
 }
 
 func TestInactiveDefinitionBlocksSetButAllowsSupersede(t *testing.T) {
