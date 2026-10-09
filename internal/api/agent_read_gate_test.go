@@ -1043,8 +1043,9 @@ func TestAgentReadAtCapacityFailsWhenRequestEnds(t *testing.T) {
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-	assert.Contains(t, w.Body.String(), "agent_read_busy")
-	assert.Zero(t, st.DB().Stats().InUse)
-	assert.Len(t, srv.agentReadSlots, agentReadConcurrency)
+	assertions := assert.New(t)
+	assertions.Equal(http.StatusServiceUnavailable, w.Code)
+	assertions.Contains(w.Body.String(), "agent_read_busy")
+	assertions.Zero(st.DB().Stats().InUse)
+	assertions.Len(srv.agentReadSlots, agentReadConcurrency)
 }
