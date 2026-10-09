@@ -307,15 +307,11 @@ func (s *Service) prepareMappingConflict(
 	localHash := mapping.LocalHash
 	var localBody []byte
 	if mapping.PersonID != nil && !localTombstone {
-		person, err := s.store.GetPersonContext(ctx, *mapping.PersonID)
+		snapshot, err := s.store.LoadPersonVCardSnapshotContext(ctx, *mapping.PersonID)
 		if err != nil {
 			return store.CardDAVConflictCapture{}, false, err
 		}
-		body, hash, err := s.renderPublicationCard(ctx, *person, book, &mapping)
-		if err != nil {
-			return store.CardDAVConflictCapture{}, false, err
-		}
-		localBody, localHash = body, hash
+		localHash = snapshot.Fingerprint
 	}
 	localChanged := localTombstone || localHash != mapping.LocalHash
 	unsafe := false
@@ -331,6 +327,17 @@ func (s *Service) prepareMappingConflict(
 	}
 	if !unresolved && localTombstone && remoteTombstone {
 		return store.CardDAVConflictCapture{}, false, nil
+	}
+	if mapping.PersonID != nil && !localTombstone {
+		person, err := s.store.GetPersonContext(ctx, *mapping.PersonID)
+		if err != nil {
+			return store.CardDAVConflictCapture{}, false, err
+		}
+		body, hash, err := s.renderPublicationCard(ctx, *person, book, &mapping)
+		if err != nil {
+			return store.CardDAVConflictCapture{}, false, err
+		}
+		localBody, localHash = body, hash
 	}
 	if !unresolved && !localTombstone && !remoteTombstone {
 		localSemanticHash, err := SemanticHash(localBody)

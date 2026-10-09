@@ -1317,7 +1317,7 @@ func (s *Store) ResolveCardDAVConflictRemoteContext(
 				if err != nil {
 					return err
 				}
-				unsafe, err := s.cardDAVRebaseDisplacesOwnerTx(ctx, tx, book.ID, *mapping.PersonID, input.Remote.Href, dropped)
+				unsafe, err := s.cardDAVRebaseDisplacesOwnerTx(ctx, tx, book.ID, *mapping.PersonID, input.Remote.Href, envelope, dropped)
 				if err != nil {
 					return err
 				}

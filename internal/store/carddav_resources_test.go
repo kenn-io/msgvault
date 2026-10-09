@@ -1020,6 +1020,7 @@ func TestCardDAVApplyFenceRollsBackWholePlan(t *testing.T) {
 }
 
 func TestCardDAVApplyMissingOwnerConflictCaptureRollsBackWholePlan(t *testing.T) {
+	assert := assert.New(t)
 	require := require.New(t)
 	st, account, book := newCardDAVResourceStore(t)
 	ordinary := remoteResource(book.CanonicalURL+"ordinary.vcf", "00000000-0000-4000-8000-000000000001", "Ordinary", "source@example.test", `"one"`)
@@ -1083,18 +1084,18 @@ func TestCardDAVApplyMissingOwnerConflictCaptureRollsBackWholePlan(t *testing.T)
 	for i, before := range resources {
 		after, err := st.GetCardDAVResourceContext(t.Context(), book.ID, before.Href)
 		require.NoError(err)
-		assert.Equal(t, before, after)
+		assert.Equal(before, after)
 		native, err := st.LoadPersonVCardSnapshotContext(t.Context(), *before.PersonID)
 		require.NoError(err)
-		assert.Equal(t, snapshots[i].Fingerprint, native.Fingerprint)
+		assert.Equal(snapshots[i].Fingerprint, native.Fingerprint)
 	}
 	books, err = st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
 	require.NoError(err)
-	assert.Equal(t, beforeBook.SyncToken, books[0].SyncToken)
-	assert.Equal(t, beforeBook.SyncRevision, books[0].SyncRevision)
+	assert.Equal(beforeBook.SyncToken, books[0].SyncToken)
+	assert.Equal(beforeBook.SyncRevision, books[0].SyncRevision)
 	conflicts, err := st.ListCardDAVConflictsContext(t.Context(), true, store.AllCardDAVAccounts)
 	require.NoError(err)
-	assert.Empty(t, conflicts)
+	assert.Empty(conflicts)
 }
 
 func TestCardDAVTombstoneDeletesOnlyUntouchedRemoteGovernedPerson(t *testing.T) {

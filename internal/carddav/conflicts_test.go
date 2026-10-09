@@ -514,6 +514,7 @@ func TestKeepRemoteRebasesImportedPersonCleanupBaseline(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
 			require := require.New(t)
 
 			fixture := &conflictMutationServer{
@@ -561,10 +562,10 @@ func TestKeepRemoteRebasesImportedPersonCleanupBaseline(t *testing.T) {
 			points, err := st.ListPersonContactPointsContext(t.Context(), personID, true)
 			require.NoError(err)
 			require.Len(points, 1)
-			assert.Equal(t, "alice.retained@example.test", points[0].OriginalValue)
+			assert.Equal("alice.retained@example.test", points[0].OriginalValue)
 			resolved, err := st.GetCardDAVConflictContext(t.Context(), conflicts[0].ID)
 			require.NoError(err)
-			assert.Equal(t, store.CardDAVConflictResolved, resolved.Status)
+			assert.Equal(store.CardDAVConflictResolved, resolved.Status)
 			envelope, err := st.GetVCardResourceEnvelopeContext(t.Context(), fmt.Sprintf("carddav:%d", book.ID), mapping.Href)
 			require.NoError(err)
 			fnMappings := 0
@@ -573,7 +574,7 @@ func TestKeepRemoteRebasesImportedPersonCleanupBaseline(t *testing.T) {
 					fnMappings++
 				}
 			}
-			assert.Equal(t, 1, fnMappings)
+			assert.Equal(1, fnMappings)
 
 			fixture.mu.Lock()
 			fixture.body = nil
@@ -586,7 +587,7 @@ func TestKeepRemoteRebasesImportedPersonCleanupBaseline(t *testing.T) {
 			person, err := st.GetPersonContext(t.Context(), personID)
 			if tt.wantPersonRetained {
 				require.NoError(err)
-				assert.Equal(t, personID, person.ID)
+				assert.Equal(personID, person.ID)
 				return
 			}
 			require.ErrorIs(err, store.ErrPersonNotFound)
@@ -1611,7 +1612,7 @@ func TestRemoteContactImportPreservesMetadata(t *testing.T) {
 		kind                                            store.ContactAddressKind
 		localKind                                       store.ContactAddressKind
 		localValue                                      string
-		derived, decoded                                bool
+		derived, decoded, legacy                        bool
 	}{
 		{name: "email", first: "TEL;TYPE=cell:+12025550101", before: "e2@example.test", after: "e2b@example.test", next: "e2c@example.test", value: "e2b@example.test", kind: store.ContactAddressEmail},
 		{name: "phone", first: "TEL;TYPE=cell:+12025550101", before: "TEL;TYPE=cell:tel:+12025550101", after: "TEL;TYPE=work:tel:+12025550103", next: "TEL;TYPE=work:tel:+12025550104", value: "+12025550103", kind: store.ContactAddressPhone},
@@ -1619,6 +1620,7 @@ func TestRemoteContactImportPreservesMetadata(t *testing.T) {
 		{name: "whitespace-pref", first: "EMAIL;TYPE=home,work;X-LABEL=first:a@example.test", second: "EMAIL;TYPE=home,work;X-LABEL=second;PREF=\" 1 \":b@example.test", value: "b@example.test", kind: store.ContactAddressEmail},
 		{name: "pref-01", first: "EMAIL;TYPE=home,work;X-LABEL=first:a@example.test", second: "EMAIL;TYPE=home,work;X-LABEL=second;PREF=01:b@example.test", value: "b@example.test", kind: store.ContactAddressEmail},
 		{name: "phone-extension", first: "TEL;TYPE=home,work;X-LABEL=first:tel:+12025550101", second: "TEL;TYPE=home,work;X-LABEL=second;PREF=1:tel:+12025550102;ext=42", value: "+12025550102", kind: store.ContactAddressPhone},
+		{name: "legacy-phone-extension", before: "EMAIL:e2@example.test", after: "EMAIL:e2b@example.test\r\nTEL:+12025550103\\;ext=42", value: "+12025550103", kind: store.ContactAddressPhone, legacy: true},
 		{name: "local-email", before: "e2@example.test", after: "e2b@example.test", value: "e2b@example.test", kind: store.ContactAddressEmail, localKind: store.ContactAddressEmail, localValue: "alice-local@example.test"},
 		{name: "local-phone", before: "e2@example.test", after: "e2b@example.test", value: "e2b@example.test", kind: store.ContactAddressEmail, localKind: store.ContactAddressPhone, localValue: "+1 (202) 555-0101"},
 		{name: "derived-name", before: "e2@example.test", after: "e2b@example.test", value: "e2b@example.test", kind: store.ContactAddressEmail, derived: true},
@@ -1692,14 +1694,33 @@ func TestRemoteContactImportPreservesMetadata(t *testing.T) {
 			}
 			edited := bytes.Replace(fixture.body, []byte(before), []byte(after), 1)
 			require.NotEqual(fixture.body, edited)
+			if tc.legacy {
+				edited = bytes.Replace(edited, []byte("VERSION:4.0"), []byte("VERSION:3.0"), 1)
+			}
 			fixture.setRemote(edited, `"remote-2"`)
 			for range 2 {
 				_, err := service.Sync(t.Context(), SyncOptions{Full: true})
 				require.NoError(err)
 				require.NoError(service.ReconcilePublications(t.Context()))
-				if !tc.decoded {
+				if !tc.decoded && !tc.legacy {
 					assert.Equal(puts, fixture.puts)
 					assert.Equal(edited, fixture.body)
+				}
+			}
+			if tc.legacy {
+				_, err := st.AddPersonContactPointContext(t.Context(), personID, store.PersonContactPointInput{
+					AddressKind: store.ContactAddressEmail, OriginalValue: "local@example.test", Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
+				})
+				require.NoError(err)
+				require.NoError(service.ReconcilePublications(t.Context()))
+				assert.Contains(string(fixture.body), "TEL:+12025550103\\;ext=42")
+				points, err := st.ListPersonContactPointsContext(t.Context(), personID, true)
+				require.NoError(err)
+				for _, point := range points {
+					if point.AddressKind == store.ContactAddressPhone {
+						assert.Equal("+12025550103", point.NormalizedValue)
+						assert.Equal(new("tel:+12025550103;ext=42"), point.URI)
+					}
 				}
 			}
 			check(updatedValue)
@@ -1773,6 +1794,24 @@ func TestPublishedImportLocalRenameSurvivesRemoteRename(t *testing.T) {
 			require.NoError(err)
 			if published {
 				assert.Empty(conflicts)
+				fixture.setRemote(bytes.Replace(fixture.body, []byte("FN:Alice Remote"), []byte("FN:Alice Local"), 1), `"coincidence"`)
+				_, err = service.Sync(t.Context(), SyncOptions{Full: true})
+				require.NoError(err)
+				conflicts, err = service.ListConflicts(t.Context())
+				require.NoError(err)
+				require.Len(conflicts, 1)
+				require.ErrorIs(assertKeepRemoteRejected(t, fixture, service, st, personID, conflicts[0].ID), store.ErrCardDAVRemoteProtected)
+				fixture.setRemote(bytes.Replace(fixture.body, []byte("FN:Alice Local"), []byte("FN:Alice Final"), 1), `"after-coincidence"`)
+				_, err = service.Sync(t.Context(), SyncOptions{Full: true})
+				require.NoError(err)
+				require.NoError(service.ResolveConflict(t.Context(), conflicts[0].ID, ResolutionKeepRemote))
+				person, err = st.GetPersonContext(t.Context(), personID)
+				require.NoError(err)
+				assert.Equal(new("Alice Local"), person.DisplayName)
+				names, err = st.ListPersonNamesContext(t.Context(), personID, true)
+				require.NoError(err)
+				require.Len(names, 1)
+				assert.Equal("Alice Final", names[0].OriginalValue)
 			} else {
 				require.Len(conflicts, 1)
 			}
@@ -1897,6 +1936,7 @@ func TestPublishedImportRemoteOwnership(t *testing.T) {
 		local, conflict     bool
 	}{
 		{"name-and-email", "FN:Alice", "FN:Alice Remote", false, false},
+		{"inserted-first-name", "FN:Alice", "FN:Alice Remote\r\nFN:Alice", false, false},
 		{"local-removal", "EMAIL:local@example.test\r\n", "", true, true},
 		{"local-type", "EMAIL:local@example.test", "EMAIL;TYPE=work:local@example.test", true, true},
 		{"moved-local-value", "local@example.test", "edited@example.test", true, true},
@@ -1904,6 +1944,8 @@ func TestPublishedImportRemoteOwnership(t *testing.T) {
 		{"legacy-geo", "EMAIL:e2@example.test", "EMAIL:e2b@example.test\r\nGEO:north;west", false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			initial := publishedImportCard()
 			if tc.name == "legacy-geo" {
 				initial = bytes.Replace(initial, []byte("VERSION:4.0"), []byte("VERSION:3.0"), 1)
@@ -1913,11 +1955,11 @@ func TestPublishedImportRemoteOwnership(t *testing.T) {
 				_, err := st.AddPersonContactPointContext(t.Context(), personID, store.PersonContactPointInput{
 					AddressKind: store.ContactAddressEmail, OriginalValue: "local@example.test", Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
 				})
-				require.NoError(t, err)
-				require.NoError(t, service.ReconcilePublications(t.Context()))
+				require.NoError(err)
+				require.NoError(service.ReconcilePublications(t.Context()))
 			}
 			before, err := st.LoadPersonVCardSnapshotContext(t.Context(), personID)
-			require.NoError(t, err)
+			require.NoError(err)
 			puts := fixture.puts
 			edited := bytes.Replace(fixture.body, []byte(tc.before), []byte(tc.after), 1)
 			if tc.name == "legacy-geo" {
@@ -1934,38 +1976,54 @@ func TestPublishedImportRemoteOwnership(t *testing.T) {
 			}
 			for range 2 {
 				_, err := service.Sync(t.Context(), SyncOptions{Full: true})
-				require.NoError(t, err)
-				require.NoError(t, service.ReconcilePublications(t.Context()))
-				assert.Equal(t, puts, fixture.puts)
-				assert.Equal(t, edited, fixture.body)
+				require.NoError(err)
+				require.NoError(service.ReconcilePublications(t.Context()))
+				assert.Equal(puts, fixture.puts)
+				assert.Equal(edited, fixture.body)
 				if tc.name == "legacy-geo" {
 					after, err := st.LoadPersonVCardSnapshotContext(t.Context(), personID)
-					require.NoError(t, err)
-					assert.Equal(t, before.Fingerprint, after.Fingerprint)
+					require.NoError(err)
+					assert.Equal(before.Fingerprint, after.Fingerprint)
 				}
 			}
 			conflicts, err := service.ListConflicts(t.Context())
-			require.NoError(t, err)
+			require.NoError(err)
 			if tc.conflict {
-				require.Len(t, conflicts, 1)
-				assert.Equal(t, edited, conflicts[0].RemoteBody)
+				require.Len(conflicts, 1)
+				assert.Equal(edited, conflicts[0].RemoteBody)
 				err = assertKeepRemoteRejected(t, fixture, service, st, personID, conflicts[0].ID)
 				if tc.local {
-					require.ErrorIs(t, err, store.ErrCardDAVRemoteProtected)
+					require.ErrorIs(err, store.ErrCardDAVRemoteProtected)
 				} else {
-					require.ErrorIs(t, err, store.ErrCardDAVRemoteInvalid)
+					require.ErrorIs(err, store.ErrCardDAVRemoteInvalid)
 				}
 				if tc.local {
-					require.ErrorIs(t, err, vcard.ErrResourceOwnershipMismatch)
+					require.ErrorIs(err, vcard.ErrResourceOwnershipMismatch)
 				}
 				if tc.name == "moved-local-value" {
-					assert.True(t, strings.HasSuffix(conflicts[0].Href, "/moved.vcf"))
+					assert.True(strings.HasSuffix(conflicts[0].Href, "/moved.vcf"))
 				}
 			} else {
-				assert.Empty(t, conflicts)
+				assert.Empty(conflicts)
 				person, err := st.GetPersonContext(t.Context(), personID)
-				require.NoError(t, err)
-				assert.Equal(t, new("Alice Remote"), person.DisplayName)
+				require.NoError(err)
+				assert.Equal(new("Alice Remote"), person.DisplayName)
+				if tc.name == "inserted-first-name" {
+					for _, label := range []string{"Alice Remote", "Alice Final"} {
+						if label == "Alice Final" {
+							fixture.setRemote(bytes.Replace(fixture.body, []byte("FN:Alice Remote"), []byte("FN:Alice Final"), 1), `"remote-3"`)
+							_, err = service.Sync(t.Context(), SyncOptions{Full: true})
+							require.NoError(err)
+						}
+						names, err := st.ListPersonNamesContext(t.Context(), personID, true)
+						require.NoError(err)
+						require.Len(names, 1)
+						assert.Equal(label, names[0].OriginalValue)
+						person, err = st.GetPersonContext(t.Context(), personID)
+						require.NoError(err)
+						assert.Equal(new(label), person.DisplayName)
+					}
+				}
 			}
 		})
 	}
@@ -1973,125 +2031,164 @@ func TestPublishedImportRemoteOwnership(t *testing.T) {
 
 func TestMalformedPreferenceDoesNotBlockReadableCards(t *testing.T) {
 	t.Run("readable cards", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
 		pref := "abc"
 		bad := bytes.Replace(conflictCardWithEmail("bad", "Bad Preference", "bad@example.test"), []byte("EMAIL:"), []byte("EMAIL;PREF="+pref+":"), 1)
+		good := conflictCardWithEmail("good", "Good", "good@example.test")
+		etag := `"one"`
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			writeDAVXML(t, w, syncResponse(cardResponseRaw("/books/personal/bad.vcf", `"one"`, escapedCardData(bad))+cardResponse("/books/personal/good.vcf", `"one"`, "good"), ""))
+			writeDAVXML(t, w, syncResponse(cardResponseRaw("/books/personal/bad.vcf", etag, escapedCardData(bad))+cardResponseRaw("/books/personal/good.vcf", etag, escapedCardData(good)), ""))
 		}))
 		t.Cleanup(server.Close)
 		service, st, book := newPullService(t, server, false)
 		for range 2 {
 			_, err := service.Sync(t.Context(), SyncOptions{Full: true})
-			require.NoError(t, err)
+			require.NoError(err)
 		}
 		for _, slug := range []string{"bad", "good"} {
 			resource, err := st.GetCardDAVResourceContext(t.Context(), book.ID, book.CanonicalURL+slug+".vcf")
-			require.NoError(t, err)
-			require.NotNil(t, resource.PersonID)
+			require.NoError(err)
+			require.NotNil(resource.PersonID)
 			points, err := st.ListPersonContactPointsContext(t.Context(), *resource.PersonID, true)
-			require.NoError(t, err)
-			require.Len(t, points, 1)
-			assert.Equal(t, slug+"@example.test", points[0].OriginalValue)
+			require.NoError(err)
+			require.Len(points, 1)
+			assert.Equal(slug+"@example.test", points[0].OriginalValue)
 			if slug == "bad" {
-				assert.Equal(t, bad, resource.RemoteBody)
+				assert.Equal(bad, resource.RemoteBody)
+			}
+		}
+		bad = bytes.Replace(bad, []byte("PREF=abc"), []byte("PREF=1"), 1)
+		good = bytes.Replace(good, []byte("good@example.test"), []byte("updated@example.test"), 1)
+		etag = `"corrected"`
+		_, err := service.Sync(t.Context(), SyncOptions{Full: true})
+		require.NoError(err)
+		for _, slug := range []string{"bad", "good"} {
+			resource, err := st.GetCardDAVResourceContext(t.Context(), book.ID, book.CanonicalURL+slug+".vcf")
+			require.NoError(err)
+			if slug == "bad" {
+				assert.Equal(bad, resource.RemoteBody)
+			} else {
+				points, err := st.ListPersonContactPointsContext(t.Context(), *resource.PersonID, true)
+				require.NoError(err)
+				require.Len(points, 1)
+				assert.Equal("updated@example.test", points[0].OriginalValue)
 			}
 		}
 	})
 	t.Run("unpublished remote resolution", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
 		fixture := &conflictMutationServer{body: conflictCardWithEmail("person", "Alice Remote Base", "alice.base@example.test"), etag: `"remote-1"`}
 		server := httptest.NewServer(fixture.handler(t))
 		t.Cleanup(server.Close)
 		service, st, book := newPullService(t, server, false)
 		_, err := service.Sync(t.Context(), SyncOptions{Full: true})
-		require.NoError(t, err)
+		require.NoError(err)
 		mapping, err := st.GetCardDAVResourceContext(t.Context(), book.ID, book.CanonicalURL+"person.vcf")
-		require.NoError(t, err)
+		require.NoError(err)
 		personID := *mapping.PersonID
 		person, err := st.GetPersonContext(t.Context(), personID)
-		require.NoError(t, err)
+		require.NoError(err)
 		_, err = st.UpdatePersonDisplayNameContext(t.Context(), personID, person.Revision, new("Alice Local Label"))
-		require.NoError(t, err)
+		require.NoError(err)
 		fixture.mu.Lock()
 		fixture.body = bytes.Replace(conflictCardWithEmail("person", "Alice Remote Base", "alice.retained@example.test"), []byte("EMAIL:"), []byte("EMAIL;PREF=abc:"), 1)
 		fixture.etag = `"remote-2"`
 		fixture.mu.Unlock()
 		_, err = service.Sync(t.Context(), SyncOptions{Full: true})
-		require.NoError(t, err)
+		require.NoError(err)
 		conflicts, err := service.ListConflicts(t.Context())
-		require.NoError(t, err)
-		require.Len(t, conflicts, 1)
-		require.NoError(t, service.ResolveConflict(t.Context(), conflicts[0].ID, ResolutionKeepRemote))
+		require.NoError(err)
+		require.Len(conflicts, 1)
+		require.NoError(service.ResolveConflict(t.Context(), conflicts[0].ID, ResolutionKeepRemote))
 		resolved, err := st.GetCardDAVConflictContext(t.Context(), conflicts[0].ID)
-		require.NoError(t, err)
-		assert.Equal(t, store.CardDAVConflictResolved, resolved.Status)
+		require.NoError(err)
+		assert.Equal(store.CardDAVConflictResolved, resolved.Status)
 		points, err := st.ListPersonContactPointsContext(t.Context(), personID, true)
-		require.NoError(t, err)
-		require.Len(t, points, 1)
-		assert.Equal(t, "alice.retained@example.test", points[0].OriginalValue)
+		require.NoError(err)
+		require.Len(points, 1)
+		assert.Equal("alice.retained@example.test", points[0].OriginalValue)
 		envelope, err := st.GetVCardResourceEnvelopeContext(t.Context(), fmt.Sprintf("carddav:%d", book.ID), mapping.Href)
-		require.NoError(t, err)
-		assert.Equal(t, fixture.body, envelope.StoredBody)
+		require.NoError(err)
+		assert.Equal(fixture.body, envelope.StoredBody)
 		fnMappings := 0
 		for _, native := range envelope.NativeMappings {
 			if native.Identity.OriginalName == "FN" {
 				fnMappings++
 			}
 		}
-		assert.Equal(t, 1, fnMappings)
+		assert.Equal(1, fnMappings)
 		person, err = st.GetPersonContext(t.Context(), personID)
-		require.NoError(t, err)
-		assert.Equal(t, new("Alice Local Label"), person.DisplayName)
+		require.NoError(err)
+		assert.Equal(new("Alice Local Label"), person.DisplayName)
 		_, err = service.Sync(t.Context(), SyncOptions{Full: true})
-		require.NoError(t, err)
+		require.NoError(err)
 		_, err = st.GetCardDAVPublicationContext(t.Context(), personID)
-		require.ErrorIs(t, err, store.ErrCardDAVPublicationNotFound)
-		assert.Zero(t, fixture.puts)
+		require.ErrorIs(err, store.ErrCardDAVPublicationNotFound)
+		assert.Zero(fixture.puts)
 	})
 }
 
 func TestPublishedImportRetainsPreferenceHashBaseline(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	body := bytes.Replace(publishedImportCard(), []byte("EMAIL:e2@example.test"), []byte("EMAIL;PREF=01:e2@example.test"), 1)
 	fixture, service, st, personID := publishedImportFixture(t, body)
 	// This baseline uses the default branch's hash encoding, before upgrading the client.
 	_, err := st.DB().Exec(st.Rebind(`UPDATE carddav_resources SET remote_semantic_hash = ? WHERE person_id = ?`), "aa61adcb2928a1453155d10fc2aeba68d7db5db41a7f73b6208441ccb0c53851", personID)
-	require.NoError(t, err)
+	require.NoError(err)
 	_, err = st.AddPersonContactPointContext(t.Context(), personID, store.PersonContactPointInput{
 		AddressKind: store.ContactAddressEmail, OriginalValue: "local@example.test", Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
 	})
-	require.NoError(t, err)
+	require.NoError(err)
 	_, err = service.Sync(t.Context(), SyncOptions{Full: true})
-	require.NoError(t, err)
+	require.NoError(err)
 	conflicts, err := service.ListConflicts(t.Context())
-	require.NoError(t, err)
-	assert.Empty(t, conflicts)
-	assert.Contains(t, string(fixture.body), "PREF=01")
+	require.NoError(err)
+	assert.Empty(conflicts)
+	assert.Contains(string(fixture.body), "PREF=01")
 }
 
 func TestPhoneURIIdentityReusesImportedPerson(t *testing.T) {
-	for _, phone := range []string{"+12025550102", "tel:+12025550102;ext=42", "tel:5550102;phone-context=+1202;ext=42"} {
-		t.Run(phone, func(t *testing.T) {
-			card := func(uid string) []byte {
+	for _, tc := range []struct{ phone, second string }{
+		{"+12025550102", "+12025550102"},
+		{"tel:+12025550102;ext=42", "tel:+12025550102;ext=42"},
+		{"tel:5550102;phone-context=+1202;ext=42", "tel:5550102;phone-context=+1202;ext=42"},
+		{"tel:+12025550102;ext=42", "tel:+12025550102;ext=43"},
+		{"tel:+12025550102;ext=42", "+12025550102"},
+	} {
+		phone := tc.phone
+		t.Run(phone+"/"+tc.second, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			card := func(uid, phone string) []byte {
 				return []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:" + uid + "\r\nFN:" + uid + "\r\nTEL:" + phone + "\r\nEND:VCARD\r\n")
 			}
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				writeDAVXML(t, w, syncResponse(cardResponseRaw("/books/personal/first.vcf", `"one"`, escapedCardData(card("first")))+cardResponseRaw("/books/personal/second.vcf", `"one"`, escapedCardData(card("second"))), ""))
+				writeDAVXML(t, w, syncResponse(cardResponseRaw("/books/personal/first.vcf", `"one"`, escapedCardData(card("first", phone)))+cardResponseRaw("/books/personal/second.vcf", `"one"`, escapedCardData(card("second", tc.second))), ""))
 			}))
 			t.Cleanup(server.Close)
 			service, st, book := newPullService(t, server, false)
 			_, err := service.Sync(t.Context(), SyncOptions{Full: true})
-			require.NoError(t, err)
+			require.NoError(err)
 			first, err := st.GetCardDAVResourceContext(t.Context(), book.ID, book.CanonicalURL+"first.vcf")
-			require.NoError(t, err)
-			require.NotNil(t, first.PersonID)
+			require.NoError(err)
+			require.NotNil(first.PersonID)
 			second, err := st.GetCardDAVResourceContext(t.Context(), book.ID, book.CanonicalURL+"second.vcf")
-			require.NoError(t, err)
-			assert.Equal(t, first.PersonID, second.PersonID)
+			require.NoError(err)
+			if phone == tc.second {
+				assert.Equal(first.PersonID, second.PersonID)
+			} else {
+				require.NotNil(second.PersonID)
+				assert.NotEqual(*first.PersonID, *second.PersonID)
+			}
 			points, err := st.ListPersonContactPointsContext(t.Context(), *first.PersonID, true)
-			require.NoError(t, err)
-			require.Len(t, points, 1)
-			assert.Equal(t, "+12025550102", points[0].NormalizedValue)
+			require.NoError(err)
+			require.Len(points, 1)
+			assert.Equal("+12025550102", points[0].NormalizedValue)
 			if strings.HasPrefix(phone, "tel:") {
-				assert.Equal(t, new(phone), points[0].URI)
+				assert.Equal(new(phone), points[0].URI)
 			}
 		})
 	}

@@ -483,7 +483,7 @@ func (s *Store) cardDAVResourceNeedsConflictTx(
 			if _, err := publicationEnvelope.PrepareCanonicalRender(); err != nil {
 				return true, nil, nil //nolint:nilerr // Unpublishable remote cards require conflict review.
 			}
-			unsafe, err := s.cardDAVRebaseDisplacesOwnerTx(ctx, tx, bookID, *resource.PersonID, href, dropped)
+			unsafe, err := s.cardDAVRebaseDisplacesOwnerTx(ctx, tx, bookID, *resource.PersonID, href, envelope, dropped)
 			if err != nil || unsafe {
 				return unsafe, nil, err
 			}
@@ -507,7 +507,32 @@ func (s *Store) CardDAVRemoteUpdateNeedsConflictContext(ctx context.Context, boo
 const cardDAVImportedRowFilter = `person_id = ? AND source = ? AND source_ref = ? AND source_resource_uid = ?
 	AND active_until IS NULL AND superseded_at IS NULL`
 
-func (s *Store) cardDAVRebaseDisplacesOwnerTx(ctx context.Context, tx *loggedTx, bookID, personID int64, href string, dropped []vcard.NativeMapping) (bool, error) {
+func (s *Store) cardDAVRebaseDisplacesOwnerTx(ctx context.Context, tx *loggedTx, bookID, personID int64, href string, incoming vcard.ResourceEnvelope, dropped []vcard.NativeMapping) (bool, error) {
+	for _, occurrence := range incoming.PropertyTree {
+		if !strings.EqualFold(occurrence.Property.Name, "FN") {
+			continue
+		}
+		value, err := vcard.PropertyValue(incoming.RenderMetadata.StoredVersion, occurrence.Property)
+		if err != nil {
+			return false, err
+		}
+		if strings.TrimSpace(value) == "" {
+			continue
+		}
+		var coincidence bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM persons p JOIN person_names n ON n.person_id = p.id
+			WHERE p.id = ? AND p.display_name = ? AND p.display_name <> n.formatted
+			  AND n.source = ? AND n.source_ref = ? AND n.source_resource_uid = ?
+			  AND n.name_kind = ? AND n.active_until IS NULL AND n.superseded_at IS NULL)`,
+			personID, strings.TrimSpace(value), ProvenanceCardDAVImport, fmt.Sprintf("carddav:%d", bookID), href,
+			PersonNameFormatted).Scan(&coincidence); err != nil {
+			return false, err
+		}
+		if coincidence {
+			return true, nil
+		}
+		break
+	}
 	for _, mapping := range dropped {
 		if mapping.Table != personNamesTableName && mapping.Table != personContactPointsTableName {
 			return true, nil
@@ -931,11 +956,15 @@ func (s *Store) resolveCardDAVPersonTx(
 	}{{ContactAddressEmail, IdentityMatchEmail, input.Emails},
 		{ContactAddressPhone, IdentityMatchPhone, input.Phones}} {
 		for _, raw := range candidate.values {
-			normalized, err := NormalizeServiceValue(nil, candidate.kind, raw)
+			value := raw
+			if candidate.kind == ContactAddressPhone {
+				value = vcard.TelephoneNumber(raw)
+			}
+			normalized, err := NormalizeServiceValue(nil, candidate.kind, value)
 			if err != nil {
 				continue
 			}
-			rows, err := tx.QueryContext(ctx, `SELECT person_id FROM person_contact_points
+			rows, err := tx.QueryContext(ctx, `SELECT person_id, uri FROM person_contact_points
 				WHERE address_kind = ? AND service_id IS NULL
 				  AND normalized_value = ? AND active_until IS NULL AND superseded_at IS NULL
 				ORDER BY person_id`, candidate.kind, normalized)
@@ -944,9 +973,17 @@ func (s *Store) resolveCardDAVPersonTx(
 			}
 			for rows.Next() {
 				var personID int64
-				if err := rows.Scan(&personID); err != nil {
+				var uri sql.NullString
+				if err := rows.Scan(&personID, &uri); err != nil {
 					_ = rows.Close()
 					return nil, nil, fmt.Errorf("scan CardDAV contact match: %w", err)
+				}
+				if candidate.kind == ContactAddressPhone {
+					_, requestedParameters, _ := strings.Cut(raw, ";")
+					_, storedParameters, _ := strings.Cut(uri.String, ";")
+					if requestedParameters != storedParameters {
+						continue
+					}
 				}
 				if _, wasRejected := rejected[personID]; !wasRejected {
 					matches[personID] = cardDAVPersonMatch{PersonID: personID, Basis: candidate.basis, NormalizedValue: normalized}
@@ -1307,6 +1344,39 @@ func (s *Store) prepareCardDAVEnvelopeTx(
 		if err != nil {
 			return envelope, nil, err
 		}
+		firstNameSeen := false
+		for _, occurrence := range envelope.PropertyTree {
+			if !strings.EqualFold(occurrence.Property.Name, "FN") {
+				continue
+			}
+			value, err := vcard.PropertyValue(envelope.RenderMetadata.StoredVersion, occurrence.Property)
+			if err != nil {
+				return envelope, nil, err
+			}
+			if strings.TrimSpace(value) == "" {
+				continue
+			}
+			if !firstNameSeen {
+				firstNameSeen = true
+				continue
+			}
+			for _, mapping := range envelope.NativeMappings {
+				if mapping.Table != personNamesTableName || mapping.Field != "formatted" || !mapping.Identity.Equal(occurrence.Identity) {
+					continue
+				}
+				var imported bool
+				if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM person_names WHERE id = ? AND `+cardDAVImportedRowFilter+`)`,
+					mapping.RowID, personID, ProvenanceCardDAVImport, envelope.SourceRef, input.Href).Scan(&imported); err != nil {
+					return envelope, nil, err
+				}
+				if imported {
+					envelope.NativeMappings = slices.DeleteFunc(envelope.NativeMappings, func(candidate vcard.NativeMapping) bool {
+						return candidate.Identity.Equal(mapping.Identity)
+					})
+				}
+			}
+		}
+		envelope.Residue = vcard.ResidueWithMappings(envelope.PropertyTree, envelope.NativeMappings)
 		for _, previous := range current.NativeMappings {
 			if !slices.ContainsFunc(envelope.NativeMappings, func(mapping vcard.NativeMapping) bool {
 				return mapping.Table == previous.Table && mapping.RowID == previous.RowID && mapping.Field == previous.Field

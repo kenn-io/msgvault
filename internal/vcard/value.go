@@ -295,6 +295,11 @@ func ContactPointValue(version Version, property Property) (value, uri string, e
 			value = strings.TrimSpace(value[7:])
 		}
 	case "TEL":
+		if version != Version40 && !IsURIValue(value) && strings.Contains(value, ";") {
+			if converted, ok := telURIFromLegacyNumber(value); ok {
+				value = converted
+			}
+		}
 		if len(value) >= 4 && strings.EqualFold(value[:4], "tel:") {
 			uri = value
 			value = TelephoneNumber(value)
