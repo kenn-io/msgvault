@@ -14,6 +14,10 @@ All notable changes to msgvault, grouped by release.
   mounts the HTTP API in the program's own server. PostgreSQL-only programs can
   build without CGO. See the [Go library guide](guides/embedding.md).
 
+- [Read-only remote clients](guides/remote-deployment.md#read-only-remote-clients) get separate reader credentials with response limits and optional collection writes.
+- Single-message [export-eml](cli-reference.md#export-eml) refuses ambiguous provider IDs for owner and reader keys.
+- Consume streamed [export-attachment](cli-reference.md#export-attachment) stdout only after the command succeeds.
+
 - msgvault sends anonymous usage telemetry: a daemon ping at startup and once
   each later UTC day, and an `app_opened` event the web UI reports through the
   daemon when it opens and on its first focus on a later UTC day. Events carry

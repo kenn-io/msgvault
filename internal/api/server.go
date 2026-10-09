@@ -1462,12 +1462,12 @@ func (w *trackingResponseWriter) WroteHeader() bool {
 // no API key is configured (pure local mode, the TUI/CLI autostart case) or it
 // carries a valid API key (an authenticated local client). apiRequestAuthorized
 // returns true in exactly those two cases, so it is reused here to avoid the
-// auth logic drifting.
+// auth logic drifting. A valid remote client key is trusted the same way.
 func (s *Server) loopbackRateLimitExempt(r *http.Request) bool {
 	if r.Method == http.MethodPost && r.URL.Path == sessionLoginPath {
 		return false
 	}
-	return isLoopbackRequest(r) && s.apiRequestAuthorized(r)
+	return isLoopbackRequest(r) && (s.apiRequestAuthorized(r) || s.remoteClientRequest(r))
 }
 
 func (s *Server) logUnauthorizedAPIRequest(r *http.Request) {
@@ -1529,13 +1529,13 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleAuthenticatedHealth returns health details that are safe behind the
-// API-key boundary. Delegated callers receive the public projection plus
+// API-key boundary. Delegated callers and remote clients receive the public projection plus
 // APISchemaVersion only, so they can verify version compatibility without
 // seeing internal operation labels that name configured account identifiers.
 func (s *Server) handleAuthenticatedHealth(w http.ResponseWriter, r *http.Request) {
 	s.refreshVectorStatus(r.Context())
 	auth := s.requestAuthentication(r)
-	if auth.Mode == AuthModeDelegated {
+	if auth.Mode == AuthModeDelegated || auth.Mode == AuthModeRemoteClient {
 		writeJSON(w, http.StatusOK, HealthResponse{
 			Status:           "ok",
 			Vector:           s.vectorHealthPublic(),

@@ -100,7 +100,7 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.7.0**.
+it is separate from the binary release version. The current schema is **3.8.0**.
 Upgrade clients and daemon together across incompatible schema versions,
 including remote deployments.
 
@@ -126,6 +126,8 @@ reports the code as that connection's failure, and run history records it as
 the failure code.
 
 Schema 3.5.0 adds the `account:` and `received:` search operators.
+
+Schema 3.8.0 adds [read-only remote client credentials](guides/remote-deployment.md#read-only-remote-clients), HTTP 409 for ambiguous raw-message references, and HTTP 413 for remote read limits.
 
 Schema 3.1.0 adds unreleased [calendar event control](#calendar-control),
 availability queries, and opt-in `write` on Calendar consent plans.
@@ -356,6 +358,8 @@ is required. Three API-key authentication methods are supported:
 | Plain auth header | `Authorization: <key>` | `Authorization: my-secret` |
 
 If no effective API key is configured, authentication is not required. Secure startup requires a key for non-loopback addresses. On unreleased `main`, `serve` creates and persists one when no credential source is configured. See [server credentials](configuration.md#server) for file and environment sources, persistence, and explicit insecure mode.
+
+Keys listed under `[[server.remote_clients]]` authenticate the same way but reach only a fixed set of read operations; every other route returns 403. See [read-only remote clients](guides/remote-deployment.md#read-only-remote-clients).
 
 ## Historical import jobs {#historical-import-jobs}
 

@@ -127,6 +127,15 @@ func (e *pgEngine) ReadOriginalMessage(ctx context.Context, ref MessageRef, maxB
 	return reader.ReadOriginalMessage(ctx, ref, maxBytes)
 }
 
+// ResolveMessageID forwards to the dialect-parameterized engine.
+func (e *pgEngine) ResolveMessageID(ctx context.Context, ref string) (int64, string, error) {
+	resolver, ok := e.Engine.(MessageIDResolver)
+	if !ok {
+		return 0, "", ErrOriginalExportUnsupported
+	}
+	return resolver.ResolveMessageID(ctx, ref)
+}
+
 // ListThread forwards to the dialect-parameterized engine.
 func (e *pgEngine) ListThread(ctx context.Context, q ThreadQuery) (*ThreadPage, error) {
 	reader, ok := e.Engine.(OriginalMessageReader)

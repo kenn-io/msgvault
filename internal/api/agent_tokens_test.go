@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -45,11 +46,7 @@ func TestAgentTokensDoNotSurviveRestart(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, w.Code, "grant from old registry must not authenticate against new registry")
 }
 
-// TestDelegatedHealthUsesPublicProjection tests proof matrix row 17.
-// Delegated callers receive the public projection (operationBusyHealth) plus
-// APISchemaVersion. Owner callers receive the full projection (operationHealth)
-// which includes the operation label. When the gate is held, the two bodies
-// differ on Operation.Label: delegated sees none, owner sees the label.
+// TestDelegatedHealthUsesPublicProjection covers restricted health views alongside owner detail.
 func TestDelegatedHealthUsesPublicProjection(t *testing.T) {
 	t.Parallel()
 	assert := assert.New(t)
@@ -60,8 +57,9 @@ func TestDelegatedHealthUsesPublicProjection(t *testing.T) {
 	}
 	cfg := &config.Config{
 		Server: config.ServerConfig{
-			APIKey:      agentTokenTestAPIKey,
-			AgentAccess: true,
+			APIKey:        agentTokenTestAPIKey,
+			AgentAccess:   true,
+			RemoteClients: []config.RemoteClientConfig{{ClientID: "reader", APIKey: remoteClientTestReaderKey}},
 		},
 	}
 	srv := NewServerWithOptions(ServerOptions{
@@ -86,15 +84,7 @@ func TestDelegatedHealthUsesPublicProjection(t *testing.T) {
 	require.True(ok, "must acquire gate")
 	defer releaseGate()
 
-	// Delegated caller.
-	reqD := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
-	reqD.Header.Set(apiprotocol.AgentTokenHeader, secret)
-	wD := httptest.NewRecorder()
-	srv.Router().ServeHTTP(wD, reqD)
-	require.Equal(http.StatusOK, wD.Code, "delegated health: %s", wD.Body.String())
-
-	var delegatedResp HealthResponse
-	require.NoError(json.NewDecoder(wD.Body).Decode(&delegatedResp))
+	srv.SetVectorInitError(errors.New("synthetic provider detail"))
 
 	// Owner caller.
 	reqO := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
@@ -106,32 +96,38 @@ func TestDelegatedHealthUsesPublicProjection(t *testing.T) {
 	var ownerResp HealthResponse
 	require.NoError(json.NewDecoder(wO.Body).Decode(&ownerResp))
 
-	// Both report "ok" and carry APISchemaVersion.
-	assert.Equal("ok", delegatedResp.Status)
+	for _, credential := range []struct{ header, key string }{
+		{apiprotocol.AgentTokenHeader, secret},
+		{"X-Api-Key", remoteClientTestReaderKey},
+	} {
+		reqD := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+		reqD.Header.Set(credential.header, credential.key)
+		wD := httptest.NewRecorder()
+		srv.Router().ServeHTTP(wD, reqD)
+		require.Equal(http.StatusOK, wD.Code, "restricted health: %s", wD.Body.String())
+
+		var restrictedResp HealthResponse
+		require.NoError(json.NewDecoder(wD.Body).Decode(&restrictedResp))
+
+		assert.Equal("ok", restrictedResp.Status)
+		assert.Equal(ownerResp.APISchemaVersion, restrictedResp.APISchemaVersion)
+		require.NotNil(restrictedResp.Operation)
+		assert.True(restrictedResp.Operation.Busy)
+		assert.Empty(restrictedResp.Operation.Label)
+		require.NotNil(restrictedResp.Vector)
+		assert.NotContains(restrictedResp.Vector.Error, "synthetic provider detail")
+		assert.Nil(restrictedResp.Vector.TextEnabled)
+		assert.Nil(restrictedResp.Vector.VisualEnabled)
+	}
 	assert.Equal("ok", ownerResp.Status)
-	assert.NotEmpty(delegatedResp.APISchemaVersion, "delegated health must include APISchemaVersion")
-	assert.NotEmpty(ownerResp.APISchemaVersion, "owner health must include APISchemaVersion")
-	assert.Equal(ownerResp.APISchemaVersion, delegatedResp.APISchemaVersion, "APISchemaVersion must match between delegated and owner")
-
-	// Public projection: Operation.Busy is reported but Label is withheld.
-	require.NotNil(delegatedResp.Operation, "delegated health must report operation busy when gate is held")
-	assert.True(delegatedResp.Operation.Busy, "delegated operation must be busy")
-	assert.Empty(delegatedResp.Operation.Label, "delegated operation must not expose label (public projection)")
-
-	// Full projection: Operation.Label names the holder.
-	require.NotNil(ownerResp.Operation, "owner health must report operation busy when gate is held")
-	assert.Equal("test-operation", ownerResp.Operation.Label, "owner operation must expose label (full projection)")
-
-	// Lane facts are owner-only. Delegated callers keep the public VectorHealth
-	// status but receive neither configured capability.
-	require.NotNil(ownerResp.Vector, "owner health must report vector status")
-	require.NotNil(ownerResp.Vector.TextEnabled, "owner health must report text capability")
-	require.NotNil(ownerResp.Vector.VisualEnabled, "owner health must report visual capability")
-	assert.True(*ownerResp.Vector.TextEnabled, "owner health must report the configured text lane")
-	assert.False(*ownerResp.Vector.VisualEnabled, "owner health must report the disabled visual lane")
-	require.NotNil(delegatedResp.Vector, "delegated health must retain vector status")
-	assert.Nil(delegatedResp.Vector.TextEnabled, "delegated health must omit text capability")
-	assert.Nil(delegatedResp.Vector.VisualEnabled, "delegated health must omit visual capability")
+	assert.NotEmpty(ownerResp.APISchemaVersion)
+	require.NotNil(ownerResp.Operation)
+	assert.Equal("test-operation", ownerResp.Operation.Label)
+	require.NotNil(ownerResp.Vector)
+	require.NotNil(ownerResp.Vector.TextEnabled)
+	require.NotNil(ownerResp.Vector.VisualEnabled)
+	assert.True(*ownerResp.Vector.TextEnabled)
+	assert.False(*ownerResp.Vector.VisualEnabled)
 }
 
 const agentTokenTestAPIKey = "owner-api-key-for-agent-tests"

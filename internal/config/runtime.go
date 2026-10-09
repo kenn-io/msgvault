@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"go.kenn.io/msgvault/internal/providercredentials"
 )
@@ -323,6 +324,35 @@ func (c *Config) PrepareServerKey() error {
 			return fmt.Errorf("persist server API key: %w", err)
 		}
 		c.Server.credential.value = key
+	}
+	return c.loadRemoteClientKeys()
+}
+
+// loadRemoteClientKeys reads remote client keys once the owner key is final,
+// so a missing reader key file only stops the server.
+func (c *Config) loadRemoteClientKeys() error {
+	if len(c.Server.RemoteClients) > 0 && c.Server.AuthenticationKey() == "" {
+		return errors.New("server remote_clients requires an effective API key")
+	}
+	seen := map[string]string{c.Server.AuthenticationKey(): "the server API key"}
+	for i := range c.Server.RemoteClients {
+		client := &c.Server.RemoteClients[i]
+		if client.APIKeyFile == "" {
+			return fmt.Errorf("invalid [server] remote_clients %q: api_key_file is required", client.ClientID)
+		}
+		key, err := providercredentials.ReadSecretFile(c.credentialPath(client.APIKeyFile))
+		if err != nil {
+			return fmt.Errorf("invalid [server] remote_clients %q: %w", client.ClientID, err)
+		}
+		// Authentication strips a "Bearer " prefix, so a key with spaces could alias another key.
+		if strings.ContainsFunc(key, unicode.IsSpace) {
+			return fmt.Errorf("invalid [server] remote_clients %q: key must not contain whitespace", client.ClientID)
+		}
+		if other, ok := seen[key]; ok {
+			return fmt.Errorf("invalid [server] remote_clients %q: key duplicates %s", client.ClientID, other)
+		}
+		seen[key] = "remote client " + client.ClientID
+		client.APIKey = key
 	}
 	return nil
 }

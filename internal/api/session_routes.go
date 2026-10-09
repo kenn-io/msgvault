@@ -27,6 +27,8 @@ const (
 	AuthModeCaller AuthMode = "caller"
 	// AuthModeDelegated marks a caller authenticated by a restricted agent grant. Never an owner mode: see apiRequestAuthorized.
 	AuthModeDelegated AuthMode = "delegated"
+	// AuthModeRemoteClient marks a read-only [[server.remote_clients]] key. Never an owner mode.
+	AuthModeRemoteClient AuthMode = "remote_client"
 )
 
 // SessionLoginRequest exchanges the active daemon API key for an in-memory

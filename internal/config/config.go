@@ -235,6 +235,16 @@ type ServerConfig struct {
 	DaemonAutoStart   *bool         `toml:"daemon_auto_start"`   // Let CLI commands start a local daemon when none is running; unset means true
 
 	credential runtimeCredential
+
+	RemoteClients []RemoteClientConfig `toml:"remote_clients,omitzero"` // Read-only API keys for remote CLIs (requires an effective API key)
+}
+
+// RemoteClientConfig grants a remote CLI read-only API access with its own key.
+type RemoteClientConfig struct {
+	ClientID         string `toml:"client_id"`
+	APIKeyFile       string `toml:"api_key_file"`
+	CollectionsWrite bool   `toml:"collections_write,omitzero"` // Also allow creating, editing and deleting collections
+	APIKey           string `toml:"-"`                          // Loaded from APIKeyFile when the server starts
 }
 
 func (s *ServerConfig) ApplyDefaults() {
@@ -264,6 +274,13 @@ func (t TelemetryConfig) EnabledOrDefault() bool {
 func (s *ServerConfig) Validate() error {
 	if s.APIPort < 0 || s.APIPort > 65535 {
 		return fmt.Errorf("invalid [server] api_port %d: must be between 0 and 65535 (0 auto-selects an open port)", s.APIPort)
+	}
+	clientIDs := make(map[string]bool, len(s.RemoteClients))
+	for _, client := range s.RemoteClients {
+		if client.ClientID == "" || clientIDs[client.ClientID] {
+			return fmt.Errorf("invalid [server] remote_clients client_id %q: must be non-empty and unique", client.ClientID)
+		}
+		clientIDs[client.ClientID] = true
 	}
 	switch s.DaemonAutoRestart {
 	case DaemonAutoRestartNewer, DaemonAutoRestartNever, DaemonAutoRestartAlways:

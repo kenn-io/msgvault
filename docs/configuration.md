@@ -710,6 +710,17 @@ Settings for the Web UI and API server started by `msgvault serve`. The same HTT
 | `daemon_idle_timeout` | `20m` | Idle timeout for lifecycle-managed background daemons; set to `"0s"` to disable |
 | `daemon_auto_restart` | `newer` | Local daemon restart policy when the CLI finds a different daemon binary version: `newer`, `never`, or `always` |
 | `daemon_auto_start` | `true` | Let CLI, TUI, and MCP commands start a local background daemon when none is running; set `false` when a supervisor runs `msgvault serve` |
+| `remote_clients` | `[]` | Read-only API keys for remote CLIs; requires an effective server API key. See below. |
+
+Each `[[server.remote_clients]]` entry gives one remote CLI its own read-only key. See [read-only remote clients](guides/remote-deployment.md#read-only-remote-clients) for what those keys can do and their limits.
+
+| Key | Default | Description |
+|---|---|---|
+| `client_id` | — | Unique name, used in server logs |
+| `api_key_file` | — | Owner-only file holding the client's key; relative paths resolve like the server's `api_key_file`. Must differ from the server key and other clients' keys. |
+| `collections_write` | `false` | Also allow creating, editing, and deleting collections |
+
+`msgvault serve` reads these files after it settles the server key, whether that key comes from `api_key`, a file, an environment variable, or is created at startup. It fails to start if a file is missing or empty or a key repeats another. CLI commands that start a local daemon also trigger these checks. Restart to add, remove, or rotate a key.
 
 `daemon_idle_timeout` applies only to background daemons started by `msgvault daemon start` or auto-started by a CLI command. Foreground `msgvault serve` keeps running until stopped. `MSGVAULT_DAEMON_IDLE_TIMEOUT` overrides the configured value for lifecycle-managed background daemons.
 
@@ -977,7 +988,7 @@ When set, archive-access CLI commands use the remote server by default. Without 
 | `api_key_env` | — | Name of an environment variable holding the remote API key |
 | `allow_insecure` | `false` | Allow HTTP remote connections |
 
-Affected CLI commands include `search` (FTS mode), `query`, `show-message`, `stats`, `list-accounts`, `list-senders`, `list-domains`, `list-labels`, `identity` subcommands, `collection` subcommands, `export-eml`, `export-attachment`, `export-attachments`, and `tui`.
+Affected CLI commands include `search` (FTS mode), `query`, `show-message`, `stats`, `list-accounts`, `list-senders`, `list-domains`, `list-labels`, `identity` subcommands, `collection` subcommands, `export-eml`, `export-attachment`, `export-attachments`, and `tui`. With a [read-only remote client](guides/remote-deployment.md#read-only-remote-clients) key, `list-senders`, `list-domains`, `list-labels`, `query`, vector search, `tui`, and `mcp` aren't available.
 
 The same settings route `mcp` to a remote daemon. Secret precedence and file
 requirements match [server credentials](#server). `--local` ignores the remote

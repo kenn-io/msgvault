@@ -326,12 +326,47 @@ func doRequestWithRootContext(
 			stopRootCancellation: stopRootCancellation,
 			cancel:               cancel,
 		}
-		return resp, nil
+		return boundErrorBody(resp), nil
 	}
 
 	// #nosec G704 -- daemonclient intentionally sends requests to the
 	// caller-resolved msgvault daemon URL after New validates the scheme.
-	return client.Do(req)
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	return boundErrorBody(resp), nil
+}
+
+const maxErrorBodyBytes = 64 << 10
+
+// boundErrorBody caps how much of an error response any caller can buffer.
+func boundErrorBody(resp *http.Response) *http.Response {
+	if resp.StatusCode >= http.StatusBadRequest {
+		resp.Body = &boundedErrorBody{ReadCloser: resp.Body, remaining: maxErrorBodyBytes + 1}
+	}
+	return resp
+}
+
+type boundedErrorBody struct {
+	io.ReadCloser
+
+	remaining int64
+}
+
+func (b *boundedErrorBody) Read(p []byte) (int, error) {
+	if b.remaining <= 0 {
+		return 0, errors.New("error response exceeds 64 KiB")
+	}
+	if int64(len(p)) > b.remaining {
+		p = p[:b.remaining]
+	}
+	n, err := b.ReadCloser.Read(p)
+	b.remaining -= int64(n)
+	if b.remaining <= 0 {
+		return n, errors.New("error response exceeds 64 KiB")
+	}
+	return n, err
 }
 
 type cancelOnCloseBody struct {

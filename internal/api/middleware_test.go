@@ -374,6 +374,7 @@ func TestLoopbackRateLimitExempt(t *testing.T) {
 	}{
 		{"keyless loopback exempt", "", "127.0.0.1:1234", "", true},
 		{"key configured valid key loopback exempt", key, "127.0.0.1:1234", key, true},
+		{"reader key loopback exempt", key, "127.0.0.1:1234", remoteClientTestReaderKey, true},
 		{"key configured missing key loopback limited", key, "127.0.0.1:1234", "", false},
 		{"key configured bad key loopback limited", key, "127.0.0.1:1234", "wrong", false},
 		{"key configured valid key non-loopback limited", key, "203.0.113.7:1234", key, false},
@@ -383,7 +384,7 @@ func TestLoopbackRateLimitExempt(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			srv := NewServer(
-				&config.Config{Server: config.ServerConfig{APIKey: tt.apiKey}},
+				&config.Config{Server: config.ServerConfig{APIKey: tt.apiKey, RemoteClients: []config.RemoteClientConfig{{ClientID: "reader", APIKey: remoteClientTestReaderKey}}}},
 				nil, nil, testLogger(),
 			)
 			got := srv.loopbackRateLimitExempt(newReq(tt.remoteAddr, tt.reqKey))

@@ -3308,6 +3308,14 @@ func (e *DuckDBEngine) ReadOriginalMessage(ctx context.Context, ref MessageRef, 
 	return e.sqliteEngine.ReadOriginalMessage(ctx, ref, maxBytes)
 }
 
+// ResolveMessageID reads from SQLite because the Parquet cache can lag recent syncs.
+func (e *DuckDBEngine) ResolveMessageID(ctx context.Context, ref string) (int64, string, error) {
+	if e.sqliteEngine == nil {
+		return 0, "", errOriginalMessageNeedsSQLite
+	}
+	return e.sqliteEngine.ResolveMessageID(ctx, ref)
+}
+
 // ListThread reads from SQLite because the Parquet cache can lag recent syncs.
 func (e *DuckDBEngine) ListThread(ctx context.Context, q ThreadQuery) (*ThreadPage, error) {
 	if e.sqliteEngine == nil {

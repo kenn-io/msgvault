@@ -11,6 +11,7 @@ import (
 
 	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/apiprotocol"
+	"go.kenn.io/msgvault/internal/config"
 	"golang.org/x/time/rate"
 )
 
@@ -232,6 +233,7 @@ type requestAuthentication struct {
 	Session               browserSession
 	trustedForCLIDuration bool
 	Grant                 *agentgrant.Grant
+	RemoteClient          *config.RemoteClientConfig
 }
 
 func (s *Server) requestAuthentication(r *http.Request) requestAuthentication {
@@ -275,6 +277,15 @@ func (s *Server) classifyAPIRequestDirect(r *http.Request) requestAuthentication
 		return requestAuthentication{
 			Mode:                  AuthModeAPIKey,
 			trustedForCLIDuration: true,
+		}
+	}
+	for i := range s.cfg.Server.RemoteClients {
+		if client := &s.cfg.Server.RemoteClients[i]; client.APIKey != "" && constantTimeAPIKeyEqual(authHeader, client.APIKey) {
+			return requestAuthentication{
+				Mode:                  AuthModeRemoteClient,
+				RemoteClient:          client,
+				trustedForCLIDuration: true,
+			}
 		}
 	}
 
@@ -337,13 +348,17 @@ func (s *Server) apiRequestAuthorized(r *http.Request) bool {
 // holders on any gated route. Delegated callers reach this predicate on
 // /api/v1/cli/run and /api/v1/calendar/control. CLI requests use
 // cliRunGateDecision; calendar control acquires the gate only for actual writes. Other
-// delegated routes skip the gate and their handlers reject them.
+// delegated routes skip the gate and their handlers reject them. Remote
+// clients reach the gate only for collection writes they are granted.
 // Unauthenticated requests (AuthModeRequired) pass straight through so they
 // reach the API auth layer without touching gate state.
 func (s *Server) requestGateEligible(r *http.Request) bool {
 	auth := s.requestAuthentication(r)
 	if auth.Mode == AuthModeDelegated {
 		return r.URL.Path == "/api/v1/cli/run" || r.URL.Path == "/api/v1/calendar/control"
+	}
+	if auth.Mode == AuthModeRemoteClient {
+		return auth.RemoteClient.CollectionsWrite && strings.HasPrefix(r.URL.Path, "/api/v1/cli/collections")
 	}
 	return auth.Mode != AuthModeRequired
 }

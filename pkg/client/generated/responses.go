@@ -367,6 +367,8 @@ type GetCLIAttachmentErrorResponseJSON = ErrorResponse
 
 type GetCLIAttachmentErrorResponseJSON404 = ErrorResponse
 
+type GetCLIAttachmentErrorResponseJSON413 = ErrorResponse
+
 type GetCLIAttachmentErrorResponseJSON500 = ErrorResponse
 
 type GetCLIAttachmentErrorResponseJSON503 = ErrorResponse
@@ -551,6 +553,10 @@ type GetCLIMessageRawErrorResponseJSON = ErrorResponse
 
 type GetCLIMessageRawErrorResponseJSON404 = ErrorResponse
 
+type GetCLIMessageRawErrorResponseJSON409 = ErrorResponse
+
+type GetCLIMessageRawErrorResponseJSON413 = ErrorResponse
+
 type GetCLIMessageRawErrorResponseJSON500 = ErrorResponse
 
 type GetCLIMessageRawErrorResponseJSON503 = ErrorResponse
@@ -562,6 +568,8 @@ type GetCLIMessageThreadErrorResponse = ErrorResponse
 type GetCLIMessageThreadErrorResponseJSON = ErrorResponse
 
 type GetCLIMessageThreadErrorResponseJSON409 = ErrorResponse
+
+type GetCLIMessageThreadErrorResponseJSON413 = ErrorResponse
 
 type GetCLIMessageThreadErrorResponseJSON503 = ErrorResponse
 
@@ -3963,6 +3971,7 @@ type GetCLIAttachmentResp struct {
 	JSON400      *GetCLIAttachmentErrorResponse
 	JSON401      *GetCLIAttachmentErrorResponseJSON
 	JSON404      *GetCLIAttachmentErrorResponseJSON404
+	JSON413      *GetCLIAttachmentErrorResponseJSON413
 	JSON500      *GetCLIAttachmentErrorResponseJSON500
 	JSON503      *GetCLIAttachmentErrorResponseJSON503
 }
@@ -4159,6 +4168,7 @@ type GetCLIMessageResp struct {
 	Body         []byte
 	StatusCode   int
 	JSON200      *GetCLIMessageResponse
+	JSON413      *GetCLIMessageErrorResponse
 }
 
 type GetCLIMessageOriginalResp struct {
@@ -4180,6 +4190,8 @@ type GetCLIMessageRawResp struct {
 	JSON400      *GetCLIMessageRawErrorResponse
 	JSON401      *GetCLIMessageRawErrorResponseJSON
 	JSON404      *GetCLIMessageRawErrorResponseJSON404
+	JSON409      *GetCLIMessageRawErrorResponseJSON409
+	JSON413      *GetCLIMessageRawErrorResponseJSON413
 	JSON500      *GetCLIMessageRawErrorResponseJSON500
 	JSON503      *GetCLIMessageRawErrorResponseJSON503
 }
@@ -4192,6 +4204,7 @@ type GetCLIMessageThreadResp struct {
 	JSON400      *GetCLIMessageThreadErrorResponse
 	JSON404      *GetCLIMessageThreadErrorResponseJSON
 	JSON409      *GetCLIMessageThreadErrorResponseJSON409
+	JSON413      *GetCLIMessageThreadErrorResponseJSON413
 	JSON503      *GetCLIMessageThreadErrorResponseJSON503
 }
 

@@ -430,3 +430,47 @@ func TestListThreadAll(t *testing.T) {
 	checks.Equal([]query.Address{{Email: "sender@example.com", Name: "Sender"}}, page.Messages[500].From)
 	checks.Equal([]query.Address{{Email: "recipient@example.com", Name: "Recipient"}}, page.Messages[500].To)
 }
+
+func TestResolveMessageID(t *testing.T) {
+	must := require.New(t)
+	f := storetest.New(t)
+	engine := originalEngine(f)
+	internal := f.CreateMessage("internal")
+	f.CreateMessage(strconv.FormatInt(internal, 10))
+	numeric := f.CreateMessage("999999")
+	deleted := f.CreateMessage("source-deleted")
+	loser := f.CreateMessage("dedup-loser")
+	_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?`), deleted)
+	must.NoError(err)
+	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?`), loser)
+	must.NoError(err)
+	other, err := f.Store.GetOrCreateSource("gmail", "other@example.com")
+	must.NoError(err)
+	f.CreateMessage("shared")
+	convID, err := f.Store.EnsureConversation(other.ID, "other-thread", "Other")
+	must.NoError(err)
+	_, err = f.Store.UpsertMessage(&store.Message{SourceID: other.ID, ConversationID: convID, SourceMessageID: "shared", MessageType: "email"})
+	must.NoError(err)
+	for _, tc := range []struct {
+		name, ref string
+		want      int64
+		wantErr   error
+	}{
+		{name: "internal before provider", ref: strconv.FormatInt(internal, 10), want: internal},
+		{name: "numeric provider fallback", ref: "999999", want: numeric},
+		{name: "source-deleted retained", ref: "source-deleted", want: deleted},
+		{name: "dedup internal hidden", ref: strconv.FormatInt(loser, 10), wantErr: store.ErrMessageNotFound},
+		{name: "ambiguous provider", ref: "shared", wantErr: query.ErrAmbiguousReference},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			must := require.New(t)
+			id, _, err := engine.ResolveMessageID(t.Context(), tc.ref)
+			if tc.wantErr != nil {
+				must.ErrorIs(err, tc.wantErr)
+				return
+			}
+			must.NoError(err)
+			assert.Equal(t, tc.want, id)
+		})
+	}
+}

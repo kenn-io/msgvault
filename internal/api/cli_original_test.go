@@ -27,17 +27,21 @@ type cliOriginalFixture struct {
 	threadKey string
 }
 
-func newCLIOriginalFixture(t *testing.T) *cliOriginalFixture {
+func newCLIOriginalFixture(t *testing.T, configure ...func(*ServerOptions)) *cliOriginalFixture {
 	t.Helper()
 	st := testutil.NewTestStore(t)
 	engine := query.NewEngine(st.DB(), st.IsPostgreSQL())
 	t.Cleanup(func() { _ = engine.Close() })
-	srv := NewServerWithOptions(ServerOptions{
+	options := ServerOptions{
 		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
 		Store:  st,
 		Engine: engine,
 		Logger: testLogger(),
-	})
+	}
+	for _, apply := range configure {
+		apply(&options)
+	}
+	srv := NewServerWithOptions(options)
 	src, err := st.GetOrCreateSource("gmail", "owner@example.com")
 	require.NoError(t, err)
 	convID, err := st.EnsureConversation(src.ID, "thread-original", "Original")
@@ -231,4 +235,16 @@ func TestHandleCLIMessageThreadAll(t *testing.T) {
 	}
 	requireErrorCode(t, f.get(t, "/api/v1/cli/message/thread?thread_id=thread-original&all=invalid"),
 		http.StatusBadRequest, "invalid_request")
+}
+
+func TestHandleCLIMessageRawVisibility(t *testing.T) {
+	must := require.New(t)
+	f := newCLIOriginalFixture(t)
+	other, err := f.st.GetOrCreateSource("gmail", "other@example.com")
+	must.NoError(err)
+	convID, err := f.st.EnsureConversation(other.ID, "other-thread", "Other")
+	must.NoError(err)
+	_, err = f.st.UpsertMessage(&store.Message{SourceID: other.ID, ConversationID: convID, SourceMessageID: "provider-original", MessageType: "email"})
+	must.NoError(err)
+	requireErrorCode(t, f.get(t, "/api/v1/cli/message/raw?id=provider-original"), http.StatusConflict, "message_ambiguous")
 }

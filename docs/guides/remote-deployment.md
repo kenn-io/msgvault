@@ -272,6 +272,59 @@ Use `--local` only when you explicitly want the command to talk to this machine'
 !!! tip "Remote TUI"
     The interactive TUI (`msgvault tui`) connects to the remote server automatically when `[remote]` is configured. All views, drill-downs, search, filtering, deletion staging, and attachment export work through the selected daemon. Staged deletion manifests are saved on the daemon host; attachment export streams bytes from the daemon and writes the zip file on the CLI machine. Use `--local` to force the local daemon instead of the configured remote server.
 
+### Read-only remote clients
+
+Give a laptop or another person read access without handing out the owner `api_key`. Each remote client gets its own key, and the server accepts it on the same listener as the owner key.
+
+1. On the server, generate a key file next to `config.toml` (the folder mounted at `/data` in the generated bundle):
+
+    ```bash
+    mkdir -p remote-keys
+    openssl rand -hex 32 > remote-keys/laptop
+    chmod 600 remote-keys/laptop
+    ```
+
+    Follow [server credential permissions](/docs/configuration/#server), including owner-only ACLs on Windows.
+
+2. List it in the server's `config.toml`. The server needs its own API key too, from any [server credential source](/docs/configuration/#server). Relative paths resolve the same way as the server's `api_key_file`.
+
+    ```toml
+    [[server.remote_clients]]
+    client_id = "laptop"
+    api_key_file = "remote-keys/laptop"
+    # collections_write = true
+    ```
+
+3. Restart the server. Keys load at startup, so restart after adding, removing, or rotating a key.
+
+4. Copy the key file to the client machine and point `[remote] api_key_file` at it.
+
+    ```toml
+    [remote]
+    url = "https://archive.tail12345.ts.net"
+    api_key_file = "~/.msgvault/remote-key"
+    ```
+
+    For a plain HTTP URL on a trusted network, such as `http://nas.tail12345.ts.net:8080`, also set `allow_insecure = true`.
+
+Reach the server over the same private network as the owner key, such as Tailscale. If you put an HTTPS reverse proxy on that network in front of the main listener, forward the `X-Api-Key` header unchanged. A reader key still reads the whole archive, so the advice in [Security Notes](#security-notes) about not exposing the server to the internet applies to it too.
+
+A remote client key can search, show messages and whole threads, export original or raw MIME and attachments, and list accounts, collections, identities, and stats. With `collections_write = true` it can also create, edit, and delete collections. Aggregate views aren't available, so `list-senders`, `list-domains`, `list-labels`, `query`, vector search, `tui`, and `mcp` fail with a remote client key. Every other request gets HTTP 403, including settings, token upload, SQL queries, sync, backups, agent tokens, the Web UI, `/openapi.json`, and `/debug/pprof/`.
+
+Direct connections retain [API rate limiting](/docs/api-server/#rate-limiting), so a throttled thread export keeps files completed before the failed request.
+
+Remote client responses have fixed limits:
+
+| Limit | Value | Response when exceeded |
+|---|---|---|
+| Search results per request | 500 | 400 `remote_search_limit` |
+| Message content or raw MIME | 64 MiB | 413 `remote_message_too_large` |
+| Original-message endpoint | 64 MiB | 413 `original_message_too_large` |
+| Whole-thread export (`export-eml --thread`) | 500 messages | 413 `remote_thread_too_large` |
+| Attachment | 1 GiB | 413 `remote_attachment_too_large` |
+
+A reader key can't show a message whose text exceeds 64 MiB or list that message's attachments. When stored text is missing, the raw MIME used to build message details must also fit the 64 MiB limit. `export-eml` still exports raw MIME when it fits that limit.
+
 ## Platform Notes
 
 ### Synology DSM
@@ -312,7 +365,7 @@ Initial sync of large mailboxes will be slower on Pi hardware. Use `--limit` to 
 ## Security Notes
 
 - **Use Tailscale.** The recommended way to access your NAS remotely is via [Tailscale](https://tailscale.com/). It encrypts all traffic and avoids the need for TLS certificates, port forwarding, or reverse proxies. Use your Tailscale hostname (e.g., `http://nas.tail12345.ts.net:8080`) with `--allow-insecure`.
-- **API key protects all API access.** The server requires `api_key` for non-loopback addresses. Anyone with the key can read your entire archive, so treat it like a password.
+- **API key protects all API access.** The server requires `api_key` for non-loopback addresses. Anyone with the key can read your entire archive, so treat it like a password. [Remote client keys](#read-only-remote-clients) can also read the entire archive, but can't change settings or run syncs.
 - **Don't expose port 8080 to the internet.** msgvault is designed for trusted networks. If you need internet access, use Tailscale rather than opening ports on your router.
 - The generated bundle sets `user: root` in Docker Compose, which works around common NAS ACL quirks (for example Synology). On a standard Linux server you can change this to a non-root user.
 

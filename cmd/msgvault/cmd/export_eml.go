@@ -84,8 +84,11 @@ func runExportEMLHTTP(cmd *cobra.Command, messageRef, outputPath string) error {
 	if errors.Is(err, store.ErrMessageNotFound) {
 		return fmt.Errorf("message not found: %s", messageRef)
 	}
-	if err != nil {
+	if errors.Is(err, daemonclient.ErrMessageRawNotFound) {
 		return fmt.Errorf("get raw message data: %w (message may not have raw data stored)", err)
+	}
+	if err != nil {
+		return fmt.Errorf("get raw message data: %w", err)
 	}
 	if sourceMessageID == "" {
 		sourceMessageID = messageRef

@@ -336,7 +336,7 @@ func writeOperationGateBusy(w http.ResponseWriter, r *http.Request, gate Operati
 	}
 	message := "another operation is running"
 	security, _ := securityFromRequest(r)
-	if security.auth.Mode != AuthModeDelegated {
+	if security.auth.Mode != AuthModeDelegated && security.auth.Mode != AuthModeRemoteClient {
 		if label, since, held := lg.Holder(); held && label != "" {
 			message = fmt.Sprintf("%s has been running for %s",
 				label, time.Since(since).Round(time.Second))

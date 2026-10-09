@@ -2189,6 +2189,8 @@ message ID. A numeric reference selects a live internal ID first, then falls
 back to a provider ID if that internal ID does not exist. This also applies
 with `--thread`.
 
+A provider ID that matches more than one account returns an error. Use the numeric archive message ID to select one message.
+
 ```bash
 msgvault export-eml <id> [flags]
 ```
@@ -2222,6 +2224,8 @@ msgvault export-attachment <content-hash> [flags]
 | `--json` | Output as JSON with base64-encoded data |
 
 The `--json`, `--base64`, and `--output` flags are mutually exclusive.
+
+Stdout output, including `--json`, streams before download verification finishes. Consume it only after the command exits successfully. Use `--output <path>` to save a verified file.
 
 See [Exporting Data](/docs/usage/exporting/) for usage examples.
 

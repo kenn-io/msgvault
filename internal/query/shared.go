@@ -1,15 +1,12 @@
 package query
 
 import (
-	"bytes"
 	"cmp"
-	"compress/zlib"
 	"context"
 	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
 	"slices"
 	"strings"
 
@@ -411,27 +408,22 @@ func attachmentCASPath(contentHash string) string {
 func extractBodyFromRawShared(ctx context.Context, db *sql.DB, rebind rebindFunc, tablePrefix string, messageID int64) (string, error) {
 	var compressed []byte
 	var compression sql.NullString
+	var storedBytes int64
 
+	limit := messageByteLimit(ctx)
+	rawColumn, rawSize := messageRawColumns(tablePrefix, limit)
 	err := db.QueryRowContext(ctx, rebind(fmt.Sprintf(`
-		SELECT raw_data, compression FROM %smessage_raw WHERE message_id = ?
-	`, tablePrefix)), messageID).Scan(&compressed, &compression)
+		SELECT %s, mr.compression, %s FROM %smessage_raw mr WHERE mr.message_id = ?
+	`, rawColumn, rawSize, tablePrefix)), messageID).Scan(&compressed, &compression, &storedBytes)
 	if err != nil {
 		return "", err
 	}
-
-	var rawData []byte
-	if compression.Valid && compression.String == "zlib" {
-		r, err := zlib.NewReader(bytes.NewReader(compressed))
-		if err != nil {
-			return "", fmt.Errorf("open zlib reader for raw message: %w", err)
-		}
-		defer func() { _ = r.Close() }()
-		rawData, err = io.ReadAll(r)
-		if err != nil {
-			return "", err
-		}
-	} else {
-		rawData = compressed
+	if limit > 0 && storedBytes > int64(len(compressed)) {
+		return "", ErrOriginalMessageTooLarge
+	}
+	rawData, err := inflateMessageRaw(compressed, compression, limit)
+	if err != nil {
+		return "", err
 	}
 
 	parsed, err := mime.Parse(rawData)
@@ -439,7 +431,12 @@ func extractBodyFromRawShared(ctx context.Context, db *sql.DB, rebind rebindFunc
 		return "", err
 	}
 
-	return parsed.GetBodyText(), nil
+	body := parsed.GetBodyText()
+	// Charset decoding can grow text past the raw size checked above.
+	if limit > 0 && int64(len(body)) > limit {
+		return "", ErrOriginalMessageTooLarge
+	}
+	return body, nil
 }
 
 // getMessageRawShared retrieves and decompresses raw MIME data for a message.
@@ -449,13 +446,16 @@ func extractBodyFromRawShared(ctx context.Context, db *sql.DB, rebind rebindFunc
 func getMessageRawShared(ctx context.Context, db *sql.DB, rebind rebindFunc, tablePrefix string, messageID int64) ([]byte, error) {
 	var compressed []byte
 	var compression sql.NullString
+	var storedBytes int64
 
+	limit := messageByteLimit(ctx)
+	rawColumn, rawSize := messageRawColumns(tablePrefix, limit)
 	err := db.QueryRowContext(ctx, rebind(fmt.Sprintf(`
-		SELECT mr.raw_data, mr.compression
+		SELECT %s, mr.compression, %s
 		FROM %smessage_raw mr
 		JOIN %smessages m ON m.id = mr.message_id
 		WHERE mr.message_id = ? AND %s
-	`, tablePrefix, tablePrefix, store.LiveMessagesWhere("m", false))), messageID).Scan(&compressed, &compression)
+	`, rawColumn, rawSize, tablePrefix, tablePrefix, store.LiveMessagesWhere("m", false))), messageID).Scan(&compressed, &compression, &storedBytes)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -463,7 +463,10 @@ func getMessageRawShared(ctx context.Context, db *sql.DB, rebind rebindFunc, tab
 		return nil, fmt.Errorf("query message_raw for id %d: %w", messageID, err)
 	}
 
-	raw, err := inflateMessageRaw(compressed, compression, 0)
+	if limit > 0 && storedBytes > int64(len(compressed)) {
+		return nil, ErrOriginalMessageTooLarge
+	}
+	raw, err := inflateMessageRaw(compressed, compression, limit)
 	if err != nil {
 		return nil, fmt.Errorf("message_raw id %d: %w", messageID, err)
 	}
@@ -537,9 +540,23 @@ func getMessageByQueryShared(ctx context.Context, db *sql.DB, rebind rebindFunc,
 
 	// Fetch body from separate table (PK lookup, avoids scanning large body B-tree)
 	var bodyText, bodyHTML sql.NullString
-	err = db.QueryRowContext(ctx, rebind(fmt.Sprintf(`
-		SELECT body_text, body_html FROM %smessage_bodies WHERE message_id = ?
-	`, tablePrefix)), msg.ID).Scan(&bodyText, &bodyHTML)
+	limit := messageByteLimit(ctx)
+	if limit > 0 {
+		sizeExpr := "COALESCE(octet_length(body_text),0)+COALESCE(octet_length(body_html),0)"
+		if tablePrefix == "sqlite_db." {
+			sizeExpr = "COALESCE(octet_length(encode(body_text)),0)+COALESCE(octet_length(encode(body_html)),0)"
+		}
+		bodyColumns := fmt.Sprintf("CASE WHEN %s<=%d THEN body_text END,CASE WHEN %s<=%d THEN body_html END", sizeExpr, limit, sizeExpr, limit)
+		var bodyBytes int64
+		err = db.QueryRowContext(ctx, rebind(fmt.Sprintf("SELECT %s,%s FROM %smessage_bodies WHERE message_id = ?", bodyColumns, sizeExpr, tablePrefix)), msg.ID).Scan(&bodyText, &bodyHTML, &bodyBytes)
+		if err == nil && bodyBytes > limit {
+			return nil, ErrOriginalMessageTooLarge
+		}
+	} else {
+		err = db.QueryRowContext(ctx, rebind(fmt.Sprintf(`
+			SELECT body_text, body_html FROM %smessage_bodies WHERE message_id = ?
+		`, tablePrefix)), msg.ID).Scan(&bodyText, &bodyHTML)
+	}
 	if err == nil {
 		if bodyText.Valid {
 			msg.BodyText = bodyText.String
@@ -555,6 +572,8 @@ func getMessageByQueryShared(ctx context.Context, db *sql.DB, rebind rebindFunc,
 	if msg.BodyText == "" && msg.BodyHTML == "" {
 		if body, err := extractBodyFromRawShared(ctx, db, rebind, tablePrefix, msg.ID); err == nil && body != "" {
 			msg.BodyText = body
+		} else if errors.Is(err, ErrOriginalMessageTooLarge) {
+			return nil, err
 		}
 	}
 

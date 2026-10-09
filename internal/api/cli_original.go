@@ -2,6 +2,7 @@ package api
 
 import (
 	"errors"
+	"fmt"
 	"math"
 	"net/http"
 	"strconv"
@@ -61,6 +62,9 @@ func (s *Server) handleCLIMessageOriginal(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "invalid_request", "query parameter max_bytes must be positive and less than 9223372036854775807")
 		return
 	}
+	if (maxBytes == 0 || maxBytes > remoteMessageBytes) && s.remoteClientRequest(r) {
+		maxBytes = remoteMessageBytes
+	}
 	original, err := reader.ReadOriginalMessage(r.Context(), ref, maxBytes)
 	if err != nil {
 		s.writeOriginalExportError(w, "read original message", err)
@@ -84,6 +88,9 @@ func (s *Server) handleCLIMessageThread(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
+	}
+	if s.remoteClientRequest(r) {
+		q.MaxMembers = query.ThreadMaxLimit
 	}
 	if q.All && (r.URL.Query().Has("limit") || r.URL.Query().Has("offset")) {
 		writeError(w, http.StatusBadRequest, "invalid_request", "query parameter \"all\" cannot be combined with \"limit\" or \"offset\"")
@@ -117,6 +124,9 @@ func (s *Server) writeOriginalExportError(w http.ResponseWriter, operation strin
 			"Provide exactly one of id, source_message_id, or thread_id")
 	case errors.Is(err, store.ErrMessageNotFound):
 		writeError(w, http.StatusNotFound, cliErrorMessageNotFound, "Message not found")
+	case errors.Is(err, query.ErrThreadTooLarge):
+		writeError(w, http.StatusRequestEntityTooLarge, "remote_thread_too_large",
+			fmt.Sprintf("Thread exceeds the remote client limit of %d messages", query.ThreadMaxLimit))
 	case errors.Is(err, query.ErrThreadNotFound):
 		writeError(w, http.StatusNotFound, "thread_not_found", "Thread not found")
 	case errors.Is(err, query.ErrOriginalMessageTooLarge):
