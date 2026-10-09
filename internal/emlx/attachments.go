@@ -128,17 +128,28 @@ func restoreSelectedAttachments(raw []byte, messagePath string, maxBytes int64, 
 		// and charge its actual size in case the cache changed after Stat.
 		file, size, err := resolveAttachment(attDir, strconv.Itoa(partIndex), findFilename(header))
 		headerGrowth := len(strings.Join(restoredHeader, "\n")) - len(strings.Join(header, "\n"))
+		// Include the separator's line ending when charging replacement bytes.
+		headerGrowth += len(cr) - len(lines[phEnd])
 		bodyEnd := phEnd + 1
+		bodyBytes := int64(0)
 		for bodyEnd < len(lines) {
 			l := strings.TrimSuffix(lines[bodyEnd], "\r")
 			if l == open || strings.TrimRight(l, " \t") == closeB {
 				break
 			}
+			bodyBytes += int64(len(lines[bodyEnd]) + 1)
 			bodyEnd++
 		}
+		if bodyEnd == len(lines) {
+			bodyBytes-- // The original final line has no LF at EOF.
+		}
 		restoredCost := func(size int64) int64 {
-			cost := encodedSize(size, len(cr)+1) + int64(headerGrowth)
-			if bodyEnd == len(lines) && size > 0 {
+			encoded := encodedSize(size, len(cr)+1)
+			if size == 0 {
+				encoded = int64(len(cr) + 1) // base64Lines still emits an empty line.
+			}
+			cost := encoded + int64(headerGrowth) - bodyBytes
+			if bodyEnd == len(lines) {
 				// Join writes no final LF when this part ends at EOF.
 				cost--
 			}
@@ -147,7 +158,7 @@ func restoreSelectedAttachments(raw []byte, messagePath string, maxBytes int64, 
 		cost := restoredCost(size)
 		var content []byte
 		if err == nil && file != "" && cost <= remaining {
-			content, err = readAttachment(file, remaining-int64(headerGrowth))
+			content, err = readAttachment(file, remaining-int64(headerGrowth)+bodyBytes)
 			cost = restoredCost(int64(len(content)))
 		}
 		if err != nil || file == "" || cost > remaining {
