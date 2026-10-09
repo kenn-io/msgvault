@@ -11,7 +11,7 @@ import (
 // SchemaVersion identifies a completed InitSchemaContext. Increment it when a
 // schema or data migration changes runtime requirements. Runtime-only consumers
 // refuse other versions instead of running migrations with their service role.
-const SchemaVersion = 1
+const SchemaVersion = 2
 
 func (s *Store) schemaVersion(ctx context.Context) (int, error) {
 	var exists bool

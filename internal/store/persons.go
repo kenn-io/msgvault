@@ -453,6 +453,10 @@ func (s *Store) deletePersonOnce(ctx context.Context, input DeletePersonEnrichme
 		if err := s.bumpPersonDeletionCounterpartVCardProjectionsTx(ctx, tx, id); err != nil {
 			return err
 		}
+		if _, err := tx.ExecContext(ctx, `UPDATE carddav_resources SET owns_display_name = FALSE WHERE person_id = ?`, id); err != nil {
+			return fmt.Errorf("clear deleted person's display-name ownership: %w", err)
+		}
+
 		var deletedUID string
 		err = tx.QueryRowContext(ctx,
 			`DELETE FROM persons WHERE id = ? AND revision = ? RETURNING vcard_uid`,
@@ -681,6 +685,10 @@ func (s *Store) updatePersonDisplayNameOnce(
 		if err != nil {
 			return fmt.Errorf("update person %d: %w", id, err)
 		}
+		if _, err := tx.ExecContext(ctx, `UPDATE carddav_resources SET owns_display_name = FALSE WHERE person_id = ?`, updatedID); err != nil {
+			return fmt.Errorf("retain local display-name ownership: %w", err)
+		}
+
 		// Preserve the person revision contract, but invalidate analytics only
 		// when the normalized display name actually changed.
 		nameChanged := previousName.Valid

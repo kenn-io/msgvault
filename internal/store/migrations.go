@@ -65,6 +65,7 @@ const (
 	// conversation_text or meeting_text row.
 	migrationPersonSweepChangeTriggers   = "person_sweep_change_triggers_v5"
 	migrationIdentityMatchSourceSupport  = "identity_match_source_support_v1"
+	migrationCardDAVDisplayNameOwnership = "carddav_display_name_ownership_v1"
 	migrationVCardSourceResourceIdentity = "vcard_source_resource_identity_v1"
 	migrationOrganizationDomainIDNA      = "organization_domain_idna_v1"
 	migrationGmailChatClassification     = "gmail_chat_classification_v1"

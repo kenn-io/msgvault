@@ -1424,66 +1424,83 @@ func TestResolveConflictRejectsChoicesOutsideExactContract(t *testing.T) {
 }
 
 func TestConditionalDelete412KeepRemoteRevalidatesCanonicalCard(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
+	for _, invalid := range []bool{false, true} {
+		t.Run(fmt.Sprintf("invalid=%t", invalid), func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 
-	fixture := &conflictMutationServer{}
-	server := httptest.NewServer(fixture.handler(t))
-	t.Cleanup(server.Close)
-	service, st, personID, book := seededMutationServiceForServer(t, server)
-	require.NoError(service.PublishPerson(t.Context(), personID))
-	fixture.mu.Lock()
-	fixture.body = conflictCard("person", "Alice Remote")
-	fixture.etag = `"remote-2"`
-	fixture.delete412 = true
-	fixture.mu.Unlock()
+			fixture := &conflictMutationServer{}
+			server := httptest.NewServer(fixture.handler(t))
+			t.Cleanup(server.Close)
+			service, st, personID, book := seededMutationServiceForServer(t, server)
+			require.NoError(service.PublishPerson(t.Context(), personID))
+			fixture.mu.Lock()
+			fixture.body = conflictCard("person", "Alice Remote")
+			if invalid {
+				fixture.body = bytes.Replace(fixture.body, []byte("END:VCARD"), []byte("EMAIL;PREF=0:invalid@example.test\r\nEND:VCARD"), 1)
+			}
+			fixture.etag = `"remote-2"`
+			fixture.delete412 = true
+			fixture.mu.Unlock()
 
-	err := service.UnpublishPerson(t.Context(), personID)
-	var conflictErr *ConflictError
-	require.ErrorAs(err, &conflictErr)
-	conflict, err := st.GetCardDAVConflictContext(t.Context(), conflictErr.ID)
-	require.NoError(err)
-	assert.True(conflict.LocalTombstone)
-	assert.False(conflict.RemoteTombstone)
-	assert.Equal(conflictCard("person", "Alice Remote"), conflict.RemoteBody)
-	fixture.mu.Lock()
-	requestsBefore := fixture.puts + fixture.gets + fixture.deletes
-	fixture.body = conflictCard("person", "Alice Newer Remote")
-	fixture.etag = `"remote-3"`
-	fixture.mu.Unlock()
+			err := service.UnpublishPerson(t.Context(), personID)
+			var conflictErr *ConflictError
+			require.ErrorAs(err, &conflictErr)
+			conflict, err := st.GetCardDAVConflictContext(t.Context(), conflictErr.ID)
+			require.NoError(err)
+			assert.True(conflict.LocalTombstone)
+			assert.False(conflict.RemoteTombstone)
+			assert.Equal(fixture.body, conflict.RemoteBody)
+			fixture.mu.Lock()
+			requestsBefore := fixture.puts + fixture.gets + fixture.deletes
+			fixture.body = conflictCard("person", "Alice Newer Remote")
+			fixture.etag = `"remote-3"`
+			fixture.mu.Unlock()
 
-	require.ErrorIs(service.ResolveConflict(t.Context(), conflict.ID, ResolutionKeepRemote),
-		store.ErrCardDAVConflictStale)
-	unresolved, err := st.GetCardDAVConflictContext(t.Context(), conflict.ID)
-	require.NoError(err)
-	assert.Equal(store.CardDAVConflictUnresolved, unresolved.Status)
-	fixture.mu.Lock()
-	fixture.body = conflict.RemoteBody
-	fixture.etag = conflict.RemoteETag
-	fixture.mu.Unlock()
-	require.NoError(service.ResolveConflict(t.Context(), conflict.ID, ResolutionKeepRemote))
-	fixture.mu.Lock()
-	assert.Equal(requestsBefore+2, fixture.puts+fixture.gets+fixture.deletes)
-	fixture.mu.Unlock()
-	mapping, err := st.GetCardDAVResourceContext(t.Context(), book.ID, book.CanonicalURL+"person.vcf")
-	require.NoError(err)
-	assert.Equal(conflict.RemoteBody, mapping.RemoteBody)
-	_, err = st.GetPersonContext(t.Context(), personID)
-	require.NoError(err)
-	resolved, err := st.GetCardDAVConflictContext(t.Context(), conflict.ID)
-	require.NoError(err)
-	assert.Equal(store.CardDAVResolutionKeepRemote, resolved.Resolution)
-	publication, err := st.GetCardDAVPublicationContext(t.Context(), personID)
-	require.NoError(err)
-	assert.True(publication.Desired)
-	assert.Empty(publication.PendingOperation)
-	fixture.mu.Lock()
-	deletesBeforeReconcile := fixture.deletes
-	fixture.mu.Unlock()
-	require.NoError(service.ReconcilePublications(t.Context()))
-	fixture.mu.Lock()
-	assert.Equal(deletesBeforeReconcile, fixture.deletes, "keep-remote must cancel the stale unpublish")
-	fixture.mu.Unlock()
+			require.ErrorIs(service.ResolveConflict(t.Context(), conflict.ID, ResolutionKeepRemote),
+				store.ErrCardDAVConflictStale)
+			unresolved, err := st.GetCardDAVConflictContext(t.Context(), conflict.ID)
+			require.NoError(err)
+			assert.Equal(store.CardDAVConflictUnresolved, unresolved.Status)
+			fixture.mu.Lock()
+			fixture.body = conflict.RemoteBody
+			fixture.etag = conflict.RemoteETag
+			fixture.mu.Unlock()
+			if invalid {
+				require.ErrorIs(service.ResolveConflict(t.Context(), conflict.ID, ResolutionKeepRemote), store.ErrCardDAVRemoteInvalid)
+				unresolved, err = st.GetCardDAVConflictContext(t.Context(), conflict.ID)
+				require.NoError(err)
+				assert.Equal(store.CardDAVConflictUnresolved, unresolved.Status)
+				publication, err := st.GetCardDAVPublicationContext(t.Context(), personID)
+				require.NoError(err)
+				assert.False(publication.Desired)
+				return
+			}
+			require.NoError(service.ResolveConflict(t.Context(), conflict.ID, ResolutionKeepRemote))
+			fixture.mu.Lock()
+			assert.Equal(requestsBefore+2, fixture.puts+fixture.gets+fixture.deletes)
+			fixture.mu.Unlock()
+			mapping, err := st.GetCardDAVResourceContext(t.Context(), book.ID, book.CanonicalURL+"person.vcf")
+			require.NoError(err)
+			assert.Equal(conflict.RemoteBody, mapping.RemoteBody)
+			_, err = st.GetPersonContext(t.Context(), personID)
+			require.NoError(err)
+			resolved, err := st.GetCardDAVConflictContext(t.Context(), conflict.ID)
+			require.NoError(err)
+			assert.Equal(store.CardDAVResolutionKeepRemote, resolved.Resolution)
+			publication, err := st.GetCardDAVPublicationContext(t.Context(), personID)
+			require.NoError(err)
+			assert.True(publication.Desired)
+			assert.Empty(publication.PendingOperation)
+			fixture.mu.Lock()
+			deletesBeforeReconcile := fixture.deletes
+			fixture.mu.Unlock()
+			require.NoError(service.ReconcilePublications(t.Context()))
+			fixture.mu.Lock()
+			assert.Equal(deletesBeforeReconcile, fixture.deletes, "keep-remote must cancel the stale unpublish")
+			fixture.mu.Unlock()
+		})
+	}
 }
 
 func TestPullRefreshPreservesUnpublishTombstoneUntilKeepRemoteCancelsIt(t *testing.T) {
@@ -1817,12 +1834,18 @@ func TestPublishedImportLocalRenameSurvivesRemoteRename(t *testing.T) {
 				require.NoError(err)
 				conflicts, err = service.ListConflicts(t.Context())
 				require.NoError(err)
-				require.Len(conflicts, 1)
-				require.ErrorIs(assertKeepRemoteRejected(t, fixture, service, st, personID, conflicts[0].ID), store.ErrCardDAVRemoteProtected)
+				if tc.supersedeName {
+					require.Len(conflicts, 1)
+					fixture.exactGet = true
+					require.NoError(service.ResolveConflict(t.Context(), conflicts[0].ID, ResolutionKeepRemote))
+				} else {
+					assert.Empty(conflicts)
+				}
+
 				fixture.setRemote(bytes.Replace(fixture.body, []byte("FN:Alice Local"), []byte("FN:Alice Final"), 1), `"after-coincidence"`)
 				_, err = service.Sync(t.Context(), SyncOptions{Full: true})
 				require.NoError(err)
-				require.NoError(service.ResolveConflict(t.Context(), conflicts[0].ID, ResolutionKeepRemote))
+
 				person, err = st.GetPersonContext(t.Context(), personID)
 				require.NoError(err)
 				assert.Equal(new("Alice Local"), person.DisplayName)
@@ -1952,14 +1975,19 @@ func TestPublishedImportRemoteOwnership(t *testing.T) {
 	for _, tc := range []struct {
 		name, before, after string
 		local, conflict     bool
+		mode                string
 	}{
-		{"name-and-email", "FN:Alice", "FN:Alice Remote", false, false},
-		{"inserted-first-name", "FN:Alice", "FN:Alice Remote\r\nFN:Alice", false, false},
-		{"local-removal", "EMAIL:local@example.test\r\n", "", true, true},
-		{"local-type", "EMAIL:local@example.test", "EMAIL;TYPE=work:local@example.test", true, true},
-		{"moved-local-value", "local@example.test", "edited@example.test", true, true},
-		{"pref-zero", "EMAIL:e2@example.test", "EMAIL;PREF=0:e2b@example.test", false, true},
-		{"legacy-geo", "EMAIL:e2@example.test", "EMAIL:e2b@example.test\r\nGEO:north;west", false, true},
+		{"local-scalar", "END:VCARD", "EMAIL:added@example.test\r\nEND:VCARD", false, false, "local-scalar"},
+		{"cleared-label", "e2@example.test", "updated@example.test", false, false, "clear"},
+		{"active-user-name", "e2@example.test", "updated@example.test", false, false, "user-name"},
+		{"inactive-user-name", "END:VCARD", "EMAIL:added@example.test\r\nEND:VCARD", false, true, "inactive-user"},
+		{"name-and-email", "FN:Alice", "FN:Alice Remote", false, false, ""},
+		{"inserted-first-name", "FN:Alice", "FN:Alice Remote\r\nFN:Alice", false, false, ""},
+		{"local-removal", "EMAIL:local@example.test\r\n", "", true, true, ""},
+		{"local-type", "EMAIL:local@example.test", "EMAIL;TYPE=work:local@example.test", true, true, ""},
+		{"moved-local-value", "local@example.test", "edited@example.test", true, true, ""},
+		{"pref-zero", "EMAIL:e2@example.test", "EMAIL;PREF=0:e2b@example.test", false, true, ""},
+		{"legacy-geo", "EMAIL:e2@example.test", "EMAIL:e2b@example.test\r\nGEO:north;west", false, true, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
@@ -1968,7 +1996,50 @@ func TestPublishedImportRemoteOwnership(t *testing.T) {
 			if tc.name == "legacy-geo" {
 				initial = bytes.Replace(initial, []byte("VERSION:4.0"), []byte("VERSION:3.0"), 1)
 			}
-			fixture, service, st, personID := publishedImportFixture(t, initial)
+			var fixture *mutationFixture
+			var service *Service
+			var st *store.Store
+			var personID int64
+			if tc.mode == "local-scalar" || tc.mode == "inactive-user" {
+				fixture = &mutationFixture{}
+				server := httptest.NewServer(fixture.handler(t))
+				t.Cleanup(server.Close)
+				service, st, personID, _ = seededMutationServiceForServer(t, server)
+				person, err := st.GetPersonContext(t.Context(), personID)
+				require.NoError(err)
+				_, err = st.UpdatePersonDisplayNameContext(t.Context(), personID, person.Revision, new("Alice"))
+				require.NoError(err)
+				if tc.mode == "inactive-user" {
+					_, err = st.AddPersonNameContext(t.Context(), personID, store.PersonNameInput{NameKind: store.PersonNameFormatted, Formatted: new("Alice"), OriginalValue: "Alice", Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}})
+					require.NoError(err)
+				}
+				require.NoError(service.PublishPerson(t.Context(), personID))
+				if tc.mode == "inactive-user" {
+					names, err := st.ListPersonNamesContext(t.Context(), personID, true)
+					require.NoError(err)
+					require.Len(names, 1)
+					require.NoError(st.SupersedePersonNameContext(t.Context(), personID, names[0].Envelope.ID, nil))
+				}
+			} else {
+				fixture, service, st, personID = publishedImportFixture(t, initial)
+			}
+			if tc.mode == "clear" || tc.mode == "user-name" {
+				var label *string
+				if tc.mode == "user-name" {
+					names, err := st.ListPersonNamesContext(t.Context(), personID, true)
+					require.NoError(err)
+					require.Len(names, 1)
+					require.NoError(st.SupersedePersonNameContext(t.Context(), personID, names[0].Envelope.ID, nil))
+					label = new("Alice User")
+					_, err = st.AddPersonNameContext(t.Context(), personID, store.PersonNameInput{NameKind: store.PersonNameFormatted, Formatted: label, OriginalValue: *label, Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}})
+					require.NoError(err)
+				}
+				person, err := st.GetPersonContext(t.Context(), personID)
+				require.NoError(err)
+				_, err = st.UpdatePersonDisplayNameContext(t.Context(), personID, person.Revision, label)
+				require.NoError(err)
+				require.NoError(service.ReconcilePublications(t.Context()))
+			}
 			if tc.local {
 				_, err := st.AddPersonContactPointContext(t.Context(), personID, store.PersonContactPointInput{
 					AddressKind: store.ContactAddressEmail, OriginalValue: "local@example.test", Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
@@ -2010,7 +2081,7 @@ func TestPublishedImportRemoteOwnership(t *testing.T) {
 				require.Len(conflicts, 1)
 				assert.Equal(edited, conflicts[0].RemoteBody)
 				err = assertKeepRemoteRejected(t, fixture, service, st, personID, conflicts[0].ID)
-				if tc.local {
+				if tc.local || tc.mode == "inactive-user" {
 					require.ErrorIs(err, store.ErrCardDAVRemoteProtected)
 				} else {
 					require.ErrorIs(err, store.ErrCardDAVRemoteInvalid)
@@ -2025,7 +2096,43 @@ func TestPublishedImportRemoteOwnership(t *testing.T) {
 				assert.Empty(conflicts)
 				person, err := st.GetPersonContext(t.Context(), personID)
 				require.NoError(err)
-				assert.Equal(new("Alice Remote"), person.DisplayName)
+				switch tc.mode {
+				case "clear":
+					assert.Nil(person.DisplayName)
+				case "user-name":
+					assert.Equal(new("Alice User"), person.DisplayName)
+					names, err := st.ListPersonNamesContext(t.Context(), personID, true)
+					require.NoError(err)
+					require.Len(names, 1)
+					assert.Equal(store.ProvenanceUser, names[0].Envelope.Source)
+				case "local-scalar":
+					assert.Equal(new("Alice"), person.DisplayName)
+					names, err := st.ListPersonNamesContext(t.Context(), personID, true)
+					require.NoError(err)
+					assert.Empty(names)
+					fixture.setRemote(bytes.Replace(fixture.body, []byte(":Alice\r\n"), []byte(":Alicia\r\n"), 1), `"remote-name"`)
+					_, err = service.Sync(t.Context(), SyncOptions{Full: true})
+					require.NoError(err)
+					person, err = st.GetPersonContext(t.Context(), personID)
+					require.NoError(err)
+					assert.Equal(new("Alice"), person.DisplayName)
+				default:
+					assert.Equal(new("Alice Remote"), person.DisplayName)
+				}
+				if tc.name == "name-and-email" {
+					fixture.setRemote(bytes.Replace(fixture.body, []byte("FN:Alice Remote"), []byte("FN:"), 1), `"empty-name"`)
+					_, err = service.Sync(t.Context(), SyncOptions{Full: true})
+					require.NoError(err)
+					person, err = st.GetPersonContext(t.Context(), personID)
+					require.NoError(err)
+					assert.Nil(person.DisplayName)
+					fixture.setRemote(bytes.Replace(fixture.body, []byte("FN:\r\n"), []byte("FN:Alice Restored\r\n"), 1), `"restored-name"`)
+					_, err = service.Sync(t.Context(), SyncOptions{Full: true})
+					require.NoError(err)
+					person, err = st.GetPersonContext(t.Context(), personID)
+					require.NoError(err)
+					assert.Equal(new("Alice Restored"), person.DisplayName)
+				}
 				if tc.name == "inserted-first-name" {
 					for _, label := range []string{"Alice Remote", "Alice Final"} {
 						if label == "Alice Final" {

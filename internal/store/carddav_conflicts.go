@@ -716,26 +716,26 @@ func (s *Store) completeCardDAVConflictLocalTombstoneTx(
 		conflict.ID, CardDAVResolutionKeepLocal)
 }
 
-func (s *Store) completePendingCardDAVConflictTombstoneFromPullTx(
+func (s *Store) preparePendingCardDAVConflictTombstoneFromPullTx(
 	ctx context.Context, tx *loggedTx, book CardDAVAddressBook, connectionGeneration int64,
 	capture CardDAVConflictCapture,
-) (bool, error) {
+) (*CardDAVConflict, *CardDAVResource, error) {
 	conflict, err := scanCardDAVConflict(tx.QueryRowContext(ctx,
 		`SELECT `+cardDAVConflictColumns+` FROM carddav_conflicts
 		 WHERE address_book_id = ? AND href = ? AND status = 'unresolved'`+
 			s.dialect.SelectForUpdate(), book.ID, capture.Href))
 	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
+		return nil, nil, nil
 	}
 	if err != nil {
-		return false, fmt.Errorf("lock pulled CardDAV tombstone conflict: %w", err)
+		return nil, nil, fmt.Errorf("lock pulled CardDAV tombstone conflict: %w", err)
 	}
 	if conflict.PendingOperation == "" {
-		return false, nil
+		return nil, nil, nil
 	}
 	mapping, err := s.validatePendingCardDAVConflictTombstoneTx(ctx, tx, conflict)
 	if err != nil {
-		return false, err
+		return nil, nil, err
 	}
 	if !capture.LocalTombstone || !capture.RemoteTombstone ||
 		capture.AddressBookID != conflict.AddressBookID || capture.Href != conflict.Href ||
@@ -745,12 +745,9 @@ func (s *Store) completePendingCardDAVConflictTombstoneFromPullTx(
 		capture.BaseRemoteETag != mapping.RemoteETag ||
 		conflict.ConnectionGeneration != connectionGeneration ||
 		conflict.BookSyncRevision != book.SyncRevision {
-		return false, ErrCardDAVConflictStale
+		return nil, nil, ErrCardDAVConflictStale
 	}
-	if _, err := s.completeCardDAVConflictLocalTombstoneTx(ctx, tx, conflict, mapping); err != nil {
-		return false, err
-	}
-	return true, nil
+	return conflict, mapping, nil
 }
 
 func cardDAVPublicationFromConflict(conflict *CardDAVConflict) *CardDAVPublication {
@@ -1328,7 +1325,7 @@ func (s *Store) ResolveCardDAVConflictRemoteContext(
 				if publicationErr != nil && !errors.Is(publicationErr, ErrCardDAVPublicationNotFound) {
 					return publicationErr
 				}
-				if publicationErr == nil && publication.Desired && publication.AddressBookID == book.ID && publication.Href == input.Remote.Href {
+				if publicationErr == nil && publication.AddressBookID == book.ID && publication.Href == input.Remote.Href {
 					publicationEnvelope := envelope
 					publicationEnvelope.RenderMetadata.RenderRequired = true
 					if _, err := publicationEnvelope.PrepareCanonicalRender(); err != nil {

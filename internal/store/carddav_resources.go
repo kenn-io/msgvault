@@ -49,6 +49,7 @@ type CardDAVResource struct {
 	Governance           CardDAVGovernance
 	PersonID             *int64
 	PersonRevisionAtBind *int64
+	OwnsDisplayName      bool
 	CreatedAt            time.Time
 	UpdatedAt            time.Time
 }
@@ -132,6 +133,11 @@ func (s *Store) ApplyCardDAVSyncPlanContext(
 			return err
 		}
 
+		type preparedUpsert struct {
+			input    CardDAVRemoteResource
+			envelope *vcard.ResourceEnvelope
+		}
+		var prepared []preparedUpsert
 		seen := make(map[string]bool, len(plan.Upserts))
 		conflicts := make(map[string]CardDAVConflictCapture, len(plan.Conflicts))
 		for _, capture := range plan.Conflicts {
@@ -184,26 +190,9 @@ func (s *Store) ApplyCardDAVSyncPlanContext(
 					capture.RemoteETag != input.RemoteETag || !bytes.Equal(capture.RemoteBody, input.RemoteBody) {
 					return ErrCardDAVInvalidPlan
 				}
-				if _, err := s.recordCardDAVConflictTx(ctx, tx, capture, cardDAVConflictRecordOptions{
-					supersedePendingIntent:         true,
-					preserveExistingLocalTombstone: true,
-				}); err != nil {
-					return err
-				}
-				delete(conflicts, input.Href)
-				continue
+				conflicts[input.Href] = capture
 			}
-			created, changed, err := s.applyCardDAVResourceTx(
-				ctx, tx, book, input, plan.CompletesFullReconcile, rebasedEnvelope,
-			)
-			if err != nil {
-				return err
-			}
-			if created {
-				result.Created++
-			} else if changed {
-				result.Updated++
-			}
+			prepared = append(prepared, preparedUpsert{input: input, envelope: rebasedEnvelope})
 		}
 
 		removed := make(map[string]bool, len(plan.RemovedHrefs))
@@ -239,24 +228,75 @@ func (s *Store) ApplyCardDAVSyncPlanContext(
 			if supplied != needsConflict {
 				return ErrCardDAVStalePlan
 			}
-			if supplied {
-				if capture.AddressBookID != book.ID || !capture.RemoteTombstone {
-					return ErrCardDAVInvalidPlan
-				}
-				completed, err := s.completePendingCardDAVConflictTombstoneFromPullTx(
-					ctx, tx, book, generation, capture)
+			if supplied && (capture.AddressBookID != book.ID || !capture.RemoteTombstone) {
+				return ErrCardDAVInvalidPlan
+			}
+		}
+		type pendingTombstone struct {
+			conflict *CardDAVConflict
+			mapping  *CardDAVResource
+		}
+		var pendingTombstones []pendingTombstone
+		for href, capture := range conflicts {
+			if !seen[href] && !removed[href] {
+				return ErrCardDAVInvalidPlan
+			}
+			if capture.RemoteTombstone {
+				conflict, mapping, err := s.preparePendingCardDAVConflictTombstoneFromPullTx(ctx, tx, book, generation, capture)
 				if err != nil {
 					return err
 				}
-				if completed {
-					result.Removed++
-					delete(conflicts, href)
+				if conflict != nil {
+					pendingTombstones = append(pendingTombstones, pendingTombstone{conflict: conflict, mapping: mapping})
 					continue
 				}
-				if _, err := s.recordCardDAVConflictTx(ctx, tx, capture, cardDAVConflictRecordOptions{}); err != nil {
+			}
+			if _, err := s.recordCardDAVConflictTx(ctx, tx, capture, cardDAVConflictRecordOptions{
+				supersedePendingIntent:         !capture.RemoteTombstone,
+				preserveExistingLocalTombstone: !capture.RemoteTombstone,
+			}); err != nil {
+				return err
+			}
+		}
+
+		var appliedHrefs []string
+		for _, item := range prepared {
+			if _, supplied := conflicts[item.input.Href]; supplied {
+				continue
+			}
+			created, changed, err := s.applyCardDAVResourceTx(ctx, tx, book, item.input, plan.CompletesFullReconcile, item.envelope)
+			if err != nil {
+				return err
+			}
+			if created {
+				result.Created++
+			} else if changed {
+				result.Updated++
+			}
+			if created || changed {
+				resource, err := s.findCardDAVResourceTx(ctx, tx, book.ID, item.input.Href)
+				if err != nil {
 					return err
 				}
-				delete(conflicts, href)
+				if resource.PersonID != nil {
+					snapshot, err := s.loadPersonVCardSnapshotTx(ctx, tx, *resource.PersonID)
+					if err != nil {
+						return err
+					}
+					if resource.LocalHash == snapshot.Fingerprint {
+						appliedHrefs = append(appliedHrefs, item.input.Href)
+					}
+				}
+			}
+		}
+		for _, pending := range pendingTombstones {
+			if _, err := s.completeCardDAVConflictLocalTombstoneTx(ctx, tx, pending.conflict, pending.mapping); err != nil {
+				return err
+			}
+			result.Removed++
+		}
+		for href := range removed {
+			if _, supplied := conflicts[href]; supplied {
 				continue
 			}
 			wasRemoved, err := s.removeCardDAVResourceTx(ctx, tx, book.ID, href)
@@ -267,8 +307,21 @@ func (s *Store) ApplyCardDAVSyncPlanContext(
 				result.Removed++
 			}
 		}
-		if len(conflicts) != 0 {
-			return ErrCardDAVInvalidPlan
+		for _, href := range appliedHrefs {
+			resource, err := s.findCardDAVResourceTx(ctx, tx, book.ID, href)
+			if err != nil {
+				return err
+			}
+			if resource.PersonID == nil {
+				continue
+			}
+			snapshot, err := s.loadPersonVCardSnapshotTx(ctx, tx, *resource.PersonID)
+			if err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE carddav_resources SET local_hash = ? WHERE id = ?`, snapshot.Fingerprint, resource.ID); err != nil {
+				return err
+			}
 		}
 
 		updated, err := tx.ExecContext(ctx, `UPDATE carddav_address_books SET
@@ -473,21 +526,35 @@ func (s *Store) cardDAVResourceNeedsConflictTx(
 		if err != nil {
 			return false, nil, err
 		}
-		if published {
+		var imported bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (
+			SELECT 1 FROM person_names WHERE `+cardDAVImportedSourceFilter+`
+			UNION ALL SELECT 1 FROM person_contact_points WHERE `+cardDAVImportedSourceFilter+`)
+			AND EXISTS (SELECT 1 FROM carddav_address_books WHERE id = ? AND is_subscribed = TRUE)`,
+			*resource.PersonID, ProvenanceCardDAVImport, fmt.Sprintf("carddav:%d", bookID), href,
+			*resource.PersonID, ProvenanceCardDAVImport, fmt.Sprintf("carddav:%d", bookID), href, bookID).Scan(&imported); err != nil {
+			return false, nil, err
+		}
+		imported = imported || resource.OwnsDisplayName
+		if published || imported {
 			envelope, dropped, err := s.prepareCardDAVEnvelopeTx(ctx, tx, bookID, *resource.PersonID, CardDAVRemoteResource{Href: href, RemoteBody: remoteBody})
 			if err != nil {
 				return false, nil, err
 			}
-			publicationEnvelope := envelope
-			publicationEnvelope.RenderMetadata.RenderRequired = true
-			if _, err := publicationEnvelope.PrepareCanonicalRender(); err != nil {
-				return true, nil, nil //nolint:nilerr // Unpublishable remote cards require conflict review.
+			if published {
+				publicationEnvelope := envelope
+				publicationEnvelope.RenderMetadata.RenderRequired = true
+				if _, err := publicationEnvelope.PrepareCanonicalRender(); err != nil {
+					return true, nil, nil //nolint:nilerr // Unpublishable remote cards require conflict review.
+				}
 			}
 			unsafe, err := s.cardDAVRebaseDisplacesOwnerTx(ctx, tx, bookID, *resource.PersonID, href, envelope, dropped)
 			if err != nil || unsafe {
 				return unsafe, nil, err
 			}
-			return false, &envelope, nil
+			if imported {
+				return false, &envelope, nil
+			}
 		}
 	}
 	return localChanged && remoteChanged, nil, nil
@@ -504,36 +571,11 @@ func (s *Store) CardDAVRemoteUpdateNeedsConflictContext(ctx context.Context, boo
 	return needed, err
 }
 
-const cardDAVImportedRowFilter = `person_id = ? AND source = ? AND source_ref = ? AND source_resource_uid = ?
-	AND active_until IS NULL AND superseded_at IS NULL`
+const cardDAVImportedSourceFilter = `person_id = ? AND source = ? AND source_ref = ? AND source_resource_uid = ?`
+
+const cardDAVImportedRowFilter = cardDAVImportedSourceFilter + ` AND active_until IS NULL AND superseded_at IS NULL`
 
 func (s *Store) cardDAVRebaseDisplacesOwnerTx(ctx context.Context, tx *loggedTx, bookID, personID int64, href string, incoming vcard.ResourceEnvelope, dropped []vcard.NativeMapping) (bool, error) {
-	for _, occurrence := range incoming.PropertyTree {
-		if !strings.EqualFold(occurrence.Property.Name, "FN") {
-			continue
-		}
-		value, err := vcard.PropertyValue(incoming.RenderMetadata.StoredVersion, occurrence.Property)
-		if err != nil {
-			return false, err
-		}
-		if strings.TrimSpace(value) == "" {
-			continue
-		}
-		var coincidence bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM persons p
-			WHERE p.id = ? AND p.display_name = ? AND p.display_name <> (
-				SELECT n.formatted FROM person_names n WHERE n.person_id = p.id
-				  AND n.source = ? AND n.source_ref = ? AND n.source_resource_uid = ?
-				  AND n.name_kind = ? ORDER BY n.id DESC LIMIT 1))`,
-			personID, strings.TrimSpace(value), ProvenanceCardDAVImport, fmt.Sprintf("carddav:%d", bookID), href,
-			PersonNameFormatted).Scan(&coincidence); err != nil {
-			return false, err
-		}
-		if coincidence {
-			return true, nil
-		}
-		break
-	}
 	for _, mapping := range dropped {
 		if mapping.Table != personNamesTableName && mapping.Table != personContactPointsTableName {
 			return true, nil
@@ -553,6 +595,21 @@ func (s *Store) cardDAVRebaseDisplacesOwnerTx(ctx context.Context, tx *loggedTx,
 			if !inactive {
 				return true, nil
 			}
+		}
+	}
+	for _, mapping := range incoming.NativeMappings {
+		if mapping.Table != personNamesTableName || mapping.Field != "formatted" {
+			continue
+		}
+		var protectedInactive bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM person_names WHERE id = ? AND person_id = ?
+			AND (active_until IS NOT NULL OR superseded_at IS NOT NULL)
+			AND NOT (source = ? AND COALESCE(source_ref, '') = ? AND COALESCE(source_resource_uid, '') = ?))`,
+			mapping.RowID, personID, ProvenanceCardDAVImport, fmt.Sprintf("carddav:%d", bookID), href).Scan(&protectedInactive); err != nil {
+			return false, err
+		}
+		if protectedInactive {
+			return true, nil
 		}
 	}
 	return false, nil
@@ -595,6 +652,7 @@ func (s *Store) applyCardDAVResourceTx(
 	var ambiguous []cardDAVPersonMatch
 	projectionRebased := false
 	remoteOwnsDisplay := false
+	ownsDisplayName := false
 	preserveLocalTombstone := !created && current.MappingStatus == CardDAVMappingMapped &&
 		current.PersonID == nil && current.RemoteSemanticHash == input.SemanticHash
 	if preserveLocalTombstone {
@@ -602,6 +660,7 @@ func (s *Store) applyCardDAVResourceTx(
 	} else if !created && current.PersonID != nil {
 		personID = current.PersonID
 		personRevision = current.PersonRevisionAtBind
+		ownsDisplayName = current.OwnsDisplayName
 		status, governance = current.MappingStatus, current.Governance
 	} else {
 		resourceID := int64(0)
@@ -623,6 +682,7 @@ func (s *Store) applyCardDAVResourceTx(
 				return false, false, err
 			}
 			status, governance = CardDAVMappingMapped, CardDAVGovernanceRemote
+			ownsDisplayName = true
 		}
 	}
 	semanticRemoteChanged := !created && current.RemoteSemanticHash != input.SemanticHash
@@ -666,7 +726,9 @@ func (s *Store) applyCardDAVResourceTx(
 		if err != nil {
 			return false, false, fmt.Errorf("hash CardDAV-bound local person: %w", err)
 		}
-		localHash = snapshot.Fingerprint
+		if created || current.PersonID == nil || projectionRebased || snapshot.Fingerprint == input.EquivalentLocalHash || snapshot.Fingerprint == current.LocalHash {
+			localHash = snapshot.Fingerprint
+		}
 	}
 
 	var resourceID int64
@@ -674,11 +736,11 @@ func (s *Store) applyCardDAVResourceTx(
 		err = tx.QueryRowContext(ctx, `INSERT INTO carddav_resources (
 			address_book_id, href, remote_uid, remote_etag, remote_body,
 			remote_semantic_hash, local_hash, mapping_status, mapping_revision,
-			governance, person_id, person_revision_at_bind
-		) VALUES (?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?, 1, ?, ?, ?) RETURNING id`,
+			governance, person_id, person_revision_at_bind, owns_display_name
+		) VALUES (?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?, 1, ?, ?, ?, ?) RETURNING id`,
 			book.ID, input.Href, input.RemoteUID, input.RemoteETag, input.RemoteBody,
 			input.SemanticHash, localHash, status, governance,
-			nullableVCardInt64(personID), nullableVCardInt64(personRevision),
+			nullableVCardInt64(personID), nullableVCardInt64(personRevision), ownsDisplayName,
 		).Scan(&resourceID)
 	} else {
 		resourceID = current.ID
@@ -686,10 +748,10 @@ func (s *Store) applyCardDAVResourceTx(
 			remote_uid = NULLIF(?, ''), remote_etag = ?, remote_body = ?,
 			remote_semantic_hash = ?, local_hash = ?, mapping_status = ?,
 			mapping_revision = mapping_revision + 1, governance = ?, person_id = ?,
-			person_revision_at_bind = ?, updated_at = `+s.dialect.Now()+`
+			person_revision_at_bind = ?, owns_display_name = ?, updated_at = `+s.dialect.Now()+`
 			WHERE id = ?`, input.RemoteUID, input.RemoteETag, input.RemoteBody,
 			input.SemanticHash, localHash, status, governance,
-			nullableVCardInt64(personID), nullableVCardInt64(personRevision), resourceID)
+			nullableVCardInt64(personID), nullableVCardInt64(personRevision), ownsDisplayName, resourceID)
 	}
 	if err != nil {
 		return false, false, fmt.Errorf("save CardDAV resource ledger: %w", err)
@@ -826,7 +888,7 @@ func (s *Store) acceptCardDAVIdentityMatchCandidateReviewedContext(
 		if resource.PersonID == nil {
 			if _, err := tx.ExecContext(ctx, `UPDATE carddav_resources SET
 				mapping_status = ?, mapping_revision = mapping_revision + 1,
-				governance = ?, person_id = ?, person_revision_at_bind = ?,
+				governance = ?, person_id = ?, person_revision_at_bind = ?, owns_display_name = FALSE,
 				local_hash = ?, updated_at = `+s.dialect.Now()+` WHERE id = ?`,
 				CardDAVMappingMapped, CardDAVGovernanceLocal, candidate.RightID,
 				personRevision, snapshot.Fingerprint, resource.ID,
@@ -1124,21 +1186,11 @@ func (s *Store) rebaseCardDAVImportedProjectionTx(
 	ctx context.Context, tx *loggedTx, bookID, personID int64, input CardDAVRemoteResource, incoming *vcard.ResourceEnvelope,
 ) (bool, error) {
 	sourceRef := fmt.Sprintf("carddav:%d", bookID)
-	var currentDisplay, priorImportedDisplay sql.NullString
-	if err := tx.QueryRowContext(ctx, `SELECT display_name FROM persons WHERE id = ?`+
-		s.dialect.SelectForUpdate(), personID).Scan(&currentDisplay); err != nil {
-		return false, fmt.Errorf("lock CardDAV projection person: %w", err)
+	var remoteOwnsDisplay bool
+	if err := tx.QueryRowContext(ctx, `SELECT owns_display_name FROM carddav_resources
+		WHERE address_book_id = ? AND href = ? AND person_id = ?`, bookID, input.Href, personID).Scan(&remoteOwnsDisplay); err != nil {
+		return false, fmt.Errorf("load CardDAV display-name ownership: %w", err)
 	}
-	err := tx.QueryRowContext(ctx, `SELECT formatted FROM person_names
-		WHERE person_id = ? AND source = ? AND source_ref = ? AND source_resource_uid = ?
-		  AND name_kind = ? AND active_until IS NULL AND superseded_at IS NULL
-		ORDER BY id LIMIT 1`, personID, ProvenanceCardDAVImport, sourceRef, input.Href,
-		PersonNameFormatted).Scan(&priorImportedDisplay)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return false, fmt.Errorf("load prior CardDAV display projection: %w", err)
-	}
-	remoteOwnsDisplay := !currentDisplay.Valid ||
-		(priorImportedDisplay.Valid && currentDisplay.String == priorImportedDisplay.String)
 
 	for _, table := range []string{personNamesTableName, personContactPointsTableName} {
 		var query strings.Builder
@@ -1158,6 +1210,10 @@ func (s *Store) rebaseCardDAVImportedProjectionTx(
 	// Rows still active after superseding this import retain their matched occurrences.
 	skipped := make(map[string]bool)
 	for _, mapping := range incoming.NativeMappings {
+		if mapping.Table == "persons" && mapping.Field == "display_name" || mapping.Table == personNamesTableName && mapping.Field == "derived_fn" {
+			skipped[mapping.Identity.Key()] = true
+			continue
+		}
 		if mapping.Table != personNamesTableName && mapping.Table != personContactPointsTableName {
 			continue
 		}
@@ -1214,21 +1270,11 @@ func (s *Store) retireCardDAVImportedProjectionTx(
 	ctx context.Context, tx *loggedTx, bookID, personID int64, href string,
 ) error {
 	sourceRef := fmt.Sprintf("carddav:%d", bookID)
-	var currentDisplay, importedDisplay sql.NullString
-	if err := tx.QueryRowContext(ctx, `SELECT display_name FROM persons WHERE id = ?`+
-		s.dialect.SelectForUpdate(), personID).Scan(&currentDisplay); err != nil {
-		return fmt.Errorf("lock retired CardDAV projection person: %w", err)
+	var remoteOwnsDisplay bool
+	if err := tx.QueryRowContext(ctx, `SELECT owns_display_name FROM carddav_resources
+		WHERE address_book_id = ? AND href = ? AND person_id = ?`, bookID, href, personID).Scan(&remoteOwnsDisplay); err != nil {
+		return fmt.Errorf("load retired CardDAV display-name ownership: %w", err)
 	}
-	err := tx.QueryRowContext(ctx, `SELECT formatted FROM person_names
-		WHERE person_id = ? AND source = ? AND source_ref = ? AND source_resource_uid = ?
-		  AND name_kind = ? AND active_until IS NULL AND superseded_at IS NULL
-		ORDER BY id LIMIT 1`, personID, ProvenanceCardDAVImport, sourceRef, href,
-		PersonNameFormatted).Scan(&importedDisplay)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("load retired CardDAV display projection: %w", err)
-	}
-	remoteOwnsDisplay := currentDisplay.Valid && importedDisplay.Valid &&
-		currentDisplay.String == importedDisplay.String
 
 	for _, table := range []string{"person_names", "person_contact_points"} {
 		if _, err := tx.ExecContext(ctx, `UPDATE `+table+` SET
@@ -1241,7 +1287,7 @@ func (s *Store) retireCardDAVImportedProjectionTx(
 	}
 	if remoteOwnsDisplay {
 		result, err := tx.ExecContext(ctx, `UPDATE persons SET display_name = NULL
-			WHERE id = ? AND display_name = ?`, personID, importedDisplay.String)
+			WHERE id = ?`, personID)
 		if err != nil {
 			return fmt.Errorf("clear retired CardDAV display label: %w", err)
 		}
@@ -1559,7 +1605,7 @@ func (s *Store) demoteCardDAVBookResourcesTx(ctx context.Context, tx *loggedTx, 
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE carddav_resources SET
 			mapping_status = ?, mapping_revision = mapping_revision + 1,
-			governance = ?, person_id = NULL, person_revision_at_bind = NULL,
+			governance = ?, person_id = NULL, person_revision_at_bind = NULL, owns_display_name = FALSE,
 			updated_at = `+s.dialect.Now()+` WHERE id = ?`,
 			demotedStatus, CardDAVGovernanceNone, resource.ID); err != nil {
 			return fmt.Errorf("demote CardDAV resource: %w", err)
@@ -1757,7 +1803,7 @@ func (s *Store) findCardDAVResourceTx(
 
 const cardDAVResourceSelect = `SELECT id, address_book_id, href, remote_uid,
 	remote_etag, remote_body, remote_semantic_hash, local_hash, mapping_status,
-	mapping_revision, governance, person_id, person_revision_at_bind,
+	mapping_revision, governance, person_id, person_revision_at_bind, owns_display_name,
 	created_at, updated_at FROM carddav_resources`
 
 func scanCardDAVResource(row scanner) (*CardDAVResource, error) {
@@ -1767,7 +1813,7 @@ func scanCardDAVResource(row scanner) (*CardDAVResource, error) {
 	if err := row.Scan(&resource.ID, &resource.AddressBookID, &resource.Href, &uid,
 		&resource.RemoteETag, &resource.RemoteBody, &resource.RemoteSemanticHash,
 		&resource.LocalHash, &resource.MappingStatus, &resource.MappingRevision,
-		&resource.Governance, &personID, &personRevision,
+		&resource.Governance, &personID, &personRevision, &resource.OwnsDisplayName,
 		&resource.CreatedAt, &resource.UpdatedAt); err != nil {
 		return nil, err
 	}

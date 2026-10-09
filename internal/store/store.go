@@ -1613,6 +1613,28 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	if err := s.ensureVCardSourceResourceIdentityIndexes(ctx); err != nil {
 		return fmt.Errorf("scope vCard identities to source resources: %w", err)
 	}
+	if err := s.runOnceMigration(ctx, migrationCardDAVDisplayNameOwnership, 1, false, func(ctx context.Context) error {
+		return s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+			_, err := tx.ExecContext(ctx, `UPDATE carddav_resources SET owns_display_name = TRUE
+				WHERE governance = 'remote' AND person_id IS NOT NULL
+				AND NOT EXISTS (SELECT 1 FROM carddav_resources other WHERE other.person_id = carddav_resources.person_id
+				  AND other.governance = 'remote' AND other.id <> carddav_resources.id) AND EXISTS (
+					SELECT 1 FROM persons p JOIN person_names n ON n.person_id = p.id
+					WHERE p.id = carddav_resources.person_id AND p.revision = carddav_resources.person_revision_at_bind
+					  AND p.display_name = n.formatted AND n.source = 'carddav_import'
+					  AND n.source_ref = 'carddav:' || CAST(carddav_resources.address_book_id AS TEXT)
+					  AND n.source_resource_uid = carddav_resources.href AND n.name_kind = 'formatted'
+					  AND n.active_until IS NULL AND n.superseded_at IS NULL
+					  AND NOT EXISTS (SELECT 1 FROM person_names other WHERE other.person_id = n.person_id
+						AND other.source = n.source AND other.source_ref = n.source_ref
+						AND other.source_resource_uid = n.source_resource_uid AND other.name_kind = n.name_kind
+						AND other.active_until IS NULL AND other.superseded_at IS NULL AND other.id <> n.id))`)
+			return err
+		})
+	}); err != nil {
+		return fmt.Errorf("migrate CardDAV display-name ownership: %w", err)
+	}
+
 	// Organization domains written before IDNA normalization may still contain
 	// Unicode. Canonicalize them before fact resolution compares incoming ASCII
 	// references with persisted roots and identifiers.
