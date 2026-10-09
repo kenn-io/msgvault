@@ -257,6 +257,8 @@ func (s *Store) withMCPEventTx(ctx context.Context, fn func(*sql.Tx, MCPEventClo
 
 // ConfigureMCPEvents records coverage once at daemon startup before writers
 // begin. A changed owner revokes old subscriptions even with unchanged coverage.
+// A disabled configuration with an empty Principal means the owner is unknown
+// to this process; it revokes nothing.
 func (s *Store) ConfigureMCPEvents(ctx context.Context, cfg MCPEventsConfig) (MCPEventClock, error) {
 	root := s.mcpRoot()
 	root.mcpConfigMu.Lock()
@@ -266,13 +268,13 @@ func (s *Store) ConfigureMCPEvents(ctx context.Context, cfg MCPEventsConfig) (MC
 	}
 	runtime, fingerprint := mcpNewRuntime(cfg)
 	if !cfg.Enabled {
-		clock, unchanged, err := root.mcpCaptureAlreadyDisabled(ctx)
+		clock, unchanged, err := root.mcpCaptureAlreadyDisabled(ctx, cfg.Principal)
 		if err != nil {
 			return MCPEventClock{}, mcpSafeError(err)
 		}
 		if unchanged {
-			// Nothing was captured and no subscription can be waiting, so
-			// there is no gap to record. Disabled Events never write.
+			// Nothing was captured, no subscription can be waiting, and no
+			// owner change needs revocation, so there is nothing to record.
 			root.mcpConfig.Store(runtime)
 			return clock, nil
 		}
@@ -294,6 +296,9 @@ func (s *Store) ConfigureMCPEvents(ctx context.Context, cfg MCPEventsConfig) (MC
 				return err
 			}
 		}
+		if cfg.Principal == "" {
+			return nil
+		}
 		_, err := tx.ExecContext(ctx, root.Rebind(`UPDATE mcp_event_subscriptions SET state='stopped',stop_reason='principal_revoked',generation=generation+1,pending_seq=NULL,pending_envelope=NULL,pending_generation=NULL,attempt_count=0,next_attempt_at=NULL,updated_at=? WHERE principal_id<>? AND stop_reason<>'principal_revoked'`), mcpTime(now), cfg.Principal)
 		return err
 	})
@@ -304,19 +309,21 @@ func (s *Store) ConfigureMCPEvents(ctx context.Context, cfg MCPEventsConfig) (MC
 	return result, nil
 }
 
-// mcpCaptureAlreadyDisabled reports whether the archive's stored capture
-// state is already off with no active subscription, without taking a write
-// lock.
-func (s *Store) mcpCaptureAlreadyDisabled(ctx context.Context) (MCPEventClock, bool, error) {
+// mcpCaptureAlreadyDisabled reports, without taking a write lock, whether the
+// archive's stored capture state is already off with no active subscription
+// and no subscription that principal would revoke.
+func (s *Store) mcpCaptureAlreadyDisabled(ctx context.Context, principal string) (MCPEventClock, bool, error) {
 	var clock MCPEventClock
-	var enabled, active bool
-	err := s.DB().QueryRowContext(ctx, `SELECT head_seq, pruned_through_seq, capture_epoch, enabled,
-		EXISTS (SELECT 1 FROM mcp_event_subscriptions WHERE state='active')
-		FROM mcp_event_clock WHERE singleton=1`).Scan(&clock.HeadSeq, &clock.PrunedThroughSeq, &clock.Epoch, &enabled, &active)
+	var enabled, active, revocable bool
+	err := s.DB().QueryRowContext(ctx, s.Rebind(`SELECT head_seq, pruned_through_seq, capture_epoch, enabled,
+		EXISTS (SELECT 1 FROM mcp_event_subscriptions WHERE state='active'),
+		EXISTS (SELECT 1 FROM mcp_event_subscriptions WHERE principal_id<>? AND stop_reason<>'principal_revoked')
+		FROM mcp_event_clock WHERE singleton=1`), principal).Scan(&clock.HeadSeq, &clock.PrunedThroughSeq, &clock.Epoch, &enabled, &active, &revocable)
 	if err != nil {
 		return MCPEventClock{}, false, fmt.Errorf("read Events capture state: %w", err)
 	}
-	return clock, !enabled && !active, nil
+	revocable = revocable && principal != ""
+	return clock, !enabled && !active && !revocable, nil
 }
 
 func (s *Store) ValidateMCPEventScope(ctx context.Context, family, scopeKind string, scopeID int64, kinds []string) (string, int64, error) {

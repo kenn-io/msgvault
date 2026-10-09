@@ -34,11 +34,13 @@ func configureDaemonMCPEventsCapture(ctx context.Context, st *store.Store) error
 // configuration before a direct archive write. With the daemon's settings the
 // write is journaled for the daemon to deliver. Otherwise capture is off, and
 // an archive whose capture was on starts a new epoch, so its subscriptions
-// stop with capture_gap instead of silently missing these writes. A missing
-// or unreadable owner key turns capture off rather than failing the command.
+// stop with capture_gap instead of silently missing these writes. The owner
+// principal is passed even when capture is off, so only a real owner change
+// revokes subscriptions. A missing or unreadable owner key leaves the owner
+// unknown and capture off rather than failing the command.
 func configureDirectWriteMCPEventsCapture(ctx context.Context, cfg *config.Config, st *store.Store) error {
 	captureConfig := store.MCPEventsConfig{}
-	if cfg.MCP.Events.Enabled && cfg.ResolveServerKey() == nil && cfg.Server.AuthenticationKey() != "" {
+	if cfg.ResolveServerKey() == nil && cfg.Server.AuthenticationKey() != "" {
 		var err error
 		captureConfig, err = daemonMCPEventsStoreConfig(cfg)
 		if err != nil {

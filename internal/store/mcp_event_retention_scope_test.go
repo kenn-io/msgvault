@@ -117,3 +117,35 @@ func TestMCPEventsPruningKeepsExpiredSubscriptionLossVisible(t *testing.T) {
 	require.NoError(err)
 	assert.True(truncated, "an event pruned while the subscription was expired is reported on renewal")
 }
+
+// An owner change revokes retained subscriptions even while Events stay off,
+// so restoring the old owner later cannot renew them. A process that does not
+// know the owner revokes nothing.
+func TestMCPEventsDisabledOwnerChangeRevokesRetainedSubscriptions(t *testing.T) {
+	assert := Assert.New(t)
+	require := Require.New(t)
+	f := storetest.New(t)
+	now := time.Now().UTC()
+	_, err := f.Store.ConfigureMCPEvents(t.Context(), mcpStoreConfig())
+	require.NoError(err)
+	_, active := activateMCPConversationSubscription(t, f, 1, f.ConvID, now)
+	disabled := mcpStoreConfig()
+	disabled.Enabled = false
+	_, err = f.Store.ConfigureMCPEvents(t.Context(), disabled)
+	require.NoError(err)
+
+	_, err = f.Store.ConfigureMCPEvents(t.Context(), store.MCPEventsConfig{})
+	require.NoError(err)
+	unknownOwner, err := f.Store.GetMCPSubscription(t.Context(), active.ID)
+	require.NoError(err)
+	require.NotNil(unknownOwner)
+	assert.Equal("capture_gap", unknownOwner.StopReason, "an unknown owner is not an owner change")
+
+	disabled.Principal = "owner:synthetic-rotated"
+	_, err = f.Store.ConfigureMCPEvents(t.Context(), disabled)
+	require.NoError(err)
+	rotated, err := f.Store.GetMCPSubscription(t.Context(), active.ID)
+	require.NoError(err)
+	require.NotNil(rotated)
+	assert.Equal("principal_revoked", rotated.StopReason)
+}
