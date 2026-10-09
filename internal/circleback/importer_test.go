@@ -280,7 +280,7 @@ func TestImport_AccountIdentityControlsFromMe(t *testing.T) {
 	}
 	f := &fakeSource{
 		meetings: map[string]json.RawMessage{
-			"primary": meetingFor("primary", "USER-A@EXAMPLE.COM"),
+			"primary": meetingFor("primary", " User-A@Example.COM "),
 			"alias":   meetingFor("alias", "user-b@example.com"),
 			"other":   meetingFor("other", "user-c@example.com"),
 		},
@@ -315,6 +315,9 @@ func TestImport_AccountIdentityControlsFromMe(t *testing.T) {
 	}
 
 	msgID := circlebackMessageIDFor(t, st, "primary")
+	var sender string
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT p.email_address FROM messages m JOIN participants p ON p.id = m.sender_id WHERE m.id = ?`), msgID).Scan(&sender))
+	assert.Equal("user-a@example.com", sender)
 	assert.Equal("work", circlebackMetadataMap(t, st, msgID)["account_identifier"],
 		"metadata preserves the source label")
 }

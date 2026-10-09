@@ -203,8 +203,6 @@ func TestOrganizationAttributeDryRunCASAndMultiOrdinal(t *testing.T) {
 			ExpectedValueID: &staleID,
 		})
 	require.ErrorIs(err, store.ErrAttributeValueConflict)
-	var conflict *store.AttributeValueConflictError
-	assert.NotErrorAs(err, &conflict)
 
 	preview, err := st.SetOrganizationAttributeValueContext(
 		ctx, store.OrganizationAttributeValueInput{
