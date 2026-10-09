@@ -228,7 +228,7 @@ func parseAgentTokenExpiry(raw string, now time.Time) (time.Time, error) {
 	if err != nil {
 		return time.Time{}, errors.New("--expires must be an RFC3339 timestamp or duration")
 	}
-	if value.IsZero() {
+	if !value.After(now) {
 		return time.Time{}, errors.New("--expires must be in the future")
 	}
 	return value, nil

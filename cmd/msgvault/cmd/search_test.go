@@ -537,7 +537,7 @@ func TestSearchCmd_PrintsBackgroundIndexNote(t *testing.T) {
 		{
 			name:       "unverified check warns",
 			indexState: "unverified",
-			wantNote:   "could not be verified for this request; results may be incomplete. Retry with owner access, or run rebuild-fts.",
+			wantNote:   "could not be verified for this request; results may be incomplete. Search again to retry the check, or run rebuild-fts.",
 		},
 		{
 			name:       "building warns about rebuilding or awaiting rebuild",

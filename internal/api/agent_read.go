@@ -292,9 +292,16 @@ func (s *Server) agentScopedStats(w http.ResponseWriter, r *http.Request, cli bo
 	}
 }
 
+// agentDiscoveryPermissions lists the read permissions that admit account and
+// collection discovery, in a fixed order so denials and logs are stable.
+var agentDiscoveryPermissions = []agentgrant.Permission{
+	agentgrant.PermissionSearchRead, agentgrant.PermissionMessageRead,
+	agentgrant.PermissionAttachmentRead, agentgrant.PermissionStatsRead,
+}
+
 func agentDiscoveryPermission(grant *agentgrant.Grant) agentgrant.Permission {
 	if grant != nil {
-		for _, p := range agentReadPermissions {
+		for _, p := range agentDiscoveryPermissions {
 			if grant.HasPermission(p) {
 				return p
 			}

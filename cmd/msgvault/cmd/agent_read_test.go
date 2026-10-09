@@ -95,7 +95,7 @@ func TestAgentTokenExpiryParser(t *testing.T) {
 		value string
 		want  time.Time
 		bad   bool
-	}{{"", time.Time{}, false}, {"24h", now.Add(24 * time.Hour), false}, {"2026-10-02T12:00:00Z", now.Add(24 * time.Hour), false}, {"-1h", time.Time{}, true}, {"0s", time.Time{}, true}, {"2026-09-30T12:00:00Z", now.Add(-24 * time.Hour), false}, {"invalid", time.Time{}, true}, {"0001-01-01T00:00:00Z", time.Time{}, true}, {"0001-01-01T01:00:00+01:00", time.Time{}, true}} {
+	}{{"", time.Time{}, false}, {"24h", now.Add(24 * time.Hour), false}, {"2026-10-02T12:00:00Z", now.Add(24 * time.Hour), false}, {"-1h", time.Time{}, true}, {"0s", time.Time{}, true}, {"2026-09-30T12:00:00Z", time.Time{}, true}, {"2026-10-01T12:00:00Z", time.Time{}, true}, {"invalid", time.Time{}, true}, {"0001-01-01T00:00:00Z", time.Time{}, true}, {"0001-01-01T01:00:00+01:00", time.Time{}, true}} {
 		got, err := parseAgentTokenExpiry(tc.value, now)
 		if tc.bad {
 			requirements.Error(err)

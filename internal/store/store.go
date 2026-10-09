@@ -2702,9 +2702,9 @@ func (s *Store) GetStatsForScopeContext(ctx context.Context, sourceIDs []int64) 
 		}
 	} else {
 		// Build the IN (?, ?, ...) placeholder list. TrimSuffix is panic-safe
-		// for any len(sourceIDs); the outer guard already routes empty slices
-		// to the unscoped branch, but this avoids a negative slice index if
-		// the guard is ever refactored.
+		// for any len(sourceIDs); the early return already handles empty
+		// slices, but this avoids a negative slice index if that guard is
+		// ever refactored.
 		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(sourceIDs)), ",")
 
 		inClause := "source_id IN (" + placeholders + ")"
