@@ -57,6 +57,7 @@
     unavailable = undefined,
     predicate,
     onClose = undefined,
+    onRetry = undefined,
     position = undefined,
     onPositionChange = undefined,
     conversationAnchorId = undefined,
@@ -76,6 +77,7 @@
     unavailable?: ExploreCacheUnavailable;
     predicate: ExplorePredicate;
     onClose?: () => void;
+    onRetry?: () => void;
     position?: 'below' | 'right';
     onPositionChange?: (position: 'below' | 'right') => void;
     /** Overrides the entry's own anchor when the reader navigated within the
@@ -333,6 +335,7 @@
               title="Nothing to read here"
               description={statusMessage || 'The selected result is no longer available in this context.'}
             />
+            {#if status === 'error' && onRetry}<Button label="Retry" size="sm" surface="soft" onclick={onRetry} />{/if}
           </div>
         {/if}
       </section>

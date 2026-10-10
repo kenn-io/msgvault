@@ -125,8 +125,6 @@ One toolbar sits above the results:
 - **Group by** adds a grouping level. Add more levels to group within groups.
 - **Sort** offers Newest first, the only order Everything has today.
 - **Columns** shows or hides table columns. It appears for the ungrouped table.
-- **Preview position** appears when the results are wide enough for a side
-  preview.
 - The count at the end reports items, or groups when the view is grouped.
 
 Each active search, filter, and grouping appears as a removable chip below the
