@@ -1783,6 +1783,41 @@ func TestPatchSettingsRemovesStaleStoredCredentialOnLaterWrite(t *testing.T) {
 	assertions.Equal(severed.ETag, unrelated.Header().Get("Credential-Etag"))
 }
 
+func TestPatchSettingsCredentialConflictCanFollowCommittedSlackPolicy(t *testing.T) {
+	t.Parallel()
+	requirements, assertions := require.New(t), assert.New(t)
+	initial := settingsStoredVectorConfig + "\n[slack]\ndms = true\n"
+	srv, path := newSettingsTestServer(t, initial)
+	credentialETag := storeVectorEmbeddingsCredential(t, srv, "stale-origin-secret")
+	moved := strings.Replace(initial, "https://first.example.test/v1", "https://second.example.test/v1", 1)
+	requirements.NoError(os.WriteFile(path, []byte(moved), 0o600))
+	srv.settingsConfigEditor = func(configPath, ifMatch string, edits []config.Edit) (config.ConfigFile, error) {
+		snapshot, err := config.EditConfigFile(configPath, ifMatch, edits)
+		if err != nil {
+			return snapshot, err
+		}
+		// Interleave a real credential write between config commit and cleanup.
+		_, err = providercredentials.Put(srv.cfg.TokensDir(), credentialETag,
+			providercredentials.VectorEmbeddingsID, "https://first.example.test/v1", "rotated-secret")
+		requirements.NoError(err)
+		return snapshot, nil
+	}
+
+	response := patchSettings(t, srv, `{"updates":[{"key":"slack.dms","value":{"boolean":false}}]}`)
+	requirements.Equal(http.StatusPreconditionFailed, response.Code, response.Body.String())
+	var failure map[string]any
+	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &failure))
+	assertions.Equal("credential_conflict", failure["error"])
+	loaded, err := config.Load(path, "")
+	requirements.NoError(err)
+	assertions.False(loaded.Slack.DMsEnabled())
+	credentials, err := providercredentials.Read(srv.cfg.TokensDir())
+	requirements.NoError(err)
+	value, _, err := credentials.Resolve(providercredentials.VectorEmbeddingsID, "https://first.example.test/v1", "", nil)
+	requirements.NoError(err)
+	assertions.Equal("rotated-secret", value)
+}
+
 func TestPatchSettingsRemovesStaleNamedProviderCredentialsAfterHostEdit(t *testing.T) {
 	t.Parallel()
 	requirements := require.New(t)

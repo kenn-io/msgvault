@@ -34,6 +34,7 @@ var mcpAllowCardDAVWrites bool
 var mcpAllowKataWrites bool
 var mcpAllowCalendarWrites bool
 var serveMCPStdioWithOptions = mcpserver.ServeWithOptions
+var mcpAllowSourceWrites bool
 var serveMCPHTTPWithOptions = mcpserver.ServeHTTPWithOptions
 
 var mcpCmd = &cobra.Command{
@@ -112,6 +113,12 @@ Add to Claude Desktop config:
 		opts.AllowCardDAVWrites = mcpAllowCardDAVWrites
 		opts.AllowKataWrites = mcpAllowKataWrites
 		opts.AllowCalendarWrites = mcpAllowCalendarWrites
+		if mcpAllowProfileWrites {
+			opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, mcpserver.OperationFamilyRecords)
+		}
+		if mcpAllowSourceWrites {
+			opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, mcpserver.OperationFamilySources)
+		}
 
 		if httpAddr != "" {
 			return serveMCPHTTPWithOptions(ctx, opts, mcpserver.HTTPOptions{
@@ -240,6 +247,7 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 	}
 	engine := daemonclient.NewEngineAdapter(st)
 	opts := mcpserver.ServeOptions{
+		DelegatedOnly:      st.UsesDelegatedAuthentication(),
 		Engine:             engine,
 		AttachmentReader:   st,
 		ManifestSaver:      daemonMCPManifestSaver{client: st},
@@ -251,6 +259,18 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 	if cfg != nil {
 		opts.AttachmentsDir = cfg.AttachmentsDir()
 		opts.DataDir = cfg.Data.DataDir
+	}
+	capabilities, discoveryErr := st.MCPCapabilities(ctx)
+	if discoveryErr != nil {
+		log.Warn("operational MCP tools disabled because daemon discovery failed", "error", discoveryErr)
+	} else {
+		backend := newDaemonMCPOperations(st, capabilities)
+		opts.Operations = backend
+		opts.OperationCapabilities = backend.capabilities()
+		opts.DelegatedOnly = capabilities.Delegated
+	}
+	if opts.DelegatedOnly {
+		return opts
 	}
 	health, capabilityErr := st.Health(ctx)
 	var schemaVersion string
@@ -276,6 +296,9 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 			opts.DirectoryBackend = people
 		}
 		opts.PeopleBackend = people
+		if supportsNamedPromotion(capabilities) {
+			opts.PeopleBackend = daemonMCPNamedPeopleBrowser{PeopleBrowser: people, client: st}
+		}
 	}
 	// The daemon executes Saved Views itself, so the tools need a daemon that
 	// serves the run endpoint; an older daemon simply omits them.
@@ -493,6 +516,8 @@ func init() {
 		"Expose CardDAV publication and sync tools. Each call requires MCP client confirmation; the client must obtain user approval.")
 	mcpCmd.Flags().BoolVar(&mcpAllowCalendarWrites, "allow-calendar-writes", false,
 		"Expose calendar event mutation tools. Calendar event text is untrusted input; enable only when the user explicitly authorizes calendar writes.")
+	mcpCmd.Flags().BoolVar(&mcpAllowSourceWrites, "allow-source-writes", false,
+		"Expose source synchronization and source policy writes. Each operation requires client confirmation; HTTP also requires --http-allow-writes.")
 	_ = mcpCmd.Flags().MarkDeprecated("force-sql", "deprecated in 0.17.0; set [analytics].engine = \"sql\" in config.toml")
 	_ = mcpCmd.Flags().MarkDeprecated("no-sqlite-scanner", "deprecated in 0.17.0; cache engine selection is daemon-managed; use [analytics].engine = \"sql\" for live SQL")
 	_ = mcpCmd.Flags().MarkHidden("force-sql")

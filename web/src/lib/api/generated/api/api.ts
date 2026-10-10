@@ -260,6 +260,7 @@ import type {
   ListTextConversationMessagesParams,
   ListTextConversationMessagesPathParameters,
   ListTextConversationsParams,
+  MCPCapabilities,
   Manifest,
   MediaSearchResponse,
   MeetingImportRequest,
@@ -2081,6 +2082,17 @@ export const testTaskIntegration = (
 ) => {
   return orvalFetch<TaskIntegrationStatusResponse>(
     { url: `/api/v1/integrations/tasks/test`, method: "POST" },
+    options,
+  );
+};
+/**
+ * @summary Describe supported MCP daemon operations
+ */
+export const getMCPCapabilities = (
+  options?: SecondParameter<typeof orvalFetch<MCPCapabilities>>,
+) => {
+  return orvalFetch<MCPCapabilities>(
+    { url: `/api/v1/mcp/capabilities`, method: "GET" },
     options,
   );
 };
