@@ -150,13 +150,23 @@ func intersectAddresses(values, allowed []string) []string {
 }
 
 // resolveForwardedAccount resolves the account argument for requests the
-// daemon answers: a physical source stays an account name, and anything else
-// becomes a scope. A name MCP cannot place, such as a source's display name,
-// goes to the daemon unchanged, which resolves names and account families
-// itself; an unknown virtual account key is still rejected here.
+// daemon answers: a value naming a source by identifier or display name goes
+// to the daemon unchanged, which resolves names, account families and
+// ambiguity itself; anything else becomes a scope. A name MCP cannot place
+// also goes through unchanged, but an unknown virtual account key is still
+// rejected here.
 func (h *handlers) resolveForwardedAccount(ctx context.Context, account string) (string, []search.AccountScope, error) {
 	if account == "" || h.engine == nil {
 		return virtualAccountScopes(account)
+	}
+	accounts, err := h.engine.ListAccounts(ctx)
+	if err != nil {
+		return "", nil, newInternalError("list accounts", err)
+	}
+	if slices.ContainsFunc(accounts, func(a query.AccountInfo) bool {
+		return strings.EqualFold(a.Identifier, account) || (a.DisplayName != "" && strings.EqualFold(a.DisplayName, account))
+	}) {
+		return account, nil, nil
 	}
 	selection, err := h.resolveAccount(ctx, account)
 	if err != nil {

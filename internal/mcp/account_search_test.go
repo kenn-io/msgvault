@@ -203,3 +203,38 @@ func TestForwardedAccountKeepsDaemonNameResolution(t *testing.T) {
 	require.Error(err, "an unknown virtual account key is rejected before the daemon")
 	assert.Contains(err.Error(), "account not found")
 }
+
+func TestAccountNamedBySourceDisplayNameSelectsTheSource(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	// An IMAP source's identifier is its connection URL, and its display
+	// name is the mailbox address, which is also a confirmed identity.
+	imap := query.AccountInfo{ID: 1, Identifier: "imaps://me%40example.com@imap.example.com:993", DisplayName: "me@example.com", SourceType: "imap"}
+	engine := &querytest.MockEngine{
+		Accounts: []query.AccountInfo{imap},
+		VirtualAccounts: map[int64][]store.VirtualAccount{1: {
+			{Key: store.VirtualIdentityKey(1, "me@example.com"), SourceID: 1, AccountAddress: "me@example.com"},
+		}},
+	}
+	h := &handlers{engine: engine}
+
+	name, scopes, err := h.resolveForwardedAccount(t.Context(), "Me@Example.com")
+	require.NoError(err)
+	assert.Equal("Me@Example.com", name, "the daemon resolves a source name itself")
+	assert.Empty(scopes, "a source name never becomes an address scope")
+
+	selection, err := h.resolveAccount(t.Context(), "me@example.com")
+	require.NoError(err)
+	require.NotNil(selection.sourceID)
+	assert.Equal(int64(1), *selection.sourceID)
+	assert.Nil(selection.scope, "the whole source, not the address on every source")
+
+	// Two sources sharing a display name: the daemon decides, local tools refuse.
+	engine.Accounts = append(engine.Accounts, query.AccountInfo{ID: 2, Identifier: "imaps://other@imap.example.com:993", DisplayName: "me@example.com", SourceType: "imap"})
+	name, _, err = h.resolveForwardedAccount(t.Context(), "me@example.com")
+	require.NoError(err)
+	assert.Equal("me@example.com", name)
+	_, err = h.resolveAccount(t.Context(), "me@example.com")
+	require.Error(err)
+	assert.Contains(err.Error(), "matches multiple sources")
+}

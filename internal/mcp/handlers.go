@@ -642,8 +642,9 @@ func translateVectorErr(err error) *toolResult {
 
 // getAccountID looks up a source ID by its identifier, preferring an exact
 // match and otherwise ignoring letter case, so "Me@gmail.com" names the same
-// source as "me@gmail.com". Returns nil if account is empty (no filter), or an
-// error if not found.
+// source as "me@gmail.com"; failing that, by its display name, which for an
+// IMAP source is often its mailbox address. Returns nil if account is empty
+// (no filter), or an error if not found.
 func (h *handlers) getAccountID(ctx context.Context, account string) (*int64, error) {
 	if account == "" {
 		return nil, nil //nolint:nilnil // empty input -> no filter, not an error
@@ -652,13 +653,16 @@ func (h *handlers) getAccountID(ctx context.Context, account string) (*int64, er
 	if err != nil {
 		return nil, newInternalError("list accounts", err)
 	}
-	for _, same := range []func(string) bool{
-		func(identifier string) bool { return identifier == account },
-		func(identifier string) bool { return strings.EqualFold(identifier, account) },
+	for _, same := range []func(query.AccountInfo) bool{
+		func(acc query.AccountInfo) bool { return acc.Identifier == account },
+		func(acc query.AccountInfo) bool { return strings.EqualFold(acc.Identifier, account) },
+		func(acc query.AccountInfo) bool {
+			return acc.DisplayName != "" && strings.EqualFold(acc.DisplayName, account)
+		},
 	} {
 		var matched *int64
 		for _, acc := range accounts {
-			if !same(acc.Identifier) {
+			if !same(acc) {
 				continue
 			}
 			if matched != nil {

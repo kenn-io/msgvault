@@ -465,7 +465,7 @@ func searchMessagesOutputSchema() *jsonschema.Schema {
 }
 
 func accountProperty() *jsonschema.Schema {
-	return stringSchema("Filter by account: a source email in any letter case (the whole source), a virtual account key from get_stats (identity:... or unattributed:...), or another confirmed address (mail attributed to it on every source)")
+	return stringSchema("Filter by account: a source email or display name in any letter case (the whole source), a virtual account key from get_stats (identity:... or unattributed:...), or another confirmed address (mail attributed to it on every source)")
 }
 
 func afterProperty() *jsonschema.Schema {
