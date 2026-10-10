@@ -605,7 +605,6 @@ func TestMediaSearchSharedSourceAllowedInputs(t *testing.T) {
 		partial           bool
 	}{
 		{"caption A only", 0, 1, true}, {"neither caption", 0, 1, true}, {"caption B", 1, 1, true},
-		{"64 inputs", 0, 0, false}, {"65 inputs", 0, 0, false},
 		{"generated", 2, 0, false}, {"generated nohit", 0, 0, false}, {"partial generated", 0, 0, true}, {"degraded provenance", 0, 0, true}, {"late caption", 0, 2, true}, {"hide unmatched", 0, 0, true}, {"hide selected", 0, 1, true}, {"no-hit bytes", 0, 1, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -618,37 +617,6 @@ func TestMediaSearchSharedSourceAllowedInputs(t *testing.T) {
 			f.transcripts["second-input"] = "caption B"
 			secondID := f.message(t, "second-input")
 			second := f.audio(t, secondID, "second-input", "", "delivery-second-input", &store.BeeperMediaResult{VaultUID: "vault", DocbankSourceID: first.sourceID, ContentVersionID: first.contentVersionID})
-			if test.name == "64 inputs" || test.name == "65 inputs" {
-				count := 64
-				if test.name == "65 inputs" {
-					count = 65
-				}
-				inputs := []string{first.suppliedInputID, second.suppliedInputID}
-				for i := 2; i < count; i++ {
-					id := fmt.Sprintf("caption-%d", i)
-					f.transcripts[id] = id
-					f.sameAudio[id] = "first-input"
-					seed := f.audio(t, f.message(t, id), id, "", "delivery-"+id, &store.BeeperMediaResult{VaultUID: "vault", DocbankSourceID: first.sourceID, ContentVersionID: first.contentVersionID})
-					inputs = append(inputs, seed.suppliedInputID)
-				}
-				// A repeated caption on another occurrence uses the same allowed input.
-				f.transcripts["duplicate"] = "caption A"
-				f.sameAudio["duplicate"] = "first-input"
-				f.audio(t, f.message(t, "duplicate"), "duplicate", "", "delivery-first-input", &store.BeeperMediaResult{VaultUID: "vault", DocbankSourceID: first.sourceID, ContentVersionID: first.contentVersionID})
-				status, _, raw := searchMediaFor(t, f.server(true), "q=words")
-				if count == 65 {
-					require.Equal(http.StatusBadRequest, status, raw)
-					assert.Contains(raw, "media_search_scope_limit")
-					assert.Contains(raw, "64 distinct current captions per recording source")
-					assert.Empty(f.requests)
-					return
-				}
-				require.Equal(http.StatusOK, status, raw)
-				require.Len(f.requests, 1)
-				require.Len(f.requests[0].MediaSources, 1)
-				assert.ElementsMatch(inputs, f.requests[0].MediaSources[0].SuppliedInputIDs)
-				return
-			}
 			source := docbankmedia.SearchMediaSource{SourceID: first.sourceID, SourceVersionID: "version", ContentVersionID: first.contentVersionID}
 			selection := docbankmedia.SearchMediaSelection{SearchMediaSource: source, Origin: "supplied", SuppliedInputID: second.suppliedInputID, Completeness: "complete"}
 			if strings.HasPrefix(test.name, "generated") || test.name == "partial generated" || test.name == "degraded provenance" {
@@ -692,6 +660,73 @@ func TestMediaSearchSharedSourceAllowedInputs(t *testing.T) {
 			assert.Equal(test.partial, response.Partial)
 			if test.name == "caption B" {
 				assert.Equal(second.messageID, response.Results[0].MessageID)
+			}
+		})
+	}
+}
+
+func TestMediaSearchSuppliedInputLimit(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		inputs   int
+		ordinary bool
+	}{
+		{"64 inputs", 64, false},
+		{"65 inputs and ordinary recording", 65, true},
+		{"65 inputs alone", 65, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			f := newMediaSearchFixture(t)
+			f.transcripts["first-input"] = "caption A"
+			first := f.retained(t, "first-input")
+			inputs := []string{first.suppliedInputID}
+			for i := 1; i < test.inputs; i++ {
+				id := fmt.Sprintf("caption-%d", i)
+				f.transcripts[id] = id
+				f.sameAudio[id] = "first-input"
+				seed := f.audio(t, f.message(t, id), id, "", "delivery-"+id, &store.BeeperMediaResult{VaultUID: "vault", DocbankSourceID: first.sourceID, ContentVersionID: first.contentVersionID})
+				f.deliver(t, "delivery-"+id, "succeeded")
+				inputs = append(inputs, seed.suppliedInputID)
+			}
+			// A repeated caption on another occurrence uses the same allowed input.
+			f.transcripts["duplicate"] = "caption A"
+			f.sameAudio["duplicate"] = "first-input"
+			f.audio(t, f.message(t, "duplicate"), "duplicate", "", "delivery-first-input", &store.BeeperMediaResult{VaultUID: "vault", DocbankSourceID: first.sourceID, ContentVersionID: first.contentVersionID})
+			selected := first
+			if test.ordinary {
+				selected = f.match(t, "ordinary")
+			}
+			if test.inputs == 64 {
+				f.report.MediaSelections = []docbankmedia.SearchMediaSelection{{SearchMediaSource: docbankmedia.SearchMediaSource{SourceID: first.sourceID, SourceVersionID: "version", ContentVersionID: first.contentVersionID}, Origin: "supplied", SuppliedInputID: first.suppliedInputID, Completeness: "complete"}}
+			}
+			status, response, raw := searchMediaFor(t, f.server(true), "q=words")
+			require.Equal(http.StatusOK, status, raw)
+			if test.inputs == 65 {
+				assert.Equal(test.inputs+1, response.UnavailableOccurrences)
+				assert.True(response.Partial)
+			} else {
+				assert.Zero(response.UnavailableOccurrences)
+			}
+			assert.Zero(response.PendingOccurrences)
+			if test.inputs == 65 && !test.ordinary {
+				assert.Empty(f.requests)
+				assert.Equal(1, f.validated)
+				assert.Empty(response.Results)
+				return
+			}
+			assert.Zero(f.validated)
+			require.Len(f.requests, 1)
+			assert.Equal([]string{selected.contentVersionID}, f.requests[0].Fence.ContentVersionIDs)
+			require.Len(f.requests[0].MediaSources, 1)
+			assert.Equal(docbankmedia.SearchMediaSource{SourceID: selected.sourceID, SourceVersionID: "version", ContentVersionID: selected.contentVersionID}, f.requests[0].MediaSources[0].SearchMediaSource)
+			if test.ordinary {
+				assert.Equal([]string{selected.suppliedInputID}, f.requests[0].MediaSources[0].SuppliedInputIDs)
+				require.Len(response.Results, 1)
+				assert.Equal(selected.messageID, response.Results[0].MessageID)
+			} else {
+				assert.ElementsMatch(inputs, f.requests[0].MediaSources[0].SuppliedInputIDs)
 			}
 		})
 	}
