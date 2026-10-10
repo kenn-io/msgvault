@@ -778,6 +778,48 @@ checkpoint and deletion semantics.
 
 ---
 
+## add-omi
+
+Validate Omi conversation and transcript access and register a configured
+hosted or self-hosted account.
+
+```bash
+msgvault add-omi [identifier]
+```
+
+Reads the Developer API key and backend root from the matching `[[omi]]` entry.
+With one entry, the identifier can be omitted. Registration confirms the
+configured primary account email. See [Omi setup](usage/meetings.md#omi).
+
+## sync-omi
+
+Archive accessible Omi conversations, summaries, and transcripts. Each source gets a resumable pass of up to five minutes. Run the same command again to continue its saved creation-date window. A provider cooldown reports when requests can resume.
+
+```bash
+msgvault sync-omi [identifier]
+msgvault sync-omi --limit 5
+msgvault sync-omi --full --after 2026-01-01
+```
+
+With no identifier, syncs all configured entries. After the first sync, each
+run reads conversations created since the last complete sync plus a 48-hour
+overlap; unchanged snapshots skip archive writes. Scheduled runs require a
+registered source and never recreate a removed source.
+
+| Flag | Default | Description |
+|---|---|---|
+| `--limit` | `0` | Maximum conversations processed, including unchanged records; zero is unlimited; negative values are rejected |
+| `--full` | `false` | Rescan all history, picking up edits to older conversations, and rewrite derived projections in place |
+| `--after` | empty | Inclusive creation-date bound in UTC (`YYYY-MM-DD`); implies `--full` |
+| `--build-cache` | `false` | Queue a cache refresh after the sync, even when automatic builds are disabled or the minimum rebuild interval has not elapsed |
+| `--no-build-cache` | `false` | Skip the post-sync cache refresh |
+
+The cache flags are mutually exclusive. By default, the daemon queues a
+background refresh when `[analytics].auto_build_cache` is enabled.
+
+See [Omi coverage limits](usage/meetings.md#omi-coverage-limits) for backend filtering,
+pagination, and rate limits.
+
 ## add-granola
 
 Register a configured Granola account and validate its API key with a live

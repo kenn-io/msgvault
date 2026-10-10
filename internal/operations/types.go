@@ -72,13 +72,14 @@ const (
 	StateRunning   State = "running"
 	StateSucceeded State = "succeeded"
 	StatePartial   State = "partial"
+	StatePaused    State = "paused"
 	StateFailed    State = "failed"
 	StateCancelled State = "cancelled"
 )
 
 func (s State) Validate() error {
 	switch s {
-	case StateQueued, StateRunning, StateSucceeded, StatePartial, StateFailed, StateCancelled:
+	case StateQueued, StateRunning, StateSucceeded, StatePartial, StatePaused, StateFailed, StateCancelled:
 		return nil
 	default:
 		return fmt.Errorf("invalid operation state %q", s)
@@ -641,6 +642,8 @@ func ProjectSourceState(
 			return StatePartial, newPublicError(PublicErrorSourceSyncFailed), nil
 		}
 		return StateFailed, newPublicError(PublicErrorSourceSyncFailed), nil
+	case "paused":
+		return StatePaused, nil, nil
 	case "cancelled":
 		return StateCancelled, nil, nil
 	default:
@@ -842,12 +845,12 @@ func validateRunStateAndError(
 			if publicError != nil {
 				return fmt.Errorf("source sync state %q cannot carry a public error", state)
 			}
-		case StateSucceeded:
+		case StateSucceeded, StatePaused:
 			if publicError != nil {
 				return fmt.Errorf("source sync state %q cannot carry a public error", state)
 			}
 			if itemErrors != 0 {
-				return errors.New("succeeded source sync cannot have item errors")
+				return fmt.Errorf("source sync state %q cannot have item errors", state)
 			}
 		case StatePartial:
 			if publicError == nil {

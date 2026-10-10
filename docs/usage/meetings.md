@@ -1,7 +1,7 @@
 ---
 last_edited: "2026-10-08"
 title: Meeting Transcripts
-description: Archive call recordings, AI meeting notes, and transcripts from Twilio, Granola, Plaud, Circleback, Notion, Muesli, and Twenty into your searchable local archive.
+description: Archive call recordings, AI meeting notes, and transcripts from Omi, Twilio, Granola, Plaud, Circleback, Notion, Muesli, and Twenty into your searchable local archive.
 ---
 
 Find meeting decisions and transcripts in the same archive as your email and
@@ -13,6 +13,7 @@ emails connect meetings to the people you already know in msgvault.
 
 | Source | Connection | Main coverage limit |
 |---|---|---|
+| [Omi](#omi) | Developer API key | Completed, non-discarded, unlocked conversations exposed by the backend |
 | [Twilio](#twilio) (unreleased) | Account auth token or API key | Recordings and transcripts Twilio still retains |
 | [Granola](#granola) | API key | Requires access to Granola's public API |
 | [Notion AI Meeting Notes](#notion-ai-meeting-notes) | Meeting PAT or integration, optional users integration | At most 50 attendee-visible meetings per discovery query |
@@ -23,7 +24,7 @@ emails connect meetings to the people you already know in msgvault.
 | [Another meeting source](#import-from-any-meeting-source) | Authenticated JSON import | Your integration supplies each meeting and its updates |
 
 Provider sync reads meeting data without changing the source service. Recording
-media is not downloaded by the Notion, Plaud, Circleback, Muesli, or Twenty integrations.
+media is not downloaded by the Omi, Notion, Plaud, Circleback, Muesli, or Twenty integrations.
 
 ## Browse and search
 
@@ -68,7 +69,7 @@ Action status is the last archived source status, not a local task list.
 msgvault does not infer assignees, create follow-ups, or mark source tasks done.
 Supported empty action lists, unsupported sources, unavailable evidence, and
 partial evidence remain distinct. Granola and Twenty have no structured action support;
-Circleback and generic imports preserve explicit actions; Notion exposes
+Omi, Circleback, and generic imports preserve explicit actions; Notion exposes
 checkboxes from archived summary and notes blocks. A Notion checkbox does not
 supply an assignee merely because a name appears in its text.
 
@@ -230,7 +231,7 @@ rejects a missing or invalid value with guidance to preserve the source label
 and add the account email separately. Plaud validates this against the live
 account; it does not assume the account owner organized every recording.
 
-`add-granola`, `add-plaud`, `add-circleback`, `add-notion-meetings`, and
+`add-omi`, `add-granola`, `add-plaud`, `add-circleback`, `add-notion-meetings`, and
 `add-muesli` always confirm the primary email for their source. Add other confirmed aliases with the identity command:
 
 ```bash
@@ -339,6 +340,121 @@ use RFC 3339 with an explicit offset, request bodies are limited to 16 MiB, and
 provider-specific fields belong under `meeting.metadata`. These sources are
 on-demand: import through the API again to add or update meetings rather than
 using **Sync now** or a scheduler.
+
+## Omi
+
+Archive conversations from Omi's hosted service, including paid accounts, or
+from your own Omi backend. This integration uses the read-only
+[Developer API](https://docs.omi.me/doc/developer/api/conversations).
+Create a Developer API key with `conversations:read` in **Settings → Developer**
+on the account and backend that hold your conversations. MCP keys (`omi_mcp_…`)
+do not authenticate this REST API.
+
+Add an entry to `config.toml`:
+
+```toml
+[[omi]]
+identifier = "omi-personal"
+account_email = "you@example.com"
+api_key = "omi_dev_..."
+enabled = true
+schedule = "0 */6 * * *"
+# For a self-hosted backend, uncomment and set its root URL:
+# base_url = "http://localhost:8000"
+```
+
+Keep the key private. For self-hosting, use the backend URL reachable from the
+msgvault daemon. A reverse-proxy path prefix is allowed; omit `/v1/dev`.
+Use HTTPS for non-loopback backends; plain HTTP is accepted only for loopback
+hosts such as `localhost`, `127.0.0.1`, or `[::1]`.
+An omitted `base_url` uses `https://api.omi.me`. Hosted and self-hosted accounts
+can coexist as separate entries with different identifiers and keys. Register
+and validate each source, then sync:
+
+```bash
+msgvault add-omi omi-personal
+msgvault sync-omi omi-personal --limit 5
+msgvault sync-omi omi-personal
+```
+
+Registration spends one transcript-list request and may wait for shared pacing or a provider cooldown.
+
+Each conversation becomes a meeting with its summary, action descriptions,
+completion status, due dates, and timestamped speaker transcript when available.
+Omi's Developer API returns a smaller projection than its backend records. It
+does not include note sections, attendee rosters, action owner names or action
+IDs. The original returned JSON, including fields msgvault does not project, stays in the archive.
+
+Speaker names and IDs provide display labels. Omi supplies no verified attendee emails, so these labels do not create email identities. The configured account email records archive ownership; it does not establish who organized the meeting or mean that Omi verified the address.
+
+### How Omi sync runs
+
+Omi allows 25 transcript list requests per hour per API key, and each request
+returns up to 200 conversations. msgvault spaces these requests about 144
+seconds apart. Scheduled syncs, manual commands, and every source that uses
+the same key and backend share that spacing.
+
+- **First sync.** The first scan reads all accessible history. Each page of 200
+  needs two requests: one reads ahead and one confirms the page did not shift.
+  A 10,000-conversation archive needs about 100 requests, or roughly four hours.
+- **Later syncs.** Later scans read conversations created since the last
+  complete scan, plus a 48-hour overlap that catches late processing and recent
+  edits. Unchanged conversations are not rewritten.
+- **Passes.** Each source syncs in passes of up to five minutes. A pass saves
+  its place, and the next pass continues the same scan with the same options
+  and date range. Conversations created during a scan arrive in the next one.
+  With several sources, `sync-omi` moves on to the next source when a pass pauses.
+- **Paused passes.** A pass that runs out of time, yields to other archive
+  work, or waits on a provider cooldown shows as **Paused** in Sources and
+  Operations. It keeps its checkpoint and records no error. A scheduled pass
+  that saved progress continues right away; a cooldown waits for the next
+  scheduled trigger.
+- **Cooldowns.** When Omi returns HTTP 429, msgvault waits for its
+  `Retry-After` delay, up to 24 hours, or one hour when the header is missing or
+  malformed. Cooldowns survive restarts and apply to every process using the
+  key. A manual sync reports when requests can resume.
+- **Server errors.** If the backend keeps returning HTTP 5xx errors until the
+  pass ends, the sync is recorded as failed with the HTTP status. The next run
+  resumes from the saved checkpoint.
+
+An enabled entry with a schedule supports daemon sync and **Sync Now**.
+
+### Rescans and scan flags
+
+Omi has no updated-since filter. Run `sync-omi --full` to pick up edits to
+conversations older than the 48-hour overlap, or conversations that become
+visible later with an older creation date.
+
+- `--after YYYY-MM-DD` limits the scan to conversations created on or after
+  that date and implies `--full`.
+- `--limit N` caps processed conversations, including unchanged ones.
+- Runs with either flag keep the creation watermark that later syncs start from.
+- Passing any scan flag explicitly, even `--limit=0` or `--full=false`, replaces
+  an unfinished scan whose options differ, and the command reports the replacement.
+
+### Omi coverage limits
+
+- The Developer API returns completed conversations that are not discarded or
+  locked.
+- Omi removes locked and malformed records after paging. If it removes an
+  entire page, older accessible conversations behind that page can be missed.
+  Run `sync-omi --full` after older records become accessible.
+- If a conversation is deleted or discarded between requests, msgvault detects
+  the shifted page and restarts paging from the last confirmed conversation.
+- Conversations without a transcript, including title-only records, are
+  archived with transcript coverage marked unavailable. If a later response
+  omits a transcript msgvault already archived, msgvault keeps the archived
+  record and says so in the sync output.
+- An explicit empty transcript is valid. Blank speech is skipped. Speech with
+  missing, reversed, or negative timestamps is kept without a timestamp.
+- A conversation with malformed field types stops the scan. Meetings already
+  saved are kept, and the next run retries the saved page.
+- Recording media and photos stay at Omi. Archived meetings remain after they
+  are deleted upstream.
+
+Use a new source identifier for a different account or backend dataset. When
+you rotate the key for the same account, keep the identifier so the sync keeps
+its saved progress.
 
 ## Twilio
 

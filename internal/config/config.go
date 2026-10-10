@@ -26,6 +26,7 @@ import (
 	"go.kenn.io/msgvault/internal/fileutil"
 	"go.kenn.io/msgvault/internal/identityops"
 	"go.kenn.io/msgvault/internal/netguard"
+	"go.kenn.io/msgvault/internal/omi"
 	"go.kenn.io/msgvault/internal/peoplesweep"
 	"go.kenn.io/msgvault/internal/personenrichment"
 	"go.kenn.io/msgvault/internal/personmatch"
@@ -543,6 +544,7 @@ type Config struct {
 	Beeper             BeeperConfig                    `toml:"beeper"`
 	Matrix             MatrixConfig                    `toml:"matrix"`
 	Slack              SlackConfig                     `toml:"slack"`
+	Omi                []OmiSource                     `toml:"omi"`
 	Granola            []GranolaSource                 `toml:"granola"`
 	Plaud              []PlaudSource                   `toml:"plaud"`
 	Circleback         []CirclebackSource              `toml:"circleback"`
@@ -1878,6 +1880,40 @@ func (c *Config) ScheduledGCalSources() []GCalSource {
 	return out
 }
 
+// OmiSource configures a hosted or self-hosted Omi Developer API account.
+type OmiSource struct {
+	Identifier   string `toml:"identifier"`
+	AccountEmail string `toml:"account_email"`
+	APIKey       string `toml:"api_key"`
+	BaseURL      string `toml:"base_url"`
+	Schedule     string `toml:"schedule"`
+	Enabled      bool   `toml:"enabled"`
+}
+
+func (s OmiSource) EffectiveAccountEmail() (string, error) {
+	return effectiveMeetingAccountEmail("omi", s.Identifier, s.AccountEmail)
+}
+
+func (c *Config) GetOmiSource(identifier string) *OmiSource {
+	for _, src := range c.Omi {
+		if strings.EqualFold(src.Identifier, identifier) {
+			cp := src
+			return &cp
+		}
+	}
+	return nil
+}
+
+func (c *Config) ScheduledOmiSources() []OmiSource {
+	var out []OmiSource
+	for _, src := range c.Omi {
+		if src.Enabled && src.Schedule != "" {
+			out = append(out, src)
+		}
+	}
+	return out
+}
+
 // GranolaSource is one configured Granola account. Each entry is a top-level
 // [[granola]] table.
 type GranolaSource struct {
@@ -2039,6 +2075,9 @@ func normalizedMeetingAccountEmail(value string) (string, bool) {
 // single entry with no identifier becomes "default" so the CLI argument can
 // be omitted in the common one-account case.
 func (c *Config) applyMeetingSourceDefaults() {
+	if len(c.Omi) == 1 && c.Omi[0].Identifier == "" {
+		c.Omi[0].Identifier = "default"
+	}
 	if len(c.Plaud) == 1 && c.Plaud[0].Identifier == "" {
 		c.Plaud[0].Identifier = "default"
 	}
@@ -2099,6 +2138,25 @@ func (c *Config) validateMeetingSources() error {
 			return fmt.Errorf("[[twenty]] identifier %q: %w", c.Twenty[i].Identifier, err)
 		}
 		c.Twenty[i].BaseURL = baseURL
+	}
+	omiIDs := make([]string, len(c.Omi))
+	for i, src := range c.Omi {
+		omiIDs[i] = src.Identifier
+	}
+	if err := check("omi", omiIDs); err != nil {
+		return err
+	}
+	for i := range c.Omi {
+		email, err := c.Omi[i].EffectiveAccountEmail()
+		if err != nil {
+			return err
+		}
+		c.Omi[i].AccountEmail = email
+		endpoint, err := omi.NormalizeBaseURL(c.Omi[i].BaseURL)
+		if err != nil {
+			return fmt.Errorf("[[omi]] entry %q: %w", c.Omi[i].Identifier, err)
+		}
+		c.Omi[i].BaseURL = endpoint
 	}
 	granolaIDs := make([]string, len(c.Granola))
 	for i, s := range c.Granola {

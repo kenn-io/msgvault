@@ -50,7 +50,7 @@ attachments alongside the records you browse.
   EML imports.
 - **Chat** — Matrix, Slack, Teams, Discord, and chats available through Beeper Desktop;
   WhatsApp, iMessage, Google Voice, Messenger, and SMS imports.
-- **Meetings** — Granola, Plaud, Circleback, Notion AI Meeting Notes, and Muesli
+- **Meetings** — Granola, Plaud, Circleback, Omi, Notion AI Meeting Notes, and Muesli
   in the same searchable record.
 - **Calendar** — Google Calendar events, organizers, and attendees, read-only.
 - **Contacts** — import contacts from a CardDAV address book and choose which

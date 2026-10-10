@@ -119,6 +119,8 @@ schema fail before issuing archive requests. The HTTP prefix remains `/api/v1`.
 This schema also adds consented identity scoring. See
 [identity match review and scoring](#identity-match-review-and-scoring).
 
+Schema 3.9.0 adds `paused` source syncs to operation history and its state filter.
+
 Schema 3.4.0 adds [Kata issues from archive evidence](usage/kata-issues.md).
 It also adds the `microsoft` CardDAV account provider, the
 `microsoft_authorization_required` CardDAV error and repair codes, and the

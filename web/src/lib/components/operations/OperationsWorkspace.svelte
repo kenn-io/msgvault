@@ -79,6 +79,7 @@
     { value: 'running', label: 'Running' },
     { value: 'succeeded', label: 'Succeeded' },
     { value: 'partial', label: 'Partial' },
+    { value: 'paused', label: 'Paused' },
     { value: 'failed', label: 'Failed' },
     { value: 'cancelled', label: 'Cancelled' }
   ];

@@ -4349,6 +4349,7 @@ func TestSchedulerJobNameForSource(t *testing.T) {
 		{"gcal", gcal.SourceType, "alice@example.com/primary", "gcal:alice@example.com", true},
 		{"gcal no calendar id", gcal.SourceType, "alice@example.com", "", false},
 		{"granola", granola.SourceType, "acct-1", "granola:acct-1", true},
+		{"omi", "omi", "omi-work", "omi:omi-work", true},
 		{"circleback", circleback.SourceType, "acct-2", "circleback:acct-2", true},
 		{"notion meetings", notionmeetings.SourceType, "acct-3", "notion-meetings:acct-3", true},
 		{"muesli", muesli.SourceType, "mac", "muesli:mac", true},
@@ -8976,4 +8977,40 @@ func TestOperationGateStillGatesAccountSyncTrigger(t *testing.T) { //nolint:para
 	resp := servePOSTTestRequest(srv, "/api/v1/sync/test@gmail.com")
 
 	require.Equal(http.StatusServiceUnavailable, resp.Code, resp.Body.String())
+}
+
+func TestHandleSourceStatusPaused(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	src, err := st.GetOrCreateSource("omi", "synthetic-paused")
+	require.NoError(err)
+	complete, err := st.StartSync(src.ID, "omi")
+	require.NoError(err)
+	require.NoError(st.CompleteSync(complete, "synthetic-watermark"))
+	paused, err := st.StartSync(src.ID, "omi")
+	require.NoError(err)
+	require.NoError(st.PauseSyncWithCheckpoint(paused, &store.Checkpoint{PageToken: "synthetic-checkpoint", MessagesProcessed: 3, MessagesAdded: 2}))
+	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, newMockScheduler(), testLogger())
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/sources/status?source_type=omi", nil))
+	require.Equal(http.StatusOK, w.Code)
+	var response SourceStatusResponse
+	require.NoError(json.NewDecoder(w.Body).Decode(&response))
+	require.Len(response.Sources, 1)
+	got := response.Sources[0]
+	assert.Nil(got.ActiveSync)
+	require.NotNil(got.LatestSync)
+	assert.Equal(store.SyncStatusPaused, got.LatestSync.Status)
+	assert.Empty(got.LatestSync.ErrorMessage)
+	assert.Zero(got.LatestSync.ErrorsCount)
+	require.NotNil(got.LastSuccessfulSync)
+	assert.Equal(complete, got.LastSuccessfulSync.ID)
+	operationServer := newOperationTestServer(st, &operationArchiveRealStore{Store: st, uid: operationTestArchiveUID})
+	history := doGet(operationServer, "/api/v1/operations/runs?state=paused&limit=25")
+	require.Equalf(http.StatusOK, history.Code, "%s", history.Body.String())
+	var runs OperationRunsResponse
+	require.NoError(json.Unmarshal(history.Body.Bytes(), &runs))
+	require.Len(runs.Runs, 1)
+	assert.Equal("paused", string(runs.Runs[0].State))
 }
