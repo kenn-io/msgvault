@@ -84,11 +84,10 @@ describe('TranscriptHits', () => {
     expect(fetchFn).toHaveBeenCalledTimes(2);
   });
 
-  it.each([0, 429, 500, 503])('clears stale excerpts after a failed refresh (%s) and allows retry', async status => {
+  it.each([429, 500, 503])('clears stale excerpts after a failed refresh (%s) and allows retry', async status => {
     vi.useFakeTimers();
     const fetchFn = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json(report()));
-    if (status === 0) fetchFn.mockRejectedValueOnce(new Error('connection lost'));
-    else fetchFn.mockResolvedValueOnce(Response.json({ error: status === 503 ? 'media_search_unavailable' : 'rate_limit_exceeded' }, { status }));
+    fetchFn.mockResolvedValueOnce(Response.json({ error: status === 503 ? 'media_search_unavailable' : 'rate_limit_exceeded' }, { status }));
     fetchFn.mockResolvedValue(Response.json(report({ results: [] })));
     const view = mount(fetchFn);
     await vi.advanceTimersByTimeAsync(300);

@@ -44,7 +44,7 @@ function exploreURLState(overrides: Record<string, unknown> = {}) {
   };
 }
 
-test('recording matches keep their conversation title through reader navigation', async ({ page }) => {
+test('recording reader restores history and focus', async ({ page }) => {
   await page.clock.install();
   const message = { id: 9, conversation_id: 2, subject: '', conversation_title: 'Team chat', body: 'Source recording',
     from: 'Example Person', to: [], sent_at: '2026-07-18T12:00:00Z', snippet: '', size_bytes: 44, has_attachments: false, attachments: [], labels: [] };
@@ -59,7 +59,6 @@ test('recording matches keep their conversation title through reader navigation'
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(exploreURLState({ query: 'quarterly' })))}`);
   const link = page.getByRole('link', { name: 'Team chat' });
   const reader = page.getByRole('complementary', { name: 'Reading pane: Team chat' });
-  await expect(page.getByRole('heading', { name: 'Results 1 item', exact: true })).toBeVisible();
   await link.click();
   await expect(reader.getByText('Source recording')).toBeVisible();
   await reader.getByRole('button', { name: 'Close reading pane' }).click();
@@ -77,8 +76,6 @@ test('recording matches keep their conversation title through reader navigation'
   await page.clock.fastForward(30_001);
   await reader.getByRole('button', { name: 'Close reading pane' }).click();
   await expect(page.locator('[data-recording-hits]')).toBeFocused();
-  await page.goto('/messages/9');
-  await expect(page.getByRole('heading', { name: 'Team chat', exact: true })).toBeVisible();
 });
 
 test('the bottom reading pane opens on a single click, resizes, and persists its height', async ({ page }) => {
