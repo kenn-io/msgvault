@@ -2214,6 +2214,10 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	}
 	s.fts5Available = available
 
+	if err := s.ensureMetadataFTS(ctx, available); err != nil {
+		return fmt.Errorf("initialize metadata substring index: %w", err)
+	}
+
 	if err := s.EnsureSeededAttributeDefinitionsContext(ctx); err != nil {
 		return fmt.Errorf("ensure seeded attribute definitions: %w", err)
 	}

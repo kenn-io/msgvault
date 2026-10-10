@@ -289,6 +289,30 @@ without an accelerator, embedding calls, or HTTP result projection. Use the
 request timing headers to determine which phase needs attention on a real
 archive before comparing it with this narrower benchmark.
 
+### SQLite metadata substring search
+
+Compare indexed candidates with the historical scan on one generated
+20,000-message archive:
+
+```bash
+go test -tags 'fts5 sqlite_vec' ./internal/query -run '^$' \
+  -bench '^BenchmarkMetadataSubstring$' -benchtime=3x -count=3 -benchmem
+```
+
+Setup and index maintenance are excluded. The benchmark covers rare subject,
+participant, and recipient-name matches, common terms, short terms, and
+common-term narrow-date counts. The scoped case keeps the existing date query
+path. Use the same machine and corpus for comparisons; these numbers
+do not predict latency on a larger archive.
+
+The built-in fuzz target compares ordered pages, exact counts, and stats with
+the original substring predicate over generated metadata:
+
+```bash
+go test -tags 'fts5 sqlite_vec' ./internal/query -run '^$' \
+  -fuzz '^FuzzMetadataSearchParity$' -fuzztime=30s -parallel=2
+```
+
 ## Evaluate search quality
 
 Use [`msgvault eval`](cli-reference.md#eval) to compare keyword, semantic, and

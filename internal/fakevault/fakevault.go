@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"go.kenn.io/msgvault/internal/sqliteutil"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -144,7 +145,7 @@ func Generate(ctx context.Context, opts Options) (*Summary, error) {
 	if err := initSchema(dbPath); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_synchronous=OFF&_foreign_keys=ON")
+	db, err := sql.Open(sqliteutil.DriverName(), dbPath+"?_journal_mode=WAL&_synchronous=OFF&_foreign_keys=ON")
 	if err != nil {
 		return nil, fmt.Errorf("fakevault: opening database: %w", err)
 	}

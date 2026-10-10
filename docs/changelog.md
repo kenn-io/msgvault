@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-08"
+last_edited: "2026-10-09"
 title: Changelog
 description: Release history for msgvault
 ---
@@ -9,6 +9,10 @@ All notable changes to msgvault, grouped by release.
 ## Unreleased
 
 - Remote edits update source-owned values on published CardDAV imports while preserving unrelated local values. Edits that would overwrite another owner create a conflict.
+
+- SQLite [metadata searches](usage/searching.md#search-metadata) gain substring
+  indexes and a 10-second free-text deadline. Archive initialization backfills
+  metadata once; large archives need additional startup time and disk space.
 
 - Go programs can use msgvault as a library through `go.kenn.io/msgvault/pkg/archive`.
   It sets up and opens SQLite or PostgreSQL archives, runs the Slack and Discord

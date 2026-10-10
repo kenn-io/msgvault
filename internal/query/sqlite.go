@@ -26,6 +26,9 @@ type SQLiteEngine struct {
 	ftsMu      sync.Mutex
 	ftsResult  bool
 	ftsChecked bool
+
+	metadataFTSMu    sync.Mutex
+	metadataFTSReady bool
 }
 
 // NewSQLiteEngine creates a new SQLite-backed query engine.
@@ -2174,6 +2177,16 @@ func (e *SQLiteEngine) buildFilteredMetadataSearchQueryParts(
 	ctx context.Context, q *search.Query, filter MessageFilter,
 ) ([]string, []any, string) {
 	conditions, args, ftsJoin := e.buildMetadataSearchQueryParts(ctx, q)
+	if len(q.TextTerms) > 0 && !metadataSearchScoped(q, filter) && e.hasMetadataFTS(ctx) {
+		for _, term := range q.TextTerms {
+			if candidate, ok := metadataTermCandidate(term); ok {
+				conditions = append(conditions, metadataCandidateSQL)
+				for range 4 {
+					args = append(args, candidate)
+				}
+			}
+		}
+	}
 	_, filterConditions, filterArgs := e.buildFilterJoinsAndConditions(filter)
 	conditions = append(filterConditions, conditions...)
 	args = append(filterArgs, args...)
@@ -2228,8 +2241,14 @@ func (e *SQLiteEngine) SearchDeepWithStats(
 // SearchFast searches message metadata and merges MessageFilter context into
 // the query (drill-down filters, hide-deleted, etc.).
 func (e *SQLiteEngine) SearchFast(ctx context.Context, q *search.Query, filter MessageFilter, limit, offset int) ([]MessageSummary, error) {
+	ctx, cancel := e.metadataSearchContext(ctx, q)
+	defer cancel()
 	conditions, args, ftsJoin := e.buildFilteredMetadataSearchQueryParts(ctx, q, filter)
-	return e.executeSearchQuery(ctx, conditions, args, ftsJoin, limit, offset)
+	results, err := e.executeSearchQuery(ctx, conditions, args, ftsJoin, limit, offset)
+	if err = metadataSearchError(ctx, err); err != nil {
+		return nil, err
+	}
+	return results, nil
 }
 
 // executeSearchQuery runs a search query built from conditions and the
@@ -2513,8 +2532,11 @@ func ParseTimePeriodBounds(period string) (after, before time.Time, ok bool) {
 // SearchFastCount returns the total count of messages matching a search query.
 // Uses the same query logic as SearchFast to ensure consistent counts.
 func (e *SQLiteEngine) SearchFastCount(ctx context.Context, q *search.Query, filter MessageFilter) (int64, error) {
+	ctx, cancel := e.metadataSearchContext(ctx, q)
+	defer cancel()
 	conditions, args, ftsJoin := e.buildFilteredMetadataSearchQueryParts(ctx, q, filter)
-	return e.executeSearchCount(ctx, conditions, args, ftsJoin)
+	count, err := e.executeSearchCount(ctx, conditions, args, ftsJoin)
+	return count, metadataSearchError(ctx, err)
 }
 
 func (e *SQLiteEngine) executeSearchCount(ctx context.Context, conditions []string, args []any, ftsJoin string) (int64, error) {
@@ -2609,20 +2631,29 @@ func (e *SQLiteEngine) getSearchMatchStats(ctx context.Context, conditions []str
 // for messages, count, and stats so all three describe the same match set.
 func (e *SQLiteEngine) SearchFastWithStats(ctx context.Context, q *search.Query, queryStr string,
 	filter MessageFilter, statsGroupBy ViewType, limit, offset int) (*SearchFastResult, error) {
+	ctx, cancel := e.metadataSearchContext(ctx, q)
+	defer cancel()
 	conditions, args, ftsJoin := e.buildFilteredMetadataSearchQueryParts(ctx, q, filter)
 	results, err := e.executeSearchQuery(ctx, conditions, args, ftsJoin, limit, offset)
-	if err != nil {
+	if err = metadataSearchError(ctx, err); err != nil {
 		return nil, err
 	}
 
-	// Best-effort count: don't abort the search if count fails.
+	// Unrelated aggregate errors remain best-effort; cancellation and deadlines
+	// must never be reported as a successful partial search.
 	count, countErr := e.executeSearchCount(ctx, conditions, args, ftsJoin)
+	if err := metadataSearchError(ctx, countErr); errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return nil, err
+	}
 	if countErr != nil {
 		log.Printf("warning: search count failed (using -1): %v", countErr)
 		count = -1
 	}
 
-	stats, _ := e.getSearchMatchStats(ctx, conditions, args, ftsJoin)
+	stats, statsErr := e.getSearchMatchStats(ctx, conditions, args, ftsJoin)
+	if err := metadataSearchError(ctx, statsErr); errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return nil, err
+	}
 
 	return &SearchFastResult{
 		Messages:   results,
