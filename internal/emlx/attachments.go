@@ -2,7 +2,9 @@ package emlx
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"io"
 	"os"
@@ -47,17 +49,47 @@ func attachmentsDir(path string) string {
 // whose base64-encoded size would push the message past maxBytes. All other
 // bytes, including each line's ending, are preserved.
 func RestoreAttachments(raw []byte, messagePath string, maxBytes int64) ([]byte, int, error) {
+	restored, n, _, err := restoreAttachments(raw, messagePath, maxBytes)
+	return restored, n, err
+}
+
+// RestorationState says what happened to one cached attachment placeholder.
+type RestorationState string
+
+const (
+	// RestorationSupplied: the cached file filled the placeholder.
+	RestorationSupplied RestorationState = "supplied"
+	// RestorationMissing: Apple Mail has no cached file for the part.
+	RestorationMissing RestorationState = "missing"
+	// RestorationError: the cached file exists but could not be read.
+	RestorationError RestorationState = "error"
+	// RestorationSourceExcluded: the part would exceed the byte limit.
+	RestorationSourceExcluded RestorationState = "source-excluded"
+)
+
+// RestorationPart records why each supported placeholder was or was not filled.
+type RestorationPart struct {
+	Key         string
+	State       RestorationState
+	ContentHash string
+	Err         error
+}
+
+func restoreAttachments(raw []byte, messagePath string, maxBytes int64) ([]byte, int, []RestorationPart, error) {
+	return restoreSelectedAttachments(raw, messagePath, maxBytes, "")
+}
+
+// A nonempty selected key bounds restoration to one original top-level part.
+func restoreSelectedAttachments(raw []byte, messagePath string, maxBytes int64, selected string) ([]byte, int, []RestorationPart, error) {
 	if !bytes.Contains(raw, []byte(applePlaceholderHeader)) {
-		return raw, 0, nil
+		return raw, 0, nil, nil
 	}
 	attDir := attachmentsDir(messagePath)
 	if attDir == "" {
-		return raw, 0, nil
+		return raw, 0, nil, nil
 	}
 	remaining := maxBytes - int64(len(raw))
-	if remaining <= 0 {
-		return raw, 0, nil
-	}
+
 	// Split on LF and keep any CR on its line: one message can mix both
 	// endings, as when a relay folds a header it added with CRLF.
 	lines := strings.Split(string(raw), "\n")
@@ -65,21 +97,28 @@ func RestoreAttachments(raw []byte, messagePath string, maxBytes int64) ([]byte,
 	// Locate the top-level boundary in the message header.
 	hdrEnd := indexBlank(lines, 0)
 	if hdrEnd < 0 {
-		return raw, 0, nil
+		return raw, 0, nil, nil
 	}
 	boundary := findBoundary(lines[:hdrEnd])
 	if boundary == "" {
-		return raw, 0, nil
+		return raw, 0, nil, nil
 	}
 	open, closeB := "--"+boundary, "--"+boundary+"--"
 
 	var out []string
 	restored := 0
 	var restoreErr error
+	var parts []RestorationPart
 	partIndex := 0
 	i := 0
 	for i < len(lines) {
 		line := lines[i]
+		// The epilogue after the closing delimiter holds no parts, even when it
+		// contains text shaped like one. Copy it unchanged, as splitParts does.
+		if strings.TrimRight(strings.TrimSuffix(line, "\r"), " \t") == closeB {
+			out = append(out, lines[i:]...)
+			break
+		}
 		if strings.TrimSuffix(line, "\r") != open {
 			out = append(out, line)
 			i++
@@ -100,37 +139,60 @@ func RestoreAttachments(raw []byte, messagePath string, maxBytes int64) ([]byte,
 			break
 		}
 		header := lines[i:phEnd]
-		if !hasPlaceholder(header) {
+		if !hasPlaceholder(header) || (selected != "" && selected != strconv.Itoa(partIndex)) {
 			out = append(out, header...)
 			i = phEnd
 			continue
 		}
 		// Replace the encoding header, including folded continuations, to
 		// match the base64 body written below.
-		var restoredHeader []string
-		drop := false
-		for _, h := range header {
-			if !strings.HasPrefix(h, " ") && !strings.HasPrefix(h, "\t") {
-				name, _, _ := strings.Cut(h, ":")
-				drop = strings.EqualFold(name, "X-Apple-Content-Length") ||
-					strings.EqualFold(name, "Content-Transfer-Encoding")
-			}
-			if !drop {
-				restoredHeader = append(restoredHeader, h)
-			}
-		}
-		restoredHeader = append(restoredHeader, "Content-Transfer-Encoding: base64"+cr)
+		restoredHeader := attachmentHeaders(header, cr)
 		// Skip files already known to exceed the budget, then bound the read
 		// and charge its actual size in case the cache changed after Stat.
 		file, size, err := resolveAttachment(attDir, strconv.Itoa(partIndex), findFilename(header))
 		headerGrowth := len(strings.Join(restoredHeader, "\n")) - len(strings.Join(header, "\n"))
-		cost := encodedSize(size, len(cr)+1) + int64(headerGrowth)
+		// Include the separator's line ending when charging replacement bytes.
+		headerGrowth += len(cr) - len(lines[phEnd])
+		bodyEnd := phEnd + 1
+		bodyBytes := int64(0)
+		for bodyEnd < len(lines) {
+			l := strings.TrimSuffix(lines[bodyEnd], "\r")
+			if l == open || strings.TrimRight(l, " \t") == closeB {
+				break
+			}
+			bodyBytes += int64(len(lines[bodyEnd]) + 1)
+			bodyEnd++
+		}
+		if bodyEnd == len(lines) {
+			bodyBytes-- // The original final line has no LF at EOF.
+		}
+		restoredCost := func(size int64) int64 {
+			encoded := encodedSize(size, len(cr)+1)
+			if size == 0 {
+				encoded = int64(len(cr) + 1) // base64Lines still emits an empty line.
+			}
+			cost := encoded + int64(headerGrowth) - bodyBytes
+			if bodyEnd == len(lines) {
+				// Join writes no final LF when this part ends at EOF.
+				cost--
+			}
+			return cost
+		}
+		cost := restoredCost(size)
 		var content []byte
 		if err == nil && file != "" && cost <= remaining {
-			content, err = readAttachment(file, remaining-int64(headerGrowth))
-			cost = encodedSize(int64(len(content)), len(cr)+1) + int64(headerGrowth)
+			content, err = readAttachment(file, remaining-int64(headerGrowth)+bodyBytes)
+			cost = restoredCost(int64(len(content)))
 		}
 		if err != nil || file == "" || cost > remaining {
+			state := RestorationSourceExcluded
+			if file == "" {
+				state = RestorationMissing
+			}
+			if err != nil {
+				state = RestorationError
+			}
+			parts = append(parts, RestorationPart{Key: strconv.Itoa(partIndex), State: state, Err: err})
 			restoreErr = errors.Join(restoreErr, err)
 			out = append(out, header...)
 			i = phEnd
@@ -144,16 +206,38 @@ func RestoreAttachments(raw []byte, messagePath string, maxBytes int64) ([]byte,
 		for _, l := range base64Lines(content) {
 			out = append(out, l+cr)
 		}
-		i = phEnd + 1
-		for i < len(lines) {
-			if l := strings.TrimSuffix(lines[i], "\r"); l == open || l == closeB {
-				break
-			}
-			i++
-		}
+		i = bodyEnd
+		sum := sha256.Sum256(content)
+		parts = append(parts, RestorationPart{
+			Key: strconv.Itoa(partIndex), State: RestorationSupplied, ContentHash: hex.EncodeToString(sum[:]),
+		})
 		restored++
 	}
-	return []byte(strings.Join(out, "\n")), restored, restoreErr
+	return []byte(strings.Join(out, "\n")), restored, parts, restoreErr
+}
+
+// attachmentHeaders replaces placeholder and encoding headers together with
+// their folded continuations, preserving every other original header byte.
+func attachmentHeaders(header []string, cr string) []string {
+	return append(withoutEncodingHeaders(header), "Content-Transfer-Encoding: base64"+cr)
+}
+
+// withoutEncodingHeaders drops X-Apple-Content-Length and
+// Content-Transfer-Encoding, including folded continuation lines.
+func withoutEncodingHeaders(header []string) []string {
+	var out []string
+	drop := false
+	for _, h := range header {
+		if !strings.HasPrefix(h, " ") && !strings.HasPrefix(h, "\t") {
+			name, _, _ := strings.Cut(h, ":")
+			drop = strings.EqualFold(name, "X-Apple-Content-Length") ||
+				strings.EqualFold(name, "Content-Transfer-Encoding")
+		}
+		if !drop {
+			out = append(out, h)
+		}
+	}
+	return out
 }
 
 // readAttachment reads at most maxBytes+1 bytes. The extra byte ensures that

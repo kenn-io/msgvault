@@ -34,7 +34,7 @@ func TestStoreAttachment_InvalidContentHash_ReturnsError(t *testing.T) {
 		Size:        2,
 	}
 
-	err = storeAttachment(st, attachmentsDir, 1, att)
+	err = storeAttachment(st, attachmentsDir, 1, att, false)
 	require.Error(err)
 
 	// Ensure nothing was written.
@@ -76,7 +76,7 @@ func TestStoreAttachment_ComputesContentHashWhenMissing(t *testing.T) {
 		Size:        2,
 	}
 
-	require.NoError(storeAttachment(st, attachmentsDir, msgID, att), "storeAttachment")
+	require.NoError(storeAttachment(st, attachmentsDir, msgID, att, false), "storeAttachment")
 	assert.NotEmpty(att.ContentHash, "expected ContentHash to be computed")
 
 	// Ensure file + DB record exist.
@@ -121,7 +121,7 @@ func TestStoreAttachmentPreservesMIMEOccurrenceEvidence(t *testing.T) {
 			ContentID: "signature-1", PartKey: "mime:2",
 		},
 	} {
-		require.NoError(storeAttachment(st, attachmentsDir, msgID, att))
+		require.NoError(storeAttachment(st, attachmentsDir, msgID, att, false))
 	}
 
 	rows, err := st.DB().Query(`
@@ -189,7 +189,7 @@ func TestStoreAttachment_StatError_DoesNotUpsertRow(t *testing.T) {
 		Size:        len(content),
 	}
 
-	require.Error(storeAttachment(st, attachmentsDir, msgID, att))
+	require.Error(storeAttachment(st, attachmentsDir, msgID, att, false))
 
 	var count int
 	err = st.DB().QueryRow(`SELECT COUNT(*) FROM attachments WHERE message_id = ?`, msgID).Scan(&count)

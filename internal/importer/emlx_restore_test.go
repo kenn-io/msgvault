@@ -129,9 +129,9 @@ func TestImportEmlxDir_RestoredPartialRerunSkipsIngest(t *testing.T) {
 	}
 }
 
-// Skipping a restored partial still repairs missing header facts, as the
-// ordinary skip path does.
-func TestImportEmlxDir_RestoredPartialRerunRepairsHeaders(t *testing.T) {
+// A completed receipt is trusted on rerun; full reconciliation repairs header
+// facts removed from the archive behind it.
+func TestImportEmlxDir_RestoredPartialFullReconcileRepairsHeaders(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st, tmp := openTestStore(t)
@@ -158,6 +158,12 @@ func TestImportEmlxDir_RestoredPartialRerunRepairsHeaders(t *testing.T) {
 	require.Zero(summary.Errors)
 	assert.Zero(calls, "rerun must not ingest")
 	assert.Equal(int64(1), summary.MessagesSkipped)
+
+	opts.FullReconcile = true
+	summary, err = ImportEmlxDir(context.Background(), st, root, opts)
+	require.NoError(err)
+	require.Zero(summary.Errors)
+	assert.Equal(1, calls, "full reconciliation completes the target once")
 	var gotID, metadata string
 	require.NoError(st.DB().QueryRow(`SELECT rfc822_message_id, CAST(metadata AS TEXT) FROM messages WHERE id = ?`, messageID).Scan(&gotID, &metadata))
 	assert.Equal(rfcID, gotID)

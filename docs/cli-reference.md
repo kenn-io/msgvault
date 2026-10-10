@@ -1661,11 +1661,12 @@ attachments of these messages outside the MIME payload, in a sibling
 `Attachments/N/` directory. The importer restores cached attachments directly
 inside the message's outer multipart, within the message size limit.
 Attachments in nested parts, such as inside some forwarded messages, are not
-restored. An attachment without a cached file stays absent; unreadable files
-or directories produce a warning. Re-importing a partial message adds newly
-cached attachments to the existing message without creating another copy.
+restored. An attachment without a cached file stays absent. An unreadable
+cached file or directory counts as an error and leaves the `.emlx` file to be
+retried on the next import. Re-importing a partial message adds newly cached
+attachments to the existing message without creating another copy.
 When the archived message already holds every cached attachment, the rerun
-skips it instead of rewriting it. If both `N.emlx` and
+skips ingestion instead of rewriting it. If both `N.emlx` and
 `N.partial.emlx` exist, the complete `N.emlx` copy wins. The command summary
 reports the number of partial files read and how many attachments the run
 added to the archive.
@@ -1676,10 +1677,42 @@ added to the archive.
 | `--account` | — | Filter to specific account(s) during auto-discover (repeatable) |
 | `--accounts-db` | — | Custom path to macOS `Accounts4.sqlite` |
 | `--identifier` | — | Manual identifier when auto-discover is not suitable |
-| `--no-resume` | `false` | Start fresh, ignoring interrupted progress |
+| `--no-resume` | `false` | Report totals for this run only, without an interrupted run's counts; completed file receipts still apply |
+| `--full-reconcile` | `false` | Invalidate this root's receipts and reconcile every discovered file |
+| `--max-message-bytes` | `134217728` (128 MiB) | Maximum EMLX file and merged MIME size in bytes, including MIME encoding; explicit values must be 1–9223372036854775806 |
 | `--checkpoint-interval` | `200` | Save progress every N messages |
 | `--no-attachments` | `false` | Skip writing attachments to disk |
 | `--no-default-identity` | `false` | Do not auto-confirm the identifier as this source's "me" identity |
+
+On unreleased `main`, each completed `.emlx` file gets a receipt. Repeat
+imports still walk every mailbox directory and check each file's metadata,
+including its cached attachments. They skip reading files whose metadata is
+unchanged and whose message is complete; the summary reports them as
+`Unchanged`. New files are imported whatever their sent date. A message found
+in another mailbox keeps the labels it already has. Removing files from Apple
+Mail's local cache never deletes archived messages.
+
+A file is complete once its message, attachments under the current
+`--no-attachments` setting, and full-text index entry are stored. Skipping
+reads requires Linux or macOS file metadata and a path without symbolic links;
+other files are read on every import. Remote-image archiving also turns
+skipping off. Receipts trust file metadata and do not check archived content.
+Run `--full-reconcile` after you suspect stale state or change archived
+messages, attachment files or the search index directly; it re-imports every
+discovered file, including ones whose content matches the archive.
+
+Problems with one file do not fail the import. An unreadable or oversized file,
+an unreadable cached attachment, a merge over the byte limit, or a failed
+attachment or search-index write counts as an error. That file stays pending and
+is retried on the next import, and the run still completes and links replies.
+Database failures fail the run. A message whose MIME structure cannot be parsed
+is archived with its raw bytes and the headers that could be recovered, and is
+not retried.
+
+If restored attachments would exceed the merged message limit, the importer
+keeps previously archived attachments and leaves the file pending. Retry with a
+larger `--max-message-bytes` value that fits your memory. The limit applies in
+both automatic and manual account modes and only to the run that sets it.
 
 See [Importing Local Email](/docs/usage/importing/) for usage examples.
 

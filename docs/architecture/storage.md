@@ -110,6 +110,34 @@ resolved users, canonical text used for safe transcript preservation, and
 hydration warnings. Integration tokens and authorization headers are never
 part of the envelope.
 
+**source_import_items** -- Durable import receipts.
+
+On unreleased `main`, Apple Mail imports keep two kinds of rows here:
+
+- `emlx-target` rows track one archived message, which several `.emlx` files
+  can share. The importer marks the row `pending` before it writes the message,
+  its attachments or its search entry, and `imported` once all of that work
+  succeeds. The completion records the attachment and search settings it used;
+  a later import with different settings finishes the message again from its
+  archived raw. A `pending` row also names the file being written, the
+  attachments it contributes, and a digest of the new raw. If the import stops
+  before that file's row is updated, the next import that finishes the message
+  credits those attachments to the file when the archived raw matches.
+- `emlx-occurrence` rows track one `.emlx` file, keyed by a digest of the
+  import root plus the file's relative path. An `imported` row stores a
+  filesystem fingerprint of the file and its cached attachments, and a hash of
+  each attachment the file contributed. A `pending` row means the file still
+  has work to finish.
+
+A repeat import skips reading a file when its fingerprint matches and its
+message is complete. The attachment hashes stop a file from replacing an
+attachment that another file has since updated. Platforms without a supported
+fingerprint still record completed rows but always read the file.
+
+The rows reuse the existing table and the sync run's ownership check, without a
+schema migration. They are cache hints rather than integrity checks; see
+[repeat imports](../usage/importing.md#repeat-apple-mail-imports-unreleased).
+
 **participants** -- Observed addresses and handles from source data. These are
 separate from the curated `persons` table.
 
