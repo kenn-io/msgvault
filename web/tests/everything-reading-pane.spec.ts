@@ -45,6 +45,7 @@ function exploreURLState(overrides: Record<string, unknown> = {}) {
 }
 
 test('recording matches keep their conversation title through reader navigation', async ({ page }) => {
+  await page.clock.install();
   const message = { id: 9, conversation_id: 2, subject: '', conversation_title: 'Team chat', body: 'Source recording',
     from: 'Example Person', to: [], sent_at: '2026-07-18T12:00:00Z', snippet: '', size_bytes: 44, has_attachments: false, attachments: [], labels: [] };
   await page.route('**/api/session', route => route.fulfill({ json: { auth_mode: 'loopback', https: false, plain_http_warning: false } }));
@@ -75,6 +76,11 @@ test('recording matches keep their conversation title through reader navigation'
   await page.goBack();
   await expect(reader).toBeVisible();
   await expect(page.getByRole('searchbox', { name: 'Search everything' })).toHaveValue('quarterly');
+  await expect(link).toBeVisible();
+  await page.clock.fastForward(30_001);
+  await expect(page.getByText('Recording results expired.')).toBeVisible();
+  await reader.getByRole('button', { name: 'Close reading pane' }).click();
+  await expect(page.getByRole('region', { name: 'Spoken in recordings' })).toBeFocused();
   await page.goto('/messages/9');
   await expect(page.getByRole('heading', { name: 'Team chat', exact: true })).toBeVisible();
 });

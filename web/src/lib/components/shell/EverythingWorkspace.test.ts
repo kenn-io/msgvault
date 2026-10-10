@@ -22,7 +22,7 @@ function exploreResponse(overrides: Record<string, unknown> = {}) {
 }
 
 describe('EverythingWorkspace', () => {
-  it('opens, retries and restores recording messages without paging message results', async () => {
+  it('retries recording details and distinguishes missing messages', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', query: 'quarterly', searchMode: 'full_text' }))}`);
     const message = { id: 9, conversation_id: 2, subject: '', conversation_title: 'Team chat', body: 'Source recording',
       from: 'Example Person', to: [], sent_at: '2026-07-18T12:00:00Z', snippet: '', size_bytes: 44, has_attachments: false, attachments: [], labels: [] };
@@ -42,7 +42,6 @@ describe('EverythingWorkspace', () => {
     try {
       const link = await screen.findByRole('link', { name: 'Team chat' });
       expect(link.getAttribute('href')).toBe('/messages/9');
-      link.focus();
       await fireEvent.click(link);
       await screen.findByText('Could not load this recording message.');
       messageStatus = 200;
@@ -52,16 +51,6 @@ describe('EverythingWorkspace', () => {
       expect(state.current.query).toBe('quarterly');
       expect(screen.getByRole('heading', { name: 'Results 0 items' })).toBeTruthy();
       expect(link.getAttribute('aria-current')).toBe('true');
-      await fireEvent.click(screen.getByRole('button', { name: 'Close reading pane' }));
-      await waitFor(() => expect(document.activeElement).toBe(link));
-      await fireEvent.click(link);
-      expect(await screen.findByRole('complementary', { name: 'Reading pane: Team chat' })).toBeTruthy();
-      window.history.back();
-      await new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
-      await waitFor(() => expect(screen.queryByRole('complementary', { name: 'Reading pane: Team chat' })).toBeNull());
-      window.history.forward();
-      await new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
-      expect(await screen.findByRole('complementary', { name: 'Reading pane: Team chat' })).toBeTruthy();
       expect(fetchFn.mock.calls.filter(([input]) => new URL((input as Request).url).searchParams.has('cursor'))).toHaveLength(0);
       await fireEvent.click(screen.getByRole('button', { name: 'Close reading pane' }));
       messageStatus = 404;

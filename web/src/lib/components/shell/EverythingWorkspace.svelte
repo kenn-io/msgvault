@@ -119,6 +119,7 @@
   let recordingError = $state('');
   let recordingMissing = $state(false);
   const recordingSelection = $derived(parseRecordingSelection(readingTargetKey));
+  const recordingSearchVisible = $derived(Boolean(enabled && exploreState.current.query.trim()));
 
   $effect(() => {
     const target = recordingSelection;
@@ -649,7 +650,7 @@
     searchMode={exploreState.current.searchMode}
     filters={exploreState.current.filters}
     groupingChain={exploreState.current.groupingChain}
-    countLabel={enabled && exploreState.current.query.trim() ? '' : countLabel}
+    countLabel={recordingSearchVisible ? '' : countLabel}
     sort={exploreState.current.groupingChain.length > 0 ? undefined : {
       options: [{ value: 'newest', label: 'Newest first' }],
       value: 'newest',
@@ -740,13 +741,13 @@
       storageKey={previewRight ? 'msgvault.reading-pane.right-size' : 'msgvault.reading-pane.size'}
       orientation={previewRight ? 'horizontal' : 'vertical'}
       initialFraction={previewRight ? 0.45 : 0.55}
-      minPrimary={previewRight ? 360 : enabled && exploreState.current.query.trim() ? 220 : 120}
+      minPrimary={previewRight ? 360 : recordingSearchVisible ? 220 : 120}
       minSecondary={previewRight ? 400 : 160}
       collapsed={!readingTargetKey}
     >
       {#snippet primary()}
         <div class="results-primary">
-          {#if enabled && exploreState.current.query.trim()}
+          {#if recordingSearchVisible}
             <TranscriptHits
               {client}
               query={exploreState.current.query}

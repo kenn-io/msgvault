@@ -2202,6 +2202,8 @@ func TestGetMessageUsesGeneratedClientAdapter(t *testing.T) {
 	s := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal("/api/v1/messages/42", r.URL.Path, "path")
 		writeJSONResponse(t, w, generated.MessageDetail{
+			ConversationTitle: stringPtr("Team chat"),
+
 			ID:             42,
 			ConversationID: int64Ptr(7),
 			Subject:        "Generated detail",
@@ -2235,6 +2237,7 @@ func TestGetMessageUsesGeneratedClientAdapter(t *testing.T) {
 	require.NotNil(msg, "GetMessage returned nil")
 	assert.Equal(int64(42), msg.ID, "ID")
 	assert.Equal(int64(7), msg.ConversationID, "ConversationID")
+	assert.Equal("Team chat", msg.ConversationTitle, "ConversationTitle")
 	assert.Equal("Generated detail", msg.Subject, "Subject")
 	assert.Equal("email", msg.MessageType, "MessageType")
 	assert.Equal("Hello, generated world!", msg.Body, "Body")

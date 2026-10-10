@@ -824,7 +824,7 @@
     const recordingOpen = parseRecordingSelection(exploreState.current.selectedRow) !== undefined;
     commitNavigation({ selectedRow: null });
     if (recordingOpen) {
-      await restoreArchiveFocus();
+      await restoreArchiveFocus(document.querySelector<HTMLElement>('[aria-label="Spoken in recordings"]') ?? undefined);
       return;
     }
     await tick();
@@ -848,14 +848,14 @@
     }, '', window.location.href);
   }
 
-  async function restoreArchiveFocus(): Promise<void> {
+  async function restoreArchiveFocus(fallback: HTMLElement | undefined = undefined): Promise<void> {
     await tick();
     // Kit releases its focus trap during teardown; focus the surviving source
     // link after that cleanup (or the current workspace's own control).
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
     const target = archiveReturnFocus?.isConnected
       ? archiveReturnFocus
-      : focusableResultsGrid() ?? navigationFocusTarget();
+      : fallback ?? focusableResultsGrid() ?? navigationFocusTarget();
     target?.focus();
   }
 
