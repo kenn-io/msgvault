@@ -328,8 +328,9 @@ type MessageSummary struct {
 
 // MessageDetail represents a full message response.
 type MessageDetail struct {
-	ConversationTitle string `json:"conversation_title,omitempty" doc:"Conversation title, populated by GET /api/v1/messages/{id}."`
 	MessageSummary
+
+	ConversationTitle string `json:"conversation_title,omitempty" doc:"Conversation title, populated by GET /api/v1/messages/{id}."`
 
 	Body     string `json:"body"`
 	BodyHTML string `json:"body_html,omitempty"`
