@@ -91,9 +91,9 @@ func TestSearchFenceAndContract(t *testing.T) {
 		tc.mutate(&invalid)
 		validation := invalid
 		validation.Fence, validation.MediaSources = nil, nil
-		assert.ErrorIs(client.ValidateSearch(t.Context(), validation), ErrInvalidRequest, tc.name)
+		require.ErrorIs(client.ValidateSearch(t.Context(), validation), ErrInvalidRequest, tc.name)
 		_, err := client.Search(t.Context(), invalid)
-		assert.ErrorIs(err, ErrInvalidRequest, tc.name)
+		require.ErrorIs(err, ErrInvalidRequest, tc.name)
 	}
 	request.MediaSources = nil
 	_, err = client.Search(t.Context(), request)
