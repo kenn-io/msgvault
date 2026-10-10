@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -27,11 +28,14 @@ func (s *Store) EnsureMicrosoftMailFoldersContext(ctx context.Context, sourceID 
 			var id int64
 			var providerID sql.NullString
 			err := q.QueryRow(`SELECT id,source_label_id FROM labels WHERE source_id=? AND name=?`, sourceID, info.Name).Scan(&id, &providerID)
-			if errors.Is(err, sql.ErrNoRows) || !strings.HasPrefix(providerID.String, microsoftCategoryPrefix) {
+			if errors.Is(err, sql.ErrNoRows) {
 				continue
 			}
 			if err != nil {
 				return fmt.Errorf("check Microsoft folder name: %w", err)
+			}
+			if !strings.HasPrefix(providerID.String, microsoftCategoryPrefix) {
+				continue
 			}
 			name, err := microsoftCategoryLabelName(q, sourceID, id, strings.TrimPrefix(providerID.String, microsoftCategoryPrefix), folderNames)
 			if err != nil {
@@ -78,9 +82,8 @@ func (s *Store) ReconcileMicrosoftMailLabelsContext(ctx context.Context, message
 	var folderChanged bool
 	err := s.withMessageAttributionTxContext(ctx, messageID, func(tx *loggedTx) error {
 		var sourceID int64
-		if err := tx.QueryRowContext(ctx, `UPDATE messages SET source_message_id=source_message_id
- WHERE id=? AND EXISTS (SELECT 1 FROM sources s WHERE s.id=messages.source_id AND s.source_type='msmail')
- RETURNING source_id`, messageID).Scan(&sourceID); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT source_id FROM messages
+ WHERE id=? AND EXISTS (SELECT 1 FROM sources s WHERE s.id=messages.source_id AND s.source_type='msmail')`, messageID).Scan(&sourceID); err != nil {
 			return fmt.Errorf("resolve Microsoft message labels: %w", err)
 		}
 		var err error
@@ -143,9 +146,35 @@ func (s *Store) reconcileMicrosoftMailLabelsTx(ctx context.Context, tx *loggedTx
 		folderChanged = len(folders) != 1 || folders[0] != *folderID
 	}
 	catalogChanged := false
-	if categories != nil {
+	if categories != nil && len(*categories) > 0 {
+		// Match the provider's Unicode case rules while keeping each label's ID stable.
+		rows, err := tx.QueryContext(ctx, `SELECT source_label_id FROM labels WHERE source_id=? AND source_label_id LIKE ?`, sourceID, microsoftCategoryPrefix+"%")
+		if err != nil {
+			return false, fmt.Errorf("read Microsoft category identities: %w", err)
+		}
+		var categoryProviderIDs []string
+		for rows.Next() {
+			var providerID string
+			if err := rows.Scan(&providerID); err != nil {
+				_ = rows.Close()
+				return false, err
+			}
+			categoryProviderIDs = append(categoryProviderIDs, providerID)
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return false, err
+		}
+		if err := rows.Close(); err != nil {
+			return false, err
+		}
 		for _, category := range *categories {
 			providerID := microsoftCategoryPrefix + category
+			if i := slices.IndexFunc(categoryProviderIDs, func(existing string) bool {
+				return strings.EqualFold(existing, providerID)
+			}); i >= 0 {
+				providerID = categoryProviderIDs[i]
+			}
 			var id int64
 			var previousName string
 			var kind sql.NullString
@@ -160,6 +189,7 @@ func (s *Store) reconcileMicrosoftMailLabelsTx(ctx context.Context, tx *loggedTx
 			switch {
 			case errors.Is(err, sql.ErrNoRows):
 				err = q.QueryRow(`INSERT INTO labels (source_id,source_label_id,name,label_type) VALUES (?,?,?,'user') RETURNING id`, sourceID, providerID, name).Scan(&id)
+				categoryProviderIDs = append(categoryProviderIDs, providerID)
 				catalogChanged = true
 			case err == nil && (previousName != name || kind.String != "user"):
 				_, err = q.Exec(`UPDATE labels SET name=?,label_type='user',system_role=NULL WHERE id=?`, name, id)
@@ -168,7 +198,9 @@ func (s *Store) reconcileMicrosoftMailLabelsTx(ctx context.Context, tx *loggedTx
 			if err != nil {
 				return false, fmt.Errorf("save Microsoft category %q: %w", category, err)
 			}
-			desired = append(desired, id)
+			if !slices.Contains(desired, id) {
+				desired = append(desired, id)
+			}
 		}
 	}
 	changed, err := s.reconcileMessageLabelsTxContext(ctx, tx, messageID, desired, true)

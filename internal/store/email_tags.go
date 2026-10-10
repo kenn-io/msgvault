@@ -95,10 +95,10 @@ func (s *Store) SaveEmailTagsContext(ctx context.Context, target EmailTagTarget,
 		return errors.New("IMAP snapshot does not match the target membership")
 	}
 	return s.withAttributionTxContext(ctx, attributionLock{Sources: []int64{target.SourceID}}, func(tx *loggedTx) error {
-		// Lock and recheck the archived identity on both SQLite and PostgreSQL.
+		// The attribution transaction holds the source lock while we recheck identity.
 		var locked int64
-		err := tx.QueryRowContext(ctx, `UPDATE messages SET source_message_id=source_message_id
-   WHERE id=? AND source_id=? AND source_message_id=? AND deleted_at IS NULL AND deleted_from_source_at IS NULL RETURNING id`, target.ID, target.SourceID, target.SourceMessageID).Scan(&locked)
+		err := tx.QueryRowContext(ctx, `SELECT id FROM messages
+   WHERE id=? AND source_id=? AND source_message_id=? AND deleted_at IS NULL AND deleted_from_source_at IS NULL`, target.ID, target.SourceID, target.SourceMessageID).Scan(&locked)
 		if err != nil {
 			return fmt.Errorf("archived tag identity changed: %w", err)
 		}
@@ -128,27 +128,52 @@ func (s *Store) SaveEmailTagsContext(ctx context.Context, target EmailTagTarget,
 		q := boundQuerier{ctx: ctx, q: tx}
 		descriptors := make(map[string]LabelInfo)
 		catalogChanged := false
+		available := make(map[string]string, len(result.AvailableTags))
 		for _, tag := range result.AvailableTags {
-			descriptors[tag.ID] = LabelInfo{Name: tag.Name, Type: "user"}
+			available[tag.ID] = tag.Name
 		}
 		for _, tag := range result.Tags {
 			if IsSystemLabel(tag) {
-				role := ""
-				if tag == "SENT" {
-					role = LabelSystemRoleSent
-				}
-				descriptors[tag] = LabelInfo{Name: tag, Type: "system", SystemRole: role}
+				descriptors[tag] = LabelInfo{Name: tag, Type: "system", SystemRole: GmailSystemRoleForLabelID(tag)}
+			} else if name, ok := available[tag]; ok {
+				descriptors[tag] = LabelInfo{Name: name, Type: "user"}
 			}
 		}
-		for tag, info := range descriptors {
+		pending := make([]string, 0, len(descriptors))
+		for tag := range descriptors {
+			pending = append(pending, tag)
+		}
+		for i := 0; i < len(pending); i++ {
+			tag := pending[i]
+			info := descriptors[tag]
 			var name string
-			var kind sql.NullString
-			err := q.QueryRow(`SELECT name,label_type FROM labels WHERE source_id=? AND source_label_id=?`, target.SourceID, tag).Scan(&name, &kind)
+			var kind, role sql.NullString
+			err := q.QueryRow(`SELECT name,label_type,system_role FROM labels WHERE source_id=? AND source_label_id=?`, target.SourceID, tag).Scan(&name, &kind, &role)
 			if err != nil && !errors.Is(err, sql.ErrNoRows) {
 				return err
 			}
-			if errors.Is(err, sql.ErrNoRows) || name != info.Name || kind.String != info.Type {
+			if errors.Is(err, sql.ErrNoRows) || name != info.Name || kind.String != info.Type || !labelSystemRoleMatches(role, info.SystemRole) {
 				catalogChanged = true
+			}
+			if err == nil && name == info.Name {
+				continue
+			}
+			// Include only live labels that must move aside for this rename.
+			// The batch's two-phase rename then keeps their identities distinct.
+			var conflict sql.NullString
+			err = q.QueryRow(`SELECT source_label_id FROM labels WHERE source_id=? AND name=?`, target.SourceID, info.Name).Scan(&conflict)
+			if errors.Is(err, sql.ErrNoRows) {
+				continue
+			}
+			if err != nil {
+				return fmt.Errorf("check Gmail label name %q: %w", info.Name, err)
+			}
+			if _, included := descriptors[conflict.String]; included {
+				continue
+			}
+			if name, ok := available[conflict.String]; ok {
+				descriptors[conflict.String] = LabelInfo{Name: name, Type: "user"}
+				pending = append(pending, conflict.String)
 			}
 		}
 		ids, err := ensureLabelsBatchWith(q, target.SourceID, descriptors, labelFlipsTx(ctx, tx, target.SourceID))
@@ -174,4 +199,16 @@ func (s *Store) SaveEmailTagsContext(ctx context.Context, target EmailTagTarget,
 		}
 		return nil
 	})
+}
+
+// GmailSystemRoleForLabelID returns Gmail's canonical role, independent of the
+// localized label name returned to users.
+func GmailSystemRoleForLabelID(sourceLabelID string) string {
+	switch sourceLabelID {
+	case "SENT":
+		return LabelSystemRoleSent
+	case "DRAFT":
+		return LabelSystemRoleDrafts
+	}
+	return ""
 }

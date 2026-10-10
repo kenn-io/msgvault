@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/httpretry"
+	"go.kenn.io/msgvault/internal/store"
 
 	"golang.org/x/oauth2"
 	"golang.org/x/sync/errgroup"
@@ -689,7 +690,7 @@ func (c *Client) ListLabels(ctx context.Context) ([]*Label, error) {
 			ID:                    l.ID,
 			Name:                  l.Name,
 			Type:                  l.Type,
-			SystemRole:            SystemRoleForLabelID(l.ID),
+			SystemRole:            store.GmailSystemRoleForLabelID(l.ID),
 			MessagesTotal:         l.MessagesTotal,
 			MessagesUnread:        l.MessagesUnread,
 			MessageListVisibility: l.MessageListVisibility,
