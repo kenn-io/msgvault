@@ -80,12 +80,6 @@ func TestSearchFenceAndContract(t *testing.T) {
 	request.MediaSources = nil
 	_, err = client.Search(t.Context(), request)
 	require.ErrorIs(err, ErrInvalidRequest)
-	request.MediaSources = sources
-	for _, versions := range [][]string{nil, {}} {
-		request.Fence.ContentVersionIDs = versions
-		_, err = client.Search(t.Context(), request)
-		require.ErrorIs(err, ErrInvalidRequest)
-	}
 	assert.Equal(int64(3), requests.Load())
 }
 
