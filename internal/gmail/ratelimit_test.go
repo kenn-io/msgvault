@@ -240,6 +240,7 @@ func TestOperationCost(t *testing.T) {
 		{OpDraftsUpdate, 15},
 		{OpDraftsDelete, 10},
 		{OpSendAsList, 1},
+		{OpMessagesModify, 5},
 		{Operation(999), 1}, // Unknown operation defaults to 1
 	}
 
@@ -255,6 +256,7 @@ func TestDraftOperationsRemoteMutationSet(t *testing.T) {
 	assert.False(OpDraftsGet.remoteMutation())
 	assert.True(OpDraftsUpdate.remoteMutation())
 	assert.True(OpDraftsDelete.remoteMutation())
+	assert.True(OpMessagesModify.remoteMutation())
 	assert.False(OpSendAsList.remoteMutation())
 }
 

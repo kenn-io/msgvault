@@ -9,13 +9,13 @@ retrieve attachments, and help you remember people and conversations. The
 server uses your selected daemon: without `[remote].url`, it starts or reuses
 the local daemon; with `[remote].url`, it uses that remote server.
 
-MCP searches the archive and prepares and manages drafts. It cannot send email, change live mailbox labels, or
-read Google credentials. Semantic searches call your configured embedding
-endpoint, so use a local or self-hosted endpoint when search text must stay on
+MCP searches the archive, manages drafts, and can edit native email tags through the daemon.
+It cannot send email or read Google credentials. Semantic searches call your
+configured embedding endpoint, so use a local or self-hosted endpoint when search text must stay on
 your machine or network. See [vector search](/docs/usage/vector-search/).
 
-By default, stdio clients can also manage Saved Views, export attachments,
-and stage deletion manifests. Actual message deletion still requires the CLI
+By default, stdio clients can also edit native email tags, manage Saved Views,
+export attachments, and stage deletion manifests. Actual message deletion still requires the CLI
 [deletion workflow](/docs/usage/deletion/). Person promotion and Notes writes
 need `--allow-profile-writes`. HTTP clients get read tools by default and need
 `--http-allow-writes` for general write tools. Calendar event mutations also
@@ -105,6 +105,30 @@ For a delegated Claude Desktop session, use these arguments with the daemon URL 
 ```
 
 For an HTTP loopback daemon URL, add `--agent-allow-insecure` before `mcp`. Delegated MCP serves over stdio; `--http` returns a usage error. Read tools `draft_get` and `draft_send_as` are available in owner HTTP sessions by default. Draft writes require `--http-allow-writes`.
+
+## Native email tags
+
+`get_message_tags` reads one archived message's live Gmail label IDs, IMAP
+keywords, or Microsoft Graph category names. Its `available_tags` lists existing
+Gmail user label IDs, the IMAP server's advertised permanent keywords, or the
+categories observed on that Microsoft message. `update_message_tags` adds or
+removes tags and verifies the result through the daemon. Both tools need
+API schema 3.11.0; older daemons omit them.
+
+```json
+{"message_id":42,"add":["Label_123"],"remove":["Label_456"],"dry_run":true}
+```
+
+Use the exact Gmail user label IDs returned by the read tool. For IMAP, use
+custom keyword atoms and optionally name a recorded `mailbox`. For Microsoft
+Graph, use category names and grant `Mail.ReadWrite` with
+[`add-o365 --graph --mail-write`](../cli-reference.md#add-o365). The update tool
+follows the normal [write controls](#write-controls). A preview never writes.
+A partial error keeps its last observed `result` in structured content; read
+tags before retrying. See [`message-tags`](../cli-reference.md#message-tags)
+for provider permissions, category limits, IMAP copy selection, and failure
+behavior. A Graph 429 returns `provider_write_failed`; retry after the limit
+clears. Uncertain writes require reading the current tags before retrying.
 
 ## Meeting evidence
 
@@ -283,6 +307,8 @@ The MCP server exposes the following tools to connected AI clients:
 | `get_stats` | Archive overview statistics, plus each account's `LastSyncAt`. Includes vector index state when configured. | — |
 | `aggregate` | Grouped statistics (top senders, domains, labels, or message volume by calendar year) | `group_by` (string: sender/recipient/domain/label/time), `limit` (int), `after` (string), `before` (string), `account` (string) |
 | `query_sql` | Advanced read-only SQL over the published analytics cache. Returns rows and freshness metadata, or an accepted refresh job. | `sql` (string, required), `fresh` (bool, default false) |
+| `get_message_tags` | Read native Gmail labels, IMAP keywords, or Microsoft Graph categories. Read-only. | `message_id` (int, required), `mailbox` (string, IMAP only) |
+| `update_message_tags` | Add or remove native email tags through the daemon. Write-class. | `message_id` (int, required), `add` / `remove` (string arrays), `mailbox` (string, IMAP only), `dry_run` (bool) |
 | `list_saved_views` | List persistent reusable Saved Views and their complete definitions. Read-only. | — |
 | `get_saved_view` | Get one Saved View and its canonical definition and revision. Read-only. | `id` (int, required) |
 | `run_saved_view` | Execute a Saved View through Explore without reconstructing its query. Returns typed entries, groups, or files. Read-only. | `id` (int, required), `limit` (int), `cursor` (string) |
@@ -585,7 +611,7 @@ instruction or as your consent to a write.
 
 Enable only the writes intended for the assistant's session:
 
-| Transport | Saved View management, attachment export, deletion staging, and draft writes | Person promotion and Notes writes | Calendar event mutations |
+| Transport | Native email tag edits, Saved View management, attachment export, deletion staging, and draft writes | Person promotion and Notes writes | Calendar event mutations |
 |---|---|---|---|
 | Stdio | Available by default | Add `--allow-profile-writes` | Add `--allow-calendar-writes` |
 | HTTP | Add `--http-allow-writes` | Add both `--http-allow-writes` and `--allow-profile-writes` | Add both `--http-allow-writes` and `--allow-calendar-writes` |

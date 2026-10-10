@@ -719,6 +719,11 @@ func (g GetMessageInlinePartQuery) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(g))
 }
 
+type GetMessageTagsQuery struct {
+	// Mailbox Exact IMAP mailbox; defaults to the current original copy or sole current membership
+	Mailbox *string `json:"mailbox,omitempty"`
+}
+
 type ListOperationRunsQuery struct {
 	// Kind Exact operation kind
 	Kind *ListOperationRunsQueryKind `json:"kind,omitempty"`

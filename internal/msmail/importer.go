@@ -28,6 +28,10 @@ const SourceType = "msmail"
 // an interrupted walk starts over. Known messages are not downloaded again.
 const walkPrefix = "walk:"
 
+// categoryDeltaPrefix identifies cursors created with categories in $select.
+// Old opaque cursors cannot gain fields, so their folders rewalk once.
+const categoryDeltaPrefix = "categories-v1:"
+
 // retryPrefix marks a saved-state key that names a message to download again.
 const retryPrefix = "retry:"
 
@@ -142,6 +146,10 @@ func Import(ctx context.Context, st *store.Store, c *Client, opts Options, log *
 			link, seen = DeltaStartURL(f.ID), map[string]bool{}
 		case strings.HasPrefix(link, walkPrefix):
 			link, seen = DeltaStartURL(f.ID), map[string]bool{}
+		case strings.HasPrefix(link, categoryDeltaPrefix):
+			link = strings.TrimPrefix(link, categoryDeltaPrefix)
+		default:
+			link, seen = DeltaStartURL(f.ID), map[string]bool{}
 		}
 		for {
 			page, perr := c.DeltaPage(ctx, link)
@@ -168,7 +176,7 @@ func Import(ctx context.Context, st *store.Store, c *Client, opts Options, log *
 			} else {
 				link = page.DeltaLink
 			}
-			cursors[f.ID] = link
+			cursors[f.ID] = categoryDeltaPrefix + link
 			if seen != nil && page.NextLink != "" {
 				cursors[f.ID] = walkPrefix + link
 			}
@@ -271,12 +279,12 @@ func (s *syncer) ensureLabels(ctx context.Context, folders []Folder) (map[string
 		}
 		infos[f.ID] = info
 	}
-	return s.st.EnsureLabelsBatch(s.sourceID, infos)
+	return s.st.EnsureMicrosoftMailFoldersContext(ctx, s.sourceID, infos)
 }
 
 // applyPage stores one delta page for a folder. New messages are downloaded.
-// Known messages get the folder as their only label, because a mail item is
-// in exactly one folder, and lose any deletion mark, because the mailbox has
+// Known messages update their folder and observed categories, and lose any
+// deletion mark, because the mailbox has
 // them again. A message in Deleted Items keeps its mark, as a Gmail message in
 // Trash does. In an incremental round (seen is nil), known messages are also
 // downloaded again, because delta reports them only when they changed. A walk
@@ -315,7 +323,7 @@ func (s *syncer) applyPage(ctx context.Context, folderID string, items []DeltaMe
 			todo = append(todo, m)
 			continue
 		}
-		if err := s.setFolder(id, folderLabel); err != nil {
+		if err := s.setFolder(ctx, id, folderLabel, m.Categories); err != nil {
 			return err
 		}
 		if seen == nil || (s.drafts != "" && folderID == s.drafts) {
@@ -340,9 +348,6 @@ func (s *syncer) applyPage(ctx context.Context, folderID string, items []DeltaMe
 // a refreshed message, it then drops the rows of parts that the new MIME no
 // longer has. If a row is missing, the old rows stay and it returns an error.
 func (s *syncer) afterStore(ctx context.Context, m DeltaMessage, raw []byte) error {
-	if s.opts.AttachmentsDir == "" {
-		return nil // no attachment rows are written
-	}
 	msgID := m.archiveID
 	if msgID == 0 {
 		ids, err := s.st.MessageExistsBatch(s.sourceID, []string{m.ID})
@@ -350,6 +355,15 @@ func (s *syncer) afterStore(ctx context.Context, m DeltaMessage, raw []byte) err
 			return err
 		}
 		msgID = ids[m.ID]
+	}
+	// Known messages already saved their categories before the MIME download.
+	if m.archiveID == 0 && m.Categories != nil {
+		if _, err := s.st.ReconcileMicrosoftMailLabelsContext(ctx, msgID, nil, m.Categories); err != nil {
+			return fmt.Errorf("save Microsoft categories: %w", err)
+		}
+	}
+	if s.opts.AttachmentsDir == "" {
+		return nil // no attachment rows are written
 	}
 	parsed, err := mime.ParseWithRecovery(raw, "")
 	if err != nil {
@@ -431,8 +445,13 @@ func (s *syncer) retryMessages(ctx context.Context) error {
 			s.cursors[key] = parent // a folder this run did not list
 			continue
 		}
+		if messageID := known[id]; messageID != 0 {
+			if err := s.setFolder(ctx, messageID, s.labels[parent], info.Categories); err != nil {
+				return err
+			}
+		}
 		// download clears the marker only after the message is stored.
-		if err := s.download(ctx, parent, []DeltaMessage{{ID: id, ReceivedDateTime: info.ReceivedDateTime, archiveID: known[id]}}); err != nil {
+		if err := s.download(ctx, parent, []DeltaMessage{{ID: id, ReceivedDateTime: info.ReceivedDateTime, Categories: info.Categories, archiveID: known[id]}}); err != nil {
 			s.cursors[key] = parent
 			return err
 		}
@@ -487,7 +506,7 @@ func (s *syncer) relocate(ctx context.Context, msgs map[string]int64) error {
 		}
 		// A folder this run did not list is picked up on the next sync.
 		if label, ok := s.labels[parent]; ok {
-			if err := s.setFolder(msgID, label); err != nil {
+			if err := s.setFolder(ctx, msgID, label, info.Categories); err != nil {
 				return err
 			}
 		}
@@ -501,8 +520,8 @@ func (s *syncer) relocate(ctx context.Context, msgs map[string]int64) error {
 	return nil
 }
 
-func (s *syncer) setFolder(messageID, label int64) error {
-	changed, err := s.st.ReconcileMessageLabels(messageID, []int64{label}, true)
+func (s *syncer) setFolder(ctx context.Context, messageID, label int64, categories *[]string) error {
+	changed, err := s.st.ReconcileMicrosoftMailLabelsContext(ctx, messageID, &label, categories)
 	if changed {
 		s.sum.Moved++
 	}
@@ -584,8 +603,18 @@ func (s *syncer) download(ctx context.Context, folderID string, msgs []DeltaMess
 			continue
 		}
 		sum := sha256.Sum256(r.raw)
+		labelIDs := []int64{folderLabel}
+		if r.msg.archiveID != 0 {
+			var err error
+			labelIDs, err = s.st.MessageLabelIDsContext(ctx, r.msg.archiveID)
+			if err != nil {
+				storeErr = fmt.Errorf("read labels for message %s: %w", r.msg.ID, err)
+				cancel()
+				continue
+			}
+		}
 		if err := importer.IngestRawMessage(ctx, s.st, s.sourceID, s.opts.Email, s.opts.AttachmentsDir,
-			[]int64{folderLabel}, r.msg.ID, hex.EncodeToString(sum[:]), r.raw, r.msg.ReceivedDateTime, s.log); err != nil {
+			labelIDs, r.msg.ID, hex.EncodeToString(sum[:]), r.raw, r.msg.ReceivedDateTime, s.log); err != nil {
 			storeErr = fmt.Errorf("store message %s: %w", r.msg.ID, err)
 			s.sum.Errors++
 			cancel()
@@ -593,9 +622,8 @@ func (s *syncer) download(ctx context.Context, folderID string, msgs []DeltaMess
 		}
 		delete(s.cursors, retryPrefix+r.msg.ID)
 		if err := s.afterStore(ctx, r.msg, r.raw); err != nil {
-			// The message is stored, but an attachment is not. A later walk
-			// would skip the known message, so it goes on the retry list.
-			s.log.Warn("attachment not stored, retrying on the next sync", "id", r.msg.ID, "error", err)
+			// A later walk skips stored messages, so incomplete processing needs a retry.
+			s.log.Warn("processing after message storage failed, retrying on the next sync", "id", r.msg.ID, "error", err)
 			s.sum.Errors++
 			s.cursors[retryPrefix+r.msg.ID] = folderID
 		}

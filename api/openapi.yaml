@@ -7302,6 +7302,103 @@ components:
         - has_attachments
         - size_bytes
       type: object
+    MessageTag:
+      additionalProperties: true
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+      required:
+        - id
+        - name
+      type: object
+    MessageTagChange:
+      additionalProperties: false
+      properties:
+        add:
+          items:
+            type: string
+          maxItems: 100
+          type: array
+        dry_run:
+          type: boolean
+        mailbox:
+          type: string
+        remove:
+          items:
+            type: string
+          maxItems: 100
+          type: array
+      type: object
+    MessageTagError:
+      additionalProperties: true
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+        result:
+          $ref: "#/components/schemas/MessageTagResult"
+      required:
+        - error
+        - message
+      type: object
+    MessageTagResult:
+      additionalProperties: true
+      properties:
+        available_tags:
+          items:
+            $ref: "#/components/schemas/MessageTag"
+          type: array
+        before:
+          items:
+            type: string
+          type: array
+        can_create_keywords:
+          type: boolean
+        dry_run:
+          type: boolean
+        flags:
+          items:
+            type: string
+          type: array
+        mailbox:
+          type: string
+        message_id:
+          format: int64
+          type: integer
+        provider:
+          type: string
+        source_id:
+          format: int64
+          type: integer
+        tags:
+          items:
+            type: string
+          type: array
+        uid:
+          format: int64
+          maximum: 4294967295
+          minimum: 0
+          type: integer
+        uidvalidity:
+          format: int64
+          maximum: 4294967295
+          minimum: 0
+          type: integer
+        verified:
+          type: boolean
+      required:
+        - message_id
+        - source_id
+        - provider
+        - tags
+        - before
+        - available_tags
+        - dry_run
+        - verified
+      type: object
     MessageTranscript:
       additionalProperties: true
       properties:
@@ -15218,7 +15315,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.10.0
+  version: 3.11.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -22817,6 +22914,168 @@ paths:
       security:
         - apiKey: []
       summary: List a message's recordings with transcript state
+      tags:
+        - API
+  /api/v1/messages/{id}/tags:
+    get:
+      operationId: getMessageTags
+      parameters:
+        - description: Archived message ID
+          in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+        - description: Exact IMAP mailbox; defaults to the current original copy or sole current membership
+          in: query
+          name: mailbox
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTagResult"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTagError"
+          description: Bad Request
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTagError"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTagError"
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTagError"
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTagError"
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTagError"
+          description: Not Implemented
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTagError"
+          description: Bad Gateway
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTagError"
+          description: Service Unavailable
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Read native email tags
+      tags:
+        - API
+    post:
+      operationId: updateMessageTags
+      parameters:
+        - description: Archived message ID
+          in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MessageTagChange"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTagResult"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTagError"
+          description: Bad Request
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTagError"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTagError"
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTagError"
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTagError"
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTagError"
+          description: Not Implemented
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTagError"
+          description: Bad Gateway
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTagError"
+          description: Service Unavailable
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Add or remove native email tags
       tags:
         - API
   /api/v1/messages/{id}/tasks:

@@ -54,6 +54,7 @@ type catalogCapabilities struct {
 	kata            bool
 	identityReview  bool
 	personCardDAV   bool
+	messageTags     bool
 }
 
 func visualSearchAvailable(capabilities catalogCapabilities) bool {
@@ -138,6 +139,7 @@ func capabilitiesFor(opts ServeOptions) catalogCapabilities {
 		kata:            opts.Kata != nil,
 		identityReview:  opts.IdentityReview != nil,
 		personCardDAV:   opts.PersonCardDAV != nil,
+		messageTags:     opts.MessageTags != nil,
 	}
 }
 
@@ -204,6 +206,8 @@ func buildOperationCatalog(capabilities catalogCapabilities) []toolDefinition {
 		findSimilarMessagesDefinition(nil),
 		getAttachmentDefinition(nil),
 		getMessageDefinition(nil),
+		messageTagDefinition(false),
+		messageTagDefinition(true),
 		getIdentityMatchDefinition(),
 		getPersonMergeContextDefinition(),
 		getCardDAVPublicationDefinition(),

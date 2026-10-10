@@ -30,14 +30,15 @@ type fakeGraph struct {
 	t   *testing.T
 	srv *httptest.Server
 
-	mu      sync.Mutex
-	folders []string          // folder IDs, in list order
-	names   map[string]string // folder ID -> display name, when not derived from the ID
-	folder  map[string]string // message ID -> folder ID; absent when deleted
-	log     []change          // one entry per change
-	expired map[string]bool   // folder IDs whose next delta reports an expired token
-	gone    map[string]bool   // folder IDs whose every delta answers 410
-	version map[string]int    // message ID -> content version
+	mu         sync.Mutex
+	folders    []string            // folder IDs, in list order
+	names      map[string]string   // folder ID -> display name, when not derived from the ID
+	folder     map[string]string   // message ID -> folder ID; absent when deleted
+	log        []change            // one entry per change
+	expired    map[string]bool     // folder IDs whose next delta reports an expired token
+	gone       map[string]bool     // folder IDs whose every delta answers 410
+	version    map[string]int      // message ID -> content version
+	categories map[string][]string // present entries are authoritative category snapshots
 
 	withAttachment map[string]bool   // message IDs whose MIME carries a file
 	shifted        map[string]bool   // message IDs whose file moves to another part
@@ -187,7 +188,14 @@ func (f *fakeGraph) serve(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, `{"error":{"code":"ErrorItemNotFound"}}`, http.StatusNotFound)
 			return
 		}
-		f.writeJSON(w, map[string]any{"parentFolderId": folder, "receivedDateTime": "2024-01-01T10:00:00Z"})
+		item := map[string]any{"parentFolderId": folder, "receivedDateTime": "2024-01-01T10:00:00Z"}
+		if f.categories != nil {
+			assert.Contains(f.t, strings.Split(q.Get("$select"), ","), "categories")
+		}
+		if categories, ok := f.categories[id]; ok {
+			item["categories"] = categories
+		}
+		f.writeJSON(w, item)
 	default:
 		http.Error(w, "unexpected "+p, http.StatusBadRequest)
 	}
@@ -231,6 +239,9 @@ func (f *fakeGraph) delta(w http.ResponseWriter, folder string, q map[string][]s
 		}
 		return ""
 	}
+	if f.categories != nil && get("token") == "" && get("skip") == "" {
+		assert.Contains(f.t, strings.Split(get("$select"), ","), "categories")
+	}
 	link := func(kind string, vals ...string) string {
 		return f.srv.URL + "/me/mailFolders/" + folder + "/messages/delta?" + kind + "&" + strings.Join(vals, "&")
 	}
@@ -254,7 +265,11 @@ func (f *fakeGraph) delta(w http.ResponseWriter, folder string, q map[string][]s
 			}
 			seen[id] = true
 			if f.folder[id] == folder {
-				out = append(out, map[string]any{"id": id})
+				item := map[string]any{"id": id}
+				if categories, ok := f.categories[id]; ok {
+					item["categories"] = categories
+				}
+				out = append(out, item)
 			} else {
 				out = append(out, map[string]any{"id": id, "@removed": map[string]any{"reason": "deleted"}})
 			}
@@ -286,7 +301,11 @@ func (f *fakeGraph) delta(w http.ResponseWriter, folder string, q map[string][]s
 	end := min(skip+f.pageSize, len(ids))
 	var out []map[string]any
 	for _, id := range ids[skip:end] {
-		out = append(out, map[string]any{"id": id, "receivedDateTime": "2024-01-01T10:00:00Z"})
+		item := map[string]any{"id": id, "receivedDateTime": "2024-01-01T10:00:00Z"}
+		if categories, ok := f.categories[id]; ok {
+			item["categories"] = categories
+		}
+		out = append(out, item)
 	}
 	resp := map[string]any{"value": out}
 	if end < len(ids) {

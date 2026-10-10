@@ -24,6 +24,8 @@ var operationGateWaitLimit = 10 * time.Second
 
 var errCLIRunGateInspectionBodyTooLarge = errors.New("cli run request body is too large to inspect before routing")
 
+var errMutationGateBusy = errors.New("archive is busy or shutting down")
+
 // OperationGate serializes daemon-owned mutating work.
 type OperationGate interface {
 	BeginWork() (func(), bool)
@@ -324,6 +326,19 @@ func beginGateWorkBounded(ctx context.Context, gate OperationGate, label string)
 	return gate.BeginWorkContext(waitCtx)
 }
 
+func (s *Server) beginMutation(label string) func(context.Context) (func(), error) {
+	return func(ctx context.Context) (func(), error) {
+		if s.operationGate == nil {
+			return func() {}, nil
+		}
+		done, ok := beginGateWorkBounded(ctx, s.operationGate, label)
+		if !ok {
+			return nil, errMutationGateBusy
+		}
+		return done, nil
+	}
+}
+
 func writeOperationGateBusy(w http.ResponseWriter, r *http.Request, gate OperationGate) {
 	lg, ok := gate.(LabeledOperationGate)
 	if !ok {
@@ -408,7 +423,8 @@ var operationGateExemptPaths = map[string]bool{
 // entries. Both perform SSRF-validated outbound reads without changing
 // archive or persistent configuration state, so they must stay available
 // while a long archive operation holds the gate. Kata evidence preparation
-// only reads message bodies and extracted document text.
+// only reads message bodies and extracted document text. Message tag reads and
+// previews bypass the gate here; their handler takes it for actual writes.
 const cardDAVAccountTestPath = "/api/v1/carddav/account/test"
 
 var readOnlyPostRoutePatterns = []string{
@@ -416,6 +432,7 @@ var readOnlyPostRoutePatterns = []string{
 	remoteImagePath,
 	cardDAVAccountTestPath,
 	kataEvidencePreparePath,
+	"/api/v1/messages/{id}/tags",
 	"/api/v1/explore",
 	"/api/v1/explore/groups",
 	"/api/v1/explore/preflight",
@@ -448,8 +465,8 @@ var (
 	readOnlyPostRouteMux  *http.ServeMux
 )
 
-// readOnlyPostRouteRequest reports whether r targets one of the read-only
-// analytical POST routes. Matching goes through a net/http ServeMux built
+// readOnlyPostRouteRequest reports whether r targets a POST route that bypasses
+// the middleware gate. Matching goes through a net/http ServeMux built
 // from readOnlyPostRoutePatterns so the path-parameter routes ({id},
 // {domain}) match with the same semantics as the API router itself.
 func readOnlyPostRouteRequest(r *http.Request) bool {
