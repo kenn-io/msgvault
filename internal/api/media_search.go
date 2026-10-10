@@ -180,11 +180,9 @@ func (reader *MessageRecordingReader) search(ctx context.Context, query string, 
 			}
 		}
 	}
-	if len(oversized) > 0 {
-		selectors = slices.DeleteFunc(selectors, func(selector docbankmedia.SearchMediaSelector) bool {
-			return oversized[selector.SearchMediaSource]
-		})
-	}
+	selectors = slices.DeleteFunc(selectors, func(selector docbankmedia.SearchMediaSelector) bool {
+		return oversized[selector.SearchMediaSource]
+	})
 	versions := make(map[string]bool)
 	for _, selector := range selectors {
 		if !versions[selector.ContentVersionID] {
