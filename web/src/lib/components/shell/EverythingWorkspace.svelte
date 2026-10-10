@@ -1,9 +1,9 @@
 <script lang="ts">
   import { Button, SegmentedControl } from '@kenn-io/kit-ui';
-  import { onDestroy, onMount, untrack } from 'svelte';
+  import { onDestroy, untrack } from 'svelte';
 
   import type { APIClient } from '../../api/client';
-  import { getMediaSearchStatus } from '../../api/generated/api/api';
+  import { mediaReadiness } from '../../search/media-ready.svelte';
   import { ArchiveMessageLoader } from '../../archive/message-loader.svelte';
   import { parseRecordingSelection } from '../../archive/recording-selection';
   import type {
@@ -115,16 +115,10 @@
 
   const api = createExploreAPI(untrack(() => client));
   const recording = new ArchiveMessageLoader();
+  const readiness = mediaReadiness();
   const recordingSelection = $derived(parseRecordingSelection(readingTargetKey));
   const recordingSearchSupported = $derived(exploreState.current.searchMode === 'full_text' && exploreState.current.filters.length === 0 && exploreState.current.groupingChain.length === 0);
-  const recordingSearchVisible = $derived(Boolean(enabled && exploreState.current.query.trim() && session.recordingSearchConfigured !== false));
-
-  onMount(() => {
-    if (session.recordingSearchConfigured !== undefined) return;
-    void getMediaSearchStatus(client).then(({ data, response }) => {
-      if (response.ok && typeof data?.configured === 'boolean') session.recordingSearchConfigured = data.configured;
-    }).catch(() => {});
-  });
+  const recordingSearchVisible = $derived(Boolean(enabled && readiness?.ready && exploreState.current.query.trim()));
 
   $effect(() => {
     void readingDetailRetryRevision;

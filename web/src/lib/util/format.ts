@@ -3,6 +3,10 @@ export function formatOffset(ms: number): string {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
 }
 
+export function formatTranscriptOrigin(origin: 'supplied' | 'generated' | undefined): string {
+  return origin === 'generated' ? 'Generated transcript' : 'Provider transcript';
+}
+
 export function formatBytes(value: number): string {
   if (value < 1024) return `${value} B`;
   if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`;

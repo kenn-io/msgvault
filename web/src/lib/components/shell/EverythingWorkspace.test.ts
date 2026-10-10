@@ -5,17 +5,20 @@ import { tick } from 'svelte';
 import { describe, expect, it, vi } from 'vitest';
 
 import { meetingFixtureResponse } from '../../meetings/fixtures.test-support';
-import { createAPIClient as createBaseAPIClient } from '../../api/client';
+import { createAPIClient } from '../../api/client';
+import { getMediaSearchStatus } from '../../api/generated/api/api';
+import { IntegrationReadiness, KATA_RETRY_MS } from '../../kata/kata-ready.svelte';
+import { mediaReadinessKey } from '../../search/media-ready.svelte';
 import { LOAD_THROUGH_END_MAX_PAGES } from '../../explore/paging';
 import { ExploreState, parseExploreURLState } from '../../explore/state.svelte';
 import AppShell from './AppShell.svelte';
 
 vi.mock('../../telemetry/screen-views', () => ({ startScreenViewReporting: () => () => {} }));
 
-function createAPIClient(fetchFn: typeof fetch, recordingConfigured = false) {
-  return createBaseAPIClient((input, init) => new URL((input as Request).url).pathname.endsWith('/media/search/status')
-    ? Promise.resolve(Response.json({ configured: recordingConfigured }))
-    : fetchFn(input, init));
+function renderRecordingShell(client: ReturnType<typeof createAPIClient>, state: ExploreState, probe: (signal: AbortSignal) => Promise<boolean | undefined> = async () => true) {
+  const readiness = new IntegrationReadiness(probe);
+  const view = render(AppShell, { props: { client, state }, context: new Map([[mediaReadinessKey, readiness]]) });
+  return { ...view, unmount: () => { view.unmount(); readiness.dispose(); } };
 }
 
 function exploreResponse(overrides: Record<string, unknown> = {}) {
@@ -29,89 +32,108 @@ function exploreResponse(overrides: Record<string, unknown> = {}) {
 }
 
 describe('EverythingWorkspace', () => {
-  it.each([429, 503, 'network'] as const)('keeps recording search visible after a status lookup failure %s and retries status on remount', async status => {
+  it('waits for configuration before showing or searching recordings', async () => {
     window.history.replaceState(null, '', '/');
-    let statusCalls = 0;
-    let searchCalls = 0;
-    const fetchFn = vi.fn<typeof fetch>(async input => {
-      const path = new URL((input as Request).url).pathname;
-      if (path.endsWith('/media/search/status')) {
-        statusCalls += 1;
-        if (statusCalls > 1) return Response.json({ configured: false });
-        if (status === 'network') throw new Error('Fetch failed');
-        return Response.json({ error: 'unavailable' }, { status });
-      }
-      if (path.endsWith('/media/search')) {
-        searchCalls += 1;
-        return status === 503 && searchCalls === 1
-          ? Response.json({ error: 'media_search_unavailable' }, { status: 503 })
-          : Response.json(recordingSearchReport());
-      }
-      return Response.json(exploreResponse());
-    });
-    const state = new ExploreState(window);
-    const view = render(AppShell, { client: createBaseAPIClient(fetchFn), state });
-    try {
-      state.replaceTransient({ workspace: 'everything' });
-      await waitFor(() => expect(statusCalls).toBe(1));
-      state.replaceTransient({ query: 'quarterly', searchMode: 'full_text' });
-      expect(await screen.findByRole('region', { name: 'Recordings' })).toBeTruthy();
-      if (status === 503) {
-        await screen.findByText('Recording search unavailable.');
-        await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-      }
-      await screen.findByRole('link', { name: 'Team chat' });
-      state.replaceTransient({ workspace: 'files' });
-      await screen.findByRole('main', { name: 'Files' });
-      state.replaceTransient({ workspace: 'everything' });
-      await waitFor(() => expect(statusCalls).toBe(2));
-      await waitFor(() => expect(screen.queryByRole('region', { name: 'Recordings' })).toBeNull());
-      state.replaceTransient({ workspace: 'files' });
-      await screen.findByRole('main', { name: 'Files' });
-      state.replaceTransient({ workspace: 'everything' });
-      await screen.findByRole('main', { name: 'Everything' });
-      expect(statusCalls).toBe(2);
-      expect(searchCalls).toBe(status === 503 ? 2 : 1);
-    } finally {
-      view.unmount();
-      state.destroy();
-    }
-  });
-
-  it('searches recordings while configuration is unknown', async () => {
-    window.history.replaceState(null, '', '/');
-    let finish!: (response: Response) => void;
-    const fetchFn = vi.fn<typeof fetch>(async input => {
-      const path = new URL((input as Request).url).pathname;
-      if (path.endsWith('/media/search/status')) return new Promise(resolve => { finish = resolve; });
-      if (path.endsWith('/media/search')) return Response.json(recordingSearchReport());
-      return Response.json(exploreResponse());
-    });
+    let finish!: (ready: boolean) => void;
+    const probe = vi.fn(() => new Promise<boolean>(resolve => { finish = resolve; }));
+    const fetchFn = vi.fn<typeof fetch>(async input => new URL((input as Request).url).pathname.endsWith('/media/search')
+      ? Response.json(recordingSearchReport()) : Response.json(exploreResponse()));
     const state = new ExploreState(window);
     state.replaceTransient({ workspace: 'everything', query: 'quarterly', searchMode: 'full_text' });
-    const view = render(AppShell, { client: createBaseAPIClient(fetchFn), state });
-    try {
-      await screen.findByRole('link', { name: 'Team chat' });
-      finish(Response.json({ configured: false }));
-      await waitFor(() => expect(screen.queryByRole('region', { name: 'Recordings' })).toBeNull());
-    } finally {
-      view.unmount();
-      state.destroy();
-    }
-  });
-
-  it('sends no recording search when configuration succeeds with false', async () => {
-    window.history.replaceState(null, '', '/');
-    const fetchFn = vi.fn<typeof fetch>(async input => new URL((input as Request).url).pathname.endsWith('/media/search/status')
-      ? Response.json({ configured: false }) : Response.json(exploreResponse()));
-    const state = new ExploreState(window);
-    state.replaceTransient({ workspace: 'everything', query: 'quarterly', searchMode: 'full_text' });
-    const view = render(AppShell, { client: createBaseAPIClient(fetchFn), state });
+    const view = renderRecordingShell(createAPIClient(fetchFn), state, probe);
     try {
       await screen.findByText('0 items');
-      await new Promise(resolve => setTimeout(resolve, 350));
+      expect(probe).toHaveBeenCalledOnce();
       expect(screen.queryByRole('region', { name: 'Recordings' })).toBeNull();
       expect(fetchFn.mock.calls.some(([input]) => new URL((input as Request).url).pathname.endsWith('/media/search'))).toBe(false);
+      finish(true);
+      await screen.findByRole('link', { name: 'Team chat' });
+    } finally {
+      view.unmount();
+      state.destroy();
+    }
+  });
+
+  it('retries a failed configuration check before searching recordings', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    window.history.replaceState(null, '', '/');
+    let statusCalls = 0;
+    const fetchFn = vi.fn<typeof fetch>(async input => {
+      const path = new URL((input as Request).url).pathname;
+      if (path.endsWith('/media/search/status')) return ++statusCalls === 1
+        ? Response.json({ error: 'unavailable' }, { status: 503 }) : Response.json({ configured: true });
+      return Response.json(path.endsWith('/media/search') ? recordingSearchReport() : exploreResponse());
+    });
+    const client = createAPIClient(fetchFn);
+    const state = new ExploreState(window);
+    state.replaceTransient({ workspace: 'everything', query: 'quarterly', searchMode: 'full_text' });
+    const view = renderRecordingShell(client, state, async signal => {
+      const { data, response } = await getMediaSearchStatus({ ...client, signal });
+      return response.ok ? data?.configured : undefined;
+    });
+    try {
+      await waitFor(() => expect(statusCalls).toBe(1));
+      await vi.advanceTimersByTimeAsync(KATA_RETRY_MS - 1000);
+      expect(statusCalls).toBe(1);
+      expect(screen.queryByRole('region', { name: 'Recordings' })).toBeNull();
+      expect(fetchFn.mock.calls.some(([input]) => new URL((input as Request).url).pathname.endsWith('/media/search'))).toBe(false);
+      await vi.advanceTimersByTimeAsync(1000);
+      await screen.findByRole('link', { name: 'Team chat' });
+      expect(statusCalls).toBe(2);
+    } finally {
+      view.unmount();
+      state.destroy();
+      vi.useRealTimers();
+    }
+  });
+
+  it('hides unconfigured recording search and preserves the layout across navigation', async () => {
+    window.history.replaceState(null, '', '/');
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json(exploreResponse()));
+    const probe = vi.fn(async () => false);
+    const state = new ExploreState(window);
+    state.replaceTransient({ workspace: 'everything', query: 'quarterly', searchMode: 'full_text' });
+    const view = renderRecordingShell(createAPIClient(fetchFn), state, probe);
+    try {
+      await screen.findByText('0 items');
+      vi.useFakeTimers();
+      state.commitSearch('different', 'full_text');
+      await tick();
+      await vi.advanceTimersByTimeAsync(300);
+      state.commitNavigation({ workspace: 'files' });
+      await tick();
+      state.commitNavigation({ workspace: 'everything' });
+      await tick();
+      await vi.advanceTimersByTimeAsync(300);
+      expect(probe).toHaveBeenCalledOnce();
+      expect(screen.queryByRole('region', { name: 'Recordings' })).toBeNull();
+      expect(screen.queryByRole('heading', { name: /^Results/ })).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+      expect(document.querySelector('.results-primary--recordings')).toBeNull();
+      expect(fetchFn.mock.calls.some(([input]) => new URL((input as Request).url).pathname.endsWith('/media/search'))).toBe(false);
+    } finally {
+      view.unmount();
+      state.destroy();
+      vi.useRealTimers();
+    }
+  });
+
+  it('shows Retry when the first configured recording search fails', async () => {
+    window.history.replaceState(null, '', '/');
+    let searchCalls = 0;
+    const fetchFn = vi.fn<typeof fetch>(async input => {
+      if (new URL((input as Request).url).pathname.endsWith('/media/search')) return ++searchCalls === 1
+        ? Response.json({ error: 'media_search_unavailable' }, { status: 503 }) : Response.json(recordingSearchReport());
+      return Response.json(exploreResponse());
+    });
+    const state = new ExploreState(window);
+    state.replaceTransient({ workspace: 'everything', query: 'quarterly', searchMode: 'full_text' });
+    const view = renderRecordingShell(createAPIClient(fetchFn), state);
+    try {
+      await screen.findByText('Recording search unavailable.');
+      await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+      await screen.findByRole('link', { name: 'Team chat' });
+      expect(searchCalls).toBe(2);
     } finally {
       view.unmount();
       state.destroy();
@@ -131,7 +153,7 @@ describe('EverythingWorkspace', () => {
       return Response.json(exploreResponse({ next_cursor: 'more' }));
     });
     const state = new ExploreState(window);
-    const view = render(AppShell, { client: createAPIClient(fetchFn, true), state });
+    const view = renderRecordingShell(createAPIClient(fetchFn), state);
     try {
       const link = await screen.findByRole('link', { name: 'Team chat' });
       expect(link.getAttribute('href')).toBe('/messages/9');
@@ -167,7 +189,7 @@ describe('EverythingWorkspace', () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', query: 'quarterly', searchMode: 'full_text', ...patch }))}`);
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json(exploreResponse()));
     const state = new ExploreState(window);
-    const view = render(AppShell, { client: createAPIClient(fetchFn, true), state });
+    const view = renderRecordingShell(createAPIClient(fetchFn), state);
     try {
       await screen.findByText('groupingChain' in patch ? '0 groups' : '0 items');
       expect(await screen.findByRole('region', { name: 'Recordings' })).toBeTruthy();
@@ -188,7 +210,7 @@ describe('EverythingWorkspace', () => {
       return Response.json(exploreResponse());
     });
     const state = new ExploreState(window);
-    const view = render(AppShell, { client: createAPIClient(fetchFn, true), state });
+    const view = renderRecordingShell(createAPIClient(fetchFn), state);
     try {
       await screen.findByText('No spoken matches.');
       for (const patch of [{ searchMode: 'semantic' as const }, { searchMode: 'full_text' as const, filters: [{ dimension: 'source' as const, values: ['1'] }] }, { filters: [], groupingChain: ['kind' as const] }]) {

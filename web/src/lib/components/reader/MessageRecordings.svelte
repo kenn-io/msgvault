@@ -8,7 +8,7 @@
   import type { MessageRecording, MessageRecordingState } from '../../api/generated/models';
   import type { APIClient } from '../../api/client';
   import { createStaleRequestGuard } from '../../archive/stale-request';
-  import { formatBytes, formatOffset } from '../../util/format';
+  import { formatBytes, formatOffset, formatTranscriptOrigin } from '../../util/format';
 
   let { client, messageId, message }: { client: APIClient; messageId: number; message?: object } = $props();
 
@@ -101,9 +101,6 @@
     };
   });
 
-  function summary(recording: MessageRecording): string {
-    return recording.transcript?.origin === 'generated' ? 'Generated transcript' : 'Provider transcript';
-  }
 </script>
 
 {#if error}
@@ -120,7 +117,7 @@
             <span>{formatBytes(recording.size_bytes)}</span>
           </div>
           {#if recording.state === 'ready'}
-            <p class="recording-state" role="status">{summary(recording)}{#if recording.transcript?.partial}{' · '}<Chip size="xs" tone="warning" uppercase={false}>Partial</Chip>{/if}</p>
+            <p class="recording-state" role="status">{formatTranscriptOrigin(recording.transcript?.origin)}{#if recording.transcript?.partial}{' · '}<Chip size="xs" tone="warning" uppercase={false}>Partial</Chip>{/if}</p>
             {#if recording.transcript}
               <div class="transcript" class:timed={recording.transcript.units.some(unit => unit.start_ms !== undefined)}>
                 {#each recording.transcript.units as unit, index (index)}

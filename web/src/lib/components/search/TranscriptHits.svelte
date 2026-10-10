@@ -7,7 +7,7 @@
   import { searchMedia } from '../../api/generated/api/api';
   import type { MediaSearchResponse, MediaSearchResult } from '../../api/generated/models';
   import { createStaleRequestGuard } from '../../archive/stale-request';
-  import { formatDateTime, formatOffset, formatShortDate } from '../../util/format';
+  import { formatDateTime, formatOffset, formatShortDate, formatTranscriptOrigin } from '../../util/format';
 
   let { client, query, supported, selectedMessageID, missingMessageID, onOpen }: {
     client: APIClient; query: string; supported: boolean; missingMessageID?: number; selectedMessageID?: number; onOpen?: (hit: MediaSearchResult) => void;
@@ -172,7 +172,7 @@
             {#if hit.occurred_at}<time class="date" datetime={hit.occurred_at} title={formatDateTime(hit.occurred_at)}>{formatShortDate(hit.occurred_at)}</time>{/if}
             <span class="provenance" id={`${id}-meta-${index}`}>
               <span class="filename" title={hit.filename}>{hit.filename || 'Unnamed recording'}</span>
-              <Chip size="xs" tone="neutral" uppercase={false}>{hit.origin === 'supplied' ? 'Provider transcript' : 'Generated transcript'}</Chip>
+              <Chip size="xs" tone="neutral" uppercase={false}>{formatTranscriptOrigin(hit.origin)}</Chip>
             </span>
             <span class="transcript" class:timed={hit.start_ms !== undefined}>
               {#if hit.start_ms !== undefined}<time datetime={`PT${hit.start_ms / 1000}S`} title={hit.end_ms === undefined ? undefined : `Until ${formatOffset(hit.end_ms)}`}>{formatOffset(hit.start_ms)}</time>{/if}
