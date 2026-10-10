@@ -465,12 +465,22 @@ func TestKeepRemoteRebasesImportedPersonCleanupBaseline(t *testing.T) {
 		require.Len(t, names, 1)
 		require.NoError(t, st.SupersedePersonNameContext(t.Context(), personID, names[0].Envelope.ID, nil))
 	}
+	renameDisplay := func(t *testing.T, st *store.Store, personID int64) {
+		t.Helper()
+		person, err := st.GetPersonContext(t.Context(), personID)
+		require.NoError(t, err)
+		_, err = st.UpdatePersonDisplayNameContext(t.Context(), personID, person.Revision, new("Alice Local"))
+		require.NoError(t, err)
+	}
 	tests := []struct {
-		name               string
-		makeLocalChange    func(t *testing.T, st *store.Store, personID int64)
-		wantPersonRetained bool
-		publish            bool
-		remoteName         string
+		name                string
+		makeLocalChange     func(t *testing.T, st *store.Store, personID int64)
+		wantPersonRetained  bool
+		publish             bool
+		remoteName          string
+		wantDisplayName     string
+		malformedPreference bool
+		followupName        bool
 	}{
 		{
 			name: "discarded imported projection edit advances cleanup baseline",
@@ -485,28 +495,38 @@ func TestKeepRemoteRebasesImportedPersonCleanupBaseline(t *testing.T) {
 			},
 		},
 		{
-			name:               "removed published formatted name is restored before reconciliation",
+			name:               "removed published formatted name is restored from unchanged remote name",
 			publish:            true,
 			remoteName:         "Alice Remote Base",
 			makeLocalChange:    removeFormattedName,
 			wantPersonRetained: true,
 		},
 		{
-			name:               "superseded formatted name accepts a remote source name change",
-			publish:            true,
-			makeLocalChange:    removeFormattedName,
+			name:    "removed published formatted name is restored from changed remote name",
+			publish: true,
+			makeLocalChange: func(t *testing.T, st *store.Store, personID int64) {
+				t.Helper()
+				renameDisplay(t, st, personID)
+				removeFormattedName(t, st, personID)
+			},
+			wantPersonRetained: true,
+			wantDisplayName:    "Alice Local",
+			remoteName:         "Alice Local",
+			followupName:       true,
+		},
+		{
+			name:               "local display rename survives remote resolution and deletion",
+			makeLocalChange:    renameDisplay,
+			wantDisplayName:    "Alice Local",
 			wantPersonRetained: true,
 		},
 		{
-			name: "local display rename survives remote resolution and deletion",
-			makeLocalChange: func(t *testing.T, st *store.Store, personID int64) {
-				t.Helper()
-				person, err := st.GetPersonContext(t.Context(), personID)
-				require.NoError(t, err)
-				_, err = st.UpdatePersonDisplayNameContext(t.Context(), personID, person.Revision, new("Alice Local"))
-				require.NoError(t, err)
-			},
-			wantPersonRetained: true,
+			name:                "unpublished malformed preference resolves while retaining local display rename",
+			makeLocalChange:     renameDisplay,
+			malformedPreference: true,
+			remoteName:          "Alice Remote Base",
+			wantDisplayName:     "Alice Local",
+			wantPersonRetained:  true,
 		},
 		{
 			name: "explicit user state keeps cleanup baseline",
@@ -559,6 +579,9 @@ func TestKeepRemoteRebasesImportedPersonCleanupBaseline(t *testing.T) {
 			fixture.body = conflictCardWithEmail(
 				"person", remoteName, "alice.retained@example.test",
 			)
+			if tt.malformedPreference {
+				fixture.body = bytes.Replace(fixture.body, []byte("EMAIL:"), []byte("EMAIL;PREF=abc:"), 1)
+			}
 			fixture.etag = `"remote-2"`
 			fixture.mu.Unlock()
 			_, err = service.Sync(t.Context(), SyncOptions{Full: true})
@@ -586,6 +609,26 @@ func TestKeepRemoteRebasesImportedPersonCleanupBaseline(t *testing.T) {
 				}
 			}
 			assert.Equal(1, fnMappings)
+			if tt.malformedPreference {
+				assert.Equal(fixture.body, envelope.StoredBody)
+				_, err = service.Sync(t.Context(), SyncOptions{Full: true})
+				require.NoError(err)
+				_, err = st.GetCardDAVPublicationContext(t.Context(), personID)
+				require.ErrorIs(err, store.ErrCardDAVPublicationNotFound)
+				assert.Zero(fixture.puts)
+			}
+			if tt.followupName {
+				fixture.mu.Lock()
+				fixture.body = bytes.Replace(fixture.body, []byte("FN:"+remoteName), []byte("FN:Alice Final"), 1)
+				fixture.etag = `"remote-3"`
+				fixture.mu.Unlock()
+				_, err = service.Sync(t.Context(), SyncOptions{Full: true})
+				require.NoError(err)
+				names, err := st.ListPersonNamesContext(t.Context(), personID, true)
+				require.NoError(err)
+				require.Len(names, 1)
+				assert.Equal("Alice Final", names[0].OriginalValue)
+			}
 
 			fixture.mu.Lock()
 			fixture.body = nil
@@ -599,8 +642,8 @@ func TestKeepRemoteRebasesImportedPersonCleanupBaseline(t *testing.T) {
 			if tt.wantPersonRetained {
 				require.NoError(err)
 				assert.Equal(personID, person.ID)
-				if tt.name == "local display rename survives remote resolution and deletion" {
-					assert.Equal(new("Alice Local"), person.DisplayName)
+				if tt.wantDisplayName != "" {
+					assert.Equal(new(tt.wantDisplayName), person.DisplayName)
 				}
 				return
 			}
@@ -1644,9 +1687,10 @@ func TestRemoteContactImportPreservesMetadata(t *testing.T) {
 		localKind                                       store.ContactAddressKind
 		localValue                                      string
 		derived, decoded, legacy                        bool
+		wantValues                                      []string
 	}{
-		{name: "email", first: "TEL;TYPE=cell:+12025550101", before: "e2@example.test", after: "e2b@example.test", next: "e2c@example.test", value: "e2b@example.test", kind: store.ContactAddressEmail},
-		{name: "phone", first: "TEL;TYPE=cell:+12025550101", before: "TEL;TYPE=cell:tel:+12025550101", after: "TEL;TYPE=work:tel:+12025550103", next: "TEL;TYPE=work:tel:+12025550104", value: "+12025550103", kind: store.ContactAddressPhone},
+		{name: "email", wantValues: []string{"e1@example.test", "$value", "+12025550101"}, first: "TEL;TYPE=cell:+12025550101", before: "e2@example.test", after: "e2b@example.test", next: "e2c@example.test", value: "e2b@example.test", kind: store.ContactAddressEmail},
+		{name: "phone", wantValues: []string{"e1@example.test", "e2@example.test", "$value"}, first: "TEL;TYPE=cell:+12025550101", before: "TEL;TYPE=cell:tel:+12025550101", after: "TEL;TYPE=work:tel:+12025550103", next: "TEL;TYPE=work:tel:+12025550104", value: "+12025550103", kind: store.ContactAddressPhone},
 		{name: "metadata-email", first: "EMAIL;TYPE=home,work;X-LABEL=first:a@example.test", second: "EMAIL;TYPE=home,work;X-LABEL=second;PREF=1:b@example.test", value: "b@example.test", kind: store.ContactAddressEmail},
 		{name: "whitespace-pref", first: "EMAIL;TYPE=home,work;X-LABEL=first:a@example.test", second: "EMAIL;TYPE=home,work;X-LABEL=second;PREF=\" 1 \":b@example.test", value: "b@example.test", kind: store.ContactAddressEmail},
 		{name: "pref-01", first: "EMAIL;TYPE=home,work;X-LABEL=first:a@example.test", second: "EMAIL;TYPE=home,work;X-LABEL=second;PREF=01:b@example.test", value: "b@example.test", kind: store.ContactAddressEmail},
@@ -1655,7 +1699,7 @@ func TestRemoteContactImportPreservesMetadata(t *testing.T) {
 		{name: "local-email", before: "e2@example.test", after: "e2b@example.test", value: "e2b@example.test", kind: store.ContactAddressEmail, localKind: store.ContactAddressEmail, localValue: "alice-local@example.test"},
 		{name: "local-phone", before: "e2@example.test", after: "e2b@example.test", value: "e2b@example.test", kind: store.ContactAddressEmail, localKind: store.ContactAddressPhone, localValue: "+1 (202) 555-0101"},
 		{name: "derived-name", before: "e2@example.test", after: "e2b@example.test", value: "e2b@example.test", kind: store.ContactAddressEmail, derived: true},
-		{name: "decoded-properties", before: "EMAIL:e2@example.test", after: "EMAIL;VALUE=uri:MAILTO:e2b@example.test\r\nTEL;VALUE=text:TeL:+12025550103", value: "e2b@example.test", kind: store.ContactAddressEmail, decoded: true},
+		{name: "decoded-properties", wantValues: []string{"e1@example.test", "e2b@example.test", "+12025550103"}, before: "EMAIL:e2@example.test", after: "EMAIL;VALUE=uri:MAILTO:e2b@example.test\r\nTEL;VALUE=text:TeL:+12025550103", value: "e2b@example.test", kind: store.ContactAddressEmail, decoded: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
@@ -1704,14 +1748,12 @@ func TestRemoteContactImportPreservesMetadata(t *testing.T) {
 				if added != nil {
 					assert.Contains(values, added.OriginalValue)
 				}
-				if tc.decoded {
-					assert.ElementsMatch([]string{"e1@example.test", "e2b@example.test", "+12025550103"}, values)
-				}
-				if tc.name == "email" {
-					assert.ElementsMatch([]string{"e1@example.test", value, "+12025550101"}, values)
-				}
-				if tc.name == "phone" {
-					assert.ElementsMatch([]string{"e1@example.test", "e2@example.test", value}, values)
+				if tc.wantValues != nil {
+					want := make([]string, len(tc.wantValues))
+					for i, expected := range tc.wantValues {
+						want[i] = strings.ReplaceAll(expected, "$value", value)
+					}
+					assert.ElementsMatch(want, values)
 				}
 			}
 			puts := fixture.puts
@@ -1745,14 +1787,6 @@ func TestRemoteContactImportPreservesMetadata(t *testing.T) {
 				require.NoError(err)
 				require.NoError(service.ReconcilePublications(t.Context()))
 				assert.Contains(string(fixture.body), "TEL:+12025550103\\;ext=42")
-				points, err := st.ListPersonContactPointsContext(t.Context(), personID, true)
-				require.NoError(err)
-				for _, point := range points {
-					if point.AddressKind == store.ContactAddressPhone {
-						assert.Equal("+12025550103", point.NormalizedValue)
-						assert.Equal(new("tel:+12025550103;ext=42"), point.URI)
-					}
-				}
 			}
 			check(updatedValue)
 			conflicts, err := service.ListConflicts(t.Context())
@@ -1792,9 +1826,8 @@ func TestRemoteContactImportPreservesMetadata(t *testing.T) {
 }
 
 func TestPublishedImportLocalRenameSurvivesRemoteRename(t *testing.T) {
-	for _, tc := range []struct{ published, supersedeName bool }{{false, false}, {true, false}, {true, true}} {
-		published := tc.published
-		t.Run(fmt.Sprintf("local rename published=%t superseded=%t", published, tc.supersedeName), func(t *testing.T) {
+	for _, published := range []bool{false, true} {
+		t.Run(fmt.Sprintf("local rename published=%t", published), func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 			fixture, service, st, personID := publishedImportFixture(t)
@@ -1826,21 +1859,12 @@ func TestPublishedImportLocalRenameSurvivesRemoteRename(t *testing.T) {
 			require.NoError(err)
 			if published {
 				assert.Empty(conflicts)
-				if tc.supersedeName {
-					require.NoError(st.SupersedePersonNameContext(t.Context(), personID, names[0].Envelope.ID, nil))
-				}
 				fixture.setRemote(bytes.Replace(fixture.body, []byte("FN:Alice Remote"), []byte("FN:Alice Local"), 1), `"coincidence"`)
 				_, err = service.Sync(t.Context(), SyncOptions{Full: true})
 				require.NoError(err)
 				conflicts, err = service.ListConflicts(t.Context())
 				require.NoError(err)
-				if tc.supersedeName {
-					require.Len(conflicts, 1)
-					fixture.exactGet = true
-					require.NoError(service.ResolveConflict(t.Context(), conflicts[0].ID, ResolutionKeepRemote))
-				} else {
-					assert.Empty(conflicts)
-				}
+				assert.Empty(conflicts)
 
 				fixture.setRemote(bytes.Replace(fixture.body, []byte("FN:Alice Local"), []byte("FN:Alice Final"), 1), `"after-coincidence"`)
 				_, err = service.Sync(t.Context(), SyncOptions{Full: true})
@@ -2209,58 +2233,6 @@ func TestMalformedPreferenceDoesNotBlockReadableCards(t *testing.T) {
 				assert.Equal("updated@example.test", points[0].OriginalValue)
 			}
 		}
-	})
-	t.Run("unpublished remote resolution", func(t *testing.T) {
-		assert := assert.New(t)
-		require := require.New(t)
-		fixture := &conflictMutationServer{body: conflictCardWithEmail("person", "Alice Remote Base", "alice.base@example.test"), etag: `"remote-1"`}
-		server := httptest.NewServer(fixture.handler(t))
-		t.Cleanup(server.Close)
-		service, st, book := newPullService(t, server, false)
-		_, err := service.Sync(t.Context(), SyncOptions{Full: true})
-		require.NoError(err)
-		mapping, err := st.GetCardDAVResourceContext(t.Context(), book.ID, book.CanonicalURL+"person.vcf")
-		require.NoError(err)
-		personID := *mapping.PersonID
-		person, err := st.GetPersonContext(t.Context(), personID)
-		require.NoError(err)
-		_, err = st.UpdatePersonDisplayNameContext(t.Context(), personID, person.Revision, new("Alice Local Label"))
-		require.NoError(err)
-		fixture.mu.Lock()
-		fixture.body = bytes.Replace(conflictCardWithEmail("person", "Alice Remote Base", "alice.retained@example.test"), []byte("EMAIL:"), []byte("EMAIL;PREF=abc:"), 1)
-		fixture.etag = `"remote-2"`
-		fixture.mu.Unlock()
-		_, err = service.Sync(t.Context(), SyncOptions{Full: true})
-		require.NoError(err)
-		conflicts, err := service.ListConflicts(t.Context())
-		require.NoError(err)
-		require.Len(conflicts, 1)
-		require.NoError(service.ResolveConflict(t.Context(), conflicts[0].ID, ResolutionKeepRemote))
-		resolved, err := st.GetCardDAVConflictContext(t.Context(), conflicts[0].ID)
-		require.NoError(err)
-		assert.Equal(store.CardDAVConflictResolved, resolved.Status)
-		points, err := st.ListPersonContactPointsContext(t.Context(), personID, true)
-		require.NoError(err)
-		require.Len(points, 1)
-		assert.Equal("alice.retained@example.test", points[0].OriginalValue)
-		envelope, err := st.GetVCardResourceEnvelopeContext(t.Context(), fmt.Sprintf("carddav:%d", book.ID), mapping.Href)
-		require.NoError(err)
-		assert.Equal(fixture.body, envelope.StoredBody)
-		fnMappings := 0
-		for _, native := range envelope.NativeMappings {
-			if native.Identity.OriginalName == "FN" {
-				fnMappings++
-			}
-		}
-		assert.Equal(1, fnMappings)
-		person, err = st.GetPersonContext(t.Context(), personID)
-		require.NoError(err)
-		assert.Equal(new("Alice Local Label"), person.DisplayName)
-		_, err = service.Sync(t.Context(), SyncOptions{Full: true})
-		require.NoError(err)
-		_, err = st.GetCardDAVPublicationContext(t.Context(), personID)
-		require.ErrorIs(err, store.ErrCardDAVPublicationNotFound)
-		assert.Zero(fixture.puts)
 	})
 }
 

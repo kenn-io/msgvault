@@ -135,12 +135,13 @@ describe('CardDAVConflicts', () => {
     rendered.unmount();
   });
 
-  it.each(['Synthetic contacts', 'msgvault', 'Last synced version'])('renders safe comparison summaries for address book %s', async (bookName) => {
-    const addressBook = { id: 7, name: bookName, ...forbidden };
+  it('renders safe comparison summaries and keeps comparison identity separate from address book labels', async () => {
+    let bookName = 'Synthetic contacts';
+    const addressBook = () => ({ id: 7, name: bookName, ...forbidden });
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const path = new URL(requestOf(input).url).pathname;
-      if (path.endsWith('/41')) return Response.json(conflictDetail(41, { address_book: addressBook }));
-      return Response.json({ conflicts: [listItem(41, { address_book: addressBook })] });
+      if (path.endsWith('/41')) return Response.json(conflictDetail(41, { address_book: addressBook() }));
+      return Response.json({ conflicts: [listItem(41, { address_book: addressBook() })] });
     });
     const controller = new CardDAVConflictsController(createAPIClient(fetchFn));
     await controller.load();
@@ -161,6 +162,12 @@ describe('CardDAVConflicts', () => {
     expect(screen.queryByRole('button', { name: 'Use msgvault version' })).toBeNull();
     expect(rendered.container.textContent).not.toMatch(/FORBIDDEN-VCARD|MUST-NOT-RENDER|must-not-render/i);
     expect(rendered.container.innerHTML).not.toMatch(/forbidden-(?:url|href|etag|hash|uid|header|credential)/i);
+    for (bookName of ['msgvault', 'Last synced version']) {
+      await controller.load();
+      await fireEvent.click(screen.getByRole('button', { name: `Review conflict 41 in ${bookName}` }));
+      await waitFor(() => expect(within(detail).getAllByRole('heading').map((heading) => heading.textContent))
+        .toEqual(['Last synced version', 'msgvault', bookName]));
+    }
     controller.destroy();
   });
 
@@ -189,16 +196,19 @@ describe('CardDAVConflicts', () => {
     expect(screen.getAllByText('No email addresses')).toHaveLength(3);
     expect(screen.getAllByText('No phone numbers')).toHaveLength(3);
     expect(screen.getByText('Resolved using the msgvault version.')).toBeDefined();
-    expect(screen.queryByRole('button', { name: /Keep (?:local|remote) card/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Use (?:msgvault|address book) version/ })).toBeNull();
     controller.destroy();
   });
 
-  it('renders accessible loading, fixed error, GET-only retry, and empty queue states', async () => {
+  it.each(['http', 'transport'])('renders loading, fixed %s error, GET-only retry, and empty queue states', async (failure) => {
     const first = deferredResponse();
     let listReads = 0;
     const fetchFn = vi.fn<typeof fetch>(async () => {
       listReads += 1;
-      if (listReads === 1) return first.promise;
+      if (listReads === 1) {
+        if (failure === 'transport') throw new TypeError('synthetic connection reset');
+        return first.promise;
+      }
       return Response.json({ conflicts: [] });
     });
     const controller = new CardDAVConflictsController(createAPIClient(fetchFn));
@@ -207,7 +217,7 @@ describe('CardDAVConflicts', () => {
     expect(screen.getByLabelText('Contact conflicts').getAttribute('aria-busy')).toBe('true');
     expect(screen.getByText('Loading contact conflicts…')).toBeDefined();
     const load = controller.load();
-    first.resolve(Response.json({ error: 'unavailable', message: forbidden.credential }, { status: 503 }));
+    if (failure === 'http') first.resolve(Response.json({ error: 'unavailable', message: forbidden.credential }, { status: 503 }));
     await load;
     expect((await screen.findByRole('alert')).textContent).toContain('Unable to load contact conflicts.');
     expect(rendered.container.textContent).not.toContain(forbidden.credential);
@@ -460,24 +470,6 @@ describe('CardDAVConflicts', () => {
 
     await fireEvent.click(screen.getByRole('button', { name: 'Use address book version' }));
     expect(screen.getByRole('dialog')).toBeDefined();
-    controller.destroy();
-  });
-
-  it('keeps a transport list failure actionable with GET-only retry', async () => {
-    let reads = 0;
-    const fetchFn = vi.fn<typeof fetch>(async () => {
-      reads += 1;
-      if (reads === 1) throw new TypeError('synthetic connection reset');
-      return Response.json({ conflicts: [] });
-    });
-    const controller = new CardDAVConflictsController(createAPIClient(fetchFn));
-    await controller.load();
-    render(CardDAVConflicts, { controller });
-
-    expect(screen.getByRole('alert').textContent).toContain('Unable to load contact conflicts.');
-    await fireEvent.click(screen.getByRole('button', { name: 'Retry contact conflicts' }));
-    expect(await screen.findByText('No contact conflicts.')).toBeDefined();
-    expect(reads).toBe(2);
     controller.destroy();
   });
 
