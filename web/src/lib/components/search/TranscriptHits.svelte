@@ -11,7 +11,6 @@
     client: APIClient; query: string; supported: boolean; selectedMessageID?: number; onOpen?: (hit: MediaSearchResult) => void;
   } = $props();
   const id = $props.id();
-  const terms = $derived(new Set(query.trim().toLowerCase().split(/\s+/u)));
   let result = $state<MediaSearchResponse>();
   const admitted = $derived(query.trim().split(/\s+/u).every(term => /^[\p{L}\p{M}\p{N}]+$/u.test(term) && /[\p{L}\p{N}]/u.test(term) && !/^(AND|OR|NOT)$/i.test(term)));
   const incomplete = $derived(Boolean(result && (result.partial || result.truncated)));
@@ -170,7 +169,7 @@
             </span>
             <span class="transcript" class:timed={hit.start_ms !== undefined}>
               {#if hit.start_ms !== undefined}<time datetime={`PT${hit.start_ms / 1000}S`} title={hit.end_ms === undefined ? undefined : `Until ${formatOffset(hit.end_ms)}`}>{formatOffset(hit.start_ms)}</time>{/if}
-              <span class="excerpt" id={`${id}-excerpt-${index}`}>{#each hit.excerpt.split(/([\p{L}\p{M}\p{N}]+)/u) as part}{#if terms.has(part.toLowerCase())}<mark>{part}</mark>{:else}{part}{/if}{/each}</span>
+              <span class="excerpt" id={`${id}-excerpt-${index}`}>{hit.excerpt}</span>
             </span>
           </a>
         </li>
@@ -220,7 +219,6 @@
   .transcript.timed { grid-template-columns: 3.5rem minmax(0, 1fr); column-gap: var(--space-3); }
   .transcript time { padding-top: 0.2em; }
   .excerpt { display: -webkit-box; line-clamp: 3; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; font-size: var(--font-size-sm); line-height: 1.5; white-space: pre-wrap; }
-  mark { background: var(--selected-bg); color: inherit; font-weight: var(--font-weight-semibold); }
   time { font-variant-numeric: tabular-nums; }
   .coverage { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-2); }
   .coverage span + span::before { content: '·'; margin-right: var(--space-2); }

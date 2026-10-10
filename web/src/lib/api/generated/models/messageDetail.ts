@@ -11,6 +11,7 @@ export interface MessageDetail {
   body_omitted?: boolean;
   cc?: string[];
   conversation_id?: number;
+  conversation_title?: string;
   deleted_at?: string;
   from: string;
   from_email?: string;

@@ -29,6 +29,7 @@ import { isCalendarDate } from '../directory/dates';
 import { isGroupingDimension, validateGroupingChain } from '../grouping/catalog';
 import { hasValidSearchAuthority, predicateFingerprint } from './selection';
 import { parseAttachmentSelection } from './attachment-authority';
+import { parseRecordingSelection } from '../archive/recording-selection';
 import { ARCHIVE_MEETING_HISTORY_KEY, parseArchiveMeetingHistory, type ArchiveMeetingHistory } from '../meetings/archive-selection';
 import {
   normalizeSettingsNavigationAuthority,
@@ -314,6 +315,7 @@ function scrollAnchor(value: unknown): ExploreScrollAnchor | null {
 function selectedRow(value: unknown): string | null {
   if (value === null) return null;
   if (typeof value !== 'string') return null;
+  if (value.startsWith('recording:')) return parseRecordingSelection(value) === undefined ? null : value;
   if (!value.startsWith('attachment:')) return value;
   return parseAttachmentSelection(value) === undefined ? null : value;
 }

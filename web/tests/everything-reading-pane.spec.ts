@@ -44,6 +44,41 @@ function exploreURLState(overrides: Record<string, unknown> = {}) {
   };
 }
 
+test('recording matches keep their conversation title through reader navigation', async ({ page }) => {
+  const message = { id: 9, conversation_id: 2, subject: '', conversation_title: 'Team chat', body: 'Source recording',
+    from: 'Example Person', to: [], sent_at: '2026-07-18T12:00:00Z', snippet: '', size_bytes: 44, has_attachments: false, attachments: [], labels: [] };
+  await page.route('**/api/session', route => route.fulfill({ json: { auth_mode: 'loopback', https: false, plain_http_warning: false } }));
+  await page.route('**/api/v1/explore', route => route.fulfill({ json: { rows: [entry(1)], total_count: 1, cache_revision: 'recording', search_provenance: {} } }));
+  await page.route('**/api/v1/media/search?*', route => route.fulfill({ json: {
+    results: [{ message_id: 9, conversation_id: 2, attachment_id: 1, containing_title: 'Team chat', origin: 'supplied', excerpt: 'Quarterly numbers' }],
+    coverage: { state: 'complete' }, partial: false, truncated: false, pending_occurrences: 0, unavailable_occurrences: 0, attribution_unavailable: 0
+  } }));
+  await page.route('**/api/v1/messages/9', route => route.fulfill({ json: message }));
+  await page.route('**/api/v1/conversations/2?*', route => route.fulfill({ json: { id: 2, messages: [message], anchor_id: 9, has_before: false, has_after: false, total: 1 } }));
+  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(exploreURLState({ query: 'quarterly' })))}`);
+  const link = page.getByRole('link', { name: 'Team chat' });
+  const reader = page.getByRole('complementary', { name: 'Reading pane: Team chat' });
+  await expect(page.getByRole('heading', { name: 'Results 1 item', exact: true })).toBeVisible();
+  await link.click();
+  await expect(reader.getByText('Source recording')).toBeVisible();
+  await reader.getByRole('button', { name: 'Dock reader right' }).click();
+  await expect(page.getByRole('separator', { name: 'Resize reading pane' })).toHaveAttribute('aria-orientation', 'vertical');
+  await reader.getByRole('button', { name: 'Dock reader below' }).click();
+  await reader.getByRole('button', { name: 'Close reading pane' }).click();
+  await expect(link).toBeFocused();
+  await page.goBack();
+  await expect(reader).toBeVisible();
+  await page.reload();
+  await expect(reader.getByText('Source recording')).toBeVisible();
+  await page.goForward();
+  await expect(reader).toHaveCount(0);
+  await page.goBack();
+  await expect(reader).toBeVisible();
+  await expect(page.getByRole('searchbox', { name: 'Search everything' })).toHaveValue('quarterly');
+  await page.goto('/messages/9');
+  await expect(page.getByRole('heading', { name: 'Team chat', exact: true })).toBeVisible();
+});
+
 test('the bottom reading pane opens on a single click, resizes, and persists its height', async ({ page }) => {
   await page.route('**/api/session', (route) =>
     route.fulfill({ json: { auth_mode: 'loopback', https: false, plain_http_warning: false } })

@@ -35,7 +35,6 @@ describe('TranscriptHits', () => {
     expect(links[0].querySelector('.transcript time')?.getAttribute('title')).toBe('Until 0:02');
     expect(links[0].textContent).toContain('Quarterly <numbers>');
     expect(links[0].querySelector('numbers')).toBeNull();
-    expect(links[0].querySelector('mark')?.textContent).toBe('Quarterly');
     expect(links[0].querySelector('time')?.getAttribute('datetime')).toBe('2026-07-18T12:00:00Z');
     expect(links[1].textContent).toContain('Generated transcript');
     expect(links[1].querySelectorAll('time')).toHaveLength(1);

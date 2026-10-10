@@ -328,6 +328,8 @@ type MessageSummary struct {
 
 // MessageDetail represents a full message response.
 type MessageDetail struct {
+	// ConversationTitle is set by GET /messages/{id}.
+	ConversationTitle string `json:"conversation_title,omitempty"`
 	MessageSummary
 
 	Body     string `json:"body"`
@@ -553,6 +555,8 @@ func messageDetailFromQuery(qMsg *query.MessageDetail) MessageDetail {
 	}
 
 	return MessageDetail{
+		ConversationTitle: qMsg.ConversationTitle,
+
 		ID:              qMsg.ID,
 		SourceID:        qMsg.SourceID,
 		SourceMessageID: qMsg.SourceMessageID,
@@ -789,10 +793,11 @@ func (s *Server) handleGetMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	detail := MessageDetail{
-		MessageSummary: toMessageSummary(*msg),
-		Body:           msg.Body,
-		BodyHTML:       msg.BodyHTML,
-		IsFromMe:       msg.IsFromMe,
+		MessageSummary:    toMessageSummary(*msg),
+		ConversationTitle: msg.ConversationTitle,
+		Body:              msg.Body,
+		BodyHTML:          msg.BodyHTML,
+		IsFromMe:          msg.IsFromMe,
 	}
 
 	attachments := make([]AttachmentInfo, 0, len(msg.Attachments))

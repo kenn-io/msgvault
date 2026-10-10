@@ -7078,6 +7078,8 @@ components:
         conversation_id:
           format: int64
           type: integer
+        conversation_title:
+          type: string
         deleted_at:
           type: string
         from:

@@ -48,6 +48,7 @@ const participantSummarySenderSQL = participantDisplaySQL + ` as from_display,
 
 // APIMessage represents a message for API responses.
 type APIMessage struct {
+	ConversationTitle    string
 	ID                   int64
 	SourceID             int64
 	SourceMessageID      string
@@ -218,6 +219,7 @@ func (s *Store) GetMessageContext(ctx context.Context, id int64) (*APIMessage, e
 			COALESCE(m.source_message_id, '') as source_message_id,
 			COALESCE(m.conversation_id, 0) as conversation_id,
 			COALESCE(c.source_conversation_id, '') as source_conversation_id,
+			COALESCE(c.title, ''),
 			COALESCE(m.subject, '') as subject,
 			COALESCE(m.message_type, '') as message_type,
 			%s,
@@ -251,6 +253,7 @@ func (s *Store) GetMessageContext(ctx context.Context, id int64) (*APIMessage, e
 		&m.SourceMessageID,
 		&m.ConversationID,
 		&m.SourceConversationID,
+		&m.ConversationTitle,
 		&m.Subject,
 		&m.MessageType,
 		&m.From,
