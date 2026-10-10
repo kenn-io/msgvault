@@ -2,15 +2,17 @@
   import { getSettings as generatedGetSettings } from './lib/api/generated/api/api';
   import { Button } from '@kenn-io/kit-ui';
   import { startAppOpenedReporting } from '@kenn-io/kit-ui/utils/app-opened';
-  import { onMount } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
   import { receiveGoogleContactsCallback } from './lib/settings/google-authorization';
   import { createSessionController, type SessionController } from './lib/api/session.svelte';
+  import { createSessionAwareAPIClient } from './lib/api/client';
   import { provideKataReadiness } from './lib/kata/kata-ready.svelte';
   import Login from './lib/components/auth/Login.svelte';
   import SettingsWorkspace from './lib/components/settings/SettingsWorkspace.svelte';
   import AppShell from './lib/components/shell/AppShell.svelte';
   import MessagePage from './lib/components/reader/MessagePage.svelte';
   import { startScreenViewReporting } from './lib/telemetry/screen-views';
+  import { startSessionReporting } from './lib/telemetry/session';
   import type { ExploreSearchMode } from './lib/explore/models';
   import { availableSearchModeStorage, parseSearchMode, rememberSearchMode } from './lib/search/modes';
   import {
@@ -83,6 +85,13 @@
     if (oauthCallback || !shellMounted || messageID === undefined) return;
     return startScreenViewReporting(session.client, 'message');
   });
+  let reporter: ReturnType<typeof startSessionReporting> | undefined;
+  $effect(() => {
+    const signedIn = session.authMode !== undefined && session.authMode !== 'required';
+    if (signedIn) reporter ??= startSessionReporting(createSessionAwareAPIClient(fetch, () => session.csrfToken));
+    reporter?.signedIn(signedIn);
+  });
+  onDestroy(() => reporter?.stop());
   async function loadBrowserDefaults(generation: number): Promise<void> {
     try {
       const { data } = await generatedGetSettings(session.client);

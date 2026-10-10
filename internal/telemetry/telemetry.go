@@ -19,6 +19,8 @@ const (
 	EventAppOpened = "app_opened"
 	// EventScreenViewed counts a fixed screen once per installation per UTC day.
 	EventScreenViewed = "screen_viewed"
+	// EventSessionEnded reports bucketed UI session duration.
+	EventSessionEnded = "session_ended"
 	// propertySurface names the interface that reported an event.
 	propertySurface = "surface"
 	application     = "msgvault"
@@ -68,6 +70,9 @@ func buildReporter(opts Options, endpoint string, logger *slog.Logger) (*posthog
 		posthog.WithAllowedEvent(EventScreenViewed,
 			posthog.AllowProperty("screen", posthog.AllowStringValues(screenNames...)),
 			posthog.AllowProperty(propertySurface, posthog.AllowStringValues("web", "tui"))),
+		posthog.WithAllowedEvent(EventSessionEnded,
+			posthog.AllowProperty(propertySurface, posthog.AllowStringValues("web", "tui")),
+			posthog.AllowProperty("duration_bucket", posthog.AllowStringValues("under_1m", "1_to_5m", "5_to_30m", "over_30m"))),
 	}
 	if strings.TrimSpace(os.Getenv(EnabledEnv)) == "" && !opts.ConfigEnabled {
 		// Only the daemon reports, so the process-wide switch is this reporter's switch.
@@ -89,4 +94,19 @@ func buildReporter(opts Options, endpoint string, logger *slog.Logger) (*posthog
 		return nil, fmt.Errorf("build telemetry reporter: %w", err)
 	}
 	return reporter, nil
+}
+
+// DurationBucket groups session runtime without reporting an exact duration.
+// Keep thresholds and names in sync with web/src/lib/telemetry/session.ts.
+func DurationBucket(duration time.Duration) string {
+	switch {
+	case duration < time.Minute:
+		return "under_1m"
+	case duration < 5*time.Minute:
+		return "1_to_5m"
+	case duration <= 30*time.Minute:
+		return "5_to_30m"
+	default:
+		return "over_30m"
+	}
 }

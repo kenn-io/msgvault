@@ -1797,6 +1797,15 @@ features once published. No startup hook or entrypoint wrapper is required.
 - `screen_viewed` when a web or terminal screen opens, counted once per installation
   per UTC day across both interfaces and daemon restarts. The daemon keeps the
   current day's screens in `telemetry-screen-views.json` beside its install ID.
+- `session_ended` when a browser tab closes, reloads, stays hidden for 30 minutes, or the
+  terminal UI exits normally or after an interrupt. Browser sessions add visible
+  time across tab switches;
+  terminal sessions measure UI runtime. Returning after 30 minutes hidden starts
+  a fresh browser session. Delivery is best effort; terminal delivery has a
+  three-second request timeout. Terminal startup failures, forced termination,
+  or crashes may send nothing.
+  Time spent signed out doesn't count. Earlier signed-in time carries across
+  signing in again, and a tab that closes or expires while signed out sends nothing.
 
 For `app_opened`, the web UI records the day it last reported in browser storage, which the
 browser keeps separately for each daemon address. With the default
@@ -1806,6 +1815,9 @@ that blocks storage, can also each send one. Each event carries only:
 
 - the product name and source (`msgvault`, `daemon`)
 - on `app_opened`, the surface (`web`)
+- on `session_ended`, the surface (`web` or `tui`) and `duration_bucket`:
+  `under_1m` below one minute, `1_to_5m` below five minutes, `5_to_30m` through
+  30 minutes, and `over_30m` above 30 minutes
 - on `screen_viewed`, the first surface (`web` or `tui`) and a fixed screen name:
   `everything`, `directory`, `directory_review`, `files`, `operations`,
   `relationships`, `saved_views`, `sources`, `deletions`, `settings`, `message`,
