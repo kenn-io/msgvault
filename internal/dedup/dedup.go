@@ -57,6 +57,7 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/deletion"
+	"go.kenn.io/msgvault/internal/emlx"
 	msgmime "go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -197,6 +198,23 @@ type DuplicateMessage struct {
 	FromEmail        string
 	MatchedIdentity  bool
 	normalizedHash   string
+	// applePlaceholders is true when the raw MIME still holds an Apple Mail
+	// X-Apple-Content-Length placeholder instead of the attachment body.
+	applePlaceholders bool
+	// mimeParts fingerprints the top-level MIME parts, so copies can be
+	// compared with the placeholder parts set aside. nil when not multipart.
+	mimeParts *mimePartPrints
+}
+
+// mimePartPrints holds hashes of a multipart message: everything outside the
+// top-level parts, and each part's header (whole, and without the lines a
+// restore rewrites) and body.
+type mimePartPrints struct {
+	outer             string
+	headers           []string
+	restorableHeaders []string
+	bodies            []string
+	placeholder       []bool
 }
 
 // IsSentCopy reports whether this message appears to be the sender-side
@@ -442,6 +460,8 @@ func (e *Engine) duplicateMessage(
 		ArchivedAt: row.ArchivedAt, IsFromMe: row.IsFromMe,
 		HasSentLabel: row.HasSentLabel, FromEmail: row.FromEmail,
 		MatchedIdentity: matched, normalizedHash: rawInfo.normalizedHash,
+		applePlaceholders: rawInfo.applePlaceholders,
+		mimeParts:         rawInfo.mimeParts,
 	}
 }
 
@@ -802,7 +822,9 @@ type duplicateRawMIMEInfo struct {
 	rfc822MessageID string
 	// messageIDChecked is true whenever raw MIME exists. An empty ID means
 	// the raw message could not confirm the stored value.
-	messageIDChecked bool
+	messageIDChecked  bool
+	applePlaceholders bool
+	mimeParts         *mimePartPrints
 }
 
 func (e *Engine) inspectDuplicateRawMIME(
@@ -821,6 +843,8 @@ func (e *Engine) inspectDuplicateRawMIME(
 				return
 			}
 			info.normalizedHash = sha256Hex(normalizeRawMIME(raw))
+			info.applePlaceholders = emlx.HasAttachmentPlaceholders(raw)
+			info.mimeParts = fingerprintMIMEParts(raw)
 			parsed, _ := msgmime.ParseWithRecovery(raw, "")
 			if parsed != nil {
 				info.rfc822MessageID = msgmime.NormalizeMessageID(parsed.MessageID)
@@ -868,16 +892,85 @@ func (e *Engine) selectSurvivor(group *DuplicateGroup) {
 		}
 	}
 
+	usePlaceholderPreference := placeholderPreferenceApplies(group.Messages, candidates)
+
 	best := candidates[0]
 	for _, i := range candidates[1:] {
 		if e.isBetter(
 			group.Messages[i], group.Messages[best], priorityMap,
-			usePayloadCompleteness,
+			usePayloadCompleteness, usePlaceholderPreference,
 		) {
 			best = i
 		}
 	}
 	group.Survivor = best
+}
+
+// fingerprintMIMEParts hashes the top-level parts of a multipart message. It
+// returns nil for a message that is not multipart.
+func fingerprintMIMEParts(raw []byte) *mimePartPrints {
+	outer, parts, ok := emlx.SplitTopLevelParts(raw)
+	if !ok {
+		return nil
+	}
+	prints := &mimePartPrints{
+		outer: sha256Hex(normalizeRawMIME([]byte(strings.Join(outer, "\n")))),
+	}
+	for _, part := range parts {
+		prints.headers = append(prints.headers, sha256Hex([]byte(strings.Join(part.Header, "\n"))))
+		prints.restorableHeaders = append(prints.restorableHeaders, sha256Hex([]byte(strings.Join(part.RestorableHeader, "\n"))))
+		prints.bodies = append(prints.bodies, sha256Hex([]byte(strings.Join(part.Body, "\n"))))
+		prints.placeholder = append(prints.placeholder, part.Placeholder)
+	}
+	return prints
+}
+
+// placeholderPreferenceApplies enables the Apple Mail placeholder tier for a
+// whole group: every eligible copy comes from one source and has raw MIME,
+// some but not all of them still carry X-Apple-Content-Length placeholders,
+// and the copies are the same message apart from the parts that carry one.
+// That is a .partial.emlx imported before attachments were restored next to a
+// copy of the same message written after it. The copies are compared part by
+// part: at positions where any copy has a placeholder, the body and the
+// encoding and placeholder header lines are set aside; everything else (the
+// message header, every other part's whole header and body) must match, so a
+// different message that reuses the Message-ID cannot win on its MIME alone.
+func placeholderPreferenceApplies(messages []DuplicateMessage, candidates []int) bool {
+	first := messages[candidates[0]]
+	if first.mimeParts == nil {
+		return false
+	}
+	withPlaceholders := 0
+	placeholderAt := make([]bool, len(first.mimeParts.placeholder))
+	for _, i := range candidates {
+		m := messages[i]
+		if !m.HasRawMIME || m.SourceID != first.SourceID || m.mimeParts == nil ||
+			m.mimeParts.outer != first.mimeParts.outer ||
+			!slices.Equal(m.mimeParts.restorableHeaders, first.mimeParts.restorableHeaders) {
+			return false
+		}
+		if m.applePlaceholders {
+			withPlaceholders++
+		}
+		for p, has := range m.mimeParts.placeholder {
+			placeholderAt[p] = placeholderAt[p] || has
+		}
+	}
+	if withPlaceholders == 0 || withPlaceholders == len(candidates) {
+		return false
+	}
+	for _, i := range candidates {
+		m := messages[i].mimeParts
+		for p := range m.bodies {
+			if placeholderAt[p] {
+				continue
+			}
+			if m.bodies[p] != first.mimeParts.bodies[p] || m.headers[p] != first.mimeParts.headers[p] {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func allIndexes(n int) []int {
@@ -894,7 +987,7 @@ func allIndexes(n int) []int {
 func (e *Engine) isBetter(
 	candidate, current DuplicateMessage,
 	priorityMap map[string]int,
-	usePayloadCompleteness bool,
+	usePayloadCompleteness, usePlaceholderPreference bool,
 ) bool {
 	candPri := sourcePriority(candidate.SourceType, priorityMap)
 	currPri := sourcePriority(current.SourceType, priorityMap)
@@ -903,6 +996,9 @@ func (e *Engine) isBetter(
 	}
 	if candidate.HasRawMIME != current.HasRawMIME {
 		return candidate.HasRawMIME
+	}
+	if usePlaceholderPreference && candidate.applePlaceholders != current.applePlaceholders {
+		return !candidate.applePlaceholders
 	}
 	if usePayloadCompleteness {
 		if better, decided := payloadCompletenessPreference(candidate, current); decided {
@@ -1640,7 +1736,8 @@ func (e *Engine) formatSurvivorMethodology(sb *strings.Builder) {
 	for i, sourceType := range e.config.SourcePreference {
 		fmt.Fprintf(sb, "  %d. %s\n", i+1, sourceType)
 	}
-	sb.WriteString("  Tiebreakers: has raw MIME > when all eligible copies have matching normalized MIME, " +
+	sb.WriteString("  Tiebreakers: has raw MIME > within one source and otherwise identical content, no Apple Mail attachment placeholders > " +
+		"when all eligible copies have matching normalized MIME, " +
 		"more attachments > attachment signal > larger payload; then metadata quality > more labels > " +
 		"earlier archived_at > lower id.\n")
 	sb.WriteString("  Metadata quality: one point each for native provider message ID, threading evidence, and Message-ID.\n\n")
