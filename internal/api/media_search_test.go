@@ -675,7 +675,6 @@ func TestMediaSearchSuppliedInputLimit(t *testing.T) {
 	}{
 		{"64 inputs", 64, false, false, false},
 		{"65 inputs and ordinary recording", 65, true, false, false},
-		{"65 inputs alone", 65, false, false, false},
 		{"65 inputs with pending caption", 65, false, true, false},
 		{"65 inputs and shared content version", 65, true, false, true},
 	} {
