@@ -423,7 +423,8 @@ var operationGateExemptPaths = map[string]bool{
 // entries. Both perform SSRF-validated outbound reads without changing
 // archive or persistent configuration state, so they must stay available
 // while a long archive operation holds the gate. Kata evidence preparation
-// only reads message bodies and extracted document text.
+// only reads message bodies and extracted document text. Message tag reads and
+// previews bypass the gate here; their handler takes it for actual writes.
 const cardDAVAccountTestPath = "/api/v1/carddav/account/test"
 
 var readOnlyPostRoutePatterns = []string{
@@ -431,6 +432,7 @@ var readOnlyPostRoutePatterns = []string{
 	remoteImagePath,
 	cardDAVAccountTestPath,
 	kataEvidencePreparePath,
+	"/api/v1/messages/{id}/tags",
 	"/api/v1/explore",
 	"/api/v1/explore/groups",
 	"/api/v1/explore/preflight",
@@ -463,8 +465,8 @@ var (
 	readOnlyPostRouteMux  *http.ServeMux
 )
 
-// readOnlyPostRouteRequest reports whether r targets one of the read-only
-// analytical POST routes. Matching goes through a net/http ServeMux built
+// readOnlyPostRouteRequest reports whether r targets a POST route that bypasses
+// the middleware gate. Matching goes through a net/http ServeMux built
 // from readOnlyPostRoutePatterns so the path-parameter routes ({id},
 // {domain}) match with the same semantics as the API router itself.
 func readOnlyPostRouteRequest(r *http.Request) bool {
@@ -541,10 +543,6 @@ func operationGateRequest(r *http.Request, auth requestAuthentication) (bool, st
 		return false, "", nil
 	}
 	if genericSyncTriggerRequest(r) {
-		return false, "", nil
-	}
-	// Tag reads and previews change nothing; the handler gates real writes.
-	if r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/v1/messages/") && strings.HasSuffix(r.URL.Path, "/tags") {
 		return false, "", nil
 	}
 	// Provider handlers take the gate only for their local mutations. Device

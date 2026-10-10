@@ -12,6 +12,9 @@ import (
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
+// Tag errors carry before/after snapshots and IMAP flags, not just an error message.
+const maxMessageTagErrorBodyBytes = 1 << 20
+
 // MessageTags never retries a provider mutation after a transport error.
 func (c *Client) MessageTags(ctx context.Context, id int64, change *emailtags.MessageTagChange, mailbox string) (*emailtags.MessageTagResult, error) {
 	method := http.MethodGet
@@ -21,7 +24,7 @@ func (c *Client) MessageTags(ctx context.Context, id int64, change *emailtags.Me
 		method = http.MethodPost
 		options = &generated.UpdateMessageTagsRequestOptions{Body: &generated.UpdateMessageTagsBody{Add: change.Add, Remove: change.Remove, Mailbox: optionalString(change.Mailbox), DryRun: &change.DryRun}}
 	}
-	resp, err := c.DoGeneratedRequestWithContext(ctx, method, path, options)
+	resp, err := c.doGeneratedRequestWithHTTPClient(ctx, method, path, options, c.httpClient, maxMessageTagErrorBodyBytes)
 	if err != nil {
 		return nil, messageTagResponseError(change, err)
 	}

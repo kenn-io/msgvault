@@ -106,8 +106,47 @@ func TestMessageTagsClientPreservesLargePartialError(t *testing.T) {
 	}
 }
 
+func TestMessageTagsClientPreservesLargeIMAPError(t *testing.T) {
+	for _, verified := range []bool{false, true} {
+		t.Run(fmt.Sprintf("verified-%t", verified), func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			tags := make([]string, 90)
+			for i := range tags {
+				tags[i] = fmt.Sprintf("%03d", i) + strings.Repeat("x", 252)
+			}
+			observed := &emailtags.MessageTagResult{
+				MessageID: 7, SourceID: 2, Provider: "imap", Mailbox: "INBOX", UIDValidity: 77, UID: 9,
+				Tags: tags, Before: tags, Flags: tags, Verified: verified,
+			}
+			code, message := "verification_failed", "Inspect tags before retrying"
+			if verified {
+				code, message = "remote_accepted_local_failed", "Provider tags were verified but could not be saved locally; sync the account"
+			}
+			st := &nativeTagsStore{Store: testutil.NewTestStore(t), failure: emailtags.Failure(code, message, observed, nil)}
+			srv := httptest.NewServer(api.NewServer(&config.Config{}, st, nil, slog.New(slog.DiscardHandler)).Router())
+			t.Cleanup(srv.Close)
+			c, err := daemonclient.New(daemonclient.Config{URL: srv.URL, AllowInsecure: true, HTTPClient: srv.Client()})
+			require.NoError(err)
+			t.Cleanup(func() { assert.NoError(c.Close()) })
+			result, err := c.MessageTags(t.Context(), 7, &emailtags.MessageTagChange{Add: tags}, "")
+			var failure *emailtags.MessageTagError
+			require.ErrorAs(err, &failure)
+			assert.Equal(code, failure.Code)
+			assert.Equal(message, failure.Message)
+			require.NotNil(result)
+			assert.Equal(tags, result.Tags)
+			assert.Equal(tags, result.Before)
+			assert.Equal(tags, result.Flags)
+			assert.Equal(verified, result.Verified)
+			assert.Equal("INBOX", result.Mailbox)
+			assert.Equal(uint32(9), result.UID)
+		})
+	}
+}
+
 func TestMessageTagsClientResponseLossIsUnknownWrite(t *testing.T) {
-	for _, scenario := range []string{"disconnect", "invalid JSON"} {
+	for _, scenario := range []string{"disconnect", "invalid JSON", "oversized error"} {
 		t.Run(scenario, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
@@ -127,6 +166,11 @@ func TestMessageTagsClientResponseLossIsUnknownWrite(t *testing.T) {
 					return
 				}
 				w.Header().Set("Content-Type", "application/json")
+				if scenario == "oversized error" {
+					w.WriteHeader(http.StatusInternalServerError)
+					_, _ = w.Write([]byte(strings.Repeat("x", (1<<20)+1)))
+					return
+				}
 				_, _ = w.Write([]byte(`{"broken"`))
 			}))
 			t.Cleanup(srv.Close)
@@ -139,6 +183,9 @@ func TestMessageTagsClientResponseLossIsUnknownWrite(t *testing.T) {
 			require.ErrorAs(err, &failure)
 			assert.Equal("remote_unknown", failure.Code)
 			assert.Equal(int32(1), calls.Load())
+			if scenario == "oversized error" {
+				require.ErrorContains(failure.Cause, "exceeds 1024 KiB")
+			}
 		})
 	}
 }

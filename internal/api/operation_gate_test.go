@@ -843,6 +843,32 @@ func TestOperationGateMiddlewareSkipsReadOnlyAnalyticalPosts(t *testing.T) {
 	}
 }
 
+func TestOperationGateMessageTagsExactRoute(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		path       string
+		wantStatus int
+	}{
+		{"/api/v1/messages/7/tags", http.StatusNoContent},
+		{"/api/v1/messages/7/attachments/tags", http.StatusServiceUnavailable},
+	} {
+		t.Run(tc.path, func(t *testing.T) {
+			assert := assert.New(t)
+			gate := &recordingOperationGate{allow: false}
+			called := false
+			handler := operationGateMiddleware(gate, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				called = true
+				w.WriteHeader(http.StatusNoContent)
+			}))
+			req := httptest.NewRequest(http.MethodPost, tc.path, strings.NewReader(`{}`))
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, req)
+			assert.Equal(tc.wantStatus, response.Code)
+			assert.Equal(tc.wantStatus == http.StatusNoContent, called)
+		})
+	}
+}
+
 func TestOperationGateMiddlewareSkipsCardDAVAccountTestWhileGateHeld(t *testing.T) { //nolint:paralleltest // swaps the package-level operationGateWaitLimit
 	require := require.New(t)
 	assert := assert.New(t)
@@ -874,9 +900,9 @@ func TestOperationGateMiddlewareSkipsCardDAVAccountTestWhileGateHeld(t *testing.
 // operation tagged "Exploration" (registerExploreRoute and the search
 // coverage route) must be classified read-only, and the table must not
 // carry stale entries for routes that no longer exist. The remote-image proxy,
-// CardDAV account test, participant completion, and Saved View run endpoints
-// are the pinned non-Exploration entries. They must remain registered POST routes for
-// their table entries to stay valid.
+// CardDAV account test, participant completion, evidence preparation, Saved View
+// run, and message tag endpoints are pinned non-Exploration entries. Message tags
+// acquire the gate in their handler for writes. Each entry must remain a POST route.
 func TestReadOnlyPostRoutePatternsMatchExplorationRoutes(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)
@@ -894,7 +920,12 @@ func TestReadOnlyPostRoutePatternsMatchExplorationRoutes(t *testing.T) {
 	require.NotNil(completion, "participant completion route must exist")
 	require.NotNil(completion.Post, "participant completion must be registered as POST")
 
-	expected := []string{remoteImagePath, cardDAVAccountTestPath, completionPath, kataEvidencePreparePath, "/api/v1/saved-views/{id}/run"}
+	messageTagsPath := "/api/v1/messages/{id}/tags"
+	messageTags := doc.Paths[messageTagsPath]
+	require.NotNil(messageTags, "message tags route must exist")
+	require.NotNil(messageTags.Post, "message tags must be registered as POST")
+
+	expected := []string{remoteImagePath, cardDAVAccountTestPath, completionPath, kataEvidencePreparePath, "/api/v1/saved-views/{id}/run", messageTagsPath}
 	for path, item := range doc.Paths {
 		if item.Post != nil && slices.Contains(item.Post.Tags, "Exploration") {
 			expected = append(expected, path)
@@ -905,7 +936,7 @@ func TestReadOnlyPostRoutePatternsMatchExplorationRoutes(t *testing.T) {
 	slices.Sort(table)
 	assert.Equal(t, expected, table,
 		"readOnlyPostRoutePatterns must match the POST routes tagged Exploration plus the "+
-			"pinned read-only POST routes; classify new analytical routes consciously in "+
+			"pinned POST routes that bypass the middleware gate; classify new analytical routes consciously in "+
 			"operation_gate.go")
 }
 

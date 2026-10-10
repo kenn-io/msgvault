@@ -322,6 +322,8 @@ Errors contain `error`, `message`, and, when available, `result` with the last
 observed state. A matching successful mutation response can supply newer tags
 when verification GET fails. `before` keeps the original snapshot; `verified`
 stays false and the archive stays unchanged until readback succeeds.
+Error snapshots omit `available_tags`. The daemon client accepts tag error
+responses up to 1 MiB to preserve the observed tags, flags, and recovery message.
 `remote_unknown` and `verification_failed` return HTTP 502;
 read tags before retrying because a write may have applied. HTTP 500
 `remote_accepted_local_failed` preserves verified provider evidence and asks
