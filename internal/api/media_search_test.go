@@ -667,13 +667,17 @@ func TestMediaSearchSharedSourceAllowedInputs(t *testing.T) {
 
 func TestMediaSearchSuppliedInputLimit(t *testing.T) {
 	for _, test := range []struct {
-		name     string
-		inputs   int
-		ordinary bool
+		name          string
+		inputs        int
+		ordinary      bool
+		pending       bool
+		sharedVersion bool
 	}{
-		{"64 inputs", 64, false},
-		{"65 inputs and ordinary recording", 65, true},
-		{"65 inputs alone", 65, false},
+		{"64 inputs", 64, false, false, false},
+		{"65 inputs and ordinary recording", 65, true, false, false},
+		{"65 inputs alone", 65, false, false, false},
+		{"65 inputs with pending caption", 65, false, true, false},
+		{"65 inputs and shared content version", 65, true, false, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			assert := assert.New(t)
@@ -688,6 +692,10 @@ func TestMediaSearchSuppliedInputLimit(t *testing.T) {
 				f.sameAudio[id] = "first-input"
 				seed := f.audio(t, f.message(t, id), id, "", "delivery-"+id, &store.BeeperMediaResult{VaultUID: "vault", DocbankSourceID: first.sourceID, ContentVersionID: first.contentVersionID})
 				f.deliver(t, "delivery-"+id, "succeeded")
+				if test.pending && i == 64 {
+					_, err := f.f.Store.DB().Exec(f.f.Store.Rebind(`UPDATE beeper_media_deliveries SET phase = 'pending-process', operation_state = 'queued' WHERE processing_key = ?`), "delivery-"+id)
+					require.NoError(err)
+				}
 				inputs = append(inputs, seed.suppliedInputID)
 			}
 			// A repeated caption on another occurrence uses the same allowed input.
@@ -695,7 +703,13 @@ func TestMediaSearchSuppliedInputLimit(t *testing.T) {
 			f.sameAudio["duplicate"] = "first-input"
 			f.audio(t, f.message(t, "duplicate"), "duplicate", "", "delivery-first-input", &store.BeeperMediaResult{VaultUID: "vault", DocbankSourceID: first.sourceID, ContentVersionID: first.contentVersionID})
 			selected := first
-			if test.ordinary {
+			if test.sharedVersion {
+				selected = f.audio(t, f.message(t, "ordinary"), "ordinary", "", "delivery-ordinary", &store.BeeperMediaResult{VaultUID: "vault", DocbankSourceID: "ordinary-source", ContentVersionID: first.contentVersionID})
+				f.deliver(t, "delivery-ordinary", "succeeded")
+				source := docbankmedia.SearchMediaSource{SourceID: selected.sourceID, SourceVersionID: "version", ContentVersionID: selected.contentVersionID}
+				f.report.MediaSelections = []docbankmedia.SearchMediaSelection{{SearchMediaSource: source, Origin: "supplied", SuppliedInputID: selected.suppliedInputID, Completeness: "complete"}}
+				f.report.Results = []docbankmedia.SearchHit{{VaultUID: "vault", NodeID: 1, ContentVersionID: selected.contentVersionID, Rank: 1, Excerpt: "ordinary caption", Evidence: []docbankmedia.SearchEvidence{{Kind: "rendition_segment", BuildID: "build", SegmentID: "segment", MediaSources: []docbankmedia.SearchMediaSource{source}}}}}
+			} else if test.ordinary {
 				selected = f.match(t, "ordinary")
 			}
 			if test.inputs == 64 {

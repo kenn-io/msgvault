@@ -140,7 +140,6 @@ func (reader *MessageRecordingReader) search(ctx context.Context, query string, 
 	if err != nil {
 		return response, err
 	}
-	versions := make(map[string]bool)
 	selectors := []docbankmedia.SearchMediaSelector{}
 	selectorIndex := make(map[docbankmedia.SearchMediaSource]int)
 	fence := docbankmedia.SearchFence{}
@@ -149,17 +148,13 @@ func (reader *MessageRecordingReader) search(ctx context.Context, query string, 
 			continue
 		}
 		fence.VaultUID = o.VaultUID
-		if !versions[o.ContentVersionID] {
-			versions[o.ContentVersionID] = true
-			fence.ContentVersionIDs = append(fence.ContentVersionIDs, o.ContentVersionID)
-		}
 		source := mediaSearchSource(o)
 		if _, exists := selectorIndex[source]; !exists {
 			selectorIndex[source] = len(selectors)
 			selectors = append(selectors, docbankmedia.SearchMediaSelector{SearchMediaSource: source, SuppliedInputIDs: []string{}})
 		}
 	}
-	if len(fence.ContentVersionIDs) > docbankmedia.MaxSearchVersions || len(selectors) > docbankmedia.MaxSearchVersions {
+	if len(selectors) > docbankmedia.MaxSearchVersions {
 		return response, errMediaSearchScope
 	}
 	supplied := []store.MessageMediaOccurrence{}
@@ -189,14 +184,16 @@ func (reader *MessageRecordingReader) search(ctx context.Context, query string, 
 		selectors = slices.DeleteFunc(selectors, func(selector docbankmedia.SearchMediaSelector) bool {
 			return oversized[selector.SearchMediaSource]
 		})
-		clear(versions)
-		fence.ContentVersionIDs = fence.ContentVersionIDs[:0]
-		for _, selector := range selectors {
-			if !versions[selector.ContentVersionID] {
-				versions[selector.ContentVersionID] = true
-				fence.ContentVersionIDs = append(fence.ContentVersionIDs, selector.ContentVersionID)
-			}
+	}
+	versions := make(map[string]bool)
+	for _, selector := range selectors {
+		if !versions[selector.ContentVersionID] {
+			versions[selector.ContentVersionID] = true
+			fence.ContentVersionIDs = append(fence.ContentVersionIDs, selector.ContentVersionID)
 		}
+	}
+	if len(fence.ContentVersionIDs) > docbankmedia.MaxSearchVersions {
+		return response, errMediaSearchScope
 	}
 	remoteCtx, cancel := context.WithTimeout(ctx, docbankBudget(ctx))
 	defer cancel()
@@ -262,6 +259,10 @@ func (reader *MessageRecordingReader) search(ctx context.Context, query string, 
 		response.Partial = response.Partial || !stable
 		selection, selected := selections[source]
 		if !selected {
+			if oversized[source] {
+				response.UnavailableOccurrences++
+				continue
+			}
 			currentRevision := o.SuppliedInputID == "" || transcriptRevisionMatches(o, "supplied", revisions[o.AttachmentID])
 			if currentRevision && reader.UploadConsent && (o.RetentionState == store.BeeperMediaRetentionPending || o.RetentionState == store.BeeperMediaRetentionSourceUnavailable ||
 				o.DeliveryPhase == "pending-artifact" || o.DeliveryPhase == "pending-process" || o.DeliveryPhase == "observing") {
