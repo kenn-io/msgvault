@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-02"
+last_edited: "2026-10-08"
 title: People and Profiles
 description: Find people across your archive, keep their details together, and understand your contact history.
 ---
@@ -12,7 +12,8 @@ save selected people in **Directory**. You can also use the
 
 | I want to… | Start here |
 |---|---|
-| Save someone's name, details, or notes | [Create a profile](#promote-a-durable-person) |
+| Save someone you have never messaged | [Create a person](#create-a-person) |
+| Save an observed contact's details or notes | [Promote a profile](#promote-a-durable-person) |
 | Remember what they recently shared | [Person briefs](/docs/usage/people-briefs/) |
 | Review meeting time and recorded follow-ups | [Meeting activity](meetings.md#export-context-and-read-follow-ups) |
 | Find files you exchanged | [Person files](#find-files-related-to-a-person) |
@@ -38,8 +39,60 @@ without enabling them.
 
 Observed contacts use **participant IDs**. Saved profiles use **person IDs**.
 Commands name the ID they require; the two are not interchangeable. Promotion
-creates a profile from an observed person. Subscribed CardDAV contacts can also
-create profiles when imported.
+creates a profile from an observed person. You can create a profile directly,
+or import one from a subscribed CardDAV address book.
+
+## Create a person
+
+Create someone you have never messaged from the CLI. This command is available
+on `main` after the latest release.
+
+```bash
+msgvault person create --name "Alex Example" \
+  --email alex@example.com:work --phone '+12025550123:cell' \
+  --org "Example Company" --title "Engineer" \
+  --address "123 Example Street" --note "Met at a conference" --json
+```
+
+Only `--name` is required. Repeat `--email` and `--phone` for multiple contact
+methods; append `:type` to label a method, such as `work`, `home`, or `cell`.
+A type uses 1-64 letters, digits, or hyphens. Creation accepts up to 200 emails
+and 200 phones. Phones must normalize to the international
+`+<country-code><number>` format (E.164).
+
+`--org` creates a current, primary employment record. It reuses the company
+that employment facts would match by name or alias, and creates a company when
+none matches. If the name matches several companies, creation stops; create the
+person without `--org`, then add the employment with
+`msgvault employment add --person <id> --organization <id>`. `--title` requires
+`--org` and becomes that employment's title.
+
+Text limits are 256 characters for the name and organization, 280 for the
+title, 1,000 for the address, and 10,000 for the note.
+The person receives a stable ID and a new vCard UID,
+with no message participants. All supplied details are user-curated data.
+
+Creation refuses an email or phone already on a current person profile or an
+observed participant cluster. The error identifies the match. Use that saved
+person, or run `msgvault person promote <participant-id>` for an observed
+contact. Use [explicit identity linking](#review-identity-matches) to combine
+observed identities; creation never links them silently.
+
+Without `--publish`, creation stays in your archive. Add `--publish` to send
+the new person to your configured [CardDAV write target](people-carddav.md#sync-and-publish-selected-people).
+If publication fails, the person remains saved. The command prints its ID and
+reports how to retry publication or review its preview.
+
+API clients use `POST /api/v1/people/create` with `name`, optional `emails` and
+`phones` arrays of `{ "value": "...", "type": "work" }`, and optional `org`,
+`title`, `address`, and `note`. Success returns the person with HTTP 201 and its
+ETag; invalid input returns 400 and an existing contact returns 409. The endpoint
+does not publish. Publish separately through the CardDAV publication API.
+`POST /api/v1/people` continues to promote observed participants.
+
+The MCP `create_person` tool accepts the same creation fields. It requires both
+MCP writes and profile writes to be enabled, like `promote_person`, and is absent
+from the read-only catalog. It creates user-curated data without publishing.
 
 Each saved profile also has a vCard UID. A new profile imported from a subscribed
 CardDAV book adopts the card's UID when it is a UUID that no other profile uses

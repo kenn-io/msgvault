@@ -664,6 +664,8 @@ export * from "./personClusterMember";
 export * from "./personContactPoint";
 export * from "./personContactPointInputRequest";
 export * from "./personContactPointPatchRequest";
+export * from "./personCreateContact";
+export * from "./personCreateInput";
 export * from "./personDate";
 export * from "./personDateInputRequest";
 export * from "./personDatePatchRequest";

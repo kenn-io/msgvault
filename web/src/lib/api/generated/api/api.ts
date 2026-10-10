@@ -323,6 +323,7 @@ import type {
   PersonBriefEnrollment,
   PersonBriefRun,
   PersonBriefVersionsResponse,
+  PersonCreateInput,
   PersonDayPage,
   PersonDaysPage,
   PersonEnrichmentProviderUpdate,
@@ -2639,6 +2640,24 @@ export const getPersonByUID = (
 ) => {
   return orvalFetch<Person>(
     { url: `/api/v1/people/by-uid`, method: "GET", params },
+    options,
+  );
+};
+/**
+ * Creates a durable profile with a new vCard UID and user-curated contact data. Refuses contacts already present on a person or observed participant cluster. A title requires an organization. Does not publish to CardDAV.
+ * @summary Create a person without message participants
+ */
+export const createStandalonePerson = (
+  personCreateInput: PersonCreateInput,
+  options?: SecondParameter<typeof orvalFetch<Person>>,
+) => {
+  return orvalFetch<Person>(
+    {
+      url: `/api/v1/people/create`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: personCreateInput,
+    },
     options,
   );
 };

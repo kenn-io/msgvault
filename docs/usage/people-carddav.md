@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-06"
+last_edited: "2026-10-08"
 title: CardDAV Contacts
 description: Bring address-book contacts into msgvault, publish selected profiles, and resolve competing edits.
 ---
@@ -274,6 +274,20 @@ The same actions are available from the CLI:
 msgvault person publish 7
 msgvault person unpublish 7
 ```
+
+On `main` after the latest release, you can create and publish someone you have
+never messaged in one command:
+
+```bash
+msgvault person create --name "Alex Example" --email alex@example.com --publish
+```
+
+Creation saves the person first, then uses the same publication path as
+`person publish`. A publication failure leaves the local person saved and
+reports its ID. Retry with `msgvault person publish <person-id>`; when review
+is required, use the preview and approval steps below. Omitting `--publish`
+keeps creation local. See [Create a person](people.md#create-a-person) for
+contact types, duplicate refusal, and the API and MCP contracts.
 
 For integrations, the publication API is:
 

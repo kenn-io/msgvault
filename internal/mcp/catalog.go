@@ -238,6 +238,7 @@ func buildOperationCatalog(capabilities catalogCapabilities) []toolDefinition {
 		semanticSearchMessagesDefinition(nil, capabilities.semanticSearch),
 		stageDeletionDefinition(nil),
 		promotePersonDefinition(nil),
+		createPersonDefinition(),
 		acceptIdentityMatchDefinition(),
 		mergePersonDefinition(),
 		approveCardDAVPublicationDefinition(),
