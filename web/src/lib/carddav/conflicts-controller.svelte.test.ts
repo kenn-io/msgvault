@@ -135,13 +135,13 @@ describe('CardDAVConflictsController', () => {
 
     await controller.retryList();
     expect(controller.conflicts).toHaveLength(1);
-    expect(controller.listError).toBe('Unable to load CardDAV conflicts.');
+    expect(controller.listError).toBe('Unable to load contact conflicts.');
     expect(controller.detailError).toBeNull();
     await controller.retrySelectedState();
     expect(controller.selectedDetail).toBeUndefined();
     expect(controller.isResolutionAllowed('keep_local')).toBe(false);
-    expect(controller.detailError).toBe('Unable to load CardDAV conflict details.');
-    expect(controller.listError).toBe('Unable to load CardDAV conflicts.');
+    expect(controller.detailError).toBe('Unable to load contact details.');
+    expect(controller.listError).toBe('Unable to load contact conflicts.');
 
     await controller.retryList();
     await controller.retrySelectedState();
@@ -315,7 +315,7 @@ describe('CardDAVConflictsController', () => {
     expect(controller.conflicts.map(({ id }) => id)).toEqual([42]);
     expect(controller.selectedDetail?.status).toBe('resolved');
     expect(controller.selectedDetail?.allowed_resolutions).toEqual([]);
-    expect(controller.announcement).toBe('CardDAV conflict 41 resolved by keeping the local card.');
+    expect(controller.announcement).toBe('Contact conflict resolved using the msgvault version.');
     expect(controller.focusRequest).toEqual({ key: 1, conflictID: 42 });
     controller.destroy();
   });
@@ -358,15 +358,15 @@ describe('CardDAVConflictsController', () => {
     expect(controller.selectedDetail?.updated_at).toBe('2026-08-28T12:00:00Z');
     expect(controller.selectedDetail?.allowed_resolutions).toEqual(['keep_remote']);
     expect(controller.resolutionUnknown).toBe(false);
-    expect(controller.resolutionError).toContain('Current conflict state was refreshed');
+    expect(controller.resolutionError).toContain('Your choice could not be confirmed');
     expect(JSON.stringify(controller)).not.toMatch(/forbidden-(?:href|etag|header)/i);
     controller.destroy();
   });
 
   it.each([
     { choice: 'keep_local' as const, status: 413, code: 'microsoft_contact_too_large', message: 'This contact is too large for Outlook, which accepts up to 4 MB. Remove a photo or other large data, then publish again.' },
-    { choice: 'keep_remote' as const, status: 409, code: 'carddav_remote_protected', message: 'The remote card would overwrite a value added in msgvault or another address book. Keep local, or restore that value in the address book and sync again.' },
-    { choice: 'keep_remote' as const, status: 409, code: 'carddav_remote_invalid', message: 'The remote card has values that cannot be published, such as an invalid preference or location. Fix them in the address book and sync again, or keep local.' }
+    { choice: 'keep_remote' as const, status: 409, code: 'carddav_remote_protected', message: 'The address-book version would replace details added in msgvault or another address book. Use the msgvault version, or correct those details in the address book and sync again.' },
+    { choice: 'keep_remote' as const, status: 409, code: 'carddav_remote_invalid', message: 'This address-book contact has invalid details. Correct them in the address book and sync again, or use the msgvault version.' }
   ])('shows $code without retrying or losing the conflict', async ({ choice, status, code, message }) => {
     let posts = 0;
     const fetchFn = vi.fn<typeof fetch>(async (input) => {

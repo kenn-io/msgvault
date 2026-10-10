@@ -114,7 +114,7 @@ describe('CardDAVConflicts', () => {
     expect(detailReads).toBe(1);
     expect(onCardDAVRequestConsumed.mock.calls).toEqual([[1]]);
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Keep remote card' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Use address book version' }));
     await fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel' }));
     const accountControl = screen.getByRole('button', { name: 'Save CardDAV account' });
     accountControl.focus();
@@ -146,21 +146,20 @@ describe('CardDAVConflicts', () => {
     const rendered = render(CardDAVConflicts, { controller });
 
     await fireEvent.click(screen.getByRole('button', { name: 'Review conflict 41 in Synthetic contacts' }));
-    const detail = await screen.findByRole('region', { name: 'CardDAV conflict 41 comparison' });
+    const detail = await screen.findByRole('region', { name: 'Contact conflict 41 comparison' });
 
-    expect(within(detail).getByRole('heading', { name: 'Base' })).toBeDefined();
-    expect(within(detail).getByRole('heading', { name: 'Local' })).toBeDefined();
-    expect(within(detail).getByRole('heading', { name: 'Remote' })).toBeDefined();
-    expect(within(detail).getByText('Present')).toBeDefined();
+    expect(within(detail).getByRole('heading', { name: 'Last synced version' })).toBeDefined();
+    expect(within(detail).getByRole('heading', { name: 'msgvault' })).toBeDefined();
+    expect(within(detail).getByRole('heading', { name: 'Synthetic contacts' })).toBeDefined();
     expect(within(detail).getByText('Synthetic Contact')).toBeDefined();
     expect(within(detail).getByText('contact@example.test')).toBeDefined();
     expect(within(detail).getByText('+1 555 0100')).toBeDefined();
     expect(within(detail).getByText('Additional name, email, or phone values are not shown.')).toBeDefined();
-    expect(within(detail).getByText('Deleted. This side is a deletion tombstone.')).toBeDefined();
-    expect(within(detail).getByText('Unavailable. No safe comparison summary is available.')).toBeDefined();
-    expect(screen.getByText('Only display name, email addresses, and phone numbers are shown. Your choice applies to the whole card.')).toBeDefined();
-    expect(screen.getByRole('button', { name: 'Keep remote card' })).toBeDefined();
-    expect(screen.queryByRole('button', { name: 'Keep local card' })).toBeNull();
+    expect(within(detail).getByText('Marked for removal from the address book.')).toBeDefined();
+    expect(within(detail).getByText('Contact details unavailable.')).toBeDefined();
+    expect(screen.getByText('Only display name, email addresses, and phone numbers are shown. Your choice also applies to contact details not shown here.')).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Use address book version' })).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'Use msgvault version' })).toBeNull();
     expect(rendered.container.textContent).not.toMatch(/FORBIDDEN-VCARD|MUST-NOT-RENDER|must-not-render/i);
     expect(rendered.container.innerHTML).not.toMatch(/forbidden-(?:url|href|etag|hash|uid|header|credential)/i);
     controller.destroy();
@@ -185,12 +184,12 @@ describe('CardDAVConflicts', () => {
     render(CardDAVConflicts, { controller });
 
     await fireEvent.click(screen.getByRole('button', { name: 'Review conflict 52 in Synthetic contacts' }));
-    await screen.findByRole('region', { name: 'CardDAV conflict 52 comparison' });
+    await screen.findByRole('region', { name: 'Contact conflict 52 comparison' });
 
     expect(screen.getAllByText('No display name')).toHaveLength(3);
     expect(screen.getAllByText('No email addresses')).toHaveLength(3);
     expect(screen.getAllByText('No phone numbers')).toHaveLength(3);
-    expect(screen.getByText('Resolved by keeping the local card.')).toBeDefined();
+    expect(screen.getByText('Resolved using the msgvault version.')).toBeDefined();
     expect(screen.queryByRole('button', { name: /Keep (?:local|remote) card/ })).toBeNull();
     controller.destroy();
   });
@@ -206,16 +205,16 @@ describe('CardDAVConflicts', () => {
     const controller = new CardDAVConflictsController(createAPIClient(fetchFn));
     const rendered = render(CardDAVConflicts, { controller });
 
-    expect(screen.getByLabelText('CardDAV conflict queue').getAttribute('aria-busy')).toBe('true');
-    expect(screen.getByText('Loading CardDAV conflicts…')).toBeDefined();
+    expect(screen.getByLabelText('Contact conflicts').getAttribute('aria-busy')).toBe('true');
+    expect(screen.getByText('Loading contact conflicts…')).toBeDefined();
     const load = controller.load();
     first.resolve(Response.json({ error: 'unavailable', message: forbidden.credential }, { status: 503 }));
     await load;
-    expect((await screen.findByRole('alert')).textContent).toContain('Unable to load CardDAV conflicts.');
+    expect((await screen.findByRole('alert')).textContent).toContain('Unable to load contact conflicts.');
     expect(rendered.container.textContent).not.toContain(forbidden.credential);
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Retry CardDAV conflicts' }));
-    expect(await screen.findByText('No unresolved CardDAV conflicts.')).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry contact conflicts' }));
+    expect(await screen.findByText('No contact conflicts.')).toBeDefined();
     expect(listReads).toBe(2);
     controller.destroy();
   });
@@ -240,17 +239,17 @@ describe('CardDAVConflicts', () => {
     await controller.load();
     const rendered = render(CardDAVConflicts, { controller });
 
-    expect(screen.getByText('CardDAV conflict review is unavailable.')).toBeDefined();
-    expect(screen.getByText('Configure or repair CardDAV in Settings before reviewing conflicts.')).toBeDefined();
+    expect(screen.getByText('Contact conflicts unavailable.')).toBeDefined();
+    expect(screen.getByText('Check your address-book connection in Settings.')).toBeDefined();
     expect(screen.queryByRole('alert')).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Retry CardDAV conflicts' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Retry contact conflicts' })).toBeNull();
     expect(rendered.container.textContent).not.toContain(forbidden.credential);
     expect(requests).toEqual([{ method: 'GET', path: '/api/v1/carddav/conflicts' }]);
 
     configured = true;
     await controller.load();
     await fireEvent.click(await screen.findByRole('button', { name: 'Review conflict 41 in Synthetic contacts' }));
-    expect(await screen.findByRole('region', { name: 'CardDAV conflict 41 comparison' })).toBeDefined();
+    expect(await screen.findByRole('region', { name: 'Contact conflict 41 comparison' })).toBeDefined();
     expect(requests).toEqual([
       { method: 'GET', path: '/api/v1/carddav/conflicts' },
       { method: 'GET', path: '/api/v1/carddav/conflicts' },
@@ -279,10 +278,10 @@ describe('CardDAVConflicts', () => {
     expect(document.activeElement).toBe(row);
     await fireEvent.click(row);
 
-    const status = await screen.findByRole('status', { name: 'CardDAV conflict review is unavailable.' });
+    const status = await screen.findByRole('status', { name: 'Contact conflicts unavailable.' });
     await waitFor(() => expect(document.activeElement).toBe(status));
     expect(document.activeElement?.isConnected).toBe(true);
-    expect(screen.getAllByRole('status', { name: 'CardDAV conflict review is unavailable.' })).toHaveLength(1);
+    expect(screen.getAllByRole('status', { name: 'Contact conflicts unavailable.' })).toHaveLength(1);
     controller.destroy();
   });
 
@@ -294,9 +293,9 @@ describe('CardDAVConflicts', () => {
     await controller.load();
     render(CardDAVConflicts, { controller });
 
-    const status = screen.getByRole('status', { name: 'CardDAV conflict review is unavailable.' });
+    const status = screen.getByRole('status', { name: 'Contact conflicts unavailable.' });
     expect(document.activeElement).not.toBe(status);
-    expect(screen.getAllByRole('status', { name: 'CardDAV conflict review is unavailable.' })).toHaveLength(1);
+    expect(screen.getAllByRole('status', { name: 'Contact conflicts unavailable.' })).toHaveLength(1);
     controller.destroy();
   });
 
@@ -319,7 +318,7 @@ describe('CardDAVConflicts', () => {
     expect(document.activeElement).not.toBe(row);
     await controller.select(41);
 
-    const status = await screen.findByRole('status', { name: 'CardDAV conflict review is unavailable.' });
+    const status = await screen.findByRole('status', { name: 'Contact conflicts unavailable.' });
     expect(document.activeElement).not.toBe(status);
     controller.destroy();
   });
@@ -346,7 +345,7 @@ describe('CardDAVConflicts', () => {
     detail.resolve(Response.json({ error: 'carddav_unavailable' }, { status: 503 }));
     await selection;
 
-    await screen.findByRole('status', { name: 'CardDAV conflict review is unavailable.' });
+    await screen.findByRole('status', { name: 'Contact conflicts unavailable.' });
     await waitFor(() => expect(document.activeElement).toBe(outside));
     outside.remove();
     controller.destroy();
@@ -370,13 +369,13 @@ describe('CardDAVConflicts', () => {
     let unavailableFocusEvents = 0;
     const recordUnavailableFocus = (event: FocusEvent) => {
       if (event.target instanceof Element && event.target.matches(
-        '[role="status"][aria-label="CardDAV conflict review is unavailable."]'
+        '[role="status"][aria-label="Contact conflicts unavailable."]'
       )) unavailableFocusEvents += 1;
     };
     document.addEventListener('focusin', recordUnavailableFocus);
     const observer = new MutationObserver(() => {
       const renderedStatus = document.querySelector(
-        '[role="status"][aria-label="CardDAV conflict review is unavailable."]'
+        '[role="status"][aria-label="Contact conflicts unavailable."]'
       );
       if (renderedStatus) outside.focus();
     });
@@ -386,7 +385,7 @@ describe('CardDAVConflicts', () => {
     row.focus();
     await fireEvent.click(row);
 
-    await screen.findByRole('status', { name: 'CardDAV conflict review is unavailable.' });
+    await screen.findByRole('status', { name: 'Contact conflicts unavailable.' });
     await waitFor(() => expect(document.activeElement).toBe(outside));
     expect(unavailableFocusEvents).toBe(0);
     observer.disconnect();
@@ -416,14 +415,14 @@ describe('CardDAVConflicts', () => {
     render(CardDAVConflicts, { controller });
 
     await fireEvent.click(screen.getByRole('button', { name: 'Review conflict 41 in Synthetic contacts' }));
-    await fireEvent.click(await screen.findByRole('button', { name: 'Keep remote card' }));
-    const dialog = screen.getByRole('dialog', { name: 'Keep remote CardDAV card' });
-    const confirm = within(dialog).getByRole('button', { name: 'Keep remote card' });
+    await fireEvent.click(await screen.findByRole('button', { name: 'Use address book version' }));
+    const dialog = screen.getByRole('dialog', { name: 'Use address book version' });
+    const confirm = within(dialog).getByRole('button', { name: 'Use address book version' });
     confirm.focus();
     expect(document.activeElement).toBe(confirm);
     await fireEvent.click(confirm);
 
-    const status = await screen.findByRole('status', { name: 'CardDAV conflict review is unavailable.' });
+    const status = await screen.findByRole('status', { name: 'Contact conflicts unavailable.' });
     await waitFor(() => expect(document.activeElement).toBe(status));
     expect(posts).toBe(1);
     controller.destroy();
@@ -446,21 +445,21 @@ describe('CardDAVConflicts', () => {
     await controller.load();
     render(CardDAVConflicts, { controller });
     await fireEvent.click(screen.getByRole('button', { name: 'Review conflict 41 in Synthetic contacts' }));
-    await fireEvent.click(await screen.findByRole('button', { name: 'Keep remote card' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Use address book version' }));
     expect(screen.getByRole('dialog')).toBeDefined();
 
     configured = false;
     await controller.retryList();
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-    expect(screen.getByText('CardDAV conflict review is unavailable.')).toBeDefined();
+    expect(screen.getByText('Contact conflicts unavailable.')).toBeDefined();
 
     configured = true;
     await controller.load();
     await fireEvent.click(await screen.findByRole('button', { name: 'Review conflict 41 in Synthetic contacts' }));
-    expect(await screen.findByRole('button', { name: 'Keep remote card' })).toBeDefined();
+    expect(await screen.findByRole('button', { name: 'Use address book version' })).toBeDefined();
     expect(screen.queryByRole('dialog')).toBeNull();
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Keep remote card' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Use address book version' }));
     expect(screen.getByRole('dialog')).toBeDefined();
     controller.destroy();
   });
@@ -476,9 +475,9 @@ describe('CardDAVConflicts', () => {
     await controller.load();
     render(CardDAVConflicts, { controller });
 
-    expect(screen.getByRole('alert').textContent).toContain('Unable to load CardDAV conflicts.');
-    await fireEvent.click(screen.getByRole('button', { name: 'Retry CardDAV conflicts' }));
-    expect(await screen.findByText('No unresolved CardDAV conflicts.')).toBeDefined();
+    expect(screen.getByRole('alert').textContent).toContain('Unable to load contact conflicts.');
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry contact conflicts' }));
+    expect(await screen.findByText('No contact conflicts.')).toBeDefined();
     expect(reads).toBe(2);
     controller.destroy();
   });
@@ -500,15 +499,15 @@ describe('CardDAVConflicts', () => {
     render(CardDAVConflicts, { controller });
 
     await fireEvent.click(screen.getByRole('button', { name: 'Review conflict 41 in Synthetic contacts' }));
-    await screen.findByRole('button', { name: 'Keep remote card' });
-    await fireEvent.click(screen.getByRole('button', { name: 'Keep remote card' }));
-    await fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Keep remote card' }));
+    await screen.findByRole('button', { name: 'Use address book version' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Use address book version' }));
+    await fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Use address book version' }));
 
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Review conflict 41 in Synthetic contacts' })).toBeNull());
     const next = screen.getByRole('button', { name: 'Review conflict 42 in Synthetic contacts' });
     await waitFor(() => expect(document.activeElement).toBe(next));
     expect(screen.getAllByRole('status')).toHaveLength(1);
-    expect(screen.getByRole('status').textContent).toBe('CardDAV conflict 41 resolved by keeping the remote card.');
+    expect(screen.getByRole('status').textContent).toBe('Contact conflict resolved using the address book version.');
     expect(posts).toBe(1);
     controller.destroy();
   });
@@ -528,12 +527,12 @@ describe('CardDAVConflicts', () => {
     render(CardDAVConflicts, { controller });
 
     await fireEvent.click(screen.getByRole('button', { name: 'Review conflict 41 in Synthetic contacts' }));
-    await fireEvent.click(await screen.findByRole('button', { name: 'Keep remote card' }));
-    await fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Keep remote card' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Use address book version' }));
+    await fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Use address book version' }));
 
     const heading = screen.getByRole('heading', { name: 'Unresolved conflicts' });
     await waitFor(() => expect(document.activeElement).toBe(heading));
-    expect(screen.getByText('No unresolved CardDAV conflicts.')).toBeDefined();
+    expect(screen.getByText('No contact conflicts.')).toBeDefined();
     controller.destroy();
   });
 
@@ -562,18 +561,18 @@ describe('CardDAVConflicts', () => {
     await controller.load();
     render(CardDAVConflicts, { controller });
     await fireEvent.click(screen.getByRole('button', { name: 'Review conflict 41 in Synthetic contacts' }));
-    await screen.findByRole('button', { name: 'Keep local card' });
-    await fireEvent.click(screen.getByRole('button', { name: 'Keep local card' }));
-    await fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Keep local card' }));
+    await screen.findByRole('button', { name: 'Use msgvault version' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Use msgvault version' }));
+    await fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Delete from address book' }));
 
-    expect(await screen.findByText('Current CardDAV conflict state is unknown. Retry state before resolving it.')).toBeDefined();
+    expect(await screen.findByText('Unable to confirm whether your choice was saved. Refresh before choosing again.')).toBeDefined();
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-    expect(screen.queryByRole('button', { name: 'Keep local card' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Use msgvault version' })).toBeNull();
     expect(posts).toBe(1);
 
     failReads = false;
-    await fireEvent.click(screen.getByRole('button', { name: 'Retry conflict state' }));
-    expect(await screen.findByRole('button', { name: 'Keep local card' })).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: 'Refresh contact' }));
+    expect(await screen.findByRole('button', { name: 'Use msgvault version' })).toBeDefined();
     expect([posts, listReads, detailReads]).toEqual([1, 3, 3]);
     controller.destroy();
   });
@@ -599,8 +598,8 @@ describe('CardDAVConflicts', () => {
     const focus = vi.spyOn(HTMLElement.prototype, 'focus');
     const rendered = render(CardDAVSettingsWorkspace, { client: createAPIClient(fetchFn), settings: [] });
     await fireEvent.click(await screen.findByRole('button', { name: 'Review conflict 41 in Synthetic contacts' }));
-    await fireEvent.click(await screen.findByRole('button', { name: 'Keep remote card' }));
-    await fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Keep remote card' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Use address book version' }));
+    await fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Use address book version' }));
     await waitFor(() => expect(mutationSignal).toBeDefined());
 
     rendered.unmount();

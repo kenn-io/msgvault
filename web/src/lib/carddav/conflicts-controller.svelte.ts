@@ -185,11 +185,13 @@ export class CardDAVConflictsController {
         return await this.reconcileResolution(id, context, mutation);
       }
       this.resolutionError =
-        (result.response.status === 413 ||
-          result.error?.error === 'carddav_remote_protected' ||
-          result.error?.error === 'carddav_remote_invalid') && result.error?.message
+        result.error?.error === 'carddav_remote_protected'
+          ? 'The address-book version would replace details added in msgvault or another address book. Use the msgvault version, or correct those details in the address book and sync again.'
+          : result.error?.error === 'carddav_remote_invalid'
+          ? 'This address-book contact has invalid details. Correct them in the address book and sync again, or use the msgvault version.'
+          : result.response.status === 413 && result.error?.message
           ? result.error.message
-          : 'Unable to resolve this CardDAV conflict.';
+          : 'Unable to save your choice. Try again.';
       return { kind: 'error' };
     } catch {
       if (!this.currentMutation(context, mutation, controller.signal)) return { kind: 'ignored' };
@@ -232,7 +234,7 @@ export class CardDAVConflictsController {
     } else if (snapshot.unavailable) {
       this.applyUnavailable();
     } else {
-      this.listError = 'Unable to load CardDAV conflicts.';
+      this.listError = 'Unable to load contact conflicts.';
     }
     if (this.listAbort === controller) this.listAbort = undefined;
     this.listLoading = false;
@@ -255,7 +257,7 @@ export class CardDAVConflictsController {
       this.applyUnavailable();
     } else {
       this.selectedDetail = undefined;
-      this.detailError = 'Unable to load CardDAV conflict details.';
+      this.detailError = 'Unable to load contact details.';
     }
     if (this.detailAbort === controller) this.detailAbort = undefined;
     this.detailLoading = false;
@@ -276,11 +278,11 @@ export class CardDAVConflictsController {
         return { kind: 'reconciled' };
       }
       this.resolutionError =
-        'Current conflict state was refreshed after the resolution result was uncertain. Choose again to resolve it.';
+        'Your choice could not be confirmed. The latest versions are shown; choose again.';
       return { kind: 'reconciled' };
     }
     this.resolutionUnknown = true;
-    this.resolutionError = 'Current CardDAV conflict state is unknown. Retry state before resolving it.';
+    this.resolutionError = 'Unable to confirm whether your choice was saved. Refresh before choosing again.';
     return { kind: 'unknown' };
   }
   private async reconcile(id: number): Promise<boolean> {
@@ -321,8 +323,8 @@ export class CardDAVConflictsController {
         this.resolutionUnknown = false;
         this.resolutionError = null;
       } else {
-        if (!list.ok) this.listError = 'Unable to load CardDAV conflicts.';
-        if (!validDetail) this.detailError = 'Unable to load CardDAV conflict details.';
+        if (!list.ok) this.listError = 'Unable to load contact conflicts.';
+        if (!validDetail) this.detailError = 'Unable to load contact details.';
         this.resolutionUnknown = true;
       }
       return !unavailable && list.ok && validDetail;
@@ -410,8 +412,8 @@ export class CardDAVConflictsController {
     }
     this.resolutionUnknown = false;
     this.resolutionError = null;
-    const side = choice === 'keep_local' ? 'local' : 'remote';
-    this.announcement = `CardDAV conflict ${id} resolved by keeping the ${side} card.`;
+    const side = choice === 'keep_local' ? 'msgvault' : 'address book';
+    this.announcement = `Contact conflict resolved using the ${side} version.`;
     const fallbackIndex = index < 0 ? 0 : Math.min(index, remaining.length - 1);
     const next = fallbackIndex >= 0 ? remaining[fallbackIndex] : undefined;
     this.focusRequest = { key: ++this.focusGeneration, ...(next ? { conflictID: next.id } : {}) };
