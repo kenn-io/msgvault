@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -44,7 +45,7 @@ func TestSchemaVersionConfigLoading(t *testing.T) {
 }
 
 func TestSchemaVersionDatabaseDoesNotMigrate(t *testing.T) {
-	future := fmt.Sprint(store.SchemaVersion + 1)
+	future := strconv.Itoa(store.SchemaVersion + 1)
 	for _, tc := range []struct {
 		name    string
 		marker  string
