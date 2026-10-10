@@ -14,6 +14,6 @@ func runConfiguredDocumentVectorGeneration(context.Context, *store.Store, int64,
 	return vectordocument.ReconcileResult{}, errors.New("document vector backend is unavailable: rebuild with sqlite_vec or pgvector support")
 }
 
-func runScheduledDocumentVectorGeneration(context.Context, *store.Store, *vectorFeatures, int) error {
+func runScheduledDocumentVectorGeneration(context.Context, *store.Store, *vectorFeatures, int, string) error {
 	return errors.New("document vector backend is unavailable: rebuild with sqlite_vec or pgvector support")
 }

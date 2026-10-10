@@ -860,7 +860,8 @@ func TestPersistMessageWithParticipantsKeepsSiblingDependentsIsolatedOnUpsert(t 
 	})
 	require.NoError(err, "persist message B")
 	require.NotEqual(messageAID, messageBID, "fixture requires distinct sibling rows")
-	require.NoError(st.SetEmbedGen(ctx, []int64{messageBID}, 73), "seed B embed generation")
+	_, stampErr := st.SetEmbedGen(ctx, []int64{messageBID}, 73)
+	require.NoError(stampErr, "seed B embed generation")
 	baselineResult, err := st.DB().ExecContext(ctx, st.Rebind(`
 		UPDATE messages
 		SET last_modified = ?, content_changed_at = ?
@@ -1058,8 +1059,10 @@ func seedRepairStoreFixture(t *testing.T) repairStoreFixture {
 		require.NoError(st.UpsertAttachmentRecord(ctx, targetID, attachment))
 	}
 	require.NoError(st.RecomputeMessageAttachmentStats(targetID))
-	require.NoError(st.SetEmbedGen(ctx, []int64{targetID}, 71))
-	require.NoError(st.SetEmbedGen(ctx, []int64{siblingID}, 72))
+	_, stampErr := st.SetEmbedGen(ctx, []int64{targetID}, 71)
+	require.NoError(stampErr)
+	_, stampErr = st.SetEmbedGen(ctx, []int64{siblingID}, 72)
+	require.NoError(stampErr)
 	_, err = st.DB().ExecContext(ctx, st.Rebind(`
 		UPDATE activity_projection_queue SET processed_revision = revision
 		WHERE message_id IN (?, ?)
@@ -1698,7 +1701,8 @@ func TestEmbedGen_OrphanImpossibleAndCoverage(t *testing.T) {
 	assert.Equal(int64(1), missing, "the new message is missing")
 
 	// Stamp it covered.
-	require.NoError(st.SetEmbedGen(ctx, []int64{id}, gen), "SetEmbedGen")
+	_, stampErr := st.SetEmbedGen(ctx, []int64{id}, gen)
+	require.NoError(stampErr, "SetEmbedGen")
 	live, embedded, _, missing, err = st.CoverageCounts(ctx, gen)
 	require.NoError(err, "CoverageCounts (after stamp)")
 	assert.Equal(int64(1), live, "still one live message")

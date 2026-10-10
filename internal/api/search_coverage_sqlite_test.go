@@ -153,7 +153,8 @@ func newRealCoverageBackend(t *testing.T, cfg vector.Config, generationState str
 		{MessageID: 1, Vector: []float32{1, 0}},
 		{MessageID: 2, Vector: []float32{0, 1}},
 	}))
-	require.NoError(t, st.SetEmbedGen(ctx, []int64{1, 2}, int64(generationID)))
+	_, stampErr := st.SetEmbedGen(ctx, []int64{1, 2}, int64(generationID))
+	require.NoError(t, stampErr)
 	require.NoError(t, backend.ActivateGeneration(ctx, generationID, true))
 	return backend
 }

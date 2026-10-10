@@ -50,6 +50,9 @@ components:
           type: boolean
         queued:
           type: boolean
+        queued_since:
+          format: date-time
+          type: string
         running:
           type: boolean
         schedule:
@@ -2111,6 +2114,9 @@ components:
         next_scheduled_at:
           format: date-time
           type: string
+        queued_since:
+          format: date-time
+          type: string
         repair_reason:
           enum:
             - account_missing
@@ -2125,11 +2131,17 @@ components:
           type: string
         scheduled:
           type: boolean
+        scheduler_running:
+          type: boolean
+        waiting_for_gate:
+          type: boolean
       required:
         - configured
         - available
         - credential_configured
         - enabled
+        - waiting_for_gate
+        - scheduler_running
         - scheduled
         - schedule
       type: object
@@ -6385,6 +6397,38 @@ components:
         - signal
         - candidates
         - applied
+      type: object
+    JobStatus:
+      additionalProperties: true
+      properties:
+        last_error:
+          type: string
+        last_run:
+          format: date-time
+          type: string
+        name:
+          type: string
+        next_run:
+          format: date-time
+          type: string
+        pending:
+          type: boolean
+        queued:
+          type: boolean
+        queued_since:
+          format: date-time
+          type: string
+        running:
+          type: boolean
+        schedule:
+          type: string
+        started_at:
+          format: date-time
+          type: string
+      required:
+        - name
+        - running
+        - schedule
       type: object
     KataEvidenceLinkRequest:
       additionalProperties: false
@@ -13063,11 +13107,16 @@ components:
           items:
             $ref: "#/components/schemas/AccountStatus"
           type: array
+        jobs:
+          items:
+            $ref: "#/components/schemas/JobStatus"
+          type: array
         running:
           type: boolean
       required:
         - running
         - accounts
+        - jobs
       type: object
     ScopeProvenance:
       additionalProperties: true
@@ -15218,7 +15267,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.10.0
+  version: 3.11.0
 openapi: 3.1.0
 paths:
   /api/ping:

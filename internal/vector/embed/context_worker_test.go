@@ -20,6 +20,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
@@ -54,6 +55,24 @@ type contextFenceRacePublisher struct {
 	vector.DocumentPublisher
 
 	beforeFence func() error
+}
+
+type contextFinalCursorPublisher struct {
+	vector.DocumentPublisher
+
+	cancel  context.CancelCauseFunc
+	commits int
+}
+
+func (p *contextFinalCursorPublisher) SetDocumentReconcileCursor(ctx context.Context, gen vector.GenerationID, cursor string) error {
+	if err := p.DocumentPublisher.SetDocumentReconcileCursor(ctx, gen, cursor); err != nil {
+		return err
+	}
+	p.commits++
+	if strings.HasPrefix(cursor, "done:") {
+		p.cancel(jobctx.ErrRunBudgetExceeded)
+	}
+	return nil
 }
 
 type countingContextAssembler struct {
@@ -310,7 +329,8 @@ func TestContextWorkerOperationPassRecordsOneTerminalMessageRun(t *testing.T) {
 		StartedAt: time.Date(2026, 8, 30, 9, 0, 0, 0, time.UTC),
 	}
 
-	result, err := f.worker.RunOnce(t.Context(), f.gen, scope)
+	ctx := t.Context()
+	result, err := f.worker.RunOnce(ctx, f.gen, scope)
 	require.NoError(t, err)
 	require.NotNil(t, result.Contextual)
 	assert.True(t, result.Contextual.Converged)
@@ -514,6 +534,25 @@ func TestContextWorker_FreshGenerationPinsJournalBeforeReconciliation(t *testing
 	assert.Equal(wantSequence, f.progress().ChangeSequence)
 	assert.LessOrEqual(counted.calls, 3,
 		"fresh generations must reconcile current state instead of assembling every historical journal page")
+}
+
+func TestContextWorker_FreshZeroSequenceBudgetExpiryDoesNotRecordProgress(t *testing.T) {
+	f := newContextWorkerFixture(t, func(deps *ContextWorkerDeps) {
+		deps.Hooks.AfterOrdinaryDiscoveryPage = func(int) error {
+			return errContextRunBudgetExhausted
+		}
+	})
+	ctx := jobctx.WithProgress(t.Context())
+
+	for range 2 {
+		_, err := f.worker.RunOnce(ctx, f.gen, testEmbeddingPassScope())
+		require.NoError(t, err)
+		assert.False(t, jobctx.HasProgress(ctx),
+			"a zero-to-zero watermark write without a cursor checkpoint is not progress")
+	}
+	progress := f.progress()
+	assert.Zero(t, progress.ChangeSequence)
+	assert.Empty(t, progress.ReconcileCursor)
 }
 
 func TestContextWorker_BatchesIndependentScopesInOneSemanticCall(t *testing.T) {
@@ -2350,6 +2389,37 @@ func TestContextWorker_CrashBoundariesReplayIdempotently(t *testing.T) {
 			assert.Zero(t, f.missing())
 		})
 	}
+	t.Run("cached-publication-budget", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		f := newContextWorkerFixture(t, nil)
+		publisher := &contextBatchPublisher{DocumentPublisher: f.backend}
+		f.deps.Publisher = publisher
+		f.deps.Hooks.AfterPublish = func() error { return errors.New("synthetic crash") }
+		f.restartWorker()
+		f.seed("beeper", f.chatID, time.Now().UTC(), "cached")
+		_, err := f.run()
+		require.Error(err)
+		require.Equal(1, f.missing())
+		require.Equal(1, publisher.batches)
+		require.Equal(1, f.client.Calls())
+
+		ctx, cancel := context.WithCancelCause(jobctx.WithProgress(t.Context()))
+		defer cancel(nil)
+		f.deps.Hooks.AfterPublish = nil
+		f.deps.Hooks.AfterCoverage = func() error {
+			cancel(jobctx.ErrRunBudgetExceeded)
+			return ctx.Err()
+		}
+		f.restartWorker()
+		_, err = f.worker.RunOnce(ctx, f.gen, testEmbeddingPassScope())
+		require.ErrorIs(err, context.Canceled)
+		require.ErrorIs(context.Cause(ctx), jobctx.ErrRunBudgetExceeded)
+		assert.Zero(f.missing())
+		assert.True(jobctx.HasProgress(ctx), "committed coverage must retain the budget continuation")
+		assert.Equal(1, publisher.batches)
+		assert.Equal(1, f.client.Calls())
+	})
 }
 
 func TestContextWorker_BackstopReconcilesBelowWatermarkAndOrphanWithBoundedCursor(t *testing.T) {
@@ -2374,6 +2444,39 @@ func TestContextWorker_BackstopReconcilesBelowWatermarkAndOrphanWithBoundedCurso
 	require.NoError(t, err)
 	assert.Equal(t, vector.DocumentTombstoned, orphan.State)
 	assert.Contains(t, f.progress().ReconcileCursor, "done:")
+}
+
+func TestContextWorker_FinalReconcileCheckpointResumesAfterBudgetExpiry(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newContextWorkerFixture(t, nil)
+	f.seed("beeper", f.chatID, time.Now().UTC(), "checkpoint")
+	_, err := f.run()
+	require.NoError(err)
+	documents, err := f.backend.ListDocumentsAfter(t.Context(), f.gen, "", 2)
+	require.NoError(err)
+	require.Len(documents, 1)
+	require.NoError(f.backend.SetDocumentReconcileCursor(t.Context(), f.gen, "orphan:"+documents[0].Key))
+	ctx, cancel := context.WithCancelCause(jobctx.WithProgress(t.Context()))
+	defer cancel(nil)
+	publisher := &contextFinalCursorPublisher{DocumentPublisher: f.backend, cancel: cancel}
+	f.deps.Publisher = publisher
+	f.restartWorker()
+
+	result, err := f.worker.RunOnce(ctx, f.gen, testEmbeddingPassScope())
+	require.ErrorIs(err, context.Canceled)
+	require.ErrorIs(context.Cause(ctx), jobctx.ErrRunBudgetExceeded)
+	assert.False(result.Contextual.Converged)
+	assert.Equal(1, publisher.commits)
+	assert.True(jobctx.HasProgress(ctx), "the sole final cursor commit must retain the scheduler continuation")
+	assert.Equal("done:"+strconv.FormatInt(f.progress().ChangeSequence, 10), f.progress().ReconcileCursor)
+
+	f.restartWorker()
+	result, err = f.run()
+	require.NoError(err)
+	assert.True(result.Contextual.Converged)
+	assert.Equal(1, publisher.commits)
+	assert.Equal(1, f.client.Calls())
 }
 
 func TestContextWorker_ReconcileSourceUsesBoundedRowPagesDespiteCurrentCoverage(t *testing.T) {
@@ -2644,4 +2747,24 @@ func TestContextWorker_ClosesSourceSnapshotBeforeSemanticCall(t *testing.T) {
 	f.seed("email", f.chatID, time.Now().UTC(), "mail")
 	_, err := f.run()
 	require.NoError(t, err)
+}
+
+func TestContextWorkerCooperativeYieldPublishesReturnedPage(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newContextWorkerFixture(t, func(deps *ContextWorkerDeps) { deps.ChangeBatchSize = 1 })
+	f.seed("beeper", f.chatID, time.Date(2026, 8, 30, 9, 0, 0, 0, time.UTC), "first synthetic message")
+	f.seed("beeper", f.chatID, time.Date(2026, 8, 31, 9, 0, 0, 0, time.UTC), "second synthetic message")
+	ctx, request := jobctx.WithPreemption(jobctx.WithProgress(t.Context()))
+	f.client.before = request
+	_, err := f.worker.RunOnce(ctx, f.gen, testEmbeddingPassScope())
+	require.NoError(err)
+	assert.Equal(1, f.client.calls)
+	assert.True(jobctx.HasProgress(ctx))
+	assert.Positive(f.missing())
+	require.NoError(ctx.Err())
+	f.client.before = nil
+	_, err = f.run()
+	require.NoError(err)
+	assert.Zero(f.missing())
 }

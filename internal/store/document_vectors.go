@@ -376,7 +376,10 @@ func (s *Store) ClaimDocumentVectorChunk(
 			case "pending":
 				if publication.leaseUntil.Valid && publication.leaseUntil.Time.After(now) {
 					if publication.leaseOwner.String == owner {
-						claimed = documentVectorChunkClaim(candidate, token, owner, publication.leaseFence, publication.leaseUntil.Time, publication.attemptCount)
+						if err := s.renewDocumentVectorChunkClaimTx(q, generationID, token, owner, publication.leaseFence, now, leaseUntil); err != nil {
+							return err
+						}
+						claimed = documentVectorChunkClaim(candidate, token, owner, publication.leaseFence, leaseUntil, publication.attemptCount)
 						return nil
 					}
 					continue
@@ -446,28 +449,32 @@ func (s *Store) RenewDocumentVectorChunkClaim(
 		if state != DocumentVectorGenerationBuilding || !currentTarget {
 			return ErrDocumentVectorInvalidGenerationState
 		}
-		result, err := q.Exec(`
-			UPDATE document_vector_publications SET lease_until = ?, updated_at = ?
-			WHERE generation_id = ? AND token = ? AND state = 'pending'
-			  AND lease_owner = ? AND lease_fence = ? AND lease_until > ?`,
-			s.dialect.TimestampParam(leaseUntil), s.dialect.TimestampParam(now), generationID,
-			token, owner, fence, s.dialect.TimestampParam(now))
-		if err != nil {
-			return fmt.Errorf("renew document vector chunk claim: %w", err)
-		}
-		updated, err := result.RowsAffected()
-		if err != nil {
-			return fmt.Errorf("read document vector chunk renewal result: %w", err)
-		}
-		if updated != 1 {
-			return ErrDocumentVectorClaimLost
-		}
-		return nil
+		return s.renewDocumentVectorChunkClaimTx(q, generationID, token, owner, fence, now, leaseUntil)
 	})
 	if err != nil {
 		return time.Time{}, err
 	}
 	return leaseUntil, nil
+}
+
+func (s *Store) renewDocumentVectorChunkClaimTx(q boundQuerier, generationID int64, token, owner string, fence int64, now, leaseUntil time.Time) error {
+	result, err := q.Exec(`
+			UPDATE document_vector_publications SET lease_until = ?, updated_at = ?
+			WHERE generation_id = ? AND token = ? AND state = 'pending'
+			  AND lease_owner = ? AND lease_fence = ? AND lease_until > ?`,
+		s.dialect.TimestampParam(leaseUntil), s.dialect.TimestampParam(now), generationID,
+		token, owner, fence, s.dialect.TimestampParam(now))
+	if err != nil {
+		return fmt.Errorf("renew document vector chunk claim: %w", err)
+	}
+	updated, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("read document vector chunk renewal result: %w", err)
+	}
+	if updated != 1 {
+		return ErrDocumentVectorClaimLost
+	}
+	return nil
 }
 
 func (s *Store) CommitDocumentVectorPublication(

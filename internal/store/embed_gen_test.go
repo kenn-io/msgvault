@@ -94,7 +94,8 @@ func TestCoverageCountsScopedFiltersBySource(t *testing.T) {
 	fx := seedEmbedScopeFixture(t, st)
 	ctx := context.Background()
 
-	require.NoError(st.SetEmbedGen(ctx, fx.msgsA[:2], 7), "stamp two of A's messages")
+	_, stampErr := st.SetEmbedGen(ctx, fx.msgsA[:2], 7)
+	require.NoError(stampErr, "stamp two of A's messages")
 
 	live, stamped, _, missing, err := st.CoverageCountsScoped(ctx, 7, nil, []int64{fx.srcA.ID})
 	require.NoError(err, "CoverageCountsScoped")
@@ -129,8 +130,10 @@ func TestScanEmbeddingCoverageStreamsStampedLiveIDsInBatches(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	fx := seedEmbedScopeFixture(t, st)
 	ctx := context.Background()
-	require.NoError(st.SetEmbedGen(ctx, append([]int64{fx.deletedA}, fx.msgsA...), 7), "stamp A, including its deleted row")
-	require.NoError(st.SetEmbedGen(ctx, fx.msgsB, 7), "stamp B outside the scope")
+	_, stampErr := st.SetEmbedGen(ctx, append([]int64{fx.deletedA}, fx.msgsA...), 7)
+	require.NoError(stampErr, "stamp A, including its deleted row")
+	_, stampErr = st.SetEmbedGen(ctx, fx.msgsB, 7)
+	require.NoError(stampErr, "stamp B outside the scope")
 
 	var batches [][]int64
 	live, stamped, err := st.ScanEmbeddingCoverage(ctx, 7, store.EmbeddingCoverageScan{
@@ -152,7 +155,8 @@ func TestScanEmbeddingCoverageStopsOnVisitError(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	fx := seedEmbedScopeFixture(t, st)
 	ctx := context.Background()
-	require.NoError(t, st.SetEmbedGen(ctx, fx.msgsA, 7))
+	_, stampErr := st.SetEmbedGen(ctx, fx.msgsA, 7)
+	require.NoError(t, stampErr)
 	visitErr := errors.New("vector database unavailable")
 
 	_, _, err := st.ScanEmbeddingCoverage(ctx, 7, store.EmbeddingCoverageScan{

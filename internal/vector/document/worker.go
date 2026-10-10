@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	docbankdocument "go.kenn.io/docbank/document"
+	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 )
@@ -249,6 +250,9 @@ func (w *Worker) Run(ctx context.Context, generationID GenerationID, limit int) 
 	w.bindCursor(generationID)
 	result.AfterGenerationID = generationID
 
+	if jobctx.PreemptionRequested(ctx) {
+		return result, nil
+	}
 	claims, err := w.collectClaims(ctx, generationID, limit, &result)
 	if err != nil || len(claims) == 0 {
 		return result, err
@@ -337,6 +341,7 @@ func (w *Worker) Run(ctx context.Context, generationID GenerationID, limit int) 
 				switch {
 				case err == nil:
 					result.Published++
+					jobctx.RecordProgress(ctx)
 				case errors.Is(err, store.ErrDocumentVectorSourceChanged):
 					result.SourceChanged++
 					if deleteErr := w.deps.Backend.DeleteTokens(heartbeat.context(), generationID, []string{claim.Token}); deleteErr != nil {

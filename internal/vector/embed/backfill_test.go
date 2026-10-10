@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/sqlitevec"
 )
@@ -24,7 +25,7 @@ type backfillFixture struct {
 	MainDB    *sql.DB
 	VectorsDB *sql.DB
 	Backend   *sqlitevec.Backend
-	Store     WorkStore
+	Store     *store.Store
 	Client    *fakeEmbeddingClient
 }
 
@@ -37,9 +38,10 @@ func newBackfillFixture(t *testing.T, n int) *backfillFixture {
 	dir := t.TempDir()
 	mainPath := filepath.Join(dir, "main.db")
 	require.NoError(t, sqlitevec.RegisterExtension(), "RegisterExtension")
-	mainDB, err := sql.Open(sqlitevec.DriverName(), mainPath)
+	st, err := store.OpenForTest(mainPath)
 	require.NoError(t, err, "open main")
-	t.Cleanup(func() { _ = mainDB.Close() })
+	t.Cleanup(func() { _ = st.Close() })
+	mainDB := st.DB()
 
 	schema := testMainSchema + `
 CREATE TABLE applied_migrations (
@@ -75,7 +77,7 @@ CREATE TABLE applied_migrations (
 		MainDB:    mainDB,
 		VectorsDB: vecDB,
 		Backend:   b,
-		Store:     &testWorkStore{db: mainDB},
+		Store:     st,
 		Client:    &fakeEmbeddingClient{dim: 4},
 	}
 }
@@ -115,9 +117,8 @@ func TestBackfillEmbedGen_UpgradeStampsEmbeddedOnly(t *testing.T) {
 	require.NoError(
 		f.Backend.Upsert(ctx, gen, chunks), "Upsert")
 
-	require.NoError(
-
-		f.Store.SetEmbedGen(ctx, []int64{1, 2, 3}, int64(gen)), "stamp")
+	_, stampErr := f.Store.SetEmbedGen(ctx, []int64{1, 2, 3}, int64(gen))
+	require.NoError(stampErr, "stamp")
 
 	require.NoError(
 		f.Backend.ActivateGeneration(ctx, gen, true), "activate (force)")

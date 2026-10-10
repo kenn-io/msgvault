@@ -1140,8 +1140,10 @@ func TestEmbedJob_MaybeRunBackstop_YieldedCleanRunDoesNotRecordCompletion(t *tes
 	logger := slog.New(slog.NewTextHandler(&logs, nil))
 	const gen = vector.GenerationID(5)
 
-	job.maybeRunBackstop(ctx, gen, logger, time.Now().UTC())
-	job.maybeRunBackstop(ctx, gen, logger, time.Now().UTC())
+	_, err := job.maybeRunBackstop(ctx, gen, logger, time.Now().UTC())
+	require.NoError(t, err)
+	_, err = job.maybeRunBackstop(ctx, gen, logger, time.Now().UTC())
+	require.NoError(t, err)
 
 	assert.NotContains(logs.String(), "embed backstop complete", "yield must not log completion")
 	n, _ := runner.backstops()
@@ -1265,6 +1267,74 @@ func TestEmbedJob_Run_ActiveGenerationError(t *testing.T) {
 
 	_, run, _ := runner.calls()
 	assert.Equal(t, 0, run, "RunOnce calls on active lookup error")
+}
+
+func TestEmbedJob_RunReturnsGenerationLookupAndActivationErrors(t *testing.T) {
+	lookupErr := errors.New("generation lookup failed")
+	workerErr := errors.New("embedding publication failed")
+	backstopErr := errors.New("embedding backstop failed")
+	activationErr := errors.New("generation activation failed")
+	building := &vector.Generation{ID: 9, State: vector.GenerationBuilding, Fingerprint: "m:768"}
+	for _, test := range []struct {
+		name        string
+		backend     *fakeBackend
+		store       EmbedCoverage
+		fingerprint string
+		wantErr     error
+		runner      *fakeRunner
+		interrupted bool
+	}{
+		{
+			name:    "building lookup",
+			backend: &fakeBackend{buildErr: lookupErr},
+			// Skip the active-person helper's building lookup so this
+			// exercises pickTarget's own error propagation.
+			fingerprint: "",
+			wantErr:     lookupErr,
+		},
+		{
+			name:        "active lookup",
+			backend:     &fakeBackend{activeErr: lookupErr},
+			fingerprint: "",
+			wantErr:     lookupErr,
+		},
+		{
+			name:        "activation",
+			backend:     &fakeBackend{activeErr: vector.ErrNoActiveGeneration, building: building, activateErr: activationErr},
+			store:       &fakeCoverage{missing: 0},
+			fingerprint: "m:768",
+			wantErr:     activationErr,
+		},
+		{name: "no active generation", backend: &fakeBackend{activeErr: vector.ErrNoActiveGeneration}},
+		{name: "backstop", backend: &fakeBackend{active: vector.Generation{ID: 42}}, runner: &fakeRunner{backstopErr: backstopErr}, wantErr: backstopErr},
+		{name: "interrupted RunOnce", backend: &fakeBackend{active: vector.Generation{ID: 42}}, runner: &fakeRunner{runErr: workerErr}, interrupted: true, wantErr: workerErr},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancelCause(t.Context())
+			defer cancel(nil)
+			runner := test.runner
+			if runner == nil {
+				runner = &fakeRunner{}
+			}
+			if test.interrupted {
+				runner.yieldCancel = cancel
+			}
+			job := &EmbedJob{
+				Worker:      runner,
+				Backend:     test.backend,
+				Store:       test.store,
+				Fingerprint: test.fingerprint,
+			}
+
+			err := job.run(ctx)
+
+			if test.wantErr == nil {
+				require.NoError(t, err)
+			} else {
+				require.ErrorIs(t, err, test.wantErr)
+			}
+		})
+	}
 }
 
 // TestEmbedJob_Run_PrefersBuildingOverActive regresses the daemon
@@ -1678,6 +1748,7 @@ func (c *recoverOnBackstopCoverage) MissingCount(context.Context, int64) (int64,
 // it reports a fixed number of live messages still needing embedding.
 type fakeCoverage struct {
 	missing     int64
+	err         error
 	calls       int
 	yieldCancel context.CancelCauseFunc
 }
@@ -1805,6 +1876,76 @@ func TestEmbedJob_Run_ContextualIncompleteBuildUsesBackstopRecovery(t *testing.T
 	assert.Equal([]int64{12}, backend.activateSequences)
 }
 
+func TestEmbedJob_MaintainActivePeopleReturnsBuildingGenerationError(t *testing.T) {
+	wantErr := errors.New("building generation lookup failed")
+	job := &EmbedJob{
+		Worker:      &fakeRunner{},
+		Backend:     &fakeBackend{buildErr: wantErr},
+		Fingerprint: "model:768",
+	}
+
+	err := job.maintainActivePeopleDuringBuild(context.Background(), slog.Default(), time.Time{})
+	require.ErrorIs(t, err, wantErr)
+}
+
+func TestEmbedJob_Run_ResumedContextualBackstopWaitsForInterval(t *testing.T) {
+	for _, state := range []string{"active", "building"} {
+		t.Run(state, func(t *testing.T) {
+			assert := assert.New(t)
+			generation := vector.Generation{ID: 7, Fingerprint: "m:768"}
+			backend := &fakeBackend{}
+			if state == "building" {
+				backend.building = &generation
+			} else {
+				backend.active = generation
+			}
+			checker := &fakeConvergenceChecker{result: ConvergenceResult{
+				MessageCoverageComplete: false,
+				PersonCoverageComplete:  true,
+				LatestJournalSequence:   12,
+				ConsumedJournalSequence: 12,
+			}}
+			ctx, cancel := context.WithCancelCause(context.Background())
+			t.Cleanup(func() { cancel(nil) })
+			runner := &fakeRunner{
+				backstopResult: embed.RunResult{Contextual: &embed.ContextConvergence{}},
+				yieldBackstop:  cancel,
+			}
+			now := time.Date(2026, time.October, 6, 6, 0, 0, 0, time.UTC)
+			job := &EmbedJob{
+				Worker: runner, Backend: backend, Fingerprint: "m:768",
+				Convergence: checker, SequenceBoundActivation: true,
+				BackstopInterval: time.Hour,
+				Now:              func() time.Time { return now },
+			}
+
+			// The first bounded pass starts a contextual backstop and yields while its
+			// durable reconciliation cursor is incomplete.
+			job.Run(ctx)
+
+			checker.result.ReconciliationComplete = true
+			runner.runOnceResult = embed.RunResult{Contextual: &embed.ContextConvergence{
+				ReconcileCursor:   "done:12",
+				ReconcileComplete: true,
+			}}
+			runner.yieldBackstop = nil
+			now = now.Add(time.Minute)
+
+			// A fresh runtime budget resumes and completes that cursor. It must not
+			// immediately reset the cursor with another full backstop.
+			job.Run(context.Background())
+			backstops, _ := runner.backstops()
+			assert.Equal(1, backstops, "resumed reconciliation must count as the interrupted backstop")
+
+			// The periodic backstop still runs after its interval has elapsed.
+			now = now.Add(time.Hour)
+			job.Run(context.Background())
+			backstops, _ = runner.backstops()
+			assert.Equal(2, backstops, "the next interval must schedule a fresh backstop")
+		})
+	}
+}
+
 func TestEmbedJob_Run_LegacyConvergenceUsesNormalActivation(t *testing.T) {
 	backend := &fakeBackend{building: &vector.Generation{ID: 7, Fingerprint: "m:768"}}
 	job := &EmbedJob{
@@ -1829,7 +1970,7 @@ func (c *fakeCoverage) MissingCount(_ context.Context, _ int64) (int64, error) {
 	if c.yieldCancel != nil {
 		c.yieldCancel(jobctx.ErrYieldedToWaiter)
 	}
-	return c.missing, nil
+	return c.missing, c.err
 }
 
 // slowRunner blocks RunOnce on `release` so tests can control when it
@@ -1933,6 +2074,23 @@ func TestEmbedJob_Run_NilSafe(t *testing.T) {
 
 // ---------- SetEmbedJob tests ----------
 
+func TestSchedulerSetDocumentVectorJobUsesEmbeddingSchedulePolicy(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	s := New(func(context.Context, string) error { return nil })
+	t.Cleanup(func() { <-s.Stop().Done() })
+	called := 0
+	requirements.NoError(s.SetDocumentVectorJob(func(context.Context) error {
+		called++
+		return nil
+	}, "*/5 * * * *", true))
+	assertions.NotEmpty(s.genericSchedules["document-vector"])
+	assertions.True(s.runDocumentVectorAfterSync)
+	requirements.ErrorContains(s.SetDocumentVectorJob(func(context.Context) error { return nil }, "invalid", false), "invalid")
+	assertions.NotEmpty(s.genericSchedules["document-vector"], "invalid replacement preserves the prior job")
+	assertions.Zero(called)
+}
+
 func TestSchedulerDocumentVectorJobRunsOnlyAfterSuccessfulSync(t *testing.T) {
 	for _, test := range []struct {
 		name     string
@@ -1991,18 +2149,18 @@ func TestScheduler_SetEmbedJob_AddsCronEntry(t *testing.T) {
 	job := &EmbedJob{Worker: runner, Backend: backend}
 
 	require.NoError(s.SetEmbedJob(job, "*/5 * * * *", false), "SetEmbedJob first")
-	assert.True(s.embed.entrySet, "embedEntrySet should be true after first SetEmbedJob")
+	assert.NotEmpty(s.genericSchedules["embed"], "embed cron should be set after first SetEmbedJob")
 
 	// Replacing with a new schedule should not error.
 	require.NoError(s.SetEmbedJob(job, "0 * * * *", true), "SetEmbedJob replace")
-	assert.True(s.embed.entrySet, "embedEntrySet should remain true after replacement")
-	assert.True(s.embed.runAfterSync, "runEmbedAfterSync should be true after replacement with runAfterSync=true")
+	assert.NotEmpty(s.genericSchedules["embed"], "embed cron should remain set after replacement")
+	assert.True(s.runEmbedAfterSync, "runEmbedAfterSync should be true after replacement with runAfterSync=true")
 
 	// Clearing.
 	require.NoError(s.SetEmbedJob(nil, "", false), "SetEmbedJob clear")
-	assert.False(s.embed.entrySet, "embedEntrySet should be false after clear")
-	assert.Nil(s.embed.job, "embedJob should be nil after clear")
-	assert.False(s.embed.runAfterSync, "runEmbedAfterSync should be false after clear")
+	assert.Empty(s.genericSchedules["embed"], "embed cron should be absent after clear")
+	assert.Nil(s.genericFuncs["embed"], "embed callback should be nil after clear")
+	assert.False(s.runEmbedAfterSync, "runEmbedAfterSync should be false after clear")
 }
 
 func TestScheduler_SetEmbedJob_InvalidCron(t *testing.T) {
@@ -2013,7 +2171,7 @@ func TestScheduler_SetEmbedJob_InvalidCron(t *testing.T) {
 
 	err := s.SetEmbedJob(job, "not a cron", false)
 	require.Error(t, err, "SetEmbedJob with invalid cron")
-	assert.False(t, s.embed.entrySet, "embedEntrySet should remain false after invalid cron")
+	assert.Empty(t, s.genericSchedules["embed"], "embed cron should remain absent after invalid cron")
 }
 
 func TestScheduler_SetEmbedJob_InvalidReplacePreservesPrevious(t *testing.T) {
@@ -2029,13 +2187,13 @@ func TestScheduler_SetEmbedJob_InvalidReplacePreservesPrevious(t *testing.T) {
 		job2 := &EmbedJob{Worker: runner2, Backend: backend}
 
 		require.NoError(s.SetEmbedJob(job1, "*/5 * * * *", true), "SetEmbedJob(job1)")
-		prevEntry := s.embed.entry
+		prevEntry := s.genericJobs["embed"]
 
 		require.Error(s.SetEmbedJob(job2, "bogus cron", true), "SetEmbedJob(job2, invalid)")
 
-		assert.True(s.embed.runAfterSync, "runAfterSync should remain true")
-		assert.True(s.embed.entrySet, "cron entry should still be job1's (entrySet)")
-		assert.Equal(prevEntry, s.embed.entry, "cron entry should still be job1's")
+		assert.True(s.runEmbedAfterSync, "runAfterSync should remain true")
+		assert.Equal("*/5 * * * *", s.genericSchedules["embed"])
+		assert.Equal(prevEntry, s.genericJobs["embed"], "cron entry should still be job1's")
 
 		require.NoError(s.AddAccount("test@example.test", "0 0 1 1 *"))
 		s.Start()
@@ -2057,9 +2215,9 @@ func TestScheduler_SetEmbedJob_EmptyScheduleNoCronEntry(t *testing.T) {
 	job := &EmbedJob{Worker: runner, Backend: backend}
 
 	require.NoError(t, s.SetEmbedJob(job, "", true), "SetEmbedJob")
-	assert.False(s.embed.entrySet, "empty schedule should not create a cron entry")
-	assert.NotNil(s.embed.job, "embedJob should be set even with empty schedule")
-	assert.True(s.embed.runAfterSync, "runEmbedAfterSync should be true")
+	assert.Empty(s.genericSchedules["embed"], "empty schedule should not create a cron entry")
+	assert.NotNil(s.genericFuncs["embed"], "embed callback should be set even with empty schedule")
+	assert.True(s.runEmbedAfterSync, "runEmbedAfterSync should be true")
 }
 
 func TestScheduler_RunAfterSync_Fires(t *testing.T) {
@@ -3444,7 +3602,7 @@ func TestStartJobDroppedFollowUpIsLogged(t *testing.T) {
 	})
 }
 
-func TestSchedulerRunsEmbedThenDocumentVectorAfterSync(t *testing.T) {
+func TestSchedulerRunsEmbedAndDocumentVectorAfterSync(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)
@@ -3467,7 +3625,7 @@ func TestSchedulerRunsEmbedThenDocumentVectorAfterSync(t *testing.T) {
 		for len(order) > 0 {
 			got = append(got, <-order)
 		}
-		assert.Equal([]string{"embed", "document vector"}, got)
+		assert.ElementsMatch([]string{"embed", "document vector"}, got)
 	})
 }
 
@@ -3498,9 +3656,9 @@ func TestScheduledVectorJobsHoldGateUnderOwnLabel(t *testing.T) {
 		job := &EmbedJob{Worker: &fakeRunner{}, Backend: &fakeBackend{active: vector.Generation{ID: 1}}}
 		require.NoError(s.SetEmbedJob(job, "0 0 1 1 *", false))
 		require.NoError(s.SetDocumentVectorJob(func(context.Context) error { return nil }, "0 0 1 1 *", false))
-		s.cron.Entry(s.embed.entry).Job.Run()
-		s.cron.Entry(s.documentVector.entry).Job.Run()
+		s.cron.Entry(s.genericJobs["embed"]).Job.Run()
+		s.cron.Entry(s.genericJobs["document-vector"]).Job.Run()
 		synctest.Wait()
-		assert.Equal(t, []string{"scheduled embedding", "scheduled document indexing"}, tracker.labels)
+		assert.Equal(t, []string{"embed", "document-vector"}, tracker.labels)
 	})
 }

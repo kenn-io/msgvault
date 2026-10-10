@@ -128,7 +128,7 @@ func (e ExploreGroupsHTTPRequest) Validate() error {
 func (f FileGroupsHTTPRequest) Validate() error {
 	var errors runtime.ValidationErrors
 }
-` + pointerValidatorFixture("FileMetadataResponse", "f") + pointerValidatorFixture("FileSearchRow", "f") +
+` + requiredStringPointerValidatorFixture("JobStatus", "j", "Schedule") + pointerValidatorFixture("FileMetadataResponse", "f") + pointerValidatorFixture("FileSearchRow", "f") +
 		pointerValidatorFixture("PersonFileSearchRow", "p") +
 		requiredStringPointerValidatorFixture("MessageRecording", "m", "Filename") +
 		requiredStringPointerValidatorFixture("PersonFactEvidence", "p",

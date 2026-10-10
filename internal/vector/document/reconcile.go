@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -97,17 +98,23 @@ func (r *Reconciler) Run(ctx context.Context, generationID GenerationID, limit i
 		result.WorkerRan = true
 		result.Worker, err = r.deps.Worker.Run(ctx, generationID, limit)
 		if ctxErr := ctx.Err(); ctxErr != nil {
-			return result, ctxErr
+			return result, errors.Join(err, ctxErr)
 		}
 		reconcileErr = errors.Join(reconcileErr, err)
 	}
 
+	if jobctx.PreemptionRequested(ctx) {
+		return result, reconcileErr
+	}
 	cleanupErr := r.cleanup(ctx, generationID, limit, &result)
 	if ctxErr := ctx.Err(); ctxErr != nil {
-		return result, errors.Join(reconcileErr, ctxErr)
+		return result, errors.Join(reconcileErr, cleanupErr, ctxErr)
 	}
 	reconcileErr = errors.Join(reconcileErr, cleanupErr)
 
+	if jobctx.PreemptionRequested(ctx) {
+		return result, reconcileErr
+	}
 	status, statusErr := r.deps.Ledger.GetDocumentVectorGenerationStatus(ctx, int64(generationID), "", limit)
 	if statusErr == nil {
 		result.Status = status
@@ -133,6 +140,7 @@ func (r *Reconciler) Run(ctx context.Context, generationID GenerationID, limit i
 			activationErr := r.deps.Ledger.ActivateDocumentVectorGeneration(ctx, int64(generationID), r.now())
 			if activationErr == nil {
 				result.Activated = true
+				jobctx.RecordProgress(ctx)
 				if refreshed, refreshErr := r.deps.Ledger.GetDocumentVectorGenerationStatus(ctx, int64(generationID), "", limit); refreshErr == nil {
 					result.Status = refreshed
 				} else {
@@ -148,6 +156,9 @@ func (r *Reconciler) Run(ctx context.Context, generationID GenerationID, limit i
 		if result.Status.CleanupPending == 0 && reconcileErr == nil {
 			result.Purged, err = r.deps.Ledger.PurgeRetiredDocumentVectorGeneration(ctx, int64(generationID))
 			reconcileErr = errors.Join(reconcileErr, err)
+			if result.Purged {
+				jobctx.RecordProgress(ctx)
+			}
 		}
 		result.Converged = result.Purged && reconcileErr == nil
 	default:
@@ -190,6 +201,7 @@ func (r *Reconciler) cleanup(
 		}
 		if finalized {
 			result.CleanupFinalized++
+			jobctx.RecordProgress(ctx)
 		}
 	}
 	if finalizeErr != nil {

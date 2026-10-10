@@ -131,9 +131,8 @@ func TestWorker_CASRepairRace_OldCodeWouldFail(t *testing.T) {
 	require.NoError(
 		err, "race: reset embed_gen")
 
-	require.NoError(
-
-		f.Store.SetEmbedGen(ctx, []int64{1}, int64(f.BuildingGen)),
+	_, stampErr := f.Store.SetEmbedGen(ctx, []int64{1}, int64(f.BuildingGen))
+	require.NoError(stampErr,
 		"old unconditional stamp")
 
 	assert.Equal(0, countMissing(t, f.MainDB, int64(f.BuildingGen)),
@@ -146,7 +145,7 @@ func TestWorker_CASRepairRace_OldCodeWouldFail(t *testing.T) {
 		err, "reset for CAS check")
 
 	staleToken := "2000-01-01 00:00:00"
-	missed, err := f.Store.SetEmbedGenIfUnchanged(ctx,
+	missed, _, err := f.Store.SetEmbedGenIfUnchanged(ctx,
 		stamps(1, staleToken), int64(f.BuildingGen))
 	require.NoError(
 		err, "CAS with stale token")
@@ -274,7 +273,7 @@ func TestWorker_CASSelfBumpDoesNotBlockStamp(t *testing.T) {
 	f := newWorkerFixture(t, 1)
 	token := setBaselineLM(t, f.MainDB, 1)
 
-	missed, err := f.Store.SetEmbedGenIfUnchanged(ctx,
+	missed, _, err := f.Store.SetEmbedGenIfUnchanged(ctx,
 		stamps(1, token), int64(f.BuildingGen))
 	require.NoError(
 		err, "CAS stamp")

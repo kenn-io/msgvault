@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"sort"
 
+	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
@@ -284,6 +285,9 @@ func (w *PersonWorker) embedPersonBatch(
 		result.Failed += len(batch)
 		return fmt.Errorf("upsert person vectors for generation %d: %w", gen, err)
 	}
+	if len(publications) > 0 {
+		jobctx.RecordProgress(ctx)
+	}
 	result.Succeeded += len(publications)
 	result.Failed += len(vectors) - len(publications)
 	if embedErr != nil {
@@ -318,6 +322,9 @@ func (w *PersonWorker) recordRejectedPersons(
 		return vector.ErrGenerationRetired
 	} else if err != nil {
 		return fmt.Errorf("record rejected person revisions for generation %d: %w", gen, err)
+	}
+	if len(publications) > 0 {
+		jobctx.RecordProgress(ctx)
 	}
 	return nil
 }

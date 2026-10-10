@@ -23,30 +23,18 @@ type EmbeddingClient interface {
 	Embed(ctx context.Context, inputs []string) ([][]float32, error)
 }
 
-// WorkStore is the subset of *store.Store the worker uses to find work
-// and stamp coverage against the MAIN db. It is a narrow interface — only
-// the few methods the worker actually calls — so the embed package depends
-// on just that surface and the worker is easy to fake in tests, mirroring
-// the func-injection style the queue/enqueuer used. *store.Store satisfies
-// it implicitly. (The package still imports internal/store for the shared
-// EmbedGenStamp type used by SetEmbedGenIfUnchanged.)
+// WorkStore finds pending messages and records committed embedding coverage.
 type WorkStore interface {
 	// ScanForEmbedding returns up to limit live message ids needing work
 	// for target (embed_gen IS NULL OR embed_gen <> target), scanning
 	// forward from afterID in id order.
 	ScanForEmbedding(ctx context.Context, target int64, afterID int64, limit int) ([]int64, error)
-	// SetEmbedGen stamps embed_gen=target on ids (idempotent). Used by the
-	// BACKFILL path, which has no content read→stamp window to guard.
-	SetEmbedGen(ctx context.Context, ids []int64, target int64) error
-	// SetEmbedGenIfUnchanged stamps embed_gen=target on each item ONLY if
-	// its last_modified still equals the value captured at content-read time
-	// (optimistic CAS). A row whose last_modified changed (a concurrent
-	// content edit bumped it via the DB triggers) is not stamped and is
-	// re-found by the next scan. Used by the scan-and-fill read→stamp path.
-	// Returns the ids whose UPDATE matched 0 rows (the CAS misses) so the
-	// worker can log them and exclude them from its success accounting; the
-	// watermark still advances and the backstop recovers them.
-	SetEmbedGenIfUnchanged(ctx context.Context, items []store.EmbedGenStamp, target int64) (missed []int64, err error)
+	// SetEmbedGen returns committed stamps, including a prefix before an error.
+	SetEmbedGen(ctx context.Context, ids []int64, target int64) (int, error)
+	// SetEmbedGenIfUnchanged returns missed IDs and committed stamps.
+	SetEmbedGenIfUnchanged(
+		ctx context.Context, items []store.EmbedGenStamp, target int64,
+	) (missed []int64, committed int, err error)
 }
 
 // WorkerDeps bundles the collaborators a Worker needs. Backend, VectorsDB,
@@ -169,7 +157,7 @@ func NewWorker(d WorkerDeps) *Worker {
 // RunResult summarizes the outcome of RunOnce.
 type RunResult struct {
 	Claimed, Succeeded, Failed, Truncated int
-	// Contextual is set by ContextWorker. The ordinary Worker leaves it nil.
+	// Contextual is nil for ordinary workers and backstops stopped before reconciliation.
 	Contextual *ContextConvergence
 }
 
@@ -208,6 +196,10 @@ type inputChunk struct {
 func (w *Worker) ReclaimStale(ctx context.Context) (int, error) { return 0, nil }
 
 func (w *Worker) stopIfYielded(ctx context.Context, gen vector.GenerationID) bool {
+	if errors.Is(context.Cause(ctx), jobctx.ErrRunBudgetExceeded) {
+		w.deps.Log.Info("embed pass reached its runtime budget; stopping", "gen", gen)
+		return true
+	}
 	if !jobctx.YieldedToWaiter(ctx) {
 		return false
 	}
@@ -351,6 +343,9 @@ func (w *Worker) run(
 	}
 
 	for {
+		if jobctx.PreemptionRequested(ctx) {
+			return res, nil
+		}
 		if err := ctx.Err(); err != nil {
 			if w.stopIfYielded(ctx, gen) {
 				return res, nil
@@ -1179,14 +1174,21 @@ func (w *Worker) stampCovered(ctx context.Context, gen vector.GenerationID, ids 
 		}
 	}
 	if len(cas) > 0 {
-		m, err := w.deps.Store.SetEmbedGenIfUnchanged(ctx, cas, int64(gen))
+		m, committed, err := w.deps.Store.SetEmbedGenIfUnchanged(ctx, cas, int64(gen))
+		missed = append(missed, m...)
+		if committed > 0 {
+			jobctx.RecordProgress(ctx)
+		}
 		if err != nil {
 			return missed, err
 		}
-		missed = append(missed, m...)
 	}
 	if len(plain) > 0 {
-		if err := w.deps.Store.SetEmbedGen(ctx, plain, int64(gen)); err != nil {
+		committed, err := w.deps.Store.SetEmbedGen(ctx, plain, int64(gen))
+		if committed > 0 {
+			jobctx.RecordProgress(ctx)
+		}
+		if err != nil {
 			return missed, err
 		}
 	}
@@ -1243,6 +1245,9 @@ func (w *Worker) stampSkipped(ctx context.Context, gen vector.GenerationID, ids 
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("commit skip stamp tx: %w", err)
+	}
+	if len(deleteIDs) > 0 {
+		jobctx.RecordProgress(ctx)
 	}
 	return missed, nil
 }

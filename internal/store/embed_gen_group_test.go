@@ -407,7 +407,8 @@ func TestContextualConvergenceCounts_PartitionsContextualAndOrdinaryMessages(t *
 		require.NoError(err)
 		ids[messageType] = id
 	}
-	require.NoError(st.SetEmbedGen(t.Context(), []int64{ids["beeper"], ids["email"]}, 7))
+	_, stampErr := st.SetEmbedGen(t.Context(), []int64{ids["beeper"], ids["email"]}, 7)
+	require.NoError(stampErr)
 
 	got, err := st.ContextualConvergenceCounts(t.Context(), 7)
 	require.NoError(err)

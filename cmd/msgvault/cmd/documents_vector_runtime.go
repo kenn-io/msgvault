@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/google/uuid"
 	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
@@ -17,10 +16,6 @@ import (
 	"go.kenn.io/msgvault/internal/vector/pgvector"
 	"go.kenn.io/msgvault/internal/vector/sqlitevec"
 )
-
-func nextDocumentVectorWorkerOwner() string {
-	return "document-vector-" + uuid.NewString()
-}
 
 type checkpointingDocumentVectorWorker struct {
 	worker       vectordocument.WorkerRunner
@@ -119,7 +114,7 @@ func runConfiguredDocumentVectorGeneration(ctx context.Context, st *store.Store,
 	}
 	defer func() { _ = vf.Close() }()
 	return runDocumentVectorWithFeatures(ctx, st, vf, generationID, limit,
-		newOperationPassScope("cli:document-vector", operations.TriggerManual))
+		newOperationPassScope("cli:document-vector", operations.TriggerManual), nextDocumentVectorWorkerOwner())
 }
 
 func openDocumentVectorCleanupBackend(ctx context.Context, st *store.Store, mainPath string) (vectordocument.Backend, func() error, error) {
@@ -148,7 +143,7 @@ func openDocumentVectorCleanupBackend(ctx context.Context, st *store.Store, main
 
 func runDocumentVectorWithFeatures(
 	ctx context.Context, st *store.Store, vf *vectorFeatures, generationID int64, limit int,
-	scope operations.PassScope,
+	scope operations.PassScope, owner string,
 ) (vectordocument.ReconcileResult, error) {
 	state := invocationFromContext(ctx)
 	if state == nil || state.cfg == nil {
@@ -171,7 +166,7 @@ func runDocumentVectorWithFeatures(
 	}
 	worker := vectordocument.NewWorker(vectordocument.WorkerDeps{
 		Ledger: st, Provider: vf.SemanticClient, Backend: vf.DocumentBackend,
-		Owner: nextDocumentVectorWorkerOwner(), Dimension: generation.Dimension,
+		Owner: owner, Dimension: generation.Dimension,
 		MaxInputChars:       cfg.Vector.Embeddings.MaxInputChars,
 		ContextualDocuments: cfg.Vector.Embeddings.EffectiveAPIFormat() == vector.APIFormatVoyageContextual,
 		LeaseDuration:       2 * time.Minute, HeartbeatInterval: 20 * time.Second,
@@ -188,13 +183,13 @@ func runDocumentVectorWithFeatures(
 	return reconciler.Run(ctx, vectordocument.GenerationID(generationID), limit)
 }
 
-func runScheduledDocumentVectorGeneration(ctx context.Context, st *store.Store, vf *vectorFeatures, limit int) error {
+func runScheduledDocumentVectorGeneration(ctx context.Context, st *store.Store, vf *vectorFeatures, limit int, owner string) error {
 	return st.WithDocumentVectorOperationLock(ctx, func() error {
-		return runScheduledDocumentVectorGenerationLocked(ctx, st, vf, limit)
+		return runScheduledDocumentVectorGenerationLocked(ctx, st, vf, limit, owner)
 	})
 }
 
-func runScheduledDocumentVectorGenerationLocked(ctx context.Context, st *store.Store, vf *vectorFeatures, limit int) error {
+func runScheduledDocumentVectorGenerationLocked(ctx context.Context, st *store.Store, vf *vectorFeatures, limit int, owner string) error {
 	scope := newOperationPassScope("scheduled:document-vector", operations.TriggerScheduled)
 	retired, err := st.GetOldestRetiredDocumentVectorGeneration(ctx)
 	if err != nil {
@@ -238,7 +233,7 @@ func runScheduledDocumentVectorGenerationLocked(ctx context.Context, st *store.S
 		}
 		// Reconcile only the obsolete generation this pass. The next bounded
 		// run creates the desired generation without exceeding one cleanup page.
-		_, reconcileErr := runDocumentVectorWithFeatures(ctx, st, vf, building.ID, limit, scope)
+		_, reconcileErr := runDocumentVectorWithFeatures(ctx, st, vf, building.ID, limit, scope, owner)
 		return reconcileErr
 	}
 	if building == nil {
@@ -259,7 +254,7 @@ func runScheduledDocumentVectorGenerationLocked(ctx context.Context, st *store.S
 				return statusErr
 			}
 			if status.CleanupPending > 0 {
-				_, reconcileErr := runDocumentVectorWithFeatures(ctx, st, vf, active.ID, limit, scope)
+				_, reconcileErr := runDocumentVectorWithFeatures(ctx, st, vf, active.ID, limit, scope, owner)
 				return reconcileErr
 			}
 			coverage, coverageErr := st.GetDocumentVectorCoverage(ctx, active.ID)
@@ -276,6 +271,6 @@ func runScheduledDocumentVectorGenerationLocked(ctx context.Context, st *store.S
 			building = &generation
 		}
 	}
-	_, err = runDocumentVectorWithFeatures(ctx, st, vf, building.ID, limit, scope)
+	_, err = runDocumentVectorWithFeatures(ctx, st, vf, building.ID, limit, scope, owner)
 	return err
 }
