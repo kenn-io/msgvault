@@ -192,9 +192,6 @@ func (reader *MessageRecordingReader) search(ctx context.Context, query string, 
 			fence.ContentVersionIDs = append(fence.ContentVersionIDs, selector.ContentVersionID)
 		}
 	}
-	if len(fence.ContentVersionIDs) > docbankmedia.MaxSearchVersions {
-		return response, errMediaSearchScope
-	}
 	remoteCtx, cancel := context.WithTimeout(ctx, docbankBudget(ctx))
 	defer cancel()
 	request := docbankmedia.SearchRequest{Query: query, Mode: "lexical", Limit: docbankmedia.MaxSearchResults, Profile: suppliedTranscriptProfile, ContentFirst: true}
