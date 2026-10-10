@@ -35,7 +35,6 @@
   import SplitPane from '../layout/SplitPane.svelte';
   import PersonTimeline from '../people/PersonTimeline.svelte';
   import SearchCoverage from '../search/SearchCoverage.svelte';
-  import { admitsMediaQuery } from '../../search/media-query';
   import TranscriptHits from '../search/TranscriptHits.svelte';
   import ReadingPane, { type ReadingPaneSelection, type ReadingPaneStatus } from '../reader/ReadingPane.svelte';
   import type { SearchCoverageAction } from '../../search/modes';
@@ -118,7 +117,8 @@
   const recordingSelection = $derived(parseRecordingSelection(readingTargetKey));
   const recordingSearchSupported = $derived(exploreState.current.searchMode === 'full_text' && exploreState.current.filters.length === 0 && exploreState.current.groupingChain.length === 0);
   const recordingSearchRequested = $derived(Boolean(enabled && exploreState.current.query.trim()));
-  const recordingSearchVisible = $derived(recordingSearchRequested && session.recordingSearchConfigured !== false && (session.recordingSearchConfigured === true || (recordingSearchSupported && admitsMediaQuery(exploreState.current.query))));
+  let recordingPanelVisible = $state(false);
+  const recordingSearchVisible = $derived(recordingSearchRequested && recordingPanelVisible);
 
   $effect(() => {
     void readingDetailRetryRevision;
@@ -739,6 +739,7 @@
             <TranscriptHits
               {client}
               bind:configured={session.recordingSearchConfigured}
+              bind:visible={recordingPanelVisible}
               missingMessageID={recording.missing ? recordingSelection : undefined}
               query={exploreState.current.query}
               supported={recordingSearchSupported}

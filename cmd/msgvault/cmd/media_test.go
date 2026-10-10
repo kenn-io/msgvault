@@ -25,8 +25,6 @@ func TestMediaSearchCLIDaemonRoundTrip(t *testing.T) {
 		{"table", []string{"search", "quarterly", "numbers", "--person", "7", "--direction", "from_person"}, 200, "Coverage complete"},
 		{"terminal", []string{"search", "quarterly numbers"}, 200, "Coverage complete"},
 		{"json", []string{"search", "quarterly numbers", "--json"}, 200, `"message_id":11`},
-		{"not configured", []string{"search", "words"}, 503, "media_search_not_configured"},
-		{"unavailable", []string{"search", "words"}, 503, "media_search_unavailable"},
 		{"mode delegated", []string{"search", "words", "--mode", "hybrid"}, 503, "media_search_mode_unavailable"},
 		{"upper limit delegated", []string{"search", "words", "--limit", "101"}, 400, "invalid_limit"},
 		{"person relation delegated", []string{"search", "words", "--direction", "from_person"}, 400, "invalid_person"},

@@ -560,10 +560,7 @@ func (s *Store) searchDocumentFilenames(
 	return s.scanDocumentSearchRows(ctx, query, args, false, limit)
 }
 
-const (
-	containingTitleMCVSQL = "COALESCE(NULLIF(m.subject, ''), NULLIF(cv.title, ''), '')"
-	containingTitleMCSQL  = "COALESCE(NULLIF(m.subject, ''), NULLIF(c.title, ''), '')"
-)
+const containingTitleMCVSQL = "COALESCE(NULLIF(m.subject, ''), NULLIF(cv.title, ''), '')"
 
 const documentSearchSelectColumns = `
 		a.id, m.id, m.conversation_id, m.source_id,

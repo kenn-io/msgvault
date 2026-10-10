@@ -9,7 +9,10 @@ export class ArchiveMeetingNavigation {
   detail = $state<MessageDetail>();
   loading = $state(false);
   error = $state('');
-  private readonly loader = new ArchiveMessageLoader();
+  private readonly loader = new ArchiveMessageLoader({
+    mismatchedID: 'This archived meeting is no longer available.',
+    invalidConversation: 'The archived meeting conversation changed or is unavailable. Reload meeting activity.',
+  });
   private generation = 0;
 
   constructor(private readonly client: APIClient) {}

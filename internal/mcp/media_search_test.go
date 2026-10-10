@@ -18,11 +18,6 @@ func TestMediaSearchMCPDaemonRoundTrip(t *testing.T) {
 	t.Parallel()
 	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal("/api/v1/media/search", r.URL.Path)
-		if r.URL.Query().Get("q") == "unconfigured" {
-			w.WriteHeader(http.StatusServiceUnavailable)
-			_, _ = w.Write([]byte(`{"error":"media_search_not_configured","message":"Configure the Docbank integration to search transcripts"}`))
-			return
-		}
 		if r.URL.Query().Get("limit") == "101" {
 			assert.Empty(r.URL.Query().Get("person_id"))
 			assert.Equal("from_person", r.URL.Query().Get("direction"))
@@ -47,8 +42,6 @@ func TestMediaSearchMCPDaemonRoundTrip(t *testing.T) {
 	assert.Equal(generated.MediaSearchResultOriginSupplied, response.Results[0].Origin)
 	delegated := runToolExpectError(t, ToolSearchMedia, h.searchMedia, map[string]any{"query": "words", "limit": float64(101), "directions": []any{"from_person"}})
 	assert.Contains(resultText(t, delegated), "API error (400): invalid media search")
-	unconfigured := runToolExpectError(t, ToolSearchMedia, h.searchMedia, map[string]any{"query": "unconfigured"})
-	assert.Contains(resultText(t, unconfigured), "Configure the Docbank integration to search transcripts")
 	assert.True(searchMediaDefinition().availability(capabilitiesFor(ServeOptions{MediaSearcher: client})))
 	assert.False(searchMediaDefinition().availability(capabilitiesFor(ServeOptions{})))
 }

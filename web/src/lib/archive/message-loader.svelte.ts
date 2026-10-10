@@ -8,6 +8,8 @@ export class ArchiveMessageLoader {
   error = $state('');
   private controller: AbortController | undefined;
 
+  constructor(private readonly invalidDetailMessages?: { mismatchedID: string; invalidConversation: string }) {}
+
   async load(client: APIClient, id?: number): Promise<MessageDetail | undefined> {
     this.cancel();
     this.detail = undefined;
@@ -21,7 +23,11 @@ export class ArchiveMessageLoader {
       if (controller.signal.aborted) return;
       if (response.status === 404 || (data && (data.id !== id || !Number.isSafeInteger(data.conversation_id) || data.conversation_id! < 1))) {
         this.missing = true;
-        this.error = error?.message || 'Message not found.';
+        this.error = data && data.id !== id && this.invalidDetailMessages
+          ? this.invalidDetailMessages.mismatchedID
+          : data && (!Number.isSafeInteger(data.conversation_id) || data.conversation_id! < 1) && this.invalidDetailMessages
+            ? this.invalidDetailMessages.invalidConversation
+            : error?.message || 'Message not found.';
       } else if (!data) this.error = error?.message || 'Could not load this message.';
       else {
         this.detail = data;

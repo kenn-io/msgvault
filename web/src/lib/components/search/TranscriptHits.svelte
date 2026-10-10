@@ -9,8 +9,8 @@
   import { createStaleRequestGuard } from '../../archive/stale-request';
   import { formatDateTime, formatOffset, formatShortDate } from '../../util/format';
 
-  let { client, query, supported, selectedMessageID, configured = $bindable<boolean | undefined>(undefined), missingMessageID, onOpen }: {
-    client: APIClient; query: string; supported: boolean; configured?: boolean; missingMessageID?: number; selectedMessageID?: number; onOpen?: (hit: MediaSearchResult) => void;
+  let { client, query, supported, selectedMessageID, configured = $bindable<boolean | undefined>(undefined), visible = $bindable(false), missingMessageID, onOpen }: {
+    client: APIClient; query: string; supported: boolean; configured?: boolean; visible?: boolean; missingMessageID?: number; selectedMessageID?: number; onOpen?: (hit: MediaSearchResult) => void;
   } = $props();
   const id = $props.id();
   let result = $state<MediaSearchResponse>();
@@ -20,6 +20,10 @@
   let expired = $state(false);
   let retryable = $state(false);
   let retry = $state(0);
+
+  $effect(() => {
+    visible = configured !== false && (configured === true || (supported && admitted));
+  });
 
   $effect(() => {
     const missingID = missingMessageID;
@@ -97,7 +101,7 @@
           blocked = true;
           return;
         }
-        configured = true;
+        if (response.ok || error?.error === 'media_search_unavailable') configured = true;
         if (error?.error === 'media_search_unavailable') {
           notice = 'Recording search unavailable.';
           retryable = true;
@@ -137,7 +141,7 @@
 
 </script>
 
-{#if configured !== false && (configured === true || (supported && admitted))}
+{#if visible}
 <section class="transcript-hits" aria-label="Recordings" tabindex="-1" data-recording-hits data-scroll>
   <header>
     <h2>Recordings{#if result && result.results.length > 0}<span class="count">{result.results.length}</span>{/if}</h2>

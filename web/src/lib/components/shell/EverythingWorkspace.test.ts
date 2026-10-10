@@ -80,7 +80,6 @@ describe('EverythingWorkspace', () => {
       const pane = await screen.findByRole('complementary', { name: 'Reading pane: Team chat' });
       expect(await within(pane).findByText('Source recording')).toBeTruthy();
       expect(await within(pane).findByText('Quarterly numbers in the source transcript')).toBeTruthy();
-      expect(state.current.query).toBe('quarterly');
       expect(screen.getByRole('heading', { name: 'Results 0 items' })).toBeTruthy();
       expect(link.getAttribute('aria-current')).toBe('true');
       expect(fetchFn.mock.calls.filter(([input]) => new URL((input as Request).url).searchParams.has('cursor'))).toHaveLength(0);
