@@ -315,6 +315,29 @@ unknown extensions, and raw values. Keep new registry elements covered by an
 explicit handling declaration so an upstream addition cannot be silently
 ignored.
 
+## Archive schema version maintenance
+
+`internal/store/schema_version.go` owns `store.SchemaVersion`, the monotonic
+integer for required main archive schema work. Increase it whenever the main
+archive schema or a required migration changes. `TestSchemaVersionContract`
+hashes the schema and migration ledger a fresh archive gets on each backend,
+plus the legacy column statements only older archives run, and fails until
+the version moves; its message gives the digest to append. The
+PostgreSQL digest is checked when the store tests run with `MSGVAULT_TEST_DB`
+set to a PostgreSQL URL, as CI's PostgreSQL lane does. A data-only repair that
+runs outside the migration ledger leaves both digests alone, so bump the version
+by hand for one. SQLite and PostgreSQL use the `schema_version` key in
+`archive_metadata`. `InitSchemaContext` refuses future versions before DDL and
+stamps this version only after its required steps succeed, using the caller's
+context. Keep optional and best-effort maintenance behavior separate from that
+completion guarantee.
+
+The initial contract is new on `main`, after v0.21.0. Existing archives start at
+`0`; successful initialization upgrades them to the binary's expected version.
+The [CLI reference](cli-reference.md#schema-version) owns the probe contract,
+and [Setup](setup.md#migrate-before-replacing-the-executable) owns the operator
+upgrade procedure.
+
 ## Code Conventions
 
 - **Web UI**: Svelte with TypeScript, generated OpenAPI types, and components

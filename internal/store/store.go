@@ -1354,7 +1354,7 @@ func (s *Store) InitSchema() error {
 // for the other ledger-gated migrations: a cancelled one is not marked applied,
 // so the next open runs it again.
 func (s *Store) InitSchemaContext(ctx context.Context) error {
-	version, err := s.schemaVersion(ctx)
+	version, err := s.SchemaVersionContext(ctx)
 	if err != nil {
 		return fmt.Errorf("read archive schema version: %w", err)
 	}

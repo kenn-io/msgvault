@@ -22,6 +22,10 @@ All notable changes to msgvault, grouped by release.
 
 - Agent tokens grant scoped archive reads through the remote CLI and MCP, with optional `--expires`. Search responses report index uncertainty; owner searches retain automatic index repair.
 
+- Applications can compare a candidate binary's expected archive version with
+  the stored version using `schema-version`, then run `migrate` before replacing
+  the executable. See [the upgrade procedure](setup.md#migrate-before-replacing-the-executable).
+
 - msgvault sends anonymous usage telemetry: a daemon ping at startup and once
   each later UTC day, and an `app_opened` event the web UI reports through the
   daemon when it opens and on its first focus on a later UTC day. Events carry
