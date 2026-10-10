@@ -1100,8 +1100,8 @@ func insertMessagesTriggerPrograms(t *testing.T, st *store.Store, insert string,
 	return programs
 }
 
-// TestContentChangedAt_InsertRunsNoTriggerOnAFreshDatabase keeps message ingest
-// at the cost it had before the watermark existed.
+// TestContentChangedAt_InsertNeedsNoWatermarkTrigger keeps the watermark from
+// adding a second row write to message ingest.
 //
 // SQLite triggers cannot assign to NEW, so an AFTER INSERT trigger that stamps
 // the watermark has to re-UPDATE the row that was just inserted. Worse, merely
@@ -1116,10 +1116,14 @@ func insertMessagesTriggerPrograms(t *testing.T, st *store.Store, insert string,
 // stamps fresh databases instead, and EnsureTriggers omits the INSERT trigger
 // entirely when that DEFAULT is present.
 //
+// Metadata indexing intentionally adds its own INSERT trigger and index writes.
+// Remove that maintenance trigger in this private fixture to isolate the
+// watermark's cost; metadata index maintenance is covered separately.
+//
 // total_changes() is SQLite's per-connection count of rows written, and unlike
 // changes() it does include rows written by trigger programs — which is exactly
 // what has to be counted.
-func TestContentChangedAt_InsertRunsNoTriggerOnAFreshDatabase(t *testing.T) {
+func TestContentChangedAt_InsertNeedsNoWatermarkTrigger(t *testing.T) {
 	testutil.SkipIfPostgres(t, "PostgreSQL stamps in a BEFORE trigger, which needs no second write")
 	require := require.New(t)
 	assert := assert.New(t)
@@ -1129,12 +1133,14 @@ func TestContentChangedAt_InsertRunsNoTriggerOnAFreshDatabase(t *testing.T) {
 	require.NoError(err)
 	conv, err := st.EnsureConversationWithType(src.ID, "insert-cost", "email_thread", "Insert cost")
 	require.NoError(err)
+	_, err = st.DB().Exec(`DROP TRIGGER IF EXISTS messages_metadata_fts_insert`)
+	require.NoError(err)
 
 	const insert = `INSERT INTO messages (source_id, source_message_id, conversation_id, message_type, subject)
 		 VALUES (?,?,?,?,?)`
 
 	assert.Zero(insertMessagesTriggerPrograms(t, st, insert, src.ID, "explain-only", conv, "email", "x"),
-		"an INSERT into messages must compile no trigger subprogram on a fresh database: "+
+		"with metadata maintenance excluded, INSERT must compile no watermark trigger subprogram: "+
 			"SQLite opens a statement journal for every INSERT that has one, whether or not the "+
 			"trigger body runs")
 
