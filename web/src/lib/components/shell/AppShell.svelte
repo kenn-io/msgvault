@@ -824,7 +824,7 @@
     const recordingOpen = parseRecordingSelection(exploreState.current.selectedRow) !== undefined;
     commitNavigation({ selectedRow: null });
     if (recordingOpen) {
-      await restoreArchiveFocus(document.querySelector<HTMLElement>('[aria-label="Spoken in recordings"]') ?? undefined);
+      await restoreArchiveFocus(document.querySelector<HTMLElement>('[data-recording-hits]') ?? undefined);
       return;
     }
     await tick();

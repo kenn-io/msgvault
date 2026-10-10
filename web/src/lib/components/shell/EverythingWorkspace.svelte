@@ -115,7 +115,6 @@
 
   const api = createExploreAPI(untrack(() => client));
   let recordingMessage = $state<MessageDetail>();
-  let recordingLoading = $state(false);
   let recordingError = $state('');
   let recordingMissing = $state(false);
   const recordingSelection = $derived(parseRecordingSelection(readingTargetKey));
@@ -128,7 +127,6 @@
     recordingMessage = undefined;
     recordingError = '';
     recordingMissing = false;
-    recordingLoading = Boolean(target);
     if (!target) return;
     const controller = new AbortController();
     void getMessage({ id: target }, { ...requestedClient, signal: controller.signal }).then(({ data, response }) => {
@@ -140,8 +138,6 @@
       else recordingMessage = data;
     }).catch(() => {
       if (!controller.signal.aborted) recordingError = 'Could not load this recording message.';
-    }).finally(() => {
-      if (!controller.signal.aborted) recordingLoading = false;
     });
     return () => controller.abort();
   });
@@ -239,7 +235,7 @@
     } => {
       const selected = readingTargetKey;
       if (!selected || readingSelection) return { status: 'ready', message: '' };
-      if (recordingSelection) return { status: recordingLoading ? 'loading' : recordingMissing ? 'missing' : 'error', message: recordingError };
+      if (recordingSelection) return { status: !recordingError ? 'loading' : recordingMissing ? 'missing' : 'error', message: recordingError };
       if (parseGroupSelection(selected)) {
         if (readingDetailUnavailable) {
           return {

@@ -80,7 +80,7 @@ test('recording matches keep their conversation title through reader navigation'
   await page.clock.fastForward(30_001);
   await expect(page.getByText('Recording results expired.')).toBeVisible();
   await reader.getByRole('button', { name: 'Close reading pane' }).click();
-  await expect(page.getByRole('region', { name: 'Spoken in recordings' })).toBeFocused();
+  await expect(page.locator('[data-recording-hits]')).toBeFocused();
   await page.goto('/messages/9');
   await expect(page.getByRole('heading', { name: 'Team chat', exact: true })).toBeVisible();
 });

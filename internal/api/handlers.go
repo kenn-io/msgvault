@@ -328,8 +328,7 @@ type MessageSummary struct {
 
 // MessageDetail represents a full message response.
 type MessageDetail struct {
-	// ConversationTitle is set by GET /messages/{id}.
-	ConversationTitle string `json:"conversation_title,omitempty"`
+	ConversationTitle string `json:"conversation_title,omitempty" doc:"Conversation title, populated by GET /api/v1/messages/{id}."`
 	MessageSummary
 
 	Body     string `json:"body"`
