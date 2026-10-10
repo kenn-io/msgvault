@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
@@ -123,6 +124,35 @@ func openStoreAndInitWithInvocation(state *invocation, migrate func(*store.Store
 		return nil, fmt.Errorf("startup migrations: %w", err)
 	}
 	return st, nil
+}
+
+// openInitializedStoreForInvocation opens an archive that setup already
+// initialized. It never creates the SQLite file and runs no schema DDL or
+// startup migrations; an archive at another schema version is refused.
+func openInitializedStoreForInvocation(ctx context.Context, state *invocation) (*store.Store, func(), error) {
+	currentCfg, _ := invocationConfigLogger(state)
+	if currentCfg == nil {
+		return nil, nil, errors.New("configuration is unavailable")
+	}
+	dsn := currentCfg.DatabaseDSN()
+	if !store.IsPostgresURL(dsn) {
+		path, err := currentCfg.DatabasePath()
+		if err != nil {
+			return nil, nil, err
+		}
+		if _, err := os.Stat(path); err != nil {
+			return nil, nil, fmt.Errorf("open initialized archive: %w", err)
+		}
+	}
+	st, err := store.OpenContext(ctx, dsn)
+	if err != nil {
+		return nil, nil, fmt.Errorf("open database: %w", err)
+	}
+	if err := st.ValidateSchemaContext(ctx); err != nil {
+		_ = st.Close()
+		return nil, nil, fmt.Errorf("validate archive schema: %w", err)
+	}
+	return st, func() { _ = st.Close() }, nil
 }
 
 func openWritableStoreAndInitForInvocation(state *invocation) (*store.Store, func(), error) {

@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -11,7 +12,7 @@ import (
 )
 
 func TestLoadDocumentAttachmentConfig(t *testing.T) {
-	assert := assert.New(t)
+	assertions := assert.New(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")
 	content := []byte(`
@@ -61,18 +62,18 @@ profile = "vector.embeddings"
 	loaded, err := Load(path, "")
 	require.NoError(t, err)
 	documents := loaded.Attachments.Documents
-	assert.True(documents.Enabled)
-	assert.True(documents.Scope.IncludeInline)
-	assert.Equal("PRIVATE_MISTRAL_KEY", documents.APIKeyEnv)
-	assert.Equal(2*time.Minute, documents.RequestTimeout)
-	assert.Equal(int64(8388608), documents.MaxSpoolBytes)
-	assert.Equal(int64(4194304), documents.MinFreeSpaceBytes)
-	assert.InDelta(4.25, documents.EstimatedCostUSDPerKUnits, 0.0001)
-	assert.Equal([]string{"chat", "email"}, documents.Scope.MessageTypes)
-	assert.True(documents.LexicalEnabled())
-	assert.True(documents.StoresChunkText())
-	assert.True(documents.Index.Embeddings.Enabled)
-	assert.Equal("vector.embeddings", documents.Index.Embeddings.Profile)
+	assertions.True(documents.Enabled)
+	assertions.True(documents.Scope.IncludeInline)
+	assertions.Equal("PRIVATE_MISTRAL_KEY", documents.APIKeyEnv)
+	assertions.Equal(2*time.Minute, documents.RequestTimeout)
+	assertions.Equal(int64(8388608), documents.MaxSpoolBytes)
+	assertions.Equal(int64(4194304), documents.MinFreeSpaceBytes)
+	assertions.InDelta(4.25, documents.EstimatedCostUSDPerKUnits, 0.0001)
+	assertions.Equal([]string{"chat", "email"}, documents.Scope.MessageTypes)
+	assertions.True(documents.LexicalEnabled())
+	assertions.True(documents.StoresChunkText())
+	assertions.True(documents.Index.Embeddings.Enabled)
+	assertions.Equal("vector.embeddings", documents.Index.Embeddings.Profile)
 }
 
 func TestLoadRejectsUnknownDocumentEmbeddingProfile(t *testing.T) {
@@ -153,6 +154,92 @@ func TestLoadRejectsExplicitZeroDocumentLimits(t *testing.T) {
 
 			_, err := Load(path, "")
 			assert.ErrorContains(t, err, "must be")
+		})
+	}
+}
+
+func TestLoadDoclingConfigWithoutMistralCredentials(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+
+	path := filepath.Join(t.TempDir(), "config.toml")
+	requirements.NoError(os.WriteFile(path, []byte(`[attachments.documents]
+enabled = true
+provider = "docling"
+endpoint = "http://127.0.0.1:5001"
+`), 0o600))
+	loaded, err := Load(path, "")
+	requirements.NoError(err)
+	documents := loaded.Attachments.Documents
+	assertions.Equal("docling", documents.Provider)
+	assertions.Empty(documents.APIKeyEnv)
+	assertions.Equal("docling.serve-v1", documents.Model)
+	assertions.Equal("operator_network", documents.Region)
+	assertions.Equal("operator-controlled", documents.RetentionPosture)
+	assertions.Equal("operator-controlled", documents.TrainingPosture)
+	assertions.Equal(30*time.Second, documents.RequestTimeout)
+	assertions.False(documents.Scope.IncludeInline)
+	assertions.False(documents.Index.Embeddings.Enabled)
+}
+
+func TestLoadDoclingConfigReplacesSavedMistralDefaults(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+
+	// Config.Save writes every field, including Mistral's defaults.
+	cfg := NewDefaultConfig()
+	cfg.HomeDir = t.TempDir()
+	requirements.NoError(cfg.Save())
+	saved, err := os.ReadFile(cfg.ConfigFilePath())
+	requirements.NoError(err)
+	head, section, found := strings.Cut(string(saved), "[attachments.documents]\n")
+	requirements.True(found)
+	section = strings.Replace(section, `provider = "mistral"`, `provider = "docling"`, 1)
+	section = strings.Replace(section, `endpoint = ""`, `endpoint = "http://127.0.0.1:5001"`, 1)
+	requirements.NoError(os.WriteFile(cfg.ConfigFilePath(), []byte(head+"[attachments.documents]\n"+section), 0o600))
+
+	loaded, err := Load(cfg.ConfigFilePath(), cfg.HomeDir)
+	requirements.NoError(err)
+	documents := loaded.Attachments.Documents
+	assertions.Equal("docling", documents.Provider)
+	assertions.Empty(documents.APIKeyEnv, "Docling must not inherit the Mistral key variable")
+	assertions.Equal("docling.serve-v1", documents.Model)
+	assertions.Equal("operator_network", documents.Region)
+	assertions.Equal("operator-controlled", documents.RetentionPosture)
+	assertions.Equal("operator-controlled", documents.TrainingPosture)
+}
+
+func TestLoadDoclingConfigPreservesExplicitProviderValues(t *testing.T) {
+	for _, test := range []struct{ name, field, want string }{
+		{"key", `api_key_env = "PRIVATE_DOCLING_KEY"`, ""},
+		{"invalid key", `api_key_env = "bad-name"`, "api_key_env"},
+		{"wrong model", `model = "other-model"`, "model"},
+		{"wrong region", `region = "us"`, "region"},
+		{"wrong retention", `retention_posture = "zdr"`, "retention_posture"},
+		{"blank model", `model = ""`, "model"},
+		{"zero timeout", `total_timeout = "0s"`, "total_timeout"},
+		{"zero polling", `poll_interval = "0s"`, "poll_interval"},
+		{"zero attempts", `max_poll_attempts = 0`, "max_poll_attempts"},
+		{"no endpoint", `endpoint = ""`, "endpoint"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+
+			path := filepath.Join(t.TempDir(), "config.toml")
+			content := "[attachments.documents]\nprovider = \"docling\"\n"
+			if test.name != "no endpoint" {
+				content += "endpoint = \"http://127.0.0.1:5001\"\n"
+			}
+			content += test.field + "\n"
+			requirements.NoError(os.WriteFile(path, []byte(content), 0o600))
+			loaded, err := Load(path, "")
+			if test.want != "" {
+				requirements.ErrorContains(err, test.want)
+				return
+			}
+			requirements.NoError(err)
+			assertions.Equal("PRIVATE_DOCLING_KEY", loaded.Attachments.Documents.APIKeyEnv)
 		})
 	}
 }

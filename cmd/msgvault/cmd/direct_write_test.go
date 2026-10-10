@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"errors"
+	"io/fs"
 	"os"
 	"strconv"
 	"testing"
@@ -549,4 +550,13 @@ func TestDaemonAutostartPreflight_AllowsProvedDaemonWithMismatchedCreateTime(t *
 	path, err := daemonRuntimeStore(dataDir).Path(os.Getpid())
 	require.NoError(err, "runtime record path")
 	assert.FileExists(path, "runtime record must survive preflight")
+}
+
+func TestOpenInitializedStoreRefusesMissingArchive(t *testing.T) {
+	cfg := testConfigValue()
+	cfg.Data.DataDir = t.TempDir()
+	_, _, err := openInitializedStoreForInvocation(t.Context(), testInvocationWithConfig(cfg))
+	require.ErrorIs(t, err, fs.ErrNotExist)
+	_, statErr := os.Stat(cfg.DatabaseDSN())
+	assert.ErrorIs(t, statErr, fs.ErrNotExist, "status must not create an archive")
 }

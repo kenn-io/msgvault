@@ -471,6 +471,17 @@ func (s *Store) PublishDocumentExtraction(
 		if !current {
 			return ErrDocumentExtractionFenceLost
 		}
+		if publication.OccurrenceMIMEType == "text/csv" && publication.Conversion == nil {
+			var provider string
+			if err := q.QueryRow(`SELECT provider FROM document_extraction_profiles WHERE id = ?`, publication.ProfileID).Scan(&provider); err != nil {
+				return fmt.Errorf("read CSV document extraction provider: %w", err)
+			}
+			// Docling uploads the original CSV. Hosted Mistral still
+			// requires the authenticated local CSV-to-PDF lineage.
+			if provider != "docling" {
+				return errors.New("CSV document extraction publication requires conversion receipt")
+			}
+		}
 		var sourceSequence int64
 		if err := q.QueryRow(`
 			SELECT COALESCE(MAX(o.source_sequence), -1)
@@ -691,10 +702,8 @@ func validateDocumentPublication(publication DocumentExtractionPublication) erro
 	); err != nil {
 		return fmt.Errorf("document extraction publication has invalid normalized identity: %w", err)
 	}
-	if publication.OccurrenceMIMEType == "text/csv" {
-		if publication.SourceBytes <= 0 || publication.Conversion == nil {
-			return errors.New("CSV document extraction publication requires conversion receipt")
-		}
+	if publication.OccurrenceMIMEType == "text/csv" && publication.SourceBytes <= 0 {
+		return errors.New("CSV document extraction publication requires positive source bytes")
 	}
 	if err := validateDocumentExtractionConversion(publication.CanonicalBlobHash, publication.OccurrenceMIMEType, publication.SourceBytes, publication.Conversion); err != nil {
 		return err

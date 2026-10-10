@@ -1,13 +1,145 @@
 package cmd
 
 import (
+	"bytes"
+	"context"
+	"errors"
 	"testing"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/documentindex"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
+
+func TestDoclingMutationsRouteWithoutCapabilityFiles(t *testing.T) {
+	for _, test := range []struct {
+		name           string
+		args, wantArgs []string
+		forwardKey     bool
+	}{
+		{"consent", []string{"documents", "consent-docling", "--yes"}, []string{"documents", "consent-docling", "--yes"}, false},
+		{"build", []string{"documents", "build", "--yes"}, []string{"documents", "build", "--yes"}, true},
+		{"resume", []string{"documents", "resume", "--yes"}, []string{"documents", "resume", "--yes"}, true},
+		{"retry", []string{"documents", "retry", "--hash", "synthetic-hash"}, []string{"documents", "retry", "--hash=synthetic-hash"}, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server, requests := newDaemonCLIRunnerTestServer(t, func(req daemonCLIRunTestRequest) {
+				assert.Equal(t, test.wantArgs, req.Args)
+				if test.forwardKey {
+					assert.Equal(t, map[string]string{"SYNTHETIC_DOCLING_KEY": "synthetic-key"}, req.Env)
+				} else {
+					assert.Empty(t, req.Env)
+				}
+			}, `{"type":"complete"}`)
+			ctx := configureRemoteDaemonForTest(t, server.URL)
+			cfg := invocationFromContext(ctx).cfg
+			cfg.Attachments.Documents.Provider = documentindex.ProviderDocling
+			cfg.Attachments.Documents.Endpoint = "https://docling.example.com"
+			cfg.Attachments.Documents.ApplyConfiguredProviderDefaults(func(string) bool { return false })
+			cfg.Attachments.Documents.APIKeyEnv = "SYNTHETIC_DOCLING_KEY"
+			t.Setenv("SYNTHETIC_DOCLING_KEY", "synthetic-key")
+			t.Setenv("MISTRAL_API_KEY", "synthetic-unused-key")
+			root := &cobra.Command{Use: "msgvault"}
+			root.AddCommand(newDocumentsCmd(documentsCommandDeps{}))
+			root.SetArgs(test.args)
+			require.NoError(t, root.ExecuteContext(ctx))
+			assert.Equal(t, int32(1), requests.Load())
+		})
+	}
+}
+
+func TestDocumentCommandsReachRemoteDoclingDaemonWithDefaultClientConfig(t *testing.T) {
+	for _, test := range []struct {
+		name           string
+		args, wantArgs []string
+	}{
+		{"build", []string{"documents", "build", "--yes"}, []string{"documents", "build", "--yes"}},
+		{"resume", []string{"documents", "resume", "--yes"}, []string{"documents", "resume", "--yes"}},
+		{"retry", []string{"documents", "retry", "--hash", "synthetic-hash"}, []string{"documents", "retry", "--hash=synthetic-hash"}},
+		{"status", []string{"documents", "status"}, []string{"documents", "status"}},
+		{"status json", []string{"documents", "status", "--json"}, []string{"documents", "status", "--json"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server, requests := newDaemonCLIRunnerTestServer(t, func(req daemonCLIRunTestRequest) {
+				assert.Equal(t, test.wantArgs, req.Args)
+				assert.Empty(t, req.Env, "a client Mistral key must not reach the daemon without a manifest")
+			}, `{"type":"complete"}`)
+			// Only [remote] is configured; the daemon owns the Docling settings.
+			ctx := configureRemoteDaemonForTest(t, server.URL)
+			invocationFromContext(ctx).cfg.Attachments.Documents = documentindex.DefaultDocumentsConfig()
+			t.Setenv("MISTRAL_API_KEY", "synthetic-unused-key")
+			root := &cobra.Command{Use: "msgvault"}
+			root.AddCommand(newDocumentsCmd(documentsCommandDeps{}))
+			root.SetArgs(test.args)
+			require.NoError(t, root.ExecuteContext(ctx))
+			assert.Equal(t, int32(1), requests.Load())
+		})
+	}
+}
+
+func TestDoclingStatusInDaemonRunnerReadsArchiveDirectly(t *testing.T) {
+	requirements := require.New(t)
+
+	markDaemonCLISubprocessForTest(t)
+	cfg := testConfigValue()
+	cfg.Attachments.Documents.Provider = documentindex.ProviderDocling
+	cfg.Attachments.Documents.Endpoint = "http://127.0.0.1:5001"
+	cfg.Attachments.Documents.ApplyConfiguredProviderDefaults(func(string) bool { return false })
+	ctx := withTestConfig(t, cfg)
+	fixture := storetest.New(t)
+	deps := documentsCommandDeps{
+		openStore: func(context.Context) (*store.Store, func(), error) {
+			return nil, func() {}, errors.New("status must not run schema setup or startup migrations")
+		},
+		openInitializedStore: func(context.Context) (*store.Store, func(), error) { return fixture.Store, func() {}, nil },
+		openReadClient: func(context.Context) (documentReadClient, func(), error) {
+			return nil, func() {}, errors.New("the daemon runner must not call back into its own HTTP API")
+		},
+	}
+	command := newDocumentsCmd(deps)
+	var output bytes.Buffer
+	command.SetOut(&output)
+	command.SetErr(&bytes.Buffer{})
+	command.SetArgs([]string{"status", "--json"})
+	requirements.NoError(command.ExecuteContext(ctx))
+	assert.Contains(t, output.String(), `"provider":"docling"`)
+}
+
+func TestDoclingStatusInDaemonRunnerLeavesStartupMigrationsPending(t *testing.T) {
+	requirements := require.New(t)
+
+	markDaemonCLISubprocessForTest(t)
+	cfg := testConfigValue()
+	cfg.Data.DataDir = t.TempDir()
+	cfg.Identity.Addresses = []string{"legacy-owner@example.com"}
+	cfg.Attachments.Documents.Provider = documentindex.ProviderDocling
+	cfg.Attachments.Documents.Endpoint = "http://127.0.0.1:5001"
+	cfg.Attachments.Documents.ApplyConfiguredProviderDefaults(func(string) bool { return false })
+	// An account exists, but its own address is not confirmed yet. The legacy
+	// identity migration must wait until the account flow confirms it.
+	st, err := store.Open(cfg.DatabaseDSN())
+	requirements.NoError(err)
+	requirements.NoError(st.InitSchema())
+	_, err = st.GetOrCreateSource("gmail", "account@example.com")
+	requirements.NoError(err)
+	requirements.NoError(st.Close())
+
+	command := newDocumentsCmd(defaultDocumentsCommandDeps())
+	command.SetOut(&bytes.Buffer{})
+	command.SetErr(&bytes.Buffer{})
+	command.SetArgs([]string{"status", "--json"})
+	requirements.NoError(command.ExecuteContext(withTestConfig(t, cfg)))
+
+	st, err = store.Open(cfg.DatabaseDSN())
+	requirements.NoError(err)
+	t.Cleanup(func() { _ = st.Close() })
+	var identities int
+	requirements.NoError(st.DB().QueryRow("SELECT COUNT(*) FROM account_identities").Scan(&identities))
+	assert.Zero(t, identities, "status must not run the legacy identity migration")
+}
 
 func TestDocumentVectorCommandsRouteWithConfiguredRemote(t *testing.T) {
 	cfg := testConfigValue()
