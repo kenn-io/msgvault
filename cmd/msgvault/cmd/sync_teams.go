@@ -18,7 +18,7 @@ var (
 
 var syncTeamsCmd = &cobra.Command{
 	Use:   "sync-teams <email>",
-	Short: "Sync Microsoft Teams chats and channels (full or incremental)",
+	Short: "Sync Microsoft Teams chats and channels",
 	Long: `Sync Microsoft Teams chats and channels for a configured account.
 
 Full or incremental sync is auto-detected based on what has already been

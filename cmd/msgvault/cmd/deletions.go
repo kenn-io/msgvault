@@ -946,7 +946,7 @@ Examples:
   msgvault delete-staged                 # With durable config consent
   msgvault delete-staged batch-123       # With durable config consent
   msgvault delete-staged --permanent     # With durable config consent
-	MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault delete-staged --yes  # One command`,
+  MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault delete-staged --yes  # One command`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		state := invocationFromCommand(cmd)
 		if state == nil || state.cfg == nil {

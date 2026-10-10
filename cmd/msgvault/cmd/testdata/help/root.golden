@@ -1,0 +1,197 @@
+msgvault keeps an offline, searchable archive of email, chat, and meeting
+records. A daemon owns the archive: commands start or reuse a local daemon,
+or use [remote].url from config.toml (--local forces the local daemon).
+
+Start here:
+  msgvault list-accounts --json    # id, email, type, counts, sync
+  msgvault search 'from:alice@example.com newer_than:30d' --json
+  # "id" feeds the commands below
+  msgvault show-message <id> --json  # body_text, attachments
+  msgvault export-eml <id> -o msg.eml  # export-attachments <id> -o DIR
+  msgvault export-messages --start 2026-09-01T00:00:00Z --end 2026-10-01T00:00:00Z
+  msgvault list-senders -n 20 --json  # also list-domains, list-labels
+  msgvault stats
+  msgvault person --help  # contacts
+  msgvault daemon status
+  msgvault setup status --json  # features and next steps
+
+Output and exit status:
+  --json prints JSON on stdout (export-messages prints JSON Lines). Progress and
+  logs go to stderr; --log-level=warn quiets routine logs. Exit 0 success, 1 error,
+  130 interrupted. 'msgvault quickstart' has a longer agent guide.
+
+Usage:
+  msgvault [command]
+
+Search and read:
+  list-accounts List archive accounts with type, message count, last sync
+  list-domains  List top sender domains by message count
+  list-labels   List all labels with message counts
+  list-senders  List top senders by message count
+  media         Search recording transcripts
+  meetings      Read archived meeting context, actions, and metrics
+  query         Run a SQL query against the analytics cache
+  search        Search messages using Gmail-like query syntax
+  show-message  Show full message details
+  stats         Show archive message, thread, attachment and account totals
+  tui           Open the interactive terminal UI
+
+Export:
+  create-subset      Create a smaller database from the archive
+  export-attachment  Export an attachment by content hash
+  export-attachments Export all attachments from a message as individual files
+  export-discord     Export bounded Discord history from the local archive
+  export-eml         Export a message as .eml file
+  export-messages    Export messages in a time window as provider-neutral JSONL
+
+People, organizations, and identity:
+  attribute-definition Manage portable attribute definitions
+  carddav              Manage CardDAV connections, books, and conflicts
+  collection           Manage named groups of accounts
+  employment           Manage employment records linking people and organizations
+  identity             Manage the confirmed "me" identifiers for each account
+  organization         Manage curated organizations and their employment records
+  person               Find contacts and manage durable person profiles
+  relationship-type    Manage person relationship types
+
+Add and sync sources:
+  add-account            Add a Gmail account via OAuth
+  add-beeper             Add Beeper Desktop as an archive source
+  add-calendar           Authorize Google Calendar and register its calendars
+  add-carddav            Discover and configure a CardDAV account
+  add-circleback         Authorize a Circleback account (browser OAuth)
+  add-discord            Register Discord guilds for bot-based archival
+  add-granola            Register a Granola account and validate its API key
+  add-imap               Add an IMAP account
+  add-matrix             Add a read-only Matrix account as an archive source
+  add-muesli             Register a local Muesli meeting database
+  add-notion-meetings    Register and validate a Notion AI Meeting Notes source
+  add-o365               Add a Microsoft 365 account via OAuth
+  add-plaud              Authorize and register a Plaud cloud account
+  add-slack              Add a Slack workspace as an archive source
+  add-synctech-sms-drive Configure a Google Drive SMS Backup & Restore source
+  add-teams              Authorize Microsoft Teams (delegated Graph) for an account
+  add-twenty             Register and validate a Twenty Call Recorder source
+  add-twilio             Register and validate a Twilio call source
+  archive-remote-images  Download remote images in archived email (needs consent)
+  backfill-beeper-media  Retry pending Beeper attachment downloads
+  backfill-discord-media Retry pending Discord attachment downloads
+  backfill-slack-media   Retry pending Slack file downloads
+  backfill-teams-media   Re-fetch missing Teams inline images for imported messages
+  list-folders           List IMAP folders (mailboxes) available for an account
+  remove-account         Remove an account and all its data
+  sync                   Sync new mail from Gmail, IMAP, and Microsoft accounts
+  sync-beeper            Sync chats from Beeper Desktop (all connected networks)
+  sync-calendar          Sync Google Calendar events for an account
+  sync-carddav           Synchronize enabled CardDAV connections
+  sync-circleback        Sync Circleback meetings, notes, and transcripts
+  sync-discord           Sync registered Discord guild history
+  sync-full              Perform a full sync of Gmail accounts
+  sync-granola           Sync Granola meeting notes and transcripts
+  sync-matrix            Sync joined rooms from Matrix
+  sync-muesli            Sync meetings from a local Muesli database
+  sync-notion-meetings   Sync Notion AI Meeting Notes
+  sync-plaud             Sync Plaud recordings, transcripts, and notes
+  sync-slack             Sync Slack conversations (channels, group DMs, DMs)
+  sync-synctech-sms      Run one configured synctech-sms source now
+  sync-teams             Sync Microsoft Teams chats and channels
+  sync-twenty            Sync Twenty Call Recorder meetings
+  sync-twilio            Sync Twilio calls and recordings
+  update-account         Update account settings
+  verify                 Verify archive integrity against Gmail
+
+Import local exports:
+  import-eml          Import a tree of RFC 5322 .eml files
+  import-emlx         Import Apple Mail .emlx files into msgvault
+  import-gvoice       Import Google Voice history from Takeout export
+  import-imazing-csv  Import Messages CSV exports created by iMazing
+  import-imessage     Import iMessages from local database
+  import-maildir      Import a Maildir or Maildir++ archive
+  import-mbox         Import an MBOX export into msgvault
+  import-messenger    Import Facebook Messenger from a Meta data export
+  import-pst          Import a PST (Outlook) archive into msgvault
+  import-slackdump    Import a Slackdump export
+  import-synctech-sms Import SMS Backup & Restore exports
+  import-whatsapp     Import WhatsApp messages from an Android or Apple database
+
+Drafts, calendar, and Kata (write to providers):
+  calendar      Control live calendar events and query availability
+  draft-compose Create an email, native Beeper, or local chat draft
+  draft-delete  Delete a managed draft
+  draft-edit    Replace the body of a managed draft
+  draft-forward Create an IMAP draft forwarding an archived message
+  draft-get     Read a managed draft or list a chat's local drafts
+  draft-recover Recover an interrupted managed IMAP draft edit or delete
+  draft-reply   Create an IMAP or Gmail reply draft from an archived message
+  draft-send-as List Gmail send-as identities
+  kata          Create Kata issues that quote archived evidence
+
+Review and delete:
+  cancel-deletion Cancel pending or in-progress deletion batches
+  deduplicate     Find and merge duplicate messages within an account
+  delete-deduped  Permanently delete dedup-hidden messages locally
+  delete-staged   Execute staged deletions
+  gc              Purge source-deleted messages and compact the SQLite archive
+  list-deletions  List pending and recent deletion batches
+  show-deletion   Show details of a deletion batch
+  stage-delete    Stage messages matching a query or IDs for deletion
+
+Indexes, embeddings, and analytics cache:
+  activity    Build the derived activity spine
+  build-cache Build analytics cache for fast TUI queries
+  cache-stats Show statistics about the analytics cache
+  documents   Manage document attachment indexing
+  embeddings  Manage message vector embeddings
+  eval        Score search quality against relevance judgments (qrels)
+  multimodal  Manage and search visual attachment embeddings
+  rebuild-fts Rebuild the full-text search index from scratch
+
+Maintenance and repair:
+  backup               Back up the archive to a snapshot repository
+  init-db              Initialize the database schema
+  pack-attachments     Pack loose attachment files into sealed pack files
+  purge-excluded-media Reclaim locally stored media excluded by current policy
+  repack-attachments   Reclaim dead bytes from sparse attachment packs
+  repair-dates         Repair missing or implausible email sent dates
+  repair-derived       Re-derive message text and metadata from stored payloads
+  repair-encoding      Repair invalid UTF-8 encoding in message text fields
+  repair-identity      Confirm account identities and recompute is_from_me
+  repair-labels        Rebuild IMAP message labels from stored mailbox memberships
+  repair-list-ids      Repair archived email List-Id values from raw MIME
+  repair-message       Repair one Gmail message snapshot or audit stored Gmail MIME
+  repair-senders       Restore missing email senders from archived MIME
+  unpack-attachments   Restore packed attachments to loose files
+
+Setup, daemon, and integrations:
+  agent-token  Manage restricted agent grant tokens
+  completion   Generate shell completion script
+  credentials  Manage provider credentials on the daemon host
+  daemon       Manage the background daemon
+  export-token Export OAuth token to a remote msgvault instance
+  help         Help about any command
+  logs         View and tail msgvault's structured log files
+  mcp          Run MCP server for Claude Desktop integration
+  openapi      Print the msgvault OpenAPI schema
+  quickstart   Print a quickstart guide for AI agents
+  serve        Run msgvault as a daemon with scheduled sync
+  setup        Run first-time setup; 'setup status' shows enabled features
+  skills       Manage agent skills for coding assistants
+  update       Update msgvault to the latest version
+  version      Print version information
+
+Flags:
+      --agent-allow-insecure      Allow plain HTTP for agent-delegated connections (trusted networks only)
+      --agent-token-file string   Path to a file containing the agent grant secret (requires --agent-url)
+      --agent-url string          Daemon URL for agent-delegated mode (requires --agent-token-file)
+      --config string             config file (default: ~/.msgvault/config.toml)
+  -h, --help                      help for msgvault
+      --home string               home directory (overrides MSGVAULT_HOME)
+      --local                     use local daemon instead of configured remote
+      --log-file string           override log file path (default: <data dir>/logs/msgvault-YYYY-MM-DD.log)
+      --log-level string          log level: debug, info, warn, error (default: info)
+      --log-sql                   log every SQL query at info level (verbose; for debugging)
+      --log-sql-slow-ms int       threshold in ms above which a SQL query is logged as slow (default 100; 0 uses the default)
+      --no-log-file               disable the log file for this run (stderr output stays on)
+  -v, --verbose                   verbose output (implies --log-level=debug)
+
+Use "msgvault [command] --help" for more information about a command.

@@ -71,7 +71,7 @@ func newAddCalendarCmd() *cobra.Command {
 func newAddCalendarLocalCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "add-calendar <email>",
-		Short: "Authorize Google Calendar access and register calendars for an account",
+		Short: "Authorize Google Calendar and register its calendars",
 		Long: "Grants read-only Calendar access (calendar.readonly) to an account and " +
 			"registers its calendars for sync. Use --write to also grant calendar.events. " +
 			"Source write_calendars and invite_calendars remain explicit opt-ins. If the account already has a Gmail token, " +
@@ -425,7 +425,7 @@ func newSyncCalendarLocalCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "sync-calendar <name|email>",
 		Aliases: []string{"sync-calendar-incremental"},
-		Short:   "Sync Google Calendar events for a configured or registered account",
+		Short:   "Sync Google Calendar events for an account",
 		Long: "Syncs calendar events for an account. The first run (or --full) does a full " +
 			"sync that enumerates and registers calendars; subsequent runs are incremental " +
 			"via syncToken. The account is resolved from a [[gcal]] config entry (by name or " +

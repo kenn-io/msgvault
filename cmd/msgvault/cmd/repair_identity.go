@@ -20,7 +20,7 @@ var (
 func newRepairIdentityCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "repair-identity [identifier]",
-		Short: "Confirm account identities and recompute is_from_me on existing messages",
+		Short: "Confirm account identities and recompute is_from_me",
 		Long: `Confirm each account's own address as its identity and recompute the
 is_from_me attribution on messages already in the archive.
 

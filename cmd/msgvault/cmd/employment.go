@@ -25,7 +25,7 @@ var (
 	employmentMarkCurrent, employmentClearStart, employmentClearEnd                                  bool
 )
 
-var employmentCmd = &cobra.Command{Use: "employment", Short: "Manage temporal employment records between people and organizations"}
+var employmentCmd = &cobra.Command{Use: "employment", Short: "Manage employment records linking people and organizations"}
 
 var employmentAddCmd = &cobra.Command{Use: "add", Short: "Add an employment record", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 	body, err := employmentBodyFromFlags(cmd)

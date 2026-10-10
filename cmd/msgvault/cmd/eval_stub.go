@@ -14,7 +14,7 @@ import (
 // use the real implementation in eval.go.
 var evalCmd = &cobra.Command{
 	Use:   "eval",
-	Short: "Evaluate retrieval quality against relevance judgments (requires sqlite_vec build)",
+	Short: "Score search quality (requires sqlite_vec build)",
 	RunE: func(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("eval requires sqlite-vec support; rebuild with `go build -tags \"fts5 sqlite_vec\"`")
 	},

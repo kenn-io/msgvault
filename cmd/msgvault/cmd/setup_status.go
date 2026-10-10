@@ -57,7 +57,7 @@ func newSetupStatusCommand(deps setupStatusDeps) *cobra.Command {
 	var jsonOutput bool
 	command := &cobra.Command{
 		Use:   "status",
-		Short: "Report which retrieval and people lanes are on, with provider, model, and the next step",
+		Short: "Show which optional features are on and how to enable them",
 		Long: `Report every optional lane: text search, semantic people search, visual
 attachment search, document extraction and vectors, the people sweep, the
 activity projection, and the chat media policy. For each lane the report
@@ -66,7 +66,8 @@ consent is recorded, and the exact command that turns it on.
 
 The report reads config.toml, the process environment, stored provider
 credentials, and the local archive's consent records. It never contacts a provider.`,
-		Args: cobra.NoArgs,
+		Example: "  msgvault setup status --json",
+		Args:    cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
 			bound := deps
 			if invocationFromContext(command.Context()) != nil && bound.bind != nil {

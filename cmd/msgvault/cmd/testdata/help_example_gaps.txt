@@ -1,0 +1,275 @@
+activity build
+add-account
+add-beeper
+add-calendar
+add-carddav
+add-circleback
+add-discord
+add-granola
+add-imap
+add-matrix
+add-muesli
+add-notion-meetings
+add-o365
+add-plaud
+add-slack
+add-synctech-sms-drive
+add-teams
+add-twenty
+add-twilio
+agent-token issue
+agent-token list
+agent-token revoke
+archive-remote-images
+attribute-definition create
+attribute-definition delete
+attribute-definition get
+attribute-definition list
+attribute-definition rename
+backfill-beeper-media
+backfill-discord-media
+backfill-slack-media
+backfill-teams-media
+backup create
+backup init
+backup list
+backup restore
+backup verify
+build-cache
+cache-stats
+cancel-deletion
+carddav authorize-google
+carddav authorize-microsoft
+carddav books
+carddav books set-role
+carddav conflicts list
+carddav conflicts resolve
+carddav conflicts show
+carddav connections
+collection add
+collection create
+collection delete
+collection list
+collection remove
+collection show
+create-subset
+credentials import-env
+credentials list
+credentials set
+daemon restart
+daemon start
+daemon stop
+deduplicate
+delete-deduped
+delete-staged
+documents build
+documents consent-mistral
+documents probe-mistral
+documents purge-derived
+documents resume
+documents retire
+documents retry
+documents search
+documents status
+documents vectors build
+documents vectors consent
+documents vectors rebuild
+documents vectors resume
+documents vectors retire
+documents vectors retry
+documents vectors status
+draft-compose
+draft-delete
+draft-edit
+draft-forward
+draft-get
+draft-recover
+draft-reply
+draft-send-as
+embeddings activate
+embeddings build
+embeddings list
+embeddings optimize
+embeddings prune
+embeddings resume
+embeddings retire
+employment add
+employment delete
+employment end
+employment list
+employment set
+employment set-primary
+employment show
+eval
+export-discord
+export-token
+gc
+identity add
+identity discover
+identity import
+identity list
+identity matches accept
+identity matches list
+identity matches reject
+identity matches show
+identity remove
+identity show
+import-eml
+import-emlx
+import-gvoice
+import-imazing-csv
+import-imessage
+import-maildir
+import-mbox
+import-messenger
+import-pst
+import-slackdump
+import-synctech-sms
+import-whatsapp
+init-db
+kata create
+kata evidence prepare
+kata link
+list-deletions
+list-folders
+logs
+mcp
+mcp status
+media search
+meetings actions
+meetings metrics
+multimodal build
+multimodal probe
+multimodal resume
+multimodal retire
+multimodal retry
+multimodal search
+multimodal status
+openapi
+organization attribute clear
+organization attribute list
+organization attribute set
+organization create
+organization delete
+organization list
+organization merge
+organization retire
+organization set
+organization show
+organization unretire
+pack-attachments
+person agenda create
+person agenda edit
+person agenda link
+person agenda list
+person agenda unlink
+person attributes clear
+person attributes list
+person attributes set
+person brief enroll
+person brief generate
+person brief history
+person brief reject
+person brief show
+person brief unenroll
+person delete
+person directory
+person enrichment consent
+person enrichment profiles
+person enrichment revoke
+person enrichment run
+person enrichment status
+person enrichment suppress
+person facts catalog
+person facts claims
+person facts decisions
+person facts evidence
+person facts evidence-status
+person facts pin
+person facts pins
+person facts unpin
+person files
+person merge
+person merge-candidate
+person merge-history
+person merge-show
+person notes append
+person notes get
+person notes set
+person provider add
+person provider check
+person provider consent
+person provider enroll-codex
+person provider history
+person provider list
+person provider login
+person provider models
+person provider remove
+person provider reverify
+person provider revoke
+person provider set
+person provider status
+person provider use
+person publish
+person relationship add
+person relationship delete
+person relationship end
+person relationship list
+person relationship reviews
+person scoring consent
+person scoring history
+person scoring revoke
+person scoring run
+person scoring status
+person set-display-name
+person split
+person sweep history
+person sweep run
+person sweep status
+person track
+person unpublish
+person untrack
+purge-excluded-media
+rebuild-fts
+relationship-type create
+relationship-type delete
+relationship-type list
+relationship-type update
+remove-account
+repack-attachments
+repair-dates
+repair-derived
+repair-encoding
+repair-identity
+repair-labels
+repair-list-ids
+repair-message
+repair-senders
+serve
+setup providers
+show-deletion
+skills install
+skills uninstall
+stage-delete
+sync-beeper
+sync-calendar
+sync-carddav
+sync-circleback
+sync-discord
+sync-full
+sync-granola
+sync-matrix
+sync-muesli
+sync-notion-meetings
+sync-plaud
+sync-slack
+sync-synctech-sms
+sync-teams
+sync-twenty
+sync-twilio
+tui
+unpack-attachments
+update
+update-account
+verify
+version

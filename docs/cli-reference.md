@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-08"
+last_edited: "2026-10-09"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -7,6 +7,11 @@ description: Complete command reference for all msgvault commands.
 Find a command by task below, or use `msgvault COMMAND --help` for the flags
 in your installed binary. This reference follows current `main`; see
 [the 0.21.0 changelog](changelog.md#0210) for features and upgrade notes.
+
+`msgvault --help` groups commands by task and lists start-here commands for
+common outcomes. Subcommand help lists global flag names; root help explains
+their defaults. Flags a parent command defines, such as `calendar --account`,
+appear in full under Inherited Flags.
 
 | Task | Commands and guides |
 |---|---|
@@ -1507,7 +1512,18 @@ msgvault sync-calendar <name|email> [flags]
 
 Control live Google Calendar events through the daemon. This is unreleased
 functionality. Follow [Calendar event setup](usage/calendar.md#control-events-unreleased)
-for consent and source permissions.
+for consent and source permissions. Calendar IDs can be `primary`, a calendar
+ID, or an alias from `config.toml`.
+
+| Command | Purpose |
+|---|---|
+| `calendar create` | Create an event on a calendar |
+| `calendar update` | Update an event's fields, guests, or recurrence |
+| `calendar delete` | Delete an event or recurring occurrences |
+| `calendar move` | Move an event to another calendar |
+| `calendar respond` | Set your RSVP for an event |
+| `calendar freebusy` | Show busy time ranges for calendars |
+| `calendar conflicts` | Find overlapping events in a time range |
 
 ```bash
 msgvault calendar create <calendar-id> --account <name|email> --summary <title> --from <start> --to <end>
@@ -2240,7 +2256,7 @@ msgvault export-messages \
   --start <RFC3339> \
   --end <RFC3339> \
   [--message-type <type>] \
-  [--source <type:identifier>] \
+  [--source <type:email>] \
   [--person-id <id>] \
   [--format jsonl]
 ```
@@ -2250,9 +2266,13 @@ msgvault export-messages \
 | `--start` | required | Inclusive RFC3339 lower bound |
 | `--end` | required | Exclusive RFC3339 upper bound |
 | `--message-type` | all | Exact message type to include; repeatable |
-| `--source` | all | Exact typed source selector; repeatable |
+| `--source` | all | `type:email` from `list-accounts --json`; repeatable |
 | `--person-id` | all | Durable person whose bound participants scope the export |
 | `--format` | `jsonl` | Output format; v1 accepts only `jsonl` |
+
+`--start` and `--end` are required. Missing bounds fail before contacting the
+daemon. For an account selector, combine its `type` and `email` from
+`msgvault list-accounts --json`, for example `--source mbox:you@example.com`.
 
 Use `--person-id N` to export messages involving a durable person's bound
 participants. Linked participants outside those bindings contribute no
@@ -2427,7 +2447,16 @@ msgvault verify <email> [flags]
 
 ## stats
 
-Show archive statistics.
+Print archive totals: messages, threads, attachments, labels, accounts, and
+database size. The message total includes active and source-deleted messages;
+when source-deleted messages exist, their counts are shown separately. The
+analytics cache also retains source-deleted messages.
+
+Text output only. For structured counts use:
+
+```bash
+msgvault query "SELECT count(*) AS n FROM messages"
+```
 
 ```bash
 msgvault stats [flags]
@@ -2741,6 +2770,24 @@ for classifications, Fastmail inventory, and import formats.
 Manage durable person profiles and their typed, historized attributes. A
 profile can be created by explicitly promoting an observed participant's
 identity cluster or by importing contacts from a subscribed CardDAV address book.
+A participant is one address or handle seen in messages; a person groups
+participants into a profile with notes, attributes, relationships, and briefs.
+
+Find an observed contact by address without creating a person:
+
+```bash
+msgvault query "SELECT id, email_address, display_name FROM participants WHERE email_address ILIKE '%alice%'"
+```
+
+Use the returned participant `id` with `person promote`. `person list --json`
+returns `id`, `participant_ids`, `revision`, `vcard_uid`, `created_at`,
+`updated_at`, and `display_name` when one is known. Promotion takes the name
+from the first named participant; CardDAV import takes the contact's name.
+The list is empty until a participant is promoted or a CardDAV contact is
+imported. Addresses are in `person identities <person-id>`; use `person get`
+for the saved profile.
+`person search` ranks semantic matches; `msgvault setup status` explains how
+to enable its lane.
 
 ```bash
 msgvault person promote <participant-id>
@@ -3883,6 +3930,11 @@ link for the message.
 ---
 
 ## list-accounts
+
+List every archived email, chat, meeting, and file-import source. JSON rows
+include `id`, `email`, `type`, `display_name`, and `last_sync`. Pass `email` to
+`--account` or `id` to `--source-id` on other commands. `export-messages` takes
+`--source <type>:<email>`.
 
 List archived accounts. While the daemon's first message-count refresh is
 still running, the table shows `pending` in the messages column, and JSON

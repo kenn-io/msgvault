@@ -17,11 +17,16 @@ var (
 
 var statsCmd = &cobra.Command{
 	Use:   "stats",
-	Short: "Show database statistics",
-	Long: `Show statistics about the archive.
+	Short: "Show archive message, thread, attachment and account totals",
+	Long: `Print archive totals: messages, threads, attachments, labels, accounts,
+and database size. Messages includes active messages and those deleted at
+the source, with separate counts when source-deleted messages exist.
+list-labels and cache-stats read the analytics cache, which retains them too.
 
-Uses configured remote server or the local daemon by default.
-Use --local to use the local daemon even when a remote is configured.`,
+Text output only. For structured counts use query, for example:
+  msgvault query "SELECT count(*) AS n FROM messages"`,
+	Example: `  msgvault stats
+  msgvault stats --account you@example.com`,
 	Args: cobra.NoArgs,
 	RunE: runStats,
 }
