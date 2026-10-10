@@ -362,6 +362,21 @@ type ListCommunicationServicesQuery struct {
 	IncludeInactive *bool `json:"include_inactive,omitempty"`
 }
 
+type SearchChatsQuery struct {
+	// Q Name or title tokens; OR matching, exact matches ranked first
+	Q string `json:"q" validate:"required"`
+
+	// Limit Maximum results (default 20, max 100)
+	Limit *int64 `json:"limit,omitempty" validate:"omitempty,gte=1,lte=100"`
+
+	// SourceID Restrict to one archived source
+	SourceID *int64 `json:"source_id,omitempty" validate:"omitempty,gte=1"`
+}
+
+func (s SearchChatsQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(s))
+}
+
 type GetConversationQuery struct {
 	// Anchor Selected message ID anchoring the chronological window
 	Anchor int64 `json:"anchor"`

@@ -3,8 +3,9 @@ package beeper
 import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
-	"strconv"
 	"strings"
+
+	"go.kenn.io/msgvault/internal/beeperidentity"
 )
 
 // Provider identity for participant_contact_observations.provider_user_id.
@@ -22,7 +23,6 @@ import (
 // ID (a numeric Telegram ID, a Discord snowflake) could collide with an
 // unrelated ID on another network and auto-link two different people — the one
 // outcome the roadmap's matching policy forbids.
-const beeperProviderPrefix = "beeper"
 
 // providerNativeKey is the one documented raw-payload key that may carry a
 // provider-native immutable user ID. An unknown key must be ignored, not
@@ -62,36 +62,16 @@ func providerUserIDScoped(
 			return providerIdentityKey(serviceSlug, kind, value, native)
 		}
 	}
-	return providerFallbackUserID(accountID, u.ID)
-}
-
-// providerFallbackUserID is the one durable namespace for an opaque Beeper
-// user ID. The raw ID is only unique inside the selected account, so callers
-// that persist fallback identities must use this helper rather than storing
-// the payload's ID directly.
-func providerFallbackUserID(accountID, userID string) string {
-	userID = strings.TrimSpace(userID)
-	if userID == "" {
-		return ""
-	}
-	if account := strings.TrimSpace(accountID); account != "" {
-		return beeperProviderPrefix + ":" + encodeIdentityPart(account) + ":" +
-			encodeIdentityPart(userID)
-	}
-	return beeperProviderPrefix + ":" + encodeIdentityPart(userID)
+	return beeperidentity.Fallback(accountID, u.ID)
 }
 
 // providerIdentityKey uses length-delimited components. Separating fields
 // with a raw colon is not collision-safe because service, scope, and provider
 // values can contain that character.
 func providerIdentityKey(serviceSlug, scopeKind, scopeValue, native string) string {
-	return "provider:" + encodeIdentityPart(serviceSlug) + ":" +
-		encodeIdentityPart(scopeKind) + ":" + encodeIdentityPart(scopeValue) + ":" +
-		encodeIdentityPart(native)
-}
-
-func encodeIdentityPart(value string) string {
-	return strconv.Itoa(len(value)) + ":" + value
+	return "provider:" + beeperidentity.EncodePart(serviceSlug) + ":" +
+		beeperidentity.EncodePart(scopeKind) + ":" + beeperidentity.EncodePart(scopeValue) + ":" +
+		beeperidentity.EncodePart(native)
 }
 
 // providerNativeUserID reads the documented providerID field from a raw user

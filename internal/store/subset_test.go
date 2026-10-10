@@ -1535,17 +1535,20 @@ func TestCopySubset_UpgradedMessageColumnOrder(t *testing.T) {
 
 	st, err := Open(srcDB)
 	require.NoError(err, "open source for upgrade")
-	// A pre-attribution archive predates both triggers that name source_is_from_me.
-	// The upgrade below reinstalls them through their migrations.
+	// A pre-attribution archive predates both triggers and the chat owner
+	// index that name source_is_from_me. The upgrade below reinstalls them
+	// through their migrations.
 	_, err = st.DB().Exec(`
 		DROP TRIGGER trg_activity_queue_messages_update;
 		DROP TRIGGER trg_cache_message_facts_update;
+		DROP INDEX idx_messages_source_owner;
 		ALTER TABLE messages DROP COLUMN identity_is_from_me;
 		ALTER TABLE messages DROP COLUMN source_is_from_me;
 		DELETE FROM applied_migrations
 		WHERE name IN ('message_attribution_provenance_v3',
 		               'activity_projection_triggers_v4',
-		               'cache_message_source_attribution');
+		               'cache_message_source_attribution',
+		               'chat_members_v1');
 	`)
 	require.NoError(err, "simulate pre-attribution schema")
 	require.NoError(st.InitSchema(), "upgrade source schema")
@@ -3502,8 +3505,9 @@ func TestCopySubset_LegacySourceMissingAttributionColumns(t *testing.T) {
 	require.NoError(err, "open source db")
 
 	_, err = db.Exec(`DROP TRIGGER trg_activity_queue_messages_update;
-		DROP TRIGGER trg_cache_message_facts_update`)
-	require.NoError(err, "drop triggers that name source_is_from_me")
+		DROP TRIGGER trg_cache_message_facts_update;
+		DROP INDEX idx_messages_source_owner`)
+	require.NoError(err, "drop triggers and index that name source_is_from_me")
 
 	for _, col := range []string{"source_is_from_me", "identity_is_from_me"} {
 		_, err = db.Exec(
@@ -4065,6 +4069,11 @@ func TestCopySubset_UpgradedAuxiliaryColumnOrder(t *testing.T) {
 		`DROP INDEX IF EXISTS idx_conversations_type`,
 		`DROP TRIGGER IF EXISTS trg_embedding_changes_conversation_title`,
 		`DROP TRIGGER IF EXISTS trg_activity_queue_conversation_type_update`,
+		`DROP TRIGGER IF EXISTS trg_chat_members_messages_update`,
+		`DROP TRIGGER IF EXISTS trg_chat_members_messages_delete`,
+		`DROP TRIGGER IF EXISTS trg_chat_members_recipients_update`,
+		`DROP TRIGGER IF EXISTS trg_chat_members_recipients_delete`,
+		`DROP TRIGGER IF EXISTS trg_chat_members_conversation_type`,
 		`ALTER TABLE conversations DROP COLUMN conversation_type`,
 		`ALTER TABLE conversations DROP COLUMN title`,
 		`ALTER TABLE conversations ADD COLUMN title TEXT`,

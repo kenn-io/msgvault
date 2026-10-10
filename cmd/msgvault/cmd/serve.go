@@ -1885,6 +1885,10 @@ func (a *storeAPIAdapter) ConversationExistsContext(ctx context.Context, convers
 	return a.store.ConversationExistsContext(ctx, conversationID)
 }
 
+func (a *storeAPIAdapter) SearchChatsContext(ctx context.Context, q store.ChatDiscoveryQuery) (*store.ChatDiscoveryPage, error) {
+	return a.store.SearchChatsContext(ctx, q)
+}
+
 func (a *storeAPIAdapter) GetConversationWindowContext(
 	ctx context.Context,
 	conversationID, anchorID int64,

@@ -1497,6 +1497,9 @@ func upsertMessageWith(q querier, d Dialect, msg *Message) (int64, error) {
 	if err := enqueueActivityProjectionMessage(q, d, id); err != nil {
 		return 0, err
 	}
+	if err := enqueueChatMembers(q, msg.ConversationID); err != nil {
+		return 0, err
+	}
 	if journalCandidate && !prior.found && d.DriverName() != postgresDriverName {
 		if err := appendPersonSweepMessageInsert(q, d, id); err != nil {
 			return 0, err
@@ -2616,6 +2619,9 @@ func replaceMessageRecipientsTx(tx querier, messageID int64, rs RecipientSet) er
 
 	if len(rs.ParticipantIDs) == 0 {
 		return nil
+	}
+	if err := enqueueChatMembersForMessage(tx, messageID); err != nil {
+		return err
 	}
 
 	// Collapse duplicates within this set. The table holds at most one row
