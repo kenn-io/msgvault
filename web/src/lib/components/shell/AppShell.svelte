@@ -73,7 +73,7 @@
   import ArchivedMeetingReader from '../meetings/ArchivedMeetingReader.svelte';
   import { ArchiveMeetingNavigation, archiveMeetingSelection, parseArchiveMeetingSelection } from '../../meetings/archive-navigation.svelte';
   import { ARCHIVE_MEETING_HISTORY_KEY, parseArchiveMeetingHistory } from '../../meetings/archive-selection';
-  import { recordingSelection } from '../../archive/recording-selection';
+  import { recordingSelection, parseRecordingSelection } from '../../archive/recording-selection';
   import EverythingWorkspace from './EverythingWorkspace.svelte';
   import AppSidebar from './AppSidebar.svelte';
   import DisplayMenu from './DisplayMenu.svelte';
@@ -821,11 +821,17 @@
     grid.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...init }));
   }
   async function closeReadingPane(): Promise<void> {
+    const recordingOpen = parseRecordingSelection(exploreState.current.selectedRow) !== undefined;
     commitNavigation({ selectedRow: null });
+    if (recordingOpen) {
+      await restoreArchiveFocus();
+      return;
+    }
     await tick();
     focusGrid();
   }
   function openRecording(messageID: number): void {
+    archiveReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
     commitNavigation({ selectedRow: recordingSelection(messageID), conversationAnchor: null });
   }
   async function openArchivedMeeting(meeting: MeetingRef): Promise<void> {

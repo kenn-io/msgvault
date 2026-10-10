@@ -22,17 +22,18 @@ function exploreResponse(overrides: Record<string, unknown> = {}) {
 }
 
 describe('EverythingWorkspace', () => {
-  it('opens recording messages in the reader and restores them without paging message results', async () => {
+  it('opens, retries and restores recording messages without paging message results', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', query: 'quarterly', searchMode: 'full_text' }))}`);
     const message = { id: 9, conversation_id: 2, subject: 'Quarterly review', body: 'Source recording',
       from: 'Example Person', to: [], sent_at: '2026-07-18T12:00:00Z', snippet: '', size_bytes: 44, has_attachments: false, attachments: [], labels: [] };
+    let messageStatus = 500;
     const fetchFn = vi.fn<typeof fetch>(async input => {
       const path = new URL((input as Request).url).pathname;
       if (path.endsWith('/media/search')) return Response.json({
         results: [{ message_id: 9, conversation_id: 2, attachment_id: 1, containing_title: 'Quarterly review', origin: 'supplied', excerpt: 'Quarterly numbers' }],
         coverage: { state: 'complete' }, partial: false, truncated: false, pending_occurrences: 0, unavailable_occurrences: 0, attribution_unavailable: 0,
       });
-      if (path.endsWith('/messages/9')) return Response.json(message);
+      if (path.endsWith('/messages/9')) return messageStatus === 200 ? Response.json(message) : Response.json({ error: 'unavailable' }, { status: messageStatus });
       if (path.endsWith('/conversations/2')) return Response.json({ id: 2, messages: [message], anchor_id: 9, has_before: false, has_after: false, total: 1 });
       return Response.json(exploreResponse({ next_cursor: 'more' }));
     });
@@ -41,11 +42,19 @@ describe('EverythingWorkspace', () => {
     try {
       const link = await screen.findByRole('link', { name: 'Quarterly review' });
       expect(link.getAttribute('href')).toBe('/messages/9');
+      link.focus();
       await fireEvent.click(link);
+      await screen.findByText('Could not load this recording message.');
+      messageStatus = 200;
+      await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
       const pane = await screen.findByRole('complementary', { name: 'Reading pane: Quarterly review' });
       expect(await within(pane).findByText('Source recording')).toBeTruthy();
       expect(state.current.query).toBe('quarterly');
       expect(link.getAttribute('aria-current')).toBe('true');
+      await fireEvent.click(screen.getByRole('button', { name: 'Close reading pane' }));
+      await waitFor(() => expect(document.activeElement).toBe(link));
+      await fireEvent.click(link);
+      expect(await screen.findByRole('complementary', { name: 'Reading pane: Quarterly review' })).toBeTruthy();
       window.history.back();
       await new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
       await waitFor(() => expect(screen.queryByRole('complementary', { name: 'Reading pane: Quarterly review' })).toBeNull());
@@ -53,6 +62,11 @@ describe('EverythingWorkspace', () => {
       await new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
       expect(await screen.findByRole('complementary', { name: 'Reading pane: Quarterly review' })).toBeTruthy();
       expect(fetchFn.mock.calls.filter(([input]) => new URL((input as Request).url).searchParams.has('cursor'))).toHaveLength(0);
+      await fireEvent.click(screen.getByRole('button', { name: 'Close reading pane' }));
+      messageStatus = 404;
+      await fireEvent.click(await screen.findByRole('link', { name: 'Quarterly review' }));
+      await screen.findByText('This recording message is no longer available.');
+      expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
     } finally {
       view.unmount();
       state.destroy();

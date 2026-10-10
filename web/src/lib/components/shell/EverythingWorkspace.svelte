@@ -117,21 +117,26 @@
   let recordingMessage = $state<MessageDetail>();
   let recordingLoading = $state(false);
   let recordingError = $state('');
+  let recordingMissing = $state(false);
   const recordingSelection = $derived(parseRecordingSelection(readingTargetKey));
 
   $effect(() => {
     const target = recordingSelection;
     const requestedClient = client;
+    void readingDetailRetryRevision;
     recordingMessage = undefined;
     recordingError = '';
+    recordingMissing = false;
     recordingLoading = Boolean(target);
     if (!target) return;
     const controller = new AbortController();
-    void getMessage({ id: target }, { ...requestedClient, signal: controller.signal }).then(({ data }) => {
+    void getMessage({ id: target }, { ...requestedClient, signal: controller.signal }).then(({ data, response }) => {
       if (controller.signal.aborted) return;
-      if (!data || data.id !== target || !Number.isSafeInteger(data.conversation_id) || data.conversation_id! < 1) {
+      if (response.status === 404 || (data && (data.id !== target || !Number.isSafeInteger(data.conversation_id) || data.conversation_id! < 1))) {
+        recordingMissing = true;
         recordingError = 'This recording message is no longer available.';
-      } else recordingMessage = data;
+      } else if (!data) recordingError = 'Could not load this recording message.';
+      else recordingMessage = data;
     }).catch(() => {
       if (!controller.signal.aborted) recordingError = 'Could not load this recording message.';
     }).finally(() => {
@@ -233,7 +238,7 @@
     } => {
       const selected = readingTargetKey;
       if (!selected || readingSelection) return { status: 'ready', message: '' };
-      if (recordingSelection) return { status: recordingLoading ? 'loading' : 'error', message: recordingError };
+      if (recordingSelection) return { status: recordingLoading ? 'loading' : recordingMissing ? 'missing' : 'error', message: recordingError };
       if (parseGroupSelection(selected)) {
         if (readingDetailUnavailable) {
           return {
@@ -735,7 +740,7 @@
       storageKey={previewRight ? 'msgvault.reading-pane.right-size' : 'msgvault.reading-pane.size'}
       orientation={previewRight ? 'horizontal' : 'vertical'}
       initialFraction={previewRight ? 0.45 : 0.55}
-      minPrimary={previewRight ? 360 : 120}
+      minPrimary={previewRight ? 360 : enabled && exploreState.current.query.trim() ? 220 : 120}
       minSecondary={previewRight ? 400 : 160}
       collapsed={!readingTargetKey}
     >
@@ -854,6 +859,7 @@
             targetKey={readingTargetKey}
             status={readingState.status}
             statusMessage={readingState.message}
+            onRetry={recordingSelection && !recordingMissing ? () => readingDetailRetryRevision += 1 : undefined}
             unavailable={readingState.unavailable}
             predicate={exploreState.predicate()}
             onClose={closeReadingPane}
