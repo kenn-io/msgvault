@@ -641,9 +641,6 @@ func registerAPIV1RawHumaJSONRouteWithErrors[T any](
 	for _, status := range errorStatuses {
 		op.Responses[httpStatusKey(status)] = errorResponseFor(api)
 	}
-	if operationID == "searchMedia" {
-		op.Responses["503"].Description = "media_search_not_configured: configure the Docbank integration; media_search_unavailable: Docbank transcript search is unavailable; media_search_mode_unavailable: use lexical mode"
-	}
 	registerRawHumaRoute(api, op, handler)
 }
 

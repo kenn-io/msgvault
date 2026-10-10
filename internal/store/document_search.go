@@ -560,8 +560,8 @@ func (s *Store) searchDocumentFilenames(
 	return s.scanDocumentSearchRows(ctx, query, args, false, limit)
 }
 
-func containingTitleSQL(conversationAlias string) string {
-	return "COALESCE(NULLIF(m.subject, ''), NULLIF(" + conversationAlias + ".title, ''), '')"
+func containingTitleSQL(messageAlias, conversationAlias string) string {
+	return "COALESCE(NULLIF(" + messageAlias + ".subject, ''), NULLIF(" + conversationAlias + ".title, ''), '')"
 }
 
 var documentSearchSelectColumns = `
@@ -570,7 +570,7 @@ var documentSearchSelectColumns = `
 		COALESCE(m.sent_at, m.received_at, m.internal_date),
 		o.occurrence_key,
 		COALESCE(o.source_part_key, ''), COALESCE(o.filename, ''),
-		` + containingTitleSQL("cv") + `,
+		` + containingTitleSQL("m", "cv") + `,
 		COALESCE(o.mime_type, ''), h.canonical_blob_hash,
 		dc.chunk_key, dc.ordinal, CAST(dc.heading_path AS TEXT),
 		dc.first_unit_index, dc.last_unit_index, dc.text,
@@ -585,7 +585,7 @@ var documentSearchRankedSelectColumns = `
 		o.occurrence_key AS occurrence_key,
 		COALESCE(o.source_part_key, '') AS source_part_key,
 		COALESCE(o.filename, '') AS filename,
-		` + containingTitleSQL("cv") + ` AS containing_title,
+		` + containingTitleSQL("m", "cv") + ` AS containing_title,
 		COALESCE(o.mime_type, '') AS mime_type,
 		h.canonical_blob_hash AS canonical_blob_hash,
 		dc.chunk_key AS chunk_key, dc.ordinal AS chunk_ordinal,

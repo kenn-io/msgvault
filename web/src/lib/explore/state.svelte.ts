@@ -312,10 +312,10 @@ function scrollAnchor(value: unknown): ExploreScrollAnchor | null {
     : null;
 }
 
-function selectedRow(value: unknown): string | null {
+function selectedRow(value: unknown, schemaVersion: unknown): string | null {
   if (value === null) return null;
   if (typeof value !== 'string') return null;
-  if (value.startsWith('recording:')) return parseRecordingSelection(value) === undefined ? null : value;
+  if (value.startsWith('recording:')) return (typeof schemaVersion === 'number' && schemaVersion > defaultExploreURLState.schemaVersion) || parseRecordingSelection(value) === undefined ? null : value;
   if (!value.startsWith('attachment:')) return value;
   return parseAttachmentSelection(value) === undefined ? null : value;
 }
@@ -535,7 +535,7 @@ function normalize(value: unknown): ExploreURLState {
       typeof value.activeRow === 'string' || value.activeRow === null
         ? value.activeRow
         : null,
-    selectedRow: typeof value.schemaVersion === 'number' && value.schemaVersion > defaultExploreURLState.schemaVersion && typeof value.selectedRow === 'string' && parseRecordingSelection(value.selectedRow) ? null : selectedRow(value.selectedRow),
+    selectedRow: selectedRow(value.selectedRow, value.schemaVersion),
     inspectorPinned: true,
     conversationAnchor:
       typeof value.conversationAnchor === 'string' || value.conversationAnchor === null

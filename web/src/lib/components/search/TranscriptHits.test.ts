@@ -78,7 +78,7 @@ describe('TranscriptHits', () => {
     finish(Response.json(report({ results: [hit({ excerpt: 'obsolete evidence' })] })));
     await vi.advanceTimersByTimeAsync(0);
     expect(screen.queryByText('obsolete evidence')).toBeNull();
-    await view.rerender({ client: view.client, query: 'quarterly', supported: false });
+    await view.rerender({ client: view.client, query: 'quarterly', supported: false, configured: true });
     expect(screen.queryByText('current evidence')).toBeNull();
     expect(screen.getByRole('status').textContent).toContain('Full text with no filters or grouping');
     expect(fetchFn).toHaveBeenCalledTimes(2);
@@ -162,8 +162,8 @@ describe('TranscriptHits', () => {
   });
 
   it.each([
-    ['café 東京 2026', true], ['cafe\u0301', true], ['from:alice@example.com quarterly', false],
-    ['quarterly OR numbers', false], ['not', true], ['and or not', true], ['AND', false], ['NOT', false], ['\u0301', false],
+    ['café 東京 2026', true], ['cafe\u0301', true], ['from:alice@example.com quarterly', false], ['"quarterly numbers"', false], ['quarterly*', false],
+    ['quarterly OR numbers', true], ['not', true], ['and or not', true], ['AND', true], ['NOT', true], ['\u0301', false],
   ] as const)('admits plain words and rejects unsupported syntax %s', async (query, searched) => {
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json(report()));
     render(TranscriptHits, { props: { client: createAPIClient(fetchFn), query, supported: true } });
@@ -171,7 +171,7 @@ describe('TranscriptHits', () => {
       await screen.findByText('Quarterly <numbers>');
       expect(new URL((fetchFn.mock.calls.at(-1)![0] as Request).url).searchParams.get('q')).toBe(query);
     } else {
-      await screen.findByText(/Recording search supports plain words only/);
+      expect(screen.queryByRole('region', { name: 'Recordings' })).toBeNull();
       expect(fetchFn).not.toHaveBeenCalled();
     }
   });

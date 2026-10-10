@@ -37,9 +37,19 @@ describe('EverythingWorkspace', () => {
       await screen.findByText('0 items');
       expect(screen.queryByRole('heading', { name: /^Results/ })).toBeNull();
       expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+      vi.useFakeTimers();
+      state.commitSearch('different', 'full_text');
+      await fireEvent(document, new Event('visibilitychange'));
+      state.commitNavigation({ workspace: 'files' });
+      await tick();
+      state.commitNavigation({ workspace: 'everything' });
+      await tick();
+      await vi.advanceTimersByTimeAsync(300);
+      expect(fetchFn.mock.calls.filter(([input]) => new URL((input as Request).url).pathname.endsWith('/media/search'))).toHaveLength(1);
     } finally {
       view.unmount();
       state.destroy();
+      vi.useRealTimers();
     }
   });
 
@@ -78,7 +88,31 @@ describe('EverythingWorkspace', () => {
       messageStatus = 404;
       await fireEvent.click(await screen.findByRole('link', { name: 'Team chat' }));
       await screen.findByText('This recording message is no longer available.');
+      expect(screen.queryByRole('link', { name: 'Team chat' })).toBeNull();
+      expect(screen.queryByText('Quarterly numbers')).toBeNull();
+      await fireEvent.click(screen.getByRole('button', { name: 'Close reading pane' }));
+      expect(screen.queryByText('Quarterly numbers')).toBeNull();
       expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+    } finally {
+      view.unmount();
+      state.destroy();
+    }
+  });
+
+  it.each([
+    { searchMode: 'semantic' }, { filters: [{ dimension: 'source', values: ['1'] }] },
+    { groupingChain: ['kind'] }, { query: 'quarterly*' },
+  ])('keeps recording search hidden until configuration is known for %j', async patch => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', query: 'quarterly', searchMode: 'full_text', ...patch }))}`);
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json(exploreResponse()));
+    const state = new ExploreState(window);
+    const view = render(AppShell, { client: createAPIClient(fetchFn), state });
+    try {
+      await screen.findByText('groupingChain' in patch ? '0 groups' : '0 items');
+      expect(screen.queryByRole('region', { name: 'Recordings' })).toBeNull();
+      expect(screen.queryByRole('heading', { name: /^Results/ })).toBeNull();
+      expect(document.querySelector('.results-primary--recordings')).toBeNull();
+      expect(fetchFn.mock.calls.some(([input]) => new URL((input as Request).url).pathname.endsWith('/media/search'))).toBe(false);
     } finally {
       view.unmount();
       state.destroy();
@@ -98,6 +132,7 @@ describe('EverythingWorkspace', () => {
     const state = new ExploreState(window);
     const view = render(AppShell, { client: createAPIClient(fetchFn), state });
     try {
+      await screen.findByText('No spoken matches.');
       for (const patch of [{ searchMode: 'semantic' as const }, { searchMode: 'full_text' as const, filters: [{ dimension: 'source' as const, values: ['1'] }] }, { filters: [], groupingChain: ['kind' as const] }]) {
         state.replaceTransient(patch);
         await tick();

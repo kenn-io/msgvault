@@ -26,6 +26,7 @@
 </script>
 
 <script lang="ts">
+  import { messageTitle } from '../../archive/message-title';
   import { Button, EmptyState, IconButton } from '@kenn-io/kit-ui';
   import X from '@lucide/svelte/icons/x';
   import { onDestroy, untrack } from 'svelte';
@@ -104,7 +105,7 @@
   let requestGeneration = 0;
   let requestController: AbortController | undefined;
   const title = $derived(selection
-    ? selection.kind === 'entry' ? selection.row.title || '(untitled)' : selection.kind === 'archive' ? selection.message.subject || selection.message.conversation_title || '(untitled)' : selection.label
+    ? selection.kind === 'entry' ? selection.row.title || '(untitled)' : selection.kind === 'archive' ? messageTitle(selection.message.subject, selection.message.conversation_title) || '(untitled)' : selection.label
     : targetKey || 'Selected result');
   const showFiles = $derived(selection?.kind === 'group' &&
     (selection.dimension === 'participant' || selection.dimension === 'domain'));

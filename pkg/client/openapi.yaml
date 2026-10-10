@@ -21752,7 +21752,7 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
-          description: "media_search_not_configured: configure the Docbank integration; media_search_unavailable: Docbank transcript search is unavailable; media_search_mode_unavailable: use lexical mode"
+          description: Error
         default:
           content:
             application/json:

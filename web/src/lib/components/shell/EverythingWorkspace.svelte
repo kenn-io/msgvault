@@ -35,6 +35,7 @@
   import SplitPane from '../layout/SplitPane.svelte';
   import PersonTimeline from '../people/PersonTimeline.svelte';
   import SearchCoverage from '../search/SearchCoverage.svelte';
+  import { admitsMediaQuery } from '../../search/media-query';
   import TranscriptHits from '../search/TranscriptHits.svelte';
   import ReadingPane, { type ReadingPaneSelection, type ReadingPaneStatus } from '../reader/ReadingPane.svelte';
   import type { SearchCoverageAction } from '../../search/modes';
@@ -115,9 +116,9 @@
   const api = createExploreAPI(untrack(() => client));
   const recording = new ArchiveMessageLoader();
   const recordingSelection = $derived(parseRecordingSelection(readingTargetKey));
-  let recordingSearchConfigured = $state(true);
+  const recordingSearchSupported = $derived(exploreState.current.searchMode === 'full_text' && exploreState.current.filters.length === 0 && exploreState.current.groupingChain.length === 0);
   const recordingSearchRequested = $derived(Boolean(enabled && exploreState.current.query.trim()));
-  const recordingSearchVisible = $derived(recordingSearchRequested && recordingSearchConfigured);
+  const recordingSearchVisible = $derived(recordingSearchRequested && session.recordingSearchConfigured !== false && (session.recordingSearchConfigured === true || (recordingSearchSupported && admitsMediaQuery(exploreState.current.query))));
 
   $effect(() => {
     void readingDetailRetryRevision;
@@ -737,9 +738,10 @@
           {#if recordingSearchRequested}
             <TranscriptHits
               {client}
-              bind:configured={recordingSearchConfigured}
+              bind:configured={session.recordingSearchConfigured}
+              missingMessageID={recording.missing ? recordingSelection : undefined}
               query={exploreState.current.query}
-              supported={exploreState.current.searchMode === 'full_text' && exploreState.current.filters.length === 0 && exploreState.current.groupingChain.length === 0}
+              supported={recordingSearchSupported}
               selectedMessageID={recordingSelection}
               onOpen={(hit) => onOpenRecording(hit.message_id)}
             />

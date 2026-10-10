@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { messageTitle } from '../../archive/message-title';
   import { Button } from '@kenn-io/kit-ui';
   import { ArchiveMessageLoader } from '../../archive/message-loader.svelte';
   import type { APIClient } from '../../api/client';
@@ -18,7 +19,7 @@
 <main aria-label="Linked message" class="message-page">
   <header>
     <Button onclick={() => window.location.assign('/')}>Back to archive</Button>
-    <h1>{loader.detail?.subject || loader.detail?.conversation_title || 'Message'}</h1>
+    <h1>{messageTitle(loader.detail?.subject, loader.detail?.conversation_title) || 'Message'}</h1>
   </header>
   {#if loader.error}
     <p role="alert">{loader.error}</p>

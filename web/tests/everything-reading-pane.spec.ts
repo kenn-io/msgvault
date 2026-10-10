@@ -279,7 +279,8 @@ test('right preview resizes, restores its width, and falls back below on narrow 
   await grid.getByText('Synthetic subject 1').click();
   const reading = page.getByRole('complementary', { name: 'Reading pane: Synthetic subject 1' });
   const resize = page.getByRole('separator', { name: 'Resize reading pane' });
-  await page.getByRole('radio', { name: 'Right', exact: true }).click();
+  const position = page.getByRole('radiogroup', { name: 'Preview position' });
+  await position.getByRole('radio', { name: 'Right', exact: true }).click();
   await expect(resize).toHaveAttribute('aria-orientation', 'vertical');
   const primary = page.locator('.results-split > [data-split-pane] > [data-pane="primary"]');
   const secondary = page.locator('.results-split > [data-split-pane] > [data-pane="secondary"]');
@@ -304,7 +305,7 @@ test('right preview resizes, restores its width, and falls back below on narrow 
 
   await page.setViewportSize({ width: 760, height: 900 });
   await expect(resize).toHaveAttribute('aria-orientation', 'horizontal');
-  await expect(page.getByRole('radiogroup', { name: 'Preview position' })).toHaveCount(0);
+  await expect(position).toHaveCount(0);
   const narrowList = (await primary.boundingBox())!;
   expect((await secondary.boundingBox())!.y).toBeGreaterThanOrEqual(narrowList.y + narrowList.height);
   await expect(reading).toBeVisible();
@@ -312,15 +313,15 @@ test('right preview resizes, restores its width, and falls back below on narrow 
   await page.setViewportSize({ width: 1920, height: 1080 });
   await expect(resize).toHaveAttribute('aria-orientation', 'vertical');
   await expect.poll(async () => (await secondary.boundingBox())!.width).toBeCloseTo(resizedWidth, 0);
-  await page.getByRole('radio', { name: 'Below', exact: true }).click();
+  await position.getByRole('radio', { name: 'Below', exact: true }).click();
   await expect(resize).toHaveAttribute('aria-orientation', 'horizontal');
   await resize.press('ArrowUp');
   const bottomHeight = (await secondary.boundingBox())!.height;
-  await page.getByRole('radio', { name: 'Right', exact: true }).click();
+  await position.getByRole('radio', { name: 'Right', exact: true }).click();
   await expect.poll(async () => (await secondary.boundingBox())!.width).toBeCloseTo(resizedWidth, 0);
-  await page.getByRole('radio', { name: 'Below', exact: true }).click();
+  await position.getByRole('radio', { name: 'Below', exact: true }).click();
   await expect.poll(async () => (await secondary.boundingBox())!.height).toBe(bottomHeight);
-  await page.getByRole('radio', { name: 'Right', exact: true }).click();
+  await position.getByRole('radio', { name: 'Right', exact: true }).click();
   await page.getByRole('button', { name: 'Close reading pane' }).click();
   await expect(grid).toBeFocused();
   await expect.poll(async () => (await primary.boundingBox())!.width)

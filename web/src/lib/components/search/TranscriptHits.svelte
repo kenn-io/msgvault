@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
+  import { admitsMediaQuery } from '../../search/media-query';
   import { Button, Chip } from '@kenn-io/kit-ui';
   import FileVolume from '@lucide/svelte/icons/file-volume';
   import type { APIClient } from '../../api/client';
@@ -7,12 +9,12 @@
   import { createStaleRequestGuard } from '../../archive/stale-request';
   import { formatDateTime, formatOffset, formatShortDate } from '../../util/format';
 
-  let { client, query, supported, selectedMessageID, configured = $bindable(true), onOpen }: {
-    client: APIClient; query: string; supported: boolean; configured?: boolean; selectedMessageID?: number; onOpen?: (hit: MediaSearchResult) => void;
+  let { client, query, supported, selectedMessageID, configured = $bindable<boolean | undefined>(undefined), missingMessageID, onOpen }: {
+    client: APIClient; query: string; supported: boolean; configured?: boolean; missingMessageID?: number; selectedMessageID?: number; onOpen?: (hit: MediaSearchResult) => void;
   } = $props();
   const id = $props.id();
   let result = $state<MediaSearchResponse>();
-  const admitted = $derived(query.trim().split(/\s+/u).every(term => /^[\p{L}\p{M}\p{N}]+$/u.test(term) && /[\p{L}\p{N}]/u.test(term) && !/^(AND|OR|NOT)$/.test(term)));
+  const admitted = $derived(admitsMediaQuery(query));
   const incomplete = $derived(Boolean(result && (result.partial || result.truncated)));
   let notice = $state('');
   let expired = $state(false);
@@ -20,9 +22,15 @@
   let retry = $state(0);
 
   $effect(() => {
+    const missingID = missingMessageID;
+    const current = untrack(() => result);
+    if (missingID !== undefined && current) result = { ...current, results: current.results.filter(hit => hit.message_id !== missingID) };
+  });
+
+  $effect(() => {
     const requestedQuery = query.trim();
     const requestedClient = client;
-    const allowed = supported && admitted;
+    const allowed = supported && admitted && untrack(() => configured !== false);
     void retry;
     result = undefined;
     notice = '';
@@ -96,7 +104,8 @@
           return;
         }
         if (signal.aborted || !data?.results || !data.coverage) throw new Error('Transcript search unavailable');
-        result = data;
+        const missingID = untrack(() => missingMessageID);
+        result = { ...data, results: data.results.filter(hit => hit.message_id !== missingID) };
       } catch {
         if (!freshness.isCurrent(generation)) return;
         result = undefined;
@@ -128,7 +137,7 @@
 
 </script>
 
-{#if configured}
+{#if configured !== false && (configured === true || (supported && admitted))}
 <section class="transcript-hits" aria-label="Recordings" tabindex="-1" data-recording-hits data-scroll>
   <header>
     <h2>Recordings{#if result && result.results.length > 0}<span class="count">{result.results.length}</span>{/if}</h2>
@@ -137,7 +146,7 @@
   {#if !supported}
     <p role="status">Recording search requires Full text with no filters or grouping.</p>
   {:else if !admitted}
-    <p role="status">Recording search supports plain words only. Operators, punctuation and quoted phrases are unavailable.</p>
+    <p role="status">Recording search supports plain words only. Punctuation and quoted phrases are unavailable.</p>
   {:else if expired}
     <p role="status">Recording results expired.</p>
   {:else if notice}
