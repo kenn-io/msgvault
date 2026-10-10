@@ -33,7 +33,7 @@ All notable changes to msgvault, grouped by release.
 - `search --help` explains the fts, vector and hybrid modes, and an empty
   keyword search suggests `--mode hybrid` when embeddings can answer it. Search
   adds `--snippet`, `--sort date` for semantic pages, and a `filename:` operator
-  that needs daemon API 3.5.0. `show` aliases `show-message`, which gains
+  that needs daemon API 3.11.0. `show` aliases `show-message`, which gains
   `--body-only` and `--strip-quoted`, and `show-thread` reads a conversation
   oldest first with quoted history removed. The reading view keeps complete
   URLs and uncertain wrapped headers.

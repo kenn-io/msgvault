@@ -53,10 +53,16 @@ func searchSnippetText(text string) string {
 func readableMessageDetail(message *query.MessageDetail) *query.MessageDetail {
 	display := *message
 	display.BodyText = readableMessageBody(message.BodyText)
-	if message.BodyText != "" && display.BodyText == "" {
-		display.Snippet = ""
-	} else if message.BodyText == "" {
-		display.Snippet = readableMessageBody(message.Snippet)
-	}
 	return &display
+}
+
+func messageTextBody(message *query.MessageDetail, stripQuoted bool) string {
+	body := message.BodyText
+	if body == "" {
+		body = message.Snippet
+	}
+	if stripQuoted {
+		body = readableMessageBody(body)
+	}
+	return body
 }

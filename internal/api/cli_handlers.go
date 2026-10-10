@@ -2334,6 +2334,16 @@ func (s *Server) handleCLISearch(w http.ResponseWriter, r *http.Request) {
 	account := r.URL.Query().Get("account")
 	collection := r.URL.Query().Get("collection")
 
+	includeSnippet := false
+	if r.URL.Query().Has("include_snippet") {
+		var err error
+		includeSnippet, err = strconv.ParseBool(r.URL.Query().Get("include_snippet"))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_include_snippet", "include_snippet must be a boolean")
+			return
+		}
+	}
+
 	limit := parseCLISearchInt(r.URL.Query().Get("limit"), 50)
 	if limit <= 0 {
 		limit = 50
@@ -2418,7 +2428,7 @@ func (s *Server) handleCLISearch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "search_failed", err.Error())
 		return
 	}
-	if r.URL.Query().Get("include_snippet") == "true" {
+	if includeSnippet {
 		metadata, err := s.searchMetadata(r.Context(), resultIDs(results), parsed, true)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "search_failed", err.Error())

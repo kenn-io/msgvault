@@ -41,16 +41,16 @@ Examples:
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if limit < 1 || limit > query.ThreadMaxLimit {
-				return errors.New("--limit must be between 1 and 500")
+				return usageErr(cmd, errors.New("--limit must be between 1 and 500"))
 			}
 			if offset < 0 {
-				return errors.New("--offset must be non-negative")
+				return usageErr(cmd, errors.New("--offset must be non-negative"))
 			}
 			id, err := resolveMessageIDArg(args[0])
 			if err != nil {
 				return err
 			}
-			client, _, err := OpenHTTPStore(cmd.Context())
+			client, _, err := OpenHTTPStore(cmd.Context(), daemonclient.AgentReadMinAPISchemaVersion)
 			if err != nil {
 				return fmt.Errorf("open store: %w", err)
 			}
@@ -75,7 +75,7 @@ Examples:
 			if err != nil {
 				return fmt.Errorf("get thread: %w", err)
 			}
-			messages, err := loadThreadMessages(cmd.Context(), client, page, stripQuoted)
+			messages, err := loadThreadMessages(cmd.Context(), client, page)
 			if err != nil {
 				return err
 			}
@@ -85,6 +85,9 @@ Examples:
 			if asJSON {
 				values := make([]map[string]any, len(messages))
 				for i, msg := range messages {
+					if stripQuoted {
+						msg = readableMessageDetail(msg)
+					}
 					values[i] = messageJSONValue(msg)
 				}
 				enc := jsontext.NewEncoder(os.Stdout, jsontext.WithIndent("  "))
@@ -92,12 +95,12 @@ Examples:
 			}
 			fmt.Printf("Thread %d (%d messages, offset %d)\n", page.ConversationID, page.Total, page.Offset)
 			for _, msg := range messages {
-				fmt.Printf("\nMessage %d · %s · %s\n%s\n", msg.ID, msg.SentAt.Format("2006-01-02 15:04:05Z07:00"), textutil.SanitizeTerminal(formatAddresses(msg.From)), textutil.SanitizeTerminal(msg.Subject))
-				body := msg.BodyText
-				if body == "" {
-					body = msg.Snippet
+				date := "undated"
+				if !msg.SentAt.IsZero() {
+					date = msg.SentAt.Format("2006-01-02 15:04:05Z07:00")
 				}
-				fmt.Println(textutil.SanitizeTerminalMultiline(body))
+				fmt.Printf("\nMessage %d · %s · %s\n%s\n", msg.ID, date, textutil.SanitizeTerminal(formatAddresses(msg.From)), textutil.SanitizeTerminal(msg.Subject))
+				fmt.Println(textutil.SanitizeTerminalMultiline(messageTextBody(msg, stripQuoted)))
 			}
 			return nil
 		},
@@ -111,7 +114,7 @@ Examples:
 
 func init() { rootCmd.AddCommand(newShowThreadCmd()) }
 
-func loadThreadMessages(ctx context.Context, client *daemonclient.Client, page *query.ThreadPage, stripQuoted bool) ([]*query.MessageDetail, error) {
+func loadThreadMessages(ctx context.Context, client *daemonclient.Client, page *query.ThreadPage) ([]*query.MessageDetail, error) {
 	messages := make([]*query.MessageDetail, len(page.Messages))
 	group, ctx := errgroup.WithContext(ctx)
 	group.SetLimit(4)
@@ -126,9 +129,6 @@ func loadThreadMessages(ctx context.Context, client *daemonclient.Client, page *
 			}
 			if detail.ConversationID != page.ConversationID {
 				return fmt.Errorf("thread message %d changed conversation during retrieval", listed.ID)
-			}
-			if stripQuoted {
-				detail = readableMessageDetail(detail)
 			}
 			messages[i] = detail
 			return nil

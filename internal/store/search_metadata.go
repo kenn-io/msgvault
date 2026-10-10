@@ -34,7 +34,7 @@ func (s *Store) GetSearchMetadata(ctx context.Context, ids []int64, q *search.Qu
 			item.AttachmentNames = []string{}
 		}
 		item.AttachmentCount = count
-		if hasRow {
+		if hasRow && name != "" {
 			item.AttachmentNames = append(item.AttachmentNames, name)
 		}
 		result[id] = item

@@ -1,6 +1,8 @@
 package store_test
 
 import (
+	"bytes"
+	"log/slog"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -42,10 +44,31 @@ func TestSearchMetadataUsesIndexAndAttachments(t *testing.T) {
 	if !f.Store.IsPostgreSQL() {
 		_, err = f.Store.DB().Exec(`DROP TABLE messages_fts`)
 		require.NoError(err)
+		var logs bytes.Buffer
+		previousLogger := slog.Default()
+		slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn})))
+		t.Cleanup(func() { slog.SetDefault(previousLogger) })
 		metadata, err = f.Store.GetSearchMetadata(t.Context(), []int64{id}, search.Parse("needle"), true)
 		require.NoError(err)
 		assert.Equal([]string{"plan.pdf", "budget.csv"}, metadata[id].AttachmentNames)
 		assert.Equal(3, metadata[id].AttachmentCount)
 		assert.Empty(metadata[id].MatchSnippet, "unavailable context falls back to the stored preview")
+		assert.Contains(logs.String(), `level=WARN msg="sql error"`)
+		assert.Contains(logs.String(), "no such table: messages_fts")
 	}
+}
+
+func TestSearchMetadataSkipsUnnamedAttachments(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	id := f.NewMessage().Create(t, f.Store)
+	_, err := f.Store.DB().Exec(f.Store.Rebind(`INSERT INTO attachments(message_id,filename,mime_type,size,storage_path) VALUES (?,NULL,'application/octet-stream',10,'synthetic'),(?,'','application/octet-stream',10,'synthetic')`), id, id)
+	require.NoError(err)
+	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET attachment_count = 2 WHERE id = ?`), id)
+	require.NoError(err)
+	metadata, err := f.Store.GetSearchMetadata(t.Context(), []int64{id}, nil, false)
+	require.NoError(err)
+	assert.Equal([]string{}, metadata[id].AttachmentNames)
+	assert.Equal(2, metadata[id].AttachmentCount)
 }

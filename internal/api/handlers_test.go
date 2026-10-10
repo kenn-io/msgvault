@@ -8980,6 +8980,46 @@ func TestOperationGateStillGatesAccountSyncTrigger(t *testing.T) { //nolint:para
 	require.Equal(http.StatusServiceUnavailable, resp.Code, resp.Body.String())
 }
 
+func TestCLISearchIncludeSnippetBoolean(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	_, id, err := testutil.CreateIndexedSourceMessage(st, "archive@example.org", "message-1", "Plan", "needle context")
+	require.NoError(t, err)
+	require.NoError(t, st.UpsertAttachment(id, "plan.pdf", "application/pdf", "synthetic", "", 10))
+	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
+	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.Background())) })
+	for _, tc := range []struct {
+		value  string
+		status int
+		names  bool
+	}{
+		{"true", http.StatusOK, true}, {"1", http.StatusOK, true},
+		{"false", http.StatusOK, false}, {"0", http.StatusOK, false},
+		{"invalid", http.StatusBadRequest, false}, {"", http.StatusBadRequest, false},
+	} {
+		t.Run(tc.value, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			w := doGet(srv, "/api/v1/cli/search?q=needle&include_snippet="+tc.value)
+			require.Equal(tc.status, w.Code, w.Body.String())
+			if tc.status != http.StatusOK {
+				return
+			}
+			var response struct {
+				Results []struct {
+					AttachmentNames []string `json:"attachment_names"`
+				} `json:"results"`
+			}
+			require.NoError(json.Unmarshal(w.Body.Bytes(), &response))
+			require.Len(response.Results, 1)
+			if tc.names {
+				assert.Equal([]string{"plan.pdf"}, response.Results[0].AttachmentNames)
+			} else {
+				assert.Empty(response.Results[0].AttachmentNames)
+			}
+		})
+	}
+}
+
 func TestCLISearchHybridHintAvailability(t *testing.T) {
 	for _, tc := range []struct {
 		name, q, scope string

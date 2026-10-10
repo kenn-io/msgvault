@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -55,8 +56,8 @@ func TestMessageBodyOnlyOutput(t *testing.T) {
 
 func TestMessageJSONStripQuotedPreview(t *testing.T) {
 	for _, tc := range []struct{ name, body, snippet, want string }{
-		{"quoted body", "> old text", "stale preview", ""},
-		{"bodyless preview", "", "Current preview\n> old text", "Current preview"},
+		{"quoted body", "> old text", "stale preview", "stale preview"},
+		{"bodyless preview", "", "Current preview\n> old text", "Current preview\n> old text"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
@@ -72,7 +73,24 @@ func TestMessageJSONStripQuotedPreview(t *testing.T) {
 			var fields map[string]any
 			require.NoError(json.Unmarshal([]byte(output), &fields))
 			assert.Equal(tc.want, fields["snippet"])
+			assert.Empty(fields["body_text"])
 			assert.Equal(tc.snippet, message.Snippet, "display cleanup does not mutate the archive")
+		})
+	}
+}
+
+func TestMessageTextStripQuotedDoesNotRestorePreview(t *testing.T) {
+	for _, bodyOnly := range []bool{false, true} {
+		t.Run(strconv.FormatBool(bodyOnly), func(t *testing.T) {
+			savedBodyOnly, savedStrip := showMessageBodyOnly, showMessageStripQuoted
+			t.Cleanup(func() { showMessageBodyOnly = savedBodyOnly; showMessageStripQuoted = savedStrip })
+			showMessageBodyOnly, showMessageStripQuoted = bodyOnly, true
+			done := captureStdout(t)
+			err := outputMessageText(&query.MessageDetail{BodyText: "> old text", Snippet: "stale preview"})
+			output := done()
+			require.NoError(t, err)
+			assert.NotContains(t, output, "old text")
+			assert.NotContains(t, output, "stale preview")
 		})
 	}
 }

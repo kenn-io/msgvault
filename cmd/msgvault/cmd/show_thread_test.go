@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
@@ -47,7 +48,7 @@ func TestLoadThreadMessagesBeyondRateLimitBurst(t *testing.T) {
 			page.Messages = append(page.Messages, query.ThreadMessage{ID: id})
 		}
 
-		messages, err := loadThreadMessages(t.Context(), client, page, false)
+		messages, err := loadThreadMessages(t.Context(), client, page)
 		require.NoError(err)
 		require.Len(messages, 100)
 		for i, message := range messages {
@@ -62,12 +63,15 @@ func TestShowThreadPaginationAndIdentity(t *testing.T) {
 		name                         string
 		offset                       int
 		asText                       bool
+		quotedBody                   bool
 		detailID, detailConversation int64
 		wantError                    string
 	}{
 		{name: "exhausted page", offset: 2},
 		{name: "partial JSON page", detailID: 1, detailConversation: 7},
 		{name: "partial text page", detailID: 1, detailConversation: 7, asText: true},
+		{name: "quoted JSON page", detailID: 1, detailConversation: 7, quotedBody: true},
+		{name: "quoted text page", detailID: 1, detailConversation: 7, quotedBody: true, asText: true},
 		{name: "detail id mismatch", detailID: 99, detailConversation: 7, wantError: "message"},
 		{name: "conversation mismatch", detailID: 1, detailConversation: 99, wantError: "conversation"},
 	} {
@@ -87,7 +91,11 @@ func TestShowThreadPaginationAndIdentity(t *testing.T) {
 					}
 					assert.NoError(json.NewEncoder(w).Encode(map[string]any{"conversation_id": 7, "total": 2, "offset": tc.offset, "has_more": tc.offset == 0, "messages": messages}))
 				case "/api/v1/cli/message":
-					assert.NoError(json.NewEncoder(w).Encode(map[string]any{"id": tc.detailID, "conversation_id": tc.detailConversation, "body_text": "Synthetic reply", "from": []map[string]any{{"email": "alice@example.com", "name": "Alice"}}}))
+					body := "Synthetic reply"
+					if tc.quotedBody {
+						body = "> old reply"
+					}
+					assert.NoError(json.NewEncoder(w).Encode(map[string]any{"id": tc.detailID, "conversation_id": tc.detailConversation, "body_text": body, "snippet": "stored preview", "from": []map[string]any{{"email": "alice@example.com", "name": "Alice"}}}))
 				default:
 					w.WriteHeader(http.StatusNotFound)
 				}
@@ -121,16 +129,23 @@ func TestShowThreadPaginationAndIdentity(t *testing.T) {
 				assert.Empty(stderr.String())
 			}
 			if tc.asText {
-				assert.Contains(out, "Synthetic reply")
+				if tc.quotedBody {
+					assert.NotContains(out, "old reply")
+					assert.NotContains(out, "stored preview")
+				} else {
+					assert.Contains(out, "Synthetic reply")
+				}
 				assert.Contains(out, "Alice <alice@example.com>")
+				assert.Contains(out, "· undated ·")
+				assert.NotContains(out, "0001-01-01")
 				return
 			}
 			var page struct {
-				ConversationID int64 `json:"conversation_id"`
-				Total          int64 `json:"total"`
-				Offset         int   `json:"offset"`
-				HasMore        bool  `json:"has_more"`
-				Messages       []any `json:"messages"`
+				ConversationID int64            `json:"conversation_id"`
+				Total          int64            `json:"total"`
+				Offset         int              `json:"offset"`
+				HasMore        bool             `json:"has_more"`
+				Messages       []map[string]any `json:"messages"`
 			}
 			require.NoError(json.Unmarshal([]byte(out), &page))
 			assert.Equal(int64(7), page.ConversationID)
@@ -138,10 +153,32 @@ func TestShowThreadPaginationAndIdentity(t *testing.T) {
 			assert.Equal(tc.offset, page.Offset)
 			assert.Equal(tc.offset == 0, page.HasMore)
 			if tc.offset == 0 {
-				assert.Len(page.Messages, 1)
+				require.Len(page.Messages, 1)
+				assert.Equal("stored preview", page.Messages[0]["snippet"])
+				if tc.quotedBody {
+					assert.Empty(page.Messages[0]["body_text"])
+				} else {
+					assert.Equal("Synthetic reply", page.Messages[0]["body_text"])
+				}
 			} else {
 				assert.Empty(page.Messages)
 			}
+		})
+	}
+}
+
+func TestShowThreadInvalidPaginationShowsUsage(t *testing.T) {
+	for _, args := range [][]string{{"--limit", "0"}, {"--limit", "501"}, {"--offset", "-1"}} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			root := newRootCommand()
+			root.AddCommand(newShowThreadCmd())
+			root.SetArgs(append([]string{"--home", t.TempDir(), "--no-log-file", "--log-level", "error", "show-thread", "1"}, args...))
+			var output bytes.Buffer
+			root.SetOut(&output)
+			root.SetErr(&output)
+			err := executeRootContext(t.Context(), root)
+			require.ErrorContains(t, err, args[0]+" must be")
+			assert.Contains(t, output.String(), "Usage:")
 		})
 	}
 }
@@ -245,7 +282,7 @@ func TestLoadThreadMessagesBoundedAndOrdered(t *testing.T) {
 	var messages []*query.MessageDetail
 	var loadErr error
 	done := make(chan struct{})
-	go func() { messages, loadErr = loadThreadMessages(ctx, client, page, true); close(done) }()
+	go func() { messages, loadErr = loadThreadMessages(ctx, client, page); close(done) }()
 	overlapped := true
 	for range 4 {
 		select {
@@ -265,6 +302,6 @@ func TestLoadThreadMessagesBoundedAndOrdered(t *testing.T) {
 	assert.Equal(int32(4), maximum.Load())
 	for i, msg := range messages {
 		assert.Equal(int64(i+1), msg.ID)
-		assert.Equal("Synthetic reply", msg.BodyText)
+		assert.Equal("Synthetic reply\n> old reply", msg.BodyText)
 	}
 }

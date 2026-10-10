@@ -103,15 +103,8 @@ func showHTTPMessage(cmd *cobra.Command, idStr string) error {
 // nil error return mirrors outputMessageJSON so callers can return either
 // uniformly; text printing never fails.
 func outputMessageText(msg *query.MessageDetail) error {
-	originalHasBody := msg.BodyText != ""
-	if showMessageStripQuoted {
-		msg = readableMessageDetail(msg)
-	}
+	body := messageTextBody(msg, showMessageStripQuoted)
 	if showMessageBodyOnly {
-		body := msg.BodyText
-		if body == "" && !originalHasBody {
-			body = msg.Snippet
-		}
 		fmt.Println(textutil.SanitizeTerminalMultiline(body))
 		return nil
 	}
@@ -171,10 +164,10 @@ func outputMessageText(msg *query.MessageDetail) error {
 
 	// Body
 	fmt.Println("\n═══════════════════════════════════════════════════════════════════════════════")
-	if msg.BodyText != "" || originalHasBody {
-		fmt.Println(textutil.SanitizeTerminalMultiline(msg.BodyText))
+	if msg.BodyText != "" {
+		fmt.Println(textutil.SanitizeTerminalMultiline(body))
 	} else if msg.Snippet != "" {
-		fmt.Printf("[No body text available. Snippet: %s]\n", textutil.SanitizeTerminal(msg.Snippet))
+		fmt.Printf("[No body text available. Snippet: %s]\n", textutil.SanitizeTerminal(body))
 	} else {
 		fmt.Println("[No body content available]")
 	}
