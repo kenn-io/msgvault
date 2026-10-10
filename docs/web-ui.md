@@ -125,7 +125,7 @@ One toolbar sits above the results:
 - **Group by** adds a grouping level. Add more levels to group within groups.
 - **Sort** offers Newest first, the only order Everything has today.
 - **Columns** shows or hides table columns. It appears for the ungrouped table.
-- The count at the end reports items, or groups when the view is grouped.
+- The count reports items, or groups when the view is grouped. It sits beside **Results** when **Recordings** is shown, otherwise at the end of the toolbar.
 
 Each active search, filter, and grouping appears as a removable chip below the
 toolbar. Select the chip's remove button, such as **Remove search** or **Remove
@@ -175,7 +175,7 @@ windows, use **Dock reader right** beside Close to read beside the results. Use 
 Drag the divider to resize either layout, or focus it and use the arrow keys.
 Double-click the divider to reset its size. The browser remembers your layout
 choice and each layout's size. Narrow windows use the preview below the results
-and restore your right-side layout when there is room again. Escape closes the reader; next/previous result shortcuts move through ordinary message results.
+and restore your right-side layout when there is room again. Escape closes the reader. Next/previous result shortcuts move between ordinary message previews and are inactive while a recording match is open.
 
 HTML email follows the app's dark theme by replacing sender-defined text,
 background, and border colors. Images keep their original colors. Choose

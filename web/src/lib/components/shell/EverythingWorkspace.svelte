@@ -755,7 +755,7 @@
               selectedMessageID={recordingSelection}
               onOpen={(hit) => onOpenRecording(hit.message_id)}
             />
-            <h2 class="results-heading">Results <span class="count">{countLabel}</span></h2>
+            <h2 class="results-heading">Results <span class="count" aria-live="polite">{countLabel}</span></h2>
           {/if}
           {#if exploreState.current.groupingChain.length > 0}
             <GroupTable
