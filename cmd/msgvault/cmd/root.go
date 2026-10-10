@@ -27,11 +27,27 @@ func newRootCommand() *cobra.Command {
 	root := &cobra.Command{
 		Use:   daemonService,
 		Short: "Offline email, chat, and meeting archive tool",
-		Long: `msgvault is an offline archive tool that exports and stores email,
-chat, and meeting data locally with full-text search capabilities.
+		Long: `msgvault keeps an offline, searchable archive of email, chat, and meeting
+records. A daemon owns the archive: commands start or reuse a local daemon,
+or use [remote].url from config.toml (--local forces the local daemon).
 
-This is the Go implementation providing sync, search, and TUI functionality
-in a single binary.`,
+Start here:
+  msgvault list-accounts --json    # id, email, type, counts, sync
+  msgvault search 'from:alice@example.com newer_than:30d' --json
+  # "id" feeds the commands below
+  msgvault show-message <id> --json  # body_text, attachments
+  msgvault export-eml <id> -o msg.eml  # export-attachments <id> -o DIR
+  msgvault export-messages --start 2026-09-01T00:00:00Z --end 2026-10-01T00:00:00Z
+  msgvault list-senders -n 20 --json  # also list-domains, list-labels
+  msgvault stats
+  msgvault person --help  # contacts
+  msgvault daemon status
+  msgvault setup status --json  # features and next steps
+
+Output and exit status:
+  --json prints JSON on stdout (export-messages prints JSON Lines). Progress and
+  logs go to stderr; --log-level=warn quiets routine logs. Exit 0 success, 1 error,
+  130 interrupted. 'msgvault quickstart' has a longer agent guide.`,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			inv := prepareInvocation(cmd)
 			if inv == nil {
@@ -55,6 +71,13 @@ in a single binary.`,
 			// have run; usageErr() flips it back on for RunE-internal
 			// invocation-contract violations.
 			cmd.SilenceUsage = true
+
+			// A help-only group prints help and reads nothing, so it needs
+			// neither config nor the agent-delegated capability gate.
+			if isHelpOnlyGroup(cmd) {
+				cmd.SilenceUsage = false
+				return nil
+			}
 
 			// Agent-delegated mode: detect before any local owner lifecycle.
 			// Only commands in agentDelegatedCapable's set may run this way.
@@ -329,6 +352,7 @@ func Execute() error {
 // Installs a panic recovery and closes the log file handler on
 // return so every run ends cleanly in the log.
 func ExecuteContext(ctx context.Context) error {
+	ensureHelpLayout(rootCmd)
 	ensureSilenceUsageWrapped(rootCmd)
 	return executeRootContext(ctx, rootCmd)
 }

@@ -58,8 +58,8 @@ Add to Claude Desktop config:
         "command": "msgvault",
         "args": ["mcp"]
       }
-	    }
-	  }`,
+      }
+    }`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		state := invocationFromCommand(cmd)
 		if state == nil || (state.cfg == nil && !isAgentMode(state)) {

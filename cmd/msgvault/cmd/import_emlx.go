@@ -59,7 +59,7 @@ Examples:
 
   # Legacy two-arg form (deprecated, still works)
   msgvault import-emlx me@gmail.com ~/Library/Mail/V10/SOME-GUID
-	`,
+  `,
 	Args: cobra.MaximumNArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		state := invocationFromCommand(cmd)

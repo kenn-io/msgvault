@@ -41,7 +41,7 @@ var (
 
 var evalCmd = &cobra.Command{
 	Use:   "eval",
-	Short: "Evaluate retrieval quality against relevance judgments (qrels)",
+	Short: "Score search quality against relevance judgments (qrels)",
 	Long: `Measure retrieval quality over a set of labeled queries.
 
 Runs each topic through one or more search modes (fts, vector, hybrid) against

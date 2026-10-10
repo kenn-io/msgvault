@@ -19,7 +19,11 @@ func newPersonIdentitiesCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "identities <person-id>",
 		Short: "List a person's archived email addresses, phone numbers, and chat IDs",
-		Args:  cobra.ExactArgs(1),
+		Long: `List the email addresses, phone numbers, and chat IDs archived for a
+durable person. JSON has person_id and identities (kind, value,
+supported); supported means the value can be a draft recipient.`,
+		Example: `  msgvault person identities 1 --json`,
+		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id, err := positivePersonCLIArg(cmd, args[0], personValue)
 			if err != nil {

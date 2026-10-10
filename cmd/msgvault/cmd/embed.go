@@ -28,7 +28,7 @@ const (
 
 var embeddingsCmd = &cobra.Command{
 	Use:   embeddingsCommandName,
-	Short: "Manage vector embeddings",
+	Short: "Manage message vector embeddings",
 }
 
 var embeddingsBuildCmd = newEmbeddingsBuildCmd("build")
@@ -72,7 +72,7 @@ var embedCmd = newEmbeddingsBuildCmd("build-embeddings")
 func newEmbeddingsBuildCmd(use string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   use,
-		Short: "Build or update the vector embedding index (incremental by default; --full-rebuild for a new generation)",
+		Short: "Build or update the message vector index",
 		Long: `Build or update the vector embedding index for hybrid search.
 Writes vectors to the co-located vectors.db. In the default incremental
 mode, the command embeds any messages still needing embedding for the

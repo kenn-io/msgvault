@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -84,6 +85,11 @@ func validateSyncFullFlags(cmd *cobra.Command) error {
 	return nil
 }
 
+// isFullSyncSource reports whether 'msgvault sync-full' downloads src.
+func isFullSyncSource(src *store.Source) bool {
+	return src.SourceType == sourceTypeGmail || src.SourceType == sourceTypeIMAP
+}
+
 func runSyncFullLocal(cmd *cobra.Command, args []string) error {
 	state := invocationFromCommand(cmd)
 	if state == nil || state.cfg == nil || state.logger == nil {
@@ -142,8 +148,8 @@ func runSyncFullLocal(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("list sources: %w", err)
 		}
-		if len(allSources) == 0 {
-			return errors.New("no accounts configured - run 'add-account' or 'add-imap' first")
+		if !slices.ContainsFunc(allSources, isFullSyncSource) {
+			return errors.New("no Gmail or IMAP accounts to sync; add one with 'msgvault add-account <gmail>' or 'msgvault add-imap'; Microsoft Graph mail uses 'msgvault sync' (file imports are not synced)")
 		}
 		for _, src := range allSources {
 			switch src.SourceType {

@@ -17,7 +17,7 @@ import (
 
 func newKataCmd() *cobra.Command {
 	var jsonOutput bool
-	root := &cobra.Command{Use: "kata", Short: "Create Kata issues that quote exact message and file evidence"}
+	root := &cobra.Command{Use: "kata", Short: "Create Kata issues that quote archived evidence"}
 	root.PersistentFlags().BoolVar(&jsonOutput, flagJSON, false, "Output the full JSON response")
 
 	var prepareInput string

@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-08"
+last_edited: "2026-10-09"
 title: Changelog
 description: Release history for msgvault
 ---
@@ -7,6 +7,13 @@ description: Release history for msgvault
 All notable changes to msgvault, grouped by release.
 
 ## Unreleased
+
+- Root help groups commands by task and includes start-here commands. Subcommand
+  help lists global flags compactly and explains common ID and output paths.
+- Unknown subcommands under help-only groups now exit 1 with suggestions;
+  `person find` previously printed help and exited 0.
+- `export-messages` reports missing `--start` and `--end` before contacting the
+  daemon.
 
 - Go programs can use msgvault as a library through `go.kenn.io/msgvault/pkg/archive`.
   It sets up and opens SQLite or PostgreSQL archives, runs the Slack and Discord

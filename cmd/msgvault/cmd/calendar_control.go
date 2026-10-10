@@ -25,13 +25,23 @@ type calendarRunner func(context.Context, calcontrol.Request) (*calcontrol.Resul
 func newCalendarControlCmd(run calendarRunner) *cobra.Command {
 	var account, sendUpdates string
 	var dryRun, readOnly, jsonOutput bool
-	root := &cobra.Command{Use: "calendar", Short: "Control live calendar events and query availability", Long: "Create, update, delete, move, or respond to live Google Calendar events through the daemon.\nRequires an explicit --account; calendar IDs and configured aliases select the target calendar.\nWrites require add-calendar --write plus write_calendars in the source configuration.\nGuest changes also require invite_calendars. Notifications default to none."}
+	root := &cobra.Command{Use: "calendar", Short: "Control live calendar events and query availability", Long: "Create, update, delete, move, or respond to live Google Calendar events through the daemon.\nRequires an explicit --account; calendar IDs and configured aliases select the target calendar.\nWrites require add-calendar --write plus write_calendars in the source configuration.\nGuest changes also require invite_calendars. Notifications default to none.\nCalendar IDs: primary, a calendar ID, or an alias from config.toml.", Example: `  msgvault calendar freebusy primary --account you@example.com --from 2026-10-10T09:00 --to 2026-10-10T18:00 --tz Europe/London --json`}
 	root.PersistentFlags().StringVar(&account, "account", "", "configured calendar source name or OAuth account (required)")
 	root.PersistentFlags().StringVar(&sendUpdates, "send-updates", "none", "guest notifications: none, all, or externalOnly")
 	root.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "verify access and print the proposed changes without writing")
 	root.PersistentFlags().BoolVar(&readOnly, "read-only", false, "forbid every event mutation")
 	root.PersistentFlags().BoolVar(&jsonOutput, "json", false, "print the complete result and archive receipts as JSON")
-	for _, action := range []string{"create", "update", "delete", "move", "respond", "freebusy", "conflicts"} {
+	commands := []struct{ action, short, example string }{
+		{"create", `Create an event on a calendar`, `  msgvault calendar create primary --account you@example.com --summary "Review" --from 2026-10-10T15:00 --to 2026-10-10T15:30 --tz Europe/London --dry-run`},
+		{"update", `Update an event's fields, guests, or recurrence`, `  msgvault calendar update primary EVENT_ID --account you@example.com --location "Room 2"`},
+		{"delete", `Delete an event or recurring occurrences`, `  msgvault calendar delete primary EVENT_ID --account you@example.com --scope single`},
+		{"move", `Move an event to another calendar`, `  msgvault calendar move primary EVENT_ID team --account you@example.com`},
+		{"respond", `Set your RSVP for an event`, `  msgvault calendar respond primary EVENT_ID --account you@example.com --status accepted`},
+		{"freebusy", `Show busy time ranges for calendars`, `  msgvault calendar freebusy primary --account you@example.com --from 2026-10-10T09:00 --to 2026-10-10T18:00 --tz Europe/London --json`},
+		{"conflicts", `Find overlapping events in a time range`, `  msgvault calendar conflicts primary --account you@example.com --from 2026-10-10T00:00 --to 2026-10-17T00:00 --tz Europe/London --json`},
+	}
+	for _, help := range commands {
+		action := help.action
 		var summary, description, location, from, to, tz, scope, original, response, destination string
 		var allDay bool
 		var attendees, addAttendees, rules, reminders, calendars []string
@@ -41,7 +51,7 @@ func newCalendarControlCmd(run calendarRunner) *cobra.Command {
 			use += " <event-id>"
 			argCount = 2
 		}
-		command := &cobra.Command{Use: use, Short: "Calendar " + action, Args: cobra.ExactArgs(argCount)}
+		command := &cobra.Command{Use: use, Short: help.short, Long: help.short + ".\nRequires --account; see 'msgvault calendar --help' for access and write permissions.", Example: help.example, Args: cobra.ExactArgs(argCount)}
 		if action == "move" {
 			command.Use += " [destination-calendar-id]"
 			command.Args = cobra.RangeArgs(2, 3)
