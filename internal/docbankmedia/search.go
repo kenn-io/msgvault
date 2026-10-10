@@ -110,7 +110,7 @@ func (c *Client) ValidateSearch(ctx context.Context, request SearchRequest) erro
 }
 
 func (c *Client) Search(ctx context.Context, request SearchRequest) (SearchReport, error) {
-	if !validSearchRequest(request) || request.Fence == nil || request.Fence.VaultUID == "" || len(request.MediaSources) == 0 {
+	if !validSearchRequest(request) || request.Fence == nil || request.Fence.VaultUID == "" || len(request.Fence.ContentVersionIDs) == 0 || len(request.MediaSources) == 0 {
 		return SearchReport{}, ErrInvalidRequest
 	}
 	ids := make(map[string]bool, len(request.Fence.ContentVersionIDs))
