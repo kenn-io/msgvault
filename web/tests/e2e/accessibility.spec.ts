@@ -517,13 +517,13 @@ test('CardDAV account, operations, conflicts, modal, and publication are accessi
     const conflictRow = page.getByRole('button', { name: 'Review conflict 41 in Synthetic contacts' });
     await conflictRow.focus();
     await page.keyboard.press('Enter');
-    const comparison = page.getByRole('region', { name: 'CardDAV conflict 41 comparison' });
-    await expect(comparison).toContainText('Present');
-    await expect(comparison).toContainText('Deleted. This side is a deletion tombstone.');
-    await expect(comparison).toContainText('Unavailable. No safe comparison summary is available.');
-    await expect(page.getByText('Only display name, email addresses, and phone numbers are shown. Your choice applies to the whole card.')).toBeVisible();
-    const baseBox = await page.getByLabel('Base card summary').boundingBox();
-    const localBox = await page.getByLabel('Local card summary').boundingBox();
+    const comparison = page.getByRole('region', { name: 'Contact conflict 41 comparison' });
+    await expect(comparison).toContainText('Synthetic Local');
+    await expect(comparison).toContainText('Contact deleted.');
+    await expect(comparison).toContainText('Contact details unavailable.');
+    await expect(page.getByText('Only display name, email addresses, and phone numbers are shown. Your choice also applies to contact details not shown here.')).toBeVisible();
+    const baseBox = await page.getByLabel('Last synced version contact details').boundingBox();
+    const localBox = await page.getByLabel('msgvault contact details').boundingBox();
     expect(baseBox).not.toBeNull();
     expect(localBox).not.toBeNull();
     if (viewport.label === 'desktop') expect(Math.abs(baseBox!.y - localBox!.y)).toBeLessThan(2);
@@ -531,11 +531,11 @@ test('CardDAV account, operations, conflicts, modal, and publication are accessi
     await assertNoViolations(page, `CardDAV conflict detail ${viewport.label}`);
     await assertCardDAVForbiddenMarkersAbsent(page);
 
-    const keepLocal = page.getByRole('button', { name: 'Keep local card' }).first();
+    const keepLocal = page.getByRole('button', { name: 'Use msgvault version' }).first();
     await keepLocal.focus();
     await page.keyboard.press('Enter');
-    const modal = page.getByRole('dialog', { name: 'Keep local CardDAV card' });
-    await expect(modal).toContainText('Choosing it deletes the whole card');
+    const modal = page.getByRole('dialog', { name: 'Restore in address book' });
+    await expect(modal).toContainText('Restore this contact in Synthetic contacts using the msgvault version.');
     await assertNoViolations(page, `CardDAV conflict modal ${viewport.label}`);
     await assertCardDAVForbiddenMarkersAbsent(page);
     await page.keyboard.press('Escape');

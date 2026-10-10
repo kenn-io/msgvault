@@ -162,13 +162,13 @@ test('keyboard journey configures CardDAV, reconciles roles, syncs history, and 
   const conflictRow = page.getByRole('button', { name: 'Review conflict 41 in Synthetic contacts' });
   await conflictRow.focus();
   await page.keyboard.press('Enter');
-  await expect(page.getByRole('region', { name: 'CardDAV conflict 41 comparison' })).toContainText('Synthetic Local');
-  await expect(page.getByRole('region', { name: 'CardDAV conflict 41 comparison' })).toContainText('Deleted. This side is a deletion tombstone.');
-  await expect(page.getByRole('region', { name: 'CardDAV conflict 41 comparison' })).toContainText('Additional name, email, or phone values are not shown.');
+  await expect(page.getByRole('region', { name: 'Contact conflict 41 comparison' })).toContainText('Synthetic Local');
+  await expect(page.getByRole('region', { name: 'Contact conflict 41 comparison' })).toContainText('Contact deleted.');
+  await expect(page.getByRole('region', { name: 'Contact conflict 41 comparison' })).toContainText('Additional name, email, or phone values are not shown.');
 
-  await submitConflictChoice(page, 'Keep local card');
-  await expect(page.getByRole('alert')).toContainText('Choose again to resolve it.');
-  const refreshedChoice = page.getByRole('button', { name: 'Keep local card' }).first();
+  await submitConflictChoice(page, 'Use msgvault version', 'Restore in address book');
+  await expect(page.getByRole('alert')).toContainText('The latest versions are shown; choose again.');
+  const refreshedChoice = page.getByRole('button', { name: 'Use msgvault version' }).first();
   await expect(refreshedChoice).toBeFocused();
   await expect(refreshedChoice).toBeEnabled();
   expect(fixture.requests.filter(({ path }) => path === '/api/v1/carddav/conflicts/41/resolve')).toEqual([{
@@ -178,7 +178,7 @@ test('keyboard journey configures CardDAV, reconciles roles, syncs history, and 
     body: { choice: 'keep_local' }
   }]);
 
-  await submitConflictChoice(page, 'Keep local card');
+  await submitConflictChoice(page, 'Use msgvault version', 'Restore in address book');
   await expect(conflictRow).toHaveCount(0);
   await expect(page.getByRole('heading', { name: 'Unresolved conflicts' })).toBeFocused();
   expect(fixture.requests.filter(({ path }) => path === '/api/v1/carddav/conflicts/41/resolve')).toHaveLength(2);
@@ -195,18 +195,18 @@ test('pending conflict resolution blocks dismissal, duplicates, and global short
   const conflictRow = page.getByRole('button', { name: 'Review conflict 41 in Synthetic contacts' });
   await conflictRow.focus();
   await page.keyboard.press('Enter');
-  const choice = page.getByRole('button', { name: 'Keep remote card' }).first();
+  const choice = page.getByRole('button', { name: 'Use address book version' }).first();
   await choice.focus();
   await page.keyboard.press('Enter');
-  const dialog = page.getByRole('dialog', { name: 'Keep remote CardDAV card' });
-  const submit = dialog.getByRole('button', { name: 'Keep remote card' });
+  const dialog = page.getByRole('dialog', { name: 'Keep contact deleted' });
+  const submit = dialog.getByRole('button', { name: 'Keep contact deleted' });
   await submit.focus();
   await page.keyboard.press('Enter');
   await expect.poll(() => mutationCount(fixture.requests, '/api/v1/carddav/conflicts/41/resolve')).toBe(1);
 
   await expect(dialog.locator('[aria-busy="true"]')).toBeVisible();
   await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeDisabled();
-  await expect(dialog.getByRole('button', { name: 'Close CardDAV conflict decision' })).toHaveCount(0);
+  await expect(dialog.getByRole('button', { name: 'Close contact choice' })).toHaveCount(0);
   await page.keyboard.press('Escape');
   await page.keyboard.press('Shift+/');
   await page.keyboard.press('Enter');
@@ -293,13 +293,13 @@ function mutationCount(
   return requests.filter((request) => request.path === path && request.method === method).length;
 }
 
-async function submitConflictChoice(page: Page, label: string): Promise<void> {
+async function submitConflictChoice(page: Page, label: string, confirmationLabel: string): Promise<void> {
   const choice = page.getByRole('button', { name: label }).first();
   await choice.focus();
   await page.keyboard.press('Enter');
-  const dialog = page.getByRole('dialog', { name: /Keep (local|remote) CardDAV card/ });
+  const dialog = page.getByRole('dialog', { name: confirmationLabel });
   await expect(dialog).toBeVisible();
-  const submit = dialog.getByRole('button', { name: label });
+  const submit = dialog.getByRole('button', { name: confirmationLabel });
   await submit.focus();
   await page.keyboard.press('Enter');
   await expect(dialog).toHaveCount(0);

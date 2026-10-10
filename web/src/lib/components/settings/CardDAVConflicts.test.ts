@@ -135,22 +135,21 @@ describe('CardDAVConflicts', () => {
     rendered.unmount();
   });
 
-  it('renders only safe comparison summaries with explicit present, deleted, unavailable, and truncated text', async () => {
+  it.each(['Synthetic contacts', 'msgvault', 'Last synced version'])('renders safe comparison summaries for address book %s', async (bookName) => {
+    const addressBook = { id: 7, name: bookName, ...forbidden };
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const path = new URL(requestOf(input).url).pathname;
-      if (path.endsWith('/41')) return Response.json(conflictDetail(41));
-      return Response.json({ conflicts: [listItem(41)] });
+      if (path.endsWith('/41')) return Response.json(conflictDetail(41, { address_book: addressBook }));
+      return Response.json({ conflicts: [listItem(41, { address_book: addressBook })] });
     });
     const controller = new CardDAVConflictsController(createAPIClient(fetchFn));
     await controller.load();
     const rendered = render(CardDAVConflicts, { controller });
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Review conflict 41 in Synthetic contacts' }));
+    await fireEvent.click(screen.getByRole('button', { name: `Review conflict 41 in ${bookName}` }));
     const detail = await screen.findByRole('region', { name: 'Contact conflict 41 comparison' });
 
-    expect(within(detail).getByRole('heading', { name: 'Last synced version' })).toBeDefined();
-    expect(within(detail).getByRole('heading', { name: 'msgvault' })).toBeDefined();
-    expect(within(detail).getByRole('heading', { name: 'Synthetic contacts' })).toBeDefined();
+    expect(within(detail).getAllByRole('heading').map((heading) => heading.textContent)).toEqual(['Last synced version', 'msgvault', bookName]);
     expect(within(detail).getByText('Synthetic Contact')).toBeDefined();
     expect(within(detail).getByText('contact@example.test')).toBeDefined();
     expect(within(detail).getByText('+1 555 0100')).toBeDefined();

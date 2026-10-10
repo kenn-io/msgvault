@@ -22,9 +22,9 @@
   let focusContext = 0;
 
   const comparisonCards = $derived(controller.selectedDetail ? [
-    { label: 'Last synced version', summary: controller.selectedDetail.base, deleted: 'Contact deleted.' },
-    { label: 'msgvault', summary: controller.selectedDetail.local, deleted: 'Marked for removal from the address book.' },
-    { label: controller.selectedDetail.address_book.name, summary: controller.selectedDetail.remote, deleted: 'Contact deleted.' }
+    { key: 'base', label: 'Last synced version', summary: controller.selectedDetail.base, deleted: 'Contact deleted.' },
+    { key: 'local', label: 'msgvault', summary: controller.selectedDetail.local, deleted: 'Marked for removal from the address book.' },
+    { key: 'remote', label: controller.selectedDetail.address_book.name, summary: controller.selectedDetail.remote, deleted: 'Contact deleted.' }
   ] : []);
 
   $effect(() => {
@@ -211,7 +211,7 @@
       {#if controller.selectedDetail}
         {@const selected = controller.selectedDetail}
         <div class="comparison" role="region" aria-label={`Contact conflict ${selected.id} comparison`} aria-busy={controller.detailLoading || controller.pendingResolutionID === selected.id}>
-          {#each comparisonCards as card (card.label)}
+          {#each comparisonCards as card (card.key)}
             <Card level="default" padding="sm" class="comparison-card" ariaLabel={`${card.label} contact details`}>
               <div class="summary">
                 <h4>{card.label}</h4>
