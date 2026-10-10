@@ -79,6 +79,7 @@ Add and sync sources:
   backfill-slack-media   Retry pending Slack file downloads
   backfill-teams-media   Re-fetch missing Teams inline images for imported messages
   list-folders           List IMAP folders (mailboxes) available for an account
+  muesli-hook            Sync the meeting named by a Muesli completion event
   remove-account         Remove an account and all its data
   sync                   Sync new mail from Gmail, IMAP, and Microsoft accounts
   sync-beeper            Sync chats from Beeper Desktop (all connected networks)

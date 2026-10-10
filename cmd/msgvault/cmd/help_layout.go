@@ -114,6 +114,7 @@ var topLevelCommandGroups = map[string]string{
 	"media":                  helpGroupRead,
 	"meetings":               helpGroupRead,
 	"multimodal":             helpGroupIndex,
+	"muesli-hook":            helpGroupSources,
 	"openapi":                helpGroupOperations,
 	"organization":           helpGroupPeople,
 	"pack-attachments":       helpGroupMaintenance,

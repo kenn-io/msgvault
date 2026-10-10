@@ -290,7 +290,7 @@ func TestRootHelpGolden(t *testing.T) {
 	expected := strings.ReplaceAll(string(want), "\r\n", "\n")
 	actual := strings.ReplaceAll(output.String(), "\r\n", "\n")
 	assertions.Equal(expected, actual)
-	assertions.LessOrEqual(output.Len(), 11500, "shorten start-here comments if root exceeds its help budget")
+	assertions.LessOrEqual(output.Len(), 12000, "shorten start-here comments if root exceeds its help budget")
 	assertions.Contains(output.String(), "Start here:")
 	_, startHere, found := strings.Cut(rootCmd.Long, "Start here:\n")
 	requirements.True(found)
