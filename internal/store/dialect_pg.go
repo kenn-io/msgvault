@@ -2355,7 +2355,9 @@ func (d *PostgreSQLDialect) IsFTSValueTooLargeError(err error) bool {
 // collections is included (despite not being a direct sources cascade target)
 // so a concurrent collection rename cannot race the collection_sources cascade.
 var exclusiveLockTables = []string{
-	"sync_runs", "sources", "conversations", "conversation_participants",
+	// Sync start/recovery locks the source, then operations, then runs.
+	// Maintenance must follow that order or block the transaction it waits for.
+	"sources", "sync_operations", "sync_runs", "conversations", "conversation_participants",
 	"messages", "message_recipients", "message_labels", "message_bodies", "message_raw",
 	"message_delivery_addresses",
 	"meeting_details", "meeting_action_items",
@@ -2373,7 +2375,6 @@ var exclusiveLockTables = []string{
 	"activity_events", "activity_event_persons", "person_contact_state",
 	"activity_projection_queue",
 	"collections", "collection_sources", "account_identities", "applied_migrations",
-	"sync_operations",
 	"source_import_items", "sync_run_items", "sync_checkpoints",
 	"imap_folder_state", "imap_message_memberships", "imap_drafts", "gmail_drafts", "chat_drafts", "beeper_drafts",
 }
