@@ -124,7 +124,7 @@
 
 </script>
 
-<section class="transcript-hits" aria-label="Spoken in recordings" data-scroll>
+<section class="transcript-hits" aria-label="Spoken in recordings" tabindex="-1" data-scroll>
   <header>
     <h2>Recordings{#if result && result.results.length > 0}<span class="count">{result.results.length}</span>{/if}</h2>
     {#if result || expired}<Button label="Refresh" size="sm" surface="soft" onclick={() => retry += 1} />{/if}
