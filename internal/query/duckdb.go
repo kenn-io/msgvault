@@ -538,6 +538,12 @@ func (e *DuckDBEngine) parquetPath(table string) string {
 	return filepath.Join(e.analyticsDir, table, "*.parquet")
 }
 
+// filenameCondition matches msg rows with an attachment name ILIKE the bound pattern.
+// It reads the cached Parquet because the daemon never attaches sqlite_db.
+func (e *DuckDBEngine) filenameCondition() string {
+	return fmt.Sprintf(`EXISTS (SELECT 1 FROM read_parquet('%s') fa WHERE CAST(fa.message_id AS BIGINT) = msg.id AND CAST(fa.filename AS VARCHAR) ILIKE ? ESCAPE '\')`, e.parquetPath("attachments"))
+}
+
 // hasCol returns true if the named column exists in the Parquet schema for the given table.
 func (e *DuckDBEngine) hasCol(table, col string) bool {
 	e.optColsMu.RLock()
@@ -1031,6 +1037,10 @@ func (e *DuckDBEngine) buildNonTextSearchConditions(q *search.Query, keyColumns 
 	if accountConditions, accountArgs := search.AccountConditions(q, "msg"); len(accountConditions) > 0 {
 		conditions = append(conditions, accountConditions...)
 		args = append(args, accountArgs...)
+	}
+	for _, filename := range q.Filenames {
+		conditions = append(conditions, e.filenameCondition())
+		args = append(args, "%"+escapeILIKE(filename)+"%")
 	}
 
 	// label: filter - case-insensitive substring match.
@@ -2311,6 +2321,10 @@ func (e *DuckDBEngine) Search(ctx context.Context, q *search.Query, limit, offse
 		conditions = append(conditions, accountConditions...)
 		args = append(args, accountArgs...)
 	}
+	for _, filename := range q.Filenames {
+		conditions = append(conditions, `EXISTS (SELECT 1 FROM sqlite_db.attachments fa WHERE fa.message_id = m.id AND fa.filename ILIKE ? ESCAPE '\')`)
+		args = append(args, "%"+escapeILIKE(filename)+"%")
+	}
 
 	if len(q.MessageTypes) > 0 {
 		condition, conditionArgs := duckDBMessageTypeCondition("m", q.MessageTypes)
@@ -3205,6 +3219,10 @@ func (e *DuckDBEngine) buildSearchConditions(q *search.Query, filter MessageFilt
 	if accountConditions, accountArgs := search.AccountConditions(q, "msg"); len(accountConditions) > 0 {
 		conditions = append(conditions, accountConditions...)
 		args = append(args, accountArgs...)
+	}
+	for _, filename := range q.Filenames {
+		conditions = append(conditions, e.filenameCondition())
+		args = append(args, "%"+escapeILIKE(filename)+"%")
 	}
 
 	// Label filter - case-insensitive substring match

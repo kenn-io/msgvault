@@ -69,3 +69,17 @@ func TestSearchMessageIDsQueryPreservesRankScopeAndTotal(t *testing.T) {
 	_, _, err = f.Store.SearchMessageIDsQueryContext(ctx, &search.Query{TextTerms: []string{"glacier"}}, 10)
 	assert.ErrorIs(t, err, context.Canceled)
 }
+
+func TestSearchMessagesFilenameLiteralFilters(t *testing.T) {
+	require := require.New(t)
+
+	f := storetest.New(t)
+	id := f.NewMessage().WithSubject("Plan").Create(t, f.Store)
+	other := f.NewMessage().WithSubject("Plan").Create(t, f.Store)
+	_, err := f.Store.DB().Exec(f.Store.Rebind(`INSERT INTO attachments(message_id,filename,mime_type,size,storage_path,content_hash) VALUES (?,'Budget%_Plan.PDF','application/pdf',10,'synthetic',NULL),(?,'界.csv','text/csv',10,'synthetic',NULL),(?,'BudgetXXPlan.pdf','application/pdf',10,'synthetic',NULL)`), id, id, other)
+	require.NoError(err)
+	rows, _, err := f.Store.SearchMessagesQueryContext(t.Context(), search.Parse(`filename:budget%_ filename:界`), 0, 1)
+	require.NoError(err)
+	require.Len(rows, 1)
+	assert.Equal(t, id, rows[0].ID)
+}

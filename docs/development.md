@@ -109,7 +109,14 @@ make test
 
 # Verbose output
 make test-v
+
+# Build the CLI and exercise search and thread reading on a synthetic archive
+make test-cli-e2e
 ```
+
+`test-cli-e2e` uses an isolated archive and a fixed synthetic embedding provider.
+Linux CI runs it against the built release binary. To reuse a binary locally,
+set `MSGVAULT_E2E_BINARY` to its absolute path.
 
 ### Build tags and assertions
 

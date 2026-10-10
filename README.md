@@ -125,7 +125,7 @@ first sync, and running on your own server.
 |---|---|
 | Understand the product | [Product overview](https://msgvault.io/) and [archive lifecycle](https://msgvault.io/guide/) |
 | Upgrade an existing archive | [Changelog and upgrade notes](docs/changelog.md#0210) |
-| Search messages and attachments | [Searching](docs/usage/searching.md) and [document indexing](docs/usage/document-indexing.md) |
+| Find messages by words or meaning, read threads, and locate attachments | [Searching](docs/usage/searching.md) and [document indexing](docs/usage/document-indexing.md) |
 | Maintain contacts and relationships | [People and profiles](docs/usage/people.md) |
 | Import local text-message history | [Text message imports](docs/usage/text-messages.md) |
 | Configure optional AI features | [Recommended configuration](docs/usage/recommended-configuration.md) |

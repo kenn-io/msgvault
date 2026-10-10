@@ -679,6 +679,7 @@ type cliDeleteDedupedExecuteResponse struct {
 }
 
 type cliSearchResponse struct {
+	HybridAvailable  bool                   `json:"hybrid_available,omitzero"`
 	Results          []query.MessageSummary `json:"results"`
 	ScopeLabel       string                 `json:"scope_label,omitempty"`
 	ScopeSourceCount int                    `json:"scope_source_count,omitzero"`
@@ -2333,6 +2334,16 @@ func (s *Server) handleCLISearch(w http.ResponseWriter, r *http.Request) {
 	account := r.URL.Query().Get("account")
 	collection := r.URL.Query().Get("collection")
 
+	includeSnippet := false
+	if r.URL.Query().Has("include_snippet") {
+		var err error
+		includeSnippet, err = strconv.ParseBool(r.URL.Query().Get("include_snippet"))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_include_snippet", "include_snippet must be a boolean")
+			return
+		}
+	}
+
 	limit := parseCLISearchInt(r.URL.Query().Get("limit"), 50)
 	if limit <= 0 {
 		limit = 50
@@ -2417,7 +2428,25 @@ func (s *Server) handleCLISearch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "search_failed", err.Error())
 		return
 	}
+	if includeSnippet {
+		metadata, err := s.searchMetadata(r.Context(), resultIDs(results), parsed, true)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "search_failed", err.Error())
+			return
+		}
+		for i := range results {
+			if item, ok := metadata[results[i].ID]; ok {
+				results[i].AttachmentNames = item.AttachmentNames
+				results[i].MatchSnippet = item.MatchSnippet
+			}
+		}
+	}
 	resp.Results = results
+	if len(results) == 0 && offset == 0 && len(parsed.TextTerms) > 0 &&
+		len(parsed.AccountAddrs) == 0 && len(parsed.ReceivedAddrs) == 0 &&
+		parsed.DeletionScope != search.DeletionScopeDeleted && parsed.DeletionScope != search.DeletionScopeAny {
+		resp.HybridAvailable = s.hybridHintAvailable(r.Context(), parsed.MessageTypes)
+	}
 	writeJSON(w, http.StatusOK, resp)
 }
 

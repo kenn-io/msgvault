@@ -9,7 +9,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
+	"go.kenn.io/msgvault/internal/vector/hybrid"
 )
 
 func TestVectorFilterMessageIDsBeforeRanking(t *testing.T) {
@@ -349,4 +352,27 @@ func hitMessageIDs(hits []vector.Hit) []int64 {
 		out[i] = h.MessageID
 	}
 	return out
+}
+
+func TestVectorFilenameFilterBeforeRanking(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	f := seedThree(t)
+	_, err := f.db.ExecContext(f.ctx, `INSERT INTO attachments(message_id,filename) VALUES (2,'Budget%_Plan.PDF'),(2,'界.csv'),(1,'BudgetXXPlan.pdf')`)
+	require.NoError(err)
+	filter, err := hybrid.BuildFilter(f.ctx, f.db, (&store.PostgreSQLDialect{}).Rebind, search.Parse(`filename:budget%_ filename:界`))
+	require.NoError(err)
+	hits, err := f.b.Search(f.ctx, f.gen, unitVec(4, 0), 1, filter)
+	require.NoError(err)
+	require.Len(hits, 1)
+	assert.Equal(int64(2), hits[0].MessageID)
+	fused, _, err := f.b.FusedSearch(f.ctx, vector.FusedRequest{QueryVec: unitVec(4, 0), Generation: f.gen, KPerSignal: 10, Limit: 1, RRFK: 60, Filter: filter})
+	require.NoError(err)
+	require.Len(fused, 1)
+	assert.Equal(int64(2), fused[0].MessageID)
+
+	lexical, _, err := f.b.FusedSearch(f.ctx, vector.FusedRequest{FTSTerms: []string{"quantum"}, Generation: f.gen, KPerSignal: 10, Limit: 1, RRFK: 60, Filter: filter})
+	require.NoError(err)
+	assert.Empty(lexical, "filename filters apply to the lexical leg before fusion")
 }

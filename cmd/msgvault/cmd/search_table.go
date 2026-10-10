@@ -76,15 +76,27 @@ func writeSearchTable(out io.Writer, headers []string, rows [][]searchTableCell,
 		}
 	}
 	if width > 0 {
+		snippetIndex := -1
+		for i, header := range headers {
+			if header == "SNIPPET" {
+				snippetIndex = i
+			}
+		}
 		fixed := 2 * (len(headers) - 1)
 		for i, cells := range widths {
-			if i != 2 && i != 3 {
+			if i != 2 && i != 3 && i != snippetIndex {
 				fixed += cells
 			}
 		}
 		available := width - fixed
-		widths[2] = max(4, min(widths[2], 30, available-7))
-		widths[3] = max(7, min(widths[3], available-widths[2]))
+		if snippetIndex < 0 {
+			widths[2] = max(4, min(widths[2], 30, available-7))
+			widths[3] = max(7, min(widths[3], available-widths[2]))
+		} else {
+			widths[2] = max(4, min(widths[2], 20, available/4))
+			widths[3] = max(7, min(widths[3], available/3))
+			widths[snippetIndex] = max(7, min(widths[snippetIndex], available-widths[2]-widths[3]))
+		}
 	}
 
 	writeRow := func(cells []string) error {

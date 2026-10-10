@@ -100,7 +100,7 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.10.0**.
+it is separate from the binary release version. The current schema is **3.11.0**.
 Upgrade clients and daemon together across incompatible schema versions,
 including remote deployments.
 
@@ -149,6 +149,9 @@ message's recordings with their Docbank transcript state. Existing routes are
 unchanged.
 
 Schema 3.7.0 adds `GET /api/v1/media/search` for scoped lexical transcript search.
+
+Schema 3.11.0 adds `filename:` search filters, optional match snippets,
+attachment names and counts, and `hybrid_available` to CLI search responses.
 
 Schema 2.35.0 adds `scope_escalation_source_type` (`gmail` or `msmail`) to
 `POST /api/v1/cli/delete-staged/plan` responses that require a permission

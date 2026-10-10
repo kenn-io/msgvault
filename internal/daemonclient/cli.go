@@ -23,6 +23,7 @@ import (
 	"go.kenn.io/msgvault/internal/collectionops"
 	"go.kenn.io/msgvault/internal/contentverify"
 	"go.kenn.io/msgvault/internal/deletion"
+	"go.kenn.io/msgvault/internal/httpretry"
 	"go.kenn.io/msgvault/internal/identityops"
 	"go.kenn.io/msgvault/internal/jsonexact"
 	"go.kenn.io/msgvault/internal/query"
@@ -166,16 +167,18 @@ type CLIInitDB struct {
 }
 
 type CLISearchRequest struct {
-	Query         string
-	Account       string
-	Collection    string
-	DeletionScope string
-	MessageTypes  []string
-	Limit         int
-	Offset        int
+	IncludeSnippet bool
+	Query          string
+	Account        string
+	Collection     string
+	DeletionScope  string
+	MessageTypes   []string
+	Limit          int
+	Offset         int
 }
 
 type CLISearch struct {
+	HybridAvailable  bool                   `json:"hybrid_available,omitzero"`
 	Results          []query.MessageSummary `json:"results"`
 	ScopeLabel       string                 `json:"scope_label,omitempty"`
 	ScopeSourceCount int                    `json:"scope_source_count,omitzero"`
@@ -230,6 +233,7 @@ type CLIHybridGeneration struct {
 
 type CLIHybridSearchResult struct {
 	Message          query.MessageSummary
+	AttachmentCount  *int64
 	ID               int64
 	Subject          string
 	FromEmail        string
@@ -958,13 +962,14 @@ func (c *Client) GetCLISearch(ctx context.Context, req CLISearchRequest) (*CLISe
 	resp, err := APIResponse(c, func(client *apiclient.Client) (*generated.SearchCLIResp, error) {
 		return client.SearchCLIWithResponse(ctx, &generated.SearchCLIRequestOptions{
 			Query: &generated.SearchCLIQuery{
-				Q:             req.Query,
-				Account:       optionalString(req.Account),
-				Collection:    optionalString(req.Collection),
-				DeletionScope: optionalString(req.DeletionScope),
-				MessageType:   optionalMessageTypes(req.MessageTypes),
-				Limit:         optionalPositiveInt64(req.Limit),
-				Offset:        optionalPositiveInt64(req.Offset),
+				Q:              req.Query,
+				IncludeSnippet: optionalBool(req.IncludeSnippet),
+				Account:        optionalString(req.Account),
+				Collection:     optionalString(req.Collection),
+				DeletionScope:  optionalString(req.DeletionScope),
+				MessageType:    optionalMessageTypes(req.MessageTypes),
+				Limit:          optionalPositiveInt64(req.Limit),
+				Offset:         optionalPositiveInt64(req.Offset),
 			},
 		})
 	})
@@ -1355,19 +1360,44 @@ func (c *Client) RebuildCLIFTS(
 }
 
 func (c *Client) GetCLIMessage(ctx context.Context, id string) (*query.MessageDetail, error) {
-	resp, err := APIResponseWithNotFound(
-		c,
-		func(client *apiclient.Client) (*generated.GetCLIMessageResp, error) {
-			return client.GetCLIMessageWithResponse(ctx, &generated.GetCLIMessageRequestOptions{
-				Query: &generated.GetCLIMessageQuery{ID: id},
-			})
-		},
-		func(*generated.GetCLIMessageResp) error {
-			return fmt.Errorf("message %s: %w", id, store.ErrMessageNotFound)
-		},
-	)
-	if err != nil {
+	// Thread pages can exhaust a remote daemon's shared request burst.
+	policy := backoff.NewExponentialBackOff()
+	policy.InitialInterval = time.Second
+	policy.MaxInterval = 10 * time.Second
+	resp, err := backoff.Retry(ctx, func() (*generated.GetCLIMessageResp, error) {
+		var retryAfter string
+		resp, err := APIResponseWithNotFound(
+			c,
+			func(client *apiclient.Client) (*generated.GetCLIMessageResp, error) {
+				resp, err := client.GetCLIMessageWithResponse(ctx, &generated.GetCLIMessageRequestOptions{
+					Query: &generated.GetCLIMessageQuery{ID: id},
+				})
+				if resp != nil && resp.HTTPResponse != nil {
+					retryAfter = resp.HTTPResponse.Header.Get("Retry-After")
+				}
+				return resp, err
+			},
+			func(*generated.GetCLIMessageResp) error {
+				return fmt.Errorf("message %s: %w", id, store.ErrMessageNotFound)
+			},
+		)
+		if err == nil {
+			return resp, nil
+		}
+		apiErr, ok := errors.AsType[*APIError](err)
+		if !ok || apiErr.Status != http.StatusTooManyRequests {
+			return nil, backoff.Permanent(err)
+		}
+		if delay, ok := httpretry.ParseRetryAfter(retryAfter, 0, time.Now()); ok {
+			return nil, backoff.RetryAfter(delay, err)
+		}
 		return nil, err
+	}, backoff.WithBackOff(policy), backoff.WithMaxTries(5), backoff.WithMaxElapsedTime(time.Minute))
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, backoff.AsRetryError(err).LastErr
 	}
 	message := cliMessageDetailFromGenerated(resp.JSON200)
 	if message != nil {

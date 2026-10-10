@@ -4442,3 +4442,7 @@ func scheduledTeamsImportOptions(email string, cfg *config.Config) teams.ImportO
 		IncludeChannels: true,
 	}
 }
+
+func (a *storeAPIAdapter) GetSearchMetadata(ctx context.Context, ids []int64, q *search.Query, includeSnippet bool) (map[int64]store.SearchMetadata, error) {
+	return a.store.GetSearchMetadata(ctx, ids, q, includeSnippet)
+}

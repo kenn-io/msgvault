@@ -707,3 +707,15 @@ func TestSearch_DeletionScope(t *testing.T) {
 	results := env.MustSearch(merged, 100, 0)
 	require.Len(t, results, 3, "Search via merged query")
 }
+
+func TestSearchFilenameLiteralFilters(t *testing.T) {
+	env := newTestEnv(t)
+	id := env.AddMessage(dbtest.MessageOpts{Subject: "shared plan", SentAt: "2026-01-01 10:00:00"})
+	other := env.AddMessage(dbtest.MessageOpts{Subject: "shared plan", SentAt: "2026-02-01 10:00:00"})
+	_, err := env.DB.Exec(`INSERT INTO attachments(message_id,filename,mime_type,size,storage_path,content_hash) VALUES (?, 'Budget%_Plan.PDF','application/pdf',10,'synthetic',NULL),(?,'界.csv','text/csv',10,'synthetic',NULL),(?,'BudgetXXPlan.pdf','application/pdf',10,'synthetic',NULL)`, id, id, other)
+	require.NoError(t, err)
+	env.EnableFTS()
+	rows := env.MustSearch(search.Parse(`shared filename:budget%_ filename:界`), 1, 0)
+	require.Len(t, rows, 1)
+	assert.Equal(t, id, rows[0].ID)
+}

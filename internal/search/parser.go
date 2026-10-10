@@ -20,6 +20,7 @@ type Query struct {
 	BccAddrs        []string   // bcc: filters
 	SubjectTerms    []string   // subject: filters
 	Labels          []string   // label: filters
+	Filenames       []string   // filename: literal attachment-name filters
 	ListIDs         []string   // list: or list-id: filters
 	AccountAddrs    []string   // account: exact attributed account address
 	ReceivedAddrs   []string   // received: exact address that received the message
@@ -125,6 +126,7 @@ func (q *Query) IsEmpty() bool {
 		len(q.BccAddrs) == 0 &&
 		len(q.SubjectTerms) == 0 &&
 		len(q.Labels) == 0 &&
+		len(q.Filenames) == 0 &&
 		len(q.ListIDs) == 0 &&
 		len(q.AccountAddrs) == 0 &&
 		len(q.ReceivedAddrs) == 0 &&
@@ -246,6 +248,12 @@ var operators = map[string]operatorFn{
 		// than an error: the operator takes free text, not a typed value.
 		if v = strings.TrimSpace(v); v != "" {
 			q.SubjectTerms = append(q.SubjectTerms, v)
+		}
+		return nil
+	},
+	"filename": func(q *Query, v string, _ time.Time) error {
+		if v = strings.TrimSpace(v); v != "" {
+			q.Filenames = append(q.Filenames, v)
 		}
 		return nil
 	},
@@ -628,6 +636,7 @@ func (q *Query) HasOperators() bool {
 		len(q.BccAddrs) > 0 ||
 		len(q.SubjectTerms) > 0 ||
 		len(q.Labels) > 0 ||
+		len(q.Filenames) > 0 ||
 		len(q.ListIDs) > 0 ||
 		len(q.AccountAddrs) > 0 ||
 		len(q.ReceivedAddrs) > 0 ||

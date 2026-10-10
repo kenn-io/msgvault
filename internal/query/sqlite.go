@@ -1947,6 +1947,11 @@ func (e *SQLiteEngine) buildSearchQueryPartsWithVisibility(ctx context.Context, 
 		args = append(args, accountArgs...)
 	}
 
+	for _, filename := range q.Filenames {
+		conditions = append(conditions, "EXISTS (SELECT 1 FROM attachments fa WHERE fa.message_id = m.id AND "+metadataContainsExpression(e.dialect, "fa.filename")+")")
+		args = append(args, "%"+escapeSQLiteLike(filename)+"%")
+	}
+
 	// message_type: filter (e.g. sms, whatsapp, calendar_event). The store
 	// API path (store/api.go) honors q.MessageTypes; the FTS query path must
 	// too, or `--mode=fts` search silently ignores message_type scoping for

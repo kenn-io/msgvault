@@ -671,6 +671,11 @@ func (s *Store) buildMessageSearchSQL(q *search.Query, ftsAvailable bool) messag
 			s.dialect.UnicodeLowerExpression("?")))
 		args = append(args, "%"+escapeLike(strings.ToLower(listID))+"%")
 	}
+	for _, filename := range q.Filenames {
+		conditions = append(conditions, fmt.Sprintf(`EXISTS (SELECT 1 FROM attachments fa WHERE fa.message_id = m.id AND %s LIKE %s ESCAPE '\')`,
+			s.dialect.UnicodeLowerExpression("COALESCE(fa.filename, '')"), s.dialect.UnicodeLowerExpression("?")))
+		args = append(args, "%"+escapeLike(filename)+"%")
+	}
 	// Structured Explore mailing-list filters use exact membership. Each
 	// request filter is an OR group, and repeated filters are ANDed.
 	for _, group := range q.ListIDExactGroups {

@@ -159,6 +159,8 @@ func captureStderr(t *testing.T) func() string {
 }
 
 func resetSearchFlags() {
+	searchShowSnippet = false
+	searchSort = ""
 	searchAccount = ""
 	searchCollection = ""
 	searchLimit = 50

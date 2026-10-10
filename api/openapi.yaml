@@ -1022,6 +1022,10 @@ components:
         attachment_count:
           format: int64
           type: integer
+        attachment_names:
+          items:
+            type: string
+          type: array
         bcc:
           items:
             $ref: "#/components/schemas/Address"
@@ -1055,6 +1059,8 @@ components:
           items:
             type: string
           type: array
+        match_snippet:
+          type: string
         message_type:
           type: string
         sent_at:
@@ -2660,6 +2666,8 @@ components:
     CliSearchResponse:
       additionalProperties: true
       properties:
+        hybrid_available:
+          type: boolean
         index_built:
           type: boolean
         index_state:
@@ -5762,6 +5770,13 @@ components:
     HybridSearchItem:
       additionalProperties: true
       properties:
+        attachment_count:
+          format: int64
+          type: integer
+        attachment_names:
+          items:
+            type: string
+          type: array
         bcc:
           items:
             type: string
@@ -15218,7 +15233,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.10.0
+  version: 3.11.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -18685,6 +18700,11 @@ paths:
     get:
       operationId: searchCLI
       parameters:
+        - description: Include attachment names and bounded FTS match context
+          in: query
+          name: include_snippet
+          schema:
+            type: boolean
         - description: Search query
           in: query
           name: q

@@ -50,7 +50,8 @@ GO_INSTALL_BIN := $(shell go env GOPATH)/bin
 endif
 GOLANGCI_LINT_BIN := $(GO_INSTALL_BIN)/golangci-lint
 CI_TOOLS_BIN := $(shell git rev-parse --path-format=absolute --git-path ci-tools/bin)
-CUSTOM_GCL_BIN := $(CI_TOOLS_BIN)/custom-gcl$(shell go env GOEXE)
+GOEXE := $(shell go env GOEXE)
+CUSTOM_GCL_BIN := $(CI_TOOLS_BIN)/custom-gcl$(GOEXE)
 GOVULNCHECK_BIN := $(CI_TOOLS_BIN)/govulncheck
 
 # Build tags for the PostgreSQL test lane (test-pg). Must be the full build set:
@@ -72,7 +73,7 @@ PG_TEST_TAGS := fts5 sqlite_vec pgvector
 # configuration. Verified by `make pg-shipped-only-check`, which re-derives the
 # closure from `go list`.
 NOCGO_LINT_PKGS := ./pkg/archive/... ./internal/postgresprofile/... ./internal/sqliteutil/... ./internal/duckdbutil/... ./internal/muesli/...
-PG_SHIPPED_ONLY_PKGS := ./cmd/msgvault ./cmd/msgvault/cmd ./internal/api ./internal/daemonclient ./internal/mcp ./internal/scheduler ./internal/store ./internal/vector/chunkmatch ./internal/vector/document ./internal/vector/embed ./internal/vector/hybrid ./internal/vector/pgvector ./pkg/archive ./scripts/contextual-retrieval-eval
+PG_SHIPPED_ONLY_PKGS := ./cmd/msgvault ./cmd/msgvault/cmd ./internal/api ./internal/daemonclient ./internal/mcp ./internal/scheduler ./internal/store ./internal/vector/chunkmatch ./internal/vector/document ./internal/vector/embed ./internal/vector/hybrid ./internal/vector/pgvector ./internal/vector/sqlitevec ./pkg/archive ./scripts/contextual-retrieval-eval
 
 OPENAPI_ARTIFACTS := api/openapi.yaml pkg/client/openapi.yaml pkg/client/generated
 WEB_INSTALL_STAMP := web/node_modules/.msgvault-install-stamp
@@ -97,11 +98,11 @@ ifeq ($(shell go env GOOS),linux)
 	CGO_ENABLED=0 go build -trimpath -buildvcs=false -o msgvault-codex-bridge ./cmd/msgvault-codex-bridge
 	chmod 755 msgvault-codex-bridge
 	@bridge_digest=$$(sha256sum msgvault-codex-bridge | cut -d' ' -f1); \
-		CGO_ENABLED=1 go build -tags "$(BUILD_TAGS)" -ldflags="$(LDFLAGS) -X go.kenn.io/msgvault/internal/peoplesweep.codexBridgeSHA256=$$bridge_digest" -o msgvault ./cmd/msgvault
+		CGO_ENABLED=1 go build -tags "$(BUILD_TAGS)" -ldflags="$(LDFLAGS) -X go.kenn.io/msgvault/internal/peoplesweep.codexBridgeSHA256=$$bridge_digest" -o msgvault$(GOEXE) ./cmd/msgvault
 else
-	CGO_ENABLED=1 go build -tags "$(BUILD_TAGS)" -ldflags="$(LDFLAGS)" -o msgvault ./cmd/msgvault
+	CGO_ENABLED=1 go build -tags "$(BUILD_TAGS)" -ldflags="$(LDFLAGS)" -o msgvault$(GOEXE) ./cmd/msgvault
 endif
-	@chmod +x msgvault
+	@chmod +x msgvault$(GOEXE)
 
 # Build with optimizations (release)
 build-release: web-embed
@@ -109,17 +110,17 @@ ifeq ($(shell go env GOOS),linux)
 	CGO_ENABLED=0 go build -trimpath -buildvcs=false -o msgvault-codex-bridge ./cmd/msgvault-codex-bridge
 	chmod 755 msgvault-codex-bridge
 	@bridge_digest=$$(sha256sum msgvault-codex-bridge | cut -d' ' -f1); \
-		CGO_ENABLED=1 go build -tags "$(BUILD_TAGS)" -ldflags="$(LDFLAGS_RELEASE) -X go.kenn.io/msgvault/internal/peoplesweep.codexBridgeSHA256=$$bridge_digest" -trimpath -o msgvault ./cmd/msgvault
+		CGO_ENABLED=1 go build -tags "$(BUILD_TAGS)" -ldflags="$(LDFLAGS_RELEASE) -X go.kenn.io/msgvault/internal/peoplesweep.codexBridgeSHA256=$$bridge_digest" -trimpath -o msgvault$(GOEXE) ./cmd/msgvault
 else
-	CGO_ENABLED=1 go build -tags "$(BUILD_TAGS)" -ldflags="$(LDFLAGS_RELEASE)" -trimpath -o msgvault ./cmd/msgvault
+	CGO_ENABLED=1 go build -tags "$(BUILD_TAGS)" -ldflags="$(LDFLAGS_RELEASE)" -trimpath -o msgvault$(GOEXE) ./cmd/msgvault
 endif
-	@chmod +x msgvault
+	@chmod +x msgvault$(GOEXE)
 
 # Install to ~/.local/bin, $GOBIN, or $GOPATH/bin
 install: build
 	@set -e; if [ -d "$(HOME)/.local/bin" ]; then \
-		echo "Installing to ~/.local/bin/msgvault"; \
-		install -m 755 msgvault "$(HOME)/.local/bin/msgvault"; \
+		echo "Installing to ~/.local/bin/msgvault$(GOEXE)"; \
+		install -m 755 msgvault$(GOEXE) "$(HOME)/.local/bin/msgvault$(GOEXE)"; \
 		if [ "$$(go env GOOS)" = linux ]; then install -m 755 msgvault-codex-bridge "$(HOME)/.local/bin/msgvault-codex-bridge"; fi; \
 	else \
 		INSTALL_DIR="$${GOBIN:-$$(go env GOBIN)}"; \
@@ -128,8 +129,8 @@ install: build
 			INSTALL_DIR="$$GOPATH_FIRST/bin"; \
 		fi; \
 		mkdir -p "$$INSTALL_DIR"; \
-		echo "Installing to $$INSTALL_DIR/msgvault"; \
-		install -m 755 msgvault "$$INSTALL_DIR/msgvault"; \
+		echo "Installing to $$INSTALL_DIR/msgvault$(GOEXE)"; \
+		install -m 755 msgvault$(GOEXE) "$$INSTALL_DIR/msgvault$(GOEXE)"; \
 		if [ "$$(go env GOOS)" = linux ]; then install -m 755 msgvault-codex-bridge "$$INSTALL_DIR/msgvault-codex-bridge"; fi; \
 	fi
 
@@ -156,6 +157,12 @@ test:
 		echo "Tests: standard package schedule, $(TEST_SHARDS) shards"; \
 		$(MAKE) test-standard; \
 	fi
+
+# Use an existing built binary when supplied, otherwise build the worktree CLI.
+.PHONY: test-cli-e2e
+test-cli-e2e:
+	@if [ -z "$(MSGVAULT_E2E_BINARY)" ]; then $(MAKE) build; fi
+	MSGVAULT_E2E_BINARY="$(if $(MSGVAULT_E2E_BINARY),$(MSGVAULT_E2E_BINARY),$(CURDIR)/msgvault$(GOEXE))" go test -timeout $(TEST_TIMEOUT) -tags "$(BUILD_TAGS)" ./cmd/msgvault/cmd -run '^TestSearchDiscoverabilityBuiltCLI$$' -count=1
 
 .PHONY: test-standard $(SQLITE_SHARD_TARGETS)
 test-standard:
@@ -541,6 +548,7 @@ help:
 	@echo ""
 	@echo "  test           - Run SQLite tests with automatic CPU/memory scaling (TEST_PROFILE=standard disables)"
 	@echo "  test-v         - Run tests (verbose)"
+	@echo "  test-cli-e2e    - Build and test the CLI on a synthetic archive"
 	@echo "  test-shards    - Run SHARDED_TEST_PKGS as TEST_SHARDS concurrent processes each"
 	@echo "  test-unsharded - Run every package except SHARDED_TEST_PKGS (CI's test lane)"
 	@echo "  fmt            - Format code"

@@ -119,6 +119,7 @@ type Dialect interface {
 	// placeholder. SQLite parses both operands as instants because archives can
 	// contain mixed textual offsets; PostgreSQL compares typed timestamps.
 	DateComparison(column, operator string) string
+	DateOrderExpression(column string) string
 
 	// messageBodyContextBackend selects the backend-native highlighter used to
 	// extract exact context for body-index hits.
@@ -359,3 +360,8 @@ func (PostgreSQLQueryDialect) SanitizeFTSQuery(query string) string {
 	}
 	return strings.Join(parts, " & ")
 }
+
+func (SQLiteQueryDialect) DateOrderExpression(column string) string {
+	return sqliteutil.TimestampKeyFunction + "(" + column + ")"
+}
+func (PostgreSQLQueryDialect) DateOrderExpression(column string) string { return column }

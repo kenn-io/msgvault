@@ -416,11 +416,13 @@ type hybridGenerationSummary struct {
 // hybridSearchItem is a single hit in a vector/hybrid response. It
 // embeds MessageSummary (not APIMessage) so the JSON schema matches
 // /api/v1/search's summary surface — callers get the same snake-case
-// fields, and we do not leak full message bodies, headers, or
-// attachment metadata in search results. Score is present only when
-// explain=1 was requested.
+// fields. Full bodies and headers are excluded; attachment names and counts
+// are included intentionally. Score is present only when explain=1 was requested.
 type hybridSearchItem struct {
 	MessageSummary
+
+	AttachmentNames []string `json:"attachment_names,omitzero"`
+	AttachmentCount *int     `json:"attachment_count,omitzero" nullable:"false"`
 
 	Score            *scoreBreakdown     `json:"score,omitzero" nullable:"false"`
 	Matches          []hybridSearchMatch `json:"matches,omitempty"`
@@ -1157,6 +1159,13 @@ func (s *Server) handleHybridSearch(
 	for _, m := range summaries {
 		byID[m.ID] = m
 	}
+	metadata, err := s.searchMetadata(ctx, hitIDs, nil, false)
+	if err != nil {
+		if s.writeIfContextError(w, err) {
+			return
+		}
+		s.logger.Warn("hybrid attachment names failed", "ids", len(hitIDs), "error", err)
+	}
 	items := make([]hybridSearchItem, 0, len(pageHits))
 	for _, h := range pageHits {
 		msg, ok := byID[h.MessageID]
@@ -1168,6 +1177,10 @@ func (s *Server) handleHybridSearch(
 			continue
 		}
 		item := hybridSearchItem{MessageSummary: toMessageSummary(msg)}
+		if extra, ok := metadata[msg.ID]; ok {
+			item.AttachmentNames = extra.AttachmentNames
+			item.AttachmentCount = &extra.AttachmentCount
+		}
 		if explain {
 			sb := &scoreBreakdown{SubjectBoosted: h.SubjectBoosted}
 			if !math.IsNaN(h.RRFScore) {

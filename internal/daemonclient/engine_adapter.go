@@ -34,6 +34,8 @@ const (
 	// accountAttributionMinAPISchemaVersion is the first daemon contract that
 	// understands account: and received:; older daemons read them as text.
 	accountAttributionMinAPISchemaVersion = "3.5.0"
+	// filenameMinAPISchemaVersion is the first daemon contract with filename: filters.
+	filenameMinAPISchemaVersion = "3.11.0"
 )
 
 // Engine implements query.Engine by making HTTP calls to a msgvault daemon.
@@ -1328,6 +1330,15 @@ func (c *Client) requireListIDCapability(
 		if !supported {
 			return fmt.Errorf("account: and received: filters require daemon API schema %s or newer",
 				accountAttributionMinAPISchemaVersion)
+		}
+	}
+	if q != nil && len(q.Filenames) > 0 {
+		supported, err := c.SupportsAPISchemaVersion(ctx, filenameMinAPISchemaVersion)
+		if err != nil {
+			return fmt.Errorf("check daemon filename filter capability: %w", err)
+		}
+		if !supported {
+			return fmt.Errorf("filename filter requires daemon API schema %s or newer", filenameMinAPISchemaVersion)
 		}
 	}
 	if filter.ListID == "" && (q == nil || len(q.ListIDs) == 0) &&

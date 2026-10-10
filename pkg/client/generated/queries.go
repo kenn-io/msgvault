@@ -250,6 +250,9 @@ type GetCLIMessageThreadQuery struct {
 }
 
 type SearchCLIQuery struct {
+	// IncludeSnippet Include attachment names and bounded FTS match context
+	IncludeSnippet *bool `json:"include_snippet,omitempty"`
+
 	// Q Search query
 	Q string `json:"q" validate:"required"`
 
