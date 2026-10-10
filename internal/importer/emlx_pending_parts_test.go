@@ -186,3 +186,47 @@ func TestImportEmlxInterruptedIngestCreditsIntent(t *testing.T) {
 		})
 	}
 }
+
+// When an earlier file in the same chunk credits the interrupted occurrence,
+// that occurrence must use its credited receipt, not the one read before.
+func TestImportEmlxCreditReachesLaterFileInChunk(t *testing.T) {
+	r, a := require.New(t), assert.New(t)
+	st, tmp := openTestStore(t)
+	root := filepath.Join(tmp, "Inbox.mbox")
+	raw := partialRaw(nil, "one.bin")
+	mkMailboxDir(t, root, map[string][]byte{"2.partial.emlx": raw})
+	cacheAttachment(t, root, "2", "2", "one.bin", []byte("initial A bytes"))
+	opts := EmlxImportOptions{Identifier: "owner@example.test", AttachmentsDir: filepath.Join(tmp, "blobs")}
+	_, err := ImportEmlxDir(t.Context(), st, root, opts)
+	r.NoError(err)
+
+	cacheAttachment(t, root, "2", "2", "one.bin", []byte("A bytes before the stop"))
+	stopped := defaultEmlxImportIO(opts)
+	ingest := stopped.ingest
+	stopped.ingest = func(
+		ctx context.Context, s *store.Store, sid int64, identifier, dest string, labels []int64,
+		target, hash string, raw []byte, date time.Time, log *slog.Logger,
+	) error {
+		r.NoError(ingest(ctx, s, sid, identifier, dest, labels, target, hash, raw, date, log))
+		return errors.New("simulated process stop")
+	}
+	_, err = importEmlxDir(t.Context(), st, root, opts, stopped)
+	r.NoError(err)
+
+	// 1.partial.emlx sorts before A, so it finishes the interrupted message
+	// first and writes newer bytes in the same chunk that later visits A.
+	bBytes := []byte("B newer bytes")
+	mkMailboxDir(t, root, map[string][]byte{"1.partial.emlx": raw})
+	cacheAttachment(t, root, "1", "2", "one.bin", bBytes)
+	summary, err := ImportEmlxDir(t.Context(), st, root, opts)
+	r.NoError(err)
+	a.Zero(summary.Errors)
+	var messageID int64
+	r.NoError(st.DB().QueryRow("SELECT id FROM messages").Scan(&messageID))
+	current, err := st.GetMessageRawContext(t.Context(), messageID)
+	r.NoError(err)
+	parsed, err := mime.Parse(current)
+	r.NoError(err)
+	r.Len(parsed.Attachments, 1)
+	a.Equal(bBytes, parsed.Attachments[0].Content, "A does not replay bytes already credited to it")
+}
