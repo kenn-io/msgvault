@@ -88,6 +88,7 @@ All notable changes to msgvault, grouped by release.
   See [Microsoft contacts](usage/people-carddav.md#microsoft-contacts).
 - A CardDAV update or unpublish attempted while the Google sign-in is missing
   goes out after sign-in, instead of turning into a conflict to review.
+- Route Loom/Cap links and native Teams recording pointers to Docbank in the background with separate reference consent, including existing messages. Self-hosted Cap requires an exact configured origin.
 
 - **Transcripts beside recordings:** the Web reader shows each recording's
   Docbank transcript, or why there isn't one, under the expanded message.

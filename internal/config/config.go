@@ -29,6 +29,7 @@ import (
 	"go.kenn.io/msgvault/internal/peoplesweep"
 	"go.kenn.io/msgvault/internal/personenrichment"
 	"go.kenn.io/msgvault/internal/personmatch"
+	"go.kenn.io/msgvault/internal/recordingref"
 	"go.kenn.io/msgvault/internal/sqliteutil"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/taskclient"
@@ -123,16 +124,23 @@ type IntegrationsConfig struct {
 // DocbankIntegrationConfig configures the optional stored-media destination.
 // The selected API key source is read when a request runs.
 type DocbankIntegrationConfig struct {
-	Enabled                 bool   `toml:"enabled"`
-	URL                     string `toml:"url"`
-	APIKeyEnv               string `toml:"api_key_env"`
-	APIKey                  string `toml:"api_key"`
-	APIKeyFile              string `toml:"api_key_file"`
-	AllSourcesUploadConsent bool   `toml:"all_sources_upload_consent"`
-	ASRProfile              string `toml:"asr_profile"`
+	Enabled                 bool     `toml:"enabled"`
+	URL                     string   `toml:"url"`
+	APIKeyEnv               string   `toml:"api_key_env"`
+	APIKey                  string   `toml:"api_key"`
+	APIKeyFile              string   `toml:"api_key_file"`
+	AllSourcesUploadConsent bool     `toml:"all_sources_upload_consent"`
+	ASRProfile              string   `toml:"asr_profile"`
+	ReferenceConsent        bool     `toml:"reference_consent"`
+	ReferenceOrigins        []string `toml:"reference_origins"`
 }
 
 func (d DocbankIntegrationConfig) validate() error {
+	for _, origin := range d.ReferenceOrigins {
+		if _, err := recordingref.CanonicalOrigin(origin); err != nil {
+			return errors.New("integrations.docbank.reference_origins: invalid origin")
+		}
+	}
 	if strings.TrimSpace(d.ASRProfile) == "supplied-transcript" {
 		return errors.New(`integrations.docbank.asr_profile: "supplied-transcript" is reserved for supplied transcript input`)
 	}
