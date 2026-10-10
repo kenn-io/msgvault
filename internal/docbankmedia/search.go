@@ -5,8 +5,6 @@ import (
 	"net/http"
 	"slices"
 	"strings"
-
-	"go.kenn.io/docbank"
 )
 
 const MaxSearchVersions = 4096
@@ -14,7 +12,10 @@ const MaxSearchResults = 100
 const MaxSearchSuppliedInputs = 64
 const maxSearchBytes = 16 << 20
 
-type SearchFence = docbank.DocumentSourceFence
+type SearchFence struct {
+	VaultUID          string   `json:"vault_uid"`
+	ContentVersionIDs []string `json:"content_version_ids"`
+}
 
 type SearchRequest struct {
 	Query        string                `json:"query"`
@@ -68,7 +69,12 @@ type SearchHit struct {
 	Evidence         []SearchEvidence `json:"evidence"`
 }
 
-type SearchCoverage docbank.DocumentSearchCoverage
+type SearchCoverage struct {
+	BindingRequired   bool   `json:"binding_required"`
+	ScopedDocuments   int    `json:"scoped_documents"`
+	CompleteDocuments int    `json:"complete_documents"`
+	State             string `json:"state"`
+}
 
 type SearchReport struct {
 	MediaSourceSelection bool                   `json:"media_source_selection"`
@@ -80,9 +86,15 @@ type SearchReport struct {
 	Truncated            bool                   `json:"truncated"`
 }
 
+func validSearchRequest(request SearchRequest) bool {
+	return strings.TrimSpace(request.Query) != "" &&
+		request.Mode == "lexical" && request.Profile != "" && request.ContentFirst &&
+		request.Limit > 0 && request.Limit <= MaxSearchResults
+}
+
 // ValidateSearch checks an empty local scope without submitting an empty fence.
 func (c *Client) ValidateSearch(ctx context.Context, request SearchRequest) error {
-	if request.Fence != nil || len(request.MediaSources) != 0 {
+	if !validSearchRequest(request) || request.Fence != nil || len(request.MediaSources) != 0 {
 		return ErrInvalidRequest
 	}
 	var response struct {
@@ -98,7 +110,7 @@ func (c *Client) ValidateSearch(ctx context.Context, request SearchRequest) erro
 }
 
 func (c *Client) Search(ctx context.Context, request SearchRequest) (SearchReport, error) {
-	if request.Fence == nil || request.Fence.VaultUID == "" || len(request.MediaSources) == 0 {
+	if !validSearchRequest(request) || request.Fence == nil || request.Fence.VaultUID == "" || len(request.MediaSources) == 0 {
 		return SearchReport{}, ErrInvalidRequest
 	}
 	ids := make(map[string]bool, len(request.Fence.ContentVersionIDs))
