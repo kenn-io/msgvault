@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -221,7 +223,6 @@ func TestImportKeepsSourceRouteFailureForInvalidAccountMetadata(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
 			assertions := assert.New(t)
 			requirements := require.New(t)
 
@@ -914,4 +915,86 @@ func TestMediaChatRefreshInvalidatesPriorRouteMembershipProof(t *testing.T) {
 	assertions.Equal("unresolved", after.Routes.Items[0].Status)
 	assertions.False(after.Routes.Items[0].MembershipComplete)
 	assertions.Contains(after.Routes.Items[0].Reasons, "membership_incomplete")
+}
+
+func TestResumedTailScanSkipsChatsAlreadyConfirmedGone(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+
+	now := time.Now().UTC().Truncate(time.Second)
+	f := newFakeBeeper(t)
+	f.addChat(&fakeChat{
+		ID: "!surviving:example.test", AccountID: "account-a", Type: "group", Title: "Surviving",
+		LastActivity: now, Participants: []map[string]any{{"id": "@self:example.test", "isSelf": true}},
+	})
+	provider := f.handler()
+	var mu sync.Mutex
+	probes := map[string]int{}
+	blockNextProbe := true
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		chatID, isProbe := strings.CutPrefix(r.URL.Path, "/v1/chats/!gone-")
+		if !isProbe {
+			provider(w, r)
+			return
+		}
+		mu.Lock()
+		probes[chatID]++
+		block := blockNextProbe && probes[chatID] == 1 && len(probes) == 2
+		mu.Unlock()
+		if block {
+			// The second distinct probe of the first run outlives its budget.
+			<-r.Context().Done()
+			return
+		}
+		http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
+	})
+	client := NewClient("http://beeper.test", testToken, 10000)
+	client.http.Transport = handlerTransport(handler)
+
+	st := testutil.NewSQLiteTestStore(t)
+	source, err := st.GetOrCreateSource("beeper", "account-a")
+	requirements.NoError(err)
+	state := NewSyncState()
+	state.TailScanStarted = tailScanCycleID(now)
+	for _, chatID := range []string{"!gone-a:example.test", "!gone-b:example.test", "!gone-c:example.test"} {
+		state.EnsureChat(chatID).Done = true
+	}
+	imp := NewImporter(st, client)
+	enumerate := func(budget time.Duration) ([]chatVisit, *ImportSummary) {
+		syncID, err := st.StartSync(source.ID, sourceTypeBeeper)
+		requirements.NoError(err)
+		sum := &ImportSummary{}
+		opts := ImportOptions{AccountID: "account-a", NoMedia: true, StopAt: time.Now().Add(budget)}
+		chats, err := imp.enumerateChats(t.Context(), syncID, source.ID, opts, state, now.Add(-reconcileWindow), true, sum)
+		requirements.NoError(err)
+		requirements.NoError(st.CompleteSyncAndPreserveSourceCursorContext(t.Context(), syncID, source.ID, ""))
+		return chats, sum
+	}
+
+	_, first := enumerate(2 * time.Second)
+	assertions.True(first.Stopped, "the blocked probe exhausts the first run's budget")
+	mu.Lock()
+	blockNextProbe = false
+	confirmed := map[string]bool{}
+	for chatID, count := range probes {
+		if state.Chats["!gone-"+chatID].Gone {
+			confirmed[chatID] = true
+			assertions.Equal(1, count)
+		}
+	}
+	mu.Unlock()
+	requirements.Len(confirmed, 1, "exactly one chat was confirmed gone before the budget expired")
+
+	chats, second := enumerate(time.Minute)
+	assertions.False(second.Stopped)
+	requirements.Len(chats, 1)
+	assertions.Equal("!surviving:example.test", chats[0].ID)
+	mu.Lock()
+	defer mu.Unlock()
+	for chatID := range confirmed {
+		assertions.Equal(1, probes[chatID], "a chat confirmed gone is not probed again")
+	}
+	for _, chatID := range []string{"!gone-a:example.test", "!gone-b:example.test", "!gone-c:example.test"} {
+		assertions.True(state.Chats[chatID].Gone)
+	}
 }

@@ -640,6 +640,9 @@ func (imp *Importer) enumerateChats(ctx context.Context, syncID, sourceID int64,
 			return errBeeperEnumerationStopped
 		}
 		seen[ch.ID] = true
+		if cs := state.Chats[ch.ID]; cs != nil {
+			cs.Gone = false
+		}
 		tailOnly := tailScan && !activityCutoff.IsZero() && !ch.LastActivity.After(activityCutoff)
 		if cs := state.Chats[ch.ID]; cs != nil && !cs.Done {
 			// Unfinished backfills are included independently of activity.
@@ -672,6 +675,11 @@ func (imp *Importer) enumerateChats(ctx context.Context, syncID, sourceID int64,
 		if cs.Done && !params.LastActivityAfter.IsZero() {
 			continue
 		}
+		// A resumed scan must not spend its budget re-probing chats whose
+		// disappearance is already confirmed or checked in this tail scan.
+		if cs.Done && (cs.Gone || state.TailScanStarted != "" && cs.TailProbed == state.TailScanStarted) {
+			continue
+		}
 		if err := imp.store.InvalidateSourceConversationMessagingRouteEvidenceContext(ctx, sourceID, chatID); err != nil {
 			return nil, fmt.Errorf("invalidate route evidence before probing missing Beeper chat %q: %w", chatID, err)
 		}
@@ -696,6 +704,7 @@ func (imp *Importer) enumerateChats(ctx context.Context, syncID, sourceID int64,
 				return nil, fmt.Errorf("invalidate route evidence for missing Beeper chat %q: %w", chatID, err)
 			}
 			cs.Done = true
+			cs.Gone = true
 			imp.recordItem(syncID, chatID, "fetch", store.SyncRunItemStatusSkipped, "beeper_chat_gone", gerr)
 			continue
 		}
