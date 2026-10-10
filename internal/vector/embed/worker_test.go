@@ -51,9 +51,9 @@ type yieldingStampStore struct {
 	cancel context.CancelCauseFunc
 }
 
-func (s *yieldingStampStore) SetEmbedGenIfUnchanged(context.Context, []store.EmbedGenStamp, int64) ([]int64, error) {
+func (s *yieldingStampStore) SetEmbedGenIfUnchanged(context.Context, []store.EmbedGenStamp, int64) ([]int64, int, error) {
 	s.cancel(jobctx.ErrYieldedToWaiter)
-	return nil, errors.New("stamp operation failed")
+	return nil, 0, errors.New("stamp operation failed")
 }
 
 type captureLogHandler struct {

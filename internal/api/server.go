@@ -382,6 +382,8 @@ type Server struct {
 	visualRun          func(context.Context, operations.PassScope) error
 	visualRetry        func(context.Context, operations.PassScope, int64, string) error
 	visualStatus       func(context.Context, bool) (visual.Status, error)
+	embeddingStatus    func(context.Context, int64) (vector.EmbeddingStatus, error)
+	embeddingETAWindow int
 	// visualAction prevents concurrent HTTP build/resume requests from both
 	// passing the active-run check before either worker records its run.
 	visualAction sync.Mutex

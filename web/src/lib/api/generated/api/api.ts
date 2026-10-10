@@ -118,6 +118,7 @@ import type {
   DocumentSearchResponse,
   DocumentVectorOperationsResponse,
   DomainSummary,
+  EmbeddingStatus,
   Employment,
   EmploymentBody,
   EmploymentsResponse,
@@ -152,6 +153,7 @@ import type {
   GetDocumentIndexStatusParams,
   GetDocumentVectorStatusParams,
   GetDomainPathParameters,
+  GetEmbeddingStatusParams,
   GetEmploymentPathParameters,
   GetFileContentPathParameters,
   GetFilePathParameters,
@@ -1600,6 +1602,18 @@ export const getDomain = (
       url: `/api/v1/domains/${encodeURIComponent(String(domain))}`,
       method: "GET",
     },
+    options,
+  );
+};
+/**
+ * @summary Get message embedding coverage and live batch diagnostics
+ */
+export const getEmbeddingStatus = (
+  params?: GetEmbeddingStatusParams,
+  options?: SecondParameter<typeof orvalFetch<EmbeddingStatus>>,
+) => {
+  return orvalFetch<EmbeddingStatus>(
+    { url: `/api/v1/embeddings/status`, method: "GET", params },
     options,
   );
 };

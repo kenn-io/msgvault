@@ -59,6 +59,18 @@ func TestPostgreSQLRuntimeAndReader(t *testing.T) {
 	st, err := store.OpenContext(t.Context(), u.String())
 	require.NoError(err)
 	t.Cleanup(func() { _ = st.Close() })
+	// A version-2 archive has no embedding diagnostics until setup upgrades it.
+	_, err = st.DB().ExecContext(t.Context(), "DROP TABLE embedding_diagnostics")
+	require.NoError(err)
+	_, err = st.DB().ExecContext(t.Context(), "UPDATE archive_metadata SET value = '2' WHERE key = 'schema_version'")
+	require.NoError(err)
+	unready, err := archive.Open(t.Context(), opts)
+	if unready != nil {
+		t.Cleanup(func() { _ = unready.Close() })
+	}
+	require.ErrorContains(err, "run setup")
+	require.NoError(archive.Setup(t.Context(), opts))
+
 	source, err := st.GetOrCreateSource("slack", "TEXAMPLE:UEXAMPLE")
 	require.NoError(err)
 	conversation, err := st.EnsureConversation(source.ID, "CEXAMPLE", "Announcements")

@@ -4,6 +4,7 @@ import (
 	"encoding/json/jsontext"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -355,13 +356,15 @@ import (
 // 3.9.0 adds source-scoped agent read permissions, optional expires_at, and GET /api/v1/agent-tokens/self.
 // 3.10.0 adds person UID lookup and exposes current vCard UIDs and CardDAV
 // bindings on person and directory responses.
-const APISchemaVersion = "3.10.0"
+// 3.11.0 adds message embedding coverage and live batch diagnostics.
+const APISchemaVersion = "3.11.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
 func OpenAPIDocument() *huma.OpenAPI {
 	doc := baseOpenAPIDocument(false)
 	hardenSourceStatusPublicSchemas(doc)
+	hardenEmbeddingStatusSchemas(doc, false)
 	relaxResponseAdditionalProperties(doc)
 	hardenOperationSchemas(doc)
 	return doc
@@ -370,6 +373,7 @@ func OpenAPIDocument() *huma.OpenAPI {
 func openAPIClientDocument() *huma.OpenAPI {
 	doc := baseOpenAPIDocument(true)
 	hardenSourceStatusClientSchemas(doc)
+	hardenEmbeddingStatusSchemas(doc, true)
 	clearResponseAdditionalProperties(doc)
 	hardenOperationSchemas(doc)
 	applyClientCodegenExtensions(doc)
@@ -634,15 +638,21 @@ func hardenTaskLinkSchemas(doc *huma.OpenAPI) {
 }
 
 func hardenSourceStatusPublicSchemas(doc *huma.OpenAPI) {
+	nullablePublicObjectRefs(doc, "SourceStatus", "active_sync", "latest_sync", "last_successful_sync")
+}
+
+// nullablePublicObjectRefs publishes nullable object references as a oneOf
+// with null, which Huma does not infer from pointer fields.
+func nullablePublicObjectRefs(doc *huma.OpenAPI, schemaName string, names ...string) {
 	if doc == nil || doc.Components == nil || doc.Components.Schemas == nil {
 		return
 	}
-	schema := doc.Components.Schemas.Map()["SourceStatus"]
+	schema := doc.Components.Schemas.Map()[schemaName]
 	if schema == nil {
 		return
 	}
-	for _, name := range []string{"active_sync", "latest_sync", "last_successful_sync"} {
-		if property := schema.Properties[name]; property != nil {
+	for _, name := range names {
+		if property := schema.Properties[name]; property != nil && property.Ref != "" {
 			ref := property.Ref
 			property.Ref = ""
 			property.Type = ""
@@ -673,6 +683,47 @@ func hardenSourceStatusClientSchemas(doc *huma.OpenAPI) {
 	for name := range nullableRuns {
 		if property := schema.Properties[name]; property != nil {
 			property.Nullable = true
+		}
+	}
+}
+
+// embeddingStatusNullableFields are always-present nullable fields. The
+// public document marks object references with nullablePublicObjectRefs; the
+// Go client uses optional pointers for all of them, as with SourceStatus.
+var embeddingStatusNullableFields = map[string][]string{
+	"EmbeddingStatus":         {"active_generation", "diagnostics", "messages_per_minute", "eta_seconds"},
+	"EmbeddingDiagnostics":    {"current_batch", "last_error", "finished_at", "last_successful_batch_at"},
+	"EmbeddingBatch":          {"error"},
+	"EmbeddingJobState":       {"started_at", "queued_at"},
+	"EmbeddingSchedulerState": {"slot_held_since"},
+}
+
+func hardenEmbeddingStatusSchemas(doc *huma.OpenAPI, client bool) {
+	if doc == nil || doc.Components == nil || doc.Components.Schemas == nil {
+		return
+	}
+	for schemaName, names := range embeddingStatusNullableFields {
+		if !client {
+			nullablePublicObjectRefs(doc, schemaName, names...)
+			continue
+		}
+		schema := doc.Components.Schemas.Map()[schemaName]
+		if schema == nil {
+			continue
+		}
+		for _, name := range names {
+			property := schema.Properties[name]
+			if property == nil {
+				continue
+			}
+			if property.Ref != "" {
+				property.AllOf = []*huma.Schema{{Ref: property.Ref}}
+				property.Ref = ""
+				property.Type = "object"
+			}
+			property.Nullable = true
+			schema.Required = slices.DeleteFunc(schema.Required, func(required string) bool { return required == name })
+			nullableSchemaProperty(schema, name)
 		}
 	}
 }

@@ -280,8 +280,8 @@ func (b *Backend) dropDeadPendingEmbeddings(ctx context.Context) error {
 	return nil
 }
 
-// resetOrphanedEmbedGen clears messages.embed_gen for every main-DB message
-// whose stamp references a generation id that does NOT exist in
+// resetOrphanedEmbedGen clears diagnostics and coverage stamps referencing
+// a generation id that does NOT exist in
 // index_generations (an "orphaned" stamp). It runs on every WRITABLE Open
 // BEFORE BackfillEmbedGenForUpgrade.
 //
@@ -358,30 +358,30 @@ func (b *Backend) resetOrphanedEmbedGen(ctx context.Context) error {
 		return fmt.Errorf("reset orphaned embed_gen: iterate generation ids: %w", err)
 	}
 
-	// Empty valid set (recreated/empty vectors.db): every non-NULL stamp is
-	// orphaned. `NOT IN ()` is a SQL pitfall, so special-case it to a plain
-	// "clear all non-NULL stamps" UPDATE.
-	if len(validIDs) == 0 {
-		if _, err := b.mainDB.ExecContext(ctx,
-			`UPDATE messages SET embed_gen = NULL WHERE embed_gen IS NOT NULL`); err != nil {
-			return fmt.Errorf("reset orphaned embed_gen: clear all stamps: %w", err)
-		}
-		return nil
-	}
-
-	// Non-empty valid set: clear only stamps that fall outside it. The set is
-	// tiny, so a literal IN-list is well under SQLite's bind limit.
 	placeholders := make([]string, len(validIDs))
 	args := make([]any, len(validIDs))
 	for i, id := range validIDs {
 		placeholders[i] = "?"
 		args[i] = id
 	}
-	q := `UPDATE messages SET embed_gen = NULL
-	       WHERE embed_gen IS NOT NULL
-	         AND embed_gen NOT IN (` + strings.Join(placeholders, ",") + `)`
+	q := `UPDATE messages SET embed_gen = NULL WHERE embed_gen IS NOT NULL`
+	diagnosticsQuery := `DELETE FROM embedding_diagnostics`
+	if len(validIDs) > 0 {
+		validSet := ` NOT IN (` + strings.Join(placeholders, ",") + `)`
+		q += ` AND embed_gen` + validSet
+		diagnosticsQuery += ` WHERE generation_id` + validSet
+	}
 	if _, err := b.mainDB.ExecContext(ctx, q, args...); err != nil {
 		return fmt.Errorf("reset orphaned embed_gen: clear orphaned stamps: %w", err)
+	}
+	hasDiagnostics, err := mainTableExists(ctx, b.mainDB, "embedding_diagnostics")
+	if err != nil {
+		return err
+	}
+	if hasDiagnostics {
+		if _, err := b.mainDB.ExecContext(ctx, diagnosticsQuery, args...); err != nil {
+			return fmt.Errorf("reset orphaned embed_gen: clear orphaned diagnostics: %w", err)
+		}
 	}
 	return nil
 }

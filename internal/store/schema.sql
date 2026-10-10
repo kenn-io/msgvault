@@ -141,6 +141,12 @@ CREATE INDEX IF NOT EXISTS idx_carddav_sync_runs_state_id
 CREATE INDEX IF NOT EXISTS idx_carddav_sync_runs_operations_order
     ON carddav_sync_runs(started_at DESC, id DESC);
 
+-- A bounded operator snapshot; Operations remains the durable run ledger.
+CREATE TABLE IF NOT EXISTS embedding_diagnostics (
+    generation_id INTEGER PRIMARY KEY,
+    snapshot TEXT NOT NULL CHECK (length(CAST(snapshot AS BLOB)) <= 131072)
+);
+
 -- Operations owns one narrow archive-side ledger per bounded worker kind.
 -- Invocation keys and fixed error codes are private recorder fields; no
 -- provider, model, endpoint, content identifier, or arbitrary payload enters

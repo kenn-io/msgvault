@@ -135,6 +135,11 @@ CREATE INDEX IF NOT EXISTS idx_carddav_sync_runs_state_id
 CREATE INDEX IF NOT EXISTS idx_carddav_sync_runs_operations_order
     ON carddav_sync_runs(started_at DESC, id DESC);
 
+CREATE TABLE IF NOT EXISTS embedding_diagnostics (
+    generation_id BIGINT PRIMARY KEY,
+    snapshot TEXT NOT NULL CHECK (octet_length(snapshot) <= 131072)
+);
+
 CREATE TABLE IF NOT EXISTS message_embedding_runs (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     invocation_key TEXT NOT NULL UNIQUE CHECK (octet_length(invocation_key) BETWEEN 1 AND 128 AND btrim(invocation_key) = invocation_key),

@@ -144,6 +144,20 @@ func SchedulerJobNameForSource(sourceType, identifier string) (string, bool) {
 	}
 }
 
+// sourceSyncJobKinds are the leading words of every job name that
+// SchedulerJobNameForSource or CardDAVJobNameForConnection returns.
+var sourceSyncJobKinds = map[string]bool{
+	"synctech-sms": true, "gcal": true, "granola": true, "plaud": true, "circleback": true,
+	"notion-meetings": true, "twilio": true, "twenty": true, "muesli": true,
+	BeeperJobName: true, MatrixJobName: true, SlackJobName: true, CardDAVJobName: true,
+}
+
+// isSourceSyncJobName reports whether a generic scheduler job syncs a source.
+func isSourceSyncJobName(name string) bool {
+	kind, _, _ := strings.Cut(name, ":")
+	return sourceSyncJobKinds[kind]
+}
+
 // gcalJobName builds the scheduler job name for a gcal account from its
 // normalized account email. Both SchedulerJobNameForSource (deriving the
 // email from a calendar's store identifier) and GCalJobNameForAccountEmail

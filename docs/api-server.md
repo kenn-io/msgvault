@@ -100,7 +100,7 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.10.0**.
+it is separate from the binary release version. The current schema is **3.11.0**.
 Upgrade clients and daemon together across incompatible schema versions,
 including remote deployments.
 
@@ -149,6 +149,9 @@ message's recordings with their Docbank transcript state. Existing routes are
 unchanged.
 
 Schema 3.7.0 adds `GET /api/v1/media/search` for scoped lexical transcript search.
+
+Schema 3.11.0 adds `GET /api/v1/embeddings/status` and MCP
+`get_embeddings_status`. See [message embedding status](#message-embedding-status).
 
 Schema 2.35.0 adds `scope_escalation_source_type` (`gmail` or `msmail`) to
 `POST /api/v1/cli/delete-staged/plan` responses that require a permission
@@ -2822,3 +2825,16 @@ policy and deletion visibility. Changes under
 | `enabled` | `true` | Whether scheduled sync is active |
 
 See the [Configuration](/docs/configuration/) page for the full config file reference.
+
+## Message embedding status
+
+`GET /api/v1/embeddings/status` returns the same generation and coverage shape
+used by `msgvault embeddings status --json`, plus live job and scheduler state,
+recent throughput, nullable ETA, and a bounded per-batch timing sample.
+`source_id` is an optional positive integer that filters coverage only.
+The endpoint is read-only and bypasses the scheduler slot. It returns `400`
+for invalid source IDs and `503` with `embeddings_status_unavailable` when
+archive diagnostics cannot be read. It never sends message content to a provider.
+See the [CLI field semantics](cli-reference.md#embeddings-status) and the
+[published OpenAPI schema](https://github.com/kenn-io/msgvault/blob/main/api/openapi.yaml).
+MCP exposes the same response through `get_embeddings_status` on API 3.11.0 or newer.

@@ -494,6 +494,15 @@ type GetDocumentVectorStatusQuery struct {
 	Limit *int64 `json:"limit,omitempty"`
 }
 
+type GetEmbeddingStatusQuery struct {
+	// SourceID Filter coverage by source ID; batch diagnostics remain generation-wide
+	SourceID *int64 `json:"source_id,omitempty" validate:"omitempty,gte=1"`
+}
+
+func (g GetEmbeddingStatusQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+}
+
 type ListIdentityMatchCandidatesQuery struct {
 	// State Candidate state filter (candidate, accepted, rejected, conflict); repeat or comma-separate for multiple values
 	State *string `json:"state,omitempty"`

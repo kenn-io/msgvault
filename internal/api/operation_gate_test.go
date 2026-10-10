@@ -719,6 +719,7 @@ func TestOperationGateMiddlewareSkipsReadOnlyCLIRunCommands(t *testing.T) {
 		body string
 	}{
 		{"embeddings list", `{"args":["embeddings","list"]}`},
+		{"embeddings status", `{"args":["embeddings","status","--json"]}`},
 		{"documents search", `{"args":["documents","search","shipping damage"]}`},
 		{"documents status", `{"args":["documents","status","--capabilities","manifest.json"]}`},
 		{"list-deletions", `{"args":["list-deletions"]}`},

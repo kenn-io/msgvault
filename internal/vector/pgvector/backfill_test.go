@@ -388,6 +388,41 @@ func TestResetOrphanedEmbedGen_RecreateScenario(t *testing.T) {
 	}
 }
 
+// TestResetOrphanedEmbedGen_ClearsOrphanedDiagnostics keeps a reused generation
+// id from showing another generation's batch timings.
+func TestResetOrphanedEmbedGen_ClearsOrphanedDiagnostics(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	ctx := context.Background()
+	db := openPGTestDB(t)
+
+	b, err := Open(ctx, Options{DB: db, Dimension: 4})
+	require.NoError(err, "Open without the diagnostics table")
+	t.Cleanup(func() { _ = b.Close() })
+	gen, err := b.CreateGeneration(ctx, "fake", 4, "")
+	require.NoError(err)
+	_, err = db.ExecContext(ctx, `CREATE TABLE embedding_diagnostics (generation_id BIGINT PRIMARY KEY, snapshot TEXT NOT NULL)`)
+	require.NoError(err)
+	_, err = db.ExecContext(ctx, `INSERT INTO embedding_diagnostics (generation_id, snapshot) VALUES ($1, '{}'), (99, '{}')`, int64(gen))
+	require.NoError(err)
+
+	b2, err := Open(ctx, Options{DB: db, Dimension: 4})
+	require.NoError(err, "re-Open (writable)")
+	t.Cleanup(func() { _ = b2.Close() })
+
+	var kept []int64
+	rows, err := db.QueryContext(ctx, `SELECT generation_id FROM embedding_diagnostics ORDER BY generation_id`)
+	require.NoError(err)
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var id int64
+		require.NoError(rows.Scan(&id))
+		kept = append(kept, id)
+	}
+	require.NoError(rows.Err())
+	assert.Equal([]int64{int64(gen)}, kept)
+}
+
 // TestResetOrphanedEmbedGen_NoFalsePositive verifies the PG reset PRESERVES
 // stamps that reference a still-existing generation row (active or retired —
 // retire only flips state on PG, it does not delete the index_generations row).

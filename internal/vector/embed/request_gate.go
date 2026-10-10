@@ -35,10 +35,10 @@ func (t beforeRequestTransport) RoundTrip(request *http.Request) (*http.Response
 }
 
 func newHTTPClient(timeout time.Duration, before BeforeRequestFunc, rejectRedirects bool) *http.Client {
-	client := &http.Client{Timeout: timeout}
+	client := &http.Client{Timeout: timeout, Transport: embeddingMeasuredTransport{base: http.DefaultTransport}}
 	if before != nil {
 		client.Transport = beforeRequestTransport{
-			base: http.DefaultTransport, before: before,
+			base: client.Transport, before: before,
 		}
 	}
 	if before != nil || rejectRedirects {

@@ -266,7 +266,7 @@ func TestScheduledTwilioSyncLogsDiagnostics(t *testing.T) {
 func TestTwilioDaemonDispatchesRegisteredScheduledSource(t *testing.T) {
 	require := require.New(t)
 	cfg := lifecycleTestConfig(t.TempDir())
-	cfg.Server.APIPort = freeTCPPort(t)
+	cfg.Server.APIPort = 0
 	cfg.Analytics.Engine = config.AnalyticsEngineSQL
 	cfg.Analytics.AutoBuildCache = false
 	cfg.Vector.Enabled = false
@@ -301,8 +301,10 @@ func TestTwilioDaemonDispatchesRegisteredScheduledSource(t *testing.T) {
 			require.FailNow("daemon did not stop")
 		}
 	})
-	waitForServeHealth(t, cfg.Server.APIPort, errCh)
-	base := fmt.Sprintf("http://127.0.0.1:%d", cfg.Server.APIPort)
+	runtime, ready, err := waitForDaemonRuntime(ctx, cfg.Data.DataDir, serveLifecycleTestTimeout, daemonRuntimeReady, errCh)
+	require.NoError(err)
+	require.True(ready, "daemon runtime record did not become ready")
+	base := fmt.Sprintf("http://127.0.0.1:%d", runtime.Port)
 	client := &http.Client{Timeout: time.Second}
 	response, err := client.Post(base+"/api/v1/sync/work?source_type=twilio", "application/json", nil)
 	require.NoError(err)

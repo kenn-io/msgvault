@@ -99,11 +99,15 @@ const (
 	searchModeHybrid  = "hybrid"
 )
 
+// ToolGetEmbeddingStatus names the message embedding diagnostics tool.
+const ToolGetEmbeddingStatus = "get_embeddings_status"
+
 // ServeOptions configures an MCP server. Only Engine is required; the
 // HybridEngine and VectorCfg fields enable the vector/hybrid modes on
 // the search_message_bodies tool, and Backend additionally enables the
 // find_similar_messages tool.
 type ServeOptions struct {
+	EmbeddingStatus     EmbeddingStatusReader
 	downloads           *downloadCache
 	Engine              query.Engine
 	AttachmentsDir      string
@@ -371,6 +375,7 @@ func newMCPServerWithPolicy(
 		vectorCfg:           opts.VectorCfg,
 		backend:             opts.Backend,
 		visualSearcher:      opts.VisualSearcher,
+		embeddingStatus:     opts.EmbeddingStatus,
 		savedViews:          opts.SavedViews,
 		meetings:            opts.Meetings,
 		calendar:            opts.Calendar,

@@ -80,6 +80,7 @@ func (c *Client) embed(ctx context.Context, role embedconfig.Role, inputs []stri
 	if len(inputs) == 0 {
 		return nil, nil
 	}
+	ctx = withEmbeddingAttemptGroup(ctx)
 	httpClient := *c.http
 	if c.cfg.BeforeRequest != nil {
 		// Consent failure ends this call, including Kit retries. Each concrete

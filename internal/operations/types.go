@@ -511,6 +511,12 @@ type PublicError struct {
 	Message string
 }
 
+// OperationPublicError is the snake_case form API responses publish for a PublicError.
+type OperationPublicError struct {
+	Code    PublicErrorCode `json:"code" enum:"archive_gap,authentication_failed,budget,cancelled,carddav_sync_failed,daemon_restarted,google_authorization_required,internal,invalid_output,invocation_archive_drift,invocation_authentication_failed,invocation_cancelled,invocation_daemon_restarted,invocation_internal,invocation_invalid_output,invocation_rate_limited,invocation_safety_limit,invocation_timeout,invocation_unsafe_error_redacted,invocation_upstream_failed,lease_lost,microsoft_authorization_required,microsoft_contact_too_large,person_sweep_failed,policy,provider_http,rate_limited,retry_after,safety_limit,source_sync_failed,sync_failed,timeout,unsafe_error_redacted,upstream_failed"`
+	Message string          `json:"message"`
+}
+
 var fixedPublicErrorMessages = map[PublicErrorCode]string{
 	PublicErrorSourceSyncFailed:               "Source sync failed.",
 	PublicErrorPersonSweepFailed:              "Person sweep failed.",

@@ -157,6 +157,7 @@ func (c *VoyageClient) embedRequest(ctx context.Context, inputs [][]string, inpu
 }
 
 func (c *VoyageClient) embedWithRetry(ctx context.Context, inputs [][]string, inputType string) ([][][]float32, error) {
+	ctx = withEmbeddingAttemptGroup(ctx)
 	body, err := json.Marshal(voyageRequest{
 		Inputs:             inputs,
 		Model:              c.cfg.Model,

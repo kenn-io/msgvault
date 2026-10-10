@@ -19,6 +19,7 @@ import (
 	"go.kenn.io/msgvault/internal/explorecatalog"
 	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
@@ -27,6 +28,58 @@ const (
 	openAPIClientArtifactPath = "../../pkg/client/openapi.yaml"
 	openAPIClientGeneratedDir = "../../pkg/client/generated"
 )
+
+func TestEmbeddingStatusNullableObjectSchemas(t *testing.T) {
+	t.Parallel()
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	public := OpenAPIDocument().Components.Schemas.Map()
+	client := openAPIClientDocument().Components.Schemas.Map()
+	for schemaName, names := range map[string][]string{
+		"EmbeddingStatus":      {"active_generation", "diagnostics"},
+		"EmbeddingDiagnostics": {"current_batch", "last_error"},
+		"EmbeddingBatch":       {"error"},
+	} {
+		for _, name := range names {
+			property := public[schemaName].Properties[name]
+			requirements.Len(property.OneOf, 2, schemaName+"."+name)
+			assertions.Equal("null", property.OneOf[1].Type)
+			assertions.Contains(public[schemaName].Required, name)
+			assertions.True(client[schemaName].Properties[name].Nullable)
+			assertions.NotContains(client[schemaName].Required, name)
+		}
+	}
+	assertions.NotContains(public["EmbeddingBatch"].Required, "finished_at")
+}
+
+func TestGeneratedEmbeddingStatusPreservesUnavailableObjects(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	wire, err := json.Marshal(vector.EmbeddingStatus{})
+	requirements.NoError(err)
+	var status generated.EmbeddingStatus
+	requirements.NoError(json.Unmarshal(wire, &status))
+	assertions.Nil(status.ActiveGeneration)
+	assertions.Nil(status.Diagnostics)
+	assertions.Nil(status.MessagesPerMinute)
+	assertions.Nil(status.EtaSeconds)
+	wire, err = json.Marshal(vector.EmbeddingDiagnostics{CurrentBatch: &vector.EmbeddingBatch{}})
+	requirements.NoError(err)
+	var diagnostics generated.EmbeddingDiagnostics
+	requirements.NoError(json.Unmarshal(wire, &diagnostics))
+	assertions.Nil(diagnostics.LastError)
+	wire, err = json.Marshal(diagnostics)
+	requirements.NoError(err)
+	var payload map[string]any
+	requirements.NoError(json.Unmarshal(wire, &payload))
+	assertions.Contains(payload, "last_error")
+	assertions.Nil(payload["last_error"])
+	batch, ok := payload["current_batch"].(map[string]any)
+	requirements.True(ok)
+	assertions.NotContains(batch, "finished_at")
+	assertions.Contains(batch, "error")
+	assertions.Nil(batch["error"])
+}
 
 func TestOpenAPIDocumentUsesAPISchemaVersion(t *testing.T) {
 	t.Parallel()
