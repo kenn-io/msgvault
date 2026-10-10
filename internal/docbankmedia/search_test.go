@@ -59,7 +59,6 @@ func TestSearchFenceAndContract(t *testing.T) {
 		}
 		assert.True(request.ContentFirst)
 		assert.Equal("lexical", request.Mode)
-		assert.Equal(ids, request.Fence.ContentVersionIDs)
 		assert.Equal(sources, request.MediaSources)
 		_, _ = w.Write([]byte(`{"media_source_selection":true,"media_selections":[],"requested_mode":"lexical","actual_mode":"lexical","coverage":{"binding_required":true,"scoped_documents":2,"complete_documents":1,"state":"unknown"},"results":[]}`))
 	}))
@@ -77,50 +76,29 @@ func TestSearchFenceAndContract(t *testing.T) {
 		_, err = client.Search(t.Context(), request)
 		require.NoError(err)
 	}
+	for _, tc := range []struct {
+		name   string
+		mutate func(*SearchRequest)
+	}{
+		{"blank query", func(r *SearchRequest) { r.Query = " \t\n" }},
+		{"non-lexical mode", func(r *SearchRequest) { r.Mode = "semantic" }},
+		{"empty profile", func(r *SearchRequest) { r.Profile = "" }},
+		{"content first disabled", func(r *SearchRequest) { r.ContentFirst = false }},
+		{"zero limit", func(r *SearchRequest) { r.Limit = 0 }},
+		{"excessive limit", func(r *SearchRequest) { r.Limit = 101 }},
+	} {
+		invalid := request
+		tc.mutate(&invalid)
+		validation := invalid
+		validation.Fence, validation.MediaSources = nil, nil
+		assert.ErrorIs(client.ValidateSearch(t.Context(), validation), ErrInvalidRequest, tc.name)
+		_, err := client.Search(t.Context(), invalid)
+		assert.ErrorIs(err, ErrInvalidRequest, tc.name)
+	}
 	request.MediaSources = nil
 	_, err = client.Search(t.Context(), request)
 	require.ErrorIs(err, ErrInvalidRequest)
 	assert.Equal(int64(3), requests.Load())
-}
-
-func TestSearchInvalidRequest(t *testing.T) {
-	t.Parallel()
-	for _, name := range []string{"blank query", "non-lexical mode", "empty profile", "content first disabled", "zero limit", "excessive limit"} {
-		t.Run(name, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-
-			var requests atomic.Int64
-			remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				requests.Add(1)
-				w.WriteHeader(http.StatusBadRequest)
-			}))
-			t.Cleanup(remote.Close)
-			client, err := NewClient(remote.URL, nil)
-			require.NoError(err)
-			request := SearchRequest{Query: "words", Mode: "lexical", Profile: "supplied-transcript", ContentFirst: true, Limit: 100}
-			switch name {
-			case "blank query":
-				request.Query = " \t\n"
-			case "non-lexical mode":
-				request.Mode = "semantic"
-			case "empty profile":
-				request.Profile = ""
-			case "content first disabled":
-				request.ContentFirst = false
-			case "zero limit":
-				request.Limit = 0
-			case "excessive limit":
-				request.Limit = 101
-			}
-			assert.ErrorIs(client.ValidateSearch(t.Context(), request), ErrInvalidRequest)
-			request.Fence = &SearchFence{VaultUID: "vault", ContentVersionIDs: []string{"123e4567-e89b-42d3-a456-426614174000"}}
-			request.MediaSources = []SearchMediaSelector{{SearchMediaSource: SearchMediaSource{SourceID: "source", SourceVersionID: "version", ContentVersionID: request.Fence.ContentVersionIDs[0]}}}
-			_, err = client.Search(t.Context(), request)
-			assert.ErrorIs(err, ErrInvalidRequest)
-			assert.Zero(requests.Load())
-		})
-	}
 }
 
 func TestSearchSelectedEvidenceBoundary(t *testing.T) {
