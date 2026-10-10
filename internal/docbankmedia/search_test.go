@@ -75,6 +75,46 @@ func TestSearchFenceAndContract(t *testing.T) {
 	assert.Equal(3, requests)
 }
 
+func TestSearchInvalidRequest(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"blank query", "non-lexical mode", "empty profile", "content first disabled", "zero limit", "excessive limit"} {
+		t.Run(name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+
+			requests := 0
+			remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				requests++
+				w.WriteHeader(http.StatusBadRequest)
+			}))
+			t.Cleanup(remote.Close)
+			client, err := NewClient(remote.URL, nil)
+			require.NoError(err)
+			request := SearchRequest{Query: "words", Mode: "lexical", Profile: "supplied-transcript", ContentFirst: true, Limit: 100}
+			switch name {
+			case "blank query":
+				request.Query = " \t\n"
+			case "non-lexical mode":
+				request.Mode = "semantic"
+			case "empty profile":
+				request.Profile = ""
+			case "content first disabled":
+				request.ContentFirst = false
+			case "zero limit":
+				request.Limit = 0
+			case "excessive limit":
+				request.Limit = 101
+			}
+			assert.ErrorIs(client.ValidateSearch(t.Context(), request), ErrInvalidRequest)
+			request.Fence = &SearchFence{VaultUID: "vault", ContentVersionIDs: []string{"123e4567-e89b-42d3-a456-426614174000"}}
+			request.MediaSources = []SearchMediaSelector{{SearchMediaSource: SearchMediaSource{SourceID: "source", SourceVersionID: "version", ContentVersionID: request.Fence.ContentVersionIDs[0]}}}
+			_, err = client.Search(t.Context(), request)
+			assert.ErrorIs(err, ErrInvalidRequest)
+			assert.Zero(requests)
+		})
+	}
+}
+
 func TestSearchSelectedEvidenceBoundary(t *testing.T) {
 	t.Parallel()
 	for _, name := range []string{"valid", "partial completeness", "degraded provenance", "unsupported completeness", "foreign vault", "foreign version", "wrong mode", "missing results", "null summary", "old producer empty", "malformed", "generated with supplied input", "summary only", "duplicate summary", "foreign summary", "empty summary origin", "empty summary completeness", "supplied allowed", "supplied excluded", "foreign source", "wrong content association", "missing build", "missing segment", "bad time", "duplicate build", "duplicate source across builds"} {
