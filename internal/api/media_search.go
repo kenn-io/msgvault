@@ -228,6 +228,9 @@ func (reader *MessageRecordingReader) search(ctx context.Context, query string, 
 	fresh := make(map[string]store.MessageMediaOccurrence, len(current))
 	for _, o := range current {
 		fresh[o.OccurrenceRef] = o
+		if oversized[mediaSearchSource(o)] {
+			continue
+		}
 		if selection, found := selections[mediaSearchSource(o)]; o.SuppliedInputID != "" && (!found || selection.Origin == "supplied") {
 			supplied = append(supplied, o)
 		}
