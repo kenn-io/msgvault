@@ -649,7 +649,7 @@
     searchMode={exploreState.current.searchMode}
     filters={exploreState.current.filters}
     groupingChain={exploreState.current.groupingChain}
-    {countLabel}
+    countLabel={enabled && exploreState.current.query.trim() ? '' : countLabel}
     sort={exploreState.current.groupingChain.length > 0 ? undefined : {
       options: [{ value: 'newest', label: 'Newest first' }],
       value: 'newest',
@@ -754,6 +754,7 @@
               selectedMessageID={recordingSelection}
               onOpen={(hit) => onOpenRecording(hit.message_id)}
             />
+            <h2 class="results-heading">Results <span class="count">{countLabel}</span></h2>
           {/if}
           {#if exploreState.current.groupingChain.length > 0}
             <GroupTable
@@ -943,6 +944,8 @@
     gap: var(--space-3);
     flex-direction: column;
   }
+  .results-heading { margin: 0; font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); }
+  .results-heading .count { color: var(--text-secondary); font-size: var(--font-size-xs); font-weight: var(--font-weight-normal); font-variant-numeric: tabular-nums; }
 
   /* The reading pane provides its own surface; the split's secondary pane
    * frames it on every edge except the one beside the drag handle. The

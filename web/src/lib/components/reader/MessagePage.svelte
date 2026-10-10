@@ -33,7 +33,7 @@
 <main aria-label="Linked message" class="message-page">
   <header>
     <Button onclick={() => window.location.assign('/')}>Back to archive</Button>
-    <h1>{message?.subject || 'Message'}</h1>
+    <h1>{message?.subject || message?.conversation_title || 'Message'}</h1>
   </header>
   {#if error}
     <p role="alert">{error}</p>
