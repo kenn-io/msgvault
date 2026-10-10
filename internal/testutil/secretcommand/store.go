@@ -84,6 +84,14 @@ func Run() {
 		_, _ = fmt.Fprint(os.Stdout, args[2])
 	case "stdin":
 		_, _ = io.Copy(os.Stdout, os.Stdin)
+	case "client-after-wait":
+		marker := filepath.Join(root, "client-after-wait.started")
+		if _, err := os.Stat(marker); err != nil { //nolint:gosec // marker is inside the fixture's private directory.
+			_ = os.WriteFile(marker, nil, 0600) //nolint:gosec // marker is inside the fixture's private directory.
+			time.Sleep(2 * time.Minute)
+			os.Exit(2)
+		}
+		_, _ = fmt.Fprint(os.Stdout, `{"installed":{"client_id":"example-client","client_secret":"example-secret","redirect_uris":["http://localhost"]}}`)
 	case "client", "client-once":
 		if mode == "client-once" {
 			marker := filepath.Join(root, "client.read")

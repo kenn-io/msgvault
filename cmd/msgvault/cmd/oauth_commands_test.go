@@ -478,3 +478,64 @@ func TestHeadlessCommandsPreserveNativeArguments(t *testing.T) {
 		}
 	}
 }
+
+// A slow client_secrets_command for one OAuth app must not hold up managers
+// for other apps, and every caller can stop waiting for its own reasons.
+func TestOAuthManagerCacheLoadsAppsIndependently(t *testing.T) {
+	require := require.New(t)
+	_, state := setupCommandOAuth(t)
+	state.cfg.OAuth.Apps = map[string]config.OAuthApp{
+		"slow": {ClientSecretsCommand: testutil.SecretCommand(t, "client-after-wait")},
+	}
+	cache := oauthManagerCache(state)
+	const budget = 15 * time.Second
+	started := filepath.Join(os.Getenv("MSGVAULT_TEST_SECRET_ROOT"), "client-after-wait.started")
+
+	loaderCtx, cancelLoader := context.WithCancel(t.Context())
+	defer cancelLoader()
+	loader := make(chan error, 1)
+	go func() { _, err := cache(loaderCtx, "slow"); loader <- err }()
+	require.Eventually(func() bool {
+		_, err := os.Stat(started)
+		return err == nil
+	}, budget, 10*time.Millisecond)
+
+	// Another app loads while the slow command is still running.
+	other := make(chan error, 1)
+	go func() { _, err := cache(t.Context(), ""); other <- err }()
+	select {
+	case err := <-other:
+		require.NoError(err)
+	case <-time.After(budget):
+		require.Fail("the default app waited for another app's credential command")
+	}
+
+	// A waiter for the slow app stops when its own context ends.
+	waiterCtx, cancelWaiter := context.WithCancel(t.Context())
+	waiter := make(chan error, 1)
+	go func() { _, err := cache(waiterCtx, "slow"); waiter <- err }()
+	cancelWaiter()
+	select {
+	case err := <-waiter:
+		require.ErrorIs(err, context.Canceled)
+	case <-time.After(budget):
+		require.Fail("a cancelled caller kept waiting for the shared load")
+	}
+
+	// When the loading caller is cancelled, a remaining caller loads again.
+	survivor := make(chan error, 1)
+	go func() { _, err := cache(t.Context(), "slow"); survivor <- err }()
+	cancelLoader()
+	select {
+	case err := <-loader:
+		require.ErrorIs(err, context.Canceled)
+	case <-time.After(budget):
+		require.Fail("the cancelled loader did not return")
+	}
+	select {
+	case err := <-survivor:
+		require.NoError(err, "the remaining caller must retry under its own context")
+	case <-time.After(budget):
+		require.Fail("the remaining caller did not finish loading")
+	}
+}

@@ -19,6 +19,7 @@ import (
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/store"
 	"golang.org/x/oauth2"
+	"golang.org/x/sync/singleflight"
 )
 
 var rootCmd = newRootCommand()
@@ -675,31 +676,69 @@ func authorizeManualForReauth(ctx context.Context, mgr tokenReauthorizer, email 
 // oauthManagerCache returns a resolver function that lazily creates and
 // caches oauth.Manager instances keyed by app name. The cache is safe
 // for concurrent use (serve runs scheduled syncs in goroutines).
+//
+// Creating a manager can run client_secrets_command, so the mutex guards only
+// the map. Concurrent callers for one app share a single load, and each caller
+// stops waiting when its own context ends.
 func oauthManagerCache(state *invocation) func(ctx context.Context, appName string) (*oauth.Manager, error) {
 	var mu sync.Mutex
+	var loads singleflight.Group
 	managers := map[string]*oauth.Manager{}
 	return func(ctx context.Context, appName string) (*oauth.Manager, error) {
-		mu.Lock()
-		defer mu.Unlock()
-		if mgr, ok := managers[appName]; ok {
-			return mgr, nil
+		for {
+			mu.Lock()
+			mgr, ok := managers[appName]
+			mu.Unlock()
+			if ok {
+				return mgr, nil
+			}
+			result := loads.DoChan(appName, func() (any, error) {
+				mgr, err := loadOAuthManager(ctx, state, appName)
+				if err != nil {
+					return nil, err
+				}
+				mu.Lock()
+				managers[appName] = mgr
+				mu.Unlock()
+				return mgr, nil
+			})
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case loaded := <-result:
+				// The load ran under another caller's context; if that caller
+				// was cancelled, this caller loads again under its own.
+				if errors.Is(loaded.Err, context.Canceled) && ctx.Err() == nil {
+					continue
+				}
+				if loaded.Err != nil {
+					return nil, loaded.Err
+				}
+				mgr, ok := loaded.Val.(*oauth.Manager)
+				if !ok {
+					return nil, fmt.Errorf("load OAuth manager for %q: unexpected result %T", appName, loaded.Val)
+				}
+				return mgr, nil
+			}
 		}
-		if state == nil || state.cfg == nil || state.logger == nil {
-			return nil, errors.New("configuration is unavailable")
-		}
-		currentCfg := state.cfg
-		currentLogger := state.logger
-		secretsPath, err := currentCfg.OAuth.CredentialsFor(appName)
-		if err != nil {
-			return nil, errors.Join(oauth.ErrClientConfig, err)
-		}
-		mgr, err := oauth.NewManagerWithCredentials(ctx, secretsPath, currentCfg.TokensDir(), currentCfg.OAuth.Tokens, currentLogger, oauth.Scopes)
-		if err != nil {
-			return nil, wrapOAuthError(fmt.Errorf("create oauth manager: %w", err), currentCfg)
-		}
-		managers[appName] = mgr
-		return mgr, nil
 	}
+}
+
+func loadOAuthManager(ctx context.Context, state *invocation, appName string) (*oauth.Manager, error) {
+	if state == nil || state.cfg == nil || state.logger == nil {
+		return nil, errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
+	credentials, err := cfg.OAuth.CredentialsFor(appName)
+	if err != nil {
+		return nil, errors.Join(oauth.ErrClientConfig, err)
+	}
+	mgr, err := oauth.NewManagerWithCredentials(ctx, credentials, cfg.TokensDir(), cfg.OAuth.Tokens,
+		state.logger, oauth.Scopes)
+	if err != nil {
+		return nil, wrapOAuthError(fmt.Errorf("create oauth manager: %w", err), cfg)
+	}
+	return mgr, nil
 }
 
 // sourceOAuthApp extracts the oauth app name from a Source, returning ""

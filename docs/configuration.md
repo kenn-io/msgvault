@@ -548,12 +548,13 @@ a read must return the same bytes. msgvault uses private local lock files to
 coordinate its processes and compares snapshots before replacing a token. It
 never writes secret temporary files in command mode.
 
-The lock files coordinate only processes on one machine. If msgvault runs on
-more than one machine against the same store, a refresh on one machine can
-overwrite a sign-in saved by another at the same moment. Either let only one
-machine run msgvault against the store, or make `write_command` serialize
-writes across machines. Other programs that change the store need the same
-coordination.
+The lock files coordinate only processes on one machine. msgvault reads the
+token to compare it and then calls `write_command` as a separate step, so a
+store cannot make that sequence atomic. If msgvault runs on more than one
+machine against the same store, a refresh on one machine can overwrite a
+sign-in saved by another at the same moment. Run msgvault against a store from
+only one machine at a time. Other programs that change the store need to avoid
+writing while msgvault runs.
 
 Configure the command backend separately on each machine. To migrate a file
 credential, move its JSON into your store under its namespace and account
