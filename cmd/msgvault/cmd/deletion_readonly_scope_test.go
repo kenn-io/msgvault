@@ -6,8 +6,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/config"
 
+	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/store"
 	"google.golang.org/api/drive/v3"
@@ -84,11 +84,11 @@ func TestDeleteStagedScopeEscalationForSource_ReadonlyWorld(t *testing.T) {
 			testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 
 			src := &store.Source{SourceType: sourceTypeGmail}
-			escalation, err := deleteStagedScopeEscalationForSource(
+			escalation, err := deleteStagedScopeEscalationForSource(t.Context(),
 				scopeEscalationAccount,
 				src,
 				tt.permanent,
-				cfg.OAuth.ClientSecrets,
+				config.OAuthApp{ClientSecrets: cfg.OAuth.ClientSecrets},
 				invocationFromContext(testCtx),
 			)
 

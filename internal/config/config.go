@@ -705,37 +705,18 @@ type DataConfig struct {
 
 // OAuthApp holds configuration for a named OAuth application.
 type OAuthApp struct {
-	ClientSecrets     string `toml:"client_secrets"`
-	ServiceAccountKey string `toml:"service_account_key"`
+	ClientSecretsCommand []string `toml:"client_secrets_command"`
+	ClientSecrets        string   `toml:"client_secrets"`
+	ServiceAccountKey    string   `toml:"service_account_key"`
 }
 
 // OAuthConfig holds OAuth configuration.
 type OAuthConfig struct {
-	ClientSecrets     string              `toml:"client_secrets"`
-	ServiceAccountKey string              `toml:"service_account_key"`
-	Apps              map[string]OAuthApp `toml:"apps"`
-}
-
-// ClientSecretsFor returns the client secrets path for the given app name.
-// Empty name returns the default. Non-empty name looks up Apps[name].
-func (o *OAuthConfig) ClientSecretsFor(name string) (string, error) {
-	if name == "" {
-		if o.ClientSecrets == "" {
-			return "", errors.New("OAuth client secrets not configured.\n\n" +
-				"Set [oauth] client_secrets in config.toml, or use --oauth-app <name>")
-		}
-		return o.ClientSecrets, nil
-	}
-	app, ok := o.Apps[name]
-	if !ok {
-		return "", fmt.Errorf("OAuth app %q not configured. Add it to config.toml:\n\n"+
-			"  [oauth.apps.%s]\n"+
-			"  client_secrets = \"/path/to/client_secret.json\"", name, name)
-	}
-	if app.ClientSecrets == "" {
-		return "", fmt.Errorf("OAuth app %q has no client_secrets path configured", name)
-	}
-	return app.ClientSecrets, nil
+	ClientSecretsCommand []string            `toml:"client_secrets_command"`
+	Tokens               OAuthTokenCommands  `toml:"tokens"`
+	ClientSecrets        string              `toml:"client_secrets"`
+	ServiceAccountKey    string              `toml:"service_account_key"`
+	Apps                 map[string]OAuthApp `toml:"apps"`
 }
 
 // ServiceAccountKeyFor returns the service account key path for the given app name.
@@ -754,11 +735,11 @@ func (o *OAuthConfig) ServiceAccountKeyFor(name string) string {
 // HasAnyConfig returns true if any OAuth configuration exists
 // (default or named apps).
 func (o *OAuthConfig) HasAnyConfig() bool {
-	if o.ClientSecrets != "" || o.ServiceAccountKey != "" {
+	if o.ClientSecrets != "" || o.ClientSecretsCommand != nil || o.ServiceAccountKey != "" {
 		return true
 	}
 	for _, app := range o.Apps {
-		if app.ClientSecrets != "" || app.ServiceAccountKey != "" {
+		if app.ClientSecrets != "" || app.ClientSecretsCommand != nil || app.ServiceAccountKey != "" {
 			return true
 		}
 	}
@@ -1123,6 +1104,10 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	}
 	cfg.Server.ApplyDefaults()
 	cfg.Discord.ApplyDefaults()
+	if err := cfg.OAuth.Validate(); err != nil {
+		return nil, fmt.Errorf("oauth: %w", err)
+	}
+
 	if err := cfg.Server.Validate(); err != nil {
 		return nil, err
 	}

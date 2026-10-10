@@ -70,8 +70,28 @@ func WithRateLimiter(rl *RateLimiter) ClientOption {
 	}
 }
 
+// tokenSourceFailureError marks a failure to obtain a token, which happens
+// before oauth2's transport sends any request to Gmail.
+type tokenSourceFailureError struct{ err error }
+
+func (e *tokenSourceFailureError) Error() string { return e.err.Error() }
+func (e *tokenSourceFailureError) Unwrap() error { return e.err }
+
+type classifiedTokenSource struct{ source oauth2.TokenSource }
+
+func (s classifiedTokenSource) Token() (*oauth2.Token, error) {
+	token, err := s.source.Token()
+	if err != nil {
+		return nil, &tokenSourceFailureError{err: err}
+	}
+	return token, nil
+}
+
 // NewClient creates a new Gmail API client.
 func NewClient(tokenSource oauth2.TokenSource, opts ...ClientOption) *Client {
+	if tokenSource != nil {
+		tokenSource = classifiedTokenSource{source: tokenSource}
+	}
 	c := &Client{
 		httpClient:  oauth2.NewClient(context.Background(), tokenSource),
 		userID:      "me",
@@ -191,6 +211,11 @@ func (c *Client) requestWithRetryBudget(ctx context.Context, op Operation, metho
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
 			if remoteMutation {
+				// A token failure, such as a refresh that could not be saved,
+				// happens before any Gmail request is sent.
+				if _, ok := errors.AsType[*tokenSourceFailureError](err); ok {
+					return nil, fmt.Errorf("oauth token for gmail mutation: %w", err)
+				}
 				if _, ok := errors.AsType[*oauth2.RetrieveError](err); ok {
 					return nil, fmt.Errorf("http request: %w", err)
 				}
@@ -597,6 +622,9 @@ func classifyDraftWrite(err error) error {
 		return &DraftWriteError{State: DraftStateCancelled, Code: "cancelled", Err: err}
 	}
 	if _, ok := errors.AsType[*oauth2.RetrieveError](err); ok {
+		return &DraftWriteError{State: DraftStateRejected, Code: "auth_failed", Err: err}
+	}
+	if _, ok := errors.AsType[*tokenSourceFailureError](err); ok {
 		return &DraftWriteError{State: DraftStateRejected, Code: "auth_failed", Err: err}
 	}
 	if _, ok := errors.AsType[*NotFoundError](err); ok {

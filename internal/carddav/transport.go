@@ -29,6 +29,7 @@ type Client struct {
 	username           string
 	password           string
 	bearerToken        func(context.Context) (string, error)
+	bearerRejected     func()
 	digest             *digestState
 	requestTimeout     time.Duration
 	operationTimeout   time.Duration
@@ -85,6 +86,7 @@ func NewClient(options ClientOptions) (*Client, error) {
 	}
 	return &Client{
 		origin: originURL(&origin), username: options.Username, password: options.Password, bearerToken: options.BearerToken,
+		bearerRejected: options.BearerTokenRejected,
 		digest:         new(digestState),
 		requestTimeout: options.RequestTimeout, operationTimeout: options.OperationTimeout,
 		responseBytes: options.ResponseBytes, operationBytes: options.OperationBytes,
@@ -345,6 +347,10 @@ func (c *Client) doPinned(ctx context.Context, target *url.URL, pinned []netip.A
 		return nil, 0, fmt.Errorf("DAV request: %w", err)
 	}
 	defer func() { _ = httpResponse.Body.Close() }()
+	if authorization == "" && c.bearerToken != nil && c.bearerRejected != nil &&
+		httpResponse.StatusCode == http.StatusUnauthorized {
+		c.bearerRejected()
+	}
 	body, err := c.readResponseBody(httpResponse.Body, operationBytes)
 	response := &Response{StatusCode: httpResponse.StatusCode, Header: httpResponse.Header.Clone(), Body: body}
 	if err != nil {

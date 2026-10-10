@@ -230,11 +230,11 @@ func runVerifyLocal(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("service account token for %s: %w", email, err)
 		}
 	} else {
-		clientSecretsPath, secretsErr := cfg.OAuth.ClientSecretsFor(appName)
+		clientSecretsPath, secretsErr := cfg.OAuth.CredentialsFor(appName)
 		if secretsErr != nil {
 			return secretsErr
 		}
-		oauthMgr, mgrErr := oauth.NewManager(clientSecretsPath, cfg.TokensDir(), logger)
+		oauthMgr, mgrErr := oauth.NewManagerWithCredentials(ctx, clientSecretsPath, cfg.TokensDir(), cfg.OAuth.Tokens, logger, oauth.Scopes)
 		if mgrErr != nil {
 			return wrapOAuthError(fmt.Errorf("create oauth manager: %w", mgrErr), cfg)
 		}

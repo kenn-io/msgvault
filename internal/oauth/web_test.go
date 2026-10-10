@@ -1,12 +1,15 @@
 package oauth
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -46,7 +49,7 @@ func TestWebAuthorizationExchangesPKCEAndPreservesExistingAccess(t *testing.T) {
 	t.Cleanup(server.Close)
 	mgr.config.Endpoint = oauth2.Endpoint{AuthURL: "https://accounts.example/authorize", TokenURL: server.URL + "/token", AuthStyle: oauth2.AuthStyleInParams}
 	mgr.profileURL = server.URL + "/profile"
-	flow, err := mgr.BeginWebAuthorization(email, "https://archive.example/")
+	flow, err := mgr.BeginWebAuthorization(t.Context(), email, "https://archive.example/")
 	required.NoError(err)
 	u, err := url.Parse(flow.URL)
 	required.NoError(err)
@@ -58,11 +61,11 @@ func TestWebAuthorizationExchangesPKCEAndPreservesExistingAccess(t *testing.T) {
 	assertions.Zero(exchanges)
 	required.NoError(flow.Complete(t.Context(), flow.State, "one-time-code"))
 	assertions.Equal(1, exchanges)
-	token, err := mgr.loadTokenFile(email)
+	token, err := mgr.loadTokenFile(t.Context(), email)
 	required.NoError(err)
 	assertions.Equal("synthetic-client", token.ClientID)
 	assertions.Equal("synthetic-refresh", token.RefreshToken)
-	assertions.ElementsMatch([]string{ScopeCardDAV, ScopeUserinfoEmail, ScopeGmailReadonly}, mgr.GrantedScopes(email))
+	assertions.ElementsMatch([]string{ScopeCardDAV, ScopeUserinfoEmail, ScopeGmailReadonly}, mgr.GrantedScopes(t.Context(), email))
 }
 
 func TestWebAuthorizationTokenProvenance(t *testing.T) {
@@ -85,13 +88,13 @@ func TestWebAuthorizationTokenProvenance(t *testing.T) {
 			required.NoError(mgr.saveToken(email, &oauth2.Token{AccessToken: "synthetic-token"}, tc.scopes))
 			mgr.config.ClientID = "selected-client"
 			mgr.config.Endpoint.AuthURL = "https://accounts.example/authorize"
-			flow, err := mgr.BeginWebAuthorization(email, "https://archive.example/")
+			flow, err := mgr.BeginWebAuthorization(t.Context(), email, "https://archive.example/")
 			required.NoError(err)
 			u, err := url.Parse(flow.URL)
 			required.NoError(err)
 			want := append([]string{ScopeCardDAV, ScopeUserinfoEmail}, tc.scopes...)
 			assertions.ElementsMatch(want, strings.Fields(u.Query().Get("scope")))
-			token, err := mgr.loadTokenFile(email)
+			token, err := mgr.loadTokenFile(t.Context(), email)
 			required.NoError(err)
 			assertions.Equal(tc.clientID, token.ClientID)
 			assertions.Equal("synthetic-token", token.AccessToken)
@@ -130,18 +133,83 @@ func TestWebAuthorizationCannotOverwriteNewerAuthorization(t *testing.T) {
 			if existing {
 				required.NoError(mgr.saveToken(email, &oauth2.Token{AccessToken: "initial-access"}, []string{ScopeGmailReadonly}))
 			}
-			older, err := mgr.BeginWebAuthorization(email, "https://archive.example/")
+			older, err := mgr.BeginWebAuthorization(t.Context(), email, "https://archive.example/")
 			required.NoError(err)
-			newer, err := mgr.withScopes(newScopes).BeginWebAuthorization(email, "https://archive.example/")
+			newer, err := mgr.WithScopes(newScopes).BeginWebAuthorization(t.Context(), email, "https://archive.example/")
 			required.NoError(err)
 			required.NoError(newer.Complete(t.Context(), newer.State, "new"))
-			before, err := mgr.loadTokenFile(email)
+			before, err := mgr.loadTokenFile(t.Context(), email)
 			required.NoError(err)
 
 			required.ErrorIs(older.Complete(t.Context(), older.State, "old"), ErrTokenChanged)
-			after, err := mgr.loadTokenFile(email)
+			after, err := mgr.loadTokenFile(t.Context(), email)
 			required.NoError(err)
 			assertions.Equal(before.snapshot, after.snapshot, "keep the newer token and its Calendar permission")
+		})
+	}
+}
+
+// Only an explicit provider answer rejects a sign-in; other failures may pass on retry.
+func TestAuthorizationProviderErrorDefaultsToUnavailable(t *testing.T) {
+	cause := errors.New("provider failure")
+	rejected := &http.Response{StatusCode: http.StatusBadRequest, Header: http.Header{}}
+	for _, tc := range []struct {
+		name        string
+		err         error
+		response    *http.Response
+		code        string
+		unavailable bool
+	}{
+		{name: "rejected request", err: cause, response: rejected, code: "invalid_grant"},
+		{name: "rejected status without code", err: cause, response: rejected},
+		{name: "provider outage", err: cause, response: &http.Response{StatusCode: http.StatusServiceUnavailable, Header: http.Header{}}, unavailable: true},
+		{name: "temporarily unavailable code", err: cause, response: rejected, code: "temporarily_unavailable", unavailable: true},
+		{name: "unreadable reply", err: cause, unavailable: true},
+		{name: "canceled", err: context.Canceled},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := authorizationProviderError(tc.err, tc.response, tc.code)
+			_, unavailable := errors.AsType[*AuthorizationUnavailableError](got)
+			assert.Equal(t, tc.unavailable, unavailable)
+			assert.ErrorIs(t, got, tc.err)
+		})
+	}
+}
+
+// A profile reply without an identity, or a failed save after Google accepted
+// the sign-in, is retryable rather than a rejected authorization.
+func TestWebAuthorizationRetryableCallbackFailures(t *testing.T) {
+	const email = "person@example.com"
+	for _, tc := range []struct {
+		name, profile string
+		breakSave     bool
+	}{
+		{name: "profile without identity", profile: `{}`},
+		{name: "save failure", profile: fmt.Sprintf(`{"email":%q}`, email), breakSave: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			required := require.New(t)
+			mgr := setupTestManager(t, []string{ScopeCardDAV, ScopeUserinfoEmail})
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.URL.Path == "/profile" {
+					_, _ = fmt.Fprint(w, tc.profile)
+					return
+				}
+				_, _ = fmt.Fprintf(w, `{"access_token":"synthetic-access","refresh_token":"synthetic-refresh","token_type":"Bearer","expires_in":3600,"scope":%q}`, ScopeCardDAV+" "+ScopeUserinfoEmail)
+			}))
+			t.Cleanup(server.Close)
+			mgr.config.Endpoint = oauth2.Endpoint{AuthURL: "https://accounts.example/authorize", TokenURL: server.URL + "/token", AuthStyle: oauth2.AuthStyleInParams}
+			mgr.profileURL = server.URL + "/profile"
+			flow, err := mgr.BeginWebAuthorization(t.Context(), email, "https://archive.example/")
+			required.NoError(err)
+			if tc.breakSave {
+				// A directory where the token file belongs makes the save fail.
+				required.NoError(os.MkdirAll(mgr.TokenPath(email), 0700))
+			}
+			err = flow.Complete(t.Context(), flow.State, "one-time-code")
+			_, unavailable := errors.AsType[*AuthorizationUnavailableError](err)
+			required.True(unavailable, "%v", err)
 		})
 	}
 }

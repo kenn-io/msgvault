@@ -155,12 +155,17 @@ func runSyncFullLocal(cmd *cobra.Command, args []string) error {
 				appName := sourceOAuthApp(src)
 				// Service accounts are always ready — no per-user token needed
 				if cfg.OAuth.ServiceAccountKeyFor(appName) == "" {
-					mgr, err := getOAuthMgr(appName)
+					mgr, err := getOAuthMgr(cmd.Context(), appName)
 					if err != nil {
 						syncErrors = append(syncErrors, fmt.Sprintf("%s: %v", src.Identifier, err))
 						continue
 					}
-					if !mgr.HasToken(src.Identifier) {
+					info, readErr := mgr.InspectToken(cmd.Context(), src.Identifier)
+					if readErr != nil && mgr.CommandTokens() {
+						syncErrors = append(syncErrors, fmt.Sprintf("%s: %v", src.Identifier, readErr))
+						continue
+					}
+					if !info.Exists {
 						fmt.Printf("Skipping %s (no OAuth token - run 'add-account' first)\n", src.Identifier)
 						continue
 					}
@@ -216,7 +221,7 @@ func runSyncFullLocal(cmd *cobra.Command, args []string) error {
 		if src.SourceType == sourceTypeGmail || src.SourceType == "" {
 			appName := sourceOAuthApp(src)
 			if cfg.OAuth.ServiceAccountKeyFor(appName) == "" {
-				if _, err := getOAuthMgr(appName); err != nil {
+				if _, err := getOAuthMgr(ctx, appName); err != nil {
 					syncErrors = append(syncErrors, fmt.Sprintf("%s: %v", src.Identifier, err))
 					continue
 				}
@@ -253,7 +258,7 @@ func runSyncFullLocal(cmd *cobra.Command, args []string) error {
 // caller-provided getOAuthMgr factory. Pass nil to use oauth.Scopes; pass
 // oauth.ScopesDeletion (or another set) for workflows that need elevated
 // access.
-func buildAPIClient(ctx context.Context, src *store.Source, getOAuthMgr func(string) (*oauth.Manager, error), saScopes []string, imapOpts ...imaplib.Option) (gmail.API, error) {
+func buildAPIClient(ctx context.Context, src *store.Source, getOAuthMgr func(ctx context.Context, _ string) (*oauth.Manager, error), saScopes []string, imapOpts ...imaplib.Option) (gmail.API, error) {
 	state := invocationFromContext(ctx)
 	if state == nil || state.cfg == nil || state.logger == nil {
 		return nil, errors.New("configuration is unavailable")
@@ -280,7 +285,7 @@ func buildAPIClient(ctx context.Context, src *store.Source, getOAuthMgr func(str
 				return nil, err
 			}
 		} else {
-			oauthMgr, err := getOAuthMgr(appName)
+			oauthMgr, err := getOAuthMgr(ctx, appName)
 			if err != nil {
 				return nil, err
 			}
@@ -566,7 +571,7 @@ func saveIMAPFolderStates(
 	return nil
 }
 
-func runFullSync(ctx context.Context, s *store.Store, getOAuthMgr func(string) (*oauth.Manager, error), src *store.Source, state *invocation) error {
+func runFullSync(ctx context.Context, s *store.Store, getOAuthMgr func(ctx context.Context, _ string) (*oauth.Manager, error), src *store.Source, state *invocation) error {
 	if state == nil {
 		state = invocationFromContext(ctx)
 	}

@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/carddav"
+	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/textutil"
 )
 
@@ -31,15 +32,18 @@ func newAuthorizeGoogleCardDAVCmd() *cobra.Command {
 			if err != nil || address.Address != email {
 				return usageErr(cmd, errors.New("invalid email address"))
 			}
-			secrets, err := cfg.OAuth.ClientSecretsFor(app)
+			secrets, err := cfg.OAuth.CredentialsFor(app)
 			if err != nil {
 				return err
 			}
-			mgr, err := carddav.NewGoogleOAuthManager(secrets, cfg.TokensDir(), app, email, logger)
+			mgr, err := carddav.NewGoogleOAuthManagerWithCredentials(cmd.Context(), secrets, cfg.TokensDir(), cfg.OAuth.Tokens, app, email, logger)
 			if err != nil {
-				return wrapOAuthError(fmt.Errorf("create oauth manager: %w", err), cfg)
+				if errors.Is(err, oauth.ErrClientConfig) {
+					return wrapOAuthError(fmt.Errorf("create oauth manager: %w", err), cfg)
+				}
+				return fmt.Errorf("prepare Google Contacts authorization: %w", err)
 			}
-			if mgr.HasToken(email) && !mgr.HasScopeMetadata(email) {
+			if mgr.HasToken(cmd.Context(), email) && !mgr.HasScopeMetadata(cmd.Context(), email) {
 				if _, err := fmt.Fprintln(cmd.ErrOrStderr(), "Warning: existing Google permissions are not recorded. This sign-in requests Contacts access; Gmail or Calendar may need separate reauthorization afterward."); err != nil {
 					return fmt.Errorf("write authorization warning: %w", err)
 				}
@@ -51,6 +55,13 @@ func newAuthorizeGoogleCardDAVCmd() *cobra.Command {
 			}
 			if err != nil {
 				return err
+			}
+			if mgr.CommandTokens() {
+				_, err = fmt.Fprintln(cmd.OutOrStdout(), "Google Contacts authorized. Token saved in the configured secret store. Select Google Contacts in Settings → CardDAV account, or run add-carddav --google with this email.")
+				if err != nil {
+					return fmt.Errorf("write Google authorization result: %w", err)
+				}
+				return nil
 			}
 			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Google Contacts authorized. Token saved to %s.\nSelect Google Contacts in Settings → CardDAV account, or run add-carddav --google with this email.\n", textutil.SanitizeTerminal(mgr.TokenPath(email)))
 			if err != nil {

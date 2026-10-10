@@ -343,15 +343,15 @@ func TestCalendarAddTokenReusableRejectsMismatchedInheritedClient(t *testing.T) 
 	_ = testCtx
 	logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
 
-	mgr, err := newCalendarOAuthManager(
-		secretsPath,
+	mgr, err := newCalendarOAuthManager(t.Context(),
+		config.OAuthApp{ClientSecrets: secretsPath},
 		"user-a@example.com",
 		invocationFromContext(testCtx),
 	)
 	require.NoError(err)
 	decision := calendarAddOAuthApp{OAuthApp: "acme", NeedsClientCheck: true}
 
-	assert.False(calendarAddTokenReusable(mgr, "user-a@example.com", decision),
+	assert.False(calendarAddTokenReusable(t.Context(), mgr, "user-a@example.com", decision),
 		"a calendar token minted by another OAuth client must force reauthorization")
 }
 
@@ -360,7 +360,7 @@ type fakeCalendarTokenProber struct {
 	refreshErr error
 }
 
-func (f fakeCalendarTokenProber) HasToken(string) bool { return f.hasToken }
+func (f fakeCalendarTokenProber) HasToken(context.Context, string) bool { return f.hasToken }
 
 func (f fakeCalendarTokenProber) ForceRefresh(context.Context, string) error {
 	return f.refreshErr

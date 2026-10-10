@@ -2132,7 +2132,7 @@ This endpoint is used by `msgvault export-token` during remote/headless deployme
 
 Register or ensure an account is scheduled for sync on the remote server.
 
-`msgvault export-token` posts to this endpoint automatically after uploading a token.
+`msgvault export-token` posts to this endpoint automatically after uploading a token. With `--upload-only`, it skips this request and does not create a Gmail sync schedule.
 
 ```json
 {

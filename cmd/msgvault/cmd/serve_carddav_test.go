@@ -162,7 +162,7 @@ func TestGoogleCardDAVSchedulerWaitsForAuthorization(t *testing.T) {
 	controller.SetScheduleReconciler(func(settings config.CardDAVConfig, service api.CardDAVOperations) error {
 		return reconcileCardDAVSchedulerJob(sched, settings, service, logger, config.DefaultCardDAVConnection)
 	})
-	required.NoError(controller.ReconcileSchedule())
+	required.NoError(controller.ReconcileSchedule(t.Context()))
 	status, err := controller.Status(testCtx, "")
 	required.NoError(err)
 	assertions.Equal("google_authorization_required", status.RepairReason)

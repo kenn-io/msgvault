@@ -68,7 +68,7 @@ you@gmail.com already has Gmail write access (https://www.googleapis.com/auth/gm
 To make the account read-only, remove its access and grant it again:
 
 1. Revoke msgvault at [myaccount.google.com/permissions](https://myaccount.google.com/permissions)
-2. `rm ~/.msgvault/tokens/you@gmail.com.json`
+2. Remove the token: with file storage, run `rm ~/.msgvault/tokens/you@gmail.com.json`; with command storage, delete its record from the configured store.
 3. `msgvault add-account you@gmail.com --readonly`
 
 Revoking clears every other Google scope for the account, so re-run whichever commands granted them — `add-calendar` for Calendar, `add-synctech-sms-drive` for Drive. Archived mail is unaffected. Confirm the result by reading the token's `scopes` array rather than the permissions page, which reports what msgvault is authorized to request.
@@ -98,6 +98,8 @@ Declining the prompt leaves both the token and the staged batch untouched. Accep
 
 ### General OAuth Issues
 
+For token-file storage:
+
 1. Remove old tokens: `rm ~/.msgvault/tokens/you@gmail.com.json`
 2. Re-add account: `msgvault add-account you@gmail.com`
 3. Revoke and retry: [myaccount.google.com/permissions](https://myaccount.google.com/permissions)
@@ -106,13 +108,15 @@ Declining the prompt leaves both the token and the staged batch untouched. Accep
 
 ### "No browser available"
 
-The standard OAuth flow requires a browser. For headless servers, use the copy-token workflow:
+The standard OAuth flow requires a browser. With token-file storage, use the copy-token workflow:
 
 1. Authorize on a machine with a browser: `msgvault add-account you@gmail.com`
 2. Copy the token file to your server: `scp ~/.msgvault/tokens/you@gmail.com.json user@server:~/.msgvault/tokens/`
 3. Register on the server: `msgvault add-account you@gmail.com`
 
 Run `msgvault add-account you@gmail.com --headless` to see detailed instructions with the exact paths for your configuration.
+
+For command storage, follow [credential configuration](https://github.com/kenn-io/msgvault/blob/main/docs/configuration.md#command-backed-google-credentials-and-tokens) and [export-token](https://github.com/kenn-io/msgvault/blob/main/docs/cli-reference.md#export-token). Use `--upload-only` for Calendar-only tokens, then register with `add-calendar` on the server.
 
 ### Token copied but "account not found"
 

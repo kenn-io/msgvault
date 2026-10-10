@@ -322,7 +322,7 @@ func TestTokenSourceRefreshesExpiredTokenThroughBoundedClient(t *testing.T) {
 	assert.Equal("new-access", token.AccessToken, "refreshed access token")
 	assert.Equal("refresh-1", token.RefreshToken, "refresh token must survive the round trip")
 
-	tf, err := mgr.loadTokenFile("user@example.com")
+	tf, err := mgr.loadTokenFile(t.Context(), "user@example.com")
 	require.NoError(err, "loadTokenFile")
 	assert.Equal("new-access", tf.AccessToken, "refreshed token should be persisted")
 	assert.Equal("refresh-1", tf.RefreshToken, "stored refresh token should be preserved")

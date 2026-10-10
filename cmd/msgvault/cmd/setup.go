@@ -79,7 +79,8 @@ func runSetup(cmd *cobra.Command, args []string) error {
 	var edits []config.Edit
 	if secretsPath != "" {
 		cfg.OAuth.ClientSecrets = secretsPath
-		edits = append(edits, config.Edit{Key: "oauth.client_secrets", Value: secretsPath})
+		cfg.OAuth.ClientSecretsCommand = nil
+		edits = append(edits, config.Edit{Key: "oauth.client_secrets", Value: secretsPath}, config.Edit{Key: "oauth.client_secrets_command", Remove: true})
 	}
 	if remoteURL != "" {
 		cfg.Remote.URL = remoteURL
@@ -102,8 +103,9 @@ func runSetup(cmd *cobra.Command, args []string) error {
 		fmt.Printf("\nConfiguration saved to %s\n", cfg.ConfigFilePath())
 	}
 
+	namedOAuthApp, _ := setupOAuthApp(&cfg.OAuth)
 	printSetupNextSteps(cmd.OutOrStdout(), setupAddAccountCommand(&cfg.OAuth), cfg.Remote.URL != "",
-		cfg.OAuth.ClientSecrets != "" && cfg.OAuth.ServiceAccountKey == "")
+		cfg.OAuth.ClientSecrets != "" && cfg.OAuth.ServiceAccountKey == "", setupUsesServiceAccount(&cfg.OAuth), namedOAuthApp)
 	return nil
 }
 
@@ -112,39 +114,62 @@ func runSetup(cmd *cobra.Command, args []string) error {
 // Without a default credential, add-account needs --oauth-app to pick a
 // named app.
 func setupAddAccountCommand(o *config.OAuthConfig) string {
-	const base = "msgvault add-account you@gmail.com"
-	if o.ClientSecrets != "" || o.ServiceAccountKey != "" {
+	const base = "msgvault add-account you@example.com"
+	app, configured := setupOAuthApp(o)
+	if !configured {
+		return ""
+	}
+	if app == "" {
 		return base
+	}
+	return base + " --oauth-app " + oauth.ShellQuote(app)
+}
+
+func setupOAuthApp(o *config.OAuthConfig) (string, bool) {
+	if o.ClientSecrets != "" || o.ClientSecretsCommand != nil || o.ServiceAccountKey != "" {
+		return "", true
 	}
 	names := slices.Sorted(maps.Keys(o.Apps))
 	for _, name := range names {
-		if app := o.Apps[name]; app.ClientSecrets != "" || app.ServiceAccountKey != "" {
-			return base + " --oauth-app " + oauth.ShellQuote(name)
+		if app := o.Apps[name]; app.ClientSecrets != "" || app.ClientSecretsCommand != nil || app.ServiceAccountKey != "" {
+			return name, true
 		}
 	}
-	return ""
+	return "", false
+}
+
+func setupUsesServiceAccount(o *config.OAuthConfig) bool {
+	app, configured := setupOAuthApp(o)
+	return configured && o.ServiceAccountKeyFor(app) != ""
 }
 
 // printSetupNextSteps prints the closing steps. bundleHasSecrets reports
 // whether the NAS bundle carries the credential add-account uses. The
 // bundle copies only the default [oauth] client_secrets, and add-account
 // prefers a service account key, which leaves no token to export.
-func printSetupNextSteps(w io.Writer, addAccountCmd string, hasRemote, bundleHasSecrets bool) {
+func printSetupNextSteps(w io.Writer, addAccountCmd string, hasRemote, bundleHasSecrets, serviceAccount bool, namedOAuthApp string) {
 	var b strings.Builder
 	b.WriteString("\nSetup complete! Next steps:\n\n")
 	if addAccountCmd != "" {
 		b.WriteString("  1. Add a Gmail account:\n")
 		b.WriteString("     " + addAccountCmd + "\n\n")
 		b.WriteString("  2. Sync your emails:\n")
-		b.WriteString("     msgvault sync-full you@gmail.com\n\n")
+		b.WriteString("     msgvault sync-full you@example.com\n\n")
 		switch {
+		case hasRemote && serviceAccount:
+			b.WriteString("  3. Configure the same service-account key on your NAS.\n")
+			b.WriteString("     Service accounts mint tokens on demand, so there is no token to export.\n\n")
 		case hasRemote && bundleHasSecrets:
 			b.WriteString("  3. Export token to your NAS (after add-account):\n")
-			b.WriteString("     msgvault export-token you@gmail.com\n\n")
+			b.WriteString("     msgvault export-token you@example.com\n\n")
 		case hasRemote:
-			b.WriteString("  This account cannot be exported to the NAS: export-token needs a\n")
-			b.WriteString("  token from the default [oauth] client_secrets, the only credential\n")
-			b.WriteString("  the NAS bundle carries.\n\n")
+			b.WriteString("  3. Configure the same OAuth app and token storage on your NAS.\n")
+			b.WriteString("     The bundle does not carry these client credentials. After add-account:\n")
+			b.WriteString("     msgvault export-token you@example.com\n\n")
+			if namedOAuthApp != "" {
+				b.WriteString("     On the NAS, after token upload, bind the account to this app with:\n")
+				b.WriteString("     " + addAccountCmd + "\n\n")
+			}
 		}
 	} else {
 		b.WriteString("  Add a source, for example:\n")
@@ -166,6 +191,13 @@ func setupOAuthSecrets(reader *bufio.Reader, cfg *config.Config) (string, error)
 	fmt.Println("Step 1: Google OAuth Credentials (Optional)")
 	fmt.Println("--------------------------------------------")
 
+	// A command source stays configured unless the user chooses a replacement.
+	if cfg.OAuth.ClientSecretsCommand != nil {
+		fmt.Println("OAuth client credentials are configured through a command.")
+		if promptYesNo(reader, "Keep existing configuration?") {
+			return "", nil
+		}
+	}
 	// Check if already configured
 	if cfg.OAuth.ClientSecrets != "" {
 		fmt.Printf("OAuth credentials already configured: %s\n", cfg.OAuth.ClientSecrets)
@@ -274,6 +306,9 @@ func setupRemoteServer(reader *bufio.Reader, oauthSecretsPath string, cfg *confi
 	if effectiveSecrets == "" {
 		effectiveSecrets = cfg.OAuth.ClientSecrets
 	}
+	if cfg.OAuth.ClientSecretsCommand != nil || cfg.OAuth.Tokens.Enabled() {
+		fmt.Println("Configure the credential commands and secret store separately on the NAS; the bundle does not contain command-backed credentials.")
+	}
 	bundleDir := filepath.Join(cfg.HomeDir, "nas-bundle")
 	if err := createNASBundle(bundleDir, apiKey, effectiveSecrets, port); err != nil {
 		fmt.Printf("Warning: Could not create NAS bundle: %v\n", err)
@@ -324,7 +359,7 @@ rate_limit_qps = 5
 # Accounts will be added automatically when you export tokens.
 # You can also add them manually:
 # [[accounts]]
-# email = "you@gmail.com"
+# email = "you@example.com"
 # schedule = "0 2 * * *"
 # enabled = true
 `, apiKey, oauthBlock)

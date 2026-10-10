@@ -340,24 +340,53 @@ func TestDraftMutationCancellationUsesDispatchState(t *testing.T) {
 	}
 }
 
-func TestDraftMutationTokenFailureMakesNoGmailRequest(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	client := NewClient(draftUnauthorizedTokenSource{}, WithRateLimiter(NewRateLimiter(1000)))
-	transport, ok := client.httpClient.Transport.(*oauth2.Transport)
-	requirements.True(ok)
-	requests := 0
-	transport.Base = draftRoundTripFunc(func(*http.Request) (*http.Response, error) {
-		requests++
-		return nil, errors.New("Gmail request must not be sent")
-	})
+type draftUnsavedRefreshTokenSource struct{}
 
-	_, err := client.CreateDraft(t.Context(), []byte("body"), "thread")
-	requirements.Error(err)
-	var writeErr *DraftWriteError
-	requirements.ErrorAs(err, &writeErr)
-	assertions.Equal("auth_failed", writeErr.Code)
-	assertions.Zero(requests)
+func (draftUnsavedRefreshTokenSource) Token() (*oauth2.Token, error) {
+	return nil, errors.New("save refreshed token: secret command exited with status 7")
+}
+
+// No Gmail request is sent when the token cannot be obtained, whether Google
+// rejects the refresh or the refreshed token cannot be saved.
+func TestDraftMutationTokenFailureMakesNoGmailRequest(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		source oauth2.TokenSource
+	}{
+		{name: "provider rejects refresh", source: draftUnauthorizedTokenSource{}},
+		{name: "refreshed token not saved", source: draftUnsavedRefreshTokenSource{}},
+	} {
+		for _, operation := range []string{"create", "update", "delete"} {
+			t.Run(tt.name+"/"+operation, func(t *testing.T) {
+				assertions := assert.New(t)
+				requirements := require.New(t)
+				client := NewClient(tt.source, WithRateLimiter(NewRateLimiter(1000)))
+				transport, ok := client.httpClient.Transport.(*oauth2.Transport)
+				requirements.True(ok)
+				requests := 0
+				transport.Base = draftRoundTripFunc(func(*http.Request) (*http.Response, error) {
+					requests++
+					return nil, errors.New("Gmail request must not be sent")
+				})
+
+				var err error
+				switch operation {
+				case "create":
+					_, err = client.CreateDraft(t.Context(), []byte("body"), "thread")
+				case "update":
+					_, err = client.UpdateDraft(t.Context(), "draft-1", []byte("body"), "thread")
+				case "delete":
+					err = client.DeleteDraft(t.Context(), "draft-1")
+				}
+				requirements.Error(err)
+				var writeErr *DraftWriteError
+				requirements.ErrorAs(err, &writeErr)
+				assertions.Equal(DraftStateRejected, writeErr.State)
+				assertions.Equal("auth_failed", writeErr.Code)
+				assertions.Zero(requests)
+			})
+		}
+	}
 }
 
 func TestIsInsufficientScopeErrorRecognizesProviderMessages(t *testing.T) {

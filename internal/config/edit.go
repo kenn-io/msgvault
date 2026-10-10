@@ -43,10 +43,11 @@ var (
 	ErrAtomicReplaceUnsupported = errors.New("conditional atomic config replacement is unsupported")
 )
 
-// Edit is one targeted TOML assignment. Key is a dotted table/key path.
+// Edit sets or removes one TOML assignment. Key is a dotted table/key path.
 type Edit struct {
-	Key   string
-	Value any
+	Key    string
+	Value  any
+	Remove bool
 }
 
 // TableEdit inserts or removes one exact TOML table. Insertions refuse an
@@ -1083,11 +1084,15 @@ func applyTargetedEdits(content []byte, edits []Edit) ([]byte, error) {
 		if lastDot := strings.LastIndex(edit.Key, "."); lastDot >= 0 {
 			section, key = edit.Key[:lastDot], edit.Key[lastDot+1:]
 		}
-		value, err := encodeTOMLValue(edit.Value)
+		value := ""
+		var err error
+		if !edit.Remove {
+			value, err = encodeTOMLValue(edit.Value)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("encode %s: %w", edit.Key, err)
 		}
-		lines, err = editTOMLLines(lines, section, key, value)
+		lines, err = editTOMLLines(lines, section, key, value, edit.Remove)
 		if err != nil {
 			return nil, err
 		}
@@ -1580,7 +1585,9 @@ func joinTOMLLines(lines []tomlLine) []byte {
 	return []byte(out.String())
 }
 
-func editTOMLLines(lines []tomlLine, section, key, value string) ([]tomlLine, error) {
+// editTOMLLines replaces or inserts section.key = value, or deletes the
+// assignment when remove is set. Removing an absent key changes nothing.
+func editTOMLLines(lines []tomlLine, section, key, value string, remove bool) ([]tomlLine, error) {
 	target := strings.Split(section+"."+key, ".")
 	currentTable := []string(nil)
 	type insertionTarget struct {
@@ -1627,6 +1634,13 @@ func editTOMLLines(lines []tomlLine, section, key, value string) ([]tomlLine, er
 		return nil, fmt.Errorf("%w: %s.%s", ErrAmbiguousConfigTarget, section, key)
 	}
 	if len(matches) == 1 {
+		if remove {
+			end, _, _, err := assignmentSpan(lines, matches[0])
+			if err != nil {
+				return nil, err
+			}
+			return append(lines[:matches[0]], lines[end+1:]...), nil
+		}
 		updated, err := replaceTOMLAssignment(lines, matches[0], value)
 		if err != nil {
 			return nil, fmt.Errorf("edit %s.%s: %w", section, key, err)
@@ -1634,6 +1648,9 @@ func editTOMLLines(lines []tomlLine, section, key, value string) ([]tomlLine, er
 		return updated, nil
 	}
 
+	if remove {
+		return lines, nil
+	}
 	eol := preferredEOL(lines)
 	hadFinalEOL := len(lines) == 0 || lines[len(lines)-1].eol != ""
 	if len(candidates) > 0 {

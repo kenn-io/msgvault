@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -47,6 +48,8 @@ func TestErrOAuthNotConfigured(t *testing.T) {
 }
 
 func TestWrapOAuthError_NotExist(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	originalErr := fmt.Errorf("open /path/to/secrets.json: %w", os.ErrNotExist)
 
 	wrapped := wrapOAuthError(originalErr, config.NewDefaultConfig())
@@ -54,9 +57,11 @@ func TestWrapOAuthError_NotExist(t *testing.T) {
 	msg := wrapped.Error()
 
 	// Should contain accessible message (not "not found" anymore)
-	assert.Contains(t, msg, "not accessible", "missing 'not accessible'")
+	assert.Contains(msg, "not accessible", "missing 'not accessible'")
 	// Should contain setup hint
-	assert.Contains(t, msg, "https://msgvault.io/guides/oauth-setup/", "missing setup URL")
+	assert.Contains(msg, "https://msgvault.io/guides/oauth-setup/", "missing setup URL")
+	require.ErrorIs(wrapped, originalErr)
+	assert.True(strings.HasSuffix(msg, oauthSetupHint(config.NewDefaultConfig())))
 }
 
 func TestWrapOAuthError_Permission(t *testing.T) {
@@ -437,6 +442,16 @@ func (fakeTokenSource) Token() (*extOAuth2.Token, error) {
 }
 
 func TestGetTokenSourceWithReauth(t *testing.T) {
+	t.Run("malformed file token", func(t *testing.T) {
+		tokenPath, restore := seedTokenEnv(t, "{")
+		defer restore()
+		mgr, err := oauth.NewManagerWithCredentials(t.Context(), config.OAuthApp{ClientSecrets: filepath.Join(filepath.Dir(filepath.Dir(tokenPath)), "client_secret.json")}, filepath.Dir(tokenPath), config.OAuthTokenCommands{}, nil, oauth.Scopes)
+		require.NoError(t, err)
+		_, err = getTokenSourceWithReauth(t.Context(), mgr, scopeEscalationAccount, false, gmailReauthHint)
+		require.ErrorIs(t, err, oauth.ErrInvalidTokenJSON)
+		assert.ErrorContains(t, err, "add-account")
+	})
+
 	invalidGrant := &extOAuth2.RetrieveError{ErrorCode: "invalid_grant"}
 	genericErr := errors.New("transient network error")
 
@@ -464,7 +479,7 @@ func TestGetTokenSourceWithReauth(t *testing.T) {
 			name: "no token at all",
 			mock: &mockReauthorizer{
 				tokenSourceFn: func(_ context.Context, _ string) (extOAuth2.TokenSource, error) {
-					return nil, errors.New("no token")
+					return nil, os.ErrNotExist
 				},
 				hasTokenVal: false,
 			},

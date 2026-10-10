@@ -210,7 +210,7 @@ func basePreflight(managers map[string]*mockReauthorizer, accounts ...preflightA
 		ListGmailAccounts: func(context.Context) ([]preflightAccount, error) {
 			return accounts, nil
 		},
-		ManagerFor: func(appName string) (preflightReauthManager, error) {
+		ManagerFor: func(ctx context.Context, appName string) (preflightReauthManager, error) {
 			return managers[appName], nil
 		},
 	}
@@ -240,7 +240,7 @@ func TestPreflightReauth(t *testing.T) {
 		},
 		{
 			name:          "no token → skip (no enroll)",
-			manager:       &mockReauthorizer{hasTokenVal: false},
+			manager:       &mockReauthorizer{tokenSourceFn: func(context.Context, string) (extOAuth2.TokenSource, error) { return nil, os.ErrNotExist }},
 			config:        func(m map[string]*mockReauthorizer) preflightConfig { return basePreflight(m, acct) },
 			wantAuthorize: 0,
 		},
