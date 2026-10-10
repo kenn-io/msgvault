@@ -22,6 +22,11 @@ All notable changes to msgvault, grouped by release.
 
 - Agent tokens grant scoped archive reads through the remote CLI and MCP, with optional `--expires`. Search responses report index uncertainty; owner searches retain automatic index repair.
 
+- On Linux, saving or editing `config.toml` works on filesystems that do not
+  record file birth time, such as ext4 created with 128-byte inodes. Before,
+  every save, settings change, and CardDAV account test or save there failed
+  with a config conflict.
+
 - msgvault sends anonymous usage telemetry: a daemon ping at startup and once
   each later UTC day, and an `app_opened` event the web UI reports through the
   daemon when it opens and on its first focus on a later UTC day. Events carry
