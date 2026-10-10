@@ -162,6 +162,26 @@ Add the following to your Claude Desktop config file:
 
 If `msgvault` is not on your PATH, use the full path to the binary. Restart Claude Desktop after saving the config.
 
+### Choose a transport for concurrent sessions
+
+A stdio MCP client starts one `msgvault mcp` proxy for each session. Each proxy forwards
+archive operations to the same msgvault daemon; it does not load a separate archive
+engine. For many simultaneous sessions, prefer one shared StreamableHTTP listener when
+your clients support a direct HTTP connection. A client-side stdio-to-HTTP bridge still
+starts a process per session.
+
+Start the listener once with `msgvault mcp --http 8080`, then point every client at
+`http://127.0.0.1:8080/mcp` using the authentication configuration below. HTTP write
+tools need the documented opt-ins. On current `main`, agent-delegated credentials
+(`--agent-url` and `--agent-token-file`) require stdio.
+
+Version 0.20.0 eagerly constructed every combination of MCP tool schemas in each
+process. Version 0.21.0 and current `main` construct catalogs when needed. Upgrade an
+older binary and restart existing proxies. This removes the known eager schema
+allocation; it does not establish the cause of every macOS memory report. See [MCP
+memory measurements](../development.md#mcp-memory-measurements) for reproducible
+allocation checks and the difference between Go heap, RSS, and physical footprint.
+
 ### StreamableHTTP Transport
 
 For MCP clients that connect over HTTP instead of stdio, run:
