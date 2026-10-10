@@ -607,7 +607,9 @@ func TestEngine_FormatMethodology_MentionsSentPolicy(t *testing.T) {
 	)
 	assert.Contains(t,
 		out,
-		"Tiebreakers: has raw MIME > when all eligible copies have matching normalized MIME, more attachments > attachment signal > larger payload; then metadata quality > more labels > earlier archived_at > lower id.",
+		"Tiebreakers: has raw MIME > for Message-ID groups with all eligible MIME parsed and matching outside placeholders, "+
+			"no X-Apple-Content-Length placeholders > when all eligible copies have matching normalized MIME, "+
+			"more attachments > attachment signal > larger payload; then metadata quality > more labels > earlier archived_at > lower id.",
 		"methodology missing payload completeness order",
 	)
 }

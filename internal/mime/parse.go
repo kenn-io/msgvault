@@ -50,6 +50,9 @@ type Message struct {
 	BodyHTML      string
 	Attachments   []Attachment
 	Errors        []string // Non-fatal parsing errors
+	// HasAppleContentLength marks MIME part headers left by Apple Mail when
+	// attachment bytes are stored outside the raw message.
+	HasAppleContentLength bool
 }
 
 // Address represents an email address with optional display name.
@@ -89,6 +92,10 @@ func DistinctAttachments(parts []Attachment) []Attachment {
 
 // Parse parses raw MIME data into a Message.
 func Parse(raw []byte) (*Message, error) {
+	return parse(raw, nil)
+}
+
+func parse(raw []byte, inspect func(*enmime.Part)) (*Message, error) {
 	root, err := envelopeParser.ReadParts(bytes.NewReader(raw))
 	if err != nil {
 		return nil, fmt.Errorf("read MIME envelope: Failed to ReadParts: %w", err)
@@ -110,6 +117,10 @@ func Parse(raw []byte) (*Message, error) {
 		ListID:    NormalizeListID(env.GetHeader("List-Id")),
 		BodyText:  env.Text,
 		BodyHTML:  env.HTML,
+		HasAppleContentLength: root.DepthMatchFirst(func(part *enmime.Part) bool {
+			_, present := part.Header["X-Apple-Content-Length"]
+			return present
+		}) != nil,
 	}
 
 	// Parse date
@@ -149,6 +160,9 @@ func Parse(raw []byte) (*Message, error) {
 		msg.Errors = append(msg.Errors, e.Error())
 	}
 
+	if inspect != nil {
+		inspect(root)
+	}
 	return msg, nil
 }
 
@@ -156,7 +170,11 @@ func Parse(raw []byte) (*Message, error) {
 // malformed MIME structure prevents full envelope parsing. Body content and
 // attachments remain unavailable after a fatal parse error.
 func ParseWithRecovery(raw []byte, fallbackSubject string) (*Message, error) {
-	msg, err := Parse(raw)
+	return parseWithRecovery(raw, fallbackSubject, nil)
+}
+
+func parseWithRecovery(raw []byte, fallbackSubject string, inspect func(*enmime.Part)) (*Message, error) {
+	msg, err := parse(raw, inspect)
 	if err == nil {
 		return msg, nil
 	}
