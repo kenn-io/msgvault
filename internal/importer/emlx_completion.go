@@ -303,7 +303,12 @@ func (r *emlxOccurrenceImporter) creditIntent(
 	receipt := emlxReceipt{Version: emlxReceiptVersion, ID: intent.Occurrence, Target: targetID}
 	status := "pending"
 	if item, ok := items[intent.Occurrence]; ok {
-		if prior, ok := decodeEmlxReceipt(item.Checksum, intent.Occurrence); ok && prior.Target == targetID {
+		if prior, ok := decodeEmlxReceipt(item.Checksum, intent.Occurrence); ok {
+			// The file has since moved on to another message; its receipt for
+			// that message is newer than this historical write.
+			if prior.Target != targetID {
+				return nil
+			}
 			receipt, status = prior, item.Status
 		}
 	}

@@ -4,6 +4,7 @@ package importer
 
 import (
 	"context"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -229,4 +230,56 @@ func TestImportEmlxCreditReachesLaterFileInChunk(t *testing.T) {
 	r.NoError(err)
 	r.Len(parsed.Attachments, 1)
 	a.Equal(bBytes, parsed.Attachments[0].Content, "A does not replay bytes already credited to it")
+}
+
+// A file whose interrupted write is credited later may already describe a
+// different message. Its newer receipt must survive the historical credit.
+func TestImportEmlxCreditKeepsNewerReceiptForOtherMessage(t *testing.T) {
+	r, a := require.New(t), assert.New(t)
+	st, tmp := openTestStore(t)
+	rootA, rootB := filepath.Join(tmp, "A.mbox"), filepath.Join(tmp, "B.mbox")
+	oldRaw := partialRaw(nil, "one.bin")
+	mkMailboxDir(t, rootA, map[string][]byte{"1.partial.emlx": oldRaw})
+	cacheAttachment(t, rootA, "1", "2", "one.bin", []byte("A bytes for the old message"))
+	opts := EmlxImportOptions{Identifier: "owner@example.test", AttachmentsDir: filepath.Join(tmp, "blobs")}
+	stopped := defaultEmlxImportIO(opts)
+	ingest := stopped.ingest
+	stopped.ingest = func(
+		ctx context.Context, s *store.Store, sid int64, identifier, dest string, labels []int64,
+		target, hash string, raw []byte, date time.Time, log *slog.Logger,
+	) error {
+		r.NoError(ingest(ctx, s, sid, identifier, dest, labels, target, hash, raw, date, log))
+		return errors.New("simulated process stop")
+	}
+	_, err := importEmlxDir(t.Context(), st, rootA, opts, stopped)
+	r.NoError(err)
+
+	newRaw := partialRaw([]string{"Message-ID: <newer@example.test>"}, "one.bin")
+	mkMailboxDir(t, rootA, map[string][]byte{"1.partial.emlx": newRaw})
+	moved, err := ImportEmlxDir(t.Context(), st, rootA, opts)
+	r.NoError(err)
+	a.Zero(moved.Errors)
+	receiptFor := func() (emlxReceipt, string) {
+		t.Helper()
+		var checksum, status string
+		r.NoError(st.DB().QueryRow(`SELECT checksum, status FROM source_import_items
+ WHERE provider = 'emlx-occurrence'`).Scan(&checksum, &status))
+		var receipt emlxReceipt
+		r.NoError(json.Unmarshal([]byte(checksum), &receipt))
+		return receipt, status
+	}
+	before, status := receiptFor()
+	r.Equal("imported", status)
+
+	mkMailboxDir(t, rootB, map[string][]byte{"1.partial.emlx": oldRaw})
+	cacheAttachment(t, rootB, "1", "2", "one.bin", []byte("B bytes for the old message"))
+	_, err = ImportEmlxDir(t.Context(), st, rootB, opts)
+	r.NoError(err)
+	var receipt emlxReceipt
+	var checksum string
+	r.NoError(st.DB().QueryRow(st.Rebind(`SELECT checksum, status FROM source_import_items
+ WHERE provider = 'emlx-occurrence' AND provider_id = ?`), before.ID).Scan(&checksum, &status))
+	r.NoError(json.Unmarshal([]byte(checksum), &receipt))
+	a.Equal("imported", status, "the historical credit must not reopen the newer receipt")
+	a.Equal(before, receipt)
 }

@@ -54,6 +54,9 @@ func TestImportEmlxReconcilePreservesArchivedPlistDate(t *testing.T) {
 			r.Equal(sql.NullTime{Time: tc.wantSent, Valid: true}, sent)
 			r.Equal(sql.NullTime{Time: plistDate, Valid: true}, internal)
 
+			// Only the copy without a usable plist date remains, so reconciliation
+			// must ingest it and fall back to the archived date.
+			r.NoError(os.Remove(filepath.Join(root, "Messages", "1.emlx")))
 			r.NoError(os.WriteFile(filepath.Join(root, "Messages", "2.emlx"),
 				fmt.Appendf(nil, "%d\n%s%s", len(raw), raw, tc.laterPlist), 0600))
 			opts.FullReconcile = true
@@ -61,6 +64,7 @@ func TestImportEmlxReconcilePreservesArchivedPlistDate(t *testing.T) {
 			r.NoError(err)
 			r.False(reconciled.HardErrors)
 			a.Zero(reconciled.MessagesAdded, "identical MIME must retain the shared archived message")
+			a.Equal(int64(1), reconciled.MessagesUpdated, "reconciliation ingests the remaining copy")
 			r.NoError(st.DB().QueryRow("SELECT sent_at, internal_date FROM messages WHERE id = ?", messageID).Scan(&sent, &internal))
 			a.Equal(sql.NullTime{Time: tc.wantSent, Valid: true}, sent)
 			a.Equal(sql.NullTime{Time: plistDate, Valid: true}, internal)

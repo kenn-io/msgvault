@@ -1,7 +1,7 @@
 package importer
 
 import (
-	"encoding/base64"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -27,21 +27,45 @@ func TestEmlxReceiptStrictIdentity(t *testing.T) {
 	a.False(ok)
 }
 
-func FuzzEmlxReceiptRoundTrip(f *testing.F) {
-	f.Add("Messages/1.emlx")
-	f.Add("Archive.mbox/子/2.emlx")
-	f.Fuzz(func(t *testing.T, rel string) {
-		// Bound materialized strings while keeping every drawn byte class.
-		rel = "Messages/" + base64.RawURLEncoding.EncodeToString([]byte(rel)[:min(len(rel), 512)]) + ".emlx"
-		receipt := emlxReceipt{
-			Version: 1, ID: strings.Repeat("a", 64) + "/" + rel, Signature: strings.Repeat("b", 64),
-			SourceParts: map[string]string{"2": strings.Repeat("d", 64)}, Target: "emlx-" + strings.Repeat("c", 64),
+// FuzzEmlxReceiptDecode feeds arbitrary ledger text to the decoder. Anything
+// it accepts must satisfy every receipt rule and re-encode to stable text.
+func FuzzEmlxReceiptDecode(f *testing.F) {
+	id := strings.Repeat("a", 64) + "/Messages/1.emlx"
+	valid, err := encodeEmlxReceipt(emlxReceipt{
+		Version: 1, ID: id, Signature: strings.Repeat("b", 64),
+		SourceParts: map[string]string{"2": strings.Repeat("d", 64)}, Target: "emlx-" + strings.Repeat("c", 64),
+	})
+	require.NoError(f, err)
+	f.Add(valid)
+	f.Add(strings.Replace(valid, `"2"`, `"02"`, 1))
+	f.Add(strings.Replace(valid, `"2"`, `"0"`, 1))
+	f.Add(strings.Replace(valid, `"signature":"`, `"signature":"x`, 1))
+	f.Add(`{"version":1,"id":"` + id + `","signature":"","source_parts":null,"target":"emlx-` +
+		strings.Repeat("c", 64) + `"}`)
+	f.Add(`{}`)
+	f.Fuzz(func(t *testing.T, text string) {
+		receipt, ok := decodeEmlxReceipt(text, id)
+		if !ok {
+			return
+		}
+		assert.Equal(t, emlxReceiptVersion, receipt.Version)
+		assert.Equal(t, id, receipt.ID)
+		assert.True(t, receipt.Signature == "" || store.IsEmlxDigest(receipt.Signature))
+		assert.True(t, store.IsEmlxTargetID(receipt.Target))
+		for key, hash := range receipt.SourceParts {
+			n, err := strconv.Atoi(key)
+			require.NoError(t, err)
+			assert.Positive(t, n)
+			assert.Equal(t, strconv.Itoa(n), key)
+			assert.True(t, store.IsEmlxDigest(hash))
 		}
 		encoded, err := encodeEmlxReceipt(receipt)
 		require.NoError(t, err)
-		decoded, ok := decodeEmlxReceipt(encoded, receipt.ID)
+		again, ok := decodeEmlxReceipt(encoded, id)
 		require.True(t, ok)
-		assert.Equal(t, receipt, decoded)
+		reencoded, err := encodeEmlxReceipt(again)
+		require.NoError(t, err)
+		assert.Equal(t, encoded, reencoded)
 	})
 }
 
