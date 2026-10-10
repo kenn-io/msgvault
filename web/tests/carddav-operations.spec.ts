@@ -262,7 +262,7 @@ test('keyboard publication ambiguity locks mutation, retries GET only, and repea
   await handoff.focus();
   await page.keyboard.press('Enter');
   await expect(page.getByRole('heading', { name: 'Conflict comparison' })).toBeFocused();
-  await expect(page.getByText('Resolved by keeping the local card.')).toBeVisible();
+  await expect(page.getByText('Resolved using the msgvault version.')).toBeVisible();
   expect(mutationCount(fixture.requests, '/api/v1/carddav/conflicts/42', 'GET')).toBe(1);
   await expect(page.getByRole('dialog')).toHaveCount(0);
 

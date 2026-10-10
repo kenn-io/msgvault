@@ -608,6 +608,6 @@ describe('CardDAVConflicts', () => {
     await Promise.resolve();
 
     expect(focus).toHaveBeenCalledTimes(focusCallsAfterDestroy);
-    expect(document.body.textContent).not.toContain('resolved by keeping');
+    expect(document.body.textContent).not.toContain('Contact conflict resolved');
   });
 });
