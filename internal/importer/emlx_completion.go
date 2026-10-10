@@ -250,7 +250,7 @@ func (r *emlxOccurrenceImporter) tryHit(
 	}
 	out.kind = emlxOutcomeUnchanged
 	if !targetComplete(target, targetID, r.policy) {
-		if err := r.recoverTarget(ctx, chunk, nil, targetID, target); err != nil {
+		if err := r.recoverTarget(ctx, chunk, targetID, target); err != nil {
 			return out, true, err
 		}
 		out.kind = emlxOutcomeUpdated
@@ -269,17 +269,15 @@ func (r *emlxOccurrenceImporter) tryHit(
 
 // recoverTarget finishes unfinished attachment or search work from the newest
 // committed raw, never from older source bytes. Ingestion applies this
-// occurrence's label alongside the labels already on the message. visiting is
-// the occurrence being imported, or nil on a receipt hit.
+// occurrence's label alongside the labels already on the message.
 func (r *emlxOccurrenceImporter) recoverTarget(
-	ctx context.Context, chunk *emlxChunk, visiting *emlxVisit, targetID string,
-	target store.EmlxTargetState,
+	ctx context.Context, chunk *emlxChunk, targetID string, target store.EmlxTargetState,
 ) error {
 	current, err := r.io.raw(ctx, r.st, target.MessageID)
 	if err != nil {
 		return err
 	}
-	if err := r.creditIntent(ctx, visiting, targetID, target, current); err != nil {
+	if err := r.creditIntent(ctx, chunk, targetID, target, current); err != nil {
 		return err
 	}
 	return r.completeTarget(ctx, chunk, targetID, target, current, target.InternalDate.Time)
@@ -288,9 +286,10 @@ func (r *emlxOccurrenceImporter) recoverTarget(
 // creditIntent settles an interrupted ingest before anything else changes the
 // target. When the archived raw is the one the ingest was writing, the
 // intended occurrence's receipt gains its attachment parts. Otherwise the
-// write never landed and that occurrence retries its parts.
+// write never landed and that occurrence retries its parts. A credited
+// occurrence later in this chunk sees its new receipt, not the prefetched one.
 func (r *emlxOccurrenceImporter) creditIntent(
-	ctx context.Context, visiting *emlxVisit, targetID string, target store.EmlxTargetState,
+	ctx context.Context, chunk *emlxChunk, targetID string, target store.EmlxTargetState,
 	current []byte,
 ) error {
 	intent := emlxPendingIntent(target, targetID)
@@ -324,8 +323,10 @@ func (r *emlxOccurrenceImporter) creditIntent(
 	if err := r.st.PutEmlxLedgerItemsContext(ctx, item); err != nil {
 		return err
 	}
-	if visiting != nil && visiting.id == intent.Occurrence {
-		visiting.item, visiting.receipt, visiting.decoded = &item, receipt, true
+	for _, v := range chunk.visits {
+		if v.id == intent.Occurrence {
+			v.item, v.receipt, v.decoded = &item, receipt, true
+		}
 	}
 	return nil
 }
@@ -480,7 +481,7 @@ func (r *emlxOccurrenceImporter) readCandidate(
 			return c, err
 		}
 		if !targetComplete(c.target, c.targetID, r.policy) {
-			if err := r.recoverTarget(ctx, chunk, v, c.targetID, c.target); err != nil {
+			if err := r.recoverTarget(ctx, chunk, c.targetID, c.target); err != nil {
 				return c, err
 			}
 			c.recovered = true
