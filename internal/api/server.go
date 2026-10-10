@@ -1316,6 +1316,8 @@ func (s *Server) loggerMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		ww := newTrackingResponseWriter(w)
+		queryShape := requestQueryShape(r.URL.Query())
+		r = r.WithContext(context.WithValue(r.Context(), requestQueryShapeKey{}, queryShape))
 
 		stopWatch := s.watchInProgressRequest(r, start)
 
@@ -1323,6 +1325,8 @@ func (s *Server) loggerMiddleware(next http.Handler) http.Handler {
 			stopWatch()
 			s.logger.Info("http request",
 				"method", r.Method,
+				"remote_addr", r.RemoteAddr,
+				"query_shape", queryShape,
 				pathKey, r.URL.Path,
 				"status", ww.Status(),
 				"bytes", ww.BytesWritten(),
@@ -1346,6 +1350,8 @@ func (s *Server) watchInProgressRequest(r *http.Request, start time.Time) func()
 	}
 	done := make(chan struct{})
 	method, path := r.Method, r.URL.Path
+	remoteAddr := r.RemoteAddr
+	queryShape := queryShapeForRequest(r)
 	requestID := requestIDFromContext(r.Context())
 	go func() {
 		timer := time.NewTimer(threshold)
@@ -1357,6 +1363,8 @@ func (s *Server) watchInProgressRequest(r *http.Request, start time.Time) func()
 			case <-timer.C:
 				s.logger.Warn("http request in progress",
 					"method", method,
+					"remote_addr", remoteAddr,
+					"query_shape", queryShape,
 					pathKey, path,
 					"request_id", requestID,
 					"elapsed", time.Since(start),

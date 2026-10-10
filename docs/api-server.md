@@ -1702,6 +1702,27 @@ whichever is shorter. A read that runs out of budget leaves its recording
 
 ---
 
+### Search message metadata {#get-apiv1searchfast}
+
+**Endpoint:** `GET /api/v1/search/fast`
+
+Search subject, snippet, sender and recipient metadata with the Gmail-style
+query in `q`. The response includes the page in `messages` and the full match
+count in `total_count`; no separate count request is needed. If the count is
+unavailable, `total_count` is `-1`.
+
+Use `limit` and `offset` to page through results. `limit=0` returns the count
+without fetching a page. Aggregate `stats` are omitted by default. Supply
+`view_type=senders` (or another aggregate view) to request them. The TUI
+requests these stats for its current view; MCP metadata search skips them.
+
+Disconnecting an HTTP MCP client cancels its in-flight daemon search,
+including older MCP protocol clients. Request completion and in-progress logs
+include `remote_addr` and `query_shape`. The shape records recognized operator
+and parameter names, with `text` marking free text. It excludes query values
+and unknown operator names. `remote_addr` is the connected peer address;
+forwarded-address headers do not replace it.
+
 ### Search messages {#get-apiv1search}
 
 **Endpoint:** `GET /api/v1/search`

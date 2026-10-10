@@ -2844,7 +2844,18 @@ func (e *DuckDBEngine) dropSearchCache() {
 
 // searchPageFromCache executes Phase 3 (paginated results) from the cached temp table.
 // Returns a SearchFastResult with cached count and stats.
-func (e *DuckDBEngine) searchPageFromCache(ctx context.Context, limit, offset int) (*SearchFastResult, error) {
+func (e *DuckDBEngine) searchPageFromCache(ctx context.Context, limit, offset int, includeStats bool) (*SearchFastResult, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if limit == 0 {
+		result := &SearchFastResult{TotalCount: e.searchCacheCount}
+		if includeStats && e.searchCacheStats != nil {
+			stats := *e.searchCacheStats
+			result.Stats = &stats
+		}
+		return result, nil
+	}
 	pageQuery := fmt.Sprintf(`
 		WITH %s,
 		page AS (
@@ -2894,7 +2905,7 @@ func (e *DuckDBEngine) searchPageFromCache(ctx context.Context, limit, offset in
 
 	// Return a copy of cached stats to prevent callers from mutating the cache
 	var statsCopy *TotalStats
-	if e.searchCacheStats != nil {
+	if includeStats && e.searchCacheStats != nil {
 		tmp := *e.searchCacheStats
 		statsCopy = &tmp
 	}
@@ -3019,12 +3030,13 @@ func (e *DuckDBEngine) SearchFastWithStats(ctx context.Context, q *search.Query,
 
 	conditions, args := e.buildSearchConditions(q, filter)
 
-	if limit == 0 {
-		limit = 100
-	}
+	includeStats := statsGroupBy != ViewNoStats
 
 	e.searchCacheMu.Lock()
 	defer e.searchCacheMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 
 	// Check cache: same conditions+args+Parquet fingerprint means same search,
 	// serve from cached table. The fingerprint was refreshed when the query
@@ -3034,10 +3046,17 @@ func (e *DuckDBEngine) SearchFastWithStats(ctx context.Context, q *search.Query,
 	cacheKey := searchCacheKeyFor(conditions, args, e.currentCacheFingerprint())
 	if cacheKey == e.searchCacheKey && e.searchCacheTable != "" {
 		// Retry stats if a previous attempt failed (transient error).
-		if e.searchCacheStats == nil {
-			e.searchCacheStats = e.computeSearchStats(ctx)
+		if includeStats && e.searchCacheStats == nil {
+			stats := e.computeSearchStats(ctx)
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			e.searchCacheStats = stats
 		}
-		return e.searchPageFromCache(ctx, limit, offset)
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		return e.searchPageFromCache(ctx, limit, offset, includeStats)
 	}
 
 	// Cache miss — drop old cache and materialize fresh.
@@ -3108,16 +3127,28 @@ func (e *DuckDBEngine) SearchFastWithStats(ctx context.Context, q *search.Query,
 		log.Printf("warning: search count query failed (using -1): %v", err)
 		count = -1
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	e.searchCacheCount = count
 
-	// Phase 4: Stats from temp table (compute before page so cache is fully populated).
-	e.searchCacheStats = e.computeSearchStats(ctx)
+	// Optional stats reuse the materialized matches; never cache canceled work.
+	if includeStats {
+		stats := e.computeSearchStats(ctx)
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		e.searchCacheStats = stats
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 
 	// Store cache key — cache is now valid.
 	e.searchCacheKey = cacheKey
 
 	// Phase 3: Paginated results from cached temp table.
-	return e.searchPageFromCache(ctx, limit, offset)
+	return e.searchPageFromCache(ctx, limit, offset, includeStats)
 }
 
 // buildSearchConditions builds WHERE conditions for search queries.

@@ -54,6 +54,25 @@ func newStdioInvocationPolicy() *invocationPolicy {
 	return newInvocationPolicy(stdioToolCallsPerSecond, stdioToolCallBurst, stdioConcurrentToolCalls)
 }
 
+// requestCancellationMiddleware joins the SDK method lifetime to its HTTP
+// request without replacing SDK values or explicit MCP cancellation. This is
+// safe for our stateless JSON responses, including older protocol clients that
+// the SDK's PropagateRequestCancellation option does not cover.
+func requestCancellationMiddleware(requestContext context.Context) sdkmcp.Middleware {
+	return func(next sdkmcp.MethodHandler) sdkmcp.MethodHandler {
+		return func(ctx context.Context, method string, req sdkmcp.Request) (sdkmcp.Result, error) {
+			ctx, cancel := context.WithCancel(ctx)
+			stop := context.AfterFunc(requestContext, cancel)
+			defer stop()
+			defer cancel()
+			if requestContext.Err() != nil {
+				cancel()
+			}
+			return next(ctx, method, req)
+		}
+	}
+}
+
 func errorIsolationMiddleware(next sdkmcp.MethodHandler) sdkmcp.MethodHandler {
 	return func(ctx context.Context, method string, req sdkmcp.Request) (sdkmcp.Result, error) {
 		result, err := next(ctx, method, req)

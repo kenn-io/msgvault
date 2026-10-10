@@ -524,9 +524,11 @@ func newMCPHTTPServerWithPolicy(
 				requestOpts.AllowCardDAVWrites = false
 				requestOpts.AllowCalendarWrites = false
 			}
-			return newMCPServerWithPolicy(requestOpts, httpOpts.AllowWrites, policy, confirmationConfig{
+			server := newMCPServerWithPolicy(requestOpts, httpOpts.AllowWrites, policy, confirmationConfig{
 				manager: confirmations, sessionKey: confirmationKey, requireSessionKey: true,
 			})
+			server.AddReceivingMiddleware(requestCancellationMiddleware(r.Context()))
+			return server
 		},
 		&sdkmcp.StreamableHTTPOptions{
 			Stateless:                    true,

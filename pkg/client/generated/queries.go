@@ -1250,7 +1250,7 @@ type FastSearchQuery struct {
 	// Q Search query
 	Q string `json:"q" validate:"required"`
 
-	// ViewType Stats grouping view type
+	// ViewType Request aggregate stats grouped by this view; omit to skip stats
 	ViewType *string `json:"view_type,omitempty"`
 
 	// Sender Sender email/address filter

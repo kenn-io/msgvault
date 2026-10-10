@@ -659,15 +659,17 @@ func newNumericCaptureEngine() *numericCaptureEngine {
 	}}
 }
 
-func (e *numericCaptureEngine) SearchFast(
+func (e *numericCaptureEngine) SearchFastWithStats(
 	_ context.Context,
 	_ *search.Query,
+	_ string,
 	_ query.MessageFilter,
+	_ query.ViewType,
 	limit int,
 	offset int,
-) ([]query.MessageSummary, error) {
-	e.limit, e.offset = limit, offset
-	return []query.MessageSummary{}, nil
+) (*query.SearchFastResult, error) {
+	e.limit, e.offset = limit-1, offset // The handler requests one extra row for has_more.
+	return &query.SearchFastResult{Messages: []query.MessageSummary{}}, nil
 }
 
 func (e *numericCaptureEngine) SearchMessageBodies(

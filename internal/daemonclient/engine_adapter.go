@@ -431,9 +431,13 @@ func optionalTextAggregateTimeGranularity(opts query.TextAggregateOptions) *stri
 
 func fastSearchQuery(queryStr string, filter query.MessageFilter, statsGroupBy query.ViewType, limit, offset int) *generated.FastSearchQuery {
 	fields := generatedFilterMessagesQuery(filter, false)
+	var viewType *string
+	if statsGroupBy != query.ViewNoStats {
+		viewType = optionalString(viewTypeToString(statsGroupBy))
+	}
 	return &generated.FastSearchQuery{
 		Q:               queryStr,
-		ViewType:        optionalString(viewTypeToString(statsGroupBy)),
+		ViewType:        viewType,
 		Sender:          fields.Sender,
 		SenderName:      fields.SenderName,
 		Recipient:       fields.Recipient,
@@ -1116,7 +1120,10 @@ func (e *Engine) SearchMessageBodies(ctx context.Context, q *search.Query, limit
 
 // SearchFast searches message metadata only (no body text).
 func (e *Engine) SearchFast(ctx context.Context, q *search.Query, filter query.MessageFilter, limit, offset int) ([]query.MessageSummary, error) {
-	result, err := e.SearchFastWithStats(ctx, q, "", filter, query.ViewSenders, limit, offset)
+	if limit == 0 {
+		limit = 100 // SearchFast retains the native engines' default page size.
+	}
+	result, err := e.SearchFastWithStats(ctx, q, "", filter, query.ViewNoStats, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -1126,11 +1133,19 @@ func (e *Engine) SearchFast(ctx context.Context, q *search.Query, filter query.M
 // SearchFastCount returns the total count of messages matching a search query.
 func (e *Engine) SearchFastCount(ctx context.Context, q *search.Query, filter query.MessageFilter) (int64, error) {
 	// Use SearchFastWithStats with limit 0 to get count only
-	result, err := e.SearchFastWithStats(ctx, q, "", filter, query.ViewSenders, 0, 0)
+	result, err := e.SearchFastWithStats(ctx, q, "", filter, query.ViewNoStats, 0, 0)
 	if err != nil {
 		return 0, err
 	}
 	return result.TotalCount, nil
+}
+
+func emptyMetadataSearchResult(statsGroupBy query.ViewType) *query.SearchFastResult {
+	result := &query.SearchFastResult{}
+	if statsGroupBy != query.ViewNoStats {
+		result.Stats = &query.TotalStats{}
+	}
+	return result
 }
 
 // SearchFastWithStats performs a fast metadata search and returns paginated results,
@@ -1144,7 +1159,7 @@ func (e *Engine) SearchFastWithStats(ctx context.Context, q *search.Query, query
 		return nil, err
 	}
 	if filter.SourceIDs != nil && len(filter.SourceIDs) == 0 {
-		return &query.SearchFastResult{Stats: &query.TotalStats{}}, nil
+		return emptyMetadataSearchResult(statsGroupBy), nil
 	}
 	if filter.SenderName != "" || filter.RecipientName != "" || filter.HasEmptyTargets() {
 		compatible, err := e.store.SupportsAPISchemaVersion(ctx, tuiSearchContractMinAPISchemaVersion)
@@ -1157,7 +1172,7 @@ func (e *Engine) SearchFastWithStats(ctx context.Context, q *search.Query, query
 	}
 	scopedQueryStr, noMatches := fastSearchScopedQueryString(q, queryStr, filter)
 	if noMatches {
-		return &query.SearchFastResult{Stats: &query.TotalStats{}}, nil
+		return emptyMetadataSearchResult(statsGroupBy), nil
 	}
 
 	resp, err := APIResponse(e.store, func(client *apiclient.Client) (*generated.FastSearchResp, error) {

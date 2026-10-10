@@ -1035,7 +1035,7 @@ func rawRouteParameters(operationID string) []*huma.Param {
 	case "fastSearch":
 		params := append([]*huma.Param{
 			queryStringParam("q", "Search query", true),
-			queryStringParam("view_type", "Stats grouping view type", false),
+			queryStringParam("view_type", "Request aggregate stats grouped by this view; omit to skip stats", false),
 		}, messageFilterParams()...)
 		return params
 	case "deepSearch":

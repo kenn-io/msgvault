@@ -117,6 +117,10 @@ type AttachmentInfo struct {
 // ViewType represents the type of aggregate view.
 type ViewType int
 
+// ViewNoStats suppresses optional aggregates in SearchFastWithStats. It is not
+// an aggregate view and does not change the numeric values of existing views.
+const ViewNoStats ViewType = -1
+
 const (
 	ViewSenders ViewType = iota
 	ViewSenderNames

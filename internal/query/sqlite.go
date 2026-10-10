@@ -2606,27 +2606,37 @@ func (e *SQLiteEngine) getSearchMatchStats(ctx context.Context, conditions []str
 }
 
 // SearchFastWithStats builds the metadata-only predicate once and reuses it
-// for messages, count, and stats so all three describe the same match set.
+// for messages, count, and requested stats. ViewNoStats skips aggregates.
 func (e *SQLiteEngine) SearchFastWithStats(ctx context.Context, q *search.Query, queryStr string,
 	filter MessageFilter, statsGroupBy ViewType, limit, offset int) (*SearchFastResult, error) {
-	conditions, args, ftsJoin := e.buildFilteredMetadataSearchQueryParts(ctx, q, filter)
-	results, err := e.executeSearchQuery(ctx, conditions, args, ftsJoin, limit, offset)
-	if err != nil {
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	conditions, args, ftsJoin := e.buildFilteredMetadataSearchQueryParts(ctx, q, filter)
+	var results []MessageSummary
+	if limit != 0 {
+		var err error
+		results, err = e.executeSearchQuery(ctx, conditions, args, ftsJoin, limit, offset)
+		if err != nil {
+			return nil, err
+		}
+	}
 
-	// Best-effort count: don't abort the search if count fails.
+	// Best-effort count, but cancellation must stop the request's remaining work.
 	count, countErr := e.executeSearchCount(ctx, conditions, args, ftsJoin)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if countErr != nil {
 		log.Printf("warning: search count failed (using -1): %v", countErr)
 		count = -1
 	}
-
-	stats, _ := e.getSearchMatchStats(ctx, conditions, args, ftsJoin)
-
-	return &SearchFastResult{
-		Messages:   results,
-		TotalCount: count,
-		Stats:      stats,
-	}, nil
+	var stats *TotalStats
+	if statsGroupBy != ViewNoStats {
+		stats, _ = e.getSearchMatchStats(ctx, conditions, args, ftsJoin)
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+	}
+	return &SearchFastResult{Messages: results, TotalCount: count, Stats: stats}, nil
 }

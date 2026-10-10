@@ -29161,7 +29161,7 @@ paths:
           required: true
           schema:
             type: string
-        - description: Stats grouping view type
+        - description: Request aggregate stats grouped by this view; omit to skip stats
           in: query
           name: view_type
           schema:
