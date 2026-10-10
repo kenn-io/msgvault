@@ -771,9 +771,17 @@ type ClientInterface interface {
 	GetPersonByUID(ctx context.Context, options *GetPersonByUIDRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPersonByUIDResponse, error)
 	GetPersonByUIDWithResponse(ctx context.Context, options *GetPersonByUIDRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPersonByUIDResp, error)
 
+	// FindContactCandidates Find durable people by saved or archived names without selecting a duplicate
+	FindContactCandidates(ctx context.Context, options *FindContactCandidatesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*FindContactCandidatesResponse, error)
+	FindContactCandidatesWithResponse(ctx context.Context, options *FindContactCandidatesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*FindContactCandidatesResp, error)
+
 	// ListDirectoryPeople Query durable people for the Directory
 	ListDirectoryPeople(ctx context.Context, options *ListDirectoryPeopleRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListDirectoryPeopleResponse, error)
 	ListDirectoryPeopleWithResponse(ctx context.Context, options *ListDirectoryPeopleRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListDirectoryPeopleResp, error)
+
+	// GetPersonMessagingRoutes Read one person's archived messaging routes and contact evidence by stable UID
+	GetPersonMessagingRoutes(ctx context.Context, options *GetPersonMessagingRoutesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPersonMessagingRoutesResponse, error)
+	GetPersonMessagingRoutesWithResponse(ctx context.Context, options *GetPersonMessagingRoutesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPersonMessagingRoutesResp, error)
 
 	// SearchPeople Search durable people semantically
 	SearchPeople(ctx context.Context, options *SearchPeopleRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchPeopleResponse, error)
@@ -12535,6 +12543,69 @@ func (c *Client) GetPersonByUID(ctx context.Context, options *GetPersonByUIDRequ
 	return responseParser(ctx, resp)
 }
 
+// FindContactCandidates Find durable people by saved or archived names without selecting a duplicate
+func (c *Client) FindContactCandidates(ctx context.Context, options *FindContactCandidatesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*FindContactCandidatesResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/people/contact-candidates",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*FindContactCandidatesResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(FindContactCandidatesErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "FindContactCandidatesErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(FindContactCandidatesResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "FindContactCandidatesResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/people/contact-candidates")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
 // ListDirectoryPeople Query durable people for the Directory
 func (c *Client) ListDirectoryPeople(ctx context.Context, options *ListDirectoryPeopleRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListDirectoryPeopleResponse, error) {
 	var err error
@@ -12592,6 +12663,69 @@ func (c *Client) ListDirectoryPeople(ctx context.Context, options *ListDirectory
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/people/directory")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetPersonMessagingRoutes Read one person's archived messaging routes and contact evidence by stable UID
+func (c *Client) GetPersonMessagingRoutes(ctx context.Context, options *GetPersonMessagingRoutesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPersonMessagingRoutesResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/people/messaging-routes",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetPersonMessagingRoutesResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(GetPersonMessagingRoutesErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "GetPersonMessagingRoutesErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(GetPersonMessagingRoutesResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "GetPersonMessagingRoutesResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/people/messaging-routes")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}

@@ -100,7 +100,7 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.10.0**.
+it is separate from the binary release version. The current schema is **3.11.0**.
 Upgrade clients and daemon together across incompatible schema versions,
 including remote deployments.
 
@@ -149,6 +149,8 @@ message's recordings with their Docbank transcript state. Existing routes are
 unchanged.
 
 Schema 3.7.0 adds `GET /api/v1/media/search` for scoped lexical transcript search.
+
+Schema 3.11.0 adds unreleased [contact route discovery](#contact-route-discovery).
 
 Schema 2.35.0 adds `scope_escalation_source_type` (`gmail` or `msmail`) to
 `POST /api/v1/cli/delete-staged/plan` responses that require a permission
@@ -1838,6 +1840,71 @@ reference and [Vector Search](/docs/usage/vector-search/) for vector /
 hybrid setup.
 
 ---
+
+### Contact route discovery {#contact-route-discovery}
+
+Find a saved person by name, then read the selected person's archived messaging
+routes. These owner-only GET routes are available in API schema 3.11.0 and are
+unreleased. Delegated agent tokens cannot use them. Discovery reads one archive
+snapshot per request and makes no provider calls or identity changes.
+
+`GET /api/v1/people/contact-candidates?query=Avery%20Example` searches saved names,
+current structured names, names of explicitly bound participants, and archived
+aliases. Every whitespace token must match a literal substring. `%`, `_`, and
+backslash are literal; SQLite folds ASCII case only. Queries must contain
+1–256 UTF-8 bytes after trimming and at most 16 tokens. The response includes
+canonical `person_uid`, `person_id`, revision, and `match_kinds` for each
+candidate. `ambiguous` describes the whole query, even when `limit=1`. The client
+must choose a person explicitly.
+
+`GET /api/v1/people/messaging-routes?person_uid=<selected-uid>` resolves canonical
+and retired UIDs through current merge and split bindings. It returns the
+requested and canonical UID, alias reason, person and identity revisions,
+curated `contact_points`, bound `observations`, `unreviewed_suggestions`, and
+`routes`. Suggestions summarize candidate or conflicted matches and
+accepted matches awaiting application. Discovery never follows or accepts them.
+
+Each route preserves `source_id`, `source_type`, exact `account_id`, network,
+archive `conversation_id`, exact `provider_chat_id`, conversation type, bound
+participant IDs, evidence and sync times, and reasons. Its status explains the
+available proof:
+
+| Status | Meaning |
+| --- | --- |
+| `archive_verified` | A direct chat with matching account/chat/type proof, a complete matching roster whose non-self members are all bound to the selected person, and evidence and source sync no older than seven days. |
+| `unresolved` | Missing, invalid, incomplete, changed, stale, deleted, or failed evidence. Read `reasons` before using the identifiers. |
+| `group_context` | A group or channel containing the person. Membership does not prove a direct endpoint. |
+| `merged_container` | A Beeper container. Its member chat IDs require independent route evidence; `missing_member_chat_ids` identifies missing or ambiguous archived members. |
+
+For Beeper, normal sync captures authoritative `Account.bridge.type` and the
+exact roster. Bridge types that name a service with a native importer use that
+importer's source type as `network`: `discordgo` becomes `discord` and `slackgo`
+becomes `slack`. Other bridge types, such as `whatsapp` or `telegram`, are used
+as reported. Display labels, names, phone shapes, Matrix IDs, and curated
+contact points never establish WhatsApp. Older archives remain unresolved until
+normal sync captures this metadata. `network_label` is a display value.
+`freshness=archive_only` and `checked_at` describe the lookup; archive verification
+does not establish live reachability or authorize sending.
+
+Both endpoints accept `limit` (default 20, range 1–100). Candidate pages use
+`after_id`. Route sections each have `items`, `has_more`, and `next_after_id`:
+pass these IDs as `after_conversation_id`, `after_contact_point_id`,
+`after_observation_id`, and `after_suggestion_id`, respectively. The route cursor
+advances over inspected conversations, so a network-filtered page can be empty
+with `has_more=true`. Follow it until exhausted. Optional `network` accepts a
+lowercase service name such as `whatsapp` or `discord`. Native sources of other
+networks are skipped without using the page. Beeper routes are filtered after
+their route metadata is read, and unknown-network routes remain visible as
+unresolved. Optional `source_id` restricts route sources. These filters do
+not restrict the contact or suggestion sections.
+
+Paging is live between requests. Restart after a changed person or identity
+revision and reconcile the first page when observations or rosters change;
+those changes do not all advance the identity revision. Each response uses
+`Cache-Control: no-store`. Invalid input returns `400 invalid_contact_lookup`,
+unknown UIDs `404 person_not_found`, retired tombstones `410 person_uid_gone`,
+and unavailable storage or backends `503 contact_lookup_unavailable`. Failures
+never return successful empty matches.
 
 ### Accounts summary {#get-apiv1accounts}
 

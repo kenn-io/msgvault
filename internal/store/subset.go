@@ -387,6 +387,25 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 	if result.Sources, err = res.RowsAffected(); err != nil {
 		return nil, fmt.Errorf("sources rows affected: %w", err)
 	}
+	// Subsets omit sync history, so retain the timestamp used by route freshness.
+	if _, err := tx.Exec(`
+		UPDATE sources SET last_sync_at = (
+			SELECT MAX(sr.completed_at) FROM src.sync_runs sr
+			WHERE sr.source_id = sources.id AND sr.status = 'completed' AND sr.errors_count = 0
+		)
+		WHERE last_sync_at IS NULL`); err != nil {
+		return nil, fmt.Errorf("copy effective source sync times: %w", err)
+	}
+	hasRouteFailures, err := sourceTableExists(tx, "source_messaging_route_failures")
+	if err != nil {
+		return nil, fmt.Errorf("check source messaging route failure schema: %w", err)
+	}
+	if hasRouteFailures {
+		if _, err := copyByName(tx, "source_messaging_route_failures",
+			"source_id IN (SELECT source_id FROM selected_message_sources)"); err != nil {
+			return nil, fmt.Errorf("copy source messaging route failures: %w", err)
+		}
+	}
 
 	if err := tx.QueryRow(
 		"SELECT COUNT(*) FROM selected_messages",

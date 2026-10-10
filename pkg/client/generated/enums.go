@@ -1162,6 +1162,25 @@ func (m MessageTranscriptOrigin) Validate() error {
 	}
 }
 
+type MessagingRouteStatus string
+
+const (
+	ArchiveVerified MessagingRouteStatus = "archive_verified"
+	GroupContext    MessagingRouteStatus = "group_context"
+	MergedContainer MessagingRouteStatus = "merged_container"
+	Unresolved      MessagingRouteStatus = "unresolved"
+)
+
+// Validate checks if the MessagingRouteStatus value is valid
+func (m MessagingRouteStatus) Validate() error {
+	switch m {
+	case ArchiveVerified, GroupContext, MergedContainer, Unresolved:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid MessagingRouteStatus value, got: %v", m))
+	}
+}
+
 type MuesliRemoteMeetingContactsState string
 
 const (

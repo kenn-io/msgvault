@@ -61,6 +61,15 @@ func newPolicyMessage(t *testing.T, st *store.Store, sourceType, identifier, con
 	return source.ID, insertStoreTestMessage(t, st, source.ID, conversationID, sourceMessageID)
 }
 
+func policyMessageConversationID(t *testing.T, st *store.Store, messageID int64) int64 {
+	t.Helper()
+	var conversationID int64
+	require.NoError(t, st.DB().QueryRow(st.Rebind(
+		`SELECT conversation_id FROM messages WHERE id = ?`,
+	), messageID).Scan(&conversationID))
+	return conversationID
+}
+
 func TestAttachmentOutcomeRoundTrip(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	_, messageID := newPolicyMessage(t, st, "beeper", "signal", "direct_chat", "round-trip", 2)
@@ -111,16 +120,16 @@ func TestRetryableAttachmentMessagesReevaluateSkippedUnderCurrentPolicy(t *testi
 	})
 	require.NoError(err)
 	assert.Equal([]store.BeeperPendingAttachmentMessage{
-		{MessageID: pendingID, SourceMessageID: "pending", ChatID: "conversation-pending", ConversationType: "group_chat", ParticipantCount: 4},
-		{MessageID: failedID, SourceMessageID: "failed", ChatID: "conversation-failed", ConversationType: "group_chat", ParticipantCount: 4},
+		{MessageID: pendingID, ConversationID: policyMessageConversationID(t, st, pendingID), SourceMessageID: "pending", ChatID: "conversation-pending", ConversationType: "group_chat", ParticipantCount: 4},
+		{MessageID: failedID, ConversationID: policyMessageConversationID(t, st, failedID), SourceMessageID: "failed", ChatID: "conversation-failed", ConversationType: "group_chat", ParticipantCount: 4},
 	}, items)
 
 	items, err = st.ListBeeperRetryableAttachmentMessages(sourceID, attachmentpolicy.Policy{})
 	require.NoError(err)
 	assert.Equal([]store.BeeperPendingAttachmentMessage{
-		{MessageID: pendingID, SourceMessageID: "pending", ChatID: "conversation-pending", ConversationType: "group_chat", ParticipantCount: 4},
-		{MessageID: failedID, SourceMessageID: "failed", ChatID: "conversation-failed", ConversationType: "group_chat", ParticipantCount: 4},
-		{MessageID: skippedID, SourceMessageID: "skipped", ChatID: "conversation-skipped", ConversationType: "group_chat", ParticipantCount: 4},
+		{MessageID: pendingID, ConversationID: policyMessageConversationID(t, st, pendingID), SourceMessageID: "pending", ChatID: "conversation-pending", ConversationType: "group_chat", ParticipantCount: 4},
+		{MessageID: failedID, ConversationID: policyMessageConversationID(t, st, failedID), SourceMessageID: "failed", ChatID: "conversation-failed", ConversationType: "group_chat", ParticipantCount: 4},
+		{MessageID: skippedID, ConversationID: policyMessageConversationID(t, st, skippedID), SourceMessageID: "skipped", ChatID: "conversation-skipped", ConversationType: "group_chat", ParticipantCount: 4},
 	}, items)
 }
 

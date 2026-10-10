@@ -52,6 +52,7 @@ type catalogCapabilities struct {
 	meetings        bool
 	personAgenda    bool
 	kata            bool
+	contactRoutes   bool
 	identityReview  bool
 	personCardDAV   bool
 }
@@ -136,6 +137,7 @@ func capabilitiesFor(opts ServeOptions) catalogCapabilities {
 		meetings:        opts.Meetings != nil,
 		personAgenda:    opts.PersonAgendaBackend != nil,
 		kata:            opts.Kata != nil,
+		contactRoutes:   opts.ContactRoutesBackend != nil,
 		identityReview:  opts.IdentityReview != nil,
 		personCardDAV:   opts.PersonCardDAV != nil,
 	}
@@ -215,6 +217,8 @@ func buildOperationCatalog(capabilities catalogCapabilities) []toolDefinition {
 		getPersonProfileDefinition(nil),
 		getPersonRelationshipDefinition(nil),
 		getPersonAgendaDefinition(),
+		findContactCandidatesDefinition(),
+		getPersonMessagingRoutesDefinition(),
 		getSavedViewDefinition(nil),
 		getStatsDefinition(nil),
 		listMessagesDefinition(nil),

@@ -2603,6 +2603,83 @@ func (c ConnectionSyncOutcome) Validate() error {
 	return errors
 }
 
+type ContactCandidate struct {
+	DisplayName string   `json:"display_name" validate:"omitempty"`
+	MatchKinds  []string `json:"match_kinds" validate:"required"`
+	PersonID    int64    `json:"person_id"`
+	PersonUID   string   `json:"person_uid" validate:"required"`
+	Revision    int64    `json:"revision"`
+}
+
+func (c ContactCandidate) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(c))
+}
+
+type ContactCandidatePage struct {
+	Ambiguous        bool               `json:"ambiguous"`
+	Candidates       []ContactCandidate `json:"candidates" validate:"required"`
+	HasMore          bool               `json:"has_more"`
+	IdentityRevision int64              `json:"identity_revision"`
+	NextAfterID      int64              `json:"next_after_id"`
+}
+
+func (c ContactCandidatePage) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range c.Candidates {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Candidates[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type ContactObservationPage struct {
+	HasMore     bool                            `json:"has_more"`
+	Items       []ParticipantContactObservation `json:"items" validate:"required"`
+	NextAfterID int64                           `json:"next_after_id"`
+}
+
+func (c ContactObservationPage) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range c.Items {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Items[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type ContactPointPage struct {
+	HasMore     bool                 `json:"has_more"`
+	Items       []PersonContactPoint `json:"items" validate:"required"`
+	NextAfterID int64                `json:"next_after_id"`
+}
+
+func (c ContactPointPage) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range c.Items {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Items[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type ContactState struct {
 	CadenceDueAt        *time.Time `json:"cadence_due_at,omitempty"`
 	CadenceStatus       string     `json:"cadence_status" validate:"required"`
@@ -5727,6 +5804,41 @@ type IdentityMatchSourceSupport struct {
 	SourceID       int64 `json:"source_id"`
 }
 
+type IdentityRouteSuggestion struct {
+	Basis     string `json:"basis" validate:"required"`
+	ID        int64  `json:"id"`
+	LeftID    int64  `json:"left_id"`
+	LeftKind  string `json:"left_kind" validate:"required"`
+	RightID   int64  `json:"right_id"`
+	RightKind string `json:"right_kind" validate:"required"`
+	State     string `json:"state" validate:"required"`
+}
+
+func (i IdentityRouteSuggestion) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(i))
+}
+
+type IdentityRouteSuggestionPage struct {
+	HasMore     bool                      `json:"has_more"`
+	Items       []IdentityRouteSuggestion `json:"items" validate:"required"`
+	NextAfterID int64                     `json:"next_after_id"`
+}
+
+func (i IdentityRouteSuggestionPage) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range i.Items {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Items[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type IdentitySearchHTTPRequest struct {
 	Cursor        *string            `json:"cursor,omitzero"`
 	IdentityQuery *string            `json:"identity_query,omitzero"`
@@ -6859,6 +6971,84 @@ type MessageTranscriptUnit struct {
 
 func (m MessageTranscriptUnit) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(m))
+}
+
+type MessagingRoute struct {
+	AccountID            string               `json:"account_id" validate:"required"`
+	BoundParticipantIds  []int64              `json:"bound_participant_ids" validate:"required"`
+	ConversationID       int64                `json:"conversation_id"`
+	ConversationType     string               `json:"conversation_type" validate:"required"`
+	EvidenceTruncated    bool                 `json:"evidence_truncated"`
+	MemberChatIds        []string             `json:"member_chat_ids" validate:"required"`
+	MembershipComplete   bool                 `json:"membership_complete"`
+	MergedIntoChatID     string               `json:"merged_into_chat_id" validate:"omitempty"`
+	MissingMemberChatIds []string             `json:"missing_member_chat_ids" validate:"required"`
+	Network              string               `json:"network" validate:"omitempty"`
+	NetworkLabel         string               `json:"network_label" validate:"omitempty"`
+	ObservedAt           *time.Time           `json:"observed_at,omitempty"`
+	ProviderChatID       string               `json:"provider_chat_id" validate:"omitempty"`
+	Reasons              []string             `json:"reasons" validate:"required"`
+	SourceID             int64                `json:"source_id"`
+	SourceLastSyncAt     *time.Time           `json:"source_last_sync_at,omitempty"`
+	SourceType           string               `json:"source_type" validate:"required"`
+	Status               MessagingRouteStatus `json:"status" validate:"required"`
+}
+
+func (m MessagingRoute) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(m.AccountID, "required"); err != nil {
+		errors = errors.Append("AccountID", err)
+	}
+	if err := typesValidator.Var(m.BoundParticipantIds, "required"); err != nil {
+		errors = errors.Append("BoundParticipantIds", err)
+	}
+	if err := typesValidator.Var(m.ConversationType, "required"); err != nil {
+		errors = errors.Append("ConversationType", err)
+	}
+	if err := typesValidator.Var(m.MemberChatIds, "required"); err != nil {
+		errors = errors.Append("MemberChatIds", err)
+	}
+
+	if err := typesValidator.Var(m.MissingMemberChatIds, "required"); err != nil {
+		errors = errors.Append("MissingMemberChatIds", err)
+	}
+
+	if err := typesValidator.Var(m.Reasons, "required"); err != nil {
+		errors = errors.Append("Reasons", err)
+	}
+	if err := typesValidator.Var(m.SourceType, "required"); err != nil {
+		errors = errors.Append("SourceType", err)
+	}
+	if v, ok := any(m.Status).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Status", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type MessagingRoutePage struct {
+	HasMore     bool             `json:"has_more"`
+	Items       []MessagingRoute `json:"items" validate:"required"`
+	NextAfterID int64            `json:"next_after_id"`
+}
+
+func (m MessagingRoutePage) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range m.Items {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Items[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type Metrics struct {
@@ -10939,6 +11129,66 @@ func (p PersonMergesResponse) Validate() error {
 				errors = errors.Append(fmt.Sprintf("Merges[%d]", i), err)
 			}
 		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonMessagingRoutesPage struct {
+	AliasReason           string                      `json:"alias_reason" validate:"omitempty"`
+	CheckedAt             time.Time                   `json:"checked_at" validate:"required"`
+	ContactPoints         ContactPointPage            `json:"contact_points"`
+	Freshness             string                      `json:"freshness" validate:"required"`
+	IdentityRevision      int64                       `json:"identity_revision"`
+	Observations          ContactObservationPage      `json:"observations"`
+	PersonID              int64                       `json:"person_id"`
+	PersonRevision        int64                       `json:"person_revision"`
+	PersonUID             string                      `json:"person_uid" validate:"required"`
+	RequestedUID          string                      `json:"requested_uid" validate:"required"`
+	Routes                MessagingRoutePage          `json:"routes"`
+	UnreviewedSuggestions IdentityRouteSuggestionPage `json:"unreviewed_suggestions"`
+	Warnings              []string                    `json:"warnings" validate:"required"`
+}
+
+func (p PersonMessagingRoutesPage) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if err := typesValidator.Var(p.CheckedAt, "required"); err != nil {
+		errors = errors.Append("CheckedAt", err)
+	}
+	if v, ok := any(p.ContactPoints).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("ContactPoints", err)
+		}
+	}
+	if err := typesValidator.Var(p.Freshness, "required"); err != nil {
+		errors = errors.Append("Freshness", err)
+	}
+	if v, ok := any(p.Observations).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Observations", err)
+		}
+	}
+	if err := typesValidator.Var(p.PersonUID, "required"); err != nil {
+		errors = errors.Append("PersonUID", err)
+	}
+	if err := typesValidator.Var(p.RequestedUID, "required"); err != nil {
+		errors = errors.Append("RequestedUID", err)
+	}
+	if v, ok := any(p.Routes).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Routes", err)
+		}
+	}
+	if v, ok := any(p.UnreviewedSuggestions).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("UnreviewedSuggestions", err)
+		}
+	}
+	if err := typesValidator.Var(p.Warnings, "required"); err != nil {
+		errors = errors.Append("Warnings", err)
 	}
 	if len(errors) == 0 {
 		return nil

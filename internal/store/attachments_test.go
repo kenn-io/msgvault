@@ -134,8 +134,8 @@ func TestListDiscordPendingAttachmentMessagesGroupsScopesAndOrders(t *testing.T)
 	pending, err := st.ListDiscordPendingAttachmentMessages(source.ID)
 	require.NoError(err)
 	assert.Equal([]store.DiscordPendingAttachmentMessage{
-		{MessageID: firstPendingID, SourceMessageID: "pending-first", ChatID: "channel-target"},
-		{MessageID: mixedPendingID, SourceMessageID: "pending-mixed", ChatID: "channel-target"},
+		{MessageID: firstPendingID, ConversationID: conversationID, SourceMessageID: "pending-first", ChatID: "channel-target"},
+		{MessageID: mixedPendingID, ConversationID: conversationID, SourceMessageID: "pending-mixed", ChatID: "channel-target"},
 	}, pending)
 }
 
@@ -176,8 +176,8 @@ func TestListDiscordAttachmentMessagesIncludesCompletedAndPendingInOneQuery(t *t
 	items, err := st.ListDiscordAttachmentMessages(source.ID)
 	require.NoError(err)
 	assert.Equal([]store.DiscordPendingAttachmentMessage{
-		{MessageID: completedID, SourceMessageID: "completed", ChatID: "channel-all", ConversationType: "channel", ParticipantCount: 12},
-		{MessageID: pendingID, SourceMessageID: "pending", ChatID: "channel-all", ConversationType: "channel", ParticipantCount: 12},
+		{MessageID: completedID, ConversationID: conversationID, SourceMessageID: "completed", ChatID: "channel-all", ConversationType: "channel", ParticipantCount: 12},
+		{MessageID: pendingID, ConversationID: conversationID, SourceMessageID: "pending", ChatID: "channel-all", ConversationType: "channel", ParticipantCount: 12},
 	}, items)
 	assert.Equal(1, strings.Count(logs.String(), `"kind":"query"`), "all-attachment scan must use one query")
 }
@@ -272,7 +272,7 @@ func TestReplaceMessageDiscordAttachmentsPersistsEmptyURLMarker(t *testing.T) {
 	pending, err := st.ListDiscordPendingAttachmentMessages(source.ID)
 	require.NoError(err)
 	assert.Equal([]store.DiscordPendingAttachmentMessage{{
-		MessageID: messageID, SourceMessageID: "345678901234567890", ChatID: "234567890123456789",
+		MessageID: messageID, ConversationID: conversationID, SourceMessageID: "345678901234567890", ChatID: "234567890123456789",
 	}}, pending)
 }
 
@@ -315,7 +315,7 @@ func TestBeeperHashlessLocalPathRemainsPending(t *testing.T) {
 	pending, err := st.ListBeeperPendingAttachmentMessages(source.ID)
 	require.NoError(err)
 	assert.Equal([]store.BeeperPendingAttachmentMessage{{
-		MessageID: messageID, SourceMessageID: "message-1", ChatID: "chat-1",
+		MessageID: messageID, ConversationID: conversationID, SourceMessageID: "message-1", ChatID: "chat-1",
 	}}, pending)
 
 	refs, err := st.MessageBeeperAttachments(messageID)
@@ -509,6 +509,7 @@ func TestListDiscordPendingAttachmentMessages(t *testing.T) {
 	require.NoError(err)
 	assert.Equal([]store.DiscordPendingAttachmentMessage{{
 		MessageID:       pendingMessageID,
+		ConversationID:  conversationID,
 		SourceMessageID: "345678901234567890",
 		ChatID:          "234567890123456789",
 	}}, items)
@@ -517,6 +518,7 @@ func TestListDiscordPendingAttachmentMessages(t *testing.T) {
 	require.NoError(err)
 	assert.Equal([]store.BeeperPendingAttachmentMessage{{
 		MessageID:       downloadedMessageID,
+		ConversationID:  conversationID,
 		SourceMessageID: "345678901234567891",
 		ChatID:          "234567890123456789",
 	}}, beeperItems)

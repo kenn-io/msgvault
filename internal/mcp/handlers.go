@@ -131,30 +131,31 @@ func listLimitArg(args map[string]any) int {
 }
 
 type handlers struct {
-	delegatedOnly       bool
-	downloads           *downloadCache
-	engine              query.Engine
-	archiveSQLQuerier   ArchiveSQLQuerier
-	attachmentsDir      string
-	attachmentReader    AttachmentReader
-	manifestSaver       DeletionManifestSaver
-	hybridSearcher      HybridSearcher
-	similarSearcher     SimilarSearcher
-	dataDir             string
-	documentSearcher    DocumentSearcher
-	mediaSearcher       MediaSearcher
-	personFileSearcher  PersonFileSearcher
-	peopleBackend       peoplebrowser.Backend
-	directoryBackend    peoplebrowser.DirectoryLister
-	savedViews          savedview.Service
-	meetings            MeetingBackend
-	calendar            CalendarBackend
-	personAgendaBackend PersonAgendaBackend
-	kata                KataBackend
-	identityReview      IdentityReviewBackend
-	personCardDAV       PersonCardDAVBackend
-	identityScoring     IdentityScoringBackend
-	drafts              DraftRunner
+	delegatedOnly        bool
+	downloads            *downloadCache
+	engine               query.Engine
+	archiveSQLQuerier    ArchiveSQLQuerier
+	attachmentsDir       string
+	attachmentReader     AttachmentReader
+	manifestSaver        DeletionManifestSaver
+	hybridSearcher       HybridSearcher
+	similarSearcher      SimilarSearcher
+	dataDir              string
+	documentSearcher     DocumentSearcher
+	mediaSearcher        MediaSearcher
+	personFileSearcher   PersonFileSearcher
+	peopleBackend        peoplebrowser.Backend
+	directoryBackend     peoplebrowser.DirectoryLister
+	savedViews           savedview.Service
+	meetings             MeetingBackend
+	calendar             CalendarBackend
+	personAgendaBackend  PersonAgendaBackend
+	kata                 KataBackend
+	identityReview       IdentityReviewBackend
+	personCardDAV        PersonCardDAVBackend
+	identityScoring      IdentityScoringBackend
+	drafts               DraftRunner
+	contactRoutesBackend ContactRoutesBackend
 
 	// Optional vector-search wiring. When hybridEngine is nil, the
 	// search_message_bodies handler rejects mode=vector and mode=hybrid with

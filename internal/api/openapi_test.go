@@ -1646,6 +1646,19 @@ func TestOpenAPIExplorationFiniteRequiredFieldsAreNonNull(t *testing.T) {
 	assertions.Equal(map[string]any{"validate": "required,min=1,max=1"}, clientGrouping.Extensions["x-oapi-codegen-extra-tags"])
 }
 
+func TestOpenAPIContactCandidateAllowsEmptySavedDisplayName(t *testing.T) {
+	t.Parallel()
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	candidate := openAPIClientDocument().Components.Schemas.Map()["ContactCandidate"]
+	requirements.NotNil(candidate)
+	displayName := candidate.Properties["display_name"]
+	requirements.NotNil(displayName)
+	assertions.Contains(candidate.Required, "display_name")
+	assertions.Equal(false, displayName.Extensions["x-omitempty"])
+	assertions.Equal(map[string]any{"validate": "omitempty"}, displayName.Extensions["x-oapi-codegen-extra-tags"])
+}
+
 func TestOpenAPIPersonMergeSnapshotUsesLosslessGoType(t *testing.T) {
 	t.Parallel()
 	requirements := require.New(t)

@@ -312,6 +312,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	s.registerTelemetryRoutes(apiV1)
 	s.registerPersonProfileRoutes(apiV1)
 	s.registerPersonIdentityRoutes(apiV1)
+	s.registerContactRouteRoutes(apiV1)
 	s.registerPersonNetworkRoutes(apiV1)
 	s.registerPersonTrackingRoutes(apiV1)
 	s.registerPersonAgendaRoutes(apiV1)

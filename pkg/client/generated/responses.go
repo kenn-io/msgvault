@@ -2211,11 +2211,35 @@ type GetPersonByUIDErrorResponseJSON409 = ErrorResponse
 
 type GetPersonByUIDErrorResponseJSON503 = ErrorResponse
 
+type FindContactCandidatesResponse = ContactCandidatePage
+
+type FindContactCandidatesErrorResponse = ErrorResponse
+
+type FindContactCandidatesErrorResponseJSON = ErrorResponse
+
+type FindContactCandidatesErrorResponseJSON403 = ErrorResponse
+
+type FindContactCandidatesErrorResponseJSON503 = ErrorResponse
+
 type ListDirectoryPeopleResponse = DirectoryPeopleResponse
 
 type ListDirectoryPeopleErrorResponse = ErrorResponse
 
 type ListDirectoryPeopleErrorResponseJSON = ErrorResponse
+
+type GetPersonMessagingRoutesResponse = PersonMessagingRoutesPage
+
+type GetPersonMessagingRoutesErrorResponse = ErrorResponse
+
+type GetPersonMessagingRoutesErrorResponseJSON = ErrorResponse
+
+type GetPersonMessagingRoutesErrorResponseJSON403 = ErrorResponse
+
+type GetPersonMessagingRoutesErrorResponseJSON404 = ErrorResponse
+
+type GetPersonMessagingRoutesErrorResponseJSON410 = ErrorResponse
+
+type GetPersonMessagingRoutesErrorResponseJSON503 = ErrorResponse
 
 type SearchPeopleResponse = PersonSearchResponse
 
@@ -5382,6 +5406,17 @@ type GetPersonByUIDResp struct {
 	JSON503      *GetPersonByUIDErrorResponseJSON503
 }
 
+type FindContactCandidatesResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *FindContactCandidatesResponse
+	JSON400      *FindContactCandidatesErrorResponse
+	JSON401      *FindContactCandidatesErrorResponseJSON
+	JSON403      *FindContactCandidatesErrorResponseJSON403
+	JSON503      *FindContactCandidatesErrorResponseJSON503
+}
+
 type ListDirectoryPeopleResp struct {
 	HTTPResponse *http.Response
 	Body         []byte
@@ -5389,6 +5424,19 @@ type ListDirectoryPeopleResp struct {
 	JSON200      *ListDirectoryPeopleResponse
 	JSON400      *ListDirectoryPeopleErrorResponse
 	JSON503      *ListDirectoryPeopleErrorResponseJSON
+}
+
+type GetPersonMessagingRoutesResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetPersonMessagingRoutesResponse
+	JSON400      *GetPersonMessagingRoutesErrorResponse
+	JSON401      *GetPersonMessagingRoutesErrorResponseJSON
+	JSON403      *GetPersonMessagingRoutesErrorResponseJSON403
+	JSON404      *GetPersonMessagingRoutesErrorResponseJSON404
+	JSON410      *GetPersonMessagingRoutesErrorResponseJSON410
+	JSON503      *GetPersonMessagingRoutesErrorResponseJSON503
 }
 
 type SearchPeopleResp struct {

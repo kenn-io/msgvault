@@ -364,12 +364,18 @@ type chatRefresh struct {
 // archived conversation type and membership record with it, so this backfill
 // and every later policy evaluation weigh the source's current truth rather
 // than a type or roster the archive predates. The returned error is fatal
-// (store failure); a fetch failure is carried in the result instead.
+// (store failure); a fetch failure is carried in the result instead. Route
+// proof survives an unchanged refresh: route evaluation compares the written
+// type and member count with the captured roster snapshot.
 func (imp *Importer) refreshChatContext(
-	ctx context.Context, syncID, sourceID int64, chatID string, sum *ImportSummary,
+	ctx context.Context, syncID, sourceID, conversationID int64, chatID string, sum *ImportSummary,
 ) (*chatRefresh, error) {
 	chat, gerr := imp.client.GetChat(ctx, chatID)
 	if errors.Is(gerr, ErrNotFound) {
+		// Route proof for a chat Beeper no longer has cannot stay verified.
+		if err := imp.store.InvalidateConversationMessagingRouteEvidence(ctx, conversationID); err != nil {
+			return nil, err
+		}
 		return &chatRefresh{}, nil
 	}
 	if gerr != nil {
@@ -501,7 +507,7 @@ func (imp *Importer) BackfillMedia(ctx context.Context, opts ImportOptions) (*Im
 		if policy.Scope == attachmentpolicy.ScopeDirect {
 			refresh, cached := chatRefreshes[item.ChatID]
 			if !cached {
-				refresh, err = imp.refreshChatContext(ctx, syncID, src.ID, item.ChatID, sum)
+				refresh, err = imp.refreshChatContext(ctx, syncID, src.ID, item.ConversationID, item.ChatID, sum)
 				if err != nil {
 					return sum, err
 				}

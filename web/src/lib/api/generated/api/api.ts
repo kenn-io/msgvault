@@ -79,6 +79,7 @@ import type {
   CommunicationService,
   CommunicationServicesResponse,
   ConsentSettingsPeopleInferenceProviderPathParameters,
+  ContactCandidatePage,
   ContactState,
   ConversationResponse,
   CreateAttributeDefinitionRequest,
@@ -127,6 +128,7 @@ import type {
   FileMetadataResponse,
   FilterMessagesParams,
   FilteredMessagesResponse,
+  FindContactCandidatesParams,
   FindSimilarMessagesParams,
   GeneratePersonBriefPathParameters,
   GetActivityDayParams,
@@ -174,6 +176,7 @@ import type {
   GetPersonContactStatePathParameters,
   GetPersonMergePathParameters,
   GetPersonMergeSnapshotPathParameters,
+  GetPersonMessagingRoutesParams,
   GetPersonNetworkParams,
   GetPersonNetworkPathParameters,
   GetPersonProfileHistoryPathParameters,
@@ -345,6 +348,7 @@ import type {
   PersonMergeReviewCandidate,
   PersonMergeSnapshotResponse,
   PersonMergesResponse,
+  PersonMessagingRoutesPage,
   PersonNetwork,
   PersonProfileHistory,
   PersonProfilePatchRequest,
@@ -2643,6 +2647,18 @@ export const getPersonByUID = (
   );
 };
 /**
+ * @summary Find durable people by saved or archived names without selecting a duplicate
+ */
+export const findContactCandidates = (
+  params: FindContactCandidatesParams,
+  options?: SecondParameter<typeof orvalFetch<ContactCandidatePage>>,
+) => {
+  return orvalFetch<ContactCandidatePage>(
+    { url: `/api/v1/people/contact-candidates`, method: "GET", params },
+    options,
+  );
+};
+/**
  * Returns one stable, non-sensitive page of promoted durable people.
  * @summary Query durable people for the Directory
  */
@@ -2652,6 +2668,18 @@ export const listDirectoryPeople = (
 ) => {
   return orvalFetch<DirectoryPeopleResponse>(
     { url: `/api/v1/people/directory`, method: "GET", params },
+    options,
+  );
+};
+/**
+ * @summary Read one person's archived messaging routes and contact evidence by stable UID
+ */
+export const getPersonMessagingRoutes = (
+  params: GetPersonMessagingRoutesParams,
+  options?: SecondParameter<typeof orvalFetch<PersonMessagingRoutesPage>>,
+) => {
+  return orvalFetch<PersonMessagingRoutesPage>(
+    { url: `/api/v1/people/messaging-routes`, method: "GET", params },
     options,
   );
 };

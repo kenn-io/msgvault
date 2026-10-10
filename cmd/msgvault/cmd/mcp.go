@@ -210,6 +210,8 @@ func delegatedMCPServeOptions(ctx context.Context, st *daemonclient.Client) (mcp
 // personAgendaMinAPISchemaVersion adds live task-backed person agendas.
 const personAgendaMinAPISchemaVersion = "2.30.0"
 
+const contactRoutesMinAPISchemaVersion = "3.11.0"
+
 // archiveSQLMinAPISchemaVersion adds SQL confined to archive analytics files.
 const archiveSQLMinAPISchemaVersion = "2.31.0"
 
@@ -291,6 +293,9 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 	}
 	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, calendarControlMinAPISchemaVersion) {
 		opts.Calendar = st
+	}
+	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, contactRoutesMinAPISchemaVersion) {
+		opts.ContactRoutesBackend = st
 	}
 	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, personAgendaMinAPISchemaVersion) {
 		opts.PersonAgendaBackend = st

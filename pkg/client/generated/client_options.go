@@ -7354,6 +7354,50 @@ func (o *GetPersonByUIDRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
+// FindContactCandidatesRequestOptions is the options needed to make a request to FindContactCandidates.
+type FindContactCandidatesRequestOptions struct {
+	Query *FindContactCandidatesQuery
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *FindContactCandidatesRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Query != nil {
+		if v, ok := any(o.Query).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Query", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *FindContactCandidatesRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *FindContactCandidatesRequestOptions) GetQuery() (map[string]any, error) {
+	return runtime.AsMap[any](o.Query)
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *FindContactCandidatesRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *FindContactCandidatesRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // ListDirectoryPeopleRequestOptions is the options needed to make a request to ListDirectoryPeople.
 type ListDirectoryPeopleRequestOptions struct {
 	Query *ListDirectoryPeopleQuery
@@ -7395,6 +7439,50 @@ func (o *ListDirectoryPeopleRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *ListDirectoryPeopleRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// GetPersonMessagingRoutesRequestOptions is the options needed to make a request to GetPersonMessagingRoutes.
+type GetPersonMessagingRoutesRequestOptions struct {
+	Query *GetPersonMessagingRoutesQuery
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *GetPersonMessagingRoutesRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Query != nil {
+		if v, ok := any(o.Query).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Query", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetPersonMessagingRoutesRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetPersonMessagingRoutesRequestOptions) GetQuery() (map[string]any, error) {
+	return runtime.AsMap[any](o.Query)
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetPersonMessagingRoutesRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetPersonMessagingRoutesRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 

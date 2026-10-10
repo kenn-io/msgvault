@@ -235,13 +235,40 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		// upserted in place — but keep the anchors. Skipping their
 		// verification would let a --full run against a reinstalled Beeper
 		// Desktop (re-assigned message IDs) silently duplicate the archive.
-		anchors := state.Anchors
+		previous := state
 		state = NewSyncState()
-		state.Anchors = anchors
+		state.Anchors = previous.Anchors
+		// Keep known chat IDs so the full listing can reconcile disappearances.
+		// Each chat starts with empty progress so its history is fetched again.
+		for chatID := range previous.Chats {
+			state.EnsureChat(chatID)
+		}
 	}
 	if opts.stopRequested() {
 		sum.Stopped = true
 		return sum, nil
+	}
+
+	// Capture route proof once per selected account. Older Desktop versions or
+	// a failed account read still archive messages, with unresolved route proof.
+	requestCtx, cancelRouteAccount := opts.requestContext(ctx)
+	opts.routeAccount, err = imp.client.GetAccount(requestCtx, opts.AccountID)
+	cancelRouteAccount()
+	accountRouteFailure := "account_lookup_failed"
+	if err != nil {
+		opts.routeAccount = nil
+		err = nil
+	} else {
+		accountRouteFailure = accountRouteProofFailure(opts.routeAccount, opts.AccountID)
+	}
+	routeFailureCtx, cancelRouteFailure := opts.finalizeContext(ctx)
+	routeFailureErr := imp.store.SetSourceMessagingRouteFailureContext(routeFailureCtx, src.ID, accountRouteFailure)
+	cancelRouteFailure()
+	if routeFailureErr != nil {
+		return nil, fmt.Errorf("record Beeper account route lookup: %w", routeFailureErr)
+	}
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
 	}
 
 	// Heal rows derived by an older build before syncing new ones, so an
@@ -384,7 +411,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	reconcileCutoff := start.Add(-reconcileWindow)
 	var chats []chatVisit
 	if !sum.Stopped {
-		chats, err = imp.enumerateChats(ctx, syncID, opts, state, reconcileCutoff, tailScan, sum)
+		chats, err = imp.enumerateChats(ctx, syncID, src.ID, opts, state, reconcileCutoff, tailScan, sum)
 	}
 	if err != nil {
 		return sum, err
@@ -506,13 +533,18 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		finalizeCtx, cancel = opts.finalizeContext(ctx)
 		defer cancel()
 	}
-	// Mid-run checkpoints are throttled, so persist the final counters before
-	// completing (CompleteSync only writes status and cursor).
+	// Mid-run checkpoints are throttled, so persist the final counters before completing.
 	if err = imp.checkpointNowContext(finalizeCtx, syncID, state, sum); err != nil {
 		return sum, err
 	}
 	blob, _ := state.Marshal()
-	if err = imp.store.CompleteSyncContext(finalizeCtx, syncID, blob); err != nil {
+	// Partial runs keep their resume state without advancing source freshness.
+	if sum.Errors == 0 {
+		err = imp.store.CompleteSyncAndPreserveSourceCursorContext(finalizeCtx, syncID, src.ID, blob)
+	} else {
+		err = imp.store.CompleteSyncContext(finalizeCtx, syncID, blob)
+	}
+	if err != nil {
 		return sum, err
 	}
 	syncCompleted = true
@@ -591,7 +623,8 @@ func orderTailsFirst(chats []chatVisit, state *SyncState) {
 // enumerateChats lists the chats this run must visit: every chat active in
 // the discovery overlap or reconciliation window (all chats on first/full
 // runs), plus any chat whose backfill is unfinished even without new activity.
-func (imp *Importer) enumerateChats(ctx context.Context, syncID int64, opts ImportOptions, state *SyncState, reconcileCutoff time.Time, tailScan bool, sum *ImportSummary) ([]chatVisit, error) {
+// After an unfiltered listing, it also probes missing completed chats.
+func (imp *Importer) enumerateChats(ctx context.Context, syncID, sourceID int64, opts ImportOptions, state *SyncState, reconcileCutoff time.Time, tailScan bool, sum *ImportSummary) ([]chatVisit, error) {
 	params := SearchChatsParams{AccountID: opts.AccountID}
 	activityCutoff := chatActivityCutoff(opts, state, reconcileCutoff)
 	if !tailScan {
@@ -607,6 +640,9 @@ func (imp *Importer) enumerateChats(ctx context.Context, syncID int64, opts Impo
 			return errBeeperEnumerationStopped
 		}
 		seen[ch.ID] = true
+		if cs := state.Chats[ch.ID]; cs != nil {
+			cs.Gone = false
+		}
 		tailOnly := tailScan && !activityCutoff.IsZero() && !ch.LastActivity.After(activityCutoff)
 		if cs := state.Chats[ch.ID]; cs != nil && !cs.Done {
 			// Unfinished backfills are included independently of activity.
@@ -631,14 +667,32 @@ func (imp *Importer) enumerateChats(ctx context.Context, syncID int64, opts Impo
 			sum.Stopped = true
 			return chats, nil
 		}
-		if cs == nil || cs.Done || seen[chatID] {
+		if cs == nil || seen[chatID] {
 			continue
+		}
+		// Only an unfiltered listing can identify missing completed chats.
+		// Quiet chats are normally absent from activity-filtered listings.
+		if cs.Done && !params.LastActivityAfter.IsZero() {
+			continue
+		}
+		// A resumed scan must not spend its budget re-probing chats whose
+		// disappearance is already confirmed or checked in this tail scan.
+		if cs.Done && (cs.Gone || state.TailScanStarted != "" && cs.TailProbed == state.TailScanStarted) {
+			continue
+		}
+		if err := imp.store.InvalidateSourceConversationMessagingRouteEvidenceContext(ctx, sourceID, chatID); err != nil {
+			return nil, fmt.Errorf("invalidate route evidence before probing missing Beeper chat %q: %w", chatID, err)
 		}
 		requestCtx, cancel := opts.requestContext(ctx)
 		detail, gerr := imp.client.GetChat(requestCtx, chatID)
 		cancel()
 		gerr = opts.budgetError(ctx, gerr)
 		if errors.Is(gerr, errBeeperBudgetExpired) {
+			if err := imp.store.InvalidateSourceConversationMessagingRouteEvidenceWithFailureContext(
+				ctx, sourceID, chatID, "membership_fetch_failed",
+			); err != nil {
+				return nil, fmt.Errorf("invalidate route evidence for budget-expired Beeper chat %q: %w", chatID, err)
+			}
 			sum.Stopped = true
 			return chats, nil
 		}
@@ -646,13 +700,22 @@ func (imp *Importer) enumerateChats(ctx context.Context, syncID int64, opts Impo
 			// The chat no longer exists in Beeper (left/deleted); there is
 			// nothing more to fetch. Mark it complete so it stops pinning the
 			// discovery watermark; the archived messages are kept.
+			if err := imp.store.InvalidateSourceConversationMessagingRouteEvidenceContext(ctx, sourceID, chatID); err != nil {
+				return nil, fmt.Errorf("invalidate route evidence for missing Beeper chat %q: %w", chatID, err)
+			}
 			cs.Done = true
+			cs.Gone = true
 			imp.recordItem(syncID, chatID, "fetch", store.SyncRunItemStatusSkipped, "beeper_chat_gone", gerr)
 			continue
 		}
 		if gerr != nil {
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
+			}
+			if err := imp.store.InvalidateSourceConversationMessagingRouteEvidenceWithFailureContext(
+				ctx, sourceID, chatID, "membership_fetch_failed",
+			); err != nil {
+				return nil, fmt.Errorf("invalidate route evidence for failed Beeper chat %q: %w", chatID, err)
 			}
 			imp.recordItem(syncID, chatID, "fetch", store.SyncRunItemStatusError, "beeper_fetch_error", gerr)
 			sum.FetchErrors++
@@ -820,6 +883,9 @@ func (imp *Importer) ensureConversation(
 	detail := ch
 	membershipComplete := !ch.Participants.HasMore
 	if ch.Participants.HasMore {
+		if err := imp.store.InvalidateSourceConversationMessagingRouteEvidenceContext(ctx, sourceID, ch.ID); err != nil {
+			return 0, false, chatMembership{}, fmt.Errorf("invalidate route evidence before Beeper roster refresh for chat %q: %w", ch.ID, err)
+		}
 		requestCtx, cancel := opts.requestContext(ctx)
 		d, gerr := imp.client.GetChat(requestCtx, ch.ID)
 		cancel()
@@ -844,6 +910,20 @@ func (imp *Importer) ensureConversation(
 	if err != nil {
 		return 0, false, chatMembership{}, err
 	}
+	// Invalidate earlier proof before any roster writes. An interrupted refresh
+	// cannot retain a complete route snapshot beside partially updated members.
+	routeEvidence := routeEvidenceFor(detail, opts)
+	if ch.AccountID != opts.AccountID {
+		routeEvidence.Failure = "account_binding_mismatch"
+	}
+	routeEvidence.ChatID = ch.ID
+	if detail.ID != ch.ID {
+		routeEvidence.Failure = "chat_binding_mismatch"
+	}
+	if err := imp.store.SetConversationMessagingRouteEvidence(ctx, convID, routeEvidence); err != nil {
+		return 0, false, chatMembership{}, err
+	}
+
 	if membership.known {
 		err = imp.store.SetConversationMemberCount(convID, membership.count)
 	} else {
@@ -893,6 +973,17 @@ func (imp *Importer) ensureConversation(
 			}
 		}
 	}
+	routeEvidence.MembershipComplete = membershipComplete && membership.known && len(resolvedMembers) == membership.count
+	for _, member := range resolvedMembers {
+		routeEvidence.ParticipantIDs = append(routeEvidence.ParticipantIDs, member.participantID)
+		if member.user.IsSelf {
+			routeEvidence.SelfParticipantIDs = append(routeEvidence.SelfParticipantIDs, member.participantID)
+		}
+	}
+	if err := imp.store.SetConversationMessagingRouteEvidence(ctx, convID, routeEvidence); err != nil {
+		return 0, false, chatMembership{}, err
+	}
+
 	// Membership must be visible before matching. The chat participant list is
 	// the only place Beeper hands us a person's phone, email, and username
 	// together, and matching those observations gathers shared-conversation
