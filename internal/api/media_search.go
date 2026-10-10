@@ -71,7 +71,7 @@ func (s *Server) handleMediaSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	reader := s.messageRecordings
 	if reader == nil || reader.Client == nil {
-		writeError(w, http.StatusServiceUnavailable, "media_search_unavailable", "Configure the Docbank integration to search transcripts")
+		writeError(w, http.StatusServiceUnavailable, "media_search_not_configured", "Configure the Docbank integration to search transcripts")
 		return
 	}
 	resolve := func() (*personscope.Scope, error) {

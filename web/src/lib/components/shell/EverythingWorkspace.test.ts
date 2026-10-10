@@ -1,3 +1,4 @@
+import { recordingMessage, recordingTranscript } from '../../archive/recording-fixtures.test-support';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { appShortcuts } from '@kenn-io/kit-ui';
 import { tick } from 'svelte';
@@ -22,10 +23,29 @@ function exploreResponse(overrides: Record<string, unknown> = {}) {
 }
 
 describe('EverythingWorkspace', () => {
+  it('hides unconfigured recording search and keeps the ordinary results layout', async () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', query: 'quarterly', searchMode: 'full_text' }))}`);
+    const fetchFn = vi.fn<typeof fetch>(async input => {
+      const path = new URL((input as Request).url).pathname;
+      if (path.endsWith('/media/search')) return Response.json({ error: 'media_search_not_configured' }, { status: 503 });
+      return Response.json(exploreResponse());
+    });
+    const state = new ExploreState(window);
+    const view = render(AppShell, { client: createAPIClient(fetchFn), state });
+    try {
+      await waitFor(() => expect(screen.queryByRole('region', { name: 'Recordings' })).toBeNull());
+      await screen.findByText('0 items');
+      expect(screen.queryByRole('heading', { name: /^Results/ })).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+    } finally {
+      view.unmount();
+      state.destroy();
+    }
+  });
+
   it('retries recording details and distinguishes missing messages', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', query: 'quarterly', searchMode: 'full_text' }))}`);
-    const message = { id: 9, conversation_id: 2, subject: '', conversation_title: 'Team chat', body: 'Source recording',
-      from: 'Example Person', to: [], sent_at: '2026-07-18T12:00:00Z', snippet: '', size_bytes: 44, has_attachments: false, attachments: [], labels: [] };
+    const message = recordingMessage;
     let messageStatus = 500;
     const fetchFn = vi.fn<typeof fetch>(async input => {
       const path = new URL((input as Request).url).pathname;
@@ -33,6 +53,7 @@ describe('EverythingWorkspace', () => {
         results: [{ message_id: 9, conversation_id: 2, attachment_id: 1, containing_title: 'Team chat', origin: 'supplied', excerpt: 'Quarterly numbers' }],
         coverage: { state: 'complete' }, partial: false, truncated: false, pending_occurrences: 0, unavailable_occurrences: 0, attribution_unavailable: 0,
       });
+      if (path.endsWith('/messages/9/recordings')) return Response.json(recordingTranscript);
       if (path.endsWith('/messages/9')) return messageStatus === 200 ? Response.json(message) : Response.json({ error: 'unavailable' }, { status: messageStatus });
       if (path.endsWith('/conversations/2')) return Response.json({ id: 2, messages: [message], anchor_id: 9, has_before: false, has_after: false, total: 1 });
       return Response.json(exploreResponse({ next_cursor: 'more' }));
@@ -48,6 +69,7 @@ describe('EverythingWorkspace', () => {
       await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
       const pane = await screen.findByRole('complementary', { name: 'Reading pane: Team chat' });
       expect(await within(pane).findByText('Source recording')).toBeTruthy();
+      expect(await within(pane).findByText('Quarterly numbers in the source transcript')).toBeTruthy();
       expect(state.current.query).toBe('quarterly');
       expect(screen.getByRole('heading', { name: 'Results 0 items' })).toBeTruthy();
       expect(link.getAttribute('aria-current')).toBe('true');

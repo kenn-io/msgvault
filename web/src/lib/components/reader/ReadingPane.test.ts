@@ -115,10 +115,9 @@ describe('ReadingPane header', () => {
     expect(screen.queryByRole('region', { name: 'Linked tasks' })).toBeNull();
   });
 
-  it('docks from optional header controls and closes from an icon-only button', async () => {
+  it('closes from an icon-only button', async () => {
     const onClose = vi.fn();
-    const onPositionChange = vi.fn();
-    const view = render(ReadingPane, {
+    render(ReadingPane, {
       props: {
         client: createAPIClient(vi.fn<typeof fetch>()),
         selection: { kind: 'entry', row: entryRow() },
@@ -126,13 +125,6 @@ describe('ReadingPane header', () => {
         onClose
       }
     });
-    expect(screen.queryByRole('button', { name: /Dock reader/ })).toBeNull();
-    await view.rerender({ position: 'below', onPositionChange });
-    await fireEvent.click(screen.getByRole('button', { name: 'Dock reader right' }));
-    expect(onPositionChange).toHaveBeenLastCalledWith('right');
-    await view.rerender({ position: 'right' });
-    await fireEvent.click(screen.getByRole('button', { name: 'Dock reader below' }));
-    expect(onPositionChange).toHaveBeenLastCalledWith('below');
     const close = screen.getByRole('button', { name: 'Close reading pane' });
     expect(close.textContent?.trim()).toBe('');
     await fireEvent.click(close);

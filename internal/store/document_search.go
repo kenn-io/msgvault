@@ -560,20 +560,24 @@ func (s *Store) searchDocumentFilenames(
 	return s.scanDocumentSearchRows(ctx, query, args, false, limit)
 }
 
-const documentSearchSelectColumns = `
+func containingTitleSQL(conversationAlias string) string {
+	return "COALESCE(NULLIF(m.subject, ''), NULLIF(" + conversationAlias + ".title, ''), '')"
+}
+
+var documentSearchSelectColumns = `
 		a.id, m.id, m.conversation_id, m.source_id,
 		COALESCE(m.source_message_id, ''),
 		COALESCE(m.sent_at, m.received_at, m.internal_date),
 		o.occurrence_key,
 		COALESCE(o.source_part_key, ''), COALESCE(o.filename, ''),
-		COALESCE(NULLIF(m.subject, ''), NULLIF(cv.title, ''), ''),
+		` + containingTitleSQL("cv") + `,
 		COALESCE(o.mime_type, ''), h.canonical_blob_hash,
 		dc.chunk_key, dc.ordinal, CAST(dc.heading_path AS TEXT),
 		dc.first_unit_index, dc.last_unit_index, dc.text,
 		h.profile_id, h.extraction_id, p.provider, p.model,
 		dc.truncated`
 
-const documentSearchRankedSelectColumns = `
+var documentSearchRankedSelectColumns = `
 		a.id AS attachment_id, m.id AS message_id,
 		m.conversation_id AS conversation_id, m.source_id AS source_id,
 		COALESCE(m.source_message_id, '') AS source_message_id,
@@ -581,7 +585,7 @@ const documentSearchRankedSelectColumns = `
 		o.occurrence_key AS occurrence_key,
 		COALESCE(o.source_part_key, '') AS source_part_key,
 		COALESCE(o.filename, '') AS filename,
-		COALESCE(NULLIF(m.subject, ''), NULLIF(cv.title, ''), '') AS containing_title,
+		` + containingTitleSQL("cv") + ` AS containing_title,
 		COALESCE(o.mime_type, '') AS mime_type,
 		h.canonical_blob_hash AS canonical_blob_hash,
 		dc.chunk_key AS chunk_key, dc.ordinal AS chunk_ordinal,

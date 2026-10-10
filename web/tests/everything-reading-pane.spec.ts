@@ -1,3 +1,4 @@
+import { recordingMessage, recordingTranscript } from '../src/lib/archive/recording-fixtures.test-support';
 import { expect, test } from '@playwright/test';
 
 function entry(index: number) {
@@ -44,16 +45,35 @@ function exploreURLState(overrides: Record<string, unknown> = {}) {
   };
 }
 
+test('unconfigured recording search preserves the ordinary results layout', async ({ page }) => {
+  await page.route('**/api/session', route => route.fulfill({ json: { auth_mode: 'loopback', https: false, plain_http_warning: false } }));
+  await page.route('**/api/v1/explore', route => route.fulfill({ json: { rows: [entry(1)], total_count: 1, cache_revision: 'recording', search_provenance: {} } }));
+  await page.route('**/api/v1/media/search?*', route => route.fulfill({ status: 503, json: { error: 'media_search_not_configured' } }));
+  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(exploreURLState({ query: 'quarterly' })))}`);
+  await expect(page.getByText('1 item', { exact: true })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Recordings' })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: /^Results/ })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Retry' })).toHaveCount(0);
+  await page.getByRole('grid', { name: 'Everything results' }).getByText('Synthetic subject 1').click();
+  const resize = page.getByRole('separator', { name: 'Resize reading pane' });
+  const handle = (await resize.boundingBox())!;
+  await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(handle.x + handle.width / 2, 0);
+  await page.mouse.up();
+  await expect.poll(async () => (await page.locator('.results-split > [data-split-pane] > [data-pane="primary"]').boundingBox())!.height).toBe(120);
+});
+
 test('recording reader restores history and focus', async ({ page }) => {
   await page.clock.install();
-  const message = { id: 9, conversation_id: 2, subject: '', conversation_title: 'Team chat', body: 'Source recording',
-    from: 'Example Person', to: [], sent_at: '2026-07-18T12:00:00Z', snippet: '', size_bytes: 44, has_attachments: false, attachments: [], labels: [] };
+  const message = recordingMessage;
   await page.route('**/api/session', route => route.fulfill({ json: { auth_mode: 'loopback', https: false, plain_http_warning: false } }));
   await page.route('**/api/v1/explore', route => route.fulfill({ json: { rows: [entry(1)], total_count: 1, cache_revision: 'recording', search_provenance: {} } }));
   await page.route('**/api/v1/media/search?*', route => route.fulfill({ json: {
     results: [{ message_id: 9, conversation_id: 2, attachment_id: 1, containing_title: 'Team chat', origin: 'supplied', excerpt: 'Quarterly numbers' }],
     coverage: { state: 'complete' }, partial: false, truncated: false, pending_occurrences: 0, unavailable_occurrences: 0, attribution_unavailable: 0
   } }));
+  await page.route('**/api/v1/messages/9/recordings', route => route.fulfill({ json: recordingTranscript }));
   await page.route('**/api/v1/messages/9', route => route.fulfill({ json: message }));
   await page.route('**/api/v1/conversations/2?*', route => route.fulfill({ json: { id: 2, messages: [message], anchor_id: 9, has_before: false, has_after: false, total: 1 } }));
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(exploreURLState({ query: 'quarterly' })))}`);
@@ -61,6 +81,7 @@ test('recording reader restores history and focus', async ({ page }) => {
   const reader = page.getByRole('complementary', { name: 'Reading pane: Team chat' });
   await link.click();
   await expect(reader.getByText('Source recording')).toBeVisible();
+  await expect(reader.getByText('Quarterly numbers in the source transcript')).toBeVisible();
   await reader.getByRole('button', { name: 'Close reading pane' }).click();
   await expect(link).toBeFocused();
   await page.goBack();
@@ -258,7 +279,7 @@ test('right preview resizes, restores its width, and falls back below on narrow 
   await grid.getByText('Synthetic subject 1').click();
   const reading = page.getByRole('complementary', { name: 'Reading pane: Synthetic subject 1' });
   const resize = page.getByRole('separator', { name: 'Resize reading pane' });
-  await reading.getByRole('button', { name: 'Dock reader right' }).click();
+  await page.getByRole('radio', { name: 'Right', exact: true }).click();
   await expect(resize).toHaveAttribute('aria-orientation', 'vertical');
   const primary = page.locator('.results-split > [data-split-pane] > [data-pane="primary"]');
   const secondary = page.locator('.results-split > [data-split-pane] > [data-pane="secondary"]');
@@ -283,7 +304,7 @@ test('right preview resizes, restores its width, and falls back below on narrow 
 
   await page.setViewportSize({ width: 760, height: 900 });
   await expect(resize).toHaveAttribute('aria-orientation', 'horizontal');
-  await expect(reading.getByRole('button', { name: /Dock reader/ })).toHaveCount(0);
+  await expect(page.getByRole('radiogroup', { name: 'Preview position' })).toHaveCount(0);
   const narrowList = (await primary.boundingBox())!;
   expect((await secondary.boundingBox())!.y).toBeGreaterThanOrEqual(narrowList.y + narrowList.height);
   await expect(reading).toBeVisible();
@@ -291,15 +312,15 @@ test('right preview resizes, restores its width, and falls back below on narrow 
   await page.setViewportSize({ width: 1920, height: 1080 });
   await expect(resize).toHaveAttribute('aria-orientation', 'vertical');
   await expect.poll(async () => (await secondary.boundingBox())!.width).toBeCloseTo(resizedWidth, 0);
-  await reading.getByRole('button', { name: 'Dock reader below' }).click();
+  await page.getByRole('radio', { name: 'Below', exact: true }).click();
   await expect(resize).toHaveAttribute('aria-orientation', 'horizontal');
   await resize.press('ArrowUp');
   const bottomHeight = (await secondary.boundingBox())!.height;
-  await reading.getByRole('button', { name: 'Dock reader right' }).click();
+  await page.getByRole('radio', { name: 'Right', exact: true }).click();
   await expect.poll(async () => (await secondary.boundingBox())!.width).toBeCloseTo(resizedWidth, 0);
-  await reading.getByRole('button', { name: 'Dock reader below' }).click();
+  await page.getByRole('radio', { name: 'Below', exact: true }).click();
   await expect.poll(async () => (await secondary.boundingBox())!.height).toBe(bottomHeight);
-  await reading.getByRole('button', { name: 'Dock reader right' }).click();
+  await page.getByRole('radio', { name: 'Right', exact: true }).click();
   await page.getByRole('button', { name: 'Close reading pane' }).click();
   await expect(grid).toBeFocused();
   await expect.poll(async () => (await primary.boundingBox())!.width)

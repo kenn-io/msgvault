@@ -535,7 +535,7 @@ function normalize(value: unknown): ExploreURLState {
       typeof value.activeRow === 'string' || value.activeRow === null
         ? value.activeRow
         : null,
-    selectedRow: selectedRow(value.selectedRow),
+    selectedRow: typeof value.schemaVersion === 'number' && value.schemaVersion > defaultExploreURLState.schemaVersion && typeof value.selectedRow === 'string' && parseRecordingSelection(value.selectedRow) ? null : selectedRow(value.selectedRow),
     inspectorPinned: true,
     conversationAnchor:
       typeof value.conversationAnchor === 'string' || value.conversationAnchor === null

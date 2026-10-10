@@ -657,14 +657,15 @@ describe('Explore URL state', () => {
   it('preserves unknown future fields while dropping session selection', () => {
     const future = {
       ...defaultExploreURLState,
-      schemaVersion: 2,
+      schemaVersion: 3,
+      selectedRow: 'recording:9',
       futureLayout: { density: 'compact' },
       selection: { mode: 'explicit', rowKeys: ['message:42'] }
     } as unknown as ExploreURLState;
 
     const restored = parseExploreURLState(serializeExploreURLState(future));
 
-    expect(restored).toMatchObject({ schemaVersion: 2, futureLayout: { density: 'compact' } });
+    expect(restored).toMatchObject({ schemaVersion: 3, selectedRow: null, futureLayout: { density: 'compact' } });
     expect(restored).not.toHaveProperty('selection');
   });
 

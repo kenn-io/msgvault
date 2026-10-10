@@ -7,12 +7,12 @@
   import { createStaleRequestGuard } from '../../archive/stale-request';
   import { formatDateTime, formatOffset, formatShortDate } from '../../util/format';
 
-  let { client, query, supported, selectedMessageID, onOpen }: {
-    client: APIClient; query: string; supported: boolean; selectedMessageID?: number; onOpen?: (hit: MediaSearchResult) => void;
+  let { client, query, supported, selectedMessageID, configured = $bindable(true), onOpen }: {
+    client: APIClient; query: string; supported: boolean; configured?: boolean; selectedMessageID?: number; onOpen?: (hit: MediaSearchResult) => void;
   } = $props();
   const id = $props.id();
   let result = $state<MediaSearchResponse>();
-  const admitted = $derived(query.trim().split(/\s+/u).every(term => /^[\p{L}\p{M}\p{N}]+$/u.test(term) && /[\p{L}\p{N}]/u.test(term) && !/^(AND|OR|NOT)$/i.test(term)));
+  const admitted = $derived(query.trim().split(/\s+/u).every(term => /^[\p{L}\p{M}\p{N}]+$/u.test(term) && /[\p{L}\p{N}]/u.test(term) && !/^(AND|OR|NOT)$/.test(term)));
   const incomplete = $derived(Boolean(result && (result.partial || result.truncated)));
   let notice = $state('');
   let expired = $state(false);
@@ -33,7 +33,6 @@
     const freshness = createStaleRequestGuard();
     let controller: AbortController | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    let disposed = false;
     let blocked = false;
 
     function stop(): void {
@@ -53,7 +52,7 @@
     }
 
     async function load(): Promise<void> {
-      if (disposed || document.hidden || controller) return;
+      if (document.hidden || controller) return;
       stop();
       result = undefined;
       notice = '';
@@ -69,7 +68,7 @@
           { q: requestedQuery, mode: 'lexical', limit: 20 },
           { ...requestedClient, signal },
         );
-        if (!freshness.isCurrent(generation) || disposed) return;
+        if (!freshness.isCurrent(generation)) return;
         if (Date.now() >= deadline) {
           expire();
           return;
@@ -85,6 +84,12 @@
               : 'Recording search cannot read this query. Check archive access or change the query.';
           return;
         }
+        if (error?.error === 'media_search_not_configured') {
+          configured = false;
+          blocked = true;
+          return;
+        }
+        configured = true;
         if (error?.error === 'media_search_unavailable') {
           notice = 'Recording search unavailable.';
           retryable = true;
@@ -93,12 +98,12 @@
         if (signal.aborted || !data?.results || !data.coverage) throw new Error('Transcript search unavailable');
         result = data;
       } catch {
-        if (!freshness.isCurrent(generation) || disposed) return;
+        if (!freshness.isCurrent(generation)) return;
         result = undefined;
         notice = 'Could not load recording matches.';
         retryable = true;
       } finally {
-        if (freshness.isCurrent(generation) && !disposed) {
+        if (freshness.isCurrent(generation)) {
           controller = undefined;
           if (!result && timer !== undefined) clearTimeout(timer);
         }
@@ -116,7 +121,6 @@
     document.addEventListener('visibilitychange', refresh);
     timer = setTimeout(() => void load(), 300);
     return () => {
-      disposed = true;
       stop();
       document.removeEventListener('visibilitychange', refresh);
     };
@@ -124,6 +128,7 @@
 
 </script>
 
+{#if configured}
 <section class="transcript-hits" aria-label="Recordings" tabindex="-1" data-recording-hits data-scroll>
   <header>
     <h2>Recordings{#if result && result.results.length > 0}<span class="count">{result.results.length}</span>{/if}</h2>
@@ -180,6 +185,7 @@
     <p role="status">Searching recordings…</p>
   {/if}
 </section>
+{/if}
 
 <style>
   .transcript-hits {

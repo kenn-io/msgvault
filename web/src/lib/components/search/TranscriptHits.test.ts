@@ -163,7 +163,7 @@ describe('TranscriptHits', () => {
 
   it.each([
     ['café 東京 2026', true], ['cafe\u0301', true], ['from:alice@example.com quarterly', false],
-    ['quarterly OR numbers', false], ['not', false], ['\u0301', false],
+    ['quarterly OR numbers', false], ['not', true], ['and or not', true], ['AND', false], ['NOT', false], ['\u0301', false],
   ] as const)('admits plain words and rejects unsupported syntax %s', async (query, searched) => {
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json(report()));
     render(TranscriptHits, { props: { client: createAPIClient(fetchFn), query, supported: true } });

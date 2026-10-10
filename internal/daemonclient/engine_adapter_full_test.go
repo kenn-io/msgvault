@@ -552,22 +552,23 @@ func TestEngineGetMessagePreservesGeneratedDetailMetadata(t *testing.T) {
 	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal("/api/v1/messages/42", r.URL.Path, "path")
 		writeJSONResponse(t, w, map[string]any{
-			"id":                42,
-			"source_message_id": "msg-42",
-			"conversation_id":   7,
-			"subject":           "Generated detail",
-			"message_type":      "sms",
-			"from":              "Alice <alice@example.com>",
-			"from_email":        "alice@example.com",
-			"from_name":         "Alice",
-			"to":                []string{"bob@example.com"},
-			"sent_at":           "2024-01-15T10:30:00Z",
-			"deleted_at":        deletedAt,
-			"snippet":           "preview",
-			"labels":            []string{"INBOX"},
-			"has_attachments":   true,
-			"size_bytes":        2048,
-			"body":              "Hello, generated world!",
+			"id":                 42,
+			"source_message_id":  "msg-42",
+			"conversation_id":    7,
+			"subject":            "Generated detail",
+			"conversation_title": "Team chat",
+			"message_type":       "sms",
+			"from":               "Alice <alice@example.com>",
+			"from_email":         "alice@example.com",
+			"from_name":          "Alice",
+			"to":                 []string{"bob@example.com"},
+			"sent_at":            "2024-01-15T10:30:00Z",
+			"deleted_at":         deletedAt,
+			"snippet":            "preview",
+			"labels":             []string{"INBOX"},
+			"has_attachments":    true,
+			"size_bytes":         2048,
+			"body":               "Hello, generated world!",
 			"attachments": []map[string]any{{
 				"id":           52,
 				"filename":     "doc.pdf",
@@ -585,6 +586,7 @@ func TestEngineGetMessagePreservesGeneratedDetailMetadata(t *testing.T) {
 	require.NoError(err, "GetMessage")
 	require.NotNil(msg, "GetMessage returned nil")
 	assert.Equal("msg-42", msg.SourceMessageID, "SourceMessageID")
+	assert.Equal("Team chat", msg.ConversationTitle, "ConversationTitle")
 	assert.Equal(store.baseURL+"/messages/42", msg.WebURL)
 	assert.Equal("sms", msg.MessageType, "MessageType")
 	require.NotNil(msg.DeletedAt, "DeletedAt")

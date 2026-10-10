@@ -730,7 +730,7 @@ func (s *Store) listMessageOccurrenceRows(
 		       o.retention_state, o.error_code, o.vault_uid, o.source_id, o.source_version_id,
 		       o.content_version_id, COALESCE(d.profile, ''), COALESCE(d.phase, ''),
 		       COALESCE(d.operation_state, ''), COALESCE(d.supplied_input_id, ''),
-		       COALESCE(NULLIF(m.subject, ''), NULLIF(c.title, ''), ''),
+		       `+containingTitleSQL("c")+`,
 		       COALESCE(m.sent_at, m.received_at, m.internal_date)
 		FROM beeper_media_occurrences o
 		LEFT JOIN beeper_media_deliveries d
