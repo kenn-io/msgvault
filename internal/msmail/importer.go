@@ -356,7 +356,8 @@ func (s *syncer) afterStore(ctx context.Context, m DeltaMessage, raw []byte) err
 		}
 		msgID = ids[m.ID]
 	}
-	if m.Categories != nil {
+	// Known messages already saved their categories before the MIME download.
+	if m.archiveID == 0 && m.Categories != nil {
 		if _, err := s.st.ReconcileMicrosoftMailLabelsContext(ctx, msgID, nil, m.Categories); err != nil {
 			return fmt.Errorf("save Microsoft categories: %w", err)
 		}

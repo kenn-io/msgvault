@@ -56,7 +56,11 @@ func (a *storeAPIAdapter) MessageTags(ctx context.Context, id int64, change *ema
 		}
 		return nil, emailtags.Failure(code, "Cannot acquire source ownership for tag editing", nil, err)
 	}
-	defer func() { _ = execution.Release() }()
+	defer func() {
+		if err := execution.Release(); err != nil && a.logger != nil {
+			a.logger.Error("release source after tag editing", "source_id", source.ID, "error", err)
+		}
+	}()
 	// Resolve again under source ownership; never substitute a newly mapped source.
 	locked, err := a.store.EmailTagTargetContext(ctx, id, mailbox)
 	if err != nil {
@@ -77,11 +81,8 @@ func (a *storeAPIAdapter) MessageTags(ctx context.Context, id int64, change *ema
 	if err := a.store.SaveEmailTagsContext(evidenceCtx, target, result); err != nil {
 		return result, emailtags.Failure("remote_accepted_local_failed", "Provider tags were verified but could not be saved locally; sync the account", result, err)
 	}
-	if err := execution.Release(); err != nil {
-		return result, emailtags.Failure("local_failed", "Provider tags were saved but source ownership could not be released", result, err)
-	}
 	if target.Provider == "gmail" || target.Provider == sourceTypeMSMail {
-		a.refreshDraftCache(evidenceCtx, source)
+		a.releaseDraftSourceAndRefreshCache(ctx, source, execution)
 	}
 	return result, nil
 }

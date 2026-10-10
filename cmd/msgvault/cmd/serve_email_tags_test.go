@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -132,6 +133,71 @@ func TestDaemonMessageTagsGmailReconciles(t *testing.T) {
 	var failure *emailtags.MessageTagError
 	require.ErrorAs(err, &failure)
 	assert.Equal("remote_accepted_local_failed", failure.Code)
+}
+
+func TestDaemonMessageTagsReleaseFailureKeepsSavedResult(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	if !st.IsPostgreSQL() {
+		t.Skip("requires PostgreSQL to disconnect the source lock session")
+	}
+	source, err := st.GetOrCreateSource("gmail", "owner@example.test")
+	require.NoError(err)
+	conversationID, err := st.EnsureConversation(source.ID, "thread-1", "Tags")
+	require.NoError(err)
+	messageID, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conversationID, SourceMessageID: "gmail-1", MessageType: "email"})
+	require.NoError(err)
+	client := &daemonTagGmailClient{MockAPI: gmail.NewMockAPI()}
+	client.tags = func(ctx context.Context, id string, change *emailtags.MessageTagChange) (*emailtags.MessageTagResult, error) {
+		assert.Equal("gmail-1", id)
+		require.NotNil(change)
+		assert.Equal([]string{"Label_next"}, change.Add)
+		// Disconnect only this fixture's advisory-lock session. The archive
+		// save uses another connection and must retain its successful result.
+		var lockPID int
+		require.NoError(st.DB().QueryRowContext(ctx, st.Rebind(`
+			SELECT pid FROM pg_locks
+			WHERE locktype='advisory' AND granted AND objsubid=1
+			AND database=(SELECT oid FROM pg_database WHERE datname=current_database())
+			AND ((classid::bigint << 32) | objid::bigint)=hashtextextended(
+				current_schema() || ':msgvault-sync:' || CAST(CAST(? AS BIGINT) AS TEXT), 0)
+		`), source.ID).Scan(&lockPID))
+		var terminated bool
+		require.NoError(st.DB().QueryRowContext(ctx, st.Rebind(`SELECT pg_terminate_backend(?, 5000)`), lockPID).Scan(&terminated))
+		require.True(terminated)
+		return &emailtags.MessageTagResult{
+			Provider: "gmail", Tags: []string{"Label_next"}, Verified: true,
+			AvailableTags: []emailtags.MessageTag{{ID: "Label_next", Name: "Next"}},
+		}, nil
+	}
+	var logs bytes.Buffer
+	var cachedLabels []string
+	a := &storeAPIAdapter{
+		store: st, config: &config.Config{OAuth: config.OAuthConfig{ServiceAccountKey: "synthetic-service-account"}},
+		logger:                slog.New(slog.NewTextHandler(&logs, nil)),
+		emailTagClientFactory: func(context.Context, *store.Source) (gmail.API, error) { return client, nil },
+		draftCacheRefresh: func(ctx context.Context, account string) error {
+			require.NoError(ctx.Err())
+			assert.Equal("owner@example.test", account)
+			message, err := st.GetMessage(messageID)
+			require.NoError(err)
+			cachedLabels = message.Labels
+			return nil
+		},
+	}
+	srv := api.NewServerWithOptions(api.ServerOptions{Config: a.config, Store: a, Logger: a.logger})
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/messages/%d/tags", messageID), strings.NewReader(`{"add":["Label_next"]}`))
+	req.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	srv.Router().ServeHTTP(response, req)
+	assert.Equal(http.StatusOK, response.Code, response.Body.String())
+	var result emailtags.MessageTagResult
+	require.NoError(json.Unmarshal(response.Body.Bytes(), &result))
+	assert.True(result.Verified)
+	assert.Equal([]string{"Label_next"}, result.Tags)
+	assert.Equal([]string{"Next"}, cachedLabels)
+	assert.Contains(logs.String(), "release source")
 }
 
 func TestDaemonMessageTagsRevokedGrantUsesDefaultFactory(t *testing.T) {

@@ -28,6 +28,7 @@ func TestSyncMicrosoftCategoriesAndFolderMoves(t *testing.T) {
 	// A folder update that omits categories must keep the last snapshot.
 	f.mu.Lock()
 	delete(f.categories, "m1")
+	f.version["m1"] = 1
 	f.mu.Unlock()
 	f.put("m1", "archive")
 	moved, err := f.sync(t, st)
@@ -36,12 +37,26 @@ func TestSyncMicrosoftCategoriesAndFolderMoves(t *testing.T) {
 	msg, err = st.GetMessage(ids["m1"])
 	require.NoError(err)
 	assert.ElementsMatch([]string{"Archive", "Category: Inbox", "Category: Next"}, msg.Labels)
+	assert.Equal("body m1 v1", msg.Snippet)
+	// Updated categories survive the same download that refreshes the body.
+	f.mu.Lock()
+	f.categories["m1"] = []string{"Later"}
+	f.version["m1"] = 2
+	f.mu.Unlock()
+	f.put("m1", "archive")
+	updated, err := f.sync(t, st)
+	require.NoError(err)
+	assert.Zero(updated.Moved)
+	msg, err = st.GetMessage(ids["m1"])
+	require.NoError(err)
+	assert.ElementsMatch([]string{"Archive", "Category: Later"}, msg.Labels)
+	assert.Equal("body m1 v2", msg.Snippet)
 	// An explicitly empty category collection clears categories, not folders.
 	f.mu.Lock()
 	f.categories["m1"] = []string{}
 	f.mu.Unlock()
 	f.put("m1", "archive")
-	updated, err := f.sync(t, st)
+	updated, err = f.sync(t, st)
 	require.NoError(err)
 	assert.Zero(updated.Moved, "category changes do not move messages")
 	msg, err = st.GetMessage(ids["m1"])
