@@ -1,8 +1,11 @@
 <script lang="ts">
-  import { Button, SegmentedControl } from '@kenn-io/kit-ui';
+  import { Button } from '@kenn-io/kit-ui';
   import { onDestroy, untrack } from 'svelte';
 
   import type { APIClient } from '../../api/client';
+  import { getMessage } from '../../api/generated/api/api';
+  import { parseRecordingSelection } from '../../archive/recording-selection';
+  import type { MessageDetail } from '../../api/generated/models';
   import type {
     MeetingRef,
     ExplorePreflightResponse as GeneratedExplorePreflightResponse,
@@ -70,6 +73,7 @@
     fixedSortNotice: () => void;
     focusGrid: () => void;
     openRow: (row: EntryRow) => void;
+    onOpenRecording: (messageID: number) => void;
     drillGroup: (row: ExploreGroupRow) => void;
     closeReadingPane: () => void;
     openRelationship: (participantID: number) => void;
@@ -100,6 +104,7 @@
     fixedSortNotice,
     focusGrid,
     openRow,
+    onOpenRecording,
     drillGroup,
     closeReadingPane,
     openRelationship,
@@ -109,6 +114,31 @@
   }: Props = $props();
 
   const api = createExploreAPI(untrack(() => client));
+  let recordingMessage = $state<MessageDetail>();
+  let recordingLoading = $state(false);
+  let recordingError = $state('');
+  const recordingSelection = $derived(parseRecordingSelection(readingTargetKey));
+
+  $effect(() => {
+    const target = recordingSelection;
+    const requestedClient = client;
+    recordingMessage = undefined;
+    recordingError = '';
+    recordingLoading = Boolean(target);
+    if (!target) return;
+    const controller = new AbortController();
+    void getMessage({ id: target }, { ...requestedClient, signal: controller.signal }).then(({ data }) => {
+      if (controller.signal.aborted) return;
+      if (!data || data.id !== target || !Number.isSafeInteger(data.conversation_id) || data.conversation_id! < 1) {
+        recordingError = 'This recording message is no longer available.';
+      } else recordingMessage = data;
+    }).catch(() => {
+      if (!controller.signal.aborted) recordingError = 'Could not load this recording message.';
+    }).finally(() => {
+      if (!controller.signal.aborted) recordingLoading = false;
+    });
+    return () => controller.abort();
+  });
 
   const countLabel = $derived.by(() => {
     const result = loader.result;
@@ -183,6 +213,7 @@
   const readingSelection = $derived.by((): ReadingPaneSelection | undefined => {
     const selected = readingTargetKey;
     if (!selected) return undefined;
+    if (recordingSelection) return recordingMessage ? { kind: 'archive', message: recordingMessage } : undefined;
     const entry = loader.rows.find((row) => row.key === selected);
     if (entry) return { kind: 'entry', row: entry };
     const group = parseGroupSelection(selected);
@@ -202,6 +233,7 @@
     } => {
       const selected = readingTargetKey;
       if (!selected || readingSelection) return { status: 'ready', message: '' };
+      if (recordingSelection) return { status: recordingLoading ? 'loading' : 'error', message: recordingError };
       if (parseGroupSelection(selected)) {
         if (readingDetailUnavailable) {
           return {
@@ -659,14 +691,6 @@
           onchange={(columns) => exploreState.replaceTransient({ columns })}
         />
       {/if}
-      {#if canPreviewRight}
-        <SegmentedControl
-          ariaLabel="Preview position"
-          options={[{ value: 'below', label: 'Below' }, { value: 'right', label: 'Right' }]}
-          value={previewPosition}
-          onchange={setPreviewPosition}
-        />
-      {/if}
     {/snippet}
   </ContextBar>
   <span class="kit-sr-only" role="status" aria-label="Sort status" aria-live="polite">{sortNotice}</span>
@@ -700,14 +724,6 @@
     </div>
   {/if}
 
-  {#if enabled && exploreState.current.query.trim()}
-    <TranscriptHits
-      {client}
-      query={exploreState.current.query}
-      supported={exploreState.current.searchMode === 'full_text' && exploreState.current.filters.length === 0 && exploreState.current.groupingChain.length === 0}
-    />
-  {/if}
-
   <div
     class="results-split"
     class:results-split--open={Boolean(readingTargetKey)}
@@ -725,6 +741,15 @@
     >
       {#snippet primary()}
         <div class="results-primary">
+          {#if enabled && exploreState.current.query.trim()}
+            <TranscriptHits
+              {client}
+              query={exploreState.current.query}
+              supported={exploreState.current.searchMode === 'full_text' && exploreState.current.filters.length === 0 && exploreState.current.groupingChain.length === 0}
+              selectedMessageID={recordingSelection}
+              onOpen={(hit) => onOpenRecording(hit.message_id)}
+            />
+          {/if}
           {#if exploreState.current.groupingChain.length > 0}
             <GroupTable
               rows={loader.groupRows}
@@ -832,6 +857,8 @@
             unavailable={readingState.unavailable}
             predicate={exploreState.predicate()}
             onClose={closeReadingPane}
+            position={canPreviewRight ? previewPosition : undefined}
+            onPositionChange={setPreviewPosition}
             {onOpenMeeting}
             onReloadMeetings={reloadGroupMeetings}
             onOpenSettings={() => commitWorkspace('settings')}
@@ -906,6 +933,8 @@
     display: flex;
     min-width: 0;
     height: 100%;
+    min-height: 0;
+    gap: var(--space-3);
     flex-direction: column;
   }
 

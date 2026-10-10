@@ -26,8 +26,10 @@
 </script>
 
 <script lang="ts">
-  import { Button, EmptyState, IconButton } from '@kenn-io/kit-ui';
+  import { Button, EmptyState, IconButton, Tooltip } from '@kenn-io/kit-ui';
   import X from '@lucide/svelte/icons/x';
+  import PanelRight from '@lucide/svelte/icons/panel-right';
+  import PanelBottom from '@lucide/svelte/icons/panel-bottom';
   import { onDestroy, untrack } from 'svelte';
 
   import type { APIClient } from '../../api/client';
@@ -55,6 +57,8 @@
     unavailable = undefined,
     predicate,
     onClose = undefined,
+    position = undefined,
+    onPositionChange = undefined,
     conversationAnchorId = undefined,
     conversationStart = undefined,
     conversationEnd = undefined,
@@ -72,6 +76,8 @@
     unavailable?: ExploreCacheUnavailable;
     predicate: ExplorePredicate;
     onClose?: () => void;
+    position?: 'below' | 'right';
+    onPositionChange?: (position: 'below' | 'right') => void;
     /** Overrides the entry's own anchor when the reader navigated within the
      * thread (URL-carried, so Back/Forward restore the same message). */
     conversationAnchorId?: number;
@@ -265,6 +271,13 @@
           ariaLabel="Open relationship"
           onclick={handleOpenRelationship}
         />
+      {/if}
+      {#if position && onPositionChange}
+        <Tooltip text={position === 'below' ? 'Dock reader right' : 'Dock reader below'}>
+          <IconButton size="sm" ariaLabel={position === 'below' ? 'Dock reader right' : 'Dock reader below'} onclick={() => onPositionChange?.(position === 'below' ? 'right' : 'below')}>
+            {#if position === 'below'}<PanelRight size={14} />{:else}<PanelBottom size={14} />{/if}
+          </IconButton>
+        </Tooltip>
       {/if}
       <IconButton size="sm" ariaLabel="Close reading pane" onclick={() => onClose?.()}>
         <X size={14} />

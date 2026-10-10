@@ -31,9 +31,11 @@ describe('TranscriptHits', () => {
     expect(links[0].textContent).toContain('Quarterly review');
     expect(links[0].textContent).toContain('voice.wav');
     expect(links[0].textContent).toContain('Provider transcript');
-    expect(links[0].textContent).toContain('0:00 to 0:02');
+    expect(links[0].querySelector('.transcript time')?.textContent).toBe('0:00');
+    expect(links[0].querySelector('.transcript time')?.getAttribute('title')).toBe('Until 0:02');
     expect(links[0].textContent).toContain('Quarterly <numbers>');
     expect(links[0].querySelector('numbers')).toBeNull();
+    expect(links[0].querySelector('mark')?.textContent).toBe('Quarterly');
     expect(links[0].querySelector('time')?.getAttribute('datetime')).toBe('2026-07-18T12:00:00Z');
     expect(links[1].textContent).toContain('Generated transcript');
     expect(links[1].querySelectorAll('time')).toHaveLength(1);
@@ -46,12 +48,11 @@ describe('TranscriptHits', () => {
   it('keeps every incomplete zero-hit coverage state visible', async () => {
     mount(vi.fn<typeof fetch>(async () => Response.json(report({ results: [], partial: true, truncated: true,
       pending_occurrences: 2, unavailable_occurrences: 3, attribution_unavailable: 1 }))));
-    await screen.findByText(/Coverage incomplete\./);
-    expect(screen.getByRole('status').textContent).toContain('2 pending.');
-    expect(screen.getByRole('status').textContent).toContain('3 unavailable.');
-    expect(screen.getByRole('status').textContent).toContain('1 with unavailable attribution.');
-    expect(screen.getByRole('status').textContent).toContain('More matches may exist.');
-    expect(screen.getByText('No matching excerpts returned.')).toBeTruthy();
+    await screen.findByText(/No matches in searched transcripts\./);
+    expect(screen.getByRole('status').textContent).toContain('2 pending');
+    expect(screen.getByRole('status').textContent).toContain('3 unavailable');
+    expect(screen.getByRole('status').textContent).toContain('1 unattributed');
+    expect(screen.getByRole('status').textContent).toContain('More may match');
     expect(screen.queryByText('No spoken matches.')).toBeNull();
   });
 
@@ -92,9 +93,9 @@ describe('TranscriptHits', () => {
     fetchFn.mockResolvedValue(Response.json(report({ results: [] })));
     const view = mount(fetchFn);
     await vi.advanceTimersByTimeAsync(300);
-    expect(screen.getByText('Quarterly <numbers>')).toBeTruthy();
+    expect(screen.getByRole('link').textContent).toContain('Quarterly <numbers>');
     await fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
-    expect(screen.queryByText('Quarterly <numbers>')).toBeNull();
+    expect(screen.queryByRole('link')).toBeNull();
     await vi.advanceTimersByTimeAsync(300);
     expect(screen.getByText(status === 503 ? 'Recording search unavailable.' : 'Could not load recording matches.')).toBeTruthy();
     await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
@@ -116,7 +117,7 @@ describe('TranscriptHits', () => {
     await vi.advanceTimersByTimeAsync(300);
     hidden.mockReturnValue(true);
     await fireEvent(document, new Event('visibilitychange'));
-    expect(screen.queryByText('Quarterly <numbers>')).toBeNull();
+    expect(screen.queryByRole('link')).toBeNull();
     hidden.mockReturnValue(false);
     await fireEvent(document, new Event('visibilitychange'));
     await fireEvent(document, new Event('visibilitychange'));
@@ -132,13 +133,13 @@ describe('TranscriptHits', () => {
     const view = mount();
     await vi.advanceTimersByTimeAsync(300);
     await vi.advanceTimersByTimeAsync(30_000);
-    expect(screen.queryByText('Quarterly <numbers>')).toBeNull();
+    expect(screen.queryByRole('link')).toBeNull();
     expect(screen.getByText('Recording results expired.')).toBeTruthy();
     await vi.advanceTimersByTimeAsync(60_000);
     expect(view.fetchFn).toHaveBeenCalledTimes(1);
     await fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
     await vi.advanceTimersByTimeAsync(300);
-    expect(screen.getByText('Quarterly <numbers>')).toBeTruthy();
+    expect(screen.getByRole('link').textContent).toContain('Quarterly <numbers>');
     expect(view.fetchFn).toHaveBeenCalledTimes(2);
     view.unmount();
   });
