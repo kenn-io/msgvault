@@ -5,7 +5,7 @@ for (const messageType of ['email', 'whatsapp']) {
     await page.setViewportSize({ width: 420, height: 900 });
     const message = {
       id: 42001, source_id: 3, source_message_id: 'source-message', conversation_id: 71,
-      subject: 'LongUnbrokenSubject'.repeat(10), message_type: messageType, from: 'sender@example.com',
+      subject: messageType === 'email' ? 'LongUnbrokenSubject'.repeat(10) : '', conversation_title: 'Team chat', message_type: messageType, from: 'sender@example.com',
       to: ['reader@example.com'], sent_at: '2020-01-01T12:00:00Z', snippet: 'Old message',
       labels: [], has_attachments: false, size_bytes: 20, body: 'The requested old message', attachments: [],
     };
@@ -27,6 +27,7 @@ for (const messageType of ['email', 'whatsapp']) {
       return route.fulfill({ status: 404, json: { message: 'Unexpected archive request' } });
     });
     await page.goto('/messages/42001');
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText(messageType === 'email' ? message.subject : 'Team chat');
     await expect(page.getByRole('article', { name: 'Message 42001' })).toContainText('The requested old message');
     expect(archiveRequests).toEqual(['/api/v1/messages/42001', '/api/v1/conversations/71']);
     expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
