@@ -3297,6 +3297,7 @@ msgvault embeddings <subcommand> [flags]
 | `build` | Build or update the index. Incremental by default; `--full-rebuild` starts a new generation. |
 | `resume` | Continue scan-and-fill embedding for the building or active generation. Incremental by default; `--backstop` also scans below the watermark. |
 | `list` | List index generations with their state, model, dimension, and pending count. |
+| `status` | Read or watch daemon coverage, worker activity, and batch timings. See [embeddings status](#embeddings-status). |
 | `optimize [generation-id]` | Build or resume the local SQLite search accelerator, or remove it with `--drop`. |
 | `prune` | Remove embeddings for hard-deleted messages. |
 | `activate <generation-id>` | Activate a completed building generation, retiring the current active one. |
@@ -3339,6 +3340,72 @@ rebuild; it only activates a generation if that generation is building.
 ```bash
 msgvault embeddings resume --backstop
 ```
+
+### embeddings status
+
+```bash
+msgvault embeddings status
+msgvault embeddings status --json
+msgvault embeddings status --watch --interval 5s
+msgvault embeddings status --source 3
+```
+
+Read message embedding coverage and live work from the daemon. Like
+`multimodal status`, the JSON response starts with generation and coverage.
+It targets a building generation matching the configured settings, or the
+active generation. A build run with `--account` or `--collection` reports its
+progress only in its own terminal. Status never starts a build or acquires the
+scheduler slot.
+
+The daemon must report API schema 3.11.0 or newer. If the CLI asks for an upgrade,
+upgrade and restart the daemon before retrying.
+
+`current` counts live messages stamped for this generation, including ones with
+no text to embed, and `pending = eligible - current`. `embeddings list` shows
+the split between embedded and blank messages. Coverage respects the configured
+message types and sources. `--source` narrows coverage to one source; batch
+metrics describe the selected generation. Coverage counts can be up to five
+seconds old; the daemon reuses them across rapid polls. `failed` counts failures
+in the latest message-embedding pass across all sources, regardless of the
+selected generation or `--source`. A successful pass with no work clears
+`failed` and preserves prior batch timings. Batch error codes describe the
+sampled pass; yielding the slot to a waiting operation is not an error. Messages
+can change while the sample is read.
+
+The job state is `idle`, `queued`, or `running`. `queued` means a scheduled run is
+waiting for the slot. A post-sync pass uses the sync's slot and goes straight
+to `running`; a manual build waiting for the slot shows as `idle` with the
+current holder. Scheduler state shows the
+configured schedule, whether embeddings run after sync, and the current slot
+holder (`none`, `sync`, `embeddings`, or `other`). `sync` covers account syncs
+and scheduled source syncs such as Slack or CardDAV. A post-sync embedding pass
+holds the sync slot until it completes. No source names appear in slot labels.
+
+The latest 20 finished batches and current batch report attempted and newly
+covered messages, input characters the provider accepted, provider-call time, HTTP request time,
+database-write time, total time, request attempts, retries, and HTTP 429s.
+Provider time includes retry waits; HTTP request time excludes them. Database
+write time includes vector publication and coverage stamps, excluding telemetry
+writes. These are message-lane timings; people work and activation can continue
+after `pending` reaches zero. Batches that call no provider, cover nothing, and
+fail nothing are not recorded. The daemon saves the timing sample at most once
+a second while a pass runs. Errors use fixed public codes, without provider
+payloads.
+
+Throughput uses newly committed coverage in the last `eta_window` batches (at
+most 20), measured from the first batch's start to now, so failed batches and
+the current batch's elapsed time count. Foreground builds use completed progress
+reports and their batch durations. During a stalled provider call it reads
+lower than the rate a foreground build prints. ETA is an estimate for pending message
+coverage, not activation. It is `null` before the first
+finished batch, at zero throughput, after five minutes without a finished batch,
+when idle, or with source-filtered coverage. Previous passes retain their timing
+sample but cannot provide an ETA for a new job. Interrupted invocations do not
+remain live merely because their durable run record says `running`.
+
+`--watch` polls every five seconds by default; `--interval` must be at least one
+second. `--watch --json` writes one JSON object per line until interrupted.
+Older generations have no timing sample until a new embedding pass runs.
 
 ### embeddings list
 

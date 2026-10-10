@@ -24,7 +24,7 @@ type ContextWorkStore interface {
 	ScanEmbeddingChanges(ctx context.Context, after int64, limit int) ([]store.EmbeddingChange, error)
 	LatestEmbeddingChangeSequence(ctx context.Context) (int64, error)
 	ScanForEmbeddingScoped(ctx context.Context, target, afterID int64, limit int, messageTypes []string, sourceIDs []int64) ([]int64, error)
-	SetEmbedGenGroupIfUnchanged(ctx context.Context, stamps []store.EmbedGenStamp, metadata store.EmbedGenMetadataVersion, target int64) (bool, error)
+	SetEmbedGenGroupIfUnchanged(ctx context.Context, stamps []store.EmbedGenStamp, metadata store.EmbedGenMetadataVersion, target int64) (bool, int, error)
 	ResetEmbedGen(ctx context.Context, ids []int64) error
 }
 
@@ -62,6 +62,7 @@ type ContextWorkerDeps struct {
 	DocumentPrefixUTF8Bytes int
 	Hooks                   ContextWorkerHooks
 	Recorder                operations.Recorder
+	Diagnostics             vector.EmbeddingDiagnosticWriter
 	Log                     *slog.Logger
 }
 
@@ -134,11 +135,15 @@ func (w *ContextWorker) runOperationPass(
 	if terminal != nil {
 		return runResultFromOperationRun(terminal)
 	}
+	runID, _ := pass.id.Int64()
+	diagnostics := newEmbeddingDiagnosticRun(ctx, w.deps.Diagnostics, w.deps.Log, gen, runID)
+	ctx = withEmbeddingDiagnostics(ctx, diagnostics)
 	defer func() {
 		retErr = operationRunError(retErr)
 		counters := finalRunCounters(result)
 		pass.checkpoint(ctx, counters)
 		pass.finish(ctx, counters, retErr)
+		diagnostics.finish(retErr)
 	}()
 	runCtx := contextWithOperationPass(ctx, pass)
 	if !backstop {
@@ -724,7 +729,16 @@ func (w *ContextWorker) selectorInBuildScope(
 	return found && scope.ContainsSource(sourceID), nil
 }
 
-func (w *ContextWorker) publishPreparedScopes(ctx context.Context, gen vector.GenerationID, scopes []preparedScope, res *RunResult) (int, error) {
+func (w *ContextWorker) publishPreparedScopes(ctx context.Context, gen vector.GenerationID, scopes []preparedScope, res *RunResult) (_ int, retErr error) {
+	diagnostics := diagnosticRun(ctx)
+	diagnostics.beginBatch(0)
+	defer func() {
+		// Running out of the per-pass budget defers work; it is not a failure.
+		if !errors.Is(retErr, errContextRunBudgetExhausted) {
+			diagnostics.failure(retErr)
+		}
+		diagnostics.completeBatch()
+	}()
 	plans := make([]preparedScopePublication, 0, len(scopes))
 	inputs := make([]DocumentInput, 0)
 	targets := make([]preparedDocumentTarget, 0)
@@ -790,6 +804,12 @@ func (w *ContextWorker) publishPreparedScopes(ctx context.Context, gen vector.Ge
 		inputs = append(inputs, scopeInputs...)
 		targets = append(targets, scopeTargets...)
 	}
+	// Scopes deferred by the run budget are not attempted in this batch.
+	attempted := 0
+	for _, plan := range plans {
+		attempted += len(plan.scope.liveVersions)
+	}
+	diagnostics.setAttempted(attempted)
 	results, embedErr := w.embedDocuments(ctx, inputs)
 	if len(results) > len(targets) || (embedErr == nil && len(results) != len(targets)) {
 		return 0, fmt.Errorf("contextual batched vector document count mismatch: got %d, expected %d", len(results), len(targets))
@@ -860,7 +880,10 @@ func (w *ContextWorker) publishPreparedScopes(ctx context.Context, gen vector.Ge
 		})
 	}
 	if len(publications) > 0 {
-		if err := w.deps.Publisher.PublishScopes(ctx, gen, publications); err != nil {
+		finishWrite := measureEmbeddingWrite(ctx)
+		publishErr := w.deps.Publisher.PublishScopes(ctx, gen, publications)
+		finishWrite(publishErr)
+		if err := publishErr; err != nil {
 			if errors.Is(err, vector.ErrGenerationRetired) {
 				return 0, errContextGenerationRetired
 			}
@@ -965,13 +988,16 @@ func (w *ContextWorker) coverPreparedScopePlan(ctx context.Context, gen vector.G
 	versions = append(versions, blankVersions...)
 	sort.Slice(versions, func(i, j int) bool { return versions[i].ID < versions[j].ID })
 	if len(versions) != 0 {
-		stamped, err := w.deps.Store.SetEmbedGenGroupIfUnchanged(ctx, versions, metadata, int64(gen))
+		finishWrite := measureEmbeddingWrite(ctx)
+		stamped, covered, err := w.deps.Store.SetEmbedGenGroupIfUnchanged(ctx, versions, metadata, int64(gen))
+		finishWrite(err)
 		if err != nil {
 			return fmt.Errorf("coverage CAS: %w", err)
 		}
 		if !stamped {
 			return errors.New("coverage CAS missed; source scope changed after assembly and remains uncovered")
 		}
+		diagnosticRun(ctx).completed(covered)
 		if w.deps.Hooks.AfterCoverage != nil {
 			if err := w.deps.Hooks.AfterCoverage(); err != nil {
 				return fmt.Errorf("after coverage CAS: %w", err)
@@ -1071,7 +1097,7 @@ func (w *ContextWorker) embedDocuments(ctx context.Context, inputs []DocumentInp
 	if len(inputs) == 0 {
 		return nil, nil
 	}
-	vectors, err := w.deps.Client.EmbedDocuments(ctx, inputs)
+	vectors, err := w.embedDocumentsMeasured(ctx, inputs)
 	if len(vectors) > len(inputs) || (err == nil && len(vectors) != len(inputs)) {
 		return nil, fmt.Errorf("contextual batched vector document count mismatch: got %d, expected %d", len(vectors), len(inputs))
 	}
@@ -1120,7 +1146,7 @@ func (w *ContextWorker) embedTruncatedDocument(ctx context.Context, input Docume
 	for budget/2 >= truncatedContextualDocumentFloorUTF8Bytes {
 		budget /= 2
 		truncated := truncateDocumentInput(input, budget)
-		vectors, err := w.deps.Client.EmbedDocuments(ctx, []DocumentInput{truncated})
+		vectors, err := w.embedDocumentsMeasured(ctx, []DocumentInput{truncated})
 		if err == nil {
 			if len(vectors) != 1 || len(vectors[0]) != len(input.Chunks) {
 				return nil, fmt.Errorf("contextual truncated document chunk count mismatch: got %d, expected %d",

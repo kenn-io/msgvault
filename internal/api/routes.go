@@ -16,6 +16,7 @@ import (
 	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/visual"
 )
 
@@ -363,6 +364,13 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 		http.StatusNotFound, http.StatusServiceUnavailable)
 	registerRawHumaRoute(apiV1, visualSearchOp, s.handleVisualSearch)
 	registerAPIV1RawHumaJSONRoute[visual.Status](apiV1, "getVisualAttachmentStatus", http.MethodGet, "/multimodal/status", "Get visual attachment embedding status", s.handleVisualStatus)
+	embeddingStatusOp := rawAPIV1Operation("getEmbeddingStatus", http.MethodGet, "/embeddings/status", "Get message embedding coverage and live batch diagnostics")
+	minimumSourceID := float64(1)
+	embeddingStatusOp.Parameters = []*huma.Param{{Name: "source_id", In: "query", Description: "Filter coverage by source ID; batch diagnostics remain generation-wide", Schema: &huma.Schema{Type: "integer", Format: "int64", Minimum: &minimumSourceID}}}
+	embeddingStatusOp.Responses = jsonResponsesFor[vector.EmbeddingStatus](apiV1)
+	embeddingStatusOp.Responses["400"] = errorResponseFor(apiV1)
+	embeddingStatusOp.Responses["503"] = errorResponseFor(apiV1)
+	registerRawHumaRoute(apiV1, embeddingStatusOp, s.handleEmbeddingStatus)
 	registerAPIV1RawHumaJSONRouteWithRequest[visualBuildRequest, visual.Status](apiV1, "startVisualAttachmentBuild", http.MethodPost, "/multimodal/build", "Consent and run one bounded visual attachment embedding pass", s.handleVisualBuild)
 	registerAPIV1RawHumaJSONRoute[visual.Status](apiV1, "resumeVisualAttachmentBuild", http.MethodPost, "/multimodal/run", "Resume one bounded visual attachment embedding pass", s.handleVisualRun)
 	registerAPIV1RawHumaJSONRouteWithRequest[visualRetryRequest, visual.Status](apiV1, "retryVisualAttachmentOwner", http.MethodPost, "/multimodal/retry", "Retry one visual attachment owner", s.handleVisualRetry)

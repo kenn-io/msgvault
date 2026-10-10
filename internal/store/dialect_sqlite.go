@@ -209,7 +209,7 @@ func (d *SQLiteDialect) proveQuiescentInstant(
 func (d *SQLiteDialect) probeQuiescentInstant(
 	ctx context.Context, conn *sql.Conn,
 ) (time.Time, bool, error) {
-	restore, err := d.useProbeBusyTimeout(ctx, conn)
+	restore, err := d.narrowBusyTimeout(ctx, conn, sqliteQuiescentProbeTimeout, "change-feed watermark probe")
 	if err != nil {
 		return time.Time{}, false, err
 	}
@@ -245,14 +245,14 @@ func (d *SQLiteDialect) probeQuiescentInstant(
 	return stamp, true, nil
 }
 
-// useProbeBusyTimeout narrows this connection's busy timeout to the probe's,
+// narrowBusyTimeout narrows this connection's busy timeout to limit,
 // returning a function that puts the connection's own value back. The
-// connection returns to the pool afterwards, so leaving the probe's timeout on
+// connection returns to the pool afterwards, so leaving the short timeout on
 // it would silently shorten every unrelated statement that later borrows it.
-func (d *SQLiteDialect) useProbeBusyTimeout(ctx context.Context, conn *sql.Conn) (func(), error) {
+func (d *SQLiteDialect) narrowBusyTimeout(ctx context.Context, conn *sql.Conn, limit time.Duration, purpose string) (func(), error) {
 	var configured int64
 	if err := conn.QueryRowContext(ctx, "PRAGMA busy_timeout").Scan(&configured); err != nil {
-		return nil, fmt.Errorf("read busy timeout for change-feed watermark probe: %w", err)
+		return nil, fmt.Errorf("read busy timeout for %s: %w", purpose, err)
 	}
 	set := func(c context.Context, ms int64) error {
 		_, err := conn.ExecContext(c, fmt.Sprintf("PRAGMA busy_timeout = %d", ms))
@@ -260,8 +260,8 @@ func (d *SQLiteDialect) useProbeBusyTimeout(ctx context.Context, conn *sql.Conn)
 	}
 	// Narrow, never widen: a store configured to give up on a busy database
 	// sooner than this means it, and the probe has a safe fallback either way.
-	if err := set(ctx, min(configured, sqliteQuiescentProbeTimeout.Milliseconds())); err != nil {
-		return nil, fmt.Errorf("set busy timeout for change-feed watermark probe: %w", err)
+	if err := set(ctx, min(configured, limit.Milliseconds())); err != nil {
+		return nil, fmt.Errorf("set busy timeout for %s: %w", purpose, err)
 	}
 	return func() {
 		// WithoutCancel: the connection must be handed back with its own
@@ -279,9 +279,9 @@ func (d *SQLiteDialect) useProbeBusyTimeout(ctx context.Context, conn *sql.Conn)
 			// database after the probe's timeout rather than the configured
 			// one, and a "database is locked" from an unrelated query is
 			// otherwise unexplainable.
-			slog.Warn("change-feed watermark probe could not restore the connection's busy timeout",
+			slog.Warn(purpose+" could not restore the connection's busy timeout",
 				slog.Int64("configured_ms", configured),
-				slog.Int64("left_at_ms", min(configured, sqliteQuiescentProbeTimeout.Milliseconds())),
+				slog.Int64("left_at_ms", min(configured, limit.Milliseconds())),
 				slog.Any("error", err))
 		}
 	}, nil

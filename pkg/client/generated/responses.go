@@ -979,6 +979,12 @@ func (g *GetDomainTimelineErrorResponseJSON503) UnmarshalJSON(data []byte) error
 	return nil
 }
 
+type GetEmbeddingStatusResponse = EmbeddingStatus
+
+type GetEmbeddingStatusErrorResponse = ErrorResponse
+
+type GetEmbeddingStatusErrorResponseJSON = ErrorResponse
+
 type CreateEmploymentResponse = Employment
 
 type CreateEmploymentErrorResponse = ErrorResponse
@@ -4500,6 +4506,15 @@ type GetDomainTimelineResp struct {
 	JSON400      *GetDomainTimelineErrorResponse
 	JSON409      *GetDomainTimelineErrorResponseJSON
 	JSON503      *GetDomainTimelineErrorResponseJSON503
+}
+
+type GetEmbeddingStatusResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetEmbeddingStatusResponse
+	JSON400      *GetEmbeddingStatusErrorResponse
+	JSON503      *GetEmbeddingStatusErrorResponseJSON
 }
 
 type CreateEmploymentResp201Headers struct {

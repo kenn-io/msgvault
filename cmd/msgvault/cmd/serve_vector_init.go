@@ -148,6 +148,10 @@ func startVectorInit(
 		h.vf = vf
 		h.mu.Unlock()
 		if cfg.Vector.Enabled {
+			coverage := &embeddingCoverageCache{}
+			apiServer.SetEmbeddingStatus(func(readCtx context.Context, sourceID int64) (vector.EmbeddingStatus, error) {
+				return readEmbeddingStatus(readCtx, s, vf.Backend, vf.Cfg, sourceID, coverage)
+			}, vf.Cfg.Embeddings.ETAWindow)
 			apiServer.SetVectorFeatures(
 				vf.HybridEngine, vf.PersonSearchEngine, vf.Backend, vf.Cfg,
 			)

@@ -4247,6 +4247,264 @@ components:
         - total_known_seconds
         - average_known_seconds
       type: object
+    EmbeddingBatch:
+      additionalProperties: true
+      properties:
+        attempted:
+          format: int64
+          type: integer
+        chars:
+          format: int64
+          type: integer
+        completed:
+          format: int64
+          type: integer
+        db_write_ms:
+          format: double
+          type: number
+        elapsed_ms:
+          format: double
+          type: number
+        error:
+          oneOf:
+            - $ref: "#/components/schemas/OperationPublicError"
+            - type: "null"
+        finished_at:
+          format: date-time
+          type: string
+        phase:
+          type: string
+        phase_started_at:
+          format: date-time
+          type: string
+        provider_ms:
+          format: double
+          type: number
+        rate_limits:
+          format: int64
+          type: integer
+        request_ms:
+          format: double
+          type: number
+        requests:
+          format: int64
+          type: integer
+        retries:
+          format: int64
+          type: integer
+        sequence:
+          format: int64
+          type: integer
+        started_at:
+          format: date-time
+          type: string
+      required:
+        - sequence
+        - started_at
+        - phase
+        - phase_started_at
+        - attempted
+        - completed
+        - chars
+        - provider_ms
+        - request_ms
+        - db_write_ms
+        - elapsed_ms
+        - requests
+        - retries
+        - rate_limits
+        - error
+      type: object
+    EmbeddingDiagnostics:
+      additionalProperties: true
+      properties:
+        current_batch:
+          oneOf:
+            - $ref: "#/components/schemas/EmbeddingBatch"
+            - type: "null"
+        finished_at:
+          format: date-time
+          type:
+            - string
+            - "null"
+        generation_id:
+          format: int64
+          type: integer
+        last_error:
+          oneOf:
+            - $ref: "#/components/schemas/OperationPublicError"
+            - type: "null"
+        last_successful_batch_at:
+          format: date-time
+          type:
+            - string
+            - "null"
+        recent_batches:
+          items:
+            $ref: "#/components/schemas/EmbeddingBatch"
+          type: array
+        run_id:
+          format: int64
+          type: integer
+        started_at:
+          format: date-time
+          type: string
+        updated_at:
+          format: date-time
+          type: string
+      required:
+        - generation_id
+        - run_id
+        - started_at
+        - updated_at
+        - finished_at
+        - current_batch
+        - recent_batches
+        - last_successful_batch_at
+        - last_error
+      type: object
+    EmbeddingGenerationStatus:
+      additionalProperties: true
+      properties:
+        dimension:
+          format: int64
+          type: integer
+        id:
+          format: int64
+          type: integer
+        model:
+          type: string
+        state:
+          type: string
+      required:
+        - id
+        - state
+        - model
+        - dimension
+      type: object
+    EmbeddingJobState:
+      additionalProperties: true
+      properties:
+        holding_scheduler_slot:
+          type: boolean
+        phase:
+          type: string
+        phase_seconds:
+          format: double
+          type: number
+        queued_at:
+          format: date-time
+          type:
+            - string
+            - "null"
+        started_at:
+          format: date-time
+          type:
+            - string
+            - "null"
+        state:
+          type: string
+      required:
+        - state
+        - started_at
+        - queued_at
+        - holding_scheduler_slot
+        - phase
+        - phase_seconds
+      type: object
+    EmbeddingSchedulerState:
+      additionalProperties: true
+      properties:
+        registered:
+          type: boolean
+        run_after_sync:
+          type: boolean
+        schedule:
+          type: string
+        slot_held:
+          type: boolean
+        slot_held_since:
+          format: date-time
+          type:
+            - string
+            - "null"
+        slot_holder:
+          type: string
+      required:
+        - registered
+        - schedule
+        - run_after_sync
+        - slot_held
+        - slot_holder
+        - slot_held_since
+      type: object
+    EmbeddingStatus:
+      additionalProperties: true
+      properties:
+        active_generation:
+          oneOf:
+            - $ref: "#/components/schemas/EmbeddingGenerationStatus"
+            - type: "null"
+        current:
+          format: int64
+          type: integer
+        diagnostics:
+          oneOf:
+            - $ref: "#/components/schemas/EmbeddingDiagnostics"
+            - type: "null"
+        eligible:
+          format: int64
+          type: integer
+        eta_seconds:
+          format: double
+          type:
+            - number
+            - "null"
+        failed:
+          format: int64
+          type: integer
+        generation:
+          $ref: "#/components/schemas/EmbeddingGenerationStatus"
+        job:
+          $ref: "#/components/schemas/EmbeddingJobState"
+        messages_per_minute:
+          format: double
+          type:
+            - number
+            - "null"
+        pending:
+          format: int64
+          type: integer
+        sampled_at:
+          format: date-time
+          type: string
+        scheduler:
+          $ref: "#/components/schemas/EmbeddingSchedulerState"
+        source_id:
+          format: int64
+          type: integer
+        window_batches:
+          format: int64
+          type: integer
+        window_seconds:
+          format: double
+          type: number
+      required:
+        - generation
+        - active_generation
+        - eligible
+        - current
+        - pending
+        - failed
+        - sampled_at
+        - job
+        - scheduler
+        - messages_per_minute
+        - eta_seconds
+        - window_batches
+        - window_seconds
+        - diagnostics
+      type: object
     Employment:
       additionalProperties: true
       properties:
@@ -15218,7 +15476,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.10.0
+  version: 3.11.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -20160,6 +20418,47 @@ paths:
       summary: Get one domain's canonical activity timeline
       tags:
         - Exploration
+  /api/v1/embeddings/status:
+    get:
+      operationId: getEmbeddingStatus
+      parameters:
+        - description: Filter coverage by source ID; batch diagnostics remain generation-wide
+          in: query
+          name: source_id
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmbeddingStatus"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get message embedding coverage and live batch diagnostics
+      tags:
+        - API
   /api/v1/employments:
     post:
       operationId: createEmployment

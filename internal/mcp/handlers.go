@@ -132,6 +132,7 @@ func listLimitArg(args map[string]any) int {
 
 type handlers struct {
 	delegatedOnly       bool
+	embeddingStatus     EmbeddingStatusReader
 	downloads           *downloadCache
 	engine              query.Engine
 	archiveSQLQuerier   ArchiveSQLQuerier

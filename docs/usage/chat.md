@@ -281,6 +281,7 @@ The MCP server exposes the following tools to connected AI clients:
 | `get_attachment` | Get attachment content by ID. Pass `offset` or `length` to receive verified chunks instead of one embedded blob. | `attachment_id` (int), `offset` (int), `length` (int), `sha256` (string, required after offset 0) |
 | `export_attachment` | Save attachment to filesystem | `attachment_id` (int), `destination` (string) |
 | `get_stats` | Archive overview statistics, plus each account's `LastSyncAt`. Includes vector index state when configured. | — |
+| `get_embeddings_status` | Read daemon coverage, worker activity, and batch timings. See [embeddings status](../cli-reference.md#embeddings-status). | `source_id` (positive int, optional) |
 | `aggregate` | Grouped statistics (top senders, domains, labels, or message volume by calendar year) | `group_by` (string: sender/recipient/domain/label/time), `limit` (int), `after` (string), `before` (string), `account` (string) |
 | `query_sql` | Advanced read-only SQL over the published analytics cache. Returns rows and freshness metadata, or an accepted refresh job. | `sql` (string, required), `fresh` (bool, default false) |
 | `list_saved_views` | List persistent reusable Saved Views and their complete definitions. Read-only. | — |
@@ -458,6 +459,8 @@ fields are available, and the daemon serves the visual route from schema
 `2.4.0` or newer. Disabled or unknown lanes omit their optional searchers. The
 reduced `semantic_search_messages` entry remains as discovery guidance and
 returns `vector_not_enabled` until text search is configured.
+
+A successful authenticated health response with API schema `3.11.0` or newer also registers `get_embeddings_status`.
 
 Daemons older than schema 2.28.0 keep the basic MCP catalog and reduced
 semantic guidance. Upgrade them to 2.28.0 or newer to expose full semantic,

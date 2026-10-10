@@ -22,6 +22,12 @@ All notable changes to msgvault, grouped by release.
 
 - Agent tokens grant scoped archive reads through the remote CLI and MCP, with optional `--expires`. Search responses report index uncertainty; owner searches retain automatic index repair.
 
+- `msgvault embeddings status` shows embedding coverage, whether an embedding
+  job is running or a scheduled one is queued, recent throughput with an ETA,
+  and per-batch provider and database timings with retry and rate-limit
+  counts. The same snapshot is available at `GET /api/v1/embeddings/status`
+  and through MCP `get_embeddings_status`.
+
 - msgvault sends anonymous usage telemetry: a daemon ping at startup and once
   each later UTC day, and an `app_opened` event the web UI reports through the
   daemon when it opens and on its first focus on a later UTC day. Events carry

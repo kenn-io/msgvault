@@ -268,6 +268,9 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 			opts.VisualSearcher = daemonMCPVisualSearcher{client: st}
 		}
 	}
+	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, embeddingsStatusMinAPISchemaVersion) {
+		opts.EmbeddingStatus = st
+	}
 	if capabilityErr != nil {
 		log.Warn("people tools disabled because the daemon capability probe failed", "error", capabilityErr)
 	} else if daemonclient.APISchemaVersionAtLeast(schemaVersion, peopleMinAPISchemaVersion) {

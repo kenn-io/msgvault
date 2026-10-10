@@ -13,8 +13,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/pkg/archive"
 )
 
@@ -55,6 +57,40 @@ func TestOpenSQLiteRequiresExistingArchive(t *testing.T) {
 	_, err = archive.OpenSQLite(t.Context(), "postgres://archive.invalid/msgvault")
 	require.ErrorContains(err, "use Open for PostgreSQL")
 	require.ErrorContains(archive.SetupSQLite(t.Context(), "postgres://archive.invalid/msgvault"), "use Setup for PostgreSQL")
+}
+
+func TestSQLiteArchiveRequiresEmbeddingDiagnosticsUpgrade(t *testing.T) {
+	require := require.New(t)
+	path := filepath.Join(t.TempDir(), "archive.db")
+	require.NoError(archive.SetupSQLite(t.Context(), path))
+	legacy, err := archive.OpenSQLite(t.Context(), path)
+	require.NoError(err)
+	t.Cleanup(func() { _ = legacy.Close() })
+
+	// Schema version 2 predates persisted embedding diagnostics.
+	_, err = legacy.Store().DB().ExecContext(t.Context(), "DROP TABLE embedding_diagnostics")
+	require.NoError(err)
+	_, err = legacy.Store().DB().ExecContext(t.Context(), "UPDATE archive_metadata SET value = '2' WHERE key = 'schema_version'")
+	require.NoError(err)
+
+	runtime, err := archive.OpenSQLite(t.Context(), path)
+	if runtime != nil {
+		t.Cleanup(func() { _ = runtime.Close() })
+	}
+	require.ErrorContains(err, "run setup")
+	assert.Nil(t, runtime)
+
+	require.NoError(archive.SetupSQLite(t.Context(), path))
+	runtime, err = archive.OpenSQLite(t.Context(), path)
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(runtime.Close()) })
+	require.NoError(runtime.Store().SaveEmbeddingDiagnostics(t.Context(), vector.EmbeddingDiagnostics{
+		GenerationID: 7, RunID: 12,
+	}))
+	snapshot, err := runtime.Store().ReadEmbeddingDiagnostics(t.Context(), 7)
+	require.NoError(err)
+	require.NotNil(snapshot)
+	assert.Equal(t, int64(12), snapshot.RunID)
 }
 
 func TestSlackCallerSelectsPrivateConversation(t *testing.T) {

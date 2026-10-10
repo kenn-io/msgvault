@@ -46,7 +46,7 @@ type WorkStore interface {
 	// Returns the ids whose UPDATE matched 0 rows (the CAS misses) so the
 	// worker can log them and exclude them from its success accounting; the
 	// watermark still advances and the backstop recovers them.
-	SetEmbedGenIfUnchanged(ctx context.Context, items []store.EmbedGenStamp, target int64) (missed []int64, err error)
+	SetEmbedGenIfUnchanged(ctx context.Context, items []store.EmbedGenStamp, target int64) (missed []int64, covered int, err error)
 }
 
 // WorkerDeps bundles the collaborators a Worker needs. Backend, VectorsDB,
@@ -106,7 +106,8 @@ type WorkerDeps struct {
 	// expensive.
 	Progress func(ProgressReport)
 	// Recorder owns archive-side public history for each bounded worker pass.
-	Recorder operations.Recorder
+	Recorder    operations.Recorder
+	Diagnostics vector.EmbeddingDiagnosticWriter
 }
 
 // ProgressReport captures RunOnce progress after a set of messages has
@@ -305,9 +306,13 @@ func (w *Worker) runOperationPass(
 		return runResultFromOperationRun(terminal)
 	}
 	outcomes := newMessagePassOutcomes(pass)
+	runID, _ := pass.id.Int64()
+	diagnostics := newEmbeddingDiagnosticRun(ctx, w.deps.Diagnostics, w.deps.Log, gen, runID)
+	ctx = withEmbeddingDiagnostics(ctx, diagnostics)
 	defer func() {
 		retErr = operationRunError(retErr)
 		pass.finish(ctx, outcomes.counters(true), retErr)
+		diagnostics.finish(retErr)
 	}()
 	return w.run(ctx, gen, backstop, outcomes)
 }
@@ -357,6 +362,8 @@ func (w *Worker) run(
 			}
 			return res, fmt.Errorf("RunOnce: %w", err)
 		}
+		// Close the previous batch so this scan is not charged to it.
+		diagnosticRun(ctx).completeBatch()
 		batchStart := time.Now()
 		ids, err := w.scanForEmbedding(ctx, int64(gen), afterID)
 		if err != nil {
@@ -372,6 +379,7 @@ func (w *Worker) run(
 			return res, nil
 		}
 		res.Claimed += len(ids)
+		diagnosticRun(ctx).beginBatch(len(ids))
 		outcomes.attempt(ids)
 		// batchMax is the highest id in this scan slice; once the batch is
 		// stamped these rows drop out of the predicate, but advancing the
@@ -383,6 +391,7 @@ func (w *Worker) run(
 			if w.stopIfYielded(ctx, gen) {
 				return res, nil
 			}
+			diagnosticRun(ctx).failure(err)
 			consecutiveFailures++
 			lastErr = err
 
@@ -522,7 +531,7 @@ func (w *Worker) run(
 		}
 
 		// Step 1: upsert embeddings (VectorsDB side).
-		if err := w.deps.Backend.Upsert(ctx, gen, eb.chunks); err != nil {
+		if err := w.upsertMeasured(ctx, gen, eb.chunks); err != nil {
 			if errors.Is(err, vector.ErrGenerationRetired) {
 				// The generation was retired out from under this worker. Per
 				// the ErrGenerationRetired contract this is a benign "stop"
@@ -830,7 +839,13 @@ func (w *Worker) embedBatch(ctx context.Context, ids []int64) (embedBatchResult,
 	vecs := make([][]float32, 0, len(inputs))
 	for i := 0; i < len(inputs); i += embedSubBatchSize {
 		end := min(i+embedSubBatchSize, len(inputs))
+		finishProvider := measureEmbeddingProvider(ctx, inputs[i:end])
 		got, err := w.deps.Client.Embed(ctx, inputs[i:end])
+		accepted := 0
+		if err == nil {
+			accepted = len(got)
+		}
+		finishProvider(accepted, err)
 		if err != nil {
 			return embedBatchResult{
 				missing:      missing,
@@ -1035,7 +1050,7 @@ func (w *Worker) downshiftDrain(
 			}
 			continue
 		}
-		if uerr := w.deps.Backend.Upsert(ctx, gen, eb.chunks); uerr != nil {
+		if uerr := w.upsertMeasured(ctx, gen, eb.chunks); uerr != nil {
 			if errors.Is(uerr, vector.ErrGenerationRetired) {
 				// Generation retired mid-drain. Stop draining and surface the
 				// benign sentinel; remaining singletons would observe the same
@@ -1169,6 +1184,8 @@ func (w *Worker) downshiftDrain(
 // recovers them. A missed CAS is NOT an error — only a real driver failure on
 // either path returns err, for the caller's consecutive-failure accounting.
 func (w *Worker) stampCovered(ctx context.Context, gen vector.GenerationID, ids []int64, lm map[int64]any) (missed []int64, err error) {
+	finish := measureEmbeddingWrite(ctx)
+	defer func() { finish(err) }()
 	var cas []store.EmbedGenStamp
 	var plain []int64
 	for _, id := range ids {
@@ -1179,13 +1196,15 @@ func (w *Worker) stampCovered(ctx context.Context, gen vector.GenerationID, ids 
 		}
 	}
 	if len(cas) > 0 {
-		m, err := w.deps.Store.SetEmbedGenIfUnchanged(ctx, cas, int64(gen))
+		m, covered, err := w.deps.Store.SetEmbedGenIfUnchanged(ctx, cas, int64(gen))
+		diagnosticRun(ctx).completed(covered)
+		missed = append(missed, m...)
 		if err != nil {
 			return missed, err
 		}
-		missed = append(missed, m...)
 	}
 	if len(plain) > 0 {
+		// Missing rows have no message to cover, so they are not counted.
 		if err := w.deps.Store.SetEmbedGen(ctx, plain, int64(gen)); err != nil {
 			return missed, err
 		}
@@ -1197,6 +1216,8 @@ func (w *Worker) stampSkipped(ctx context.Context, gen vector.GenerationID, ids 
 	if len(ids) == 0 {
 		return nil, nil
 	}
+	finish := measureEmbeddingWrite(ctx)
+	defer func() { finish(err) }()
 	if w.deps.beforeSkipStamp != nil {
 		w.deps.beforeSkipStamp(ctx, ids)
 	}
@@ -1208,6 +1229,7 @@ func (w *Worker) stampSkipped(ctx context.Context, gen vector.GenerationID, ids 
 	defer func() { _ = tx.Rollback() }()
 
 	deleteIDs := make([]int64, 0, len(ids))
+	covered := 0
 	for _, id := range ids {
 		if tok, ok := lm[id]; ok {
 			res, err := tx.ExecContext(ctx,
@@ -1224,6 +1246,7 @@ func (w *Worker) stampSkipped(ctx context.Context, gen vector.GenerationID, ids 
 				missed = append(missed, id)
 				continue
 			}
+			covered++
 			deleteIDs = append(deleteIDs, id)
 			continue
 		}
@@ -1244,6 +1267,7 @@ func (w *Worker) stampSkipped(ctx context.Context, gen vector.GenerationID, ids 
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("commit skip stamp tx: %w", err)
 	}
+	diagnosticRun(ctx).completed(covered)
 	return missed, nil
 }
 

@@ -182,6 +182,7 @@ VALUES (1, 1, 1, 'm1', 'email', 99);
 `)
 	require.NoError(
 		err, "seed message with orphaned embed_gen")
+	require.NoError(s.SaveEmbeddingDiagnostics(ctx, vector.EmbeddingDiagnostics{GenerationID: 99, RunID: 1}))
 
 	require.NoError(
 		s.Close(), "close rw store")
@@ -212,4 +213,7 @@ VALUES (1, 1, 1, 'm1', 'email', 99);
 	require.NoError(ro.DB().QueryRow(`SELECT embed_gen FROM messages WHERE id = 1`).Scan(&v))
 	assert.True(v.Valid, "read-only Open must NOT reset the orphaned embed_gen")
 	assert.Equal(int64(99), v.Int64, "orphaned stamp unchanged under read-only Open")
+	diagnostics, err := ro.ReadEmbeddingDiagnostics(ctx, 99)
+	require.NoError(err)
+	assert.NotNil(diagnostics, "read-only Open preserves orphaned diagnostics")
 }

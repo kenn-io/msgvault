@@ -133,6 +133,11 @@ type Scheduler struct {
 	visualPostRunning bool
 	visualPostPending bool
 
+	// Live embedding job state reported by EmbeddingStatus.
+	embedSchedule                 string
+	embedQueued, embedRunning     int
+	embedQueuedAt, embedStartedAt time.Time
+
 	ctx     context.Context    // cancelled on Stop
 	cancel  context.CancelFunc // cancels ctx
 	wg      sync.WaitGroup     // tracks running sync goroutines
@@ -414,11 +419,20 @@ func (s *Scheduler) setCronSlot(slot *cronSlot, job func(context.Context) error,
 	}
 	slot.job = job
 	slot.runAfterSync = runAfterSync && job != nil
+	if slot == &s.embed {
+		s.embedSchedule = schedule
+	}
 	if job == nil || schedule == "" {
 		return nil
 	}
 	entryID, err := s.cron.AddFunc(schedule, func() {
 		if s.isStopped() {
+			return
+		}
+		if slot == &s.embed {
+			if runErr := s.runEmbeddingJob(job, true); runErr != nil {
+				s.logger.Error("scheduled embedding reconciliation failed", "error", runErr)
+			}
 			return
 		}
 		done, ok := s.beginWork(slot.workLabel)
@@ -575,6 +589,12 @@ func (s *Scheduler) runSync(email string) {
 		}
 		s.mu.RUnlock()
 		if postSync != nil {
+			if slot == &s.embed {
+				if postErr := s.runEmbeddingJob(postSync, false); postErr != nil {
+					s.logger.Error("post-sync embedding reconciliation failed", "error", postErr)
+				}
+				continue
+			}
 			postCtx, endPost := s.jobContext("post-sync "+slot.label, false, 0)
 			if postErr := postSync(postCtx); postErr != nil {
 				s.logger.Error("post-sync "+slot.label+" reconciliation failed", "error", postErr)

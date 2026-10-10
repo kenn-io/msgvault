@@ -107,15 +107,17 @@ func TestSetEmbedGenGroupIfUnchanged_SuccessAndReplay(t *testing.T) {
 	f := newEmbedGenGroupFixture(t, 2)
 	versions, metadata := f.snapshot()
 
-	stamped, err := f.store.SetEmbedGenGroupIfUnchanged(t.Context(), versions, metadata, 4)
+	stamped, covered, err := f.store.SetEmbedGenGroupIfUnchanged(t.Context(), versions, metadata, 4)
 	require.NoError(err)
 	assert.True(stamped)
+	assert.Equal(2, covered)
 	assert.Equal([]sql.NullInt64{{Int64: 4, Valid: true}, {Int64: 4, Valid: true}}, f.embedGens())
 
 	replayVersions, replayMetadata := f.snapshot()
-	stamped, err = f.store.SetEmbedGenGroupIfUnchanged(t.Context(), replayVersions, replayMetadata, 4)
+	stamped, covered, err = f.store.SetEmbedGenGroupIfUnchanged(t.Context(), replayVersions, replayMetadata, 4)
 	require.NoError(err)
 	assert.True(stamped)
+	assert.Zero(covered, "a replay covers nothing new")
 	assert.Equal([]sql.NullInt64{{Int64: 4, Valid: true}, {Int64: 4, Valid: true}}, f.embedGens())
 }
 
@@ -127,7 +129,7 @@ func TestSetEmbedGenGroupIfUnchanged_PreservesPublishedRevisionTokens(t *testing
 	}
 	versions, metadata := f.snapshot()
 
-	stamped, err := f.store.SetEmbedGenGroupIfUnchanged(t.Context(), versions, metadata, 4)
+	stamped, _, err := f.store.SetEmbedGenGroupIfUnchanged(t.Context(), versions, metadata, 4)
 	require.NoError(t, err)
 	require.True(t, stamped)
 	after, _ := f.snapshot()
@@ -169,7 +171,7 @@ func TestSetEmbedGenGroupIfUnchanged_PostgresAvoidsPersistenceLockInversion(t *t
 	defer cancelCAS()
 	resultCh := make(chan casResult, 1)
 	go func() {
-		stamped, casErr := f.store.SetEmbedGenGroupIfUnchanged(casCtx, versions, metadata, 4)
+		stamped, _, casErr := f.store.SetEmbedGenGroupIfUnchanged(casCtx, versions, metadata, 4)
 		resultCh <- casResult{stamped: stamped, err: casErr}
 	}()
 
@@ -232,7 +234,7 @@ func TestSetEmbedGenGroupIfUnchanged_OneMissStampsNone(t *testing.T) {
 	}()
 	require.NoError(<-changed)
 
-	stamped, err := f.store.SetEmbedGenGroupIfUnchanged(t.Context(), versions, metadata, 4)
+	stamped, _, err := f.store.SetEmbedGenGroupIfUnchanged(t.Context(), versions, metadata, 4)
 	require.NoError(err)
 	assert.False(stamped)
 	assert.Equal([]sql.NullInt64{{}, {}}, f.embedGens())
@@ -259,7 +261,7 @@ func TestSetEmbedGenGroupIfUnchanged_MissingDeletedAndDuplicateMembers(t *testin
 			f := newEmbedGenGroupFixture(t, 2)
 			versions, metadata := f.snapshot()
 			tt.mutate(f, versions)
-			stamped, err := f.store.SetEmbedGenGroupIfUnchanged(t.Context(), versions, metadata, 4)
+			stamped, _, err := f.store.SetEmbedGenGroupIfUnchanged(t.Context(), versions, metadata, 4)
 			require.NoError(t, err)
 			assert.False(t, stamped)
 			for _, value := range f.embedGens() {
@@ -330,7 +332,7 @@ func TestSetEmbedGenGroupIfUnchanged_MetadataChangesStampNone(t *testing.T) {
 			}()
 			require.NoError(<-changed)
 
-			stamped, err := f.store.SetEmbedGenGroupIfUnchanged(t.Context(), versions, metadata, 4)
+			stamped, _, err := f.store.SetEmbedGenGroupIfUnchanged(t.Context(), versions, metadata, 4)
 			require.NoError(err)
 			assert.False(stamped)
 			assert.Equal([]sql.NullInt64{{}, {}}, f.embedGens())
@@ -350,7 +352,7 @@ func TestSetEmbedGenGroupIfUnchanged_DialectNativeTimestampToken(t *testing.T) {
 		assert.IsType("", versions[0].LastModified)
 	}
 
-	stamped, err := f.store.SetEmbedGenGroupIfUnchanged(t.Context(), versions, metadata, 9)
+	stamped, _, err := f.store.SetEmbedGenGroupIfUnchanged(t.Context(), versions, metadata, 9)
 	require.NoError(err)
 	assert.True(stamped)
 }
@@ -368,7 +370,7 @@ func TestSetEmbedGenGroupIfUnchanged_StampErrorRollsBackEveryMember(t *testing.T
 			SELECT RAISE(ABORT, 'synthetic group stamp failure');
 		END`, f.messageIDs[1]))
 
-	stamped, err := f.store.SetEmbedGenGroupIfUnchanged(t.Context(), versions, metadata, 4)
+	stamped, _, err := f.store.SetEmbedGenGroupIfUnchanged(t.Context(), versions, metadata, 4)
 	require.ErrorContains(t, err, "synthetic group stamp failure")
 	assert.False(t, stamped)
 	assert.Equal(t, []sql.NullInt64{{}, {}}, f.embedGens(),
@@ -385,7 +387,7 @@ func TestEmbedGenMetadataVersion_MatchesAssemblerCanonicalDigest(t *testing.T) {
 	versions, metadata := f.snapshot()
 
 	assert.Equal(t, "008696efed0969c656a9fef5057430881961388f760d2286213b606605837a3d", metadata.Digest)
-	stamped, err := f.store.SetEmbedGenGroupIfUnchanged(t.Context(), versions, metadata, 11)
+	stamped, _, err := f.store.SetEmbedGenGroupIfUnchanged(t.Context(), versions, metadata, 11)
 	require.NoError(t, err)
 	assert.True(t, stamped, "store recomputation must accept Task 5's exact canonical digest")
 }

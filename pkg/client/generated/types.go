@@ -3822,6 +3822,191 @@ func (d DurationTotals) Validate() error {
 	return errors
 }
 
+type EmbeddingBatch struct {
+	Attempted      int64                 `json:"attempted"`
+	Chars          int64                 `json:"chars"`
+	Completed      int64                 `json:"completed"`
+	DBWriteMs      float64               `json:"db_write_ms"`
+	ElapsedMs      float64               `json:"elapsed_ms"`
+	ErrorData      *OperationPublicError `json:"error" validate:"omitempty"`
+	FinishedAt     *time.Time            `json:"finished_at,omitempty"`
+	Phase          string                `json:"phase" validate:"required"`
+	PhaseStartedAt time.Time             `json:"phase_started_at" validate:"required"`
+	ProviderMs     float64               `json:"provider_ms"`
+	RateLimits     int64                 `json:"rate_limits"`
+	RequestMs      float64               `json:"request_ms"`
+	Requests       int64                 `json:"requests"`
+	Retries        int64                 `json:"retries"`
+	Sequence       int64                 `json:"sequence"`
+	StartedAt      time.Time             `json:"started_at" validate:"required"`
+}
+
+func (e EmbeddingBatch) Validate() error {
+	var errors runtime.ValidationErrors
+	if e.ErrorData != nil {
+		if v, ok := any(e.ErrorData).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("ErrorData", err)
+			}
+		}
+	}
+	if err := typesValidator.Var(e.Phase, "required"); err != nil {
+		errors = errors.Append("Phase", err)
+	}
+	if err := typesValidator.Var(e.PhaseStartedAt, "required"); err != nil {
+		errors = errors.Append("PhaseStartedAt", err)
+	}
+	if err := typesValidator.Var(e.StartedAt, "required"); err != nil {
+		errors = errors.Append("StartedAt", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type EmbeddingDiagnostics struct {
+	CurrentBatch          *EmbeddingBatch       `json:"current_batch" validate:"omitempty"`
+	FinishedAt            *time.Time            `json:"finished_at" validate:"omitempty"`
+	GenerationID          int64                 `json:"generation_id"`
+	LastError             *OperationPublicError `json:"last_error" validate:"omitempty"`
+	LastSuccessfulBatchAt *time.Time            `json:"last_successful_batch_at" validate:"omitempty"`
+	RecentBatches         []EmbeddingBatch      `json:"recent_batches" validate:"required"`
+	RunID                 int64                 `json:"run_id"`
+	StartedAt             time.Time             `json:"started_at" validate:"required"`
+	UpdatedAt             time.Time             `json:"updated_at" validate:"required"`
+}
+
+func (e EmbeddingDiagnostics) Validate() error {
+	var errors runtime.ValidationErrors
+	if e.CurrentBatch != nil {
+		if v, ok := any(e.CurrentBatch).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("CurrentBatch", err)
+			}
+		}
+	}
+	if e.LastError != nil {
+		if v, ok := any(e.LastError).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("LastError", err)
+			}
+		}
+	}
+	for i, item := range e.RecentBatches {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("RecentBatches[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(e.StartedAt, "required"); err != nil {
+		errors = errors.Append("StartedAt", err)
+	}
+	if err := typesValidator.Var(e.UpdatedAt, "required"); err != nil {
+		errors = errors.Append("UpdatedAt", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type EmbeddingGenerationStatus struct {
+	Dimension int64  `json:"dimension"`
+	ID        int64  `json:"id"`
+	Model     string `json:"model" validate:"required"`
+	State     string `json:"state" validate:"required"`
+}
+
+func (e EmbeddingGenerationStatus) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(e))
+}
+
+type EmbeddingJobState struct {
+	HoldingSchedulerSlot bool       `json:"holding_scheduler_slot"`
+	Phase                string     `json:"phase" validate:"required"`
+	PhaseSeconds         float64    `json:"phase_seconds"`
+	QueuedAt             *time.Time `json:"queued_at" validate:"omitempty"`
+	StartedAt            *time.Time `json:"started_at" validate:"omitempty"`
+	State                string     `json:"state" validate:"required"`
+}
+
+func (e EmbeddingJobState) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(e))
+}
+
+type EmbeddingSchedulerState struct {
+	Registered    bool       `json:"registered"`
+	RunAfterSync  bool       `json:"run_after_sync"`
+	Schedule      string     `json:"schedule" validate:"required"`
+	SlotHeld      bool       `json:"slot_held"`
+	SlotHeldSince *time.Time `json:"slot_held_since" validate:"omitempty"`
+	SlotHolder    string     `json:"slot_holder" validate:"required"`
+}
+
+func (e EmbeddingSchedulerState) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(e))
+}
+
+type EmbeddingStatus struct {
+	ActiveGeneration  *EmbeddingGenerationStatus `json:"active_generation" validate:"omitempty"`
+	Current           int64                      `json:"current"`
+	Diagnostics       *EmbeddingDiagnostics      `json:"diagnostics" validate:"omitempty"`
+	Eligible          int64                      `json:"eligible"`
+	EtaSeconds        *float64                   `json:"eta_seconds" validate:"omitempty"`
+	Failed            int64                      `json:"failed"`
+	Generation        EmbeddingGenerationStatus  `json:"generation"`
+	Job               EmbeddingJobState          `json:"job"`
+	MessagesPerMinute *float64                   `json:"messages_per_minute" validate:"omitempty"`
+	Pending           int64                      `json:"pending"`
+	SampledAt         time.Time                  `json:"sampled_at" validate:"required"`
+	Scheduler         EmbeddingSchedulerState    `json:"scheduler"`
+	SourceID          *int64                     `json:"source_id,omitempty"`
+	WindowBatches     int64                      `json:"window_batches"`
+	WindowSeconds     float64                    `json:"window_seconds"`
+}
+
+func (e EmbeddingStatus) Validate() error {
+	var errors runtime.ValidationErrors
+	if e.ActiveGeneration != nil {
+		if v, ok := any(e.ActiveGeneration).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("ActiveGeneration", err)
+			}
+		}
+	}
+	if e.Diagnostics != nil {
+		if v, ok := any(e.Diagnostics).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Diagnostics", err)
+			}
+		}
+	}
+	if v, ok := any(e.Generation).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Generation", err)
+		}
+	}
+	if v, ok := any(e.Job).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Job", err)
+		}
+	}
+	if err := typesValidator.Var(e.SampledAt, "required"); err != nil {
+		errors = errors.Append("SampledAt", err)
+	}
+	if v, ok := any(e.Scheduler).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Scheduler", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type Employment struct {
 	AddressID      *int64       `json:"address_id,omitempty"`
 	Confidence     *float64     `json:"confidence,omitempty"`
