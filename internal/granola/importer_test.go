@@ -248,7 +248,7 @@ func TestImport_TranscriptTimestampFallbacksRemainSearchable(t *testing.T) {
 			Owner:     User{Name: "Test User", Email: "user@example.com"},
 			CreatedAt: createdAt, UpdatedAt: createdAt,
 			Transcript: []TranscriptSegment{
-				{Speaker: Speaker{Name: "Untimed"}, Text: "No timestamp"},
+				{Speaker: Speaker{Source: "microphone"}, Text: "No timestamp"},
 				{Speaker: Speaker{Name: "Timed"}, Text: "First timestamp", StartTime: firstTranscriptAt},
 				{Speaker: Speaker{Name: "Later"}, Text: "Thirty seconds later", StartTime: firstTranscriptAt.Add(30 * time.Second), EndTime: firstTranscriptAt.Add(45 * time.Second)},
 			},
@@ -285,7 +285,7 @@ func TestImport_TranscriptTimestampFallbacksRemainSearchable(t *testing.T) {
 		&sparseSentAt, &sparseBody, &sparseMetadata,
 	))
 	assert.Equal(firstTranscriptAt, sparseSentAt.UTC())
-	assert.Contains(sparseBody, "[00:00] Untimed: No timestamp")
+	assert.Contains(sparseBody, "[00:00] Me: No timestamp")
 	assert.Contains(sparseBody, "[00:00] Timed: First timestamp")
 	assert.Contains(sparseBody, "[00:30] Later: Thirty seconds later")
 	var sparseMeta meetingMetadata
@@ -487,6 +487,18 @@ func TestImport_IdempotentAndRefresh(t *testing.T) {
 	var count int
 	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&count))
 	assert.Equal(1, count)
+
+	var snippet string
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT snippet FROM messages WHERE source_message_id = ?`), "not_Ab12Cd34Ef56Gh").Scan(&snippet))
+	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET snippet = ? WHERE source_message_id = ?`), "stale", "not_Ab12Cd34Ef56Gh")
+	require.NoError(err)
+	forced, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com", Full: true})
+	require.NoError(err)
+	assert.EqualValues(0, forced.NotesAdded)
+	assert.EqualValues(1, forced.NotesUpdated)
+	var repaired string
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT snippet FROM messages WHERE source_message_id = ?`), "not_Ab12Cd34Ef56Gh").Scan(&repaired))
+	assert.Equal(snippet, repaired)
 
 	// Server-side edit with a newer updated_at: row refreshes in place.
 	edited := strings.ReplaceAll(string(api.notes["not_Ab12Cd34Ef56Gh"]),
