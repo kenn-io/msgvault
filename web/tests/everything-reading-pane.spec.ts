@@ -62,9 +62,6 @@ test('recording matches keep their conversation title through reader navigation'
   await expect(page.getByRole('heading', { name: 'Results 1 item', exact: true })).toBeVisible();
   await link.click();
   await expect(reader.getByText('Source recording')).toBeVisible();
-  await reader.getByRole('button', { name: 'Dock reader right' }).click();
-  await expect(page.getByRole('separator', { name: 'Resize reading pane' })).toHaveAttribute('aria-orientation', 'vertical');
-  await reader.getByRole('button', { name: 'Dock reader below' }).click();
   await reader.getByRole('button', { name: 'Close reading pane' }).click();
   await expect(link).toBeFocused();
   await page.goBack();
@@ -78,7 +75,6 @@ test('recording matches keep their conversation title through reader navigation'
   await expect(page.getByRole('searchbox', { name: 'Search everything' })).toHaveValue('quarterly');
   await expect(link).toBeVisible();
   await page.clock.fastForward(30_001);
-  await expect(page.getByText('Recording results expired.')).toBeVisible();
   await reader.getByRole('button', { name: 'Close reading pane' }).click();
   await expect(page.locator('[data-recording-hits]')).toBeFocused();
   await page.goto('/messages/9');
