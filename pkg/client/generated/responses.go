@@ -2211,6 +2211,14 @@ type GetPersonByUIDErrorResponseJSON409 = ErrorResponse
 
 type GetPersonByUIDErrorResponseJSON503 = ErrorResponse
 
+type CreateStandalonePersonResponse = Person
+
+type CreateStandalonePersonErrorResponse = ErrorResponse
+
+type CreateStandalonePersonErrorResponseJSON = ErrorResponse
+
+type CreateStandalonePersonErrorResponseJSON503 = ErrorResponse
+
 type ListDirectoryPeopleResponse = DirectoryPeopleResponse
 
 type ListDirectoryPeopleErrorResponse = ErrorResponse
@@ -5380,6 +5388,21 @@ type GetPersonByUIDResp struct {
 	JSON404      *GetPersonByUIDErrorResponseJSON
 	JSON409      *GetPersonByUIDErrorResponseJSON409
 	JSON503      *GetPersonByUIDErrorResponseJSON503
+}
+
+type CreateStandalonePersonResp201Headers struct {
+	ETag string `header:"ETag"`
+}
+
+type CreateStandalonePersonResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON201      *CreateStandalonePersonResponse
+	Headers201   *CreateStandalonePersonResp201Headers
+	JSON400      *CreateStandalonePersonErrorResponse
+	JSON409      *CreateStandalonePersonErrorResponseJSON
+	JSON503      *CreateStandalonePersonErrorResponseJSON503
 }
 
 type ListDirectoryPeopleResp struct {

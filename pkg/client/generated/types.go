@@ -9525,6 +9525,72 @@ func (p PersonContactPointPatchRequest) Validate() error {
 	return errors
 }
 
+type PersonCreateContact struct {
+	Type  *string `json:"type,omitzero"`
+	Value string  `json:"value" validate:"required"`
+}
+
+func (p PersonCreateContact) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type PersonCreateInput struct {
+	Address *string               `json:"address,omitzero" validate:"omitempty,max=1000"`
+	Emails  []PersonCreateContact `json:"emails,omitempty"`
+	Name    string                `json:"name" validate:"required,max=256,min=1"`
+	Note    *string               `json:"note,omitzero" validate:"omitempty,max=10000"`
+	Org     *string               `json:"org,omitzero" validate:"omitempty,max=256"`
+	Phones  []PersonCreateContact `json:"phones,omitempty"`
+
+	// Title Job title at org; requires org
+	Title *string `json:"title,omitzero" validate:"omitempty,max=280"`
+}
+
+func (p PersonCreateInput) Validate() error {
+	var errors runtime.ValidationErrors
+	if p.Address != nil {
+		if err := typesValidator.Var(p.Address, "omitempty,max=1000"); err != nil {
+			errors = errors.Append("Address", err)
+		}
+	}
+	for i, item := range p.Emails {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Emails[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(p.Name, "required,max=256,min=1"); err != nil {
+		errors = errors.Append("Name", err)
+	}
+	if p.Note != nil {
+		if err := typesValidator.Var(p.Note, "omitempty,max=10000"); err != nil {
+			errors = errors.Append("Note", err)
+		}
+	}
+	if p.Org != nil {
+		if err := typesValidator.Var(p.Org, "omitempty,max=256"); err != nil {
+			errors = errors.Append("Org", err)
+		}
+	}
+	for i, item := range p.Phones {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Phones[%d]", i), err)
+			}
+		}
+	}
+	if p.Title != nil {
+		if err := typesValidator.Var(p.Title, "omitempty,max=280"); err != nil {
+			errors = errors.Append("Title", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type PersonDate struct {
 	CalendarScale *string       `json:"calendar_scale,omitzero"`
 	Date          PartialDate   `json:"date"`
