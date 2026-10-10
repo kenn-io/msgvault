@@ -16,7 +16,7 @@ import { VisibleLexicalCountCache, type SearchCoverageValue } from '../../search
  * `AbortController`s, and timer handles local to each mount.
  */
 export class EverythingSessionState {
-  recordingSearchConfigured = $state<boolean>();
+  recordingSearchAvailable = $state(false);
   /** Latest semantic coverage snapshot for the active poll key. */
   coverage = $state<SearchCoverageValue>();
   /** Exponential-backoff attempt count for the current coverage poll key. */

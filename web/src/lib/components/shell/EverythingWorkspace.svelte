@@ -117,8 +117,7 @@
   const recordingSelection = $derived(parseRecordingSelection(readingTargetKey));
   const recordingSearchSupported = $derived(exploreState.current.searchMode === 'full_text' && exploreState.current.filters.length === 0 && exploreState.current.groupingChain.length === 0);
   const recordingSearchRequested = $derived(Boolean(enabled && exploreState.current.query.trim()));
-  let recordingPanelVisible = $state(false);
-  const recordingSearchVisible = $derived(recordingSearchRequested && recordingPanelVisible);
+  const recordingSearchVisible = $derived(recordingSearchRequested && session.recordingSearchAvailable);
 
   $effect(() => {
     void readingDetailRetryRevision;
@@ -738,8 +737,7 @@
           {#if recordingSearchRequested}
             <TranscriptHits
               {client}
-              bind:configured={session.recordingSearchConfigured}
-              bind:visible={recordingPanelVisible}
+              bind:available={session.recordingSearchAvailable}
               missingMessageID={recording.missing ? recordingSelection : undefined}
               query={exploreState.current.query}
               supported={recordingSearchSupported}

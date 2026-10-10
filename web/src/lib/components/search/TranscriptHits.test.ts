@@ -77,7 +77,7 @@ describe('TranscriptHits', () => {
     finish(Response.json(report({ results: [hit({ excerpt: 'obsolete evidence' })] })));
     await vi.advanceTimersByTimeAsync(0);
     expect(screen.queryByText('obsolete evidence')).toBeNull();
-    await view.rerender({ client: view.client, query: 'quarterly', supported: false, configured: true });
+    await view.rerender({ client: view.client, query: 'quarterly', supported: false, available: true });
     expect(screen.queryByText('current evidence')).toBeNull();
     expect(screen.getByRole('status').textContent).toContain('Full text with no filters or grouping');
     expect(fetchFn).toHaveBeenCalledTimes(2);
@@ -103,16 +103,23 @@ describe('TranscriptHits', () => {
     expect(fetchFn).toHaveBeenCalledTimes(3);
   });
 
-  it('keeps unsupported queries hidden after a 500 leaves configuration unproven', async () => {
+  it.each([400, 403, 429, 500, 503])('hides errors and hints before a successful search and retries the next query (%s)', async status => {
     vi.useFakeTimers();
-    const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ error: 'internal_error' }, { status: 500 }));
+    const fetchFn = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json({ error: status === 503 ? 'media_search_unavailable' : 'internal_error' }, { status }))
+      .mockResolvedValue(Response.json(report()));
     const view = mount(fetchFn);
+    expect(screen.queryByRole('region', { name: 'Recordings' })).toBeNull();
     await vi.advanceTimersByTimeAsync(300);
-    expect(screen.getByText('Could not load recording matches.')).toBeTruthy();
+    expect(screen.queryByRole('region', { name: 'Recordings' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
     await view.rerender({ client: view.client, query: 'quarterly*', supported: true });
     expect(screen.queryByRole('region', { name: 'Recordings' })).toBeNull();
     expect(screen.queryByText(/Recording search supports plain words only/)).toBeNull();
     expect(fetchFn).toHaveBeenCalledTimes(1);
+    await view.rerender({ client: view.client, query: 'different', supported: true });
+    await vi.advanceTimersByTimeAsync(300);
+    expect(screen.getByRole('link')).toBeTruthy();
+    expect(fetchFn).toHaveBeenCalledTimes(2);
     view.unmount();
   });
 
@@ -158,7 +165,8 @@ describe('TranscriptHits', () => {
     vi.useFakeTimers();
     let finish!: (value: Response) => void;
     const fetchFn = vi.fn<typeof fetch>(() => new Promise(resolve => { finish = resolve; }));
-    const view = mount(fetchFn);
+    const client = createAPIClient(fetchFn);
+    const view = render(TranscriptHits, { props: { client, query: 'quarterly', supported: true, available: true } });
     await vi.advanceTimersByTimeAsync(300);
     const request = fetchFn.mock.calls[0][0] as Request;
     await vi.advanceTimersByTimeAsync(30_000);
@@ -196,14 +204,15 @@ describe('TranscriptHits', () => {
   ])('keeps %s %s terminal until the query changes', async (status, error, text) => {
     vi.useFakeTimers();
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ error }, { status }));
-    const view = mount(fetchFn);
+    const client = createAPIClient(fetchFn);
+    const view = render(TranscriptHits, { props: { client, query: 'quarterly', supported: true, available: true } });
     await vi.advanceTimersByTimeAsync(300);
     expect(screen.getByText(text)).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Refresh' })).toBeNull();
     await fireEvent(document, new Event('visibilitychange'));
     expect(fetchFn).toHaveBeenCalledTimes(1);
-    await view.rerender({ client: view.client, query: 'different', supported: true });
+    await view.rerender({ client, query: 'different', supported: true, available: true });
     await vi.advanceTimersByTimeAsync(300);
     expect(fetchFn).toHaveBeenCalledTimes(2);
     view.unmount();

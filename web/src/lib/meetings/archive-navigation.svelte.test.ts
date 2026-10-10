@@ -50,6 +50,18 @@ describe('archive meeting navigation', () => {
     expect(await navigation.load(42)).toBeUndefined();
     expect(navigation.error).toBe('Meeting eligibility could not be checked.');
   });
+  it.each([
+    [async () => new Response(null, { status: 404 }), 'The archived meeting could not be loaded.'],
+    [async () => new Response(null, { status: 500 }), 'The archived meeting could not be loaded.'],
+    [async () => { throw new Error('Fetch failed'); }, 'The archived meeting could not be loaded.'],
+    [async () => Response.json({ error: 'unavailable', message: 'Archive temporarily unavailable.' }, { status: 503 }), 'Archive temporarily unavailable.'],
+  ] as const)('preserves meeting load errors', async (fetchFn, message) => {
+    const navigation = new ArchiveMeetingNavigation(createAPIClient(fetchFn));
+    expect(await navigation.load(42)).toBeUndefined();
+    expect(navigation.error).toBe(message);
+    expect(navigation.detail).toBeUndefined();
+    expect(navigation.loading).toBe(false);
+  });
   it('aborts and discards stale eligibility results when the next meeting owns navigation', async () => {
     let resolveFirst!: (response: Response) => void;
     let firstEligibility!: Request;

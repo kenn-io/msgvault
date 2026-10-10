@@ -12,6 +12,8 @@ export class ArchiveMeetingNavigation {
   private readonly loader = new ArchiveMessageLoader({
     mismatchedID: 'This archived meeting is no longer available.',
     invalidConversation: 'The archived meeting conversation changed or is unavailable. Reload meeting activity.',
+    missing: 'The archived meeting could not be loaded.',
+    failed: 'The archived meeting could not be loaded.',
   });
   private generation = 0;
 

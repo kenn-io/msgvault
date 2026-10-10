@@ -8,7 +8,7 @@ export class ArchiveMessageLoader {
   error = $state('');
   private controller: AbortController | undefined;
 
-  constructor(private readonly invalidDetailMessages?: { mismatchedID: string; invalidConversation: string }) {}
+  constructor(private readonly messages?: { mismatchedID: string; invalidConversation: string; missing: string; failed: string }) {}
 
   async load(client: APIClient, id?: number): Promise<MessageDetail | undefined> {
     this.cancel();
@@ -23,18 +23,18 @@ export class ArchiveMessageLoader {
       if (controller.signal.aborted) return;
       if (response.status === 404 || (data && (data.id !== id || !Number.isSafeInteger(data.conversation_id) || data.conversation_id! < 1))) {
         this.missing = true;
-        this.error = data && data.id !== id && this.invalidDetailMessages
-          ? this.invalidDetailMessages.mismatchedID
-          : data && (!Number.isSafeInteger(data.conversation_id) || data.conversation_id! < 1) && this.invalidDetailMessages
-            ? this.invalidDetailMessages.invalidConversation
-            : error?.message || 'Message not found.';
-      } else if (!data) this.error = error?.message || 'Could not load this message.';
+        this.error = data && data.id !== id && this.messages
+          ? this.messages.mismatchedID
+          : data && (!Number.isSafeInteger(data.conversation_id) || data.conversation_id! < 1) && this.messages
+            ? this.messages.invalidConversation
+            : error?.message || this.messages?.missing || 'Message not found.';
+      } else if (!data) this.error = error?.message || this.messages?.failed || 'Could not load this message.';
       else {
         this.detail = data;
         return data;
       }
     } catch {
-      if (!controller.signal.aborted) this.error = 'Could not load this message.';
+      if (!controller.signal.aborted) this.error = this.messages?.failed || 'Could not load this message.';
     }
   }
 

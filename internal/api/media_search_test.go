@@ -403,7 +403,7 @@ func TestMediaSearchSelectedProfilesForSharedContent(t *testing.T) {
 	assert.Len(f.requests[0].Fence.ContentVersionIDs, 1)
 }
 
-func TestMediaSearchNotConfigured(t *testing.T) {
+func TestMediaSearchUnconfigured(t *testing.T) {
 	t.Parallel()
 	for _, readerMissing := range []bool{true, false} {
 		f := newMediaSearchFixture(t)
@@ -415,7 +415,7 @@ func TestMediaSearchNotConfigured(t *testing.T) {
 		}
 		status, _, raw := searchMediaFor(t, server, "q=words")
 		assert.Equal(t, http.StatusServiceUnavailable, status, raw)
-		assert.Contains(t, raw, "media_search_not_configured")
+		assert.Contains(t, raw, "media_search_unavailable")
 		assert.Contains(t, raw, "Configure the Docbank integration to search transcripts")
 		assert.Empty(t, f.requests)
 	}

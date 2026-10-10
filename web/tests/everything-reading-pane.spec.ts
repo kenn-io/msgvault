@@ -48,7 +48,7 @@ function exploreURLState(overrides: Record<string, unknown> = {}) {
 test('unconfigured recording search preserves the ordinary results layout', async ({ page }) => {
   await page.route('**/api/session', route => route.fulfill({ json: { auth_mode: 'loopback', https: false, plain_http_warning: false } }));
   await page.route('**/api/v1/explore', route => route.fulfill({ json: { rows: [entry(1)], total_count: 1, cache_revision: 'recording', search_provenance: {} } }));
-  await page.route('**/api/v1/media/search?*', route => route.fulfill({ status: 503, json: { error: 'media_search_not_configured' } }));
+  await page.route('**/api/v1/media/search?*', route => route.fulfill({ status: 503, json: { error: 'media_search_unavailable' } }));
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(exploreURLState({ query: 'quarterly' })))}`);
   await page.getByRole('grid', { name: 'Everything results' }).getByText('Synthetic subject 1').click();
   const resize = page.getByRole('separator', { name: 'Resize reading pane' });

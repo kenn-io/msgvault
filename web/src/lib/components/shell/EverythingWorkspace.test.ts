@@ -27,25 +27,32 @@ describe('EverythingWorkspace', () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', query: 'quarterly', searchMode: 'full_text' }))}`);
     const fetchFn = vi.fn<typeof fetch>(async input => {
       const path = new URL((input as Request).url).pathname;
-      if (path.endsWith('/media/search')) return Response.json({ error: 'media_search_not_configured' }, { status: 503 });
+      if (path.endsWith('/media/search')) return Response.json({ error: 'media_search_unavailable' }, { status: 503 });
       return Response.json(exploreResponse());
     });
     const state = new ExploreState(window);
     const view = render(AppShell, { client: createAPIClient(fetchFn), state });
     try {
+      await waitFor(() => expect(fetchFn.mock.calls.filter(([input]) => new URL((input as Request).url).pathname.endsWith('/media/search'))).toHaveLength(1));
       await waitFor(() => expect(screen.queryByRole('region', { name: 'Recordings' })).toBeNull());
       await screen.findByText('0 items');
       expect(screen.queryByRole('heading', { name: /^Results/ })).toBeNull();
       expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+      expect(document.querySelector('.results-primary--recordings')).toBeNull();
       vi.useFakeTimers();
       state.commitSearch('different', 'full_text');
-      await fireEvent(document, new Event('visibilitychange'));
+      await tick();
+      await vi.advanceTimersByTimeAsync(300);
+      expect(fetchFn.mock.calls.filter(([input]) => new URL((input as Request).url).pathname.endsWith('/media/search'))).toHaveLength(2);
       state.commitNavigation({ workspace: 'files' });
       await tick();
       state.commitNavigation({ workspace: 'everything' });
       await tick();
       await vi.advanceTimersByTimeAsync(300);
-      expect(fetchFn.mock.calls.filter(([input]) => new URL((input as Request).url).pathname.endsWith('/media/search'))).toHaveLength(1);
+      expect(fetchFn.mock.calls.filter(([input]) => new URL((input as Request).url).pathname.endsWith('/media/search'))).toHaveLength(3);
+      expect(screen.queryByRole('region', { name: 'Recordings' })).toBeNull();
+      expect(screen.queryByRole('heading', { name: /^Results/ })).toBeNull();
+      expect(document.querySelector('.results-primary--recordings')).toBeNull();
     } finally {
       view.unmount();
       state.destroy();
@@ -101,7 +108,7 @@ describe('EverythingWorkspace', () => {
   it.each([
     { searchMode: 'semantic' }, { filters: [{ dimension: 'source', values: ['1'] }] },
     { groupingChain: ['kind'] }, { query: 'quarterly*' },
-  ])('keeps recording search hidden until configuration is known for %j', async patch => {
+  ])('keeps recording search hidden until a successful response for %j', async patch => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', query: 'quarterly', searchMode: 'full_text', ...patch }))}`);
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json(exploreResponse()));
     const state = new ExploreState(window);

@@ -3,6 +3,17 @@ import { createAPIClient } from '../api/client';
 import { ArchiveMessageLoader } from './message-loader.svelte';
 
 describe('ArchiveMessageLoader', () => {
+  it.each([
+    [async () => new Response(null, { status: 404 }), 'Message not found.', true],
+    [async () => new Response(null, { status: 500 }), 'Could not load this message.', false],
+    [async () => { throw new Error('Fetch failed'); }, 'Could not load this message.', false],
+    [async () => Response.json({ error: 'unavailable', message: 'Archive temporarily unavailable.' }, { status: 503 }), 'Archive temporarily unavailable.', false],
+  ] as const)('keeps default message errors', async (fetchFn, message, missing) => {
+    const loader = new ArchiveMessageLoader();
+    expect(await loader.load(createAPIClient(fetchFn), 9)).toBeUndefined();
+    expect(loader.error).toBe(message);
+    expect(loader.missing).toBe(missing);
+  });
   it('ignores cancelled details and clears missing state when retried', async () => {
     let finish!: (value: Response) => void;
     const fetchFn = vi.fn<typeof fetch>()

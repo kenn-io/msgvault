@@ -9,8 +9,8 @@
   import { createStaleRequestGuard } from '../../archive/stale-request';
   import { formatDateTime, formatOffset, formatShortDate } from '../../util/format';
 
-  let { client, query, supported, selectedMessageID, configured = $bindable<boolean | undefined>(undefined), visible = $bindable(false), missingMessageID, onOpen }: {
-    client: APIClient; query: string; supported: boolean; configured?: boolean; visible?: boolean; missingMessageID?: number; selectedMessageID?: number; onOpen?: (hit: MediaSearchResult) => void;
+  let { client, query, supported, selectedMessageID, available = $bindable(false), missingMessageID, onOpen }: {
+    client: APIClient; query: string; supported: boolean; available?: boolean; missingMessageID?: number; selectedMessageID?: number; onOpen?: (hit: MediaSearchResult) => void;
   } = $props();
   const id = $props.id();
   let result = $state<MediaSearchResponse>();
@@ -22,10 +22,6 @@
   let retry = $state(0);
 
   $effect(() => {
-    visible = configured !== false && (configured === true || (supported && admitted));
-  });
-
-  $effect(() => {
     const missingID = missingMessageID;
     const current = untrack(() => result);
     if (missingID !== undefined && current) result = { ...current, results: current.results.filter(hit => hit.message_id !== missingID) };
@@ -34,7 +30,7 @@
   $effect(() => {
     const requestedQuery = query.trim();
     const requestedClient = client;
-    const allowed = supported && admitted && untrack(() => configured !== false);
+    const allowed = supported && admitted;
     void retry;
     result = undefined;
     notice = '';
@@ -85,6 +81,7 @@
           expire();
           return;
         }
+        if (response.ok) available = true;
         if (response.status >= 400 && response.status < 500 && response.status !== 429) {
           blocked = true;
           notice = error?.error === 'media_search_scope_limit'
@@ -96,12 +93,6 @@
               : 'Recording search cannot read this query. Check archive access or change the query.';
           return;
         }
-        if (error?.error === 'media_search_not_configured') {
-          configured = false;
-          blocked = true;
-          return;
-        }
-        if (response.ok || error?.error === 'media_search_unavailable') configured = true;
         if (error?.error === 'media_search_unavailable') {
           notice = 'Recording search unavailable.';
           retryable = true;
@@ -141,7 +132,7 @@
 
 </script>
 
-{#if visible}
+{#if available}
 <section class="transcript-hits" aria-label="Recordings" tabindex="-1" data-recording-hits data-scroll>
   <header>
     <h2>Recordings{#if result && result.results.length > 0}<span class="count">{result.results.length}</span>{/if}</h2>
