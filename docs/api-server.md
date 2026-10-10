@@ -104,7 +104,7 @@ it is separate from the binary release version. The current schema is **3.11.0**
 Upgrade clients and daemon together across incompatible schema versions,
 including remote deployments.
 
-Schema 3.11.0 adds source filename, title and date to transcript search results and optional `conversation_title` to `GET /messages/{id}`.
+Schema 3.11.0 adds `GET /media/search/status` to report whether Docbank transcript search is configured. It also adds source filename, title and date to transcript search results and optional `conversation_title` to `GET /messages/{id}`.
 
 Schema 3.9.0 adds source-scoped agent read permissions and optional `expires_at`. Admitted FTS search responses, including aggregates, filtered messages and total statistics with search text, carry optional `index_state`. Agent checks are bounded; owner CLI searches retain automatic verification and repair.
 See [scoped archive reads](cli-reference.md#scoped-archive-reads).
@@ -1604,6 +1604,8 @@ Successful responses set:
 ---
 
 ### Media transcript search
+
+`GET /api/v1/media/search/status` returns a boolean `configured` field. It reports `false` when the recording reader or its Docbank client is absent. It checks configuration without contacting Docbank.
 
 `GET /api/v1/media/search?q=quarterly%20numbers&mode=lexical&limit=20` finds spoken words and returns every matching live message occurrence. Results include message, conversation and attachment IDs, optional `filename`, `containing_title` and `occurred_at`, supplied or generated origin, an excerpt, and timing when Docbank recorded it. Optional `person_id` and repeated `direction` values select `from_person`, `to_person` or `group` relations.
 

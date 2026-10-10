@@ -28,6 +28,15 @@ type MediaSearchResult struct {
 	EndMS           *int64     `json:"end_ms,omitempty"`
 }
 
+type MediaSearchStatusResponse struct {
+	Configured bool `json:"configured"`
+}
+
+func (s *Server) handleMediaSearchStatus(w http.ResponseWriter, r *http.Request) {
+	reader := s.messageRecordings
+	writeJSON(w, http.StatusOK, MediaSearchStatusResponse{Configured: reader != nil && reader.Client != nil})
+}
+
 type MediaSearchResponse struct {
 	Coverage               docbankmedia.SearchCoverage `json:"coverage"`
 	PendingOccurrences     int                         `json:"pending_occurrences"`

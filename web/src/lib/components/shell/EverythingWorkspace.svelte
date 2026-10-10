@@ -1,8 +1,9 @@
 <script lang="ts">
   import { Button, SegmentedControl } from '@kenn-io/kit-ui';
-  import { onDestroy, untrack } from 'svelte';
+  import { onDestroy, onMount, untrack } from 'svelte';
 
   import type { APIClient } from '../../api/client';
+  import { getMediaSearchStatus } from '../../api/generated/api/api';
   import { ArchiveMessageLoader } from '../../archive/message-loader.svelte';
   import { parseRecordingSelection } from '../../archive/recording-selection';
   import type {
@@ -116,8 +117,15 @@
   const recording = new ArchiveMessageLoader();
   const recordingSelection = $derived(parseRecordingSelection(readingTargetKey));
   const recordingSearchSupported = $derived(exploreState.current.searchMode === 'full_text' && exploreState.current.filters.length === 0 && exploreState.current.groupingChain.length === 0);
-  const recordingSearchRequested = $derived(Boolean(enabled && exploreState.current.query.trim()));
-  const recordingSearchVisible = $derived(recordingSearchRequested && session.recordingSearchAvailable);
+  const recordingSearchVisible = $derived(Boolean(enabled && exploreState.current.query.trim() && session.recordingSearchConfigured));
+
+  onMount(() => {
+    if (session.recordingSearchConfigured !== undefined) return;
+    session.recordingSearchConfigured = false;
+    void getMediaSearchStatus(client).then(({ data }) => {
+      session.recordingSearchConfigured = data?.configured === true;
+    }).catch(() => {});
+  });
 
   $effect(() => {
     void readingDetailRetryRevision;
@@ -734,10 +742,9 @@
     >
       {#snippet primary()}
         <div class="results-primary" class:results-primary--recordings={recordingSearchVisible}>
-          {#if recordingSearchRequested}
+          {#if recordingSearchVisible}
             <TranscriptHits
               {client}
-              bind:available={session.recordingSearchAvailable}
               missingMessageID={recording.missing ? recordingSelection : undefined}
               query={exploreState.current.query}
               supported={recordingSearchSupported}

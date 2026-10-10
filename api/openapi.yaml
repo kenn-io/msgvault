@@ -6634,6 +6634,14 @@ components:
         - origin
         - excerpt
       type: object
+    MediaSearchStatusResponse:
+      additionalProperties: true
+      properties:
+        configured:
+          type: boolean
+      required:
+        - configured
+      type: object
     Meeting:
       additionalProperties: false
       allOf:
@@ -22070,6 +22078,51 @@ paths:
       security:
         - apiKey: []
       summary: Search source-selected transcripts as visible messages
+      tags:
+        - API
+  /api/v1/media/search/status:
+    get:
+      operationId: getMediaSearchStatus
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MediaSearchStatusResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "429":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get recording transcript search configuration status
       tags:
         - API
   /api/v1/meetings/actions:

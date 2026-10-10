@@ -1,4 +1,4 @@
-import { recordingMessage, recordingTranscript } from '../src/lib/archive/recording-fixtures.test-support';
+import { recordingMessage, recordingTranscript, recordingSearchReport } from '../src/lib/archive/recording-fixtures.test-support';
 import { expect, test } from '@playwright/test';
 
 function entry(index: number) {
@@ -48,7 +48,9 @@ function exploreURLState(overrides: Record<string, unknown> = {}) {
 test('unconfigured recording search preserves the ordinary results layout', async ({ page }) => {
   await page.route('**/api/session', route => route.fulfill({ json: { auth_mode: 'loopback', https: false, plain_http_warning: false } }));
   await page.route('**/api/v1/explore', route => route.fulfill({ json: { rows: [entry(1)], total_count: 1, cache_revision: 'recording', search_provenance: {} } }));
-  await page.route('**/api/v1/media/search?*', route => route.fulfill({ status: 503, json: { error: 'media_search_unavailable' } }));
+  await page.route('**/api/v1/media/search/status', route => route.fulfill({ json: { configured: false } }));
+  const searchRequests: string[] = [];
+  page.on('request', request => { if (new URL(request.url()).pathname === '/api/v1/media/search') searchRequests.push(request.url()); });
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(exploreURLState({ query: 'quarterly' })))}`);
   await page.getByRole('grid', { name: 'Everything results' }).getByText('Synthetic subject 1').click();
   const resize = page.getByRole('separator', { name: 'Resize reading pane' });
@@ -58,6 +60,8 @@ test('unconfigured recording search preserves the ordinary results layout', asyn
   await page.mouse.move(handle.x + handle.width / 2, 0);
   await page.mouse.up();
   await expect.poll(async () => (await page.locator('.results-split > [data-split-pane] > [data-pane="primary"]').boundingBox())!.height).toBe(120);
+  expect(searchRequests).toEqual([]);
+  await expect(page.getByRole('region', { name: 'Recordings' })).toHaveCount(0);
 });
 
 test('recording reader restores history and focus', async ({ page }) => {
@@ -65,10 +69,8 @@ test('recording reader restores history and focus', async ({ page }) => {
   const message = recordingMessage;
   await page.route('**/api/session', route => route.fulfill({ json: { auth_mode: 'loopback', https: false, plain_http_warning: false } }));
   await page.route('**/api/v1/explore', route => route.fulfill({ json: { rows: [entry(1)], total_count: 1, cache_revision: 'recording', search_provenance: {} } }));
-  await page.route('**/api/v1/media/search?*', route => route.fulfill({ json: {
-    results: [{ message_id: 9, conversation_id: 2, attachment_id: 1, containing_title: 'Team chat', origin: 'supplied', excerpt: 'Quarterly numbers' }],
-    coverage: { state: 'complete' }, partial: false, truncated: false, pending_occurrences: 0, unavailable_occurrences: 0, attribution_unavailable: 0
-  } }));
+  await page.route('**/api/v1/media/search/status', route => route.fulfill({ json: { configured: true } }));
+  await page.route('**/api/v1/media/search?*', route => route.fulfill({ json: recordingSearchReport }));
   await page.route('**/api/v1/messages/9/recordings', route => route.fulfill({ json: recordingTranscript }));
   await page.route('**/api/v1/messages/9', route => route.fulfill({ json: message }));
   await page.route('**/api/v1/conversations/2?*', route => route.fulfill({ json: { id: 2, messages: [message], anchor_id: 9, has_before: false, has_after: false, total: 1 } }));

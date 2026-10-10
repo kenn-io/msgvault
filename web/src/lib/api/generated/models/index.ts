@@ -487,6 +487,7 @@ export * from "./matchSummary";
 export * from "./mediaSearchResponse";
 export * from "./mediaSearchResult";
 export * from "./mediaSearchResultOrigin";
+export * from "./mediaSearchStatusResponse";
 export * from "./meeting";
 export * from "./meetingActionItem";
 export * from "./meetingActionsRequest";

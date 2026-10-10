@@ -6245,6 +6245,10 @@ func (m MediaSearchResult) Validate() error {
 	return errors
 }
 
+type MediaSearchStatusResponse struct {
+	Configured bool `json:"configured"`
+}
+
 type Meeting struct {
 	ActionItems        *[]MeetingActionItem `json:"action_items,omitempty" validate:"omitempty,max=1000,dive"`
 	Attendees          []MeetingPerson      `json:"attendees,omitempty"`

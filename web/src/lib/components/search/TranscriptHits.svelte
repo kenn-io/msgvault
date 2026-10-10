@@ -9,8 +9,8 @@
   import { createStaleRequestGuard } from '../../archive/stale-request';
   import { formatDateTime, formatOffset, formatShortDate } from '../../util/format';
 
-  let { client, query, supported, selectedMessageID, available = $bindable(false), missingMessageID, onOpen }: {
-    client: APIClient; query: string; supported: boolean; available?: boolean; missingMessageID?: number; selectedMessageID?: number; onOpen?: (hit: MediaSearchResult) => void;
+  let { client, query, supported, selectedMessageID, missingMessageID, onOpen }: {
+    client: APIClient; query: string; supported: boolean; missingMessageID?: number; selectedMessageID?: number; onOpen?: (hit: MediaSearchResult) => void;
   } = $props();
   const id = $props.id();
   let result = $state<MediaSearchResponse>();
@@ -81,7 +81,6 @@
           expire();
           return;
         }
-        if (response.ok) available = true;
         if (response.status >= 400 && response.status < 500 && response.status !== 429) {
           blocked = true;
           notice = error?.error === 'media_search_scope_limit'
@@ -98,7 +97,7 @@
           retryable = true;
           return;
         }
-        if (signal.aborted || !data?.results || !data.coverage) throw new Error('Transcript search unavailable');
+        if (!data?.results || !data.coverage) throw new Error('Transcript search unavailable');
         const missingID = untrack(() => missingMessageID);
         result = { ...data, results: data.results.filter(hit => hit.message_id !== missingID) };
       } catch {
@@ -132,7 +131,6 @@
 
 </script>
 
-{#if available}
 <section class="transcript-hits" aria-label="Recordings" tabindex="-1" data-recording-hits data-scroll>
   <header>
     <h2>Recordings{#if result && result.results.length > 0}<span class="count">{result.results.length}</span>{/if}</h2>
@@ -189,7 +187,6 @@
     <p role="status">Searching recordings…</p>
   {/if}
 </section>
-{/if}
 
 <style>
   .transcript-hits {

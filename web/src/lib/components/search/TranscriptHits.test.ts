@@ -77,7 +77,7 @@ describe('TranscriptHits', () => {
     finish(Response.json(report({ results: [hit({ excerpt: 'obsolete evidence' })] })));
     await vi.advanceTimersByTimeAsync(0);
     expect(screen.queryByText('obsolete evidence')).toBeNull();
-    await view.rerender({ client: view.client, query: 'quarterly', supported: false, available: true });
+    await view.rerender({ client: view.client, query: 'quarterly', supported: false });
     expect(screen.queryByText('current evidence')).toBeNull();
     expect(screen.getByRole('status').textContent).toContain('Full text with no filters or grouping');
     expect(fetchFn).toHaveBeenCalledTimes(2);
@@ -103,20 +103,15 @@ describe('TranscriptHits', () => {
     expect(fetchFn).toHaveBeenCalledTimes(3);
   });
 
-  it.each([400, 403, 429, 500, 503])('hides errors and hints before a successful search and retries the next query (%s)', async status => {
+  it('shows a first-request failure and retries it', async () => {
     vi.useFakeTimers();
-    const fetchFn = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json({ error: status === 503 ? 'media_search_unavailable' : 'internal_error' }, { status }))
+    const fetchFn = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json({ error: 'media_search_unavailable' }, { status: 503 }))
       .mockResolvedValue(Response.json(report()));
     const view = mount(fetchFn);
-    expect(screen.queryByRole('region', { name: 'Recordings' })).toBeNull();
+    expect(screen.getByRole('region', { name: 'Recordings' })).toBeTruthy();
     await vi.advanceTimersByTimeAsync(300);
-    expect(screen.queryByRole('region', { name: 'Recordings' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
-    await view.rerender({ client: view.client, query: 'quarterly*', supported: true });
-    expect(screen.queryByRole('region', { name: 'Recordings' })).toBeNull();
-    expect(screen.queryByText(/Recording search supports plain words only/)).toBeNull();
-    expect(fetchFn).toHaveBeenCalledTimes(1);
-    await view.rerender({ client: view.client, query: 'different', supported: true });
+    expect(screen.getByText('Recording search unavailable.')).toBeTruthy();
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     await vi.advanceTimersByTimeAsync(300);
     expect(screen.getByRole('link')).toBeTruthy();
     expect(fetchFn).toHaveBeenCalledTimes(2);
@@ -166,7 +161,7 @@ describe('TranscriptHits', () => {
     let finish!: (value: Response) => void;
     const fetchFn = vi.fn<typeof fetch>(() => new Promise(resolve => { finish = resolve; }));
     const client = createAPIClient(fetchFn);
-    const view = render(TranscriptHits, { props: { client, query: 'quarterly', supported: true, available: true } });
+    const view = render(TranscriptHits, { props: { client, query: 'quarterly', supported: true } });
     await vi.advanceTimersByTimeAsync(300);
     const request = fetchFn.mock.calls[0][0] as Request;
     await vi.advanceTimersByTimeAsync(30_000);
@@ -191,7 +186,8 @@ describe('TranscriptHits', () => {
       await screen.findByText('Quarterly <numbers>');
       expect(new URL((fetchFn.mock.calls.at(-1)![0] as Request).url).searchParams.get('q')).toBe(query);
     } else {
-      expect(screen.queryByRole('region', { name: 'Recordings' })).toBeNull();
+      expect(screen.getByRole('region', { name: 'Recordings' })).toBeTruthy();
+      expect(screen.getByText(/Recording search supports plain words only/)).toBeTruthy();
       expect(fetchFn).not.toHaveBeenCalled();
     }
   });
@@ -205,14 +201,14 @@ describe('TranscriptHits', () => {
     vi.useFakeTimers();
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ error }, { status }));
     const client = createAPIClient(fetchFn);
-    const view = render(TranscriptHits, { props: { client, query: 'quarterly', supported: true, available: true } });
+    const view = render(TranscriptHits, { props: { client, query: 'quarterly', supported: true } });
     await vi.advanceTimersByTimeAsync(300);
     expect(screen.getByText(text)).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Refresh' })).toBeNull();
     await fireEvent(document, new Event('visibilitychange'));
     expect(fetchFn).toHaveBeenCalledTimes(1);
-    await view.rerender({ client, query: 'different', supported: true, available: true });
+    await view.rerender({ client, query: 'different', supported: true });
     await vi.advanceTimersByTimeAsync(300);
     expect(fetchFn).toHaveBeenCalledTimes(2);
     view.unmount();

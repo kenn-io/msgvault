@@ -1633,6 +1633,16 @@ type SearchMediaErrorResponseJSON500 = ErrorResponse
 
 type SearchMediaErrorResponseJSON503 = ErrorResponse
 
+type GetMediaSearchStatusResponse = MediaSearchStatusResponse
+
+type GetMediaSearchStatusErrorResponse = ErrorResponse
+
+type GetMediaSearchStatusErrorResponseJSON = ErrorResponse
+
+type GetMediaSearchStatusErrorResponseJSON429 = ErrorResponse
+
+type GetMediaSearchStatusErrorResponseJSON503 = ErrorResponse
+
 type ListMeetingActionItemsResponse = ActionsPage
 
 type ListMeetingActionItemsErrorResponse = ErrorResponse
@@ -4913,6 +4923,17 @@ type SearchMediaResp struct {
 	JSON429      *SearchMediaErrorResponseJSON429
 	JSON500      *SearchMediaErrorResponseJSON500
 	JSON503      *SearchMediaErrorResponseJSON503
+}
+
+type GetMediaSearchStatusResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetMediaSearchStatusResponse
+	JSON400      *GetMediaSearchStatusErrorResponse
+	JSON403      *GetMediaSearchStatusErrorResponseJSON
+	JSON429      *GetMediaSearchStatusErrorResponseJSON429
+	JSON503      *GetMediaSearchStatusErrorResponseJSON503
 }
 
 type ListMeetingActionItemsResp struct {

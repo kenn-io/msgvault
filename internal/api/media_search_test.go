@@ -29,6 +29,30 @@ type mediaSearchFixture struct {
 	waitForCancel bool
 }
 
+func TestMediaSearchStatus(t *testing.T) {
+	for _, state := range []string{"configured", "no reader", "no client"} {
+		t.Run(state, func(t *testing.T) {
+			f := newRecordingFixture(t)
+			server := f.server(false)
+			switch state {
+			case "no reader":
+				server.messageRecordings = nil
+			case "no client":
+				server.messageRecordings.Client = nil
+			}
+			request := httptest.NewRequest(http.MethodGet, "/api/v1/media/search/status", nil)
+			request.Header.Set("X-Api-Key", recordingsTestAPIKey)
+			response := httptest.NewRecorder()
+			server.Router().ServeHTTP(response, request)
+			require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+			var status MediaSearchStatusResponse
+			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &status))
+			assert.Equal(t, state == "configured", status.Configured)
+			assert.Zero(t, f.docbank.requestCount())
+		})
+	}
+}
+
 func newMediaSearchFixture(t *testing.T) *mediaSearchFixture {
 	t.Helper()
 	f := &mediaSearchFixture{recordingFixture: newRecordingFixture(t), report: docbankmedia.SearchReport{

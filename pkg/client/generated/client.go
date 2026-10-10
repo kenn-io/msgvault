@@ -595,6 +595,10 @@ type ClientInterface interface {
 	SearchMedia(ctx context.Context, options *SearchMediaRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchMediaResponse, error)
 	SearchMediaWithResponse(ctx context.Context, options *SearchMediaRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchMediaResp, error)
 
+	// GetMediaSearchStatus Get recording transcript search configuration status
+	GetMediaSearchStatus(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetMediaSearchStatusResponse, error)
+	GetMediaSearchStatusWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetMediaSearchStatusResp, error)
+
 	// ListMeetingActionItems List archived meeting action items
 	ListMeetingActionItems(ctx context.Context, options *ListMeetingActionItemsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListMeetingActionItemsResponse, error)
 	ListMeetingActionItemsWithResponse(ctx context.Context, options *ListMeetingActionItemsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListMeetingActionItemsResp, error)
@@ -9806,6 +9810,68 @@ func (c *Client) SearchMedia(ctx context.Context, options *SearchMediaRequestOpt
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/media/search")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetMediaSearchStatus Get recording transcript search configuration status
+func (c *Client) GetMediaSearchStatus(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetMediaSearchStatusResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/media/search/status",
+		Method:     "GET",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetMediaSearchStatusResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(GetMediaSearchStatusErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "GetMediaSearchStatusErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(GetMediaSearchStatusResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "GetMediaSearchStatusResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/media/search/status")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
