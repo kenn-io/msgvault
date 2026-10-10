@@ -8,7 +8,7 @@
   import type { MessageRecording, MessageRecordingState } from '../../api/generated/models';
   import type { APIClient } from '../../api/client';
   import { createStaleRequestGuard } from '../../archive/stale-request';
-  import { formatBytes } from '../../util/format';
+  import { formatBytes, formatOffset } from '../../util/format';
 
   let { client, messageId, message }: { client: APIClient; messageId: number; message?: object } = $props();
 
@@ -104,11 +104,6 @@
   function summary(recording: MessageRecording): string {
     return recording.transcript?.origin === 'generated' ? 'Generated transcript' : 'Provider transcript';
   }
-
-  function offset(ms: number): string {
-    const seconds = Math.floor(ms / 1000);
-    return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
-  }
 </script>
 
 {#if error}
@@ -129,7 +124,7 @@
             {#if recording.transcript}
               <div class="transcript" class:timed={recording.transcript.units.some(unit => unit.start_ms !== undefined)}>
                 {#each recording.transcript.units as unit, index (index)}
-                  <p>{#if unit.start_ms !== undefined}<time data-mono datetime={`PT${unit.start_ms / 1000}S`}>{offset(unit.start_ms)}</time>{' '}{:else}<span aria-hidden="true"></span>{/if}<span class="unit-body">{#if unit.speaker}<strong>{unit.speaker}</strong>{/if}{unit.text}</span></p>
+                  <p>{#if unit.start_ms !== undefined}<time data-mono datetime={`PT${unit.start_ms / 1000}S`}>{formatOffset(unit.start_ms)}</time>{' '}{:else}<span aria-hidden="true"></span>{/if}<span class="unit-body">{#if unit.speaker}<strong>{unit.speaker}</strong>{/if}{unit.text}</span></p>
                 {:else}
                   <p class="transcript-empty">The transcript has no text.</p>
                 {/each}

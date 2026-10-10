@@ -8,6 +8,8 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- [Everything search](web-ui.md#explore-and-search) shows recording transcript matches for plain-word Full text queries, with source details, provenance and coverage. Recording search waits for a typing pause and excerpts expire after 30 seconds. API schema 3.11.0 adds source filename, title and date to media search results and optional `conversation_title` to message detail.
+
 - Go programs can use msgvault as a library through `go.kenn.io/msgvault/pkg/archive`.
   It sets up and opens SQLite or PostgreSQL archives, runs the Slack and Discord
   importers with caller-supplied credentials, purges channels and sources, and

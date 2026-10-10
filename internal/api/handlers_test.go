@@ -4369,7 +4369,8 @@ func TestSchedulerJobNameForSource(t *testing.T) {
 func TestHandleGetMessage(t *testing.T) {
 	t.Parallel()
 	assert := assert.New(t)
-	srv, _ := newTestServerWithMockStore(t)
+	srv, mock := newTestServerWithMockStore(t)
+	mock.messages[0].ConversationTitle = "Team chat"
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages/1", nil)
 	w := httptest.NewRecorder()
@@ -4383,6 +4384,7 @@ func TestHandleGetMessage(t *testing.T) {
 
 	assert.Equal(int64(1), resp.ID, "id")
 	assert.Equal("Test Subject", resp.Subject, "subject")
+	assert.Equal("Team chat", resp.ConversationTitle, "conversation title")
 	assert.Equal("This is the full message body text.", resp.Body, "body")
 }
 

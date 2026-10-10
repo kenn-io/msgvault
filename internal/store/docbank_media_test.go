@@ -855,12 +855,38 @@ func TestMessageMediaOccurrences(t *testing.T) {
 	require.Len(occurrences, 1)
 	assert.Equal(store.MessageMediaOccurrence{
 		MessageID: retained.messageID, ConversationID: f.ConvID,
-		AttachmentID: retained.attachmentID, Filename: "voice.wav", Size: 44, AttachmentState: attachmentpolicy.StateStored,
+		ContainingTitle: "Default Thread",
+		AttachmentID:    retained.attachmentID, Filename: "voice.wav", Size: 44, AttachmentState: attachmentpolicy.StateStored,
 		OccurrenceRef: "msgvault:retained", Revision: "r1", RetentionState: store.BeeperMediaRetentionRetained,
 		VaultUID: "vault", DocbankSourceID: "source-1111", SourceVersionID: "version",
 		ContentVersionID: "content", DeliveryProfile: "supplied-transcript", DeliveryPhase: "pending-artifact", BytesArchived: true,
 	}, occurrences[0])
-	_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE beeper_media_deliveries SET phase = 'done',
+	date := time.Date(2026, time.July, 18, 12, 0, 0, 0, time.UTC)
+	_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET subject = ?, sent_at = ? WHERE id = ?`), "Quarterly review", date, retained.messageID)
+	require.NoError(err)
+	occurrences = list(retained.messageID)
+	assert.Equal("Quarterly review", occurrences[0].ContainingTitle)
+	require.NotNil(occurrences[0].OccurredAt)
+	assert.True(date.Equal(*occurrences[0].OccurredAt))
+	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET subject = '', sent_at = NULL WHERE id = ?`), retained.messageID)
+	require.NoError(err)
+	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE conversations SET title = '' WHERE id = ?`), f.ConvID)
+	require.NoError(err)
+	occurrences = list(retained.messageID)
+	assert.Empty(occurrences[0].ContainingTitle)
+	assert.Nil(occurrences[0].OccurredAt)
+	internalDate := date.Add(-time.Hour)
+	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET sent_at = NULL, received_at = ?, internal_date = ? WHERE id = ?`), date, internalDate, retained.messageID)
+	require.NoError(err)
+	occurrences = list(retained.messageID)
+	require.NotNil(occurrences[0].OccurredAt)
+	assert.True(date.Equal(*occurrences[0].OccurredAt))
+	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET received_at = NULL WHERE id = ?`), retained.messageID)
+	require.NoError(err)
+	occurrences = list(retained.messageID)
+	require.NotNil(occurrences[0].OccurredAt)
+	assert.True(internalDate.Equal(*occurrences[0].OccurredAt))
+	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE beeper_media_deliveries SET phase = 'done',
 		operation_state = 'succeeded', supplied_input_id = 'input-key' WHERE destination_key = 'reader' AND processing_key = 'key'`))
 	require.NoError(err)
 	occurrences = list(retained.messageID)

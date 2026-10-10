@@ -6215,15 +6215,18 @@ func (m MediaSearchResponse) Validate() error {
 }
 
 type MediaSearchResult struct {
-	AttachmentID   int64  `json:"attachment_id"`
-	ConversationID int64  `json:"conversation_id"`
-	EndMs          *int64 `json:"end_ms,omitempty"`
+	AttachmentID    int64   `json:"attachment_id"`
+	ContainingTitle *string `json:"containing_title,omitzero"`
+	ConversationID  int64   `json:"conversation_id"`
+	EndMs           *int64  `json:"end_ms,omitempty"`
 
 	// Excerpt Plain transcript excerpt without search highlight markers
-	Excerpt   string                  `json:"excerpt" validate:"required"`
-	MessageID int64                   `json:"message_id"`
-	Origin    MediaSearchResultOrigin `json:"origin" validate:"required"`
-	StartMs   *int64                  `json:"start_ms,omitempty"`
+	Excerpt    string                  `json:"excerpt" validate:"required"`
+	Filename   *string                 `json:"filename,omitzero"`
+	MessageID  int64                   `json:"message_id"`
+	OccurredAt *time.Time              `json:"occurred_at,omitempty"`
+	Origin     MediaSearchResultOrigin `json:"origin" validate:"required"`
+	StartMs    *int64                  `json:"start_ms,omitempty"`
 }
 
 func (m MediaSearchResult) Validate() error {
@@ -6638,30 +6641,33 @@ type MergePersonRequest struct {
 }
 
 type MessageDetail struct {
-	Attachments     []AttachmentInfo `json:"attachments" validate:"required"`
-	Bcc             []string         `json:"bcc,omitempty"`
-	Body            string           `json:"body" validate:"required"`
-	BodyHTML        *string          `json:"body_html,omitzero"`
-	BodyOmitted     *bool            `json:"body_omitted,omitempty"`
-	Cc              []string         `json:"cc,omitempty"`
-	ConversationID  *int64           `json:"conversation_id,omitempty"`
-	DeletedAt       *string          `json:"deleted_at,omitzero"`
-	From            string           `json:"from" validate:"required"`
-	FromEmail       *string          `json:"from_email,omitzero"`
-	FromName        *string          `json:"from_name,omitzero"`
-	FromPhone       *string          `json:"from_phone,omitzero"`
-	HasAttachments  bool             `json:"has_attachments"`
-	ID              int64            `json:"id"`
-	IsFromMe        *bool            `json:"is_from_me,omitempty"`
-	Labels          []string         `json:"labels" validate:"required"`
-	MessageType     *string          `json:"message_type,omitzero"`
-	SentAt          string           `json:"sent_at" validate:"required"`
-	SizeBytes       int64            `json:"size_bytes"`
-	Snippet         string           `json:"snippet" validate:"required"`
-	SourceID        *int64           `json:"source_id,omitempty"`
-	SourceMessageID *string          `json:"source_message_id,omitzero"`
-	Subject         string           `json:"subject" validate:"required"`
-	To              []string         `json:"to" validate:"required"`
+	Attachments    []AttachmentInfo `json:"attachments" validate:"required"`
+	Bcc            []string         `json:"bcc,omitempty"`
+	Body           string           `json:"body" validate:"required"`
+	BodyHTML       *string          `json:"body_html,omitzero"`
+	BodyOmitted    *bool            `json:"body_omitted,omitempty"`
+	Cc             []string         `json:"cc,omitempty"`
+	ConversationID *int64           `json:"conversation_id,omitempty"`
+
+	// ConversationTitle Conversation title, populated by GET /api/v1/messages/{id}.
+	ConversationTitle *string  `json:"conversation_title,omitzero"`
+	DeletedAt         *string  `json:"deleted_at,omitzero"`
+	From              string   `json:"from" validate:"required"`
+	FromEmail         *string  `json:"from_email,omitzero"`
+	FromName          *string  `json:"from_name,omitzero"`
+	FromPhone         *string  `json:"from_phone,omitzero"`
+	HasAttachments    bool     `json:"has_attachments"`
+	ID                int64    `json:"id"`
+	IsFromMe          *bool    `json:"is_from_me,omitempty"`
+	Labels            []string `json:"labels" validate:"required"`
+	MessageType       *string  `json:"message_type,omitzero"`
+	SentAt            string   `json:"sent_at" validate:"required"`
+	SizeBytes         int64    `json:"size_bytes"`
+	Snippet           string   `json:"snippet" validate:"required"`
+	SourceID          *int64   `json:"source_id,omitempty"`
+	SourceMessageID   *string  `json:"source_message_id,omitzero"`
+	Subject           string   `json:"subject" validate:"required"`
+	To                []string `json:"to" validate:"required"`
 }
 
 func (m MessageDetail) Validate() error {

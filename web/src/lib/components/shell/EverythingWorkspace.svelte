@@ -1,8 +1,11 @@
 <script lang="ts">
-  import { Button, SegmentedControl } from '@kenn-io/kit-ui';
+  import { Button } from '@kenn-io/kit-ui';
   import { onDestroy, untrack } from 'svelte';
 
   import type { APIClient } from '../../api/client';
+  import { getMessage } from '../../api/generated/api/api';
+  import { parseRecordingSelection } from '../../archive/recording-selection';
+  import type { MessageDetail } from '../../api/generated/models';
   import type {
     MeetingRef,
     ExplorePreflightResponse as GeneratedExplorePreflightResponse,
@@ -33,6 +36,7 @@
   import SplitPane from '../layout/SplitPane.svelte';
   import PersonTimeline from '../people/PersonTimeline.svelte';
   import SearchCoverage from '../search/SearchCoverage.svelte';
+  import TranscriptHits from '../search/TranscriptHits.svelte';
   import ReadingPane, { type ReadingPaneSelection, type ReadingPaneStatus } from '../reader/ReadingPane.svelte';
   import type { SearchCoverageAction } from '../../search/modes';
   import MeetingPanel from '../meetings/MeetingPanel.svelte';
@@ -69,6 +73,7 @@
     fixedSortNotice: () => void;
     focusGrid: () => void;
     openRow: (row: EntryRow) => void;
+    onOpenRecording: (messageID: number) => void;
     drillGroup: (row: ExploreGroupRow) => void;
     closeReadingPane: () => void;
     openRelationship: (participantID: number) => void;
@@ -99,6 +104,7 @@
     fixedSortNotice,
     focusGrid,
     openRow,
+    onOpenRecording,
     drillGroup,
     closeReadingPane,
     openRelationship,
@@ -108,6 +114,33 @@
   }: Props = $props();
 
   const api = createExploreAPI(untrack(() => client));
+  let recordingMessage = $state<MessageDetail>();
+  let recordingError = $state('');
+  let recordingMissing = $state(false);
+  const recordingSelection = $derived(parseRecordingSelection(readingTargetKey));
+  const recordingSearchVisible = $derived(Boolean(enabled && exploreState.current.query.trim()));
+
+  $effect(() => {
+    const target = recordingSelection;
+    const requestedClient = client;
+    void readingDetailRetryRevision;
+    recordingMessage = undefined;
+    recordingError = '';
+    recordingMissing = false;
+    if (!target) return;
+    const controller = new AbortController();
+    void getMessage({ id: target }, { ...requestedClient, signal: controller.signal }).then(({ data, response }) => {
+      if (controller.signal.aborted) return;
+      if (response.status === 404 || (data && (data.id !== target || !Number.isSafeInteger(data.conversation_id) || data.conversation_id! < 1))) {
+        recordingMissing = true;
+        recordingError = 'This recording message is no longer available.';
+      } else if (!data) recordingError = 'Could not load this recording message.';
+      else recordingMessage = data;
+    }).catch(() => {
+      if (!controller.signal.aborted) recordingError = 'Could not load this recording message.';
+    });
+    return () => controller.abort();
+  });
 
   const countLabel = $derived.by(() => {
     const result = loader.result;
@@ -182,6 +215,7 @@
   const readingSelection = $derived.by((): ReadingPaneSelection | undefined => {
     const selected = readingTargetKey;
     if (!selected) return undefined;
+    if (recordingSelection) return recordingMessage ? { kind: 'archive', message: recordingMessage } : undefined;
     const entry = loader.rows.find((row) => row.key === selected);
     if (entry) return { kind: 'entry', row: entry };
     const group = parseGroupSelection(selected);
@@ -201,6 +235,7 @@
     } => {
       const selected = readingTargetKey;
       if (!selected || readingSelection) return { status: 'ready', message: '' };
+      if (recordingSelection) return { status: !recordingError ? 'loading' : recordingMissing ? 'missing' : 'error', message: recordingError };
       if (parseGroupSelection(selected)) {
         if (readingDetailUnavailable) {
           return {
@@ -611,7 +646,7 @@
     searchMode={exploreState.current.searchMode}
     filters={exploreState.current.filters}
     groupingChain={exploreState.current.groupingChain}
-    {countLabel}
+    countLabel={recordingSearchVisible ? '' : countLabel}
     sort={exploreState.current.groupingChain.length > 0 ? undefined : {
       options: [{ value: 'newest', label: 'Newest first' }],
       value: 'newest',
@@ -658,14 +693,6 @@
           onchange={(columns) => exploreState.replaceTransient({ columns })}
         />
       {/if}
-      {#if canPreviewRight}
-        <SegmentedControl
-          ariaLabel="Preview position"
-          options={[{ value: 'below', label: 'Below' }, { value: 'right', label: 'Right' }]}
-          value={previewPosition}
-          onchange={setPreviewPosition}
-        />
-      {/if}
     {/snippet}
   </ContextBar>
   <span class="kit-sr-only" role="status" aria-label="Sort status" aria-live="polite">{sortNotice}</span>
@@ -710,12 +737,22 @@
       storageKey={previewRight ? 'msgvault.reading-pane.right-size' : 'msgvault.reading-pane.size'}
       orientation={previewRight ? 'horizontal' : 'vertical'}
       initialFraction={previewRight ? 0.45 : 0.55}
-      minPrimary={previewRight ? 360 : 120}
+      minPrimary={previewRight ? 360 : recordingSearchVisible ? 220 : 120}
       minSecondary={previewRight ? 400 : 160}
       collapsed={!readingTargetKey}
     >
       {#snippet primary()}
         <div class="results-primary">
+          {#if recordingSearchVisible}
+            <TranscriptHits
+              {client}
+              query={exploreState.current.query}
+              supported={exploreState.current.searchMode === 'full_text' && exploreState.current.filters.length === 0 && exploreState.current.groupingChain.length === 0}
+              selectedMessageID={recordingSelection}
+              onOpen={(hit) => onOpenRecording(hit.message_id)}
+            />
+            <h2 class="results-heading">Results <span class="count" aria-live="polite">{countLabel}</span></h2>
+          {/if}
           {#if exploreState.current.groupingChain.length > 0}
             <GroupTable
               rows={loader.groupRows}
@@ -820,9 +857,12 @@
             targetKey={readingTargetKey}
             status={readingState.status}
             statusMessage={readingState.message}
+            onRetry={recordingSelection && !recordingMissing ? () => readingDetailRetryRevision += 1 : undefined}
             unavailable={readingState.unavailable}
             predicate={exploreState.predicate()}
             onClose={closeReadingPane}
+            position={canPreviewRight ? previewPosition : undefined}
+            onPositionChange={setPreviewPosition}
             {onOpenMeeting}
             onReloadMeetings={reloadGroupMeetings}
             onOpenSettings={() => commitWorkspace('settings')}
@@ -897,8 +937,12 @@
     display: flex;
     min-width: 0;
     height: 100%;
+    min-height: 0;
+    gap: var(--space-3);
     flex-direction: column;
   }
+  .results-heading { margin: 0; font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); }
+  .results-heading .count { color: var(--text-secondary); font-size: var(--font-size-xs); font-weight: var(--font-weight-normal); font-variant-numeric: tabular-nums; }
 
   /* The reading pane provides its own surface; the split's secondary pane
    * frames it on every edge except the one beside the drag handle. The

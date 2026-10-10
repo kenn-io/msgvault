@@ -245,11 +245,14 @@ func TestGetMessage(t *testing.T) {
 
 	_, err := env.DB.Exec(`UPDATE messages SET is_from_me = TRUE WHERE id = 1`)
 	require.NoError(err, "mark message as sent by the account owner")
+	_, err = env.DB.Exec(`UPDATE conversations SET title = 'Team chat' WHERE id = (SELECT conversation_id FROM messages WHERE id = 1)`)
+	require.NoError(err)
 
 	msg, err := env.Engine.GetMessage(env.Ctx, 1)
 	require.NoError(err, "GetMessage")
 	require.NotNil(msg, "expected message")
 	assert.Equal("Hello World", msg.Subject)
+	assert.Equal("Team chat", msg.ConversationTitle)
 	assert.True(msg.IsFromMe)
 	require.Len(msg.From, 1, "from list")
 	assert.Equal("alice@example.com", msg.From[0].Email)

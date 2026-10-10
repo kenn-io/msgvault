@@ -100,9 +100,11 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.10.0**.
+it is separate from the binary release version. The current schema is **3.11.0**.
 Upgrade clients and daemon together across incompatible schema versions,
 including remote deployments.
+
+Schema 3.11.0 adds source filename, title and date to transcript search results and optional `conversation_title` to `GET /messages/{id}`.
 
 Schema 3.9.0 adds source-scoped agent read permissions and optional `expires_at`. Admitted FTS search responses, including aggregates, filtered messages and total statistics with search text, carry optional `index_state`. Agent checks are bounded; owner CLI searches retain automatic verification and repair.
 See [scoped archive reads](cli-reference.md#scoped-archive-reads).
@@ -1603,7 +1605,7 @@ Successful responses set:
 
 ### Media transcript search
 
-`GET /api/v1/media/search?q=quarterly%20numbers&mode=lexical&limit=20` finds spoken words and returns every matching live message occurrence. Results include message, conversation and attachment IDs, supplied or generated origin, an excerpt, and timing when Docbank recorded it. Optional `person_id` and repeated `direction` values select `from_person`, `to_person` or `group` relations.
+`GET /api/v1/media/search?q=quarterly%20numbers&mode=lexical&limit=20` finds spoken words and returns every matching live message occurrence. Results include message, conversation and attachment IDs, optional `filename`, `containing_title` and `occurred_at`, supplied or generated origin, an excerpt, and timing when Docbank recorded it. Optional `person_id` and repeated `direction` values select `from_person`, `to_person` or `group` relations.
 
 The daemon searches the complete allowed population, with a ceiling of 4,096 distinct versions and source selectors and 64 distinct current supplied transcript input IDs per recording source. Repeated occurrences of the same input count once. Oversized scopes return `media_search_scope_limit` before contacting Docbank; set `person_id` to narrow the scope. Semantic and hybrid modes return `media_search_mode_unavailable`. A disabled or unreachable integration returns `media_search_unavailable`.
 

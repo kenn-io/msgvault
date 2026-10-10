@@ -1,3 +1,8 @@
+export function formatOffset(ms: number): string {
+  const seconds = Math.floor(ms / 1000);
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+}
+
 export function formatBytes(value: number): string {
   if (value < 1024) return `${value} B`;
   if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`;
@@ -9,6 +14,14 @@ export function formatDateTime(value: string | null | undefined, timeStyle: 'sho
   const date = new Date(value);
   if (!Number.isFinite(date.getTime())) return 'Not available';
   return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle }).format(date);
+}
+
+export function formatShortDate(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.valueOf())) return value;
+  return new Intl.DateTimeFormat(undefined, {
+    month: 'short', day: 'numeric', year: date.getFullYear() === new Date().getFullYear() ? undefined : 'numeric'
+  }).format(date);
 }
 
 const RELATIVE_UNITS: ReadonlyArray<readonly [Intl.RelativeTimeFormatUnit, number]> = [

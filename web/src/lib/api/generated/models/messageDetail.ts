@@ -11,6 +11,8 @@ export interface MessageDetail {
   body_omitted?: boolean;
   cc?: string[];
   conversation_id?: number;
+  /** Conversation title, populated by GET /api/v1/messages/{id}. */
+  conversation_title?: string;
   deleted_at?: string;
   from: string;
   from_email?: string;
