@@ -1,18 +1,8 @@
 import { fireEvent, render, screen } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
+import { recordingSearchHit as hit, recordingSearchReport as report } from '../../archive/recording-fixtures.test-support';
 import TranscriptHits from './TranscriptHits.svelte';
-
-function hit(overrides: Record<string, unknown> = {}) {
-  return { message_id: 9, conversation_id: 2, attachment_id: 1, filename: 'voice.wav', containing_title: 'Quarterly review',
-    occurred_at: '2026-07-18T12:00:00Z', origin: 'supplied', excerpt: 'Quarterly <numbers>', ...overrides };
-}
-
-function report(overrides: Record<string, unknown> = {}) {
-  return { coverage: { state: 'complete', binding_required: false, complete_documents: 1, scoped_documents: 1 },
-    results: [hit()], partial: false, truncated: false, pending_occurrences: 0, unavailable_occurrences: 0,
-    attribution_unavailable: 0, ...overrides };
-}
 
 function mount(fetchFn = vi.fn<typeof fetch>(async () => Response.json(report()))) {
   const client = createAPIClient(fetchFn);
@@ -24,11 +14,11 @@ afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 describe('TranscriptHits', () => {
   it('requests lexical evidence and preserves source occurrences, provenance and optional timing', async () => {
     const { fetchFn } = mount(vi.fn<typeof fetch>(async () => Response.json(report({ results: [
-      hit({ start_ms: 0, end_ms: 2800 }), hit({ message_id: 10, origin: 'generated', filename: 'other.wav' }),
+      hit({ start_ms: 0, end_ms: 2800, excerpt: 'Quarterly <numbers>' }), hit({ message_id: 10, origin: 'generated', filename: 'other.wav' }),
     ] }))));
     const links = await screen.findAllByRole('link');
     expect(links.map(link => link.getAttribute('href'))).toEqual(['/messages/9', '/messages/10']);
-    expect(links[0].textContent).toContain('Quarterly review');
+    expect(links[0].textContent).toContain('Team chat');
     expect(links[0].textContent).toContain('voice.wav');
     expect(links[0].textContent).toContain('Provider transcript');
     expect(links[0].querySelector('.transcript time')?.getAttribute('title')).toBe('Until 0:02');
@@ -90,7 +80,7 @@ describe('TranscriptHits', () => {
     fetchFn.mockResolvedValue(Response.json(report({ results: [] })));
     const view = mount(fetchFn);
     await vi.advanceTimersByTimeAsync(300);
-    expect(screen.getByRole('link').textContent).toContain('Quarterly <numbers>');
+    expect(screen.getByRole('link').textContent).toContain('Quarterly numbers');
     await fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
     expect(screen.queryByRole('link')).toBeNull();
     await vi.advanceTimersByTimeAsync(300);
@@ -151,7 +141,7 @@ describe('TranscriptHits', () => {
     expect(view.fetchFn).toHaveBeenCalledTimes(1);
     await fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
     await vi.advanceTimersByTimeAsync(300);
-    expect(screen.getByRole('link').textContent).toContain('Quarterly <numbers>');
+    expect(screen.getByRole('link').textContent).toContain('Quarterly numbers');
     expect(view.fetchFn).toHaveBeenCalledTimes(2);
     view.unmount();
   });
@@ -183,7 +173,7 @@ describe('TranscriptHits', () => {
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json(report()));
     render(TranscriptHits, { props: { client: createAPIClient(fetchFn), query, supported: true } });
     if (searched) {
-      await screen.findByText('Quarterly <numbers>');
+      await screen.findByText('Quarterly numbers');
       expect(new URL((fetchFn.mock.calls.at(-1)![0] as Request).url).searchParams.get('q')).toBe(query);
     } else {
       expect(screen.getByRole('region', { name: 'Recordings' })).toBeTruthy();

@@ -53,6 +53,26 @@ func TestMediaSearchStatus(t *testing.T) {
 	}
 }
 
+func TestMediaSearchStatusBypassesSearchGuard(t *testing.T) {
+	f := newRecordingFixture(t)
+	server := f.server(false)
+	server.documentSearchRateLimiter.Close()
+	server.documentSearchRateLimiter = NewRateLimiter(1, 1)
+	t.Cleanup(server.documentSearchRateLimiter.Close)
+	require.True(t, server.documentSearchRateLimiter.Allow("127.0.0.1"))
+	gate := &recordingOperationGate{allow: false}
+	server.operationGate = gate
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/media/search/status", nil)
+	request.RemoteAddr = "127.0.0.1:1234"
+	request.Header.Set("X-Api-Key", recordingsTestAPIKey)
+	response := httptest.NewRecorder()
+	server.Router().ServeHTTP(response, request)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	assert.JSONEq(t, `{"configured":true}`, response.Body.String())
+	begin, _ := gate.counts()
+	assert.Zero(t, begin)
+}
+
 func newMediaSearchFixture(t *testing.T) *mediaSearchFixture {
 	t.Helper()
 	f := &mediaSearchFixture{recordingFixture: newRecordingFixture(t), report: docbankmedia.SearchReport{

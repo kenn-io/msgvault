@@ -117,13 +117,12 @@
   const recording = new ArchiveMessageLoader();
   const recordingSelection = $derived(parseRecordingSelection(readingTargetKey));
   const recordingSearchSupported = $derived(exploreState.current.searchMode === 'full_text' && exploreState.current.filters.length === 0 && exploreState.current.groupingChain.length === 0);
-  const recordingSearchVisible = $derived(Boolean(enabled && exploreState.current.query.trim() && session.recordingSearchConfigured));
+  const recordingSearchVisible = $derived(Boolean(enabled && exploreState.current.query.trim() && session.recordingSearchConfigured !== false));
 
   onMount(() => {
     if (session.recordingSearchConfigured !== undefined) return;
-    session.recordingSearchConfigured = false;
-    void getMediaSearchStatus(client).then(({ data }) => {
-      session.recordingSearchConfigured = data?.configured === true;
+    void getMediaSearchStatus(client).then(({ data, response }) => {
+      if (response.ok && typeof data?.configured === 'boolean') session.recordingSearchConfigured = data.configured;
     }).catch(() => {});
   });
 

@@ -22090,30 +22090,6 @@ paths:
               schema:
                 $ref: "#/components/schemas/MediaSearchStatusResponse"
           description: OK
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "403":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "429":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "503":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
         default:
           content:
             application/json:

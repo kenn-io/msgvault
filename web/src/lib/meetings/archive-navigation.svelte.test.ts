@@ -43,6 +43,19 @@ describe('archive meeting navigation', () => {
     expect(navigation.detail).toBeUndefined();
     expect(navigation.error).toBe('This archived meeting is no longer available.');
   });
+  it.each([
+    [{ id: 43, message_type: 'email', conversation_id: 0 }, 'This archived meeting is no longer available.'],
+    [{ message_type: 'email', conversation_id: 0 }, 'The selected archive item is no longer a meeting transcript.'],
+    [{ message_type: 'email', conversation_id: 9 }, 'The selected archive item is no longer a meeting transcript.'],
+    [{ conversation_id: 0 }, 'The archived meeting conversation changed or is unavailable. Reload meeting activity.'],
+  ])('checks message ID, then meeting type, then conversation %j', async (overrides, message) => {
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ ...detail, ...overrides }));
+    const navigation = new ArchiveMeetingNavigation(createAPIClient(fetchFn));
+    expect(await navigation.load(42, 8)).toBeUndefined();
+    expect(navigation.error).toBe(message);
+    expect(navigation.detail).toBeUndefined();
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
   it('reports eligibility request failures without presenting them as an unavailable meeting', async () => {
     const client = createAPIClient(async (input) => new URL((input as Request).url).pathname.endsWith('/meetings/metrics')
       ? Response.json({ error: 'internal_error', message: 'Meeting eligibility could not be checked.' }, { status: 500 }) : Response.json(detail));

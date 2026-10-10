@@ -14,6 +14,8 @@ export class ArchiveMeetingNavigation {
     invalidConversation: 'The archived meeting conversation changed or is unavailable. Reload meeting activity.',
     missing: 'The archived meeting could not be loaded.',
     failed: 'The archived meeting could not be loaded.',
+  }, (data) => {
+    if (data.message_type !== 'meeting_transcript') return 'The selected archive item is no longer a meeting transcript.';
   });
   private generation = 0;
 
@@ -29,7 +31,6 @@ export class ArchiveMeetingNavigation {
       const data = await this.loader.load(this.client, id);
       if (generation !== this.generation) return;
       if (!data) throw new Error(this.loader.error || 'The archived meeting could not be loaded.');
-      if (data.message_type !== 'meeting_transcript') throw new Error('The selected archive item is no longer a meeting transcript.');
       if (conversationID !== undefined && data.conversation_id !== conversationID) {
         throw new Error('The archived meeting conversation changed or is unavailable. Reload meeting activity.');
       }

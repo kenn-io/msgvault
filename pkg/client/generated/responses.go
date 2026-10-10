@@ -1637,12 +1637,6 @@ type GetMediaSearchStatusResponse = MediaSearchStatusResponse
 
 type GetMediaSearchStatusErrorResponse = ErrorResponse
 
-type GetMediaSearchStatusErrorResponseJSON = ErrorResponse
-
-type GetMediaSearchStatusErrorResponseJSON429 = ErrorResponse
-
-type GetMediaSearchStatusErrorResponseJSON503 = ErrorResponse
-
 type ListMeetingActionItemsResponse = ActionsPage
 
 type ListMeetingActionItemsErrorResponse = ErrorResponse
@@ -4930,10 +4924,6 @@ type GetMediaSearchStatusResp struct {
 	Body         []byte
 	StatusCode   int
 	JSON200      *GetMediaSearchStatusResponse
-	JSON400      *GetMediaSearchStatusErrorResponse
-	JSON403      *GetMediaSearchStatusErrorResponseJSON
-	JSON429      *GetMediaSearchStatusErrorResponseJSON429
-	JSON503      *GetMediaSearchStatusErrorResponseJSON503
 }
 
 type ListMeetingActionItemsResp struct {

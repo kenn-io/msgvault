@@ -29,13 +29,102 @@ function exploreResponse(overrides: Record<string, unknown> = {}) {
 }
 
 describe('EverythingWorkspace', () => {
+  it.each([429, 503, 'network'] as const)('keeps recording search visible after a status lookup failure %s and retries status on remount', async status => {
+    window.history.replaceState(null, '', '/');
+    let statusCalls = 0;
+    let searchCalls = 0;
+    const fetchFn = vi.fn<typeof fetch>(async input => {
+      const path = new URL((input as Request).url).pathname;
+      if (path.endsWith('/media/search/status')) {
+        statusCalls += 1;
+        if (statusCalls > 1) return Response.json({ configured: false });
+        if (status === 'network') throw new Error('Fetch failed');
+        return Response.json({ error: 'unavailable' }, { status });
+      }
+      if (path.endsWith('/media/search')) {
+        searchCalls += 1;
+        return status === 503 && searchCalls === 1
+          ? Response.json({ error: 'media_search_unavailable' }, { status: 503 })
+          : Response.json(recordingSearchReport());
+      }
+      return Response.json(exploreResponse());
+    });
+    const state = new ExploreState(window);
+    const view = render(AppShell, { client: createBaseAPIClient(fetchFn), state });
+    try {
+      state.replaceTransient({ workspace: 'everything' });
+      await waitFor(() => expect(statusCalls).toBe(1));
+      state.replaceTransient({ query: 'quarterly', searchMode: 'full_text' });
+      expect(await screen.findByRole('region', { name: 'Recordings' })).toBeTruthy();
+      if (status === 503) {
+        await screen.findByText('Recording search unavailable.');
+        await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+      }
+      await screen.findByRole('link', { name: 'Team chat' });
+      state.replaceTransient({ workspace: 'files' });
+      await screen.findByRole('main', { name: 'Files' });
+      state.replaceTransient({ workspace: 'everything' });
+      await waitFor(() => expect(statusCalls).toBe(2));
+      await waitFor(() => expect(screen.queryByRole('region', { name: 'Recordings' })).toBeNull());
+      state.replaceTransient({ workspace: 'files' });
+      await screen.findByRole('main', { name: 'Files' });
+      state.replaceTransient({ workspace: 'everything' });
+      await screen.findByRole('main', { name: 'Everything' });
+      expect(statusCalls).toBe(2);
+      expect(searchCalls).toBe(status === 503 ? 2 : 1);
+    } finally {
+      view.unmount();
+      state.destroy();
+    }
+  });
+
+  it('searches recordings while configuration is unknown', async () => {
+    window.history.replaceState(null, '', '/');
+    let finish!: (response: Response) => void;
+    const fetchFn = vi.fn<typeof fetch>(async input => {
+      const path = new URL((input as Request).url).pathname;
+      if (path.endsWith('/media/search/status')) return new Promise(resolve => { finish = resolve; });
+      if (path.endsWith('/media/search')) return Response.json(recordingSearchReport());
+      return Response.json(exploreResponse());
+    });
+    const state = new ExploreState(window);
+    state.replaceTransient({ workspace: 'everything', query: 'quarterly', searchMode: 'full_text' });
+    const view = render(AppShell, { client: createBaseAPIClient(fetchFn), state });
+    try {
+      await screen.findByRole('link', { name: 'Team chat' });
+      finish(Response.json({ configured: false }));
+      await waitFor(() => expect(screen.queryByRole('region', { name: 'Recordings' })).toBeNull());
+    } finally {
+      view.unmount();
+      state.destroy();
+    }
+  });
+
+  it('sends no recording search when configuration succeeds with false', async () => {
+    window.history.replaceState(null, '', '/');
+    const fetchFn = vi.fn<typeof fetch>(async input => new URL((input as Request).url).pathname.endsWith('/media/search/status')
+      ? Response.json({ configured: false }) : Response.json(exploreResponse()));
+    const state = new ExploreState(window);
+    state.replaceTransient({ workspace: 'everything', query: 'quarterly', searchMode: 'full_text' });
+    const view = render(AppShell, { client: createBaseAPIClient(fetchFn), state });
+    try {
+      await screen.findByText('0 items');
+      await new Promise(resolve => setTimeout(resolve, 350));
+      expect(screen.queryByRole('region', { name: 'Recordings' })).toBeNull();
+      expect(fetchFn.mock.calls.some(([input]) => new URL((input as Request).url).pathname.endsWith('/media/search'))).toBe(false);
+    } finally {
+      view.unmount();
+      state.destroy();
+    }
+  });
+
   it('retries recording details and distinguishes missing messages', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', query: 'quarterly', searchMode: 'full_text' }))}`);
     const message = recordingMessage;
     let messageStatus = 500;
     const fetchFn = vi.fn<typeof fetch>(async input => {
       const path = new URL((input as Request).url).pathname;
-      if (path.endsWith('/media/search')) return Response.json(recordingSearchReport);
+      if (path.endsWith('/media/search')) return Response.json(recordingSearchReport());
       if (path.endsWith('/messages/9/recordings')) return Response.json(recordingTranscript);
       if (path.endsWith('/messages/9')) return messageStatus === 200 ? Response.json(message) : Response.json({ error: 'unavailable' }, { status: messageStatus });
       if (path.endsWith('/conversations/2')) return Response.json({ id: 2, messages: [message], anchor_id: 9, has_before: false, has_after: false, total: 1 });
@@ -95,10 +184,7 @@ describe('EverythingWorkspace', () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', query: 'restored', searchMode: 'full_text' }))}`);
     const fetchFn = vi.fn<typeof fetch>(async input => {
       const path = new URL((input as Request).url).pathname;
-      if (path.endsWith('/media/search')) return Response.json({
-        results: [], coverage: { state: 'complete' }, partial: false, truncated: false,
-        pending_occurrences: 0, unavailable_occurrences: 0, attribution_unavailable: 0,
-      });
+      if (path.endsWith('/media/search')) return Response.json(recordingSearchReport({ results: [] }));
       return Response.json(exploreResponse());
     });
     const state = new ExploreState(window);

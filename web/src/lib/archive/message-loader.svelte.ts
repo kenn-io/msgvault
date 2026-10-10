@@ -8,7 +8,7 @@ export class ArchiveMessageLoader {
   error = $state('');
   private controller: AbortController | undefined;
 
-  constructor(private readonly messages?: { mismatchedID: string; invalidConversation: string; missing: string; failed: string }) {}
+  constructor(private readonly messages?: { mismatchedID: string; invalidConversation: string; missing: string; failed: string }, private readonly validateMessage?: (detail: MessageDetail) => string | undefined) {}
 
   async load(client: APIClient, id?: number): Promise<MessageDetail | undefined> {
     this.cancel();
@@ -21,6 +21,10 @@ export class ArchiveMessageLoader {
     try {
       const { data, error, response } = await getMessage({ id }, { ...client, signal: controller.signal });
       if (controller.signal.aborted) return;
+      if (data && data.id === id) {
+        this.error = this.validateMessage?.(data) || '';
+        if (this.error) return;
+      }
       if (response.status === 404 || (data && (data.id !== id || !Number.isSafeInteger(data.conversation_id) || data.conversation_id! < 1))) {
         this.missing = true;
         this.error = data && data.id !== id && this.messages
