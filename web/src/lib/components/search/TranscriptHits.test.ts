@@ -162,18 +162,19 @@ describe('TranscriptHits', () => {
     view.unmount();
   });
 
-  it.each(['café 東京 2026', 'cafe\u0301'])('admits plain Unicode words in %s', async query => {
-    const view = mount();
-    await view.rerender({ client: view.client, query, supported: true });
-    await screen.findByText('Quarterly <numbers>');
-    expect(new URL((view.fetchFn.mock.calls.at(-1)![0] as Request).url).searchParams.get('q')).toBe(query);
-  });
-
-  it.each(['from:alice@example.com quarterly', 'quarterly OR numbers', 'not', '\u0301'])('rejects unsupported syntax %s without searching', async query => {
-    const fetchFn = vi.fn<typeof fetch>();
+  it.each([
+    ['café 東京 2026', true], ['cafe\u0301', true], ['from:alice@example.com quarterly', false],
+    ['quarterly OR numbers', false], ['not', false], ['\u0301', false],
+  ] as const)('admits plain words and rejects unsupported syntax %s', async (query, searched) => {
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json(report()));
     render(TranscriptHits, { props: { client: createAPIClient(fetchFn), query, supported: true } });
-    await screen.findByText(/Recording search supports plain words only/);
-    expect(fetchFn).not.toHaveBeenCalled();
+    if (searched) {
+      await screen.findByText('Quarterly <numbers>');
+      expect(new URL((fetchFn.mock.calls.at(-1)![0] as Request).url).searchParams.get('q')).toBe(query);
+    } else {
+      await screen.findByText(/Recording search supports plain words only/);
+      expect(fetchFn).not.toHaveBeenCalled();
+    }
   });
 
   it.each([
