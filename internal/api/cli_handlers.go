@@ -1634,6 +1634,10 @@ const cliRunPersonCommand = "person"
 // nested command path. Backup admits only the frozen create path, documents
 // admits only mutations that must run under the daemon's writer lock, and
 // person admits only the provider consent boundary and sweep operations.
+// cliRunStatusSubcommand is the read-only status subcommand shared by the
+// document and document-vector command groups.
+const cliRunStatusSubcommand = "status"
+
 func cliRunCommandAllowed(args []string) bool {
 	if len(args) == 0 {
 		return false
@@ -1664,14 +1668,14 @@ func cliRunCommandAllowed(args []string) bool {
 				return false
 			}
 			switch args[2] {
-			case "build", "consent", "rebuild", "resume", "retire", "retry", "status":
+			case "build", "consent", "rebuild", "resume", "retire", "retry", cliRunStatusSubcommand:
 				return true
 			default:
 				return false
 			}
 		}
 		switch args[1] {
-		case "build", "consent-mistral", "purge-derived", "resume", "retire", "retry":
+		case "build", "consent-mistral", "consent-docling", "purge-derived", "resume", "retire", "retry", cliRunStatusSubcommand:
 			return true
 		default:
 			return false
