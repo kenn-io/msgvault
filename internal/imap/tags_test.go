@@ -24,9 +24,13 @@ type keywordTestSession struct {
 	omitPermanent bool
 	rejectRemove  bool
 	omitFlags     bool
+	selectModes   chan<- bool
 }
 
 func (s *keywordTestSession) Select(name string, opts *imapapi.SelectOptions) (*imapapi.SelectData, error) {
+	if s.selectModes != nil {
+		s.selectModes <- opts.ReadOnly
+	}
 	data, err := s.Session.Select(name, opts)
 	if err != nil {
 		return nil, fmt.Errorf("select test mailbox: %w", err)
@@ -89,6 +93,36 @@ func newKeywordTestClientFor(t *testing.T, session keywordTestSession) (*Client,
 	require.NoError(err)
 	return c, DraftReceipt{Mailbox: "INBOX", UIDValidity: data.UIDValidity, UID: 1}
 }
+
+func TestMessageKeywordsMailboxAccess(t *testing.T) {
+	modes := make(chan bool, 8)
+	c, id := newKeywordTestClientFor(t, keywordTestSession{selectModes: modes})
+	<-modes // The fixture selects the mailbox to discover UIDVALIDITY.
+	for _, tc := range []struct {
+		name     string
+		change   *emailtags.MessageTagChange
+		readOnly bool
+	}{
+		{name: "read", readOnly: true},
+		{name: "preview", change: &emailtags.MessageTagChange{Add: []string{"Next"}, DryRun: true}, readOnly: true},
+		{name: "write", change: &emailtags.MessageTagChange{Add: []string{"Next"}}},
+		{name: "read after write", readOnly: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := c.MessageKeywords(t.Context(), id, tc.change)
+			require.NoError(t, err)
+			require.Len(t, modes, 1)
+			assert.Equal(t, tc.readOnly, <-modes)
+		})
+	}
+
+	// A later operation must not reuse EXAMINE as a writable selection.
+	_, err := c.GetMessageRaw(t.Context(), "INBOX|1")
+	require.NoError(t, err)
+	require.Len(t, modes, 1)
+	assert.False(t, <-modes)
+}
+
 func TestMessageKeywordsPreservesFlagsAndSync(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

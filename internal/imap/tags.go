@@ -78,11 +78,16 @@ func (c *Client) MessageKeywords(ctx context.Context, id DraftReceipt, input *em
 	}
 	result := &emailtags.MessageTagResult{Tags: []string{}, Before: []string{}, AvailableTags: []emailtags.MessageTag{}, Provider: "imap", Mailbox: id.Mailbox, UIDValidity: id.UIDValidity, UID: id.UID}
 	err := c.withDraftConn(ctx, func(conn *imapclient.Client) error {
-		selected, err := conn.Select(id.Mailbox, nil).Wait()
+		readOnly := input == nil || change.DryRun
+		selected, err := conn.Select(id.Mailbox, &imaplib.SelectOptions{ReadOnly: readOnly}).Wait()
 		if err != nil {
 			return emailtags.Failure("provider_read_failed", "cannot select IMAP mailbox; check access and sync the account", result, err)
 		}
 		c.selectedMailbox = id.Mailbox
+		if readOnly {
+			// Do not reuse EXAMINE when a later operation needs a writable mailbox.
+			c.selectedMailbox = ""
+		}
 		c.selectedUIDValidity = selected.UIDValidity
 		c.selectedNumMessages = selected.NumMessages
 		if selected.UIDValidity != id.UIDValidity {
