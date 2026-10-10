@@ -16,6 +16,14 @@ export function formatDateTime(value: string | null | undefined, timeStyle: 'sho
   return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle }).format(date);
 }
 
+export function formatShortDate(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.valueOf())) return value;
+  return new Intl.DateTimeFormat(undefined, {
+    month: 'short', day: 'numeric', year: date.getFullYear() === new Date().getFullYear() ? undefined : 'numeric'
+  }).format(date);
+}
+
 const RELATIVE_UNITS: ReadonlyArray<readonly [Intl.RelativeTimeFormatUnit, number]> = [
   ['day', 86_400_000], ['hour', 3_600_000], ['minute', 60_000], ['second', 1_000]
 ];
