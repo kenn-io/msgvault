@@ -4,6 +4,10 @@
 
 export type FilterMessagesParams = {
   /**
+   * JSON list of account scopes that intersect, for structured clients
+   */
+  account_scopes?: string;
+  /**
    * Sender email/address filter
    */
   sender?: string;

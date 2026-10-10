@@ -7,6 +7,7 @@ import {
   entryKindPresentation,
   fileTypeLabel,
   filterDimensionLabel,
+  filterValueLabel,
   preflightReasonLabel,
   presentationLabel,
   searchModeLabel
@@ -27,6 +28,14 @@ describe('explore labels', () => {
     expect(filterDimensionLabel('message_type')).toBe('Message type');
     expect(filterDimensionLabel('mailing_list')).toBe('Mailing list');
     expect(filterDimensionLabel('made_up_dimension' as never)).toBe('Made up dimension');
+  });
+
+  it('shows account filter keys as the address or bucket they name', () => {
+    expect(filterValueLabel('account', 'identity:7:d29ya0BleGFtcGxlLm9yZw')).toBe('work@example.org');
+    expect(filterValueLabel('account', 'unattributed:7')).toBe('Unattributed');
+    expect(filterValueLabel('account', 'mask@example.org')).toBe('mask@example.org');
+    expect(filterValueLabel('account', 'identity:7:!!')).toBe('identity:7:!!');
+    expect(filterValueLabel('source', 'unattributed:7')).toBe('unattributed:7');
   });
 
   it('labels every filter dimension the API defines', () => {

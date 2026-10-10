@@ -1,6 +1,7 @@
 import type { SavedViewStateEnvelope } from '../api/generated/models';
 import {
   filterDimensionLabel,
+  filterValueLabel,
   groupedByLabel,
   presentationLabel,
   searchModeLabel
@@ -75,8 +76,9 @@ export function savedViewSummary(saved: CanonicalState): string[] {
   const parts: string[] = [];
   if (saved.query) parts.push(`${searchModeLabel(searchMode(saved))}: “${saved.query}”`);
   for (const filter of saved.filters ?? []) {
-    const label = filterDimensionLabel(filterDimension(filter.field));
-    parts.push(`${label}: ${filter.values.join(', ')}`);
+    const dimension = filterDimension(filter.field);
+    const values = filter.values.map((value) => filterValueLabel(dimension, value));
+    parts.push(`${filterDimensionLabel(dimension)}: ${values.join(', ')}`);
   }
   if (saved.grouping?.length) parts.push(groupedByLabel(saved.grouping));
   parts.push(presentationLabel(saved.presentation ?? 'table'));

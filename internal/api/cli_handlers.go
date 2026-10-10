@@ -712,12 +712,40 @@ type cliAccountsResponse struct {
 	// every count is a zero placeholder. Only callers sending
 	// apiprotocol.AllowPendingCountsHeader get it.
 	CountsPending bool `json:"counts_pending,omitempty"`
+	// VirtualAccountsUnavailable reports that the catalog read failed, timed
+	// out, or was served from an earlier snapshot. Accounts then carry the
+	// last known virtual_accounts, if any, which can miss identities confirmed
+	// since, so absence from them does not prove an address is unknown.
+	VirtualAccountsUnavailable bool `json:"virtual_accounts_unavailable,omitempty"`
 }
 
 // sourceMessageCounter is implemented by stores that count every source's
 // messages in one pass.
 type sourceMessageCounter interface {
 	CountMessagesBySourceContext(ctx context.Context) (map[int64]store.SourceMessageCounts, error)
+}
+
+// virtualAccountLister reads the virtual account catalog. Its freshness
+// depends on the confirmed identities, so a store that offers the catalog
+// also reports the revision that changes when one is added or removed.
+type virtualAccountLister interface {
+	ListVirtualAccountsContext(ctx context.Context) (map[int64][]store.VirtualAccount, error)
+	AccountIdentityRevisionContext(ctx context.Context) (int64, error)
+}
+
+// virtualAccountCatalogFreshFor is how long a completed catalog read serves
+// as current. Confirming or removing an identity starts a new read at once.
+const virtualAccountCatalogFreshFor = 2 * time.Minute
+
+// virtualAccountCatalogVersion is the identity revision a catalog read
+// depends on, so a read from before an identity change is never fresh.
+func (s *Server) virtualAccountCatalogVersion(ctx context.Context, lister virtualAccountLister) string {
+	revision, err := lister.AccountIdentityRevisionContext(ctx)
+	if err != nil {
+		s.logger.Warn("reading account identity revision for the account catalog", "error", err)
+		return ""
+	}
+	return strconv.FormatInt(revision, 10)
 }
 
 type cliCollectionsResponse struct {
@@ -842,6 +870,9 @@ type cliAccountResponse struct {
 	MessageCount       int64      `json:"message_count"`
 	SourceDeletedCount int64      `json:"source_deleted_count"`
 	LastSync           *time.Time `json:"last_sync"`
+	// VirtualAccounts lists the source's confirmed identities and its
+	// unattributed rows, each with live counts, for account pickers.
+	VirtualAccounts []store.VirtualAccount `json:"virtual_accounts,omitempty"`
 }
 
 type cliMessageResponse struct {
@@ -2750,6 +2781,34 @@ func (s *Server) handleCLIAccounts(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		accounts = append(accounts, newCLIAccountResponse(src, count, sourceDeleted))
+	}
+
+	if lister, ok := s.store.(virtualAccountLister); ok {
+		var virtual map[int64][]store.VirtualAccount
+		var stale bool
+		var err error
+		if s.requestAuthentication(r).Grant != nil {
+			// An agent reads the catalog inside its authorization snapshot:
+			// the shared cache may predate a source whose ID was reused.
+			virtual, err = lister.ListVirtualAccountsContext(r.Context())
+		} else {
+			virtual, _, stale, err = s.virtualAccountSnapshots.getVersion(
+				r.Context(), s.importContext, "", s.virtualAccountCatalogVersion(r.Context(), lister),
+				s.statsSnapshotWait, lister.ListVirtualAccountsContext,
+			)
+		}
+		// The catalog is extra detail; a slow or failed read still returns
+		// the accounts with whatever children the last snapshot held.
+		if err != nil && s.writeIfContextError(w, r.Context().Err()) {
+			return
+		}
+		if err != nil {
+			s.logger.Warn("listing accounts without virtual accounts", "error", err)
+		}
+		response.VirtualAccountsUnavailable = stale || err != nil
+		for i := range accounts {
+			accounts[i].VirtualAccounts = virtual[accounts[i].ID]
+		}
 	}
 
 	response.Accounts = accounts

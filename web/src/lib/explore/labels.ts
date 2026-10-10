@@ -34,6 +34,7 @@ export const EXPLORE_COLUMNS: ReadonlyArray<{ id: ExploreColumn; label: string }
 // Where the grouping label reads wrongly as a filter chip (plural, or a different word),
 // name it here.
 const FILTER_DIMENSIONS: Partial<Record<string, string>> = {
+  account: 'Account',
   participant: 'Person',
   identity: 'Identity',
   domain: 'Domain',
@@ -116,6 +117,23 @@ export function filterDimensionLabel(
   if (explicit) return explicit;
   if (isGroupingDimension(dimension)) return groupingDimensionLabel(dimension);
   return sentenceCase(dimension);
+}
+
+// filterValueLabel shows a filter value as people read it. An account key
+// names a confirmed address (identity:<source>:<base64url address>) or a
+// source's unattributed mail; other values show as stored.
+export function filterValueLabel(dimension: string, value: string): string {
+  if (dimension !== 'account') return value;
+  if (/^unattributed:\d+$/.test(value)) return 'Unattributed';
+  const identity = /^identity:\d+:([A-Za-z0-9_-]+)$/.exec(value);
+  if (!identity?.[1]) return value;
+  try {
+    const base64 = identity[1].replaceAll('-', '+').replaceAll('_', '/');
+    const bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch {
+    return value;
+  }
 }
 
 // One wording for grouping in chips and saved-view summaries ("Grouped by Person, then Year").
