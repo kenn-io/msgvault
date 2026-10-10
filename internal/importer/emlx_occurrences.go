@@ -25,15 +25,32 @@ type emlxReceipt struct {
 // emlxCompletion is the checksum payload of an emlx-target ledger row. Run
 // records the sync run that completed the target, so one run completes a
 // shared target once even when it forces reconciliation of every occurrence.
+// A pending row's Intent names the occurrence whose attachments the
+// interrupted ingest was writing.
 type emlxCompletion struct {
-	Version int    `json:"version"`
-	Target  string `json:"target"`
-	Policy  string `json:"policy"`
-	Run     int64  `json:"run,omitzero"`
+	Version int         `json:"version"`
+	Target  string      `json:"target"`
+	Policy  string      `json:"policy"`
+	Run     int64       `json:"run,omitzero"`
+	Intent  *emlxIntent `json:"intent,omitzero"`
+}
+
+// emlxIntent records, before an ingest, which occurrence contributes which
+// attachment parts and the digest of the raw being written. If the archived
+// raw matches Raw afterwards, the write landed and the parts belong to that
+// occurrence, even when the process stopped before its receipt was saved.
+type emlxIntent struct {
+	Occurrence string            `json:"occurrence"`
+	Parts      map[string]string `json:"parts"`
+	Raw        string            `json:"raw"`
 }
 
 func emlxDigest(s string) string {
-	sum := sha256.Sum256([]byte(s))
+	return emlxRawDigest([]byte(s))
+}
+
+func emlxRawDigest(b []byte) string {
+	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
 }
 
@@ -68,6 +85,18 @@ func emlxTargetCompletion(st store.EmlxTargetState, id, policy string) (emlxComp
 		return c, false
 	}
 	return c, c.Version == emlxReceiptVersion && c.Target == id && c.Policy == policy
+}
+
+// emlxPendingIntent returns the intent recorded on a pending target row.
+func emlxPendingIntent(st store.EmlxTargetState, id string) *emlxIntent {
+	var c emlxCompletion
+	if st.Item == nil || st.Item.Status != "pending" ||
+		json.Unmarshal([]byte(st.Item.Checksum), &c, json.RejectUnknownMembers(true)) != nil ||
+		c.Version != emlxReceiptVersion || c.Target != id || c.Intent == nil ||
+		!store.IsEmlxOccurrenceID(c.Intent.Occurrence) || !store.IsEmlxDigest(c.Intent.Raw) {
+		return nil
+	}
+	return c.Intent
 }
 
 func targetComplete(st store.EmlxTargetState, id, policy string) bool {

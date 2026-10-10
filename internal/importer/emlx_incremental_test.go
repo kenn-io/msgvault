@@ -124,3 +124,19 @@ func TestIsEmlxRetryable(t *testing.T) {
 		})
 	}
 }
+
+func TestImportEmlxLabelFailureFailsRun(t *testing.T) {
+	r, a := require.New(t), assert.New(t)
+	st, tmp := openTestStore(t)
+	root := filepath.Join(tmp, "Inbox.mbox")
+	mkMailboxDir(t, root, map[string][]byte{"1.emlx": email.NewMessage().From("sender@example.test").Body("label").Bytes()})
+	_, err := st.DB().Exec(`CREATE TRIGGER block_labels BEFORE INSERT ON labels
+ BEGIN SELECT RAISE(ABORT, 'synthetic label failure'); END`)
+	r.NoError(err)
+	summary, err := ImportEmlxDir(t.Context(), st, root, EmlxImportOptions{Identifier: "owner@example.test"})
+	r.NoError(err)
+	a.True(summary.HardErrors, "a mailbox skipped by a database failure must fail the run")
+	var status string
+	r.NoError(st.DB().QueryRow(`SELECT status FROM sync_runs ORDER BY id DESC LIMIT 1`).Scan(&status))
+	a.Equal(store.SyncStatusFailed, status)
+}

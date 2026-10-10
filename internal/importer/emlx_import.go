@@ -266,7 +266,7 @@ func reportDiscoveryErrors(run *emlxRun, err error) {
 func (r *emlxRun) importMailbox(ctx context.Context, sourceID int64, mboxIdx int, mb emlx.Mailbox) {
 	labelID, err := r.st.EnsureLabel(sourceID, mb.Label, mb.Label, "user")
 	if err != nil {
-		r.reportSoft("failed to ensure label", fmt.Errorf("label %q: %w", mb.Label, err))
+		r.reportHard("failed to ensure label", fmt.Errorf("label %q: %w", mb.Label, err))
 		return
 	}
 	r.log.Info("importing mailbox", "label", mb.Label, "files", len(mb.Files), "index", mboxIdx)
