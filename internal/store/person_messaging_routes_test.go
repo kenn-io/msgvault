@@ -404,3 +404,81 @@ func TestMessagingRoutesIncludeSuggestionsForBoundCardDAVResource(t *testing.T) 
 	assertions.Equal(candidate.ID, page.UnreviewedSuggestions.Items[0].ID)
 	assertions.Empty(page.Routes.Items)
 }
+
+func TestMessagingRoutesRejectDirectChatWithUnboundMember(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+
+	t.Parallel()
+	f := storetest.New(t)
+	person, peer := messagingPerson(t, f.Store, "direct-peer")
+	other, err := f.Store.EnsureParticipantByIdentifier("email", "unbound@example.test", "Blake Example")
+	requirements.NoError(err)
+	_, id := messagingConversation(t, f.Store, "account", "!direct:example.test", "direct_chat", peer)
+	requirements.NoError(f.Store.EnsureConversationParticipant(id, other, "member"))
+	writeMessagingEvidence(t, f.Store, id, store.MessagingRouteEvidence{
+		ChatID: "!direct:example.test", AccountID: "account", Network: "whatsapp", ProviderType: "single",
+		ObservedAt: time.Now().UTC(), MembershipComplete: true, ParticipantIDs: []int64{peer, other},
+	})
+
+	page, err := f.Store.GetPersonMessagingRoutesContext(t.Context(), store.PersonMessagingRouteQuery{PersonUID: person.VCardUID})
+	requirements.NoError(err)
+	requirements.Len(page.Routes.Items, 1)
+	assertions.Equal("unresolved", page.Routes.Items[0].Status)
+	assertions.Equal([]string{"direct_chat_has_unbound_member"}, page.Routes.Items[0].Reasons)
+}
+
+func TestMessagingRoutesRejectMemberCountChangedAfterCapture(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+
+	t.Parallel()
+	f := storetest.New(t)
+	person, peer := messagingPerson(t, f.Store, "count-peer")
+	_, id := messagingConversation(t, f.Store, "account", "!count:example.test", "direct_chat", peer)
+	requirements.NoError(f.Store.SetConversationMemberCount(id, 2))
+
+	page, err := f.Store.GetPersonMessagingRoutesContext(t.Context(), store.PersonMessagingRouteQuery{PersonUID: person.VCardUID})
+	requirements.NoError(err)
+	requirements.Len(page.Routes.Items, 1)
+	assertions.Equal("unresolved", page.Routes.Items[0].Status)
+	assertions.Equal([]string{"roster_changed"}, page.Routes.Items[0].Reasons)
+}
+
+func TestMessagingRoutesNetworkFilterMatchesNativeAndBeeperRoutes(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+
+	t.Parallel()
+	f := storetest.New(t)
+	person, peer := messagingPerson(t, f.Store, "network-peer")
+	nativeConversation := func(sourceType, chat string) int64 {
+		src, err := f.Store.GetOrCreateSource(sourceType, sourceType+"-workspace")
+		requirements.NoError(err)
+		id, err := f.Store.EnsureConversationWithType(src.ID, chat, "direct_chat", "Synthetic chat")
+		requirements.NoError(err)
+		requirements.NoError(f.Store.EnsureConversationParticipant(id, peer, "member"))
+		return id
+	}
+	// Created first, so an unfiltered page of one would return only Slack.
+	nativeConversation("slack", "D-slack")
+	native := nativeConversation("discord", "D-discord")
+	_, bridged := messagingConversation(t, f.Store, "discordgo", "!bridged:example.test", "direct_chat", peer)
+	writeMessagingEvidence(t, f.Store, bridged, store.MessagingRouteEvidence{
+		ChatID: "!bridged:example.test", AccountID: "discordgo", Network: "discord", ProviderType: "single",
+		ObservedAt: time.Now().UTC(), MembershipComplete: true, ParticipantIDs: []int64{peer},
+	})
+
+	query := store.PersonMessagingRouteQuery{PersonUID: person.VCardUID, Network: "discord", Limit: 1}
+	page, err := f.Store.GetPersonMessagingRoutesContext(t.Context(), query)
+	requirements.NoError(err)
+	requirements.Len(page.Routes.Items, 1, "the Slack route is skipped without consuming the page")
+	assertions.Equal(native, page.Routes.Items[0].ConversationID)
+	query.AfterConversationID = page.Routes.NextAfterID
+	next, err := f.Store.GetPersonMessagingRoutesContext(t.Context(), query)
+	requirements.NoError(err)
+	requirements.Len(next.Routes.Items, 1)
+	assertions.Equal(bridged, next.Routes.Items[0].ConversationID)
+	assertions.Equal("discord", next.Routes.Items[0].Network)
+	assertions.Equal("archive_verified", next.Routes.Items[0].Status)
+}

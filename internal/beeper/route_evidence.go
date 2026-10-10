@@ -7,8 +7,20 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
+// beeperServiceNetworks maps Beeper bridge types to the service names that
+// native importers use as their source type, so one route network filter
+// selects the same service from either kind of source.
+var beeperServiceNetworks = map[string]string{
+	"discordgo": "discord",
+	"slackgo":   "slack",
+}
+
 func routeEvidenceFor(ch *Chat, opts ImportOptions) store.MessagingRouteEvidence {
-	e := store.MessagingRouteEvidence{ChatID: ch.ID, AccountID: ch.AccountID, ProviderType: ch.Type, NetworkLabel: ch.Network, ObservedAt: time.Now().UTC(), ParticipantIDs: []int64{}, SelfParticipantIDs: []int64{}, MemberChatIDs: []string{}, MergedIntoChatID: ch.MergedIntoChatID}
+	e := store.MessagingRouteEvidence{
+		ChatID: ch.ID, AccountID: ch.AccountID, ProviderType: ch.Type, NetworkLabel: ch.Network,
+		ObservedAt: time.Now().UTC(), ParticipantIDs: []int64{}, SelfParticipantIDs: []int64{},
+		MemberChatIDs: []string{}, MergedIntoChatID: ch.MergedIntoChatID,
+	}
 	if ch.Merge != nil {
 		e.Merged = true
 		e.MemberChatIDs = ch.Merge.ChatIDs
@@ -17,11 +29,8 @@ func routeEvidenceFor(ch *Chat, opts ImportOptions) store.MessagingRouteEvidence
 	if ch.AccountID != opts.AccountID {
 		e.Failure = "account_binding_mismatch"
 	}
-	if a := opts.routeAccount; a != nil && a.AccountID == opts.AccountID && a.Bridge != nil {
-		network := strings.ToLower(strings.TrimSpace(a.Bridge.Type))
-		if store.ValidatePersonMessagingRouteQuery(store.PersonMessagingRouteQuery{PersonUID: "validation", Network: network}) == nil {
-			e.Network = network
-		}
+	if a := opts.routeAccount; a != nil && a.AccountID == opts.AccountID {
+		e.Network = routeNetwork(a)
 	}
 	if failure := accountRouteProofFailure(opts.routeAccount, opts.AccountID); e.Failure == "" {
 		e.Failure = failure
@@ -30,6 +39,23 @@ func routeEvidenceFor(ch *Chat, opts ImportOptions) store.MessagingRouteEvidence
 		e.Failure = "network_unverified"
 	}
 	return e
+}
+
+// routeNetwork returns the account's service network from its authoritative
+// bridge type, or "" when the bridge does not name a usable network.
+func routeNetwork(account *Account) string {
+	if account.Bridge == nil {
+		return ""
+	}
+	network := strings.ToLower(strings.TrimSpace(account.Bridge.Type))
+	if service, ok := beeperServiceNetworks[network]; ok {
+		network = service
+	}
+	query := store.PersonMessagingRouteQuery{PersonUID: "validation", Network: network}
+	if network == "" || store.ValidatePersonMessagingRouteQuery(query) != nil {
+		return ""
+	}
+	return network
 }
 
 // accountRouteProofFailure classifies whether the account response provides
@@ -43,11 +69,7 @@ func accountRouteProofFailure(account *Account, expectedAccountID string) string
 	if account.AccountID != expectedAccountID {
 		return "account_binding_mismatch"
 	}
-	if account.Bridge == nil {
-		return "network_unverified"
-	}
-	network := strings.ToLower(strings.TrimSpace(account.Bridge.Type))
-	if network == "" || store.ValidatePersonMessagingRouteQuery(store.PersonMessagingRouteQuery{PersonUID: "validation", Network: network}) != nil {
+	if routeNetwork(account) == "" {
 		return "network_unverified"
 	}
 	switch account.Status {

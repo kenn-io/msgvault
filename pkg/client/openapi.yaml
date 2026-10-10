@@ -24671,7 +24671,7 @@ paths:
           required: true
           schema:
             type: string
-        - description: Canonical lowercase bridge/service slug; unknown networks remain visible as unresolved.
+        - description: Lowercase service name such as whatsapp or discord; unknown networks remain visible as unresolved.
           in: query
           name: network
           schema:

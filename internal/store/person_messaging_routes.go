@@ -116,7 +116,10 @@ const maxRouteEvidenceIDs = 100
 const routeEvidenceMaxAge = 7 * 24 * time.Hour
 
 func ValidatePersonMessagingRouteQuery(q PersonMessagingRouteQuery) error {
-	if strings.TrimSpace(q.PersonUID) == "" || !utf8.ValidString(q.PersonUID) || len(q.PersonUID) > 256 || q.Limit < 0 || q.Limit > 100 || q.SourceID < 0 || q.AfterConversationID < 0 || q.AfterContactPointID < 0 || q.AfterObservationID < 0 || q.AfterSuggestionID < 0 {
+	validUID := strings.TrimSpace(q.PersonUID) != "" && utf8.ValidString(q.PersonUID) && len(q.PersonUID) <= 256
+	negativeID := q.SourceID < 0 || q.AfterConversationID < 0 || q.AfterContactPointID < 0 ||
+		q.AfterObservationID < 0 || q.AfterSuggestionID < 0
+	if !validUID || q.Limit < 0 || q.Limit > 100 || negativeID {
 		return fmt.Errorf("%w: person_uid required; limit 1..100; IDs nonnegative", ErrInvalidContactLookup)
 	}
 	if len(q.Network) > 64 {
@@ -124,7 +127,7 @@ func ValidatePersonMessagingRouteQuery(q PersonMessagingRouteQuery) error {
 	}
 	for _, r := range q.Network {
 		if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '-' && r != '_' {
-			return fmt.Errorf("%w: network must be a canonical lowercase service/bridge slug", ErrInvalidContactLookup)
+			return fmt.Errorf("%w: network must be a lowercase service name", ErrInvalidContactLookup)
 		}
 	}
 	return nil
@@ -140,7 +143,16 @@ func (s *Store) GetPersonMessagingRoutesContext(ctx context.Context, q PersonMes
 	if limit == 0 {
 		limit = 20
 	}
-	page := &PersonMessagingRoutesPage{RequestedUID: q.PersonUID, Freshness: "archive_only", CheckedAt: time.Now().UTC(), Warnings: []string{}, Routes: MessagingRoutePage{Items: []MessagingRoute{}}, ContactPoints: ContactPointPage{Items: []PersonContactPoint{}}, Observations: ContactObservationPage{Items: []ParticipantContactObservation{}}, UnreviewedSuggestions: IdentityRouteSuggestionPage{Items: []IdentityRouteSuggestion{}}}
+	page := &PersonMessagingRoutesPage{
+		RequestedUID:          q.PersonUID,
+		Freshness:             "archive_only",
+		CheckedAt:             time.Now().UTC(),
+		Warnings:              []string{},
+		Routes:                MessagingRoutePage{Items: []MessagingRoute{}},
+		ContactPoints:         ContactPointPage{Items: []PersonContactPoint{}},
+		Observations:          ContactObservationPage{Items: []ParticipantContactObservation{}},
+		UnreviewedSuggestions: IdentityRouteSuggestionPage{Items: []IdentityRouteSuggestion{}},
+	}
 	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
 		if err := resolveMessagingPersonTx(ctx, tx, q.PersonUID, page); err != nil {
 			return err
@@ -287,40 +299,50 @@ type archivedMessagingRoute struct {
 	deleted       bool
 }
 
-func (s *Store) readMessagingRoutes(ctx context.Context, tx *loggedTx, q PersonMessagingRouteQuery, page *PersonMessagingRoutesPage, limit int) error {
+// nativeRouteSourceTypes identify their service independently of labels or
+// participant identifiers. They still need roster/self proof to verify.
+var nativeRouteSourceTypes = []string{"whatsapp", "slack", sourceTypeDiscord, "matrix", "teams"}
+
+func (s *Store) readMessagingRoutes(
+	ctx context.Context, tx *loggedTx, q PersonMessagingRouteQuery, page *PersonMessagingRoutesPage, limit int,
+) error {
 	metadataBytes := `LENGTH(CAST(c.metadata AS BLOB))`
 	if s.IsPostgreSQL() {
 		metadataBytes = `OCTET_LENGTH(CAST(c.metadata AS TEXT))`
 	}
-	query := `SELECT c.id,COALESCE(c.source_conversation_id,''),c.source_id,src.source_type,src.identifier,c.conversation_type,
- COALESCE(src.last_sync_at,(SELECT MAX(sr.completed_at) FROM sync_runs sr WHERE sr.source_id=src.id AND sr.status='completed' AND sr.errors_count=0)),CASE WHEN ` + metadataBytes + `<=65536 THEN COALESCE(CAST(c.metadata AS TEXT),'') ELSE '' END,
+	query := `SELECT c.id,COALESCE(c.source_conversation_id,''),c.source_id,src.source_type,src.identifier,
+ c.conversation_type,
+ COALESCE(src.last_sync_at,(SELECT MAX(sr.completed_at) FROM sync_runs sr
+  WHERE sr.source_id=src.id AND sr.status='completed' AND sr.errors_count=0)),
+ CASE WHEN ` + metadataBytes + `<=65536 THEN COALESCE(CAST(c.metadata AS TEXT),'') ELSE '' END,
  COALESCE(` + metadataBytes + `,0)>65536,
- EXISTS(SELECT 1 FROM messages m WHERE m.conversation_id=c.id) AND NOT EXISTS(SELECT 1 FROM messages m WHERE m.conversation_id=c.id AND m.deleted_from_source_at IS NULL)
- ,COALESCE(srf.failure,'')
+ EXISTS(SELECT 1 FROM messages m WHERE m.conversation_id=c.id)
+  AND NOT EXISTS(SELECT 1 FROM messages m WHERE m.conversation_id=c.id AND m.deleted_from_source_at IS NULL),
+ COALESCE(srf.failure,'')
  FROM conversations c JOIN sources src ON src.id=c.source_id
  LEFT JOIN source_messaging_route_failures srf ON srf.source_id=src.id
  WHERE c.id>? AND c.conversation_type<>'email_thread'
  AND EXISTS(SELECT 1 FROM conversation_participants cp JOIN person_participants pp ON pp.participant_id=cp.participant_id
- WHERE cp.conversation_id=c.id AND cp.left_at IS NULL AND pp.person_id=?)`
+  WHERE cp.conversation_id=c.id AND cp.left_at IS NULL AND pp.person_id=?)`
 	args := []any{q.AfterConversationID, page.PersonID}
 	if q.SourceID > 0 {
 		query += ` AND c.source_id=?`
 		args = append(args, q.SourceID)
 	}
-	// Bound the number of inspected rows as well as emitted rows. The network
-	// filter is evaluated from trusted metadata; unknown networks stay visible.
+	if q.Network != "" {
+		// Native sources carry their network in the source type, so other
+		// networks are skipped in SQL. Beeper networks come from route
+		// metadata and are filtered after evaluation; unknown ones stay visible.
+		query += ` AND (src.source_type NOT IN (` + sqlPlaceholders(len(nativeRouteSourceTypes)) + `) OR src.source_type=?)`
+		for _, sourceType := range nativeRouteSourceTypes {
+			args = append(args, sourceType)
+		}
+		args = append(args, q.Network)
+	}
+	// Bound the number of inspected rows as well as emitted rows.
 	query += ` ORDER BY c.id LIMIT ?`
 	args = append(args, limit+1)
-	archived, err := readContactLookupRows(ctx, tx, query, func(row scanner) (*archivedMessagingRoute, error) {
-		item := &archivedMessagingRoute{}
-		var synced nullableTimestamp
-		r := &item.route
-		err := row.Scan(&r.ConversationID, &r.ProviderChatID, &r.SourceID, &r.SourceType, &r.AccountID, &r.ConversationType, &synced, &item.metadata, &item.oversized, &item.deleted, &item.sourceFailure)
-		if synced.Valid {
-			r.SourceLastSyncAt = &synced.Time
-		}
-		return item, err
-	}, args...)
+	archived, err := readContactLookupRows(ctx, tx, query, scanArchivedMessagingRoute, args...)
 	if err != nil {
 		return fmt.Errorf("read route conversations: %w", err)
 	}
@@ -341,9 +363,23 @@ func (s *Store) readMessagingRoutes(ctx context.Context, tx *loggedTx, q PersonM
 	return nil
 }
 
+func scanArchivedMessagingRoute(row scanner) (*archivedMessagingRoute, error) {
+	item := &archivedMessagingRoute{}
+	var synced nullableTimestamp
+	r := &item.route
+	err := row.Scan(&r.ConversationID, &r.ProviderChatID, &r.SourceID, &r.SourceType, &r.AccountID,
+		&r.ConversationType, &synced, &item.metadata, &item.oversized, &item.deleted, &item.sourceFailure)
+	if synced.Valid {
+		r.SourceLastSyncAt = &synced.Time
+	}
+	return item, err
+}
+
 func messagingRoster(ctx context.Context, tx *loggedTx, conversationID, personID int64) (roster, bound []int64, err error) {
-	rows, err := tx.QueryContext(ctx, `SELECT cp.participant_id,EXISTS(SELECT 1 FROM person_participants pp WHERE pp.participant_id=cp.participant_id AND pp.person_id=?)
- FROM conversation_participants cp WHERE cp.conversation_id=? AND cp.left_at IS NULL ORDER BY cp.participant_id LIMIT ?`, personID, conversationID, maxRouteEvidenceIDs+1)
+	rows, err := tx.QueryContext(ctx, `SELECT cp.participant_id,
+ EXISTS(SELECT 1 FROM person_participants pp WHERE pp.participant_id=cp.participant_id AND pp.person_id=?)
+ FROM conversation_participants cp WHERE cp.conversation_id=? AND cp.left_at IS NULL
+ ORDER BY cp.participant_id LIMIT ?`, personID, conversationID, maxRouteEvidenceIDs+1)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -363,7 +399,17 @@ func messagingRoster(ctx context.Context, tx *loggedTx, conversationID, personID
 	}
 	return roster, bound, rows.Err()
 }
-func evaluateMessagingRoute(ctx context.Context, tx *loggedTx, personID int64, now time.Time, item *archivedMessagingRoute) error {
+
+// routeMetadata is the part of conversation metadata that route proof reads.
+type routeMetadata struct {
+	Route              *MessagingRouteEvidence `json:"messaging_route"`
+	MemberCount        *int                    `json:"member_count"`
+	MemberCountUnknown bool                    `json:"member_count_unknown"`
+}
+
+func evaluateMessagingRoute(
+	ctx context.Context, tx *loggedTx, personID int64, now time.Time, item *archivedMessagingRoute,
+) error {
 	r := &item.route
 	r.Status = "unresolved"
 	r.Reasons = []string{}
@@ -374,10 +420,7 @@ func evaluateMessagingRoute(ctx context.Context, tx *loggedTx, personID int64, n
 		return fmt.Errorf("read route roster: %w", err)
 	}
 	r.BoundParticipantIDs = bound
-	// Native importer kinds identify their service independently of labels or
-	// participant identifiers. They still need roster/self proof to verify.
-	switch r.SourceType {
-	case "whatsapp", "slack", sourceTypeDiscord, "matrix", "teams":
+	if slices.Contains(nativeRouteSourceTypes, r.SourceType) {
 		r.Network = r.SourceType
 	}
 	if len(roster) > maxRouteEvidenceIDs {
@@ -385,10 +428,7 @@ func evaluateMessagingRoute(ctx context.Context, tx *loggedTx, personID int64, n
 		r.Reasons = append(r.Reasons, "evidence_truncated")
 		r.BoundParticipantIDs = bound[:min(len(bound), maxRouteEvidenceIDs)]
 	}
-	var metadata struct {
-		Route              *MessagingRouteEvidence `json:"messaging_route"`
-		MemberCountUnknown bool                    `json:"member_count_unknown"`
-	}
+	var metadata routeMetadata
 	if item.oversized {
 		r.Reasons = append(r.Reasons, "route_metadata_oversized")
 	}
@@ -397,86 +437,153 @@ func evaluateMessagingRoute(ctx context.Context, tx *loggedTx, personID int64, n
 			r.Reasons = append(r.Reasons, "route_metadata_invalid")
 		}
 	}
-	e := metadata.Route
 	if metadata.MemberCountUnknown {
 		r.MembershipComplete = false
 		r.Reasons = append(r.Reasons, "membership_incomplete")
 	}
-	if e == nil {
+	if metadata.Route == nil {
 		r.Reasons = append(r.Reasons, "route_metadata_missing")
-	} else {
-		r.NetworkLabel = e.NetworkLabel
-		if r.SourceType == "beeper" {
-			r.Network = e.Network
+	} else if err := applyRouteEvidence(ctx, tx, personID, now, r, metadata, roster); err != nil {
+		return err
+	}
+	appendRouteSourceReasons(r, item, now)
+	finalizeRouteStatus(r)
+	return nil
+}
+
+func applyRouteEvidence(
+	ctx context.Context, tx *loggedTx, personID int64, now time.Time,
+	r *MessagingRoute, metadata routeMetadata, roster []int64,
+) error {
+	e := metadata.Route
+	r.NetworkLabel = e.NetworkLabel
+	if r.SourceType == "beeper" {
+		r.Network = e.Network
+	}
+	r.MergedIntoChatID = e.MergedIntoChatID
+	r.MembershipComplete = e.MembershipComplete && !metadata.MemberCountUnknown
+	if !e.ObservedAt.IsZero() {
+		r.ObservedAt = &e.ObservedAt
+	}
+	checkRouteBindings(r, e)
+	checkRouteRoster(r, e, metadata.MemberCount, roster)
+	if e.ObservedAt.IsZero() || now.Sub(e.ObservedAt) > routeEvidenceMaxAge || e.ObservedAt.After(now.Add(time.Minute)) {
+		r.Reasons = append(r.Reasons, "evidence_stale")
+	}
+	switch e.Failure {
+	case "":
+	case "account_lookup_failed", "account_not_connected", "account_binding_mismatch",
+		"chat_binding_mismatch", "membership_fetch_failed", "network_unverified":
+		r.Reasons = append(r.Reasons, e.Failure)
+	default:
+		r.Reasons = append(r.Reasons, "provider_metadata_unavailable")
+	}
+	if !e.Merged {
+		return nil
+	}
+	return checkMergedContainer(ctx, tx, personID, r, e)
+}
+
+func checkRouteBindings(r *MessagingRoute, e *MessagingRouteEvidence) {
+	if e.AccountID != r.AccountID {
+		r.Reasons = append(r.Reasons, "account_binding_mismatch")
+	}
+	if e.ChatID != r.ProviderChatID {
+		r.Reasons = append(r.Reasons, "chat_binding_mismatch")
+	}
+	if e.ProviderType != "single" && e.ProviderType != "group" {
+		r.Reasons = append(r.Reasons, "conversation_type_unverified")
+	}
+	directMismatch := e.ProviderType == "single" && r.ConversationType != "direct_chat"
+	groupMismatch := e.ProviderType == "group" && r.ConversationType != "group_chat"
+	if !e.Merged && (directMismatch || groupMismatch) {
+		r.Reasons = append(r.Reasons, "conversation_type_mismatch")
+	}
+}
+
+// checkRouteRoster compares the archived roster with the captured snapshot.
+// A later member-count write without a matching roster capture, such as a
+// media refresh, also invalidates the snapshot.
+func checkRouteRoster(r *MessagingRoute, e *MessagingRouteEvidence, memberCount *int, roster []int64) {
+	if !e.MembershipComplete {
+		r.Reasons = append(r.Reasons, "membership_incomplete")
+	}
+	ids := slices.Clone(e.ParticipantIDs)
+	slices.Sort(ids)
+	if !slices.Equal(roster, ids) || memberCount != nil && !e.Truncated && *memberCount != len(ids) {
+		r.Reasons = append(r.Reasons, "roster_changed")
+	}
+	if e.Truncated || len(ids) > maxRouteEvidenceIDs || len(e.SelfParticipantIDs) > maxRouteEvidenceIDs ||
+		len(e.MemberChatIDs) > maxRouteEvidenceIDs {
+		r.EvidenceTruncated = true
+		r.Reasons = append(r.Reasons, "evidence_truncated")
+	}
+	nonSelf := []int64{}
+	for _, id := range r.BoundParticipantIDs {
+		if !slices.Contains(e.SelfParticipantIDs, id) {
+			nonSelf = append(nonSelf, id)
 		}
-		r.MergedIntoChatID = e.MergedIntoChatID
-		r.MembershipComplete = e.MembershipComplete && !metadata.MemberCountUnknown
-		if !e.ObservedAt.IsZero() {
-			r.ObservedAt = &e.ObservedAt
-		}
-		if e.AccountID != r.AccountID {
-			r.Reasons = append(r.Reasons, "account_binding_mismatch")
-		}
-		if e.ChatID != r.ProviderChatID {
-			r.Reasons = append(r.Reasons, "chat_binding_mismatch")
-		}
-		if e.ProviderType != "single" && e.ProviderType != "group" {
-			r.Reasons = append(r.Reasons, "conversation_type_unverified")
-		}
-		if !e.Merged && ((e.ProviderType == "single" && r.ConversationType != "direct_chat") || (e.ProviderType == "group" && r.ConversationType != "group_chat")) {
-			r.Reasons = append(r.Reasons, "conversation_type_mismatch")
-		}
-		if !e.MembershipComplete {
-			r.Reasons = append(r.Reasons, "membership_incomplete")
-		}
-		ids := slices.Clone(e.ParticipantIDs)
-		slices.Sort(ids)
-		if !slices.Equal(roster, ids) {
-			r.Reasons = append(r.Reasons, "roster_changed")
-		}
-		if e.Truncated || len(ids) > maxRouteEvidenceIDs || len(e.SelfParticipantIDs) > maxRouteEvidenceIDs || len(e.MemberChatIDs) > maxRouteEvidenceIDs {
-			r.EvidenceTruncated = true
-			r.Reasons = append(r.Reasons, "evidence_truncated")
-		}
-		nonSelf := []int64{}
-		for _, id := range r.BoundParticipantIDs {
-			if !slices.Contains(e.SelfParticipantIDs, id) {
-				nonSelf = append(nonSelf, id)
-			}
-		}
-		r.BoundParticipantIDs = nonSelf
-		if len(nonSelf) == 0 {
-			r.Reasons = append(r.Reasons, "self_only")
-		}
-		if e.ObservedAt.IsZero() || now.Sub(e.ObservedAt) > routeEvidenceMaxAge || e.ObservedAt.After(now.Add(time.Minute)) {
-			r.Reasons = append(r.Reasons, "evidence_stale")
-		}
-		switch e.Failure {
-		case "":
-		case "account_lookup_failed", "account_not_connected", "account_binding_mismatch", "chat_binding_mismatch", "membership_fetch_failed", "network_unverified":
-			r.Reasons = append(r.Reasons, e.Failure)
-		default:
-			r.Reasons = append(r.Reasons, "provider_metadata_unavailable")
-		}
-		if e.Merged {
-			r.Status = "merged_container"
-			r.Reasons = append(r.Reasons, "merged_container_not_network_endpoint")
-			r.MemberChatIDs = append(r.MemberChatIDs, e.MemberChatIDs[:min(len(e.MemberChatIDs), maxRouteEvidenceIDs)]...)
-			for _, chat := range r.MemberChatIDs {
-				var count int
-				if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM conversations c JOIN sources src ON src.id=c.source_id
-     WHERE c.source_conversation_id=? AND src.source_type='beeper' AND EXISTS(SELECT 1 FROM conversation_participants cp JOIN person_participants pp ON pp.participant_id=cp.participant_id WHERE cp.conversation_id=c.id AND cp.left_at IS NULL AND pp.person_id=?)`, chat, personID).Scan(&count); err != nil {
-					return err
-				}
-				if count != 1 {
-					r.MissingMemberChatIDs = append(r.MissingMemberChatIDs, chat)
-				}
-			}
-			if len(r.MissingMemberChatIDs) > 0 {
-				r.Reasons = append(r.Reasons, "member_route_evidence_missing_or_ambiguous")
+	}
+	if len(nonSelf) == 0 {
+		r.Reasons = append(r.Reasons, "self_only")
+	}
+	// A direct endpoint belongs to the person only when nobody else is in it.
+	if r.ConversationType == "direct_chat" {
+		for _, id := range roster {
+			if !slices.Contains(e.SelfParticipantIDs, id) && !slices.Contains(r.BoundParticipantIDs, id) {
+				r.Reasons = append(r.Reasons, "direct_chat_has_unbound_member")
+				break
 			}
 		}
 	}
+	r.BoundParticipantIDs = nonSelf
+}
+
+func checkMergedContainer(
+	ctx context.Context, tx *loggedTx, personID int64, r *MessagingRoute, e *MessagingRouteEvidence,
+) error {
+	r.Status = "merged_container"
+	r.Reasons = append(r.Reasons, "merged_container_not_network_endpoint")
+	r.MemberChatIDs = append(r.MemberChatIDs, e.MemberChatIDs[:min(len(e.MemberChatIDs), maxRouteEvidenceIDs)]...)
+	if len(r.MemberChatIDs) == 0 {
+		return nil
+	}
+	args := make([]any, 0, len(r.MemberChatIDs)+1)
+	for _, chat := range r.MemberChatIDs {
+		args = append(args, chat)
+	}
+	args = append(args, personID)
+	// Member chats may belong to other Beeper accounts, so the lookup spans sources.
+	counts, err := readContactLookupRows(ctx, tx, `SELECT c.source_conversation_id,COUNT(*)
+ FROM conversations c JOIN sources src ON src.id=c.source_id
+ WHERE c.source_conversation_id IN (`+sqlPlaceholders(len(r.MemberChatIDs))+`) AND src.source_type='beeper'
+ AND EXISTS(SELECT 1 FROM conversation_participants cp JOIN person_participants pp ON pp.participant_id=cp.participant_id
+  WHERE cp.conversation_id=c.id AND cp.left_at IS NULL AND pp.person_id=?)
+ GROUP BY c.source_conversation_id`, func(row scanner) (*mergedMemberCount, error) {
+		item := &mergedMemberCount{}
+		return item, row.Scan(&item.chatID, &item.count)
+	}, args...)
+	if err != nil {
+		return fmt.Errorf("read merged route members: %w", err)
+	}
+	for _, chat := range r.MemberChatIDs {
+		matched := slices.ContainsFunc(counts, func(c mergedMemberCount) bool { return c.chatID == chat && c.count == 1 })
+		if !matched {
+			r.MissingMemberChatIDs = append(r.MissingMemberChatIDs, chat)
+		}
+	}
+	if len(r.MissingMemberChatIDs) > 0 {
+		r.Reasons = append(r.Reasons, "member_route_evidence_missing_or_ambiguous")
+	}
+	return nil
+}
+
+type mergedMemberCount struct {
+	chatID string
+	count  int
+}
+
+func appendRouteSourceReasons(r *MessagingRoute, item *archivedMessagingRoute, now time.Time) {
 	if item.sourceFailure != "" {
 		r.Reasons = append(r.Reasons, item.sourceFailure)
 	}
@@ -494,6 +601,9 @@ func evaluateMessagingRoute(ctx context.Context, tx *loggedTx, personID int64, n
 	if item.deleted {
 		r.Reasons = append(r.Reasons, "source_messages_deleted")
 	}
+}
+
+func finalizeRouteStatus(r *MessagingRoute) {
 	if r.Status != "merged_container" && (r.ConversationType == "group_chat" || r.ConversationType == "channel") {
 		r.Status = "group_context"
 		r.Reasons = append(r.Reasons, "group_membership_is_not_a_direct_endpoint")
@@ -508,5 +618,4 @@ func evaluateMessagingRoute(ctx context.Context, tx *loggedTx, personID int64, n
 	if len(r.Reasons) == 0 && r.ConversationType == "direct_chat" {
 		r.Status = "archive_verified"
 	}
-	return nil
 }

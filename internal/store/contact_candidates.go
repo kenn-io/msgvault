@@ -36,8 +36,10 @@ type ContactCandidatePage struct {
 // SQLite LOWER folds ASCII only; Unicode spelling is otherwise literal.
 func ValidateContactCandidateQuery(q ContactCandidateQuery) error {
 	name := strings.TrimSpace(q.Query)
-	if !utf8.ValidString(q.Query) || len(name) == 0 || len(name) > 256 || len(strings.Fields(name)) > 16 || q.Limit < 0 || q.Limit > 100 || q.AfterID < 0 {
-		return fmt.Errorf("%w: query must contain 1..256 UTF-8 bytes and at most 16 tokens; limit 1..100; after_id nonnegative", ErrInvalidContactLookup)
+	validQuery := utf8.ValidString(q.Query) && len(name) > 0 && len(name) <= 256 && len(strings.Fields(name)) <= 16
+	if !validQuery || q.Limit < 0 || q.Limit > 100 || q.AfterID < 0 {
+		return fmt.Errorf("%w: query must contain 1..256 UTF-8 bytes and at most 16 tokens; "+
+			"limit 1..100; after_id nonnegative", ErrInvalidContactLookup)
 	}
 	return nil
 }
@@ -48,7 +50,11 @@ var candidateNameLanes = []string{
 	`LOWER(COALESCE(p.display_name,'')) LIKE LOWER(?) ESCAPE '\'`,
 	`EXISTS (SELECT 1 FROM person_names n WHERE n.person_id=p.id
  AND n.active_until IS NULL AND n.superseded_at IS NULL
- AND LOWER(COALESCE(n.formatted,'') || ' ' || COALESCE(n.honorific_prefixes,'') || ' ' || COALESCE(n.given_name,'') || ' ' || COALESCE(n.additional_names,'') || ' ' || COALESCE(n.family_name,'') || ' ' || COALESCE(n.secondary_surname,'') || ' ' || COALESCE(n.honorific_suffixes,'') || ' ' || COALESCE(n.generation,'') || ' ' || COALESCE(n.sort_as,'') || ' ' || n.original_value) LIKE LOWER(?) ESCAPE '\')`,
+ AND LOWER(COALESCE(n.formatted,'') || ' ' || COALESCE(n.honorific_prefixes,'')
+  || ' ' || COALESCE(n.given_name,'') || ' ' || COALESCE(n.additional_names,'')
+  || ' ' || COALESCE(n.family_name,'') || ' ' || COALESCE(n.secondary_surname,'')
+  || ' ' || COALESCE(n.honorific_suffixes,'') || ' ' || COALESCE(n.generation,'')
+  || ' ' || COALESCE(n.sort_as,'') || ' ' || n.original_value) LIKE LOWER(?) ESCAPE '\')`,
 	`EXISTS (SELECT 1 FROM person_participants pp JOIN participants member ON member.id=pp.participant_id
  WHERE pp.person_id=p.id AND LOWER(COALESCE(member.display_name,'')) LIKE LOWER(?) ESCAPE '\')`,
 	`EXISTS (SELECT 1 FROM person_participants pp JOIN message_recipients mr ON mr.participant_id=pp.participant_id
@@ -68,7 +74,11 @@ func contactCandidatePredicate(query string) (string, []any) {
 	return strings.Join(clauses, " AND "), args
 }
 
-func (s *Store) FindContactCandidatesContext(ctx context.Context, q ContactCandidateQuery) (*ContactCandidatePage, error) {
+var candidateMatchKinds = []string{"saved_name", "curated_name", "bound_observed_name", "archived_alias"}
+
+func (s *Store) FindContactCandidatesContext(
+	ctx context.Context, q ContactCandidateQuery,
+) (*ContactCandidatePage, error) {
 	if err := ValidateContactCandidateQuery(q); err != nil {
 		return nil, err
 	}
@@ -85,12 +95,18 @@ func (s *Store) FindContactCandidatesContext(ctx context.Context, q ContactCandi
 			return err
 		}
 		// Ambiguity describes the whole query, including when the current page is
-		// the last one or limit=1. Count only two roots, not the entire archive.
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM (SELECT p.id FROM persons p WHERE `+predicate+` LIMIT 2) matched`, args...).Scan(&page.NextAfterID); err != nil {
-			return err
+		// the last one or limit=1. A first page reads limit+1 >= 2 rows and
+		// answers it directly. Archived aliases make each pass read every
+		// recipient row of the bound participants, so only later pages pay for
+		// a separate pass, which stops after two roots.
+		if q.AfterID > 0 {
+			var matched int
+			countQuery := `SELECT COUNT(*) FROM (SELECT p.id FROM persons p WHERE ` + predicate + ` LIMIT 2) matched`
+			if err := tx.QueryRowContext(ctx, countQuery, args...).Scan(&matched); err != nil {
+				return err
+			}
+			page.Ambiguous = matched > 1
 		}
-		page.Ambiguous = page.NextAfterID > 1
-		page.NextAfterID = 0
 		matchColumns := []string{}
 		matchArgs := []any{}
 		escape := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
@@ -108,7 +124,8 @@ func (s *Store) FindContactCandidatesContext(ctx context.Context, q ContactCandi
 		allArgs = append(allArgs, matchArgs...)
 		allArgs = append(allArgs, args...)
 		allArgs = append(allArgs, q.AfterID, limit+1)
-		rows, err := tx.QueryContext(ctx, `SELECT p.id,p.vcard_uid,COALESCE(p.display_name,''),p.revision,`+strings.Join(matchColumns, ",")+`
+		rows, err := tx.QueryContext(ctx, `SELECT p.id,p.vcard_uid,COALESCE(p.display_name,''),p.revision,`+
+			strings.Join(matchColumns, ",")+`
    FROM persons p WHERE `+predicate+` AND p.id>? ORDER BY p.id LIMIT ?`, allArgs...)
 		if err != nil {
 			return err
@@ -116,14 +133,18 @@ func (s *Store) FindContactCandidatesContext(ctx context.Context, q ContactCandi
 		defer func() { _ = rows.Close() }()
 		for rows.Next() {
 			var c ContactCandidate
-			var saved, curated, observed, alias bool
-			if err := rows.Scan(&c.PersonID, &c.PersonUID, &c.DisplayName, &c.Revision, &saved, &curated, &observed, &alias); err != nil {
+			matches := make([]bool, len(candidateMatchKinds))
+			dest := []any{&c.PersonID, &c.PersonUID, &c.DisplayName, &c.Revision}
+			for i := range matches {
+				dest = append(dest, &matches[i])
+			}
+			if err := rows.Scan(dest...); err != nil {
 				return err
 			}
 			c.MatchKinds = []string{}
-			for i, yes := range []bool{saved, curated, observed, alias} {
-				if yes {
-					c.MatchKinds = append(c.MatchKinds, []string{"saved_name", "curated_name", "bound_observed_name", "archived_alias"}[i])
+			for i, matched := range matches {
+				if matched {
+					c.MatchKinds = append(c.MatchKinds, candidateMatchKinds[i])
 				}
 			}
 			page.Candidates = append(page.Candidates, c)
@@ -132,6 +153,9 @@ func (s *Store) FindContactCandidatesContext(ctx context.Context, q ContactCandi
 	})
 	if err != nil {
 		return nil, fmt.Errorf("find contact candidates: %w", err)
+	}
+	if q.AfterID == 0 {
+		page.Ambiguous = len(page.Candidates) > 1
 	}
 	if len(page.Candidates) > limit {
 		page.HasMore = true

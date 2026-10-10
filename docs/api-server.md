@@ -1871,13 +1871,16 @@ available proof:
 
 | Status | Meaning |
 | --- | --- |
-| `archive_verified` | A direct chat with matching account/chat/type proof, a complete matching roster, a non-self member bound to the selected person, and evidence and source sync no older than seven days. |
+| `archive_verified` | A direct chat with matching account/chat/type proof, a complete matching roster whose non-self members are all bound to the selected person, and evidence and source sync no older than seven days. |
 | `unresolved` | Missing, invalid, incomplete, changed, stale, deleted, or failed evidence. Read `reasons` before using the identifiers. |
 | `group_context` | A group or channel containing the person. Membership does not prove a direct endpoint. |
 | `merged_container` | A Beeper container. Its member chat IDs require independent route evidence; `missing_member_chat_ids` identifies missing or ambiguous archived members. |
 
 For Beeper, normal sync captures authoritative `Account.bridge.type` and the
-exact roster. Display labels, names, phone shapes, Matrix IDs, and curated
+exact roster. Bridge types that name a service with a native importer use that
+importer's source type as `network`: `discordgo` becomes `discord` and `slackgo`
+becomes `slack`. Other bridge types, such as `whatsapp` or `telegram`, are used
+as reported. Display labels, names, phone shapes, Matrix IDs, and curated
 contact points never establish WhatsApp. Older archives remain unresolved until
 normal sync captures this metadata. `network_label` is a display value.
 `freshness=archive_only` and `checked_at` describe the lookup; archive verification
@@ -1889,8 +1892,10 @@ pass these IDs as `after_conversation_id`, `after_contact_point_id`,
 `after_observation_id`, and `after_suggestion_id`, respectively. The route cursor
 advances over inspected conversations, so a network-filtered page can be empty
 with `has_more=true`. Follow it until exhausted. Optional `network` accepts a
-canonical lowercase bridge/service slug; unknown-network routes remain visible
-as unresolved. Optional `source_id` restricts route sources. These filters do
+lowercase service name such as `whatsapp` or `discord`. Native sources of other
+networks are skipped without using the page. Beeper routes are filtered after
+their route metadata is read, and unknown-network routes remain visible as
+unresolved. Optional `source_id` restricts route sources. These filters do
 not restrict the contact or suggestion sections.
 
 Paging is live between requests. Restart after a changed person or identity

@@ -863,58 +863,87 @@ func TestUnfinishedChatRosterFetchInterruptionInvalidatesMessagingRoute(t *testi
 	}
 }
 
-func TestMediaChatRefreshInvalidatesPriorRouteMembershipProof(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
+func TestMediaChatRefreshKeepsRouteProofOnlyForUnchangedRoster(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		participants []map[string]any
+		gone         bool
+		wantStatus   string
+		wantReason   string
+	}{
+		{
+			name:         "unchanged roster",
+			participants: []map[string]any{{"id": "@avery:example.test", "fullName": "Avery Example"}},
+			wantStatus:   "archive_verified",
+		},
+		{
+			name: "member added",
+			participants: []map[string]any{
+				{"id": "@avery:example.test", "fullName": "Avery Example"},
+				{"id": "@blake:example.test", "fullName": "Blake Example"},
+			},
+			wantStatus: "unresolved",
+			wantReason: "roster_changed",
+		},
+		{name: "chat gone", gone: true, wantStatus: "unresolved", wantReason: "membership_incomplete"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
 
-	f := newFakeBeeper(t)
-	chat := &fakeChat{ID: "!media-refresh:example.test", AccountID: "account-a", Type: "single"}
-	chat.Participants = []map[string]any{{"id": "@avery:example.test", "fullName": "Avery Example"}}
-	f.addChat(chat)
+			f := newFakeBeeper(t)
+			chatID := "!media-refresh:example.test"
+			if !test.gone {
+				f.addChat(&fakeChat{ID: chatID, AccountID: "account-a", Type: "single", Participants: test.participants})
+			}
 
-	st := testutil.NewSQLiteTestStore(t)
-	source, err := st.GetOrCreateSource("beeper", "account-a")
-	requirements.NoError(err)
-	_, err = st.DB().Exec(`UPDATE sources SET last_sync_at=CURRENT_TIMESTAMP WHERE id=?`, source.ID)
-	requirements.NoError(err)
-	participantID, err := st.EnsureParticipantByIdentifier("email", "avery@example.test", "Avery Example")
-	requirements.NoError(err)
-	person, _, err := st.CreatePersonFromParticipant(participantID)
-	requirements.NoError(err)
-	conversationID, err := st.EnsureConversationWithType(source.ID, chat.ID, "direct_chat", "Avery Example")
-	requirements.NoError(err)
-	requirements.NoError(st.EnsureConversationParticipant(conversationID, participantID, "member"))
-	requirements.NoError(st.SetConversationMessagingRouteEvidence(t.Context(), conversationID, store.MessagingRouteEvidence{
-		ChatID:             chat.ID,
-		AccountID:          "account-a",
-		Network:            "whatsapp",
-		ProviderType:       "single",
-		ObservedAt:         time.Now().UTC(),
-		MembershipComplete: true,
-		ParticipantIDs:     []int64{participantID},
-		SelfParticipantIDs: []int64{},
-		MemberChatIDs:      []string{},
-	}))
-	query := store.PersonMessagingRouteQuery{PersonUID: person.VCardUID}
-	before, err := st.GetPersonMessagingRoutesContext(t.Context(), query)
-	requirements.NoError(err)
-	requirements.Len(before.Routes.Items, 1)
-	assertions.Equal("archive_verified", before.Routes.Items[0].Status)
+			st := testutil.NewSQLiteTestStore(t)
+			source, err := st.GetOrCreateSource("beeper", "account-a")
+			requirements.NoError(err)
+			_, err = st.DB().Exec(`UPDATE sources SET last_sync_at=CURRENT_TIMESTAMP WHERE id=?`, source.ID)
+			requirements.NoError(err)
+			participantID, err := st.EnsureParticipantByIdentifier("email", "avery@example.test", "Avery Example")
+			requirements.NoError(err)
+			person, _, err := st.CreatePersonFromParticipant(participantID)
+			requirements.NoError(err)
+			conversationID, err := st.EnsureConversationWithType(source.ID, chatID, "direct_chat", "Avery Example")
+			requirements.NoError(err)
+			requirements.NoError(st.EnsureConversationParticipant(conversationID, participantID, "member"))
+			requirements.NoError(st.SetConversationMemberCount(conversationID, 1))
+			requirements.NoError(st.SetConversationMessagingRouteEvidence(t.Context(), conversationID, store.MessagingRouteEvidence{
+				ChatID:             chatID,
+				AccountID:          "account-a",
+				Network:            "whatsapp",
+				ProviderType:       "single",
+				ObservedAt:         time.Now().UTC(),
+				MembershipComplete: true,
+				ParticipantIDs:     []int64{participantID},
+				SelfParticipantIDs: []int64{},
+				MemberChatIDs:      []string{},
+			}))
+			query := store.PersonMessagingRouteQuery{PersonUID: person.VCardUID}
+			before, err := st.GetPersonMessagingRoutesContext(t.Context(), query)
+			requirements.NoError(err)
+			requirements.Len(before.Routes.Items, 1)
+			assertions.Equal("archive_verified", before.Routes.Items[0].Status)
 
-	srv := f.server()
-	t.Cleanup(srv.Close)
-	imp := NewImporter(st, NewClient(srv.URL, testToken, 10000))
-	refresh, err := imp.refreshChatContext(t.Context(), 0, source.ID, conversationID, chat.ID, &ImportSummary{})
-	requirements.NoError(err)
-	requirements.NotNil(refresh)
-	assertions.True(refresh.found)
+			srv := f.server()
+			t.Cleanup(srv.Close)
+			imp := NewImporter(st, NewClient(srv.URL, testToken, 10000))
+			refresh, err := imp.refreshChatContext(t.Context(), 0, source.ID, conversationID, chatID, &ImportSummary{})
+			requirements.NoError(err)
+			requirements.NotNil(refresh)
+			assertions.Equal(!test.gone, refresh.found)
 
-	after, err := st.GetPersonMessagingRoutesContext(t.Context(), query)
-	requirements.NoError(err)
-	requirements.Len(after.Routes.Items, 1)
-	assertions.Equal("unresolved", after.Routes.Items[0].Status)
-	assertions.False(after.Routes.Items[0].MembershipComplete)
-	assertions.Contains(after.Routes.Items[0].Reasons, "membership_incomplete")
+			after, err := st.GetPersonMessagingRoutesContext(t.Context(), query)
+			requirements.NoError(err)
+			requirements.Len(after.Routes.Items, 1)
+			assertions.Equal(test.wantStatus, after.Routes.Items[0].Status)
+			if test.wantReason != "" {
+				assertions.Contains(after.Routes.Items[0].Reasons, test.wantReason)
+			}
+		})
+	}
 }
 
 func TestResumedTailScanSkipsChatsAlreadyConfirmedGone(t *testing.T) {
@@ -996,5 +1025,22 @@ func TestResumedTailScanSkipsChatsAlreadyConfirmedGone(t *testing.T) {
 	}
 	for _, chatID := range []string{"!gone-a:example.test", "!gone-b:example.test", "!gone-c:example.test"} {
 		assertions.True(state.Chats[chatID].Gone)
+	}
+}
+
+func TestRouteEvidenceUsesServiceNetworkForBeeperBridgeTypes(t *testing.T) {
+	for _, test := range []struct{ bridgeType, want string }{
+		{bridgeType: "discordgo", want: "discord"},
+		{bridgeType: "slackgo", want: "slack"},
+		{bridgeType: "whatsapp", want: "whatsapp"},
+		{bridgeType: " Telegram ", want: "telegram"},
+	} {
+		t.Run(test.bridgeType, func(t *testing.T) {
+			account := &Account{AccountID: "account-a", Bridge: &AccountBridge{Type: test.bridgeType}, Status: "connected"}
+			e := routeEvidenceFor(&Chat{ID: "!chat:example.test", AccountID: "account-a", Type: "single"},
+				ImportOptions{AccountID: "account-a", routeAccount: account})
+			assert.Equal(t, test.want, e.Network)
+			assert.Empty(t, e.Failure)
+		})
 	}
 }

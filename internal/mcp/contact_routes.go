@@ -34,7 +34,7 @@ func findContactCandidatesDefinition() toolDefinition {
 func getPersonMessagingRoutesDefinition() toolDefinition {
 	properties := map[string]*jsonschema.Schema{
 		"person_uid": stringSchema("Selected canonical or retired UID; unknown and tombstoned UIDs are explicit errors"),
-		"network":    stringSchema("Optional canonical lowercase bridge/service slug. Unknown networks stay visible as unresolved."),
+		"network":    stringSchema("Optional lowercase service name such as whatsapp or discord. Unknown networks stay visible as unresolved."),
 		"source_id":  boundedIntegerSchema("Optional source ID", 0, maxJSONSafeInteger),
 		"limit":      boundedIntegerWithDefault("Maximum rows per independent section, default 20", 1, 100, 20),
 	}

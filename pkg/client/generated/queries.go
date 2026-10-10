@@ -891,7 +891,7 @@ type GetPersonMessagingRoutesQuery struct {
 	// PersonUID Canonical or retired person UID. Tombstones return 410; unknown UIDs return 404.
 	PersonUID string `json:"person_uid" validate:"required"`
 
-	// Network Canonical lowercase bridge/service slug; unknown networks remain visible as unresolved.
+	// Network Lowercase service name such as whatsapp or discord; unknown networks remain visible as unresolved.
 	Network             *string `json:"network,omitempty"`
 	SourceID            *int64  `json:"source_id,omitempty" validate:"omitempty,gte=0"`
 	Limit               *int64  `json:"limit,omitempty" validate:"omitempty,gte=1,lte=100"`

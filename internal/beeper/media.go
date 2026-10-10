@@ -364,18 +364,18 @@ type chatRefresh struct {
 // archived conversation type and membership record with it, so this backfill
 // and every later policy evaluation weigh the source's current truth rather
 // than a type or roster the archive predates. The returned error is fatal
-// (store failure); a fetch failure is carried in the result instead.
+// (store failure); a fetch failure is carried in the result instead. Route
+// proof survives an unchanged refresh: route evaluation compares the written
+// type and member count with the captured roster snapshot.
 func (imp *Importer) refreshChatContext(
 	ctx context.Context, syncID, sourceID, conversationID int64, chatID string, sum *ImportSummary,
 ) (*chatRefresh, error) {
-	// Media refresh does not reconcile archived participant identities. Invalidate
-	// the earlier roster proof before the provider read so an interruption or
-	// membership change cannot leave that proof usable for route discovery.
-	if err := imp.store.InvalidateConversationMessagingRouteEvidence(ctx, conversationID); err != nil {
-		return nil, err
-	}
 	chat, gerr := imp.client.GetChat(ctx, chatID)
 	if errors.Is(gerr, ErrNotFound) {
+		// Route proof for a chat Beeper no longer has cannot stay verified.
+		if err := imp.store.InvalidateConversationMessagingRouteEvidence(ctx, conversationID); err != nil {
+			return nil, err
+		}
 		return &chatRefresh{}, nil
 	}
 	if gerr != nil {

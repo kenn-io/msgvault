@@ -26,7 +26,7 @@ func (s *Server) registerContactRouteRoutes(api huma.API) {
 	registerRawHumaRoute(api, candidates, s.handleFindContactCandidates)
 
 	routes := rawAPIV1Operation("getPersonMessagingRoutes", http.MethodGet, "/people/messaging-routes", "Read one person's archived messaging routes and contact evidence by stable UID")
-	routes.Parameters = []*huma.Param{contactStringParam("person_uid", true, "Canonical or retired person UID. Tombstones return 410; unknown UIDs return 404."), contactStringParam("network", false, "Canonical lowercase bridge/service slug; unknown networks remain visible as unresolved."), contactIntegerParam("source_id", 0, 0), contactIntegerParam("limit", 1, 100)}
+	routes.Parameters = []*huma.Param{contactStringParam("person_uid", true, "Canonical or retired person UID. Tombstones return 410; unknown UIDs return 404."), contactStringParam("network", false, "Lowercase service name such as whatsapp or discord; unknown networks remain visible as unresolved."), contactIntegerParam("source_id", 0, 0), contactIntegerParam("limit", 1, 100)}
 	for _, name := range []string{"after_conversation_id", "after_contact_point_id", "after_observation_id", "after_suggestion_id"} {
 		routes.Parameters = append(routes.Parameters, contactIntegerParam(name, 0, 0))
 	}
