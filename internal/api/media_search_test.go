@@ -712,7 +712,7 @@ func TestMediaSearchSuppliedInputLimit(t *testing.T) {
 				selected = f.match(t, "ordinary")
 			}
 			if test.inputs == 64 {
-				f.report.MediaSelections = []docbankmedia.SearchMediaSelection{{SearchMediaSource: docbankmedia.SearchMediaSource{SourceID: first.sourceID, SourceVersionID: "version", ContentVersionID: first.contentVersionID}, Origin: "supplied", SuppliedInputID: first.suppliedInputID, Completeness: "complete"}}
+				f.report.MediaSelections = []docbankmedia.SearchMediaSelection{{SourceID: first.sourceID, SourceVersionID: "version", ContentVersionID: first.contentVersionID, Origin: "supplied", SuppliedInputID: first.suppliedInputID, Completeness: "complete"}}
 			}
 			status, response, raw := searchMediaFor(t, f.server(true), "q=words")
 			require.Equal(http.StatusOK, status, raw)
