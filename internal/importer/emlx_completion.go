@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -249,7 +250,7 @@ func (r *emlxOccurrenceImporter) tryHit(
 	}
 	out.kind = emlxOutcomeUnchanged
 	if !targetComplete(target, targetID, r.policy) {
-		if err := r.recoverTarget(ctx, chunk, targetID, target); err != nil {
+		if err := r.recoverTarget(ctx, chunk, nil, targetID, target); err != nil {
 			return out, true, err
 		}
 		out.kind = emlxOutcomeUpdated
@@ -268,15 +269,65 @@ func (r *emlxOccurrenceImporter) tryHit(
 
 // recoverTarget finishes unfinished attachment or search work from the newest
 // committed raw, never from older source bytes. Ingestion applies this
-// occurrence's label alongside the labels already on the message.
+// occurrence's label alongside the labels already on the message. visiting is
+// the occurrence being imported, or nil on a receipt hit.
 func (r *emlxOccurrenceImporter) recoverTarget(
-	ctx context.Context, chunk *emlxChunk, targetID string, target store.EmlxTargetState,
+	ctx context.Context, chunk *emlxChunk, visiting *emlxVisit, targetID string,
+	target store.EmlxTargetState,
 ) error {
 	current, err := r.io.raw(ctx, r.st, target.MessageID)
 	if err != nil {
 		return err
 	}
+	if err := r.creditIntent(ctx, visiting, targetID, target, current); err != nil {
+		return err
+	}
 	return r.completeTarget(ctx, chunk, targetID, target, current, target.InternalDate.Time)
+}
+
+// creditIntent settles an interrupted ingest before anything else changes the
+// target. When the archived raw is the one the ingest was writing, the
+// intended occurrence's receipt gains its attachment parts. Otherwise the
+// write never landed and that occurrence retries its parts.
+func (r *emlxOccurrenceImporter) creditIntent(
+	ctx context.Context, visiting *emlxVisit, targetID string, target store.EmlxTargetState,
+	current []byte,
+) error {
+	intent := emlxPendingIntent(target, targetID)
+	if intent == nil || intent.Raw != emlxRawDigest(current) {
+		return nil
+	}
+	items, err := r.st.EmlxOccurrencesContext(ctx, r.sourceID, []string{intent.Occurrence})
+	if err != nil {
+		return err
+	}
+	receipt := emlxReceipt{Version: emlxReceiptVersion, ID: intent.Occurrence, Target: targetID}
+	status := "pending"
+	if item, ok := items[intent.Occurrence]; ok {
+		if prior, ok := decodeEmlxReceipt(item.Checksum, intent.Occurrence); ok && prior.Target == targetID {
+			receipt, status = prior, item.Status
+		}
+	}
+	receipt.SourceParts = maps.Clone(receipt.SourceParts)
+	if receipt.SourceParts == nil {
+		receipt.SourceParts = make(map[string]string, len(intent.Parts))
+	}
+	maps.Copy(receipt.SourceParts, intent.Parts)
+	checksum, err := encodeEmlxReceipt(receipt)
+	if err != nil {
+		return err
+	}
+	item := store.SourceImportItem{
+		SourceID: r.sourceID, Provider: "emlx-occurrence", ProviderID: intent.Occurrence,
+		Name: intent.Occurrence[65:], Checksum: checksum, Status: status,
+	}
+	if err := r.st.PutEmlxLedgerItemsContext(ctx, item); err != nil {
+		return err
+	}
+	if visiting != nil && visiting.id == intent.Occurrence {
+		visiting.item, visiting.receipt, visiting.decoded = &item, receipt, true
+	}
+	return nil
 }
 
 // completeTarget ingests raw into the shared target and records its completion.
@@ -284,7 +335,7 @@ func (r *emlxOccurrenceImporter) completeTarget(
 	ctx context.Context, chunk *emlxChunk, targetID string, target store.EmlxTargetState,
 	raw []byte, date time.Time,
 ) error {
-	completed, err := r.ingestTarget(ctx, chunk, targetID, target, raw, date)
+	completed, err := r.ingestTarget(ctx, chunk, targetID, target, raw, date, nil)
 	if err != nil {
 		return err
 	}
@@ -297,7 +348,7 @@ func (r *emlxOccurrenceImporter) completeTarget(
 // message/raw/blob/index mutation.
 func (r *emlxOccurrenceImporter) ingestTarget(
 	ctx context.Context, chunk *emlxChunk, targetID string, target store.EmlxTargetState,
-	raw []byte, date time.Time,
+	raw []byte, date time.Time, intent *emlxIntent,
 ) (store.SourceImportItem, error) {
 	chunk.forget(targetID)
 	labels := []int64{chunk.labelID}
@@ -312,7 +363,7 @@ func (r *emlxOccurrenceImporter) ingestTarget(
 			}
 		}
 	}
-	completion := emlxCompletion{Target: targetID, Policy: r.policy, Run: r.syncID}
+	completion := emlxCompletion{Target: targetID, Policy: r.policy, Run: r.syncID, Intent: intent}
 	dirty, err := emlxTargetItem(r.sourceID, completion, "pending")
 	if err != nil {
 		return dirty, err
@@ -337,6 +388,7 @@ func (r *emlxOccurrenceImporter) ingestTarget(
 	if state := states[targetID]; state.MessageID == 0 || !state.HasRaw || state.Deleted {
 		return dirty, errors.New("EMLX target has no live archived raw")
 	}
+	completion.Intent = nil
 	return emlxTargetItem(r.sourceID, completion, "imported")
 }
 
@@ -355,7 +407,7 @@ type emlxCandidate struct {
 
 func (r *emlxOccurrenceImporter) importCold(
 	ctx context.Context, chunk *emlxChunk, v *emlxVisit,
-) (out emlxOutcome, retErr error) {
+) (out emlxOutcome, err error) {
 	// A stale clean path must become pending before attempting new content.
 	if v.item != nil && v.item.Status == "imported" {
 		if err := r.markPending(ctx, v, v.item.Checksum); err != nil {
@@ -372,13 +424,9 @@ func (r *emlxOccurrenceImporter) importCold(
 		}
 		return out, err
 	}
-	defer func() {
-		if retErr != nil {
-			retErr = errors.Join(retErr, r.saveProgress(ctx, v, c))
-		}
-	}()
 	if r.needsIngest(v, c) {
-		completed, err := r.ingestTarget(ctx, chunk, c.targetID, c.target, c.merged.Raw, c.fallbackDate)
+		intent := &emlxIntent{Occurrence: v.id, Parts: c.merged.SourceParts, Raw: emlxRawDigest(c.merged.Raw)}
+		completed, err := r.ingestTarget(ctx, chunk, c.targetID, c.target, c.merged.Raw, c.fallbackDate, intent)
 		if err != nil {
 			return out, err
 		}
@@ -432,7 +480,7 @@ func (r *emlxOccurrenceImporter) readCandidate(
 			return c, err
 		}
 		if !targetComplete(c.target, c.targetID, r.policy) {
-			if err := r.recoverTarget(ctx, chunk, c.targetID, c.target); err != nil {
+			if err := r.recoverTarget(ctx, chunk, v, c.targetID, c.target); err != nil {
 				return c, err
 			}
 			c.recovered = true
@@ -493,29 +541,6 @@ func (r *emlxOccurrenceImporter) needsIngest(v *emlxVisit, c *emlxCandidate) boo
 	return !ok || completion.Run != r.syncID
 }
 
-// saveProgress keeps evidence for a candidate that ingestion committed before
-// later attachment or index work failed, even after cancellation.
-func (r *emlxOccurrenceImporter) saveProgress(ctx context.Context, v *emlxVisit, c *emlxCandidate) error {
-	ctx = context.WithoutCancel(ctx)
-	states, err := r.st.EmlxTargetsContext(ctx, r.sourceID, 0, []string{c.targetID})
-	if err != nil {
-		return err
-	}
-	state := states[c.targetID]
-	if !state.HasRaw || state.Deleted {
-		return nil
-	}
-	saved, err := r.io.raw(ctx, r.st, state.MessageID)
-	if err != nil || !bytes.Equal(saved, c.merged.Raw) {
-		return err
-	}
-	checksum, err := encodeEmlxReceipt(r.receipt(v, c))
-	if err != nil {
-		return err
-	}
-	return r.markPending(ctx, v, checksum)
-}
-
 func (r *emlxOccurrenceImporter) receipt(v *emlxVisit, c *emlxCandidate) emlxReceipt {
 	return emlxReceipt{
 		Version: emlxReceiptVersion, ID: v.id, SourceParts: c.merged.SourceParts, Target: c.targetID,
@@ -524,16 +549,29 @@ func (r *emlxOccurrenceImporter) receipt(v *emlxVisit, c *emlxCandidate) emlxRec
 
 // publishReceipt completes the occurrence once all supported work succeeded
 // and the file and its dependencies did not change while they were read. A
-// target completed by this occurrence is published with it, or alone when
-// the occurrence remains pending.
+// target completed by this occurrence is published in the same transaction.
+// When other work remains, the archive still holds the merged raw, so the
+// pending receipt keeps the attachment parts this occurrence contributed.
 func (r *emlxOccurrenceImporter) publishReceipt(
 	ctx context.Context, v *emlxVisit, c *emlxCandidate, completed ...store.SourceImportItem,
 ) error {
 	receipt, err := r.readyReceipt(ctx, v, c)
-	if err != nil {
-		return errors.Join(err, r.st.PutEmlxLedgerItemsContext(ctx, completed...))
+	if err == nil {
+		return r.st.PutEmlxLedgerItemsContext(ctx, append(completed, receipt)...)
 	}
-	return r.st.PutEmlxLedgerItemsContext(ctx, append(completed, receipt)...)
+	checksum, encodeErr := encodeEmlxReceipt(r.receipt(v, c))
+	if encodeErr != nil {
+		return errors.Join(err, encodeErr)
+	}
+	pending := store.SourceImportItem{
+		SourceID: r.sourceID, Provider: "emlx-occurrence", ProviderID: v.id, Name: v.rel,
+		Checksum: checksum, Status: "pending",
+	}
+	putErr := r.st.PutEmlxLedgerItemsContext(context.WithoutCancel(ctx), append(completed, pending)...)
+	if putErr == nil {
+		v.item = &pending
+	}
+	return errors.Join(err, putErr)
 }
 
 func (r *emlxOccurrenceImporter) readyReceipt(

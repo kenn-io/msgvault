@@ -159,3 +159,28 @@ func TestImportEmlxFatalUnclosedPlaceholderPreservesRaw(t *testing.T) {
 		a.Equal(msg.Raw, archived, "salvage must preserve restore-attempted raw")
 	}
 }
+
+// Text after the closing delimiter is epilogue, even when it looks like an
+// attachment placeholder. It must neither become a part nor block archiving.
+func TestImportEmlxIgnoresPlaceholderInEpilogue(t *testing.T) {
+	r, a := require.New(t), assert.New(t)
+	st, tmp := openTestStore(t)
+	root := filepath.Join(tmp, "Inbox.mbox")
+	raw := []byte("From: sender@example.test\nSubject: Synthetic epilogue\nMIME-Version: 1.0\n" +
+		"Content-Type: multipart/mixed; boundary=\"b\"\n\n" +
+		"--b\nContent-Type: text/plain\n\nbody\n--b--\nepilogue text\n" +
+		"--b\nContent-Type: application/octet-stream\nX-Apple-Content-Length: 4\n\n\n")
+	mkMailboxDir(t, root, map[string][]byte{"1.partial.emlx": raw})
+	cacheAttachment(t, root, "1", "2", "epilogue.bin", []byte("not a part"))
+	for range 2 {
+		summary, err := ImportEmlxDir(t.Context(), st, root, EmlxImportOptions{Identifier: "owner@example.test"})
+		r.NoError(err)
+		a.Zero(summary.Errors)
+		a.False(summary.HardErrors)
+	}
+	var messageID int64
+	r.NoError(st.DB().QueryRow("SELECT id FROM messages").Scan(&messageID))
+	archived, err := st.GetMessageRawContext(t.Context(), messageID)
+	r.NoError(err)
+	a.Equal(raw, archived, "the epilogue is archived unchanged")
+}

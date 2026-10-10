@@ -113,6 +113,12 @@ func restoreSelectedAttachments(raw []byte, messagePath string, maxBytes int64, 
 	i := 0
 	for i < len(lines) {
 		line := lines[i]
+		// The epilogue after the closing delimiter holds no parts, even when it
+		// contains text shaped like one. Copy it unchanged, as splitParts does.
+		if strings.TrimRight(strings.TrimSuffix(line, "\r"), " \t") == closeB {
+			out = append(out, lines[i:]...)
+			break
+		}
 		if strings.TrimSuffix(line, "\r") != open {
 			out = append(out, line)
 			i++
