@@ -257,12 +257,8 @@ func (reader *MessageRecordingReader) search(ctx context.Context, query string, 
 		response.Partial = response.Partial || !stable
 		selection, selected := selections[source]
 		if !selected {
-			if oversized[source] {
-				response.UnavailableOccurrences++
-				continue
-			}
 			currentRevision := o.SuppliedInputID == "" || transcriptRevisionMatches(o, "supplied", revisions[o.AttachmentID])
-			if currentRevision && reader.UploadConsent && (o.RetentionState == store.BeeperMediaRetentionPending || o.RetentionState == store.BeeperMediaRetentionSourceUnavailable ||
+			if !oversized[source] && currentRevision && reader.UploadConsent && (o.RetentionState == store.BeeperMediaRetentionPending || o.RetentionState == store.BeeperMediaRetentionSourceUnavailable ||
 				o.DeliveryPhase == "pending-artifact" || o.DeliveryPhase == "pending-process" || o.DeliveryPhase == "observing") {
 				response.PendingOccurrences++
 			} else {
