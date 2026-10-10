@@ -2,8 +2,9 @@ package store
 
 // Canonical message types shared across import and migration paths.
 const (
-	MessageTypeEmail      = "email"
-	MessageTypeGoogleChat = "google_chat"
+	MessageTypeEmail         = "email"
+	MessageTypeCalendarEvent = "calendar_event"
+	MessageTypeGoogleChat    = "google_chat"
 )
 
 // IsEmailMessageType reports whether a messages.message_type value denotes an

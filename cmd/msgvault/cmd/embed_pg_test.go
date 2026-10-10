@@ -249,6 +249,72 @@ func TestFillFullCoveragePartitionsScopedLiveMessagesPG(t *testing.T) {
 	assert.Equal(row.LiveCount, row.EmbeddedCount+row.BlankCount+row.MissingCount)
 }
 
+func TestFillFullCoverageKeepsSnapshotAcrossEmbeddingBatchCommitPG(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	pgb, _, dsn := openEmbedManagePGDB(t)
+	ctx := t.Context()
+	gen, err := pgb.CreateGeneration(ctx, "example-model", 4, "example-fingerprint")
+	require.NoError(err)
+
+	main, err := store.Open(dsn)
+	require.NoError(err)
+	t.Cleanup(func() { _ = main.Close() })
+	source, err := main.GetOrCreateSource("gmail", "coverage@example.test")
+	require.NoError(err)
+	conversationID, err := main.EnsureConversation(source.ID, "coverage-thread", "Coverage")
+	require.NoError(err)
+	alreadyStampedID, err := main.UpsertMessage(&store.Message{
+		SourceID: source.ID, ConversationID: conversationID,
+		SourceMessageID: "already-stamped", MessageType: "email",
+	})
+	require.NoError(err)
+	batchPendingID, err := main.UpsertMessage(&store.Message{
+		SourceID: source.ID, ConversationID: conversationID,
+		SourceMessageID: "batch-pending", MessageType: "email",
+	})
+	require.NoError(err)
+	_, err = main.DB().ExecContext(ctx, `UPDATE messages SET embed_gen = $1 WHERE id = $2`, int64(gen), alreadyStampedID)
+	require.NoError(err)
+	require.NoError(pgb.Upsert(ctx, gen, []vector.Chunk{
+		{MessageID: alreadyStampedID, Vector: []float32{1, 0, 0, 0}},
+	}), "seed already-stamped vector")
+
+	cfg := config.NewDefaultConfig()
+	cfg.Data.DatabaseURL = dsn
+	cfg.Vector.Embeddings.Dimension = 4
+	ctx = testInvocationContext(ctx, cfg, invocationOptions{})
+	backend, closeBackend, err := openEmbeddingsBackend(ctx)
+	require.NoError(err)
+	t.Cleanup(closeBackend)
+	snapshot, ok := backend.(vector.CoverageSnapshotBackend)
+	require.True(ok)
+	interleaved := &interleavingCoverageBackend{
+		Backend:  backend,
+		snapshot: snapshot,
+		commit: func(ctx context.Context) error {
+			if err := backend.Upsert(ctx, gen, []vector.Chunk{
+				{MessageID: batchPendingID, Vector: []float32{0, 1, 0, 0}},
+			}); err != nil {
+				return err
+			}
+			_, err := main.DB().ExecContext(ctx,
+				`UPDATE messages SET embed_gen = $1 WHERE id = $2`, int64(gen), batchPendingID)
+			return err
+		},
+	}
+
+	row := embeddingGenerationRow{ID: gen}
+	require.NoError(fillFullCoverage(ctx, interleaved, cfg.Vector.Embed.Scope.BuildScope(), &row))
+	assert.Equal(int64(2), row.LiveCount)
+	assert.Equal(int64(1), row.EmbeddedCount,
+		"the message stamped after the main-DB snapshot is not part of its coverage count")
+	assert.Equal(int64(0), row.BlankCount)
+	assert.Equal(int64(1), row.MissingCount)
+	assert.Equal(row.LiveCount, row.EmbeddedCount+row.BlankCount+row.MissingCount,
+		"coverage remains a partition when an embedding batch commits between reads")
+}
+
 // TestListEmbeddingGenerations_PG exercises listEmbeddingGenerations through
 // the PG rebind path against a live PostgreSQL database. Validates that the
 // PG placeholder rebind and boolean-placeholder behaviour work correctly.

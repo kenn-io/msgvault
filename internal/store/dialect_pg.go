@@ -646,6 +646,7 @@ func (d *PostgreSQLDialect) FTSRebuildSchema(ctx context.Context, q contextQueri
 func (d *PostgreSQLDialect) LegacyColumnMigrations() []ColumnMigration {
 	return []ColumnMigration{
 		{`ALTER TABLE person_match_judgment_cursor ADD COLUMN IF NOT EXISTS started_at_zero BOOLEAN NOT NULL DEFAULT FALSE`, "person_match_judgment_cursor.started_at_zero"},
+		{`ALTER TABLE carddav_publications ADD COLUMN IF NOT EXISTS pending_intent_id TEXT`, "carddav_publications.pending_intent_id"},
 		{`ALTER TABLE carddav_publications ADD COLUMN IF NOT EXISTS outgoing_envelope_metadata BYTEA`, "carddav_publications.outgoing_envelope_metadata"},
 		{`ALTER TABLE carddav_publications ADD COLUMN IF NOT EXISTS approved_body_sha256 TEXT`, "carddav_publications.approved_body_sha256"},
 		{`ALTER TABLE carddav_publications ADD COLUMN IF NOT EXISTS approved_inference_revision BIGINT`, "carddav_publications.approved_inference_revision"},
@@ -2370,6 +2371,7 @@ var exclusiveLockTables = []string{
 	"collections", "collection_sources", "account_identities", "applied_migrations",
 	"sync_operations",
 	"source_import_items", "sync_run_items", "sync_checkpoints",
+	"inbox_provider_states", "inbox_source_revisions", "inbox_triage_mappings",
 	"imap_folder_state", "imap_message_memberships", "imap_drafts", "gmail_drafts", "chat_drafts", "beeper_drafts",
 }
 

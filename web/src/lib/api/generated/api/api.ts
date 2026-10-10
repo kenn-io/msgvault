@@ -12,6 +12,7 @@ import type {
   AppendPersonNotePathParameters,
   AppendPersonNoteRequest,
   ApproveCardDAVPublicationPathParameters,
+  ApproveScopedCardDAVPublicationPathParameters,
   AttachmentInfo,
   AttributeDefinition,
   AttributeDefinitionsResponse,
@@ -37,6 +38,7 @@ import type {
   CacheBuildAccepted,
   CacheBuildStatus,
   CacheStats,
+  CalendarSource,
   CancelDeletionPathParameters,
   CancelDeletionResponse,
   CancelSettingsPeopleCodexLoginPathParameters,
@@ -57,6 +59,8 @@ import type {
   CardDAVPublicationResponse,
   CardDAVResolveRequest,
   CardDAVRunsResponse,
+  CardDAVScopedPublicationApprovalRequest,
+  CardDAVScopedPublicationReceiptResponse,
   CardDAVStatusResponse,
   CardDAVSyncRequest,
   Catalog,
@@ -122,6 +126,7 @@ import type {
   EmploymentsResponse,
   EndEmploymentBody,
   EndEmploymentPathParameters,
+  Envelope,
   FastSearchParams,
   FileMetadataResponse,
   FilterMessagesParams,
@@ -156,10 +161,16 @@ import type {
   GetFilePathParameters,
   GetGmailIDsByFilterParams,
   GetIdentityMatchCandidatePathParameters,
+  GetIdentityOperationReceiptParams,
   GetImportJobPathParameters,
+  GetMCPEventMessageParams,
+  GetMCPEventMessagePathParameters,
+  GetMCPEventParams,
   GetMessageInlinePartParams,
   GetMessageInlinePartPathParameters,
   GetMessagePathParameters,
+  GetMessageTagsParams,
+  GetMessageTagsPathParameters,
   GetOperationRunPathParameters,
   GetOrganizationHistoryPathParameters,
   GetOrganizationPathParameters,
@@ -197,6 +208,11 @@ import type {
   IdentityMatchCandidate,
   IdentityMatchCandidatesResponse,
   IdentityMatchRejectResponse,
+  IdentityOperationApplyRequest,
+  IdentityOperationApplyResponse,
+  IdentityOperationPreviewResponse,
+  IdentityPreviewRequest,
+  IdentityReceipt,
   ImportJobRequest,
   ImportJobResponse,
   KataEvidenceLinkRequest,
@@ -252,11 +268,14 @@ import type {
   ListPersonRelationshipReviewsParams,
   ListPersonRelationshipsParams,
   ListPersonRelationshipsPathParameters,
+  ListResult,
   ListSourceIdentitiesPathParameters,
   ListSourceStatusParams,
   ListTextConversationMessagesParams,
   ListTextConversationMessagesPathParameters,
   ListTextConversationsParams,
+  MCPCapabilities,
+  MCPEventsListRequest,
   Manifest,
   MeetingImportRequest,
   MeetingImportResponse,
@@ -266,6 +285,9 @@ import type {
   MergePersonsPathParameters,
   MessageDetail,
   MessageListResponse,
+  MessageTagChange,
+  MessageTagResponse,
+  MessageTagResult,
   OperationRunDetail,
   OperationRunsResponse,
   OperationStatusResponse,
@@ -349,6 +371,7 @@ import type {
   PersonSummary,
   PersonTracking,
   PreviewCardDAVPublicationPathParameters,
+  PreviewScopedCardDAVPublicationPathParameters,
   ProviderCredentialResponse,
   ProviderCredentialWriteRequest,
   PublishCardDAVPersonPathParameters,
@@ -362,6 +385,7 @@ import type {
   PutSettingsProviderCredentialPathParameters,
   QueryRequest,
   QueryResult,
+  ReconcileScopedCardDAVPublicationPathParameters,
   RejectPersonBriefPathParameters,
   RejectPersonBriefRequest,
   RelationshipReviewsResponse,
@@ -412,6 +436,9 @@ import type {
   Status,
   StatusMessageResponse,
   StructuredPersonProfile,
+  SubscribeRequest,
+  SubscribeResult,
+  SubscriptionStatus,
   SyncCLIParams,
   SyncFullCLIParams,
   SyncResult,
@@ -434,7 +461,9 @@ import type {
   UnlinkMessageTaskPathParameters,
   UnlinkPersonAgendaItemPathParameters,
   UnpublishCardDAVPersonPathParameters,
+  UnsubscribeRequest,
   UpdateCardDAVBookRolesPathParameters,
+  UpdateMessageTagsPathParameters,
   UpdatePersonAgendaItemPathParameters,
   UploadTokenPathParameters,
   VerifyCLIParams,
@@ -957,6 +986,63 @@ export const listCardDAVRuns = (
 ) => {
   return orvalFetch<CardDAVRunsResponse>(
     { url: `/api/v1/carddav/runs`, method: "GET", params },
+    options,
+  );
+};
+/**
+ * @summary Approve one mapped CardDAV update with a durable receipt
+ */
+export const approveScopedCardDAVPublication = (
+  { personId }: ApproveScopedCardDAVPublicationPathParameters,
+  cardDAVScopedPublicationApprovalRequest: CardDAVScopedPublicationApprovalRequest,
+  options?: SecondParameter<
+    typeof orvalFetch<CardDAVScopedPublicationReceiptResponse>
+  >,
+) => {
+  return orvalFetch<CardDAVScopedPublicationReceiptResponse>(
+    {
+      url: `/api/v1/carddav/scoped/publications/${encodeURIComponent(String(personId))}/approve`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: cardDAVScopedPublicationApprovalRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary Preview one authorized mapped CardDAV update
+ */
+export const previewScopedCardDAVPublication = (
+  { personId }: PreviewScopedCardDAVPublicationPathParameters,
+  options?: SecondParameter<
+    typeof orvalFetch<CardDAVPublicationPreviewResponse>
+  >,
+) => {
+  return orvalFetch<CardDAVPublicationPreviewResponse>(
+    {
+      url: `/api/v1/carddav/scoped/publications/${encodeURIComponent(String(personId))}/preview`,
+      method: "GET",
+    },
+    options,
+  );
+};
+/**
+ * @summary Observe an existing reviewed CardDAV update without replaying it
+ */
+export const reconcileScopedCardDAVPublication = (
+  { personId }: ReconcileScopedCardDAVPublicationPathParameters,
+  cardDAVScopedPublicationApprovalRequest: CardDAVScopedPublicationApprovalRequest,
+  options?: SecondParameter<
+    typeof orvalFetch<CardDAVScopedPublicationReceiptResponse>
+  >,
+) => {
+  return orvalFetch<CardDAVScopedPublicationReceiptResponse>(
+    {
+      url: `/api/v1/carddav/scoped/publications/${encodeURIComponent(String(personId))}/reconcile`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: cardDAVScopedPublicationApprovalRequest,
+    },
     options,
   );
 };
@@ -1805,6 +1891,54 @@ export const reviewRejectIdentityMatchCandidate = (
   );
 };
 /**
+ * @summary Apply one signed identity preview or recover its exact committed retry
+ */
+export const applyIdentityOperation = (
+  identityOperationApplyRequest: IdentityOperationApplyRequest,
+  options?: SecondParameter<typeof orvalFetch<IdentityOperationApplyResponse>>,
+) => {
+  return orvalFetch<IdentityOperationApplyResponse>(
+    {
+      url: `/api/v1/identity/operations/apply`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: identityOperationApplyRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary Preview one explicit identity operation without mutation
+ */
+export const previewIdentityOperation = (
+  identityPreviewRequest: IdentityPreviewRequest,
+  options?: SecondParameter<
+    typeof orvalFetch<IdentityOperationPreviewResponse>
+  >,
+) => {
+  return orvalFetch<IdentityOperationPreviewResponse>(
+    {
+      url: `/api/v1/identity/operations/preview`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: identityPreviewRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary Read one committed identity outcome without replaying its mutation
+ */
+export const getIdentityOperationReceipt = (
+  params?: GetIdentityOperationReceiptParams,
+  options?: SecondParameter<typeof orvalFetch<IdentityReceipt>>,
+) => {
+  return orvalFetch<IdentityReceipt>(
+    { url: `/api/v1/identity/operations/receipt`, method: "GET", params },
+    options,
+  );
+};
+/**
  * @summary Grant identity scoring consent
  */
 export const personMatchScoringConsent = (
@@ -2049,6 +2183,119 @@ export const testTaskIntegration = (
   );
 };
 /**
+ * @summary Describe admitted MCP daemon operations
+ */
+export const getMCPCapabilities = (
+  options?: SecondParameter<typeof orvalFetch<MCPCapabilities>>,
+) => {
+  return orvalFetch<MCPCapabilities>(
+    { url: `/api/v1/mcp/capabilities`, method: "GET" },
+    options,
+  );
+};
+/**
+ * @summary List subscribable archive calendars
+ */
+export const listMCPCalendarSources = (
+  options?: SecondParameter<typeof orvalFetch<CalendarSource[]>>,
+) => {
+  return orvalFetch<CalendarSource[]>(
+    { url: `/api/v1/mcp/events/calendar-sources`, method: "GET" },
+    options,
+  );
+};
+/**
+ * @summary Recover a retained MCP occurrence
+ */
+export const getMCPEvent = (
+  params: GetMCPEventParams,
+  options?: SecondParameter<typeof orvalFetch<Envelope>>,
+) => {
+  return orvalFetch<Envelope>(
+    { url: `/api/v1/mcp/events/event`, method: "GET", params },
+    options,
+  );
+};
+/**
+ * @summary List scoped MCP Events
+ */
+export const listMCPEvents = (
+  mCPEventsListRequest: MCPEventsListRequest,
+  options?: SecondParameter<typeof orvalFetch<ListResult>>,
+) => {
+  return orvalFetch<ListResult>(
+    {
+      url: `/api/v1/mcp/events/list`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: mCPEventsListRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary Read a message authorized by a retained MCP occurrence
+ */
+export const getMCPEventMessage = (
+  { id }: GetMCPEventMessagePathParameters,
+  params: GetMCPEventMessageParams,
+  options?: SecondParameter<typeof orvalFetch<CliMessageResponse>>,
+) => {
+  return orvalFetch<CliMessageResponse>(
+    {
+      url: `/api/v1/mcp/events/messages/${encodeURIComponent(String(id))}`,
+      method: "GET",
+      params,
+    },
+    options,
+  );
+};
+/**
+ * @summary Get owner MCP Events delivery status
+ */
+export const getMCPEventsStatus = (
+  options?: SecondParameter<typeof orvalFetch<SubscriptionStatus[]>>,
+) => {
+  return orvalFetch<SubscriptionStatus[]>(
+    { url: `/api/v1/mcp/events/status`, method: "GET" },
+    options,
+  );
+};
+/**
+ * @summary Verify and subscribe an owner callback
+ */
+export const subscribeMCPEvents = (
+  subscribeRequest: SubscribeRequest,
+  options?: SecondParameter<typeof orvalFetch<SubscribeResult>>,
+) => {
+  return orvalFetch<SubscribeResult>(
+    {
+      url: `/api/v1/mcp/events/subscribe`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: subscribeRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary End an owner MCP Events subscription
+ */
+export const unsubscribeMCPEvents = (
+  unsubscribeRequest: UnsubscribeRequest,
+  options?: SecondParameter<typeof orvalFetch<void>>,
+) => {
+  return orvalFetch<void>(
+    {
+      url: `/api/v1/mcp/events/unsubscribe`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: unsubscribeRequest,
+    },
+    options,
+  );
+};
+/**
  * @summary List messages
  */
 export const listMessages = (
@@ -2125,6 +2372,42 @@ export const getMessageInlinePart = (
       method: "GET",
       params,
       responseType: "blob",
+    },
+    options,
+  );
+};
+/**
+ * @summary Read native email tags
+ */
+export const getMessageTags = (
+  { id }: GetMessageTagsPathParameters,
+  params?: GetMessageTagsParams,
+  options?: SecondParameter<typeof orvalFetch<MessageTagResponse>>,
+) => {
+  return orvalFetch<MessageTagResponse>(
+    {
+      url: `/api/v1/messages/${encodeURIComponent(String(id))}/tags`,
+      method: "GET",
+      params,
+    },
+    options,
+  );
+};
+/**
+ * Accepts dry_run=true previews only. Execute tag changes through inbox/control with a signed preview, expected state and idempotency key.
+ * @summary Preview native email tag changes
+ */
+export const updateMessageTags = (
+  { id }: UpdateMessageTagsPathParameters,
+  messageTagChange: MessageTagChange,
+  options?: SecondParameter<typeof orvalFetch<MessageTagResult>>,
+) => {
+  return orvalFetch<MessageTagResult>(
+    {
+      url: `/api/v1/messages/${encodeURIComponent(String(id))}/tags`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: messageTagChange,
     },
     options,
   );

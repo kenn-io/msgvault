@@ -236,7 +236,7 @@ func (s *Server) registerOrganizationRoutes(api huma.API) {
 	addOrganizationIDParameter(&remove)
 	addOrganizationIfMatchParameter(&remove)
 	remove.Responses = rawHumaResponses(http.StatusNoContent)
-	remove.Responses["default"] = errorResponseFor(api)
+	remove.Responses[defaultErrorResponse] = errorResponseFor(api)
 	addErrorResponses(api, remove.Responses, http.StatusBadRequest, http.StatusConflict, http.StatusNotFound, http.StatusPreconditionRequired, http.StatusServiceUnavailable)
 	registerRawHumaRoute(api, remove, s.handleDeleteOrganization)
 

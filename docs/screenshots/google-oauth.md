@@ -1,3 +1,9 @@
+---
+title: Google OAuth screenshots
+description: Provenance and licenses for published Gmail onboarding screenshots.
+last_edited: "2026-10-02"
+---
+
 # Google OAuth screenshots
 
 These published captures illustrate the Gmail onboarding guide without requiring

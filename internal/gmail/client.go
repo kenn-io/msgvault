@@ -56,6 +56,17 @@ func WithLogger(logger *slog.Logger) ClientOption {
 	}
 }
 
+// WithTransport sets the underlying HTTP transport while retaining OAuth authorization.
+func WithTransport(transport http.RoundTripper) ClientOption {
+	return func(c *Client) {
+		if oauthTransport, ok := c.httpClient.Transport.(*oauth2.Transport); ok {
+			configured := *oauthTransport
+			configured.Base = transport
+			c.httpClient.Transport = &configured
+		}
+	}
+}
+
 // WithConcurrency sets the max concurrent requests for batch operations.
 func WithConcurrency(n int) ClientOption {
 	return func(c *Client) {

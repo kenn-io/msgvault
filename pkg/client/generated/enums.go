@@ -981,6 +981,62 @@ func (i IdentityMatchRejectResponseCacheState) Validate() error {
 	}
 }
 
+type IdentityOperationApplyRequestOperation string
+
+const (
+	GraphLink    IdentityOperationApplyRequestOperation = "graph-link"
+	GraphUnlink  IdentityOperationApplyRequestOperation = "graph-unlink"
+	PersonLink   IdentityOperationApplyRequestOperation = "person-link"
+	PersonUnlink IdentityOperationApplyRequestOperation = "person-unlink"
+)
+
+// Validate checks if the IdentityOperationApplyRequestOperation value is valid
+func (i IdentityOperationApplyRequestOperation) Validate() error {
+	switch i {
+	case GraphLink, GraphUnlink, PersonLink, PersonUnlink:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid IdentityOperationApplyRequestOperation value, got: %v", i))
+	}
+}
+
+type IdentityOperationApplyResponseCacheState string
+
+const (
+	IdentityOperationApplyResponseCacheStateReady IdentityOperationApplyResponseCacheState = "ready"
+	IdentityOperationApplyResponseCacheStateStale IdentityOperationApplyResponseCacheState = "stale"
+	Unknown                                       IdentityOperationApplyResponseCacheState = "unknown"
+)
+
+// Validate checks if the IdentityOperationApplyResponseCacheState value is valid
+func (i IdentityOperationApplyResponseCacheState) Validate() error {
+	switch i {
+	case IdentityOperationApplyResponseCacheStateReady, IdentityOperationApplyResponseCacheStateStale, Unknown:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid IdentityOperationApplyResponseCacheState value, got: %v", i))
+	}
+}
+
+type IdentityPreviewRequestOperation string
+
+const (
+	IdentityPreviewRequestOperationGraphLink    IdentityPreviewRequestOperation = "graph-link"
+	IdentityPreviewRequestOperationGraphUnlink  IdentityPreviewRequestOperation = "graph-unlink"
+	IdentityPreviewRequestOperationPersonLink   IdentityPreviewRequestOperation = "person-link"
+	IdentityPreviewRequestOperationPersonUnlink IdentityPreviewRequestOperation = "person-unlink"
+)
+
+// Validate checks if the IdentityPreviewRequestOperation value is valid
+func (i IdentityPreviewRequestOperation) Validate() error {
+	switch i {
+	case IdentityPreviewRequestOperationGraphLink, IdentityPreviewRequestOperationGraphUnlink, IdentityPreviewRequestOperationPersonLink, IdentityPreviewRequestOperationPersonUnlink:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid IdentityPreviewRequestOperation value, got: %v", i))
+	}
+}
+
 type IdentitySearchSortDirection string
 
 const (
@@ -1032,6 +1088,23 @@ func (i ImportJobResponseStatus) Validate() error {
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid ImportJobResponseStatus value, got: %v", i))
+	}
+}
+
+type InboxProviderIngestionStatus string
+
+const (
+	InboxProviderIngestionStatusPartial InboxProviderIngestionStatus = "partial"
+	InboxProviderIngestionStatusUnknown InboxProviderIngestionStatus = "unknown"
+)
+
+// Validate checks if the InboxProviderIngestionStatus value is valid
+func (i InboxProviderIngestionStatus) Validate() error {
+	switch i {
+	case InboxProviderIngestionStatusPartial, InboxProviderIngestionStatusUnknown:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid InboxProviderIngestionStatus value, got: %v", i))
 	}
 }
 
@@ -2572,6 +2645,23 @@ func (t TelemetryEventResponseStatus) Validate() error {
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid TelemetryEventResponseStatus value, got: %v", t))
+	}
+}
+
+type ListInboxCandidatesQueryScope string
+
+const (
+	Chat                                 ListInboxCandidatesQueryScope = "chat"
+	ListInboxCandidatesQueryScopeMessage ListInboxCandidatesQueryScope = "message"
+)
+
+// Validate checks if the ListInboxCandidatesQueryScope value is valid
+func (l ListInboxCandidatesQueryScope) Validate() error {
+	switch l {
+	case Chat, ListInboxCandidatesQueryScopeMessage:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid ListInboxCandidatesQueryScope value, got: %v", l))
 	}
 }
 

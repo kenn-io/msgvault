@@ -280,12 +280,11 @@ func (s *Service) preparePublicationEnvelope(source *store.CardDAVPublicationRev
 		if err != nil {
 			return vcard.ResourceEnvelope{}, err
 		}
-		fullName := person.VCardUID
-		if person.DisplayName != nil && strings.TrimSpace(*person.DisplayName) != "" {
-			fullName = strings.TrimSpace(*person.DisplayName)
-		}
+		// Start without an imported FN. The native projector chooses explicit
+		// formatted or structured names, then the display-name fallback. A seeded
+		// FN would survive as unowned residue alongside those projected names.
 		raw := []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:" + vcard.EscapeText(person.VCardUID) +
-			"\r\nFN:" + vcard.EscapeText(fullName) + "\r\nEND:VCARD\r\n")
+			"\r\nEND:VCARD\r\n")
 		envelope, err = vcard.ParseResourceEnvelope(raw)
 		if err != nil {
 			return vcard.ResourceEnvelope{}, err

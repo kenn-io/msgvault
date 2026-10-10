@@ -340,6 +340,17 @@ func (c *Client) doPinned(ctx context.Context, target *url.URL, pinned []netip.A
 	} else if c.username != "" || c.password != "" {
 		req.SetBasicAuth(c.username, c.password)
 	}
+	if err := authorizePublicationDispatch(ctx, req.Method, req.URL.String(), davRequest); err != nil {
+		return nil, 0, err
+	}
+	if _, scoped := ctx.Value(publicationAuthorityKey{}).(publicationRequestAuthority); scoped {
+		// Native authority uses the operation budget. Start the network budget
+		// after that check so lock waits do not consume an HTTP attempt.
+		cancelRequest()
+		networkCtx, cancelNetwork := context.WithTimeout(ctx, c.requestTimeout)
+		defer cancelNetwork()
+		req = req.WithContext(networkCtx)
+	}
 	httpResponse, err := client.Do(req)
 	if err != nil {
 		return nil, 0, fmt.Errorf("DAV request: %w", err)

@@ -4,8 +4,10 @@
 import type { AgentTokenIssueRequestSenderSelections } from "./agentTokenIssueRequestSenderSelections";
 
 export interface AgentTokenIssueRequest {
+  address_book_ids?: number[];
   label: string;
   permissions: string[];
+  person_ids?: number[];
   sender_selections?: AgentTokenIssueRequestSenderSelections;
-  source_ids: number[];
+  source_ids?: number[];
 }

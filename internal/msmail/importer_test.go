@@ -18,6 +18,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/inboxcontrol"
 	"go.kenn.io/msgvault/internal/msgraph"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -30,14 +31,16 @@ type fakeGraph struct {
 	t   *testing.T
 	srv *httptest.Server
 
-	mu      sync.Mutex
-	folders []string          // folder IDs, in list order
-	names   map[string]string // folder ID -> display name, when not derived from the ID
-	folder  map[string]string // message ID -> folder ID; absent when deleted
-	log     []change          // one entry per change
-	expired map[string]bool   // folder IDs whose next delta reports an expired token
-	gone    map[string]bool   // folder IDs whose every delta answers 410
-	version map[string]int    // message ID -> content version
+	mu         sync.Mutex
+	folders    []string            // folder IDs, in list order
+	names      map[string]string   // folder ID -> display name, when not derived from the ID
+	folder     map[string]string   // message ID -> folder ID; absent when deleted
+	isRead     map[string]bool     // provider read state
+	log        []change            // one entry per change
+	expired    map[string]bool     // folder IDs whose next delta reports an expired token
+	gone       map[string]bool     // folder IDs whose every delta answers 410
+	version    map[string]int      // message ID -> content version
+	categories map[string][]string // present entries are authoritative category snapshots
 
 	withAttachment map[string]bool   // message IDs whose MIME carries a file
 	shifted        map[string]bool   // message IDs whose file moves to another part
@@ -62,7 +65,7 @@ type change struct{ id, from string }
 
 func newFakeGraph(t *testing.T) *fakeGraph {
 	t.Helper()
-	f := &fakeGraph{t: t, folder: map[string]string{}, expired: map[string]bool{}, gone: map[string]bool{}, version: map[string]int{}, withAttachment: map[string]bool{}, shifted: map[string]bool{}, attachmentBody: map[string]string{}, broken: map[string]bool{}, goneOnValue: map[string]bool{}, badValue: map[string]bool{}, pageSize: 2}
+	f := &fakeGraph{t: t, folder: map[string]string{}, isRead: map[string]bool{}, expired: map[string]bool{}, gone: map[string]bool{}, version: map[string]int{}, withAttachment: map[string]bool{}, shifted: map[string]bool{}, attachmentBody: map[string]string{}, broken: map[string]bool{}, goneOnValue: map[string]bool{}, badValue: map[string]bool{}, pageSize: 2}
 	f.folders = []string{"inbox", "archive"}
 	f.expiredStatus = http.StatusGone
 	f.srv = httptest.NewServer(http.HandlerFunc(f.serve))
@@ -187,7 +190,14 @@ func (f *fakeGraph) serve(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, `{"error":{"code":"ErrorItemNotFound"}}`, http.StatusNotFound)
 			return
 		}
-		f.writeJSON(w, map[string]any{"parentFolderId": folder, "receivedDateTime": "2024-01-01T10:00:00Z"})
+		item := map[string]any{"parentFolderId": folder, "receivedDateTime": "2024-01-01T10:00:00Z", "isRead": f.isRead[id], "@odata.etag": fmt.Sprintf("W/\"%d\"", f.version[id])}
+		if f.categories != nil {
+			assert.Contains(f.t, strings.Split(q.Get("$select"), ","), "categories")
+		}
+		if categories, ok := f.categories[id]; ok {
+			item["categories"] = categories
+		}
+		f.writeJSON(w, item)
 	default:
 		http.Error(w, "unexpected "+p, http.StatusBadRequest)
 	}
@@ -231,6 +241,13 @@ func (f *fakeGraph) delta(w http.ResponseWriter, folder string, q map[string][]s
 		}
 		return ""
 	}
+	if f.categories != nil && get("token") == "" && get("skip") == "" {
+		assert.Contains(f.t, strings.Split(get("$select"), ","), "categories")
+	}
+	if get("token") == "" && get("skip") == "" {
+		assert.Contains(f.t, strings.Split(get("$select"), ","), "isRead")
+		assert.Contains(f.t, strings.Split(get("$select"), ","), "parentFolderId")
+	}
 	link := func(kind string, vals ...string) string {
 		return f.srv.URL + "/me/mailFolders/" + folder + "/messages/delta?" + kind + "&" + strings.Join(vals, "&")
 	}
@@ -254,7 +271,11 @@ func (f *fakeGraph) delta(w http.ResponseWriter, folder string, q map[string][]s
 			}
 			seen[id] = true
 			if f.folder[id] == folder {
-				out = append(out, map[string]any{"id": id})
+				item := map[string]any{"id": id, "parentFolderId": f.folder[id], "isRead": f.isRead[id], "@odata.etag": fmt.Sprintf("W/\"%d\"", f.version[id])}
+				if categories, ok := f.categories[id]; ok {
+					item["categories"] = categories
+				}
+				out = append(out, item)
 			} else {
 				out = append(out, map[string]any{"id": id, "@removed": map[string]any{"reason": "deleted"}})
 			}
@@ -286,7 +307,11 @@ func (f *fakeGraph) delta(w http.ResponseWriter, folder string, q map[string][]s
 	end := min(skip+f.pageSize, len(ids))
 	var out []map[string]any
 	for _, id := range ids[skip:end] {
-		out = append(out, map[string]any{"id": id, "receivedDateTime": "2024-01-01T10:00:00Z"})
+		item := map[string]any{"id": id, "receivedDateTime": "2024-01-01T10:00:00Z", "parentFolderId": f.folder[id], "isRead": f.isRead[id], "@odata.etag": fmt.Sprintf("W/\"%d\"", f.version[id])}
+		if categories, ok := f.categories[id]; ok {
+			item["categories"] = categories
+		}
+		out = append(out, item)
 	}
 	resp := map[string]any{"value": out}
 	if end < len(ids) {
@@ -305,6 +330,57 @@ func (f *fakeGraph) sync(t *testing.T, st *store.Store) (*Summary, error) {
 		dir = f.t.TempDir()
 	}
 	return Import(context.Background(), st, c, Options{Email: "me@example.com", AttachmentsDir: dir}, slog.Default())
+}
+
+func TestImportPersistsMicrosoftInboxStateForTriage(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := newFakeGraph(t)
+	f.put("message-in-inbox", "inbox")
+	f.isRead["message-in-inbox"] = true
+	f.categories = map[string][]string{"message-in-inbox": {"Todo", "Work"}}
+	st := testutil.NewTestStore(t)
+
+	summary, err := f.sync(t, st)
+	requirements.NoError(err)
+	source, err := st.GetSourceByIDContext(t.Context(), summary.SourceID)
+	requirements.NoError(err)
+	ids, err := st.MessageExistsBatch(source.ID, []string{"message-in-inbox"})
+	requirements.NoError(err)
+	target := inboxcontrol.Target{SourceID: source.ID, SourceType: SourceType, SourceIdentifier: source.Identifier, AccountID: source.Identifier, Scope: inboxcontrol.ScopeMessage, ItemID: ids["message-in-inbox"], ProviderID: "message-in-inbox"}
+	sourceIdentity := inboxcontrol.SourceIdentity{SourceID: source.ID, SourceType: SourceType, SourceIdentifier: source.Identifier, AccountID: source.Identifier}
+	snapshot, err := st.InboxTriageSnapshot(t.Context(), sourceIdentity, []inboxcontrol.Target{target})
+	requirements.NoError(err)
+	requirements.Len(snapshot.Candidates, 1)
+	candidate := snapshot.Candidates[0]
+	assertions.True(*candidate.State.Inbox)
+	assertions.True(*candidate.State.Read)
+	assertions.Equal("inbox", candidate.State.Location)
+	assertions.Equal([]string{"Todo", "Work"}, candidate.State.Tags)
+	assertions.Equal(`W/"0"`, candidate.State.Revision)
+
+	f.isRead["message-in-inbox"] = false
+	f.categories["message-in-inbox"] = []string{"FollowUp"}
+	f.put("message-in-inbox", "inbox")
+	_, err = f.sync(t, st)
+	requirements.NoError(err)
+	state, err := st.GetInboxProviderState(t.Context(), target)
+	requirements.NoError(err)
+	requirements.NotNil(state)
+	assertions.False(*state.Read)
+	assertions.ElementsMatch([]string{"FollowUp"}, state.Tags)
+
+	f.categories["message-in-inbox"] = []string{"Archived"}
+	f.put("message-in-inbox", "archive")
+	_, err = f.sync(t, st)
+	requirements.NoError(err)
+	state, err = st.GetInboxProviderState(t.Context(), target)
+	requirements.NoError(err)
+	requirements.NotNil(state)
+	assertions.False(*state.Inbox)
+	assertions.False(*state.Read)
+	assertions.Equal("archive", state.Location)
+	assertions.ElementsMatch([]string{"Archived"}, state.Tags)
 }
 
 // state returns message ID -> "folder label name" or "deleted".

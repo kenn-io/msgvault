@@ -24,6 +24,8 @@ function syntheticRow(index: number) {
 }
 
 test('50,000 rows keep a bounded keyed DOM and stable grid focus', async ({ page }) => {
+  // Fetching all 100 pages uses the same allowance as other large browser fixtures.
+  test.slow();
   const total = 50_000;
   const pageSize = 500;
   const requests: Array<{ cursor?: string; limit?: number }> = [];

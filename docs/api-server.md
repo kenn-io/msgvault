@@ -1,7 +1,7 @@
 ---
-last_edited: "2026-10-06"
 title: Web UI & API Server
 description: Daemon-served analytical Web UI and REST API for your msgvault archive, with optional background sync scheduling.
+last_edited: "2026-10-08"
 ---
 
 
@@ -95,12 +95,123 @@ recurrence limits, notification behavior, and reconciliation instructions.
 `POST /api/v1/cli/add-calendar/plan` also accepts `write=true` to plan opt-in
 `calendar.events` consent while preserving existing Google scopes.
 
+## Explicit identity operations (unreleased)
+
+Use these native routes to link or unlink a verified participant pair without
+requiring a review candidate, or to attach or detach a participant from a durable
+person. Graph changes preserve message authorship and existing person bindings.
+They never merge every participant in a group conversation into one person.
+
+| Route | Contract |
+|---|---|
+| `POST /api/v1/identity/operations/preview` | Read-only `operation` and `target`; returns scoped evidence, its fingerprint, a signed `preview_token` and `expires_at` |
+| `POST /api/v1/identity/operations/apply` | Same operation/target, `expected_fingerprint`, `preview_token` and `idempotency_key`; returns the committed audit receipt and `cache_state` |
+| `GET /api/v1/identity/operations/receipt` | Read one outcome by the current principal's `idempotency_key`; owners can instead use `receipt_id`, or `principal` with the original key |
+
+Operations are `graph-link`, `graph-unlink`, `person-link` and `person-unlink`.
+Every target has `participant_id`; graph actions require
+`other_participant_id`, and binding actions require `person_id`. IDs must be
+positive exact JSON integers. Requests reject unknown or duplicate fields and
+noncanonical field names; preview/apply bodies are limited to 16 KiB.
+
+Delegated previews and receipt reads require `identity.read`. Apply also
+requires `identity.link` or `identity.unlink`, matching the selected operation.
+The daemon checks every affected source, durable person and address book against
+the current grant before disclosure and again inside the mutation transaction.
+An affected identity component is limited to 100 participants. Published-contact,
+conflict and active-merge guards still apply; permission does not bypass them.
+
+Previews expire after five minutes and bind the operation, target, current
+principal, authority and evidence. Restart invalidates pending previews. A stale
+preview or changed request conflicts before a fresh mutation. An exact committed
+retry with the same principal/key/request returns its saved receipt, even after
+preview expiry; it still requires current authorization. Receipts survive restart.
+After a timeout or lost acknowledgement, read the original key's receipt before
+deciding whether to retry. `cache_state` is `ready`, `stale` or `unknown` and
+reports analytics publication separately from the committed identity change.
+
+Owner-only `POST /api/v1/agent-tokens` accepts `source_ids`, `person_ids` and
+`address_book_ids`, with 1–100 explicit resources across those lists. The daemon
+resolves native person UIDs and account/book/URL/ownership evidence. Caller-supplied
+UIDs or fingerprints are rejected. A source grant does not grant person access.
+Grant selections are immutable; revocation or daemon restart removes their authority.
+Trusted owners can read an old receipt after revocation without restoring the grant.
+
+On unreleased `main`, `person.read` permits the selected person's current
+`GET /api/v1/people/{id}` and `GET /api/v1/people/{id}/profile` routes. The grant
+matches both the native person ID and its permanent UID. `person.edit` also
+permits the existing display-name and structured-profile `PATCH` routes, with
+their exact `If-Match` revision. Source scopes alone grant no person access.
+
+A rename also requires read and edit authority for relationship counterparts
+whose contact projections change. A structured profile or attribute edit
+requires only its target.
+These edits require `carddav.write` for every affected person's imported or
+published native address book. The book scope must match its account, ID, URL
+and ownership fingerprint. Admission precedes the daemon's write gate; the
+transaction rechecks current scope and revocation before changing the profile.
+Missing native authorization support hides these routes from delegated MCP
+discovery and rejects forced edits. This does not admit account synchronization
+or other CardDAV operations.
+
+The same person grants admit `GET /api/v1/people/{id}/attributes` and its
+existing `PUT` and `DELETE` value routes. Delegated writes require the person
+ETag and `expected_value_id`. A positive value ID must match the current slot;
+zero on `PUT` requires an empty slot. Multi-valued creation also requires an
+explicit ordinal. Attribute writes change the contact projection without
+changing the person record's revision, so the value precondition is separate.
+Owners can keep their existing unconditional calls; a supplied `If-Match` is
+checked. Dry runs use the same native validation and roll back. Delegated sets
+use user provenance and the grant's actor identity. Provider provenance,
+caller-supplied actors and record references are rejected. These grants do not
+admit definition creation or changes.
+
+On unreleased `main`, `person.merge` and `person.read` permit the existing
+`POST /api/v1/people/{id}/merge` route. The request needs both exact person
+ETags and an `Idempotency-Key`. The native transaction checks both permanent
+person identities, every affected relationship or reference owner, and current
+`carddav.write` authority for their address books. The combined affected scope
+is limited to 100 people and books. Organization-reference effects are unsupported
+for delegated merges. Published-contact restrictions still apply.
+
+Merge receipts bind the grant's actor identity. An exact retry requires current
+authorization, the original survivor identity, an absent absorbed person ID,
+and unsplit merge lineage. A reused numeric ID does not inherit the original
+person's authority. Changed ownership or revocation denies replay. This permission
+does not admit merge history, snapshots, candidate decisions or splits. Missing
+native transaction authorization hides the merge route from delegated discovery
+and rejects a forced call.
+
+Delegated stdio MCP exposes `get_person_merge_context` for both scoped profile
+reads. `merge_person` also needs `person.merge`, `--allow-person-merges` and
+explicit client confirmation. Both tools use the native checks above. Merge
+permission does not expose CardDAV publication approval or synchronization.
+
+Delegated stdio MCP uses that discovery to expose `get_person_edit_context`,
+`get_person_structured_profile` and `get_person_attributes`. The attributes
+context includes native definitions, current value IDs and the person ETag.
+MCP attribute integers and numbers inside JSON values must be between
+`-9007199254740991` and `9007199254740991`. Stored values outside this range
+refuse MCP attribute reads and edits before confirmation.
+`set_person_display_name`, `patch_person_profile`, `set_person_attribute` and
+`clear_person_attribute` also require `person.edit`, `--allow-profile-writes`,
+the current ETag and user confirmation. Each call uses these native HTTP routes
+and their current grant checks. Structured edits preserve the display-name
+override. These permissions do not expose owner archive, source, promotion or
+Notes tools.
+
+MCP startup checks authenticated discovery and the exact schema 3.5 contracts.
+Read-only grants expose `preview_identity_operation` and `get_identity_receipt`.
+Link and unlink grants admit their own pair and person-binding tools. Mutations
+also require `--allow-identity-decisions`, the transport's write gate and client
+confirmation.
+
 ## API compatibility
 
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.5.0**.
+it is separate from the binary release version. The current unreleased schema is **3.5.0**.
 Upgrade clients and daemon together across incompatible schema versions,
 including remote deployments.
 
@@ -116,6 +227,10 @@ schema fail before issuing archive requests. The HTTP prefix remains `/api/v1`.
 This schema also adds consented identity scoring. See
 [identity match review and scoring](#identity-match-review-and-scoring).
 
+Unreleased native additions include [explicit identity operations](#explicit-identity-operations-unreleased) and bounded person/address-book agent-token selections.
+
+Schema 3.2.0 adds unreleased [native email tags](#native-email-tags).
+
 Schema 3.4.0 adds [Kata issues from archive evidence](usage/kata-issues.md).
 It also adds the `microsoft` CardDAV account provider, the
 `microsoft_authorization_required` CardDAV error and repair codes, and the
@@ -130,7 +245,7 @@ Schema 3.5.0 adds the `account:` and `received:` search operators.
 Schema 3.1.0 adds unreleased [calendar event control](#calendar-control),
 availability queries, and opt-in `write` on Calendar consent plans.
 
-Schema 3.2.0 adds `counts_pending` to `GET /api/v1/cli/accounts`. See
+Schema 3.3.0 includes `counts_pending` for opted-in `GET /api/v1/cli/accounts` callers. See
 [archive statistics](#get-apiv1stats) for when it appears.
 
 Schema 2.35.0 adds `scope_escalation_source_type` (`gmail` or `msmail`) to
@@ -231,6 +346,244 @@ responses are bounded projections that omit raw vCards and resource hrefs;
 only the explicit publication preview route returns a raw vCard.
 See [release changes](changelog.md#upgrade-and-compatibility) for removed paths
 and the 1.x/2.x transition.
+
+### Native email tags
+
+Read one archived message's live Gmail labels, IMAP keywords, or Microsoft
+Graph categories. These owner-only read and preview routes require API schema
+3.2.0. Signed edits require schema 3.3.0, currently unreleased. The daemon owns
+provider credentials; delegated tokens use the separately granted
+[inbox control](#inbox-control-unreleased) route.
+
+| Method and path | Contract |
+|---|---|
+| `GET /api/v1/messages/{id}/tags` | Read native tags; optional `mailbox` selects an exact recorded IMAP copy. Schema 3.3.0 also returns the resolved `target` for signed control. |
+| `POST /api/v1/messages/{id}/tags` | Preview `add` and `remove` arrays with `dry_run: true`; optional `mailbox` selects an IMAP copy. An unsigned apply returns 409 `inbox_preview_required`. |
+
+`id` is the positive archived message ID. Each array allows at most 100 tags
+of 1–255 UTF-8 bytes. Tags are deduplicated; overlapping add and remove sets
+are rejected. IMAP further restricts tags to ASCII keyword atoms and compares
+them without case. Gmail requires existing user label IDs. Microsoft Graph
+requires category names and saved `Mail.ReadWrite` permission for writes. See
+[`message-tags`](cli-reference.md#message-tags) for provider requirements.
+
+```json
+{"add":["Label_123"],"remove":["Label_456"],"dry_run":true}
+```
+
+The tag result contains `message_id`, `source_id`, `provider`, `tags`, `before`,
+`available_tags` (`id` and `name`), `dry_run`, and `verified`. IMAP also returns
+`mailbox`, `uidvalidity`, `uid`, the observed `flags`, and
+`can_create_keywords` when new persistent keywords are supported. This field
+reports provider support; it does not authorize implicit keyword creation.
+Gmail returns all current label IDs, including system labels, while
+`available_tags` contains only editable user labels. IMAP returns custom
+keywords in `tags`. Microsoft Graph returns `provider: "msmail"` and observed
+category names; it requires neither a master-category catalog nor
+`MailboxSettings.Read`.
+
+Reads return verified observations. Previews return projected tags with
+`verified: false` and do not update the archive. The CLI and MCP tag clients
+obtain a fresh signed inbox preview before applying an edit. Their results
+also retain `receipt_id`, `receipt_status`, and `idempotency_key` when available.
+A verified read is not evidence of a verified edit.
+
+Successful signed edits require independent provider readback and archive
+persistence. Microsoft categories use separate `Category: <name>` archive
+labels, or `Category: <name> (2)` when a folder already has that name, and survive
+later folder syncs. Tag edits preserve folder membership, provider read flags,
+unrelated tags, and local UI read state. Gmail and Microsoft category changes
+mark derived data stale and request a cache refresh.
+
+Tag read and preview errors contain `error`, `message`, and, when available,
+`result` with the last observation. Invalid tags return 400, insufficient
+provider scope returns 403, a missing archived message returns 404, and stale
+provider identity returns 409. Unsupported providers or persistent keyword
+support return 501. Signed edit and receipt errors follow the contract below.
+
+### Inbox control (unreleased)
+
+Schema 3.3.0 adds `POST /api/v1/inbox/control` for exact provider actions.
+It supports `get-capabilities`, `get-state`, `list-folders`, `tags`, `archive`,
+`unarchive`, `set-read`, `set-unread`, `move`, `create-folder`, `receipt-get`,
+and `reconcile`. Provider support and saved credentials can limit each action;
+use `get-capabilities` before planning a write. The route accepts strict JSON
+with `Content-Type: application/json`, bounded to 1 MiB.
+
+These are the implemented provider operations. They do not establish support or
+authority for an installed account; query `get-capabilities` for the exact source
+and caller.
+
+| Operation | Gmail | IMAP | Microsoft mail | Beeper |
+|---|---|---|---|---|
+| Observe state | Supported | Supported | Supported | Requires an exact account and chat |
+| Edit tags | User-label IDs | Existing persistent keywords | Categories | Unsupported |
+| Archive / unarchive | Change `INBOX` | Requires `MOVE` and `UIDPLUS`; archive also requires one configured or SPECIAL-USE Archive mailbox | Unsupported | Requires current capability and marker evidence for the exact chat |
+| Set read / unread | Change `UNREAD` | Requires observed persistent `Seen` support | Unsupported | Requires current capability and marker evidence for the exact chat |
+| Move | User-label targets | Native mailboxes with `MOVE` and `UIDPLUS`; no copy/delete fallback | Unsupported | Unsupported |
+| List / create folders | Native user labels | Native mailboxes | Unsupported | Unsupported |
+
+The response distinguishes four operation statuses:
+
+| Status | Meaning |
+|---|---|
+| `supported` | Current native evidence and caller authority admit the operation. Exact-target preflight still applies. |
+| `unsupported` | The adapter or observed provider capabilities do not support the operation. |
+| `permission-required` | A required source/action grant or provider modification scope is missing. |
+| `unavailable` | Required live account, catalog, scope, or target evidence could not be established. |
+
+Gmail modification scopes and Microsoft `Mail.ReadWrite` remain separate from
+daemon grants. Beeper source discovery does not scan other chats to infer a
+selected chat's write capabilities. Missing evidence never permits a fallback
+mutation.
+
+Item actions require an exact `target`, including source/account identity and
+provider item ID. IMAP also requires the recorded mailbox, UIDVALIDITY, and UID.
+Source actions (`get-capabilities`, `list-folders`, `create-folder`) use only
+`source`. Receipt actions use only `receipt_id`; authority comes from the stored
+intent. Keep GTD tags separate from folder locations. Folder creation is an
+explicit action and never a side effect of tagging or moving.
+
+Owners may use their configured sources. Delegates need `inbox.read`, the
+source grant, and the permission for the requested mutation: `inbox.tag`,
+`inbox.archive`, `inbox.read-state`, `inbox.move`, or `inbox.folder-create`.
+The daemon rechecks current grants before dispatch and receipt access.
+
+`GET /api/v1/inbox/candidates` lists committed Inbox metadata for one source.
+Supply `source_id`, `source_type`, `source_identifier`, `account_id`, and `scope`
+(`message` for mail, `chat` for Beeper). Owners may read their configured
+sources; delegates need `inbox.read` for that exact source. `limit` defaults to
+25 and accepts 1–100. Unknown or repeated query fields are rejected.
+
+Each page contains `candidates`, `archive_revision`, `next_cursor`, and
+`unavailable`. Pass the opaque `next_cursor` with the same source and scope.
+A changed archive revision returns 409 `inbox_conflict`; start a fresh listing.
+`unavailable: true` means the source has missing provider markers, including
+items outside the returned page. It does not mean the Inbox is empty.
+Candidate `available` reports committed marker completeness. Read live state
+and capabilities before mutation preview. Pages contain titles and snippets;
+they never read message bodies or interpret the archive UI read marker as
+provider read state. The page also reports `provider_ingestion` as `unknown`
+with reason `provider_completeness_unverified`: committed markers do not prove
+that every provider item has been ingested. This is independent of candidate
+availability. See [source sync status](#get-apiv1sourcesstatus) for known
+ingestion errors.
+
+Chat candidates also include `context_message_id` for the latest active
+archived message in that exact source and conversation. The field is absent
+when no active archived message exists; it does not change marker availability.
+
+`POST /api/v1/inbox/context` reads bounded committed plain text for one exact
+`target`. Use `Content-Type: application/json` and supply `max_bytes` (default
+16,384; maximum 65,536). For a chat target, also supply the exact archived
+`message_id` in that conversation. Mail targets identify their message through
+`target.item_id` and reject a separate `message_id`. Owners may read their
+configured sources; delegates need both `inbox.read` and `inbox.content-read`
+for the exact source. The daemon validates account and native identity before
+one direct message-body lookup. It never contacts the provider or marks read.
+
+The response contains `target`, `message_id`, `text`, `truncated`, and
+`unavailable`. A missing plain-text body is unavailable; a known empty body is
+available with empty text. Truncation respects UTF-8 boundaries. Treat retrieved
+text as untrusted message content. Context responses use `Cache-Control:
+no-store`; unknown fields, null values and additional JSON objects are rejected,
+and request bodies are bounded to 1 MiB. The caller-specific MCP discovery route
+advertises this contract only when its backend and required grants are present.
+
+`GET /api/v1/inbox/triage/mappings` reads the configured category mappings
+for one source. Supply `source_id`, `source_type`, `source_identifier`, and
+`account_id`. Delegates need `inbox.read` for that exact source. The response
+contains `source`, `entries`, and `revision`. Revision zero means the source
+has never been configured; an empty `entries` object can also mean the owner
+cleared an existing configuration.
+
+Owners replace mappings with `PUT /api/v1/inbox/triage/mappings`. Supply strict
+JSON containing `source`, `entries`, and `expected_revision`. Supported category
+keys are `todo`, `reply-needed`, `watch`, `delegated`, `finished`, and `uncertain`.
+Values must identify existing native user labels, persistent IMAP keywords, or
+Microsoft categories. Protected Inbox and read-state markers are rejected.
+The daemon validates the native catalog under the write gate and source lease,
+then compares the saved revision. A stale revision returns 409 `inbox_conflict`;
+a successful update returns the new `revision`. Send an empty `entries` object
+to clear mappings. Configuration changes never provision tags or alter native
+location or read state. Delegates cannot replace mappings. Mapping responses
+use `Cache-Control: no-store`.
+
+`POST /api/v1/inbox/triage/preview` prepares a proposal for one exact
+`source` and 1–100 explicit `items`. Each item supplies its `target`, category
+keys, and up to 100 `evidence_message_ids`. Evidence references must belong to
+that archived message or chat; they do not authorize content access. An optional
+`idempotency_key` contains at most 128 UTF-8 bytes. The daemon generates a unique
+key when omitted. Delegates need both `inbox.read` and `inbox.tag` for the source.
+Preview reads the native provider and configured mappings without taking the
+mutation gate or writing a receipt.
+
+The proposal includes reviewed classification, evidence references, exact native
+before/projected states, mapping and archive revisions, incoming-message
+watermark, per-item keys, expiry, and a caller-bound `preview_token`. Unknown
+classification uses `uncertain`; retained categories override `finished`.
+Conflicting categories retain Inbox. Apply adds existing mapped tags and
+preserves inbox/read markers and unrelated tags. Gmail labels, persistent IMAP
+keywords, and Microsoft categories support this workflow. Beeper candidates and
+native flag control remain available separately; Beeper has no native tag mapping.
+
+Submit the complete proposal to `POST /api/v1/inbox/triage/apply`. Individual item
+requests omit the standalone inbox-control token. The daemon authenticates the
+whole proposal and rechecks current grants, revisions, arrivals, evidence,
+native catalog, state, and expiry inside one write gate and source lease.
+Success returns an array of results in proposal order. Errors retain that same
+ordered array in `results`; an empty entry has not been dispatched. Preserve
+returned receipts and item keys. Completed items replay their authorized receipt
+after expiry. Unknown outcomes require receipt inspection or reconciliation
+before a new intent. A changed archive can require a new preview for unexecuted
+items in a partial batch. Both routes reject unknown fields, null values,
+additional JSON objects, and request bodies larger than 1 MiB, and return
+`Cache-Control: no-store`.
+
+To edit tags through HTTP:
+
+1. Read the owner-only tags endpoint and retain its exact `target`. Delegates
+   use an exact target supplied by the owner for an authorized source.
+2. Send `operation: "tags"`, that `target`, `tags` with `add` and `remove`, and
+   `dry_run: true` to inbox control. Review the returned `before`, `projected`,
+   `preview_token`, and `expires_at`. No provider write occurs.
+3. Apply the same intent with `dry_run: false`, the returned `before` as
+   `expected`, the unchanged `preview_token`, and a unique `idempotency_key`
+   of 1–128 UTF-8 bytes. Keep the full request for recovery. Previews expire
+   after five minutes; changed provider state or intent requires a new preview.
+
+The daemon acquires its mutation gate and the source execution lease, checks
+fresh provider state, records durable dispatch evidence, sends once, and reads
+back independently. IMAP STORE and MOVE additionally require explicit
+READ-WRITE evidence from SELECT. Daemon leases exclude local sync; they do not
+prevent another provider client from changing remote state between observation
+and dispatch. Microsoft Graph sends `If-Match`, but its atomic precondition
+guarantee is unqualified and is not advertised as a conditional-write capability.
+
+Results retain `before`, `projected`, `after`, and a `receipt` when available.
+Only a `verified` receipt proves provider readback and archive reconciliation.
+An `unknown` or `dispatching` receipt must be inspected using `receipt-get` or
+`reconcile` with its ID. Reconciliation reads back and persists proven state;
+it never dispatches another provider mutation. Replaying the exact original
+request with the same key returns stored evidence without redispatching an
+uncertain write. If the response was lost, retain the original request and key;
+do not create a fresh key as a retry.
+
+| HTTP status and error | Meaning |
+|---|---|
+| 403 `inbox_denied` | Current source/action authorization is missing. |
+| 409 `inbox_conflict` | Preview, identity, provider state, source lease, or operation key conflicts with current evidence. |
+| 409 `inbox_provider_rejected` | The provider path rejected the action without a write. |
+| 503 `inbox_unavailable` | Required provider evidence or capability is unavailable. |
+| 503 `operation_in_progress` | The daemon mutation gate could not be acquired within its 10-second wait. |
+| 502 `inbox_outcome_unknown` | A write may have applied; retain the receipt and reconcile before any new intent. |
+| 500 `inbox_reconcile_only` | Provider evidence exists, but local reconciliation is incomplete. |
+| 500 `inbox_internal` | Local control failed; retain any returned receipt or operation key. |
+
+Failure responses can contain `result` with the original receipt. Receipt replay
+may return HTTP 200 with a stored uncertain status; inspect `receipt.status`
+rather than treating HTTP success as verification. See the generated OpenAPI
+contract for exact request and response schemas.
 
 ### Identity match review and scoring
 
@@ -429,6 +782,31 @@ with the same account and bounds to continue through the normal resumable
 importer. Leave `noresume` false when you want to reuse available progress.
 There is no dedicated cancellation endpoint for these jobs.
 
+## MCP Events
+
+The current unreleased schema includes these owner-key-only endpoints. They
+accept no caller-supplied principal. Browser sessions, delegated agent tokens, and keyless
+access cannot use them. Disabled Events has no advertised capability.
+
+| Method | Path under `/api/v1/mcp/events` | Result |
+|---|---|---|
+| POST | `/list` | Runtime catalog; request body `{}` |
+| POST | `/subscribe` | Verified subscription ID, cursor, refresh deadline, and truncation flag |
+| POST | `/unsubscribe` | End the selected subscription; `204` on success |
+| GET | `/status` | Safe subscription delivery state |
+| GET | `/calendar-sources` | Subscribable calendar source IDs, summaries, and accounts |
+| GET | `/event?event_id=...` | Retained occurrence envelope |
+| GET | `/messages/{id}?event_id=...` | Full message details authorized by that occurrence |
+
+POST bodies reject unknown fields. Callback destinations and encrypted secrets
+are never returned by status. Authenticated owner health includes `mcp_events`
+and, when enabled, `mcp_event_capabilities`; public and delegated health omit
+these fields. All Events responses use `Cache-Control: no-store`.
+
+The [MCP Events guide](usage/chat.md#events) owns scope arguments, signed
+verification, delivery and replay behavior, read authority, and transport limits.
+The generated OpenAPI document owns the exact request and error schemas.
+
 ## API Endpoints
 
 ### Query the analytics cache {#post-apiv1query}
@@ -448,6 +826,9 @@ uses a committed Parquet publication, `cache` includes `generation` and
 applicable. A usable stale publication remains queryable during
 `min_rebuild_interval` and while a refresh runs. This includes messages deleted
 since publication; see the [cache freshness policy](configuration.md#analytics).
+Committed message details can include an item missing from an older analytics
+search publication. Rebuilding the cache resolves that archive mismatch; it
+does not establish provider ingestion completeness.
 
 With `fresh=true`, the endpoint accepts a refresh with `202`, `job_id`, and
 `status` instead of holding the request open. Automatic recovery of a missing
@@ -1739,6 +2120,19 @@ Read sync status for all sources, or filter to one source type with
 deployments because it exposes active, latest, and last-successful
 sync runs without triggering a sync.
 
+`provider_ingestion` describes ingestion evidence independently of archive
+commits and analytics publication. Current servers report:
+
+| Status | Reason | Meaning |
+|---|---|---|
+| `unknown` | `provider_completeness_unverified` | No source completeness proof, including after a successful sync |
+| `unknown` | `sync_in_progress` | The latest sync is still running and has no reported errors |
+| `partial` | `sync_reported_errors` | The latest sync failed, has a positive error counter, or contains per-item errors |
+
+A recent `last_sync_at` or a completed run does not prove every provider item
+has been ingested. Expected skips alone do not prove an ingestion error.
+Older daemons may omit `provider_ingestion`; treat omission as unknown.
+
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `source_type` | string | — | Optional source-type filter, for example `gmail`, `imap`, or `synctech_sms` |
@@ -1756,6 +2150,10 @@ sync runs without triggering a sync.
       "last_sync_at": "2026-06-18T13:02:11Z",
       "updated_at": "2026-06-18T13:02:11Z",
       "active_sync": null,
+      "provider_ingestion": {
+        "status": "partial",
+        "reason": "sync_reported_errors"
+      },
       "latest_sync": {
         "id": 42,
         "source_id": 1,

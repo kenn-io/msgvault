@@ -79,6 +79,8 @@ func TestCoverageSplit_EmbeddedBlankMissing(t *testing.T) {
 
 	embeddedCount, err := b.EmbeddedMessageCount(ctx, gen)
 	require.NoError(err, "EmbeddedMessageCount")
+	snapshotEmbeddedCount, err := b.EmbeddedMessageCountForSnapshot(ctx, gen, []int64{embedded[0], blanks[0]})
+	require.NoError(err, "EmbeddedMessageCountForSnapshot")
 	coverage, err := b.EmbeddingCoverage(ctx, gen, vector.BuildScope{})
 	require.NoError(err, "EmbeddingCoverage")
 	blank := max(stamped-embeddedCount, 0)
@@ -86,6 +88,7 @@ func TestCoverageSplit_EmbeddedBlankMissing(t *testing.T) {
 	assert.Equal(int64(5), live, "live = all 5 messages")
 	assert.Equal(int64(4), stamped, "stamped = 4 (2 embedded + 2 blank)")
 	assert.Equal(int64(2), embeddedCount, "embedded = 2 (distinct message_ids with a vector)")
+	assert.Equal(int64(1), snapshotEmbeddedCount, "snapshot intersection counts only vectors in the captured stamped IDs")
 	assert.Equal(vector.EmbeddingCoverage{Live: 5, Stamped: 4, Embedded: 2}, coverage,
 		"the single-statement split matches the separately computed counts")
 	assert.Equal(int64(2), blank, "blank = stamped - embedded = 2")

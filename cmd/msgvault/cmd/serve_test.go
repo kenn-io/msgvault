@@ -740,6 +740,7 @@ func TestRunServeAutoSwitchesToDuckDBAfterBackgroundBuild(t *testing.T) {
 	t.Cleanup(cancel)
 
 	buildStarted := make(chan struct{})
+	buildFinished := make(chan error, 1)
 	releaseBuild := make(chan struct{})
 	stubBuildCacheSubprocess(t, func(ctx context.Context, fullRebuild bool) error {
 		close(buildStarted)
@@ -749,6 +750,7 @@ func TestRunServeAutoSwitchesToDuckDBAfterBackgroundBuild(t *testing.T) {
 			return ctx.Err()
 		}
 		_, err := buildCache(c.DatabaseDSN(), c.AnalyticsDir(), fullRebuild)
+		buildFinished <- err
 		return err
 	})
 
@@ -782,6 +784,9 @@ func TestRunServeAutoSwitchesToDuckDBAfterBackgroundBuild(t *testing.T) {
 	assert.Equal(api.AnalyticsModeSQLFallback, readAnalyticsMode())
 
 	close(releaseBuild)
+	// Cache export has no speed contract. Bound the observable engine switch
+	// only after the real build completes, and surface build errors directly.
+	require.NoError(<-buildFinished, "background analytics cache build")
 	assert.Eventually(func() bool {
 		return readAnalyticsMode() == api.AnalyticsModeDuckDB
 	}, 10*time.Second, 25*time.Millisecond, "auto mode should switch to DuckDB after cache build")

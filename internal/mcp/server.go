@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
+	"go.kenn.io/msgvault/internal/identitycontrol"
+	"go.kenn.io/msgvault/internal/inboxcontrol"
 	"go.kenn.io/msgvault/internal/mcpdiscovery"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -30,65 +32,77 @@ import (
 
 // Tool name constants.
 const (
-	ToolDraftReply                = "draft_reply"
-	ToolDraftCompose              = "draft_compose"
-	ToolDraftForward              = "draft_forward"
-	ToolDraftGet                  = "draft_get"
-	ToolDraftEdit                 = "draft_edit"
-	ToolDraftDelete               = "draft_delete"
-	ToolDraftRecover              = "draft_recover"
-	ToolDraftSendAs               = "draft_send_as"
-	ToolSearchMessages            = "search_messages"
-	ToolQuerySQL                  = "query_sql"
-	ToolSearchMetadata            = "search_metadata"
-	ToolSearchMessageBodies       = "search_message_bodies"
-	ToolSemanticSearchMessages    = "semantic_search_messages"
-	ToolGetMessage                = "get_message"
-	ToolGetAttachment             = "get_attachment"
-	ToolExportAttachment          = "export_attachment"
-	ToolExportEML                 = "export_eml"
-	ToolListThread                = "list_thread"
-	ToolListMessages              = "list_messages"
-	ToolGetStats                  = "get_stats"
-	ToolAggregate                 = "aggregate"
-	ToolStageDeletion             = "stage_deletion"
-	ToolSearchByDomains           = "search_by_domains"
-	ToolFindSimilarMessages       = "find_similar_messages"
-	ToolSearchVisualAttachments   = "search_visual_attachments"
-	ToolSearchInMessage           = "search_in_message"
-	ToolSearchDocuments           = "search_document_attachments"
-	ToolSearchPersonFiles         = "search_person_files"
-	ToolSearchPeople              = "search_people"
-	ToolListDirectoryPeople       = "list_directory_people"
-	ToolGetPersonNotes            = "get_person_notes"
-	ToolGetPersonProfile          = "get_person_profile"
-	ToolGetPersonRelationship     = "get_person_relationship"
-	ToolGetPersonAgenda           = "get_person_agenda"
-	ToolPromotePerson             = "promote_person"
-	ToolUpdatePersonNotes         = "update_person_notes"
-	ToolListSavedViews            = "list_saved_views"
-	ToolGetSavedView              = "get_saved_view"
-	ToolRunSavedView              = "run_saved_view"
-	ToolCreateSavedView           = "create_saved_view"
-	ToolUpdateSavedView           = "update_saved_view"
-	ToolDeleteSavedView           = "delete_saved_view"
-	ToolGetMeetingContext         = "get_meeting_context"
-	ToolListMeetingActionItems    = "list_meeting_action_items"
-	ToolGetMeetingMetrics         = "get_meeting_metrics"
-	ToolListIdentityMatches       = "list_identity_matches"
-	ToolGetIdentityMatch          = "get_identity_match"
-	ToolAcceptIdentityMatch       = "accept_identity_match"
-	ToolRejectIdentityMatch       = "reject_identity_match"
-	ToolGetPersonMergeContext     = "get_person_merge_context"
-	ToolMergePerson               = "merge_person"
-	ToolGetCardDAVPublication     = "get_carddav_publication"
-	ToolPreviewCardDAVPublication = "preview_carddav_publication"
-	ToolApproveCardDAVPublication = "approve_carddav_publication"
-	ToolSyncCardDAV               = "sync_carddav"
-	ToolGetCardDAVSyncStatus      = "get_carddav_sync_status"
-	ToolGetIdentityScoringStatus  = "get_identity_scoring_status"
-	ToolScoreIdentityMatches      = "score_identity_matches"
-	ToolListIdentityJudgments     = "list_identity_judgments"
+	ToolSearchMessages              = "search_messages"
+	ToolQuerySQL                    = "query_sql"
+	ToolSearchMetadata              = "search_metadata"
+	ToolSearchMessageBodies         = "search_message_bodies"
+	ToolSemanticSearchMessages      = "semantic_search_messages"
+	ToolGetMessage                  = "get_message"
+	ToolGetAttachment               = "get_attachment"
+	ToolExportAttachment            = "export_attachment"
+	ToolExportEML                   = "export_eml"
+	ToolListThread                  = "list_thread"
+	ToolListMessages                = "list_messages"
+	ToolGetStats                    = "get_stats"
+	ToolAggregate                   = "aggregate"
+	ToolStageDeletion               = "stage_deletion"
+	ToolSearchByDomains             = "search_by_domains"
+	ToolFindSimilarMessages         = "find_similar_messages"
+	ToolSearchVisualAttachments     = "search_visual_attachments"
+	ToolSearchInMessage             = "search_in_message"
+	ToolSearchDocuments             = "search_document_attachments"
+	ToolSearchPersonFiles           = "search_person_files"
+	ToolSearchPeople                = "search_people"
+	ToolListDirectoryPeople         = "list_directory_people"
+	ToolGetPersonNotes              = "get_person_notes"
+	ToolGetPersonProfile            = "get_person_profile"
+	ToolGetPersonRelationship       = "get_person_relationship"
+	ToolGetPersonAgenda             = "get_person_agenda"
+	ToolPromotePerson               = "promote_person"
+	ToolUpdatePersonNotes           = "update_person_notes"
+	ToolListSavedViews              = "list_saved_views"
+	ToolGetSavedView                = "get_saved_view"
+	ToolRunSavedView                = "run_saved_view"
+	ToolCreateSavedView             = "create_saved_view"
+	ToolUpdateSavedView             = "update_saved_view"
+	ToolDeleteSavedView             = "delete_saved_view"
+	ToolGetMeetingContext           = "get_meeting_context"
+	ToolListMeetingActionItems      = "list_meeting_action_items"
+	ToolGetMeetingMetrics           = "get_meeting_metrics"
+	ToolListIdentityMatches         = "list_identity_matches"
+	ToolGetIdentityMatch            = "get_identity_match"
+	ToolAcceptIdentityMatch         = "accept_identity_match"
+	ToolRejectIdentityMatch         = "reject_identity_match"
+	ToolPreviewIdentityOperation    = "preview_identity_operation"
+	ToolLinkParticipantIdentity     = "link_participant_identity"
+	ToolUnlinkParticipantIdentity   = "unlink_participant_identity"
+	ToolLinkParticipantToPerson     = "link_participant_to_person"
+	ToolUnlinkParticipantFromPerson = "unlink_participant_from_person"
+	ToolGetIdentityReceipt          = "get_identity_receipt"
+	ToolGetPersonMergeContext       = "get_person_merge_context"
+	ToolMergePerson                 = "merge_person"
+	ToolGetCardDAVPublication       = "get_carddav_publication"
+	ToolPreviewCardDAVPublication   = "preview_carddav_publication"
+	ToolApproveCardDAVPublication   = "approve_carddav_publication"
+	ToolSyncCardDAV                 = "sync_carddav"
+	ToolGetCardDAVSyncStatus        = "get_carddav_sync_status"
+	ToolGetIdentityScoringStatus    = "get_identity_scoring_status"
+	ToolScoreIdentityMatches        = "score_identity_matches"
+	ToolListIdentityJudgments       = "list_identity_judgments"
+	ToolDraftReply                  = "draft_reply"
+	ToolDraftCompose                = "draft_compose"
+	ToolDraftForward                = "draft_forward"
+	ToolDraftGet                    = "draft_get"
+	ToolDraftEdit                   = "draft_edit"
+	ToolDraftDelete                 = "draft_delete"
+	ToolDraftRecover                = "draft_recover"
+	ToolDraftSendAs                 = "draft_send_as"
+)
+
+const (
+	ToolPreviewScopedCardDAVPublication   = "preview_scoped_carddav_publication"
+	ToolApproveScopedCardDAVPublication   = "approve_scoped_carddav_publication"
+	ToolReconcileScopedCardDAVPublication = "reconcile_scoped_carddav_publication"
 )
 
 // search_message_bodies/search_in_message mode values (wire format).
@@ -103,20 +117,25 @@ const (
 // the search_message_bodies tool, and Backend additionally enables the
 // find_similar_messages tool.
 type ServeOptions struct {
-	downloads           *downloadCache
-	Engine              query.Engine
-	AttachmentsDir      string
-	AttachmentReader    AttachmentReader
-	ManifestSaver       DeletionManifestSaver
-	HybridSearcher      HybridSearcher
-	SimilarSearcher     SimilarSearcher
-	DataDir             string
-	DocumentSearcher    DocumentSearcher
-	PersonFileSearcher  PersonFileSearcher
-	PeopleBackend       peoplebrowser.Backend
-	DirectoryBackend    peoplebrowser.DirectoryLister
-	PersonAgendaBackend PersonAgendaBackend
-	Kata                KataBackend
+	// Operations admits only fixed tools described by the current daemon caller.
+	Operations            OperationBackend
+	OperationCapabilities []string
+	// OperationWriteFamilies requires an explicit operator opt-in per family.
+	OperationWriteFamilies []OperationFamily
+	downloads              *downloadCache
+	Engine                 query.Engine
+	AttachmentsDir         string
+	AttachmentReader       AttachmentReader
+	ManifestSaver          DeletionManifestSaver
+	HybridSearcher         HybridSearcher
+	SimilarSearcher        SimilarSearcher
+	DataDir                string
+	DocumentSearcher       DocumentSearcher
+	PersonFileSearcher     PersonFileSearcher
+	PeopleBackend          peoplebrowser.Backend
+	DirectoryBackend       peoplebrowser.DirectoryLister
+	PersonAgendaBackend    PersonAgendaBackend
+	Kata                   KataBackend
 	// AllowProfileWrites exposes person promotion and Notes mutation tools.
 	// It remains false unless the operator explicitly opts in.
 	AllowProfileWrites bool
@@ -155,24 +174,54 @@ type ServeOptions struct {
 	SavedViews savedview.Service
 	// Meetings exposes daemon-backed archived meeting context, action, and
 	// metric reads. Leave it nil when the daemon predates those routes.
-	Meetings MeetingBackend
-	Calendar CalendarBackend
-	// DelegatedOnly limits an agent-delegated caller to calendar and draft tools.
-	DelegatedOnly bool
+	Meetings     MeetingBackend
+	Calendar     CalendarBackend
+	CalendarOnly bool // suppress archive tools; an explicitly supplied draft backend may coexist
 	// ArchiveSQLQuerier exposes query_sql when the daemon supports restricted SQL.
 	ArchiveSQLQuerier ArchiveSQLQuerier
 	// IdentityReview is present only when the daemon serves token-guarded
 	// identity match decisions. Older daemons omit these tools entirely.
 	IdentityReview IdentityReviewBackend
+	// IdentityOperations uses scoped native previews, writes and receipt reads.
+	IdentityOperations IdentityOperationBackend
+	// IdentityActions bounds the four mutations; nil retains all for library callers.
+	// Production discovery always supplies an explicit list, including empty.
+	IdentityActions []identitycontrol.Operation
 	// PersonCardDAV is present only when the daemon serves revision-guarded
 	// person merge and token-guarded CardDAV publication routes.
 	PersonCardDAV PersonCardDAVBackend
+	// Scoped CardDAV routes are admitted independently by current discovery.
+	ScopedCardDAVPreview   ScopedCardDAVPreviewBackend
+	ScopedCardDAVApprove   ScopedCardDAVApproveBackend
+	ScopedCardDAVReconcile ScopedCardDAVReconcileBackend
+	// PersonMerge exposes only native profile context and guarded merges.
+	PersonMerge PersonMergeBackend
+	// SuppressPersonMergeWrites suppresses mutation admission for the narrow
+	// PersonMerge lane; legacy owner PersonCardDAV retains its existing gates.
+	SuppressPersonMergeWrites bool
+	MessageTags               MessageTagBackend
+	// SuppressMessageTagWrites preserves tag reads when the backend has no
+	// admitted signed mutation contract. Embedders may opt into this restriction.
+	SuppressMessageTagWrites bool
 	// IdentityScoring exposes consented manual scoring. Consent is
 	// recorded through the CLI/API, never by an MCP tool.
 	IdentityScoring IdentityScoringBackend
+	Events          EventsBackend
 	// Drafts runs managed draft commands with the caller's credential.
 	Drafts        DraftRunner
 	DraftCommands []string
+	// Inbox exposes only operations admitted by current daemon discovery.
+	Inbox           InboxBackend
+	InboxOperations []inboxcontrol.Operation
+	// InboxCandidates is supplied only when current discovery admits metadata listing.
+	InboxCandidates InboxCandidateBackend
+	// InboxContext is supplied only when current discovery admits scoped content reads.
+	InboxContext InboxContextBackend
+	// Triage routes are independently admitted by current daemon discovery.
+	InboxTriagePreview InboxTriagePreviewBackend
+	InboxTriageApply   InboxTriageApplyBackend
+	// DraftToolsOnly suppresses archive tools; a compatible calendar backend may coexist.
+	DraftToolsOnly bool
 }
 
 type HTTPOptions struct {
@@ -181,6 +230,8 @@ type HTTPOptions struct {
 	Addr               string
 	APIKey             string
 	AllowWrites        bool
+	// IndependentCredential suppresses owner-only Events even when its bytes match the owner key.
+	IndependentCredential bool
 }
 
 func officialToolHandler(
@@ -212,6 +263,9 @@ func officialToolHandler(
 			requireConfirmationSessionKey: confirmation.requireSessionKey,
 		})
 		if err != nil {
+			if eventErr, ok := errors.AsType[*eventReadError](err); ok {
+				return nil, nil, eventRPCError(eventErr.cause)
+			}
 			if required, ok := errors.AsType[*confirmationRequiredError](err); ok {
 				state, issueErr := confirmation.manager.issue(session, confirmation.sessionKey, toolName, arguments, required.params.Message)
 				if issueErr != nil {
@@ -309,6 +363,7 @@ var mcpSchemaCache = sdkmcp.NewSchemaCache()
 
 // newMCPServer builds an official MCP server from the operation catalog.
 func newMCPServer(opts ServeOptions, allowWrites bool) *sdkmcp.Server {
+	opts.Events = nil
 	return newMCPServerWithPolicy(opts, allowWrites, newStdioInvocationPolicy())
 }
 
@@ -367,9 +422,27 @@ func newMCPServerWithPolicy(
 		personAgendaBackend: opts.PersonAgendaBackend,
 		kata:                opts.Kata,
 		identityReview:      opts.IdentityReview,
+		identityOperations:  opts.IdentityOperations,
 		personCardDAV:       opts.PersonCardDAV,
-		identityScoring:     opts.IdentityScoring,
-		drafts:              opts.Drafts,
+
+		scopedCardDAVPreview:   opts.ScopedCardDAVPreview,
+		scopedCardDAVApprove:   opts.ScopedCardDAVApprove,
+		scopedCardDAVReconcile: opts.ScopedCardDAVReconcile,
+
+		personMerge:        opts.PersonMerge,
+		messageTags:        opts.MessageTags,
+		identityScoring:    opts.IdentityScoring,
+		events:             opts.Events,
+		drafts:             opts.Drafts,
+		inbox:              opts.Inbox,
+		inboxCandidates:    opts.InboxCandidates,
+		inboxContext:       opts.InboxContext,
+		inboxTriagePreview: opts.InboxTriagePreview,
+		inboxTriageApply:   opts.InboxTriageApply,
+	}
+
+	if h.personMerge == nil {
+		h.personMerge = opts.PersonCardDAV
 	}
 
 	for _, definition := range operationCatalog(opts, h) {
@@ -406,8 +479,15 @@ func newMCPServerWithPolicy(
 		}
 		sdkmcp.AddTool[map[string]any, any](s, definition.tool(), officialToolHandler(definition.bind(h), confirmation))
 	}
-	if !opts.DelegatedOnly {
+	for _, definition := range operationalCatalog(opts, allowWrites) {
+		sdkmcp.AddTool[map[string]any, any](s, definition.definition.tool(), officialToolHandler(definition.bind(opts.Operations), confirmation))
+	}
+	if !opts.CalendarOnly && !opts.DraftToolsOnly {
 		registerAttachmentResources(s, h)
+	}
+	if opts.Events != nil {
+		s.AddReceivingMiddleware(eventsCapabilityMiddleware)
+		registerEvents(s, opts.Events)
 	}
 
 	return s
@@ -424,6 +504,7 @@ func Serve(ctx context.Context, engine query.Engine, attachmentsDir, dataDir str
 
 // ServeWithOptions creates an MCP server from opts and serves over stdio.
 func ServeWithOptions(ctx context.Context, opts ServeOptions) error {
+	opts.Events = nil
 	if err := ServeTransport(ctx, opts, &sdkmcp.StdioTransport{}); err != nil {
 		return fmt.Errorf("serve MCP over stdio: %w", err)
 	}
@@ -432,6 +513,7 @@ func ServeWithOptions(ctx context.Context, opts ServeOptions) error {
 
 // ServeTransport creates an MCP server from opts and serves it on transport.
 func ServeTransport(ctx context.Context, opts ServeOptions, transport sdkmcp.Transport) error {
+	opts.Events = nil
 	opts.downloads = &downloadCache{}
 	defer opts.downloads.close()
 	return newMCPServerWithPolicy(opts, true, newStdioInvocationPolicy()).Run(ctx, transport) //nolint:wrapcheck // ServeWithOptions adds transport-specific context.
@@ -506,6 +588,9 @@ func newMCPHTTPServerWithPolicy(
 	httpServer := sdkmcp.NewStreamableHTTPHandler(
 		func(r *http.Request) *sdkmcp.Server {
 			requestOpts := opts
+			if r.Header.Get("Mcp-Protocol-Version") != "2026-07-28" || httpOpts.APIKey == "" || httpOpts.IndependentCredential || (opts.CalendarOnly || opts.DraftToolsOnly) {
+				requestOpts.Events = nil
+			}
 			if r.Header.Get("Mcp-Protocol-Version") < "2026-07-28" {
 				// Stateless HTTP cannot initiate form elicitation on older protocols.
 				requestOpts.AllowIdentityDecisions = false

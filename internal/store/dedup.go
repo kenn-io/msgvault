@@ -750,6 +750,10 @@ func (s *Store) DeleteDedupedBatchesContext(
 	// (finding S1). No-op timeout reset on SQLite.
 	var deleted int64
 	err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+		// Physical deletion changes the source evidence used by identity grants.
+		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+			return err
+		}
 		for _, batchID := range batchIDs {
 			result, err := tx.ExecContext(ctx, `
 				DELETE FROM messages
@@ -852,6 +856,9 @@ func (s *Store) DeleteAllDedupedContext(
 	// delete share the tx so they observe the same snapshot, as before.
 	// No-op timeout reset on SQLite.
 	err = s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+			return err
+		}
 		if err := tx.QueryRowContext(ctx, `
 			SELECT COUNT(DISTINCT delete_batch_id)
 			FROM messages

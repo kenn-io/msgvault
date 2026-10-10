@@ -182,9 +182,9 @@ func recordSyncRunItems(t *testing.T, env *TestEnv, sourceID int64, status strin
 	recordSyncRunItemsOfType(t, env, sourceID, "full", status, items...)
 }
 
-func recordIncrementalSyncRunItems(t *testing.T, env *TestEnv, sourceID int64, status string, items ...store.SyncRunItem) {
+func recordIncrementalSyncRunItems(t *testing.T, env *TestEnv, sourceID int64, items ...store.SyncRunItem) {
 	t.Helper()
-	recordSyncRunItemsOfType(t, env, sourceID, "incremental", status, items...)
+	recordSyncRunItemsOfType(t, env, sourceID, "incremental", store.SyncStatusCompleted, items...)
 }
 
 func recordSyncRunItemsOfType(t *testing.T, env *TestEnv, sourceID int64, syncType, status string, items ...store.SyncRunItem) {
@@ -236,7 +236,7 @@ func TestIncrementalSyncReplayRecordsEachErrorResultClass(t *testing.T) {
 			ErrorKind:       syncItemKindFetchError,
 		})
 	}
-	recordIncrementalSyncRunItems(t, env, source.ID, store.SyncStatusCompleted, items...)
+	recordIncrementalSyncRunItems(t, env, source.ID, items...)
 	env.SetHistory(1000)
 
 	env.Mock.GetMessageError["b-nil"] = errors.New("temporary transport failure")
@@ -598,6 +598,7 @@ func TestSyncPageRefreshesOnlyUnambiguousSentAliasesOnce(t *testing.T) { //nolin
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
+	env.Syncer = New(env.Mock, env.Store, &Options{SourceType: sourceTypeIMAP})
 	source, err := env.Store.GetOrCreateSource("imap", testEmail)
 	require.NoError(err, "GetOrCreateSource")
 	for _, address := range []string{
@@ -1618,7 +1619,7 @@ func TestIncrementalSyncFiltersFetchReplayCandidates(t *testing.T) {
 		eligibleID    = "replay-eligible"
 		batchEligible = "replay-batch-eligible"
 	)
-	recordIncrementalSyncRunItems(t, env, source.ID, store.SyncStatusCompleted, store.SyncRunItem{
+	recordIncrementalSyncRunItems(t, env, source.ID, store.SyncRunItem{
 		SourceMessageID: olderID,
 		Phase:           syncItemPhaseFetch,
 		Status:          store.SyncRunItemStatusError,
@@ -1630,7 +1631,7 @@ func TestIncrementalSyncFiltersFetchReplayCandidates(t *testing.T) {
 		Status:          store.SyncRunItemStatusError,
 		ErrorKind:       syncItemKindFetchError,
 	})
-	recordIncrementalSyncRunItems(t, env, source.ID, store.SyncStatusCompleted,
+	recordIncrementalSyncRunItems(t, env, source.ID,
 		store.SyncRunItem{SourceMessageID: eligibleID, Phase: syncItemPhaseFetch, Status: store.SyncRunItemStatusError, ErrorKind: syncItemKindFetchError},
 		store.SyncRunItem{SourceMessageID: eligibleID, Phase: syncItemPhaseFetch, Status: store.SyncRunItemStatusError, ErrorKind: syncItemKindBatchFetchError},
 		store.SyncRunItem{SourceMessageID: batchEligible, Phase: syncItemPhaseFetch, Status: store.SyncRunItemStatusError, ErrorKind: syncItemKindBatchFetchError},
@@ -5547,8 +5548,59 @@ func (a *labelMetadataSnapshotAPI) GetMessageLabelsBatch(_ context.Context, mess
 			continue
 		}
 		results[i].LabelIDs = append([]string(nil), msg.LabelIDs...)
+		results[i].HistoryID = msg.HistoryID
 	}
 	return results, nil
+}
+
+func TestIncrementalSyncMetadataRefreshFailureKeepsHistoryCursor(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	env := newTestEnv(t)
+	env.Mock.Profile.MessagesTotal = 1
+	env.Mock.Profile.HistoryID = 12340
+	env.Mock.AddMessage("metadata-refresh", testMIME(), []string{"INBOX"})
+	source := env.CreateSource(t)
+	runFullSync(t, env)
+
+	env.Mock.Messages["metadata-refresh"].LabelIDs = []string{"INBOX", "STARRED"}
+	env.Mock.Messages["metadata-refresh"].HistoryID = 12350
+	env.SetHistory(12350, historyLabelAdded("metadata-refresh", "STARRED"))
+	failingAPI := &labelMetadataSnapshotAPI{
+		MockAPI: env.Mock,
+		labelErrors: map[string]error{
+			"metadata-refresh": errors.New("temporary metadata failure"),
+		},
+	}
+	env.Syncer = New(failingAPI, env.Store, nil)
+	current, err := env.Store.GetSourceByID(source.ID)
+	requirements.NoError(err)
+	_, err = env.Syncer.Incremental(env.Context, current)
+	requirements.ErrorContains(err, "metadata-refresh")
+	assertMessageNotHasLabel(t, env.Store, "metadata-refresh", "STARRED")
+
+	failedRun, err := env.Store.GetLatestSync(source.ID)
+	requirements.NoError(err)
+	requirements.Equal("failed", failedRun.Status)
+	requirements.Equal(int64(1), failedRun.ErrorsCount)
+	failedItems, err := env.Store.ListSyncRunItems(failedRun.ID, store.SyncRunItemStatusError, 10)
+	requirements.NoError(err)
+	requirements.Len(failedItems, 1)
+	assertions.Equal("metadata-refresh", failedItems[0].SourceMessageID)
+	assertions.Equal("metadata_refresh_error", failedItems[0].ErrorKind)
+
+	current, err = env.Store.GetSourceByID(source.ID)
+	requirements.NoError(err)
+	requirements.True(current.SyncCursor.Valid)
+	assertions.Equal("12340", current.SyncCursor.String, "failed metadata refresh must leave the history cursor retryable")
+
+	env.Syncer = New(&labelMetadataSnapshotAPI{MockAPI: env.Mock}, env.Store, nil)
+	_, err = env.Syncer.Incremental(env.Context, current)
+	requirements.NoError(err)
+	assertMessageHasLabel(t, env.Store, "metadata-refresh", "STARRED")
+	updated, err := env.Store.GetSourceByID(source.ID)
+	requirements.NoError(err)
+	assertions.Equal("12350", updated.SyncCursor.String)
 }
 
 func TestIMAPFilteredRescanPreservesCanonicalIDAndMergesLabels(t *testing.T) {

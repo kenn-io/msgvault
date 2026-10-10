@@ -23,6 +23,7 @@ var (
 	ErrPersonMergeInvalid           = errors.New("invalid person merge")
 	ErrPersonMergeAlreadySplit      = errors.New("person merge lineage already split")
 	ErrPersonMergeLineageConflict   = errors.New("participant consolidation crosses person merge lineage")
+	ErrPersonMergeScopeUnsupported  = errors.New("person merge cannot authorize organization references")
 	ErrPersonMergeIdempotency       = errors.New("person merge idempotency conflict")
 	ErrPersonMergeCandidateState    = errors.New("person merge candidate state conflict")
 	ErrPersonMergeCandidateNotFound = errors.New("person merge candidate not found")
@@ -268,18 +269,26 @@ type PersonMergeCandidateDecisionResult struct {
 func (s *Store) MergePersonsContext(
 	ctx context.Context, request PersonMergeRequest,
 ) (*PersonMergeResult, error) {
+	return s.MergePersonsAuthorizedContext(ctx, request, nil)
+}
+
+// MergePersonsAuthorizedContext checks native person and address-book scope
+// in the existing merge transaction. Completed receipts require fresh admission.
+func (s *Store) MergePersonsAuthorizedContext(
+	ctx context.Context, request PersonMergeRequest, authorize PersonEditAuthorizer,
+) (*PersonMergeResult, error) {
 	request.IdempotencyKey = strings.TrimSpace(request.IdempotencyKey)
 	request.Actor = strings.TrimSpace(request.Actor)
 	if err := request.validate(); err != nil {
 		return nil, err
 	}
 	return retryBusyWrite(ctx, s, "merge persons", func() (*PersonMergeResult, error) {
-		return s.mergePersonsOnce(ctx, request)
+		return s.mergePersonsOnce(ctx, request, authorize)
 	})
 }
 
 func (s *Store) mergePersonsOnce(
-	ctx context.Context, request PersonMergeRequest,
+	ctx context.Context, request PersonMergeRequest, authorize PersonEditAuthorizer,
 ) (*PersonMergeResult, error) {
 	requestHash, err := personMergeRequestHash(request)
 	if err != nil {
@@ -300,6 +309,9 @@ func (s *Store) mergePersonsOnce(
 			return err
 		}
 		if found {
+			if err := s.authorizePersonMergeReplayTx(ctx, tx, replayed, authorize); err != nil {
+				return err
+			}
 			result = replayed
 			return nil
 		}
@@ -325,6 +337,15 @@ func (s *Store) mergePersonsOnce(
 		}
 		if err := ensurePersonMergeCardDAVStateTx(ctx, tx, survivor.ID, absorbed.ID); err != nil {
 			return err
+		}
+		if authorize != nil {
+			scope, err := s.personMergeScopeTx(ctx, tx, survivor.ID, absorbed.ID)
+			if err != nil {
+				return err
+			}
+			if err := authorize(ctx, scope); err != nil {
+				return err
+			}
 		}
 
 		inferenceBefore, err := s.captureInferenceExportPeopleTx(ctx, tx, survivor.ID)

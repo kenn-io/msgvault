@@ -349,6 +349,10 @@ import (
 // microsoft CardDAV provider, microsoft_authorization_required and
 // microsoft_contact_too_large.
 // 3.5.0 adds the account: and received: search operators.
+// Unreleased native additions in this integration: signed inbox previews,
+// durable receipts, owner-only MCP Events, scoped identity preview/apply and
+// receipt recovery, and native person/address-book grant selections.
+// Unsigned native tag writes from the earlier integration are rejected.
 const APISchemaVersion = "3.5.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
@@ -911,7 +915,46 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 		return
 	}
 	schemas := doc.Components.Schemas.Map()
+	if context := schemas["InboxContext"]; context != nil {
+		if text := context.Properties["text"]; text != nil {
+			// A present empty body is valid; omission still fails validation.
+			setCodegenGoType(text, "*string")
+		}
+	}
 	const emailProperty = "email"
+	// Events arguments and schema documents contain arbitrary JSON values.
+	// Empty object schemas otherwise generate struct{} and discard that data.
+	for schemaName, properties := range map[string][]string{
+		"SubscribeRequest":   {"arguments"},
+		"UnsubscribeRequest": {"arguments"},
+		"Definition":         {"inputSchema", "payloadSchema"},
+	} {
+		if schema := schemas[schemaName]; schema != nil {
+			for _, name := range properties {
+				if property := schema.Properties[name]; property != nil {
+					setCodegenGoType(property, "map[string]any")
+				}
+			}
+		}
+	}
+	if envelope := schemas["Envelope"]; envelope != nil {
+		if data := envelope.Properties["data"]; data != nil {
+			setCodegenGoType(data, "jsontext.Value")
+			data.Extensions["x-go-type-import"] = map[string]any{pathKey: "encoding/json/jsontext"}
+		}
+	}
+	if calendar := schemas["CalendarProjection"]; calendar != nil {
+		for name, goType := range map[string]string{"all_day": "*bool", "sequence": "*int64"} {
+			if property := calendar.Properties[name]; property != nil {
+				setCodegenGoType(property, goType)
+			}
+		}
+		// Unknown provider fields are present as null, including zero-capable
+		// scalar fields. Keep every nullable field through parsing and encoding.
+		for _, name := range []string{statusFieldName, "sequence", "start", "end", "all_day", "time_zone", "ical_uid"} {
+			nullableSchemaProperty(calendar, name)
+		}
+	}
 	if input := schemas["GCalEventInput"]; input != nil {
 		for name, goType := range map[string]string{"attendees": "*[]GCalAttendee", "recurrence": "*[]string"} {
 			if field := input.Properties[name]; field != nil {

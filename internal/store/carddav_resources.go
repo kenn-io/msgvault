@@ -104,6 +104,9 @@ func (s *Store) ApplyCardDAVSyncPlanContext(
 	}
 	result := &CardDAVApplyResult{}
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+			return err
+		}
 		var generation int64
 		if err := tx.QueryRowContext(ctx, `SELECT connection_generation
 			FROM carddav_accounts WHERE id = (SELECT account_id FROM carddav_address_books WHERE id = ?)`+s.dialect.SelectForUpdate(), plan.AddressBookID).Scan(&generation); err != nil {
@@ -130,9 +133,6 @@ func (s *Store) ApplyCardDAVSyncPlanContext(
 		if book.SyncRevision != plan.SyncRevision ||
 			(!book.IsSubscribed && !book.IsLookupSource) {
 			return ErrCardDAVStalePlan
-		}
-		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
-			return err
 		}
 
 		seen := make(map[string]bool, len(plan.Upserts))

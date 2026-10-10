@@ -113,6 +113,11 @@ func (s *Store) ExecuteGCContext(
 
 	var deleted int64
 	err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+		// Reserve the writer before reading the population being confirmed.
+		// This also serializes removal of identity source evidence.
+		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+			return err
+		}
 		q := boundQuerier{ctx: ctx, q: tx}
 		actual, err := planGCWith(q)
 		if err != nil {

@@ -904,6 +904,9 @@ func (imp *Importer) ensureConversation(
 			sourceID, opts.AccountID, bridgePrefix, sum,
 		)
 	}
+	if err := imp.observeChatInbox(ctx, sourceID, convID, ch.ID, detail, opts.AccountID); err != nil {
+		return 0, false, chatMembership{}, err
+	}
 	return convID, membershipComplete, membership, nil
 }
 

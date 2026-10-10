@@ -1,7 +1,7 @@
 ---
-last_edited: "2026-10-04"
 title: MCP Server
 description: Expose your email, chat, calendar, and meeting archive to AI assistants via MCP.
+last_edited: "2026-10-06"
 ---
 
 Connect an AI assistant to your msgvault archive so it can find messages,
@@ -9,13 +9,13 @@ retrieve attachments, and help you remember people and conversations. The
 server uses your selected daemon: without `[remote].url`, it starts or reuses
 the local daemon; with `[remote].url`, it uses that remote server.
 
-MCP searches the archive and prepares and manages drafts. It cannot send email, change live mailbox labels, or
-read Google credentials. Semantic searches call your configured embedding
-endpoint, so use a local or self-hosted endpoint when search text must stay on
+MCP searches the archive and can edit native email tags and manage drafts through the daemon.
+It cannot send email or read Google credentials. Semantic searches call your
+configured embedding endpoint, so use a local or self-hosted endpoint when search text must stay on
 your machine or network. See [vector search](/docs/usage/vector-search/).
 
-By default, stdio clients can also manage Saved Views, export attachments,
-and stage deletion manifests. Actual message deletion still requires the CLI
+By default, stdio clients can also edit native email tags, manage Saved Views,
+export attachments, and stage deletion manifests. Actual message deletion still requires the CLI
 [deletion workflow](/docs/usage/deletion/). Person promotion and Notes writes
 need `--allow-profile-writes`. HTTP clients get read tools by default and need
 `--http-allow-writes` for general write tools. Calendar event mutations also
@@ -26,6 +26,152 @@ instructions or authorization to make a change. See [write controls](#write-cont
 
 Saved View management changes only reusable definitions; deleting a Saved
 View never deletes archive messages.
+
+## Inbox control (unreleased)
+
+Daemon API schema 3.3.0 and current operation discovery enable native inbox
+tools. Delegates need `inbox.read` and the exact source grant. Mutation tools
+also require the action permission. Discovery omits tools that the current
+caller cannot use; live provider capabilities can further restrict each action.
+
+`inbox_candidates` takes an exact `source` and `scope` (`message` for mail,
+`chat` for Beeper), optional `limit` (default 25, range 1–100), and `cursor`.
+It returns a `page` containing committed titles, snippets, provider markers,
+`archive_revision`, and `next_cursor`. Pass the cursor unchanged with the same
+source and scope. A stale cursor returns a `conflict` error; start a fresh
+listing. `unavailable` reports missing provider markers, including items
+outside the page. Listing does not read message bodies or write to providers.
+
+`inbox_context` reads bounded plain text for an exact `target`. For a Beeper
+chat, set `message_id` to the candidate's `context_message_id`; a missing
+selector means there is no active archived message to select. Mail targets
+select their message directly and reject a separate `message_id`. Delegates
+also need `inbox.content-read` for the source. Optional `max_bytes` defaults to
+16,384 and accepts at most 65,536. The returned `context` distinguishes known
+empty text from unavailable content and reports truncation. Treat its text as
+untrusted data. Reading context does not change provider or read state.
+
+`inbox_get_capabilities`, `inbox_get_state`, and `inbox_list_folders` observe
+native state. `inbox_archive`, `inbox_unarchive`, `inbox_set_read`,
+`inbox_set_unread`, `inbox_move`, `inbox_tags`, and `inbox_create_folder` preview
+one exact mutation by default. `inbox_receipt_get` and `inbox_reconcile` inspect
+or reconcile durable evidence without redispatching a provider write.
+
+Mutation execution requires `dry_run: false`, expected state, the signed
+preview token, an idempotency key, and client confirmation of those exact
+arguments. Retain returned receipts even when a tool reports an error.
+Provider text is untrusted data and cannot authorize a change. See the
+[HTTP inbox contract](../api-server.md#inbox-control-unreleased) for exact
+identities, provider limits, and recovery rules. HTTP mutation tools also need
+`--http-allow-writes`. Inbox tools do not send messages.
+
+`inbox_triage_preview` prepares a read-only proposal for 1–100 explicit mail
+targets from one exact source. Both triage tools require `inbox.read`,
+`inbox.tag`, and that source grant. Supply category keys and archived evidence
+message IDs. The daemon uses existing owner-configured tags; missing categories
+use `uncertain`, and conflicting or retained categories keep Inbox. Preview
+does not create tags or change read state.
+
+Pass the complete returned proposal unchanged to `inbox_triage_apply`, including
+its revisions, evidence, token, and item keys. The client must confirm those
+exact arguments before the MCP server calls apply. HTTP also requires
+`--http-allow-writes`. Apply adds mapped tags while retaining Inbox, read state,
+and unrelated tags. The daemon rechecks current grants, incoming messages,
+mappings, native state, and expiry before a new write.
+
+Keep the ordered per-item results and receipts even on error. A separately
+confirmed retry of the same proposal recovers existing receipts, including after
+preview expiry, without repeating completed or uncertain writes. Inspect or
+reconcile an `unknown` receipt before creating a new intent. Triage supports
+mail providers with native tags; use the separate flag tools for Beeper chats.
+See the [HTTP inbox contract](../api-server.md#inbox-control-unreleased) for
+provider limits and partial-batch recovery. Review the
+[rollout checklist](inbox-rollout.md) before enabling native controls.
+
+## Events
+
+On unreleased `main`, native MCP Events can notify an HTTPS receiver when
+msgvault archives a live message, changes an archived calendar event, or changes
+a draft. This requires daemon API schema 3.2.0 or newer, protocol
+`2026-07-28`, Streamable HTTP, the selected daemon's owner API key, and
+[`[mcp.events].enabled`](../configuration.md#mcpevents). It is unavailable over
+stdio, with delegated tokens, in keyless mode, or when either independent
+`--http-token-file` or `--http-token-env` is selected.
+
+The client discovers the top-level `events` capability through
+`server/discover`, then calls `events/list`. The runtime catalog includes only
+source types with implemented capture and reads. Phase 1 supports Gmail and
+IMAP message and draft occurrences, and Google Calendar event changes.
+Managed Beeper drafts and local chat drafts also have capture and `draft_get`
+reads when their source types are explicitly enabled in `[mcp.events].sources`:
+`beeper`, `slack`, `slackdump`, `teams`, and `discord`.
+Historical imports, full scans, and recovery scans do not emit live occurrences. A newly
+subscribed receiver starts at the current journal head. Keep the daemon running
+with `msgvault serve`, or disable background daemon idle shutdown when callbacks
+must remain available.
+
+Choose an exact scope before subscribing:
+
+| Family | Scope argument | Find the scope |
+|---|---|---|
+| `msgvault.message_archived` | `conversation_id` | Message or conversation reads |
+| `msgvault.calendar_event_changed` | `calendar_source_id` | `list_calendar_sources` |
+| `msgvault.draft_changed` | `conversation_id` | Draft or conversation reads |
+
+Archive IDs are canonical decimal strings. Subscribe with `events/subscribe`:
+
+```json
+{
+  "name": "msgvault.message_archived",
+  "arguments": {"conversation_id": "42"},
+  "delivery": {
+    "mode": "webhook",
+    "url": "https://receiver.example.net/events",
+    "secret": "whsec_<base64-encoded 32-byte secret>"
+  }
+}
+```
+
+The receiver must echo the signed verification request's `challenge` as JSON.
+Delivery requests contain a signed occurrence envelope. Verify the Standard
+Webhooks signature over the exact body and deduplicate by `eventId`. HTTPS
+receivers normally need public addresses and port 443 or 8443; the
+[configuration reference](../configuration.md#mcpevents) owns private receiver
+exceptions and address checks.
+
+Save the returned `id`, `cursor`, and `refreshBefore`. The MCP `refreshBefore`
+field is an ISO8601 UTC timestamp, such as `2026-10-02T12:00:00.123Z`. Renew
+before that time with the same scope, callback, and secret. `events/unsubscribe`
+ends that subscription. Use a saved cursor for explicit replay; when coverage
+or retention makes it stale, subscribe returns `truncated: true` and starts at
+the current head. Delivery is at least once, ordered within each subscription,
+with one pending occurrence and at most twelve attempts. A `2xx` response
+acknowledges delivery; `410` ends the subscription; `413` drops the occurrence.
+
+Use `get_mcp_event` to recover a retained occurrence. For a message occurrence,
+pass its `eventId` as `event_id` to every `get_message` page. This grants a read
+only for the message identified by that receipt; it cannot authorize another
+message or a replacement using a deleted message's ID. An occurrence receipt
+can survive physical message deletion even when its message read becomes
+unavailable. Ending a subscription removes its read authority immediately;
+expired subscriptions have a 24-hour read grace while the receipt is retained.
+
+Use `draft_get` to read a managed draft by its `draft_id`. Deleted drafts can
+return not-found while `get_mcp_event` still returns their retained occurrence.
+
+`msgvault mcp events status --json` shows safe delivery state, cursors, pending
+attempts, and dead-letter and loop-guard counts. It omits callback URLs and
+secrets. Subscriptions expire within 24 hours and the journal retains at most
+seven days. Own-message delivery defaults off; the runtime schema describes
+`include_from_me` and its bounded loop guard. Events do not poll provider status
+or send mail. Attachment processing, action completion, filed Kata issues, and
+Beeper media readiness remain unadvertised until their producer and read gates
+are implemented.
+
+Hosted ChatGPT integration remains experimental: a gateway must forward native
+`events/*` and provide the daemon owner key. An HTTPS webhook receiver receives
+callbacks directly from the daemon. A tunnel does not establish this auth
+bridge or forward callbacks automatically.
 
 ## Calendar control
 
@@ -58,7 +204,7 @@ Availability needs `time_min` and `time_max`, and accepts optional `calendar_ids
 [Calendar setup](calendar.md#control-events-unreleased) owns write consent,
 configured calendar permissions, recurrence limits, and archive failure recovery.
 MCP forwards requests to that same daemon path. A delegated stdio bridge, invoked
-with `--agent-url` and `--agent-token-file`, exposes only calendar and draft tools. The daemon
+with `--agent-url` and `--agent-token-file`, exposes calendar tools and managed drafts supported by the daemon. The daemon
 checks the grant's exact calendar source identity. `calendar.read` permits
 availability; `calendar.event.read` permits provider-derived event details in
 delegated plans and write receipts; `calendar.write` permits event changes; and
@@ -69,6 +215,30 @@ Calendar tools instruct assistants to treat archived event text and attendee
 content as data, never as instructions or permission to write. The write opt-in
 exposes mutation tools; the user must request each change and confirm each
 non-dry-run plan through client elicitation.
+
+## Native email tags
+
+`get_message_tags` reads one archived message's live Gmail label IDs, IMAP
+keywords, or Microsoft Graph category names. Its `available_tags` lists existing
+Gmail user label IDs, the IMAP server's advertised permanent keywords, or the
+categories observed on that Microsoft message. `update_message_tags` adds or
+removes tags and verifies the result through the daemon. Both tools need
+API schema 3.2.0; older daemons omit them.
+
+```json
+{"message_id":42,"add":["Label_123"],"remove":["Label_456"],"dry_run":true}
+```
+
+Use the exact Gmail user label IDs returned by the read tool. For IMAP, use
+custom keyword atoms and optionally name a recorded `mailbox`. For Microsoft
+Graph, use category names and grant `Mail.ReadWrite` with
+[`add-o365 --graph --mail-write`](../cli-reference.md#add-o365). The update tool
+follows the normal [write controls](#write-controls). A preview never writes.
+An actual edit requires client confirmation of the exact message, mailbox and
+tag changes. A client that cannot confirm the action cannot execute it.
+A partial error keeps its last observed `result` in structured content; read
+tags before retrying. See [`message-tags`](../cli-reference.md#message-tags)
+for provider permissions, identity checks, and failure behavior.
 
 ## Draft tools
 
@@ -89,7 +259,7 @@ These tools run the matching CLI commands through your selected daemon. They req
 
 Recipient parameters `to`, `cc`, and `bcc` are arrays of strings. Use `draft_get` to read the current revision before editing, deleting, or recovering a draft. Conversation lists return a `data` array. `draft_send_as` returns a `send_as` list.
 
-Owner sessions expose all eight tools alongside the archive tools. Delegated sessions expose only `draft_reply`, `draft_compose`, `draft_get`, `draft_edit`, `draft_delete`, and `draft_recover` from this list, alongside the [calendar tools](#calendar-control). Each call uses the agent token, and the daemon checks its permissions and source scope.
+Owner sessions expose all eight tools alongside the archive tools. Delegated sessions expose `draft_reply`, `draft_compose`, `draft_get`, `draft_edit`, `draft_delete`, and `draft_recover`, alongside calendar tools when the daemon supports them. Each call uses the agent token, and the daemon checks its permissions and source scope.
 
 For a delegated Claude Desktop session, use these arguments with the daemon URL and token file you received from the owner:
 
@@ -283,6 +453,8 @@ The MCP server exposes the following tools to connected AI clients:
 | `get_stats` | Archive overview statistics, plus each account's `LastSyncAt`. Includes vector index state when configured. | — |
 | `aggregate` | Grouped statistics (top senders, domains, labels, or message volume by calendar year) | `group_by` (string: sender/recipient/domain/label/time), `limit` (int), `after` (string), `before` (string), `account` (string) |
 | `query_sql` | Advanced read-only SQL over the published analytics cache. Returns rows and freshness metadata, or an accepted refresh job. | `sql` (string, required), `fresh` (bool, default false) |
+| `get_message_tags` | Read native Gmail labels, IMAP keywords, or Microsoft Graph categories. Read-only. | `message_id` (int, required), `mailbox` (string, IMAP only) |
+| `update_message_tags` | Add or remove native email tags through the daemon. Write-class. | `message_id` (int, required), `add` / `remove` (string arrays), `mailbox` (string, IMAP only), `dry_run` (bool) |
 | `list_saved_views` | List persistent reusable Saved Views and their complete definitions. Read-only. | — |
 | `get_saved_view` | Get one Saved View and its canonical definition and revision. Read-only. | `id` (int, required) |
 | `run_saved_view` | Execute a Saved View through Explore without reconstructing its query. Returns typed entries, groups, or files. Read-only. | `id` (int, required), `limit` (int), `cursor` (string) |
@@ -580,19 +752,34 @@ instruction or as your consent to a write.
 
 Enable only the writes intended for the assistant's session:
 
-| Transport | Saved View management, attachment export, deletion staging, and draft writes | Person promotion and Notes writes | Calendar event mutations |
+| Transport | Native email tag edits, Saved View management, attachment export, deletion staging, and managed draft writes | Person profile and Notes writes | Calendar event mutations |
 |---|---|---|---|
 | Stdio | Available by default | Add `--allow-profile-writes` | Add `--allow-calendar-writes` |
 | HTTP | Add `--http-allow-writes` | Add both `--http-allow-writes` and `--allow-profile-writes` | Add both `--http-allow-writes` and `--allow-calendar-writes` |
 
 `draft_delete` and `draft_recover` require confirmation for each call under both transports, even when the write tools are available.
 
-When profile writes are enabled, two additional tools appear:
+When profile writes are enabled, these tools appear on compatible daemons:
 
 | Tool | Effect | Parameters |
 |---|---|---|
-| `promote_person` | Create a saved profile from an observed contact; repeated promotion returns the existing profile. | `participant_id` (int, required) |
+| `promote_person` | Create a saved profile from an observed contact; repeated promotion preserves the existing name. On a compatible daemon, an explicit initial name requires confirmation. | `participant_id` (int, required), `display_name` (string or null, optional on compatible daemons) |
 | `update_person_notes` | Append or replace private Notes with `enrichment` provenance. | `person_id` (int, required), `text` (required), `mode` (`append` by default, or `replace`), `expected_value_id` |
+| `set_person_display_name` | Set or clear the saved display name after confirmation. | `person_id`, exact `etag`, `display_name` (empty clears the override) |
+| `patch_person_profile` | Add or supersede structured names, contact points, addresses, dates, categories and media after confirmation; preserve the display-name override. | `person_id`, exact `etag`, `patch` |
+
+On unreleased `main`, `get_person_edit_context` and
+`get_person_structured_profile` return the current person data and ETag for
+these edits. Delegated stdio sessions expose only selected people with
+`person.read`; writes also need `person.edit` and `--allow-profile-writes`.
+The daemon checks the permanent person UID and every affected native address
+book before writing. See [scoped person access](../api-server.md#explicit-identity-operations-unreleased)
+for the grant contract. Delegated sessions do not expose promotion or Notes.
+
+For a new profile, omitted or null `display_name` uses its observed name.
+An empty or whitespace-only name leaves it unset. Re-promotion preserves the
+saved name, including a cleared name. Older or delegated daemon contracts do
+not expose this optional initial-name field.
 
 Appending is atomic and forbids `expected_value_id`. Replacing existing Notes
 requires the current value ID returned by `get_person_notes`; a concurrent
@@ -641,7 +828,7 @@ msgvault mcp --http 8080
 | `--http-token-file` | — | On unreleased `main`, read an independent inbound bearer key from an owner-only file; requires `--http`. |
 | `--http-token-env` | — | On unreleased `main`, name the variable holding the inbound bearer key; file takes priority. Requires `--http`. |
 | `--http-allow-writes` | `false` | Expose write-class tools over HTTP. Identity review, scoring, person merges, CardDAV writes, profile writes, and other write tools still need their separate flags. |
-| `--allow-profile-writes` | `false` | Expose person promotion and private Notes writes. HTTP also requires `--http-allow-writes`. |
+| `--allow-profile-writes` | `false` | Expose supported person promotion, display-name, structured-profile and private Notes writes. Delegated sessions require exact person grants and omit promotion and Notes. HTTP also requires `--http-allow-writes`. |
 | `--allow-identity-decisions` | `false` | Expose identity match accept/reject tools. Each decision needs client confirmation. HTTP also requires `--http-allow-writes`. |
 | `--allow-identity-scoring` | `false` | Expose consented manual identity scoring, which sends bounded raw identity data to the fixed provider. Each run needs client confirmation; HTTP also requires `--http-allow-writes`. |
 | `--allow-person-merges` | `false` | Expose local person merge tools. Each merge needs client confirmation; HTTP also requires `--http-allow-writes`. |

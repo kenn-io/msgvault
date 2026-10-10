@@ -368,7 +368,7 @@ func applyActivityEligibility(row *activityCandidateRow) {
 	hasTimestamp := activityUsableTime(row.candidate.SentAt) ||
 		activityUsableTime(row.candidate.ReceivedAt) ||
 		activityUsableTime(row.candidate.InternalDate)
-	cancelled := row.candidate.MessageType == "calendar_event" &&
+	cancelled := row.candidate.MessageType == MessageTypeCalendarEvent &&
 		strings.EqualFold(strings.TrimSpace(metadata.Status), "cancelled")
 	row.candidate.Eligible = row.deletedAt == nil &&
 		row.deletedFromSourceAt == nil &&

@@ -188,8 +188,8 @@ func (a *storeAPIAdapter) runBeeperDraftCreate(ctx context.Context, grant *agent
 }
 
 // runBeeperDraftLifecycle serves draft-get, draft-edit and draft-delete for
-// a Beeper draft. Each write first checks that Beeper still shows the
-// committed draft, so text someone else typed in the chat is never replaced.
+// a Beeper draft. Writes require an empty composer: Beeper can refuse a text
+// write atomically, but cannot conditionally clear a populated composer.
 func (a *storeAPIAdapter) runBeeperDraftLifecycle(ctx context.Context, intent draftLifecycleIntent, grant *agentgrant.Grant, draft store.BeeperDraft, emit func(api.CLIRunEvent) error) error {
 	if intent.Operation == api.CLIRunDraftRecoverCommand {
 		if grant != nil {
@@ -290,6 +290,9 @@ func (a *storeAPIAdapter) runBeeperDraftLifecycle(ctx context.Context, intent dr
 	if !state.Empty && !beeperDraftMatches(state, draft.Text) {
 		return draftReplyError("draft_conflict", errors.New("the Beeper draft changed outside msgvault"))
 	}
+	if !state.Empty {
+		return draftReplyError("composer_clear_required", errors.New("clear the managed draft in Beeper, then retry with the same revision"))
+	}
 	operation, status := store.BeeperDraftOperationEdit, "edited"
 	if intent.Operation == api.CLIRunDraftDeleteCommand {
 		operation, status = store.BeeperDraftOperationDelete, "deleted"
@@ -319,16 +322,6 @@ func (a *storeAPIAdapter) writeBeeperDraft(ctx context.Context, client *beeper.C
 			}
 		}
 		return a.beeperDraftFailure(ctx, emit, intent, claimed.DraftID, "remote_unknown", err)
-	}
-	if !state.Empty {
-		chat, err := client.SetDraft(ctx, claimed.ChatID, nil)
-		if err != nil {
-			return fail(err)
-		}
-		changed = true
-		if state, err = chat.DraftState(); err != nil || !state.Empty {
-			return fail(errors.New("beeper did not confirm the cleared draft"))
-		}
 	}
 	text := ""
 	if claimed.Pending.Operation == store.BeeperDraftOperationEdit {

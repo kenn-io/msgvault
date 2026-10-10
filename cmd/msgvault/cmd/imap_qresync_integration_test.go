@@ -20,6 +20,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/imap"
+	"go.kenn.io/msgvault/internal/inboxcontrol"
 	"go.kenn.io/msgvault/internal/store"
 	msgsync "go.kenn.io/msgvault/internal/sync"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -947,10 +948,26 @@ func TestIMAPQresyncEndToEndFlagOnlyChangePreservesLocalReadState(t *testing.T) 
 	}
 	addr, server := startScriptedRFC7162Server(t, baseline)
 	st := testutil.NewTestStore(t)
-	const identifier = "imap://flags@example.test"
+	host, portText, err := net.SplitHostPort(addr)
+	requirements.NoError(err)
+	port, err := strconv.Atoi(portText)
+	requirements.NoError(err)
+	identifier := (&imap.Config{Host: host, Port: port, Username: testutil.IMAPTestUsername}).Identifier()
 	first, source := requireScriptedRFC7162Sync(t, st, identifier, addr)
 	requirements.NoError(first.Close())
-	_, err := st.DB().Exec(st.Rebind(`
+	metadata, err := st.SourceMessageMetadata(source.ID)
+	requirements.NoError(err)
+	row, ok := metadata["INBOX|1"]
+	requirements.True(ok)
+	target := inboxcontrol.Target{SourceID: source.ID, SourceType: "imap", SourceIdentifier: identifier, AccountID: testutil.IMAPTestUsername, Scope: inboxcontrol.ScopeMessage, ItemID: row.ID, ProviderID: "INBOX|1", Mailbox: "INBOX", UIDValidity: 77, UID: 1}
+	initial, err := st.GetInboxProviderState(t.Context(), target)
+	requirements.NoError(err)
+	requirements.NotNil(initial, "full sync must record native state")
+	requirements.NotNil(initial.Read)
+	assertions.False(*initial.Read)
+	requirements.NotNil(initial.Inbox)
+	assertions.True(*initial.Inbox)
+	_, err = st.DB().Exec(st.Rebind(`
 		UPDATE messages SET is_read = ? WHERE source_id = ? AND source_message_id = ?
 	`), false, source.ID, "INBOX|1")
 	requirements.NoError(err)
@@ -965,6 +982,16 @@ func TestIMAPQresyncEndToEndFlagOnlyChangePreservesLocalReadState(t *testing.T) 
 	})
 	second, _ := requireScriptedRFC7162Sync(t, st, identifier, addr)
 	requirements.NoError(second.Close())
+	refreshed, err := st.GetInboxProviderState(t.Context(), target)
+	requirements.NoError(err)
+	requirements.NotNil(refreshed)
+	requirements.NotNil(refreshed.Read)
+	assertions.True(*refreshed.Read, "flag-only QRESYNC refreshes provider read state")
+	requirements.NotNil(refreshed.Inbox)
+	assertions.True(*refreshed.Inbox)
+	assertions.ElementsMatch([]string{string(imapapi.FlagSeen), string(imapapi.FlagFlagged)}, refreshed.Flags)
+	assertions.Empty(refreshed.Tags, "system flags are not native keywords")
+	assertions.True(refreshed.ObservedAt.After(initial.ObservedAt))
 
 	assertions.Equal([]string{
 		"INBOX|1|[\"\\\\Flagged\",\"\\\\Seen\"]",

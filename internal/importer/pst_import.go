@@ -210,7 +210,8 @@ func importPstWithBatchSize(
 				if err := json.Unmarshal([]byte(active.CursorBefore.String), &saved); err == nil {
 					sameFile := saved.File == absPath || saved.File == cpFile
 					if !sameFile && saved.File != "" {
-						if curInfo, err := os.Stat(absPath); err == nil {
+						// The CLI caller selects the archive path; imports have no restricted directory.
+						if curInfo, err := os.Stat(absPath); err == nil { // #nosec G703 -- inspect the explicitly selected local archive
 							if cpInfo, err := os.Stat(saved.File); err == nil && os.SameFile(curInfo, cpInfo) {
 								sameFile = true
 							}
@@ -659,7 +660,8 @@ func finishPstThreads(ctx context.Context, st *store.Store, sourceID int64) erro
 // distinguishes archives. Re-importing the same bytes yields the same
 // fingerprint regardless of path, preserving idempotence.
 func pstArchiveFingerprint(path string) (string, error) {
-	f, err := os.Open(path)
+	// The CLI caller selects the archive path; imports have no restricted directory.
+	f, err := os.Open(path) // #nosec G703 -- read the explicitly selected local archive
 	if err != nil {
 		return "", err
 	}

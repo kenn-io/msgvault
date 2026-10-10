@@ -202,6 +202,7 @@ var ErrMessageGone = errors.New("message no longer present in the mailbox")
 // MessageLabelsBatchResult is one per-message result from a batch label fetch.
 // LabelIDs is nil when the fetch failed; Err preserves the per-message cause.
 type MessageLabelsBatchResult struct {
+	HistoryID       uint64
 	ID              string
 	LabelIDs        []string
 	RFC822MessageID string

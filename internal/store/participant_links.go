@@ -8,8 +8,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-
-	"go.kenn.io/msgvault/internal/peoplesweep"
 )
 
 // ErrAlreadyLinked is returned by LinkParticipants when the requested edge
@@ -275,12 +273,22 @@ func (s *Store) lockIdentityMutationTxContext(
 		}
 		return errAttributionLockUpgrade
 	}
-	if _, err := tx.ExecContext(ctx, s.dialect.InsertOrIgnore(
-		`INSERT OR IGNORE INTO archive_metadata (key, value) VALUES (?, '0')`),
+	return lockIdentityMutationContext(ctx, tx.ExecContext)
+}
+
+// lockIdentityMutationContext also serves native sync transactions on pinned
+// connections. exec must observe the supplied context and rebind SQL for its
+// dialect. Acquiring this fence does not change the semantic revision.
+func lockIdentityMutationContext(
+	ctx context.Context,
+	exec func(context.Context, string, ...any) (sql.Result, error),
+) error {
+	if _, err := exec(ctx,
+		`INSERT INTO archive_metadata (key, value) VALUES (?, '0') ON CONFLICT (key) DO NOTHING`,
 		identityRevisionKey); err != nil {
 		return fmt.Errorf("seed identity revision: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx,
+	if _, err := exec(ctx,
 		`UPDATE archive_metadata SET value = value WHERE key = ?`,
 		identityRevisionKey); err != nil {
 		return fmt.Errorf("lock identity revision: %w", err)
@@ -475,8 +483,7 @@ func (s *Store) linkParticipantsContextGuardedOwned(
 			linked = true
 			if personID != 0 {
 				err = s.publishPersonIdentityScopeChangesTx(
-					ctx, tx, []int64{personID},
-					peoplesweep.EvidenceEffectIdentityReassigned)
+					ctx, tx, []int64{personID})
 			}
 		}
 		if err == nil && afterLink != nil {
@@ -635,17 +642,49 @@ func assignPersonMergeComponentLineage(
 // Idempotent: unlinking a pair with no edge is a no-op that returns the
 // current revision unchanged. Returns the identity revision after the call.
 func (s *Store) UnlinkParticipants(a, b int64) (int64, error) {
+	return s.UnlinkParticipantsContext(context.Background(), a, b)
+}
+
+// UnlinkParticipantsContext removes one exact identity edge while preserving
+// durable person bindings. The supplied context controls the native transaction.
+func (s *Store) UnlinkParticipantsContext(ctx context.Context, a, b int64) (int64, error) {
+	return s.unlinkParticipantsContextGuarded(ctx, a, b, nil)
+}
+
+// unlinkParticipantsContextGuarded checks the guard under the identity mutation
+// lock even for absent-edge retries. A denied or cancelled guard changes neither
+// the graph nor candidate provenance. The guard can bind current revisions and
+// authorization to the same transaction as a later native operation receipt.
+func (s *Store) unlinkParticipantsContextGuarded(
+	ctx context.Context, a, b int64,
+	guard func(context.Context, *loggedTx) error,
+) (int64, error) {
+	return s.unlinkParticipantsContextGuardedReceipt(ctx, a, b, guard, nil)
+}
+
+// unlinkParticipantsContextGuardedReceipt keeps a receipt hook in the same
+// native transaction, including exact absent-edge outcomes.
+func (s *Store) unlinkParticipantsContextGuardedReceipt(
+	ctx context.Context, a, b int64,
+	guard func(context.Context, *loggedTx) error,
+	afterUnlink func(context.Context, *loggedTx) error,
+) (int64, error) {
 	lo, hi := normalizeEdge(a, b)
 
 	var revision int64
-	err := s.withTx(func(tx *loggedTx) error {
-		if err := s.lockIdentityMutationTx(tx); err != nil {
+	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 			return err
 		}
-		if err := s.verifyParticipantsExistTx(tx, lo, hi); err != nil {
+		if guard != nil {
+			if err := guard(ctx, tx); err != nil {
+				return err
+			}
+		}
+		if err := s.verifyParticipantsExistTxContext(ctx, tx, lo, hi); err != nil {
 			return err
 		}
-		edges, err := s.loadLinkEdgesTx(tx)
+		edges, err := s.loadLinkEdgesTxContext(ctx, tx)
 		if err != nil {
 			return err
 		}
@@ -657,21 +696,24 @@ func (s *Store) UnlinkParticipants(a, b int64) (int64, error) {
 			}
 		}
 		if !found {
-			revision, err = s.currentIdentityRevisionTx(tx)
+			revision, err = s.currentIdentityRevisionTxContext(ctx, tx)
+			if err == nil && afterUnlink != nil {
+				err = afterUnlink(ctx, tx)
+			}
 			return err
 		}
 		affectedMembers := sortedComponentMembers(lo, edges)
 		affectedPeople, err := personIDsForParticipantsTx(
-			context.Background(), tx, affectedMembers)
+			ctx, tx, affectedMembers)
 		if err != nil {
 			return err
 		}
 		trackedPeople, err := s.trackedPersonIDsForParticipantsTx(
-			context.Background(), tx, affectedMembers)
+			ctx, tx, affectedMembers)
 		if err != nil {
 			return err
 		}
-		res, err := tx.Exec(
+		res, err := tx.ExecContext(ctx,
 			`DELETE FROM participant_links WHERE participant_a = ? AND participant_b = ?`,
 			lo, hi)
 		if err != nil {
@@ -682,25 +724,32 @@ func (s *Store) UnlinkParticipants(a, b int64) (int64, error) {
 			return fmt.Errorf("rows affected: %w", err)
 		}
 		if n == 0 {
-			revision, err = s.currentIdentityRevisionTx(tx)
+			revision, err = s.currentIdentityRevisionTxContext(ctx, tx)
+			if err == nil && afterUnlink != nil {
+				err = afterUnlink(ctx, tx)
+			}
 			return err
 		}
 		if err := s.rejectAcceptedIdentityMatchesAcrossUnlinkTx(
-			tx, lo, hi, edges,
+			ctx, tx, lo, hi, edges,
 		); err != nil {
 			return err
 		}
-		revision, err = s.bumpIdentityRevision(tx)
+		revision, err = s.bumpIdentityRevisionContext(ctx, tx)
 		if err != nil {
 			return err
 		}
 		if err := s.publishPersonIdentityScopeChangesTx(
-			context.Background(), tx, trackedPeople,
-			peoplesweep.EvidenceEffectIdentityReassigned); err != nil {
+			ctx, tx, trackedPeople); err != nil {
 			return err
 		}
-		return s.invalidatePersonEnrichmentIdentitiesTx(
-			context.Background(), tx, affectedPeople...)
+		if err := s.invalidatePersonEnrichmentIdentitiesTx(ctx, tx, affectedPeople...); err != nil {
+			return err
+		}
+		if afterUnlink != nil {
+			return afterUnlink(ctx, tx)
+		}
+		return nil
 	})
 	return revision, err
 }
@@ -713,7 +762,7 @@ func (s *Store) UnlinkParticipants(a, b int64) (int64, error) {
 // scan is restricted to the component that contained the removed edge, and
 // the caller already holds the identity-mutation lock.
 func (s *Store) rejectAcceptedIdentityMatchesAcrossUnlinkTx(
-	tx *loggedTx, a, b int64, edges []linkEdge,
+	ctx context.Context, tx *loggedTx, a, b int64, edges []linkEdge,
 ) error {
 	original := componentOf(a, edges)
 	if _, ok := original[b]; !ok {
@@ -741,7 +790,7 @@ func (s *Store) rejectAcceptedIdentityMatchesAcrossUnlinkTx(
 	// into an IN list: a large identity cluster can exceed SQLite or PostgreSQL
 	// bind-parameter limits. The component and split checks below keep the
 	// result bounded to the original cluster in memory.
-	rows, err := tx.Query(`
+	rows, err := tx.QueryContext(ctx, `
 		SELECT id, left_id, right_id
 		FROM identity_match_candidates
 		WHERE state = ? AND left_kind = ? AND right_kind = ?`,
@@ -783,7 +832,7 @@ func (s *Store) rejectAcceptedIdentityMatchesAcrossUnlinkTx(
 		return nil
 	}
 	return s.rejectAcceptedIdentityMatchCandidatesTx(
-		context.Background(), tx, candidateIDs, "crossing unlink")
+		ctx, tx, candidateIDs, "crossing unlink")
 }
 
 func (s *Store) rejectAcceptedIdentityMatchesAcrossPersonSplitTx(

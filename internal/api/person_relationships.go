@@ -113,7 +113,7 @@ func (s *Server) registerPersonRelationshipRoutes(api huma.API) {
 	addRelationshipIDParameter(&deleteType, "Relationship type ID")
 	addRelationshipIfMatchParameter(&deleteType, "relationship type")
 	deleteType.Responses = rawHumaResponses(http.StatusNoContent)
-	deleteType.Responses["default"] = errorResponseFor(api)
+	deleteType.Responses[defaultErrorResponse] = errorResponseFor(api)
 	addErrorResponses(api, deleteType.Responses, http.StatusBadRequest, http.StatusConflict, http.StatusNotFound, http.StatusPreconditionRequired, http.StatusServiceUnavailable)
 	registerRawHumaRoute(api, deleteType, s.handleDeleteRelationshipType)
 
@@ -151,7 +151,7 @@ func (s *Server) registerPersonRelationshipRoutes(api huma.API) {
 	addRelationshipIDParameter(&deleteEdge, "Person relationship ID")
 	addRelationshipIfMatchParameter(&deleteEdge, "person relationship")
 	deleteEdge.Responses = rawHumaResponses(http.StatusNoContent)
-	deleteEdge.Responses["default"] = errorResponseFor(api)
+	deleteEdge.Responses[defaultErrorResponse] = errorResponseFor(api)
 	addErrorResponses(api, deleteEdge.Responses, http.StatusBadRequest, http.StatusConflict, http.StatusNotFound, http.StatusPreconditionRequired, http.StatusServiceUnavailable)
 	registerRawHumaRoute(api, deleteEdge, s.handleDeletePersonRelationship)
 

@@ -128,6 +128,15 @@ func (f FileGroupsHTTPRequest) Validate() error {
 	var errors runtime.ValidationErrors
 }
 ` + pointerValidatorFixture("FileMetadataResponse", "f") + pointerValidatorFixture("FileSearchRow", "f") +
+		`func (i InboxContext) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(i.Text).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Text", err)
+		}
+	}
+}
+` +
 		pointerValidatorFixture("PersonFileSearchRow", "p") +
 		requiredStringPointerValidatorFixture("PersonFactEvidence", "p",
 			"SourceRef", "SourceURL", "ContentSha256", "SourceVersion", "SubjectRef", "Excerpt") + `

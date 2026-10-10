@@ -268,14 +268,42 @@ components:
         - Email
         - Name
       type: object
+    AgentTokenBookView:
+      properties:
+        account_id:
+          format: int64
+          type: integer
+        book_id:
+          format: int64
+          type: integer
+        canonical_url:
+          type: string
+        ownership_fingerprint:
+          type: string
+      required:
+        - account_id
+        - book_id
+        - canonical_url
+        - ownership_fingerprint
+      type: object
     AgentTokenIssueRequest:
       additionalProperties: false
       properties:
+        address_book_ids:
+          items:
+            format: int64
+            type: integer
+          type: array
         label:
           type: string
         permissions:
           items:
             type: string
+          type: array
+        person_ids:
+          items:
+            format: int64
+            type: integer
           type: array
         sender_selections:
           additionalProperties:
@@ -291,10 +319,13 @@ components:
       required:
         - label
         - permissions
-        - source_ids
       type: object
     AgentTokenIssueResponse:
       properties:
+        address_books:
+          items:
+            $ref: "#/components/schemas/AgentTokenBookView"
+          type: array
         created_at:
           format: date-time
           type: string
@@ -307,6 +338,10 @@ components:
         permissions:
           items:
             type: string
+          type: array
+        persons:
+          items:
+            $ref: "#/components/schemas/AgentTokenPersonView"
           type: array
         secret:
           type: string
@@ -332,6 +367,17 @@ components:
       required:
         - tokens
       type: object
+    AgentTokenPersonView:
+      properties:
+        id:
+          format: int64
+          type: integer
+        uid:
+          type: string
+      required:
+        - id
+        - uid
+      type: object
     AgentTokenSourceView:
       properties:
         id:
@@ -353,6 +399,10 @@ components:
       type: object
     AgentTokenView:
       properties:
+        address_books:
+          items:
+            $ref: "#/components/schemas/AgentTokenBookView"
+          type: array
         created_at:
           format: date-time
           type: string
@@ -363,6 +413,10 @@ components:
         permissions:
           items:
             type: string
+          type: array
+        persons:
+          items:
+            $ref: "#/components/schemas/AgentTokenPersonView"
           type: array
         sources:
           items:
@@ -1275,6 +1329,62 @@ components:
         - action
         - calendar_id
       type: object
+    CalendarProjection:
+      properties:
+        all_day:
+          nullable: true
+          type: boolean
+          x-go-type: "*bool"
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        end:
+          nullable: true
+          type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        ical_uid:
+          nullable: true
+          type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        sequence:
+          format: int64
+          nullable: true
+          type: integer
+          x-go-type: "*int64"
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        start:
+          nullable: true
+          type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        status:
+          nullable: true
+          type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        time_zone:
+          nullable: true
+          type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+      required:
+        - status
+        - sequence
+        - start
+        - end
+        - all_day
+        - time_zone
+        - ical_uid
+      type: object
     CalendarRequest:
       additionalProperties: false
       not:
@@ -1418,6 +1528,19 @@ components:
         - dry_run
         - plan
         - writes
+      type: object
+    CalendarSource:
+      properties:
+        account:
+          type: string
+        source_id:
+          type: string
+        summary:
+          type: string
+      required:
+        - source_id
+        - summary
+        - account
       type: object
     CalendarWriteReceipt:
       properties:
@@ -1908,6 +2031,66 @@ components:
         - approval_token
         - review_required
       type: object
+    CardDAVPublicationReceipt:
+      properties:
+        account_id:
+          format: int64
+          type: integer
+        address_book_id:
+          format: int64
+          type: integer
+        body_sha256:
+          type: string
+        connection_generation:
+          format: int64
+          type: integer
+        created_at:
+          format: date-time
+          type: string
+        error_code:
+          type: string
+        id:
+          type: string
+        mutation_revision:
+          format: int64
+          type: integer
+        noop:
+          type: boolean
+        person_id:
+          format: int64
+          type: integer
+        person_revision:
+          format: int64
+          type: integer
+        person_uid:
+          type: string
+        remote_etag:
+          type: string
+        retry_after:
+          format: date-time
+          nullable: true
+          type: string
+        state:
+          type: string
+        verified_at:
+          format: date-time
+          nullable: true
+          type: string
+      required:
+        - id
+        - state
+        - noop
+        - person_id
+        - person_uid
+        - person_revision
+        - account_id
+        - address_book_id
+        - connection_generation
+        - mutation_revision
+        - body_sha256
+        - remote_etag
+        - created_at
+      type: object
     CardDAVPublicationResponse:
       properties:
         address_book:
@@ -2044,6 +2227,28 @@ components:
           type: array
       required:
         - runs
+      type: object
+    CardDAVScopedPublicationApprovalRequest:
+      additionalProperties: false
+      properties:
+        approval_token:
+          maxLength: 256
+          minLength: 1
+          type: string
+        idempotency_key:
+          maxLength: 256
+          minLength: 1
+          type: string
+      required:
+        - approval_token
+        - idempotency_key
+      type: object
+    CardDAVScopedPublicationReceiptResponse:
+      properties:
+        receipt:
+          $ref: "#/components/schemas/CardDAVPublicationReceipt"
+      required:
+        - receipt
       type: object
     CardDAVStatusAccount:
       properties:
@@ -2498,6 +2703,8 @@ components:
           type: string
         body_text:
           type: string
+        calendar:
+          $ref: "#/components/schemas/CalendarProjection"
         cc:
           items:
             $ref: "#/components/schemas/CliMessageAddress"
@@ -2518,6 +2725,8 @@ components:
         id:
           format: int64
           type: integer
+        is_from_me:
+          type: boolean
         labels:
           items:
             type: string
@@ -2540,6 +2749,9 @@ components:
           type: string
         source_conversation_id:
           type: string
+        source_id:
+          format: int64
+          type: integer
         source_message_id:
           type: string
         subject:
@@ -2549,6 +2761,8 @@ components:
             $ref: "#/components/schemas/CliMessageAddress"
           type: array
       required:
+        - source_id
+        - is_from_me
         - id
         - source_message_id
         - conversation_id
@@ -3217,6 +3431,31 @@ components:
         - offset
         - limit
       type: object
+    Definition:
+      properties:
+        delivery:
+          items:
+            type: string
+          type: array
+        description:
+          type: string
+        inputSchema:
+          additionalProperties: {}
+          type: object
+          x-go-type: map[string]any
+        name:
+          type: string
+        payloadSchema:
+          additionalProperties: {}
+          type: object
+          x-go-type: map[string]any
+      required:
+        - name
+        - description
+        - delivery
+        - inputSchema
+        - payloadSchema
+      type: object
     DeletionManifestDetail:
       properties:
         account:
@@ -3293,6 +3532,19 @@ components:
         - source_type
         - source_identifier
         - source_message_id
+      type: object
+    Delivery:
+      additionalProperties: false
+      properties:
+        mode:
+          type: string
+        secret:
+          type: string
+        url:
+          type: string
+      required:
+        - mode
+        - url
       type: object
     DirectoryPeopleResponse:
       properties:
@@ -4403,6 +4655,27 @@ components:
         - attachment_count
         - attachment_size
         - deleted_from_source
+      type: object
+    Envelope:
+      properties:
+        cursor:
+          type: string
+        data:
+          x-go-type: jsontext.Value
+          x-go-type-import:
+            path: encoding/json/jsontext
+        eventId:
+          type: string
+        name:
+          type: string
+        timestamp:
+          type: string
+      required:
+        - eventId
+        - name
+        - timestamp
+        - data
+        - cursor
       type: object
     ErrorResponse:
       properties:
@@ -5642,6 +5915,12 @@ components:
           type: string
         api_schema_version:
           type: string
+        mcp_event_capabilities:
+          items:
+            $ref: "#/components/schemas/MCPEventCapability"
+          type: array
+        mcp_events:
+          type: boolean
         operation:
           $ref: "#/components/schemas/OperationHealth"
         status:
@@ -5818,6 +6097,73 @@ components:
         - retrieval_ms
         - hydration_ms
       type: object
+    IdentityAccountEvidence:
+      properties:
+        connection_generation:
+          format: int64
+          type: integer
+        discovery_revision:
+          format: int64
+          type: integer
+        id:
+          format: int64
+          type: integer
+        ownership_fingerprint:
+          type: string
+      required:
+        - id
+        - connection_generation
+        - discovery_revision
+        - ownership_fingerprint
+      type: object
+    IdentityBindingEvidence:
+      properties:
+        participant_id:
+          format: int64
+          type: integer
+        person_id:
+          format: int64
+          type: integer
+      required:
+        - participant_id
+        - person_id
+      type: object
+    IdentityBookEvidence:
+      properties:
+        account_id:
+          format: int64
+          type: integer
+        canonical_url:
+          type: string
+        id:
+          format: int64
+          type: integer
+        sync_revision:
+          format: int64
+          type: integer
+      required:
+        - id
+        - account_id
+        - sync_revision
+        - canonical_url
+      type: object
+    IdentityCandidateEvidence:
+      properties:
+        application_pending:
+          type: boolean
+        fingerprint:
+          type: string
+        id:
+          format: int64
+          type: integer
+        state:
+          type: string
+      required:
+        - id
+        - state
+        - application_pending
+        - fingerprint
+      type: object
     IdentityConfirmationOutcome:
       properties:
         added:
@@ -5832,6 +6178,64 @@ components:
         - identifier
         - added
         - signals
+      type: object
+    IdentityConflictEvidence:
+      properties:
+        book_id:
+          format: int64
+          type: integer
+        id:
+          format: int64
+          type: integer
+        mapping_revision:
+          format: int64
+          type: integer
+        person_id:
+          format: int64
+          type: integer
+        review_revision:
+          format: int64
+          type: integer
+      required:
+        - id
+        - person_id
+        - book_id
+        - mapping_revision
+        - review_revision
+      type: object
+    IdentityLineageEvidence:
+      properties:
+        current_person_id:
+          format: int64
+          type: integer
+        merge_id:
+          format: int64
+          type: integer
+        origin_side:
+          type: string
+        participant_id:
+          format: int64
+          type: integer
+      required:
+        - merge_id
+        - participant_id
+        - origin_side
+        - current_person_id
+      type: object
+    IdentityLinkEvidence:
+      properties:
+        candidate_id:
+          format: int64
+          type: integer
+        other_participant_id:
+          format: int64
+          type: integer
+        participant_id:
+          format: int64
+          type: integer
+      required:
+        - participant_id
+        - other_participant_id
       type: object
     IdentityLinkRequest:
       additionalProperties: false
@@ -6093,6 +6497,276 @@ components:
         - source_id
         - is_conservative
       type: object
+    IdentityOperationApplyRequest:
+      additionalProperties: false
+      properties:
+        expected_fingerprint:
+          type: string
+        idempotency_key:
+          type: string
+        operation:
+          enum:
+            - graph-link
+            - graph-unlink
+            - person-link
+            - person-unlink
+          type: string
+        preview_token:
+          type: string
+        target:
+          $ref: "#/components/schemas/IdentityTarget"
+      required:
+        - operation
+        - target
+        - expected_fingerprint
+        - preview_token
+        - idempotency_key
+      type: object
+    IdentityOperationApplyResponse:
+      properties:
+        after_fingerprint:
+          type: string
+        after_revision:
+          format: int64
+          type: integer
+        before_fingerprint:
+          type: string
+        before_revision:
+          format: int64
+          type: integer
+        cache_state:
+          enum:
+            - ready
+            - stale
+            - unknown
+          type: string
+        changed:
+          type: boolean
+        created_at:
+          format: date-time
+          type: string
+        edge:
+          $ref: "#/components/schemas/IdentityReceiptEdgeChange"
+        id:
+          type: string
+        operation:
+          type: string
+        participants:
+          items:
+            format: int64
+            type: integer
+          type: array
+        persons:
+          items:
+            format: int64
+            type: integer
+          type: array
+        target:
+          $ref: "#/components/schemas/IdentityTarget"
+      required:
+        - cache_state
+        - id
+        - operation
+        - target
+        - before_fingerprint
+        - after_fingerprint
+        - before_revision
+        - after_revision
+        - changed
+        - participants
+        - persons
+        - created_at
+      type: object
+    IdentityOperationPreviewResponse:
+      properties:
+        expires_at:
+          format: date-time
+          type: string
+        preview_token:
+          type: string
+        snapshot:
+          $ref: "#/components/schemas/IdentitySnapshot"
+      required:
+        - snapshot
+        - preview_token
+        - expires_at
+      type: object
+    IdentityParticipantEvidence:
+      properties:
+        display_name:
+          type: string
+        email:
+          type: string
+        id:
+          format: int64
+          type: integer
+        identifier_fingerprint:
+          type: string
+        observation_fingerprint:
+          type: string
+        phone:
+          type: string
+      required:
+        - id
+        - display_name
+        - email
+        - phone
+        - identifier_fingerprint
+        - observation_fingerprint
+      type: object
+    IdentityPersonEvidence:
+      properties:
+        id:
+          format: int64
+          type: integer
+        projection_revision:
+          format: int64
+          type: integer
+        revision:
+          format: int64
+          type: integer
+        uid:
+          type: string
+      required:
+        - id
+        - uid
+        - revision
+        - projection_revision
+      type: object
+    IdentityPreviewRequest:
+      additionalProperties: false
+      properties:
+        operation:
+          enum:
+            - graph-link
+            - graph-unlink
+            - person-link
+            - person-unlink
+          type: string
+        target:
+          $ref: "#/components/schemas/IdentityTarget"
+      required:
+        - operation
+        - target
+      type: object
+    IdentityPublicationEvidence:
+      properties:
+        book_id:
+          format: int64
+          type: integer
+        desired:
+          type: boolean
+        href:
+          type: string
+        mutation_revision:
+          format: int64
+          type: integer
+        pending_operation:
+          type: string
+        person_id:
+          format: int64
+          type: integer
+      required:
+        - person_id
+        - book_id
+        - mutation_revision
+        - desired
+        - pending_operation
+        - href
+      type: object
+    IdentityReceipt:
+      properties:
+        after_fingerprint:
+          type: string
+        after_revision:
+          format: int64
+          type: integer
+        before_fingerprint:
+          type: string
+        before_revision:
+          format: int64
+          type: integer
+        changed:
+          type: boolean
+        created_at:
+          format: date-time
+          type: string
+        edge:
+          $ref: "#/components/schemas/IdentityReceiptEdgeChange"
+        id:
+          type: string
+        operation:
+          type: string
+        participants:
+          items:
+            format: int64
+            type: integer
+          type: array
+        persons:
+          items:
+            format: int64
+            type: integer
+          type: array
+        target:
+          $ref: "#/components/schemas/IdentityTarget"
+      required:
+        - id
+        - operation
+        - target
+        - before_fingerprint
+        - after_fingerprint
+        - before_revision
+        - after_revision
+        - changed
+        - participants
+        - persons
+        - created_at
+      type: object
+    IdentityReceiptEdgeChange:
+      properties:
+        after_candidate_id:
+          format: int64
+          type: integer
+        after_present:
+          type: boolean
+        before_candidate_id:
+          format: int64
+          type: integer
+        before_present:
+          type: boolean
+      required:
+        - before_present
+        - after_present
+      type: object
+    IdentityResourceEvidence:
+      properties:
+        book_id:
+          format: int64
+          type: integer
+        etag:
+          type: string
+        governance:
+          type: string
+        href:
+          type: string
+        id:
+          format: int64
+          type: integer
+        mapping_revision:
+          format: int64
+          type: integer
+        person_id:
+          format: int64
+          type: integer
+      required:
+        - id
+        - person_id
+        - book_id
+        - mapping_revision
+        - href
+        - etag
+        - governance
+      type: object
     IdentitySearchHTTPRequest:
       additionalProperties: false
       properties:
@@ -6137,6 +6811,173 @@ components:
       required:
         - field
         - direction
+      type: object
+    IdentitySnapshot:
+      properties:
+        accounts:
+          items:
+            $ref: "#/components/schemas/IdentityAccountEvidence"
+          type: array
+        active_merge_ids:
+          items:
+            format: int64
+            type: integer
+          type: array
+        bindings:
+          items:
+            $ref: "#/components/schemas/IdentityBindingEvidence"
+          type: array
+        blockers:
+          items:
+            type: string
+          type: array
+        books:
+          items:
+            $ref: "#/components/schemas/IdentityBookEvidence"
+          type: array
+        candidates:
+          items:
+            $ref: "#/components/schemas/IdentityCandidateEvidence"
+          type: array
+        component_members:
+          items:
+            format: int64
+            type: integer
+          type: array
+        conflicts:
+          items:
+            $ref: "#/components/schemas/IdentityConflictEvidence"
+          type: array
+        fingerprint:
+          type: string
+        identity_revision:
+          format: int64
+          type: integer
+        lineages:
+          items:
+            $ref: "#/components/schemas/IdentityLineageEvidence"
+          type: array
+        links:
+          items:
+            $ref: "#/components/schemas/IdentityLinkEvidence"
+          type: array
+        manual_confirm_candidate_id:
+          format: int64
+          type: integer
+        members:
+          items:
+            format: int64
+            type: integer
+          type: array
+        noop:
+          type: boolean
+        operation:
+          type: string
+        other_component_members:
+          items:
+            format: int64
+            type: integer
+          type: array
+        participants:
+          items:
+            $ref: "#/components/schemas/IdentityParticipantEvidence"
+          type: array
+        persons:
+          items:
+            $ref: "#/components/schemas/IdentityPersonEvidence"
+          type: array
+        publications:
+          items:
+            $ref: "#/components/schemas/IdentityPublicationEvidence"
+          type: array
+        resources:
+          items:
+            $ref: "#/components/schemas/IdentityResourceEvidence"
+          type: array
+        source_contributions:
+          items:
+            $ref: "#/components/schemas/IdentitySourceContribution"
+          type: array
+        sources:
+          items:
+            $ref: "#/components/schemas/IdentitySourceEvidence"
+          type: array
+        target:
+          $ref: "#/components/schemas/IdentityTarget"
+      required:
+        - operation
+        - target
+        - identity_revision
+        - component_members
+        - other_component_members
+        - members
+        - participants
+        - persons
+        - bindings
+        - links
+        - candidates
+        - sources
+        - source_contributions
+        - accounts
+        - books
+        - resources
+        - conflicts
+        - publications
+        - lineages
+        - active_merge_ids
+        - blockers
+        - noop
+        - fingerprint
+      type: object
+    IdentitySourceContribution:
+      properties:
+        participant_id:
+          format: int64
+          type: integer
+        source_id:
+          format: int64
+          type: integer
+      required:
+        - participant_id
+        - source_id
+      type: object
+    IdentitySourceEvidence:
+      properties:
+        id:
+          format: int64
+          type: integer
+        identifier:
+          type: string
+        ownership_fingerprint:
+          type: string
+        type:
+          type: string
+      required:
+        - id
+        - type
+        - identifier
+        - ownership_fingerprint
+      type: object
+    IdentityTarget:
+      additionalProperties: false
+      properties:
+        other_participant_id:
+          format: int64
+          maximum: 9007199254740991
+          minimum: 1
+          type: integer
+        participant_id:
+          format: int64
+          maximum: 9007199254740991
+          minimum: 1
+          type: integer
+        person_id:
+          format: int64
+          maximum: 9007199254740991
+          minimum: 1
+          type: integer
+      required:
+        - participant_id
       type: object
     ImportEntry:
       additionalProperties: false
@@ -6292,6 +7133,515 @@ components:
         - candidates
         - applied
       type: object
+    InboxCandidate:
+      properties:
+        available:
+          type: boolean
+        context_message_id:
+          format: int64
+          type: integer
+        snippet:
+          type: string
+        state:
+          $ref: "#/components/schemas/InboxState"
+        title:
+          type: string
+      required:
+        - state
+        - available
+      type: object
+    InboxCandidatePage:
+      properties:
+        archive_revision:
+          type: string
+        candidates:
+          items:
+            $ref: "#/components/schemas/InboxCandidate"
+          type: array
+        next_cursor:
+          type: string
+        provider_ingestion:
+          $ref: "#/components/schemas/InboxProviderIngestion"
+        scope:
+          type: string
+        source:
+          $ref: "#/components/schemas/InboxSourceIdentity"
+        unavailable:
+          type: boolean
+      required:
+        - source
+        - scope
+        - archive_revision
+        - candidates
+        - unavailable
+      type: object
+    InboxCapabilities:
+      properties:
+        conditional_write:
+          type: boolean
+        location_model:
+          type: string
+        observed_at:
+          format: date-time
+          type: string
+        operations:
+          items:
+            $ref: "#/components/schemas/InboxCapability"
+          type: array
+        source:
+          $ref: "#/components/schemas/InboxSourceIdentity"
+      required:
+        - source
+        - location_model
+        - conditional_write
+        - observed_at
+        - operations
+      type: object
+    InboxCapability:
+      properties:
+        operation:
+          type: string
+        reason:
+          type: string
+        status:
+          type: string
+      required:
+        - operation
+        - status
+      type: object
+    InboxContext:
+      properties:
+        message_id:
+          format: int64
+          type: integer
+        target:
+          $ref: "#/components/schemas/InboxTarget"
+        text:
+          type: string
+          x-go-type: "*string"
+        truncated:
+          type: boolean
+        unavailable:
+          type: boolean
+      required:
+        - target
+        - message_id
+        - text
+        - truncated
+        - unavailable
+      type: object
+    InboxContextRequest:
+      additionalProperties: false
+      properties:
+        max_bytes:
+          format: int64
+          type: integer
+        message_id:
+          format: int64
+          type: integer
+        target:
+          $ref: "#/components/schemas/InboxTarget"
+      required:
+        - target
+      type: object
+    InboxControlError:
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+        result:
+          $ref: "#/components/schemas/InboxResult"
+      required:
+        - error
+        - message
+      type: object
+    InboxFolder:
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        parent_id:
+          type: string
+        uidvalidity:
+          format: int64
+          maximum: 4294967295
+          minimum: 0
+          type: integer
+      type: object
+    InboxProviderIngestion:
+      properties:
+        reason:
+          type: string
+        status:
+          enum:
+            - unknown
+            - partial
+          type: string
+      required:
+        - status
+        - reason
+      type: object
+    InboxReceipt:
+      properties:
+        after:
+          $ref: "#/components/schemas/InboxState"
+        before:
+          $ref: "#/components/schemas/InboxState"
+        created_at:
+          format: date-time
+          type: string
+        dispatched_at:
+          format: date-time
+          type: string
+        failure_code:
+          type: string
+        finished_at:
+          format: date-time
+          type: string
+        id:
+          type: string
+        idempotency_key:
+          type: string
+        intent:
+          $ref: "#/components/schemas/InboxRequest"
+        intent_hash:
+          type: string
+        principal_id:
+          type: string
+        projected:
+          $ref: "#/components/schemas/InboxState"
+        source_id:
+          format: int64
+          type: integer
+        state_hash:
+          type: string
+        status:
+          type: string
+      required:
+        - id
+        - principal_id
+        - source_id
+        - idempotency_key
+        - intent_hash
+        - state_hash
+        - intent
+        - before
+        - status
+        - created_at
+      type: object
+    InboxRequest:
+      additionalProperties: false
+      properties:
+        destination:
+          $ref: "#/components/schemas/InboxFolder"
+        dry_run:
+          type: boolean
+        expected:
+          $ref: "#/components/schemas/InboxState"
+        idempotency_key:
+          type: string
+        operation:
+          type: string
+        origin_folder:
+          $ref: "#/components/schemas/InboxFolder"
+        preview_token:
+          type: string
+        receipt_id:
+          type: string
+        source:
+          $ref: "#/components/schemas/InboxSourceIdentity"
+        tags:
+          $ref: "#/components/schemas/MessageTagChange"
+        target:
+          $ref: "#/components/schemas/InboxTarget"
+      required:
+        - operation
+      type: object
+    InboxResult:
+      properties:
+        after:
+          $ref: "#/components/schemas/InboxState"
+        before:
+          $ref: "#/components/schemas/InboxState"
+        capabilities:
+          $ref: "#/components/schemas/InboxCapabilities"
+        expires_at:
+          format: date-time
+          type: string
+        folders:
+          items:
+            $ref: "#/components/schemas/InboxFolder"
+          type: array
+        preview_token:
+          type: string
+        projected:
+          $ref: "#/components/schemas/InboxState"
+        receipt:
+          $ref: "#/components/schemas/InboxReceipt"
+      type: object
+    InboxSourceIdentity:
+      additionalProperties: false
+      properties:
+        account_id:
+          type: string
+        source_id:
+          format: int64
+          type: integer
+        source_identifier:
+          type: string
+        source_type:
+          type: string
+      required:
+        - source_id
+        - source_type
+        - source_identifier
+        - account_id
+      type: object
+    InboxState:
+      additionalProperties: false
+      properties:
+        flags:
+          items:
+            type: string
+          type: array
+        folders:
+          items:
+            $ref: "#/components/schemas/InboxFolder"
+          type: array
+        inbox:
+          type: boolean
+        last_message_id:
+          type: string
+        location:
+          type: string
+        marked_unread:
+          type: boolean
+        observed_at:
+          format: date-time
+          type: string
+        provisioned_folder:
+          $ref: "#/components/schemas/InboxFolder"
+        read:
+          type: boolean
+        revision:
+          type: string
+        source:
+          $ref: "#/components/schemas/InboxSourceIdentity"
+        tags:
+          items:
+            type: string
+          type: array
+        target:
+          $ref: "#/components/schemas/InboxTarget"
+      required:
+        - target
+        - source
+        - observed_at
+      type: object
+    InboxTarget:
+      additionalProperties: false
+      properties:
+        account_id:
+          type: string
+        item_id:
+          format: int64
+          type: integer
+        mailbox:
+          type: string
+        provider_id:
+          type: string
+        scope:
+          type: string
+        source_id:
+          format: int64
+          type: integer
+        source_identifier:
+          type: string
+        source_type:
+          type: string
+        uid:
+          format: int64
+          maximum: 4294967295
+          minimum: 0
+          type: integer
+        uidvalidity:
+          format: int64
+          maximum: 4294967295
+          minimum: 0
+          type: integer
+      required:
+        - source_id
+        - source_type
+        - source_identifier
+        - account_id
+        - scope
+        - item_id
+        - provider_id
+      type: object
+    InboxTriageError:
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+        results:
+          items:
+            $ref: "#/components/schemas/InboxResult"
+          type: array
+      required:
+        - error
+        - message
+      type: object
+    InboxTriageInput:
+      additionalProperties: false
+      properties:
+        items:
+          items:
+            $ref: "#/components/schemas/InboxTriageItemInput"
+          maxItems: 100
+          minItems: 1
+          type: array
+        source:
+          $ref: "#/components/schemas/InboxSourceIdentity"
+      required:
+        - source
+        - items
+      type: object
+    InboxTriageItemInput:
+      additionalProperties: false
+      properties:
+        categories:
+          items:
+            type: string
+          maxItems: 6
+          type: array
+        evidence_message_ids:
+          items:
+            format: int64
+            type: integer
+          maxItems: 100
+          type: array
+        idempotency_key:
+          maxLength: 128
+          type: string
+        target:
+          $ref: "#/components/schemas/InboxTarget"
+      required:
+        - target
+        - categories
+        - evidence_message_ids
+      type: object
+    InboxTriageMappingConfiguration:
+      properties:
+        entries:
+          additionalProperties:
+            type: string
+          type: object
+        revision:
+          format: int64
+          type: integer
+        source:
+          $ref: "#/components/schemas/InboxSourceIdentity"
+      required:
+        - source
+        - entries
+        - revision
+      type: object
+    InboxTriageMappingRevision:
+      properties:
+        revision:
+          format: int64
+          type: integer
+      required:
+        - revision
+      type: object
+    InboxTriageMappingUpdate:
+      additionalProperties: false
+      properties:
+        entries:
+          additionalProperties:
+            type: string
+          type: object
+        expected_revision:
+          format: int64
+          minimum: 0
+          type: integer
+        source:
+          $ref: "#/components/schemas/InboxSourceIdentity"
+      required:
+        - source
+        - entries
+        - expected_revision
+      type: object
+    InboxTriageProposal:
+      additionalProperties: false
+      properties:
+        archive_revision:
+          type: string
+        expires_at:
+          format: date-time
+          type: string
+        incoming_watermark:
+          type: string
+        issued_at:
+          format: date-time
+          type: string
+        items:
+          items:
+            $ref: "#/components/schemas/InboxTriageProposalItem"
+          maxItems: 100
+          minItems: 1
+          type: array
+        mapping_revision:
+          format: int64
+          type: integer
+        preview_token:
+          type: string
+        source:
+          $ref: "#/components/schemas/InboxSourceIdentity"
+      required:
+        - source
+        - mapping_revision
+        - archive_revision
+        - incoming_watermark
+        - items
+        - issued_at
+        - expires_at
+        - preview_token
+      type: object
+    InboxTriageProposalItem:
+      additionalProperties: false
+      properties:
+        categories:
+          items:
+            type: string
+          maxItems: 6
+          type: array
+        classification:
+          type: string
+        evidence_message_ids:
+          items:
+            format: int64
+            type: integer
+          maxItems: 100
+          type: array
+        projected:
+          $ref: "#/components/schemas/InboxState"
+        request:
+          $ref: "#/components/schemas/InboxRequest"
+        retain_inbox:
+          type: boolean
+      required:
+        - categories
+        - evidence_message_ids
+        - classification
+        - retain_inbox
+        - request
+        - projected
+      type: object
     KataEvidenceLinkRequest:
       additionalProperties: false
       properties:
@@ -6409,6 +7759,122 @@ components:
           type: array
       required:
         - manifests
+      type: object
+    ListResult:
+      properties:
+        events:
+          items:
+            $ref: "#/components/schemas/Definition"
+          type: array
+      required:
+        - events
+      type: object
+    MCPCapabilities:
+      properties:
+        commands:
+          items:
+            $ref: "#/components/schemas/MCPCommandDescriptor"
+          type: array
+        delegated:
+          type: boolean
+        identity_operations:
+          items:
+            type: string
+          type: array
+        inbox_operations:
+          items:
+            type: string
+          type: array
+        routes:
+          items:
+            $ref: "#/components/schemas/MCPRouteDescriptor"
+          type: array
+        version:
+          format: int64
+          type: integer
+      required:
+        - version
+        - delegated
+        - routes
+        - commands
+        - inbox_operations
+        - identity_operations
+      type: object
+    MCPCommandDescriptor:
+      properties:
+        delegated:
+          type: boolean
+        flags:
+          items:
+            type: string
+          type: array
+        name:
+          type: string
+      required:
+        - name
+        - flags
+        - delegated
+      type: object
+    MCPEventCapability:
+      properties:
+        family:
+          type: string
+        kinds:
+          items:
+            type: string
+          type: array
+        read_tools:
+          items:
+            type: string
+          type: array
+        source_type:
+          type: string
+      required:
+        - family
+        - source_type
+        - kinds
+        - read_tools
+      type: object
+    MCPEventsErrorResponse:
+      properties:
+        code:
+          format: int64
+          type: integer
+        error:
+          type: string
+        message:
+          type: string
+        reason:
+          type: string
+      required:
+        - error
+        - message
+      type: object
+    MCPEventsListRequest:
+      additionalProperties: false
+      type: object
+    MCPRouteDescriptor:
+      properties:
+        method:
+          type: string
+        operation_id:
+          type: string
+        path:
+          type: string
+        query_parameters:
+          items:
+            type: string
+          type: array
+        request_properties:
+          items:
+            type: string
+          type: array
+      required:
+        - operation_id
+        - method
+        - path
+        - query_parameters
+        - request_properties
       type: object
     Manifest:
       additionalProperties: false
@@ -6845,6 +8311,8 @@ components:
           type: string
         body_omitted:
           type: boolean
+        calendar:
+          $ref: "#/components/schemas/CalendarProjection"
         cc:
           items:
             type: string
@@ -7035,6 +8503,168 @@ components:
         - labels
         - has_attachments
         - size_bytes
+      type: object
+    MessageTag:
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+      required:
+        - id
+        - name
+      type: object
+    MessageTagChange:
+      additionalProperties: false
+      properties:
+        add:
+          items:
+            type: string
+          maxItems: 100
+          type: array
+        dry_run:
+          type: boolean
+        mailbox:
+          type: string
+        remove:
+          items:
+            type: string
+          maxItems: 100
+          type: array
+      type: object
+    MessageTagError:
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+        result:
+          $ref: "#/components/schemas/MessageTagResult"
+      required:
+        - error
+        - message
+      type: object
+    MessageTagResponse:
+      properties:
+        available_tags:
+          items:
+            $ref: "#/components/schemas/MessageTag"
+          type: array
+        before:
+          items:
+            type: string
+          type: array
+        can_create_keywords:
+          type: boolean
+        dry_run:
+          type: boolean
+        flags:
+          items:
+            type: string
+          type: array
+        idempotency_key:
+          type: string
+        mailbox:
+          type: string
+        message_id:
+          format: int64
+          type: integer
+        provider:
+          type: string
+        receipt_id:
+          type: string
+        receipt_status:
+          type: string
+        source_id:
+          format: int64
+          type: integer
+        tags:
+          items:
+            type: string
+          type: array
+        target:
+          $ref: "#/components/schemas/InboxTarget"
+        uid:
+          format: int64
+          maximum: 4294967295
+          minimum: 0
+          type: integer
+        uidvalidity:
+          format: int64
+          maximum: 4294967295
+          minimum: 0
+          type: integer
+        verified:
+          type: boolean
+      required:
+        - message_id
+        - source_id
+        - provider
+        - tags
+        - before
+        - available_tags
+        - dry_run
+        - verified
+      type: object
+    MessageTagResult:
+      properties:
+        available_tags:
+          items:
+            $ref: "#/components/schemas/MessageTag"
+          type: array
+        before:
+          items:
+            type: string
+          type: array
+        can_create_keywords:
+          type: boolean
+        dry_run:
+          type: boolean
+        flags:
+          items:
+            type: string
+          type: array
+        idempotency_key:
+          type: string
+        mailbox:
+          type: string
+        message_id:
+          format: int64
+          type: integer
+        provider:
+          type: string
+        receipt_id:
+          type: string
+        receipt_status:
+          type: string
+        source_id:
+          format: int64
+          type: integer
+        tags:
+          items:
+            type: string
+          type: array
+        uid:
+          format: int64
+          maximum: 4294967295
+          minimum: 0
+          type: integer
+        uidvalidity:
+          format: int64
+          maximum: 4294967295
+          minimum: 0
+          type: integer
+        verified:
+          type: boolean
+      required:
+        - message_id
+        - source_id
+        - provider
+        - tags
+        - before
+        - available_tags
+        - dry_run
+        - verified
       type: object
     Metrics:
       properties:
@@ -12787,7 +14417,9 @@ components:
           format: double
           type: number
         expected_value_id:
+          description: Current value ID, or zero to require an empty slot; required for delegated edits. Multi-valued creation requires an explicit ordinal.
           format: int64
+          minimum: 0
           type: integer
         ordinal:
           format: int64
@@ -13156,6 +14788,8 @@ components:
         next_sync_at:
           nullable: true
           type: string
+        provider_ingestion:
+          $ref: "#/components/schemas/InboxProviderIngestion"
         schedule:
           type: string
         scheduled:
@@ -13494,6 +15128,95 @@ components:
         - dates
         - categories
         - media
+      type: object
+    SubscribeRequest:
+      additionalProperties: false
+      properties:
+        arguments:
+          additionalProperties: {}
+          type: object
+          x-go-type: map[string]any
+        cursor:
+          type: string
+        delivery:
+          $ref: "#/components/schemas/Delivery"
+        name:
+          type: string
+        ttlMs:
+          format: int64
+          type: integer
+      required:
+        - name
+        - arguments
+        - delivery
+      type: object
+    SubscribeResult:
+      properties:
+        cursor:
+          type: string
+        id:
+          type: string
+        refreshBefore:
+          format: int64
+          type: integer
+        truncated:
+          type: boolean
+      required:
+        - id
+        - refreshBefore
+        - cursor
+        - truncated
+      type: object
+    SubscriptionStatus:
+      properties:
+        cursor:
+          type: string
+        cursor_epoch:
+          format: int64
+          type: integer
+        cursor_seq:
+          format: int64
+          type: integer
+        dead_letter_count:
+          format: int64
+          type: integer
+        id:
+          type: string
+        last_delivery_outcome:
+          type: string
+        loop_guard_skips:
+          format: int64
+          type: integer
+        name:
+          type: string
+        pending_attempt:
+          format: int64
+          type: integer
+        refreshBefore:
+          format: int64
+          type: integer
+        scope_id:
+          type: string
+        scope_kind:
+          type: string
+        state:
+          type: string
+        stop_reason:
+          type: string
+      required:
+        - id
+        - name
+        - scope_kind
+        - scope_id
+        - state
+        - refreshBefore
+        - cursor
+        - cursor_epoch
+        - cursor_seq
+        - pending_attempt
+        - last_delivery_outcome
+        - dead_letter_count
+        - loop_guard_skips
       type: object
     Summary:
       additionalProperties: false
@@ -14242,6 +15965,22 @@ components:
       required:
         - status
         - message
+      type: object
+    UnsubscribeRequest:
+      additionalProperties: false
+      properties:
+        arguments:
+          additionalProperties: {}
+          type: object
+          x-go-type: map[string]any
+        delivery:
+          $ref: "#/components/schemas/Delivery"
+        name:
+          type: string
+      required:
+        - name
+        - arguments
+        - delivery
       type: object
     UpdateRequest:
       additionalProperties: false
@@ -16520,6 +18259,258 @@ paths:
       security:
         - apiKey: []
       summary: List CardDAV synchronization runs
+      tags:
+        - API
+  /api/v1/carddav/scoped/publications/{person_id}/approve:
+    post:
+      operationId: approveScopedCardDAVPublication
+      parameters:
+        - in: path
+          name: person_id
+          required: true
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CardDAVScopedPublicationApprovalRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CardDAVScopedPublicationReceiptResponse"
+          description: OK
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CardDAVScopedPublicationReceiptResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+          headers:
+            Retry-After:
+              description: Seconds until CardDAV retry is safe
+              schema:
+                format: int64
+                minimum: 0
+                type: integer
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Approve one mapped CardDAV update with a durable receipt
+      tags:
+        - API
+  /api/v1/carddav/scoped/publications/{person_id}/preview:
+    get:
+      operationId: previewScopedCardDAVPublication
+      parameters:
+        - in: path
+          name: person_id
+          required: true
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CardDAVPublicationPreviewResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+          headers:
+            Retry-After:
+              description: Seconds until CardDAV retry is safe
+              schema:
+                format: int64
+                minimum: 0
+                type: integer
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Preview one authorized mapped CardDAV update
+      tags:
+        - API
+  /api/v1/carddav/scoped/publications/{person_id}/reconcile:
+    post:
+      operationId: reconcileScopedCardDAVPublication
+      parameters:
+        - in: path
+          name: person_id
+          required: true
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CardDAVScopedPublicationApprovalRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CardDAVScopedPublicationReceiptResponse"
+          description: OK
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CardDAVScopedPublicationReceiptResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+          headers:
+            Retry-After:
+              description: Seconds until CardDAV retry is safe
+              schema:
+                format: int64
+                minimum: 0
+                type: integer
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Observe an existing reviewed CardDAV update without replaying it
       tags:
         - API
   /api/v1/carddav/status:
@@ -20485,6 +22476,259 @@ paths:
       summary: Review and reject an identity match candidate
       tags:
         - API
+  /api/v1/identity/operations/apply:
+    post:
+      operationId: applyIdentityOperation
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IdentityOperationApplyRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdentityOperationApplyResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "415":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "504":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Apply one signed identity preview or recover its exact committed retry
+      tags:
+        - API
+  /api/v1/identity/operations/preview:
+    post:
+      operationId: previewIdentityOperation
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IdentityPreviewRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdentityOperationPreviewResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "415":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Preview one explicit identity operation without mutation
+      tags:
+        - API
+  /api/v1/identity/operations/receipt:
+    get:
+      operationId: getIdentityOperationReceipt
+      parameters:
+        - description: Exact key for this principal
+          in: query
+          name: idempotency_key
+          schema:
+            type: string
+        - description: Exact receipt ID; owner only
+          in: query
+          name: receipt_id
+          schema:
+            type: string
+        - description: Exact prior principal for owner recovery
+          in: query
+          name: principal
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdentityReceipt"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Read one committed identity outcome without replaying its mutation
+      tags:
+        - API
   /api/v1/identity/scoring/consent:
     post:
       operationId: personMatchScoringConsent
@@ -20880,6 +23124,588 @@ paths:
       summary: Get historical import status
       tags:
         - API
+  /api/v1/inbox/candidates:
+    get:
+      operationId: listInboxCandidates
+      parameters:
+        - description: Exact archive source ID
+          in: query
+          name: source_id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Exact provider type
+          in: query
+          name: source_type
+          required: true
+          schema:
+            type: string
+        - description: Exact source identifier
+          in: query
+          name: source_identifier
+          required: true
+          schema:
+            type: string
+        - description: Exact provider account
+          in: query
+          name: account_id
+          required: true
+          schema:
+            type: string
+        - description: Native target scope
+          in: query
+          name: scope
+          required: true
+          schema:
+            enum:
+              - message
+              - chat
+            type: string
+        - description: Maximum candidates (default 25, range 1–100)
+          in: query
+          name: limit
+          schema:
+            format: int64
+            maximum: 100
+            minimum: 1
+            type: integer
+        - description: Opaque source/scope/archive revision pagination cursor
+          in: query
+          name: cursor
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InboxCandidatePage"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Forbidden
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Service Unavailable
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List bounded committed inbox metadata for one exact source
+      tags:
+        - Inbox
+  /api/v1/inbox/context:
+    post:
+      operationId: getInboxContext
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InboxContextRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InboxContext"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Forbidden
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Request Entity Too Large
+        "415":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Unsupported Media Type
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Service Unavailable
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Read bounded archived text for one exact inbox target
+      tags:
+        - Inbox
+  /api/v1/inbox/control:
+    post:
+      operationId: controlInbox
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InboxRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InboxResult"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InboxControlError"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InboxControlError"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InboxControlError"
+          description: Forbidden
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InboxControlError"
+          description: Conflict
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InboxControlError"
+          description: Request Entity Too Large
+        "415":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InboxControlError"
+          description: Unsupported Media Type
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InboxControlError"
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InboxControlError"
+          description: Not Implemented
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InboxControlError"
+          description: Bad Gateway
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InboxControlError"
+          description: Service Unavailable
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Preview, execute or reconcile one exact inbox action
+      tags:
+        - Inbox
+  /api/v1/inbox/triage/apply:
+    post:
+      operationId: applyInboxTriage
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InboxTriageProposal"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: "#/components/schemas/InboxResult"
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InboxTriageError"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InboxTriageError"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InboxTriageError"
+          description: Forbidden
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InboxTriageError"
+          description: Conflict
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InboxTriageError"
+          description: Request Entity Too Large
+        "415":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InboxTriageError"
+          description: Unsupported Media Type
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InboxTriageError"
+          description: Internal Server Error
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InboxTriageError"
+          description: Bad Gateway
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InboxTriageError"
+          description: Service Unavailable
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Apply one authenticated triage proposal with per-item durable receipts
+      tags:
+        - Inbox
+  /api/v1/inbox/triage/mappings:
+    get:
+      operationId: getInboxTriageMappings
+      parameters:
+        - description: Exact archive source ID
+          in: query
+          name: source_id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Exact provider type
+          in: query
+          name: source_type
+          required: true
+          schema:
+            type: string
+        - description: Exact source identifier
+          in: query
+          name: source_identifier
+          required: true
+          schema:
+            type: string
+        - description: Exact provider account
+          in: query
+          name: account_id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InboxTriageMappingConfiguration"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Forbidden
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Service Unavailable
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Read configured category mappings for one exact source
+      tags:
+        - Inbox
+    put:
+      operationId: updateInboxTriageMappings
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InboxTriageMappingUpdate"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InboxTriageMappingRevision"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Forbidden
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Conflict
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Request Entity Too Large
+        "415":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Unsupported Media Type
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Service Unavailable
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Replace owner category mappings after native catalog validation
+      tags:
+        - Inbox
+  /api/v1/inbox/triage/preview:
+    post:
+      operationId: previewInboxTriage
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InboxTriageInput"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InboxTriageProposal"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InboxTriageError"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InboxTriageError"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InboxTriageError"
+          description: Forbidden
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InboxTriageError"
+          description: Conflict
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InboxTriageError"
+          description: Request Entity Too Large
+        "415":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InboxTriageError"
+          description: Unsupported Media Type
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InboxTriageError"
+          description: Internal Server Error
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InboxTriageError"
+          description: Bad Gateway
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InboxTriageError"
+          description: Service Unavailable
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Preview a bounded tag-only triage proposal for explicit inbox targets
+      tags:
+        - Inbox
   /api/v1/integrations/kata/evidence/prepare:
     post:
       operationId: prepareKataEvidence
@@ -21181,6 +24007,210 @@ paths:
       security:
         - apiKey: []
       summary: Test task integration discovery, authentication, capabilities, and project
+      tags:
+        - API
+  /api/v1/mcp/capabilities:
+    get:
+      operationId: getMCPCapabilities
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MCPCapabilities"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Describe admitted MCP daemon operations
+      tags:
+        - API
+  /api/v1/mcp/events/calendar-sources:
+    get:
+      operationId: listMCPCalendarSources
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: "#/components/schemas/CalendarSource"
+                type: array
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MCPEventsErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List subscribable archive calendars
+      tags:
+        - API
+  /api/v1/mcp/events/event:
+    get:
+      operationId: getMCPEvent
+      parameters:
+        - in: query
+          name: event_id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MCPEventsErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Recover a retained MCP occurrence
+      tags:
+        - API
+  /api/v1/mcp/events/list:
+    post:
+      operationId: listMCPEvents
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MCPEventsListRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListResult"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MCPEventsErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List scoped MCP Events
+      tags:
+        - API
+  /api/v1/mcp/events/messages/{id}:
+    get:
+      operationId: getMCPEventMessage
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            pattern: ^[1-9][0-9]{0,18}$
+            type: string
+        - in: query
+          name: event_id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CliMessageResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MCPEventsErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Read a message authorized by a retained MCP occurrence
+      tags:
+        - API
+  /api/v1/mcp/events/status:
+    get:
+      operationId: getMCPEventsStatus
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: "#/components/schemas/SubscriptionStatus"
+                type: array
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MCPEventsErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get owner MCP Events delivery status
+      tags:
+        - API
+  /api/v1/mcp/events/subscribe:
+    post:
+      operationId: subscribeMCPEvents
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SubscribeRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubscribeResult"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MCPEventsErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Verify and subscribe an owner callback
+      tags:
+        - API
+  /api/v1/mcp/events/unsubscribe:
+    post:
+      operationId: unsubscribeMCPEvents
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UnsubscribeRequest"
+        required: true
+      responses:
+        "204":
+          description: No Content
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MCPEventsErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: End an owner MCP Events subscription
       tags:
         - API
   /api/v1/meetings/actions:
@@ -21909,6 +24939,169 @@ paths:
       security:
         - apiKey: []
       summary: Get an inline MIME part
+      tags:
+        - API
+  /api/v1/messages/{id}/tags:
+    get:
+      operationId: getMessageTags
+      parameters:
+        - description: Archived message ID
+          in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+        - description: Exact IMAP mailbox; defaults to the archived primary membership
+          in: query
+          name: mailbox
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTagResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTagError"
+          description: Bad Request
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTagError"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTagError"
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTagError"
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTagError"
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTagError"
+          description: Not Implemented
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTagError"
+          description: Bad Gateway
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTagError"
+          description: Service Unavailable
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Read native email tags
+      tags:
+        - API
+    post:
+      description: Accepts dry_run=true previews only. Execute tag changes through inbox/control with a signed preview, expected state and idempotency key.
+      operationId: updateMessageTags
+      parameters:
+        - description: Archived message ID
+          in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MessageTagChange"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTagResult"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTagError"
+          description: Bad Request
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTagError"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTagError"
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTagError"
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTagError"
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTagError"
+          description: Not Implemented
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTagError"
+          description: Bad Gateway
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTagError"
+          description: Service Unavailable
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Preview native email tag changes
       tags:
         - API
   /api/v1/messages/{id}/tasks:
@@ -23792,6 +26985,12 @@ paths:
               description: Strong person profile revision tag for optimistic concurrency
               schema:
                 type: string
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
         "404":
           content:
             application/json:
@@ -23849,6 +27048,12 @@ paths:
               description: Strong person profile revision tag for optimistic concurrency
               schema:
                 type: string
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
         "404":
           content:
             application/json:
@@ -23861,7 +27066,19 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Error
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
         "428":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "501":
           content:
             application/json:
               schema:
@@ -24266,7 +27483,30 @@ paths:
               schema:
                 $ref: "#/components/schemas/PersonAttributesResponse"
           description: OK
+          headers:
+            ETag:
+              description: Strong person profile revision tag for optimistic concurrency
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
         "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "501":
           content:
             application/json:
               schema:
@@ -24306,6 +27546,11 @@ paths:
           required: true
           schema:
             type: string
+        - description: Person revision tag from the attributes response. Required for delegated edits; checked when supplied by an owner. Value-slot CAS is separate.
+          in: header
+          name: If-Match
+          schema:
+            type: string
         - description: Ordinal for a multi-valued definition
           in: query
           name: ordinal
@@ -24336,6 +27581,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
         "404":
           content:
             application/json:
@@ -24348,6 +27599,24 @@ paths:
               schema:
                 $ref: "#/components/schemas/PersonAttributeConflictResponse"
           description: Conflict
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "428":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
         "503":
           content:
             application/json:
@@ -24381,6 +27650,11 @@ paths:
           required: true
           schema:
             type: string
+        - description: Person revision tag from the attributes response. Required for delegated edits; checked when supplied by an owner. Value-slot CAS is separate.
+          in: header
+          name: If-Match
+          schema:
+            type: string
         - description: Validate and preview without writing
           in: query
           name: dry_run
@@ -24405,6 +27679,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
         "404":
           content:
             application/json:
@@ -24417,6 +27697,24 @@ paths:
               schema:
                 $ref: "#/components/schemas/PersonAttributeConflictResponse"
           description: Conflict
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "428":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
         "503":
           content:
             application/json:
@@ -25623,6 +28921,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
         "404":
           content:
             application/json:
@@ -25635,6 +28939,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Error
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
         "428":
           content:
             application/json:
@@ -25642,6 +28952,12 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Error
         "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "501":
           content:
             application/json:
               schema:
@@ -25879,6 +29195,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
         "404":
           content:
             application/json:
@@ -25943,6 +29265,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
         "404":
           content:
             application/json:
@@ -25962,6 +29290,12 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Error
         "428":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "501":
           content:
             application/json:
               schema:

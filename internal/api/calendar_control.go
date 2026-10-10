@@ -10,6 +10,7 @@ import (
 	"mime"
 	"net/http"
 	"reflect"
+	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/msgvault/internal/agentgrant"
@@ -30,6 +31,13 @@ func calendarSchemaName(t reflect.Type, hint string) string {
 		return "GCal" + name
 	case "go.kenn.io/msgvault/internal/calcontrol":
 		return "Calendar" + name
+	case "go.kenn.io/msgvault/internal/identitycontrol":
+		if strings.HasPrefix(name, "Identity") {
+			return name
+		}
+		return "Identity" + name
+	case "go.kenn.io/msgvault/internal/inboxcontrol":
+		return "Inbox" + name
 	default:
 		return name
 	}

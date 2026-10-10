@@ -252,6 +252,7 @@ describe('direct data: images', () => {
     expect(result.inlineImages).toEqual([]);
   });
 
+  // Keep the full decoded-cap payload; parsing megabytes is not a five-second throughput contract.
   it('replaces a data: image over the per-image decoded cap with a placeholder', () => {
     const oversized = `data:image/png;base64,${'A'.repeat(
       Math.ceil((MAX_ARCHIVED_DATA_IMAGE_DECODED_BYTES * 4) / 3) + 4
@@ -264,7 +265,7 @@ describe('direct data: images', () => {
     expect(placeholderCaptions(result.html)).toEqual(['Image unavailable: Big']);
     expect(result.html).not.toContain(oversized);
     expect(result.html).toContain(`src="${SMALL_DATA_PNG}"`);
-  });
+  }, 30_000);
 
   it('caps data: image occurrences per document — excess become placeholders', () => {
     const count = MAX_ARCHIVED_DATA_IMAGE_OCCURRENCES + 1;

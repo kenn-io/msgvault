@@ -1,6 +1,7 @@
 package calsync
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json/v2"
 	"fmt"
@@ -43,7 +44,7 @@ type eventMetadata struct {
 	RecurringEventID  string   `json:"recurring_event_id,omitempty"`
 	OriginalStartTime string   `json:"original_start_time,omitempty"`
 	ICalUID           string   `json:"ical_uid,omitempty"`
-	Sequence          int      `json:"sequence,omitzero"`
+	Sequence          *int     `json:"sequence,omitempty"`
 	HTMLLink          string   `json:"html_link,omitempty"`
 	HangoutLink       string   `json:"hangout_link,omitempty"`
 	Transparency      string   `json:"transparency,omitempty"`
@@ -54,10 +55,9 @@ type eventMetadata struct {
 	AccountEmail      string   `json:"account_email,omitempty"`
 }
 
-// ingestEvent persists a non-cancelled event through the canonical write path
-// plus the metadata helper, and indexes it for FTS/embeddings. It is idempotent
-// via UpsertMessage's ON CONFLICT(source_id, source_message_id).
-func (s *Syncer) ingestEvent(sourceID int64, cal gcal.Calendar, ev gcal.Event) (int64, error) {
+// persistCalendarSnapshot prepares provider data for one atomic Store write.
+// The Store owns the prior-state comparison and sparse cancellation merge.
+func (s *Syncer) persistCalendarSnapshot(ctx context.Context, sourceID int64, cal gcal.Calendar, ev gcal.Event) (int64, bool, error) {
 	smid := deriveSourceMessageID(ev)
 	ev.Organizer.Email = normalizeParticipantEmail(ev.Organizer.Email)
 	for i := range ev.Attendees {
@@ -70,7 +70,7 @@ func (s *Syncer) ingestEvent(sourceID int64, cal gcal.Calendar, ev gcal.Event) (
 	if ev.Organizer.Email != "" {
 		id, err := s.store.EnsureParticipant(ev.Organizer.Email, ev.Organizer.DisplayName, emailDomain(ev.Organizer.Email))
 		if err != nil {
-			return 0, fmt.Errorf("organizer participant: %w", err)
+			return 0, false, fmt.Errorf("organizer participant: %w", err)
 		}
 		senderID = id
 	}
@@ -85,7 +85,7 @@ func (s *Syncer) ingestEvent(sourceID int64, cal gcal.Calendar, ev gcal.Event) (
 		}
 		pid, err := s.store.EnsureParticipant(a.Email, a.DisplayName, emailDomain(a.Email))
 		if err != nil {
-			return 0, fmt.Errorf("attendee participant: %w", err)
+			return 0, false, fmt.Errorf("attendee participant: %w", err)
 		}
 		attendeeIDs = append(attendeeIDs, pid)
 		attendeeNames = append(attendeeNames, a.DisplayName)
@@ -102,10 +102,6 @@ func (s *Syncer) ingestEvent(sourceID int64, cal gcal.Calendar, ev gcal.Event) (
 	if ev.RecurringEventID != "" {
 		convTitle = ""
 	}
-	convID, err := s.store.EnsureConversationWithType(sourceID, conversationKey(ev), gcal.ConversationType, convTitle)
-	if err != nil {
-		return 0, fmt.Errorf("ensure conversation: %w", err)
-	}
 
 	body := serializeBody(ev)
 	subject := ev.Summary
@@ -114,8 +110,7 @@ func (s *Syncer) ingestEvent(sourceID int64, cal gcal.Calendar, ev gcal.Event) (
 		strings.EqualFold(ev.Organizer.Email, s.opts.AccountEmail)
 	fromMe := ev.Organizer.Self || identityFromMe
 
-	msgID, err := s.store.UpsertMessage(&store.Message{
-		ConversationID:          convID,
+	message := &store.Message{
 		SourceID:                sourceID,
 		SourceMessageID:         smid,
 		MessageType:             gcal.MessageTypeCalendarEvent,
@@ -126,33 +121,17 @@ func (s *Syncer) ingestEvent(sourceID int64, cal gcal.Calendar, ev gcal.Event) (
 		Subject:                 sql.NullString{String: subject, Valid: subject != ""},
 		Snippet:                 sql.NullString{String: Snippet(body), Valid: body != ""},
 		SizeEstimate:            int64(len(body)),
-	})
-	if err != nil {
-		return 0, fmt.Errorf("upsert message: %w", err)
 	}
-
 	metaJSON, err := json.Marshal(buildMetadata(ev, cal, s.opts.AccountEmail), json.Deterministic(true))
 	if err != nil {
-		return 0, fmt.Errorf("marshal metadata: %w", err)
+		return 0, false, fmt.Errorf("marshal metadata: %w", err)
 	}
-	if err := s.store.SetMessageMetadata(msgID, sql.NullString{String: string(metaJSON), Valid: true}); err != nil {
-		return 0, fmt.Errorf("set metadata: %w", err)
-	}
-
-	if err := s.store.UpsertMessageBody(msgID, sql.NullString{String: body, Valid: body != ""}, sql.NullString{}); err != nil {
-		return 0, fmt.Errorf("upsert body: %w", err)
-	}
-
 	raw := []byte(ev.Raw)
 	if len(raw) == 0 {
 		if raw, err = json.Marshal(ev, json.Deterministic(true)); err != nil {
-			return 0, fmt.Errorf("marshal raw event: %w", err)
+			return 0, false, fmt.Errorf("marshal raw event: %w", err)
 		}
 	}
-	if err := s.store.UpsertMessageRawWithFormat(msgID, raw, gcal.RawFormat); err != nil {
-		return 0, fmt.Errorf("upsert raw: %w", err)
-	}
-
 	// Replace recipients UNCONDITIONALLY (even with empty sets) so re-syncing an
 	// event that lost its organizer or all attendees clears the stale rows.
 	// ReplaceMessageRecipients DELETEs the existing rows of that type first, then
@@ -165,74 +144,26 @@ func (s *Syncer) ingestEvent(sourceID int64, cal gcal.Calendar, ev gcal.Event) (
 		fromIDs = []int64{senderID}
 		fromNames = []string{ev.Organizer.DisplayName}
 	}
-	if err := s.store.ReplaceMessageRecipients(msgID, "from", fromIDs, fromNames); err != nil {
-		return 0, fmt.Errorf("replace from recipient: %w", err)
+	metadata := sql.NullString{String: string(metaJSON), Valid: true}
+	data := &store.MessagePersistData{
+		Message: message,
+		Conversation: &store.ConversationPersistData{
+			SourceConversationID: conversationKey(ev),
+			ConversationType:     gcal.ConversationType,
+			Title:                convTitle,
+		},
+		Metadata:  &metadata,
+		BodyText:  sql.NullString{String: body, Valid: body != ""},
+		RawMIME:   raw,
+		RawFormat: gcal.RawFormat,
+		Recipients: []store.RecipientSet{
+			{Type: "from", ParticipantIDs: fromIDs, DisplayNames: fromNames},
+			{Type: "to", ParticipantIDs: attendeeIDs, DisplayNames: attendeeNames},
+		},
+		// Keep raw attendee emails in the FTS address column only.
+		FTS: &store.FTSDoc{Subject: subject, Body: body, FromAddr: ev.Organizer.Email, ToAddrs: strings.Join(attendeeEmails, " ")},
 	}
-	if err := s.store.ReplaceMessageRecipients(msgID, "to", attendeeIDs, attendeeNames); err != nil {
-		return 0, fmt.Errorf("replace to recipients: %w", err)
-	}
-
-	// FTS: raw attendee emails go ONLY through the toAddrs column, never the
-	// body, so BM25/ts_rank doesn't double-count them and embeddings see only
-	// semantic prose.
-	if err := s.store.UpsertFTS(msgID, subject, body, ev.Organizer.Email, strings.Join(attendeeEmails, " "), ""); err != nil {
-		s.logger.Warn("upsert calendar event fts failed", "message_id", msgID, "event_id", smid, "error", err)
-	}
-
-	return msgID, nil
-}
-
-// flagCancelled retains a cancelled event rather than soft-deleting it. If the
-// row already exists, it flips metadata.status to "cancelled" while preserving
-// every other stored field (a cancellation delta usually arrives with empty
-// summary/start, so re-upserting would wipe the archived event). If the row was
-// never seen, it inserts a minimal tombstone whose metadata records the
-// cancellation. Returns (messageID, insertedNew).
-func (s *Syncer) flagCancelled(sourceID int64, cal gcal.Calendar, ev gcal.Event) (int64, bool, error) {
-	smid := deriveSourceMessageID(ev)
-	existing, err := s.store.MessageExistsBatch(sourceID, []string{smid})
-	if err != nil {
-		return 0, false, fmt.Errorf("lookup existing event: %w", err)
-	}
-	if id, ok := existing[smid]; ok {
-		merged, err := mergeStatusCancelled(s.store, id)
-		if err != nil {
-			return 0, false, err
-		}
-		if err := s.store.SetMessageMetadata(id, merged); err != nil {
-			return 0, false, fmt.Errorf("flag cancelled metadata: %w", err)
-		}
-		return id, false, nil
-	}
-	// Never-seen cancellation: record it as a tombstone via the normal path.
-	// ev.Status == "cancelled" flows into metadata.status.
-	id, err := s.ingestEvent(sourceID, cal, ev)
-	if err != nil {
-		return 0, false, err
-	}
-	return id, true, nil
-}
-
-// mergeStatusCancelled reads a message's existing metadata, sets status to
-// "cancelled", and returns the merged JSON, preserving all other keys.
-func mergeStatusCancelled(st *store.Store, messageID int64) (sql.NullString, error) {
-	existing, err := st.GetMessageMetadata(messageID)
-	if err != nil {
-		return sql.NullString{}, fmt.Errorf("read metadata: %w", err)
-	}
-	m := map[string]any{}
-	if existing.Valid && existing.String != "" {
-		if err := json.Unmarshal([]byte(existing.String), &m); err != nil {
-			// Corrupt/absent metadata shouldn't block the cancellation flag.
-			m = map[string]any{}
-		}
-	}
-	m["status"] = gcal.StatusCancelled
-	b, err := json.Marshal(m, json.Deterministic(true))
-	if err != nil {
-		return sql.NullString{}, fmt.Errorf("marshal merged metadata: %w", err)
-	}
-	return sql.NullString{String: string(b), Valid: true}, nil
+	return s.store.PersistCalendarEventContext(ctx, data, ev.Updated, ev.IsCancelled())
 }
 
 func normalizeParticipantEmail(email string) string {
@@ -285,6 +216,19 @@ func eventSentAt(ev gcal.Event) sql.NullTime {
 
 // buildMetadata projects an event into the metadata payload.
 func buildMetadata(ev gcal.Event, cal gcal.Calendar, accountEmail string) eventMetadata {
+	var sequence *int
+	if ev.Sequence != 0 {
+		value := ev.Sequence
+		sequence = &value
+	}
+	if len(ev.Raw) > 0 {
+		var provider struct {
+			Sequence *int `json:"sequence"`
+		}
+		if json.Unmarshal([]byte(ev.Raw), &provider) == nil && provider.Sequence != nil {
+			sequence = provider.Sequence
+		}
+	}
 	return eventMetadata{
 		Status:            ev.Status,
 		AllDay:            ev.Start.IsAllDay(),
@@ -295,7 +239,7 @@ func buildMetadata(ev gcal.Event, cal gcal.Calendar, accountEmail string) eventM
 		RecurringEventID:  ev.RecurringEventID,
 		OriginalStartTime: originalStartKey(ev.OriginalStartTime),
 		ICalUID:           ev.ICalUID,
-		Sequence:          ev.Sequence,
+		Sequence:          sequence,
 		HTMLLink:          ev.HTMLLink,
 		HangoutLink:       ev.HangoutLink,
 		Transparency:      ev.Transparency,

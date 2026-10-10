@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-02"
+last_edited: "2026-10-06"
 title: Documentation
 description: Set up your archive, find messages and files, maintain people, and operate msgvault.
 ---
@@ -61,6 +61,7 @@ limit an archive view.
 | Remove mail from a provider | [Deletion staging and execution](usage/deletion.md) |
 | Prepare a message draft for review | [Mail drafts](cli-reference.md#draft-reply), [Beeper drafts](cli-reference.md#beeper-chat-drafts), and [local chat drafts](cli-reference.md#local-chat-drafts) |
 | Keep a recoverable copy | [Backup and restore](usage/backup.md) |
+| Review native inbox controls before enabling them | [Inbox rollout checklist](usage/inbox-rollout.md) (unreleased) |
 | Take data elsewhere | [Exporting](usage/exporting.md) |
 | Diagnose a problem | [Troubleshooting](troubleshooting.md) and [FAQ](faq.md) |
 

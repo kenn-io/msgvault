@@ -567,6 +567,12 @@ func (s *Store) UpdatePersonDisplayName(
 func (s *Store) UpdatePersonDisplayNameContext(
 	ctx context.Context, id, expectedRevision int64, displayName *string,
 ) (*Person, error) {
+	return s.UpdatePersonDisplayNameAuthorizedContext(ctx, id, expectedRevision, displayName, nil)
+}
+
+// UpdatePersonDisplayNameAuthorizedContext checks every affected native person
+// and address book under the same transaction as the existing rename.
+func (s *Store) UpdatePersonDisplayNameAuthorizedContext(ctx context.Context, id, expectedRevision int64, displayName *string, authorize PersonEditAuthorizer) (*Person, error) {
 	displayName = normalizePersonDisplayName(displayName)
 	// The rename locks the identity row, this person, and then every
 	// relationship counterpart; relationship writes lock the same person
@@ -574,16 +580,19 @@ func (s *Store) UpdatePersonDisplayNameContext(
 	// deadlock victim starts over from a clean transaction.
 	return retryContendedWrite(ctx, s, "update person display name",
 		func() (*Person, error) {
-			return s.updatePersonDisplayNameOnce(ctx, id, expectedRevision, displayName)
+			return s.updatePersonDisplayNameOnce(ctx, id, expectedRevision, displayName, authorize)
 		})
 }
 
 func (s *Store) updatePersonDisplayNameOnce(
-	ctx context.Context, id, expectedRevision int64, displayName *string,
+	ctx context.Context, id, expectedRevision int64, displayName *string, authorize PersonEditAuthorizer,
 ) (*Person, error) {
 	var person *Person
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
 		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+			return err
+		}
+		if err := s.authorizePersonEditTx(ctx, tx, id, true, authorize); err != nil {
 			return err
 		}
 		var previousName sql.NullString

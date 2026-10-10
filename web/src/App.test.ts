@@ -7,30 +7,24 @@ import { createSessionController } from './lib/api/session.svelte';
 import { resolveInitialSearchMode, SEARCH_MODE_PREFERENCE_KEY } from './lib/search/modes';
 import { chooseSelectOption } from './test/kit-ui';
 describe('application foundation', () => {
-  it('reports resolved workspaces and standalone messages', async () => {
-    const events: Array<{ event: string; properties?: { screen?: string; surface?: string } }> = [];
-    const session = createSessionController(async (input) => {
-      const request = input as Request;
-      const path = new URL(request.url).pathname;
-      if (path === '/api/session') return Response.json({ auth_mode: 'loopback', https: false });
-      if (path === '/api/v1/telemetry/events') {
-        events.push(await request.json());
-        return Response.json({ status: 'queued' }, { status: 202 });
-      }
-      if (path === '/api/v1/settings') return Response.json({ settings: [], pending_restart: false });
-      if (path === '/api/v1/explore') return Response.json({ rows: [], total_count: 0, cache_revision: 'screens', search_provenance: {} });
-      return Response.json({}, { status: 404 });
-    });
+  it.each([
+    ['Everything', 'everything'], ['Directory', 'directory'], ['Reviews', 'directory_review'],
+    ['Files', 'files'], ['Operations', 'operations'], ['Relationships', 'relationships'],
+    ['Saved views', 'saved_views'], ['Sources', 'sources'], ['Deletions', 'deletions'], ['Settings', 'settings'],
+  ])('reports the resolved %s workspace after navigation', async (label, name) => {
+    const { events, session } = screenReportingSession();
+    window.history.replaceState(null, '', name === 'relationships' ? '/?workspace=everything' : '/?workspace=relationships');
+    render(App, { session });
+    const navigation = within(await screen.findByRole('navigation', { name: 'Primary' }));
+    await fireEvent.click(await navigation.findByRole('button', { name: label }));
+    await waitFor(() => expect(events.at(-1)?.properties?.screen).toBe(name));
+  });
+  it('reports a standalone message after leaving a workspace', async () => {
+    const { events, session } = screenReportingSession();
     window.history.replaceState(null, '', '/?workspace=everything');
     render(App, { session });
-    for (const [label, name] of [
-      ['Everything', 'everything'], ['Directory', 'directory'], ['Reviews', 'directory_review'],
-      ['Files', 'files'], ['Operations', 'operations'], ['Relationships', 'relationships'],
-      ['Saved views', 'saved_views'], ['Sources', 'sources'], ['Deletions', 'deletions'], ['Settings', 'settings'],
-    ]) {
-      await fireEvent.click(await screen.findByRole('button', { name: label }));
-      await waitFor(() => expect(events.some((event) => event.properties?.screen === name)).toBe(true));
-    }
+    await session.bootstrap();
+    await waitFor(() => expect(events.some((event) => event.properties?.screen === 'everything')).toBe(true));
     window.history.replaceState(null, '', '/messages/123');
     await fireEvent(window, new PopStateEvent('popstate'));
     await waitFor(() => expect(events.at(-1)?.properties?.screen).toBe('message'));
@@ -644,4 +638,21 @@ async function openAppearance(fetchFn: ReturnType<typeof appearanceDaemon>) {
   render(App, { session });
   await session.bootstrap();
   await screen.findByRole('heading', { level: 2, name: 'Appearance' });
+}
+
+function screenReportingSession() {
+  const events: Array<{ event: string; properties?: { screen?: string; surface?: string } }> = [];
+  const session = createSessionController(async (input) => {
+    const request = input as Request;
+    const path = new URL(request.url).pathname;
+    if (path === '/api/session') return Response.json({ auth_mode: 'loopback', https: false });
+    if (path === '/api/v1/telemetry/events') {
+      events.push(await request.json());
+      return Response.json({ status: 'queued' }, { status: 202 });
+    }
+    if (path === '/api/v1/settings') return Response.json({ settings: [], pending_restart: false });
+    if (path === '/api/v1/explore') return Response.json({ rows: [], total_count: 0, cache_revision: 'screens', search_provenance: {} });
+    return Response.json({}, { status: 404 });
+  });
+  return { events, session };
 }

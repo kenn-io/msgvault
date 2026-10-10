@@ -140,7 +140,7 @@ func (s *Server) registerAttributeDefinitionRoutes(api huma.API) {
 	addAttributeDefinitionIDParameter(&remove)
 	addAttributeDefinitionIfMatchParameter(&remove)
 	remove.Responses = rawHumaResponses(http.StatusNoContent)
-	remove.Responses["default"] = errorResponseFor(api)
+	remove.Responses[defaultErrorResponse] = errorResponseFor(api)
 	addErrorResponses(api, remove.Responses, http.StatusBadRequest, http.StatusConflict,
 		http.StatusNotFound, http.StatusPreconditionRequired, http.StatusServiceUnavailable)
 	registerRawHumaRoute(api, remove, s.handleDeleteAttributeDefinition)
@@ -289,6 +289,10 @@ func (s *Server) attributeDefinitionStore(
 }
 
 func (s *Server) writeAttributeError(w http.ResponseWriter, err error) {
+	if errors.Is(err, errPersonScopeDenied) || errors.Is(err, store.ErrPersonRevisionConflict) || errors.Is(err, store.ErrIdentityOperationTooLarge) {
+		s.writePersonError(w, err)
+		return
+	}
 	if s.writeIfContextError(w, err) {
 		return
 	}

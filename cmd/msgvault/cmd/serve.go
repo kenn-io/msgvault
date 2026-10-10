@@ -30,9 +30,12 @@ import (
 	"go.kenn.io/msgvault/internal/gmail"
 	"go.kenn.io/msgvault/internal/granola"
 	imaplib "go.kenn.io/msgvault/internal/imap"
+	"go.kenn.io/msgvault/internal/inboxcontrol"
 	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/kataevidence"
+	"go.kenn.io/msgvault/internal/mcpevents"
 	"go.kenn.io/msgvault/internal/meetingimport"
+	"go.kenn.io/msgvault/internal/msmail"
 	"go.kenn.io/msgvault/internal/muesli"
 	"go.kenn.io/msgvault/internal/notionmeetings"
 	"go.kenn.io/msgvault/internal/oauth"
@@ -319,6 +322,10 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 	logger.Info("daemon startup step complete", "step", "init_archive_schema")
 	if err := recoverNativeOperationRunsAtStartup(cmd.Context(), s, logger); err != nil {
+		return err
+	}
+	inboxKey, err := prepareInboxRuntime(cmd.Context(), cfg, s)
+	if err != nil {
 		return err
 	}
 	// Legacy [identity] migration is deferred to the first scheduled sync's
@@ -776,8 +783,6 @@ func runServe(cmd *cobra.Command, args []string) error {
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
 	// Start the schedulers
-	sched.Start()
-	mediaSched.Start()
 
 	// Create adapters for the API interfaces
 	refreshCacheAfterWrite := func(_ context.Context, label string) error {
@@ -794,6 +799,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	cacheJobs := newCacheBuildJobs(ctx, idleTracker, nil)
 	cacheJobs.logger = logger
 	storeAdapter := &storeAPIAdapter{
+		inboxKey:               inboxKey,
 		store:                  s,
 		config:                 cfg,
 		options:                state.options,
@@ -865,6 +871,36 @@ func runServe(cmd *cobra.Command, args []string) error {
 		apiOpts.VectorStatus = api.VectorStatusInitializing
 	}
 	apiServer = api.NewServerWithOptions(apiOpts)
+	mcpEventService, eventsErr := newDaemonMCPEventsService(ctx, cfg, s, apiServer)
+	if eventsErr != nil {
+		keyFailure, ok := errors.AsType[*mcpevents.Error](eventsErr)
+		if !ok || keyFailure.Reason != "events_key_unavailable" {
+			return fmt.Errorf("start MCP Events: %w", eventsErr)
+		}
+		// Disable coverage before any scheduled writer starts, while retaining
+		// the fixed key failure for the owner's status command.
+		disabledConfig := *cfg
+		disabledConfig.MCP.Events.Enabled = false
+		mcpEventService, err = newDaemonMCPEventsService(ctx, &disabledConfig, s, apiServer)
+		if err != nil {
+			return fmt.Errorf("disable MCP Events after key failure: %w", err)
+		}
+		apiServer.SetMCPEventsUnavailable(keyFailure)
+		logger.Warn("MCP Events unavailable", "reason", keyFailure.Reason)
+	} else {
+		apiServer.SetMCPEvents(mcpEventService)
+	}
+	var mcpEventsDone chan error
+	if eventsErr == nil && cfg.MCP.Events.Enabled && len(mcpEventService.Capabilities()) > 0 {
+		mcpEventsDone = make(chan error, 1)
+		go func() {
+			mcpEventsDone <- mcpEventService.Run(ctx)
+			close(mcpEventsDone)
+		}()
+	}
+	// Coverage is published before scheduled providers may write live data.
+	sched.Start()
+	mediaSched.Start()
 	if cfg.People.Sweep.Enabled {
 		// The daemon owns the people sweep worker, so it owns manual brief
 		// generation: POST /api/v1/people/{id}/brief/generate reports
@@ -969,6 +1005,12 @@ func runServe(cmd *cobra.Command, args []string) error {
 				serverStartupErr = err
 				cancel()
 			}
+		case eventsRunErr := <-mcpEventsDone:
+			if eventsRunErr != nil {
+				serverStartupErr = eventsRunErr
+				logger.Warn("MCP Events stopped", "reason", "events_storage_unavailable")
+			}
+			cancel()
 		case <-ctx.Done():
 			logger.Info("context cancelled")
 		}
@@ -981,6 +1023,14 @@ func runServe(cmd *cobra.Command, args []string) error {
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), serveOperationDrainTimeout)
 	defer shutdownCancel()
 	shutdownErr := shutdownServeRuntime(shutdownCtx, cmd.OutOrStdout(), apiServer, serveSchedulers{sched, mediaSched}, operationGate)
+	if mcpEventsDone != nil {
+		select {
+		case eventsRunErr := <-mcpEventsDone:
+			shutdownErr = errors.Join(shutdownErr, eventsRunErr)
+		case <-shutdownCtx.Done():
+			shutdownErr = errors.Join(shutdownErr, errors.New("MCP Events workers did not stop during shutdown"))
+		}
+	}
 	if !cacheJobs.waitContext(shutdownCtx) {
 		logger.Warn("analytics cache build did not stop within the shutdown drain timeout")
 		shutdownErr = errors.Join(shutdownErr, errors.New("analytics cache build did not stop during shutdown"))
@@ -1668,16 +1718,21 @@ func newDaemonIdleTracker(c *config.Config, stop context.CancelFunc, logger *slo
 // Since api.APIMessage, api.StoreStats, etc. are type aliases for store types,
 // the adapter methods are simple pass-throughs with no conversion needed.
 type storeAPIAdapter struct {
-	store                   *store.Store
-	config                  *config.Config
-	options                 invocationOptions
-	logger                  *slog.Logger
-	draftPolicy             []config.IMAPDraftSource
-	draftClientFactory      func(context.Context, *store.Source) (*imaplib.Client, error)
-	gmailDraftPolicy        []config.GmailDraftSource
-	beeperDraftPolicy       []config.GmailDraftSource
-	gmailDraftClientFactory func(context.Context, *store.Source) (gmail.DraftAPI, error)
-	calendarClientFactory   func(context.Context, config.GCalSource, bool) (gcal.ControlAPI, error)
+	inboxKey                            []byte
+	inboxProviderFactory                func(context.Context, *store.Source, inboxcontrol.Request) (inboxcontrol.Provider, error)
+	store                               *store.Store
+	config                              *config.Config
+	options                             invocationOptions
+	logger                              *slog.Logger
+	draftPolicy                         []config.IMAPDraftSource
+	draftClientFactory                  func(context.Context, *store.Source) (*imaplib.Client, error)
+	gmailDraftPolicy                    []config.GmailDraftSource
+	beeperDraftPolicy                   []config.GmailDraftSource
+	gmailDraftClientFactory             func(context.Context, *store.Source) (gmail.DraftAPI, error)
+	calendarClientFactory               func(context.Context, config.GCalSource, bool) (gcal.ControlAPI, error)
+	emailTagClientFactory               func(context.Context, *store.Source) (gmail.API, error)
+	microsoftTagClientFactory           func(context.Context, *store.Source, bool) (*msmail.Client, error)
+	microsoftTriageCatalogClientFactory func(context.Context, *store.Source) (*msmail.Client, error)
 	// draftCacheRefresh rebuilds the analytics cache after a draft is durable,
 	// the same best-effort hook the meeting importer uses.
 	draftCacheRefresh     func(context.Context, string) error
@@ -1766,6 +1821,7 @@ var _ api.ContextCLIDedupDeleteStore = (*storeAPIAdapter)(nil)
 var _ api.IdentityLinkStore = (*storeAPIAdapter)(nil)
 var _ api.IdentityMatchStore = (*storeAPIAdapter)(nil)
 var _ api.PersonProfileStore = (*storeAPIAdapter)(nil)
+var _ api.ScopedPersonEditStore = (*storeAPIAdapter)(nil)
 var _ api.PersonCompletionStore = (*storeAPIAdapter)(nil)
 var _ api.PersonTrackingStore = (*storeAPIAdapter)(nil)
 var _ api.PersonNetworkStore = (*storeAPIAdapter)(nil)
@@ -3261,6 +3317,10 @@ func (a *storeAPIAdapter) MergePersonsContext(
 	return a.store.MergePersonsContext(ctx, request)
 }
 
+func (a *storeAPIAdapter) MergePersonsAuthorizedContext(ctx context.Context, request store.PersonMergeRequest, authorize store.PersonEditAuthorizer) (*store.PersonMergeResult, error) {
+	return a.store.MergePersonsAuthorizedContext(ctx, request, authorize)
+}
+
 func (a *storeAPIAdapter) SplitPersonMergeContext(
 	ctx context.Context, request store.PersonSplitRequest,
 ) (*store.PersonSplitResult, error) {
@@ -3301,6 +3361,22 @@ func (a *storeAPIAdapter) GetPersonProfileContext(
 	ctx context.Context, personID int64,
 ) (*store.PersonProfile, error) {
 	return a.store.GetPersonProfileContext(ctx, personID)
+}
+
+func (a *storeAPIAdapter) PersonEditScopeContext(ctx context.Context, id int64) (*store.IdentityGrantSelection, error) {
+	return a.store.PersonEditScopeContext(ctx, id)
+}
+
+func (a *storeAPIAdapter) PersonProfileEditScopeContext(ctx context.Context, id int64) (*store.IdentityGrantSelection, error) {
+	return a.store.PersonProfileEditScopeContext(ctx, id)
+}
+
+func (a *storeAPIAdapter) UpdatePersonDisplayNameAuthorizedContext(ctx context.Context, id, revision int64, name *string, authorize store.PersonEditAuthorizer) (*store.Person, error) {
+	return a.store.UpdatePersonDisplayNameAuthorizedContext(ctx, id, revision, name, authorize)
+}
+
+func (a *storeAPIAdapter) ApplyPersonProfilePatchAuthorizedContext(ctx context.Context, id, revision int64, patch store.PersonProfilePatch, authorize store.PersonEditAuthorizer) (*store.PersonProfile, error) {
+	return a.store.ApplyPersonProfilePatchAuthorizedContext(ctx, id, revision, patch, authorize)
 }
 
 func (a *storeAPIAdapter) ApplyPersonProfilePatchContext(
@@ -3381,6 +3457,14 @@ func (a *storeAPIAdapter) SetPersonAttributeValueContext(
 	ctx context.Context, input store.PersonAttributeValueInput,
 ) (*store.PersonAttributeWrite, error) {
 	return a.store.SetPersonAttributeValueContext(ctx, input)
+}
+
+func (a *storeAPIAdapter) SetPersonAttributeValueAuthorizedContext(ctx context.Context, input store.PersonAttributeValueInput, authorize store.PersonEditAuthorizer) (*store.PersonAttributeWrite, error) {
+	return a.store.SetPersonAttributeValueAuthorizedContext(ctx, input, authorize)
+}
+
+func (a *storeAPIAdapter) SupersedePersonAttributeValueAuthorizedContext(ctx context.Context, input store.PersonAttributeSupersedeInput, authorize store.PersonEditAuthorizer) (*store.PersonAttributeWrite, error) {
+	return a.store.SupersedePersonAttributeValueAuthorizedContext(ctx, input, authorize)
 }
 
 func (a *storeAPIAdapter) AppendPersonNoteContext(
@@ -4148,6 +4232,7 @@ func scheduledSyncPreemptible(s *store.Store, identifier string, logger *slog.Lo
 func newDaemonGmailClient(
 	ctx context.Context, email string, src *store.Source,
 	getOAuthMgr func(string) (*oauth.Manager, error), state *invocation,
+	serviceAccountScopes ...[]string,
 ) (client gmail.API, serviceAccount bool, err error) {
 	if state == nil {
 		state = invocationFromContext(ctx)
@@ -4167,7 +4252,11 @@ func newDaemonGmailClient(
 
 	saKeyPath := cfg.OAuth.ServiceAccountKeyFor(appName)
 	if saKeyPath != "" {
-		saMgr, saErr := oauth.NewServiceAccountManager(saKeyPath, oauth.Scopes)
+		scopes := oauth.Scopes
+		if len(serviceAccountScopes) > 0 && len(serviceAccountScopes[0]) > 0 {
+			scopes = serviceAccountScopes[0]
+		}
+		saMgr, saErr := oauth.NewServiceAccountManager(saKeyPath, scopes)
 		if saErr != nil {
 			return nil, false, provideridentity.NewGmailCredentialError(
 				provideridentity.GmailServiceAccountConfiguration,

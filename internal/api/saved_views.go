@@ -91,7 +91,7 @@ func (s *Server) registerSavedViewRoutes(api huma.API) {
 	addSavedViewIDParameter(&remove)
 	addSavedViewIfMatchParameter(&remove)
 	remove.Responses = rawHumaResponses(http.StatusNoContent)
-	remove.Responses["default"] = errorResponseFor(api)
+	remove.Responses[defaultErrorResponse] = errorResponseFor(api)
 	addErrorResponses(api, remove.Responses, http.StatusBadRequest, http.StatusUnauthorized,
 		http.StatusConflict, http.StatusNotFound, http.StatusPreconditionRequired,
 		http.StatusInternalServerError, http.StatusServiceUnavailable)

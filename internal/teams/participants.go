@@ -52,8 +52,8 @@ func (r *participantResolver) resolve(ctx context.Context, id *Identity) (int64,
 
 func (r *participantResolver) byEmail(email, displayName string) (int64, error) {
 	domain := ""
-	if at := strings.LastIndex(email, "@"); at >= 0 {
-		domain = strings.ToLower(email[at+1:])
+	if _, suffix, found := strings.CutLast(email, "@"); found {
+		domain = strings.ToLower(suffix)
 	}
 	return r.store.EnsureParticipant(strings.ToLower(email), displayName, domain)
 }

@@ -285,6 +285,54 @@ For integrations, the publication API is:
 | `POST /api/v1/carddav/publications/{person_id}/approve` | Publish with a reviewed `approval_token` |
 | `DELETE /api/v1/carddav/publications/{person_id}` | Remove their publication |
 
+Development builds also support scoped, reviewed updates to cards already
+mapped to a person. These endpoints require current `person.read` authority for
+the exact native person UID and `carddav.write` authority for the exact account
+and address book. They do not create cards, delete cards, or resolve conflicts.
+
+| Request | Effect |
+|---|---|
+| `GET /api/v1/carddav/scoped/publications/{person_id}/preview` | Read the exact mapped update and its approval token without provider work |
+| `POST /api/v1/carddav/scoped/publications/{person_id}/approve` | Submit `approval_token` and `idempotency_key`; return a durable `receipt` |
+| `POST /api/v1/carddav/scoped/publications/{person_id}/reconcile` | Submit the original token and key; observe the exact pending update with GET requests |
+
+The key must contain 1–256 UTF-8 bytes and must not be blank. Repeating the same
+person, token, and key returns the original receipt after current authorization,
+without generating another preview or repeating provider work. A different
+person or token with the same key is rejected. Keys belong to the authenticated
+principal; callers cannot choose that principal.
+
+Read `receipt.state` to determine the outcome. `verified` and `rejected` return
+HTTP 200; inspect `error_code` and `retry_after` for a rejected operation.
+`dispatching` returns HTTP 202 and retains the native pending evidence. An
+unchanged card returns a verified receipt with `noop: true` and performs no
+provider work. Repeated approval only reads the saved outcome. Use `reconcile`
+to recover a pending receipt after checking the current person and book grants.
+It returns the same receipt and never repeats the PUT. Settled receipts need
+no provider transport; a missing receipt is not admitted as a new publication.
+
+MCP exposes the same scoped contracts as
+`preview_scoped_carddav_publication`, `approve_scoped_carddav_publication`, and
+`reconcile_scoped_carddav_publication`. Each tool appears only when current
+daemon discovery admits its exact route. Approval and recovery also require
+`msgvault mcp --allow-carddav-writes` and client confirmation of the exact
+arguments. Preserve the original token and key for retries and recovery; these
+tools do not fetch a replacement preview during confirmation. Revoked grants
+deny even saved receipt reads. These tools do not expose owner publication or
+whole-account sync authority.
+
+Recovery remains discoverable with current person/book authority when the
+CardDAV controller is absent. It can return a settled receipt without provider
+work. Pending receipts still require recovery transport and remain pending
+when that transport is unavailable. Owner receipts survive a daemon restart.
+Daemon-issued agent tokens are process-scoped; a new delegated token cannot
+claim a receipt belonging to the old token.
+
+Owner sync can verify the exact pending update and settle its original receipt
+in the same transaction that clears the pending intent. A failed receipt write
+or ambiguous canonical observation retains the original intent and receipt.
+Recovery performs GET requests and does not replay the reviewed PUT.
+
 Publication state is `unpublished`, `published`, `pending`, or `conflict`.
 `pending` means the operation has not been settled; sync recovers pending work
 before importing changes. Wait for the resulting state before assuming a write

@@ -30,7 +30,8 @@ type fakeBeeperDrafts struct {
 	draft    string // raw JSON value of the chat's draft field
 	requests int
 	patches  int
-	failText bool // answer 500 to the next text write without applying it
+	afterGet string // external typing after the returned GET snapshot
+	failText bool   // answer 500 to the next text write without applying it
 }
 
 func (f *fakeBeeperDrafts) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -72,7 +73,11 @@ func (f *fakeBeeperDrafts) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			f.draft = string(formatted)
 		}
 	}
-	_, _ = io.WriteString(w, `{"id":"`+beeperDraftTestChat+`","accountID":"`+f.account+`","draft":`+f.draft+`}`)
+	response := `{"id":"` + beeperDraftTestChat + `","accountID":"` + f.account + `","draft":` + f.draft + `}`
+	if r.Method == http.MethodGet && f.afterGet != "" {
+		f.draft, f.afterGet = f.afterGet, ""
+	}
+	_, _ = io.WriteString(w, response)
 }
 
 func (f *fakeBeeperDrafts) set(draft string, failText bool) {
@@ -159,24 +164,27 @@ func assertBeeperDraftCode(t *testing.T, err error, code string) {
 }
 
 func TestBeeperDraftWritesCheckTheComposerFirst(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	f := newBeeperDraftFixture(t)
 
 	created, err := f.create(t, nil, "hello")
-	require.NoError(err)
-	assert.Equal("created", created.Status)
-	assert.Equal(int64(1), created.Revision)
-	require.NotNil(created.Content)
-	assert.Equal("<p>hello</p>", *created.Content)
+	requirements.NoError(err)
+	assertions.Equal("created", created.Status)
+	assertions.Equal(int64(1), created.Revision)
+	requirements.NotNil(created.Content)
+	assertions.Equal("<p>hello</p>", *created.Content)
 
 	_, err = f.create(t, nil, "again")
 	assertBeeperDraftCode(t, err, "draft_exists")
 
+	_, err = f.edit(t, created, "second")
+	assertBeeperDraftCode(t, err, "composer_clear_required")
+	f.beeper.set("null", false)
 	edited, err := f.edit(t, created, "second")
-	require.NoError(err)
-	assert.Equal(int64(2), edited.Revision)
-	assert.Equal("<p>second</p>", *edited.Content)
+	requirements.NoError(err)
+	assertions.Equal(int64(2), edited.Revision)
+	assertions.Equal("<p>second</p>", *edited.Content)
 
 	// Text typed in Beeper is never replaced or cleared.
 	f.beeper.set(`{"text":"typed in Beeper"}`, false)
@@ -186,39 +194,42 @@ func TestBeeperDraftWritesCheckTheComposerFirst(t *testing.T) {
 	_, err = f.run(t, nil, api.CLIRunDraftDeleteCommand, edited.DraftID, "--revision", "2")
 	assertBeeperDraftCode(t, err, "draft_conflict")
 	_, patchesAfter := f.beeper.counts()
-	assert.Equal(patchesBefore, patchesAfter)
+	assertions.Equal(patchesBefore, patchesAfter)
 
 	// An interrupted edit stays pending until Beeper shows how it ended.
-	f.beeper.set(`{"text":"<p>second</p>"}`, true)
+	f.beeper.set("null", true)
 	pending, err := f.edit(t, edited, "third")
 	assertBeeperDraftCode(t, err, "remote_unknown")
-	assert.Equal(store.BeeperDraftOperationEdit, pending.PendingOperation)
-	assert.Equal("third", pending.CandidateContent)
+	assertions.Equal(store.BeeperDraftOperationEdit, pending.PendingOperation)
+	assertions.Equal("third", pending.CandidateContent)
 	retried, err := f.edit(t, edited, "third")
-	require.NoError(err)
-	assert.Equal(int64(3), retried.Revision)
-	assert.Equal("<p>third</p>", *retried.Content)
-	assert.Empty(retried.PendingOperation)
+	requirements.NoError(err)
+	assertions.Equal(int64(3), retried.Revision)
+	assertions.Equal("<p>third</p>", *retried.Content)
+	assertions.Empty(retried.PendingOperation)
 
+	_, err = f.run(t, nil, api.CLIRunDraftDeleteCommand, retried.DraftID, "--revision", "3")
+	assertBeeperDraftCode(t, err, "composer_clear_required")
+	f.beeper.set("null", false)
 	deleted, err := f.run(t, nil, api.CLIRunDraftDeleteCommand, retried.DraftID, "--revision", "3")
-	require.NoError(err)
-	assert.Equal("discarded", deleted.Lifecycle)
-	assert.Equal("null", f.beeper.current())
+	requirements.NoError(err)
+	assertions.Equal("discarded", deleted.Lifecycle)
+	assertions.Equal("null", f.beeper.current())
 
 	recreated, err := f.create(t, nil, "fresh")
-	require.NoError(err)
-	assert.NotEqual(created.DraftID, recreated.DraftID)
+	requirements.NoError(err)
+	assertions.NotEqual(created.DraftID, recreated.DraftID)
 	requestsBefore, _ := f.beeper.counts()
 	got, err := f.run(t, nil, api.CLIRunDraftGetCommand, recreated.DraftID)
-	require.NoError(err)
-	assert.Equal("<p>fresh</p>", *got.Content)
+	requirements.NoError(err)
+	assertions.Equal("<p>fresh</p>", *got.Content)
 	requestsAfter, _ := f.beeper.counts()
-	assert.Equal(requestsBefore, requestsAfter)
+	assertions.Equal(requestsBefore, requestsAfter)
 }
 
 func TestBeeperDraftDelegatedLifecycle(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	f := newBeeperDraftFixture(t)
 	grant := &agentgrant.Grant{
 		ID:          "beeper-grant",
@@ -226,27 +237,29 @@ func TestBeeperDraftDelegatedLifecycle(t *testing.T) {
 		Sources:     []agentgrant.SourceRef{{Type: "beeper", Identifier: f.source.Identifier}},
 	}
 	created, err := f.create(t, grant, "hello")
-	require.NoError(err)
+	requirements.NoError(err)
+	f.beeper.set("null", false)
 	edited, err := f.run(t, grant, api.CLIRunDraftEditCommand, created.DraftID, "--revision", "1", "--body", "edited")
-	require.NoError(err)
-	assert.JSONEq(`{"text":"<p>edited</p>"}`, f.beeper.current())
+	requirements.NoError(err)
+	assertions.JSONEq(`{"text":"<p>edited</p>"}`, f.beeper.current())
 	loaded, err := f.run(t, grant, api.CLIRunDraftGetCommand, created.DraftID)
-	require.NoError(err)
-	require.NotNil(loaded.Content)
-	assert.Equal("<p>edited</p>", *loaded.Content)
+	requirements.NoError(err)
+	requirements.NotNil(loaded.Content)
+	assertions.Equal("<p>edited</p>", *loaded.Content)
+	f.beeper.set("null", false)
 	_, err = f.run(t, grant, api.CLIRunDraftDeleteCommand, created.DraftID, "--revision", strconv.FormatInt(edited.Revision, 10))
-	require.NoError(err)
-	assert.Equal("null", f.beeper.current())
+	requirements.NoError(err)
+	assertions.Equal("null", f.beeper.current())
 }
 
 func TestBeeperDraftDeleteOnlyResponses(t *testing.T) {
 	for _, format := range []string{"json", "text"} {
 		t.Run(format, func(t *testing.T) {
-			require := require.New(t)
-			assert := assert.New(t)
+			requirements := require.New(t)
+			assertions := assert.New(t)
 			f := newBeeperDraftFixture(t)
 			created, err := f.create(t, nil, "owner draft")
-			require.NoError(err)
+			requirements.NoError(err)
 			grant := &agentgrant.Grant{
 				ID:          "delete-only",
 				Permissions: []agentgrant.Permission{agentgrant.PermissionDraftDelete},
@@ -262,27 +275,27 @@ func TestBeeperDraftDeleteOnlyResponses(t *testing.T) {
 					output.WriteString(event.Data)
 					return nil
 				})
-				assert.Contains(output.String(), created.DraftID)
-				assert.NotContains(output.String(), "owner draft")
+				assertions.Contains(output.String(), created.DraftID)
+				assertions.NotContains(output.String(), "owner draft")
 				if format == "json" {
 					var got beeperDraftOutput
-					require.NoError(json.Unmarshal([]byte(output.String()), &got))
-					assert.Equal(status, got.Status)
-					assert.Positive(got.Revision)
-					assert.Nil(got.Content)
-					assert.Empty(got.CandidateContent)
+					requirements.NoError(json.Unmarshal([]byte(output.String()), &got))
+					assertions.Equal(status, got.Status)
+					assertions.Positive(got.Revision)
+					assertions.Nil(got.Content)
+					assertions.Empty(got.CandidateContent)
 				} else {
-					assert.Contains(output.String(), "status: "+status)
-					assert.NotContains(output.String(), "content:")
+					assertions.Contains(output.String(), "status: "+status)
+					assertions.NotContains(output.String(), "content:")
 				}
 				return err
 			}
-			require.NoError(run("ok", api.CLIRunDraftGetCommand, created.DraftID))
+			requirements.NoError(run("ok", api.CLIRunDraftGetCommand, created.DraftID))
 
 			// An unconfirmed edit has both committed and candidate text to hide.
 			_, err = f.store.ClaimBeeperDraftContext(t.Context(), created.DraftID, created.Revision, store.BeeperDraftOperationEdit, "pending owner draft")
-			require.NoError(err)
-			require.NoError(run("ok", api.CLIRunDraftGetCommand, created.DraftID))
+			requirements.NoError(err)
+			requirements.NoError(run("ok", api.CLIRunDraftGetCommand, created.DraftID))
 			f.beeper.set(`{"text":"<p>pending owner draft</p>"}`, false)
 			err = run("pending_operation", api.CLIRunDraftDeleteCommand, created.DraftID, "--revision", "1")
 			assertBeeperDraftCode(t, err, "pending_operation")
@@ -291,25 +304,25 @@ func TestBeeperDraftDeleteOnlyResponses(t *testing.T) {
 			editor := *grant
 			editor.Permissions = []agentgrant.Permission{agentgrant.PermissionDraftEdit}
 			visible, err := f.run(t, &editor, api.CLIRunDraftGetCommand, created.DraftID)
-			require.NoError(err)
-			require.NotNil(visible.Content)
-			assert.Equal("<p>owner draft</p>", *visible.Content)
-			assert.Equal("pending owner draft", visible.CandidateContent)
-			assert.Equal(store.BeeperDraftOperationEdit, visible.PendingOperation)
+			requirements.NoError(err)
+			requirements.NotNil(visible.Content)
+			assertions.Equal("<p>owner draft</p>", *visible.Content)
+			assertions.Equal("pending owner draft", visible.CandidateContent)
+			assertions.Equal(store.BeeperDraftOperationEdit, visible.PendingOperation)
 
 			f.beeper.set("null", false)
-			require.NoError(run("deleted", api.CLIRunDraftDeleteCommand, created.DraftID, "--revision", "1"))
-			require.NoError(run("already_discarded", api.CLIRunDraftDeleteCommand, created.DraftID, "--revision", "2"))
+			requirements.NoError(run("deleted", api.CLIRunDraftDeleteCommand, created.DraftID, "--revision", "1"))
+			requirements.NoError(run("already_discarded", api.CLIRunDraftDeleteCommand, created.DraftID, "--revision", "2"))
 		})
 	}
 }
 
 func TestBeeperDraftDelegatedDenialPrecedesProvider(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	f := newBeeperDraftFixture(t)
 	created, err := f.create(t, nil, "hello")
-	require.NoError(err)
+	requirements.NoError(err)
 	requestsBefore, _ := f.beeper.counts()
 
 	other := &agentgrant.Grant{
@@ -322,7 +335,7 @@ func TestBeeperDraftDelegatedDenialPrecedesProvider(t *testing.T) {
 	_, err = f.run(t, other, api.CLIRunDraftEditCommand, created.DraftID, "--revision", "1", "--body", "agent")
 	assertBeeperDraftCode(t, err, "not_permitted")
 	requestsAfter, _ := f.beeper.counts()
-	assert.Equal(requestsBefore, requestsAfter)
+	assertions.Equal(requestsBefore, requestsAfter)
 
 	creator := &agentgrant.Grant{
 		ID:          "beeper-grant",
@@ -333,6 +346,51 @@ func TestBeeperDraftDelegatedDenialPrecedesProvider(t *testing.T) {
 	assertBeeperDraftCode(t, err, "not_permitted")
 	existing, err := f.create(t, creator, "agent")
 	assertBeeperDraftCode(t, err, "draft_exists")
-	assert.Equal(created.DraftID, existing.DraftID)
-	assert.Nil(existing.Content)
+	assertions.Equal(created.DraftID, existing.DraftID)
+	assertions.Nil(existing.Content)
+}
+
+func TestBeeperDraftComposerRacePreservesExternalText(t *testing.T) {
+	for _, operation := range []string{api.CLIRunDraftEditCommand, api.CLIRunDraftDeleteCommand} {
+		t.Run(operation, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+
+			f := newBeeperDraftFixture(t)
+			created, err := f.create(t, nil, "managed draft")
+			requirements.NoError(err)
+			external := `{"text":"User typed after the read"}`
+			f.beeper.mu.Lock()
+			f.beeper.afterGet = external
+			f.beeper.mu.Unlock()
+			_, before := f.beeper.counts()
+			args := []string{operation, created.DraftID, "--revision", "1"}
+			if operation == api.CLIRunDraftEditCommand {
+				args = append(args, "--body", "replacement")
+			}
+			_, err = f.run(t, nil, args...)
+			assertBeeperDraftCode(t, err, "composer_clear_required")
+			assertions.JSONEq(external, f.beeper.current())
+			_, after := f.beeper.counts()
+			assertions.Equal(before, after, "no unconditional clear or replacement")
+			retained, err := f.store.GetBeeperDraftContext(t.Context(), created.DraftID)
+			requirements.NoError(err)
+			assertions.Equal(int64(1), retained.Revision)
+			assertions.Nil(retained.Pending)
+			assertions.Nil(retained.DiscardedAt)
+		})
+	}
+}
+
+func TestBeeperDraftEmptySetRaceUsesProviderPrecondition(t *testing.T) {
+	f := newBeeperDraftFixture(t)
+	external := `{"text":"User typed into an empty composer"}`
+	f.beeper.mu.Lock()
+	f.beeper.afterGet = external
+	f.beeper.mu.Unlock()
+	_, err := f.create(t, nil, "new managed draft")
+	assertBeeperDraftCode(t, err, "provider_rejected")
+	assert.JSONEq(t, external, f.beeper.current())
+	_, patches := f.beeper.counts()
+	assert.Equal(t, 1, patches)
 }

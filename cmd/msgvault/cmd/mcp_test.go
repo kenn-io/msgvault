@@ -176,12 +176,12 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 		Addr:               "0.0.0.0:8081",
 		DiscoveryDirectory: filepath.Join(home, "mcp"),
 		BackendURL:         daemon.URL,
-		APIKey:             "mcp-http-key",
+		APIKey:             "daemon-key",
 		AllowWrites:        true,
 	}, gotHTTPOpts)
 }
 
-func TestMCPDelegatedModeServesDraftsWithoutCalendarAPI(t *testing.T) {
+func TestMCPDelegatedModeRejectsDaemonWithoutDraftAPI(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	previousHTTPAddr := mcpHTTPAddr
@@ -192,10 +192,9 @@ func TestMCPDelegatedModeServesDraftsWithoutCalendarAPI(t *testing.T) {
 	var serveCalled bool
 	serveMCPStdioWithOptions = func(_ context.Context, options mcpserver.ServeOptions) error {
 		serveCalled = true
-		assertions.True(options.DelegatedOnly)
+		assertions.True(options.CalendarOnly)
 		assertions.Nil(options.Calendar)
-		assertions.NotEmpty(options.DraftCommands)
-		return errors.New("stop after capture")
+		return errors.New("stdio serving started without calendar tools")
 	}
 	t.Cleanup(func() {
 		mcpHTTPAddr = previousHTTPAddr
@@ -209,7 +208,7 @@ func TestMCPDelegatedModeServesDraftsWithoutCalendarAPI(t *testing.T) {
 		case "/api/v1/health":
 			healthRequests.Add(1)
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": "3.0.0"})
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": "2.99.0"})
 		case "/api/session":
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]string{"auth_mode": "delegated"})
@@ -229,9 +228,9 @@ func TestMCPDelegatedModeServesDraftsWithoutCalendarAPI(t *testing.T) {
 
 	err := mcpCmd.RunE(cmd, nil)
 
-	requirements.ErrorContains(err, "stop after capture")
-	assertions.True(serveCalled)
-	assertions.Equal(int32(2), healthRequests.Load())
+	requirements.ErrorContains(err, "incompatible with client API schema")
+	assertions.False(serveCalled)
+	assertions.Equal(int32(1), healthRequests.Load())
 }
 
 func TestDaemonMCPHybridSearcherPreservesPhaseTimings(t *testing.T) {
@@ -340,6 +339,15 @@ func TestDaemonMCPVectorReadinessIsCheckedAtRequestTime(t *testing.T) {
 	})
 
 	opts := daemonMCPServeOptions(testCtx, client, invocationFromContext(testCtx))
+	var startupPaths []string
+	for len(requests) > 0 {
+		startupPaths = append(startupPaths, <-requests)
+	}
+	require.NotEmpty(startupPaths)
+	assert.Equal("/api/v1/health", startupPaths[0])
+	for _, path := range startupPaths {
+		assert.Contains([]string{"/api/v1/health", "/api/v1/mcp/capabilities"}, path, "startup probes implementation metadata, never vector readiness")
+	}
 	_, err := opts.HybridSearcher.SearchHybrid(testCtx, mcpserver.HybridSearchRequest{
 		Query: "term",
 		Mode:  "hybrid",
@@ -348,8 +356,6 @@ func TestDaemonMCPVectorReadinessIsCheckedAtRequestTime(t *testing.T) {
 	require.ErrorAs(err, &coded)
 	assert.Equal("vector_initializing", coded.APIErrorCode())
 	path := <-requests
-	assert.Equal("/api/v1/health", path, "startup should only probe health")
-	path = <-requests
 	assert.Equal("/api/v1/search", path, "vector readiness belongs to the request")
 }
 
@@ -359,17 +365,18 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 	})
 	_ = testCtx
 	tests := []struct {
-		name           string
-		schemaVersion  string
-		wantPeople     bool
-		wantDirectory  bool
-		wantSavedViews bool
-		wantMeetings   bool
-		wantAgenda     bool
-		wantArchiveSQL bool
-		wantReview     bool
-		wantScoring    bool
-		wantCardDAV    bool
+		name            string
+		schemaVersion   string
+		wantPeople      bool
+		wantDirectory   bool
+		wantSavedViews  bool
+		wantMeetings    bool
+		wantAgenda      bool
+		wantArchiveSQL  bool
+		wantReview      bool
+		wantScoring     bool
+		wantCardDAV     bool
+		wantMessageTags bool
 	}{
 		{name: "people schema", schemaVersion: "2.10.0", wantPeople: true},
 		{name: "directory predecessor", schemaVersion: "2.12.9", wantPeople: true},
@@ -387,6 +394,8 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 		{name: "person CardDAV schema", schemaVersion: "2.32.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true},
 		{name: "identity review and scoring predecessor", schemaVersion: "2.35.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true},
 		{name: "identity review and scoring schema", schemaVersion: "3.0.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true},
+		{name: "calendar schema without message tags", schemaVersion: "3.1.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true},
+		{name: "native message tags schema", schemaVersion: "3.2.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantMessageTags: true},
 		{name: "older same-major schema", schemaVersion: "2.9.9"},
 		{name: "malformed schema", schemaVersion: "not-a-version"},
 		{name: "missing schema"},
@@ -425,6 +434,8 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 			assert.Equal(tt.wantReview, opts.IdentityReview != nil)
 			assert.Equal(tt.wantCardDAV, opts.PersonCardDAV != nil)
 			assert.Equal(tt.wantScoring, opts.IdentityScoring != nil)
+			assert.Equal(tt.wantMessageTags, opts.MessageTags != nil)
+			assert.True(opts.SuppressMessageTagWrites)
 		})
 	}
 }

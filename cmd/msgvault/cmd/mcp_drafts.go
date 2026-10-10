@@ -9,7 +9,9 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
 )
@@ -84,4 +86,18 @@ func (r daemonMCPDraftRunner) RunDraftCommand(ctx context.Context, request mcpse
 		return result, &mcpserver.DraftCommandError{Message: err.Error(), Stderr: result.Stderr}
 	}
 	return result, err
+}
+
+// MCPCommandDescriptors reports only trusted managed-draft commands. Flags
+// come from the same Cobra parsers used by the in-process daemon runner.
+func (a *storeAPIAdapter) MCPCommandDescriptors() []apiprotocol.MCPCommandDescriptor {
+	descriptors := make([]apiprotocol.MCPCommandDescriptor, 0, len(mcpDraftCommandConstructors))
+	for _, name := range mcpDraftCommands(false) {
+		command := mcpDraftCommandConstructors[name]()
+		flags := []string{}
+		command.Flags().VisitAll(func(flag *pflag.Flag) { flags = append(flags, flag.Name) })
+		slices.Sort(flags)
+		descriptors = append(descriptors, apiprotocol.MCPCommandDescriptor{Name: name, Flags: flags, Delegated: agentDelegatedCommand(name)})
+	}
+	return descriptors
 }

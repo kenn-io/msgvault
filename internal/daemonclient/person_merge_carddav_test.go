@@ -37,6 +37,7 @@ func TestSafeMCPErrorPreservesServedRouteCodesWithoutProse(t *testing.T) {
 		"invalid_if_match", "invalid_idempotency_key", "if_match_required", "idempotency_key_required",
 		"person_profile_not_found", "person_merge_invalid", "person_merge_failed",
 		"carddav_unavailable", "google_authorization_required", "microsoft_authorization_required", "carddav_preview_too_large",
+		"carddav_scope_unavailable", "carddav_receipt_not_found",
 		"carddav_conflict_stale", "carddav_conflict_pending", "carddav_publication_pending",
 		"carddav_retry_after", "carddav_upstream_failed", "carddav_storage_failed", "carddav_failed",
 		"bad_request", "not_found", "conflict", "invalid_request",

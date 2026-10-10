@@ -116,8 +116,11 @@ for (const theme of ['light', 'dark'] as const) {
 
     await selectWorkspace(page, 'Everything');
     const grid = page.getByRole('grid', { name: 'Everything results' });
+    const firstRow = grid.locator('[data-row-key]').first();
+    await expect(firstRow).toBeVisible();
     await grid.focus();
     await page.keyboard.press('Space');
+    await expect(firstRow.getByRole('checkbox')).toBeChecked();
     await page.keyboard.press('d');
     await page.getByRole('button', { name: 'Cancel', exact: true }).click();
     await expect(page.getByRole('button', { name: 'Stage deletion…' })).toBeVisible();
@@ -136,8 +139,7 @@ for (const theme of ['light', 'dark'] as const) {
 
 for (const theme of ['light', 'dark'] as const) {
   for (const density of ['compact', 'comfortable'] as const) {
-    test(`${theme}/${density} primary workspaces and representative states have no axe violations`, async ({ page }) => {
-      test.slow();
+    async function preparePrimaryWorkspace(page: Page) {
       await installMixedArchive(page);
       await page.unroute('**/api/v1/participants/12/files/search');
       await page.route('**/api/v1/participants/12/files/search', async (route) => {
@@ -162,6 +164,11 @@ for (const theme of ['light', 'dark'] as const) {
       await page.goto('/');
       await setKitTheme(page, theme);
       await setTemporaryDensity(page, density === 'compact' ? 'Compact' : 'Comfortable');
+    }
+
+    test(`${theme}/${density} Relationships panes and person files have no axe violations`, async ({ page }) => {
+      test.slow();
+      await preparePrimaryWorkspace(page);
 
       // The Relationships hub is the default landing workspace; walk its
       // three panes (list, timeline, reading pane) open one at a time so
@@ -189,6 +196,11 @@ for (const theme of ['light', 'dark'] as const) {
       await expect(page.getByRole('complementary', { name: /Reading pane/ })).toBeVisible();
       await assertNoViolations(page, `Relationships reading pane ${theme}/${density}`);
       await page.keyboard.press('Escape');
+    });
+
+    test(`${theme}/${density} Everything, reading pane, and keyboard help have no axe violations`, async ({ page }) => {
+      test.slow();
+      await preparePrimaryWorkspace(page);
 
       await selectWorkspace(page, 'Everything');
       const grid = page.getByRole('grid', { name: 'Everything results' });
@@ -205,6 +217,11 @@ for (const theme of ['light', 'dark'] as const) {
       await expect(keyboardHelp).toBeVisible();
       await assertNoViolations(page, `modal ${theme}/${density}`);
       await keyboardHelp.getByRole('button', { name: 'Close' }).click();
+    });
+
+    test(`${theme}/${density} Directory, archive, and Manage workspaces have no axe violations`, async ({ page }) => {
+      test.slow();
+      await preparePrimaryWorkspace(page);
 
       for (const workspace of ['Directory', 'Files', 'Saved views', 'Sources', 'Deletions', 'Settings']) {
         await selectWorkspace(page, workspace);
@@ -226,6 +243,8 @@ for (const theme of ['light', 'dark'] as const) {
 
 for (const theme of ['light', 'dark'] as const) {
   test(`${theme} menus, selection bar, Save view dialog, and navigation have no axe violations`, async ({ page }) => {
+    // Seven full-page axe scans use the same budget as the other multi-state journeys.
+    test.slow();
     await installMixedArchive(page);
     await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
     await setKitTheme(page, theme);

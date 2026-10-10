@@ -9,6 +9,10 @@ export interface SetPersonAttributeRequest {
   active_until?: string;
   actor?: string;
   confidence?: number;
+  /**
+   * Current value ID, or zero to require an empty slot; required for delegated edits. Multi-valued creation requires an explicit ordinal.
+   * @minimum 0
+   */
   expected_value_id?: number;
   ordinal?: number;
   source?: SetPersonAttributeRequestSource;

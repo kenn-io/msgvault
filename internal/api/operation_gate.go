@@ -362,8 +362,21 @@ func writeOperationGateBusy(w http.ResponseWriter, r *http.Request, gate Operati
 // DELETE /api/v1/agent-tokens/{id} uses a dynamic path; its exemption is
 // handled by the strings.HasPrefix check in operationGateRequest below.
 var operationGateExemptPaths = map[string]bool{
+	// Events take the gate for short Store steps, outside callback I/O.
+	mcpEventsPath + "/list":        true,
+	mcpEventsPath + "/subscribe":   true,
+	mcpEventsPath + "/unsubscribe": true,
+	// Identity apply owns its gate after current scope admission.
+	identityOperationsPath + "/apply": true,
 	// Calendar control acquires the gate after parsing, authorization, and preview.
 	"/api/v1/calendar/control": true,
+	// Inbox controller owns gate then source lease; previews only read.
+	"/api/v1/inbox/control": true,
+	// Triage preview only reads; apply acquires one controller gate for the batch.
+	"/api/v1/inbox/triage/preview": true,
+	"/api/v1/inbox/triage/apply":   true,
+	// Mapping updates acquire the gate after owner and request validation.
+	"/api/v1/inbox/triage/mappings": true,
 	// Scoring coordinates the gate around local mutations, never provider I/O.
 	"/api/v1/identity/scoring/run":     true,
 	"/api/v1/identity/scoring/consent": true,
@@ -411,6 +424,7 @@ var operationGateExemptPaths = map[string]bool{
 const cardDAVAccountTestPath = "/api/v1/carddav/account/test"
 
 var readOnlyPostRoutePatterns = []string{
+	identityOperationsPath + "/preview",
 	"/api/v1/saved-views/{id}/run",
 	remoteImagePath,
 	cardDAVAccountTestPath,
@@ -518,10 +532,17 @@ func operationGateRequest(r *http.Request, auth requestAuthentication) (bool, st
 	case http.MethodGet, http.MethodHead, http.MethodOptions:
 		return false, "", nil
 	}
+	if r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, scopedCardDAVPublicationPath) && (strings.HasSuffix(r.URL.Path, "/approve") || strings.HasSuffix(r.URL.Path, "/reconcile")) {
+		return false, "", nil
+	}
 	if operationGateExemptPaths[r.URL.Path] || strings.HasPrefix(r.URL.Path, agentTokensPath+"/") {
 		return false, "", nil
 	}
 	if readOnlyPostRouteRequest(r) {
+		return false, "", nil
+	}
+	// Tag reads and previews change nothing; the handler gates real writes.
+	if r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/v1/messages/") && strings.HasSuffix(r.URL.Path, "/tags") {
 		return false, "", nil
 	}
 	if genericSyncTriggerRequest(r) {

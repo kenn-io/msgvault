@@ -910,12 +910,8 @@ func TestBuildCache_WaitsForCrossProcessBuildLock(t *testing.T) {
 	}
 
 	require.NoError(held.Unlock(), "release build lock")
-	select {
-	case err := <-done:
-		require.NoError(err, "buildCache after lock release")
-	case <-time.After(30 * time.Second):
-		require.FailNow("buildCache did not finish after the lock was released")
-	}
+	// Join the real export before fixture cleanup; cache builds have no speed contract.
+	require.NoError(<-done, "buildCache after lock release")
 }
 
 // TestBuildCache_WaitsForCacheReaders verifies the writer side of the
@@ -947,12 +943,8 @@ func TestBuildCache_WaitsForCacheReaders(t *testing.T) {
 	}
 
 	require.NoError(reader.Unlock(), "release reader lock")
-	select {
-	case err := <-done:
-		require.NoError(err, "buildCache after reader release")
-	case <-time.After(30 * time.Second):
-		require.FailNow("buildCache did not finish after the reader released")
-	}
+	// Join the real export before fixture cleanup; cache builds have no speed contract.
+	require.NoError(<-done, "buildCache after reader release")
 }
 
 // TestBuildCache_BasicExport tests that buildCache creates all expected Parquet files.

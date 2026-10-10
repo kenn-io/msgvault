@@ -505,6 +505,17 @@ type ListIdentityMatchCandidatesQuery struct {
 	Offset *int64 `json:"offset,omitempty"`
 }
 
+type GetIdentityOperationReceiptQuery struct {
+	// IdempotencyKey Exact key for this principal
+	IdempotencyKey *string `json:"idempotency_key,omitempty"`
+
+	// ReceiptID Exact receipt ID; owner only
+	ReceiptID *string `json:"receipt_id,omitempty"`
+
+	// Principal Exact prior principal for owner recovery
+	Principal *string `json:"principal,omitempty"`
+}
+
 type ListPersonMatchJudgmentsQuery struct {
 	// CandidateID Optional candidate ID; zero lists all
 	CandidateID *int64 `json:"candidate_id,omitempty"`
@@ -516,6 +527,74 @@ type ListPersonMatchJudgmentsQuery struct {
 	BeforeID *int64 `json:"before_id,omitempty"`
 }
 
+type ListInboxCandidatesQuery struct {
+	// SourceID Exact archive source ID
+	SourceID int64 `json:"source_id"`
+
+	// SourceType Exact provider type
+	SourceType string `json:"source_type" validate:"required"`
+
+	// SourceIdentifier Exact source identifier
+	SourceIdentifier string `json:"source_identifier" validate:"required"`
+
+	// AccountID Exact provider account
+	AccountID string `json:"account_id" validate:"required"`
+
+	// Scope Native target scope
+	Scope ListInboxCandidatesQueryScope `json:"scope" validate:"required"`
+
+	// Limit Maximum candidates (default 25, range 1–100)
+	Limit *int64 `json:"limit,omitempty" validate:"omitempty,gte=1,lte=100"`
+
+	// Cursor Opaque source/scope/archive revision pagination cursor
+	Cursor *string `json:"cursor,omitempty"`
+}
+
+func (l ListInboxCandidatesQuery) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(l.SourceType, "required"); err != nil {
+		errors = errors.Append("SourceType", err)
+	}
+	if err := typesValidator.Var(l.SourceIdentifier, "required"); err != nil {
+		errors = errors.Append("SourceIdentifier", err)
+	}
+	if err := typesValidator.Var(l.AccountID, "required"); err != nil {
+		errors = errors.Append("AccountID", err)
+	}
+	if v, ok := any(l.Scope).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Scope", err)
+		}
+	}
+	if l.Limit != nil {
+		if err := typesValidator.Var(l.Limit, "omitempty,gte=1,lte=100"); err != nil {
+			errors = errors.Append("Limit", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type GetInboxTriageMappingsQuery struct {
+	// SourceID Exact archive source ID
+	SourceID int64 `json:"source_id"`
+
+	// SourceType Exact provider type
+	SourceType string `json:"source_type" validate:"required"`
+
+	// SourceIdentifier Exact source identifier
+	SourceIdentifier string `json:"source_identifier" validate:"required"`
+
+	// AccountID Exact provider account
+	AccountID string `json:"account_id" validate:"required"`
+}
+
+func (g GetInboxTriageMappingsQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+}
+
 type SearchIntegrationTasksQuery struct {
 	// Q Task title search within the configured project
 	Q string `json:"q" validate:"required"`
@@ -523,6 +602,22 @@ type SearchIntegrationTasksQuery struct {
 
 func (s SearchIntegrationTasksQuery) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(s))
+}
+
+type GetMCPEventQuery struct {
+	EventID string `json:"event_id" validate:"required"`
+}
+
+func (g GetMCPEventQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+}
+
+type GetMCPEventMessageQuery struct {
+	EventID string `json:"event_id" validate:"required"`
+}
+
+func (g GetMCPEventMessageQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
 }
 
 type ListMessagesQuery struct {
@@ -696,6 +791,11 @@ type GetMessageInlinePartQuery struct {
 
 func (g GetMessageInlinePartQuery) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+}
+
+type GetMessageTagsQuery struct {
+	// Mailbox Exact IMAP mailbox; defaults to the archived primary membership
+	Mailbox *string `json:"mailbox,omitempty"`
 }
 
 type ListOperationRunsQuery struct {

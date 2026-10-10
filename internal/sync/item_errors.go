@@ -15,12 +15,13 @@ const (
 	syncItemPhaseIngest = "ingest"
 	syncItemPhaseDelete = "delete"
 
-	syncItemKindBatchFetchError = "batch_fetch_error"
-	syncItemKindFetchError      = "fetch_error"
-	syncItemKindGmailNotFound   = "gmail_not_found"
-	syncItemKindMessageGone     = "message_gone"
-	syncItemKindIngestError     = "ingest_error"
-	syncItemKindDeleteError     = "delete_error"
+	syncItemKindBatchFetchError      = "batch_fetch_error"
+	syncItemKindFetchError           = "fetch_error"
+	syncItemKindGmailNotFound        = "gmail_not_found"
+	syncItemKindMetadataRefreshError = "metadata_refresh_error"
+	syncItemKindMessageGone          = "message_gone"
+	syncItemKindIngestError          = "ingest_error"
+	syncItemKindDeleteError          = "delete_error"
 )
 
 // isFetchReplayCandidate reports whether a durable run item names a raw fetch

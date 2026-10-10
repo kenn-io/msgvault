@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 
 	"go.kenn.io/msgvault/internal/carddav"
 	"go.kenn.io/msgvault/internal/store"
@@ -104,4 +105,62 @@ func (m *cardDAVManagerOperations) ResolveConflict(ctx context.Context, id int64
 		return err
 	}
 	return service.ResolveConflict(ctx, id, choice)
+}
+
+func (m *cardDAVManagerOperations) PreviewPublicationAuthorized(ctx context.Context, id int64, authorize store.PersonEditAuthorizer) (*carddav.PublicationPreview, error) {
+	service, err := m.forPerson(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	scoped, ok := service.(ScopedCardDAVPublicationOperations)
+	if !ok {
+		return nil, store.ErrCardDAVInvalidPlan
+	}
+	return scoped.PreviewPublicationAuthorized(ctx, id, authorize)
+}
+
+func (m *cardDAVManagerOperations) PublishReviewedPersonWithReceipt(ctx context.Context, id int64, token, principal, key string, authorize store.PersonEditAuthorizer) (*store.CardDAVPublicationReceipt, error) {
+	bound, err := m.controller.store.WithReviewedCardDAVPublicationReceipt(ctx, principal, key, id, token)
+	if err != nil {
+		return nil, err
+	}
+	receipt, err := m.controller.store.ReviewedCardDAVPublicationReceiptContext(bound, authorize)
+	if err == nil {
+		return receipt, nil
+	}
+	if !errors.Is(err, store.ErrCardDAVPublicationReceiptNotFound) {
+		return nil, err
+	}
+	service, err := m.forPerson(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	scoped, ok := service.(ScopedCardDAVPublicationOperations)
+	if !ok {
+		return nil, store.ErrCardDAVInvalidPlan
+	}
+	return scoped.PublishReviewedPersonWithReceipt(bound, id, token, principal, key, authorize)
+}
+
+func (m *cardDAVManagerOperations) ReconcileReviewedPersonWithReceipt(ctx context.Context, id int64, token, principal, key string, authorize store.PersonEditAuthorizer) (*store.CardDAVPublicationReceipt, error) {
+	bound, err := m.controller.store.WithReviewedCardDAVPublicationReceipt(ctx, principal, key, id, token)
+	if err != nil {
+		return nil, err
+	}
+	receipt, pending, err := m.controller.store.ReviewedCardDAVPublicationRecoveryContext(bound, authorize)
+	if err != nil {
+		return nil, err
+	}
+	if pending == nil {
+		return receipt, nil
+	}
+	service, err := m.forPerson(bound, id)
+	if err != nil {
+		return nil, err
+	}
+	scoped, ok := service.(ScopedCardDAVPublicationRecoveryOperations)
+	if !ok {
+		return nil, store.ErrCardDAVInvalidPlan
+	}
+	return scoped.ReconcileReviewedPersonWithReceipt(bound, id, token, principal, key, authorize)
 }

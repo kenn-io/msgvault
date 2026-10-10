@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"net/url"
@@ -24,12 +25,23 @@ import (
 // ErrTooLarge classifies a response body that exceeds the caller's byte cap.
 var ErrTooLarge = errors.New("graph response exceeds the configured size cap")
 
+// successfulResponseTooLargeError retains proof of an accepted HTTP response when
+// only its unused body exceeded the cap. Other ErrTooLarge sources carry no
+// evidence that a request was sent or accepted.
+type successfulResponseTooLargeError struct{}
+
+func (*successfulResponseTooLargeError) Error() string { return ErrTooLarge.Error() }
+func (*successfulResponseTooLargeError) Unwrap() error { return ErrTooLarge }
+
 // ErrNotFound classifies a 404 response.
 var ErrNotFound = errors.New("graph resource not found")
 
 // ErrForbidden classifies a 403 response, for example a token that lacks the
 // scope a write needs.
 var ErrForbidden = errors.New("graph request forbidden")
+
+// ErrBadRequest classifies invalid property values in a 400 response.
+var ErrBadRequest = errors.New("graph request rejected")
 
 // ErrUnauthorized classifies a 401 response, for example a revoked token.
 var ErrUnauthorized = errors.New("graph request unauthorized")
@@ -191,7 +203,7 @@ func (c *Client) do(ctx context.Context, method, rawURL string, reqBody []byte, 
 		}
 		if ok(resp.StatusCode) && maxBytes > 0 && resp.ContentLength > maxBytes {
 			_ = resp.Body.Close()
-			return nil, ErrTooLarge
+			return nil, &successfulResponseTooLargeError{}
 		}
 		reader := io.Reader(resp.Body)
 		if maxBytes > 0 {
@@ -227,7 +239,7 @@ func (c *Client) do(ctx context.Context, method, rawURL string, reqBody []byte, 
 		switch {
 		case ok(resp.StatusCode):
 			if maxBytes > 0 && int64(len(body)) > maxBytes {
-				return nil, ErrTooLarge
+				return nil, &successfulResponseTooLargeError{}
 			}
 			return body, nil
 		case resp.StatusCode == http.StatusGone || expired:
@@ -240,6 +252,8 @@ func (c *Client) do(ctx context.Context, method, rawURL string, reqBody []byte, 
 			return nil, fmt.Errorf("graph %s %s: status %d: %s: %w", method, reqURL, resp.StatusCode, string(body), ErrUnauthorized)
 		case resp.StatusCode == http.StatusForbidden:
 			return nil, fmt.Errorf("graph %s %s: status %d: %s: %w", method, reqURL, resp.StatusCode, string(body), ErrForbidden)
+		case resp.StatusCode == http.StatusBadRequest:
+			return nil, fmt.Errorf("graph %s %s: status %d: %s: %w", method, reqURL, resp.StatusCode, string(body), errors.Join(ErrBadRequest, &StatusError{StatusCode: resp.StatusCode}))
 		case resp.StatusCode >= 500 && once:
 			return nil, fmt.Errorf("graph %s %s: status %d: %s", method, reqURL, resp.StatusCode, string(body))
 		case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500:
@@ -380,6 +394,54 @@ func (c *Client) send(ctx context.Context, method, url string, body any, ifMatch
 		}
 	}
 	return c.do(ctx, method, url, reqBody, 0, ifMatch, mode, nil)
+}
+
+// PatchIfMatch sends the observed resource version as If-Match. It sends one
+// request, even when the response is lost or Graph returns a transient error.
+func (c *Client) PatchIfMatch(ctx context.Context, path string, body any, etag string) error {
+	if strings.TrimSpace(etag) == "" {
+		return errors.New("graph PATCH requires a resource version")
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return fmt.Errorf("graph PATCH %s: encode body: %w", path, err)
+	}
+	client := c.withoutRedirects()
+	client.Headers = maps.Clone(c.Headers)
+	if client.Headers == nil {
+		client.Headers = make(map[string]string)
+	}
+	client.Headers["If-Match"] = etag
+	_, err = client.do(ctx, http.MethodPatch, path, data, 1<<20, "", retryNone, nil)
+	if _, accepted := errors.AsType[*successfulResponseTooLargeError](err); accepted {
+		// The PATCH received a successful HTTP status. Its response is unused;
+		// callers must still perform their independent provider-state readback.
+		return nil
+	}
+	return err
+}
+
+func (c *Client) withoutRedirects() Client {
+	client := *c
+	httpClient := *c.http
+	httpClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	client.http = &httpClient
+	return client
+}
+
+// GetJSONOnce reads bounded control metadata without retries or redirects.
+// The cap must be positive and at most 1 MiB. Importer paging retains its
+// existing retry policy through GetJSON.
+func (c *Client) GetJSONOnce(ctx context.Context, path string, out any, maxBytes int64) error {
+	if maxBytes <= 0 || maxBytes > 1<<20 {
+		return errors.New("graph metadata cap must be between 1 byte and 1 MiB")
+	}
+	client := c.withoutRedirects()
+	body, err := client.do(ctx, http.MethodGet, path, nil, maxBytes, "", retryNone, nil)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(body, out)
 }
 
 // GetJSON fetches url and unmarshals the JSON body into out.

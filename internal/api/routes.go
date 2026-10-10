@@ -206,6 +206,12 @@ func (s *Server) humaAuthMiddleware(ctx huma.Context, next func(huma.Context)) {
 	req, _ := humago.Unwrap(ctx)
 	auth := s.requestAuthentication(req)
 	if auth.Mode == AuthModeDelegated {
+		if op := ctx.Operation(); op != nil && mcpEventsOperationIDs[op.OperationID] {
+			ctx.SetHeader("Content-Type", applicationJSONMediaType)
+			ctx.SetStatus(http.StatusForbidden)
+			_ = marshalAPIJSON(ctx.BodyWriter(), MCPEventsErrorResponse{Error: "mcp_events_error", Message: "owner_required", Code: -32012, Reason: "owner_required"})
+			return
+		}
 		if op := ctx.Operation(); op != nil && delegatedOperationAllowed(op.OperationID) {
 			next(ctx)
 			return
@@ -283,6 +289,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	s.registerSettingsRoutes(apiV1)
 	s.registerCardDAVRoutes(apiV1)
 	s.registerSavedViewRoutes(apiV1)
+	s.registerMCPEventsRoutes(apiV1)
 	s.registerExploreRoutes(apiV1)
 	s.registerFilesRoutes(apiV1)
 	s.registerDocumentSearchRoute(apiV1)
@@ -291,6 +298,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	s.registerPersonIdentityRoutes(apiV1)
 	s.registerPersonNetworkRoutes(apiV1)
 	s.registerPersonTrackingRoutes(apiV1)
+	s.registerEmailTagRoutes(apiV1)
 	s.registerPersonAgendaRoutes(apiV1)
 	s.registerKataIssueRoutes(apiV1)
 	s.registerPersonBriefRoutes(apiV1)
@@ -417,6 +425,13 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	s.registerMeetingImportRoute(apiV1)
 	s.registerMeetingRoutes(apiV1)
 	s.registerCalendarControlRoute(apiV1)
+	s.registerIdentityOperationRoutes(apiV1)
+	s.registerInboxControlRoute(apiV1)
+	s.registerInboxCandidatesRoute(apiV1)
+	s.registerInboxContextRoute(apiV1)
+	s.registerInboxTriageMappingRoutes(apiV1)
+	s.registerInboxTriageRoutes(apiV1)
+	s.registerMCPCapabilitiesRoute(apiV1)
 	registerAPIV1RawHumaJSONRoute[ConversationResponse](apiV1, "getConversation", http.MethodGet, "/conversations/{id}", "Get a bounded containing conversation", s.handleGetConversation)
 	registerAPIV1RawHumaJSONRoute[AttachmentInfo](apiV1, "getAttachment", http.MethodGet, "/attachments/{id}", "Get attachment metadata", s.handleGetAttachment)
 	registerAPIV1RawHumaBinaryRoute(
@@ -628,7 +643,7 @@ func registerAPIV1RawHumaOperationJSONRoute[T any](
 ) {
 	op := rawAPIV1Operation(operationID, method, path, summary)
 	op.Responses = jsonResponsesFor[T](api)
-	op.Responses["default"] = operationErrorResponseFor(api)
+	op.Responses[defaultErrorResponse] = operationErrorResponseFor(api)
 	for _, status := range errorStatuses {
 		op.Responses[httpStatusKey(status)] = operationErrorResponseFor(api)
 	}
@@ -1293,7 +1308,7 @@ func jsonResponsesFor[T any](api huma.API, successStatuses ...int) map[string]*h
 			},
 		}
 	}
-	responses["default"] = errorResponseFor(api)
+	responses[defaultErrorResponse] = errorResponseFor(api)
 	return responses
 }
 
@@ -1309,7 +1324,7 @@ func oneOfJSONResponses(api huma.API, responseTypes ...reflect.Type) map[string]
 				applicationJSONMediaType: {Schema: &huma.Schema{OneOf: oneOf}},
 			},
 		},
-		"default": errorResponseFor(api),
+		defaultErrorResponse: errorResponseFor(api),
 	}
 }
 
@@ -1321,7 +1336,7 @@ func binaryResponsesFor(api huma.API, contentType string, errorStatuses ...int) 
 				contentType: {Schema: &huma.Schema{Type: huma.TypeString, Format: "binary"}},
 			},
 		},
-		"default": errorResponseFor(api),
+		defaultErrorResponse: errorResponseFor(api),
 	}
 	for _, status := range errorStatuses {
 		responses[httpStatusKey(status)] = errorResponseFor(api)
@@ -1337,7 +1352,7 @@ func ndjsonResponsesFor[T any](api huma.API) map[string]*huma.Response {
 				"application/x-ndjson": {Schema: schemaFor[T](api)},
 			},
 		},
-		"default": errorResponseFor(api),
+		defaultErrorResponse: errorResponseFor(api),
 	}
 }
 
@@ -1393,7 +1408,7 @@ func rawHumaResponses(successStatuses ...int) map[string]*huma.Response {
 	for _, status := range successStatuses {
 		responses[httpStatusKey(status)] = &huma.Response{Description: http.StatusText(status)}
 	}
-	responses["default"] = &huma.Response{Description: "Error"}
+	responses[defaultErrorResponse] = &huma.Response{Description: "Error"}
 	return responses
 }
 

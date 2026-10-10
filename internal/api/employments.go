@@ -106,7 +106,7 @@ func (s *Server) registerEmploymentRoutes(api huma.API) {
 	addEmploymentIDParameter(&remove)
 	addEmploymentIfMatchParameter(&remove)
 	remove.Responses = rawHumaResponses(http.StatusNoContent)
-	remove.Responses["default"] = errorResponseFor(api)
+	remove.Responses[defaultErrorResponse] = errorResponseFor(api)
 	addErrorResponses(api, remove.Responses, http.StatusBadRequest, http.StatusConflict, http.StatusNotFound, http.StatusPreconditionRequired, http.StatusServiceUnavailable)
 	registerRawHumaRoute(api, remove, s.handleDeleteEmployment)
 

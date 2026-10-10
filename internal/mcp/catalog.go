@@ -12,6 +12,7 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.kenn.io/msgvault/internal/daemonclient"
+	"go.kenn.io/msgvault/internal/identitycontrol"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector/visual"
@@ -39,20 +40,24 @@ const (
 )
 
 type catalogCapabilities struct {
-	sqlQuery        bool
-	semanticSearch  bool
-	vectorInMessage bool
-	similarMessages bool
-	documentSearch  bool
-	people          bool
-	directoryPeople bool
-	visualSearch    bool
-	savedViews      bool
-	meetings        bool
-	personAgenda    bool
-	kata            bool
-	identityReview  bool
-	personCardDAV   bool
+	sqlQuery          bool
+	semanticSearch    bool
+	vectorInMessage   bool
+	similarMessages   bool
+	documentSearch    bool
+	people            bool
+	directoryPeople   bool
+	visualSearch      bool
+	savedViews        bool
+	meetings          bool
+	personAgenda      bool
+	identityReview    bool
+	personCardDAV     bool
+	personMerge       bool
+	personMergeWrites bool
+	messageTags       bool
+	messageTagWrites  bool
+	kata              bool
 }
 
 func visualSearchAvailable(capabilities catalogCapabilities) bool {
@@ -122,20 +127,24 @@ func (d toolDefinition) bind(h *handlers) func(context.Context, toolRequest) (*t
 
 func capabilitiesFor(opts ServeOptions) catalogCapabilities {
 	return catalogCapabilities{
-		sqlQuery:        opts.ArchiveSQLQuerier != nil,
-		semanticSearch:  opts.HybridEngine != nil || opts.HybridSearcher != nil,
-		vectorInMessage: opts.HybridEngine != nil && opts.Backend != nil,
-		similarMessages: opts.Backend != nil || opts.SimilarSearcher != nil,
-		documentSearch:  opts.DocumentSearcher != nil,
-		people:          opts.PeopleBackend != nil,
-		directoryPeople: opts.DirectoryBackend != nil,
-		visualSearch:    opts.VisualSearcher != nil,
-		savedViews:      opts.SavedViews != nil,
-		meetings:        opts.Meetings != nil,
-		personAgenda:    opts.PersonAgendaBackend != nil,
-		kata:            opts.Kata != nil,
-		identityReview:  opts.IdentityReview != nil,
-		personCardDAV:   opts.PersonCardDAV != nil,
+		sqlQuery:          opts.ArchiveSQLQuerier != nil,
+		semanticSearch:    opts.HybridEngine != nil || opts.HybridSearcher != nil,
+		vectorInMessage:   opts.HybridEngine != nil && opts.Backend != nil,
+		similarMessages:   opts.Backend != nil || opts.SimilarSearcher != nil,
+		documentSearch:    opts.DocumentSearcher != nil,
+		people:            opts.PeopleBackend != nil,
+		directoryPeople:   opts.DirectoryBackend != nil,
+		visualSearch:      opts.VisualSearcher != nil,
+		savedViews:        opts.SavedViews != nil,
+		meetings:          opts.Meetings != nil,
+		personAgenda:      opts.PersonAgendaBackend != nil,
+		identityReview:    opts.IdentityReview != nil,
+		personCardDAV:     opts.PersonCardDAV != nil,
+		personMerge:       opts.PersonMerge != nil || opts.PersonCardDAV != nil,
+		personMergeWrites: opts.PersonCardDAV != nil || opts.PersonMerge != nil && !opts.SuppressPersonMergeWrites,
+		messageTags:       opts.MessageTags != nil,
+		messageTagWrites:  opts.MessageTags != nil && !opts.SuppressMessageTagWrites,
+		kata:              opts.Kata != nil,
 	}
 }
 
@@ -164,11 +173,73 @@ func (c *operationCatalogCache) get(capabilities catalogCapabilities) []toolDefi
 }
 
 func operationCatalog(opts ServeOptions, _ *handlers) []toolDefinition {
-	definitions := []toolDefinition{}
-	if !opts.DelegatedOnly {
+	var definitions []toolDefinition
+	if !opts.CalendarOnly && !opts.DraftToolsOnly {
 		definitions = slices.Clone(stableOperationCatalogs.get(capabilitiesFor(opts)))
 		if opts.IdentityScoring != nil {
 			definitions = append(definitions, stableIdentityScoringDefinitions...)
+		}
+	} else if opts.PersonMerge != nil {
+		for _, definition := range stableOperationCatalogs.get(capabilitiesFor(opts)) {
+			if definition.name == ToolGetPersonMergeContext || definition.name == ToolMergePerson {
+				definitions = append(definitions, definition)
+			}
+		}
+	}
+	if _, supported := opts.PeopleBackend.(NamedPersonPromoter); supported {
+		for i := range definitions {
+			if definitions[i].name == ToolPromotePerson {
+				definitions[i] = namedPromotionDefinition()
+			}
+		}
+	}
+	if opts.IdentityOperations != nil {
+		actions := map[string]identitycontrol.Operation{
+			ToolLinkParticipantIdentity:     identitycontrol.OperationGraphLink,
+			ToolUnlinkParticipantIdentity:   identitycontrol.OperationGraphUnlink,
+			ToolLinkParticipantToPerson:     identitycontrol.OperationPersonLink,
+			ToolUnlinkParticipantFromPerson: identitycontrol.OperationPersonUnlink,
+		}
+		for _, definition := range stableIdentityOperationDefinitions() {
+			if action, write := actions[definition.name]; write && opts.IdentityActions != nil && !slices.Contains(opts.IdentityActions, action) {
+				continue
+			}
+			definitions = append(definitions, definition)
+		}
+	}
+	for _, definition := range scopedCardDAVDefinitions() {
+		switch definition.name {
+		case ToolPreviewScopedCardDAVPublication:
+			if opts.ScopedCardDAVPreview != nil {
+				definitions = append(definitions, definition)
+			}
+		case ToolApproveScopedCardDAVPublication:
+			if opts.ScopedCardDAVApprove != nil {
+				definitions = append(definitions, definition)
+			}
+		case ToolReconcileScopedCardDAVPublication:
+			if opts.ScopedCardDAVReconcile != nil {
+				definitions = append(definitions, definition)
+			}
+		}
+	}
+	if opts.InboxCandidates != nil {
+		definitions = append(definitions, inboxCandidatesDefinition())
+	}
+	if opts.InboxContext != nil {
+		definitions = append(definitions, inboxContextDefinition())
+	}
+	if opts.InboxTriagePreview != nil {
+		definitions = append(definitions, inboxTriagePreviewDefinition())
+	}
+	if opts.InboxTriageApply != nil {
+		definitions = append(definitions, inboxTriageApplyDefinition())
+	}
+	if opts.Inbox != nil {
+		for _, op := range slices.Compact(slices.Sorted(slices.Values(opts.InboxOperations))) {
+			if definition, ok := stableInboxDefinitions[op]; ok {
+				definitions = append(definitions, definition)
+			}
 		}
 	}
 	if opts.Calendar != nil {
@@ -195,6 +266,8 @@ func buildOperationCatalog(capabilities catalogCapabilities) []toolDefinition {
 		findSimilarMessagesDefinition(nil),
 		getAttachmentDefinition(nil),
 		getMessageDefinition(nil),
+		messageTagDefinition(false),
+		messageTagDefinition(true),
 		getIdentityMatchDefinition(),
 		getPersonMergeContextDefinition(),
 		getCardDAVPublicationDefinition(),
@@ -624,9 +697,10 @@ func getMessageDefinition(_ *handlers) toolDefinition {
 			"To jump to a known match location: use center_at=<byte offset> to center the window on that location. "+
 			"Note: snippet is pre-stored source metadata (may be empty for non-Gmail sources).",
 		closedObject(map[string]*jsonschema.Schema{
-			"id":            safeIDSchema("Message ID"),
+			"id":            &jsonschema.Schema{AnyOf: []*jsonschema.Schema{safeIDSchema("Message ID"), {Type: "string", Pattern: "^[1-9][0-9]*$"}}, Description: "Archive message ID as a decimal string or integer"},
 			toolArgOffset:   nonNegativeIntegerSchema("Byte offset from the start of the selected body to begin reading (default 0). Ignored when center_at is provided.", 0),
 			"center_at":     signedSafeIntegerSchema("Byte offset from the start of the selected body to center the window on. Takes precedence over offset.", -1),
+			"event_id":      stringSchema("Retained Events occurrence authorizing this message read; unavailable receipts deny the read."),
 			toolArgMaxChars: signedSafeIntegerSchema("Maximum selected-body bytes to return (default 2000, max 4000). Values above 4000 are clamped to 4000; zero or negative values use the default.", 2000),
 			"body_format":   bodyFormat,
 			"full_body":     booleanSchema("Return the complete selected body in one response, ignoring offset, center_at, and max_chars. Use only when the full content is explicitly needed."),

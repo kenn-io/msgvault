@@ -53,9 +53,12 @@ func (c *Client) recordMembershipLocked(
 	if uid == 0 {
 		return
 	}
-	canonicalFlags := make([]string, len(flags))
-	for i, flag := range flags {
-		canonicalFlags[i] = string(flag)
+	var canonicalFlags []string
+	if flags != nil {
+		canonicalFlags = make([]string, len(flags))
+		for i, flag := range flags {
+			canonicalFlags[i] = string(flag)
+		}
 	}
 	slices.Sort(canonicalFlags)
 	sourceMessageID := compositeID(mailbox, uid)

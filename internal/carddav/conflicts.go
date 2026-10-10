@@ -139,7 +139,7 @@ func (s *Service) ResolveConflict(ctx context.Context, id int64, choice Resoluti
 		if err != nil {
 			return err
 		}
-		_, err = s.store.SweepResolvedCardDAVConflictsContext(operationCtx, time.Now())
+		_, err = s.sweepResolvedConflicts(operationCtx, time.Now())
 		return err
 	}
 	return s.resolveConflictKeepLocal(ctx, conflict)
@@ -389,7 +389,7 @@ func (s *Service) resolveConflictKeepLocal(
 			if err := s.executeMutation(operationCtx, pending); err != nil {
 				return err
 			}
-			_, err = s.store.SweepResolvedCardDAVConflictsContext(operationCtx, time.Now())
+			_, err = s.sweepResolvedConflicts(operationCtx, time.Now())
 			return err
 		}
 		if !tombstone {
@@ -408,7 +408,7 @@ func (s *Service) resolveConflictKeepLocal(
 				return err
 			}
 		}
-		_, err = s.store.SweepResolvedCardDAVConflictsContext(operationCtx, time.Now())
+		_, err = s.sweepResolvedConflicts(operationCtx, time.Now())
 		return err
 	}
 	if conflict.ApprovedConflictRevision != nil && (tombstone != conflict.RemoteTombstone || remote.RemoteETag != conflict.RemoteETag) {
@@ -450,7 +450,7 @@ func (s *Service) resolveConflictKeepLocal(
 	if err := s.executeMutation(operationCtx, prepared); err != nil {
 		return err
 	}
-	_, err = s.store.SweepResolvedCardDAVConflictsContext(operationCtx, time.Now())
+	_, err = s.sweepResolvedConflicts(operationCtx, time.Now())
 	return err
 }
 

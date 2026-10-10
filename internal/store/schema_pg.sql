@@ -6,6 +6,115 @@ CREATE TABLE IF NOT EXISTS archive_metadata (
     value TEXT NOT NULL
 );
 
+-- Native MCP Events use one transaction-owned clock for commit ordering.
+-- Store writes these timestamps as fixed-width UTC text on both backends.
+CREATE TABLE IF NOT EXISTS mcp_event_clock (
+    singleton SMALLINT PRIMARY KEY CHECK (singleton = 1),
+    head_seq BIGINT NOT NULL DEFAULT 0 CHECK (head_seq >= 0),
+    pruned_through_seq BIGINT NOT NULL DEFAULT 0 CHECK (pruned_through_seq >= 0),
+    capture_epoch BIGINT NOT NULL DEFAULT 0 CHECK (capture_epoch >= 0),
+    epoch_started_at TEXT NOT NULL DEFAULT '',
+    coverage_fingerprint TEXT NOT NULL DEFAULT '',
+    enabled BOOLEAN NOT NULL DEFAULT FALSE
+);
+INSERT INTO mcp_event_clock (singleton) VALUES (1)
+ON CONFLICT (singleton) DO NOTHING;
+
+-- Retained occurrences deliberately have no archive foreign keys: deletion
+-- of a message or draft does not destroy a subscriber's receipt.
+CREATE TABLE IF NOT EXISTS mcp_event_log (
+    seq BIGINT PRIMARY KEY CHECK (seq > 0),
+    epoch BIGINT NOT NULL,
+    family TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    scope_kind TEXT NOT NULL,
+    scope_id BIGINT NOT NULL,
+    item_key TEXT NOT NULL,
+    message_id BIGINT,
+    message_reference_seq BIGINT,
+    conversation_id BIGINT NOT NULL,
+    source_id BIGINT NOT NULL,
+    attachment_id BIGINT,
+    from_me BOOLEAN NOT NULL,
+    occurred_at TEXT NOT NULL,
+    recorded_at TEXT NOT NULL,
+    data TEXT NOT NULL CHECK (jsonb_typeof(data::jsonb) = 'object')
+);
+CREATE INDEX IF NOT EXISTS idx_mcp_event_log_scope
+    ON mcp_event_log(epoch, family, scope_kind, scope_id, seq);
+CREATE INDEX IF NOT EXISTS idx_mcp_event_log_source ON mcp_event_log(source_id);
+CREATE INDEX IF NOT EXISTS idx_mcp_event_log_retention ON mcp_event_log(recorded_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mcp_event_log_occurrence
+    ON mcp_event_log(family, scope_kind, scope_id, item_key)
+    WHERE kind = 'reaction' OR family IN (
+        'msgvault.draft_changed', 'msgvault.kata_issue_filed',
+        'msgvault.attachment_processed');
+
+CREATE TABLE IF NOT EXISTS mcp_event_subscriptions (
+    id TEXT PRIMARY KEY,
+    principal_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    arguments TEXT NOT NULL,
+    scope_kind TEXT NOT NULL,
+    scope_id BIGINT NOT NULL,
+    source_id BIGINT NOT NULL,
+    callback_url TEXT NOT NULL,
+    secret_enc BYTEA NOT NULL,
+    previous_secret_enc BYTEA,
+    previous_secret_until TEXT,
+    secret_revision BIGINT NOT NULL CHECK (secret_revision > 0),
+    verified_revision BIGINT NOT NULL,
+    verified_at TEXT NOT NULL,
+    generation BIGINT NOT NULL CHECK (generation > 0),
+    state TEXT NOT NULL CHECK (state IN ('active', 'expired', 'unsubscribed', 'gone', 'stopped')),
+    stop_reason TEXT NOT NULL DEFAULT '',
+    expires_at TEXT NOT NULL,
+    cursor_epoch BIGINT NOT NULL,
+    cursor_seq BIGINT NOT NULL CHECK (cursor_seq >= 0),
+    pending_seq BIGINT,
+    pending_envelope BYTEA,
+    pending_generation BIGINT,
+    attempt_count BIGINT NOT NULL DEFAULT 0 CHECK (attempt_count BETWEEN 0 AND 12),
+    next_attempt_at TEXT,
+    from_me_window_start TEXT,
+    from_me_window_count BIGINT NOT NULL DEFAULT 0 CHECK (from_me_window_count >= 0),
+    loop_guard_skips BIGINT NOT NULL DEFAULT 0 CHECK (loop_guard_skips >= 0),
+    dead_letter_count BIGINT NOT NULL DEFAULT 0 CHECK (dead_letter_count >= 0),
+    last_outcome TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    CHECK ((pending_seq IS NULL AND pending_envelope IS NULL AND pending_generation IS NULL)
+        OR (pending_seq IS NOT NULL AND pending_seq > 0
+            AND pending_envelope IS NOT NULL
+            AND pending_generation IS NOT NULL AND pending_generation > 0))
+);
+CREATE INDEX IF NOT EXISTS idx_mcp_event_subscriptions_scope
+    ON mcp_event_subscriptions(scope_kind, scope_id) WHERE state = 'active';
+CREATE INDEX IF NOT EXISTS idx_mcp_event_subscriptions_due
+    ON mcp_event_subscriptions(state, next_attempt_at);
+CREATE INDEX IF NOT EXISTS idx_mcp_event_subscriptions_principal
+    ON mcp_event_subscriptions(principal_id, state);
+
+CREATE TABLE IF NOT EXISTS mcp_event_dead_letters (
+    subscription_id TEXT NOT NULL,
+    seq BIGINT NOT NULL,
+    attempts BIGINT NOT NULL CHECK (attempts BETWEEN 1 AND 12),
+    last_status_class TEXT NOT NULL,
+    failed_at TEXT NOT NULL,
+    PRIMARY KEY (subscription_id, seq)
+);
+CREATE INDEX IF NOT EXISTS idx_mcp_event_dead_letters_cleanup
+    ON mcp_event_dead_letters(failed_at);
+
+CREATE TABLE IF NOT EXISTS mcp_live_admissions (
+    message_id BIGINT PRIMARY KEY,
+    source_id BIGINT NOT NULL,
+    message_reference_seq BIGINT NOT NULL CHECK (message_reference_seq > 0),
+    epoch BIGINT NOT NULL,
+    admitted_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_mcp_live_admissions_source ON mcp_live_admissions(source_id);
+
 -- Open catalog of communication services. Seeded slugs are presentation and
 -- normalization metadata, NOT a database enum and not a compatibility
 -- ceiling: an unknown bridge type or a custom service is registered as a new
@@ -1205,6 +1314,7 @@ CREATE TABLE IF NOT EXISTS carddav_publications (
     desired                     BOOLEAN NOT NULL DEFAULT TRUE,
     address_book_id             BIGINT REFERENCES carddav_address_books(id) ON DELETE CASCADE,
     href                        TEXT,
+    pending_intent_id           TEXT,
     pending_operation           TEXT CHECK (pending_operation IN ('create', 'update', 'delete')),
     outgoing_body               BYTEA,
     outgoing_semantic_hash      TEXT,
@@ -3285,6 +3395,64 @@ CREATE TABLE IF NOT EXISTS identity_match_evidence_sources (
 CREATE INDEX IF NOT EXISTS idx_identity_match_evidence_sources_source
     ON identity_match_evidence_sources(source_id, evidence_id);
 
+-- Inbox provider state and dispatch receipts.
+
+-- Provider read/location state is separate from the archive UI read marker.
+-- Advances atomically with committed provider observations and retirements.
+CREATE TABLE IF NOT EXISTS inbox_source_revisions (
+    source_id BIGINT PRIMARY KEY REFERENCES sources(id) ON DELETE CASCADE,
+    revision BIGINT NOT NULL CHECK (revision > 0)
+);
+
+-- Owner configuration is separate from native tag and location observations.
+CREATE TABLE IF NOT EXISTS inbox_triage_mappings (
+    source_id BIGINT PRIMARY KEY REFERENCES sources(id) ON DELETE CASCADE,
+    source_json TEXT NOT NULL,
+    mapping_json TEXT NOT NULL,
+    revision BIGINT NOT NULL CHECK (revision > 0)
+);
+
+CREATE TABLE IF NOT EXISTS inbox_provider_states (
+    target_key TEXT PRIMARY KEY,
+    source_id BIGINT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    scope TEXT NOT NULL CHECK (scope IN ('message', 'chat')),
+    item_id BIGINT NOT NULL,
+    provider_id TEXT NOT NULL,
+    mailbox TEXT NOT NULL DEFAULT '',
+    uidvalidity BIGINT NOT NULL DEFAULT 0,
+    uid BIGINT NOT NULL DEFAULT 0,
+    is_inbox BOOLEAN,
+    provider_read BOOLEAN,
+    marked_unread BOOLEAN,
+    semantic_hash TEXT NOT NULL,
+    state_json TEXT NOT NULL,
+    observed_at BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_inbox_provider_states_candidates
+    ON inbox_provider_states(source_id, scope, is_inbox, observed_at, item_id);
+CREATE INDEX IF NOT EXISTS idx_inbox_provider_states_identity
+    ON inbox_provider_states(source_id, scope, item_id, provider_id);
+
+-- Inbox dispatch evidence is retained independently of archive/source deletion.
+-- Timestamps are UTC Unix nanoseconds in both database implementations.
+CREATE TABLE IF NOT EXISTS inbox_operation_receipts (
+    id TEXT PRIMARY KEY,
+    principal_id TEXT NOT NULL,
+    source_id BIGINT NOT NULL,
+    idempotency_key_hash TEXT NOT NULL,
+    intent_hash TEXT NOT NULL,
+    receipt_json TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('prepared', 'dispatching', 'verified', 'partial', 'unknown', 'reconcile-only', 'failed')),
+    created_at BIGINT NOT NULL,
+    dispatched_at BIGINT,
+    finished_at BIGINT,
+    after_json TEXT,
+    failure_code TEXT NOT NULL DEFAULT '',
+    UNIQUE (principal_id, source_id, idempotency_key_hash)
+);
+CREATE INDEX IF NOT EXISTS idx_inbox_receipts_source_status
+    ON inbox_operation_receipts(source_id, status);
+
 -- Marks one-time data migrations that have already run. Schema DDL is
 -- idempotent via IF NOT EXISTS; this table is for *data* migrations
 -- (e.g. moving legacy config into per-account records) that must run
@@ -4080,6 +4248,57 @@ CREATE INDEX IF NOT EXISTS idx_meeting_actions_status
     ON meeting_action_items(status, message_id, ordinal);
 CREATE INDEX IF NOT EXISTS idx_meeting_actions_assignee
     ON meeting_action_items(assignee_email, message_id, ordinal);
+
+-- Live references disappear on physical deletion; retained receipts keep
+-- their original reference sequence independently of archive row ID reuse.
+CREATE TABLE IF NOT EXISTS mcp_event_message_refs (
+    message_id BIGINT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+    reference_seq BIGINT NOT NULL UNIQUE CHECK (reference_seq > 0)
+);
+
+-- Identity changes and their digest-only receipts commit in one transaction.
+-- No endpoint foreign keys: a terminal receipt survives later archive cleanup.
+CREATE TABLE IF NOT EXISTS identity_operation_receipts (
+    receipt_id TEXT PRIMARY KEY,
+    principal TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    request_hash TEXT NOT NULL,
+    receipt_json TEXT NOT NULL,
+    UNIQUE (principal, idempotency_key)
+);
+
+-- CardDAV receipts settle with canonical observations and pending-intent removal.
+-- Retained receipt evidence survives later archive cleanup.
+CREATE TABLE IF NOT EXISTS carddav_publication_receipts (
+    receipt_id TEXT PRIMARY KEY,
+    principal_hash TEXT NOT NULL,
+    idempotency_key_hash TEXT NOT NULL,
+    request_hash TEXT NOT NULL,
+    posted_request_hash TEXT NOT NULL DEFAULT '',
+    pending_intent_id TEXT UNIQUE,
+    is_noop BOOLEAN NOT NULL DEFAULT FALSE,
+    person_id BIGINT NOT NULL,
+    person_uid TEXT NOT NULL,
+    person_revision BIGINT NOT NULL,
+    account_id BIGINT NOT NULL,
+    address_book_id BIGINT NOT NULL,
+    book_fingerprint TEXT NOT NULL,
+    connection_generation BIGINT NOT NULL,
+    mutation_revision BIGINT NOT NULL,
+    body_sha256 TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('dispatching', 'verified', 'rejected')),
+    remote_etag TEXT NOT NULL DEFAULT '',
+    error_code TEXT NOT NULL DEFAULT '',
+    retry_after TEXT,
+    created_at TEXT NOT NULL,
+    verified_at TEXT,
+    UNIQUE (principal_hash, idempotency_key_hash),
+    CHECK ((is_noop = FALSE AND pending_intent_id IS NOT NULL) OR
+           (is_noop = TRUE AND pending_intent_id IS NULL AND state = 'verified')),
+    CHECK ((state = 'rejected' AND error_code IN ('provider_rejected', 'retry_after')) OR
+           (state <> 'rejected' AND error_code = '')),
+    CHECK (retry_after IS NULL OR (state = 'rejected' AND error_code = 'retry_after'))
+);
 
 -- Delivery-header addresses read from each email's stored MIME. Account
 -- attribution derives messages.account_address from them; they are hints

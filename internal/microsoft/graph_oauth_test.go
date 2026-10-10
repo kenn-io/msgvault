@@ -97,6 +97,42 @@ func TestGraphManager_Authorize_PersistsGraphToken(t *testing.T) {
 	assert.Contains(tf.Scopes, "https://graph.microsoft.com/Chat.Read", "Graph scope persisted")
 }
 
+func TestGraphMailTriageManagerPersistsCatalogScope(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	dir := t.TempDir()
+	manager := NewGraphMailTriageManager("client", "common", "", dir, slog.Default())
+	manager.verifyIDTokenFn = testVerifyFn
+	var requested []string
+	manager.browserFlowFn = func(_ context.Context, email string, scopes []string) (*oauth2.Token, string, error) {
+		requested = scopes
+		idToken := makeIDToken(t, map[string]any{"email": email, "tid": "org-tid"})
+		token := (&oauth2.Token{AccessToken: "triage-access", RefreshToken: "triage-refresh", TokenType: "Bearer"}).WithExtra(map[string]any{"id_token": idToken})
+		return token, "test-nonce", nil
+	}
+
+	requirements.NoError(manager.Authorize(t.Context(), "user@company.com"))
+	assertions.ElementsMatch(GraphMailTriageScopes(), requested)
+	assertions.Equal(NewGraphMailManager("client", "common", "", dir, nil).TokenPath("user@company.com"), manager.TokenPath("user@company.com"))
+	token, err := manager.loadTokenFile("user@company.com")
+	requirements.NoError(err)
+	assertions.ElementsMatch(GraphMailTriageScopes(), token.Scopes)
+	assertions.True(manager.HasToken("user@company.com"))
+	hasScopes, err := manager.HasScopes("user@company.com")
+	requirements.NoError(err)
+	assertions.True(hasScopes)
+}
+
+func TestGraphMailTriageManagerRequiresExplicitReauthorization(t *testing.T) {
+	requirements := require.New(t)
+	manager := NewGraphMailTriageManager("client", "common", "", t.TempDir(), slog.Default())
+	token := &oauth2.Token{AccessToken: "write-access", RefreshToken: "write-refresh", TokenType: "Bearer"}
+	requirements.NoError(manager.saveToken("user@company.com", token, GraphMailWriteScopes(), "org-tid"))
+	_, err := manager.TokenSource(t.Context(), "user@company.com")
+	requirements.ErrorContains(err, "MailboxSettings.Read")
+	requirements.ErrorContains(err, "add-o365 user@company.com --graph --mail-write --mail-triage")
+}
+
 func TestGraphManager_Authorize_Mismatch(t *testing.T) {
 	dir := t.TempDir()
 	m := NewGraphManager("test-client", "common", "", dir, slog.Default())
@@ -281,6 +317,7 @@ func TestGraphMailWriteManager_Scopes(t *testing.T) {
 	assert.False(ok)
 	_, err = writeMgr.TokenSource(t.Context(), "user@company.com")
 	require.ErrorContains(err, "Mail.ReadWrite")
+	require.ErrorContains(err, "--mail-write")
 
 	require.NoError(writeMgr.saveToken("user@company.com", token, GraphMailWriteScopes(), "org-tid"))
 	ok, err = writeMgr.HasScopes("user@company.com")

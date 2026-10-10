@@ -22,7 +22,6 @@ import (
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/emailattribution"
 	"go.kenn.io/msgvault/internal/mime"
-	"go.kenn.io/msgvault/internal/peoplesweep"
 )
 
 // querier is satisfied by both *sql.DB and *sql.Tx, allowing
@@ -93,6 +92,7 @@ type MessageDeliveryEvidence struct {
 // MessagePersistData bundles everything needed to atomically
 // persist a message and its related rows in a single transaction.
 type MessagePersistData struct {
+	GmailInboxObservation     *GmailInboxObservation
 	Message                   *Message
 	Conversation              *ConversationPersistData
 	Delivery                  *MessageDeliveryEvidence
@@ -1087,6 +1087,9 @@ func (s *Store) MigrateSourceMessageID(sourceID, conversationID int64, legacySou
 		return err
 	}
 	return s.withTx(func(tx *loggedTx) error {
+		if err := s.lockIdentityMutationTx(tx); err != nil {
+			return err
+		}
 		var newID int64
 		err := tx.QueryRow(
 			`SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?`,
@@ -1370,7 +1373,7 @@ type bodylessMessageJournalState struct {
 	deleted        bool
 }
 
-func upsertMessageWith(q querier, d Dialect, msg *Message) (int64, error) {
+func upsertMessageWith(q querier, d Dialect, msg *Message, inserted ...*bool) (int64, error) {
 	journalCandidate := isBodylessMessageJournalCandidate(msg)
 	var prior bodylessMessageJournalState
 	if journalCandidate {
@@ -1392,7 +1395,7 @@ func upsertMessageWith(q querier, d Dialect, msg *Message) (int64, error) {
 			return 0, fmt.Errorf("read bodyless message journal state: %w", err)
 		}
 	}
-	sql := upsertMessageSQL(d.Now())
+	upsertSQL := upsertMessageSQL(d.Now())
 	sourceIsFromMe := msg.IsFromMe && !msg.IdentityDerivedIsFromMe
 	identityIsFromMe := msg.IsFromMe && msg.IdentityDerivedIsFromMe
 	args := []any{
@@ -1408,9 +1411,21 @@ func upsertMessageWith(q querier, d Dialect, msg *Message) (int64, error) {
 		msg.PreserveAttachmentStats, msg.PreserveAttachmentStats,
 	}
 
+	// The insertion outcome belongs to the write, rather than an earlier
+	// existence read. Events-enabled transactions hold the global clock fence.
+	if len(inserted) > 0 {
+		insertSQL := strings.Split(upsertSQL, "ON CONFLICT(source_id, source_message_id)")[0] + "ON CONFLICT(source_id, source_message_id) DO NOTHING RETURNING id"
+		var newID int64
+		err := q.QueryRow(insertSQL, args[:len(args)-2]...).Scan(&newID)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return 0, err
+		}
+		*inserted[0] = err == nil
+	}
+
 	// Use RETURNING to avoid an extra SELECT per message when supported.
 	var id int64
-	err := q.QueryRow(sql+"\n\t\tRETURNING id\n\t", args...).Scan(&id)
+	err := q.QueryRow(upsertSQL+"\n\t\tRETURNING id\n\t", args...).Scan(&id)
 
 	if err != nil {
 		// SQLite < 3.35 does not support RETURNING. Fall back to an Exec + SELECT.
@@ -1418,7 +1433,7 @@ func upsertMessageWith(q querier, d Dialect, msg *Message) (int64, error) {
 			return 0, err
 		}
 
-		if _, execErr := q.Exec(sql, args...); execErr != nil {
+		if _, execErr := q.Exec(upsertSQL, args...); execErr != nil {
 			return 0, execErr
 		}
 
@@ -2029,7 +2044,7 @@ func (s *Store) PersistRepairMessageWithParticipantsContext(
 		}
 		return nil
 	}
-	messageID, err := s.persistMessageWithParticipantsTransaction(
+	messageID, err := s.WithIngestContext(IngestContext{Mode: IngestUnknown}).persistMessageWithParticipantsTransaction(
 		ctx, attributionLock{Sources: []int64{expected.SourceID}},
 		beforeParticipants, participants, build, prepare, afterPersist,
 	)
@@ -2085,6 +2100,15 @@ func (s *Store) persistMessageWithParticipantsTx(
 	afterPersist messagePersistAfter,
 ) (int64, error) {
 	var messageID int64
+	// Sender and recipient occurrences are authorization support for identity
+	// operations. Fence them before directory, message, or provenance writes.
+	// An attribution entry already holds that fence before the sync fence;
+	// upgrading its shared identity lock would invert its acquisition order.
+	if tx.attribution == nil {
+		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+			return 0, err
+		}
+	}
 	if s.dialect.DriverName() != postgresDriverName {
 		// Reserve SQLite's writer slot before any prior-state or related
 		// snapshot reads. Otherwise a concurrent commit can leave this
@@ -2100,14 +2124,6 @@ func (s *Store) persistMessageWithParticipantsTx(
 		}
 		if participant.EmailAddress == "" {
 			hasPhoneParticipant = true
-		}
-	}
-	if hasPhoneParticipant {
-		// Phone participants write participant_identifiers, which participant
-		// merges rewrite under the identity lock. Take it before the directory
-		// lock, the same order MergeParticipants uses.
-		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
-			return 0, err
 		}
 	}
 	if len(participants) > 1 || hasPhoneParticipant {
@@ -2177,12 +2193,22 @@ func (s *Store) persistMessageWithParticipantsTx(
 	if err := s.requireSyncSource(data.Message.SourceID); err != nil {
 		return 0, err
 	}
-	id, err := s.persistMessageWith(ctx, tx, data)
+	var inserted bool
+	var outcome []*bool
+	if s.captureMCPEnabled() {
+		outcome = []*bool{&inserted}
+	}
+	id, err := s.persistMessageWith(ctx, tx, data, outcome...)
 	if err != nil {
 		return 0, err
 	}
 	if afterPersist != nil {
 		if err := afterPersist(ctx, tx, data, id); err != nil {
+			return 0, err
+		}
+	}
+	if inserted && data.Message.MessageType != MessageTypeCalendarEvent {
+		if err := s.appendArchivedMessageTx(ctx, tx, id); err != nil {
 			return 0, err
 		}
 	}
@@ -2194,6 +2220,7 @@ func (s *Store) persistMessageWith(
 	ctx context.Context,
 	tx *loggedTx,
 	data *MessagePersistData,
+	inserted ...*bool,
 ) (int64, error) {
 	if data == nil || data.Message == nil {
 		return 0, errors.New("persist message requires a message")
@@ -2227,7 +2254,7 @@ func (s *Store) persistMessageWith(
 		message = &messageCopy
 	}
 
-	messageID, err := upsertMessageWith(q, s.dialect, message)
+	messageID, err := upsertMessageWith(q, s.dialect, message, inserted...)
 	if err != nil {
 		return 0, fmt.Errorf("upsert message: %w", err)
 	}
@@ -2279,6 +2306,11 @@ func (s *Store) persistMessageWith(
 		return 0, err
 	}
 
+	if data.GmailInboxObservation != nil {
+		if err := s.observeGmailInboxSyncTx(ctx, tx, data.Message.SourceID, messageID, data.Message.SourceMessageID, *data.GmailInboxObservation); err != nil {
+			return 0, fmt.Errorf("store Gmail inbox observation: %w", err)
+		}
+	}
 	if !data.PreserveLabels {
 		if err := replaceMessageLabelsTx(q, messageID, data.LabelIDs); err != nil {
 			return 0, fmt.Errorf("store labels: %w", err)
@@ -4642,8 +4674,7 @@ func (s *Store) MergeParticipants(oldID, newID int64) error {
 		}
 		if personID != 0 {
 			if err := s.publishPersonIdentityScopeChangesTx(
-				context.Background(), tx, []int64{personID},
-				peoplesweep.EvidenceEffectIdentityReassigned); err != nil {
+				context.Background(), tx, []int64{personID}); err != nil {
 				return err
 			}
 			if personRevisionBumped {
@@ -5664,18 +5695,14 @@ func consolidateConversationParticipantJournal(tx querier, dialect Dialect, conv
 
 // UpsertReaction inserts or ignores a reaction.
 func (s *Store) UpsertReaction(messageID, participantID int64, reactionType, reactionValue string, createdAt time.Time) error {
-	write := func(q querier) error {
-		if err := s.requireSyncMessageSourceTx(q, messageID); err != nil {
+	ctx := context.Background()
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.requireSyncMessageSourceTx(tx, messageID); err != nil {
 			return err
 		}
-		_, err := q.Exec(s.dialect.InsertOrIgnore(`INSERT OR IGNORE INTO reactions (message_id, participant_id, reaction_type, reaction_value, created_at)
-			VALUES (?, ?, ?, ?, ?)`), messageID, participantID, reactionType, reactionValue, createdAt)
-		return err
-	}
-	if s.syncGeneration != nil {
-		return s.withTx(func(tx *loggedTx) error { return write(tx) })
-	}
-	return write(s.db)
+		r := ReactionRef{ParticipantID: participantID, Type: reactionType, Value: reactionValue, CreatedAt: createdAt}
+		return s.insertReactionTx(ctx, tx, messageID, r, true)
+	})
 }
 
 // UpsertReactionWithSourceID inserts a reaction and records the provider event
@@ -5776,23 +5803,59 @@ func (s *Store) MessageIDByMetadataValue(conversationID int64, key, value string
 
 type ReactionRef struct {
 	ParticipantID int64
-	Type          string
-	Value         string
+	Type, Value   string
 	CreatedAt     time.Time
 }
 
-// ReplaceReactions replaces all reactions for a message atomically.
+func (s *Store) insertReactionTx(ctx context.Context, tx *loggedTx, messageID int64, r ReactionRef, emit bool) error {
+	result, err := tx.ExecContext(ctx, s.dialect.InsertOrIgnore(`INSERT OR IGNORE INTO reactions (message_id, participant_id, reaction_type, reaction_value, created_at) VALUES (?, ?, ?, ?, ?)`), messageID, r.ParticipantID, r.Type, r.Value, r.CreatedAt)
+	if err != nil {
+		return err
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if count > 0 && emit {
+		return s.appendReactionTx(ctx, tx, messageID, r)
+	}
+	return nil
+}
+
+// ReplaceReactions compares additions against the prior set inside the mutation transaction.
 func (s *Store) ReplaceReactions(messageID int64, reactions []ReactionRef) error {
-	return s.withTx(func(tx *loggedTx) error {
-		if _, err := tx.Exec(`DELETE FROM reactions WHERE message_id = ?`, messageID); err != nil {
+	ctx := context.Background()
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.requireSyncMessageSourceTx(tx, messageID); err != nil {
+			return err
+		}
+		rows, err := tx.QueryContext(ctx, `SELECT participant_id, reaction_type, reaction_value FROM reactions WHERE message_id = ?`, messageID)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = rows.Close() }()
+		old := map[reactionIdentity]bool{}
+		for rows.Next() {
+			var key reactionIdentity
+			if err := rows.Scan(&key.ParticipantID, &key.Type, &key.Value); err != nil {
+				return err
+			}
+			old[key] = true
+		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		if err := rows.Close(); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM reactions WHERE message_id = ?`, messageID); err != nil {
 			return err
 		}
 		for _, r := range reactions {
 			if r.ParticipantID == 0 {
 				continue
 			}
-			if _, err := tx.Exec(s.dialect.InsertOrIgnore(`INSERT OR IGNORE INTO reactions (message_id, participant_id, reaction_type, reaction_value, created_at)
-				VALUES (?, ?, ?, ?, ?)`), messageID, r.ParticipantID, r.Type, r.Value, r.CreatedAt); err != nil {
+			if err := s.insertReactionTx(ctx, tx, messageID, r, !old[reactionIdentity{r.ParticipantID, r.Type, r.Value}]); err != nil {
 				return err
 			}
 		}

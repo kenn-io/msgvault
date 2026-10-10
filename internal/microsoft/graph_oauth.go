@@ -24,10 +24,11 @@ const (
 	scopeGraphTeamMemberRead = "https://graph.microsoft.com/TeamMember.Read.All"
 	// Private and shared channels carry their own membership, read via
 	// GET /teams/{id}/channels/{id}/members.
-	scopeGraphChannelMemberRead = "https://graph.microsoft.com/ChannelMember.Read.All"
-	scopeGraphMailRead          = "https://graph.microsoft.com/Mail.Read"
-	scopeGraphMailReadWrite     = "https://graph.microsoft.com/Mail.ReadWrite"
-	scopeGraphContactsReadWrite = "https://graph.microsoft.com/Contacts.ReadWrite"
+	scopeGraphChannelMemberRead   = "https://graph.microsoft.com/ChannelMember.Read.All"
+	scopeGraphMailRead            = "https://graph.microsoft.com/Mail.Read"
+	scopeGraphMailReadWrite       = "https://graph.microsoft.com/Mail.ReadWrite"
+	scopeGraphMailboxSettingsRead = "https://graph.microsoft.com/MailboxSettings.Read"
+	scopeGraphContactsReadWrite   = "https://graph.microsoft.com/Contacts.ReadWrite"
 )
 
 // GraphScopes returns the OAuth scopes requested for Microsoft Teams ingestion
@@ -53,6 +54,12 @@ func GraphMailScopes() []string {
 // token granted with these scopes.
 func GraphMailWriteScopes() []string {
 	return append(GraphMailScopes(), scopeGraphMailReadWrite)
+}
+
+// GraphMailTriageScopes adds the permission required to read the Outlook
+// master-category catalog used to configure inbox triage.
+func GraphMailTriageScopes() []string {
+	return append(GraphMailWriteScopes(), scopeGraphMailboxSettingsRead)
 }
 
 // GraphContactsScopes returns the OAuth scopes requested for two-way contact
@@ -120,6 +127,16 @@ func NewGraphContactsManager(clientID, tenantID, redirectURI, tokensDir string, 
 func NewGraphMailWriteManager(clientID, tenantID, redirectURI, tokensDir string, logger *slog.Logger) *GraphManager {
 	m := NewGraphMailManager(clientID, tenantID, redirectURI, tokensDir, logger)
 	m.scopes = GraphMailWriteScopes()
+	m.reauthCmd = "msgvault add-o365 %s --graph --mail-write"
+	return m
+}
+
+// NewGraphMailTriageManager requests the existing mail-write grant plus
+// MailboxSettings.Read, which native triage category discovery requires.
+func NewGraphMailTriageManager(clientID, tenantID, redirectURI, tokensDir string, logger *slog.Logger) *GraphManager {
+	m := NewGraphMailWriteManager(clientID, tenantID, redirectURI, tokensDir, logger)
+	m.scopes = GraphMailTriageScopes()
+	m.reauthCmd = "msgvault add-o365 %s --graph --mail-write --mail-triage"
 	return m
 }
 

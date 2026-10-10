@@ -14,6 +14,8 @@ in your installed binary. This reference follows current `main`; see
 | Import local exports | [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [import-imazing-csv](#import-imazing-csv), [text imports](usage/text-messages.md) |
 | Search and browse | [search](#search), [tui](#tui), [show-message](#show-message), [documents](#documents), [embeddings](#embeddings), [multimodal](#multimodal), [eval](#eval) |
 | Maintain people and contacts | [person](#person), [people guide](usage/people.md), [CardDAV](usage/people-carddav.md) |
+| Observe and control live inbox items | [inbox](#inbox) |
+| Edit live email tags | [message-tags](#message-tags) |
 | Organize accounts | [identity](#identity), [collection](#collection), [update-account](#update-account) |
 | Read meeting evidence | [meetings](#meetings), [meeting workflow](usage/meetings.md) |
 | Export | [export-messages](#export-messages), [export-eml](#export-eml), [export-attachments](#export-attachments), [create-subset](#create-subset) |
@@ -197,7 +199,18 @@ It tests the connection before saving credentials.
 | `--port` | `993` | IMAP server port (993 for TLS, 143 for STARTTLS/plain) |
 | `--starttls` | `false` | Use STARTTLS instead of implicit TLS |
 | `--no-tls` | `false` | Disable TLS entirely (plaintext, not recommended) |
+| `--archive-mailbox` | automatic discovery | Exact existing mailbox used for inbox archive operations (newer `main` builds) |
 | `--no-default-identity` | `false` | Do not auto-confirm the username as this account's "me" identity. Saved across syncs and re-authorization; only explicit `--no-default-identity=false` clears the choice. See [saved identity choice](#saved-default-identity-choice) |
+
+On newer `main` builds, `--archive-mailbox "Saved Mail"` selects an existing
+mailbox when the server does not advertise one unambiguous SPECIAL-USE Archive
+mailbox. This saves the per-account `archive_mailbox` setting; it does not create
+or move mail. The command rejects missing or nonselectable mailboxes and INBOX
+before saving credentials or configuration. Archive operations require native
+MOVE and UIDPLUS support.
+To update the setting, rerun `add-imap` with the same host, port, transport and
+username. Omitting the flag preserves the saved choice; `--archive-mailbox=`
+clears it and restores automatic discovery.
 
 Credentials are stored in `tokens/imap_<hash>.json` with restricted file permissions (0600). Use app-specific passwords when your provider supports them.
 
@@ -207,13 +220,199 @@ After adding an account, sync it with `msgvault sync-full`. IMAP accounts use th
 
 ---
 
+## inbox
+
+Newer `main` builds expose native inbox operations through a daemon with API
+schema 3.3.0 and current operation discovery. Delegated callers need the exact
+source grant and `inbox.read`; mutations also need their action permission.
+See [inbox control](api-server.md#inbox-control-unreleased) for provider limits,
+signed previews, and receipt recovery.
+
+### inbox candidates
+
+Read committed Inbox metadata for one exact source. Output is JSON with
+`candidates`, `archive_revision`, `next_cursor`, and `unavailable`.
+
+```bash
+msgvault inbox candidates --source-id 1 --source-type gmail \
+  --source-identifier owner@example.test --account-id owner@example.test \
+  --scope message --limit 25
+```
+
+| Flag | Contract |
+|---|---|
+| `--source-id` | Required exact archive source ID |
+| `--source-type` | Required provider: `gmail`, `imap`, `msmail`, or `beeper` |
+| `--source-identifier` | Required exact archive source identifier |
+| `--account-id` | Required exact provider account ID |
+| `--scope` | Required: `message` for mail, `chat` for Beeper |
+| `--limit` | Maximum candidates per page; default 25, range 1–100 |
+| `--cursor` | Opaque `next_cursor` from a prior page for the same source and scope |
+
+A changed archive revision rejects the cursor; start a fresh listing.
+`unavailable` reports missing provider markers, including items outside the
+page. Candidate `available` reports marker completeness. Check live state and
+capabilities before planning a mutation. Listing reads titles and snippets,
+without message bodies or provider writes.
+
+### inbox triage
+
+Preview a bounded tag-only proposal, review the saved JSON, then apply it:
+
+```bash
+msgvault inbox triage preview --request triage.json > proposal.json
+msgvault inbox triage apply --request proposal.json --apply > receipts.json
+```
+
+The preview request contains one exact `source` and 1–100 `items`. Each item
+contains a candidate `target`, `categories`, and `evidence_message_ids` belonging
+to that archived message. Empty categories classify as `uncertain`. The daemon
+uses the owner's existing native tag mappings. Optional `idempotency_key` values
+must be unique and at most 128 UTF-8 bytes; omitted keys are generated in the
+proposal. Both `inbox.read` and `inbox.tag` must cover the source.
+
+Apply requires the complete proposal and `--apply`. Preserve its signed token,
+revisions, evidence, expected/projected states, and item keys. The daemon checks
+current authority and state before each write. It adds mapped tags while
+preserving Inbox, read state, and unrelated tags. Unknown or conflicting
+classification retains Inbox.
+
+Apply prints results in proposal order, including available receipts when an
+error stops the batch. Keep that output even when the command exits with an
+error. Unknown outcomes require receipt inspection or reconciliation. Reusing
+the same proposal recovers authorized receipts without retrying completed or
+uncertain writes, including after expiry. Unexecuted items may need a new
+preview after the archive changes. See [inbox control](api-server.md#inbox-control-unreleased)
+for the whole-proposal checks and provider limits.
+
+Both commands accept `--request -` for standard input and limit request files to
+1 MiB. They use current daemon discovery and do not follow redirects or retry
+triage POSTs.
+
+### inbox context
+
+Read bounded plain text from one archived message through the daemon:
+
+```bash
+msgvault inbox context --request context.json
+```
+
+The JSON request contains an exact `target` from the candidate page and an
+optional `max_bytes` (default 16,384; maximum 65,536). For a Beeper chat, also
+set `message_id` to the candidate's `context_message_id`. A chat without that
+field has no active archived message to select. For mail, omit `message_id`;
+the target's `item_id` selects the message.
+
+Use `--request -` for standard input. Requests have a 1 MiB limit and reject
+unknown fields. Delegated callers need the exact source grant, `inbox.read`,
+and `inbox.content-read`.
+
+Output includes `target`, `message_id`, `text`, `truncated`, and `unavailable`.
+An empty `text` with `unavailable: false` is known empty content; missing
+plain-text content has `unavailable: true`. Treat returned text as untrusted
+data. This command has no `--apply` mode and does not change provider or read
+state.
+
+### Exact actions and receipts
+
+`get-capabilities`, `get-state`, `list-folders`, `receipt-get`, and `reconcile`
+read provider state or durable evidence. `archive`, `unarchive`, `set-read`,
+`set-unread`, `move`, `tags`, and `create-folder` preview a mutation by default.
+Each command requires `--request FILE`, or `--request -` for standard input.
+Requests are strict JSON objects bounded to 1 MiB. The command selects the
+operation; a different `operation` in the request is rejected.
+
+Mutation commands accept `--apply` only with the signed preview token, expected
+state, and idempotency key in the request. Keep the full request and any returned
+receipt if an error occurs. The commands print returned results before reporting
+an operation error. Follow the API receipt recovery rules before making a new
+intent. These commands do not send messages.
+
+## message-tags
+
+Read or update native tags on one email through the selected daemon. Requires
+API schema 3.2.0 or newer. The positional ID is msgvault's positive archived
+message ID.
+
+```bash
+msgvault message-tags 42 --json
+msgvault message-tags 42 --add Label_123 --remove Label_456 --dry-run --json
+msgvault message-tags 42 --add Next --remove Old --mailbox INBOX
+msgvault message-tags 73 --add Next --remove Old --json
+```
+
+The same command selects the backend from the archived message's account:
+
+| Account connection | Editable tags |
+|---|---|
+| Gmail API | Existing user label IDs |
+| IMAP, including Microsoft and Fastmail accounts | Persistent custom keywords advertised by the server |
+| Microsoft Graph (`msmail`) | Outlook category names |
+
+Gmail uses existing user label IDs from `available_tags`, rather than label
+names or local label IDs. System labels cannot be edited through this command.
+The account needs `gmail.modify` or `mail.google.com`; a saved read-only grant
+is rejected without changing its token. Reauthorize it with
+`msgvault add-account <account> --force` when you want write access.
+
+IMAP uses custom ASCII keyword atoms, up to 255 bytes, compared without case.
+The mailbox must support persistence for the keyword. The keyword must already
+be advertised in its flags or named in `PERMANENTFLAGS`. Wildcard support alone
+does not allow creating a new keyword.
+System flags such as `\Seen` and `\Flagged` are preserved.
+The edit targets a recorded mailbox UID and UIDVALIDITY. With no `--mailbox`,
+it uses the message's primary membership. Sync first if that mapping is stale
+or missing. See [IMAP keywords](usage/imap.md#edit-keyword-tags).
+
+Microsoft Graph uses category names, up to 255 UTF-8 bytes. Reads and previews
+use the existing read grant. Writes need `Mail.ReadWrite`; grant it with
+`msgvault add-o365 <account> --graph --mail-write`. The daemon never starts a
+sign-in flow or replaces a read-only token during a tag edit. An edit preserves
+other categories and checks the provider version before replacing the category
+collection. If another client changed the message, read its tags and retry.
+The archive shows categories as `Category: <name>` separately from mail folders,
+and later syncs retain and refresh them. If a folder already uses that name,
+the category becomes `Category: <name> (2)`.
+
+Fastmail messages currently use IMAP, even when a JMAP token is configured for
+address discovery. JMAP and IMAP share custom keywords, so the existing IMAP
+connection edits those shared tags without another credential. Outlook
+categories require a Microsoft Graph account; an IMAP connection can edit only
+the keywords its server supports. File imports such as MBOX, PST, and EML have
+no connected provider to update and return `unsupported_provider`.
+
+| Flag | Contract |
+|---|---|
+| `--add` | Add one native tag; repeat for multiple tags, at most 100 |
+| `--remove` | Remove one native tag; repeat for multiple tags, at most 100 |
+| `--mailbox` | Select an exact recorded IMAP mailbox copy |
+| `--dry-run` | Preview an edit without a provider write or local update |
+| `--json` | Return the result, or an error with the last observed result |
+
+An edit needs at least one add or remove tag. A tag cannot occur in both lists.
+With neither flag, the command reads the current tags and available tag IDs.
+Unrelated tags are preserved. A satisfied retry makes no provider write.
+
+`verified: true` means provider readback satisfied the requested changes at
+that time. Another client can edit the message afterward. Preview does not
+prove write access: the provider can still reject a later write. If an edit
+partly applies or readback fails, inspect current tags before retrying. If
+`remote_accepted_local_failed` is returned, the provider result was verified
+but local persistence failed; sync the account.
+
 ## draft-reply
 
 Create one reply draft from an archived message to an authorized IMAP
 destination, or reply within its original Gmail account. The daemon requires
-the matching operator grant. Without `--from`, the reply uses the confirmed
-identity the parent was addressed to, or the source's only eligible identity.
-See [IMAP drafts](/docs/usage/imap/#drafts) for the full sender rules.
+the matching operator grant. An explicit `--from` takes precedence. Otherwise,
+Msgvault uses the unique confirmed destination identity found in the parent's
+archived To, Cc, or Bcc recipients combined with every original To and Cc
+header, including when legacy recipient snapshots are missing. Multiple
+matching identities require `--from` unless the agent's grant allows exactly
+one of them. A matching identity outside the agent's sender grant returns an
+authorization error. With no match, `--from` is optional when exactly one
+confirmed identity is eligible. Compose and forward retain that eligibility
+rule without recipient inference.
 
 ```bash
 msgvault draft-reply <message-id> --body <text>
@@ -334,8 +533,8 @@ msgvault draft-compose --source-id 42 --to '!room:beeper.local' --body 'Draft te
 
 The chat's composer must be empty. Each chat has at most one managed draft;
 `draft_exists` reports the existing one. `draft-get`, `draft-edit`, and
-`draft-delete` work on the returned draft ID, and `draft-delete` clears the
-composer. The edit body must be nonblank. Delegated tokens need `draft.create` on the
+`draft-delete` work on the returned draft ID. Edit and delete require an empty
+composer; delete discards the local managed draft. The edit body must be nonblank. Delegated tokens need `draft.create` on the
 Beeper source to create; `draft-get` accepts `draft.edit` or `draft.delete`,
 `draft-edit` needs `draft.edit`, and `draft-delete` needs `draft.delete`.
 Delete-only agents receive draft metadata without committed or pending text,
@@ -343,8 +542,13 @@ including in error responses. A creator's `draft_exists` result carries the
 draft ID without its text. `draft-get` shows the draft as
 Beeper last reported it, which can differ from the text sent because Beeper
 formats it. Edit and delete read the composer first and return `draft_conflict`
-when someone changed it in Beeper. Beeper has no conditional write, so text typed
-between that read and the write can still be cleared. A write Beeper refuses before anything changed
+when someone changed it in Beeper. A matching populated composer returns
+`composer_clear_required`; clear it manually in Beeper and retry with the same
+revision. msgvault never clears a composer automatically. Beeper accepts new
+text only when the composer is still empty, protecting text typed after the
+read. Its API has no documented conditional clear; local source locking cannot
+protect against external typing. See the [Beeper draft API](https://developers.beeper.com/desktop-api-reference/resources/chats/methods/update/).
+A write Beeper refuses before anything changed
 returns `provider_rejected`; a new draft whose text Beeper refused is
 discarded, so the chat is free for another `draft-compose`. A write with an
 unknown outcome returns `remote_unknown` and keeps the draft's pending
@@ -571,6 +775,8 @@ Requires a `[microsoft]` section with `client_id` in `config.toml`. See the [OAu
 | `--headless` | `false` | Sign in with a device code instead of a local browser |
 | `--no-default-identity` | `false` | Do not auto-confirm the email address as this account's "me" identity. Saved across syncs and re-authorization; only explicit `--no-default-identity=false` clears the choice. See [saved identity choice](#saved-default-identity-choice) |
 | `--graph` | `false` | Sync through the Microsoft Graph mail API instead of IMAP. Creates an `msmail` account. Needs the `Mail.Read` permission. `delete-staged` asks for `Mail.ReadWrite` on first use |
+| `--mail-write` | `false` | With `--graph`, request `Mail.ReadWrite` for category edits and remote deletion |
+| `--mail-triage` | `false` | With `--graph --mail-write`, request `MailboxSettings.Read` for inbox triage category discovery |
 
 After adding the account, sync it with `msgvault sync-full`. For a `--graph`
 account, use `msgvault sync`. See
@@ -2589,7 +2795,7 @@ msgvault identity import [<account>] [--source-id <id>] (--file <path> | --stdin
 |---|---|---|
 | `--account` | `list` | Restrict to a single account |
 | `--collection` | `list` | Restrict to all member accounts of a collection |
-| `--source-id` | all subcommands | Select one source unambiguously by numeric ID; mutually exclusive with an account argument or `list` scope |
+| `--source-id` | account self-identity subcommands | Select one source unambiguously by numeric ID; mutually exclusive with an account argument or `list` scope |
 | `--json` | `list`, `show`, `discover`, `import` | Output structured JSON; discovery also suppresses progress |
 | `--signal` | `add` | Evidence signal name (default `manual`) |
 | `--apply` | `discover` | After the complete preview scan, confirm strong evidence |
@@ -2607,6 +2813,35 @@ stays review-only. See [People, Profiles, and Source Identities](/docs/usage/peo
 for classifications, Fastmail inventory, and import formats.
 
 ---
+
+### identity operations (unreleased)
+
+Preview one explicit participant pair or participant/person binding through the
+selected daemon. These commands use the [signed native identity contract](api-server.md#explicit-identity-operations-unreleased) and print JSON.
+
+```bash
+msgvault identity operations graph-link --request pair.json
+msgvault identity operations graph-unlink --request pair.json
+msgvault identity operations person-link --request binding.json
+msgvault identity operations person-unlink --request binding.json
+msgvault identity operations graph-link --request reviewed-pair.json --apply
+msgvault identity operations receipt --idempotency-key <original-key>
+```
+
+`--request -` reads standard input. The request is a canonical JSON object of
+at most 16 KiB. Each action previews by default. `--apply` requires the exact
+`expected_fingerprint`, `preview_token` and `idempotency_key` from the reviewed
+request, in addition to its target. An optional `operation` must match the command.
+
+Use `--agent-url` and `--agent-token-file` for a delegated invocation. Preview
+and receipt reads require `identity.read`; apply also requires the matching
+link/unlink permission and all affected native resource scopes. The older
+account self-identity commands remain owner-only.
+
+If execution or receipt output has an unknown outcome, read the receipt with
+the original key before deciding whether to retry. Owners can recover a receipt
+with `--receipt-id`, or `--principal` and the original `--idempotency-key`.
+These selectors cannot be combined ambiguously. Receipt reads never replay a write.
 
 ## person
 
@@ -3484,6 +3719,15 @@ for input security, runtime precedence, and sweep-provider commands.
 
 ## mcp
 
+### Inspect Events delivery
+
+On unreleased `main`, `msgvault mcp events status --json` reads the selected
+local or remote daemon's owner-only delivery state. It reports subscription
+state, stop reason, refresh deadline, settled cursor and epoch, pending attempts,
+last outcome, and dead-letter and loop-guard counts. Callback URLs, secrets,
+and encrypted secret values are omitted. A disabled daemon reports Events
+unavailable. See [MCP Events](usage/chat.md#events) for setup and protocol limits.
+
 ### Discover running HTTP listeners
 
 Run `msgvault mcp status --json` to list HTTP MCP listeners started by this
@@ -3503,7 +3747,7 @@ Start the Model Context Protocol server for AI assistant integration.
 
 Draft tools prepare and manage drafts through the selected daemon, using the same commands and permissions as the CLI. Msgvault never sends. A daemon with API schema 3.0.0 or newer exposes eight draft tools to the owner.
 
-With `--agent-url` and `--agent-token-file`, `msgvault mcp` exposes only the six delegated draft tools and, on daemons with API schema 3.1.0 or newer, the calendar tools over stdio. The daemon checks the token's permissions and source scope on every call. Delegated sessions refuse `--http`.
+With `--agent-url` and `--agent-token-file`, `msgvault mcp` exposes admitted inbox, managed draft, calendar, and explicit identity tools over stdio. The daemon checks the token's permissions and exact source scope on every call. Delegated sessions refuse `--http`. See [inbox tools](usage/chat.md#inbox-control-unreleased) for candidate pagination and signed native actions.
 
 ```bash
 msgvault mcp [flags]
@@ -3517,9 +3761,18 @@ msgvault mcp [flags]
 | `--http-token-file` | — | On unreleased `main`, read an independent inbound bearer key from an owner-only file; takes priority over `--http-token-env`. Requires `--http`. |
 | `--http-token-env` | — | On unreleased `main`, name the environment variable holding an independent inbound bearer key. Requires `--http`. |
 | `--http-allow-insecure` | `false` | Allow non-loopback HTTP binding without an effective inbound key. A configured key is still enforced; without one, use only behind a trusted network boundary or authenticated reverse proxy. |
-| `--http-allow-writes` | `false` | Expose Saved View management, attachment export, deletion staging, and managed draft writes over StreamableHTTP. Calendar event mutations also require `--allow-calendar-writes`, and Kata issue writes `--allow-kata-writes`. Enable only for trusted, authenticated clients. |
+| `--http-allow-writes` | `false` | Expose native email tag edits, Saved View management, attachment export, deletion staging, and managed draft writes over StreamableHTTP. Calendar event mutations also require `--allow-calendar-writes`, and Kata issue writes `--allow-kata-writes`. Enable only for trusted, authenticated clients. |
+| `--allow-source-writes` | `false` | On unreleased `main`, expose configured source synchronization and Slack channel selection writes. Each call requires user approval through MCP client confirmation. HTTP also requires `--http-allow-writes`. |
+| `--allow-profile-writes` | `false` | Expose person promotion, saved display-name edits, and private Notes writes. HTTP also requires `--http-allow-writes`. |
 | `--allow-calendar-writes` | `false` | Expose calendar event mutation tools. HTTP also requires `--http-allow-writes`; only enable for sessions where the user explicitly authorizes calendar writes. |
 | `--allow-kata-writes` | `false` | Expose `create_kata_issue` and `link_kata_evidence`. HTTP also requires `--http-allow-writes`; archive text is untrusted input, so only enable for sessions where the user explicitly authorizes Kata issue writes. See [Kata issues](usage/kata-issues.md). |
+
+On unreleased `main`, owner sessions discover source status, confirmed identities,
+scheduler work, analytics cache build jobs, and Slack selection through the
+selected daemon's registered contracts. Missing contracts hide their tools.
+Sync acceptance means work was scheduled; it does not prove completion.
+A recent sync or published analytics cache does not establish complete provider
+coverage. Delegated sessions do not expose these owner source operations.
 
 See [MCP Server](/docs/usage/chat/) for configuration and tool reference.
 
@@ -4212,6 +4465,9 @@ msgvault quickstart
 ---
 
 ## agent-token
+
+The unreleased native HTTP token issuer also supports explicit person and
+address-book selections for [scoped identity operations](api-server.md#explicit-identity-operations-unreleased).
 
 Manage restricted agent grants. The daemon must be started with `[server] agent_access = true`
 and a non-empty `[server] api_key`. All three subcommands require owner authentication

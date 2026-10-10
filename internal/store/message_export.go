@@ -533,7 +533,7 @@ func normalizeMessageExportConversation(
 		return MessageExportConversationGroupChat, nil, nil
 	case "meeting":
 		return MessageExportConversationMeeting, nil, nil
-	case "calendar", "calendar_event":
+	case "calendar", MessageTypeCalendarEvent:
 		return MessageExportConversationCalendar, nil, nil
 	default:
 		return MessageExportConversationOther, nil, nil

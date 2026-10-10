@@ -14,19 +14,24 @@ func (s *Store) BindMeetingSourceOwner(sourceID int64, email string) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.db.Exec(fmt.Sprintf(`UPDATE sources SET sync_config = %s WHERE id = ? AND sync_config IS NULL`, s.dialect.JSONBindExpr()), string(raw), sourceID)
-	if err != nil {
-		return fmt.Errorf("bind meeting source owner: %w", err)
-	}
-	var config sql.NullString
-	if err := s.db.QueryRow(`SELECT sync_config FROM sources WHERE id = ?`, sourceID).Scan(&config); err != nil {
-		return err
-	}
-	var owner struct {
-		Email string `json:"account_email"`
-	}
-	if !config.Valid || json.Unmarshal([]byte(config.String), &owner) != nil || owner.Email != email {
-		return errors.New("meeting source is already bound to another account; use a new identifier")
-	}
-	return nil
+	return s.withTx(func(tx *loggedTx) error {
+		if err := s.lockIdentityMutationTx(tx); err != nil {
+			return err
+		}
+		_, err := tx.Exec(fmt.Sprintf(`UPDATE sources SET sync_config = %s WHERE id = ? AND sync_config IS NULL`, s.dialect.JSONBindExpr()), string(raw), sourceID)
+		if err != nil {
+			return fmt.Errorf("bind meeting source owner: %w", err)
+		}
+		var config sql.NullString
+		if err := tx.QueryRow(`SELECT sync_config FROM sources WHERE id = ?`, sourceID).Scan(&config); err != nil {
+			return err
+		}
+		var owner struct {
+			Email string `json:"account_email"`
+		}
+		if !config.Valid || json.Unmarshal([]byte(config.String), &owner) != nil || owner.Email != email {
+			return errors.New("meeting source is already bound to another account; use a new identifier")
+		}
+		return nil
+	})
 }

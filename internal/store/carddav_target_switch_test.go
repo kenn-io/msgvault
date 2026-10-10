@@ -13,7 +13,7 @@ import (
 
 func TestCardDAVCrossAccountTargetSwitchRacingPublication(t *testing.T) {
 	assertions := assert.New(t)
-	require := require.New(t)
+	requirements := require.New(t)
 
 	st, _, oldBook := newCardDAVResourceStore(t)
 	if !st.IsPostgreSQL() {
@@ -22,11 +22,11 @@ func TestCardDAVCrossAccountTargetSwitchRacingPublication(t *testing.T) {
 	input := cardDAVConcurrentInput("work@example.com", "work")
 	input.ConnectionName = "work"
 	_, books, err := st.ReplaceCardDAVDiscoveryContext(t.Context(), input)
-	require.NoError(err)
+	requirements.NoError(err)
 	var personID int64
-	require.NoError(st.DB().QueryRow(`INSERT INTO persons (vcard_uid, display_name) VALUES ('review-target-race','Example Person') RETURNING id`).Scan(&personID))
+	requirements.NoError(st.DB().QueryRow(`INSERT INTO persons (vcard_uid, display_name) VALUES ('review-target-race','Example Person') RETURNING id`).Scan(&personID))
 	snapshot, err := st.LoadPersonVCardSnapshotContext(t.Context(), personID)
-	require.NoError(err)
+	requirements.NoError(err)
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 	reached, resume := make(chan struct{}), make(chan struct{})
@@ -48,37 +48,38 @@ func TestCardDAVCrossAccountTargetSwitchRacingPublication(t *testing.T) {
 	select {
 	case <-reached:
 	case <-ctx.Done():
-		require.NoError(ctx.Err())
+		requirements.NoError(ctx.Err())
 	}
 	roleDone := make(chan error, 1)
 	go func() {
 		roleDone <- st.SetCardDAVBookRolesContext(ctx, books[0].ID, store.CardDAVBookRoles{IsWriteTarget: true, IsSubscribed: true, IsLookupSource: true})
 	}()
 	// Wait for the role change to reach an actual database lock held by the
-	// old target publication before releasing that publication.
+	// old target publication before releasing that publication. Both writers
+	// now acquire the identity fence before account or book locks.
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
 	for {
 		var blocked bool
-		err := st.DB().QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND (query LIKE '%carddav_accounts%' OR query LIKE '%carddav_address_books%'))`).Scan(&blocked)
-		require.NoError(err)
+		err := st.DB().QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE '%archive_metadata%' AND cardinality(pg_blocking_pids(pid)) > 0)`).Scan(&blocked)
+		requirements.NoError(err)
 		if blocked {
 			break
 		}
 		select {
 		case <-ticker.C:
 		case <-ctx.Done():
-			require.NoError(ctx.Err())
+			requirements.NoError(ctx.Err())
 		}
 	}
 	release.Do(func() { close(resume) })
-	require.NoError(<-publicationDone)
-	require.ErrorIs(<-roleDone, store.ErrCardDAVRoleChangePending, "cross-account target swap must not pass its ownership guard before waiting for old-owner publication")
+	requirements.NoError(<-publicationDone)
+	requirements.ErrorIs(<-roleDone, store.ErrCardDAVRoleChangePending, "cross-account target swap must not pass its ownership guard before waiting for old-owner publication")
 	pending, err := st.GetCardDAVPublicationContext(ctx, personID)
-	require.NoError(err)
+	requirements.NoError(err)
 	assertions.Equal(store.CardDAVMutationCreate, pending.PendingOperation)
 	all, err := st.ListCardDAVAddressBooksContext(ctx, store.AllCardDAVAccounts)
-	require.NoError(err)
+	requirements.NoError(err)
 	for _, book := range all {
 		if book.ID == oldBook.ID {
 			assertions.True(book.IsWriteTarget, "the book with newly pending work must remain target")

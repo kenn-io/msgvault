@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/agentgrant"
+	"go.kenn.io/msgvault/internal/identitycontrol"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -34,7 +35,9 @@ type agentGrantSourceResolver interface {
 type agentTokenIssueRequest struct {
 	Label            string              `json:"label"`
 	Permissions      []string            `json:"permissions"`
-	SourceIDs        []int64             `json:"source_ids"`
+	SourceIDs        []int64             `json:"source_ids,omitempty"`
+	PersonIDs        []int64             `json:"person_ids,omitempty"`
+	AddressBookIDs   []int64             `json:"address_book_ids,omitempty"`
 	SenderSelections map[string][]string `json:"sender_selections,omitempty"`
 }
 
@@ -42,22 +45,26 @@ type agentTokenIssueRequest struct {
 // The secret is returned exactly once. Fields are inlined (not embedded) so the
 // schema generator exposes every field, including id, to generated clients.
 type agentTokenIssueResponse struct {
-	ID          string                 `json:"id"`
-	Label       string                 `json:"label"`
-	Permissions []string               `json:"permissions"`
-	Sources     []agentTokenSourceView `json:"sources"`
-	CreatedAt   time.Time              `json:"created_at"`
-	Secret      string                 `json:"secret"`
-	DaemonURL   string                 `json:"daemon_url"`
+	ID           string                 `json:"id"`
+	Label        string                 `json:"label"`
+	Permissions  []string               `json:"permissions"`
+	Sources      []agentTokenSourceView `json:"sources"`
+	Persons      []agentTokenPersonView `json:"persons,omitempty"`
+	AddressBooks []agentTokenBookView   `json:"address_books,omitempty"`
+	CreatedAt    time.Time              `json:"created_at"`
+	Secret       string                 `json:"secret"`
+	DaemonURL    string                 `json:"daemon_url"`
 }
 
 // agentTokenView is the list/revoke-safe view of a grant: no secret or digest.
 type agentTokenView struct {
-	ID          string                 `json:"id"`
-	Label       string                 `json:"label"`
-	Permissions []string               `json:"permissions"`
-	Sources     []agentTokenSourceView `json:"sources"`
-	CreatedAt   time.Time              `json:"created_at"`
+	ID           string                 `json:"id"`
+	Label        string                 `json:"label"`
+	Permissions  []string               `json:"permissions"`
+	Sources      []agentTokenSourceView `json:"sources"`
+	Persons      []agentTokenPersonView `json:"persons,omitempty"`
+	AddressBooks []agentTokenBookView   `json:"address_books,omitempty"`
+	CreatedAt    time.Time              `json:"created_at"`
 }
 
 type agentTokenSourceView struct {
@@ -69,6 +76,22 @@ type agentTokenSourceView struct {
 
 type agentTokenListResponse struct {
 	Tokens []agentTokenView `json:"tokens"`
+}
+
+type agentTokenPersonView struct {
+	ID  int64  `json:"id"`
+	UID string `json:"uid"`
+}
+
+type agentTokenBookView struct {
+	AccountID            int64  `json:"account_id"`
+	BookID               int64  `json:"book_id"`
+	CanonicalURL         string `json:"canonical_url"`
+	OwnershipFingerprint string `json:"ownership_fingerprint"`
+}
+
+type agentGrantResourceResolver interface {
+	IdentityGrantSelectionContext(ctx context.Context, personIDs, bookIDs []int64) (*store.IdentityGrantSelection, error)
 }
 
 func grantToView(g agentgrant.Grant) agentTokenView {
@@ -83,12 +106,22 @@ func grantToView(g agentgrant.Grant) agentTokenView {
 			SenderKeys: append([]string{}, s.SenderKeys...),
 		}
 	}
+	persons := make([]agentTokenPersonView, len(g.Persons))
+	for i, person := range g.Persons {
+		persons[i] = agentTokenPersonView{ID: person.ID, UID: person.UID}
+	}
+	books := make([]agentTokenBookView, len(g.AddressBooks))
+	for i, book := range g.AddressBooks {
+		books[i] = agentTokenBookView{AccountID: book.AccountID, BookID: book.BookID, CanonicalURL: book.CanonicalURL, OwnershipFingerprint: book.OwnershipFingerprint}
+	}
 	return agentTokenView{
-		ID:          g.ID,
-		Label:       g.Label,
-		Permissions: perms,
-		Sources:     sources,
-		CreatedAt:   g.CreatedAt,
+		ID:           g.ID,
+		Label:        g.Label,
+		Permissions:  perms,
+		Sources:      sources,
+		Persons:      persons,
+		AddressBooks: books,
+		CreatedAt:    g.CreatedAt,
 	}
 }
 
@@ -186,7 +219,7 @@ func (s *Server) handleIssueAgentToken(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req agentTokenIssueRequest
-	dec := jsontext.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
+	dec := jsontext.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20), json.RejectUnknownMembers(true))
 	if err := json.UnmarshalDecode(dec, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON request body")
 		return
@@ -204,8 +237,8 @@ func (s *Server) handleIssueAgentToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request", "permissions must not be empty")
 		return
 	}
-	if len(req.SourceIDs) == 0 {
-		writeError(w, http.StatusBadRequest, "invalid_request", "source_ids must not be empty")
+	if err := validateAgentTokenResourceSelection(req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
 
@@ -222,7 +255,7 @@ func (s *Server) handleIssueAgentToken(w http.ResponseWriter, r *http.Request) {
 
 	// Resolve source IDs to live SourceRefs
 	resolver, ok := s.store.(agentGrantSourceResolver)
-	if !ok {
+	if !ok && len(req.SourceIDs) > 0 {
 		writeError(w, http.StatusInternalServerError, "internal_error", "store does not support source resolution")
 		return
 	}
@@ -279,7 +312,35 @@ func (s *Server) handleIssueAgentToken(w http.ResponseWriter, r *http.Request) {
 		sources[i].SenderKeys = senderKeys
 	}
 
-	_, secret, g, err := s.agentGrants.Issue(req.Label, perms, sources)
+	scope := agentgrant.ResourceScopes{Sources: sources}
+	if len(req.PersonIDs)+len(req.AddressBookIDs) > 0 {
+		resolver, ok := s.store.(agentGrantResourceResolver)
+		if !ok {
+			writeError(w, http.StatusNotImplemented, "resource_scope_unavailable", "The daemon cannot resolve selected identity resources")
+			return
+		}
+		selection, err := resolver.IdentityGrantSelectionContext(r.Context(), req.PersonIDs, req.AddressBookIDs)
+		if err != nil {
+			if errors.Is(err, store.ErrPersonNotFound) || errors.Is(err, store.ErrCardDAVAddressBookNotFound) || errors.Is(err, identitycontrol.ErrInvalidRequest) {
+				writeError(w, http.StatusBadRequest, "invalid_resource", "A selected person or address book is unavailable")
+				return
+			}
+			s.logger.Error("resolve agent token resources", "error", err)
+			writeError(w, http.StatusInternalServerError, "internal_error", "Could not resolve selected identity resources")
+			return
+		}
+		if selection == nil {
+			writeError(w, http.StatusInternalServerError, "internal_error", "Could not resolve selected identity resources")
+			return
+		}
+		for _, person := range selection.Persons {
+			scope.Persons = append(scope.Persons, agentgrant.PersonRef{ID: person.ID, UID: person.UID})
+		}
+		for _, book := range selection.AddressBooks {
+			scope.AddressBooks = append(scope.AddressBooks, agentgrant.AddressBookRef{AccountID: book.AccountID, BookID: book.BookID, CanonicalURL: book.CanonicalURL, OwnershipFingerprint: book.OwnershipFingerprint})
+		}
+	}
+	_, secret, g, err := s.agentGrants.IssueScoped(req.Label, perms, scope)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
@@ -291,13 +352,15 @@ func (s *Server) handleIssueAgentToken(w http.ResponseWriter, r *http.Request) {
 
 	v := grantToView(g)
 	writeJSON(w, http.StatusCreated, agentTokenIssueResponse{
-		ID:          v.ID,
-		Label:       v.Label,
-		Permissions: v.Permissions,
-		Sources:     v.Sources,
-		CreatedAt:   v.CreatedAt,
-		Secret:      secret,
-		DaemonURL:   daemonURL,
+		ID:           v.ID,
+		Label:        v.Label,
+		Permissions:  v.Permissions,
+		Sources:      v.Sources,
+		Persons:      v.Persons,
+		AddressBooks: v.AddressBooks,
+		CreatedAt:    v.CreatedAt,
+		Secret:       secret,
+		DaemonURL:    daemonURL,
 	})
 }
 

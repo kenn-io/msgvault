@@ -103,7 +103,7 @@ func TestOpenRemoteStoreAcceptsCompatibleNewerMinorSchema(t *testing.T) {
 	healthRequests, testCtx := remoteSchemaStub(t, func(w http.ResponseWriter) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"status": "ok", "api_schema_version": "3.1.0",
+			"status": "ok", "api_schema_version": "3.3.0",
 		})
 	})
 
@@ -198,7 +198,7 @@ func TestDaemonRuntimeCompatibilityRejectsLegacyRecordWithoutSchemaVersion(t *te
 	require.ErrorContains(daemonRuntimeCompatibilityError(previousMajor),
 		`daemon API schema version "1.44.0" is incompatible`)
 
-	newerMinor := &DaemonRuntime{API: daemonAPIVersion, APISchemaVersion: "3.1.0"}
+	newerMinor := &DaemonRuntime{API: daemonAPIVersion, APISchemaVersion: "3.3.0"}
 	require.NoError(daemonRuntimeCompatibilityError(newerMinor))
 
 	previousSchema := &DaemonRuntime{API: daemonAPIVersion, APISchemaVersion: "2.35.0"}

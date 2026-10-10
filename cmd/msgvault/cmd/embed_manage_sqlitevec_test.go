@@ -135,28 +135,3 @@ INSERT INTO messages (id, conversation_id, source_id, source_message_id, message
 	assert.Equal(row.LiveCount, row.EmbeddedCount+row.BlankCount+row.MissingCount,
 		"coverage remains a partition when an embedding batch commits between reads")
 }
-
-type interleavingCoverageBackend struct {
-	vector.Backend
-
-	snapshot vector.CoverageSnapshotBackend
-	commit   func(context.Context) error
-}
-
-func (b *interleavingCoverageBackend) commitBeforeCount(ctx context.Context) error {
-	if b.commit == nil {
-		return nil
-	}
-	commit := b.commit
-	b.commit = nil
-	return commit(ctx)
-}
-
-func (b *interleavingCoverageBackend) EmbeddedMessageCountForSnapshot(
-	ctx context.Context, gen vector.GenerationID, stampedMessageIDs []int64,
-) (int64, error) {
-	if err := b.commitBeforeCount(ctx); err != nil {
-		return 0, err
-	}
-	return b.snapshot.EmbeddedMessageCountForSnapshot(ctx, gen, stampedMessageIDs)
-}

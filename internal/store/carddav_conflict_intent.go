@@ -152,6 +152,9 @@ func (s *Store) lockCardDAVConflictIntentTx(ctx context.Context, tx *loggedTx, p
 func (s *Store) RefreshCardDAVConflictLocalIntentContext(ctx context.Context, pending CardDAVPublication) (*CardDAVPublication, error) {
 	var current *CardDAVPublication
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+			return err
+		}
 		source, p, err := s.lockCardDAVConflictIntentTx(ctx, tx, pending)
 		if err != nil {
 			return err
@@ -177,6 +180,9 @@ func (s *Store) RefreshCardDAVConflictLocalIntentContext(ctx context.Context, pe
 
 func (s *Store) ValidateCardDAVConflictCreateRetryContext(ctx context.Context, pending CardDAVPublication) error {
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+			return err
+		}
 		source, current, err := s.lockCardDAVConflictIntentTx(ctx, tx, pending)
 		if err != nil {
 			return err
@@ -208,6 +214,9 @@ func (s *Store) ValidateCardDAVConflictCreateRetryContext(ctx context.Context, p
 // fences before any retry after canonical absence.
 func (s *Store) CommitCardDAVConflictLocalIntentContext(ctx context.Context, input CardDAVCanonicalMutation) error {
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+			return err
+		}
 		source, current, err := s.lockCardDAVConflictIntentTx(ctx, tx, input.Publication)
 		if err != nil {
 			return err
@@ -243,6 +252,9 @@ func (s *Store) CommitCardDAVConflictLocalIntentContext(ctx context.Context, inp
 // preflight revision so an explicit fresh preview/approval can replace it.
 func (s *Store) RollbackCardDAVConflictLocalIntentContext(ctx context.Context, pending CardDAVPublication) error {
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+			return err
+		}
 		source, current, err := s.lockCardDAVConflictIntentTx(ctx, tx, pending)
 		if err != nil {
 			return err
@@ -262,6 +274,9 @@ func (s *Store) ResetCardDAVConflictLocalIntentContext(ctx context.Context, pend
 		return ErrCardDAVConflictTooLarge
 	}
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+			return err
+		}
 		source, current, err := s.lockCardDAVConflictIntentTx(ctx, tx, pending)
 		if err != nil {
 			return err

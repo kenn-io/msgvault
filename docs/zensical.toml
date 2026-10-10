@@ -54,6 +54,7 @@ nav = [
   ]},
   {"Maintain and Operate" = [
     {"Backup and Restore" = "usage/backup.md"},
+    {"Review an Inbox Rollout" = "usage/inbox-rollout.md"},
     {"Verify Integrity" = "guides/verification.md"},
     {"Deduplication" = "usage/deduplication.md"},
     {"Deleting Email" = "usage/deletion.md"},

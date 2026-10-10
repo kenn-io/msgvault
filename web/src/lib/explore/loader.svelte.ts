@@ -64,8 +64,9 @@ function samePageAuthority(
  * sites rather than owned exclusively by EverythingWorkspace.
  */
 export class ExploreLoader {
-  rows = $state<EntryRow[]>([]);
-  groupRows = $state<ExploreGroupRow[]>([]);
+  // Page snapshots are replaced as a whole; large lists need no per-row proxies.
+  rows = $state.raw<EntryRow[]>([]);
+  groupRows = $state.raw<ExploreGroupRow[]>([]);
   resultGeneration = $state(0);
   result = $state<ExploreResult>();
   unavailable = $state<ExploreCacheUnavailable>();

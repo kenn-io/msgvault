@@ -1520,6 +1520,26 @@ func (b *Backend) EmbeddedMessageCountForIDs(ctx context.Context, gen vector.Gen
 	return count, nil
 }
 
+// EmbeddedMessageCountForSnapshot counts generation vectors among the
+// live, stamped message IDs captured by a main-database read snapshot.
+func (b *Backend) EmbeddedMessageCountForSnapshot(
+	ctx context.Context, gen vector.GenerationID, stampedMessageIDs []int64,
+) (int64, error) {
+	if len(stampedMessageIDs) == 0 {
+		return 0, nil
+	}
+	var count int64
+	if err := b.db.QueryRowContext(ctx, `
+		SELECT COUNT(DISTINCT message_id)
+		FROM embeddings
+		WHERE generation_id = $1
+		  AND message_id = ANY($2)`,
+		int64(gen), stampedMessageIDs).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count snapshot embedded messages: %w", err)
+	}
+	return count, nil
+}
+
 // EmbeddingCoverage counts in-scope live, stamped, and embedded messages for
 // gen in one statement. PostgreSQL gives a statement one snapshot, so a batch
 // committed by a running embedding job cannot make Embedded exceed Stamped.

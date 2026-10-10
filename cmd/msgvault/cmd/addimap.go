@@ -59,6 +59,7 @@ var (
 )
 
 func newAddIMAPCmd() *cobra.Command {
+	var archiveMailbox string
 	cmd := &cobra.Command{
 		Use:   "add-imap",
 		Short: "Add an IMAP account",
@@ -110,11 +111,12 @@ Examples:
 
 			// Build IMAP config
 			imapCfg := &imapclient.Config{
-				Host:     imapHost,
-				Port:     imapPort,
-				TLS:      !imapNoTLS && !imapSTARTTLS,
-				STARTTLS: imapSTARTTLS,
-				Username: imapUsername,
+				Host:           imapHost,
+				Port:           imapPort,
+				TLS:            !imapNoTLS && !imapSTARTTLS,
+				STARTTLS:       imapSTARTTLS,
+				Username:       imapUsername,
+				ArchiveMailbox: archiveMailbox,
 			}
 
 			password, err := readAddIMAPPassword(cmd, false)
@@ -125,10 +127,15 @@ Examples:
 			// Test connection
 			fmt.Printf("Testing connection to %s...\n", imapCfg.Addr())
 			imapClient := imapclient.NewClient(imapCfg, password, imapclient.WithLogger(logger))
+			defer func() { _ = imapClient.Close() }()
 			profile, err := imapClient.GetProfile(cmd.Context())
-			_ = imapClient.Close()
 			if err != nil {
 				return fmt.Errorf("connection test failed: %w", err)
+			}
+			if archiveMailbox != "" {
+				if err := imapClient.ValidateArchiveMailbox(cmd.Context(), archiveMailbox); err != nil {
+					return err
+				}
 			}
 			fmt.Printf("Connected successfully as %s\n", profile.EmailAddress)
 
@@ -149,6 +156,16 @@ Examples:
 			source, err := s.GetOrCreateSource(sourceTypeIMAP, identifier)
 			if err != nil {
 				return fmt.Errorf("create source: %w", err)
+			}
+
+			// Reauthorization preserves an existing explicit archive choice unless
+			// the caller supplies the flag; an explicit empty value restores discovery.
+			if !cmd.Flags().Changed("archive-mailbox") && source.SyncConfig.Valid {
+				previous, err := imapclient.ConfigFromJSON(source.SyncConfig.String)
+				if err != nil {
+					return fmt.Errorf("read existing IMAP config: %w", err)
+				}
+				imapCfg.ArchiveMailbox = previous.ArchiveMailbox
 			}
 
 			// Store config JSON
@@ -187,6 +204,7 @@ Examples:
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&archiveMailbox, "archive-mailbox", "", "Exact existing archive mailbox (empty: discover SPECIAL-USE Archive)")
 	cmd.Flags().StringVar(&imapHost, "host", "", "IMAP server hostname (required)")
 	cmd.Flags().IntVar(&imapPort, "port", 0, "IMAP server port (default: 993 for TLS, 143 otherwise; matches defaults in internal/microsoft/imap package)")
 	cmd.Flags().StringVar(&imapUsername, "username", "", "IMAP username / email address (required)")

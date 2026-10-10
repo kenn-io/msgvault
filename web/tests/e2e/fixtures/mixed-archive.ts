@@ -84,6 +84,10 @@ let fixturePromise: Promise<MixedArchiveFixture> | undefined;
 
 export function loadMixedArchive(): Promise<MixedArchiveFixture> {
   fixturePromise ??= Promise.resolve().then(() => {
+    // Suite setup prepares this once so a restarted worker does not spend a
+    // browser test's deadline generating the same synthetic archive again.
+    const prepared = process.env.MSGVAULT_BROWSER_MIXED_ARCHIVE_FIXTURE;
+    if (prepared) return JSON.parse(readFileSync(prepared, 'utf8')) as MixedArchiveFixture;
     const fixturePath = join(tmpdir(), `msgvault-mixed-archive-${process.pid}.json`);
     const repositoryRoot = dirname(fileURLToPath(new URL('../../../../package.json', import.meta.url)));
     execFileSync(

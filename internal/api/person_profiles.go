@@ -134,7 +134,7 @@ func (s *Server) registerPersonProfileRoutes(api huma.API) {
 	addPersonIDParameter(&get)
 	get.Responses = jsonResponsesFor[store.Person](api)
 	addPersonETagHeader(get.Responses[httpStatusKey(http.StatusOK)])
-	addErrorResponses(api, get.Responses, http.StatusNotFound, http.StatusServiceUnavailable)
+	addErrorResponses(api, get.Responses, http.StatusForbidden, http.StatusNotFound, http.StatusServiceUnavailable)
 	registerRawHumaRoute(api, get, s.handleGetPersonProfile)
 
 	patch := rawAPIV1Operation("patchPerson", http.MethodPatch, "/people/{id}", "Update a durable person's display name")
@@ -144,6 +144,7 @@ func (s *Server) registerPersonProfileRoutes(api huma.API) {
 	patch.Responses = jsonResponsesFor[store.Person](api)
 	addPersonETagHeader(patch.Responses[httpStatusKey(http.StatusOK)])
 	addErrorResponses(api, patch.Responses, http.StatusConflict, http.StatusNotFound,
+		http.StatusForbidden, http.StatusNotImplemented, http.StatusRequestEntityTooLarge,
 		http.StatusPreconditionRequired, http.StatusServiceUnavailable)
 	registerRawHumaRoute(api, patch, s.handlePatchPerson)
 
@@ -153,7 +154,7 @@ func (s *Server) registerPersonProfileRoutes(api huma.API) {
 	addPersonIDParameter(&remove)
 	addPersonIfMatchParameter(&remove)
 	remove.Responses = rawHumaResponses(http.StatusNoContent)
-	remove.Responses["default"] = errorResponseFor(api)
+	remove.Responses[defaultErrorResponse] = errorResponseFor(api)
 	addErrorResponses(api, remove.Responses, http.StatusBadRequest, http.StatusUnauthorized,
 		http.StatusConflict, http.StatusNotFound, http.StatusPreconditionRequired,
 		http.StatusInternalServerError, http.StatusServiceUnavailable)
@@ -301,9 +302,15 @@ func (s *Server) handleGetPersonProfile(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
+	if !s.admitPersonTarget(w, r, id, false) {
+		return
+	}
 	person, err := profiles.GetPersonContext(r.Context(), id)
 	if err != nil {
 		s.writePersonError(w, err)
+		return
+	}
+	if !s.admitPersonRead(w, r, person) {
 		return
 	}
 	writePerson(w, http.StatusOK, person)
@@ -411,6 +418,9 @@ func (s *Server) handlePatchPerson(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !s.admitPersonTarget(w, r, id, true) {
+		return
+	}
 	revision, ok := personIfMatch(w, r, id)
 	if !ok {
 		return
@@ -429,7 +439,22 @@ func (s *Server) handlePatchPerson(w http.ResponseWriter, r *http.Request) {
 	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
 		displayName = nil
 	}
-	person, err := profiles.UpdatePersonDisplayNameContext(r.Context(), id, revision, displayName)
+	var person *store.Person
+	var err error
+	if s.requestAuthentication(r).Mode == AuthModeDelegated {
+		backend, authorize, ok := s.scopedPersonEditAdmission(w, r, id, false)
+		if !ok {
+			return
+		}
+		release, ok := s.beginScopedPersonEdit(w, r)
+		if !ok {
+			return
+		}
+		defer release()
+		person, err = backend.UpdatePersonDisplayNameAuthorizedContext(r.Context(), id, revision, displayName, authorize)
+	} else {
+		person, err = profiles.UpdatePersonDisplayNameContext(r.Context(), id, revision, displayName)
+	}
 	if err != nil {
 		s.writePersonError(w, err)
 		return
@@ -453,6 +478,10 @@ func (s *Server) writePersonError(w http.ResponseWriter, err error) {
 		return
 	}
 	switch {
+	case errors.Is(err, errPersonScopeDenied):
+		writeError(w, http.StatusForbidden, "person_scope_denied", "Current credentials do not authorize every affected person and address book")
+	case errors.Is(err, store.ErrIdentityOperationTooLarge):
+		writeError(w, http.StatusRequestEntityTooLarge, "person_scope_too_large", "Person edit affects too many resources")
 	case errors.Is(err, store.ErrPersonNotFound):
 		writeError(w, http.StatusNotFound, "person_profile_not_found", "Person profile not found")
 	case errors.Is(err, store.ErrPersonRevisionConflict):

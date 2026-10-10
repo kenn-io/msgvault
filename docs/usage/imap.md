@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-15"
+last_edited: "2026-10-04"
 title: IMAP Sync and Repair
 description: Archive IMAP mail efficiently, choose folders, and repair stored labels.
 ---
@@ -144,6 +144,40 @@ without folder flags scans the complete account again.
 Folder filtering works the same whether the CLI uses a local daemon or a
 configured remote msgvault server.
 
+## Edit keyword tags
+
+Use [`message-tags`](../cli-reference.md#message-tags) to read, add, or remove
+custom keywords on a message's recorded server copy:
+
+```bash
+msgvault message-tags 42 --mailbox INBOX --json
+msgvault message-tags 42 --mailbox INBOX --add Next --remove Old
+```
+
+Keywords are separate from the folder labels shown in the archive. The daemon
+preserves system flags and other keywords, verifies the requested changes by
+readback, and saves the observed flags on that exact membership. Each folder
+copy has its own flags. Sync first if the stored UID or UIDVALIDITY is missing
+or stale. The server must allow persistent keywords: its `PERMANENTFLAGS` must
+list `\*` or the keyword, or be absent, which IMAP treats as all flags
+permanent. The keyword must already appear in the mailbox's flags or be named
+in `PERMANENTFLAGS`; wildcard or omitted persistent flags alone do not allow
+msgvault to create a new keyword.
+
+This path applies to every IMAP account, including Microsoft 365, Outlook.com,
+Fastmail, and accounts at other providers. It does not depend on the host or
+authentication method. Fastmail's custom keywords are
+[shared with JMAP](https://www.rfc-editor.org/rfc/rfc8621.html#section-4.1.1); its
+optional JMAP address-discovery token does not change how mail is archived.
+Microsoft Outlook categories are separate from IMAP keywords and use the
+[Microsoft Graph tag backend](../cli-reference.md#message-tags). A server that
+does not allow persistent keywords cannot accept an IMAP tag edit.
+
+A dry run can check keyword syntax, identity, and advertised support. It cannot
+prove mailbox write access; the server's STORE response and readback decide
+whether a later edit succeeded. After a partial or uncertain write, read the
+current tags before retrying.
+
 ## Repair stored labels
 
 Use `repair-labels` when an archived message still shows a folder label that
@@ -238,19 +272,17 @@ the daemon host.
 The parent must have its original email stored in the archive. Reply-all uses
 Reply-To or From, then visible To and Cc recipients. It removes confirmed
 identities for the selected destination and never reads a parent's Bcc as a
-reply recipient. The IMAP server must support UIDPLUS, which returns a receipt
-that identifies the stored draft.
-
-Msgvault picks the draft's From address in this order:
-
-1. An explicit `--from`. It must be a confirmed identity for the destination.
-2. For replies, the confirmed identity the parent was addressed to. Msgvault
-    checks the parent's archived To, Cc, and Bcc recipients and every To and
-    Cc header in the original email. If several identities match, an agent's
-    grant must allow exactly one of them; otherwise pass `--from`. A sole
-    match outside the agent's grant returns an authorization error.
-3. The destination's only eligible confirmed identity. Compose and forward
-    start here.
+reply recipient. An explicit `--from` takes precedence and must be a confirmed
+identity for that source. Otherwise, Msgvault uses the unique confirmed
+destination identity found in the parent's archived To, Cc, or Bcc recipients
+combined with every original To and Cc header, including when legacy recipient
+snapshots are missing. Multiple matching identities require
+`--from` unless the agent's grant allows exactly one of them. A matching
+identity outside the agent's sender grant returns an authorization error.
+With no match, `--from` is optional when exactly one confirmed identity is
+eligible. Compose and forward use that eligibility rule without recipient
+inference. The IMAP server must support UIDPLUS, which returns a receipt that
+identifies the stored draft.
 
 For delegated callers, the token freezes the allowed sender identities when an
 owner issues it. A draft From header is a local choice and does not prove

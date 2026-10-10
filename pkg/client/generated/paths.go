@@ -126,6 +126,30 @@ func (p PreviewCardDAVPublicationPath) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(p))
 }
 
+type ApproveScopedCardDAVPublicationPath struct {
+	PersonID int64 `json:"person_id" validate:"gte=1"`
+}
+
+func (a ApproveScopedCardDAVPublicationPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(a))
+}
+
+type PreviewScopedCardDAVPublicationPath struct {
+	PersonID int64 `json:"person_id" validate:"gte=1"`
+}
+
+func (p PreviewScopedCardDAVPublicationPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type ReconcileScopedCardDAVPublicationPath struct {
+	PersonID int64 `json:"person_id" validate:"gte=1"`
+}
+
+func (r ReconcileScopedCardDAVPublicationPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(r))
+}
+
 type DeleteCLICollectionPath struct {
 	// Name Collection name
 	Name string `json:"name" validate:"required"`
@@ -316,6 +340,14 @@ func (l LinkKataEvidencePath) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(l))
 }
 
+type GetMCPEventMessagePath struct {
+	ID string `json:"id" validate:"required"`
+}
+
+func (g GetMCPEventMessagePath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+}
+
 type GetMessagePath struct {
 	// ID Message ID
 	ID int64 `json:"id"`
@@ -324,6 +356,16 @@ type GetMessagePath struct {
 type GetMessageInlinePartPath struct {
 	// ID Message ID
 	ID int64 `json:"id"`
+}
+
+type GetMessageTagsPath struct {
+	// ID Archived message ID
+	ID int `json:"id"`
+}
+
+type UpdateMessageTagsPath struct {
+	// ID Archived message ID
+	ID int `json:"id"`
 }
 
 type ListMessageTasksPath struct {

@@ -167,7 +167,7 @@ func (s *Service) sync(ctx context.Context, options SyncOptions) (SyncResult, er
 			return total, errors.Join(failures...)
 		}
 	}
-	if _, err := s.store.SweepResolvedCardDAVConflictsContext(operationCtx, time.Now()); err != nil {
+	if _, err := s.sweepResolvedConflicts(operationCtx, time.Now()); err != nil {
 		failures = append(failures, err)
 	}
 	return total, errors.Join(failures...)

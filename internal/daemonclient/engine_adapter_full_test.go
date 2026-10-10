@@ -370,6 +370,7 @@ func TestEngineListAccountsUsesSourceBackedCLIAccounts(t *testing.T) {
 	assert.Equal("imessage", accounts[0].SourceType)
 	assert.Equal("imported@example.com", accounts[0].Identifier)
 	assert.Equal("Imported", accounts[0].DisplayName)
+	assert.True(accounts[0].CountsPending, "pending count state must reach account-list consumers")
 }
 
 func TestEngineTextMethodsUseGeneratedClientAdapter(t *testing.T) {

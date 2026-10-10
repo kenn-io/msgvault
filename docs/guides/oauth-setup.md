@@ -644,10 +644,24 @@ type `msmail`. Each mail folder becomes a label. The first sync downloads every
 folder. Later syncs fetch only the changes, including moves between folders
 and deletes. The daemon schedules the account like any other.
 
-To delete messages at the source with `delete-staged`, also add the delegated
-permission `Mail.ReadWrite`. Sync does not use it. The first `delete-staged`
-for the account asks to upgrade the token. See
-[Deleting Email](/docs/usage/deletion/).
+For category editing and source deletion, also add the delegated permission
+`Mail.ReadWrite` and authorize with `--mail-write`:
+
+```bash
+msgvault add-o365 you@example.com --graph --mail-write
+```
+
+Inbox triage category discovery also needs the delegated permission
+`MailboxSettings.Read`. Add it to the app registration and authorize with
+`--mail-triage` as well:
+
+```bash
+msgvault add-o365 you@example.com --graph --mail-write --mail-triage
+```
+
+This reauthorization saves the additional grant in the existing Graph mail
+token. Mail sync does not use either write or mailbox-settings permission.
+See [Deleting Email](/docs/usage/deletion/) for source deletion.
 
 To sync Microsoft contacts, also add the delegated permission
 `Contacts.ReadWrite`. See [CardDAV Contacts](/docs/usage/people-carddav/#microsoft-contacts).

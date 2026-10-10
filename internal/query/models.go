@@ -7,6 +7,8 @@ package query
 import (
 	"maps"
 	"time"
+
+	"go.kenn.io/msgvault/internal/store"
 )
 
 // AggregateRow represents a single row in an aggregate view.
@@ -86,6 +88,8 @@ type MessageDetail struct {
 	To   []Address `json:"to"`
 	Cc   []Address `json:"cc"`
 	Bcc  []Address `json:"bcc"`
+
+	Calendar *store.CalendarProjection `json:"calendar,omitempty"`
 
 	// Content
 	BodyText string `json:"body_text"`
@@ -366,6 +370,8 @@ type AccountInfo struct {
 	SourceType  string
 	Identifier  string // email address
 	DisplayName string
+	// CountsPending reports that the daemon is still refreshing account counts.
+	CountsPending bool `json:"counts_pending,omitempty"`
 	// LastSyncAt is the source's most recent sync activity. Provider
 	// messages newer than this may not be archived yet. Nil when the
 	// source has never synced.

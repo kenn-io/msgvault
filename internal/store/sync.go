@@ -50,12 +50,15 @@ type syncGeneration struct {
 func (s *Store) ScopedToSync(sourceID, syncRunID int64) *Store {
 	base := s.withoutSyncScope()
 	return &Store{
-		db:                   base.db,
-		dbPath:               base.dbPath,
-		sqliteFilesystemPath: base.sqliteFilesystemPath,
-		dialect:              base.dialect,
-		readOnly:             base.readOnly,
-		fts5Available:        base.fts5Available,
+		db:                       base.db,
+		dbPath:                   base.dbPath,
+		sqliteFilesystemPath:     base.sqliteFilesystemPath,
+		dialect:                  base.dialect,
+		readOnly:                 base.readOnly,
+		fts5Available:            base.fts5Available,
+		directoryProjectionReady: base.directoryProjectionReady,
+		mcpBase:                  base.mcpRoot(),
+		mcpIngest:                s.mcpIngest,
 
 		syncGeneration:     &syncGeneration{sourceID: sourceID, runID: syncRunID},
 		syncBase:           base,
@@ -90,6 +93,16 @@ func (s *Store) fenceSyncGenerationTx(
 ) error {
 	if s.syncGeneration == nil {
 		return nil
+	}
+	// Scoped Store transactions call this before their writer callback. The
+	// identity fence must precede even the sync_runs reservation, or source
+	// removal can deadlock while holding identity before its table locks.
+	// Attribution entries already hold that fence before their source locks;
+	// keep shared ownership so different sources can sync concurrently.
+	if tx.attribution == nil {
+		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+			return err
+		}
 	}
 	var runID int64
 	err := tx.QueryRowContext(ctx, `
@@ -470,6 +483,9 @@ func (s *Store) startSyncOnce(
 
 	rebind := s.dialect.Rebind
 	now := s.dialect.Now()
+	if err := s.lockSyncIdentityContext(ctx, conn); err != nil {
+		return 0, err
+	}
 
 	// Serialize against concurrent StartSync for the same source.
 	// SQLite already serializes writers under BEGIN IMMEDIATE; PG
@@ -554,6 +570,9 @@ func (s *Store) recoverAbandonedSyncSource(ctx context.Context, sourceID int64) 
 func (s *Store) recoverAbandonedSyncSourceQueries(
 	ctx context.Context, q contextStatementQuerier, sourceID int64, now string,
 ) error {
+	if err := s.lockSyncIdentityContext(ctx, q); err != nil {
+		return err
+	}
 	var lockedID int64
 	if err := q.QueryRowContext(ctx,
 		s.Rebind(`SELECT id FROM sources WHERE id = ?`+s.dialect.SelectForUpdate()),
@@ -579,6 +598,18 @@ func (s *Store) recoverAbandonedSyncSourceQueries(
 		return fmt.Errorf("fail abandoned sync: %w", err)
 	}
 	return nil
+}
+
+// Sync setup changes no identity evidence. Shared ownership preserves the
+// identity-before-source order without blocking other sources' ingestion.
+// Events capture retains its exclusive outer fence.
+func (s *Store) lockSyncIdentityContext(ctx context.Context, q contextStatementQuerier) error {
+	if !s.captureMCPEnabled() {
+		return s.shareIdentityLockContext(ctx, q)
+	}
+	return lockIdentityMutationContext(ctx, func(ctx context.Context, query string, args ...any) (sql.Result, error) {
+		return q.ExecContext(ctx, s.Rebind(query), args...)
+	})
 }
 
 // SyncOperation is the durable status of one higher-level sync invocation.
@@ -1155,6 +1186,11 @@ func validateCurrentSyncGeneration(
 }
 
 func lockSyncSourceTx(ctx context.Context, tx *loggedTx, sourceID int64) error {
+	// Keep control transitions and scoped ingestion in the same global order:
+	// identity, source, then sync-run and archive tables.
+	if err := lockIdentityMutationContext(ctx, tx.ExecContext); err != nil {
+		return err
+	}
 	result, err := tx.ExecContext(
 		ctx, `UPDATE sources SET updated_at = updated_at WHERE id = ?`, sourceID,
 	)
@@ -1555,7 +1591,12 @@ type Source struct {
 // fields instead of a unique-violation error.
 func (s *Store) GetOrCreateSource(sourceType, identifier string) (*Source, error) {
 	now := s.dialect.Now()
-	row := s.db.QueryRow(fmt.Sprintf(`
+	var source *Source
+	err := s.withTx(func(tx *loggedTx) error {
+		if err := s.lockIdentityMutationTx(tx); err != nil {
+			return err
+		}
+		row := tx.QueryRow(fmt.Sprintf(`
 		INSERT INTO sources (source_type, identifier, created_at, updated_at)
 		VALUES (?, ?, %s, %s)
 		ON CONFLICT (source_type, identifier) DO UPDATE
@@ -1565,7 +1606,10 @@ func (s *Store) GetOrCreateSource(sourceType, identifier string) (*Source, error
 		          created_at, updated_at
 	`, now, now), sourceType, identifier)
 
-	source, err := scanSource(row)
+		var err error
+		source, err = scanSource(row)
+		return err
+	})
 	if err != nil {
 		return nil, fmt.Errorf("upsert source: %w", err)
 	}
@@ -1579,7 +1623,7 @@ func (s *Store) GetOrCreateSource(sourceType, identifier string) (*Source, error
 	// process launch) re-adds every source not yet linked. Self-heals
 	// on next CLI invocation; until then collection-scoped reads of
 	// All would miss this source. Acceptable for a single-user tool;
-	// a future refactor can fold this into a withTx.
+	// a future refactor can include membership in the source transaction.
 	if _, err := s.db.Exec(
 		s.dialect.InsertOrIgnore(
 			`INSERT OR IGNORE INTO collection_sources (collection_id, source_id)

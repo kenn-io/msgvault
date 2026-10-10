@@ -165,20 +165,23 @@ func TestDraftReadsDoNotRequireConfirmation(t *testing.T) {
 	for _, tc := range []struct {
 		command string
 		args    map[string]any
+		stdout  string
+		want    any
 	}{
-		{"draft-get", map[string]any{"conversation": 3}},
-		{"draft-send-as", map[string]any{"account": "a@example.com"}},
+		{"draft-get", map[string]any{"conversation": 3}, `[{"draft_id":"d1"}]`, map[string]any{"data": []any{map[string]any{"draft_id": "d1"}}}},
+		{"draft-send-as", map[string]any{"account": "a@example.com"}, `{"source_id":1,"account":"a@example.com","send_as":[]}`, map[string]any{"source_id": float64(1), "account": "a@example.com", "send_as": []any{}}},
 	} {
 		t.Run(tc.command, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
-			runner := &draftTestRunner{result: DraftCommandResult{Stdout: `{"status":"done"}`}}
+			runner := &draftTestRunner{result: DraftCommandResult{Stdout: tc.stdout}}
 			session := draftConfirmationSession(t, runner, tc.command)
 			result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: strings.ReplaceAll(tc.command, "-", "_"), Arguments: tc.args})
 			require.NoError(err)
 			assert.False(result.NeedsInput())
 			assert.False(result.IsError)
 			assert.Equal(1, runner.calls)
+			assert.Equal(tc.want, result.StructuredContent)
 		})
 	}
 }
@@ -212,13 +215,30 @@ func TestDraftToolCatalogFollowsCommandsAndWriteClass(t *testing.T) {
 		require.True(ok)
 		assert.Equal(true, annotations["destructiveHint"])
 	}
-	opts.DelegatedOnly = true
+	opts.DraftToolsOnly = true
 	opts.DraftCommands = []string{"draft-reply", "draft-compose", "draft-get", "draft-edit", "draft-delete", "draft-recover"}
 	tools := rawListTools(t, opts, true)
 	assert.Len(tools, 6)
 	assert.NotContains(toolsByName(t, tools), ToolGetStats)
 	response := rawModernCall(t, opts, HTTPOptions{AllowWrites: true}, "resources/templates/list", nil)
 	assert.Empty(response.Result["resourceTemplates"])
+	clientTransport, serverTransport := sdkmcp.NewInMemoryTransports()
+	serverSession, err := newMCPServer(ServeOptions{Drafts: &draftTestRunner{}, DraftCommands: commands}, true).Connect(t.Context(), serverTransport, nil)
+	require.NoError(err)
+	t.Cleanup(func() { _ = serverSession.Close() })
+	client := sdkmcp.NewClient(&sdkmcp.Implementation{Name: "draft-test", Version: "1"}, nil)
+	session, err := client.Connect(t.Context(), clientTransport, nil)
+	require.NoError(err)
+	t.Cleanup(func() { _ = session.Close() })
+	listed, err := session.ListTools(t.Context(), nil)
+	require.NoError(err)
+	var stdioDrafts []string
+	for _, tool := range listed.Tools {
+		if strings.HasPrefix(tool.Name, "draft_") {
+			stdioDrafts = append(stdioDrafts, tool.Name)
+		}
+	}
+	assert.Len(stdioDrafts, 8)
 }
 
 func TestDraftToolResultShapes(t *testing.T) {
@@ -237,6 +257,9 @@ func TestDraftToolResultShapes(t *testing.T) {
 			require := require.New(t)
 			runner := &draftTestRunner{result: DraftCommandResult{Stdout: tc.stdout}, err: tc.err}
 			result := confirmedCallTool(t, ServeOptions{Drafts: runner, DraftCommands: []string{"draft-reply"}}, ToolDraftReply, map[string]any{"message_id": 7, "source_id": 9, "body": "reply", "all": false}, true)
+			assert.Equal("7", runner.request.Positional)
+			assert.Equal([]string{"9"}, runner.request.Flags["source-id"])
+			assert.NotContains(runner.request.Flags, "all")
 			if tc.text != "" {
 				assert.Equal(true, result["isError"])
 				content, ok := result["content"].([]any)
@@ -254,7 +277,7 @@ func TestDraftToolResultShapes(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)
 		clientTransport, serverTransport := sdkmcp.NewInMemoryTransports()
-		serverSession, err := newMCPServer(ServeOptions{Drafts: &draftTestRunner{err: errors.New("private transport detail")}, DraftCommands: []string{"draft-get"}, DelegatedOnly: true}, true).Connect(t.Context(), serverTransport, nil)
+		serverSession, err := newMCPServer(ServeOptions{Drafts: &draftTestRunner{err: errors.New("private transport detail")}, DraftCommands: []string{"draft-get"}, DraftToolsOnly: true}, true).Connect(t.Context(), serverTransport, nil)
 		require.NoError(err)
 		t.Cleanup(func() { _ = serverSession.Close() })
 		client := sdkmcp.NewClient(&sdkmcp.Implementation{Name: "draft-error-test", Version: "1"}, nil)

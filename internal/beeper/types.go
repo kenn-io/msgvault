@@ -84,15 +84,32 @@ type ChatParticipants struct {
 	Total   int           `json:"total"`
 }
 
+// ChatCapabilities uses pointers because absent support is unknown.
+type ChatCapabilities struct {
+	Archive      *bool `json:"archive"`
+	MarkAsUnread *bool `json:"markAsUnread"`
+}
+type ChatMerge struct {
+	ChatIDs       []string `json:"chatIDs"`
+	DefaultChatID string   `json:"defaultChatID"`
+}
+
 // Chat is a conversation on one account.
 type Chat struct {
-	ID           string           `json:"id"` // Matrix room ID, globally unique
-	AccountID    string           `json:"accountID"`
-	Network      string           `json:"network"`
-	Title        string           `json:"title"`
-	Type         string           `json:"type"` // "single" | "group"
-	Participants ChatParticipants `json:"participants"`
-	LastActivity time.Time        `json:"lastActivity"`
+	ID                     string            `json:"id"` // Matrix room ID, globally unique
+	AccountID              string            `json:"accountID"`
+	Network                string            `json:"network"`
+	Title                  string            `json:"title"`
+	Type                   string            `json:"type"` // "single" | "group"
+	Participants           ChatParticipants  `json:"participants"`
+	LastActivity           time.Time         `json:"lastActivity"`
+	IsArchived             *bool             `json:"isArchived"`
+	IsMarkedUnread         *bool             `json:"isMarkedUnread"`
+	UnreadCount            *int              `json:"unreadCount"`
+	Capabilities           *ChatCapabilities `json:"capabilities"`
+	Merge                  *ChatMerge        `json:"merge"`
+	MergedIntoChatID       string            `json:"mergedIntoChatID"`
+	LastReadMessageSortKey string            `json:"lastReadMessageSortKey"`
 	// Draft is the composer draft as sent: absent, null, or an object.
 	Draft jsontext.Value `json:"draft"`
 }

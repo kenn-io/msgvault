@@ -60,6 +60,7 @@ below, or replace a page's trailing slash with `.md`: `/docs/setup/` becomes
 ## Maintain and Operate
 
 - [Backup and Restore](https://msgvault.io/docs/usage/backup.md): snapshot repositories
+- [Review an Inbox Rollout](https://msgvault.io/docs/usage/inbox-rollout.md): unreleased native controls, permissions, and recovery
 - [Verify Integrity](https://msgvault.io/docs/guides/verification.md)
 - [Deduplication](https://msgvault.io/docs/usage/deduplication.md)
 - [Deleting Email](https://msgvault.io/docs/usage/deletion.md): staging and gated execution

@@ -117,7 +117,7 @@ func (value ActivityRefKind) Valid() bool {
 // they independently derive RefKind/Channel from the same inputs, and any
 // disagreement makes the authoritative write reject the projection as stale.
 func IsMeetingMessageType(messageType string) bool {
-	return messageType == "calendar_event" || messageType == "meeting_transcript"
+	return messageType == MessageTypeCalendarEvent || messageType == "meeting_transcript"
 }
 
 type ActivityEventPerson struct {

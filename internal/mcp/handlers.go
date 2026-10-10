@@ -9,6 +9,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -131,6 +132,7 @@ func listLimitArg(args map[string]any) int {
 }
 
 type handlers struct {
+	events              EventsBackend
 	downloads           *downloadCache
 	engine              query.Engine
 	archiveSQLQuerier   ArchiveSQLQuerier
@@ -150,9 +152,22 @@ type handlers struct {
 	personAgendaBackend PersonAgendaBackend
 	kata                KataBackend
 	identityReview      IdentityReviewBackend
+	identityOperations  IdentityOperationBackend
 	personCardDAV       PersonCardDAVBackend
-	identityScoring     IdentityScoringBackend
-	drafts              DraftRunner
+
+	scopedCardDAVPreview   ScopedCardDAVPreviewBackend
+	scopedCardDAVApprove   ScopedCardDAVApproveBackend
+	scopedCardDAVReconcile ScopedCardDAVReconcileBackend
+
+	personMerge        PersonMergeBackend
+	messageTags        MessageTagBackend
+	identityScoring    IdentityScoringBackend
+	drafts             DraftRunner
+	inbox              InboxBackend
+	inboxCandidates    InboxCandidateBackend
+	inboxContext       InboxContextBackend
+	inboxTriagePreview InboxTriagePreviewBackend
+	inboxTriageApply   InboxTriageApplyBackend
 
 	// Optional vector-search wiring. When hybridEngine is nil, the
 	// search_message_bodies handler rejects mode=vector and mode=hybrid with
@@ -660,6 +675,20 @@ func getIDArg(args map[string]any, key string) (int64, error) {
 		return 0, fmt.Errorf("%s must be a positive integer", key)
 	}
 	return int64(v), nil
+}
+
+// getMessageIDArg preserves int64 archive IDs carried by Events as decimal
+// strings while retaining the numeric contract of existing message reads.
+func getMessageIDArg(args map[string]any) (int64, error) {
+	value, ok := args["id"].(string)
+	if !ok {
+		return getIDArg(args, "id")
+	}
+	id, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || id <= 0 || strconv.FormatInt(id, 10) != value {
+		return 0, errors.New("id must be a positive integer or canonical decimal string")
+	}
+	return id, nil
 }
 
 // getDateArg extracts an optional date (YYYY-MM-DD) from the arguments map.
@@ -1576,43 +1605,61 @@ func lineNumberAt(body string, byteOffset int) int {
 }
 
 type getMessageResponse struct {
-	WebURL               string                 `json:"web_url,omitempty"`
-	ID                   int64                  `json:"id"`
-	SourceMessageID      string                 `json:"source_message_id"`
-	ConversationID       int64                  `json:"conversation_id"`
-	SourceConversationID string                 `json:"source_conversation_id"`
-	Subject              string                 `json:"subject"`
-	MessageType          string                 `json:"message_type,omitempty"`
-	Snippet              string                 `json:"snippet"`
-	SentAt               time.Time              `json:"sent_at"`
-	ReceivedAt           *time.Time             `json:"received_at,omitempty"`
-	DeletedAt            *time.Time             `json:"deleted_at,omitempty"`
-	SizeEstimate         int64                  `json:"size_estimate"`
-	HasAttachments       bool                   `json:"has_attachments"`
-	From                 []query.Address        `json:"from"`
-	To                   []query.Address        `json:"to"`
-	Cc                   []query.Address        `json:"cc"`
-	Bcc                  []query.Address        `json:"bcc"`
-	BodyText             string                 `json:"body_text"`
-	BodyHTML             string                 `json:"body_html"`
-	BodyFormat           string                 `json:"body_format,omitempty"`
-	BodyLength           int                    `json:"body_length"`
-	BodyReturned         int                    `json:"body_returned"`
-	Offset               int                    `json:"offset"`
-	HasMore              bool                   `json:"has_more"`
-	Labels               []string               `json:"labels"`
-	Attachments          []query.AttachmentInfo `json:"attachments"`
+	SourceID             int64                     `json:"source_id"`
+	IsFromMe             bool                      `json:"is_from_me"`
+	Calendar             *store.CalendarProjection `json:"calendar,omitempty"`
+	WebURL               string                    `json:"web_url,omitempty"`
+	ID                   int64                     `json:"id"`
+	SourceMessageID      string                    `json:"source_message_id"`
+	ConversationID       int64                     `json:"conversation_id"`
+	SourceConversationID string                    `json:"source_conversation_id"`
+	Subject              string                    `json:"subject"`
+	MessageType          string                    `json:"message_type,omitempty"`
+	Snippet              string                    `json:"snippet"`
+	SentAt               time.Time                 `json:"sent_at"`
+	ReceivedAt           *time.Time                `json:"received_at,omitempty"`
+	DeletedAt            *time.Time                `json:"deleted_at,omitempty"`
+	SizeEstimate         int64                     `json:"size_estimate"`
+	HasAttachments       bool                      `json:"has_attachments"`
+	From                 []query.Address           `json:"from"`
+	To                   []query.Address           `json:"to"`
+	Cc                   []query.Address           `json:"cc"`
+	Bcc                  []query.Address           `json:"bcc"`
+	BodyText             string                    `json:"body_text"`
+	BodyHTML             string                    `json:"body_html"`
+	BodyFormat           string                    `json:"body_format,omitempty"`
+	BodyLength           int                       `json:"body_length"`
+	BodyReturned         int                       `json:"body_returned"`
+	Offset               int                       `json:"offset"`
+	HasMore              bool                      `json:"has_more"`
+	Labels               []string                  `json:"labels"`
+	Attachments          []query.AttachmentInfo    `json:"attachments"`
 }
 
 func (h *handlers) getMessage(ctx context.Context, req toolRequest) (*toolResult, error) {
 	args := req.GetArguments()
 
-	id, err := getIDArg(args, "id")
+	id, err := getMessageIDArg(args)
 	if err != nil {
 		return toolErrorResult(err.Error()), nil
 	}
 
-	msg, err := h.engine.GetMessage(ctx, id)
+	var msg *query.MessageDetail
+	if value, present := args["event_id"]; present {
+		eventID, ok := value.(string)
+		if !ok || strings.TrimSpace(eventID) == "" {
+			return toolErrorResult("event_id must be a nonempty string"), nil
+		}
+		if h.events == nil {
+			return toolErrorResult("event-bound message reads are unavailable"), nil
+		}
+		msg, err = h.events.GetMCPEventMessage(ctx, eventID, id)
+		if err != nil {
+			return nil, &eventReadError{cause: err}
+		}
+	} else {
+		msg, err = h.engine.GetMessage(ctx, id)
+	}
 	if err != nil {
 		return messageLookupError("load message", err)
 	}
@@ -1671,6 +1718,7 @@ func (h *handlers) getMessage(ctx context.Context, req toolRequest) (*toolResult
 	}
 
 	return jsonResult(getMessageResponse{
+		SourceID: msg.SourceID, IsFromMe: msg.IsFromMe, Calendar: msg.Calendar,
 		WebURL:               msg.WebURL,
 		ID:                   msg.ID,
 		SourceMessageID:      msg.SourceMessageID,

@@ -1,7 +1,7 @@
 ---
-last_edited: "2026-10-01"
 title: Architecture Overview
 description: How msgvault captures communications, preserves the archive, and serves people, search, and automation.
+last_edited: "2026-10-06"
 ---
 
 msgvault keeps communications and curated relationships in an archive you
@@ -74,6 +74,16 @@ delegated grants, OAuth scope, and live calendar access before sending a provide
 write. Successful changes use calendar sync's Store persistence path immediately,
 without advancing sync cursors. Remote completion and archive completion are
 reported separately so clients can reconcile a partial failure.
+
+On unreleased `main`, opt-in [MCP Events](../usage/chat.md#events) capture live
+message, calendar, and draft occurrences in the same Store transaction as their
+archive changes. Writers acquire identity, sync-generation, and Events clock
+fences in that order. Historical and recovery scans do not emit live occurrences.
+The daemon owns encrypted subscription state, bounded retention, and independent
+callback workers. Callback resolution and HTTPS requests run outside Store
+transactions and the archive operation gate. Shutdown cancels and joins these
+workers before closing the Store. The MCP adapter forwards owner-authorized
+requests to this daemon; it does not open the archive or deliver callbacks.
 
 ## Responsibilities
 

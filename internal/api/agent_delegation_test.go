@@ -21,7 +21,7 @@ import (
 )
 
 // allowedDelegatedOps is the exact set. Keep in sync with delegatedOperationAllowed.
-var allowedDelegatedOps = []string{"runCLI", "getHealth", "controlCalendar"}
+var allowedDelegatedOps = []string{"runCLI", "getHealth", "controlCalendar", "controlInbox", "listInboxCandidates", "getInboxContext", "getInboxTriageMappings", "previewInboxTriage", "applyInboxTriage", "getMCPCapabilities", "previewIdentityOperation", "applyIdentityOperation", "getIdentityOperationReceipt", "getPersonProfile", "patchPerson", "getPersonStructuredProfile", "patchPersonStructuredProfile", "listPersonAttributes", "setPersonAttribute", "clearPersonAttribute", "mergePersons", "previewScopedCardDAVPublication", "approveScopedCardDAVPublication", "reconcileScopedCardDAVPublication"}
 
 // stubSourceResolverStore wraps mockStore and adds GetSourceByIDContext.
 type stubSourceStore struct {
@@ -237,8 +237,9 @@ func TestAgentTokenNeverFallsBack(t *testing.T) {
 
 // TestDelegatedOperationAllowlistIsClosed tests proof matrix row 8.
 // It enumerates all operations registered in the live route registry via the
-// OpenAPI spec and verifies that exactly the two allowed operations pass the
-// delegated auth middleware; every other /api/v1/* operation returns 401.
+// OpenAPI spec and verifies that exactly allowedDelegatedOps pass the
+// delegated auth middleware. Other /api/v1/* operations return 401, except
+// owner-only MCP Events operations, which return 403 with owner_required.
 func TestDelegatedOperationAllowlistIsClosed(t *testing.T) {
 	t.Parallel()
 	assert := assert.New(t)
@@ -300,15 +301,26 @@ func TestDelegatedOperationAllowlistIsClosed(t *testing.T) {
 					"allowed op %q (%s %s) must not return 401; got %d", op.OperationID, strings.ToUpper(method), rawPath, w.Code)
 				testedAllowed++
 			} else {
-				assert.Equal(http.StatusUnauthorized, w.Code,
-					"non-allowed op %q (%s %s) must return 401; got %d", op.OperationID, strings.ToUpper(method), rawPath, w.Code)
+				wantStatus := http.StatusUnauthorized
+				if strings.HasPrefix(rawPath, "/api/v1/mcp/events/") {
+					wantStatus = http.StatusForbidden
+					var denial struct {
+						Code   int    `json:"code"`
+						Reason string `json:"reason"`
+					}
+					require.NoError(json.Unmarshal(w.Body.Bytes(), &denial))
+					assert.Equal(-32012, denial.Code)
+					assert.Equal("owner_required", denial.Reason)
+				}
+				assert.Equal(wantStatus, w.Code,
+					"non-allowed op %q (%s %s) must return %d; got %d", op.OperationID, strings.ToUpper(method), rawPath, wantStatus, w.Code)
 				testedDenied++
 			}
 		}
 	}
 
 	assert.GreaterOrEqual(testedAllowed, len(allowedDelegatedOps),
-		"all two allowed ops must appear under /api/v1/*")
+		"all allowed ops must appear under /api/v1/*")
 	assert.Greater(testedDenied, 10,
 		"many non-allowed ops must be registered under /api/v1/")
 }

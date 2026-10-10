@@ -27,6 +27,7 @@ var mcpHTTPAddr string
 var mcpHTTPAllowInsecure bool
 var mcpHTTPAllowWrites bool
 var mcpAllowProfileWrites bool
+var mcpAllowSourceWrites bool
 var mcpAllowIdentityDecisions bool
 var mcpAllowIdentityScoring bool
 var mcpAllowPersonMerges bool
@@ -45,11 +46,12 @@ This allows Claude Desktop (or any MCP client) to query your archive
 using tools like search_metadata, search_message_bodies, search_document_attachments, semantic_search_messages, get_message, list_messages, list_thread, export_eml, get_stats,
 aggregate, get_person_agenda, list_saved_views, run_saved_view, stage_deletion,
 draft_reply, draft_compose, draft_forward, draft_get, draft_edit, draft_delete,
-draft_recover, and draft_send_as.
+draft_recover, draft_send_as, and the inbox_* tools for state, capabilities,
+folders, signed actions, and receipts.
 Draft tools create, read, edit, delete, and recover managed drafts through the
 daemon. Msgvault never sends. With --agent-url and --agent-token-file, stdio
-exposes only delegated draft and calendar tools and the daemon enforces the
-agent grant.
+exposes granted inbox, delegated draft, and compatible calendar tools; the daemon
+enforces the agent grant.
 
 Add to Claude Desktop config:
   {
@@ -62,11 +64,11 @@ Add to Claude Desktop config:
 	  }`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		state := invocationFromCommand(cmd)
-		if state == nil || (state.cfg == nil && !isAgentMode(state)) {
-			return errors.New("configuration is unavailable")
+		if isAgentMode(state) {
+			return runDelegatedMCP(cmd)
 		}
-		if isAgentMode(state) && mcpHTTPAddr != "" {
-			return usageErr(cmd, errors.New("delegated MCP supports stdio only"))
+		if state == nil || state.cfg == nil {
+			return errors.New("configuration is unavailable")
 		}
 		cfg := state.cfg
 		httpAddr, inboundKey, err := prepareMCPHTTP(cmd, cfg)
@@ -82,7 +84,7 @@ Add to Claude Desktop config:
 			if !cmd.Flags().Changed("http-token-file") && !cmd.Flags().Changed("http-token-env") {
 				// Local startup may have created the key. OpenHTTPStore refreshes
 				// it after discovering or starting the daemon that owns the archive.
-				inboundKey = cfg.Server.AuthenticationKey()
+				inboundKey = httpStoreAPIKey(info, cfg)
 			}
 			httpAddr, err = normalizeMCPHTTPAddr(httpAddr, mcpHTTPAllowInsecure, inboundKey != "")
 			if err != nil {
@@ -97,15 +99,18 @@ Add to Claude Desktop config:
 		ctx, cancel := context.WithCancel(cmd.Context())
 		defer cancel()
 
-		var opts mcpserver.ServeOptions
-		if isAgentMode(state) {
-			if opts, err = delegatedMCPServeOptions(ctx, st); err != nil {
-				return err
-			}
-		} else {
-			opts = daemonMCPServeOptions(ctx, st, state)
+		opts := daemonMCPServeOptions(ctx, st, state)
+		independentCredential := cmd.Flags().Changed("http-token-file") || cmd.Flags().Changed("http-token-env")
+		if httpAddr == "" || independentCredential {
+			opts.Events = nil
 		}
 		opts.AllowProfileWrites = mcpAllowProfileWrites
+		if mcpAllowSourceWrites {
+			opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, mcpserver.OperationFamilySources)
+		}
+		if mcpAllowProfileWrites {
+			opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, mcpserver.OperationFamilyRecords)
+		}
 		opts.AllowIdentityDecisions = mcpAllowIdentityDecisions
 		opts.AllowIdentityScoring = mcpAllowIdentityScoring
 		opts.AllowPersonMerges = mcpAllowPersonMerges
@@ -115,11 +120,12 @@ Add to Claude Desktop config:
 
 		if httpAddr != "" {
 			return serveMCPHTTPWithOptions(ctx, opts, mcpserver.HTTPOptions{
-				Addr:               httpAddr,
-				DiscoveryDirectory: filepath.Join(cfg.HomeDir, "mcp"),
-				BackendURL:         info.URL,
-				APIKey:             inboundKey,
-				AllowWrites:        mcpHTTPAllowWrites,
+				Addr:                  httpAddr,
+				DiscoveryDirectory:    filepath.Join(cfg.HomeDir, "mcp"),
+				BackendURL:            info.URL,
+				APIKey:                inboundKey,
+				AllowWrites:           mcpHTTPAllowWrites,
+				IndependentCredential: independentCredential,
 			})
 		}
 		return serveMCPStdioWithOptions(ctx, opts)
@@ -154,11 +160,15 @@ func prepareMCPHTTP(cmd *cobra.Command, cfg *config.Config) (string, string, err
 		}
 		key, err = providercredentials.ResolveSecret("", "", name)
 	default:
-		err = cfg.ResolveServerKey()
-		key = cfg.Server.AuthenticationKey()
-		// A local daemon may create the default key during startup. Enforce
-		// the inbound key requirement after OpenHTTPStore has resolved it.
-		deferKeyCheck = !isRemoteModeFor(invocationFromCommand(cmd))
+		if isRemoteModeFor(invocationFromCommand(cmd)) {
+			key = cfg.Remote.AuthenticationKey()
+		} else {
+			err = cfg.ResolveServerKey()
+			key = cfg.Server.AuthenticationKey()
+		}
+		// Daemon resolution selects the remote owner key or creates a local
+		// default key. Enforce its presence after OpenHTTPStore resolves it.
+		deferKeyCheck = true
 	}
 	if err != nil {
 		return "", "", fmt.Errorf("MCP inbound credential: %w", err)
@@ -175,28 +185,54 @@ const identityReviewMinAPISchemaVersion = "3.0.0"
 const identityScoringMinAPISchemaVersion = "3.0.0"
 const draftsMinAPISchemaVersion = "3.0.0"
 
-// delegatedMCPServeOptions offers only the tools an agent grant can use.
-// Draft tools are the floor, so an older daemon fails instead of serving an empty msgvault.
-func delegatedMCPServeOptions(ctx context.Context, st *daemonclient.Client) (mcpserver.ServeOptions, error) {
+func runDelegatedMCP(cmd *cobra.Command) error {
+	if mcpHTTPAddr != "" {
+		return usageErr(cmd, errors.New("--http is not available in agent-delegated mode; run the stdio MCP server"))
+	}
+	if _, _, err := prepareMCPHTTP(cmd, nil); err != nil {
+		return usageErr(cmd, err)
+	}
+	st, _, err := OpenHTTPStore(cmd.Context())
+	if err != nil {
+		return fmt.Errorf("open daemon: %w", err)
+	}
+	defer func() { _ = st.Close() }()
+	ctx, cancel := context.WithCancel(cmd.Context())
+	defer cancel()
+	// Restricted startup fails closed when the daemon cannot serve a delegated lane.
 	health, err := st.Health(ctx)
 	if err != nil {
-		return mcpserver.ServeOptions{}, fmt.Errorf("check daemon compatibility: %w", err)
+		return fmt.Errorf("check daemon compatibility: %w", err)
 	}
 	var schemaVersion string
 	if health != nil && health.APISchemaVersion != nil {
 		schemaVersion = *health.APISchemaVersion
 	}
 	if !daemonclient.APISchemaVersionAtLeast(schemaVersion, draftsMinAPISchemaVersion) {
-		return mcpserver.ServeOptions{}, fmt.Errorf("MCP draft tools require daemon API schema %s or newer (daemon reports %q); upgrade the daemon", draftsMinAPISchemaVersion, schemaVersion)
+		return fmt.Errorf("MCP draft tools require daemon API schema %s or newer (daemon reports %q); upgrade the daemon", draftsMinAPISchemaVersion, schemaVersion)
 	}
 	opts := mcpserver.ServeOptions{
-		Drafts: daemonMCPDraftRunner{client: st}, DraftCommands: mcpDraftCommands(true), DelegatedOnly: true,
+		Drafts: daemonMCPDraftRunner{client: st}, DraftCommands: mcpDraftCommands(true), DraftToolsOnly: true,
+		AllowCalendarWrites:    mcpAllowCalendarWrites,
+		AllowIdentityDecisions: mcpAllowIdentityDecisions,
+		AllowProfileWrites:     mcpAllowProfileWrites,
+		AllowPersonMerges:      mcpAllowPersonMerges,
+	}
+	if mcpAllowProfileWrites {
+		opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, mcpserver.OperationFamilyRecords)
 	}
 	if daemonclient.APISchemaVersionAtLeast(schemaVersion, calendarControlMinAPISchemaVersion) {
 		opts.Calendar = st
+		opts.CalendarOnly = true
 	}
-	return opts, nil
+	if err := applyMCPDiscovery(ctx, st, &opts, schemaVersion, true); err != nil {
+		return err
+	}
+	return serveMCPStdioWithOptions(ctx, opts)
 }
+
+// messageTagsMinAPISchemaVersion adds native Gmail label and IMAP keyword edits.
+const messageTagsMinAPISchemaVersion = "3.2.0"
 
 // personAgendaMinAPISchemaVersion adds live task-backed person agendas.
 const personAgendaMinAPISchemaVersion = "2.30.0"
@@ -206,6 +242,8 @@ const archiveSQLMinAPISchemaVersion = "2.31.0"
 
 // calendarControlMinAPISchemaVersion adds delegated Calendar tools.
 const calendarControlMinAPISchemaVersion = "3.1.0"
+
+const mcpEventsMinAPISchemaVersion = "3.2.0"
 
 // kataIssuesMinAPISchemaVersion adds Kata issues that quote archive evidence.
 const kataIssuesMinAPISchemaVersion = "3.4.0"
@@ -231,12 +269,13 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 	}
 	engine := daemonclient.NewEngineAdapter(st)
 	opts := mcpserver.ServeOptions{
-		Engine:             engine,
-		AttachmentReader:   st,
-		ManifestSaver:      daemonMCPManifestSaver{client: st},
-		DocumentSearcher:   st,
-		PersonFileSearcher: daemonMCPPersonFileSearcher{client: st},
-		Drafts:             daemonMCPDraftRunner{client: st},
+		SuppressMessageTagWrites: true,
+		Engine:                   engine,
+		AttachmentReader:         st,
+		ManifestSaver:            daemonMCPManifestSaver{client: st},
+		DocumentSearcher:         st,
+		PersonFileSearcher:       daemonMCPPersonFileSearcher{client: st},
+		Drafts:                   daemonMCPDraftRunner{client: st},
 	}
 	if cfg != nil {
 		opts.AttachmentsDir = cfg.AttachmentsDir()
@@ -282,6 +321,18 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, calendarControlMinAPISchemaVersion) {
 		opts.Calendar = st
 	}
+	if isAgentMode(state) || st.UsesDelegatedAuthentication() {
+		limited := mcpserver.ServeOptions{Calendar: opts.Calendar, CalendarOnly: true, DraftToolsOnly: true, Drafts: opts.Drafts}
+		if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, draftsMinAPISchemaVersion) {
+			limited.DraftCommands = mcpDraftCommands(true)
+		}
+		if err := applyMCPDiscovery(ctx, st, &limited, schemaVersion, true); err != nil {
+			limited.Calendar = nil
+			limited.DraftCommands = nil
+			log.Warn("delegated MCP tools disabled because operation discovery failed", "error", err)
+		}
+		return limited
+	}
 	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, personAgendaMinAPISchemaVersion) {
 		opts.PersonAgendaBackend = st
 	}
@@ -298,6 +349,9 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, personCardDAVMinAPISchemaVersion) {
 		opts.PersonCardDAV = st
 	}
+	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, messageTagsMinAPISchemaVersion) {
+		opts.MessageTags = st
+	}
 	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, identityScoringMinAPISchemaVersion) {
 		opts.IdentityScoring = st
 	}
@@ -305,6 +359,15 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 		opts.DraftCommands = mcpDraftCommands(false)
 	}
 
+	if err := applyMCPDiscovery(ctx, st, &opts, schemaVersion, false); err != nil {
+		log.Warn("inbox tools disabled because operation discovery failed", "error", err)
+	}
+	if capabilityErr == nil && health != nil && health.McpEvents != nil && *health.McpEvents &&
+		daemonclient.APISchemaVersionAtLeast(schemaVersion, mcpEventsMinAPISchemaVersion) && st.MCPEventsOwnerCredential() {
+		if catalog, err := st.MCPEventsList(ctx); err == nil && len(catalog.Events) > 0 {
+			opts.Events = st
+		}
+	}
 	return opts
 }
 
@@ -446,7 +509,7 @@ func (s daemonMCPSimilarSearcher) FindSimilar(
 }
 
 func init() {
-	mcpCmd.AddCommand(newMCPStatusCommand())
+	mcpCmd.AddCommand(newMCPStatusCommand(), newMCPEventsCommand())
 	rootCmd.AddCommand(mcpCmd)
 	mcpCmd.Flags().BoolVar(&mcpForceSQL, "force-sql", false, "Deprecated in 0.17.0: set [analytics].engine = \"sql\" in config.toml")
 	mcpCmd.Flags().BoolVar(&mcpNoSQLiteScanner, "no-sqlite-scanner", false, "Deprecated in 0.17.0: cache engine selection is daemon-managed")
@@ -467,8 +530,10 @@ func init() {
 			"deletion manifests, Saved View management, managed draft writes, and profile writes separately enabled with "+
 			"--allow-profile-writes, identity decisions, identity scoring, person merges, CardDAV writes, calendar writes, and Kata issue writes enabled "+
 			"with their separate opt-ins; enable it only for trusted, authenticated clients.")
+	mcpCmd.Flags().BoolVar(&mcpAllowSourceWrites, "allow-source-writes", false,
+		"Expose configured source synchronization and Slack selection writes. Each call requires MCP client confirmation after user approval.")
 	mcpCmd.Flags().BoolVar(&mcpAllowProfileWrites, "allow-profile-writes", false,
-		"Expose person promotion and private Notes writes. Model tool calls "+
+		"Expose person promotion, saved display-name and private Notes writes. Model tool calls "+
 			"can persist profile data, so enable this only for sessions where the user "+
 			"has explicitly authorized profile writes.")
 	mcpCmd.Flags().BoolVar(&mcpAllowIdentityDecisions, "allow-identity-decisions", false,

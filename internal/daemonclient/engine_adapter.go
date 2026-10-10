@@ -802,6 +802,8 @@ func queryDetailFromAPIMessage(msg *store.APIMessage) *query.MessageDetail {
 	}
 	detail := &query.MessageDetail{
 		ID:                   msg.ID,
+		IsFromMe:             msg.IsFromMe,
+		Calendar:             msg.Calendar,
 		SourceID:             msg.SourceID,
 		SourceMessageID:      msg.SourceMessageID,
 		ConversationID:       msg.ConversationID,
@@ -1363,7 +1365,7 @@ func (e *Engine) SearchByDomains(ctx context.Context, domains []string, after, b
 
 // ListAccounts returns all archive source accounts.
 func (e *Engine) ListAccounts(ctx context.Context) ([]query.AccountInfo, error) {
-	accounts, _, err := e.store.GetCLIAccounts(ctx)
+	accounts, countsPending, err := e.store.GetCLIAccounts(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1371,11 +1373,12 @@ func (e *Engine) ListAccounts(ctx context.Context) ([]query.AccountInfo, error) 
 	result := make([]query.AccountInfo, len(accounts))
 	for i, acc := range accounts {
 		result[i] = query.AccountInfo{
-			ID:          acc.ID,
-			SourceType:  acc.Type,
-			Identifier:  acc.Email,
-			DisplayName: acc.DisplayName,
-			LastSyncAt:  copyTime(acc.LastSync),
+			ID:            acc.ID,
+			SourceType:    acc.Type,
+			Identifier:    acc.Email,
+			DisplayName:   acc.DisplayName,
+			CountsPending: countsPending,
+			LastSyncAt:    copyTime(acc.LastSync),
 		}
 	}
 	return result, nil

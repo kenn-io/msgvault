@@ -220,6 +220,7 @@ func (s *Store) listAttributeValuesContext(
 
 // setAttributeValueTx supersedes the current value in the slot and inserts a
 // replacement. The caller has loaded the definition and taken its own locks.
+// A zero expected value ID requires an empty, explicitly selected slot.
 func (s *Store) setAttributeValueTx(
 	ctx context.Context, tx *loggedTx, owner attributeOwner, definition AttributeDefinition,
 	input attributeValueInput, activeFrom, transactionTime time.Time,
@@ -237,6 +238,11 @@ func (s *Store) setAttributeValueTx(
 		return nil, fmt.Errorf(
 			"%w: ordinal %d is not allowed on %s, which declares cardinality single",
 			ErrAttributeValueInvalid, *input.Ordinal, definition.Slug)
+	}
+	if input.ExpectedValueID != nil && *input.ExpectedValueID == 0 &&
+		definition.Cardinality == AttributeCardinalityMulti && input.Ordinal == nil {
+		return nil, fmt.Errorf("%w: an absent-value precondition requires an explicit ordinal for %s",
+			ErrAttributeValueInvalid, definition.Slug)
 	}
 	if input.Value.Type == AttributeValueRecordReference {
 		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
@@ -267,8 +273,11 @@ func (s *Store) setAttributeValueTx(
 	if err != nil {
 		return nil, err
 	}
-	if input.ExpectedValueID != nil && (!hasCurrent || current.ID != *input.ExpectedValueID) {
-		return nil, owner.conflict(current)
+	if input.ExpectedValueID != nil {
+		expected := *input.ExpectedValueID
+		if expected == 0 && hasCurrent || expected != 0 && (!hasCurrent || current.ID != expected) {
+			return nil, owner.conflict(current)
+		}
 	}
 	write := &attributeValueWrite{}
 	if hasCurrent {

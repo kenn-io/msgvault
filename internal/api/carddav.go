@@ -1019,6 +1019,7 @@ func (c *CardDAVController) Runs(ctx context.Context, limit int, beforeID *int64
 }
 
 func (s *Server) registerCardDAVRoutes(api huma.API) {
+	s.registerScopedCardDAVPublicationRoutes(api)
 	authorize := rawAPIV1Operation("beginGoogleCardDAVAuthorization", http.MethodPost, "/carddav/google/authorize", "Start Google Contacts authorization in a browser")
 	authorize.Description = "Start sign-in from the msgvault Web UI. The Origin header must match the redirect_uri origin, and redirect_uri must be the Web UI's root URL. For terminal authorization, use msgvault carddav authorize-google."
 	authorize.Parameters = append(authorize.Parameters, &huma.Param{Name: "Origin", In: "header", Required: true,

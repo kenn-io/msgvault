@@ -32,6 +32,10 @@ type CompleteGoogleCardDAVAuthorizationBody = CardDAVGoogleCallbackRequest
 
 type ApproveCardDAVPublicationBody = CardDAVPublicationApprovalRequest
 
+type ApproveScopedCardDAVPublicationBody = CardDAVScopedPublicationApprovalRequest
+
+type ReconcileScopedCardDAVPublicationBody = CardDAVScopedPublicationApprovalRequest
+
 type SyncCardDAVBody = CardDAVSyncRequest
 
 type UpdateCLIAccountBody = UpdateRequest
@@ -108,6 +112,10 @@ type ReviewAcceptIdentityMatchCandidateBody = DecideIdentityMatchReviewedRequest
 
 type ReviewRejectIdentityMatchCandidateBody = DecideIdentityMatchReviewedRequest
 
+type ApplyIdentityOperationBody = IdentityOperationApplyRequest
+
+type PreviewIdentityOperationBody = IdentityPreviewRequest
+
 type PersonMatchScoringConsentBody = PersonMatchConsentDecisionRequest
 
 type PersonMatchScoringRevokeBody = PersonMatchConsentDecisionRequest
@@ -120,17 +128,35 @@ type ImportMeetingBody = MeetingImportRequest
 
 type CreateImportJobBody = ImportJobRequest
 
+type GetInboxContextBody = InboxContextRequest
+
+type ControlInboxBody = InboxRequest
+
+type ApplyInboxTriageBody = InboxTriageProposal
+
+type UpdateInboxTriageMappingsBody = InboxTriageMappingUpdate
+
+type PreviewInboxTriageBody = InboxTriageInput
+
 type PrepareKataEvidenceBody = KataEvidencePrepareRequest
 
 type CreateKataIssueBody = KataIssueCreateRequest
 
 type LinkKataEvidenceBody = KataEvidenceLinkRequest
 
+type ListMCPEventsBody = MCPEventsListRequest
+
+type SubscribeMCPEventsBody = SubscribeRequest
+
+type UnsubscribeMCPEventsBody = UnsubscribeRequest
+
 type ListMeetingActionItemsBody = MeetingActionsRequest
 
 type GetMeetingContextBody = MeetingContextRequest
 
 type GetMeetingMetricsBody = MeetingMetricsRequest
+
+type UpdateMessageTagsBody = MessageTagChange
 
 type CreateOrLinkMessageTaskBody = TaskLinkMutationRequest
 

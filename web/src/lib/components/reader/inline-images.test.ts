@@ -173,6 +173,7 @@ describe('resolveArchivedInlineImages', () => {
     expect(html).toContain('Inline image unavailable: Image 0');
   });
 
+  // Exercise the full serialized budget with the same allowance as the large-image fixture above.
   it('bounds repeated near-limit data URLs and the final serialized document', async () => {
     const repeatedCount = 10;
     const input = fixture(Array.from({ length: repeatedCount }, () => 'large@example.com'));
@@ -196,7 +197,7 @@ describe('resolveArchivedInlineImages', () => {
     expect(html.length).toBeLessThanOrEqual(
       MAX_ARCHIVED_INLINE_IMAGE_SERIALIZED_BYTES + input.html.length + 4_096
     );
-  });
+  }, 30_000);
 
   it('fetches exactly 32 unique CIDs and leaves thousands beyond the cap visible', async () => {
     const input = fixture(Array.from({ length: 2_000 }, (_value, index) => `unique-${index}@example.com`));

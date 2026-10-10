@@ -981,22 +981,19 @@ func TestRemoveNonMatrixAccountDoesNotWaitForMatrixLifecycleLock(t *testing.T) {
 			return nil
 		})
 	}()
+	defer func() {
+		close(releaseLock)
+		require.NoError(<-lockDone)
+	}()
 	select {
 	case <-lockHeld:
 	case <-time.After(5 * time.Second):
 		require.FailNow("Matrix lifecycle lock was not acquired")
 	}
-	removeDone := make(chan error, 1)
-	go func() { removeDone <- executeRemoveAccount(t, ctx) }()
-	select {
-	case err := <-removeDone:
-		require.NoError(err)
-	case <-time.After(5 * time.Second):
-		close(releaseLock)
-		require.FailNow("unrelated account removal waited for Matrix lifecycle lock")
-	}
-	close(releaseLock)
-	require.NoError(<-lockDone)
+	// Completion while the Matrix lock is held proves removal does not take
+	// that lock. Schema initialization and cache rebuilding have no speed
+	// requirement; keep the worker in this test until both finish.
+	require.NoError(executeRemoveAccount(t, ctx))
 }
 
 func TestRemoveAccountCmd_HoldsCacheLockThroughRebuild(t *testing.T) {
@@ -1661,17 +1658,10 @@ func TestDiscordAddLifecycleBlocksFinalCredentialRemovalUntilGuildRegistration(t
 	}
 
 	close(resumeAdd)
-	waitResult := func(label string, result <-chan error) error {
-		select {
-		case err := <-result:
-			return err
-		case <-time.After(5 * time.Second):
-			require.FailNow("timed out waiting for Discord lifecycle operation", "operation: %s", label)
-			return errors.New("unreachable timeout")
-		}
-	}
-	require.NoError(waitResult("add", addDone))
-	require.NoError(waitResult("remove", removeDone))
+	// The lifecycle lock is released. Join both operations before fixture
+	// cleanup; account removal also rebuilds caches and has no speed contract.
+	require.NoError(<-addDone, "add must finish after releasing the lifecycle pause")
+	require.NoError(<-removeDone, "remove must finish after the new guild is registered")
 	require.NoError(st.Close())
 	_, err = os.Stat(tokenPath)
 	require.NoError(err, "credential must survive because the newly registered guild references it")

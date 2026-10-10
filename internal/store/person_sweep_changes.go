@@ -345,7 +345,6 @@ func (s *Store) publishPersonIdentityScopeChangesTx(
 	ctx context.Context,
 	tx *loggedTx,
 	personIDs []int64,
-	effect peoplesweep.EvidenceChangeEffect,
 ) error {
 	personIDs = slices.Clone(personIDs)
 	slices.Sort(personIDs)
@@ -402,7 +401,7 @@ func (s *Store) publishPersonIdentityScopeChangesTx(
 		for rows.Next() {
 			change := peoplesweep.ArchiveChange{
 				PersonID: personID, Kind: peoplesweep.ChangeScope,
-				EvidenceEffect: effect,
+				EvidenceEffect: peoplesweep.EvidenceEffectIdentityReassigned,
 			}
 			if err := rows.Scan(&change.SourceID, &change.MessageID, &change.SourceLane,
 				&change.AttachmentID, &change.OccurrenceKey); err != nil {

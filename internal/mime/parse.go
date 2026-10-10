@@ -553,8 +553,8 @@ func stripAddressDecorations(value string) string {
 
 // extractDomain extracts the domain from an email address.
 func extractDomain(email string) string {
-	if idx := strings.LastIndex(email, "@"); idx >= 0 {
-		return strings.ToLower(email[idx+1:])
+	if _, domain, found := strings.CutLast(email, "@"); found {
+		return strings.ToLower(domain)
 	}
 	return ""
 }

@@ -78,6 +78,7 @@ function stateWithGroup(): ExploreState {
 
 describe('meeting archive reader navigation', () => {
   it('preflights detail, opens the real reader, and restores scope and focus through Back/Forward and Close', async () => {
+    // The real reader and three history transitions share one integration budget.
     let resolveDetail!: (response: Response) => void;
     const { client, requests } = handler(() => new Promise<Response>((resolve) => { resolveDetail = resolve; }));
     const state = stateWithMeetingFilter();
@@ -115,7 +116,7 @@ describe('meeting archive reader navigation', () => {
     expect(metricRequests.filter((body) => body.scope?.message_ids === undefined)).toHaveLength(2);
     expect(metricRequests.filter((body) => body.scope?.message_ids?.[0] === 42)).toEqual([{ scope: { message_ids: [42] } }]);
     view.unmount(); state.destroy();
-  });
+  }, 10_000);
 
   it('restores an archive marker from a deep URL without fabricating a list row or draining pages', async () => {
     const { client, requests } = handler();

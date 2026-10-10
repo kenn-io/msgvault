@@ -8,6 +8,10 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- Preview explicit participant links and person bindings through [scoped native
+  identity operations](api-server.md#explicit-identity-operations-unreleased).
+  MCP exposes the caller's admitted actions with write opt-ins and confirmation;
+  committed receipts support recovery after a lost acknowledgement.
 - msgvault sends anonymous usage telemetry: a daemon ping at startup and once
   each later UTC day, and an `app_opened` event the web UI reports through the
   daemon when it opens and on its first focus on a later UTC day. Events carry
@@ -54,6 +58,14 @@ All notable changes to msgvault, grouped by release.
   and MCP interfaces. Write consent and exact source permissions are opt-in;
   guest notifications default to `none`. The daemon verifies calendar access
   and archives successful changes immediately.
+- [`message-tags`](cli-reference.md#message-tags) reads and edits Gmail
+  labels, IMAP keywords, and Microsoft Graph categories on one archived message
+  through the CLI and MCP using signed inbox control, and saves the verified
+  result to the archive. HTTP tag reads and previews remain available; unsigned
+  tag writes now return `inbox_preview_required`. HTTP edits use the
+  [signed preview and receipt contract](api-server.md#inbox-control-unreleased).
+  Microsoft Graph sync now archives categories, so the first sync of an
+  existing Microsoft account after upgrading walks every folder once.
 - [Twilio calls](usage/meetings.md#twilio) archive as searchable meetings with
   their recordings saved locally.
 - [Kata issues](usage/kata-issues.md) can quote an exact passage from a

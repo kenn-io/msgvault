@@ -24,6 +24,7 @@ import (
 	"go.kenn.io/msgvault/internal/deletion"
 	msgexport "go.kenn.io/msgvault/internal/export"
 	"go.kenn.io/msgvault/internal/fileutil"
+	"go.kenn.io/msgvault/internal/inboxcontrol"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/search"
@@ -118,21 +119,22 @@ type SourceStatusResponse struct {
 
 // SourceStatus represents one source and its read-only sync status.
 type SourceStatus struct {
-	ID                    int64          `json:"id"`
-	SourceType            string         `json:"source_type"`
-	Identifier            string         `json:"identifier"`
-	DisplayName           *string        `json:"display_name"`
-	LastSyncAt            *string        `json:"last_sync_at"`
-	UpdatedAt             string         `json:"updated_at"`
-	ActiveSync            *SyncRunStatus `json:"active_sync"`
-	LatestSync            *SyncRunStatus `json:"latest_sync"`
-	LastSuccessfulSync    *SyncRunStatus `json:"last_successful_sync"`
-	CanSync               bool           `json:"can_sync"`
-	SyncUnavailableReason string         `json:"sync_unavailable_reason,omitempty"`
-	Scheduled             bool           `json:"scheduled"`
-	Schedule              string         `json:"schedule,omitempty"`
-	NextSyncAt            *string        `json:"next_sync_at"`
-	SchedulerLastError    string         `json:"scheduler_last_error,omitempty"`
+	ProviderIngestion     *inboxcontrol.ProviderIngestion `json:"provider_ingestion,omitempty"`
+	ID                    int64                           `json:"id"`
+	SourceType            string                          `json:"source_type"`
+	Identifier            string                          `json:"identifier"`
+	DisplayName           *string                         `json:"display_name"`
+	LastSyncAt            *string                         `json:"last_sync_at"`
+	UpdatedAt             string                          `json:"updated_at"`
+	ActiveSync            *SyncRunStatus                  `json:"active_sync"`
+	LatestSync            *SyncRunStatus                  `json:"latest_sync"`
+	LastSuccessfulSync    *SyncRunStatus                  `json:"last_successful_sync"`
+	CanSync               bool                            `json:"can_sync"`
+	SyncUnavailableReason string                          `json:"sync_unavailable_reason,omitempty"`
+	Scheduled             bool                            `json:"scheduled"`
+	Schedule              string                          `json:"schedule,omitempty"`
+	NextSyncAt            *string                         `json:"next_sync_at"`
+	SchedulerLastError    string                          `json:"scheduler_last_error,omitempty"`
 	// SchedulerQueued reports a scheduled run waiting for another job to
 	// finish; SchedulerPending a follow-up run requested while one executes;
 	// SchedulerStartedAt when the executing run began.
@@ -231,6 +233,16 @@ type HealthResponse struct {
 	// /api/v1/health so remote CLI clients can refuse a major-version mismatch
 	// before issuing commands. Omitted on the public unauthenticated /health.
 	APISchemaVersion string `json:"api_schema_version,omitempty"`
+	// Events discovery is available only to the daemon's owner API key.
+	MCPEvents            *bool                `json:"mcp_events,omitzero" nullable:"false"`
+	MCPEventCapabilities []MCPEventCapability `json:"mcp_event_capabilities,omitempty"`
+}
+
+type MCPEventCapability struct {
+	Family     string   `json:"family"`
+	SourceType string   `json:"source_type"`
+	Kinds      []string `json:"kinds"`
+	ReadTools  []string `json:"read_tools"`
 }
 
 type MessageListResponse struct {
@@ -327,6 +339,8 @@ type MessageSummary struct {
 // MessageDetail represents a full message response.
 type MessageDetail struct {
 	MessageSummary
+
+	Calendar *store.CalendarProjection `json:"calendar,omitempty"`
 
 	Body     string `json:"body"`
 	BodyHTML string `json:"body_html,omitempty"`
@@ -569,6 +583,7 @@ func messageDetailFromQuery(qMsg *query.MessageDetail) MessageDetail {
 		HasAttach:       qMsg.HasAttachments,
 		SizeBytes:       qMsg.SizeEstimate,
 		IsFromMe:        qMsg.IsFromMe,
+		Calendar:        qMsg.Calendar,
 		Body:            body,
 		BodyHTML:        qMsg.BodyHTML,
 		Attachments:     attachments,
@@ -779,6 +794,7 @@ func (s *Server) handleGetMessage(w http.ResponseWriter, r *http.Request) {
 		Body:           msg.Body,
 		BodyHTML:       msg.BodyHTML,
 		IsFromMe:       msg.IsFromMe,
+		Calendar:       msg.Calendar,
 	}
 
 	attachments := make([]AttachmentInfo, 0, len(msg.Attachments))
@@ -1616,6 +1632,7 @@ func (s *Server) sourceStatus(ctx context.Context, statusStore SourceStatusStore
 		return SourceStatus{}, err
 	}
 
+	status.ProviderIngestion = sourceProviderIngestion(status.LatestSync)
 	return status, nil
 }
 

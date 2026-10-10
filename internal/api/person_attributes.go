@@ -63,7 +63,7 @@ type SetPersonAttributeRequest struct {
 	Actor           *string              `json:"actor,omitzero" nullable:"false"`
 	ActiveFrom      *time.Time           `json:"active_from,omitempty"`
 	ActiveUntil     *time.Time           `json:"active_until,omitempty"`
-	ExpectedValueID *int64               `json:"expected_value_id,omitzero" nullable:"false"`
+	ExpectedValueID *int64               `json:"expected_value_id,omitzero" nullable:"false" minimum:"0" doc:"Current value ID, or zero to require an empty slot; required for delegated edits. Multi-valued creation requires an explicit ordinal."`
 }
 
 // AppendPersonNoteRequest carries one note fragment and its provenance.
@@ -85,19 +85,21 @@ func (s *Server) registerPersonAttributeRoutes(api huma.API) {
 		queryStringParam("universal_id",
 			"Restrict the response to one portable definition identifier", false))
 	list.Responses = jsonResponsesFor[PersonAttributesResponse](api)
-	addErrorResponses(api, list.Responses, http.StatusNotFound, http.StatusServiceUnavailable)
+	addPersonETagHeader(list.Responses[httpStatusKey(http.StatusOK)])
+	addErrorResponses(api, list.Responses, http.StatusBadRequest, http.StatusForbidden, http.StatusNotFound, http.StatusNotImplemented, http.StatusServiceUnavailable)
 	registerRawHumaRoute(api, list, s.handleListPersonAttributes)
 
 	set := rawAPIV1Operation("setPersonAttribute", http.MethodPut,
 		"/people/{id}/attributes/{slug}", "Set a person's attribute value")
 	addPersonIDParameter(&set)
 	addAttributeSlugParameter(&set)
+	addAttributePersonIfMatchParameter(&set)
 	set.Parameters = append(set.Parameters,
 		queryBooleanParam("dry_run", "Validate and preview without writing"))
 	set.RequestBody = jsonRequestBodyFor[SetPersonAttributeRequest](api)
 	set.Responses = jsonResponsesFor[store.PersonAttributeWrite](api)
 	addErrorResponses(api, set.Responses, http.StatusBadRequest, http.StatusConflict,
-		http.StatusNotFound, http.StatusServiceUnavailable)
+		http.StatusForbidden, http.StatusNotFound, http.StatusRequestEntityTooLarge, http.StatusPreconditionRequired, http.StatusNotImplemented, http.StatusServiceUnavailable)
 	set.Responses[httpStatusKey(http.StatusConflict)] = personAttributeConflictResponse(api)
 	registerRawHumaRoute(api, set, s.handleSetPersonAttribute)
 
@@ -116,6 +118,7 @@ func (s *Server) registerPersonAttributeRoutes(api huma.API) {
 		"/people/{id}/attributes/{slug}", "Supersede a person's attribute value")
 	addPersonIDParameter(&clearOperation)
 	addAttributeSlugParameter(&clearOperation)
+	addAttributePersonIfMatchParameter(&clearOperation)
 	clearOperation.Parameters = append(clearOperation.Parameters,
 		queryIntegerParam("ordinal", "Ordinal for a multi-valued definition"),
 		queryIntegerParam("expected_value_id",
@@ -123,7 +126,7 @@ func (s *Server) registerPersonAttributeRoutes(api huma.API) {
 		queryBooleanParam("dry_run", "Validate and preview without writing"))
 	clearOperation.Responses = jsonResponsesFor[store.PersonAttributeWrite](api)
 	addErrorResponses(api, clearOperation.Responses, http.StatusBadRequest, http.StatusConflict,
-		http.StatusNotFound, http.StatusServiceUnavailable)
+		http.StatusForbidden, http.StatusNotFound, http.StatusRequestEntityTooLarge, http.StatusPreconditionRequired, http.StatusNotImplemented, http.StatusServiceUnavailable)
 	clearOperation.Responses[httpStatusKey(http.StatusConflict)] = personAttributeConflictResponse(api)
 	registerRawHumaRoute(api, clearOperation, s.handleClearPersonAttribute)
 }
@@ -145,6 +148,13 @@ func addAttributeSlugParameter(operation *huma.Operation) {
 	})
 }
 
+func addAttributePersonIfMatchParameter(operation *huma.Operation) {
+	addPersonIfMatchParameter(operation)
+	parameter := operation.Parameters[len(operation.Parameters)-1]
+	parameter.Required = false
+	parameter.Description = "Person revision tag from the attributes response. Required for delegated edits; checked when supplied by an owner. Value-slot CAS is separate."
+}
+
 func (s *Server) handleListPersonAttributes(w http.ResponseWriter, r *http.Request) {
 	attributes, ok := s.personAttributeStore(w)
 	if !ok {
@@ -153,6 +163,15 @@ func (s *Server) handleListPersonAttributes(w http.ResponseWriter, r *http.Reque
 	personID, ok := personProfileID(w, r)
 	if !ok {
 		return
+	}
+	if !s.admitPersonTarget(w, r, personID, false) {
+		return
+	}
+	if s.requestAuthentication(r).Mode == AuthModeDelegated {
+		if _, ok := s.store.(ScopedPersonAttributeStore); !ok {
+			writeError(w, http.StatusNotImplemented, "person_scope_unavailable", "Native scoped attribute access is unavailable")
+			return
+		}
 	}
 	includeHistory, _, err := queryBool(r, "history")
 	if err != nil {
@@ -172,7 +191,8 @@ func (s *Server) handleListPersonAttributes(w http.ResponseWriter, r *http.Reque
 			return
 		}
 	}
-	if _, err := s.requirePersonForAttributes(w, r, personID); err != nil {
+	person, err := s.requirePersonForAttributes(w, r, personID)
+	if err != nil {
 		return
 	}
 	definitions, err := attributes.ListAttributeDefinitionsContext(r.Context(),
@@ -245,6 +265,7 @@ func (s *Server) handleListPersonAttributes(w http.ResponseWriter, r *http.Reque
 		}
 		response.Attributes = append(response.Attributes, group)
 	}
+	w.Header().Set(etagHeaderName, personETag(*person))
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, response)
 }
@@ -258,6 +279,18 @@ func (s *Server) handleSetPersonAttribute(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
+	if !s.admitPersonTarget(w, r, personID, true) {
+		return
+	}
+	delegated := s.requestAuthentication(r).Mode == AuthModeDelegated
+	var revision int64
+	conditional := delegated || len(r.Header.Values(ifMatchHeaderName)) > 0
+	if conditional {
+		revision, ok = personIfMatch(w, r, personID)
+		if !ok {
+			return
+		}
+	}
 	dryRun, _, err := queryBool(r, "dry_run")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
@@ -267,23 +300,51 @@ func (s *Server) handleSetPersonAttribute(w http.ResponseWriter, r *http.Request
 	if !decodeAttributeRequest(w, r, &request) {
 		return
 	}
-	if request.ExpectedValueID != nil && *request.ExpectedValueID < 1 {
+	if request.ExpectedValueID != nil && *request.ExpectedValueID < 0 {
 		writeError(w, http.StatusBadRequest, "invalid_expected_value_id",
-			"expected_value_id must be a positive integer")
+			"expected_value_id must be a nonnegative integer")
 		return
 	}
 	source := store.Provenance(strings.TrimSpace(request.Source))
 	if source == "" {
 		source = store.ProvenanceUser
 	}
-	write, err := attributes.SetPersonAttributeValueContext(r.Context(),
-		store.PersonAttributeValueInput{
-			PersonID: personID, DefinitionSlug: slug, Ordinal: request.Ordinal,
-			Value: request.Value, ActiveFrom: request.ActiveFrom,
-			ActiveUntil: request.ActiveUntil, Source: source, SourceRef: request.SourceRef,
-			Confidence: request.Confidence, Actor: request.Actor,
-			ExpectedValueID: request.ExpectedValueID, DryRun: dryRun,
-		})
+	if delegated {
+		if request.ExpectedValueID == nil {
+			writeError(w, http.StatusPreconditionRequired, "attribute_precondition_required", "expected_value_id is required; zero requires an empty slot")
+			return
+		}
+		if source != store.ProvenanceUser || request.Actor != nil || request.SourceRef != nil || request.Confidence != nil || request.Value.Type == store.AttributeValueRecordReference || request.Value.RecordType != nil || request.Value.RecordID != nil {
+			writeError(w, http.StatusBadRequest, "invalid_delegated_attribute", "Delegated attribute edits require user provenance and a value without record references")
+			return
+		}
+	}
+	input := store.PersonAttributeValueInput{
+		PersonID: personID, DefinitionSlug: slug, Ordinal: request.Ordinal,
+		Value: request.Value, ActiveFrom: request.ActiveFrom,
+		ActiveUntil: request.ActiveUntil, Source: source, SourceRef: request.SourceRef,
+		Confidence: request.Confidence, Actor: request.Actor,
+		ExpectedValueID: request.ExpectedValueID, DryRun: dryRun,
+	}
+	var write *store.PersonAttributeWrite
+	if conditional {
+		backend, authorize, admitted := s.scopedPersonAttributeAdmission(w, r, personID, revision)
+		if !admitted {
+			return
+		}
+		if delegated {
+			release, admitted := s.beginScopedPersonEdit(w, r)
+			if !admitted {
+				return
+			}
+			defer release()
+			actor := "agent:" + s.requestAuthentication(r).Grant.ID
+			input.Actor = &actor
+		}
+		write, err = backend.SetPersonAttributeValueAuthorizedContext(r.Context(), input, authorize)
+	} else {
+		write, err = attributes.SetPersonAttributeValueContext(r.Context(), input)
+	}
 	if err != nil {
 		s.writeAttributeError(w, err)
 		return
@@ -301,15 +362,50 @@ func (s *Server) handleClearPersonAttribute(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
+	if !s.admitPersonTarget(w, r, personID, true) {
+		return
+	}
+	delegated := s.requestAuthentication(r).Mode == AuthModeDelegated
+	var revision int64
+	conditional := delegated || len(r.Header.Values(ifMatchHeaderName)) > 0
+	if conditional {
+		revision, ok = personIfMatch(w, r, personID)
+		if !ok {
+			return
+		}
+	}
 	query, ok := s.attributeClearQuery(w, r)
 	if !ok {
 		return
 	}
-	write, err := attributes.SupersedePersonAttributeValueContext(r.Context(),
-		store.PersonAttributeSupersedeInput{
-			PersonID: personID, DefinitionSlug: slug, Ordinal: query.ordinal,
-			ExpectedValueID: query.expectedValueID, DryRun: query.dryRun,
-		})
+	if delegated && query.expectedValueID == nil {
+		writeError(w, http.StatusPreconditionRequired, "attribute_precondition_required", "expected_value_id is required")
+		return
+	}
+	input := store.PersonAttributeSupersedeInput{
+		PersonID: personID, DefinitionSlug: slug, Ordinal: query.ordinal,
+		ExpectedValueID: query.expectedValueID, DryRun: query.dryRun,
+	}
+	var write *store.PersonAttributeWrite
+	var err error
+	if conditional {
+		backend, authorize, admitted := s.scopedPersonAttributeAdmission(w, r, personID, revision)
+		if !admitted {
+			return
+		}
+		if delegated {
+			release, admitted := s.beginScopedPersonEdit(w, r)
+			if !admitted {
+				return
+			}
+			defer release()
+			actor := "agent:" + s.requestAuthentication(r).Grant.ID
+			input.Actor = &actor
+		}
+		write, err = backend.SupersedePersonAttributeValueAuthorizedContext(r.Context(), input, authorize)
+	} else {
+		write, err = attributes.SupersedePersonAttributeValueContext(r.Context(), input)
+	}
 	if err != nil {
 		s.writeAttributeError(w, err)
 		return
@@ -427,6 +523,9 @@ func (s *Server) requirePersonForAttributes(
 	if err != nil {
 		s.writeAttributeError(w, err)
 		return nil, err
+	}
+	if !s.admitPersonRead(w, r, person) {
+		return nil, errPersonScopeDenied
 	}
 	return person, nil
 }

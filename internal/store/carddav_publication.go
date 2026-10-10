@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 type CardDAVMutationOperation string
@@ -49,6 +51,7 @@ type CardDAVPublicationPlan struct {
 }
 
 type CardDAVPublication struct {
+	PendingIntentID           string
 	ConflictOwned             bool
 	OutgoingEnvelopeMetadata  []byte
 	ApprovedBodySHA256        *string
@@ -106,19 +109,35 @@ func (s *Store) PrepareCardDAVPublicationContext(
 	if plan.Desired && (len(plan.OutgoingBody) == 0 || plan.OutgoingSemanticHash == "" || plan.LocalHash == "") {
 		return nil, ErrCardDAVInvalidPlan
 	}
-	return s.prepareCardDAVPublicationContext(ctx, plan, nil)
+	return s.prepareCardDAVPublicationContext(ctx, plan, nil, nil)
 }
 
-func (s *Store) prepareCardDAVPublicationContext(ctx context.Context, plan CardDAVPublicationPlan, review *CardDAVReviewedPublicationPlan) (*CardDAVPublication, error) {
+func (s *Store) prepareCardDAVPublicationContext(ctx context.Context, plan CardDAVPublicationPlan, review *CardDAVReviewedPublicationPlan, authorize PersonEditAuthorizer) (*CardDAVPublication, error) {
+	binding, bound, err := s.cardDAVReceiptBinding(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if bound && (review == nil || authorize == nil) {
+		return nil, ErrCardDAVInvalidPlan
+	}
+	if bound && binding.postedRequestHash != "" && (binding.personID != plan.PersonID || binding.postedRequestHash != cardDAVPostedPublicationHash(plan.PersonID, review.ApprovalToken)) {
+		return nil, ErrCardDAVPublicationMismatch
+	}
 	var prepared *CardDAVPublication
 	var options *sql.TxOptions
 	if review != nil {
 		options = &sql.TxOptions{Isolation: sql.LevelRepeatableRead}
 	}
-	err := s.withTxOptionsContext(ctx, options, func(tx *loggedTx) error {
+	err = s.withTxOptionsContext(ctx, options, func(tx *loggedTx) error {
 		var err error
-		prepared, err = s.prepareCardDAVPublicationTx(ctx, tx, plan, review)
-		return err
+		prepared, err = s.prepareCardDAVPublicationTx(ctx, tx, plan, review, authorize)
+		if err != nil {
+			return err
+		}
+		if bound && prepared.Noop {
+			return s.commitCardDAVNoopReceiptTx(ctx, tx, binding, plan, review, prepared, authorize)
+		}
+		return nil
 	})
 	if review != nil && (s.dialect.IsSerializationFailureError(err) || errors.Is(err, ErrVCardProjectionConflict) || errors.Is(err, ErrCardDAVStalePlan) || errors.Is(err, ErrCardDAVNoWriteTarget)) {
 		return nil, ErrCardDAVReviewStale
@@ -126,7 +145,10 @@ func (s *Store) prepareCardDAVPublicationContext(ctx context.Context, plan CardD
 	return prepared, err
 }
 
-func (s *Store) prepareCardDAVPublicationTx(ctx context.Context, tx *loggedTx, plan CardDAVPublicationPlan, review *CardDAVReviewedPublicationPlan) (*CardDAVPublication, error) {
+func (s *Store) prepareCardDAVPublicationTx(ctx context.Context, tx *loggedTx, plan CardDAVPublicationPlan, review *CardDAVReviewedPublicationPlan, authorize PersonEditAuthorizer) (*CardDAVPublication, error) {
+	if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+		return nil, err
+	}
 	var prepared *CardDAVPublication
 	err := func() error {
 		account, err := getCardDAVAccountForBookFrom(ctx, tx.Tx, s.Rebind, plan.AddressBookID)
@@ -220,6 +242,15 @@ func (s *Store) prepareCardDAVPublicationTx(ctx context.Context, tx *loggedTx, p
 				return ErrCardDAVStalePlan
 			}
 		}
+		if authorize != nil {
+			scope, err := s.identityGrantSelectionTx(ctx, tx, []int64{plan.PersonID}, []int64{plan.AddressBookID})
+			if err != nil {
+				return err
+			}
+			if err := authorize(ctx, scope); err != nil {
+				return err
+			}
+		}
 		if review != nil {
 			source, err := s.loadCardDAVPublicationReviewSourceTx(ctx, tx, plan.PersonID)
 			if err != nil {
@@ -292,7 +323,7 @@ func (s *Store) prepareCardDAVPublicationTx(ctx context.Context, tx *loggedTx, p
 				) VALUES (?, TRUE, ?, ?)
 				ON CONFLICT(person_id) DO UPDATE SET
 					desired = TRUE, address_book_id = excluded.address_book_id,
-					href = excluded.href, pending_operation = NULL,
+					href = excluded.href, pending_operation = NULL, pending_intent_id = NULL,
 					outgoing_body = NULL, outgoing_semantic_hash = NULL,
 					approved_body_sha256 = NULL, approved_inference_revision = NULL,
 					approved_mutation_revision = NULL, outgoing_envelope_metadata = NULL,
@@ -356,8 +387,8 @@ func (s *Store) prepareCardDAVPublicationTx(ctx context.Context, tx *loggedTx, p
 			outgoing_body, outgoing_semantic_hash, local_hash, remote_etag,
 			connection_generation, book_sync_revision, mapping_revision,
 			previous_mapping_revision, create_recovery_used, mutation_revision,
-			pending_started_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, NULLIF(?, ''), ?, NULLIF(?, ''), ?, ?, ?, ?, FALSE, ?, ?, `+s.dialect.Now()+`)
+			pending_started_at, pending_intent_id, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, NULLIF(?, ''), ?, NULLIF(?, ''), ?, ?, ?, ?, FALSE, ?, ?, ?, `+s.dialect.Now()+`)
 		ON CONFLICT(person_id) DO UPDATE SET
 			desired = excluded.desired, address_book_id = excluded.address_book_id,
 			href = excluded.href, pending_operation = excluded.pending_operation,
@@ -371,11 +402,11 @@ func (s *Store) prepareCardDAVPublicationTx(ctx context.Context, tx *loggedTx, p
 			mapping_revision = excluded.mapping_revision,
 			previous_mapping_revision = excluded.previous_mapping_revision,
 			create_recovery_used = FALSE, mutation_revision = excluded.mutation_revision,
-			pending_started_at = excluded.pending_started_at, updated_at = `+s.dialect.Now(),
+			pending_started_at = excluded.pending_started_at, pending_intent_id = excluded.pending_intent_id, updated_at = `+s.dialect.Now(),
 			plan.PersonID, plan.Desired, plan.AddressBookID, plan.Href, operation,
 			outgoingBody, outgoingHash, snapshot.Fingerprint, remoteETag,
 			generation, bookRevision, mappingRevision, previousMappingRevision,
-			nextMutationRevision, timeValue(&now))
+			nextMutationRevision, timeValue(&now), uuid.NewString())
 		if err != nil {
 			return fmt.Errorf("persist CardDAV publication intent: %w", err)
 		}
@@ -461,11 +492,35 @@ func (s *Store) RefreshCardDAVPublicationFenceContext(
 	if err != nil {
 		return nil, err
 	}
+	return s.refreshCardDAVPublicationFenceContext(ctx, identity, nil)
+}
+
+// RefreshCardDAVPublicationFenceAuthorizedContext refreshes recovery fences
+// only for the expected pending mutation after checking current native authority.
+func (s *Store) RefreshCardDAVPublicationFenceAuthorizedContext(
+	ctx context.Context, expected CardDAVPublication, authorize PersonEditAuthorizer,
+) (*CardDAVPublication, error) {
+	if authorize != nil && (expected.ResolutionConflictID != 0 || expected.ConflictOwned) {
+		return nil, ErrCardDAVInvalidPlan
+	}
+	return s.refreshCardDAVPublicationFenceContext(ctx, &expected, authorize)
+}
+
+func (s *Store) refreshCardDAVPublicationFenceContext(
+	ctx context.Context, identity *CardDAVPublication, authorize PersonEditAuthorizer,
+) (*CardDAVPublication, error) {
+	personID := identity.PersonID
 	var publication *CardDAVPublication
-	err = s.withTxContext(ctx, func(tx *loggedTx) error {
+	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+			return err
+		}
 		current, err := s.lockCardDAVPublicationOperationTx(ctx, tx, personID, identity.AddressBookID)
 		if err != nil {
 			return err
+		}
+		if authorize != nil && !cardDAVPublicationIntentMatches(current, *identity) {
+			return ErrCardDAVStalePlan
 		}
 		if current.PendingOperation == "" {
 			return ErrCardDAVPublicationNotFound
@@ -495,6 +550,15 @@ func (s *Store) RefreshCardDAVPublicationFenceContext(
 			}
 			mappingRevision = resource.MappingRevision
 		}
+		if authorize != nil {
+			scope, err := s.identityGrantSelectionTx(ctx, tx, []int64{current.PersonID}, []int64{current.AddressBookID})
+			if err != nil {
+				return err
+			}
+			if err := authorize(ctx, scope); err != nil {
+				return err
+			}
+		}
 		_, err = tx.ExecContext(ctx, `UPDATE carddav_publications SET
 			book_sync_revision = ?, mapping_revision = ?, updated_at = `+s.dialect.Now()+`
 			WHERE person_id = ? AND mutation_revision = ?`,
@@ -521,14 +585,14 @@ func (s *Store) FenceCardDAVCreateCollisionContext(
 	}
 	var fenced *CardDAVPublication
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+			return err
+		}
 		if err := s.lockCardDAVPublicationTargetTx(ctx, tx, pending.AddressBookID); err != nil {
 			return err
 		}
 		if s.cardDAVCollisionIdentityLockHook != nil {
 			s.cardDAVCollisionIdentityLockHook()
-		}
-		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
-			return err
 		}
 		current, err := s.lockCardDAVPublicationOperationTx(ctx, tx, pending.PersonID, pending.AddressBookID)
 		if err != nil {
@@ -601,13 +665,41 @@ func (s *Store) FenceCardDAVCreateCollisionContext(
 func (s *Store) CommitCardDAVPublicationContext(
 	ctx context.Context, input CardDAVCanonicalMutation,
 ) error {
+	return s.CommitCardDAVPublicationAuthorizedContext(ctx, input, nil)
+}
+
+// CommitCardDAVPublicationAuthorizedContext checks current native authority
+// before settling the pending intent and canonical observation together.
+func (s *Store) CommitCardDAVPublicationAuthorizedContext(
+	ctx context.Context, input CardDAVCanonicalMutation, authorize PersonEditAuthorizer,
+) error {
 	pending := input.Publication
-	return s.withTxContext(ctx, func(tx *loggedTx) error {
+	receipt, hasReceipt, err := s.cardDAVReceiptBinding(ctx)
+	if err != nil || (hasReceipt && (authorize == nil || pending.PendingOperation != CardDAVMutationUpdate)) {
+		return ErrCardDAVInvalidPlan
+	}
+	if authorize != nil && (pending.ResolutionConflictID != 0 || pending.ConflictOwned) {
+		return ErrCardDAVInvalidPlan
+	}
+	ownerReceiptRecovery := false
+	err = s.withTxContext(ctx, func(tx *loggedTx) error {
+		ownerReceiptRecovery = false
+		var settlementReceipt *cardDAVReceiptBinding
+		settlementIntent := pending
+		if hasReceipt {
+			settlementReceipt = &receipt
+		}
+		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+			return err
+		}
 		current, err := s.lockCardDAVPublicationOperationTx(ctx, tx, pending.PersonID, pending.AddressBookID)
 		if err != nil {
 			return err
 		}
 		if current.MutationRevision != pending.MutationRevision || current.PendingOperation != pending.PendingOperation {
+			return ErrCardDAVStalePlan
+		}
+		if authorize != nil && !cardDAVPublicationIntentMatches(current, pending) {
 			return ErrCardDAVStalePlan
 		}
 		var generation, bookRevision int64
@@ -621,6 +713,26 @@ func (s *Store) CommitCardDAVPublicationContext(
 		}
 		if generation != current.ConnectionGeneration || bookRevision != current.BookSyncRevision {
 			return ErrCardDAVStalePlan
+		}
+		if !hasReceipt {
+			settlementReceipt, err = s.cardDAVOwnerRecoveryReceiptTx(ctx, tx, *current)
+			if err != nil && !errors.Is(err, ErrCardDAVPublicationReceiptNotFound) {
+				return err
+			}
+			if settlementReceipt != nil && authorize != nil {
+				return ErrCardDAVInvalidPlan
+			}
+			settlementIntent = *current
+			ownerReceiptRecovery = settlementReceipt != nil
+		}
+		if authorize != nil {
+			scope, err := s.identityGrantSelectionTx(ctx, tx, []int64{current.PersonID}, []int64{current.AddressBookID})
+			if err != nil {
+				return err
+			}
+			if err := authorize(ctx, scope); err != nil {
+				return err
+			}
 		}
 		snapshot, err := s.loadPersonVCardSnapshotTx(ctx, tx, current.PersonID)
 		if err != nil {
@@ -734,8 +846,14 @@ func (s *Store) CommitCardDAVPublicationContext(
 			return err
 		}
 
+		if settlementReceipt != nil {
+			if err := s.settleCardDAVPublicationReceiptTx(ctx, tx, settlementReceipt, settlementIntent, input.Remote.RemoteETag); err != nil {
+				return err
+			}
+		}
+
 		result, err := tx.ExecContext(ctx, `UPDATE carddav_publications SET desired = TRUE,
-			pending_operation = NULL, outgoing_body = NULL,
+			pending_operation = NULL, pending_intent_id = NULL, outgoing_body = NULL,
 			approved_body_sha256 = NULL, approved_inference_revision = NULL,
 			approved_mutation_revision = NULL, outgoing_envelope_metadata = NULL,
 			outgoing_semantic_hash = NULL, local_hash = NULL, remote_etag = NULL,
@@ -752,6 +870,12 @@ func (s *Store) CommitCardDAVPublicationContext(
 		}
 		return s.resolvePublicationConflictAuditTx(ctx, tx, pending)
 	})
+	// An ambiguous receipt observation must retain the original intent.
+	// Legacy owner conflict capture would clear that recovery evidence.
+	if ownerReceiptRecovery && errors.Is(err, ErrCardDAVPublicationMismatch) {
+		return ErrCardDAVPublicationPending
+	}
+	return err
 }
 
 func (s *Store) resolvePublicationConflictAuditTx(
@@ -783,7 +907,15 @@ func (s *Store) resolvePublicationConflictAuditTx(
 func (s *Store) RollbackCardDAVPublicationThrottleContext(
 	ctx context.Context, pending *CardDAVPublication, retryAfter time.Time,
 ) error {
-	return s.rollbackCardDAVPublicationContext(ctx, pending, &retryAfter)
+	return s.RollbackCardDAVPublicationThrottleAuthorizedContext(ctx, pending, retryAfter, nil)
+}
+
+// RollbackCardDAVPublicationThrottleAuthorizedContext authorizes the mapped
+// rollback and its owning account's retry deadline in the same transaction.
+func (s *Store) RollbackCardDAVPublicationThrottleAuthorizedContext(
+	ctx context.Context, pending *CardDAVPublication, retryAfter time.Time, authorize PersonEditAuthorizer,
+) error {
+	return s.rollbackCardDAVPublicationContext(ctx, pending, &retryAfter, authorize)
 }
 
 // RollbackCardDAVPublicationContext clears a definitively rejected remote
@@ -791,22 +923,64 @@ func (s *Store) RollbackCardDAVPublicationThrottleContext(
 func (s *Store) RollbackCardDAVPublicationContext(
 	ctx context.Context, pending *CardDAVPublication,
 ) error {
-	return s.rollbackCardDAVPublicationContext(ctx, pending, nil)
+	return s.RollbackCardDAVPublicationAuthorizedContext(ctx, pending, nil)
+}
+
+// RollbackCardDAVPublicationAuthorizedContext checks current authority before
+// clearing a definitively rejected publication intent and restoring its mapping.
+func (s *Store) RollbackCardDAVPublicationAuthorizedContext(
+	ctx context.Context, pending *CardDAVPublication, authorize PersonEditAuthorizer,
+) error {
+	return s.rollbackCardDAVPublicationContext(ctx, pending, nil, authorize)
 }
 
 func (s *Store) rollbackCardDAVPublicationContext(
-	ctx context.Context, pending *CardDAVPublication, retryAfter *time.Time,
+	ctx context.Context, pending *CardDAVPublication, retryAfter *time.Time, authorize PersonEditAuthorizer,
 ) error {
-	if pending == nil {
+	if pending == nil || (authorize != nil && (pending.ResolutionConflictID != 0 || pending.ConflictOwned)) {
+		return ErrCardDAVInvalidPlan
+	}
+	binding, bound, err := s.cardDAVReceiptBinding(ctx)
+	if err != nil {
+		return err
+	}
+	if bound && (authorize == nil || pending.PendingOperation != CardDAVMutationUpdate || pending.PendingIntentID == "" || pending.Noop) {
 		return ErrCardDAVInvalidPlan
 	}
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+			return err
+		}
 		current, err := s.lockCardDAVPublicationOperationTx(ctx, tx, pending.PersonID, pending.AddressBookID)
 		if err != nil {
 			return err
 		}
 		if current.MutationRevision != pending.MutationRevision || current.PendingOperation != pending.PendingOperation {
 			return ErrCardDAVStalePlan
+		}
+		if authorize != nil && !cardDAVPublicationIntentMatches(current, *pending) {
+			return ErrCardDAVStalePlan
+		}
+		if bound {
+			account, err := getCardDAVAccountForBookFrom(ctx, tx.Tx, s.Rebind, current.AddressBookID)
+			if err != nil {
+				return err
+			}
+			if account == nil {
+				return ErrCardDAVAddressBookNotFound
+			}
+			if account.ConnectionGeneration != current.ConnectionGeneration {
+				return ErrCardDAVStalePlan
+			}
+		}
+		if authorize != nil {
+			scope, err := s.identityGrantSelectionTx(ctx, tx, []int64{current.PersonID}, []int64{current.AddressBookID})
+			if err != nil {
+				return err
+			}
+			if err := authorize(ctx, scope); err != nil {
+				return err
+			}
 		}
 		if current.PendingOperation != CardDAVMutationCreate {
 			result, err := tx.ExecContext(ctx, `UPDATE carddav_resources SET
@@ -839,7 +1013,7 @@ func (s *Store) rollbackCardDAVPublicationContext(
 		}
 		result, err := tx.ExecContext(ctx, `UPDATE carddav_publications SET
 			desired = ?,
-			pending_operation = NULL, outgoing_body = NULL,
+			pending_operation = NULL, pending_intent_id = NULL, outgoing_body = NULL,
 			approved_body_sha256 = NULL, approved_inference_revision = NULL,
 			approved_mutation_revision = NULL, outgoing_envelope_metadata = NULL,
 			outgoing_semantic_hash = NULL, local_hash = NULL, remote_etag = NULL,
@@ -854,6 +1028,7 @@ func (s *Store) rollbackCardDAVPublicationContext(
 		if affected, _ := result.RowsAffected(); affected != 1 {
 			return ErrCardDAVStalePlan
 		}
+		var receiptRetryAfter *time.Time
 		if retryAfter != nil && !retryAfter.IsZero() {
 			account, err := getCardDAVAccountForBookFrom(ctx, tx.Tx, s.Rebind, current.AddressBookID)
 			if err != nil {
@@ -862,7 +1037,18 @@ func (s *Store) rollbackCardDAVPublicationContext(
 			if account == nil {
 				return ErrCardDAVAddressBookNotFound
 			}
-			return s.setCardDAVRetryAfterFrom(ctx, tx, *retryAfter, account.ID)
+			if err := s.setCardDAVRetryAfterFrom(ctx, tx, *retryAfter, account.ID); err != nil {
+				return err
+			}
+			if bound {
+				receiptRetryAfter, err = getCardDAVRetryAfterFrom(ctx, tx, account.ID)
+				if err != nil {
+					return err
+				}
+			}
+		}
+		if bound {
+			return s.rejectCardDAVPublicationReceiptTx(ctx, tx, binding, *current, retryAfter != nil, receiptRetryAfter)
 		}
 		return nil
 	})
@@ -961,7 +1147,7 @@ func getCardDAVPublicationFrom(
 	var result CardDAVPublication
 	var bookID, generation, bookRevision, mappingRevision, previousMapping sql.NullInt64
 	var href, operation, outgoingHash, localHash, remoteETag sql.NullString
-	var approvedBody sql.NullString
+	var approvedBody, pendingID sql.NullString
 	var approvedInference, approvedMutation sql.NullInt64
 	var outgoing []byte
 	var pendingAt sql.NullTime
@@ -969,11 +1155,11 @@ func getCardDAVPublicationFrom(
 		pending_operation, outgoing_body, outgoing_semantic_hash, local_hash,
 		remote_etag, connection_generation, book_sync_revision, mapping_revision,
 		previous_mapping_revision, create_recovery_used, mutation_revision,
-		pending_started_at, approved_body_sha256, approved_inference_revision, approved_mutation_revision, outgoing_envelope_metadata FROM carddav_publications WHERE person_id = ?`+suffix, personID).Scan(
+		pending_started_at, approved_body_sha256, approved_inference_revision, approved_mutation_revision, outgoing_envelope_metadata, pending_intent_id FROM carddav_publications WHERE person_id = ?`+suffix, personID).Scan(
 		&result.PersonID, &result.Desired, &bookID, &href, &operation, &outgoing,
 		&outgoingHash, &localHash, &remoteETag, &generation, &bookRevision,
 		&mappingRevision, &previousMapping, &result.CreateRecoveryUsed,
-		&result.MutationRevision, &pendingAt, &approvedBody, &approvedInference, &approvedMutation, &result.OutgoingEnvelopeMetadata)
+		&result.MutationRevision, &pendingAt, &approvedBody, &approvedInference, &approvedMutation, &result.OutgoingEnvelopeMetadata, &pendingID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrCardDAVPublicationNotFound
 	}
@@ -985,6 +1171,7 @@ func getCardDAVPublicationFrom(
 	}
 	result.ApprovedInferenceRevision = cardDAVInferenceNullInt64Ptr(approvedInference)
 	result.ApprovedMutationRevision = cardDAVInferenceNullInt64Ptr(approvedMutation)
+	result.PendingIntentID = pendingID.String
 	result.AddressBookID, result.Href = bookID.Int64, href.String
 	result.PendingOperation = CardDAVMutationOperation(operation.String)
 	result.OutgoingBody = append([]byte(nil), outgoing...)

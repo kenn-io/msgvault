@@ -5,6 +5,7 @@ const previewURL = `http://127.0.0.1:${previewPort}`;
 
 export default defineConfig({
   testDir: './tests',
+  globalSetup: './tests/global-setup.ts',
   reporter: [
     ['list'],
     ['html', { open: 'never', outputFolder: 'playwright-report' }]

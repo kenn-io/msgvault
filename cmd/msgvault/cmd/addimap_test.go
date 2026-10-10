@@ -3,12 +3,18 @@ package cmd
 import (
 	"bytes"
 	"io"
+	"net"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/config"
+	imapclient "go.kenn.io/msgvault/internal/imap"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 func TestPasswordPromptStrategy(t *testing.T) {
@@ -158,15 +164,15 @@ func TestReadPasswordFromPipe(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			require := require.New(t)
+			requirements := require.New(t)
 			r := strings.NewReader(tt.input)
 			got, err := readPasswordFromPipe(r)
 			if tt.wantErr != "" {
-				require.Error(err, "expected error containing %q", tt.wantErr)
-				require.ErrorContains(err, tt.wantErr)
+				requirements.Error(err, "expected error containing %q", tt.wantErr)
+				requirements.ErrorContains(err, tt.wantErr)
 				return
 			}
-			require.NoError(err)
+			requirements.NoError(err)
 			assert.Equal(t, tt.want, got)
 		})
 	}
@@ -185,18 +191,19 @@ func TestReadPasswordFromPipeLargeInput(t *testing.T) {
 var _ func(io.Reader) (string, error) = readPasswordFromPipe
 
 func TestAddIMAPUsesDaemonRunnerAndForwardsPasswordEnv(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	const host = "localhost"
 	server, requests := newDaemonCLIRunnerTestServer(t, func(req daemonCLIRunTestRequest) {
-		assert.Equal([]string{
+		assertions.Equal([]string{
 			"add-imap",
+			"--archive-mailbox=Saved Mail",
 			"--host=" + host,
 			"--no-tls",
 			"--port=1",
 			"--username=alice@example.com",
 		}, req.Args, "args")
-		assert.Equal(map[string]string{"MSGVAULT_IMAP_PASSWORD": "secret"}, req.Env, "env")
+		assertions.Equal(map[string]string{"MSGVAULT_IMAP_PASSWORD": "secret"}, req.Env, "env")
 	}, `{"type":"stdout","data":"IMAP account added successfully!\n"}`, `{"type":"complete"}`)
 
 	savedHost := imapHost
@@ -224,15 +231,74 @@ func TestAddIMAPUsesDaemonRunnerAndForwardsPasswordEnv(t *testing.T) {
 	cmd.SetOut(&stdout)
 	cmd.SetErr(&stderr)
 	cmd.SetArgs([]string{
+		"--archive-mailbox", "Saved Mail",
 		"--host", host,
 		"--port", "1",
 		"--username", "alice@example.com",
 		"--no-tls",
 	})
 
-	require.NoError(cmd.Execute(), "add-imap")
+	requirements.NoError(cmd.Execute(), "add-imap")
 
-	assert.Equal(1, int(requests.Load()), "runner endpoint calls")
-	assert.Equal("IMAP account added successfully!\n", stdout.String(), "stdout")
-	assert.Contains(stderr.String(), "Using password from MSGVAULT_IMAP_PASSWORD", "stderr")
+	assertions.Equal(1, int(requests.Load()), "runner endpoint calls")
+	assertions.Equal("IMAP account added successfully!\n", stdout.String(), "stdout")
+	assertions.Contains(stderr.String(), "Using password from MSGVAULT_IMAP_PASSWORD", "stderr")
+}
+
+func TestAddIMAPArchiveMailboxSavedAcrossReauthorization(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+
+	savedHost, savedPort, savedUsername := imapHost, imapPort, imapUsername
+	savedNoTLS, savedStartTLS, savedNoDefaultIdentity := imapNoTLS, imapSTARTTLS, noDefaultIdentityAddImap
+	t.Cleanup(func() {
+		imapHost, imapPort, imapUsername = savedHost, savedPort, savedUsername
+		imapNoTLS, imapSTARTTLS, noDefaultIdentityAddImap = savedNoTLS, savedStartTLS, savedNoDefaultIdentity
+	})
+	t.Setenv(daemonCLISubprocessEnv, strconv.Itoa(os.Getppid()))
+	t.Setenv("MSGVAULT_IMAP_PASSWORD", testutil.IMAPTestPassword)
+	addr, _ := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 0, "Saved Mail": 0})
+	host, portText, err := net.SplitHostPort(addr)
+	requirements.NoError(err)
+	port, err := strconv.Atoi(portText)
+	requirements.NoError(err)
+	home := t.TempDir()
+	cfg := &config.Config{HomeDir: home, Data: config.DataConfig{DataDir: home}}
+	ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	identifier := (&imapclient.Config{Host: host, Port: port, Username: testutil.IMAPTestUsername}).Identifier()
+	for _, step := range []struct {
+		flags     []string
+		want      string
+		wantError bool
+	}{
+		{[]string{"--archive-mailbox", "Saved Mail"}, "Saved Mail", false},
+		{[]string{"--archive-mailbox", "Missing Mail"}, "Saved Mail", true},
+		{[]string{"--archive-mailbox", "INBOX"}, "Saved Mail", true},
+		{nil, "Saved Mail", false},
+		{[]string{"--archive-mailbox="}, "", false},
+	} {
+		cmd := newAddIMAPCmd()
+		cmd.SetContext(ctx)
+		cmd.SetOut(io.Discard)
+		cmd.SetErr(io.Discard)
+		args := []string{"--host", host, "--port", portText, "--username", testutil.IMAPTestUsername, "--no-tls", "--no-default-identity"}
+		cmd.SetArgs(append(args, step.flags...))
+		err := cmd.Execute()
+		if step.wantError {
+			requirements.Error(err)
+			require.ErrorContains(t, err, "archive mailbox")
+		} else {
+			requirements.NoError(err)
+		}
+		path, err := cfg.DatabasePath()
+		requirements.NoError(err)
+		db, err := store.Open(path)
+		requirements.NoError(err)
+		source, err := db.GetSourceByTypeAndIdentifier("imap", identifier)
+		requirements.NoError(err)
+		saved, err := imapclient.ConfigFromJSON(source.SyncConfig.String)
+		requirements.NoError(err)
+		assertions.Equal(step.want, saved.ArchiveMailbox)
+		requirements.NoError(db.Close())
+	}
 }

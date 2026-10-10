@@ -11,24 +11,25 @@ import (
 )
 
 func TestCardDAVCreateCollisionAndMergeUseCompatibleLocks(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
+
 	st, id, _ := newPersonFactProjectionStore(t)
 	if !st.IsPostgreSQL() {
 		t.Skip("requires PostgreSQL row-lock scheduling")
 	}
 	book := inferenceMigrationBook(t, st)
 	person, err := st.GetPersonContext(t.Context(), id)
-	require.NoError(err)
+	requirements.NoError(err)
 	var otherID int64
-	require.NoError(st.db.QueryRow(`INSERT INTO persons(vcard_uid,display_name) VALUES ('collision-survivor','Collision Survivor') RETURNING id`).Scan(&otherID))
+	requirements.NoError(st.db.QueryRow(`INSERT INTO persons(vcard_uid,display_name) VALUES ('collision-survivor','Collision Survivor') RETURNING id`).Scan(&otherID))
 	other, err := st.GetPersonContext(t.Context(), otherID)
-	require.NoError(err)
+	requirements.NoError(err)
 	source, err := st.LoadPersonVCardSnapshotContext(t.Context(), id)
-	require.NoError(err)
+	requirements.NoError(err)
 	body := []byte(fmt.Sprintf("BEGIN:VCARD\r\nVERSION:3.0\r\nUID:%s\r\nFN:Local\r\nEND:VCARD\r\n", person.VCardUID))
 	pending, err := st.PrepareCardDAVPublicationContext(t.Context(), CardDAVPublicationPlan{PersonID: id, Desired: true, AddressBookID: book.ID, Href: book.CanonicalURL + "collision.vcf", OutgoingBody: body, OutgoingSemanticHash: "local", LocalHash: source.Fingerprint})
-	require.NoError(err)
+	requirements.NoError(err)
 	remote := CardDAVRemoteResource{Href: pending.Href, RemoteUID: "remote", RemoteETag: `"remote"`, RemoteBody: []byte("BEGIN:VCARD\r\nVERSION:3.0\r\nUID:remote\r\nFN:Remote\r\nEND:VCARD\r\n"), SemanticHash: "remote"}
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()
@@ -52,11 +53,19 @@ func TestCardDAVCreateCollisionAndMergeUseCompatibleLocks(t *testing.T) {
 		_, err := st.MergePersonsContext(ctx, PersonMergeRequest{SurvivorID: otherID, AbsorbedID: id, ExpectedSurvivorRevision: other.Revision, ExpectedAbsorbedRevision: person.Revision, Actor: "test", IdempotencyKey: "collision-merge"})
 		mergeDone <- err
 	}()
-	// Merge must reject the pending publication while the collision is still
-	// paused. The context bounds a regression that blocks on its person lock.
-	mergeErr := <-mergeDone
+	// Both operations take the identity fence before account or person locks.
+	// Observe the merge waiting on that fence, then let collision commit so
+	// merge can recheck the pending publication and reject it.
+	assertions.Eventually(func() bool {
+		var blocked bool
+		err := st.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM pg_stat_activity
+			WHERE datname=current_database() AND wait_event_type='Lock'
+			AND query LIKE '%archive_metadata%' AND cardinality(pg_blocking_pids(pid)) > 0)`).Scan(&blocked)
+		return err == nil && blocked
+	}, 10*time.Second, 10*time.Millisecond)
 	close(resume)
-	require.NoError(<-collisionDone)
-	require.ErrorIs(mergeErr, ErrPersonCardDAVPublished)
-	assert.Equal(int64(1), attempts.Load(), "merge must not require a retry after a deadlock")
+	requirements.NoError(<-collisionDone)
+	mergeErr := <-mergeDone
+	requirements.ErrorIs(mergeErr, ErrPersonCardDAVPublished)
+	assertions.Equal(int64(1), attempts.Load(), "merge must not require a retry after a deadlock")
 }

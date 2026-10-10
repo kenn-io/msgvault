@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -490,7 +491,7 @@ func applyIMAPMailboxDeltas(
 			RFC822MessageID:          observation.RFC822MessageID,
 			RawSHA256:                observation.RawSHA256,
 			RawSize:                  observation.RawSize,
-			Flags:                    append([]string(nil), observation.Flags...),
+			Flags:                    slices.Clone(observation.Flags),
 		})
 	}
 	byMailbox := make(map[string][]store.IMAPMembershipObservation)

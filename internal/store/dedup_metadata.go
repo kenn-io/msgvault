@@ -19,7 +19,7 @@ type duplicateMetadataEvidence struct {
 func (e duplicateMetadataEvidence) quality(sourceType, sourceMessageID string) int {
 	sourceMessageID = strings.TrimSpace(sourceMessageID)
 	quality := 0
-	if (sourceType == "gmail" || sourceType == "imap" || sourceType == "msmail") && sourceMessageID != "" {
+	if (sourceType == sourceTypeGmail || sourceType == sourceTypeIMAP || sourceType == "msmail") && sourceMessageID != "" {
 		quality++
 	}
 	if strings.TrimSpace(e.rfc822ID) != "" {
@@ -27,7 +27,7 @@ func (e duplicateMetadataEvidence) quality(sourceType, sourceMessageID string) i
 	}
 	threadKey := strings.TrimSpace(e.providerThreadKey)
 	if e.hasReplyParent ||
-		(sourceType == "gmail" && threadKey != "" && sourceMessageID != "" &&
+		(sourceType == sourceTypeGmail && threadKey != "" && sourceMessageID != "" &&
 			threadKey != sourceMessageID) ||
 		(sourceType == "google-groups" && isGoogleGroupsProviderThread(threadKey)) ||
 		hasArchivedReplyHeader(e.metadata) {

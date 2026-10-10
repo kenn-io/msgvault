@@ -397,3 +397,6 @@ func (c *Client) GetHealth(ctx context.Context) (*DaemonHealth, error) {
 	}
 	return health, nil
 }
+
+// UsesDelegatedAuthentication reports the configured caller mode without exposing credentials.
+func (c *Client) UsesDelegatedAuthentication() bool { return c.agentToken != "" }

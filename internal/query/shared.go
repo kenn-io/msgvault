@@ -265,7 +265,7 @@ func appendSummaryRecipient(msg *MessageSummary, recipType string, addr Address)
 // fetchMessageLabelsDetail fetches labels for a single message detail.
 // tablePrefix is "" for direct SQLite or "sqlite_db." for DuckDB's sqlite_scan.
 // rebind rewrites the ? placeholders for the driver in use.
-func fetchMessageLabelsDetail(ctx context.Context, db *sql.DB, rebind rebindFunc, tablePrefix string, msg *MessageDetail) error {
+func fetchMessageLabelsDetail(ctx context.Context, db messageSnapshotReader, rebind rebindFunc, tablePrefix string, msg *MessageDetail) error {
 	rows, err := db.QueryContext(ctx, rebind(fmt.Sprintf(`
 		SELECT l.name
 		FROM %smessage_labels ml
@@ -291,7 +291,7 @@ func fetchMessageLabelsDetail(ctx context.Context, db *sql.DB, rebind rebindFunc
 // fetchParticipantsShared fetches participants for a single message detail.
 // tablePrefix is "" for direct SQLite or "sqlite_db." for DuckDB's sqlite_scan.
 // rebind rewrites the ? placeholders for the driver in use.
-func fetchParticipantsShared(ctx context.Context, db *sql.DB, rebind rebindFunc, tablePrefix string, msg *MessageDetail) error {
+func fetchParticipantsShared(ctx context.Context, db messageSnapshotReader, rebind rebindFunc, tablePrefix string, msg *MessageDetail) error {
 	rows, err := db.QueryContext(ctx, rebind(fmt.Sprintf(`
 		SELECT mr.recipient_type,
 		       COALESCE(NULLIF(p.email_address, ''), NULLIF(p.phone_number, ''), ''),
@@ -346,7 +346,7 @@ func fetchParticipantsShared(ctx context.Context, db *sql.DB, rebind rebindFunc,
 // fetchAttachmentsShared fetches attachments for a single message detail.
 // tablePrefix is "" for direct SQLite or "sqlite_db." for DuckDB's sqlite_scan.
 // rebind rewrites the ? placeholders for the driver in use.
-func fetchAttachmentsShared(ctx context.Context, db *sql.DB, rebind rebindFunc, tablePrefix string, msg *MessageDetail) error {
+func fetchAttachmentsShared(ctx context.Context, db messageSnapshotReader, rebind rebindFunc, tablePrefix string, msg *MessageDetail) error {
 	rows, err := db.QueryContext(ctx, rebind(fmt.Sprintf(`
 		SELECT id, COALESCE(filename, ''), COALESCE(mime_type, ''), COALESCE(size, 0), COALESCE(content_hash, ''), COALESCE(storage_path, '')
 		FROM %sattachments
@@ -408,7 +408,7 @@ func attachmentCASPath(contentHash string) string {
 // extractBodyFromRawShared extracts text body from compressed MIME data.
 // tablePrefix is "" for direct SQLite or "sqlite_db." for DuckDB's sqlite_scan.
 // rebind rewrites the ? placeholders for the driver in use.
-func extractBodyFromRawShared(ctx context.Context, db *sql.DB, rebind rebindFunc, tablePrefix string, messageID int64) (string, error) {
+func extractBodyFromRawShared(ctx context.Context, db messageSnapshotReader, rebind rebindFunc, tablePrefix string, messageID int64) (string, error) {
 	var compressed []byte
 	var compression sql.NullString
 
@@ -470,11 +470,24 @@ func getMessageRawShared(ctx context.Context, db *sql.DB, rebind rebindFunc, tab
 	return raw, nil
 }
 
+// messageSnapshotReader allows every detail query to share either the caller's
+// transaction or the archive pool used by ordinary message readers.
+type messageSnapshotReader interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}
+
+// GetMessageInSnapshot loads current archive details inside the transaction
+// that authorized an Events receipt. Every body and related-row read uses tx.
+func GetMessageInSnapshot(ctx context.Context, tx *sql.Tx, rebind func(string) string, messageID int64) (*MessageDetail, error) {
+	return getMessageByQueryShared(ctx, tx, rebind, "", "m.id = ? AND "+store.LiveMessagesWhere("m", false), messageID)
+}
+
 // getMessageByQueryShared retrieves a full message detail by an arbitrary WHERE clause.
 // tablePrefix is "" for direct SQLite or "sqlite_db." for DuckDB's sqlite_scan.
 // rebind rewrites the ? placeholders for the driver in use; it is applied
 // to every sub-query this function dispatches.
-func getMessageByQueryShared(ctx context.Context, db *sql.DB, rebind rebindFunc, tablePrefix string, whereClause string, args ...any) (*MessageDetail, error) {
+func getMessageByQueryShared(ctx context.Context, db messageSnapshotReader, rebind rebindFunc, tablePrefix string, whereClause string, args ...any) (*MessageDetail, error) {
 	query := fmt.Sprintf(`
 		SELECT
 			m.id,
@@ -491,7 +504,8 @@ func getMessageByQueryShared(ctx context.Context, db *sql.DB, rebind rebindFunc,
 			COALESCE(m.size_estimate, 0),
 			m.has_attachments,
 			COALESCE(m.is_from_me, FALSE),
-			m.deleted_from_source_at
+			m.deleted_from_source_at,
+			m.metadata
 		FROM %smessages m
 		LEFT JOIN %sconversations conv ON conv.id = m.conversation_id
 		WHERE %s
@@ -499,6 +513,7 @@ func getMessageByQueryShared(ctx context.Context, db *sql.DB, rebind rebindFunc,
 
 	var msg MessageDetail
 	var sentAt, receivedAt, deletedAt sql.NullTime
+	var metadata sql.NullString
 	err := db.QueryRowContext(ctx, rebind(query), args...).Scan(
 		&msg.ID,
 		&msg.SourceID,
@@ -515,12 +530,17 @@ func getMessageByQueryShared(ctx context.Context, db *sql.DB, rebind rebindFunc,
 		&msg.HasAttachments,
 		&msg.IsFromMe,
 		&deletedAt,
+		&metadata,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil //nolint:nilnil // Engine.GetMessage/GetMessageBySourceID use (nil, nil) for not-found; callers chain fallback lookups on the nil result
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get message: %w", err)
+	}
+
+	if msg.MessageType == messageTypeCalendar {
+		msg.Calendar = store.ParseCalendarProjection(metadata.String)
 	}
 
 	if sentAt.Valid {

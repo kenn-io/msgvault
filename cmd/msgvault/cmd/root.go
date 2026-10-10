@@ -234,15 +234,18 @@ func skipsConfigLoad(cmd *cobra.Command) bool {
 // work without local configuration or a local daemon are permitted; all others
 // must be run by the owner.
 func agentDelegatedCapable(cmd *cobra.Command) bool {
+	if isIdentityOperationCommand(cmd) {
+		return true
+	}
 	for ancestor := cmd; ancestor != nil; ancestor = ancestor.Parent() {
-		if ancestor.Name() == "calendar" {
+		if ancestor.Name() == "calendar" || ancestor.Name() == "inbox" {
 			return true
 		}
 	}
 	return agentDelegatedCommand(cmd.Name())
 }
 
-// agentDelegatedCommand owns the command set offered to an agent grant.
+// agentDelegatedCommand owns the flat command set offered to an agent grant.
 func agentDelegatedCommand(name string) bool {
 	switch name {
 	case "draft-reply", "draft-compose", "draft-get", "draft-edit", "draft-delete", "draft-recover", "mcp":

@@ -203,6 +203,7 @@ func (s *Store) applyIMAPMailboxDeltas(
 		}
 
 		affected := make(map[int64]struct{})
+		var inboxObservations []imapInboxSyncObservation
 		if err := captureUntrackedIMAPMessageIDs(tx, sourceID, affected); err != nil {
 			return err
 		}
@@ -268,6 +269,10 @@ func (s *Store) applyIMAPMailboxDeltas(
 				if err != nil {
 					return err
 				}
+				inboxObservations = append(inboxObservations, imapInboxSyncObservation{
+					Membership: observation, MessageID: messageID,
+					Revision: fmt.Sprintf("%d:%d:%d", normalized.uidValidity, delta.State.UIDNext, delta.State.HighestModSeq),
+				})
 				flags := observation.Flags
 				if flags == nil {
 					flags = []string{}
@@ -377,7 +382,7 @@ func (s *Store) applyIMAPMailboxDeltas(
 				return fmt.Errorf("upsert IMAP folder state for %q: %w", normalized.mailbox, err)
 			}
 		}
-		return nil
+		return observeIMAPSyncMembershipsTx(ctx, tx, sourceID, inboxObservations)
 	})
 }
 

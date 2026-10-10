@@ -15,6 +15,20 @@ import (
 type Permission string
 
 const (
+	PermissionPersonRead        Permission = "person.read"
+	PermissionPersonEdit        Permission = "person.edit"
+	PermissionPersonMerge       Permission = "person.merge"
+	PermissionCardDAVWrite      Permission = "carddav.write"
+	PermissionIdentityRead      Permission = "identity.read"
+	PermissionIdentityLink      Permission = "identity.link"
+	PermissionIdentityUnlink    Permission = "identity.unlink"
+	PermissionInboxRead         Permission = "inbox.read"
+	PermissionInboxContentRead  Permission = "inbox.content-read"
+	PermissionInboxTag          Permission = "inbox.tag"
+	PermissionInboxArchive      Permission = "inbox.archive"
+	PermissionInboxReadState    Permission = "inbox.read-state"
+	PermissionInboxMove         Permission = "inbox.move"
+	PermissionInboxFolderCreate Permission = "inbox.folder-create"
 	PermissionDraftCreate       Permission = "draft.create"
 	PermissionDraftEdit         Permission = "draft.edit"
 	PermissionDraftDelete       Permission = "draft.delete"
@@ -25,6 +39,20 @@ const (
 )
 
 var knownPermissions = map[string]Permission{
+	string(PermissionPersonRead):        PermissionPersonRead,
+	string(PermissionPersonEdit):        PermissionPersonEdit,
+	string(PermissionPersonMerge):       PermissionPersonMerge,
+	string(PermissionCardDAVWrite):      PermissionCardDAVWrite,
+	string(PermissionIdentityRead):      PermissionIdentityRead,
+	string(PermissionIdentityLink):      PermissionIdentityLink,
+	string(PermissionIdentityUnlink):    PermissionIdentityUnlink,
+	string(PermissionInboxRead):         PermissionInboxRead,
+	string(PermissionInboxContentRead):  PermissionInboxContentRead,
+	string(PermissionInboxTag):          PermissionInboxTag,
+	string(PermissionInboxArchive):      PermissionInboxArchive,
+	string(PermissionInboxReadState):    PermissionInboxReadState,
+	string(PermissionInboxMove):         PermissionInboxMove,
+	string(PermissionInboxFolderCreate): PermissionInboxFolderCreate,
 	string(PermissionDraftCreate):       PermissionDraftCreate,
 	string(PermissionDraftEdit):         PermissionDraftEdit,
 	string(PermissionDraftDelete):       PermissionDraftDelete,
@@ -50,11 +78,13 @@ type SourceRef struct {
 }
 
 type Grant struct {
-	ID          string
-	Label       string
-	Permissions []Permission
-	Sources     []SourceRef
-	CreatedAt   time.Time
+	ID           string
+	Label        string
+	Permissions  []Permission
+	Sources      []SourceRef
+	Persons      []PersonRef
+	AddressBooks []AddressBookRef
+	CreatedAt    time.Time
 }
 
 func (g Grant) HasPermission(p Permission) bool {
@@ -90,11 +120,13 @@ func (g Grant) AllowsSender(p Permission, src SourceRef, senderKey string) bool 
 
 func cloneGrant(g Grant) Grant {
 	clone := Grant{
-		ID:          g.ID,
-		Label:       g.Label,
-		Permissions: append([]Permission(nil), g.Permissions...),
-		CreatedAt:   g.CreatedAt,
-		Sources:     make([]SourceRef, len(g.Sources)),
+		ID:           g.ID,
+		Label:        g.Label,
+		Permissions:  append([]Permission(nil), g.Permissions...),
+		CreatedAt:    g.CreatedAt,
+		Sources:      make([]SourceRef, len(g.Sources)),
+		Persons:      append([]PersonRef(nil), g.Persons...),
+		AddressBooks: append([]AddressBookRef(nil), g.AddressBooks...),
 	}
 	for i, source := range g.Sources {
 		clone.Sources[i] = SourceRef{
@@ -125,13 +157,18 @@ func NewRegistry() *Registry {
 }
 
 func (r *Registry) Issue(label string, perms []Permission, sources []SourceRef) (id, secret string, g Grant, err error) {
+	return r.issue(label, perms, ResourceScopes{Sources: sources}, false)
+}
+
+func (r *Registry) issue(label string, perms []Permission, scope ResourceScopes, scoped bool) (id, secret string, g Grant, err error) {
+	sources := scope.Sources
 	if label == "" {
 		return "", "", Grant{}, errors.New("agentgrant: label must not be empty")
 	}
 	if len(perms) == 0 {
 		return "", "", Grant{}, errors.New("agentgrant: permission set must not be empty")
 	}
-	if len(sources) == 0 {
+	if !scoped && len(sources) == 0 {
 		return "", "", Grant{}, errors.New("agentgrant: source set must not be empty")
 	}
 	// validate perms
@@ -178,11 +215,13 @@ func (r *Registry) Issue(label string, perms []Permission, sources []SourceRef) 
 	digest := sha256.Sum256([]byte(secretPlain))
 
 	g = Grant{
-		ID:          id,
-		Label:       label,
-		Permissions: append([]Permission(nil), perms...),
-		Sources:     append([]SourceRef(nil), sources...),
-		CreatedAt:   time.Now(),
+		ID:           id,
+		Label:        label,
+		Permissions:  append([]Permission(nil), perms...),
+		Sources:      append([]SourceRef(nil), sources...),
+		Persons:      append([]PersonRef(nil), scope.Persons...),
+		AddressBooks: append([]AddressBookRef(nil), scope.AddressBooks...),
+		CreatedAt:    time.Now(),
 	}
 
 	r.mu.Lock()

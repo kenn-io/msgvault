@@ -76,7 +76,7 @@ func (s *Server) registerSessionRoutes(api huma.API) {
 		Responses: map[string]*huma.Response{
 			httpStatusKey(http.StatusNoContent):       {Description: http.StatusText(http.StatusNoContent)},
 			httpStatusKey(http.StatusTooManyRequests): errorResponseFor(api),
-			"default": errorResponseFor(api),
+			defaultErrorResponse:                      errorResponseFor(api),
 		},
 	}
 	registerRawHumaRoute(api, logout, s.handleSessionLogout)

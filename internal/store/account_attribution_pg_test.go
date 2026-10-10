@@ -37,7 +37,8 @@ func waitForLockWait(t *testing.T, st *store.Store, fragment, message string) in
 	require.Eventually(t, func() bool {
 		err = st.DB().QueryRowContext(context.Background(), `
 			SELECT COALESCE(MIN(pid), 0) FROM pg_stat_activity
-			WHERE wait_event_type = 'Lock' AND POSITION($1 IN query) > 0`, fragment).Scan(&pid)
+			WHERE datname = current_database()
+			  AND wait_event_type = 'Lock' AND POSITION($1 IN query) > 0`, fragment).Scan(&pid)
 		return err == nil && pid > 0
 	}, pgWaitBudget, 10*time.Millisecond, message)
 	require.NoError(t, err)
@@ -50,7 +51,8 @@ func holdsRelationLock(t *testing.T, st *store.Store, pid int, relation string) 
 	require.NoError(t, st.DB().QueryRowContext(context.Background(), `
 		SELECT EXISTS (
 			SELECT 1 FROM pg_locks l JOIN pg_class c ON c.oid = l.relation
-			WHERE l.pid = $1 AND c.relname = $2 AND l.granted)`, pid, relation).Scan(&held))
+			WHERE l.database = (SELECT oid FROM pg_database WHERE datname = current_database())
+			  AND l.pid = $1 AND c.relname = $2 AND l.granted)`, pid, relation).Scan(&held))
 	return held
 }
 
@@ -189,7 +191,8 @@ func TestAccountAttributionScopedPersistVsSourceRemovalPG(t *testing.T) {
 	require.Eventually(t, func() bool {
 		var waiting int
 		return st.DB().QueryRowContext(context.Background(), `SELECT COUNT(*) FROM pg_stat_activity
-			WHERE wait_event_type = 'Lock' AND POSITION('archive_metadata' IN query) > 0`).Scan(&waiting) == nil && waiting >= 2
+			WHERE datname = current_database()
+			  AND wait_event_type = 'Lock' AND POSITION('archive_metadata' IN query) > 0`).Scan(&waiting) == nil && waiting >= 2
 	}, pgWaitBudget, 10*time.Millisecond, "source removal must wait for the identity row")
 	release()
 	assertNoDeadlock(t, waitResult(t, persistDone, "scoped persist"))
@@ -234,7 +237,8 @@ func TestAccountAttributionPersistVsIMAPLabelRepairPG(t *testing.T) {
 	require.Eventually(func() bool {
 		return st.DB().QueryRowContext(context.Background(), `
 			SELECT COALESCE(MIN(l.pid), 0) FROM pg_locks l JOIN pg_class c ON c.oid = l.relation
-			WHERE c.relname = 'sources' AND l.mode = 'RowExclusiveLock' AND l.granted
+			WHERE l.database = (SELECT oid FROM pg_database WHERE datname = current_database())
+			  AND c.relname = 'sources' AND l.mode = 'RowExclusiveLock' AND l.granted
 			  AND l.pid <> pg_backend_pid()`).Scan(&repairPID) == nil && repairPID > 0
 	}, pgWaitBudget, 10*time.Millisecond)
 

@@ -107,8 +107,8 @@ func Discover(root string) ([]Mailbox, error) {
 func Flags(path string) []string {
 	name := filepath.Base(path)
 	flags := ""
-	if i := strings.LastIndex(name, ":2,"); i >= 0 {
-		flags = name[i+3:]
+	if _, suffix, found := strings.CutLast(name, ":2,"); found {
+		flags = suffix
 	}
 	var labels []string
 	if !strings.Contains(flags, "S") {

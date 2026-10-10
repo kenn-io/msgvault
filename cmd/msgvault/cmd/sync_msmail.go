@@ -27,10 +27,21 @@ func newGraphMailManager(state *invocation) *microsoft.GraphManager {
 }
 
 // newGraphMailWriteManager requests Mail.ReadWrite on top of the sync scopes.
-// delete-staged uses it.
+// Tag editing and delete-staged use it.
 func newGraphMailWriteManager(state *invocation) *microsoft.GraphManager {
 	cfg := state.cfg
 	return microsoft.NewGraphMailWriteManager(
+		cfg.Microsoft.ClientID,
+		cfg.Microsoft.EffectiveTenantID(),
+		cfg.Microsoft.EffectiveRedirectURI(),
+		cfg.TokensDir(),
+		state.logger,
+	)
+}
+
+func newGraphMailTriageManager(state *invocation) *microsoft.GraphManager {
+	cfg := state.cfg
+	return microsoft.NewGraphMailTriageManager(
 		cfg.Microsoft.ClientID,
 		cfg.Microsoft.EffectiveTenantID(),
 		cfg.Microsoft.EffectiveRedirectURI(),
