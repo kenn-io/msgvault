@@ -22,14 +22,14 @@ func TestProjectConflictContactAllowListsNormalizesAndBoundsFields(t *testing.T)
 		"EMAIL:" + long + "\r\n" +
 		"EMAIL:e2@example.test\r\nEMAIL:e3@example.test\r\nEMAIL:e4@example.test\r\n" +
 		"EMAIL:e5@example.test\r\nEMAIL:e6@example.test\r\nEMAIL:e7@example.test\r\nEMAIL:e8@example.test\r\n" +
-		"TEL:TEL:+1  555  0100\r\nTEL:+1 555 0100\r\nEND:VCARD\r\n"
+		"TEL:TEL:+1  555  0100;ext=42\r\nTEL:TEL:+1 555 0100;ext=42\r\nTEL:+1 555 0100\r\nEND:VCARD\r\n"
 
 	got := projectConflictContact([]byte(raw), false)
 	require.Equal(ConflictSidePresent, got.State)
 	assert.Equal("Alice Example", got.DisplayName)
 	require.Len(got.Emails, 8)
 	assert.Equal("alice@example.test", got.Emails[0])
-	assert.Equal([]string{"+1 555 0100"}, got.Phones)
+	assert.Equal([]string{"+1 555 0100;ext=42", "+1 555 0100"}, got.Phones)
 	assert.True(got.Truncated)
 	assert.LessOrEqual(len(got.Emails[1]), 256)
 	assert.True(utf8.ValidString(got.Emails[1]))

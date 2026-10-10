@@ -245,7 +245,14 @@ func TestCardDAVKeepRemoteResolutionAppliesRetainedSnapshotAndAuditsChoice(t *te
 	require := require.New(t)
 
 	st, _, _, mapping := seededCardDAVConflictMapping(t)
+	person, err := st.GetPersonContext(t.Context(), *mapping.PersonID)
+	require.NoError(err)
+	_, err = st.UpdatePersonDisplayNameContext(t.Context(), person.ID, person.Revision, nil)
+	require.NoError(err)
+	snapshot, err := st.LoadPersonVCardSnapshotContext(t.Context(), person.ID)
+	require.NoError(err)
 	capture := conflictCapture(mapping)
+	capture.LocalHash = snapshot.Fingerprint
 	conflict, err := st.RecordCardDAVConflictContext(t.Context(), capture)
 	require.NoError(err)
 	retained := parseCardDAVRemoteForStoreTest(mapping.Href, capture.RemoteETag, capture.RemoteBody)
@@ -264,7 +271,11 @@ func TestCardDAVKeepRemoteResolutionAppliesRetainedSnapshotAndAuditsChoice(t *te
 	assert.Equal(capture.RemoteBody, after.RemoteBody)
 	assert.Equal(capture.RemoteETag, after.RemoteETag)
 	require.NotNil(after.PersonID)
-	snapshot, err := st.LoadPersonVCardSnapshotContext(t.Context(), *after.PersonID)
+	assert.True(after.OwnsDisplayName)
+	person, err = st.GetPersonContext(t.Context(), *after.PersonID)
+	require.NoError(err)
+	assert.Equal(new("Remote"), person.DisplayName)
+	snapshot, err = st.LoadPersonVCardSnapshotContext(t.Context(), *after.PersonID)
 	require.NoError(err)
 	assert.Equal(snapshot.Fingerprint, after.LocalHash)
 }

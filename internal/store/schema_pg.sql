@@ -1196,6 +1196,7 @@ CREATE TABLE IF NOT EXISTS carddav_resources (
     governance              TEXT NOT NULL CHECK (governance IN ('remote', 'local', 'none')),
     person_id               BIGINT REFERENCES persons(id) ON DELETE SET NULL,
     person_revision_at_bind BIGINT,
+    owns_display_name       BOOLEAN NOT NULL DEFAULT FALSE,
     created_at              TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at              TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (address_book_id, href)

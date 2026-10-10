@@ -475,6 +475,9 @@ func projectContactPoint(point store.PersonContactPoint) (projectedProperty, boo
 		return projectedProperty{}, false, err
 	}
 	projected := ownedProjection(ownerContactPoint, point.Envelope, valueOwnedParameters, property)
+	if point.Envelope.Source == store.ProvenanceCardDAVImport {
+		projected.CarriedParameters = []string{"TYPE", "PREF"}
+	}
 	return projected, true, nil
 }
 

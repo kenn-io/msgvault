@@ -904,14 +904,14 @@ func TestSyncDowngradesUnsupportedSyncCollectionToSnapshot(t *testing.T) {
 	}
 }
 
-func TestParseRemoteResourceStripsContactSchemesCaseInsensitively(t *testing.T) {
+func TestParseRemoteResourceRetainsPhoneEndpoint(t *testing.T) {
 	body := []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:schemes\r\nFN:Schemes\r\n" +
 		"EMAIL:MAILTO:Alice@Example.test\r\nTEL:TeL:+1-202-555-0100\r\nEND:VCARD\r\n")
 
 	resource, err := parseRemoteResource("https://contacts.example/schemes.vcf", `"one"`, body)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"Alice@Example.test"}, resource.Emails)
-	assert.Equal(t, []string{"+1-202-555-0100"}, resource.Phones)
+	assert.Equal(t, []string{"TeL:+1-202-555-0100"}, resource.Phones)
 }
 
 func TestParseRemoteResourceDecodesTextContactValues(t *testing.T) {

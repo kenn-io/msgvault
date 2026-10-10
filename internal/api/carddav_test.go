@@ -1487,6 +1487,7 @@ func TestCardDAVRoutesMapValidationMissingConflictAndStorageStatuses(t *testing.
 	const roles = `{"write_target":false,"subscribed":true,"lookup_source":false}`
 	tests := []struct {
 		name, method, path, body string
+		code, message            string
 		service                  CardDAVOperations
 		want                     int
 	}{
@@ -1502,6 +1503,8 @@ func TestCardDAVRoutesMapValidationMissingConflictAndStorageStatuses(t *testing.
 		{name: "resolution validation", method: http.MethodPost, path: "/api/v1/carddav/conflicts/7/resolve", body: `{"choice":"invalid"}`, service: cardDAVErrorFixture{resolveErr: carddav.ErrInvalidResolutionChoice}, want: http.StatusBadRequest},
 		{name: "conflict missing", method: http.MethodPost, path: "/api/v1/carddav/conflicts/7/resolve", body: `{"choice":"keep_remote"}`, service: cardDAVErrorFixture{resolveErr: store.ErrCardDAVConflictNotFound}, want: http.StatusNotFound},
 		{name: "conflict stale", method: http.MethodPost, path: "/api/v1/carddav/conflicts/7/resolve", body: `{"choice":"keep_remote"}`, service: cardDAVErrorFixture{resolveErr: store.ErrCardDAVConflictStale}, want: http.StatusConflict},
+		{name: "remote protected", method: http.MethodPost, path: "/api/v1/carddav/conflicts/7/resolve", body: `{"choice":"keep_remote"}`, service: cardDAVErrorFixture{resolveErr: fmt.Errorf("%w: private detail", store.ErrCardDAVRemoteProtected)}, want: http.StatusConflict, code: "carddav_remote_protected", message: "The remote card would overwrite a value added in msgvault or another address book. Keep local, or restore that value in the address book and sync again."},
+		{name: "remote invalid", method: http.MethodPost, path: "/api/v1/carddav/conflicts/7/resolve", body: `{"choice":"keep_remote"}`, service: cardDAVErrorFixture{resolveErr: fmt.Errorf("%w: private detail", store.ErrCardDAVRemoteInvalid)}, want: http.StatusConflict, code: "carddav_remote_invalid", message: "The remote card has values that cannot be published, such as an invalid preference or location. Fix them in the address book and sync again, or keep local."},
 		{name: "conflict storage", method: http.MethodPost, path: "/api/v1/carddav/conflicts/7/resolve", body: `{"choice":"keep_remote"}`, service: cardDAVErrorFixture{resolveErr: errors.New("database unavailable")}, want: http.StatusInternalServerError},
 		{name: "sync stale", method: http.MethodPost, path: "/api/v1/carddav/sync", body: `{}`, service: cardDAVErrorFixture{syncErr: store.ErrCardDAVStalePlan}, want: http.StatusConflict},
 		{name: "sync already active", method: http.MethodPost, path: "/api/v1/carddav/sync", body: `{}`, service: cardDAVErrorFixture{syncErr: store.ErrCardDAVSyncActive}, want: http.StatusConflict},
@@ -1515,6 +1518,9 @@ func TestCardDAVRoutesMapValidationMissingConflictAndStorageStatuses(t *testing.
 		t.Run(tt.name, func(t *testing.T) {
 			resp := cardDAVRouteResponse(t, tt.service, tt.method, tt.path, tt.body)
 			assert.Equal(t, tt.want, resp.Code, resp.Body.String())
+			if tt.code != "" {
+				assert.JSONEq(t, fmt.Sprintf(`{"error":%q,"message":%q}`, tt.code, tt.message), resp.Body.String())
+			}
 		})
 	}
 }

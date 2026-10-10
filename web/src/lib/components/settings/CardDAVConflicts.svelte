@@ -22,9 +22,9 @@
   let focusContext = 0;
 
   const comparisonCards = $derived(controller.selectedDetail ? [
-    { label: 'Base', summary: controller.selectedDetail.base },
-    { label: 'Local', summary: controller.selectedDetail.local },
-    { label: 'Remote', summary: controller.selectedDetail.remote }
+    { key: 'base', label: 'Last synced version', summary: controller.selectedDetail.base, deleted: 'Contact deleted.' },
+    { key: 'local', label: 'msgvault', summary: controller.selectedDetail.local, deleted: 'Marked for removal from the address book.' },
+    { key: 'remote', label: controller.selectedDetail.address_book.name, summary: controller.selectedDetail.remote, deleted: 'Contact deleted.' }
   ] : []);
 
   $effect(() => {
@@ -44,11 +44,11 @@
   });
 
   function stateLabel(state: CardDAVConflictSummary['state']): string {
-    return state.charAt(0).toUpperCase() + state.slice(1);
+    return state === 'present' ? 'Contact saved' : state === 'deleted' ? 'Contact deleted' : 'Details unavailable';
   }
 
   function resolutionLabel(choice: CardDAVConflictChoice): string {
-    return choice === 'keep_local' ? 'local' : 'remote';
+    return choice === 'keep_local' ? 'msgvault' : 'address book';
   }
 
   function formatTimestamp(value: string): string {
@@ -131,8 +131,7 @@
 </script>
 
 <SettingsSection
-  title="CardDAV conflicts"
-  description="Review unresolved whole-card conflicts using bounded contact summaries."
+  title="Contact conflicts"
 >
   <div bind:this={conflictSurface} class="conflict-surface" onfocusin={rememberSurfaceFocus} onfocusout={forgetSurfaceFocus}>
     {#if controller.unavailable}
@@ -140,29 +139,29 @@
         bind:this={unavailableStatus}
         class="unavailable-status"
         role="status"
-        aria-label="CardDAV conflict review is unavailable."
+        aria-label="Contact conflicts unavailable."
         tabindex="-1"
       >
         <EmptyState
-          title="CardDAV conflict review is unavailable."
-          description="Configure or repair CardDAV in Settings before reviewing conflicts."
+          title="Contact conflicts unavailable."
+          description="Check your address-book connection in Settings."
         />
       </div>
     {:else}
-      <div class="conflicts" aria-label="CardDAV conflict queue" aria-busy={controller.listLoading}>
+      <div class="conflicts" aria-label="Contact conflicts" aria-busy={controller.listLoading}>
     <div class="queue-panel">
       <h3 bind:this={conflictsHeading} tabindex="-1">Unresolved conflicts</h3>
       {#if controller.listLoading}
-        <p class="working"><Spinner size={14} label="Loading CardDAV conflicts" /> Loading CardDAV conflicts…</p>
+        <p class="working"><Spinner size={14} label="Loading contact conflicts" /> Loading contact conflicts…</p>
       {/if}
       {#if controller.listError}
         <div class="notice notice--error" role="alert">
           <span>{controller.listError}</span>
-          <Button size="sm" label="Retry CardDAV conflicts" disabled={controller.listLoading} onclick={() => void controller.retryList()} />
+          <Button size="sm" label="Retry contact conflicts" disabled={controller.listLoading} onclick={() => void controller.retryList()} />
         </div>
       {/if}
       {#if !controller.listLoading && controller.conflicts.length === 0}
-        <EmptyState title="No unresolved CardDAV conflicts." description="New conflicts will appear after CardDAV synchronization." />
+        <EmptyState title="No contact conflicts." />
       {:else}
         <div class="conflict-list">
           {#each controller.conflicts as conflict (conflict.id)}
@@ -178,7 +177,7 @@
             >
               <strong>Conflict {conflict.id}</strong>
               <span>{conflict.address_book.name}</span>
-              <span>Local: {stateLabel(conflict.local_state)} · Remote: {stateLabel(conflict.remote_state)}</span>
+              <span>msgvault: {conflict.local_state === 'deleted' ? 'Remove from address book' : stateLabel(conflict.local_state)} · {conflict.address_book.name}: {stateLabel(conflict.remote_state)}</span>
               <time datetime={conflict.updated_at}>Updated {formatTimestamp(conflict.updated_at)}</time>
             </button>
           {/each}
@@ -188,10 +187,10 @@
 
     <section class="detail-panel" aria-labelledby="carddav-conflict-detail-heading">
       <h3 bind:this={detailHeading} id="carddav-conflict-detail-heading" tabindex="-1">Conflict comparison</h3>
-      <p class="disclosure">Only display name, email addresses, and phone numbers are shown. Your choice applies to the whole card.</p>
+      <p class="disclosure">Only display name, email addresses, and phone numbers are shown. Your choice also applies to contact details not shown here.</p>
 
       {#if controller.detailLoading && !controller.selectedDetail}
-        <p class="working" aria-busy="true"><Spinner size={14} label="Loading CardDAV conflict details" /> Loading conflict details…</p>
+        <p class="working" aria-busy="true"><Spinner size={14} label="Loading contact details" /> Loading conflict details…</p>
       {/if}
       {#if controller.detailError}
         <div class="notice notice--error" role="alert">
@@ -204,20 +203,19 @@
       {/if}
       {#if controller.resolutionUnknown}
         <div class="notice notice--error" role="alert">
-          <span>Current CardDAV conflict state is unknown. Retry state before resolving it.</span>
-          <Button size="sm" label="Retry conflict state" disabled={controller.listLoading || controller.detailLoading} onclick={() => void controller.retrySelectedState()} />
+          <span>Unable to confirm whether your choice was saved. Refresh before choosing again.</span>
+          <Button size="sm" label="Refresh contact" disabled={controller.listLoading || controller.detailLoading} onclick={() => void controller.retrySelectedState()} />
         </div>
       {/if}
 
       {#if controller.selectedDetail}
         {@const selected = controller.selectedDetail}
-        <div class="comparison" role="region" aria-label={`CardDAV conflict ${selected.id} comparison`} aria-busy={controller.detailLoading || controller.pendingResolutionID === selected.id}>
-          {#each comparisonCards as card (card.label)}
-            <Card level="default" padding="sm" class="comparison-card" ariaLabel={`${card.label} card summary`}>
+        <div class="comparison" role="region" aria-label={`Contact conflict ${selected.id} comparison`} aria-busy={controller.detailLoading || controller.pendingResolutionID === selected.id}>
+          {#each comparisonCards as card (card.key)}
+            <Card level="default" padding="sm" class="comparison-card" ariaLabel={`${card.label} contact details`}>
               <div class="summary">
                 <h4>{card.label}</h4>
                 {#if card.summary.state === 'present'}
-                  <p class="state-text">Present</p>
                   <dl>
                     <div><dt>Display name</dt><dd>{card.summary.display_name || 'No display name'}</dd></div>
                     <div>
@@ -237,9 +235,9 @@
                   </dl>
                   {#if card.summary.truncated}<p class="truncated">Additional name, email, or phone values are not shown.</p>{/if}
                 {:else if card.summary.state === 'deleted'}
-                  <p class="state-text">Deleted. This side is a deletion tombstone.</p>
+                  <p class="state-text">{card.deleted}</p>
                 {:else}
-                  <p class="state-text">Unavailable. No safe comparison summary is available.</p>
+                  <p class="state-text">Contact details unavailable.</p>
                 {/if}
               </div>
             </Card>
@@ -247,14 +245,14 @@
         </div>
 
         {#if selected.status === 'resolved'}
-          <p class="notice notice--success">Resolved{selected.resolution ? ` by keeping the ${resolutionLabel(selected.resolution)} card.` : '.'}</p>
+          <p class="notice notice--success">Resolved{selected.resolution ? ` using the ${resolutionLabel(selected.resolution)} version.` : '.'}</p>
         {:else if !controller.resolutionUnknown}
           <div class="actions" aria-label="Conflict resolution choices">
             {#each selected.allowed_resolutions as choice (choice)}
               <Button
                 tone="info"
                 surface="solid"
-                label={`Keep ${resolutionLabel(choice)} card`}
+                label={`Use ${resolutionLabel(choice)} version`}
                 disabled={!controller.isResolutionAllowed(choice)}
                 onclick={(event) => openDecision(choice, event)}
               />
@@ -262,7 +260,7 @@
           </div>
         {/if}
       {:else if !controller.detailLoading && !controller.detailError}
-        <p>Select a conflict to inspect its safe comparison summary.</p>
+        <p>Select a contact to compare versions.</p>
       {/if}
     </section>
       </div>
@@ -277,7 +275,9 @@
 {#if activeChoice && controller.selectedDetail}
   <div data-carddav-conflict-decision>
     <CardDAVConflictDecisionModal
-      conflictID={controller.selectedDetail.id}
+      addressBookName={controller.selectedDetail.address_book.name}
+      localState={controller.selectedDetail.local.state}
+      remoteState={controller.selectedDetail.remote.state}
       choice={activeChoice}
       pending={controller.pendingResolutionID === controller.selectedDetail.id}
       error={controller.resolutionError}

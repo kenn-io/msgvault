@@ -373,7 +373,6 @@ func parseRemoteResource(href, etag string, body []byte) (store.CardDAVRemoteRes
 	}
 	for _, occurrence := range envelope.PropertyTree {
 		property := occurrence.Property
-		identity := cardDAVVCardIdentity(occurrence)
 		switch strings.ToUpper(property.Name) {
 		case "UID":
 			if resource.RemoteUID == "" {
@@ -381,74 +380,30 @@ func parseRemoteResource(href, etag string, body []byte) (store.CardDAVRemoteRes
 			}
 		case "FN":
 			if resource.DisplayName == "" {
-				value, err := cardDAVPropertyValue(envelope.RenderMetadata.StoredVersion, property)
+				value, err := vcard.PropertyValue(envelope.RenderMetadata.StoredVersion, property)
 				if err != nil {
 					return store.CardDAVRemoteResource{}, fmt.Errorf("decode CardDAV FN: %w", err)
 				}
 				resource.DisplayName = strings.TrimSpace(value)
-				resource.DisplayNameIdentity = identity
 			}
-		case "EMAIL":
-			value, err := cardDAVPropertyValue(envelope.RenderMetadata.StoredVersion, property)
+		case "EMAIL", "TEL":
+			value, uri, err := vcard.ContactPointValue(envelope.RenderMetadata.StoredVersion, property)
 			if err != nil {
-				return store.CardDAVRemoteResource{}, fmt.Errorf("decode CardDAV EMAIL: %w", err)
+				return store.CardDAVRemoteResource{}, fmt.Errorf("decode CardDAV %s: %w", property.Name, err)
 			}
-			value = strings.TrimSpace(trimPrefixFold(value, "mailto:"))
 			if value != "" {
-				resource.Emails = append(resource.Emails, value)
-				resource.EmailIdentities = append(resource.EmailIdentities, identity)
-			}
-		case "TEL":
-			value, err := cardDAVPropertyValue(envelope.RenderMetadata.StoredVersion, property)
-			if err != nil {
-				return store.CardDAVRemoteResource{}, fmt.Errorf("decode CardDAV TEL: %w", err)
-			}
-			value = strings.TrimSpace(trimPrefixFold(value, "tel:"))
-			if value != "" {
-				resource.Phones = append(resource.Phones, value)
-				resource.PhoneIdentities = append(resource.PhoneIdentities, identity)
+				if strings.EqualFold(property.Name, "EMAIL") {
+					resource.Emails = append(resource.Emails, value)
+				} else {
+					if uri != "" {
+						value = uri
+					}
+					resource.Phones = append(resource.Phones, value)
+				}
 			}
 		}
 	}
 	return resource, nil
-}
-
-func cardDAVPropertyValue(version vcard.Version, property vcard.Property) (string, error) {
-	valueType := ""
-	for _, parameter := range property.ParametersNamed("VALUE") {
-		if len(parameter.Values) > 0 {
-			valueType = strings.ToLower(strings.TrimSpace(parameter.Values[0].Decoded))
-			break
-		}
-	}
-	name := strings.ToUpper(property.Name)
-	isText := valueType == "text" || valueType == "" &&
-		(name != "TEL" || version != vcard.Version40)
-	if !isText {
-		return property.RawValue, nil
-	}
-	return vcard.UnescapeText(property.RawValue)
-}
-
-func cardDAVVCardIdentity(occurrence vcard.PropertyOccurrence) store.VCardIdentity {
-	identity := store.VCardIdentity{
-		Property: strings.ToUpper(occurrence.Property.Name),
-		PropID:   occurrence.Identity.PropID,
-		PID:      append([]string(nil), occurrence.Identity.PID...),
-		AltID:    occurrence.Identity.AltID,
-	}
-	if occurrence.Identity.Group != "" {
-		group := occurrence.Identity.Group
-		identity.Group = &group
-	}
-	return identity
-}
-
-func trimPrefixFold(value, prefix string) string {
-	if len(value) >= len(prefix) && strings.EqualFold(value[:len(prefix)], prefix) {
-		return value[len(prefix):]
-	}
-	return value
 }
 
 // SyncCollectionBody builds the RFC 6578 level-1 incremental request.
