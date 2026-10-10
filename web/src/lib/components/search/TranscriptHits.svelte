@@ -124,7 +124,7 @@
 
 </script>
 
-<section class="transcript-hits" aria-label="Spoken in recordings" tabindex="-1" data-scroll>
+<section class="transcript-hits" aria-label="Recordings" tabindex="-1" data-recording-hits data-scroll>
   <header>
     <h2>Recordings{#if result && result.results.length > 0}<span class="count">{result.results.length}</span>{/if}</h2>
     {#if result || expired}<Button label="Refresh" size="sm" surface="soft" onclick={() => retry += 1} />{/if}
@@ -183,6 +183,7 @@
 
 <style>
   .transcript-hits {
+    container-type: inline-size;
     flex: 0 1 auto;
     min-height: 80px;
     max-height: 40%;
@@ -222,5 +223,5 @@
   time { font-variant-numeric: tabular-nums; }
   .coverage { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-2); }
   .coverage span + span::before { content: '·'; margin-right: var(--space-2); }
-  @media (max-width: 640px) { a { column-gap: var(--space-2); padding-inline: 0; } .transcript { grid-column: 1 / -1; } .transcript.timed { grid-template-columns: 3rem minmax(0, 1fr); } }
+  @container (max-width: 640px) { a { column-gap: var(--space-2); padding-inline: 0; } .transcript { grid-column: 1 / -1; } .transcript.timed { grid-template-columns: 3rem minmax(0, 1fr); } }
 </style>
