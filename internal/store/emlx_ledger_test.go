@@ -29,8 +29,20 @@ func TestEmlxLedgerFencedTransitions(t *testing.T) {
 	r.NoError(err)
 	r.NotNil(states[id].Item)
 	a.Equal("imported", states[id].Item.Status)
-	item.SourceID++
-	a.Error(scoped.PutEmlxLedgerItemsContext(t.Context(), item))
+}
+
+func TestEmlxLedgerRejectsOtherSource(t *testing.T) {
+	r, a := require.New(t), assert.New(t)
+	f := storetest.New(t)
+	other, err := f.Store.GetOrCreateSource("apple-mail", "other@example.test")
+	r.NoError(err)
+	scoped := f.Store.ScopedToSync(f.Source.ID, f.StartSync())
+	id := "emlx-" + strings.Repeat("e", 64)
+	item := store.SourceImportItem{SourceID: other.ID, Provider: "emlx-target", ProviderID: id, Status: "imported"}
+	r.ErrorContains(scoped.PutEmlxLedgerItemsContext(t.Context(), item), "is scoped to source")
+	states, err := f.Store.EmlxTargetsContext(t.Context(), other.ID, 0, []string{id})
+	r.NoError(err)
+	a.Nil(states[id].Item, "a run cannot publish receipts for another source")
 }
 
 func TestEmlxLedgerAtomicRootInvalidation(t *testing.T) {
