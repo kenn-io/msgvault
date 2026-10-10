@@ -73,39 +73,32 @@ describe('TranscriptHits', () => {
     expect(fetchFn).toHaveBeenCalledTimes(2);
   });
 
-  it.each([429, 503])('clears stale excerpts after a failed refresh (%s) and allows retry', async status => {
+  it.each([
+    { status: 429, refresh: true }, { status: 503, refresh: true }, { status: 503, refresh: false },
+  ])('clears excerpts after a failed search %j and allows retry', async ({ status, refresh }) => {
     vi.useFakeTimers();
-    const fetchFn = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json(report()));
+    const fetchFn = vi.fn<typeof fetch>();
+    if (refresh) fetchFn.mockResolvedValueOnce(Response.json(report()));
     fetchFn.mockResolvedValueOnce(Response.json({ error: status === 503 ? 'media_search_unavailable' : 'rate_limit_exceeded' }, { status }));
-    fetchFn.mockResolvedValue(Response.json(report({ results: [] })));
+    fetchFn.mockResolvedValue(Response.json(report({ results: refresh ? [] : [hit()] })));
     const view = mount(fetchFn);
-    await vi.advanceTimersByTimeAsync(300);
-    expect(screen.getByRole('link').textContent).toContain('Quarterly numbers');
-    await fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    expect(screen.getByRole('region', { name: 'Recordings' })).toBeTruthy();
+    if (refresh) {
+      await vi.advanceTimersByTimeAsync(300);
+      expect(screen.getByRole('link').textContent).toContain('Quarterly numbers');
+      await fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    }
     expect(screen.queryByRole('link')).toBeNull();
     await vi.advanceTimersByTimeAsync(300);
+    expect(screen.getByRole('region', { name: 'Recordings' })).toBeTruthy();
     expect(screen.getByText(status === 503 ? 'Recording search unavailable.' : 'Could not load recording matches.')).toBeTruthy();
     await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     await vi.advanceTimersByTimeAsync(300);
-    expect(screen.getByText('No spoken matches.')).toBeTruthy();
+    if (refresh) expect(screen.getByText('No spoken matches.')).toBeTruthy();
+    else expect(screen.getByRole('link')).toBeTruthy();
     view.unmount();
     await vi.advanceTimersByTimeAsync(60_000);
-    expect(fetchFn).toHaveBeenCalledTimes(3);
-  });
-
-  it('shows a first-request failure and retries it', async () => {
-    vi.useFakeTimers();
-    const fetchFn = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json({ error: 'media_search_unavailable' }, { status: 503 }))
-      .mockResolvedValue(Response.json(report()));
-    const view = mount(fetchFn);
-    expect(screen.getByRole('region', { name: 'Recordings' })).toBeTruthy();
-    await vi.advanceTimersByTimeAsync(300);
-    expect(screen.getByText('Recording search unavailable.')).toBeTruthy();
-    await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    await vi.advanceTimersByTimeAsync(300);
-    expect(screen.getByRole('link')).toBeTruthy();
-    expect(fetchFn).toHaveBeenCalledTimes(2);
-    view.unmount();
+    expect(fetchFn).toHaveBeenCalledTimes(refresh ? 3 : 2);
   });
 
   it('clears hidden evidence and coalesces visibility refreshes', async () => {

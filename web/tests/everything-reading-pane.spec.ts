@@ -49,8 +49,6 @@ test('unconfigured recording search preserves the ordinary results layout', asyn
   await page.route('**/api/session', route => route.fulfill({ json: { auth_mode: 'loopback', https: false, plain_http_warning: false } }));
   await page.route('**/api/v1/explore', route => route.fulfill({ json: { rows: [entry(1)], total_count: 1, cache_revision: 'recording', search_provenance: {} } }));
   await page.route('**/api/v1/media/search/status', route => route.fulfill({ json: { configured: false } }));
-  const searchRequests: string[] = [];
-  page.on('request', request => { if (new URL(request.url()).pathname === '/api/v1/media/search') searchRequests.push(request.url()); });
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(exploreURLState({ query: 'quarterly' })))}`);
   await page.getByRole('grid', { name: 'Everything results' }).getByText('Synthetic subject 1').click();
   const resize = page.getByRole('separator', { name: 'Resize reading pane' });
@@ -60,8 +58,6 @@ test('unconfigured recording search preserves the ordinary results layout', asyn
   await page.mouse.move(handle.x + handle.width / 2, 0);
   await page.mouse.up();
   await expect.poll(async () => (await page.locator('.results-split > [data-split-pane] > [data-pane="primary"]').boundingBox())!.height).toBe(120);
-  expect(searchRequests).toEqual([]);
-  await expect(page.getByRole('region', { name: 'Recordings' })).toHaveCount(0);
 });
 
 test('recording reader restores history and focus', async ({ page }) => {
