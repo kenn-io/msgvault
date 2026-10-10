@@ -112,9 +112,10 @@ before publication. This exception does not permit reuse in ordinary tests.
 
 ## Code and SQL conventions
 
-- Increment `store.SchemaVersion` when schema or data migrations change runtime
-  requirements. Embedded readers open without DDL and require completed setup
-  at their expected version.
+- Increment `store.SchemaVersion` for any main archive schema change, including
+  indexes, or required data migration. Embedded readers open without DDL and
+  require completed setup at their exact expected version. See
+  [schema version maintenance](docs/development.md#archive-schema-version-maintenance).
 - Use Bubble Tea and lipgloss for the TUI; Svelte and the shared UI toolkit for
   the Web UI. See [Development](docs/development.md) for the dependency map.
 - Route database operations through `Store`. Use DuckDB for Parquet queries,

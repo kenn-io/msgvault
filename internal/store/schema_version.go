@@ -8,12 +8,16 @@ import (
 	"strconv"
 )
 
-// SchemaVersion identifies a completed InitSchemaContext. Increment it when a
-// schema or data migration changes runtime requirements. Runtime-only consumers
-// refuse other versions instead of running migrations with their service role.
+// SchemaVersion identifies a completed InitSchemaContext. Increment it for any
+// main archive schema change, including indexes, or required data migration.
+// Runtime-only consumers require an exact match and never run migrations.
+// TestSchemaVersionContract catches most missed bumps. API, cache and optional
+// vector backend versions are independent.
 const SchemaVersion = 2
 
-func (s *Store) schemaVersion(ctx context.Context) (int, error) {
+// SchemaVersionContext reads the stored completion marker without migrating.
+// A missing marker identifies a legacy archive and returns zero.
+func (s *Store) SchemaVersionContext(ctx context.Context) (int, error) {
 	var exists bool
 	query := "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'archive_metadata')"
 	if s.IsPostgreSQL() {
@@ -35,7 +39,7 @@ func (s *Store) schemaVersion(ctx context.Context) (int, error) {
 	}
 	version, err := strconv.Atoi(value)
 	if err != nil || version <= 0 {
-		return 0, errors.New("invalid archive schema version")
+		return 0, fmt.Errorf("invalid archive schema version %q", value)
 	}
 	return version, nil
 }
@@ -43,7 +47,7 @@ func (s *Store) schemaVersion(ctx context.Context) (int, error) {
 // ValidateSchemaContext performs read-only readiness checks. Only setup runs
 // InitSchemaContext; callers with a runtime role must never try to repair here.
 func (s *Store) ValidateSchemaContext(ctx context.Context) error {
-	version, err := s.schemaVersion(ctx)
+	version, err := s.SchemaVersionContext(ctx)
 	if err != nil {
 		return err
 	}
