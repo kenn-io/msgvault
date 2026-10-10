@@ -876,3 +876,28 @@ func TestClientLogsExpectedFailuresAtDebug(t *testing.T) {
 		})
 	}
 }
+
+// A 401 for a bearer request tells the token owner to stop reusing that token;
+// other responses must not discard a token the server accepted.
+func TestClientReportsRejectedBearerToken(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	status := http.StatusUnauthorized
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(status)
+	}))
+	t.Cleanup(server.Close)
+	client := newFixtureClient(t, server.URL, "", "")
+	client.bearerToken = func(context.Context) (string, error) { return "synthetic-token", nil }
+	rejected := 0
+	client.bearerRejected = func() { rejected++ }
+
+	_, err := client.Do(t.Context(), Request{Method: "PROPFIND", URL: server.URL})
+	require.Error(err)
+	assert.Equal(1, rejected)
+
+	status = http.StatusMultiStatus
+	_, err = client.Do(t.Context(), Request{Method: "PROPFIND", URL: server.URL})
+	require.NoError(err)
+	assert.Equal(1, rejected)
+}

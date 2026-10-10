@@ -506,6 +506,11 @@ func (c *CardDAVController) Save(ctx context.Context, req CardDAVAccountRequest)
 	); err != nil {
 		return CardDAVAccountResponse{}, errors.Join(errCardDAVStorage, err)
 	}
+	if credential.Google {
+		// Discovery must use the stored grant, not a token cached before a
+		// re-authorization that this save is meant to pick up.
+		c.root().googleTokens.forget(googleTokenKeyFor(credential))
+	}
 	service, err := c.serviceForCredential(credential, next)
 	if err != nil {
 		return CardDAVAccountResponse{}, errors.Join(errCardDAVValidation, err)

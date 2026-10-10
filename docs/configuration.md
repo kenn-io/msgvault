@@ -510,7 +510,8 @@ Token commands receive these environment variables:
 | `MSGVAULT_ACCOUNT` | Account spelling used for this token; empty for listing |
 
 Key each record by namespace and account. These values do not depend on the data
-directory or machine, so one store can serve several machines. Preserve
+directory or machine, so moving the data directory or reading the store from
+another machine finds the same records. Preserve
 namespaces: a Google Contacts token can have the same account as its Gmail token
 in a different namespace. Do not collapse distinct account spellings or
 namespaces in a wrapper.
@@ -527,8 +528,8 @@ expand tildes, environment variables, redirects, or pipes. Executables use `PATH
 relative executables use the process working directory. Use absolute paths for
 scripts that must run from the daemon. A command that cannot start, such as a
 missing or non-executable program, is a configuration error; for
-`client_secrets_command`, msgvault asks you to fix the OAuth app settings. Commands inherit the user's environment
-and run with the user's privileges. They must work unattended for scheduled sync.
+`client_secrets_command`, msgvault asks you to fix the OAuth app settings.
+Commands inherit the user's environment and run with the user's privileges. They must work unattended for scheduled sync.
 
 Each invocation has a 30-second deadline and a 1 MiB stdout limit, and stops
 when the operation that needs it is cancelled. When msgvault's stderr is a
@@ -539,13 +540,20 @@ Pass secrets through stdin rather than placing them in command arguments.
 
 Google Contacts reuses an access token until it expires, so the daemon runs these
 commands about once per token lifetime rather than for every contacts request.
-Saving or authorizing a Google Contacts connection reads the stored token again.
+Saving or authorizing a Google Contacts connection, or Google rejecting the
+token, reads the stored token again.
 
 Keep token JSON unchanged, including `scopes` and `client_id`. A write followed by
 a read must return the same bytes. msgvault uses private local lock files to
 coordinate its processes and compares snapshots before replacing a token. It
-never writes secret temporary files in command mode. Other programs that change
-the store need their own coordination with these operations.
+never writes secret temporary files in command mode.
+
+The lock files coordinate only processes on one machine. If msgvault runs on
+more than one machine against the same store, a refresh on one machine can
+overwrite a sign-in saved by another at the same moment. Either let only one
+machine run msgvault against the store, or make `write_command` serialize
+writes across machines. Other programs that change the store need the same
+coordination.
 
 Configure the command backend separately on each machine. To migrate a file
 credential, move its JSON into your store under its namespace and account

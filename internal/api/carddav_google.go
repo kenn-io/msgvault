@@ -73,6 +73,9 @@ func (c *CardDAVController) serviceForCredential(credential carddav.Credential, 
 		BearerToken: func(ctx context.Context) (string, error) {
 			return c.googleBearerToken(ctx, credential)
 		},
+		BearerTokenRejected: func() {
+			c.root().googleTokens.forget(googleTokenKeyFor(credential))
+		},
 	})
 	if err != nil {
 		return nil, err
@@ -83,7 +86,8 @@ func (c *CardDAVController) serviceForCredential(credential carddav.Credential, 
 func (c *CardDAVController) googleBearerToken(ctx context.Context, credential carddav.Credential) (string, error) {
 	key := googleTokenKeyFor(credential)
 	tokens := &c.root().googleTokens
-	if access, ok := tokens.valid(key); ok {
+	access, generation, ok := tokens.valid(key)
+	if ok {
 		return access, nil
 	}
 	// Resolve the grant again once the cached token expires: CLI authorization
@@ -100,7 +104,7 @@ func (c *CardDAVController) googleBearerToken(ctx context.Context, credential ca
 	if err != nil {
 		return "", googleCardDAVTokenError(err)
 	}
-	tokens.store(key, token)
+	tokens.store(key, generation, token)
 	return token.AccessToken, nil
 }
 
@@ -132,7 +136,7 @@ func googleCardDAVTokenError(err error) error {
 // googleCredentialUsable reports whether requests can get a Google token,
 // reusing a cached access token before running credential commands.
 func (c *CardDAVController) googleCredentialUsable(ctx context.Context, credential carddav.Credential) error {
-	if _, ok := c.root().googleTokens.valid(googleTokenKeyFor(credential)); ok {
+	if _, _, ok := c.root().googleTokens.valid(googleTokenKeyFor(credential)); ok {
 		return nil
 	}
 	_, err := c.googleOAuthManager(ctx, credential)

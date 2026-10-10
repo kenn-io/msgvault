@@ -11,8 +11,16 @@ import (
 // requests. Resolving a token can run credential commands, so the daemon does
 // it once per access-token lifetime rather than once per request.
 type googleAccessTokens struct {
-	mu     sync.Mutex
-	tokens map[googleTokenKey]oauth2.Token
+	mu      sync.Mutex
+	entries map[googleTokenKey]googleTokenEntry
+}
+
+// googleTokenEntry counts invalidations so a lookup that started before one
+// cannot store the token it read from the older grant.
+type googleTokenEntry struct {
+	token      oauth2.Token
+	cached     bool
+	generation uint64
 }
 
 // googleTokenKey identifies the grant that resolution selects. Connections that
@@ -26,33 +34,43 @@ func googleTokenKeyFor(credential carddav.Credential) googleTokenKey {
 	return googleTokenKey{username: credential.Username, oauthApp: credential.OAuthApp}
 }
 
-// valid returns a cached access token that has not reached its expiry. Tokens
-// without an expiry are never cached, so their grant is re-resolved each time.
-func (t *googleAccessTokens) valid(key googleTokenKey) (string, bool) {
+// valid returns a cached access token that has not reached its expiry. When
+// none exists, it returns the generation that a later store must still match.
+func (t *googleAccessTokens) valid(key googleTokenKey) (string, uint64, bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	token, ok := t.tokens[key]
-	if !ok || !token.Valid() {
-		return "", false
+	entry := t.entries[key]
+	if !entry.cached || !entry.token.Valid() {
+		return "", entry.generation, false
 	}
-	return token.AccessToken, true
+	return entry.token.AccessToken, entry.generation, true
 }
 
-func (t *googleAccessTokens) store(key googleTokenKey, token *oauth2.Token) {
+// store caches token unless the key was forgotten after the lookup began.
+// Tokens without an expiry are never cached, so their grant is re-resolved.
+func (t *googleAccessTokens) store(key googleTokenKey, generation uint64, token *oauth2.Token) {
 	if token.Expiry.IsZero() {
 		return
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.tokens == nil {
-		t.tokens = make(map[googleTokenKey]oauth2.Token)
+	entry := t.entries[key]
+	if entry.generation != generation {
+		return
 	}
-	t.tokens[key] = *token
+	if t.entries == nil {
+		t.entries = make(map[googleTokenKey]googleTokenEntry)
+	}
+	t.entries[key] = googleTokenEntry{token: *token, cached: true, generation: generation}
 }
 
-// forget drops a cached token so the next request reads the current grant.
+// forget drops a cached token and rejects stores from lookups already running,
+// so the next request reads the current grant.
 func (t *googleAccessTokens) forget(key googleTokenKey) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	delete(t.tokens, key)
+	if t.entries == nil {
+		t.entries = make(map[googleTokenKey]googleTokenEntry)
+	}
+	t.entries[key] = googleTokenEntry{generation: t.entries[key].generation + 1}
 }
