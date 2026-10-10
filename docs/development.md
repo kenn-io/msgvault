@@ -319,17 +319,25 @@ ignored.
 
 `internal/store/schema_version.go` owns `store.SchemaVersion`, the monotonic
 integer for required main archive schema work. Increase it whenever the main
-archive schema or a required migration changes. `TestSchemaVersionContract`
-hashes the schema and migration ledger a fresh archive gets on each backend,
-plus the legacy column statements only older archives run, and fails until
-the version moves; its message gives the digest to append. The
-PostgreSQL digest is checked when the store tests run with `MSGVAULT_TEST_DB`
-set to a PostgreSQL URL, as CI's PostgreSQL lane does. A data-only repair that
-runs outside the migration ledger leaves both digests alone, so bump the version
-by hand for one. SQLite and PostgreSQL use the `schema_version` key in
-`archive_metadata`. `InitSchemaContext` refuses future versions before DDL and
-stamps this version only after its required steps succeed, using the caller's
-context. Keep optional and best-effort maintenance behavior separate from that
+archive schema changes, including indexes, or a required data migration changes.
+Embedded readers require an exact version match. Once an archive is migrated to
+a higher version, applications using an older `pkg/archive` must upgrade too,
+even if the schema change only added an index.
+
+`TestSchemaVersionContract` hashes the schema and migration ledger a fresh archive
+gets on each backend, plus the legacy column statements only older archives run,
+and fails until the version moves; its message gives the digest to append.
+Append entries for the new version to both `schemaContractDigests` and
+`schemaContractPostgresDigests`; keep earlier entries unchanged. The SQLite lane
+also requires a PostgreSQL entry. Obtain that digest by running the store tests
+with `MSGVAULT_TEST_DB` set to a PostgreSQL URL. Without local PostgreSQL, use the digest from the CI
+PostgreSQL lane's failure log, append it, and rerun CI to verify it.
+
+A data-only repair that runs outside the migration ledger leaves both digests
+alone, so bump the version by hand for one. SQLite and PostgreSQL use the
+`schema_version` key in `archive_metadata`. `InitSchemaContext` refuses future
+versions before DDL and stamps this version only after its required steps succeed,
+using the caller's context. Keep optional and best-effort maintenance behavior separate from that
 completion guarantee.
 
 The initial contract is new on `main`, after v0.21.0. Existing archives start at

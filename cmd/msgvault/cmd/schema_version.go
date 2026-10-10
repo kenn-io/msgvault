@@ -40,7 +40,7 @@ probed on their host; --local intentionally selects this machine's archive.`,
 				}()
 				version, err = s.SchemaVersionContext(cmd.Context())
 				if err != nil {
-					return err
+					return fmt.Errorf("read archive schema version: %w", err)
 				}
 			}
 			if _, err := fmt.Fprintln(cmd.OutOrStdout(), version); err != nil {

@@ -84,7 +84,7 @@ func TestMigrateDoesNotApplyLegacyIdentityConfig(t *testing.T) {
 	require.NoError(s.Close())
 }
 
-func TestMigrateFutureArchiveReleasesLocks(t *testing.T) {
+func TestMigrateFailureReleasesLocks(t *testing.T) {
 	for _, kind := range []string{"future", "cancelled"} {
 		t.Run(kind, func(t *testing.T) {
 			require := require.New(t)

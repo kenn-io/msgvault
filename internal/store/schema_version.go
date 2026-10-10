@@ -8,9 +8,9 @@ import (
 	"strconv"
 )
 
-// SchemaVersion identifies a completed InitSchemaContext. Increment it when a
-// schema or data migration changes runtime requirements. Runtime-only consumers
-// refuse other versions instead of running migrations with their service role.
+// SchemaVersion identifies a completed InitSchemaContext. Increment it for any
+// main archive schema change, including indexes, or required data migration.
+// Runtime-only consumers require an exact match and never run migrations.
 // TestSchemaVersionContract catches most missed bumps. API, cache and optional
 // vector backend versions are independent.
 const SchemaVersion = 2
@@ -39,7 +39,7 @@ func (s *Store) SchemaVersionContext(ctx context.Context) (int, error) {
 	}
 	version, err := strconv.Atoi(value)
 	if err != nil || version <= 0 {
-		return 0, errors.New("invalid archive schema version")
+		return 0, fmt.Errorf("invalid archive schema version %q", value)
 	}
 	return version, nil
 }

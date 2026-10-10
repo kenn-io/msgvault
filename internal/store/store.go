@@ -397,7 +397,7 @@ func OpenReadOnlyContext(ctx context.Context, dbPath string) (*Store, error) {
 	if _, err := os.Stat(filesystemPath); err != nil {
 		return nil, fmt.Errorf(
 			"database not found: %s "+
-				"(run 'msgvault init-db' first)", dbPath,
+				"(run 'msgvault migrate' first)", dbPath,
 		)
 	}
 
