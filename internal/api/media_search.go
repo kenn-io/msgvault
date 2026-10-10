@@ -94,7 +94,7 @@ func (s *Server) handleMediaSearch(w http.ResponseWriter, r *http.Request) {
 		httpErr, httpError := errors.AsType[*docbankmedia.HTTPError](err)
 		switch {
 		case errors.Is(err, errMediaSearchScope):
-			writeError(w, http.StatusBadRequest, "media_search_scope_limit", "Search supports at most 4096 media versions and source selectors, and 64 distinct current captions per recording source; set --person in the CLI or person_id in the API to narrow the scope")
+			writeError(w, http.StatusBadRequest, "media_search_scope_limit", "Search supports at most 4096 media versions and source selectors; set --person in the CLI or person_id in the API to narrow the scope")
 		case httpError && httpErr.Status == http.StatusBadRequest:
 			writeError(w, http.StatusBadRequest, "invalid_media_search", "Docbank rejected the search query")
 		default:
@@ -140,7 +140,6 @@ func (reader *MessageRecordingReader) search(ctx context.Context, query string, 
 	if err != nil {
 		return response, err
 	}
-	versions := make(map[string]bool)
 	selectors := []docbankmedia.SearchMediaSelector{}
 	selectorIndex := make(map[docbankmedia.SearchMediaSource]int)
 	fence := docbankmedia.SearchFence{}
@@ -149,17 +148,13 @@ func (reader *MessageRecordingReader) search(ctx context.Context, query string, 
 			continue
 		}
 		fence.VaultUID = o.VaultUID
-		if !versions[o.ContentVersionID] {
-			versions[o.ContentVersionID] = true
-			fence.ContentVersionIDs = append(fence.ContentVersionIDs, o.ContentVersionID)
-		}
 		source := mediaSearchSource(o)
 		if _, exists := selectorIndex[source]; !exists {
 			selectorIndex[source] = len(selectors)
 			selectors = append(selectors, docbankmedia.SearchMediaSelector{SearchMediaSource: source, SuppliedInputIDs: []string{}})
 		}
 	}
-	if len(fence.ContentVersionIDs) > docbankmedia.MaxSearchVersions || len(selectors) > docbankmedia.MaxSearchVersions {
+	if len(selectors) > docbankmedia.MaxSearchVersions {
 		return response, errMediaSearchScope
 	}
 	supplied := []store.MessageMediaOccurrence{}
@@ -172,15 +167,27 @@ func (reader *MessageRecordingReader) search(ctx context.Context, query string, 
 	if err != nil {
 		return response, err
 	}
+	oversized := make(map[docbankmedia.SearchMediaSource]bool)
 	for _, o := range supplied {
 		if transcriptRevisionMatches(o, "supplied", revisions[o.AttachmentID]) {
 			selector := &selectors[selectorIndex[mediaSearchSource(o)]]
 			if !slices.Contains(selector.SuppliedInputIDs, o.SuppliedInputID) {
 				if len(selector.SuppliedInputIDs) == docbankmedia.MaxSearchSuppliedInputs {
-					return response, errMediaSearchScope
+					oversized[selector.SearchMediaSource] = true
+					continue
 				}
 				selector.SuppliedInputIDs = append(selector.SuppliedInputIDs, o.SuppliedInputID)
 			}
+		}
+	}
+	selectors = slices.DeleteFunc(selectors, func(selector docbankmedia.SearchMediaSelector) bool {
+		return oversized[selector.SearchMediaSource]
+	})
+	versions := make(map[string]bool)
+	for _, selector := range selectors {
+		if !versions[selector.ContentVersionID] {
+			versions[selector.ContentVersionID] = true
+			fence.ContentVersionIDs = append(fence.ContentVersionIDs, selector.ContentVersionID)
 		}
 	}
 	remoteCtx, cancel := context.WithTimeout(ctx, docbankBudget(ctx))
@@ -219,6 +226,9 @@ func (reader *MessageRecordingReader) search(ctx context.Context, query string, 
 	fresh := make(map[string]store.MessageMediaOccurrence, len(current))
 	for _, o := range current {
 		fresh[o.OccurrenceRef] = o
+		if oversized[mediaSearchSource(o)] {
+			continue
+		}
 		if selection, found := selections[mediaSearchSource(o)]; o.SuppliedInputID != "" && (!found || selection.Origin == "supplied") {
 			supplied = append(supplied, o)
 		}
@@ -248,7 +258,7 @@ func (reader *MessageRecordingReader) search(ctx context.Context, query string, 
 		selection, selected := selections[source]
 		if !selected {
 			currentRevision := o.SuppliedInputID == "" || transcriptRevisionMatches(o, "supplied", revisions[o.AttachmentID])
-			if currentRevision && reader.UploadConsent && (o.RetentionState == store.BeeperMediaRetentionPending || o.RetentionState == store.BeeperMediaRetentionSourceUnavailable ||
+			if !oversized[source] && currentRevision && reader.UploadConsent && (o.RetentionState == store.BeeperMediaRetentionPending || o.RetentionState == store.BeeperMediaRetentionSourceUnavailable ||
 				o.DeliveryPhase == "pending-artifact" || o.DeliveryPhase == "pending-process" || o.DeliveryPhase == "observing") {
 				response.PendingOccurrences++
 			} else {
