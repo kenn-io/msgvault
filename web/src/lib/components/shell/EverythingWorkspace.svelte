@@ -22,6 +22,7 @@
     ExploreWorkspace,
   } from '../../explore/models';
   import { createExploreAPI } from '../../explore/api';
+  import { isValidSourceID } from '../../explore/models';
   import { filtersForGroup, parseGroupSelection } from '../../explore/group-context';
   import { findGroupDetail } from '../../explore/group-detail';
   import type { ExploreLoader } from '../../explore/loader.svelte';
@@ -117,8 +118,13 @@
   const recording = new ArchiveMessageLoader();
   const readiness = mediaReadiness();
   const recordingSelection = $derived(parseRecordingSelection(readingTargetKey));
-  const recordingParticipantID = $derived(exploreState.current.filters.length === 1 && exploreState.current.filters[0].dimension === 'participant' && exploreState.current.filters[0].values.length === 1 ? Number(exploreState.current.filters[0].values[0]) : undefined);
-  const recordingSearchSupported = $derived(exploreState.current.searchMode === 'full_text' && (exploreState.current.filters.length === 0 || (recordingParticipantID !== undefined && Number.isSafeInteger(recordingParticipantID) && recordingParticipantID > 0)) && exploreState.current.groupingChain.length === 0);
+  const recordingParticipantID = $derived.by(() => {
+    const filters = exploreState.current.filters;
+    if (filters.length !== 1 || filters[0].dimension !== 'participant' || filters[0].values.length !== 1) return undefined;
+    const value = filters[0].values[0];
+    return isValidSourceID(value) ? Number(value) : undefined;
+  });
+  const recordingSearchSupported = $derived(exploreState.current.searchMode === 'full_text' && (exploreState.current.filters.length === 0 || recordingParticipantID !== undefined) && exploreState.current.groupingChain.length === 0);
   const recordingSearchVisible = $derived.by(() => {
     const query = exploreState.current.query.trim();
     return Boolean(enabled && readiness?.ready && query && exploreState.current.presentation === 'table');

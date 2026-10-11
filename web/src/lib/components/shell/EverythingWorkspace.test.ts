@@ -129,6 +129,7 @@ describe('EverythingWorkspace', () => {
     { groupingChain: ['kind'] },
     { filters: [{ dimension: 'participant', values: ['1', '2'] }] },
     { filters: [{ dimension: 'participant', values: ['1'] }, { dimension: 'participant', values: ['2'] }] },
+    ...['1e3', '0x7', '7.0'].map(value => ({ filters: [{ dimension: 'participant', values: [value] }] })),
   ])('shows recording search hints for configured unsupported queries %j', async patch => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', query: 'quarterly', searchMode: 'full_text', ...patch }))}`);
