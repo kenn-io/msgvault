@@ -118,7 +118,10 @@
   const readiness = mediaReadiness();
   const recordingSelection = $derived(parseRecordingSelection(readingTargetKey));
   const recordingSearchSupported = $derived(exploreState.current.searchMode === 'full_text' && exploreState.current.filters.length === 0 && exploreState.current.groupingChain.length === 0);
-  const recordingSearchVisible = $derived(Boolean(enabled && readiness?.ready && exploreState.current.query.trim()));
+  const recordingSearchVisible = $derived.by(() => {
+    const query = exploreState.current.query.trim();
+    return Boolean(enabled && readiness?.ready && query);
+  });
 
   $effect(() => {
     void readingDetailRetryRevision;
@@ -776,6 +779,7 @@
           {:else}
             {#if exploreState.current.presentation === 'timeline'}
               <PersonTimeline
+                fill={recordingSearchVisible}
                 rows={loader.rows}
                 {selection}
                 loading={loader.loading}

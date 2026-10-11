@@ -31,10 +31,13 @@ function exploreResponse(overrides: Record<string, unknown> = {}) {
 }
 
 describe('EverythingWorkspace', () => {
-  it('waits for configuration before showing or searching recordings', async () => {
+  it('asks again after two failed configuration checks when the query changes', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
     window.history.replaceState(null, '', '/');
     let finish!: (ready: boolean) => void;
-    const probe = vi.fn(() => new Promise<boolean>(resolve => { finish = resolve; }));
+    const probe = vi.fn(() => new Promise<boolean>(resolve => { finish = resolve; }))
+      .mockRejectedValueOnce(new Error('Status unavailable'))
+      .mockRejectedValueOnce(new Error('Status still unavailable'));
     const fetchFn = vi.fn<typeof fetch>(async input => new URL((input as Request).url).pathname.endsWith('/media/search')
       ? Response.json(recordingSearchReport()) : Response.json(exploreResponse()));
     const state = new ExploreState(window);
@@ -43,6 +46,11 @@ describe('EverythingWorkspace', () => {
     try {
       await screen.findByText('0 items');
       expect(probe).toHaveBeenCalledOnce();
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(probe).toHaveBeenCalledTimes(2);
+      state.commitSearch('recovered', 'full_text');
+      await tick();
+      await waitFor(() => expect(probe).toHaveBeenCalledTimes(3));
       expect(screen.queryByRole('region', { name: 'Recordings' })).toBeNull();
       expect(fetchFn.mock.calls.some(([input]) => new URL((input as Request).url).pathname.endsWith('/media/search'))).toBe(false);
       finish(true);
@@ -50,6 +58,7 @@ describe('EverythingWorkspace', () => {
     } finally {
       view.unmount();
       state.destroy();
+      vi.useRealTimers();
     }
   });
 
@@ -85,11 +94,14 @@ describe('EverythingWorkspace', () => {
   });
 
   it('retries recording details and distinguishes missing messages', async () => {
-    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', query: 'quarterly', searchMode: 'full_text' }))}`);
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', query: 'quarterly', searchMode: 'full_text', selectedRow: 'recording:9' }))}`);
     const message = recordingMessage;
     let messageStatus = 500;
+    const exploreBodies: Array<{ cursor?: string }> = [];
     const fetchFn = vi.fn<typeof fetch>(async input => {
-      const path = new URL((input as Request).url).pathname;
+      const request = input as Request;
+      const path = new URL(request.url).pathname;
+      if (path.endsWith('/explore')) exploreBodies.push(await request.clone().json());
       if (path.endsWith('/media/search')) return Response.json(recordingSearchReport());
       if (path.endsWith('/messages/9/recordings')) return Response.json(recordingTranscript);
       if (path.endsWith('/messages/9')) return messageStatus === 200 ? Response.json(message) : Response.json({ error: 'unavailable' }, { status: messageStatus });
@@ -101,7 +113,6 @@ describe('EverythingWorkspace', () => {
     try {
       const link = await screen.findByRole('link', { name: 'Team chat' });
       expect(link.getAttribute('href')).toBe('/messages/9');
-      await fireEvent.click(link);
       await screen.findByText('Could not load this recording message.');
       messageStatus = 200;
       await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
@@ -110,7 +121,8 @@ describe('EverythingWorkspace', () => {
       expect(await within(pane).findByText('Quarterly numbers in the source transcript')).toBeTruthy();
       expect(screen.getByRole('heading', { name: 'Results 0 items' })).toBeTruthy();
       expect(link.getAttribute('aria-current')).toBe('true');
-      expect(fetchFn.mock.calls.filter(([input]) => new URL((input as Request).url).searchParams.has('cursor'))).toHaveLength(0);
+      expect(exploreBodies.length).toBeGreaterThan(0);
+      expect(exploreBodies.filter(body => body.cursor)).toHaveLength(0);
       await fireEvent.click(screen.getByRole('button', { name: 'Close reading pane' }));
       messageStatus = 404;
       await fireEvent.click(await screen.findByRole('link', { name: 'Team chat' }));

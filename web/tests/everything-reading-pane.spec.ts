@@ -45,19 +45,50 @@ function exploreURLState(overrides: Record<string, unknown> = {}) {
   };
 }
 
-test('unconfigured recording search preserves the ordinary results layout', async ({ page }) => {
+for (const presentation of ['table', 'timeline']) {
+  test(`unconfigured recording search preserves the ordinary ${presentation} layout`, async ({ page }) => {
+    await page.route('**/api/session', route => route.fulfill({ json: { auth_mode: 'loopback', https: false, plain_http_warning: false } }));
+    await page.route('**/api/v1/explore', route => route.fulfill({ json: { rows: [entry(1)], total_count: 1, cache_revision: 'recording', search_provenance: {} } }));
+    await page.route('**/api/v1/media/search/status', route => route.fulfill({ json: { configured: false } }));
+    await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(exploreURLState({ query: 'quarterly', presentation })))}`);
+    if (presentation === 'timeline') {
+      await expect.poll(async () => (await page.getByRole('region', { name: 'Canonical activity timeline' }).boundingBox())!.height).toBe(320);
+    }
+    await page.getByRole('grid', { name: 'Everything results' }).getByText('Synthetic subject 1').click();
+    const resize = page.getByRole('separator', { name: 'Resize reading pane' });
+    const handle = (await resize.boundingBox())!;
+    await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(handle.x + handle.width / 2, 0);
+    await page.mouse.up();
+    await expect.poll(async () => (await page.locator('.results-split > [data-split-pane] > [data-pane="primary"]').boundingBox())!.height).toBe(120);
+  });
+}
+
+test('recording timeline rows stay inside a resized results pane', async ({ page }) => {
   await page.route('**/api/session', route => route.fulfill({ json: { auth_mode: 'loopback', https: false, plain_http_warning: false } }));
-  await page.route('**/api/v1/explore', route => route.fulfill({ json: { rows: [entry(1)], total_count: 1, cache_revision: 'recording', search_provenance: {} } }));
-  await page.route('**/api/v1/media/search/status', route => route.fulfill({ json: { configured: false } }));
-  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(exploreURLState({ query: 'quarterly' })))}`);
-  await page.getByRole('grid', { name: 'Everything results' }).getByText('Synthetic subject 1').click();
+  await page.route('**/api/v1/explore', route => route.fulfill({ json: { rows: Array.from({ length: 20 }, (_, index) => entry(index + 1)), total_count: 20, cache_revision: 'recording', search_provenance: {} } }));
+  await page.route('**/api/v1/media/search/status', route => route.fulfill({ json: { configured: true } }));
+  await page.route('**/api/v1/media/search?*', route => route.fulfill({ json: recordingSearchReport() }));
+  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(exploreURLState({ query: 'quarterly', presentation: 'timeline' })))}`);
+  await expect(page.getByRole('link', { name: 'Team chat' })).toBeVisible();
+  const grid = page.getByRole('grid', { name: 'Everything results' });
+  await grid.getByText('Synthetic subject 1', { exact: true }).click();
+  const primary = page.locator('.results-split > [data-split-pane] > [data-pane="primary"]');
   const resize = page.getByRole('separator', { name: 'Resize reading pane' });
   const handle = (await resize.boundingBox())!;
+  const pane = (await primary.boundingBox())!;
   await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2);
   await page.mouse.down();
-  await page.mouse.move(handle.x + handle.width / 2, 0);
+  await page.mouse.move(handle.x + handle.width / 2, pane.y + 350);
   await page.mouse.up();
-  await expect.poll(async () => (await page.locator('.results-split > [data-split-pane] > [data-pane="primary"]').boundingBox())!.height).toBe(120);
+  await expect.poll(async () => (await primary.boundingBox())!.height).toBeCloseTo(350, -1);
+  const timeline = (await page.getByRole('region', { name: 'Canonical activity timeline' }).boundingBox())!;
+  const results = (await primary.boundingBox())!;
+  expect(timeline.height).toBeLessThan(320);
+  expect(timeline.y + timeline.height).toBeLessThanOrEqual(results.y + results.height + 1);
+  await grid.evaluate(element => { element.scrollTop = element.scrollHeight; });
+  await expect(grid.getByText('Synthetic subject 20')).toBeInViewport();
 });
 
 test('recording reader restores history and focus', async ({ page }) => {
