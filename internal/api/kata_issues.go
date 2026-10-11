@@ -228,6 +228,7 @@ func (s *Server) handleFindKataIssues(w http.ResponseWriter, r *http.Request) {
 	for i, issue := range issues {
 		response.Issues[i] = kataIssueReceipt(issue)
 	}
+	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, response)
 }
 
