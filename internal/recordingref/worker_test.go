@@ -422,7 +422,11 @@ func TestRecordingReferenceUncertain(t *testing.T) {
 				if r.Method == http.MethodGet {
 					gets <- r.URL.Path
 				}
-				if r.Header.Get("X-Api-Key") != expectedKey.Load().(string) {
+				expected, ok := expectedKey.Load().(string)
+				if !assert.True(ok) {
+					return
+				}
+				if r.Header.Get("X-Api-Key") != expected {
 					w.WriteHeader(http.StatusUnauthorized)
 					return
 				}

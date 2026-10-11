@@ -155,7 +155,7 @@ func TestPostgreSQLRuntimeAndReader(t *testing.T) {
 	require.NoError(err)
 	legacy, err := archive.Open(t.Context(), opts)
 	if legacy != nil {
-		assert.NoError(legacy.Close())
+		require.NoError(legacy.Close())
 	}
 	require.ErrorContains(err, "run setup")
 

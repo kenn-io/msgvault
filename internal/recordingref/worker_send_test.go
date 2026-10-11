@@ -58,12 +58,13 @@ func TestRecordingReferenceRemovalBeforeSend(t *testing.T) {
 					defer gate.Unlock()
 					state, _, _ := recordingState(t, f, id)
 					assert.Equal(tc.stateAtChange, state, "the worker must mark sending before yielding after its read")
-					if change == "source deletion" {
+					switch change {
+					case "source deletion":
 						require.NoError(f.Store.MarkMessagesDeletedBatch(f.Source.ID, []string{"recording"}))
-					} else if change == "archive deletion" {
+					case "archive deletion":
 						_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET deleted_at=? WHERE id=?`), "2000-01-01 00:00:00.000", id)
 						require.NoError(err)
-					} else {
+					default:
 						require.NoError(f.Store.UpsertMessageBody(id, sql.NullString{String: "Recording link removed", Valid: true}, sql.NullString{}))
 					}
 					changed = true
