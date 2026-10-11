@@ -1,8 +1,6 @@
 package recordingref
 
 import (
-	"encoding/json/v2"
-	"net/http"
 	"strconv"
 	"testing"
 
@@ -22,14 +20,7 @@ func TestRecordingReferenceBatchContinuesAfterInvalidOccurrence(t *testing.T) {
 	_, err := f.Store.DB().Exec(`UPDATE messages SET content_changed_at='2000-01-01 00:00:00.000'`)
 	require.NoError(err)
 	requests := make(chan string, 2)
-	client := recordingClient(t, func(w http.ResponseWriter, r *http.Request) {
-		var req docbankmedia.ReferenceRequest
-		if !assert.NoError(json.UnmarshalRead(r.Body, &req)) {
-			return
-		}
-		requests <- req.ReferenceURL
-		writeReceipt(t, w, req.OperationID)
-	})
+	client := recordingURLClient(t, requests)
 	worker := NewWorker(f.Store, client, "destination", nil, nil)
 	// Discover both rows without sending, then corrupt the first saved occurrence.
 	unavailable, err := docbankmedia.NewClient("http://127.0.0.1:1", func() (string, error) {

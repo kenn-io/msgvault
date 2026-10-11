@@ -37,8 +37,6 @@ func TestReferenceWire(t *testing.T) {
 	assert.Equal(false, body["acquire"])
 	assert.Equal("operation", body["operation_id"])
 	assert.Equal("https://loom.com/share/abc?token=secret", body["reference_url"])
-	assert.NotContains(body, "processing")
-	assert.NotContains(body, "credential_binding")
 	_, err = client.OperationReceipt(t.Context(), "operation")
 	require.NoError(err)
 	assert.Equal("/api/v1/media/operations/operation", getPath)

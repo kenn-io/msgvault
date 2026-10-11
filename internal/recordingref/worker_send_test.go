@@ -3,15 +3,12 @@ package recordingref
 import (
 	"context"
 	"database/sql"
-	"encoding/json/v2"
-	"net/http"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/docbankmedia"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
@@ -34,14 +31,7 @@ func TestRecordingReferenceRemovalBeforeSend(t *testing.T) {
 				id := f.CreateMessage("recording")
 				recordingBody(t, f, id, "https://loom.com/share/recording")
 				requests := make(chan string, 2)
-				client := recordingClient(t, func(w http.ResponseWriter, r *http.Request) {
-					var req docbankmedia.ReferenceRequest
-					if !assert.NoError(json.UnmarshalRead(r.Body, &req)) {
-						return
-					}
-					requests <- req.ReferenceURL
-					writeReceipt(t, w, req.OperationID)
-				})
+				client := recordingURLClient(t, requests)
 				worker := NewWorker(f.Store, client, "destination", nil, nil)
 				message, found, err := f.Store.ReadRecordingMessage(t.Context(), id)
 				require.NoError(err)
@@ -92,10 +82,8 @@ func TestRecordingReferenceRemovalBeforeSend(t *testing.T) {
 				if change == "archive deletion" {
 					_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET deleted_at=NULL WHERE id=?`), id)
 					require.NoError(err)
-					assert.Eventually(func() bool {
-						require.NoError(worker.RunBatch(t.Context()))
-						return len(requests) == 1
-					}, 5*time.Second, 10*time.Millisecond)
+					waitForRecordingChange(t, worker, id)
+					assert.Len(requests, 1)
 				}
 			})
 		}

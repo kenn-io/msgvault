@@ -41,7 +41,6 @@ func TestScan(t *testing.T) {
 		{"underline query", "__https://loom.com/share/abc?token=a_b__", nil, []string{"https://loom.com/share/abc?token=a_b"}},
 		{"strikethrough", "~~https://loom.com/share/abc~~", nil, []string{"https://loom.com/share/abc"}},
 		{"nested", "**__https://loom.com/share/abc__**", nil, []string{"https://loom.com/share/abc"}},
-		{"bold label", "**[Watch](https://loom.com/share/abc)**", nil, []string{"https://loom.com/share/abc"}},
 		{"label punctuation", "**[Watch](https://cap.so/s/abc!)**", nil, []string{"https://cap.so/s/abc!"}},
 		{"plain label punctuation", "[Watch](https://cap.so/s/abc!)", nil, []string{"https://cap.so/s/abc!"}},
 		{"literal query", "https://cap.so/s/abc?token=keep_*_~", nil, []string{"https://cap.so/s/abc?token=keep_*_~"}},

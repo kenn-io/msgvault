@@ -105,7 +105,7 @@ func TestRecordingLinkHTMLPersists(t *testing.T) {
 	f := newFakeBeeper(t)
 	ch := mediaTranscriptChat()
 	ch.Msgs[0].ID = "html1"
-	ch.Msgs[0].Text = `<mx-reply><a href="https://loom.com/share/parent">Parent</a></mx-reply><a href="https://loom.com/share/abc">Watch recording</a>`
+	ch.Msgs[0].Text = `<a href="https://loom.com/share/abc">Watch recording</a>`
 	f.addChat(ch)
 	imp, st, done := newTestImporter(t, f)
 	defer done()

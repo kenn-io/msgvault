@@ -65,10 +65,15 @@ func TestRecordingReferenceState(t *testing.T) {
 	ok, err = f.Store.MarkRecordingReferenceSending(t.Context(), first, now)
 	require.NoError(err)
 	assert.False(ok)
+}
+
+func TestRecordingReferenceCursor(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	f := storetest.New(t)
 	before, err := f.Store.LoadRecordingReferenceCursor(t.Context(), "destination")
 	require.NoError(err)
-	after := store.RecordingReferenceCursor{At: now, AfterID: id, AfterRow: true, Policy: "policy"}
-	ok, err = f.Store.AdvanceRecordingReferenceCursor(t.Context(), "destination", before, after)
+	after := store.RecordingReferenceCursor{At: time.Now().UTC(), AfterID: 1, AfterRow: true, Policy: "policy"}
+	ok, err := f.Store.AdvanceRecordingReferenceCursor(t.Context(), "destination", before, after)
 	require.NoError(err)
 	assert.True(ok)
 	ok, err = f.Store.AdvanceRecordingReferenceCursor(t.Context(), "destination", before, after)
