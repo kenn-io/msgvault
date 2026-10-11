@@ -80,6 +80,7 @@ func TestImportMuesliWaitsOutRateLimit(t *testing.T) {
 
 func TestImportMuesliRateLimitStopsWhenCanceled(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
+		require := require.New(t)
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		attempts := 0
@@ -89,7 +90,7 @@ func TestImportMuesliRateLimitStopsWhenCanceled(t *testing.T) {
 			w.WriteHeader(http.StatusTooManyRequests)
 		}))
 		client, err := New(Config{URL: "http://127.0.0.1", AllowInsecure: true, APIKey: "test-owner-key", HTTPClient: server.Client()})
-		require.NoError(t, err)
+		require.NoError(err)
 		done := make(chan error, 1)
 		go func() {
 			_, err := client.ImportMuesli(ctx, muesli.RemoteRequest{Action: "register", Source: meetingimport.Source{Identifier: "recorder", AccountEmail: "user@example.com"}})
@@ -97,12 +98,12 @@ func TestImportMuesliRateLimitStopsWhenCanceled(t *testing.T) {
 		}()
 		// In-memory I/O finishes before Wait observes the goroutine blocked on Retry-After.
 		synctest.Wait()
-		require.Equal(t, 1, attempts)
-		require.Empty(t, done)
+		require.Equal(1, attempts)
+		require.Empty(done)
 		cancel()
 		synctest.Wait()
-		require.Len(t, done, 1, "cancellation interrupts Retry-After before its timer fires")
-		require.ErrorIs(t, <-done, context.Canceled)
+		require.Len(done, 1, "cancellation interrupts Retry-After before its timer fires")
+		require.ErrorIs(<-done, context.Canceled)
 		assert.Equal(t, 1, attempts, "cancellation prevents another request")
 	})
 }
