@@ -691,3 +691,32 @@ func TestMCPEventsIdleDeliveryDoesNotWrite(t *testing.T) {
 		})
 	}
 }
+
+// A receiver that answers 410 ends the subscription, and ending a
+// subscription removes its receipt read authority at once.
+func TestMCPEventsGoneSubscriptionCannotReadReceipts(t *testing.T) {
+	require := Require.New(t)
+	f := storetest.New(t)
+	now := time.Now().UTC()
+	clock, err := f.Store.ConfigureMCPEvents(t.Context(), mcpStoreConfig())
+	require.NoError(err)
+	active, _, err := f.Store.ActivateMCPSubscription(t.Context(), store.MCPActivation{Subscription: newMCPStoreSubscription(t, f, 1, now), Now: now})
+	require.NoError(err)
+	appendMCPSubscriptionFixture(t, f, clock.Epoch, now)
+	_, err = f.Store.GetMCPEvent(t.Context(), active.ID, 1, active.Principal, now)
+	require.NoError(err, "an active subscription reads its receipt")
+	pending, err := f.Store.PrepareMCPDelivery(t.Context(), active.ID, active.Generation, now, func(store.MCPSubscription, store.MCPEvent) ([]byte, error) {
+		return []byte(`{"eventId":"synthetic-gone"}`), nil
+	})
+	require.NoError(err)
+	require.NotNil(pending)
+	require.NoError(f.Store.FinishMCPDelivery(t.Context(), active.ID, active.Generation, 1, now, 410, time.Time{}))
+	gone, err := f.Store.GetMCPSubscription(t.Context(), active.ID)
+	require.NoError(err)
+	require.NotNil(gone)
+	require.Equal("gone", gone.State)
+
+	_, err = f.Store.GetMCPEvent(t.Context(), active.ID, 1, active.Principal, now)
+	require.Error(err)
+	Assert.Equal(t, "event_unavailable", err.Error())
+}
