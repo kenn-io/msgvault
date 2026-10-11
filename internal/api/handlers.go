@@ -330,7 +330,7 @@ type MessageSummary struct {
 type MessageDetail struct {
 	MessageSummary
 
-	ConversationTitle string `json:"conversation_title,omitempty" doc:"Conversation title, populated by GET /api/v1/messages/{id}."`
+	ConversationTitle string `json:"conversation_title,omitempty" doc:"Conversation title, when available."`
 
 	Body     string `json:"body"`
 	BodyHTML string `json:"body_html,omitempty"`

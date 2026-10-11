@@ -6976,7 +6976,7 @@ components:
           format: int64
           type: integer
         conversation_title:
-          description: Conversation title, populated by GET /api/v1/messages/{id}.
+          description: Conversation title, when available.
           type: string
         deleted_at:
           type: string

@@ -15,7 +15,6 @@
   const id = $props.id();
   let result = $state<MediaSearchResponse>();
   const admitted = $derived(admitsMediaQuery(query));
-  const validParticipant = $derived(participantID === undefined || (Number.isSafeInteger(participantID) && participantID > 0));
   const incomplete = $derived(Boolean(result && (result.partial || result.truncated)));
   let notice = $state('');
   let expired = $state(false);
@@ -33,7 +32,7 @@
     const requestedQuery = query.trim();
     const requestedClient = client;
     const requestedParticipantID = participantID;
-    const allowed = supported && validParticipant && admitted;
+    const allowed = supported && admitted;
     const retryRequested = retry !== previousRetry;
     previousRetry = retry;
     result = undefined;
@@ -145,7 +144,7 @@
     <h2>Recordings{#if result && result.results.length > 0}<span class="count">{result.results.length}</span>{/if}</h2>
     {#if result || expired}<Button label="Refresh" size="sm" surface="soft" onclick={() => retry += 1} />{/if}
   </header>
-  {#if !supported || !validParticipant}
+  {#if !supported}
     <p role="status">Recording search requires Full text with no grouping and at most one Person filter.</p>
   {:else if !admitted}
     <p role="status">Recording search supports plain words only. Punctuation and quoted phrases are unavailable.</p>

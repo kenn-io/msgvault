@@ -6653,7 +6653,7 @@ type MessageDetail struct {
 	Cc             []string         `json:"cc,omitempty"`
 	ConversationID *int64           `json:"conversation_id,omitempty"`
 
-	// ConversationTitle Conversation title, populated by GET /api/v1/messages/{id}.
+	// ConversationTitle Conversation title, when available.
 	ConversationTitle *string  `json:"conversation_title,omitzero"`
 	DeletedAt         *string  `json:"deleted_at,omitzero"`
 	From              string   `json:"from" validate:"required"`
