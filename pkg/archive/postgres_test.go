@@ -149,6 +149,15 @@ func TestPostgreSQLRuntimeAndReader(t *testing.T) {
 	assert.Equal(source.ID, accounts.Accounts[0].ID)
 	exerciseSlackReplacement(t, runtime)
 	exerciseDiscordCollection(t, runtime)
+	_, err = admin.Exec("DROP TABLE " + quote(schema) + ".recording_references")
+	require.NoError(err)
+	_, err = admin.Exec("UPDATE " + quote(schema) + ".archive_metadata SET value = '3' WHERE key = 'schema_version'")
+	require.NoError(err)
+	legacy, err := archive.Open(t.Context(), opts)
+	if legacy != nil {
+		assert.NoError(legacy.Close())
+	}
+	require.ErrorContains(err, "run setup")
 
 	// An incompatible setup must fail without trying to repair its marker.
 	_, err = admin.Exec("UPDATE " + quote(schema) + ".archive_metadata SET value = 'unsupported' WHERE key = 'schema_version'")
