@@ -1194,6 +1194,7 @@ With `enabled = true` and `reference_consent = true`, the daemon routes Loom and
 Cap links from normalized message text and HTML across every message source,
 including existing messages and links behind display text. It also routes native
 Teams recording pointers from typed attachment records.
+Beeper imports and repairs retain HTML outside quoted replies, so links behind display text and changes to link targets remain discoverable.
 It submits references with acquisition disabled. Docbank records outcome
 `access_required` or `unsupported`. Coverage stays `unprocessed` until media is imported.
 Delivery log events include Docbank's
@@ -1213,7 +1214,7 @@ The former Beeper-only `upload_consent` setting no longer enables uploads.
 Existing users must explicitly set `all_sources_upload_consent = true` to resume
 sending audio, including Beeper recordings.
 
-The daemon reads these settings at startup, so restart it after a change. A new
+Restart the daemon after changing these settings, including `reference_consent` or `reference_origins`. A new
 `url` starts a separate delivery record; earlier rows stay. Disabling the route
 stops the job and keeps its rows. A failed setup, such as an invalid `url`,
 does the same and logs a warning. `all_sources_upload_consent` covers transport only; the
