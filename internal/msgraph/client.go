@@ -192,7 +192,7 @@ func (c *Client) do(ctx context.Context, method, rawURL string, reqBody []byte, 
 			lastErr = err
 			continue
 		}
-		if ok(resp.StatusCode) && maxBytes > 0 && resp.ContentLength > maxBytes {
+		if maxBytes > 0 && resp.ContentLength > maxBytes {
 			_ = resp.Body.Close()
 			return nil, ErrTooLarge
 		}
@@ -218,6 +218,9 @@ func (c *Client) do(ctx context.Context, method, rawURL string, reqBody []byte, 
 		if closeErr != nil {
 			return nil, fmt.Errorf("graph %s %s: close body: %w", method, reqURL, closeErr)
 		}
+		if maxBytes > 0 && int64(len(body)) > maxBytes {
+			return nil, ErrTooLarge
+		}
 		var graphError struct {
 			Error struct {
 				Code string `json:"code"`
@@ -229,9 +232,6 @@ func (c *Client) do(ctx context.Context, method, rawURL string, reqBody []byte, 
 		expired := graphError.Error.Code == "syncStateNotFound"
 		switch {
 		case ok(resp.StatusCode):
-			if maxBytes > 0 && int64(len(body)) > maxBytes {
-				return nil, ErrTooLarge
-			}
 			return body, nil
 		case resp.StatusCode == http.StatusGone || expired:
 			return nil, fmt.Errorf("graph %s %s: status %d: %s: %w", method, reqURL, resp.StatusCode, string(body), ErrGone)
@@ -362,7 +362,35 @@ func (c *Client) SendOnce(ctx context.Context, method, url string, body any, ifM
 // whose caller must check the resource again before repeating it, such as a
 // DELETE, which Graph cannot make conditional.
 func (c *Client) SendNoRetry(ctx context.Context, method, url string, body any, ifMatch string) ([]byte, error) {
-	return c.send(ctx, method, url, body, ifMatch, retryNone)
+	client := c.withoutRedirects()
+	var data []byte
+	var err error
+	if body != nil {
+		data, err = json.Marshal(body)
+		if err != nil {
+			return nil, fmt.Errorf("graph %s %s: encode body: %w", method, url, err)
+		}
+	}
+	return client.do(ctx, method, url, data, 1<<20, ifMatch, retryNone, nil)
+}
+
+// withoutRedirects isolates exact-target requests from the importer's retry policy.
+func (c *Client) withoutRedirects() *Client {
+	client := *c
+	httpClient := *c.http
+	httpClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	client.http = &httpClient
+	return &client
+}
+
+// GetJSONOnce reads bounded metadata once without following redirects.
+func (c *Client) GetJSONOnce(ctx context.Context, url string, out any) error {
+	client := c.withoutRedirects()
+	body, err := client.do(ctx, http.MethodGet, url, nil, 1<<20, "", retryNone, nil)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(body, out)
 }
 
 // retryMode says which failures do repeats.
