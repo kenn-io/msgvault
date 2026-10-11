@@ -151,6 +151,7 @@ func TestKataIssueHTTP(t *testing.T) {
 		{kataevidence.ErrChanged, http.StatusConflict, "evidence_changed"},
 		{kataevidence.ErrInvalidReference, http.StatusBadRequest, "invalid_evidence"},
 		{taskclient.ErrInvalidRef, http.StatusBadRequest, "invalid_ref"},
+		{fmt.Errorf("prepare: %w", kataevidence.ErrDocbankLimit), http.StatusBadRequest, "invalid_evidence"},
 		{kataissues.ErrInvalidRequest, http.StatusUnprocessableEntity, "invalid_request"},
 		{kataissues.ErrOutsideProject, http.StatusUnprocessableEntity, "kata_issue_outside_project"},
 		{fmt.Errorf("%w: person 404: %w", personagenda.ErrIdentityLookup, fmt.Errorf("get person: %w", store.ErrPersonNotFound)), http.StatusNotFound, "person_profile_not_found"},
@@ -165,6 +166,15 @@ func TestKataIssueHTTP(t *testing.T) {
 			var body ErrorResponse
 			require.NoError(json.Unmarshal(failed.Body.Bytes(), &body))
 			assert.Equal("Kata issue ref is malformed", body.Message)
+		}
+		if tc.code == "invalid_evidence" {
+			var body ErrorResponse
+			require.NoError(json.Unmarshal(failed.Body.Bytes(), &body))
+			if errors.Is(tc.err, kataevidence.ErrDocbankLimit) {
+				assert.Equal("a request can cite at most 4 Docbank transcript references", body.Message)
+			} else {
+				assert.Equal("Evidence identity or range is invalid", body.Message)
+			}
 		}
 	}
 }

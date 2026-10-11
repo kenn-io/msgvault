@@ -8,6 +8,7 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -193,6 +194,43 @@ func TestCreateSavesPreparedQuotation(t *testing.T) {
 		require.ErrorIs(err, want)
 	}
 	assert.Equal(sent, f.kata.creates.Load())
+}
+
+func TestCreateAndLinkDocbankReferenceLimit(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newFixture(t)
+	uid, err := f.store.Store.ArchiveUIDContext(t.Context())
+	require.NoError(err)
+	ref := kataevidence.Reference{Version: kataevidence.Version, Kind: "docbank_rendition", ArchiveUID: uid, MessageID: 4,
+		SourceType: "beeper", SourceIdentifier: "signal", SourceMessageID: "voice1", AttachmentID: 9, OccurrenceKey: "msgvault:voice1"}
+	docbank := &slowDocbank{binding: kataevidence.DocbankBinding{Reference: ref, VaultUID: "22222222-2222-4222-8222-222222222222",
+		ContentVersionID: "11111111-1111-4111-8111-111111111111", ContentSHA256: strings.Repeat("a", 64)}, healthy: true}
+	evidence := kataevidence.New(nil).WithDocbank(kataevidence.NewDocbankReader(docbank, docbank, func(context.Context) (string, error) { return "destination", nil }))
+	f.service.Evidence = evidence
+	ref.DocbankRendition = &kataevidence.DocbankReference{VaultUID: docbank.binding.VaultUID, NodeID: 7, ContentVersionID: docbank.binding.ContentVersionID,
+		ContentSHA256: docbank.binding.ContentSHA256, RenditionAttachmentID: strings.Repeat("b", 64), BuildID: strings.Repeat("f", 64),
+		RenditionSHA256: strings.Repeat("d", 64), EndRune: 1}
+	ref, err = kataevidence.Canonicalize(ref)
+	require.NoError(err)
+	refs := slices.Repeat([]kataevidence.Reference{ref}, kataevidence.MaxDocbankReferences+1)
+	created, err := f.service.Create(t.Context(), "key-duplicates", kataissues.CreateInput{Title: "Send email", Evidence: refs})
+	require.NoError(err)
+	assert.Len(envelopeOf(t, created.Issue).Entries, 1)
+	assert.Equal(1, docbank.reads)
+	_, err = f.service.Link(t.Context(), created.Issue.QualifiedRef, refs)
+	require.NoError(err)
+	assert.Equal(1, docbank.reads, "repeated links reuse recorded evidence")
+	for i := range refs {
+		payload := *refs[i].DocbankRendition
+		payload.StartRune, payload.EndRune = i, i+1
+		refs[i].DocbankRendition = &payload
+	}
+	_, err = f.service.Create(t.Context(), "key-limit", kataissues.CreateInput{Title: "Send email", Evidence: refs})
+	require.ErrorIs(err, kataevidence.ErrDocbankLimit)
+	_, err = f.service.Link(t.Context(), created.Issue.QualifiedRef, refs)
+	require.ErrorIs(err, kataevidence.ErrDocbankLimit)
+	assert.Equal(1, docbank.reads, "over-limit requests never read Docbank")
 }
 
 // resolvedAs reports every citation in one unavailable state.

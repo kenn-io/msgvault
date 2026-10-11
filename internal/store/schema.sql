@@ -1851,7 +1851,7 @@ CREATE INDEX IF NOT EXISTS idx_beeper_media_occurrences_ready
 CREATE INDEX IF NOT EXISTS idx_beeper_media_occurrences_processing
     ON beeper_media_occurrences(destination_key, processing_key, retention_state);
 CREATE INDEX IF NOT EXISTS idx_beeper_media_occurrences_source
-    ON beeper_media_occurrences(source_type, source_identifier, source_message_id, destination_key);
+    ON beeper_media_occurrences(source_type, source_identifier, source_message_id, source_conversation_id, source_attachment_id, source_part_key, source_sha256, destination_key, retention_state);
 
 CREATE TABLE IF NOT EXISTS beeper_media_deliveries (
     destination_key          TEXT NOT NULL,

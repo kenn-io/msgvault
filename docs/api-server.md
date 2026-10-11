@@ -121,6 +121,9 @@ schema fail before issuing archive requests. The HTTP prefix remains `/api/v1`.
 This schema also adds consented identity scoring. See
 [identity match review and scoring](#identity-match-review-and-scoring).
 
+Schema 3.12.0 adds the `docbank_rendition` evidence kind, which
+[cites a Docbank transcript](usage/kata-issues.md#cite-a-docbank-transcript).
+
 Schema 3.12.0 adds `GET /api/v1/integrations/kata/issues/{ref}/context`, which
 [reads an issue's evidence back](usage/kata-issues.md#read-an-issues-evidence-back),
 and the `ContextPassage` schema with optional `before` and `after` text.
