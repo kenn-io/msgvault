@@ -896,9 +896,10 @@ trusted_callbacks = [{ origin = "https://receiver.example.net:8443", addresses =
 ```
 
 The daemon creates `<data_dir>/mcp-events.key` with owner-only access when Events
-is enabled. Back up this key with the archive if you need to restore encrypted
-subscription secrets. A missing key with retained encrypted state, or a corrupt
-key, disables Events without replacing it. Events status reports
+is enabled. `msgvault backup create --include-tokens` captures it with the
+archive; without it, a restored archive cannot decrypt its subscription
+secrets. A missing key with retained encrypted state, or a corrupt key, disables
+Events without replacing it. Events status reports
 `events_key_unavailable`. Keep Events disabled when opening an archive clone; rotate
 the clone's owner API key before enabling callbacks. Run one daemon per archive.
 

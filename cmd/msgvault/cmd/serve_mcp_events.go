@@ -11,6 +11,9 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
+// mcpEventsKeyFile is the Events secret-encryption key in the data directory.
+const mcpEventsKeyFile = "mcp-events.key"
+
 func newDaemonMCPEventsService(ctx context.Context, cfg *config.Config, st *store.Store, server *api.Server) (*mcpevents.Service, error) {
 	opts, err := daemonMCPEventsOptions(cfg)
 	if err != nil {
@@ -73,7 +76,7 @@ func daemonMCPEventsOptions(cfg *config.Config) (mcpevents.Options, error) {
 		Retention:        retention,
 		Sources:          append([]string(nil), cfg.MCP.Events.Sources...),
 		TrustedCallbacks: trusted,
-		KeyPath:          filepath.Join(cfg.Data.DataDir, "mcp-events.key"),
+		KeyPath:          filepath.Join(cfg.Data.DataDir, mcpEventsKeyFile),
 		OwnerKey:         cfg.Server.AuthenticationKey(),
 	}, nil
 }
