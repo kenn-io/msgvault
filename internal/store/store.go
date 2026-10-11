@@ -1093,6 +1093,7 @@ func (s *Store) buildLargeIndexesConcurrently(ctx context.Context) {
 		{"idx_participant_identifiers_value_lower", "ON participant_identifiers(LOWER(identifier_value))"},
 		{"idx_person_match_scoring_contact_lookup", "ON participant_contact_observations(address_kind, normalized_value, participant_id) WHERE active_until IS NULL AND superseded_at IS NULL"},
 		{"idx_beeper_media_occurrences_source", "ON beeper_media_occurrences(source_type, source_identifier, source_message_id, destination_key)"},
+		{"idx_beeper_media_occurrences_citation", "ON beeper_media_occurrences(source_type, source_identifier, source_message_id, source_conversation_id, source_attachment_id, source_part_key, source_sha256, destination_key, retention_state)"},
 		{"idx_message_recipients_email_from", "ON message_recipients(LOWER(email_address), message_id) WHERE recipient_type = 'from'"},
 	}
 	for _, index := range concurrentIndexes {

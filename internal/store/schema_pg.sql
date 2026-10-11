@@ -1609,7 +1609,7 @@ CREATE INDEX IF NOT EXISTS idx_beeper_media_occurrences_ready
     ON beeper_media_occurrences(destination_key, retention_state, next_action_at, occurrence_ref);
 CREATE INDEX IF NOT EXISTS idx_beeper_media_occurrences_processing
     ON beeper_media_occurrences(destination_key, processing_key, retention_state);
-CREATE INDEX IF NOT EXISTS idx_beeper_media_occurrences_source
+CREATE INDEX IF NOT EXISTS idx_beeper_media_occurrences_citation
     ON beeper_media_occurrences(source_type, source_identifier, source_message_id, source_conversation_id, source_attachment_id, source_part_key, source_sha256, destination_key, retention_state);
 
 CREATE TABLE IF NOT EXISTS beeper_media_deliveries (

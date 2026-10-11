@@ -11,6 +11,27 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
+func TestKataCitationIndexUpgrade(t *testing.T) {
+	require := require.New(t)
+	f := storetest.New(t)
+	query := "SELECT sql FROM sqlite_master WHERE type='index' AND name=?"
+	if f.Store.IsPostgreSQL() {
+		query = "SELECT indexdef FROM pg_indexes WHERE schemaname=current_schema() AND indexname=?"
+	}
+	query = f.Store.Rebind(query)
+	var original string
+	require.NoError(f.Store.DB().QueryRow(query, "idx_beeper_media_occurrences_source").Scan(&original))
+	require.Contains(original, "(source_type, source_identifier, source_message_id, destination_key)")
+	_, err := f.Store.DB().Exec("DROP INDEX idx_beeper_media_occurrences_citation")
+	require.NoError(err)
+	require.NoError(f.Store.InitSchemaContext(t.Context()))
+	var retained, citation string
+	require.NoError(f.Store.DB().QueryRow(query, "idx_beeper_media_occurrences_source").Scan(&retained))
+	require.Equal(original, retained)
+	require.NoError(f.Store.DB().QueryRow(query, "idx_beeper_media_occurrences_citation").Scan(&citation))
+	require.Contains(citation, "(source_type, source_identifier, source_message_id, source_conversation_id, source_attachment_id, source_part_key, source_sha256, destination_key, retention_state)")
+}
+
 func TestKataEvidenceMessage(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
