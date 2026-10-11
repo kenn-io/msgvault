@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -149,7 +150,7 @@ func TestPostgreSQLRuntimeAndReader(t *testing.T) {
 	assert.Equal(source.ID, accounts.Accounts[0].ID)
 	exerciseSlackReplacement(t, runtime)
 	exerciseDiscordCollection(t, runtime)
-	_, err = admin.Exec("UPDATE "+quote(schema)+".archive_metadata SET value = $1 WHERE key = 'schema_version'", fmt.Sprint(store.SchemaVersion-1))
+	_, err = admin.Exec("UPDATE "+quote(schema)+".archive_metadata SET value = $1 WHERE key = 'schema_version'", strconv.Itoa(store.SchemaVersion-1))
 	require.NoError(err)
 	legacy, err := archive.Open(t.Context(), opts)
 	if legacy != nil {

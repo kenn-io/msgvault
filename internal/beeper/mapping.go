@@ -40,12 +40,15 @@ func MessageHTML(m *Message) string {
 	if !htmlElementRe.MatchString(text) {
 		return ""
 	}
+	var body strings.Builder
+	body.WriteString(text)
 	for _, att := range m.Attachments {
 		if transcript := sourceTranscript(&att); transcript != "" {
-			text += "<br>🎤 transcript: " + strings.ReplaceAll(html.EscapeString(transcript), "\n", "<br>")
+			body.WriteString("<br>🎤 transcript: ")
+			body.WriteString(strings.ReplaceAll(html.EscapeString(transcript), "\n", "<br>"))
 		}
 	}
-	return text
+	return body.String()
 }
 
 // plainText renders a Beeper message's text as plain text.

@@ -212,6 +212,7 @@ func scanHTML(body string, allowed map[string]bool) ([]Ref, string) {
 		switch token {
 		case html.ErrorToken:
 			return refs, prose.String()
+		case html.TextToken, html.CommentToken, html.DoctypeToken:
 		case html.EndTagToken:
 			name, _ := z.TagName()
 			if bytes.EqualFold(name, []byte("a")) {
