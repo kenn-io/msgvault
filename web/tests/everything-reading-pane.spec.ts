@@ -1,4 +1,4 @@
-import { recordingMessage, recordingTranscript, recordingSearchReport } from '../src/lib/archive/recording-fixtures.test-support';
+import { recordingMessage, recordingTranscript, recordingSearchHit, recordingSearchReport } from '../src/lib/archive/recording-fixtures.test-support';
 import { expect, test } from '@playwright/test';
 
 function entry(index: number) {
@@ -45,7 +45,7 @@ function exploreURLState(overrides: Record<string, unknown> = {}) {
   };
 }
 
-test('recording timeline rows stay inside a resized results pane', async ({ page }) => {
+test('recordings stay capped and scroll beside ordinary timeline rows', async ({ page }) => {
   let resolveReadiness!: () => void;
   const readiness = new Promise<void>(resolve => { resolveReadiness = resolve; });
   await page.route('**/api/session', route => route.fulfill({ json: { auth_mode: 'loopback', https: false, plain_http_warning: false } }));
@@ -54,7 +54,9 @@ test('recording timeline rows stay inside a resized results pane', async ({ page
     await readiness;
     await route.fulfill({ json: { configured: true } });
   });
-  await page.route('**/api/v1/media/search?*', route => route.fulfill({ json: recordingSearchReport() }));
+  await page.route('**/api/v1/media/search?*', route => route.fulfill({ json: recordingSearchReport({
+    results: Array.from({ length: 20 }, (_, index) => recordingSearchHit({ containing_title: `Recording ${index + 1}` }))
+  }) }));
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(exploreURLState({ query: 'quarterly', presentation: 'timeline' })))}`);
   const grid = page.getByRole('grid', { name: 'Everything results' });
   await grid.getByText('Synthetic subject 1', { exact: true }).click();
@@ -67,25 +69,22 @@ test('recording timeline rows stay inside a resized results pane', async ({ page
   await page.mouse.move(handle.x + handle.width / 2, 0);
   await page.mouse.up();
   await expect.poll(async () => (await primary.boundingBox())!.height).toBe(120);
-  const savedSize = await page.evaluate(() => localStorage.getItem('msgvault.reading-pane.size'));
-  expect(savedSize).not.toBeNull();
   resolveReadiness();
-  await expect(page.getByRole('link', { name: 'Team chat' })).toBeVisible();
-  await expect.poll(async () => (await primary.boundingBox())!.height).toBe(220);
-  expect(await page.evaluate(() => localStorage.getItem('msgvault.reading-pane.size'))).toBe(savedSize);
-  await expect(grid.getByText('Synthetic subject 1', { exact: true })).toBeInViewport();
+  const recordings = page.getByRole('region', { name: 'Recordings', exact: true });
+  await expect(recordings.getByRole('link', { name: 'Recording 1', exact: true })).toBeVisible();
+  await expect.poll(async () => (await primary.boundingBox())!.height).toBe(120);
   const readyHandle = (await resize.boundingBox())!;
   await page.mouse.move(readyHandle.x + readyHandle.width / 2, readyHandle.y + readyHandle.height / 2);
   await page.mouse.down();
   await page.mouse.move(handle.x + handle.width / 2, pane.y + 350);
   await page.mouse.up();
   await expect.poll(async () => (await primary.boundingBox())!.height).toBeCloseTo(350, -1);
-  const timeline = (await page.getByRole('region', { name: 'Canonical activity timeline' }).boundingBox())!;
   const results = (await primary.boundingBox())!;
-  expect(timeline.height).toBeLessThan(320);
-  expect(timeline.y + timeline.height).toBeLessThanOrEqual(results.y + results.height + 1);
-  await grid.evaluate(element => { element.scrollTop = element.scrollHeight; });
-  await expect(grid.getByText('Synthetic subject 20')).toBeInViewport();
+  expect((await recordings.boundingBox())!.height).toBeLessThanOrEqual(Math.min(results.height * 0.4, 320) + 1);
+  expect(await recordings.evaluate(element => element.scrollHeight)).toBeGreaterThan(await recordings.evaluate(element => element.clientHeight));
+  await recordings.evaluate(element => { element.scrollTop = element.scrollHeight; });
+  await expect(recordings.getByRole('link', { name: 'Recording 20', exact: true })).toBeInViewport();
+  await expect(grid.getByText('Synthetic subject 1', { exact: true })).toBeInViewport();
 });
 
 test('recording reader restores history and focus', async ({ page }) => {
