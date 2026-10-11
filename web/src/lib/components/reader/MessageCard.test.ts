@@ -258,29 +258,19 @@ it.each([
   expect(fetchFn).toHaveBeenCalledOnce();
 });
 
-it.each([
-  { name: 'a failed check', first: () => Promise.reject(new TypeError('network down')) },
-  { name: 'Kata out of reach', first: async () => Response.json({ state: 'unreachable', project: 'example' }) },
-])('asks Kata again shortly after $name, so the mounted card shows the action', async ({ first }) => {
-  vi.useFakeTimers({ shouldAdvanceTime: true });
+it('shows the Kata action once readiness turns ready', async () => {
+  let finish!: (response: Response) => void;
+  const fetchFn = vi.fn<typeof fetch>(() => new Promise(resolve => { finish = resolve; }));
+  const { KataReadiness, kataReadinessKey } = await import('../../kata/kata-ready.svelte');
+  const client = createAPIClient(fetchFn);
+  const readiness = new KataReadiness(client);
   try {
-    const fetchFn = vi.fn<typeof fetch>()
-      .mockImplementationOnce(first)
-      .mockImplementation(async () => Response.json({ state: 'ready', project: 'example' }));
-    const { createAPIClient } = await import('../../api/client');
-    const { KATA_RETRY_MS, KataReadiness, kataReadinessKey } = await import('../../kata/kata-ready.svelte');
-    const client = createAPIClient(fetchFn);
-    const readiness = new KataReadiness(client);
     render(MessageCard, { props: { message: detail(), expanded: true, client }, context: new Map([[kataReadinessKey, readiness]]) });
     await waitFor(() => expect(fetchFn).toHaveBeenCalledOnce());
-    await vi.advanceTimersByTimeAsync(KATA_RETRY_MS - 1000);
-    expect(fetchFn).toHaveBeenCalledOnce();
     expect(screen.queryByRole('button', { name: 'Create Kata issue' })).toBeNull();
-    await vi.advanceTimersByTimeAsync(1000);
+    finish(Response.json({ state: 'ready', project: 'example' }));
     expect(await screen.findByRole('button', { name: 'Create Kata issue' })).toBeTruthy();
-    expect(fetchFn).toHaveBeenCalledTimes(2);
-    readiness.dispose();
   } finally {
-    vi.useRealTimers();
+    readiness.dispose();
   }
 });

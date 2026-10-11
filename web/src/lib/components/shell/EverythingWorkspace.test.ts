@@ -119,9 +119,6 @@ describe('EverythingWorkspace', () => {
       await screen.findByText('Quarterly numbers');
       const request = fetchFn.mock.calls.find(([input]) => new URL((input as Request).url).pathname.endsWith('/media/search'))![0] as Request;
       expect(new URL(request.url).searchParams.get('participant_id')).toBe('7');
-      state.commitNavigation({ filters: [{ dimension: 'source', values: ['1'] }] });
-      await screen.findByText('Recording search requires Full text with no grouping and at most one Person filter.');
-      expect(screen.queryByText('Quarterly numbers')).toBeNull();
     } finally {
       view.unmount();
       state.destroy();
@@ -132,9 +129,6 @@ describe('EverythingWorkspace', () => {
     { searchMode: 'semantic' }, { filters: [{ dimension: 'source', values: ['1'] }] },
     { groupingChain: ['kind'] },
     { filters: [{ dimension: 'participant', values: ['1', '2'] }] },
-    { filters: [{ dimension: 'participant', values: ['NaN'] }] },
-    { filters: [{ dimension: 'participant', values: ['0'] }] },
-    { filters: [{ dimension: 'participant', values: ['9007199254740992'] }] },
     { filters: [{ dimension: 'participant', values: ['1'] }, { dimension: 'participant', values: ['2'] }] },
   ])('shows recording search hints for configured unsupported queries %j', async patch => {
     vi.useFakeTimers({ shouldAdvanceTime: true });

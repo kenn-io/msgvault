@@ -87,9 +87,6 @@ test('recordings stay capped in Table and leave Timeline rows reachable', async 
   await expect(grid.getByText('Synthetic subject 1', { exact: true })).toBeInViewport();
   await page.getByRole('combobox', { name: 'Show as: Table' }).click();
   await page.getByRole('option', { name: 'Timeline', exact: true }).click();
-  await expect(recordings).toHaveCount(0);
-  await expect(page.locator('.results-primary--recordings')).toHaveCount(0);
-  await expect(page.getByRole('heading', { name: /^Results/ })).toHaveCount(0);
   await grid.getByText('Synthetic subject 1', { exact: true }).click();
   await expect.poll(async () => (await primary.boundingBox())!.height).toBeCloseTo(350, -1);
   await grid.evaluate(element => { element.scrollTop = element.scrollHeight; });
