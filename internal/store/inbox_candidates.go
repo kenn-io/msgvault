@@ -162,7 +162,9 @@ func inboxCandidateMembershipSQL(source inboxcontrol.SourceIdentity) string {
 		return "TRUE"
 	}
 	return `EXISTS (SELECT 1 FROM imap_message_memberships member WHERE member.source_id=p.source_id
-  AND member.message_id=p.item_id AND member.mailbox=p.mailbox AND member.uidvalidity=p.uidvalidity AND member.uid=p.uid)`
+  AND member.message_id=p.item_id AND member.mailbox=p.mailbox AND member.uidvalidity=p.uidvalidity AND member.uid=p.uid
+  AND EXISTS (SELECT 1 FROM imap_folder_state folder WHERE folder.source_id=member.source_id
+    AND folder.mailbox=member.mailbox AND folder.uidvalidity=member.uidvalidity))`
 }
 
 func inboxCandidateRevision(ctx context.Context, tx *loggedTx, source inboxcontrol.SourceIdentity, scope inboxcontrol.Scope) (string, bool, error) {
