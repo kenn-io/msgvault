@@ -491,7 +491,7 @@ func (w *Worker) run(
 					w.deps.Log.Warn("messages missing from main DB", "gen", gen, "ids", eb.missing)
 				}
 				if len(eb.empty) > 0 {
-					w.deps.Log.Warn("messages empty after preprocess", "gen", gen, "ids", eb.empty)
+					w.deps.Log.Warn("messages have no embeddable text after preprocess", "gen", gen, "ids", eb.empty)
 				}
 				missed, serr := w.stampSkipped(ctx, gen, skipIDs, eb.lastModified)
 				if serr != nil {
@@ -600,7 +600,7 @@ func (w *Worker) run(
 			w.deps.Log.Warn("messages missing from main DB", "gen", gen, "ids", eb.missing)
 		}
 		if len(eb.empty) > 0 {
-			w.deps.Log.Warn("messages empty after preprocess", "gen", gen, "ids", eb.empty)
+			w.deps.Log.Warn("messages have no embeddable text after preprocess", "gen", gen, "ids", eb.empty)
 		}
 
 		// Only rows ACTUALLY stamped count as succeeded. A CAS miss (its
