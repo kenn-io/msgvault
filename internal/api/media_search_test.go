@@ -32,6 +32,8 @@ type mediaSearchFixture struct {
 func TestMediaSearchStatus(t *testing.T) {
 	for _, state := range []string{"configured", "no reader", "no client"} {
 		t.Run(state, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			f := newRecordingFixture(t)
 			server := f.server(false)
 			switch state {
@@ -44,22 +46,24 @@ func TestMediaSearchStatus(t *testing.T) {
 			request.Header.Set("X-Api-Key", recordingsTestAPIKey)
 			response := httptest.NewRecorder()
 			server.Router().ServeHTTP(response, request)
-			require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+			require.Equal(http.StatusOK, response.Code, response.Body.String())
 			var status MediaSearchStatusResponse
-			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &status))
-			assert.Equal(t, state == "configured", status.Configured)
-			assert.Zero(t, f.docbank.requestCount())
+			require.NoError(json.Unmarshal(response.Body.Bytes(), &status))
+			assert.Equal(state == "configured", status.Configured)
+			assert.Zero(f.docbank.requestCount())
 		})
 	}
 }
 
 func TestMediaSearchStatusBypassesSearchGuard(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	f := newRecordingFixture(t)
 	server := f.server(false)
 	server.documentSearchRateLimiter.Close()
 	server.documentSearchRateLimiter = NewRateLimiter(1, 1)
 	t.Cleanup(server.documentSearchRateLimiter.Close)
-	require.True(t, server.documentSearchRateLimiter.Allow("127.0.0.1"))
+	require.True(server.documentSearchRateLimiter.Allow("127.0.0.1"))
 	gate := &recordingOperationGate{allow: false}
 	server.operationGate = gate
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/media/search/status", nil)
@@ -67,10 +71,10 @@ func TestMediaSearchStatusBypassesSearchGuard(t *testing.T) {
 	request.Header.Set("X-Api-Key", recordingsTestAPIKey)
 	response := httptest.NewRecorder()
 	server.Router().ServeHTTP(response, request)
-	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
-	assert.JSONEq(t, `{"configured":true}`, response.Body.String())
+	require.Equal(http.StatusOK, response.Code, response.Body.String())
+	assert.JSONEq(`{"configured":true}`, response.Body.String())
 	begin, _ := gate.counts()
-	assert.Zero(t, begin)
+	assert.Zero(begin)
 }
 
 func newMediaSearchFixture(t *testing.T) *mediaSearchFixture {
@@ -448,6 +452,7 @@ func TestMediaSearchSelectedProfilesForSharedContent(t *testing.T) {
 }
 
 func TestMediaSearchUnconfigured(t *testing.T) {
+	assert := assert.New(t)
 	t.Parallel()
 	for _, readerMissing := range []bool{true, false} {
 		f := newMediaSearchFixture(t)
@@ -458,10 +463,10 @@ func TestMediaSearchUnconfigured(t *testing.T) {
 			server.messageRecordings.Client = nil
 		}
 		status, _, raw := searchMediaFor(t, server, "q=words")
-		assert.Equal(t, http.StatusServiceUnavailable, status, raw)
-		assert.Contains(t, raw, "media_search_unavailable")
-		assert.Contains(t, raw, "Configure the Docbank integration to search transcripts")
-		assert.Empty(t, f.requests)
+		assert.Equal(http.StatusServiceUnavailable, status, raw)
+		assert.Contains(raw, "media_search_unavailable")
+		assert.Contains(raw, "Configure the Docbank integration to search transcripts")
+		assert.Empty(f.requests)
 	}
 }
 
