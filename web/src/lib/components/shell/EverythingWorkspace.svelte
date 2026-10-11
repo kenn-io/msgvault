@@ -22,7 +22,6 @@
     ExploreWorkspace,
   } from '../../explore/models';
   import { createExploreAPI } from '../../explore/api';
-  import { isValidSourceID } from '../../explore/models';
   import { filtersForGroup, parseGroupSelection } from '../../explore/group-context';
   import { findGroupDetail } from '../../explore/group-detail';
   import type { ExploreLoader } from '../../explore/loader.svelte';
@@ -122,9 +121,12 @@
     const filters = exploreState.current.filters;
     if (filters.length !== 1 || filters[0].dimension !== 'participant' || filters[0].values.length !== 1) return undefined;
     const value = filters[0].values[0];
-    return isValidSourceID(value) ? Number(value) : undefined;
+    const id = Number(value);
+    return /^[1-9]\d*$/.test(value) && Number.isSafeInteger(id) ? id : undefined;
   });
-  const recordingSearchSupported = $derived(exploreState.current.searchMode === 'full_text' && (exploreState.current.filters.length === 0 || recordingParticipantID !== undefined) && exploreState.current.groupingChain.length === 0);
+  const recordingSearchSupported = $derived(exploreState.current.searchMode === 'full_text'
+    && (exploreState.current.filters.length === 0 || recordingParticipantID !== undefined)
+    && exploreState.current.groupingChain.length === 0);
   const recordingSearchVisible = $derived.by(() => {
     const query = exploreState.current.query.trim();
     return Boolean(enabled && readiness?.ready && query && exploreState.current.presentation === 'table');
@@ -755,8 +757,6 @@
               selectedMessageID={recordingSelection}
               onOpen={(hit) => onOpenRecording(hit.message_id)}
             />
-          {/if}
-          {#if recordingSearchVisible}
             <h2 class="results-heading">Results <span class="count" aria-live="polite">{countLabel}</span></h2>
           {/if}
           {#if exploreState.current.groupingChain.length > 0}

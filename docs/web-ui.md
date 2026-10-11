@@ -148,8 +148,6 @@ Search mode is always explicit:
 - **Hybrid** combines keyword matches with semantic ranking where it is
   available.
 
-With Docbank configured, **Full text** queries containing plain words also search recording transcripts in **Table** view with no grouping and either no filters or one **Person** filter selecting one person. These searches send the query text to the configured Docbank service. **Recordings** shows up to 20 matching excerpts above ordinary results with source title, date, filename, transcript origin and supplied timing. Open a match in the reader to read its message and current transcript while keeping your search. Modified clicks open the message in a new tab. Recording search waits until typing pauses for 300 ms. Matches have independent counts and coverage; incomplete coverage remains visible even with zero matches. If the search exceeds 4,096 distinct versions or source selectors, add a Person filter. If that person still exceeds the limit, use person-scoped recording search in the CLI. Punctuation, quoted phrases, Semantic, Hybrid, other filters and grouping leave recording search unavailable. Recordings appears once the daemon confirms Docbank is configured. Pending or failed checks keep it hidden; a failed check retries after 30 seconds. Results expire 30 seconds after the request starts; use Refresh for current matches. Transient failures offer Retry. A query or Person filter change retries a refused search.
-
 A coverage notice below the toolbar reports semantic coverage. Disabled, building, stale,
 incomplete, unavailable, and ready are different states; msgvault never silently
 changes the requested mode. Semantic-only results cannot include unembedded
@@ -162,6 +160,32 @@ error, not an empty result, and the query and filters remain available to retry.
 cannot safely honor the selected search mode. Update or rebuild the named
 component, or deliberately select a supported mode. Msgvault does not quietly
 substitute full-text search for either state.
+
+### Recording matches
+
+With Docbank configured, Everything also searches recording transcripts and
+shows matches in **Recordings** above the ordinary results. Recording search
+sends the query text to the configured Docbank service.
+
+- **When it runs:** a **Full text** query of plain words, in **Table** view,
+  with no grouping and either no filters or one **Person** filter selecting one
+  person. Punctuation, quoted phrases, Semantic, Hybrid, other filters and
+  grouping leave recording search unavailable. The search starts once typing
+  pauses for 300 ms.
+- **What it shows:** up to 20 matching excerpts with source title, date,
+  filename, transcript origin and supplied timing. Matches have their own count
+  and coverage; incomplete coverage stays visible even with zero matches.
+- **Opening a match:** the reader shows its message and current transcript
+  while keeping your search. Modified clicks open the message in a new tab.
+- **Scope limits:** if the search exceeds 4,096 distinct versions or source
+  selectors, add a Person filter. If that person still exceeds the limit, use
+  person-scoped recording search in the CLI.
+- **Availability:** Recordings appears once the daemon confirms Docbank is
+  configured. Pending or failed checks keep it hidden; a failed check retries
+  after 30 seconds.
+- **Freshness and failures:** results expire 30 seconds after the request
+  starts; use **Refresh** for current matches. Transient failures offer
+  **Retry**. A query or Person filter change retries a refused search.
 
 ## Read messages
 

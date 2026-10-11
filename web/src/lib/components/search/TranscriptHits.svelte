@@ -1,6 +1,6 @@
 <script lang="ts">
   import { untrack } from 'svelte';
-  import { admitsMediaQuery } from '../../search/media-query';
+  import { admitsMediaQuery, refusedMediaSearchNotice } from '../../search/media-query';
   import { Button, Chip } from '@kenn-io/kit-ui';
   import FileVolume from '@lucide/svelte/icons/file-volume';
   import type { APIClient } from '../../api/client';
@@ -86,17 +86,7 @@
         }
         if (response.status >= 400 && response.status < 500 && response.status !== 429) {
           blocked = true;
-          notice = error?.error === 'media_search_scope_limit'
-            ? requestedParticipantID === undefined
-              ? 'Add a Person filter to search recordings.'
-              : 'This Person filter exceeds recording-search limits. Use person-scoped recording search in the CLI.'
-            : error?.error === 'invalid_media_search'
-              ? 'Recording search rejected this query. Try different plain words.'
-              : error?.error === 'invalid_parameter'
-                ? new TextEncoder().encode(requestedQuery).length > 8192
-                  ? 'Recording search query is too long. Use fewer words.'
-                  : error.message || 'Recording search cannot read this query. Check archive access or change the query.'
-              : 'Recording search cannot read this query. Check archive access or change the query.';
+          notice = refusedMediaSearchNotice(error?.error, error?.message, requestedQuery, requestedParticipantID);
           return;
         }
         if (error?.error === 'media_search_unavailable') {

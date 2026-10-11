@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"slices"
 	"strings"
@@ -47,6 +48,35 @@ type MediaSearchResponse struct {
 	Results                []MediaSearchResult         `json:"results"`
 }
 
+// participantClusterExpander is implemented by analytics engines that expand
+// Explore participant filters through committed identity clusters.
+type participantClusterExpander interface {
+	ExpandParticipantClusterMembers(ctx context.Context, ids []int64) ([]int64, error)
+}
+
+// participantScope selects participantID's identity cluster with the
+// membership Explore's Person filter matches unless directions narrow it.
+// Engines without committed clusters fall back to the archive's current links.
+func (s *Server) participantScope(
+	ctx context.Context, st *store.Store, participantID int64, directions []personscope.Direction,
+) (*personscope.Scope, error) {
+	var members []int64
+	var err error
+	if clusters, ok := s.queryEngineForContext(ctx).(participantClusterExpander); ok {
+		members, err = clusters.ExpandParticipantClusterMembers(ctx, []int64{participantID})
+	} else {
+		members, err = st.ClusterMembers(participantID)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("expand participant %d identity cluster: %w", participantID, err)
+	}
+	normalized, membership, err := resolver.NormalizeDirections(directions)
+	if err != nil {
+		return nil, err
+	}
+	return &personscope.Scope{ParticipantIDs: members, Directions: normalized, ParticipantMembership: membership}, nil
+}
+
 func (s *Server) handleMediaSearch(w http.ResponseWriter, r *http.Request) {
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	mode := r.URL.Query().Get("mode")
@@ -62,8 +92,11 @@ func (s *Server) handleMediaSearch(w http.ResponseWriter, r *http.Request) {
 			directions = append(directions, personscope.Direction(direction))
 		}
 	}
-	if err != nil || personErr != nil || participantErr != nil || q == "" || len(q) > 8192 || limit < 1 || limit > 100 || personID < 0 || participantID < 0 ||
-		(len(directions) > 0 && personID == 0 && participantID == 0) || (r.URL.Query().Has("person_id") && personID == 0) || (r.URL.Query().Has("participant_id") && participantID == 0) {
+	invalidQuery := q == "" || len(q) > 8192 || limit < 1 || limit > 100
+	invalidPerson := personID < 0 || (r.URL.Query().Has("person_id") && personID == 0)
+	invalidParticipant := participantID < 0 || (r.URL.Query().Has("participant_id") && participantID == 0)
+	unscopedDirections := len(directions) > 0 && personID == 0 && participantID == 0
+	if err != nil || personErr != nil || participantErr != nil || invalidQuery || invalidPerson || invalidParticipant || unscopedDirections {
 		s.rejectBadParam(w, errors.New("q is required and must be at most 8192 bytes, limit must be 1 to 100, and directions require a positive person_id or participant_id"))
 		return
 	}
@@ -97,20 +130,7 @@ func (s *Server) handleMediaSearch(w http.ResponseWriter, r *http.Request) {
 			return nil, nil //nolint:nilnil // No person scope searches the full visible archive.
 		}
 		if participantID > 0 {
-			var members []int64
-			var err error
-			if clusters, ok := s.queryEngineForContext(r.Context()).(interface {
-				ExpandParticipantClusterMembers(ctx context.Context, ids []int64) ([]int64, error)
-			}); ok {
-				members, err = clusters.ExpandParticipantClusterMembers(r.Context(), []int64{participantID})
-			} else {
-				members, err = reader.Store.ClusterMembers(participantID)
-			}
-			if err != nil {
-				return nil, err
-			}
-			normalized, defaultDirections, err := resolver.NormalizeDirections(directions)
-			return &personscope.Scope{ParticipantIDs: members, Directions: normalized, ParticipantMembership: defaultDirections}, err
+			return s.participantScope(r.Context(), reader.Store, participantID, directions)
 		}
 		resolution, err := resolver.Resolve(r.Context(), reader.Store, reference, directions)
 		return &resolution.Scope, err

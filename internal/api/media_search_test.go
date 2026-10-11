@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -156,16 +157,17 @@ func TestMediaSearchOccurrencesAndTiming(t *testing.T) {
 	id := f.message(t, "second")
 	f.audio(t, id, "second", "", "delivery-first", &store.BeeperMediaResult{VaultUID: "vault", DocbankSourceID: seed.sourceID, ContentVersionID: seed.contentVersionID})
 	f.report.Results[0].Evidence[0].TimeSpan = &docbankmedia.MediaTimeSpan{StartMS: 1200, EndMS: 2800}
-	occurrences, err := f.f.Store.ListMessageMediaOccurrences(t.Context(), recordingsTestDestination, seed.messageID)
+	sentAt := time.Date(2026, time.July, 18, 12, 0, 0, 0, time.UTC)
+	_, err := f.f.Store.DB().Exec(f.f.Store.Rebind(`UPDATE messages SET subject = ?, sent_at = ? WHERE id = ?`), "Quarterly review", sentAt, seed.messageID)
 	require.NoError(err)
-	require.Len(occurrences, 1)
 	status, response, raw := searchMediaFor(t, f.server(true), "q=quarterly+numbers")
 	require.Equal(http.StatusOK, status, raw)
 	require.Len(response.Results, 2)
 	assert.Equal(seed.messageID, response.Results[0].MessageID)
-	assert.Equal(occurrences[0].Filename, response.Results[0].Filename)
-	assert.Equal(occurrences[0].ContainingTitle, response.Results[0].ContainingTitle)
-	assert.Equal(occurrences[0].OccurredAt, response.Results[0].OccurredAt)
+	assert.Equal("voice.wav", response.Results[0].Filename)
+	assert.Equal("Quarterly review", response.Results[0].ContainingTitle)
+	require.NotNil(response.Results[0].OccurredAt)
+	assert.True(sentAt.Equal(*response.Results[0].OccurredAt), "occurred_at %s", response.Results[0].OccurredAt)
 	assert.Equal(id, response.Results[1].MessageID)
 	assert.Equal(int64(1200), *response.Results[1].StartMS)
 	assert.False(response.Partial)
@@ -274,63 +276,68 @@ func TestMediaSearchOversizedPopulation(t *testing.T) {
 	assert.Empty(f.requests)
 }
 
+func TestMediaSearchParticipantScope(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	t.Parallel()
+	f := newMediaSearchFixture(t)
+	selected := f.match(t, "selected")
+	aliased := f.match(t, "aliased")
+	participant := f.f.EnsureParticipant("selected@example.com", "Selected Person", "example.com")
+	alias := f.f.EnsureParticipant("alias@example.com", "Alias", "example.com")
+	_, err := f.f.Store.LinkParticipants(participant, alias)
+	require.NoError(err)
+	for messageID, sender := range map[int64]int64{selected.messageID: participant, aliased.messageID: alias} {
+		_, err = f.f.Store.DB().Exec(f.f.Store.Rebind(`UPDATE messages SET sender_id = ? WHERE id = ?`), sender, messageID)
+		require.NoError(err)
+	}
+	fullReport := f.report
+	f.duringSearch = func() {
+		fence := f.requests[len(f.requests)-1].Fence.ContentVersionIDs
+		f.report = fullReport
+		f.report.Results = slices.DeleteFunc(slices.Clone(fullReport.Results), func(hit docbankmedia.SearchHit) bool {
+			return !slices.Contains(fence, hit.ContentVersionID)
+		})
+		f.report.MediaSelections = slices.DeleteFunc(slices.Clone(fullReport.MediaSelections), func(selection docbankmedia.SearchMediaSelection) bool {
+			return !slices.Contains(fence, selection.ContentVersionID)
+		})
+		f.report.Coverage.ScopedDocuments, f.report.Coverage.CompleteDocuments = len(f.report.Results), len(f.report.Results)
+	}
+	search := func(server *Server, parameters string) []int64 {
+		t.Helper()
+		status, response, raw := searchMediaFor(t, server, "q=quarterly+numbers&"+parameters)
+		require.Equal(http.StatusOK, status, raw)
+		var messageIDs []int64
+		for _, result := range response.Results {
+			messageIDs = append(messageIDs, result.MessageID)
+		}
+		return messageIDs
+	}
+	byParticipant := fmt.Sprintf("participant_id=%d", participant)
+
+	assert.ElementsMatch([]int64{selected.messageID, aliased.messageID}, search(f.server(true), byParticipant), "live links widen the cluster")
+	_, err = f.f.Store.UnlinkParticipants(participant, alias)
+	require.NoError(err)
+	assert.Equal([]int64{selected.messageID}, search(f.server(true), byParticipant), "unlinked alias leaves the cluster")
+	assert.Equal([]string{selected.contentVersionID}, f.requests[len(f.requests)-1].Fence.ContentVersionIDs)
+
+	analytical := f.server(true)
+	clusters := fmt.Sprintf(`(%d::BIGINT, %d::BIGINT), (%d::BIGINT, %d::BIGINT)`, participant, participant, alias, participant)
+	engine, _ := newExploreDuckDBFixtureWithClusters(t, exploreFixtureDefaultMessages, exploreFixtureDefaultRecipients, clusters, 3)
+	analytical.SetAnalyticsEngine(engine, AnalyticsModeDuckDB)
+	assert.ElementsMatch([]int64{selected.messageID, aliased.messageID}, search(analytical, byParticipant), "committed Explore clusters win over live links")
+
+	_, err = f.f.Store.DB().Exec(f.f.Store.Rebind(`UPDATE messages SET sender_id = NULL WHERE id = ?`), selected.messageID)
+	require.NoError(err)
+	_, err = f.f.Store.DB().Exec(f.f.Store.Rebind(`INSERT INTO message_recipients (message_id, participant_id, recipient_type) VALUES (?, ?, 'mention')`), selected.messageID, participant)
+	require.NoError(err)
+	assert.Equal([]int64{selected.messageID}, search(f.server(true), byParticipant), "a mention matches like Explore's Person filter")
+	assert.Empty(search(f.server(true), byParticipant+"&direction=from_person"), "a direction disables membership matching")
+}
+
 func TestMediaSearchPersonDirection(t *testing.T) {
 	t.Parallel()
-	{
-		assert := assert.New(t)
-		require := require.New(t)
-
-		f := newMediaSearchFixture(t)
-		selected := f.match(t, "selected")
-		participant := f.f.EnsureParticipant("selected@example.com", "Selected Person", "example.com")
-		alias := f.f.EnsureParticipant("alias@example.com", "Alias", "example.com")
-		_, err := f.f.Store.LinkParticipants(participant, alias)
-		require.NoError(err)
-		_, _, err = f.f.Store.CreatePersonFromParticipant(participant)
-		require.NoError(err)
-		_, err = f.f.Store.DB().Exec(f.f.Store.Rebind(`UPDATE messages SET sender_id = ? WHERE id = ?`), participant, selected.messageID)
-		require.NoError(err)
-		unlinked := f.match(t, "unlinked")
-		_, err = f.f.Store.DB().Exec(f.f.Store.Rebind(`UPDATE messages SET sender_id = ? WHERE id = ?`), alias, unlinked.messageID)
-		require.NoError(err)
-		_, err = f.f.Store.UnlinkParticipants(participant, alias)
-		require.NoError(err)
-		fullReport := f.report
-		f.duringSearch = func() {
-			f.report = fullReport
-			if len(f.requests[len(f.requests)-1].MediaSources) == 1 {
-				f.report.Results = fullReport.Results[:1]
-				f.report.MediaSelections = fullReport.MediaSelections[:1]
-				f.report.Coverage.ScopedDocuments, f.report.Coverage.CompleteDocuments = 1, 1
-			}
-		}
-		for _, analytical := range []bool{false, true} {
-			server := f.server(true)
-			if analytical {
-				messages := fmt.Sprintf(`(%d::BIGINT, 1::BIGINT, 'selected', 101::BIGINT, 'Selected', 'quarterly numbers', TIMESTAMP '2026-07-18 10:00:00', 100::BIGINT, true, 1::INTEGER, NULL::TIMESTAMP, %d::BIGINT, NULL::BIGINT, 'email', NULL::VARCHAR, false, 2026, 7),
-				(%d::BIGINT, 1::BIGINT, 'unlinked', 102::BIGINT, 'Unlinked', 'quarterly numbers', TIMESTAMP '2026-07-18 11:00:00', 100::BIGINT, true, 1::INTEGER, NULL::TIMESTAMP, %d::BIGINT, NULL::BIGINT, 'email', NULL::VARCHAR, false, 2026, 7)`, selected.messageID, participant, unlinked.messageID, alias)
-				recipients := fmt.Sprintf(`(%d::BIGINT, %d::BIGINT, 'from', 'Selected'), (%d::BIGINT, %d::BIGINT, 'from', 'Alias')`, selected.messageID, participant, unlinked.messageID, alias)
-				engine, _ := newExploreDuckDBFixtureWithMessagesAndRecipients(t, messages, recipients, unlinked.messageID)
-				server.SetAnalyticsEngine(engine, AnalyticsModeDuckDB)
-			}
-			status, response, raw := searchMediaFor(t, server, fmt.Sprintf("q=quarterly+numbers&participant_id=%d", participant))
-			require.Equal(http.StatusOK, status, raw)
-			require.Len(response.Results, 1)
-			assert.Equal(selected.messageID, response.Results[0].MessageID)
-			assert.Equal([]string{selected.contentVersionID}, f.requests[len(f.requests)-1].Fence.ContentVersionIDs)
-		}
-		_, err = f.f.Store.DB().Exec(f.f.Store.Rebind(`UPDATE messages SET sender_id = NULL WHERE id = ?`), selected.messageID)
-		require.NoError(err)
-		_, err = f.f.Store.DB().Exec(f.f.Store.Rebind(`INSERT INTO message_recipients (message_id, participant_id, recipient_type) VALUES (?, ?, 'mention')`), selected.messageID, participant)
-		require.NoError(err)
-		status, response, raw := searchMediaFor(t, f.server(true), fmt.Sprintf("q=quarterly+numbers&participant_id=%d", participant))
-		require.Equal(http.StatusOK, status, raw)
-		require.Len(response.Results, 1)
-		assert.Equal(selected.messageID, response.Results[0].MessageID)
-		status, response, raw = searchMediaFor(t, f.server(true), fmt.Sprintf("q=quarterly+numbers&participant_id=%d&direction=from_person", participant))
-		require.Equal(http.StatusOK, status, raw)
-		assert.Empty(response.Results)
-	}
 	for _, direction := range []string{"from_person", "to_person", "membership change", "person deleted", "all mapped", "multi mapped", "all hidden", "all bytes", "all late hidden", "all late bytes", "all wrong destination", "all late wrong destination", "all no audio", "competing delivery", "delivery input"} {
 		t.Run(direction, func(t *testing.T) {
 			assert := assert.New(t)
