@@ -66,12 +66,16 @@ for (const presentation of ['timeline']) {
 }
 
 test('recording timeline rows stay inside a resized results pane', async ({ page }) => {
+  let resolveReadiness!: () => void;
+  const readiness = new Promise<void>(resolve => { resolveReadiness = resolve; });
   await page.route('**/api/session', route => route.fulfill({ json: { auth_mode: 'loopback', https: false, plain_http_warning: false } }));
   await page.route('**/api/v1/explore', route => route.fulfill({ json: { rows: Array.from({ length: 20 }, (_, index) => entry(index + 1)), total_count: 20, cache_revision: 'recording', search_provenance: {} } }));
-  await page.route('**/api/v1/media/search/status', route => route.fulfill({ json: { configured: true } }));
+  await page.route('**/api/v1/media/search/status', async route => {
+    await readiness;
+    await route.fulfill({ json: { configured: true } });
+  });
   await page.route('**/api/v1/media/search?*', route => route.fulfill({ json: recordingSearchReport() }));
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(exploreURLState({ query: 'quarterly', presentation: 'timeline' })))}`);
-  await expect(page.getByRole('link', { name: 'Team chat' })).toBeVisible();
   const grid = page.getByRole('grid', { name: 'Everything results' });
   await grid.getByText('Synthetic subject 1', { exact: true }).click();
   const primary = page.locator('.results-split > [data-split-pane] > [data-pane="primary"]');
@@ -79,6 +83,16 @@ test('recording timeline rows stay inside a resized results pane', async ({ page
   const handle = (await resize.boundingBox())!;
   const pane = (await primary.boundingBox())!;
   await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(handle.x + handle.width / 2, 0);
+  await page.mouse.up();
+  await expect.poll(async () => (await primary.boundingBox())!.height).toBe(120);
+  resolveReadiness();
+  await expect(page.getByRole('link', { name: 'Team chat' })).toBeVisible();
+  await expect.poll(async () => (await primary.boundingBox())!.height).toBe(220);
+  await expect(grid.getByText('Synthetic subject 1', { exact: true })).toBeInViewport();
+  const readyHandle = (await resize.boundingBox())!;
+  await page.mouse.move(readyHandle.x + readyHandle.width / 2, readyHandle.y + readyHandle.height / 2);
   await page.mouse.down();
   await page.mouse.move(handle.x + handle.width / 2, pane.y + 350);
   await page.mouse.up();

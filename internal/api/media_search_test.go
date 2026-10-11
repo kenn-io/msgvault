@@ -53,6 +53,8 @@ func TestMediaSearchStatus(t *testing.T) {
 			request.Header.Set("X-Api-Key", recordingsTestAPIKey)
 			response := httptest.NewRecorder()
 			server.Router().ServeHTTP(response, request)
+			assert.Zero(f.validated)
+			assert.Empty(f.requests)
 			require.Equal(http.StatusOK, response.Code, response.Body.String())
 			var status MediaSearchStatusResponse
 			require.NoError(json.Unmarshal(response.Body.Bytes(), &status))

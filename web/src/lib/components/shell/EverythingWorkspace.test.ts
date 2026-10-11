@@ -111,6 +111,7 @@ describe('EverythingWorkspace', () => {
     { searchMode: 'semantic' }, { filters: [{ dimension: 'source', values: ['1'] }] },
     { groupingChain: ['kind'] },
   ])('shows recording search hints for configured unsupported queries %j', async patch => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', query: 'quarterly', searchMode: 'full_text', ...patch }))}`);
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json(exploreResponse()));
     const state = new ExploreState(window);
@@ -120,10 +121,13 @@ describe('EverythingWorkspace', () => {
       expect(await screen.findByRole('region', { name: 'Recordings' })).toBeTruthy();
       expect(screen.getByRole('heading', { name: /^Results/ })).toBeTruthy();
       expect(document.querySelector('.results-primary--recordings')).toBeTruthy();
+      expect(screen.getByText('Recording search requires Full text with no filters or grouping.')).toBeTruthy();
+      await vi.advanceTimersByTimeAsync(300);
       expect(fetchFn.mock.calls.some(([input]) => new URL((input as Request).url).pathname.endsWith('/media/search'))).toBe(false);
     } finally {
       view.unmount();
       state.destroy();
+      vi.useRealTimers();
     }
   });
 
