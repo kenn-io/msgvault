@@ -106,7 +106,8 @@ func referenceInputs(m store.RecordingMessage, refs []Ref) ([]store.RecordingRef
 		occ := docbankmedia.Occurrence{Ref: "msgvault:" + digest(strings.Join([]string{m.ArchiveUID, m.SourceType, m.SourceIdentifier, m.SourceMessageID, r.RouteKey}, "\x00"))}
 		if m.SentAt != nil {
 			sent = m.SentAt.UTC().Format(time.RFC3339Nano)
-			occ.Message = docbankmedia.Timestamp{Normalized: sent, Raw: sent, Precision: "instant", Timezone: "UTC"}
+			raw, _ := json.Marshal(sent)
+			occ.Message = beeper.MediaTimestamp(raw)
 		}
 		occ.Revision = digest(r.ReferenceSHA256() + "\x00" + sent)
 		encoded, err := json.Marshal(occ)

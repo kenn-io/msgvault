@@ -522,7 +522,7 @@ func describeStoredMedia(
 	filename, requestMIME := selectedMediaMetadata(candidate.Filename, candidate.MIMEType)
 	var message docbankmedia.Timestamp
 	if candidate.SentAt.Valid {
-		message = mediaTimestamp(jsontext.Value(mustJSON(candidate.SentAt.Time.UTC().Format(time.RFC3339Nano))))
+		message = MediaTimestamp(jsontext.Value(mustJSON(candidate.SentAt.Time.UTC().Format(time.RFC3339Nano))))
 	}
 	descriptor := MediaDescriptor{
 		Occurrence: docbankmedia.Occurrence{
@@ -1299,7 +1299,7 @@ func describeMediaEnvelope(envelope mediaEnvelope, candidate store.BeeperMediaCa
 	if attachment.Transcription != nil {
 		language = strings.TrimSpace(attachment.Transcription.Language)
 	}
-	timestamp := mediaTimestamp(envelope.Timestamp)
+	timestamp := MediaTimestamp(envelope.Timestamp)
 	occurrence := docbankmedia.Occurrence{
 		Ref: mediaOccurrenceRef(archiveUID, candidate.SourceType, candidate.SourceIdentifier,
 			candidate.SourceConversationID, candidate.SourceMessageID, part),
@@ -1401,7 +1401,8 @@ func selectedMediaMetadata(filename, mediaType string) (string, string) {
 	return filename, baseType
 }
 
-func mediaTimestamp(raw jsontext.Value) docbankmedia.Timestamp {
+// MediaTimestamp builds Docbank timestamp metadata from a JSON string.
+func MediaTimestamp(raw jsontext.Value) docbankmedia.Timestamp {
 	var rawTimestamp string
 	if err := json.Unmarshal(raw, &rawTimestamp); err != nil {
 		return docbankmedia.Timestamp{}

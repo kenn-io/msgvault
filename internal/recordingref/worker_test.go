@@ -673,7 +673,7 @@ func TestRecordingReferenceOccurrenceCorrection(t *testing.T) {
 				original := <-requests
 				value := "corrected"
 				if field == "sent_at" {
-					value = "2026-01-01 10:00:00.000"
+					value = "2026-01-01 10:00:00.123"
 				}
 				_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET `+field+`=? WHERE id=?`), value, id)
 				require.NoError(err)
@@ -724,7 +724,11 @@ func TestRecordingReferenceOccurrenceCorrection(t *testing.T) {
 				assert.Equal(original.ReferenceURL, corrected.ReferenceURL)
 				if field == "sent_at" {
 					assert.NotEqual(original.Occurrence.Revision, corrected.Occurrence.Revision)
-					assert.Equal("2026-01-01T10:00:00Z", corrected.Occurrence.Message.Normalized)
+					zero := 0
+					assert.Equal(docbankmedia.Timestamp{
+						Normalized: "2026-01-01T10:00:00.123Z", Raw: "2026-01-01T10:00:00.123Z",
+						Precision: "instant", Timezone: "UTC", ZoneText: "Z", OffsetSeconds: &zero, FractionDigits: 3,
+					}, corrected.Occurrence.Message)
 					assert.Equal(original.Occurrence.Ref, corrected.Occurrence.Ref)
 				} else {
 					assert.NotEqual(original.Occurrence.Ref, corrected.Occurrence.Ref)
