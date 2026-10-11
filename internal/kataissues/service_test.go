@@ -765,17 +765,12 @@ func TestCitingFindsEveryCitedSource(t *testing.T) {
 	}})
 	require.NoError(err)
 	f.kata.endpoint().CloseIssue(t, created.UID)
-	legacy, truncated, err := service.Citing(t.Context(), kataevidence.SourceKeys(message)[0], 10)
-	require.NoError(err)
-	require.Len(legacy, 1, "main's evidence envelopes need no source markers to be found")
-	assert.Equal(created.UID, legacy[0].UID)
-	assert.False(truncated)
 
 	chunkKeys := kataevidence.SourceKeys(chunk)
 	for _, key := range []string{kataevidence.SourceKeys(message)[0], chunkKeys[0], chunkKeys[1]} {
 		issues, truncated, err := service.Citing(t.Context(), key, 10)
 		require.NoError(err)
-		require.Len(issues, 1)
+		require.Len(issues, 1, "legacy evidence envelopes need no source markers to be found")
 		assert.Equal(created.UID, issues[0].UID)
 		assert.Equal("closed", issues[0].Status)
 		assert.False(truncated)
