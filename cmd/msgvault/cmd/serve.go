@@ -1766,6 +1766,7 @@ type storeAPIAdapter struct {
 	gmailDraftClientFactory   func(context.Context, *store.Source) (gmail.DraftAPI, error)
 	calendarClientFactory     func(context.Context, config.GCalSource, bool) (gcal.ControlAPI, error)
 	inboxKey                  []byte
+	beeperInboxClientFactory  func(context.Context, *store.Source) (*beeper.Client, error)
 	emailTagClientFactory     func(context.Context, *store.Source) (gmail.API, error)
 	microsoftTagClientFactory func(context.Context, *store.Source, bool) (*msmail.Client, error)
 	// draftCacheRefresh rebuilds the analytics cache after a draft is durable,

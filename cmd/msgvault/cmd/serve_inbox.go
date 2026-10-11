@@ -120,6 +120,15 @@ func (a *storeAPIAdapter) inboxBinding(ctx context.Context, request inboxcontrol
 	if binding.SourceType != kind || binding.SourceIdentifier != source.Identifier || binding.AccountID != accountID {
 		return nil, binding, inboxcontrol.ErrDenied
 	}
+	if request.Target != nil && binding.SourceType == "beeper" {
+		if request.Target.Scope != inboxcontrol.ScopeChat {
+			return nil, binding, inboxcontrol.ErrUnavailable
+		}
+		if err := a.store.ValidateInboxTargetContext(ctx, *request.Target); err != nil {
+			return nil, binding, inboxcontrol.ErrDenied
+		}
+		return source, binding, nil
+	}
 	if request.Target != nil {
 		if request.Target.Scope != inboxcontrol.ScopeMessage {
 			return nil, binding, inboxcontrol.ErrUnavailable
@@ -172,6 +181,9 @@ func (a *storeAPIAdapter) resolveInboxProvider(ctx context.Context, request inbo
 	}
 	if binding.SourceType == sourceTypeMSMail {
 		return a.resolveMicrosoftInboxProvider(ctx, source, binding, request)
+	}
+	if binding.SourceType == "beeper" {
+		return a.resolveBeeperInboxProvider(ctx, request, source, binding)
 	}
 	if binding.SourceType != "gmail" {
 		return nil, inboxcontrol.ErrUnavailable
