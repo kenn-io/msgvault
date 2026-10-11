@@ -123,8 +123,8 @@ var seededCommunicationServices = []CommunicationServiceInput{
 	{Slug: "instagram", DisplayLabel: "Instagram", ScopePolicy: ScopePolicyNone, Normalization: NormalizationStripAtLower, NormalizationVersion: 1, ProfileURLTemplate: new("https://www.instagram.com/{username}")},
 	{Slug: "signal", DisplayLabel: "Signal", ScopePolicy: ScopePolicyNone, Normalization: NormalizationPhoneE164, NormalizationVersion: 1},
 	{Slug: "x", DisplayLabel: "X", Aliases: []string{"twitter"}, ScopePolicy: ScopePolicyNone, Normalization: NormalizationStripAtLower, NormalizationVersion: 1, ProfileURLTemplate: new("https://x.com/{username}")},
-	{Slug: "discord", DisplayLabel: "Discord", ScopePolicy: ScopePolicyNone, Normalization: NormalizationLower, NormalizationVersion: 1},
-	{Slug: "slack", DisplayLabel: "Slack", ScopePolicy: ScopePolicyRequired, DefaultScopeKind: new("workspace"), Normalization: NormalizationLower, NormalizationVersion: 1},
+	{Slug: sourceTypeDiscord, DisplayLabel: "Discord", ScopePolicy: ScopePolicyNone, Normalization: NormalizationLower, NormalizationVersion: 1},
+	{Slug: sourceTypeSlack, DisplayLabel: "Slack", ScopePolicy: ScopePolicyRequired, DefaultScopeKind: new("workspace"), Normalization: NormalizationLower, NormalizationVersion: 1},
 	{Slug: "linkedin", DisplayLabel: "LinkedIn", ScopePolicy: ScopePolicyNone, Normalization: NormalizationLower, NormalizationVersion: 1, ProfileURLTemplate: new("https://www.linkedin.com/in/{username}")},
 	{Slug: "sms", DisplayLabel: "SMS", ScopePolicy: ScopePolicyNone, Normalization: NormalizationPhoneE164, NormalizationVersion: 1, URIScheme: new("sms")},
 	{Slug: "rcs", DisplayLabel: "RCS", ScopePolicy: ScopePolicyNone, Normalization: NormalizationPhoneE164, NormalizationVersion: 1, URIScheme: new("sms")},
@@ -138,7 +138,7 @@ var seededCommunicationServices = []CommunicationServiceInput{
 	{Slug: "bluesky", DisplayLabel: "Bluesky", Aliases: []string{"bsky"}, ScopePolicy: ScopePolicyNone, Normalization: NormalizationStripAtLower, NormalizationVersion: 1, ProfileURLTemplate: new("https://bsky.app/profile/{username}")},
 	// Matrix identifiers remain case-sensitive; lowercasing could merge two
 	// distinct archived participants.
-	{Slug: "matrix", DisplayLabel: "Matrix", ScopePolicy: ScopePolicyRequired, DefaultScopeKind: new("server"), Normalization: NormalizationNone, NormalizationVersion: 1, URIScheme: new("matrix")},
+	{Slug: sourceTypeMatrix, DisplayLabel: "Matrix", ScopePolicy: ScopePolicyRequired, DefaultScopeKind: new("server"), Normalization: NormalizationNone, NormalizationVersion: 1, URIScheme: new(sourceTypeMatrix)},
 	{Slug: "reddit", DisplayLabel: "Reddit", ScopePolicy: ScopePolicyNone, Normalization: NormalizationStripAtLower, NormalizationVersion: 1, ProfileURLTemplate: new("https://www.reddit.com/user/{username}")},
 	{Slug: "kakaotalk", DisplayLabel: "KakaoTalk", ScopePolicy: ScopePolicyNone, Normalization: NormalizationLower, NormalizationVersion: 1},
 	{Slug: "wechat", DisplayLabel: "WeChat", ScopePolicy: ScopePolicyNone, Normalization: NormalizationLower, NormalizationVersion: 1},

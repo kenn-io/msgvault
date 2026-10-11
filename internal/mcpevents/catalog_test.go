@@ -19,7 +19,7 @@ func TestCatalogReflectsOnlyEnabledReadyFamilies(t *testing.T) {
 	s, err := New(t.Context(), f.Store, Options{Enabled: true, Sources: []string{"gmail", "gcal"}, KeyPath: t.TempDir() + "/key", OwnerKey: "synthetic-owner"})
 	require.NoError(err)
 	definitions := s.Catalog().Events
-	require.Len(definitions, 3)
+	require.Len(definitions, 5)
 	require.Equal(messageFamily, definitions[0].Name)
 	messageInputs, ok := definitions[0].InputSchema["properties"].(map[string]any)
 	require.True(ok)
@@ -31,7 +31,7 @@ func TestCatalogReflectsOnlyEnabledReadyFamilies(t *testing.T) {
 		assert.Contains(definition.Description, "get_mcp_event")
 		assert.Contains(definition.Description, "get_message")
 	}
-	assert.Len(s.Capabilities(), 3)
+	assert.Len(s.Capabilities(), 5)
 	definitions[0].InputSchema["type"] = "corrupted"
 	assert.Equal("object", s.Catalog().Events[0].InputSchema["type"], "catalog caller cannot change service schema")
 	assert.Empty(capabilities(false, []string{"gmail"}))
@@ -101,8 +101,25 @@ func TestManagedDraftCatalogOwnerReadGate(t *testing.T) {
 			require.NoError(err)
 			want := []store.MCPEventCapability{{Family: draftFamily, SourceType: tc.source, Kinds: []string{"created", "updated", "deleted"}}}
 			if tc.source != "slackdump" {
-				want = append([]store.MCPEventCapability{{Family: messageFamily, SourceType: tc.source, Kinds: []string{"message"}}}, want...)
+				want = append([]store.MCPEventCapability{{Family: messageFamily, SourceType: tc.source, Kinds: []string{"message"}}, {Family: sourceMessageFamily, SourceType: tc.source, Kinds: []string{"message"}}}, want...)
 			}
+			if tc.source == "slack" {
+				want = []store.MCPEventCapability{
+					{Family: messageFamily, SourceType: "slack", Kinds: []string{"message"}},
+					{Family: sourceMessageFamily, SourceType: "slack", Kinds: []string{"message"}},
+					{Family: inboxMessageFamily, SourceType: "slack", Kinds: []string{"message"}},
+					{Family: draftFamily, SourceType: "slack", Kinds: []string{"created", "updated", "deleted"}},
+				}
+			}
+			if tc.source == "teams" || tc.source == "discord" || tc.source == "beeper" {
+				want = []store.MCPEventCapability{
+					{Family: messageFamily, SourceType: tc.source, Kinds: []string{"message"}},
+					{Family: sourceMessageFamily, SourceType: tc.source, Kinds: []string{"message"}},
+					{Family: inboxMessageFamily, SourceType: tc.source, Kinds: []string{"message"}},
+					{Family: draftFamily, SourceType: tc.source, Kinds: []string{"created", "updated", "deleted"}},
+				}
+			}
+
 			require.Equal(want, s.Capabilities(), "only implemented kinds are ready on this explicitly enabled source")
 			caps := s.Capabilities()
 			caps[0].Kinds[0] = "corrupted"
@@ -138,8 +155,12 @@ func TestManagedDraftCatalogOwnerReadGate(t *testing.T) {
 func TestCatalogDefaultCapabilitiesAndSourceIsolation(t *testing.T) {
 	want := []store.MCPEventCapability{
 		{Family: messageFamily, SourceType: "gmail", Kinds: []string{"message"}},
+		{Family: sourceMessageFamily, SourceType: "gmail", Kinds: []string{"message"}},
+		{Family: inboxMessageFamily, SourceType: "gmail", Kinds: []string{"message"}},
 		{Family: draftFamily, SourceType: "gmail", Kinds: []string{"created", "updated", "deleted"}},
 		{Family: messageFamily, SourceType: "imap", Kinds: []string{"message"}},
+		{Family: sourceMessageFamily, SourceType: "imap", Kinds: []string{"message"}},
+		{Family: inboxMessageFamily, SourceType: "imap", Kinds: []string{"message"}},
 		{Family: draftFamily, SourceType: "imap", Kinds: []string{"created", "updated", "deleted"}},
 		{Family: calendarFamily, SourceType: "gcal", Kinds: []string{"created", "updated", "cancelled"}},
 	}
@@ -184,13 +205,13 @@ func TestManagedDraftMixedPayloadSchema(t *testing.T) {
 	}
 }
 
-func TestCatalogMatrixMessageOnly(t *testing.T) {
-	Assert.Equal(t, []store.MCPEventCapability{{Family: messageFamily, SourceType: "matrix", Kinds: []string{"message"}}}, capabilities(true, []string{"matrix"}))
+func TestCatalogMatrixMessageScopes(t *testing.T) {
+	Assert.Equal(t, []store.MCPEventCapability{{Family: messageFamily, SourceType: "matrix", Kinds: []string{"message"}}, {Family: sourceMessageFamily, SourceType: "matrix", Kinds: []string{"message"}}, {Family: inboxMessageFamily, SourceType: "matrix", Kinds: []string{"message"}}}, capabilities(true, []string{"matrix"}))
 	Assert.Empty(t, capabilities(false, []string{"matrix"}))
 }
 
 func TestCatalogMSMailMessageOnly(t *testing.T) {
-	Assert.Equal(t, []store.MCPEventCapability{{Family: messageFamily, SourceType: "msmail", Kinds: []string{"message"}}}, capabilities(true, []string{"msmail"}))
+	Assert.Equal(t, []store.MCPEventCapability{{Family: messageFamily, SourceType: "msmail", Kinds: []string{"message"}}, {Family: sourceMessageFamily, SourceType: "msmail", Kinds: []string{"message"}}, {Family: inboxMessageFamily, SourceType: "msmail", Kinds: []string{"message"}}}, capabilities(true, []string{"msmail"}))
 	Assert.Empty(t, capabilities(false, []string{"msmail"}))
 }
 
@@ -200,12 +221,12 @@ func TestCatalogCombinedNativeProviders(t *testing.T) {
 		got[capability.SourceType] = append(got[capability.SourceType], capability.Family)
 	}
 	Require.Equal(t, map[string][]string{
-		"beeper":    {messageFamily, draftFamily},
-		"slack":     {messageFamily, draftFamily},
-		"teams":     {messageFamily, draftFamily},
-		"discord":   {messageFamily, draftFamily},
-		"msmail":    {messageFamily},
-		"matrix":    {messageFamily},
+		"beeper":    {messageFamily, sourceMessageFamily, inboxMessageFamily, draftFamily},
+		"slack":     {messageFamily, sourceMessageFamily, inboxMessageFamily, draftFamily},
+		"teams":     {messageFamily, sourceMessageFamily, inboxMessageFamily, draftFamily},
+		"discord":   {messageFamily, sourceMessageFamily, inboxMessageFamily, draftFamily},
+		"msmail":    {messageFamily, sourceMessageFamily, inboxMessageFamily},
+		"matrix":    {messageFamily, sourceMessageFamily, inboxMessageFamily},
 		"slackdump": {draftFamily},
 	}, got)
 }

@@ -68,6 +68,7 @@ var routeProbeTimeout = 15 * time.Second
 // PendingReplies buffer persistMessage appends to, keeping checkpoints
 // consistent with the cursor by construction).
 type chatScope struct {
+	nativeScopes       *store.NativeMessageScopeMembership
 	ingestMode         store.IngestMode
 	conversation       *store.ConversationPersistData
 	chatID             string
@@ -154,8 +155,12 @@ func (cc *chatScope) chargeBudget(processed int) {
 // Importer ingests Beeper Desktop messages into the msgvault store. One
 // Import run covers one Beeper account (= one msgvault source).
 type Importer struct {
-	store  *store.Store
-	client *Client
+	nativePermission *store.NativeSourcePermission
+	nativeRoutePins  map[string]store.NativeMessageScopeLookup
+	nativeRouteReads map[string]store.NativeMessageScopeLookup
+	nativeReadPaused bool
+	store            *store.Store
+	client           *Client
 	// mediaFailures caches retryable attachment failures for one sync run. The
 	// incremental and reconcile passes can both persist the same message.
 	mediaFailures map[mediaAttemptKey]store.AttachmentRef
@@ -348,6 +353,9 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	// finds it here instead of losing the previous run's progress — the store
 	// only exposes the newest run's checkpoint.
 	imp.checkpointNow(syncID, state, sum)
+	if err = imp.pinNativeBeeperAuthority(ctx, src.ID, opts, state); err != nil {
+		return sum, err
+	}
 
 	// Message IDs are only unique per Beeper installation; verify the anchor
 	// messages still exist unchanged before trusting stored cursors.
@@ -360,6 +368,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	if !sum.Stopped {
 		requestCtx, cancel := opts.requestContext(ctx)
 		verifyErr := imp.verifyAnchors(requestCtx, syncID, src.ID, state)
+		verifyErr = imp.nativeBeeperReadError(ctx, "", verifyErr)
 		cancel()
 		if errors.Is(verifyErr, ErrNeedsReanchor) {
 			err = imp.recordReanchorRequired(ctx, opts, src.ID, verifyErr)
@@ -601,10 +610,10 @@ func (imp *Importer) listMessagesPage(ctx context.Context, opts ImportOptions, c
 		retryErr := backoff.AsRetryError(err)
 		err = retryErr.LastErr
 		if !errors.Is(retryErr.Cause, backoff.ErrPermanent) && !errors.Is(retryErr.Cause, backoff.ErrExhausted) {
-			return nil, opts.budgetError(ctx, requestCtx.Err())
+			return nil, imp.nativeBeeperReadError(ctx, chatID, opts.budgetError(ctx, requestCtx.Err()))
 		}
 	}
-	return page, opts.budgetError(ctx, err)
+	return page, imp.nativeBeeperReadError(ctx, chatID, opts.budgetError(ctx, err))
 }
 
 // orderTailsFirst runs chats with new messages on a finished history first,
@@ -667,7 +676,7 @@ func (imp *Importer) enumerateChats(ctx context.Context, syncID, sourceID int64,
 		return chats, nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, imp.nativeBeeperReadError(ctx, "", err)
 	}
 	if params.LastActivityAfter.IsZero() {
 		// Subset copies retain conversations but omit sync history. Include
@@ -730,6 +739,7 @@ func (imp *Importer) enumerateChats(ctx context.Context, syncID, sourceID int64,
 		cancelProbe()
 		cancelRequest()
 		gerr = opts.budgetError(ctx, gerr)
+		gerr = imp.nativeBeeperReadError(ctx, chatID, gerr)
 		if errors.Is(gerr, errBeeperBudgetExpired) {
 			if err := imp.store.InvalidateSourceConversationMessagingRouteEvidenceWithFailureContext(
 				ctx, sourceID, chatID, "membership_fetch_failed",
@@ -795,6 +805,10 @@ func chatActivityCutoff(opts ImportOptions, state *SyncState, reconcileCutoff ti
 // incrementally extends the chat's messages. Returns the processed message
 // count, whether the chat work completed, and any fatal error.
 func (imp *Importer) syncChat(ctx context.Context, syncID, sourceID int64, ch *Chat, opts ImportOptions, state *SyncState, reconcileCutoff time.Time, tailScan, tailOnly bool, sum *ImportSummary) (_ int64, chatComplete bool, err error) {
+	nativeScopes, err := imp.nativeBeeperRoute(ctx, sourceID, ch, opts)
+	if err != nil {
+		return 0, false, err
+	}
 	convID, membershipComplete, membership, err := imp.ensureConversation(
 		ctx, syncID, sourceID, ch, opts, sum,
 	)
@@ -824,7 +838,8 @@ func (imp *Importer) syncChat(ctx context.Context, syncID, sourceID int64, ch *C
 	}()
 	cs := state.EnsureChat(ch.ID)
 	cc := &chatScope{
-		chatID: ch.ID, convID: convID, sourceID: sourceID, syncID: syncID,
+		nativeScopes: nativeScopes,
+		chatID:       ch.ID, convID: convID, sourceID: sourceID, syncID: syncID,
 		opts: opts, cs: cs, membershipComplete: membershipComplete,
 		tailScan: tailScan,
 		conversation: &store.ConversationPersistData{
@@ -1614,6 +1629,9 @@ func (imp *Importer) persistMessage(ctx context.Context, cc *chatScope, m *Messa
 // A reaction target refresh is historical message recovery. Embedded reaction
 // snapshots lack attributable live evidence and remain historical in every phase.
 func (imp *Importer) persistMessageWithMode(ctx context.Context, cc *chatScope, m *Message, sum *ImportSummary, messageMode store.IngestMode) error {
+	if imp.nativePermission != nil && (cc.nativeScopes == nil || m.AccountID != "" && m.AccountID != cc.opts.AccountID || m.ChatID != "" && m.ChatID != cc.chatID) {
+		return imp.pauseNativeBeeperAuthority(ctx, errors.New("native_member_route_mismatch"))
+	}
 	msg, text := mapMessage(m, cc.convID, cc.sourceID)
 	senderPID, err := imp.res.resolveID(m.SenderID, m.SenderName)
 	if err != nil {
@@ -1656,7 +1674,7 @@ func (imp *Importer) persistMessageWithMode(ctx context.Context, cc *chatScope, 
 	}
 	view := imp.store.WithIngestContext(store.IngestContext{Mode: messageMode, ObservedAt: time.Now().UTC()})
 	messageID, err := view.PersistMessageContext(ctx, &store.MessagePersistData{
-		Message: &msg, Conversation: conversation, Metadata: &metadata,
+		Message: &msg, Conversation: conversation, Metadata: &metadata, NativeScopes: cc.nativeScopes,
 		PreserveLabels: true,
 		BodyText:       sql.NullString{String: text, Valid: text != ""}, RawMIME: raw, RawFormat: "beeper_json",
 		BodyHTML:      sql.NullString{String: bodyHTML, Valid: bodyHTML != ""},

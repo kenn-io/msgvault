@@ -95,6 +95,7 @@ func TestMCPMessageProducerExplicitProvenance(t *testing.T) {
 			assert := Assert.New(t)
 
 			f := storetest.New(t)
+			grantSyntheticSourceFixture(t, f)
 			enableProducerEvents(t, f.Store, store.MCPEventCapability{Family: "msgvault.message_archived", SourceType: "gmail", Kinds: []string{"message"}})
 			view := f.Store.WithIngestContext(store.IngestContext{Mode: tc.mode, ObservedAt: producerObservedAt})
 			id, err := view.PersistMessageContext(t.Context(), &store.MessagePersistData{Message: f.NewMessage().Build(), BodyText: sql.NullString{String: "Complete synthetic body", Valid: true}})
@@ -138,6 +139,7 @@ func TestMCPMessageProducerOnlyProbesInsertionForLiveIngest(t *testing.T) {
 			assert := Assert.New(t)
 			require := Require.New(t)
 			f := storetest.New(t)
+			grantSyntheticSourceFixture(t, f)
 			enableProducerEvents(t, f.Store, store.MCPEventCapability{Family: "msgvault.message_archived", SourceType: "gmail", Kinds: []string{"message"}})
 			_, err := f.Store.DB().Exec(`CREATE TABLE synthetic_mcp_message_writes (inserts INTEGER NOT NULL, updates INTEGER NOT NULL)`)
 			require.NoError(err)
@@ -189,6 +191,7 @@ func TestMCPMessageProducerFinalAttributionAndDuplicate(t *testing.T) {
 	assert := Assert.New(t)
 
 	f := storetest.New(t)
+	grantSyntheticSourceFixture(t, f)
 	owner := f.EnsureParticipant("owner@example.test", "Owner", "example.test")
 	require.NoError(f.Store.AddAccountIdentity(f.Source.ID, "owner@example.test", "manual"))
 	enableProducerEvents(t, f.Store, store.MCPEventCapability{Family: "msgvault.message_archived", SourceType: "gmail", Kinds: []string{"message"}})
@@ -211,6 +214,7 @@ func TestMCPMessageProducerConcurrentInsertEmitsOnce(t *testing.T) {
 	assert := Assert.New(t)
 
 	f := storetest.New(t)
+	grantSyntheticSourceFixture(t, f)
 	enableProducerEvents(t, f.Store, store.MCPEventCapability{Family: "msgvault.message_archived", SourceType: "gmail", Kinds: []string{"message"}})
 	view := f.Store.WithIngestContext(store.IngestContext{Mode: store.IngestLive, ObservedAt: producerObservedAt})
 	start := make(chan struct{})
@@ -239,6 +243,7 @@ func TestMCPMessageProducerCompositeFailureRollsBack(t *testing.T) {
 
 	testutil.SkipIfPostgres(t, "SQLite trigger injects failure after header persistence")
 	f := storetest.New(t)
+	grantSyntheticSourceFixture(t, f)
 	enableProducerEvents(t, f.Store, store.MCPEventCapability{Family: "msgvault.message_archived", SourceType: "gmail", Kinds: []string{"message"}})
 	_, err := f.Store.DB().Exec(`CREATE TRIGGER reject_mcp_body BEFORE INSERT ON message_bodies BEGIN SELECT RAISE(ABORT, 'synthetic body failure'); END`)
 	require.NoError(err)
@@ -256,6 +261,7 @@ func TestMCPMessageProducerRepairAndHeaderOnlyAreMuted(t *testing.T) {
 	assert := Assert.New(t)
 
 	f := storetest.New(t)
+	grantSyntheticSourceFixture(t, f)
 	enableProducerEvents(t, f.Store, store.MCPEventCapability{Family: "msgvault.message_archived", SourceType: "gmail", Kinds: []string{"message"}})
 	view := f.Store.WithIngestContext(store.IngestContext{Mode: store.IngestLive, ObservedAt: producerObservedAt})
 	msg := f.NewMessage().Build()

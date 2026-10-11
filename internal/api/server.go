@@ -1616,19 +1616,7 @@ func (s *Server) handleAuthenticatedHealth(w http.ResponseWriter, r *http.Reques
 		response.MCPEvents = &enabled
 		if enabled {
 			for _, capability := range s.mcpEvents.Capabilities() {
-				tools := []string{"get_message"}
-				switch capability.Family {
-				case "msgvault.message_archived":
-					tools = append(tools, "list_thread")
-					if capability.SourceType != "matrix" {
-						tools = append(tools, "get_attachment")
-					}
-				case "msgvault.draft_changed":
-					tools = []string{"draft_get"}
-					if capability.SourceType == "gmail" || capability.SourceType == "imap" {
-						tools = append(tools, "get_message")
-					}
-				}
+				tools := mcpevents.ReadToolsForCapability(capability.Family, capability.SourceType)
 				response.MCPEventCapabilities = append(response.MCPEventCapabilities, MCPEventCapability{Family: capability.Family, SourceType: capability.SourceType, Kinds: capability.Kinds, ReadTools: tools})
 			}
 		}

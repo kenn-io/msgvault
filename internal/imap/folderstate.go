@@ -83,6 +83,7 @@ func (c *Client) recordMembershipLocked(
 // mailbox cursor in the source. Deletion detection retires the stored
 // membership on the next run.
 func (c *Client) forgetMembershipLocked(mailbox string, uid imap.UID) {
+	c.nativeMailboxIndex = nil
 	c.observedMemberships = slices.DeleteFunc(
 		c.observedMemberships,
 		func(observation MembershipObservation) bool {

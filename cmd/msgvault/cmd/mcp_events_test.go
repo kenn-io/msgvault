@@ -57,6 +57,9 @@ func TestDaemonMCPEventsDisabledHealthSkipsCatalogProbe(t *testing.T) {
 		{name: "API 3.14 with Events flag is denied", health: `{"status":"ok","api_schema_version":"3.14.0","mcp_events":true}`},
 		{name: "schema without Events field", health: `{"status":"ok","api_schema_version":"3.15.0"}`},
 		{name: "Events disabled", health: `{"status":"ok","api_schema_version":"3.15.0","mcp_events":false}`},
+		{name: "older schema 3.3", health: `{"status":"ok","api_schema_version":"3.3.0","mcp_events":true}`},
+		{name: "older schema 3.2", health: `{"status":"ok","api_schema_version":"3.2.0","mcp_events":true}`},
+		{name: "older schema 3.1", health: `{"status":"ok","api_schema_version":"3.1.0","mcp_events":true}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)

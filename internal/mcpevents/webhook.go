@@ -25,6 +25,7 @@ import (
 
 type callbackGuardKey struct{}
 type webhookClient struct {
+	now       func() time.Time
 	client    *http.Client
 	transport *http.Transport
 	resolve   func(context.Context, string, string) ([]netip.Addr, error)
@@ -190,7 +191,11 @@ func (w *webhookClient) request(ctx context.Context, callback, id, eventID strin
 	if err != nil {
 		return nil, invalid("invalid_callback")
 	}
-	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
+	now := time.Now
+	if w.now != nil {
+		now = w.now
+	}
+	timestamp := strconv.FormatInt(now().Unix(), 10)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Webhook-Id", eventID)
 	req.Header.Set("Webhook-Timestamp", timestamp)

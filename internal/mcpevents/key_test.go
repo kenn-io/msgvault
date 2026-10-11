@@ -18,6 +18,7 @@ func TestKeyCreationDisabledAndRestoreRules(t *testing.T) {
 	assert := Assert.New(t)
 	require := Require.New(t)
 	f := storetest.New(t)
+	requireNativeGmailFixtureRead(t, f)
 	path := filepath.Join(t.TempDir(), "events.key")
 	_, err := New(t.Context(), f.Store, Options{KeyPath: path})
 	require.NoError(err)

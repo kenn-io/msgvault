@@ -58,6 +58,7 @@ func TestMCPEventsCallbackVerificationReleasesDaemonOperationGate(t *testing.T) 
 	assert := Assert.New(t)
 	require := Require.New(t)
 	f := storetest.New(t)
+	grantSyntheticMCPAPISource(t, f)
 	gate := NewSerialOperationGate()
 	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: testSessionAPIKey}}, Store: f.Store, Logger: testLogger(), OperationGate: gate})
 	t.Cleanup(func() { Require.NoError(t, srv.Shutdown(context.Background())) })
@@ -167,4 +168,32 @@ func TestMCPEventsCallbackVerificationReleasesDaemonOperationGate(t *testing.T) 
 		require.FailNow("subscribe did not finish after challenge release")
 	}
 	assert.True(acquired, "daemon operation gate must be available during callback verification")
+}
+
+// The generic POST gate must not wrap discovery: the service acquires the
+// same real serial gate around its bounded Store operation.
+func TestMCPEventsResourceDiscoveryTakesDaemonGateOnce(t *testing.T) {
+	assert, require := Assert.New(t), Require.New(t)
+	f := storetest.New(t)
+	gate := NewSerialOperationGate()
+	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: testSessionAPIKey}}, Store: f.Store, Logger: testLogger(), OperationGate: gate})
+	t.Cleanup(func() { Require.NoError(t, srv.Shutdown(context.Background())) })
+	svc, err := mcpevents.New(t.Context(), f.Store, mcpevents.Options{OwnerKey: testSessionAPIKey, WithOperation: srv.MCPEventsOperation})
+	require.NoError(err)
+	srv.SetMCPEvents(svc)
+	// Bound a wait for real request completion; double admission cannot finish
+	// until cancellation releases the outer gate.
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/api/v1/mcp/events/resources", bytes.NewBufferString(`{"kind":"source"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+testSessionAPIKey)
+	response := httptest.NewRecorder()
+	srv.Router().ServeHTTP(response, req)
+	require.Equal(http.StatusOK, response.Code, response.Body.String())
+	var page mcpevents.ResourcePage
+	require.NoError(json.Unmarshal(response.Body.Bytes(), &page))
+	require.Len(page.Resources, 1)
+	assert.Equal(strconv.FormatInt(f.Source.ID, 10), page.Resources[0].ID)
+	assert.Equal("events_disabled", page.Resources[0].Capabilities.UnavailableReason)
 }

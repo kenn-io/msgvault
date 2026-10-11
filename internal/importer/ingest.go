@@ -49,9 +49,13 @@ var ErrMIMEAttachmentPreparation = errors.New("prepare MIME attachment")
 func IngestRawMessageSnapshot(ctx context.Context, st *store.Store,
 	sourceID int64, identifier, attachmentsDir string, labelIDs []int64,
 	sourceMsgID, rawHash string, raw []byte, fallbackDate time.Time, log *slog.Logger,
+	nativeScopes ...*store.NativeMessageScopeMembership,
 ) error {
+	if len(nativeScopes) > 1 {
+		return errors.New("multiple native scope snapshots")
+	}
 	return ingestRawMessageMode(ctx, st, sourceID, identifier, attachmentsDir, labelIDs,
-		sourceMsgID, rawHash, raw, fallbackDate, log, nil, "", false, true)
+		sourceMsgID, rawHash, raw, fallbackDate, log, nil, "", false, true, nativeScopes...)
 }
 
 type rawMessageIngestFunc func(context.Context, *store.Store, int64, string, string, []int64, string, string, []byte, time.Time, *slog.Logger) error
@@ -93,6 +97,7 @@ func ingestRawMessageMode(
 	labelIDs []int64, sourceMsgID, rawHash string,
 	raw []byte, fallbackDate time.Time,
 	log *slog.Logger, images *remoteimage.Fetcher, threadID string, strict, coherent bool,
+	nativeScopes ...*store.NativeMessageScopeMembership,
 ) error {
 	parsed, parseErr := mime.ParseWithRecovery(raw, "(MIME parse error)")
 	if strict && parseErr != nil {
@@ -241,9 +246,14 @@ func ingestRawMessageMode(
 		replyHeader = &parsed.InReplyTo
 		fts = &store.FTSDoc{Subject: subject, Body: bodyText, FromAddr: joinEmails(parsed.From), ToAddrs: joinEmails(parsed.To), CcAddrs: joinEmails(parsed.Cc)}
 	}
+	var nativeMembership *store.NativeMessageScopeMembership
+	if len(nativeScopes) > 0 {
+		nativeMembership = nativeScopes[0]
+	}
 	// Persist atomically
 	messageID, err := st.PersistMessageContext(ctx, &store.MessagePersistData{
 		Conversation:              conversation,
+		NativeScopes:              nativeMembership,
 		MIMEAttachmentReplacement: attachmentWrites,
 		EmailInReplyTo:            replyHeader,
 		FTS:                       fts,

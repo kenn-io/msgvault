@@ -51,7 +51,7 @@ type draftEventSnapshot struct {
 func (s *Store) draftEventSnapshotTx(ctx context.Context, tx *loggedTx, draftKind, draftID string) (snapshot draftEventSnapshot, err error) {
 	var query string
 	switch draftKind {
-	case "gmail", "imap":
+	case "gmail", sourceTypeIMAP:
 		query = `SELECT d.source_id,m.conversation_id,d.current_message_id,d.revision,COALESCE(d.created_by_principal,'unknown') FROM ` + draftKind + `_drafts d JOIN messages m ON m.id=d.current_message_id WHERE d.draft_id=?`
 	case "beeper":
 		query = `SELECT d.source_id,c.id,0,d.revision,COALESCE(d.created_by_principal,'unknown') FROM beeper_drafts d JOIN conversations c ON c.source_id=d.source_id AND c.source_conversation_id=d.chat_id WHERE d.draft_id=?`
@@ -96,5 +96,5 @@ func (s *Store) appendDraftSnapshotTx(ctx context.Context, tx *loggedTx, draftKi
 		return err
 	}
 	live := s.WithIngestContext(IngestContext{Mode: IngestLive, ObservedAt: changed})
-	return live.appendMCPEventTx(ctx, tx, MCPEvent{Family: "msgvault.draft_changed", Kind: kind, ScopeKind: "conversation", ScopeID: snapshot.conversation, ConversationID: snapshot.conversation, SourceID: snapshot.source, MessageID: snapshot.message, ItemKey: fmt.Sprintf("draft:%s:%d:%s", draftID, snapshot.revision, kind), OccurredAt: changed, Data: raw})
+	return live.appendMCPEventTx(ctx, tx, MCPEvent{Family: "msgvault.draft_changed", Kind: kind, ScopeKind: mcpScopeConversation, ScopeID: snapshot.conversation, ConversationID: snapshot.conversation, SourceID: snapshot.source, MessageID: snapshot.message, ItemKey: fmt.Sprintf("draft:%s:%d:%s", draftID, snapshot.revision, kind), OccurredAt: changed, Data: raw})
 }

@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"fmt"
 	"testing"
 	"time"
 
@@ -15,22 +14,27 @@ func TestMCPEventsPrepareReportsMoreAfterFilteredRowBudget(t *testing.T) {
 	assert := Assert.New(t)
 	require := Require.New(t)
 	f := storetest.New(t)
+	grantSyntheticSourceFixture(t, f)
 	now := time.Now().UTC()
-	clock, err := f.Store.ConfigureMCPEvents(t.Context(), mcpStoreConfig())
+	_, err := f.Store.ConfigureMCPEvents(t.Context(), mcpStoreConfig())
 	require.NoError(err)
 	active, _, err := f.Store.ActivateMCPSubscription(t.Context(), store.MCPActivation{Subscription: newMCPStoreSubscription(t, f, 1, now), Now: now})
 	require.NoError(err)
 	// The subscription excludes own messages, so these rows are skipped
 	// without a delivery. The last row is the first one it receives.
 	const filtered = 300
-	recorded := now.Format(time.RFC3339Nano)
+	owner := f.EnsureParticipant("budget-owner@example.net", "Synthetic owner", "example.net")
+	require.NoError(f.Store.AddAccountIdentity(f.Source.ID, "budget-owner@example.net", "manual"))
+	live := f.Store.WithIngestContext(store.IngestContext{Mode: store.IngestLive, ObservedAt: now})
 	for seq := 1; seq <= filtered+1; seq++ {
-		fromMe := seq <= filtered
-		_, err := f.Store.DB().Exec(f.Store.Rebind(`INSERT INTO mcp_event_log (seq,epoch,family,kind,scope_kind,scope_id,item_key,message_id,conversation_id,source_id,from_me,occurred_at,recorded_at,data) VALUES (?,?,'msgvault.message_archived','message','conversation',?,?,?,?,?,?,?,?,?)`), seq, clock.Epoch, f.ConvID, fmt.Sprintf("message:%d", seq), seq, f.ConvID, f.Source.ID, fromMe, recorded, recorded, fmt.Sprintf(`{"kind":"message","from_me":%t}`, fromMe))
+		message := f.NewMessage().Build()
+		if seq <= filtered {
+			message.SenderID.Int64 = owner
+			message.SenderID.Valid = true
+		}
+		_, err := live.PersistMessageContext(t.Context(), &store.MessagePersistData{Message: message})
 		require.NoError(err)
 	}
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE mcp_event_clock SET head_seq=? WHERE singleton=1`), filtered+1)
-	require.NoError(err)
 	build := func(store.MCPSubscription, store.MCPEvent) ([]byte, error) {
 		return []byte(`{"eventId":"after-filtered-run"}`), nil
 	}

@@ -2,19 +2,33 @@ package sync
 
 import (
 	"errors"
+	"net"
+	"strconv"
 	"testing"
 
 	Assert "github.com/stretchr/testify/assert"   //nolint:importas // Keep package constructors available to assertion helpers in nested scopes.
 	Require "github.com/stretchr/testify/require" //nolint:importas // Keep package constructors available to assertion helpers in nested scopes.
+	"go.kenn.io/msgvault/internal/gmail"
 	imapclient "go.kenn.io/msgvault/internal/imap"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	testemail "go.kenn.io/msgvault/internal/testutil/email"
 )
 
+// These provenance controls explicitly model a granted native credential. The
+// generic MockAPI remains unknown; real native HTTP/SDK tests verify admission.
+type grantedGmailProvenanceAPI struct{ *gmail.MockAPI }
+
+func (grantedGmailProvenanceAPI) NativeMessageReadPermission() (bool, bool) { return true, true }
+
 func enableProviderEvents(t *testing.T, env *TestEnv, sourceType string) {
 	t.Helper()
 	require := Require.New(t)
+	if sourceType == "gmail" {
+		scoped := *env.Syncer
+		scoped.client = grantedGmailProvenanceAPI{env.Mock}
+		env.Syncer = &scoped
+	}
 
 	_, err := env.Store.ConfigureMCPEvents(t.Context(), store.MCPEventsConfig{Enabled: true, Principal: "owner", Capabilities: []store.MCPEventCapability{{Family: "msgvault.message_archived", SourceType: sourceType, Kinds: []string{"message"}}}})
 	require.NoError(err)
@@ -98,20 +112,26 @@ func TestMCPProviderIMAPMailboxDeltaLiveRecoveryMuted(t *testing.T) {
 	opts := DefaultOptions()
 	opts.SourceType = sourceTypeIMAP
 	addr, user := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 0})
+	host, portText, err := net.SplitHostPort(addr)
+	require.NoError(err)
+	port, err := strconv.Atoi(portText)
+	require.NoError(err)
+	route := (&imapclient.Config{Host: host, Port: port, Username: testutil.IMAPTestUsername}).Identifier()
+	runNative := func() { _, err := env.Syncer.Full(env.Context, route); require.NoError(err) }
 	appendMessage := func(id string) {
 		testutil.AppendIMAPRawMessage(t, user, "INBOX", testemail.NewMessage().Header("Message-ID", "<"+id+"@example.test>").Body(id+" body").CRLF().Bytes())
 	}
 	appendMessage("historical")
 	first := newSyncTestIMAPClient(t, addr)
 	env.Syncer = New(first.Client, env.Store, opts)
-	runFullSync(t, env)
+	runNative()
 	saved := first.ObservedFolderStates()
 	require.NoError(first.Close())
 	assert.Zero(providerEventCount(t, env))
 	appendMessage("live-delta")
 	second := newSyncTestIMAPClient(t, addr, imapclient.WithFolderStates(saved))
 	env.Syncer = New(second.Client, env.Store, opts)
-	runFullSync(t, env)
+	runNative()
 	assert.Equal(store.IngestLive, second.MessageIngestContext("INBOX|2").Mode, "saved=%+v deltas=%+v", saved, second.ObservedMailboxDeltas())
 	assert.Equal(1, providerEventCount(t, env))
 	saved = second.ObservedFolderStates()
@@ -119,7 +139,7 @@ func TestMCPProviderIMAPMailboxDeltaLiveRecoveryMuted(t *testing.T) {
 	appendMessage("recovery-found")
 	third := newSyncTestIMAPClient(t, addr, imapclient.WithFolderStates(saved), imapclient.WithForceFullEnumeration())
 	env.Syncer = New(third.Client, env.Store, opts)
-	runFullSync(t, env)
+	runNative()
 	assert.Equal(1, providerEventCount(t, env), "forced recovery discovers historical rows without live attribution")
 	assertMessageCount(t, env.Store, 3)
 }

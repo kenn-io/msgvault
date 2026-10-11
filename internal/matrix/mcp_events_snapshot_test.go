@@ -55,6 +55,8 @@ func newEventsMatrixFixture(t *testing.T) *eventsMatrixFixture {
 		live := f.round.Load() > 0
 		var response any
 		switch r.URL.Path {
+		case "/_matrix/client/v3/account/whoami":
+			response = map[string]any{"user_id": "@archive:example.org", "device_id": "synthetic-scope-device"}
 		case "/_matrix/client/v3/sync":
 			if f.failSync {
 				http.Error(w, "synthetic sync interruption", http.StatusBadRequest)
@@ -107,7 +109,7 @@ func newEventsMatrixFixture(t *testing.T) *eventsMatrixFixture {
 				http.Error(w, "synthetic second-room interruption", http.StatusBadRequest)
 				return
 			}
-			response = map[string]any{"joined": map[string]any{}}
+			response = map[string]any{"joined": map[string]any{"@archive:example.org": map[string]any{"display_name": "Synthetic Owner"}}}
 		case "/_matrix/client/v3/rooms/!room:example.org/messages":
 			if f.failGap {
 				http.Error(w, "synthetic interruption", http.StatusBadRequest)

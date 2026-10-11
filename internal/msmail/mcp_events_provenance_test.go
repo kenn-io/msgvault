@@ -32,7 +32,7 @@ func TestMCPMSMailNativeDeltaCoverage(t *testing.T) {
 			assert := assert.New(t)
 			st := testutil.NewTestStore(t)
 			enableNativeMailEvents(t, st)
-			f := newFakeGraph(t)
+			f := newNativeEventMailGraph(t)
 			if !empty {
 				f.put("history", "inbox")
 			}
@@ -69,7 +69,7 @@ func TestMCPMSMailNativeDeltaCoverage(t *testing.T) {
 func TestMCPMSMailInitialOverridesCallerMode(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	enableNativeMailEvents(t, st)
-	f := newFakeGraph(t)
+	f := newNativeEventMailGraph(t)
 	f.put("history", "inbox")
 	_, err := f.sync(t, st.WithIngestContext(store.IngestContext{Mode: store.IngestLive}))
 	require.NoError(t, err)
@@ -83,7 +83,7 @@ func TestMCPMSMailInterruptedWalksRemainHistory(t *testing.T) {
 			assert := assert.New(t)
 			st := testutil.NewTestStore(t)
 			enableNativeMailEvents(t, st)
-			f := newFakeGraph(t)
+			f := newNativeEventMailGraph(t)
 			if kind != "initial" {
 				_, err := f.sync(t, st)
 				require.NoError(err)
@@ -118,7 +118,7 @@ func TestMCPMSMailInterruptedLiveContinuation(t *testing.T) {
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	enableNativeMailEvents(t, st)
-	f := newFakeGraph(t)
+	f := newNativeEventMailGraph(t)
 	_, err := f.sync(t, st)
 	require.NoError(err)
 	f.deltaPageSize = 2
@@ -147,7 +147,7 @@ func TestMCPMSMailFailedSnapshotRetryProvenance(t *testing.T) {
 				assert := assert.New(t)
 				st := testutil.NewTestStore(t)
 				enableNativeMailEvents(t, st)
-				f := newFakeGraph(t)
+				f := newNativeEventMailGraph(t)
 				if live {
 					_, err := f.sync(t, st)
 					require.NoError(err)
@@ -207,7 +207,7 @@ func FuzzMCPMSMailRetryProvenance(f *testing.F) {
 		require := require.New(t)
 		st := testutil.NewTestStore(t)
 		enableNativeMailEvents(t, st)
-		graph := newFakeGraph(t)
+		graph := newNativeEventMailGraph(t)
 		if live {
 			_, err := graph.sync(t, st)
 			require.NoError(err)
@@ -249,7 +249,7 @@ func TestMCPMSMailLegacyAndUnknownRetryEvidence(t *testing.T) {
 			require := require.New(t)
 			st := testutil.NewTestStore(t)
 			enableNativeMailEvents(t, st)
-			f := newFakeGraph(t)
+			f := newNativeEventMailGraph(t)
 			summary, err := f.sync(t, st)
 			require.NoError(err)
 			previous, err := st.GetLastSuccessfulSync(summary.SourceID)

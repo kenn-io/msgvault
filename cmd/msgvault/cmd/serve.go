@@ -51,6 +51,7 @@ import (
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/sourcecatalog"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/sync"
 	"go.kenn.io/msgvault/internal/syncerr"
@@ -4321,6 +4322,9 @@ func findScheduledSyncSources(s *store.Store, identifier string) ([]*store.Sourc
 			}
 			continue
 		}
+		if !sourcecatalog.ScheduledAccountSync(src.SourceType) {
+			continue
+		}
 		switch src.SourceType {
 		case sourceTypeGmail, sourceTypeIMAP, sourceTypeMSMail, sourceTypeTeams:
 			if _, dup := seen[src.SourceType]; !dup {
@@ -4387,10 +4391,13 @@ func newDaemonGmailClient(
 	}
 
 	var tokenSource oauth2.TokenSource
+	var readGrantedScopes func() []string
 	var tsErr error
 
 	saKeyPath := cfg.OAuth.ServiceAccountKeyFor(appName)
 	if saKeyPath != "" {
+		granted := append([]string(nil), scopes...)
+		readGrantedScopes = func() []string { return granted }
 		saMgr, saErr := oauth.NewServiceAccountManager(saKeyPath, scopes)
 		if saErr != nil {
 			return nil, false, provideridentity.NewGmailCredentialError(
@@ -4416,6 +4423,7 @@ func newDaemonGmailClient(
 				fmt.Errorf("resolve OAuth credentials for %s: %w", email, oaErr),
 			)
 		}
+		readGrantedScopes = func() []string { return oauthMgr.GrantedScopes(email) }
 		tokenSource, tsErr = oauthMgr.TokenSource(ctx, email)
 		if tsErr != nil {
 			// Distinguish transient network failures (DNS lookup timeout,
@@ -4442,6 +4450,7 @@ func newDaemonGmailClient(
 	return gmail.NewClient(tokenSource,
 		gmail.WithLogger(logger),
 		gmail.WithRateLimiter(rateLimiter),
+		gmail.WithGrantedScopesReader(readGrantedScopes),
 	), saKeyPath != "", nil
 }
 
@@ -4451,18 +4460,22 @@ func newDaemonGmailClient(
 // open a browser for OAuth — the error path tells the user how to
 // re-authorize from a terminal.
 func runScheduledGmailSync(ctx context.Context, email string, src *store.Source, s *store.Store, getOAuthMgr func(ctx context.Context, _ string) (*oauth.Manager, error), state *invocation) (*gmail.SyncSummary, error) {
+	permission, err := pinNativeGmailPermission(ctx, email, src, s)
+	if err != nil {
+		return nil, err
+	}
 	if state == nil {
 		state = invocationFromContext(ctx)
 	}
 	if state == nil || state.cfg == nil || state.logger == nil {
-		return nil, errors.New("configuration is unavailable")
+		return nil, pauseNativeGmailPermission(ctx, s, permission, errors.New("configuration is unavailable"))
 	}
 	cfg := state.cfg
 	logger := state.logger
 	accountEmail := scheduledGmailAccountIdentifier(email, src)
 	client, _, err := newDaemonGmailClient(ctx, accountEmail, src, getOAuthMgr, state, oauth.Scopes)
 	if err != nil {
-		return nil, err
+		return nil, pauseNativeGmailPermission(ctx, s, permission, err)
 	}
 	defer func() { _ = client.Close() }()
 
@@ -4514,18 +4527,22 @@ func scheduledGmailAccountIdentifier(selector string, src *store.Source) string 
 // on because IMAP page tokens are numeric offsets that don't survive
 // across processes (see syncfull.go).
 func runScheduledIMAPSync(ctx context.Context, src *store.Source, s *store.Store, state *invocation) (*gmail.SyncSummary, error) {
+	permission, err := pinNativeMessagePermission(ctx, src.Identifier, src, s)
+	if err != nil {
+		return nil, err
+	}
 	if state == nil {
 		state = invocationFromContext(ctx)
 	}
 	if state == nil || state.cfg == nil || state.logger == nil {
-		return nil, errors.New("configuration is unavailable")
+		return nil, pauseNativeMessagePermission(ctx, s, permission, errors.New("configuration is unavailable"))
 	}
 	cfg := state.cfg
 	logger := state.logger
 	imapOpts := imapFolderStateOptions(s, src, false, cfg, logger)
 	apiClient, err := buildAPIClient(ctx, src, nil, nil, imapOpts...)
 	if err != nil {
-		return nil, fmt.Errorf("build IMAP client: %w", err)
+		return nil, pauseNativeMessagePermission(ctx, s, permission, fmt.Errorf("build IMAP client: %w", err))
 	}
 	defer func() { _ = apiClient.Close() }()
 
@@ -4594,7 +4611,7 @@ func runScheduledTeamsSync(ctx context.Context, src *store.Source, s *store.Stor
 		return fmt.Errorf("post-source-create migrations: %w", err)
 	}
 
-	client, err := newTeamsClient(ctx, cfg, logger, email)
+	client, err := newTeamsClient(ctx, cfg, logger, email, s)
 	if err != nil {
 		return err
 	}

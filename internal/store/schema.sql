@@ -4781,6 +4781,79 @@ CREATE TABLE IF NOT EXISTS mcp_event_message_refs (
     reference_seq INTEGER NOT NULL UNIQUE CHECK (reference_seq > 0)
 );
 
+-- Resource lifetimes are independent of retained subscription and occurrence
+-- bindings. Removing a live lifetime must never rewrite retained authority.
+CREATE TABLE IF NOT EXISTS mcp_source_resources (
+    source_id BIGINT PRIMARY KEY REFERENCES sources(id) ON DELETE CASCADE,
+    generation TEXT NOT NULL CHECK (length(generation)=64)
+);
+CREATE TABLE IF NOT EXISTS mcp_conversation_resources (
+    conversation_id BIGINT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
+    source_id BIGINT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    generation TEXT NOT NULL CHECK (length(generation)=64)
+);
+CREATE INDEX IF NOT EXISTS idx_mcp_conversation_resources_source
+    ON mcp_conversation_resources(source_id);
+CREATE TABLE IF NOT EXISTS mcp_subscription_resource_bindings (
+    subscription_id TEXT PRIMARY KEY REFERENCES mcp_event_subscriptions(id) ON DELETE CASCADE,
+    source_generation TEXT NOT NULL,
+    scope_generation TEXT NOT NULL,
+    valid BOOLEAN NOT NULL
+);
+CREATE TABLE IF NOT EXISTS mcp_event_resource_bindings (
+    seq BIGINT PRIMARY KEY REFERENCES mcp_event_log(seq) ON DELETE CASCADE,
+    source_generation TEXT NOT NULL,
+    scope_generation TEXT NOT NULL,
+    valid BOOLEAN NOT NULL,
+    message_valid BOOLEAN NOT NULL
+);
+
+-- A source occurrence pins its originating conversation while the encompassing
+-- source subscription remains usable for unrelated conversations. No archive
+-- foreign key can erase this retained authorization evidence.
+CREATE TABLE IF NOT EXISTS mcp_event_origin_bindings (
+ seq BIGINT PRIMARY KEY REFERENCES mcp_event_log(seq) ON DELETE CASCADE,
+ generation TEXT NOT NULL CHECK (length(generation)=64)
+);
+
+-- Native permission evidence is independent of archive presence and binds one
+-- source lifetime. No credential or delegated-agent grant is stored here.
+CREATE TABLE IF NOT EXISTS native_source_permissions (
+ source_id BIGINT PRIMARY KEY REFERENCES sources(id) ON DELETE CASCADE,
+ source_generation TEXT NOT NULL CHECK (length(source_generation)=64),
+ permission_known BOOLEAN NOT NULL,
+ message_read BOOLEAN NOT NULL,
+ CHECK (NOT message_read OR permission_known)
+);
+
+-- Native scope presence is independent of mutable archival label associations.
+-- Retired rows remain tombstones; restoring a native identity rotates its key.
+CREATE TABLE IF NOT EXISTS native_message_scopes (
+ id INTEGER PRIMARY KEY,
+ source_id BIGINT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+ source_generation TEXT NOT NULL CHECK (length(source_generation)=64),
+ scope_kind TEXT NOT NULL,
+ provider_id TEXT NOT NULL,
+ parent_provider_id TEXT NOT NULL DEFAULT '',
+ native_epoch TEXT NOT NULL DEFAULT '',
+ permission_domain TEXT NOT NULL DEFAULT '',
+ display_name TEXT NOT NULL,
+ generation TEXT NOT NULL CHECK (length(generation)=64),
+ present BOOLEAN NOT NULL,
+ UNIQUE (source_id,scope_kind,provider_id)
+);
+CREATE INDEX IF NOT EXISTS idx_native_message_scopes_present ON native_message_scopes(source_id,scope_kind,parent_provider_id,present,id);
+
+-- Current native membership is written with the complete message snapshot.
+-- Journal resource bindings separately retain each occurrence's capture lifetime.
+CREATE TABLE IF NOT EXISTS native_message_scope_memberships (
+ message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+ scope_id BIGINT NOT NULL REFERENCES native_message_scopes(id) ON DELETE CASCADE,
+ source_generation TEXT NOT NULL CHECK (length(source_generation)=64),
+ scope_generation TEXT NOT NULL CHECK (length(scope_generation)=64),
+ PRIMARY KEY (message_id,scope_id)
+);
+
 -- Scope references survive in subscriptions, but cascade from live conversations.
 -- AUTOINCREMENT prevents a deleted conversation's reference from being reused.
 CREATE TABLE IF NOT EXISTS mcp_event_conversation_refs (
@@ -4794,3 +4867,11 @@ CREATE TABLE IF NOT EXISTS mcp_event_source_refs (
     reference_id INTEGER PRIMARY KEY AUTOINCREMENT,
     source_id INTEGER NOT NULL UNIQUE REFERENCES sources(id) ON DELETE CASCADE
 );
+CREATE TABLE IF NOT EXISTS mcp_live_admissions (
+    message_id INTEGER PRIMARY KEY,
+    source_id INTEGER NOT NULL,
+    message_reference_seq INTEGER NOT NULL CHECK (message_reference_seq > 0),
+    epoch INTEGER NOT NULL,
+    admitted_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_mcp_live_admissions_source ON mcp_live_admissions(source_id);

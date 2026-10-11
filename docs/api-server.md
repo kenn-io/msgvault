@@ -158,7 +158,7 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.23.0**.
+it is separate from the binary release version. The current schema is **3.24.0**.
 
 Schema 3.19.0 adds pipe-separated OR in full-text message search queries.
 Upgrade clients and daemon together across incompatible schema versions,
@@ -181,6 +181,9 @@ requests remain valid.
 
 Schema 3.23.0 adds the [Docbank attachment mirror](#docbank-attachment-mirror)
 routes, delivery receipts and status states.
+
+Schema 3.24.0 adds native source and inbox discovery and subscriptions to
+[MCP Events](#mcp-events).
 
 Schema 3.0.0 removes the unguarded
 `POST /api/v1/identity/match-candidates/{id}/accept` and `/reject` routes.
@@ -631,12 +634,14 @@ There is no dedicated cancellation endpoint for these jobs.
 
 ## MCP Events
 
-Schema 3.14.0 adds these owner-key-only endpoints. They accept no
-caller-supplied principal. Browser sessions, delegated agent tokens, and keyless
-access cannot use them. Disabled Events has no advertised capability.
+Schema 3.24.0 adds native source and inbox discovery and subscriptions. These
+owner-key-only endpoints accept no caller-supplied principal. Browser sessions,
+delegated agent tokens, and keyless access cannot use them. Disabled Events has
+no advertised capability.
 
 | Method | Path under `/api/v1/mcp/events` | Result |
 |---|---|---|
+| POST | `/resources` | Paginated native source, conversation, and inbox identities with current capabilities |
 | POST | `/list` | Runtime catalog; request body `{}` |
 | POST | `/subscribe` | Verified subscription ID, cursor, refresh deadline, and truncation flag |
 | POST | `/unsubscribe` | End the selected subscription; `204` on success |
@@ -644,6 +649,16 @@ access cannot use them. Disabled Events has no advertised capability.
 | GET | `/calendar-sources` | Subscribable calendar source IDs, summaries, and accounts |
 | GET | `/event?event_id=...` | Retained occurrence envelope |
 | GET | `/messages/{id}?event_id=...` | Full message details authorized by that occurrence |
+
+`POST /resources` accepts `kind` (`source`, `conversation`, or `inbox`), an
+optional `source_id`, `limit` (default 25, maximum 100), and `cursor`. It
+returns `resources` and `next_cursor` when another page exists. Keep the same
+filters and page size while continuing. Each resource includes its lifetime
+reference, native provider ID, source identity, display name, and capabilities.
+Inbox resources also include their native scope kind. Discovery remains
+available while Events is disabled; capabilities are empty with reason
+`events_disabled`. It does not contact a provider, enable capture, or create a
+signing key.
 
 POST bodies reject unknown fields. Callback destinations and encrypted secrets
 are never returned by status. Authenticated owner health includes `mcp_events`

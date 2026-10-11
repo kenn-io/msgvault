@@ -137,6 +137,22 @@ func (s *Store) captureMCPEnabled() bool {
 	return r != nil && r.config.Enabled
 }
 
+// MCPMessageCaptureEnabled lets native adapters avoid Events-only permission
+// requests when this provider has no selected live message family. It is an
+// advisory snapshot; capture and delivery repeat transactional authorization.
+func (s *Store) MCPMessageCaptureEnabled(sourceType string) bool {
+	r := s.mcpRoot().mcpConfig.Load()
+	if r == nil || !r.config.Enabled {
+		return false
+	}
+	for _, family := range []string{"msgvault.message_archived", mcpSourceMessageFamily, mcpInboxMessageFamily} {
+		if len(r.kinds[family+"\x00"+sourceType]) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Store) ingestContext() IngestContext { return s.mcpIngest }
 
 // WithIngestContext returns an immutable view sharing the archive pool and
@@ -282,12 +298,23 @@ func (s *Store) ConfigureMCPEvents(ctx context.Context, cfg MCPEventsConfig) (MC
 	var result MCPEventClock
 	err := root.withMCPEventTx(ctx, func(tx *sql.Tx, clock MCPEventClock) error {
 		result = clock
+		if err := root.adoptMCPResources(ctx, tx); err != nil {
+			return err
+		}
 		var oldFingerprint string
 		if err := tx.QueryRowContext(ctx, `SELECT coverage_fingerprint FROM mcp_event_clock WHERE singleton=1`).Scan(&oldFingerprint); err != nil {
 			return err
 		}
+		compatible, err := root.adoptMCPScopeCoverage(ctx, tx, runtime, oldFingerprint, fingerprint)
+		if err != nil {
+			return err
+		}
 		now := time.Now().UTC()
-		if oldFingerprint != fingerprint {
+		if compatible {
+			if _, err := tx.ExecContext(ctx, root.Rebind(`UPDATE mcp_event_clock SET coverage_fingerprint=?,enabled=? WHERE singleton=1`), fingerprint, cfg.Enabled); err != nil {
+				return err
+			}
+		} else if oldFingerprint != fingerprint {
 			err := tx.QueryRowContext(ctx, root.Rebind(`UPDATE mcp_event_clock SET capture_epoch=capture_epoch+1,epoch_started_at=?,coverage_fingerprint=?,enabled=? WHERE singleton=1 RETURNING head_seq,pruned_through_seq,capture_epoch`), mcpTime(now), fingerprint, cfg.Enabled).Scan(&result.HeadSeq, &result.PrunedThroughSeq, &result.Epoch)
 			if err != nil {
 				return err
@@ -299,7 +326,7 @@ func (s *Store) ConfigureMCPEvents(ctx context.Context, cfg MCPEventsConfig) (MC
 		if cfg.Principal == "" {
 			return nil
 		}
-		_, err := tx.ExecContext(ctx, root.Rebind(`UPDATE mcp_event_subscriptions SET state='stopped',stop_reason='principal_revoked',generation=generation+1,pending_seq=NULL,pending_envelope=NULL,pending_generation=NULL,attempt_count=0,next_attempt_at=NULL,updated_at=? WHERE principal_id<>? AND stop_reason<>'principal_revoked'`), mcpTime(now), cfg.Principal)
+		_, err = tx.ExecContext(ctx, root.Rebind(`UPDATE mcp_event_subscriptions SET state='stopped',stop_reason='principal_revoked',generation=generation+1,pending_seq=NULL,pending_envelope=NULL,pending_generation=NULL,attempt_count=0,next_attempt_at=NULL,updated_at=? WHERE principal_id<>? AND stop_reason<>'principal_revoked'`), mcpTime(now), cfg.Principal)
 		return err
 	})
 	if err != nil {
@@ -314,16 +341,17 @@ func (s *Store) ConfigureMCPEvents(ctx context.Context, cfg MCPEventsConfig) (MC
 // and no subscription that principal would revoke.
 func (s *Store) mcpCaptureAlreadyDisabled(ctx context.Context, principal string) (MCPEventClock, bool, error) {
 	var clock MCPEventClock
-	var enabled, active, revocable bool
+	var enabled, active, revocable, adopted bool
 	err := s.DB().QueryRowContext(ctx, s.Rebind(`SELECT head_seq, pruned_through_seq, capture_epoch, enabled,
 		EXISTS (SELECT 1 FROM mcp_event_subscriptions WHERE state='active'),
-		EXISTS (SELECT 1 FROM mcp_event_subscriptions WHERE principal_id<>? AND stop_reason<>'principal_revoked')
-		FROM mcp_event_clock WHERE singleton=1`), principal).Scan(&clock.HeadSeq, &clock.PrunedThroughSeq, &clock.Epoch, &enabled, &active, &revocable)
+		EXISTS (SELECT 1 FROM mcp_event_subscriptions WHERE principal_id<>? AND stop_reason<>'principal_revoked'),
+		EXISTS (SELECT 1 FROM archive_metadata WHERE key=?)
+		FROM mcp_event_clock WHERE singleton=1`), principal, mcpResourceAdoptionKey).Scan(&clock.HeadSeq, &clock.PrunedThroughSeq, &clock.Epoch, &enabled, &active, &revocable, &adopted)
 	if err != nil {
 		return MCPEventClock{}, false, fmt.Errorf("read Events capture state: %w", err)
 	}
 	revocable = revocable && principal != ""
-	return clock, !enabled && !active && !revocable, nil
+	return clock, !enabled && !active && !revocable && adopted, nil
 }
 
 func (s *Store) ValidateMCPEventScope(ctx context.Context, family, scopeKind string, scopeID int64, kinds []string) (string, int64, error) {
@@ -331,9 +359,12 @@ func (s *Store) ValidateMCPEventScope(ctx context.Context, family, scopeKind str
 }
 
 func (s *Store) validateMCPEventScope(ctx context.Context, db SQLReader, r *mcpRuntime, family, scopeKind string, scopeID int64, kinds []string) (string, int64, error) {
-	wantScope := "conversation"
-	if family == "msgvault.calendar_event_changed" {
-		wantScope = "source"
+	wantScope := mcpScopeConversation
+	if family == "msgvault.calendar_event_changed" || family == mcpSourceMessageFamily {
+		wantScope = mcpScopeSource
+	}
+	if family == mcpInboxMessageFamily {
+		wantScope = mcpScopeInbox
 	}
 	if scopeKind != wantScope {
 		return "", 0, mcpStoreError("wrong_scope_type")
@@ -341,9 +372,12 @@ func (s *Store) validateMCPEventScope(ctx context.Context, db SQLReader, r *mcpR
 	var sourceType string
 	var sourceID int64
 	var err error
-	if scopeKind == "source" {
+	switch scopeKind {
+	case mcpScopeSource:
 		err = db.QueryRowContext(ctx, s.Rebind(`SELECT source_type,id FROM sources WHERE id=?`), scopeID).Scan(&sourceType, &sourceID)
-	} else {
+	case mcpScopeInbox:
+		err = db.QueryRowContext(ctx, s.Rebind(`SELECT s.source_type,s.id FROM native_message_scopes n JOIN sources s ON s.id=n.source_id WHERE n.id=? AND n.present AND EXISTS (SELECT 1 FROM mcp_source_resources sr WHERE sr.source_id=n.source_id AND sr.generation=n.source_generation)`), scopeID).Scan(&sourceType, &sourceID)
+	default:
 		err = db.QueryRowContext(ctx, s.Rebind(`SELECT s.source_type,s.id FROM conversations c JOIN sources s ON s.id=c.source_id WHERE c.id=?`), scopeID).Scan(&sourceType, &sourceID)
 	}
 	if errors.Is(err, sql.ErrNoRows) {
@@ -360,26 +394,40 @@ func (s *Store) validateMCPEventScope(ctx context.Context, db SQLReader, r *mcpR
 			return "", 0, mcpStoreError("kind_not_capable")
 		}
 	}
-	if allowed, err := s.mcpTeamsChatAllowed(ctx, db, family, sourceID, scopeID); err != nil {
-		return "", 0, mcpSafeError(err)
-	} else if !allowed {
-		return "", 0, mcpStoreError("source_not_capable")
+	if family == "msgvault.message_archived" || family == mcpSourceMessageFamily || family == mcpInboxMessageFamily {
+		allowed, err := s.mcpNativeMessageAccess(ctx, db, family, sourceID)
+		if err != nil {
+			return "", 0, err
+		}
+		if !allowed {
+			return "", 0, mcpStoreError("native_authority_unavailable")
+		}
+	}
+	// A source subscription accepts new chats; its source ID is never a
+	// conversation ID. Each captured occurrence still validates the native chat.
+	if scopeKind == mcpScopeConversation {
+		if allowed, err := s.mcpNativeConversationAllowed(ctx, db, family, sourceID, scopeID); err != nil {
+			return "", 0, mcpSafeError(err)
+		} else if !allowed {
+			return "", 0, mcpStoreError("source_not_capable")
+		}
 	}
 	return sourceType, sourceID, nil
 }
 
-// mcpTeamsChatAllowed applies the native chat-only producer boundary without
+// mcpNativeConversationAllowed applies native Teams chat and Discord container boundaries without
 // requiring capture to remain enabled for retained receipt reads. Subscription
 // lifetime checks separately revoke removed scopes and sources.
-func (s *Store) mcpTeamsChatAllowed(ctx context.Context, db SQLReader, family string, sourceID, conversationID int64) (bool, error) {
-	if family != "msgvault.message_archived" {
+func (s *Store) mcpNativeConversationAllowed(ctx context.Context, db SQLReader, family string, sourceID, conversationID int64) (bool, error) {
+	if family != "msgvault.message_archived" && family != mcpSourceMessageFamily && family != mcpInboxMessageFamily {
 		return true, nil
 	}
 	var allowed bool
 	err := db.QueryRowContext(ctx, s.Rebind(`SELECT
-		NOT EXISTS (SELECT 1 FROM sources WHERE id=? AND source_type='teams')
-		OR EXISTS (SELECT 1 FROM conversations WHERE id=? AND source_id=?
-			AND conversation_type IN ('direct_chat','group_chat'))`), sourceID, conversationID, sourceID).Scan(&allowed)
+		(NOT EXISTS (SELECT 1 FROM sources WHERE id=? AND source_type='teams')
+		OR EXISTS (SELECT 1 FROM conversations c WHERE c.id=? AND c.source_id=?
+			AND c.conversation_type IN ('direct_chat','group_chat') AND EXISTS (SELECT 1 FROM native_message_scopes n WHERE n.source_id=c.source_id AND n.scope_kind='teams_chat' AND n.provider_id=c.source_conversation_id AND n.present AND EXISTS (SELECT 1 FROM mcp_source_resources r WHERE r.source_id=n.source_id AND r.generation=n.source_generation))))
+  AND (NOT EXISTS (SELECT 1 FROM sources WHERE id=? AND source_type='discord') OR EXISTS (SELECT 1 FROM conversations c WHERE c.id=? AND c.source_id=? AND EXISTS (SELECT 1 FROM native_message_scopes n WHERE n.source_id=c.source_id AND n.scope_kind IN ('discord_channel','discord_thread') AND n.provider_id=c.source_conversation_id AND n.present AND EXISTS (SELECT 1 FROM mcp_source_resources r WHERE r.source_id=n.source_id AND r.generation=n.source_generation)))) AND (NOT EXISTS(SELECT 1 FROM sources WHERE id=? AND source_type='matrix') OR EXISTS(SELECT 1 FROM conversations c WHERE c.id=? AND c.source_id=? AND EXISTS(SELECT 1 FROM native_message_scopes n WHERE n.source_id=c.source_id AND n.scope_kind='matrix_room' AND n.provider_id=c.source_conversation_id AND n.present AND EXISTS(SELECT 1 FROM mcp_source_resources r WHERE r.source_id=n.source_id AND r.generation=n.source_generation)))) AND (NOT EXISTS(SELECT 1 FROM sources WHERE id=? AND source_type='beeper') OR EXISTS(SELECT 1 FROM conversations c WHERE c.id=? AND c.source_id=? AND EXISTS(SELECT 1 FROM native_message_scopes n WHERE n.source_id=c.source_id AND n.scope_kind='beeper_member' AND n.provider_id=c.source_conversation_id AND n.present AND EXISTS(SELECT 1 FROM mcp_source_resources r WHERE r.source_id=n.source_id AND r.generation=n.source_generation))))`), sourceID, conversationID, sourceID, sourceID, conversationID, sourceID, sourceID, conversationID, sourceID, sourceID, conversationID, sourceID).Scan(&allowed)
 	return allowed, err
 }
 
@@ -398,7 +446,12 @@ func (s *Store) appendMCPEventTx(ctx context.Context, logged *loggedTx, event MC
 	if !r.kinds[event.Family+"\x00"+sourceType][event.Kind] {
 		return nil
 	}
-	if allowed, err := s.mcpTeamsChatAllowed(ctx, tx, event.Family, event.SourceID, event.ConversationID); err != nil {
+	if allowed, err := s.mcpNativeMessageAccess(ctx, tx, event.Family, event.SourceID); err != nil {
+		return mcpSafeError(err)
+	} else if !allowed {
+		return nil
+	}
+	if allowed, err := s.mcpNativeConversationAllowed(ctx, tx, event.Family, event.SourceID, event.ConversationID); err != nil {
 		return mcpSafeError(err)
 	} else if !allowed {
 		return nil
@@ -450,6 +503,15 @@ func (s *Store) appendMCPEventTx(ctx context.Context, logged *loggedTx, event MC
 	if err != nil {
 		return mcpSafeError(err)
 	}
+	if err := s.bindMCPEventResource(ctx, tx, event, false); err != nil {
+		return mcpSafeError(err)
+	}
+	if event.Kind == "message" && event.MessageID > 0 {
+		_, err = logged.ExecContext(ctx, `INSERT INTO mcp_live_admissions (message_id,source_id,message_reference_seq,epoch,admitted_at) VALUES (?,?,?,?,?) ON CONFLICT (message_id) DO UPDATE SET source_id=excluded.source_id,message_reference_seq=excluded.message_reference_seq,epoch=excluded.epoch,admitted_at=excluded.admitted_at`, event.MessageID, event.SourceID, event.MessageReferenceSeq, event.Epoch, mcpTime(event.RecordedAt))
+	}
+	if err != nil {
+		return mcpSafeError(err)
+	}
 	logged.mcpEventsWritten = true
 	return nil
 }
@@ -468,6 +530,15 @@ func (s *Store) removeMCPEventSource(ctx context.Context, db contextQuerier, sou
 	}
 	_, err := db.ExecContext(ctx, s.Rebind(`UPDATE mcp_event_subscriptions SET state='stopped',stop_reason='scope_removed',generation=generation+1,pending_seq=NULL,pending_envelope=NULL,pending_generation=NULL,attempt_count=0,next_attempt_at=NULL,updated_at=? WHERE source_id=? AND stop_reason<>'scope_removed'`), mcpTime(time.Now().UTC()), sourceID)
 	return mcpSafeError(err)
+}
+
+// Source admission has no conversation yet; every occurrence validates its
+// actual origin separately. A source ID is never used as a conversation ID.
+func (s *Store) mcpSubscriptionTeamsChatAllowed(ctx context.Context, db SQLReader, sub *MCPSubscription) (bool, error) {
+	if sub.ScopeKind != mcpScopeConversation {
+		return true, nil
+	}
+	return s.mcpNativeConversationAllowed(ctx, db, sub.Name, sub.SourceID, sub.ScopeID)
 }
 
 func (s *Store) removeMCPEventConversations(ctx context.Context, db contextQuerier, targets string, args []any) error {

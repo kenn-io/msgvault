@@ -14,6 +14,7 @@ func TestMCPEventsStartupReadsSecretsAcrossRevokedPrincipals(t *testing.T) {
 	assert := Assert.New(t)
 	require := Require.New(t)
 	f := storetest.New(t)
+	grantSyntheticSourceFixture(t, f)
 	config := store.MCPEventsConfig{Enabled: true, Principal: "owner:synthetic-old", Capabilities: []store.MCPEventCapability{{Family: "msgvault.message_archived", SourceType: "gmail", Kinds: []string{"message"}}}}
 	_, err := f.Store.ConfigureMCPEvents(t.Context(), config)
 	require.NoError(err)

@@ -25,20 +25,20 @@ func TestMCPDiscordNativeLiveCoverage(t *testing.T) {
 			if !initiallyEmpty {
 				api.messages["300"] = []Message{importerTestMessage("501", "300", "Synthetic history")}
 			}
-			opts := ImportOptions{GuildID: "200"}
-			_, err := newTestImporter(st, api).Import(t.Context(), opts)
+			opts := ImportOptions{GuildID: "200", BotUserID: "101"}
+			_, err := newNativeDiscordUnitImporter(st, api).Import(t.Context(), opts)
 			require.NoError(err)
 			var events int
 			require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM mcp_event_log`).Scan(&events))
 			assert.Zero(events, "first successful coverage is historical")
 			api.messages["300"] = append(api.messages["300"], importerTestMessage("502", "300", "Synthetic live arrival"))
-			_, err = newTestImporter(st, api).Import(t.Context(), opts)
+			_, err = newNativeDiscordUnitImporter(st, api).Import(t.Context(), opts)
 			require.NoError(err)
 			require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM mcp_event_log`).Scan(&events))
 			assert.Equal(1, events, "completed coverage permits one later arrival")
 			opts.Full = true
 			api.messages["300"] = append(api.messages["300"], importerTestMessage("503", "300", "Synthetic full history"))
-			_, err = newTestImporter(st, api).Import(t.Context(), opts)
+			_, err = newNativeDiscordUnitImporter(st, api).Import(t.Context(), opts)
 			require.NoError(err)
 			require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM mcp_event_log`).Scan(&events))
 			assert.Equal(1, events, "explicit full import stays silent")
@@ -53,25 +53,25 @@ func TestMCPDiscordInterruptedFullCoverage(t *testing.T) {
 	enableNativeDiscordEvents(t, st)
 	api := newImporterFakeAPI(importerTestChannel("300", "Synthetic channel"))
 	api.messages["300"] = []Message{importerTestMessage("501", "300", "Synthetic baseline")}
-	opts := ImportOptions{GuildID: "200"}
-	_, err := newTestImporter(st, api).Import(t.Context(), opts)
+	opts := ImportOptions{GuildID: "200", BotUserID: "101"}
+	_, err := newNativeDiscordUnitImporter(st, api).Import(t.Context(), opts)
 	require.NoError(err)
 	api.messages["300"] = append(api.messages["300"], importerTestMessage("502", "300", "Synthetic pending history"))
 	api.messageHook = func(_ string, _ MessageQuery) ([]Message, error, bool) {
 		return nil, errors.New("synthetic interruption"), true
 	}
 	opts.Full = true
-	_, err = newTestImporter(st, api).Import(t.Context(), opts)
+	_, err = newNativeDiscordUnitImporter(st, api).Import(t.Context(), opts)
 	require.Error(err)
 	api.messageHook = nil
 	opts.Full = false
-	_, err = newTestImporter(st, api).Import(t.Context(), opts)
+	_, err = newNativeDiscordUnitImporter(st, api).Import(t.Context(), opts)
 	require.NoError(err)
 	var events int
 	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM mcp_event_log`).Scan(&events))
 	assert.Zero(events, "ordinary resume must not relabel an interrupted full import")
 	api.messages["300"] = append(api.messages["300"], importerTestMessage("503", "300", "Synthetic new arrival"))
-	_, err = newTestImporter(st, api).Import(t.Context(), opts)
+	_, err = newNativeDiscordUnitImporter(st, api).Import(t.Context(), opts)
 	require.NoError(err)
 	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM mcp_event_log`).Scan(&events))
 	assert.Equal(1, events)
@@ -93,7 +93,7 @@ func TestMCPDiscordLegacyCoverageIsConservative(t *testing.T) {
 	require.NoError(st.CompleteSync(syncID, blob))
 	api := newImporterFakeAPI(importerTestChannel("300", "Synthetic channel"))
 	api.messages["300"] = []Message{importerTestMessage("502", "300", "Synthetic legacy gap")}
-	_, err = newTestImporter(st, api).Import(t.Context(), ImportOptions{GuildID: "200"})
+	_, err = newNativeDiscordUnitImporter(st, api).Import(t.Context(), ImportOptions{GuildID: "200", BotUserID: "101"})
 	require.NoError(err)
 	var events int
 	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM mcp_event_log`).Scan(&events))
@@ -107,8 +107,8 @@ func TestMCPDiscordInterruptedLiveCoverage(t *testing.T) {
 	enableNativeDiscordEvents(t, st)
 	api := newImporterFakeAPI(importerTestChannel("300", "Synthetic channel"))
 	api.messages["300"] = []Message{importerTestMessage("501", "300", "Synthetic baseline")}
-	opts := ImportOptions{GuildID: "200"}
-	_, err := newTestImporter(st, api).Import(t.Context(), opts)
+	opts := ImportOptions{GuildID: "200", BotUserID: "101"}
+	_, err := newNativeDiscordUnitImporter(st, api).Import(t.Context(), opts)
 	require.NoError(err)
 	for _, id := range []string{"502", "503", "504"} {
 		api.messages["300"] = append(api.messages["300"], importerTestMessage(id, "300", "Synthetic arrival"))
@@ -119,14 +119,14 @@ func TestMCPDiscordInterruptedLiveCoverage(t *testing.T) {
 		}
 		return nil, nil, false
 	}
-	_, err = newTestImporter(st, api).Import(t.Context(), opts)
+	_, err = newNativeDiscordUnitImporter(st, api).Import(t.Context(), opts)
 	require.Error(err)
 	var events int
 	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM mcp_event_log`).Scan(&events))
 	assert.Equal(2, events)
 	api.messageHook = nil
 	api.messages["300"] = append(api.messages["300"], importerTestMessage("505", "300", "Synthetic later arrival"))
-	_, err = newTestImporter(st, api).Import(t.Context(), opts)
+	_, err = newNativeDiscordUnitImporter(st, api).Import(t.Context(), opts)
 	require.NoError(err)
 	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM mcp_event_log`).Scan(&events))
 	assert.Equal(4, events, "live checkpoint resumes without silencing remaining arrivals")
@@ -138,19 +138,19 @@ func TestMCPDiscordNewContainerDoesNotBorrowCoverage(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	enableNativeDiscordEvents(t, st)
 	api := newImporterFakeAPI(importerTestChannel("300", "Synthetic covered channel"))
-	opts := ImportOptions{GuildID: "200"}
-	_, err := newTestImporter(st, api).Import(t.Context(), opts)
+	opts := ImportOptions{GuildID: "200", BotUserID: "101"}
+	_, err := newNativeDiscordUnitImporter(st, api).Import(t.Context(), opts)
 	require.NoError(err)
 	api.channels = append(api.channels, importerTestChannel("301", "Synthetic new channel"))
 	api.messages["300"] = []Message{importerTestMessage("502", "300", "Synthetic arrival")}
 	api.messages["301"] = []Message{importerTestMessage("501", "301", "Synthetic old history")}
-	_, err = newTestImporter(st, api).Import(t.Context(), opts)
+	_, err = newNativeDiscordUnitImporter(st, api).Import(t.Context(), opts)
 	require.NoError(err)
 	var events int
 	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM mcp_event_log`).Scan(&events))
 	assert.Equal(1, events)
 	api.messages["301"] = append(api.messages["301"], importerTestMessage("503", "301", "Synthetic arrival"))
-	_, err = newTestImporter(st, api).Import(t.Context(), opts)
+	_, err = newNativeDiscordUnitImporter(st, api).Import(t.Context(), opts)
 	require.NoError(err)
 	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM mcp_event_log`).Scan(&events))
 	assert.Equal(2, events)
@@ -166,14 +166,14 @@ func TestMCPDiscordChangedWindowDoesNotBorrowCoverage(t *testing.T) {
 	messageID, err := SnowflakeFromTimestamp(lower.Add(48 * time.Hour))
 	require.NoError(err)
 	api.messages["300"] = []Message{importerTestMessage(messageID, "300", "Synthetic history")}
-	opts := ImportOptions{GuildID: "200", After: lower}
-	_, err = newTestImporter(st, api).Import(t.Context(), opts)
+	opts := ImportOptions{GuildID: "200", BotUserID: "101", After: lower}
+	_, err = newNativeDiscordUnitImporter(st, api).Import(t.Context(), opts)
 	require.NoError(err)
 	messageID, err = SnowflakeFromTimestamp(lower.Add(72 * time.Hour))
 	require.NoError(err)
 	api.messages["300"] = append(api.messages["300"], importerTestMessage(messageID, "300", "Synthetic changed-window gap"))
 	opts.After = lower.Add(time.Hour)
-	_, err = newTestImporter(st, api).Import(t.Context(), opts)
+	_, err = newNativeDiscordUnitImporter(st, api).Import(t.Context(), opts)
 	require.NoError(err)
 	var events int
 	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM mcp_event_log`).Scan(&events))
@@ -181,7 +181,7 @@ func TestMCPDiscordChangedWindowDoesNotBorrowCoverage(t *testing.T) {
 	messageID, err = SnowflakeFromTimestamp(lower.Add(96 * time.Hour))
 	require.NoError(err)
 	api.messages["300"] = append(api.messages["300"], importerTestMessage(messageID, "300", "Synthetic later arrival"))
-	_, err = newTestImporter(st, api).Import(t.Context(), opts)
+	_, err = newNativeDiscordUnitImporter(st, api).Import(t.Context(), opts)
 	require.NoError(err)
 	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM mcp_event_log`).Scan(&events))
 	assert.Equal(1, events)
@@ -198,9 +198,9 @@ func TestMCPDiscordArrivalBetweenForwardAndRepair(t *testing.T) {
 	arrival := importerTestSnowflake(t, now.Add(-time.Hour), 3)
 	api := newImporterFakeAPI(importerTestChannel("300", "Synthetic channel"))
 	api.messages["300"] = []Message{importerTestMessage(baseline, "300", "Synthetic baseline")}
-	imp := newTestImporter(st, api)
+	imp := newNativeDiscordUnitImporter(st, api)
 	imp.now = func() time.Time { return now }
-	opts := ImportOptions{GuildID: "200", EditRescanWindow: 24 * time.Hour}
+	opts := ImportOptions{GuildID: "200", BotUserID: "101", EditRescanWindow: 24 * time.Hour}
 	_, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 	forwarded, injected := false, false

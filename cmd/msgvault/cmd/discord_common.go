@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"sort"
 	"strings"
@@ -14,10 +15,11 @@ import (
 	"github.com/mattn/go-isatty"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/discord"
+	"go.kenn.io/msgvault/internal/sourcecatalog"
 	"go.kenn.io/msgvault/internal/store"
 )
 
-const sourceTypeDiscord = "discord"
+const sourceTypeDiscord = sourcecatalog.Discord
 
 type discordCommandDeps struct {
 	bind                 func(context.Context) discordCommandDeps
@@ -208,16 +210,28 @@ func resolveDiscordClientForSource(source *store.Source, deps discordCommandDeps
 }
 
 func newDiscordImporterForSource(ctx context.Context, st *store.Store, source *store.Source, deps discordCommandDeps) (*discord.Importer, string, error) {
-	client, botID, err := resolveDiscordClientForSource(source, deps)
+	permission, err := pinNativeMessagePermission(ctx, source.Identifier, source, st)
 	if err != nil {
 		return nil, "", err
 	}
+	client, botID, err := resolveDiscordClientForSource(source, deps)
+	if err != nil {
+		return nil, "", pauseNativeMessagePermission(ctx, st, permission, err)
+	}
 	me, err := client.Me(ctx)
 	if err != nil {
-		return nil, "", fmt.Errorf("verify Discord credential identity: %w", err)
+		cause := fmt.Errorf("verify Discord credential identity: %w", err)
+		var apiErr *discord.APIError
+		if permission != nil && errors.As(err, &apiErr) && (apiErr.StatusCode == http.StatusUnauthorized || apiErr.StatusCode == http.StatusForbidden || apiErr.StatusCode == http.StatusNotFound) {
+			permission.Known = true
+		}
+		return nil, "", pauseNativeMessagePermission(ctx, st, permission, cause)
 	}
 	if me.ID != botID || !me.Bot {
-		return nil, "", errors.New("discord current user does not match the bound bot identity")
+		if permission != nil {
+			permission.Known = true
+		}
+		return nil, "", pauseNativeMessagePermission(ctx, st, permission, errors.New("discord current user does not match the bound bot identity"))
 	}
 	return discord.NewImporter(st, client), botID, nil
 }

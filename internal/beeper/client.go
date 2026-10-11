@@ -40,6 +40,16 @@ var ErrNotFound = errors.New("not found")
 // transport retry loop. Retrying the same request cannot correct a 4xx error.
 var errPermanentResponse = errors.New("request rejected")
 
+// nativeResponseError keeps status evidence typed without changing public
+// diagnostics or the existing retry/not-found error contracts.
+type nativeResponseError struct {
+	status int
+	cause  error
+}
+
+func (e nativeResponseError) Error() string { return e.cause.Error() }
+func (e nativeResponseError) Unwrap() error { return e.cause }
+
 // ErrAssetTooLarge reports an asset exceeding the caller's size cap; the cap
 // is enforced while reading so oversized bodies are never fully buffered.
 var ErrAssetTooLarge = errors.New("asset exceeds size cap")
@@ -193,7 +203,7 @@ func (c *Client) fetch(ctx context.Context, path string, maxBytes int64, asset b
 			}
 			return body, nil
 		case resp.StatusCode == http.StatusUnauthorized:
-			return nil, fmt.Errorf("beeper GET %s: unauthorized (401): the access token was rejected; mint a new token in Beeper Desktop (Settings > Developer) and re-run 'msgvault add-beeper': %w", reqURL, errPermanentResponse)
+			return nil, nativeResponseError{status: resp.StatusCode, cause: fmt.Errorf("beeper GET %s: unauthorized (401): the access token was rejected; mint a new token in Beeper Desktop (Settings > Developer) and re-run 'msgvault add-beeper': %w", reqURL, errPermanentResponse)}
 		case resp.StatusCode == http.StatusTooManyRequests:
 			// Throttling is transient whatever the body says.
 			if asset && assetAttempts >= maxAssetAttempts {
@@ -208,7 +218,7 @@ func (c *Client) fetch(ctx context.Context, path string, maxBytes int64, asset b
 			return nil, fmt.Errorf("beeper GET %s: status %d: %s: %w",
 				reqURL, resp.StatusCode, errorSnippet(body), assetErr)
 		case resp.StatusCode == http.StatusNotFound:
-			return nil, fmt.Errorf("beeper GET %s: %w", reqURL, ErrNotFound)
+			return nil, nativeResponseError{status: resp.StatusCode, cause: fmt.Errorf("beeper GET %s: %w", reqURL, ErrNotFound)}
 		case resp.StatusCode >= 500:
 			if asset && assetAttempts >= maxAssetAttempts {
 				return nil, fmt.Errorf("beeper GET %s: status %d after %d attempts: %s",
@@ -217,7 +227,7 @@ func (c *Client) fetch(ctx context.Context, path string, maxBytes int64, asset b
 			sawTransientAssetFailure = true
 		default:
 			if resp.StatusCode >= 400 && resp.StatusCode < 500 && resp.StatusCode != http.StatusRequestTimeout {
-				return nil, fmt.Errorf("beeper GET %s: status %d: %s: %w", reqURL, resp.StatusCode, string(body), errPermanentResponse)
+				return nil, nativeResponseError{status: resp.StatusCode, cause: fmt.Errorf("beeper GET %s: status %d: %s: %w", reqURL, resp.StatusCode, string(body), errPermanentResponse)}
 			}
 			return nil, fmt.Errorf("beeper GET %s: status %d: %s", reqURL, resp.StatusCode, string(body))
 		}

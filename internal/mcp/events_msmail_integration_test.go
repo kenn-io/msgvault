@@ -251,9 +251,16 @@ func TestEventsNativeMSMailImportAndReceiptRead(t *testing.T) {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
-		assert.Equal("Bearer synthetic-token", r.Header.Get("Authorization"))
+		owner := "owner@example.com"
+		if r.Header.Get("Authorization") == "Bearer synthetic-other-token" {
+			owner = "other-owner@example.com"
+		} else {
+			assert.Equal("Bearer synthetic-token", r.Header.Get("Authorization"))
+		}
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.URL.Path == "/me":
+			assert.NoError(json.NewEncoder(w).Encode(map[string]any{"id": owner, "mail": owner, "userPrincipalName": owner}))
 		case r.URL.Path == "/me/mailFolders":
 			assert.NoError(json.NewEncoder(w).Encode(map[string]any{"value": []any{map[string]any{"id": "inbox", "displayName": "Inbox"}}}))
 		case r.URL.Path == "/me/mailFolders/inbox/messages/delta":
@@ -295,15 +302,21 @@ func TestEventsNativeMSMailImportAndReceiptRead(t *testing.T) {
 				return
 			}
 			http.NotFound(w, r)
+		case strings.HasPrefix(r.URL.Path, "/me/messages/"):
+			assert.NoError(json.NewEncoder(w).Encode(map[string]any{"id": strings.TrimPrefix(r.URL.Path, "/me/messages/"), "parentFolderId": "inbox"}))
 		default:
 			http.NotFound(w, r)
 		}
 	}))
 	t.Cleanup(provider.Close)
-	nativeClient := msmail.NewClient(provider.URL, func(context.Context) (string, error) { return "synthetic-token", nil }, 1000)
 	importOpts := msmail.Options{Email: "owner@example.com", AttachmentsDir: cfg.AttachmentsDir()}
 	syncMailbox := func(opts msmail.Options) {
 		t.Helper()
+		token := "synthetic-token"
+		if opts.Email == "other-owner@example.com" {
+			token = "synthetic-other-token"
+		}
+		nativeClient := msmail.NewClient(provider.URL, func(context.Context) (string, error) { return token, nil }, 1000, msmail.WithGrantedScopesReader(func() ([]string, error) { return []string{"Mail.Read"}, nil }))
 		_, err := msmail.Import(t.Context(), f.Store, nativeClient, opts, slog.New(slog.DiscardHandler))
 		require.NoError(err)
 	}
@@ -367,14 +380,12 @@ func TestEventsNativeMSMailImportAndReceiptRead(t *testing.T) {
 	assert.Equal(strconv.FormatInt(messageID, 10), payload["message_id"])
 	require.NoError(resolvedPayload.Validate(payload), "actual occurrence must match its advertised schema")
 	assert.NotContains(string(envelope.Data), body)
+	var deliveredSeq int64
+	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT seq FROM mcp_event_log WHERE family='msgvault.message_archived' AND message_id=? AND source_id=?`), messageID, sourceID).Scan(&deliveredSeq))
 	require.Eventually(func() bool {
 		row, err := f.Store.GetMCPSubscription(t.Context(), subscriptionID)
-		var head int64
-		if queryErr := f.Store.DB().QueryRow(`SELECT head_seq FROM mcp_event_clock WHERE singleton=1`).Scan(&head); queryErr != nil {
-			return false
-		}
-		return err == nil && row != nil && row.CursorSeq == head && row.PendingSeq == 0
-	}, 30*time.Second, 20*time.Millisecond, "delivery success was not durably recorded")
+		return err == nil && row != nil && row.CursorSeq >= deliveredSeq && row.PendingSeq == 0
+	}, 30*time.Second, 20*time.Millisecond, "delivery acknowledgement includes the actual subscribed-family occurrence")
 	_, wire = call("tools/call", map[string]any{"name": "get_mcp_event", "arguments": map[string]any{"event_id": envelope.EventID}})
 	require.Nil(wire["error"])
 	assert.Equal(envelope.EventID, eventsWireObject(t, eventsWireObject(t, wire["result"])["structuredContent"])["eventId"])
@@ -466,6 +477,6 @@ func TestEventsNativeMSMailImportAndReceiptRead(t *testing.T) {
 		require.FailNow("explicit own-message subscription was not delivered")
 	}
 	var occurrences int
-	require.NoError(f.Store.DB().QueryRow(`SELECT COUNT(*) FROM mcp_event_log`).Scan(&occurrences))
+	require.NoError(f.Store.DB().QueryRow(`SELECT COUNT(*) FROM mcp_event_log WHERE family='msgvault.message_archived'`).Scan(&occurrences))
 	assert.Equal(3, occurrences, "re-import and a second account's history do not duplicate live arrivals")
 }

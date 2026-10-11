@@ -28,7 +28,7 @@ func TestTwelfthFailedAttemptDeadLettersAndContinues(t *testing.T) {
 	// Resume a real persisted pending envelope at the final retry boundary.
 	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE mcp_event_subscriptions SET attempt_count=11 WHERE id=?`), result.ID)
 	require.NoError(err)
-	appendReceipt(t, s, f, 2)
+	appendReceipt(t, s, f, 3)
 	var sends atomic.Int32
 	s.webhook = tlsWebhook(t, func(rw http.ResponseWriter, r *http.Request) {
 		if sends.Add(1) == 1 {
@@ -44,7 +44,7 @@ func TestTwelfthFailedAttemptDeadLettersAndContinues(t *testing.T) {
 	go func() { done <- s.Run(ctx) }()
 	require.Eventually(func() bool {
 		row, err := s.st.GetMCPSubscription(t.Context(), result.ID)
-		return err == nil && row.CursorSeq == 2 && row.PendingSeq == 0
+		return err == nil && row.CursorSeq == 3 && row.PendingSeq == 0
 	}, 10*time.Second, 10*time.Millisecond)
 	cancel()
 	select {

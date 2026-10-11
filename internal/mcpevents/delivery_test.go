@@ -74,8 +74,8 @@ func TestExpiredOccurrenceAdvancesRetentionFloorBeforeDelivery(t *testing.T) {
 	s, f, req := eventServiceWithRetention(t, time.Minute)
 	result, err := s.Subscribe(t.Context(), s.principal, req)
 	require.NoError(err)
-	appendReceipt(t, s, f, 1)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE mcp_event_log SET recorded_at=? WHERE seq=1`), time.Now().UTC().Add(-2*time.Minute).Format("2006-01-02T15:04:05.000000000Z"))
+	messageID := appendReceipt(t, s, f, 1)
+	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE mcp_event_log SET recorded_at=? WHERE message_id=?`), time.Now().UTC().Add(-2*time.Minute).Format("2006-01-02T15:04:05.000000000Z"), messageID)
 	require.NoError(err)
 
 	delivery, err := s.st.PrepareMCPDelivery(t.Context(), result.ID, 1, time.Now().UTC(), func(store.MCPSubscription, store.MCPEvent) ([]byte, error) {
@@ -87,7 +87,7 @@ func TestExpiredOccurrenceAdvancesRetentionFloorBeforeDelivery(t *testing.T) {
 	var floor, retained int64
 	require.NoError(f.Store.DB().QueryRow(`SELECT pruned_through_seq FROM mcp_event_clock WHERE singleton=1`).Scan(&floor))
 	require.NoError(f.Store.DB().QueryRow(`SELECT COUNT(*) FROM mcp_event_log`).Scan(&retained))
-	assert.Equal(int64(1), floor)
+	assert.Equal(int64(2), floor)
 	assert.Zero(retained)
 	sub, err := f.Store.GetMCPSubscription(t.Context(), result.ID)
 	require.NoError(err)

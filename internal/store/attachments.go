@@ -765,7 +765,7 @@ func (s *Store) ListDiscordAttachmentMessages(sourceID int64) ([]DiscordAttachme
 			return nil, err
 		}
 		message.ParticipantCount = attachmentPolicyParticipantCount(
-			"discord", message.ParticipantCount, metadata,
+			sourceTypeDiscord, message.ParticipantCount, metadata,
 		)
 		messages = append(messages, message)
 	}

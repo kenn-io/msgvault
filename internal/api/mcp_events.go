@@ -18,7 +18,7 @@ const mcpEventsPath = "/api/v1/mcp/events"
 var mcpEventsOperationIDs = map[string]bool{
 	"listMCPEvents": true, "subscribeMCPEvents": true, "unsubscribeMCPEvents": true,
 	"getMCPEventsStatus": true, "listMCPCalendarSources": true,
-	"getMCPEvent": true, "getMCPEventMessage": true,
+	"getMCPEvent": true, "getMCPEventMessage": true, "discoverMCPEventResources": true,
 }
 
 type mcpEventsRequestKey struct{}
@@ -83,6 +83,10 @@ func (s *Server) MCPEventsDeliveryOperation(ctx context.Context, operation func(
 }
 
 func (s *Server) registerMCPEventsRoutes(api huma.API) {
+	discovery := rawAPIV1Operation("discoverMCPEventResources", http.MethodPost, "/mcp/events/resources", "Discover native source and inbox subscription resources")
+	discovery.RequestBody = jsonRequestBodyFor[mcpevents.ResourceQuery](api)
+	discovery.Responses = jsonResponsesFor[mcpevents.ResourcePage](api)
+	registerMCPEventsRoute(api, discovery, s.handleMCPEventResources)
 	list := rawAPIV1Operation("listMCPEvents", http.MethodPost, "/mcp/events/list", "List scoped MCP Events")
 	list.RequestBody = jsonRequestBodyFor[MCPEventsListRequest](api)
 	list.Responses = jsonResponsesFor[mcpevents.ListResult](api)
@@ -282,4 +286,31 @@ func (s *Server) handleMCPEventMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, cliMessageResponseFromQuery(message))
+}
+
+// Discovery needs owner archive access, independently of capture configuration.
+// It never enables Events, creates provider accounts or contacts a provider.
+func (s *Server) handleMCPEventResources(w http.ResponseWriter, r *http.Request) {
+	if s.requestAuthentication(r).Mode != AuthModeAPIKey || s.mcpEventsPrincipal == "" {
+		writeMCPEventsError(w, &mcpevents.Error{Code: -32012, Reason: "owner_required"})
+		return
+	}
+	if s.mcpEventsUnavailable != nil {
+		writeMCPEventsError(w, s.mcpEventsUnavailable)
+		return
+	}
+	if s.mcpEvents == nil {
+		writeMCPEventsError(w, &mcpevents.Error{Code: -32015, Reason: "events_unavailable"})
+		return
+	}
+	var query mcpevents.ResourceQuery
+	if !decodeMCPEventsRequest(w, r, &query) {
+		return
+	}
+	result, err := s.mcpEvents.DiscoverResources(mcpEventsRequestContext(r), s.mcpEventsPrincipal, query)
+	if err != nil {
+		writeMCPEventsError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }

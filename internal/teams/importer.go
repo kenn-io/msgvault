@@ -32,9 +32,12 @@ type recipientRef struct {
 
 // Importer ingests Microsoft Teams messages into the msgvault store.
 type Importer struct {
-	store  *store.Store
-	client *Client
-	res    *participantResolver
+	store            *store.Store
+	client           *Client
+	res              *participantResolver
+	nativePermission *store.NativeSourcePermission
+	nativeSourceRef  string
+	nativeSelfMember *ChatMember
 }
 
 // NewImporter creates an Importer backed by the given store and Graph client.
@@ -88,6 +91,11 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 	imp = imp.scopedToSync(src.ID, syncID)
 	defer func() {
 		if err != nil {
+			if nativeTeamsDenied(err) && imp.nativePermission != nil {
+				denied := *imp.nativePermission
+				denied.Known, denied.MessageRead = true, false
+				err = errors.Join(err, imp.store.ObserveNativeSourcePermission(ctx, denied))
+			}
 			blob, _ := state.Marshal()
 			_ = imp.store.FailSyncWithCheckpoint(syncID, err.Error(), &store.Checkpoint{
 				PageToken:         blob,
@@ -98,6 +106,9 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 		}
 	}()
 
+	if err = imp.observeNativeTeamsPermission(ctx, src); err != nil {
+		return sum, err
+	}
 	if opts.Full {
 		state.ResetChatBaseline = true
 		blob, marshalErr := state.Marshal()
@@ -234,6 +245,9 @@ func (imp *Importer) syncChats(ctx context.Context, sourceID, syncID int64, opts
 		sum.Errors++
 	}
 	chats = append(chats, selfChat...)
+	if observeErr := imp.observeNativeTeamsChats(ctx, sourceID, opts.Email, chats, err == nil); observeErr != nil {
+		return observeErr
+	}
 	total := len(chats)
 	for idx, ch := range chats {
 		if ctx.Err() != nil {
@@ -284,10 +298,31 @@ func (imp *Importer) syncChats(ctx context.Context, sourceID, syncID int64, opts
 		live := !opts.Full && state.ChatCovered(ch.ID)
 
 		since := state.ChatCursor(ch.ID)
+		read, err := imp.pinNativeTeamsChatRead(ctx, sourceID, opts.Email, ch.ID)
+		if err != nil {
+			return err
+		}
 		msgs, pageTruncated, err := imp.client.ListChatMessages(ctx, ch.ID, chatQuerySince(since), opts.Limit)
 		if err != nil {
+			if errors.Is(err, msgraph.ErrUnauthorized) {
+				return err
+			}
+			if errors.Is(err, msgraph.ErrForbidden) || errors.Is(err, msgraph.ErrNotFound) {
+				if retireErr := imp.retireNativeTeamsChat(ctx, read); retireErr != nil {
+					return retireErr
+				}
+			}
 			sum.Errors++
 			continue
+		}
+		for _, message := range msgs {
+			if message.ChatID != "" && message.ChatID != ch.ID {
+				return errors.New("native_chat_identity_mismatch")
+			}
+		}
+		nativeScopes, observeErr := imp.observeNativeTeamsChatRead(ctx, read)
+		if observeErr != nil {
+			return observeErr
 		}
 		var maxTime time.Time
 		if since != "" {
@@ -318,7 +353,7 @@ func (imp *Importer) syncChats(ctx context.Context, sourceID, syncID int64, opts
 			}
 			gm := &msgs[i]
 			messageID, added, perr := imp.persistChatMessage(ctx, sourceID, gm, &chatPersistContext{
-				conversationID: convID, chat: ch, opts: chatOpts, toRecipients: toRecips,
+				conversationID: convID, chat: ch, opts: chatOpts, toRecipients: toRecips, nativeScopes: nativeScopes,
 				live: live,
 			}, sum)
 			if perr != nil {
@@ -380,6 +415,8 @@ func (imp *Importer) syncChats(ctx context.Context, sourceID, syncID int64, opts
 // same object ID a members read would have returned, preserving the participant
 // cache key that sender and mention resolution read. If the probe finds no
 // user, chatMembers leaves the roster unresolved so a later sync can retry it.
+// An account-verified native Events run can also identify the sole owner from
+// /me when the actual self-chat read succeeds with an empty message list.
 func (imp *Importer) selfChat(ctx context.Context, email string) ([]Chat, []ChatMember, error) {
 	msgs, _, err := imp.client.ListChatMessages(ctx, SelfChatID, "", 50)
 	if errors.Is(err, msgraph.ErrNotFound) {
@@ -389,6 +426,9 @@ func (imp *Importer) selfChat(ctx context.Context, email string) ([]Chat, []Chat
 		return nil, nil, err
 	}
 	if len(msgs) == 0 {
+		if imp.nativeSelfMember != nil {
+			return []Chat{{ID: SelfChatID, ChatType: "oneOnOne"}}, []ChatMember{*imp.nativeSelfMember}, nil
+		}
 		return nil, nil, nil
 	}
 	var members []ChatMember

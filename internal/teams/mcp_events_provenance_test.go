@@ -45,6 +45,8 @@ func newNativeTeamsEventFeed(t *testing.T) (*nativeTeamsEventFeed, *Importer, Im
 		}
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
+		case "/me":
+			_, _ = w.Write([]byte(`{"id":"synthetic-owner-id","mail":"owner@example.test","userPrincipalName":"owner@example.test"}`))
 		case "/me/chats":
 			_, _ = w.Write([]byte(`{"value":[{"id":"event-chat","chatType":"group","topic":"Synthetic event chat"}]}`))
 		case "/chats/event-chat/members":
@@ -87,7 +89,7 @@ func newNativeTeamsEventFeed(t *testing.T) (*nativeTeamsEventFeed, *Importer, Im
 	st := testutil.NewTestStore(t)
 	_, err := st.ConfigureMCPEvents(t.Context(), store.MCPEventsConfig{Enabled: true, Principal: "synthetic-owner", Capabilities: []store.MCPEventCapability{{Family: "msgvault.message_archived", SourceType: "teams", Kinds: []string{"message"}}}})
 	require.NoError(t, err)
-	return f, NewImporter(st, NewClient(srv.URL, func(context.Context) (string, error) { return "synthetic-token", nil }, 50)), ImportOptions{Email: "owner@example.test"}
+	return f, NewImporter(st, NewClient(srv.URL, func(context.Context) (string, error) { return "synthetic-token", nil }, 50, WithGrantedScopesReader(func() ([]string, error) { return []string{"Chat.Read"}, nil }))), ImportOptions{Email: "owner@example.test"}
 }
 
 func TestMCPTeamsChatLiveProvenance(t *testing.T) {

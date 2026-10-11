@@ -11,6 +11,10 @@ import (
 )
 
 type Options struct {
+	// Now supplies evaluation and webhook-signature time. Nil uses the wall
+	// clock. It is an internal dependency, not configuration or wire input;
+	// wakeups and cancellation still use real timers.
+	Now               func() time.Time
 	Enabled           bool
 	Retention         time.Duration
 	Sources           []string
@@ -111,12 +115,12 @@ func SafeError(code int, reason string) (*Error, bool) {
 	switch code {
 	case -32602:
 		switch reason {
-		case "invalid_request", "invalid_arguments", "unknown_argument", "unknown_event", "invalid_scope", "invalid_identifier", "invalid_boolean", "invalid_kinds", "invalid_cursor", "invalid_event_id", "invalid_secret", "invalid_callback", "invalid_trusted_callback", "invalid_ttl", "invalid_retention", "invalid_subscription", "unknown_scope", "wrong_scope_type", "source_not_capable", "kind_not_capable", "event_unavailable", "message_unavailable", "payload_too_large":
+		case "invalid_resource_reference", "invalid_resource_query", "invalid_discovery_cursor", "resource_unavailable", "invalid_request", "invalid_arguments", "unknown_argument", "unknown_event", "invalid_scope", "invalid_identifier", "invalid_boolean", "invalid_kinds", "invalid_cursor", "invalid_event_id", "invalid_secret", "invalid_callback", "invalid_trusted_callback", "invalid_ttl", "invalid_retention", "invalid_subscription", "unknown_scope", "wrong_scope_type", "source_not_capable", "kind_not_capable", "event_unavailable", "message_unavailable", "payload_too_large":
 			allowed = true
 		}
 	case -32012:
 		switch reason {
-		case "owner_required", "subscription_unavailable", "principal_revoked", "subscription_inactive":
+		case "native_authority_unavailable", "owner_required", "subscription_unavailable", "principal_revoked", "subscription_inactive":
 			allowed = true
 		}
 	case -32013:

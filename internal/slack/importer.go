@@ -109,10 +109,15 @@ func (cc *convScope) drainPageBudget() int {
 // Importer ingests one Slack workspace user's conversations into the
 // msgvault store. One Import run covers one workspace (= one source).
 type Importer struct {
-	store          *store.Store
-	client         *Client
-	res            *participantResolver
-	lastCheckpoint time.Time
+	nativeSlackSourceReference                         string
+	nativeSlackPermissionKnown, nativeSlackMessageRead bool
+	nativeSlackDeniedDomains                           []string
+	nativeSlackChannels                                map[string]Conversation
+	nativeSlackScopePins                               map[string]store.NativeMessageScopeLookup
+	store                                              *store.Store
+	client                                             *Client
+	res                                                *participantResolver
+	lastCheckpoint                                     time.Time
 	// now is a clock hook for tests.
 	now func() time.Time
 	// resumeLoaded is a test hook run after resume state loads and before
@@ -273,6 +278,9 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (_ *ImportS
 	// its first checkpoint, the next run must still find the prior progress.
 	// Load-bearing for newest-wins resume and the --full reset — fatal on
 	// failure, never silent.
+	if err = imp.pinNativeSlackAccount(ctx, src, opts); err != nil {
+		return sum, err
+	}
 	if err = imp.checkpointNow(ctx, syncID, state, sum); err != nil {
 		return sum, err
 	}
@@ -301,14 +309,17 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (_ *ImportS
 	}
 
 	var convs []Conversation
+	var nativeChannels []Conversation
 	listed := map[string]bool{}
 	err = imp.client.AllConversations(ctx, func(c Conversation) error {
+		nativeChannels = append(nativeChannels, c)
 		listed[c.ID] = true
 		if includeConversation(&c, &opts) {
 			convs = append(convs, c)
 		}
 		return nil
 	})
+	err = errors.Join(err, imp.observeNativeSlackChannels(ctx, src.ID, opts, nativeChannels, err == nil))
 	if err != nil {
 		return sum, fmt.Errorf("enumerate slack conversations: %w", err)
 	}
@@ -625,6 +636,9 @@ func (imp *Importer) ensureMembership(ctx context.Context, syncID, convID int64,
 				return nil, 0, nil, ctx.Err()
 			}
 			if errors.Is(err, ErrNotFound) {
+				if retireErr := imp.retireNativeSlackReadScope(ctx, c.ID, ""); retireErr != nil {
+					return nil, 0, nil, retireErr
+				}
 				imp.recordItem(ctx, syncID, c.ID, "membership", store.SyncRunItemStatusSkipped, "slack_channel_gone", err)
 				// Known-gone is distinct from a transient outage. Let the
 				// history path confirm/record the gone conversation rather
@@ -711,6 +725,9 @@ func (imp *Importer) walkWindow(ctx context.Context, cc *convScope, state *SyncS
 				continue
 			}
 			if errors.Is(err, ErrNotFound) {
+				if retireErr := imp.retireNativeSlackReadScope(ctx, cc.channelID, ""); retireErr != nil {
+					return retireErr
+				}
 				// Enumerated but unreadable (observed live: a sandbox
 				// provisioning-bot DM) or since deleted. There is nothing to
 				// fetch — recording it as a hard error would wedge every
@@ -856,6 +873,9 @@ func (imp *Importer) drainPendingThreads(ctx context.Context, cc *convScope, sum
 				return ctx.Err()
 			}
 			if errors.Is(err, ErrNotFound) {
+				if retireErr := imp.retireNativeSlackReadScope(ctx, cc.channelID, pt.RootTS); retireErr != nil {
+					return retireErr
+				}
 				// Thread gone between discovery and drain: expected churn.
 				imp.recordItem(ctx, cc.syncID, sourceMessageID(cc.channelID, pt.RootTS), "thread", store.SyncRunItemStatusSkipped, "slack_thread_gone", err)
 				cs.PendingThreads = cs.PendingThreads[1:]
@@ -996,6 +1016,9 @@ func (imp *Importer) threadCatchUp(ctx context.Context, cc *convScope, state *Sy
 				continue
 			}
 			if errors.Is(err, ErrNotFound) {
+				if retireErr := imp.retireNativeSlackReadScope(ctx, cc.channelID, ""); retireErr != nil {
+					return retireErr
+				}
 				// The conversation is gone: there is nothing left to fetch,
 				// ever. Clearing the debt here keeps one deleted channel
 				// from wedging every future workspace sync into failure —
@@ -1128,6 +1151,9 @@ func (imp *Importer) rescanHead(ctx context.Context, cc *convScope, sum *ImportS
 				return ctx.Err()
 			}
 			if errors.Is(err, ErrNotFound) {
+				if retireErr := imp.retireNativeSlackReadScope(ctx, cc.channelID, ""); retireErr != nil {
+					return retireErr
+				}
 				imp.recordItem(ctx, cc.syncID, cc.channelID, "fetch", store.SyncRunItemStatusSkipped, "slack_channel_gone", err)
 				return nil
 			}
@@ -1182,6 +1208,9 @@ func (imp *Importer) rescanThread(ctx context.Context, cc *convScope, rootTS str
 				return ctx.Err()
 			}
 			if errors.Is(err, ErrNotFound) {
+				if retireErr := imp.retireNativeSlackReadScope(ctx, cc.channelID, rootTS); retireErr != nil {
+					return retireErr
+				}
 				imp.recordItem(ctx, cc.syncID, sourceMessageID(cc.channelID, rootTS), "maintenance", store.SyncRunItemStatusSkipped, "slack_thread_gone", err)
 				return nil
 			}
@@ -1319,6 +1348,14 @@ func (imp *Importer) processMessage(ctx context.Context, cc *convScope, m *Messa
 			// later without publishing an incomplete arrival.
 			mode = store.IngestBackfill
 		}
+	}
+	nativeScopes, nativeRead, nativeErr := imp.nativeSlackMessageScopes(ctx, cc, m)
+	if nativeErr != nil {
+		return nativeErr
+	}
+	data.NativeScopes = nativeScopes
+	if !nativeRead {
+		mode = store.IngestUnknown
 	}
 	messageID, err := imp.store.WithIngestContext(store.IngestContext{Mode: mode, ObservedAt: imp.now()}).PersistMessageContext(ctx, data)
 	if err != nil {

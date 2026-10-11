@@ -38,7 +38,7 @@ func TestDaemonMCPEventsConfigurationAndStartup(t *testing.T) {
 	cfg.MCP.Events.Enabled = true
 	enabled, err := newDaemonMCPEventsService(t.Context(), cfg, st, server)
 	require.NoError(err)
-	require.Len(enabled.Capabilities(), 5)
+	require.Len(enabled.Capabilities(), 9)
 	key, err := os.ReadFile(keyPath)
 	require.NoError(err)
 	require.Len(key, 32)
@@ -116,6 +116,7 @@ func TestDaemonSyncChildStoreCapturesLiveEventsWithoutResettingCoverage(t *testi
 	require.NoError(err)
 	t.Cleanup(cleanup)
 
+	grantDaemonEventsSourceAuthority(t, childStore, source.ID)
 	message := storetest.NewMessage(source.ID, conversationID).WithSourceMessageID("daemon-sync-live-message").Build()
 	view := childStore.WithIngestContext(store.IngestContext{Mode: store.IngestLive, ObservedAt: time.Now().UTC()})
 	messageID, err := view.PersistMessageContext(t.Context(), &store.MessagePersistData{Message: message})
@@ -158,6 +159,7 @@ func TestDirectWriteStoreJournalsLiveEventsWithDaemonSettings(t *testing.T) {
 	cliStore, cleanup, err := openWritableStoreAndInitWithInvocation(&invocation{cfg: cfg, logger: testDiscardLogger()}, runStartupMigrationsForIngest)
 	require.NoError(err)
 	t.Cleanup(cleanup)
+	grantDaemonEventsSourceAuthority(t, cliStore, source.ID)
 	message := storetest.NewMessage(source.ID, conversationID).WithSourceMessageID("direct-write-live-message").Build()
 	view := cliStore.WithIngestContext(store.IngestContext{Mode: store.IngestLive, ObservedAt: time.Now().UTC()})
 	messageID, err := view.PersistMessageContext(t.Context(), &store.MessagePersistData{Message: message})
@@ -228,6 +230,7 @@ func TestDirectWriteStoreWithEventsOffKeepsOwnerSubscriptions(t *testing.T) {
 		CallbackURL: "https://receiver.example.net/hook", SecretEnc: []byte("synthetic-encrypted-secret"),
 		SecretRevision: 1, VerifiedRevision: 1, ExpiresAt: now.Add(24 * time.Hour),
 	}
+	grantDaemonEventsSourceAuthority(t, daemonStore, source.ID)
 	require.NoError(daemonStore.BindMCPSubscriptionScope(t.Context(), &subscription))
 	_, _, err = daemonStore.ActivateMCPSubscription(t.Context(), store.MCPActivation{Subscription: subscription, Now: now})
 	require.NoError(err)
@@ -276,6 +279,7 @@ func TestDaemonStartWithoutOwnerKeyKeepsSubscriptionsRenewable(t *testing.T) {
 		CallbackURL: "https://receiver.example.net/hook", SecretEnc: []byte("synthetic-encrypted-secret"),
 		SecretRevision: 1, VerifiedRevision: 1, ExpiresAt: now.Add(24 * time.Hour),
 	}
+	grantDaemonEventsSourceAuthority(t, st, source.ID)
 	require.NoError(st.BindMCPSubscriptionScope(t.Context(), &subscription))
 	_, _, err = st.ActivateMCPSubscription(t.Context(), store.MCPActivation{Subscription: subscription, Now: now})
 	require.NoError(err)
@@ -296,8 +300,22 @@ func TestDaemonStartWithoutOwnerKeyKeepsSubscriptionsRenewable(t *testing.T) {
 	require.NoError(err)
 	require.NotNil(stopped)
 	Assert.Equal(t, "capture_gap", stopped.StopReason)
+	grantDaemonEventsSourceAuthority(t, st, source.ID)
 	subscription.ExpiresAt = now.Add(24 * time.Hour)
 	renewed, _, err := st.ActivateMCPSubscription(t.Context(), store.MCPActivation{Subscription: subscription, ExpectedGeneration: stopped.Generation, ExpectedState: stopped.State, ExpectedSecretRevision: stopped.SecretRevision, Now: now.Add(time.Minute)})
 	require.NoError(err, "the restored owner can renew")
 	Assert.Equal(t, "active", renewed.State)
+}
+
+// These daemon Store fixtures isolate capture snapshots and owner continuity.
+// Native provider/SDK tests separately prove actual credential observations.
+func grantDaemonEventsSourceAuthority(t *testing.T, st *store.Store, sourceID int64) {
+	t.Helper()
+	resource, err := st.GetMCPResource(t.Context(), "source", sourceID)
+	Require.NoError(t, err)
+	Require.NoError(t, st.ObserveNativeSourcePermission(t.Context(), store.NativeSourcePermission{
+		SourceID: sourceID, SourceReference: resource.Reference,
+		SourceType: resource.SourceType, NativeIdentity: resource.ProviderID,
+		Known: true, MessageRead: true,
+	}))
 }

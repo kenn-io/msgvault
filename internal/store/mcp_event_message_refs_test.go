@@ -14,18 +14,13 @@ import (
 func mcpReferenceFixture(t *testing.T) (*storetest.Fixture, *store.MCPSubscription, int64, time.Time) {
 	t.Helper()
 	f := storetest.New(t)
+	grantSyntheticSourceFixture(t, f)
 	now := time.Now().UTC()
 	clock, err := f.Store.ConfigureMCPEvents(t.Context(), mcpStoreConfig())
 	Require.NoError(t, err)
 	active, _, err := f.Store.ActivateMCPSubscription(t.Context(), store.MCPActivation{Subscription: newMCPStoreSubscription(t, f, 1, now), Now: now})
 	Require.NoError(t, err)
-	id := f.CreateMessage("synthetic-original-message")
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`INSERT INTO mcp_event_message_refs (message_id,reference_seq) VALUES (?,1)`), id)
-	Require.NoError(t, err)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`INSERT INTO mcp_event_log (seq,epoch,family,kind,scope_kind,scope_id,item_key,message_id,message_reference_seq,conversation_id,source_id,from_me,occurred_at,recorded_at,data) VALUES (1,?,'msgvault.message_archived','message','conversation',?,'message:1',?,1,?,?,FALSE,?,?,?)`), clock.Epoch, f.ConvID, id, f.ConvID, f.Source.ID, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), `{"kind":"message","from_me":false}`)
-	Require.NoError(t, err)
-	_, err = f.Store.DB().Exec(`UPDATE mcp_event_clock SET head_seq=1 WHERE singleton=1`)
-	Require.NoError(t, err)
+	id := appendMCPSubscriptionFixture(t, f, clock.Epoch, now)
 	return f, active, id, now
 }
 

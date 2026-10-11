@@ -257,6 +257,12 @@ func TestEventsNativeMatrixImportAndReceiptRead(t *testing.T) {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
+		user := "@archive:example.org"
+		if r.Header.Get("Authorization") == "Bearer synthetic-other-token" {
+			user = "@second-owner:example.org"
+		} else {
+			assert.Equal("Bearer synthetic-token", r.Header.Get("Authorization"))
+		}
 		w.Header().Set("Content-Type", "application/json")
 		current := round.Load()
 		message := func(eventID, sender string) map[string]any {
@@ -268,6 +274,8 @@ func TestEventsNativeMatrixImportAndReceiptRead(t *testing.T) {
 		}
 		var response any
 		switch {
+		case r.URL.Path == "/_matrix/client/v3/account/whoami":
+			response = map[string]any{"user_id": user}
 		case r.URL.Path == "/_matrix/client/v3/sync":
 			title := "Synthetic history room"
 			events := []any{message("$root", "@member:example.org")}
@@ -287,9 +295,9 @@ func TestEventsNativeMatrixImportAndReceiptRead(t *testing.T) {
 			response = map[string]any{"@member:example.org": []string{"!room:example.org"}}
 		case strings.HasSuffix(r.URL.Path, "/joined_members"):
 			response = map[string]any{"joined": map[string]any{
-				"@archive:example.org": map[string]any{"display_name": "Synthetic Owner"},
-				"@member:example.org":  map[string]any{"display_name": "Synthetic Sender"},
-				"@other:example.org":   map[string]any{"display_name": "Synthetic Member"},
+				user:                  map[string]any{"display_name": "Synthetic Owner"},
+				"@member:example.org": map[string]any{"display_name": "Synthetic Sender"},
+				"@other:example.org":  map[string]any{"display_name": "Synthetic Member"},
 			}}
 		default:
 			http.NotFound(w, r)
@@ -298,14 +306,17 @@ func TestEventsNativeMatrixImportAndReceiptRead(t *testing.T) {
 		assert.NoError(json.NewEncoder(w).Encode(response))
 	}))
 	t.Cleanup(provider.Close)
-	nativeClient, err := mautrix.NewClient(provider.URL, id.UserID("@archive:example.org"), "synthetic-token")
-	require.NoError(err)
 	importOpts := matrix.ImportOptions{UserID: "@archive:example.org"}
 	syncMailbox := func(opts matrix.ImportOptions) {
 		t.Helper()
 		_, err := f.Store.GetOrCreateSource("matrix", opts.UserID)
 		require.NoError(err)
-		nativeClient.UserID = id.UserID(opts.UserID)
+		token := "synthetic-token"
+		if opts.UserID == "@second-owner:example.org" {
+			token = "synthetic-other-token"
+		}
+		nativeClient, err := mautrix.NewClient(provider.URL, id.UserID(opts.UserID), token)
+		require.NoError(err)
 		_, err = matrix.NewImporter(f.Store, &matrix.Runtime{Client: nativeClient}).Import(t.Context(), opts)
 		require.NoError(err)
 	}
@@ -369,14 +380,12 @@ func TestEventsNativeMatrixImportAndReceiptRead(t *testing.T) {
 	assert.Equal(strconv.FormatInt(messageID, 10), payload["message_id"])
 	require.NoError(resolvedPayload.Validate(payload), "actual occurrence must match its advertised schema")
 	assert.NotContains(string(envelope.Data), body)
+	var deliveredSeq int64
+	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT seq FROM mcp_event_log WHERE family='msgvault.message_archived' AND message_id=? AND source_id=?`), messageID, sourceID).Scan(&deliveredSeq))
 	require.Eventually(func() bool {
 		row, err := f.Store.GetMCPSubscription(t.Context(), subscriptionID)
-		var head int64
-		if queryErr := f.Store.DB().QueryRow(`SELECT head_seq FROM mcp_event_clock WHERE singleton=1`).Scan(&head); queryErr != nil {
-			return false
-		}
-		return err == nil && row != nil && row.CursorSeq == head && row.PendingSeq == 0
-	}, 30*time.Second, 20*time.Millisecond, "delivery success was not durably recorded")
+		return err == nil && row != nil && row.CursorSeq >= deliveredSeq && row.PendingSeq == 0
+	}, 30*time.Second, 20*time.Millisecond, "delivery acknowledgement includes the actual subscribed-family occurrence")
 	_, wire = call("tools/call", map[string]any{"name": "get_mcp_event", "arguments": map[string]any{"event_id": envelope.EventID}})
 	require.Nil(wire["error"])
 	assert.Equal(envelope.EventID, eventsWireObject(t, eventsWireObject(t, wire["result"])["structuredContent"])["eventId"])
@@ -441,6 +450,6 @@ func TestEventsNativeMatrixImportAndReceiptRead(t *testing.T) {
 		require.FailNow("explicit own-message subscription was not delivered")
 	}
 	var occurrences int
-	require.NoError(f.Store.DB().QueryRow(`SELECT COUNT(*) FROM mcp_event_log`).Scan(&occurrences))
+	require.NoError(f.Store.DB().QueryRow(`SELECT COUNT(*) FROM mcp_event_log WHERE family='msgvault.message_archived'`).Scan(&occurrences))
 	assert.Equal(3, occurrences, "re-import and a second account's history do not duplicate live arrivals")
 }

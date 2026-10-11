@@ -16,6 +16,7 @@ type chatPersistContext struct {
 	opts           ImportOptions
 	toRecipients   []recipientRef
 	live           bool
+	nativeScopes   []store.NativeMessageScopeIdentity
 }
 
 // persistChatMessage commits mandatory native state before publication. Optional
@@ -131,6 +132,12 @@ func (imp *Importer) persistChatMessage(ctx context.Context, sourceID int64, gm 
 		BodyText: sql.NullString{String: text, Valid: text != ""}, BodyHTML: bodyHTML,
 		RawMIME: raw, RawFormat: "teams_json", Recipients: recipients,
 		ReactionSnapshot: &reactions, LinkAttachmentSnapshot: &links,
+	}
+	if err := imp.recheckNativeTeamsPermission(ctx); err != nil {
+		return 0, false, err
+	}
+	if imp.nativeSourceRef != "" {
+		data.NativeScopes = &store.NativeMessageScopeMembership{SourceReference: imp.nativeSourceRef, Scopes: cc.nativeScopes}
 	}
 	mode := store.IngestBackfill
 	if cc.live {

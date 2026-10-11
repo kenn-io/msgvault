@@ -20,6 +20,7 @@ func TestMCPEventsPurgePreservesExpiryAndEndGrace(t *testing.T) {
 			assert := Assert.New(t)
 			require := Require.New(t)
 			f := storetest.New(t)
+			grantSyntheticSourceFixture(t, f)
 			now := time.Now().UTC()
 			_, err := f.Store.ConfigureMCPEvents(t.Context(), mcpStoreConfig())
 			require.NoError(err)
