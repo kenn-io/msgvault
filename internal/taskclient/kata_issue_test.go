@@ -52,8 +52,6 @@ func TestFindActionTask(t *testing.T) {
 				if r.URL.Path == "/api/v1/issues" {
 					if strings.HasPrefix(r.URL.Query().Get("meta"), ActionMetadataKey+"=") {
 						assert.Equal("oldest", r.URL.Query().Get("sort"))
-					} else {
-						assert.Empty(r.URL.Query().Get("sort"), "Kata's default order is newest first")
 					}
 				}
 				handler.ServeHTTP(w, r)

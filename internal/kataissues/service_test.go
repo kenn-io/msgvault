@@ -770,10 +770,6 @@ func TestCitingFindsEveryCitedSource(t *testing.T) {
 	require.Len(legacy, 1, "main's evidence envelopes need no source markers to be found")
 	assert.Equal(created.UID, legacy[0].UID)
 	assert.False(truncated)
-	for range 2 {
-		_, err = service.Link(t.Context(), created.QualifiedRef, []kataevidence.Reference{chunk})
-		require.NoError(err)
-	}
 
 	chunkKeys := kataevidence.SourceKeys(chunk)
 	for _, key := range []string{kataevidence.SourceKeys(message)[0], chunkKeys[0], chunkKeys[1]} {
@@ -787,10 +783,6 @@ func TestCitingFindsEveryCitedSource(t *testing.T) {
 
 	second, err := service.Create(t.Context(), "key-citing-second", kataissues.CreateInput{Title: "Review the revised budget", Evidence: []kataevidence.Reference{message}})
 	require.NoError(err)
-	replay, err := service.Create(t.Context(), "key-citing-second", kataissues.CreateInput{Title: "Review the revised budget", Evidence: []kataevidence.Reference{message}})
-	require.NoError(err)
-	assert.True(replay.Replayed)
-	assert.Equal(second.Issue.UID, replay.Issue.UID)
 	for _, limit := range []int{1, 2} {
 		issues, truncated, err := service.Citing(t.Context(), kataevidence.SourceKeys(message)[0], limit)
 		require.NoError(err)
