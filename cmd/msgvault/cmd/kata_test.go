@@ -125,8 +125,7 @@ func TestKataCreateThroughDaemonAdapter(t *testing.T) {
 	command.SetOut(&stdout)
 	command.SetErr(&stderr)
 	require.NoError(command.ExecuteContext(ctx))
-	rows := strings.Split(strings.TrimSpace(stdout.String()), "\n")
-	for _, row := range rows {
+	for row := range strings.SplitSeq(strings.TrimSpace(stdout.String()), "\n") {
 		assert.Len(strings.Split(row, "\t"), 3, row)
 	}
 	assert.Contains(stderr.String(), "More issues cite this source")

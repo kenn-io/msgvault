@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -160,7 +161,7 @@ func TestKataIssueHTTP(t *testing.T) {
 		failed := serveKataIssue(server, "/api/v1/integrations/kata/issues", createBody, map[string]string{"Idempotency-Key": "key-2"})
 		assert.Equal(tc.status, failed.Code)
 		assert.Contains(failed.Body.String(), tc.code)
-		if tc.err == taskclient.ErrInvalidRef {
+		if errors.Is(tc.err, taskclient.ErrInvalidRef) {
 			var body ErrorResponse
 			require.NoError(json.Unmarshal(failed.Body.Bytes(), &body))
 			assert.Equal("Kata issue ref is malformed", body.Message)
