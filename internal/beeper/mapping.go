@@ -34,6 +34,15 @@ var mxReplyFallbackRe = regexp.MustCompile(`(?is)<mx-reply(?:\s[^<>]*)?>.*?</mx-
 // so plain messages like "Help & About" are never rewritten.
 var htmlEntityRe = regexp.MustCompile(`&(amp|lt|gt|quot|apos|nbsp|#\d+|#x[0-9a-fA-F]+);`)
 
+// MessageHTML retains link targets while excluding the quoted parent message.
+func MessageHTML(text string) string {
+	text = mxReplyFallbackRe.ReplaceAllString(text, "")
+	if htmlElementRe.MatchString(text) {
+		return text
+	}
+	return ""
+}
+
 // plainText renders a Beeper message's text as plain text.
 //
 // The API's `text` field is HTML for a large minority of messages (formatted

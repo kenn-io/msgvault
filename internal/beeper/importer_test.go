@@ -100,6 +100,43 @@ func newTestImporter(t *testing.T, f *fakeBeeper) (*Importer, *store.Store, func
 	return imp, st, srv.Close
 }
 
+func TestRecordingLinkHTMLPersistsAndRepairs(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	f := newFakeBeeper(t)
+	ch := shareAndHTMLChat()
+	ch.Msgs = ch.Msgs[:1]
+	ch.Msgs[0].Attachments = nil
+	ch.Msgs[0].Text = `<mx-reply><a href="https://loom.com/share/parent">Parent</a></mx-reply><a href="https://loom.com/share/abc">Watch recording</a>`
+	f.addChat(ch)
+	imp, st, done := newTestImporter(t, f)
+	defer done()
+	_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
+	require.NoError(err)
+	var id int64
+	var body, html string
+	require.NoError(st.DB().QueryRow(`SELECT m.id, b.body_text, COALESCE(b.body_html,'') FROM messages m JOIN message_bodies b ON b.message_id=m.id WHERE m.source_message_id='html1'`).Scan(&id, &body, &html))
+	assert.Equal("Watch recording", body)
+	assert.Equal(`<a href="https://loom.com/share/abc">Watch recording</a>`, html)
+	_, err = st.DB().Exec(st.Rebind(`UPDATE message_bodies SET body_html=NULL WHERE message_id=?`), id)
+	require.NoError(err)
+	_, err = imp.RepairSource(t.Context(), beeperSourceID(t, st), nil)
+	require.NoError(err)
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT body_html FROM message_bodies WHERE message_id=?`), id).Scan(&html))
+	assert.Equal(`<a href="https://loom.com/share/abc">Watch recording</a>`, html)
+	var conversationID int64
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT conversation_id FROM messages WHERE id=?`), id).Scan(&conversationID))
+	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET content_changed_at='2000-01-01 00:00:00.000' WHERE id=?`), id)
+	require.NoError(err)
+	m := &Message{ID: "html1", Text: `<a href="https://loom.com/share/changed">Watch recording</a>`}
+	require.NoError(imp.persistMessage(t.Context(), &chatScope{sourceID: beeperSourceID(t, st), convID: conversationID}, m, &ImportSummary{}))
+	var changed string
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT body_text, body_html FROM message_bodies WHERE message_id=?`), id).Scan(&body, &html))
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT content_changed_at FROM messages WHERE id=?`), id).Scan(&changed))
+	assert.Equal("Watch recording", body)
+	assert.Equal(m.Text, html)
+	assert.NotContains(changed, "2000-01-01")
+}
+
 func TestImportBackfillEndToEnd(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

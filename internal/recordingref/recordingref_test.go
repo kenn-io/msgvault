@@ -46,6 +46,10 @@ func TestScan(t *testing.T) {
 	r := scanProse("https://cap.example.test/s/abc?token=secret", []string{"https://cap.example.test"}, nil)
 	require.Len(t, r, 1)
 	assert.Empty(t, r[0].Canonical)
+	const literal = "https://cap.so/s/abc?token=keep_*_~"
+	r = scanProse(literal, nil, nil)
+	require.Len(t, r, 1)
+	assert.Equal(t, literal, r[0].Reference)
 }
 
 func TestTeamsPointer(t *testing.T) {
@@ -95,6 +99,7 @@ func TestScanHTML(t *testing.T) {
 		{"https://cap.so/s/abc!", ""},
 		{"https://cap.so/s/abc?token=secret!", ""},
 		{"https://cap.so/s/abc?token=secret)", ""},
+		{"https://cap.so/s/abc?token=literal**__", ""},
 		{"https://www.loom.com/share/abc?token=example!)", " "},
 		{"https://www.loom.com/share/abc?token=example!)", "\t\r\n\f"},
 	} {

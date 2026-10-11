@@ -46,12 +46,14 @@ func TestRecordingReferenceJob(t *testing.T) {
 		require.NoError(f.Store.UpsertMessageBody(id, sql.NullString{String: "https://loom.com/share/abc", Valid: true}, sql.NullString{}))
 		_, err := f.Store.DB().Exec(`UPDATE messages SET content_changed_at='2000-01-01 00:00:00.000'`)
 		require.NoError(err)
+		requests := make(chan string, 2)
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			var req docbankmedia.ReferenceRequest
 			if !assert.NoError(json.UnmarshalRead(r.Body, &req)) {
 				return
 			}
 			assert.False(req.Acquire)
+			requests <- req.ReferenceURL
 			assert.NoError(json.MarshalWrite(w, docbankmedia.Receipt{VaultUID: "vault", SourceID: "source", OperationID: req.OperationID, OccurrenceID: "occurrence", OperationState: "succeeded", CoverageState: "unprocessed", Outcome: "access_required"}))
 		}))
 		defer server.Close()
@@ -61,7 +63,15 @@ func TestRecordingReferenceJob(t *testing.T) {
 		defer func() { <-s.Stop().Done() }()
 		require.NoError(configureRecordingReferenceJob(t.Context(), s, gate, f.Store, config.DocbankIntegrationConfig{Enabled: true, ReferenceConsent: true, URL: server.URL, APIKeyEnv: "MSGVAULT_TEST_REFERENCE_KEY"}, nil))
 		assert.True(s.IsJobScheduled(recordingReferenceJob))
+		for len(gate.labels) > 0 {
+			<-gate.labels
+		}
 		require.NoError(s.TriggerJob(recordingReferenceJob))
+		require.Len(requests, 1)
+		assert.Equal("https://loom.com/share/abc", <-requests)
+		var state string
+		require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT state FROM recording_references WHERE message_id=?`), id).Scan(&state))
+		assert.Equal("retained", state)
 		require.NotEmpty(gate.labels)
 		for len(gate.labels) > 0 {
 			assert.Equal("Recording reference submission", <-gate.labels)

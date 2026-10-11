@@ -132,6 +132,60 @@ func TestRecordingReferenceFeed(t *testing.T) {
 	}, 5*time.Second, 10*time.Millisecond)
 }
 
+func TestRecordingReferenceLegacyBeeper(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	f := storetest.New(t)
+	_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE sources SET source_type='beeper' WHERE id=?`), f.Source.ID)
+	require.NoError(err)
+	id := f.CreateMessage("recording")
+	recordingBody(t, f, id, "Watch recording")
+	require.NoError(f.Store.UpsertMessageRawWithFormat(id, []byte(`{"text":"<mx-reply><a href=\"https://loom.com/share/parent\">Parent</a></mx-reply><a href=\"https://loom.com/share/abc!\">Watch recording</a>"}`), "beeper_json"))
+	before, err := f.Store.LoadRecordingReferenceCursor(t.Context(), "destination")
+	require.NoError(err)
+	_, err = f.Store.AdvanceRecordingReferenceCursor(t.Context(), "destination", before, store.RecordingReferenceCursor{At: time.Now().Add(time.Hour), Policy: digest("")})
+	require.NoError(err)
+	requests := make(chan string, 2)
+	client := recordingClient(t, func(w http.ResponseWriter, r *http.Request) {
+		var req docbankmedia.ReferenceRequest
+		if !assert.NoError(json.UnmarshalRead(r.Body, &req)) {
+			return
+		}
+		requests <- req.ReferenceURL
+		writeReceipt(t, w, req.OperationID)
+	})
+	w := NewWorker(f.Store, client, "destination", nil, nil)
+	runDiscovery(t, w, 1)
+	require.Len(requests, 1)
+	assert.Equal("https://loom.com/share/abc!", <-requests)
+	before, err = f.Store.LoadRecordingReferenceCursor(t.Context(), "destination")
+	require.NoError(err)
+	_, err = f.Store.AdvanceRecordingReferenceCursor(t.Context(), "destination", before, store.RecordingReferenceCursor{Policy: before.Policy})
+	require.NoError(err)
+	before, err = f.Store.LoadRecordingReferenceCursor(t.Context(), "destination")
+	require.NoError(err)
+	_, err = f.Store.DB().Exec(`ALTER TABLE message_raw RENAME TO recording_raw_unavailable`)
+	require.NoError(err)
+	require.Error(w.RunBatch(t.Context()))
+	after, err := f.Store.LoadRecordingReferenceCursor(t.Context(), "destination")
+	require.NoError(err)
+	assert.Equal(before, after)
+	_, err = f.Store.DB().Exec(`ALTER TABLE recording_raw_unavailable RENAME TO message_raw`)
+	require.NoError(err)
+	for _, raw := range [][]byte{[]byte(`{"text":`), nil} {
+		if raw == nil {
+			_, err = f.Store.DB().Exec(f.Store.Rebind(`DELETE FROM message_raw WHERE message_id=?`), id)
+			require.NoError(err)
+		} else {
+			require.NoError(f.Store.UpsertMessageRawWithFormat(id, raw, "beeper_json"))
+		}
+		m, exists, err := w.readMessage(t.Context(), id)
+		require.NoError(err)
+		require.True(exists)
+		assert.Equal("Watch recording", m.Body)
+		assert.Empty(messageRefs(m, nil))
+	}
+}
+
 func TestRecordingReferenceFeedHTMLVisibleURL(t *testing.T) {
 	for _, tc := range []struct {
 		name, href, before, after string

@@ -2,6 +2,7 @@ package recordingref
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/beeper"
 	"go.kenn.io/msgvault/internal/docbankmedia"
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
@@ -78,6 +80,25 @@ func messageRefs(m store.RecordingMessage, origins []string) []Ref {
 	return refs
 }
 
+func (w *Worker) readMessage(ctx context.Context, id int64) (store.RecordingMessage, bool, error) {
+	m, exists, err := w.st.ReadRecordingMessage(ctx, id)
+	if err != nil || !exists || m.SourceType != "beeper" || m.BodyHTML != "" {
+		return m, exists, err
+	}
+	raw, err := w.st.GetMessageRawContext(ctx, id)
+	if errors.Is(err, sql.ErrNoRows) || errors.Is(err, store.ErrInvalidMessageRaw) {
+		return m, exists, nil
+	}
+	if err != nil {
+		return m, exists, err
+	}
+	var message beeper.Message
+	if json.Unmarshal(raw, &message) == nil {
+		m.BodyHTML = beeper.MessageHTML(message.Text)
+	}
+	return m, exists, nil
+}
+
 func referenceInputs(m store.RecordingMessage, refs []Ref) ([]store.RecordingReferenceInput, error) {
 	inputs := make([]store.RecordingReferenceInput, 0, len(refs))
 	for _, r := range refs {
@@ -108,7 +129,7 @@ func (w *Worker) reconcile(ctx context.Context, m store.RecordingMessage) error 
 func (w *Worker) RunBatch(ctx context.Context) error {
 	var examined, pages, attempted int
 	start := time.Now()
-	policy := digest(strings.Join(w.origins, "\x00"))
+	policy := digest("discovery-v2\x00" + strings.Join(w.origins, "\x00"))
 	for pages < 50 && time.Since(start) < 20*time.Second {
 		var before, cursor store.RecordingReferenceCursor
 		var page store.ChangedMessagePage
@@ -134,7 +155,7 @@ func (w *Worker) RunBatch(ctx context.Context) error {
 				break
 			}
 			if err := w.gated(ctx, func() error {
-				m, exists, err := w.st.ReadRecordingMessage(ctx, changed.ID)
+				m, exists, err := w.readMessage(ctx, changed.ID)
 				if err != nil {
 					return err
 				}
@@ -192,7 +213,7 @@ func (w *Worker) deliver(ctx context.Context, claim store.RecordingReferenceClai
 	var rebuildable, recoverReceipt, marked bool
 	var now time.Time
 	if err := w.gated(ctx, func() error {
-		m, exists, err := w.st.ReadRecordingMessage(ctx, claim.MessageID)
+		m, exists, err := w.readMessage(ctx, claim.MessageID)
 		if err != nil {
 			return err
 		}
@@ -285,7 +306,7 @@ func (w *Worker) deliver(ctx context.Context, claim store.RecordingReferenceClai
 		result.SourceID, result.OccurrenceID, result.Outcome, result.CoverageState = receipt.SourceID, receipt.OccurrenceID, receipt.Outcome, receipt.CoverageState
 	}
 	return w.gated(ctx, func() error {
-		current, exists, err := w.st.ReadRecordingMessage(ctx, claim.MessageID)
+		current, exists, err := w.readMessage(ctx, claim.MessageID)
 		if err != nil {
 			return err
 		}

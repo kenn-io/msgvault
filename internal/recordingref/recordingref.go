@@ -143,9 +143,21 @@ func scanProse(text string, origins []string, exact map[string]bool) []Ref {
 	allowed := originSet(origins)
 	seen := make(map[string]bool)
 	var refs []Ref
-	for _, token := range tokens.FindAllString(text, -1) {
+	for _, match := range tokens.FindAllStringIndex(text, -1) {
+		token := text[match[0]:match[1]]
 		for len(token) > 0 && (len(token) > 8192 || !exact[token]) && strings.ContainsAny(token[len(token)-1:], ".,;:!?)]}'") {
 			token = token[:len(token)-1]
+		}
+		if !exact[token] {
+			for _, marker := range []string{"***", "___", "**", "__", "~~", "||", "*", "_"} {
+				if strings.HasSuffix(text[:match[0]], marker) && strings.HasSuffix(token, marker) {
+					token = strings.TrimSuffix(token, marker)
+					for len(token) > 0 && (len(token) > 8192 || !exact[token]) && strings.ContainsAny(token[len(token)-1:], ".,;:!?)]}'") {
+						token = token[:len(token)-1]
+					}
+					break
+				}
+			}
 		}
 		if len(token) <= 8192 && exact[token] {
 			continue

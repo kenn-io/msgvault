@@ -26,7 +26,8 @@ const rawArchiveFormat = "beeper_json"
 //	v3 — exclude Matrix reply fallbacks from body text, snippets, and search.
 //	v4 — keep link-preview media out of standalone document processing.
 //	v5 — preserve Beeper source transcript provenance on attachment metadata.
-const rederiveVersion = "v5"
+//	v6 retains HTML link targets outside Matrix reply fallbacks.
+const rederiveVersion = "v6"
 
 // repairBatchSize bounds how many archived messages are held in memory per
 // pass of the walk.
@@ -177,10 +178,11 @@ func (imp *Importer) repairMessage(item *store.ArchivedRawMessage, sourceID int6
 	// Snippet and FTS state can drift independently, and the store commits all
 	// three fields atomically so a failure leaves the row retryable.
 	bodyChanged := item.BodyText != text
+	bodyHTML := MessageHTML(m.Text)
 	if err := imp.store.UpdateMessageDerivedText(
 		item.MessageID,
 		sql.NullString{String: text, Valid: text != ""},
-		sql.NullString{},
+		sql.NullString{String: bodyHTML, Valid: bodyHTML != ""},
 		msg.Snippet,
 		store.FTSDoc{Body: text, FromAddr: m.SenderName},
 	); err != nil {
