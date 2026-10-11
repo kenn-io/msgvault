@@ -484,6 +484,22 @@ func TestMediaSearchPersonDirection(t *testing.T) {
 	}
 }
 
+func TestMediaSearchParticipantMention(t *testing.T) {
+	t.Parallel()
+	f := newMediaSearchFixture(t)
+	selected := f.match(t, "mention")
+	participant := f.f.EnsureParticipant("mentioned@example.com", "Mentioned Person", "example.com")
+	_, err := f.f.Store.DB().Exec(f.f.Store.Rebind(`INSERT INTO message_recipients (message_id, participant_id, recipient_type) VALUES (?, ?, 'mention')`), selected.messageID, participant)
+	require.NoError(t, err)
+	status, response, raw := searchMediaFor(t, f.server(true), fmt.Sprintf("q=quarterly+numbers&participant_id=%d", participant))
+	require.Equal(t, http.StatusOK, status, raw)
+	require.Len(t, response.Results, 1)
+	assert.Equal(t, selected.messageID, response.Results[0].MessageID)
+	status, response, raw = searchMediaFor(t, f.server(true), fmt.Sprintf("q=quarterly+numbers&participant_id=%d&direction=from_person", participant))
+	require.Equal(t, http.StatusOK, status, raw)
+	assert.Empty(t, response.Results)
+}
+
 func TestMediaSearchSelectedProfilesForSharedContent(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

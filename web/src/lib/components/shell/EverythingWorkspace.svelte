@@ -937,7 +937,7 @@
     height: 100%;
     flex-direction: column;
   }
-  .results-primary--recordings { min-height: 0; gap: var(--space-3); }
+  .results-primary--recordings { container: results / size; min-height: 0; gap: var(--space-3); }
   .results-heading { margin: 0; font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); }
   .results-heading .count { color: var(--text-secondary); font-size: var(--font-size-xs); font-weight: var(--font-weight-normal); font-variant-numeric: tabular-nums; }
 

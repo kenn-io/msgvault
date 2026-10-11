@@ -110,7 +110,7 @@ func (s *Server) handleMediaSearch(w http.ResponseWriter, r *http.Request) {
 				return nil, err
 			}
 			normalized, defaultDirections, err := resolver.NormalizeDirections(directions)
-			return &personscope.Scope{ParticipantIDs: members, Directions: normalized, IncludeUnclassifiedRosterRows: defaultDirections}, err
+			return &personscope.Scope{ParticipantIDs: members, Directions: normalized, IncludeUnclassifiedRosterRows: defaultDirections, ParticipantMembership: defaultDirections}, err
 		}
 		resolution, err := resolver.Resolve(r.Context(), reader.Store, reference, directions)
 		return &resolution.Scope, err

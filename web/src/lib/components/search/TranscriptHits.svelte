@@ -21,6 +21,7 @@
   let expired = $state(false);
   let retryable = $state(false);
   let retry = $state(0);
+  let previousRetry = 0;
 
   $effect(() => {
     const missingID = missingMessageID;
@@ -33,7 +34,8 @@
     const requestedClient = client;
     const requestedParticipantID = participantID;
     const allowed = supported && validParticipant && admitted;
-    void retry;
+    const retryRequested = retry !== previousRetry;
+    previousRetry = retry;
     result = undefined;
     notice = '';
     expired = false;
@@ -128,7 +130,8 @@
       }
     }
     document.addEventListener('visibilitychange', refresh);
-    void load();
+    if (retryRequested) void load();
+    else timer = setTimeout(() => { timer = undefined; void load(); }, 300);
     return () => {
       stop();
       document.removeEventListener('visibilitychange', refresh);
@@ -198,7 +201,7 @@
   .transcript-hits {
     container-type: inline-size;
     flex: 0 1 auto;
-    min-height: 80px;
+    min-height: 0;
     max-height: min(40%, 320px);
     overflow: auto;
     padding: var(--space-2) var(--space-3);
@@ -237,4 +240,5 @@
   .coverage { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-2); }
   .coverage span + span::before { content: '·'; margin-right: var(--space-2); }
   @container (max-width: 640px) { a { column-gap: var(--space-2); padding-inline: 0; } .transcript { grid-column: 1 / -1; } .transcript.timed { grid-template-columns: 3rem minmax(0, 1fr); } }
+  @container results (max-height: 200px) { .transcript-hits { display: none; } }
 </style>

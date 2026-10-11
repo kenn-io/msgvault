@@ -71,7 +71,9 @@ test('recordings stay capped in Table and leave Timeline rows reachable', async 
   await expect.poll(async () => (await primary.boundingBox())!.height).toBe(120);
   resolveReadiness();
   const recordings = page.getByRole('region', { name: 'Recordings', exact: true });
-  await expect(recordings.getByRole('link', { name: 'Recording 1', exact: true })).toBeVisible();
+  await expect(recordings).toBeHidden();
+  const firstRow = grid.getByRole('row').filter({ hasText: 'Synthetic subject 1' }).first();
+  await expect(firstRow).toBeInViewport({ ratio: 1 });
   await expect.poll(async () => (await primary.boundingBox())!.height).toBe(120);
   const readyHandle = (await resize.boundingBox())!;
   await page.mouse.move(readyHandle.x + readyHandle.width / 2, readyHandle.y + readyHandle.height / 2);
@@ -79,6 +81,7 @@ test('recordings stay capped in Table and leave Timeline rows reachable', async 
   await page.mouse.move(handle.x + handle.width / 2, pane.y + 350);
   await page.mouse.up();
   await expect.poll(async () => (await primary.boundingBox())!.height).toBeCloseTo(350, -1);
+  await expect(recordings.getByRole('link', { name: 'Recording 1', exact: true })).toBeVisible();
   const results = (await primary.boundingBox())!;
   expect((await recordings.boundingBox())!.height).toBeLessThanOrEqual(Math.min(results.height * 0.4, 320) + 1);
   expect(await recordings.evaluate(element => element.scrollHeight)).toBeGreaterThan(await recordings.evaluate(element => element.clientHeight));

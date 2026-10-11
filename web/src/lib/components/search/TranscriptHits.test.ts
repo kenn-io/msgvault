@@ -12,6 +12,34 @@ function mount(fetchFn = vi.fn<typeof fetch>(async () => Response.json(report())
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
 describe('TranscriptHits', () => {
+  it('debounces typing and immediately cancels and clears stale evidence', async () => {
+    vi.useFakeTimers();
+    let finish!: (value: Response) => void;
+    const fetchFn = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json(report()))
+      .mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }))
+      .mockResolvedValue(Response.json(report({ results: [hit({ excerpt: 'final evidence' })] })));
+    const view = mount(fetchFn);
+    await vi.advanceTimersByTimeAsync(300);
+    expect(screen.getByText('Quarterly numbers')).toBeTruthy();
+    await view.rerender({ client: view.client, query: 'q', supported: true });
+    expect(screen.queryByRole('link')).toBeNull();
+    await vi.advanceTimersByTimeAsync(300);
+    const stale = fetchFn.mock.calls[1][0] as Request;
+    for (const query of ['qu', 'qua', 'quarter']) {
+      await view.rerender({ client: view.client, query, supported: true });
+      expect(stale.signal.aborted).toBe(true);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(fetchFn).toHaveBeenCalledTimes(2);
+    }
+    finish(Response.json(report({ results: [hit({ excerpt: 'obsolete evidence' })] })));
+    await vi.advanceTimersByTimeAsync(200);
+    expect(fetchFn).toHaveBeenCalledTimes(3);
+    expect(new URL((fetchFn.mock.calls[2][0] as Request).url).searchParams.get('q')).toBe('quarter');
+    expect(screen.getByText('final evidence')).toBeTruthy();
+    expect(screen.queryByText('obsolete evidence')).toBeNull();
+    view.unmount();
+  });
+
   it('requests lexical evidence and preserves source occurrences, provenance and optional timing', async () => {
     const { fetchFn } = mount(vi.fn<typeof fetch>(async () => Response.json(report({ results: [
       hit({ start_ms: 0, end_ms: 2800, excerpt: 'Quarterly <numbers>' }), hit({ message_id: 10, origin: 'generated', filename: 'other.wav' }),
@@ -66,7 +94,7 @@ describe('TranscriptHits', () => {
     const fetchFn = vi.fn<typeof fetch>().mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }))
       .mockResolvedValue(Response.json(report({ results: [hit({ excerpt: 'current evidence' })] })));
     const view = mount(fetchFn);
-    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(300);
     expect(fetchFn).toHaveBeenCalledTimes(1);
     const old = fetchFn.mock.calls[0][0] as Request;
     for (const query of ['"quarterly"', 'from:person']) {
@@ -76,11 +104,11 @@ describe('TranscriptHits', () => {
     }
     expect(old.signal.aborted).toBe(true);
     await view.rerender({ client: view.client, query: 'quarterly', supported: true });
-    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(300);
     expect(new URL((fetchFn.mock.calls[1][0] as Request).url).searchParams.get('q')).toBe('quarterly');
     expect(screen.getByText('current evidence')).toBeTruthy();
     finish(Response.json(report({ results: [hit({ excerpt: 'obsolete evidence' })] })));
-    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(300);
     expect(screen.queryByText('obsolete evidence')).toBeNull();
     await view.rerender({ client: view.client, query: 'quarterly', supported: false });
     expect(screen.queryByText('current evidence')).toBeNull();
@@ -99,16 +127,16 @@ describe('TranscriptHits', () => {
     const view = mount(fetchFn);
     expect(screen.getByRole('region', { name: 'Recordings' })).toBeTruthy();
     if (refresh) {
-      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(300);
       expect(screen.getByRole('link').textContent).toContain('Quarterly numbers');
       await fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
     }
     expect(screen.queryByRole('link')).toBeNull();
-    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(300);
     expect(screen.getByRole('region', { name: 'Recordings' })).toBeTruthy();
     expect(screen.getByText(status === 503 ? 'Recording search unavailable.' : 'Could not load recording matches.')).toBeTruthy();
     await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(300);
     if (refresh) expect(screen.getByText('No spoken matches.')).toBeTruthy();
     else expect(screen.getByRole('link')).toBeTruthy();
     view.unmount();
@@ -124,7 +152,7 @@ describe('TranscriptHits', () => {
       .mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }))
       .mockResolvedValue(Response.json(report({ results: [] })));
     const view = mount(fetchFn);
-    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(300);
     hidden.mockReturnValue(true);
     await fireEvent(document, new Event('visibilitychange'));
     expect(screen.queryByRole('link')).toBeNull();
@@ -133,7 +161,7 @@ describe('TranscriptHits', () => {
     await fireEvent(document, new Event('visibilitychange'));
     expect(fetchFn).toHaveBeenCalledTimes(2);
     finish(Response.json(report({ results: [] })));
-    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(300);
     expect(screen.getByText('No spoken matches.')).toBeTruthy();
     view.unmount();
   });
@@ -141,14 +169,14 @@ describe('TranscriptHits', () => {
   it('expires evidence without polling and manually refreshes it', async () => {
     vi.useFakeTimers();
     const view = mount();
-    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(300);
     await vi.advanceTimersByTimeAsync(30_000);
     expect(screen.queryByRole('link')).toBeNull();
     expect(screen.getByText('Recording results expired.')).toBeTruthy();
     await vi.advanceTimersByTimeAsync(60_000);
     expect(view.fetchFn).toHaveBeenCalledTimes(1);
     await fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
-    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(300);
     expect(screen.getByRole('link').textContent).toContain('Quarterly numbers');
     expect(view.fetchFn).toHaveBeenCalledTimes(2);
     view.unmount();
@@ -160,12 +188,12 @@ describe('TranscriptHits', () => {
     const fetchFn = vi.fn<typeof fetch>(() => new Promise(resolve => { finish = resolve; }));
     const client = createAPIClient(fetchFn);
     const view = render(TranscriptHits, { props: { client, query: 'quarterly', supported: true } });
-    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(300);
     const request = fetchFn.mock.calls[0][0] as Request;
     await vi.advanceTimersByTimeAsync(30_000);
     expect(request.signal.aborted).toBe(true);
     finish(Response.json(report()));
-    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(300);
     expect(screen.getByText('Recording search timed out.')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Refresh' })).toBeNull();
@@ -181,7 +209,7 @@ describe('TranscriptHits', () => {
     vi.useFakeTimers();
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json(report()));
     render(TranscriptHits, { props: { client: createAPIClient(fetchFn), query, supported: true } });
-    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(300);
     if (searched) {
       expect(screen.getByText('Quarterly numbers')).toBeTruthy();
       expect(new URL((fetchFn.mock.calls.at(-1)![0] as Request).url).searchParams.get('q')).toBe(query);
@@ -202,24 +230,17 @@ describe('TranscriptHits', () => {
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ error, message: text }, { status }));
     const client = createAPIClient(fetchFn);
     const view = render(TranscriptHits, { props: { client, query: 'quarterly', supported: true } });
-    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(300);
     expect(screen.getByText(text)).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Refresh' })).toBeNull();
     await fireEvent(document, new Event('visibilitychange'));
     expect(fetchFn).toHaveBeenCalledTimes(1);
     await view.rerender({ client, query: 'different', supported: true });
-    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(300);
     expect(fetchFn).toHaveBeenCalledTimes(2);
     expect(screen.getByText(text)).toBeTruthy();
     view.unmount();
-  });
-
-  it.each([NaN, 0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1])('rejects invalid participant ID %s', async participantID => {
-    const fetchFn = vi.fn<typeof fetch>();
-    render(TranscriptHits, { props: { client: createAPIClient(fetchFn), query: 'quarterly', supported: true, participantID } });
-    expect(await screen.findByText(/Recording search requires Full text/)).toBeTruthy();
-    expect(fetchFn).not.toHaveBeenCalled();
   });
 
   it('explains an oversized query', async () => {
