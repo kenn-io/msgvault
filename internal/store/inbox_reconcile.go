@@ -45,10 +45,16 @@ func (s *Store) ReconcileInboxProviderState(ctx context.Context, target inboxcon
 				return err
 			}
 		}
-		if (target.SourceType == "gmail" || target.SourceType == "msmail") && after.Tags != nil {
+		tags := after.Tags
+		// State's wire format omits empty tags. Complete Microsoft metadata
+		// distinguishes a known empty category collection from unknown metadata.
+		if target.SourceType == "msmail" && tags == nil && microsoftInboxMetadataComplete(after) {
+			tags = []string{}
+		}
+		if (target.SourceType == "gmail" || target.SourceType == "msmail") && tags != nil {
 			guard := MessageIdentityGuard{ID: target.ItemID, SourceID: target.SourceID, SourceMessageID: target.ProviderID}
 			native := EmailTagTarget{MessageIdentityGuard: guard, Provider: target.SourceType}
-			snapshot := &emailtags.MessageTagResult{Provider: target.SourceType, Tags: after.Tags, Verified: true}
+			snapshot := &emailtags.MessageTagResult{Provider: target.SourceType, Tags: tags, Verified: true}
 			if target.SourceType == "gmail" {
 				for _, folder := range after.Folders {
 					if folder.ID == "" || folder.Name == "" || folder.ParentID != "" || folder.UIDValidity != 0 || IsSystemLabel(folder.ID) {
