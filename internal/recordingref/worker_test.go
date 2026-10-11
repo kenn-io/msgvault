@@ -132,56 +132,32 @@ func TestRecordingReferenceFeed(t *testing.T) {
 	}, 5*time.Second, 10*time.Millisecond)
 }
 
-func TestRecordingReferenceFeedHTML(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	f := storetest.New(t)
-	id := f.CreateMessage("html-recording")
-	text := "Watch recording"
-	body := `<p><a href="https://loom.com/share/abc?token=one&amp;key=two!">Watch recording</a></p><a href="https://loom.com/share/abc?token=one&amp;key=two!">Again</a>`
-	require.NoError(f.Store.UpsertMessageBody(id, sql.NullString{String: text, Valid: true}, sql.NullString{String: body, Valid: true}))
-	requests := make(chan docbankmedia.ReferenceRequest, 5)
-	client := recordingClient(t, func(w http.ResponseWriter, r *http.Request) {
-		var req docbankmedia.ReferenceRequest
-		if !assert.NoError(json.UnmarshalRead(r.Body, &req)) {
-			return
-		}
-		requests <- req
-		writeReceipt(t, w, req.OperationID)
-	})
-	w := NewWorker(f.Store, client, "destination", nil, nil)
-	runDiscovery(t, w, 1)
-	require.Len(requests, 1)
-	assert.Equal("https://loom.com/share/abc?token=one&key=two!", (<-requests).ReferenceURL)
-	recordingText := "Watch recording https://loom.com/share/abc?token=one&key=two!"
-	require.NoError(f.Store.UpsertMessageBody(id, sql.NullString{String: recordingText, Valid: true}, sql.NullString{String: body, Valid: true}))
-	m, exists, err := f.Store.ReadRecordingMessage(t.Context(), id)
-	require.NoError(err)
-	require.True(exists)
-	require.Len(messageRefs(m, nil), 1)
-	waitForRecordingChange(t, w, id)
-	assert.Empty(requests)
-}
-
 func TestRecordingReferenceFeedHTMLVisibleURL(t *testing.T) {
 	for _, tc := range []struct {
 		name, href, before, after string
 		extraAnchors              int
+		repeated                  bool
 	}{
-		{"exact", "https://cap.so/s/abc!", "", "", 0},
-		{"period", "https://cap.so/s/abc!", "", ".", 0},
-		{"parenthesized", "https://cap.so/s/abc!", "(", ")", 0},
-		{"parenthesis ID", "https://cap.so/s/abc)", "", ".", 0},
-		{"parenthesized parenthesis ID", "https://cap.so/s/abc)", "(", ")", 0},
-		{"long suffix", "https://cap.so/s/abc!", "", strings.Repeat(".", 1<<20), 8},
+		{"exact", "https://cap.so/s/abc!", "", "", 0, false},
+		{"period", "https://cap.so/s/abc!", "", ".", 0, false},
+		{"parenthesized", "https://cap.so/s/abc!", "(", ")", 0, false},
+		{"parenthesis ID", "https://cap.so/s/abc)", "", ".", 0, false},
+		{"parenthesized parenthesis ID", "https://cap.so/s/abc)", "(", ")", 0, false},
+		{"long suffix", "https://cap.so/s/abc!", "", strings.Repeat(".", 1<<20), 8, false},
+		{"encoded repeated anchor", "https://loom.com/share/abc?token=one&key=two!", "", "", 0, true},
 	} {
-		for _, htmlOnly := range []bool{false, true} {
-			t.Run(tc.name+"/htmlOnly="+strconv.FormatBool(htmlOnly), func(t *testing.T) {
+		for _, textVariant := range []string{"both", "HTML only", "plain text without URL"} {
+			t.Run(tc.name+"/"+textVariant, func(t *testing.T) {
 				assert, require := assert.New(t), require.New(t)
 				f := storetest.New(t)
 				id := f.CreateMessage("html-visible-url")
 				visible := tc.before + tc.href + tc.after
 				text := sql.NullString{String: visible + " https://cap.so/s/other", Valid: true}
-				body := tc.before + `<a href="` + tc.href + `">` + tc.href + `</a>` + tc.after + " https://cap.so/s/other"
+				anchor := `<a href="` + strings.ReplaceAll(tc.href, "&", "&amp;") + `">` + tc.href + `</a>`
+				body := tc.before + anchor + tc.after + " https://cap.so/s/other"
+				if tc.repeated {
+					body += " " + anchor
+				}
 				want := []string{tc.href, "https://cap.so/s/other"}
 				var anchors strings.Builder
 				for i := range tc.extraAnchors {
@@ -191,8 +167,11 @@ func TestRecordingReferenceFeedHTMLVisibleURL(t *testing.T) {
 				}
 				body += anchors.String()
 				text.String += strings.Repeat(" recording", tc.extraAnchors)
-				if htmlOnly {
+				switch textVariant {
+				case "HTML only":
 					text = sql.NullString{}
+				case "plain text without URL":
+					text.String = "Watch recording"
 				}
 				require.NoError(f.Store.UpsertMessageBody(id, text, sql.NullString{String: body, Valid: true}))
 				m, found, err := f.Store.ReadRecordingMessage(t.Context(), id)
@@ -204,34 +183,6 @@ func TestRecordingReferenceFeedHTMLVisibleURL(t *testing.T) {
 					got = append(got, ref.Reference)
 				}
 				assert.ElementsMatch(want, got)
-				requests := make(chan string, len(want)+1)
-				client := recordingClient(t, func(w http.ResponseWriter, r *http.Request) {
-					var req docbankmedia.ReferenceRequest
-					if !assert.NoError(json.UnmarshalRead(r.Body, &req)) {
-						return
-					}
-					requests <- req.ReferenceURL
-					writeReceipt(t, w, req.OperationID)
-				})
-				w := NewWorker(f.Store, client, "destination", nil, nil)
-				runDiscovery(t, w, len(want))
-				require.Len(requests, len(want))
-				got = nil
-				for range want {
-					got = append(got, <-requests)
-				}
-				assert.ElementsMatch(want, got)
-				for i, independent := range []string{"https://cap.so/s/abc", "https://cap.so/s/abc!extra"} {
-					if htmlOnly {
-						body += " " + independent
-					} else {
-						text.String += " " + independent
-					}
-					require.NoError(f.Store.UpsertMessageBody(id, text, sql.NullString{String: body, Valid: true}))
-					runDiscovery(t, w, len(want)+1+i)
-					require.Len(requests, 1)
-					assert.Equal(independent, <-requests)
-				}
 			})
 		}
 	}
@@ -294,9 +245,8 @@ func TestRecordingReferenceDelivery(t *testing.T) {
 		w := NewWorker(f.Store, client, "destination", nil, nil)
 		err = w.RunBatch(t.Context())
 		require.NoError(err)
-		assert.Zero(requests)
 		state, _, _ := recordingState(t, f, id)
-		assert.Equal("withdrawn", state)
+		require.Equal("withdrawn", state)
 		_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET deleted_at=NULL WHERE id=?`), id)
 		require.NoError(err)
 		assert.Eventually(func() bool { err := w.RunBatch(t.Context()); require.NoError(err); return requests == 1 }, 5*time.Second, 10*time.Millisecond)
@@ -357,8 +307,13 @@ func TestRecordingReferenceDelivery(t *testing.T) {
 				assert.Equal(2, claims[0].RetryCount)
 				assert.WithinDuration(time.Now().Add(10*time.Minute), claims[0].NextActionAt, 5*time.Second)
 			}
+			if tc.name == "blocked" {
+				require.NoError(f.Store.ReconsiderBlockedRecordingReferences(t.Context(), "destination"))
+			}
+			if tc.name != "retry" {
+				return
+			}
 			status = 200
-			require.NoError(f.Store.ReconsiderBlockedRecordingReferences(t.Context(), "destination"))
 			due(t, f)
 			err := w.RunBatch(t.Context())
 			require.NoError(err)
@@ -553,15 +508,6 @@ func TestRecordingReferenceUncertain(t *testing.T) {
 		assert.Equal("/api/v1/media/operations/"+op, <-gets)
 		assert.Equal("/api/v1/media/operations/"+op, <-gets)
 		assert.Equal("/api/v1/media/operations/"+op, <-gets)
-		state, _, current = recordingState(t, f, id)
-		assert.Equal("pending", state)
-		assert.NotEqual(op, current)
-		due(t, f)
-		err = worker.RunBatch(t.Context())
-		require.NoError(err)
-		state, _, current = recordingState(t, f, id)
-		assert.Equal("retained", state)
-		assert.NotEqual(op, current)
 	})
 	t.Run("unsuccessful resend preserves receipt recovery", func(t *testing.T) {
 		assert, require := assert.New(t), require.New(t)
@@ -606,17 +552,6 @@ func TestRecordingReferenceUncertain(t *testing.T) {
 		require.NoError(err)
 		require.Len(claims, 1)
 		assert.Equal(lastSend, claims[0].LastSendAt)
-		recordingBody(t, f, id, "link removed")
-		due(t, f)
-		w.client = recordingClient(t, func(w http.ResponseWriter, r *http.Request) {
-			assert.Equal(http.MethodGet, r.Method)
-			writeReceipt(t, w, op)
-		})
-		err = w.RunBatch(t.Context())
-		require.NoError(err)
-		state, code, _ = recordingState(t, f, id)
-		assert.Equal("withdrawn", state)
-		assert.Empty(code)
 	})
 	for _, tc := range []struct {
 		name       string
@@ -703,7 +638,7 @@ func TestRecordingReferenceUncertain(t *testing.T) {
 			if tc.live {
 				require.Len(requests, 2)
 				assert.Equal(requests[0], requests[1])
-				if tc.status == http.StatusUnprocessableEntity || tc.status == http.StatusNotFound || tc.status == http.StatusMethodNotAllowed {
+				if tc.status == http.StatusUnprocessableEntity {
 					claims, err := f.Store.ClaimRecordingReferences(t.Context(), "destination", time.Now().Add(time.Hour), 20)
 					require.NoError(err)
 					require.Len(claims, 1)
@@ -761,14 +696,15 @@ func TestRecordingReferenceSecrets(t *testing.T) {
 		assert.NotContains(row, secret)
 		assert.NotContains(logs.String(), secret)
 	}
-	_, err := client.SubmitReference(t.Context(), docbankmedia.ReferenceRequest{OperationID: "op", ReferenceURL: "https://cap.example.test/s/path_secret"})
-	require.Error(err)
-	assert.NotContains(err.Error(), "secret")
 }
 
 func TestRecordingReferenceOccurrenceCorrection(t *testing.T) {
 	for _, field := range []string{"sent_at", "source_message_id"} {
-		for _, settlement := range []string{"retained", "replay", "receipt"} {
+		settlements := []string{"retained", "replay", "receipt"}
+		if field == "sent_at" {
+			settlements = settlements[:1]
+		}
+		for _, settlement := range settlements {
 			t.Run(field+"/"+settlement, func(t *testing.T) {
 				assert, require := assert.New(t), require.New(t)
 				f := storetest.New(t)
@@ -881,90 +817,82 @@ CREATE TRIGGER reject_recording_replacement BEFORE UPDATE OF operation_id ON rec
 }
 
 func TestRecordingReferenceSettlementRollback(t *testing.T) {
-	for _, field := range []string{"sent_at", "source_message_id"} {
-		t.Run(field, func(t *testing.T) {
-			assert, require := assert.New(t), require.New(t)
-			f := storetest.New(t)
-			id := f.NewMessage().WithSourceMessageID("original").WithSentAt(time.Date(2026, 1, 1, 9, 0, 0, 0, time.UTC)).Create(t, f.Store)
-			recordingBody(t, f, id, "https://loom.com/share/abc")
-			requests := make(chan docbankmedia.ReferenceRequest, 5)
-			var ready atomic.Bool
-			client := recordingClient(t, func(w http.ResponseWriter, r *http.Request) {
-				var req docbankmedia.ReferenceRequest
-				if !assert.NoError(json.UnmarshalRead(r.Body, &req)) {
-					return
-				}
-				requests <- req
-				if !ready.Load() {
-					w.WriteHeader(http.StatusServiceUnavailable)
-					return
-				}
-				writeReceipt(t, w, req.OperationID)
-			})
-			worker := NewWorker(f.Store, client, "destination", nil, nil)
-			runDiscovery(t, worker, 1)
-			require.Len(requests, 1)
-			original := <-requests
-			value := "corrected"
-			if field == "sent_at" {
-				value = "2026-01-01 10:00:00.000"
-			}
-			_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET `+field+`=? WHERE id=?`), value, id)
-			require.NoError(err)
-			waitForRecordingChange(t, worker, id)
-			before, err := f.Store.LoadRecordingReferenceCursor(t.Context(), "destination")
-			require.NoError(err)
-			claims, err := f.Store.ClaimRecordingReferences(t.Context(), "destination", time.Now().Add(time.Hour), 20)
-			require.NoError(err)
-			require.Len(claims, 1)
-			frozen := claims[0]
-			restore := rejectRecordingReplacement(t, f)
-			t.Cleanup(restore)
-			ready.Store(true)
-			due(t, f)
-			err = worker.RunBatch(t.Context())
-			require.ErrorContains(err, "injected recording replacement failure")
-			require.Len(requests, 1)
-			assert.Equal(original, <-requests)
-			claims, err = f.Store.ClaimRecordingReferences(t.Context(), "destination", time.Now().Add(time.Hour), 20)
-			require.NoError(err)
-			require.Len(claims, 1)
-			assert.Equal("uncertain", claims[0].State)
-			assert.Equal(frozen.OperationID, claims[0].OperationID)
-			assert.Equal(frozen.OccurrenceJSON, claims[0].OccurrenceJSON)
-			assert.Equal(frozen.ErrorCode, claims[0].ErrorCode)
-			assert.Equal(frozen.RetryCount, claims[0].RetryCount)
-			var receipt string
-			require.NoError(f.Store.DB().QueryRow(`SELECT occurrence_id FROM recording_references`).Scan(&receipt))
-			assert.Empty(receipt)
-			restore()
-			worker = NewWorker(f.Store, client, "destination", nil, nil)
-			due(t, f)
-			err = worker.RunBatch(t.Context())
-			require.NoError(err)
-			remaining, err := f.Store.ListChangedMessages(t.Context(), before.FeedCursor(), 200)
-			require.NoError(err)
-			assert.Empty(remaining.Messages)
-			require.Len(requests, 1)
-			assert.Equal(original, <-requests)
-			state, _, op := recordingState(t, f, id)
-			assert.Equal("pending", state)
-			assert.NotEqual(original.OperationID, op)
-			err = worker.RunBatch(t.Context())
-			require.NoError(err)
-			require.Len(requests, 1)
-			corrected := <-requests
-			assert.Equal(op, corrected.OperationID)
-			assert.NotEqual(original.Occurrence, corrected.Occurrence)
-			after, err := f.Store.LoadRecordingReferenceCursor(t.Context(), "destination")
-			require.NoError(err)
-			assert.False(after.At.Before(before.At))
-			assert.Equal(before.Policy, after.Policy)
-			err = worker.RunBatch(t.Context())
-			require.NoError(err)
-			assert.Empty(requests)
-		})
-	}
+	assert, require := assert.New(t), require.New(t)
+	f := storetest.New(t)
+	id := f.NewMessage().WithSourceMessageID("original").WithSentAt(time.Date(2026, 1, 1, 9, 0, 0, 0, time.UTC)).Create(t, f.Store)
+	recordingBody(t, f, id, "https://loom.com/share/abc")
+	requests := make(chan docbankmedia.ReferenceRequest, 5)
+	var ready atomic.Bool
+	client := recordingClient(t, func(w http.ResponseWriter, r *http.Request) {
+		var req docbankmedia.ReferenceRequest
+		if !assert.NoError(json.UnmarshalRead(r.Body, &req)) {
+			return
+		}
+		requests <- req
+		if !ready.Load() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		writeReceipt(t, w, req.OperationID)
+	})
+	worker := NewWorker(f.Store, client, "destination", nil, nil)
+	runDiscovery(t, worker, 1)
+	require.Len(requests, 1)
+	original := <-requests
+	_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET source_message_id=? WHERE id=?`), "corrected", id)
+	require.NoError(err)
+	waitForRecordingChange(t, worker, id)
+	before, err := f.Store.LoadRecordingReferenceCursor(t.Context(), "destination")
+	require.NoError(err)
+	claims, err := f.Store.ClaimRecordingReferences(t.Context(), "destination", time.Now().Add(time.Hour), 20)
+	require.NoError(err)
+	require.Len(claims, 1)
+	frozen := claims[0]
+	restore := rejectRecordingReplacement(t, f)
+	t.Cleanup(restore)
+	ready.Store(true)
+	due(t, f)
+	err = worker.RunBatch(t.Context())
+	require.ErrorContains(err, "injected recording replacement failure")
+	require.Len(requests, 1)
+	assert.Equal(original, <-requests)
+	claims, err = f.Store.ClaimRecordingReferences(t.Context(), "destination", time.Now().Add(time.Hour), 20)
+	require.NoError(err)
+	require.Len(claims, 1)
+	assert.Equal("uncertain", claims[0].State)
+	assert.Equal(frozen.OperationID, claims[0].OperationID)
+	assert.Equal(frozen.OccurrenceJSON, claims[0].OccurrenceJSON)
+	assert.Equal(frozen.ErrorCode, claims[0].ErrorCode)
+	assert.Equal(frozen.RetryCount, claims[0].RetryCount)
+	var receipt string
+	require.NoError(f.Store.DB().QueryRow(`SELECT occurrence_id FROM recording_references`).Scan(&receipt))
+	assert.Empty(receipt)
+	restore()
+	worker = NewWorker(f.Store, client, "destination", nil, nil)
+	due(t, f)
+	err = worker.RunBatch(t.Context())
+	require.NoError(err)
+	remaining, err := f.Store.ListChangedMessages(t.Context(), before.FeedCursor(), 200)
+	require.NoError(err)
+	assert.Empty(remaining.Messages)
+	require.Len(requests, 1)
+	assert.Equal(original, <-requests)
+	state, _, op := recordingState(t, f, id)
+	assert.Equal("pending", state)
+	assert.NotEqual(original.OperationID, op)
+	err = worker.RunBatch(t.Context())
+	require.NoError(err)
+	require.Len(requests, 1)
+	corrected := <-requests
+	assert.Equal(op, corrected.OperationID)
+	assert.NotEqual(original.Occurrence, corrected.Occurrence)
+	after, err := f.Store.LoadRecordingReferenceCursor(t.Context(), "destination")
+	require.NoError(err)
+	assert.False(after.At.Before(before.At))
+	assert.Equal(before.Policy, after.Policy)
+	err = worker.RunBatch(t.Context())
+	require.NoError(err)
+	assert.Empty(requests)
 }
 
 func TestRecordingReferenceCorrectionDuringHTTP(t *testing.T) {

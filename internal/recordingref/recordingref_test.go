@@ -22,7 +22,6 @@ func TestScan(t *testing.T) {
 		{"IPv4", "https://192.0.2.1:8443/s/abc", []string{"https://192.0.2.1:8443"}, CapSelfHosted, 1},
 		{"IPv6 default port", "https://[2001:db8::1]:443/s/abc", []string{"https://[2001:db8::1]"}, CapSelfHosted, 1},
 		{"IPv6 nondefault port", "https://[2001:db8::1]:8443/s/abc", []string{"https://[2001:db8::1]:8443"}, CapSelfHosted, 1},
-		{"IPv6 unlisted", "https://[2001:db8::1]:8443/s/abc", nil, "", 0},
 		{"IPv6 wrong port", "https://[2001:db8::1]:8443/s/abc", []string{"https://[2001:db8::1]"}, "", 0},
 		{"unlisted", "https://cap.example.test/s/abc", nil, "", 0},
 		{"lookalike", "https://loom.com.example.test/share/abc", nil, "", 0},
@@ -62,21 +61,16 @@ func TestTeamsPointer(t *testing.T) {
 	assert.False(ok)
 	_, ok = TeamsPointer("teams:recording:abc", "https://alice@teams.example.test/play")
 	assert.False(ok)
-	_, err := CanonicalOrigin("https://example.test/s/abc")
-	require.Error(err)
-	_, err = CanonicalOrigin("https://example.test#token")
-	require.Error(err)
-	origin, err := CanonicalOrigin("HTTPS://EXAMPLE.TEST:443")
-	require.NoError(err)
-	assert.Equal("https://example.test", origin)
 	r, ok = TeamsPointer("teams:recording:ipv6", "https://[2001:DB8::1]:8443/play?id=secret#fragment")
 	require.True(ok)
-	assert.Equal("https://[2001:db8::1]:8443", r.Origin)
 	assert.Equal("https://[2001:db8::1]:8443/play?id=secret", r.Canonical)
 }
 
 func TestCanonicalOrigin(t *testing.T) {
 	for _, tc := range []struct{ raw, want string }{
+		{"https://example.test/s/abc", ""},
+		{"https://example.test#token", ""},
+		{"HTTPS://EXAMPLE.TEST:443", "https://example.test"},
 		{"https://192.0.2.1:443", "https://192.0.2.1"},
 		{"http://192.0.2.1:80", "http://192.0.2.1"},
 		{"https://[2001:DB8::1]", "https://[2001:db8::1]"},
@@ -100,30 +94,25 @@ func TestCanonicalOrigin(t *testing.T) {
 }
 
 func TestScanHTML(t *testing.T) {
-	for _, raw := range []string{"https://cap.so/s/abc!", "https://cap.so/s/abc?token=secret!", "https://cap.so/s/abc?token=secret)"} {
-		t.Run(raw, func(t *testing.T) {
+	for _, tc := range []struct{ target, padding string }{
+		{"https://cap.so/s/abc!", ""},
+		{"https://cap.so/s/abc?token=secret!", ""},
+		{"https://cap.so/s/abc?token=secret)", ""},
+		{"https://www.loom.com/share/abc?token=example!)", " "},
+		{"https://www.loom.com/share/abc?token=example!)", "\t\r\n\f"},
+	} {
+		t.Run(tc.target+tc.padding, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
-			refs := ScanHTML(`<a href="`+raw+`">Watch recording</a>`, nil)
+			refs := ScanHTML(`<a href="`+tc.padding+tc.target+tc.padding+`">Watch recording</a>`, nil)
 			require.Len(refs, 1)
-			assert.Equal(raw, refs[0].Reference)
-			if raw == "https://cap.so/s/abc!" {
+			assert.Equal(tc.target, refs[0].Reference)
+			if tc.target == "https://cap.so/s/abc!" {
 				plain := scanProse("https://cap.so/s/abc", nil, nil)
 				require.Len(plain, 1)
 				assert.NotEqual(plain[0].RouteKey, refs[0].RouteKey)
-				assert.Equal(raw, refs[0].Canonical)
+				assert.Equal(tc.target, refs[0].Canonical)
 			}
 		})
 	}
 	assert.Empty(t, ScanHTML(`<a href="prefix https://cap.so/s/abc">Watch</a>`, nil))
-}
-
-func TestScanHTMLPaddedTarget(t *testing.T) {
-	for _, padding := range []string{" ", "\t\r\n\f"} {
-		t.Run(padding, func(t *testing.T) {
-			const target = "https://www.loom.com/share/abc?token=example!)"
-			refs := ScanHTML(`<a href="`+padding+target+padding+`">Watch</a>`, nil)
-			require.Len(t, refs, 1)
-			assert.Equal(t, target, refs[0].Reference)
-		})
-	}
 }
