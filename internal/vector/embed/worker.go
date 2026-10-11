@@ -491,7 +491,7 @@ func (w *Worker) run(
 					w.deps.Log.Warn("messages missing from main DB", "gen", gen, "ids", eb.missing)
 				}
 				if len(eb.empty) > 0 {
-					w.deps.Log.Warn("messages have no embeddable content", "gen", gen, "ids", eb.empty)
+					w.deps.Log.Warn("messages empty after preprocess", "gen", gen, "ids", eb.empty)
 				}
 				missed, serr := w.stampSkipped(ctx, gen, skipIDs, eb.lastModified)
 				if serr != nil {
@@ -600,7 +600,7 @@ func (w *Worker) run(
 			w.deps.Log.Warn("messages missing from main DB", "gen", gen, "ids", eb.missing)
 		}
 		if len(eb.empty) > 0 {
-			w.deps.Log.Warn("messages have no embeddable content", "gen", gen, "ids", eb.empty)
+			w.deps.Log.Warn("messages empty after preprocess", "gen", gen, "ids", eb.empty)
 		}
 
 		// Only rows ACTUALLY stamped count as succeeded. A CAS miss (its
@@ -797,9 +797,7 @@ func (w *Worker) embedBatch(ctx context.Context, ids []int64) (embedBatchResult,
 		msgTrunc := m.BodyTruncated || chunkTail
 		chunkIndex := 0
 		for j, sp := range spans {
-			// Visible messages can still produce windows containing only
-			// whitespace, formatting or controls. Match the client's rule
-			// without rewriting text or shifting its source offsets.
+			// Match the client's blank-input rule while preserving source offsets.
 			if embedmodel.BlankText(sp.Text) {
 				continue
 			}
@@ -824,11 +822,6 @@ func (w *Worker) embedBatch(ctx context.Context, ids []int64) (embedBatchResult,
 		if chunkIndex == 0 {
 			empty = append(empty, m.ID)
 		}
-	}
-	if len(inputs) == 0 {
-		// The chunk cap can discard the only visible content. Cover these
-		// messages through the same CAS-protected skip path as blank text.
-		return embedBatchResult{missing: missing, empty: empty, lastModified: lastModified}, nil
 	}
 
 	// Split chunk inputs into sub-batches of at most BatchSize so a
