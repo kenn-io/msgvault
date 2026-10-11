@@ -13,7 +13,7 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
-func TestRecordingReferenceDiscoveryResumesAfterBudget(t *testing.T) {
+func TestRecordingReferenceDiscovery(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		messages int

@@ -10,7 +10,7 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
-func TestRecordingReferenceTeamsPointer(t *testing.T) {
+func TestRecordingReferencePointerChangeWatermark(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	f := storetest.New(t)
 	id := f.CreateMessage("recording")

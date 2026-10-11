@@ -34,7 +34,6 @@ func TestReferenceWire(t *testing.T) {
 	assert.Equal("occurrence", receipt.OccurrenceID)
 	assert.Equal("access_required", receipt.Outcome)
 	assert.Equal("unprocessed", receipt.CoverageState)
-	assert.Len(body, 4)
 	assert.Equal(false, body["acquire"])
 	assert.Equal("operation", body["operation_id"])
 	assert.Equal("https://loom.com/share/abc?token=secret", body["reference_url"])

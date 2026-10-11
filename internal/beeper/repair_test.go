@@ -66,7 +66,7 @@ func TestRepairArchiveRewritesStaleDerivedRows(t *testing.T) {
 
 	// Simulate rows written by an older build: raw HTML in the body and no
 	// share classification on the attachments.
-	_, err = st.DB().Exec(st.Rebind(`UPDATE message_bodies SET body_text = ?
+	_, err = st.DB().Exec(st.Rebind(`UPDATE message_bodies SET body_text = ?, body_html = NULL
 		WHERE message_id = (SELECT id FROM messages WHERE source_message_id = 'html1')`),
 		`<p>hello <a href="https://example.com" rel="noopener noreferrer">there</a></p>`)
 	require.NoError(err)
@@ -84,10 +84,11 @@ func TestRepairArchiveRewritesStaleDerivedRows(t *testing.T) {
 	assert.Zero(sum.Undecodable)
 	assert.Equal(int64(1), sum.BodiesRewritten, "only the stale body needs rewriting")
 
-	var body, snippet string
-	require.NoError(st.DB().QueryRow(`SELECT b.body_text, COALESCE(m.snippet, '')
+	var body, snippet, html string
+	require.NoError(st.DB().QueryRow(`SELECT b.body_text, COALESCE(m.snippet, ''), b.body_html
 		FROM messages m JOIN message_bodies b ON b.message_id = m.id
-		WHERE m.source_message_id = 'html1'`).Scan(&body, &snippet))
+		WHERE m.source_message_id = 'html1'`).Scan(&body, &snippet, &html))
+	assert.Equal(ch.Msgs[0].Text, html)
 	assert.Equal("hello there", body, "HTML must be converted to plain text")
 	assert.Equal("hello there", snippet)
 

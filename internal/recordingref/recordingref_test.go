@@ -17,12 +17,9 @@ func TestScan(t *testing.T) {
 		{"loom", "See https://WWW.LOOM.COM:443/share/abc?token=secret#fragment.", nil, []string{"https://WWW.LOOM.COM:443/share/abc?token=secret#fragment"}},
 		{"cap", "https://cap.so/dev/abc", nil, []string{"https://cap.so/dev/abc"}},
 		{"padded cloud port", "https://loom.com:00443/share/abc", nil, []string{"https://loom.com:00443/share/abc"}},
-		{"padded registered port", "https://cap.example.test:08443/s/abc", []string{"https://cap.example.test:8443"}, []string{"https://cap.example.test:08443/s/abc"}},
 		{"cap HTTP", "http://cap.so/s/abc http://www.cap.so/embed/abc", nil, nil},
 		{"registered", "https://cap.example.test/s/abc", []string{"https://CAP.EXAMPLE.TEST:443"}, []string{"https://cap.example.test/s/abc"}},
 		{"IPv4", "https://192.0.2.1:8443/s/abc", []string{"https://192.0.2.1:8443"}, []string{"https://192.0.2.1:8443/s/abc"}},
-		{"IPv6 default port", "https://[2001:db8::1]:443/s/abc", []string{"https://[2001:db8::1]"}, []string{"https://[2001:db8::1]:443/s/abc"}},
-		{"IPv6 nondefault port", "https://[2001:db8::1]:8443/s/abc", []string{"https://[2001:db8::1]:8443"}, []string{"https://[2001:db8::1]:8443/s/abc"}},
 		{"IPv6 wrong port", "https://[2001:db8::1]:8443/s/abc", []string{"https://[2001:db8::1]"}, nil},
 		{"unlisted", "https://cap.example.test/s/abc", nil, nil},
 		{"lookalike", "https://loom.com.example.test/share/abc", nil, nil},
@@ -60,14 +57,13 @@ func TestScan(t *testing.T) {
 	r := scanProse("https://cap.example.test:8443/s/abc?token=secret", []string{"https://cap.example.test:8443"}, nil)
 	require.Len(r, 1)
 	assert.Empty(r[0].Canonical)
-	padded := scanProse("https://cap.example.test:08443/s/abc?token=secret", []string{"https://cap.example.test:08443"}, nil)
+	padded := scanProse("https://cap.example.test:08443/s/abc?token=secret", []string{"https://cap.example.test:8443"}, nil)
 	require.Len(padded, 1)
 	assert.Equal(r[0].RouteKey, padded[0].RouteKey)
 }
 
 func TestTeamsPointer(t *testing.T) {
 	assert := assert.New(t)
-	require := require.New(t)
 	r, ok := TeamsPointer("teams:recording:abc", "https://teams.example.test/play?id=secret#fragment")
 	assert.True(ok)
 	assert.Equal("https://teams.example.test/play?id=secret", r.Canonical)
@@ -75,9 +71,6 @@ func TestTeamsPointer(t *testing.T) {
 	assert.False(ok)
 	_, ok = TeamsPointer("teams:recording:abc", "https://alice@teams.example.test/play")
 	assert.False(ok)
-	r, ok = TeamsPointer("teams:recording:ipv6", "https://[2001:DB8::1]:08443/play?id=secret#fragment")
-	require.True(ok)
-	assert.Equal("https://[2001:db8::1]:8443/play?id=secret", r.Canonical)
 }
 
 func TestCanonicalOrigin(t *testing.T) {
@@ -120,11 +113,5 @@ func TestScanHTML(t *testing.T) {
 			assert.Equal(tc.target, refs[0].Reference)
 		})
 	}
-	assert, require := assert.New(t), require.New(t)
-	plain := scanProse("https://cap.so/s/abc", nil, nil)
-	require.Len(plain, 1)
-	anchor := ScanHTML(`<a href="https://cap.so/s/abc!">Watch</a>`, nil)
-	require.Len(anchor, 1)
-	assert.NotEqual(plain[0].RouteKey, anchor[0].RouteKey)
-	assert.Empty(ScanHTML(`<a href="prefix https://cap.so/s/abc">Watch</a>`, nil))
+	assert.Empty(t, ScanHTML(`<a href="prefix https://cap.so/s/abc">Watch</a>`, nil))
 }

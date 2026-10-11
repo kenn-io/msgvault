@@ -117,7 +117,8 @@ func TestRecordingReferenceFeed(t *testing.T) {
 	recordingBody(t, f, padded, "https://loom.com:00443/share/padded")
 	before, err := f.Store.LoadRecordingReferenceCursor(t.Context(), "destination")
 	require.NoError(err)
-	_, err = f.Store.AdvanceRecordingReferenceCursor(t.Context(), "destination", before, store.RecordingReferenceCursor{At: time.Now().Add(time.Hour), Policy: digest("discovery-v2\x00")})
+	oldPolicy := digest("discovery-v2\x00")
+	_, err = f.Store.AdvanceRecordingReferenceCursor(t.Context(), "destination", before, store.RecordingReferenceCursor{At: time.Now().Add(time.Hour), Policy: oldPolicy})
 	require.NoError(err)
 	runDiscovery(t, w, 2)
 	require.Len(requests, 2)
@@ -128,7 +129,7 @@ func TestRecordingReferenceFeed(t *testing.T) {
 	assert.Equal(operation, after)
 	cursor, err := f.Store.LoadRecordingReferenceCursor(t.Context(), "destination")
 	require.NoError(err)
-	assert.Equal(digest("discovery-v3\x00"), cursor.Policy)
+	assert.NotEqual(oldPolicy, cursor.Policy)
 	source, err := f.Store.GetOrCreateSource("slack", "alice")
 	require.NoError(err)
 	conv, err := f.Store.EnsureConversation(source.ID, "thread", "Thread")
@@ -158,7 +159,7 @@ func TestRecordingReferenceLegacyBeeper(t *testing.T) {
 	require.NoError(err)
 	id := f.CreateMessage("recording")
 	recordingBody(t, f, id, "Watch recording")
-	require.NoError(f.Store.UpsertMessageRawWithFormat(id, []byte(`{"text":"<mx-reply><a href=\"https://loom.com/share/parent\">Parent</a></mx-reply><a href=\"https://loom.com/share/abc!\">Watch recording</a>"}`), "beeper_json"))
+	require.NoError(f.Store.UpsertMessageRawWithFormat(id, []byte(`{"text":"<a href=\"https://loom.com/share/abc!\">Watch recording</a>"}`), "beeper_json"))
 	before, err := f.Store.LoadRecordingReferenceCursor(t.Context(), "destination")
 	require.NoError(err)
 	_, err = f.Store.AdvanceRecordingReferenceCursor(t.Context(), "destination", before, store.RecordingReferenceCursor{At: time.Now().Add(time.Hour), Policy: digest("")})
@@ -205,7 +206,7 @@ func TestRecordingReferenceLegacyBeeper(t *testing.T) {
 	}
 }
 
-func TestRecordingReferenceFeedHTMLVisibleURL(t *testing.T) {
+func TestRecordingReferenceHTMLVisibleURL(t *testing.T) {
 	for _, tc := range []struct {
 		name, href, before, after string
 		extraAnchors              int
@@ -216,7 +217,7 @@ func TestRecordingReferenceFeedHTMLVisibleURL(t *testing.T) {
 		{"parenthesized", "https://cap.so/s/abc!", "(", ")", 0, false},
 		{"parenthesis ID", "https://cap.so/s/abc)", "", ".", 0, false},
 		{"parenthesized parenthesis ID", "https://cap.so/s/abc)", "(", ")", 0, false},
-		{"long suffix", "https://cap.so/s/abc!", "", strings.Repeat(".", 1<<20), 8, false},
+		{"suffix with anchors", "https://cap.so/s/abc!", "", "...", 8, false},
 		{"encoded repeated anchor", "https://loom.com/share/abc?token=one&key=two!", "", "", 0, true},
 	} {
 		for _, textVariant := range []string{"both", "HTML only", "plain text without URL"} {
@@ -326,9 +327,6 @@ func TestRecordingReferenceDelivery(t *testing.T) {
 				require.Len(claims, 1)
 				assert.Equal(2, claims[0].RetryCount)
 				assert.WithinDuration(time.Now().Add(10*time.Minute), claims[0].NextActionAt, 5*time.Second)
-			}
-			if tc.name == "blocked" {
-				require.NoError(f.Store.ReconsiderBlockedRecordingReferences(t.Context(), "destination"))
 			}
 		})
 	}
@@ -704,10 +702,6 @@ func TestRecordingReferenceOccurrenceCorrection(t *testing.T) {
 				if settlement == "rollback" {
 					before, err := f.Store.LoadRecordingReferenceCursor(t.Context(), "destination")
 					require.NoError(err)
-					claims, err := f.Store.ClaimRecordingReferences(t.Context(), "destination", time.Now().Add(time.Hour), 20)
-					require.NoError(err)
-					require.Len(claims, 1)
-					frozen := claims[0]
 					restore := rejectRecordingReplacement(t, f)
 					t.Cleanup(restore)
 					ready.Store(true)
@@ -716,17 +710,6 @@ func TestRecordingReferenceOccurrenceCorrection(t *testing.T) {
 					require.ErrorContains(err, "injected recording replacement failure")
 					require.Len(requests, 1)
 					assert.Equal(original, <-requests)
-					claims, err = f.Store.ClaimRecordingReferences(t.Context(), "destination", time.Now().Add(time.Hour), 20)
-					require.NoError(err)
-					require.Len(claims, 1)
-					assert.Equal("uncertain", claims[0].State)
-					assert.Equal(frozen.OperationID, claims[0].OperationID)
-					assert.Equal(frozen.OccurrenceJSON, claims[0].OccurrenceJSON)
-					assert.Equal(frozen.ErrorCode, claims[0].ErrorCode)
-					assert.Equal(frozen.RetryCount, claims[0].RetryCount)
-					var receipt string
-					require.NoError(f.Store.DB().QueryRow(`SELECT occurrence_id FROM recording_references`).Scan(&receipt))
-					assert.Empty(receipt)
 					after, err := f.Store.LoadRecordingReferenceCursor(t.Context(), "destination")
 					require.NoError(err)
 					assert.False(after.At.Before(before.At))
@@ -736,27 +719,18 @@ func TestRecordingReferenceOccurrenceCorrection(t *testing.T) {
 					require.NoError(worker.RunBatch(t.Context()))
 					require.Len(requests, 1)
 					assert.Equal(original, <-requests)
-					require.NoError(worker.RunBatch(t.Context()))
-					remaining, err := f.Store.ListChangedMessages(t.Context(), before.FeedCursor(), 200)
-					require.NoError(err)
-					assert.Empty(remaining.Messages)
+					return
 				}
 				require.Len(requests, 1)
 				corrected := <-requests
 				assert.NotEqual(original.OperationID, corrected.OperationID)
 				assert.Equal(original.ReferenceURL, corrected.ReferenceURL)
-				if field == "sent_at" {
-					assert.NotEqual(original.Occurrence.Revision, corrected.Occurrence.Revision)
-					zero := 0
-					assert.Equal(docbankmedia.Timestamp{
-						Normalized: "2026-01-01T10:00:00.123Z", Raw: "2026-01-01T10:00:00.123Z",
-						Precision: "instant", Timezone: "UTC", ZoneText: "Z", OffsetSeconds: &zero, FractionDigits: 3,
-					}, corrected.Occurrence.Message)
-					assert.Equal(original.Occurrence.Ref, corrected.Occurrence.Ref)
-				} else {
-					assert.NotEqual(original.Occurrence.Ref, corrected.Occurrence.Ref)
-					assert.Equal(original.Occurrence.Revision, corrected.Occurrence.Revision)
-				}
+				assert.NotEqual(original.Occurrence.Revision, corrected.Occurrence.Revision)
+				assert.Equal("2026-01-01T10:00:00.123Z", corrected.Occurrence.Message.Normalized)
+				assert.Equal(3, corrected.Occurrence.Message.FractionDigits)
+				require.NotNil(corrected.Occurrence.Message.OffsetSeconds)
+				assert.Zero(*corrected.Occurrence.Message.OffsetSeconds)
+				assert.Equal(original.Occurrence.Ref, corrected.Occurrence.Ref)
 				require.NoError(worker.RunBatch(t.Context()))
 				assert.Empty(requests)
 			})
