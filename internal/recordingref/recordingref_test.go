@@ -114,10 +114,11 @@ func TestScanHTML(t *testing.T) {
 			assert.Equal(tc.target, refs[0].Reference)
 		})
 	}
+	assert, require := assert.New(t), require.New(t)
 	plain := scanProse("https://cap.so/s/abc", nil, nil)
-	require.Len(t, plain, 1)
+	require.Len(plain, 1)
 	anchor := ScanHTML(`<a href="https://cap.so/s/abc!">Watch</a>`, nil)
-	require.Len(t, anchor, 1)
-	assert.NotEqual(t, plain[0].RouteKey, anchor[0].RouteKey)
-	assert.Empty(t, ScanHTML(`<a href="prefix https://cap.so/s/abc">Watch</a>`, nil))
+	require.Len(anchor, 1)
+	assert.NotEqual(plain[0].RouteKey, anchor[0].RouteKey)
+	assert.Empty(ScanHTML(`<a href="prefix https://cap.so/s/abc">Watch</a>`, nil))
 }
