@@ -535,6 +535,9 @@ type SearchMediaQuery struct {
 	// PersonID Durable person ID
 	PersonID *int64 `json:"person_id,omitempty"`
 
+	// ParticipantID Observed participant ID; translated through its durable person when bound; mutually exclusive with person_id
+	ParticipantID *int64 `json:"participant_id,omitempty"`
+
 	// Direction Person relation: from_person, to_person, or group
 	Direction []string `json:"direction,omitempty"`
 

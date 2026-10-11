@@ -117,7 +117,8 @@
   const recording = new ArchiveMessageLoader();
   const readiness = mediaReadiness();
   const recordingSelection = $derived(parseRecordingSelection(readingTargetKey));
-  const recordingSearchSupported = $derived(exploreState.current.searchMode === 'full_text' && exploreState.current.filters.length === 0 && exploreState.current.groupingChain.length === 0);
+  const recordingParticipantID = $derived(exploreState.current.filters.length === 1 && exploreState.current.filters[0].dimension === 'participant' && exploreState.current.filters[0].values.length === 1 ? Number(exploreState.current.filters[0].values[0]) : undefined);
+  const recordingSearchSupported = $derived(exploreState.current.searchMode === 'full_text' && (exploreState.current.filters.length === 0 || recordingParticipantID !== undefined) && exploreState.current.groupingChain.length === 0);
   const recordingSearchVisible = $derived.by(() => {
     const query = exploreState.current.query.trim();
     return Boolean(enabled && readiness?.ready && query);
@@ -732,7 +733,7 @@
       storageKey={previewRight ? 'msgvault.reading-pane.right-size' : 'msgvault.reading-pane.size'}
       orientation={previewRight ? 'horizontal' : 'vertical'}
       initialFraction={previewRight ? 0.45 : 0.55}
-      minPrimary={previewRight ? 360 : recordingSearchVisible ? 220 : 120}
+      minPrimary={previewRight ? 360 : 120}
       minSecondary={previewRight ? 400 : 160}
       collapsed={!readingTargetKey}
     >
@@ -741,7 +742,7 @@
           {#if recordingSearchVisible}
             <TranscriptHits
               {client}
-              {session}
+              participantID={recordingParticipantID}
               missingMessageID={recording.missing ? recordingSelection : undefined}
               query={exploreState.current.query}
               supported={recordingSearchSupported}
@@ -780,7 +781,6 @@
           {:else}
             {#if exploreState.current.presentation === 'timeline'}
               <PersonTimeline
-                fill={recordingSearchVisible}
                 rows={loader.rows}
                 {selection}
                 loading={loader.loading}

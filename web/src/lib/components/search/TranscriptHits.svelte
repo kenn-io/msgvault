@@ -4,15 +4,13 @@
   import { Button, Chip } from '@kenn-io/kit-ui';
   import FileVolume from '@lucide/svelte/icons/file-volume';
   import type { APIClient } from '../../api/client';
-  import type { EverythingSessionState } from '../shell/EverythingSessionState.svelte';
   import { searchMedia } from '../../api/generated/api/api';
   import type { MediaSearchResponse, MediaSearchResult } from '../../api/generated/models';
   import { createStaleRequestGuard } from '../../archive/stale-request';
   import { formatDateTime, formatOffset, formatShortDate, formatTranscriptOrigin } from '../../util/format';
 
-  let { client, session, query, supported, selectedMessageID, missingMessageID, onOpen }: {
-    session: EverythingSessionState;
-    client: APIClient; query: string; supported: boolean; missingMessageID?: number; selectedMessageID?: number; onOpen?: (hit: MediaSearchResult) => void;
+  let { client, query, supported, participantID, selectedMessageID, missingMessageID, onOpen }: {
+    client: APIClient; query: string; supported: boolean; participantID?: number; missingMessageID?: number; selectedMessageID?: number; onOpen?: (hit: MediaSearchResult) => void;
   } = $props();
   const id = $props.id();
   let result = $state<MediaSearchResponse>();
@@ -22,7 +20,6 @@
   let expired = $state(false);
   let retryable = $state(false);
   let retry = $state(0);
-  const scopeLimitNotice = 'This archive exceeds browser recording-search limits. Use person-scoped recording search in the CLI or API.';
 
   $effect(() => {
     const missingID = missingMessageID;
@@ -33,6 +30,7 @@
   $effect(() => {
     const requestedQuery = query.trim();
     const requestedClient = client;
+    const requestedParticipantID = participantID;
     const allowed = supported && admitted;
     void retry;
     result = undefined;
@@ -40,10 +38,6 @@
     expired = false;
     retryable = false;
     if (!allowed) return;
-    if (session.mediaSearchScopeLimited) {
-      notice = scopeLimitNotice;
-      return;
-    }
 
     const freshness = createStaleRequestGuard();
     let controller: AbortController | undefined;
@@ -80,7 +74,7 @@
       const signal = controller.signal;
       try {
         const { data, error, response } = await searchMedia(
-          { q: requestedQuery, mode: 'lexical', limit: 20 },
+          { q: requestedQuery, mode: 'lexical', limit: 20, participant_id: requestedParticipantID },
           { ...requestedClient, signal },
         );
         if (!freshness.isCurrent(generation)) return;
@@ -90,9 +84,10 @@
         }
         if (response.status >= 400 && response.status < 500 && response.status !== 429) {
           blocked = true;
-          if (error?.error === 'media_search_scope_limit') session.mediaSearchScopeLimited = true;
           notice = error?.error === 'media_search_scope_limit'
-            ? scopeLimitNotice
+            ? requestedParticipantID === undefined
+              ? 'Add a Person filter to search recordings.'
+              : 'This Person filter exceeds recording-search limits. Use person-scoped recording search in the CLI.'
             : error?.error === 'invalid_media_search'
               ? 'Recording search rejected this query. Try different plain words.'
               : error?.error === 'invalid_parameter'
@@ -130,7 +125,7 @@
       }
     }
     document.addEventListener('visibilitychange', refresh);
-    timer = setTimeout(() => void load(), 300);
+    void load();
     return () => {
       stop();
       document.removeEventListener('visibilitychange', refresh);
@@ -145,7 +140,7 @@
     {#if result || expired}<Button label="Refresh" size="sm" surface="soft" onclick={() => retry += 1} />{/if}
   </header>
   {#if !supported}
-    <p role="status">Recording search requires Full text with no filters or grouping.</p>
+    <p role="status">Recording search requires Full text with no grouping and at most one Person filter.</p>
   {:else if !admitted}
     <p role="status">Recording search supports plain words only. Punctuation and quoted phrases are unavailable.</p>
   {:else if expired}
@@ -201,7 +196,7 @@
     container-type: inline-size;
     flex: 0 1 auto;
     min-height: 80px;
-    max-height: 40%;
+    max-height: min(40%, 320px);
     overflow: auto;
     padding: var(--space-2) var(--space-3);
     border: 1px solid var(--border-default);

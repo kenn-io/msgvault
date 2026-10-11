@@ -9,7 +9,7 @@ All notable changes to msgvault, grouped by release.
 ## Unreleased
 
 - Remote edits update source-owned values on published CardDAV imports while preserving unrelated local values. Edits that would overwrite another owner create a conflict.
-- [Everything search](web-ui.md#explore-and-search) shows recording transcript matches for plain-word Full text queries, with source details, provenance and coverage. Recording search waits for a typing pause and excerpts expire after 30 seconds. Recordings appears once the daemon confirms Docbank is configured; a failed check keeps it hidden and retries after 30 seconds. Configured recording search shows failures and Retry from the first request. API schema 3.11.0 adds `GET /media/search/status`, source filename, title and date to media search results and optional `conversation_title` to message detail.
+- [Everything search](web-ui.md#explore-and-search) shows recording transcript matches for plain-word Full text queries and supports one Person filter. API schema 3.11.0 adds `participant_id` to media search, `GET /media/search/status`, source filename, title and date to media search results and optional `conversation_title` to message detail.
 
 - Go programs can use msgvault as a library through `go.kenn.io/msgvault/pkg/archive`.
   It sets up and opens SQLite or PostgreSQL archives, runs the Slack and Discord

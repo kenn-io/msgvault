@@ -55,15 +55,20 @@ func (s *Server) handleMediaSearch(w http.ResponseWriter, r *http.Request) {
 		limit = 20
 	}
 	personID, _, personErr := queryInt64(r, "person_id")
+	participantID, _, participantErr := queryInt64(r, "participant_id")
 	directions := make([]personscope.Direction, 0)
 	for _, value := range r.URL.Query()["direction"] {
 		for direction := range strings.SplitSeq(value, ",") {
 			directions = append(directions, personscope.Direction(direction))
 		}
 	}
-	if err != nil || personErr != nil || q == "" || len(q) > 8192 || limit < 1 || limit > 100 || personID < 0 ||
-		(len(directions) > 0 && personID == 0) || (r.URL.Query().Has("person_id") && personID == 0) {
-		s.rejectBadParam(w, errors.New("q is required and must be at most 8192 bytes, limit must be 1 to 100, and directions require a positive person_id"))
+	if err != nil || personErr != nil || participantErr != nil || q == "" || len(q) > 8192 || limit < 1 || limit > 100 || personID < 0 || participantID < 0 ||
+		(len(directions) > 0 && personID == 0 && participantID == 0) || (r.URL.Query().Has("person_id") && personID == 0) || (r.URL.Query().Has("participant_id") && participantID == 0) {
+		s.rejectBadParam(w, errors.New("q is required and must be at most 8192 bytes, limit must be 1 to 100, and directions require a positive person_id or participant_id"))
+		return
+	}
+	if personID > 0 && participantID > 0 {
+		s.rejectBadParam(w, errors.New("person_id and participant_id are mutually exclusive"))
 		return
 	}
 	if _, _, err := resolver.NormalizeDirections(directions); err != nil {
@@ -83,22 +88,26 @@ func (s *Server) handleMediaSearch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "media_search_unavailable", "Configure the Docbank integration to search transcripts")
 		return
 	}
+	reference := resolver.Reference{Kind: resolver.ReferencePerson, ID: personID}
+	if participantID > 0 {
+		reference = resolver.Reference{Kind: resolver.ReferenceParticipant, ID: participantID}
+	}
 	resolve := func() (*personscope.Scope, error) {
-		if personID == 0 {
+		if reference.ID == 0 {
 			return nil, nil //nolint:nilnil // No person scope searches the full visible archive.
 		}
-		resolution, err := resolver.Resolve(r.Context(), reader.Store, resolver.Reference{Kind: resolver.ReferencePerson, ID: personID}, directions)
+		resolution, err := resolver.Resolve(r.Context(), reader.Store, reference, directions)
 		return &resolution.Scope, err
 	}
 	scope, err := resolve()
 	if err != nil {
-		s.writePersonScopeError(w, resolver.Reference{Kind: resolver.ReferencePerson, ID: personID}, err, "media")
+		s.writePersonScopeError(w, reference, err, "media")
 		return
 	}
 	response, err := reader.search(r.Context(), q, limit, scope, resolve)
 	if err != nil {
 		if scopeErr, ok := errors.AsType[*mediaSearchScopeError](err); ok {
-			s.writePersonScopeError(w, resolver.Reference{Kind: resolver.ReferencePerson, ID: personID}, scopeErr.err, "media")
+			s.writePersonScopeError(w, reference, scopeErr.err, "media")
 			return
 		}
 		if s.writeIfContextError(w, err) {
@@ -107,7 +116,7 @@ func (s *Server) handleMediaSearch(w http.ResponseWriter, r *http.Request) {
 		httpErr, httpError := errors.AsType[*docbankmedia.HTTPError](err)
 		switch {
 		case errors.Is(err, errMediaSearchScope):
-			writeError(w, http.StatusBadRequest, "media_search_scope_limit", "Search supports at most 4096 media versions and source selectors; set --person in the CLI or person_id in the API to narrow the scope")
+			writeError(w, http.StatusBadRequest, "media_search_scope_limit", "Search supports at most 4096 media versions and source selectors; add a Person filter in the browser, set --person in the CLI, or person_id or participant_id in the API to narrow the scope")
 		case httpError && httpErr.Status == http.StatusBadRequest:
 			writeError(w, http.StatusBadRequest, "invalid_media_search", "Docbank rejected the search query")
 		default:

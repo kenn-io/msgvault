@@ -6,7 +6,6 @@
   import EverythingTable from '../explore/EverythingTable.svelte';
 
   interface Props {
-    fill?: boolean;
     rows: EntryRow[];
     totalCount?: number;
     loading?: boolean;
@@ -30,7 +29,7 @@
     onVisibleRows?: (keys: string[]) => void;
   }
 
-  let { rows, fill = false, totalCount = undefined, loading = false, loadingMore = false, hasMore = false,
+  let { rows, totalCount = undefined, loading = false, loadingMore = false, hasMore = false,
     generation = 0, error = '', pageError = '', unavailable = undefined, onOpen = undefined, onRetry = undefined,
     onLoadMore = undefined, onLoadThroughEnd = undefined, selection: providedSelection = undefined,
     focusedKey = null, inspectedKey = null, scrollAnchor = null, restoring = false,
@@ -38,7 +37,7 @@
   const selection = untrack(() => providedSelection ?? new ExploreSelectionState());
 </script>
 
-<section class="timeline" class:timeline--fill={fill} aria-label="Canonical activity timeline">
+<section class="timeline" aria-label="Canonical activity timeline">
   <header>
     <h2>Activity</h2>
     <span>{totalCount === undefined ? 'Bounded timeline' : `${totalCount.toLocaleString()} items`}</span>
@@ -50,7 +49,6 @@
 
 <style>
   .timeline { display: flex; min-height: 320px; flex-direction: column; gap: var(--space-3); }
-  .timeline--fill { flex: 1; min-height: 0; }
   header { display: flex; align-items: end; justify-content: space-between; }
   header h2 { margin: 0; }
   header h2 { font-size: var(--font-size-lg); }

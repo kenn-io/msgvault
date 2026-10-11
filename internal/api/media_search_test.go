@@ -248,7 +248,7 @@ func TestMediaSearchOversizedPopulation(t *testing.T) {
 
 	t.Parallel()
 	f := newMediaSearchFixture(t)
-	f.match(t, "seed")
+	f.retained(t, "seed")
 	// Clone mapped identities to exercise the public fence ceiling without thousands of imports.
 	transaction, err := f.f.Store.DB().BeginTx(t.Context(), nil)
 	require.NoError(err)
@@ -271,6 +271,21 @@ func TestMediaSearchOversizedPopulation(t *testing.T) {
 	assert.Equal(http.StatusBadRequest, status, raw)
 	assert.Contains(raw, "media_search_scope_limit")
 	assert.Empty(f.requests)
+	selected := f.match(t, "selected")
+	participant := f.f.EnsureParticipant("selected@example.com", "Selected Person", "example.com")
+	person, _, err := f.f.Store.CreatePersonFromParticipant(participant)
+	require.NoError(err)
+	_, err = f.f.Store.DB().Exec(f.f.Store.Rebind(`UPDATE messages SET sender_id = ? WHERE id = ?`), participant, selected.messageID)
+	require.NoError(err)
+	status, response, raw := searchMediaFor(t, f.server(true), fmt.Sprintf("q=quarterly+numbers&participant_id=%d", participant))
+	require.Equal(http.StatusOK, status, raw)
+	require.Len(response.Results, 1)
+	assert.Equal(selected.messageID, response.Results[0].MessageID)
+	require.Len(f.requests, 1)
+	assert.Equal([]string{selected.contentVersionID}, f.requests[0].Fence.ContentVersionIDs)
+	status, _, raw = searchMediaFor(t, f.server(true), fmt.Sprintf("q=quarterly+numbers&participant_id=%d&person_id=%d", participant, person.ID))
+	assert.Equal(http.StatusBadRequest, status, raw)
+	assert.Contains(raw, "mutually exclusive")
 }
 
 func TestMediaSearchPersonDirection(t *testing.T) {

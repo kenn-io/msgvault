@@ -107,9 +107,32 @@ describe('EverythingWorkspace', () => {
     }
   });
 
+  it('uses the single Person filter for recording search', async () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', query: 'quarterly', searchMode: 'full_text', filters: [{ dimension: 'participant', values: ['7'] }] }))}`);
+    const fetchFn = vi.fn<typeof fetch>(async input => {
+      const url = new URL((input as Request).url);
+      return Response.json(url.pathname.endsWith('/media/search') ? recordingSearchReport() : exploreResponse());
+    });
+    const state = new ExploreState(window);
+    const view = renderRecordingShell(createAPIClient(fetchFn), state);
+    try {
+      await screen.findByText('Quarterly numbers');
+      const request = fetchFn.mock.calls.find(([input]) => new URL((input as Request).url).pathname.endsWith('/media/search'))![0] as Request;
+      expect(new URL(request.url).searchParams.get('participant_id')).toBe('7');
+      state.commitNavigation({ filters: [{ dimension: 'source', values: ['1'] }] });
+      await screen.findByText('Recording search requires Full text with no grouping and at most one Person filter.');
+      expect(screen.queryByText('Quarterly numbers')).toBeNull();
+    } finally {
+      view.unmount();
+      state.destroy();
+    }
+  });
+
   it.each([
     { searchMode: 'semantic' }, { filters: [{ dimension: 'source', values: ['1'] }] },
     { groupingChain: ['kind'] },
+    { filters: [{ dimension: 'participant', values: ['1', '2'] }] },
+    { filters: [{ dimension: 'participant', values: ['1'] }, { dimension: 'participant', values: ['2'] }] },
   ])('shows recording search hints for configured unsupported queries %j', async patch => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', query: 'quarterly', searchMode: 'full_text', ...patch }))}`);
@@ -121,7 +144,7 @@ describe('EverythingWorkspace', () => {
       expect(await screen.findByRole('region', { name: 'Recordings' })).toBeTruthy();
       expect(screen.getByRole('heading', { name: /^Results/ })).toBeTruthy();
       expect(document.querySelector('.results-primary--recordings')).toBeTruthy();
-      expect(screen.getByText('Recording search requires Full text with no filters or grouping.')).toBeTruthy();
+      expect(screen.getByText('Recording search requires Full text with no grouping and at most one Person filter.')).toBeTruthy();
       await vi.advanceTimersByTimeAsync(300);
       expect(fetchFn.mock.calls.some(([input]) => new URL((input as Request).url).pathname.endsWith('/media/search'))).toBe(false);
     } finally {

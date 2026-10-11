@@ -88,7 +88,6 @@
     return !vertical && maxPrimary !== undefined ? Math.min(byAvailable, maxPrimary) : byAvailable;
   });
   const minimum = $derived(Math.min(minSized, maximum));
-  const displayedSize = $derived(clamp(sizedSize));
 
   function clamp(size: number): number {
     const atLeastMinimum = Math.max(minimum, size);
@@ -97,7 +96,7 @@
 
   function setSize(size: number, persist = true): void {
     const next = clamp(size);
-    sizedSize = persist ? next : size;
+    sizedSize = next;
     if (persist) {
       userSized = true;
       persistSize(next);
@@ -106,7 +105,7 @@
   }
 
   function startResize(): void {
-    resizeStartSize = displayedSize;
+    resizeStartSize = sizedSize;
   }
 
   /** Double-clicking the handle returns to the default size and forgets the
@@ -152,7 +151,7 @@
       const measured = measure(entry);
       if (measured === undefined) return;
       available = measured;
-      if (userSized) setSize(sizedSize, false);
+      if (userSized) setSize(sizedSize);
       else if (initialFraction !== undefined && available > 0) {
         setSize(Math.round(available * initialFraction), false);
       } else setSize(sizedSize, false);
@@ -166,7 +165,7 @@
   <section
     class="pane primary"
     data-pane="primary"
-    style:flex-basis={vertical ? undefined : `${displayedSize}px`}
+    style:flex-basis={vertical ? undefined : `${sizedSize}px`}
   >
     {#if primary}{@render primary()}{/if}
   </section>
@@ -181,7 +180,7 @@
         {keyboardStep}
         ariaValueMin={minimum}
         ariaValueMax={maximum}
-        ariaValueNow={displayedSize}
+        ariaValueNow={sizedSize}
         onResizeStart={startResize}
         onResize={resize}
       />
@@ -189,7 +188,7 @@
     <section
       class="pane secondary"
       data-pane="secondary"
-      style:flex-basis={vertical ? `${displayedSize}px` : undefined}
+      style:flex-basis={vertical ? `${sizedSize}px` : undefined}
     >
       {#if secondary}{@render secondary()}{/if}
     </section>

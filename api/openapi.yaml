@@ -22001,6 +22001,12 @@ paths:
           schema:
             format: int64
             type: integer
+        - description: Observed participant ID; translated through its durable person when bound; mutually exclusive with person_id
+          in: query
+          name: participant_id
+          schema:
+            format: int64
+            type: integer
         - description: "Person relation: from_person, to_person, or group"
           in: query
           name: direction
