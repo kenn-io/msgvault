@@ -9,14 +9,14 @@ import (
 func TestCLIRunCommandAllowedDocumentMutations(t *testing.T) {
 	t.Parallel()
 	for _, subcommand := range []string{
-		"build", "consent-mistral", "purge-derived", "resume", "retire", "retry",
+		"build", "consent-mistral", "consent-docling", "purge-derived", "resume", "retire", "retry", "status",
 	} {
 		t.Run(subcommand, func(t *testing.T) {
 			assert.True(t, cliRunCommandAllowed([]string{"documents", subcommand}))
 		})
 	}
 
-	for _, subcommand := range []string{"probe-mistral", "search", "status"} {
+	for _, subcommand := range []string{"probe-mistral", "search"} {
 		t.Run(subcommand, func(t *testing.T) {
 			assert.False(t, cliRunCommandAllowed([]string{"documents", subcommand}))
 		})

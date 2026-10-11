@@ -497,9 +497,17 @@ func TestBuildFilter_LabelsMatchCaseInsensitiveSubstring(t *testing.T) {
 	}
 }
 
-func TestBuildFilterRejectsAccountOperators(t *testing.T) {
-	for _, query := range []string{"received:work@example.org", "account:work@example.org"} {
-		_, err := BuildFilter(context.Background(), nil, nil, search.Parse(query))
-		assert.ErrorIs(t, err, ErrAccountFiltersUnsupported, query)
-	}
+func TestBuildFilterCarriesAccountScopes(t *testing.T) {
+	assert := assert.New(t)
+	f, err := BuildFilter(context.Background(), nil, nil, search.Parse("lunch account:a@example.org received:b@example.org"))
+	require.NoError(t, err)
+	assert.Equal([]search.AccountScope{
+		{Addresses: []string{"a@example.org"}},
+		{Addresses: []string{"b@example.org"}, Inbound: true},
+	}, f.AccountScopes)
+
+	require.NoError(t, ApplyMessageFilter(context.Background(), nil, nil, &f,
+		query.MessageFilter{AccountScopes: []search.AccountScope{{Unattributed: true}}}))
+	assert.Len(f.AccountScopes, 3, "structured scopes intersect with the query's")
+	assert.True(f.AccountScopes[2].Unattributed)
 }

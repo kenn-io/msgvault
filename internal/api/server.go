@@ -259,8 +259,10 @@ type Server struct {
 	// Shutdown cancels.
 	statsSnapshots        snapshotCache[*StoreStats]
 	accountCountSnapshots snapshotCache[map[int64]store.SourceMessageCounts]
-	statsSnapshotWait     time.Duration
-	vectorStatsTimeout    time.Duration
+	// virtualAccountSnapshots bounds the account picker catalog the same way.
+	virtualAccountSnapshots snapshotCache[map[int64][]store.VirtualAccount]
+	statsSnapshotWait       time.Duration
+	vectorStatsTimeout      time.Duration
 
 	cfg                    *config.Config
 	store                  MessageStore
@@ -658,15 +660,18 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 		cancelImports:          cancelImports,
 		statsSnapshots:         snapshotCache[*StoreStats]{logger: opts.Logger},
 		accountCountSnapshots:  snapshotCache[map[int64]store.SourceMessageCounts]{logger: opts.Logger},
-		statsSnapshotWait:      statsSnapshotWait,
-		vectorStatsTimeout:     vectorStatsTimeout,
-		blobStore:              opts.BlobStore,
-		messageRecordings:      opts.MessageRecordings,
-		remoteImages:           remoteimage.NewFetcher(),
-		inlineCache:            newInlineParseCache(inlineCacheMaxEntries, inlineCacheMaxBytes),
-		spaHandler:             opts.SPAHandler,
-		telemetryCapture:       opts.TelemetryCapture,
-		sessions:               newSessionStore(defaultSessionTTL),
+		virtualAccountSnapshots: snapshotCache[map[int64][]store.VirtualAccount]{
+			logger: opts.Logger, freshFor: virtualAccountCatalogFreshFor,
+		},
+		statsSnapshotWait:  statsSnapshotWait,
+		vectorStatsTimeout: vectorStatsTimeout,
+		blobStore:          opts.BlobStore,
+		messageRecordings:  opts.MessageRecordings,
+		remoteImages:       remoteimage.NewFetcher(),
+		inlineCache:        newInlineParseCache(inlineCacheMaxEntries, inlineCacheMaxBytes),
+		spaHandler:         opts.SPAHandler,
+		telemetryCapture:   opts.TelemetryCapture,
+		sessions:           newSessionStore(defaultSessionTTL),
 		agentGrants: func() *agentgrant.Registry {
 			if opts.Config != nil && opts.Config.Server.AgentAccess {
 				return agentgrant.NewRegistry()

@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-08"
+last_edited: "2026-10-09"
 title: MCP Server
 description: Expose your email, chat, calendar, and meeting archive to AI assistants via MCP.
 ---
@@ -280,7 +280,7 @@ The MCP server exposes the following tools to connected AI clients:
 | `export_eml` | Export one email's original `.eml` bytes in verified chunks. See [Export original emails](#export-original-emails). | exactly one of `id` (int) or `source_message_id` (string); `account` (string), `offset` (int), `length` (1–4194304, default 1048576), `sha256` (string, required after offset 0) |
 | `get_attachment` | Get attachment content by ID. Pass `offset` or `length` to receive verified chunks instead of one embedded blob. | `attachment_id` (int), `offset` (int), `length` (int), `sha256` (string, required after offset 0) |
 | `export_attachment` | Save attachment to filesystem | `attachment_id` (int), `destination` (string) |
-| `get_stats` | Archive overview statistics, plus each account's `LastSyncAt`. Includes vector index state when configured. | — |
+| `get_stats` | Archive overview statistics, plus each account's `LastSyncAt` and its `virtual_accounts`, whose keys the `account` argument takes. Includes vector index state when configured. | — |
 | `aggregate` | Grouped statistics (top senders, domains, labels, or message volume by calendar year) | `group_by` (string: sender/recipient/domain/label/time), `limit` (int), `after` (string), `before` (string), `account` (string) |
 | `query_sql` | Advanced read-only SQL over the published analytics cache. Returns rows and freshness metadata, or an accepted refresh job. | `sql` (string, required), `fresh` (bool, default false) |
 | `list_saved_views` | List persistent reusable Saved Views and their complete definitions. Read-only. | — |
@@ -416,7 +416,7 @@ whose surviving message belongs to another account's conversation. See
 
 ### `search_metadata` and `search_message_bodies` / `semantic_search_messages` query syntax
 
-Supported operators: `from:`, `to:`, `cc:`, `bcc:`, `subject:`, `label:` (or `l:`), `list:` (or `list-id:`), `has:attachment`, `before:`/`after:` (YYYY-MM-DD), `older_than:`/`newer_than:` (e.g. `7d`, `2w`, `1m`, `1y`), `larger:`/`smaller:` (e.g. `5M`), `received:`/`account:` (an exact confirmed address; not in `semantic_search_messages`). Bare domains on `from:`/`to:` match any address at that domain. Different operators are ANDed; repeated List-Id operators require every literal substring, and repeated `account:` or `received:` values match any of them.
+Supported operators: `from:`, `to:`, `cc:`, `bcc:`, `subject:`, `label:` (or `l:`), `list:` (or `list-id:`), `has:attachment`, `before:`/`after:` (YYYY-MM-DD), `older_than:`/`newer_than:` (e.g. `7d`, `2w`, `1m`, `1y`), `larger:`/`smaller:` (e.g. `5M`), `received:`/`account:` (an exact confirmed address). Bare domains on `from:`/`to:` match any address at that domain. Different operators are ANDed; repeated List-Id operators require every literal substring, and repeated `account:` or `received:` values match any of them.
 
 Not supported: negation (`-has:attachment`), `OR`, or parentheses grouping.
 

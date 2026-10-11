@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-08"
+last_edited: "2026-10-09"
 title: Interactive TUI
 description: Browse messages and people, search your archive, save attachments, and stage email deletion from the terminal.
 ---
@@ -62,8 +62,11 @@ Deletion staging and attachment export use the selected daemon. When connected t
 
 ### Email Account and Collection Scopes
 
-Press `A` in Email mode to choose `All Accounts`, an individual account, or a
-named collection. A collection is a daemon-owned group of accounts, and the
+Press `A` in Email mode to choose `All Accounts`, an individual account, a
+receiving address, or a named collection. When confirmed addresses divide a
+source's mail, the picker lists each address under the source, plus an
+Unattributed entry for mail no confirmed address claims; see
+[Searching](searching.md#find-mail-by-the-address-that-received-it). A collection is a daemon-owned group of accounts, and the
 title shows `Collection: <name>` while its exact member sources scope
 aggregates, message lists, fast search, statistics, and deletion-target
 inspection. An empty collection shows no results and makes no scoped HTTP read.

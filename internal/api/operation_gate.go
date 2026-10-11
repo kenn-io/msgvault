@@ -592,7 +592,6 @@ var cliRunReadOnlyCommands = map[string]bool{
 	"show-deletion":    true,
 	"embeddings list":  true,
 	"documents search": true,
-	"documents status": true,
 }
 
 // cliRunSelfGatedCommands are proxied CLI commands that acquire the

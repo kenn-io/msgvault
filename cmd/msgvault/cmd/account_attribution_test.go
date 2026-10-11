@@ -141,3 +141,73 @@ func TestAccountAttributionAppendKeepsCacheIncremental(t *testing.T) {
 	require.NoError(err)
 	assert.True(stale.FullRebuild, "a published row whose account changed forces a rebuild: %s", stale.Reason)
 }
+
+// TestAccountScopeCacheParity compares picker account scopes on the exported
+// cache with the live SQLite archive across list, count, aggregate and explore.
+func TestAccountScopeCacheParity(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	path := filepath.Join(t.TempDir(), "archive.db")
+	st, err := store.OpenForTest(path)
+	require.NoError(err)
+	defer func() { require.NoError(st.Close()) }()
+	require.NoError(st.InitSchema())
+	src, err := st.GetOrCreateSource("gmail", "inbox@example.net")
+	require.NoError(err)
+	require.NoError(st.AddAccountIdentity(src.ID, "work@example.org", "manual"))
+	require.NoError(st.AddAccountIdentity(src.ID, "mask@example.org", "manual"))
+	conv, err := st.EnsureConversation(src.ID, "thread", "synthetic thread")
+	require.NoError(err)
+	for _, header := range []string{"X-Delivered-To: work@example.org", "X-Delivered-To: mask@example.org", "X-Original-To: work@example.org, mask@example.org"} {
+		_, err = st.PersistMessageContext(t.Context(), &store.MessagePersistData{
+			Message: &store.Message{SourceID: src.ID, ConversationID: conv, SourceMessageID: header, MessageType: "email", SentAt: attributionSentAt},
+			RawMIME: []byte("From: sender@example.test\r\n" + header + "\r\n\r\nbody"),
+		})
+		require.NoError(err)
+	}
+	cache := filepath.Join(t.TempDir(), "analytics")
+	_, err = buildCache(path, cache, true)
+	require.NoError(err)
+	duck, err := query.NewDuckDBEngine(cache, path, nil)
+	require.NoError(err)
+	defer func() { require.NoError(duck.Close()) }()
+	live := query.NewSQLiteEngine(st.DB())
+
+	source := src.ID
+	for name, scopes := range map[string][]search.AccountScope{
+		"identity":     {{SourceID: &source, Addresses: []string{"work@example.org"}}},
+		"unattributed": {{SourceID: &source, Unattributed: true}},
+		"inbound":      {{Addresses: []string{"work@example.org", "mask@example.org"}, Inbound: true}},
+		"intersect":    {{Addresses: []string{"work@example.org", "mask@example.org"}}, {Addresses: []string{"mask@example.org"}}},
+	} {
+		filter := query.MessageFilter{AccountScopes: scopes, Pagination: query.Pagination{Limit: 100}}
+		liveRows, err := live.ListMessages(t.Context(), filter)
+		require.NoError(err, name)
+		duckRows, err := duck.ListMessages(t.Context(), filter)
+		require.NoError(err, name)
+		assert.Equal(summaryIDs(liveRows), summaryIDs(duckRows), name)
+		assert.NotEmpty(liveRows, name)
+
+		liveCount, err := live.SearchFastCount(t.Context(), &search.Query{}, filter)
+		require.NoError(err, name)
+		duckCount, err := duck.SearchFastCount(t.Context(), &search.Query{}, filter)
+		require.NoError(err, name)
+		assert.Equal(liveCount, duckCount, name)
+
+		opts := query.AggregateOptions{AccountScopes: scopes, Limit: 10}
+		liveAgg, err := live.Aggregate(t.Context(), query.ViewSenders, opts)
+		require.NoError(err, name)
+		duckAgg, err := duck.Aggregate(t.Context(), query.ViewSenders, opts)
+		require.NoError(err, name)
+		require.Len(duckAgg, len(liveAgg), name)
+		for i := range liveAgg {
+			assert.Equal(liveAgg[i].Count, duckAgg[i].Count, name)
+		}
+
+		explored, err := duck.Explore(t.Context(), query.ExploreRequest{
+			Context: query.Context{AccountScopes: scopes}, Page: query.PageSpec{Limit: 10},
+		})
+		require.NoError(err, name)
+		assert.Equal(int64(len(liveRows)), explored.TotalCount, name)
+	}
+}
