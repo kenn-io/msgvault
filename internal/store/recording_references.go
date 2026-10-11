@@ -66,6 +66,24 @@ func (s *Store) AdvanceRecordingReferenceCursor(ctx context.Context, destination
 }
 
 type RecordingPointer struct{ ID, Path string }
+
+func readRecordingPointers(ctx context.Context, q contextRowsQuerier, messageID int64, orderBy string) ([]RecordingPointer, error) {
+	rows, err := q.QueryContext(ctx, `SELECT source_attachment_id, storage_path FROM attachments WHERE message_id=? AND source_attachment_id LIKE 'teams:recording:%' ORDER BY `+orderBy, messageID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var pointers []RecordingPointer
+	for rows.Next() {
+		var p RecordingPointer
+		if err := rows.Scan(&p.ID, &p.Path); err != nil {
+			return nil, err
+		}
+		pointers = append(pointers, p)
+	}
+	return pointers, rows.Err()
+}
+
 type RecordingMessage struct {
 	ID                                                                        int64
 	ArchiveUID, SourceType, SourceIdentifier, SourceMessageID, Body, BodyHTML string
@@ -99,19 +117,8 @@ func (s *Store) ReadRecordingMessage(ctx context.Context, messageID int64) (Reco
 	}
 	m.Body = nullStringValue(text)
 	m.BodyHTML = nullStringValue(html)
-	rows, err := s.db.QueryContext(ctx, `SELECT source_attachment_id, storage_path FROM attachments WHERE message_id=? AND source_attachment_id LIKE 'teams:recording:%' ORDER BY id`, messageID)
-	if err != nil {
-		return m, false, err
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		var p RecordingPointer
-		if err := rows.Scan(&p.ID, &p.Path); err != nil {
-			return m, false, err
-		}
-		m.Pointers = append(m.Pointers, p)
-	}
-	return m, true, rows.Err()
+	m.Pointers, err = readRecordingPointers(ctx, s.db, messageID, "id")
+	return m, err == nil, err
 }
 
 type RecordingReferenceInput struct {
