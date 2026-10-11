@@ -3,10 +3,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import { recordingSearchHit as hit, recordingSearchReport as report } from '../../archive/recording-fixtures.test-support';
 import TranscriptHits from './TranscriptHits.svelte';
+import { EverythingSessionState } from '../shell/EverythingSessionState.svelte';
 
 function mount(fetchFn = vi.fn<typeof fetch>(async () => Response.json(report()))) {
   const client = createAPIClient(fetchFn);
-  return { client, fetchFn, ...render(TranscriptHits, { props: { client, query: 'quarterly', supported: true } }) };
+  return { client, fetchFn, ...render(TranscriptHits, { props: { client, session: new EverythingSessionState(), query: 'quarterly', supported: true } }) };
 }
 
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
@@ -144,7 +145,7 @@ describe('TranscriptHits', () => {
     let finish!: (value: Response) => void;
     const fetchFn = vi.fn<typeof fetch>(() => new Promise(resolve => { finish = resolve; }));
     const client = createAPIClient(fetchFn);
-    const view = render(TranscriptHits, { props: { client, query: 'quarterly', supported: true } });
+    const view = render(TranscriptHits, { props: { client, session: new EverythingSessionState(), query: 'quarterly', supported: true } });
     await vi.advanceTimersByTimeAsync(300);
     const request = fetchFn.mock.calls[0][0] as Request;
     await vi.advanceTimersByTimeAsync(30_000);
@@ -165,7 +166,7 @@ describe('TranscriptHits', () => {
   ] as const)('admits plain words and rejects unsupported syntax %s', async (query, searched) => {
     vi.useFakeTimers();
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json(report()));
-    render(TranscriptHits, { props: { client: createAPIClient(fetchFn), query, supported: true } });
+    render(TranscriptHits, { props: { client: createAPIClient(fetchFn), session: new EverythingSessionState(), query, supported: true } });
     await vi.advanceTimersByTimeAsync(301);
     if (searched) {
       expect(screen.getByText('Quarterly numbers')).toBeTruthy();
@@ -182,11 +183,12 @@ describe('TranscriptHits', () => {
     [400, 'invalid_media_search', 'Recording search rejected this query. Try different plain words.'],
     [400, 'invalid_parameter', 'Recording search query is too long. Use fewer words.'],
     [403, 'forbidden', 'Recording search cannot read this query. Check archive access or change the query.'],
-  ])('keeps %s %s terminal until the query changes', async (status, error, text) => {
+  ])('keeps %s %s terminal for the query or session scope', async (status, error, text) => {
     vi.useFakeTimers();
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ error }, { status }));
     const client = createAPIClient(fetchFn);
-    const view = render(TranscriptHits, { props: { client, query: 'quarterly', supported: true } });
+    const session = new EverythingSessionState();
+    const view = render(TranscriptHits, { props: { client, session, query: 'quarterly', supported: true } });
     await vi.advanceTimersByTimeAsync(300);
     expect(screen.getByText(text)).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
@@ -194,9 +196,17 @@ describe('TranscriptHits', () => {
     await fireEvent(document, new Event('visibilitychange'));
     expect(fetchFn).toHaveBeenCalledTimes(1);
     await view.rerender({ client, query: 'different', supported: true });
-    await vi.advanceTimersByTimeAsync(300);
-    expect(fetchFn).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(301);
+    expect(fetchFn).toHaveBeenCalledTimes(error === 'media_search_scope_limit' ? 1 : 2);
+    expect(screen.getByText(text)).toBeTruthy();
     view.unmount();
+    if (error === 'media_search_scope_limit') {
+      const remounted = render(TranscriptHits, { props: { client, session, query: 'another', supported: true } });
+      await vi.advanceTimersByTimeAsync(301);
+      expect(fetchFn).toHaveBeenCalledTimes(1);
+      expect(screen.getByText(text)).toBeTruthy();
+      remounted.unmount();
+    }
   });
 
 });

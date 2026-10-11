@@ -741,6 +741,7 @@
           {#if recordingSearchVisible}
             <TranscriptHits
               {client}
+              {session}
               missingMessageID={recording.missing ? recordingSelection : undefined}
               query={exploreState.current.query}
               supported={recordingSearchSupported}

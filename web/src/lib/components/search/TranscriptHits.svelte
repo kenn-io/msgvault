@@ -4,12 +4,14 @@
   import { Button, Chip } from '@kenn-io/kit-ui';
   import FileVolume from '@lucide/svelte/icons/file-volume';
   import type { APIClient } from '../../api/client';
+  import type { EverythingSessionState } from '../shell/EverythingSessionState.svelte';
   import { searchMedia } from '../../api/generated/api/api';
   import type { MediaSearchResponse, MediaSearchResult } from '../../api/generated/models';
   import { createStaleRequestGuard } from '../../archive/stale-request';
   import { formatDateTime, formatOffset, formatShortDate, formatTranscriptOrigin } from '../../util/format';
 
-  let { client, query, supported, selectedMessageID, missingMessageID, onOpen }: {
+  let { client, session, query, supported, selectedMessageID, missingMessageID, onOpen }: {
+    session: EverythingSessionState;
     client: APIClient; query: string; supported: boolean; missingMessageID?: number; selectedMessageID?: number; onOpen?: (hit: MediaSearchResult) => void;
   } = $props();
   const id = $props.id();
@@ -20,6 +22,7 @@
   let expired = $state(false);
   let retryable = $state(false);
   let retry = $state(0);
+  const scopeLimitNotice = 'This archive exceeds browser recording-search limits. Use person-scoped recording search in the CLI or API.';
 
   $effect(() => {
     const missingID = missingMessageID;
@@ -37,6 +40,10 @@
     expired = false;
     retryable = false;
     if (!allowed) return;
+    if (session.mediaSearchScopeLimited) {
+      notice = scopeLimitNotice;
+      return;
+    }
 
     const freshness = createStaleRequestGuard();
     let controller: AbortController | undefined;
@@ -83,8 +90,9 @@
         }
         if (response.status >= 400 && response.status < 500 && response.status !== 429) {
           blocked = true;
+          if (error?.error === 'media_search_scope_limit') session.mediaSearchScopeLimited = true;
           notice = error?.error === 'media_search_scope_limit'
-            ? 'This archive exceeds browser recording-search limits. Use person-scoped recording search in the CLI or API.'
+            ? scopeLimitNotice
             : error?.error === 'invalid_media_search'
               ? 'Recording search rejected this query. Try different plain words.'
               : error?.error === 'invalid_parameter'
