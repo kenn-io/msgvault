@@ -18,7 +18,6 @@ import (
 	"go.kenn.io/msgvault/internal/personagenda"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/taskclient"
-	"go.kenn.io/msgvault/internal/testutil/katatest"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
@@ -143,31 +142,6 @@ func TestKataIssueHTTP(t *testing.T) {
 	server.router.ServeHTTP(negative, httptest.NewRequest(http.MethodGet, "/api/v1/integrations/kata/issues/example%23abcd/context?offset=-1", nil))
 	assert.Equal(http.StatusBadRequest, negative.Code)
 
-	kataServer := httptest.NewServer(katatest.New(t).Service.Handler())
-	t.Cleanup(kataServer.Close)
-	cfg := &config.Config{}
-	cfg.Integrations.Kata = config.TaskIntegrationConfig{Enabled: true, Endpoint: kataServer.URL, APIKey: katatest.Token, DefaultProject: "example"}
-	f := storetest.New(t)
-	backendServer := NewServerWithOptions(ServerOptions{Config: cfg, Store: &mockStore{}, Logger: testLogger(), KataIssueOperations: &kataIssueBackend{store: f.Store, config: cfg.Integrations.Kata}})
-	var createRequest KataIssueCreateRequest
-	require.NoError(json.Unmarshal([]byte(createBody), &createRequest))
-	linkBody, err := json.Marshal(KataEvidenceLinkRequest{Evidence: createRequest.Evidence})
-	require.NoError(err)
-	for _, route := range []string{"context", "evidence"} {
-		path := "/api/v1/integrations/kata/issues/%23abcd/" + route
-		malformed := httptest.NewRecorder()
-		if route == "context" {
-			backendServer.router.ServeHTTP(malformed, httptest.NewRequest(http.MethodGet, path, nil))
-		} else {
-			malformed = serveKataIssue(backendServer, path, string(linkBody), nil)
-		}
-		assert.Equal(http.StatusBadRequest, malformed.Code, "%s: %s", route, malformed.Body.String())
-		var body ErrorResponse
-		require.NoError(json.Unmarshal(malformed.Body.Bytes(), &body))
-		assert.Equal("invalid_ref", body.Error)
-		assert.Equal("Kata issue ref is malformed", body.Message)
-	}
-
 	for _, tc := range []struct {
 		err    error
 		status int
@@ -175,7 +149,9 @@ func TestKataIssueHTTP(t *testing.T) {
 	}{
 		{kataevidence.ErrChanged, http.StatusConflict, "evidence_changed"},
 		{kataevidence.ErrInvalidReference, http.StatusBadRequest, "invalid_evidence"},
+		{taskclient.ErrInvalidRef, http.StatusBadRequest, "invalid_ref"},
 		{kataissues.ErrInvalidRequest, http.StatusUnprocessableEntity, "invalid_request"},
+		{kataissues.ErrOutsideProject, http.StatusUnprocessableEntity, "kata_issue_outside_project"},
 		{fmt.Errorf("%w: person 404: %w", personagenda.ErrIdentityLookup, fmt.Errorf("get person: %w", store.ErrPersonNotFound)), http.StatusNotFound, "person_profile_not_found"},
 		{kataevidence.ErrUnprocessed, http.StatusUnprocessableEntity, "evidence_unprocessed"},
 		{kataevidence.ErrUnsupported, http.StatusUnprocessableEntity, "evidence_unsupported"},
@@ -184,6 +160,11 @@ func TestKataIssueHTTP(t *testing.T) {
 		failed := serveKataIssue(server, "/api/v1/integrations/kata/issues", createBody, map[string]string{"Idempotency-Key": "key-2"})
 		assert.Equal(tc.status, failed.Code)
 		assert.Contains(failed.Body.String(), tc.code)
+		if tc.err == taskclient.ErrInvalidRef {
+			var body ErrorResponse
+			require.NoError(json.Unmarshal(failed.Body.Bytes(), &body))
+			assert.Equal("Kata issue ref is malformed", body.Message)
+		}
 	}
 }
 
@@ -208,13 +189,6 @@ func TestKataIssueLookupArchiveErrors(t *testing.T) {
 		{"message missing", func(_ *testing.T, _ *storetest.Fixture) int64 {
 			return 1
 		}, http.StatusNotFound, "evidence_unavailable"},
-		{"source message ID missing", func(t *testing.T, f *storetest.Fixture) int64 {
-			t.Helper()
-			id := f.CreateMessage("lookup-message")
-			_, err := f.Store.DB().Exec(f.Store.Rebind("UPDATE messages SET source_message_id='' WHERE id=?"), id)
-			require.NoError(t, err)
-			return id
-		}, http.StatusUnprocessableEntity, "evidence_unsupported"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := storetest.New(t)

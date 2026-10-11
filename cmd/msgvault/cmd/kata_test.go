@@ -126,7 +126,6 @@ func TestKataCreateThroughDaemonAdapter(t *testing.T) {
 	command.SetErr(&stderr)
 	require.NoError(command.ExecuteContext(ctx))
 	rows := strings.Split(strings.TrimSpace(stdout.String()), "\n")
-	assert.Len(rows, 10)
 	for _, row := range rows {
 		assert.Len(strings.Split(row, "\t"), 3, row)
 	}

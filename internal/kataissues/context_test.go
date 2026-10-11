@@ -108,6 +108,8 @@ func TestContextPages(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newFixture(t)
+	_, err := f.service.Context(t.Context(), "#abcd", 0)
+	require.ErrorIs(err, taskclient.ErrInvalidRef)
 	refs := make([]kataevidence.Reference, 0, kataissues.ContextPageSize+1)
 	for i := range kataissues.ContextPageSize + 1 {
 		refs = append(refs, f.evidence(t, i*100).Reference)

@@ -267,9 +267,16 @@ func TestCreateRetryUnderTheSameKey(t *testing.T) {
 
 		// Link writes only to the configured project, so the moved issue and
 		// any other project are out of reach, and Kata sees no write.
-		for _, ref := range []string{again.Issue.QualifiedRef, "missing#abcd"} {
-			_, err = f.service.Link(t.Context(), ref, []kataevidence.Reference{f.evidence(t, f.evidence(t, 0).NextRune).Reference})
-			require.ErrorIs(err, kataissues.ErrOutsideProject, ref)
+		for _, tc := range []struct {
+			ref string
+			err error
+		}{
+			{again.Issue.QualifiedRef, kataissues.ErrOutsideProject},
+			{"missing#abcd", kataissues.ErrOutsideProject},
+			{"#abcd", taskclient.ErrInvalidRef},
+		} {
+			_, err = f.service.Link(t.Context(), tc.ref, []kataevidence.Reference{f.evidence(t, f.evidence(t, 0).NextRune).Reference})
+			require.ErrorIs(err, tc.err, tc.ref)
 		}
 		still, err := f.service.Create(t.Context(), "key-moved", input)
 		require.NoError(err)
