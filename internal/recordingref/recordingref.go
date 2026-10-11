@@ -145,17 +145,39 @@ func scanProse(text string, origins []string, exact map[string]bool) []Ref {
 	var refs []Ref
 	for _, match := range tokens.FindAllStringIndex(text, -1) {
 		token := text[match[0]:match[1]]
-		for len(token) > 0 && (len(token) > 8192 || !exact[token]) && strings.ContainsAny(token[len(token)-1:], ".,;:!?)]}'") {
-			token = token[:len(token)-1]
-		}
 		if !exact[token] {
-			for _, marker := range []string{"***", "___", "**", "__", "~~", "||", "*", "_"} {
-				if strings.HasSuffix(text[:match[0]], marker) && strings.HasSuffix(token, marker) {
-					token = strings.TrimSuffix(token, marker)
-					for len(token) > 0 && (len(token) > 8192 || !exact[token]) && strings.ContainsAny(token[len(token)-1:], ".,;:!?)]}'") {
-						token = token[:len(token)-1]
+			before := text[:match[0]]
+			var closing []string
+			labeled := false
+			if strings.HasSuffix(before, "](") {
+				if label := strings.LastIndex(before, "["); label >= 0 {
+					closing = append(closing, ")")
+					labeled = true
+					before = before[:label]
+				}
+			}
+			for {
+				matched := false
+				for _, marker := range []string{"***", "___", "**", "__", "~~", "||", "*", "_"} {
+					if strings.HasSuffix(before, marker) {
+						closing = append(closing, marker)
+						before = strings.TrimSuffix(before, marker)
+						matched = true
+						break
 					}
+				}
+				if !matched {
 					break
+				}
+			}
+			suffix := strings.Join(closing, "")
+			for len(token) > 0 && (len(token) > 8192 || !exact[token]) && (suffix == "" || !strings.HasSuffix(token, suffix)) && strings.ContainsAny(token[len(token)-1:], ".,;:!?)]}'") {
+				token = token[:len(token)-1]
+			}
+			if !exact[token] && suffix != "" && strings.HasSuffix(token, suffix) {
+				token = strings.TrimSuffix(token, suffix)
+				for !labeled && len(token) > 0 && (len(token) > 8192 || !exact[token]) && strings.ContainsAny(token[len(token)-1:], ".,;:!?)]}'") {
+					token = token[:len(token)-1]
 				}
 			}
 		}

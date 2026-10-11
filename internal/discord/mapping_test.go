@@ -1,10 +1,7 @@
 package discord
 
 import (
-	"database/sql"
 	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"strconv"
 	"testing"
 	"time"
@@ -12,47 +9,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
-	"go.kenn.io/msgvault/internal/docbankmedia"
-	"go.kenn.io/msgvault/internal/recordingref"
 	"go.kenn.io/msgvault/internal/store"
-	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
-
-func TestFormattedRecordingDelivery(t *testing.T) {
-	for _, tc := range []struct{ raw, want string }{
-		{"**https://loom.com/share/abc**", "https://loom.com/share/abc"},
-		{"**https://loom.com/share/abc.**", "https://loom.com/share/abc"},
-		{"__https://loom.com/share/abc?token=a_b__", "https://loom.com/share/abc?token=a_b"},
-		{"~~https://loom.com/share/abc~~", "https://loom.com/share/abc"},
-	} {
-		t.Run(tc.raw, func(t *testing.T) {
-			assert, require := assert.New(t), require.New(t)
-			f := storetest.New(t)
-			_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE sources SET source_type='discord' WHERE id=?`), f.Source.ID)
-			require.NoError(err)
-			mapped, err := mapMessage(&Message{ID: "recording", Content: tc.raw}, f.ConvID, f.Source.ID)
-			require.NoError(err)
-			_, err = f.Store.PersistMessage(&store.MessagePersistData{Message: &mapped.Message, BodyText: sql.NullString{String: mapped.BodyText, Valid: true}})
-			require.NoError(err)
-			requests := make(chan string, 2)
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				var req docbankmedia.ReferenceRequest
-				if !assert.NoError(json.NewDecoder(r.Body).Decode(&req)) {
-					return
-				}
-				requests <- req.ReferenceURL
-				assert.NoError(json.NewEncoder(w).Encode(docbankmedia.Receipt{VaultUID: "vault", SourceID: "source", OperationID: req.OperationID, OccurrenceID: "occurrence", OperationState: "succeeded", CoverageState: "unprocessed", Outcome: "access_required"}))
-			}))
-			defer server.Close()
-			client, err := docbankmedia.NewClient(server.URL, nil)
-			require.NoError(err)
-			worker := recordingref.NewWorker(f.Store, client, "destination", nil, nil)
-			assert.Eventually(func() bool { require.NoError(worker.RunBatch(t.Context())); return len(requests) == 1 }, 5*time.Second, 10*time.Millisecond)
-			require.Len(requests, 1)
-			assert.Equal(tc.want, <-requests)
-		})
-	}
-}
 
 func TestMapConversationUsesChannelForChannelsAndThreads(t *testing.T) {
 	created := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)

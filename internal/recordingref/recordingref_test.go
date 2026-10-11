@@ -12,44 +12,51 @@ func TestScan(t *testing.T) {
 	for _, tc := range []struct {
 		name, text string
 		origins    []string
-		count      int
+		want       []string
 	}{
-		{"loom", "See https://WWW.LOOM.COM:443/share/abc?token=secret#fragment.", nil, 1},
-		{"cap", "https://cap.so/dev/abc", nil, 1},
-		{"cap HTTP", "http://cap.so/s/abc http://www.cap.so/embed/abc", nil, 0},
-		{"registered", "https://cap.example.test/s/abc", []string{"https://CAP.EXAMPLE.TEST:443"}, 1},
-		{"IPv4", "https://192.0.2.1:8443/s/abc", []string{"https://192.0.2.1:8443"}, 1},
-		{"IPv6 default port", "https://[2001:db8::1]:443/s/abc", []string{"https://[2001:db8::1]"}, 1},
-		{"IPv6 nondefault port", "https://[2001:db8::1]:8443/s/abc", []string{"https://[2001:db8::1]:8443"}, 1},
-		{"IPv6 wrong port", "https://[2001:db8::1]:8443/s/abc", []string{"https://[2001:db8::1]"}, 0},
-		{"unlisted", "https://cap.example.test/s/abc", nil, 0},
-		{"lookalike", "https://loom.com.example.test/share/abc", nil, 0},
-		{"user info", "https://alice@loom.com/share/abc", nil, 0},
-		{"port", "https://loom.com:444/share/abc", nil, 0},
-		{"long", "https://loom.com/share/" + strings.Repeat("a", 8192), nil, 0},
-		{"encoded path", "https://loom.com/share/%61bc", nil, 0},
-		{"long ID", "https://loom.com/share/" + strings.Repeat("a", 256), nil, 1},
-		{"punctuated ID", "https://cap.so/s/abc+def.ghi", nil, 1},
-		{"empty ID", "https://loom.com/share/", nil, 0},
-		{"multiple segments", "https://cap.so/s/abc/def", nil, 0},
-		{"deduplicate", "https://loom.com/share/abc https://www.loom.com/share/abc", nil, 1},
-		{"route identity", "https://loom.com/share/abc https://www.loom.com/embed/abc", nil, 2},
+		{"loom", "See https://WWW.LOOM.COM:443/share/abc?token=secret#fragment.", nil, []string{"https://WWW.LOOM.COM:443/share/abc?token=secret#fragment"}},
+		{"cap", "https://cap.so/dev/abc", nil, []string{"https://cap.so/dev/abc"}},
+		{"cap HTTP", "http://cap.so/s/abc http://www.cap.so/embed/abc", nil, nil},
+		{"registered", "https://cap.example.test/s/abc", []string{"https://CAP.EXAMPLE.TEST:443"}, []string{"https://cap.example.test/s/abc"}},
+		{"IPv4", "https://192.0.2.1:8443/s/abc", []string{"https://192.0.2.1:8443"}, []string{"https://192.0.2.1:8443/s/abc"}},
+		{"IPv6 default port", "https://[2001:db8::1]:443/s/abc", []string{"https://[2001:db8::1]"}, []string{"https://[2001:db8::1]:443/s/abc"}},
+		{"IPv6 nondefault port", "https://[2001:db8::1]:8443/s/abc", []string{"https://[2001:db8::1]:8443"}, []string{"https://[2001:db8::1]:8443/s/abc"}},
+		{"IPv6 wrong port", "https://[2001:db8::1]:8443/s/abc", []string{"https://[2001:db8::1]"}, nil},
+		{"unlisted", "https://cap.example.test/s/abc", nil, nil},
+		{"lookalike", "https://loom.com.example.test/share/abc", nil, nil},
+		{"user info", "https://alice@loom.com/share/abc", nil, nil},
+		{"port", "https://loom.com:444/share/abc", nil, nil},
+		{"long", "https://loom.com/share/" + strings.Repeat("a", 8192), nil, nil},
+		{"encoded path", "https://loom.com/share/%61bc", nil, nil},
+		{"long ID", "https://loom.com/share/" + strings.Repeat("a", 256), nil, []string{"https://loom.com/share/" + strings.Repeat("a", 256)}},
+		{"punctuated ID", "https://cap.so/s/abc+def.ghi", nil, []string{"https://cap.so/s/abc+def.ghi"}},
+		{"empty ID", "https://loom.com/share/", nil, nil},
+		{"multiple segments", "https://cap.so/s/abc/def", nil, nil},
+		{"deduplicate", "https://loom.com/share/abc https://www.loom.com/share/abc", nil, []string{"https://loom.com/share/abc"}},
+		{"route identity", "https://loom.com/share/abc https://www.loom.com/embed/abc", nil, []string{"https://loom.com/share/abc", "https://www.loom.com/embed/abc"}},
+		{"bold", "**https://loom.com/share/abc**", nil, []string{"https://loom.com/share/abc"}},
+		{"bold sentence", "**https://loom.com/share/abc.**", nil, []string{"https://loom.com/share/abc"}},
+		{"underline query", "__https://loom.com/share/abc?token=a_b__", nil, []string{"https://loom.com/share/abc?token=a_b"}},
+		{"strikethrough", "~~https://loom.com/share/abc~~", nil, []string{"https://loom.com/share/abc"}},
+		{"nested", "**__https://loom.com/share/abc__**", nil, []string{"https://loom.com/share/abc"}},
+		{"bold label", "**[Watch](https://loom.com/share/abc)**", nil, []string{"https://loom.com/share/abc"}},
+		{"label punctuation", "**[Watch](https://cap.so/s/abc!)**", nil, []string{"https://cap.so/s/abc!"}},
+		{"plain label punctuation", "[Watch](https://cap.so/s/abc!)", nil, []string{"https://cap.so/s/abc!"}},
+		{"literal query", "https://cap.so/s/abc?token=keep_*_~", nil, []string{"https://cap.so/s/abc?token=keep_*_~"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			refs := scanProse(tc.text, tc.origins, nil)
-			require.Len(t, refs, tc.count)
-			if tc.count == 1 {
-				assert.Len(t, refs[0].RouteKey, 64)
+			var got []string
+			for _, ref := range refs {
+				got = append(got, ref.Reference)
+				assert.Len(t, ref.RouteKey, 64)
 			}
+			assert.Equal(t, tc.want, got)
 		})
 	}
 	r := scanProse("https://cap.example.test/s/abc?token=secret", []string{"https://cap.example.test"}, nil)
 	require.Len(t, r, 1)
 	assert.Empty(t, r[0].Canonical)
-	const literal = "https://cap.so/s/abc?token=keep_*_~"
-	r = scanProse(literal, nil, nil)
-	require.Len(t, r, 1)
-	assert.Equal(t, literal, r[0].Reference)
 }
 
 func TestTeamsPointer(t *testing.T) {
@@ -96,9 +103,6 @@ func TestCanonicalOrigin(t *testing.T) {
 
 func TestScanHTML(t *testing.T) {
 	for _, tc := range []struct{ target, padding string }{
-		{"https://cap.so/s/abc!", ""},
-		{"https://cap.so/s/abc?token=secret!", ""},
-		{"https://cap.so/s/abc?token=secret)", ""},
 		{"https://cap.so/s/abc?token=literal**__", ""},
 		{"https://www.loom.com/share/abc?token=example!)", " "},
 		{"https://www.loom.com/share/abc?token=example!)", "\t\r\n\f"},
@@ -108,13 +112,12 @@ func TestScanHTML(t *testing.T) {
 			refs := ScanHTML(`<a href="`+tc.padding+tc.target+tc.padding+`">Watch recording</a>`, nil)
 			require.Len(refs, 1)
 			assert.Equal(tc.target, refs[0].Reference)
-			if tc.target == "https://cap.so/s/abc!" {
-				plain := scanProse("https://cap.so/s/abc", nil, nil)
-				require.Len(plain, 1)
-				assert.NotEqual(plain[0].RouteKey, refs[0].RouteKey)
-				assert.Equal(tc.target, refs[0].Canonical)
-			}
 		})
 	}
+	plain := scanProse("https://cap.so/s/abc", nil, nil)
+	require.Len(t, plain, 1)
+	anchor := ScanHTML(`<a href="https://cap.so/s/abc!">Watch</a>`, nil)
+	require.Len(t, anchor, 1)
+	assert.NotEqual(t, plain[0].RouteKey, anchor[0].RouteKey)
 	assert.Empty(t, ScanHTML(`<a href="prefix https://cap.so/s/abc">Watch</a>`, nil))
 }

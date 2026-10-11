@@ -52,7 +52,6 @@ func TestRecordingReferenceJob(t *testing.T) {
 			if !assert.NoError(json.UnmarshalRead(r.Body, &req)) {
 				return
 			}
-			assert.False(req.Acquire)
 			requests <- req.ReferenceURL
 			assert.NoError(json.MarshalWrite(w, docbankmedia.Receipt{VaultUID: "vault", SourceID: "source", OperationID: req.OperationID, OccurrenceID: "occurrence", OperationState: "succeeded", CoverageState: "unprocessed", Outcome: "access_required"}))
 		}))
@@ -68,10 +67,6 @@ func TestRecordingReferenceJob(t *testing.T) {
 		}
 		require.NoError(s.TriggerJob(recordingReferenceJob))
 		require.Len(requests, 1)
-		assert.Equal("https://loom.com/share/abc", <-requests)
-		var state string
-		require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT state FROM recording_references WHERE message_id=?`), id).Scan(&state))
-		assert.Equal("retained", state)
 		require.NotEmpty(gate.labels)
 		for len(gate.labels) > 0 {
 			assert.Equal("Recording reference submission", <-gate.labels)

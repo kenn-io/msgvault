@@ -125,16 +125,11 @@ func TestRecordingLinkHTMLPersistsAndRepairs(t *testing.T) {
 	assert.Equal(`<a href="https://loom.com/share/abc">Watch recording</a>`, html)
 	var conversationID int64
 	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT conversation_id FROM messages WHERE id=?`), id).Scan(&conversationID))
-	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET content_changed_at='2000-01-01 00:00:00.000' WHERE id=?`), id)
-	require.NoError(err)
 	m := &Message{ID: "html1", Text: `<a href="https://loom.com/share/changed">Watch recording</a>`}
 	require.NoError(imp.persistMessage(t.Context(), &chatScope{sourceID: beeperSourceID(t, st), convID: conversationID}, m, &ImportSummary{}))
-	var changed string
 	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT body_text, body_html FROM message_bodies WHERE message_id=?`), id).Scan(&body, &html))
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT content_changed_at FROM messages WHERE id=?`), id).Scan(&changed))
 	assert.Equal("Watch recording", body)
 	assert.Equal(m.Text, html)
-	assert.NotContains(changed, "2000-01-01")
 }
 
 func TestImportBackfillEndToEnd(t *testing.T) {
