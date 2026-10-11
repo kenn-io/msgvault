@@ -86,7 +86,7 @@ func kataDefinitions() []toolDefinition {
 	// The daemon accepts 1 to 128 characters.
 	key := create.inputSchema.Properties["idempotency_key"]
 	key.MinLength, key.MaxLength = new(1), new(128)
-	find := kataDefinition("find_kata_issues", "List Kata issues, open or closed, that already cite a message (or calendar event) by message_id, or one of its files with attachment_id as well. Check before filing so a repeated review links to the earlier issue rather than filing again.", false, func(ctx context.Context, b KataBackend, in generated.FindKataIssuesQuery) (generated.KataIssueListResponse, error) {
+	find := kataDefinition("find_kata_issues", "List Kata issues, open or closed, that already cite a message (or calendar event) by message_id, or one of its files with attachment_id as well. Check before filing so a repeated review links to the earlier issue rather than filing again. When truncated is true the list may be incomplete; check Kata before filing.", false, func(ctx context.Context, b KataBackend, in generated.FindKataIssuesQuery) (generated.KataIssueListResponse, error) {
 		return b.FindKataIssues(ctx, in)
 	})
 	find.availability = func(c catalogCapabilities) bool { return c.kataLookup }

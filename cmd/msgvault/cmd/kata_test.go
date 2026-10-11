@@ -128,7 +128,7 @@ func TestKataCreateThroughDaemonAdapter(t *testing.T) {
 	for row := range strings.SplitSeq(strings.TrimSpace(stdout.String()), "\n") {
 		assert.Len(strings.Split(row, "\t"), 3, row)
 	}
-	assert.Contains(stderr.String(), "More issues cite this source")
+	assert.Contains(stderr.String(), "This list may be incomplete; check Kata before filing again.")
 }
 
 func TestKataIssuesRequiresMessage(t *testing.T) {

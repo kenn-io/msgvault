@@ -2974,7 +2974,7 @@ issue; running it again with the same key and input returns the issue it filed
 instead of a duplicate.
 `link` adds evidence to an existing issue in the configured project, given as `project#ref` or a bare
 ref. `issues` lists the issues, open or closed, that already cite a message
-or one of its files, one `ref<TAB>status<TAB>title` line each. `context`
+or one of its files, one `ref<TAB>status<TAB>title` line each. It checks the newest 500 evidence-bearing issues, or 20 if the listing exceeds 16 MiB, and warns on stderr when the list may be incomplete; check Kata before filing again. JSON reports this as `truncated`. `context`
 shows each passage an issue cites, its state in the archive today, and the
 text around it, 10 passages at a time; `--offset` reads the next page. See
 [Kata issues](usage/kata-issues.md) for request shapes and limits.

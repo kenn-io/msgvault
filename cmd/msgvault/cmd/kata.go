@@ -129,7 +129,7 @@ func newKataCmd() *cobra.Command {
 				}
 			}
 			if result.Truncated {
-				if _, err := fmt.Fprintln(cmd.ErrOrStderr(), "More issues cite this source; see them in Kata."); err != nil {
+				if _, err := fmt.Fprintln(cmd.ErrOrStderr(), "This list may be incomplete; check Kata before filing again."); err != nil {
 					return fmt.Errorf("write Kata issues: %w", err)
 				}
 			}

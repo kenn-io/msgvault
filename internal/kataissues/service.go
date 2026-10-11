@@ -249,18 +249,27 @@ func (s *Service) Link(ctx context.Context, issueRef string, evidence []kataevid
 	return taskclient.KataTask{}, ErrIssueChanged
 }
 
-// Citing returns up to limit issues, open or closed and oldest first, that
-// cite the source, and whether more do.
+// Citing scans recent issues and returns matches oldest first, with a flag when the list may be incomplete.
 func (s *Service) Citing(ctx context.Context, key string, limit int) ([]taskclient.KataTask, bool, error) {
-	candidates, err := s.Kata.FindMetadataTasks(ctx, s.Project, EvidenceMetadataKey, 0)
+	const maxCandidates = 500
+	candidates, err := s.Kata.FindMetadataTasks(ctx, s.Project, EvidenceMetadataKey, maxCandidates+1)
+	incomplete := errors.Is(err, taskclient.ErrResponseTooLarge)
+	if incomplete {
+		// Twenty issues fit under 16 MiB within msgvault's per-issue producer bound.
+		candidates, err = s.Kata.FindMetadataTasks(ctx, s.Project, EvidenceMetadataKey, 20)
+	}
 	if err != nil {
 		return nil, false, err
+	}
+	if len(candidates) > maxCandidates {
+		candidates, incomplete = candidates[:maxCandidates], true
 	}
 	var issues []taskclient.KataTask
 	for _, candidate := range candidates {
 		envelope, err := parseEnvelope(candidate.Metadata[EvidenceMetadataKey])
 		if err != nil {
-			return nil, false, err
+			incomplete = true
+			continue
 		}
 		for _, entry := range envelope.Entries {
 			if slices.Contains(kataevidence.SourceKeys(entry.Reference), key) {
@@ -269,10 +278,11 @@ func (s *Service) Citing(ctx context.Context, key string, limit int) ([]taskclie
 			}
 		}
 	}
+	slices.Reverse(issues)
 	if len(issues) > limit {
 		return issues[:limit], true, nil
 	}
-	return issues, false, nil
+	return issues, incomplete, nil
 }
 
 // splitRef returns the project and issue a ref names. A qualified ref names

@@ -6131,7 +6131,7 @@ func (k KataIssueCreateRequest) Validate() error {
 type KataIssueListResponse struct {
 	Issues []KataIssueReceipt `json:"issues" validate:"required"`
 
-	// Truncated More issues cite this source than were returned
+	// Truncated The list may omit issues that cite this source: more matched than were returned, or some issues could not be checked
 	Truncated bool `json:"truncated"`
 }
 

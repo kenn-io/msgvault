@@ -801,10 +801,54 @@ func TestCitingFindsEveryCitedSource(t *testing.T) {
 			assert.Equal(second.Issue.UID, issues[1].UID)
 		}
 	}
+	var listingCalls atomic.Int32
+	fallbackServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/issues" {
+			listingCalls.Add(1)
+			if r.URL.Query().Get("limit") == "501" {
+				_, _ = io.WriteString(w, strings.Repeat(" ", (16<<20)+1))
+				return
+			}
+			assert.Equal("20", r.URL.Query().Get("limit"))
+		}
+		f.kata.service.Handler().ServeHTTP(w, r)
+	}))
+	t.Cleanup(fallbackServer.Close)
+	fallbackClient, err := taskclient.ConnectKata(t.Context(), taskclient.IntegrationConfig{Enabled: true, Endpoint: fallbackServer.URL, APIKey: katatest.Token, DefaultProject: "example"})
+	require.NoError(err)
+	fallback := *service
+	fallback.Kata = fallbackClient
+	issues, incomplete, err := fallback.Citing(t.Context(), kataevidence.SourceKeys(message)[0], 10)
+	require.NoError(err)
+	require.Len(issues, 2)
+	assert.Equal(created.UID, issues[0].UID)
+	assert.True(incomplete)
+	assert.Equal(int32(2), listingCalls.Load())
+
 	_, err = service.Kata.MutateMetadataKey(t.Context(), "example", created.UID, kataissues.EvidenceMetadataKey, created.Metadata[kataissues.EvidenceMetadataKey], kataissues.Envelope{Version: 2})
 	require.NoError(err)
-	_, _, err = service.Citing(t.Context(), kataevidence.SourceKeys(message)[0], 10)
-	require.ErrorIs(err, kataissues.ErrUnsupportedEvidence)
+	issues, incomplete, err = service.Citing(t.Context(), kataevidence.SourceKeys(message)[0], 10)
+	require.NoError(err)
+	require.Len(issues, 1)
+	assert.Equal(second.Issue.UID, issues[0].UID)
+	assert.True(incomplete, "an unreadable candidate cannot imply no other citation exists")
+	recentBody, err := json.Marshal(katagen.CreateIssueRequestBody{Actor: new("msgvault"), ForceNew: new(true), Title: "Recent unrelated citation", Metadata: map[string]any{
+		kataissues.EvidenceMetadataKey: kataissues.Envelope{Version: 1, Entries: []kataissues.Entry{{ID: kataevidence.ID(unrelated), Passage: kataevidence.PassageID(unrelated, "Other words"), Reference: unrelated}}},
+	}})
+	require.NoError(err)
+	for i := range 500 {
+		request := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/projects/%d/issues", f.kata.projectID), strings.NewReader(string(recentBody)))
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Authorization", "Bearer "+katatest.Token)
+		request.Header.Set("Idempotency-Key", fmt.Sprintf("recent-%d", i))
+		recorder := httptest.NewRecorder()
+		f.kata.service.Handler().ServeHTTP(recorder, request)
+		require.Equal(http.StatusOK, recorder.Code, recorder.Body.String())
+	}
+	issues, incomplete, err = service.Citing(t.Context(), kataevidence.SourceKeys(message)[0], 10)
+	require.NoError(err)
+	assert.Empty(issues)
+	assert.True(incomplete, "a citation beyond the newest 500 cannot imply a complete miss")
 	f.kata.Close()
 	_, _, err = service.Citing(t.Context(), kataevidence.SourceKeys(message)[0], 10)
 	require.ErrorIs(err, taskclient.ErrUnreachable)

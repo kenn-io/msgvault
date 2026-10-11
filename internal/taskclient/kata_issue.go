@@ -47,16 +47,18 @@ func (c *KataClient) FindActionTask(ctx context.Context, project, action string)
 }
 
 // FindMetadataTasks returns up to limit open or closed issues carrying the
-// metadata key in any project, oldest first. Zero lists all within the response limit.
+// metadata key in any project, newest first.
 func (c *KataClient) FindMetadataTasks(ctx context.Context, project, key string, limit int) ([]KataTask, error) {
-	return c.listIssues(ctx, project, url.Values{"meta": {key}}, limit)
+	return c.listIssues(ctx, project, url.Values{"meta": {key}, "sort": {""}}, limit)
 }
 
-// listIssues lists matching issues across projects, oldest first. A grant
+// listIssues lists matching issues across projects, oldest first by default. A grant
 // scoped to project cannot list the others, so a refusal there narrows the
 // search to project.
 func (c *KataClient) listIssues(ctx context.Context, project string, query url.Values, limit int) ([]KataTask, error) {
-	query.Set("sort", "oldest")
+	if !query.Has("sort") {
+		query.Set("sort", "oldest")
+	}
 	query.Set("limit", strconv.Itoa(limit))
 	tasks, err := c.listAllIssues(ctx, query.Encode())
 	if !errors.Is(err, ErrNotFound) && !errors.Is(err, ErrAuthenticationRequired) {

@@ -23,7 +23,7 @@ type KataIssueOperations interface {
 	Create(ctx context.Context, key string, input kataissues.CreateInput) (kataissues.Result, error)
 	Link(ctx context.Context, ref string, evidence []kataevidence.Reference) (taskclient.KataTask, error)
 	// Find lists issues citing a message, or one of its attachments when
-	// attachmentID is set, and whether more do.
+	// attachmentID is set, and whether the list may be incomplete.
 	Find(ctx context.Context, messageID, attachmentID int64) ([]taskclient.KataTask, bool, error)
 	// Context reads one page of the passages an issue cites.
 	Context(ctx context.Context, ref string, offset int) (kataissues.Context, error)
@@ -73,7 +73,7 @@ type KataIssueConflictResponse struct {
 
 type KataIssueListResponse struct {
 	Issues    []KataIssueReceipt `json:"issues"`
-	Truncated bool               `json:"truncated" doc:"More issues cite this source than were returned"`
+	Truncated bool               `json:"truncated" doc:"The list may omit issues that cite this source: more matched than were returned, or some issues could not be checked"`
 }
 
 type KataIssueContextResponse struct {

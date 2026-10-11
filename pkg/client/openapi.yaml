@@ -6457,7 +6457,7 @@ components:
             $ref: "#/components/schemas/KataIssueReceipt"
           type: array
         truncated:
-          description: More issues cite this source than were returned
+          description: "The list may omit issues that cite this source: more matched than were returned, or some issues could not be checked"
           type: boolean
       required:
         - issues

@@ -125,6 +125,7 @@ and the `ContextPassage` schema with optional `before` and `after` text.
 
 Schema 3.12.0 adds `GET /api/v1/integrations/kata/issues`, which
 [finds the Kata issues that cite a source](usage/kata-issues.md#find-issues-that-already-cite-a-source).
+It checks the newest 500 evidence-bearing issues, or 20 if the listing exceeds 16 MiB. `truncated: true` means the list may be incomplete; check Kata before filing again.
 
 Schema 3.4.0 adds [Kata issues from archive evidence](usage/kata-issues.md).
 It also adds the `microsoft` CardDAV account provider, the

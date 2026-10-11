@@ -111,13 +111,13 @@ instead of filing again. A file is identified by the message it arrived on, so
 `--message` alone also finds issues that quote its attachments, while
 `--attachment` narrows to one file. Calendar events are archived as messages:
 cite and find them by their message ID. The lookup shows up to 10 issues,
-oldest first, and says when more cite the source. HTTP clients call
+oldest first, and warns when the list may be incomplete. HTTP clients call
 `GET /api/v1/integrations/kata/issues?message_id=42&attachment_id=7`; MCP
 clients call `find_kata_issues`, which needs no write flag.
 
 The CLI writes result rows to stdout and the truncation notice to stderr.
 Use `--json` for a response with `issues` and `truncated` fields.
-Lookup includes issues filed before lookup was added. If the issue listing exceeds 16 MiB, lookup returns an error instead of incomplete results.
+Lookup checks the newest 500 issues with saved evidence, including closed issues and issues filed before lookup was added. If that listing exceeds 16 MiB, it retries with the newest 20. Unreadable evidence is skipped. When more issues exist, evidence was skipped, or more matches were found than returned, `truncated` is true. The list may be incomplete; check Kata before filing again.
 
 ## Read an issue's evidence back
 

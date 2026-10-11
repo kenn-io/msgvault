@@ -1,7 +1,9 @@
 package taskclient
 
 import (
+	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -46,7 +48,16 @@ func TestFindActionTask(t *testing.T) {
 			if name != "static token" {
 				handler = native.Handler()
 			}
-			server := httptest.NewTLSServer(handler)
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/v1/issues" {
+					if strings.HasPrefix(r.URL.Query().Get("meta"), ActionMetadataKey+"=") {
+						assert.Equal("oldest", r.URL.Query().Get("sort"))
+					} else {
+						assert.Empty(r.URL.Query().Get("sort"), "Kata's default order is newest first")
+					}
+				}
+				handler.ServeHTTP(w, r)
+			}))
 			t.Cleanup(server.Close)
 			client, err := ConnectKata(t.Context(), IntegrationConfig{Enabled: true, Endpoint: server.URL, APIKey: katatest.Token, HTTPClient: server.Client(), DefaultProject: katatest.Project})
 			require.NoError(err)
@@ -75,9 +86,9 @@ func TestFindActionTask(t *testing.T) {
 			citing, err = client.FindMetadataTasks(t.Context(), "example", "msgvault.evidence", 0)
 			require.NoError(err)
 			require.Len(citing, 2)
-			assert.Equal(created.UID, citing[0].UID)
-			assert.Equal(second.UID, citing[1].UID)
-			citing, err = client.FindMetadataTasks(t.Context(), "example", "msgvault.source.b", 2)
+			assert.Equal(second.UID, citing[0].UID)
+			assert.Equal(created.UID, citing[1].UID)
+			citing, err = client.FindMetadataTasks(t.Context(), "example", "msgvault.missing", 2)
 			require.NoError(err)
 			assert.Empty(citing)
 		})
