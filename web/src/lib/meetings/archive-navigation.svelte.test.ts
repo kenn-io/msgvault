@@ -44,12 +44,14 @@ describe('archive meeting navigation', () => {
     [{ id: 43, message_type: 'email', conversation_id: 0 }, 'This archived meeting is no longer available.'],
     [{ message_type: 'email', conversation_id: 0 }, 'The selected archive item is no longer a meeting transcript.'],
     [{ conversation_id: 0 }, 'The archived meeting conversation changed or is unavailable. Reload meeting activity.'],
+    [new Response(null, { status: 500 }), 'The archived meeting could not be loaded.'],
   ])('checks message ID, then meeting type, then conversation %j', async (overrides, message) => {
-    const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ ...detail, ...overrides }));
+    const fetchFn = vi.fn<typeof fetch>(async () => overrides instanceof Response ? overrides : Response.json({ ...detail, ...overrides }));
     const navigation = new ArchiveMeetingNavigation(createAPIClient(fetchFn));
     expect(await navigation.load(42, 8)).toBeUndefined();
     expect(navigation.error).toBe(message);
     expect(navigation.detail).toBeUndefined();
+    expect(navigation.loading).toBe(false);
     expect(fetchFn).toHaveBeenCalledTimes(1);
   });
   it('reports eligibility request failures without presenting them as an unavailable meeting', async () => {
@@ -58,13 +60,6 @@ describe('archive meeting navigation', () => {
     const navigation = new ArchiveMeetingNavigation(client);
     expect(await navigation.load(42)).toBeUndefined();
     expect(navigation.error).toBe('Meeting eligibility could not be checked.');
-  });
-  it('preserves meeting load errors', async () => {
-    const navigation = new ArchiveMeetingNavigation(createAPIClient(async () => new Response(null, { status: 500 })));
-    expect(await navigation.load(42)).toBeUndefined();
-    expect(navigation.error).toBe('The archived meeting could not be loaded.');
-    expect(navigation.detail).toBeUndefined();
-    expect(navigation.loading).toBe(false);
   });
   it('aborts and discards stale eligibility results when the next meeting owns navigation', async () => {
     let resolveFirst!: (response: Response) => void;

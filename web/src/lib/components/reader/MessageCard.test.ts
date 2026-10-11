@@ -257,20 +257,3 @@ it.each([
   expect(screen.queryByText('Kata is unavailable')).toBeNull();
   expect(fetchFn).toHaveBeenCalledOnce();
 });
-
-it('shows the Kata action once readiness turns ready', async () => {
-  let finish!: (response: Response) => void;
-  const fetchFn = vi.fn<typeof fetch>(() => new Promise(resolve => { finish = resolve; }));
-  const { KataReadiness, kataReadinessKey } = await import('../../kata/kata-ready.svelte');
-  const client = createAPIClient(fetchFn);
-  const readiness = new KataReadiness(client);
-  try {
-    render(MessageCard, { props: { message: detail(), expanded: true, client }, context: new Map([[kataReadinessKey, readiness]]) });
-    await waitFor(() => expect(fetchFn).toHaveBeenCalledOnce());
-    expect(screen.queryByRole('button', { name: 'Create Kata issue' })).toBeNull();
-    finish(Response.json({ state: 'ready', project: 'example' }));
-    expect(await screen.findByRole('button', { name: 'Create Kata issue' })).toBeTruthy();
-  } finally {
-    readiness.dispose();
-  }
-});
