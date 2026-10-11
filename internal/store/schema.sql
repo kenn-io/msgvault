@@ -57,7 +57,7 @@ CREATE TABLE IF NOT EXISTS mcp_event_subscriptions (
     scope_kind TEXT NOT NULL,
     scope_id INTEGER NOT NULL,
     source_id INTEGER NOT NULL,
-    conversation_reference_id INTEGER NOT NULL DEFAULT 0,
+    scope_reference_id INTEGER NOT NULL DEFAULT 0,
     callback_url TEXT NOT NULL,
     secret_enc BLOB NOT NULL,
     previous_secret_enc BLOB,
@@ -4663,4 +4663,11 @@ CREATE TABLE IF NOT EXISTS mcp_event_message_refs (
 CREATE TABLE IF NOT EXISTS mcp_event_conversation_refs (
     reference_id INTEGER PRIMARY KEY AUTOINCREMENT,
     conversation_id INTEGER NOT NULL UNIQUE REFERENCES conversations(id) ON DELETE CASCADE
+);
+
+-- Calendar scopes bind the same way to their source: SQLite can reuse a
+-- removed source's ID, but never its reference.
+CREATE TABLE IF NOT EXISTS mcp_event_source_refs (
+    reference_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_id INTEGER NOT NULL UNIQUE REFERENCES sources(id) ON DELETE CASCADE
 );

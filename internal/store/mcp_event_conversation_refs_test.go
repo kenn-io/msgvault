@@ -138,7 +138,7 @@ func TestMCPEventsConversationReferenceRejectsPhysicalReuse(t *testing.T) {
 	replacement := *active
 	replacement.ID = "sub_replacement"
 	require.NoError(f.Store.BindMCPSubscriptionScope(t.Context(), &replacement))
-	assert.NotEqual(active.ConversationReferenceID, replacement.ConversationReferenceID)
+	assert.NotEqual(active.ScopeReferenceID, replacement.ScopeReferenceID)
 	require.Error(f.Store.CheckMCPSubscription(t.Context(), active.ID, active.Generation, now))
 	require.Error(f.Store.CheckMCPDeliveryOccurrence(t.Context(), active.ID, active.Generation, pending.Event.Seq, now))
 	_, err = f.Store.GetMCPEvent(t.Context(), active.ID, pending.Event.Seq, active.Principal, now)

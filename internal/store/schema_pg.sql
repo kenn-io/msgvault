@@ -58,7 +58,7 @@ CREATE TABLE IF NOT EXISTS mcp_event_subscriptions (
     scope_kind TEXT NOT NULL,
     scope_id BIGINT NOT NULL,
     source_id BIGINT NOT NULL,
-    conversation_reference_id BIGINT NOT NULL DEFAULT 0,
+    scope_reference_id BIGINT NOT NULL DEFAULT 0,
     callback_url TEXT NOT NULL,
     secret_enc BYTEA NOT NULL,
     previous_secret_enc BYTEA,
@@ -4230,4 +4230,10 @@ CREATE TABLE IF NOT EXISTS mcp_event_message_refs (
 CREATE TABLE IF NOT EXISTS mcp_event_conversation_refs (
     reference_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     conversation_id BIGINT NOT NULL UNIQUE REFERENCES conversations(id) ON DELETE CASCADE
+);
+
+-- Calendar scopes bind the same way to their source lifetime.
+CREATE TABLE IF NOT EXISTS mcp_event_source_refs (
+    reference_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    source_id BIGINT NOT NULL UNIQUE REFERENCES sources(id) ON DELETE CASCADE
 );

@@ -13,7 +13,7 @@ type MCPSubscription struct {
 	ID, Principal, Name                                   string
 	Arguments                                             []byte
 	ScopeKind                                             string
-	ScopeID, SourceID, ConversationReferenceID            int64
+	ScopeID, SourceID, ScopeReferenceID                   int64
 	CallbackURL                                           string
 	SecretEnc, PreviousSecretEnc                          []byte
 	PreviousSecretUntil                                   time.Time
@@ -50,20 +50,24 @@ type MCPDelivery struct {
 	More bool
 }
 
-const mcpSubscriptionColumns = `id,principal_id,name,arguments,scope_kind,scope_id,source_id,conversation_reference_id,callback_url,secret_enc,previous_secret_enc,previous_secret_until,secret_revision,verified_revision,verified_at,generation,state,stop_reason,expires_at,cursor_epoch,cursor_seq,pending_seq,pending_envelope,pending_generation,attempt_count,next_attempt_at,from_me_window_start,from_me_window_count,loop_guard_skips,dead_letter_count,last_outcome,created_at,updated_at`
+const mcpSubscriptionColumns = `id,principal_id,name,arguments,scope_kind,scope_id,source_id,scope_reference_id,callback_url,secret_enc,previous_secret_enc,previous_secret_until,secret_revision,verified_revision,verified_at,generation,state,stop_reason,expires_at,cursor_epoch,cursor_seq,pending_seq,pending_envelope,pending_generation,attempt_count,next_attempt_at,from_me_window_start,from_me_window_count,loop_guard_skips,dead_letter_count,last_outcome,created_at,updated_at`
 const mcpEventColumns = `seq,epoch,family,kind,scope_kind,scope_id,item_key,COALESCE(message_id,0),COALESCE(message_reference_seq,0),conversation_id,source_id,COALESCE(attachment_id,0),from_me,occurred_at,recorded_at,data`
 const mcpSubscriptionActive = "active"
 
 const mcpSubscriptionScopeExistsSQL = `(
- (sub.scope_kind='source' AND EXISTS (SELECT 1 FROM sources s WHERE s.id=sub.scope_id AND s.id=sub.source_id))
+ (sub.scope_kind='source' AND EXISTS (
+  SELECT 1 FROM mcp_event_source_refs ref
+  WHERE ref.source_id=sub.scope_id AND ref.reference_id=sub.scope_reference_id AND ref.source_id=sub.source_id
+ ))
  OR (sub.scope_kind='conversation' AND EXISTS (
   SELECT 1 FROM mcp_event_conversation_refs ref JOIN conversations c ON c.id=ref.conversation_id
-  WHERE ref.conversation_id=sub.scope_id AND ref.reference_id=sub.conversation_reference_id AND c.source_id=sub.source_id
+  WHERE ref.conversation_id=sub.scope_id AND ref.reference_id=sub.scope_reference_id AND c.source_id=sub.source_id
  ))
 )`
 
-// BindMCPSubscriptionScope captures the conversation's lifetime before the
-// outbound challenge. Activation must still name that same lifetime.
+// BindMCPSubscriptionScope captures the conversation's or calendar source's
+// lifetime before the outbound challenge. Activation must still name that same
+// lifetime, so a scope removed and replaced under a reused ID is rejected.
 func (s *Store) BindMCPSubscriptionScope(ctx context.Context, sub *MCPSubscription) error {
 	return s.withMCPEventTx(ctx, func(tx *sql.Tx, _ MCPEventClock) error {
 		var arguments struct {
@@ -83,24 +87,23 @@ func (s *Store) BindMCPSubscriptionScope(ctx context.Context, sub *MCPSubscripti
 			return err
 		}
 		sub.SourceID = sourceID
-		sub.ConversationReferenceID = 0
+		table, column := "mcp_event_source_refs", "source_id"
 		if sub.ScopeKind == "conversation" {
-			if _, err := tx.ExecContext(ctx, s.Rebind(`INSERT INTO mcp_event_conversation_refs (conversation_id) VALUES (?) ON CONFLICT (conversation_id) DO NOTHING`), sub.ScopeID); err != nil {
-				return err
-			}
-			return tx.QueryRowContext(ctx, s.Rebind(`SELECT reference_id FROM mcp_event_conversation_refs WHERE conversation_id=?`), sub.ScopeID).Scan(&sub.ConversationReferenceID)
+			table, column = "mcp_event_conversation_refs", "conversation_id"
 		}
-		return nil
+		if _, err := tx.ExecContext(ctx, s.Rebind(`INSERT INTO `+table+` (`+column+`) VALUES (?) ON CONFLICT (`+column+`) DO NOTHING`), sub.ScopeID); err != nil {
+			return err
+		}
+		return tx.QueryRowContext(ctx, s.Rebind(`SELECT reference_id FROM `+table+` WHERE `+column+`=?`), sub.ScopeID).Scan(&sub.ScopeReferenceID)
 	})
 }
 
 func (s *Store) mcpSubscriptionScopeExists(ctx context.Context, db SQLReader, sub *MCPSubscription) (bool, error) {
 	var exists bool
-	query := `SELECT EXISTS (SELECT 1 FROM sources WHERE id=? AND id=?)`
-	args := []any{sub.ScopeID, sub.SourceID}
+	query := `SELECT EXISTS (SELECT 1 FROM mcp_event_source_refs WHERE source_id=? AND source_id=? AND reference_id=?)`
+	args := []any{sub.ScopeID, sub.SourceID, sub.ScopeReferenceID}
 	if sub.ScopeKind == "conversation" {
 		query = `SELECT EXISTS (SELECT 1 FROM mcp_event_conversation_refs ref JOIN conversations c ON c.id=ref.conversation_id WHERE ref.conversation_id=? AND c.source_id=? AND ref.reference_id=?)`
-		args = append(args, sub.ConversationReferenceID)
 	}
 	err := db.QueryRowContext(ctx, s.Rebind(query), args...).Scan(&exists)
 	return exists, err
@@ -112,7 +115,7 @@ func scanMCPSubscription(row scanner) (*MCPSubscription, error) {
 	var previousUntil, due, window sql.NullString
 	var verified, expires, created, updated string
 	var pendingSeq, pendingGen sql.NullInt64
-	err := row.Scan(&sub.ID, &sub.Principal, &sub.Name, &arguments, &sub.ScopeKind, &sub.ScopeID, &sub.SourceID, &sub.ConversationReferenceID, &sub.CallbackURL, &sub.SecretEnc, &sub.PreviousSecretEnc, &previousUntil, &sub.SecretRevision, &sub.VerifiedRevision, &verified, &sub.Generation, &sub.State, &sub.StopReason, &expires, &sub.CursorEpoch, &sub.CursorSeq, &pendingSeq, &sub.PendingEnvelope, &pendingGen, &sub.AttemptCount, &due, &window, &sub.FromMeWindowCount, &sub.LoopGuardSkips, &sub.DeadLetterCount, &sub.LastOutcome, &created, &updated)
+	err := row.Scan(&sub.ID, &sub.Principal, &sub.Name, &arguments, &sub.ScopeKind, &sub.ScopeID, &sub.SourceID, &sub.ScopeReferenceID, &sub.CallbackURL, &sub.SecretEnc, &sub.PreviousSecretEnc, &previousUntil, &sub.SecretRevision, &sub.VerifiedRevision, &verified, &sub.Generation, &sub.State, &sub.StopReason, &expires, &sub.CursorEpoch, &sub.CursorSeq, &pendingSeq, &sub.PendingEnvelope, &pendingGen, &sub.AttemptCount, &due, &window, &sub.FromMeWindowCount, &sub.LoopGuardSkips, &sub.DeadLetterCount, &sub.LastOutcome, &created, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil //nolint:nilnil // A missing subscription is a valid absence state for lookup and first activation.
 	}
@@ -164,7 +167,7 @@ func (s *Store) saveMCPSubscription(ctx context.Context, tx *sql.Tx, sub *MCPSub
 	if sub.PendingSeq > 0 {
 		pending = sub.PendingEnvelope
 	}
-	_, err := tx.ExecContext(ctx, s.Rebind(`INSERT INTO mcp_event_subscriptions (`+mcpSubscriptionColumns+`) VALUES (`+strings.TrimSuffix(strings.Repeat("?,", len(columns)), ",")+`) ON CONFLICT (id) DO UPDATE SET `+strings.Join(updates, ",")), sub.ID, sub.Principal, sub.Name, string(sub.Arguments), sub.ScopeKind, sub.ScopeID, sub.SourceID, sub.ConversationReferenceID, sub.CallbackURL, sub.SecretEnc, sub.PreviousSecretEnc, mcpOptionalTime(sub.PreviousSecretUntil), sub.SecretRevision, sub.VerifiedRevision, mcpTime(sub.VerifiedAt), sub.Generation, sub.State, sub.StopReason, mcpTime(sub.ExpiresAt), sub.CursorEpoch, sub.CursorSeq, mcpOptionalID(sub.PendingSeq), pending, mcpOptionalID(sub.PendingGeneration), sub.AttemptCount, mcpOptionalTime(sub.NextAttemptAt), mcpOptionalTime(sub.FromMeWindowStart), sub.FromMeWindowCount, sub.LoopGuardSkips, sub.DeadLetterCount, sub.LastOutcome, mcpTime(sub.CreatedAt), mcpTime(sub.UpdatedAt))
+	_, err := tx.ExecContext(ctx, s.Rebind(`INSERT INTO mcp_event_subscriptions (`+mcpSubscriptionColumns+`) VALUES (`+strings.TrimSuffix(strings.Repeat("?,", len(columns)), ",")+`) ON CONFLICT (id) DO UPDATE SET `+strings.Join(updates, ",")), sub.ID, sub.Principal, sub.Name, string(sub.Arguments), sub.ScopeKind, sub.ScopeID, sub.SourceID, sub.ScopeReferenceID, sub.CallbackURL, sub.SecretEnc, sub.PreviousSecretEnc, mcpOptionalTime(sub.PreviousSecretUntil), sub.SecretRevision, sub.VerifiedRevision, mcpTime(sub.VerifiedAt), sub.Generation, sub.State, sub.StopReason, mcpTime(sub.ExpiresAt), sub.CursorEpoch, sub.CursorSeq, mcpOptionalID(sub.PendingSeq), pending, mcpOptionalID(sub.PendingGeneration), sub.AttemptCount, mcpOptionalTime(sub.NextAttemptAt), mcpOptionalTime(sub.FromMeWindowStart), sub.FromMeWindowCount, sub.LoopGuardSkips, sub.DeadLetterCount, sub.LastOutcome, mcpTime(sub.CreatedAt), mcpTime(sub.UpdatedAt))
 	return err
 }
 
@@ -278,7 +281,7 @@ func (s *Store) ActivateMCPSubscription(ctx context.Context, a MCPActivation) (*
 			if old.Principal != input.Principal || old.StopReason == "principal_revoked" || old.StopReason == "scope_removed" {
 				return mcpStoreError("subscription_unavailable")
 			}
-			if old.ConversationReferenceID != input.ConversationReferenceID {
+			if old.ScopeReferenceID != input.ScopeReferenceID {
 				return mcpStoreError("unknown_scope")
 			}
 			if old.Generation != a.ExpectedGeneration || old.State != a.ExpectedState || old.SecretRevision != a.ExpectedSecretRevision {
