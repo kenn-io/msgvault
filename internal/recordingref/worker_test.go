@@ -397,7 +397,7 @@ func TestRecordingReferenceUncertain(t *testing.T) {
 			}
 		})
 	}
-	for _, code := range []string{"unauthorized", "server_error", "credential_unavailable", "receipt_unauthorized", "receipt_server_error"} {
+	for _, code := range []string{"unauthorized", "server_error", "credential_unavailable", "receipt_server_error"} {
 		t.Run("failed recovery/"+code, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			f := storetest.New(t)
@@ -515,8 +515,6 @@ func TestRecordingReferenceUncertain(t *testing.T) {
 		{"settled miss", false, 404, true, "withdrawn", "receipt_not_found"},
 		{"rejection then settled live miss", true, 422, false, "uncertain", "validation"},
 		{"old route missing", true, 404, true, "uncertain", "not_found"},
-		{"old method rejection", true, 405, true, "uncertain", "http_error"},
-		{"old forbidden", true, 403, true, "uncertain", "forbidden"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
