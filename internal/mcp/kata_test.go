@@ -65,11 +65,11 @@ func TestKataWriteToolsRequireOptIn(t *testing.T) {
 		}
 	}
 	assert.NotContains(toolsByName(t, rawListTools(t, ServeOptions{Engine: &querytest.MockEngine{}}, true)), "prepare_kata_evidence")
-	// A 3.3.0 daemon serves every Kata tool but the lookup.
+	// Older daemons serve the evidence tools without lookup or context.
 	older := toolsByName(t, rawListTools(t, ServeOptions{Engine: &querytest.MockEngine{}, Kata: &fakeKataBackend{}}, false))
 	assert.Contains(older, "prepare_kata_evidence")
 	assert.NotContains(older, "find_kata_issues")
-	// A 3.4.0 daemon adds the lookup only.
+	// Lookup can be enabled independently of context.
 	lookup := toolsByName(t, rawListTools(t, ServeOptions{Engine: &querytest.MockEngine{}, Kata: &fakeKataBackend{}, KataLookup: true}, false))
 	assert.Contains(lookup, "find_kata_issues")
 	assert.NotContains(lookup, "get_kata_issue_context")

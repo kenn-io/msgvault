@@ -711,87 +711,106 @@ func TestWorkerRunClassifiesProviderSuffixWhenPrefixBackendPutFails(t *testing.T
 	assertions.Equal("provider_transient", ledger.failures[1].errorCode)
 }
 
-func TestWorkerRunRenewsClaimsDuringLongProviderCall(t *testing.T) {
-	ledger := newFakeDocumentVectorLedger(workerClaim("extract-a", 1, "first", "token-a"))
-	ledger.renewed = make(chan struct{})
-	provider := &fakeDocumentVectorProvider{call: func(ctx context.Context, _ []embed.DocumentInput) ([][][]float32, error) {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-ledger.renewed:
-			return [][][]float32{{{1, 2, 3}}}, nil
-		case <-time.After(100 * time.Millisecond):
-			return nil, errors.New("heartbeat did not renew claim")
+func TestWorkerRunRenewsClaimsDuringLongStage(t *testing.T) {
+	for _, slowBackend := range []bool{false, true} {
+		name := "provider call"
+		if slowBackend {
+			name = "backend put"
 		}
-	}}
-	worker := newFakeWorker(ledger, provider, &fakeDocumentVectorBackend{})
-	worker.deps.LeaseDuration = 100 * time.Millisecond
-	worker.deps.HeartbeatInterval = 10 * time.Millisecond
+		t.Run(name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				ledger := newFakeDocumentVectorLedger(workerClaim("extract-a", 1, "first", "token-a"))
+				ledger.renewed = make(chan struct{})
+				waitForRenewal := func(ctx context.Context) error {
+					select {
+					case <-ctx.Done():
+						return ctx.Err()
+					case <-ledger.renewed:
+						return nil
+					case <-time.After(100 * time.Millisecond):
+						return fmt.Errorf("heartbeat did not renew during %s", name)
+					}
+				}
+				provider := &fakeDocumentVectorProvider{vectors: [][][]float32{{{1, 2, 3}}}}
+				backend := &fakeDocumentVectorBackend{}
+				if slowBackend {
+					backend.put = func(ctx context.Context, _ []Embedding) error { return waitForRenewal(ctx) }
+				} else {
+					provider = &fakeDocumentVectorProvider{call: func(ctx context.Context, _ []embed.DocumentInput) ([][][]float32, error) {
+						if err := waitForRenewal(ctx); err != nil {
+							return nil, err
+						}
+						return [][][]float32{{{1, 2, 3}}}, nil
+					}}
+				}
+				worker := newFakeWorker(ledger, provider, backend)
+				worker.deps.LeaseDuration = 100 * time.Millisecond
+				worker.deps.HeartbeatInterval = 10 * time.Millisecond
 
-	result, err := worker.Run(t.Context(), 1, 1)
-	require.NoError(t, err)
-	assert.Equal(t, 1, result.Published)
-	assert.Positive(t, ledger.renewCallCount())
+				result, err := worker.Run(t.Context(), 1, 1)
+				require.NoError(t, err)
+				assert.Equal(t, 1, result.Published)
+				assert.Positive(t, ledger.renewCallCount())
+			})
+		})
+	}
 }
 
-func TestWorkerRunRenewsClaimsDuringLongBackendPut(t *testing.T) {
-	ledger := newFakeDocumentVectorLedger(workerClaim("extract-a", 1, "first", "token-a"))
-	ledger.renewed = make(chan struct{})
-	backend := &fakeDocumentVectorBackend{put: func(ctx context.Context, _ []Embedding) error {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-ledger.renewed:
-			return nil
-		case <-time.After(100 * time.Millisecond):
-			return errors.New("heartbeat did not renew during backend put")
+func TestWorkerRunCancelsStageWhenHeartbeatLosesClaim(t *testing.T) {
+	for _, slowBackend := range []bool{false, true} {
+		name := "provider call"
+		if slowBackend {
+			name = "backend put"
 		}
-	}}
-	worker := newFakeWorker(ledger, &fakeDocumentVectorProvider{
-		vectors: [][][]float32{{{1, 2, 3}}},
-	}, backend)
-	worker.deps.LeaseDuration = 100 * time.Millisecond
-	worker.deps.HeartbeatInterval = 10 * time.Millisecond
+		t.Run(name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				assertions := assert.New(t)
+				requirements := require.New(t)
+				ledger := newFakeDocumentVectorLedger(workerClaim("extract-a", 1, "first", "token-a"))
+				ledger.renewErr = store.ErrDocumentVectorClaimLost
+				canceled := make(chan struct{})
+				waitForCancel := func(ctx context.Context) error {
+					select {
+					case <-ctx.Done():
+						close(canceled)
+						return ctx.Err()
+					case <-time.After(100 * time.Millisecond):
+						return fmt.Errorf("heartbeat did not cancel %s", name)
+					}
+				}
+				provider := &fakeDocumentVectorProvider{vectors: [][][]float32{{{1, 2, 3}}}}
+				backend := &fakeDocumentVectorBackend{}
+				if slowBackend {
+					backend.put = func(ctx context.Context, _ []Embedding) error { return waitForCancel(ctx) }
+				} else {
+					provider = &fakeDocumentVectorProvider{call: func(ctx context.Context, _ []embed.DocumentInput) ([][][]float32, error) {
+						return nil, waitForCancel(ctx)
+					}}
+				}
+				worker := newFakeWorker(ledger, provider, backend)
+				worker.deps.LeaseDuration = 100 * time.Millisecond
+				worker.deps.HeartbeatInterval = 10 * time.Millisecond
 
-	result, err := worker.Run(t.Context(), 1, 1)
-	require.NoError(t, err)
-	assert.Equal(t, 1, result.Published)
-	assert.Positive(t, ledger.renewCallCount())
-}
-
-func TestWorkerRunCancelsBackendPutWhenHeartbeatLosesClaim(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	ledger := newFakeDocumentVectorLedger(workerClaim("extract-a", 1, "first", "token-a"))
-	ledger.renewErr = store.ErrDocumentVectorClaimLost
-	backendCanceled := make(chan struct{})
-	backend := &fakeDocumentVectorBackend{put: func(ctx context.Context, _ []Embedding) error {
-		select {
-		case <-ctx.Done():
-			close(backendCanceled)
-			return ctx.Err()
-		case <-time.After(100 * time.Millisecond):
-			return errors.New("heartbeat did not cancel backend put")
-		}
-	}}
-	worker := newFakeWorker(ledger, &fakeDocumentVectorProvider{
-		vectors: [][][]float32{{{1, 2, 3}}},
-	}, backend)
-	worker.deps.LeaseDuration = 100 * time.Millisecond
-	worker.deps.HeartbeatInterval = 10 * time.Millisecond
-
-	result, err := worker.Run(t.Context(), 1, 1)
-	requirements.ErrorIs(err, store.ErrDocumentVectorClaimLost)
-	assertions.Zero(result.Published)
-	assertions.Zero(result.Retry)
-	assertions.Zero(result.Terminal)
-	assertions.Empty(ledger.committed)
-	assertions.Empty(ledger.failures)
-	assertions.Empty(backend.deletes)
-	select {
-	case <-backendCanceled:
-	default:
-		requirements.Fail("backend context was not canceled after renewal loss")
+				result, err := worker.Run(t.Context(), 1, 1)
+				requirements.ErrorIs(err, store.ErrDocumentVectorClaimLost)
+				if slowBackend {
+					assertions.Zero(result.Published)
+					assertions.Zero(result.Retry)
+					assertions.Zero(result.Terminal)
+				} else {
+					assertions.Zero(result.Embedded)
+					assertions.Empty(backend.puts)
+				}
+				assertions.Empty(backend.deletes)
+				assertions.Empty(ledger.committed)
+				assertions.Empty(ledger.failures)
+				select {
+				case <-canceled:
+				default:
+					requirements.Fail("stage context was not canceled after renewal loss")
+				}
+			})
+		})
 	}
 }
 
@@ -841,116 +860,74 @@ func TestWorkerRunStopsRenewingClaimBeforeCommitAfterSynchronousRenewal(t *testi
 	})
 }
 
-func TestWorkerRunCancelsCommitWhenAnotherClaimLosesHeartbeat(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	ledger := newFakeDocumentVectorLedger(
-		workerClaim("extract-a", 1, "first", "token-a"),
-		workerClaim("extract-b", 2, "second", "token-b"),
-	)
-	ledger.renewErrByToken["token-b"] = store.ErrDocumentVectorClaimLost
-	commitCanceled := make(chan struct{})
-	ledger.commit = func(ctx context.Context, token string) error {
-		if token != "token-a" {
-			return nil
-		}
-		select {
-		case <-ctx.Done():
-			close(commitCanceled)
-			return ctx.Err()
-		case <-time.After(100 * time.Millisecond):
-			return errors.New("heartbeat loss did not cancel commit")
-		}
-	}
-	worker := newFakeWorker(ledger, &fakeDocumentVectorProvider{vectors: [][][]float32{
-		{{1, 2, 3}}, {{4, 5, 6}},
-	}}, &fakeDocumentVectorBackend{})
-	worker.deps.LeaseDuration = 100 * time.Millisecond
-	worker.deps.HeartbeatInterval = 10 * time.Millisecond
-
-	result, err := worker.Run(t.Context(), 1, 2)
-	requirements.ErrorIs(err, store.ErrDocumentVectorClaimLost)
-	assertions.Zero(result.Published)
-	assertions.Empty(ledger.committed)
-	assertions.Empty(ledger.failures)
-	select {
-	case <-commitCanceled:
-	default:
-		requirements.Fail("commit context was not canceled after another renewal loss")
-	}
-}
-
-func TestWorkerRunCancelsFailureTransitionWhenAnotherClaimLosesHeartbeat(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	ledger := newFakeDocumentVectorLedger(
-		workerClaim("extract-a", 1, "first", "token-a"),
-		workerClaim("extract-b", 2, "second", "token-b"),
-	)
-	ledger.renewErrByToken["token-b"] = store.ErrDocumentVectorClaimLost
-	failureCanceled := make(chan struct{})
-	ledger.fail = func(ctx context.Context, token string) error {
-		if token != "token-a" {
-			return nil
-		}
-		select {
-		case <-ctx.Done():
-			close(failureCanceled)
-			return ctx.Err()
-		case <-time.After(100 * time.Millisecond):
-			return errors.New("heartbeat loss did not cancel failure transition")
-		}
-	}
+func TestWorkerRunCancelsLedgerCallWhenAnotherClaimLosesHeartbeat(t *testing.T) {
 	providerErr := errors.New("provider unavailable")
-	worker := newFakeWorker(ledger, &fakeDocumentVectorProvider{err: providerErr}, &fakeDocumentVectorBackend{})
-	worker.deps.LeaseDuration = 100 * time.Millisecond
-	worker.deps.HeartbeatInterval = 10 * time.Millisecond
-
-	result, err := worker.Run(t.Context(), 1, 2)
-	requirements.ErrorIs(err, store.ErrDocumentVectorClaimLost)
-	requirements.ErrorIs(err, providerErr)
-	assertions.Zero(result.Retry)
-	assertions.Zero(result.Terminal)
-	assertions.Empty(ledger.committed)
-	assertions.Empty(ledger.failures)
-	select {
-	case <-failureCanceled:
-	default:
-		requirements.Fail("failure context was not canceled after another renewal loss")
+	tests := []struct {
+		name     string
+		provider *fakeDocumentVectorProvider
+		block    func(ledger *fakeDocumentVectorLedger, hook func(context.Context, string) error)
+		wantErr  error
+	}{
+		{
+			name:     "commit",
+			provider: &fakeDocumentVectorProvider{vectors: [][][]float32{{{1, 2, 3}}, {{4, 5, 6}}}},
+			block: func(ledger *fakeDocumentVectorLedger, hook func(context.Context, string) error) {
+				ledger.commit = hook
+			},
+		},
+		{
+			name:     "failure transition",
+			provider: &fakeDocumentVectorProvider{err: providerErr},
+			block: func(ledger *fakeDocumentVectorLedger, hook func(context.Context, string) error) {
+				ledger.fail = hook
+			},
+			wantErr: providerErr,
+		},
 	}
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				assertions := assert.New(t)
+				requirements := require.New(t)
+				ledger := newFakeDocumentVectorLedger(
+					workerClaim("extract-a", 1, "first", "token-a"),
+					workerClaim("extract-b", 2, "second", "token-b"),
+				)
+				ledger.renewErrByToken["token-b"] = store.ErrDocumentVectorClaimLost
+				canceled := make(chan struct{})
+				tt.block(ledger, func(ctx context.Context, token string) error {
+					if token != "token-a" {
+						return nil
+					}
+					select {
+					case <-ctx.Done():
+						close(canceled)
+						return ctx.Err()
+					case <-time.After(100 * time.Millisecond):
+						return errors.New("heartbeat loss did not cancel the ledger call")
+					}
+				})
+				worker := newFakeWorker(ledger, tt.provider, &fakeDocumentVectorBackend{})
+				worker.deps.LeaseDuration = 100 * time.Millisecond
+				worker.deps.HeartbeatInterval = 10 * time.Millisecond
 
-func TestWorkerRunCancelsPublicationWhenHeartbeatLosesClaim(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	ledger := newFakeDocumentVectorLedger(workerClaim("extract-a", 1, "first", "token-a"))
-	ledger.renewErr = store.ErrDocumentVectorClaimLost
-	providerCanceled := make(chan struct{})
-	provider := &fakeDocumentVectorProvider{call: func(ctx context.Context, _ []embed.DocumentInput) ([][][]float32, error) {
-		select {
-		case <-ctx.Done():
-			close(providerCanceled)
-			return nil, ctx.Err()
-		case <-time.After(100 * time.Millisecond):
-			return nil, errors.New("heartbeat did not cancel provider")
-		}
-	}}
-	backend := &fakeDocumentVectorBackend{}
-	worker := newFakeWorker(ledger, provider, backend)
-	worker.deps.LeaseDuration = 100 * time.Millisecond
-	worker.deps.HeartbeatInterval = 10 * time.Millisecond
-
-	result, err := worker.Run(t.Context(), 1, 1)
-	requirements.ErrorIs(err, store.ErrDocumentVectorClaimLost)
-	assertions.Zero(result.Embedded)
-	assertions.Empty(backend.puts)
-	assertions.Empty(backend.deletes)
-	assertions.Empty(ledger.committed)
-	assertions.Empty(ledger.failures)
-	select {
-	case <-providerCanceled:
-	default:
-		requirements.Fail("provider context was not canceled after renewal loss")
+				result, err := worker.Run(t.Context(), 1, 2)
+				requirements.ErrorIs(err, store.ErrDocumentVectorClaimLost)
+				if tt.wantErr != nil {
+					requirements.ErrorIs(err, tt.wantErr)
+				}
+				assertions.Zero(result.Published)
+				assertions.Zero(result.Retry)
+				assertions.Zero(result.Terminal)
+				assertions.Empty(ledger.committed)
+				assertions.Empty(ledger.failures)
+				select {
+				case <-canceled:
+				default:
+					requirements.Fail("ledger call context was not canceled after another renewal loss")
+				}
+			})
+		})
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 )
 
 const (
+	// Version is the durable reference format; later formats must preserve version 1 identities.
 	Version = 1
 	// MaxChars bounds every citation: the prepared window, a valid reference
 	// and the saved quotation. Longer references are rejected, never shortened.

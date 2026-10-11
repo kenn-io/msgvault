@@ -51,7 +51,7 @@ func TestSQLiteQuiescentProofsAreStoredInTheOrderTheyAreProved(t *testing.T) {
 					"a second prover stored its proof while the first was still " +
 						"proving; the two can then store out of order and the older " +
 						"proof wins")
-			case <-time.After(50 * time.Millisecond):
+			case <-time.After(50 * time.Millisecond): //nolint:kennlint // absence check: the first prover holds the second until it returns
 			}
 			return older, true, older, nil
 		})

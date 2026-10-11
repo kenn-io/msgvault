@@ -44,6 +44,10 @@ func TestMCPListDirectoryPeopleForwardsQueryAndReturnsRows(t *testing.T) {
 	backend := &directoryPeopleBackend{page: &store.DirectoryPeoplePage{
 		People: []store.DirectoryPersonSummary{{
 			ID: 7, DisplayName: new("Alice Example"), Revision: 4,
+			VCardUID: "person-7", CardDAVBindings: []store.CardDAVBinding{{
+				Connection: "personal", Book: "Personal", Href: "https://contacts.example.test/book/person.vcf",
+				RemoteUID: "urn:uuid:remote-7", MappingStatus: store.CardDAVMappingMapped,
+			}},
 			PrimaryChannel: "chat", ContactState: "active", LastContactAt: &after,
 			Categories: []string{"friend"}, Organizations: []string{"Example Org"},
 		}},
@@ -71,6 +75,13 @@ func TestMCPListDirectoryPeopleForwardsQueryAndReturnsRows(t *testing.T) {
 	require.True(ok)
 	assert.InDelta(7, row["id"], 0)
 	assert.Equal("Alice Example", row["display_name"])
+	assert.Equal("person-7", row["vcard_uid"])
+	bindings, ok := row["carddav_bindings"].([]any)
+	require.True(ok)
+	require.Len(bindings, 1)
+	binding, ok := bindings[0].(map[string]any)
+	require.True(ok)
+	assert.Equal("urn:uuid:remote-7", binding["remote_uid"])
 	assert.InDelta(4, row["revision"], 0)
 	assert.Equal("2026-08-20T12:30:00.123456789Z", row["last_contact_at"])
 	assert.Equal([]any{"friend"}, row["categories"])

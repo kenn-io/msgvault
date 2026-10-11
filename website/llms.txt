@@ -71,6 +71,7 @@ below, or replace a page's trailing slash with `.md`: `/docs/setup/` becomes
 
 - [CLI Reference](https://msgvault.io/docs/cli-reference.md): every command and flag
 - [Configuration](https://msgvault.io/docs/configuration.md): config.toml reference
+- [Go library](https://msgvault.io/docs/guides/embedding.md): archive lifecycle, synchronization, and message reads
 - [HTTP API](https://msgvault.io/docs/api-server.md)
 - [MCP Server](https://msgvault.io/docs/usage/chat.md): AI assistant integration
 - [Kata Issues](https://msgvault.io/docs/usage/kata-issues.md): file issues that quote archived messages and files

@@ -178,7 +178,7 @@ test("production imports expose archived actions, duration evidence, and exact c
     .fill("alex@example.com");
   await panel.getByRole("button", { name: "Apply action filters" }).click();
   await expect(
-    panel.getByText("1 matching action items", { exact: true }),
+    panel.getByText("1 matching", { exact: true }),
   ).toBeVisible();
   await expect(
     panel.getByText("Publish the Notion recap", { exact: true }),
@@ -367,7 +367,7 @@ test("rapid search scope changes leave only the final meeting evidence", async (
   await search.press("Enter");
   await assertMetrics(panel, 1, 0, 1, "0s", "Unavailable");
   await expect(
-    panel.getByText("0 matching action items", { exact: true }),
+    panel.getByText("0 matching", { exact: true }),
   ).toBeVisible();
   await expect(
     panel.getByText("Send the Circleback recap", { exact: true }),

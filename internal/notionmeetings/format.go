@@ -100,7 +100,7 @@ func (h *HydratedMeeting) ArchiveSnapshot(sourceID int64, identifier, accountEma
 	return meetingarchive.Snapshot{
 		SourceID: sourceID, AccountEmail: accountEmail,
 		SourceMessageID: h.Discovery.ID, SourceConversationID: h.Discovery.ID,
-		Title: title, StartedAt: startedAt.UTC(), Body: body, Snippet: meetingSnippet(body),
+		Title: title, StartedAt: startedAt.UTC(), Body: body, Snippet: meetingarchive.Snippet(body),
 		Metadata: metadata, Raw: raw, RawFormat: RawFormat,
 		Attendees: append([]meetingarchive.Person(nil), h.Attendees...),
 	}, nil
@@ -186,14 +186,6 @@ func lifecycleForStatus(status, transcript string) string {
 	default:
 		return "unknown"
 	}
-}
-
-func meetingSnippet(body string) string {
-	runes := []rune(strings.TrimSpace(body))
-	if len(runes) > 200 {
-		runes = runes[:200]
-	}
-	return string(runes)
 }
 
 // userAnchor is the stable identity of a Notion user. The provider verifies

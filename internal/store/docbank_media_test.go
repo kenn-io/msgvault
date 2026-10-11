@@ -829,3 +829,296 @@ func TestBeeperMediaSchemaReopen(t *testing.T) {
 	assert.Equal(1, occurrences)
 	assert.Equal(1, deliveries)
 }
+
+func TestMessageMediaOccurrences(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newBeeperMediaFixture(t)
+	ctx := t.Context()
+	list := func(messageID int64) []store.MessageMediaOccurrence {
+		t.Helper()
+		occurrences, err := f.Store.ListMessageMediaOccurrences(ctx, "reader", messageID)
+		require.NoError(err)
+		return occurrences
+	}
+	retentionState := func(audio beeperAudio) string {
+		t.Helper()
+		var state string
+		require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT retention_state FROM beeper_media_occurrences
+			WHERE destination_key = 'reader' AND occurrence_ref = ?`), "msgvault:"+audio.sourceMessageID).Scan(&state))
+		return state
+	}
+
+	retained := addBeeperAudio(t, f.Store, f.Source.ID, f.ConvID, "retained", strings.Repeat("1", 64))
+	retainAudio(t, f.Store, retained.mapping("reader", "r1", "key"), "occurrence-1")
+	occurrences := list(retained.messageID)
+	require.Len(occurrences, 1)
+	assert.Equal(store.MessageMediaOccurrence{
+		MessageID: retained.messageID, ConversationID: f.ConvID,
+		AttachmentID: retained.attachmentID, Filename: "voice.wav", Size: 44, AttachmentState: attachmentpolicy.StateStored,
+		OccurrenceRef: "msgvault:retained", Revision: "r1", RetentionState: store.BeeperMediaRetentionRetained,
+		VaultUID: "vault", DocbankSourceID: "source-1111", SourceVersionID: "version",
+		ContentVersionID: "content", DeliveryProfile: "supplied-transcript", DeliveryPhase: "pending-artifact", BytesArchived: true,
+	}, occurrences[0])
+	_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE beeper_media_deliveries SET phase = 'done',
+		operation_state = 'succeeded', supplied_input_id = 'input-key' WHERE destination_key = 'reader' AND processing_key = 'key'`))
+	require.NoError(err)
+	occurrences = list(retained.messageID)
+	require.Len(occurrences, 1)
+	assert.Equal("done", occurrences[0].DeliveryPhase)
+	assert.Equal("succeeded", occurrences[0].DeliveryOperationState)
+	assert.Equal("input-key", occurrences[0].SuppliedInputID)
+	awaiting := []store.MessageMediaOccurrence{{
+		AttachmentID: retained.attachmentID, Filename: "voice.wav", Size: 44, BytesArchived: true, AttachmentState: attachmentpolicy.StateStored,
+	}}
+	other, err := f.Store.ListMessageMediaOccurrences(ctx, "other-destination", retained.messageID)
+	require.NoError(err)
+	assert.Equal(awaiting, other, "another destination has not discovered it")
+
+	pending := addBeeperAudio(t, f.Store, f.Source.ID, f.ConvID, "pending", strings.Repeat("2", 64))
+	require.NoError(f.Store.ReconcileBeeperMediaMapping(ctx, pending.mapping("reader", "r1", "")))
+	occurrences = list(pending.messageID)
+	require.Len(occurrences, 1)
+	assert.Equal(store.BeeperMediaRetentionPending, occurrences[0].RetentionState)
+	assert.Empty(occurrences[0].DocbankSourceID)
+
+	revoked := addBeeperAudio(t, f.Store, f.Source.ID, f.ConvID, "revoked", strings.Repeat("3", 64))
+	revokedMapping := revoked.mapping("reader", "r1", "")
+	require.NoError(f.Store.ReconcileBeeperMediaMapping(ctx, revokedMapping))
+	prepared, err := f.Store.PrepareBeeperMediaOperation(ctx, retainOperation(revokedMapping))
+	require.NoError(err)
+	applied, err := f.Store.FinishBeeperMediaOperation(ctx, prepared,
+		store.BeeperMediaResult{ErrorCode: "no_live_occurrence", Revoked: true})
+	require.NoError(err)
+	require.True(applied)
+	listed := list(revoked.messageID)
+	require.Len(listed, 1)
+	assert.True(listed[0].BytesArchived, "live audio with only a revoked mapping stays captured")
+	assert.Empty(listed[0].OccurrenceRef)
+
+	// Reading never revokes: the worker owns that transition.
+	deleted := addBeeperAudio(t, f.Store, f.Source.ID, f.ConvID, "deleted", strings.Repeat("4", 64))
+	retainAudio(t, f.Store, deleted.mapping("reader", "r1", ""), "occurrence-4")
+	require.NoError(f.Store.MarkMessageDeleted(f.Source.ID, deleted.sourceMessageID))
+	assert.Empty(list(deleted.messageID))
+	assert.Equal(store.BeeperMediaRetentionRetained, retentionState(deleted))
+
+	hidden := addBeeperAudio(t, f.Store, f.Source.ID, f.ConvID, "hidden", strings.Repeat("5", 64))
+	retainAudio(t, f.Store, hidden.mapping("reader", "r1", ""), "occurrence-5")
+	require.Len(list(hidden.messageID), 1)
+	_, err = f.Store.MergeDuplicates(retained.messageID, []int64{hidden.messageID}, "batch-hide")
+	require.NoError(err)
+	assert.Empty(list(hidden.messageID))
+
+	replaced := addBeeperAudio(t, f.Store, f.Source.ID, f.ConvID, "replaced", strings.Repeat("6", 64))
+	retainAudio(t, f.Store, replaced.mapping("reader", "r1", ""), "occurrence-6")
+	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE attachments SET content_hash = ? WHERE id = ?`),
+		strings.Repeat("7", 64), replaced.attachmentID)
+	require.NoError(err)
+	listed = list(replaced.messageID)
+	require.Len(listed, 1)
+	assert.True(listed[0].BytesArchived, "changed bytes remain captured without using the old occurrence")
+	assert.Empty(listed[0].OccurrenceRef)
+
+	// Discovery blocks an untyped oversized file as unsupported_media; only audio among
+	// those is a recording. Audio blocked after retention began stays, whatever the code.
+	gmail, err := f.Store.GetOrCreateSource("gmail", "other@example.com")
+	require.NoError(err)
+	gmailConversation, err := f.Store.EnsureConversation(gmail.ID, "gmail-thread", "Thread")
+	require.NoError(err)
+	for _, file := range []struct {
+		name, mime, mediaType, code string
+		discovered, hidden          bool
+	}{
+		{"clip.mp4", "video/mp4", "video", "unsupported_media", true, true},
+		{"memo.mp3", "application/octet-stream", "", "unsupported_media", true, false},
+		{"attachment.bin", "application/octet-stream", "", "credential_unavailable", false, false},
+		{"header.bin", "application/octet-stream", "", "unsupported_media", false, false},
+	} {
+		video := addBeeperAudio(t, f.Store, gmail.ID, gmailConversation, "gmail-"+file.name, digestString(file.name))
+		_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE attachments SET filename = ?, mime_type = ?, media_type = ?
+			WHERE id = ?`), file.name, file.mime, file.mediaType, video.attachmentID)
+		require.NoError(err)
+		mapping := video.mapping("reader", "r1", "")
+		mapping.SourceType, mapping.SourceIdentifier, mapping.SourceConversationID = "gmail", "other@example.com", "gmail-thread"
+		if file.discovered {
+			mapping.RetentionState, mapping.ErrorCode = store.BeeperMediaRetentionBlocked, file.code
+			require.NoError(f.Store.ReconcileBeeperMediaMapping(ctx, mapping))
+		} else {
+			require.NoError(f.Store.ReconcileBeeperMediaMapping(ctx, mapping))
+			prepared, err := f.Store.PrepareBeeperMediaOperation(ctx, retainOperation(mapping))
+			require.NoError(err)
+			applied, err := f.Store.FinishBeeperMediaOperation(ctx, prepared, store.BeeperMediaResult{ErrorCode: file.code})
+			require.NoError(err)
+			require.True(applied)
+		}
+		listed = list(video.messageID)
+		for _, destination := range []string{"", "other-destination"} {
+			local, err := f.Store.ListMessageMediaOccurrences(ctx, destination, video.messageID)
+			require.NoError(err)
+			if file.hidden {
+				assert.Empty(local, file.name)
+			} else {
+				assert.Equal([]store.MessageMediaOccurrence{{AttachmentID: video.attachmentID,
+					Filename: file.name, Size: 44, BytesArchived: true, AttachmentState: attachmentpolicy.StateStored}}, local, file.name)
+			}
+		}
+		if file.hidden {
+			assert.Empty(listed, file.name)
+			continue
+		}
+		require.Len(listed, 1, file.name)
+		assert.Equal(store.BeeperMediaRetentionBlocked, listed[0].RetentionState, file.name)
+		assert.Equal(file.code, listed[0].ErrorCode, file.name)
+		if file.name == "attachment.bin" {
+			mapping.DestinationKey = "duplicate-destination"
+			require.NoError(f.Store.ReconcileBeeperMediaMapping(ctx, mapping))
+			local, err := f.Store.ListMessageMediaOccurrences(ctx, "", video.messageID)
+			require.NoError(err)
+			require.Len(local, 1, "multiple mappings classify one attachment")
+			_, err = f.Store.MergeDuplicates(retained.messageID, []int64{video.messageID}, "hide-generic")
+			require.NoError(err)
+			local, err = f.Store.ListMessageMediaOccurrences(ctx, "", video.messageID)
+			require.NoError(err)
+			assert.Empty(local)
+		}
+		if file.name == "header.bin" {
+			_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE attachments SET content_hash = ? WHERE id = ?`),
+				digestString("replacement"), video.attachmentID)
+			require.NoError(err)
+			local, err := f.Store.ListMessageMediaOccurrences(ctx, "", video.messageID)
+			require.NoError(err)
+			assert.Empty(local, "the old header classification does not follow replaced bytes")
+			_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE attachments SET content_hash = ? WHERE id = ?`),
+				video.hash, video.attachmentID)
+			require.NoError(err)
+			require.NoError(f.Store.MarkMessageDeleted(gmail.ID, video.sourceMessageID))
+			local, err = f.Store.ListMessageMediaOccurrences(ctx, "", video.messageID)
+			require.NoError(err)
+			assert.Empty(local)
+		}
+	}
+
+	// Archived audio remains visible even when the worker cannot type its format.
+	for _, file := range []struct {
+		name, mime string
+	}{
+		{"call.wav", "application/octet-stream"},
+		{"call", "audio/mpeg"},
+		{"note.ogg", "application/octet-stream"},
+	} {
+		audio := addBeeperAudio(t, f.Store, gmail.ID, gmailConversation, "gmail-stored-"+file.name,
+			digestString("stored-"+file.name))
+		_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE attachments SET filename = ?, mime_type = ?, media_type = ''
+			WHERE id = ?`), file.name, file.mime, audio.attachmentID)
+		require.NoError(err)
+		listed = list(audio.messageID)
+		require.Len(listed, 1, file.name)
+		assert.True(listed[0].BytesArchived, file.name)
+		if file.name == "note.ogg" {
+			_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE attachments SET attachment_role = 'unknown' WHERE id = ?`), audio.attachmentID)
+			require.NoError(err)
+			listed = list(audio.messageID)
+			require.Len(listed, 1)
+			assert.True(listed[0].BytesArchived)
+			_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE sources SET identifier = '' WHERE id = ?`), gmail.ID)
+			require.NoError(err)
+			listed = list(audio.messageID)
+			require.Len(listed, 1)
+			assert.True(listed[0].BytesArchived)
+		}
+	}
+
+	// Older releases stored duplicate Slack and Discord bytes as hashless rows
+	// pointing at a trusted CAS path. Those bytes are archived; a provider
+	// placeholder path is not.
+	slack, err := f.Store.GetOrCreateSource("slack", "T01:U01")
+	require.NoError(err)
+	slackConversation, err := f.Store.EnsureConversation(slack.ID, "slack-channel", "Channel")
+	require.NoError(err)
+	for _, alias := range []struct {
+		sourceAttachmentID, state, placeholder string
+		archived                               bool
+	}{
+		{"slack:F01", "", "", true},
+		{"slack:F02", "stored", "", true},
+		{"discord:A03", "", "", true},
+		{"slack:F04", "", "slack:pending:F04", false},
+		{"slack:F05", "", "none", false},
+	} {
+		audio := addBeeperAudio(t, f.Store, slack.ID, slackConversation, "alias-"+alias.sourceAttachmentID,
+			digestString(alias.sourceAttachmentID))
+		storagePath := alias.placeholder
+		switch storagePath {
+		case "":
+			storagePath = audio.hash[:2] + "/" + audio.hash
+		case "none":
+			storagePath = ""
+		}
+		_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE attachments
+			SET content_hash = '', storage_path = ?, attachment_state = NULLIF(?, ''), source_attachment_id = ?,
+			    filename = 'voice.ogg', mime_type = 'audio/ogg'
+			WHERE id = ?`), storagePath, alias.state, alias.sourceAttachmentID, audio.attachmentID)
+		require.NoError(err)
+		listed = list(audio.messageID)
+		require.Len(listed, 1, alias.sourceAttachmentID)
+		assert.Equal(alias.archived, listed[0].BytesArchived, alias.sourceAttachmentID)
+		assert.Empty(listed[0].OccurrenceRef, alias.sourceAttachmentID)
+	}
+
+	legacyMissing := addBeeperAudio(t, f.Store, f.Source.ID, f.ConvID, "legacy-missing-reader", strings.Repeat("c", 64))
+	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE attachments SET attachment_state = NULL, storage_path = '' WHERE id = ?`), legacyMissing.attachmentID)
+	require.NoError(err)
+	listed = list(legacyMissing.messageID)
+	require.Len(listed, 1)
+	assert.Equal(legacyMissing.attachmentID, listed[0].AttachmentID)
+	assert.Empty(listed[0].OccurrenceRef)
+
+	// Audio that never reached the archive is listed without Docbank identity; other media is not.
+	for _, write := range []store.AttachmentWrite{
+		{Filename: "late.ogg", MIMEType: "audio/ogg", Size: 12, SourceAttachmentID: "beeper:late",
+			SourcePartKey: "beeper:late", MediaType: "voice_note", State: attachmentpolicy.StateSkipped,
+			SkipReason: attachmentpolicy.SkipSizeCap, Role: store.AttachmentRoleStandalone,
+			RoleSource: store.AttachmentRoleSourceImporterSemantics},
+		{Filename: "photo.jpg", MIMEType: "image/jpeg", Size: 30, SourceAttachmentID: "beeper:photo",
+			SourcePartKey: "beeper:photo", MediaType: "image", State: attachmentpolicy.StateSkipped,
+			SkipReason: attachmentpolicy.SkipSizeCap, Role: store.AttachmentRoleStandalone,
+			RoleSource: store.AttachmentRoleSourceImporterSemantics},
+		// Slack leaves media_type empty on files it never downloaded.
+		{Filename: "clip.mp3", MIMEType: "audio/mpeg", Size: 20, SourceAttachmentID: "slack:clip",
+			SourcePartKey: "slack:clip", State: attachmentpolicy.StateFailed,
+			SkipReason: attachmentpolicy.SkipFetchFailure, Role: store.AttachmentRoleStandalone,
+			RoleSource: store.AttachmentRoleSourceImporterSemantics},
+		// Importers can leave voice notes with a generic type and only a name.
+		{Filename: "note.OGG", MIMEType: "application/octet-stream", Size: 9, SourceAttachmentID: "beeper:note-ogg",
+			SourcePartKey: "beeper:note-ogg", State: attachmentpolicy.StateFailed,
+			SkipReason: attachmentpolicy.SkipFetchFailure, Role: store.AttachmentRoleStandalone,
+			RoleSource: store.AttachmentRoleSourceImporterSemantics},
+		{Filename: "memo.m4a", Size: 8, SourceAttachmentID: "beeper:memo-m4a",
+			SourcePartKey: "beeper:memo-m4a", State: attachmentpolicy.StateFailed,
+			SkipReason: attachmentpolicy.SkipFetchFailure, Role: store.AttachmentRoleStandalone,
+			RoleSource: store.AttachmentRoleSourceImporterSemantics},
+	} {
+		require.NoError(f.Store.UpsertAttachmentRecord(ctx, retained.messageID, write))
+	}
+	occurrences = list(retained.messageID)
+	require.Len(occurrences, 5)
+	assert.Equal("msgvault:retained", occurrences[0].OccurrenceRef)
+	assert.Equal(int64(12), occurrences[1].Size)
+	assert.Equal(attachmentpolicy.StateSkipped, occurrences[1].AttachmentState)
+	assert.False(occurrences[1].BytesArchived)
+	assert.Empty(occurrences[1].RetentionState)
+	assert.Empty(occurrences[1].DocbankSourceID)
+	for i, filename := range []string{"late.ogg", "clip.mp3", "note.OGG", "memo.m4a"} {
+		assert.Equal(filename, occurrences[i+1].Filename)
+		assert.Empty(occurrences[i+1].OccurrenceRef, filename)
+	}
+
+	local, err := f.Store.ListMessageMediaOccurrences(ctx, "", retained.messageID)
+	require.NoError(err)
+	require.Len(local, 5)
+	assert.True(local[0].BytesArchived)
+	assert.Empty(local[0].OccurrenceRef)
+	_, err = f.Store.ListMessageMediaOccurrences(ctx, "reader", 0)
+	require.Error(err)
+}

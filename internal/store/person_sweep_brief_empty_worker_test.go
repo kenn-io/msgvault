@@ -19,9 +19,7 @@ func TestPersonSweepWorkerForcedBriefWithoutArchiveHistory(t *testing.T) {
 	require.NoError(err)
 	_, err = st.EnsurePersonInferenceProfile(t.Context(), profile)
 	require.NoError(err)
-	_, err = st.DB().ExecContext(t.Context(), st.Rebind(
-		`INSERT INTO person_inference_consents (profile_fingerprint, granted_by)
-		 VALUES (?, 'test-owner')`), profile.Fingerprint)
+	_, _, err = st.GrantPersonInferenceConsent(t.Context(), profile.Fingerprint, "test-owner")
 	require.NoError(err)
 	_, err = st.SetPersonBriefEnrollmentContext(t.Context(), personID, true, "test-owner", true)
 	require.NoError(err)

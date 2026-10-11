@@ -9,6 +9,7 @@
   import type { APIClient } from '../../api/client';
   import type { CardDAVAccountRequest as GeneratedCardDAVAccountRequest } from '../../api/generated/models';
   import { authorizeGoogleContacts } from '../../settings/google-authorization';
+  import { shellQuote } from '../../settings/shell-quote';
   import type { CardDAVAccountValues } from '../../carddav/account-settings';
   import CronField from './CronField.svelte';
   type CardDAVAccountRequest = GeneratedCardDAVAccountRequest;
@@ -30,8 +31,10 @@
   let persistedProvider = $state(initialValues.provider);
   let persistedOAuthApp = $state(initialValues.oauthApp);
   const googleURL = 'https://www.googleapis.com/.well-known/carddav';
+  const graphURL = 'https://graph.microsoft.com/v1.0';
   const google = $derived(provider === 'google');
-  function shellQuote(value: string): string { return "'" + value.replaceAll("'", "'\\''") + "'"; }
+  const microsoft = $derived(provider === 'microsoft');
+  const oauth = $derived(google || microsoft);
   function selectProvider(value: string) {
     provider = value;
     password = '';
@@ -39,7 +42,9 @@
   }
   let baseURL = $state(initialValues.baseURL);
   let username = $state(initialValues.username);
-  const authorizationCommand = $derived(`msgvault carddav authorize-google ${shellQuote(username || 'you@example.com')}${oauthApp ? ` --oauth-app ${shellQuote(oauthApp)}` : ''}`);
+  function authorizationCommand(shell: 'posix' | 'cmd'): string {
+    return `msgvault carddav authorize-${provider} ${shellQuote(username || 'you@example.com', shell)}${google && oauthApp ? ` --oauth-app ${shellQuote(oauthApp, shell)}` : ''}`;
+  }
   let password = $state('');
   let persistedBaseURL = $state(initialValues.baseURL);
   let persistedUsername = $state(initialValues.username);
@@ -98,6 +103,7 @@
       schedule,
     };
     if (google) { body.provider = 'google'; body.oauth_app = oauthApp; body.base_url = googleURL; }
+    else if (microsoft) { body.provider = 'microsoft'; body.base_url = graphURL; }
     else if (password !== '') body.password = password;
     return body;
   }
@@ -113,10 +119,10 @@
     return provider === persistedProvider && oauthApp === persistedOAuthApp && !enabled && persistedBaseURL !== '' && baseURL === persistedBaseURL && username === persistedUsername;
   }
   function passwordRequiredForSave(): boolean {
-    return !google && !canReusePersistedPassword() && !canDisableWithoutPassword();
+    return !oauth && !canReusePersistedPassword() && !canDisableWithoutPassword();
   }
   function validatePassword(allowCredentialFreeDisable: boolean): boolean {
-    if (google || canReusePersistedPassword() || password !== '' || (allowCredentialFreeDisable && canDisableWithoutPassword()))
+    if (oauth || canReusePersistedPassword() || password !== '' || (allowCredentialFreeDisable && canDisableWithoutPassword()))
       return true;
     status = '';
     error = 'Password is required for a new or changed CardDAV account.';
@@ -226,6 +232,14 @@
   }
 </script>
 
+{#snippet terminalCommands()}
+  <p>POSIX shell</p>
+  <code class="authorization-command">{authorizationCommand('posix')}</code>
+  <p>Command Prompt</p>
+  <p>Start Command Prompt with <code>cmd /d /v:off</code>, then paste:</p>
+  <code class="authorization-command">{authorizationCommand('cmd')}</code>
+{/snippet}
+
 <SettingsSection title="CardDAV account" description="Address-book server this archive syncs contacts with.">
   {#if error}<p class="error" role="alert">{error}</p>{/if}
   {#if status}<p class="status" role="status">{status}</p>{/if}
@@ -242,17 +256,17 @@
   >
     <label>
       Provider
-      <SelectDropdown title="CardDAV provider" value={provider} options={[{ value: '', label: 'Other CardDAV server' }, { value: 'google', label: 'Google Contacts' }]} onchange={selectProvider} disabled={activeAction !== undefined} />
+      <SelectDropdown title="CardDAV provider" value={provider} options={[{ value: '', label: 'Other CardDAV server' }, { value: 'google', label: 'Google Contacts' }, { value: 'microsoft', label: 'Microsoft 365 or Outlook.com' }]} onchange={selectProvider} disabled={activeAction !== undefined} />
     </label>
     <div class="fields">
-      {#if !google}
+      {#if !oauth}
       <div class="field">
         <label class="field__label" for={`${uid}-url`}>Base URL</label>
         <TextInput id={`${uid}-url`} type="url" bind:value={baseURL} disabled={activeAction !== undefined} required block />
       </div>
       {/if}
       <div class="field">
-        <label class="field__label" for={`${uid}-username`}>{google ? 'Google account email' : 'Username'}</label>
+        <label class="field__label" for={`${uid}-username`}>{google ? 'Google account email' : microsoft ? 'Microsoft account email' : 'Username'}</label>
         <TextInput
           id={`${uid}-username`}
           autocomplete="username"
@@ -274,9 +288,13 @@
       <p>Register <code>{window.location.origin}/</code> as an authorized redirect URI in your Google OAuth app. Keep existing permissions checked when granting contacts access.</p>
       <p>Your contacts account and OAuth app can differ from your mail accounts. A matching Google authorization is reused; otherwise, CardDAV stores separate credentials.</p>
       <details><summary>Authorize from the terminal instead</summary>
-        <code class="authorization-command">{authorizationCommand}</code>
+        {@render terminalCommands()}
         <p>For a remote daemon, copy the authorized token to that host before testing. <a href="https://msgvault.io/docs/usage/people-carddav/#google-contacts" target="_blank" rel="noreferrer">Google Contacts setup</a></p>
       </details>
+    {:else if microsoft}
+      <p>Sign in from the terminal before you save.</p>
+      {@render terminalCommands()}
+      <p>Your Microsoft app registration needs the delegated <code>Contacts.ReadWrite</code> permission. <a href="https://msgvault.io/docs/usage/people-carddav/#microsoft-contacts" target="_blank" rel="noreferrer">Microsoft contacts setup</a></p>
     {:else}
       <div class="field">
         <label class="field__label" for={`${uid}-password`}>Password</label>

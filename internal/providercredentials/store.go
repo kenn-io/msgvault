@@ -4,8 +4,12 @@
 package providercredentials
 
 import (
+	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
@@ -20,6 +24,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 
 	"go.kenn.io/kit/atomicfile"
 )
@@ -28,10 +33,10 @@ const (
 	Filename                                 = "provider-credentials.json" // #nosec G101 -- filename, not a credential.
 	VectorEmbeddingsID                       = "vector.embeddings"
 	VectorMultimodalID                       = "vector.multimodal"
-	PeopleSweepID                            = "people.sweep"
 	PersonEnrichmentSuppressionID            = "people.enrichment/suppression"
 	StoredSuppressionEnvironment             = "MSGVAULT_STORED_PERSON_ENRICHMENT_SUPPRESSION_KEY"
 	personEnrichmentCredentialIDPrefix       = "people.enrichment/"
+	peopleProviderCredentialIDPrefix         = "people.provider/"
 	credentialStoreVersion                   = 1
 	maximumCredentialStoreBytes        int64 = 1 << 20
 )
@@ -41,6 +46,11 @@ var (
 	ErrUnavailable    = errors.New("provider credential store unavailable")
 	ErrOriginMismatch = errors.New("stored provider credential is bound to a different endpoint origin")
 	providerNameRE    = regexp.MustCompile(`^[A-Za-z0-9._:-]+$`)
+	revisionKey       struct {
+		once sync.Once
+		key  [32]byte
+		err  error
+	}
 )
 
 type Source string
@@ -88,9 +98,25 @@ func PersonEnrichmentID(name string) string {
 	return personEnrichmentCredentialIDPrefix + name
 }
 
+// PeopleProviderID names a people provider key. ValidateID rejects it so the
+// generic credential route cannot bypass the people key routes.
+func PeopleProviderID(name string) string {
+	return peopleProviderCredentialIDPrefix + name
+}
+
+func validateRecordID(id string) error {
+	if name, ok := strings.CutPrefix(id, peopleProviderCredentialIDPrefix); ok {
+		if name == "" || !providerNameRE.MatchString(name) {
+			return errors.New("invalid people provider credential ID")
+		}
+		return nil
+	}
+	return ValidateID(id)
+}
+
 func ValidateID(id string) error {
 	switch id {
-	case VectorEmbeddingsID, VectorMultimodalID, PeopleSweepID:
+	case VectorEmbeddingsID, VectorMultimodalID:
 		return nil
 	}
 	if !strings.HasPrefix(id, personEnrichmentCredentialIDPrefix) {
@@ -198,7 +224,7 @@ func validateStore(saved storeFile) error {
 	}
 	for id, credential := range saved.Credentials {
 		if id != PersonEnrichmentSuppressionID {
-			if err := ValidateID(id); err != nil {
+			if err := validateRecordID(id); err != nil {
 				return errors.New("credential store contains an invalid credential ID")
 			}
 			origin, err := EndpointOrigin(credential.Origin)
@@ -232,7 +258,7 @@ func (s Snapshot) Resolve(
 	if s.loadErr != nil {
 		return "", State{}, s.loadErr
 	}
-	if err := ValidateID(id); err != nil {
+	if err := validateRecordID(id); err != nil {
 		return "", State{}, err
 	}
 	if stored, ok := s.credentials[id]; ok {
@@ -248,6 +274,28 @@ func (s Snapshot) Resolve(
 		}
 	}
 	return "", State{Configured: false, Source: SourceNone}, nil
+}
+
+// Revision returns an opaque keyed token for one credential's exact state,
+// absent included. It cannot serve as an offline verifier for the secret.
+func (s Snapshot) Revision(id string) (string, error) {
+	if s.loadErr != nil {
+		return "", s.loadErr
+	}
+	revisionKey.once.Do(func() {
+		_, revisionKey.err = rand.Read(revisionKey.key[:])
+	})
+	if revisionKey.err != nil {
+		return "", revisionKey.err
+	}
+	mac := hmac.New(sha256.New, revisionKey.key[:])
+	_, _ = mac.Write([]byte("msgvault provider credential revision v1\x00" + id + "\x00"))
+	if stored, ok := s.credentials[id]; ok {
+		_, _ = fmt.Fprintf(mac, "\x01%d\x00%s\x00%s", stored.Revision, stored.Origin, stored.Value)
+	} else {
+		_, _ = mac.Write([]byte{0})
+	}
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil)), nil
 }
 
 // Stored reports whether the snapshot holds a credential for id, regardless
@@ -308,27 +356,92 @@ func Put(tokenDir, ifMatch, id, endpoint, value string) (Snapshot, error) {
 	if err != nil {
 		return Snapshot{}, err
 	}
-	return mutate(tokenDir, ifMatch, func(credentials map[string]record) {
-		revision := int64(1)
-		if current, ok := credentials[id]; ok {
-			revision = current.Revision + 1
+	return mutate(tokenDir, etagMatches(ifMatch), putRecord(id, origin, value))
+}
+
+// PutIfRevision stores one credential only while its observed Revision is
+// current, so writes to other credentials never conflict with it.
+func PutIfRevision(tokenDir, expected, id, endpoint, value string) (Snapshot, error) {
+	if err := validateRecordID(id); err != nil {
+		return Snapshot{}, err
+	}
+	if value == "" {
+		return Snapshot{}, errors.New("provider credential cannot be empty")
+	}
+	origin, err := EndpointOrigin(endpoint)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	return mutate(tokenDir, revisionMatches(id, expected), putRecord(id, origin, value))
+}
+
+// DeleteIfRevision removes one credential only while its observed Revision
+// is current. retire removes any older copy under the same lock, before the
+// deletion is published, so an import cannot bring the credential back.
+func DeleteIfRevision(tokenDir, expected, id string, retire func() error) (Snapshot, error) {
+	if err := validateRecordID(id); err != nil {
+		return Snapshot{}, err
+	}
+	return locked(tokenDir, func(current Snapshot, permissions permissionBackend) (Snapshot, error) {
+		if err := revisionMatches(id, expected)(current); err != nil {
+			return Snapshot{}, err
 		}
-		credentials[id] = record{ID: id, Kind: recordKind(id), Value: value, Origin: origin, Revision: revision}
+		if err := retire(); err != nil {
+			return Snapshot{}, err
+		}
+		credentials := maps.Clone(current.credentials)
+		delete(credentials, id)
+		return persist(tokenDir, permissions, credentials)
 	})
+}
+
+func putRecord(id, origin, value string) func(map[string]record) {
+	return func(credentials map[string]record) {
+		credentials[id] = record{ID: id, Kind: recordKind(id), Value: value, Origin: origin, Revision: nextRevision(credentials, id)}
+	}
+}
+
+// nextRevision starts a new record at a random revision, so a key deleted and
+// saved again never repeats a Revision token or ETag observed before.
+func nextRevision(credentials map[string]record, id string) int64 {
+	if current, ok := credentials[id]; ok {
+		return current.Revision + 1
+	}
+	var random [8]byte
+	_, _ = rand.Read(random[:])
+	return int64(binary.BigEndian.Uint64(random[:])>>12) + 1
+}
+
+func etagMatches(ifMatch string) func(Snapshot) error {
+	return func(current Snapshot) error {
+		if ifMatch == "" || ifMatch != current.ETag {
+			return ErrConflict
+		}
+		return nil
+	}
+}
+
+func revisionMatches(id, expected string) func(Snapshot) error {
+	return func(current Snapshot) error {
+		actual, err := current.Revision(id)
+		if err != nil {
+			return err
+		}
+		if !hmac.Equal([]byte(actual), []byte(expected)) {
+			return ErrConflict
+		}
+		return nil
+	}
 }
 
 func PutSuppression(tokenDir, ifMatch, value string) (Snapshot, error) {
 	if value == "" {
 		return Snapshot{}, errors.New("suppression key cannot be empty")
 	}
-	return mutate(tokenDir, ifMatch, func(credentials map[string]record) {
-		revision := int64(1)
-		if current, ok := credentials[PersonEnrichmentSuppressionID]; ok {
-			revision = current.Revision + 1
-		}
+	return mutate(tokenDir, etagMatches(ifMatch), func(credentials map[string]record) {
 		credentials[PersonEnrichmentSuppressionID] = record{
 			ID: PersonEnrichmentSuppressionID, Kind: recordKind(PersonEnrichmentSuppressionID),
-			Value: value, Revision: revision,
+			Value: value, Revision: nextRevision(credentials, PersonEnrichmentSuppressionID),
 		}
 	})
 }
@@ -340,43 +453,78 @@ func DeleteSuppressionIfValue(tokenDir, value string) (Snapshot, error) {
 	if value == "" {
 		return Snapshot{}, errors.New("suppression key cannot be empty")
 	}
-	permissions := nativePermissions{}
-	if err := permissions.secureDirectory(tokenDir); err != nil {
-		return Snapshot{}, fmt.Errorf("secure credential directory: %w", err)
-	}
-	var result Snapshot
-	err := withStoreLock(tokenDir, func() error {
-		current, err := readWithPermissions(tokenDir, permissions)
-		if err != nil {
-			return err
-		}
+	return locked(tokenDir, func(current Snapshot, permissions permissionBackend) (Snapshot, error) {
 		stored, ok := current.credentials[PersonEnrichmentSuppressionID]
 		if !ok {
-			result = current
-			return nil
+			return current, nil
 		}
 		if subtle.ConstantTimeCompare([]byte(stored.Value), []byte(value)) != 1 {
-			return ErrConflict
+			return Snapshot{}, ErrConflict
 		}
-		credentials := make(map[string]record, len(current.credentials))
-		maps.Copy(credentials, current.credentials)
+		credentials := maps.Clone(current.credentials)
 		delete(credentials, PersonEnrichmentSuppressionID)
-		result, err = persist(tokenDir, permissions, credentials)
-		return err
+		return persist(tokenDir, permissions, credentials)
 	})
-	return result, err
 }
 
 func Delete(tokenDir, ifMatch, id string) (Snapshot, error) {
 	if err := ValidateID(id); err != nil {
 		return Snapshot{}, err
 	}
-	return mutate(tokenDir, ifMatch, func(credentials map[string]record) {
+	return mutate(tokenDir, etagMatches(ifMatch), func(credentials map[string]record) {
 		delete(credentials, id)
 	})
 }
 
-func mutate(tokenDir, ifMatch string, mutation func(map[string]record)) (Snapshot, error) {
+// ImportIfAbsent moves one credential from an older store under the store
+// lock, so a concurrent delete cannot see it come back. An ID already stored
+// skips load and only retires the old copy; otherwise retire runs once load
+// reports nothing to import or the import is published, and load and persist
+// errors leave the old copy in place.
+func ImportIfAbsent(tokenDir, id, endpoint string, load func() (string, bool, error), retire func() error) (Snapshot, error) {
+	if err := validateRecordID(id); err != nil {
+		return Snapshot{}, err
+	}
+	origin, err := EndpointOrigin(endpoint)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	return locked(tokenDir, func(current Snapshot, permissions permissionBackend) (Snapshot, error) {
+		if current.Stored(id) {
+			// The stored key wins; a stale or malformed old copy is only retired.
+			return current, retire()
+		}
+		value, ok, err := load()
+		if err != nil {
+			return Snapshot{}, err
+		}
+		if ok {
+			if value == "" {
+				return Snapshot{}, errors.New("provider credential cannot be empty")
+			}
+			credentials := maps.Clone(current.credentials)
+			putRecord(id, origin, value)(credentials)
+			if current, err = persist(tokenDir, permissions, credentials); err != nil {
+				return Snapshot{}, err
+			}
+		}
+		return current, retire()
+	})
+}
+
+func mutate(tokenDir string, precondition func(Snapshot) error, mutation func(map[string]record)) (Snapshot, error) {
+	return locked(tokenDir, func(current Snapshot, permissions permissionBackend) (Snapshot, error) {
+		if err := precondition(current); err != nil {
+			return Snapshot{}, err
+		}
+		credentials := maps.Clone(current.credentials)
+		mutation(credentials)
+		return persist(tokenDir, permissions, credentials)
+	})
+}
+
+// locked runs fn against a fresh read while holding the store lock.
+func locked(tokenDir string, fn func(Snapshot, permissionBackend) (Snapshot, error)) (Snapshot, error) {
 	permissions := nativePermissions{}
 	if err := permissions.secureDirectory(tokenDir); err != nil {
 		return Snapshot{}, fmt.Errorf("secure credential directory: %w", err)
@@ -387,17 +535,8 @@ func mutate(tokenDir, ifMatch string, mutation func(map[string]record)) (Snapsho
 		if err != nil {
 			return err
 		}
-		if ifMatch == "" || ifMatch != current.ETag {
-			return ErrConflict
-		}
-		credentials := make(map[string]record, len(current.credentials)+1)
-		maps.Copy(credentials, current.credentials)
-		mutation(credentials)
-		result, err = persist(tokenDir, permissions, credentials)
-		if err != nil {
-			return err
-		}
-		return nil
+		result, err = fn(current, permissions)
+		return err
 	})
 	return result, err
 }
@@ -409,6 +548,10 @@ func persist(tokenDir string, permissions permissionBackend, credentials map[str
 		return Snapshot{}, fmt.Errorf("encode credential store: %w", err)
 	}
 	encoded = append(encoded, '\n')
+	if int64(len(encoded)) > maximumCredentialStoreBytes {
+		// Publishing it would make every stored credential unreadable.
+		return Snapshot{}, errors.New("credential store would exceed its size limit")
+	}
 	published, err := publish(tokenDir, permissions, encoded)
 	if err != nil {
 		return Snapshot{}, err
@@ -459,11 +602,11 @@ func recordKind(id string) string {
 		return "vector_embeddings"
 	case VectorMultimodalID:
 		return "vector_multimodal"
-	case PeopleSweepID:
-		return "people_sweep"
 	case PersonEnrichmentSuppressionID:
 		return "person_enrichment_suppression"
-	default:
-		return "person_enrichment"
 	}
+	if strings.HasPrefix(id, peopleProviderCredentialIDPrefix) {
+		return "people_provider"
+	}
+	return "person_enrichment"
 }

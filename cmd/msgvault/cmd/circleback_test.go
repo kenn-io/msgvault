@@ -101,91 +101,6 @@ func TestCirclebackSummaryReportsMaintenanceItems(t *testing.T) {
 	assert.Contains(out.String(), "outside --limit")
 }
 
-func TestFinishCirclebackImportRefreshesOnlyAfterCommittedWrites(t *testing.T) {
-	tests := []struct {
-		name          string
-		cancelContext bool
-		sum           *circleback.ImportSummary
-		importErr     error
-		wantRefreshes int
-		wantError     string
-	}{
-		{
-			name:          "cancellation after write",
-			cancelContext: true,
-			sum:           &circleback.ImportSummary{MeetingsAdded: 1},
-			importErr:     context.Canceled,
-			wantRefreshes: 1,
-			wantError:     "canceled",
-		},
-		{
-			name:          "hard error after write",
-			sum:           &circleback.ImportSummary{MeetingsUpdated: 1},
-			importErr:     errors.New("provider failed"),
-			wantRefreshes: 1,
-			wantError:     "failed",
-		},
-		{
-			name:          "cancellation before write",
-			cancelContext: true,
-			sum:           &circleback.ImportSummary{},
-			importErr:     context.Canceled,
-			wantError:     "canceled",
-		},
-		{
-			name:      "hard error before write",
-			sum:       &circleback.ImportSummary{},
-			importErr: errors.New("provider failed"),
-			wantError: "failed",
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-			if tc.cancelContext {
-				cancel()
-			}
-			refreshes := 0
-
-			err := finishCirclebackImport(ctx, "alice@example.com", tc.sum, tc.importErr, func() error {
-				refreshes++
-				return nil
-			})
-
-			require.Error(err)
-			if tc.cancelContext {
-				require.ErrorIs(err, context.Canceled)
-			}
-			assert.Equal(tc.wantRefreshes, refreshes)
-			assert.Contains(err.Error(), "circleback sync alice@example.com")
-			assert.Contains(err.Error(), tc.wantError)
-		})
-	}
-}
-
-func TestFinishCirclebackImportRefreshesEarlierSourceWritesOnLaterFailure(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	total := &circleback.ImportSummary{}
-	accumulateCirclebackWrites(total, &circleback.ImportSummary{MeetingsAdded: 2})
-	accumulateCirclebackWrites(total, &circleback.ImportSummary{MeetingsUpdated: 1})
-	refreshes := 0
-
-	err := finishCirclebackImport(context.Background(), "second", total, errors.New("connect failed"), func() error {
-		refreshes++
-		return nil
-	})
-
-	require.ErrorContains(err, "circleback sync second failed")
-	assert.EqualValues(2, total.MeetingsAdded)
-	assert.EqualValues(1, total.MeetingsUpdated)
-	assert.Equal(1, refreshes, "a later source failure must refresh writes committed by earlier sources")
-}
-
 func TestFinishScheduledCirclebackImportUsesDetachedRefreshContext(t *testing.T) {
 	hardErr := errors.New("scheduled provider failed")
 	tests := []struct {
@@ -211,11 +126,11 @@ func TestFinishScheduledCirclebackImportUsesDetachedRefreshContext(t *testing.T)
 			refreshes := 0
 			var refreshContextErr error
 
-			err := finishScheduledCirclebackImport(
-				ctx,
-				"work",
-				&circleback.ImportSummary{MeetingsAdded: 1},
-				tc.importErr,
+			run := meetingSyncRun{
+				provider: "circleback", identifier: "work", writes: 1,
+				err: tc.importErr, canceled: circlebackCanceled(ctx, tc.importErr),
+			}
+			err := run.finishScheduled(ctx, "circleback:work",
 				func(refreshCtx context.Context, identifier string) error {
 					refreshes++
 					cancel()
@@ -240,13 +155,9 @@ func TestFinishScheduledCirclebackImportReturnsRefreshError(t *testing.T) {
 	importErr := errors.New("provider failed")
 	refreshErr := errors.New("refresh failed")
 
-	err := finishScheduledCirclebackImport(
-		context.Background(),
-		"work",
-		&circleback.ImportSummary{MeetingsAdded: 1},
-		importErr,
-		func(context.Context, string) error { return refreshErr },
-	)
+	run := meetingSyncRun{provider: "circleback", identifier: "work", writes: 1, err: importErr}
+	err := run.finishScheduled(context.Background(), "circleback:work",
+		func(context.Context, string) error { return refreshErr })
 
 	require.ErrorIs(t, err, importErr)
 	require.ErrorIs(t, err, refreshErr)

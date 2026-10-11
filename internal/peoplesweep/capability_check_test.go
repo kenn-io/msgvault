@@ -448,7 +448,7 @@ func TestCapabilityNegotiationStopsOnNonCapabilityFailuresAndInvalidOutput(t *te
 			ctx := t.Context()
 			if test.wait {
 				var cancel context.CancelFunc
-				ctx, cancel = context.WithTimeout(ctx, 25*time.Millisecond)
+				ctx, cancel = context.WithTimeout(ctx, 25*time.Millisecond) //nolint:kennlint // the deadline is the expected result; the handler blocks until release
 				defer cancel()
 			}
 

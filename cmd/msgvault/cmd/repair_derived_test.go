@@ -5,7 +5,10 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"go.kenn.io/msgvault/internal/rederive"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 func TestFormatRepairDerivedSummaryReportsMessageMetadata(t *testing.T) {
@@ -19,4 +22,22 @@ func TestFormatRepairDerivedSummaryReportsMessageMetadata(t *testing.T) {
 		"discord/example: 3 messages scanned, 2 message metadata rewritten, 0 bodies rewritten, 4 attachments tagged (1s)\n",
 		got,
 	)
+}
+
+func TestRepairDerivedTargetsRejectsUnknownSourceType(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	_, err := st.GetOrCreateSource("gmail", "inbox@example.net")
+	require.NoError(err)
+	saved := repairDerivedSourceTypes
+	t.Cleanup(func() { repairDerivedSourceTypes = saved })
+
+	repairDerivedSourceTypes = []string{"gmial"}
+	_, err = repairDerivedTargets(st)
+	require.ErrorContains(err, `no source of type "gmial" to repair`)
+
+	repairDerivedSourceTypes = []string{"gmail"}
+	targets, err := repairDerivedTargets(st)
+	require.NoError(err)
+	require.Len(targets, 1)
 }

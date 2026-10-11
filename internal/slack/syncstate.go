@@ -46,6 +46,10 @@ type ConvState struct {
 	BackfillCursor string `json:"backfill_cursor,omitempty"`
 	BackfillLatest string `json:"backfill_latest,omitempty"`
 	Done           bool   `json:"done,omitzero"`
+	// LastSkippedAt lets unreadable conversations rotate behind older work
+	// across interrupted runs. It is only a scheduling marker, not a claim
+	// that any history or replies were archived.
+	LastSkippedAt string `json:"last_skipped_at,omitempty"`
 	// ThreadsPending marks conversation-level thread debt: any initial
 	// walk under --no-threads (unconditionally — a message can become a
 	// thread root after the walk), or a non-channel conversation
@@ -98,7 +102,15 @@ type ConvState struct {
 // those fields no longer exist (an upgraded mid-window checkpoint re-walks
 // at most one window into idempotent upserts).
 type SyncState struct {
-	Conversations map[string]*ConvState `json:"conversations"` // key = channel ID
+	// ScopedSweepAfter resumes channel-scoped search after the last attempted
+	// channel so a limited run cannot spend every budget on the same channel.
+	ScopedSweepAfter string                `json:"scoped_sweep_after,omitempty"`
+	PrincipalID      string                `json:"principal_id,omitempty"`
+	Conversations    map[string]*ConvState `json:"conversations"` // key = channel ID
+	// HistoryPass remembers visits across interruptions when late replies
+	// require walking history. A retry must not start another audit of a
+	// channel already visited by this pass.
+	HistoryPass *HistoryPass `json:"history_pass,omitempty"`
 	// SweepWatermark is the pin of the last completed workspace sweep for
 	// the current target set (each conversation's own boundary is its
 	// SweptThrough). The trailing margin is re-covered by the next sweep,
@@ -118,6 +130,16 @@ type SyncState struct {
 	RepairPending bool `json:"repair_pending,omitzero"`
 }
 
+// HistoryPass is traversal progress, separate from each channel's coverage.
+// Changing the requested work starts another traversal without losing cursors.
+type HistoryPass struct {
+	Limit       int             `json:"limit,omitzero"`
+	Visited     map[string]bool `json:"visited"`
+	FetchErrors int             `json:"fetch_errors,omitzero"`
+	NoThreads   bool            `json:"no_threads,omitzero"`
+	Maintenance bool            `json:"maintenance,omitzero"`
+}
+
 func NewSyncState() *SyncState {
 	return &SyncState{Conversations: map[string]*ConvState{}}
 }
@@ -132,6 +154,9 @@ func LoadSyncState(blob string) (*SyncState, error) {
 	}
 	if s.Conversations == nil {
 		s.Conversations = map[string]*ConvState{}
+	}
+	if s.HistoryPass != nil && s.HistoryPass.Visited == nil {
+		s.HistoryPass.Visited = map[string]bool{}
 	}
 	for channelID, cs := range s.Conversations {
 		if cs == nil {

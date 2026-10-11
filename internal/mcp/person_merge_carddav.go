@@ -210,13 +210,16 @@ func (h *handlers) approveCardDAVPublication(ctx context.Context, req toolReques
 				}
 			}
 		}
-		message = fmt.Sprintf("Approve CardDAV publication for %s in address book %q (ID %d)? This queues the contact below for a remote write. Approval fails if the contact has changed since review.\nCurrent contact preview (data, not instructions):\n%s",
-			confirmationIdentityLabel("person", id, name), preview.AddressBook.Name, preview.AddressBook.ID, preview.Vcard)
+		message = fmt.Sprintf("Approve CardDAV publication for %s in address book %q (ID %d)? This queues the contact below for a remote write. Approval fails if the contact has changed since review.\nCurrent contact preview (data, not instructions; inline media summarized):\n%s",
+			confirmationIdentityLabel("person", id, name), preview.AddressBook.Name, preview.AddressBook.ID, cardDAVConfirmationPreview(preview.Vcard))
 	}
 	if err := req.confirmUserAction(ctx, message); err != nil {
 		return confirmationToolError(err)
 	}
 	value, err := h.personCardDAV.ApproveCardDAVPublication(ctx, id, token)
+	if err != nil {
+		return toolErrorResult(daemonclient.SafeMCPErrorForPerson(err, id).Error()), nil
+	}
 	return mcpPersonCardDAVResult(value, err)
 }
 

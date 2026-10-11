@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"time"
 
@@ -22,34 +23,13 @@ func (b *Backend) PublishScope(ctx context.Context, gen vector.GenerationID, sco
 	}})
 }
 
-type validatedPGScopePublication struct {
-	publication vector.DocumentScopePublication
-	docByMember map[int64]string
-	desiredKeys []string
-}
-
 func (b *Backend) PublishScopes(ctx context.Context, gen vector.GenerationID, scopes []vector.DocumentScopePublication) error {
 	if len(scopes) == 0 {
 		return nil
 	}
-	validated := make([]validatedPGScopePublication, len(scopes))
-	seenScopes := make(map[string]struct{}, len(scopes))
-	for i, publication := range scopes {
-		if publication.ScopeKey == "" {
-			return errors.New("publish scope: empty scope key")
-		}
-		if _, exists := seenScopes[publication.ScopeKey]; exists {
-			return fmt.Errorf("publish scopes: duplicate scope key %q", publication.ScopeKey)
-		}
-		seenScopes[publication.ScopeKey] = struct{}{}
-		docByMember, desiredKeys, err := validatePGDocumentPublication(
-			publication.SourceSequence, publication.Documents, publication.Chunks, publication.FenceOnly)
-		if err != nil {
-			return err
-		}
-		validated[i] = validatedPGScopePublication{
-			publication: publication, docByMember: docByMember, desiredKeys: desiredKeys,
-		}
+	validated, err := vector.ValidateScopePublications(scopes)
+	if err != nil {
+		return err
 	}
 	tx, err := b.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -71,7 +51,7 @@ func (b *Backend) PublishScopes(ctx context.Context, gen vector.GenerationID, sc
 		return fmt.Errorf("%w: %d", vector.ErrGenerationRetired, gen)
 	}
 	for _, scope := range validated {
-		for _, chunk := range scope.publication.Chunks {
+		for _, chunk := range scope.Publication.Chunks {
 			if len(chunk.Vector) != dim {
 				return fmt.Errorf("%w: chunk %d for msg %d has %d dims, gen has %d",
 					vector.ErrDimensionMismatch, chunk.ChunkIndex, chunk.MessageID, len(chunk.Vector), dim)
@@ -81,8 +61,8 @@ func (b *Backend) PublishScopes(ctx context.Context, gen vector.GenerationID, sc
 	now := time.Now().Unix()
 	applied := false
 	for _, scope := range validated {
-		accepted, err := claimPGScopeSequence(ctx, tx, gen, scope.publication.ScopeKey,
-			scope.publication.SourceSequence)
+		accepted, err := claimPGScopeSequence(ctx, tx, gen, scope.Publication.ScopeKey,
+			scope.Publication.SourceSequence)
 		if err != nil {
 			return err
 		}
@@ -90,8 +70,8 @@ func (b *Backend) PublishScopes(ctx context.Context, gen vector.GenerationID, sc
 			continue
 		}
 		applied = true
-		if scope.publication.FenceOnly {
-			if err := fencePGScope(ctx, tx, gen, scope.publication, now); err != nil {
+		if scope.Publication.FenceOnly {
+			if err := fencePGScope(ctx, tx, gen, scope.Publication, now); err != nil {
 				return err
 			}
 			continue
@@ -137,9 +117,9 @@ func claimPGScopeSequence(
 }
 
 func (b *Backend) publishPGScope(ctx context.Context, tx *sql.Tx, gen vector.GenerationID, dim int,
-	scope validatedPGScopePublication, now int64) error {
-	publication := scope.publication
-	owned, err := pgOwnedMembersForPublication(ctx, tx, gen, publication.ScopeKey, scope.desiredKeys)
+	scope vector.ValidatedScopePublication, now int64) error {
+	publication := scope.Publication
+	owned, err := pgOwnedMembersForPublication(ctx, tx, gen, publication.ScopeKey, scope.DesiredKeys)
 	if err != nil {
 		return err
 	}
@@ -147,17 +127,17 @@ func (b *Backend) publishPGScope(ctx context.Context, tx *sql.Tx, gen vector.Gen
 	if err != nil {
 		return err
 	}
-	preserved, err := validatedPreservedPGMembers(current, publication.Documents)
+	preserved, err := vector.PreservedDocumentMembers(current, publication.Documents)
 	if err != nil {
 		return err
 	}
-	for messageID := range scope.docByMember {
+	for messageID := range scope.DocByMember {
 		owned[messageID] = struct{}{}
 	}
 	for messageID := range preserved {
 		delete(owned, messageID)
 	}
-	ids := sortedPGDocumentIDs(owned)
+	ids := slices.Sorted(maps.Keys(owned))
 	if len(ids) > 0 {
 		if _, err := tx.ExecContext(ctx,
 			`DELETE FROM embeddings WHERE generation_id = $1 AND message_id = ANY($2::bigint[])`,
@@ -175,11 +155,11 @@ func (b *Backend) publishPGScope(ctx context.Context, tx *sql.Tx, gen vector.Gen
 		  AND d.scope_key = $2`, int64(gen), publication.ScopeKey); err != nil {
 		return fmt.Errorf("clear old scope membership: %w", err)
 	}
-	if len(scope.desiredKeys) > 0 {
+	if len(scope.DesiredKeys) > 0 {
 		if _, err := tx.ExecContext(ctx, `
 			DELETE FROM embedding_document_members
 			WHERE generation_id = $1 AND document_key = ANY($2::text[])`,
-			int64(gen), textArray(scope.desiredKeys)); err != nil {
+			int64(gen), textArray(scope.DesiredKeys)); err != nil {
 			return fmt.Errorf("clear desired document membership: %w", err)
 		}
 	}
@@ -244,86 +224,6 @@ func (b *Backend) publishPGScope(ctx context.Context, tx *sql.Tx, gen vector.Gen
 	return nil
 }
 
-func validatePGDocumentPublication(
-	sourceSequence int64, docs []vector.DocumentPublication, chunks []vector.Chunk, fenceOnly bool,
-) (map[int64]string, []string, error) {
-	if fenceOnly && len(chunks) != 0 {
-		return nil, nil, errors.New("publish scope: fence-only publication cannot contain chunks")
-	}
-	docByMember := make(map[int64]string)
-	preserved := make(map[int64]struct{})
-	seenKeys := make(map[string]struct{}, len(docs))
-	keys := make([]string, 0, len(docs))
-	for _, doc := range docs {
-		if doc.SourceSequence != sourceSequence {
-			return nil, nil, fmt.Errorf("publish scope: document %q source sequence %d does not match scope sequence %d", doc.Key, doc.SourceSequence, sourceSequence)
-		}
-		if doc.Key == "" || doc.Kind == "" || doc.Revision == "" {
-			return nil, nil, errors.New("publish scope: document key, kind, and revision are required")
-		}
-		if _, exists := seenKeys[doc.Key]; exists {
-			return nil, nil, fmt.Errorf("publish scope: duplicate document key %q", doc.Key)
-		}
-		seenKeys[doc.Key] = struct{}{}
-		keys = append(keys, doc.Key)
-		for _, messageID := range doc.Members {
-			if owner, exists := docByMember[messageID]; exists {
-				return nil, nil, fmt.Errorf("publish scope: message %d belongs to both %q and %q", messageID, owner, doc.Key)
-			}
-			docByMember[messageID] = doc.Key
-			if doc.PreserveVectors {
-				preserved[messageID] = struct{}{}
-			}
-		}
-	}
-	chunked := make(map[int64]struct{}, len(chunks))
-	for _, chunk := range chunks {
-		if _, exists := docByMember[chunk.MessageID]; !exists {
-			return nil, nil, fmt.Errorf("publish scope: chunk message %d has no desired document owner", chunk.MessageID)
-		}
-		if _, exists := preserved[chunk.MessageID]; exists {
-			return nil, nil, fmt.Errorf("publish scope: preserved document member %d also has a replacement chunk", chunk.MessageID)
-		}
-		chunked[chunk.MessageID] = struct{}{}
-	}
-	for messageID := range preserved {
-		chunked[messageID] = struct{}{}
-	}
-	if !fenceOnly {
-		for messageID := range docByMember {
-			if _, exists := chunked[messageID]; !exists {
-				return nil, nil, fmt.Errorf("publish scope: document member %d has no chunk", messageID)
-			}
-		}
-	}
-	slices.Sort(keys)
-	return docByMember, keys, nil
-}
-
-func validatedPreservedPGMembers(
-	current []vector.DocumentRecord, desired []vector.DocumentPublication,
-) (map[int64]struct{}, error) {
-	currentByKey := make(map[string]vector.DocumentRecord, len(current))
-	for _, record := range current {
-		currentByKey[record.Key] = record
-	}
-	preserved := make(map[int64]struct{})
-	for _, doc := range desired {
-		if !doc.PreserveVectors {
-			continue
-		}
-		record, ok := currentByKey[doc.Key]
-		if !ok || record.Kind != doc.Kind || record.PublishedRevision != doc.Revision ||
-			!slices.Equal(record.Members, doc.Members) {
-			return nil, fmt.Errorf("%w: preserved document %q changed", vector.ErrDocumentFenceChanged, doc.Key)
-		}
-		for _, messageID := range doc.Members {
-			preserved[messageID] = struct{}{}
-		}
-	}
-	return preserved, nil
-}
-
 func fencePGScope(
 	ctx context.Context, tx *sql.Tx, gen vector.GenerationID,
 	publication vector.DocumentScopePublication, now int64,
@@ -332,7 +232,7 @@ func fencePGScope(
 	if err != nil {
 		return err
 	}
-	if !samePGFenceDocuments(current, publication.Documents) {
+	if !vector.SameFenceDocuments(current, publication.Documents) {
 		return fmt.Errorf("%w: %q", vector.ErrDocumentFenceChanged, publication.ScopeKey)
 	}
 	if _, err := tx.ExecContext(ctx, `
@@ -349,6 +249,7 @@ func fencePGScope(
 func pgScopeDocumentsTx(
 	ctx context.Context, tx *sql.Tx, gen vector.GenerationID, scopeKey string,
 ) ([]vector.DocumentRecord, error) {
+	//nolint:rowserrcheck // ScanScopeDocuments owns rows and checks Err.
 	rows, err := tx.QueryContext(ctx, `
 		SELECT d.document_key, d.kind, d.published_revision, m.message_id
 		  FROM embedding_documents d
@@ -359,44 +260,7 @@ func pgScopeDocumentsTx(
 	if err != nil {
 		return nil, fmt.Errorf("read scope %q document fence: %w", scopeKey, err)
 	}
-	defer func() { _ = rows.Close() }()
-	records := make([]vector.DocumentRecord, 0)
-	for rows.Next() {
-		var key, kind, revision string
-		var member sql.NullInt64
-		if err := rows.Scan(&key, &kind, &revision, &member); err != nil {
-			return nil, fmt.Errorf("scan scope %q document fence: %w", scopeKey, err)
-		}
-		if len(records) == 0 || records[len(records)-1].Key != key {
-			records = append(records, vector.DocumentRecord{Key: key, Kind: kind,
-				PublishedRevision: revision, Members: []int64{}})
-		}
-		if member.Valid {
-			records[len(records)-1].Members = append(records[len(records)-1].Members, member.Int64)
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("read scope %q document fence rows: %w", scopeKey, err)
-	}
-	return records, nil
-}
-
-func samePGFenceDocuments(current []vector.DocumentRecord, desired []vector.DocumentPublication) bool {
-	if len(current) != len(desired) {
-		return false
-	}
-	desiredByKey := make(map[string]vector.DocumentPublication, len(desired))
-	for _, doc := range desired {
-		desiredByKey[doc.Key] = doc
-	}
-	for _, record := range current {
-		doc, ok := desiredByKey[record.Key]
-		if !ok || record.Kind != doc.Kind || record.PublishedRevision != doc.Revision ||
-			!slices.Equal(record.Members, doc.Members) {
-			return false
-		}
-	}
-	return true
+	return vector.ScanScopeDocuments(rows, scopeKey)
 }
 
 func pgOwnedMembersForPublication(ctx context.Context, tx *sql.Tx, gen vector.GenerationID, scopeKey string, desiredKeys []string) (map[int64]struct{}, error) {
@@ -421,15 +285,6 @@ func pgOwnedMembersForPublication(ctx context.Context, tx *sql.Tx, gen vector.Ge
 		owned[messageID] = struct{}{}
 	}
 	return owned, rows.Err()
-}
-
-func sortedPGDocumentIDs(ids map[int64]struct{}) []int64 {
-	out := make([]int64, 0, len(ids))
-	for id := range ids {
-		out = append(out, id)
-	}
-	slices.Sort(out)
-	return out
 }
 
 func (b *Backend) GetDocument(ctx context.Context, gen vector.GenerationID, key string) (vector.DocumentRecord, error) {

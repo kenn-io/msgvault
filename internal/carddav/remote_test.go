@@ -2,6 +2,7 @@ package carddav
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -23,6 +24,10 @@ type memoryRemote struct {
 	etags   map[string]string
 	version int
 	puts    int
+	// writeErr, when set, fails every write before it is sent.
+	writeErr error
+	// failed counts the writes that writeErr failed.
+	failed int
 }
 
 func newMemoryRemote() *memoryRemote {
@@ -61,6 +66,10 @@ func (m *memoryRemote) Get(_ context.Context, href string) (store.CardDAVRemoteR
 }
 
 func (m *memoryRemote) Put(_ context.Context, href string, body []byte, etag string, create bool) error {
+	if m.writeErr != nil {
+		m.failed++
+		return m.writeErr
+	}
 	_, exists := m.cards[href]
 	if create && exists || !create && m.etags[href] != etag {
 		return &StatusError{StatusCode: http.StatusPreconditionFailed}
@@ -71,6 +80,9 @@ func (m *memoryRemote) Put(_ context.Context, href string, body []byte, etag str
 }
 
 func (m *memoryRemote) Delete(_ context.Context, href, etag string) error {
+	if m.writeErr != nil {
+		return m.writeErr
+	}
 	if m.etags[href] != etag {
 		return &StatusError{StatusCode: http.StatusPreconditionFailed}
 	}
@@ -158,4 +170,72 @@ func TestCanonicalAbsentReadSavesRetryAfter(t *testing.T) {
 	gate, err := st.GetCardDAVRetryAfterContext(t.Context(), store.DefaultCardDAVAccountID)
 	require.NoError(err)
 	require.NotNil(gate)
+}
+
+// An update and an unpublish that fail on a missing Google sign-in were never
+// sent, so they go out after sign-in without a conflict.
+func TestWritesBlockedOnSignInResumeWithoutConflict(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	allowed := true
+	_, books, err := st.ReplaceCardDAVDiscoveryContext(t.Context(), store.CardDAVDiscoveryInput{
+		BaseURL: "https://memory.test", Username: "alice", PrincipalURL: "https://memory.test/principal/", HomeURL: "https://memory.test/books/",
+		Books: []store.CardDAVDiscoveredBook{{CanonicalURL: "https://memory.test/books/personal/", DisplayName: "Personal", CanCreate: &allowed}},
+	})
+	require.NoError(err)
+	href := books[0].CanonicalURL + "alice"
+	remote := newMemoryRemote()
+	service := NewRemoteService(st, remote)
+	var personID int64
+	require.NoError(st.DB().QueryRow(st.Rebind(`INSERT INTO persons (vcard_uid, display_name)
+		VALUES (?, ?) RETURNING id`), "alice", "Alice Local").Scan(&personID))
+	require.NoError(service.PublishPerson(t.Context(), personID))
+	_, err = st.AddPersonContactPointContext(t.Context(), personID, store.PersonContactPointInput{
+		AddressKind: store.ContactAddressEmail, OriginalValue: "alice@example.test",
+		Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
+	})
+	require.NoError(err)
+
+	remote.writeErr = ErrGoogleAuthorizationRequired
+	require.ErrorIs(service.PublishPerson(t.Context(), personID), ErrGoogleAuthorizationRequired)
+	remote.writeErr = nil
+	_, err = service.Sync(t.Context(), SyncOptions{})
+	require.NoError(err)
+	require.Contains(string(remote.cards[href]), "alice@example.test")
+
+	remote.writeErr = ErrGoogleAuthorizationRequired
+	require.ErrorIs(service.UnpublishPerson(t.Context(), personID), ErrGoogleAuthorizationRequired)
+	remote.writeErr = nil
+	require.NoError(service.UnpublishPerson(t.Context(), personID))
+	require.NotContains(remote.cards, href)
+	conflicts, err := st.ListCardDAVConflictsContext(t.Context(), true, store.DefaultCardDAVAccountID)
+	require.NoError(err)
+	require.Empty(conflicts)
+}
+
+// A token failure stops the publication sweep at the first write, instead of
+// repeating for every pending person.
+func TestTokenFailureStopsThePublicationSweep(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	allowed := true
+	_, _, err := st.ReplaceCardDAVDiscoveryContext(t.Context(), store.CardDAVDiscoveryInput{
+		BaseURL: "https://memory.test", Username: "alice", PrincipalURL: "https://memory.test/principal/", HomeURL: "https://memory.test/books/",
+		Books: []store.CardDAVDiscoveredBook{{CanonicalURL: "https://memory.test/books/personal/", DisplayName: "Personal", CanCreate: &allowed}},
+	})
+	require.NoError(err)
+	remote := newMemoryRemote()
+	service := NewRemoteService(st, remote)
+	remote.writeErr = errors.Join(ErrMicrosoftTokenUnavailable, ErrWriteNotSent)
+	for _, uid := range []string{"alice", "bob"} {
+		var personID int64
+		require.NoError(st.DB().QueryRow(st.Rebind(`INSERT INTO persons (vcard_uid, display_name)
+			VALUES (?, ?) RETURNING id`), uid, uid).Scan(&personID))
+		require.Error(service.PublishPerson(t.Context(), personID))
+	}
+	remote.failed = 0
+
+	_, err = service.Sync(t.Context(), SyncOptions{})
+	require.ErrorIs(err, ErrMicrosoftTokenUnavailable)
+	require.Equal(1, remote.failed)
 }

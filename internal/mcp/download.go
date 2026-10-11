@@ -28,6 +28,7 @@ type downloadKey struct {
 }
 
 type downloadSnapshot struct {
+	validate   func(context.Context) error
 	data       []byte
 	digest     string
 	original   *query.OriginalMessage
@@ -58,12 +59,24 @@ func (c *downloadCache) get(ctx context.Context, key downloadKey, req chunkReque
 	}
 	if entry := c.entries[key]; entry != nil {
 		if time.Now().Before(entry.expires) {
-			if req.digest != "" && req.digest != entry.digest {
-				return nil, errDownloadExpired
+			if entry.validate != nil {
+				if err := entry.validate(ctx); err != nil {
+					if !errors.Is(err, errDownloadExpired) {
+						return nil, err
+					}
+					c.remove(key)
+					entry = nil
+				}
 			}
-			return entry, nil
+			if entry != nil {
+				if req.digest != "" && req.digest != entry.digest {
+					return nil, errDownloadExpired
+				}
+				return entry, nil
+			}
+		} else {
+			c.remove(key)
 		}
-		c.remove(key)
 	}
 	if req.offset != 0 {
 		return nil, errDownloadExpired

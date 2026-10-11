@@ -44,6 +44,7 @@ type catalogCapabilities struct {
 	vectorInMessage bool
 	similarMessages bool
 	documentSearch  bool
+	mediaSearch     bool
 	people          bool
 	directoryPeople bool
 	visualSearch    bool
@@ -129,6 +130,7 @@ func capabilitiesFor(opts ServeOptions) catalogCapabilities {
 		vectorInMessage: opts.HybridEngine != nil && opts.Backend != nil,
 		similarMessages: opts.Backend != nil || opts.SimilarSearcher != nil,
 		documentSearch:  opts.DocumentSearcher != nil,
+		mediaSearch:     opts.MediaSearcher != nil,
 		people:          opts.PeopleBackend != nil,
 		directoryPeople: opts.DirectoryBackend != nil,
 		visualSearch:    opts.VisualSearcher != nil,
@@ -173,6 +175,13 @@ func operationCatalog(opts ServeOptions, _ *handlers) []toolDefinition {
 		definitions = slices.Clone(stableOperationCatalogs.get(capabilitiesFor(opts)))
 		if opts.IdentityScoring != nil {
 			definitions = append(definitions, stableIdentityScoringDefinitions...)
+		}
+	}
+	if opts.DelegatedOnly && opts.Engine != nil {
+		for _, definition := range stableOperationCatalogs.get(capabilitiesFor(opts)) {
+			if permission, ok := agentReadToolPermission(definition.name); ok && slices.Contains(opts.GrantPermissions, string(permission)) {
+				definitions = append(definitions, definition)
+			}
 		}
 	}
 	if opts.Calendar != nil {
@@ -222,6 +231,7 @@ func buildOperationCatalog(capabilities catalogCapabilities) []toolDefinition {
 		runSavedViewDefinition(nil),
 		searchByDomainsDefinition(nil),
 		searchDocumentsDefinition(nil),
+		searchMediaDefinition(),
 		searchInMessageDefinition(nil, capabilities.vectorInMessage),
 		searchMessageBodiesDefinition(nil),
 		searchMessagesDefinition(nil, capabilities.semanticSearch),
@@ -459,7 +469,7 @@ func searchMessagesOutputSchema() *jsonschema.Schema {
 }
 
 func accountProperty() *jsonschema.Schema {
-	return stringSchema("Filter by account email address (use get_stats to list available accounts)")
+	return stringSchema("Filter by account: a source email or display name in any letter case (the whole source), a virtual account key from get_stats (identity:... or unattributed:...), or another confirmed address (mail attributed to it on every source)")
 }
 
 func afterProperty() *jsonschema.Schema {
@@ -480,8 +490,10 @@ func offsetProperty() *jsonschema.Schema {
 
 const (
 	searchMetadataOperatorDoc = "Supported operators: from:, to:, cc:, bcc:, subject:, label: (or l:), has:attachment, " +
-		"before:/after: (YYYY-MM-DD), older_than:/newer_than: (e.g. 7d, 2w, 1m, 1y), larger:/smaller: (e.g. 5M). " +
-		"Bare domains on from:/to: match any address at that domain. Multiple terms are ANDed. " +
+		"before:/after: (YYYY-MM-DD), older_than:/newer_than: (e.g. 7d, 2w, 1m, 1y), larger:/smaller: (e.g. 5M), " +
+		"account:, received: (exact addresses; received: excludes sent mail and calendar events). " +
+		"Bare domains on from:/to: match any address at that domain. Different operators are ANDed; " +
+		"repeated account: or received: values are ORed. " +
 		"Not supported: negation (-), OR, or parentheses grouping."
 	searchMetadataFreeTextDoc = "Free text matches subject, snippet, and sender/recipient metadata only (not bodies). " +
 		"Use search_message_bodies for body keywords or semantic_search_messages for vector/hybrid search."
@@ -558,7 +570,8 @@ func searchMessageBodiesDefinition(_ *handlers) toolDefinition {
 		searchIntro+
 			"Results are ordered newest-first (by sent date). "+
 			"Paginate with offset/limit (default limit 20, max 50). Response: data, returned, offset, has_more. "+
-			"Body search does not return a total; use has_more to detect more pages.",
+			"Body search does not return a total; use has_more to detect more pages. "+
+			"Delegated body search requires one selected account; pass account when the grant covers several accounts.",
 		closedObject(map[string]*jsonschema.Schema{
 			toolArgQuery:   stringSchema(queryDesc),
 			toolArgAccount: accountProperty(),
@@ -818,7 +831,7 @@ func aggregateDefinition(_ *handlers) toolDefinition {
 func searchByDomainsDefinition(_ *handlers) toolDefinition {
 	return readDefinition(
 		ToolSearchByDomains,
-		"Find messages where any participant (from, to, or cc) belongs to one of the given domains. "+
+		"Find messages where any participant (from, to, or cc) belongs to one of the given domains. Searches all accounts available to this session. "+
 			"Useful for finding all communication with a company regardless of direction. Returns an object with a data array of matching message summaries.",
 		closedObject(map[string]*jsonschema.Schema{
 			toolArgDomains: stringSchema("Comma-separated domain names (e.g. 'gobright.com,ascentae.com')"),
@@ -947,7 +960,11 @@ func searchPersonFilesDefinition(_ *handlers) toolDefinition {
 
 // The following named response types make every catalog output schema visible
 // without changing existing JSON field names.
-type searchMetadataResponse paginatedResponse[query.MessageSummary]
+type searchMetadataResponse struct {
+	paginatedResponse[query.MessageSummary]
+
+	IndexState string `json:"index_state,omitempty"`
+}
 type searchInMessageResponse paginatedResponse[messageMatch]
 type listMessagesResponse paginatedResponse[query.MessageSummary]
 type aggregateResponse struct {

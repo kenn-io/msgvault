@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button } from '@kenn-io/kit-ui';
+  import { Button, Card } from '@kenn-io/kit-ui';
   import { onDestroy, tick, untrack } from 'svelte';
   import type { MeetingRef } from '../../api/generated/models';
   import MeetingPanel from '../meetings/MeetingPanel.svelte';
@@ -42,14 +42,14 @@
   }
 
   type DetailTab = 'overview' | 'profile' | 'organizations' | 'connections' | 'network' | 'media' | 'maintenance';
-  const SECTIONS: ReadonlyArray<{ id: DetailTab; label: string }> = [
-    { id: 'overview', label: 'Overview' },
-    { id: 'profile', label: 'Profile' },
-    { id: 'organizations', label: 'Organizations' },
-    { id: 'connections', label: 'Connections' },
-    { id: 'network', label: 'Network' },
-    { id: 'media', label: 'Media & files' },
-    { id: 'maintenance', label: 'Maintenance' },
+  const SECTIONS: ReadonlyArray<{ id: DetailTab; label: string; description: string }> = [
+    { id: 'overview', label: 'Overview', description: 'Activity, agenda, attributes, and meeting context.' },
+    { id: 'profile', label: 'Profile', description: 'Names, contact points, addresses, dates, and categories.' },
+    { id: 'organizations', label: 'Organizations', description: 'Employment history and organization records.' },
+    { id: 'connections', label: 'Connections', description: 'Curated relationships with other people.' },
+    { id: 'network', label: 'Network', description: 'A graph of durable people, organizations, and connections.' },
+    { id: 'media', label: 'Media & files', description: 'Files associated with this durable person.' },
+    { id: 'maintenance', label: 'Maintenance', description: 'Tracking, CardDAV publication, and merge history.' },
   ];
   let {
     client,
@@ -67,6 +67,7 @@
     onReviewFacts = undefined
   }: Props = $props();
   let activeTab = $state<DetailTab>('overview');
+  const activeSection = $derived(SECTIONS.find((section) => section.id === activeTab) ?? SECTIONS[0]!);
   let fileSort = $state<FileSearchSort>({ field: 'occurred_at', direction: 'desc' });
   let fileFilenameQuery = $state('');
   let fileMIMEFamilies = $state<FileMIMEFamily[]>([]);
@@ -166,20 +167,29 @@
     </div>
   </header>
 
-  <div class="detail-tabs" role="tablist" aria-label="Person detail sections">
-    {#each SECTIONS as section (section.id)}
-      <button bind:this={tabButtons[section.id]} id={tabID(section.id)} type="button" role="tab"
-        aria-selected={activeTab === section.id} aria-controls={panelID(section.id)}
-        tabindex={activeTab === section.id ? 0 : -1} onkeydown={handleTabKeydown}
-        onclick={() => void selectTab(section.id)}>{section.label}</button>
-    {/each}
-  </div>
+  <Card level="default" padding="none" class="detail-surface">
+    <div class="detail-frame">
+      <div class="detail-tabs" role="tablist" aria-label="Person detail sections" data-scroll>
+        {#each SECTIONS as section (section.id)}
+          <button bind:this={tabButtons[section.id]} id={tabID(section.id)} type="button" role="tab"
+            aria-selected={activeTab === section.id} aria-controls={panelID(section.id)}
+            tabindex={activeTab === section.id ? 0 : -1} onkeydown={handleTabKeydown}
+            onclick={() => void selectTab(section.id)}>{section.label}</button>
+        {/each}
+      </div>
 
-  {#each Object.entries(bundle.errors) as [section, message]}
-    <p class="section-error" role="alert">{sectionNames[section as DirectoryReadSection]}: {message}</p>
-  {/each}
+      <div class="panel-shell" id={panelID(activeTab)} role="tabpanel" aria-labelledby={tabID(activeTab)} tabindex="0">
+        <header class="panel-heading">
+          <span>Person record</span>
+          <h3>{activeSection.label}</h3>
+          <p>{activeSection.description}</p>
+        </header>
 
-  <div id={panelID(activeTab)} role="tabpanel" aria-labelledby={tabID(activeTab)} tabindex="0">
+        {#each Object.entries(bundle.errors) as [section, message]}
+          <p class="section-error" role="alert">{sectionNames[section as DirectoryReadSection]}: {message}</p>
+        {/each}
+
+        <div class="tab-body">
     {#if activeTab === 'overview'}
       <PersonBriefCard {client} {personID} {onAnnounce} />
       <PersonAgenda {client} {personID} {onAnnounce} />
@@ -235,13 +245,13 @@
       {/if}
     {:else if activeTab === 'organizations'}
       {#if entityController}<OrganizationEmploymentTab controller={entityController} {personID} {organizationRequest} />
-      {:else}<section><h2>Organizations</h2><p>Organizations are unavailable for this selection.</p></section>{/if}
+      {:else}<section><h3>Organizations</h3><p>Organizations are unavailable for this selection.</p></section>{/if}
     {:else if activeTab === 'connections'}
       {#if entityController}<RelationshipsTab {client} controller={entityController} {personID} />
-      {:else}<section><h2>Connections</h2><p>Connections are unavailable for this selection.</p></section>{/if}
+      {:else}<section><h3>Connections</h3><p>Connections are unavailable for this selection.</p></section>{/if}
     {:else if activeTab === 'network'}
       {#if entityController}<PersonNetwork controller={entityController} {onOpenPerson} onOpenOrganization={openOrganization} />
-      {:else}<section><h2>Network</h2><p>The curated network is unavailable for this selection.</p></section>{/if}
+      {:else}<section><h3>Network</h3><p>The curated network is unavailable for this selection.</p></section>{/if}
     {:else if activeTab === 'media'}
       <!-- Durable Directory IDs use the People API, never the analytical participant route. -->
       <FilesWorkspace
@@ -267,21 +277,38 @@
       />
       <PersonMergeHistory {client} {personID} {onOpenPerson} {onSplitCommitted} />
     {/if}
-  </div>
+        </div>
+      </div>
+    </div>
+  </Card>
 </section>
 
 <style>
-  .person-detail { padding: var(--space-4); display: grid; gap: var(--space-4); }
+  .person-detail { display: grid; min-width: 0; gap: var(--space-4); padding: var(--space-4); }
   .person-header { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
   .person-header h2 { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
   .person-actions { display: contents; }
-  .detail-tabs { display: flex; flex-wrap: nowrap; gap: var(--space-2); overflow-x: auto; }
-  [role="tabpanel"] { display: grid; gap: var(--space-4); outline: none; }
-  [role="tab"] { white-space: nowrap; flex: none; border: 1px solid var(--border-default); border-radius: var(--radius-sm); padding: var(--space-2) var(--space-3); background: var(--bg-inset); color: var(--text-secondary); cursor: pointer; }
-  [role="tab"][aria-selected="true"] { background: var(--bg-surface-hover); color: var(--text-primary); }
+  .person-detail :global(.detail-surface) { min-width: 0; overflow: hidden; }
+  .detail-frame { min-width: 0; }
+  .detail-tabs { display: flex; flex-wrap: nowrap; gap: var(--space-1); overflow-x: auto; padding: var(--space-2); border-bottom: 1px solid var(--border-muted); background: var(--bg-inset); }
+  [role="tab"] { flex: none; padding: var(--space-2) var(--space-3); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-muted); font: inherit; font-size: var(--font-size-sm); font-weight: 500; white-space: nowrap; cursor: pointer; }
+  [role="tab"]:hover { background: var(--bg-surface-hover); color: var(--text-secondary); }
+  [role="tab"][aria-selected="true"] { background: var(--bg-surface); color: var(--text-primary); box-shadow: var(--shadow-sm); font-weight: 650; }
+  [role="tab"]:focus-visible { outline: var(--focus-ring); outline-offset: -2px; }
+  .panel-shell { display: grid; min-width: 0; gap: var(--space-5); padding: var(--space-5); background: var(--bg-surface); }
+  .panel-shell:focus-visible { outline: var(--focus-ring); outline-offset: -3px; }
+  .panel-heading { display: grid; gap: var(--space-1); padding-bottom: var(--space-4); border-bottom: 1px solid var(--border-muted); }
+  .panel-heading span { color: var(--text-muted); font-size: var(--font-size-2xs); font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
+  .panel-heading h3 { font-size: var(--font-size-lg); }
+  .panel-heading p { color: var(--text-muted); font-size: var(--font-size-sm); }
+  .tab-body { display: grid; min-width: 0; gap: var(--space-4); }
   section { display: grid; gap: var(--space-2); }
   h2, h3, h4, p, ul { margin: 0; }
   h3 { font-size: var(--font-size-md); } h4, small { color: var(--text-muted); font-size: var(--font-size-sm); }
   ul { padding-left: var(--space-5); }
-  .section-error { margin: 0; padding: var(--space-2); background: var(--bg-inset); color: var(--text-secondary); }
+  .section-error { margin: 0; padding: var(--space-3); border-radius: var(--radius-sm); background: var(--bg-inset); color: var(--text-secondary); }
+  @media (max-width: 640px) {
+    .person-detail { padding: var(--space-3); }
+    .panel-shell { padding: var(--space-4); }
+  }
 </style>

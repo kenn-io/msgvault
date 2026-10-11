@@ -29,7 +29,9 @@ type searchPeopleResponse struct {
 type searchPeopleRow struct {
 	query.PersonSummary
 
-	PersonID int64 `json:"person_id,omitzero"`
+	PersonID        int64                  `json:"person_id,omitzero"`
+	VCardUID        string                 `json:"vcard_uid,omitzero"`
+	CardDAVBindings []store.CardDAVBinding `json:"carddav_bindings,omitzero"`
 }
 
 type searchPeopleCursor struct {
@@ -268,6 +270,8 @@ func (h *handlers) prepareCuratedPeopleSearch(
 		applyProfileToPeopleSummary(&summary, profile)
 		prepared.rows = append(prepared.rows, searchPeopleRow{
 			PersonSummary: summary, PersonID: profile.ID,
+			VCardUID:        profile.VCardUID,
+			CardDAVBindings: append([]store.CardDAVBinding{}, profile.CardDAVBindings...),
 		})
 	}
 	return prepared
@@ -295,6 +299,8 @@ func (h *handlers) searchObservedPeoplePage(
 			if profile, exists := profileForPeopleSummary(summary, prepared.byParticipant); exists {
 				applyProfileToPeopleSummary(&row.PersonSummary, profile)
 				row.PersonID = profile.ID
+				row.VCardUID = profile.VCardUID
+				row.CardDAVBindings = append([]store.CardDAVBinding{}, profile.CardDAVBindings...)
 			}
 			rows = append(rows, row)
 		}

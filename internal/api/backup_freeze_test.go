@@ -186,14 +186,30 @@ func TestBackupFreezeEndRejectsBogusTokenThenSucceedsOnce(t *testing.T) {
 	assert.Equal(http.StatusBadRequest, secondEndResp.Code, "second end with same token should fail")
 }
 
-func TestBackupFreezeWatchdogAutoReleasesGateAndInvalidatesToken(t *testing.T) { //nolint:paralleltest // swaps the package-level backupFreezeWatchdogTimeout
+func TestBackupFreezeAllowsCheckpointRetryBudget(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		srv := newBackupFreezeTestServer(nil)
+		defer func() { require.NoError(t, srv.Shutdown(context.Background())) }()
+		token := beginBackupFreeze(t, srv)
+
+		// Kit can spend 255 seconds in busy waits plus five seconds of backoff.
+		synctest.Sleep(270 * time.Second)
+		assert.Equal(t, http.StatusServiceUnavailable, gatedProbeStatus(srv),
+			"writes must remain gated while checkpoint retries finish")
+
+		endResp := httptest.NewRecorder()
+		srv.Router().ServeHTTP(endResp, endBackupFreeze(t, token))
+		require.Equal(t, http.StatusOK, endResp.Code, "freeze end: %s", endResp.Body.String())
+		assert.Equal(t, http.StatusBadRequest, gatedProbeStatus(srv), "writes resume after freeze end")
+	})
+}
+
+func TestBackupFreezeWatchdogAutoReleasesGateAndInvalidatesToken(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)
-
-		oldTimeout := backupFreezeWatchdogTimeout
-		backupFreezeWatchdogTimeout = 50 * time.Millisecond
-		defer func() { backupFreezeWatchdogTimeout = oldTimeout }()
 
 		buf := &syncBuffer{}
 		logger := slog.New(slog.NewJSONHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
@@ -206,7 +222,7 @@ func TestBackupFreezeWatchdogAutoReleasesGateAndInvalidatesToken(t *testing.T) {
 
 		token := beginBackupFreeze(t, srv)
 
-		synctest.Sleep(backupFreezeWatchdogTimeout)
+		synctest.Sleep(5 * time.Minute)
 		assert.Equal(http.StatusBadRequest, gatedProbeStatus(srv),
 			"gate should auto-release after watchdog fires")
 		logLine := findJSONLogLine(t, buf.String(), "backup freeze watchdog fired; releasing operation gate")

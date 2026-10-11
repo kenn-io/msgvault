@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/mattn/go-isatty"
@@ -15,6 +16,8 @@ import (
 	"go.kenn.io/msgvault/internal/carddav"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
+	"go.kenn.io/msgvault/internal/microsoft"
+	"go.kenn.io/msgvault/internal/mscontacts"
 	"go.kenn.io/msgvault/internal/textutil"
 	apiclient "go.kenn.io/msgvault/pkg/client"
 	"go.kenn.io/msgvault/pkg/client/generated"
@@ -22,10 +25,10 @@ import (
 
 func newAddCardDAVCmd() *cobra.Command {
 	var schedule, connection string
-	var disabled, google bool
+	var disabled, google, msContacts, headless bool
 	var oauthApp string
-	cmd := &cobra.Command{Use: "add-carddav <base-url> <username> | --google <email>", Short: "Discover and configure a CardDAV account", Args: func(cmd *cobra.Command, args []string) error {
-		if google {
+	cmd := &cobra.Command{Use: "add-carddav <base-url> <username> | --google <email> | --microsoft <email>", Short: "Discover and configure a CardDAV account", Args: func(cmd *cobra.Command, args []string) error {
+		if google || msContacts {
 			return cobra.ExactArgs(1)(cmd, args)
 		}
 		return cobra.ExactArgs(2)(cmd, args)
@@ -38,15 +41,30 @@ func newAddCardDAVCmd() *cobra.Command {
 		if !google && oauthApp != "" {
 			return usageErr(cmd, errors.New("--oauth-app requires --google"))
 		}
+		if google && msContacts {
+			return usageErr(cmd, errors.New("--google and --microsoft cannot be combined"))
+		}
+		if headless && !msContacts {
+			return usageErr(cmd, errors.New("--headless requires --microsoft"))
+		}
+		if msContacts {
+			// The daemon looks the token up under the lowercased email.
+			args[0] = strings.ToLower(strings.TrimSpace(args[0]))
+			if err := authorizeMicrosoftContacts(cmd, args[0], headless, false); err != nil {
+				return err
+			}
+		}
 		var password string
-		if !google {
+		if !google && !msContacts {
 			password, err = readCardDAVPassword()
 			if err != nil {
 				return err
 			}
 		}
 		baseURL, username := carddav.GoogleDiscoveryURL, args[0]
-		if !google {
+		if msContacts {
+			baseURL = mscontacts.GraphBaseURL
+		} else if !google {
 			baseURL, username = args[0], args[1]
 		}
 		client, _, err := OpenHTTPStore(cmd.Context())
@@ -59,6 +77,11 @@ func newAddCardDAVCmd() *cobra.Command {
 			provider := generated.Google
 			body.Provider = &provider
 			body.OauthApp = &oauthApp
+			body.Password = nil
+		}
+		if msContacts {
+			provider := generated.Microsoft
+			body.Provider = &provider
 			body.Password = nil
 		}
 		if schedule != "" {
@@ -77,9 +100,62 @@ func newAddCardDAVCmd() *cobra.Command {
 	cmd.Flags().StringVar(&connection, "connection", "", "Connection name (default when omitted)")
 	cmd.Flags().BoolVar(&google, "google", false, "Use Google Contacts with an authorized OAuth token")
 	cmd.Flags().StringVar(&oauthApp, "oauth-app", "", "Named Google OAuth application")
+	cmd.Flags().BoolVar(&msContacts, "microsoft", false, "Use Microsoft 365 or Outlook.com contacts through Microsoft Graph")
+	cmd.Flags().BoolVar(&headless, "headless", false, "Sign in to Microsoft with a device code instead of a browser")
 	cmd.Flags().StringVar(&schedule, "schedule", "", "cron schedule for background synchronization")
 	cmd.Flags().BoolVar(&disabled, "disabled", false, "save the connection without enabling synchronization")
 	return cmd
+}
+
+// newAuthorizeMicrosoftCardDAVCmd signs in without saving a connection, so
+// an existing connection keeps its schedule and enabled state.
+func newAuthorizeMicrosoftCardDAVCmd() *cobra.Command {
+	var headless bool
+	cmd := &cobra.Command{
+		Use:   "authorize-microsoft <email>",
+		Short: "Authorize Microsoft contacts for CardDAV",
+		Long:  "Sign in to Microsoft for contacts on this machine, without saving a connection. Then save the connection in CardDAV settings, or run add-carddav --microsoft with this email. For a remote daemon, copy the token to that host.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return authorizeMicrosoftContacts(cmd, strings.ToLower(strings.TrimSpace(args[0])), headless, true)
+		},
+	}
+	cmd.Flags().BoolVar(&headless, "headless", false, "Sign in with a device code instead of a browser")
+	return cmd
+}
+
+// authorizeMicrosoftContacts signs in for Microsoft Graph contacts. Without
+// force, it skips sign-in when a saved token has the contacts scopes and
+// still yields an access token.
+func authorizeMicrosoftContacts(cmd *cobra.Command, email string, headless, force bool) error {
+	state := invocationFromCommand(cmd)
+	if state == nil || state.cfg == nil {
+		return errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
+	if cfg.Microsoft.ClientID == "" {
+		return errors.New("[microsoft] client_id is not configured; see the Microsoft 365 setup guide")
+	}
+	mgr := microsoft.NewGraphContactsManager(cfg.Microsoft.ClientID, microsoftTenantID("", cfg),
+		cfg.Microsoft.EffectiveRedirectURI(), cfg.TokensDir(), state.logger)
+	if ok, err := mgr.HasScopes(email); !force && err == nil && ok {
+		if source, err := mgr.TokenSource(cmd.Context(), email); err == nil {
+			if _, err := source(cmd.Context()); err == nil {
+				return nil
+			}
+		}
+	}
+	if headless {
+		mgr.UseDeviceCode()
+	}
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Authorizing %s for Microsoft contacts...\n", textutil.SanitizeTerminal(email))
+	if err := mgr.Authorize(cmd.Context(), email); err != nil {
+		return fmt.Errorf("authorization failed: %w", err)
+	}
+	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Microsoft contacts authorized. Token saved to %s.\n", textutil.SanitizeTerminal(mgr.TokenPath(email))); err != nil {
+		return fmt.Errorf("write Microsoft authorization result: %w", err)
+	}
+	return nil
 }
 
 func readCardDAVPassword() (string, error) {
@@ -178,7 +254,7 @@ func newCardDAVCmd() *cobra.Command {
 	conflicts.AddCommand(&cobra.Command{Use: "show <conflict-id>", Short: "Show safe base, local, and remote summaries for a CardDAV conflict", Args: cobra.ExactArgs(1), RunE: runCardDAVConflictShow})
 	resolve := &cobra.Command{Use: "resolve <conflict-id> <keep_local|keep_remote>", Short: "Resolve one CardDAV conflict", Args: cobra.ExactArgs(2), RunE: runCardDAVResolve}
 	conflicts.AddCommand(resolve)
-	root.AddCommand(books, conflicts, newAuthorizeGoogleCardDAVCmd(), &cobra.Command{Use: "connections", Short: "List saved CardDAV connections", Args: cobra.NoArgs, RunE: runCardDAVConnections})
+	root.AddCommand(books, conflicts, newAuthorizeGoogleCardDAVCmd(), newAuthorizeMicrosoftCardDAVCmd(), &cobra.Command{Use: "connections", Short: "List saved CardDAV connections", Args: cobra.NoArgs, RunE: runCardDAVConnections})
 	return root
 }
 

@@ -82,7 +82,7 @@ func TestPeopleCodexCheckRejectsOverlappingSignIn(t *testing.T) {
 			request.SetPathValue("name", "subscription")
 			_, configured, _, profile, ok := srv.peopleInferenceProfileForRequest(httptest.NewRecorder(), request, created.ETag)
 			require.True(ok)
-			credentials := peoplesweep.NewFileCredentialStore(configured.TokensDir())
+			credentials := peoplesweep.NewStoredCredentials(configured.TokensDir())
 			loginFinish := make(chan struct{}, 1)
 			defer close(loginFinish)
 			srv.peopleCodexLogins = newPeopleCodexLogins(finishingCodexLoginClient{finish: loginFinish}, time.Now)
@@ -280,7 +280,7 @@ func TestPeopleCodexLoginCancellationWaitsForCredentialCommitToStop(t *testing.T
 	select {
 	case err := <-result:
 		require.FailNow("cancellation returned before client stopped", err)
-	case <-time.After(20 * time.Millisecond):
+	case <-time.After(20 * time.Millisecond): //nolint:kennlint // absence check: the client holds cancellation until finish closes
 	}
 	close(client.finish)
 	require.NoError(<-result)

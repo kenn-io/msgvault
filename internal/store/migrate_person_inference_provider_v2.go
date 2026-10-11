@@ -16,6 +16,10 @@ import (
 // over to the reworked disclosure. Those rows and their consents are removed
 // so every remaining profile decodes as a canonical ProviderProfile.
 func (s *Store) migratePersonInferenceProviderV2(ctx context.Context) error {
+	legacyConsents, err := s.tableExistsContext(ctx, "person_inference_consents")
+	if err != nil {
+		return fmt.Errorf("check person_inference_consents: %w", err)
+	}
 	return s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
 		columns := []ColumnMigration{
 			{`ALTER TABLE person_inference_profiles ADD COLUMN auth_scheme TEXT NOT NULL DEFAULT 'bearer'`, "person_inference_profiles.auth_scheme"},
@@ -64,11 +68,14 @@ func (s *Store) migratePersonInferenceProviderV2(ctx context.Context) error {
 			return err
 		}
 		for _, fingerprint := range stale {
-			for _, statement := range []string{
-				`DELETE FROM person_inference_consents WHERE profile_fingerprint = ?`,
+			statements := []string{
 				`DELETE FROM person_inference_checks WHERE profile_fingerprint = ?`,
 				`DELETE FROM person_inference_profiles WHERE fingerprint = ?`,
-			} {
+			}
+			if legacyConsents {
+				statements = append([]string{`DELETE FROM person_inference_consents WHERE profile_fingerprint = ?`}, statements...)
+			}
+			for _, statement := range statements {
 				if _, err := tx.ExecContext(ctx, statement, fingerprint); err != nil {
 					return fmt.Errorf("remove pre-profile people inference row %s: %w", fingerprint, err)
 				}

@@ -1726,7 +1726,7 @@ func TestContactStateDirtyEntrypointsLockIdentityBeforeContactRowsOnPostgreSQL(
 					"dirty entrypoint bypassed identity lock",
 					"contact state changed while identity mutation was locked",
 				)
-			case <-time.After(100 * time.Millisecond):
+			case <-time.After(100 * time.Millisecond): //nolint:kennlint // absence check: the held identity lock keeps the dirty entrypoint waiting
 			}
 			waitForPostgreSQLLockWait(
 				t, f.Store, "%archive_metadata%")
@@ -3112,7 +3112,7 @@ func TestRecomputeContactStateSerializesPostgreSQLQueueInsertBeforeFreshCommit(
 	select {
 	case mutationErr := <-mutationResult:
 		require.NoError(mutationErr)
-	case <-time.After(150 * time.Millisecond):
+	case <-time.After(150 * time.Millisecond): //nolint:kennlint // absence check: the open freshness transaction keeps the mutation waiting
 		mutationBlocked = true
 	}
 	assert.True(mutationBlocked,

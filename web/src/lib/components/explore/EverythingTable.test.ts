@@ -154,7 +154,8 @@ describe('EverythingTable', () => {
     await rendered.rerender({ columns: ['title', 'size'] });
 
     expect(screen.getAllByRole('columnheader').map((header) => header.textContent?.trim()))
-      .toEqual(['Subject / title', 'Size']);
+      .toEqual(['', 'Subject / title', 'Size']);
+    expect(screen.getByRole('checkbox', { name: 'Select all loaded items' })).toBeDefined();
   });
 
   it('keeps keyboard focus on the grid while j/k move a stable keyed cursor', async () => {
@@ -171,6 +172,22 @@ describe('EverythingTable', () => {
 
     expect(document.activeElement).toBe(grid);
     expect(grid.getAttribute('aria-activedescendant')).toContain('message-3a-2');
+  });
+
+  it('makes a checkbox row current, so Space next acts on that row', async () => {
+    const selection = new ExploreSelectionState();
+    const onActiveKey = vi.fn();
+    render(EverythingTable, { rows: [row(1), row(2), row(3)], selection, onActiveKey });
+    const grid = screen.getByRole('grid', { name: 'Everything results' });
+
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'Select Synthetic subject 2' }));
+    expect(selection.isSelected('message:2')).toBe(true);
+    expect(grid.getAttribute('aria-activedescendant')).toContain('message-3a-2');
+    expect(onActiveKey).toHaveBeenLastCalledWith('message:2');
+
+    await fireEvent.keyDown(grid, { key: ' ' });
+    expect(selection.isSelected('message:2')).toBe(false);
+    expect(selection.isSelected('message:1')).toBe(false);
   });
 
   it('requests another cursor page when navigation or scrolling reaches the loaded boundary', async () => {
@@ -369,7 +386,7 @@ describe('EverythingTable', () => {
     expect(skeleton.style.gridTemplateColumns).toBe(
       screen.getByRole('row', { name: /Kind/ }).style.gridTemplateColumns
     );
-    expect(skeleton.children).toHaveLength(6);
+    expect(skeleton.children).toHaveLength(7);
 
     void rerender({ rows: [], selection, loading: false });
     expect(screen.getByText('No items match this view')).toBeDefined();

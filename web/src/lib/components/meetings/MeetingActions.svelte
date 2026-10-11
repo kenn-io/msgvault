@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button, EmptyState } from '@kenn-io/kit-ui';
+  import { Button, Card, EmptyState } from '@kenn-io/kit-ui';
   import { onDestroy, untrack } from 'svelte';
 
   import type { APIClient } from '../../api/client';
@@ -72,54 +72,70 @@
 </script>
 
 <section class="meeting-actions" aria-labelledby={headingID}>
-  <h3 id={headingID}>Archived action items</h3>
-  {#if controller.loading}
-    <p role="status">Loading action evidence…</p>
-  {/if}
-  {#if controller.error}
-    <p role="alert">{controller.error.message}</p>
-    {#if controller.error.recovery === 'retry' || controller.error.recovery === 'reload'}
-      <Button label={controller.error.recovery === 'retry' ? 'Retry action items' : 'Reload action items'} size="sm" surface="outline" onclick={retry} />
+  <Card level="inset" padding="sm">
+    <header class="actions-heading">
+      <div>
+        <span class="eyebrow">Archive evidence</span>
+        <h3 id={headingID}>Archived action items</h3>
+      </div>
+      {#if displayedPage}
+        <span class="meeting-count">{displayedPage.coverage.meeting_count.toLocaleString()} in scope</span>
+      {/if}
+    </header>
+    {#if controller.loading}
+      <p role="status">Loading action evidence…</p>
     {/if}
-  {/if}
-  {#if displayedPage}
-    <p class="coverage" role="status">{coverageSummary(displayedPage.coverage)}</p>
-    {#if displayedPage.rows.length === 0}
-      <EmptyState title={emptyState(displayedPage.coverage)} description="Source evidence is shown without local completion state." />
-    {:else}
-      <ol>
-        {#each displayedPage.rows as row (`${row.meeting.message_id}:${row.action.locator}`)}
-          <li>
-            <strong>{row.action.title}</strong>
-            {#if row.action.description}<p>{row.action.description}</p>{/if}
-            <dl>
-              <div><dt>Source status</dt><dd>{row.action.source_status != null && row.action.source_status !== row.action.status ? `${row.action.status} (source: ${row.action.source_status})` : row.action.status}</dd></div>
-              <div><dt>Assignee</dt><dd>{assignee(row)}</dd></div>
-              {#if row.action.due_date}<div><dt>Due</dt><dd>{row.action.due_date}</dd></div>{/if}
-            </dl>
-            <a href={row.meeting.archive_path} onclick={(event) => openMeeting(event, row.meeting)}>
-              Open archived meeting
-            </a>
-          </li>
-        {/each}
-      </ol>
-    {/if}
-    {#if request}
-      <p class="coverage" role="status">Showing {displayedPage.rows.length.toLocaleString()} of {displayedPage.total_count.toLocaleString()} action items</p>
-      {#if displayedPage.next_cursor && !controller.error}
-        <Button label="Load more action items" size="sm" surface="outline" disabled={controller.loading} onclick={() => void controller.loadMore()} />
+    {#if controller.error}
+      <p role="alert">{controller.error.message}</p>
+      {#if controller.error.recovery === 'retry' || controller.error.recovery === 'reload'}
+        <Button label={controller.error.recovery === 'retry' ? 'Retry action items' : 'Reload action items'} size="sm" surface="outline" onclick={retry} />
       {/if}
     {/if}
-  {/if}
+    {#if displayedPage}
+      <div class="coverage" role="status">
+        <span class="kit-sr-only">{coverageSummary(displayedPage.coverage)}</span>
+        <div aria-hidden="true">
+          <span>Evidence coverage</span>
+          <ul>
+            <li class:empty={displayedPage.coverage.available === 0}><strong>{displayedPage.coverage.available}</strong> available</li>
+            <li class:empty={displayedPage.coverage.partial === 0}><strong>{displayedPage.coverage.partial}</strong> partial</li>
+            <li class:empty={displayedPage.coverage.unsupported === 0}><strong>{displayedPage.coverage.unsupported}</strong> unsupported</li>
+            <li class:empty={displayedPage.coverage.unavailable === 0}><strong>{displayedPage.coverage.unavailable}</strong> unavailable</li>
+          </ul>
+        </div>
+      </div>
+      {#if displayedPage.rows.length === 0}
+        <EmptyState title={emptyState(displayedPage.coverage)} description="Source evidence is shown without local completion state." />
+      {:else}
+        <ol>
+          {#each displayedPage.rows as row (`${row.meeting.message_id}:${row.action.locator}`)}
+            <li>
+              <strong>{row.action.title}</strong>
+              {#if row.action.description}<p>{row.action.description}</p>{/if}
+              <dl>
+                <div><dt>Source status</dt><dd>{row.action.source_status != null && row.action.source_status !== row.action.status ? `${row.action.status} (source: ${row.action.source_status})` : row.action.status}</dd></div>
+                <div><dt>Assignee</dt><dd>{assignee(row)}</dd></div>
+                {#if row.action.due_date}<div><dt>Due</dt><dd>{row.action.due_date}</dd></div>{/if}
+              </dl>
+              <a href={row.meeting.archive_path} onclick={(event) => openMeeting(event, row.meeting)}>
+                Open archived meeting
+              </a>
+            </li>
+          {/each}
+        </ol>
+      {/if}
+      {#if request}
+        <p class="showing" role="status">Showing {displayedPage.rows.length.toLocaleString()} of {displayedPage.total_count.toLocaleString()} action items</p>
+        {#if displayedPage.next_cursor && !controller.error}
+          <Button label="Load more action items" size="sm" surface="outline" disabled={controller.loading} onclick={() => void controller.loadMore()} />
+        {/if}
+      {/if}
+    {/if}
+  </Card>
 </section>
 
 <style>
-  .meeting-actions {
-    display: grid;
-    gap: var(--space-3);
-    padding: var(--space-4);
-    border-bottom: 1px solid var(--border-muted);
-  }
+  .meeting-actions { min-width: 0; }
 
   h3,
   p,
@@ -128,27 +144,53 @@
     margin: 0;
   }
 
+  .actions-heading {
+    display: flex;
+    align-items: end;
+    justify-content: space-between;
+    gap: var(--space-4);
+    margin-bottom: var(--space-4);
+  }
+  .actions-heading > div { display: grid; gap: var(--space-1); }
+  .eyebrow { color: var(--text-muted); font-size: var(--font-size-2xs); font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
   h3 {
     color: var(--text-primary);
-    font-size: var(--font-size-sm);
+    font-size: var(--font-size-md);
   }
+  .meeting-count { color: var(--text-muted); font-size: var(--font-size-xs); white-space: nowrap; }
 
   .coverage {
+    display: grid;
+    gap: var(--space-2);
+    margin-bottom: var(--space-3);
+    padding-block: var(--space-3);
+    border-block: 1px solid var(--border-muted);
     color: var(--text-muted);
     font-size: var(--font-size-xs);
   }
+  .coverage > div { display: grid; gap: var(--space-2); }
+  .coverage > div > span { font-weight: 600; color: var(--text-secondary); }
+  .coverage ul { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); margin: 0; padding: 0; list-style: none; }
+  .coverage li { color: var(--text-secondary); }
+  .coverage li.empty { color: var(--text-muted); }
+  .coverage strong { color: var(--text-primary); font-variant-numeric: tabular-nums; }
+  .coverage li.empty strong { color: inherit; }
+  .meeting-actions :global(.kit-empty-state) { margin: 0; padding: var(--space-5) var(--space-3); }
 
   ol {
     display: grid;
-    gap: var(--space-4);
+    gap: 0;
     margin: 0;
-    padding-left: var(--space-5);
+    padding: 0;
+    list-style: none;
   }
 
   li {
     color: var(--text-secondary);
     font-size: var(--font-size-sm);
   }
+  ol > li { padding: var(--space-4) 0; border-top: 1px solid var(--border-muted); }
+  ol > li:first-child { border-top: 0; }
 
   li > * + * {
     margin-top: var(--space-2);
@@ -176,4 +218,5 @@
   a {
     color: var(--link-ink);
   }
+  .showing { margin-top: var(--space-3); color: var(--text-muted); font-size: var(--font-size-xs); }
 </style>

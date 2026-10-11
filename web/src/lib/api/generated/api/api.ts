@@ -7,6 +7,7 @@ import type {
   AgentTokenIssueRequest,
   AgentTokenIssueResponse,
   AgentTokenListResponse,
+  AgentTokenView,
   AggregateResponse,
   AppendPersonNoteParams,
   AppendPersonNotePathParameters,
@@ -172,6 +173,7 @@ import type {
   GetPersonActivityDayPathParameters,
   GetPersonBriefEnrollmentPathParameters,
   GetPersonBriefPathParameters,
+  GetPersonByUIDParams,
   GetPersonContactStatePathParameters,
   GetPersonMergePathParameters,
   GetPersonMergeSnapshotPathParameters,
@@ -222,6 +224,7 @@ import type {
   ListDeletionsResponse,
   ListDirectoryPeopleParams,
   ListIdentityMatchCandidatesParams,
+  ListMessageRecordingsPathParameters,
   ListMessageTasksPathParameters,
   ListMessagesParams,
   ListOperationRunsParams,
@@ -250,6 +253,7 @@ import type {
   ListPersonFactEvidenceStatusEventsPathParameters,
   ListPersonFactPinsPathParameters,
   ListPersonFactTargetsParams,
+  ListPersonIdentitiesPathParameters,
   ListPersonMatchJudgmentsParams,
   ListPersonMergesParams,
   ListPersonMergesPathParameters,
@@ -262,6 +266,7 @@ import type {
   ListTextConversationMessagesPathParameters,
   ListTextConversationsParams,
   Manifest,
+  MediaSearchResponse,
   MeetingImportRequest,
   MeetingImportResponse,
   MergeOrganizationBody,
@@ -270,6 +275,9 @@ import type {
   MergePersonsPathParameters,
   MessageDetail,
   MessageListResponse,
+  MessageRecordingsResponse,
+  MuesliRemoteRequest,
+  MuesliRemoteResult,
   OperationRunDetail,
   OperationRunsResponse,
   OperationStatusResponse,
@@ -329,6 +337,7 @@ import type {
   PersonFactEvidenceStatusEventsResponse,
   PersonFactPinWrite,
   PersonFactPinsResponse,
+  PersonIdentitiesResponse,
   PersonInboxResponse,
   PersonMatchConsentDecisionRequest,
   PersonMatchConsentDecisionResponse,
@@ -388,6 +397,7 @@ import type {
   SearchDocumentsParams,
   SearchFastResponse,
   SearchIntegrationTasksParams,
+  SearchMediaParams,
   SearchMessagesByDomainsParams,
   SearchMessagesParams,
   SearchResult,
@@ -423,6 +433,8 @@ import type {
   TaskLinkMutationRequest,
   TaskLinkMutationResponse,
   TaskSearchResponse,
+  TelemetryEventRequest,
+  TelemetryEventResponse,
   TextConversationsResponse,
   TextMessagesResponse,
   TextSearchResponse,
@@ -431,6 +443,7 @@ import type {
   TotalStatsResponse,
   TriggerSyncParams,
   TriggerSyncPathParameters,
+  TriggerSyncResponse,
   UnlinkMessageTaskPathParameters,
   UnlinkPersonAgendaItemPathParameters,
   UnpublishCardDAVPersonPathParameters,
@@ -477,7 +490,7 @@ export const addAccount = (
   );
 };
 /**
- * @summary List active agent grants
+ * @summary List agent grants
  */
 export const listAgentTokens = (
   options?: SecondParameter<typeof orvalFetch<AgentTokenListResponse>>,
@@ -501,6 +514,17 @@ export const issueAgentToken = (
       headers: { "Content-Type": "application/json" },
       data: agentTokenIssueRequest,
     },
+    options,
+  );
+};
+/**
+ * @summary Get the calling agent's grant
+ */
+export const getAgentTokenSelf = (
+  options?: SecondParameter<typeof orvalFetch<AgentTokenView>>,
+) => {
+  return orvalFetch<AgentTokenView>(
+    { url: `/api/v1/agent-tokens/self`, method: "GET" },
     options,
   );
 };
@@ -1919,6 +1943,23 @@ export const importMeeting = (
   );
 };
 /**
+ * @summary Import one recorder-local Muesli meeting
+ */
+export const importMuesli = (
+  muesliRemoteRequest: MuesliRemoteRequest,
+  options?: SecondParameter<typeof orvalFetch<MuesliRemoteResult>>,
+) => {
+  return orvalFetch<MuesliRemoteResult>(
+    {
+      url: `/api/v1/import/muesli`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: muesliRemoteRequest,
+    },
+    options,
+  );
+};
+/**
  * @summary Start a bounded historical import
  */
 export const createImportJob = (
@@ -2078,6 +2119,18 @@ export const testTaskIntegration = (
   );
 };
 /**
+ * @summary Search source-selected transcripts as visible messages
+ */
+export const searchMedia = (
+  params: SearchMediaParams,
+  options?: SecondParameter<typeof orvalFetch<MediaSearchResponse>>,
+) => {
+  return orvalFetch<MediaSearchResponse>(
+    { url: `/api/v1/media/search`, method: "GET", params },
+    options,
+  );
+};
+/**
  * @summary List messages
  */
 export const listMessages = (
@@ -2154,6 +2207,21 @@ export const getMessageInlinePart = (
       method: "GET",
       params,
       responseType: "blob",
+    },
+    options,
+  );
+};
+/**
+ * @summary List a message's recordings with transcript state
+ */
+export const listMessageRecordings = (
+  { id }: ListMessageRecordingsPathParameters,
+  options?: SecondParameter<typeof orvalFetch<MessageRecordingsResponse>>,
+) => {
+  return orvalFetch<MessageRecordingsResponse>(
+    {
+      url: `/api/v1/messages/${encodeURIComponent(String(id))}/recordings`,
+      method: "GET",
     },
     options,
   );
@@ -2592,6 +2660,19 @@ export const createPerson = (
       headers: { "Content-Type": "application/json" },
       data: createPersonRequest,
     },
+    options,
+  );
+};
+/**
+ * Resolves the person's current vCard UID, a retired UID that still aliases the person, or the UID of a CardDAV resource mapped to the person. Returns a conflict when one remote UID maps to different people.
+ * @summary Look up a durable person by vCard or CardDAV UID
+ */
+export const getPersonByUID = (
+  params: GetPersonByUIDParams,
+  options?: SecondParameter<typeof orvalFetch<Person>>,
+) => {
+  return orvalFetch<Person>(
+    { url: `/api/v1/people/by-uid`, method: "GET", params },
     options,
   );
 };
@@ -3073,6 +3154,22 @@ export const setPersonFactPin = (
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       data: setPersonFactPinRequest,
+    },
+    options,
+  );
+};
+/**
+ * Lists the identities of the person's current participants. Email addresses are supported draft recipients; phone numbers and chat identifiers are not. Curated contact points and postal addresses are not listed.
+ * @summary List a durable person's archived identities
+ */
+export const listPersonIdentities = (
+  { id }: ListPersonIdentitiesPathParameters,
+  options?: SecondParameter<typeof orvalFetch<PersonIdentitiesResponse>>,
+) => {
+  return orvalFetch<PersonIdentitiesResponse>(
+    {
+      url: `/api/v1/people/${encodeURIComponent(String(id))}/identities`,
+      method: "GET",
     },
     options,
   );
@@ -4076,13 +4173,30 @@ export const getTotalStats = (
 export const triggerSync = (
   { account }: TriggerSyncPathParameters,
   params?: TriggerSyncParams,
-  options?: SecondParameter<typeof orvalFetch<StatusMessageResponse>>,
+  options?: SecondParameter<typeof orvalFetch<TriggerSyncResponse>>,
 ) => {
-  return orvalFetch<StatusMessageResponse>(
+  return orvalFetch<TriggerSyncResponse>(
     {
       url: `/api/v1/sync/${encodeURIComponent(String(account))}`,
       method: "POST",
       params,
+    },
+    options,
+  );
+};
+/**
+ * @summary Report a web or terminal UI usage event
+ */
+export const captureTelemetryEvent = (
+  telemetryEventRequest: TelemetryEventRequest,
+  options?: SecondParameter<typeof orvalFetch<TelemetryEventResponse>>,
+) => {
+  return orvalFetch<TelemetryEventResponse>(
+    {
+      url: `/api/v1/telemetry/events`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: telemetryEventRequest,
     },
     options,
   );

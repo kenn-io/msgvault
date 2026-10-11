@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-05"
+last_edited: "2026-10-08"
 title: Changelog
 description: Release history for msgvault
 ---
@@ -8,9 +8,53 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- Remote edits update source-owned values on published CardDAV imports while preserving unrelated local values. Edits that would overwrite another owner create a conflict.
+
+- Go programs can use msgvault as a library through `go.kenn.io/msgvault/pkg/archive`.
+  It sets up and opens SQLite or PostgreSQL archives, runs the Slack and Discord
+  importers with caller-supplied credentials, purges channels and sources, and
+  mounts the HTTP API in the program's own server. PostgreSQL-only programs can
+  build without CGO. See the [Go library guide](guides/embedding.md).
+
+- [Read-only remote clients](guides/remote-deployment.md#read-only-remote-clients) get separate reader credentials with response limits and optional collection writes.
+- Single-message [export-eml](cli-reference.md#export-eml) refuses ambiguous provider IDs for owner and reader keys.
+- Consume streamed [export-attachment](cli-reference.md#export-attachment) stdout only after the command succeeds.
+
+- Agent tokens grant scoped archive reads through the remote CLI and MCP, with optional `--expires`. Search responses report index uncertainty; owner searches retain automatic index repair.
+
+- Applications can compare a candidate binary's expected archive version with
+  the stored version using `schema-version`, then run `migrate` before replacing
+  the executable. See [the upgrade procedure](setup.md#migrate-before-replacing-the-executable).
+
+- msgvault sends anonymous usage telemetry: a daemon ping at startup and once
+  each later UTC day, and an `app_opened` event the web UI reports through the
+  daemon when it opens and on its first focus on a later UTC day. Events carry
+  the version, commit, OS, architecture and a random install ID, never archive
+  content. `[telemetry] enabled = false` in `config.toml` or
+  `MSGVAULT_TELEMETRY_ENABLED=0` turns it off, and `serve` says so at startup
+  while it's on. See [telemetry](configuration.md#telemetry).
+
 - `list-accounts` and `embeddings list` keep working while a sync, import, or
   embedding build runs. Accounts whose counts aren't ready yet show `pending`.
 
+- Granola and Circleback save meetings through the same path as Muesli, Notion,
+  and meeting file import. Organizer and attendee names are trimmed, a value
+  without `@` is no longer saved as a participant, a repeated attendee appears
+  once in search, and recipient rows record the address. Existing meetings keep
+  their earlier form until they change; run `sync-granola --full` or
+  `sync-circleback --full` to rewrite them. Granola now skips unchanged notes
+  instead of rewriting them.
+
+- Find mail by the address that received it: `received:work@example.org` finds
+  forwarded and Bcc'd mail delivered to a confirmed alias, and
+  `account:work@example.org` adds sent mail and calendar events. Older mail
+  fills in on each source's next sync or import, or with
+  `msgvault repair-derived`. API schema 3.5.0; older daemons refuse these
+  operators.
+- Pick a receiving address or the unattributed mail of a source in the TUI
+  account picker, the Web UI's Explore account filter, and the MCP `account`
+  argument; vector and hybrid search accept `received:` and `account:`. API
+  schema 3.11.0.
 - Rerunning `import-whatsapp` on an Apple `ChatStorage.sqlite` reads only the
   chats that changed since the last successful import and writes only new and
   changed messages, instead of rewriting the whole archive. It picks up edits
@@ -18,11 +62,22 @@ All notable changes to msgvault, grouped by release.
 - `import-whatsapp` accepts `--after` and `--before` for Apple databases, so a
   first import can fetch recent messages before the full run. Android imports
   reject both flags.
+- People provider keys stored with `msgvault person provider add --api-key-stdin`
+  or the Web UI now work on Windows. Every stored people provider key lives in
+  `tokens/provider-credentials.json` with the other provider keys, and keys an
+  older release kept under `tokens/people-providers/` move there the first time
+  msgvault uses the profile. After a people key is stored this way, an older
+  release rejects the credential file, so downgrading makes every stored
+  provider key unavailable. Before downgrading, run
+  `msgvault person provider remove <name>` for each profile with a stored key.
+  `remove` also deletes a stored key whose profile is no longer in the config.
 - [Calendar event control](usage/calendar.md#control-events-unreleased) adds
   create, update, delete, move, self RSVP, and availability commands, plus HTTP
   and MCP interfaces. Write consent and exact source permissions are opt-in;
   guest notifications default to `none`. The daemon verifies calendar access
   and archives successful changes immediately.
+- [Twilio calls](usage/meetings.md#twilio) archive as searchable meetings with
+  their recordings saved locally.
 - [Kata issues](usage/kata-issues.md) can quote an exact passage from a
   message, transcript, or file, from the Web UI, `msgvault kata`, HTTP, or MCP
   (`--allow-kata-writes`). Retrying a create returns the original issue, and
@@ -33,6 +88,23 @@ All notable changes to msgvault, grouped by release.
 - Adding Calendar to a Gmail token recognizes Google's short and expanded
   `email`/`profile` scope names, avoiding false missing-scope errors on re-consent.
 - Prepare and manage drafts through MCP with the caller's own daemon permissions, including restricted agent grants. Msgvault never sends.
+- `person identities` and `GET /api/v1/people/{id}/identities` list the email
+  addresses, phone numbers, and chat IDs your archive holds for a person, so
+  you can pick an email address for `draft-compose --to`. Phone numbers and
+  chat IDs show as unsupported. See
+  [Draft to a person](cli-reference.md#draft-to-a-person).
+- CardDAV sync supports Microsoft 365 and Outlook.com contacts through
+  Microsoft Graph. `msgvault add-carddav --microsoft <email>` signs in and
+  saves the connection. Contacts and each folder inside it are address books.
+  See [Microsoft contacts](usage/people-carddav.md#microsoft-contacts).
+- A CardDAV update or unpublish attempted while the Google sign-in is missing
+  goes out after sign-in, instead of turning into a conflict to review.
+
+- **Transcripts beside recordings:** the Web reader shows each recording's
+  Docbank transcript, or why there isn't one, under the expanded message.
+  `GET /api/v1/messages/{id}/recordings` serves the same list (API schema 3.6.0).
+
+- **Search spoken words:** `msgvault media search`, MCP `search_media`, and `GET /api/v1/media/search` find current recording transcripts and show partial coverage when some recordings aren't searchable (API schema 3.7.0).
 
 ## 0.21.0
 <small>2026-10-02</small>

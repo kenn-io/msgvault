@@ -98,7 +98,6 @@ describe('SettingsWorkspace', () => {
     let configured = false;
     const revision = 1;
     const status = () => Response.json({
-      stored_credentials_supported: true,
       profiles: created ? [{
         name: 'from-env', preset_id: 'openrouter', protocol: 'openai-chat', model: 'model-one',
         endpoint: 'https://openrouter.example.test/api/v1', credential_source: 'env',
@@ -165,7 +164,6 @@ describe('SettingsWorkspace', () => {
       retention_posture: 'No retention', training_posture: 'No training',
     });
     const status = () => Response.json({
-      stored_credentials_supported: true,
       profiles: revision > 1 ? [profile()] : [], configured_enabled: selected,
       configured_name: selected ? 'routed' : undefined, running_enabled: false,
       pending_restart: selected,
@@ -240,7 +238,6 @@ describe('SettingsWorkspace', () => {
       const path = new URL(request.url).pathname;
       if (path === '/api/v1/settings') return settingsResponse(initialSettings, '"settings-a"');
       if (path === '/api/v1/settings/people-inference') return Response.json({
-        stored_credentials_supported: true,
         profiles: [{
           name: 'routed', preset_id: 'openrouter', protocol: 'openai_chat',
           model: 'model-one', endpoint: 'https://openrouter.example.test/api/v1',

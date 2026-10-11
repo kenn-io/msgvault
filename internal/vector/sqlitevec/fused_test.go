@@ -529,7 +529,7 @@ func TestFusedSearch_PinnedPoolKeepsAttach(t *testing.T) {
 	// were unpinned AND vec.* actually missing, we wouldn't hang.
 	// With the pin it will timeout waiting for the tx's conn — which
 	// is exactly the intended serialisation, not a failure.
-	queryCtx, cancel := context.WithTimeout(ctx, 150*time.Millisecond)
+	queryCtx, cancel := context.WithTimeout(ctx, 150*time.Millisecond) //nolint:kennlint // the deadline is the expected result; the open transaction holds the pinned connection
 	defer cancel()
 	// This is a serialisation probe, not a data read: we only inspect
 	// secondErr to distinguish a deadlock-avoidance timeout from a

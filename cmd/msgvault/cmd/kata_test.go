@@ -168,12 +168,12 @@ func TestKataCommandsRefuseAnOlderDaemon(t *testing.T) {
 	ctx := configureRemoteDaemonForTest(t, daemon.URL)
 	for _, args := range [][]string{{"evidence", "prepare"}, {"create", "--idempotency-key", "key-1"}, {"link", "example#abcd"}, {"issues", "--message", "1"}, {"context", "example#abcd"}} {
 		// The lookup and the context read need newer daemons than the other commands.
-		version.Store(new("3.2.0"))
+		version.Store(new("3.3.0"))
 		switch args[0] {
 		case "issues":
-			version.Store(new("3.3.0"))
+			version.Store(new("3.11.0"))
 		case "context":
-			version.Store(new("3.4.0"))
+			version.Store(new("3.11.0"))
 		}
 		command := newKataCmd()
 		command.SetArgs(args)

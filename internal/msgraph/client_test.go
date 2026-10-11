@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -17,41 +18,88 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// A connection that breaks in the middle of a body is retried, like a 5xx.
-func TestGetRetriesTruncatedBody(t *testing.T) {
+// GetRawMetered charges every response it reads, failed and broken ones
+// included, and an error from charge ends the request.
+func TestGetRawMeteredChargesEveryAttempt(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	errBody := `{"error":{"code":"serviceUnavailable"}}`
 	var calls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		if calls.Add(1) == 1 {
+		switch calls.Add(1) {
+		case 1:
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(errBody))
+		case 2:
 			w.Header().Set("Content-Length", "100")
 			_, _ = w.Write([]byte("partial"))
-			return // the server closes the connection 93 bytes short
+		default:
+			_, _ = w.Write([]byte("full body"))
 		}
-		_, _ = w.Write([]byte("full body"))
 	}))
 	defer srv.Close()
-
 	c := NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 1000)
-	body, err := c.GetRaw(context.Background(), "/me/messages/m1/$value")
-	require.NoError(t, err)
-	assert.Equal(t, "full body", string(body))
-	assert.EqualValues(t, 2, calls.Load())
+
+	var charged []int64
+	body, err := c.GetRawMetered(t.Context(), "/x", 1<<20, func(n int64) error {
+		charged = append(charged, n)
+		return nil
+	})
+	require.NoError(err)
+	assert.Equal("full body", string(body))
+	assert.Equal([]int64{int64(len(errBody)), int64(len("partial")), int64(len("full body"))}, charged)
+
+	calls.Store(0)
+	limit := errors.New("limit")
+	charges := 0
+	_, err = c.GetRawMetered(t.Context(), "/x", 1<<20, func(int64) error {
+		charges++
+		return limit
+	})
+	require.ErrorIs(err, limit)
+	assert.Equal(1, charges)
+	assert.EqualValues(1, calls.Load())
 }
 
+// A request cancelled while it waits out a 429 stops. A write was never
+// applied, so it is marked not sent.
 func TestClientContextCancelDuringRetry(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		server := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Retry-After", "30") // long wait so cancellation wins
-			w.WriteHeader(http.StatusTooManyRequests)
-		}))
-		httpClient := server.Client()
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		c := NewClient(server.URL, func(context.Context) (string, error) { return "t", nil }, 50)
-		c.http.Transport = httpClient.Transport
-		go func() { time.Sleep(50 * time.Millisecond); cancel() }()
-		_, err := c.GetRaw(ctx, "/x")
-		require.ErrorIs(t, err, context.Canceled)
-	})
+	for _, tc := range []struct {
+		name string
+		call func(context.Context, *Client) error
+		want error
+	}{
+		{
+			name: "GetRaw",
+			call: func(ctx context.Context, c *Client) error { _, err := c.GetRaw(ctx, "/x"); return err },
+			want: context.Canceled,
+		},
+		{
+			name: "SendOnce",
+			call: func(ctx context.Context, c *Client) error {
+				_, err := c.SendOnce(ctx, http.MethodPatch, "/me/contacts/a", map[string]string{}, `W/"1"`)
+				return err
+			},
+			want: ErrNotSent,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				server := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Retry-After", "30") // long wait so cancellation wins
+					w.WriteHeader(http.StatusTooManyRequests)
+				}))
+				httpClient := server.Client()
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				c := NewClient(server.URL, func(context.Context) (string, error) { return "t", nil }, 50)
+				c.http.Transport = httpClient.Transport
+				go func() { time.Sleep(50 * time.Millisecond); cancel() }()
+				require.ErrorIs(t, tc.call(ctx, c), tc.want)
+			})
+		})
+	}
 }
 
 func TestGetGraphErrorClassification(t *testing.T) {
@@ -65,6 +113,9 @@ func TestGetGraphErrorClassification(t *testing.T) {
 		{"expired_400", http.StatusBadRequest, `{"error":{"code":"syncStateNotFound"}}`, ErrGone},
 		{"gone", http.StatusGone, "expired", ErrGone},
 		{"missing", http.StatusNotFound, `{"error":{"code":"ErrorItemNotFound","message":"syncStateNotFound is not the error code"}}`, ErrNotFound},
+		{"unauthorized", http.StatusUnauthorized, `{"error":{"code":"InvalidAuthenticationToken"}}`, ErrUnauthorized},
+		{"stale_etag", http.StatusPreconditionFailed, `{"error":{"code":"ErrorIrresolvableConflict"}}`, ErrPreconditionFailed},
+		{"bad_change_key", http.StatusBadRequest, `{"error":{"code":"ErrorInvalidChangeKey"}}`, ErrPreconditionFailed},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -220,5 +271,92 @@ func TestGetRawWithTimeout(t *testing.T) {
 		_, err = c.GetRaw(t.Context(), "/metadata")
 		require.Error(err)
 		assert.Equal(603*time.Second, time.Since(start))
+	})
+}
+
+// A 429 that outlasts every retry, or whose wait outlasts the caller's
+// deadline, returns at once with Graph's last Retry-After, so a caller can
+// pause instead of repeating the request or seeing a cancellation.
+func TestGetReportsThrottling(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		retryAfter string
+		deadline   time.Duration
+		want       time.Duration
+	}{
+		{name: "retries exhausted", retryAfter: "30", want: 30 * time.Second},
+		{name: "wait outlasts deadline", retryAfter: "600", deadline: 5 * time.Minute, want: 600 * time.Second},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					w.Header().Set("Retry-After", tc.retryAfter)
+					w.WriteHeader(http.StatusTooManyRequests)
+				}))
+				httpClient := srv.Client()
+				c := NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 1000)
+				c.http.Transport = httpClient.Transport
+				ctx := t.Context()
+				if tc.deadline > 0 {
+					var cancel context.CancelFunc
+					ctx, cancel = context.WithTimeout(ctx, tc.deadline)
+					defer cancel()
+				}
+				_, err := c.GetRaw(ctx, "/message")
+				throttled, ok := errors.AsType[*ThrottledError](err)
+				require.True(t, ok, "error: %v", err)
+				assert.Equal(t, tc.want, throttled.RetryAfter)
+				assert.NoError(t, ctx.Err())
+			})
+		})
+	}
+}
+
+// SendOnce does not repeat a write after a 5xx, which can follow an applied
+// write, but it retries a 429, which Graph applied nothing for.
+func TestSendOnceRetriesOnlyThrottling(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		var statuses []int
+		calls := 0
+		srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			status := statuses[calls]
+			calls++
+			w.WriteHeader(status)
+		}))
+		httpClient := srv.Client()
+		c := NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 1000)
+		c.http.Transport = httpClient.Transport
+
+		statuses, calls = []int{http.StatusServiceUnavailable, http.StatusCreated}, 0
+		_, err := c.SendOnce(t.Context(), http.MethodPost, "/contacts", map[string]string{}, "")
+		require.Error(err)
+		assert.Equal(1, calls)
+
+		statuses, calls = []int{http.StatusTooManyRequests, http.StatusCreated}, 0
+		_, err = c.SendOnce(t.Context(), http.MethodPost, "/contacts", map[string]string{}, "")
+		require.NoError(err)
+		assert.Equal(2, calls)
+	})
+}
+
+func TestSendHeldByRateLimitIsMarkedNotSent(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		requests := 0
+		srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			requests++
+			w.WriteHeader(http.StatusNoContent)
+		}))
+		transport := srv.Client().Transport
+		c := NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 0.001)
+		c.http.Transport = transport
+		_, err := c.SendOnce(t.Context(), http.MethodDelete, "/me/contacts/a", nil, "")
+		require.NoError(t, err)
+		ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+		defer cancel()
+		_, err = c.SendOnce(ctx, http.MethodDelete, "/me/contacts/b", nil, "")
+		require.ErrorIs(t, err, ErrNotSent)
+		assert.Equal(t, 1, requests)
 	})
 }

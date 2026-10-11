@@ -7,17 +7,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"math"
-	"strings"
-	"unicode/utf8"
 
-	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/document"
-)
-
-const (
-	documentVectorBatchLimit = 1000
-	documentVectorTokenLimit = 1024
 )
 
 // DocumentBackend is the independent attachment-document vector store. It
@@ -34,7 +25,7 @@ func (b *Backend) DocumentBackend() *DocumentBackend {
 }
 
 func (b *DocumentBackend) PutUnpublished(ctx context.Context, generationID document.GenerationID, dimension int, embeddings []document.Embedding) error {
-	if err := validateDocumentPut(generationID, dimension, embeddings); err != nil {
+	if err := document.ValidatePut(generationID, dimension, embeddings); err != nil {
 		return err
 	}
 	if len(embeddings) == 0 {
@@ -102,7 +93,7 @@ func (b *DocumentBackend) PutUnpublished(ctx context.Context, generationID docum
 }
 
 func (b *DocumentBackend) DeleteTokens(ctx context.Context, generationID document.GenerationID, tokens []string) error {
-	if err := validateDocumentTokens(generationID, tokens); err != nil {
+	if err := document.ValidateTokens(generationID, tokens); err != nil {
 		return err
 	}
 	if len(tokens) == 0 {
@@ -153,7 +144,7 @@ func (b *DocumentBackend) Search(ctx context.Context, generationID document.Gene
 }
 
 func (b *DocumentBackend) SearchPage(ctx context.Context, generationID document.GenerationID, dimension int, query []float32, cursor string, k int) (document.HitPage, error) {
-	if err := validateDocumentSearch(generationID, dimension, query, k); err != nil {
+	if err := document.ValidateSearch(generationID, dimension, query, k); err != nil {
 		return document.HitPage{}, err
 	}
 	afterDistance, afterToken, afterRank, err := document.DecodePageCursor(cursor)
@@ -189,106 +180,10 @@ func (b *DocumentBackend) SearchPage(ctx context.Context, generationID document.
 		%s
 		ORDER BY distance ASC, token ASC
 		LIMIT ?`, DocumentVectorTableName(dimension), pagePredicate)
+	//nolint:rowserrcheck // ReadHitPage owns rows and checks Err.
 	rows, err := b.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return document.HitPage{}, fmt.Errorf("search document vectors: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
-	hits := make([]document.Hit, 0, k+1)
-	distances := make([]float64, 0, k+1)
-	for rows.Next() {
-		var hit document.Hit
-		var distance float64
-		if err := rows.Scan(&hit.Token, &hit.Score, &distance); err != nil {
-			return document.HitPage{}, fmt.Errorf("scan document vector hit: %w", err)
-		}
-		hit.Rank = afterRank + len(hits) + 1
-		hits = append(hits, hit)
-		distances = append(distances, distance)
-	}
-	if err := rows.Err(); err != nil {
-		return document.HitPage{}, fmt.Errorf("iterate document vector hits: %w", err)
-	}
-	page := document.HitPage{Exhausted: len(hits) <= k}
-	if len(hits) > k {
-		page.Hits = hits[:k]
-	} else {
-		page.Hits = hits
-	}
-	if !page.Exhausted {
-		page.NextCursor, err = document.EncodePageCursor(distances[k-1], hits[k-1].Token, hits[k-1].Rank)
-		if err != nil {
-			return document.HitPage{}, err
-		}
-	}
-	return page, nil
-}
-
-func validateDocumentPut(generationID document.GenerationID, dimension int, embeddings []document.Embedding) error {
-	if generationID <= 0 || dimension <= 0 || len(embeddings) > documentVectorBatchLimit {
-		return fmt.Errorf("%w: generation, dimension, or batch bound", document.ErrInvalidVector)
-	}
-	seen := make(map[string]struct{}, len(embeddings))
-	for i, embedding := range embeddings {
-		if err := validateDocumentToken(embedding.Token); err != nil {
-			return fmt.Errorf("embedding %d: %w", i, err)
-		}
-		if _, ok := seen[embedding.Token]; ok {
-			return fmt.Errorf("%w: duplicate token %q", document.ErrInvalidVector, embedding.Token)
-		}
-		seen[embedding.Token] = struct{}{}
-		if len(embedding.Vector) != dimension {
-			return fmt.Errorf("%w: token %q has %d dimensions, want %d",
-				vector.ErrDimensionMismatch, embedding.Token, len(embedding.Vector), dimension)
-		}
-		if err := validateDocumentVector(embedding.Vector); err != nil {
-			return fmt.Errorf("token %q: %w", embedding.Token, err)
-		}
-	}
-	return nil
-}
-
-func validateDocumentTokens(generationID document.GenerationID, tokens []string) error {
-	if generationID <= 0 || len(tokens) > documentVectorBatchLimit {
-		return fmt.Errorf("%w: generation or token batch bound", document.ErrInvalidVector)
-	}
-	for _, token := range tokens {
-		if err := validateDocumentToken(token); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func validateDocumentSearch(generationID document.GenerationID, dimension int, query []float32, k int) error {
-	if generationID <= 0 || dimension <= 0 || k <= 0 || k > documentVectorBatchLimit {
-		return fmt.Errorf("%w: generation, dimension, or result bound", document.ErrInvalidVector)
-	}
-	if len(query) != dimension {
-		return fmt.Errorf("%w: query has %d dimensions, want %d", vector.ErrDimensionMismatch, len(query), dimension)
-	}
-	return validateDocumentVector(query)
-}
-
-func validateDocumentToken(token string) error {
-	if token == "" || len(token) > documentVectorTokenLimit ||
-		!utf8.ValidString(token) || strings.ContainsRune(token, 0) {
-		return fmt.Errorf("%w: token must contain 1..%d bytes", document.ErrInvalidVector, documentVectorTokenLimit)
-	}
-	return nil
-}
-
-func validateDocumentVector(values []float32) error {
-	var norm float64
-	for _, value := range values {
-		f := float64(value)
-		if math.IsNaN(f) || math.IsInf(f, 0) {
-			return fmt.Errorf("%w: non-finite component", document.ErrInvalidVector)
-		}
-		norm += f * f
-	}
-	if norm == 0 {
-		return fmt.Errorf("%w: zero-norm vector", document.ErrInvalidVector)
-	}
-	return nil
+	return document.ReadHitPage(rows, k, afterRank)
 }

@@ -56,7 +56,7 @@ func TestPersonSweepPostgreSQLApplyConsentLinearizesWithRevoke(t *testing.T) {
 		select {
 		case err := <-revokeResult:
 			requirements.Failf("revoke passed locked consent", "error: %v", err)
-		case <-time.After(200 * time.Millisecond):
+		case <-time.After(200 * time.Millisecond): //nolint:kennlint // absence check: the locked consent keeps the revoke waiting
 		}
 		releaseOnce.Do(func() { close(release) })
 		requirements.NoError(<-applyResult)
@@ -73,8 +73,8 @@ func TestPersonSweepPostgreSQLApplyConsentLinearizesWithRevoke(t *testing.T) {
 		requirements.NoError(err)
 		t.Cleanup(func() { _ = tx.Rollback() })
 		_, err = tx.ExecContext(t.Context(), f.store.Rebind(`
-			UPDATE person_inference_consents SET revoked_by = ?, revoked_at = CURRENT_TIMESTAMP
-			WHERE profile_fingerprint = ? AND revoked_at IS NULL`), "reviewer-test",
+			UPDATE provider_consents SET revoked_by = ?, revoked_at = CURRENT_TIMESTAMP
+			WHERE purpose = 'people_inference' AND fingerprint = ? AND revoked_at IS NULL`), "reviewer-test",
 			f.request.Generation.Policy.ProviderPolicyFingerprint)
 		requirements.NoError(err)
 		applyResult := make(chan error, 1)
@@ -85,7 +85,7 @@ func TestPersonSweepPostgreSQLApplyConsentLinearizesWithRevoke(t *testing.T) {
 		select {
 		case applyErr := <-applyResult:
 			requirements.Failf("apply passed uncommitted revoke", "error: %v", applyErr)
-		case <-time.After(200 * time.Millisecond):
+		case <-time.After(200 * time.Millisecond): //nolint:kennlint // absence check: the uncommitted revoke keeps the apply waiting
 		}
 		requirements.NoError(tx.Commit())
 		applyErr := <-applyResult

@@ -575,13 +575,17 @@ func postgresFTSNeedsBackfillSQL() string {
 // partial btree index created by EnsureFTSIndex makes even the false
 // case index-served and self-pruning as backfill completes.
 func (d *PostgreSQLDialect) FTSNeedsBackfill(db *sql.DB) bool {
+	needs, _ := d.FTSNeedsBackfillContext(context.Background(), db)
+	return needs
+}
+func (d *PostgreSQLDialect) FTSNeedsBackfillContext(ctx context.Context, db *sql.DB) (bool, error) {
 	var exists bool
-	if err := db.QueryRow(
+	if err := ReadDBContext(ctx, db).QueryRowContext(ctx,
 		postgresFTSNeedsBackfillSQL(),
 	).Scan(&exists); err != nil {
-		return false
+		return false, fmt.Errorf("probe FTS completeness: %w", err)
 	}
-	return exists
+	return exists, nil
 }
 
 // FTSNeedsBackfillQuick uses the same exact EXISTS probe as FTSNeedsBackfill:
@@ -645,6 +649,7 @@ func (d *PostgreSQLDialect) FTSRebuildSchema(ctx context.Context, q contextQueri
 //	TEXT → TEXT, DATETIME → TIMESTAMPTZ, JSON → JSONB.
 func (d *PostgreSQLDialect) LegacyColumnMigrations() []ColumnMigration {
 	return []ColumnMigration{
+		{`ALTER TABLE carddav_resources ADD COLUMN IF NOT EXISTS owns_display_name BOOLEAN NOT NULL DEFAULT FALSE`, "carddav_resources.owns_display_name"},
 		{`ALTER TABLE person_match_judgment_cursor ADD COLUMN IF NOT EXISTS started_at_zero BOOLEAN NOT NULL DEFAULT FALSE`, "person_match_judgment_cursor.started_at_zero"},
 		{`ALTER TABLE carddav_publications ADD COLUMN IF NOT EXISTS outgoing_envelope_metadata BYTEA`, "carddav_publications.outgoing_envelope_metadata"},
 		{`ALTER TABLE carddav_publications ADD COLUMN IF NOT EXISTS approved_body_sha256 TEXT`, "carddav_publications.approved_body_sha256"},
@@ -676,6 +681,9 @@ func (d *PostgreSQLDialect) LegacyColumnMigrations() []ColumnMigration {
 		{`ALTER TABLE imap_folder_state ADD COLUMN IF NOT EXISTS highest_modseq NUMERIC(20, 0) NOT NULL DEFAULT 0`, "imap_folder_state.highest_modseq"},
 		{`ALTER TABLE messages ADD COLUMN IF NOT EXISTS rfc822_message_id TEXT`, "rfc822_message_id"},
 		{`ALTER TABLE messages ADD COLUMN IF NOT EXISTS list_id TEXT`, "list_id"},
+		{`ALTER TABLE messages ADD COLUMN IF NOT EXISTS account_address TEXT`, "account_address"},
+		{`ALTER TABLE messages ADD COLUMN IF NOT EXISTS account_path TEXT`, "account_path"},
+		{`ALTER TABLE messages ADD COLUMN IF NOT EXISTS draft_authored BOOLEAN NOT NULL DEFAULT FALSE`, "draft_authored"},
 		{`ALTER TABLE sources ADD COLUMN IF NOT EXISTS oauth_app TEXT`, "oauth_app"},
 		{`ALTER TABLE participants ADD COLUMN IF NOT EXISTS phone_number TEXT`, "phone_number"},
 		{`ALTER TABLE participants ADD COLUMN IF NOT EXISTS canonical_id TEXT`, "canonical_id"},
@@ -2349,6 +2357,7 @@ func (d *PostgreSQLDialect) IsFTSValueTooLargeError(err error) bool {
 var exclusiveLockTables = []string{
 	"sync_runs", "sources", "conversations", "conversation_participants",
 	"messages", "message_recipients", "message_labels", "message_bodies", "message_raw",
+	"message_delivery_addresses",
 	"meeting_details", "meeting_action_items",
 	"attachments", "document_occurrences", "labels", "participants", "participant_identifiers", "reactions", "reaction_source_events",
 	"participant_contact_observations", identityMatchCandidatesTableName, identityMatchCandidateSourcesTableName,

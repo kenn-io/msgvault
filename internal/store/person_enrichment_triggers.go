@@ -43,8 +43,7 @@ func (s *Store) enqueuePersonEnrichmentTx(
 	if err := tx.QueryRowContext(ctx, `
 		SELECT EXISTS (
 			SELECT 1 FROM person_tracking pt
-			JOIN person_enrichment_consents c
-			  ON c.profile_fingerprint = ? AND c.revoked_at IS NULL
+			JOIN `+activeConsentsSQL(ConsentPersonEnrichment)+` c ON c.fingerprint = ?
 			WHERE pt.person_id = ?
 		)`, input.ProfileFingerprint, input.PersonID).Scan(&authorized); err != nil {
 		return fmt.Errorf("authorize person enrichment trigger: %w", err)
@@ -105,10 +104,10 @@ func (s *Store) publishPersonEnrichmentTx(
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO person_enrichment_work
 			(person_id, profile_fingerprint, trigger_mask, trigger_generation, due_at)
-		SELECT ?, c.profile_fingerprint, ?, ?, ?
-		FROM person_enrichment_consents c
+		SELECT ?, c.fingerprint, ?, ?, ?
+		FROM `+activeConsentsSQL(ConsentPersonEnrichment)+` c
 		JOIN person_tracking pt ON pt.person_id = ?
-		WHERE c.revoked_at IS NULL`+personEnrichmentWorkConflictClause,
+		WHERE 1 = 1`+personEnrichmentWorkConflictClause,
 		personID, mask, strings.TrimSpace(generation), dueAt.UTC(), personID)
 	if err != nil {
 		return fmt.Errorf("publish authorized person enrichment work: %w", err)
@@ -217,9 +216,8 @@ func (s *Store) EnqueueDuePersonEnrichmentContext(
 			FROM person_fact_claims c
 			JOIN person_fact_generations g ON g.id = c.generation_id
 			JOIN person_tracking pt ON pt.person_id = c.person_id
-			JOIN person_enrichment_consents consent
-			  ON consent.profile_fingerprint = g.provider_policy_fingerprint
-			 AND consent.revoked_at IS NULL
+			JOIN `+activeConsentsSQL(ConsentPersonEnrichment)+` consent
+			  ON consent.fingerprint = g.provider_policy_fingerprint
 			LEFT JOIN person_enrichment_work w
 			  ON w.person_id = c.person_id
 			 AND w.profile_fingerprint = g.provider_policy_fingerprint
@@ -286,23 +284,22 @@ func (s *Store) EnqueueDuePersonEnrichmentContext(
 		missingArgs := append([]any(nil), profileArgs...)
 		missingArgs = append(missingArgs, limit-count)
 		rows, err := tx.QueryContext(ctx, `
-			SELECT pt.person_id, c.profile_fingerprint, p.revision
+			SELECT pt.person_id, c.fingerprint, p.revision
 			FROM person_tracking pt
 			JOIN persons p ON p.id = pt.person_id
-			CROSS JOIN person_enrichment_consents c
+			CROSS JOIN `+activeConsentsSQL(ConsentPersonEnrichment)+` c
 			LEFT JOIN person_enrichment_work w
 			  ON w.person_id = pt.person_id
-			 AND w.profile_fingerprint = c.profile_fingerprint
-			WHERE c.revoked_at IS NULL
-			  AND c.profile_fingerprint IN (`+profilePlaceholders+`)
+			 AND w.profile_fingerprint = c.fingerprint
+			WHERE c.fingerprint IN (`+profilePlaceholders+`)
 			  AND w.person_id IS NULL
 			  AND NOT EXISTS (
 				SELECT 1 FROM person_enrichment_attempts attempted
 				WHERE attempted.person_id = pt.person_id
-				  AND attempted.profile_fingerprint = c.profile_fingerprint
+				  AND attempted.profile_fingerprint = c.fingerprint
 				  AND attempted.person_revision = p.revision
 			  )
-			ORDER BY pt.person_id, c.profile_fingerprint
+			ORDER BY pt.person_id, c.fingerprint
 			LIMIT ?`, missingArgs...)
 		if err != nil {
 			return fmt.Errorf("list missing person enrichment work: %w", err)
@@ -468,7 +465,7 @@ func (s *Store) personEnrichmentAuthorizedTx(
 	var authorized bool
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS (
 		SELECT 1 FROM person_tracking tracked
-		JOIN person_enrichment_consents consent ON consent.revoked_at IS NULL
+		CROSS JOIN `+activeConsentsSQL(ConsentPersonEnrichment)+` consent
 		WHERE tracked.person_id = ?
 	)`, personID).Scan(&authorized); err != nil {
 		return false, fmt.Errorf("read person enrichment authorization: %w", err)

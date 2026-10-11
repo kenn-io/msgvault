@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
@@ -29,7 +30,7 @@ func escapeLikeSubject(s string) string {
 // filteredChunkAndMessageCount seed it from store.LiveMessagesWhere;
 // applyFilterClauses uses it inline).
 func buildPGFilterClauses(f vector.Filter, bind func(any) string) []string {
-	var clauses []string
+	clauses := search.AccountScopeConditionsBound(f.AccountScopes, "m", bind)
 	if len(f.MessageIDs) > 0 {
 		clauses = append(clauses, fmt.Sprintf("m.id = ANY(%s::bigint[])", bind(int64Array(f.MessageIDs))))
 	}

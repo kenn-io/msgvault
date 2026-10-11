@@ -28,7 +28,6 @@
   let selectedID = $state<number | null>(null);
   let confirming = $state(false);
   let confirmError = $state<string | null>(null);
-  let preserveSelectionOnClose = false;
   const options = $derived(
     results.map(
       (row): TypeaheadOption => ({
@@ -101,21 +100,17 @@
   }
   function handleQueryInput(value: string): void {
     query = value;
-    if (value.trim() === '' && preserveSelectionOnClose) {
-      preserveSelectionOnClose = false;
-    } else {
-      selectedID = null;
-      confirmError = null;
-    }
     debouncedSearch(value);
+  }
+  function handlePickerFocusIn(event: FocusEvent): void {
+    // Focus reaching the search input means the picker reopened for a new choice.
+    if (!(event.target instanceof HTMLInputElement)) return;
+    selectedID = null;
+    confirmError = null;
   }
   function selectResult(id: number): void {
     selectedID = id;
     confirmError = null;
-    // Typeahead reports an empty query as it closes after selection. Preserve
-    // this result through that lifecycle reset; a later empty editable field
-    // clears it before confirmation can use stale state.
-    preserveSelectionOnClose = true;
   }
   async function confirmLink(): Promise<void> {
     if (selectedID === null || confirming) return;
@@ -170,7 +165,7 @@
   ariaLabel={`Link another identity for ${personLabel}`}
   onclose={requestClose}
 >
-  <div class="link-identity-dialog" aria-busy={confirming}>
+  <div class="link-identity-dialog" aria-busy={confirming} onfocusin={handlePickerFocusIn}>
     <Typeahead
       {options}
       value={selectedID === null ? '' : String(selectedID)}

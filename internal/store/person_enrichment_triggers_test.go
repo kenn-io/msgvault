@@ -67,7 +67,7 @@ func newEnrichmentTriggerFixture(t *testing.T, profileCount int) enrichmentTrigg
 	return enrichmentTriggerFixture{store: f.Store, person: person, profiles: profiles, now: now}
 }
 
-func (f enrichmentTriggerFixture) grant(t *testing.T, index int) *store.PersonEnrichmentConsent {
+func (f enrichmentTriggerFixture) grant(t *testing.T, index int) *store.ProviderConsent {
 	t.Helper()
 	consent, created, err := f.store.GrantPersonEnrichmentConsent(
 		t.Context(), f.profiles[index].Fingerprint, "test")
@@ -323,7 +323,7 @@ func testPersonEnrichmentMissingPersonRevocation(t *testing.T, st *store.Store, 
 	select {
 	case <-trackingPersonLocked:
 		earlyPersonMutation = true
-	case <-time.After(250 * time.Millisecond):
+	case <-time.After(250 * time.Millisecond): //nolint:kennlint // absence check: the authority gate keeps tracking from locking the person
 	}
 	if manual && earlyPersonMutation {
 		select {
@@ -804,7 +804,7 @@ func TestPersonEnrichmentCatchUpSerializesWithConsentRevocation(t *testing.T) {
 	select {
 	case revokeErr = <-revokeDone:
 		earlyRemoval = true
-	case <-time.After(250 * time.Millisecond):
+	case <-time.After(250 * time.Millisecond): //nolint:kennlint // absence check: the held catch-up keeps the revoke waiting
 	}
 	release()
 	require.NoError(<-catchUpDone)
@@ -946,6 +946,12 @@ func TestPersonEnrichmentTriggerConsentGrantAndRevocationCancelPendingWork(t *te
 	stored, err := f.store.GetPersonEnrichmentAttemptContext(t.Context(), attempt.ID)
 	require.NoError(err)
 	assert.Equal("terminal", stored.State)
+
+	regrant := f.grant(t, 0)
+	assert.Greater(regrant.ID, consent.ID)
+	rows = f.work(t, 0)
+	require.Len(rows, 1)
+	assert.Equal("consent:"+formatEnrichmentTriggerID(regrant.ID), rows[0].TriggerGeneration)
 }
 
 func TestPersonEnrichmentMergeAndSplitInvalidateProviderIdentities(t *testing.T) {

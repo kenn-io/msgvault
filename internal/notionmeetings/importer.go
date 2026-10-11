@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/meetingarchive"
+	"go.kenn.io/msgvault/internal/meetingidentity"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -32,6 +33,7 @@ type Source interface {
 }
 
 type Importer struct {
+	users  UserSource
 	store  *store.Store
 	client Source
 	now    func() time.Time
@@ -39,6 +41,12 @@ type Importer struct {
 
 func NewImporter(st *store.Store, client Source) *Importer {
 	return &Importer{store: st, client: client, now: time.Now}
+}
+
+// WithUserSource resolves attendees with a separate workspace users token.
+func (imp *Importer) WithUserSource(users UserSource) *Importer {
+	imp.users = users
+	return imp
 }
 
 type ImportOptions struct {
@@ -301,7 +309,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		workOrder = append(workOrder, id)
 	}
 
-	hydrator := NewHydrator(imp.client)
+	hydrator := NewHydrator(imp.client).WithUserSource(imp.users)
 	archiver := meetingarchive.New(scopedStore)
 	var hardErrors []error
 	for _, id := range workOrder {
@@ -561,7 +569,7 @@ func preserveArchivedAttendees(meeting *HydratedMeeting, archived []resolvedUser
 	archivedByID := make(map[string]resolvedUser, len(archived))
 	for _, user := range archived {
 		id := strings.TrimSpace(user.ID)
-		email := strings.ToLower(strings.TrimSpace(user.Email))
+		email := meetingidentity.Normalize(user.Email)
 		if id == "" || email == "" || !user.EmailVerified {
 			continue
 		}
@@ -598,7 +606,8 @@ func preserveArchivedAttendees(meeting *HydratedMeeting, archived []resolvedUser
 
 		user, ok := currentByID[id]
 		if !ok {
-			if _, isUnresolved := unresolved[id]; isUnresolved {
+			if _, isUnresolved := unresolved[id]; isUnresolved &&
+				(meeting.failedAttendeeIDs == nil || meeting.failedAttendeeIDs[id]) {
 				user, ok = archivedByID[id]
 				if ok {
 					restored++
@@ -613,7 +622,7 @@ func preserveArchivedAttendees(meeting *HydratedMeeting, archived []resolvedUser
 
 		user.ID = strings.TrimSpace(user.ID)
 		user.Name = strings.TrimSpace(user.Name)
-		user.Email = strings.ToLower(strings.TrimSpace(user.Email))
+		user.Email = meetingidentity.Normalize(user.Email)
 		if user.Name != "" {
 			label = user.Name
 		}
@@ -661,7 +670,7 @@ func preserveArchivedAttendeeRelationships(
 	currentByID := make(map[string]int, len(meeting.ResolvedUsers))
 	emailUsers := make(map[string]map[int]struct{}, len(meeting.ResolvedUsers))
 	addEmailUser := func(email string, userIndex int) {
-		email = strings.ToLower(strings.TrimSpace(email))
+		email = meetingidentity.Normalize(email)
 		if email == "" {
 			return
 		}
@@ -673,9 +682,9 @@ func preserveArchivedAttendeeRelationships(
 		users[userIndex] = struct{}{}
 	}
 	addAlias := func(userIndex int, email string) {
-		email = strings.ToLower(strings.TrimSpace(email))
+		email = meetingidentity.Normalize(email)
 		user := &meeting.ResolvedUsers[userIndex]
-		if email == "" || email == strings.ToLower(strings.TrimSpace(user.Email)) {
+		if email == "" || email == meetingidentity.Normalize(user.Email) {
 			return
 		}
 		for _, alias := range user.EmailAliases {
@@ -688,7 +697,7 @@ func preserveArchivedAttendeeRelationships(
 	for index := range meeting.ResolvedUsers {
 		user := &meeting.ResolvedUsers[index]
 		id := strings.TrimSpace(user.ID)
-		email := strings.ToLower(strings.TrimSpace(user.Email))
+		email := meetingidentity.Normalize(user.Email)
 		if id == "" || email == "" || !user.EmailVerified {
 			continue
 		}
@@ -715,7 +724,7 @@ func preserveArchivedAttendeeRelationships(
 	}
 	currentParticipants := make(map[int64]map[int]struct{}, len(emailUsers))
 	for _, recipient := range archived {
-		email := strings.ToLower(strings.TrimSpace(recipient.EmailAddress))
+		email := meetingidentity.Normalize(recipient.EmailAddress)
 		users := emailUsers[email]
 		if len(users) == 0 {
 			continue
@@ -731,7 +740,7 @@ func preserveArchivedAttendeeRelationships(
 	}
 	seen := make(map[string]struct{}, len(meeting.Attendees)+len(archived))
 	for _, attendee := range meeting.Attendees {
-		email := strings.ToLower(strings.TrimSpace(attendee.Email))
+		email := meetingidentity.Normalize(attendee.Email)
 		if email != "" {
 			seen[email] = struct{}{}
 		}
@@ -742,7 +751,7 @@ func preserveArchivedAttendeeRelationships(
 		if len(users) == 0 {
 			continue
 		}
-		email := strings.ToLower(strings.TrimSpace(recipient.EmailAddress))
+		email := meetingidentity.Normalize(recipient.EmailAddress)
 		if email == "" {
 			continue
 		}

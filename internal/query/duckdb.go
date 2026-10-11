@@ -291,6 +291,8 @@ func newDuckDBEngine(ctx context.Context, analyticsDir string, sqlitePath string
 		{datasetMessages, "owner_participant_id"},
 		{datasetMessages, messageTypeDimension},
 		{datasetMessages, "list_id"},
+		{datasetMessages, "account_address"},
+		{datasetMessages, "account_path"},
 		{datasetConversations, "title"},
 		{datasetConversations, "conversation_type"},
 		{"sources", "source_type"},
@@ -726,6 +728,13 @@ func (e *DuckDBEngine) parquetCTEs() string {
 	} else {
 		msgExtra = append(msgExtra, "NULL::VARCHAR AS list_id")
 	}
+	for _, col := range []string{"account_address", "account_path"} {
+		if e.hasCol(datasetMessages, col) {
+			msgReplace = append(msgReplace, "CAST("+col+" AS VARCHAR) AS "+col)
+		} else {
+			msgExtra = append(msgExtra, "NULL::VARCHAR AS "+col)
+		}
+	}
 	if e.hasCol(datasetMessages, "deleted_at") {
 		msgReplace = append(msgReplace, "TRY_CAST(deleted_at AS TIMESTAMP) AS deleted_at")
 	} else {
@@ -1018,6 +1027,12 @@ func (e *DuckDBEngine) buildNonTextSearchConditions(q *search.Query, keyColumns 
 		conditions = append(conditions, `msg.list_id ILIKE ? ESCAPE '\'`)
 		args = append(args, "%"+escapeILIKE(listID)+"%")
 	}
+	// account: and received: match the derived account projection.
+	if accountConditions, accountArgs := search.AccountConditions(q, "msg"); len(accountConditions) > 0 {
+		conditions = append(conditions, accountConditions...)
+		args = append(args, accountArgs...)
+	}
+	conditions, args = appendAccountScopeConditions(conditions, args, q.AccountScopes, "msg")
 
 	// label: filter - case-insensitive substring match.
 	// In the Labels aggregate view (keyColumns includes the label column),
@@ -1189,11 +1204,12 @@ func (e *DuckDBEngine) buildWhereClause(opts AggregateOptions, keyColumns ...str
 	var conditions []string
 	var args []any
 
-	if !hasExplicitMessageTypeSearch(opts.SearchQuery) {
+	if !aggregateOverridesEmailDefault(MessageFilter{}, opts) {
 		conditions = append(conditions, emailOnlyFilterMsg)
 	}
 	conditions = append(conditions, store.LiveMessagesWhere("msg", opts.HideDeletedFromSource))
 	conditions, args = appendSourceFilter(conditions, args, "msg.", opts.SourceID, opts.SourceIDs)
+	conditions, args = appendAccountScopeConditions(conditions, args, opts.AccountScopes, "msg")
 
 	if opts.After != nil {
 		conditions = append(conditions, "msg.sent_at >= CAST(? AS TIMESTAMP)")
@@ -1422,6 +1438,7 @@ func (e *DuckDBEngine) buildFilterConditions(filter MessageFilter) (string, []an
 
 	conditions = append(conditions, store.LiveMessagesWhere("msg", filter.HideDeletedFromSource))
 	conditions, args = appendSourceFilter(conditions, args, "msg.", filter.SourceID, filter.SourceIDs)
+	conditions, args = appendAccountScopeConditions(conditions, args, filter.AccountScopes, "msg")
 
 	if filter.ConversationID != nil {
 		conditions = append(conditions, "msg.conversation_id = ?")
@@ -1676,12 +1693,13 @@ func (e *DuckDBEngine) SubAggregate(ctx context.Context, filter MessageFilter, g
 		filter.HideDeletedFromSource = true
 	}
 	where, args := e.buildFilterConditions(filter)
-	if strings.TrimSpace(filter.MessageType) == "" && !hasExplicitMessageTypeSearch(opts.SearchQuery) {
+	if strings.TrimSpace(filter.MessageType) == "" && !aggregateOverridesEmailDefault(filter, opts) {
 		where += " AND " + emailOnlyFilterMsg
 	}
 
 	// Add opts-based conditions (source IDs, date range, attachment filter).
 	whereParts, args := appendSourceFilter(nil, args, "msg.", opts.SourceID, opts.SourceIDs)
+	whereParts, args = appendAccountScopeConditions(whereParts, args, opts.AccountScopes, "msg")
 	if len(whereParts) > 0 {
 		where += " AND " + strings.Join(whereParts, " AND ")
 	}
@@ -1852,6 +1870,15 @@ func (e *DuckDBEngine) GetTotalStats(ctx context.Context, opts StatsOptions) (*T
 	}
 
 	return stats, nil
+}
+
+// ListVirtualAccounts reads the virtual account catalog through the live
+// SQLite engine, or returns none when only the Parquet cache is available.
+func (e *DuckDBEngine) ListVirtualAccounts(ctx context.Context) (map[int64][]store.VirtualAccount, error) {
+	if e.sqliteEngine != nil {
+		return e.sqliteEngine.ListVirtualAccounts(ctx)
+	}
+	return map[int64][]store.VirtualAccount{}, nil
 }
 
 // ListAccounts returns accounts from SQLite via DuckDB's sqlite_scan,
@@ -2162,10 +2189,10 @@ func (e *DuckDBEngine) GetMessage(ctx context.Context, id int64) (*MessageDetail
 
 // GetMessageBySourceID retrieves a message by source ID from SQLite.
 // Uses direct SQLite connection when available for better BLOB handling.
-func (e *DuckDBEngine) GetMessageBySourceID(ctx context.Context, sourceMessageID string) (*MessageDetail, error) {
+func (e *DuckDBEngine) GetMessageBySourceID(ctx context.Context, sourceMessageID string, sourceIDs []int64) (*MessageDetail, error) {
 	// Prefer direct SQLite for body/BLOB retrieval
 	if e.sqliteEngine != nil {
-		return e.sqliteEngine.GetMessageBySourceID(ctx, sourceMessageID)
+		return e.sqliteEngine.GetMessageBySourceID(ctx, sourceMessageID, sourceIDs)
 	}
 
 	// Fall back to sqlite_scan
@@ -2173,7 +2200,8 @@ func (e *DuckDBEngine) GetMessageBySourceID(ctx context.Context, sourceMessageID
 		return nil, errors.New("GetMessageBySourceID requires SQLite: pass sqlitePath to NewDuckDBEngine")
 	}
 
-	return e.getMessageByQuery(ctx, "m.source_message_id = ?", sourceMessageID)
+	conditions, args := appendSourceFilter([]string{"m.source_message_id = ?"}, []any{sourceMessageID}, "m.", nil, sourceIDs)
+	return e.getMessageByQuery(ctx, strings.Join(conditions, " AND "), args...)
 }
 
 // GetAttachment retrieves attachment metadata by ID.
@@ -2291,6 +2319,12 @@ func (e *DuckDBEngine) Search(ctx context.Context, q *search.Query, limit, offse
 		conditions = append(conditions, "m.list_id ILIKE ? ESCAPE '\\'")
 		args = append(args, "%"+escapeSQLiteLike(listID)+"%")
 	}
+	// account: and received: match the derived account projection.
+	if accountConditions, accountArgs := search.AccountConditions(q, "m"); len(accountConditions) > 0 {
+		conditions = append(conditions, accountConditions...)
+		args = append(args, accountArgs...)
+	}
+	conditions, args = appendAccountScopeConditions(conditions, args, q.AccountScopes, "m")
 
 	if len(q.MessageTypes) > 0 {
 		condition, conditionArgs := duckDBMessageTypeCondition("m", q.MessageTypes)
@@ -2452,7 +2486,7 @@ func (e *DuckDBEngine) SearchDeepWithStats(
 // SearchMessageBodies delegates to the direct SQLite engine so FTS5 can scope
 // MATCH to the indexed body column. The sqlite_scanner fallback is
 // intentionally unsupported: exact body search must never scan message_bodies.
-func (e *DuckDBEngine) SearchMessageBodies(ctx context.Context, q *search.Query, limit, offset int) ([]MessageSummary, error) {
+func (e *DuckDBEngine) SearchMessageBodies(ctx context.Context, q *search.Query, limit, offset int) (*SearchFastResult, error) {
 	if e.sqliteEngine == nil {
 		return nil, fmt.Errorf("%w: a direct SQLite engine is required; reopen the query engine with a SQLite connection", ErrMessageBodySearchUnavailable)
 	}
@@ -2462,11 +2496,11 @@ func (e *DuckDBEngine) SearchMessageBodies(ctx context.Context, q *search.Query,
 // SearchByDomains returns message summaries for the given sender domains.
 // It delegates to SQLite because domain search needs JOINs across
 // participants and message_recipients that the Parquet cache doesn't carry.
-func (e *DuckDBEngine) SearchByDomains(ctx context.Context, domains []string, after, before *time.Time, limit, offset int) ([]MessageSummary, error) {
+func (e *DuckDBEngine) SearchByDomains(ctx context.Context, domains []string, after, before *time.Time, limit, offset int, sourceIDs []int64) ([]MessageSummary, error) {
 	// Delegate to SQLite — domain search requires JOINs across participants
 	// and message_recipients which are not available in the Parquet cache.
 	if e.sqliteEngine != nil {
-		return e.sqliteEngine.SearchByDomains(ctx, domains, after, before, limit, offset)
+		return e.sqliteEngine.SearchByDomains(ctx, domains, after, before, limit, offset, sourceIDs)
 	}
 	return nil, errors.New("SearchByDomains requires SQLite engine (participant data not in Parquet cache)")
 }
@@ -3181,6 +3215,12 @@ func (e *DuckDBEngine) buildSearchConditions(q *search.Query, filter MessageFilt
 		conditions = append(conditions, `msg.list_id ILIKE ? ESCAPE '\'`)
 		args = append(args, "%"+escapeILIKE(listID)+"%")
 	}
+	// account: and received: match the derived account projection.
+	if accountConditions, accountArgs := search.AccountConditions(q, "msg"); len(accountConditions) > 0 {
+		conditions = append(conditions, accountConditions...)
+		args = append(args, accountArgs...)
+	}
+	conditions, args = appendAccountScopeConditions(conditions, args, q.AccountScopes, "msg")
 
 	// Label filter - case-insensitive substring match
 	if len(q.Labels) > 0 {
@@ -3282,6 +3322,14 @@ func (e *DuckDBEngine) ReadOriginalMessage(ctx context.Context, ref MessageRef, 
 		return nil, errOriginalMessageNeedsSQLite
 	}
 	return e.sqliteEngine.ReadOriginalMessage(ctx, ref, maxBytes)
+}
+
+// ResolveMessageID reads from SQLite because the Parquet cache can lag recent syncs.
+func (e *DuckDBEngine) ResolveMessageID(ctx context.Context, ref string) (int64, string, error) {
+	if e.sqliteEngine == nil {
+		return 0, "", errOriginalMessageNeedsSQLite
+	}
+	return e.sqliteEngine.ResolveMessageID(ctx, ref)
 }
 
 // ListThread reads from SQLite because the Parquet cache can lag recent syncs.

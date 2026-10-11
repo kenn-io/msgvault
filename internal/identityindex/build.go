@@ -48,6 +48,11 @@ type ActivityStats struct {
 	ExpansionRatio           float64
 }
 
+const (
+	activityBuildRelation      = "relationship_build_activity"
+	deltaActivityBuildRelation = "relationship_build_activity_delta"
+)
+
 // BuildResult contains marker data derived alongside the index.
 type BuildResult struct {
 	ConversationParticipantsFingerprint string
@@ -109,6 +114,18 @@ func Build(
 		return BuildResult{}, err
 	}
 	activity := b.activityRelation()
+	if opts.Mode == ModeIncremental {
+		if err := b.materializeBuildTable(ctx, deltaActivityBuildRelation,
+			b.deltaActivityRelation(), "relationship_activity_delta"); err != nil {
+			return BuildResult{}, err
+		}
+	} else {
+		if err := b.materializeBuildTable(ctx, activityBuildRelation,
+			activity, "relationship_activity_edges"); err != nil {
+			return BuildResult{}, err
+		}
+		activity = "(SELECT * FROM " + activityBuildRelation + ")"
+	}
 	effectiveAt, err := b.relationshipEffectiveAt(ctx, activity)
 	if err != nil {
 		return BuildResult{}, err
@@ -145,7 +162,7 @@ func Build(
 	if opts.Mode == ModeIncremental {
 		// The committed generation was validated before publication. Appends
 		// use new message IDs, so only the staged edges need row validation.
-		validationActivity = b.deltaActivityRelation()
+		validationActivity = deltaActivityBuildRelation
 	}
 	if err := Validate(ctx, db, ValidationOptions{
 		OutputRoot:             opts.OutputRoot,
@@ -165,7 +182,7 @@ func Build(
 	}
 	statsActivity := activity
 	if opts.Mode == ModeIncremental {
-		statsActivity = b.deltaActivityRelation()
+		statsActivity = deltaActivityBuildRelation
 	}
 	activityStats, err := collectActivityStats(ctx, db, statsActivity)
 	if err != nil {
@@ -233,7 +250,7 @@ func (b builder) deltaActivityRelation() string {
 }
 
 func (b builder) expandedActivity(paths []string) string {
-	return ExpandedActivityRelation(
+	return buildActivityRelation(
 		readParquetRelation(paths, true),
 		readParquetRelation([]string{b.base("conversation_participants")}, false),
 		readParquetRelation([]string{b.base("participants")}, false),
@@ -372,7 +389,10 @@ func (b builder) materializeBuildTable(
 
 func (b builder) dropBuildTables() error {
 	var result error
-	for _, table := range []string{logicalBuildRelation, temperatureBuildRelation, directoryBuildRelation} {
+	for _, table := range []string{
+		logicalBuildRelation, temperatureBuildRelation, directoryBuildRelation,
+		activityBuildRelation, deltaActivityBuildRelation,
+	} {
 		if _, err := b.db.ExecContext(
 			context.Background(),
 			"DROP TABLE IF EXISTS "+table,

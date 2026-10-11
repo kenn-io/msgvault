@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-25"
+last_edited: "2026-10-08"
 title: Data Storage
 description: Database schema, Parquet analytics cache, content-addressed attachments, and token storage.
 ---
@@ -33,7 +33,7 @@ separately. SQLite is the default and stores the archive at `~/.msgvault/msgvaul
 | Column | Type | Description |
 |---|---|---|
 | `id` | INTEGER PK | Auto-increment |
-| `source_type` | TEXT | Provider/import type, for example `gmail`, `imap`, `gcal`, `teams`, `discord`, `beeper`, `mbox`, `whatsapp`, `granola`, `plaud`, `circleback`, `notion_meetings`, or `muesli` |
+| `source_type` | TEXT | Provider/import type, for example `gmail`, `imap`, `gcal`, `teams`, `discord`, `beeper`, `mbox`, `whatsapp`, `granola`, `plaud`, `circleback`, `notion_meetings`, `muesli`, `twilio`, or `twenty` |
 | `identifier` | TEXT | Provider-stable identifier such as an email address, phone number, or Discord guild ID |
 | `display_name` | TEXT | Account display name |
 | `sync_cursor` | TEXT | Sync cursor (Gmail history ID for Gmail accounts) |
@@ -61,12 +61,32 @@ separately. SQLite is the default and stores the archive at `~/.msgvault/msgvaul
 | `message_type` | TEXT | `email`, `calendar_event`, `meeting_transcript`, `beeper`, `teams`, `discord`, `sms`, `mms`, `whatsapp`, `imessage`, `fbmessenger`, `synctech_sms_call`, `google_voice_text`, `google_voice_call`, `google_voice_voicemail` |
 | `sent_at` | DATETIME | Send timestamp |
 | `sender_id` | INTEGER FK | References `participants` |
+| `account_address` | TEXT, nullable | The one confirmed address an email or calendar event belongs to; NULL when evidence conflicts or is missing |
+| `account_path` | TEXT, nullable | `inbound`, `sent` or `calendar`; NULL on email and calendar rows means attribution is still pending |
 | `subject` | TEXT | Message subject |
 | `snippet` | TEXT | Preview excerpt |
 | `size_estimate` | INTEGER | Approximate size in bytes |
 | `has_attachments` | BOOLEAN | Attachment flag |
 | `deleted_at` | DATETIME | Soft-delete timestamp |
 | `deleted_from_source_at` | DATETIME | Records removal from the source; content may remain archived |
+
+The Store derives `account_address` and `account_path` in the same transaction
+as every message write that changes their inputs: raw MIME, recipients, and
+Sent or Drafts labels. A change to confirmed identities or the source
+identifier returns the affected rows to pending in its own transaction, then
+derives them in pages after it commits. Every sync or import first derives the
+source's pending rows, which a partial index on pending rows keeps cheap when
+there are none. Attribution never changes `source_id`.
+Rows other than email and calendar events keep both columns NULL. The
+[received-account design](https://github.com/kenn-io/msgvault/blob/main/docs/internal/received-as-identity-design.md) records
+the rules; [Searching](../usage/searching.md#find-mail-by-the-address-that-received-it)
+covers `received:` and `account:`.
+
+**message_delivery_addresses** -- Delivery-header addresses read from each
+email's stored MIME (`kind` is `original` or `delivered`, `address` is
+lowercased). The address-leading index lets an identity change re-derive only
+the messages that mention it. A derived row's addresses always match its stored
+MIME; messages without MIME have none.
 
 **message_bodies** -- Parsed content stored separately from message metadata.
 

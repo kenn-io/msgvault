@@ -271,6 +271,9 @@ components:
     AgentTokenIssueRequest:
       additionalProperties: false
       properties:
+        expires_at:
+          format: date-time
+          type: string
         label:
           type: string
         permissions:
@@ -299,6 +302,9 @@ components:
           format: date-time
           type: string
         daemon_url:
+          type: string
+        expires_at:
+          format: date-time
           type: string
         id:
           type: string
@@ -356,6 +362,9 @@ components:
         created_at:
           format: date-time
           type: string
+        expires_at:
+          format: date-time
+          type: string
         id:
           type: string
         label:
@@ -382,6 +391,8 @@ components:
             format: int64
             type: integer
           type: array
+        index_state:
+          type: string
         rows:
           items:
             $ref: "#/components/schemas/AggregateRowJSON"
@@ -1514,6 +1525,7 @@ components:
           enum:
             - ""
             - google
+            - microsoft
           type: string
         schedule:
           type: string
@@ -1558,6 +1570,25 @@ components:
       required:
         - id
         - name
+      type: object
+    CardDAVBinding:
+      properties:
+        book:
+          type: string
+        connection:
+          type: string
+        href:
+          type: string
+        mapping_status:
+          type: string
+        remote_uid:
+          type: string
+      required:
+        - connection
+        - book
+        - href
+        - remote_uid
+        - mapping_status
       type: object
     CardDAVBookResponse:
       properties:
@@ -1980,6 +2011,8 @@ components:
             - retry_after
             - authentication_failed
             - google_authorization_required
+            - microsoft_authorization_required
+            - microsoft_contact_too_large
             - upstream_failed
             - safety_limit
             - sync_failed
@@ -2080,6 +2113,7 @@ components:
             - credential_mismatch
             - credential_unavailable
             - google_authorization_required
+            - microsoft_authorization_required
             - runtime_unavailable
           type: string
         schedule:
@@ -2236,6 +2270,10 @@ components:
           type: integer
         type:
           type: string
+        virtual_accounts:
+          items:
+            $ref: "#/components/schemas/VirtualAccount"
+          type: array
       required:
         - id
         - email
@@ -2257,6 +2295,8 @@ components:
         counts_pending:
           type: boolean
         stale:
+          type: boolean
+        virtual_accounts_unavailable:
           type: boolean
       required:
         - accounts
@@ -3204,6 +3244,8 @@ components:
           type: integer
         has_more:
           type: boolean
+        index_state:
+          type: string
         limit:
           format: int64
           type: integer
@@ -3322,6 +3364,10 @@ components:
       type: object
     DirectoryPersonSummary:
       properties:
+        carddav_bindings:
+          items:
+            $ref: "#/components/schemas/CardDAVBinding"
+          type: array
         categories:
           items:
             type: string
@@ -3345,8 +3391,12 @@ components:
         revision:
           format: int64
           type: integer
+        vcard_uid:
+          type: string
       required:
         - id
+        - vcard_uid
+        - carddav_bindings
         - revision
         - contact_state
         - categories
@@ -4634,6 +4684,7 @@ components:
             - before
             - deletion
             - identity
+            - account
           type: string
           x-enum-names:
             - ExploreFilterDimensionSource
@@ -4645,6 +4696,7 @@ components:
             - ExploreFilterDimensionBefore
             - ExploreFilterDimensionDeletion
             - ExploreFilterDimensionIdentity
+            - ExploreFilterDimensionAccount
         values:
           items:
             type: string
@@ -5314,6 +5366,8 @@ components:
           type: integer
         has_more:
           type: boolean
+        index_state:
+          type: string
         limit:
           format: int64
           type: integer
@@ -6510,6 +6564,73 @@ components:
         strongest_excerpt:
           type: string
       type: object
+    MediaSearchResponse:
+      properties:
+        attribution_unavailable:
+          description: Current recording occurrences whose selected transcript cannot be attributed, including searches with no hits
+          format: int64
+          type: integer
+        coverage:
+          $ref: "#/components/schemas/SearchCoverage"
+        partial:
+          description: Coverage or occurrence attribution is incomplete, even with no matching excerpts
+          type: boolean
+        pending_occurrences:
+          format: int64
+          type: integer
+        results:
+          items:
+            $ref: "#/components/schemas/MediaSearchResult"
+          type: array
+        truncated:
+          type: boolean
+        unavailable_occurrences:
+          format: int64
+          type: integer
+      required:
+        - coverage
+        - pending_occurrences
+        - unavailable_occurrences
+        - attribution_unavailable
+        - partial
+        - truncated
+        - results
+      type: object
+    MediaSearchResult:
+      properties:
+        attachment_id:
+          format: int64
+          type: integer
+        conversation_id:
+          format: int64
+          type: integer
+        end_ms:
+          format: int64
+          type: integer
+        excerpt:
+          description: Plain transcript excerpt without search highlight markers
+          type: string
+        message_id:
+          format: int64
+          type: integer
+        origin:
+          enum:
+            - supplied
+            - generated
+          type: string
+          x-enum-names:
+            - MediaSearchResultOriginSupplied
+            - MediaSearchResultOriginGenerated
+        start_ms:
+          format: int64
+          type: integer
+      required:
+        - message_id
+        - conversation_id
+        - attachment_id
+        - origin
+        - excerpt
+      type: object
     Meeting:
       additionalProperties: false
       properties:
@@ -7003,6 +7124,56 @@ components:
         - account
         - source_type
       type: object
+    MessageRecording:
+      properties:
+        attachment_id:
+          format: int64
+          type: integer
+        filename:
+          nullable: true
+          type: string
+        size_bytes:
+          format: int64
+          type: integer
+        state:
+          enum:
+            - ready
+            - processing
+            - missing
+            - failed
+            - unsupported
+            - media_missing
+            - unavailable
+          type: string
+          x-enum-names:
+            - MessageRecordingStateReady
+            - MessageRecordingStateProcessing
+            - MessageRecordingStateMissing
+            - MessageRecordingStateFailed
+            - MessageRecordingStateUnsupported
+            - MessageRecordingStateMediaMissing
+            - MessageRecordingStateUnavailable
+        transcript:
+          $ref: "#/components/schemas/MessageTranscript"
+      required:
+        - attachment_id
+        - filename
+        - size_bytes
+        - state
+      type: object
+    MessageRecordingsResponse:
+      properties:
+        message_id:
+          format: int64
+          type: integer
+        recordings:
+          items:
+            $ref: "#/components/schemas/MessageRecording"
+          type: array
+      required:
+        - message_id
+        - recordings
+      type: object
     MessageReference:
       additionalProperties: false
       properties:
@@ -7082,6 +7253,42 @@ components:
         - has_attachments
         - size_bytes
       type: object
+    MessageTranscript:
+      properties:
+        origin:
+          enum:
+            - supplied
+            - generated
+          type: string
+          x-enum-names:
+            - MessageTranscriptOriginSupplied
+            - MessageTranscriptOriginGenerated
+        partial:
+          type: boolean
+        units:
+          items:
+            $ref: "#/components/schemas/MessageTranscriptUnit"
+          type: array
+      required:
+        - origin
+        - partial
+        - units
+      type: object
+    MessageTranscriptUnit:
+      properties:
+        end_ms:
+          format: int64
+          type: integer
+        speaker:
+          type: string
+        start_ms:
+          format: int64
+          type: integer
+        text:
+          type: string
+      required:
+        - text
+      type: object
     Metrics:
       properties:
         archive_uid:
@@ -7138,6 +7345,170 @@ components:
       required:
         - month
         - totals
+      type: object
+    MuesliRemoteMeeting:
+      additionalProperties: false
+      properties:
+        contacts_state:
+          enum:
+            - complete
+            - partial
+            - unavailable
+            - "off"
+          type: string
+        participants:
+          items:
+            $ref: "#/components/schemas/MuesliRemoteParticipant"
+          maxItems: 200
+          type: array
+        record:
+          $ref: "#/components/schemas/MuesliRemoteRecord"
+      required:
+        - record
+        - contacts_state
+      type: object
+    MuesliRemoteParticipant:
+      additionalProperties: false
+      properties:
+        anchor:
+          maxLength: 78
+          type: string
+        contact_review_phones:
+          items:
+            type: string
+          maxItems: 50
+          type: array
+        email:
+          type: string
+        emails:
+          items:
+            type: string
+          maxItems: 50
+          type: array
+        link_excluded_addresses:
+          items:
+            type: string
+          maxItems: 50
+          type: array
+        name:
+          maxLength: 1024
+          type: string
+        phones:
+          items:
+            type: string
+          maxItems: 50
+          type: array
+        ref:
+          maxLength: 16
+          type: string
+        resolution:
+          enum:
+            - ""
+            - resolved
+            - carried_forward
+          type: string
+        skipped_phones:
+          format: int64
+          type: integer
+        source:
+          type: string
+      type: object
+    MuesliRemoteRecord:
+      additionalProperties: false
+      properties:
+        calendar_event_id:
+          type: string
+        calendar_series_id:
+          type: string
+        calendar_source:
+          type: string
+        created_at:
+          type: string
+        duration_seconds:
+          format: double
+          type: number
+        end_time:
+          type: string
+        folder:
+          type: string
+        follow_up_to_id:
+          format: int64
+          type: integer
+        formatted_notes:
+          type: string
+        id:
+          format: int64
+          type: integer
+        manual_notes:
+          type: string
+        raw_transcript:
+          type: string
+        source:
+          type: string
+        start_time:
+          type: string
+        status:
+          type: string
+        template_kind:
+          type: string
+        template_name:
+          type: string
+        title:
+          type: string
+        word_count:
+          format: int64
+          type: integer
+      required:
+        - id
+        - title
+        - start_time
+        - created_at
+      type: object
+    MuesliRemoteRequest:
+      additionalProperties: false
+      properties:
+        action:
+          enum:
+            - register
+            - upsert
+            - refresh
+          type: string
+        build_cache:
+          type: boolean
+        full:
+          type: boolean
+        meeting:
+          $ref: "#/components/schemas/MuesliRemoteMeeting"
+        no_build_cache:
+          type: boolean
+        source:
+          $ref: "#/components/schemas/Source"
+      required:
+        - action
+        - source
+      type: object
+    MuesliRemoteResult:
+      properties:
+        changed:
+          type: boolean
+        message_id:
+          format: int64
+          type: integer
+        source_id:
+          format: int64
+          type: integer
+        status:
+          enum:
+            - registered
+            - created
+            - updated
+            - unchanged
+            - refreshed
+          type: string
+      required:
+        - status
+        - source_id
+        - changed
       type: object
     MutationResult:
       properties:
@@ -7361,6 +7732,8 @@ components:
             - invocation_unsafe_error_redacted
             - invocation_upstream_failed
             - lease_lost
+            - microsoft_authorization_required
+            - microsoft_contact_too_large
             - person_sweep_failed
             - policy
             - provider_http
@@ -8966,10 +9339,7 @@ components:
           type: string
         running_name:
           type: string
-        stored_credentials_supported:
-          type: boolean
       required:
-        - stored_credentials_supported
         - profiles
         - configured_enabled
         - running_enabled
@@ -8986,6 +9356,10 @@ components:
       type: object
     Person:
       properties:
+        carddav_bindings:
+          items:
+            $ref: "#/components/schemas/CardDAVBinding"
+          type: array
         created_at:
           format: date-time
           type: string
@@ -10480,6 +10854,35 @@ components:
         - is_primary
         - provenance
         - participant_id
+      type: object
+    PersonIdentitiesResponse:
+      properties:
+        identities:
+          items:
+            $ref: "#/components/schemas/PersonIdentity"
+          type: array
+        person_id:
+          format: int64
+          type: integer
+      required:
+        - person_id
+        - identities
+      type: object
+    PersonIdentity:
+      properties:
+        kind:
+          description: Identity kind, such as email, phone, or a chat service
+          type: string
+        supported:
+          description: Whether the value can be a draft recipient
+          type: boolean
+        value:
+          description: Archived value; a supported email is ready to pass as a draft recipient
+          type: string
+      required:
+        - kind
+        - value
+        - supported
       type: object
     PersonInboxResponse:
       properties:
@@ -12318,6 +12721,7 @@ components:
             - participant
             - domain
             - mailing_list
+            - account
             - message_type
             - after
             - before
@@ -12331,6 +12735,7 @@ components:
             - SavedViewFilterFieldParticipant
             - SavedViewFilterFieldDomain
             - SavedViewFilterFieldMailingList
+            - SavedViewFilterFieldAccount
             - SavedViewFilterFieldMessageType
             - SavedViewFilterFieldAfter
             - SavedViewFilterFieldBefore
@@ -12497,6 +12902,24 @@ components:
           format: double
           type: number
       type: object
+    SearchCoverage:
+      properties:
+        binding_required:
+          type: boolean
+        complete_documents:
+          format: int64
+          type: integer
+        scoped_documents:
+          format: int64
+          type: integer
+        state:
+          type: string
+      required:
+        - binding_required
+        - scoped_documents
+        - complete_documents
+        - state
+      type: object
     SearchCoverageRequest:
       additionalProperties: false
       properties:
@@ -12556,6 +12979,8 @@ components:
             format: int64
             type: integer
           type: array
+        index_state:
+          type: string
         messages:
           items:
             $ref: "#/components/schemas/MessageSummary"
@@ -12607,6 +13032,8 @@ components:
       type: object
     SearchResult:
       properties:
+        index_state:
+          type: string
         messages:
           items:
             $ref: "#/components/schemas/MessageSummary"
@@ -12728,6 +13155,7 @@ components:
             - session
             - required
             - delegated
+            - caller
           type: string
         csrf_token:
           type: string
@@ -13363,7 +13791,6 @@ components:
         - total_accounts
         - total_labels
         - total_attachments
-        - database_size_bytes
       type: object
     StatsView:
       properties:
@@ -13850,6 +14277,31 @@ components:
         - id
         - title
       type: object
+    TelemetryEventRequest:
+      additionalProperties: false
+      properties:
+        event:
+          description: Allowlisted event name, such as app_opened or screen_viewed
+          type: string
+        properties:
+          additionalProperties:
+            x-go-type: any
+          description: Event properties; the daemon drops any its allowlist omits
+          type: object
+      required:
+        - event
+      type: object
+    TelemetryEventResponse:
+      properties:
+        status:
+          description: queued when accepted, including suppressed daily screen duplicates or invalid screen names; disabled when telemetry is off
+          enum:
+            - queued
+            - disabled
+          type: string
+      required:
+        - status
+      type: object
     TemperatureSignals:
       properties:
         meeting_signal:
@@ -14187,6 +14639,8 @@ components:
         attachment_size:
           format: int64
           type: integer
+        index_state:
+          type: string
         label_count:
           format: int64
           type: integer
@@ -14223,6 +14677,18 @@ components:
       required:
         - speaker
         - text
+      type: object
+    TriggerSyncResponse:
+      properties:
+        disposition:
+          type: string
+        message:
+          type: string
+        status:
+          type: string
+      required:
+        - status
+        - message
       type: object
     UpdateRequest:
       additionalProperties: false
@@ -14376,6 +14842,32 @@ components:
       required:
         - status
       type: object
+    VirtualAccount:
+      properties:
+        account_address:
+          type: string
+        key:
+          type: string
+        message_count:
+          format: int64
+          type: integer
+        pending_count:
+          format: int64
+          type: integer
+        source_deleted_count:
+          format: int64
+          type: integer
+        source_id:
+          format: int64
+          type: integer
+        unattributed:
+          type: boolean
+      required:
+        - key
+        - source_id
+        - message_count
+        - source_deleted_count
+      type: object
     VisualBuildRequest:
       additionalProperties: false
       properties:
@@ -14482,7 +14974,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.5.0
+  version: 3.12.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:
@@ -14661,7 +15153,7 @@ paths:
           description: Error
       security:
         - apiKey: []
-      summary: List active agent grants
+      summary: List agent grants
       tags:
         - API
     post:
@@ -14688,6 +15180,27 @@ paths:
       security:
         - apiKey: []
       summary: Issue a restricted agent grant
+      tags:
+        - API
+  /api/v1/agent-tokens/self:
+    get:
+      operationId: getAgentTokenSelf
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentTokenView"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get the calling agent's grant
       tags:
         - API
   /api/v1/agent-tokens/{id}:
@@ -14717,6 +15230,11 @@ paths:
         - description: Aggregate view type
           in: query
           name: view_type
+          schema:
+            type: string
+        - description: JSON list of account scopes that intersect, for structured clients
+          in: query
+          name: account_scopes
           schema:
             type: string
         - description: "Sort field: count, size, attachment_size, or name"
@@ -14805,6 +15323,11 @@ paths:
           in: query
           name: view_type
           required: true
+          schema:
+            type: string
+        - description: JSON list of account scopes that intersect, for structured clients
+          in: query
+          name: account_scopes
           schema:
             type: string
         - description: "Sort field: count, size, attachment_size, or name"
@@ -15890,6 +16413,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Error
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
         "500":
           content:
             application/json:
@@ -16578,6 +17107,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Error
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
         "500":
           content:
             application/json:
@@ -16745,6 +17280,12 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Error
         "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "413":
           content:
             application/json:
               schema:
@@ -17579,6 +18120,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/CliMessageResponse"
           description: OK
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
         default:
           content:
             application/json:
@@ -17701,6 +18248,18 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
         "500":
           content:
             application/json:
@@ -17786,6 +18345,12 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Error
         "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "413":
           content:
             application/json:
               schema:
@@ -20728,6 +21293,39 @@ paths:
       summary: Import one meeting
       tags:
         - API
+  /api/v1/import/muesli:
+    post:
+      operationId: importMuesli
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MuesliRemoteRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MuesliRemoteResult"
+          description: OK
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MuesliRemoteResult"
+          description: Created
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Import one recorder-local Muesli meeting
+      tags:
+        - API
   /api/v1/imports:
     post:
       operationId: createImportJob
@@ -21286,6 +21884,106 @@ paths:
       summary: Test task integration discovery, authentication, capabilities, and project
       tags:
         - API
+  /api/v1/media/search:
+    get:
+      operationId: searchMedia
+      parameters:
+        - description: Spoken words to find in transcripts
+          in: query
+          name: q
+          required: true
+          schema:
+            type: string
+        - description: Lexical mode; semantic and hybrid are unavailable
+          in: query
+          name: mode
+          schema:
+            type: string
+        - description: Durable person ID
+          in: query
+          name: person_id
+          schema:
+            format: int64
+            type: integer
+        - description: "Person relation: from_person, to_person, or group"
+          in: query
+          name: direction
+          schema:
+            items:
+              type: string
+            type: array
+        - description: Maximum occurrences to return, default 20, max 100
+          in: query
+          name: limit
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MediaSearchResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "429":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Search source-selected transcripts as visible messages
+      tags:
+        - API
   /api/v1/meetings/actions:
     post:
       operationId: listMeetingActionItems
@@ -21612,6 +22310,11 @@ paths:
     get:
       operationId: filterMessages
       parameters:
+        - description: JSON list of account scopes that intersect, for structured clients
+          in: query
+          name: account_scopes
+          schema:
+            type: string
         - description: Sender email/address filter
           in: query
           name: sender
@@ -21751,6 +22454,11 @@ paths:
     get:
       operationId: getGmailIDsByFilter
       parameters:
+        - description: JSON list of account scopes that intersect, for structured clients
+          in: query
+          name: account_scopes
+          schema:
+            type: string
         - description: Sender email/address filter
           in: query
           name: sender
@@ -22012,6 +22720,35 @@ paths:
       security:
         - apiKey: []
       summary: Get an inline MIME part
+      tags:
+        - API
+  /api/v1/messages/{id}/recordings:
+    get:
+      operationId: listMessageRecordings
+      parameters:
+        - description: Message ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageRecordingsResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List a message's recordings with transcript state
       tags:
         - API
   /api/v1/messages/{id}/tasks:
@@ -23671,6 +24408,60 @@ paths:
       security:
         - apiKey: []
       summary: Promote a participant cluster to a durable person
+      tags:
+        - API
+  /api/v1/people/by-uid:
+    get:
+      description: Resolves the person's current vCard UID, a retired UID that still aliases the person, or the UID of a CardDAV resource mapped to the person. Returns a conflict when one remote UID maps to different people.
+      operationId: getPersonByUID
+      parameters:
+        - description: Exact vCard UID or CardDAV resource UID
+          in: query
+          name: uid
+          required: true
+          schema:
+            minLength: 1
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Person"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Look up a durable person by vCard or CardDAV UID
       tags:
         - API
   /api/v1/people/directory:
@@ -25629,6 +26420,54 @@ paths:
       summary: Search one durable person's analytical files
       tags:
         - Exploration
+  /api/v1/people/{id}/identities:
+    get:
+      description: Lists the identities of the person's current participants. Email addresses are supported draft recipients; phone numbers and chat identifiers are not. Curated contact points and postal addresses are not listed.
+      operationId: listPersonIdentities
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonIdentitiesResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List a durable person's archived identities
+      tags:
+        - API
   /api/v1/people/{id}/merge:
     post:
       operationId: mergePersons
@@ -27850,6 +28689,11 @@ paths:
           name: list_id
           schema:
             type: string
+        - description: JSON list of account scopes that intersect (vector or hybrid mode only)
+          in: query
+          name: account_scopes
+          schema:
+            type: string
         - description: Calendar period in YYYY, YYYY-MM, or YYYY-MM-DD format (vector or hybrid mode only)
           in: query
           name: time_period
@@ -28049,6 +28893,11 @@ paths:
           name: scope
           schema:
             type: string
+        - description: JSON list of account scopes that intersect, for structured clients
+          in: query
+          name: account_scopes
+          schema:
+            type: string
         - description: Sender email/address filter; not supported when scope=body
           in: query
           name: sender
@@ -28188,6 +29037,20 @@ paths:
     get:
       operationId: searchMessagesByDomains
       parameters:
+        - description: Source account ID
+          in: query
+          name: source_id
+          schema:
+            format: int64
+            type: integer
+        - description: Source account IDs
+          in: query
+          name: source_ids
+          schema:
+            items:
+              format: int64
+              type: integer
+            type: array
         - description: Comma-separated participant domains
           in: query
           name: domains
@@ -28247,6 +29110,11 @@ paths:
         - description: Stats grouping view type
           in: query
           name: view_type
+          schema:
+            type: string
+        - description: JSON list of account scopes that intersect, for structured clients
+          in: query
+          name: account_scopes
           schema:
             type: string
         - description: Sender email/address filter
@@ -28404,6 +29272,11 @@ paths:
         - description: Account email or configured source identifier
           in: query
           name: account
+          schema:
+            type: string
+        - description: JSON list of account scopes that intersect, for structured clients
+          in: query
+          name: account_scopes
           schema:
             type: string
         - description: Message type filter
@@ -29943,6 +30816,11 @@ paths:
           name: group_by
           schema:
             type: string
+        - description: JSON list of account scopes that intersect, for structured clients
+          in: query
+          name: account_scopes
+          schema:
+            type: string
         - description: Sender email/address filter
           in: query
           name: sender
@@ -30068,7 +30946,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/StatusMessageResponse"
+                $ref: "#/components/schemas/TriggerSyncResponse"
           description: Accepted
         default:
           content:
@@ -30079,6 +30957,29 @@ paths:
       security:
         - apiKey: []
       summary: Trigger account sync
+      tags:
+        - API
+  /api/v1/telemetry/events:
+    post:
+      operationId: captureTelemetryEvent
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TelemetryEventRequest"
+        required: true
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TelemetryEventResponse"
+          description: Accepted
+        default:
+          description: Error
+      security:
+        - apiKey: []
+      summary: Report a web or terminal UI usage event
       tags:
         - API
   /api/v1/text/aggregates:

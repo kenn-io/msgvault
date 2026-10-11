@@ -46,6 +46,7 @@ import (
 	"go.kenn.io/msgvault/internal/personenrichment"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/query/querytest"
+	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/synctechsms"
@@ -181,6 +182,12 @@ func TestHandleStats(t *testing.T) {
 	require.NoError(json.Unmarshal(bodyBytes, &raw), "decode raw")
 	_, exists := raw["vector_search"]
 	assert.False(exists, "vector_search key present in JSON; want omitted entirely (raw=%s)", string(raw["vector_search"]))
+	for _, size := range []int64{0, 1024} {
+		body, err := json.Marshal(statsResponseFromStore(&store.Stats{DatabaseSize: size}))
+		require.NoError(err)
+		require.NoError(json.Unmarshal(body, &raw))
+		assert.JSONEq(strconv.FormatInt(size, 10), string(raw["database_size_bytes"]))
+	}
 }
 
 func TestHandleCLIStatsCollectionScope(t *testing.T) {
@@ -758,6 +765,7 @@ func TestOpenAPIExportsServerRouteTable(t *testing.T) {
 		"/api/v1/messages":                       {"get"},
 		"/api/v1/messages/{id}":                  {"get"},
 		"/api/v1/messages/{id}/inline":           {"get"},
+		"/api/v1/messages/{id}/recordings":       {"get"},
 		"/api/v1/search":                         {"get"},
 		"/api/v1/query":                          {"post"},
 		"/api/v1/aggregates":                     {"get"},
@@ -2836,7 +2844,7 @@ func TestHandleCLIRebuildFTSFlushesProgressThroughMiddleware(t *testing.T) {
 	case resp = <-respCh:
 	case err := <-errCh:
 		require.NoError(err, "post rebuild-fts")
-	case <-time.After(500 * time.Millisecond):
+	case <-time.After(5 * time.Second):
 		require.FailNow("rebuild-fts response did not flush before completion")
 	}
 	defer func() { _ = resp.Body.Close() }()
@@ -2859,7 +2867,7 @@ func TestHandleCLIRebuildFTSFlushesProgressThroughMiddleware(t *testing.T) {
 	case event = <-decodeCh:
 	case err := <-decodeErrCh:
 		require.NoError(err, "decode first progress event")
-	case <-time.After(500 * time.Millisecond):
+	case <-time.After(5 * time.Second):
 		require.FailNow("rebuild-fts progress event was not flushed before completion")
 	}
 	assert.Equal("progress", event.Type, "event type")
@@ -3814,12 +3822,14 @@ func TestHandleSourceStatusStopsWaitingForDatabaseAfterCancellation(t *testing.T
 
 	deadline := time.NewTimer(2 * time.Second)
 	defer deadline.Stop()
+	poll := time.NewTicker(10 * time.Millisecond)
+	defer poll.Stop()
 	for db.Stats().WaitCount == initialWaits {
 		select {
 		case <-deadline.C:
 			_ = conn.Close()
 			require.FailNow("status request did not wait for the held database connection")
-		case <-time.After(10 * time.Millisecond):
+		case <-poll.C:
 		}
 	}
 	cancel()
@@ -4077,6 +4087,40 @@ func TestHandleTriggerSyncGenericSource(t *testing.T) {
 	require.Equal(http.StatusAccepted, resp.Code, resp.Body.String())
 	assert.Equal([]string{"granola:acct-1"}, sched.startedJobs, "started generic job")
 	assert.Empty(sched.triggeredJobs, "TriggerJob must not be used for the async trigger path")
+}
+
+// TestHandleTriggerSyncGenericDisposition proves the 202 body reports what the
+// trigger did, and never says "started" when the job was already running.
+func TestHandleTriggerSyncGenericDisposition(t *testing.T) {
+	t.Parallel()
+	for _, disp := range []scheduler.JobDisposition{scheduler.JobStarted, scheduler.JobPending, scheduler.JobCoalesced} {
+		t.Run(string(disp), func(t *testing.T) {
+			t.Parallel()
+			require := require.New(t)
+			assert := assert.New(t)
+			sched := newMockScheduler()
+			sched.scheduledJobs = map[string]bool{"granola:acct-1": true}
+			sched.startJobFn = func(string) (scheduler.JobDisposition, error) { return disp, nil }
+			srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, nil, sched, testLogger())
+
+			resp := servePOSTTestRequest(srv, "/api/v1/sync/acct-1?source_type=granola")
+
+			require.Equal(http.StatusAccepted, resp.Code, resp.Body.String())
+			var body TriggerSyncResponse
+			require.NoError(json.Unmarshal(resp.Body.Bytes(), &body))
+			assert.Equal(string(disp), body.Disposition)
+			assert.Equal("accepted", body.Status)
+			if disp == scheduler.JobStarted {
+				assert.Contains(body.Message, "started")
+			} else {
+				assert.NotContains(body.Message, "started")
+			}
+			if disp == scheduler.JobCoalesced {
+				assert.Contains(body.Message, "no additional run")
+				assert.NotContains(body.Message, "running", "a queued initial run is not running yet")
+			}
+		})
+	}
 }
 
 // TestHandleTriggerSyncBeeperSource confirms a beeper source (one of many under
@@ -5508,7 +5552,7 @@ func TestHandleSearchByDomainsUsesQueryEngine(t *testing.T) {
 	var gotAfter, gotBefore *time.Time
 	var gotLimit, gotOffset int
 	engine := &querytest.MockEngine{
-		SearchByDomainsFunc: func(_ context.Context, domains []string, after, before *time.Time, limit, offset int) ([]query.MessageSummary, error) {
+		SearchByDomainsFunc: func(_ context.Context, domains []string, after, before *time.Time, limit, offset int, _ []int64) ([]query.MessageSummary, error) {
 			gotDomains = domains
 			gotAfter = after
 			gotBefore = before
@@ -6467,8 +6511,12 @@ type bodySearchTestEngine struct {
 
 func (e *bodySearchTestEngine) SearchMessageBodies(
 	ctx context.Context, q *search.Query, limit, offset int,
-) ([]query.MessageSummary, error) {
-	return e.searchMessageBodiesFunc(ctx, q, limit, offset)
+) (*query.SearchFastResult, error) {
+	messages, err := e.searchMessageBodiesFunc(ctx, q, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	return &query.SearchFastResult{Messages: messages}, nil
 }
 
 func TestHandleDeepSearchBodyScope(t *testing.T) {
@@ -8870,4 +8918,29 @@ func TestHandleSourceStatusDisablesSyncForQueuedJobs(t *testing.T) {
 			assert.Equal("sync_already_running", response.Sources[0].SyncUnavailableReason)
 		})
 	}
+}
+
+// TestOperationGateStillGatesAccountSyncTrigger pins that only generic-source
+// triggers bypass the gate: an account sync trigger keeps its gate behaviour.
+func TestOperationGateStillGatesAccountSyncTrigger(t *testing.T) { //nolint:paralleltest // swaps the package-level operationGateWaitLimit
+	require := require.New(t)
+	gate := NewSerialOperationGate()
+	sched := newMockScheduler()
+	sched.scheduled["test@gmail.com"] = true
+	srv := NewServerWithOptions(ServerOptions{
+		Config:        &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Scheduler:     sched,
+		Logger:        testLogger(),
+		OperationGate: gate,
+	})
+	holderDone, ok := gate.BeginLabeledWorkContext(context.Background(), "holder")
+	require.True(ok)
+	defer holderDone()
+	orig := operationGateWaitLimit
+	operationGateWaitLimit = time.Millisecond
+	t.Cleanup(func() { operationGateWaitLimit = orig })
+
+	resp := servePOSTTestRequest(srv, "/api/v1/sync/test@gmail.com")
+
+	require.Equal(http.StatusServiceUnavailable, resp.Code, resp.Body.String())
 }

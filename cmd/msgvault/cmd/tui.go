@@ -16,6 +16,7 @@ import (
 	"go.kenn.io/msgvault/internal/peoplebrowser"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/tui"
+	apiclient "go.kenn.io/msgvault/pkg/client/generated"
 )
 
 var forceLocalTUI bool
@@ -120,6 +121,7 @@ HTTP Mode:
 			AnalyticsNotice:       notice,
 			SettingsBackend:       backend.settings,
 			CollectionScopeLister: collectionScopes,
+			ReportScreen:          tuiScreenReporter(backend.client),
 		})
 		p := tea.NewProgram(model)
 		noticeCtx, stopNoticeRefresh := context.WithCancel(cmd.Context())
@@ -151,6 +153,19 @@ HTTP Mode:
 
 		return nil
 	},
+}
+
+func tuiScreenReporter(client *daemonclient.Client) func(context.Context, string) error {
+	return func(ctx context.Context, screen string) error {
+		generated, err := client.GeneratedClient()
+		if err != nil {
+			return err
+		}
+		_, err = generated.CaptureTelemetryEvent(ctx, &apiclient.CaptureTelemetryEventRequestOptions{
+			Body: &apiclient.CaptureTelemetryEventBody{Event: "screen_viewed", Properties: map[string]any{"screen": screen, "surface": "tui"}},
+		})
+		return err
+	}
 }
 
 func withTUIFileLogger(result *logging.Result, run func() error) error {

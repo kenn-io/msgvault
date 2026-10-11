@@ -4,10 +4,12 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
 	"go.kenn.io/msgvault/internal/meetingarchive"
+	"go.kenn.io/msgvault/internal/meetingidentity"
 )
 
 const rawSchemaVersion = 1
@@ -106,8 +108,9 @@ type rawParticipant struct {
 	Phone  string `json:"phone,omitempty"`
 	Source string `json:"source,omitempty"`
 	// Emails and Phones are the participant's Contacts identities.
-	Emails []string `json:"emails,omitempty"`
-	Phones []string `json:"phones,omitempty"`
+	Emails              []string `json:"emails,omitempty"`
+	Phones              []string `json:"phones,omitempty"`
+	ContactReviewPhones []string `json:"contact_review_phones,omitempty"`
 }
 
 type rawMeeting struct {
@@ -274,13 +277,13 @@ func (m Meeting) ArchiveSnapshot(sourceID int64, identifier, accountEmail string
 	}
 
 	var organizer *meetingarchive.Person
-	if email := strings.ToLower(strings.TrimSpace(accountEmail)); email != "" {
+	if email := meetingidentity.Normalize(accountEmail); email != "" {
 		organizer = &meetingarchive.Person{Email: email}
 	}
 	return meetingarchive.Snapshot{
 		SourceID: sourceID, AccountEmail: accountEmail,
 		SourceMessageID: key, SourceConversationID: key,
-		Title: title, StartedAt: started, Body: body, Snippet: snippet(body),
+		Title: title, StartedAt: started, Body: body, Snippet: meetingarchive.Snippet(body),
 		Metadata: metadata, Raw: raw, RawFormat: RawFormat,
 		Organizer: organizer, Attendees: attendees,
 	}, nil
@@ -300,13 +303,14 @@ func (m Meeting) endedAt(started time.Time) time.Time {
 
 // dedupeParticipants drops repeated emails (Muesli can list the same person
 // from the calendar and from Contacts) and fully blank rows. The first row
-// keeps its place; a later duplicate only supplies a name the first lacks.
+// keeps its place; resolved Contacts evidence takes precedence over carried
+// evidence from an earlier sync.
 func dedupeParticipants(participants []Participant) []Participant {
 	out := make([]Participant, 0, len(participants))
 	index := map[string]int{}
 	for _, person := range participants {
 		person.Name = strings.TrimSpace(person.Name)
-		person.Email = strings.ToLower(strings.TrimSpace(person.Email))
+		person.Email = meetingidentity.Normalize(person.Email)
 		if person.Name == "" && person.Email == "" && len(person.ContactEmails) == 0 && len(person.ContactPhones) == 0 {
 			continue
 		}
@@ -315,10 +319,18 @@ func dedupeParticipants(participants []Participant) []Participant {
 				if out[at].Name == "" {
 					out[at].Name = person.Name
 				}
-				if out[at].Resolution == "" && person.Resolution != "" {
+				if (person.Resolution == resolutionResolved && out[at].Resolution != resolutionResolved) ||
+					(out[at].Resolution == "" && person.Resolution != "") {
 					out[at].ContactEmails, out[at].ContactPhones = person.ContactEmails, person.ContactPhones
 					out[at].Anchor, out[at].Resolution = person.Anchor, person.Resolution
 					out[at].LinkExcludedAddresses = person.LinkExcludedAddresses
+				}
+				if out[at].Resolution == resolutionResolved || person.Resolution == resolutionResolved {
+					out[at].ContactReviewPhones = nil
+				} else {
+					out[at].ContactReviewPhones = append(slices.Clone(out[at].ContactReviewPhones), person.ContactReviewPhones...)
+					slices.Sort(out[at].ContactReviewPhones)
+					out[at].ContactReviewPhones = slices.Compact(out[at].ContactReviewPhones)
 				}
 				continue
 			}
@@ -354,12 +366,4 @@ func formatOptionalTime(value time.Time) string {
 		return ""
 	}
 	return value.UTC().Format(time.RFC3339Nano)
-}
-
-func snippet(body string) string {
-	runes := []rune(strings.TrimSpace(body))
-	if len(runes) > 200 {
-		runes = runes[:200]
-	}
-	return string(runes)
 }

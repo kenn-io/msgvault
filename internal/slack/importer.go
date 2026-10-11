@@ -110,10 +110,16 @@ type Importer struct {
 	lastCheckpoint time.Time
 	// now is a clock hook for tests.
 	now func() time.Time
+	// resumeLoaded is a test hook run after resume state loads and before
+	// the run starts, where a concurrent purge must not interleave.
+	resumeLoaded func(sourceID int64)
 	// opts/sourceID scope the current run (the importer is single-threaded;
 	// set at the top of Import/BackfillMedia).
 	opts     ImportOptions
 	sourceID int64
+	// ownerID is the source owner's Slack user ID, which may differ from
+	// opts.UserID after a credential replacement.
+	ownerID string
 }
 
 // NewImporter creates an Importer backed by the given store and Slack client.
@@ -149,8 +155,8 @@ var errInvalidResumeState = errors.New("invalid Slack resume state")
 // Under CONCURRENT runs on one source (unsupported: daemon plus manual CLI
 // simultaneously) newest-wins can drop the older run's tail progress — the
 // safe direction: lower boundaries only re-fetch into idempotent upserts.
-func (imp *Importer) loadResumeState(sourceID int64) (*SyncState, error) {
-	cp, err := imp.store.GetLatestCheckpointedSync(sourceID)
+func (imp *Importer) loadResumeState(ctx context.Context, sourceID int64) (*SyncState, error) {
+	cp, err := imp.store.GetLatestCheckpointedSyncContext(ctx, sourceID)
 	if err == nil {
 		if cp == nil || !cp.CursorBefore.Valid {
 			return nil, fmt.Errorf("latest Slack checkpoint has no resume state: %w", errInvalidResumeState)
@@ -165,7 +171,7 @@ func (imp *Importer) loadResumeState(sourceID int64) (*SyncState, error) {
 		return nil, fmt.Errorf("read latest Slack checkpoint: %w", err)
 	}
 
-	prev, err := imp.store.GetLastSuccessfulSync(sourceID)
+	prev, err := imp.store.GetLastSuccessfulSyncContext(ctx, sourceID)
 	if err == nil {
 		if prev == nil || !prev.CursorAfter.Valid {
 			return nil, fmt.Errorf("last successful Slack sync has no resume state: %w", errInvalidResumeState)
@@ -187,24 +193,40 @@ func (imp *Importer) loadResumeState(sourceID int64) (*SyncState, error) {
 // across interrupted runs); completed ones fetch only messages newer than
 // the stored cursor, then discover late replies with search plus periodic
 // canonical thread audits.
-func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSummary, error) {
+func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (_ *ImportSummary, retErr error) {
 	start := imp.now()
 	if opts.TeamID == "" || opts.UserID == "" {
 		return nil, errors.New("slack team and user IDs required")
 	}
-	src, err := imp.store.GetOrCreateSource(sourceTypeSlack, opts.TeamID+":"+opts.UserID)
+	src, err := imp.bindSource(ctx, opts)
 	if err != nil {
 		return nil, err
 	}
-	imp.opts, imp.sourceID = opts, src.ID
 	sum := &ImportSummary{SourceID: src.ID}
 
-	state, err := imp.loadResumeState(src.ID)
+	// Own the source before reading resume state: a purge that commits after
+	// this read would otherwise be undone by checkpointing the stale state.
+	execution, err := imp.store.AcquireSyncExecutionContext(ctx, src.ID)
+	if err != nil {
+		return nil, fmt.Errorf("acquire Slack sync execution: %w", err)
+	}
+	defer func() { retErr = errors.Join(retErr, execution.Release()) }()
+
+	state, err := imp.loadResumeState(ctx, src.ID)
 	if err != nil {
 		if !opts.Full || !errors.Is(err, errInvalidResumeState) {
 			return nil, fmt.Errorf("load Slack resume state: %w", err)
 		}
 		state = NewSyncState()
+	}
+	// Checkpoints from before principal tracking were written by the
+	// source's own user; only a different credential user needs a re-walk.
+	if state.PrincipalID == "" {
+		state.PrincipalID = imp.ownerID
+	}
+	if opts.RevalidatePrincipal && state.PrincipalID != opts.UserID {
+		state = NewSyncState()
+		state.RepairPending = true
 	}
 	if opts.Full {
 		// --full starts a repair SESSION, not a one-shot: the reset is
@@ -221,19 +243,24 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 		}
 	}
 
-	syncID, err := imp.store.StartSync(src.ID, sourceTypeSlack)
+	state.PrincipalID = opts.UserID
+	if imp.resumeLoaded != nil {
+		imp.resumeLoaded(src.ID)
+	}
+	syncID, err := execution.StartSyncContext(ctx, sourceTypeSlack, "")
 	if err != nil {
 		return nil, err
 	}
 	imp = imp.scopedToSync(src.ID, syncID)
-	// Failures below must ASSIGN to err (never shadow it with :=) so this
-	// defer records them on the run — WITH the in-memory final state, so
-	// resume granularity is the failure instant, not the last throttled
-	// flush (best-effort on the way down: the failure may itself be a
-	// checkpoint write).
+	// Save the final in-memory state on interruption, including errors
+	// returned before the next throttled checkpoint. Scheduler handoffs
+	// remain resumable without being reported as provider failures.
 	defer func() {
-		if err != nil {
-			_ = imp.store.FailSyncWithCheckpoint(syncID, err.Error(), imp.failCheckpoint(state, sum))
+		if retErr != nil {
+			if state.HistoryPass != nil && state.HistoryPass.FetchErrors > 0 && sum.FetchErrors == 0 {
+				retErr = errors.Join(retErr, fmt.Errorf("partial Slack sync: earlier attempts had %d fetch error(s)", state.HistoryPass.FetchErrors))
+			}
+			retErr = errors.Join(retErr, imp.store.InterruptSyncWithCheckpoint(ctx, syncID, retErr, imp.failCheckpoint(state, sum)))
 		}
 	}()
 
@@ -241,7 +268,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 	// its first checkpoint, the next run must still find the prior progress.
 	// Load-bearing for newest-wins resume and the --full reset — fatal on
 	// failure, never silent.
-	if err = imp.checkpointNow(syncID, state, sum); err != nil {
+	if err = imp.checkpointNow(ctx, syncID, state, sum); err != nil {
 		return sum, err
 	}
 
@@ -252,6 +279,15 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 		return sum, fmt.Errorf("refresh slack users: %w", err)
 	}
 	searchReplies := slices.Contains(imp.client.scopes, "search:read")
+	if searchReplies {
+		state.HistoryPass = nil
+	} else if state.HistoryPass == nil || state.HistoryPass.NoThreads != opts.NoThreads ||
+		state.HistoryPass.Maintenance != opts.Maintenance || state.HistoryPass.Limit != opts.Limit {
+		state.HistoryPass = &HistoryPass{
+			Visited: map[string]bool{}, NoThreads: opts.NoThreads,
+			Maintenance: opts.Maintenance, Limit: opts.Limit,
+		}
+	}
 	// File metadata still arrives with channel messages. Without files:read,
 	// keep it pending rather than attempting downloads the token cannot make.
 	if !slices.Contains(imp.client.scopes, "files:read") {
@@ -260,7 +296,9 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 	}
 
 	var convs []Conversation
+	listed := map[string]bool{}
 	err = imp.client.AllConversations(ctx, func(c Conversation) error {
+		listed[c.ID] = true
 		if includeConversation(&c, &opts) {
 			convs = append(convs, c)
 		}
@@ -269,18 +307,46 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 	if err != nil {
 		return sum, fmt.Errorf("enumerate slack conversations: %w", err)
 	}
+	for _, id := range opts.ChannelIDs {
+		if !listed[id] {
+			// The credential user no longer sees this conversation: it was
+			// deleted, archived away, or the user left it.
+			sum.UnavailableChannels = append(sum.UnavailableChannels, id)
+			imp.recordItem(ctx, syncID, id, "selection", store.SyncRunItemStatusSkipped, "slack_channel_unavailable", nil)
+		}
+	}
+
+	// Spend interrupted runs on the oldest uncovered history first. In
+	// enumeration order, already-refreshed channels can consume every run's
+	// budget auditing old threads while later channels never get a turn.
+	// A recent skip also yields its turn without claiming history coverage.
+	// Both markers persist across daemon restarts.
+	schedulingTime := func(c Conversation) time.Time {
+		cs := state.EnsureConv(c.ID)
+		if tsLess(cs.Cursor, cs.LastSkippedAt) {
+			return tsTime(cs.LastSkippedAt)
+		}
+		return tsTime(cs.Cursor)
+	}
+	slices.SortStableFunc(convs, func(a, b Conversation) int {
+		return schedulingTime(a).Compare(schedulingTime(b))
+	})
 
 	total := len(convs)
 	targets := map[string]sweepTarget{}
 	for idx := range convs {
 		c := &convs[idx]
+		if state.HistoryPass != nil && state.HistoryPass.Visited[c.ID] {
+			continue
+		}
 		if err = ctx.Err(); err != nil {
 			return sum, err
 		}
 		before := sum.MessagesProcessed
-		if !searchReplies && !opts.NoThreads {
+		fetchErrors := sum.FetchErrors
+		if !opts.NoThreads && (!searchReplies || (opts.ChannelIDs != nil && !strings.HasPrefix(c.ID, "C"))) {
 			cs := state.EnsureConv(c.ID)
-			// Without search, revisit old roots for new replies on every
+			// Without usable search, revisit old roots for new replies on every
 			// sync. Resume an existing walk intact. Finish the incremental
 			// window after each audit before starting another, so limited
 			// runs cannot starve new top-level messages.
@@ -291,11 +357,21 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 			}
 		}
 		var cc *convScope
-		if cc, err = imp.syncConversation(ctx, syncID, src.ID, c, opts, state, sum); err != nil {
+		cc, err = imp.syncConversation(ctx, syncID, src.ID, c, opts, state, sum)
+		if state.HistoryPass != nil {
+			state.HistoryPass.FetchErrors += sum.FetchErrors - fetchErrors
+		}
+		if err != nil {
 			return sum, err
 		}
 		if cc.membershipReady && state.EnsureConv(c.ID).Done {
 			targets[c.ID] = sweepTarget{convID: cc.convID, toRecipients: cc.toRecipients}
+		}
+		if state.HistoryPass != nil {
+			// Failed visits still take their turn. Carry their errors until
+			// this pass ends, then retry them in the next pass so one broken
+			// channel cannot prevent healthy channels from refreshing.
+			state.HistoryPass.Visited[c.ID] = true
 		}
 		sum.ConversationsProcessed++
 		if opts.Progress != nil {
@@ -303,7 +379,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 				idx+1, total, conversationTitle(c, imp.res.displayName), sum.MessagesProcessed-before))
 		}
 		// Flush checkpoint so an interrupted run resumes from this point.
-		if err = imp.checkpoint(syncID, state, sum); err != nil {
+		if err = imp.checkpoint(ctx, syncID, state, sum); err != nil {
 			return sum, err
 		}
 	}
@@ -317,17 +393,21 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 		if err = imp.sweepReplies(ctx, syncID, targets, state, sum); err != nil {
 			return sum, err
 		}
-		if err = imp.checkpoint(syncID, state, sum); err != nil {
+		if err = imp.checkpoint(ctx, syncID, state, sum); err != nil {
 			return sum, err
 		}
 	}
 
-	if err = imp.store.RecomputeConversationStats(src.ID); err != nil {
+	if err = imp.store.RecomputeConversationStatsContext(ctx, src.ID); err != nil {
 		return sum, err
 	}
 	// A repair session ends only on a clean pass that leaves nothing owed
 	// among the conversations this run could actually reach.
-	if state.RepairPending && sum.FetchErrors == 0 {
+	fetchErrors := sum.FetchErrors
+	if state.HistoryPass != nil {
+		fetchErrors = state.HistoryPass.FetchErrors
+	}
+	if state.RepairPending && fetchErrors == 0 {
 		eligible := make(map[string]bool, len(convs))
 		for i := range convs {
 			eligible[convs[i].ID] = true
@@ -336,25 +416,55 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 			state.RepairPending = false
 		}
 	}
+	var fetchErr error
+	if fetchErrors > 0 {
+		// Retain the failure after clearing traversal state: cancellation of
+		// the final checkpoint must not turn this pass into a clean handoff.
+		fetchErr = fmt.Errorf("partial Slack sync: %d fetch error(s)", fetchErrors)
+		state.HistoryPass = nil
+	}
 	// Mid-run checkpoints are throttled, so persist the final counters before
 	// completing (CompleteSync only writes status and cursor).
-	if err = imp.checkpointNow(syncID, state, sum); err != nil {
-		return sum, err
+	if err = imp.checkpointNow(ctx, syncID, state, sum); err != nil {
+		return sum, errors.Join(err, fetchErr)
 	}
-	if sum.FetchErrors > 0 {
-		// Fetch failures are isolated so healthy conversations still sync,
-		// but the run must remain failed and caller-visible; the checkpoint
-		// above preserves all partial progress for the next attempt.
+	if fetchErr != nil {
+		// Keep per-channel debt for the next pass while reporting this failure.
 		sum.Duration = imp.now().Sub(start)
-		err = fmt.Errorf("partial Slack sync: %d fetch error(s)", sum.FetchErrors)
-		return sum, err
+		return sum, fetchErr
 	}
-	blob, _ := state.Marshal()
-	if err = imp.store.CompleteSync(syncID, blob); err != nil {
+	completedState := *state
+	completedState.HistoryPass = nil
+	blob, _ := completedState.Marshal()
+	if err = imp.store.CompleteSyncContext(ctx, syncID, blob); err != nil {
 		return sum, err
 	}
 	sum.Duration = imp.now().Sub(start)
 	return sum, nil
+}
+
+// bindSource resolves the run's source and records its owner, the user whose
+// messages are "from me". A supplied SourceID keeps the owner from the source
+// identifier, so replacing the credential user does not reattribute history.
+func (imp *Importer) bindSource(ctx context.Context, opts ImportOptions) (*store.Source, error) {
+	if opts.SourceID == 0 {
+		src, err := imp.store.GetOrCreateSourceContext(ctx, sourceTypeSlack, opts.TeamID+":"+opts.UserID)
+		if err != nil {
+			return nil, err
+		}
+		imp.opts, imp.sourceID, imp.ownerID = opts, src.ID, opts.UserID
+		return src, nil
+	}
+	src, err := imp.store.GetSourceByIDContext(ctx, opts.SourceID)
+	if err != nil {
+		return nil, err
+	}
+	owner, ok := strings.CutPrefix(src.Identifier, opts.TeamID+":")
+	if src.SourceType != sourceTypeSlack || !ok || owner == "" {
+		return nil, errors.New("slack source does not match the credential workspace")
+	}
+	imp.opts, imp.sourceID, imp.ownerID = opts, src.ID, owner
+	return src, nil
 }
 
 // includeConversation applies the conversation selection policy. DMs and
@@ -362,6 +472,9 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 // filters exist to skip noisy channels, not people). Private channels also
 // honor ExcludePrivateChannels; all channels honor the name filters.
 func includeConversation(c *Conversation, opts *ImportOptions) bool {
+	if opts.ChannelIDs != nil && !slices.Contains(opts.ChannelIDs, c.ID) {
+		return false
+	}
 	if c.IsIM {
 		return !opts.ExcludeDMs
 	}
@@ -386,7 +499,7 @@ func includeConversation(c *Conversation, opts *ImportOptions) bool {
 // walks as recorded drain debt (paid before anything else each run) and
 // discovered by the reply sweep thereafter.
 func (imp *Importer) syncConversation(ctx context.Context, syncID, sourceID int64, c *Conversation, opts ImportOptions, state *SyncState, sum *ImportSummary) (*convScope, error) {
-	convID, err := imp.store.EnsureConversationWithType(sourceID, c.ID, conversationType(c), conversationTitle(c, imp.res.displayName))
+	convID, err := imp.store.EnsureConversationWithTypeContext(ctx, sourceID, c.ID, conversationType(c), conversationTitle(c, imp.res.displayName))
 	if err != nil {
 		return nil, err
 	}
@@ -480,7 +593,7 @@ func (imp *Importer) ensureMembership(ctx context.Context, syncID, convID int64,
 	var members []store.ConversationParticipantRef
 	directRecipients := make([]messageRecipient, 0)
 	add := func(userID string) error {
-		pid, err := imp.res.resolveID(userID)
+		pid, err := imp.res.resolveID(ctx, userID)
 		if err != nil {
 			return err
 		}
@@ -505,7 +618,7 @@ func (imp *Importer) ensureMembership(ctx context.Context, syncID, convID int64,
 				return nil, 0, ctx.Err()
 			}
 			if errors.Is(err, ErrNotFound) {
-				imp.recordItem(syncID, c.ID, "membership", store.SyncRunItemStatusSkipped, "slack_channel_gone", err)
+				imp.recordItem(ctx, syncID, c.ID, "membership", store.SyncRunItemStatusSkipped, "slack_channel_gone", err)
 				// Known-gone is distinct from a transient outage. Let the
 				// history path confirm/record the gone conversation rather
 				// than parking it forever as missing membership; whatever
@@ -515,22 +628,22 @@ func (imp *Importer) ensureMembership(ctx context.Context, syncID, convID int64,
 			// Isolated (message archiving proceeds) but honest: a members
 			// listing outage is a fetch failure and the run must report
 			// partial, not success.
-			imp.recordItem(syncID, c.ID, "membership", store.SyncRunItemStatusError, "slack_fetch_error", err)
+			imp.recordItem(ctx, syncID, c.ID, "membership", store.SyncRunItemStatusError, "slack_fetch_error", err)
 			sum.FetchErrors++
 			sum.Errors++
 			// Store failures stay fatal here (see processMessage): the archived
 			// roster decides later downloads, so failing to record the outage
 			// would silently restore the fail-open behavior.
-			if merr := imp.store.MarkConversationMemberCountUnknown(convID); merr != nil {
+			if merr := imp.store.MarkConversationMemberCountUnknownContext(ctx, convID); merr != nil {
 				return nil, 0, merr
 			}
 			return nil, unknownMembershipCount(opts.MediaPolicy), nil
 		}
 	}
-	if err := imp.store.ReplaceConversationParticipants(convID, members); err != nil {
+	if err := imp.store.ReplaceConversationParticipantsContext(ctx, convID, members); err != nil {
 		return nil, 0, err
 	}
-	if err := imp.store.SetConversationMemberCount(convID, len(members)); err != nil {
+	if err := imp.store.SetConversationMemberCountContext(ctx, convID, len(members)); err != nil {
 		return nil, 0, err
 	}
 	return directRecipients, len(members), nil
@@ -593,15 +706,16 @@ func (imp *Importer) walkWindow(ctx context.Context, cc *convScope, state *SyncS
 				// future run into partial failure. A vacuous stamp keeps
 				// the stamp-less adoption from flagging catch-up churn for
 				// a channel with nothing to cover.
-				imp.recordItem(cc.syncID, cc.channelID, "fetch", store.SyncRunItemStatusSkipped, "slack_channel_gone", err)
+				imp.recordItem(ctx, cc.syncID, cc.channelID, "fetch", store.SyncRunItemStatusSkipped, "slack_channel_gone", err)
 				cs.Done = true
 				cs.BackfillCursor, cs.BackfillLatest = "", ""
+				cs.LastSkippedAt = tsFormat(imp.now())
 				if cs.SweptThrough == "" {
 					cs.SweptThrough = tsFormat(imp.now())
 				}
 				return nil
 			}
-			imp.recordItem(cc.syncID, cc.channelID, "fetch", store.SyncRunItemStatusError, "slack_fetch_error", err)
+			imp.recordItem(ctx, cc.syncID, cc.channelID, "fetch", store.SyncRunItemStatusError, "slack_fetch_error", err)
 			sum.FetchErrors++
 			sum.Errors++
 			return nil
@@ -680,7 +794,7 @@ func (imp *Importer) walkWindow(ctx context.Context, cc *convScope, state *SyncS
 		}
 		pages++
 		if pages%checkpointPageInterval == 0 {
-			if err := imp.checkpoint(cc.syncID, state, sum); err != nil {
+			if err := imp.checkpoint(ctx, cc.syncID, state, sum); err != nil {
 				return err
 			}
 		}
@@ -720,11 +834,11 @@ func (imp *Importer) drainPendingThreads(ctx context.Context, cc *convScope, sum
 			}
 			if errors.Is(err, ErrNotFound) {
 				// Thread gone between discovery and drain: expected churn.
-				imp.recordItem(cc.syncID, sourceMessageID(cc.channelID, pt.RootTS), "thread", store.SyncRunItemStatusSkipped, "slack_thread_gone", err)
+				imp.recordItem(ctx, cc.syncID, sourceMessageID(cc.channelID, pt.RootTS), "thread", store.SyncRunItemStatusSkipped, "slack_thread_gone", err)
 				cs.PendingThreads = cs.PendingThreads[1:]
 				continue
 			}
-			imp.recordItem(cc.syncID, sourceMessageID(cc.channelID, pt.RootTS), "thread", store.SyncRunItemStatusError, "slack_fetch_error", err)
+			imp.recordItem(ctx, cc.syncID, sourceMessageID(cc.channelID, pt.RootTS), "thread", store.SyncRunItemStatusError, "slack_fetch_error", err)
 			sum.FetchErrors++
 			sum.Errors++
 			return nil // entry parked at DrainedTo; retried next run
@@ -751,7 +865,7 @@ func (imp *Importer) drainPendingThreads(ctx context.Context, cc *convScope, sum
 				// which is --maintenance work, not the drain's. It is only
 				// processed when missing (this fetch is then the first to
 				// see the root, and SetReplyTo needs it in place).
-				archived, err := imp.parentArchived(cc.sourceID, cc.channelID, m.TS)
+				archived, err := imp.parentArchived(ctx, cc.sourceID, cc.channelID, m.TS)
 				if err != nil {
 					return fmt.Errorf("check archived thread parent: %w", err)
 				}
@@ -794,7 +908,7 @@ func (imp *Importer) drainPendingThreads(ctx context.Context, cc *convScope, sum
 			// More pages claimed but no reply advanced the resume point
 			// (defensive: should be impossible with ascending replies).
 			// Park rather than loop forever.
-			imp.recordItem(cc.syncID, sourceMessageID(cc.channelID, pt.RootTS), "thread", store.SyncRunItemStatusError, "slack_drain_stalled",
+			imp.recordItem(ctx, cc.syncID, sourceMessageID(cc.channelID, pt.RootTS), "thread", store.SyncRunItemStatusError, "slack_drain_stalled",
 				fmt.Errorf("thread %s drain made no progress past %s", pt.RootTS, oldest))
 			sum.FetchErrors++
 			sum.Errors++
@@ -857,17 +971,18 @@ func (imp *Importer) threadCatchUp(ctx context.Context, cc *convScope, state *Sy
 				// and a vacuous stamp keeps the stamp-less adoption from
 				// re-flagging it (nothing exists to cover; the gap
 				// machinery owns any later resurrection).
-				imp.recordItem(cc.syncID, cc.channelID, "fetch", store.SyncRunItemStatusSkipped, "slack_channel_gone", err)
+				imp.recordItem(ctx, cc.syncID, cc.channelID, "fetch", store.SyncRunItemStatusSkipped, "slack_channel_gone", err)
 				cs.ThreadsPending = false
 				cs.CatchUpCursor, cs.CatchUpLatest = "", ""
 				cs.AuditPending = false
 				cs.AuditedThrough = tsFormat(imp.now())
+				cs.LastSkippedAt = tsFormat(imp.now())
 				if cs.SweptThrough == "" {
 					cs.SweptThrough = tsFormat(imp.now())
 				}
 				return nil
 			}
-			imp.recordItem(cc.syncID, cc.channelID, "fetch", store.SyncRunItemStatusError, "slack_fetch_error", err)
+			imp.recordItem(ctx, cc.syncID, cc.channelID, "fetch", store.SyncRunItemStatusError, "slack_fetch_error", err)
 			sum.FetchErrors++
 			sum.Errors++
 			return nil // cursor stays; retried next run
@@ -908,7 +1023,7 @@ func (imp *Importer) threadCatchUp(ctx context.Context, cc *convScope, state *Sy
 		if len(cs.PendingThreads) > 0 {
 			return nil // one-page invariant: pay before paging further
 		}
-		if err := imp.checkpoint(cc.syncID, state, sum); err != nil {
+		if err := imp.checkpoint(ctx, cc.syncID, state, sum); err != nil {
 			return err
 		}
 	}
@@ -919,8 +1034,8 @@ func (imp *Importer) threadCatchUp(ctx context.Context, cc *convScope, state *Sy
 // persistence attempt and must be retried. Store errors are returned so the
 // caller holds its thread debt rather than refreshing an archived parent on
 // uncertainty.
-func (imp *Importer) parentArchived(sourceID int64, channelID, ts string) (bool, error) {
-	ids, err := imp.store.MessageExistsWithRawBatch(sourceID, []string{sourceMessageID(channelID, ts)})
+func (imp *Importer) parentArchived(ctx context.Context, sourceID int64, channelID, ts string) (bool, error) {
+	ids, err := imp.store.MessageExistsWithRawBatchContext(ctx, sourceID, []string{sourceMessageID(channelID, ts)})
 	if err != nil {
 		return false, err
 	}
@@ -947,7 +1062,7 @@ func (imp *Importer) rescanHead(ctx context.Context, cc *convScope, sum *ImportS
 	// scan below cover roots the archive has not linked yet (deduped).
 	rescanned := map[string]bool{}
 	if !cc.opts.NoThreads {
-		rootIDs, err := imp.store.ListSlackRecentReplyThreadRoots(cc.sourceID, cc.convID, imp.now().Add(-maintenanceRescanWindow))
+		rootIDs, err := imp.store.ListSlackRecentReplyThreadRootsContext(ctx, cc.sourceID, cc.convID, imp.now().Add(-maintenanceRescanWindow))
 		if err != nil {
 			return fmt.Errorf("list recent-reply thread roots: %w", err)
 		}
@@ -982,10 +1097,10 @@ func (imp *Importer) rescanHead(ctx context.Context, cc *convScope, sum *ImportS
 				return ctx.Err()
 			}
 			if errors.Is(err, ErrNotFound) {
-				imp.recordItem(cc.syncID, cc.channelID, "fetch", store.SyncRunItemStatusSkipped, "slack_channel_gone", err)
+				imp.recordItem(ctx, cc.syncID, cc.channelID, "fetch", store.SyncRunItemStatusSkipped, "slack_channel_gone", err)
 				return nil
 			}
-			imp.recordItem(cc.syncID, cc.channelID, "fetch", store.SyncRunItemStatusError, "slack_fetch_error", err)
+			imp.recordItem(ctx, cc.syncID, cc.channelID, "fetch", store.SyncRunItemStatusError, "slack_fetch_error", err)
 			sum.FetchErrors++
 			sum.Errors++
 			return nil
@@ -1036,10 +1151,10 @@ func (imp *Importer) rescanThread(ctx context.Context, cc *convScope, rootTS str
 				return ctx.Err()
 			}
 			if errors.Is(err, ErrNotFound) {
-				imp.recordItem(cc.syncID, sourceMessageID(cc.channelID, rootTS), "maintenance", store.SyncRunItemStatusSkipped, "slack_thread_gone", err)
+				imp.recordItem(ctx, cc.syncID, sourceMessageID(cc.channelID, rootTS), "maintenance", store.SyncRunItemStatusSkipped, "slack_thread_gone", err)
 				return nil
 			}
-			imp.recordItem(cc.syncID, sourceMessageID(cc.channelID, rootTS), "maintenance", store.SyncRunItemStatusError, "slack_fetch_error", err)
+			imp.recordItem(ctx, cc.syncID, sourceMessageID(cc.channelID, rootTS), "maintenance", store.SyncRunItemStatusError, "slack_fetch_error", err)
 			sum.FetchErrors++
 			sum.Errors++
 			return nil
@@ -1081,20 +1196,20 @@ func (imp *Importer) processMessage(ctx context.Context, cc *convScope, m *Messa
 		// an interrupted attempt and must be retried. The probe cannot swallow
 		// its error toward "missing" — that direction overwrites — so store
 		// failure aborts like every other store op.
-		ids, err := imp.store.MessageExistsWithRawBatch(cc.sourceID, []string{sourceMessageID(cc.channelID, m.TS)})
+		ids, err := imp.store.MessageExistsWithRawBatchContext(ctx, cc.sourceID, []string{sourceMessageID(cc.channelID, m.TS)})
 		if err != nil {
 			return fmt.Errorf("tombstone existence check: %w", err)
 		}
 		if len(ids) > 0 {
-			if err := imp.store.MarkMessageDeleted(cc.sourceID, sourceMessageID(cc.channelID, m.TS)); err != nil {
+			if err := imp.store.MarkMessageDeletedContext(ctx, cc.sourceID, sourceMessageID(cc.channelID, m.TS)); err != nil {
 				return fmt.Errorf("mark Slack message deleted: %w", err)
 			}
 			return nil
 		}
 	}
 
-	msg, text := mapMessage(m, cc.channelID, cc.convID, cc.sourceID, m.User == cc.opts.UserID, imp.res.displayName)
-	existing, err := imp.store.MessageExistsBatch(cc.sourceID, []string{msg.SourceMessageID})
+	msg, text := mapMessage(m, cc.channelID, cc.convID, cc.sourceID, m.User == imp.ownerID, imp.res.displayName)
+	existing, err := imp.store.MessageExistsBatchContext(ctx, cc.sourceID, []string{msg.SourceMessageID})
 	if err != nil {
 		return fmt.Errorf("check existing Slack message: %w", err)
 	}
@@ -1107,9 +1222,9 @@ func (imp *Importer) processMessage(ctx context.Context, cc *convScope, m *Messa
 	}
 	var senderPID int64
 	if m.User != "" {
-		senderPID, err = imp.res.resolveID(m.User)
+		senderPID, err = imp.res.resolveID(ctx, m.User)
 	} else if m.BotID != "" {
-		senderPID, err = imp.res.resolveBot(m.BotID, m.Username)
+		senderPID, err = imp.res.resolveBot(ctx, m.BotID, m.Username)
 	}
 	if err != nil {
 		return err
@@ -1117,22 +1232,25 @@ func (imp *Importer) processMessage(ctx context.Context, cc *convScope, m *Messa
 	if senderPID != 0 {
 		msg.SenderID = sql.NullInt64{Int64: senderPID, Valid: true}
 	}
-	messageID, err := imp.store.UpsertMessage(&msg)
+	messageID, err := imp.store.UpsertMessageContext(ctx, &msg)
 	if err != nil {
 		return err
 	}
-	if err := imp.store.UpsertMessageBody(messageID, sql.NullString{String: text, Valid: text != ""}, sql.NullString{}); err != nil {
+	if err := imp.store.UpsertMessageBodyContext(ctx, messageID, sql.NullString{String: text, Valid: text != ""}, sql.NullString{}); err != nil {
 		return err
 	}
 	// FTS is the one warn-and-continue store write: the index is derived
 	// from the (fatally-checked) message row and body, holes are detected
 	// by FTSNeedsBackfill's anti-join, and rebuild-fts repopulates them —
 	// the same policy every other importer follows.
-	if err := imp.store.UpsertFTS(messageID, "", text, imp.res.displayName(m.User), "", ""); err != nil {
+	if err := imp.store.UpsertFTSContext(ctx, messageID, "", text, imp.res.displayName(m.User), "", ""); err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return err
+		}
 		sum.Errors++
 	}
 	if m.Edited != nil {
-		if err := imp.store.SetMessageEdited(messageID); err != nil {
+		if err := imp.store.SetMessageEditedContext(ctx, messageID); err != nil {
 			return fmt.Errorf("set message edited: %w", err)
 		}
 	}
@@ -1143,10 +1261,10 @@ func (imp *Importer) processMessage(ctx context.Context, cc *convScope, m *Messa
 		}
 	}
 
-	if err := imp.persistRecipients(messageID, m, senderPID, cc.toRecipients); err != nil {
+	if err := imp.persistRecipients(ctx, messageID, m, senderPID, cc.toRecipients); err != nil {
 		return err
 	}
-	if err := imp.persistReactions(messageID, m); err != nil {
+	if err := imp.persistReactions(ctx, messageID, m); err != nil {
 		return err
 	}
 
@@ -1155,7 +1273,7 @@ func (imp *Importer) processMessage(ctx context.Context, cc *convScope, m *Messa
 	// carry roots; the replies response carries the root first), and
 	// SetReplyTo resolves to NULL harmlessly if one is missing.
 	if m.IsThreadReply() {
-		if err := imp.store.SetReplyTo(cc.sourceID, sourceMessageID(cc.channelID, m.TS), sourceMessageID(cc.channelID, m.ThreadTS)); err != nil {
+		if err := imp.store.SetReplyToContext(ctx, cc.sourceID, sourceMessageID(cc.channelID, m.TS), sourceMessageID(cc.channelID, m.ThreadTS)); err != nil {
 			return fmt.Errorf("link thread reply: %w", err)
 		}
 	}
@@ -1165,17 +1283,17 @@ func (imp *Importer) processMessage(ctx context.Context, cc *convScope, m *Messa
 	// but still mark it inactive; a live message reappearing later clears a
 	// stale marker, matching the Teams and Discord importers.
 	if m.Subtype == "tombstone" {
-		if err := imp.store.MarkMessageDeleted(cc.sourceID, msg.SourceMessageID); err != nil {
+		if err := imp.store.MarkMessageDeletedContext(ctx, cc.sourceID, msg.SourceMessageID); err != nil {
 			return fmt.Errorf("mark Slack message deleted: %w", err)
 		}
-	} else if err := imp.store.ClearMessageDeletedFromSource(cc.sourceID, msg.SourceMessageID); err != nil {
+	} else if err := imp.store.ClearMessageDeletedFromSourceContext(ctx, cc.sourceID, msg.SourceMessageID); err != nil {
 		return fmt.Errorf("clear Slack message tombstone: %w", err)
 	}
 
 	// Archive the exact original message JSON (captured at decode time) only
 	// after every fatal auxiliary write succeeds. Tombstone retries use its
 	// presence as the durable signal that this whole snapshot completed.
-	if err := imp.store.UpsertMessageRawWithFormat(messageID, raw, "slack_json"); err != nil {
+	if err := imp.store.UpsertMessageRawWithFormatContext(ctx, messageID, raw, "slack_json"); err != nil {
 		return fmt.Errorf("archive slack message raw: %w", err)
 	}
 
@@ -1197,7 +1315,7 @@ func (imp *Importer) processMessage(ctx context.Context, cc *convScope, m *Messa
 // persistRecipients writes the shared sender and mention recipient sets.
 // Conversation membership remains in conversation_participants rather than
 // being fanned out into a "to" row on every channel message.
-func (imp *Importer) persistRecipients(messageID int64, m *Message, senderPID int64, toRecipients []messageRecipient) error {
+func (imp *Importer) persistRecipients(ctx context.Context, messageID int64, m *Message, senderPID int64, toRecipients []messageRecipient) error {
 	var fromIDs []int64
 	var fromNames []string
 	if senderPID != 0 {
@@ -1208,7 +1326,7 @@ func (imp *Importer) persistRecipients(messageID int64, m *Message, senderPID in
 		fromIDs = append(fromIDs, senderPID)
 		fromNames = append(fromNames, senderName)
 	}
-	if err := imp.store.ReplaceMessageRecipients(messageID, "from", fromIDs, fromNames); err != nil {
+	if err := imp.store.ReplaceMessageRecipientsContext(ctx, messageID, "from", fromIDs, fromNames); err != nil {
 		return err
 	}
 	// Direct-chat membership has a concrete addressee meaning. A nil slice
@@ -1224,7 +1342,7 @@ func (imp *Importer) persistRecipients(messageID int64, m *Message, senderPID in
 			toIDs = append(toIDs, recipient.id)
 			toNames = append(toNames, recipient.name)
 		}
-		if err := imp.store.ReplaceMessageRecipients(messageID, "to", toIDs, toNames); err != nil {
+		if err := imp.store.ReplaceMessageRecipientsContext(ctx, messageID, "to", toIDs, toNames); err != nil {
 			return err
 		}
 	}
@@ -1232,7 +1350,7 @@ func (imp *Importer) persistRecipients(messageID int64, m *Message, senderPID in
 	var ids []int64
 	var names []string
 	for _, uid := range m.MentionedUserIDs() {
-		pid, err := imp.res.resolveID(uid)
+		pid, err := imp.res.resolveID(ctx, uid)
 		if err != nil {
 			return err
 		}
@@ -1242,7 +1360,7 @@ func (imp *Importer) persistRecipients(messageID int64, m *Message, senderPID in
 		ids = append(ids, pid)
 		names = append(names, imp.res.displayName(uid))
 	}
-	return imp.store.ReplaceMessageRecipients(messageID, "mention", ids, names)
+	return imp.store.ReplaceMessageRecipientsContext(ctx, messageID, "mention", ids, names)
 }
 
 // persistReactions replaces the message's reactions from the embedded
@@ -1250,11 +1368,11 @@ func (imp *Importer) persistRecipients(messageID int64, m *Message, senderPID in
 // with the target message's timestamp (cosmetic only). The API may truncate
 // a reaction's user list on very popular messages — the archived raw JSON
 // preserves the counts.
-func (imp *Importer) persistReactions(messageID int64, m *Message) error {
+func (imp *Importer) persistReactions(ctx context.Context, messageID int64, m *Message) error {
 	var reactions []store.ReactionRef
 	for _, rc := range m.Reactions {
 		for _, uid := range rc.Users {
-			pid, err := imp.res.resolveID(uid)
+			pid, err := imp.res.resolveID(ctx, uid)
 			if err != nil {
 				return err
 			}
@@ -1269,16 +1387,16 @@ func (imp *Importer) persistReactions(messageID int64, m *Message) error {
 			})
 		}
 	}
-	return imp.store.ReplaceReactions(messageID, reactions)
+	return imp.store.ReplaceReactionsContext(ctx, messageID, reactions)
 }
 
 // checkpoint persists the sync state mid-run so an interrupted run resumes.
 // Flushes are throttled (see checkpointMinInterval).
-func (imp *Importer) checkpoint(syncID int64, state *SyncState, sum *ImportSummary) error {
+func (imp *Importer) checkpoint(ctx context.Context, syncID int64, state *SyncState, sum *ImportSummary) error {
 	if time.Since(imp.lastCheckpoint) < checkpointMinInterval {
 		return nil
 	}
-	return imp.checkpointNow(syncID, state, sum)
+	return imp.checkpointNow(ctx, syncID, state, sum)
 }
 
 // checkpointNow persists the sync state unconditionally: for the initial
@@ -1287,12 +1405,12 @@ func (imp *Importer) checkpoint(syncID int64, state *SyncState, sum *ImportSumma
 // checkpoint is load-bearing — newest-wins resume and the --full reset both
 // exist only in it until the run completes — and a silently lost checkpoint
 // would let an interrupted repair evaporate with no error ever surfaced.
-func (imp *Importer) checkpointNow(syncID int64, state *SyncState, sum *ImportSummary) error {
+func (imp *Importer) checkpointNow(ctx context.Context, syncID int64, state *SyncState, sum *ImportSummary) error {
 	blob, err := state.Marshal()
 	if err != nil {
 		return fmt.Errorf("marshal sync state: %w", err)
 	}
-	if err := imp.store.UpdateSyncCheckpoint(syncID, &store.Checkpoint{
+	if err := imp.store.UpdateSyncCheckpointContext(ctx, syncID, &store.Checkpoint{
 		PageToken:         blob,
 		MessagesProcessed: int64(sum.MessagesProcessed),
 		MessagesAdded:     int64(sum.MessagesAdded),
@@ -1323,12 +1441,12 @@ func (imp *Importer) failCheckpoint(state *SyncState, sum *ImportSummary) *store
 }
 
 // recordItem records a per-item outcome on the sync run.
-func (imp *Importer) recordItem(syncID int64, sourceMessageID, phase, status, kind string, err error) {
+func (imp *Importer) recordItem(ctx context.Context, syncID int64, sourceMessageID, phase, status, kind string, err error) {
 	msg := ""
 	if err != nil {
 		msg = err.Error()
 	}
-	_ = imp.store.RecordSyncRunItem(store.SyncRunItem{
+	_ = imp.store.RecordSyncRunItemContext(ctx, store.SyncRunItem{
 		SyncRunID:       syncID,
 		SourceMessageID: sourceMessageID,
 		Phase:           phase,
@@ -1342,7 +1460,7 @@ func (imp *Importer) recordItem(syncID int64, sourceMessageID, phase, status, ki
 // messages with unfinished work, plus exclusions now allowed by current
 // policy, are re-read from archived JSON and re-persisted. Idempotent
 // (content-addressed storage, replace-by-prefix rows).
-func (imp *Importer) BackfillMedia(ctx context.Context, opts ImportOptions) (*ImportSummary, error) {
+func (imp *Importer) BackfillMedia(ctx context.Context, opts ImportOptions) (_ *ImportSummary, retErr error) {
 	// An explicit media backfill IS the download request. NoMedia means
 	// "defer downloads, leave pending markers for backfill-slack-media" —
 	// honoring it here would make the payer re-record the markers and
@@ -1361,16 +1479,22 @@ func (imp *Importer) BackfillMedia(ctx context.Context, opts ImportOptions) (*Im
 	if opts.AttachmentsDir == "" {
 		return nil, errors.New("attachments dir required")
 	}
-	src, err := imp.store.GetOrCreateSource(sourceTypeSlack, opts.TeamID+":"+opts.UserID)
+	src, err := imp.bindSource(ctx, opts)
 	if err != nil {
 		return nil, err
 	}
-	imp.opts, imp.sourceID = opts, src.ID
 	sum := &ImportSummary{SourceID: src.ID}
+	// Own the source before reading the state this run carries forward, so
+	// a concurrent purge cannot be undone by the copied checkpoint.
+	execution, err := imp.store.AcquireSyncExecutionContext(ctx, src.ID)
+	if err != nil {
+		return nil, fmt.Errorf("acquire Slack media sync execution: %w", err)
+	}
+	defer func() { retErr = errors.Join(retErr, execution.Release()) }()
 	// This run's sync_runs row becomes the source's newest completed run and
 	// Import loads its cursor_after as the resume baseline — carry the
 	// existing sync state forward verbatim or the next sync would restart.
-	state, err := imp.loadResumeState(src.ID)
+	state, err := imp.loadResumeState(ctx, src.ID)
 	if err != nil {
 		return nil, fmt.Errorf("load Slack resume state: %w", err)
 	}
@@ -1378,17 +1502,19 @@ func (imp *Importer) BackfillMedia(ctx context.Context, opts ImportOptions) (*Im
 	if err != nil {
 		return nil, err
 	}
-	syncID, err := imp.store.StartSync(src.ID, "slack_media")
+	syncID, err := execution.StartSyncContext(ctx, "slack_media", "")
 	if err != nil {
 		return nil, err
 	}
 	imp = imp.scopedToSync(src.ID, syncID)
 	defer func() {
-		if err != nil {
-			_ = imp.store.FailSyncWithCheckpoint(syncID, err.Error(), imp.failCheckpoint(state, sum))
+		if retErr != nil {
+			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer cancel()
+			retErr = errors.Join(retErr, imp.store.FailSyncWithCheckpointContext(cleanupCtx, syncID, retErr.Error(), imp.failCheckpoint(state, sum)))
 		}
 	}()
-	if err = imp.checkpointNow(syncID, state, sum); err != nil {
+	if err = imp.checkpointNow(ctx, syncID, state, sum); err != nil {
 		return sum, err
 	}
 
@@ -1399,7 +1525,7 @@ func (imp *Importer) BackfillMedia(ctx context.Context, opts ImportOptions) (*Im
 	if policy.MaxBytes <= 0 {
 		policy.MaxBytes = defaultMaxMediaBytes
 	}
-	pending, err := imp.store.ListSlackRetryableAttachmentMessages(src.ID, policy)
+	pending, err := imp.store.ListSlackRetryableAttachmentMessagesContext(ctx, src.ID, policy)
 	if err != nil {
 		return sum, err
 	}
@@ -1408,7 +1534,7 @@ func (imp *Importer) BackfillMedia(ctx context.Context, opts ImportOptions) (*Im
 		if err = ctx.Err(); err != nil {
 			return sum, err
 		}
-		raw, rerr := imp.store.GetMessageRaw(item.MessageID)
+		raw, rerr := imp.store.GetMessageRawContext(ctx, item.MessageID)
 		if rerr != nil && !errors.Is(rerr, sql.ErrNoRows) {
 			// Store-read failure: the local database is sick — fatal, like
 			// every store failure (see processMessage).
@@ -1422,11 +1548,11 @@ func (imp *Importer) BackfillMedia(ctx context.Context, opts ImportOptions) (*Im
 			// raw). Record it actionably, keep the pending count honest —
 			// the markers stay in place and discoverable — and fail the run
 			// as partial below instead of reporting a clean sweep.
-			imp.recordItem(syncID, item.SourceMessageID, "attachment", store.SyncRunItemStatusError, "slack_raw_invalid",
+			imp.recordItem(ctx, syncID, item.SourceMessageID, "attachment", store.SyncRunItemStatusError, "slack_raw_invalid",
 				fmt.Errorf("archived raw JSON for %s is missing or malformed; run sync-slack --full to re-fetch it", item.SourceMessageID))
 			sum.Errors++
 			invalidRaw++
-			sum.AttachmentsPending += imp.pendingMarkerCount(item.MessageID)
+			sum.AttachmentsPending += imp.pendingMarkerCount(ctx, item.MessageID)
 			continue
 		}
 		itemOpts := opts
@@ -1438,7 +1564,7 @@ func (imp *Importer) BackfillMedia(ctx context.Context, opts ImportOptions) (*Im
 		}
 		sum.MessagesProcessed++
 	}
-	if err = imp.checkpointNow(syncID, state, sum); err != nil {
+	if err = imp.checkpointNow(ctx, syncID, state, sum); err != nil {
 		return sum, err
 	}
 	if invalidRaw > 0 {
@@ -1446,7 +1572,7 @@ func (imp *Importer) BackfillMedia(ctx context.Context, opts ImportOptions) (*Im
 		err = fmt.Errorf("partial Slack media backfill: %d message(s) with invalid archived raw JSON (run sync-slack --full to repair)", invalidRaw)
 		return sum, err
 	}
-	if err = imp.store.CompleteSync(syncID, stateBlob); err != nil {
+	if err = imp.store.CompleteSyncContext(ctx, syncID, stateBlob); err != nil {
 		return sum, err
 	}
 	sum.Duration = imp.now().Sub(start)
@@ -1458,8 +1584,8 @@ func (imp *Importer) BackfillMedia(ctx context.Context, opts ImportOptions) (*Im
 // message still reports its undone work honestly. Best-effort: on a read
 // error it returns 1 — the message is in the pending list, so at least one
 // marker exists.
-func (imp *Importer) pendingMarkerCount(messageID int64) int {
-	refs, err := imp.store.MessageSlackAttachments(messageID)
+func (imp *Importer) pendingMarkerCount(ctx context.Context, messageID int64) int {
+	refs, err := imp.store.MessageSlackAttachmentsContext(ctx, messageID)
 	if err != nil {
 		return 1
 	}

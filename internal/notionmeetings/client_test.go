@@ -82,6 +82,8 @@ func TestClientReadEndpointsPreserveRawResponses(t *testing.T) {
 		case "/v1/pages/page-1/markdown":
 			assert.Equal("true", r.URL.Query().Get("include_transcript"))
 			_, _ = io.WriteString(w, `{"object":"page_markdown","id":"page-1","markdown":"# Weekly planning\nTranscript: Ready","truncated":false,"unknown_block_ids":[]}`)
+		case "/v1/users/guest":
+			_, _ = io.WriteString(w, `{"object":"user","id":"guest","type":"person","person":{"email":"guest@example.com","email_verified":true}}`)
 		case "/v1/users":
 			assert.Equal("users-1", r.URL.Query().Get("start_cursor"))
 			assert.Equal("100", r.URL.Query().Get("page_size"))
@@ -114,6 +116,10 @@ func TestClientReadEndpointsPreserveRawResponses(t *testing.T) {
 	require.Len(users.Results, 1)
 	assert.Equal("user@example.com", users.Results[0].Person.Email)
 	assert.True(users.Results[0].Person.EmailVerified)
+	guest, err := client.RetrieveUser(context.Background(), "guest")
+	require.NoError(err)
+	assert.Equal("guest@example.com", guest.Person.Email)
+	assert.Contains(string(guest.Raw), `"guest"`)
 }
 
 func TestBlockPlainTextExtractsContentBearingPayloads(t *testing.T) {
@@ -151,6 +157,7 @@ func TestClientClassifiesAndSanitizesProviderErrors(t *testing.T) {
 		{name: "meeting access", path: "/query", status: http.StatusForbidden, code: "restricted_resource", wantError: ErrMeetingAccess},
 		{name: "read content", path: "/block", status: http.StatusForbidden, code: "restricted_resource", wantError: ErrReadContent},
 		{name: "user information", path: "/users", status: http.StatusForbidden, code: "restricted_resource", wantError: ErrUserInformation},
+		{name: "individual user information", path: "/user", status: http.StatusForbidden, code: "restricted_resource", wantError: ErrUserInformation},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -169,6 +176,8 @@ func TestClientClassifiesAndSanitizesProviderErrors(t *testing.T) {
 				_, err = client.QueryMeetingNotes(context.Background(), 1)
 			case "/block":
 				_, err = client.RetrieveBlock(context.Background(), "block-1")
+			case "/user":
+				_, err = client.RetrieveUser(context.Background(), "guest")
 			case "/users":
 				_, err = client.ListUsers(context.Background(), "")
 			}
@@ -409,6 +418,18 @@ func TestClientRejectsMalformedPageMarkdownResponses(t *testing.T) {
 
 			require.ErrorIs(t, err, ErrMalformedResponse)
 			assert.Nil(t, result)
+		})
+	}
+}
+
+func TestRetrieveUserValidatesIdentity(t *testing.T) {
+	for _, tc := range []struct{ name, body string }{
+		{"wrong ID", `{"object":"user","id":"other"}`},
+		{"wrong object", `{"object":"block","id":"guest"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := newStaticNotionClient(t, tc.body).RetrieveUser(t.Context(), "guest")
+			require.ErrorIs(t, err, ErrMalformedResponse)
 		})
 	}
 }

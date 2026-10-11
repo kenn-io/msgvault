@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"errors"
 	"os"
@@ -140,6 +141,7 @@ func TestPurgeExcludedMediaDryRunAndApplyPreservesSharedBlob(t *testing.T) {
 }
 
 func TestMediaPolicyForSlackdumpUsesSlackWorkspaceConfig(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
 	current := &config.Config{Slack: config.SlackConfig{
 		MaxMediaMB: 7,
 		AccountsConfig: map[string]config.MediaAccountConfig{
@@ -148,8 +150,13 @@ func TestMediaPolicyForSlackdumpUsesSlackWorkspaceConfig(t *testing.T) {
 	}}
 
 	policy, ok := mediaPolicyForSource(current, "slackdump", "T_TEST:UALICE")
-	require.True(t, ok)
-	assert.Equal(t, int64(11)<<20, policy.MaxBytes)
+	require.True(ok)
+	assert.Equal(int64(11)<<20, policy.MaxBytes)
+
+	current.Twilio = []config.TwilioSource{{Identifier: "work", MaxMediaMB: 1}}
+	policy, ok = mediaPolicyForSource(current, "twilio", "work")
+	require.True(ok)
+	assert.Equal(int64(1)<<20, policy.MaxBytes)
 }
 
 func TestPurgeExcludedMediaPreservesBlobReferencedByThumbnail(t *testing.T) {
@@ -223,6 +230,69 @@ func TestPurgeExcludedMediaRetriesAndContinuesLooseBlobCleanup(t *testing.T) {
 	retry.SetArgs([]string{"--yes"})
 	require.NoError(retry.Execute())
 	assert.NoFileExists(f.fullPath, "a later run sweeps dead blobs even with no new exclusions")
+}
+
+func TestSweepAttachmentCandidates(t *testing.T) {
+	assert := assert.New(t)
+	f := newPurgeMediaFixture(t)
+	dir := f.config.AttachmentsDir()
+	removed := seedAttachmentFile(t, dir, "aa/orphan", "orphan")
+	failed := seedAttachmentFile(t, dir, "aa/failed", "failed")
+	outside := seedAttachmentFile(t, filepath.Dir(dir), "outside", "outside")
+	counts, err := sweepAttachmentCandidates(t.Context(), f.store, dir, []attachmentFileCandidate{
+		{path: f.contentPath},
+		{path: "../outside"},
+		{path: "aa/failed"},
+		{path: "aa/missing"},
+		{path: "aa/orphan"},
+	}, func(path string) error {
+		if path == failed {
+			return errors.New("synthetic removal failure")
+		}
+		return os.Remove(path)
+	})
+	require.Error(t, err)
+	assert.Equal(attachmentSweepCounts{removed: 1, missing: 1, preserved: 1}, counts)
+	assert.FileExists(f.fullPath, "path-only references preserve content")
+	assert.FileExists(outside, "paths outside the attachment directory survive")
+	assert.NoFileExists(removed, "cleanup continues after a failed unlink")
+}
+
+func TestSweepUnreferencedLooseMedia(t *testing.T) {
+	t.Run("cancellation", func(t *testing.T) {
+		assert := assert.New(t)
+		f := newPurgeMediaFixture(t)
+		dir := f.config.AttachmentsDir()
+		paths := make([]string, 0, 3)
+		for _, hash := range []string{strings.Repeat("cd", 32), "cd" + strings.Repeat("ef", 31), strings.Repeat("ef", 32)} {
+			paths = append(paths, seedAttachmentFile(t, dir, hash[:2]+"/"+hash, "orphan"))
+		}
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		removed, err := sweepUnreferencedLooseMedia(ctx, f.store, dir, func(path string) error {
+			err := os.Remove(path)
+			if err == nil {
+				cancel()
+			}
+			return err
+		})
+		require.ErrorIs(t, err, context.Canceled)
+		assert.Equal(1, removed)
+		assert.NoFileExists(paths[0])
+		assert.FileExists(paths[2])
+		assert.Equal(1, strings.Count(err.Error(), context.Canceled.Error()), "report cancellation once")
+	})
+	t.Run("missing files", func(t *testing.T) {
+		f := newPurgeMediaFixture(t)
+		hash := strings.Repeat("cd", 32)
+		seedAttachmentFile(t, f.config.AttachmentsDir(), hash[:2]+"/"+hash, "orphan")
+		removed, err := sweepUnreferencedLooseMedia(t.Context(), f.store, f.config.AttachmentsDir(), func(path string) error {
+			require.NoError(t, os.Remove(path))
+			return os.ErrNotExist // Another cleanup removed the file before this unlink.
+		})
+		require.NoError(t, err)
+		assert.Zero(t, removed)
+	})
 }
 
 // TestPurgeExcludedMediaRetainsUnresolvedRostersUnderParticipantLimit keeps

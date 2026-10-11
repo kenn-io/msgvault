@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
-import { describe, expect, it, vi } from 'vitest';
+import { tick } from 'svelte';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
 import { KataReadiness, kataReadinessKey } from '../../kata/kata-ready.svelte';
@@ -117,6 +118,74 @@ describe('RelationshipsWorkspace relationship calendar', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Previous relationship year' }));
     await waitFor(() => expect(years).toEqual([2026, 2025]));
     expect(await within(calendarSection).findAllByRole('button', { name: '1 message on Jan 1, 2025' })).not.toHaveLength(0);
+  });
+
+  it('changes the Files view only when a day is selected from Files, and clears the day when Files opens', async () => {
+    vi.stubEnv('TZ', 'UTC');
+    onTestFinished(() => { vi.unstubAllEnvs(); });
+    const timelineFilters: unknown[] = [];
+    const { fetchFn } = fetchHandler({
+      '/api/v1/participants/1': async () => Response.json(person(1, 'Alice Example')),
+      '/api/v1/relationships/1/timeline': async (request) => {
+        timelineFilters.push((await request.clone().json()).filters);
+        return Response.json({
+          canonical_id: 1, identity_revision: 3, cache_revision: 'cache-rel', rows: [], total_count: 0
+        });
+      },
+      '/api/v1/relationships/1/calendar': async () => Response.json(relationshipCalendar(1, 2026)),
+      '/api/v1/participants/1/files/search': async () => Response.json({
+        files: [], total_count: 0, cache_revision: 'cache-rel', search_provenance: {}
+      })
+    });
+    const props = { ...baseProps(fetchFn), target: 'cluster:1' };
+    const { rerender } = render(RelationshipsWorkspace, { props });
+    await props.controller.openTarget('cluster:1', props.predicate);
+    const calendarSection = await screen.findByRole('region', { name: 'Relationship activity calendar' });
+    const day = () => within(calendarSection).getAllByRole('button', { name: '1 message on Jan 1, 2026' })[0];
+
+    await fireEvent.click(await waitFor(day));
+    await waitFor(() => expect(day().getAttribute('aria-pressed')).toBe('true'));
+    await waitFor(() => expect(timelineFilters.at(-1)).toEqual([
+      { dimension: 'after', values: ['2026-01-01T00:00:00.000Z'] },
+      { dimension: 'before', values: ['2026-01-02T00:00:00.000Z'] }
+    ]));
+    expect(props.onFilesToggle).not.toHaveBeenCalled();
+
+    await rerender({ ...props, filesOpen: true });
+    await waitFor(() => expect(day().getAttribute('aria-pressed')).toBe('false'));
+    expect(within(calendarSection).queryByRole('button', { name: 'Clear date' })).toBeNull();
+    await waitFor(() => expect(timelineFilters.at(-1)).toEqual([]));
+
+    await fireEvent.click(day());
+    expect(props.onFilesToggle).toHaveBeenCalledExactlyOnceWith(false);
+  });
+
+  it('closes the reading pane without taking focus from the selected day', async () => {
+    const { fetchFn } = fetchHandler({
+      '/api/v1/participants/1': async () => Response.json(person(1, 'Alice Example')),
+      '/api/v1/relationships/1/timeline': async () => Response.json({
+        canonical_id: 1, identity_revision: 3, cache_revision: 'cache-rel',
+        rows: [{ key: 'message:1', kind: 'email', occurred_at: when, preview: 'Preview text', source_id: 1, title: 'Subject line', has_attachments: false, message_count: 1, anchor_message_id: 9, conversation_id: 70 }],
+        total_count: 1
+      }),
+      '/api/v1/relationships/1/calendar': async () => Response.json(relationshipCalendar(1, 2026)),
+      '/api/v1/conversations/70': async () => Response.json({
+        id: 70, anchor_id: 9, has_before: false, has_after: false, total: 0, messages: []
+      })
+    });
+    const props = { ...baseProps(fetchFn), target: 'cluster:1' };
+    render(RelationshipsWorkspace, { props });
+    await props.controller.openTarget('cluster:1', props.predicate);
+    await fireEvent.click((await screen.findByText('Subject line')).closest('[role="row"]')!);
+    await screen.findByRole('complementary', { name: /Reading pane/ });
+    const calendarSection = screen.getByRole('region', { name: 'Relationship activity calendar' });
+    const day = (await within(calendarSection).findAllByRole('button', { name: '1 message on Jan 1, 2026' }))[0];
+
+    day.focus();
+    await fireEvent.click(day);
+    await waitFor(() => expect(screen.queryByRole('complementary', { name: /Reading pane/ })).toBeNull());
+    await tick();
+    expect(document.activeElement).toBe(day);
   });
 
   it('does not render or request a calendar for domain targets', async () => {
@@ -635,6 +704,207 @@ describe('RelationshipsWorkspace', () => {
     expect(props.onTargetChange).toHaveBeenCalledWith(null);
     const listGrid = screen.getByRole('grid', { name: 'Relationship results' });
     await waitFor(() => expect(document.activeElement).toBe(listGrid));
+  });
+});
+
+describe('RelationshipsWorkspace bulk Same person', () => {
+  function relationshipRow(id: number, label: string) {
+    return {
+      canonical_id: id, display_label: label, last_at: when, member_ids: [id], score: 2,
+      signals: { last_interaction_at: when, meeting_count: 0, meetings_together: 0, modalities: 2, received_from_them: 1, sent_count: 3, sent_to_them: 1 }
+    };
+  }
+
+  const linked = (cacheState: 'ready' | 'stale' = 'ready') => Response.json({ identity_revision: 5, cache_state: cacheState });
+
+  const mergeRequired = () => Response.json({
+    error: 'person_merge_required', message: 'Choose a survivor', profiles: [
+      { etag: '"person-7-r4"', person: { id: 7, revision: 4, display_name: 'Synthetic One', participant_ids: [1], created_at: when, updated_at: when, vcard_uid: 'synthetic-7' } },
+      { etag: '"person-9-r2"', person: { id: 9, revision: 2, display_name: 'Synthetic Two', participant_ids: [2], created_at: when, updated_at: when, vcard_uid: 'synthetic-9' } }
+    ]
+  }, { status: 409 });
+
+  /** Serves three people and answers each identity link from `linkResponses`
+   * in order, recording the participant pair every link request carried. */
+  function renderBulk(
+    linkResponses: Array<() => Response | Promise<Response>>,
+    overrides: Record<string, (request: Request) => Promise<Response> | Response> = {}
+  ) {
+    const links: Array<{ participant_a: number; participant_b: number }> = [];
+    const { fetchFn } = fetchHandler({
+      '/api/v1/relationships': async () => Response.json({
+        rows: [relationshipRow(1, 'Alice Example'), relationshipRow(2, 'Bob Example'), relationshipRow(3, 'Cara Example')]
+      }),
+      '/api/v1/identity/links': async (request) => {
+        links.push(await request.clone().json() as { participant_a: number; participant_b: number });
+        const next = linkResponses.shift();
+        if (!next) throw new Error('unexpected identity link');
+        return next();
+      },
+      ...overrides
+    });
+    const props = baseProps(fetchFn);
+    const { rerender } = render(RelationshipsWorkspace, { props });
+    return { links, props, rerender };
+  }
+
+  async function selectAllPeople(): Promise<void> {
+    await fireEvent.click(await screen.findByRole('checkbox', { name: 'Select all loaded people' }));
+  }
+
+  it('links a Shift-selected range to the first person in order and clears the selection', async () => {
+    const { links } = renderBulk([linked, linked]);
+
+    await fireEvent.click(await screen.findByRole('checkbox', { name: 'Select Alice Example' }));
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'Select Cara Example' }), { shiftKey: true });
+    expect(screen.getByText('3 selected')).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: 'Same person' }));
+
+    await waitFor(() => expect(screen.getByRole('status').textContent).toBe('3 people are now treated as the same person.'));
+    expect(links).toEqual([{ participant_a: 1, participant_b: 2 }, { participant_a: 1, participant_b: 3 }]);
+    expect(screen.getByRole('checkbox', { name: 'Select Bob Example' })).toHaveProperty('checked', false);
+  });
+
+  it('stops at a failed link, reports progress, and keeps the selection for another try', async () => {
+    const { links } = renderBulk([
+      linked,
+      () => Response.json({ error: 'internal_error', message: 'failed to update participant links' }, { status: 500 })
+    ]);
+
+    await selectAllPeople();
+    await fireEvent.click(screen.getByRole('button', { name: 'Same person' }));
+
+    expect((await screen.findByRole('alert')).textContent).toBe('1 of 2 linked. failed to update participant links');
+    expect(links).toHaveLength(2);
+    expect(screen.getByText('3 selected')).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Same person' })).toHaveProperty('disabled', false);
+  });
+
+  it('keeps the batch locked while a profile merge reconciles, then finishes the queue', async () => {
+    let listRequests = 0;
+    let releaseReconcile: (() => void) | undefined;
+    const rows = [relationshipRow(1, 'Alice Example'), relationshipRow(2, 'Bob Example'), relationshipRow(3, 'Cara Example')];
+    const { links } = renderBulk([mergeRequired, linked, linked], {
+      '/api/v1/relationships': async () => {
+        listRequests += 1;
+        // Request 1 is the initial load; request 2 is the post-merge reconcile.
+        if (listRequests === 2) await new Promise<void>((resolve) => { releaseReconcile = resolve; });
+        return Response.json({ rows });
+      },
+      '/api/v1/people/7/merge': async () => Response.json({
+        cache_state: 'ready', identity_revision: 8, review_candidates: [],
+        person: { id: 7, revision: 5, display_name: 'Synthetic One', participant_ids: [1, 2], created_at: when, updated_at: when, vcard_uid: 'synthetic-7' },
+        merge: {
+          id: 41, survivor_person_id: 7, absorbed_person_id: 9, current_person_id: 7,
+          survivor_vcard_uid: 'synthetic-7', absorbed_vcard_uid: 'synthetic-9',
+          survivor_revision_before: 4, absorbed_revision_before: 2, survivor_revision_after: 5,
+          actor: 'web', snapshot_version: 1, snapshot_sha256: 'synthetic-digest', created_at: when
+        }
+      }, { headers: { ETag: '"person-7-r5"' } })
+    });
+
+    await selectAllPeople();
+    await fireEvent.click(screen.getByRole('button', { name: 'Same person' }));
+    await screen.findByRole('dialog', { name: 'Resolve person merge' });
+    await fireEvent.click(screen.getByRole('radio', { name: 'Synthetic One (Person 7)' }));
+    await fireEvent.click(screen.getByRole('checkbox', { name: /I understand this consolidates both profiles/i }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Merge into selected survivor' }));
+
+    await waitFor(() => expect(releaseReconcile).toBeDefined());
+    expect(screen.queryByRole('dialog', { name: 'Resolve person merge' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Same person' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Linking…' })).toHaveProperty('disabled', true);
+    expect(screen.getByRole('checkbox', { name: 'Unselect Bob Example' })).toHaveProperty('disabled', true);
+
+    releaseReconcile?.();
+    expect(await screen.findByText('3 people are now treated as the same person.')).toBeDefined();
+    expect(links).toEqual([
+      { participant_a: 1, participant_b: 2 },
+      { participant_a: 1, participant_b: 2 },
+      { participant_a: 1, participant_b: 3 }
+    ]);
+  });
+
+  it('drops a selection made under earlier filters once a batch interrupted by Back/Forward stops', async () => {
+    let failLink: (() => void) | undefined;
+    const { props, rerender } = renderBulk([
+      () => new Promise<Response>((resolve) => {
+        failLink = () => resolve(Response.json({ error: 'internal_error', message: 'link failed' }, { status: 500 }));
+      })
+    ]);
+
+    await selectAllPeople();
+    await fireEvent.click(screen.getByRole('button', { name: 'Same person' }));
+    await waitFor(() => expect(failLink).toBeDefined());
+    await rerender({ ...props, showAll: true });
+    failLink?.();
+
+    expect((await screen.findByRole('alert')).textContent).toBe('0 of 2 linked. link failed');
+    expect(screen.queryByText('3 selected')).toBeNull();
+    expect(screen.getByRole('checkbox', { name: 'Select Alice Example' })).toHaveProperty('checked', false);
+  });
+
+  it('stops the batch without linking the rest when the profile merge is cancelled', async () => {
+    const { links } = renderBulk([mergeRequired]);
+
+    await selectAllPeople();
+    await fireEvent.click(screen.getByRole('button', { name: 'Same person' }));
+    await screen.findByRole('dialog', { name: 'Resolve person merge' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Close person merge' }));
+
+    expect((await screen.findByRole('alert')).textContent).toBe('0 of 2 linked. Bulk linking was stopped.');
+    expect(links).toHaveLength(1);
+    expect(screen.getByRole('button', { name: 'Same person' })).toHaveProperty('disabled', false);
+  });
+
+  it('warns when the final cache refresh failed, and Retry repeats that link until the cache is ready', async () => {
+    const { links } = renderBulk([() => linked('stale'), () => linked('stale'), () => linked('ready')]);
+
+    await selectAllPeople();
+    await fireEvent.click(screen.getByRole('button', { name: 'Same person' }));
+
+    expect((await screen.findByRole('alert')).textContent).toBe(
+      '3 people are now treated as the same person. The cache refresh failed — groupings may be stale until a rebuild. Retrying is safe.'
+    );
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+    await waitFor(() => expect(screen.getByRole('status').textContent).toBe('Identity cache refreshed.'));
+    expect(links.at(-1)).toEqual({ participant_a: 1, participant_b: 3 });
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+  });
+
+  it('keeps the stale warning and Retry when the post-link list reload fails, and Retry restores the rows', async () => {
+    let listRequests = 0;
+    const rows = [relationshipRow(1, 'Alice Example'), relationshipRow(2, 'Bob Example'), relationshipRow(3, 'Cara Example')];
+    renderBulk([() => linked('stale'), () => linked('stale'), () => linked('ready')], {
+      '/api/v1/relationships': () => {
+        listRequests += 1;
+        // Request 3 is the reload after the second link.
+        if (listRequests === 3) return Response.json({ error: 'internal_error', message: 'list unavailable' }, { status: 500 });
+        return Response.json({ rows });
+      }
+    });
+
+    await selectAllPeople();
+    await fireEvent.click(screen.getByRole('button', { name: 'Same person' }));
+
+    expect(await screen.findByText('list unavailable')).toBeDefined();
+    expect(screen.queryByText('Alice Example')).toBeNull();
+    expect(await screen.findByText(/3 people are now treated as the same person\. The cache refresh failed/)).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+    expect(await screen.findByText('Alice Example')).toBeDefined();
+    await waitFor(() => expect(screen.getByRole('status').textContent).toBe('Identity cache refreshed.'));
+  });
+
+  it('drops an earlier stale warning once a later link in the batch refreshes the cache', async () => {
+    renderBulk([() => linked('stale'), () => linked('ready')]);
+
+    await selectAllPeople();
+    await fireEvent.click(screen.getByRole('button', { name: 'Same person' }));
+
+    await waitFor(() => expect(screen.getByRole('status').textContent).toBe('3 people are now treated as the same person.'));
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
   });
 });
 

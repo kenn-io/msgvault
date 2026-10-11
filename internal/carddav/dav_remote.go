@@ -114,7 +114,8 @@ func (r *davRemote) fetchSyncCollection(
 		if err != nil {
 			return store.CardDAVSyncPlan{}, err
 		}
-		depth := 1
+		// RFC 6578 section 3.3 requires Depth: 0; DAV:sync-level scopes the report.
+		depth := 0
 		response, err := r.do(ctx, Request{Method: "REPORT", URL: book.CanonicalURL, Depth: &depth, Body: body}, budget)
 		if err != nil {
 			return store.CardDAVSyncPlan{}, err

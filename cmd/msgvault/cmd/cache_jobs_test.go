@@ -157,7 +157,7 @@ func TestCacheBuildJobsWaitsForShutdown(t *testing.T) {
 	require.NoError(err)
 	<-started
 	cancel()
-	waitCtx, stopWait := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	waitCtx, stopWait := context.WithTimeout(context.Background(), 20*time.Millisecond) //nolint:kennlint // the deadline is the expected result; the job blocks on release past the wait
 	defer stopWait()
 	require.False(jobs.waitContext(waitCtx))
 	close(release)
@@ -169,15 +169,25 @@ func TestCacheBuildJobsWaitsForShutdown(t *testing.T) {
 func TestManualSyncProbeDoesNotQueueCacheRefresh(t *testing.T) {
 	assert := assert.New(t)
 	assert.False(manualSyncCLICommand([]string{"sync-circleback", "--probe"}))
+	assert.False(manualSyncCLICommand([]string{"sync-plaud", "--probe"}))
 	assert.False(manualSyncCLICommand([]string{"sync-notion-meetings", "--probe=true"}))
 	assert.True(manualSyncCLICommand([]string{"sync-notion-meetings", "--limit", "3"}))
 	assert.True(manualSyncCLICommand([]string{"sync-matrix"}))
+	assert.True(manualSyncCLICommand([]string{"sync-twilio", "work"}))
+	assert.False(manualSyncCLICommand([]string{"sync-twilio", "--probe"}))
+	assert.False(manualSyncCLICommand([]string{"sync-twilio", "--probe=true"}))
 }
 
 func TestSyncMatrixRegistersManualCacheFlags(t *testing.T) {
 	cmd := newSyncMatrixCmd()
 	assert.NotNil(t, cmd.Flags().Lookup("build-cache"))
 	assert.NotNil(t, cmd.Flags().Lookup("no-build-cache"))
+}
+
+func TestManualSyncCacheRefreshIncludesNativeMeetingProviders(t *testing.T) {
+	assert := assert.New(t)
+	assert.True(manualSyncCLICommand([]string{"sync-muesli"}))
+	assert.True(manualSyncCLICommand([]string{"sync-plaud"}))
 }
 
 func TestCacheBuildJobsScheduledCooldownCoversAllAccepts(t *testing.T) {

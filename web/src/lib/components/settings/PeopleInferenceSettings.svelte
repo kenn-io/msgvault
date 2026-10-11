@@ -87,37 +87,32 @@
       {/if}
     </div>
 
-    {#if controller.status.stored_credentials_supported}
-      <form class="form" onsubmit={(event) => { event.preventDefault(); void createProfile(); }}>
-        <h3>Add a profile</h3>
-        <SelectDropdown title="Provider" value={provider} disabled={controller.busy}
-          options={[{ value: 'openai', label: 'OpenAI Platform' }, { value: 'openrouter', label: 'OpenRouter' }, { value: 'venice', label: 'Venice' }]}
-          onchange={(value) => { provider = value as typeof provider; key = ''; }} />
-        <label>Profile name<TextInput bind:value={name} required autocomplete="off" disabled={controller.busy} block /></label>
-        <label>Model ID<TextInput bind:value={model} required autocomplete="off" block /></label>
-        <label>API key<TextInput type="password" bind:value={key} autocomplete="new-password" required block /></label>
-        <fieldset>
-          <legend>Archive source classes</legend>
-          <Checkbox label="Conversation text" checked={allowedSources.includes('conversation_text')} onchange={(checked) => setSource('conversation_text', checked)} />
-          <Checkbox label="Meeting text" checked={allowedSources.includes('meeting_text')} onchange={(checked) => setSource('meeting_text', checked)} />
-          <Checkbox label="Document text" checked={allowedSources.includes('document_text')} onchange={(checked) => setSource('document_text', checked)} />
-        </fieldset>
-        <label>Archive data since (YYYY-MM-DD)<TextInput bind:value={sourceSince} placeholder="YYYY-MM-DD" required block /></label>
-        <label>Archive data until (optional, YYYY-MM-DD)<TextInput bind:value={sourceUntil} placeholder="YYYY-MM-DD" block /></label>
-        <fieldset>
-          <legend>Sensitive archive content</legend>
-          <label><input type="radio" name="sensitive-content" value="allow" bind:group={sensitiveChoice} required /> Allow sensitive content</label>
-          <label><input type="radio" name="sensitive-content" value="exclude" bind:group={sensitiveChoice} /> Exclude sensitive content</label>
-          <p>Real sweeps send archive text to this provider. Excluding sensitive content permits only the synthetic check.</p>
-        </fieldset>
-        <label>Retention statement<TextInput bind:value={retentionPosture} required autocomplete="off" block /></label>
-        <label>Training statement<TextInput bind:value={trainingPosture} required autocomplete="off" block /></label>
-        <Button type="submit" disabled={controller.busy} label="Create profile" />
-      </form>
-    {:else}
-      <p>Stored provider keys are unavailable on this platform. Configure an environment credential with
-        <code>msgvault person provider add</code> and <code>--credential-env</code> on the daemon host, then reload these settings.</p>
-    {/if}
+    <form class="form" onsubmit={(event) => { event.preventDefault(); void createProfile(); }}>
+      <h3>Add a profile</h3>
+      <SelectDropdown title="Provider" value={provider} disabled={controller.busy}
+        options={[{ value: 'openai', label: 'OpenAI Platform' }, { value: 'openrouter', label: 'OpenRouter' }, { value: 'venice', label: 'Venice' }]}
+        onchange={(value) => { provider = value as typeof provider; key = ''; }} />
+      <label>Profile name<TextInput bind:value={name} required autocomplete="off" disabled={controller.busy} block /></label>
+      <label>Model ID<TextInput bind:value={model} required autocomplete="off" block /></label>
+      <label>API key<TextInput type="password" bind:value={key} autocomplete="new-password" required block /></label>
+      <fieldset>
+        <legend>Archive source classes</legend>
+        <Checkbox label="Conversation text" checked={allowedSources.includes('conversation_text')} onchange={(checked) => setSource('conversation_text', checked)} />
+        <Checkbox label="Meeting text" checked={allowedSources.includes('meeting_text')} onchange={(checked) => setSource('meeting_text', checked)} />
+        <Checkbox label="Document text" checked={allowedSources.includes('document_text')} onchange={(checked) => setSource('document_text', checked)} />
+      </fieldset>
+      <label>Archive data since (YYYY-MM-DD)<TextInput bind:value={sourceSince} placeholder="YYYY-MM-DD" required block /></label>
+      <label>Archive data until (optional, YYYY-MM-DD)<TextInput bind:value={sourceUntil} placeholder="YYYY-MM-DD" block /></label>
+      <fieldset>
+        <legend>Sensitive archive content</legend>
+        <label><input type="radio" name="sensitive-content" value="allow" bind:group={sensitiveChoice} required /> Allow sensitive content</label>
+        <label><input type="radio" name="sensitive-content" value="exclude" bind:group={sensitiveChoice} /> Exclude sensitive content</label>
+        <p>Real sweeps send archive text to this provider. Excluding sensitive content permits only the synthetic check.</p>
+      </fieldset>
+      <label>Retention statement<TextInput bind:value={retentionPosture} required autocomplete="off" block /></label>
+      <label>Training statement<TextInput bind:value={trainingPosture} required autocomplete="off" block /></label>
+      <Button type="submit" disabled={controller.busy} label="Create profile" />
+    </form>
 
     {#if controller.status.profiles.length}
       <div class="profile">
@@ -134,7 +129,7 @@
             <div><dt>Last check</dt><dd>{profile.checked ? 'Checked for this profile' : 'Not checked'}</dd></div>
             <div><dt>Consent</dt><dd>{profile.consent_active ? 'Granted for this profile' : 'Not granted'}</dd></div>
           </dl>
-          {#if controller.status.stored_credentials_supported && profile.protocol !== 'codex_app_server' && profile.credential_source !== 'env'}
+          {#if profile.protocol !== 'codex_app_server' && profile.credential_source !== 'env'}
             <form class="replacement-key" onsubmit={(event) => { event.preventDefault(); void saveReplacementKey(); }}>
               <label>Replacement API key<TextInput type="password" bind:value={replacementKey} autocomplete="new-password" required block /></label>
               <Button type="submit" disabled={controller.busy} label="Save API key" />

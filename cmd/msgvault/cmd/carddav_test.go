@@ -38,6 +38,11 @@ func TestCardDAVCommandsExposeSafeOperatorSurface(t *testing.T) {
 	require.NoError(err)
 	assertions.Equal("show", show.Name())
 	assertions.Equal("Show safe base, local, and remote summaries for a CardDAV conflict", show.Short)
+	authorize, _, err := root.Find([]string{"authorize-microsoft"})
+	require.NoError(err)
+	assertions.Equal("authorize-microsoft", authorize.Name())
+	assertions.NotNil(authorize.Flags().Lookup("headless"))
+	assertions.Nil(authorize.Flags().Lookup("schedule"), "sign-in must not change a saved connection")
 }
 
 func TestCardDAVCLIProductionRoutes(t *testing.T) {
@@ -378,5 +383,22 @@ func TestCardDAVCLIRejectsInvalidConnectionBeforeRequest(t *testing.T) {
 		err := command.Execute()
 		require.Error(t, err)
 		assert.ErrorContains(t, err, "connection")
+	}
+}
+
+func TestAddCardDAVMicrosoftFlagsAreCheckedBeforeSignIn(t *testing.T) {
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"--google", "--microsoft", "person@example.com"}, "--google and --microsoft cannot be combined"},
+		{[]string{"--headless", "https://contacts.example/dav", "person"}, "--headless requires --microsoft"},
+		{[]string{"--microsoft", "--oauth-app", "contacts", "person@example.com"}, "--oauth-app requires --google"},
+	} {
+		command := newAddCardDAVCmd()
+		command.SetOut(&bytes.Buffer{})
+		command.SetErr(&bytes.Buffer{})
+		command.SetArgs(tc.args)
+		require.ErrorContains(t, command.Execute(), tc.want)
 	}
 }

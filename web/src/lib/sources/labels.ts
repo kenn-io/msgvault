@@ -2,13 +2,14 @@ import type { ChipTone } from '@kenn-io/kit-ui';
 import type { SourceStatus } from '../api/generated/models';
 import { sentenceCase } from '../explore/labels';
 
-// Source types the daemon stores (internal/api/scheduler_jobs.go and the
-// importers). An empty type shows no label: the identifier stands alone.
+// Curated friendly labels for daemon source types. Other codes use
+// sentenceCase, including twenty → Twenty. An empty type shows no label:
+// the identifier stands alone.
 const SOURCE_TYPES: Readonly<Record<string, string>> = {
   '': '', gmail: 'Gmail', imap: 'IMAP', msmail: 'Microsoft mail', teams: 'Teams',
   discord: 'Discord', meeting_import: 'Meeting import', synctech_sms: 'SMS backup',
   imazing_csv: 'iMazing CSV', circleback: 'Circleback', plaud: 'Plaud', gcal: 'Google Calendar', muesli: 'Muesli',
-  granola: 'Granola', notion_meetings: 'Notion meetings', pst: 'PST import',
+  granola: 'Granola', notion_meetings: 'Notion meetings', twilio: 'Twilio', pst: 'PST import',
   'apple-mail': 'Apple Mail', mbox: 'Mbox import', beeper: 'Beeper', slack: 'Slack', matrix: 'Matrix',
   eml: 'EML import', maildir: 'Maildir import', whatsapp: 'WhatsApp',
   apple_messages: 'Apple Messages', facebook_messenger: 'Facebook Messenger',
@@ -30,10 +31,11 @@ export function syncUnavailableLabel(code: string | undefined): string {
 }
 
 export function syncStatusChip(
-  source: Pick<SourceStatus, 'active_sync' | 'latest_sync'>
+  source: Pick<SourceStatus, 'active_sync' | 'latest_sync' | 'scheduler_queued'>
 ): { label: string; tone: ChipTone } {
   const latest = source.latest_sync;
   if (source.active_sync || latest?.status === 'running') return { label: 'Syncing', tone: 'info' };
+  if (source.scheduler_queued && (!latest || latest.status === 'cancelled')) return { label: 'Queued', tone: 'info' };
   if (!latest) return { label: 'Never synced', tone: 'muted' };
   if (latest.status === 'completed') {
     return latest.errors_count > 0

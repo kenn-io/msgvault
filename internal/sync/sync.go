@@ -22,6 +22,7 @@ import (
 	"go.kenn.io/msgvault/internal/gmail"
 	"go.kenn.io/msgvault/internal/identityops"
 	"go.kenn.io/msgvault/internal/mime"
+	"go.kenn.io/msgvault/internal/rederive"
 	"go.kenn.io/msgvault/internal/remoteimage"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/textutil"
@@ -1193,6 +1194,13 @@ func (s *Syncer) runWithSyncExecution(
 			err = errors.Join(err, releaseErr)
 		}
 	}()
+	src, err := s.store.GetSourceByIDContext(ctx, sourceID)
+	if err != nil {
+		return nil, fmt.Errorf("load source %d: %w", sourceID, err)
+	}
+	if src != nil {
+		rederive.Heal(ctx, s.logger, s.store, src)
+	}
 	return run(execution)
 }
 

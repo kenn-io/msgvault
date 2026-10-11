@@ -45,6 +45,7 @@ enabled = true
 identifier = "notion-work"
 account_email = " Notion.User@Example.COM "
 token = "ntn_test"
+users_token = "ntn-example"
 schedule = "15 */6 * * *"
 enabled = true
 `)
@@ -72,6 +73,7 @@ enabled = true
 	require.NotNil(notion)
 	assert.Equal("notion.user@example.com", notion.AccountEmail)
 	assert.Equal("ntn_test", notion.Token)
+	assert.Equal("ntn-example", notion.UsersToken)
 	require.Len(cfg.ScheduledNotionMeetingsSources(), 1)
 }
 
@@ -206,8 +208,9 @@ token = "ntn_b"
 }
 
 func TestLoadMeetingSourceDuplicateIdentifiersRejected(t *testing.T) {
-	require := require.New(t)
-	configPath := writeMeetingConfig(t, `
+	twilio := "account_email='user@example.com'\naccount_sid='AC00000000000000000000000000000001'\nauth_token='synthetic'\n"
+	for name, body := range map[string]string{
+		"granola": `
 [[granola]]
 identifier = "same"
 api_key = "grn_a"
@@ -215,11 +218,14 @@ api_key = "grn_a"
 [[granola]]
 identifier = "SAME"
 api_key = "grn_b"
-`)
-
-	_, err := Load(configPath, "")
-	require.Error(err)
-	require.Contains(err.Error(), "duplicate identifier")
+`,
+		"twilio": "[[twilio]]\nidentifier='work'\n" + twilio + "[[twilio]]\nidentifier='WORK'\n" + twilio,
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := Load(writeMeetingConfig(t, body), "")
+			require.ErrorContains(t, err, "duplicate identifier")
+		})
+	}
 }
 
 func TestLoadMeetingSourceMissingIdentifierRejected(t *testing.T) {

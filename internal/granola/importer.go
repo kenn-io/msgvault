@@ -2,7 +2,6 @@ package granola
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -10,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/meetingarchive"
 	"go.kenn.io/msgvault/internal/meetingidentity"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -85,10 +85,6 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 	); err != nil {
 		return nil, fmt.Errorf("confirm Granola account identity: %w", err)
 	}
-	accountIdentities, err := meetingidentity.ForSource(imp.store, src.ID, opts.AccountEmail)
-	if err != nil {
-		return nil, err
-	}
 
 	var state syncState
 	if prev, perr := imp.store.GetLastSuccessfulSync(src.ID); perr == nil && prev != nil && prev.CursorAfter.Valid {
@@ -142,7 +138,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 		maxBoundaryIDs[id] = struct{}{}
 	}
 
-	err = imp.forEachNote(ctx, src.ID, accountIdentities, params, opts, sum, func(n NoteSummary) bool {
+	err = imp.forEachNote(ctx, src.ID, params, opts, sum, func(n NoteSummary) bool {
 		if opts.Full || cursorUpdatedAt.IsZero() || !n.UpdatedAt.Equal(cursorUpdatedAt) {
 			return false
 		}
@@ -216,11 +212,20 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 // forEachNote pages through the list endpoint, fetches each note in full,
 // ingests it, and reports successfully-ingested notes to onIngested. Summaries
 // already covered at the cursor boundary do not consume the processing limit.
-func (imp *Importer) forEachNote(ctx context.Context, sourceID int64, accountIdentities meetingidentity.Set, params ListNotesParams, opts ImportOptions, sum *ImportSummary, alreadyCovered func(NoteSummary) bool, onIngested func(*Note)) error {
+func (imp *Importer) forEachNote(
+	ctx context.Context,
+	sourceID int64,
+	params ListNotesParams,
+	opts ImportOptions,
+	sum *ImportSummary,
+	alreadyCovered func(NoteSummary) bool,
+	onIngested func(*Note),
+) error {
 	progress := opts.Progress
 	if progress == nil {
 		progress = func(string) {}
 	}
+	archiver := meetingarchive.New(imp.store)
 	seenCursors := make(map[string]struct{})
 	for {
 		page, err := imp.client.ListNotes(ctx, params)
@@ -249,16 +254,19 @@ func (imp *Importer) forEachNote(ctx context.Context, sourceID int64, accountIde
 				progress(fmt.Sprintf("note %s: fetch returned invalid ID %q", ns.ID, note.ID))
 				continue
 			}
-			added, err := imp.ingestNote(sourceID, opts.Identifier, accountIdentities, note)
+			noteCtx := context.WithoutCancel(ctx)
+			result, err := imp.ingestNote(noteCtx, archiver, sourceID, opts, note)
+			// Upsert can commit and then fail stat maintenance; count the write first.
+			switch {
+			case result.Created:
+				sum.NotesAdded++
+			case result.Changed:
+				sum.NotesUpdated++
+			}
 			if err != nil {
 				sum.Errors++
 				progress(fmt.Sprintf("note %s: ingest failed: %v", ns.ID, err))
 				continue
-			}
-			if added {
-				sum.NotesAdded++
-			} else {
-				sum.NotesUpdated++
 			}
 			onIngested(note)
 			progress(fmt.Sprintf("imported %q (%s)", noteTitle(note), ns.ID))
@@ -294,115 +302,47 @@ type meetingMetadata struct {
 	AccountID       string   `json:"account_identifier,omitempty"`
 }
 
-// ingestNote persists one note through the canonical write path. Idempotent
-// via UpsertMessage's ON CONFLICT(source_id, source_message_id). Returns
-// whether the message row was newly inserted.
-func (imp *Importer) ingestNote(sourceID int64, identifier string, accountIdentities meetingidentity.Set, n *Note) (bool, error) {
-	existing, err := imp.store.MessageExistsBatch(sourceID, []string{n.ID})
-	if err != nil {
-		return false, fmt.Errorf("lookup existing note: %w", err)
-	}
-	_, existed := existing[n.ID]
-
+// ingestNote archives one note through meetingarchive. Upsert keys on
+// (source_id, source_message_id), so a re-sync updates the row in place.
+func (imp *Importer) ingestNote(
+	ctx context.Context,
+	archiver *meetingarchive.Archiver,
+	sourceID int64,
+	opts ImportOptions,
+	n *Note,
+) (meetingarchive.Result, error) {
 	organizerEmail, organizerName := organizer(n)
-
-	var senderID int64
-	if organizerEmail != "" {
-		id, err := imp.store.EnsureParticipant(organizerEmail, organizerName, emailDomain(organizerEmail))
-		if err != nil {
-			return false, fmt.Errorf("organizer participant: %w", err)
-		}
-		senderID = id
-	}
-
-	var attendeeIDs []int64
-	var attendeeNames []string
-	var attendeeEmails []string
-	for _, a := range attendees(n) {
-		pid, err := imp.store.EnsureParticipant(a.Email, a.Name, emailDomain(a.Email))
-		if err != nil {
-			return false, fmt.Errorf("attendee participant: %w", err)
-		}
-		attendeeIDs = append(attendeeIDs, pid)
-		attendeeNames = append(attendeeNames, a.Name)
-		attendeeEmails = append(attendeeEmails, a.Email)
-	}
-
-	title := noteTitle(n)
-	participants := make([]store.ConversationParticipantRef, 0, len(attendeeIDs))
-	for _, participantID := range attendeeIDs {
-		participants = append(participants, store.ConversationParticipantRef{ParticipantID: participantID, Role: "member"})
-	}
-
-	body := buildBody(n)
-	fromMe := organizerEmail != "" && accountIdentities.Contains(organizerEmail)
-	sentAt := noteStartTime(n).UTC()
-
-	message := &store.Message{
-		SourceID:                sourceID,
-		SourceMessageID:         n.ID,
-		MessageType:             MessageType,
-		SentAt:                  sql.NullTime{Time: sentAt, Valid: !sentAt.IsZero()},
-		SenderID:                sql.NullInt64{Int64: senderID, Valid: senderID != 0},
-		IsFromMe:                fromMe,
-		IdentityDerivedIsFromMe: fromMe,
-		Subject:                 sql.NullString{String: title, Valid: title != ""},
-		Snippet:                 sql.NullString{String: snippet(body), Valid: body != ""},
-		SizeEstimate:            int64(len(body)),
-	}
-
-	metaJSON, err := json.Marshal(buildMetadata(n, identifier, organizerEmail), json.Deterministic(true))
+	metadata := buildMetadata(n, opts.Identifier, organizerEmail)
+	metaJSON, err := json.Marshal(metadata, json.Deterministic(true))
 	if err != nil {
-		return false, fmt.Errorf("marshal metadata: %w", err)
+		return meetingarchive.Result{}, fmt.Errorf("marshal metadata: %w", err)
 	}
-	metadata := sql.NullString{String: string(metaJSON), Valid: true}
-
 	raw := []byte(n.Raw)
 	if len(raw) == 0 {
 		if raw, err = json.Marshal(n, json.Deterministic(true)); err != nil {
-			return false, fmt.Errorf("marshal raw note: %w", err)
+			return meetingarchive.Result{}, fmt.Errorf("marshal raw note: %w", err)
 		}
 	}
-	// Replace recipients unconditionally (even with empty sets) so a re-sync
-	// that lost its organizer or attendees clears the stale rows (calsync
-	// precedent).
-	var fromIDs []int64
-	var fromNames []string
-	if senderID != 0 {
-		fromIDs = []int64{senderID}
-		fromNames = []string{organizerName}
+	var people []meetingarchive.Person
+	for _, a := range attendees(n) {
+		people = append(people, meetingarchive.Person{Name: a.Name, Email: a.Email})
 	}
-	// FTS: raw attendee emails go ONLY through the toAddrs column, never the
-	// body, so ranking doesn't double-count them.
-	fts := &store.FTSDoc{
-		Subject:  title,
-		Body:     body,
-		FromAddr: organizerEmail,
-		ToAddrs:  strings.Join(attendeeEmails, " "),
-	}
-	if _, err := imp.store.PersistMessage(&store.MessagePersistData{
-		Message: message,
-		Conversation: &store.ConversationPersistData{
-			SourceConversationID: "meeting:" + n.ID,
-			ConversationType:     ConversationType,
-			Title:                title,
-			Participants:         participants,
-		},
-		Metadata:  &metadata,
-		BodyText:  sql.NullString{String: body, Valid: body != ""},
-		RawMIME:   raw,
-		RawFormat: RawFormat,
-		Recipients: []store.RecipientSet{
-			{Type: "from", ParticipantIDs: fromIDs, DisplayNames: fromNames},
-			{Type: "to", ParticipantIDs: attendeeIDs, DisplayNames: attendeeNames},
-		},
-		PreserveLabels: true,
-		FTS:            fts,
-	}); err != nil {
-		return false, fmt.Errorf("persist note: %w", err)
-	}
-
-	return !existed, nil
+	body := buildBody(n)
+	return archiver.Upsert(ctx, meetingarchive.Snapshot{
+		SourceID:             sourceID,
+		AccountEmail:         opts.AccountEmail,
+		SourceMessageID:      n.ID,
+		SourceConversationID: "meeting:" + n.ID,
+		Title:                noteTitle(n),
+		StartedAt:            noteStartTime(n).UTC(),
+		Body:                 body,
+		Snippet:              meetingarchive.Snippet(body),
+		Metadata:             metaJSON,
+		Raw:                  raw,
+		RawFormat:            RawFormat,
+		Organizer:            &meetingarchive.Person{Name: organizerName, Email: organizerEmail},
+		Attendees:            people,
+	}, meetingarchive.UpsertOptions{Force: opts.Full})
 }
 
 // organizer resolves the meeting organizer: the calendar event's organiser
@@ -410,7 +350,7 @@ func (imp *Importer) ingestNote(sourceID int64, identifier string, accountIdenti
 // matching attendee (the calendar payload carries emails only).
 func organizer(n *Note) (email, name string) {
 	if n.CalendarEvent != nil && n.CalendarEvent.Organiser != "" {
-		email = normalizeEmail(n.CalendarEvent.Organiser)
+		email = meetingidentity.Normalize(n.CalendarEvent.Organiser)
 		for _, a := range n.Attendees {
 			if strings.EqualFold(a.Email, email) {
 				return email, a.Name
@@ -421,7 +361,7 @@ func organizer(n *Note) (email, name string) {
 		}
 		return email, ""
 	}
-	return normalizeEmail(n.Owner.Email), n.Owner.Name
+	return meetingidentity.Normalize(n.Owner.Email), n.Owner.Name
 }
 
 // attendees returns the recipient list: note attendees when present, else the
@@ -429,7 +369,7 @@ func organizer(n *Note) (email, name string) {
 func attendees(n *Note) []User {
 	var out []User
 	for _, a := range n.Attendees {
-		if e := normalizeEmail(a.Email); e != "" {
+		if e := meetingidentity.Normalize(a.Email); e != "" {
 			out = append(out, User{Name: a.Name, Email: e})
 		}
 	}
@@ -437,7 +377,7 @@ func attendees(n *Note) []User {
 		return out
 	}
 	for _, inv := range n.CalendarEvent.Invitees {
-		if e := normalizeEmail(inv.Email); e != "" {
+		if e := meetingidentity.Normalize(inv.Email); e != "" {
 			out = append(out, User{Email: e})
 		}
 	}
@@ -484,15 +424,4 @@ func buildMetadata(n *Note, identifier, organizerEmail string) meetingMetadata {
 		m.Folders = append(m.Folders, f.Name)
 	}
 	return m
-}
-
-func normalizeEmail(email string) string {
-	return strings.ToLower(strings.TrimSpace(email))
-}
-
-func emailDomain(email string) string {
-	if i := strings.LastIndex(email, "@"); i >= 0 {
-		return email[i+1:]
-	}
-	return ""
 }

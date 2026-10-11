@@ -12,6 +12,5 @@ export interface PeopleInferenceSettingsResponse {
   running_enabled: boolean;
   running_fingerprint?: string;
   running_name?: string;
-  stored_credentials_supported: boolean;
   [key: string]: unknown;
 }

@@ -17,6 +17,8 @@ import (
 	"go.kenn.io/msgvault/internal/deletion"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
 	"go.kenn.io/msgvault/internal/providercredentials"
+	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/vector/visual"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
@@ -48,7 +50,7 @@ draft_reply, draft_compose, draft_forward, draft_get, draft_edit, draft_delete,
 draft_recover, and draft_send_as.
 Draft tools create, read, edit, delete, and recover managed drafts through the
 daemon. Msgvault never sends. With --agent-url and --agent-token-file, stdio
-exposes only delegated draft and calendar tools and the daemon enforces the
+exposes scoped read, draft and calendar tools and the daemon enforces the
 agent grant.
 
 Add to Claude Desktop config:
@@ -192,6 +194,15 @@ func delegatedMCPServeOptions(ctx context.Context, st *daemonclient.Client) (mcp
 	opts := mcpserver.ServeOptions{
 		Drafts: daemonMCPDraftRunner{client: st}, DraftCommands: mcpDraftCommands(true), DelegatedOnly: true,
 	}
+	if daemonclient.APISchemaVersionAtLeast(schemaVersion, daemonclient.AgentReadMinAPISchemaVersion) {
+		grant, err := st.AgentTokenSelf(ctx)
+		if err != nil {
+			return mcpserver.ServeOptions{}, fmt.Errorf("read agent grant: %w", err)
+		}
+		opts.Engine = daemonclient.NewEngineAdapter(st)
+		opts.AttachmentReader = st
+		opts.GrantPermissions = grant.Permissions
+	}
 	if daemonclient.APISchemaVersionAtLeast(schemaVersion, calendarControlMinAPISchemaVersion) {
 		opts.Calendar = st
 	}
@@ -208,13 +219,13 @@ const archiveSQLMinAPISchemaVersion = "2.31.0"
 const calendarControlMinAPISchemaVersion = "3.1.0"
 
 // kataIssuesMinAPISchemaVersion adds Kata issues that quote archive evidence.
-const kataIssuesMinAPISchemaVersion = "3.3.0"
+const kataIssuesMinAPISchemaVersion = "3.4.0"
 
 // kataLookupMinAPISchemaVersion adds finding the Kata issues that cite a source.
-const kataLookupMinAPISchemaVersion = "3.4.0"
+const kataLookupMinAPISchemaVersion = "3.12.0"
 
 // kataContextMinAPISchemaVersion adds reading back the passages a Kata issue cites.
-const kataContextMinAPISchemaVersion = "3.5.0"
+const kataContextMinAPISchemaVersion = "3.12.0"
 
 // Schema 2.28.0 adds independent configured-lane facts to authenticated
 // health. Older health responses cannot distinguish text from visual search.
@@ -241,6 +252,7 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 		AttachmentReader:   st,
 		ManifestSaver:      daemonMCPManifestSaver{client: st},
 		DocumentSearcher:   st,
+		MediaSearcher:      st,
 		PersonFileSearcher: daemonMCPPersonFileSearcher{client: st},
 		Drafts:             daemonMCPDraftRunner{client: st},
 	}
@@ -360,6 +372,7 @@ func (s daemonMCPHybridSearcher) SearchHybrid(
 	resp, err := s.client.GetCLIHybridSearch(ctx, daemonclient.CLIHybridSearchRequest{
 		Query:          req.Query,
 		Account:        req.Account,
+		Filter:         query.MessageFilter{AccountScopes: search.CloneAccountScopes(req.AccountScopes)},
 		Mode:           req.Mode,
 		Limit:          req.Limit,
 		Offset:         req.Offset,
@@ -426,6 +439,7 @@ func (s daemonMCPSimilarSearcher) FindSimilar(
 	req mcpserver.SimilarSearchRequest,
 ) (*mcpserver.SimilarSearchResult, error) {
 	resp, err := s.client.FindSimilarMessages(ctx, daemonclient.SimilarSearchRequest{
+		AccountScopes: search.CloneAccountScopes(req.AccountScopes),
 		MessageID:     req.MessageID,
 		Limit:         req.Limit,
 		Account:       req.Account,

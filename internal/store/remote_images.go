@@ -23,7 +23,11 @@ func (s *Store) UpsertRemoteImageAttachment(ctx context.Context, messageID int64
 // MessageRemoteImages returns only this message's archived remote images.
 // The namespace survives MIME repair, which replaces MIME-owned rows only.
 func (s *Store) MessageRemoteImages(messageID int64) (map[string]AttachmentRef, error) {
-	return s.messageProviderAttachments(messageID, "remote-image:")
+	return s.MessageRemoteImagesContext(context.Background(), messageID)
+}
+
+func (s *Store) MessageRemoteImagesContext(ctx context.Context, messageID int64) (map[string]AttachmentRef, error) {
+	return s.messageProviderAttachmentsContext(ctx, messageID, "remote-image:")
 }
 
 // RemoteImageBackfillMessageIDs pages email identities without scanning body

@@ -52,6 +52,7 @@ var requiredPointerValidators = [][3]string{
 	{"FileSearchRow", "MimeType", "f"},
 	{"PersonFileSearchRow", "Filename", "p"},
 	{"PersonFileSearchRow", "MimeType", "p"},
+	{"MessageRecording", "Filename", "m"},
 	{"PersonFactEvidence", "SourceRef", "p"},
 	{"PersonFactEvidence", "SourceURL", "p"},
 	{"PersonFactEvidence", "ContentSha256", "p"},

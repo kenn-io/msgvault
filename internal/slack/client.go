@@ -125,6 +125,11 @@ func NewClient(baseURL, token string) *Client {
 	}
 }
 
+// Scopes returns the granted scopes from the most recent successful response.
+// Call AuthTest first. An absent header yields no scopes, so a caller with a
+// scope policy can reject unverifiable credentials.
+func (c *Client) Scopes() []string { return slices.Clone(c.scopes) }
+
 // disableRateLimits removes the per-tier pacing (tests only).
 func (c *Client) disableRateLimits() {
 	for tier := range c.limiters {

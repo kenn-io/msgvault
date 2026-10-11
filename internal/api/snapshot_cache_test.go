@@ -246,3 +246,71 @@ func TestSnapshotCacheComputeDeadlineIsNotWaitTimeout(t *testing.T) {
 		assert.NotErrorIs(err, errSnapshotWaitTimeout, "a computation timeout must remain an error")
 	})
 }
+
+func TestSnapshotCacheFreshForServesCompletedSlowRead(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		cache := snapshotCache[int]{freshFor: 2 * time.Minute}
+		var computes atomic.Int32
+		slow := func(context.Context) (int, error) {
+			computes.Add(1)
+			time.Sleep(5 * time.Second)
+			return int(computes.Load()), nil
+		}
+
+		// Every read takes longer than the wait, so the first caller gives up.
+		_, _, _, err := cache.get(context.Background(), context.Background(), "k", 2*time.Second, slow)
+		require.ErrorIs(err, errSnapshotWaitTimeout)
+		time.Sleep(10 * time.Second)
+		synctest.Wait()
+
+		// A retry consumes the completed read as current instead of starting
+		// another slow read and calling the result stale.
+		value, _, stale, err := cache.get(context.Background(), context.Background(), "k", 2*time.Second, slow)
+		require.NoError(err)
+		assert.Equal(1, value)
+		assert.False(stale)
+		assert.Equal(int32(1), computes.Load(), "a fresh value starts no new read")
+
+		// Past half its age the value is still served while a refresh runs.
+		time.Sleep(time.Minute)
+		value, _, stale, err = cache.get(context.Background(), context.Background(), "k", 2*time.Second, slow)
+		require.NoError(err)
+		assert.Equal(1, value)
+		assert.False(stale)
+		time.Sleep(10 * time.Second)
+		synctest.Wait()
+		value, _, _, err = cache.get(context.Background(), context.Background(), "k", 2*time.Second, slow)
+		require.NoError(err)
+		assert.Equal(2, value, "the background refresh replaced the value")
+	})
+}
+
+func TestSnapshotCacheOlderVersionNeverReplacesNewerValue(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		cache := snapshotCache[string]{freshFor: 2 * time.Minute}
+		read := func(value string, delay time.Duration) func(context.Context) (string, error) {
+			return func(context.Context) (string, error) {
+				time.Sleep(delay)
+				return value, nil
+			}
+		}
+
+		// A slow read at version 1 is still running when version 2 arrives.
+		_, _, _, err := cache.getVersion(context.Background(), context.Background(), "", "1", time.Second, read("v1", 10*time.Second))
+		require.ErrorIs(err, errSnapshotWaitTimeout)
+		value, _, _, err := cache.getVersion(context.Background(), context.Background(), "", "2", time.Second, read("v2", 0))
+		require.NoError(err)
+		assert.Equal("v2", value)
+
+		time.Sleep(10 * time.Second)
+		synctest.Wait()
+		value, _, stale, err := cache.getVersion(context.Background(), context.Background(), "", "2", time.Second, read("v3", time.Hour))
+		require.NoError(err)
+		assert.Equal("v2", value, "the late version-1 read did not replace the newer value")
+		assert.False(stale)
+	})
+}

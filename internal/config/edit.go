@@ -919,8 +919,14 @@ func validateEditableCandidate(cfg *Config) error {
 	for index, source := range cfg.NotionMeetings {
 		schedules[fmt.Sprintf("notion_meetings[%d].schedule", index)] = source.Schedule
 	}
+	for index, source := range cfg.Twilio {
+		schedules[fmt.Sprintf("twilio[%d].schedule", index)] = source.Schedule
+	}
 	for index, source := range cfg.Muesli {
 		schedules[fmt.Sprintf("muesli[%d].schedule", index)] = source.Schedule
+	}
+	for index, source := range cfg.Twenty {
+		schedules[fmt.Sprintf("twenty[%d].schedule", index)] = source.Schedule
 	}
 	for key, expression := range schedules {
 		if expression == "" {

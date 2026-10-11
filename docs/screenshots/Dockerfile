@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.4
 # Stage 1: Build msgvault binary
-FROM golang:1.27.1-bookworm AS builder
+FROM golang:1.27.2-bookworm AS builder
 
 ARG MSGVAULT_VERSION=dev
 
@@ -10,7 +10,7 @@ COPY . /src
 WORKDIR /src
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=1 go build -buildvcs=false -tags "fts5 sqlite_vec" \
+    CGO_ENABLED=1 go build -buildvcs=false -tags "fts5 sqlite_vec kit_posthog_disabled" \
       -ldflags="-X go.kenn.io/msgvault/cmd/msgvault/cmd.Version=${MSGVAULT_VERSION}" \
       -o msgvault ./cmd/msgvault
 

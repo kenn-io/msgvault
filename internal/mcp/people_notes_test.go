@@ -258,6 +258,10 @@ func TestMCPSearchPeopleIncludesCuratedOnlyDisplayNameAndProfileID(t *testing.T)
 		profiles: []store.Person{{
 			ID: 7, VCardUID: "person-7", DisplayName: &displayName, Revision: 3,
 			ParticipantIDs: []int64{11}, CreatedAt: now, UpdatedAt: now,
+			CardDAVBindings: []store.CardDAVBinding{{
+				Connection: "personal", Book: "Personal", Href: "https://contacts.example.test/book/person.vcf",
+				RemoteUID: "urn:uuid:remote-7", MappingStatus: store.CardDAVMappingMapped,
+			}},
 		}},
 		contact: &query.PersonSummary{
 			ID: 11, DisplayLabel: "Observed Name", Identifiers: []query.PersonIdentifier{},
@@ -280,6 +284,13 @@ func TestMCPSearchPeopleIncludesCuratedOnlyDisplayNameAndProfileID(t *testing.T)
 	assert.Equal("Curated Alias", row["display_label"])
 	assert.InDelta(float64(11), row["id"], 0)
 	assert.InDelta(float64(7), row["person_id"], 0)
+	assert.Equal("person-7", row["vcard_uid"])
+	bindings, ok := row["carddav_bindings"].([]any)
+	require.True(ok)
+	require.Len(bindings, 1)
+	binding, ok := bindings[0].(map[string]any)
+	require.True(ok)
+	assert.Equal("urn:uuid:remote-7", binding["remote_uid"])
 	profile, ok := row["profile"].(map[string]any)
 	require.True(ok)
 	assert.InDelta(float64(7), profile["id"], 0)

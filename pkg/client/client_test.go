@@ -621,6 +621,24 @@ func TestGeneratedExploreGroupingValidatesExactlyOneDimension(t *testing.T) {
 	}}).Validate(), "multiple file grouping dimensions")
 }
 
+func TestGeneratedMessageRecordingsAcceptUnnamedAudio(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	var response generated.MessageRecordingsResponse
+	requirements.NoError(json.Unmarshal([]byte(
+		`{"message_id":9,"recordings":[{"attachment_id":1,"filename":"","size_bytes":44,"state":"media_missing"}]}`,
+	), &response))
+	requirements.Len(response.Recordings, 1)
+	requirements.NotNil(response.Recordings[0].Filename)
+	assertions.Empty(*response.Recordings[0].Filename)
+	requirements.NoError(response.Validate(), "audio without a filename is a legitimate recording")
+
+	missing := response
+	missing.Recordings = []generated.MessageRecording{response.Recordings[0]}
+	missing.Recordings[0].Filename = nil
+	requirements.Error(missing.Validate(), "missing required filename")
+}
+
 func TestGeneratedFileMetadataRequiresPresenceButAcceptsEmptyLegacyStrings(t *testing.T) {
 	t.Run("metadata response", func(t *testing.T) {
 		assertions := assert.New(t)
@@ -1394,4 +1412,101 @@ func TestStageDeletionAcceptsDryRunOK(t *testing.T) {
 	assert.True(got.DryRun, "dry_run")
 	assert.Equal(int64(3), got.MessageCount, "message_count")
 	assert.Len(got.SampleGmailIds, 3, "sample ids")
+}
+
+func TestCaptureTelemetryEventSendsPropertyValues(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	var got map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"status":"queued"}`))
+	}))
+	t.Cleanup(server.Close)
+
+	c, err := New(server.URL)
+	require.NoError(err, "New")
+	_, err = c.CaptureTelemetryEvent(context.Background(), &generated.CaptureTelemetryEventRequestOptions{
+		Body: &generated.CaptureTelemetryEventBody{
+			Event:      "app_opened",
+			Properties: map[string]any{"surface": "web"},
+		},
+	})
+	require.NoError(err, "CaptureTelemetryEvent")
+	assert.Equal(t, map[string]any{"event": "app_opened", "properties": map[string]any{"surface": "web"}}, got)
+}
+
+// TestGeneratedTriggerSyncExposesDisposition proves the published triggerSync
+// schema carries the optional disposition: a generic-source 202 decodes it, and
+// an account-sync 202 without it still validates.
+func TestGeneratedTriggerSyncExposesDisposition(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		body string
+		want *string
+	}{
+		{"generic", `{"status":"accepted","message":"follow-up recorded","disposition":"pending"}`, new("pending")},
+		{"account", `{"status":"accepted","message":"Sync started for a@b.c"}`, nil},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusAccepted)
+				_, _ = w.Write([]byte(tt.body))
+			}))
+			defer server.Close()
+			c, err := New(server.URL)
+			require.NoError(t, err)
+
+			got, err := c.TriggerSync(t.Context(), &generated.TriggerSyncRequestOptions{
+				PathParams: &generated.TriggerSyncPath{Account: "acct"},
+			})
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got.Disposition)
+		})
+	}
+}
+
+func TestImportMuesliSuccessStatuses(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		code  int
+		body  string
+		valid bool
+	}{
+		{"registration", 200, `{"status":"registered","source_id":3,"changed":false}`, true},
+		{"unchanged", 200, `{"status":"unchanged","source_id":3,"message_id":42,"changed":false}`, true},
+		{"updated", 200, `{"status":"updated","source_id":3,"message_id":42,"changed":true}`, true},
+		{"created", 201, `{"status":"created","source_id":3,"message_id":42,"changed":true}`, true},
+		{"empty", 200, ``, false},
+		{"unauthorized", 401, `{"error":"unauthorized"}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(http.MethodPost, r.Method)
+				assert.Equal("/api/v1/import/muesli", r.URL.Path)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tc.code)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			t.Cleanup(server.Close)
+			c, err := New(server.URL)
+			require.NoError(err)
+			got, err := c.ImportMuesli(t.Context(), &generated.ImportMuesliRequestOptions{Body: &generated.ImportMuesliBody{}})
+			if !tc.valid {
+				require.Error(err)
+				return
+			}
+			require.NoError(err)
+			assert.Equal(int64(3), got.SourceID)
+		})
+	}
 }

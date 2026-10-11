@@ -110,7 +110,9 @@ func (s *Store) MigrateLegacyIdentityConfigContext(
 		return false, true, 0, len(normalized), nil
 	}
 
+	pending := make(map[int64][]int64)
 	if err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		clear(pending)
 		// Fast path first, read-only: this migration runs on every store
 		// open, and the marker check must not take any write lock — an
 		// unconditional identity-row write here would add a WAL commit and
@@ -146,7 +148,7 @@ func (s *Store) MigrateLegacyIdentityConfigContext(
 			if !SourceTypeUsesEmailIdentity(src.SourceType) {
 				continue
 			}
-			insertedForSource := false
+			var insertedForSource []string
 			for _, addr := range normalized {
 				// Comparison rule (email-shaped → case-insensitive;
 				// everything else → case-sensitive) is shared with
@@ -166,13 +168,20 @@ func (s *Store) MigrateLegacyIdentityConfigContext(
 					// exactly like AddAccountIdentity's insert branch —
 					// see the matching comment there.
 					insertedAny = true
-					insertedForSource = true
+					insertedForSource = append(insertedForSource, addr)
 				}
 			}
-			if insertedForSource {
+			if len(insertedForSource) > 0 {
 				if err := refreshSourceMessageAttributionContext(ctx, tx, src.ID, ""); err != nil {
 					return fmt.Errorf("refresh migrated identity attribution (source=%d): %w", src.ID, err)
 				}
+				// A file import migrates after storing its messages, so
+				// their account attribution must change with the identities.
+				ids, err := s.markAccountAttributionPendingForAddressesTx(ctx, tx, src.ID, insertedForSource)
+				if err != nil {
+					return err
+				}
+				pending[src.ID] = ids
 			}
 		}
 
@@ -199,6 +208,9 @@ func (s *Store) MigrateLegacyIdentityConfigContext(
 		return txErr
 	}); err != nil {
 		return false, false, 0, 0, fmt.Errorf("migrate legacy identity config: %w", err)
+	}
+	for sourceID, ids := range pending {
+		s.deriveAccountAttributionAfterCommit(ctx, sourceID, ids)
 	}
 
 	return true, false, eligibleSources, len(normalized), nil

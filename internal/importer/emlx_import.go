@@ -14,6 +14,7 @@ import (
 
 	"go.kenn.io/msgvault/internal/emlx"
 	"go.kenn.io/msgvault/internal/mime"
+	"go.kenn.io/msgvault/internal/rederive"
 	"go.kenn.io/msgvault/internal/remoteimage"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -165,6 +166,7 @@ func ImportEmlxDir(
 	defer func() {
 		retErr = errors.Join(retErr, execution.Release())
 	}()
+	rederive.Heal(ctx, slog.Default(), st, src)
 
 	// Resume support.
 	var (

@@ -21,6 +21,8 @@ type MessageIdentityMatch struct {
 	SourceID   int64
 	Sender     []string
 	Recipients []string
+	// Visible holds the confirmed To/Cc matches, without Bcc.
+	Visible []string
 }
 
 // ResolvedAccountIdentity is one confirmed source identity and every
@@ -118,6 +120,7 @@ type messageIdentityCandidates struct {
 	senderFallback    *identityCandidateSet
 	senderHasEnvelope bool
 	recipients        *identityCandidateSet
+	visible           *identityCandidateSet
 }
 
 // identityCandidateSet keeps one key set per comparison rule so the
@@ -147,10 +150,20 @@ func (s *Store) MatchMessageIdentitiesContext(
 	ctx context.Context,
 	messageIDs []int64,
 ) (map[int64]MessageIdentityMatch, error) {
+	return matchMessageIdentitiesWith(ctx, s.db, messageIDs)
+}
+
+// matchMessageIdentitiesWith is MatchMessageIdentitiesContext on any querier,
+// so account attribution can read it inside its transaction.
+func matchMessageIdentitiesWith(
+	ctx context.Context,
+	q chunkQuerier,
+	messageIDs []int64,
+) (map[int64]MessageIdentityMatch, error) {
 	candidatesByMessage := make(map[int64]*messageIdentityCandidates, len(messageIDs))
 	sourceSet := make(map[int64]struct{})
 
-	err := queryInChunksContext(ctx, s.db, messageIDs, nil, `
+	err := queryInChunksContext(ctx, q, messageIDs, nil, `
 		WITH requested_messages AS (
 			SELECT m.id, m.source_id, m.sender_id
 			FROM messages m
@@ -221,6 +234,7 @@ func (s *Store) MatchMessageIdentitiesContext(
 				sender:         newIdentityCandidateSet(),
 				senderFallback: newIdentityCandidateSet(),
 				recipients:     newIdentityCandidateSet(),
+				visible:        newIdentityCandidateSet(),
 			}
 			candidatesByMessage[messageID] = candidates
 			sourceSet[sourceID] = struct{}{}
@@ -235,7 +249,10 @@ func (s *Store) MatchMessageIdentitiesContext(
 			} else {
 				target = candidates.senderFallback
 			}
-		case "to", "cc", "bcc":
+		case "to", "cc":
+			candidates.visible.addRow(envelopeAddress, emailAddress, identifierType, identifierValue)
+			target = candidates.recipients
+		case "bcc":
 			target = candidates.recipients
 		default:
 			return nil
@@ -254,7 +271,7 @@ func (s *Store) MatchMessageIdentitiesContext(
 	slices.Sort(sourceIDs)
 
 	identitiesBySource := make(map[int64]*storedIdentityIndex, len(sourceIDs))
-	err = queryInChunksContext(ctx, s.db, sourceIDs, nil, `
+	err = queryInChunksContext(ctx, q, sourceIDs, nil, `
 		SELECT source_id, address
 		FROM account_identities
 		WHERE source_id IN (%s)
@@ -289,6 +306,7 @@ func (s *Store) MatchMessageIdentitiesContext(
 			SourceID:   candidates.sourceID,
 			Sender:     intersectStoredIdentities(sender, identities),
 			Recipients: intersectStoredIdentities(candidates.recipients, identities),
+			Visible:    intersectStoredIdentities(candidates.visible, identities),
 		}
 	}
 	return matches, nil

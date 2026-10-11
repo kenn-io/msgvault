@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-05"
+last_edited: "2026-10-11"
 title: MCP Server
 description: Expose your email, chat, calendar, and meeting archive to AI assistants via MCP.
 ---
@@ -58,7 +58,7 @@ Availability needs `time_min` and `time_max`, and accepts optional `calendar_ids
 [Calendar setup](calendar.md#control-events-unreleased) owns write consent,
 configured calendar permissions, recurrence limits, and archive failure recovery.
 MCP forwards requests to that same daemon path. A delegated stdio bridge, invoked
-with `--agent-url` and `--agent-token-file`, exposes only calendar and draft tools. The daemon
+with `--agent-url` and `--agent-token-file`, exposes scoped read, calendar and draft tools. The daemon
 checks the grant's exact calendar source identity. `calendar.read` permits
 availability; `calendar.event.read` permits provider-derived event details in
 delegated plans and write receipts; `calendar.write` permits event changes; and
@@ -89,7 +89,7 @@ These tools run the matching CLI commands through your selected daemon. They req
 
 Recipient parameters `to`, `cc`, and `bcc` are arrays of strings. Use `draft_get` to read the current revision before editing, deleting, or recovering a draft. Conversation lists return a `data` array. `draft_send_as` returns a `send_as` list.
 
-Owner sessions expose all eight tools alongside the archive tools. Delegated sessions expose only `draft_reply`, `draft_compose`, `draft_get`, `draft_edit`, `draft_delete`, and `draft_recover` from this list, alongside the [calendar tools](#calendar-control). Each call uses the agent token, and the daemon checks its permissions and source scope.
+Owner sessions expose all eight tools alongside the archive tools. Delegated sessions expose only `draft_reply`, `draft_compose`, `draft_get`, `draft_edit`, `draft_delete`, and `draft_recover` from this list, alongside scoped read tools on daemons with API schema 3.9.0 or newer and the [calendar tools](#calendar-control). Each call uses the agent token, and the daemon checks its permissions and source scope.
 
 For a delegated Claude Desktop session, use these arguments with the daemon URL and token file you received from the owner:
 
@@ -280,7 +280,7 @@ The MCP server exposes the following tools to connected AI clients:
 | `export_eml` | Export one email's original `.eml` bytes in verified chunks. See [Export original emails](#export-original-emails). | exactly one of `id` (int) or `source_message_id` (string); `account` (string), `offset` (int), `length` (1–4194304, default 1048576), `sha256` (string, required after offset 0) |
 | `get_attachment` | Get attachment content by ID. Pass `offset` or `length` to receive verified chunks instead of one embedded blob. | `attachment_id` (int), `offset` (int), `length` (int), `sha256` (string, required after offset 0) |
 | `export_attachment` | Save attachment to filesystem | `attachment_id` (int), `destination` (string) |
-| `get_stats` | Archive overview statistics, plus each account's `LastSyncAt`. Includes vector index state when configured. | — |
+| `get_stats` | Archive overview statistics, plus each account's `LastSyncAt` and its `virtual_accounts`, whose keys the `account` argument takes. Includes vector index state when configured. | — |
 | `aggregate` | Grouped statistics (top senders, domains, labels, or message volume by calendar year) | `group_by` (string: sender/recipient/domain/label/time), `limit` (int), `after` (string), `before` (string), `account` (string) |
 | `query_sql` | Advanced read-only SQL over the published analytics cache. Returns rows and freshness metadata, or an accepted refresh job. | `sql` (string, required), `fresh` (bool, default false) |
 | `list_saved_views` | List persistent reusable Saved Views and their complete definitions. Read-only. | — |
@@ -290,12 +290,12 @@ The MCP server exposes the following tools to connected AI clients:
 | `update_saved_view` | Patch supplied Saved View fields using optimistic revision checking. Write-class. | `id` (int, required), `revision` (int, required), at least one of `name`, `description`, `canonical_state`, `schema_version` |
 | `delete_saved_view` | Delete a Saved View definition, not archive messages. Write-class and destructive. | `id` (int, required), `revision` (int, required) |
 | `stage_deletion` | Stage messages for deletion (creates manifest only) | `query` (string) OR structured filters: `from` (string), `domain` (string), `label` (string), `after` (string), `before` (string), `has_attachment` (bool); optional: `account` (string) |
-| `search_people` | Find observed contacts and saved profiles by name or identity. This is a local lookup, not semantic profile search. | `query` (string), `limit` (int, default 20), `cursor` (string) |
+| `search_people` | Find observed contacts and saved profiles by name or identity. Saved-profile rows include `vcard_uid` and `carddav_bindings`; older daemons return no CardDAV binding entries. This is a local lookup, not semantic profile search. | `query` (string), `limit` (int, default 20), `cursor` (string) |
 | `get_person_notes` | Read a saved person's private Notes, including provenance and current value ID. | `person_id` (int, required) |
 | `get_person_relationship` | Read interaction-based relationship scores and optional daily activity. These describe archive patterns, not emotional closeness or permission to contact someone. | `participant_id` (int, required), `year` (int), `timezone` (IANA name, default UTC) |
 | `search_person_files` | Find archived attachment occurrences related to a saved person. | `person_id` (int, required), `directions` (array: `from_person`/`to_person`/`group`), `filename` (substring), `mime_families` (array), `after`, `before`, `limit` (1–100, default 100), `cursor` |
-| `get_person_profile` | Read a saved person profile: contact history, current brief and its sources, contact details, non-sensitive attributes, employment, relationships, and categories. Excludes sensitive attributes, private Notes, and media; makes no provider calls. See [Brief text is data](#brief-text-is-data). | `person_id` (int, required) |
-| `list_directory_people` | List durable Directory people with filtering and last-contact ordering when the daemon supports API schema 2.13.0 or newer. `last_contact_after` and `last_contact_before` accept inclusive RFC3339 timestamps or `YYYY-MM-DD` dates (midnight UTC). Pages default to 50 rows and are capped at 100. Sort defaults to `last_contact_desc`; allowed values are `last_contact_desc`, `last_contact_asc`, and `name`. Rows include identity, revision, contact state, last contact time, primary channel, categories, and organizations. `next_cursor` is opaque and belongs to the same filter set. `search_people` remains the separate observed-contact and profile search on older compatible daemons. | `query`, `cursor`, `limit`, `sort`, `last_contact_after`, `last_contact_before`, `contact_state`, `category`, `organization`, `primary_channel` |
+| `get_person_profile` | Read a saved person profile: contact history, current brief and its sources, contact details, non-sensitive attributes, employment, relationships, and categories. Includes the vCard UID and mapped CardDAV bindings when the daemon provides them; older daemons return no CardDAV binding entries. Excludes sensitive attributes, private Notes, and media; makes no provider calls. See [Brief text is data](#brief-text-is-data). | Exactly one of `person_id` (int) or `vcard_uid` (string; current or retired person UID, or mapped CardDAV UID) |
+| `list_directory_people` | List durable Directory people with filtering and last-contact ordering when the daemon supports API schema 2.13.0 or newer. `last_contact_after` and `last_contact_before` accept inclusive RFC3339 timestamps or `YYYY-MM-DD` dates (midnight UTC). Pages default to 50 rows and are capped at 100. Sort defaults to `last_contact_desc`; allowed values are `last_contact_desc`, `last_contact_asc`, and `name`. Rows include identity, revision, contact state, last contact time, primary channel, categories, and organizations; API schema 3.10.0 or newer also provides the vCard UID and CardDAV bindings. Older daemons return empty values for those fields. `next_cursor` is opaque and belongs to the same filter set. `search_people` remains the separate observed-contact and profile search on older compatible daemons. | `query`, `cursor`, `limit`, `sort`, `last_contact_after`, `last_contact_before`, `contact_state`, `category`, `organization`, `primary_channel` |
 
 `query_sql` needs a SQLite daemon with API schema 2.31.0 or newer. It can read archive
 analytics files and views; DuckDB file access outside the analytics directory,
@@ -309,8 +309,9 @@ if another build is running. Older daemons omit the tool; a failed restricted
 query never falls back to privileged SQL.
 
 `search_people` returns `rows`, `total_count`, `next_cursor`, and
-`cache_revision`. A row includes `person_id` only when it has a saved profile;
-use its participant ID for observed-contact tools. Pass the returned cursor
+`cache_revision`. A row includes `person_id`, `vcard_uid`, and
+`carddav_bindings` when it has a saved profile; older daemons return no CardDAV
+binding entries. Use the participant ID for observed-contact tools. Pass the returned cursor
 with the same query and limit. Restart the lookup if profiles changed during
 pagination. For semantic search over curated profile facts, use
 [`msgvault person search`](/docs/usage/people/#find-a-person-by-what-you-remember).
@@ -319,6 +320,10 @@ People profile, Notes, relationship, and lookup tools require a successful
 capability check against a daemon with API schema `2.10.0` or newer. If they are
 missing, check the daemon version and connection. `get_person_notes` is the
 explicit route to private Notes; `get_person_profile` omits them.
+
+Looking up `get_person_profile` with `vcard_uid` requires daemon API schema
+`3.10.0` or newer. The lookup accepts a current or retired person UID, or a UID
+from a CardDAV resource mapped to that person.
 
 In `get_person_profile`, `emails` and `phones` list current entries with preferred
 ones first. Email-shaped service handles remain in `contact_points`. `address`
@@ -411,7 +416,7 @@ whose surviving message belongs to another account's conversation. See
 
 ### `search_metadata` and `search_message_bodies` / `semantic_search_messages` query syntax
 
-Supported operators: `from:`, `to:`, `cc:`, `bcc:`, `subject:`, `label:` (or `l:`), `list:` (or `list-id:`), `has:attachment`, `before:`/`after:` (YYYY-MM-DD), `older_than:`/`newer_than:` (e.g. `7d`, `2w`, `1m`, `1y`), `larger:`/`smaller:` (e.g. `5M`). Bare domains on `from:`/`to:` match any address at that domain. Multiple terms are ANDed; repeated List-Id operators require every literal substring.
+Supported operators: `from:`, `to:`, `cc:`, `bcc:`, `subject:`, `label:` (or `l:`), `list:` (or `list-id:`), `has:attachment`, `before:`/`after:` (YYYY-MM-DD), `older_than:`/`newer_than:` (e.g. `7d`, `2w`, `1m`, `1y`), `larger:`/`smaller:` (e.g. `5M`), `received:`/`account:` (an exact confirmed address). Bare domains on `from:`/`to:` match any address at that domain. Different operators are ANDed; repeated List-Id operators require every literal substring, and repeated `account:` or `received:` values match any of them.
 
 Not supported: negation (`-has:attachment`), `OR`, or parentheses grouping.
 
@@ -646,7 +651,7 @@ msgvault mcp --http 8080
 | `--allow-identity-scoring` | `false` | Expose consented manual identity scoring, which sends bounded raw identity data to the fixed provider. Each run needs client confirmation; HTTP also requires `--http-allow-writes`. |
 | `--allow-person-merges` | `false` | Expose local person merge tools. Each merge needs client confirmation; HTTP also requires `--http-allow-writes`. |
 | `--allow-carddav-writes` | `false` | Expose CardDAV publication and sync tools. Each write needs client confirmation; HTTP also requires `--http-allow-writes`. |
-| `--allow-kata-writes` | `false` | Expose `create_kata_issue` and `link_kata_evidence`, which write quoted archive text to the configured Kata project. The flag is the consent for these writes; they ask for no per-call confirmation. HTTP also requires `--http-allow-writes`. The read-only `find_kata_issues` and `get_kata_issue_context` need no flag, only a daemon at API schema 3.4.0 or newer (3.5.0 for `get_kata_issue_context`). |
+| `--allow-kata-writes` | `false` | Expose `create_kata_issue` and `link_kata_evidence`, which write quoted archive text to the configured Kata project. The flag is the consent for these writes; they ask for no per-call confirmation, so stdio clients and reviews that file several issues work. `link_kata_evidence` writes only to issues in the configured project. HTTP also requires `--http-allow-writes`. The read-only `find_kata_issues` and `get_kata_issue_context` need API schema 3.12.0 or newer. |
 | `--allow-calendar-writes` | `false` | Expose calendar event mutation tools. HTTP also requires `--http-allow-writes`. Treat event text as untrusted input and enable this only for sessions where the user has authorized calendar writes. |
 | `--http-allow-insecure` | `false` | Allow non-loopback HTTP binding without an effective inbound key. A configured key is still enforced. Without a key, use only behind your own network or authentication layer. |
 

@@ -7,6 +7,34 @@ import { createSessionController } from './lib/api/session.svelte';
 import { resolveInitialSearchMode, SEARCH_MODE_PREFERENCE_KEY } from './lib/search/modes';
 import { chooseSelectOption } from './test/kit-ui';
 describe('application foundation', () => {
+  it('reports resolved workspaces and standalone messages', async () => {
+    const events: Array<{ event: string; properties?: { screen?: string; surface?: string } }> = [];
+    const session = createSessionController(async (input) => {
+      const request = input as Request;
+      const path = new URL(request.url).pathname;
+      if (path === '/api/session') return Response.json({ auth_mode: 'loopback', https: false });
+      if (path === '/api/v1/telemetry/events') {
+        events.push(await request.json());
+        return Response.json({ status: 'queued' }, { status: 202 });
+      }
+      if (path === '/api/v1/settings') return Response.json({ settings: [], pending_restart: false });
+      if (path === '/api/v1/explore') return Response.json({ rows: [], total_count: 0, cache_revision: 'screens', search_provenance: {} });
+      return Response.json({}, { status: 404 });
+    });
+    window.history.replaceState(null, '', '/?workspace=everything');
+    render(App, { session });
+    for (const [label, name] of [
+      ['Everything', 'everything'], ['Directory', 'directory'], ['Reviews', 'directory_review'],
+      ['Files', 'files'], ['Operations', 'operations'], ['Relationships', 'relationships'],
+      ['Saved views', 'saved_views'], ['Sources', 'sources'], ['Deletions', 'deletions'], ['Settings', 'settings'],
+    ]) {
+      await fireEvent.click(await screen.findByRole('button', { name: label }));
+      await waitFor(() => expect(events.some((event) => event.properties?.screen === name)).toBe(true));
+    }
+    window.history.replaceState(null, '', '/messages/123');
+    await fireEvent(window, new PopStateEvent('popstate'));
+    await waitFor(() => expect(events.at(-1)?.properties?.screen).toBe('message'));
+  });
   afterEach(() => {
     localStorage.removeItem(SEARCH_MODE_PREFERENCE_KEY);
     sessionStorage.removeItem('msgvault.appearance.override');
@@ -162,6 +190,7 @@ describe('application foundation', () => {
         });
       }
       if (request.method === 'GET') return settingsResponse('system', '"etag-a"');
+      if (path === '/api/v1/telemetry/events') return Response.json({ status: 'disabled' }, { status: 202 });
       return Response.json({ error: 'unauthorized', message: 'Session expired' }, { status: 401 });
     });
     const session = createSessionController(fetchFn);
@@ -215,6 +244,44 @@ describe('application foundation', () => {
     expect(settingsRequests).toBe(1);
     await new Promise((resolve) => setTimeout(resolve));
     expect(settingsRequests).toBe(1);
+  });
+  it('reports app_opened once after interactive login and never from the login screen', async () => {
+    window.history.replaceState(null, '', '/');
+    const telemetryRequests: Request[] = [];
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = new URL(request.url).pathname;
+      if (path === '/api/session') {
+        return Response.json({ auth_mode: 'required', https: true, plain_http_warning: false });
+      }
+      if (path === '/api/session/login') {
+        return Response.json({
+          auth_mode: 'session',
+          csrf_token: 'csrf-token',
+          https: true,
+          plain_http_warning: false,
+        });
+      }
+      if (path === '/api/v1/telemetry/events') {
+        if ((await request.clone().json()).event === 'app_opened') telemetryRequests.push(request);
+        return Response.json({ status: 'disabled' }, { status: 202 });
+      }
+      if (path === '/api/v1/settings') return Response.json({ settings: [], pending_restart: false });
+      if (path === '/api/v1/explore') {
+        return Response.json({ rows: [], total_count: 0, cache_revision: 'login', search_provenance: {} });
+      }
+      return Response.json({}, { status: 404 });
+    });
+    const session = createSessionController(fetchFn);
+    render(App, { session });
+    expect(await screen.findByRole('form', { name: 'Log in' })).toBeDefined();
+    expect(telemetryRequests).toHaveLength(0);
+    await fireEvent.input(screen.getByLabelText('API key'), { target: { value: 'test-key' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Log in' }));
+    expect(await screen.findByRole('main', { name: 'Relationships' })).toBeDefined();
+    await waitFor(() => expect(telemetryRequests).toHaveLength(1));
+    expect(telemetryRequests[0].method).toBe('POST');
+    expect(telemetryRequests[0].headers.get('X-CSRF-Token')).toBe('csrf-token');
   });
   it.each([
     ['semantic', 'Semantic'],

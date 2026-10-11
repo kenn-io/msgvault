@@ -3,6 +3,8 @@ package meetingarchive
 import (
 	"strings"
 	"unicode"
+
+	"go.kenn.io/msgvault/internal/meetingidentity"
 )
 
 // Normalized returns the person with trimmed, lowercased emails, E.164-only
@@ -82,7 +84,7 @@ type identity struct {
 // validate their own addresses) while refusing values that cannot be an
 // address at all.
 func normalizePersonEmail(value string) string {
-	value = strings.ToLower(strings.TrimSpace(value))
+	value = meetingidentity.Normalize(value)
 	if !strings.Contains(value, "@") || strings.IndexFunc(value, unicode.IsSpace) >= 0 {
 		return ""
 	}

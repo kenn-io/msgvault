@@ -634,3 +634,95 @@ func processingKeyForDestination(t *testing.T, st *store.Store, destination, pro
 		WHERE destination_key = ? AND profile = ?`), destination, profile).Scan(&key))
 	return key
 }
+
+// TestMediaRevisionMatchesWorker checks that MediaRevision reproduces the
+// revision the worker records, so a reader can trust a match to mean the
+// provider transcript is unchanged.
+func TestMediaRevisionMatchesWorker(t *testing.T) {
+	requireParent := require.New(t)
+	assertParent := assert.New(t)
+	wav := syntheticWAV(800, 23)
+	world := importVoiceChat(t,
+		voiceSpec{id: "beeper-supplied", asset: "mxc://beeper.local/revision-supplied", mime: "audio/wav",
+			fileName: "supplied.wav", transcript: "provider words", data: wav},
+		voiceSpec{id: "beeper-plain", asset: "mxc://beeper.local/revision-plain", mime: "audio/wav",
+			fileName: "plain.wav", data: syntheticWAV(800, 24)})
+	addStoredMediaSource(t, world, "gmail", "test@example.com", "mail-audio", syntheticWAV(800, 25),
+		"meeting.wav", "audio/wav", "", store.AttachmentRoleStandalone, "", nil,
+		"mail:attachment:1", "mime:1.2")
+	world.beeper.appendMsg("!audio:beeper.local", fakeMsg{
+		ID: "beeper-multipart", SortKey: 99, Timestamp: time.Now().Add(-29 * 24 * time.Hour).UTC(), Type: "VOICE", SenderID: "@signal_ann:beeper.local", SenderName: "Ann",
+		Attachments: []map[string]any{
+			{"id": "mxc://beeper.local/revision-supplied", "type": "audio", "isVoiceNote": true, "mimeType": "audio/wav", "fileName": "supplied.wav", "fileSize": len(wav)},
+			{"id": "mxc://beeper.local/revision-plain", "type": "audio", "isVoiceNote": true, "mimeType": "audio/wav", "fileName": "plain.wav", "fileSize": len(wav)},
+		},
+	})
+	_, err := world.imp.Import(t.Context(), ImportOptions{AccountID: "signal", AttachmentsDir: world.dir})
+	requireParent.NoError(err)
+	docbank := newFakeDocbank(t)
+	server := httptest.NewServer(docbank)
+	defer server.Close()
+	runPasses(t, world.submitter(t, server, "destination-revision").WithASRProfile("revision-asr"), 3)
+
+	rows, err := world.st.DB().Query(world.st.Rebind(`SELECT source_type, attachment_id, revision
+		FROM beeper_media_occurrences WHERE destination_key = ? ORDER BY source_message_id`),
+		"destination-revision")
+	requireParent.NoError(err)
+	defer func() { requireParent.NoError(rows.Close()) }()
+	var sourceTypes []string
+	ids := []int64{}
+	expected := map[int64]string{}
+	var beeperID int64
+	for rows.Next() {
+		var sourceType, recorded string
+		var attachmentID int64
+		requireParent.NoError(rows.Scan(&sourceType, &attachmentID, &recorded))
+		revision, err := MediaRevision(t.Context(), world.st, attachmentID)
+		requireParent.NoError(err, sourceType)
+		assertParent.Equal(recorded, revision, sourceType)
+		ids = append(ids, attachmentID)
+		expected[attachmentID] = recorded
+		if sourceType == "beeper" {
+			beeperID = attachmentID
+		}
+		sourceTypes = append(sourceTypes, sourceType)
+	}
+	requireParent.NoError(rows.Err())
+	requireParent.NoError(rows.Close())
+	revisions, err := MediaRevisions(t.Context(), world.st, ids)
+	requireParent.NoError(err)
+	assertParent.Equal(expected, revisions)
+	assertParent.ElementsMatch([]string{"beeper", "beeper", "beeper", "beeper", "gmail"}, sourceTypes)
+	candidate, err := world.st.GetBeeperMediaCandidate(t.Context(), beeperID)
+	requireParent.NoError(err)
+	raw, err := world.st.GetMessageRawContext(t.Context(), candidate.MessageID)
+	requireParent.NoError(err)
+	for _, mutation := range []string{"missing raw", "invalid raw", "corrupt raw", "missing attachment"} {
+		t.Run(mutation, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			id := beeperID
+			var err error
+			switch mutation {
+			case "missing raw":
+				_, err = world.st.DB().Exec(world.st.Rebind(`DELETE FROM message_raw WHERE message_id = ?`), candidate.MessageID)
+			case "invalid raw":
+				err = world.st.UpsertMessageRawWithFormat(candidate.MessageID, []byte("invalid"), "beeper_json")
+			case "corrupt raw":
+				_, err = world.st.DB().Exec(world.st.Rebind(`UPDATE message_raw SET raw_data = ?, compression = 'gzip' WHERE message_id = ?`), []byte{0}, candidate.MessageID)
+			case "missing attachment":
+				id = -1
+			}
+			require.NoError(err)
+			t.Cleanup(func() { require.NoError(world.st.UpsertMessageRawWithFormat(candidate.MessageID, raw, "beeper_json")) })
+			revisions, err := MediaRevisions(t.Context(), world.st, []int64{id})
+			require.NoError(err)
+			assert.Empty(revisions[id])
+			_, err = MediaRevision(t.Context(), world.st, id)
+			require.Error(err)
+			if mutation == "missing raw" || mutation == "missing attachment" {
+				assert.ErrorIs(err, sql.ErrNoRows)
+			}
+		})
+	}
+}

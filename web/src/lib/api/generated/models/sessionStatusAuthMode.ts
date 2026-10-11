@@ -11,4 +11,5 @@ export const SessionStatusAuthMode = {
   session: "session",
   required: "required",
   delegated: "delegated",
+  caller: "caller",
 } as const;

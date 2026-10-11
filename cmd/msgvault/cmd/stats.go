@@ -6,6 +6,7 @@ import (
 	"io"
 
 	"github.com/spf13/cobra"
+	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -35,7 +36,7 @@ func runStats(cmd *cobra.Command, _ []string) error {
 	out := cmd.OutOrStdout()
 	scoped := statsAccount != "" || statsCollection != ""
 
-	s, info, err := OpenHTTPStore(cmd.Context())
+	s, info, err := OpenHTTPStore(cmd.Context(), daemonclient.AgentReadMinAPISchemaVersion)
 	if err != nil {
 		return fmt.Errorf("open store: %w", err)
 	}
@@ -47,6 +48,7 @@ func runStats(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("get stats: %w", err)
 	}
 	dbStats := resp.Stats
+	showSize := info.Kind != HTTPStoreAgentDelegated
 	logger.Info("stats",
 		tableMessages, dbStats.MessageCount,
 		"threads", dbStats.ThreadCount,
@@ -65,17 +67,17 @@ func runStats(cmd *cobra.Command, _ []string) error {
 				label = statsCollection
 			}
 		}
-		printScopedStats(out, dbStats, statsAccount != "", label, resp.ScopeSourceCount)
+		printScopedStats(out, dbStats, statsAccount != "", label, resp.ScopeSourceCount, showSize)
 		return nil
 	}
 
-	if info.Kind == HTTPStoreConfiguredRemote {
+	if info.Kind == HTTPStoreConfiguredRemote || info.Kind == HTTPStoreAgentDelegated {
 		_, _ = fmt.Fprintf(out, "Remote: %s\n", info.URL)
 	} else {
 		_, _ = fmt.Fprintf(out, "Database: %s\n", cfg.DatabaseDSN())
 	}
 
-	printStats(out, dbStats)
+	printStats(out, dbStats, showSize)
 	return nil
 }
 
@@ -85,6 +87,7 @@ func printScopedStats(
 	accountScope bool,
 	label string,
 	sourceCount int,
+	showSize bool,
 ) {
 	if accountScope {
 		_, _ = fmt.Fprintf(w, "Stats for account %q:\n", label)
@@ -96,11 +99,13 @@ func printScopedStats(
 		_, _ = fmt.Fprintf(w, "Stats for collection %q (%d account%s):\n",
 			label, sourceCount, suffix)
 	}
-	printStats(w, s)
-	_, _ = fmt.Fprintln(w, "\nNote: Size is global (not scoped).")
+	printStats(w, s, showSize)
+	if showSize {
+		_, _ = fmt.Fprintln(w, "\nNote: Size is global (not scoped).")
+	}
 }
 
-func printStats(w io.Writer, s *store.Stats) {
+func printStats(w io.Writer, s *store.Stats, showSize bool) {
 	if s.SourceDeletedCount > 0 {
 		total := s.MessageCount + s.SourceDeletedCount
 		_, _ = fmt.Fprintf(w, "  Messages:    %s (%s active, %s deleted from source)\n",
@@ -112,7 +117,9 @@ func printStats(w io.Writer, s *store.Stats) {
 	_, _ = fmt.Fprintf(w, "  Attachments: %s\n", formatCount(s.AttachmentCount))
 	_, _ = fmt.Fprintf(w, "  Labels:      %s\n", formatCount(s.LabelCount))
 	_, _ = fmt.Fprintf(w, "  Accounts:    %s\n", formatCount(s.SourceCount))
-	_, _ = fmt.Fprintf(w, "  Size:        %.2f MB\n", float64(s.DatabaseSize)/(1024*1024))
+	if showSize {
+		_, _ = fmt.Fprintf(w, "  Size:        %.2f MB\n", float64(s.DatabaseSize)/(1024*1024))
+	}
 }
 
 func init() {

@@ -96,33 +96,40 @@ describe('LinkIdentityDialog', () => {
     expect(screen.queryByText('Self')).toBeNull();
   });
 
-  it('selects a result by click or Enter, then confirms with that participant ID', async () => {
-    const { onConfirm } = renderDialog();
-    await fireEvent.input(await openTypeahead('Search people to link'), { target: { value: 'B' } });
-    const bobOption = await screen.findByRole('option', { name: /Bob/ });
+  it.each([
+    ['click', 'Bob', 2],
+    ['Enter', 'Cara', 3]
+  ] as const)('confirms a result selected by %s after focus leaves the picker', async (how, label, id) => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { onConfirm } = renderDialog();
+      const input = await openTypeahead('Search people to link');
+      await fireEvent.input(input, { target: { value: label[0] } });
+      const option = await screen.findByRole('option', { name: new RegExp(label) });
+      if (how === 'click') {
+        await fireEvent.mouseDown(option);
+      } else {
+        await fireEvent.keyDown(input, { key: 'ArrowDown' });
+        await fireEvent.keyDown(input, { key: 'Enter' });
+      }
+      const trigger = await screen.findByRole('button', { name: `Search people to link: ${label}` });
+      await waitFor(() => expect(document.activeElement).toBe(trigger));
 
-    await fireEvent.mouseDown(bobOption);
-    expect(screen.getByRole('button', { name: 'These are the same person' })).toHaveProperty('disabled', false);
+      // Leaving the closed picker makes Typeahead send another empty query, which also clears the results.
+      const confirm = screen.getByRole('button', { name: 'These are the same person' });
+      confirm.focus();
+      await vi.advanceTimersByTimeAsync(250);
 
-    await fireEvent.click(screen.getByRole('button', { name: 'These are the same person' }));
-    await waitFor(() => expect(onConfirm).toHaveBeenCalledWith(2));
+      expect(screen.getByRole('button', { name: `Search people to link: ${label}` })).toBeDefined();
+      expect(confirm).toHaveProperty('disabled', false);
+      await fireEvent.click(confirm);
+      await waitFor(() => expect(onConfirm).toHaveBeenCalledWith(id));
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
-  it('selects a result via Enter without requiring a click', async () => {
-    const { onConfirm } = renderDialog();
-    const input = await openTypeahead('Search people to link');
-    await fireEvent.input(input, { target: { value: 'C' } });
-    await screen.findByRole('option', { name: /Cara/ });
-
-    await fireEvent.keyDown(input, { key: 'ArrowDown' });
-    await fireEvent.keyDown(input, { key: 'Enter' });
-    expect(screen.getByRole('button', { name: 'These are the same person' })).toHaveProperty('disabled', false);
-
-    await fireEvent.click(screen.getByRole('button', { name: 'These are the same person' }));
-    await waitFor(() => expect(onConfirm).toHaveBeenCalledWith(3));
-  });
-
-  it('clears a prior selection when the editable Typeahead field is empty', async () => {
+  it('drops the prior selection when the picker reopens', async () => {
     const { onConfirm } = renderDialog();
     await fireEvent.input(await openTypeahead('Search people to link'), { target: { value: 'B' } });
     await fireEvent.mouseDown(await screen.findByRole('option', { name: /Bob/ }));

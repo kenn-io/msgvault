@@ -61,8 +61,8 @@ export function timelineRowToSelection(row: RelationshipTimelineRow): ReadingPan
 export function localDayBoundsUTC(instant: string): { start: string; end: string } {
   const date = new Date(instant);
   const startOfDay = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-  const endOfDay = new Date(startOfDay);
-  endOfDay.setDate(endOfDay.getDate() + 1);
+  // A skipped midnight can normalize the start to 01:00; do not carry that hour forward.
+  const endOfDay = new Date(date.getFullYear(), date.getMonth(), date.getDate() + 1);
   return { start: startOfDay.toISOString(), end: endOfDay.toISOString() };
 }
 

@@ -125,8 +125,7 @@ func newPersonSweepApplyFixtureWithBudget(
 	request.Generation.Claims = []personfacts.ProposedClaim{
 		personFactProjectionClaim(personID, targets[AttributeSlugPrimaryChannel], `"chat"`, suffix),
 	}
-	_, err = st.db.ExecContext(t.Context(), `INSERT INTO person_inference_consents
-		(profile_fingerprint, granted_by) VALUES (?, 'test')`, profile)
+	_, _, err = st.GrantPersonInferenceConsent(t.Context(), profile, "test")
 	require.NoError(t, err)
 	reservedCost, err := peoplesweep.EstimateCostMicroUSD(
 		peoplesweep.TokenUsage{InputTokens: 3, OutputTokens: 2}, budget)
@@ -405,8 +404,8 @@ func TestApplyPersonSweepRevokedConsentChargesUsageOnly(t *testing.T) {
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonSweepApplyFixture(t, "revoked-consent", true)
-	_, err := f.store.db.Exec(`UPDATE person_inference_consents SET revoked_by = 'test',
-		revoked_at = CURRENT_TIMESTAMP WHERE profile_fingerprint = ?`,
+	_, err := f.store.db.Exec(`UPDATE provider_consents SET revoked_by = 'test',
+		revoked_at = CURRENT_TIMESTAMP WHERE purpose = 'people_inference' AND fingerprint = ?`,
 		f.request.Generation.Policy.ProviderPolicyFingerprint)
 	requirements.NoError(err)
 	_, err = f.store.ApplyPersonSweep(t.Context(), f.request)

@@ -1,6 +1,8 @@
 package store
 
 import (
+	"bytes"
+	"compress/zlib"
 	"context"
 	"database/sql"
 	"fmt"
@@ -1346,9 +1348,9 @@ func TestCopySubsetExcludesDocumentDerivativesAndHostedConsent(t *testing.T) {
 		VALUES (?, 'openai_compatible', 'https://api.example.test/v1',
 		        'gpt-test', 'TEST_KEY', 'zero_retention', 'no_training',
 		        '["conversation_text"]', '2025-01-01', '{}');
-		INSERT INTO person_inference_consents
-			(profile_fingerprint, granted_by)
-		VALUES (?, 'cli');
+		INSERT INTO provider_consents
+			(purpose, id, fingerprint, granted_by)
+		VALUES ('people_inference', 1, ?, 'cli');
 		INSERT INTO person_semantic_embedding_profiles
 			(fingerprint, purpose, destination, api_format, model, api_key_env,
 			 retention_posture, training_posture, renderer_policy,
@@ -1357,9 +1359,9 @@ func TestCopySubsetExcludesDocumentDerivativesAndHostedConsent(t *testing.T) {
 		        'openai', 'synthetic-model', 'TEST_KEY', 'zero_data_retention',
 		        'no_training', 'person-semantic-v1', '["person_display_name"]',
 		        'all_durable_people', '{}');
-		INSERT INTO person_semantic_embedding_consents
-			(profile_fingerprint, granted_by)
-		VALUES (?, 'cli')`,
+		INSERT INTO provider_consents
+			(purpose, id, fingerprint, granted_by)
+		VALUES ('person_semantic_embedding', 1, ?, 'cli')`,
 		fingerprint, fingerprint, strings.Repeat("b", 64), strings.Repeat("c", 64), strings.Repeat("d", 64),
 		strings.Repeat("e", 64), strings.Repeat("e", 64),
 		strings.Repeat("f", 64), strings.Repeat("f", 64),
@@ -1377,8 +1379,7 @@ func TestCopySubsetExcludesDocumentDerivativesAndHostedConsent(t *testing.T) {
 		"document_extraction_rebuilds", "document_extraction_rebuild_targets",
 		"document_extraction_heads", "document_units", "document_chunks", "document_chunk_spans",
 		"document_occurrences", "document_extraction_claims",
-		"person_inference_profiles", "person_inference_consents",
-		"person_semantic_embedding_profiles", "person_semantic_embedding_consents",
+		"person_inference_profiles", "person_semantic_embedding_profiles", "provider_consents",
 	} {
 		var count int
 		require.NoError(destination.QueryRow(`SELECT COUNT(*) FROM `+table).Scan(&count), table)
@@ -1410,8 +1411,8 @@ func TestCopySubsetExcludesPersonEnrichmentSuppressionAndOperations(t *testing.T
 			 endpoint, api_key_env, policy_json)
 		 VALUES (?, 'subset-provider', 'exa', 'https://provider.example.test',
 			 'https://provider.example.test/search', 'SUBSET_PROVIDER_KEY', '{}')`, []any{fingerprint}},
-		{`INSERT INTO person_enrichment_consents
-			(profile_fingerprint, granted_by) VALUES (?, 'subset-test')`, []any{fingerprint}},
+		{`INSERT INTO provider_consents
+			(purpose, id, fingerprint, granted_by) VALUES ('person_enrichment', 1, ?, 'subset-test')`, []any{fingerprint}},
 		{`INSERT INTO person_enrichment_suppressions
 			(provider_namespace, identifier_class, normalization_version, key_id,
 			 digest, reason, actor)
@@ -1485,7 +1486,7 @@ func TestCopySubsetExcludesPersonEnrichmentSuppressionAndOperations(t *testing.T
 
 	tables := []string{
 		"person_enrichment_profiles",
-		"person_enrichment_consents",
+		"provider_consents",
 		"person_enrichment_suppressions",
 		"person_enrichment_runs",
 		"person_enrichment_manual_run_targets",
@@ -4978,4 +4979,104 @@ func TestCopySubsetReleasesReviewMappingsWhoseAcceptedEdgeWasFiltered(t *testing
 			"next projection")
 	require.Len(copied.Residue, 2)
 	assert.Equal("RELATED", copied.Residue[1].Property.Name)
+}
+
+func TestCopySubsetKeepsAccountAttributionConsistent(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	srcDB := createTestSourceDB(t, t.TempDir(), 3)
+	db, err := sql.Open("sqlite3", srcDB)
+	require.NoError(err)
+	for _, stmt := range []string{
+		// Message 1 (alice to bob) stays in source 1; messages 2 and 3 (bob
+		// to charlie) move to source 2, so only source 2 uses charlie.
+		`INSERT INTO sources (id, source_type, identifier) VALUES (2, 'gmail', 'other@example.com')`,
+		`UPDATE messages SET source_id = 2 WHERE id IN (2, 3)`,
+		`UPDATE messages SET account_address = 'work@example.org', account_path = 'inbound'`,
+		// Message 1 predates attribution: pending, with an alias named only
+		// in its stored delivery headers.
+		`UPDATE messages SET account_address = NULL, account_path = NULL WHERE id = 1`,
+		`INSERT INTO account_identities (source_id, address, address_key, source_signal) VALUES
+			(1, 'hidden@example.org', 'hidden@example.org', 'manual'),
+			(1, 'charlie@example.com', 'charlie@example.com', 'manual'),
+			(1, 'unused@example.org', 'unused@example.org', 'manual'),
+			(2, 'work@example.org', 'work@example.org', 'manual')`,
+	} {
+		_, err = db.Exec(stmt)
+		require.NoError(err, stmt)
+	}
+	var raw bytes.Buffer
+	zw := zlib.NewWriter(&raw)
+	_, err = zw.Write([]byte("X-Delivered-To: hidden@example.org\r\n\r\nbody"))
+	require.NoError(err)
+	require.NoError(zw.Close())
+	_, err = db.Exec(`INSERT INTO message_raw (message_id, raw_data, raw_format, compression)
+		VALUES (1, ?, 'mime', 'zlib')`, raw.Bytes())
+	require.NoError(err)
+	require.NoError(db.Close())
+
+	copiedIdentities := func(includeIdentity bool) []string {
+		dstDir := filepath.Join(t.TempDir(), "dst")
+		_, err := CopySubset(srcDB, dstDir, 3, includeIdentity)
+		require.NoError(err)
+		dst, err := Open(filepath.Join(dstDir, "msgvault.db"))
+		require.NoError(err)
+		t.Cleanup(func() { _ = dst.Close() })
+		require.NoError(dst.InitSchema())
+		rows, err := dst.DB().Query(`SELECT source_id || ':' || address_key FROM account_identities
+			ORDER BY source_id, address_key`)
+		require.NoError(err)
+		defer func() { _ = rows.Close() }()
+		var keys []string
+		for rows.Next() {
+			var key string
+			require.NoError(rows.Scan(&key))
+			keys = append(keys, key)
+		}
+		require.NoError(rows.Err())
+		return keys
+	}
+	assert.Equal([]string{"1:hidden@example.org", "2:work@example.org"}, copiedIdentities(false),
+		"each source keeps only the addresses its own messages use, including a pending message's headers")
+	assert.Equal([]string{
+		"1:charlie@example.com", "1:hidden@example.org", "1:unused@example.org", "2:work@example.org",
+	}, copiedIdentities(true), "--include-identity copies every confirmed address of an included source")
+}
+
+func TestCopySubsetKeepsPendingDraftOutOfReceived(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	srcDB := createTestSourceDB(t, t.TempDir(), 3)
+	db, err := sql.Open("sqlite3", srcDB)
+	require.NoError(err)
+	// Message 1 (alice to bob) is a draft archived before attribution: its
+	// only draft evidence is an IMAP \Draft flag, which subsets do not copy.
+	for _, stmt := range []string{
+		`UPDATE messages SET account_address = NULL, account_path = NULL, draft_authored = FALSE`,
+		`INSERT INTO imap_message_memberships (source_id, mailbox, uidvalidity, uid, message_id, flags)
+		 VALUES (1, 'Scratch', 7, 1, 1, '["\\Draft"]')`,
+		`INSERT INTO account_identities (source_id, address, address_key, source_signal)
+		 VALUES (1, 'bob@example.com', 'bob@example.com', 'manual')`,
+	} {
+		_, err = db.Exec(stmt)
+		require.NoError(err, stmt)
+	}
+	require.NoError(db.Close())
+
+	dstDir := filepath.Join(t.TempDir(), "dst")
+	_, err = CopySubset(srcDB, dstDir, 3, false)
+	require.NoError(err)
+	dst, err := Open(filepath.Join(dstDir, "msgvault.db"))
+	require.NoError(err)
+	t.Cleanup(func() { _ = dst.Close() })
+	require.NoError(dst.InitSchema())
+	_, err = dst.RepairAccountAttributionContext(t.Context(), 1, nil)
+	require.NoError(err)
+
+	var authored bool
+	var path sql.NullString
+	require.NoError(dst.DB().QueryRow(`SELECT draft_authored, account_path FROM messages WHERE id = 1`).
+		Scan(&authored, &path))
+	assert.True(authored, "the subset keeps the draft mark its IMAP flag gave it")
+	assert.Equal(accountPathSent, path.String, "a copied draft is written, not received")
 }

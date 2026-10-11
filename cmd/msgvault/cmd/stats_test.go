@@ -318,7 +318,10 @@ func TestPrintStats_ThousandsGroupingUniform(t *testing.T) {
 		LabelCount:      1183,
 		SourceCount:     12345,
 		DatabaseSize:    1024 * 1024,
-	})
+	}, true)
+	var zero bytes.Buffer
+	printStats(&zero, &store.Stats{}, true)
+	assert.Contains(zero.String(), "Size:        0.00 MB")
 	got := out.String()
 	assert.Contains(got, "Messages:    2,470,176", "messages grouped")
 	assert.Contains(got, "Threads:     561,070", "threads grouped")

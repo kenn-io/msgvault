@@ -971,3 +971,59 @@ func TestRequestEditorDelegatedMode(t *testing.T) {
 		assert.Empty(t, gotAPIKey, "X-Api-Key must not be set in delegated mode")
 	})
 }
+
+func TestErrorResponseBodiesAreBounded(t *testing.T) {
+	for _, size := range []int{maxErrorBodyBytes - 1, maxErrorBodyBytes, maxErrorBodyBytes + 1} {
+		for _, eofWithData := range []bool{false, true} {
+			t.Run(fmt.Sprintf("size-%d-eof-with-data-%t", size, eofWithData), func(t *testing.T) {
+				must := require.New(t)
+				resp := boundErrorBody(&http.Response{StatusCode: http.StatusBadRequest, Body: &boundaryErrorReader{
+					Reader: strings.NewReader(strings.Repeat("x", size)), eofWithData: eofWithData,
+				}})
+				t.Cleanup(func() { must.NoError(resp.Body.Close()) })
+				body := resp.Body
+				p := make([]byte, maxErrorBodyBytes+1)
+				n, err := body.Read(p)
+				assert.Equal(t, size, n)
+				if size > maxErrorBodyBytes {
+					must.ErrorContains(err, "exceeds 64 KiB")
+				} else {
+					if eofWithData {
+						must.ErrorIs(err, io.EOF)
+					} else {
+						must.NoError(err)
+					}
+					_, err = body.Read(p)
+					must.ErrorIs(err, io.EOF)
+				}
+			})
+		}
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = io.WriteString(w, strings.Repeat("x", 80<<10))
+	}))
+	t.Cleanup(srv.Close)
+	client, err := New(Config{URL: srv.URL, AllowInsecure: true})
+	require.NoError(t, err)
+
+	_, _, err = client.GetCLIAccounts(t.Context())
+	require.ErrorContains(t, err, "exceeds 64 KiB")
+}
+
+type boundaryErrorReader struct {
+	*strings.Reader
+
+	eofWithData bool
+}
+
+func (r *boundaryErrorReader) Read(p []byte) (int, error) {
+	n, err := r.Reader.Read(p)
+	if r.eofWithData && r.Len() == 0 {
+		err = io.EOF
+	}
+	return n, err
+}
+
+func (r *boundaryErrorReader) Close() error { return nil }

@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/carddav"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -1062,7 +1063,7 @@ func TestCardDAVAccountSaveSerializesCompleteCredentialTransition(t *testing.T) 
 	select {
 	case <-secondFactoryCalled:
 		assert.Fail("second save entered the transition while the first save was in discovery")
-	case <-time.After(50 * time.Millisecond):
+	case <-time.After(50 * time.Millisecond): //nolint:kennlint // absence check: the first save holds the transition in discovery
 	}
 	close(firstRelease)
 	for range 2 {
@@ -1345,6 +1346,14 @@ func TestCardDAVPublicationTooLargeResponses(t *testing.T) {
 				"/api/v1/carddav/publications/7"+route.suffix, route.body)
 			require.Equal(http.StatusRequestEntityTooLarge, resp.Code, resp.Body.String())
 			assert.Contains(resp.Body.String(), `"error":"carddav_preview_too_large"`)
+			if route.method == http.MethodPost {
+				tooLarge := &carddav.ContactTooLargeError{PersonID: 7, Err: errors.Join(carddav.ErrMicrosoftContactTooLarge, &carddav.StatusError{StatusCode: http.StatusRequestEntityTooLarge})}
+				resp = cardDAVRouteResponse(t, cardDAVErrorFixture{mutateErr: tooLarge}, route.method,
+					"/api/v1/carddav/publications/7"+route.suffix, route.body)
+				require.Equal(http.StatusRequestEntityTooLarge, resp.Code, resp.Body.String())
+				assert.Contains(resp.Body.String(), `"error":"microsoft_contact_too_large"`)
+				assert.Contains(resp.Body.String(), operations.MicrosoftContactTooLargeMessage(7))
+			}
 			path := document.Paths["/api/v1/carddav/publications/{person_id}"+route.suffix]
 			require.NotNil(path)
 			operation := path.Post
@@ -1355,6 +1364,20 @@ func TestCardDAVPublicationTooLargeResponses(t *testing.T) {
 			assert.Contains(operation.Responses, "413")
 		})
 	}
+	t.Run("POST sync", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		tooLarge := &carddav.ContactTooLargeError{PersonID: 7, Err: carddav.ErrMicrosoftContactTooLarge}
+		resp := cardDAVRouteResponse(t, cardDAVErrorFixture{syncErr: tooLarge}, http.MethodPost, "/api/v1/carddav/sync", `{}`)
+		require.Equal(http.StatusRequestEntityTooLarge, resp.Code, resp.Body.String())
+		assert.Contains(resp.Body.String(), `"error":"microsoft_contact_too_large"`)
+		assert.Contains(resp.Body.String(), operations.FixedPublicError(operations.PublicErrorMicrosoftContactTooLarge).Message)
+		assert.NotContains(resp.Body.String(), "Person 7")
+		path := document.Paths["/api/v1/carddav/sync"]
+		require.NotNil(path)
+		require.NotNil(path.Post)
+		assert.Contains(path.Post.Responses, "413")
+	})
 }
 
 func TestCardDAVPublicationPreviewAndApprovalRoutes(t *testing.T) {
@@ -1464,6 +1487,7 @@ func TestCardDAVRoutesMapValidationMissingConflictAndStorageStatuses(t *testing.
 	const roles = `{"write_target":false,"subscribed":true,"lookup_source":false}`
 	tests := []struct {
 		name, method, path, body string
+		code, message            string
 		service                  CardDAVOperations
 		want                     int
 	}{
@@ -1479,6 +1503,8 @@ func TestCardDAVRoutesMapValidationMissingConflictAndStorageStatuses(t *testing.
 		{name: "resolution validation", method: http.MethodPost, path: "/api/v1/carddav/conflicts/7/resolve", body: `{"choice":"invalid"}`, service: cardDAVErrorFixture{resolveErr: carddav.ErrInvalidResolutionChoice}, want: http.StatusBadRequest},
 		{name: "conflict missing", method: http.MethodPost, path: "/api/v1/carddav/conflicts/7/resolve", body: `{"choice":"keep_remote"}`, service: cardDAVErrorFixture{resolveErr: store.ErrCardDAVConflictNotFound}, want: http.StatusNotFound},
 		{name: "conflict stale", method: http.MethodPost, path: "/api/v1/carddav/conflicts/7/resolve", body: `{"choice":"keep_remote"}`, service: cardDAVErrorFixture{resolveErr: store.ErrCardDAVConflictStale}, want: http.StatusConflict},
+		{name: "remote protected", method: http.MethodPost, path: "/api/v1/carddav/conflicts/7/resolve", body: `{"choice":"keep_remote"}`, service: cardDAVErrorFixture{resolveErr: fmt.Errorf("%w: private detail", store.ErrCardDAVRemoteProtected)}, want: http.StatusConflict, code: "carddav_remote_protected", message: "The remote card would overwrite a value added in msgvault or another address book. Keep local, or restore that value in the address book and sync again."},
+		{name: "remote invalid", method: http.MethodPost, path: "/api/v1/carddav/conflicts/7/resolve", body: `{"choice":"keep_remote"}`, service: cardDAVErrorFixture{resolveErr: fmt.Errorf("%w: private detail", store.ErrCardDAVRemoteInvalid)}, want: http.StatusConflict, code: "carddav_remote_invalid", message: "The remote card has values that cannot be published, such as an invalid preference or location. Fix them in the address book and sync again, or keep local."},
 		{name: "conflict storage", method: http.MethodPost, path: "/api/v1/carddav/conflicts/7/resolve", body: `{"choice":"keep_remote"}`, service: cardDAVErrorFixture{resolveErr: errors.New("database unavailable")}, want: http.StatusInternalServerError},
 		{name: "sync stale", method: http.MethodPost, path: "/api/v1/carddav/sync", body: `{}`, service: cardDAVErrorFixture{syncErr: store.ErrCardDAVStalePlan}, want: http.StatusConflict},
 		{name: "sync already active", method: http.MethodPost, path: "/api/v1/carddav/sync", body: `{}`, service: cardDAVErrorFixture{syncErr: store.ErrCardDAVSyncActive}, want: http.StatusConflict},
@@ -1492,6 +1518,9 @@ func TestCardDAVRoutesMapValidationMissingConflictAndStorageStatuses(t *testing.
 		t.Run(tt.name, func(t *testing.T) {
 			resp := cardDAVRouteResponse(t, tt.service, tt.method, tt.path, tt.body)
 			assert.Equal(t, tt.want, resp.Code, resp.Body.String())
+			if tt.code != "" {
+				assert.JSONEq(t, fmt.Sprintf(`{"error":%q,"message":%q}`, tt.code, tt.message), resp.Body.String())
+			}
 		})
 	}
 }

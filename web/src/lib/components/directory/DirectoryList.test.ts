@@ -4,9 +4,9 @@ import { describe, expect, it, vi } from 'vitest';
 import DirectoryList from './DirectoryList.svelte';
 
 const rows = [
-  { id: 1, revision: 1, display_name: 'Alpha Fixture', contact_state: 'active', categories: [], organizations: [] },
-  { id: 2, revision: 1, display_name: 'Bravo Fixture', contact_state: 'active', categories: [], organizations: [] },
-  { id: 3, revision: 1, display_name: 'Charlie Fixture', contact_state: 'inactive', categories: [], organizations: [] }
+  { id: 1, revision: 1, vcard_uid: 'person-1', carddav_bindings: [], display_name: 'Alpha Fixture', contact_state: 'active', categories: [], organizations: [] },
+  { id: 2, revision: 1, vcard_uid: 'person-2', carddav_bindings: [], display_name: 'Bravo Fixture', contact_state: 'active', categories: [], organizations: [] },
+  { id: 3, revision: 1, vcard_uid: 'person-3', carddav_bindings: [], display_name: 'Charlie Fixture', contact_state: 'inactive', categories: [], organizations: [] }
 ];
 
 describe('DirectoryList', () => {
@@ -33,6 +33,35 @@ describe('DirectoryList', () => {
     expect(onSelect).toHaveBeenCalledWith(1);
     await fireEvent.keyDown(alpha, { key: 'Enter' });
     expect(onSelect).toHaveBeenCalledTimes(2);
+  });
+
+  it('leaves Space on a row checkbox to the checkbox instead of opening the person', async () => {
+    const onSelect = vi.fn();
+    render(DirectoryList, {
+      rows, loading: false, loadingMore: false, error: null, pageError: null, pageRecovery: null,
+      hasMore: false, selectedPersonID: null, onSelect, onLoadMore: vi.fn(), onReload: vi.fn()
+    });
+    const checkbox = screen.getByRole('checkbox', { name: 'Select Bravo Fixture' });
+    checkbox.focus();
+
+    const notPrevented = await fireEvent.keyDown(checkbox, { key: ' ' });
+
+    expect(notPrevented).toBe(true);
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(checkbox);
+  });
+
+  it('lists each failed deletion with the server message that explains how to unblock it', () => {
+    render(DirectoryList, {
+      rows, loading: false, loadingMore: false, error: null, pageError: null, pageRecovery: null,
+      hasMore: false, selectedPersonID: null, onSelect: vi.fn(), onLoadMore: vi.fn(), onReload: vi.fn(),
+      bulkMessage: '1 deleted; 1 could not be deleted:', bulkError: true,
+      bulkFailures: [{ name: 'Bravo Fixture', message: 'Unpublish this person from CardDAV before deleting it' }]
+    });
+
+    const alert = screen.getByRole('alert');
+    expect(alert.textContent).toContain('1 deleted; 1 could not be deleted:');
+    expect(alert.textContent).toContain('Bravo Fixture: Unpublish this person from CardDAV before deleting it');
   });
 
   it('offers Reload without Load more when the retained cursor needs page-one recovery', () => {

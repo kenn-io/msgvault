@@ -33,6 +33,7 @@ type PersonProfileStore interface {
 		ctx context.Context, participantID int64, displayName *string,
 	) (*store.Person, bool, error)
 	GetPersonContext(ctx context.Context, id int64) (*store.Person, error)
+	GetPersonByUIDContext(ctx context.Context, uid string) (*store.Person, error)
 	ListPersonsContext(ctx context.Context) ([]store.Person, error)
 	DirectoryPeoplePageContext(ctx context.Context, query store.DirectoryPeopleQuery) (*store.DirectoryPeoplePage, error)
 	UpdatePersonDisplayNameContext(
@@ -136,6 +137,17 @@ func (s *Server) registerPersonProfileRoutes(api huma.API) {
 	addPersonETagHeader(get.Responses[httpStatusKey(http.StatusOK)])
 	addErrorResponses(api, get.Responses, http.StatusNotFound, http.StatusServiceUnavailable)
 	registerRawHumaRoute(api, get, s.handleGetPersonProfile)
+
+	getByUID := rawAPIV1Operation("getPersonByUID", http.MethodGet,
+		"/people/by-uid", "Look up a durable person by vCard or CardDAV UID")
+	getByUID.Description = "Resolves the person's current vCard UID, a retired UID that still aliases the person, " +
+		"or the UID of a CardDAV resource mapped to the person. Returns a conflict when one remote UID maps to " +
+		"different people."
+	addPersonUIDParameter(&getByUID)
+	getByUID.Responses = jsonResponsesFor[store.Person](api)
+	addErrorResponses(api, getByUID.Responses, http.StatusBadRequest, http.StatusNotFound,
+		http.StatusConflict, http.StatusServiceUnavailable)
+	registerRawHumaRoute(api, getByUID, s.handleGetPersonByUID)
 
 	patch := rawAPIV1Operation("patchPerson", http.MethodPatch, "/people/{id}", "Update a durable person's display name")
 	addPersonIDParameter(&patch)
@@ -309,6 +321,24 @@ func (s *Server) handleGetPersonProfile(w http.ResponseWriter, r *http.Request) 
 	writePerson(w, http.StatusOK, person)
 }
 
+func (s *Server) handleGetPersonByUID(w http.ResponseWriter, r *http.Request) {
+	profiles, ok := s.personProfileStore(w)
+	if !ok {
+		return
+	}
+	uid := strings.TrimSpace(r.URL.Query().Get("uid"))
+	if uid == "" {
+		writeError(w, http.StatusBadRequest, "invalid_person_uid", "vCard UID must not be empty")
+		return
+	}
+	person, err := profiles.GetPersonByUIDContext(r.Context(), uid)
+	if err != nil {
+		s.writePersonError(w, err)
+		return
+	}
+	writePerson(w, http.StatusOK, person)
+}
+
 func (s *Server) handleListPeople(w http.ResponseWriter, r *http.Request) {
 	profiles, ok := s.personProfileStore(w)
 	if !ok {
@@ -455,6 +485,8 @@ func (s *Server) writePersonError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, store.ErrPersonNotFound):
 		writeError(w, http.StatusNotFound, "person_profile_not_found", "Person profile not found")
+	case errors.Is(err, store.ErrPersonUIDAmbiguous):
+		writeError(w, http.StatusConflict, "person_uid_ambiguous", "UID is bound to multiple person profiles")
 	case errors.Is(err, store.ErrPersonRevisionConflict):
 		writeError(w, http.StatusConflict, "person_revision_conflict", "Person profile changed; reload and retry")
 	case errors.Is(err, store.ErrPersonBindingConflict):
@@ -492,6 +524,15 @@ func addPersonIDParameter(operation *huma.Operation) {
 	operation.Parameters = append(operation.Parameters, &huma.Param{
 		Name: "id", In: pathKey, Required: true, Description: "Durable person ID",
 		Schema: &huma.Schema{Type: huma.TypeInteger, Format: formatInt64},
+	})
+}
+
+func addPersonUIDParameter(operation *huma.Operation) {
+	minimumLength := 1
+	operation.Parameters = append(operation.Parameters, &huma.Param{
+		Name: "uid", In: "query", Required: true,
+		Description: "Exact vCard UID or CardDAV resource UID",
+		Schema:      &huma.Schema{Type: huma.TypeString, MinLength: &minimumLength},
 	})
 }
 

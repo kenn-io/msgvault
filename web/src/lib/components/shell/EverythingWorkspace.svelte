@@ -841,14 +841,16 @@
   .everything-workspace {
     display: flex;
     width: 100%;
+    min-width: 0;
     min-height: 0;
     flex: 1;
     flex-direction: column;
     gap: var(--space-4);
     padding: var(--space-5) var(--page-gutter) var(--space-4);
+    overflow: hidden;
   }
 
-  .meeting-overview { max-height: 42vh; overflow: auto; flex: none; border: 1px solid var(--border-muted); }
+  .meeting-overview { width: 100%; max-width: 100%; min-width: 0; max-height: 42vh; overflow-x: hidden; overflow-y: auto; flex: none; }
 
   .scope-note {
     margin: 0;

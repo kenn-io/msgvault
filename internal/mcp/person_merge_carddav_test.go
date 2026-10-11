@@ -146,7 +146,8 @@ func TestMCPCardDAVUnavailableErrorIsActionable(t *testing.T) {
 func TestMCPPersonCardDAVCompletionPublicationAndSyncRoutes(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	const privateCard = "BEGIN:VCARD\r\nVERSION:4.0\r\nFN:Private\\, Test\r\nEND:VCARD\r\n"
+	photoData := strings.Repeat("QUJD", 12*1024)
+	privateCard := "BEGIN:VCARD\r\nVERSION:4.0\r\nFN:Private\\, Test\r\nPHOTO:data:image/png;base64," + photoData + "\r\nEMAIL:contact@example.com\r\nEND:VCARD\r\n"
 	var approved atomic.Bool
 	var syncBlocked atomic.Bool
 	syncBlocked.Store(true)
@@ -166,6 +167,11 @@ func TestMCPPersonCardDAVCompletionPublicationAndSyncRoutes(t *testing.T) {
 			}
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				assert.NoError(err)
+				return
+			}
+			if body.Token == "too-large" {
+				w.WriteHeader(http.StatusRequestEntityTooLarge)
+				_, _ = w.Write([]byte(`{"error":"microsoft_contact_too_large","message":"Private Test must not appear here"}`))
 				return
 			}
 			if body.Token != "token-1" {
@@ -199,15 +205,24 @@ func TestMCPPersonCardDAVCompletionPublicationAndSyncRoutes(t *testing.T) {
 	assert.Equal(true, toolStructuredContent(t, publication)["inference_review_required"])
 	preview := rawCallTool(t, opts, ToolPreviewCardDAVPublication, map[string]any{"person_id": float64(7)})
 	assert.Equal(privateCard, toolStructuredContent(t, preview)["vcard"])
+	assert.Equal("token-1", toolStructuredContent(t, preview)["approval_token"])
 	stale := confirmedCallTool(t, opts, ToolApproveCardDAVPublication, map[string]any{"person_id": float64(7), "approval_token": "old-token"}, true)
 	assert.Equal(true, stale["isError"])
 	assert.Contains(fmt.Sprint(stale), "carddav_review_stale")
 	assert.NotContains(fmt.Sprint(stale), "Private Test")
 	assert.False(approved.Load())
+	tooLarge := confirmedCallTool(t, opts, ToolApproveCardDAVPublication, map[string]any{"person_id": float64(7), "approval_token": "too-large"}, true)
+	assert.Equal(true, tooLarge["isError"])
+	assert.Contains(fmt.Sprint(tooLarge), "daemon request failed (413, microsoft_contact_too_large): Person 7's contact is over Outlook's 4 MB limit.")
+	assert.NotContains(fmt.Sprint(tooLarge), "Private Test")
 	approvedResult := confirmedCallTool(t, opts, ToolApproveCardDAVPublication, map[string]any{"person_id": float64(7), "approval_token": "token-1"}, true, func(message string) {
 		assert.Contains(message, `"Private, Test" (person 7)`)
 		assert.Contains(message, "Personal")
 		assert.Contains(message, "queues")
+		assert.Contains(message, "[inline PHOTO, 49174 encoded bytes]")
+		assert.Contains(message, "EMAIL:contact@example.com")
+		assert.NotContains(message, photoData)
+		assert.Less(len(message), 2048)
 	})
 	assert.NotEqual(true, approvedResult["isError"])
 	assert.True(approved.Load())

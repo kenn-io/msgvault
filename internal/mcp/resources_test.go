@@ -625,9 +625,18 @@ func TestMCPDaemonRequestErrorsBecomeSafeToolResults(t *testing.T) {
 			name: "body search index unavailable", path: "/api/v1/search/deep",
 			code: "body_search_index_unavailable", status: http.StatusServiceUnavailable,
 			tool: ToolSearchMessageBodies, args: map[string]any{"query": "needle"},
-			want: "body_search_index_unavailable: message body search index is unavailable",
+			want: "body_search_index_unavailable: message body search index is unavailable; ask the archive owner to search or run rebuild-fts, then retry",
 			opts: func(client *daemonclient.Client) ServeOptions {
 				return ServeOptions{Engine: daemonclient.NewEngineAdapter(client)}
+			},
+		},
+		{
+			name: "hybrid account operator", path: "/api/v1/search", code: "unsupported_filter_mode",
+			status: http.StatusBadRequest, tool: ToolSemanticSearchMessages,
+			args: map[string]any{"query": "needle", "mode": searchModeHybrid},
+			want: "unsupported_filter_mode: a filter is not supported in this search mode",
+			opts: func(client *daemonclient.Client) ServeOptions {
+				return ServeOptions{Engine: &querytest.MockEngine{}, HybridSearcher: task4DaemonHybridErrorSearcher{client}}
 			},
 		},
 		{

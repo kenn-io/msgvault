@@ -19,7 +19,7 @@ import (
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
-	"github.com/duckdb/duckdb-go/v2"
+	"go.kenn.io/msgvault/internal/duckdbutil"
 	"go.kenn.io/msgvault/internal/explorecatalog"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
@@ -39,12 +39,13 @@ const (
 )
 
 type ExploreFilter struct {
-	Dimension string   `json:"dimension" enum:"source,participant,domain,message_type,mailing_list,after,before,deletion,identity"`
+	Dimension string   `json:"dimension" enum:"source,participant,domain,message_type,mailing_list,after,before,deletion,identity,account"`
 	Values    []string `json:"values" minItems:"1"`
 }
 
 // Explore filter dimension names, matching ExploreFilter.Dimension's enum tag.
 const (
+	exploreFilterAccount     = explorecatalog.FilterAccount
 	exploreFilterSource      = explorecatalog.FilterSource
 	exploreFilterParticipant = explorecatalog.FilterParticipant
 	exploreFilterDomain      = explorecatalog.FilterDomain
@@ -1002,6 +1003,15 @@ func exploreContext(filters []ExploreFilter) (query.Context, error) {
 			return result, fmt.Errorf("filter dimension %q requires at least one value", filter.Dimension)
 		}
 		switch filter.Dimension {
+		case exploreFilterAccount:
+			if len(filter.Values) != 1 {
+				return result, errors.New("account filter requires one virtual account key or email address")
+			}
+			scope, err := exploreAccountScope(filter.Values[0])
+			if err != nil {
+				return result, err
+			}
+			result.AccountScopes = append(result.AccountScopes, scope)
 		case exploreFilterSource:
 			ids := make([]int64, len(filter.Values))
 			for i, value := range filter.Values {
@@ -1437,6 +1447,7 @@ func (s *Server) resolveExploreSearch(ctx context.Context, w http.ResponseWriter
 // combined predicate can match no messages and the resolver should skip
 // the index entirely.
 func applyLexicalFilterPushdown(parsed *search.Query, filters query.Context) bool {
+	parsed.AccountScopes = append(parsed.AccountScopes, search.CloneAccountScopes(filters.AccountScopes)...)
 	if len(filters.SourceIDs) > 0 {
 		if len(parsed.AccountIDs) == 0 {
 			parsed.AccountIDs = slices.Clone(filters.SourceIDs)
@@ -1957,7 +1968,7 @@ func (s *Server) writeExploreError(ctx context.Context, w http.ResponseWriter, e
 		return
 	}
 	s.logger.Error("exploration failed", "error", err)
-	if resourceErr, ok := errors.AsType[*duckdb.Error](err); ok && resourceErr.Type == duckdb.ErrorTypeOutOfMemory {
+	if duckdbutil.IsOutOfMemory(err) {
 		writeError(w, http.StatusServiceUnavailable, "query_resource_exhausted",
 			"This query ran out of memory or temporary disk space. Try narrowing the results with filters. "+
 				"The person running msgvault can check available resources and increase analytics.query_memory_limit "+
@@ -1991,4 +2002,28 @@ func (s *Server) writeExploreUnavailable(
 		Error: "analytical_cache_unavailable", Message: "The committed analytical cache is unavailable",
 		Readiness: readiness, RecoveryAction: "Run msgvault build-cache --full-rebuild and retry",
 	})
+}
+
+// exploreAccountScope reads one account filter value: a virtual account key
+// from the account catalog, or an exact address matched on every source.
+func exploreAccountScope(value string) (search.AccountScope, error) {
+	if store.IsVirtualAccountKey(value) {
+		sourceID, address, unattributed, err := store.ParseVirtualAccountKey(value)
+		if err != nil {
+			return search.AccountScope{}, err
+		}
+		scope := search.AccountScope{SourceID: &sourceID, Unattributed: unattributed}
+		if !unattributed {
+			if address, err = search.ParseAccountAddress(address); err != nil {
+				return search.AccountScope{}, err
+			}
+			scope.Addresses = []string{address}
+		}
+		return scope, nil
+	}
+	address, err := search.ParseAccountAddress(value)
+	if err != nil {
+		return search.AccountScope{}, fmt.Errorf("account filter: %w", err)
+	}
+	return search.AccountScope{Addresses: []string{address}}, nil
 }

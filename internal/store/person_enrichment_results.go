@@ -505,15 +505,12 @@ func (s *Store) recheckPersonEnrichmentCommitTx(
 	if !tracked {
 		return enrichmentCommitDisposition{Status: personenrichment.ClaimPolicyRejected}, nil
 	}
-	var consentID int64
-	err = tx.QueryRowContext(ctx, `SELECT id FROM person_enrichment_consents
-		WHERE profile_fingerprint = ? AND revoked_at IS NULL ORDER BY id DESC LIMIT 1`+
-		s.dialect.SelectForUpdate(), profile.Fingerprint).Scan(&consentID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return enrichmentCommitDisposition{Status: personenrichment.ClaimPolicyRejected}, nil
-	}
+	active, err := lockActiveConsentTx(ctx, tx, s.dialect, ConsentPersonEnrichment, profile.Fingerprint)
 	if err != nil {
 		return enrichmentCommitDisposition{}, fmt.Errorf("lock enrichment consent: %w", err)
+	}
+	if !active {
+		return enrichmentCommitDisposition{Status: personenrichment.ClaimPolicyRejected}, nil
 	}
 	digests, err := commit.VerifiedReturnedIdentifierDigests()
 	if err != nil {

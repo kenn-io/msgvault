@@ -1045,8 +1045,7 @@ func (s *Store) AuthorizeAttemptPoll(
 		var active bool
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (
 			SELECT 1 FROM person_tracking tracked
-			JOIN person_enrichment_consents consent
-			  ON consent.profile_fingerprint = ? AND consent.revoked_at IS NULL
+			JOIN `+activeConsentsSQL(ConsentPersonEnrichment)+` consent ON consent.fingerprint = ?
 			WHERE tracked.person_id = ?)`, token.ProfileFingerprint,
 			token.WorkPersonID).Scan(&active); err != nil {
 			return fmt.Errorf("check person enrichment poll authority: %w", err)
@@ -1113,8 +1112,7 @@ func (s *Store) AuthorizeAttemptDispatch(
 		var active bool
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (
 			SELECT 1 FROM person_tracking tracked
-			JOIN person_enrichment_consents consent
-			  ON consent.profile_fingerprint = ? AND consent.revoked_at IS NULL
+			JOIN `+activeConsentsSQL(ConsentPersonEnrichment)+` consent ON consent.fingerprint = ?
 			WHERE tracked.person_id = ?)`, token.ProfileFingerprint,
 			token.WorkPersonID).Scan(&active); err != nil {
 			return fmt.Errorf("check person enrichment dispatch authority: %w", err)

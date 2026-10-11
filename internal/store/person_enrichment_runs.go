@@ -148,8 +148,7 @@ func (s *Store) StartManualPersonEnrichmentRunContext(
 		var authorized bool
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (
 			SELECT 1 FROM person_tracking pt
-			JOIN person_enrichment_consents c
-			  ON c.profile_fingerprint = ? AND c.revoked_at IS NULL
+			JOIN `+activeConsentsSQL(ConsentPersonEnrichment)+` c ON c.fingerprint = ?
 			WHERE pt.person_id = ?)`, profileFingerprint, personID).Scan(&authorized); err != nil {
 			return fmt.Errorf("authorize manual person enrichment run: %w", err)
 		}

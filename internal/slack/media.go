@@ -9,7 +9,6 @@ import (
 	"net/url"
 	"sort"
 	"strings"
-	"time"
 
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/export"
@@ -75,21 +74,6 @@ func fetchableURL(rawURL string) (string, error) {
 	return u.String(), nil
 }
 
-// mediaTimeout bounds one file download. The API client's 60s whole-request
-// timeout starves large files on slow links (~14 Mbps just to move the
-// default 100 MiB cap before the deadline), permanently pending perfectly
-// valid files — every backfill retry hits the same wall. The bound scales
-// with the size cap at a ~128 KiB/s floor rate with a generous minimum, so
-// any download making modest progress completes, while remaining finite:
-// an unattended scheduled sync must never hang forever on a stalled read.
-func mediaTimeout(maxBytes int64) time.Duration {
-	scaled := time.Duration(maxBytes/(128<<10)) * time.Second
-	if scaled < 10*time.Minute {
-		return 10 * time.Minute
-	}
-	return scaled
-}
-
 // DownloadFile fetches a files.slack.com URL with the bearer token, capped at
 // maxBytes. Redirects are refused entirely: a redirect off-host would carry
 // the token, and same-host redirects do not occur in practice.
@@ -104,7 +88,7 @@ func (c *Client) DownloadFile(ctx context.Context, rawURL string, maxBytes int64
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	client := &http.Client{
-		Timeout: mediaTimeout(maxBytes),
+		Timeout: attachmentpolicy.DownloadTimeout(maxBytes),
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return fmt.Errorf("refusing redirect to %s: %w", req.URL.Host, errOffHost)
 		},
@@ -150,7 +134,7 @@ func (c *Client) DownloadFile(ctx context.Context, rawURL string, maxBytes int64
 // leaves downloaded bytes orphaned in CAS with no marker, invisible to
 // backfill forever, so the run must stop rather than advance past it.
 func (imp *Importer) persistFiles(ctx context.Context, syncID, messageID int64, m *Message, opts ImportOptions, sum *ImportSummary) error {
-	existing, err := imp.store.MessageSlackAttachments(messageID)
+	existing, err := imp.store.MessageSlackAttachmentsContext(ctx, messageID)
 	if err != nil {
 		return fmt.Errorf("read attachment rows: %w", err)
 	}
@@ -213,7 +197,7 @@ func (imp *Importer) persistFiles(ctx context.Context, syncID, messageID int64, 
 
 		// pend leaves a retryable marker; link records metadata permanently.
 		pend := func(status, kind string, err error) {
-			imp.recordItem(syncID, sourceMessageID("", m.TS), "attachment", status, kind, err)
+			imp.recordItem(ctx, syncID, sourceMessageID("", m.TS), "attachment", status, kind, err)
 			if status == store.SyncRunItemStatusSkipped {
 				pendingRow.State = attachmentpolicy.StateSkipped
 				pendingRow.SkipReason = attachmentpolicy.SkipSizeCap
@@ -255,7 +239,7 @@ func (imp *Importer) persistFiles(ctx context.Context, syncID, messageID int64, 
 			}
 			pendingRow.State = attachmentpolicy.StateSkipped
 			pendingRow.SkipReason = reason
-			imp.recordItem(syncID, sourceMessageID("", m.TS), "attachment",
+			imp.recordItem(ctx, syncID, sourceMessageID("", m.TS), "attachment",
 				store.SyncRunItemStatusSkipped, "slack_media_policy", nil)
 			refs = append(refs, pendingRow)
 			sum.AttachmentsSkipped++
@@ -278,7 +262,7 @@ func (imp *Importer) persistFiles(ctx context.Context, syncID, messageID int64, 
 			// Slack can keep file metadata after the backing bytes have been
 			// deleted. Preserve the permalink and file provenance as a
 			// metadata-only link, but terminate retry debt that can never pay.
-			imp.recordItem(syncID, sourceMessageID("", m.TS), "attachment",
+			imp.recordItem(ctx, syncID, sourceMessageID("", m.TS), "attachment",
 				store.SyncRunItemStatusSkipped, "slack_media_gone", derr)
 			refs = append(refs, linkRow)
 			continue
@@ -333,10 +317,10 @@ func (imp *Importer) persistFiles(ctx context.Context, syncID, messageID int64, 
 		}
 		refs = append(refs, ref)
 	}
-	if err := imp.store.ReplaceMessageSlackAttachments(messageID, refs); err != nil {
+	if err := imp.store.ReplaceMessageSlackAttachmentsContext(ctx, messageID, refs); err != nil {
 		return fmt.Errorf("replace attachment rows: %w", err)
 	}
-	if err := imp.store.RecomputeMessageAttachmentStats(messageID); err != nil {
+	if err := imp.store.RecomputeMessageAttachmentStatsContext(ctx, messageID); err != nil {
 		return fmt.Errorf("recompute attachment stats: %w", err)
 	}
 	return nil

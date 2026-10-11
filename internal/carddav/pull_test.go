@@ -630,10 +630,17 @@ func TestMultigetCanonicalizesEquivalentMissingHref(t *testing.T) {
 }
 
 func TestSyncContinuesTruncated507PageWithNextToken(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	syncRequests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body := readRequestBody(t, r)
 		if strings.Contains(body, "sync-collection") {
+			if !assert.Equal("0", r.Header.Get("Depth")) {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
 			syncRequests++
 			if syncRequests == 1 {
 				events := changedResponse("/books/personal/alice.vcf", `&quot;one&quot;`) +
@@ -641,7 +648,7 @@ func TestSyncContinuesTruncated507PageWithNextToken(t *testing.T) {
 				writeDAVXML(t, w, syncResponse(events, "page-2"))
 				return
 			}
-			assert.Equal(t, "page-2", syncRequestToken(body))
+			assert.Equal("page-2", syncRequestToken(body))
 			writeDAVXML(t, w, syncResponse(changedResponse("/books/personal/bob.vcf", `&quot;two&quot;`), "final"))
 			return
 		}
@@ -652,12 +659,16 @@ func TestSyncContinuesTruncated507PageWithNextToken(t *testing.T) {
 		writeDAVXML(t, w, syncResponse(cards.String(), ""))
 	}))
 	t.Cleanup(server.Close)
-	service, _, _ := newPullService(t, server, true)
+	service, st, _ := newPullService(t, server, true)
 
 	result, err := service.Sync(t.Context(), SyncOptions{Full: true})
-	require.NoError(t, err)
-	assert.Equal(t, 2, result.Created)
-	assert.Equal(t, 2, syncRequests)
+	require.NoError(err)
+	assert.Equal(2, result.Created)
+	assert.Equal(2, syncRequests)
+	books, err := st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
+	require.NoError(err)
+	require.Len(books, 1)
+	assert.Equal("final", books[0].SyncToken)
 }
 
 func TestInitialSyncSendsEmptyTokenAndFallsBackToIndividualGET(t *testing.T) {
@@ -893,14 +904,14 @@ func TestSyncDowngradesUnsupportedSyncCollectionToSnapshot(t *testing.T) {
 	}
 }
 
-func TestParseRemoteResourceStripsContactSchemesCaseInsensitively(t *testing.T) {
+func TestParseRemoteResourceRetainsPhoneEndpoint(t *testing.T) {
 	body := []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:schemes\r\nFN:Schemes\r\n" +
 		"EMAIL:MAILTO:Alice@Example.test\r\nTEL:TeL:+1-202-555-0100\r\nEND:VCARD\r\n")
 
 	resource, err := parseRemoteResource("https://contacts.example/schemes.vcf", `"one"`, body)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"Alice@Example.test"}, resource.Emails)
-	assert.Equal(t, []string{"+1-202-555-0100"}, resource.Phones)
+	assert.Equal(t, []string{"TeL:+1-202-555-0100"}, resource.Phones)
 }
 
 func TestParseRemoteResourceDecodesTextContactValues(t *testing.T) {

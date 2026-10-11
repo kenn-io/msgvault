@@ -1,15 +1,172 @@
 package identityindex
 
 import (
+	"context"
 	"encoding/json/v2"
 	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestBuildActivityPreservesFullExpansionContributions(t *testing.T) {
+	for _, tc := range []struct {
+		name, messageType, conversationType      string
+		members                                  int64
+		missingOwner, ownerAlias, mixed, unknown bool
+	}{
+		{name: "large group", messageType: "whatsapp", conversationType: "group_chat", members: 200, unknown: true},
+		{name: "direct chat", messageType: "imessage", conversationType: "direct_chat", members: 3},
+		{name: "owner absent", messageType: "beeper", conversationType: "group_chat", members: 20, missingOwner: true},
+		{name: "owner alias", messageType: "beeper", conversationType: "group_chat", members: 20, ownerAlias: true},
+		{name: "mixed modalities", messageType: "beeper", conversationType: "group_chat", members: 20, mixed: true, unknown: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requirements := require.New(t)
+			root, db := writeRelationshipBaseFixture(t, true)
+			writeSyntheticRelationshipFanOut(t, db, root, syntheticRelationshipFanOutOptions{
+				firstMessageID: 1, messageCount: 20, memberCount: tc.members,
+				startDate: "2026-01-01 00:00:00", messageType: tc.messageType, conversationType: tc.conversationType,
+			})
+			messageType := "message_type"
+			if tc.mixed {
+				messageType = "CASE WHEN id % 5 = 0 THEN 'email' WHEN id % 7 = 0 THEN 'meeting_transcript' WHEN id % 6 = 0 THEN 'calendar_event' ELSE message_type END"
+			}
+			_, err := db.Exec(`CREATE TEMP TABLE equivalence_messages AS
+				SELECT * REPLACE (
+					CASE WHEN id % 4 = 0 THEN NULL ELSE 2 END::BIGINT AS sender_id,
+					(id % 3 = 0) AS is_from_me,
+					(1 + id % 2)::BIGINT AS source_id,
+					(TIMESTAMP '2026-01-01' + (id // 4) * INTERVAL '1 second') AS sent_at,
+					(id % 3)::INTEGER AS attachment_count,
+					`+messageType+` AS message_type
+				) FROM read_parquet(?)`, parquetDatasetGlob(root, "messages"))
+			requirements.NoError(err)
+			replaceRelationshipParquet(t, db, root, "messages", "SELECT * FROM equivalence_messages")
+			replaceRelationshipParquet(t, db, root, "sources", `
+				SELECT i::BIGINT AS id, 'owner@example.test' AS account_email, 'beeper' AS source_type FROM range(1, 3) t(i)`)
+			unknownRecipient, unknownMember := "", ""
+			if tc.unknown {
+				unknownRecipient = " UNION ALL SELECT 1, 999999, 'to', ''"
+				unknownMember = " UNION ALL SELECT 10, 999999"
+			}
+			replaceRelationshipParquet(t, db, root, "message_recipients", `
+				SELECT id AS message_id, 3::BIGINT AS participant_id,
+				       'to'::VARCHAR AS recipient_type, ''::VARCHAR AS display_name
+				FROM equivalence_messages WHERE id % 5 = 0 AND id < 19`+unknownRecipient)
+			_, err = db.Exec(`CREATE TEMP TABLE aliased_participants AS
+				SELECT * FROM read_parquet(?) UNION ALL
+				SELECT ?, 'alias@alias.test', 'alias.test', 'Alias', ''`,
+				parquetDatasetGlob(root, "participants"), tc.members+1)
+			requirements.NoError(err)
+			replaceRelationshipParquet(t, db, root, "participants", "SELECT * FROM aliased_participants")
+			canonical := 2
+			if tc.ownerAlias {
+				canonical = 1
+			}
+			replaceRelationshipParquet(t, db, root, "participant_clusters", fmt.Sprintf(`
+				SELECT %d::BIGINT AS participant_id, %d::BIGINT AS canonical_id`, tc.members+1, canonical))
+			replaceRelationshipParquet(t, db, root, "conversation_participants", fmt.Sprintf(`
+				SELECT 10::BIGINT AS conversation_id, i::BIGINT AS participant_id FROM range(1, %d) t(i)`, tc.members+2)+unknownMember)
+			if tc.missingOwner {
+				replaceRelationshipParquet(t, db, root, "owner_participants", `
+					SELECT NULL::BIGINT AS source_id, NULL::BIGINT AS participant_id WHERE false`)
+			}
+			path := func(dataset string) string { return parquetDatasetGlob(root, dataset) }
+			_, err = db.Exec("CREATE TEMP TABLE sparse AS " + buildSparseRelationshipActivitySQL(
+				path, readParquetRelation([]string{path("messages")}, true), 2026))
+			requirements.NoError(err)
+			base := func(dataset string) string { return readParquetRelation([]string{path(dataset)}, false) }
+			full := ExpandedActivityRelation("sparse", base("conversation_participants"),
+				base("participants"), base("participant_clusters"), base("owner_participants"))
+			bounded := buildActivityRelation("sparse", base("conversation_participants"),
+				base("participants"), base("participant_clusters"), base("owner_participants"))
+			if tc.mixed {
+				var meetingFacts, earlierRosterAttendeeFacts int64
+				facts := RelationshipTemperatureFactsSQL(bounded, time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC))
+				requirements.NoError(db.QueryRow(`SELECT count(*) FILTER (WHERE meeting),
+					count(*) FILTER (WHERE meeting AND canonical_id = 4 AND message_id < 19)
+					FROM (`+facts+`)`).Scan(&meetingFacts, &earlierRosterAttendeeFacts))
+				requirements.Positive(meetingFacts)
+				requirements.Positive(earlierRosterAttendeeFacts, "roster-only attendees receive credit before the chat anchor")
+			}
+			for _, reduction := range []struct {
+				name string
+				sql  func(string) string
+			}{
+				{"logical", buildLogicalActivityMaterializationSQL},
+				{"temperature", func(activity string) string {
+					return RelationshipTemperatureFactsSQL(activity, time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC))
+				}},
+			} {
+				t.Run(reduction.name, func(t *testing.T) {
+					_, err := db.ExecContext(context.Background(), "CREATE TEMP TABLE full_"+reduction.name+" AS "+reduction.sql(full))
+					require.NoError(t, err)
+					var differences int64
+					err = db.QueryRow(`WITH bounded AS (` + reduction.sql(bounded) + `)
+						SELECT count(*) FROM (
+							(SELECT * FROM bounded EXCEPT ALL SELECT * FROM full_` + reduction.name + `)
+							UNION ALL
+							(SELECT * FROM full_` + reduction.name + ` EXCEPT ALL SELECT * FROM bounded)
+						)`).Scan(&differences)
+					require.NoError(t, err)
+					assert.Zero(t, differences)
+				})
+			}
+		})
+	}
+}
+
+func FuzzGroupBuildExpansionBounded(f *testing.F) {
+	f.Add(uint16(0), uint16(0), false)
+	f.Add(uint16(1), uint16(1), true)
+	f.Add(uint16(32), uint16(200), false)
+	f.Add(uint16(65535), uint16(65535), true)
+	f.Fuzz(func(t *testing.T, messages, members uint16, ownerPresent bool) {
+		requirements := require.New(t)
+		// Draw the full input domain; bound only the materialized SQL fixture.
+		messageCount := min(int64(messages), 32)
+		memberCount := 2 + min(int64(members), 256)
+		root, db := writeRelationshipBaseFixture(t, true)
+		writeSyntheticRelationshipFanOut(t, db, root, syntheticRelationshipFanOutOptions{
+			firstMessageID: 1, messageCount: messageCount, memberCount: memberCount,
+			startDate: "2026-01-01", messageType: "beeper", conversationType: "group_chat",
+		})
+		_, err := db.Exec(`CREATE TEMP TABLE generated_messages AS
+			SELECT * REPLACE (2::BIGINT AS sender_id) FROM read_parquet(?)`, parquetDatasetGlob(root, "messages"))
+		requirements.NoError(err)
+		replaceRelationshipParquet(t, db, root, "messages", "SELECT * FROM generated_messages")
+		replaceRelationshipParquet(t, db, root, "message_recipients", `
+			SELECT id AS message_id, 2::BIGINT AS participant_id,
+			       'from'::VARCHAR AS recipient_type, ''::VARCHAR AS display_name
+			FROM generated_messages`)
+		if !ownerPresent {
+			replaceRelationshipParquet(t, db, root, "owner_participants", `
+				SELECT NULL::BIGINT AS source_id, NULL::BIGINT AS participant_id WHERE false`)
+		}
+		path := func(dataset string) string { return parquetDatasetGlob(root, dataset) }
+		_, err = db.Exec("CREATE TEMP TABLE sparse AS " + buildSparseRelationshipActivitySQL(
+			path, readParquetRelation([]string{path("messages")}, true), 2026))
+		requirements.NoError(err)
+		base := func(dataset string) string { return readParquetRelation([]string{path(dataset)}, false) }
+		bounded := buildActivityRelation("sparse", base("conversation_participants"),
+			base("participants"), base("participant_clusters"), base("owner_participants"))
+		var rows int64
+		requirements.NoError(db.QueryRow("SELECT count(*) FROM " + bounded).Scan(&rows))
+		var want int64
+		if messageCount > 0 {
+			want = messageCount + memberCount - 1
+			if ownerPresent {
+				want = 2*messageCount + memberCount - 2
+			}
+		}
+		assert.Equal(t, want, rows, "one roster per conversation plus per-message direct/owner edges")
+	})
+}
 
 func TestExpandedActivityFiltersReachParquet(t *testing.T) {
 	root, db := writeRelationshipBaseFixture(t, true)

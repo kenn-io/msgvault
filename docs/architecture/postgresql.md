@@ -25,8 +25,9 @@ stores embeddings in the same database as the message archive.
 
 - PostgreSQL 16 is the tested target.
 - The `pgvector` extension must be available if `[vector].enabled = true`.
-- The msgvault database role needs normal DDL privileges so msgvault can create
-  its schema on first connection.
+- The standalone msgvault database role needs normal DDL privileges so msgvault
+  can create its schema on first connection. The [Go library](../guides/embedding.md)
+  separates privileged setup from a runtime role that cannot perform DDL.
 
 msgvault runs `CREATE EXTENSION IF NOT EXISTS vector` when the pgvector backend
 initializes. If your role cannot create extensions, have an administrator install

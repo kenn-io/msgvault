@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"go.kenn.io/msgvault/internal/meetingarchive"
 )
 
 type Snapshot struct {
@@ -77,7 +79,7 @@ func BuildSnapshot(req NormalizedRequest) (Snapshot, error) {
 		Title:             title,
 		StartedAt:         meeting.StartedAt.UTC(),
 		Body:              body,
-		Snippet:           snippet(body),
+		Snippet:           meetingarchive.Snippet(body),
 		Metadata:          metadata,
 		Raw:               raw,
 		Organizer:         meeting.Organizer,
@@ -170,15 +172,6 @@ func formatSegment(segment TranscriptSegment) string {
 		return fmt.Sprintf("[%d:%02d:%02d] %s", hours, minutes, seconds, label)
 	}
 	return fmt.Sprintf("[%02d:%02d] %s", minutes, seconds, label)
-}
-
-func snippet(body string) string {
-	const maxRunes = 200
-	runes := []rune(strings.TrimSpace(body))
-	if len(runes) <= maxRunes {
-		return string(runes)
-	}
-	return string(runes[:maxRunes])
 }
 
 func buildCanonicalMeeting(meeting NormalizedMeeting) canonicalMeeting {

@@ -29,9 +29,13 @@ type Remote interface {
 	// Get returns the current card at href, or absent when there is none.
 	Get(ctx context.Context, href string) (resource store.CardDAVRemoteResource, absent bool, err error)
 	// Put writes body to href. With create, it fails with 412 when href
-	// exists. Otherwise it fails with 412 when etag is not current.
+	// exists. Otherwise it fails with 412 when etag is not current. A failure
+	// before the write request is sent includes ErrWriteNotSent. A card
+	// larger than a Microsoft contact can hold fails with 413 and
+	// ErrMicrosoftContactTooLarge.
 	Put(ctx context.Context, href string, body []byte, etag string, create bool) error
-	// Delete removes href, and fails with 412 when etag is not current.
+	// Delete removes href, and fails with 412 when etag is not current. A
+	// failure before the request is sent includes ErrWriteNotSent.
 	Delete(ctx context.Context, href, etag string) error
 	// CreateHref returns the href that a new card with uid gets in the book
 	// at collectionURL.
@@ -95,3 +99,30 @@ func (s *Service) operationTimeout() time.Duration {
 	timeout, _ := s.remote.Limits()
 	return timeout
 }
+
+// NewRemoteResource parses a vCard into the resource that a Remote returns
+// from Pull and Get.
+func NewRemoteResource(href, etag string, body []byte) (store.CardDAVRemoteResource, error) {
+	return parseRemoteResource(href, etag, body)
+}
+
+// ErrWriteNotSent marks a Remote write that failed before its request was
+// sent, so the service plans it again instead of recovering it.
+var ErrWriteNotSent = errors.New("CardDAV write was not sent")
+
+// ErrMicrosoftContactTooLarge marks a card larger than Outlook's 4 MB limit
+// for one contact write.
+var ErrMicrosoftContactTooLarge = errors.New("contact is too large for Outlook")
+
+// ContactTooLargeError names the person whose card is over Outlook's limit.
+// Err is the write's error, which wraps ErrMicrosoftContactTooLarge.
+type ContactTooLargeError struct {
+	PersonID int64
+	Err      error
+}
+
+func (e *ContactTooLargeError) Error() string {
+	return e.Err.Error()
+}
+
+func (e *ContactTooLargeError) Unwrap() error { return e.Err }

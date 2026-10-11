@@ -1,15 +1,12 @@
 package query
 
 import (
-	"bytes"
 	"cmp"
-	"compress/zlib"
 	"context"
 	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
 	"slices"
 	"strings"
 
@@ -57,14 +54,16 @@ const emailOnlyFilterMsg = "(msg.message_type = '" + messageTypeEmail + "' OR ms
 // NULL and empty string handle old data where message_type was not yet populated.
 const emailOnlyFilterM = "(m.message_type = '" + messageTypeEmail + "' OR m.message_type IS NULL OR m.message_type = '')"
 
-// hasExplicitMessageTypeSearch reports whether a parsed search query selects
-// one or more message types. Default analytics use this to apply the positive
-// email-only predicate without overriding an explicit message-type scope.
-func hasExplicitMessageTypeSearch(searchQuery string) bool {
+// searchOverridesEmailDefault reports whether a parsed search query sets its
+// own message-type scope: message_type:, or account:, which also matches
+// calendar events. Default analytics apply the positive email-only predicate
+// only when it does not.
+func searchOverridesEmailDefault(searchQuery string) bool {
 	if searchQuery == "" {
 		return false
 	}
-	return len(search.Parse(searchQuery).MessageTypes) > 0
+	q := search.Parse(searchQuery)
+	return len(q.MessageTypes) > 0 || len(q.AccountAddrs) > 0
 }
 
 // shouldDefaultStatsToEmail reports whether a generic stats query should use
@@ -72,7 +71,20 @@ func hasExplicitMessageTypeSearch(searchQuery string) bool {
 // message-type scope as search, while an explicit message_type remains
 // authoritative in either mode.
 func shouldDefaultStatsToEmail(opts StatsOptions) bool {
-	return !opts.SearchScope && !hasExplicitMessageTypeSearch(opts.SearchQuery)
+	// An account scope selects email and calendar rows itself.
+	if opts.Filter != nil && len(opts.Filter.AccountScopes) > 0 {
+		return false
+	}
+	return !opts.SearchScope && !searchOverridesEmailDefault(opts.SearchQuery)
+}
+
+// appendAccountScopeConditions adds one predicate per account scope against
+// the messages table aliased as alias.
+func appendAccountScopeConditions(
+	conditions []string, args []any, scopes []search.AccountScope, alias string,
+) ([]string, []any) {
+	scopeConditions, scopeArgs := search.AccountScopeConditions(scopes, alias)
+	return append(conditions, scopeConditions...), append(args, scopeArgs...)
 }
 
 // effectiveStatsFilter returns the complete message scope for a stats query.
@@ -159,7 +171,7 @@ func noopRebind(q string) string { return q }
 // fetchLabelsForMessageList adds labels to message summaries using a batch query.
 // tablePrefix is "" for direct SQLite or "sqlite_db." for DuckDB's sqlite_scan.
 // rebind rewrites the ? placeholders for the driver in use.
-func fetchLabelsForMessageList(ctx context.Context, db *sql.DB, rebind rebindFunc, tablePrefix string, messages []MessageSummary) error {
+func fetchLabelsForMessageList(ctx context.Context, db store.SQLReader, rebind rebindFunc, tablePrefix string, messages []MessageSummary) error {
 	if len(messages) == 0 {
 		return nil
 	}
@@ -203,7 +215,7 @@ func fetchLabelsForMessageList(ctx context.Context, db *sql.DB, rebind rebindFun
 // fetchParticipantsForMessageList adds recipients to message summaries using a batch query.
 // tablePrefix is "" for direct SQLite or "sqlite_db." for DuckDB's sqlite_scan.
 // rebind rewrites the ? placeholders for the driver in use.
-func fetchParticipantsForMessageList(ctx context.Context, db *sql.DB, rebind rebindFunc, tablePrefix string, messages []MessageSummary) error {
+func fetchParticipantsForMessageList(ctx context.Context, db store.SQLReader, rebind rebindFunc, tablePrefix string, messages []MessageSummary) error {
 	if len(messages) == 0 {
 		return nil
 	}
@@ -263,7 +275,7 @@ func appendSummaryRecipient(msg *MessageSummary, recipType string, addr Address)
 // fetchMessageLabelsDetail fetches labels for a single message detail.
 // tablePrefix is "" for direct SQLite or "sqlite_db." for DuckDB's sqlite_scan.
 // rebind rewrites the ? placeholders for the driver in use.
-func fetchMessageLabelsDetail(ctx context.Context, db *sql.DB, rebind rebindFunc, tablePrefix string, msg *MessageDetail) error {
+func fetchMessageLabelsDetail(ctx context.Context, db store.SQLReader, rebind rebindFunc, tablePrefix string, msg *MessageDetail) error {
 	rows, err := db.QueryContext(ctx, rebind(fmt.Sprintf(`
 		SELECT l.name
 		FROM %smessage_labels ml
@@ -289,7 +301,7 @@ func fetchMessageLabelsDetail(ctx context.Context, db *sql.DB, rebind rebindFunc
 // fetchParticipantsShared fetches participants for a single message detail.
 // tablePrefix is "" for direct SQLite or "sqlite_db." for DuckDB's sqlite_scan.
 // rebind rewrites the ? placeholders for the driver in use.
-func fetchParticipantsShared(ctx context.Context, db *sql.DB, rebind rebindFunc, tablePrefix string, msg *MessageDetail) error {
+func fetchParticipantsShared(ctx context.Context, db store.SQLReader, rebind rebindFunc, tablePrefix string, msg *MessageDetail) error {
 	rows, err := db.QueryContext(ctx, rebind(fmt.Sprintf(`
 		SELECT mr.recipient_type,
 		       COALESCE(NULLIF(p.email_address, ''), NULLIF(p.phone_number, ''), ''),
@@ -344,7 +356,7 @@ func fetchParticipantsShared(ctx context.Context, db *sql.DB, rebind rebindFunc,
 // fetchAttachmentsShared fetches attachments for a single message detail.
 // tablePrefix is "" for direct SQLite or "sqlite_db." for DuckDB's sqlite_scan.
 // rebind rewrites the ? placeholders for the driver in use.
-func fetchAttachmentsShared(ctx context.Context, db *sql.DB, rebind rebindFunc, tablePrefix string, msg *MessageDetail) error {
+func fetchAttachmentsShared(ctx context.Context, db store.SQLReader, rebind rebindFunc, tablePrefix string, msg *MessageDetail) error {
 	rows, err := db.QueryContext(ctx, rebind(fmt.Sprintf(`
 		SELECT id, COALESCE(filename, ''), COALESCE(mime_type, ''), COALESCE(size, 0), COALESCE(content_hash, ''), COALESCE(storage_path, '')
 		FROM %sattachments
@@ -406,30 +418,25 @@ func attachmentCASPath(contentHash string) string {
 // extractBodyFromRawShared extracts text body from compressed MIME data.
 // tablePrefix is "" for direct SQLite or "sqlite_db." for DuckDB's sqlite_scan.
 // rebind rewrites the ? placeholders for the driver in use.
-func extractBodyFromRawShared(ctx context.Context, db *sql.DB, rebind rebindFunc, tablePrefix string, messageID int64) (string, error) {
+func extractBodyFromRawShared(ctx context.Context, db store.SQLReader, rebind rebindFunc, tablePrefix string, messageID int64) (string, error) {
 	var compressed []byte
 	var compression sql.NullString
+	var storedBytes int64
 
+	limit := messageByteLimit(ctx)
+	rawColumn, rawSize := messageRawColumns(tablePrefix, limit)
 	err := db.QueryRowContext(ctx, rebind(fmt.Sprintf(`
-		SELECT raw_data, compression FROM %smessage_raw WHERE message_id = ?
-	`, tablePrefix)), messageID).Scan(&compressed, &compression)
+		SELECT %s, mr.compression, %s FROM %smessage_raw mr WHERE mr.message_id = ?
+	`, rawColumn, rawSize, tablePrefix)), messageID).Scan(&compressed, &compression, &storedBytes)
 	if err != nil {
 		return "", err
 	}
-
-	var rawData []byte
-	if compression.Valid && compression.String == "zlib" {
-		r, err := zlib.NewReader(bytes.NewReader(compressed))
-		if err != nil {
-			return "", fmt.Errorf("open zlib reader for raw message: %w", err)
-		}
-		defer func() { _ = r.Close() }()
-		rawData, err = io.ReadAll(r)
-		if err != nil {
-			return "", err
-		}
-	} else {
-		rawData = compressed
+	if limit > 0 && storedBytes > int64(len(compressed)) {
+		return "", ErrOriginalMessageTooLarge
+	}
+	rawData, err := inflateMessageRaw(compressed, compression, limit)
+	if err != nil {
+		return "", err
 	}
 
 	parsed, err := mime.Parse(rawData)
@@ -437,23 +444,31 @@ func extractBodyFromRawShared(ctx context.Context, db *sql.DB, rebind rebindFunc
 		return "", err
 	}
 
-	return parsed.GetBodyText(), nil
+	body := parsed.GetBodyText()
+	// Charset decoding can grow text past the raw size checked above.
+	if limit > 0 && int64(len(body)) > limit {
+		return "", ErrOriginalMessageTooLarge
+	}
+	return body, nil
 }
 
 // getMessageRawShared retrieves and decompresses raw MIME data for a message.
 // Returns nil, nil if no raw data is stored or if the message is an internal
 // deduplication loser (deleted_at). Source-deleted rows remain archive data and
 // are available to raw MIME consumers.
-func getMessageRawShared(ctx context.Context, db *sql.DB, rebind rebindFunc, tablePrefix string, messageID int64) ([]byte, error) {
+func getMessageRawShared(ctx context.Context, db store.SQLReader, rebind rebindFunc, tablePrefix string, messageID int64) ([]byte, error) {
 	var compressed []byte
 	var compression sql.NullString
+	var storedBytes int64
 
+	limit := messageByteLimit(ctx)
+	rawColumn, rawSize := messageRawColumns(tablePrefix, limit)
 	err := db.QueryRowContext(ctx, rebind(fmt.Sprintf(`
-		SELECT mr.raw_data, mr.compression
+		SELECT %s, mr.compression, %s
 		FROM %smessage_raw mr
 		JOIN %smessages m ON m.id = mr.message_id
 		WHERE mr.message_id = ? AND %s
-	`, tablePrefix, tablePrefix, store.LiveMessagesWhere("m", false))), messageID).Scan(&compressed, &compression)
+	`, rawColumn, rawSize, tablePrefix, tablePrefix, store.LiveMessagesWhere("m", false))), messageID).Scan(&compressed, &compression, &storedBytes)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -461,7 +476,10 @@ func getMessageRawShared(ctx context.Context, db *sql.DB, rebind rebindFunc, tab
 		return nil, fmt.Errorf("query message_raw for id %d: %w", messageID, err)
 	}
 
-	raw, err := inflateMessageRaw(compressed, compression, 0)
+	if limit > 0 && storedBytes > int64(len(compressed)) {
+		return nil, ErrOriginalMessageTooLarge
+	}
+	raw, err := inflateMessageRaw(compressed, compression, limit)
 	if err != nil {
 		return nil, fmt.Errorf("message_raw id %d: %w", messageID, err)
 	}
@@ -472,7 +490,7 @@ func getMessageRawShared(ctx context.Context, db *sql.DB, rebind rebindFunc, tab
 // tablePrefix is "" for direct SQLite or "sqlite_db." for DuckDB's sqlite_scan.
 // rebind rewrites the ? placeholders for the driver in use; it is applied
 // to every sub-query this function dispatches.
-func getMessageByQueryShared(ctx context.Context, db *sql.DB, rebind rebindFunc, tablePrefix string, whereClause string, args ...any) (*MessageDetail, error) {
+func getMessageByQueryShared(ctx context.Context, db store.SQLReader, rebind rebindFunc, tablePrefix string, whereClause string, args ...any) (*MessageDetail, error) {
 	query := fmt.Sprintf(`
 		SELECT
 			m.id,
@@ -535,9 +553,23 @@ func getMessageByQueryShared(ctx context.Context, db *sql.DB, rebind rebindFunc,
 
 	// Fetch body from separate table (PK lookup, avoids scanning large body B-tree)
 	var bodyText, bodyHTML sql.NullString
-	err = db.QueryRowContext(ctx, rebind(fmt.Sprintf(`
-		SELECT body_text, body_html FROM %smessage_bodies WHERE message_id = ?
-	`, tablePrefix)), msg.ID).Scan(&bodyText, &bodyHTML)
+	limit := messageByteLimit(ctx)
+	if limit > 0 {
+		sizeExpr := "COALESCE(octet_length(body_text),0)+COALESCE(octet_length(body_html),0)"
+		if tablePrefix == "sqlite_db." {
+			sizeExpr = "COALESCE(octet_length(encode(body_text)),0)+COALESCE(octet_length(encode(body_html)),0)"
+		}
+		bodyColumns := fmt.Sprintf("CASE WHEN %s<=%d THEN body_text END,CASE WHEN %s<=%d THEN body_html END", sizeExpr, limit, sizeExpr, limit)
+		var bodyBytes int64
+		err = db.QueryRowContext(ctx, rebind(fmt.Sprintf("SELECT %s,%s FROM %smessage_bodies WHERE message_id = ?", bodyColumns, sizeExpr, tablePrefix)), msg.ID).Scan(&bodyText, &bodyHTML, &bodyBytes)
+		if err == nil && bodyBytes > limit {
+			return nil, ErrOriginalMessageTooLarge
+		}
+	} else {
+		err = db.QueryRowContext(ctx, rebind(fmt.Sprintf(`
+			SELECT body_text, body_html FROM %smessage_bodies WHERE message_id = ?
+		`, tablePrefix)), msg.ID).Scan(&bodyText, &bodyHTML)
+	}
 	if err == nil {
 		if bodyText.Valid {
 			msg.BodyText = bodyText.String
@@ -553,6 +585,8 @@ func getMessageByQueryShared(ctx context.Context, db *sql.DB, rebind rebindFunc,
 	if msg.BodyText == "" && msg.BodyHTML == "" {
 		if body, err := extractBodyFromRawShared(ctx, db, rebind, tablePrefix, msg.ID); err == nil && body != "" {
 			msg.BodyText = body
+		} else if errors.Is(err, ErrOriginalMessageTooLarge) {
+			return nil, err
 		}
 	}
 

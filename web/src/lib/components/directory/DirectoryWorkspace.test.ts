@@ -280,7 +280,7 @@ describe('DirectoryWorkspace', () => {
     await waitFor(() => expect(commits).toContainEqual({ directoryPersonID: 42 }));
     await waitFor(() => expect(controller.selectedPersonID).toBe(42));
     expect(await screen.findByText('4 meetings')).toBeDefined();
-    expect(await screen.findByText('0 matching action items')).toBeDefined();
+    expect(await screen.findByText('0 matching')).toBeDefined();
   });
 
   it('keeps loaded rows visible when loading another page fails and retries that page', async () => {
@@ -333,6 +333,100 @@ describe('DirectoryWorkspace', () => {
     expect(screen.getByText('Retained Person')).toBeDefined();
     await fireEvent.click(screen.getByRole('button', { name: 'Reload directory' }));
     expect(await screen.findByText('Reloaded Person')).toBeDefined();
+  });
+
+  describe('bulk deletion', () => {
+    const person = (id: number, name: string) => ({
+      id, revision: 1, display_name: name, contact_state: 'active', categories: [], organizations: []
+    });
+
+    /** Answers DELETE /api/v1/people/{id} from `deletes` and every list read
+     * from `pages` in order, recording which list reads asked for page one. */
+    function renderDirectory(
+      pages: Array<{ people: ReturnType<typeof person>[]; next_cursor?: string } | (() => Response)>,
+      deletes: Record<number, () => Response>
+    ) {
+      const pageOneReads: number[] = [];
+      let listReads = 0;
+      const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
+        const request = input instanceof Request ? input : new Request(input);
+        const match = /^\/api\/v1\/people\/(\d+)$/.exec(pathOf(request));
+        if (request.method === 'DELETE' && match) return deletes[Number(match[1])]!();
+        listReads += 1;
+        if (!new URL(request.url).searchParams.get('cursor')) pageOneReads.push(listReads);
+        const page = pages.shift() ?? { people: [] };
+        return typeof page === 'function' ? page() : Response.json(page);
+      }));
+      render(DirectoryWorkspace, { client, controller: new DirectoryController(client), state });
+      return { pageOneReads };
+    }
+
+    async function deleteAllLoaded(): Promise<void> {
+      await fireEvent.click(await screen.findByRole('checkbox', { name: 'Select all loaded people' }));
+      await fireEvent.click(screen.getByRole('button', { name: 'Delete…' }));
+      await fireEvent.click(screen.getByRole('button', { name: 'Confirm delete' }));
+    }
+
+    it('reloads page one after deleting every loaded person, so later pages stay reachable', async () => {
+      const { pageOneReads } = renderDirectory(
+        [
+          { people: [person(1, 'Alpha Fixture'), person(2, 'Bravo Fixture')], next_cursor: 'cursor-after-bravo' },
+          { people: [person(3, 'Charlie Fixture')] }
+        ],
+        { 1: () => new Response(null, { status: 204 }), 2: () => new Response(null, { status: 204 }) }
+      );
+
+      await deleteAllLoaded();
+
+      expect(await screen.findByText('2 people deleted.')).toBeDefined();
+      expect(screen.getByRole('row', { name: /Charlie Fixture/ })).toBeDefined();
+      expect(pageOneReads).toEqual([1, 2]);
+    });
+
+    it('keeps the deletion outcome visible when the page-one reload fails', async () => {
+      renderDirectory(
+        [
+          { people: [person(1, 'Alpha Fixture'), person(2, 'Bravo Fixture')] },
+          () => Response.json({ error: 'internal_error', message: 'Directory unavailable' }, { status: 500 })
+        ],
+        {
+          1: () => new Response(null, { status: 204 }),
+          2: () => Response.json(
+            { error: 'person_merge_active', message: "Split the person's active merge lineage before deleting this profile" },
+            { status: 409 }
+          )
+        }
+      );
+
+      await deleteAllLoaded();
+
+      expect(await screen.findByText('Directory unavailable')).toBeDefined();
+      expect(await screen.findByText('1 deleted; 1 could not be deleted:')).toBeDefined();
+      expect(screen.getByText(/active merge lineage before deleting this profile/)).toBeDefined();
+    });
+
+    it('shows the server message for each person that could not be deleted', async () => {
+      renderDirectory(
+        [
+          { people: [person(1, 'Alpha Fixture'), person(2, 'Bravo Fixture')] },
+          { people: [person(2, 'Bravo Fixture')] }
+        ],
+        {
+          1: () => new Response(null, { status: 204 }),
+          2: () => Response.json(
+            { error: 'person_carddav_published', message: 'Unpublish this person from CardDAV before deleting it' },
+            { status: 409 }
+          )
+        }
+      );
+
+      await deleteAllLoaded();
+
+      const alert = await screen.findByRole('alert');
+      expect(alert.textContent).toContain('1 deleted; 1 could not be deleted:');
+      expect(alert.textContent).toContain('Bravo Fixture: Unpublish this person from CardDAV before deleting it');
+      expect(alert.textContent).not.toContain('Reload the directory');
+    });
   });
 
   it('renders actionable binding guidance from the structured promotion code', async () => {

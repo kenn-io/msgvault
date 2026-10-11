@@ -2,9 +2,11 @@ package mcp
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -146,6 +148,29 @@ func TestDownloadSnapshotExpiryAndShutdown(t *testing.T) {
 		}
 		first, err := cache.get(t.Context(), key, chunkRequest{}, load)
 		must.NoError(err)
+		for _, validationErr := range []error{context.Canceled, errors.New("synthetic authorization failure")} {
+			first.validate = func(context.Context) error { return validationErr }
+			_, err = cache.get(t.Context(), key, chunkRequest{}, load)
+			must.ErrorIs(err, validationErr)
+			checks.Same(first, cache.entries[key])
+			checks.Equal(len(first.data), cache.bytes)
+		}
+		first.validate = nil
+		_, err = cache.get(t.Context(), key, chunkRequest{digest: "wrong"}, load)
+		must.ErrorIs(err, errDownloadExpired)
+		checks.Same(first, cache.entries[key])
+		first.validate = func(context.Context) error { return errDownloadExpired }
+		_, err = cache.get(t.Context(), key, chunkRequest{offset: 1, digest: first.digest}, load)
+		must.ErrorIs(err, errDownloadExpired)
+		checks.Zero(cache.bytes)
+		first, err = cache.get(t.Context(), key, chunkRequest{}, load)
+		must.NoError(err, "invalidated entry can restart immediately")
+		first.validate = func(context.Context) error { return fmt.Errorf("snapshot changed: %w", errDownloadExpired) }
+		load = func() (*downloadSnapshot, error) { return &downloadSnapshot{data: []byte("updated bytes")}, nil }
+		first, err = cache.get(t.Context(), key, chunkRequest{}, load)
+		must.NoError(err, "offset zero also replaces an invalidated cached entry directly")
+		checks.Equal([]byte("updated bytes"), first.data)
+		checks.Equal(len(first.data), cache.bytes)
 		time.Sleep(downloadLifetime)
 		synctest.Wait()
 		_, err = cache.get(t.Context(), key, chunkRequest{offset: 1, digest: first.digest}, load)

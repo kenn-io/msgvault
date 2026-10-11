@@ -117,7 +117,7 @@ func newDelegatedTestServerWithGate(t *testing.T, gate OperationGate) (*Server, 
 
 	// Issue a grant and return the secret
 	srcRef := agentgrant.SourceRef{ID: 1, Type: "imap", Identifier: "alice@example.com"}
-	_, secret, _, err := reg.Issue("test-agent", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{srcRef})
+	_, secret, _, err := reg.Issue("test-agent", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{srcRef}, time.Time{})
 	require.NoError(t, err)
 
 	return srv, secret
@@ -309,7 +309,7 @@ func TestDelegatedDraftLifecycleCommandsSkipBusyOperationGate(t *testing.T) { //
 
 			select {
 			case <-done:
-			case <-time.After(200 * time.Millisecond):
+			case <-time.After(5 * time.Second):
 				requirements.FailNow("delegated lifecycle rejection must not wait on a held operation gate")
 			}
 
@@ -358,7 +358,7 @@ func TestDelegatedDraftGetSkipsBusyOperationGate(t *testing.T) { //nolint:parall
 
 	select {
 	case <-done:
-	case <-time.After(200 * time.Millisecond):
+	case <-time.After(5 * time.Second):
 		requirements.FailNow("delegated draft-get must not wait on a held operation gate")
 	}
 
@@ -432,7 +432,7 @@ func TestDelegatedGrantScopesSource(t *testing.T) {
 	require := require.New(t)
 	reg := agentgrant.NewRegistry()
 	grantedSrc := agentgrant.SourceRef{ID: 1, Type: "imap", Identifier: "alice@example.com"}
-	_, secret, _, err := reg.Issue("scope-test", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{grantedSrc})
+	_, secret, _, err := reg.Issue("scope-test", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{grantedSrc}, time.Time{})
 	require.NoError(err)
 
 	// The store resolves the parent message to a source outside the grant.

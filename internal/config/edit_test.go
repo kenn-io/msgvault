@@ -524,6 +524,8 @@ source_since = "2025-01-01"
 answer = 42
 `
 	requirements.NoError(os.WriteFile(path, []byte(before), 0o640))
+	// Set the mode being preserved explicitly; creation honors the caller's umask.
+	requirements.NoError(os.Chmod(path, 0o640))
 	snapshot, err := ReadConfigFile(path)
 	requirements.NoError(err)
 
@@ -2222,17 +2224,23 @@ func TestEditConfigRejectsInvalidMuesliSchedule(t *testing.T) {
 }
 
 func TestEditConfigRejectsInvalidPlaudSchedule(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	path := filepath.Join(t.TempDir(), "config.toml")
-	before := "[[plaud]]\nidentifier = \"work\"\naccount_email = \"owner@example.com\"\nschedule = \"15 */6 * * *\"\nenabled = true\n"
-	require.NoError(os.WriteFile(path, []byte(before), 0600))
-	snapshot, err := ReadConfigFile(path)
-	require.NoError(err)
-	_, err = EditConfigFile(path, snapshot.ETag, []Edit{{Key: "plaud.schedule", Value: "not a cron"}})
-	require.ErrorIs(err, ErrInvalidConfigCandidate)
-	assert.Contains(err.Error(), "invalid plaud[0].schedule")
-	got, err := os.ReadFile(path)
-	require.NoError(err)
-	assert.Equal(before, string(got))
+	for kind, before := range map[string]string{
+		"plaud":  "[[plaud]]\nidentifier = \"work\"\naccount_email = \"owner@example.com\"\nschedule = \"15 */6 * * *\"\nenabled = true\n",
+		"twilio": "[[twilio]]\naccount_email='user@example.com'\naccount_sid='AC00000000000000000000000000000001'\nauth_token='synthetic'\nschedule='15 */6 * * *'\n",
+	} {
+		t.Run(kind, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			path := filepath.Join(t.TempDir(), "config.toml")
+			require.NoError(os.WriteFile(path, []byte(before), 0600))
+			snapshot, err := ReadConfigFile(path)
+			require.NoError(err)
+			_, err = EditConfigFile(path, snapshot.ETag, []Edit{{Key: kind + ".schedule", Value: "not a cron"}})
+			require.ErrorIs(err, ErrInvalidConfigCandidate)
+			assert.Contains(err.Error(), "invalid "+kind+"[0].schedule")
+			got, err := os.ReadFile(path)
+			require.NoError(err)
+			assert.Equal(before, string(got))
+		})
+	}
 }

@@ -223,3 +223,17 @@ func TestDraftLifecycleReplacementIndexesCc(t *testing.T) {
 	requirements.Len(matches, 1)
 	assertions.Equal(draft.CurrentMessageID, matches[0].ID)
 }
+
+func TestManagedDraftSenderKeyAcceptsQuotedLocalPart(t *testing.T) {
+	raw := []byte("From: <\"first last\"@example.com>\r\nTo: to@example.com\r\nSubject: x\r\n\r\nbody\r\n")
+	key, err := managedDraftSenderKey(raw)
+	require.NoError(t, err)
+	assert.Equal(t, store.NormalizeIdentifierForCompare("first last@example.com"), key)
+}
+
+func TestParseStoredMailboxRejectsUnquotableAddress(t *testing.T) {
+	for _, value := range []string{"ali\x00ce@example.com", "first\tlast@example.com", "ali\u0085ce@example.com", "ali\xffce@example.com"} {
+		_, _, err := parseStoredMailbox(value)
+		require.Error(t, err, value)
+	}
+}

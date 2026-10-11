@@ -17,9 +17,37 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
+
+func TestImporterSchedulerYieldResumesWithoutFailure(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	api := newImporterFakeAPI(importerTestChannel("300", "general"))
+	api.messages["300"] = []Message{importerTestMessage("101", "300", "saved after resume")}
+	ctx, cancel := context.WithCancelCause(t.Context())
+	defer cancel(nil)
+	api.guildHook = func() { cancel(jobctx.ErrYieldedToWaiter) }
+	opts := ImportOptions{GuildID: "200", AttachmentsDir: t.TempDir()}
+	summary, err := newTestImporter(st, api).Import(ctx, opts)
+	require.ErrorIs(err, context.Canceled)
+	run, err := st.GetLatestSync(summary.SourceID)
+	require.NoError(err)
+	assert.Equal("cancelled", run.Status)
+	assert.Empty(run.ErrorMessage.String)
+	checkpoint, err := st.GetLatestCheckpointedSync(summary.SourceID)
+	require.NoError(err)
+	assert.Equal(run.ID, checkpoint.ID)
+	api.guildHook = nil
+	_, err = newTestImporter(st, api).Import(t.Context(), opts)
+	require.NoError(err)
+	var count int
+	require.NoError(st.DB().QueryRow("SELECT COUNT(*) FROM messages").Scan(&count))
+	assert.Equal(1, count)
+}
 
 type importerFakeAPI struct {
 	mu sync.Mutex
@@ -745,19 +773,19 @@ func TestImporterArchiveGuildMembershipCoversEveryConversation(t *testing.T) {
 	}
 	importer := newTestImporter(st, newImporterFakeAPI())
 
-	require.NoError(importer.ArchiveGuildMembership(source.ID, 9, errors.New("members unavailable")))
+	require.NoError(importer.ArchiveGuildMembership(t.Context(), source.ID, 9, errors.New("members unavailable")))
 	assert.JSONEq(`{"guild_id":"200","discord_channel_type":0,"member_count":40,"member_count_unknown":true}`,
 		metadataOf(channelID))
 	assert.JSONEq(`{"guild_id":"200","discord_channel_type":11,"member_count":40,"container_member_count":20,`+
 		`"member_count_unknown":true}`, metadataOf(threadID))
 
-	require.NoError(importer.ArchiveGuildMembership(source.ID, 5, nil))
+	require.NoError(importer.ArchiveGuildMembership(t.Context(), source.ID, 5, nil))
 	assert.JSONEq(`{"guild_id":"200","discord_channel_type":0,"member_count":5}`, metadataOf(channelID))
 	assert.JSONEq(`{"guild_id":"200","discord_channel_type":11,"member_count":20,"container_member_count":20}`,
 		metadataOf(threadID), "the container's own count outlives a floor that no longer exceeds it")
 
 	// Without a participant limit no lookup is made, and nothing is rewritten.
-	require.NoError(importer.ArchiveGuildMembership(source.ID, 0, nil))
+	require.NoError(importer.ArchiveGuildMembership(t.Context(), source.ID, 0, nil))
 	assert.JSONEq(`{"guild_id":"200","discord_channel_type":0,"member_count":5}`, metadataOf(channelID))
 }
 
@@ -1077,7 +1105,7 @@ func TestImporterInitialStateResumesOnlyCompatibleRunShape(t *testing.T) {
 			require.NoError(st.UpdateSyncCheckpoint(failedID, &store.Checkpoint{PageToken: checkpointBlob}))
 			require.NoError(st.FailSync(failedID, "interrupted"))
 
-			state, hadBaseline, err := newTestImporter(st, newImporterFakeAPI()).initialState(
+			state, hadBaseline, err := newTestImporter(st, newImporterFakeAPI()).initialState(t.Context(),
 				source.ID, tt.requestedFull, tt.requestedLower,
 			)
 			require.NoError(err)

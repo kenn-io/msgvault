@@ -13,6 +13,7 @@
   import type { ExploreSelectionState } from '../../explore/state.svelte';
   import { rebaseVirtualScroll, RowGeometry, tableViewportHeight } from '../../theme/preferences.svelte';
   import { formatBytes } from '../../util/format';
+  import SelectionCheckbox from '../common/SelectionCheckbox.svelte';
   import IdentityBadge from './IdentityBadge.svelte';
   import RowKind from './RowKind.svelte';
 
@@ -182,9 +183,18 @@
   });
   const activeIndex = $derived(activeKey ? rows.findIndex((row) => row.key === activeKey) : -1);
   const activeRow = $derived(activeIndex >= 0 ? rows[activeIndex] : undefined);
+  const orderedKeys = $derived(rows.map((row) => row.key));
+  const allLoadedSelected = $derived(
+    orderedKeys.length > 0 && orderedKeys.every((key) => selection.isSelected(key))
+  );
+  const someLoadedSelected = $derived(
+    orderedKeys.some((key) => selection.isSelected(key))
+  );
+  const selectionMode = $derived(selection.mode === 'all_matching' || selection.count > 0);
   const template = $derived(
-    visibleColumns
-      .map((column) => {
+    [
+      '32px',
+      ...visibleColumns.map((column) => {
         const configured = columnWidths[column];
         if (configured !== undefined) return `${configured}px`;
         if (column === 'kind') return 'minmax(86px, 0.7fr)';
@@ -195,7 +205,7 @@
         if (column === 'attachments') return '42px';
         return '76px';
       })
-      .join(' ')
+    ].join(' ')
   );
 
   onMount(() => {
@@ -390,6 +400,11 @@
     }
     if (!restoring && hasMore && !loadingMore && slice.end >= rows.length - OVERSCAN) void onLoadMore?.();
   }
+
+  function toggleLoadedSelection(): void {
+    if (allLoadedSelected) selection.clear();
+    else selection.selectVisible(orderedKeys);
+  }
 </script>
 
 <section class="everything-table" aria-label="Everything table">
@@ -400,14 +415,24 @@
     data-scroll
     aria-label="Everything results"
     aria-rowcount={accessibilityRowCount}
-    aria-colcount={visibleColumns.length}
+    aria-colcount={visibleColumns.length + 1}
     aria-busy={loading || loadingMore}
     aria-activedescendant={activeRow ? rowId(activeRow) : undefined}
+    class:selection-mode={selectionMode}
     tabindex="0"
     onkeydown={handleKeydown}
     onscroll={handleScroll}
   >
     <div class="table-header" bind:this={headerElement} role="row" style:grid-template-columns={template}>
+      <span role="columnheader" class="selection-header">
+        <SelectionCheckbox
+          checked={allLoadedSelected}
+          mixed={!allLoadedSelected && someLoadedSelected}
+          label={allLoadedSelected ? 'Unselect all loaded items' : 'Select all loaded items'}
+          inGrid
+          onToggle={toggleLoadedSelection}
+        />
+      </span>
       {#each visibleColumns as column (column)}
         <span
           role="columnheader"
@@ -423,7 +448,7 @@
       role="rowgroup"
     >
       {#if unavailable}
-        <div role="row"><div role="gridcell" aria-colspan={visibleColumns.length}><div class="cache-unavailable" role="alert">
+        <div role="row"><div role="gridcell" aria-colspan={visibleColumns.length + 1}><div class="cache-unavailable" role="alert">
             <strong>{unavailable.readiness === 'building' ? 'Preparing analytical cache' : 'Analytical cache unavailable'}</strong>
             <span>{unavailable.message}</span>
             {#if unavailable.readiness === 'building'}
@@ -436,7 +461,7 @@
         </div>
         </div>
       {:else if error}
-        <div role="row"><div role="gridcell" aria-colspan={visibleColumns.length}><div class="request-error" role="alert">
+        <div role="row"><div role="gridcell" aria-colspan={visibleColumns.length + 1}><div class="request-error" role="alert">
             <span>{error}</span>
             <Button
               label={restoring ? 'Retry restoration' : 'Retry request'}
@@ -456,6 +481,7 @@
               role="row"
               style:grid-template-columns={template}
             >
+              <span class="skeleton-cell selection-cell" role="gridcell"><i></i></span>
               {#each visibleColumns as column (column)}
                 <span class="skeleton-cell" role="gridcell"><i></i></span>
               {/each}
@@ -463,11 +489,11 @@
           {/each}
         </div>
       {:else if rows.length === 0}
-        <div role="row"><div class="empty" role="gridcell" aria-colspan={visibleColumns.length}>
+        <div role="row"><div class="empty" role="gridcell" aria-colspan={visibleColumns.length + 1}>
           <EmptyState title="No items match this view" description="Adjust the search or clear filters to widen the view." />
         </div></div>
       {:else if !slice || rowHeight === undefined}
-        <div role="row"><div role="gridcell" aria-colspan={visibleColumns.length}><p class="empty" role="status">Preparing table layout…</p></div></div>
+        <div role="row"><div role="gridcell" aria-colspan={visibleColumns.length + 1}><p class="empty" role="status">Preparing table layout…</p></div></div>
       {:else}
         <div class="virtual-spacer" style:height={`${slice.totalHeight}px`}>
           <div class="virtual-window" style:top={`${slice.topPad}px`}>
@@ -494,12 +520,21 @@
                 }}
                 onclick={() => onOpen?.(row)}
               >
+                <span class="selection-cell" role="gridcell">
+                  <SelectionCheckbox
+                    checked={selection.isSelected(row.key)}
+                    label={`${selection.isSelected(row.key) ? 'Unselect' : 'Select'} ${row.title || 'item'}`}
+                    inGrid
+                    onToggle={(range) => {
+                      activeKey = row.key;
+                      onActiveKey?.(row.key);
+                      selection.toggle(row.key, index, orderedKeys, range);
+                    }}
+                  />
+                </span>
                 {#each visibleColumns as column (column)}
                   <span class={`cell cell--${column}`} role="gridcell">
                     {#if column === 'kind'}
-                      {#if selection.isSelected(row.key)}
-                        <span class="selection-marker" aria-hidden="true">✓</span>
-                      {/if}
                       <RowKind kind={row.kind} messageType={row.message_type} />
                     {:else if column === 'people'}
                       {@const label = people(row)}
@@ -540,7 +575,7 @@
              cursor survived (a transient failure), offer a quiet retry that
              re-attempts the same page; a terminal failure dropped the
              cursor, so the only recovery is reloading the view. -->
-        <div role="row"><div role="gridcell" aria-colspan={visibleColumns.length}>
+        <div role="row"><div role="gridcell" aria-colspan={visibleColumns.length + 1}>
           <div class="page-error" role="alert">
             <span>{pageError}</span>
             {#if hasMore}
@@ -552,7 +587,7 @@
         </div></div>
       {/if}
       {#if loadingMore}
-        <div role="row"><div role="gridcell" aria-colspan={visibleColumns.length}>
+        <div role="row"><div role="gridcell" aria-colspan={visibleColumns.length + 1}>
           <div class="page-progress" role="status">Loading more… {rows.length.toLocaleString()} loaded</div>
         </div></div>
       {/if}
@@ -622,6 +657,26 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .selection-header,
+  .selection-cell {
+    display: grid;
+    min-width: 0;
+    place-items: center;
+  }
+
+  .selection-cell :global(.selection-checkbox) {
+    opacity: 0;
+    transform: scale(0.9);
+    transition: opacity 80ms ease-out, transform 80ms ease-out;
+  }
+
+  .data-row:hover .selection-cell :global(.selection-checkbox),
+  .data-row:focus-within .selection-cell :global(.selection-checkbox),
+  .table-grid.selection-mode .selection-cell :global(.selection-checkbox) {
+    opacity: 1;
+    transform: scale(1);
   }
 
   .table-body {
@@ -714,12 +769,6 @@
 
   .attachment {
     color: var(--artifact-ink);
-  }
-
-  .selection-marker {
-    margin-right: var(--space-2);
-    color: var(--active-ink);
-    font-weight: 800;
   }
 
   .empty {

@@ -406,8 +406,8 @@ func metadataForSetting(key string) settingMetadata {
 		return metadata
 	}
 	last := key
-	if dot := strings.LastIndexByte(key, '.'); dot >= 0 {
-		last = key[dot+1:]
+	if _, suffix, ok := strings.CutLast(key, "."); ok {
+		last = suffix
 	}
 	words := strings.Fields(strings.ReplaceAll(last, "_", " "))
 	for index := range words {

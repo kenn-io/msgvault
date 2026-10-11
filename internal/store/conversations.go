@@ -388,7 +388,12 @@ func (s *Store) batchPopulateAttachments(ctx context.Context, messages []APIMess
 // SetConversationMetadata writes the conversations.metadata JSON/JSONB column.
 // Passing an invalid sql.NullString clears the column.
 func (s *Store) SetConversationMetadata(conversationID int64, metadata sql.NullString) error {
-	err := s.withSyncConversationWriteContext(context.Background(), conversationID, func(q querier) error {
+	return s.SetConversationMetadataContext(context.Background(), conversationID, metadata)
+}
+
+// SetConversationMetadataContext honors cancellation during SetConversationMetadata.
+func (s *Store) SetConversationMetadataContext(ctx context.Context, conversationID int64, metadata sql.NullString) error {
+	err := s.withSyncConversationWriteContext(ctx, conversationID, func(q querier) error {
 		_, err := q.Exec(fmt.Sprintf(`
 			UPDATE conversations
 			SET metadata = %s
@@ -404,8 +409,13 @@ func (s *Store) SetConversationMetadata(conversationID int64, metadata sql.NullS
 
 // GetConversationMetadata reads the conversations.metadata JSON/JSONB column.
 func (s *Store) GetConversationMetadata(conversationID int64) (sql.NullString, error) {
+	return s.GetConversationMetadataContext(context.Background(), conversationID)
+}
+
+// GetConversationMetadataContext honors cancellation during GetConversationMetadata.
+func (s *Store) GetConversationMetadataContext(ctx context.Context, conversationID int64) (sql.NullString, error) {
 	var metadata sql.NullString
-	if err := s.db.QueryRow(
+	if err := s.db.QueryRowContext(ctx,
 		`SELECT metadata FROM conversations WHERE id = ?`, conversationID,
 	).Scan(&metadata); err != nil {
 		return sql.NullString{}, fmt.Errorf("get conversation metadata (id=%d): %w", conversationID, err)
@@ -418,7 +428,12 @@ func (s *Store) GetConversationMetadata(conversationID int64) (sql.NullString, e
 // evaluates this record rather than the participant rows, which accumulate
 // every member ever seen and so can only ever raise the count.
 func (s *Store) SetConversationMemberCount(conversationID int64, count int) error {
-	metadata, err := s.conversationMetadataObject(conversationID)
+	return s.SetConversationMemberCountContext(context.Background(), conversationID, count)
+}
+
+// SetConversationMemberCountContext honors cancellation during SetConversationMemberCount.
+func (s *Store) SetConversationMemberCountContext(ctx context.Context, conversationID int64, count int) error {
+	metadata, err := s.conversationMetadataObjectContext(ctx, conversationID)
 	if err != nil {
 		return err
 	}
@@ -428,7 +443,7 @@ func (s *Store) SetConversationMemberCount(conversationID int64, count int) erro
 	}
 	metadata["member_count"] = encoded
 	delete(metadata, "member_count_unknown")
-	return s.writeConversationMetadataObject(conversationID, metadata)
+	return s.writeConversationMetadataObjectContext(ctx, conversationID, metadata)
 }
 
 // MarkConversationMemberCountUnknown records that a provider could not read a
@@ -440,18 +455,23 @@ func (s *Store) SetConversationMemberCount(conversationID int64, count int) erro
 // purge that trusted the stale count instead could download or delete media
 // against the membership the conversation has now.
 func (s *Store) MarkConversationMemberCountUnknown(conversationID int64) error {
-	metadata, err := s.conversationMetadataObject(conversationID)
+	return s.MarkConversationMemberCountUnknownContext(context.Background(), conversationID)
+}
+
+// MarkConversationMemberCountUnknownContext honors cancellation during MarkConversationMemberCountUnknown.
+func (s *Store) MarkConversationMemberCountUnknownContext(ctx context.Context, conversationID int64) error {
+	metadata, err := s.conversationMetadataObjectContext(ctx, conversationID)
 	if err != nil {
 		return err
 	}
 	metadata["member_count_unknown"] = jsontext.Value("true")
-	return s.writeConversationMetadataObject(conversationID, metadata)
+	return s.writeConversationMetadataObjectContext(ctx, conversationID, metadata)
 }
 
-// conversationMetadataObject reads the metadata column as a mutable JSON
+// conversationMetadataObjectContext reads the metadata column as a mutable JSON
 // object, so a provider can revise one key without disturbing the others.
-func (s *Store) conversationMetadataObject(conversationID int64) (map[string]jsontext.Value, error) {
-	stored, err := s.GetConversationMetadata(conversationID)
+func (s *Store) conversationMetadataObjectContext(ctx context.Context, conversationID int64) (map[string]jsontext.Value, error) {
+	stored, err := s.GetConversationMetadataContext(ctx, conversationID)
 	if err != nil {
 		return nil, err
 	}
@@ -465,14 +485,14 @@ func (s *Store) conversationMetadataObject(conversationID int64) (map[string]jso
 	return metadata, nil
 }
 
-func (s *Store) writeConversationMetadataObject(
+func (s *Store) writeConversationMetadataObjectContext(ctx context.Context,
 	conversationID int64, metadata map[string]jsontext.Value,
 ) error {
 	encoded, err := json.Marshal(metadata, json.Deterministic(true))
 	if err != nil {
 		return fmt.Errorf("encode conversation metadata (id=%d): %w", conversationID, err)
 	}
-	return s.SetConversationMetadata(conversationID, sql.NullString{
+	return s.SetConversationMetadataContext(ctx, conversationID, sql.NullString{
 		String: string(encoded), Valid: len(metadata) != 0,
 	})
 }
@@ -480,7 +500,12 @@ func (s *Store) writeConversationMetadataObject(
 // ListConversationIDs returns the IDs of every conversation archived under
 // sourceID, in ID order.
 func (s *Store) ListConversationIDs(sourceID int64) ([]int64, error) {
-	rows, err := s.db.Query(`SELECT id FROM conversations WHERE source_id = ? ORDER BY id`, sourceID)
+	return s.ListConversationIDsContext(context.Background(), sourceID)
+}
+
+// ListConversationIDsContext honors cancellation during ListConversationIDs.
+func (s *Store) ListConversationIDsContext(ctx context.Context, sourceID int64) ([]int64, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM conversations WHERE source_id = ? ORDER BY id`, sourceID)
 	if err != nil {
 		return nil, fmt.Errorf("list conversations for source %d: %w", sourceID, err)
 	}
@@ -506,12 +531,19 @@ func (s *Store) ListConversationIDs(sourceID int64) ([]int64, error) {
 func (s *Store) ConversationMetadataBatch(
 	sourceID int64, sourceConversationIDs []string,
 ) (map[string]sql.NullString, error) {
+	return s.ConversationMetadataBatchContext(context.Background(), sourceID, sourceConversationIDs)
+}
+
+// ConversationMetadataBatchContext honors cancellation during ConversationMetadataBatch.
+func (s *Store) ConversationMetadataBatchContext(ctx context.Context,
+	sourceID int64, sourceConversationIDs []string,
+) (map[string]sql.NullString, error) {
 	if len(sourceConversationIDs) == 0 {
 		return make(map[string]sql.NullString), nil
 	}
 
 	metadata := make(map[string]sql.NullString)
-	err := queryInChunks(s.db, sourceConversationIDs, []any{sourceID},
+	err := queryInChunksContext(ctx, s.db, sourceConversationIDs, []any{sourceID},
 		`SELECT source_conversation_id, metadata
 		 FROM conversations
 		 WHERE source_id = ? AND source_conversation_id IN (%s)`,

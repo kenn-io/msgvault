@@ -63,6 +63,7 @@ export const test = base.extend<{ daemon: MeetingDaemon }>({
           XDG_CACHE_HOME: join(scratch, "xdg-cache"),
           TMPDIR: scratch,
           TZ: "UTC",
+          MSGVAULT_TELEMETRY_ENABLED: "0",
         };
         // Reuse immutable compiler caches without giving the daemon any ambient
         // provider/remote/archive configuration or credentials.

@@ -102,7 +102,7 @@ func TestSQLiteDatabaseSizeContextCancelsConnectionWait(t *testing.T) {
 		require.FailNowf("DatabaseSize bypassed context-aware SQL",
 			"returned before the only database connection was available: size=%d err=%v",
 			early.size, early.err)
-	case <-time.After(25 * time.Millisecond):
+	case <-time.After(25 * time.Millisecond): //nolint:kennlint // absence check: the held only connection keeps DatabaseSize waiting
 	}
 
 	cancel()

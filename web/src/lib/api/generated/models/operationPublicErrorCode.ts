@@ -27,6 +27,8 @@ export const OperationPublicErrorCode = {
   invocation_unsafe_error_redacted: "invocation_unsafe_error_redacted",
   invocation_upstream_failed: "invocation_upstream_failed",
   lease_lost: "lease_lost",
+  microsoft_authorization_required: "microsoft_authorization_required",
+  microsoft_contact_too_large: "microsoft_contact_too_large",
   person_sweep_failed: "person_sweep_failed",
   policy: "policy",
   provider_http: "provider_http",

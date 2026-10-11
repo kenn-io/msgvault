@@ -45,15 +45,14 @@ type PeopleInferenceProfileSetting struct {
 // PeopleInferenceSettingsResponse distinguishes disk configuration from the
 // policy the daemon loaded at startup. A saved change takes effect on restart.
 type PeopleInferenceSettingsResponse struct {
-	StoredCredentialsSupported bool                            `json:"stored_credentials_supported"`
-	Profiles                   []PeopleInferenceProfileSetting `json:"profiles"`
-	ConfiguredName             string                          `json:"configured_name,omitempty"`
-	ConfiguredEnabled          bool                            `json:"configured_enabled"`
-	ConfiguredFingerprint      string                          `json:"configured_fingerprint,omitempty"`
-	RunningName                string                          `json:"running_name,omitempty"`
-	RunningEnabled             bool                            `json:"running_enabled"`
-	RunningFingerprint         string                          `json:"running_fingerprint,omitempty"`
-	PendingRestart             bool                            `json:"pending_restart"`
+	Profiles              []PeopleInferenceProfileSetting `json:"profiles"`
+	ConfiguredName        string                          `json:"configured_name,omitempty"`
+	ConfiguredEnabled     bool                            `json:"configured_enabled"`
+	ConfiguredFingerprint string                          `json:"configured_fingerprint,omitempty"`
+	RunningName           string                          `json:"running_name,omitempty"`
+	RunningEnabled        bool                            `json:"running_enabled"`
+	RunningFingerprint    string                          `json:"running_fingerprint,omitempty"`
+	PendingRestart        bool                            `json:"pending_restart"`
 }
 
 type PeopleInferenceSelectionRequest struct {
@@ -129,7 +128,7 @@ type peopleInferenceCheckStore interface {
 type peopleInferenceConsentStore interface {
 	peoplesweep.ProviderAuthority
 	EnsurePersonInferenceProfile(ctx context.Context, profile peoplesweep.ProviderProfile) (bool, error)
-	GrantPersonInferenceConsent(ctx context.Context, fingerprint, actor string) (*store.PersonInferenceConsent, bool, error)
+	GrantPersonInferenceConsent(ctx context.Context, fingerprint, actor string) (*store.ProviderConsent, bool, error)
 }
 
 type peopleInferenceCredentialAuthorityStore interface {
@@ -415,11 +414,6 @@ func (s *Server) handleCreatePeopleInferencePreset(w http.ResponseWriter, r *htt
 	if !decodeStrictSettingsJSON(w, r, &request) {
 		return
 	}
-	if !peoplesweep.StoredCredentialsSupported() {
-		writeError(w, http.StatusServiceUnavailable, "credential_store_unsupported",
-			"Stored provider keys are unavailable on this platform; configure an environment credential with msgvault person provider add and --credential-env on the daemon host")
-		return
-	}
 	if err := peoplesweep.ValidateProviderProfileName(r.PathValue("name")); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_provider_name", "People inference provider name is invalid")
 		return
@@ -488,7 +482,7 @@ func (s *Server) handlePutPeopleInferenceKey(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusInternalServerError, "authority_revoke_failed", "Could not revoke prior provider consent and check")
 		return
 	}
-	if _, err := target.credentials.SaveIfRevision(target.name, peoplesweep.NewCredential(peoplesweep.AuthBearer, request.Value), ifMatch); err != nil {
+	if _, err := target.credentials.SaveIfRevision(target.name, target.endpoint, request.Value, ifMatch); err != nil {
 		if errors.Is(err, peoplesweep.ErrCredentialRevisionConflict) {
 			writeError(w, http.StatusPreconditionFailed, "credential_conflict", "People provider credential changed; reload settings")
 		} else {
@@ -552,9 +546,10 @@ func (s *Server) handleDeletePeopleInferenceKey(w http.ResponseWriter, r *http.R
 
 type peopleInferenceKeyTarget struct {
 	name         string
+	endpoint     string
 	fingerprints []string
 	store        peopleInferenceCredentialAuthorityStore
-	credentials  *peoplesweep.FileCredentialStore
+	credentials  peoplesweep.StoredCredentials
 }
 
 // A saved policy may differ from the daemon's policy while restart is pending.
@@ -609,8 +604,8 @@ func (s *Server) peopleInferenceKeyTarget(
 		writeError(w, http.StatusServiceUnavailable, "people_inference_unavailable", "People inference store is unavailable")
 		return peopleInferenceKeyTarget{}, false
 	}
-	credentials := peoplesweep.NewFileCredentialStore(configured.TokensDir())
-	current, present, err := credentials.Revision(name)
+	credentials := peoplesweep.NewStoredCredentials(configured.TokensDir())
+	current, present, err := credentials.Revision(name, provider.Endpoint)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "credential_store_unavailable", "People provider credential store is unavailable")
 		return peopleInferenceKeyTarget{}, false
@@ -634,7 +629,9 @@ func (s *Server) peopleInferenceKeyTarget(
 			fingerprints = append(fingerprints, running.Fingerprint)
 		}
 	}
-	return peopleInferenceKeyTarget{name: name, fingerprints: fingerprints, store: st, credentials: credentials}, true
+	return peopleInferenceKeyTarget{
+		name: name, endpoint: provider.Endpoint, fingerprints: fingerprints, store: st, credentials: credentials,
+	}, true
 }
 
 func (s *Server) peopleInferenceProfileForRequest(
@@ -698,7 +695,7 @@ func (s *Server) handleCheckPeopleInferenceProvider(w http.ResponseWriter, r *ht
 		writeError(w, http.StatusServiceUnavailable, "provider_unavailable", "People inference provider is unavailable")
 		return
 	}
-	credentials := peoplesweep.NewFileCredentialStore(configured.TokensDir())
+	credentials := peoplesweep.NewStoredCredentials(configured.TokensDir())
 	resolver := peoplesweep.NewCredentialResolver(credentials, os.LookupEnv)
 	runner, err := peoplesweep.NewRunner(selected, st, registry, resolver)
 	if err != nil {
@@ -712,7 +709,7 @@ func (s *Server) handleCheckPeopleInferenceProvider(w http.ResponseWriter, r *ht
 // external provider call. The operation gate is held only for the final write.
 func (s *Server) runPeopleInferenceCheck(
 	w http.ResponseWriter, r *http.Request, ifMatch string,
-	profile peoplesweep.ProviderProfile, credentials *peoplesweep.FileCredentialStore,
+	profile peoplesweep.ProviderProfile, credentials peoplesweep.CredentialStore,
 	check func(context.Context) (peoplesweep.StructuredResponse, error),
 ) {
 	st, ok := s.store.(peopleInferenceCheckStore)
@@ -738,7 +735,7 @@ func (s *Server) runPeopleInferenceCheck(
 	var credentialRevision string
 	if profile.Credential == peoplesweep.CredentialStored {
 		var err error
-		credentialRevision, _, err = credentials.Revision(profile.CredentialRef)
+		credentialRevision, _, err = credentials.Revision(profile.CredentialRef, profile.Endpoint)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "credential_store_unavailable", "People provider credential store is unavailable")
 			return
@@ -772,7 +769,7 @@ func (s *Server) runPeopleInferenceCheck(
 		return
 	}
 	if credentialRevision != "" {
-		current, _, err := credentials.Revision(profile.CredentialRef)
+		current, _, err := credentials.Revision(profile.CredentialRef, profile.Endpoint)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "credential_store_unavailable", "People provider credential store is unavailable")
 			return
@@ -946,7 +943,7 @@ func (s *Server) handleRemovePeopleInferenceProvider(w http.ResponseWriter, r *h
 		return
 	}
 	service := personenrollment.NewService(s.cfg.ConfigFilePath(), st)
-	credentials := peoplesweep.NewFileCredentialStore(s.cfg.TokensDir())
+	credentials := peoplesweep.NewStoredCredentials(s.cfg.TokensDir())
 	runningFingerprint := ""
 	if s.cfg.People.Sweep.Enabled && s.cfg.People.Sweep.Provider.Name == name {
 		running, err := s.cfg.People.Sweep.Profile()
@@ -987,8 +984,7 @@ func (s *Server) handleRemovePeopleInferenceProvider(w http.ResponseWriter, r *h
 
 func (s *Server) buildPeopleInferenceSettingsResponse(ctx context.Context, configured *config.Config) (PeopleInferenceSettingsResponse, error) {
 	response := peopleInferenceSettingsResponse(configured.People.Sweep, s.cfg.People.Sweep)
-	response.StoredCredentialsSupported = peoplesweep.StoredCredentialsSupported()
-	credentials := peoplesweep.NewFileCredentialStore(configured.TokensDir())
+	credentials := peoplesweep.NewStoredCredentials(configured.TokensDir())
 	for index := range response.Profiles {
 		profile := &response.Profiles[index]
 		if profile.Protocol == string(peoplesweep.ProtocolCodexAppServer) {
@@ -1003,10 +999,7 @@ func (s *Server) buildPeopleInferenceSettingsResponse(ctx context.Context, confi
 		if profile.CredentialSource != string(peoplesweep.CredentialStored) {
 			continue
 		}
-		if !response.StoredCredentialsSupported {
-			continue // The platform cannot hold profile secrets, so nothing is stored.
-		}
-		revision, exists, err := credentials.Revision(profile.Name)
+		revision, exists, err := credentials.Revision(profile.Name, profile.Endpoint)
 		if err != nil {
 			return PeopleInferenceSettingsResponse{}, err
 		}

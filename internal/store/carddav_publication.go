@@ -777,6 +777,9 @@ func (s *Store) resolvePublicationConflictAuditTx(
 	return err
 }
 
+// RollbackCardDAVPublicationThrottleContext clears a pending write but keeps its
+// intent. A zero retryAfter does not pause the connection, for a write that
+// was never sent, such as one blocked on sign-in.
 func (s *Store) RollbackCardDAVPublicationThrottleContext(
 	ctx context.Context, pending *CardDAVPublication, retryAfter time.Time,
 ) error {
@@ -851,7 +854,7 @@ func (s *Store) rollbackCardDAVPublicationContext(
 		if affected, _ := result.RowsAffected(); affected != 1 {
 			return ErrCardDAVStalePlan
 		}
-		if retryAfter != nil {
+		if retryAfter != nil && !retryAfter.IsZero() {
 			account, err := getCardDAVAccountForBookFrom(ctx, tx.Tx, s.Rebind, current.AddressBookID)
 			if err != nil {
 				return err

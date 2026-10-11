@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	"go.kenn.io/msgvault/internal/search"
 )
 
 // GenerationID identifies one index generation.
@@ -201,6 +203,9 @@ type Chunk struct {
 //     `>= After` and `< Before`.
 //   - LargerThan/SmallerThan compare against m.size_estimate.
 type Filter struct {
+	// AccountScopes intersect; each matches its addresses or unattributed rows.
+	AccountScopes []search.AccountScope
+
 	MessageIDs         []int64   // exact bounded candidate population; empty = unrestricted
 	SourceIDs          []int64   // from [server/sources].identifier; empty = no source filter
 	ConversationIDs    []int64   // exact messages.conversation_id values; empty = unrestricted
@@ -226,7 +231,7 @@ type Filter struct {
 // IsEmpty reports whether the filter has no restrictions. A zero-value
 // Filter is empty and backends should skip filter resolution entirely.
 func (f Filter) IsEmpty() bool {
-	return len(f.MessageIDs) == 0 &&
+	return len(f.AccountScopes) == 0 && len(f.MessageIDs) == 0 &&
 		len(f.SourceIDs) == 0 &&
 		len(f.ConversationIDs) == 0 &&
 		len(f.SenderGroups) == 0 &&
@@ -253,6 +258,9 @@ const MaxFilterMessageIDs = 2_000
 var ErrFilterTooLarge = errors.New("vector message ID filter exceeds 2000 IDs")
 
 func ValidateFilter(filter Filter) error {
+	if err := search.ValidateAccountScopes(filter.AccountScopes); err != nil {
+		return err
+	}
 	if len(filter.MessageIDs) > MaxFilterMessageIDs {
 		return ErrFilterTooLarge
 	}

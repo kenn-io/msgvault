@@ -53,6 +53,11 @@ Supported operators:
   larger:      Size filter (5M, 100K)
   smaller:     Size filter
   message_type: Message type filter (sms, mms, whatsapp, teams, email, meeting_transcript)
+  received:    Exact confirmed address that received the mail
+  account:     Exact confirmed address that received or sent the mail, or owns the calendar event
+
+Unlike --account, which selects a whole archive source, account: matches only
+messages attributed to that address.
 
 List-Id values are matched as case-insensitive literal substrings. Quote values
 that contain spaces. Repeating list: or list-id: requires every value to match.
@@ -151,14 +156,14 @@ func runHTTPSearch(cmd *cobra.Command, queryStr string) error {
 		return errors.New("invocation state is unavailable")
 	}
 	logger := state.logger
-	s, info, err := OpenHTTPStore(cmd.Context())
+	s, info, err := OpenHTTPStore(cmd.Context(), daemonclient.AgentReadMinAPISchemaVersion)
 	if err != nil {
 		return fmt.Errorf("open store: %w", err)
 	}
 	defer func() { _ = s.Close() }()
 
 	prefix := "Searching..."
-	if info.Kind == HTTPStoreConfiguredRemote {
+	if info.Kind == HTTPStoreConfiguredRemote || info.Kind == HTTPStoreAgentDelegated {
 		prefix = fmt.Sprintf("Searching %s...", info.URL)
 	}
 	stopStatus := startSearchStatus(cmd.Context(), prefix, info)
@@ -207,7 +212,20 @@ func runHTTPSearch(cmd *cobra.Command, queryStr string) error {
 		// Pre-0.18 daemons built the index synchronously inside the request.
 		fmt.Fprintf(os.Stderr, "Built search index (%d messages indexed).\n", resp.IndexedMessages)
 	}
-	if resp.IndexState == "building" {
+	switch resp.IndexState {
+	case "checking":
+		if isAgentMode(state) {
+			fmt.Fprintln(os.Stderr, "Note: the search index is being checked; results may be incomplete.")
+		}
+	case "unverified":
+		if isAgentMode(state) {
+			fmt.Fprintln(os.Stderr, "Note: the search index could not be verified for this request; results may be incomplete. Ask the archive owner to search once or run rebuild-fts.")
+		} else {
+			fmt.Fprintln(os.Stderr, "Note: the search index could not be verified for this request; results may be incomplete. Search again to retry the check, or run rebuild-fts.")
+		}
+	case "awaiting_owner":
+		fmt.Fprintln(os.Stderr, "Note: the search index is incomplete; run rebuild-fts with owner access. Results may be incomplete until it finishes.")
+	case "building":
 		fmt.Fprintln(os.Stderr,
 			"Note: the search index is rebuilding or awaiting a rebuild in the background; results may be incomplete until it finishes.")
 	}

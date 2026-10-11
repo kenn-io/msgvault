@@ -350,6 +350,9 @@ func TestV3ViewMapsV4ValueTypesAndEscapesTelURIParameters(t *testing.T) {
 	number, err := UnescapeText(tel.Property.RawValue)
 	require.NoError(err)
 	assert.Equal("+12025550123;ext=12", number)
+	v4, err := reparsed.RenderView(Version40)
+	require.NoError(err)
+	assert.Contains(string(v4), "TEL:tel:+12025550123;ext=12\r\n")
 }
 
 func TestRenderViewRejectsUnsupportedVersion(t *testing.T) {

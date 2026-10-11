@@ -268,6 +268,13 @@ func (s *Store) lockIdentityMutationTxContext(
 	ctx context.Context,
 	tx *loggedTx,
 ) error {
+	if tx.attribution != nil {
+		// The attribution entry already took the identity row before the fence.
+		if tx.attribution.exclusive {
+			return nil
+		}
+		return errAttributionLockUpgrade
+	}
 	if _, err := tx.ExecContext(ctx, s.dialect.InsertOrIgnore(
 		`INSERT OR IGNORE INTO archive_metadata (key, value) VALUES (?, '0')`),
 		identityRevisionKey); err != nil {
@@ -842,7 +849,7 @@ func (s *Store) rejectAcceptedIdentityMatchCandidatesTx(
 	return nil
 }
 
-// rewriteLinksForMerge repoints link edges from loser to winner when a
+// rewriteLinksForMergeContext repoints link edges from loser to winner when a
 // participant merge (MergeParticipants, mergeParticipant) absorbs loser into
 // winner. Must run inside the merge's own transaction, before the final
 // `DELETE FROM participants WHERE id = ?`: participant_links has an ON
@@ -862,15 +869,6 @@ func (s *Store) rejectAcceptedIdentityMatchCandidatesTx(
 // touched any edge: a merge can change owner_participants even when it
 // touches no link edge, so there is no return value for them to condition
 // on.
-func (s *Store) rewriteLinksForMerge(tx *loggedTx, loser, winner int64) error {
-	return s.rewriteLinksForMergeContext(context.Background(), tx, loser, winner)
-}
-
-// rewriteLinksForMergeContext is the context-aware form of
-// rewriteLinksForMerge. The legacy phone-unique migration uses it: its merge
-// runs inside a maintenance transaction with the pool-wide statement_timeout
-// disabled, so on PostgreSQL nothing but ctx can cut short a statement here
-// that is waiting on a conflicting lock.
 func (s *Store) rewriteLinksForMergeContext(
 	ctx context.Context, tx *loggedTx, loser, winner int64,
 ) error {

@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -38,12 +40,12 @@ func TestProviderCredentialsAndCallbacksStaySeparate(t *testing.T) {
 	require := require.New(t)
 	f := newFakeAS(t)
 	dir := t.TempDir()
-	m := newTestManager(t, f, "18091")
+	m := newTestManager(t, f)
 	m.tokensDir = dir
 	m.provider.Name = "plaud"
 	m.provider.CallbackPath = "/callback/plaud"
 	require.NoError(m.Authorize(context.Background(), "work"))
-	assert.Equal("http://localhost:18091/callback/plaud", f.lastAuthorize.Get("redirect_uri"))
+	assert.Equal("http://localhost:"+m.redirectPort+"/callback/plaud", f.lastAuthorize.Get("redirect_uri"))
 	other := newDefaultManager(f.srv.URL+"/api/mcp", dir)
 	assert.False(other.HasToken("work"))
 	_, err := other.TokenSource(context.Background(), "work")
@@ -145,11 +147,11 @@ func writeJSON(w http.ResponseWriter, v any) {
 
 // newTestManager wires a Manager at the fake AS's MCP endpoint whose
 // "browser" is an HTTP client that follows the authorize redirect into the
-// localhost callback.
-func newTestManager(t *testing.T, f *fakeAS, port string) *Manager {
+// localhost callback on a free port.
+func newTestManager(t *testing.T, f *fakeAS) *Manager {
 	t.Helper()
 	m := newDefaultManager(f.srv.URL+"/api/mcp", t.TempDir())
-	m.redirectPort = port
+	m.redirectPort = freeLocalhostPort(t)
 	m.openBrowserFn = func(ctx context.Context, rawURL string) error {
 		go func() {
 			resp, err := http.Get(rawURL) //nolint:gosec // test hook fetching the fake AS authorize URL
@@ -162,6 +164,18 @@ func newTestManager(t *testing.T, f *fakeAS, port string) *Manager {
 	return m
 }
 
+// freeLocalhostPort returns a localhost port that was free a moment ago, so
+// callback tests do not depend on a fixed port being available.
+func freeLocalhostPort(t *testing.T) string {
+	t.Helper()
+	listener, err := net.Listen("tcp", "localhost:0")
+	require.NoError(t, err)
+	addr, ok := listener.Addr().(*net.TCPAddr)
+	require.True(t, ok, "listener address must be TCP")
+	require.NoError(t, listener.Close())
+	return strconv.Itoa(addr.Port)
+}
+
 func TestAuthorize_FullFlow(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("localhost listener flow not exercised on windows CI")
@@ -169,7 +183,7 @@ func TestAuthorize_FullFlow(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newFakeAS(t)
-	m := newTestManager(t, f, "18090")
+	m := newTestManager(t, f)
 
 	require.NoError(m.Authorize(context.Background(), "alice@example.com"))
 
@@ -225,7 +239,7 @@ func TestAuthorizeWithValidationPreservesStoredTokenUntilIdentityMatches(t *test
 			assert := assert.New(t)
 			require := require.New(t)
 			f := newFakeAS(t)
-			m := newTestManager(t, f, "18092")
+			m := newTestManager(t, f)
 			require.NoError(m.saveToken("work", &tokenFile{
 				Token: oauth2.Token{
 					AccessToken:  "old-access",

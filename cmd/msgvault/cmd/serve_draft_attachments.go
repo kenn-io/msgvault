@@ -69,7 +69,7 @@ func prepareIMAPDraftAttachmentWrites(ctx context.Context, parsed *msgmime.Messa
 	}
 	writes := make([]store.AttachmentWrite, 0, len(parsed.Attachments))
 	used := make([]bool, len(refs))
-	for _, part := range msgmime.DistinctAttachments(parsed.Attachments) {
+	for _, part := range parsed.Attachments {
 		if part.Size == 0 {
 			continue // sync stores no row for an empty part
 		}

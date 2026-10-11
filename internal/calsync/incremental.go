@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	"go.kenn.io/msgvault/internal/gcal"
+	"go.kenn.io/msgvault/internal/rederive"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -102,6 +103,7 @@ func (s *Syncer) Incremental(ctx context.Context) (Result, error) {
 // so the next sync re-delivers and retries the failed events rather than losing
 // them. A 410 surfaces as ErrSyncTokenExpired for the caller to self-heal.
 func (s *Syncer) incrementalCalendar(ctx context.Context, src *store.Source, cal gcal.Calendar, result *Result) error {
+	rederive.Heal(ctx, s.logger, s.store, src)
 	syncID, err := s.store.StartSync(src.ID, "incremental")
 	if err != nil {
 		return fmt.Errorf("start sync: %w", err)

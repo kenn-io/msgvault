@@ -718,6 +718,20 @@ func TestServerDaemonAutoStartDefault(t *testing.T) {
 	assert.True(t, cfg.Server.DaemonAutoStartEnabled())
 }
 
+func TestLoadTelemetryEnabled(t *testing.T) {
+	for content, want := range map[string]bool{
+		"":                               true,
+		"[telemetry]\nenabled = true\n":  true,
+		"[telemetry]\nenabled = false\n": false,
+	} {
+		configPath := filepath.Join(t.TempDir(), "config.toml")
+		require.NoError(t, os.WriteFile(configPath, []byte(content), 0o644))
+		cfg, err := Load(configPath, "")
+		require.NoError(t, err)
+		assert.Equal(t, want, cfg.Telemetry.EnabledOrDefault(), "config %q", content)
+	}
+}
+
 func TestLoadWithServerDaemonAutoRestart(t *testing.T) {
 	tmpDir := t.TempDir()
 

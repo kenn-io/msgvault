@@ -111,9 +111,11 @@ separately.
 Use `--api-key-stdin` during `provider add` to store a profile-specific key
 outside `config.toml`, or `--credential-env NAME` to store only an environment
 variable name. Never put the secret value in a command argument. Stored keys
-are supported on Linux and macOS only; on other platforms `provider add`
-refuses a stored credential before reading it, so pass `--credential-env`
-there. Custom local gateways can use `--custom`; their synthetic check still
+work on every platform. They live in `tokens/provider-credentials.json` with
+the other provider keys, and each is sent only to the endpoint origin (scheme,
+host, and port) of the profile it was saved for. Keys that an older release
+stored on Linux or macOS move into that file the first time msgvault uses the
+profile. Custom local gateways can use `--custom`; their synthetic check still
 calls the configured endpoint.
 
 Supported HTTP protocols are `openai_chat`, `openai_responses`,

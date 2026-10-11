@@ -145,7 +145,7 @@ func (s *Server) setupHumaAPI(mux humago.Mux) huma.API {
 	configureHuma()
 
 	config := huma.DefaultConfig("msgvault API", APISchemaVersion)
-	config.Components.Schemas = huma.NewMapRegistry("#/components/schemas/", calendarSchemaName)
+	config.Components.Schemas = huma.NewMapRegistry("#/components/schemas/", prefixedSchemaName)
 	jsonFormat := huma.Format{
 		Marshal: marshalAPIJSON,
 		Unmarshal: func(data []byte, value any) error {
@@ -207,11 +207,33 @@ func (s *Server) humaAuthMiddleware(ctx huma.Context, next func(huma.Context)) {
 	auth := s.requestAuthentication(req)
 	if auth.Mode == AuthModeDelegated {
 		if op := ctx.Operation(); op != nil && delegatedOperationAllowed(op.OperationID) {
+			permission, err := agentReadPermission(op.OperationID, auth.Grant)
+			if err != nil {
+				writeHumaError(ctx, err.status, err.ErrorResponse.Error, err.Message)
+				return
+			}
+			if permission != "" {
+				release, err := s.beginAgentRead(req, op.OperationID, auth.Grant, permission)
+				if err != nil {
+					writeHumaError(ctx, err.status, err.ErrorResponse.Error, err.Message)
+					return
+				}
+				defer release()
+			}
 			next(ctx)
 			return
 		}
 		s.logUnauthorizedAPIRequest(req)
 		writeHumaError(ctx, http.StatusUnauthorized, "unauthorized", "Invalid or missing API key")
+		return
+	}
+	if auth.Mode == AuthModeRemoteClient {
+		if op := ctx.Operation(); op != nil && remoteClientOperationAllowed(op.OperationID, auth.RemoteClient.CollectionsWrite) {
+			next(ctx)
+			return
+		}
+		s.logger.Warn("remote client operation denied", pathKey, req.URL.Path, "client_id", auth.RemoteClient.ClientID)
+		writeHumaError(ctx, http.StatusForbidden, "forbidden", "Operation is not available to remote clients")
 		return
 	}
 	if auth.Mode != AuthModeRequired {
@@ -286,7 +308,10 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	s.registerExploreRoutes(apiV1)
 	s.registerFilesRoutes(apiV1)
 	s.registerDocumentSearchRoute(apiV1)
+	registerAPIV1RawHumaJSONRouteWithErrors[MediaSearchResponse](apiV1, "searchMedia", http.MethodGet, "/media/search", "Search source-selected transcripts as visible messages", s.documentSearchGuard("media search", s.handleMediaSearch), http.StatusBadRequest, http.StatusForbidden, http.StatusNotFound, http.StatusConflict, http.StatusUnprocessableEntity, http.StatusTooManyRequests, http.StatusInternalServerError, http.StatusServiceUnavailable)
+	s.registerTelemetryRoutes(apiV1)
 	s.registerPersonProfileRoutes(apiV1)
+	s.registerPersonIdentityRoutes(apiV1)
 	s.registerPersonNetworkRoutes(apiV1)
 	s.registerPersonTrackingRoutes(apiV1)
 	s.registerPersonAgendaRoutes(apiV1)
@@ -360,14 +385,15 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	registerAPIV1RawHumaJSONRouteWithRequest[deletion.Manifest, CLIDeletionManifestResponse](apiV1, "createCLIDeletionManifest", http.MethodPost, "/cli/deletion-manifests", "Create a staged deletion manifest", s.handleCLICreateDeletionManifest)
 	registerAPIV1RawHumaJSONRouteWithRequest[CLIEmbeddingsPlanRequest, CLIEmbeddingsPlanResponse](apiV1, "planCLIEmbeddings", http.MethodPost, "/cli/embeddings/plan", "Plan CLI embeddings management", s.handleCLIEmbeddingsPlan)
 	registerAPIV1RawHumaNDJSONRouteWithRequest[CLIRunRequest, CLIRunEvent](apiV1, "runCLI", http.MethodPost, "/cli/run", "Run an allowlisted CLI command", s.handleCLIRun)
-	registerAPIV1RawHumaJSONRoute[cliMessageResponse](apiV1, "getCLIMessage", http.MethodGet, "/cli/message", "Get one message for CLI output", s.handleCLIMessage)
+	registerAPIV1RawHumaJSONRouteWithErrors[cliMessageResponse](apiV1, "getCLIMessage", http.MethodGet, "/cli/message", "Get one message for CLI output", s.handleCLIMessage, http.StatusRequestEntityTooLarge)
 	registerAPIV1RawHumaJSONRouteWithErrors[cliOriginalMessageResponse](apiV1, "getCLIMessageOriginal", http.MethodGet, "/cli/message/original", "Get one message's original MIME for export", s.handleCLIMessageOriginal,
 		http.StatusBadRequest, http.StatusNotFound, http.StatusConflict, http.StatusRequestEntityTooLarge, http.StatusServiceUnavailable)
 	registerAPIV1RawHumaJSONRouteWithErrors[query.ThreadPage](apiV1, "getCLIMessageThread", http.MethodGet, "/cli/message/thread", "List one conversation in chronological order for export", s.handleCLIMessageThread,
-		http.StatusBadRequest, http.StatusNotFound, http.StatusConflict, http.StatusServiceUnavailable)
+		http.StatusBadRequest, http.StatusNotFound, http.StatusConflict, http.StatusRequestEntityTooLarge, http.StatusServiceUnavailable)
 	// Agent-token management routes: owner API key required.
 	registerAPIV1RawHumaJSONRouteWithRequest[agentTokenIssueRequest, agentTokenIssueResponse](apiV1, "issueAgentToken", http.MethodPost, "/agent-tokens", "Issue a restricted agent grant", s.handleIssueAgentToken, http.StatusCreated)
-	registerAPIV1RawHumaJSONRoute[agentTokenListResponse](apiV1, "listAgentTokens", http.MethodGet, "/agent-tokens", "List active agent grants", s.handleListAgentTokens)
+	registerAPIV1RawHumaJSONRoute[agentTokenListResponse](apiV1, "listAgentTokens", http.MethodGet, "/agent-tokens", "List agent grants", s.handleListAgentTokens)
+	registerAPIV1RawHumaJSONRoute[agentTokenView](apiV1, "getAgentTokenSelf", http.MethodGet, "/agent-tokens/self", "Get the calling agent's grant", s.handleGetAgentTokenSelf)
 	{
 		op := rawAPIV1Operation("revokeAgentToken", http.MethodDelete, "/agent-tokens/{id}", "Revoke an agent grant by ID")
 		op.Responses = rawHumaResponses(http.StatusNoContent)
@@ -384,6 +410,8 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 		http.StatusBadRequest,
 		http.StatusUnauthorized,
 		http.StatusNotFound,
+		http.StatusConflict,
+		http.StatusRequestEntityTooLarge,
 		http.StatusInternalServerError,
 		http.StatusServiceUnavailable,
 	)
@@ -398,6 +426,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 		http.StatusBadRequest,
 		http.StatusUnauthorized,
 		http.StatusNotFound,
+		http.StatusRequestEntityTooLarge,
 		http.StatusInternalServerError,
 		http.StatusServiceUnavailable,
 	)
@@ -412,7 +441,9 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 
 	registerAPIV1RawHumaJSONRoute[MessageListResponse](apiV1, "listMessages", http.MethodGet, "/messages", "List messages", s.handleListMessages)
 	registerAPIV1RawHumaJSONRoute[MessageDetail](apiV1, "getMessage", http.MethodGet, "/messages/{id}", "Get one message", s.handleGetMessage)
+	registerAPIV1RawHumaJSONRoute[MessageRecordingsResponse](apiV1, "listMessageRecordings", http.MethodGet, "/messages/{id}/recordings", "List a message's recordings with transcript state", s.handleListMessageRecordings)
 	s.registerMeetingImportRoute(apiV1)
+	s.registerMuesliImportRoute(apiV1)
 	s.registerMeetingRoutes(apiV1)
 	s.registerCalendarControlRoute(apiV1)
 	registerAPIV1RawHumaJSONRoute[ConversationResponse](apiV1, "getConversation", http.MethodGet, "/conversations/{id}", "Get a bounded containing conversation", s.handleGetConversation)
@@ -554,7 +585,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	registerAPIV1RawHumaJSONRouteWithRequest[AddAccountRequest, StatusMessageResponse](apiV1, "addAccount", http.MethodPost, "/accounts", "Add an account", s.handleAddAccount, http.StatusOK, http.StatusCreated)
 	registerAPIV1RawHumaJSONRoute[SourceStatusResponse](apiV1, "listSourceStatus", http.MethodGet, "/sources/status", "List source sync status", s.handleSourceStatus)
 	registerAPIV1RawHumaJSONRoute[SourceIdentitiesResponse](apiV1, "listSourceIdentities", http.MethodGet, "/sources/{source_id}/identities", "List confirmed identities for one source", s.handleSourceIdentities)
-	registerAPIV1RawHumaJSONRoute[StatusMessageResponse](apiV1, "triggerSync", http.MethodPost, "/sync/{account}", "Trigger account sync", s.handleTriggerSync, http.StatusAccepted)
+	registerAPIV1RawHumaJSONRoute[TriggerSyncResponse](apiV1, "triggerSync", http.MethodPost, "/sync/{account}", "Trigger account sync", s.handleTriggerSync, http.StatusAccepted)
 	registerAPIV1RawHumaJSONRoute[SchedulerStatusResponse](apiV1, "getSchedulerStatus", http.MethodGet, "/scheduler/status", "Get scheduler status", s.handleSchedulerStatus)
 	registerAPIV1RawHumaJSONRouteWithRequest[TokenUploadRequest, StatusMessageResponse](apiV1, "uploadToken", http.MethodPost, "/auth/token/{email}", "Upload an OAuth token", s.handleUploadToken, http.StatusCreated)
 
@@ -781,6 +812,14 @@ func rawRouteParameters(operationID string) []*huma.Param {
 			queryStringParam("message_type", "Message type filter; repeat or comma-separate for multiple values", false),
 			queryStringParam("deletion_scope", "Source deletion scope: active (default), deleted, or any", false),
 		}, scopeParams()...)
+	case "searchMedia":
+		return []*huma.Param{
+			queryStringParam("q", "Spoken words to find in transcripts", true),
+			queryStringParam("mode", "Lexical mode; semantic and hybrid are unavailable", false),
+			queryIntegerParam("person_id", "Durable person ID"),
+			queryRefArrayParam("direction", "Person relation: from_person, to_person, or group"),
+			queryIntegerParam(limitParam, "Maximum occurrences to return, default 20, max 100"),
+		}
 	case "searchDocuments":
 		return []*huma.Param{
 			queryStringParam("q", "Extracted document content or filename query", true),
@@ -870,7 +909,7 @@ func rawRouteParameters(operationID string) []*huma.Param {
 		}
 	case "listMessages":
 		return paginationParams("page", "page_size")
-	case "getMessage":
+	case "getMessage", "listMessageRecordings":
 		return []*huma.Param{pathIntegerParam("Message ID")}
 	case "listMessageTasks", "createOrLinkMessageTask":
 		params := []*huma.Param{pathIntegerParam("Archived email message ID")}
@@ -968,6 +1007,8 @@ func rawRouteParameters(operationID string) []*huma.Param {
 		)
 	case "searchMessagesByDomains":
 		return []*huma.Param{
+			queryIntegerParam("source_id", "Source account ID"),
+			queryIntegerArrayParam("source_ids", "Source account IDs"),
 			queryStringParam("domains", "Comma-separated participant domains", true),
 			queryStringParam("after", "Lower date/time bound (RFC3339 or YYYY-MM-DD)", false),
 			queryStringParam("before", "Upper date/time bound (RFC3339 or YYYY-MM-DD)", false),
@@ -979,6 +1020,7 @@ func rawRouteParameters(operationID string) []*huma.Param {
 			queryRequiredIntegerParam("message_id", "Seed message ID"),
 			queryIntegerParam(limitParam, "Maximum number of rows to return"),
 			queryStringParam("account", "Account email or configured source identifier", false),
+			queryStringParam("account_scopes", "JSON list of account scopes that intersect, for structured clients", false),
 			queryStringParam("message_type", "Message type filter", false),
 			queryStringParam("after", "Lower date/time bound (RFC3339 or YYYY-MM-DD)", false),
 			queryStringParam("before", "Upper date/time bound (RFC3339 or YYYY-MM-DD)", false),
@@ -1086,6 +1128,7 @@ func paginationParams(pageName, pageSizeName string) []*huma.Param {
 
 func aggregateOptionParams() []*huma.Param {
 	return []*huma.Param{
+		queryStringParam("account_scopes", "JSON list of account scopes that intersect, for structured clients", false),
 		queryStringParam("sort", "Sort field: count, size, attachment_size, or name", false),
 		queryStringParam("direction", "Sort direction: asc or desc", false),
 		queryIntegerParam(limitParam, "Maximum number of rows to return (default 100; values below 1 fall back to the default)"),
@@ -1111,6 +1154,7 @@ func messageFilterParams() []*huma.Param {
 
 func messageFilterScopeParams() []*huma.Param {
 	return []*huma.Param{
+		queryStringParam("account_scopes", "JSON list of account scopes that intersect, for structured clients", false),
 		queryStringParam("sender", "Sender email/address filter", false),
 		queryStringParam("sender_name", "Sender display-name filter", false),
 		queryStringParam(recipientParam, "Recipient email/address filter", false),
@@ -1140,6 +1184,7 @@ func semanticMessageFilterParams() []*huma.Param {
 		queryStringParam("domain", "Exact sender domain filter (vector or hybrid mode only)", false),
 		queryStringParam("label", "Exact case-insensitive label filter (vector or hybrid mode only)", false),
 		queryStringParam("list_id", "Exact case-insensitive RFC 2919 List-Id filter (vector or hybrid mode only)", false),
+		queryStringParam("account_scopes", "JSON list of account scopes that intersect (vector or hybrid mode only)", false),
 		queryStringParam("time_period", "Calendar period in YYYY, YYYY-MM, or YYYY-MM-DD format (vector or hybrid mode only)", false),
 		queryStringParam("time_granularity", "Time bucket granularity (vector or hybrid mode only)", false),
 		queryIntegerParam("source_id", "Exact source ID (vector or hybrid mode only)"),

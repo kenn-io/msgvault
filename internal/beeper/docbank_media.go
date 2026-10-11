@@ -434,6 +434,81 @@ func (w *MediaSubmitter) describeCandidate(
 	return configureMediaProcessing(descriptor, "", w.asrProfile), "", nil
 }
 
+// MediaRevision returns the occurrence revision the media worker would record
+// for the attachment now, so a reader can tell when a mapping no longer matches
+// the source message's transcript, timestamp or file metadata.
+func MediaRevision(ctx context.Context, st *store.Store, attachmentID int64) (string, error) {
+	candidate, err := st.GetBeeperMediaCandidate(ctx, attachmentID)
+	if err != nil {
+		return "", err
+	}
+	if candidate.SourceType != "beeper" {
+		descriptor, err := describeStoredMedia(candidate, "")
+		return descriptor.Occurrence.Revision, err
+	}
+	raw, err := st.GetMessageRawContext(ctx, candidate.MessageID)
+	if err != nil {
+		return "", err
+	}
+	descriptor, _, err := describeMedia(raw, candidate, "")
+	return descriptor.Occurrence.Revision, err
+}
+
+// MediaRevisions shares the worker's descriptor parsing across selected attachments.
+func MediaRevisions(ctx context.Context, st *store.Store, attachmentIDs []int64) (map[int64]string, error) {
+	revisions := make(map[int64]string, len(attachmentIDs))
+	for len(attachmentIDs) > 0 {
+		n := min(len(attachmentIDs), 500)
+		candidates, err := st.GetBeeperMediaCandidates(ctx, attachmentIDs[:n])
+		if err != nil {
+			return nil, err
+		}
+		messageIDs := []int64{}
+		seen := make(map[int64]bool)
+		for _, candidate := range candidates {
+			if candidate.SourceType == "beeper" && !seen[candidate.MessageID] {
+				seen[candidate.MessageID] = true
+				messageIDs = append(messageIDs, candidate.MessageID)
+			}
+		}
+		raws, err := st.GetMessageRawsContext(ctx, messageIDs)
+		if err != nil {
+			return nil, err
+		}
+		envelopes := make(map[int64]mediaEnvelope, len(raws))
+		for id, raw := range raws {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			envelope, err := parseMediaEnvelope(raw)
+			if err == nil {
+				envelopes[id] = envelope
+			}
+		}
+		for _, candidate := range candidates {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			var descriptor MediaDescriptor
+			if candidate.SourceType == "beeper" {
+				envelope, found := envelopes[candidate.MessageID]
+				if !found {
+					continue
+				}
+				descriptor, _, err = describeMediaEnvelope(envelope, candidate, "")
+			} else {
+				descriptor, err = describeStoredMedia(candidate, "")
+			}
+			if err == nil {
+				revisions[candidate.AttachmentID] = descriptor.Occurrence.Revision
+			}
+		}
+		attachmentIDs = attachmentIDs[n:]
+	}
+
+	return revisions, nil
+}
+
 func describeStoredMedia(
 	candidate store.BeeperMediaCandidate, archiveUID string,
 ) (MediaDescriptor, error) {
@@ -1155,20 +1230,29 @@ func mappingCandidate(mapping store.BeeperMediaMapping) store.BeeperMediaCandida
 	}
 }
 
-func describeMedia(
-	raw []byte, candidate store.BeeperMediaCandidate, archiveUID string,
-) (MediaDescriptor, string, error) {
-	if !utf8.Valid(raw) {
-		return MediaDescriptor{}, "", errBeeperMediaRawInvalid
+type mediaEnvelope struct {
+	ID          string         `json:"id"`
+	Timestamp   jsontext.Value `json:"timestamp"`
+	Attachments []Attachment   `json:"attachments"`
+}
+
+func parseMediaEnvelope(raw []byte) (mediaEnvelope, error) {
+	var envelope mediaEnvelope
+	if !utf8.Valid(raw) || json.Unmarshal(raw, &envelope) != nil {
+		return envelope, errBeeperMediaRawInvalid
 	}
-	var envelope struct {
-		ID          string         `json:"id"`
-		Timestamp   jsontext.Value `json:"timestamp"`
-		Attachments []Attachment   `json:"attachments"`
+	return envelope, nil
+}
+
+func describeMedia(raw []byte, candidate store.BeeperMediaCandidate, archiveUID string) (MediaDescriptor, string, error) {
+	envelope, err := parseMediaEnvelope(raw)
+	if err != nil {
+		return MediaDescriptor{}, "", err
 	}
-	if err := json.Unmarshal(raw, &envelope); err != nil {
-		return MediaDescriptor{}, "", errBeeperMediaRawInvalid
-	}
+	return describeMediaEnvelope(envelope, candidate, archiveUID)
+}
+
+func describeMediaEnvelope(envelope mediaEnvelope, candidate store.BeeperMediaCandidate, archiveUID string) (MediaDescriptor, string, error) {
 	if candidate.SourceMessageID != "" && envelope.ID != candidate.SourceMessageID {
 		return MediaDescriptor{}, "", errBeeperMediaSourceChanged
 	}

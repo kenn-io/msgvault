@@ -161,6 +161,22 @@ describe('CardDAVPublicationController', () => {
     controller.destroy();
   });
 
+  it('shows the reason for a publish that is too large and sends nothing else', async () => {
+    const message = 'This contact is too large for Outlook, which accepts up to 4 MB. Remove a photo or other large data, then publish again.';
+    const fetchFn = vi.fn<typeof fetch>(async (input) => requestOf(input).method === 'POST'
+      ? Response.json({ error: 'microsoft_contact_too_large', message }, { status: 413 })
+      : Response.json(publication(7, 'unpublished')));
+    const controller = new CardDAVPublicationController(createAPIClient(fetchFn));
+    await controller.setPerson(7);
+
+    expect(await controller.publish()).toEqual({ kind: 'error', action: 'publish' });
+
+    expect(controller.error).toBe(message);
+    expect(controller.publication?.state).toBe('unpublished');
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+    controller.destroy();
+  });
+
   it('projects only typed CardDAV unavailable as optional state and recovers on a later load', async () => {
     let configured = false;
     const fetchFn = vi.fn<typeof fetch>(async () => configured

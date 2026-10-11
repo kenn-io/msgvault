@@ -29,7 +29,7 @@ func TestImporterScopesParticipantResolver(t *testing.T) {
 	scoped := NewImporter(st, nil, "team-a").scopedToSync(source.ID, runID)
 	requirements.NoError(st.FailSync(runID, "worker stopped"))
 
-	_, err = scoped.res.resolveID("user-a")
+	_, err = scoped.res.resolveID(t.Context(), "user-a")
 	requirements.ErrorIs(err, store.ErrSyncRunSuperseded)
 }
 
@@ -1094,7 +1094,7 @@ func TestLoadResumeStateSurfacesDatabaseReadFailure(t *testing.T) {
 	require.NoError(err)
 	require.NoError(st.DB().Close())
 
-	_, err = imp.loadResumeState(src.ID)
+	_, err = imp.loadResumeState(t.Context(), src.ID)
 	require.Error(err)
 	assert.ErrorContains(err, "read latest Slack checkpoint")
 }
@@ -1228,7 +1228,7 @@ func mustMarshal(t *testing.T, s *SyncState) string {
 
 func requireResumeState(t *testing.T, imp *Importer, sourceID int64) *SyncState {
 	t.Helper()
-	state, err := imp.loadResumeState(sourceID)
+	state, err := imp.loadResumeState(t.Context(), sourceID)
 	require.NoError(t, err)
 	return state
 }
@@ -3336,20 +3336,20 @@ func TestParentArchivedRequiresRawCompletionMarker(t *testing.T) {
 	})
 	require.NoError(err)
 
-	archived, err := imp.parentArchived(src.ID, "C80", "123.000100")
+	archived, err := imp.parentArchived(t.Context(), src.ID, "C80", "123.000100")
 	require.NoError(err)
 	assert.False(archived,
 		"a partial row must remain eligible when a replies response re-serves its parent")
 
 	require.NoError(st.UpsertMessageRawWithFormat(messageID, []byte(`{"type":"message"}`), "slack_json"))
-	archived, err = imp.parentArchived(src.ID, "C80", "123.000100")
+	archived, err = imp.parentArchived(t.Context(), src.ID, "C80", "123.000100")
 	require.NoError(err)
 	assert.True(archived,
 		"row plus raw archive is a complete parent snapshot")
 
 	_, err = st.DB().Exec(`DROP TABLE message_raw`)
 	require.NoError(err)
-	_, err = imp.parentArchived(src.ID, "C80", "123.000100")
+	_, err = imp.parentArchived(t.Context(), src.ID, "C80", "123.000100")
 	require.Error(err, "a failed completion probe must hold thread debt instead of refreshing the parent")
 }
 

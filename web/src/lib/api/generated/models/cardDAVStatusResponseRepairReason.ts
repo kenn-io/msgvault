@@ -11,5 +11,6 @@ export const CardDAVStatusResponseRepairReason = {
   credential_mismatch: "credential_mismatch",
   credential_unavailable: "credential_unavailable",
   google_authorization_required: "google_authorization_required",
+  microsoft_authorization_required: "microsoft_authorization_required",
   runtime_unavailable: "runtime_unavailable",
 } as const;

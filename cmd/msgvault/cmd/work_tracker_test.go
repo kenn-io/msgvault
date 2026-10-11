@@ -122,7 +122,8 @@ func TestServeSchedulerReportsActualGateHolder(t *testing.T) {
 			<-release
 			return nil
 		}}))
-		require.NoError(sched.StartJob("activity-projection"))
+		_, startErr := sched.StartJob("activity-projection")
+		require.NoError(startErr)
 		synctest.Wait()
 		label, since, busy := gate.Holder()
 		assert.True(busy)

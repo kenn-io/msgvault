@@ -13,8 +13,14 @@ import (
 var (
 	// ErrGoogleAuthorizationRequired identifies credentials that need Google sign-in.
 	ErrGoogleAuthorizationRequired = errors.New("authorization for Google Contacts is required")
+	// ErrMicrosoftAuthorizationRequired identifies credentials that need
+	// Microsoft sign-in.
+	ErrMicrosoftAuthorizationRequired = errors.New("authorization for Microsoft contacts is required")
 	// ErrGoogleTokenUnavailable identifies an account-wide token acquisition failure.
 	ErrGoogleTokenUnavailable = errors.New("token endpoint for Google Contacts is unavailable")
+	// ErrMicrosoftTokenUnavailable identifies an account-wide failure to get a
+	// Microsoft contacts token.
+	ErrMicrosoftTokenUnavailable = errors.New("token endpoint for Microsoft contacts is unavailable")
 )
 
 // googleTokensDir separates CardDAV authorizations by configured OAuth app.

@@ -103,6 +103,8 @@ func TestSQLiteFTSProbeErrors(t *testing.T) {
 			req.NoError(err)
 			d := &SQLiteDialect{}
 			assert.False(d.FTSNeedsBackfill(db), "errors must not be treated as gaps")
+			_, err = d.FTSNeedsBackfillContext(t.Context(), db)
+			req.Error(err, "context probe exposes SQL errors")
 			assert.False(d.FTSNeedsBackfillQuick(context.Background(), db))
 		})
 	}

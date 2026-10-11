@@ -236,12 +236,8 @@ func (s *Store) exportMessageSources(
 	return nil
 }
 
-func (s *Store) exportMessageConversations(
-	ctx context.Context,
-	filter MessageExportFilter,
-	sink MessageExportSink,
-	counts *MessageExportCounts,
-) error {
+// messageExportConversationsQuery builds the conversation export query and its arguments.
+func messageExportConversationsQuery(filter MessageExportFilter) (string, []any) {
 	predicate, args := messageExportPredicate("m", filter, true)
 	var sourcePredicate string
 	if len(filter.SourceIDs) > 0 {
@@ -249,7 +245,7 @@ func (s *Store) exportMessageConversations(
 		sourcePredicate = " AND " + clause
 		args = append(args, sourceArgs...)
 	}
-	rows, err := s.db.QueryContext(ctx, s.dialect.Rebind(`
+	return `
 		SELECT s.source_type, s.identifier, c.source_conversation_id,
 		       COALESCE(c.title, ''), c.conversation_type,
 		       COALESCE(c.metadata, '{}')
@@ -258,10 +254,20 @@ func (s *Store) exportMessageConversations(
 		WHERE EXISTS (
 			SELECT 1
 			FROM messages m
-			WHERE m.conversation_id = c.id AND `+predicate+`
-		)`+sourcePredicate+`
+			WHERE m.conversation_id = c.id AND ` + predicate + `
+		)` + sourcePredicate + `
 		ORDER BY s.source_type, s.identifier, c.source_conversation_id
-	`), args...)
+	`, args
+}
+
+func (s *Store) exportMessageConversations(
+	ctx context.Context,
+	filter MessageExportFilter,
+	sink MessageExportSink,
+	counts *MessageExportCounts,
+) error {
+	query, args := messageExportConversationsQuery(filter)
+	rows, err := s.db.QueryContext(ctx, s.dialect.Rebind(query), args...)
 	if err != nil {
 		return fmt.Errorf("query message export conversations: %w", err)
 	}

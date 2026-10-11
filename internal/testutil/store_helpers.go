@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -215,4 +216,29 @@ func assignFreshArchiveUID(t *testing.T, st *store.Store) {
 	updated, err := result.RowsAffected()
 	require.NoError(t, err, "assigned archive UID rows")
 	require.Equal(t, int64(1), updated, "the template carried exactly one archive UID to replace")
+}
+
+// CreateIndexedSourceMessage inserts a synthetic email and its search index for shared read fixtures.
+func CreateIndexedSourceMessage(st *store.Store, identifier, providerID, subject, body string) (*store.Source, int64, error) {
+	source, err := st.GetOrCreateSource("test", identifier)
+	if err != nil {
+		return nil, 0, fmt.Errorf("create fixture source: %w", err)
+	}
+	conv, err := st.EnsureConversation(source.ID, "thread", "Synthetic")
+	if err != nil {
+		return nil, 0, fmt.Errorf("create fixture conversation: %w", err)
+	}
+	id, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conv, SourceMessageID: providerID, MessageType: "email", Subject: sql.NullString{String: subject, Valid: true}})
+	if err != nil {
+		return nil, 0, fmt.Errorf("create fixture message: %w", err)
+	}
+	if body != "" {
+		if err := st.UpsertMessageBody(id, sql.NullString{String: body, Valid: true}, sql.NullString{}); err != nil {
+			return nil, 0, fmt.Errorf("create fixture body: %w", err)
+		}
+	}
+	if err := st.UpsertFTS(id, subject, body, identifier, "", ""); err != nil {
+		return nil, 0, fmt.Errorf("index fixture message: %w", err)
+	}
+	return source, id, nil
 }

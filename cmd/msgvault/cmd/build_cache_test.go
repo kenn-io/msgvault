@@ -20,6 +20,7 @@ import (
 	"time"
 
 	_ "github.com/duckdb/duckdb-go/v2"
+	"github.com/gofrs/flock"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -880,78 +881,53 @@ func TestBuildCacheScheduledReevaluatesIntervalUnderLock(t *testing.T) {
 		"the lock-held recheck must build after the interval elapses")
 }
 
-// TestBuildCache_WaitsForCrossProcessBuildLock verifies buildCache blocks on
-// the inter-process build lock: buildCacheMu only serializes one process,
-// while daemon-owned CLI children rebuild the cache in their own processes.
-// The test holds the lock through an independent file handle, which conflicts
-// exactly like another process's holder would.
-func TestBuildCache_WaitsForCrossProcessBuildLock(t *testing.T) {
-	require := require.New(t)
-	tmpDir := setupTestSQLite(t)
-	dbPath := filepath.Join(tmpDir, "test.db")
-	analyticsDir := filepath.Join(tmpDir, "analytics")
-
-	held, err := cacheBuildFileLock(analyticsDir)
-	require.NoError(err, "cacheBuildFileLock")
-	locked, err := held.TryLock()
-	require.NoError(err, "hold build lock")
-	require.True(locked, "hold build lock")
-
-	done := make(chan error, 1)
-	go func() {
-		_, err := buildCache(dbPath, analyticsDir, false)
-		done <- err
-	}()
-
-	select {
-	case <-done:
-		require.FailNow("buildCache must wait for the cross-process build lock")
-	case <-time.After(150 * time.Millisecond):
+// TestBuildCache_WaitsForCacheLockHolders verifies buildCache blocks on the
+// inter-process cache lock. An exclusive holder stands in for another
+// process's build, since buildCacheMu only serializes one process. A shared
+// holder stands in for a running query, whose Parquet files a build must not
+// delete. Each holder uses an independent file handle, which conflicts exactly
+// like another process's holder would.
+func TestBuildCache_WaitsForCacheLockHolders(t *testing.T) {
+	tests := []struct {
+		name string
+		hold func(*flock.Flock) (bool, error)
+	}{
+		{name: "exclusive build", hold: (*flock.Flock).TryLock},
+		{name: "shared reader", hold: (*flock.Flock).TryRLock},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require := require.New(t)
+			tmpDir := setupTestSQLite(t)
+			dbPath := filepath.Join(tmpDir, "test.db")
+			analyticsDir := filepath.Join(tmpDir, "analytics")
 
-	require.NoError(held.Unlock(), "release build lock")
-	select {
-	case err := <-done:
-		require.NoError(err, "buildCache after lock release")
-	case <-time.After(30 * time.Second):
-		require.FailNow("buildCache did not finish after the lock was released")
-	}
-}
+			holder, err := cacheBuildFileLock(analyticsDir)
+			require.NoError(err, "cacheBuildFileLock")
+			locked, err := tt.hold(holder)
+			require.NoError(err, "hold cache lock")
+			require.True(locked, "hold cache lock")
 
-// TestBuildCache_WaitsForCacheReaders verifies the writer side of the
-// reader/writer protocol: a build's exclusive lock must wait for a query's
-// shared hold to release, so it cannot delete Parquet files out from under a
-// running query.
-func TestBuildCache_WaitsForCacheReaders(t *testing.T) {
-	require := require.New(t)
-	tmpDir := setupTestSQLite(t)
-	dbPath := filepath.Join(tmpDir, "test.db")
-	analyticsDir := filepath.Join(tmpDir, "analytics")
+			done := make(chan error, 1)
+			go func() {
+				_, err := buildCache(dbPath, analyticsDir, false)
+				done <- err
+			}()
 
-	reader, err := cacheBuildFileLock(analyticsDir)
-	require.NoError(err, "cacheBuildFileLock")
-	locked, err := reader.TryRLock()
-	require.NoError(err, "hold shared reader lock")
-	require.True(locked, "hold shared reader lock")
+			select {
+			case <-done:
+				require.FailNow("buildCache must wait for the cache lock holder")
+			case <-time.After(150 * time.Millisecond): //nolint:kennlint // absence check: the held cache lock keeps buildCache waiting
+			}
 
-	done := make(chan error, 1)
-	go func() {
-		_, err := buildCache(dbPath, analyticsDir, false)
-		done <- err
-	}()
-
-	select {
-	case <-done:
-		require.FailNow("buildCache must wait for shared reader locks")
-	case <-time.After(150 * time.Millisecond):
-	}
-
-	require.NoError(reader.Unlock(), "release reader lock")
-	select {
-	case err := <-done:
-		require.NoError(err, "buildCache after reader release")
-	case <-time.After(30 * time.Second):
-		require.FailNow("buildCache did not finish after the reader released")
+			require.NoError(holder.Unlock(), "release cache lock")
+			select {
+			case err := <-done:
+				require.NoError(err, "buildCache after lock release")
+			case <-time.After(30 * time.Second):
+				require.FailNow("buildCache did not finish after the lock was released")
+			}
+		})
 	}
 }
 
@@ -1490,7 +1466,7 @@ func runBuildCacheSQLiteMutation(t *testing.T, dbPath, operation string) {
 }
 
 func TestBuildCache_PublishesSnapshotWhenTerminalAdditionLandsDuringExport(t *testing.T) {
-	for _, terminalStatus := range []string{"completed", "failed"} {
+	for _, terminalStatus := range []string{"completed", "failed", "cancelled"} {
 		t.Run(terminalStatus, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
@@ -1597,6 +1573,9 @@ func TestBuildCache_PublishesSnapshotWhenTerminalAdditionLandsDuringExport(t *te
 			require.NoError(err)
 			fresh := cacheNeedsBuild(dbPath, analyticsDir)
 			require.False(fresh.NeedsBuild, "retry must capture the terminal addition: %+v", fresh)
+			repaired, err := query.ReadCacheSyncState(analyticsDir)
+			require.NoError(err)
+			assert.Equal(int64(1), repaired.LastCacheAdditionCount)
 
 			duckdb, err := sql.Open("duckdb", "")
 			require.NoError(err)
@@ -1616,62 +1595,66 @@ func TestBuildCache_PublishesSnapshotWhenTerminalAdditionLandsDuringExport(t *te
 	}
 }
 
-func TestBuildCache_PublishesSnapshotWhenZeroCounterRunFailsDuringExport(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	tmpDir := setupTestSQLite(t)
-	dbPath := filepath.Join(tmpDir, "test.db")
-	analyticsDir := filepath.Join(tmpDir, "analytics")
+func TestBuildCache_PublishesSnapshotWhenZeroCounterRunInterruptedDuringExport(t *testing.T) {
+	for _, terminalStatus := range []string{"failed", "cancelled"} {
+		t.Run(terminalStatus, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			tmpDir := setupTestSQLite(t)
+			dbPath := filepath.Join(tmpDir, "test.db")
+			analyticsDir := filepath.Join(tmpDir, "analytics")
 
-	db, err := sql.Open("sqlite3", dbPath)
-	require.NoError(err)
-	_, err = db.Exec(`
-		CREATE TABLE sync_runs (
-			id INTEGER PRIMARY KEY,
-			source_id INTEGER,
-			started_at DATETIME,
-			completed_at DATETIME,
-			status TEXT,
-			messages_processed INTEGER,
-			messages_added INTEGER,
-			messages_updated INTEGER,
-			errors_count INTEGER
-		);
-		INSERT INTO sync_runs (
-			id, source_id, started_at, status,
-			messages_processed, messages_added, messages_updated, errors_count
-		) VALUES (1, 1, datetime('now'), 'running', 0, 0, 0, 0);
-	`)
-	require.NoError(err)
-	require.NoError(db.Close())
+			db, err := sql.Open("sqlite3", dbPath)
+			require.NoError(err)
+			_, err = db.Exec(`
+				CREATE TABLE sync_runs (
+					id INTEGER PRIMARY KEY,
+					source_id INTEGER,
+					started_at DATETIME,
+					completed_at DATETIME,
+					status TEXT,
+					messages_processed INTEGER,
+					messages_added INTEGER,
+					messages_updated INTEGER,
+					errors_count INTEGER
+				);
+				INSERT INTO sync_runs (
+					id, source_id, started_at, status,
+					messages_processed, messages_added, messages_updated, errors_count
+				) VALUES (1, 1, datetime('now'), 'running', 0, 0, 0, 0);
+			`)
+			require.NoError(err)
+			require.NoError(db.Close())
 
-	_, err = buildCache(dbPath, analyticsDir, false)
-	require.NoError(err)
-	stateBefore, err := os.ReadFile(query.CacheStatePath(analyticsDir))
-	require.NoError(err)
+			_, err = buildCache(dbPath, analyticsDir, false)
+			require.NoError(err)
+			stateBefore, err := os.ReadFile(query.CacheStatePath(analyticsDir))
+			require.NoError(err)
 
-	buildCacheBeforeStateWriteHook = func() {
-		hookDB, hookErr := sql.Open("sqlite3", dbPath)
-		require.NoError(hookErr)
-		defer func() { require.NoError(hookDB.Close()) }()
-		_, hookErr = hookDB.Exec(`
-			UPDATE sync_runs
-			SET status = 'failed', completed_at = datetime('now')
-			WHERE id = 1
-		`)
-		require.NoError(hookErr)
+			buildCacheBeforeStateWriteHook = func() {
+				hookDB, hookErr := sql.Open("sqlite3", dbPath)
+				require.NoError(hookErr)
+				defer func() { require.NoError(hookDB.Close()) }()
+				_, hookErr = hookDB.Exec(`
+					UPDATE sync_runs
+					SET status = ?, completed_at = datetime('now')
+					WHERE id = 1
+				`, terminalStatus)
+				require.NoError(hookErr)
+			}
+			t.Cleanup(func() { buildCacheBeforeStateWriteHook = nil })
+
+			_, err = buildCache(dbPath, analyticsDir, true)
+			require.NoError(err, "a counter change during export publishes the snapshot")
+			buildCacheBeforeStateWriteHook = nil
+			stateAfter, readErr := os.ReadFile(query.CacheStatePath(analyticsDir))
+			require.NoError(readErr)
+			assert.NotEqual(stateBefore, stateAfter, "snapshot publication replaces committed state")
+			stale := cacheNeedsBuild(dbPath, analyticsDir)
+			assert.True(stale.NeedsBuild, "run interrupted during export leaves the cache stale: %+v", stale)
+			assert.True(stale.FullRebuild, "partial snapshot needs a full rebuild: %+v", stale)
+		})
 	}
-	t.Cleanup(func() { buildCacheBeforeStateWriteHook = nil })
-
-	_, err = buildCache(dbPath, analyticsDir, true)
-	require.NoError(err, "a counter change during export publishes the snapshot")
-	buildCacheBeforeStateWriteHook = nil
-	stateAfter, readErr := os.ReadFile(query.CacheStatePath(analyticsDir))
-	require.NoError(readErr)
-	assert.NotEqual(stateBefore, stateAfter, "snapshot publication replaces committed state")
-	stale := cacheNeedsBuild(dbPath, analyticsDir)
-	assert.True(stale.NeedsBuild, "run failing during export leaves the cache stale: %+v", stale)
-	assert.True(stale.FullRebuild, "partial snapshot needs a full rebuild: %+v", stale)
 }
 
 func TestCacheNeedsBuild_DetectsOlderRunFailingAfterNewerFailure(t *testing.T) {
@@ -1721,7 +1704,7 @@ func TestCacheNeedsBuild_DetectsOlderRunFailingAfterNewerFailure(t *testing.T) {
 	staleness := cacheNeedsBuild(dbPath, analyticsDir)
 	assert.True(staleness.NeedsBuild, "every newly failed run must invalidate cache: %+v", staleness)
 	assert.True(staleness.FullRebuild, "failed-run progress requires a full rebuild: %+v", staleness)
-	assert.Contains(staleness.Reason, "failed sync")
+	assert.Contains(staleness.Reason, "interrupted sync")
 }
 
 func TestBuildCache_PublishesSnapshotWhenOlderRunFailsDuringExport(t *testing.T) {

@@ -176,9 +176,12 @@ func TestSyncDiscordRebuildsCacheAfterRepairBeforeSyncSetupFailure(t *testing.T)
 		name         string
 		invalidState bool
 		wantError    string
+		wantRepaired bool
 	}{
-		{"invalid saved state", true, "load last successful Discord sync state"},
-		{"active sync", false, "start Discord sync"},
+		{"invalid saved state", true, "load last successful Discord sync state", true},
+		// Another sync owns the source, so the import stops before rewriting
+		// its messages.
+		{"active sync", false, "acquire Discord sync execution", false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			require := require.New(t)
@@ -222,6 +225,11 @@ func TestSyncDiscordRebuildsCacheAfterRepairBeforeSyncSetupFailure(t *testing.T)
 			}
 			metadata, err := st.GetMessageMetadata(messageID)
 			require.NoError(err)
+			if !tt.wantRepaired {
+				assert.False(metadata.Valid, "an import without source ownership must not repair messages")
+				assert.Zero(rebuilds, "an import that repaired nothing must not rebuild analytics")
+				return
+			}
 			assert.JSONEq(`{"discord_message_type":0,"discord_message_flags":8192}`, metadata.String)
 			assert.Equal(1, rebuilds, "repair writes must refresh analytics even if sync setup fails")
 		})

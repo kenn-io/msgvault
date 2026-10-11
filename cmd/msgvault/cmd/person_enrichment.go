@@ -156,9 +156,9 @@ func proxyPersonEnrichmentCommandWithEnv(
 }
 
 type personEnrichmentStatusOutput struct {
-	Profiles     []personenrichment.ProviderProfile    `json:"profiles"`
-	Consents     []store.PersonEnrichmentConsentStatus `json:"consents"`
-	Suppressions []store.PersonEnrichmentSuppression   `json:"suppressions"`
+	Profiles     []personenrichment.ProviderProfile  `json:"profiles"`
+	Consents     []store.ProviderConsentStatus       `json:"consents"`
+	Suppressions []store.PersonEnrichmentSuppression `json:"suppressions"`
 }
 
 func newPersonEnrichmentStatusCommand(deps personEnrichmentCommandDeps) *cobra.Command {
@@ -273,8 +273,8 @@ func newPersonEnrichmentConsentCommand(deps personEnrichmentCommandDeps) *cobra.
 			}
 			if jsonOutput {
 				return json.MarshalEncode(jsontext.NewEncoder(command.OutOrStdout()), struct {
-					Consent *store.PersonEnrichmentConsent `json:"consent"`
-					Created bool                           `json:"created"`
+					Consent *store.ProviderConsent `json:"consent"`
+					Created bool                   `json:"created"`
 				}{consent, created}, json.Deterministic(true))
 			}
 			_, err = fmt.Fprintf(command.OutOrStdout(), "Consent active for %s\n", consent.ProfileFingerprint)

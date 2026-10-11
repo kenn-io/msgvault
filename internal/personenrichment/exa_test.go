@@ -445,10 +445,14 @@ func TestExaEnforcesConfiguredRequestTimeout(t *testing.T) {
 	checks := assert.New(t)
 	requirements := require.New(t)
 	fixture := exaFixture(t, "exa_people_success.json")
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		<-time.After(100 * time.Millisecond)
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(fixture)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		select {
+		case <-r.Context().Done():
+		case <-time.After(5 * time.Second):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(fixture)
+		}
 	}))
 	defer server.Close()
 	config := exaConfig(server.URL+"/search", "people", 1)

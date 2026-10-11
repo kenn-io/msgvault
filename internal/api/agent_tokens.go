@@ -32,6 +32,7 @@ type agentGrantSourceResolver interface {
 
 // agentTokenIssueRequest is the body for POST /agent-tokens.
 type agentTokenIssueRequest struct {
+	ExpiresAt        *time.Time          `json:"expires_at,omitempty"`
 	Label            string              `json:"label"`
 	Permissions      []string            `json:"permissions"`
 	SourceIDs        []int64             `json:"source_ids"`
@@ -42,6 +43,7 @@ type agentTokenIssueRequest struct {
 // The secret is returned exactly once. Fields are inlined (not embedded) so the
 // schema generator exposes every field, including id, to generated clients.
 type agentTokenIssueResponse struct {
+	ExpiresAt   *time.Time             `json:"expires_at,omitempty"`
 	ID          string                 `json:"id"`
 	Label       string                 `json:"label"`
 	Permissions []string               `json:"permissions"`
@@ -53,6 +55,7 @@ type agentTokenIssueResponse struct {
 
 // agentTokenView is the list/revoke-safe view of a grant: no secret or digest.
 type agentTokenView struct {
+	ExpiresAt   *time.Time             `json:"expires_at,omitempty"`
 	ID          string                 `json:"id"`
 	Label       string                 `json:"label"`
 	Permissions []string               `json:"permissions"`
@@ -72,6 +75,11 @@ type agentTokenListResponse struct {
 }
 
 func grantToView(g agentgrant.Grant) agentTokenView {
+	var expires *time.Time
+	if !g.ExpiresAt.IsZero() {
+		value := g.ExpiresAt
+		expires = &value
+	}
 	perms := make([]string, len(g.Permissions))
 	for i, p := range g.Permissions {
 		perms[i] = string(p)
@@ -89,6 +97,7 @@ func grantToView(g agentgrant.Grant) agentTokenView {
 		Permissions: perms,
 		Sources:     sources,
 		CreatedAt:   g.CreatedAt,
+		ExpiresAt:   expires,
 	}
 }
 
@@ -162,11 +171,11 @@ func senderKeysForSource(
 	return keys, nil
 }
 
-// ownerAPIKeyPresented returns true when the request carries the owner API key.
-// Routes through the classifier cached by requestSecurityMiddleware so header
-// normalization is handled in exactly one place.
-func (s *Server) ownerAPIKeyPresented(r *http.Request) bool {
-	return s.requestAuthentication(r).Mode == AuthModeAPIKey
+// ownerAccessAuthorized accepts the daemon owner API key or the library
+// caller's admission of this operation.
+func (s *Server) ownerAccessAuthorized(r *http.Request) bool {
+	mode := s.requestAuthentication(r).Mode
+	return mode == AuthModeAPIKey || mode == AuthModeCaller
 }
 
 // handleIssueAgentToken issues a new restricted agent grant.
@@ -176,7 +185,7 @@ func (s *Server) handleIssueAgentToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "Invalid or missing API key")
 		return
 	}
-	if !s.ownerAPIKeyPresented(r) {
+	if !s.ownerAccessAuthorized(r) {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "Agent token management requires the owner API key")
 		return
 	}
@@ -279,7 +288,15 @@ func (s *Server) handleIssueAgentToken(w http.ResponseWriter, r *http.Request) {
 		sources[i].SenderKeys = senderKeys
 	}
 
-	_, secret, g, err := s.agentGrants.Issue(req.Label, perms, sources)
+	var expires time.Time
+	if req.ExpiresAt != nil {
+		if req.ExpiresAt.IsZero() {
+			writeError(w, 400, "invalid_request", "expires_at must be in the future")
+			return
+		}
+		expires = *req.ExpiresAt
+	}
+	_, secret, g, err := s.agentGrants.Issue(req.Label, perms, sources, expires)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
@@ -296,6 +313,7 @@ func (s *Server) handleIssueAgentToken(w http.ResponseWriter, r *http.Request) {
 		Permissions: v.Permissions,
 		Sources:     v.Sources,
 		CreatedAt:   v.CreatedAt,
+		ExpiresAt:   v.ExpiresAt,
 		Secret:      secret,
 		DaemonURL:   daemonURL,
 	})
@@ -307,7 +325,7 @@ func (s *Server) handleListAgentTokens(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "Invalid or missing API key")
 		return
 	}
-	if !s.ownerAPIKeyPresented(r) {
+	if !s.ownerAccessAuthorized(r) {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "Agent token management requires the owner API key")
 		return
 	}
@@ -324,6 +342,17 @@ func (s *Server) handleListAgentTokens(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, agentTokenListResponse{Tokens: views})
 }
 
+// handleGetAgentTokenSelf returns the calling agent's grant so clients can offer
+// only the tools it authorizes.
+func (s *Server) handleGetAgentTokenSelf(w http.ResponseWriter, r *http.Request) {
+	grant := s.requestAuthentication(r).Grant
+	if grant == nil {
+		writeError(w, http.StatusBadRequest, "agent_token_required", "Only an agent token can read its own grant")
+		return
+	}
+	writeJSON(w, http.StatusOK, grantToView(*grant))
+}
+
 // handleRevokeAgentToken removes a grant by ID.
 // Returns 204 regardless of whether the ID existed (to prevent enumeration).
 func (s *Server) handleRevokeAgentToken(w http.ResponseWriter, r *http.Request) {
@@ -331,7 +360,7 @@ func (s *Server) handleRevokeAgentToken(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusUnauthorized, "unauthorized", "Invalid or missing API key")
 		return
 	}
-	if !s.ownerAPIKeyPresented(r) {
+	if !s.ownerAccessAuthorized(r) {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "Agent token management requires the owner API key")
 		return
 	}

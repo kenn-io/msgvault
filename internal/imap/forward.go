@@ -333,7 +333,7 @@ func quotedTextWithHeader(headerSummary, text string) string {
 }
 
 func validateForwardParsedAttachments(parsed *msgmime.Message, expected []ForwardAttachment) error {
-	parts := msgmime.DistinctAttachments(parsed.Attachments)
+	parts := parsed.Attachments
 	if len(parts) != len(expected) {
 		return fmt.Errorf("forwarded MIME attachment count mismatch: emitted %d, expected %d", len(parts), len(expected))
 	}

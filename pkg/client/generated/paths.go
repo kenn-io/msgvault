@@ -335,6 +335,11 @@ type GetMessageInlinePartPath struct {
 	ID int64 `json:"id"`
 }
 
+type ListMessageRecordingsPath struct {
+	// ID Message ID
+	ID int64 `json:"id"`
+}
+
 type ListMessageTasksPath struct {
 	// ID Archived email message ID
 	ID int64 `json:"id"`
@@ -657,6 +662,11 @@ func (s SetPersonFactPinPath) Validate() error {
 }
 
 type SearchPersonFilesPath struct {
+	// ID Durable person ID
+	ID int64 `json:"id"`
+}
+
+type ListPersonIdentitiesPath struct {
 	// ID Durable person ID
 	ID int64 `json:"id"`
 }

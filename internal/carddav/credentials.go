@@ -39,6 +39,7 @@ func ConnectionTokenDir(tokenDir, name string) (string, error) {
 type Credential struct {
 	Password             string `json:"password,omitempty"`
 	Google               bool   `json:"google,omitzero"`
+	Microsoft            bool   `json:"microsoft,omitzero"`
 	OAuthApp             string `json:"oauth_app,omitempty"`
 	BaseURL              string `json:"base_url,omitempty"`
 	Username             string `json:"username,omitempty"`
@@ -69,9 +70,13 @@ func savePasswordWithPermissions(tokenDir, password string, permissions credenti
 	return saveCredentialWithPermissions(tokenDir, Credential{Password: password}, permissions)
 }
 
+// OAuth reports whether the credential signs in with OAuth instead of a
+// password.
+func (c Credential) OAuth() bool { return c.Google || c.Microsoft }
+
 // SaveCredential atomically publishes an identity-bound CardDAV credential.
 func SaveCredential(tokenDir string, credential Credential) error {
-	if (credential.Password == "" && !credential.Google) || credential.BaseURL == "" || credential.Username == "" || credential.ConnectionGeneration <= 0 {
+	if (credential.Password == "" && !credential.OAuth()) || credential.BaseURL == "" || credential.Username == "" || credential.ConnectionGeneration <= 0 {
 		return errors.New("CardDAV credential requires a connection identity")
 	}
 	return saveCredentialWithPermissions(tokenDir, credential, nativeCredentialPermissions{})
@@ -242,10 +247,13 @@ func loadCredentialWithPermissions(tokenDir string, permissions credentialPermis
 	if err := json.UnmarshalDecode(decoder, &saved); err != nil {
 		return Credential{}, fmt.Errorf("decode CardDAV token file: %w", err)
 	}
-	if saved.Google && saved.Password != "" {
-		return Credential{}, errors.New("a Google CardDAV credential cannot contain a password")
+	if saved.Google && saved.Microsoft {
+		return Credential{}, errors.New("a CardDAV credential cannot be both Google and Microsoft")
 	}
-	if saved.Password == "" && !saved.Google {
+	if saved.OAuth() && saved.Password != "" {
+		return Credential{}, errors.New("an OAuth CardDAV credential cannot contain a password")
+	}
+	if saved.Password == "" && !saved.OAuth() {
 		return Credential{}, errors.New("CardDAV token file contains an empty password")
 	}
 	return saved, nil

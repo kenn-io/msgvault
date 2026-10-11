@@ -1,0 +1,10 @@
+From: sender@example.test
+Date: Mon, 1 Jan 2024 12:00:00 +0000
+Subject: Synthetic route
+Delivered-To: inbox@example.net
+Delivered-To: work@example.com
+X-Forwarded-To: inbox@example.net
+X-Forwarded-For: work@example.com inbox@example.net
+To: hidden@example.test
+
+Synthetic body

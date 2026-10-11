@@ -72,44 +72,39 @@ func TestExportEMLUsesLocalDaemonHTTPAndPreservesFileOutput(t *testing.T) {
 	assert.Contains(out.String(), "("+strconv.Itoa(len(raw))+" bytes)", "stdout size")
 }
 
-func TestExportEMLHTTPNotFoundPreservesCLIError(t *testing.T) {
-	cfg := testConfigValue()
-	useLocal := false
+func TestExportEMLHTTPRawDataHintOnlyWhenRawIsMissing(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		status         int
+		body           string
+		wantHint       bool
+		ref, wantError string
+	}{
+		{"raw missing", http.StatusNotFound, `{"error":"raw_message_not_found","message":"Message raw data not found"}`, true, "gmail-raw", ""},
+		{"too large", http.StatusRequestEntityTooLarge, `{"error":"remote_message_too_large","message":"Message content exceeds the remote client byte limit"}`, false, "gmail-raw", ""},
+		{"message missing", http.StatusNotFound, `{"error":"not_found","message":"Message not found"}`, false, "missing", "message not found: missing"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			must := require.New(t)
+			dataDir := t.TempDir()
+			writeStatsHTTPDaemonRuntime(t, dataDir, emlHTTPErrorDaemon(t, tc.status, tc.body))
+			testCtx := testInvocationContext(t.Context(), &config.Config{HomeDir: dataDir, Data: config.DataConfig{DataDir: dataDir}}, invocationOptions{})
+			invocationFromContext(testCtx).options.useLocal = true
+			cmd := &cobra.Command{Use: "export-eml"}
+			cmd.SetContext(testCtx)
+			var out bytes.Buffer
+			cmd.SetOut(&out)
 
-	require := require.New(t)
-	assert := assert.New(t)
-	dataDir := t.TempDir()
-	server := emlHTTPNotFoundDaemon(t)
-	writeStatsHTTPDaemonRuntime(t, dataDir, server)
-
-	savedCfg := cfg
-	savedUseLocal := useLocal
-	defer func() {
-		cfg = savedCfg
-		useLocal = savedUseLocal
-	}()
-
-	cfg = &config.Config{
-		HomeDir: dataDir,
-		Data:    config.DataConfig{DataDir: dataDir},
+			err := runExportEML(cmd, tc.ref, filepath.Join(dataDir, "message.eml"))
+			must.Error(err)
+			assert.Empty(t, out.String(), "stdout")
+			if tc.wantError != "" {
+				must.ErrorContains(err, tc.wantError)
+				assert.NotContains(t, err.Error(), "API error")
+			}
+			assert.Equal(t, tc.wantHint, strings.Contains(err.Error(), "may not have raw data stored"), err.Error())
+		})
 	}
-	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
-	_ = testCtx
-	useLocal = true
-	invocationFromContext(testCtx).options.useLocal = true
-
-	var out bytes.Buffer
-	cmd := &cobra.Command{Use: "export-eml"}
-	cmd.SetContext(testCtx)
-	cmd.SetContext(testCtx)
-	cmd.SetOut(&out)
-
-	err := runExportEML(cmd, "missing", filepath.Join(dataDir, "missing.eml"))
-	require.Error(err, "export-eml")
-
-	assert.Empty(out.String(), "stdout")
-	require.ErrorContains(err, "message not found: missing", "not found error")
-	assert.NotContains(err.Error(), "API error", "transport details")
 }
 
 func TestWriteExportedEMLDefaultsToSourceMessageIDFilename(t *testing.T) {
@@ -170,7 +165,7 @@ func emlHTTPDaemon(t *testing.T, raw []byte) (*httptest.Server, *atomic.Int32) {
 	return server, requests
 }
 
-func emlHTTPNotFoundDaemon(t *testing.T) *httptest.Server {
+func emlHTTPErrorDaemon(t *testing.T, status int, body string) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
 	mux.Handle("/api/ping", daemon.NewPingHandler(daemon.PingHandlerOptions{
@@ -178,8 +173,9 @@ func emlHTTPNotFoundDaemon(t *testing.T) *httptest.Server {
 		Version: Version,
 	}))
 	mux.HandleFunc("/api/v1/cli/message/raw", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-		_, _ = w.Write([]byte(`{"error":"not_found","message":"Message not found"}`))
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(body))
 	})
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)

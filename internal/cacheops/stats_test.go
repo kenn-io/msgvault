@@ -30,7 +30,7 @@ func TestCollectStatsWaitsForCacheBuildLock(t *testing.T) {
 	require.NoError(err, "acquire exclusive build lock")
 	require.True(locked, "acquire exclusive build lock")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond) //nolint:kennlint // the deadline is the expected result; the held build lock keeps collection waiting
 	defer cancel()
 	_, err = CollectStats(ctx, dir)
 	require.Error(err, "stats collection must wait while a build holds the lock")

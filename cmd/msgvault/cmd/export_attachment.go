@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"encoding/base64"
-	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -80,17 +79,12 @@ func runExportAttachmentHTTP(cmd *cobra.Command, contentHash string) error {
 	}
 	defer func() { _ = s.Close() }()
 
-	if exportAttachmentJSON {
-		data, err := s.GetCLIAttachment(cmd.Context(), contentHash)
-		if err != nil {
-			return err
-		}
-		return exportAttachmentDataAsJSON(data, contentHash)
-	}
-
 	body, err := s.OpenCLIAttachment(cmd.Context(), contentHash)
 	if err != nil {
 		return err
+	}
+	if exportAttachmentJSON {
+		return errors.Join(exportAttachmentStreamAsJSON(body, contentHash), body.Close())
 	}
 
 	if exportAttachmentBase64 {
@@ -99,15 +93,28 @@ func runExportAttachmentHTTP(cmd *cobra.Command, contentHash string) error {
 	return exportAttachmentBinaryDownload(body)
 }
 
-func exportAttachmentDataAsJSON(data []byte, contentHash string) error {
-	output := map[string]any{
-		"content_hash": contentHash,
-		"size":         len(data),
-		"data_base64":  base64.StdEncoding.EncodeToString(data),
+// exportAttachmentStreamAsJSON writes the same document as a deterministic
+// indented encoder, streaming the base64 data so size can come last.
+func exportAttachmentStreamAsJSON(r io.Reader, contentHash string) error {
+	hash, err := json.Marshal(contentHash)
+	if err != nil {
+		return err
 	}
-	enc := jsontext.NewEncoder(os.Stdout, jsontext.WithIndentPrefix(""), jsontext.WithIndent("  "))
-
-	return json.MarshalEncode(enc, output, json.Deterministic(true))
+	if _, err := fmt.Fprintf(os.Stdout, "{\n  \"content_hash\": %s,\n  \"data_base64\": \"", hash); err != nil {
+		return fmt.Errorf("write attachment JSON: %w", err)
+	}
+	encoder := base64.NewEncoder(base64.StdEncoding, os.Stdout)
+	size, err := io.Copy(encoder, r)
+	if err != nil {
+		return fmt.Errorf("encode attachment: %w", err)
+	}
+	if err := encoder.Close(); err != nil {
+		return fmt.Errorf("finalize base64: %w", err)
+	}
+	if _, err := fmt.Fprintf(os.Stdout, "\",\n  \"size\": %d\n}\n", size); err != nil {
+		return fmt.Errorf("write attachment JSON: %w", err)
+	}
+	return nil
 }
 
 func exportAttachmentStreamAsBase64(r io.Reader) error {

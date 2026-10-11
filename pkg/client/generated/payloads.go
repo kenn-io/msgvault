@@ -118,6 +118,8 @@ type UnlinkIdentityParticipantsBody = IdentityLinkRequest
 
 type ImportMeetingBody = MeetingImportRequest
 
+type ImportMuesliBody = MuesliRemoteRequest
+
 type CreateImportJobBody = ImportJobRequest
 
 type PrepareKataEvidenceBody = KataEvidencePrepareRequest
@@ -235,3 +237,5 @@ type SelectSettingsPeopleInferenceBody = PeopleInferenceSelectionRequest
 type PutSettingsPersonEnrichmentProviderBody = PersonEnrichmentProviderUpdate
 
 type PutSettingsProviderCredentialBody = ProviderCredentialWriteRequest
+
+type CaptureTelemetryEventBody = TelemetryEventRequest

@@ -356,26 +356,36 @@ func testExpandedActivity(baseRoot string, activityRoots ...string) string {
 }
 
 func TestBuildIncrementalChatContributionsMatchFullReductionAcrossYears(t *testing.T) {
-	committedRoot, db := writeRelationshipBaseFixture(t, false)
-	setChatRelationshipFixture(t, db, committedRoot, 100, 2026)
-	effectiveAt := time.Date(2027, 7, 21, 10, 30, 0, 0, time.UTC)
-	_, err := Build(context.Background(), db, BuildOptions{
-		Mode: ModeFull, StagedBaseRoot: committedRoot, OutputRoot: committedRoot,
-		EffectiveAt: effectiveAt,
-	})
-	require.NoError(t, err)
+	for _, tc := range []struct {
+		name                      string
+		committedYear, stagedYear int
+	}{
+		{"new anchor", 2026, 2027},
+		{"late arrivals", 2027, 2026},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			committedRoot, db := writeRelationshipBaseFixture(t, false)
+			setChatRelationshipFixture(t, db, committedRoot, 100, tc.committedYear)
+			effectiveAt := time.Date(2027, 7, 21, 10, 30, 0, 0, time.UTC)
+			_, err := Build(context.Background(), db, BuildOptions{
+				Mode: ModeFull, StagedBaseRoot: committedRoot, OutputRoot: committedRoot,
+				EffectiveAt: effectiveAt,
+			})
+			require.NoError(t, err)
 
-	stagedRoot, stagedDB := writeRelationshipBaseFixture(t, false)
-	rewriteRelationshipFixtureIDs(t, stagedDB, stagedRoot, 200, 10)
-	setChatRelationshipFixture(t, stagedDB, stagedRoot, 200, 2027)
-	_, err = Build(context.Background(), db, BuildOptions{
-		Mode: ModeIncremental, CommittedRoot: committedRoot,
-		StagedBaseRoot: stagedRoot, OutputRoot: stagedRoot,
-		EffectiveAt: effectiveAt,
-	})
-	require.NoError(t, err)
-	assertIncrementalContributionsMatchFullReduction(t, db, committedRoot, stagedRoot, effectiveAt)
-	assertIncrementalDatasetsMatchFullBuild(t, db, committedRoot, stagedRoot, effectiveAt)
+			stagedRoot, stagedDB := writeRelationshipBaseFixture(t, false)
+			rewriteRelationshipFixtureIDs(t, stagedDB, stagedRoot, 200, 10)
+			setChatRelationshipFixture(t, stagedDB, stagedRoot, 200, tc.stagedYear)
+			_, err = Build(context.Background(), db, BuildOptions{
+				Mode: ModeIncremental, CommittedRoot: committedRoot,
+				StagedBaseRoot: stagedRoot, OutputRoot: stagedRoot,
+				EffectiveAt: effectiveAt,
+			})
+			require.NoError(t, err)
+			assertIncrementalContributionsMatchFullReduction(t, db, committedRoot, stagedRoot, effectiveAt)
+			assertIncrementalDatasetsMatchFullBuild(t, db, committedRoot, stagedRoot, effectiveAt)
+		})
+	}
 }
 
 func TestBuildIncrementalRecomputesNewlyEligibleOldTemperatureFacts(t *testing.T) {

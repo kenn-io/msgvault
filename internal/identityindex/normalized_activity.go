@@ -87,6 +87,45 @@ FROM message_facts m`, EntryKindSQL("m.message_type"),
 // SQL relations produced by the cache builder or query engine. Keep the CTEs
 // inlined so query predicates reach Parquet instead of materializing the archive.
 func ExpandedActivityRelation(sparse, roster, participants, clusters, owners string) string {
+	return expandedActivityRelation(sparse, roster, participants, clusters, owners, false)
+}
+
+// buildActivityRelation keeps full roster evidence at each logical chat anchor.
+// Earlier group messages need only direct edges and owner presence for scores.
+// Query expansion stays complete so message-level person filters keep working.
+func buildActivityRelation(sparse, roster, participants, clusters, owners string) string {
+	return expandedActivityRelation(sparse, roster, participants, clusters, owners, true)
+}
+
+func expandedActivityRelation(sparse, roster, participants, clusters, owners string, logicalBuild bool) string {
+	memberCTEs := `, expanded_members AS NOT MATERIALIZED (SELECT * FROM members)`
+	factMemberKey, directMemberKey := "", ""
+	if logicalBuild {
+		// Split the joins before expansion. A residual owner-or-anchor filter
+		// on the full message/roster join would still visit the multiplied rows.
+		memberCTEs = `, chat_anchors AS (
+	SELECT source_id, conversation_id,
+	       arg_max(message_id, struct_pack(at := occurred_at, id := message_id)) AS message_id
+	FROM facts WHERE is_chat GROUP BY source_id, conversation_id
+), roster_facts AS NOT MATERIALIZED (
+	SELECT f.*, (
+		NOT f.is_chat OR lower(f.conversation_type) = 'direct_chat'
+		OR EXISTS (SELECT 1 FROM chat_anchors a
+		           WHERE a.source_id = f.source_id AND a.conversation_id = f.conversation_id
+		             AND a.message_id = f.message_id)
+	) AS expand_roster FROM facts f
+), expanded_members AS NOT MATERIALIZED (
+	SELECT f.message_id, f.occurred_year, cm.*
+	FROM (SELECT * FROM roster_facts WHERE expand_roster) f
+	JOIN members cm ON cm.conversation_id = f.conversation_id
+	UNION ALL
+	SELECT f.message_id, f.occurred_year, cm.*
+	FROM (SELECT * FROM roster_facts WHERE NOT expand_roster) f
+	JOIN (SELECT * FROM members WHERE is_owner) cm ON cm.conversation_id = f.conversation_id
+)`
+		factMemberKey = " AND cm.message_id = f.message_id AND cm.occurred_year = f.occurred_year"
+		directMemberKey = " AND cm.message_id = d.message_id AND cm.occurred_year = d.occurred_year"
+	}
 	return fmt.Sprintf(`(
 WITH raw_activity AS NOT MATERIALIZED (SELECT * FROM %[1]s),
 facts AS NOT MATERIALIZED (SELECT * FROM raw_activity WHERE canonical_id IS NULL),
@@ -106,7 +145,7 @@ canon AS NOT MATERIALIZED (
 	FROM %[2]s cp
 	LEFT JOIN canon c ON c.participant_id = cp.participant_id
 	LEFT JOIN owner_canon o ON o.canonical_id = c.canonical_id
-)
+)%[6]s
 SELECT f.message_id, f.conversation_id, f.source_id, f.source_type,
        f.occurred_at, f.message_type, f.conversation_type, f.entry_kind,
        f.is_chat, f.is_from_me, f.attachment_count, f.has_attachments,
@@ -116,7 +155,7 @@ SELECT f.message_id, f.conversation_id, f.source_id, f.source_type,
        coalesce(d.is_author, false) AS is_author,
        (cm.is_owner OR coalesce(d.is_owner, false)) AS is_owner,
        f.occurred_year
-FROM facts f JOIN members cm ON cm.conversation_id = f.conversation_id
+FROM facts f JOIN expanded_members cm ON cm.conversation_id = f.conversation_id%[7]s
 LEFT JOIN direct d ON d.message_id = f.message_id
                   AND d.occurred_year = f.occurred_year
                   AND d.canonical_id = cm.canonical_id
@@ -131,7 +170,7 @@ SELECT d.message_id, d.conversation_id, d.source_id, d.source_type,
        d.is_sender, d.is_author, d.is_owner, d.occurred_year
 FROM direct d
 WHERE NOT EXISTS (
-	SELECT 1 FROM members cm WHERE cm.conversation_id = d.conversation_id
+	SELECT 1 FROM expanded_members cm WHERE cm.conversation_id = d.conversation_id%[8]s
 	AND cm.canonical_id = d.canonical_id
 	AND cm.participant_domain = d.participant_domain
 )
@@ -149,8 +188,8 @@ WHERE f.is_direct
    OR EXISTS (SELECT 1 FROM members cm
               WHERE cm.conversation_id = f.conversation_id AND cm.canonical_id IS NULL)
    OR (NOT EXISTS (SELECT 1 FROM direct d WHERE d.message_id = f.message_id)
-       AND NOT EXISTS (SELECT 1 FROM members cm
-                       WHERE cm.conversation_id = f.conversation_id
-                         AND cm.canonical_id IS NOT NULL))
-)`, sparse, roster, participants, clusters, owners)
+	       AND NOT EXISTS (SELECT 1 FROM expanded_members cm
+	                       WHERE cm.conversation_id = f.conversation_id%[7]s
+	                         AND cm.canonical_id IS NOT NULL))
+)`, sparse, roster, participants, clusters, owners, memberCTEs, factMemberKey, directMemberKey)
 }

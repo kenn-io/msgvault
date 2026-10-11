@@ -57,7 +57,7 @@ cd "$repo_root"
 make web-install web-embed
 node scripts/check-web-assets.mjs
 
-CGO_ENABLED=1 go build -tags "fts5 sqlite_vec" -trimpath -ldflags="-s -w" -o "$binary" ./cmd/msgvault
+CGO_ENABLED=1 go build -tags "fts5 sqlite_vec kit_posthog_disabled" -trimpath -ldflags="-s -w" -o "$binary" ./cmd/msgvault
 node scripts/check-web-assets.mjs --binary "$binary"
 
 attachment_hash="$(go run -tags "fts5 sqlite_vec" ./scripts/smoke-fixture "$home_dir")"
