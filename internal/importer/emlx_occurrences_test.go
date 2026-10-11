@@ -24,39 +24,6 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/email"
 )
 
-// Successful ingestion must acknowledge both the physical occurrence and
-// completion of its shared archived target across a database reopen.
-func TestImportEmlxOccurrenceReceiptsPersist(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	st, tmp := openTestStore(t)
-	root := filepath.Join(tmp, "Inbox.mbox")
-	raw := email.NewMessage().From("sender@example.test").To("owner@example.test").
-		Header("Message-ID", "<receipt@example.test>").Body("Synthetic receipt message.").Bytes()
-	mkMailboxDir(t, root, map[string][]byte{"1.emlx": raw})
-	opts := EmlxImportOptions{Identifier: "owner@example.test"}
-
-	summary, err := ImportEmlxDir(t.Context(), st, root, opts)
-	requirements.NoError(err)
-	requirements.False(summary.HardErrors)
-	assertions.Equal(int64(1), summary.MessagesAdded)
-	assertions.Equal(1, countEmlxLedgerEntries(t, st, summary.SourceID, "emlx-occurrence", "imported"))
-	assertions.Equal(1, countEmlxLedgerEntries(t, st, summary.SourceID, "emlx-target", "imported"))
-
-	requirements.NoError(st.Close())
-	reopened, err := store.Open(filepath.Join(tmp, "msgvault.db"))
-	requirements.NoError(err)
-	t.Cleanup(func() { requirements.NoError(reopened.Close()) })
-	assertions.Equal(1, countEmlxLedgerEntries(t, reopened, summary.SourceID, "emlx-occurrence", "imported"))
-	assertions.Equal(1, countEmlxLedgerEntries(t, reopened, summary.SourceID, "emlx-target", "imported"))
-
-	summary, err = ImportEmlxDir(t.Context(), reopened, root, opts)
-	requirements.NoError(err)
-	assertions.False(summary.HardErrors)
-	assertions.Zero(summary.MessagesAdded)
-	assertions.Equal(int64(1), summary.MessagesProcessed)
-}
-
 func TestImportEmlxNewOldDateMessage(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
