@@ -653,7 +653,7 @@ func TestWorker_SkipsInvisibleOnlyContent(t *testing.T) {
 			assert.Zero(t, countMissing(t, f.MainDB, int64(f.BuildingGen)))
 			rows, err := f.VectorsDB.Query(`SELECT message_id, chunk_index, chunk_char_start, chunk_char_end FROM embeddings WHERE generation_id = ? ORDER BY message_id, chunk_index`, f.BuildingGen)
 			require.NoError(t, err)
-			defer rows.Close()
+			defer func() { _ = rows.Close() }()
 			chunks := []chunk{}
 			for rows.Next() {
 				var got chunk
