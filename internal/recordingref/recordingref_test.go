@@ -43,10 +43,13 @@ func TestScan(t *testing.T) {
 		{"nested", "**__https://loom.com/share/abc__**", nil, []string{"https://loom.com/share/abc"}},
 		{"label punctuation", "**[Watch](https://cap.so/s/abc!)**", nil, []string{"https://cap.so/s/abc!"}},
 		{"plain label punctuation", "[Watch](https://cap.so/s/abc!)", nil, []string{"https://cap.so/s/abc!"}},
+		{"URL label", "[https://loom.com/share/abc](https://loom.com/share/abc)", nil, []string{"https://loom.com/share/abc"}},
+		{"different URL label", "[https://loom.com/share/label](https://cap.so/s/target?token=a_b!)", nil, []string{"https://cap.so/s/target?token=a_b!"}},
+		{"IPv6 URL label", "[https://[2001:db8::1]:8443/s/label](https://[2001:db8::1]:8443/s/abc?token=(one))", []string{"https://[2001:db8::1]:8443"}, []string{"https://[2001:db8::1]:8443/s/abc?token=(one)"}},
 		{"literal query", "https://cap.so/s/abc?token=keep_*_~", nil, []string{"https://cap.so/s/abc?token=keep_*_~"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			refs := scanProse(tc.text, tc.origins, nil)
+			refs := scanProse(tc.text, originSet(tc.origins), nil)
 			var got []string
 			for _, ref := range refs {
 				got = append(got, ref.Reference)
@@ -56,10 +59,10 @@ func TestScan(t *testing.T) {
 		})
 	}
 	assert, require := assert.New(t), require.New(t)
-	r := scanProse("https://cap.example.test:8443/s/abc?token=secret", []string{"https://cap.example.test:8443"}, nil)
+	r := scanProse("https://cap.example.test:8443/s/abc?token=secret", originSet([]string{"https://cap.example.test:8443"}), nil)
 	require.Len(r, 1)
 	assert.Empty(r[0].Canonical)
-	padded := scanProse("https://cap.example.test:08443/s/abc?token=secret", []string{"https://cap.example.test:8443"}, nil)
+	padded := scanProse("https://cap.example.test:08443/s/abc?token=secret", originSet([]string{"https://cap.example.test:8443"}), nil)
 	require.Len(padded, 1)
 	assert.Equal(r[0].RouteKey, padded[0].RouteKey)
 }

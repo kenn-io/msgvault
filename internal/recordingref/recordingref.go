@@ -39,6 +39,7 @@ func digest(value string) string {
 func (r Ref) ReferenceSHA256() string { return digest(r.Reference) }
 
 var tokens = regexp.MustCompile(`(?i)https?://[^\s<>"\x60]+`)
+var markdownLinks = regexp.MustCompile(`(?i)\[(?:[^\[\]\n]|\[[^\[\]\n]*\])*\]\((https?://(?:[^()\s<>]|\([^()\s<>]*\))*)\)`)
 var recordingPath = regexp.MustCompile(`^/(share|embed|s|dev)/([^/]+)$`)
 
 func parse(raw string) (*url.URL, error) {
@@ -141,23 +142,22 @@ func admit(raw string, allowed map[string]bool) (Ref, bool) {
 	return Ref{RouteKey: digest(string(kind) + "\x00" + identity), Reference: raw, Canonical: canonical}, true
 }
 
-func scanProse(text string, origins []string, exact map[string]bool) []Ref {
-	allowed := originSet(origins)
+func scanProse(text string, allowed map[string]bool, exact map[string]bool) []Ref {
 	seen := make(map[string]bool)
 	var refs []Ref
+	text = markdownLinks.ReplaceAllStringFunc(text, func(link string) string {
+		target := markdownLinks.FindStringSubmatch(link)[1]
+		if r, ok := admit(target, allowed); ok && !exact[target] && !seen[r.RouteKey] {
+			refs = append(refs, r)
+			seen[r.RouteKey] = true
+		}
+		return " "
+	})
 	for _, match := range tokens.FindAllStringIndex(text, -1) {
 		token := text[match[0]:match[1]]
 		if !exact[token] {
 			before := text[:match[0]]
 			var closing []string
-			labeled := false
-			if strings.HasSuffix(before, "](") {
-				if label := strings.LastIndex(before, "["); label >= 0 {
-					closing = append(closing, ")")
-					labeled = true
-					before = before[:label]
-				}
-			}
 			for {
 				matched := false
 				for _, marker := range []string{"***", "___", "**", "__", "~~", "||", "*", "_"} {
@@ -182,7 +182,7 @@ func scanProse(text string, origins []string, exact map[string]bool) []Ref {
 			}
 			if !exact[token] && suffix != "" && strings.HasSuffix(token, suffix) {
 				token = strings.TrimSuffix(token, suffix)
-				for !labeled && len(token) > 0 && (len(token) > 8192 || !exact[token]) {
+				for len(token) > 0 && (len(token) > 8192 || !exact[token]) {
 					last, size := utf8.DecodeLastRuneInString(token)
 					if !strings.ContainsRune(".,;:!?)]}'”’»›…", last) {
 						break
@@ -204,7 +204,10 @@ func scanProse(text string, origins []string, exact map[string]bool) []Ref {
 
 // ScanHTML sends archived anchor targets through the same offline admission rule.
 func ScanHTML(body string, origins []string) []Ref {
-	allowed := originSet(origins)
+	return scanHTML(body, originSet(origins))
+}
+
+func scanHTML(body string, allowed map[string]bool) []Ref {
 	z := html.NewTokenizer(strings.NewReader(body))
 	var refs []Ref
 	for {

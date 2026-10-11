@@ -24,19 +24,19 @@ type Worker struct {
 	client      *docbankmedia.Client
 	destination string
 	origins     []string
+	allowed     map[string]bool
 	logger      *slog.Logger
 	gate        func(context.Context) (func(), bool)
 }
 
 func NewWorker(st *store.Store, client *docbankmedia.Client, destination string, origins []string, logger *slog.Logger) *Worker {
-	canonical := make([]string, 0, len(origins))
-	for _, raw := range origins {
-		if origin, err := CanonicalOrigin(raw); err == nil {
-			canonical = append(canonical, origin)
-		}
+	allowed := originSet(origins)
+	canonical := make([]string, 0, len(allowed))
+	for origin := range allowed {
+		canonical = append(canonical, origin)
 	}
 	slices.Sort(canonical)
-	return &Worker{st: st, client: client, destination: destination, origins: slices.Compact(canonical), logger: logger}
+	return &Worker{st: st, client: client, destination: destination, origins: canonical, allowed: allowed, logger: logger}
 }
 
 func (w *Worker) WithOperationGate(gate func(context.Context) (func(), bool)) *Worker {
@@ -55,17 +55,17 @@ func (w *Worker) gated(ctx context.Context, fn func() error) error {
 	return fn()
 }
 
-func messageRefs(m store.RecordingMessage, origins []string) []Ref {
+func messageRefs(m store.RecordingMessage, allowed map[string]bool) []Ref {
 	var refs []Ref
 	seen := make(map[string]bool)
-	anchors := ScanHTML(m.BodyHTML, origins)
+	anchors := scanHTML(m.BodyHTML, allowed)
 	exact := make(map[string]bool, len(anchors))
 	for _, r := range anchors {
 		exact[r.Reference] = true
 	}
 	prose := m.Body + "\n" + mime.StripHTML(m.BodyHTML)
 	// Exact anchor targets take precedence over prose punctuation heuristics.
-	for _, r := range append(anchors, scanProse(prose, origins, exact)...) {
+	for _, r := range append(anchors, scanProse(prose, allowed, exact)...) {
 		if !seen[r.RouteKey] {
 			refs = append(refs, r)
 			seen[r.RouteKey] = true
@@ -120,7 +120,7 @@ func referenceInputs(m store.RecordingMessage, refs []Ref) ([]store.RecordingRef
 }
 
 func (w *Worker) reconcile(ctx context.Context, m store.RecordingMessage) error {
-	inputs, err := referenceInputs(m, messageRefs(m, w.origins))
+	inputs, err := referenceInputs(m, messageRefs(m, w.allowed))
 	if err != nil {
 		return err
 	}
@@ -130,7 +130,7 @@ func (w *Worker) reconcile(ctx context.Context, m store.RecordingMessage) error 
 func (w *Worker) RunBatch(ctx context.Context) error {
 	var examined, pages, attempted int
 	start := time.Now()
-	policy := digest("discovery-v4\x00" + strings.Join(w.origins, "\x00"))
+	policy := digest("discovery-v5\x00" + strings.Join(w.origins, "\x00"))
 	for pages < 50 && time.Since(start) < 20*time.Second {
 		var before, cursor store.RecordingReferenceCursor
 		var page store.ChangedMessagePage
@@ -219,7 +219,7 @@ func (w *Worker) deliver(ctx context.Context, claim store.RecordingReferenceClai
 			return err
 		}
 		if exists && m.Live {
-			for _, r := range messageRefs(m, w.origins) {
+			for _, r := range messageRefs(m, w.allowed) {
 				if r.RouteKey == claim.RouteKey && r.ReferenceSHA256() == claim.RefSHA256 {
 					ref, rebuildable = r, true
 					break
@@ -311,7 +311,7 @@ func (w *Worker) deliver(ctx context.Context, claim store.RecordingReferenceClai
 		if err != nil {
 			return err
 		}
-		inputs, err := referenceInputs(current, messageRefs(current, w.origins))
+		inputs, err := referenceInputs(current, messageRefs(current, w.allowed))
 		if err != nil {
 			return err
 		}
