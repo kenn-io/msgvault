@@ -1194,6 +1194,7 @@ With `enabled = true` and `reference_consent = true`, the daemon routes Loom and
 Cap links from normalized message text and HTML across every message source,
 including existing messages and links behind display text. It also routes native
 Teams recording pointers from typed attachment records.
+HTML messages use actual link destinations and surrounding text; the plain body is used when HTML is absent.
 Beeper imports and repairs retain HTML outside quoted replies, so links behind display text and changes to link targets remain discoverable.
 It submits references with acquisition disabled. Docbank records outcome
 `access_required` or `unsupported`. Coverage stays `unprocessed` until media is imported.
