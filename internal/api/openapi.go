@@ -363,7 +363,8 @@ import (
 // attachment names/counts, and hybrid_available on CLI search responses.
 // 3.15.0 adds native Gmail label, IMAP keyword, and Microsoft Graph category
 // reads and delta updates.
-const APISchemaVersion = "3.15.0"
+// 3.16.0 adds authenticated implementation-only MCP capability discovery.
+const APISchemaVersion = "3.16.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

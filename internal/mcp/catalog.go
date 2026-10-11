@@ -196,6 +196,13 @@ func operationCatalog(opts ServeOptions, _ *handlers) []toolDefinition {
 			}
 		}
 	}
+	if _, supported := opts.PeopleBackend.(NamedPersonPromoter); supported && !opts.legacyHTTP {
+		for i := range definitions {
+			if definitions[i].name == ToolPromotePerson {
+				definitions[i] = namedPromotionDefinition()
+			}
+		}
+	}
 	sort.Slice(definitions, func(i, j int) bool { return definitions[i].name < definitions[j].name })
 	return definitions
 }

@@ -311,7 +311,8 @@ func TestIdentityDecisionConfirmationWorksAcrossNoKeyStatelessHTTPRequests(t *te
 		body, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": id, "method": "tools/call", "params": params})
 		requires.NoError(err)
 		req := task3ModernRequest("tools/call", ToolAcceptIdentityMatch, string(body))
-		_, response := task3Serve(handler, req)
+		recorder, response := task3Serve(handler, req)
+		task3RequireSuccess(t, recorder, response)
 		return response
 	}
 	first := call(1, nil)

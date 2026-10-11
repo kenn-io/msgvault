@@ -364,25 +364,28 @@ func task5LegacyHTTPPost(
 	assert.Empty(t, req.Header.Get("Mcp-Session-Id"))
 	recorder, response := task3Serve(handler, req)
 	assert.Equal(t, "no-store", recorder.Header().Get("Cache-Control"))
-	assert.Empty(t, recorder.Header().Get("Mcp-Session-Id"))
 	return recorder, response
 }
 
 func TestRawHTTPLegacy(t *testing.T) {
+	assert := assert.New(t)
 	fixture := newTask5Fixture(t, "000")
 	handler := newMCPHTTPServer(fixture.opts, HTTPOptions{}).Handler
 
 	initializeRecorder, initialized := task5LegacyHTTPPost(t, handler, "", `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"raw-http-legacy","version":"raw-http-legacy-version"}}}`)
 	task3RequireSuccess(t, initializeRecorder, initialized)
-	assert.Equal(t, "2025-11-25", initialized.Result["protocolVersion"])
+	assert.Equal("2025-11-25", initialized.Result["protocolVersion"])
+	assert.Empty(initializeRecorder.Header().Get("Mcp-Session-Id"))
 
 	listRecorder, listed := task5LegacyHTTPPost(t, handler, "2025-11-25", `{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}`)
 	task3RequireSuccess(t, listRecorder, listed)
-	assert.Equal(t, task5ExpectedTools("000", false), task3ToolNames(t, listed))
+	assert.Equal(task5ExpectedTools("000", false), task3ToolNames(t, listed))
+	assert.Empty(listRecorder.Header().Get("Mcp-Session-Id"))
 
 	callRecorder, called := task5LegacyHTTPPost(t, handler, "2025-11-25", `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"get_stats","arguments":{}}}`)
 	task3RequireSuccess(t, callRecorder, called)
 	task5AssertRawJSONParity(t, called.Result)
+	assert.Empty(callRecorder.Header().Get("Mcp-Session-Id"))
 }
 
 func TestMCPHTTPConfirmationWritesRequireModernProtocol(t *testing.T) {
@@ -393,6 +396,10 @@ func TestMCPHTTPConfirmationWritesRequireModernProtocol(t *testing.T) {
 		IdentityScoring: newIdentityScoringMCPBackend(t), AllowIdentityDecisions: true,
 		AllowPersonMerges: true, AllowCardDAVWrites: true, AllowIdentityScoring: true,
 		Calendar: calendar, AllowCalendarWrites: true,
+		Operations:             operationalTestBackend{},
+		OperationCapabilities:  []string{"get_source_scheduler_status", "sync_source", "update_slack_sync_policy", "set_person_display_name"},
+		OperationWriteFamilies: []OperationFamily{OperationFamilySources, OperationFamilyRecords},
+		PeopleBackend:          &namedPromotionTestBackend{recordingPeopleBackend: &recordingPeopleBackend{}}, AllowProfileWrites: true,
 	}
 	handler := newMCPHTTPServer(opts, HTTPOptions{AllowWrites: true}).Handler
 	for _, version := range []string{"2025-03-26", "2025-06-18", "2025-11-25", task3ModernProtocolVersion} {
@@ -416,12 +423,29 @@ func TestMCPHTTPConfirmationWritesRequireModernProtocol(t *testing.T) {
 				recorder, called = task5LegacyHTTPPost(t, handler, version, readBody)
 			}
 			task3RequireSuccess(t, recorder, called)
+			assert.Empty(recorder.Header().Get("Mcp-Session-Id"))
 			assert.NotEqual(true, called.Result["isError"])
 			assert.InDelta(1, toolStructuredContent(t, called.Result)["id"], 0)
 			names := task3ToolNames(t, listed)
 			assert.Contains(names, ToolGetIdentityMatch)
 			assert.Contains(names, "calendar_freebusy")
-			for _, name := range []string{ToolAcceptIdentityMatch, ToolRejectIdentityMatch, ToolScoreIdentityMatches, ToolMergePerson, ToolApproveCardDAVPublication, ToolSyncCardDAV, "calendar_create", "calendar_update", "calendar_delete", "calendar_move", "calendar_respond"} {
+			assert.Contains(names, "get_source_scheduler_status")
+			assert.Contains(names, ToolPromotePerson)
+			tools, ok := listed.Result["tools"].([]any)
+			require.True(t, ok)
+			for _, tool := range tools {
+				definition, ok := tool.(map[string]any)
+				require.True(t, ok)
+				if definition["name"] == ToolPromotePerson {
+					properties := toolPropertyNames(t, definition)
+					if version == task3ModernProtocolVersion {
+						assert.Contains(properties, "display_name")
+					} else {
+						assert.NotContains(properties, "display_name")
+					}
+				}
+			}
+			for _, name := range []string{ToolAcceptIdentityMatch, ToolRejectIdentityMatch, ToolScoreIdentityMatches, ToolMergePerson, ToolApproveCardDAVPublication, ToolSyncCardDAV, "calendar_create", "calendar_update", "calendar_delete", "calendar_move", "calendar_respond", "sync_source", "update_slack_sync_policy", "set_person_display_name"} {
 				if version == task3ModernProtocolVersion {
 					assert.Contains(names, name)
 				} else {

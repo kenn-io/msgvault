@@ -1641,6 +1641,10 @@ type TestTaskIntegrationResponse = TaskIntegrationStatusResponse
 
 type TestTaskIntegrationErrorResponse = ErrorResponse
 
+type GetMCPCapabilitiesResponse = MCPCapabilities
+
+type GetMCPCapabilitiesErrorResponse = ErrorResponse
+
 type SearchMediaResponse = MediaSearchResponse
 
 type SearchMediaErrorResponse = ErrorResponse
@@ -4989,6 +4993,13 @@ type TestTaskIntegrationResp struct {
 	Body         []byte
 	StatusCode   int
 	JSON200      *TestTaskIntegrationResponse
+}
+
+type GetMCPCapabilitiesResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetMCPCapabilitiesResponse
 }
 
 type SearchMediaResp struct {
