@@ -600,3 +600,44 @@ func TestSendDropsPreviousSecretAfterOverlapEnds(t *testing.T) {
 	signature := <-signatures
 	assert.NotContains(signature, " ", "an expired previous secret must not add a second signature")
 }
+
+// A gate held longer than a short TTL must not activate a subscription that
+// is already expired; its times start when activation can run.
+func TestSubscribeTimesActivationAfterTheGate(t *testing.T) {
+	require := Require.New(t)
+	s, _, req := eventService(t)
+	var challenged atomic.Bool
+	s.webhook = tlsWebhook(t, func(rw http.ResponseWriter, r *http.Request) {
+		var v map[string]any
+		if !Assert.NoError(t, json.NewDecoder(r.Body).Decode(&v)) {
+			return
+		}
+		challenged.Store(true)
+		Assert.NoError(t, json.NewEncoder(rw).Encode(map[string]any{"challenge": v["challenge"]}))
+	})
+	ttl := int64(200)
+	req.TTLMS = &ttl
+	var released time.Time
+	s.opts.WithOperation = func(ctx context.Context, fn func() error) error {
+		if challenged.Load() && released.IsZero() {
+			// Hold the gate past the requested TTL, as a scheduled job could.
+			deadline := time.Now().Add(2 * time.Duration(ttl) * time.Millisecond)
+			for time.Now().Before(deadline) {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-time.After(10 * time.Millisecond):
+				}
+			}
+			released = time.Now()
+		}
+		return fn()
+	}
+	result, err := s.Subscribe(t.Context(), s.principal, req)
+	require.NoError(err)
+	require.False(released.IsZero(), "activation waited on the gate")
+	row, err := s.st.GetMCPSubscription(t.Context(), result.ID)
+	require.NoError(err)
+	require.NotNil(row)
+	Assert.True(t, row.ExpiresAt.After(released), "expiry %s must follow the gate release %s", row.ExpiresAt, released)
+}
