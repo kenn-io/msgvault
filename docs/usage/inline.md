@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-06"
+last_edited: "2026-10-12"
 title: Inline
 description: Archive all accessible Inline chats through OAuth MCP or the authenticated Inline CLI, with optional chat filters.
 ---

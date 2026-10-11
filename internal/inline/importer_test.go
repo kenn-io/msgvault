@@ -171,7 +171,8 @@ func TestImportCapturesHistoryRepliesAndFullRepairWithoutDeletingArchive(t *test
 	newReply.ReplyToMessageID = 1
 	client.messages[1] = append(client.messages[1], newReply)
 	client.messages[1][2].Text = "edited surviving message"
-	client.messages[1][2].EditedAt = time.Unix(1700001000, 0).UTC()
+	editedAt := time.Unix(1700001000, 0).UTC()
+	client.messages[1][2].EditedAt = editedAt
 	incremental, err := imp.Import(t.Context(), opts)
 	requires.NoError(err)
 	assertions.Equal(1, incremental.MessagesAdded)
@@ -194,7 +195,9 @@ func TestImportCapturesHistoryRepliesAndFullRepairWithoutDeletingArchive(t *test
 	requires.NoError(err)
 	assertions.Equal("edited surviving message", body)
 	requires.NoError(imp.store.DB().QueryRow(imp.store.Rebind(`SELECT metadata FROM messages WHERE id = ?`), id3).Scan(&metadata))
-	assertions.Contains(metadata, `"edited_at":"2023-11-14T22:30:00Z"`, "full repair must retain the actual source edit date")
+	var archivedMetadata messageMetadata
+	requires.NoError(json.Unmarshal([]byte(metadata), &archivedMetadata))
+	assertions.WithinDuration(editedAt, archivedMetadata.EditedAt, 0, "full repair must retain the actual source edit date")
 	archivedMessage(t, imp.store, summary.SourceID, 1, 1)
 	var labels int
 	requires.NoError(imp.store.DB().QueryRow(imp.store.Rebind(`SELECT COUNT(*) FROM message_labels WHERE message_id = ? AND label_id = ?`), id3, labelID).Scan(&labels))
@@ -543,7 +546,7 @@ func TestImportUsesReactionTimestampAndKeepsMissingDateUnknown(t *testing.T) {
 	requires.NoError(imp.store.DB().QueryRow(imp.store.Rebind(`SELECT created_at FROM reactions WHERE message_id = ? AND reaction_value = ?`), id, "known").Scan(&known))
 	requires.NoError(imp.store.DB().QueryRow(imp.store.Rebind(`SELECT created_at FROM reactions WHERE message_id = ? AND reaction_value = ?`), id, "unknown").Scan(&unknown))
 	requires.True(known.Valid)
-	assertions.Equal(date, known.Time)
+	assertions.WithinDuration(date, known.Time, 0)
 	assertions.False(unknown.Valid)
 }
 

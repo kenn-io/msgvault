@@ -32,6 +32,6 @@ func TestReplaceReactionsPreservesKnownTimestampAndStoresUnknownAsNull(t *testin
 	requires.NoError(st.DB().QueryRow(st.Rebind(`SELECT created_at FROM reactions WHERE message_id = ? AND reaction_value = ?`), messageID, "👍").Scan(&gotKnown))
 	requires.NoError(st.DB().QueryRow(st.Rebind(`SELECT created_at FROM reactions WHERE message_id = ? AND reaction_value = ?`), messageID, "👀").Scan(&gotUnknown))
 	requires.True(gotKnown.Valid)
-	assertions.Equal(known, gotKnown.Time)
+	assertions.Equal(known, gotKnown.Time.UTC())
 	assertions.False(gotUnknown.Valid, "a source without reaction time must not fabricate one")
 }

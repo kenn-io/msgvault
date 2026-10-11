@@ -341,7 +341,7 @@ func TestCrossProjectionMetadataKeepsUnsignedOccurrenceIdentity(t *testing.T) {
 func storedMediaMessageStats(t *testing.T, imp *Importer, messageID int64) (hasAttachments bool, attachmentCount int) {
 	t.Helper()
 	require.NoError(t, imp.store.DB().QueryRow(
-		`SELECT has_attachments, attachment_count FROM messages WHERE id = ?`, messageID,
+		imp.store.Rebind(`SELECT has_attachments, attachment_count FROM messages WHERE id = ?`), messageID,
 	).Scan(&hasAttachments, &attachmentCount))
 	return hasAttachments, attachmentCount
 }
@@ -395,7 +395,7 @@ func TestMediaImportPersistsAttachmentStatsForListingsAndSearch(t *testing.T) {
 				requires.NoError(imp.store.ReplaceMessageInlineProviderAttachments(id, refsSlice(refs)))
 				// Older archives can retain incorrect statistics from before
 				// Inline replacement recomputed them; full replay repairs them.
-				_, err = imp.store.DB().Exec(`UPDATE messages SET has_attachments = 0, attachment_count = 0 WHERE id = ?`, id)
+				_, err = imp.store.DB().Exec(imp.store.Rebind(`UPDATE messages SET has_attachments = FALSE, attachment_count = 0 WHERE id = ?`), id)
 				requires.NoError(err)
 				opts.NoMedia = false
 				opts.Full = true

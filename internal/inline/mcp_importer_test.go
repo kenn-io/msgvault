@@ -36,6 +36,9 @@ func readMCPReactionSnapshot(t *testing.T, st *store.Store, messageID int64) []a
 	for rows.Next() {
 		var reaction archivedMCPReaction
 		require.NoError(t, rows.Scan(&reaction.UserIdentifier, &reaction.Type, &reaction.Emoji, &reaction.CreatedAt))
+		if reaction.CreatedAt.Valid {
+			reaction.CreatedAt.Time = reaction.CreatedAt.Time.UTC()
+		}
 		snapshot = append(snapshot, reaction)
 	}
 	require.NoError(t, rows.Err())
@@ -130,19 +133,21 @@ func TestMCPReactionRefreshRetainsCLIRawEvidence(t *testing.T) {
 		{"empty replacement", `,"reactions":[]`, []archivedMCPReaction{}},
 	} {
 		t.Run(step.name, func(t *testing.T) {
+			checks := assert.New(t)
+			requires := require.New(t)
 			setMCPReactionHistory(f, 1, base, step.suffix)
 			_, err := imp.Import(t.Context(), opts)
-			require.NoError(t, err)
-			assert.Equal(t, step.want, readMCPReactionSnapshot(t, imp.store, messageID))
+			requires.NoError(err)
+			checks.Equal(step.want, readMCPReactionSnapshot(t, imp.store, messageID))
 			raw, err := imp.store.GetMessageRaw(messageID)
-			require.NoError(t, err)
-			assert.Equal(t, originalRaw, raw)
+			requires.NoError(err)
+			checks.Equal(originalRaw, raw)
 			value, err := imp.store.GetMessageMetadata(messageID)
-			require.NoError(t, err)
+			requires.NoError(err)
 			var metadata messageMetadata
-			require.NoError(t, json.Unmarshal([]byte(value.String), &metadata))
-			assert.Equal(t, RawCLIFormat, metadata.RawFormat)
-			assert.Equal(t, RawMCPFormat, metadata.ProjectionFormat)
+			requires.NoError(json.Unmarshal([]byte(value.String), &metadata))
+			checks.Equal(RawCLIFormat, metadata.RawFormat)
+			checks.Equal(RawMCPFormat, metadata.ProjectionFormat)
 		})
 	}
 }
