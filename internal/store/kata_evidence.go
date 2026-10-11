@@ -163,6 +163,7 @@ func (s *Store) KataDocbankBinding(ctx context.Context, destination string, atta
 	// The producer hashes the source tuple; reconciliation revokes its older revisions.
 	err = s.db.QueryRowContext(ctx, s.Rebind(`
 		SELECT o.vault_uid, o.content_version_id, o.source_sha256,
+		       o.revision, o.source_id, o.source_version_id, COALESCE(d.supplied_input_id,''),
 		       COALESCE(NULLIF(d.profile,''),'supplied-transcript'),
 		       m.id, src.source_type, src.identifier, m.source_message_id, o.occurrence_ref,
 		       COALESCE(a.filename,''), COALESCE(m.subject,''), COALESCE(m.sent_at,m.received_at,m.internal_date)
@@ -170,7 +171,8 @@ func (s *Store) KataDocbankBinding(ctx context.Context, destination string, atta
 		LEFT JOIN beeper_media_deliveries d ON d.destination_key=o.destination_key AND d.processing_key=o.processing_key
 		`+beeperMediaCurrentJoin+`
 		  AND o.destination_key=? AND a.id=? AND o.retention_state='retained'
-		`), destination, attachmentID).Scan(&result.VaultUID, &result.ContentVersionID, &result.ContentSHA256, &result.Profile,
+		`), destination, attachmentID).Scan(&result.VaultUID, &result.ContentVersionID, &result.ContentSHA256,
+		&result.Revision, &result.SourceID, &result.SourceVersionID, &result.SuppliedInputID, &result.Profile,
 		&ref.MessageID, &ref.SourceType, &ref.SourceIdentifier, &ref.SourceMessageID, &ref.OccurrenceKey,
 		&result.Display.Filename, &result.Display.ContainingTitle, &occurred)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -182,7 +184,7 @@ func (s *Store) KataDocbankBinding(ctx context.Context, destination string, atta
 	if occurred.Valid {
 		result.Display.Timestamp = occurred.Time
 	}
-	if result.VaultUID == "" || result.ContentVersionID == "" {
+	if result.VaultUID == "" || result.ContentVersionID == "" || result.Revision == "" || result.SourceID == "" || result.SourceVersionID == "" || result.SuppliedInputID == "" {
 		return kataevidence.DocbankBinding{}, kataevidence.ErrUnavailable
 	}
 	return result, nil

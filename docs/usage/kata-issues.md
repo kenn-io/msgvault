@@ -123,8 +123,9 @@ and link return `archive_unavailable` (503); retry later. A context read
 reports `changed` once Docbank holds a newer version of the file or
 transcribed it again, `unavailable` when Docbank deleted the file, and
 `unreachable` while Docbank can't be reached. Citing transcripts needs Docbank
-v0.15.0 or newer, which serves exact transcript windows. An older Docbank, or
-one that refuses msgvault's credential or processing profile, answers
+v0.15.1 or newer. Msgvault checks that the transcript came from the retained
+delivery and that the message's transcript hasn't changed. A Docbank that
+refuses msgvault's credential or processing profile answers
 `evidence_unsupported`; retrying won't help until the configuration changes.
 The Web UI can't cite transcripts yet.
 

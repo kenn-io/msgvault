@@ -1,15 +1,51 @@
 package store_test
 
 import (
+	"context"
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/beeper"
 	"go.kenn.io/msgvault/internal/kataevidence"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
+
+func TestKataDocbankSourceEditBeforeReconciliation(t *testing.T) {
+	for _, transcript := range []string{"edited transcript", ""} {
+		t.Run(transcript, func(t *testing.T) {
+			f := newBeeperMediaFixture(t)
+			audio := addBeeperAudio(t, f.Store, f.Source.ID, f.ConvID, "voice1", strings.Repeat("a", 64))
+			writeRaw := func(text string) {
+				raw := []byte(fmt.Sprintf(`{"id":"voice1","attachments":[{"id":"mxc://audio/voice1","isVoiceNote":true,"transcription":{"transcription":%q}}]}`, text))
+				require.NoError(t, f.Store.UpsertMessageRawWithFormat(audio.messageID, raw, "beeper_json"))
+			}
+			writeRaw("original transcript")
+			revision := func(ctx context.Context, id int64) (string, error) { return beeper.MediaRevision(ctx, f.Store, id) }
+			original, err := revision(t.Context(), audio.attachmentID)
+			require.NoError(t, err)
+			mapping := audio.mapping("destination", original, "processing")
+			retainAudio(t, f.Store, mapping, "occurrence")
+			_, err = f.Store.DB().Exec("UPDATE beeper_media_deliveries SET supplied_input_id='input'")
+			require.NoError(t, err)
+			binding, err := f.Store.KataDocbankBinding(t.Context(), "destination", audio.attachmentID)
+			require.NoError(t, err)
+			writeRaw(transcript)
+			reader := kataevidence.NewDocbankReader(f.Store, nil, func(context.Context) (string, error) { return "destination", nil }, revision)
+			result, err := reader.LoadKataEvidenceSource(t.Context(), kataevidence.Selector{Kind: "docbank_rendition", MessageID: audio.messageID, AttachmentID: audio.attachmentID, MaxChars: new(10)})
+			require.ErrorIs(t, err, kataevidence.ErrChanged)
+			assert.Empty(t, result.Text)
+			ref := binding.Reference
+			ref.DocbankRendition = &kataevidence.DocbankReference{VaultUID: binding.VaultUID, ContentVersionID: binding.ContentVersionID, ContentSHA256: binding.ContentSHA256, EndRune: 10}
+			result, err = reader.ReadKataEvidenceSource(t.Context(), ref)
+			require.ErrorIs(t, err, kataevidence.ErrChanged)
+			assert.Empty(t, result.Text)
+		})
+	}
+}
 
 func TestKataCitationIndexUpgrade(t *testing.T) {
 	require := require.New(t)
@@ -189,7 +225,7 @@ func TestKataCitationSourceMatchesPreparedEvidence(t *testing.T) {
 }
 
 func TestKataDocbankBindingDeliverySelection(t *testing.T) {
-	for _, name := range []string{"retained", "replaced revision", "pending", "revoked", "different destination", "deleted at source", "content refresh", "reused attachment", "document and Docbank sources"} {
+	for _, name := range []string{"retained", "replaced revision", "unknown supplied input", "pending", "revoked", "different destination", "deleted at source", "content refresh", "reused attachment", "document and Docbank sources"} {
 		t.Run(name, func(t *testing.T) {
 			require := require.New(t)
 			f := newBeeperMediaFixture(t)
@@ -235,6 +271,10 @@ func TestKataDocbankBindingDeliverySelection(t *testing.T) {
 					SELECT 'doc-occurrence',a.id,a.message_id,m.source_id,a.content_hash,a.attachment_role,'test' FROM attachments a JOIN messages m ON m.id=a.message_id WHERE a.id=?`), audio.attachmentID)
 				require.NoError(err)
 			}
+			if name != "unknown supplied input" {
+				_, err := f.Store.DB().Exec(f.Store.Rebind("UPDATE beeper_media_deliveries SET supplied_input_id='input' WHERE destination_key=? AND processing_key=?"), mapping.DestinationKey, mapping.ProcessingKey)
+				require.NoError(err)
+			}
 			binding, err := f.Store.KataDocbankBinding(t.Context(), destination, audio.attachmentID)
 			if name != "retained" && name != "replaced revision" && name != "document and Docbank sources" {
 				require.ErrorIs(err, kataevidence.ErrUnavailable)
@@ -242,7 +282,8 @@ func TestKataDocbankBindingDeliverySelection(t *testing.T) {
 				require.NoError(err)
 				assert.Equal(t, kataevidence.DocbankBinding{
 					Reference: ref,
-					VaultUID:  "vault", ContentVersionID: "content", ContentSHA256: audio.hash, Profile: "supplied-transcript",
+					Revision:  mapping.Revision, SourceID: "source-aaaa", SourceVersionID: "version", SuppliedInputID: "input",
+					VaultUID: "vault", ContentVersionID: "content", ContentSHA256: audio.hash, Profile: "supplied-transcript",
 					Display: kataevidence.Display{Filename: "voice.wav"},
 				}, binding)
 			}

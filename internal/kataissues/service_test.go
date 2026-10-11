@@ -205,8 +205,9 @@ func TestCreateAndLinkDocbankReferenceLimit(t *testing.T) {
 	ref := kataevidence.Reference{Version: kataevidence.Version, Kind: "docbank_rendition", ArchiveUID: uid, MessageID: 4,
 		SourceType: "beeper", SourceIdentifier: "signal", SourceMessageID: "voice1", AttachmentID: 9, OccurrenceKey: "msgvault:voice1"}
 	docbank := &slowDocbank{binding: kataevidence.DocbankBinding{Reference: ref, VaultUID: "22222222-2222-4222-8222-222222222222",
+		Revision: "revision", SourceID: "source", SourceVersionID: "version", SuppliedInputID: "input",
 		ContentVersionID: "11111111-1111-4111-8111-111111111111", ContentSHA256: strings.Repeat("a", 64)}, healthy: true}
-	evidence := kataevidence.New(nil).WithDocbank(kataevidence.NewDocbankReader(docbank, docbank, func(context.Context) (string, error) { return "destination", nil }))
+	evidence := kataevidence.New(nil).WithDocbank(kataevidence.NewDocbankReader(docbank, docbank, func(context.Context) (string, error) { return "destination", nil }, docbank.MediaRevision))
 	f.service.Evidence = evidence
 	ref.DocbankRendition = &kataevidence.DocbankReference{VaultUID: docbank.binding.VaultUID, NodeID: 7, ContentVersionID: docbank.binding.ContentVersionID,
 		ContentSHA256: docbank.binding.ContentSHA256, RenditionAttachmentID: strings.Repeat("b", 64), BuildID: strings.Repeat("f", 64),

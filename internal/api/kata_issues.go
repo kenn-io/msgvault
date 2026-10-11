@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
+	"go.kenn.io/msgvault/internal/beeper"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/docbankmedia"
 	"go.kenn.io/msgvault/internal/kataevidence"
@@ -307,22 +308,28 @@ type kataIssueBackend struct {
 }
 
 func newKataIssueBackend(cfg *config.Config, messageStore MessageStore) KataIssueOperations {
-	store, ok := messageStore.(kataIssueStore)
+	archive, ok := messageStore.(kataIssueStore)
 	if !ok || cfg == nil {
 		return nil
 	}
-	evidence := kataevidence.New(store)
+	evidence := kataevidence.New(archive)
 	if docbank := cfg.Integrations.Docbank; docbank.Enabled {
 		client, err := docbankmedia.NewClient(docbank.URL, docbank.ResolveAPIKey)
 		// An invalid URL leaves Docbank citations unsupported; the media job reports it.
 		if err == nil {
-			evidence.WithDocbank(kataevidence.NewDocbankReader(store, client, func(ctx context.Context) (string, error) {
-				uid, err := store.ArchiveUIDContext(ctx)
+			evidence.WithDocbank(kataevidence.NewDocbankReader(archive, client, func(ctx context.Context) (string, error) {
+				uid, err := archive.ArchiveUIDContext(ctx)
 				return docbankmedia.DestinationKey(docbank.URL, uid), err
+			}, func(ctx context.Context, attachmentID int64) (string, error) {
+				st, ok := messageStore.(*store.Store)
+				if !ok {
+					return "", kataevidence.ErrUnavailable
+				}
+				return beeper.MediaRevision(ctx, st, attachmentID)
 			}))
 		}
 	}
-	return &kataIssueBackend{config: cfg.Integrations.Kata, store: store, evidence: evidence}
+	return &kataIssueBackend{config: cfg.Integrations.Kata, store: archive, evidence: evidence}
 }
 
 func (b *kataIssueBackend) Prepare(ctx context.Context, selectors []kataevidence.Selector) ([]kataevidence.Evidence, error) {

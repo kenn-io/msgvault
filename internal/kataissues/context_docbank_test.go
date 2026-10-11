@@ -19,12 +19,13 @@ import (
 )
 
 type slowDocbank struct {
-	binding    kataevidence.DocbankBinding
-	reads      int
-	outage     bool
-	healthy    bool
-	delay      time.Duration
-	bindingErr error
+	binding     kataevidence.DocbankBinding
+	reads       int
+	outage      bool
+	healthy     bool
+	delay       time.Duration
+	bindingErr  error
+	servedBuild string
 }
 
 type contextEvidence struct {
@@ -72,11 +73,22 @@ func (f *slowDocbank) EvidenceIdentity(ctx context.Context, _, _, _ string) (doc
 	return docbankmedia.EvidenceWindowRequest{BuildID: strings.Repeat("f", 64)}, f.wait(ctx)
 }
 
-func (f *slowDocbank) ReadEvidenceWindow(ctx context.Context, _ docbankmedia.EvidenceWindowRequest) (docbankmedia.EvidenceWindow, error) {
+func (f *slowDocbank) MediaRevision(context.Context, int64) (string, error) {
+	return "revision", nil
+}
+
+func (f *slowDocbank) Transcript(context.Context, string, string, string) (docbankmedia.MediaTranscript, error) {
+	return docbankmedia.MediaTranscript{VaultUID: f.binding.VaultUID, Transcript: &docbankmedia.MediaTranscriptEvidence{
+		Origin: "supplied", SuppliedInputID: "input", BuildID: f.servedBuild,
+	}}, nil
+}
+
+func (f *slowDocbank) ReadEvidenceWindow(ctx context.Context, request docbankmedia.EvidenceWindowRequest) (docbankmedia.EvidenceWindow, error) {
 	if err := f.wait(ctx); err != nil {
 		return docbankmedia.EvidenceWindow{}, err
 	}
 	if f.healthy {
+		f.servedBuild = request.BuildID
 		return docbankmedia.EvidenceWindow{Text: strings.Repeat("Send email", 3)}, nil
 	}
 	return docbankmedia.EvidenceWindow{}, &docbankmedia.HTTPError{Status: http.StatusNotFound}
@@ -128,8 +140,9 @@ func TestContextDocbankAdmissionLimit(t *testing.T) {
 				ref := kataevidence.Reference{Version: kataevidence.Version, Kind: "docbank_rendition", ArchiveUID: "archive", MessageID: 4,
 					SourceType: "beeper", SourceIdentifier: "signal", SourceMessageID: "voice1", AttachmentID: 9, OccurrenceKey: "msgvault:voice1"}
 				docbank := &slowDocbank{binding: kataevidence.DocbankBinding{Reference: ref, VaultUID: "22222222-2222-4222-8222-222222222222",
+					Revision: "revision", SourceID: "source", SourceVersionID: "version", SuppliedInputID: "input",
 					ContentVersionID: "11111111-1111-4111-8111-111111111111", ContentSHA256: strings.Repeat("a", 64)}, outage: tc.outage, healthy: tc.healthy, delay: tc.delay, bindingErr: tc.bindingErr}
-				evidence := kataevidence.New(nil).WithDocbank(kataevidence.NewDocbankReader(docbank, docbank, func(context.Context) (string, error) { return "destination", nil }))
+				evidence := kataevidence.New(nil).WithDocbank(kataevidence.NewDocbankReader(docbank, docbank, func(context.Context) (string, error) { return "destination", nil }, docbank.MediaRevision))
 				var entries []kataissues.Entry
 				var newest []kataissues.Entry
 				for passage := range 3 {

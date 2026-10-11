@@ -91,6 +91,10 @@ type DocbankReference struct {
 // source tuple and occurrence key in Reference, and Docbank's identities.
 type DocbankBinding struct {
 	Reference        Reference
+	Revision         string
+	SourceID         string
+	SourceVersionID  string
+	SuppliedInputID  string
 	VaultUID         string
 	ContentVersionID string
 	ContentSHA256    string

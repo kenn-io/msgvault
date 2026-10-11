@@ -32,7 +32,25 @@ type fakeDocbank struct {
 	// noWindows is a Docbank older than the evidence window route.
 	noWindows bool
 	// finishing selects no rendition once, then one: processing finished in between.
-	finishing bool
+	finishing       bool
+	revision        string
+	inputID         string
+	transcriptBuild *string
+	afterRead       func()
+}
+
+func (f *fakeDocbank) MediaRevision(context.Context, int64) (string, error) {
+	return f.revision, nil
+}
+
+func (f *fakeDocbank) Transcript(context.Context, string, string, string) (docbankmedia.MediaTranscript, error) {
+	build := f.build
+	if f.transcriptBuild != nil {
+		build = *f.transcriptBuild
+	}
+	return docbankmedia.MediaTranscript{VaultUID: f.binding.VaultUID, Transcript: &docbankmedia.MediaTranscriptEvidence{
+		Origin: "supplied", BuildID: build, SuppliedInputID: f.inputID,
+	}}, f.err
 }
 
 func (f *fakeDocbank) KataDocbankBinding(_ context.Context, destination string, attachmentID int64) (kataevidence.DocbankBinding, error) {
@@ -86,20 +104,62 @@ func (f *fakeDocbank) ReadEvidenceWindow(ctx context.Context, request docbankmed
 	}
 	text := f.text[request.Offset:min(len(f.text), request.Offset+request.MaxChars)]
 	end := request.Offset + len(text)
+	if f.afterRead != nil {
+		f.afterRead()
+	}
 	return docbankmedia.EvidenceWindow{Text: string(text), ActualStart: request.Offset, ActualEnd: end, EOF: end == len(f.text)}, nil
 }
 
 func newFakeDocbank() *fakeDocbank {
 	return &fakeDocbank{
 		binding: kataevidence.DocbankBinding{
+			Revision: "revision", SourceID: "source", SourceVersionID: "version", SuppliedInputID: "input",
 			Reference: kataevidence.Reference{Version: kataevidence.Version, Kind: "docbank_rendition", ArchiveUID: "archive", MessageID: 4,
 				SourceType: "beeper", SourceIdentifier: "signal", SourceMessageID: "voice1", AttachmentID: 9, OccurrenceKey: "msgvault:voice1"},
 			VaultUID: "22222222-2222-4222-8222-222222222222", ContentVersionID: "11111111-1111-4111-8111-111111111111", ContentSHA256: strings.Repeat("a", 64), Profile: "supplied-transcript",
 			Display: kataevidence.Display{Filename: "voice.wav"},
 		},
-		text:    []rune(strings.Repeat("é", kataevidence.MaxChars) + "Send the revised budget by Friday."),
-		current: "11111111-1111-4111-8111-111111111111",
-		build:   strings.Repeat("c", 64),
+		text:     []rune(strings.Repeat("é", kataevidence.MaxChars) + "Send the revised budget by Friday."),
+		current:  "11111111-1111-4111-8111-111111111111",
+		build:    strings.Repeat("c", 64),
+		revision: "revision", inputID: "input",
+	}
+}
+
+func TestDocbankRejectsStaleTranscriptProvenance(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		change func(*fakeDocbank)
+		want   error
+	}{
+		{"source edited before read", func(f *fakeDocbank) { f.revision = "edited" }, kataevidence.ErrChanged},
+		{"source removed before read", func(f *fakeDocbank) { f.revision = "removed" }, kataevidence.ErrChanged},
+		{"source edited during read", func(f *fakeDocbank) { f.afterRead = func() { f.revision = "edited" } }, kataevidence.ErrChanged},
+		{"shared audio with another input", func(f *fakeDocbank) { f.inputID = "other-message-input" }, kataevidence.ErrUnavailable},
+		{"missing input", func(f *fakeDocbank) { f.inputID = "" }, kataevidence.ErrUnavailable},
+		{"missing build", func(f *fakeDocbank) { f.transcriptBuild = new("") }, kataevidence.ErrUnavailable},
+		{"another build", func(f *fakeDocbank) { f.transcriptBuild = new(strings.Repeat("e", 64)) }, kataevidence.ErrChanged},
+		{"build changed during read", func(f *fakeDocbank) { f.afterRead = func() { f.build = strings.Repeat("e", 64) } }, kataevidence.ErrChanged},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, resolve := range []bool{false, true} {
+				f := newFakeDocbank()
+				reader := kataevidence.NewDocbankReader(f, f, func(context.Context) (string, error) { return "destination", nil }, f.MediaRevision)
+				selector := kataevidence.Selector{Kind: "docbank_rendition", MessageID: 4, AttachmentID: 9, MaxChars: new(10)}
+				prepared, err := reader.LoadKataEvidenceSource(t.Context(), selector)
+				require.NoError(t, err)
+				tc.change(f)
+				var result kataevidence.SourceRecord
+				if resolve {
+					prepared.Reference.DocbankRendition.EndRune = 10
+					result, err = reader.ReadKataEvidenceSource(t.Context(), prepared.Reference)
+				} else {
+					result, err = reader.LoadKataEvidenceSource(t.Context(), selector)
+				}
+				require.ErrorIs(t, err, tc.want, "resolve=%v", resolve)
+				assert.Empty(t, result.Text)
+			}
+		})
 	}
 }
 
@@ -107,7 +167,7 @@ func TestDocbankWindowsPageAndResolve(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	docbank := newFakeDocbank()
-	svc := kataevidence.New(nil).WithDocbank(kataevidence.NewDocbankReader(docbank, docbank, func(context.Context) (string, error) { return "destination", nil }))
+	svc := kataevidence.New(nil).WithDocbank(kataevidence.NewDocbankReader(docbank, docbank, func(context.Context) (string, error) { return "destination", nil }, docbank.MediaRevision))
 	selector := kataevidence.Selector{Kind: "docbank_rendition", MessageID: 4, AttachmentID: 9, MaxChars: new(kataevidence.MaxChars)}
 
 	first, err := svc.Prepare(t.Context(), []kataevidence.Selector{selector})

@@ -21,6 +21,7 @@ type DocbankBindingStore interface {
 
 // DocbankClient reads rendition windows from the configured Docbank.
 type DocbankClient interface {
+	Transcript(ctx context.Context, sourceID, sourceVersionID, contentVersionID string) (docbankmedia.MediaTranscript, error)
 	EvidenceIdentity(ctx context.Context, contentVersionID, contentSHA256, profile string) (docbankmedia.EvidenceWindowRequest, error)
 	CurrentVersion(ctx context.Context, nodeID int64) (string, error)
 	ReadEvidenceWindow(ctx context.Context, request docbankmedia.EvidenceWindowRequest) (docbankmedia.EvidenceWindow, error)
@@ -32,12 +33,40 @@ type DocbankReader struct {
 	store       DocbankBindingStore
 	client      DocbankClient
 	destination func(context.Context) (string, error)
+	revision    func(context.Context, int64) (string, error)
 }
 
 // NewDocbankReader reads bindings recorded under the destination key that
 // destination returns.
-func NewDocbankReader(store DocbankBindingStore, client DocbankClient, destination func(context.Context) (string, error)) *DocbankReader {
-	return &DocbankReader{store: store, client: client, destination: destination}
+func NewDocbankReader(store DocbankBindingStore, client DocbankClient, destination func(context.Context) (string, error), revision func(context.Context, int64) (string, error)) *DocbankReader {
+	return &DocbankReader{store: store, client: client, destination: destination, revision: revision}
+}
+
+func (r *DocbankReader) checkRevision(ctx context.Context, binding DocbankBinding) error {
+	revision, err := r.revision(ctx, binding.Reference.AttachmentID)
+	if err != nil {
+		return err
+	}
+	if revision == "" || revision != binding.Revision {
+		return ErrChanged
+	}
+	return nil
+}
+
+func (r *DocbankReader) checkTranscript(ctx context.Context, binding DocbankBinding, request docbankmedia.EvidenceWindowRequest) error {
+	transcript, err := r.client.Transcript(ctx, binding.SourceID, binding.SourceVersionID, binding.ContentVersionID)
+	if err != nil {
+		return err
+	}
+	evidence := transcript.Transcript
+	if transcript.VaultUID != binding.VaultUID || evidence == nil || evidence.Origin != "supplied" ||
+		binding.SuppliedInputID == "" || evidence.SuppliedInputID != binding.SuppliedInputID || evidence.BuildID == "" {
+		return ErrUnavailable
+	}
+	if evidence.BuildID != request.BuildID {
+		return ErrChanged
+	}
+	return nil
 }
 
 func (r *DocbankReader) binding(ctx context.Context, attachmentID int64) (DocbankBinding, error) {
@@ -60,6 +89,9 @@ func (r *DocbankReader) LoadKataEvidenceSource(ctx context.Context, selector Sel
 	if binding.Reference.MessageID != selector.MessageID {
 		return SourceRecord{}, ErrUnavailable
 	}
+	if err := r.checkRevision(ctx, binding); err != nil {
+		return SourceRecord{}, err
+	}
 	parent := ctx
 	ctx, cancel := context.WithTimeout(ctx, DocbankTimeout)
 	defer cancel()
@@ -77,6 +109,12 @@ func (r *DocbankReader) LoadKataEvidenceSource(ctx context.Context, selector Sel
 	}
 	if err != nil {
 		return SourceRecord{}, docbankError(parent, err)
+	}
+	if err := r.checkTranscript(ctx, binding, request); err != nil {
+		return SourceRecord{}, docbankError(parent, err)
+	}
+	if err := r.checkRevision(parent, binding); err != nil {
+		return SourceRecord{}, err
 	}
 	ref := binding.Reference
 	ref.DocbankRendition = &DocbankReference{VaultUID: request.VaultUID, NodeID: request.NodeID, ContentVersionID: request.ContentVersionID,
@@ -104,6 +142,9 @@ func (r *DocbankReader) ReadKataEvidenceSource(ctx context.Context, ref Referenc
 	if binding.ContentVersionID != p.ContentVersionID || !strings.EqualFold(binding.ContentSHA256, p.ContentSHA256) {
 		return SourceRecord{}, ErrChanged
 	}
+	if err := r.checkRevision(ctx, binding); err != nil {
+		return SourceRecord{}, err
+	}
 	from := max(0, p.StartRune-ContextRunes)
 	parent := ctx
 	ctx, cancel := context.WithTimeout(ctx, DocbankTimeout)
@@ -117,6 +158,12 @@ func (r *DocbankReader) ReadKataEvidenceSource(ctx context.Context, ref Referenc
 	}
 	if err != nil {
 		return SourceRecord{}, docbankError(parent, err)
+	}
+	if err := r.checkTranscript(ctx, binding, request); err != nil {
+		return SourceRecord{}, docbankError(parent, err)
+	}
+	if err := r.checkRevision(parent, binding); err != nil {
+		return SourceRecord{}, err
 	}
 	return SourceRecord{Reference: ref, Text: window.Text, TextStart: window.ActualStart, Display: binding.Display}, nil
 }

@@ -408,12 +408,13 @@ func TestClientMediaTranscript(t *testing.T) {
 	assert.Empty(transcript.Transcript.Units[1].Speaker)
 
 	respond(with(map[string]any{"transcript": map[string]any{
-		"origin": "supplied", "supplied_input_id": "input", "completeness": "complete", "units": []any{},
+		"origin": "supplied", "supplied_input_id": "input", "build_id": "build", "completeness": "complete", "units": []any{},
 	}}))
 	transcript, err = client.Transcript(t.Context(), sourceID, versionID, contentID)
 	require.NoError(err)
 	require.NotNil(transcript.Transcript)
 	assert.Equal("input", transcript.Transcript.SuppliedInputID)
+	assert.Equal("build", transcript.Transcript.BuildID)
 
 	respond(with(map[string]any{"evidence_state": "pending", "transcript": nil}))
 	transcript, err = client.Transcript(t.Context(), sourceID, versionID, contentID)
