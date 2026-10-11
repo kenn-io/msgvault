@@ -196,11 +196,11 @@ describe('TranscriptHits', () => {
   it.each([
     [400, 'media_search_scope_limit', 'Add a Person filter to search recordings.'],
     [400, 'invalid_media_search', 'Recording search rejected this query. Try different plain words.'],
-    [400, 'invalid_parameter', 'Recording search query is too long. Use fewer words.'],
+    [400, 'invalid_parameter', 'direction must be from_person, to_person, or group'],
     [403, 'forbidden', 'Recording search cannot read this query. Check archive access or change the query.'],
   ])('keeps %s %s terminal until the query changes', async (status, error, text) => {
     vi.useFakeTimers();
-    const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ error }, { status }));
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ error, message: text }, { status }));
     const client = createAPIClient(fetchFn);
     const view = render(TranscriptHits, { props: { client, query: 'quarterly', supported: true } });
     await vi.advanceTimersByTimeAsync(0);
@@ -214,6 +214,19 @@ describe('TranscriptHits', () => {
     expect(fetchFn).toHaveBeenCalledTimes(2);
     expect(screen.getByText(text)).toBeTruthy();
     view.unmount();
+  });
+
+  it.each([NaN, 0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1])('rejects invalid participant ID %s', async participantID => {
+    const fetchFn = vi.fn<typeof fetch>();
+    render(TranscriptHits, { props: { client: createAPIClient(fetchFn), query: 'quarterly', supported: true, participantID } });
+    expect(await screen.findByText(/Recording search requires Full text/)).toBeTruthy();
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  it('explains an oversized query', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ error: 'invalid_parameter', message: 'q is required and must be at most 8192 bytes' }, { status: 400 }));
+    render(TranscriptHits, { props: { client: createAPIClient(fetchFn), query: 'é'.repeat(4097), supported: true } });
+    expect(await screen.findByText('Recording search query is too long. Use fewer words.')).toBeTruthy();
   });
 
 });

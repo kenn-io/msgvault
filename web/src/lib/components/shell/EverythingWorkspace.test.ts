@@ -132,6 +132,9 @@ describe('EverythingWorkspace', () => {
     { searchMode: 'semantic' }, { filters: [{ dimension: 'source', values: ['1'] }] },
     { groupingChain: ['kind'] },
     { filters: [{ dimension: 'participant', values: ['1', '2'] }] },
+    { filters: [{ dimension: 'participant', values: ['NaN'] }] },
+    { filters: [{ dimension: 'participant', values: ['0'] }] },
+    { filters: [{ dimension: 'participant', values: ['9007199254740992'] }] },
     { filters: [{ dimension: 'participant', values: ['1'] }, { dimension: 'participant', values: ['2'] }] },
   ])('shows recording search hints for configured unsupported queries %j', async patch => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
@@ -1076,7 +1079,8 @@ describe('EverythingWorkspace', () => {
     });
     const state = new ExploreState(window);
     state.commitNavigation({ groupingChain: ['source'] });
-    const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
+    state.commitSearch('quarterly', 'full_text');
+    const rendered = renderRecordingShell(createAPIClient(fetchFn), state);
 
     await waitFor(() => expect(requests).toHaveLength(1));
     expect(new URL(requests[0]!.url).pathname).toBe('/api/v1/explore/groups');
@@ -1084,12 +1088,16 @@ describe('EverythingWorkspace', () => {
     state.commitNavigation({ groupingChain: [], presentation: 'timeline' });
     expect(await screen.findByRole('region', { name: 'Canonical activity timeline' })).toBeDefined();
     expect(await screen.findByText('Synthetic subject 1')).toBeDefined();
+    expect(screen.queryByRole('region', { name: 'Recordings' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: /^Results/ })).toBeNull();
+    expect(document.querySelector('.results-primary--recordings')).toBeNull();
     expect(new URL(requests.at(-1)!.url).pathname).toBe('/api/v1/explore');
 
     state.commitNavigation({ presentation: 'files' });
     expect(state.current).toMatchObject({ workspace: 'files', presentation: 'files' });
     expect(await screen.findByRole('main', { name: 'Files' })).toBeDefined();
     expect(screen.queryByRole('grid', { name: 'Files in current context' })).toBeNull();
+    expect(screen.queryByRole('region', { name: 'Recordings' })).toBeNull();
     rendered.unmount();
     state.destroy();
   });

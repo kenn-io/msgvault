@@ -21692,7 +21692,7 @@ paths:
           schema:
             format: int64
             type: integer
-        - description: Observed participant ID; translated through its durable person when bound; mutually exclusive with person_id
+        - description: Observed participant ID; selects its current Explore identity cluster; mutually exclusive with person_id
           in: query
           name: participant_id
           schema:

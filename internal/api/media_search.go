@@ -96,6 +96,22 @@ func (s *Server) handleMediaSearch(w http.ResponseWriter, r *http.Request) {
 		if reference.ID == 0 {
 			return nil, nil //nolint:nilnil // No person scope searches the full visible archive.
 		}
+		if participantID > 0 {
+			var members []int64
+			var err error
+			if clusters, ok := s.queryEngineForContext(r.Context()).(interface {
+				ExpandParticipantClusterMembers(context.Context, []int64) ([]int64, error)
+			}); ok {
+				members, err = clusters.ExpandParticipantClusterMembers(r.Context(), []int64{participantID})
+			} else {
+				members, err = reader.Store.ClusterMembers(participantID)
+			}
+			if err != nil {
+				return nil, err
+			}
+			normalized, defaultDirections, err := resolver.NormalizeDirections(directions)
+			return &personscope.Scope{ParticipantIDs: members, Directions: normalized, IncludeUnclassifiedRosterRows: defaultDirections}, err
+		}
 		resolution, err := resolver.Resolve(r.Context(), reader.Store, reference, directions)
 		return &resolution.Scope, err
 	}

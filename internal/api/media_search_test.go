@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/docbankmedia"
+	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -273,6 +274,9 @@ func TestMediaSearchOversizedPopulation(t *testing.T) {
 	assert.Empty(f.requests)
 	selected := f.match(t, "selected")
 	participant := f.f.EnsureParticipant("selected@example.com", "Selected Person", "example.com")
+	alias := f.f.EnsureParticipant("alias@example.com", "Alias", "example.com")
+	_, err = f.f.Store.LinkParticipants(participant, alias)
+	require.NoError(err)
 	person, _, err := f.f.Store.CreatePersonFromParticipant(participant)
 	require.NoError(err)
 	_, err = f.f.Store.DB().Exec(f.f.Store.Rebind(`UPDATE messages SET sender_id = ? WHERE id = ?`), participant, selected.messageID)
@@ -283,6 +287,43 @@ func TestMediaSearchOversizedPopulation(t *testing.T) {
 	assert.Equal(selected.messageID, response.Results[0].MessageID)
 	require.Len(f.requests, 1)
 	assert.Equal([]string{selected.contentVersionID}, f.requests[0].Fence.ContentVersionIDs)
+	unlinked := f.match(t, "unlinked")
+	_, err = f.f.Store.DB().Exec(f.f.Store.Rebind(`UPDATE messages SET sender_id = ? WHERE id = ?`), alias, unlinked.messageID)
+	require.NoError(err)
+	_, err = f.f.Store.UnlinkParticipants(participant, alias)
+	require.NoError(err)
+	fullReport := f.report
+	f.duringSearch = func() {
+		f.report = fullReport
+		if len(f.requests[len(f.requests)-1].MediaSources) == 1 {
+			f.report.Results = fullReport.Results[:1]
+			f.report.MediaSelections = fullReport.MediaSelections[:1]
+			f.report.Coverage.ScopedDocuments, f.report.Coverage.CompleteDocuments = 1, 1
+		}
+	}
+	for _, analytical := range []bool{false, true} {
+		server := f.server(true)
+		if analytical {
+			messages := fmt.Sprintf(`(%d::BIGINT, 1::BIGINT, 'selected', 101::BIGINT, 'Selected', 'quarterly numbers', TIMESTAMP '2026-07-18 10:00:00', 100::BIGINT, true, 1::INTEGER, NULL::TIMESTAMP, %d::BIGINT, NULL::BIGINT, 'email', NULL::VARCHAR, false, 2026, 7),
+				(%d::BIGINT, 1::BIGINT, 'unlinked', 102::BIGINT, 'Unlinked', 'quarterly numbers', TIMESTAMP '2026-07-18 11:00:00', 100::BIGINT, true, 1::INTEGER, NULL::TIMESTAMP, %d::BIGINT, NULL::BIGINT, 'email', NULL::VARCHAR, false, 2026, 7)`, selected.messageID, participant, unlinked.messageID, alias)
+			recipients := fmt.Sprintf(`(%d::BIGINT, %d::BIGINT, 'from', 'Selected'), (%d::BIGINT, %d::BIGINT, 'from', 'Alias')`, selected.messageID, participant, unlinked.messageID, alias)
+			engine, _ := newExploreDuckDBFixtureWithMessagesAndRecipients(t, messages, recipients, unlinked.messageID)
+			ordinary, err := engine.Explore(t.Context(), query.ExploreRequest{Context: query.Context{ParticipantIDs: []int64{participant}}})
+			require.NoError(err)
+			require.Len(ordinary.Rows, 1)
+			require.NotNil(ordinary.Rows[0].AnchorMessageID)
+			assert.Equal(selected.messageID, *ordinary.Rows[0].AnchorMessageID)
+			server.SetAnalyticsEngine(engine, AnalyticsModeDuckDB)
+		}
+		status, response, raw = searchMediaFor(t, server, fmt.Sprintf("q=quarterly+numbers&participant_id=%d", participant))
+		require.Equal(http.StatusOK, status, raw)
+		require.Len(response.Results, 1)
+		assert.Equal(selected.messageID, response.Results[0].MessageID)
+		assert.Equal([]string{selected.contentVersionID}, f.requests[len(f.requests)-1].Fence.ContentVersionIDs)
+	}
+	status, response, raw = searchMediaFor(t, f.server(true), fmt.Sprintf("q=quarterly+numbers&person_id=%d", person.ID))
+	require.Equal(http.StatusOK, status, raw)
+	assert.Len(response.Results, 2)
 	status, _, raw = searchMediaFor(t, f.server(true), fmt.Sprintf("q=quarterly+numbers&participant_id=%d&person_id=%d", participant, person.ID))
 	assert.Equal(http.StatusBadRequest, status, raw)
 	assert.Contains(raw, "mutually exclusive")

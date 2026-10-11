@@ -818,7 +818,7 @@ func rawRouteParameters(operationID string) []*huma.Param {
 			queryStringParam("q", "Spoken words to find in transcripts", true),
 			queryStringParam("mode", "Lexical mode; semantic and hybrid are unavailable", false),
 			queryIntegerParam("person_id", "Durable person ID"),
-			queryIntegerParam("participant_id", "Observed participant ID; translated through its durable person when bound; mutually exclusive with person_id"),
+			queryIntegerParam("participant_id", "Observed participant ID; selects its current Explore identity cluster; mutually exclusive with person_id"),
 			queryRefArrayParam("direction", "Person relation: from_person, to_person, or group"),
 			queryIntegerParam(limitParam, "Maximum occurrences to return, default 20, max 100"),
 		}

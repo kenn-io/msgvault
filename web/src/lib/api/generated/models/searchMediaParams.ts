@@ -16,7 +16,7 @@ export type SearchMediaParams = {
    */
   person_id?: number;
   /**
-   * Observed participant ID; translated through its durable person when bound; mutually exclusive with person_id
+   * Observed participant ID; selects its current Explore identity cluster; mutually exclusive with person_id
    */
   participant_id?: number;
   /**

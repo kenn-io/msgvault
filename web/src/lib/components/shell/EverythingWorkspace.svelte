@@ -118,10 +118,10 @@
   const readiness = mediaReadiness();
   const recordingSelection = $derived(parseRecordingSelection(readingTargetKey));
   const recordingParticipantID = $derived(exploreState.current.filters.length === 1 && exploreState.current.filters[0].dimension === 'participant' && exploreState.current.filters[0].values.length === 1 ? Number(exploreState.current.filters[0].values[0]) : undefined);
-  const recordingSearchSupported = $derived(exploreState.current.searchMode === 'full_text' && (exploreState.current.filters.length === 0 || recordingParticipantID !== undefined) && exploreState.current.groupingChain.length === 0);
+  const recordingSearchSupported = $derived(exploreState.current.searchMode === 'full_text' && (exploreState.current.filters.length === 0 || (recordingParticipantID !== undefined && Number.isSafeInteger(recordingParticipantID) && recordingParticipantID > 0)) && exploreState.current.groupingChain.length === 0);
   const recordingSearchVisible = $derived.by(() => {
     const query = exploreState.current.query.trim();
-    return Boolean(enabled && readiness?.ready && query);
+    return Boolean(enabled && readiness?.ready && query && exploreState.current.presentation === 'table');
   });
 
   $effect(() => {
