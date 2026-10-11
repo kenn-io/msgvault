@@ -184,7 +184,7 @@ func (s *Store) KataDocbankBinding(ctx context.Context, destination string, atta
 	if occurred.Valid {
 		result.Display.Timestamp = occurred.Time
 	}
-	if result.VaultUID == "" || result.ContentVersionID == "" || result.Revision == "" || result.SourceID == "" || result.SourceVersionID == "" || result.SuppliedInputID == "" {
+	if result.VaultUID == "" || result.ContentVersionID == "" || result.Revision == "" || result.SourceID == "" || result.SourceVersionID == "" || result.Profile == "supplied-transcript" && result.SuppliedInputID == "" {
 		return kataevidence.DocbankBinding{}, kataevidence.ErrUnavailable
 	}
 	return result, nil

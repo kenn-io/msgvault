@@ -36,6 +36,8 @@ type fakeDocbank struct {
 	finishing       bool
 	revision        string
 	inputID         string
+	origin          string
+	profileBuild    map[string]string
 	transcriptBuild *string
 	afterRead       func()
 }
@@ -44,13 +46,13 @@ func (f *fakeDocbank) MediaRevision(context.Context, int64) (string, error) {
 	return f.revision, nil
 }
 
-func (f *fakeDocbank) Transcript(context.Context, string, string, string) (docbankmedia.MediaTranscript, error) {
+func (f *fakeDocbank) TranscriptIdentity(context.Context, string, string, string) (docbankmedia.MediaTranscript, error) {
 	build := f.build
 	if f.transcriptBuild != nil {
 		build = *f.transcriptBuild
 	}
 	return docbankmedia.MediaTranscript{VaultUID: f.binding.VaultUID, Transcript: &docbankmedia.MediaTranscriptEvidence{
-		Origin: "supplied", BuildID: build, SuppliedInputID: f.inputID,
+		Origin: f.origin, BuildID: build, SuppliedInputID: f.inputID,
 	}}, f.err
 }
 
@@ -71,7 +73,7 @@ func (f *fakeDocbank) CurrentVersion(context.Context, int64) (string, error) {
 
 var errNotFound = &docbankmedia.HTTPError{Status: http.StatusNotFound, Code: "not_found"}
 
-func (f *fakeDocbank) EvidenceIdentity(_ context.Context, contentVersionID, contentSHA256, _ string) (docbankmedia.EvidenceWindowRequest, error) {
+func (f *fakeDocbank) EvidenceIdentity(_ context.Context, contentVersionID, contentSHA256, profile string) (docbankmedia.EvidenceWindowRequest, error) {
 	if f.err != nil {
 		return docbankmedia.EvidenceWindowRequest{}, f.err
 	}
@@ -85,8 +87,12 @@ func (f *fakeDocbank) EvidenceIdentity(_ context.Context, contentVersionID, cont
 	if contentVersionID != f.current || f.build == "" {
 		return docbankmedia.EvidenceWindowRequest{NodeID: 7}, errNotFound
 	}
+	build := f.build
+	if selected, ok := f.profileBuild[profile]; ok {
+		build = selected
+	}
 	return docbankmedia.EvidenceWindowRequest{NodeID: 7, ContentVersionID: contentVersionID, ContentSHA256: contentSHA256,
-		RenditionAttachmentID: strings.Repeat("b", 64), BuildID: f.build, RenditionSHA256: strings.Repeat("d", 64)}, nil
+		RenditionAttachmentID: strings.Repeat("b", 64), BuildID: build, RenditionSHA256: strings.Repeat("d", 64)}, nil
 }
 
 func (f *fakeDocbank) ReadEvidenceWindow(ctx context.Context, request docbankmedia.EvidenceWindowRequest) (docbankmedia.EvidenceWindow, error) {
@@ -121,12 +127,13 @@ func newFakeDocbank() *fakeDocbank {
 			Reference: kataevidence.Reference{Version: kataevidence.Version, Kind: "docbank_rendition", ArchiveUID: "archive", MessageID: 4,
 				SourceType: "beeper", SourceIdentifier: "signal", SourceMessageID: "voice1", AttachmentID: 9, OccurrenceKey: "msgvault:voice1"},
 			VaultUID: "22222222-2222-4222-8222-222222222222", ContentVersionID: "11111111-1111-4111-8111-111111111111", ContentSHA256: strings.Repeat("a", 64), Profile: "supplied-transcript",
-			Display: kataevidence.Display{Filename: "voice.wav"},
+			Display: kataevidence.Display{Filename: "voice.wav", ContainingTitle: "Budget review"},
 		},
 		text:     []rune(strings.Repeat("é", kataevidence.MaxChars) + "Send the revised budget by Friday."),
 		current:  "11111111-1111-4111-8111-111111111111",
 		build:    strings.Repeat("c", 64),
 		revision: "revision", inputID: "input",
+		origin: "supplied",
 	}
 }
 
@@ -162,6 +169,7 @@ func TestDocbankRejectsStaleTranscriptProvenance(t *testing.T) {
 				}
 				require.ErrorIs(t, err, tc.want, "resolve=%v", resolve)
 				assert.Empty(t, result.Text)
+				assert.Equal(t, f.binding.Display, result.Display)
 			}
 		})
 	}
@@ -183,8 +191,37 @@ func TestDocbankWindowNotFoundReason(t *testing.T) {
 			result, err = reader.ReadKataEvidenceSource(t.Context(), prepared.Reference)
 			require.ErrorIs(t, err, want)
 			assert.Empty(t, result.Text)
+			f.build = strings.Repeat("e", 64)
+			result, err = reader.ReadKataEvidenceSource(t.Context(), prepared.Reference)
+			require.ErrorIs(t, err, kataevidence.ErrChanged)
+			assert.Empty(t, result.Text)
+			assert.Equal(t, f.binding.Display, result.Display)
 		})
 	}
+}
+
+func TestDocbankGeneratedTranscriptProvenance(t *testing.T) {
+	f := newFakeDocbank()
+	f.origin, f.inputID, f.binding.SuppliedInputID, f.binding.Profile = "generated", "", "", "audio-transcript"
+	reader := kataevidence.NewDocbankReader(f, f, func(context.Context) (string, error) { return "destination", nil }, f.MediaRevision)
+	selector := kataevidence.Selector{Kind: "docbank_rendition", MessageID: 4, AttachmentID: 9, MaxChars: new(10)}
+	prepared, err := reader.LoadKataEvidenceSource(t.Context(), selector)
+	require.NoError(t, err)
+	prepared.Reference.DocbankRendition.EndRune = 10
+	resolved, err := kataevidence.New(nil).WithDocbank(reader).ResolveAround(t.Context(), prepared.Reference, 0)
+	require.NoError(t, err)
+	assert.Equal(t, kataevidence.Available, resolved.State)
+	assert.Equal(t, prepared.Text, resolved.Evidence.Excerpt)
+	f.profileBuild = map[string]string{"audio-transcript": strings.Repeat("e", 64)}
+	_, err = reader.ReadKataEvidenceSource(t.Context(), prepared.Reference)
+	require.ErrorIs(t, err, kataevidence.ErrChanged)
+	f.profileBuild = nil
+	f.inputID = "unexpected-supplied-input"
+	_, err = reader.ReadKataEvidenceSource(t.Context(), prepared.Reference)
+	require.ErrorIs(t, err, kataevidence.ErrUnavailable)
+	f.inputID, f.binding.Profile = "", "supplied-transcript"
+	_, err = reader.LoadKataEvidenceSource(t.Context(), selector)
+	require.ErrorIs(t, err, kataevidence.ErrUnavailable)
 }
 
 func TestDocbankWindowsPageAndResolve(t *testing.T) {
@@ -254,11 +291,13 @@ func TestDocbankWindowsPageAndResolve(t *testing.T) {
 	resolved, err = svc.ResolveAround(t.Context(), ref, 0)
 	require.NoError(err)
 	assert.Equal(kataevidence.Changed, resolved.State, "Docbank transcribed the file again")
+	assert.Equal("Budget review", resolved.Evidence.Display.ContainingTitle)
 
 	docbank.build, docbank.current = strings.Repeat("c", 64), "33333333-3333-4333-8333-333333333333"
 	resolved, err = svc.ResolveAround(t.Context(), ref, 0)
 	require.NoError(err)
 	assert.Equal(kataevidence.Changed, resolved.State, "Docbank holds a newer version of the file")
+	assert.Equal("Budget review", resolved.Evidence.Display.ContainingTitle)
 
 	docbank.current = ""
 	resolved, err = svc.ResolveAround(t.Context(), ref, 0)
@@ -305,6 +344,8 @@ func TestDocbankWindowsPageAndResolve(t *testing.T) {
 		err  *docbankmedia.HTTPError
 		want kataevidence.State
 	}{
+		{&docbankmedia.HTTPError{Status: http.StatusConflict, Code: "conflict", Reason: "rendition_selection_stale"}, kataevidence.Changed},
+		{&docbankmedia.HTTPError{Status: http.StatusRequestEntityTooLarge, Code: "too_large", Reason: "rendition_text_too_large"}, kataevidence.Unavailable},
 		{&docbankmedia.HTTPError{Status: http.StatusServiceUnavailable, Code: "server_error", Reason: "content_missing"}, kataevidence.Unavailable},
 		{&docbankmedia.HTTPError{Status: http.StatusBadRequest, Code: "bad_request"}, kataevidence.Unsupported},
 		{&docbankmedia.HTTPError{Status: http.StatusUnprocessableEntity, Code: "validation", Reason: "processing_profile_unavailable"}, kataevidence.Unsupported},

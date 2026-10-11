@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"io"
 	"net/http"
@@ -55,8 +57,8 @@ func DestinationKey(endpoint, archiveUID string) string {
 }
 
 // EvidenceIdentity returns the node and selected rendition identities of one
-// content version, without VaultUID or a range. It reads only the rendition's
-// headers, so it never starts processing. When Docbank selects no rendition it
+// content version, without VaultUID or a range. It resolves metadata without
+// streaming rendition bytes. When Docbank selects no rendition it
 // returns the 404 with the node ID set, so the caller can ask the node why. A
 // version Docbank no longer holds returns ErrEvidenceUnavailable.
 func (c *Client) EvidenceIdentity(ctx context.Context, contentVersionID, contentSHA256, profile string) (EvidenceWindowRequest, error) {
@@ -64,6 +66,7 @@ func (c *Client) EvidenceIdentity(ctx context.Context, contentVersionID, content
 		ID       string `json:"id"`
 		NodeID   int64  `json:"node_id"`
 		BlobHash string `json:"blob_hash"`
+		Size     int64  `json:"size"`
 	}
 	err := c.jsonRequest(ctx, http.MethodGet, "/api/v1/versions/"+url.PathEscape(contentVersionID), nil, &version)
 	// Docbank pruned the version or emptied its trash.
@@ -76,22 +79,68 @@ func (c *Client) EvidenceIdentity(ctx context.Context, contentVersionID, content
 	if version.ID != contentVersionID || version.NodeID < 1 || !strings.EqualFold(version.BlobHash, contentSHA256) {
 		return EvidenceWindowRequest{}, ErrEvidenceUnavailable
 	}
-	type selector struct {
-		NodeID           int64  `json:"node_id"`
-		ContentVersionID string `json:"content_version_id"`
-		Profile          string `json:"profile"`
+	var node struct {
+		ID               int64  `json:"id"`
+		Revision         int64  `json:"revision"`
+		CurrentVersionID string `json:"current_version_id"`
+		TrashedAt        string `json:"trashed_at"`
 	}
-	body := struct {
-		Selector selector `json:"selector"`
-		MaxBytes int64    `json:"max_bytes"`
-	}{selector{version.NodeID, version.ID, profile}, 64 << 20}
-	header, err := c.headers(ctx, http.MethodPost, "/api/v1/renditions/select", body)
+	err = c.jsonRequest(ctx, http.MethodGet, "/api/v1/nodes/"+strconv.FormatInt(version.NodeID, 10), nil, &node)
 	if err != nil {
 		return EvidenceWindowRequest{NodeID: version.NodeID}, err
 	}
+	if node.ID != version.NodeID || node.Revision < 1 {
+		return EvidenceWindowRequest{}, ErrInvalidReceipt
+	}
+	if node.TrashedAt != "" {
+		return EvidenceWindowRequest{}, ErrEvidenceUnavailable
+	}
+	if node.CurrentVersionID != version.ID {
+		return EvidenceWindowRequest{NodeID: version.NodeID}, &HTTPError{Status: http.StatusNotFound}
+	}
+	body := struct {
+		NodeID    int64  `json:"node_id"`
+		Revision  int64  `json:"revision"`
+		VersionID string `json:"version_id"`
+		BlobHash  string `json:"blob_hash"`
+		Size      int64  `json:"size"`
+		Profile   string `json:"profile"`
+	}{node.ID, node.Revision, version.ID, version.BlobHash, version.Size, profile}
+	var receipt struct {
+		State  string `json:"state"`
+		Source struct {
+			NodeID    int64  `json:"node_id"`
+			Revision  int64  `json:"revision"`
+			VersionID string `json:"version_id"`
+			BlobHash  string `json:"blob_hash"`
+			Size      int64  `json:"size"`
+		} `json:"source"`
+		Profile struct {
+			Name string `json:"name"`
+		} `json:"profile"`
+		AttachmentID string `json:"attachment_id"`
+		BuildID      string `json:"build_id"`
+		Artifact     *struct {
+			SHA256 string `json:"sha256"`
+		} `json:"artifact"`
+	}
+	if err := c.jsonRequest(ctx, http.MethodPost, "/api/v1/renditions/text", body, &receipt); err != nil {
+		return EvidenceWindowRequest{NodeID: node.ID}, err
+	}
+	if receipt.State == "unconfigured" || receipt.State == "profile_required" {
+		return EvidenceWindowRequest{NodeID: node.ID}, &HTTPError{Status: http.StatusUnprocessableEntity, Reason: "processing_profile_unavailable"}
+	}
+	if receipt.State != "ready" {
+		return EvidenceWindowRequest{NodeID: node.ID}, &HTTPError{Status: http.StatusNotFound}
+	}
 	identity := EvidenceWindowRequest{NodeID: version.NodeID, ContentVersionID: version.ID, ContentSHA256: version.BlobHash,
-		RenditionAttachmentID: header.Get("X-Docbank-Rendition-Attachment"), BuildID: header.Get("X-Docbank-Rendition-Build"), RenditionSHA256: header.Get("X-Docbank-Blob-Hash")}
-	if header.Get("X-Docbank-Content-Version") != version.ID || identity.RenditionAttachmentID == "" || identity.BuildID == "" || identity.RenditionSHA256 == "" {
+		RenditionAttachmentID: receipt.AttachmentID, BuildID: receipt.BuildID}
+	if receipt.Artifact != nil {
+		identity.RenditionSHA256 = receipt.Artifact.SHA256
+	}
+	if receipt.Source.NodeID != node.ID || receipt.Source.Revision != node.Revision || receipt.Source.VersionID != version.ID ||
+		receipt.Source.BlobHash != version.BlobHash || receipt.Source.Size != version.Size || receipt.Profile.Name != profile ||
+		identity.RenditionAttachmentID == "" || identity.BuildID == "" || identity.RenditionSHA256 == "" {
 		return EvidenceWindowRequest{}, ErrInvalidReceipt
 	}
 	return identity, nil
@@ -132,21 +181,98 @@ func (c *Client) ReadEvidenceWindow(ctx context.Context, request EvidenceWindowR
 	return w, nil
 }
 
-// headers sends a JSON request and returns the response headers, closing a
-// successful body unread.
-func (c *Client) headers(ctx context.Context, method, endpoint string, body any) (http.Header, error) {
-	req, err := c.newJSONRequest(ctx, method, endpoint, body, maxMetadataBytes)
+// TranscriptIdentity reads v0.15.1's provenance prefix, capped at metadata size, without consuming units.
+func (c *Client) TranscriptIdentity(ctx context.Context, sourceID, sourceVersionID, contentVersionID string) (MediaTranscript, error) {
+	if sourceID == "" || sourceVersionID == "" || contentVersionID == "" {
+		return MediaTranscript{}, ErrInvalidRequest
+	}
+	endpoint := "/api/v1/media/sources/" + url.PathEscape(sourceID) + "/versions/" + url.PathEscape(sourceVersionID) +
+		"/transcript?" + url.Values{"content_version_id": {contentVersionID}}.Encode()
+	req, err := c.newJSONRequest(ctx, http.MethodGet, endpoint, nil, maxMetadataBytes)
 	if err != nil {
-		return nil, err
+		return MediaTranscript{}, err
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, transportError(err)
+		return MediaTranscript{}, transportError(err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, maxMetadataBytes))
-		return nil, newHTTPError(resp.StatusCode, data)
+		return MediaTranscript{}, newHTTPError(resp.StatusCode, data)
 	}
-	return resp.Header, nil
+	result, err := readTranscriptIdentity(io.LimitReader(resp.Body, maxMetadataBytes))
+	if ctx.Err() != nil {
+		return MediaTranscript{}, transportError(ctx.Err())
+	}
+	if err != nil || result.SourceID != sourceID || result.SourceVersionID != sourceVersionID || result.ContentVersionID != contentVersionID {
+		return MediaTranscript{}, ErrEvidenceUnavailable
+	}
+	return result, nil
+}
+
+func readTranscriptIdentity(reader io.Reader) (MediaTranscript, error) {
+	decoder := jsontext.NewDecoder(reader)
+	token, err := decoder.ReadToken()
+	if err != nil || token.Kind() != '{' {
+		return MediaTranscript{}, ErrEvidenceUnavailable
+	}
+	token, err = decoder.ReadToken()
+	if err == nil && token.Kind() == '"' && token.String() == "$schema" {
+		if err := decoder.SkipValue(); err != nil {
+			return MediaTranscript{}, ErrEvidenceUnavailable
+		}
+		token, err = decoder.ReadToken()
+	}
+	var result MediaTranscript
+	for _, field := range []struct {
+		name  string
+		value *string
+	}{
+		{"vault_uid", &result.VaultUID}, {"source_id", &result.SourceID}, {"source_version_id", &result.SourceVersionID},
+		{"content_version_id", &result.ContentVersionID}, {"evidence_state", &result.EvidenceState},
+		{"coverage_state", &result.CoverageState}, {"operation_state", &result.OperationState},
+	} {
+		if err != nil || token.Kind() != '"' || token.String() != field.name || json.UnmarshalDecode(decoder, field.value) != nil {
+			return MediaTranscript{}, ErrEvidenceUnavailable
+		}
+		token, err = decoder.ReadToken()
+	}
+	if result.VaultUID == "" || result.EvidenceState != "ready" {
+		return MediaTranscript{}, ErrEvidenceUnavailable
+	}
+	if err != nil || token.Kind() != '"' || token.String() != "transcript" {
+		return MediaTranscript{}, ErrEvidenceUnavailable
+	}
+	token, err = decoder.ReadToken()
+	if err != nil || token.Kind() != '{' {
+		return MediaTranscript{}, ErrEvidenceUnavailable
+	}
+	evidence := &MediaTranscriptEvidence{}
+	for {
+		token, err := decoder.ReadToken()
+		if err != nil || token.Kind() != '"' {
+			return MediaTranscript{}, ErrEvidenceUnavailable
+		}
+		switch token.String() {
+		case "units":
+			if evidence.BuildID == "" || evidence.Origin != "supplied" && evidence.Origin != "generated" ||
+				evidence.Origin == "supplied" && evidence.SuppliedInputID == "" || evidence.Origin == "generated" && evidence.SuppliedInputID != "" {
+				return MediaTranscript{}, ErrEvidenceUnavailable
+			}
+			result.Transcript = evidence
+			return result, nil
+		case "build_id":
+			err = json.UnmarshalDecode(decoder, &evidence.BuildID)
+		case "supplied_input_id":
+			err = json.UnmarshalDecode(decoder, &evidence.SuppliedInputID)
+		case "origin":
+			err = json.UnmarshalDecode(decoder, &evidence.Origin)
+		default:
+			err = decoder.SkipValue()
+		}
+		if err != nil {
+			return MediaTranscript{}, ErrEvidenceUnavailable
+		}
+	}
 }

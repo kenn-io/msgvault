@@ -77,7 +77,7 @@ func (f *slowDocbank) MediaRevision(context.Context, int64) (string, error) {
 	return "revision", nil
 }
 
-func (f *slowDocbank) Transcript(context.Context, string, string, string) (docbankmedia.MediaTranscript, error) {
+func (f *slowDocbank) TranscriptIdentity(context.Context, string, string, string) (docbankmedia.MediaTranscript, error) {
 	return docbankmedia.MediaTranscript{VaultUID: f.binding.VaultUID, Transcript: &docbankmedia.MediaTranscriptEvidence{
 		Origin: "supplied", SuppliedInputID: "input", BuildID: f.servedBuild,
 	}}, nil

@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/beeper"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/docbankmedia"
@@ -223,6 +224,14 @@ func TestKataContextLabelsPassagesWithoutDisplay(t *testing.T) {
 // The daemon adapter carries a Docbank transcript citation from prepare
 // through the issue and back to the file lookup and context read.
 func TestKataDocbankThroughDaemonAdapter(t *testing.T) {
+	for _, origin := range []string{"supplied", "generated"} {
+		t.Run(origin, func(t *testing.T) {
+			testKataDocbankThroughDaemonAdapter(t, origin)
+		})
+	}
+}
+
+func testKataDocbankThroughDaemonAdapter(t *testing.T, origin string) {
 	assert := assert.New(t)
 	require := require.New(t)
 	st, _ := storedBeeperVoiceNote(t)
@@ -231,15 +240,40 @@ func TestKataDocbankThroughDaemonAdapter(t *testing.T) {
 	require.NoError(st.DB().QueryRow(`SELECT message_id, id, content_hash FROM attachments`).Scan(&messageID, &attachmentID, &hash))
 	const vault, version = "22222222-2222-4222-8222-222222222222", "11111111-1111-4111-8111-111111111111"
 	transcript := []rune(strings.Repeat("é", kataevidence.MaxChars) + "Send the revised budget by Friday.")
+	profile, inputID := "audio-transcript", ""
+	if origin == "supplied" {
+		profile, inputID = "supplied-transcript", "input"
+		raw := []byte(fmt.Sprintf(`{"id":"voice1","timestamp":"2026-09-16T10:11:12.123Z","attachments":[{"id":"mxc://beeper.local/voice1","type":"audio","isVoiceNote":true,"mimeType":"audio/wav","fileName":"voice.wav","transcription":{"transcription":%q}}]}`, string(transcript)))
+		require.NoError(st.UpsertMessageRawWithFormat(messageID, raw, "beeper_json"))
+	}
 	docbank := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/api/v1/versions/" + version:
 			_, _ = fmt.Fprintf(w, `{"id":%q,"node_id":7,"blob_hash":%q}`, version, hash)
-		case "/api/v1/renditions/select":
-			for name, value := range map[string]string{"Content-Version": version, "Rendition-Attachment": strings.Repeat("b", 64), "Rendition-Build": strings.Repeat("c", 64), "Blob-Hash": strings.Repeat("d", 64)} {
-				w.Header().Set("X-Docbank-"+name, value)
+		case "/api/v1/nodes/7":
+			_, _ = fmt.Fprintf(w, `{"id":7,"revision":1,"current_version_id":%q}`, version)
+		case "/api/v1/renditions/text":
+			var request struct {
+				NodeID    int64  `json:"node_id"`
+				Revision  int64  `json:"revision"`
+				VersionID string `json:"version_id"`
+				BlobHash  string `json:"blob_hash"`
+				Size      int64  `json:"size"`
+				Profile   string `json:"profile"`
 			}
+			if !assert.NoError(json.UnmarshalRead(r.Body, &request, json.RejectUnknownMembers(true))) {
+				return
+			}
+			assert.Equal(profile, request.Profile)
+			assert.NoError(json.MarshalWrite(w, map[string]any{"state": "ready", "source": map[string]any{"node_id": request.NodeID, "revision": request.Revision,
+				"version_id": request.VersionID, "blob_hash": request.BlobHash, "size": request.Size}, "profile": map[string]any{"name": request.Profile},
+				"attachment_id": strings.Repeat("b", 64), "build_id": strings.Repeat("c", 64), "artifact": map[string]any{"sha256": strings.Repeat("d", 64)}}))
+		case "/api/v1/media/sources/source/versions/source-version/transcript":
+			assert.NoError(json.MarshalWrite(w, docbankmedia.MediaTranscript{VaultUID: vault, SourceID: "source", SourceVersionID: "source-version", ContentVersionID: version,
+				EvidenceState: "ready", CoverageState: "transcribed", OperationState: "succeeded", Transcript: &docbankmedia.MediaTranscriptEvidence{
+					BuildID: strings.Repeat("c", 64), SuppliedInputID: inputID, Origin: origin, Completeness: "complete", Units: []docbankmedia.MediaTranscriptUnit{{Text: string(transcript)}},
+				}}))
 		case "/api/v1/evidence/windows":
 			var request docbankmedia.EvidenceWindowRequest
 			if !assert.NoError(json.UnmarshalRead(r.Body, &request, json.RejectUnknownMembers(true))) {
@@ -262,11 +296,13 @@ func TestKataDocbankThroughDaemonAdapter(t *testing.T) {
 	t.Cleanup(docbank.Close)
 	archiveUID, err := st.ArchiveUIDContext(t.Context())
 	require.NoError(err)
-	mapping := store.BeeperMediaMapping{DestinationKey: docbankmedia.DestinationKey(docbank.URL, archiveUID), OccurrenceRef: "msgvault:voice1", Revision: "revision",
+	revision, err := beeper.MediaRevision(t.Context(), st, attachmentID)
+	require.NoError(err)
+	mapping := store.BeeperMediaMapping{DestinationKey: docbankmedia.DestinationKey(docbank.URL, archiveUID), OccurrenceRef: "msgvault:voice1", Revision: revision,
 		SourceType: "beeper", SourceIdentifier: "signal", SourceConversationID: "default-thread", SourceMessageID: "voice1",
 		SourceAttachmentID: "beeper:mxc://beeper.local/voice1", SourcePartKey: "beeper:mxc://beeper.local/voice1", MessageID: messageID, AttachmentID: attachmentID,
 		SourceSHA256: hash, ByteLength: 1, RawHash: strings.Repeat("e", 64), OccurrenceJSON: `{}`, Filename: "voice.wav", MIMEType: "audio/wav",
-		ProcessingKey: "processing", ProcessingProvider: "beeper", ProcessingProfile: "supplied-transcript"}
+		ProcessingKey: "processing", ProcessingProvider: "beeper", ProcessingProfile: profile}
 	require.NoError(st.ReconcileBeeperMediaMapping(t.Context(), mapping))
 	prepared, err := st.PrepareBeeperMediaOperation(t.Context(), store.BeeperMediaOperation{Kind: store.BeeperMediaOperationRetain, DestinationKey: mapping.DestinationKey, OccurrenceRef: mapping.OccurrenceRef, Revision: mapping.Revision})
 	require.NoError(err)
@@ -274,6 +310,8 @@ func TestKataDocbankThroughDaemonAdapter(t *testing.T) {
 		ContentVersionID: version, DocbankOccurrenceID: "occurrence", CoverageState: "transcribed"})
 	require.NoError(err)
 	require.True(applied)
+	_, err = st.DB().Exec(st.Rebind("UPDATE beeper_media_deliveries SET supplied_input_id=? WHERE destination_key=? AND processing_key=?"), inputID, mapping.DestinationKey, mapping.ProcessingKey)
+	require.NoError(err)
 
 	kataServer := httptest.NewServer(katatest.New(t).Service.Handler())
 	t.Cleanup(kataServer.Close)

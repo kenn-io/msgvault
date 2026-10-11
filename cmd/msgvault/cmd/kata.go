@@ -172,7 +172,7 @@ func newKataCmd() *cobra.Command {
 // when the input cites one.
 func kataEvidenceMinVersion[T any](items []T, docbank func(T) bool) string {
 	if slices.ContainsFunc(items, docbank) {
-		return kataDocbankMinAPISchemaVersion
+		return kataLookupMinAPISchemaVersion
 	}
 	return kataIssuesMinAPISchemaVersion
 }

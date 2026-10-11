@@ -72,7 +72,7 @@ func TestKataWriteToolsRequireOptIn(t *testing.T) {
 	assert.NotContains(older, "get_kata_issue_context")
 	// Only a compatible daemon is described as citing Docbank transcripts.
 	for _, docbank := range []bool{false, true} {
-		listed := rawListTools(t, ServeOptions{Engine: &querytest.MockEngine{}, Kata: &fakeKataBackend{}, KataDocbank: docbank}, false)
+		listed := rawListTools(t, ServeOptions{Engine: &querytest.MockEngine{}, Kata: &fakeKataBackend{}, KataLookup: docbank}, false)
 		description, _ := toolsByName(t, listed)["prepare_kata_evidence"]["description"].(string)
 		assert.Equal(docbank, strings.Contains(description, "docbank_rendition"))
 	}

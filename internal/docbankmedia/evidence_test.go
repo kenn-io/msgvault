@@ -16,15 +16,15 @@ import (
 	"go.kenn.io/msgvault/internal/docbankmedia"
 )
 
-// Mirrors of Docbank v0.15.0's selector request; strict decoding rejects any
+// Mirrors of Docbank v0.15.1's metadata request; strict decoding rejects any
 // member the server would reject.
 type wireSelect struct {
-	Selector struct {
-		NodeID           int64  `json:"node_id"`
-		ContentVersionID string `json:"content_version_id"`
-		Profile          string `json:"profile"`
-	} `json:"selector"`
-	MaxBytes int64 `json:"max_bytes"`
+	NodeID    int64  `json:"node_id"`
+	Revision  int64  `json:"revision"`
+	VersionID string `json:"version_id"`
+	BlobHash  string `json:"blob_hash"`
+	Size      int64  `json:"size"`
+	Profile   string `json:"profile"`
 }
 
 func TestEvidenceWindowWire(t *testing.T) {
@@ -44,21 +44,19 @@ func TestEvidenceWindowWire(t *testing.T) {
 		defer mu.Unlock()
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/nodes/7":
-			writeJSON(w, map[string]any{"id": 7, "name": "voice.wav", "kind": "file", "current_version_id": version})
+			writeJSON(w, map[string]any{"id": 7, "revision": 1, "name": "voice.wav", "kind": "file", "current_version_id": version})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/nodes/8":
 			writeJSON(w, map[string]any{"id": 8, "current_version_id": version, "trashed_at": "2026-10-05T00:00:00Z"})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/versions/"+version:
 			writeJSON(w, map[string]any{"id": version, "node_id": 7, "blob_hash": content, "size": 44})
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/renditions/select":
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/renditions/text":
 			if !assert.NoError(json.UnmarshalRead(r.Body, &selected, json.RejectUnknownMembers(true))) || unprocessed {
 				http.NotFound(w, r)
 				return
 			}
-			w.Header().Set("X-Docbank-Content-Version", version)
-			w.Header().Set("X-Docbank-Rendition-Attachment", attachment)
-			w.Header().Set("X-Docbank-Rendition-Build", build)
-			w.Header().Set("X-Docbank-Blob-Hash", rendition)
-			_, _ = w.Write([]byte("the whole transcript, which the client never reads"))
+			writeJSON(w, map[string]any{"state": "ready", "source": map[string]any{"node_id": selected.NodeID, "revision": selected.Revision,
+				"version_id": selected.VersionID, "blob_hash": selected.BlobHash, "size": selected.Size}, "profile": map[string]any{"name": selected.Profile},
+				"attachment_id": attachment, "build_id": build, "artifact": map[string]any{"sha256": rendition}})
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/evidence/windows":
 			var request docbankmedia.EvidenceWindowRequest
 			if !assert.NoError(json.UnmarshalRead(r.Body, &request, json.RejectUnknownMembers(true))) {
@@ -95,8 +93,10 @@ func TestEvidenceWindowWire(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(docbankmedia.EvidenceWindowRequest{NodeID: 7, ContentVersionID: version, ContentSHA256: content, RenditionAttachmentID: attachment, BuildID: build, RenditionSHA256: rendition}, identity)
 	mu.Lock()
-	assert.Equal(int64(7), selected.Selector.NodeID)
-	assert.Equal("supplied-transcript", selected.Selector.Profile)
+	assert.Equal(int64(7), selected.NodeID)
+	assert.Equal("supplied-transcript", selected.Profile)
+	assert.Equal(int64(1), selected.Revision)
+	assert.Equal(int64(44), selected.Size)
 	mu.Unlock()
 
 	identity.VaultUID, identity.Offset, identity.MaxChars = "22222222-2222-4222-8222-222222222222", 9, 7

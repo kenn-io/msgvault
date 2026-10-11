@@ -21,7 +21,7 @@ type DocbankBindingStore interface {
 
 // DocbankClient reads rendition windows from the configured Docbank.
 type DocbankClient interface {
-	Transcript(ctx context.Context, sourceID, sourceVersionID, contentVersionID string) (docbankmedia.MediaTranscript, error)
+	TranscriptIdentity(ctx context.Context, sourceID, sourceVersionID, contentVersionID string) (docbankmedia.MediaTranscript, error)
 	EvidenceIdentity(ctx context.Context, contentVersionID, contentSHA256, profile string) (docbankmedia.EvidenceWindowRequest, error)
 	CurrentVersion(ctx context.Context, nodeID int64) (string, error)
 	ReadEvidenceWindow(ctx context.Context, request docbankmedia.EvidenceWindowRequest) (docbankmedia.EvidenceWindow, error)
@@ -54,13 +54,34 @@ func (r *DocbankReader) checkRevision(ctx context.Context, binding DocbankBindin
 }
 
 func (r *DocbankReader) checkTranscript(ctx context.Context, binding DocbankBinding, request docbankmedia.EvidenceWindowRequest) error {
-	transcript, err := r.client.Transcript(ctx, binding.SourceID, binding.SourceVersionID, binding.ContentVersionID)
+	transcript, err := r.client.TranscriptIdentity(ctx, binding.SourceID, binding.SourceVersionID, binding.ContentVersionID)
 	if err != nil {
 		return err
 	}
 	evidence := transcript.Transcript
-	if transcript.VaultUID != binding.VaultUID || evidence == nil || evidence.Origin != "supplied" ||
-		binding.SuppliedInputID == "" || evidence.SuppliedInputID != binding.SuppliedInputID || evidence.BuildID == "" {
+	if transcript.VaultUID != binding.VaultUID || evidence == nil || evidence.BuildID == "" {
+		return ErrUnavailable
+	}
+	switch evidence.Origin {
+	case "supplied":
+		if binding.SuppliedInputID == "" || evidence.SuppliedInputID != binding.SuppliedInputID {
+			return ErrUnavailable
+		}
+	case "generated":
+		if binding.Profile == "supplied-transcript" || evidence.SuppliedInputID != "" || binding.SuppliedInputID != "" {
+			return ErrUnavailable
+		}
+		identity, err := r.client.EvidenceIdentity(ctx, binding.ContentVersionID, binding.ContentSHA256, binding.Profile)
+		if notFound(err) {
+			return ErrChanged
+		}
+		if err != nil {
+			return err
+		}
+		if identity.RenditionAttachmentID != request.RenditionAttachmentID || identity.BuildID != request.BuildID || identity.RenditionSHA256 != request.RenditionSHA256 {
+			return ErrChanged
+		}
+	default:
 		return ErrUnavailable
 	}
 	if evidence.BuildID != request.BuildID {
@@ -90,7 +111,7 @@ func (r *DocbankReader) LoadKataEvidenceSource(ctx context.Context, selector Sel
 		return SourceRecord{}, ErrUnavailable
 	}
 	if err := r.checkRevision(ctx, binding); err != nil {
-		return SourceRecord{}, err
+		return SourceRecord{Display: binding.Display}, err
 	}
 	parent := ctx
 	ctx, cancel := context.WithTimeout(ctx, DocbankTimeout)
@@ -100,7 +121,7 @@ func (r *DocbankReader) LoadKataEvidenceSource(ctx context.Context, selector Sel
 		err = r.classify(ctx, request.NodeID, binding, nil, err)
 	}
 	if err != nil {
-		return SourceRecord{}, docbankError(parent, err)
+		return SourceRecord{Display: binding.Display}, docbankError(parent, err)
 	}
 	request.VaultUID, request.Offset, request.MaxChars = binding.VaultUID, start, end-start
 	window, err := r.client.ReadEvidenceWindow(ctx, request)
@@ -108,13 +129,13 @@ func (r *DocbankReader) LoadKataEvidenceSource(ctx context.Context, selector Sel
 		err = r.classify(ctx, request.NodeID, binding, &request, err)
 	}
 	if err != nil {
-		return SourceRecord{}, docbankError(parent, err)
+		return SourceRecord{Display: binding.Display}, docbankError(parent, err)
 	}
 	if err := r.checkTranscript(ctx, binding, request); err != nil {
-		return SourceRecord{}, docbankError(parent, err)
+		return SourceRecord{Display: binding.Display}, docbankError(parent, err)
 	}
 	if err := r.checkRevision(parent, binding); err != nil {
-		return SourceRecord{}, err
+		return SourceRecord{Display: binding.Display}, err
 	}
 	ref := binding.Reference
 	ref.DocbankRendition = &DocbankReference{VaultUID: request.VaultUID, NodeID: request.NodeID, ContentVersionID: request.ContentVersionID,
@@ -140,10 +161,10 @@ func (r *DocbankReader) ReadKataEvidenceSource(ctx context.Context, ref Referenc
 		return SourceRecord{}, ErrUnavailable
 	}
 	if binding.ContentVersionID != p.ContentVersionID || !strings.EqualFold(binding.ContentSHA256, p.ContentSHA256) {
-		return SourceRecord{}, ErrChanged
+		return SourceRecord{Display: binding.Display}, ErrChanged
 	}
 	if err := r.checkRevision(ctx, binding); err != nil {
-		return SourceRecord{}, err
+		return SourceRecord{Display: binding.Display}, err
 	}
 	from := max(0, p.StartRune-ContextRunes)
 	parent := ctx
@@ -157,13 +178,13 @@ func (r *DocbankReader) ReadKataEvidenceSource(ctx context.Context, ref Referenc
 		err = r.classify(ctx, p.NodeID, binding, &request, err)
 	}
 	if err != nil {
-		return SourceRecord{}, docbankError(parent, err)
+		return SourceRecord{Display: binding.Display}, docbankError(parent, err)
 	}
 	if err := r.checkTranscript(ctx, binding, request); err != nil {
-		return SourceRecord{}, docbankError(parent, err)
+		return SourceRecord{Display: binding.Display}, docbankError(parent, err)
 	}
 	if err := r.checkRevision(parent, binding); err != nil {
-		return SourceRecord{}, err
+		return SourceRecord{Display: binding.Display}, err
 	}
 	return SourceRecord{Reference: ref, Text: window.Text, TextStart: window.ActualStart, Display: binding.Display}, nil
 }
@@ -181,9 +202,10 @@ func (r *DocbankReader) classify(ctx context.Context, nodeID int64, binding Docb
 		return err
 	case current != binding.ContentVersionID:
 		return ErrChanged
-	case httpErr != nil && httpErr.Reason == "evidence_unavailable":
-		return ErrUnavailable
 	case window == nil:
+		if httpErr != nil && httpErr.Reason == "evidence_unavailable" {
+			return ErrUnavailable
+		}
 		return ErrUnprocessed
 	}
 	identity, err := r.client.EvidenceIdentity(ctx, binding.ContentVersionID, binding.ContentSHA256, binding.Profile)
@@ -194,6 +216,9 @@ func (r *DocbankReader) classify(ctx context.Context, nodeID int64, binding Docb
 		return err
 	case identity.RenditionAttachmentID != window.RenditionAttachmentID || identity.BuildID != window.BuildID || identity.RenditionSHA256 != window.RenditionSHA256:
 		return ErrChanged
+	}
+	if httpErr != nil && httpErr.Reason == "evidence_unavailable" {
+		return ErrUnavailable
 	}
 	// The file and its transcript are there, so this Docbank lacks the window route (before v0.15.0).
 	return ErrUnsupported
@@ -220,7 +245,10 @@ func docbankError(parent context.Context, err error) error {
 	}
 	if httpErr, ok := errors.AsType[*docbankmedia.HTTPError](err); ok {
 		switch {
-		case httpErr.Status == http.StatusRequestedRangeNotSatisfiable, httpErr.Status == http.StatusServiceUnavailable && httpErr.Reason == "content_missing":
+		case httpErr.Status == http.StatusConflict && httpErr.Reason == "rendition_selection_stale":
+			return ErrChanged
+		case httpErr.Status == http.StatusRequestedRangeNotSatisfiable, httpErr.Status == http.StatusServiceUnavailable && httpErr.Reason == "content_missing",
+			httpErr.Status == http.StatusRequestEntityTooLarge && httpErr.Reason == "rendition_text_too_large":
 			return ErrUnavailable
 		case httpErr.Status == http.StatusBadRequest, httpErr.Status == http.StatusUnprocessableEntity, httpErr.Status == http.StatusUnauthorized, httpErr.Status == http.StatusForbidden:
 			return ErrUnsupported

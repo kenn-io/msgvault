@@ -22,6 +22,7 @@ import (
 	"github.com/spf13/cobra"
 	"go.kenn.io/kit/telemetry/posthog"
 	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/beeper"
 	"go.kenn.io/msgvault/internal/carddav"
 	"go.kenn.io/msgvault/internal/circleback"
 	"go.kenn.io/msgvault/internal/config"
@@ -1862,6 +1863,10 @@ func (a *storeAPIAdapter) KataCitationSource(ctx context.Context, messageID, att
 
 func (a *storeAPIAdapter) KataDocbankBinding(ctx context.Context, destination string, attachmentID int64) (kataevidence.DocbankBinding, error) {
 	return a.store.KataDocbankBinding(ctx, destination, attachmentID)
+}
+
+func (a *storeAPIAdapter) MediaRevision(ctx context.Context, attachmentID int64) (string, error) {
+	return beeper.MediaRevision(ctx, a.store, attachmentID)
 }
 
 // ListPersonUIDsContext forwards to the store so the daemon's adapter, not a
