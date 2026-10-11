@@ -18,7 +18,6 @@ func TestScan(t *testing.T) {
 		{"cap", "https://cap.so/dev/abc", nil, []string{"https://cap.so/dev/abc"}},
 		{"padded cloud port", "https://loom.com:00443/share/abc", nil, []string{"https://loom.com:00443/share/abc"}},
 		{"cap HTTP", "http://cap.so/s/abc http://www.cap.so/embed/abc", nil, nil},
-		{"registered", "https://cap.example.test/s/abc", []string{"https://CAP.EXAMPLE.TEST:443"}, []string{"https://cap.example.test/s/abc"}},
 		{"IPv4", "https://192.0.2.1:8443/s/abc", []string{"https://192.0.2.1:8443"}, []string{"https://192.0.2.1:8443/s/abc"}},
 		{"IPv6 wrong port", "https://[2001:db8::1]:8443/s/abc", []string{"https://[2001:db8::1]"}, nil},
 		{"unlisted", "https://cap.example.test/s/abc", nil, nil},

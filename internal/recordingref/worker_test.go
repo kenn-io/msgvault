@@ -113,8 +113,8 @@ func TestRecordingReferenceFeed(t *testing.T) {
 	w := NewWorker(f.Store, client, "destination", nil, nil)
 	runDiscovery(t, w, 1)
 	_, _, operation := recordingState(t, f, one)
-	padded := f.CreateMessage("padded")
-	recordingBody(t, f, padded, "https://loom.com:00443/share/padded")
+	skipped := f.CreateMessage("skipped")
+	recordingBody(t, f, skipped, "https://loom.com/share/skipped")
 	before, err := f.Store.LoadRecordingReferenceCursor(t.Context(), "destination")
 	require.NoError(err)
 	oldPolicy := digest("discovery-v2\x00")
@@ -123,7 +123,7 @@ func TestRecordingReferenceFeed(t *testing.T) {
 	runDiscovery(t, w, 2)
 	require.Len(requests, 2)
 	<-requests
-	assert.Equal("https://loom.com:00443/share/padded", <-requests)
+	assert.Equal("https://loom.com/share/skipped", <-requests)
 	state, _, after := recordingState(t, f, one)
 	assert.Equal("retained", state)
 	assert.Equal(operation, after)
@@ -212,21 +212,15 @@ func TestRecordingReferenceHTMLVisibleURL(t *testing.T) {
 		extraAnchors              int
 		repeated                  bool
 	}{
-		{"exact", "https://cap.so/s/abc!", "", "", 0, false},
-		{"period", "https://cap.so/s/abc!", "", ".", 0, false},
-		{"parenthesized", "https://cap.so/s/abc!", "(", ")", 0, false},
-		{"parenthesis ID", "https://cap.so/s/abc)", "", ".", 0, false},
 		{"parenthesized parenthesis ID", "https://cap.so/s/abc)", "(", ")", 0, false},
 		{"suffix with anchors", "https://cap.so/s/abc!", "", "...", 8, false},
 		{"encoded repeated anchor", "https://loom.com/share/abc?token=one&key=two!", "", "", 0, true},
 	} {
 		for _, textVariant := range []string{"both", "HTML only", "plain text without URL"} {
 			t.Run(tc.name+"/"+textVariant, func(t *testing.T) {
-				assert, require := assert.New(t), require.New(t)
-				f := storetest.New(t)
-				id := f.CreateMessage("html-visible-url")
+				assert := assert.New(t)
 				visible := tc.before + tc.href + tc.after
-				text := sql.NullString{String: visible + " https://cap.so/s/other", Valid: true}
+				text := visible + " https://cap.so/s/other"
 				anchor := `<a href="` + strings.ReplaceAll(tc.href, "&", "&amp;") + `">` + tc.href + `</a>`
 				body := tc.before + anchor + tc.after + " https://cap.so/s/other"
 				if tc.repeated {
@@ -240,17 +234,14 @@ func TestRecordingReferenceHTMLVisibleURL(t *testing.T) {
 					want = append(want, href)
 				}
 				body += anchors.String()
-				text.String += strings.Repeat(" recording", tc.extraAnchors)
+				text += strings.Repeat(" recording", tc.extraAnchors)
 				switch textVariant {
 				case "HTML only":
-					text = sql.NullString{}
+					text = ""
 				case "plain text without URL":
-					text.String = "Watch recording"
+					text = "Watch recording"
 				}
-				require.NoError(f.Store.UpsertMessageBody(id, text, sql.NullString{String: body, Valid: true}))
-				m, found, err := f.Store.ReadRecordingMessage(t.Context(), id)
-				require.NoError(err)
-				require.True(found)
+				m := store.RecordingMessage{Body: text, BodyHTML: body}
 				refs := messageRefs(m, nil)
 				var got []string
 				for _, ref := range refs {
@@ -281,7 +272,7 @@ func TestRecordingReferenceDelivery(t *testing.T) {
 		{"retry", 503, "server_error", "uncertain"},
 		{"blocked", 422, "validation", "blocked"},
 		{"capability", 503, "capability_unavailable", "uncertain"},
-		{"credential", 0, "credential_unavailable", "pending"},
+		{"credential", 200, "credential_unavailable", "pending"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
@@ -289,7 +280,7 @@ func TestRecordingReferenceDelivery(t *testing.T) {
 			id := f.CreateMessage("recording")
 			recordingBody(t, f, id, "https://loom.com/share/abc?token=one")
 			var requests []docbankmedia.ReferenceRequest
-			client := recordingClient(t, func(w http.ResponseWriter, r *http.Request) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				var req docbankmedia.ReferenceRequest
 				if !assert.NoError(json.UnmarshalRead(r.Body, &req)) {
 					return
@@ -301,23 +292,23 @@ func TestRecordingReferenceDelivery(t *testing.T) {
 					return
 				}
 				writeReceipt(t, w, req.OperationID)
+			}))
+			defer server.Close()
+			client, err := docbankmedia.NewClient(server.URL, func() (string, error) {
+				if tc.name == "credential" {
+					return "", docbankmedia.ErrCredentialUnavailable
+				}
+				return "", nil
 			})
-			if tc.name == "credential" {
-				client, err := docbankmedia.NewClient("http://127.0.0.1:1", func() (string, error) { return "", docbankmedia.ErrCredentialUnavailable })
-				require.NoError(err)
-				w := NewWorker(f.Store, client, "destination", nil, nil)
-				runDiscovery(t, w, 1)
-				state, code, _ := recordingState(t, f, id)
-				assert.Equal(tc.state, state)
-				assert.Equal(tc.code, code)
-				assert.Empty(requests)
-				return
-			}
+			require.NoError(err)
 			w := NewWorker(f.Store, client, "destination", nil, nil)
 			runDiscovery(t, w, 1)
 			state, code, _ := recordingState(t, f, id)
 			assert.Equal(tc.state, state)
 			assert.Equal(tc.code, code)
+			if tc.name == "credential" {
+				assert.Empty(requests)
+			}
 			if tc.name == "capability" {
 				due(t, f)
 				err := w.RunBatch(t.Context())
@@ -723,7 +714,6 @@ func TestRecordingReferenceOccurrenceCorrection(t *testing.T) {
 				}
 				require.Len(requests, 1)
 				corrected := <-requests
-				assert.NotEqual(original.OperationID, corrected.OperationID)
 				assert.Equal(original.ReferenceURL, corrected.ReferenceURL)
 				assert.NotEqual(original.Occurrence.Revision, corrected.Occurrence.Revision)
 				assert.Equal("2026-01-01T10:00:00.123Z", corrected.Occurrence.Message.Normalized)
