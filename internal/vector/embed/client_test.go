@@ -490,6 +490,37 @@ func TestClient_Embed_ContextCanceledDuringBackoff(t *testing.T) {
 	})
 }
 
+func TestVoyageClient_ContextCancellationStopsRetryBackoff(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		require := require.New(t)
+		var attempts atomic.Int32
+		server := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			attempts.Add(1)
+			http.Error(w, "transient", http.StatusServiceUnavailable)
+		}))
+		client := NewVoyageClient(VoyageConfig{Endpoint: "http://127.0.0.1", Model: "voyage-context-4", Dimension: 4, MaxRetries: 5})
+		client.http.Transport = server.Client().Transport
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		done := make(chan error, 1)
+		go func() {
+			_, err := client.EmbedQuery(ctx, "query")
+			done <- err
+		}()
+		// In-memory I/O finishes before Wait observes the goroutine blocked on backoff.
+		synctest.Wait()
+		require.Equal(int32(1), attempts.Load())
+		require.Empty(done)
+		cancel()
+		synctest.Wait()
+		require.Len(done, 1, "cancellation interrupts backoff before its timer fires")
+		err := <-done
+		require.ErrorIs(err, context.Canceled)
+		require.ErrorContains(err, "context canceled during backoff")
+		assert.Equal(t, int32(1), attempts.Load(), "cancellation prevents another request")
+	})
+}
+
 func TestClient_Embed_MissingIndex(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Two response items preserve the expected raw count, but both target

@@ -1007,24 +1007,3 @@ func TestVoyageClientBeforeRequestFencesQueryRetry(t *testing.T) {
 	assert.Equal(t, int32(1), requests.Load(),
 		"revocation after the first 429 must fence the Voyage query retry")
 }
-
-func TestVoyageClient_ContextCancellationStopsRetryBackoff(t *testing.T) {
-	var attempts atomic.Int32
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		attempts.Add(1)
-		http.Error(w, "transient", http.StatusServiceUnavailable)
-		_ = http.NewResponseController(w).Flush()
-		cancel()
-	}))
-	t.Cleanup(server.Close)
-
-	_, err := newVoyageClient(server.URL, func(cfg *embed.VoyageConfig) {
-		cfg.MaxRetries = 5
-	}).EmbedQuery(ctx, "query")
-
-	require.Error(t, err)
-	require.ErrorIs(t, err, context.Canceled)
-	assert.Equal(t, int32(1), attempts.Load(), "attempts after cancellation")
-}
