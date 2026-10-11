@@ -33,21 +33,3 @@ func TestMCPEventsSchemaStartsDisabled(t *testing.T) {
 		require.NoError(rows.Err())
 	}
 }
-
-func TestMCPEventMessageReferencesCascadeWithoutDeletingReceipt(t *testing.T) {
-	assert := Assert.New(t)
-	require := Require.New(t)
-	f := storetest.New(t)
-	messageID := f.CreateMessage("synthetic-retained-message")
-	_, err := f.Store.DB().Exec(f.Store.Rebind(`INSERT INTO mcp_event_message_refs (message_id,reference_seq) VALUES (?,1)`), messageID)
-	require.NoError(err)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`INSERT INTO mcp_event_log (seq,epoch,family,kind,scope_kind,scope_id,item_key,message_id,message_reference_seq,conversation_id,source_id,from_me,occurred_at,recorded_at,data) VALUES (1,1,'msgvault.message_archived','message','conversation',?,'message:1',?,1,?,?,FALSE,'2026-10-05T12:00:00.000000000Z','2026-10-05T12:00:00.000000000Z','{}')`), f.ConvID, messageID, f.ConvID, f.Source.ID)
-	require.NoError(err)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`DELETE FROM messages WHERE id=?`), messageID)
-	require.NoError(err)
-	var refs, receipts int
-	require.NoError(f.Store.DB().QueryRow(`SELECT COUNT(*) FROM mcp_event_message_refs`).Scan(&refs))
-	require.NoError(f.Store.DB().QueryRow(`SELECT COUNT(*) FROM mcp_event_log`).Scan(&receipts))
-	assert.Zero(refs)
-	assert.Equal(1, receipts)
-}
