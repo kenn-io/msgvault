@@ -117,7 +117,7 @@ func TestRecordingReferenceFeed(t *testing.T) {
 	recordingBody(t, f, skipped, "https://loom.com/share/skipped")
 	before, err := f.Store.LoadRecordingReferenceCursor(t.Context(), "destination")
 	require.NoError(err)
-	oldPolicy := digest("discovery-v2\x00")
+	oldPolicy := digest("discovery-v3\x00")
 	_, err = f.Store.AdvanceRecordingReferenceCursor(t.Context(), "destination", before, store.RecordingReferenceCursor{At: time.Now().Add(time.Hour), Policy: oldPolicy})
 	require.NoError(err)
 	runDiscovery(t, w, 2)
@@ -214,7 +214,7 @@ func TestRecordingReferenceHTMLVisibleURL(t *testing.T) {
 	}{
 		{"parenthesized parenthesis ID", "https://cap.so/s/abc)", "(", ")", 0, false},
 		{"suffix with anchors", "https://cap.so/s/abc!", "", "...", 8, false},
-		{"encoded repeated anchor", "https://loom.com/share/abc?token=one&key=two!", "", "", 0, true},
+		{"encoded repeated anchor", "https://loom.com/share/abc?token=one&key=two!…", "", "", 0, true},
 	} {
 		for _, textVariant := range []string{"both", "HTML only", "plain text without URL"} {
 			t.Run(tc.name+"/"+textVariant, func(t *testing.T) {

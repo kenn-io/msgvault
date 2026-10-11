@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"golang.org/x/net/html"
 	"golang.org/x/net/idna"
@@ -172,13 +173,21 @@ func scanProse(text string, origins []string, exact map[string]bool) []Ref {
 				}
 			}
 			suffix := strings.Join(closing, "")
-			for len(token) > 0 && (len(token) > 8192 || !exact[token]) && (suffix == "" || !strings.HasSuffix(token, suffix)) && strings.ContainsAny(token[len(token)-1:], ".,;:!?)]}'") {
-				token = token[:len(token)-1]
+			for len(token) > 0 && (len(token) > 8192 || !exact[token]) && (suffix == "" || !strings.HasSuffix(token, suffix)) {
+				last, size := utf8.DecodeLastRuneInString(token)
+				if !strings.ContainsRune(".,;:!?)]}'”’»›…", last) {
+					break
+				}
+				token = token[:len(token)-size]
 			}
 			if !exact[token] && suffix != "" && strings.HasSuffix(token, suffix) {
 				token = strings.TrimSuffix(token, suffix)
-				for !labeled && len(token) > 0 && (len(token) > 8192 || !exact[token]) && strings.ContainsAny(token[len(token)-1:], ".,;:!?)]}'") {
-					token = token[:len(token)-1]
+				for !labeled && len(token) > 0 && (len(token) > 8192 || !exact[token]) {
+					last, size := utf8.DecodeLastRuneInString(token)
+					if !strings.ContainsRune(".,;:!?)]}'”’»›…", last) {
+						break
+					}
+					token = token[:len(token)-size]
 				}
 			}
 		}
