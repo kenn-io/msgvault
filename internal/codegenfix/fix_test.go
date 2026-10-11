@@ -137,6 +137,15 @@ func (f FileGroupsHTTPRequest) Validate() error {
 	var errors runtime.ValidationErrors
 }
 ` + pointerValidatorFixture("FileMetadataResponse", "f") + pointerValidatorFixture("FileSearchRow", "f") +
+		`func (i InboxContext) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(i.Text).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Text", err)
+		}
+	}
+}
+` +
 		pointerValidatorFixture("PersonFileSearchRow", "p") +
 		requiredStringPointerValidatorFixture("MessageRecording", "m", "Filename") +
 		requiredStringPointerValidatorFixture("PersonFactEvidence", "p",
@@ -145,6 +154,7 @@ func (c CreateDailyNoteEntryRequest) Validate() error {
 	var errors runtime.ValidationErrors
 ` + dailyNoteDecoyValidatorBlock() + dailyNotePersonIDsValidatorBlock("omitempty,gte=1") + `
 }
+
 `
 }
 
@@ -214,4 +224,11 @@ func requiredStringPointerValidatorFixture(
 	}
 	result.WriteString("}\n")
 	return result.String()
+}
+
+func TestRewriteInboxContextTextPresence(t *testing.T) {
+	result, err := RewriteGeneratedValidators([]byte(generatedValidatorFixture()))
+	require.NoError(t, err)
+	assert.Contains(t, string(result), `typesValidator.Var(i.Text, "required")`)
+	assert.NotContains(t, string(result), `any(i.Text).(runtime.Validator)`)
 }

@@ -10,7 +10,7 @@ const (
 type ContextRequest struct {
 	Target    Target `json:"target"`
 	MessageID int64  `json:"message_id,omitempty"`
-	MaxBytes  int    `json:"max_bytes,omitempty"`
+	MaxBytes  int    `json:"max_bytes,omitempty" minimum:"0" maximum:"65536"`
 }
 
 func (r ContextRequest) Validate() error {

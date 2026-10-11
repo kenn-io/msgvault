@@ -1555,6 +1555,36 @@ type GetImportJobErrorResponse = ErrorResponse
 
 type GetImportJobErrorResponseJSON = ErrorResponse
 
+type ListInboxCandidatesResponse = InboxCandidatePage
+
+type ListInboxCandidatesErrorResponse = ErrorResponse
+
+type ListInboxCandidatesErrorResponseJSON = ErrorResponse
+
+type ListInboxCandidatesErrorResponseJSON403 = ErrorResponse
+
+type ListInboxCandidatesErrorResponseJSON409 = ErrorResponse
+
+type ListInboxCandidatesErrorResponseJSON500 = ErrorResponse
+
+type ListInboxCandidatesErrorResponseJSON503 = ErrorResponse
+
+type GetInboxContextResponse = InboxContext
+
+type GetInboxContextErrorResponse = ErrorResponse
+
+type GetInboxContextErrorResponseJSON = ErrorResponse
+
+type GetInboxContextErrorResponseJSON403 = ErrorResponse
+
+type GetInboxContextErrorResponseJSON413 = ErrorResponse
+
+type GetInboxContextErrorResponseJSON415 = ErrorResponse
+
+type GetInboxContextErrorResponseJSON500 = ErrorResponse
+
+type GetInboxContextErrorResponseJSON503 = ErrorResponse
+
 type ControlInboxResponse = InboxResult
 
 type ControlInboxErrorResponse = InboxControlError
@@ -4922,6 +4952,33 @@ type GetImportJobResp struct {
 	JSON200      *GetImportJobResponse
 	JSON401      *GetImportJobErrorResponse
 	JSON404      *GetImportJobErrorResponseJSON
+}
+
+type ListInboxCandidatesResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListInboxCandidatesResponse
+	JSON400      *ListInboxCandidatesErrorResponse
+	JSON401      *ListInboxCandidatesErrorResponseJSON
+	JSON403      *ListInboxCandidatesErrorResponseJSON403
+	JSON409      *ListInboxCandidatesErrorResponseJSON409
+	JSON500      *ListInboxCandidatesErrorResponseJSON500
+	JSON503      *ListInboxCandidatesErrorResponseJSON503
+}
+
+type GetInboxContextResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetInboxContextResponse
+	JSON400      *GetInboxContextErrorResponse
+	JSON401      *GetInboxContextErrorResponseJSON
+	JSON403      *GetInboxContextErrorResponseJSON403
+	JSON413      *GetInboxContextErrorResponseJSON413
+	JSON415      *GetInboxContextErrorResponseJSON415
+	JSON500      *GetInboxContextErrorResponseJSON500
+	JSON503      *GetInboxContextErrorResponseJSON503
 }
 
 type ControlInboxResp struct {
