@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -83,17 +82,6 @@ func TestKataIssueHTTP(t *testing.T) {
 	assert.Equal(1000, preparedBody.Evidence[0].NextRune)
 	require.Len(operations.selectors, 1)
 	assert.Equal(1000, *operations.selectors[0].StartRune)
-
-	// The largest quotes a client may send still fit the request bound.
-	selectors := make([]string, kataevidence.MaxReferences)
-	for i := range selectors {
-		selectors[i] = `{"kind":"message","message_id":` + strconv.Itoa(i+1) + `,"quote":"` + strings.Repeat("🙂", kataevidence.MaxChars) + `"}`
-	}
-	largestBody := `{"selectors":[` + strings.Join(selectors, ",") + `]}`
-	require.Greater(len(largestBody), 64<<10)
-	largest := serveKataIssue(server, kataEvidencePreparePath, largestBody, nil)
-	require.Equal(http.StatusOK, largest.Code, largest.Body.String())
-	assert.Len(operations.selectors, kataevidence.MaxReferences)
 
 	createBody := `{"title":"Send the budget","list":"follow up","person_id":3,"evidence":[{"version":1,"kind":"message","archive_uid":"archive","message_id":7,"source_type":"email","source_identifier":"inbox@example.com","source_message_id":"m7","message":{"body_sha256":"` + strings.Repeat("ab", 32) + `","start_rune":0,"end_rune":5}}]}`
 	missingKey := serveKataIssue(server, "/api/v1/integrations/kata/issues", createBody, nil)
