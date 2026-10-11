@@ -16,7 +16,7 @@ import (
 )
 
 func TestRecordingReferenceRemovalBeforeSend(t *testing.T) {
-	for _, change := range []string{"source deletion", "link removal"} {
+	for _, change := range []string{"source deletion", "archive deletion", "link removal"} {
 		for _, tc := range []struct {
 			name, stateAtChange string
 			beforePreparation   bool
@@ -25,6 +25,9 @@ func TestRecordingReferenceRemovalBeforeSend(t *testing.T) {
 			{"before preparation", "pending", true, 0},
 			{"after preparation yields", "uncertain", false, 1},
 		} {
+			if change == "archive deletion" && !tc.beforePreparation {
+				continue
+			}
 			t.Run(change+"/"+tc.name, func(t *testing.T) {
 				assert, require := assert.New(t), require.New(t)
 				f := storetest.New(t)
@@ -57,6 +60,9 @@ func TestRecordingReferenceRemovalBeforeSend(t *testing.T) {
 					assert.Equal(tc.stateAtChange, state, "the worker must mark sending before yielding after its read")
 					if change == "source deletion" {
 						require.NoError(f.Store.MarkMessagesDeletedBatch(f.Source.ID, []string{"recording"}))
+					} else if change == "archive deletion" {
+						_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET deleted_at=? WHERE id=?`), "2000-01-01 00:00:00.000", id)
+						require.NoError(err)
 					} else {
 						require.NoError(f.Store.UpsertMessageBody(id, sql.NullString{String: "Recording link removed", Valid: true}, sql.NullString{}))
 					}
@@ -82,6 +88,14 @@ func TestRecordingReferenceRemovalBeforeSend(t *testing.T) {
 				}
 				state, _, _ := recordingState(t, f, id)
 				assert.Equal("withdrawn", state)
+				if change == "archive deletion" {
+					_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET deleted_at=NULL WHERE id=?`), id)
+					require.NoError(err)
+					assert.Eventually(func() bool {
+						require.NoError(worker.RunBatch(t.Context()))
+						return len(requests) == 1
+					}, 5*time.Second, 10*time.Millisecond)
+				}
 			})
 		}
 	}
