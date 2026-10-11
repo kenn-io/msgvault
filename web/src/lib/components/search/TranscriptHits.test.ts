@@ -61,22 +61,6 @@ describe('TranscriptHits', () => {
     expect(fetchFn).toHaveBeenCalledTimes(1);
   });
 
-  it('retries after a scope limit when the filter changes', async () => {
-    const fetchFn = vi.fn<typeof fetch>()
-      .mockResolvedValueOnce(Response.json({ error: 'media_search_scope_limit' }, { status: 400 }))
-      .mockResolvedValueOnce(Response.json(report()))
-      .mockResolvedValueOnce(Response.json({ error: 'media_search_scope_limit' }, { status: 400 }));
-    const client = createAPIClient(fetchFn);
-    const view = render(TranscriptHits, { props: { client, query: 'quarterly', supported: true } });
-    await screen.findByText('Add a Person filter to search recordings.');
-    await view.rerender({ client, query: 'quarterly', supported: true, participantID: 7 });
-    const link = await screen.findByRole('link');
-    expect(link.textContent).toContain(recording().filename);
-    await view.rerender({ client, query: 'different', supported: true, participantID: 7 });
-    await screen.findByText('This Person filter exceeds recording-search limits. Use person-scoped recording search in the CLI.');
-    expect(fetchFn).toHaveBeenCalledTimes(3);
-  });
-
   it('keeps every incomplete zero-hit coverage state visible', async () => {
     mount(vi.fn<typeof fetch>(async () => Response.json(report({ results: [], partial: true, truncated: true,
       pending_occurrences: 2, unavailable_occurrences: 3, attribution_unavailable: 1 }))));
@@ -158,39 +142,32 @@ describe('TranscriptHits', () => {
     view.unmount();
   });
 
-  it('expires evidence without polling and manually refreshes it', async () => {
+  it.each([false, true])('expires evidence without polling, slow response: %s', async slow => {
     vi.useFakeTimers();
-    const view = mount();
+    let finish!: (value: Response) => void;
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json(report()));
+    if (slow) fetchFn.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const view = mount(fetchFn);
     await vi.advanceTimersByTimeAsync(300);
     await vi.advanceTimersByTimeAsync(30_000);
     expect(screen.queryByRole('link')).toBeNull();
-    expect(screen.getByText('Recording results expired.')).toBeTruthy();
+    if (slow) {
+      expect((fetchFn.mock.calls[0][0] as Request).signal.aborted).toBe(true);
+      finish(Response.json(report()));
+      await vi.advanceTimersByTimeAsync(300);
+      expect(screen.getByText('Recording search timed out.')).toBeTruthy();
+      expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy();
+      expect(screen.queryByRole('button', { name: 'Refresh' })).toBeNull();
+      expect(screen.queryByRole('link')).toBeNull();
+    } else {
+      expect(screen.getByText('Recording results expired.')).toBeTruthy();
+    }
     await vi.advanceTimersByTimeAsync(60_000);
     expect(view.fetchFn).toHaveBeenCalledTimes(1);
-    await fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    await fireEvent.click(screen.getByRole('button', { name: slow ? 'Retry' : 'Refresh' }));
     await vi.advanceTimersByTimeAsync(300);
     expect(screen.getByRole('link').textContent).toContain('Quarterly numbers');
     expect(view.fetchFn).toHaveBeenCalledTimes(2);
-    view.unmount();
-  });
-
-  it('counts request time toward expiry and ignores an expired slow response', async () => {
-    vi.useFakeTimers();
-    let finish!: (value: Response) => void;
-    const fetchFn = vi.fn<typeof fetch>(() => new Promise(resolve => { finish = resolve; }));
-    const client = createAPIClient(fetchFn);
-    const view = render(TranscriptHits, { props: { client, query: 'quarterly', supported: true } });
-    await vi.advanceTimersByTimeAsync(300);
-    const request = fetchFn.mock.calls[0][0] as Request;
-    await vi.advanceTimersByTimeAsync(30_000);
-    expect(request.signal.aborted).toBe(true);
-    finish(Response.json(report()));
-    await vi.advanceTimersByTimeAsync(300);
-    expect(screen.getByText('Recording search timed out.')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Refresh' })).toBeNull();
-    expect(screen.queryByRole('link')).toBeNull();
-    expect(fetchFn).toHaveBeenCalledTimes(1);
     view.unmount();
   });
 
@@ -229,10 +206,17 @@ describe('TranscriptHits', () => {
     expect(screen.queryByRole('button', { name: 'Refresh' })).toBeNull();
     await fireEvent(document, new Event('visibilitychange'));
     expect(fetchFn).toHaveBeenCalledTimes(1);
-    await view.rerender({ client, query: 'different', supported: true });
+    const participantID = error === 'media_search_scope_limit' ? 7 : undefined;
+    if (participantID !== undefined) {
+      fetchFn.mockResolvedValueOnce(Response.json(report()));
+      await view.rerender({ client, query, supported: true, participantID });
+      await vi.advanceTimersByTimeAsync(300);
+      expect(screen.getByRole('link').textContent).toContain(recording().filename);
+    }
+    await view.rerender({ client, query: 'different', supported: true, participantID });
     await vi.advanceTimersByTimeAsync(300);
-    expect(fetchFn).toHaveBeenCalledTimes(2);
-    expect(screen.getByText(message)).toBeTruthy();
+    expect(fetchFn).toHaveBeenCalledTimes(participantID === undefined ? 2 : 3);
+    expect(screen.getByText(participantID === undefined ? message : 'This Person filter exceeds recording-search limits. Use person-scoped recording search in the CLI.')).toBeTruthy();
     view.unmount();
   });
 

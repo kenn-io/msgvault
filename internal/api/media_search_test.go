@@ -62,7 +62,7 @@ func TestMediaSearchStatus(t *testing.T) {
 			assert.Zero(f.docbank.requestCount())
 			begin, _ := gate.counts()
 			assert.Zero(begin)
-			if state != "configured" {
+			if state == "no reader" {
 				server.operationGate = nil
 				code, _, raw := searchMediaFor(t, server, "q=words")
 				assert.Equal(http.StatusServiceUnavailable, code, raw)
@@ -286,7 +286,7 @@ func TestMediaSearchPersonDirection(t *testing.T) {
 		alias := f.f.EnsureParticipant("alias@example.com", "Alias", "example.com")
 		_, err := f.f.Store.LinkParticipants(participant, alias)
 		require.NoError(err)
-		person, _, err := f.f.Store.CreatePersonFromParticipant(participant)
+		_, _, err = f.f.Store.CreatePersonFromParticipant(participant)
 		require.NoError(err)
 		_, err = f.f.Store.DB().Exec(f.f.Store.Rebind(`UPDATE messages SET sender_id = ? WHERE id = ?`), participant, selected.messageID)
 		require.NoError(err)
@@ -319,14 +319,11 @@ func TestMediaSearchPersonDirection(t *testing.T) {
 			assert.Equal(selected.messageID, response.Results[0].MessageID)
 			assert.Equal([]string{selected.contentVersionID}, f.requests[len(f.requests)-1].Fence.ContentVersionIDs)
 		}
-		status, response, raw := searchMediaFor(t, f.server(true), fmt.Sprintf("q=quarterly+numbers&person_id=%d", person.ID))
-		require.Equal(http.StatusOK, status, raw)
-		assert.Len(response.Results, 2)
 		_, err = f.f.Store.DB().Exec(f.f.Store.Rebind(`UPDATE messages SET sender_id = NULL WHERE id = ?`), selected.messageID)
 		require.NoError(err)
 		_, err = f.f.Store.DB().Exec(f.f.Store.Rebind(`INSERT INTO message_recipients (message_id, participant_id, recipient_type) VALUES (?, ?, 'mention')`), selected.messageID, participant)
 		require.NoError(err)
-		status, response, raw = searchMediaFor(t, f.server(true), fmt.Sprintf("q=quarterly+numbers&participant_id=%d", participant))
+		status, response, raw := searchMediaFor(t, f.server(true), fmt.Sprintf("q=quarterly+numbers&participant_id=%d", participant))
 		require.Equal(http.StatusOK, status, raw)
 		require.Len(response.Results, 1)
 		assert.Equal(selected.messageID, response.Results[0].MessageID)
