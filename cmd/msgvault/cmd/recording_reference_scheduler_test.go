@@ -63,7 +63,7 @@ func TestRecordingReferenceJob(t *testing.T) {
 		require.NoError(configureRecordingReferenceJob(t.Context(), s, gate, f.Store, config.DocbankIntegrationConfig{Enabled: true, ReferenceConsent: true, URL: server.URL, APIKeyEnv: "MSGVAULT_TEST_REFERENCE_KEY"}, nil))
 		assert.True(s.IsJobScheduled(recordingReferenceJob))
 		for len(gate.labels) > 0 {
-			<-gate.labels
+			assert.Equal(recordingReferenceGateLabel, <-gate.labels)
 		}
 		require.NoError(s.TriggerJob(recordingReferenceJob))
 		require.Len(requests, 1)

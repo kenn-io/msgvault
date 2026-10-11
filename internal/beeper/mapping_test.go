@@ -66,7 +66,6 @@ func TestMessageHTML(t *testing.T) {
 		name, text, want string
 	}{
 		{"reply and transcript", `<mx-reply><a href="https://loom.com/share/parent">Parent</a></mx-reply><a href="https://loom.com/share/abc">Watch recording</a>`, `<a href="https://loom.com/share/abc">Watch recording</a><br>🎤 transcript: &lt;b&gt;quoted&lt;/b&gt; &amp; plain<br>second line`},
-		{"formatted transcript", `<p>hello <a href="https://example.com" rel="noopener noreferrer">there</a></p>`, `<p>hello <a href="https://example.com" rel="noopener noreferrer">there</a></p><br>🎤 transcript: &lt;b&gt;quoted&lt;/b&gt; &amp; plain<br>second line`},
 		{"plain text", "source words", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -100,7 +100,7 @@ func newTestImporter(t *testing.T, f *fakeBeeper) (*Importer, *store.Store, func
 	return imp, st, srv.Close
 }
 
-func TestRecordingLinkHTMLPersists(t *testing.T) {
+func TestBeeperHTMLPersists(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	f := newFakeBeeper(t)
 	ch := mediaTranscriptChat()
