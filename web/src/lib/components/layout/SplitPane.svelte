@@ -160,14 +160,6 @@
     observer.observe(target);
     return () => observer.disconnect();
   });
-
-  $effect(() => {
-    void minimum;
-    void maximum;
-    untrack(() => {
-      if (available > 0) onSizeChange?.(displayedSize);
-    });
-  });
 </script>
 
 <div class="split-pane" class:split-pane--vertical={vertical} class:split-pane--collapsed={collapsed} data-split-pane bind:this={host}>
