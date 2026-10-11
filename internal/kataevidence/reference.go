@@ -114,8 +114,7 @@ func PassageLocation(ref Reference) string {
 		ref.SourceType, ref.SourceIdentifier, ref.SourceMessageID, ref.OccurrenceKey, chunkKey, strconv.Itoa(start), strconv.Itoa(end))
 }
 
-// sourceKeyPrefix starts every Kata metadata key that marks an issue as
-// citing a source.
+// sourceKeyPrefix starts each source identity used to compare citations.
 const sourceKeyPrefix = "msgvault.source."
 
 // SourceKeys names the sources ref cites, without range or content hashes: its

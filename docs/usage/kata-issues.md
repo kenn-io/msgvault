@@ -117,6 +117,7 @@ clients call `find_kata_issues`, which needs no write flag.
 
 The CLI writes result rows to stdout and the truncation notice to stderr.
 Use `--json` for a response with `issues` and `truncated` fields.
+Lookup includes issues filed before lookup was added. If the issue listing exceeds 16 MiB, lookup returns an error instead of incomplete results.
 
 ## Read an issue's evidence back
 

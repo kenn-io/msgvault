@@ -47,7 +47,7 @@ func (c *KataClient) FindActionTask(ctx context.Context, project, action string)
 }
 
 // FindMetadataTasks returns up to limit open or closed issues carrying the
-// metadata key in any project, oldest first.
+// metadata key in any project, oldest first. Zero lists all within the response limit.
 func (c *KataClient) FindMetadataTasks(ctx context.Context, project, key string, limit int) ([]KataTask, error) {
 	return c.listIssues(ctx, project, url.Values{"meta": {key}}, limit)
 }

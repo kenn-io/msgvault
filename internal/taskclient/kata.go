@@ -246,22 +246,17 @@ func (c *KataClient) MutateMetadata(ctx context.Context, project, taskID, revisi
 // MutateMetadataKey guards just the changed key, preserving unrelated concurrent
 // edits. A nil previous value requires the key to be absent.
 func (c *KataClient) MutateMetadataKey(ctx context.Context, project, taskID, key string, previous, value any) (KataTask, error) {
-	return c.MutateMetadataKeys(ctx, project, taskID, key, previous, map[string]any{key: value})
-}
-
-// MutateMetadataKeys writes patch only while guardKey still holds previous.
-func (c *KataClient) MutateMetadataKeys(ctx context.Context, project, taskID, guardKey string, previous any, patch map[string]any) (KataTask, error) {
 	guard := &kata.MetadataPatchGuard_OneOf{}
 	if previous == nil {
-		guard.N, guard.B = 2, kata.MetadataPatchGuard_OneOf_1{Key: guardKey, IfAbsent: kata.True}
+		guard.N, guard.B = 2, kata.MetadataPatchGuard_OneOf_1{Key: key, IfAbsent: kata.True}
 	} else {
 		encoded, err := json.Marshal(previous)
 		if err != nil {
 			return KataTask{}, fmt.Errorf("encode metadata guard: %w", err)
 		}
-		guard.N, guard.A = 1, kata.MetadataPatchGuard_OneOf_0{Key: guardKey, IfValue: string(encoded)}
+		guard.N, guard.A = 1, kata.MetadataPatchGuard_OneOf_0{Key: key, IfValue: string(encoded)}
 	}
-	return c.patchMetadata(ctx, project, taskID, kata.PatchIssueMetadataRequestBody{Actor: new(writeActor), Patch: patch, Guard: &kata.MetadataPatchGuard{MetadataPatchGuard_OneOf: guard}}, nil)
+	return c.patchMetadata(ctx, project, taskID, kata.PatchIssueMetadataRequestBody{Actor: new(writeActor), Patch: map[string]any{key: value}, Guard: &kata.MetadataPatchGuard{MetadataPatchGuard_OneOf: guard}}, nil)
 }
 
 func (c *KataClient) patchMetadata(ctx context.Context, project, taskID string, request kata.PatchIssueMetadataRequestBody, headers http.Header) (KataTask, error) {
