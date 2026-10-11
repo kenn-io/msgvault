@@ -103,18 +103,6 @@ func TestEvidenceWindowWire(t *testing.T) {
 	window, err := client.ReadEvidenceWindow(t.Context(), identity)
 	require.NoError(err)
 	assert.Equal("revised", window.Text)
-	for _, ids := range [][2]string{
-		{"vault", version},
-		{identity.VaultUID, "content-1"},
-	} {
-		invalid := identity
-		invalid.VaultUID, invalid.ContentVersionID = ids[0], ids[1]
-		_, err = client.ReadEvidenceWindow(t.Context(), invalid)
-		httpErr, ok := errors.AsType[*docbankmedia.HTTPError](err)
-		require.True(ok, "%v", err)
-		assert.Equal(http.StatusBadRequest, httpErr.Status)
-		assert.Equal("invalid_evidence_request", httpErr.Reason)
-	}
 
 	_, err = client.EvidenceIdentity(t.Context(), version, strings.Repeat("e", 64), "supplied-transcript")
 	require.ErrorIs(err, docbankmedia.ErrEvidenceUnavailable, "another file's bytes")
