@@ -621,13 +621,10 @@ func TestSubscribeTimesActivationAfterTheGate(t *testing.T) {
 	s.opts.WithOperation = func(ctx context.Context, fn func() error) error {
 		if challenged.Load() && released.IsZero() {
 			// Hold the gate past the requested TTL, as a scheduled job could.
-			deadline := time.Now().Add(2 * time.Duration(ttl) * time.Millisecond)
-			for time.Now().Before(deadline) {
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				case <-time.After(10 * time.Millisecond):
-				}
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(2 * time.Duration(ttl) * time.Millisecond):
 			}
 			released = time.Now()
 		}
