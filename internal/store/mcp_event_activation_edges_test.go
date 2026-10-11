@@ -32,11 +32,13 @@ func TestMCPEventsFreshReplayTruncatesOldEpochOrPrunedCursor(t *testing.T) {
 			require.NoError(err)
 			_, err = f.Store.DB().Exec(`UPDATE mcp_event_clock SET head_seq=3,pruned_through_seq=2 WHERE singleton=1`)
 			require.NoError(err)
-			epoch := clock.Epoch
+			// Each case breaks exactly one condition: an old epoch with a cursor
+			// at the head, or the current epoch with a cursor below the floor.
+			epoch, seq := clock.Epoch, int64(1)
 			if oldEpoch {
-				epoch = initial.Epoch
+				epoch, seq = initial.Epoch, 3
 			}
-			active, truncated, err := f.Store.ActivateMCPSubscription(t.Context(), store.MCPActivation{Subscription: newMCPStoreSubscription(t, f, 1, now), Now: now, Replay: true, ReplayEpoch: epoch, ReplaySeq: 1})
+			active, truncated, err := f.Store.ActivateMCPSubscription(t.Context(), store.MCPActivation{Subscription: newMCPStoreSubscription(t, f, 1, now), Now: now, Replay: true, ReplayEpoch: epoch, ReplaySeq: seq})
 			require.NoError(err)
 			assert.True(truncated)
 			assert.Equal(clock.Epoch, active.CursorEpoch)
