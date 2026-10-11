@@ -1197,8 +1197,10 @@ Teams recording pointers from typed attachment records.
 Beeper imports and repairs retain HTML outside quoted replies, so links behind display text and changes to link targets remain discoverable.
 It submits references with acquisition disabled. Docbank records outcome
 `access_required` or `unsupported`. Coverage stays `unprocessed` until media is imported.
-Delivery log events include Docbank's
+Delivery log events include delivery state and Docbank's
 `source_id` and `occurrence_id` for `docbank media import-artifact`.
+
+Each run attempts at most 20 deliveries. HTTP requests time out after 30 seconds; slow Docbank responses delay backfill, and the scheduler skips overlapping runs.
 
 Removing a recording link or deleting its message stops future submissions once
 the worker sees the change. A request already prepared for sending can still
