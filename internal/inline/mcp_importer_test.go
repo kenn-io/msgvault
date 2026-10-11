@@ -1,17 +1,151 @@
 package inline
 
 import (
+	"database/sql"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
+
+type archivedMCPReaction struct {
+	UserIdentifier string
+	Type           string
+	Emoji          string
+	CreatedAt      sql.NullTime
+}
+
+func readMCPReactionSnapshot(t *testing.T, st *store.Store, messageID int64) []archivedMCPReaction {
+	t.Helper()
+	rows, err := st.DB().Query(st.Rebind(`SELECT pi.identifier_value, r.reaction_type, r.reaction_value, r.created_at
+		FROM reactions r JOIN participant_identifiers pi ON pi.participant_id = r.participant_id
+		WHERE r.message_id = ? AND pi.identifier_type = ? ORDER BY pi.identifier_value, r.reaction_value`), messageID, SourceType)
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, rows.Close()) })
+	snapshot := []archivedMCPReaction{}
+	for rows.Next() {
+		var reaction archivedMCPReaction
+		require.NoError(t, rows.Scan(&reaction.UserIdentifier, &reaction.Type, &reaction.Emoji, &reaction.CreatedAt))
+		snapshot = append(snapshot, reaction)
+	}
+	require.NoError(t, rows.Err())
+	return snapshot
+}
+
+func setMCPReactionHistory(f *inlineMCPFixture, chatID int64, base, suffix string) {
+	message := strings.TrimSuffix(base, "}") + suffix + `}`
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.payloads["messages.list"] = fmt.Sprintf(`{"chat":{"chatId":"%d"},"nextOffsetId":null,"messages":[%s]}`, chatID, message)
+}
+
+func TestMCPImportPersistsAndReplacesReactionSnapshots(t *testing.T) {
+	for _, structured := range []bool{true, false} {
+		t.Run(fmt.Sprintf("structured_%t", structured), func(t *testing.T) {
+			f := newInlineMCPFixture(t, map[string]string{
+				"conversations.get": `{"chat":{"chatId":"7","title":"Example chat","kind":"space_chat"},"details":{},"participants":[]}`,
+			}, structured)
+			base := inlineMessageJSON(t, 5, "complete", "")
+			setMCPReactionHistory(f, 7, base, `,"reactions":[{"userId":"2","emoji":"👍"}]`)
+			client := connectInlineFixture(t, f)
+			account, err := client.Me(t.Context())
+			require.NoError(t, err)
+			st := testutil.NewTestStore(t)
+			_, err = st.GetOrCreateSource(SourceType, account.Identifier())
+			require.NoError(t, err)
+			imp := NewImporter(st, client)
+			opts := ImportOptions{Account: account, ChatIDs: []int64{7}, AttachmentsDir: t.TempDir()}
+			first, err := imp.Import(t.Context(), opts)
+			require.NoError(t, err)
+			assert.Equal(t, 1, first.MessagesAdded)
+			messageID := archivedMessage(t, st, first.SourceID, 7, 5)
+			one := []archivedMCPReaction{{UserIdentifier: "api.inline.chat:user:2", Type: "emoji", Emoji: "👍"}}
+			two := append(append([]archivedMCPReaction{}, one...), archivedMCPReaction{UserIdentifier: "api.inline.chat:user:3", Type: "emoji", Emoji: "👀"})
+			assert.Equal(t, one, readMCPReactionSnapshot(t, st, messageID))
+
+			populated := `,"reactions":[{"userId":"2","emoji":"👍"},{"userId":"3","emoji":"👀"},{"userId":"3","emoji":"👀"}]`
+			opts.Full = true
+			for _, step := range []struct {
+				name, suffix string
+				want         []archivedMCPReaction
+			}{
+				{"omitted projection", "", one},
+				{"null projection", `,"reactions":null`, one},
+				{"populated replacement", populated, two},
+				{"repeated snapshot", populated, two},
+				{"empty replacement", `,"reactions":[]`, []archivedMCPReaction{}},
+			} {
+				t.Run(step.name, func(t *testing.T) {
+					setMCPReactionHistory(f, 7, base, step.suffix)
+					summary, err := imp.Import(t.Context(), opts)
+					require.NoError(t, err)
+					assert.Equal(t, 1, summary.MessagesUpdated)
+					assert.Equal(t, messageID, archivedMessage(t, st, summary.SourceID, 7, 5))
+					assert.Equal(t, step.want, readMCPReactionSnapshot(t, st, messageID))
+				})
+			}
+		})
+	}
+}
+
+func TestMCPReactionRefreshRetainsCLIRawEvidence(t *testing.T) {
+	imp, cli, opts := importerFixture(t)
+	message, err := cliDecodeMessage(jsontext.Value(`{"id":1,"chat_id":1,"from_id":101,"date":1700000000,"message":"original","reactions":{"reactions":[{"user_id":101,"emoji":"👍","date":1700000200}]}}`), 1)
+	require.NoError(t, err)
+	cli.messages[1] = []Message{message}
+	first, err := imp.Import(t.Context(), opts)
+	require.NoError(t, err)
+	messageID := archivedMessage(t, imp.store, first.SourceID, 1, 1)
+	originalRaw, err := imp.store.GetMessageRaw(messageID)
+	require.NoError(t, err)
+	known := []archivedMCPReaction{{UserIdentifier: "api.inline.chat:user:101", Type: "emoji", Emoji: "👍", CreatedAt: sql.NullTime{Time: time.Unix(1700000200, 0).UTC(), Valid: true}}}
+	assert.Equal(t, known, readMCPReactionSnapshot(t, imp.store, messageID))
+
+	f := newInlineMCPFixture(t, map[string]string{
+		"conversations.get": `{"chat":{"chatId":"1","title":"Example chat","kind":"space_chat"},"details":{},"participants":[]}`,
+	}, true)
+	f.owner.Store(opts.Account.UserID)
+	client := connectInlineFixture(t, f)
+	imp = NewImporter(imp.store, client)
+	opts.Full = true
+	base := strings.Replace(inlineMessageJSON(t, 1, "current", ""), `"chatId":"7"`, `"chatId":"1"`, 1)
+	unknown := []archivedMCPReaction{{UserIdentifier: "api.inline.chat:user:101", Type: "emoji", Emoji: "👍"}}
+	for _, step := range []struct {
+		name, suffix string
+		want         []archivedMCPReaction
+	}{
+		{"omitted projection", "", known},
+		{"null projection", `,"reactions":null`, known},
+		{"current snapshot with unknown date", `,"reactions":[{"userId":"101","emoji":"👍"}]`, unknown},
+		{"empty replacement", `,"reactions":[]`, []archivedMCPReaction{}},
+	} {
+		t.Run(step.name, func(t *testing.T) {
+			setMCPReactionHistory(f, 1, base, step.suffix)
+			_, err := imp.Import(t.Context(), opts)
+			require.NoError(t, err)
+			assert.Equal(t, step.want, readMCPReactionSnapshot(t, imp.store, messageID))
+			raw, err := imp.store.GetMessageRaw(messageID)
+			require.NoError(t, err)
+			assert.Equal(t, originalRaw, raw)
+			value, err := imp.store.GetMessageMetadata(messageID)
+			require.NoError(t, err)
+			var metadata messageMetadata
+			require.NoError(t, json.Unmarshal([]byte(value.String), &metadata))
+			assert.Equal(t, RawCLIFormat, metadata.RawFormat)
+			assert.Equal(t, RawMCPFormat, metadata.ProjectionFormat)
+		})
+	}
+}
 
 // Exercise the SDK transport, provider parser and archive together. The local
 // server supplies the external read contract; the importer and Store are real.

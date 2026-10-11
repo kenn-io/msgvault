@@ -427,6 +427,10 @@ type mcpMessage struct {
 	EditDate   *string   `json:"editDate"`
 	ReplyToID  *string   `json:"replyToMsgId"`
 	Media      *mcpMedia `json:"media"`
+	Reactions  []struct {
+		UserID string `json:"userId"`
+		Emoji  string `json:"emoji"`
+	} `json:"reactions"`
 }
 
 func decodeMCPMessage(raw jsontext.Value, chatID int64) (Message, error) {
@@ -462,6 +466,19 @@ func decodeMCPMessage(raw jsontext.Value, chatID int64) (Message, error) {
 		return Message{}, err
 	}
 	msg := Message{ID: id, ChatID: chat, SenderID: from, Text: *v.Text, SenderName: v.SenderName, SentAt: date, EditedAt: edit, IsFromMe: *v.Out, ReplyToMessageID: reply, Raw: raw, RawFormat: RawMCPFormat}
+	// Older projections may omit reactions. Only an explicit array is a
+	// complete snapshot, including an empty array that clears prior reactions.
+	if v.Reactions != nil {
+		msg.Reactions = make([]Reaction, 0, len(v.Reactions))
+		for _, reaction := range v.Reactions {
+			userID, err := positiveID(reaction.UserID)
+			if err != nil || strings.TrimSpace(reaction.Emoji) == "" {
+				return Message{}, fmt.Errorf("%w: malformed reaction", ErrContract)
+			}
+			// MCP does not expose reaction dates; keep their occurrence time unknown.
+			msg.Reactions = append(msg.Reactions, Reaction{UserID: userID, Emoji: reaction.Emoji, Count: 1})
+		}
+	}
 	if v.Media != nil {
 		media, err := decodeMCPMedia(*v.Media, chatID, id)
 		if err != nil {

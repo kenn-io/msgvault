@@ -163,16 +163,20 @@ changing scheduled accounts or chat selections.
   files are stored separately from the searchable message body.
 - Each captured message retains a raw JSON projection:
   `inline_mcp_json` or `inline_cli_json`.
+- Available reaction snapshots store each actor and emoji. An explicit empty
+  MCP snapshot clears archived reactions; a missing or null snapshot keeps the
+  previous snapshot. MCP does not provide reaction timestamps.
 
 All-chat mode discovers accessible child chats as separate conversations;
 available parent references remain conversation metadata. With an explicit
 filter, select each child chat's ID separately to capture its messages.
 
 The MCP projection does not expose all fields in Inline's native protocol.
-Reactions, rich-text entities, forwarding headers, service-message fields, and
-some thread metadata may be absent. CLI JSON can retain additional fields the
-installed CLI returns, but neither connection is a complete native-protocol
-export. An MCP refresh keeps an existing richer CLI raw snapshot while updating
+Rich-text entities, forwarding headers, service-message fields, and some thread
+metadata may be absent. Older MCP projections may also omit reactions. CLI JSON
+can retain additional fields the installed CLI returns, but neither connection
+is a complete native-protocol export. An MCP refresh keeps an existing richer
+CLI raw snapshot while updating
 the searchable body and current normalized metadata from MCP. Historical
 sender names may also be unavailable; stable user IDs keep
 those participants distinguishable.

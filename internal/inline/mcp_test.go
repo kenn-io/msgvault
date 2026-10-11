@@ -218,6 +218,34 @@ func TestMCPRejectsInvalidHistory(t *testing.T) {
 	}
 }
 
+func TestMCPRejectsInvalidReactionSnapshots(t *testing.T) {
+	base := inlineMessageJSON(t, 5, "complete", "")
+	for name, reactions := range map[string]string{
+		"wrong array type":       `{}`,
+		"null occurrence":        `[null]`,
+		"missing actor":          `[{"emoji":"👍"}]`,
+		"numeric actor":          `[{"userId":2,"emoji":"👍"}]`,
+		"zero actor":             `[{"userId":"0","emoji":"👍"}]`,
+		"negative actor":         `[{"userId":"-1","emoji":"👍"}]`,
+		"noncanonical actor":     `[{"userId":"02","emoji":"👍"}]`,
+		"unsafe actor":           `[{"userId":"9007199254740992","emoji":"👍"}]`,
+		"missing emoji":          `[{"userId":"2"}]`,
+		"empty emoji":            `[{"userId":"2","emoji":""}]`,
+		"whitespace emoji":       `[{"userId":"2","emoji":"  "}]`,
+		"invalid later reaction": `[{"userId":"2","emoji":"👍"},{"userId":"0","emoji":"👀"}]`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			message := strings.TrimSuffix(base, "}") + `,"reactions":` + reactions + `}`
+			f := newInlineMCPFixture(t, map[string]string{
+				"messages.list": `{"chat":{"chatId":"7"},"nextOffsetId":null,"messages":[` + message + `]}`,
+			}, true)
+			c := connectInlineFixture(t, f)
+			_, err := c.Messages(t.Context(), 7, 0)
+			require.ErrorIs(t, err, ErrContract)
+		})
+	}
+}
+
 func TestMCPSessionExpiryReconnectsOnceAndPinsOwner(t *testing.T) {
 	assertions := assert.New(t)
 	requires := require.New(t)
