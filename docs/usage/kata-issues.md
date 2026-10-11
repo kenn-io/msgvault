@@ -127,6 +127,8 @@ Days later, read what an issue cites and what surrounds each quote:
 msgvault kata context example#ab12
 ```
 
+Use a qualified ref such as `other#ab12` to read an issue in another project when Kata permits access.
+
 The first line shows the issue's ref, status, and title. Each passage the
 issue cites follows with its state in the archive today and its source. A
 passage linked again after a re-sync that left its text where it was shows
