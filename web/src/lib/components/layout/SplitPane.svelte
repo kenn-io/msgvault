@@ -88,6 +88,7 @@
     return !vertical && maxPrimary !== undefined ? Math.min(byAvailable, maxPrimary) : byAvailable;
   });
   const minimum = $derived(Math.min(minSized, maximum));
+  const displayedSize = $derived(clamp(sizedSize));
 
   function clamp(size: number): number {
     const atLeastMinimum = Math.max(minimum, size);
@@ -96,7 +97,7 @@
 
   function setSize(size: number, persist = true): void {
     const next = clamp(size);
-    sizedSize = next;
+    sizedSize = persist ? next : size;
     if (persist) {
       userSized = true;
       persistSize(next);
@@ -105,7 +106,7 @@
   }
 
   function startResize(): void {
-    resizeStartSize = sizedSize;
+    resizeStartSize = displayedSize;
   }
 
   /** Double-clicking the handle returns to the default size and forgets the
@@ -151,7 +152,7 @@
       const measured = measure(entry);
       if (measured === undefined) return;
       available = measured;
-      if (userSized) setSize(sizedSize);
+      if (userSized) setSize(sizedSize, false);
       else if (initialFraction !== undefined && available > 0) {
         setSize(Math.round(available * initialFraction), false);
       } else setSize(sizedSize, false);
@@ -164,7 +165,7 @@
     void minimum;
     void maximum;
     untrack(() => {
-      if (available > 0 && clamp(sizedSize) !== sizedSize) setSize(sizedSize, userSized);
+      if (available > 0) onSizeChange?.(displayedSize);
     });
   });
 </script>
@@ -173,7 +174,7 @@
   <section
     class="pane primary"
     data-pane="primary"
-    style:flex-basis={vertical ? undefined : `${sizedSize}px`}
+    style:flex-basis={vertical ? undefined : `${displayedSize}px`}
   >
     {#if primary}{@render primary()}{/if}
   </section>
@@ -188,7 +189,7 @@
         {keyboardStep}
         ariaValueMin={minimum}
         ariaValueMax={maximum}
-        ariaValueNow={sizedSize}
+        ariaValueNow={displayedSize}
         onResizeStart={startResize}
         onResize={resize}
       />
@@ -196,7 +197,7 @@
     <section
       class="pane secondary"
       data-pane="secondary"
-      style:flex-basis={vertical ? `${sizedSize}px` : undefined}
+      style:flex-basis={vertical ? `${displayedSize}px` : undefined}
     >
       {#if secondary}{@render secondary()}{/if}
     </section>

@@ -113,7 +113,7 @@ describe('SplitPane', () => {
     const narrowMaximum = 500 - 320 - splitHandleSize;
     reportWidth(host, 500);
     await waitFor(() => expect(primary.style.flexBasis).toBe(`${narrowMaximum}px`));
-    expect(localStorage.getItem('archive:test-split')).toBe(String(narrowMaximum));
+    expect(localStorage.getItem('archive:test-split')).toBe(String(wideMaximum));
   });
 
   it('caps a horizontal primary pane at maxPrimary even when more width is available', async () => {

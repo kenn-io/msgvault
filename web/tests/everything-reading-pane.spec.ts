@@ -67,9 +67,12 @@ test('recording timeline rows stay inside a resized results pane', async ({ page
   await page.mouse.move(handle.x + handle.width / 2, 0);
   await page.mouse.up();
   await expect.poll(async () => (await primary.boundingBox())!.height).toBe(120);
+  const savedSize = await page.evaluate(() => localStorage.getItem('msgvault.reading-pane.size'));
+  expect(savedSize).not.toBeNull();
   resolveReadiness();
   await expect(page.getByRole('link', { name: 'Team chat' })).toBeVisible();
   await expect.poll(async () => (await primary.boundingBox())!.height).toBe(220);
+  expect(await page.evaluate(() => localStorage.getItem('msgvault.reading-pane.size'))).toBe(savedSize);
   await expect(grid.getByText('Synthetic subject 1', { exact: true })).toBeInViewport();
   const readyHandle = (await resize.boundingBox())!;
   await page.mouse.move(readyHandle.x + readyHandle.width / 2, readyHandle.y + readyHandle.height / 2);
