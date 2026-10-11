@@ -30,7 +30,8 @@ type fakeDocbank struct {
 	// pruned is a version Docbank no longer holds at all.
 	pruned string
 	// noWindows is a Docbank older than the evidence window route.
-	noWindows bool
+	noWindows    bool
+	windowReason string
 	// finishing selects no rendition once, then one: processing finished in between.
 	finishing       bool
 	revision        string
@@ -96,7 +97,10 @@ func (f *fakeDocbank) ReadEvidenceWindow(ctx context.Context, request docbankmed
 	if f.err != nil {
 		return docbankmedia.EvidenceWindow{}, f.err
 	}
-	if f.noWindows || request.ContentVersionID != f.current || request.BuildID != f.build {
+	if f.noWindows {
+		return docbankmedia.EvidenceWindow{}, &docbankmedia.HTTPError{Status: http.StatusNotFound, Code: "not_found", Reason: f.windowReason}
+	}
+	if request.ContentVersionID != f.current || request.BuildID != f.build {
 		return docbankmedia.EvidenceWindow{}, errNotFound
 	}
 	if request.Offset > len(f.text) {
@@ -159,6 +163,26 @@ func TestDocbankRejectsStaleTranscriptProvenance(t *testing.T) {
 				require.ErrorIs(t, err, tc.want, "resolve=%v", resolve)
 				assert.Empty(t, result.Text)
 			}
+		})
+	}
+}
+
+func TestDocbankWindowNotFoundReason(t *testing.T) {
+	for reason, want := range map[string]error{"": kataevidence.ErrUnsupported, "evidence_unavailable": kataevidence.ErrUnavailable} {
+		t.Run(reason, func(t *testing.T) {
+			f := newFakeDocbank()
+			reader := kataevidence.NewDocbankReader(f, f, func(context.Context) (string, error) { return "destination", nil }, f.MediaRevision)
+			selector := kataevidence.Selector{Kind: "docbank_rendition", MessageID: 4, AttachmentID: 9, MaxChars: new(10)}
+			prepared, err := reader.LoadKataEvidenceSource(t.Context(), selector)
+			require.NoError(t, err)
+			prepared.Reference.DocbankRendition.EndRune = 10
+			f.noWindows, f.windowReason = true, reason
+			result, err := reader.LoadKataEvidenceSource(t.Context(), selector)
+			require.ErrorIs(t, err, want)
+			assert.Empty(t, result.Text)
+			result, err = reader.ReadKataEvidenceSource(t.Context(), prepared.Reference)
+			require.ErrorIs(t, err, want)
+			assert.Empty(t, result.Text)
 		})
 	}
 }

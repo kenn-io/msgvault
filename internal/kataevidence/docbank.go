@@ -97,7 +97,7 @@ func (r *DocbankReader) LoadKataEvidenceSource(ctx context.Context, selector Sel
 	defer cancel()
 	request, err := r.client.EvidenceIdentity(ctx, binding.ContentVersionID, binding.ContentSHA256, binding.Profile)
 	if notFound(err) && request.NodeID > 0 {
-		err = r.classify(ctx, request.NodeID, binding, nil)
+		err = r.classify(ctx, request.NodeID, binding, nil, err)
 	}
 	if err != nil {
 		return SourceRecord{}, docbankError(parent, err)
@@ -105,7 +105,7 @@ func (r *DocbankReader) LoadKataEvidenceSource(ctx context.Context, selector Sel
 	request.VaultUID, request.Offset, request.MaxChars = binding.VaultUID, start, end-start
 	window, err := r.client.ReadEvidenceWindow(ctx, request)
 	if notFound(err) {
-		err = r.classify(ctx, request.NodeID, binding, &request)
+		err = r.classify(ctx, request.NodeID, binding, &request, err)
 	}
 	if err != nil {
 		return SourceRecord{}, docbankError(parent, err)
@@ -154,7 +154,7 @@ func (r *DocbankReader) ReadKataEvidenceSource(ctx context.Context, ref Referenc
 		Offset: from, MaxChars: p.EndRune - from + ContextRunes}
 	window, err := r.client.ReadEvidenceWindow(ctx, request)
 	if notFound(err) {
-		err = r.classify(ctx, p.NodeID, binding, &request)
+		err = r.classify(ctx, p.NodeID, binding, &request, err)
 	}
 	if err != nil {
 		return SourceRecord{}, docbankError(parent, err)
@@ -173,13 +173,16 @@ func (r *DocbankReader) ReadKataEvidenceSource(ctx context.Context, ref Referenc
 // current, and a version with no selected rendition alike, so it asks the
 // node. window is the window request that 404'd, or nil when the rendition
 // select did.
-func (r *DocbankReader) classify(ctx context.Context, nodeID int64, binding DocbankBinding, window *docbankmedia.EvidenceWindowRequest) error {
+func (r *DocbankReader) classify(ctx context.Context, nodeID int64, binding DocbankBinding, window *docbankmedia.EvidenceWindowRequest, failure error) error {
+	httpErr, _ := errors.AsType[*docbankmedia.HTTPError](failure)
 	current, err := r.client.CurrentVersion(ctx, nodeID)
 	switch {
 	case err != nil:
 		return err
 	case current != binding.ContentVersionID:
 		return ErrChanged
+	case httpErr != nil && httpErr.Reason == "evidence_unavailable":
+		return ErrUnavailable
 	case window == nil:
 		return ErrUnprocessed
 	}
