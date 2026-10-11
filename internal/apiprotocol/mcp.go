@@ -40,3 +40,41 @@ func (c MCPCapabilities) HasInboxContract() bool {
 	}
 	return false
 }
+
+// HasInboxCandidatesContract requires the exact metadata route and query fields.
+func (c MCPCapabilities) HasInboxCandidatesContract() bool {
+	if c.Version != 1 {
+		return false
+	}
+	for _, route := range c.Routes {
+		if route.OperationID != "listInboxCandidates" || route.Method != http.MethodGet || route.Path != "/api/v1/inbox/candidates" {
+			continue
+		}
+		for _, field := range []string{"source_id", "source_type", "source_identifier", "account_id", "scope", "limit", "cursor"} {
+			if !slices.Contains(route.QueryParameters, field) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+// HasInboxContextContract requires the exact scoped content route and fields.
+func (c MCPCapabilities) HasInboxContextContract() bool {
+	if c.Version != 1 {
+		return false
+	}
+	for _, route := range c.Routes {
+		if route.OperationID != "getInboxContext" || route.Method != http.MethodPost || route.Path != "/api/v1/inbox/context" {
+			continue
+		}
+		for _, field := range []string{"target", "message_id", "max_bytes"} {
+			if !slices.Contains(route.RequestProperties, field) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
