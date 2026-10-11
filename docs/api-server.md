@@ -999,6 +999,7 @@ feed, re-fetch its detail response if you cache either of these:
 * `body` and `body_html`. An added or edited body moves the watermark. A body
   *deletion* does not, so a body you already hold can still go stale — that one
   is in the exception list below.
+  Beeper repair can update `body_html` and advance `content_changed_at`, making the message reappear in this feed.
 * `from`. It is derived from the sender pointer, and a change of pointer moves
   the watermark. Renaming or correcting the participant the pointer names does
   not, so the address or display name can still change under you.
