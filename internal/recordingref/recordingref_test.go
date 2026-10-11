@@ -12,35 +12,33 @@ func TestScan(t *testing.T) {
 	for _, tc := range []struct {
 		name, text string
 		origins    []string
-		kind       Kind
 		count      int
 	}{
-		{"loom", "See https://WWW.LOOM.COM:443/share/abc?token=secret#fragment.", nil, Loom, 1},
-		{"cap", "https://cap.so/dev/abc", nil, CapCloud, 1},
-		{"cap HTTP", "http://cap.so/s/abc http://www.cap.so/embed/abc", nil, "", 0},
-		{"registered", "https://cap.example.test/s/abc", []string{"https://CAP.EXAMPLE.TEST:443"}, CapSelfHosted, 1},
-		{"IPv4", "https://192.0.2.1:8443/s/abc", []string{"https://192.0.2.1:8443"}, CapSelfHosted, 1},
-		{"IPv6 default port", "https://[2001:db8::1]:443/s/abc", []string{"https://[2001:db8::1]"}, CapSelfHosted, 1},
-		{"IPv6 nondefault port", "https://[2001:db8::1]:8443/s/abc", []string{"https://[2001:db8::1]:8443"}, CapSelfHosted, 1},
-		{"IPv6 wrong port", "https://[2001:db8::1]:8443/s/abc", []string{"https://[2001:db8::1]"}, "", 0},
-		{"unlisted", "https://cap.example.test/s/abc", nil, "", 0},
-		{"lookalike", "https://loom.com.example.test/share/abc", nil, "", 0},
-		{"user info", "https://alice@loom.com/share/abc", nil, "", 0},
-		{"port", "https://loom.com:444/share/abc", nil, "", 0},
-		{"long", "https://loom.com/share/" + strings.Repeat("a", 8192), nil, "", 0},
-		{"encoded path", "https://loom.com/share/%61bc", nil, "", 0},
-		{"long ID", "https://loom.com/share/" + strings.Repeat("a", 256), nil, Loom, 1},
-		{"punctuated ID", "https://cap.so/s/abc+def.ghi", nil, CapCloud, 1},
-		{"empty ID", "https://loom.com/share/", nil, "", 0},
-		{"multiple segments", "https://cap.so/s/abc/def", nil, "", 0},
-		{"deduplicate", "https://loom.com/share/abc https://www.loom.com/share/abc", nil, Loom, 1},
-		{"route identity", "https://loom.com/share/abc https://www.loom.com/embed/abc", nil, Loom, 2},
+		{"loom", "See https://WWW.LOOM.COM:443/share/abc?token=secret#fragment.", nil, 1},
+		{"cap", "https://cap.so/dev/abc", nil, 1},
+		{"cap HTTP", "http://cap.so/s/abc http://www.cap.so/embed/abc", nil, 0},
+		{"registered", "https://cap.example.test/s/abc", []string{"https://CAP.EXAMPLE.TEST:443"}, 1},
+		{"IPv4", "https://192.0.2.1:8443/s/abc", []string{"https://192.0.2.1:8443"}, 1},
+		{"IPv6 default port", "https://[2001:db8::1]:443/s/abc", []string{"https://[2001:db8::1]"}, 1},
+		{"IPv6 nondefault port", "https://[2001:db8::1]:8443/s/abc", []string{"https://[2001:db8::1]:8443"}, 1},
+		{"IPv6 wrong port", "https://[2001:db8::1]:8443/s/abc", []string{"https://[2001:db8::1]"}, 0},
+		{"unlisted", "https://cap.example.test/s/abc", nil, 0},
+		{"lookalike", "https://loom.com.example.test/share/abc", nil, 0},
+		{"user info", "https://alice@loom.com/share/abc", nil, 0},
+		{"port", "https://loom.com:444/share/abc", nil, 0},
+		{"long", "https://loom.com/share/" + strings.Repeat("a", 8192), nil, 0},
+		{"encoded path", "https://loom.com/share/%61bc", nil, 0},
+		{"long ID", "https://loom.com/share/" + strings.Repeat("a", 256), nil, 1},
+		{"punctuated ID", "https://cap.so/s/abc+def.ghi", nil, 1},
+		{"empty ID", "https://loom.com/share/", nil, 0},
+		{"multiple segments", "https://cap.so/s/abc/def", nil, 0},
+		{"deduplicate", "https://loom.com/share/abc https://www.loom.com/share/abc", nil, 1},
+		{"route identity", "https://loom.com/share/abc https://www.loom.com/embed/abc", nil, 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			refs := scanProse(tc.text, tc.origins, nil)
 			require.Len(t, refs, tc.count)
 			if tc.count == 1 {
-				assert.Equal(t, tc.kind, refs[0].Kind)
 				assert.Len(t, refs[0].RouteKey, 64)
 			}
 		})
@@ -48,7 +46,6 @@ func TestScan(t *testing.T) {
 	r := scanProse("https://cap.example.test/s/abc?token=secret", []string{"https://cap.example.test"}, nil)
 	require.Len(t, r, 1)
 	assert.Empty(t, r[0].Canonical)
-	assert.NotContains(t, r[0].Origin, "secret")
 }
 
 func TestTeamsPointer(t *testing.T) {

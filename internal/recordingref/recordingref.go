@@ -27,8 +27,7 @@ const (
 
 // Ref URLs contain access material and must stay in memory.
 type Ref struct {
-	Kind                                   Kind
-	Origin, RouteKey, Reference, Canonical string
+	RouteKey, Reference, Canonical string
 }
 
 func digest(value string) string {
@@ -137,7 +136,7 @@ func admit(raw string, allowed map[string]bool) (Ref, bool) {
 	if kind == CapSelfHosted {
 		canonical = ""
 	}
-	return Ref{Kind: kind, Origin: origin, RouteKey: digest(string(kind) + "\x00" + identity), Reference: raw, Canonical: canonical}, true
+	return Ref{RouteKey: digest(string(kind) + "\x00" + identity), Reference: raw, Canonical: canonical}, true
 }
 
 func scanProse(text string, origins []string, exact map[string]bool) []Ref {
@@ -197,5 +196,5 @@ func TeamsPointer(sourceAttachmentID, storagePath string) (Ref, bool) {
 	if err != nil {
 		return Ref{}, false
 	}
-	return Ref{Kind: TeamsRecording, Origin: u.Scheme + "://" + u.Host, RouteKey: digest(string(TeamsRecording) + "\x00" + sourceAttachmentID), Reference: storagePath, Canonical: u.String()}, true
+	return Ref{RouteKey: digest(string(TeamsRecording) + "\x00" + sourceAttachmentID), Reference: storagePath, Canonical: u.String()}, true
 }
