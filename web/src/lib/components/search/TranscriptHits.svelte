@@ -36,7 +36,7 @@
     notice = '';
     expired = false;
     retryable = false;
-    if (!allowed || !requestedQuery) return;
+    if (!allowed) return;
 
     const freshness = createStaleRequestGuard();
     let controller: AbortController | undefined;
