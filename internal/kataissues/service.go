@@ -170,15 +170,12 @@ func (s *Service) Link(ctx context.Context, issueRef string, evidence []kataevid
 	// Writes stay in the configured project, the scope --allow-kata-writes
 	// grants, even when the credential reaches others. An issue moved to
 	// another project takes new evidence there through Kata itself.
-	project := s.Project
-	if named, short, qualified := strings.Cut(strings.TrimSpace(issueRef), "#"); qualified {
-		if named == "" {
-			return taskclient.KataTask{}, taskclient.ErrInvalidRef
-		}
-		if named != s.Project {
-			return taskclient.KataTask{}, ErrOutsideProject
-		}
-		issueRef = short
+	project, issueRef, err := s.splitRef(issueRef)
+	if err != nil {
+		return taskclient.KataTask{}, err
+	}
+	if project != s.Project {
+		return taskclient.KataTask{}, ErrOutsideProject
 	}
 	resolved := map[string]quotation{}
 	for range maxLinkAttempts {
