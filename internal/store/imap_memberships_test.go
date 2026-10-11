@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/emailtags"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -928,6 +929,63 @@ func TestApplyIMAPMailboxDeltas_UnchangedResetWritesNothing(t *testing.T) {
 	assert.Equal([]string{"INBOX"}, messageLabels(t, f.store, secondID))
 	assert.False(messageTombstoned(t, f.store, firstID))
 	assert.False(messageTombstoned(t, f.store, secondID))
+}
+
+func TestApplyIMAPMailboxDeltas_ReorderedFlagsAfterTagSaveWriteNothing(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newAttrFixture(t, "imap", attrSink)
+	f.confirm(attrSink)
+	messageID := f.persist(attrMail{
+		raw: "From: " + attrSink + "\r\n\r\nbody", from: []string{attrSink}, sourceMsgKey: "INBOX|1",
+	})
+	delta := store.IMAPMailboxDelta{
+		Mailbox: "INBOX",
+		State:   store.IMAPFolderState{Mailbox: "INBOX", UIDValidity: 5, UIDNext: 2},
+		Memberships: []store.IMAPMembershipObservation{{
+			UID: 1, SourceMessageID: "INBOX|1", Flags: []string{"\\Seen", "Next"},
+		}},
+	}
+	require.NoError(f.st.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{delta}))
+	target, err := f.st.EmailTagTargetContext(t.Context(), messageID, "INBOX")
+	require.NoError(err)
+	require.NoError(f.st.SaveEmailTagsContext(t.Context(), target, &emailtags.MessageTagResult{
+		Provider: "imap", Mailbox: "INBOX", UIDValidity: 5, UID: 1,
+		Flags: []string{"Next", "\\Seen"}, Tags: []string{"Next"}, Verified: true,
+	}))
+	_, path := attribution(t, f.st, messageID)
+	require.Equal("sent", path.String)
+	stampMemberships(t, f.st, f.source.ID)
+	_, err = f.st.DB().Exec(`CREATE TABLE reset_write_audit (kind TEXT NOT NULL)`)
+	require.NoError(err)
+	auditSQL := `
+		CREATE TRIGGER audit_reset_labels AFTER DELETE ON message_labels
+		BEGIN INSERT INTO reset_write_audit VALUES ('label'); END;
+		CREATE TRIGGER audit_reset_attribution
+		AFTER UPDATE OF account_address, account_path ON messages
+		BEGIN INSERT INTO reset_write_audit VALUES ('attribution'); END;
+	`
+	if f.st.IsPostgreSQL() {
+		auditSQL = `
+			CREATE FUNCTION audit_reset_write() RETURNS trigger LANGUAGE plpgsql AS $$
+			BEGIN INSERT INTO reset_write_audit VALUES (TG_TABLE_NAME); RETURN NULL; END $$;
+			CREATE TRIGGER audit_reset_labels AFTER DELETE ON message_labels
+			FOR EACH ROW EXECUTE FUNCTION audit_reset_write();
+			CREATE TRIGGER audit_reset_attribution
+			AFTER UPDATE OF account_address, account_path ON messages
+			FOR EACH ROW EXECUTE FUNCTION audit_reset_write();
+		`
+	}
+	_, err = f.st.DB().Exec(auditSQL)
+	require.NoError(err)
+
+	delta.Reset = true
+	require.NoError(f.st.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{delta}))
+
+	assert.Zero(membershipsWritten(t, f.st, f.source.ID), "flag order must not rewrite a saved membership")
+	var writes int
+	require.NoError(f.st.DB().QueryRow(`SELECT COUNT(*) FROM reset_write_audit`).Scan(&writes))
+	assert.Zero(writes, "flag order must not rebuild labels or account attribution")
 }
 
 func TestApplyIMAPMailboxDeltas_ResetWritesOnlyChangedMemberships(t *testing.T) {

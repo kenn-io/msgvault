@@ -169,6 +169,8 @@ import type {
   GetMessageInlinePartParams,
   GetMessageInlinePartPathParameters,
   GetMessagePathParameters,
+  GetMessageTagsParams,
+  GetMessageTagsPathParameters,
   GetOperationRunPathParameters,
   GetOrganizationHistoryPathParameters,
   GetOrganizationPathParameters,
@@ -284,6 +286,8 @@ import type {
   MessageDetail,
   MessageListResponse,
   MessageRecordingsResponse,
+  MessageTagChange,
+  MessageTagResult,
   MuesliRemoteRequest,
   MuesliRemoteResult,
   OperationRunDetail,
@@ -462,6 +466,7 @@ import type {
   UnpublishCardDAVPersonPathParameters,
   UnsubscribeRequest,
   UpdateCardDAVBookRolesPathParameters,
+  UpdateMessageTagsPathParameters,
   UpdatePersonAgendaItemPathParameters,
   UploadTokenPathParameters,
   VerifyCLIParams,
@@ -2366,6 +2371,41 @@ export const listMessageRecordings = (
     {
       url: `/api/v1/messages/${encodeURIComponent(String(id))}/recordings`,
       method: "GET",
+    },
+    options,
+  );
+};
+/**
+ * @summary Read native email tags
+ */
+export const getMessageTags = (
+  { id }: GetMessageTagsPathParameters,
+  params?: GetMessageTagsParams,
+  options?: SecondParameter<typeof orvalFetch<MessageTagResult>>,
+) => {
+  return orvalFetch<MessageTagResult>(
+    {
+      url: `/api/v1/messages/${encodeURIComponent(String(id))}/tags`,
+      method: "GET",
+      params,
+    },
+    options,
+  );
+};
+/**
+ * @summary Add or remove native email tags
+ */
+export const updateMessageTags = (
+  { id }: UpdateMessageTagsPathParameters,
+  messageTagChange: MessageTagChange,
+  options?: SecondParameter<typeof orvalFetch<MessageTagResult>>,
+) => {
+  return orvalFetch<MessageTagResult>(
+    {
+      url: `/api/v1/messages/${encodeURIComponent(String(id))}/tags`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: messageTagChange,
     },
     options,
   );

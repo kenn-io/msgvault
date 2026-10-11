@@ -36,6 +36,7 @@ import (
 	"go.kenn.io/msgvault/internal/kataevidence"
 	"go.kenn.io/msgvault/internal/mcpevents"
 	"go.kenn.io/msgvault/internal/meetingimport"
+	"go.kenn.io/msgvault/internal/msmail"
 	"go.kenn.io/msgvault/internal/muesli"
 	"go.kenn.io/msgvault/internal/notionmeetings"
 	"go.kenn.io/msgvault/internal/oauth"
@@ -895,7 +896,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 	apiOpts.GmailProfileAddress = func(ctx context.Context, source *store.Source) (string, error) {
 		client, serviceAccount, err := newDaemonGmailClient(
-			ctx, source.Identifier, source, getOAuthMgr, state,
+			ctx, source.Identifier, source, getOAuthMgr, state, oauth.Scopes,
 		)
 		if err != nil {
 			return "", err
@@ -1774,6 +1775,8 @@ type storeAPIAdapter struct {
 	store                   *store.Store
 	config                  *config.Config
 	options                 invocationOptions
+	emailTagClientFactory     func(context.Context, *store.Source) (gmail.API, error)
+	microsoftTagClientFactory func(context.Context, *store.Source, bool) (*msmail.Client, error)
 	mcpEventsCapture        bool
 	mcpEventsCaptureConfig  *store.MCPEventsConfig
 	logger                  *slog.Logger
@@ -4329,6 +4332,7 @@ func scheduledSyncPreemptible(s *store.Store, identifier string, logger *slog.Lo
 func newDaemonGmailClient(
 	ctx context.Context, email string, src *store.Source,
 	getOAuthMgr func(ctx context.Context, _ string) (*oauth.Manager, error), state *invocation,
+	scopes []string,
 ) (client gmail.API, serviceAccount bool, err error) {
 	if state == nil {
 		state = invocationFromContext(ctx)
@@ -4349,9 +4353,9 @@ func newDaemonGmailClient(
 
 	saKeyPath := cfg.OAuth.ServiceAccountKeyFor(appName)
 	if saKeyPath != "" {
-		granted := append([]string(nil), oauth.Scopes...)
+		granted := append([]string(nil), scopes...)
 		readGrantedScopes = func() []string { return granted }
-		saMgr, saErr := oauth.NewServiceAccountManager(saKeyPath, oauth.Scopes)
+		saMgr, saErr := oauth.NewServiceAccountManager(saKeyPath, scopes)
 		if saErr != nil {
 			return nil, false, provideridentity.NewGmailCredentialError(
 				provideridentity.GmailServiceAccountConfiguration,
@@ -4425,7 +4429,7 @@ func runScheduledGmailSync(ctx context.Context, email string, src *store.Source,
 	}
 	cfg := state.cfg
 	logger := state.logger
-	client, _, err := newDaemonGmailClient(ctx, email, src, getOAuthMgr, state)
+	client, _, err := newDaemonGmailClient(ctx, email, src, getOAuthMgr, state, oauth.Scopes)
 	if err != nil {
 		return nil, pauseNativeGmailPermission(ctx, s, permission, err)
 	}

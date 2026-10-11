@@ -155,6 +155,7 @@ type handlers struct {
 	kata                KataBackend
 	identityReview      IdentityReviewBackend
 	personCardDAV       PersonCardDAVBackend
+	messageTags         MessageTagBackend
 	identityScoring     IdentityScoringBackend
 	drafts              DraftRunner
 
