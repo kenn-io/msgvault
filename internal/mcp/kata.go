@@ -72,6 +72,7 @@ func kataDefinition[I, O any](name, description string, write bool, call func(co
 	definition.availability = func(c catalogCapabilities) bool { return c.kata }
 	definition.annotations.OpenWorldHint = new(true)
 	if write {
+		// --allow-kata-writes supplies consent for clients without per-call approval.
 		definition.security = toolSecurityKataWrite
 		definition.annotations.ReadOnlyHint = false
 		definition.annotations.IdempotentHint = true
@@ -101,7 +102,7 @@ func kataDefinitions() []toolDefinition {
 		create,
 		find,
 		issueContext,
-		kataDefinition("link_kata_evidence", "Add prepared evidence to an existing Kata issue. Repeating a link adds nothing.", true, func(ctx context.Context, b KataBackend, in kataLinkArgs) (generated.KataIssueResponse, error) {
+		kataDefinition("link_kata_evidence", "Add prepared evidence to an existing Kata issue in the configured project. Repeating a link adds nothing.", true, func(ctx context.Context, b KataBackend, in kataLinkArgs) (generated.KataIssueResponse, error) {
 			return b.LinkKataEvidence(ctx, in.Ref, in.KataEvidenceLinkRequest)
 		}),
 	}
