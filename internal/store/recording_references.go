@@ -97,7 +97,7 @@ func (s *Store) ReadRecordingMessage(ctx context.Context, messageID int64) (Reco
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return m, false, err
 	}
-	m.Body = embeddingBodyValue(text, html)
+	m.Body = nullStringValue(text)
 	m.BodyHTML = nullStringValue(html)
 	rows, err := s.db.QueryContext(ctx, `SELECT source_attachment_id, storage_path FROM attachments WHERE message_id=? AND source_attachment_id LIKE 'teams:recording:%' ORDER BY id`, messageID)
 	if err != nil {
