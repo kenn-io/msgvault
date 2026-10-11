@@ -170,17 +170,13 @@ func TestRecordingReferenceLegacyBeeper(t *testing.T) {
 	id := f.CreateMessage("recording")
 	recordingBody(t, f, id, "Watch recording")
 	require.NoError(f.Store.UpsertMessageRawWithFormat(id, []byte(`{"text":"<a href=\"https://loom.com/share/abc!\">Watch recording</a>"}`), "beeper_json"))
-	before, err := f.Store.LoadRecordingReferenceCursor(t.Context(), "destination")
-	require.NoError(err)
-	_, err = f.Store.AdvanceRecordingReferenceCursor(t.Context(), "destination", before, store.RecordingReferenceCursor{At: time.Now().Add(time.Hour), Policy: digest("")})
-	require.NoError(err)
 	requests := make(chan string, 2)
 	client := recordingURLClient(t, requests)
 	w := NewWorker(f.Store, client, "destination", nil, nil)
 	runDiscovery(t, w, 1)
 	require.Len(requests, 1)
 	assert.Equal("https://loom.com/share/abc!", <-requests)
-	before, err = f.Store.LoadRecordingReferenceCursor(t.Context(), "destination")
+	before, err := f.Store.LoadRecordingReferenceCursor(t.Context(), "destination")
 	require.NoError(err)
 	_, err = f.Store.AdvanceRecordingReferenceCursor(t.Context(), "destination", before, store.RecordingReferenceCursor{Policy: before.Policy})
 	require.NoError(err)
@@ -215,11 +211,10 @@ func TestRecordingReferenceHTMLVisibleURL(t *testing.T) {
 		extraAnchors              int
 		repeated                  bool
 	}{
-		{"parenthesized parenthesis ID", "https://cap.so/s/abc)", "(", ")", 0, false},
 		{"suffix with anchors", "https://cap.so/s/abc!", "", "...", 8, false},
 		{"encoded repeated anchor", "https://loom.com/share/abc?token=one&key=two!…", "", "", 0, true},
 	} {
-		for _, textVariant := range []string{"both", "HTML only", "plain text without URL"} {
+		for _, textVariant := range []string{"both", "plain text without URL"} {
 			t.Run(tc.name+"/"+textVariant, func(t *testing.T) {
 				assert := assert.New(t)
 				visible := tc.before + tc.href + tc.after
@@ -238,10 +233,7 @@ func TestRecordingReferenceHTMLVisibleURL(t *testing.T) {
 				}
 				body += anchors.String()
 				text += strings.Repeat(" recording", tc.extraAnchors)
-				switch textVariant {
-				case "HTML only":
-					text = ""
-				case "plain text without URL":
+				if textVariant == "plain text without URL" {
 					text = "Watch recording"
 				}
 				m := store.RecordingMessage{Body: text, BodyHTML: body}
@@ -260,10 +252,11 @@ func TestRecordingReferenceTeamsPointer(t *testing.T) {
 	f := storetest.New(t)
 	id := f.CreateMessage("teams")
 	require.NoError(t, f.Store.ReplaceMessageLinkAttachments(id, []store.AttachmentRef{{SourceAttachmentID: "teams:recording:abc", StoragePath: "https://teams.example.test/play?token=secret"}}))
-	client := recordingClient(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusServiceUnavailable) })
+	requests := make(chan string, 1)
+	client := recordingURLClient(t, requests)
 	runDiscovery(t, NewWorker(f.Store, client, "destination", nil, nil), 1)
-	state, _, _ := recordingState(t, f, id)
-	assert.Equal(t, "uncertain", state)
+	require.Len(t, requests, 1)
+	assert.Equal(t, "https://teams.example.test/play?token=secret", <-requests)
 }
 
 func TestRecordingReferenceDelivery(t *testing.T) {

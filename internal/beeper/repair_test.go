@@ -91,9 +91,8 @@ func TestRepairArchiveRewritesStaleDerivedRows(t *testing.T) {
 	require.NoError(st.DB().QueryRow(`SELECT b.body_text, COALESCE(m.snippet, ''), b.body_html
 		FROM messages m JOIN message_bodies b ON b.message_id = m.id
 		WHERE m.source_message_id = 'html1'`).Scan(&body, &snippet, &html))
-	expected := Message{Text: ch.Msgs[0].Text, Attachments: []Attachment{{Transcription: &Transcription{Transcription: "source words"}}}}
-	assert.Equal(MessageHTML(&expected), html)
-	assert.Equal(bodyText(&expected), body)
+	assert.Equal(`<p>hello <a href="https://example.com" rel="noopener noreferrer">there</a></p><br>🎤 transcript: source words`, html)
+	assert.Equal("hello there\n🎤 transcript: source words", body)
 	assert.Equal(body, snippet)
 
 	// The forwarded link keeps its share URL and is excluded from standalone

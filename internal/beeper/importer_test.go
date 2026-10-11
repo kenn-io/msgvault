@@ -113,8 +113,7 @@ func TestRecordingLinkHTMLPersists(t *testing.T) {
 	require.NoError(err)
 	var html string
 	require.NoError(st.DB().QueryRow(`SELECT COALESCE(b.body_html,'') FROM messages m JOIN message_bodies b ON b.message_id=m.id WHERE m.source_message_id='html1'`).Scan(&html))
-	expected := Message{Text: ch.Msgs[0].Text, Attachments: []Attachment{{Transcription: &Transcription{Transcription: "source words"}}}}
-	assert.Equal(MessageHTML(&expected), html)
+	assert.Equal(`<a href="https://loom.com/share/abc">Watch recording</a><br>🎤 transcript: source words`, html)
 }
 
 func TestImportBackfillEndToEnd(t *testing.T) {
