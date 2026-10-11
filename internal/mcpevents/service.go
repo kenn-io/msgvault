@@ -234,25 +234,22 @@ func (s *Service) Subscribe(ctx context.Context, principal string, req Subscribe
 			return result, err
 		}
 	}
-	now := time.Now().UTC()
 	ttl := 24 * time.Hour
 	if req.TTLMS != nil {
 		ttl = time.Duration(*req.TTLMS) * time.Millisecond
 	}
-	activation.Now = now
-	activation.Subscription.ExpiresAt = now.Add(ttl)
-	activation.Subscription.VerifiedAt = now
 	activation.Subscription.SecretEnc, err = encryptSecret(s.key, id, "current", secret)
 	if err != nil {
 		return result, err
 	}
+	rotating := false
 	if old != nil {
 		if !hmac.Equal(secret, oldSecret) && old.State == "active" {
 			activation.Subscription.PreviousSecretEnc, err = encryptSecret(s.key, id, "previous", oldSecret)
 			if err != nil {
 				return result, err
 			}
-			activation.Subscription.PreviousSecretUntil = now.Add(time.Minute)
+			rotating = true
 		} else if hmac.Equal(secret, oldSecret) {
 			activation.Subscription.PreviousSecretEnc = old.PreviousSecretEnc
 			activation.Subscription.PreviousSecretUntil = old.PreviousSecretUntil
@@ -260,7 +257,19 @@ func (s *Service) Subscribe(ctx context.Context, principal string, req Subscribe
 	}
 	var sub *store.MCPSubscription
 	var truncated bool
-	err = s.operation(ctx, func() error { sub, truncated, err = s.st.ActivateMCPSubscription(ctx, activation); return err })
+	err = s.operation(ctx, func() error {
+		// The gate can be held longer than a short TTL, so the subscription's
+		// times start once activation can run.
+		now := time.Now().UTC()
+		activation.Now = now
+		activation.Subscription.ExpiresAt = now.Add(ttl)
+		activation.Subscription.VerifiedAt = now
+		if rotating {
+			activation.Subscription.PreviousSecretUntil = now.Add(time.Minute)
+		}
+		sub, truncated, err = s.st.ActivateMCPSubscription(ctx, activation)
+		return err
+	})
 	if err != nil {
 		return result, safeStoreError(err)
 	}
