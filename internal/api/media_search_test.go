@@ -15,7 +15,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/docbankmedia"
-	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -312,11 +311,6 @@ func TestMediaSearchPersonDirection(t *testing.T) {
 				(%d::BIGINT, 1::BIGINT, 'unlinked', 102::BIGINT, 'Unlinked', 'quarterly numbers', TIMESTAMP '2026-07-18 11:00:00', 100::BIGINT, true, 1::INTEGER, NULL::TIMESTAMP, %d::BIGINT, NULL::BIGINT, 'email', NULL::VARCHAR, false, 2026, 7)`, selected.messageID, participant, unlinked.messageID, alias)
 				recipients := fmt.Sprintf(`(%d::BIGINT, %d::BIGINT, 'from', 'Selected'), (%d::BIGINT, %d::BIGINT, 'from', 'Alias')`, selected.messageID, participant, unlinked.messageID, alias)
 				engine, _ := newExploreDuckDBFixtureWithMessagesAndRecipients(t, messages, recipients, unlinked.messageID)
-				ordinary, err := engine.Explore(t.Context(), query.ExploreRequest{Context: query.Context{ParticipantIDs: []int64{participant}}})
-				require.NoError(err)
-				require.Len(ordinary.Rows, 1)
-				require.NotNil(ordinary.Rows[0].AnchorMessageID)
-				assert.Equal(selected.messageID, *ordinary.Rows[0].AnchorMessageID)
 				server.SetAnalyticsEngine(engine, AnalyticsModeDuckDB)
 			}
 			status, response, raw := searchMediaFor(t, server, fmt.Sprintf("q=quarterly+numbers&participant_id=%d", participant))

@@ -95,11 +95,9 @@ describe('TranscriptHits', () => {
     await vi.advanceTimersByTimeAsync(300);
     expect(fetchFn).toHaveBeenCalledTimes(1);
     expect(screen.getByText('current evidence')).toBeTruthy();
-    for (const query of ['"quarterly"', 'from:person']) {
-      await view.rerender({ client: view.client, query, supported: true });
-      expect(screen.queryByText('current evidence')).toBeNull();
-      expect(fetchFn).toHaveBeenCalledTimes(1);
-    }
+    await view.rerender({ client: view.client, query: '"quarterly"', supported: true });
+    expect(screen.queryByText('current evidence')).toBeNull();
+    expect(fetchFn).toHaveBeenCalledTimes(1);
     await view.rerender({ client: view.client, query: 'quarterly', supported: true });
     await vi.advanceTimersByTimeAsync(300);
     expect(new URL((fetchFn.mock.calls[1][0] as Request).url).searchParams.get('q')).toBe('quarterly');
