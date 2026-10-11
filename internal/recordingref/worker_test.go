@@ -99,17 +99,36 @@ func writeReceipt(t *testing.T, w http.ResponseWriter, op string) {
 func TestRecordingReferenceFeed(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	f := storetest.New(t)
+	requests := make(chan string, 4)
 	client := recordingClient(t, func(w http.ResponseWriter, r *http.Request) {
 		var req docbankmedia.ReferenceRequest
 		if !assert.NoError(json.UnmarshalRead(r.Body, &req)) {
 			return
 		}
+		requests <- req.ReferenceURL
 		writeReceipt(t, w, req.OperationID)
 	})
 	one := f.CreateMessage("one")
 	recordingBody(t, f, one, "https://loom.com/share/one")
 	w := NewWorker(f.Store, client, "destination", nil, nil)
 	runDiscovery(t, w, 1)
+	_, _, operation := recordingState(t, f, one)
+	padded := f.CreateMessage("padded")
+	recordingBody(t, f, padded, "https://loom.com:00443/share/padded")
+	before, err := f.Store.LoadRecordingReferenceCursor(t.Context(), "destination")
+	require.NoError(err)
+	_, err = f.Store.AdvanceRecordingReferenceCursor(t.Context(), "destination", before, store.RecordingReferenceCursor{At: time.Now().Add(time.Hour), Policy: digest("discovery-v2\x00")})
+	require.NoError(err)
+	runDiscovery(t, w, 2)
+	require.Len(requests, 2)
+	<-requests
+	assert.Equal("https://loom.com:00443/share/padded", <-requests)
+	state, _, after := recordingState(t, f, one)
+	assert.Equal("retained", state)
+	assert.Equal(operation, after)
+	cursor, err := f.Store.LoadRecordingReferenceCursor(t.Context(), "destination")
+	require.NoError(err)
+	assert.Equal(digest("discovery-v3\x00"), cursor.Policy)
 	source, err := f.Store.GetOrCreateSource("slack", "alice")
 	require.NoError(err)
 	conv, err := f.Store.EnsureConversation(source.ID, "thread", "Thread")
@@ -122,7 +141,7 @@ func TestRecordingReferenceFeed(t *testing.T) {
 	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT COUNT(*) FROM recording_references WHERE message_id=?`), two).Scan(&count))
 	assert.Zero(count)
 	w = NewWorker(f.Store, client, "destination", []string{"https://cap.example.test"}, nil)
-	runDiscovery(t, w, 2)
+	runDiscovery(t, w, 3)
 	recordingBody(t, f, one, "recording removed")
 	assert.Eventually(func() bool {
 		err := w.RunBatch(t.Context())

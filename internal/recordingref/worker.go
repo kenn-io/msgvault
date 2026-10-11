@@ -130,7 +130,7 @@ func (w *Worker) reconcile(ctx context.Context, m store.RecordingMessage) error 
 func (w *Worker) RunBatch(ctx context.Context) error {
 	var examined, pages, attempted int
 	start := time.Now()
-	policy := digest("discovery-v2\x00" + strings.Join(w.origins, "\x00"))
+	policy := digest("discovery-v3\x00" + strings.Join(w.origins, "\x00"))
 	for pages < 50 && time.Since(start) < 20*time.Second {
 		var before, cursor store.RecordingReferenceCursor
 		var page store.ChangedMessagePage

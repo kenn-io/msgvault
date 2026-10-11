@@ -68,6 +68,7 @@ func parse(raw string) (*url.URL, error) {
 		if err != nil || n < 1 || n > 65535 {
 			return nil, errors.New("invalid recording port")
 		}
+		port = strconv.Itoa(n)
 	}
 	if (u.Scheme == "http" && port == "80") || (u.Scheme == "https" && port == "443") {
 		port = ""

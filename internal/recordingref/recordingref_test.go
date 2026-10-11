@@ -16,6 +16,8 @@ func TestScan(t *testing.T) {
 	}{
 		{"loom", "See https://WWW.LOOM.COM:443/share/abc?token=secret#fragment.", nil, []string{"https://WWW.LOOM.COM:443/share/abc?token=secret#fragment"}},
 		{"cap", "https://cap.so/dev/abc", nil, []string{"https://cap.so/dev/abc"}},
+		{"padded cloud port", "https://loom.com:00443/share/abc", nil, []string{"https://loom.com:00443/share/abc"}},
+		{"padded registered port", "https://cap.example.test:08443/s/abc", []string{"https://cap.example.test:8443"}, []string{"https://cap.example.test:08443/s/abc"}},
 		{"cap HTTP", "http://cap.so/s/abc http://www.cap.so/embed/abc", nil, nil},
 		{"registered", "https://cap.example.test/s/abc", []string{"https://CAP.EXAMPLE.TEST:443"}, []string{"https://cap.example.test/s/abc"}},
 		{"IPv4", "https://192.0.2.1:8443/s/abc", []string{"https://192.0.2.1:8443"}, []string{"https://192.0.2.1:8443/s/abc"}},
@@ -54,9 +56,13 @@ func TestScan(t *testing.T) {
 			assert.Equal(t, tc.want, got)
 		})
 	}
-	r := scanProse("https://cap.example.test/s/abc?token=secret", []string{"https://cap.example.test"}, nil)
-	require.Len(t, r, 1)
-	assert.Empty(t, r[0].Canonical)
+	assert, require := assert.New(t), require.New(t)
+	r := scanProse("https://cap.example.test:8443/s/abc?token=secret", []string{"https://cap.example.test:8443"}, nil)
+	require.Len(r, 1)
+	assert.Empty(r[0].Canonical)
+	padded := scanProse("https://cap.example.test:08443/s/abc?token=secret", []string{"https://cap.example.test:08443"}, nil)
+	require.Len(padded, 1)
+	assert.Equal(r[0].RouteKey, padded[0].RouteKey)
 }
 
 func TestTeamsPointer(t *testing.T) {
@@ -69,7 +75,7 @@ func TestTeamsPointer(t *testing.T) {
 	assert.False(ok)
 	_, ok = TeamsPointer("teams:recording:abc", "https://alice@teams.example.test/play")
 	assert.False(ok)
-	r, ok = TeamsPointer("teams:recording:ipv6", "https://[2001:DB8::1]:8443/play?id=secret#fragment")
+	r, ok = TeamsPointer("teams:recording:ipv6", "https://[2001:DB8::1]:08443/play?id=secret#fragment")
 	require.True(ok)
 	assert.Equal("https://[2001:db8::1]:8443/play?id=secret", r.Canonical)
 }
@@ -79,6 +85,8 @@ func TestCanonicalOrigin(t *testing.T) {
 		{"https://example.test/s/abc", ""},
 		{"https://example.test#token", ""},
 		{"HTTPS://EXAMPLE.TEST:443", "https://example.test"},
+		{"https://example.test:00443", "https://example.test"},
+		{"https://example.test:08443", "https://example.test:8443"},
 		{"http://192.0.2.1:80", "http://192.0.2.1"},
 		{"https://[2001:DB8::1]", "https://[2001:db8::1]"},
 		{"https://[2001:db8::1]:443", "https://[2001:db8::1]"},
