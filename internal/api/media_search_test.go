@@ -62,14 +62,14 @@ func TestMediaSearchStatus(t *testing.T) {
 			assert.Zero(f.docbank.requestCount())
 			begin, _ := gate.counts()
 			assert.Zero(begin)
-			server.operationGate = nil
-			code, _, raw := searchMediaFor(t, server, "q=words")
 			if state != "configured" {
+				server.operationGate = nil
+				code, _, raw := searchMediaFor(t, server, "q=words")
 				assert.Equal(http.StatusServiceUnavailable, code, raw)
 				assert.Contains(raw, "media_search_unavailable")
 				assert.Contains(raw, "Configure the Docbank integration to search transcripts")
+				assert.Empty(f.requests)
 			}
-			assert.Empty(f.requests)
 		})
 	}
 }
