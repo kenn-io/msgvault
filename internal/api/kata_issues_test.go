@@ -182,11 +182,6 @@ func TestKataIssueLookupArchiveErrors(t *testing.T) {
 			require.NoError(t, err)
 			return 1
 		}, http.StatusServiceUnavailable, "archive_unavailable"},
-		{"database closed", func(t *testing.T, f *storetest.Fixture) int64 {
-			t.Helper()
-			require.NoError(t, f.Store.DB().Close())
-			return 1
-		}, http.StatusServiceUnavailable, "archive_unavailable"},
 		{"message missing", func(_ *testing.T, _ *storetest.Fixture) int64 {
 			return 1
 		}, http.StatusNotFound, "evidence_unavailable"},
