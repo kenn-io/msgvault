@@ -1,7 +1,6 @@
 package config
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -10,34 +9,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestBeeperDocbankConfigURL(t *testing.T) {
+func TestBeeperDocbankConfigDefersURLValidation(t *testing.T) {
 	t.Setenv("MSGVAULT_HOME", t.TempDir())
-	for _, tc := range []struct {
-		name    string
-		url     string
-		enabled bool
-		valid   bool
-	}{
-		{"remote HTTPS", "https://docbank.example.com", true, true},
-		{"loopback HTTP", "http://127.0.0.1:8080", true, true},
-		{"missing URL", "", true, false},
-		{"remote HTTP", "http://docbank.example.com", true, false},
-		{"credentials", "https://user:secret@docbank.example.com", true, false},
-		{"query", "https://docbank.example.com?key=value", true, false},
-		{"disabled", "invalid", false, true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "config.toml")
-			content := fmt.Sprintf("[integrations.docbank]\nenabled = %t\nurl = %q\n", tc.enabled, tc.url)
-			require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
-			_, err := Load(path, "")
-			if tc.valid {
-				require.NoError(t, err)
-			} else {
-				require.ErrorContains(t, err, "integrations.docbank.url")
-			}
-		})
-	}
+	path := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(path, []byte("[integrations.docbank]\nenabled = true\nurl = \"invalid\"\n"), 0o600))
+	_, err := Load(path, "")
+	require.NoError(t, err)
 }
 
 func TestBeeperDocbankConfig(t *testing.T) {

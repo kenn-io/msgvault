@@ -185,13 +185,13 @@ func TestKataCommandsRefuseAnOlderDaemon(t *testing.T) {
 		require.ErrorContains(t, err, "too old for Kata issues", args[0])
 	}
 	// Citing a Docbank transcript needs a daemon that reads them.
-	version.Store(new("3.11.0"))
+	version.Store(new("3.12.0"))
 	command := newKataCmd()
 	command.SetArgs([]string{"evidence", "prepare"})
 	command.SetIn(strings.NewReader(`{"selectors":[{"kind":"docbank_rendition","message_id":1,"attachment_id":2,"max_chars":1000}]}`))
 	command.SetOut(io.Discard)
 	command.SetErr(io.Discard)
-	require.ErrorContains(t, command.ExecuteContext(ctx), "API schema 3.12.0")
+	require.ErrorContains(t, command.ExecuteContext(ctx), "API schema 3.13.0")
 }
 
 func kataInputFor(command string) string {
@@ -254,20 +254,8 @@ func testKataDocbankThroughDaemonAdapter(t *testing.T, origin string) {
 		case "/api/v1/nodes/7":
 			_, _ = fmt.Fprintf(w, `{"id":7,"revision":1,"current_version_id":%q}`, version)
 		case "/api/v1/renditions/text":
-			var request struct {
-				NodeID    int64  `json:"node_id"`
-				Revision  int64  `json:"revision"`
-				VersionID string `json:"version_id"`
-				BlobHash  string `json:"blob_hash"`
-				Size      int64  `json:"size"`
-				Profile   string `json:"profile"`
-			}
-			if !assert.NoError(json.UnmarshalRead(r.Body, &request, json.RejectUnknownMembers(true))) {
-				return
-			}
-			assert.Equal(profile, request.Profile)
-			assert.NoError(json.MarshalWrite(w, map[string]any{"state": "ready", "source": map[string]any{"node_id": request.NodeID, "revision": request.Revision,
-				"version_id": request.VersionID, "blob_hash": request.BlobHash, "size": request.Size}, "profile": map[string]any{"name": request.Profile},
+			assert.NoError(json.MarshalWrite(w, map[string]any{"state": "ready", "source": map[string]any{"node_id": 7, "revision": 1,
+				"version_id": version, "blob_hash": hash, "size": 0}, "profile": map[string]any{"name": profile},
 				"attachment_id": strings.Repeat("b", 64), "build_id": strings.Repeat("c", 64), "artifact": map[string]any{"sha256": strings.Repeat("d", 64)}}))
 		case "/api/v1/media/sources/source/versions/source-version/transcript":
 			assert.NoError(json.MarshalWrite(w, docbankmedia.MediaTranscript{VaultUID: vault, SourceID: "source", SourceVersionID: "source-version", ContentVersionID: version,
@@ -313,7 +301,14 @@ func testKataDocbankThroughDaemonAdapter(t *testing.T, origin string) {
 	_, err = st.DB().Exec(st.Rebind("UPDATE beeper_media_deliveries SET supplied_input_id=? WHERE destination_key=? AND processing_key=?"), inputID, mapping.DestinationKey, mapping.ProcessingKey)
 	require.NoError(err)
 
-	kataServer := httptest.NewServer(katatest.New(t).Service.Handler())
+	kataHandler := katatest.New(t).Service.Handler()
+	var metadataScans atomic.Int32
+	kataServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/issues" {
+			metadataScans.Add(1)
+		}
+		kataHandler.ServeHTTP(w, r)
+	}))
 	t.Cleanup(kataServer.Close)
 	cfg := &config.Config{}
 	cfg.Integrations.Kata = config.TaskIntegrationConfig{Enabled: true, Endpoint: kataServer.URL, APIKey: katatest.Token, DefaultProject: "example"}
@@ -333,8 +328,10 @@ func testKataDocbankThroughDaemonAdapter(t *testing.T, origin string) {
 	require.NoError(err)
 	var created generated.KataIssueResponse
 	require.NoError(json.Unmarshal(runKataCommand(ctx, t, string(request), "create", "--idempotency-key", "docbank-key", "--json"), &created))
+	metadataScans.Store(0)
 	var citing generated.KataIssueListResponse
 	require.NoError(json.Unmarshal(runKataCommand(ctx, t, "", "issues", "--message", strconv.FormatInt(messageID, 10), "--attachment", strconv.FormatInt(attachmentID, 10), "--json"), &citing))
+	assert.Equal(int32(1), metadataScans.Load())
 	require.Len(citing.Issues, 1, "the file lookup finds an issue citing only its Docbank transcript")
 	assert.Equal(created.Issue.UID, citing.Issues[0].UID)
 	assert.Contains(string(runKataCommand(ctx, t, "", "context", created.Issue.QualifiedRef)), "[Send the revised budget by Friday.]\n")
@@ -364,10 +361,38 @@ func testKataDocbankThroughDaemonAdapter(t *testing.T, origin string) {
 	require.NoError(err)
 	both, err := kata.CreateTask(t.Context(), "example", "both", taskclient.KataCreate{Title: "Cites both", Metadata: metadata(chunkRef, transcriptRef)})
 	require.NoError(err)
+	historical := mapping
+	historical.DestinationKey = "historical-destination"
+	historical.OccurrenceRef = "msgvault:historical"
+	require.NoError(st.ReconcileBeeperMediaMapping(t.Context(), historical))
+	historicalRef := transcriptRef
+	historicalRef.OccurrenceKey = historical.OccurrenceRef
+	historicalIssue, err := kata.CreateTask(t.Context(), "example", "historical", taskclient.KataCreate{Title: "Cites historical delivery", Metadata: metadata(historicalRef)})
+	require.NoError(err)
+	metadataScans.Store(0)
+
 	require.NoError(json.Unmarshal(runKataCommand(ctx, t, "", "issues", "--message", strconv.FormatInt(messageID, 10), "--attachment", strconv.FormatInt(attachmentID, 10), "--json"), &citing))
 	uids := []string{}
 	for _, issue := range citing.Issues {
 		uids = append(uids, issue.UID)
 	}
-	assert.Equal([]string{created.Issue.UID, chunkOnly.UID, both.UID}, uids)
+	assert.Equal(int32(1), metadataScans.Load())
+	assert.Equal([]string{created.Issue.UID, chunkOnly.UID, both.UID, historicalIssue.UID}, uids)
+	require.NoError(st.UpsertMessageRawWithFormat(messageID, []byte(`{"id":"voice1","attachments":[]}`), "beeper_json"))
+	var changed generated.KataIssueContextResponse
+	require.NoError(json.Unmarshal(runKataCommand(ctx, t, "", "context", created.Issue.QualifiedRef, "--json"), &changed))
+	require.Len(changed.Passages, 1)
+	assert.Equal("changed", changed.Passages[0].State)
+	assert.Equal("Send the revised budget by Friday.", *changed.Passages[0].SavedQuote)
+
+	cfg.Integrations.Docbank.URL = "invalid"
+	invalidDaemon := httptest.NewServer(api.NewServer(cfg, &storeAPIAdapter{store: st}, nil, slog.New(slog.DiscardHandler)).Router())
+	t.Cleanup(invalidDaemon.Close)
+	invalidContext := configureRemoteDaemonForTest(t, invalidDaemon.URL)
+	command := newKataCmd()
+	command.SetArgs([]string{"evidence", "prepare"})
+	command.SetIn(strings.NewReader(selector))
+	command.SetOut(io.Discard)
+	command.SetErr(io.Discard)
+	require.ErrorContains(command.ExecuteContext(invalidContext), "invalid URL")
 }

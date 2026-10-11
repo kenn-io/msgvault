@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -614,4 +615,37 @@ func TestNormalizeMCPHTTPAddr(t *testing.T) {
 		_, err := normalizeMCPHTTPAddr("not-a-port", false, false)
 		require.Error(t, err, "expected error for non-port, non-host:port")
 	})
+}
+
+func TestDaemonMCPDocbankCapability(t *testing.T) {
+	for _, tc := range []struct {
+		version          string
+		configured, want bool
+	}{
+		{"3.12.0", true, false}, {"3.13.0", false, false}, {"3.13.0", true, true},
+	} {
+		t.Run(tc.version+"/"+fmt.Sprint(tc.configured), func(t *testing.T) {
+			ctx := withStoreResolverConfig(t, &config.Config{Data: config.DataConfig{DataDir: t.TempDir()}})
+			var probes atomic.Int32
+			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/v1/health":
+					require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": tc.version}))
+				case "/api/v1/media/search/status":
+					probes.Add(1)
+					require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"configured": tc.configured}))
+				default:
+					http.NotFound(w, r)
+				}
+			})
+			opts := daemonMCPServeOptions(ctx, client, invocationFromContext(ctx))
+			assert.True(t, opts.KataLookup)
+			assert.Equal(t, tc.want, opts.KataDocbank)
+			if tc.version == "3.12.0" {
+				assert.Zero(t, probes.Load())
+			} else {
+				assert.Equal(t, int32(1), probes.Load())
+			}
+		})
+	}
 }

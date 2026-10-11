@@ -119,8 +119,9 @@ type ServeOptions struct {
 	DirectoryBackend    peoplebrowser.DirectoryLister
 	PersonAgendaBackend PersonAgendaBackend
 	Kata                KataBackend
-	// KataLookup enables issue lookup, context reads and Docbank citation descriptions.
-	KataLookup bool
+	// KataLookup enables issue lookup and context reads.
+	KataLookup  bool
+	KataDocbank bool
 	// AllowProfileWrites exposes person promotion and Notes mutation tools.
 	// It remains false unless the operator explicitly opts in.
 	AllowProfileWrites bool

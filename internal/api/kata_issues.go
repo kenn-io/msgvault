@@ -1,11 +1,10 @@
 package api
 
 import (
-	"cmp"
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
-	"slices"
 	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -263,9 +262,11 @@ func (s *Server) writeKataIssueError(w http.ResponseWriter, err error) {
 		{kataevidence.ErrArchiveUnavailable, http.StatusServiceUnavailable, "archive_unavailable", "The archive could not be read"},
 		{kataevidence.ErrUnavailable, http.StatusNotFound, "evidence_unavailable", "The cited source is unavailable"},
 		{kataevidence.ErrChanged, http.StatusConflict, "evidence_changed", "The cited source has changed; prepare it again"},
+		{kataevidence.ErrFailed, http.StatusUnprocessableEntity, "evidence_failed", "Transcript processing failed in Docbank"},
 		{kataevidence.ErrUnprocessed, http.StatusUnprocessableEntity, "evidence_unprocessed", "The file has no extracted text or transcript"},
 		{kataevidence.ErrQuoteNotFound, http.StatusUnprocessableEntity, "quote_not_found", "The quoted text does not appear in the source"},
 		{kataevidence.ErrQuoteAmbiguous, http.StatusUnprocessableEntity, "quote_ambiguous", "The quoted text appears more than once; quote more of it"},
+		{kataevidence.ErrDocbankConfiguration, http.StatusUnprocessableEntity, "docbank_configuration_invalid", "The enabled Docbank integration has an invalid URL"},
 		{kataevidence.ErrUnsupported, http.StatusUnprocessableEntity, "evidence_unsupported", "This source cannot be cited"},
 		{kataissues.ErrEvidenceLimit, http.StatusUnprocessableEntity, "evidence_limit", "A request can cite at most 32 passages"},
 		{kataissues.ErrIssueDeleted, http.StatusConflict, "kata_issue_deleted", "The issue this key filed was deleted in Kata or is not visible to this credential; use a new idempotency key, or restore the issue in Kata"},
@@ -318,6 +319,10 @@ func newKataIssueBackend(cfg *config.Config, messageStore MessageStore) KataIssu
 	evidence := kataevidence.New(archive)
 	if docbank := cfg.Integrations.Docbank; docbank.Enabled {
 		client, err := docbankmedia.NewClient(docbank.URL, docbank.ResolveAPIKey)
+		if err != nil {
+			configurationError := fmt.Errorf("%w: %v", kataevidence.ErrDocbankConfiguration, err)
+			evidence.WithDocbank(kataevidence.NewDocbankReader(archive, nil, func(context.Context) (string, error) { return "", configurationError }, nil))
+		}
 		revisions, ok := messageStore.(mediaRevisionReader)
 		if err == nil && ok {
 			evidence.WithDocbank(kataevidence.NewDocbankReader(archive, client, func(ctx context.Context) (string, error) {
@@ -374,30 +379,10 @@ func (b *kataIssueBackend) Find(ctx context.Context, messageID, attachmentID int
 	if err != nil {
 		return nil, false, err
 	}
-	// A file can be cited as extracted text and as each Docbank delivery, under different keys.
-	var issues []taskclient.KataTask
-	seen, truncated := map[string]bool{}, false
+	var keys []string
 	for _, ref := range refs {
-		// The last key names the attachment when there is one, else the message.
-		keys := kataevidence.SourceKeys(ref)
-		found, more, err := service.Citing(ctx, keys[len(keys)-1], kataIssueFindLimit)
-		if err != nil {
-			return nil, false, err
-		}
-		truncated = truncated || more
-		for _, issue := range found {
-			if !seen[issue.UID] {
-				seen[issue.UID] = true
-				issues = append(issues, issue)
-			}
-		}
+		sourceKeys := kataevidence.SourceKeys(ref)
+		keys = append(keys, sourceKeys[len(sourceKeys)-1])
 	}
-	// Order the merge as Kata orders one lookup, oldest first, before keeping the first page.
-	slices.SortFunc(issues, func(a, b taskclient.KataTask) int {
-		return cmp.Or(a.CreatedAt.Compare(b.CreatedAt), cmp.Compare(a.IssueID, b.IssueID))
-	})
-	if len(issues) > kataIssueFindLimit {
-		issues, truncated = issues[:kataIssueFindLimit], true
-	}
-	return issues, truncated, nil
+	return service.Citing(ctx, keys, kataIssueFindLimit)
 }

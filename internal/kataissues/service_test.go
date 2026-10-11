@@ -807,7 +807,7 @@ func TestCitingFindsEveryCitedSource(t *testing.T) {
 
 	chunkKeys := kataevidence.SourceKeys(chunk)
 	for _, key := range []string{kataevidence.SourceKeys(message)[0], chunkKeys[0], chunkKeys[1]} {
-		issues, truncated, err := service.Citing(t.Context(), key, 10)
+		issues, truncated, err := service.Citing(t.Context(), []string{key}, 10)
 		require.NoError(err)
 		require.Len(issues, 1, "legacy evidence envelopes need no source markers to be found")
 		assert.Equal(created.UID, issues[0].UID)
@@ -818,7 +818,7 @@ func TestCitingFindsEveryCitedSource(t *testing.T) {
 	second, err := service.Create(t.Context(), "key-citing-second", kataissues.CreateInput{Title: "Review the revised budget", Evidence: []kataevidence.Reference{message}})
 	require.NoError(err)
 	for _, limit := range []int{1, 2} {
-		issues, truncated, err := service.Citing(t.Context(), kataevidence.SourceKeys(message)[0], limit)
+		issues, truncated, err := service.Citing(t.Context(), kataevidence.SourceKeys(message), limit)
 		require.NoError(err)
 		require.Len(issues, limit)
 		assert.Equal(created.UID, issues[0].UID)
@@ -844,7 +844,7 @@ func TestCitingFindsEveryCitedSource(t *testing.T) {
 	require.NoError(err)
 	fallback := *service
 	fallback.Kata = fallbackClient
-	issues, incomplete, err := fallback.Citing(t.Context(), kataevidence.SourceKeys(message)[0], 10)
+	issues, incomplete, err := fallback.Citing(t.Context(), kataevidence.SourceKeys(message), 10)
 	require.NoError(err)
 	require.Len(issues, 2)
 	assert.Equal(created.UID, issues[0].UID)
@@ -853,7 +853,7 @@ func TestCitingFindsEveryCitedSource(t *testing.T) {
 
 	_, err = service.Kata.MutateMetadataKey(t.Context(), "example", created.UID, kataissues.EvidenceMetadataKey, created.Metadata[kataissues.EvidenceMetadataKey], kataissues.Envelope{Version: 2})
 	require.NoError(err)
-	issues, incomplete, err = service.Citing(t.Context(), kataevidence.SourceKeys(message)[0], 10)
+	issues, incomplete, err = service.Citing(t.Context(), kataevidence.SourceKeys(message), 10)
 	require.NoError(err)
 	require.Len(issues, 1)
 	assert.Equal(second.Issue.UID, issues[0].UID)
@@ -871,11 +871,11 @@ func TestCitingFindsEveryCitedSource(t *testing.T) {
 		f.kata.service.Handler().ServeHTTP(recorder, request)
 		require.Equal(http.StatusOK, recorder.Code, recorder.Body.String())
 	}
-	issues, incomplete, err = service.Citing(t.Context(), kataevidence.SourceKeys(message)[0], 10)
+	issues, incomplete, err = service.Citing(t.Context(), kataevidence.SourceKeys(message), 10)
 	require.NoError(err)
 	assert.Empty(issues)
 	assert.True(incomplete, "a citation beyond the newest 500 cannot imply a complete miss")
 	f.kata.Close()
-	_, _, err = service.Citing(t.Context(), kataevidence.SourceKeys(message)[0], 10)
+	_, _, err = service.Citing(t.Context(), kataevidence.SourceKeys(message), 10)
 	require.ErrorIs(err, taskclient.ErrUnreachable)
 }

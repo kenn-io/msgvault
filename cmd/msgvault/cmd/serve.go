@@ -1866,7 +1866,14 @@ func (a *storeAPIAdapter) KataDocbankBinding(ctx context.Context, destination st
 }
 
 func (a *storeAPIAdapter) MediaRevision(ctx context.Context, attachmentID int64) (string, error) {
-	return beeper.MediaRevision(ctx, a.store, attachmentID)
+	revision, err := beeper.MediaRevision(ctx, a.store, attachmentID)
+	if beeper.MediaRevisionUnavailable(err) {
+		return "", kataevidence.ErrUnavailable
+	}
+	if beeper.MediaRevisionChanged(err) {
+		return "", kataevidence.ErrChanged
+	}
+	return revision, err
 }
 
 // ListPersonUIDsContext forwards to the store so the daemon's adapter, not a

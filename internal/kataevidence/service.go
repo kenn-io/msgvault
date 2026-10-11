@@ -151,6 +151,8 @@ func (s *Service) ResolveAround(ctx context.Context, ref Reference, around int) 
 			result.State, result.Evidence.Display = Changed, record.Display
 		case errors.Is(err, ErrUnavailable):
 			result.State = Unavailable
+		case errors.Is(err, ErrFailed):
+			result.State = Failed
 		case errors.Is(err, ErrUnprocessed):
 			result.State = Unprocessed
 		case errors.Is(err, ErrUnsupported):
@@ -260,7 +262,7 @@ func setRange(ref Reference, start, end int) Reference {
 // ArchiveError keeps evidence outcomes recognizable and marks anything else
 // as a failure to read the archive.
 func ArchiveError(err error) error {
-	for _, known := range []error{ErrInvalidReference, ErrUnavailable, ErrChanged, ErrUnprocessed, ErrUnsupported, ErrArchiveUnavailable, context.Canceled, context.DeadlineExceeded} {
+	for _, known := range []error{ErrInvalidReference, ErrUnavailable, ErrChanged, ErrFailed, ErrUnprocessed, ErrUnsupported, ErrArchiveUnavailable, context.Canceled, context.DeadlineExceeded} {
 		if errors.Is(err, known) {
 			return err
 		}

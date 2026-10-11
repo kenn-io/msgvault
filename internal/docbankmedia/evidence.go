@@ -127,6 +127,12 @@ func (c *Client) EvidenceIdentity(ctx context.Context, contentVersionID, content
 	if receipt.State == "unconfigured" || receipt.State == "profile_required" {
 		return EvidenceWindowRequest{NodeID: node.ID}, &HTTPError{Status: http.StatusUnprocessableEntity, Reason: "processing_profile_unavailable"}
 	}
+	if receipt.State == "failed" {
+		return EvidenceWindowRequest{NodeID: node.ID}, &HTTPError{Status: http.StatusUnprocessableEntity, Reason: "rendition_failed"}
+	}
+	if receipt.State == "historical_unavailable" || receipt.State == "verified_empty" {
+		return EvidenceWindowRequest{NodeID: node.ID}, ErrEvidenceUnavailable
+	}
 	if receipt.State != "ready" {
 		return EvidenceWindowRequest{NodeID: node.ID}, &HTTPError{Status: http.StatusNotFound}
 	}
@@ -141,6 +147,11 @@ func (c *Client) EvidenceIdentity(ctx context.Context, contentVersionID, content
 		return EvidenceWindowRequest{}, ErrInvalidReceipt
 	}
 	return identity, nil
+}
+
+// SuppliedTranscriptMatches verifies the producer's retained input identity.
+func SuppliedTranscriptMatches(retained, selected string) bool {
+	return retained != "" && selected == retained
 }
 
 // CurrentVersion returns the content version a Docbank node holds now. A

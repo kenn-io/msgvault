@@ -27,14 +27,16 @@ const (
 )
 
 var (
-	ErrInvalidReference = errors.New("invalid Kata evidence reference")
-	ErrDocbankLimit     = fmt.Errorf("a request can cite at most %d Docbank transcript references", MaxDocbankReferences)
-	ErrUnavailable      = errors.New("kata evidence unavailable")
-	ErrChanged          = errors.New("kata evidence changed")
-	ErrUnprocessed      = errors.New("kata evidence unprocessed")
-	ErrUnsupported      = errors.New("kata evidence unsupported")
-	ErrQuoteNotFound    = errors.New("kata evidence quote not found in the source")
-	ErrQuoteAmbiguous   = errors.New("kata evidence quote appears more than once in the source")
+	ErrInvalidReference     = errors.New("invalid Kata evidence reference")
+	ErrDocbankLimit         = fmt.Errorf("a request can cite at most %d Docbank transcript references", MaxDocbankReferences)
+	ErrUnavailable          = errors.New("kata evidence unavailable")
+	ErrChanged              = errors.New("kata evidence changed")
+	ErrFailed               = errors.New("kata evidence processing failed")
+	ErrUnprocessed          = errors.New("kata evidence unprocessed")
+	ErrUnsupported          = errors.New("kata evidence unsupported")
+	ErrDocbankConfiguration = fmt.Errorf("invalid Docbank URL: %w", ErrUnsupported)
+	ErrQuoteNotFound        = errors.New("kata evidence quote not found in the source")
+	ErrQuoteAmbiguous       = errors.New("kata evidence quote appears more than once in the source")
 	// ErrArchiveUnavailable wraps a failure to read the archive itself.
 	ErrArchiveUnavailable = errors.New("archive is unavailable")
 	// ErrDocbankUnavailable marks a failure from the Docbank client.
@@ -140,6 +142,7 @@ const (
 	Available   State = "available"
 	Changed     State = "changed"
 	Unavailable State = "unavailable"
+	Failed      State = "failed"
 	Unprocessed State = "unprocessed"
 	Unsupported State = "unsupported"
 	// Unreachable means Docbank couldn't be reached to read the passage; retry later.
@@ -162,7 +165,7 @@ type Evidence struct {
 }
 
 type Resolution struct {
-	State    State    `json:"state"`
+	State    State    `json:"state" doc:"available, changed, unavailable, unprocessed, failed, unsupported, or unreachable"`
 	Evidence Evidence `json:"evidence"`
 	// Before and After hold up to ContextRunes of the text around an
 	// available excerpt when the caller asks for them.

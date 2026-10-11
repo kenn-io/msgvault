@@ -35,6 +35,7 @@ func TestEvidenceWindowWire(t *testing.T) {
 	var mu sync.Mutex
 	var selected wireSelect
 	unprocessed := false
+	receiptState := "ready"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !assert.Equal(testKey, r.Header.Get("X-Api-Key")) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -54,7 +55,7 @@ func TestEvidenceWindowWire(t *testing.T) {
 				http.NotFound(w, r)
 				return
 			}
-			writeJSON(w, map[string]any{"state": "ready", "source": map[string]any{"node_id": selected.NodeID, "revision": selected.Revision,
+			writeJSON(w, map[string]any{"state": receiptState, "source": map[string]any{"node_id": selected.NodeID, "revision": selected.Revision,
 				"version_id": selected.VersionID, "blob_hash": selected.BlobHash, "size": selected.Size}, "profile": map[string]any{"name": selected.Profile},
 				"attachment_id": attachment, "build_id": build, "artifact": map[string]any{"sha256": rendition}})
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/evidence/windows":
@@ -103,6 +104,31 @@ func TestEvidenceWindowWire(t *testing.T) {
 	window, err := client.ReadEvidenceWindow(t.Context(), identity)
 	require.NoError(err)
 	assert.Equal("revised", window.Text)
+
+	for _, state := range []string{"failed", "historical_unavailable", "verified_empty", "unconfigured", "profile_required", "pending"} {
+		mu.Lock()
+		receiptState = state
+		mu.Unlock()
+		_, err := client.EvidenceIdentity(t.Context(), version, content, "supplied-transcript")
+		switch state {
+		case "historical_unavailable", "verified_empty":
+			require.ErrorIs(err, docbankmedia.ErrEvidenceUnavailable)
+		default:
+			httpErr, ok := errors.AsType[*docbankmedia.HTTPError](err)
+			require.True(ok)
+			switch state {
+			case "failed":
+				assert.Equal("rendition_failed", httpErr.Reason)
+			case "pending":
+				assert.Equal(http.StatusNotFound, httpErr.Status)
+			default:
+				assert.Equal("processing_profile_unavailable", httpErr.Reason)
+			}
+		}
+	}
+	mu.Lock()
+	receiptState = "ready"
+	mu.Unlock()
 
 	_, err = client.EvidenceIdentity(t.Context(), version, strings.Repeat("e", 64), "supplied-transcript")
 	require.ErrorIs(err, docbankmedia.ErrEvidenceUnavailable, "another file's bytes")

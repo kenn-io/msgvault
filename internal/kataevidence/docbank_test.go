@@ -19,6 +19,8 @@ import (
 // fakeDocbank serves one transcript and the binding that names it. Like
 // Docbank, it serves only the node's current version and transcript build.
 type fakeDocbank struct {
+	transcripts int
+	revisionErr error
 	reads       int
 	binding     kataevidence.DocbankBinding
 	text        []rune
@@ -43,10 +45,11 @@ type fakeDocbank struct {
 }
 
 func (f *fakeDocbank) MediaRevision(context.Context, int64) (string, error) {
-	return f.revision, nil
+	return f.revision, f.revisionErr
 }
 
 func (f *fakeDocbank) Transcript(context.Context, string, string, string) (docbankmedia.MediaTranscript, error) {
+	f.transcripts++
 	build := f.build
 	if f.transcriptBuild != nil {
 		build = *f.transcriptBuild
@@ -140,6 +143,9 @@ func TestDocbankRejectsStaleTranscriptProvenance(t *testing.T) {
 		change func(*fakeDocbank)
 		want   error
 	}{
+		{"revision callback changed", func(f *fakeDocbank) { f.revisionErr = kataevidence.ErrChanged }, kataevidence.ErrChanged},
+		{"revision callback unavailable", func(f *fakeDocbank) { f.revisionErr = kataevidence.ErrUnavailable }, kataevidence.ErrUnavailable},
+		{"revision database error", func(f *fakeDocbank) { f.revisionErr = kataevidence.ErrArchiveUnavailable }, kataevidence.ErrArchiveUnavailable},
 		{"source edited before read", func(f *fakeDocbank) { f.revision = "edited" }, kataevidence.ErrChanged},
 		{"source removed before read", func(f *fakeDocbank) { f.revision = "removed" }, kataevidence.ErrChanged},
 		{"source edited during read", func(f *fakeDocbank) { f.afterRead = func() { f.revision = "edited" } }, kataevidence.ErrChanged},
@@ -157,6 +163,7 @@ func TestDocbankRejectsStaleTranscriptProvenance(t *testing.T) {
 				prepared, err := reader.LoadKataEvidenceSource(t.Context(), selector)
 				require.NoError(t, err)
 				tc.change(f)
+				reader = kataevidence.NewDocbankReader(f, f, func(context.Context) (string, error) { return "destination", nil }, f.MediaRevision)
 				var result kataevidence.SourceRecord
 				if resolve {
 					prepared.Reference.DocbankRendition.EndRune = 10
@@ -211,7 +218,9 @@ func TestDocbankGeneratedTranscriptProvenance(t *testing.T) {
 	assert.Equal(t, kataevidence.Available, resolved.State)
 	assert.Equal(t, prepared.Text, resolved.Evidence.Excerpt)
 	assert.Equal(t, 1, f.identities)
+	assert.Equal(t, 1, f.transcripts, "the same pinned build reuses verified metadata")
 	f.inputID = "unexpected-supplied-input"
+	reader = kataevidence.NewDocbankReader(f, f, func(context.Context) (string, error) { return "destination", nil }, f.MediaRevision)
 	_, err = reader.ReadKataEvidenceSource(t.Context(), prepared.Reference)
 	require.ErrorIs(t, err, kataevidence.ErrUnavailable)
 	f.inputID, f.binding.Profile = "", "supplied-transcript"
@@ -344,6 +353,7 @@ func TestDocbankWindowsPageAndResolve(t *testing.T) {
 		{&docbankmedia.HTTPError{Status: http.StatusServiceUnavailable, Code: "server_error", Reason: "content_missing"}, kataevidence.Unavailable},
 		{&docbankmedia.HTTPError{Status: http.StatusBadRequest, Code: "bad_request"}, kataevidence.Unsupported},
 		{&docbankmedia.HTTPError{Status: http.StatusUnprocessableEntity, Code: "validation", Reason: "processing_profile_unavailable"}, kataevidence.Unsupported},
+		{&docbankmedia.HTTPError{Status: http.StatusUnprocessableEntity, Reason: "rendition_failed"}, kataevidence.Failed},
 		{&docbankmedia.HTTPError{Status: http.StatusForbidden, Code: "forbidden"}, kataevidence.Unsupported},
 	} {
 		docbank.err = tc.err

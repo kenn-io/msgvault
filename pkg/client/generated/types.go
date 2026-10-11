@@ -2665,7 +2665,9 @@ type ContextPassage struct {
 
 	// SavedQuote Quoted words recovered from the issue body or comments when archive evidence is not available
 	SavedQuote *string `json:"saved_quote,omitzero"`
-	State      string  `json:"state" validate:"required"`
+
+	// State available, changed, unavailable, unprocessed, failed, unsupported, or unreachable
+	State string `json:"state" validate:"required"`
 }
 
 func (c ContextPassage) Validate() error {

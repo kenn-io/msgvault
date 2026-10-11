@@ -24,6 +24,7 @@ type slowDocbank struct {
 	outage      bool
 	healthy     bool
 	delay       time.Duration
+	revisionErr error
 	bindingErr  error
 	servedBuild string
 }
@@ -74,7 +75,7 @@ func (f *slowDocbank) EvidenceIdentity(ctx context.Context, _, _, _ string) (doc
 }
 
 func (f *slowDocbank) MediaRevision(context.Context, int64) (string, error) {
-	return "revision", nil
+	return "revision", f.revisionErr
 }
 
 func (f *slowDocbank) Transcript(context.Context, string, string, string) (docbankmedia.MediaTranscript, error) {
@@ -111,20 +112,21 @@ func (f *slowDocbank) wait(ctx context.Context) error {
 func TestContextDocbankAdmissionLimit(t *testing.T) {
 	localErr := errors.New("local database failed")
 	for _, tc := range []struct {
-		name       string
-		healthy    bool
-		outage     bool
-		delay      time.Duration
-		attempts   int
-		mixed      bool
-		cancelAt   time.Duration
-		localErr   error
-		bindingErr error
-		wantErr    error
-		states     []kataevidence.State
-		next       int
-		elapsed    time.Duration
-		reads      int
+		name        string
+		healthy     bool
+		outage      bool
+		delay       time.Duration
+		attempts    int
+		mixed       bool
+		cancelAt    time.Duration
+		localErr    error
+		revisionErr error
+		bindingErr  error
+		wantErr     error
+		states      []kataevidence.State
+		next        int
+		elapsed     time.Duration
+		reads       int
 	}{
 		{name: "healthy slow reads", healthy: true, delay: 3 * time.Second, attempts: 1, states: []kataevidence.State{kataevidence.Available, kataevidence.Available}, next: 2, elapsed: 6 * time.Second, reads: 2},
 		{name: "stalled Docbank", delay: time.Minute, attempts: 1, states: []kataevidence.State{kataevidence.Unreachable}, next: 1, elapsed: kataevidence.DocbankTimeout, reads: 1},
@@ -133,6 +135,8 @@ func TestContextDocbankAdmissionLimit(t *testing.T) {
 		{name: "older attempts share passage timeout", delay: time.Second, attempts: 20, states: []kataevidence.State{kataevidence.Changed}, next: 1, elapsed: kataevidence.DocbankTimeout, reads: 2},
 		{name: "caller cancellation", delay: time.Minute, attempts: 1, cancelAt: time.Second, wantErr: context.Canceled, elapsed: time.Second, reads: 1},
 		{name: "local error after timeout", delay: time.Minute, attempts: 1, mixed: true, localErr: localErr, wantErr: localErr, elapsed: kataevidence.DocbankTimeout, reads: 1},
+		{name: "revision changed", attempts: 1, mixed: true, revisionErr: kataevidence.ErrChanged, states: []kataevidence.State{kataevidence.Changed, kataevidence.Available, kataevidence.Changed, kataevidence.Changed}, reads: 3},
+		{name: "revision missing", attempts: 1, mixed: true, revisionErr: kataevidence.ErrUnavailable, states: []kataevidence.State{kataevidence.Unavailable, kataevidence.Available, kataevidence.Unavailable, kataevidence.Unavailable}, reads: 3},
 		{name: "binding store failure", attempts: 1, bindingErr: localErr, wantErr: localErr, reads: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -141,7 +145,7 @@ func TestContextDocbankAdmissionLimit(t *testing.T) {
 					SourceType: "beeper", SourceIdentifier: "signal", SourceMessageID: "voice1", AttachmentID: 9, OccurrenceKey: "msgvault:voice1"}
 				docbank := &slowDocbank{binding: kataevidence.DocbankBinding{Reference: ref, VaultUID: "22222222-2222-4222-8222-222222222222",
 					Revision: "revision", SourceID: "source", SourceVersionID: "version", SuppliedInputID: "input",
-					ContentVersionID: "11111111-1111-4111-8111-111111111111", ContentSHA256: strings.Repeat("a", 64)}, outage: tc.outage, healthy: tc.healthy, delay: tc.delay, bindingErr: tc.bindingErr}
+					ContentVersionID: "11111111-1111-4111-8111-111111111111", ContentSHA256: strings.Repeat("a", 64)}, outage: tc.outage, healthy: tc.healthy, delay: tc.delay, bindingErr: tc.bindingErr, revisionErr: tc.revisionErr}
 				evidence := kataevidence.New(nil).WithDocbank(kataevidence.NewDocbankReader(docbank, docbank, func(context.Context) (string, error) { return "destination", nil }, docbank.MediaRevision))
 				var entries []kataissues.Entry
 				var newest []kataissues.Entry

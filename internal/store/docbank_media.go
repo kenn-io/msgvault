@@ -89,16 +89,17 @@ const beeperMediaEligible = attachmentBytesArchived + `
 		  AND COALESCE(a.attachment_role, 'unknown') IN ('standalone', 'unknown'))
 	  )`
 
-// beeperMediaCurrentJoin follows occurrence row o to its live source
-// attachment by stable source tuple, never by attachment row ID.
-var beeperMediaCurrentJoin = `
+// beeperMediaTupleJoin follows occurrence row o by stable source tuple, including historical deliveries.
+var beeperMediaTupleJoin = `
 	JOIN sources src ON src.source_type = o.source_type AND src.identifier = o.source_identifier
 	JOIN messages m ON m.source_id = src.id AND m.source_message_id = o.source_message_id
 	JOIN conversations cv ON cv.id = m.conversation_id
 	JOIN attachments a ON a.message_id = m.id
 	WHERE COALESCE(cv.source_conversation_id, '') = o.source_conversation_id
 	  AND COALESCE(a.source_attachment_id, '') = o.source_attachment_id
-	  AND COALESCE(NULLIF(a.source_part_key, ''), NULLIF(a.source_attachment_id, ''), src.source_type || ':unknown') = o.source_part_key
+	  AND COALESCE(NULLIF(a.source_part_key, ''), NULLIF(a.source_attachment_id, ''), src.source_type || ':unknown') = o.source_part_key`
+
+var beeperMediaCurrentJoin = beeperMediaTupleJoin + `
 	  AND a.content_hash = o.source_sha256
 	  AND ` + beeperMediaEligible + `
 	  AND ` + LiveMessagesWhere("m", true)

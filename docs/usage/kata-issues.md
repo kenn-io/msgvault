@@ -116,6 +116,8 @@ window in Kata. The issue records the exact Docbank file version and
 transcript build it quoted, and `msgvault kata issues --message 42
 --attachment 7` finds it.
 
+Transcript citations require daemon API schema 3.13.0 or newer. A daemon with the Docbank integration disabled returns `evidence_unsupported`. A failed rendition returns `evidence_failed`; an empty or unavailable historical rendition returns `evidence_unavailable`.
+
 Prepare returns `evidence_unprocessed` while Docbank has no transcript for the
 file, `evidence_changed` once Docbank holds a newer version of it, and
 `evidence_unavailable` when msgvault has no delivery of it to the configured
@@ -175,6 +177,7 @@ the passage cited again shows as its own entry, after the passages cited before 
 | `available` | The cited words are still there. |
 | `changed` | The message or file text changed since it was cited, or Docbank transcribed the file again. |
 | `unavailable` | The source was deleted, or the evidence names another archive. |
+| `failed` | Docbank transcript processing failed. |
 | `unprocessed` | The file has no extracted text or transcript. |
 | `unsupported` | The source can't be cited, Docbank is too old to serve transcript windows, or Docbank refused msgvault's credential or processing profile. |
 | `unreachable` | Docbank couldn't be reached to read a transcript; retry later. |

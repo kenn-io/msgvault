@@ -155,6 +155,8 @@ func TestKataIssueHTTP(t *testing.T) {
 		{kataissues.ErrInvalidRequest, http.StatusUnprocessableEntity, "invalid_request"},
 		{kataissues.ErrOutsideProject, http.StatusUnprocessableEntity, "kata_issue_outside_project"},
 		{fmt.Errorf("%w: person 404: %w", personagenda.ErrIdentityLookup, fmt.Errorf("get person: %w", store.ErrPersonNotFound)), http.StatusNotFound, "person_profile_not_found"},
+		{kataevidence.ErrDocbankConfiguration, http.StatusUnprocessableEntity, "docbank_configuration_invalid"},
+		{kataevidence.ErrFailed, http.StatusUnprocessableEntity, "evidence_failed"},
 		{kataevidence.ErrUnprocessed, http.StatusUnprocessableEntity, "evidence_unprocessed"},
 		{kataevidence.ErrUnsupported, http.StatusUnprocessableEntity, "evidence_unsupported"},
 	} {

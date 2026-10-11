@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"go.kenn.io/msgvault/internal/docbankmedia"
@@ -34,6 +35,8 @@ type DocbankReader struct {
 	client      DocbankClient
 	destination func(context.Context) (string, error)
 	revision    func(context.Context, int64) (string, error)
+	mu          sync.Mutex
+	verified    map[transcriptKey]bool
 }
 
 // NewDocbankReader reads bindings recorded under the destination key that
@@ -53,7 +56,19 @@ func (r *DocbankReader) checkRevision(ctx context.Context, binding DocbankBindin
 	return nil
 }
 
+// A pinned build and source revision keep producer metadata immutable; cache only successful checks.
+type transcriptKey struct {
+	revision, source, sourceVersion, contentVersion, contentHash, vault, input, profile, build, attachment, rendition string
+}
+
 func (r *DocbankReader) checkTranscript(ctx context.Context, binding DocbankBinding, request docbankmedia.EvidenceWindowRequest) error {
+	key := transcriptKey{binding.Revision, binding.SourceID, binding.SourceVersionID, binding.ContentVersionID, binding.ContentSHA256, binding.VaultUID, binding.SuppliedInputID, binding.Profile, request.BuildID, request.RenditionAttachmentID, request.RenditionSHA256}
+	r.mu.Lock()
+	verified := r.verified[key]
+	r.mu.Unlock()
+	if verified {
+		return nil
+	}
 	transcript, err := r.client.Transcript(ctx, binding.SourceID, binding.SourceVersionID, binding.ContentVersionID)
 	if err != nil {
 		return err
@@ -67,7 +82,7 @@ func (r *DocbankReader) checkTranscript(ctx context.Context, binding DocbankBind
 	}
 	switch evidence.Origin {
 	case "supplied":
-		if binding.SuppliedInputID == "" || evidence.SuppliedInputID != binding.SuppliedInputID {
+		if !docbankmedia.SuppliedTranscriptMatches(binding.SuppliedInputID, evidence.SuppliedInputID) {
 			return ErrUnavailable
 		}
 	case "generated":
@@ -80,6 +95,15 @@ func (r *DocbankReader) checkTranscript(ctx context.Context, binding DocbankBind
 	if evidence.BuildID != request.BuildID {
 		return ErrChanged
 	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.verified) >= 64 {
+		clear(r.verified)
+	}
+	if r.verified == nil {
+		r.verified = make(map[transcriptKey]bool)
+	}
+	r.verified[key] = true
 	return nil
 }
 
@@ -229,7 +253,7 @@ func notFound(err error) bool {
 // timeout is a retryable archive failure. The caller's own cancellation stays an error.
 func docbankError(parent context.Context, err error) error {
 	switch {
-	case parent.Err() != nil, errors.Is(err, ErrChanged), errors.Is(err, ErrUnprocessed), errors.Is(err, ErrUnavailable), errors.Is(err, ErrUnsupported):
+	case parent.Err() != nil, errors.Is(err, ErrChanged), errors.Is(err, ErrUnprocessed), errors.Is(err, ErrFailed), errors.Is(err, ErrUnavailable), errors.Is(err, ErrUnsupported):
 		return err
 	case errors.Is(err, docbankmedia.ErrEvidenceUnavailable):
 		return ErrUnavailable
@@ -238,6 +262,8 @@ func docbankError(parent context.Context, err error) error {
 	}
 	if httpErr, ok := errors.AsType[*docbankmedia.HTTPError](err); ok {
 		switch {
+		case httpErr.Reason == "rendition_failed":
+			return ErrFailed
 		case httpErr.Status == http.StatusConflict && httpErr.Reason == "rendition_selection_stale":
 			return ErrChanged
 		case httpErr.Status == http.StatusRequestedRangeNotSatisfiable, httpErr.Status == http.StatusServiceUnavailable && httpErr.Reason == "content_missing",

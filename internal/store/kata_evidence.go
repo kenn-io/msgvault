@@ -118,13 +118,8 @@ func (s *Store) KataCitationSource(ctx context.Context, messageID, attachmentID 
 	}
 	// Historical deliveries follow the source tuple regardless of current bytes or eligibility.
 	rows, err := s.db.QueryContext(ctx, s.Rebind(`
-		SELECT o.occurrence_ref FROM beeper_media_occurrences o
-		JOIN sources src ON src.source_type=o.source_type AND src.identifier=o.source_identifier
-		JOIN messages m ON m.source_id=src.id AND m.source_message_id=o.source_message_id
-		JOIN conversations c ON c.id=m.conversation_id AND COALESCE(c.source_conversation_id,'')=o.source_conversation_id
-		JOIN attachments a ON a.message_id=m.id AND COALESCE(a.source_attachment_id,'')=o.source_attachment_id
-		  AND COALESCE(NULLIF(a.source_part_key,''),NULLIF(a.source_attachment_id,''),src.source_type || ':unknown')=o.source_part_key
-		WHERE a.id=? AND m.id=? ORDER BY o.occurrence_ref`), attachmentID, messageID)
+		SELECT o.occurrence_ref FROM beeper_media_occurrences o`+beeperMediaTupleJoin+`
+		  AND a.id=? AND m.id=? ORDER BY o.occurrence_ref`), attachmentID, messageID)
 	if err != nil {
 		return nil, fmt.Errorf("read Kata Docbank occurrences: %w", err)
 	}

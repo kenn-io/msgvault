@@ -21,7 +21,6 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/robfig/cron/v3"
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
-	"go.kenn.io/msgvault/internal/docbankmedia"
 	"go.kenn.io/msgvault/internal/documentindex"
 	"go.kenn.io/msgvault/internal/duckdbutil"
 	"go.kenn.io/msgvault/internal/fileutil"
@@ -140,11 +139,6 @@ func (d DocbankIntegrationConfig) validate() error {
 	for i, origin := range d.ReferenceOrigins {
 		if _, err := recordingref.CanonicalOrigin(origin); err != nil {
 			return fmt.Errorf("integrations.docbank.reference_origins[%d]: invalid origin", i+1)
-		}
-	}
-	if d.Enabled {
-		if _, err := docbankmedia.NewClient(d.URL, d.ResolveAPIKey); err != nil {
-			return fmt.Errorf("integrations.docbank.url: %w", err)
 		}
 	}
 	if strings.TrimSpace(d.ASRProfile) == "supplied-transcript" {

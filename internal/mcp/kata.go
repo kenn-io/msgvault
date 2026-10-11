@@ -91,7 +91,7 @@ func kataDefinitions(docbankAvailable bool) []toolDefinition {
 		return b.FindKataIssues(ctx, in)
 	})
 	find.availability = func(c catalogCapabilities) bool { return c.kataLookup }
-	issueContext := kataDefinition("get_kata_issue_context", "Read each passage a Kata issue cites, once, with its state in the archive today (available, changed, unavailable, unprocessed, unsupported, or unreachable when Docbank is down; retry later) and, when available, up to 500 characters before and after the cited words. When archive evidence is not available, saved_quote holds the matching quoted words from the issue body or comments, if still present. Returns up to 10 passages per call; pass next_offset as offset for more.", false, func(ctx context.Context, b KataBackend, in kataContextArgs) (generated.KataIssueContextResponse, error) {
+	issueContext := kataDefinition("get_kata_issue_context", "Read each passage a Kata issue cites, once, with its state in the archive today (available, changed, unavailable, unprocessed, failed when transcript processing failed, unsupported, or unreachable when Docbank is down; retry later) and, when available, up to 500 characters before and after the cited words. When archive evidence is not available, saved_quote holds the matching quoted words from the issue body or comments, if still present. Returns up to 10 passages per call; pass next_offset as offset for more.", false, func(ctx context.Context, b KataBackend, in kataContextArgs) (generated.KataIssueContextResponse, error) {
 		return b.GetKataIssueContext(ctx, in.Ref, in.GetKataIssueContextQuery)
 	})
 	issueContext.availability = func(c catalogCapabilities) bool { return c.kataLookup }
