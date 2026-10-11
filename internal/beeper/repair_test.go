@@ -33,6 +33,11 @@ func TestRepairArchiveRewritesStaleDerivedRows(t *testing.T) {
 		"id": "mxc://x/sticker1", "type": beeperAttachmentTypeImage, "isSticker": true,
 		"mimeType": "image/webp", "fileName": "sticker.webp", "fileSize": 13,
 	}}
+	transcript := "<b>quoted</b> & plain\nsecond line"
+	voice := mediaTranscriptChat().Msgs[0].Attachments[0]
+	voice["transcription"] = map[string]any{"transcription": transcript}
+	ch.Msgs[0].Attachments = append(ch.Msgs[0].Attachments, voice)
+	f.setAsset("mxc://beeper.local/voice1", []byte("voice-bytes"))
 
 	imp, st, done := newTestImporter(t, f)
 	defer done()
@@ -88,9 +93,9 @@ func TestRepairArchiveRewritesStaleDerivedRows(t *testing.T) {
 	require.NoError(st.DB().QueryRow(`SELECT b.body_text, COALESCE(m.snippet, ''), b.body_html
 		FROM messages m JOIN message_bodies b ON b.message_id = m.id
 		WHERE m.source_message_id = 'html1'`).Scan(&body, &snippet, &html))
-	assert.Equal(ch.Msgs[0].Text, html)
-	assert.Equal("hello there", body, "HTML must be converted to plain text")
-	assert.Equal("hello there", snippet)
+	assert.Equal(ch.Msgs[0].Text+`<br>🎤 transcript: &lt;b&gt;quoted&lt;/b&gt; &amp; plain<br>second line`, html)
+	assert.Equal("hello there\n🎤 transcript: "+transcript, body, "HTML must be converted to plain text")
+	assert.Equal(body, snippet)
 
 	// The forwarded link keeps its share URL and is excluded from standalone
 	// processing; the composed photo remains standalone.

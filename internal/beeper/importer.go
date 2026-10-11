@@ -1426,7 +1426,7 @@ func (imp *Importer) persistMessage(ctx context.Context, cc *chatScope, m *Messa
 	if err != nil {
 		return err
 	}
-	bodyHTML := MessageHTML(m.Text)
+	bodyHTML := MessageHTML(m)
 	if err := imp.store.UpsertMessageBody(messageID, sql.NullString{String: text, Valid: text != ""}, sql.NullString{String: bodyHTML, Valid: bodyHTML != ""}); err != nil {
 		return err
 	}

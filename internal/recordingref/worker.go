@@ -94,7 +94,7 @@ func (w *Worker) readMessage(ctx context.Context, id int64) (store.RecordingMess
 	}
 	var message beeper.Message
 	if json.Unmarshal(raw, &message) == nil {
-		m.BodyHTML = beeper.MessageHTML(message.Text)
+		m.BodyHTML = beeper.MessageHTML(&message)
 	}
 	return m, exists, nil
 }

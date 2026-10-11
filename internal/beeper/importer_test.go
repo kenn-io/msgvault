@@ -103,9 +103,10 @@ func newTestImporter(t *testing.T, f *fakeBeeper) (*Importer, *store.Store, func
 func TestRecordingLinkHTMLPersists(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	f := newFakeBeeper(t)
-	ch := shareAndHTMLChat()
-	ch.Msgs = ch.Msgs[:1]
-	ch.Msgs[0].Attachments = nil
+	ch := mediaTranscriptChat()
+	ch.Msgs[0].ID = "html1"
+	transcript := "<b>quoted</b> & plain\nsecond line"
+	ch.Msgs[0].Attachments[0]["transcription"] = map[string]any{"transcription": transcript}
 	ch.Msgs[0].Text = `<mx-reply><a href="https://loom.com/share/parent">Parent</a></mx-reply><a href="https://loom.com/share/abc">Watch recording</a>`
 	f.addChat(ch)
 	imp, st, done := newTestImporter(t, f)
@@ -114,8 +115,8 @@ func TestRecordingLinkHTMLPersists(t *testing.T) {
 	require.NoError(err)
 	var body, html string
 	require.NoError(st.DB().QueryRow(`SELECT b.body_text, COALESCE(b.body_html,'') FROM messages m JOIN message_bodies b ON b.message_id=m.id WHERE m.source_message_id='html1'`).Scan(&body, &html))
-	assert.Equal("Watch recording", body)
-	assert.Equal(`<a href="https://loom.com/share/abc">Watch recording</a>`, html)
+	assert.Equal("Watch recording\n🎤 transcript: "+transcript, body)
+	assert.Equal(`<a href="https://loom.com/share/abc">Watch recording</a><br>🎤 transcript: &lt;b&gt;quoted&lt;/b&gt; &amp; plain<br>second line`, html)
 }
 
 func TestImportBackfillEndToEnd(t *testing.T) {
