@@ -433,7 +433,7 @@ func mcpEventMatches(sub MCPSubscription, event MCPEvent) bool {
 }
 
 func mcpCanRead(sub *MCPSubscription, principal string, now time.Time) bool {
-	return sub != nil && sub.Principal == principal && sub.State != "unsubscribed" && sub.StopReason != "scope_removed" && sub.StopReason != "principal_revoked" && now.Before(sub.ExpiresAt.Add(24*time.Hour))
+	return sub != nil && sub.Principal == principal && sub.State != "unsubscribed" && sub.State != "gone" && sub.StopReason != "scope_removed" && sub.StopReason != "principal_revoked" && now.Before(sub.ExpiresAt.Add(24*time.Hour))
 }
 
 func (s *Store) mcpAuthorizedEvent(ctx context.Context, db SQLReader, id string, seq int64, principal string, now time.Time) (MCPEvent, error) {
