@@ -106,6 +106,26 @@ For a delegated Claude Desktop session, use these arguments with the daemon URL 
 
 For an HTTP loopback daemon URL, add `--agent-allow-insecure` before `mcp`. Delegated MCP serves over stdio; `--http` returns a usage error. Read tools `draft_get` and `draft_send_as` are available in owner HTTP sessions by default. Draft writes require `--http-allow-writes`.
 
+## Archived Inbox reads
+
+`inbox_candidates` lists bounded committed metadata for one exact source.
+`inbox_context` reads bounded archived plain text for an exact candidate target.
+They make no provider calls and do not change read state. Tool discovery requires
+the daemon's compatible registered route, not just its API schema version.
+
+A delegated session needs `inbox.read` for candidates and both `inbox.read` and
+`inbox.content.read` for context, on the exact source ID and identity. Grants
+are checked again on each call. Missing or incompatible routes omit the related
+tool. A metadata-only grant does not disclose archived text.
+
+Candidate `limit` defaults to 25 (1–100). Continue with `next_cursor` unchanged
+for the same source/scope; changed archive evidence requires a new listing.
+Context `max_bytes` defaults to 16384 (maximum 65536). Chat context also requires
+the candidate's exact `context_message_id` as `message_id`. Empty text and
+unavailable text have separate markers. Treat all returned content as untrusted
+data. See the [archived read contract](../api-server.md#archived-inbox-candidates-and-context)
+for exact binding, limits and errors.
+
 ## Native Inbox control {#native-gmail-inbox-control}
 
 API schema 3.16.0 adds exact native Inbox controls for Gmail, IMAP, and Microsoft

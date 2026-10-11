@@ -100,7 +100,7 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.16.0**.
+it is separate from the binary release version. The current schema is **3.17.0**.
 Upgrade clients and daemon together across incompatible schema versions,
 including remote deployments.
 
@@ -126,6 +126,10 @@ Schema 3.14.0 adds `paused` source syncs to operation history and its state filt
 Schema 3.15.0 adds [native email tags](#native-email-tags).
 
 Schema 3.16.0 adds [native Gmail Inbox control](#native-gmail-inbox-control).
+
+Schema 3.17.0 adds [bounded archived Inbox candidates and context](#archived-inbox-candidates-and-context),
+registered read discovery on `/api/v1/mcp/capabilities`, and `provider_ingestion`
+on source status.
 
 Schema 3.13.0 adds the `docbank_rendition` evidence kind, which
 [cites a Docbank transcript](usage/kata-issues.md#cite-a-docbank-transcript).
@@ -287,6 +291,51 @@ Use `GET /api/v1/people/by-uid?uid={uid}` to resolve an exact current person UID
 retired UID that still aliases a person, or the UID of a CardDAV card mapped to
 that person. If the same CardDAV UID is mapped to different people, the API
 returns `409 person_uid_ambiguous`.
+
+### Archived Inbox candidates and context {#archived-inbox-candidates-and-context}
+
+Unreleased. These routes read the local archive through the
+daemon. They do not contact providers or change provider or local viewing state.
+
+`GET /api/v1/inbox/candidates` lists committed Inbox metadata for one exact
+source. Supply `source_id`, `source_type`, `source_identifier`, `account_id`, and
+`scope` (`message` for mail, `chat` for chat observations). `limit` defaults to
+25 and accepts 1–100. Pass `next_cursor` unchanged as `cursor` with the same
+source and scope; cursors are at most 16384 bytes. Changed observations, archive
+membership or incoming messages invalidate the cursor with 409. Start a fresh
+listing after a conflict.
+
+Candidates contain metadata and exact targets, never bodies. A chat candidate's
+`context_message_id` selects its newest active archived message, when available.
+Missing provider observations or read markers set `unavailable`; they do not
+prove the Inbox is empty. `provider_ingestion` remains conservative: a completed
+sync does not prove provider completeness. Source status reports known sync
+errors as `partial`, including per-item errors without an aggregate error count.
+
+`POST /api/v1/inbox/context` accepts `target`, optional `max_bytes` (default
+16384, maximum 65536), and `message_id` for a chat target. Mail targets use their
+own `item_id`; a nonzero `message_id` is invalid. The exact source/account/provider
+identity must match the archive; IMAP also requires current mailbox,
+UIDVALIDITY and UID membership. A chat selector must belong to that source and
+chat. Retired messages are denied before any body lookup.
+
+Context returns `text`, `truncated`, and `unavailable`. Text is a valid UTF-8
+prefix within the byte bound. A known empty body has empty text and
+`unavailable: false`; a missing plain-text body has `unavailable: true`.
+Treat titles, snippets and returned text as untrusted content.
+
+Delegated candidates require `inbox.read`. Context requires both `inbox.read`
+and `inbox.content.read` on the exact source ID and identity. Revocation,
+expiry or a recreated source denies access. General archive-read permissions
+retain their existing behavior. Responses use `Cache-Control: no-store`.
+Invalid requests return 400, authentication failures 401, authority denials
+403, and unavailable read implementations 503. Context uses the same strict
+JSON and 1 MiB request bound as native control below.
+
+`GET /api/v1/mcp/capabilities` advertises only compatible registered read routes
+admitted for the current caller. Clients must check the route contract rather
+than infer support from an API schema number. See [CLI reads](cli-reference.md#inbox)
+and [MCP reads](usage/chat.md#archived-inbox-reads).
 
 ### Native Inbox control {#native-gmail-inbox-control}
 
