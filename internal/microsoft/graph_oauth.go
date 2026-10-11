@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"go.kenn.io/msgvault/internal/msgraph"
 	"golang.org/x/oauth2"
 )
 
@@ -38,14 +39,14 @@ func GraphScopes() []string {
 		scopeGraphChatRead, scopeGraphChannelMessage, scopeGraphTeamReadBasic,
 		scopeGraphChannelBasic, scopeGraphUserRead, scopeGraphUserReadBasic,
 		scopeGraphTeamMemberRead, scopeGraphChannelMemberRead,
-		scopeOfflineAccess, "openid", scopeEmail,
+		scopeOfflineAccess, "openid", scopeEmail, scopeProfile,
 	}
 }
 
 // GraphMailScopes returns the OAuth scopes requested for mailbox ingestion via
 // the Graph API.
 func GraphMailScopes() []string {
-	return []string{scopeGraphMailRead, scopeGraphUserRead, scopeOfflineAccess, "openid", scopeEmail}
+	return []string{scopeGraphMailRead, scopeGraphUserRead, scopeOfflineAccess, "openid", scopeEmail, scopeProfile}
 }
 
 // GraphMailWriteScopes returns the mail scopes plus Mail.ReadWrite, which
@@ -59,7 +60,7 @@ func GraphMailWriteScopes() []string {
 // sync via the Graph API. CardDAV sync can publish at any time, so the write
 // scope is requested at sign-in.
 func GraphContactsScopes() []string {
-	return []string{scopeGraphContactsReadWrite, scopeGraphUserRead, scopeOfflineAccess, "openid", scopeEmail}
+	return []string{scopeGraphContactsReadWrite, scopeGraphUserRead, scopeOfflineAccess, "openid", scopeEmail, scopeProfile}
 }
 
 // GraphManager is a sibling of Manager that runs the same interactive browser
@@ -83,6 +84,9 @@ type GraphManager struct {
 	scopes      []string
 	tokenPrefix string
 	reauthCmd   string
+
+	// graphURL is the Graph API base used to confirm the signed-in mailbox.
+	graphURL string
 
 	// Test hooks, mirrored onto the internal delegate. See Manager.
 	authorityURL    string
@@ -136,6 +140,7 @@ func newGraphManager(clientID, tenantID, redirectURI, tokensDir string, logger *
 		redirectURI: redirectURI,
 		tokensDir:   tokensDir,
 		logger:      logger,
+		graphURL:    msgraph.GraphBaseURL,
 	}
 }
 
@@ -181,6 +186,12 @@ func (m *GraphManager) Authorize(ctx context.Context, email string) error {
 		return err
 	}
 	_, claims, err := d.resolveTokenEmail(ctx, email, token, nonce)
+	if err != nil && claims != nil {
+		err = m.confirmMailbox(ctx, email, token.AccessToken, err)
+		if err != nil {
+			return fmt.Errorf("%w; run '%s' again and sign in to the account that owns %s", err, fmt.Sprintf(m.reauthCmd, email), email)
+		}
+	}
 	if err != nil {
 		return err
 	}
@@ -189,6 +200,32 @@ func (m *GraphManager) Authorize(ctx context.Context, email string) error {
 		tenantID = claims.TenantID
 	}
 	return m.saveToken(email, token, scopes, tenantID)
+}
+
+// confirmMailbox accepts a sign-in name that differs from email when the
+// signed-in user's Graph profile lists email as its mailbox or an alias.
+func (m *GraphManager) confirmMailbox(ctx context.Context, email, accessToken string, identityErr error) error {
+	client := msgraph.NewClient(m.graphURL, func(context.Context) (string, error) { return accessToken, nil }, 0)
+	var me struct {
+		Mail              string   `json:"mail"`
+		UserPrincipalName string   `json:"userPrincipalName"`
+		ProxyAddresses    []string `json:"proxyAddresses"`
+	}
+	if err := client.GetJSON(ctx, "/me?$select=mail,userPrincipalName,proxyAddresses", &me); err != nil {
+		return fmt.Errorf("%w; could not confirm the signed-in mailbox: %w", identityErr, err)
+	}
+	addrs := []string{me.Mail, me.UserPrincipalName}
+	for _, proxy := range me.ProxyAddresses {
+		if len(proxy) > 5 && strings.EqualFold(proxy[:5], "smtp:") {
+			addrs = append(addrs, proxy[5:])
+		}
+	}
+	for _, addr := range addrs {
+		if strings.EqualFold(addr, email) {
+			return nil
+		}
+	}
+	return identityErr
 }
 
 // TokenSource loads the persisted Graph token and returns a function yielding a
@@ -207,7 +244,7 @@ func (m *GraphManager) TokenSource(ctx context.Context, email string) (func(cont
 	scopes := tf.Scopes
 	if len(scopes) == 0 {
 		scopes = m.scopes
-	} else if missing := missingScopes(scopes, m.scopes); len(missing) > 0 {
+	} else if missing := missingGraphScopes(scopes, m.scopes); len(missing) > 0 {
 		return nil, fmt.Errorf(
 			"token for %s is missing Microsoft Graph scopes %s — run '%s' to re-authorize",
 			email, strings.Join(missing, ", "), fmt.Sprintf(m.reauthCmd, email),
@@ -226,14 +263,13 @@ func (m *GraphManager) TokenSource(ctx context.Context, email string) (func(cont
 	}), nil
 }
 
-// HasScopes reports whether the saved token was granted every scope this
-// manager requests.
+// HasScopes reports whether the saved token has the scopes needed at runtime.
 func (m *GraphManager) HasScopes(email string) (bool, error) {
 	tf, err := m.loadTokenFile(email)
 	if err != nil {
 		return false, err
 	}
-	return len(missingScopes(tf.Scopes, m.scopes)) == 0, nil
+	return len(missingGraphScopes(tf.Scopes, m.scopes)) == 0, nil
 }
 
 // HasToken reports whether a persisted Graph token exists for the account.
@@ -262,13 +298,16 @@ func (m *GraphManager) loadTokenFile(email string) (*tokenFile, error) {
 	return readTokenFile(m.TokenPath(email))
 }
 
-func missingScopes(scopes, want []string) []string {
+func missingGraphScopes(scopes, want []string) []string {
 	have := make(map[string]struct{}, len(scopes))
 	for _, scope := range scopes {
 		have[scope] = struct{}{}
 	}
 	var missing []string
 	for _, scope := range want {
+		if scope == scopeProfile {
+			continue // Profile supplies sign-in claims; existing grants can still sync.
+		}
 		if _, ok := have[scope]; !ok {
 			missing = append(missing, scope)
 		}

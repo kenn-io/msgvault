@@ -4,6 +4,7 @@
 import type { MessageSummary } from "./messageSummary";
 
 export interface SearchResult {
+  index_state?: string;
   messages: MessageSummary[];
   page: number;
   page_size: number;

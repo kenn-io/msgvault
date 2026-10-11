@@ -127,25 +127,30 @@ type Scheduler struct {
 	// queuedRuns counts runs blocked waiting for the work gate.
 	queuedRuns int
 
-	// Embed job state (optional). Set via SetEmbedJob; cron.EntryID 0
-	// may be valid, so embedEntrySet tracks whether an entry exists.
-	embedJob                   *EmbedJob
-	embedEntry                 cron.EntryID
-	embedEntrySet              bool
-	runEmbedAfterSync          bool
-	visualPostSync             func(context.Context) error
-	visualPostRunning          bool
-	visualPostPending          bool
-	documentVectorJob          func(context.Context) error
-	documentVectorEntry        cron.EntryID
-	documentVectorEntrySet     bool
-	runDocumentVectorAfterSync bool
+	embed             cronSlot // set via SetEmbedJob
+	documentVector    cronSlot // set via SetDocumentVectorJob
+	visualPostSync    func(context.Context) error
+	visualPostRunning bool
+	visualPostPending bool
 
 	ctx     context.Context    // cancelled on Stop
 	cancel  context.CancelFunc // cancels ctx
 	wg      sync.WaitGroup     // tracks running sync goroutines
 	started bool               // true after Start(), false after Stop()
 	stopped bool               // true after Stop()
+}
+
+// cronSlot is an optional cron job that can also run after each successful
+// sync. cron.EntryID 0 may be valid, so entrySet tracks whether one exists.
+type cronSlot struct {
+	label        string // error and log wording
+	workLabel    string // beginWork label for cron runs
+	jobName      string // jobContext label for cron runs
+	announce     bool   // log registration with next_run
+	job          func(context.Context) error
+	entry        cron.EntryID
+	entrySet     bool
+	runAfterSync bool
 }
 
 // SetVisualPostSyncJob installs the independently consented visual lane's
@@ -184,6 +189,8 @@ func New(syncFunc SyncFunc) *Scheduler {
 		genericQueued:      make(map[string]bool),
 		genericPending:     make(map[string]bool),
 		genericStartedAt:   make(map[string]time.Time),
+		embed:              cronSlot{label: "embed", workLabel: "scheduled embedding", jobName: "embed", announce: true},
+		documentVector:     cronSlot{label: "document vector", workLabel: "scheduled document indexing", jobName: "document-vector"},
 		ctx:                ctx,
 		cancel:             cancel,
 	}
@@ -377,25 +384,36 @@ func (s *Scheduler) RemoveAccount(email string) {
 // violation (ValidateCronExpr already accepted the expression) and
 // clears the embed job rather than restoring the prior one.
 func (s *Scheduler) SetEmbedJob(job *EmbedJob, schedule string, runAfterSync bool) error {
+	var run func(context.Context) error
+	if job != nil {
+		run = func(ctx context.Context) error { job.Run(ctx); return nil }
+	}
+	return s.setCronSlot(&s.embed, run, schedule, runAfterSync)
+}
+
+// SetDocumentVectorJob installs the bounded document-vector convergence job
+// on the same cron/post-sync policy used by message embeddings.
+func (s *Scheduler) SetDocumentVectorJob(job func(context.Context) error, schedule string, runAfterSync bool) error {
+	return s.setCronSlot(&s.documentVector, job, schedule, runAfterSync)
+}
+
+func (s *Scheduler) setCronSlot(slot *cronSlot, job func(context.Context) error, schedule string, runAfterSync bool) error {
 	// Validate the cron expression before mutating any state so a bad
 	// schedule can't leave the scheduler with a half-removed previous
 	// job. ValidateCronExpr is cheap and pure.
 	if job != nil && schedule != "" {
 		if err := ValidateCronExpr(schedule); err != nil {
-			return fmt.Errorf("invalid embed cron expression %q: %w", schedule, err)
+			return fmt.Errorf("invalid %s cron expression %q: %w", slot.label, schedule, err)
 		}
 	}
-
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
-	if s.embedEntrySet {
-		s.cron.Remove(s.embedEntry)
-		s.embedEntrySet = false
+	if slot.entrySet {
+		s.cron.Remove(slot.entry)
+		slot.entrySet = false
 	}
-	s.embedJob = job
-	s.runEmbedAfterSync = runAfterSync && job != nil
-
+	slot.job = job
+	slot.runAfterSync = runAfterSync && job != nil
 	if job == nil || schedule == "" {
 		return nil
 	}
@@ -403,72 +421,30 @@ func (s *Scheduler) SetEmbedJob(job *EmbedJob, schedule string, runAfterSync boo
 		if s.isStopped() {
 			return
 		}
-		done, ok := s.beginWork("scheduled embedding")
+		done, ok := s.beginWork(slot.workLabel)
 		if !ok {
 			return
 		}
 		defer done()
-		runCtx, endRun := s.jobContext("embed", false, 0)
+		runCtx, endRun := s.jobContext(slot.jobName, false, 0)
 		defer endRun()
-		job.Run(runCtx)
+		if runErr := job(runCtx); runErr != nil {
+			s.logger.Error("scheduled "+slot.label+" reconciliation failed", "error", runErr)
+		}
 	})
 	if err != nil {
 		// ValidateCronExpr above should have caught any parse error;
 		// if AddFunc still fails here it's an internal invariant
 		// violation, not caller input. Roll back the state we mutated.
-		s.embedJob = nil
-		s.runEmbedAfterSync = false
-		return fmt.Errorf("register embed cron: %w", err)
+		slot.job = nil
+		slot.runAfterSync = false
+		return fmt.Errorf("register %s cron: %w", slot.label, err)
 	}
-	s.embedEntry = entryID
-	s.embedEntrySet = true
-	s.logger.Info("scheduled embed job",
-		"schedule", schedule,
-		"next_run", s.nextRun(entryID))
-	return nil
-}
-
-// SetDocumentVectorJob installs the bounded document-vector convergence job
-// on the same cron/post-sync policy used by message embeddings.
-func (s *Scheduler) SetDocumentVectorJob(job func(context.Context) error, schedule string, runAfterSync bool) error {
-	if job != nil && schedule != "" {
-		if err := ValidateCronExpr(schedule); err != nil {
-			return fmt.Errorf("invalid document vector cron expression %q: %w", schedule, err)
-		}
+	slot.entry = entryID
+	slot.entrySet = true
+	if slot.announce {
+		s.logger.Info("scheduled "+slot.label+" job", "schedule", schedule, "next_run", s.nextRun(entryID))
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.documentVectorEntrySet {
-		s.cron.Remove(s.documentVectorEntry)
-		s.documentVectorEntrySet = false
-	}
-	s.documentVectorJob = job
-	s.runDocumentVectorAfterSync = runAfterSync && job != nil
-	if job == nil || schedule == "" {
-		return nil
-	}
-	entry, err := s.cron.AddFunc(schedule, func() {
-		if s.isStopped() {
-			return
-		}
-		done, ok := s.beginWork("scheduled document indexing")
-		if !ok {
-			return
-		}
-		defer done()
-		runCtx, endRun := s.jobContext("document-vector", false, 0)
-		defer endRun()
-		if runErr := job(runCtx); runErr != nil {
-			s.logger.Error("scheduled document vector reconciliation failed", "error", runErr)
-		}
-	})
-	if err != nil {
-		s.documentVectorJob = nil
-		s.runDocumentVectorAfterSync = false
-		return fmt.Errorf("register document vector cron: %w", err)
-	}
-	s.documentVectorEntry = entry
-	s.documentVectorEntrySet = true
 	return nil
 }
 
@@ -563,7 +539,7 @@ func (s *Scheduler) runSync(email string) {
 
 	s.mu.Lock()
 	if yielded {
-		if callbackErr := callbackErrorAfterYield(runCtx, err); callbackErr != nil {
+		if callbackErr := jobctx.ErrorAfterYield(runCtx, err); callbackErr != nil {
 			s.lastErr[email] = callbackErr
 			logScheduledSyncError(s.logger, email, time.Since(start), callbackErr)
 		}
@@ -591,95 +567,22 @@ func (s *Scheduler) runSync(email string) {
 	if err != nil || yielded {
 		return
 	}
-	var postSync *EmbedJob
-	s.mu.RLock()
-	if s.runEmbedAfterSync && s.embedJob != nil && !s.stopped {
-		postSync = s.embedJob
-	}
-	s.mu.RUnlock()
-	if postSync != nil {
-		embedCtx, endEmbed := s.jobContext("post-sync embed", false, 0)
-		postSync.Run(embedCtx)
-		endEmbed()
-	}
-	var documentVectorPostSync func(context.Context) error
-	s.mu.RLock()
-	if s.runDocumentVectorAfterSync && s.documentVectorJob != nil && !s.stopped {
-		documentVectorPostSync = s.documentVectorJob
-	}
-	s.mu.RUnlock()
-	if documentVectorPostSync != nil {
-		documentCtx, endDocument := s.jobContext("post-sync document vector", false, 0)
-		if documentErr := documentVectorPostSync(documentCtx); documentErr != nil {
-			s.logger.Error("post-sync document vector reconciliation failed", "error", documentErr)
+	for _, slot := range []*cronSlot{&s.embed, &s.documentVector} {
+		var postSync func(context.Context) error
+		s.mu.RLock()
+		if slot.runAfterSync && slot.job != nil && !s.stopped {
+			postSync = slot.job
 		}
-		endDocument()
+		s.mu.RUnlock()
+		if postSync != nil {
+			postCtx, endPost := s.jobContext("post-sync "+slot.label, false, 0)
+			if postErr := postSync(postCtx); postErr != nil {
+				s.logger.Error("post-sync "+slot.label+" reconciliation failed", "error", postErr)
+			}
+			endPost()
+		}
 	}
 	s.startVisualPostSync()
-}
-
-func callbackErrorAfterYield(ctx context.Context, err error) error {
-	if err == nil {
-		return nil
-	}
-	if yieldedToWaiter(ctx) || errors.Is(context.Cause(ctx), jobctx.ErrRunBudgetExceeded) {
-		_, filtered := filterYieldCancellation(err, errors.Is(ctx.Err(), context.DeadlineExceeded))
-		return filtered
-	}
-	return err
-}
-
-type yieldFilteredError struct {
-	message string
-	cause   error
-}
-
-func (e yieldFilteredError) Error() string { return e.message }
-
-func (e yieldFilteredError) Unwrap() error { return e.cause }
-
-func filterYieldCancellation(err error, deadlineExpired bool) (bool, error) {
-	if err == nil {
-		return false, nil
-	}
-	if joined, ok := err.(interface{ Unwrap() []error }); ok {
-		causes := joined.Unwrap()
-		kept := make([]error, 0, len(causes))
-		changed := false
-		for _, cause := range causes {
-			filteredOut, filtered := filterYieldCancellation(cause, deadlineExpired)
-			changed = changed || filteredOut
-			if filtered != nil {
-				kept = append(kept, filtered)
-			}
-		}
-		if !changed {
-			return false, err
-		}
-		return true, errors.Join(kept...)
-	}
-	if wrapped, ok := err.(interface{ Unwrap() error }); ok {
-		cause := wrapped.Unwrap()
-		changed, filtered := filterYieldCancellation(cause, deadlineExpired)
-		if !changed {
-			return false, err
-		}
-		if filtered == nil {
-			return true, nil
-		}
-		message := err.Error()
-		if causeMessage := cause.Error(); causeMessage != "" {
-			message = strings.Replace(message, causeMessage, filtered.Error(), 1)
-		}
-		if message == err.Error() {
-			message = fmt.Sprintf("%s: %s", message, filtered.Error())
-		}
-		return true, yieldFilteredError{message: message, cause: filtered}
-	}
-	if errors.Is(err, context.Canceled) || (deadlineExpired && (errors.Is(err, context.DeadlineExceeded) || errors.Is(err, jobctx.ErrRunBudgetExceeded))) || errors.Is(err, ErrYieldedToWaiter) {
-		return true, nil
-	}
-	return false, err
 }
 
 // logScheduledSyncError keeps transient network failures below the error
@@ -931,7 +834,7 @@ func (s *Scheduler) runJob(name string, run func(context.Context) error) error {
 	if budgetExpired && !jobctx.HasProgress(runCtx) {
 		delete(s.genericPending, name)
 		err = errors.Join(fmt.Errorf("%w before committing progress", jobctx.ErrRunBudgetExceeded),
-			callbackErrorAfterYield(runCtx, err))
+			jobctx.ErrorAfterYield(runCtx, err))
 		s.genericLastErr[name] = err
 		s.logger.Warn("scheduled job reached its runtime limit before committing progress; waiting for the next trigger",
 			"job", name,
@@ -948,7 +851,7 @@ func (s *Scheduler) runJob(name string, run func(context.Context) error) error {
 	}
 	if yielded {
 		s.genericPending[name] = true
-		if callbackErr := callbackErrorAfterYield(runCtx, err); callbackErr != nil {
+		if callbackErr := jobctx.ErrorAfterYield(runCtx, err); callbackErr != nil {
 			s.genericLastErr[name] = callbackErr
 			s.logger.Error("scheduled job yielded after callback error; queued follow-up",
 				"job", name,

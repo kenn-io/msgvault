@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/daemon"
+	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonauth"
@@ -532,7 +533,7 @@ func (m *mockStore) GetStatsContext(ctx context.Context) (*StoreStats, error) {
 	return m.GetStats()
 }
 
-func (m *mockStore) ListMessagesContext(_ context.Context, offset, limit int) ([]APIMessage, int64, error) {
+func (m *mockStore) ListMessagesContext(_ context.Context, offset, limit int, _ []int64) ([]APIMessage, int64, error) {
 	return m.ListMessages(offset, limit)
 }
 
@@ -1272,13 +1273,23 @@ func TestTimeoutMiddlewareDeadlinePolicy(t *testing.T) {
 	const apiKey = "deadline-policy-test-key"
 	srv := NewServerWithOptions(ServerOptions{
 		Config: &config.Config{Server: config.ServerConfig{
-			APIPort: 8080,
-			APIKey:  apiKey,
+			APIPort:     8080,
+			APIKey:      apiKey,
+			AgentAccess: true,
 		}},
 		Logger: testLogger(),
 	})
 
-	handler := srv.timeoutMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	t.Cleanup(srv.agentGrants.Close)
+	_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: 1, Type: "test", Identifier: "reader@example.test"}}, time.Time{})
+	require.NoError(t, err)
+	delegated := httptest.NewRequest(http.MethodGet, "/api/v1/cli/search?q=needle", nil)
+	delegated.Header.Set(apiprotocol.AgentTokenHeader, token)
+	markedDelegated := delegated.Clone(t.Context())
+	markedDelegated.Header.Set(apiprotocol.ClientClassHeader, apiprotocol.ClientClassCLI)
+	var hasDeadline bool
+	handler := srv.timeoutMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, hasDeadline = r.Context().Deadline()
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -1302,11 +1313,12 @@ func TestTimeoutMiddlewareDeadlinePolicy(t *testing.T) {
 	bounded := httptest.NewRequest(http.MethodGet, "/api/v1/cli/stats", nil)
 
 	tests := []struct {
-		name             string
-		request          *http.Request
-		wantReadClear    bool
-		wantReadDeadline bool
-		wantWriteClear   bool
+		name                string
+		request             *http.Request
+		wantReadClear       bool
+		wantReadDeadline    bool
+		wantWriteClear      bool
+		wantContextDeadline bool
 	}{
 		{name: "unmarked long path", request: longPath, wantWriteClear: true},
 		{name: "marked request", request: marked, wantReadClear: true, wantWriteClear: true},
@@ -1327,7 +1339,9 @@ func TestTimeoutMiddlewareDeadlinePolicy(t *testing.T) {
 			request:        unauthorizedMeetingImport,
 			wantWriteClear: true,
 		},
-		{name: "bounded request", request: bounded},
+		{name: "bounded request", request: bounded, wantContextDeadline: true},
+		{name: "delegated search", request: delegated, wantContextDeadline: true},
+		{name: "marked delegated search", request: markedDelegated, wantContextDeadline: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1336,6 +1350,9 @@ func TestTimeoutMiddlewareDeadlinePolicy(t *testing.T) {
 			recorder := &deadlineClearingRecorder{ResponseRecorder: httptest.NewRecorder()}
 			started := time.Now()
 			handler.ServeHTTP(recorder, tt.request)
+			if tt.wantContextDeadline {
+				assert.True(hasDeadline)
+			}
 			finished := time.Now()
 			if tt.wantReadClear {
 				require.Len(recorder.readDeadlines, 1, "read deadline changes")
@@ -1618,107 +1635,38 @@ func TestCLIRepairMessageRoutePropagatesCancellation(t *testing.T) {
 	<-done
 }
 
-func TestCLIRepairMessageRepairWaitsForOperationGate(t *testing.T) {
-	t.Parallel()
-	gate := NewSerialOperationGate()
-	release, ok := gate.BeginWorkContext(t.Context())
-	require.True(t, ok)
-	called := make(chan struct{})
-	store := &mockStore{repairMessageFunc: func(
-		context.Context, CLIRepairMessageRequest, func(CLIRepairMessageEvent) error,
-	) error {
-		close(called)
-		return nil
-	}}
-	srv := NewServerWithOptions(ServerOptions{
-		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
-		Store:  store, Scheduler: newMockScheduler(), Logger: testLogger(), OperationGate: gate,
-	})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/repair-message",
-		strings.NewReader(`{"reference":"gmail-42"}`))
-	req.Header.Set("Content-Type", "application/json")
-	done := make(chan struct{})
-	go func() {
-		srv.Router().ServeHTTP(httptest.NewRecorder(), req)
-		close(done)
-	}()
-
-	select {
-	case <-called:
-		require.FailNow(t, "repair ran while another archive operation held the gate")
-	case <-time.After(30 * time.Millisecond):
-	}
-	release()
-	select {
-	case <-called:
-	case <-time.After(time.Second):
-		require.FailNow(t, "repair did not run after the operation gate was released")
-	}
-	<-done
-}
-
-func TestCLIRepairMessageValidAuditBypassesOperationGateAndPreservesBody(t *testing.T) { //nolint:paralleltest // expects the audit to reach the store inside a 250ms real-time window
-	assert := assert.New(t)
-	require := require.New(t)
-	gate := NewSerialOperationGate()
-	release, ok := gate.BeginWorkContext(t.Context())
-	require.True(ok)
-	var releaseOnce sync.Once
-	releaseGate := func() { releaseOnce.Do(release) }
-	defer releaseGate()
-
-	got := make(chan CLIRepairMessageRequest, 1)
-	store := &mockStore{repairMessageFunc: func(
-		_ context.Context, req CLIRepairMessageRequest, _ func(CLIRepairMessageEvent) error,
-	) error {
-		got <- req
-		return nil
-	}}
-	srv := NewServerWithOptions(ServerOptions{
-		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
-		Store:  store, Scheduler: newMockScheduler(), Logger: testLogger(), OperationGate: gate,
-	})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/repair-message",
-		strings.NewReader(`{"audit":true,"source_id":7,"json":true}`))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	done := make(chan struct{})
-	go func() {
-		srv.Router().ServeHTTP(w, req)
-		close(done)
-	}()
-
-	select {
-	case request := <-got:
-		assert.Equal(CLIRepairMessageRequest{Audit: true, SourceID: 7, JSON: true}, request)
-	case <-time.After(250 * time.Millisecond):
-		releaseGate()
-		<-done
-		require.FailNow("valid read-only audit waited on the mutation gate")
-	}
-	<-done
-	assert.Equal(http.StatusOK, w.Code)
-}
-
-func TestCLIRepairMessageInvalidAuditBodiesDoNotBypassOperationGate(t *testing.T) {
+func TestCLIRepairMessageTakesOperationGateUnlessValidAudit(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name string
-		body string
+		name        string
+		body        string
+		wantStatus  int
+		wantGated   bool
+		wantRequest *CLIRepairMessageRequest
 	}{
-		{name: "audit with repair reference", body: `{"audit":true,"reference":"gmail-42"}`},
-		{name: "audit with negative source", body: `{"audit":true,"source_id":-1}`},
-		{name: "malformed JSON", body: `{"audit":true`},
+		{
+			name: "repair reference", body: `{"reference":"gmail-42"}`,
+			wantStatus: http.StatusOK, wantGated: true,
+			wantRequest: &CLIRepairMessageRequest{Reference: "gmail-42"},
+		},
+		{
+			name: "valid audit", body: `{"audit":true,"source_id":7,"json":true}`,
+			wantStatus:  http.StatusOK,
+			wantRequest: &CLIRepairMessageRequest{Audit: true, SourceID: 7, JSON: true},
+		},
+		{name: "audit with repair reference", body: `{"audit":true,"reference":"gmail-42"}`, wantStatus: http.StatusBadRequest, wantGated: true},
+		{name: "audit with negative source", body: `{"audit":true,"source_id":-1}`, wantStatus: http.StatusBadRequest, wantGated: true},
+		{name: "malformed JSON", body: `{"audit":true`, wantStatus: http.StatusBadRequest, wantGated: true},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			assert := assert.New(t)
 			gate := &recordingOperationGate{allow: true}
-			called := make(chan struct{}, 1)
+			got := make(chan CLIRepairMessageRequest, 1)
 			store := &mockStore{repairMessageFunc: func(
-				context.Context, CLIRepairMessageRequest, func(CLIRepairMessageEvent) error,
+				_ context.Context, req CLIRepairMessageRequest, _ func(CLIRepairMessageEvent) error,
 			) error {
-				called <- struct{}{}
+				got <- req
 				return nil
 			}}
 			srv := NewServerWithOptions(ServerOptions{
@@ -1730,14 +1678,21 @@ func TestCLIRepairMessageInvalidAuditBodiesDoNotBypassOperationGate(t *testing.T
 			w := httptest.NewRecorder()
 			srv.Router().ServeHTTP(w, req)
 
-			assert.Equal(http.StatusBadRequest, w.Code)
+			assert.Equal(test.wantStatus, w.Code)
 			begin, done := gate.counts()
-			assert.Equal(1, begin, "invalid audit body must remain gated")
-			assert.Equal(1, done, "gate must be released after handler rejection")
+			wantCalls := 0
+			if test.wantGated {
+				wantCalls = 1
+			}
+			assert.Equal(wantCalls, begin, "operation gate calls")
+			assert.Equal(wantCalls, done, "gate must be released after the handler returns")
 			select {
-			case <-called:
-				require.FailNow(t, "invalid audit body reached the repair runner")
+			case request := <-got:
+				if assert.NotNil(test.wantRequest, "request reached the repair runner") {
+					assert.Equal(*test.wantRequest, request)
+				}
 			default:
+				assert.Nil(test.wantRequest, "request did not reach the repair runner")
 			}
 		})
 	}

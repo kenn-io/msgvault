@@ -53,7 +53,7 @@ func storeStatsFromGenerated(stats generated.StatsResponse) *store.Stats {
 		SourceCount:        stats.TotalAccounts,
 		LabelCount:         stats.TotalLabels,
 		AttachmentCount:    stats.TotalAttachments,
-		DatabaseSize:       stats.DatabaseSizeBytes,
+		DatabaseSize:       int64Value(stats.DatabaseSizeBytes),
 	}
 }
 
@@ -482,6 +482,26 @@ func cliAccountsFromGenerated(resp *generated.ListCLIAccountsResponse) []CLIAcco
 			MessageCount:       account.MessageCount,
 			SourceDeletedCount: account.SourceDeletedCount,
 			LastSync:           account.LastSync,
+			VirtualAccounts:    virtualAccountsFromGenerated(account.VirtualAccounts),
+		}
+	}
+	return out
+}
+
+func virtualAccountsFromGenerated(accounts []generated.VirtualAccount) []store.VirtualAccount {
+	if len(accounts) == 0 {
+		return nil
+	}
+	out := make([]store.VirtualAccount, len(accounts))
+	for i, account := range accounts {
+		out[i] = store.VirtualAccount{
+			Key:                account.Key,
+			SourceID:           account.SourceID,
+			AccountAddress:     stringValue(account.AccountAddress),
+			Unattributed:       account.Unattributed != nil && *account.Unattributed,
+			MessageCount:       account.MessageCount,
+			SourceDeletedCount: account.SourceDeletedCount,
+			PendingCount:       int64Value(account.PendingCount),
 		}
 	}
 	return out

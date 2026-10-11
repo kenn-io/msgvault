@@ -224,7 +224,7 @@ func (s *Store) scanIdentityObservationsContext(
 		           JOIN labels l ON l.id = ml.label_id
 		           WHERE ml.message_id = m.id
 		             AND l.source_id = m.source_id
-		             AND l.system_role = 'sent'
+		             AND `+sentFolderLabelSQL("l")+`
 		       ) AS has_sent_folder,
 		       EXISTS (
 		           SELECT 1
@@ -232,8 +232,7 @@ func (s *Store) scanIdentityObservationsContext(
 		           JOIN labels l ON l.id = ml.label_id
 		           WHERE ml.message_id = m.id
 		             AND l.source_id = m.source_id
-		             AND src.source_type = 'gmail'
-		             AND l.source_label_id = 'SENT'
+		             AND `+sentGmailLabelSQL("l", "src")+`
 		       ) AS has_sent_label
 		FROM messages m
 		JOIN sources src ON src.id = m.source_id
@@ -379,12 +378,10 @@ func (s *Store) addAccountIdentityConfirmationChunkOnce(
 	confirmations []normalizedIdentityConfirmation,
 ) ([]IdentityConfirmationOutcome, error) {
 	outcomes := make([]IdentityConfirmationOutcome, 0, len(confirmations))
-	err := s.withTxContext(ctx, func(tx *loggedTx) error {
-		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
-			return err
-		}
-
-		inserted := false
+	var pending []int64
+	err := s.withAttributionTxContext(ctx, attributionLock{Exclusive: true}, func(tx *loggedTx) error {
+		outcomes, pending = outcomes[:0], nil
+		var addedAddresses []string
 		for _, confirmation := range confirmations {
 			added, err := s.mergeAccountIdentitySignalsTx(
 				ctx,
@@ -397,14 +394,16 @@ func (s *Store) addAccountIdentityConfirmationChunkOnce(
 			if err != nil {
 				return err
 			}
-			inserted = inserted || added
+			if added {
+				addedAddresses = append(addedAddresses, confirmation.identifier)
+			}
 			outcomes = append(outcomes, IdentityConfirmationOutcome{
 				Identifier: confirmation.identifier,
 				Added:      added,
 				Signals:    confirmation.signals,
 			})
 		}
-		if !inserted {
+		if len(addedAddresses) == 0 {
 			return nil
 		}
 		if _, err := s.bumpIdentityRevisionContext(ctx, tx); err != nil {
@@ -413,62 +412,26 @@ func (s *Store) addAccountIdentityConfirmationChunkOnce(
 		if err := s.bumpAccountIdentityRevisionContext(ctx, tx); err != nil {
 			return err
 		}
-		participantIDs, err := participantIDsForConfirmationsContext(ctx, tx, sourceID, confirmations)
-		if err != nil {
+		if err := refreshIdentityMessageAttributionContext(ctx, tx, sourceID, addedAddresses, ""); err != nil {
 			return err
 		}
-		if len(participantIDs) == 0 {
-			return nil
-		}
-		return refreshParticipantMessageAttributionContext(ctx, tx, participantIDs...)
+		var err error
+		pending, err = s.markAccountAttributionPendingForAddressesTx(ctx, tx, sourceID, addedAddresses)
+		return err
 	})
 	if err != nil {
 		return nil, err
 	}
+	s.deriveAccountAttributionAfterCommit(ctx, sourceID, pending)
 	return outcomes, nil
 }
 
-// participantIDsForConfirmationsContext resolves the participants matched by
-// a confirmation chunk's identifiers, using the same case-sensitivity rules
-// as messageIdentityAttributionMatch: participants.email_address and
-// email-typed participant_identifiers match case-insensitively, and every
-// other identifier type matches the raw stored value. Scoping the
-// attribution refresh that follows a chunk's inserts to just these
-// participants replaces a full-source UPDATE with one bounded to the
-// senders the chunk could actually affect.
-//
-// Current identifiers alone are not enough: after a participant merge a
-// confirmed alias may survive only in message_recipients.email_address
-// snapshots, matching no participant row at all — yet the merge survivor's
-// sent messages still carry that alias in their 'from' envelope and must be
-// re-attributed. The envelope pass below resolves those senders. It walks
-// the confirming source's messages once per chunk (probing the 'from'
-// snapshot per message through idx_message_recipients_message) rather than
-// scanning message_recipients by address, which no index serves; a source
-// walk per chunk is the same order of work the single-identity
-// AddAccountIdentity path already spends on its full-source refresh.
-func participantIDsForConfirmationsContext(
+// participantIDsForAddressesContext resolves only senders the ownership fallback can match.
+func participantIDsForAddressesContext(
 	ctx context.Context,
-	tx *loggedTx,
-	sourceID int64,
-	confirmations []normalizedIdentityConfirmation,
+	q chunkQuerier,
+	addresses []string,
 ) ([]int64, error) {
-	addresses := make([]string, 0, len(confirmations))
-	loweredAddresses := make([]string, 0, len(confirmations))
-	loweredEmailAddresses := make([]string, 0, len(confirmations))
-	seenLowered := make(map[string]struct{}, len(confirmations))
-	for _, confirmation := range confirmations {
-		addresses = append(addresses, confirmation.identifier)
-		lowered := strings.ToLower(confirmation.identifier)
-		if _, ok := seenLowered[lowered]; !ok {
-			seenLowered[lowered] = struct{}{}
-			loweredAddresses = append(loweredAddresses, lowered)
-			if looksLikeEmail(confirmation.identifier) {
-				loweredEmailAddresses = append(loweredEmailAddresses, lowered)
-			}
-		}
-	}
-
 	participantIDs := make(map[int64]struct{})
 	scanParticipantID := func(rows *loggedRows) error {
 		var id int64
@@ -479,39 +442,23 @@ func participantIDsForConfirmationsContext(
 		return nil
 	}
 
-	if err := queryInChunksContext(ctx, tx, loweredAddresses, nil, `
+	if err := queryInChunksWithValueExprContext(ctx, q, addresses, nil, `
 		SELECT p.id FROM participants p
 		WHERE p.email_address IS NOT NULL AND LOWER(p.email_address) IN (%s)
-	`, scanParticipantID); err != nil {
+	`, "LOWER(?)", scanParticipantID); err != nil {
 		return nil, fmt.Errorf("resolve confirmation participants by email: %w", err)
 	}
-	if err := queryInChunksContext(ctx, tx, loweredAddresses, nil, `
+	if err := queryInChunksWithValueExprContext(ctx, q, addresses, nil, `
 		SELECT pi.participant_id FROM participant_identifiers pi
-		WHERE pi.identifier_type = 'email' AND LOWER(pi.identifier_value) IN (%s)
-	`, scanParticipantID); err != nil {
+		WHERE pi.identifier_type = 'email'`+identifierWithoutPrimaryEmail+` AND LOWER(pi.identifier_value) IN (%s)
+	`, "LOWER(?)", scanParticipantID); err != nil {
 		return nil, fmt.Errorf("resolve confirmation participants by email identifier: %w", err)
 	}
-	if err := queryInChunksContext(ctx, tx, addresses, nil, `
+	if err := queryInChunksContext(ctx, q, addresses, nil, `
 		SELECT pi.participant_id FROM participant_identifiers pi
 		WHERE pi.identifier_type <> 'email' AND pi.identifier_value IN (%s)
 	`, scanParticipantID); err != nil {
 		return nil, fmt.Errorf("resolve confirmation participants by non-email identifier: %w", err)
-	}
-	if len(loweredEmailAddresses) > 0 {
-		if err := queryInChunksContext(ctx, tx, loweredEmailAddresses, []any{sourceID}, `
-			SELECT m.sender_id FROM messages m
-			WHERE m.source_id = ?
-			  AND m.sender_id IS NOT NULL
-			  AND EXISTS (
-			      SELECT 1 FROM message_recipients mr
-			      WHERE mr.message_id = m.id
-			        AND mr.recipient_type = 'from'
-			        AND mr.email_address IS NOT NULL
-			        AND LOWER(mr.email_address) IN (%s)
-			  )
-		`, scanParticipantID); err != nil {
-			return nil, fmt.Errorf("resolve confirmation senders by envelope address: %w", err)
-		}
 	}
 
 	ids := make([]int64, 0, len(participantIDs))

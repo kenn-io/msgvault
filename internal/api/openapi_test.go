@@ -1357,7 +1357,7 @@ func TestOpenAPIDocumentsAllExplorationOperations(t *testing.T) {
 	requirements.NotNil(filter)
 	requirements.NotNil(filter.Properties["dimension"])
 	assertions.ElementsMatch(
-		[]any{"source", "participant", "domain", "mailing_list", "message_type", "after", "before", "deletion", "identity"},
+		[]any{"source", "participant", "domain", "mailing_list", "message_type", "after", "before", "deletion", "identity", "account"},
 		filter.Properties["dimension"].Enum,
 	)
 	clientFilter := openAPIClientDocument().Components.Schemas.Map()["ExploreFilter"]
@@ -1366,11 +1366,11 @@ func TestOpenAPIDocumentsAllExplorationOperations(t *testing.T) {
 	assertions.Equal([]any{
 		"ExploreFilterDimensionSource", "ExploreFilterDimensionParticipant", "ExploreFilterDimensionDomain", "ExploreFilterDimensionMessageType",
 		"ExploreFilterDimensionMailingList", "ExploreFilterDimensionAfter", "ExploreFilterDimensionBefore",
-		"ExploreFilterDimensionDeletion", "ExploreFilterDimensionIdentity",
+		"ExploreFilterDimensionDeletion", "ExploreFilterDimensionIdentity", "ExploreFilterDimensionAccount",
 	}, clientFilter.Properties["dimension"].Extensions["x-enum-names"])
 	for schemaName, properties := range map[string][]string{
 		"DirectoryPeopleResponse":    {"people"},
-		"DirectoryPersonSummary":     {"categories", "organizations"},
+		"DirectoryPersonSummary":     {"categories", "organizations", "carddav_bindings", "vcard_uid"},
 		"ExploreFilter":              {"values"},
 		"ExploreHTTPResponse":        {"rows"},
 		"EntryRow":                   {"matched_sender_identities", "matched_recipient_identities"},
@@ -1705,7 +1705,7 @@ func TestOpenAPIDirectoryArraysAreRequiredAndNonNullInRenderedDocuments(t *testi
 			requirements.NoError(json.Unmarshal(raw, &document))
 			for schemaName, properties := range map[string][]string{
 				"DirectoryPeopleResponse": {"people"},
-				"DirectoryPersonSummary":  {"categories", "organizations"},
+				"DirectoryPersonSummary":  {"categories", "organizations", "carddav_bindings"},
 			} {
 				schema, ok := document.Components.Schemas[schemaName]
 				requirements.True(ok, schemaName)

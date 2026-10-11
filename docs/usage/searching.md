@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-27"
+last_edited: "2026-10-10"
 title: Searching
 description: Find archived messages by words, meaning, account, conversation, or message type.
 ---
@@ -47,6 +47,8 @@ msgvault supports a local subset of Gmail-like search syntax.
 | `subject:` | Subject text | `subject:meeting` |
 | `label:` | Gmail label | `label:INBOX`, `label:SENT` |
 | `list:` / `list-id:` | RFC 2919 List-Id literal substring | `list:announce.example.org` |
+| `received:` | Exact address that received inbound mail | `received:work@example.org` |
+| `account:` | Exact account of received mail, sent mail, or a calendar event | `account:work@example.org` |
 | `has:attachment` | Has attachments | `has:attachment` |
 | `before:` | Before date | `before:2024-06-01` |
 | `after:` | After date | `after:2024-01-01` |
@@ -63,6 +65,51 @@ List-Id matching is case-insensitive and treats `%`, `_`, and `\` literally.
 Quote a value when it contains spaces, for example
 `list-id:"Example Announcements"`. Repeating `list:` or `list-id:` uses AND
 semantics: every supplied substring must occur in the stored List-Id.
+
+### Find mail by the address that received it
+
+Several confirmed addresses can deliver into one archive source, for example
+work@ forwarding into a personal Gmail. `received:work@example.org` finds
+inbound mail that address received, including forwarded mail whose visible To
+shows a list or Bcc. `account:work@example.org` also finds sent mail from that
+address and calendar events of that calendar.
+
+- Confirm the address for its source first (`msgvault identity add` or identity
+  discovery). Both operators take one exact address; case is ignored, dots and
+  plus suffixes are not.
+- msgvault picks one account per message from its delivery headers, then its
+  confirmed To/Cc recipients, then the source's own mailbox. When two confirmed
+  addresses tie, the message has no account and neither operator finds it.
+- `received:` excludes sent copies, drafts and calendar events. A message
+  counts as sent when the provider filed it under Sent or Drafts. In a source
+  without a Sent folder, such as an mbox or PST import, a message from a
+  confirmed address with no delivery headers or confirmed recipients also
+  counts as sent.
+- `--account` selects a whole archive source. `account:` matches only messages
+  attributed to the address, so mail forwarded into a personal source matches
+  `account:work@example.org` but not `--account work@example.org`.
+- Repeating one operator matches any of the values; using both requires both.
+- Mail archived by an older version fills in on the source's next sync or
+  import. For a file import you will not run again, use
+  [`msgvault repair-derived`](../cli-reference.md#repair-derived).
+- Confirming or removing an address updates the messages it affects before
+  the command returns. If that update is interrupted, the next sync finishes
+  it.
+- Both operators work in full-text, vector, and hybrid search.
+
+In the TUI account picker and the Web UI's Explore account filter, a source
+whose confirmed addresses split its mail lists each address under it, plus an
+Unattributed entry for mail no confirmed address claims. The Unattributed
+entry also appears while older mail still waits for repair. MCP tools take the
+same entries as their `account` argument: the keys that `get_stats` lists
+(`identity:...` or `unattributed:...`). A source's own address or display
+name, in any letter case, still selects that whole source; any other confirmed
+address selects the mail attributed to it on every source.
+
+Delivery headers are routing hints, not proof that you own an address, and
+attribution never lets msgvault send from it. The
+[design record](https://github.com/kenn-io/msgvault/blob/main/docs/internal/received-as-identity-design.md) lists the headers
+and the order msgvault trusts them in.
 
 ### Domain Search
 
@@ -213,6 +260,12 @@ Add `--json` for machine-readable output:
 ```bash
 msgvault search from:alice@example.com --json
 ```
+
+## Search spoken words
+
+`msgvault media search "quarterly numbers"` finds matching recording transcripts as their visible messages. A shared recording returns each live message occurrence. Add `--person 7 --direction from_person` to search recordings from one person, or `--json` for IDs, origin, plain excerpts, timing, coverage and optional `filename`, `containing_title` and `occurred_at` fields.
+
+Media search uses lexical retrieval through the configured Docbank integration. It searches the full allowed population within [the API scope limits](https://github.com/kenn-io/msgvault/blob/main/docs/api-server.md#media-transcript-search). Semantic and hybrid modes are unavailable. An empty result proves no match only with complete coverage and `partial=false`. Search requires Docbank's source-selected search contract; older servers report search unavailable. See [the CLI reference](https://github.com/kenn-io/msgvault/blob/main/docs/cli-reference.md#media-search) for flags and [the API contract](https://github.com/kenn-io/msgvault/blob/main/docs/api-server.md#media-transcript-search) for coverage fields. Use `msgvault show-message <message_id>` to read a result in context. For browser recording search and its Person filter, see [Everything search](../web-ui.md#recording-matches).
 
 ## Semantic / Hybrid Search
 

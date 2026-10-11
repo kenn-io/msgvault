@@ -76,6 +76,9 @@ type fakeGraph struct {
 	onLookup func()
 	expire   bool // the next delta with a token answers 410 Gone
 	failWith int  // status for every request, when set
+	// failListings answers the next folder listings with 503 and a 64 KB
+	// body, as a listing that keeps breaking does.
+	failListings int
 	// lag leaves removals out of delta, as Graph may report a change late. A
 	// round's link stops before the first one left out, so a round without lag
 	// reports it.
@@ -252,6 +255,13 @@ func (f *fakeGraph) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		reply(http.StatusOK, map[string]any{"value": items, "@odata.deltaLink": link})
 	case len(segments) == 4 && segments[3] == "contacts" && r.Method == http.MethodGet:
 		f.lists++
+		if f.failListings > 0 {
+			f.failListings--
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write(make([]byte, 64<<10))
+			return
+		}
 		values := []contact{}
 		filter := query.Get("$filter")
 		if filter != "" && f.onLookup != nil {
@@ -436,7 +446,17 @@ type fixture struct {
 	book    store.CardDAVAddressBook
 	// tokenErr, when set, is returned in place of an access token.
 	tokenErr error
+	remote   *budgetRemote
 }
+
+// budgetRemote is a Remote whose per-sync byte limit a test can lower.
+type budgetRemote struct {
+	*Remote
+
+	bytes int64
+}
+
+func (r *budgetRemote) Limits() (time.Duration, int64) { return operationTimeout, r.bytes }
 
 // newFixture discovers the fake account and makes the "test" folder the
 // subscribed write target. The default Contacts folder gets no role.
@@ -453,7 +473,8 @@ func newFixture(t *testing.T) *fixture {
 		}
 		return "token", nil
 	}, testQPS)
-	service := carddav.NewRemoteService(st, remote)
+	f.remote = &budgetRemote{Remote: remote, bytes: operationBytes}
+	service := carddav.NewRemoteService(st, f.remote)
 	discovery, err := service.DiscoverConnection(t.Context(), "")
 	require.NoError(t, err)
 	require.Len(t, discovery.Books, 2)
@@ -1986,4 +2007,16 @@ func TestDroppedLinesAreLoggedOncePerContact(t *testing.T) {
 	}
 
 	require.Equal(1, strings.Count(logs.String(), "extra lines are not published"), logs.String())
+}
+
+// A listing that keeps failing counts toward the sync limit, so retries stop
+// once Graph has sent more than the limit.
+func TestRetriedListingCountsTowardTheSyncLimit(t *testing.T) {
+	f := newFixture(t)
+	f.remote.bytes = 128 << 10
+	f.fake.failListings = 3
+
+	_, err := f.service.Sync(t.Context(), carddav.SyncOptions{})
+	code, _ := carddav.SyncFailure(err)
+	assert.Equal(t, "safety_limit", code)
 }

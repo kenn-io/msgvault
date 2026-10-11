@@ -43,6 +43,10 @@ type IssueAgentTokenResponse = AgentTokenIssueResponse
 
 type IssueAgentTokenErrorResponse = ErrorResponse
 
+type GetAgentTokenSelfResponse = AgentTokenView
+
+type GetAgentTokenSelfErrorResponse = ErrorResponse
+
 type GetAggregatesResponse = AggregateResponse
 
 type GetAggregatesErrorResponse = ErrorResponse
@@ -367,6 +371,8 @@ type GetCLIAttachmentErrorResponseJSON = ErrorResponse
 
 type GetCLIAttachmentErrorResponseJSON404 = ErrorResponse
 
+type GetCLIAttachmentErrorResponseJSON413 = ErrorResponse
+
 type GetCLIAttachmentErrorResponseJSON500 = ErrorResponse
 
 type GetCLIAttachmentErrorResponseJSON503 = ErrorResponse
@@ -551,6 +557,10 @@ type GetCLIMessageRawErrorResponseJSON = ErrorResponse
 
 type GetCLIMessageRawErrorResponseJSON404 = ErrorResponse
 
+type GetCLIMessageRawErrorResponseJSON409 = ErrorResponse
+
+type GetCLIMessageRawErrorResponseJSON413 = ErrorResponse
+
 type GetCLIMessageRawErrorResponseJSON500 = ErrorResponse
 
 type GetCLIMessageRawErrorResponseJSON503 = ErrorResponse
@@ -562,6 +572,8 @@ type GetCLIMessageThreadErrorResponse = ErrorResponse
 type GetCLIMessageThreadErrorResponseJSON = ErrorResponse
 
 type GetCLIMessageThreadErrorResponseJSON409 = ErrorResponse
+
+type GetCLIMessageThreadErrorResponseJSON413 = ErrorResponse
 
 type GetCLIMessageThreadErrorResponseJSON503 = ErrorResponse
 
@@ -1511,6 +1523,12 @@ type ImportMeetingResponseJSON = MeetingImportResponse
 
 type ImportMeetingErrorResponse = ErrorResponse
 
+type ImportMuesliResponse = MuesliRemoteResult
+
+type ImportMuesliResponseJSON = MuesliRemoteResult
+
+type ImportMuesliErrorResponse = ErrorResponse
+
 type CreateImportJobResponse = ImportJobResponse
 
 type CreateImportJobErrorResponse = ErrorResponse
@@ -1596,6 +1614,28 @@ type GetTaskIntegrationStatusErrorResponse = ErrorResponse
 type TestTaskIntegrationResponse = TaskIntegrationStatusResponse
 
 type TestTaskIntegrationErrorResponse = ErrorResponse
+
+type SearchMediaResponse = MediaSearchResponse
+
+type SearchMediaErrorResponse = ErrorResponse
+
+type SearchMediaErrorResponseJSON = ErrorResponse
+
+type SearchMediaErrorResponseJSON404 = ErrorResponse
+
+type SearchMediaErrorResponseJSON409 = ErrorResponse
+
+type SearchMediaErrorResponseJSON422 = ErrorResponse
+
+type SearchMediaErrorResponseJSON429 = ErrorResponse
+
+type SearchMediaErrorResponseJSON500 = ErrorResponse
+
+type SearchMediaErrorResponseJSON503 = ErrorResponse
+
+type GetMediaSearchStatusResponse = MediaSearchStatusResponse
+
+type GetMediaSearchStatusErrorResponse = ErrorResponse
 
 type ListMeetingActionItemsResponse = ActionsPage
 
@@ -1694,6 +1734,10 @@ type GetMessageInlinePartErrorResponseJSON500 = ErrorResponse
 type GetMessageInlinePartErrorResponseJSON501 = ErrorResponse
 
 type GetMessageInlinePartErrorResponseJSON503 = ErrorResponse
+
+type ListMessageRecordingsResponse = MessageRecordingsResponse
+
+type ListMessageRecordingsErrorResponse = ErrorResponse
 
 type ListMessageTasksResponse = TaskLinkLookupResponse
 
@@ -2160,6 +2204,16 @@ type CreatePersonResponseJSON = Person
 type CreatePersonErrorResponse = ErrorResponse
 
 type CreatePersonErrorResponseJSON = ErrorResponse
+
+type GetPersonByUIDResponse = Person
+
+type GetPersonByUIDErrorResponse = ErrorResponse
+
+type GetPersonByUIDErrorResponseJSON = ErrorResponse
+
+type GetPersonByUIDErrorResponseJSON409 = ErrorResponse
+
+type GetPersonByUIDErrorResponseJSON503 = ErrorResponse
 
 type ListDirectoryPeopleResponse = DirectoryPeopleResponse
 
@@ -3470,6 +3524,13 @@ type IssueAgentTokenResp struct {
 	JSON201      *IssueAgentTokenResponse
 }
 
+type GetAgentTokenSelfResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetAgentTokenSelfResponse
+}
+
 type RevokeAgentTokenResp struct {
 	HTTPResponse *http.Response
 	Body         []byte
@@ -3941,6 +4002,7 @@ type GetCLIAttachmentResp struct {
 	JSON400      *GetCLIAttachmentErrorResponse
 	JSON401      *GetCLIAttachmentErrorResponseJSON
 	JSON404      *GetCLIAttachmentErrorResponseJSON404
+	JSON413      *GetCLIAttachmentErrorResponseJSON413
 	JSON500      *GetCLIAttachmentErrorResponseJSON500
 	JSON503      *GetCLIAttachmentErrorResponseJSON503
 }
@@ -4137,6 +4199,7 @@ type GetCLIMessageResp struct {
 	Body         []byte
 	StatusCode   int
 	JSON200      *GetCLIMessageResponse
+	JSON413      *GetCLIMessageErrorResponse
 }
 
 type GetCLIMessageOriginalResp struct {
@@ -4158,6 +4221,8 @@ type GetCLIMessageRawResp struct {
 	JSON400      *GetCLIMessageRawErrorResponse
 	JSON401      *GetCLIMessageRawErrorResponseJSON
 	JSON404      *GetCLIMessageRawErrorResponseJSON404
+	JSON409      *GetCLIMessageRawErrorResponseJSON409
+	JSON413      *GetCLIMessageRawErrorResponseJSON413
 	JSON500      *GetCLIMessageRawErrorResponseJSON500
 	JSON503      *GetCLIMessageRawErrorResponseJSON503
 }
@@ -4170,6 +4235,7 @@ type GetCLIMessageThreadResp struct {
 	JSON400      *GetCLIMessageThreadErrorResponse
 	JSON404      *GetCLIMessageThreadErrorResponseJSON
 	JSON409      *GetCLIMessageThreadErrorResponseJSON409
+	JSON413      *GetCLIMessageThreadErrorResponseJSON413
 	JSON503      *GetCLIMessageThreadErrorResponseJSON503
 }
 
@@ -4737,6 +4803,14 @@ type ImportMeetingResp struct {
 	JSON201      *ImportMeetingResponseJSON
 }
 
+type ImportMuesliResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ImportMuesliResponse
+	JSON201      *ImportMuesliResponseJSON
+}
+
 type CreateImportJobResp struct {
 	HTTPResponse *http.Response
 	Body         []byte
@@ -4828,6 +4902,28 @@ type TestTaskIntegrationResp struct {
 	Body         []byte
 	StatusCode   int
 	JSON200      *TestTaskIntegrationResponse
+}
+
+type SearchMediaResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *SearchMediaResponse
+	JSON400      *SearchMediaErrorResponse
+	JSON403      *SearchMediaErrorResponseJSON
+	JSON404      *SearchMediaErrorResponseJSON404
+	JSON409      *SearchMediaErrorResponseJSON409
+	JSON422      *SearchMediaErrorResponseJSON422
+	JSON429      *SearchMediaErrorResponseJSON429
+	JSON500      *SearchMediaErrorResponseJSON500
+	JSON503      *SearchMediaErrorResponseJSON503
+}
+
+type GetMediaSearchStatusResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetMediaSearchStatusResponse
 }
 
 type ListMeetingActionItemsResp struct {
@@ -4926,6 +5022,13 @@ type GetMessageInlinePartResp struct {
 	JSON500      *GetMessageInlinePartErrorResponseJSON500
 	JSON501      *GetMessageInlinePartErrorResponseJSON501
 	JSON503      *GetMessageInlinePartErrorResponseJSON503
+}
+
+type ListMessageRecordingsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListMessageRecordingsResponse
 }
 
 type ListMessageTasksResp struct {
@@ -5277,6 +5380,17 @@ type CreatePersonResp struct {
 	Headers201   *CreatePersonResp201Headers
 	JSON409      *CreatePersonErrorResponse
 	JSON503      *CreatePersonErrorResponseJSON
+}
+
+type GetPersonByUIDResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetPersonByUIDResponse
+	JSON400      *GetPersonByUIDErrorResponse
+	JSON404      *GetPersonByUIDErrorResponseJSON
+	JSON409      *GetPersonByUIDErrorResponseJSON409
+	JSON503      *GetPersonByUIDErrorResponseJSON503
 }
 
 type ListDirectoryPeopleResp struct {

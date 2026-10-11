@@ -1,3 +1,4 @@
+import { recordingMessage, recordingTranscript, recordingSearchHit, recordingSearchReport } from '../src/lib/archive/recording-fixtures.test-support';
 import { expect, test } from '@playwright/test';
 
 function entry(index: number) {
@@ -43,6 +44,89 @@ function exploreURLState(overrides: Record<string, unknown> = {}) {
     ...overrides
   };
 }
+
+test('recordings stay capped in Table and leave Timeline rows reachable', async ({ page }) => {
+  let resolveReadiness!: () => void;
+  const readiness = new Promise<void>(resolve => { resolveReadiness = resolve; });
+  await page.route('**/api/session', route => route.fulfill({ json: { auth_mode: 'loopback', https: false, plain_http_warning: false } }));
+  await page.route('**/api/v1/explore', route => route.fulfill({ json: { rows: Array.from({ length: 20 }, (_, index) => entry(index + 1)), total_count: 20, cache_revision: 'recording', search_provenance: {} } }));
+  await page.route('**/api/v1/media/search/status', async route => {
+    await readiness;
+    await route.fulfill({ json: { configured: true } });
+  });
+  await page.route('**/api/v1/media/search?*', route => route.fulfill({ json: recordingSearchReport({
+    results: Array.from({ length: 20 }, (_, index) => recordingSearchHit({ containing_title: `Recording ${index + 1}` }))
+  }) }));
+  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(exploreURLState({ query: 'quarterly' })))}`);
+  const grid = page.getByRole('grid', { name: 'Everything results' });
+  await grid.getByText('Synthetic subject 1', { exact: true }).click();
+  const primary = page.locator('.results-split > [data-split-pane] > [data-pane="primary"]');
+  const resize = page.getByRole('separator', { name: 'Resize reading pane' });
+  const handle = (await resize.boundingBox())!;
+  const pane = (await primary.boundingBox())!;
+  await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(handle.x + handle.width / 2, 0);
+  await page.mouse.up();
+  await expect.poll(async () => (await primary.boundingBox())!.height).toBe(120);
+  resolveReadiness();
+  await expect(page.getByRole('heading', { name: /^Results/ })).toBeVisible();
+  const recordings = page.getByRole('region', { name: 'Recordings', exact: true });
+  await expect(recordings).toBeHidden();
+  const firstRow = grid.getByRole('row').filter({ hasText: 'Synthetic subject 1' }).first();
+  await expect(firstRow).toBeInViewport({ ratio: 1 });
+  await expect.poll(async () => (await primary.boundingBox())!.height).toBe(120);
+  const readyHandle = (await resize.boundingBox())!;
+  await page.mouse.move(readyHandle.x + readyHandle.width / 2, readyHandle.y + readyHandle.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(handle.x + handle.width / 2, pane.y + 350);
+  await page.mouse.up();
+  await expect.poll(async () => (await primary.boundingBox())!.height).toBeCloseTo(350, -1);
+  await expect(recordings.getByRole('link', { name: 'Recording 1', exact: true })).toBeVisible();
+  const results = (await primary.boundingBox())!;
+  expect((await recordings.boundingBox())!.height).toBeLessThanOrEqual(Math.min(results.height * 0.4, 320) + 1);
+  expect(await recordings.evaluate(element => element.scrollHeight)).toBeGreaterThan(await recordings.evaluate(element => element.clientHeight));
+  await recordings.evaluate(element => { element.scrollTop = element.scrollHeight; });
+  await expect(recordings.getByRole('link', { name: 'Recording 20', exact: true })).toBeInViewport();
+  await expect(grid.getByText('Synthetic subject 1', { exact: true })).toBeInViewport();
+  await page.getByRole('combobox', { name: 'Show as: Table' }).click();
+  await page.getByRole('option', { name: 'Timeline', exact: true }).click();
+  await grid.getByText('Synthetic subject 1', { exact: true }).click();
+  await expect.poll(async () => (await primary.boundingBox())!.height).toBeCloseTo(350, -1);
+  await grid.evaluate(element => { element.scrollTop = element.scrollHeight; });
+  await expect(grid.getByText('Synthetic subject 20', { exact: true })).toBeInViewport();
+});
+
+test('recording reader restores history and focus', async ({ page }) => {
+  await page.clock.install();
+  const message = recordingMessage;
+  await page.route('**/api/session', route => route.fulfill({ json: { auth_mode: 'loopback', https: false, plain_http_warning: false } }));
+  await page.route('**/api/v1/explore', route => route.fulfill({ json: { rows: [entry(1)], total_count: 1, cache_revision: 'recording', search_provenance: {} } }));
+  await page.route('**/api/v1/media/search/status', route => route.fulfill({ json: { configured: true } }));
+  await page.route('**/api/v1/media/search?*', route => route.fulfill({ json: recordingSearchReport() }));
+  await page.route('**/api/v1/messages/9/recordings', route => route.fulfill({ json: recordingTranscript }));
+  await page.route('**/api/v1/messages/9', route => route.fulfill({ json: message }));
+  await page.route('**/api/v1/conversations/2?*', route => route.fulfill({ json: { id: 2, messages: [message], anchor_id: 9, has_before: false, has_after: false, total: 1 } }));
+  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(exploreURLState({ query: 'quarterly' })))}`);
+  const link = page.getByRole('link', { name: 'Team chat' });
+  const reader = page.getByRole('complementary', { name: 'Reading pane: Team chat' });
+  await link.click();
+  await reader.getByRole('button', { name: 'Close reading pane' }).click();
+  await expect(link).toBeFocused();
+  await page.goBack();
+  await expect(reader).toBeVisible();
+  await page.reload();
+  await expect(reader).toBeVisible();
+  await page.goForward();
+  await expect(reader).toHaveCount(0);
+  await page.goBack();
+  await expect(reader).toBeVisible();
+  await expect(page.getByRole('searchbox', { name: 'Search everything' })).toHaveValue('quarterly');
+  await expect(link).toBeVisible();
+  await page.clock.fastForward(30_001);
+  await reader.getByRole('button', { name: 'Close reading pane' }).click();
+  await expect(page.locator('[data-recording-hits]')).toBeFocused();
+});
 
 test('the bottom reading pane opens on a single click, resizes, and persists its height', async ({ page }) => {
   await page.route('**/api/session', (route) =>

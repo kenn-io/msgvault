@@ -15,6 +15,7 @@ import (
 	"go.kenn.io/msgvault/internal/importer"
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/msgraph"
+	"go.kenn.io/msgvault/internal/rederive"
 	"go.kenn.io/msgvault/internal/store"
 	"golang.org/x/sync/errgroup"
 )
@@ -35,11 +36,11 @@ const retryPrefix = "retry:"
 const fetchWorkers = 4
 
 // systemFolders maps Graph well-known folder names to the label system role
-// they carry. Each one is labelled "system"; only Sent Items has a role.
+// they carry. Each one is labelled "system"; only Sent Items and Drafts have a role.
 var systemFolders = map[string]string{
 	"inbox":        "",
 	"sentitems":    store.LabelSystemRoleSent,
-	"drafts":       "",
+	"drafts":       store.LabelSystemRoleDrafts,
 	"deleteditems": "",
 	"junkemail":    "",
 	"archive":      "",
@@ -85,6 +86,7 @@ func Import(ctx context.Context, st *store.Store, c *Client, opts Options, log *
 		mergeCursors(cursors, cp.CursorBefore.String)
 	}
 
+	rederive.Heal(ctx, log, st, src)
 	syncID, err := st.StartSync(src.ID, SourceType)
 	if err != nil {
 		return nil, err

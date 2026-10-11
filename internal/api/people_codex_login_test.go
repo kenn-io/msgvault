@@ -280,7 +280,7 @@ func TestPeopleCodexLoginCancellationWaitsForCredentialCommitToStop(t *testing.T
 	select {
 	case err := <-result:
 		require.FailNow("cancellation returned before client stopped", err)
-	case <-time.After(20 * time.Millisecond):
+	case <-time.After(20 * time.Millisecond): //nolint:kennlint // absence check: the client holds cancellation until finish closes
 	}
 	close(client.finish)
 	require.NoError(<-result)

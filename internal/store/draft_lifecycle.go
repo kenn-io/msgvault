@@ -81,6 +81,38 @@ func (t draftTable[D]) inTx(ctx context.Context, s *Store, draftID string, fn fu
 	})
 }
 
+// inAttributionTx is inTx for publication entries that write messages or
+// labels: it opens through the attribution entry, locking the draft's source
+// before the draft row.
+func (t draftTable[D]) inAttributionTx(ctx context.Context, s *Store, draftID string, fn func(tx *loggedTx, draft D) error) error {
+	var sourceID int64
+	err := s.db.QueryRowContext(ctx, `SELECT source_id FROM `+t.table+` WHERE draft_id = ?`, draftID).Scan(&sourceID)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("read %s draft %q source: %w", t.provider, draftID, err)
+	}
+	lock := attributionLock{}
+	if sourceID > 0 {
+		lock.Sources = []int64{sourceID}
+	}
+	return s.withAttributionTxContext(ctx, lock, func(tx *loggedTx) error {
+		if err := t.lockTx(ctx, s, tx, draftID); err != nil {
+			return err
+		}
+		draft, err := t.load(ctx, tx, s.dialect.SelectForUpdate(), draftID)
+		if err != nil {
+			return err
+		}
+		var lockedSourceID int64
+		if err := tx.QueryRowContext(ctx, `SELECT source_id FROM `+t.table+` WHERE draft_id = ?`, draftID).Scan(&lockedSourceID); err != nil {
+			return fmt.Errorf("read %s draft %q source: %w", t.provider, draftID, err)
+		}
+		if lockedSourceID != sourceID {
+			return fmt.Errorf("%s draft %q moved from source %d to %d", t.provider, draftID, sourceID, lockedSourceID)
+		}
+		return fn(tx, draft)
+	})
+}
+
 func (t draftTable[D]) clearPendingTx(ctx context.Context, s *Store, tx *loggedTx, draftID string, revision int64) error {
 	result, err := tx.ExecContext(ctx, `UPDATE `+t.table+` SET `+t.pendingNullSQL()+`, updated_at = `+s.dialect.Now()+`
 		WHERE draft_id = ? AND revision = ? AND pending_operation IS NOT NULL`, draftID, revision)

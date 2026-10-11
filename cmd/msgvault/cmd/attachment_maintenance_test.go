@@ -665,7 +665,7 @@ func TestAttachmentIngestMutationLeaseWaitsForMaintenance(t *testing.T) {
 	select {
 	case <-ingestStarted:
 		assert.Fail(t, "ingest started while maintenance held the exclusive lease")
-	case <-time.After(25 * time.Millisecond):
+	case <-time.After(25 * time.Millisecond): //nolint:kennlint // absence check: the held maintenance lease keeps ingest from starting
 	}
 	require.NoError(maintenanceLease.Release())
 	select {

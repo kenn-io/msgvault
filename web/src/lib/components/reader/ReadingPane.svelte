@@ -26,6 +26,7 @@
 </script>
 
 <script lang="ts">
+  import { messageTitle } from '../../archive/message-title';
   import { Button, EmptyState, IconButton } from '@kenn-io/kit-ui';
   import X from '@lucide/svelte/icons/x';
   import { onDestroy, untrack } from 'svelte';
@@ -55,6 +56,7 @@
     unavailable = undefined,
     predicate,
     onClose = undefined,
+    onRetry = undefined,
     conversationAnchorId = undefined,
     conversationStart = undefined,
     conversationEnd = undefined,
@@ -72,6 +74,7 @@
     unavailable?: ExploreCacheUnavailable;
     predicate: ExplorePredicate;
     onClose?: () => void;
+    onRetry?: () => void;
     /** Overrides the entry's own anchor when the reader navigated within the
      * thread (URL-carried, so Back/Forward restore the same message). */
     conversationAnchorId?: number;
@@ -102,7 +105,7 @@
   let requestGeneration = 0;
   let requestController: AbortController | undefined;
   const title = $derived(selection
-    ? selection.kind === 'entry' ? selection.row.title || '(untitled)' : selection.kind === 'archive' ? selection.message.subject || '(untitled)' : selection.label
+    ? selection.kind === 'entry' ? selection.row.title || '(untitled)' : selection.kind === 'archive' ? messageTitle(selection.message.subject, selection.message.conversation_title) || '(untitled)' : selection.label
     : targetKey || 'Selected result');
   const showFiles = $derived(selection?.kind === 'group' &&
     (selection.dimension === 'participant' || selection.dimension === 'domain'));
@@ -320,6 +323,7 @@
               title="Nothing to read here"
               description={statusMessage || 'The selected result is no longer available in this context.'}
             />
+            {#if status === 'error' && onRetry}<Button label="Retry" size="sm" surface="soft" onclick={onRetry} />{/if}
           </div>
         {/if}
       </section>

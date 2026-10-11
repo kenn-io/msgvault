@@ -72,17 +72,15 @@ func TestIdleTrackerExternalRequestResetsIdle(t *testing.T) {
 
 func TestIdleTrackerInternalWorkBlocksIdle(t *testing.T) {
 	t.Parallel()
-	synctest.Test(t, func(t *testing.T) {
-		f := newIdleTrackerFixture(t, 20*time.Millisecond)
-		done, ok := f.tracker.BeginWork()
-		require.True(t, ok, "BeginWork")
-		f.run(t)
+	f := newIdleTrackerFixture(t, 20*time.Millisecond)
+	done, ok := f.tracker.BeginWork()
+	require.True(t, ok, "BeginWork")
+	f.run(t)
 
-		f.requireNotFiredWithin(t, 35*time.Millisecond, "idle fired while internal work was active")
+	f.requireNotFiredWithin(t, 35*time.Millisecond, "idle fired while internal work was active")
 
-		done()
-		f.requireFiredWithin(t, 80*time.Millisecond, "idle did not fire after internal work ended")
-	})
+	done()
+	f.requireFiredWithin(t, 80*time.Millisecond, "idle did not fire after internal work ended")
 }
 
 func TestIdleTrackerRejectsRequestsAfterDrainStarts(t *testing.T) {

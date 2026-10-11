@@ -33,6 +33,7 @@ type Source interface {
 }
 
 type Importer struct {
+	users  UserSource
 	store  *store.Store
 	client Source
 	now    func() time.Time
@@ -40,6 +41,12 @@ type Importer struct {
 
 func NewImporter(st *store.Store, client Source) *Importer {
 	return &Importer{store: st, client: client, now: time.Now}
+}
+
+// WithUserSource resolves attendees with a separate workspace users token.
+func (imp *Importer) WithUserSource(users UserSource) *Importer {
+	imp.users = users
+	return imp
 }
 
 type ImportOptions struct {
@@ -302,7 +309,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		workOrder = append(workOrder, id)
 	}
 
-	hydrator := NewHydrator(imp.client)
+	hydrator := NewHydrator(imp.client).WithUserSource(imp.users)
 	archiver := meetingarchive.New(scopedStore)
 	var hardErrors []error
 	for _, id := range workOrder {
@@ -599,7 +606,8 @@ func preserveArchivedAttendees(meeting *HydratedMeeting, archived []resolvedUser
 
 		user, ok := currentByID[id]
 		if !ok {
-			if _, isUnresolved := unresolved[id]; isUnresolved {
+			if _, isUnresolved := unresolved[id]; isUnresolved &&
+				(meeting.failedAttendeeIDs == nil || meeting.failedAttendeeIDs[id]) {
 				user, ok = archivedByID[id]
 				if ok {
 					restored++

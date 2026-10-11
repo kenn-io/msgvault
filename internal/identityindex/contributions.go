@@ -11,16 +11,28 @@ import (
 // across append builds. Only new activity edges are reduced on an append;
 // global rankings still read the small daily contribution table.
 func (b builder) materializeContributions(ctx context.Context, activity string, effectiveAt time.Time) error {
-	temperatureSQL := buildRelationshipTemperatureDailySQL(activity, effectiveAt)
-	logicalSQL := buildLogicalActivityMaterializationSQL(activity)
-	if b.opts.Mode == ModeIncremental &&
+	reuseContributions := b.opts.Mode == ModeIncremental &&
 		datasetContainsParquet(b.opts.CommittedRoot, DatasetLogicalContributions) &&
-		datasetContainsParquet(b.opts.CommittedRoot, DatasetTemperatureContributions) {
-		delta := b.deltaActivityRelation()
-		reuseTemperature, err := b.canReuseTemperatureContributions(ctx, effectiveAt)
+		datasetContainsParquet(b.opts.CommittedRoot, DatasetTemperatureContributions)
+	reuseTemperature := false
+	if reuseContributions {
+		var err error
+		reuseTemperature, err = b.canReuseTemperatureContributions(ctx, effectiveAt)
 		if err != nil {
 			return err
 		}
+	}
+	if b.opts.Mode == ModeIncremental && !reuseTemperature {
+		if err := b.materializeBuildTable(ctx, activityBuildRelation,
+			activity, "relationship_activity_edges"); err != nil {
+			return err
+		}
+		activity = "(SELECT * FROM " + activityBuildRelation + ")"
+	}
+	temperatureSQL := buildRelationshipTemperatureDailySQL(activity, effectiveAt)
+	logicalSQL := buildLogicalActivityMaterializationSQL(activity)
+	if reuseContributions {
+		delta := "(SELECT * FROM " + deltaActivityBuildRelation + ")"
 		if reuseTemperature {
 			temperatureSQL = mergeTemperatureContributionsSQL(
 				b.committed(DatasetTemperatureContributions),

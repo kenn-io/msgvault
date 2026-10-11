@@ -4,6 +4,7 @@ import "slices"
 
 // Explore filter dimensions accepted by the analytical server contract.
 const (
+	FilterAccount     = "account"
 	FilterSource      = "source"
 	FilterIdentity    = "identity"
 	FilterParticipant = "participant"
@@ -21,6 +22,7 @@ var filterDimensions = [...]string{
 	FilterParticipant,
 	FilterDomain,
 	FilterMailingList,
+	FilterAccount,
 	FilterMessageType,
 	FilterAfter,
 	FilterBefore,

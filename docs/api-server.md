@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-06"
+last_edited: "2026-10-08"
 title: Web UI & API Server
 description: Daemon-served analytical Web UI and REST API for your msgvault archive, with optional background sync scheduling.
 ---
@@ -100,9 +100,14 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.4.0**.
+it is separate from the binary release version. The current schema is **3.11.0**.
 Upgrade clients and daemon together across incompatible schema versions,
 including remote deployments.
+
+Schema 3.11.0 adds `GET /media/search/status` to report whether Docbank transcript search is configured. It also adds source filename, title and date to transcript search results and optional `conversation_title` to `GET /messages/{id}`.
+
+Schema 3.9.0 adds source-scoped agent read permissions and optional `expires_at`. Admitted FTS search responses, including aggregates, filtered messages and total statistics with search text, carry optional `index_state`. Agent checks are bounded; owner CLI searches retain automatic verification and repair.
+See [scoped archive reads](cli-reference.md#scoped-archive-reads).
 
 Schema 3.3.0 adds `POST /api/v1/telemetry/events`, which the web and terminal UIs use to
 report anonymous usage events through the daemon. See
@@ -125,11 +130,30 @@ exceeds Outlook's 4 MB write limit. A sync of all connections returns 200 and
 reports the code as that connection's failure, and run history records it as
 the failure code.
 
+Schema 3.5.0 adds the `account:` and `received:` search operators.
+
+Schema 3.8.0 adds [read-only remote client credentials](guides/remote-deployment.md#read-only-remote-clients), HTTP 409 for ambiguous raw-message references, and HTTP 413 for remote read limits.
+
+Schema 3.10.0 adds `GET /api/v1/people/by-uid`, which resolves current person
+UIDs, retired person UIDs, and UIDs on mapped CardDAV resources. It returns a
+conflict when one UID resolves to multiple people. Person responses expose
+`carddav_bindings`; directory responses now include both `vcard_uid` and
+`carddav_bindings`.
+
+Schema 3.11.0 adds structured `account_scopes` filters, the Explore account
+filter, and the virtual account catalog on `/cli/accounts`.
+
 Schema 3.1.0 adds unreleased [calendar event control](#calendar-control),
 availability queries, and opt-in `write` on Calendar consent plans.
 
 Schema 3.2.0 adds `counts_pending` to `GET /api/v1/cli/accounts`. See
 [archive statistics](#get-apiv1stats) for when it appears.
+
+Schema 3.6.0 adds `GET /api/v1/messages/{id}/recordings`, which lists a
+message's recordings with their Docbank transcript state. Existing routes are
+unchanged.
+
+Schema 3.7.0 adds `GET /api/v1/media/search` for scoped lexical transcript search.
 
 Schema 2.35.0 adds `scope_escalation_source_type` (`gmail` or `msmail`) to
 `POST /api/v1/cli/delete-staged/plan` responses that require a permission
@@ -229,6 +253,20 @@ responses are bounded projections that omit raw vCards and resource hrefs;
 only the explicit publication preview route returns a raw vCard.
 See [release changes](changelog.md#upgrade-and-compatibility) for removed paths
 and the 1.x/2.x transition.
+
+### Person UIDs and CardDAV bindings
+
+Person responses, including `GET /api/v1/people/{id}`, `GET /api/v1/people`,
+person updates, and semantic person search, return `vcard_uid` for each person
+and `carddav_bindings` when the person has mapped CardDAV cards. Directory rows
+always include both fields; `carddav_bindings` is an empty array when no card
+is mapped. A binding names the CardDAV `connection` and `book` and
+includes the resource `href`, its `remote_uid`, and `mapping_status`.
+
+Use `GET /api/v1/people/by-uid?uid={uid}` to resolve an exact current person UID, a
+retired UID that still aliases a person, or the UID of a CardDAV card mapped to
+that person. If the same CardDAV UID is mapped to different people, the API
+returns `409 person_uid_ambiguous`.
 
 ### Identity match review and scoring
 
@@ -348,6 +386,8 @@ is required. Three API-key authentication methods are supported:
 | Plain auth header | `Authorization: <key>` | `Authorization: my-secret` |
 
 If no effective API key is configured, authentication is not required. Secure startup requires a key for non-loopback addresses. On unreleased `main`, `serve` creates and persists one when no credential source is configured. See [server credentials](configuration.md#server) for file and environment sources, persistence, and explicit insecure mode.
+
+Keys listed under `[[server.remote_clients]]` authenticate the same way but reach only a fixed set of read operations; every other route returns 403. See [read-only remote clients](guides/remote-deployment.md#read-only-remote-clients).
 
 ## Historical import jobs {#historical-import-jobs}
 
@@ -1566,6 +1606,109 @@ Successful responses set:
 
 ---
 
+### Media transcript search
+
+`GET /api/v1/media/search/status` returns a boolean `configured` field. It reports `false` when the recording reader or its Docbank client is absent. It checks configuration without contacting Docbank.
+
+`GET /api/v1/media/search?q=quarterly%20numbers&mode=lexical&limit=20` finds spoken words and returns every matching live message occurrence. Results include message, conversation and attachment IDs, optional `filename`, `containing_title` and `occurred_at`, supplied or generated origin, an excerpt, and timing when Docbank recorded it. Optional `person_id` selects durable person bindings; `participant_id` selects the current identity cluster used by Explore's Person filter. They can't be combined. Repeated `direction` values select `from_person`, `to_person` or `group` relations and require either ID.
+
+The daemon searches the complete allowed population, with a ceiling of 4,096 distinct versions and source selectors. Oversized scopes return `media_search_scope_limit` before contacting Docbank; set `person_id` or `participant_id` to narrow the scope. A recording with more than 64 distinct current supplied transcript input IDs is left out of the search. Its message occurrences count in `unavailable_occurrences`, and `partial=true`. Repeated occurrences of the same input count once. Semantic and hybrid modes return `media_search_mode_unavailable`. An unconfigured or unreachable integration returns `media_search_unavailable`.
+
+The response has Docbank `coverage`, local `pending_occurrences` and `unavailable_occurrences`, `attribution_unavailable`, `partial`, and `truncated`. Pending counts require durable worker work; unmapped audio counts as unavailable. Coverage state `unknown` stays unknown. `partial` also reports local gaps and withheld excerpts. An empty result with complete coverage and `partial=false` means the query found no transcript match. The output limit applies after shared recordings expand into messages; `truncated` reports remaining occurrences or Docbank's retrieval limit.
+
+Selected transcript completeness must be `complete`, `partial`, or `degraded_provenance`. The latter two set `partial=true`; unsupported values reject the entire search with HTTP 503 and `media_search_unavailable`.
+
+Media search requires Docbank's source-selected search contract: `media_sources` selectors, a `media_source_selection` report marker and query-independent `media_selections`, including empty results. The daemon sends each source's current supplied-input set; generated transcripts stay eligible while supplied work is queued. Docbank selects each source's current transcript before ranking and returns build and exact source associations with each plain excerpt; source selections carry origin and supplied-input identity. Pending or missing transcripts leave coverage partial while ready matches remain searchable. Older servers and remote lookup failures return `media_search_unavailable`. Supplied text requires `supplied_input_id` to match the occurrence's saved delivery; mismatches count as unavailable attribution even when the query has no hits. The daemon validates supplied transcript revisions before search and rechecks visibility, recording identity, supplied text and person scope afterward.
+
+### Message recordings {#get-apiv1messagesidrecordings}
+
+**Endpoint:** `GET /api/v1/messages/{id}/recordings`
+
+List a message's recordings and their transcript state. msgvault reads the
+transcript from the configured [Docbank destination](usage/beeper.md#send-audio-to-docbank)
+on each request and does not store it.
+
+```json
+{
+  "message_id": 42,
+  "recordings": [
+    {
+      "attachment_id": 5,
+      "filename": "voice.wav",
+      "size_bytes": 48213,
+      "state": "ready",
+      "transcript": {
+        "origin": "supplied",
+        "partial": false,
+        "units": [
+          { "text": "See you at noon.", "start_ms": 0, "end_ms": 1500, "speaker": "alice" }
+        ]
+      }
+    }
+  ]
+}
+```
+
+`state` is one of:
+
+| State | Meaning |
+|---|---|
+| `ready` | Docbank has transcript text; `transcript` is set |
+| `processing` | The transcript is queued or running |
+| `missing` | Docbank has the audio but no transcript |
+| `failed` | Docbank's transcription failed or was cancelled |
+| `unsupported` | Transcription eligibility or limits reject the recording |
+| `media_missing` | The audio bytes are missing from the archive |
+| `unavailable` | msgvault can't show a transcript; see below |
+
+A recording is `unavailable` when:
+
+- Docbank can't be reached in time, or the API key is missing.
+- Docbank returns evidence that msgvault can't attribute to this recording,
+  such as a provider transcript that another message or an earlier edit sent
+  for the same audio.
+- `all_sources_upload_consent` is off, so the media worker won't send audio
+  that is waiting to be sent, including a provider transcript that changed.
+- The media worker blocked the recording for a reason other than transcription eligibility or limits.
+- Capture policy skipped the recording's bytes.
+
+`origin` is `supplied` for a provider transcript and `generated` for speech
+recognition. `partial` is true when Docbank reports truncated, incomplete or
+omitted text. A unit's `start_ms`, `end_ms` and `speaker` are present only when
+Docbank recorded them.
+
+A `supplied` transcript shows only when Docbank identifies the exact input
+msgvault sent for the message's current recording. This requires Docbank's
+[supplied-input attribution](https://github.com/kenn-io/docbank/pull/825).
+Older Docbank servers that omit this identity leave supplied text `unavailable`. Matching evidence can
+show `ready` before the local worker polls completion. An edited transcript
+reads as `processing` while delivery is pending and uploads are allowed.
+A delivery that failed reads as `failed`.
+If Docbank serves another input for the same audio, including after a transcript
+is reverted, supplied text stays `unavailable` until Docbank serves the saved input.
+
+Only live messages list recordings. A message that is hidden as a duplicate or
+deleted from its source returns an empty list. Captured audio without a current
+worker mapping reads as `unavailable` until discovery records processing work.
+When the Docbank integration is off, or its `url`
+is invalid, archived recordings stay visible with transcript state `unavailable`;
+audio whose bytes are absent stays `media_missing`, or `unavailable` when capture policy skipped it. A
+non-positive or non-numeric ID returns `400 invalid_id`.
+
+Person-scoped Media and Files, search, CLI, TUI and MCP readers are later work.
+
+The Web reader refreshes visible recordings while the message stays open.
+Unchanged results increase the interval from 2 seconds up to 30 seconds.
+Returning to the tab refreshes immediately. A changed message clears earlier
+evidence before loading its recordings again.
+
+Each request reads Docbank for retained recordings only, up to four at a time.
+The reads share a budget of 20 seconds or half the remaining request time,
+whichever is shorter. A read that runs out of budget leaves its recording
+`unavailable`.
+
+---
+
 ### Search messages {#get-apiv1search}
 
 **Endpoint:** `GET /api/v1/search`
@@ -1852,6 +1995,48 @@ An `explore` scope carries the complete `predicate`, `cache_revision`,
 exclusive with direct `scope`. The server resolves the full matching population,
 with a 10000-ID transfer ceiling. A stale authority requires reloading; an
 oversized scope must be narrowed. Neither case widens the request.
+
+### Import a recorder-local Muesli meeting
+
+**Endpoint:** `POST /api/v1/import/muesli`
+
+The native client uses this owner-authenticated endpoint for remote Muesli sync.
+Agent-delegated credentials and read-only remote client keys are denied. It is available on `main` and is not yet
+released. Prefer the native [Muesli commands](cli-reference.md#sync-muesli);
+applications do not need an export script.
+
+The strict JSON contract accepts `action` (`register`, `upsert`, or `refresh`),
+`source` (`identifier`, optional `display_name`, and `account_email`), an optional
+normalized `meeting`, and optional `full`, `build_cache`, and `no_build_cache`
+flags. The client probes its local database before sending `register` to create the stable source.
+`upsert` requires a registered source and a nonempty meeting that is not
+still recording or processing.
+`build_cache` requires the `refresh` action, which permits an explicit cache
+request even when a scan contains no eligible meetings. The recorder email must match the source's existing primary identity.
+Database paths and raw Contacts identifiers are not accepted.
+
+Requests are limited to 16 MiB, 200 participants, and 50 distinct identities per
+participant. Unknown/duplicate JSON members, trailing input, and invalid UTF-8
+are rejected. Invalid JSON returns `400`, validation failures `422`, oversized
+requests `413`, and a missing source `404`. Validation errors omit field values.
+When combined new and archived Contacts evidence would exceed these limits, the
+daemon drops that attendee's review-only phone suggestions and imports the
+meeting. A meeting the daemon cannot archive returns `422` /
+`record_validation_failed`; native clients skip it and continue the scan. Source or request errors use `validation_failed`
+and stop the scan so the owner can correct registration or configuration.
+The body is bounded and validated before acquiring the operation gate. A busy
+gate returns `503` / `operation_in_progress`, and the off-host rate limit
+returns `429` with `Retry-After`. Native clients wait and retry the same body
+until cancelled.
+
+Responses contain `status`, `source_id`, optional `message_id`, and `changed`.
+Statuses are `registered`, `created`, `updated`, `unchanged`, and `refreshed`.
+Creation returns `201`; other successful actions return `200`. Meetings preserve
+the existing Muesli key derived from row ID and creation time, so lost responses
+can be retried safely and later edits update the same archive message. Each
+new or edited meeting records one `muesli_push` sync run; an unchanged
+retransmission records none. Routine changed writes request an automatic
+background refresh; unchanged writes do not.
 
 ### Import a meeting {#post-apiv1importmeeting}
 
@@ -2562,6 +2747,24 @@ The server is designed for local use:
 
 !!! warning
     Exposing the server on a network without authentication gives anyone on that network access to your entire email archive. Keep authentication enabled when binding to non-loopback addresses.
+
+### Restricted agent reads
+
+Agent requests use `X-Msgvault-Agent-Token` instead of the owner key. The
+daemon checks `search.read`, `message.read`, `attachment.read`, or `stats.read`
+and the live source identity before serving supported archive reads. Unscoped
+reads select only granted sources. Explicit accounts, collections, and source ID
+sets must fit entirely inside the grant. A missing permission or an account
+selector outside the grant returns `403 permission_denied` and names the
+permission. A message, thread, or attachment outside the grant returns the same
+`404` as a missing one. At most two agent reads run at once; others wait, and a
+request that ends while waiting returns `503 agent_read_busy`. Unsupported routes remain
+owner-only, including SQL, exports, writes, configuration, and grant management.
+
+Delegated reads use the daemon's ordinary request deadline, normally 60 seconds.
+
+See [agent-token](cli-reference.md#agent-token) for grant lifetime, expiry,
+revocation, issuance, remote CLI and MCP usage, and supported read capabilities.
 
 ## Configuration Reference
 

@@ -95,7 +95,7 @@ func (r *participantResolver) displayName(userID string) string {
 // resolveID resolves a Slack user ID to a participant ID, creating the
 // participant if needed. Unknown IDs (Slack Connect guests, departed users
 // missing from users.list) resolve by bare identifier with no display name.
-func (r *participantResolver) resolveID(userID string) (int64, error) {
+func (r *participantResolver) resolveID(ctx context.Context, userID string) (int64, error) {
 	if userID == "" {
 		return 0, nil
 	}
@@ -107,11 +107,11 @@ func (r *participantResolver) resolveID(userID string) (int64, error) {
 	}
 	u, known := r.users[userID]
 	if known && strings.Contains(u.Profile.Email, "@") && !u.IsBot {
-		pid, err := r.byEmail(u.Profile.Email, u.DisplayName())
+		pid, err := r.byEmail(ctx, u.Profile.Email, u.DisplayName())
 		if err != nil {
 			return 0, err
 		}
-		if err := r.recordRich(userID, pid); err != nil {
+		if err := r.recordRich(ctx, userID, pid); err != nil {
 			return 0, err
 		}
 		return pid, nil
@@ -120,7 +120,7 @@ func (r *participantResolver) resolveID(userID string) (int64, error) {
 	if known {
 		name = u.DisplayName()
 	}
-	pid, err := r.store.EnsureParticipantByIdentifier(participantIdentifierType, r.identifierValue(userID), name)
+	pid, err := r.store.EnsureParticipantByIdentifierContext(ctx, participantIdentifierType, r.identifierValue(userID), name)
 	if err != nil {
 		return 0, err
 	}
@@ -132,18 +132,18 @@ func (r *participantResolver) resolveID(userID string) (int64, error) {
 // participant, so later runs resolve bare sightings to the same person. A
 // prior weak (bare-ID) owner is the same Slack user seen with less metadata:
 // its history is merged into the rich participant rather than left split.
-func (r *participantResolver) recordRich(userID string, pid int64) error {
+func (r *participantResolver) recordRich(ctx context.Context, userID string, pid int64) error {
 	value := r.identifierValue(userID)
-	prev, _, err := r.store.ParticipantByIdentifier(participantIdentifierType, value)
+	prev, _, err := r.store.ParticipantByIdentifierContext(ctx, participantIdentifierType, value)
 	if err != nil {
 		return err
 	}
 	if prev != 0 && prev != pid {
-		if err := r.store.MergeParticipants(prev, pid); err != nil {
+		if err := r.store.MergeParticipantsContext(ctx, prev, pid); err != nil {
 			return err
 		}
 	}
-	if err := r.store.SetParticipantIdentifier(pid, participantIdentifierType, value); err != nil {
+	if err := r.store.SetParticipantIdentifierContext(ctx, pid, participantIdentifierType, value); err != nil {
 		return err
 	}
 	r.rich[userID] = pid
@@ -153,7 +153,7 @@ func (r *participantResolver) recordRich(userID string, pid int64) error {
 
 // resolveBot resolves a bot sender (bot_id + optional username). Bots never
 // dedup by email; they are namespaced by bot ID.
-func (r *participantResolver) resolveBot(botID, username string) (int64, error) {
+func (r *participantResolver) resolveBot(ctx context.Context, botID, username string) (int64, error) {
 	if botID == "" {
 		return 0, nil
 	}
@@ -161,7 +161,7 @@ func (r *participantResolver) resolveBot(botID, username string) (int64, error) 
 	if pid, ok := r.fallback[key]; ok {
 		return pid, nil
 	}
-	pid, err := r.store.EnsureParticipantByIdentifier(participantIdentifierType, r.identifierValue(key), username)
+	pid, err := r.store.EnsureParticipantByIdentifierContext(ctx, participantIdentifierType, r.identifierValue(key), username)
 	if err != nil {
 		return 0, err
 	}
@@ -169,11 +169,11 @@ func (r *participantResolver) resolveBot(botID, username string) (int64, error) 
 	return pid, nil
 }
 
-func (r *participantResolver) byEmail(email, displayName string) (int64, error) {
+func (r *participantResolver) byEmail(ctx context.Context, email, displayName string) (int64, error) {
 	email = strings.ToLower(email)
 	domain := ""
 	if at := strings.LastIndex(email, "@"); at >= 0 {
 		domain = email[at+1:]
 	}
-	return r.store.EnsureParticipant(email, displayName, domain)
+	return r.store.EnsureParticipantContext(ctx, email, displayName, domain)
 }

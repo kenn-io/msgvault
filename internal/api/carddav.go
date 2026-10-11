@@ -1325,6 +1325,10 @@ func (s *Server) writeCardDAVOperationError(
 		errors.Is(err, store.ErrCardDAVConflictNotFound),
 		errors.Is(err, store.ErrPersonNotFound):
 		writeError(w, http.StatusNotFound, "not_found", message)
+	case errors.Is(err, store.ErrCardDAVRemoteProtected):
+		writeError(w, http.StatusConflict, "carddav_remote_protected", "The remote card would overwrite a value added in msgvault or another address book. Keep local, or restore that value in the address book and sync again.")
+	case errors.Is(err, store.ErrCardDAVRemoteInvalid):
+		writeError(w, http.StatusConflict, "carddav_remote_invalid", "The remote card has values that cannot be published, such as an invalid preference or location. Fix them in the address book and sync again, or keep local.")
 	case errors.Is(err, store.ErrCardDAVConflictStale):
 		writeError(w, http.StatusConflict, "carddav_conflict_stale", "CardDAV conflict changed; refresh before trying again")
 	case errors.Is(err, carddav.ErrCardDAVConflictPending):

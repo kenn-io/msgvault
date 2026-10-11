@@ -17,6 +17,8 @@
     firstYear: number | null;
     currentYear: number;
     onYearChange: (year: number) => void;
+    selectedDate?: string | null;
+    onDateChange: (date: string | null) => void;
   }
 
   interface CalendarCell {
@@ -38,7 +40,9 @@
     year = new Date().getUTCFullYear(),
     firstYear,
     currentYear,
-    onYearChange
+    onYearChange,
+    selectedDate = null,
+    onDateChange
   }: Props = $props();
 
   const selectedYear = $derived(calendar?.year ?? year);
@@ -222,6 +226,8 @@
                 type="button"
                 class="heat-cell {levelClass(cell.day)}"
                 aria-label={dayTooltipText(cell.day)}
+                aria-pressed={selectedDate === cell.date}
+                onclick={() => onDateChange(selectedDate === cell.date ? null : cell.date)}
               ></button>
             {/if}
           </span>
@@ -275,6 +281,12 @@
       <!-- kit-ui-check-ignore: One delegated tooltip follows individual days; kit Tooltip owns its trigger and open state. -->
       <div id={tooltipID} class="calendar-day-tooltip kit-popover-card" role="tooltip" bind:this={tooltipNode}>
         {tooltip.getAttribute('aria-label')}
+      </div>
+    {/if}
+    {#if selectedDate}
+      <div class="date-selection">
+        <time datetime={selectedDate}>{new Date(`${selectedDate}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</time>
+        <Button size="sm" surface="outline" label="Clear date" onclick={() => onDateChange(null)} />
       </div>
     {/if}
     {#if !hasActivity}<p class="empty-year">No interactions in {calendar.year}.</p>{/if}
@@ -401,12 +413,31 @@
   button.heat-cell {
     padding: 0;
     border: 0;
-    cursor: default;
+    cursor: pointer;
+  }
+
+  button.heat-cell:hover {
+    outline: 1px solid var(--border-strong);
+    outline-offset: 1px;
+  }
+
+  button.heat-cell[aria-pressed='true'] {
+    outline: 2px solid var(--text-primary);
+    outline-offset: 1px;
   }
 
   button.heat-cell:focus-visible {
     outline: 2px solid var(--accent-blue);
     outline-offset: 1px;
+  }
+
+  .date-selection {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+    margin-top: var(--space-3);
+    font-size: var(--text-sm);
   }
 
   .level-none { background: var(--bg-inset); }

@@ -101,7 +101,7 @@ func TestClientContextCancelDuringBackoff(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond) //nolint:kennlint // the deadline is the expected result; the server always fails, so only the context ends the backoff
 	defer cancel()
 
 	c := NewClient(srv.URL, testToken, 1000)

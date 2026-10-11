@@ -2,10 +2,13 @@ package microsoft
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -34,6 +37,7 @@ func TestGraphScopes(t *testing.T) {
 	assert.Contains(got, "https://graph.microsoft.com/TeamMember.Read.All")
 	assert.Contains(got, "https://graph.microsoft.com/ChannelMember.Read.All")
 	assert.Contains(got, scopeOfflineAccess)
+	assert.Contains(got, scopeProfile)
 }
 
 func TestNewGraphManager_DefaultsTenant(t *testing.T) {
@@ -97,20 +101,106 @@ func TestGraphManager_Authorize_PersistsGraphToken(t *testing.T) {
 	assert.Contains(tf.Scopes, "https://graph.microsoft.com/Chat.Read", "Graph scope persisted")
 }
 
-func TestGraphManager_Authorize_Mismatch(t *testing.T) {
-	dir := t.TempDir()
-	m := NewGraphManager("test-client", "common", "", dir, slog.Default())
-	m.verifyIDTokenFn = testVerifyFn
-	m.browserFlowFn = func(_ context.Context, _ string, _ []string) (*oauth2.Token, string, error) {
-		idToken := makeIDToken(t, map[string]any{"email": "other@example.com"})
-		tok := (&oauth2.Token{AccessToken: "x", TokenType: "Bearer"}).
-			WithExtra(map[string]any{"id_token": idToken})
-		return tok, "nonce", nil
+func TestGraphManager_Authorize_ConfirmsMailboxViaProfile(t *testing.T) {
+	upn := map[string]any{"preferred_username": "jdoe@example.org", "tid": "org-tenant-id"}
+	primary := map[string]any{"email": "j.doe@example.com", "tid": "org-tenant-id"}
+	absent := map[string]any{"tid": "org-tenant-id"}
+	for _, product := range []struct {
+		name       string
+		newManager func(string, string, string, string, *slog.Logger) *GraphManager
+	}{
+		{"mail", NewGraphMailManager},
+		{"mail write", NewGraphMailWriteManager},
+		{"teams", NewGraphManager},
+		{"contacts", NewGraphContactsManager},
+	} {
+		t.Run(product.name, func(t *testing.T) {
+			for _, tc := range []struct {
+				name                  string
+				claims                map[string]any
+				status                int
+				body                  string
+				saved                 bool
+				invalid, missingToken bool
+			}{
+				{name: "mail", claims: upn, status: http.StatusOK, body: `{"mail":"John@example.com","userPrincipalName":"jdoe@example.org"}`, saved: true},
+				{name: "smtp alias", claims: upn, status: http.StatusOK, body: `{"mail":"j.doe@example.com","proxyAddresses":["SMTP:j.doe@example.com","smtp:JOHN@example.com"]}`, saved: true},
+				{name: "primary email versus alias", claims: primary, status: http.StatusOK, body: `{"mail":"j.doe@example.com","proxyAddresses":["SMTP:j.doe@example.com","smtp:john@example.com"]}`, saved: true},
+				{name: "absent identity fields", claims: absent, status: http.StatusOK, body: `{"mail":"john@example.com"}`, saved: true},
+				{name: "other mailbox", claims: upn, status: http.StatusOK, body: `{"mail":"bob@example.com","userPrincipalName":"bob@example.org","proxyAddresses":["SMTP:bob@example.com"]}`},
+				{name: "other primary email", claims: primary, status: http.StatusOK, body: `{"mail":"bob@example.com"}`},
+				{name: "absent identity and other mailbox", claims: absent, status: http.StatusOK, body: `{"mail":"bob@example.com"}`},
+				{name: "non smtp proxy", claims: primary, status: http.StatusOK, body: `{"proxyAddresses":["SIP:john@example.com"]}`},
+				{name: "forbidden", claims: upn, status: http.StatusForbidden, body: `{"error":{"code":"Authorization_RequestDenied"}}`},
+				{name: "absent identity and forbidden", claims: absent, status: http.StatusForbidden, body: `{}`},
+				{name: "invalid token", claims: absent, status: http.StatusOK, body: `{"mail":"john@example.com"}`, invalid: true},
+				{name: "missing token", status: http.StatusOK, body: `{"mail":"john@example.com"}`, missingToken: true},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					var calls atomic.Int32
+					srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						calls.Add(1)
+						assert.Equal(t, "/me", r.URL.Path)
+						assert.Equal(t, "mail,userPrincipalName,proxyAddresses", r.URL.Query().Get("$select"))
+						assert.Equal(t, "Bearer new-access", r.Header.Get("Authorization"))
+						w.WriteHeader(tc.status)
+						_, _ = w.Write([]byte(tc.body))
+					}))
+					t.Cleanup(srv.Close)
+					m := product.newManager("test-client", "common", "", t.TempDir(), slog.Default())
+					m.graphURL = srv.URL
+					m.verifyIDTokenFn = testVerifyFn
+					invalid := errors.New("invalid ID token signature or nonce")
+					if tc.invalid {
+						m.verifyIDTokenFn = func(context.Context, string) (*idTokenClaims, error) {
+							return &idTokenClaims{Email: "john@example.com"}, invalid
+						}
+					}
+					m.browserFlowFn = func(_ context.Context, _ string, scopes []string) (*oauth2.Token, string, error) {
+						assert.Contains(t, scopes, scopeProfile)
+						tok := &oauth2.Token{AccessToken: "new-access", RefreshToken: "new-refresh", TokenType: "Bearer"}
+						if !tc.missingToken {
+							tok = tok.WithExtra(map[string]any{"id_token": makeScopedIDToken(t, tc.claims, scopes)})
+						}
+						return tok, "test-nonce", nil
+					}
+					old := &oauth2.Token{AccessToken: "old-access", RefreshToken: "old-refresh", TokenType: "Bearer"}
+					require.NoError(t, m.saveToken("john@example.com", old, m.scopes, "old-tenant"))
+					before, err := os.ReadFile(m.TokenPath("john@example.com"))
+					require.NoError(t, err)
+
+					err = m.Authorize(t.Context(), "john@example.com")
+					if tc.saved {
+						require.NoError(t, err)
+						tf, err := m.loadTokenFile("john@example.com")
+						require.NoError(t, err)
+						assert.Equal(t, "new-access", tf.AccessToken)
+						assert.Equal(t, "new-refresh", tf.RefreshToken)
+						assert.Equal(t, "org-tenant-id", tf.TenantID)
+					} else {
+						require.Error(t, err)
+						if tc.invalid {
+							require.ErrorIs(t, err, invalid)
+						} else if !tc.missingToken {
+							assert.Contains(t, err.Error(), "sign in to the account that owns john@example.com")
+							if tc.claims["email"] != nil || tc.claims["preferred_username"] != nil {
+								var mismatch *TokenMismatchError
+								require.ErrorAs(t, err, &mismatch)
+							}
+						}
+						got, err := os.ReadFile(m.TokenPath("john@example.com"))
+						require.NoError(t, err)
+						assert.Equal(t, before, got, "existing credentials preserved")
+					}
+					wantCalls := int32(1)
+					if tc.invalid || tc.missingToken {
+						wantCalls = 0
+					}
+					assert.Equal(t, wantCalls, calls.Load())
+				})
+			}
+		})
 	}
-	err := m.Authorize(t.Context(), "user@company.com")
-	require.Error(t, err, "expected mismatch error")
-	mismatch := &TokenMismatchError{}
-	assert.ErrorAs(t, err, &mismatch, "expected *TokenMismatchError")
 }
 
 func TestGraphManager_TokenSource_NoIMAPValidation(t *testing.T) {
@@ -125,6 +215,57 @@ func TestGraphManager_TokenSource_NoIMAPValidation(t *testing.T) {
 	ts, err := m.TokenSource(t.Context(), "user@company.com")
 	require.NoError(t, err)
 	require.NotNil(t, ts, "TokenSource returned nil")
+}
+
+func TestGraphManager_ExistingGrantWithoutProfile(t *testing.T) {
+	for _, product := range []struct {
+		name       string
+		newManager func(string, string, string, string, *slog.Logger) *GraphManager
+		permission string
+	}{
+		{"mail", NewGraphMailManager, scopeGraphMailRead},
+		{"mail write", NewGraphMailWriteManager, scopeGraphMailReadWrite},
+		{"teams", NewGraphManager, scopeGraphChatRead},
+		{"contacts", NewGraphContactsManager, scopeGraphContactsReadWrite},
+	} {
+		t.Run(product.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			m := product.newManager("test-client", "common", "", t.TempDir(), nil)
+			granted := slices.DeleteFunc(slices.Clone(m.scopes), func(scope string) bool { return scope == scopeProfile })
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.NoError(r.ParseForm())
+				assert.Equal("refresh_token", r.Form.Get("grant_type"))
+				assert.Equal("old-refresh", r.Form.Get("refresh_token"))
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"access_token":"fresh-access","token_type":"Bearer","expires_in":3600,"refresh_token":"fresh-refresh"}`))
+			}))
+			t.Cleanup(srv.Close)
+			m.authorityURL = srv.URL
+			token := &oauth2.Token{AccessToken: "old-access", RefreshToken: "old-refresh", TokenType: "Bearer", Expiry: time.Now().Add(-time.Hour)}
+			require.NoError(m.saveToken("user@example.com", token, granted, "org-tenant-id"))
+			ok, err := m.HasScopes("user@example.com")
+			require.NoError(err)
+			assert.True(ok)
+			source, err := m.TokenSource(t.Context(), "user@example.com")
+			require.NoError(err)
+			access, err := source(t.Context())
+			require.NoError(err)
+			assert.Equal("fresh-access", access)
+			saved, err := m.loadTokenFile("user@example.com")
+			require.NoError(err)
+			assert.ElementsMatch(granted, saved.Scopes)
+			assert.Equal("fresh-refresh", saved.RefreshToken)
+
+			missingPermission := slices.DeleteFunc(slices.Clone(granted), func(scope string) bool { return scope == product.permission })
+			require.NoError(m.saveToken("user@example.com", token, missingPermission, "org-tenant-id"))
+			ok, err = m.HasScopes("user@example.com")
+			require.NoError(err)
+			assert.False(ok)
+			_, err = m.TokenSource(t.Context(), "user@example.com")
+			require.ErrorContains(err, product.permission)
+		})
+	}
 }
 
 func TestGraphManager_TokenSource_StaleGraphScopesReturnsError(t *testing.T) {

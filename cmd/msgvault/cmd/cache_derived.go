@@ -163,7 +163,7 @@ func refreshDerivedDatasetsOnly(
 	if repairRelated {
 		// A late terminal sync can add children to an already-exported parent.
 		// Acknowledge its addition counter only from the same snapshot used to
-		// repair those children. Changed facts or failed runs remain full repairs.
+		// repair those children. Changed facts or interrupted runs remain full repairs.
 		counters, err := readCacheSyncCounters(sourceSnapshot)
 		if err != nil {
 			return nil, fmt.Errorf("read related-refresh sync counters: %w", err)

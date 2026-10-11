@@ -5,8 +5,9 @@
 
   import type { APIClient } from '../../api/client';
   import type { ExploreFilter, ExploreGroupDimension, ExploreSearchMode, ExploreURLState } from '../../explore/models';
-  import { filterDimensionLabel, groupedByLabel, searchModeLabel } from '../../explore/labels';
+  import { filterDimensionLabel, filterValueLabel, groupedByLabel, searchModeLabel } from '../../explore/labels';
   import { groupingOptions, isGroupingDimension } from '../../grouping/catalog';
+  import AccountFilter from './AccountFilter.svelte';
   import IdentityFilter from './IdentityFilter.svelte';
 
   interface ExtraChip {
@@ -139,7 +140,7 @@
       {/if}
       {#each filters as filter, index (`${filter.dimension}:${filter.values.join('\u0000')}`)}
         <span class="chip chip--filter">
-          {filterDimensionLabel(filter.dimension)}: {filter.values.join(', ')}
+          {filterDimensionLabel(filter.dimension)}: {filter.values.map((value) => filterValueLabel(filter.dimension, value)).join(', ')}
           <IconButton
             size="sm"
             ariaLabel={`Remove ${filterDimensionLabel(filter.dimension)} filter`}
@@ -177,6 +178,7 @@
           <Button size="sm" surface="outline" label="Clear filters" onclick={onClearFilters} />
         {/if}
       </div>
+      <AccountFilter {client} {filters} onChange={onFiltersChange} />
       <IdentityFilter {client} {filters} onChange={onFiltersChange} />
     </div>
   {/if}

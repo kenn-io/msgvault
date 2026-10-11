@@ -1010,14 +1010,15 @@ func TestVoyageClientBeforeRequestFencesQueryRetry(t *testing.T) {
 
 func TestVoyageClient_ContextCancellationStopsRetryBackoff(t *testing.T) {
 	var attempts atomic.Int32
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		attempts.Add(1)
 		http.Error(w, "transient", http.StatusServiceUnavailable)
+		_ = http.NewResponseController(w).Flush()
+		cancel()
 	}))
 	t.Cleanup(server.Close)
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-	time.AfterFunc(25*time.Millisecond, cancel)
 
 	_, err := newVoyageClient(server.URL, func(cfg *embed.VoyageConfig) {
 		cfg.MaxRetries = 5

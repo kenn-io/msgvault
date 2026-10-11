@@ -377,9 +377,13 @@ connection's credential needs repair.
 
 ## Resolve competing edits
 
-If both msgvault and the address book changed the same card, msgvault records a
-conflict for review. It also records edit/delete conflicts instead of silently
-choosing a side.
+When a contact is published back into its source address book, remote edits
+update its imported values and preserve values added in msgvault or imported
+from other books.
+
+If both msgvault and the address book changed the same card, or a remote edit
+would overwrite another owner's value, msgvault records a conflict for review.
+It also records edit/delete conflicts instead of silently choosing a side.
 
 ```bash
 msgvault carddav conflicts list
@@ -398,6 +402,8 @@ msgvault carddav conflicts resolve 18 keep_remote
 `keep_local` applies the local choice to the remote card. `keep_remote` accepts
 the remote choice locally. Either choice may represent a deletion. If the
 remote state changed again, reload the conflict and review the new comparison.
+For contacts with an active publication, a remote choice that would restore a
+protected value or cannot be rendered safely leaves the conflict unresolved.
 An unresolved conflict prevents conflicting publication work from proceeding.
 
 A saved person with an active CardDAV publication cannot be merged with another

@@ -22,6 +22,7 @@ const (
 	sourceTypeNotionMeetings = "notion_meetings"
 	sourceTypeTwilio         = "twilio"
 	sourceTypeMuesli         = "muesli"
+	sourceTypeTwenty         = "twenty"
 )
 
 // Analytics dataset / SQLite table names: the Parquet subdirectory under

@@ -41,7 +41,7 @@ TEST_PROFILE ?= auto
 # Only the automatic SQLite profile adds query and overlaps package jobs.
 SQLITE_SHARDED_TEST_PKGS := $(sort $(SHARDED_TEST_PKGS) ./internal/query)
 SQLITE_SHARD_TARGETS := $(addprefix test-sqlite-shard/,$(SQLITE_SHARDED_TEST_PKGS))
-GOLANGCI_LINT_VERSION ?= v2.13.1
+GOLANGCI_LINT_VERSION ?= v2.14.0
 GOVULNCHECK_VERSION ?= v1.7.0
 HUMA_CHECK_VERSION := 3e1f59e9011e878ec595aa04aebc8a77c5292c4d
 GO_INSTALL_BIN := $(shell go env GOBIN)
@@ -71,7 +71,8 @@ PG_TEST_TAGS := fts5 sqlite_vec pgvector
 # in both configurations, so test-pg-both runs just these in the shipped-build
 # configuration. Verified by `make pg-shipped-only-check`, which re-derives the
 # closure from `go list`.
-PG_SHIPPED_ONLY_PKGS := ./cmd/msgvault ./cmd/msgvault/cmd ./internal/api ./internal/daemonclient ./internal/mcp ./internal/scheduler ./internal/store ./internal/vector/chunkmatch ./internal/vector/document ./internal/vector/embed ./internal/vector/hybrid ./internal/vector/pgvector ./scripts/contextual-retrieval-eval
+NOCGO_LINT_PKGS := ./pkg/archive/... ./internal/postgresprofile/... ./internal/sqliteutil/... ./internal/duckdbutil/... ./internal/muesli/...
+PG_SHIPPED_ONLY_PKGS := ./cmd/msgvault ./cmd/msgvault/cmd ./internal/api ./internal/daemonclient ./internal/mcp ./internal/scheduler ./internal/store ./internal/vector/chunkmatch ./internal/vector/document ./internal/vector/embed ./internal/vector/hybrid ./internal/vector/pgvector ./pkg/archive ./scripts/contextual-retrieval-eval
 
 OPENAPI_ARTIFACTS := api/openapi.yaml pkg/client/openapi.yaml pkg/client/generated
 WEB_INSTALL_STAMP := web/node_modules/.msgvault-install-stamp
@@ -193,6 +194,12 @@ test-v:
 # See docs/internal/PG_STATUS.md for the supported feature surface.
 test-pg: require-test-db
 	go test -timeout $(TEST_TIMEOUT) -p $(PG_TEST_PARALLEL) -tags "$(PG_TEST_TAGS)" ./...
+
+# PostgreSQL-only library profile: no SQLite, DuckDB, or sqlite-vec driver.
+.PHONY: test-pg-nocgo
+test-pg-nocgo: require-test-db
+	CGO_ENABLED=0 go build ./internal/store ./internal/query ./internal/slack ./internal/discord ./internal/api
+	CGO_ENABLED=0 go test -timeout $(TEST_TIMEOUT) ./internal/postgresprofile ./pkg/archive
 
 # Run the SHIPPED build's tests against PostgreSQL (set MSGVAULT_TEST_DB first).
 # The released binary is built with BUILD_TAGS and no pgvector, so that build
@@ -372,10 +379,12 @@ lint-tools:
 
 # Build golangci-lint with the plugins in .custom-gcl.yml into the
 # repository-owned tool path. Strip repo-local Git variables so a build run
-# from the commit hook does not inherit GIT_DIR.
+# from the commit hook does not inherit GIT_DIR. An existing binary is reused
+# while it is newer than .custom-gcl.yml and reports GOLANGCI_LINT_VERSION.
 custom-gcl: lint-tools
-	@mkdir -p "$(CI_TOOLS_BIN)"
-	@unset_args=$$(git rev-parse --local-env-vars 2>/dev/null | sed 's/^/-u /' | tr '\n' ' '); \
+	@if [ -x "$(CUSTOM_GCL_BIN)" ] && [ "$(CUSTOM_GCL_BIN)" -nt .custom-gcl.yml ]; then case "$$("$(CUSTOM_GCL_BIN)" version --short 2>/dev/null)" in "$(GOLANGCI_LINT_VERSION)"-custom-gcl-*) exit 0;; esac; fi; \
+	mkdir -p "$(CI_TOOLS_BIN)"; \
+	unset_args=$$(git rev-parse --local-env-vars 2>/dev/null | sed 's/^/-u /' | tr '\n' ' '); \
 	env $$unset_args GOFLAGS=-buildvcs=false "$(GOLANGCI_LINT_BIN)" custom \
 		--destination "$(CI_TOOLS_BIN)" --name custom-gcl \
 		--version "$(GOLANGCI_LINT_VERSION)"
@@ -386,15 +395,29 @@ lint: custom-gcl
 	TMPDIR="$(GOLANGCI_LINT_TMP)" "$(CUSTOM_GCL_BIN)" run --fix ./...
 
 # Check the shared Huma API contract.
+# The dedicated adapter targets a foreign host even when its route matches this API.
 huma-check:
-	go run go.kenn.io/kit/cmd/huma-check@$(HUMA_CHECK_VERSION) ./...
+	@go run go.kenn.io/kit/cmd/huma-check@$(HUMA_CHECK_VERSION) -h >/dev/null 2>&1 || :; \
+	status=0; out=$$(go run go.kenn.io/kit/cmd/huma-check@$(HUMA_CHECK_VERSION) ./... 2>&1) || status=$$?; \
+	if [ $$status -eq 1 ] && printf '%s\n' "$$out" | awk ' \
+		/^internal[\\\/]docbankmedia[\\\/][^\\\/]+\.go:[1-9][0-9]*:[1-9][0-9]*: hand-rolled HTTP request to this module\047s own Huma route \/[^ ;]*; call it through the generated API client \(client\)$$/ { foreign++; next } \
+		$$0 == "exit status 1" && !wrapper { wrapper = 1; next } \
+		{ bad = 1 } \
+		END { exit !(foreign && wrapper && !bad) }'; then \
+		echo "huma-check: accepted foreign-service client diagnostics in internal/docbankmedia"; \
+	else \
+		[ -z "$$out" ] || printf '%s\n' "$$out"; exit $$status; \
+	fi
 
 .PHONY: huma-check
 
-# Run linter (CI, no auto-fix)
+# Run linter (CI, no auto-fix). The second pass lints the files that only the
+# PostgreSQL-only CGO_ENABLED=0 build compiles. It covers the packages whose
+# tests also build without CGO; the others' tests need the SQLite driver.
 lint-ci: custom-gcl testify-helper-check
 	@mkdir -p "$(GOLANGCI_LINT_TMP)"
 	TMPDIR="$(GOLANGCI_LINT_TMP)" "$(CUSTOM_GCL_BIN)" run ./...
+	CGO_ENABLED=0 TMPDIR="$(GOLANGCI_LINT_TMP)" "$(CUSTOM_GCL_BIN)" run $(NOCGO_LINT_PKGS)
 	@if [ -n "$$GITHUB_PATH" ]; then \
 		$(MAKE) --no-print-directory vuln-tools; \
 		printf '%s\n' "$(CI_TOOLS_BIN)" >> "$$GITHUB_PATH"; \
@@ -409,7 +432,7 @@ vuln-tools:
 vulncheck: vuln-tools
 	"$(GOVULNCHECK_BIN)" -tags "$(BUILD_TAGS)" ./...
 
-# Enforce testify helper usage and named sub-second polling budgets in tests
+# Enforce testify helper usage in assertion-heavy tests
 testify-helper-check:
 	go run ./cmd/testify-helper-check -tags="$(BUILD_TAGS)" ./...
 
@@ -524,7 +547,7 @@ help:
 	@echo "  lint           - Run linter (auto-fix)"
 	@echo "  lint-ci        - Run linter (CI, no auto-fix; also runs testify-helper-check)"
 	@echo "  vulncheck      - Run the pinned Go vulnerability scanner"
-	@echo "  testify-helper-check - Enforce testify helpers and polling budgets in tests"
+	@echo "  testify-helper-check - Enforce testify helper usage in assertion-heavy tests"
 	@echo "  tidy           - Tidy go.mod"
 	@echo "  vcard-registry-check - Network-check IANA registry drift (manual; not CI)"
 	@echo "  vcard-registry-update - Update the vendored IANA vCard registry"

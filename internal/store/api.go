@@ -48,6 +48,7 @@ const participantSummarySenderSQL = participantDisplaySQL + ` as from_display,
 
 // APIMessage represents a message for API responses.
 type APIMessage struct {
+	ConversationTitle    string
 	ID                   int64
 	SourceID             int64
 	SourceMessageID      string
@@ -100,20 +101,29 @@ type APIAttachment struct {
 // ListMessages returns a paginated list of messages with batch-loaded
 // recipients and labels.
 func (s *Store) ListMessages(offset, limit int) ([]APIMessage, int64, error) {
-	return s.ListMessagesContext(context.Background(), offset, limit)
+	return s.ListMessagesContext(context.Background(), offset, limit, nil)
 }
 
 // ListMessagesContext is the context-aware form of ListMessages. Request
 // paths pass the request context so the count, list, and hydration queries
 // carry the request_id for SQL logging and are cancelled together when the
 // request is abandoned or times out.
-func (s *Store) ListMessagesContext(ctx context.Context, offset, limit int) ([]APIMessage, int64, error) {
+func (s *Store) ListMessagesContext(ctx context.Context, offset, limit int, sourceIDs []int64) ([]APIMessage, int64, error) {
+	scope := ""
+	var args []any
+	if sourceIDs != nil {
+		predicate := "0 = 1"
+		if len(sourceIDs) > 0 {
+			predicate, args = messageExportInClause("m.source_id", sourceIDs)
+		}
+		scope = " AND " + predicate
+	}
 	// Get total count. Use the canonical live-messages predicate so
 	// dedup-hidden rows (deleted_at) are excluded alongside source-
 	// deleted rows.
 	var total int64
 	err := s.db.QueryRowContext(ctx,
-		"SELECT COUNT(*) FROM messages WHERE "+LiveMessagesWhere("", true),
+		"SELECT COUNT(*) FROM messages m WHERE "+LiveMessagesWhere("m", true)+scope, args...,
 	).Scan(&total)
 	if err != nil {
 		return nil, 0, err
@@ -145,9 +155,9 @@ func (s *Store) ListMessagesContext(ctx context.Context, offset, limit int) ([]A
 		WHERE %s
 		ORDER BY COALESCE(m.sent_at, m.received_at, m.internal_date) DESC, m.id DESC
 		LIMIT ? OFFSET ?
-	`, participantSummarySenderSQL, LiveMessagesWhere("m", true))
+	`, participantSummarySenderSQL, LiveMessagesWhere("m", true)+scope)
 
-	rows, err := s.db.QueryContext(ctx, query, limit, offset)
+	rows, err := s.db.QueryContext(ctx, query, append(args, limit, offset)...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -209,6 +219,7 @@ func (s *Store) GetMessageContext(ctx context.Context, id int64) (*APIMessage, e
 			COALESCE(m.source_message_id, '') as source_message_id,
 			COALESCE(m.conversation_id, 0) as conversation_id,
 			COALESCE(c.source_conversation_id, '') as source_conversation_id,
+			COALESCE(c.title, ''),
 			COALESCE(m.subject, '') as subject,
 			COALESCE(m.message_type, '') as message_type,
 			%s,
@@ -242,6 +253,7 @@ func (s *Store) GetMessageContext(ctx context.Context, id int64) (*APIMessage, e
 		&m.SourceMessageID,
 		&m.ConversationID,
 		&m.SourceConversationID,
+		&m.ConversationTitle,
 		&m.Subject,
 		&m.MessageType,
 		&m.From,
@@ -676,6 +688,16 @@ func (s *Store) buildMessageSearchSQL(q *search.Query, ftsAvailable bool) messag
 			args = append(args, listID)
 		}
 		conditions = append(conditions, "("+strings.Join(parts, " OR ")+")")
+	}
+	// account: and received: match the derived account projection.
+	if accountConditions, accountArgs := search.AccountConditions(q, "m"); len(accountConditions) > 0 {
+		conditions = append(conditions, accountConditions...)
+		args = append(args, accountArgs...)
+	}
+	// Structured scopes narrow candidates before any limit applies.
+	if scopeConditions, scopeArgs := search.AccountScopeConditions(q.AccountScopes, "m"); len(scopeConditions) > 0 {
+		conditions = append(conditions, scopeConditions...)
+		args = append(args, scopeArgs...)
 	}
 
 	// message_type: / message_type= filter. An "email" value also matches an

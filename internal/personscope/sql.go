@@ -43,6 +43,16 @@ func MessagePredicate(scope Scope, message, conversation string) (string, []any)
 		}
 		return placeholders(len(scope.ParticipantIDs))
 	}
+	if scope.ParticipantMembership {
+		senderIDs, recipientIDs, rosterIDs := appendIDs(), appendIDs(), appendIDs()
+		return `(` + message + `.sender_id IN (` + senderIDs + `) OR EXISTS (
+			SELECT 1 FROM message_recipients person_recipient
+			WHERE person_recipient.message_id = ` + message + `.id
+			  AND person_recipient.participant_id IN (` + recipientIDs + `)) OR EXISTS (
+			SELECT 1 FROM conversation_participants person_member
+			WHERE person_member.conversation_id = ` + message + `.conversation_id
+			  AND person_member.participant_id IN (` + rosterIDs + `)))`, args
+	}
 	directionEvidence := `(` + message + `.is_from_me = TRUE OR ` + message + `.sender_id IS NOT NULL OR EXISTS (
 		SELECT 1 FROM message_recipients known_from
 		WHERE known_from.message_id = ` + message + `.id

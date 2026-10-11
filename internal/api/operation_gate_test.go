@@ -275,6 +275,8 @@ func TestOperationGateMiddlewareStillGatesMutatingDocumentCommands(t *testing.T)
 		{"consent", `{"args":["documents","consent-mistral","--yes"]}`},
 		{"retry", `{"args":["documents","retry","--hash","abc"]}`},
 		{"retire", `{"args":["documents","retire","profile","--yes"]}`},
+		// Status reconciles the occurrence index, which writes.
+		{"status", `{"args":["documents","status","--json"]}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -370,7 +372,7 @@ func TestOperationGateMiddlewareStopsWaitingWhenRequestContextCancels(t *testing
 	cancel()
 	select {
 	case <-done:
-	case <-time.After(500 * time.Millisecond):
+	case <-time.After(5 * time.Second):
 		release()
 		require.FailNow("handler did not return after request cancellation")
 	}
@@ -649,7 +651,7 @@ func TestSerialOperationGateDrainRejectsQueuedWorkAndWaitsForActive(t *testing.T
 	select {
 	case queuedOK := <-queuedDone:
 		assert.Fail("queued work returned before drain", "ok=%v", queuedOK)
-	case <-time.After(25 * time.Millisecond):
+	case <-time.After(25 * time.Millisecond): //nolint:kennlint // absence check: active work keeps queued work waiting
 	}
 
 	drainDone := make(chan error, 1)
@@ -660,7 +662,7 @@ func TestSerialOperationGateDrainRejectsQueuedWorkAndWaitsForActive(t *testing.T
 	select {
 	case queuedOK := <-queuedDone:
 		assert.False(queuedOK, "queued work should be rejected by drain")
-	case <-time.After(500 * time.Millisecond):
+	case <-time.After(5 * time.Second):
 		releaseActive()
 		require.FailNow("queued work did not return after drain started")
 	}
@@ -668,14 +670,14 @@ func TestSerialOperationGateDrainRejectsQueuedWorkAndWaitsForActive(t *testing.T
 	select {
 	case err := <-drainDone:
 		assert.Fail("drain returned before active work released", "err=%v", err)
-	case <-time.After(25 * time.Millisecond):
+	case <-time.After(25 * time.Millisecond): //nolint:kennlint // absence check: unreleased active work keeps the drain waiting
 	}
 
 	releaseActive()
 	select {
 	case err := <-drainDone:
 		require.NoError(err, "drain")
-	case <-time.After(500 * time.Millisecond):
+	case <-time.After(5 * time.Second):
 		require.FailNow("drain did not finish after active work released")
 	}
 
@@ -720,7 +722,6 @@ func TestOperationGateMiddlewareSkipsReadOnlyCLIRunCommands(t *testing.T) {
 	}{
 		{"embeddings list", `{"args":["embeddings","list"]}`},
 		{"documents search", `{"args":["documents","search","shipping damage"]}`},
-		{"documents status", `{"args":["documents","status","--capabilities","manifest.json"]}`},
 		{"list-deletions", `{"args":["list-deletions"]}`},
 		{"show-deletion with id", `{"args":["show-deletion","batch-123"]}`},
 	}

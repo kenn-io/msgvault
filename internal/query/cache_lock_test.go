@@ -22,7 +22,7 @@ func TestAcquireCacheReadLockBlocksDuringBuild(t *testing.T) {
 	require.NoError(err, "acquire exclusive build lock")
 	require.True(locked, "acquire exclusive build lock")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond) //nolint:kennlint // the deadline is the expected result; the held build lock keeps the reader waiting
 	defer cancel()
 	_, err = AcquireCacheReadLock(ctx, dir)
 	require.Error(err, "reader must block while a build holds the lock exclusively")

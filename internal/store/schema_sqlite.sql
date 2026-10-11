@@ -12,6 +12,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_carddav_one_write_target
     ON carddav_address_books((1)) WHERE is_write_target = TRUE;
 CREATE INDEX IF NOT EXISTS idx_carddav_resources_person
     ON carddav_resources(person_id) WHERE person_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_carddav_resources_remote_uid
+    ON carddav_resources(remote_uid) WHERE remote_uid IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_carddav_publications_pending
     ON carddav_publications(pending_operation, person_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_carddav_one_unresolved_conflict

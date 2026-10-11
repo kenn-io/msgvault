@@ -3,6 +3,9 @@
   import { onDestroy, untrack } from 'svelte';
 
   import type { APIClient } from '../../api/client';
+  import { mediaReadiness } from '../../search/media-ready.svelte';
+  import { ArchiveMessageLoader } from '../../archive/message-loader.svelte';
+  import { parseRecordingSelection } from '../../archive/recording-selection';
   import type {
     MeetingRef,
     ExplorePreflightResponse as GeneratedExplorePreflightResponse,
@@ -33,6 +36,7 @@
   import SplitPane from '../layout/SplitPane.svelte';
   import PersonTimeline from '../people/PersonTimeline.svelte';
   import SearchCoverage from '../search/SearchCoverage.svelte';
+  import TranscriptHits from '../search/TranscriptHits.svelte';
   import ReadingPane, { type ReadingPaneSelection, type ReadingPaneStatus } from '../reader/ReadingPane.svelte';
   import type { SearchCoverageAction } from '../../search/modes';
   import MeetingPanel from '../meetings/MeetingPanel.svelte';
@@ -69,6 +73,7 @@
     fixedSortNotice: () => void;
     focusGrid: () => void;
     openRow: (row: EntryRow) => void;
+    onOpenRecording: (messageID: number) => void;
     drillGroup: (row: ExploreGroupRow) => void;
     closeReadingPane: () => void;
     openRelationship: (participantID: number) => void;
@@ -99,6 +104,7 @@
     fixedSortNotice,
     focusGrid,
     openRow,
+    onOpenRecording,
     drillGroup,
     closeReadingPane,
     openRelationship,
@@ -108,6 +114,29 @@
   }: Props = $props();
 
   const api = createExploreAPI(untrack(() => client));
+  const recording = new ArchiveMessageLoader();
+  const readiness = mediaReadiness();
+  const recordingSelection = $derived(parseRecordingSelection(readingTargetKey));
+  const recordingParticipantID = $derived.by(() => {
+    const filters = exploreState.current.filters;
+    if (filters.length !== 1 || filters[0].dimension !== 'participant' || filters[0].values.length !== 1) return undefined;
+    const value = filters[0].values[0];
+    const id = Number(value);
+    return /^[1-9]\d*$/.test(value) && Number.isSafeInteger(id) ? id : undefined;
+  });
+  const recordingSearchSupported = $derived(exploreState.current.searchMode === 'full_text'
+    && (exploreState.current.filters.length === 0 || recordingParticipantID !== undefined)
+    && exploreState.current.groupingChain.length === 0);
+  const recordingSearchVisible = $derived.by(() => {
+    const query = exploreState.current.query.trim();
+    return Boolean(enabled && readiness?.ready && query && exploreState.current.presentation === 'table');
+  });
+
+  $effect(() => {
+    void readingDetailRetryRevision;
+    void recording.load(client, recordingSelection);
+    return () => recording.cancel();
+  });
 
   const countLabel = $derived.by(() => {
     const result = loader.result;
@@ -182,6 +211,7 @@
   const readingSelection = $derived.by((): ReadingPaneSelection | undefined => {
     const selected = readingTargetKey;
     if (!selected) return undefined;
+    if (recordingSelection) return recording.detail ? { kind: 'archive', message: recording.detail } : undefined;
     const entry = loader.rows.find((row) => row.key === selected);
     if (entry) return { kind: 'entry', row: entry };
     const group = parseGroupSelection(selected);
@@ -201,6 +231,7 @@
     } => {
       const selected = readingTargetKey;
       if (!selected || readingSelection) return { status: 'ready', message: '' };
+      if (recordingSelection) return { status: !recording.error ? 'loading' : recording.missing ? 'missing' : 'error', message: recording.missing ? 'This recording message is no longer available.' : 'Could not load this recording message.' };
       if (parseGroupSelection(selected)) {
         if (readingDetailUnavailable) {
           return {
@@ -611,7 +642,7 @@
     searchMode={exploreState.current.searchMode}
     filters={exploreState.current.filters}
     groupingChain={exploreState.current.groupingChain}
-    {countLabel}
+    countLabel={recordingSearchVisible ? '' : countLabel}
     sort={exploreState.current.groupingChain.length > 0 ? undefined : {
       options: [{ value: 'newest', label: 'Newest first' }],
       value: 'newest',
@@ -715,7 +746,19 @@
       collapsed={!readingTargetKey}
     >
       {#snippet primary()}
-        <div class="results-primary">
+        <div class="results-primary" class:results-primary--recordings={recordingSearchVisible}>
+          {#if recordingSearchVisible}
+            <TranscriptHits
+              {client}
+              participantID={recordingParticipantID}
+              missingMessageID={recording.missing ? recordingSelection : undefined}
+              query={exploreState.current.query}
+              supported={recordingSearchSupported}
+              selectedMessageID={recordingSelection}
+              onOpen={(hit) => onOpenRecording(hit.message_id)}
+            />
+            <h2 class="results-heading">Results <span class="count" aria-live="polite">{countLabel}</span></h2>
+          {/if}
           {#if exploreState.current.groupingChain.length > 0}
             <GroupTable
               rows={loader.groupRows}
@@ -820,6 +863,7 @@
             targetKey={readingTargetKey}
             status={readingState.status}
             statusMessage={readingState.message}
+            onRetry={recordingSelection && !recording.missing ? () => readingDetailRetryRevision += 1 : undefined}
             unavailable={readingState.unavailable}
             predicate={exploreState.predicate()}
             onClose={closeReadingPane}
@@ -899,6 +943,9 @@
     height: 100%;
     flex-direction: column;
   }
+  .results-primary--recordings { container: results / size; min-height: 0; gap: var(--space-3); }
+  .results-heading { margin: 0; font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); }
+  .results-heading .count { color: var(--text-secondary); font-size: var(--font-size-xs); font-weight: var(--font-weight-normal); font-variant-numeric: tabular-nums; }
 
   /* The reading pane provides its own surface; the split's secondary pane
    * frames it on every edge except the one beside the drag handle. The

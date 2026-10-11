@@ -380,7 +380,7 @@ func cacheNeedsBuildLockedWithOptions(ctx context.Context, dbPath, analyticsDir 
 			result.HasUpdated = true
 			result.FullRebuild = true
 			reasons = append(reasons, fmt.Sprintf(
-				"failed sync watermark changed from count=%d,sum=%d to count=%d,sum=%d",
+				"interrupted sync watermark changed from count=%d,sum=%d to count=%d,sum=%d",
 				state.LastFailedSyncRunCount, state.LastFailedSyncRunIDSum,
 				counters.failedRunCount, counters.failedRunIDSum))
 		}

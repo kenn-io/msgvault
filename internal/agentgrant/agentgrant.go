@@ -15,6 +15,10 @@ import (
 type Permission string
 
 const (
+	PermissionSearchRead        Permission = "search.read"
+	PermissionMessageRead       Permission = "message.read"
+	PermissionAttachmentRead    Permission = "attachment.read"
+	PermissionStatsRead         Permission = "stats.read"
 	PermissionDraftCreate       Permission = "draft.create"
 	PermissionDraftEdit         Permission = "draft.edit"
 	PermissionDraftDelete       Permission = "draft.delete"
@@ -25,6 +29,10 @@ const (
 )
 
 var knownPermissions = map[string]Permission{
+	string(PermissionSearchRead):        PermissionSearchRead,
+	string(PermissionMessageRead):       PermissionMessageRead,
+	string(PermissionAttachmentRead):    PermissionAttachmentRead,
+	string(PermissionStatsRead):         PermissionStatsRead,
 	string(PermissionDraftCreate):       PermissionDraftCreate,
 	string(PermissionDraftEdit):         PermissionDraftEdit,
 	string(PermissionDraftDelete):       PermissionDraftDelete,
@@ -39,9 +47,7 @@ func KnownPermission(s string) (Permission, bool) {
 	return p, ok
 }
 
-// SourceRef carries the repo's durable source identity: (id, type, identifier).
-// SourceRef carries ID as a diagnostic field only; matching uses (Type, Identifier)
-// which are portable across re-adds (manifest.go:99-101).
+// SourceRef matches Type and Identifier across re-adds; ID is diagnostic only.
 type SourceRef struct {
 	ID         int64
 	Type       string
@@ -55,6 +61,7 @@ type Grant struct {
 	Permissions []Permission
 	Sources     []SourceRef
 	CreatedAt   time.Time
+	ExpiresAt   time.Time
 }
 
 func (g Grant) HasPermission(p Permission) bool {
@@ -63,9 +70,10 @@ func (g Grant) HasPermission(p Permission) bool {
 
 // Allows returns true only when p is in the grant AND some SourceRef matches Type and Identifier.
 func (g Grant) Allows(p Permission, src SourceRef) bool {
-	if !g.HasPermission(p) {
-		return false
-	}
+	return g.HasPermission(p) && g.MatchesSource(src)
+}
+
+func (g Grant) MatchesSource(src SourceRef) bool {
 	for _, s := range g.Sources {
 		if s.Type == src.Type && s.Identifier == src.Identifier {
 			return true
@@ -94,6 +102,7 @@ func cloneGrant(g Grant) Grant {
 		Label:       g.Label,
 		Permissions: append([]Permission(nil), g.Permissions...),
 		CreatedAt:   g.CreatedAt,
+		ExpiresAt:   g.ExpiresAt,
 		Sources:     make([]SourceRef, len(g.Sources)),
 	}
 	for i, source := range g.Sources {
@@ -124,7 +133,12 @@ func NewRegistry() *Registry {
 	return &Registry{entries: make(map[string]entry)}
 }
 
-func (r *Registry) Issue(label string, perms []Permission, sources []SourceRef) (id, secret string, g Grant, err error) {
+// Issue creates a grant; a zero expiry keeps it valid until revoked or restart.
+func (r *Registry) Issue(label string, perms []Permission, sources []SourceRef, expires time.Time) (id, secret string, g Grant, err error) {
+	if !expires.IsZero() && !expires.After(time.Now()) {
+		return "", "", Grant{}, errors.New("agentgrant: expiry must be in the future")
+	}
+
 	if label == "" {
 		return "", "", Grant{}, errors.New("agentgrant: label must not be empty")
 	}
@@ -183,6 +197,7 @@ func (r *Registry) Issue(label string, perms []Permission, sources []SourceRef) 
 		Permissions: append([]Permission(nil), perms...),
 		Sources:     append([]SourceRef(nil), sources...),
 		CreatedAt:   time.Now(),
+		ExpiresAt:   expires,
 	}
 
 	r.mu.Lock()
@@ -199,13 +214,14 @@ func (r *Registry) Lookup(secret string) (Grant, bool) {
 	defer r.mu.Unlock()
 
 	for _, e := range r.entries {
-		if subtle.ConstantTimeCompare(digest[:], e.digest[:]) == 1 {
+		if subtle.ConstantTimeCompare(digest[:], e.digest[:]) == 1 && (e.grant.ExpiresAt.IsZero() || time.Now().Before(e.grant.ExpiresAt)) {
 			return cloneGrant(e.grant), true
 		}
 	}
 	return Grant{}, false
 }
 
+// List returns every grant, including expired ones so the owner can revoke them.
 func (r *Registry) List() []Grant {
 	r.mu.Lock()
 	defer r.mu.Unlock()

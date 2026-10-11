@@ -151,7 +151,7 @@ func TestCalendarControlDaemonClientArchiveAndDelegatedGrants(t *testing.T) {
 	requirements.NoError(json.Unmarshal([]byte(meta.String), &archivedMetadata))
 	assertions.Equal("team@example.com", archivedMetadata.OrganizerEmail)
 	assertions.Equal("person@example.com", archivedMetadata.AccountEmail)
-	issued, err := owner.IssueAgentToken(t.Context(), "calendar writer", []string{"calendar.write"}, []int64{source.ID}, nil)
+	issued, err := owner.IssueAgentToken(t.Context(), "calendar writer", []string{"calendar.write"}, []int64{source.ID}, nil, time.Time{})
 	requirements.NoError(err)
 	delegated, err := daemonclient.New(daemonclient.Config{URL: daemon.URL, AgentToken: issued.Secret, AllowInsecure: true, HTTPClient: daemon.Client()})
 	requirements.NoError(err)
@@ -181,7 +181,7 @@ func TestCalendarControlDaemonClientArchiveAndDelegatedGrants(t *testing.T) {
 	requirements.NoError(err, "primary is authorized against its live canonical ID")
 	otherSource, err := st.GetOrCreateSource(sourceTypeCalendar, "person@example.com/other@example.com")
 	requirements.NoError(err)
-	otherGrant, err := owner.IssueAgentToken(t.Context(), "other calendar", []string{"calendar.write"}, []int64{otherSource.ID}, nil)
+	otherGrant, err := owner.IssueAgentToken(t.Context(), "other calendar", []string{"calendar.write"}, []int64{otherSource.ID}, nil, time.Time{})
 	requirements.NoError(err)
 	primaryBody, err := json.Marshal(request)
 	requirements.NoError(err)
@@ -277,7 +277,7 @@ func TestCalendarControlDelegatedSetupHidesConfiguration(t *testing.T) {
 			} else {
 				cfg.GCal = nil
 			}
-			issued, err := owner.IssueAgentToken(t.Context(), tc.name, []string{tc.permission}, []int64{tc.sourceID}, nil)
+			issued, err := owner.IssueAgentToken(t.Context(), tc.name, []string{tc.permission}, []int64{tc.sourceID}, nil, time.Time{})
 			requirements.NoError(err)
 			request := httptest.NewRequest(http.MethodPost, "/api/v1/calendar/control", strings.NewReader(strings.Replace(body, `"calendar_id":"team"`, `"calendar_id":"`+tc.calendar+`"`, 1)))
 			request.Header.Set("Content-Type", "application/json")

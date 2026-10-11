@@ -124,26 +124,30 @@ Use `testing/synctest` bubbles for work owned by the test process, including
 goroutines, channels, timers, tickers, and fakes. Advance virtual time with
 `synctest.Sleep` and wait for durable state with `synctest.Wait`.
 
-Keep real budgets for PostgreSQL and SQLite locks, database clocks, network
-requests, subprocesses, DuckDB, and operating-system events. Name retained
-sub-second testify budgets so their event and owner are clear.
-
-The helper check rejects bare totals below one second in `Eventually`,
-`Eventuallyf`, `EventuallyWithT`, `EventuallyWithTf`, `Never`, and `Neverf`.
-Named budgets and variables stay outside this rule. Virtual sleeps are valid
-inside a bubble. CI runs this check on Ubuntu, so Windows-only test files still
-need Windows validation.
+Keep real waits for PostgreSQL and SQLite locks, database clocks, network
+requests, subprocesses, DuckDB, and operating-system events.
 
 `make lint` and `make lint-ci` build a pinned golangci-lint with Kit's
-`kennlint` plugin and run its `sleeptest` check. The check rejects `time.Sleep`
-in tests outside a `synctest.Test` bubble. A kept real wait carries
-`//nolint:kennlint // <what it waits for>` on the sleep line.
+`kennlint` plugin and run its `sleeptest` and `deadlinetest` checks. Outside a
+`synctest.Test` bubble, `sleeptest` rejects `time.Sleep` and `deadlinetest`
+rejects sub-second `context.WithTimeout`, `context.WithDeadline`, `time.After`,
+`time.NewTimer`, `time.AfterFunc` and testify `Eventually` budgets, plus zero
+or negative `Never` windows. A kept real wait carries `//nolint:kennlint //
+<what it waits for>` on the flagged line; for a deadline, that is only when its
+expiry is the asserted result or a `select` shows an event does not happen.
 
 ### PostgreSQL tests
 
 `MSGVAULT_TEST_DB=postgres://...` runs PostgreSQL-backed
 tests. pgvector tests require a PostgreSQL instance with the `vector`
 extension and the `pgvector` build tag.
+
+`MSGVAULT_TEST_DB=postgres://... make test-pg-nocgo` checks the PostgreSQL-only
+library profile. It builds the store, query engine, Slack and Discord importers,
+and HTTP API with `CGO_ENABLED=0`, then tests archive writes, full-text search,
+and reads against PostgreSQL. It deliberately omits the `fts5` and `sqlite_vec`
+build tags. SQLite archives, local SQLite imports, and DuckDB/Parquet analytics
+require the normal CGO build; this profile does not build the standalone CLI.
 
 The PostgreSQL deadlock tests also require permission to set
 `deadlock_timeout`. They defer the blocker transaction's deadlock detector
@@ -310,6 +314,37 @@ The codec preserves ordered properties, source spelling, parameter quoting,
 unknown extensions, and raw values. Keep new registry elements covered by an
 explicit handling declaration so an upstream addition cannot be silently
 ignored.
+
+## Archive schema version maintenance
+
+`internal/store/schema_version.go` owns `store.SchemaVersion`, the monotonic
+integer for required main archive schema work. Increase it whenever the main
+archive schema changes, including indexes, or a required data migration changes.
+Embedded readers require an exact version match. Once an archive is migrated to
+a higher version, applications using an older `pkg/archive` must upgrade too,
+even if the schema change only added an index.
+
+`TestSchemaVersionContract` hashes the schema and migration ledger a fresh archive
+gets on each backend, plus the legacy column statements only older archives run,
+and fails until the version moves; its message gives the digest to append.
+Append entries for the new version to both `schemaContractDigests` and
+`schemaContractPostgresDigests`; keep earlier entries unchanged. The SQLite lane
+also requires a PostgreSQL entry. Obtain that digest by running the store tests
+with `MSGVAULT_TEST_DB` set to a PostgreSQL URL. Without local PostgreSQL, use the digest from the CI
+PostgreSQL lane's failure log, append it, and rerun CI to verify it.
+
+A data-only repair that runs outside the migration ledger leaves both digests
+alone, so bump the version by hand for one. SQLite and PostgreSQL use the
+`schema_version` key in `archive_metadata`. `InitSchemaContext` refuses future
+versions before DDL and stamps this version only after its required steps succeed,
+using the caller's context. Keep optional and best-effort maintenance behavior separate from that
+completion guarantee.
+
+The initial contract is new on `main`, after v0.21.0. Existing archives start at
+`0`; successful initialization upgrades them to the binary's expected version.
+The [CLI reference](cli-reference.md#schema-version) owns the probe contract,
+and [Setup](setup.md#migrate-before-replacing-the-executable) owns the operator
+upgrade procedure.
 
 ## Code Conventions
 

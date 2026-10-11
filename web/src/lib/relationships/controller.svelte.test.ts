@@ -1112,6 +1112,154 @@ describe('RelationshipsController.openTarget', () => {
   });
 });
 
+describe('RelationshipsController calendar day selection', () => {
+  it('keeps other filters across day pagination and restores the original date range on clear', async () => {
+    const bodies: Array<{ filters?: unknown[]; cursor?: string }> = [];
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = pathOf(request);
+      if (path === '/api/v1/participants/1') return Response.json(person(1));
+      if (path === '/api/v1/participants/1/summary') return Response.json({ summary: person(1) });
+      if (path === '/api/v1/relationships/1/calendar') return Response.json({}, { status: 404 });
+      if (path === '/api/v1/relationships/1/timeline') {
+        const body = await request.json();
+        bodies.push(body);
+        return Response.json({
+          canonical_id: 1, identity_revision: 1, cache_revision: 'cache-rel',
+          rows: [timelineRow(body.cursor ? 'next' : 'first')],
+          next_cursor: body.cursor ? undefined : 'page-2'
+        });
+      }
+      throw new Error(`unexpected path ${path}`);
+    });
+    const controller = new RelationshipsController(createAPIClient(fetchFn), () => 'UTC');
+    const predicate: ExplorePredicate = { presentation: 'table', filters: [
+      { dimension: 'source', values: ['2'] },
+      { dimension: 'after', values: ['2025-01-01'] },
+      { dimension: 'before', values: ['2027-01-01'] }
+    ] };
+    await controller.openTarget('cluster:1', predicate);
+    await controller.selectTimelineDay({
+      date: '2026-07-19', start: '2026-07-19T00:00:00.000Z', end: '2026-07-20T00:00:00.000Z'
+    });
+    expect(bodies.at(-1)?.filters).toEqual([
+      { dimension: 'source', values: ['2'] },
+      { dimension: 'after', values: ['2026-07-19T00:00:00.000Z'] },
+      { dimension: 'before', values: ['2026-07-20T00:00:00.000Z'] }
+    ]);
+    await controller.loadMoreTimeline();
+    expect(bodies.at(-1)).toMatchObject({ cursor: 'page-2', filters: [
+      { dimension: 'source', values: ['2'] },
+      { dimension: 'after', values: ['2026-07-19T00:00:00.000Z'] },
+      { dimension: 'before', values: ['2026-07-20T00:00:00.000Z'] }
+    ] });
+    expect(controller.timelineRows.map((row) => row.key)).toEqual(['first', 'next']);
+    await controller.selectTimelineDay(null);
+    expect(bodies.at(-1)?.filters).toEqual(predicate.filters);
+    expect(bodies.at(-1)?.cursor).toBeUndefined();
+    expect(controller.timelineRows.map((row) => row.key)).toEqual(['first']);
+    expect(controller.timelineDay).toBeNull();
+    controller.destroy();
+  });
+
+  it('keeps the selected day and calendar year when retrying a header that was still building', async () => {
+    vi.useFakeTimers();
+    let summaryCalls = 0;
+    const timelineFilters: unknown[] = [];
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = pathOf(request);
+      if (path === '/api/v1/participants/1') return Response.json({ ...person(1), first_at: '2018-01-02T00:00:00Z' });
+      if (path === '/api/v1/participants/1/summary') {
+        summaryCalls += 1;
+        if (summaryCalls === 1) return Response.json({
+          error: 'analytical_cache_unavailable', message: 'The analytical cache is being prepared',
+          readiness: 'building', recovery_action: ''
+        }, { status: 503 });
+        return Response.json({ summary: { ...person(1), activity_count: 7 } });
+      }
+      if (path === '/api/v1/relationships/1/calendar') return Response.json({}, { status: 404 });
+      if (path === '/api/v1/relationships/1/timeline') {
+        timelineFilters.push((await request.json()).filters);
+        return Response.json({
+          canonical_id: 1, identity_revision: 1, cache_revision: 'cache-rel', rows: [timelineRow('row')]
+        });
+      }
+      throw new Error(`unexpected path ${path}`);
+    });
+    const controller = new RelationshipsController(createAPIClient(fetchFn), () => 'UTC');
+    const sourceFilter = { dimension: 'source' as const, values: ['2'] };
+    await controller.openTarget('cluster:1', { presentation: 'table', filters: [sourceFilter] });
+    await controller.loadRelationshipYear(2025);
+    await controller.selectTimelineDay({
+      date: '2025-03-08', start: '2025-03-08T00:00:00.000Z', end: '2025-03-09T00:00:00.000Z'
+    });
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.waitFor(() => expect(controller.detail?.activity_count).toBe(7));
+    expect(controller.timelineDay?.date).toBe('2025-03-08');
+    expect(controller.relationshipCalendarYear).toBe(2025);
+    expect(timelineFilters.at(-1)).toEqual([
+      sourceFilter,
+      { dimension: 'after', values: ['2025-03-08T00:00:00.000Z'] },
+      { dimension: 'before', values: ['2025-03-09T00:00:00.000Z'] }
+    ]);
+
+    controller.destroy();
+    vi.useRealTimers();
+  });
+
+  it.each(['another day', 'clear date', 'another person'])(
+    'discards a late day response after selecting %s', async (action) => {
+      let resolveDay!: (response: Response) => void;
+      const fetchFn = vi.fn<typeof fetch>(async (input) => {
+        const request = input instanceof Request ? input : new Request(input);
+        const path = pathOf(request);
+        if (path === '/api/v1/participants/1') return Response.json(person(1));
+        if (path === '/api/v1/participants/2') return Response.json(person(2));
+        if (path.endsWith('/calendar')) return Response.json({}, { status: 404 });
+        if (path.endsWith('/timeline')) {
+          const body = await request.json();
+          if (body.filters?.some((filter: { values: string[] }) => filter.values.includes('2026-07-19T00:00:00.000Z'))) {
+            return new Promise<Response>((resolve) => { resolveDay = resolve; });
+          }
+          return Response.json({
+            canonical_id: path.includes('/2/') ? 2 : 1, identity_revision: 1,
+            rows: [timelineRow('current')], cache_revision: 'cache-rel'
+          });
+        }
+        throw new Error(`unexpected path ${path}`);
+      });
+      const controller = new RelationshipsController(createAPIClient(fetchFn), () => 'UTC');
+      await controller.openTarget('cluster:1', { filters: [], presentation: 'table' });
+      const pending = controller.selectTimelineDay({
+        date: '2026-07-19', start: '2026-07-19T00:00:00.000Z', end: '2026-07-20T00:00:00.000Z'
+      });
+      await vi.waitFor(() => expect(resolveDay).toBeTypeOf('function'));
+      if (action === 'another day') {
+        await controller.selectTimelineDay({
+          date: '2026-07-20', start: '2026-07-20T00:00:00.000Z', end: '2026-07-21T00:00:00.000Z'
+        });
+      } else if (action === 'clear date') {
+        await controller.selectTimelineDay(null);
+      } else {
+        await controller.openTarget('cluster:2', { filters: [], presentation: 'table' });
+      }
+      resolveDay(Response.json({
+        canonical_id: 1, identity_revision: 1, rows: [timelineRow('stale')],
+        next_cursor: 'stale-page', cache_revision: 'cache-rel'
+      }));
+      await pending;
+      expect(controller.timelineRows.map((row) => row.key)).toEqual(['current']);
+      expect(controller.timelineCursor).toBeNull();
+      expect(controller.timelineLoading).toBe(false);
+      expect(controller.timelineDay?.date ?? null).toBe(action === 'another day' ? '2026-07-20' : null);
+      expect(controller.canonicalID).toBe(action === 'another person' ? 2 : 1);
+      controller.destroy();
+    }
+  );
+});
+
 describe('RelationshipsController filtered header metrics', () => {
   const sourceFilter = { dimension: 'source' as const, values: ['1'] };
   const filtered: ExplorePredicate = { filters: [sourceFilter], presentation: 'table' };

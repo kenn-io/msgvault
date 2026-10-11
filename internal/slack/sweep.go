@@ -108,6 +108,29 @@ func (imp *Importer) sweepReplies(ctx context.Context, syncID int64, targets map
 		cs.SweptThrough = pin
 	}
 
+	if imp.opts.ChannelIDs != nil {
+		start := sort.Search(len(ids), func(i int) bool { return ids[i] > state.ScopedSweepAfter })
+		for i := range ids {
+			if budget.exhausted() {
+				break
+			}
+			cid := ids[(start+i)%len(ids)]
+			if !strings.HasPrefix(cid, "C") {
+				// These conversations use the importer's canonical-walk
+				// scheduler, which leaves room for incremental history.
+				continue
+			}
+			state.ScopedSweepAfter = cid
+			cs := state.Conversations[cid]
+			if err := imp.sweepRange(ctx, syncID, cid, cs.SweptThrough, now, pin,
+				map[string]sweepTarget{cid: targets[cid]}, loc, budget, state, sum,
+				func(certified string) { cs.SweptThrough = certified }); err != nil {
+				return err
+			}
+		}
+		imp.scheduleCanonicalThreadAudit(targets, state, now)
+		return nil
+	}
 	// Gap recovery: a target certified behind the workspace watermark
 	// missed sweeps while absent from the target set.
 	for _, cid := range ids {
@@ -250,7 +273,7 @@ func (imp *Importer) sweepRange(ctx context.Context, syncID int64, scope, floor 
 			// before it could advance. Certification is safe because the
 			// persisted catch-up debt covers every in-scope thread.
 			advance(nextBoundary)
-			if err := imp.checkpoint(syncID, state, sum); err != nil {
+			if err := imp.checkpoint(ctx, syncID, state, sum); err != nil {
 				return err
 			}
 			day = nextDay
@@ -292,7 +315,7 @@ func (imp *Importer) sweepRange(ctx context.Context, syncID int64, scope, floor 
 			}
 			// Discovery failure: nothing this day was processed;
 			// certification stays where the last complete day left it.
-			imp.recordItem(syncID, item, "sweep", store.SyncRunItemStatusError, "slack_search_error", err)
+			imp.recordItem(ctx, syncID, item, "sweep", store.SyncRunItemStatusError, "slack_search_error", err)
 			sum.FetchErrors++
 			sum.Errors++
 			return nil
@@ -338,13 +361,13 @@ func (imp *Importer) sweepRange(ctx context.Context, syncID int64, scope, floor 
 				// follow-up walk when that pin predates this day boundary.
 				cs.recordTruncatedSweep(nextBoundary)
 			}
-			imp.recordItem(syncID, item, "sweep", store.SyncRunItemStatusError, "slack_sweep_truncated",
+			imp.recordItem(ctx, syncID, item, "sweep", store.SyncRunItemStatusError, "slack_sweep_truncated",
 				fmt.Errorf("day %s exceeds the %d reachable results per query; the unreachable tail is recorded as thread catch-up debt and recovers on subsequent runs (see the sweep design doc)", dayStr, sweepTruncationCeiling))
 			sum.FetchErrors++
 			sum.Errors++
 		}
 		advance(nextBoundary)
-		if err := imp.checkpoint(syncID, state, sum); err != nil {
+		if err := imp.checkpoint(ctx, syncID, state, sum); err != nil {
 			return err
 		}
 		day = nextDay

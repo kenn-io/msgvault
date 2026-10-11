@@ -1196,6 +1196,7 @@ CREATE TABLE IF NOT EXISTS carddav_resources (
     governance              TEXT NOT NULL CHECK (governance IN ('remote', 'local', 'none')),
     person_id               BIGINT REFERENCES persons(id) ON DELETE SET NULL,
     person_revision_at_bind BIGINT,
+    owns_display_name       BOOLEAN NOT NULL DEFAULT FALSE,
     created_at              TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at              TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (address_book_id, href)
@@ -1276,6 +1277,8 @@ CREATE INDEX IF NOT EXISTS idx_carddav_conflicts_resolved_at
     ON carddav_conflicts(status, resolved_at);
 CREATE INDEX IF NOT EXISTS idx_carddav_resources_person
     ON carddav_resources(person_id) WHERE person_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_carddav_resources_remote_uid
+    ON carddav_resources(remote_uid) WHERE remote_uid IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_person_uid_aliases_survivor
     ON person_uid_aliases(surviving_person_id)
     WHERE surviving_person_id IS NOT NULL;
@@ -1341,6 +1344,9 @@ CREATE TABLE IF NOT EXISTS messages (
     is_from_me BOOLEAN DEFAULT FALSE,
     source_is_from_me BOOLEAN,
     identity_is_from_me BOOLEAN NOT NULL DEFAULT FALSE,
+    account_address TEXT,
+    account_path TEXT,
+    draft_authored BOOLEAN NOT NULL DEFAULT FALSE,
 
     subject TEXT,
     snippet TEXT,
@@ -3884,6 +3890,7 @@ CREATE INDEX IF NOT EXISTS idx_messages_source_message_id ON messages(source_mes
 -- column, not here: a legacy DB missing search_fts would fail this index
 -- during the schema-file Exec and roll back the whole apply. [cr2-10]
 
+-- idx_message_recipients_email_from is built concurrently by Store.
 CREATE INDEX IF NOT EXISTS idx_message_recipients_message ON message_recipients(message_id);
 CREATE INDEX IF NOT EXISTS idx_message_recipients_participant ON message_recipients(participant_id, recipient_type);
 
@@ -4077,3 +4084,15 @@ CREATE INDEX IF NOT EXISTS idx_meeting_actions_status
     ON meeting_action_items(status, message_id, ordinal);
 CREATE INDEX IF NOT EXISTS idx_meeting_actions_assignee
     ON meeting_action_items(assignee_email, message_id, ordinal);
+
+-- Delivery-header addresses read from each email's stored MIME. Account
+-- attribution derives messages.account_address from them; they are hints
+-- about routing, not proof of ownership.
+CREATE TABLE IF NOT EXISTS message_delivery_addresses (
+    message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,      -- 'original' or 'delivered'
+    address TEXT NOT NULL,   -- lowercased mailbox
+    PRIMARY KEY (message_id, kind, address)
+);
+CREATE INDEX IF NOT EXISTS idx_message_delivery_addresses_address
+    ON message_delivery_addresses(address, message_id);

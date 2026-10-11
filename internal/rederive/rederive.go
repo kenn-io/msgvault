@@ -115,21 +115,23 @@ func Run(
 		// those partial authoritative writes visible to cache maintenance even
 		// though the repair remains retryable.
 		if sum != nil && (sum.MessagesScanned > 0 || sum.Errors > 0) {
-			return sum, errors.Join(err, s.AdvanceDerivedDataRevision())
+			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer cancel()
+			return sum, errors.Join(err, s.AdvanceDerivedDataRevisionContext(cleanupCtx))
 		}
 		return sum, err
 	}
 	if sum != nil && sum.Errors > 0 {
-		return sum, s.AdvanceDerivedDataRevision()
+		return sum, s.AdvanceDerivedDataRevisionContext(ctx)
 	}
 	ledgerKey := LedgerKey(sourceType, identifier, version)
 	if sum == nil || sum.MessagesScanned == 0 {
 		// New and empty sources have no existing derived rows to invalidate.
 		// Record the pass so sync does not repeat it, but keep a current cache
 		// valid after the source's first import.
-		return sum, s.MarkMigrationApplied(ledgerKey)
+		return sum, s.MarkMigrationAppliedContext(ctx, ledgerKey, 1)
 	}
-	if err := s.MarkMigrationAppliedWithDerivedDataRevision(ledgerKey); err != nil {
+	if err := s.MarkMigrationAppliedWithDerivedDataRevisionContext(ctx, ledgerKey); err != nil {
 		return sum, err
 	}
 	return sum, nil
@@ -146,7 +148,7 @@ func RunIfStale(
 	if !ok {
 		return nil, false, nil
 	}
-	applied, err := s.IsMigrationApplied(LedgerKey(sourceType, identifier, version))
+	applied, err := s.IsMigrationAppliedContext(ctx, LedgerKey(sourceType, identifier, version), 1)
 	if err != nil || applied {
 		return nil, false, err
 	}

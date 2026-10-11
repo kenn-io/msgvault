@@ -693,6 +693,7 @@ func (e ExploreCacheUnavailableResponseReadiness) Validate() error {
 type ExploreFilterDimension string
 
 const (
+	ExploreFilterDimensionAccount     ExploreFilterDimension = "account"
 	ExploreFilterDimensionAfter       ExploreFilterDimension = "after"
 	ExploreFilterDimensionBefore      ExploreFilterDimension = "before"
 	ExploreFilterDimensionDeletion    ExploreFilterDimension = "deletion"
@@ -707,7 +708,7 @@ const (
 // Validate checks if the ExploreFilterDimension value is valid
 func (e ExploreFilterDimension) Validate() error {
 	switch e {
-	case ExploreFilterDimensionAfter, ExploreFilterDimensionBefore, ExploreFilterDimensionDeletion, ExploreFilterDimensionDomain, ExploreFilterDimensionIdentity, ExploreFilterDimensionMailingList, ExploreFilterDimensionMessageType, ExploreFilterDimensionParticipant, ExploreFilterDimensionSource:
+	case ExploreFilterDimensionAccount, ExploreFilterDimensionAfter, ExploreFilterDimensionBefore, ExploreFilterDimensionDeletion, ExploreFilterDimensionDomain, ExploreFilterDimensionIdentity, ExploreFilterDimensionMailingList, ExploreFilterDimensionMessageType, ExploreFilterDimensionParticipant, ExploreFilterDimensionSource:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid ExploreFilterDimension value, got: %v", e))
@@ -1035,6 +1036,23 @@ func (i ImportJobResponseStatus) Validate() error {
 	}
 }
 
+type MediaSearchResultOrigin string
+
+const (
+	MediaSearchResultOriginGenerated MediaSearchResultOrigin = "generated"
+	MediaSearchResultOriginSupplied  MediaSearchResultOrigin = "supplied"
+)
+
+// Validate checks if the MediaSearchResultOrigin value is valid
+func (m MediaSearchResultOrigin) Validate() error {
+	switch m {
+	case MediaSearchResultOriginGenerated, MediaSearchResultOriginSupplied:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid MediaSearchResultOrigin value, got: %v", m))
+	}
+}
+
 type MeetingActionsRequestStatus string
 
 const (
@@ -1106,6 +1124,120 @@ func (m MeetingScopeRequestDeletion) Validate() error {
 	}
 }
 
+type MessageRecordingState string
+
+const (
+	MessageRecordingStateFailed       MessageRecordingState = "failed"
+	MessageRecordingStateMediaMissing MessageRecordingState = "media_missing"
+	MessageRecordingStateMissing      MessageRecordingState = "missing"
+	MessageRecordingStateProcessing   MessageRecordingState = "processing"
+	MessageRecordingStateReady        MessageRecordingState = "ready"
+	MessageRecordingStateUnavailable  MessageRecordingState = "unavailable"
+	MessageRecordingStateUnsupported  MessageRecordingState = "unsupported"
+)
+
+// Validate checks if the MessageRecordingState value is valid
+func (m MessageRecordingState) Validate() error {
+	switch m {
+	case MessageRecordingStateFailed, MessageRecordingStateMediaMissing, MessageRecordingStateMissing, MessageRecordingStateProcessing, MessageRecordingStateReady, MessageRecordingStateUnavailable, MessageRecordingStateUnsupported:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid MessageRecordingState value, got: %v", m))
+	}
+}
+
+type MessageTranscriptOrigin string
+
+const (
+	MessageTranscriptOriginGenerated MessageTranscriptOrigin = "generated"
+	MessageTranscriptOriginSupplied  MessageTranscriptOrigin = "supplied"
+)
+
+// Validate checks if the MessageTranscriptOrigin value is valid
+func (m MessageTranscriptOrigin) Validate() error {
+	switch m {
+	case MessageTranscriptOriginGenerated, MessageTranscriptOriginSupplied:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid MessageTranscriptOrigin value, got: %v", m))
+	}
+}
+
+type MuesliRemoteMeetingContactsState string
+
+const (
+	Complete                                MuesliRemoteMeetingContactsState = "complete"
+	MuesliRemoteMeetingContactsStatePartial MuesliRemoteMeetingContactsState = "partial"
+	Off                                     MuesliRemoteMeetingContactsState = "off"
+	Unavailable                             MuesliRemoteMeetingContactsState = "unavailable"
+)
+
+// Validate checks if the MuesliRemoteMeetingContactsState value is valid
+func (m MuesliRemoteMeetingContactsState) Validate() error {
+	switch m {
+	case Complete, MuesliRemoteMeetingContactsStatePartial, Off, Unavailable:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid MuesliRemoteMeetingContactsState value, got: %v", m))
+	}
+}
+
+type MuesliRemoteParticipantResolution string
+
+const (
+	CarriedForward                         MuesliRemoteParticipantResolution = "carried_forward"
+	MuesliRemoteParticipantResolutionEmpty MuesliRemoteParticipantResolution = ""
+	Resolved                               MuesliRemoteParticipantResolution = "resolved"
+)
+
+// Validate checks if the MuesliRemoteParticipantResolution value is valid
+func (m MuesliRemoteParticipantResolution) Validate() error {
+	switch m {
+	case CarriedForward, MuesliRemoteParticipantResolutionEmpty, Resolved:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid MuesliRemoteParticipantResolution value, got: %v", m))
+	}
+}
+
+type MuesliRemoteRequestAction string
+
+const (
+	Refresh  MuesliRemoteRequestAction = "refresh"
+	Register MuesliRemoteRequestAction = "register"
+	Upsert   MuesliRemoteRequestAction = "upsert"
+)
+
+// Validate checks if the MuesliRemoteRequestAction value is valid
+func (m MuesliRemoteRequestAction) Validate() error {
+	switch m {
+	case Refresh, Register, Upsert:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid MuesliRemoteRequestAction value, got: %v", m))
+	}
+}
+
+type MuesliRemoteResultStatus string
+
+const (
+	Created    MuesliRemoteResultStatus = "created"
+	Refreshed  MuesliRemoteResultStatus = "refreshed"
+	Registered MuesliRemoteResultStatus = "registered"
+	Unchanged  MuesliRemoteResultStatus = "unchanged"
+	Updated    MuesliRemoteResultStatus = "updated"
+)
+
+// Validate checks if the MuesliRemoteResultStatus value is valid
+func (m MuesliRemoteResultStatus) Validate() error {
+	switch m {
+	case Created, Refreshed, Registered, Unchanged, Updated:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid MuesliRemoteResultStatus value, got: %v", m))
+	}
+}
+
 type NetworkEdgeKind string
 
 const (
@@ -1143,14 +1275,14 @@ func (n NetworkNodeKind) Validate() error {
 type OperationLaneStatusHistoryAvailability string
 
 const (
-	Available   OperationLaneStatusHistoryAvailability = "available"
-	Unavailable OperationLaneStatusHistoryAvailability = "unavailable"
+	Available                                         OperationLaneStatusHistoryAvailability = "available"
+	OperationLaneStatusHistoryAvailabilityUnavailable OperationLaneStatusHistoryAvailability = "unavailable"
 )
 
 // Validate checks if the OperationLaneStatusHistoryAvailability value is valid
 func (o OperationLaneStatusHistoryAvailability) Validate() error {
 	switch o {
-	case Available, Unavailable:
+	case Available, OperationLaneStatusHistoryAvailabilityUnavailable:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid OperationLaneStatusHistoryAvailability value, got: %v", o))
@@ -1245,11 +1377,12 @@ const (
 	Added                               OperationPublicCounterName = "added"
 	Attempted                           OperationPublicCounterName = "attempted"
 	Books                               OperationPublicCounterName = "books"
-	Created                             OperationPublicCounterName = "created"
 	IdentityRejected                    OperationPublicCounterName = "identity_rejected"
 	ItemErrors                          OperationPublicCounterName = "item_errors"
+	OperationPublicCounterNameCreated   OperationPublicCounterName = "created"
 	OperationPublicCounterNameFailed    OperationPublicCounterName = "failed"
 	OperationPublicCounterNameSucceeded OperationPublicCounterName = "succeeded"
+	OperationPublicCounterNameUpdated   OperationPublicCounterName = "updated"
 	Processed                           OperationPublicCounterName = "processed"
 	ProjectedWrites                     OperationPublicCounterName = "projected_writes"
 	Removed                             OperationPublicCounterName = "removed"
@@ -1258,13 +1391,12 @@ const (
 	Started                             OperationPublicCounterName = "started"
 	Suppressed                          OperationPublicCounterName = "suppressed"
 	Truncated                           OperationPublicCounterName = "truncated"
-	Updated                             OperationPublicCounterName = "updated"
 )
 
 // Validate checks if the OperationPublicCounterName value is valid
 func (o OperationPublicCounterName) Validate() error {
 	switch o {
-	case Added, Attempted, Books, Created, IdentityRejected, ItemErrors, OperationPublicCounterNameFailed, OperationPublicCounterNameSucceeded, Processed, ProjectedWrites, Removed, Requested, Skipped, Started, Suppressed, Truncated, Updated:
+	case Added, Attempted, Books, IdentityRejected, ItemErrors, OperationPublicCounterNameCreated, OperationPublicCounterNameFailed, OperationPublicCounterNameSucceeded, OperationPublicCounterNameUpdated, Processed, ProjectedWrites, Removed, Requested, Skipped, Started, Suppressed, Truncated:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid OperationPublicCounterName value, got: %v", o))
@@ -2145,6 +2277,7 @@ func (r RunSavedViewResponseResultKind) Validate() error {
 type SavedViewFilterField string
 
 const (
+	SavedViewFilterFieldAccount       SavedViewFilterField = "account"
 	SavedViewFilterFieldAfter         SavedViewFilterField = "after"
 	SavedViewFilterFieldBefore        SavedViewFilterField = "before"
 	SavedViewFilterFieldDeletion      SavedViewFilterField = "deletion"
@@ -2161,7 +2294,7 @@ const (
 // Validate checks if the SavedViewFilterField value is valid
 func (s SavedViewFilterField) Validate() error {
 	switch s {
-	case SavedViewFilterFieldAfter, SavedViewFilterFieldBefore, SavedViewFilterFieldDeletion, SavedViewFilterFieldDomain, SavedViewFilterFieldIdentity, SavedViewFilterFieldMailingList, SavedViewFilterFieldMessageType, SavedViewFilterFieldParticipant, SavedViewFilterFieldParticipantID, SavedViewFilterFieldSource, SavedViewFilterFieldSourceID:
+	case SavedViewFilterFieldAccount, SavedViewFilterFieldAfter, SavedViewFilterFieldBefore, SavedViewFilterFieldDeletion, SavedViewFilterFieldDomain, SavedViewFilterFieldIdentity, SavedViewFilterFieldMailingList, SavedViewFilterFieldMessageType, SavedViewFilterFieldParticipant, SavedViewFilterFieldParticipantID, SavedViewFilterFieldSource, SavedViewFilterFieldSourceID:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid SavedViewFilterField value, got: %v", s))
@@ -2392,6 +2525,7 @@ type SessionStatusAuthMode string
 
 const (
 	APIKey    SessionStatusAuthMode = "api_key"
+	Caller    SessionStatusAuthMode = "caller"
 	Delegated SessionStatusAuthMode = "delegated"
 	Loopback  SessionStatusAuthMode = "loopback"
 	Required  SessionStatusAuthMode = "required"
@@ -2401,7 +2535,7 @@ const (
 // Validate checks if the SessionStatusAuthMode value is valid
 func (s SessionStatusAuthMode) Validate() error {
 	switch s {
-	case APIKey, Delegated, Loopback, Required, Session:
+	case APIKey, Caller, Delegated, Loopback, Required, Session:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid SessionStatusAuthMode value, got: %v", s))

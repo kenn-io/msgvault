@@ -1,6 +1,6 @@
 module go.kenn.io/msgvault
 
-go 1.27.1
+go 1.27.2
 
 replace github.com/emersion/go-imap/v2 => github.com/rodboev/go-imap/v2 v2.0.0-beta.8.0.20260916140841-7dc6eaf3b23f
 
@@ -46,13 +46,13 @@ require (
 	github.com/teambition/rrule-go v1.8.2
 	go.kenn.io/docbank v0.14.1-0.20261001015536-a212ec3d2e4a
 	go.kenn.io/kata v0.18.1-0.20261001005735-0bf1e54c63d3
-	go.kenn.io/kit v0.31.1
+	go.kenn.io/kit v0.32.2
 	go.opentelemetry.io/otel v1.45.0
 	go.opentelemetry.io/otel/sdk v1.45.0
 	go.opentelemetry.io/otel/trace v1.45.0
 	golang.org/x/crypto v0.57.0
 	golang.org/x/mod v0.41.0
-	golang.org/x/net v0.59.0
+	golang.org/x/net v0.60.0
 	golang.org/x/oauth2 v0.36.0
 	golang.org/x/sync v0.23.0
 	golang.org/x/sys v0.48.0
@@ -180,7 +180,7 @@ require (
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260803160001-6ac0973c030d // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260803160001-6ac0973c030d // indirect
-	google.golang.org/grpc v1.83.1 // indirect
+	google.golang.org/grpc v1.83.2 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	modernc.org/libc v1.73.4 // indirect

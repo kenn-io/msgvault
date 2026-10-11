@@ -682,7 +682,7 @@ func TestConnectRetry_CancellationAtBlockingStages(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+			ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond) //nolint:kennlint // the deadline is the expected result; each server never completes the connection, so only the deadline ends the retries
 			defer cancel()
 			err := tt.run(t, ctx)
 			assert.ErrorIs(t, err, context.DeadlineExceeded)

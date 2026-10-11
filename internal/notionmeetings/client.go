@@ -176,6 +176,23 @@ func (c *Client) ListUsers(ctx context.Context, cursor string) (*UserPage, error
 	return &result, nil
 }
 
+// RetrieveUser includes guests, which ListUsers does not enumerate.
+func (c *Client) RetrieveUser(ctx context.Context, id string) (*User, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil, fmt.Errorf("%w: blank user ID", ErrMalformedResponse)
+	}
+	var result User
+	_, err := c.doJSON(ctx, http.MethodGet, "/v1/users/"+url.PathEscape(id), nil, &result, operationUsers)
+	if err != nil {
+		return nil, err
+	}
+	if result.Object != "user" || result.ID != id {
+		return nil, fmt.Errorf("%w: retrieved user has unexpected identity or object", ErrMalformedResponse)
+	}
+	return &result, nil
+}
+
 func validateListEnvelope(raw jsontext.Value) error {
 	var envelope struct {
 		Results *jsontext.Value `json:"results"`

@@ -209,6 +209,7 @@ type Dialect interface {
 
 	// FTSNeedsBackfill reports whether the FTS index needs to be populated.
 	FTSNeedsBackfill(db *sql.DB) bool
+	FTSNeedsBackfillContext(ctx context.Context, db *sql.DB) (bool, error)
 
 	// FTSNeedsBackfillQuick is a cheap approximation of FTSNeedsBackfill for
 	// hot paths: it must never take longer than a few index lookups. True

@@ -43,11 +43,11 @@ func PlausibleDateBounds(now time.Time) (time.Time, time.Time) {
 func ParseReceivedChain(headers []string) []time.Time {
 	dates := make([]time.Time, 0, len(headers))
 	for _, header := range headers {
-		semicolon := strings.LastIndex(header, ";")
-		if semicolon < 0 {
+		_, date, ok := strings.CutLast(header, ";")
+		if !ok {
 			continue
 		}
-		if parsed := parseDate(strings.TrimSpace(header[semicolon+1:])); !parsed.IsZero() {
+		if parsed := parseDate(strings.TrimSpace(date)); !parsed.IsZero() {
 			dates = append(dates, parsed)
 		}
 	}

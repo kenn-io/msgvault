@@ -12,6 +12,9 @@ type GetAggregatesQuery struct {
 	// ViewType Aggregate view type
 	ViewType *string `json:"view_type,omitempty"`
 
+	// AccountScopes JSON list of account scopes that intersect, for structured clients
+	AccountScopes *string `json:"account_scopes,omitempty"`
+
 	// Sort Sort field: count, size, attachment_size, or name
 	Sort *string `json:"sort,omitempty"`
 
@@ -49,6 +52,9 @@ type GetAggregatesQuery struct {
 type GetSubAggregatesQuery struct {
 	// ViewType Aggregate view type
 	ViewType string `json:"view_type" validate:"required"`
+
+	// AccountScopes JSON list of account scopes that intersect, for structured clients
+	AccountScopes *string `json:"account_scopes,omitempty"`
 
 	// Sort Sort field: count, size, attachment_size, or name
 	Sort *string `json:"sort,omitempty"`
@@ -525,6 +531,30 @@ func (s SearchIntegrationTasksQuery) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(s))
 }
 
+type SearchMediaQuery struct {
+	// Q Spoken words to find in transcripts
+	Q string `json:"q" validate:"required"`
+
+	// Mode Lexical mode; semantic and hybrid are unavailable
+	Mode *string `json:"mode,omitempty"`
+
+	// PersonID Durable person ID
+	PersonID *int64 `json:"person_id,omitempty"`
+
+	// ParticipantID Observed participant ID; selects its current Explore identity cluster; mutually exclusive with person_id
+	ParticipantID *int64 `json:"participant_id,omitempty"`
+
+	// Direction Person relation: from_person, to_person, or group
+	Direction []string `json:"direction,omitempty"`
+
+	// Limit Maximum occurrences to return, default 20, max 100
+	Limit *int64 `json:"limit,omitempty"`
+}
+
+func (s SearchMediaQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(s))
+}
+
 type ListMessagesQuery struct {
 	// Page One-based page number (default 1; values below 1 are clamped to 1). Non-numeric values are rejected with 400.
 	Page *int64 `json:"page,omitempty"`
@@ -542,6 +572,9 @@ type ListChangedMessagesQuery struct {
 }
 
 type FilterMessagesQuery struct {
+	// AccountScopes JSON list of account scopes that intersect, for structured clients
+	AccountScopes *string `json:"account_scopes,omitempty"`
+
 	// Sender Sender email/address filter
 	Sender *string `json:"sender,omitempty"`
 
@@ -610,6 +643,9 @@ type FilterMessagesQuery struct {
 }
 
 type GetGmailIDsByFilterQuery struct {
+	// AccountScopes JSON list of account scopes that intersect, for structured clients
+	AccountScopes *string `json:"account_scopes,omitempty"`
+
 	// Sender Sender email/address filter
 	Sender *string `json:"sender,omitempty"`
 
@@ -797,6 +833,15 @@ type ListOrganizationEmploymentsQuery struct {
 
 	// Offset Results to skip
 	Offset *int64 `json:"offset,omitempty"`
+}
+
+type GetPersonByUIDQuery struct {
+	// UID Exact vCard UID or CardDAV resource UID
+	UID string `json:"uid" validate:"required,min=1"`
+}
+
+func (g GetPersonByUIDQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
 }
 
 type ListDirectoryPeopleQuery struct {
@@ -1088,6 +1133,9 @@ type SearchMessagesQuery struct {
 	// ListID Exact case-insensitive RFC 2919 List-Id filter (vector or hybrid mode only)
 	ListID *string `json:"list_id,omitempty"`
 
+	// AccountScopes JSON list of account scopes that intersect (vector or hybrid mode only)
+	AccountScopes *string `json:"account_scopes,omitempty"`
+
 	// TimePeriod Calendar period in YYYY, YYYY-MM, or YYYY-MM-DD format (vector or hybrid mode only)
 	TimePeriod *string `json:"time_period,omitempty"`
 
@@ -1117,6 +1165,9 @@ type DeepSearchQuery struct {
 
 	// Scope Exact search scope: body; omit for composite full-text search
 	Scope *string `json:"scope,omitempty"`
+
+	// AccountScopes JSON list of account scopes that intersect, for structured clients
+	AccountScopes *string `json:"account_scopes,omitempty"`
 
 	// Sender Sender email/address filter; not supported when scope=body
 	Sender *string `json:"sender,omitempty"`
@@ -1190,6 +1241,12 @@ func (d DeepSearchQuery) Validate() error {
 }
 
 type SearchMessagesByDomainsQuery struct {
+	// SourceID Source account ID
+	SourceID *int64 `json:"source_id,omitempty"`
+
+	// SourceIds Source account IDs
+	SourceIds []int64 `json:"source_ids,omitempty"`
+
 	// Domains Comma-separated participant domains
 	Domains string `json:"domains" validate:"required"`
 
@@ -1216,6 +1273,9 @@ type FastSearchQuery struct {
 
 	// ViewType Stats grouping view type
 	ViewType *string `json:"view_type,omitempty"`
+
+	// AccountScopes JSON list of account scopes that intersect, for structured clients
+	AccountScopes *string `json:"account_scopes,omitempty"`
 
 	// Sender Sender email/address filter
 	Sender *string `json:"sender,omitempty"`
@@ -1298,6 +1358,9 @@ type FindSimilarMessagesQuery struct {
 	// Account Account email or configured source identifier
 	Account *string `json:"account,omitempty"`
 
+	// AccountScopes JSON list of account scopes that intersect, for structured clients
+	AccountScopes *string `json:"account_scopes,omitempty"`
+
 	// MessageType Message type filter
 	MessageType *string `json:"message_type,omitempty"`
 
@@ -1328,6 +1391,9 @@ type GetTotalStatsQuery struct {
 
 	// GroupBy Aggregate view type for grouping
 	GroupBy *string `json:"group_by,omitempty"`
+
+	// AccountScopes JSON list of account scopes that intersect, for structured clients
+	AccountScopes *string `json:"account_scopes,omitempty"`
 
 	// Sender Sender email/address filter
 	Sender *string `json:"sender,omitempty"`

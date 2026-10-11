@@ -4,6 +4,14 @@
 
 export type SearchMessagesByDomainsParams = {
   /**
+   * Source account ID
+   */
+  source_id?: number;
+  /**
+   * Source account IDs
+   */
+  source_ids?: number[];
+  /**
    * Comma-separated participant domains
    */
   domains: string;

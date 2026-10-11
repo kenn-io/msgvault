@@ -80,6 +80,8 @@ Use these as reasoning checkpoints, not a requirement to create a design doc.
   installed binary and needs intentional authorization.
 - All `go test` invocations need `-tags "fts5 sqlite_vec"`; prefer `make test`.
   PostgreSQL tests use the targets documented in [Development](docs/development.md).
+  The PostgreSQL-only library profile is the exception: use `make test-pg-nocgo`,
+  which omits native-driver tags and disables CGO.
 - After Go changes, run `go fmt ./...` and `go vet ./...` before committing.
   Include resulting formatting changes. Use `make lint-ci` for lint checks.
 - All new or modified Go assertions must use testify: `require.X` for setup or
@@ -110,6 +112,10 @@ before publication. This exception does not permit reuse in ordinary tests.
 
 ## Code and SQL conventions
 
+- Increment `store.SchemaVersion` for any main archive schema change, including
+  indexes, or required data migration. Embedded readers open without DDL and
+  require completed setup at their exact expected version. See
+  [schema version maintenance](docs/development.md#archive-schema-version-maintenance).
 - Use Bubble Tea and lipgloss for the TUI; Svelte and the shared UI toolkit for
   the Web UI. See [Development](docs/development.md) for the dependency map.
 - Route database operations through `Store`. Use DuckDB for Parquet queries,

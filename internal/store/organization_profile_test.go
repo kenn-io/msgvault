@@ -2,10 +2,7 @@ package store_test
 
 import (
 	"context"
-	"log/slog"
 	"strconv"
-	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -405,11 +402,10 @@ func TestGetOrganizationProfileReturnsOneRootAndChildrenSnapshot(t *testing.T) {
 
 	rootRead := make(chan struct{})
 	releaseRootRead := make(chan struct{})
-	previousLogger := slog.Default()
-	slog.SetDefault(slog.New(&organizationProfileBarrierHandler{
-		rootRead: rootRead, release: releaseRootRead,
+	t.Cleanup(st.SetOrganizationProfileRootReadHookForTest(func() {
+		close(rootRead)
+		<-releaseRootRead
 	}))
-	t.Cleanup(func() { slog.SetDefault(previousLogger) })
 
 	type result struct {
 		profile *store.OrganizationProfile
@@ -423,7 +419,8 @@ func TestGetOrganizationProfileReturnsOneRootAndChildrenSnapshot(t *testing.T) {
 
 	select {
 	case <-rootRead:
-	case <-time.After(100 * time.Millisecond):
+	case <-time.After(5 * time.Second):
+		require.FailNow("profile read did not reach the root read hook")
 	}
 	require.NoError(writer.Commit())
 	committed = true
@@ -432,58 +429,10 @@ func TestGetOrganizationProfileReturnsOneRootAndChildrenSnapshot(t *testing.T) {
 	got := <-resultCh
 	require.NoError(got.err)
 	require.Len(got.profile.Names, 1)
-	switch got.profile.Organization.Name {
-	case "Old Root":
-		assert.Equal(initial.Organization.Revision, got.profile.Organization.Revision)
-		assert.Equal("Old Alias", got.profile.Names[0].Name)
-	case "New Root":
-		assert.Equal(initial.Organization.Revision+1, got.profile.Organization.Revision)
-		assert.Equal("New Alias", got.profile.Names[0].Name)
-	default:
-		assert.Fail("unexpected root snapshot", got.profile.Organization.Name)
-	}
+	assert.Equal("Old Root", got.profile.Organization.Name)
+	assert.Equal(initial.Organization.Revision, got.profile.Organization.Revision)
+	assert.Equal("Old Alias", got.profile.Names[0].Name)
 }
-
-type organizationProfileBarrierHandler struct {
-	rootRead chan struct{}
-	release  <-chan struct{}
-	once     sync.Once
-}
-
-func (h *organizationProfileBarrierHandler) Enabled(context.Context, slog.Level) bool {
-	return true
-}
-
-func (h *organizationProfileBarrierHandler) Handle(_ context.Context, record slog.Record) error {
-	var kind, statement string
-	record.Attrs(func(attribute slog.Attr) bool {
-		switch attribute.Key {
-		case "kind":
-			kind = attribute.Value.String()
-		case "stmt":
-			statement = attribute.Value.String()
-		}
-		return true
-	})
-	if kind == "queryrow" &&
-		strings.Contains(statement, "FROM organizations WHERE id =") {
-		h.once.Do(func() {
-			close(h.rootRead)
-			<-h.release
-		})
-	}
-	return nil
-}
-
-func (h *organizationProfileBarrierHandler) WithAttrs([]slog.Attr) slog.Handler {
-	return h
-}
-
-func (h *organizationProfileBarrierHandler) WithGroup(string) slog.Handler {
-	return h
-}
-
-var _ slog.Handler = (*organizationProfileBarrierHandler)(nil)
 
 func TestOrganizationProfileKeepsValueDuplicatesWithDistinctIdentity(t *testing.T) {
 	assert := assert.New(t)

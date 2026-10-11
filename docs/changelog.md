@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-06"
+last_edited: "2026-10-08"
 title: Changelog
 description: Release history for msgvault
 ---
@@ -7,6 +7,29 @@ description: Release history for msgvault
 All notable changes to msgvault, grouped by release.
 
 ## Unreleased
+
+- Remote edits update source-owned values on published CardDAV imports while preserving unrelated local values. Edits that would overwrite another owner create a conflict.
+- [Everything search](web-ui.md#recording-matches) shows recording transcript matches for plain-word Full text queries and supports one Person filter. API schema 3.11.0 adds `participant_id` to media search, `GET /media/search/status`, source filename, title and date to media search results and optional `conversation_title` to message detail.
+
+- Go programs can use msgvault as a library through `go.kenn.io/msgvault/pkg/archive`.
+  It sets up and opens SQLite or PostgreSQL archives, runs the Slack and Discord
+  importers with caller-supplied credentials, purges channels and sources, and
+  mounts the HTTP API in the program's own server. PostgreSQL-only programs can
+  build without CGO. See the [Go library guide](guides/embedding.md).
+
+- [Read-only remote clients](guides/remote-deployment.md#read-only-remote-clients) get separate reader credentials with response limits and optional collection writes.
+- Single-message [export-eml](cli-reference.md#export-eml) refuses ambiguous provider IDs for owner and reader keys.
+- Consume streamed [export-attachment](cli-reference.md#export-attachment) stdout only after the command succeeds.
+
+- Agent tokens grant scoped archive reads through the remote CLI and MCP, with optional `--expires`. Search responses report index uncertainty; owner searches retain automatic index repair.
+
+- Applications can compare a candidate binary's expected archive version with
+  the stored version using `schema-version`, then run `migrate` before replacing
+  the executable. See [the upgrade procedure](setup.md#migrate-before-replacing-the-executable).
+
+- Owned-address changes recheck only matching messages. SQLite upgrades may
+  take several minutes to build a one-time From-address index. See
+  [startup progress](guides/daemon-migration.md#what-you-will-see).
 
 - msgvault sends anonymous usage telemetry: a daemon ping at startup and once
   each later UTC day, and an `app_opened` event the web UI reports through the
@@ -27,6 +50,16 @@ All notable changes to msgvault, grouped by release.
   `sync-circleback --full` to rewrite them. Granola now skips unchanged notes
   instead of rewriting them.
 
+- Find mail by the address that received it: `received:work@example.org` finds
+  forwarded and Bcc'd mail delivered to a confirmed alias, and
+  `account:work@example.org` adds sent mail and calendar events. Older mail
+  fills in on each source's next sync or import, or with
+  `msgvault repair-derived`. API schema 3.5.0; older daemons refuse these
+  operators.
+- Pick a receiving address or the unattributed mail of a source in the TUI
+  account picker, the Web UI's Explore account filter, and the MCP `account`
+  argument; vector and hybrid search accept `received:` and `account:`. API
+  schema 3.11.0.
 - Rerunning `import-whatsapp` on an Apple `ChatStorage.sqlite` reads only the
   chats that changed since the last successful import and writes only new and
   changed messages, instead of rewriting the whole archive. It picks up edits
@@ -68,6 +101,12 @@ All notable changes to msgvault, grouped by release.
   See [Microsoft contacts](usage/people-carddav.md#microsoft-contacts).
 - A CardDAV update or unpublish attempted while the Google sign-in is missing
   goes out after sign-in, instead of turning into a conflict to review.
+
+- **Transcripts beside recordings:** the Web reader shows each recording's
+  Docbank transcript, or why there isn't one, under the expanded message.
+  `GET /api/v1/messages/{id}/recordings` serves the same list (API schema 3.6.0).
+
+- **Search spoken words:** `msgvault media search`, MCP `search_media`, and `GET /api/v1/media/search` find current recording transcripts and show partial coverage when some recordings aren't searchable (API schema 3.7.0).
 
 ## 0.21.0
 <small>2026-10-02</small>

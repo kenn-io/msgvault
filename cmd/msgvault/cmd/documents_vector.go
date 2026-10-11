@@ -78,37 +78,23 @@ func configuredDocumentVectorSpec(ctx context.Context, st *store.Store) (store.D
 	}, nil
 }
 
-func configuredDocumentVectorConsentSpec(spec store.DocumentVectorGenerationSpec, state *invocation) (store.DocumentVectorConsentSpec, error) {
+func configuredDocumentVectorConsentSpec(spec store.DocumentVectorGenerationSpec, state *invocation, purpose string) (store.DocumentVectorConsentSpec, error) {
 	state = invocationState(context.Background(), state)
 	if state == nil || state.cfg == nil {
 		return store.DocumentVectorConsentSpec{}, errors.New("configuration is unavailable")
 	}
-	cfg := state.cfg
-	egressFingerprint, err := vectordocument.EgressFingerprint(spec.TargetExtractionProfileID, cfg.Vector)
+	fingerprint := vectordocument.EgressFingerprint
+	if purpose == "query_embedding" {
+		fingerprint = vectordocument.QueryEgressFingerprint
+	}
+	egressFingerprint, err := fingerprint(spec.TargetExtractionProfileID, state.cfg.Vector)
 	if err != nil {
 		return store.DocumentVectorConsentSpec{}, err
 	}
 	return store.DocumentVectorConsentSpec{
 		DocumentVectorGenerationSpec: spec,
 		EgressFingerprint:            egressFingerprint,
-		Purpose:                      "document_embedding",
-	}, nil
-}
-
-func configuredDocumentVectorQueryConsentSpec(spec store.DocumentVectorGenerationSpec, state *invocation) (store.DocumentVectorConsentSpec, error) {
-	state = invocationState(context.Background(), state)
-	if state == nil || state.cfg == nil {
-		return store.DocumentVectorConsentSpec{}, errors.New("configuration is unavailable")
-	}
-	cfg := state.cfg
-	egressFingerprint, err := vectordocument.QueryEgressFingerprint(spec.TargetExtractionProfileID, cfg.Vector)
-	if err != nil {
-		return store.DocumentVectorConsentSpec{}, err
-	}
-	return store.DocumentVectorConsentSpec{
-		DocumentVectorGenerationSpec: spec,
-		EgressFingerprint:            egressFingerprint,
-		Purpose:                      "query_embedding",
+		Purpose:                      purpose,
 	}, nil
 }
 
@@ -131,6 +117,25 @@ func runDocumentVectorCommandHTTP(command *cobra.Command, args []string, forward
 	return runDaemonCLICommandHTTPFromCobra(command, args)
 }
 
+// lockedDocumentVectorRunE routes a ledger verb to the daemon, then runs fn
+// under the document vector operation lock. A non-empty yesError requires --yes.
+func lockedDocumentVectorRunE(deps documentsCommandDeps, forwardEmbeddingKey bool, yesError string,
+	fn func(*cobra.Command, *store.Store) error) func(*cobra.Command, []string) error {
+	return func(command *cobra.Command, args []string) error {
+		if !isDaemonCLISubprocess() {
+			return runDocumentVectorCommandHTTP(command, args, forwardEmbeddingKey)
+		}
+		if yesError != "" {
+			if yes, err := command.Flags().GetBool("yes"); err != nil || !yes {
+				return errors.New(yesError)
+			}
+		}
+		return withDocumentVectorStore(command.Context(), deps, func(st *store.Store) error {
+			return st.WithDocumentVectorOperationLock(command.Context(), func() error { return fn(command, st) })
+		})
+	}
+}
+
 func newDocumentVectorConsentCmd(deps documentsCommandDeps) *cobra.Command {
 	var yes bool
 	var purpose string
@@ -147,15 +152,11 @@ func newDocumentVectorConsentCmd(deps documentsCommandDeps) *cobra.Command {
 				if err != nil {
 					return err
 				}
-				var consentSpec store.DocumentVectorConsentSpec
-				switch purpose {
-				case "documents":
-					consentSpec, err = configuredDocumentVectorConsentSpec(spec, invocationFromCommand(command))
-				case "queries":
-					consentSpec, err = configuredDocumentVectorQueryConsentSpec(spec, invocationFromCommand(command))
-				default:
+				consentPurpose := map[string]string{"documents": "document_embedding", "queries": "query_embedding"}[purpose]
+				if consentPurpose == "" {
 					return errors.New("document vector consent purpose must be documents or queries")
 				}
+				consentSpec, err := configuredDocumentVectorConsentSpec(spec, invocationFromCommand(command), consentPurpose)
 				if err != nil {
 					return err
 				}
@@ -224,50 +225,43 @@ func newDocumentVectorBuildCmd(deps documentsCommandDeps, resume bool) *cobra.Co
 	var limit int
 	command := &cobra.Command{
 		Use: name, Short: short, Args: cobra.NoArgs,
-		RunE: func(command *cobra.Command, args []string) error {
-			if !isDaemonCLISubprocess() {
-				return runDocumentVectorCommandHTTP(command, args, true)
-			}
-			return withDocumentVectorStore(command.Context(), deps, func(st *store.Store) error {
-				return st.WithDocumentVectorOperationLock(command.Context(), func() error {
-					if resume {
-						generation, err := st.GetDocumentVectorGeneration(command.Context(), generationID)
-						if err != nil {
-							return err
-						}
-						if generation.State == store.DocumentVectorGenerationRetired {
-							return runDocumentVectorCommand(command, deps, st, generationID, limit)
-						}
-					}
-					spec, err := desiredDocumentVectorSpec(command.Context(), st)
-					if err != nil {
-						return err
-					}
-					if err := requireDocumentVectorConsent(command.Context(), st, spec); err != nil {
-						return err
-					}
-					if resume {
-						generation, err := st.GetDocumentVectorGeneration(command.Context(), generationID)
-						if err != nil {
-							return err
-						}
-						if generation.State != store.DocumentVectorGenerationBuilding || generation.DocumentVectorGenerationSpec != spec {
-							return store.ErrDocumentVectorInvalidGenerationState
-						}
-					} else {
-						generation, _, err := st.EnsureDocumentVectorGeneration(command.Context(), spec)
-						if err != nil {
-							return err
-						}
-						if generation.State != store.DocumentVectorGenerationBuilding {
-							return errors.New("the configured generation is already active; use documents vectors rebuild for coverage drift")
-						}
-						generationID = generation.ID
-					}
+		RunE: lockedDocumentVectorRunE(deps, true, "", func(command *cobra.Command, st *store.Store) error {
+			if resume {
+				generation, err := st.GetDocumentVectorGeneration(command.Context(), generationID)
+				if err != nil {
+					return err
+				}
+				if generation.State == store.DocumentVectorGenerationRetired {
 					return runDocumentVectorCommand(command, deps, st, generationID, limit)
-				})
-			})
-		},
+				}
+			}
+			spec, err := desiredDocumentVectorSpec(command.Context(), st)
+			if err != nil {
+				return err
+			}
+			if err := requireDocumentVectorConsent(command.Context(), st, spec); err != nil {
+				return err
+			}
+			if resume {
+				generation, err := st.GetDocumentVectorGeneration(command.Context(), generationID)
+				if err != nil {
+					return err
+				}
+				if generation.State != store.DocumentVectorGenerationBuilding || generation.DocumentVectorGenerationSpec != spec {
+					return store.ErrDocumentVectorInvalidGenerationState
+				}
+			} else {
+				generation, _, err := st.EnsureDocumentVectorGeneration(command.Context(), spec)
+				if err != nil {
+					return err
+				}
+				if generation.State != store.DocumentVectorGenerationBuilding {
+					return errors.New("the configured generation is already active; use documents vectors rebuild for coverage drift")
+				}
+				generationID = generation.ID
+			}
+			return runDocumentVectorCommand(command, deps, st, generationID, limit)
+		}),
 	}
 	command.Flags().IntVarP(&limit, "limit", "n", defaultDocumentVectorOperationLimit, "Maximum chunks and cleanup tokens to process (1-1000)")
 	if resume {
@@ -289,7 +283,7 @@ func requireDocumentVectorConsent(ctx context.Context, st *store.Store, spec sto
 }
 
 func hasDocumentVectorConsent(ctx context.Context, st *store.Store, spec store.DocumentVectorGenerationSpec) (bool, error) {
-	consentSpec, err := configuredDocumentVectorConsentSpec(spec, invocationFromContext(ctx))
+	consentSpec, err := configuredDocumentVectorConsentSpec(spec, invocationFromContext(ctx), "document_embedding")
 	if err != nil {
 		return false, err
 	}
@@ -319,20 +313,13 @@ func newDocumentVectorRetryCmd(deps documentsCommandDeps) *cobra.Command {
 	var afterToken string
 	var limit int
 	command := &cobra.Command{Use: "retry", Short: "Reset current failed publications for retry", Args: cobra.NoArgs,
-		RunE: func(command *cobra.Command, args []string) error {
-			if !isDaemonCLISubprocess() {
-				return runDocumentVectorCommandHTTP(command, args, false)
+		RunE: lockedDocumentVectorRunE(deps, false, "", func(command *cobra.Command, st *store.Store) error {
+			result, err := st.ResetDocumentVectorFailures(command.Context(), generationID, afterToken, limit, time.Now())
+			if err != nil {
+				return err
 			}
-			return withDocumentVectorStore(command.Context(), deps, func(st *store.Store) error {
-				return st.WithDocumentVectorOperationLock(command.Context(), func() error {
-					result, err := st.ResetDocumentVectorFailures(command.Context(), generationID, afterToken, limit, time.Now())
-					if err != nil {
-						return err
-					}
-					return json.MarshalEncode(jsontext.NewEncoder(command.OutOrStdout()), result, json.Deterministic(true))
-				})
-			})
-		}}
+			return json.MarshalEncode(jsontext.NewEncoder(command.OutOrStdout()), result, json.Deterministic(true))
+		})}
 	command.Flags().Int64Var(&generationID, "generation-id", 0, "Generation whose failures should be reset")
 	command.Flags().StringVar(&afterToken, "after-token", "", "Stable retry cursor token")
 	command.Flags().IntVarP(&limit, "limit", "n", defaultDocumentVectorOperationLimit, "Maximum failures to scan (1-1000)")
@@ -343,63 +330,41 @@ func newDocumentVectorRetryCmd(deps documentsCommandDeps) *cobra.Command {
 func newDocumentVectorRebuildCmd(deps documentsCommandDeps) *cobra.Command {
 	var activeID int64
 	var limit int
-	var yes bool
 	command := &cobra.Command{Use: "rebuild", Short: "Build a fresh generation while the active generation remains searchable", Args: cobra.NoArgs,
-		RunE: func(command *cobra.Command, args []string) error {
-			if !isDaemonCLISubprocess() {
-				return runDocumentVectorCommandHTTP(command, args, true)
+		RunE: lockedDocumentVectorRunE(deps, true, "document vector rebuild requires --yes", func(command *cobra.Command, st *store.Store) error {
+			spec, err := desiredDocumentVectorSpec(command.Context(), st)
+			if err != nil {
+				return err
 			}
-			if !yes {
-				return errors.New("document vector rebuild requires --yes")
+			if err := requireDocumentVectorConsent(command.Context(), st, spec); err != nil {
+				return err
 			}
-			return withDocumentVectorStore(command.Context(), deps, func(st *store.Store) error {
-				return st.WithDocumentVectorOperationLock(command.Context(), func() error {
-					spec, err := desiredDocumentVectorSpec(command.Context(), st)
-					if err != nil {
-						return err
-					}
-					if err := requireDocumentVectorConsent(command.Context(), st, spec); err != nil {
-						return err
-					}
-					generation, err := st.StartDocumentVectorRebuild(command.Context(), activeID, spec, time.Now())
-					if err != nil {
-						return err
-					}
-					return runDocumentVectorCommand(command, deps, st, generation.ID, limit)
-				})
-			})
-		}}
+			generation, err := st.StartDocumentVectorRebuild(command.Context(), activeID, spec, time.Now())
+			if err != nil {
+				return err
+			}
+			return runDocumentVectorCommand(command, deps, st, generation.ID, limit)
+		})}
 	command.Flags().Int64Var(&activeID, "generation-id", 0, "Active generation being replaced")
 	command.Flags().IntVarP(&limit, "limit", "n", defaultDocumentVectorOperationLimit, "Maximum chunks and cleanup tokens to process (1-1000)")
-	command.Flags().BoolVar(&yes, "yes", false, "Confirm the rebuild")
+	command.Flags().Bool("yes", false, "Confirm the rebuild")
 	_ = command.MarkFlagRequired("generation-id")
 	return command
 }
 
 func newDocumentVectorRetireCmd(deps documentsCommandDeps) *cobra.Command {
 	var generationID int64
-	var yes bool
 	command := &cobra.Command{Use: cliEmbeddingsOperationRetire, Short: "Retire a document vector generation without deleting its backend ledger", Args: cobra.NoArgs,
-		RunE: func(command *cobra.Command, args []string) error {
-			if !isDaemonCLISubprocess() {
-				return runDocumentVectorCommandHTTP(command, args, false)
+		RunE: lockedDocumentVectorRunE(deps, false, "document vector retirement requires --yes", func(command *cobra.Command, st *store.Store) error {
+			retired, err := st.RetireDocumentVectorGeneration(command.Context(), generationID, time.Now())
+			if err != nil {
+				return err
 			}
-			if !yes {
-				return errors.New("document vector retirement requires --yes")
-			}
-			return withDocumentVectorStore(command.Context(), deps, func(st *store.Store) error {
-				return st.WithDocumentVectorOperationLock(command.Context(), func() error {
-					retired, err := st.RetireDocumentVectorGeneration(command.Context(), generationID, time.Now())
-					if err != nil {
-						return err
-					}
-					_, _ = fmt.Fprintf(command.OutOrStdout(), "retired=%t generation_id=%d; backend cleanup will resume when vector operations next run\n", retired, generationID)
-					return nil
-				})
-			})
-		}}
+			_, _ = fmt.Fprintf(command.OutOrStdout(), "retired=%t generation_id=%d; backend cleanup will resume when vector operations next run\n", retired, generationID)
+			return nil
+		})}
 	command.Flags().Int64Var(&generationID, "generation-id", 0, "Generation to retire")
-	command.Flags().BoolVar(&yes, "yes", false, "Confirm retirement")
+	command.Flags().Bool("yes", false, "Confirm retirement")
 	_ = command.MarkFlagRequired("generation-id")
 	return command
 }
@@ -434,11 +399,11 @@ func newDocumentVectorStatusCmd(deps documentsCommandDeps) *cobra.Command {
 				if err != nil {
 					return err
 				}
-				documentConsentSpec, err := configuredDocumentVectorConsentSpec(spec, invocationFromCommand(command))
+				documentConsentSpec, err := configuredDocumentVectorConsentSpec(spec, invocationFromCommand(command), "document_embedding")
 				if err != nil {
 					return err
 				}
-				queryConsentSpec, err := configuredDocumentVectorQueryConsentSpec(spec, invocationFromCommand(command))
+				queryConsentSpec, err := configuredDocumentVectorConsentSpec(spec, invocationFromCommand(command), "query_embedding")
 				if err != nil {
 					return err
 				}

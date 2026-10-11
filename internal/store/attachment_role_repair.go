@@ -355,37 +355,9 @@ func (s *Store) prepareAttachmentRoleRepair(messageID int64, raw []byte) ([]atta
 		return nil, err
 	}
 
-	// Enmime can expose the same physical part through both Attachments and
-	// Inlines. PartKey is the source identity, so collapse that duplicate while
-	// preserving the stricter inline evidence. A key with conflicting bytes is
-	// corrupt/ambiguous and is excluded entirely.
-	partsByKey := make(map[string]internalmime.Attachment, len(parsed.Attachments))
-	conflictedKeys := make(map[string]struct{})
+	partsByHash := make(map[string][]internalmime.Attachment, len(parsed.Attachments))
 	for _, part := range parsed.Attachments {
 		if part.PartKey == "" {
-			continue
-		}
-		previous, exists := partsByKey[part.PartKey]
-		if !exists {
-			partsByKey[part.PartKey] = part
-			continue
-		}
-		if previous.ContentHash != part.ContentHash {
-			conflictedKeys[part.PartKey] = struct{}{}
-			continue
-		}
-		if part.IsInline || part.Disposition == "inline" || part.ContentID != "" {
-			previous.IsInline = true
-			previous.Disposition = "inline"
-			if previous.ContentID == "" {
-				previous.ContentID = part.ContentID
-			}
-			partsByKey[part.PartKey] = previous
-		}
-	}
-	partsByHash := make(map[string][]internalmime.Attachment, len(partsByKey))
-	for partKey, part := range partsByKey {
-		if _, conflicted := conflictedKeys[partKey]; conflicted {
 			continue
 		}
 		partsByHash[part.ContentHash] = append(partsByHash[part.ContentHash], part)

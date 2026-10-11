@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"io"
@@ -788,6 +789,31 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	for _, src := range cfg.Twenty {
+		if src.Enabled && src.Schedule == "" {
+			logger.Warn("Twenty source is enabled but has no schedule; the daemon will not sync it",
+				"source", src.Identifier, "hint", `set schedule on the [[twenty]] entry`)
+		}
+	}
+	for _, src := range cfg.ScheduledTwentySources() {
+		source := src
+		jobName, ok := api.SchedulerJobNameForSource(sourceTypeTwenty, source.Identifier)
+		if !ok {
+			logger.Error("no scheduler job mapping for Twenty source", "source", source.Identifier)
+			continue
+		}
+		if err := sched.AddJob(scheduler.Job{
+			Name: jobName, Schedule: source.Schedule,
+			Run: invocationBoundJobRun(state, func(ctx context.Context) error {
+				return runConfiguredTwentySync(ctx, s, source)
+			}),
+		}); err != nil {
+			logger.Error("failed to schedule Twenty source", "source", source.Identifier, "error", err)
+		} else {
+			logger.Info("scheduled Twenty source", "source", source.Identifier, "schedule", source.Schedule)
+		}
+	}
+
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
@@ -827,6 +853,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 	schedAdapter := &schedulerAdapter{scheduler: sched, media: mediaSched}
 
+	messageRecordings, err := newMessageRecordingReader(ctx, s, cfg.Integrations.Docbank)
+	if err != nil {
+		logger.Warn("Message transcripts unavailable", "error", err)
+	}
+
 	// Create and start API server
 	var apiServer *api.Server
 	apiOpts := api.ServerOptions{
@@ -857,6 +888,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		OperationHistoryReader:        storeAdapter,
 		BlobStore:                     blobStore,
 		TelemetryCapture:              telemetry.CaptureHandler(telemetryReporter, cfg.Data.DataDir),
+		MessageRecordings:             messageRecordings,
 	}
 	apiOpts.GmailProfileAddress = func(ctx context.Context, source *store.Source) (string, error) {
 		client, serviceAccount, err := newDaemonGmailClient(
@@ -1760,6 +1792,7 @@ var _ api.MessageIdentityStore = (*storeAPIAdapter)(nil)
 var _ api.PersonFactStore = (*storeAPIAdapter)(nil)
 var _ api.PersonBriefStore = (*storeAPIAdapter)(nil)
 var _ api.MeetingImporter = (*storeAPIAdapter)(nil)
+var _ api.MuesliImporter = (*storeAPIAdapter)(nil)
 var _ api.SourceStatusStore = (*storeAPIAdapter)(nil)
 var _ api.CLIStore = (*storeAPIAdapter)(nil)
 var _ api.ContextCLIStore = (*storeAPIAdapter)(nil)
@@ -2009,14 +2042,38 @@ func (a *storeAPIAdapter) ImportMeeting(
 	return a.meetingImporter.Import(ctx, req)
 }
 
+// ImportMuesli receives bounded recorder-local evidence under the API gate.
+func (a *storeAPIAdapter) ImportMuesli(ctx context.Context, req muesli.RemoteRequest) (muesli.RemoteResult, error) {
+	if a == nil || a.store == nil {
+		return muesli.RemoteResult{}, errors.New("muesli import unavailable")
+	}
+	result, err := muesli.NewImporter(a.store).ImportRemote(ctx, req)
+	refreshCtx := context.WithoutCancel(a.invocationContext(ctx))
+	if req.Action == "refresh" && err == nil && req.BuildCache {
+		err = a.queueCacheRefreshAfterManualSync(true, req.NoBuildCache)
+	} else if result.Changed && !req.NoBuildCache {
+		// A committed write still needs a refresh when checkpoint/link work fails.
+		if refreshErr := rebuildMuesliCacheAfterScheduledSync(refreshCtx, "muesli"); refreshErr != nil && a.logger != nil {
+			a.logger.Warn("Muesli cache refresh deferred", "error_class", "internal")
+		}
+	}
+	return result, err
+}
+
 func (a *storeAPIAdapter) GetStatsContext(ctx context.Context) (*api.StoreStats, error) {
 	return a.store.GetStatsContext(ctx)
 }
 
+func (a *storeAPIAdapter) BeginReadSnapshotContext(ctx context.Context) (context.Context, func(), error) {
+	return a.store.BeginReadSnapshotContext(ctx)
+}
+func (a *storeAPIAdapter) DB() *sql.DB        { return a.store.DB() }
+func (a *storeAPIAdapter) IsPostgreSQL() bool { return a.store.IsPostgreSQL() }
+
 func (a *storeAPIAdapter) ListMessagesContext(
-	ctx context.Context, offset, limit int,
+	ctx context.Context, offset, limit int, sourceIDs []int64,
 ) ([]api.APIMessage, int64, error) {
-	return a.store.ListMessagesContext(ctx, offset, limit)
+	return a.store.ListMessagesContext(ctx, offset, limit, sourceIDs)
 }
 
 func (a *storeAPIAdapter) GetMessageContext(ctx context.Context, id int64) (*api.APIMessage, error) {
@@ -2063,8 +2120,8 @@ func (a *storeAPIAdapter) GetMessage(id int64) (*api.APIMessage, error) {
 	return a.store.GetMessage(id)
 }
 
-func (a *storeAPIAdapter) MessageRemoteImages(id int64) (map[string]store.AttachmentRef, error) {
-	return a.store.MessageRemoteImages(id)
+func (a *storeAPIAdapter) MessageRemoteImagesContext(ctx context.Context, id int64) (map[string]store.AttachmentRef, error) {
+	return a.store.MessageRemoteImagesContext(ctx, id)
 }
 
 func (a *storeAPIAdapter) GetMessagesSummariesByIDs(ids []int64) ([]api.APIMessage, error) {
@@ -2093,6 +2150,9 @@ func (a *storeAPIAdapter) SearchMessageIDsQueryContext(
 	return a.store.SearchMessageIDsQueryContext(ctx, q, limit)
 }
 
+func (a *storeAPIAdapter) NeedsFTSBackfillContext(ctx context.Context) (bool, error) {
+	return a.store.NeedsFTSBackfillContext(ctx)
+}
 func (a *storeAPIAdapter) NeedsFTSBackfill() bool {
 	return a.store.NeedsFTSBackfill()
 }
@@ -2818,6 +2878,23 @@ func (a *storeAPIAdapter) ListAccountIdentitiesContext(
 	return a.store.ListAccountIdentitiesContext(ctx, sourceID)
 }
 
+func (a *storeAPIAdapter) ListVirtualAccountsContext(ctx context.Context) (map[int64][]store.VirtualAccount, error) {
+	return a.store.ListVirtualAccountsContext(ctx)
+}
+
+// AccountIdentityRevisionContext lets the API tell a catalog read from before
+// an identity change from a current one.
+func (a *storeAPIAdapter) AccountIdentityRevisionContext(ctx context.Context) (int64, error) {
+	return a.store.AccountIdentityRevisionContext(ctx)
+}
+
+// The API serves the account catalog only from a store that also reports
+// the identity revision, so the adapter must keep both.
+var _ interface {
+	ListVirtualAccountsContext(ctx context.Context) (map[int64][]store.VirtualAccount, error)
+	AccountIdentityRevisionContext(ctx context.Context) (int64, error)
+} = (*storeAPIAdapter)(nil)
+
 func (a *storeAPIAdapter) ResolveAccountIdentityContext(
 	ctx context.Context,
 	sourceID int64,
@@ -2947,6 +3024,10 @@ func (a *storeAPIAdapter) CreatePersonFromParticipantWithDisplayNameContext(
 
 func (a *storeAPIAdapter) GetPersonContext(ctx context.Context, id int64) (*store.Person, error) {
 	return a.store.GetPersonContext(ctx, id)
+}
+
+func (a *storeAPIAdapter) GetPersonByUIDContext(ctx context.Context, uid string) (*store.Person, error) {
+	return a.store.GetPersonByUIDContext(ctx, uid)
 }
 
 func (a *storeAPIAdapter) EnsurePersonInferenceProfile(ctx context.Context, profile peoplesweep.ProviderProfile) (bool, error) {

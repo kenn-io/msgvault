@@ -13,6 +13,9 @@ cmd/msgvault/cmd/testdata/issue-769.json -text whitespace=blank-at-eol,blank-at-
 internal/vcard/testdata/*.vcf -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
 internal/vcard/registry/data/*.csv -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
 
+# Email forwarding fixtures retain the original CRLF header wire format.
+internal/emailattribution/testdata/*.eml -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+
 # Slackdump attachments are arbitrary archived bytes. Never rewrite fixture
 # line endings on Windows checkouts.
 internal/slack/testdata/slackdump/standard/general/attachments/** -text

@@ -211,13 +211,32 @@ func (m *MediaArchiver) PersistAttachments(
 	return m.persistAttachments(ctx, messageID, attachments, true, messageFlags)
 }
 
+// keepArchivedAttachment carries an earlier run's stored file into refreshed
+// provider metadata, so rewriting a message's attachment rows never discards
+// a download. It reports whether the attachment's bytes are already archived.
+func keepArchivedAttachment(ref *store.AttachmentRef, previous store.AttachmentRef) bool {
+	if previous.Size > ref.Size {
+		ref.Size = previous.Size
+	}
+	if !store.IsDiscordAttachmentDownloaded(previous) {
+		return false
+	}
+	ref.StoragePath = previous.StoragePath
+	ref.ContentHash = previous.ContentHash
+	ref.Role = store.AttachmentRoleStandalone
+	ref.RoleSource = store.AttachmentRoleSourceProviderExplicit
+	ref.State = attachmentpolicy.StateStored
+	ref.SkipReason = ""
+	return true
+}
+
 // persistAttachments refreshes the complete observed attachment set. When
 // retryExisting is false, known pending rows get fresh metadata without a
 // duplicate download attempt; newly observed rows are still attempted.
 func (m *MediaArchiver) persistAttachments(
 	ctx context.Context, messageID int64, attachments []Attachment, retryExisting bool, messageFlags int,
 ) (MediaResult, error) {
-	existing, err := m.store.MessageDiscordAttachments(messageID)
+	existing, err := m.store.MessageDiscordAttachmentsContext(ctx, messageID)
 	if err != nil {
 		return MediaResult{}, fmt.Errorf("load Discord attachment metadata: %w", err)
 	}
@@ -242,16 +261,7 @@ func (m *MediaArchiver) persistAttachments(
 		remainingRefs = remainingRefs[1:]
 		item := attachmentWork{attachment: attachment, ref: ref, download: true, report: true}
 		if previous, ok := existing[ref.SourceAttachmentID]; ok {
-			if previous.Size > ref.Size {
-				ref.Size = previous.Size
-			}
-			if store.IsDiscordAttachmentDownloaded(previous) {
-				ref.StoragePath = previous.StoragePath
-				ref.ContentHash = previous.ContentHash
-				ref.Role = store.AttachmentRoleStandalone
-				ref.RoleSource = store.AttachmentRoleSourceProviderExplicit
-				ref.State = attachmentpolicy.StateStored
-				ref.SkipReason = ""
+			if keepArchivedAttachment(ref, previous) {
 				item.download = false
 				item.report = retryExisting
 			} else if !retryExisting {
@@ -271,7 +281,7 @@ func (m *MediaArchiver) persistAttachments(
 		}
 		work = append(work, item)
 	}
-	if err := m.replaceMetadata(messageID, refs); err != nil {
+	if err := m.replaceMetadata(ctx, messageID, refs); err != nil {
 		return MediaResult{}, err
 	}
 
@@ -291,6 +301,14 @@ func (m *MediaArchiver) persistAttachments(
 			continue
 		}
 		stored, downloadErr := m.downloadAttachment(ctx, pending.attachment, *pending.ref)
+		// The pending marker was committed before download. Cancellation leaves
+		// it intact without starting another database write.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			item.Outcome = MediaPending
+			item.Err = ctxErr
+			result.Items = append(result.Items, item)
+			continue
+		}
 		if downloadErr != nil {
 			*pending.ref = stored
 			pending.ref.State = attachmentpolicy.StateFailed
@@ -301,21 +319,15 @@ func (m *MediaArchiver) persistAttachments(
 				pending.ref.SkipReason = attachmentpolicy.SkipSizeCap
 				item.Outcome = MediaSkipped
 			}
-			if replaceErr := m.replaceMetadata(messageID, refs); replaceErr != nil {
+			if replaceErr := m.replaceMetadata(ctx, messageID, refs); replaceErr != nil {
 				return result, replaceErr
 			}
 			item.Err = downloadErr
 			result.Items = append(result.Items, item)
 			continue
 		}
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			item.Outcome = MediaPending
-			item.Err = ctxErr
-			result.Items = append(result.Items, item)
-			continue
-		}
 		*pending.ref = stored
-		if err := m.replaceMetadata(messageID, refs); err != nil {
+		if err := m.replaceMetadata(ctx, messageID, refs); err != nil {
 			item.Outcome = MediaPending
 			item.Err = ErrMediaStorage
 			result.Items = append(result.Items, item)
@@ -334,7 +346,7 @@ func (m *MediaArchiver) persistAttachments(
 func (m *MediaArchiver) BackfillMessage(
 	ctx context.Context, messageID int64, channelID, sourceMessageID string,
 ) (MediaResult, error) {
-	existing, err := m.store.MessageDiscordAttachments(messageID)
+	existing, err := m.store.MessageDiscordAttachmentsContext(ctx, messageID)
 	if err != nil {
 		return MediaResult{}, fmt.Errorf("load pending Discord attachment metadata: %w", err)
 	}
@@ -366,7 +378,7 @@ func (m *MediaArchiver) BackfillMessage(
 		retryIDs = append(retryIDs, refs[i].SourceAttachmentID)
 	}
 	if metadataChanged {
-		if err := m.replaceMetadata(messageID, refs); err != nil {
+		if err := m.replaceMetadata(ctx, messageID, refs); err != nil {
 			return MediaResult{}, err
 		}
 		for _, ref := range refs {
@@ -377,7 +389,7 @@ func (m *MediaArchiver) BackfillMessage(
 		return result, nil
 	}
 	if m.api == nil {
-		if err := m.markFailed(messageID, existing, retryIDs); err != nil {
+		if err := m.markFailed(ctx, messageID, existing, retryIDs); err != nil {
 			return MediaResult{}, err
 		}
 		pending := pendingRefreshResults(retryIDs, ErrMediaRefresh)
@@ -400,7 +412,7 @@ func (m *MediaArchiver) BackfillMessage(
 			result.Items = append(result.Items, pending.Items...)
 			return result, nil
 		}
-		if err := m.markFailed(messageID, existing, retryIDs); err != nil {
+		if err := m.markFailed(ctx, messageID, existing, retryIDs); err != nil {
 			return MediaResult{}, err
 		}
 		pending := pendingRefreshResults(retryIDs, ErrMediaRefresh)
@@ -444,7 +456,7 @@ func (m *MediaArchiver) BackfillMessage(
 	// Persist refreshed provenance before using any new signed URL. Missing
 	// attachments keep their last observed marker unchanged.
 	if matched {
-		if err := m.replaceMetadata(messageID, refs); err != nil {
+		if err := m.replaceMetadata(ctx, messageID, refs); err != nil {
 			return MediaResult{}, err
 		}
 	}
@@ -453,6 +465,14 @@ func (m *MediaArchiver) BackfillMessage(
 		attachment := fresh[sourceAttachmentID]
 		idx := refIndex[sourceAttachmentID]
 		stored, downloadErr := m.downloadAttachment(ctx, attachment, refs[idx])
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			result.Items = append(result.Items, MediaItemResult{
+				SourceAttachmentID: sourceAttachmentID,
+				Outcome:            MediaPending,
+				Err:                ctxErr,
+			})
+			continue
+		}
 		if downloadErr != nil {
 			refs[idx] = stored
 			refs[idx].State = attachmentpolicy.StateFailed
@@ -463,7 +483,7 @@ func (m *MediaArchiver) BackfillMessage(
 				refs[idx].SkipReason = attachmentpolicy.SkipSizeCap
 				outcome = MediaSkipped
 			}
-			if err := m.replaceMetadata(messageID, refs); err != nil {
+			if err := m.replaceMetadata(ctx, messageID, refs); err != nil {
 				return result, err
 			}
 			result.Items = append(result.Items, MediaItemResult{
@@ -473,16 +493,8 @@ func (m *MediaArchiver) BackfillMessage(
 			})
 			continue
 		}
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			result.Items = append(result.Items, MediaItemResult{
-				SourceAttachmentID: sourceAttachmentID,
-				Outcome:            MediaPending,
-				Err:                ctxErr,
-			})
-			continue
-		}
 		refs[idx] = stored
-		if err := m.replaceMetadata(messageID, refs); err != nil {
+		if err := m.replaceMetadata(ctx, messageID, refs); err != nil {
 			result.Items = append(result.Items, MediaItemResult{
 				SourceAttachmentID: sourceAttachmentID,
 				Outcome:            MediaPending,
@@ -498,7 +510,7 @@ func (m *MediaArchiver) BackfillMessage(
 	return result, nil
 }
 
-func (m *MediaArchiver) markFailed(
+func (m *MediaArchiver) markFailed(ctx context.Context,
 	messageID int64, existing map[string]store.AttachmentRef, sourceAttachmentIDs []string,
 ) error {
 	refs := attachmentRefsInOrder(existing)
@@ -513,7 +525,7 @@ func (m *MediaArchiver) markFailed(
 		refs[i].State = attachmentpolicy.StateFailed
 		refs[i].SkipReason = attachmentpolicy.SkipFetchFailure
 	}
-	return m.replaceMetadata(messageID, refs)
+	return m.replaceMetadata(ctx, messageID, refs)
 }
 
 func pendingRefreshResults(sourceAttachmentIDs []string, err error) MediaResult {
@@ -553,11 +565,11 @@ func attachmentRefsInOrder(refs map[string]store.AttachmentRef) []store.Attachme
 	return ordered
 }
 
-func (m *MediaArchiver) replaceMetadata(messageID int64, refs []store.AttachmentRef) error {
-	if err := m.store.ReplaceMessageDiscordAttachments(messageID, refs); err != nil {
+func (m *MediaArchiver) replaceMetadata(ctx context.Context, messageID int64, refs []store.AttachmentRef) error {
+	if err := m.store.ReplaceMessageDiscordAttachmentsContext(ctx, messageID, refs); err != nil {
 		return fmt.Errorf("persist Discord attachment metadata: %w", err)
 	}
-	if err := m.store.RecomputeMessageAttachmentStats(messageID); err != nil {
+	if err := m.store.RecomputeMessageAttachmentStatsContext(ctx, messageID); err != nil {
 		return fmt.Errorf("recompute Discord attachment metadata: %w", err)
 	}
 	return nil

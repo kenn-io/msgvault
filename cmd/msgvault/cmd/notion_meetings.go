@@ -25,6 +25,9 @@ var (
 	newNotionMeetingsClient = func(baseURL, token string) notionmeetings.Source {
 		return notionmeetings.NewClient(baseURL, token)
 	}
+	newNotionUsersClient = func(baseURL, token string) notionmeetings.UserSource {
+		return notionmeetings.NewClient(baseURL, token)
+	}
 	rebuildNotionMeetingsCacheAfterWrite         = rebuildCacheAfterManualSync
 	rebuildNotionMeetingsCacheAfterScheduledSync = rebuildCacheAfterScheduledSync
 )
@@ -68,7 +71,7 @@ type notionMeetingsQuerySource interface {
 	ListUsers(ctx context.Context, cursor string) (*notionmeetings.UserPage, error)
 }
 
-func runNotionMeetingsProbe(ctx context.Context, out io.Writer, client notionMeetingsQuerySource) error {
+func runNotionMeetingsProbe(ctx context.Context, out io.Writer, client notionMeetingsQuerySource, users notionmeetings.UserSource) error {
 	result, err := client.QueryMeetingNotes(ctx, 1)
 	if err != nil {
 		return fmt.Errorf("probe Notion AI Meeting Notes access: %w", err)
@@ -102,16 +105,57 @@ func runNotionMeetingsProbe(ctx context.Context, out io.Writer, client notionMee
 		}
 		_, _ = fmt.Fprintln(out, "  Read Content: available")
 	}
-	if _, err := client.ListUsers(ctx, ""); errors.Is(err, notionmeetings.ErrUserInformation) {
-		_, _ = fmt.Fprintln(out, "  User Information: unavailable (attendees remain display-only)")
-	} else if errors.Is(err, notionmeetings.ErrRateLimited) {
-		_, _ = fmt.Fprintf(out, "  User Information: unavailable (error: %v; attendees remain display-only)\n", err)
-	} else if err != nil {
-		return fmt.Errorf("probe Notion User Information access: %w", err)
-	} else {
-		_, _ = fmt.Fprintln(out, "  User Information: available")
+	if users == nil {
+		if _, err := client.ListUsers(ctx, ""); errors.Is(err, notionmeetings.ErrUserInformation) {
+			_, _ = fmt.Fprintln(out, "  User Information: unavailable (attendees remain display-only unless a users token is configured)")
+		} else if errors.Is(err, notionmeetings.ErrRateLimited) {
+			_, _ = fmt.Fprintf(out, "  User Information: unavailable (error: %v; attendees remain display-only)\n", err)
+		} else if err != nil {
+			return fmt.Errorf("probe Notion User Information access: %w", err)
+		} else {
+			_, _ = fmt.Fprintln(out, "  User Information: available")
+		}
+		return nil
 	}
+	attendeeID := ""
+	for _, meeting := range result.Results {
+		for _, id := range meeting.MeetingNotes.CalendarEvent.Attendees {
+			if strings.TrimSpace(id) != "" {
+				attendeeID = id
+				break
+			}
+		}
+		if attendeeID != "" {
+			break
+		}
+	}
+	if attendeeID == "" {
+		_, _ = fmt.Fprintln(out, "  Users token: untested (no visible attendee ID)")
+		return nil
+	}
+	lookupCtx, cancel := context.WithTimeout(ctx, notionmeetings.UserLookupTimeout)
+	defer cancel()
+	user, err := users.RetrieveUser(lookupCtx, attendeeID)
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if err != nil {
+		_, _ = fmt.Fprintf(out, "  Users token: unavailable (%v)\n", err)
+	} else if user.Person.EmailVerified && strings.TrimSpace(user.Person.Email) != "" {
+		_, _ = fmt.Fprintln(out, "  Users token: verified email available for sampled attendee")
+	} else {
+		_, _ = fmt.Fprintln(out, "  Users token: no verified email for sampled attendee (check Read user information including email addresses)")
+	}
+
 	return nil
+}
+
+func configuredNotionClients(source config.NotionMeetingsSource) (notionmeetings.Source, notionmeetings.UserSource) {
+	var users notionmeetings.UserSource
+	if token := strings.TrimSpace(source.UsersToken); token != "" {
+		users = newNotionUsersClient(notionmeetings.DefaultBaseURL, token)
+	}
+	return newNotionMeetingsClient(notionmeetings.DefaultBaseURL, source.Token), users
 }
 
 var addNotionMeetingsCmd = &cobra.Command{
@@ -138,8 +182,8 @@ var addNotionMeetingsCmd = &cobra.Command{
 		if strings.TrimSpace(source.Token) == "" {
 			return fmt.Errorf("[[notion_meetings]] entry %q has no token\n\n%s", source.Identifier, notionMeetingsConfigHint)
 		}
-		client := newNotionMeetingsClient(notionmeetings.DefaultBaseURL, source.Token)
-		if err := runNotionMeetingsProbe(cmd.Context(), cmd.OutOrStdout(), client); err != nil {
+		client, users := configuredNotionClients(*source)
+		if err := runNotionMeetingsProbe(cmd.Context(), cmd.OutOrStdout(), client, users); err != nil {
 			return err
 		}
 		st, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
@@ -201,9 +245,8 @@ maintenance. --probe validates access without printing meeting content.`,
 			}
 		}
 		if syncNotionMeetingsProbe {
-			source := sources[0]
-			return runNotionMeetingsProbe(cmd.Context(), cmd.OutOrStdout(),
-				newNotionMeetingsClient(notionmeetings.DefaultBaseURL, source.Token))
+			client, users := configuredNotionClients(sources[0])
+			return runNotionMeetingsProbe(cmd.Context(), cmd.OutOrStdout(), client, users)
 		}
 
 		st, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
@@ -216,8 +259,8 @@ maintenance. --probe validates access without printing meeting content.`,
 		for _, source := range sources {
 			accountEmail, _ := source.EffectiveAccountEmail()
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Syncing Notion meetings for %s\n\n", source.Identifier)
-			importer := notionmeetings.NewImporter(st,
-				newNotionMeetingsClient(notionmeetings.DefaultBaseURL, source.Token))
+			client, users := configuredNotionClients(source)
+			importer := notionmeetings.NewImporter(st, client).WithUserSource(users)
 			summary, importErr := importer.Import(cmd.Context(), notionmeetings.ImportOptions{
 				Identifier: source.Identifier, AccountEmail: accountEmail,
 				Full: syncNotionMeetingsFull || !after.IsZero(), Limit: syncNotionMeetingsLimit,
@@ -271,8 +314,8 @@ func runConfiguredNotionMeetingsSync(ctx context.Context, st *store.Store, sourc
 	if err != nil {
 		return err
 	}
-	importer := notionmeetings.NewImporter(st,
-		newNotionMeetingsClient(notionmeetings.DefaultBaseURL, source.Token))
+	client, users := configuredNotionClients(source)
+	importer := notionmeetings.NewImporter(st, client).WithUserSource(users)
 	summary, importErr := importer.Import(ctx, notionmeetings.ImportOptions{
 		Identifier: source.Identifier, AccountEmail: accountEmail,
 	})

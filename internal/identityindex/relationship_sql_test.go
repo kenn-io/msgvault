@@ -131,27 +131,41 @@ func TestRelationshipActivityYearQueryExcludesOffYearEdgesUnderLowMemory(t *test
 }
 
 func TestBuildStreamsRelationshipActivityUnderLowMemory(t *testing.T) {
-	requirements := require.New(t)
-	assertions := assert.New(t)
-	root, db := writeRelationshipBaseFixture(t, true)
-	writeSyntheticRelationshipFanOut(t, db, root, syntheticRelationshipFanOutOptions{
-		firstMessageID:   1,
-		messageCount:     5_000,
-		memberCount:      200,
-		startDate:        "2026-01-01",
-		messageType:      "email",
-		conversationType: "email_thread",
-	})
-	requirements.NoError(setRelationshipTestMemoryLimit(db, "192MB"))
-
-	result, err := Build(context.Background(), db, BuildOptions{
-		Mode:           ModeFull,
-		StagedBaseRoot: root,
-		OutputRoot:     root,
-	})
-	requirements.NoError(err)
-	assertions.Equal(int64(1_000_000), result.Activity.FinalRows)
-	assertions.Equal(int64(1_000_000), result.Activity.ConversationExpandedRows)
+	for _, tc := range []struct {
+		messageType, conversationType, memoryLimit string
+		finalRows                                  int64
+	}{
+		{"email", "email_thread", "192MB", 1_000_000},
+		{"beeper", "group_chat", "128MB", 10_198},
+	} {
+		t.Run(tc.conversationType, func(t *testing.T) {
+			requirements := require.New(t)
+			root, db := writeRelationshipBaseFixture(t, true)
+			writeSyntheticRelationshipFanOut(t, db, root, syntheticRelationshipFanOutOptions{
+				firstMessageID: 1, messageCount: 5_000, memberCount: 200,
+				startDate: "2026-01-01", messageType: tc.messageType, conversationType: tc.conversationType,
+			})
+			if tc.conversationType == "group_chat" {
+				_, err := db.Exec(`CREATE TEMP TABLE incoming AS
+					SELECT * REPLACE (2::BIGINT AS sender_id) FROM read_parquet(?)`,
+					parquetDatasetGlob(root, "messages"))
+				requirements.NoError(err)
+				replaceRelationshipParquet(t, db, root, "messages", "SELECT * FROM incoming")
+				replaceRelationshipParquet(t, db, root, "message_recipients", `
+					SELECT id AS message_id, 2::BIGINT AS participant_id,
+					       'from'::VARCHAR AS recipient_type, ''::VARCHAR AS display_name
+					FROM incoming`)
+				_, err = db.Exec("SET max_temp_directory_size = '128MB'")
+				requirements.NoError(err)
+			}
+			requirements.NoError(setRelationshipTestMemoryLimit(db, tc.memoryLimit))
+			result, err := Build(context.Background(), db, BuildOptions{
+				Mode: ModeFull, StagedBaseRoot: root, OutputRoot: root,
+			})
+			requirements.NoError(err)
+			assert.Equal(t, tc.finalRows, result.Activity.FinalRows)
+		})
+	}
 }
 
 func TestBuildStoresConversationMembershipOncePerConversation(t *testing.T) {
@@ -460,7 +474,7 @@ func TestLogicalChatReductionKeepsEarlierDirectOnlyIdentity(t *testing.T) {
 	assertions.JSONEq(`["alpha.test", "gamma.test"]`, domainKeysJSON)
 }
 
-func TestBuildRelationshipActivity100MillionEdgeAcceptance(t *testing.T) {
+func TestBuildRelationshipActivityAvoids100MillionEdgeExpansion(t *testing.T) {
 	if os.Getenv(stressRelationshipActivity100MEnv) != "1" {
 		t.Skip("set " + stressRelationshipActivity100MEnv + "=1 to run")
 	}
@@ -480,8 +494,8 @@ func TestBuildRelationshipActivity100MillionEdgeAcceptance(t *testing.T) {
 		OutputRoot:     root,
 	})
 	require.NoError(t, err)
-	assert.Equal(t, int64(100_000_000), result.Activity.ConversationExpandedRows)
-	assert.Equal(t, int64(100_000_000), result.Activity.FinalRows)
+	assert.Equal(t, int64(500_199), result.Activity.ConversationExpandedRows)
+	assert.Equal(t, int64(500_199), result.Activity.FinalRows)
 }
 
 func writeRelationshipEquivalenceFixture(t *testing.T) (string, *sql.DB) {

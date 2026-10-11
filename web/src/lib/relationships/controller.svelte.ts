@@ -55,6 +55,8 @@ export interface RelationshipsMergeContext {
 }
 type ListRow = RelationshipRow | PersonSummary | DomainSummary;
 type ListRows = RelationshipRow[] | PersonSummary[] | DomainSummary[];
+type TimelineDay = { date: string; start: string; end: string };
+type TargetRestore = { year?: number; restarted?: boolean; day?: TimelineDay | null };
 /** Snapshot of the query context a list page belongs to, captured by
  * loadList so loadMoreList replays the exact same endpoint and body (plus
  * the cursor) even if `facet`/`query`/`showAll` have since been reassigned. */
@@ -130,6 +132,7 @@ export class RelationshipsController {
   timelineLoading = $state(false);
   timelineLoadingMore = $state(false);
   timelineError = $state<string | null>(null);
+  timelineDay = $state<TimelineDay | null>(null);
   /** One-line notice set when a cursor_invalidated 409 silently restarted the
    * timeline from page 1; cleared on the next openTarget navigation. */
   timelineRestartNotice = $state<string | null>(null);
@@ -146,6 +149,7 @@ export class RelationshipsController {
   private listAbort: AbortController | undefined;
   private cacheBuildRetry: ReturnType<typeof setTimeout> | undefined;
   private detailAbort: AbortController | undefined;
+  private timelineAbort = new AbortController();
   private detailCacheBuildRetry: ReturnType<typeof setTimeout> | undefined;
   private listGeneration = 0;
   private detailGeneration = 0;
@@ -366,8 +370,7 @@ export class RelationshipsController {
   private async openTargetWithCalendarState(
     target: string,
     predicate: ExplorePredicate,
-    selectedCalendarYear?: number,
-    calendarRestarted = false,
+    restore: TargetRestore = {},
   ): Promise<void> {
     this.clearDetailCacheBuildRetry();
     this.detailAbort?.abort();
@@ -385,7 +388,8 @@ export class RelationshipsController {
     this.timelineLoadingMore = false;
     this.canonicalID = null;
     this.identityRevision = null;
-    this.resetRelationshipCalendar(selectedCalendarYear, calendarRestarted);
+    this.resetRelationshipCalendar(restore.year, restore.restarted);
+    this.timelineDay = restore.day ?? null;
     this.seenCursors = new Set<string>();
     const clusterID = parseClusterID(target);
     const domainName = parseDomainName(target);
@@ -441,7 +445,8 @@ export class RelationshipsController {
             signal,
           },
         ),
-        this.fetchClusterPage(id, predicate.filters ?? undefined, generation, undefined, signal),
+        this.fetchClusterPage(id, this.timelineFilters(), generation, undefined,
+          AbortSignal.any([signal, this.timelineAbort.signal])),
         hasActiveFilters(context)
           ? generatedGetParticipantContextSummary({ id: id }, context, {
               ...this.client,
@@ -609,7 +614,7 @@ export class RelationshipsController {
       if (changed) {
         this.relationshipCalendarCache.clear();
         if (!this.relationshipCalendarRestarted && target !== null && this.lastPredicate) {
-          await this.openTargetWithCalendarState(target, this.lastPredicate, year, true);
+          await this.openTargetWithCalendarState(target, this.lastPredicate, { year, restarted: true });
           return;
         }
         this.relationshipCalendarError = 'Relationship activity changed again. Retry when the archive settles.';
@@ -651,13 +656,42 @@ export class RelationshipsController {
     if (clusterID === undefined && domainName === undefined) return;
     this.timelineLoadingMore = true;
     const generation = this.detailGeneration;
-    const signal = this.detailAbort.signal;
+    const signal = AbortSignal.any([this.detailAbort.signal, this.timelineAbort.signal]);
     const cursor = this.timelineCursor;
     if (clusterID !== undefined) {
-      await this.fetchClusterPage(clusterID, this.lastPredicate.filters ?? undefined, generation, cursor, signal);
+      await this.fetchClusterPage(clusterID, this.timelineFilters(), generation, cursor, signal);
     } else if (domainName !== undefined) {
       await this.fetchDomainPage(domainName, contextPredicate(this.lastPredicate), generation, cursor, signal);
     }
+  }
+  async selectTimelineDay(day: TimelineDay | null): Promise<void> {
+    const id = this.target ? parseClusterID(this.target) : undefined;
+    if (id === undefined || !this.lastPredicate || !this.detailAbort) return;
+    this.timelineAbort.abort();
+    this.timelineAbort = new AbortController();
+    const signal = AbortSignal.any([this.detailAbort.signal, this.timelineAbort.signal]);
+    this.timelineDay = day;
+    this.timelineRows = [];
+    this.timelineCursor = null;
+    this.seenCursors.clear();
+    this.timelineError = null;
+    this.timelineRestartNotice = null;
+    this.timelineLoadingMore = false;
+    this.timelineLoading = true;
+    try {
+      await this.fetchClusterPage(id, this.timelineFilters(), this.detailGeneration, undefined, signal);
+    } finally {
+      if (!signal.aborted) this.timelineLoading = false;
+    }
+  }
+  private timelineFilters(): ExploreFilter[] | undefined {
+    const filters = this.lastPredicate?.filters ?? undefined;
+    if (!this.timelineDay) return filters;
+    return [
+      ...(filters ?? []).filter((filter) => filter.dimension !== 'after' && filter.dimension !== 'before'),
+      { dimension: 'after', values: [this.timelineDay.start] },
+      { dimension: 'before', values: [this.timelineDay.end] },
+    ];
   }
   private async fetchClusterPage(
     id: number,
@@ -707,7 +741,7 @@ export class RelationshipsController {
     } catch (cause: unknown) {
       if (!signal.aborted && generation === this.detailGeneration) this.timelineError = errorMessage(cause, 0);
     } finally {
-      if (generation === this.detailGeneration) this.timelineLoadingMore = false;
+      if (!signal.aborted && generation === this.detailGeneration) this.timelineLoadingMore = false;
     }
   }
   private async fetchDomainPage(
@@ -820,10 +854,14 @@ export class RelationshipsController {
     this.clearDetailCacheBuildRetry();
     this.listAbort?.abort();
     this.detailAbort?.abort();
+    this.timelineAbort.abort();
     ++this.relationshipCalendarGeneration;
     this.relationshipCalendarLoading = false;
   }
   private resetRelationshipCalendar(selectedYear?: number, restarted = false): void {
+    this.timelineAbort.abort();
+    this.timelineAbort = new AbortController();
+    this.timelineDay = null;
     ++this.relationshipCalendarGeneration;
     this.relationshipCalendar = null;
     this.relationshipCalendarCurrentYear = currentYearInTimezone(this.timezone());
@@ -853,11 +891,16 @@ export class RelationshipsController {
     if (this.detailCacheBuildRetry === undefined && this.target && this.lastPredicate) {
       const target = this.target;
       const predicate = this.lastPredicate;
+      // Reload the header and timeline together, keeping the calendar year
+      // and selected day. Every path that changes the generation also
+      // clears this timer, so the timer does not need the request signal.
       this.detailCacheBuildRetry = setTimeout(() => {
         this.detailCacheBuildRetry = undefined;
-        if (generation === this.detailGeneration && !signal.aborted) {
-          void this.openTarget(target, predicate);
-        }
+        if (generation !== this.detailGeneration) return;
+        void this.openTargetWithCalendarState(target, predicate, {
+          year: this.relationshipCalendarYear,
+          day: this.timelineDay,
+        });
       }, 1000);
     }
     return true;

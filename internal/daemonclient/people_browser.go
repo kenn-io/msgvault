@@ -679,12 +679,30 @@ func personFromGenerated(person *generated.Person) *store.Person {
 	if person == nil {
 		return nil
 	}
+	bindings := cardDAVBindingsFromGenerated(person.CarddavBindings)
+	var cardDAVBindings []store.CardDAVBinding
+	if len(bindings) > 0 {
+		cardDAVBindings = bindings
+	}
 	return &store.Person{
 		ID: person.ID, VCardUID: person.VcardUID,
 		DisplayName: copyString(person.DisplayName), Revision: person.Revision,
 		ParticipantIDs: append([]int64(nil), person.ParticipantIds...),
 		CreatedAt:      person.CreatedAt, UpdatedAt: person.UpdatedAt,
+		CardDAVBindings: cardDAVBindings,
 	}
+}
+
+func cardDAVBindingsFromGenerated(bindings []generated.CardDAVBinding) []store.CardDAVBinding {
+	converted := make([]store.CardDAVBinding, len(bindings))
+	for index, binding := range bindings {
+		converted[index] = store.CardDAVBinding{
+			Connection: binding.Connection, Book: binding.Book, Href: binding.Href,
+			RemoteUID:     binding.RemoteUID,
+			MappingStatus: store.CardDAVMappingStatus(binding.MappingStatus),
+		}
+	}
+	return converted
 }
 
 func attributeDefinitionFromGenerated(definition generated.AttributeDefinition) store.AttributeDefinition {

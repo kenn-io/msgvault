@@ -97,6 +97,23 @@ func DiscoverCatalog(
 	prior map[string]ThreadCatalogState,
 	full bool,
 ) (CatalogResult, error) {
+	return discoverCatalog(ctx, api, guildID, guildConfig, prior, catalogScan{full: full})
+}
+
+// catalogScan selects how much archived-thread history discovery revisits.
+// The public profile admits selected parents and their public threads only.
+type catalogScan struct {
+	full       bool
+	publicOnly bool
+}
+
+// discoverCatalog's public profile never lets metadata for other channels
+// authorize their content.
+func discoverCatalog(
+	ctx context.Context, api API, guildID string, guildConfig config.DiscordGuildConfig,
+	prior map[string]ThreadCatalogState, scan catalogScan,
+) (CatalogResult, error) {
+	full, publicOnly := scan.full, scan.publicOnly
 	result := CatalogResult{ThreadCatalog: cloneThreadCatalog(prior)}
 	if api == nil {
 		return result, errors.New("discover Discord catalog: nil API")
@@ -114,12 +131,15 @@ func DiscoverCatalog(
 	threadParents := make(map[string]string)
 	for _, channel := range channels {
 		parents[channel.ID] = channel
-		if !isThreadCatalogParent(channel.Type) {
+		if !IsThreadCatalogParent(channel.Type) {
 			continue
 		}
 		if isTopLevelMessageContainer(channel.Type) && ContainerIncluded(guildConfig, channel.ID, "") {
 			addCatalogContainer(&result, containerIndexes, channel, nil)
 		}
+	}
+	if publicOnly {
+		result.Issues = append(result.Issues, unlistedSelectedParents(guildID, guildConfig.Include, parents)...)
 	}
 
 	var fatalErrors []error
@@ -133,6 +153,9 @@ func DiscoverCatalog(
 		}
 	} else {
 		for _, thread := range active {
+			if publicOnly && (thread.Type == channelTypePrivateThread || !ContainerIncluded(guildConfig, thread.ParentID, "")) {
+				continue
+			}
 			if thread.ParentID == "" {
 				malformedErr := fmt.Errorf("%w: active thread %s has no parent ID", ErrMalformedCatalog, thread.ID)
 				result.Issues = append(result.Issues, newCatalogIssue(CatalogScopeActiveThreads, guildID, "", malformedErr))
@@ -158,11 +181,14 @@ func DiscoverCatalog(
 	}
 
 	for _, parent := range orderedCatalogParents(channels) {
+		if publicOnly && !ContainerIncluded(guildConfig, parent.ID, "") {
+			continue
+		}
 		if _, ok := result.ThreadCatalog[parent.ID]; !ok {
 			result.ThreadCatalog[parent.ID] = ThreadCatalogState{}
 		}
 		archiveKinds := []bool{false}
-		if parent.Type == channelTypeGuildText {
+		if parent.Type == channelTypeGuildText && !publicOnly {
 			archiveKinds = append(archiveKinds, true)
 		}
 		for _, private := range archiveKinds {
@@ -179,6 +205,9 @@ func DiscoverCatalog(
 			newWatermark, scanErr := discoverArchive(
 				ctx, api, parent, private, priorWatermark, full,
 				func(thread Channel) error {
+					if publicOnly && thread.Type == channelTypePrivateThread {
+						return nil
+					}
 					if err := recordCatalogThreadParent(threadParents, thread.ID, thread.ParentID); err != nil {
 						return err
 					}
@@ -326,14 +355,16 @@ func isThreadMessageContainer(channelType int) bool {
 		channelType == channelTypePrivateThread
 }
 
-func isThreadCatalogParent(channelType int) bool {
+// IsThreadCatalogParent reports whether a channel type can own threads and is
+// selectable as a collection parent.
+func IsThreadCatalogParent(channelType int) bool {
 	return isTopLevelMessageContainer(channelType) || channelType == channelTypeGuildForum || channelType == channelTypeGuildMedia
 }
 
 func orderedCatalogParents(channels []Channel) []Channel {
 	parents := make([]Channel, 0, len(channels))
 	for _, channel := range channels {
-		if isThreadCatalogParent(channel.Type) {
+		if IsThreadCatalogParent(channel.Type) {
 			parents = append(parents, channel)
 		}
 	}
@@ -437,6 +468,26 @@ func mergeThreadMetadata(existing, incoming *ThreadMetadata) *ThreadMetadata {
 		merged.CreateTimestamp = incoming.CreateTimestamp
 	}
 	return &merged
+}
+
+// unlistedSelectedParents reports selected parents the guild no longer lists.
+// Public collection never probes them with older access evidence, so the
+// issue is the caller's only signal that the channel was deleted or hidden.
+func unlistedSelectedParents(guildID string, selected []string, listed map[string]Channel) []CatalogIssue {
+	var issues []CatalogIssue
+	for _, id := range selected {
+		if channel, ok := listed[id]; ok && IsThreadCatalogParent(channel.Type) {
+			continue
+		}
+		issues = append(issues, CatalogIssue{
+			Scope:    CatalogScopeGuildChannels,
+			Kind:     CatalogIssueUnknownChannel,
+			GuildID:  guildID,
+			ParentID: id,
+			Err:      fmt.Errorf("selected Discord channel %s is not a listed message or thread parent", id),
+		})
+	}
+	return issues
 }
 
 func newCatalogIssue(scope CatalogScope, guildID, parentID string, err error) CatalogIssue {

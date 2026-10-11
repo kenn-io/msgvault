@@ -593,6 +593,53 @@ func TestScheduledCacheRefreshSkipsWhenAutoBuildCacheDisabled(t *testing.T) {
 	assert.Zero(builds, "disabled auto_build_cache must not start a cache build")
 }
 
+func TestFailedAutomaticCacheBuildSchedulesRetry(t *testing.T) {
+	cfg := testConfigValue()
+
+	require := require.New(t)
+	assert := assert.New(t)
+	tmpDir := t.TempDir()
+	st, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
+	require.NoError(err)
+	t.Cleanup(func() { _ = st.Close() })
+	require.NoError(st.InitSchema())
+	savedCfg := cfg
+	t.Cleanup(func() { cfg = savedCfg })
+	cfg = &config.Config{
+		HomeDir:   tmpDir,
+		Data:      config.DataConfig{DataDir: tmpDir},
+		Analytics: config.AnalyticsConfig{AutoBuildCache: true},
+	}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+
+	sentinel := errors.New("synthetic cache build failure")
+	oldRunBuild := runScheduledBuildCacheSubprocess
+	runScheduledBuildCacheSubprocess = func(context.Context) error { return sentinel }
+	t.Cleanup(func() { runScheduledBuildCacheSubprocess = oldRunBuild })
+	type retry struct {
+		delay      time.Duration
+		identifier string
+	}
+	var retries []retry
+	schedule := func(delay time.Duration, identifier string) {
+		retries = append(retries, retry{delay, identifier})
+	}
+
+	err = rebuildCacheNow(testCtx, "muesli", schedule)
+	require.ErrorIs(err, sentinel)
+	assert.Equal([]retry{{15 * time.Minute, "muesli"}}, retries,
+		"unchanged scans request no build, so a failure must schedule its own retry")
+
+	shutdownCtx, cancel := context.WithCancel(testCtx)
+	runScheduledBuildCacheSubprocess = func(ctx context.Context) error {
+		cancel()
+		return ctx.Err()
+	}
+	err = rebuildCacheNow(shutdownCtx, "muesli", schedule)
+	require.ErrorIs(err, context.Canceled)
+	assert.Len(retries, 1, "a build canceled by shutdown schedules no retry")
+}
+
 func TestScheduledCacheBuildDelay(t *testing.T) {
 	now := time.Date(2026, 8, 12, 12, 0, 0, 0, time.UTC)
 	tests := []struct {

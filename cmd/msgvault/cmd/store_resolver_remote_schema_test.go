@@ -249,19 +249,35 @@ func agentDelegatedSchemaStub(t *testing.T, sessionResponse string, health func(
 // calls verifyRemoteAPISchemaVersion when the probe is enabled, and accepts a
 // matching schema version.
 func TestOpenAgentDelegatedStoreVerifiesAPISchema(t *testing.T) {
-	require := require.New(t)
-	healthRequests, ctx := agentDelegatedSchemaStub(t, `{"auth_mode":"delegated"}`, func(w http.ResponseWriter) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"status": "ok", "api_schema_version": api.APISchemaVersion,
+	for _, tc := range []struct {
+		version, minimum string
+		refused          bool
+	}{
+		{"3.0.0", daemonclient.AgentReadMinAPISchemaVersion, true},
+		{"3.8.0", daemonclient.AgentReadMinAPISchemaVersion, true},
+		{api.APISchemaVersion, daemonclient.AgentReadMinAPISchemaVersion, false},
+		{"3.0.0", "", false},
+	} {
+		t.Run(tc.version+"/"+tc.minimum, func(t *testing.T) {
+			require := require.New(t)
+			checks := assert.New(t)
+			healthRequests, ctx := agentDelegatedSchemaStub(t, `{"auth_mode":"delegated"}`, func(w http.ResponseWriter) {
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": tc.version})
+			})
+			client, info, err := OpenHTTPStore(ctx, tc.minimum)
+			checks.Equal(int32(1), healthRequests.Load(), "one authenticated health probe")
+			if tc.refused {
+				require.ErrorContains(err, "upgrade the daemon and issue a read grant")
+				checks.Contains(err.Error(), daemonclient.AgentReadMinAPISchemaVersion)
+				checks.Nil(client)
+				return
+			}
+			require.NoError(err)
+			t.Cleanup(func() { _ = client.Close() })
+			checks.Equal(HTTPStoreAgentDelegated, info.Kind)
 		})
-	})
-
-	client, info, err := openAgentDelegatedStore(ctx, invocationFromContext(ctx))
-	require.NoError(err)
-	t.Cleanup(func() { _ = client.Close() })
-	assert.Equal(t, HTTPStoreAgentDelegated, info.Kind)
-	assert.Equal(t, int32(1), healthRequests.Load(), "schema check must hit /api/v1/health")
+	}
 }
 
 // TestOpenAgentDelegatedStoreRejectsMismatchedSchema verifies that
@@ -289,7 +305,7 @@ func TestOpenAgentDelegatedStoreReportsAuthenticationFailure(t *testing.T) {
 	})
 
 	_, _, err := openAgentDelegatedStore(ctx, invocationFromContext(ctx))
-	require.ErrorContains(err, "agent authentication failed")
+	require.ErrorContains(err, "agent authentication failed: token is invalid, expired, revoked, or agent access is disabled")
 	assert.NotContains(err.Error(), "schema version")
 	var apiErr *daemonclient.APIError
 	require.ErrorAs(err, &apiErr)

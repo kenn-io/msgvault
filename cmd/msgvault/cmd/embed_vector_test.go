@@ -388,9 +388,9 @@ func setupVectorFeaturesFixture(
 	require.NoError(t, err)
 	spec, err := configuredDocumentVectorSpec(testCtx, s)
 	require.NoError(t, err)
-	documentConsent, err := configuredDocumentVectorConsentSpec(spec, invocationFromContext(testCtx))
+	documentConsent, err := configuredDocumentVectorConsentSpec(spec, invocationFromContext(testCtx), "document_embedding")
 	require.NoError(t, err)
-	queryConsent, err := configuredDocumentVectorQueryConsentSpec(spec, invocationFromContext(testCtx))
+	queryConsent, err := configuredDocumentVectorConsentSpec(spec, invocationFromContext(testCtx), "query_embedding")
 	require.NoError(t, err)
 	for _, consentSpec := range []store.DocumentVectorConsentSpec{documentConsent, queryConsent} {
 		_, _, err = s.RecordDocumentVectorConsent(testCtx, consentSpec, time.Now())

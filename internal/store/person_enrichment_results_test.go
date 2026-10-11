@@ -1352,7 +1352,7 @@ func TestPersonEnrichmentResultCommitAndLeaseRenewalDoNotDeadlock(t *testing.T) 
 	select {
 	case err := <-renewDone:
 		requirements.FailNowf("lease renewal did not wait for the held commit", "%v", err)
-	case <-time.After(300 * time.Millisecond):
+	case <-time.After(300 * time.Millisecond): //nolint:kennlint // absence check: the held commit keeps the renewal waiting
 	}
 	close(releaseResult)
 

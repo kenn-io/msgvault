@@ -88,6 +88,32 @@ type OriginalMessageReader interface {
 
 var _ OriginalMessageReader = (*SQLiteEngine)(nil)
 
+// MessageIDResolver finds a message by internal or source message ID without
+// reading its content.
+type MessageIDResolver interface {
+	ResolveMessageID(ctx context.Context, ref string) (id int64, sourceMessageID string, err error)
+}
+
+var _ MessageIDResolver = (*SQLiteEngine)(nil)
+
+// ResolveMessageID resolves live archive messages, trying a positive internal ID before an unambiguous provider message ID.
+func (e *SQLiteEngine) ResolveMessageID(ctx context.Context, ref string) (int64, string, error) {
+	if n, err := strconv.ParseInt(ref, 10, 64); err == nil && n > 0 {
+		record, err := e.resolveMessageRecord(ctx, MessageRef{ID: n}, nil)
+		if err == nil {
+			return record.MessageID, record.SourceMessageID, nil
+		}
+		if !errors.Is(err, store.ErrMessageNotFound) {
+			return 0, "", err
+		}
+	}
+	record, err := e.resolveMessageRecord(ctx, MessageRef{SourceMessageID: ref}, nil)
+	if err != nil {
+		return 0, "", err
+	}
+	return record.MessageID, record.SourceMessageID, nil
+}
+
 // ReadOriginalMessage resolves ref among live messages (dedup losers are
 // not found; source-deleted messages remain archive data) and returns the
 // stored MIME. Non-MIME raw formats report ErrOriginalMIMEUnavailable.
@@ -95,7 +121,7 @@ func (e *SQLiteEngine) ReadOriginalMessage(ctx context.Context, ref MessageRef, 
 	if maxBytes < 0 || maxBytes == math.MaxInt64 {
 		return nil, errors.New("maxBytes must be non-negative and less than MaxInt64")
 	}
-	record, err := e.resolveMessageRecord(ctx, ref)
+	record, err := e.resolveMessageRecord(ctx, ref, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -103,25 +129,11 @@ func (e *SQLiteEngine) ReadOriginalMessage(ctx context.Context, ref MessageRef, 
 	var compressed []byte
 	var format, compression sql.NullString
 	var storedBytes int64
-	plainLimit, compressedLimit := int64(math.MaxInt64), int64(math.MaxInt64)
-	if maxBytes > 0 {
-		plainLimit = maxBytes
-		// Bound the initial database read at 2x + 1 KiB to allow normal archive
-		// zlib overhead. Decoded MIME keeps the exact maxBytes limit. Saturate
-		// before multiplying to avoid overflow.
-		if maxBytes <= (math.MaxInt64-1024)/2 {
-			compressedLimit = 2*maxBytes + 1024
-		}
-	}
-	err = e.queryRowContext(ctx, `
-		SELECT CASE
-		           WHEN length(raw_data) <= CASE WHEN compression = 'zlib'
-		               THEN CAST(? AS BIGINT) ELSE CAST(? AS BIGINT) END
-		           THEN raw_data
-		       END,
-		       raw_format, compression, length(raw_data)
-		FROM message_raw WHERE message_id = ?
-	`, compressedLimit, plainLimit, record.MessageID).Scan(&compressed, &format, &compression, &storedBytes)
+	rawColumn, rawSize := messageRawColumns("", maxBytes)
+	err = e.queryRowContext(ctx, fmt.Sprintf(`
+		SELECT %s, mr.raw_format, mr.compression, %s
+		FROM message_raw mr WHERE mr.message_id = ?
+	`, rawColumn, rawSize), record.MessageID).Scan(&compressed, &format, &compression, &storedBytes)
 	if errors.Is(err, sql.ErrNoRows) || (err == nil && format.String != "mime") {
 		return nil, fmt.Errorf("message %d: %w", record.MessageID, ErrOriginalMIMEUnavailable)
 	}
@@ -138,7 +150,7 @@ func (e *SQLiteEngine) ReadOriginalMessage(ctx context.Context, ref MessageRef, 
 	return &OriginalMessage{MessageRecord: *record, MIME: mime}, nil
 }
 
-func (e *SQLiteEngine) resolveMessageRecord(ctx context.Context, ref MessageRef) (*MessageRecord, error) {
+func (e *SQLiteEngine) resolveMessageRecord(ctx context.Context, ref MessageRef, sourceIDs []int64) (*MessageRecord, error) {
 	if (ref.ID == 0) == (ref.SourceMessageID == "") || ref.ID < 0 {
 		return nil, ErrInvalidMessageRef
 	}
@@ -155,6 +167,7 @@ func (e *SQLiteEngine) resolveMessageRecord(ctx context.Context, ref MessageRef)
 		conditions = append(conditions, "s.identifier = ?")
 		args = append(args, ref.Account)
 	}
+	conditions, args = appendSourceFilter(conditions, args, "m.", nil, sourceIDs)
 	rows, err := e.queryContext(ctx, `
 		SELECT m.id, COALESCE(m.source_message_id, ''), COALESCE(m.conversation_id, 0),
 		       COALESCE(conv.source_conversation_id, ''),
@@ -259,12 +272,17 @@ const (
 type ThreadQuery struct {
 	MessageRef
 
+	SourceIDs []int64
+
 	ThreadID string
 	Limit    int
 	Offset   int
 
 	// All returns fixed membership from one query, ignoring Limit and Offset.
 	All bool
+	// MaxMembers, when positive, fails an All query with ErrThreadTooLarge
+	// instead of returning more members.
+	MaxMembers int
 }
 
 // ThreadMessage is one archived message in a conversation listing.
@@ -319,9 +337,9 @@ func (e *SQLiteEngine) ListThread(ctx context.Context, q ThreadQuery) (*ThreadPa
 	var header *MessageRecord
 	var err error
 	if q.ThreadID != "" {
-		header, err = e.resolveThreadRecord(ctx, q.ThreadID, q.Account)
+		header, err = e.resolveThreadRecord(ctx, q.ThreadID, q.Account, q.SourceIDs)
 	} else {
-		header, err = e.resolveMessageRecord(ctx, q.MessageRef)
+		header, err = e.resolveMessageRecord(ctx, q.MessageRef, q.SourceIDs)
 	}
 	if err != nil {
 		return nil, err
@@ -352,6 +370,9 @@ func (e *SQLiteEngine) ListThread(ctx context.Context, q ThreadQuery) (*ThreadPa
 		statement += " LIMIT ? OFFSET ?"
 		args = append(args, limit, offset)
 	}
+	if q.All && q.MaxMembers > 0 {
+		statement += fmt.Sprintf(" LIMIT %d", q.MaxMembers+1)
+	}
 	rows, err := e.queryContext(ctx, statement, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list thread messages: %w", err)
@@ -374,6 +395,9 @@ func (e *SQLiteEngine) ListThread(ctx context.Context, q ThreadQuery) (*ThreadPa
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("list thread messages: %w", err)
 	}
+	if q.All && q.MaxMembers > 0 && len(page.Messages) > q.MaxMembers {
+		return nil, ErrThreadTooLarge
+	}
 	if q.All {
 		page.Total = int64(len(page.Messages))
 	} else {
@@ -391,7 +415,7 @@ func (e *SQLiteEngine) ListThread(ctx context.Context, q ThreadQuery) (*ThreadPa
 	return page, nil
 }
 
-func (e *SQLiteEngine) resolveThreadRecord(ctx context.Context, threadID, account string) (*MessageRecord, error) {
+func (e *SQLiteEngine) resolveThreadRecord(ctx context.Context, threadID, account string, sourceIDs []int64) (*MessageRecord, error) {
 	conditions := `conv.source_conversation_id = ? AND EXISTS (
 		SELECT 1 FROM messages m WHERE m.conversation_id = conv.id AND ` + store.LiveMessagesWhere("m", false) + `
 	)`
@@ -400,11 +424,12 @@ func (e *SQLiteEngine) resolveThreadRecord(ctx context.Context, threadID, accoun
 		conditions += " AND s.identifier = ?"
 		args = append(args, account)
 	}
+	filtered, args := appendSourceFilter([]string{conditions}, args, "conv.", nil, sourceIDs)
 	rows, err := e.queryContext(ctx, `
 		SELECT conv.id, conv.source_conversation_id, s.id, s.identifier, s.source_type, s.last_sync_at
 		FROM conversations conv
 		JOIN sources s ON s.id = conv.source_id
-		WHERE `+conditions+`
+		WHERE `+strings.Join(filtered, " AND ")+`
 		ORDER BY conv.id`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("resolve thread: %w", err)

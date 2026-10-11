@@ -61,8 +61,9 @@ func writeEmbeddings(t *testing.T, w http.ResponseWriter, vecs [][]float32) {
 }
 
 type embeddingRequest struct {
-	Input []string `json:"input"`
-	Model string   `json:"model"`
+	Input      []string `json:"input"`
+	Model      string   `json:"model"`
+	Dimensions *int     `json:"dimensions"`
 }
 
 func decodeRequest(t *testing.T, r *http.Request) embeddingRequest {
@@ -335,6 +336,8 @@ func TestClient_Embed_Success(t *testing.T) {
 		req := decodeRequest(t, r)
 		assert.Len(req.Input, 2)
 		assert.Equal("test-model", req.Model)
+		// Dimension validates response width; servers must not be asked to truncate.
+		assert.Nil(req.Dimensions)
 		writeEmbeddings(t, w, [][]float32{
 			{0.1, 0.2, 0.3},
 			{0.4, 0.5, 0.6},

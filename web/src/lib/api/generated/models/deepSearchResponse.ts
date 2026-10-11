@@ -9,6 +9,7 @@ export interface DeepSearchResponse {
   body_contexts?: BodySearchContext[];
   count: number;
   has_more: boolean;
+  index_state?: string;
   limit: number;
   messages: MessageSummary[];
   offset: number;

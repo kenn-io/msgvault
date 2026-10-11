@@ -131,7 +131,7 @@ func isAgentMode(state *invocation) bool {
 
 // openAgentDelegatedStore creates a daemonclient.Client authenticated with an
 // agent grant secret read from the file named by --agent-token-file.
-func openAgentDelegatedStore(ctx context.Context, state *invocation) (*daemonclient.Client, HTTPStoreInfo, error) {
+func openAgentDelegatedStore(ctx context.Context, state *invocation, minimumSchema ...string) (*daemonclient.Client, HTTPStoreInfo, error) {
 	state = invocationState(ctx, state)
 	if state == nil {
 		return nil, HTTPStoreInfo{}, errors.New("invocation state is required")
@@ -164,10 +164,10 @@ func openAgentDelegatedStore(ctx context.Context, state *invocation) (*daemoncli
 		return nil, HTTPStoreInfo{}, err
 	}
 	st.SetBusyNotifier(reportDaemonBusyWait)
-	if err := verifyRemoteAPISchemaVersion(ctx, st); err != nil {
+	if err := verifyRemoteAPISchemaVersion(ctx, st, minimumSchema...); err != nil {
 		_ = st.Close()
 		if apiErr, ok := errors.AsType[*daemonclient.APIError](err); ok && apiErr.Status == http.StatusUnauthorized {
-			return nil, HTTPStoreInfo{}, fmt.Errorf("agent authentication failed: token is invalid, revoked, or agent access is disabled: %w", apiErr)
+			return nil, HTTPStoreInfo{}, fmt.Errorf("agent authentication failed: token is invalid, expired, revoked, or agent access is disabled: %w", apiErr)
 		}
 		return nil, HTTPStoreInfo{}, err
 	}
@@ -227,18 +227,19 @@ func isRemoteModeFor(state *invocation) bool {
 // A configured [remote].url wins unless --local was passed. Otherwise the local
 // daemon is discovered or started so SQLite remains owned by one long-lived
 // process.
-func OpenHTTPStore(ctx context.Context) (*daemonclient.Client, HTTPStoreInfo, error) {
-	return openHTTPStoreWithStartupCacheIntent(ctx, startupCacheBuildIntentNone)
+func OpenHTTPStore(ctx context.Context, minimumSchema ...string) (*daemonclient.Client, HTTPStoreInfo, error) {
+	return openHTTPStoreWithStartupCacheIntent(ctx, startupCacheBuildIntentNone, minimumSchema...)
 }
 
 func openHTTPStoreWithStartupCacheIntent(
 	ctx context.Context,
 	intent startupCacheBuildIntent,
+	minimumSchema ...string,
 ) (*daemonclient.Client, HTTPStoreInfo, error) {
 	inv := invocationFromContext(ctx)
 	// Agent-delegated mode is checked first: it operates without a local config.
 	if isAgentMode(inv) {
-		return openAgentDelegatedStore(ctx, inv)
+		return openAgentDelegatedStore(ctx, inv, minimumSchema...)
 	}
 	if inv == nil {
 		return nil, HTTPStoreInfo{}, errors.New("invocation state is required")
@@ -343,7 +344,7 @@ var remoteAPISchemaCheckEnabled = true
 // analytical /people/{id} became the durable person detail), so decoding a
 // mismatched peer's response would silently produce wrong data rather than
 // an error.
-func verifyRemoteAPISchemaVersion(ctx context.Context, client *daemonclient.Client) error {
+func verifyRemoteAPISchemaVersion(ctx context.Context, client *daemonclient.Client, minimumSchema ...string) error {
 	if !remoteAPISchemaCheckEnabled {
 		return nil
 	}
@@ -361,7 +362,13 @@ func verifyRemoteAPISchemaVersion(ctx context.Context, client *daemonclient.Clie
 	if response.JSON200.APISchemaVersion != nil {
 		version = *response.JSON200.APISchemaVersion
 	}
-	return apiSchemaCompatibilityError(version)
+	if err := apiSchemaCompatibilityError(version); err != nil {
+		return err
+	}
+	if len(minimumSchema) > 0 && minimumSchema[0] != "" && !daemonclient.APISchemaVersionAtLeast(version, minimumSchema[0]) {
+		return fmt.Errorf("agent archive reads require daemon API schema %s or newer (daemon reports %q); upgrade the daemon and issue a read grant", minimumSchema[0], version)
+	}
+	return nil
 }
 
 type localDaemonStartupInfo struct {

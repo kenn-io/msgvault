@@ -296,3 +296,13 @@ func TestImportRecordsFailedSyncWhenDatabaseCannotOpen(t *testing.T) {
 	assert.NotContains(run.ErrorMessage.String, "private-folder", "the archive does not keep local paths")
 	assert.Contains(run.ErrorMessage.String, "db_path")
 }
+
+func TestImportMeetingIDOnly(t *testing.T) {
+	f := newImporterFixture(t)
+	first := insertRow(t, f.muesli, "meetings", completedMeeting(nil))
+	insertRow(t, f.muesli, "meetings", completedMeeting(map[string]any{"created_at": "2026-09-01 14:00:04"}))
+	sum, err := f.imp.Import(t.Context(), ImportOptions{Identifier: "mac", AccountEmail: "you@example.com", DBPath: f.path, MeetingID: first})
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), sum.MeetingsProcessed)
+	assert.Equal(t, int64(1), sum.MeetingsAdded)
+}

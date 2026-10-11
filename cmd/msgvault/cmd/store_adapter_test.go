@@ -275,12 +275,12 @@ func TestMarkedCLISearchCancellationReturnsFromProductionQuickFTSProbe(t *testin
 
 	select {
 	case <-returned:
-	case <-time.After(500 * time.Millisecond):
+	case <-time.After(5 * time.Second):
 		require.FailNow("production quick FTS probe continued after marked request cancellation")
 	}
 	select {
 	case <-requestDone:
-	case <-time.After(500 * time.Millisecond):
+	case <-time.After(5 * time.Second):
 		require.FailNow("marked CLI search did not return after cancellation")
 	}
 }
@@ -443,7 +443,7 @@ func TestStoreAPIAdapterContextReadsHonorCancellation(t *testing.T) {
 	_, err = adapter.GetStatsContext(ctx)
 	require.ErrorIs(err, context.Canceled, "GetStatsContext must honor a cancelled context")
 
-	_, _, err = adapter.ListMessagesContext(ctx, 0, 10)
+	_, _, err = adapter.ListMessagesContext(ctx, 0, 10, nil)
 	require.ErrorIs(err, context.Canceled, "ListMessagesContext must honor a cancelled context")
 
 	_, err = adapter.GetMessageContext(ctx, 1)

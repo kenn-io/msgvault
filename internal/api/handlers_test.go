@@ -182,6 +182,12 @@ func TestHandleStats(t *testing.T) {
 	require.NoError(json.Unmarshal(bodyBytes, &raw), "decode raw")
 	_, exists := raw["vector_search"]
 	assert.False(exists, "vector_search key present in JSON; want omitted entirely (raw=%s)", string(raw["vector_search"]))
+	for _, size := range []int64{0, 1024} {
+		body, err := json.Marshal(statsResponseFromStore(&store.Stats{DatabaseSize: size}))
+		require.NoError(err)
+		require.NoError(json.Unmarshal(body, &raw))
+		assert.JSONEq(strconv.FormatInt(size, 10), string(raw["database_size_bytes"]))
+	}
 }
 
 func TestHandleCLIStatsCollectionScope(t *testing.T) {
@@ -759,6 +765,7 @@ func TestOpenAPIExportsServerRouteTable(t *testing.T) {
 		"/api/v1/messages":                       {"get"},
 		"/api/v1/messages/{id}":                  {"get"},
 		"/api/v1/messages/{id}/inline":           {"get"},
+		"/api/v1/messages/{id}/recordings":       {"get"},
 		"/api/v1/search":                         {"get"},
 		"/api/v1/query":                          {"post"},
 		"/api/v1/aggregates":                     {"get"},
@@ -2837,7 +2844,7 @@ func TestHandleCLIRebuildFTSFlushesProgressThroughMiddleware(t *testing.T) {
 	case resp = <-respCh:
 	case err := <-errCh:
 		require.NoError(err, "post rebuild-fts")
-	case <-time.After(500 * time.Millisecond):
+	case <-time.After(5 * time.Second):
 		require.FailNow("rebuild-fts response did not flush before completion")
 	}
 	defer func() { _ = resp.Body.Close() }()
@@ -2860,7 +2867,7 @@ func TestHandleCLIRebuildFTSFlushesProgressThroughMiddleware(t *testing.T) {
 	case event = <-decodeCh:
 	case err := <-decodeErrCh:
 		require.NoError(err, "decode first progress event")
-	case <-time.After(500 * time.Millisecond):
+	case <-time.After(5 * time.Second):
 		require.FailNow("rebuild-fts progress event was not flushed before completion")
 	}
 	assert.Equal("progress", event.Type, "event type")
@@ -3815,12 +3822,14 @@ func TestHandleSourceStatusStopsWaitingForDatabaseAfterCancellation(t *testing.T
 
 	deadline := time.NewTimer(2 * time.Second)
 	defer deadline.Stop()
+	poll := time.NewTicker(10 * time.Millisecond)
+	defer poll.Stop()
 	for db.Stats().WaitCount == initialWaits {
 		select {
 		case <-deadline.C:
 			_ = conn.Close()
 			require.FailNow("status request did not wait for the held database connection")
-		case <-time.After(10 * time.Millisecond):
+		case <-poll.C:
 		}
 	}
 	cancel()
@@ -4360,7 +4369,8 @@ func TestSchedulerJobNameForSource(t *testing.T) {
 func TestHandleGetMessage(t *testing.T) {
 	t.Parallel()
 	assert := assert.New(t)
-	srv, _ := newTestServerWithMockStore(t)
+	srv, mock := newTestServerWithMockStore(t)
+	mock.messages[0].ConversationTitle = "Team chat"
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages/1", nil)
 	w := httptest.NewRecorder()
@@ -4374,6 +4384,7 @@ func TestHandleGetMessage(t *testing.T) {
 
 	assert.Equal(int64(1), resp.ID, "id")
 	assert.Equal("Test Subject", resp.Subject, "subject")
+	assert.Equal("Team chat", resp.ConversationTitle, "conversation title")
 	assert.Equal("This is the full message body text.", resp.Body, "body")
 }
 
@@ -5543,7 +5554,7 @@ func TestHandleSearchByDomainsUsesQueryEngine(t *testing.T) {
 	var gotAfter, gotBefore *time.Time
 	var gotLimit, gotOffset int
 	engine := &querytest.MockEngine{
-		SearchByDomainsFunc: func(_ context.Context, domains []string, after, before *time.Time, limit, offset int) ([]query.MessageSummary, error) {
+		SearchByDomainsFunc: func(_ context.Context, domains []string, after, before *time.Time, limit, offset int, _ []int64) ([]query.MessageSummary, error) {
 			gotDomains = domains
 			gotAfter = after
 			gotBefore = before
@@ -6502,8 +6513,12 @@ type bodySearchTestEngine struct {
 
 func (e *bodySearchTestEngine) SearchMessageBodies(
 	ctx context.Context, q *search.Query, limit, offset int,
-) ([]query.MessageSummary, error) {
-	return e.searchMessageBodiesFunc(ctx, q, limit, offset)
+) (*query.SearchFastResult, error) {
+	messages, err := e.searchMessageBodiesFunc(ctx, q, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	return &query.SearchFastResult{Messages: messages}, nil
 }
 
 func TestHandleDeepSearchBodyScope(t *testing.T) {

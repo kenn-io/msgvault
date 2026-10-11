@@ -3,6 +3,8 @@ package store_test
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -12,6 +14,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -1164,4 +1167,63 @@ func TestStore_HasAnyActiveSync(t *testing.T) {
 	assert.False(running, "expected no active sync after completion")
 
 	_ = syncID
+}
+
+func TestStore_InterruptSyncWithCheckpoint(t *testing.T) {
+	providerErr := errors.New("provider unavailable")
+	for _, tc := range []struct {
+		name       string
+		cause      error
+		err        error
+		itemErrors int64
+		wantStatus string
+	}{
+		{name: "handoff", cause: jobctx.ErrYieldedToWaiter, err: context.Canceled, wantStatus: store.SyncStatusCancelled},
+		{name: "wrapped handoff", cause: jobctx.ErrYieldedToWaiter, err: fmt.Errorf("fetch: %w", context.Canceled), wantStatus: store.SyncStatusCancelled},
+		{name: "user cancellation", cause: context.Canceled, err: context.Canceled, wantStatus: store.SyncStatusFailed},
+		{name: "provider error during handoff", cause: jobctx.ErrYieldedToWaiter, err: providerErr, wantStatus: store.SyncStatusFailed},
+		{name: "joined error during handoff", cause: jobctx.ErrYieldedToWaiter, err: errors.Join(providerErr, context.Canceled), wantStatus: store.SyncStatusFailed},
+		{name: "wrapped joined error", cause: jobctx.ErrYieldedToWaiter, err: fmt.Errorf("fetch: %w", errors.Join(providerErr, context.Canceled)), wantStatus: store.SyncStatusFailed},
+		{name: "item errors during handoff", cause: jobctx.ErrYieldedToWaiter, err: context.Canceled, itemErrors: 1, wantStatus: store.SyncStatusFailed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			f := storetest.New(t)
+			id, err := f.Store.StartSync(f.Source.ID, "slack")
+			require.NoError(err)
+			ctx, cancel := context.WithCancelCause(t.Context())
+			cancel(tc.cause)
+			cp := &store.Checkpoint{PageToken: "resume-cursor", MessagesProcessed: 7, MessagesAdded: 3, ErrorsCount: tc.itemErrors}
+			require.NoError(f.Store.InterruptSyncWithCheckpoint(ctx, id, tc.err, cp))
+			run, err := f.Store.GetLatestSync(f.Source.ID)
+			require.NoError(err)
+			assert.Equal(tc.wantStatus, run.Status)
+			if tc.wantStatus == store.SyncStatusCancelled {
+				assert.Empty(run.ErrorMessage.String)
+			} else {
+				assert.Equal(tc.err.Error(), run.ErrorMessage.String)
+			}
+			assert.Equal(int64(7), run.MessagesProcessed)
+			assert.Equal(int64(3), run.MessagesAdded)
+			assert.Equal(tc.itemErrors, run.ErrorsCount)
+			resumed, err := f.Store.GetLatestCheckpointedSync(f.Source.ID)
+			require.NoError(err)
+			assert.Equal(id, resumed.ID)
+			resumed, err = f.Store.GetLatestCheckpointedSyncByType(f.Source.ID, "slack")
+			require.NoError(err)
+			assert.Equal("resume-cursor", resumed.CursorBefore.String)
+			_, err = f.Store.GetLatestCheckpointedSyncByType(f.Source.ID, "discord")
+			require.ErrorIs(err, store.ErrSyncRunNotFound)
+			// Finalization releases ownership; completing the next attempt
+			// makes even a cancelled checkpoint obsolete.
+			next, err := f.Store.StartSync(f.Source.ID, "slack")
+			require.NoError(err)
+			require.NoError(f.Store.CompleteSync(next, "finished"))
+			_, err = f.Store.GetLatestCheckpointedSync(f.Source.ID)
+			require.ErrorIs(err, store.ErrSyncRunNotFound)
+			_, err = f.Store.GetLatestCheckpointedSyncByType(f.Source.ID, "slack")
+			require.ErrorIs(err, store.ErrSyncRunNotFound)
+		})
+	}
 }

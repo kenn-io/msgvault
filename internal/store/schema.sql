@@ -1238,6 +1238,7 @@ CREATE TABLE IF NOT EXISTS carddav_resources (
     governance              TEXT NOT NULL CHECK (governance IN ('remote', 'local', 'none')),
     person_id               INTEGER REFERENCES persons(id) ON DELETE SET NULL,
     person_revision_at_bind INTEGER,
+    owns_display_name       BOOLEAN NOT NULL DEFAULT FALSE,
     created_at              DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at              DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (address_book_id, href)
@@ -1401,6 +1402,9 @@ CREATE TABLE IF NOT EXISTS messages (
     is_from_me BOOLEAN DEFAULT FALSE,
     source_is_from_me BOOLEAN,
     identity_is_from_me BOOLEAN NOT NULL DEFAULT FALSE,
+    account_address TEXT,
+    account_path TEXT,
+    draft_authored BOOLEAN NOT NULL DEFAULT FALSE, -- once filed as a draft, kept after the draft is retired
 
     -- Content
     subject TEXT,               -- email subject, NULL for chat
@@ -1846,6 +1850,8 @@ CREATE INDEX IF NOT EXISTS idx_beeper_media_occurrences_ready
     ON beeper_media_occurrences(destination_key, retention_state, next_action_at, occurrence_ref);
 CREATE INDEX IF NOT EXISTS idx_beeper_media_occurrences_processing
     ON beeper_media_occurrences(destination_key, processing_key, retention_state);
+CREATE INDEX IF NOT EXISTS idx_beeper_media_occurrences_source
+    ON beeper_media_occurrences(source_type, source_identifier, source_message_id, destination_key);
 
 CREATE TABLE IF NOT EXISTS beeper_media_deliveries (
     destination_key          TEXT NOT NULL,
@@ -2290,6 +2296,7 @@ CREATE INDEX IF NOT EXISTS idx_messages_reply_to_message_id ON messages(reply_to
     WHERE reply_to_message_id IS NOT NULL;
 
 -- Message recipients
+-- idx_message_recipients_email_from is built after legacy column migrations in Store.
 CREATE INDEX IF NOT EXISTS idx_message_recipients_message ON message_recipients(message_id);
 CREATE INDEX IF NOT EXISTS idx_message_recipients_participant ON message_recipients(participant_id, recipient_type);
 
@@ -4510,3 +4517,15 @@ CREATE INDEX IF NOT EXISTS idx_meeting_actions_status
     ON meeting_action_items(status, message_id, ordinal);
 CREATE INDEX IF NOT EXISTS idx_meeting_actions_assignee
     ON meeting_action_items(assignee_email, message_id, ordinal);
+
+-- Delivery-header addresses read from each email's stored MIME. Account
+-- attribution derives messages.account_address from them; they are hints
+-- about routing, not proof of ownership.
+CREATE TABLE IF NOT EXISTS message_delivery_addresses (
+    message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,      -- 'original' or 'delivered'
+    address TEXT NOT NULL,   -- lowercased mailbox
+    PRIMARY KEY (message_id, kind, address)
+);
+CREATE INDEX IF NOT EXISTS idx_message_delivery_addresses_address
+    ON message_delivery_addresses(address, message_id);

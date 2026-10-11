@@ -819,17 +819,20 @@ func TestVCardResourceWritesRetrySQLiteSnapshotContention(t *testing.T) {
 	writerDone := make(chan struct{})
 	go func() {
 		defer close(writerDone)
+		pause := time.NewTicker(2 * time.Millisecond)
+		defer pause.Stop()
 		for {
 			select {
 			case <-stop:
 				return
-			case <-time.After(2 * time.Millisecond):
+			case <-pause.C:
 			}
 			_, _ = st.AddPersonCategoryContext(context.Background(), person.ID,
 				store.PersonCategoryInput{
 					OriginalValue: "contention",
 					Envelope:      store.ValueEnvelopeInput{Source: store.ProvenanceUser},
 				})
+			pause.Reset(2 * time.Millisecond)
 		}
 	}()
 	t.Cleanup(func() {
@@ -882,11 +885,13 @@ func TestVCardSemanticCommitAbsorbsSQLiteWriterContention(t *testing.T) {
 	writerDone := make(chan struct{})
 	go func() {
 		defer close(writerDone)
+		pause := time.NewTicker(300 * time.Microsecond)
+		defer pause.Stop()
 		for i := 0; ; i++ {
 			select {
 			case <-stop:
 				return
-			case <-time.After(300 * time.Microsecond):
+			case <-pause.C:
 			}
 			_, _ = st.AddPersonNameContext(context.Background(), neighbour.ID,
 				store.PersonNameInput{
@@ -894,6 +899,7 @@ func TestVCardSemanticCommitAbsorbsSQLiteWriterContention(t *testing.T) {
 					Formatted: new(fmt.Sprintf("Bob %d", i)),
 					Envelope:  store.ValueEnvelopeInput{Source: store.ProvenanceUser},
 				})
+			pause.Reset(300 * time.Microsecond)
 		}
 	}()
 	t.Cleanup(func() {

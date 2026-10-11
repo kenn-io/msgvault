@@ -12,7 +12,6 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/mattn/go-sqlite3"
 	"go.kenn.io/msgvault/internal/sqliteutil"
 )
 
@@ -516,12 +515,19 @@ const sqliteFTSNeedsBackfillVirtualSQL = `SELECT EXISTS (SELECT 1 FROM messages 
 // and fall back to the virtual table. Checking every message catches interior
 // holes left when indexing fails during sync but later messages are indexed.
 func (d *SQLiteDialect) FTSNeedsBackfill(db *sql.DB) bool {
+	needs, _ := d.FTSNeedsBackfillContext(context.Background(), db)
+	return needs
+}
+func (d *SQLiteDialect) FTSNeedsBackfillContext(ctx context.Context, db *sql.DB) (bool, error) {
 	var exists bool
-	err := db.QueryRowContext(context.Background(), sqliteFTSNeedsBackfillDocsizeSQL).Scan(&exists)
+	err := ReadDBContext(ctx, db).QueryRowContext(ctx, sqliteFTSNeedsBackfillDocsizeSQL).Scan(&exists)
 	if d.IsNoSuchTableError(err) {
-		err = db.QueryRowContext(context.Background(), sqliteFTSNeedsBackfillVirtualSQL).Scan(&exists)
+		err = ReadDBContext(ctx, db).QueryRowContext(ctx, sqliteFTSNeedsBackfillVirtualSQL).Scan(&exists)
 	}
-	return err == nil && exists
+	if err != nil {
+		return false, fmt.Errorf("probe FTS completeness: %w", err)
+	}
+	return exists, nil
 }
 
 // FTSNeedsBackfillQuick compares maximum message and indexed row IDs. The
@@ -1942,6 +1948,7 @@ func (d *SQLiteDialect) contentChangedAtDefaultStamps(q querier) (bool, error) {
 // silences these when the column already exists (idempotent migrations).
 func (d *SQLiteDialect) LegacyColumnMigrations() []ColumnMigration {
 	return []ColumnMigration{
+		{`ALTER TABLE carddav_resources ADD COLUMN owns_display_name BOOLEAN NOT NULL DEFAULT FALSE`, "carddav_resources.owns_display_name"},
 		{`ALTER TABLE person_match_judgment_cursor ADD COLUMN started_at_zero BOOLEAN NOT NULL DEFAULT FALSE`, "person_match_judgment_cursor.started_at_zero"},
 		{`ALTER TABLE carddav_publications ADD COLUMN outgoing_envelope_metadata BLOB`, "carddav_publications.outgoing_envelope_metadata"},
 		{`ALTER TABLE carddav_publications ADD COLUMN approved_body_sha256 TEXT`, "carddav_publications.approved_body_sha256"},
@@ -1973,6 +1980,9 @@ func (d *SQLiteDialect) LegacyColumnMigrations() []ColumnMigration {
 		{`ALTER TABLE imap_folder_state ADD COLUMN highest_modseq TEXT NOT NULL DEFAULT '0'`, "imap_folder_state.highest_modseq"},
 		{`ALTER TABLE messages ADD COLUMN rfc822_message_id TEXT`, "rfc822_message_id"},
 		{`ALTER TABLE messages ADD COLUMN list_id TEXT`, "list_id"},
+		{`ALTER TABLE messages ADD COLUMN account_address TEXT`, "account_address"},
+		{`ALTER TABLE messages ADD COLUMN account_path TEXT`, "account_path"},
+		{`ALTER TABLE messages ADD COLUMN draft_authored BOOLEAN NOT NULL DEFAULT FALSE`, "draft_authored"},
 		{`ALTER TABLE sources ADD COLUMN oauth_app TEXT`, "oauth_app"},
 		{`ALTER TABLE participants ADD COLUMN phone_number TEXT`, "phone_number"},
 		{`ALTER TABLE participants ADD COLUMN canonical_id TEXT`, "canonical_id"},
@@ -2248,24 +2258,6 @@ func (d *SQLiteDialect) RowWriterLockSQL(table, column string) string {
 // so Store.runMaintenance issues no reset statement and SQLite's
 // transactional behavior is unchanged.
 func (d *SQLiteDialect) MaintenanceTimeoutResetSQL() string { return "" }
-
-// IsBusyError returns true for SQLITE_BUSY and SQLITE_LOCKED. Matching on
-// the result code is more robust than substring matching: BUSY surfaces as
-// "database is locked" but LOCKED surfaces as "database table is locked",
-// so a single substring cannot catch both.
-func (d *SQLiteDialect) IsBusyError(err error) bool {
-	if err == nil {
-		return false
-	}
-	if serr, ok := errors.AsType[sqlite3.Error](err); ok {
-		return serr.Code == sqlite3.ErrBusy || serr.Code == sqlite3.ErrLocked
-	}
-	var serrPtr *sqlite3.Error
-	if errors.As(err, &serrPtr) && serrPtr != nil {
-		return serrPtr.Code == sqlite3.ErrBusy || serrPtr.Code == sqlite3.ErrLocked
-	}
-	return false
-}
 
 // IsSerializationFailureError always returns false for SQLite. Only one write
 // transaction runs at a time, so a locked row can never have been changed and

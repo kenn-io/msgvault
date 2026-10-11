@@ -293,17 +293,19 @@ func readCacheSyncCountersContext(ctx context.Context, db contextSQLRowQuerier) 
 	})
 }
 
+// Cancelled attempts can commit messages before yielding. Like failed runs,
+// they may stop before counting every write, so track interruptions as well.
 func readCacheSyncCountersWithRow(queryRow func(string, ...any) *sql.Row) (cacheSyncCounters, error) {
 	var counters cacheSyncCounters
 	err := queryRow(`
 		SELECT
 			COALESCE(SUM(COALESCE(sr.messages_added, 0)), 0),
 			COALESCE(SUM(COALESCE(sr.messages_updated, 0)), 0),
-			COALESCE(SUM(CASE WHEN sr.status = 'failed' THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN sr.status = 'failed' THEN sr.id ELSE 0 END), 0)
+			COALESCE(SUM(CASE WHEN sr.status IN ('failed', 'cancelled') THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN sr.status IN ('failed', 'cancelled') THEN sr.id ELSE 0 END), 0)
 		FROM sync_runs sr
 		JOIN sources src ON src.id = sr.source_id
-		WHERE sr.status IN ('completed', 'failed')
+		WHERE sr.status IN ('completed', 'failed', 'cancelled')
 		  AND sr.completed_at IS NOT NULL
 	`).Scan(
 		&counters.additions,
@@ -323,6 +325,9 @@ var buildCacheCmd = &cobra.Command{
 This command exports normalized tables to Parquet files for fast aggregate queries.
 DuckDB joins the Parquet files at query time, which is much faster than joining
 during export (especially for incremental updates).
+
+Large group chats use less temporary disk while keeping every member searchable.
+Relationship build and resource details: https://msgvault.io/docs/configuration/#analytics
 
 The cache files are stored in ~/.msgvault/analytics/:
   - messages/year=*/     Core message data, partitioned by year
@@ -638,6 +643,7 @@ func messageExportColumns(source *cacheSourceSnapshot, ownerParticipant, attribu
 	return fmt.Sprintf(`
 			m.id,
 			m.source_id,
+			`+source.accountColumnsSQL("m")+`,
 			COALESCE(%s, '') AS source_message_id,
 			%s AS rfc822_message_id,
 			m.conversation_id,
@@ -1347,6 +1353,14 @@ func buildCacheLockedAttempt(
 		messageSourceAttribution = "COALESCE(m.source_is_from_me, FALSE)"
 	}
 	sourceSnapshot.hasMessageSourceAttribution = messageSourceAttributionColumnCount > 0
+	var accountAttributionColumnCount int
+	if err := sourceSnapshot.QueryRow(`
+		SELECT COUNT(*) FROM pragma_table_info('messages')
+		WHERE name IN ('account_address', 'account_path')
+	`).Scan(&accountAttributionColumnCount); err != nil {
+		return nil, fmt.Errorf("inspect message account attribution schema: %w", err)
+	}
+	sourceSnapshot.hasAccountAttribution = accountAttributionColumnCount == 2
 	var recipientEnvelopeColumnCount int
 	if err := sourceSnapshot.QueryRow(`
 		SELECT COUNT(*) FROM pragma_table_info('message_recipients')
@@ -1674,7 +1688,7 @@ func reportIdentityBuildProgress(dataset string, elapsed time.Duration) {
 func reportRelationshipActivityStats(stats identityindex.ActivityStats) {
 	fmt.Printf(
 		"  %-25s direct=%d conversation=%d final=%d expansion=%.2fx\n",
-		"Relationship fan-out:",
+		"Relationship build rows:",
 		stats.DirectRows,
 		stats.ConversationExpandedRows,
 		stats.FinalRows,
@@ -1863,6 +1877,7 @@ type cacheSourceSnapshot struct {
 	hasAttachmentMIME           bool
 	hasAttachmentMetadata       bool
 	hasMessageSourceAttribution bool
+	hasAccountAttribution       bool
 	hasRecipientEnvelope        bool
 	// csvSnapshot records that the sqlite_db tables are CSV views exported
 	// from SQLite, not the attached database itself. It is set once at
@@ -2044,6 +2059,10 @@ func (s *cacheSourceSnapshot) tables() []cacheSnapshotTable {
 	if s.hasMessageSourceAttribution {
 		messageColumns += ", source_is_from_me"
 		messageTypes += ", 'source_is_from_me': 'BOOLEAN'"
+	}
+	if s.hasAccountAttribution {
+		messageColumns += ", account_address, account_path"
+		messageTypes += ", 'account_address': 'VARCHAR', 'account_path': 'VARCHAR'"
 	}
 	messageTypes += "}"
 
@@ -2586,8 +2605,13 @@ func rebuildCacheAfterScheduledSync(ctx context.Context, identifier string) erro
 	return rebuildCacheNow(ctx, identifier, nil)
 }
 
+// cacheBuildFailureRetryDelay spaces automatic retries after a failed
+// post-sync cache build.
+const cacheBuildFailureRetryDelay = 15 * time.Minute
+
 // rebuildCacheNow runs the locked staleness check and, when a build is due
-// and not throttled, the build subprocess.
+// and not throttled, the build subprocess. scheduleRetry, when set, receives a
+// follow-up request for a throttled or failed build.
 func rebuildCacheNow(
 	ctx context.Context,
 	identifier string,
@@ -2636,6 +2660,11 @@ func rebuildCacheNow(
 		"full_rebuild", staleness.FullRebuild)
 	if err := runScheduledBuildCacheSubprocess(ctx); err != nil {
 		logger.Error("cache build failed", "error", err)
+		if scheduleRetry != nil && ctx.Err() == nil {
+			// Later syncs that write nothing request no build, so a failed
+			// build would otherwise leave the cache stale until the next write.
+			scheduleRetry(cacheBuildFailureRetryDelay, identifier)
+		}
 		return fmt.Errorf("refresh analytics cache: %w", err)
 	}
 	staleness = cacheNeedsBuildContext(ctx, dbPath, analyticsDir)
@@ -2710,4 +2739,13 @@ func init() {
 		"Internal: scheduled staleness-derived build with lock-held interval recheck",
 	)
 	_ = buildCacheCmd.Flags().MarkHidden("scheduled-auto")
+}
+
+// accountColumnsSQL selects the message account projection, or typed NULLs
+// when the archive predates it.
+func (s *cacheSourceSnapshot) accountColumnsSQL(alias string) string {
+	if !s.hasAccountAttribution {
+		return "CAST(NULL AS VARCHAR) AS account_address, CAST(NULL AS VARCHAR) AS account_path"
+	}
+	return alias + ".account_address, " + alias + ".account_path"
 }

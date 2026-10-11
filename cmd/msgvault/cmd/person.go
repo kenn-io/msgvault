@@ -63,25 +63,64 @@ var personPromoteCmd = &cobra.Command{
 }
 
 var personGetCmd = &cobra.Command{
-	Use:   "get <person-id>",
+	Use:   "get [person-id]",
 	Short: "Get a durable person profile",
-	Args:  cobra.ExactArgs(1),
+	Args:  personGetArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		id, err := positivePersonCLIArg(cmd, args[0], personValue)
+		uid, err := personGetUID(cmd)
 		if err != nil {
 			return err
+		}
+		var id int64
+		if uid == "" {
+			id, err = positivePersonCLIArg(cmd, args[0], personValue)
+			if err != nil {
+				return err
+			}
 		}
 		client, _, err := OpenHTTPStore(cmd.Context())
 		if err != nil {
 			return err
 		}
 		defer func() { _ = client.Close() }()
+		if uid != "" {
+			resp, err := getCLIPersonByUID(cmd, client, uid)
+			if err != nil {
+				return err
+			}
+			return writeCLIPerson(cmd, resp.JSON200)
+		}
 		resp, err := getCLIPerson(cmd, client, id)
 		if err != nil {
 			return err
 		}
 		return writeCLIPerson(cmd, resp.JSON200)
 	},
+}
+
+func personGetUID(cmd *cobra.Command) (string, error) {
+	uid, err := cmd.Flags().GetString("vcard-uid")
+	if err != nil {
+		return "", fmt.Errorf("read --vcard-uid: %w", err)
+	}
+	return strings.TrimSpace(uid), nil
+}
+
+func personGetArgs(cmd *cobra.Command, args []string) error {
+	uid, err := personGetUID(cmd)
+	if err != nil {
+		return err
+	}
+	if uid != "" {
+		if len(args) != 0 {
+			return usageErr(cmd, errors.New("--vcard-uid cannot be combined with a person ID"))
+		}
+		return nil
+	}
+	if len(args) != 1 {
+		return usageErr(cmd, errors.New("provide a person ID or --vcard-uid"))
+	}
+	return nil
 }
 
 var personListCmd = &cobra.Command{
@@ -641,6 +680,26 @@ func getCLIPerson(
 		})
 }
 
+func getCLIPersonByUID(
+	cmd *cobra.Command, client *daemonclient.Client, uid string,
+) (*generated.GetPersonByUIDResp, error) {
+	supported, err := client.SupportsAPISchemaVersion(cmd.Context(), daemonclient.PersonUIDLookupMinAPISchemaVersion)
+	if err != nil {
+		return nil, fmt.Errorf("check person UID lookup capability: %w", err)
+	}
+	if !supported {
+		return nil, fmt.Errorf("person UID lookup requires daemon API schema %s or newer; upgrade the daemon",
+			daemonclient.PersonUIDLookupMinAPISchemaVersion)
+	}
+	return daemonclient.APIResponse(client,
+		func(api *apiclient.Client) (*generated.GetPersonByUIDResp, error) {
+			return api.GetPersonByUIDWithResponse(cmd.Context(),
+				&generated.GetPersonByUIDRequestOptions{
+					Query: &generated.GetPersonByUIDQuery{UID: uid},
+				})
+		})
+}
+
 func writeCLIPerson(cmd *cobra.Command, person *generated.Person) error {
 	if person == nil {
 		return errors.New("person response was empty")
@@ -694,6 +753,7 @@ func init() {
 	} {
 		command.Flags().BoolVar(&personJSON, flagJSON, false, "Output as JSON")
 	}
+	personGetCmd.Flags().String("vcard-uid", "", "Look up by a person or bound CardDAV UID")
 	personSetDisplayNameCmd.Flags().BoolVar(
 		&personClearDisplayName, "clear", false, "Clear the display-name override",
 	)

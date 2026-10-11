@@ -68,6 +68,8 @@ func (m Model) meetingSourceLabel(sourceID int64) string {
 			return "Muesli"
 		case meetingSourceTwilio:
 			return "Twilio"
+		case meetingSourceTwenty:
+			return "Twenty"
 		case meetingSourceImported:
 			if account.DisplayName != "" {
 				return textutil.SanitizeTerminal(account.DisplayName)

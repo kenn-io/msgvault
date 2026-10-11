@@ -369,7 +369,7 @@ func TestTokenManagerDeleteUsesCredentialStoreLock(t *testing.T) {
 	select {
 	case err := <-done:
 		require.FailNow("credential deletion bypassed store lock", "error: %v", err)
-	case <-time.After(50 * time.Millisecond):
+	case <-time.After(50 * time.Millisecond): //nolint:kennlint // absence check: the held store lock keeps deletion waiting
 	}
 	require.NoError(lock.Unlock())
 	require.NoError(<-done)

@@ -200,8 +200,8 @@ func normalizeRepairSender(sender mime.Address) (repairSender, error) {
 func lenientRepairAddress(addr mime.Address) repairSender {
 	email := strings.ToLower(strings.TrimSpace(addr.Email))
 	domain := strings.ToLower(strings.TrimSpace(addr.Domain))
-	if at := strings.LastIndex(email, "@"); at >= 0 {
-		domain = email[at+1:]
+	if _, suffix, ok := strings.CutLast(email, "@"); ok {
+		domain = suffix
 	}
 	return repairSender{
 		email:       email,
@@ -238,7 +238,7 @@ func (s *Store) ApplySenderRepairContext(
 		}
 	}
 
-	return s.withTxContext(ctx, func(tx *loggedTx) error {
+	return s.withMessageAttributionTxContext(ctx, messageID, func(tx *loggedTx) error {
 		q := boundQuerier{ctx: ctx, q: tx}
 		if err := s.lockMessageForRecipientWrite(q, messageID); err != nil {
 			return err
@@ -335,6 +335,9 @@ func (s *Store) ApplySenderRepairContext(
 		}
 		if err := refreshMessageAttributionWith(q, messageID); err != nil {
 			return fmt.Errorf("refresh message %d attribution: %w", messageID, err)
+		}
+		if _, err := s.refreshAccountAttributionTx(ctx, tx, messageID, deliveryInput{}); err != nil {
+			return err
 		}
 		if s.fts5Available {
 			if _, err := q.Exec(

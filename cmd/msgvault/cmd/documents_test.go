@@ -152,6 +152,9 @@ func TestDocumentsConsentBuildAndStatusUseExactAuthenticatedProfile(t *testing.T
 		openStore: func(context.Context) (*store.Store, func(), error) {
 			return fixture.Store, func() {}, nil
 		},
+		openInitializedStore: func(context.Context) (*store.Store, func(), error) {
+			return fixture.Store, func() {}, nil
+		},
 		openAttachments: func(context.Context, *store.Store) (documentindex.DocumentAttachmentOpener, func() error, error) {
 			attachmentOpened = true
 			return commandAttachmentOpener{content: content}, func() error { return nil }, nil
@@ -416,7 +419,8 @@ func TestDocumentBuildRepairsHistoricalMIMERolesBeforePreflight(t *testing.T) {
 
 	manifestPath := writeCommandCapabilityManifest(t, cfg.Attachments.Documents.MaxPagesPerDocument)
 	deps := documentsCommandDeps{
-		openStore: func(context.Context) (*store.Store, func(), error) { return fixture.Store, func() {}, nil },
+		openStore:            func(context.Context) (*store.Store, func(), error) { return fixture.Store, func() {}, nil },
+		openInitializedStore: func(context.Context) (*store.Store, func(), error) { return fixture.Store, func() {}, nil },
 		openAttachments: func(context.Context, *store.Store) (documentindex.DocumentAttachmentOpener, func() error, error) {
 			return nil, func() error { return nil }, errors.New("synthetic stop after repair")
 		},
@@ -462,7 +466,8 @@ func TestDocumentsSearchDoesNotRegisterUnconsentedJournalConsumer(t *testing.T) 
 	require := require.New(t)
 	fixture := storetest.New(t)
 	deps := documentsCommandDeps{
-		openStore: func(context.Context) (*store.Store, func(), error) { return fixture.Store, func() {}, nil },
+		openStore:            func(context.Context) (*store.Store, func(), error) { return fixture.Store, func() {}, nil },
+		openInitializedStore: func(context.Context) (*store.Store, func(), error) { return fixture.Store, func() {}, nil },
 	}
 	command := newDocumentsCmd(deps)
 	var output bytes.Buffer
@@ -482,7 +487,8 @@ func TestDocumentsSearchDoesNotRegisterUnconsentedJournalConsumer(t *testing.T) 
 func TestDocumentsSearchLocalExplicitSemanticNeverMasqueradesAsLexical(t *testing.T) {
 	fixture := storetest.New(t)
 	command := newDocumentsCmd(documentsCommandDeps{
-		openStore: func(context.Context) (*store.Store, func(), error) { return fixture.Store, func() {}, nil },
+		openStore:            func(context.Context) (*store.Store, func(), error) { return fixture.Store, func() {}, nil },
+		openInitializedStore: func(context.Context) (*store.Store, func(), error) { return fixture.Store, func() {}, nil },
 	})
 	command.SetArgs([]string{"search", "evidence", "--mode", "semantic", "--candidate-limit", "25"})
 	err := command.ExecuteContext(t.Context())
@@ -630,7 +636,8 @@ func TestDocumentsBuildRefusesAPIUseBeforeExactConsent(t *testing.T) {
 			providerCalled = true
 			return &commandBuildProcessor{}, nil
 		},
-		openStore: func(context.Context) (*store.Store, func(), error) { return fixture.Store, func() {}, nil },
+		openStore:            func(context.Context) (*store.Store, func(), error) { return fixture.Store, func() {}, nil },
+		openInitializedStore: func(context.Context) (*store.Store, func(), error) { return fixture.Store, func() {}, nil },
 	}
 	manifestPath := writeCommandCapabilityManifest(t, cfg.Attachments.Documents.MaxPagesPerDocument)
 	command := newDocumentsCmd(deps)
@@ -679,7 +686,8 @@ func TestDocumentFullRebuildResumesDurableTargetSnapshot(t *testing.T) {
 		newMistralProcessor: func(*documentindex.DocumentsConfig) (documentindex.MistralProcessor, error) {
 			return processor, nil
 		},
-		openStore: func(context.Context) (*store.Store, func(), error) { return fixture.Store, func() {}, nil },
+		openStore:            func(context.Context) (*store.Store, func(), error) { return fixture.Store, func() {}, nil },
+		openInitializedStore: func(context.Context) (*store.Store, func(), error) { return fixture.Store, func() {}, nil },
 		openAttachments: func(context.Context, *store.Store) (documentindex.DocumentAttachmentOpener, func() error, error) {
 			return commandAttachmentMapOpener{contents: contents}, func() error { return nil }, nil
 		},
@@ -1274,8 +1282,9 @@ func TestInlineDocumentConsentRescansAndReportsMalformedSource(t *testing.T) {
 	manifestPath := writeCommandCapabilityManifest(t, cfg.Attachments.Documents.MaxPagesPerDocument)
 	processor := &commandBuildProcessor{}
 	deps := documentsCommandDeps{
-		newMistralProcessor: func(*documentindex.DocumentsConfig) (documentindex.MistralProcessor, error) { return processor, nil },
-		openStore:           func(context.Context) (*store.Store, func(), error) { return fixture.Store, func() {}, nil },
+		newMistralProcessor:  func(*documentindex.DocumentsConfig) (documentindex.MistralProcessor, error) { return processor, nil },
+		openStore:            func(context.Context) (*store.Store, func(), error) { return fixture.Store, func() {}, nil },
+		openInitializedStore: func(context.Context) (*store.Store, func(), error) { return fixture.Store, func() {}, nil },
 		openAttachments: func(context.Context, *store.Store) (documentindex.DocumentAttachmentOpener, func() error, error) {
 			return commandAttachmentOpener{content: content}, func() error { return nil }, nil
 		},

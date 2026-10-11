@@ -1,5 +1,13 @@
 # Relationship list index
 
+Historical design. The expanded storage grain measured below has been superseded
+by sparse message facts and direct edges, with conversation membership stored
+once in the normalized roster. Current builds join group-chat rosters at the
+logical conversation entry and retain per-message owner evidence for scores.
+See [analytics configuration](../configuration.md#analytics) for current builder
+behavior and resource settings. The original measurements and rationale remain
+below.
+
 ## Problem
 
 The Relationships workspace currently derives people, domains, and

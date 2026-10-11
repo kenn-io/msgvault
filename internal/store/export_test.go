@@ -137,6 +137,13 @@ func (s *Store) SetAttributeSeedReadHookForTest(fn func(slug string)) func() {
 	return func() { s.attributeSeedReadHook = nil }
 }
 
+// SetOrganizationProfileRootReadHookForTest installs a hook between the profile
+// root read and its child reads. Returns a restore func that clears the hook.
+func (s *Store) SetOrganizationProfileRootReadHookForTest(fn func()) func() {
+	s.organizationProfileRootReadHook = fn
+	return func() { s.organizationProfileRootReadHook = nil }
+}
+
 // SetAttachmentRoleRepairPreparedHookForTest installs a hook after historical
 // MIME evidence has been prepared but before the repair transaction begins.
 // Tests use it to reproduce a concurrent resync that changes attachment bytes.
@@ -338,6 +345,13 @@ func (s *Store) SetPersonNetworkSourceReadHookForTest(fn func(limit, count int))
 
 func (s *Store) SetCardDAVPublicationReviewBeforePersonLockHookForTest(fn func()) {
 	s.cardDAVReviewPersonLockHook = fn
+}
+
+// RefreshSourceMessageAttributionForTest is the full-refresh oracle for targeted attribution.
+func RefreshSourceMessageAttributionForTest(s *Store, sourceID int64) error {
+	return s.withTxContext(context.Background(), func(tx *loggedTx) error {
+		return refreshSourceMessageAttributionContext(context.Background(), tx, sourceID)
+	})
 }
 
 // Owner-address SQL builders, exported for their isolation test.

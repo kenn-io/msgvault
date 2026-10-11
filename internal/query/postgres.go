@@ -82,7 +82,7 @@ func (e *pgEngine) GetDeletionTargetsByAggregateSearch(
 // explicitly.
 func (e *pgEngine) SearchMessageBodies(
 	ctx context.Context, q *search.Query, limit, offset int,
-) ([]MessageSummary, error) {
+) (*SearchFastResult, error) {
 	bodySearcher, ok := e.Engine.(MessageBodySearcher)
 	if !ok {
 		return nil, ErrMessageBodySearchUnavailable
@@ -125,6 +125,15 @@ func (e *pgEngine) ReadOriginalMessage(ctx context.Context, ref MessageRef, maxB
 		return nil, ErrOriginalExportUnsupported
 	}
 	return reader.ReadOriginalMessage(ctx, ref, maxBytes)
+}
+
+// ResolveMessageID forwards to the dialect-parameterized engine.
+func (e *pgEngine) ResolveMessageID(ctx context.Context, ref string) (int64, string, error) {
+	resolver, ok := e.Engine.(MessageIDResolver)
+	if !ok {
+		return 0, "", ErrOriginalExportUnsupported
+	}
+	return resolver.ResolveMessageID(ctx, ref)
 }
 
 // ListThread forwards to the dialect-parameterized engine.

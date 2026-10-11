@@ -20,7 +20,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
-	"github.com/mattn/go-sqlite3"
 	"go.kenn.io/kit/atomicfile"
 	"go.kenn.io/msgvault/internal/sqliteutil"
 )
@@ -99,6 +98,7 @@ type Store struct {
 	initSchemaWindowHook                  func()
 	beforeLargeIndexBuildHook             func()
 	attributeSeedReadHook                 func(slug string)
+	organizationProfileRootReadHook       func()
 	contentChangedBackfillBatchHook       func(fromID, toID int64) error
 	backfillFTSBatchErrHook               func(fromID, toID int64) error
 	attachmentRoleRepairPreparedHook      func()
@@ -106,6 +106,8 @@ type Store struct {
 	listIDRepairAfterScanHook             func(context.Context, *loggedTx, []listIDRepairUpdate) error
 	listIDRepairAfterFingerprintLockHook  func()
 	imapLabelRepairPerMessageHook         func(messageID int64)
+	attributionAfterLockHook              func(sourceIDs []int64)
+	accountAttributionAfterReadHook       func(messageID int64)
 	cardDAVConflictResolveSnapshotHook    func()
 	cardDAVTombstonePrepareSnapshotHook   func()
 	cardDAVReviewPersonLockHook           func()
@@ -130,7 +132,9 @@ type Store struct {
 	// contentChangedBackfillBatch and rfc822IDBackfillBatch. Per-Store for
 	// the same reason.
 	contentChangedBackfillBatchSizeOverride int64
-	rfc822IDBackfillBatchSizeOverride       int
+	// accountRepairPageSizeOverride shrinks account-attribution repair pages in tests.
+	accountRepairPageSizeOverride     int
+	rfc822IDBackfillBatchSizeOverride int
 }
 
 // synchronous=FULL + fullfsync=true protects WAL writes against OS/power crashes
@@ -140,24 +144,6 @@ type Store struct {
 // so the durability cost is negligible. fullfsync is macOS-only (F_FULLFSYNC
 // fcntl) and a no-op on other platforms.
 const defaultSQLiteParams = "?_journal_mode=WAL&_busy_timeout=30000&_synchronous=FULL&_fullfsync=true&_foreign_keys=ON"
-
-// isSQLiteError checks if err is a sqlite3.Error with a message containing substr.
-// This is more robust than strings.Contains on err.Error() because it first
-// type-asserts to the specific driver error type using errors.As.
-// Handles both value (sqlite3.Error) and pointer (*sqlite3.Error) forms.
-//
-// SQLiteDialect's error predicates are thin wrappers around this helper; it also
-// services subset.go (which has not been migrated to Dialect).
-func isSQLiteError(err error, substr string) bool {
-	if sqliteErr, ok := errors.AsType[sqlite3.Error](err); ok {
-		return strings.Contains(sqliteErr.Error(), substr)
-	}
-	var sqliteErrPtr *sqlite3.Error
-	if errors.As(err, &sqliteErrPtr) && sqliteErrPtr != nil {
-		return strings.Contains(sqliteErrPtr.Error(), substr)
-	}
-	return false
-}
 
 // IsPostgresURL returns true if the path looks like a PostgreSQL connection URL.
 // Exported so cmd-side helpers can decide whether to skip SQLite-only code
@@ -188,7 +174,7 @@ func OpenContext(ctx context.Context, dbPath string) (*Store, error) {
 		return nil, err
 	}
 	if IsPostgresURL(dbPath) {
-		return openPostgresContext(ctx, dbPath)
+		return OpenPostgresContext(ctx, dbPath)
 	}
 	return openSQLiteContext(ctx, dbPath, defaultSQLiteParams)
 }
@@ -215,6 +201,9 @@ func openSQLite(dbPath, params string) (*Store, error) {
 func openSQLiteContext(ctx context.Context, dbPath, params string) (*Store, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
+	}
+	if !sqliteutil.Available {
+		return nil, errors.New("SQLite requires a build with CGO enabled; use PostgreSQL with this build")
 	}
 	normalizedDSN, filesystemPath, err := sqliteutil.ResolveDSN(dbPath)
 	if err != nil {
@@ -301,10 +290,12 @@ func appendSQLiteParams(dsn, params string) string {
 
 // openPostgres opens a PostgreSQL database using the given connection URL.
 func openPostgres(dbURL string) (*Store, error) {
-	return openPostgresContext(context.Background(), dbURL)
+	return OpenPostgresContext(context.Background(), dbURL)
 }
 
-func openPostgresContext(ctx context.Context, dbURL string) (*Store, error) {
+// OpenPostgresContext opens PostgreSQL explicitly, accepting a URL or libpq keyword DSN.
+// Unlike OpenContext, it does not interpret a non-URL input as a SQLite path.
+func OpenPostgresContext(ctx context.Context, dbURL string) (*Store, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -396,6 +387,9 @@ func OpenReadOnlyContext(ctx context.Context, dbPath string) (*Store, error) {
 		return openPostgresReadOnly(ctx, dbPath)
 	}
 
+	if !sqliteutil.Available {
+		return nil, errors.New("SQLite requires a build with CGO enabled; use PostgreSQL with this build")
+	}
 	dsn, filesystemPath, err := sqliteutil.QueryOnlyDSN(dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("resolve SQLite database path: %w", err)
@@ -403,7 +397,7 @@ func OpenReadOnlyContext(ctx context.Context, dbPath string) (*Store, error) {
 	if _, err := os.Stat(filesystemPath); err != nil {
 		return nil, fmt.Errorf(
 			"database not found: %s "+
-				"(run 'msgvault init-db' first)", dbPath,
+				"(run 'msgvault migrate' first)", dbPath,
 		)
 	}
 
@@ -692,21 +686,6 @@ func (s *Store) optimizeAfterSync(ctx context.Context) {
 	}
 }
 
-// isSQLiteContention reports errors that mean the database was busy rather
-// than broken: expected on a loaded archive and retried later.
-func isSQLiteContention(err error) bool {
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return true
-	}
-	if sqliteErr, ok := errors.AsType[sqlite3.Error](err); ok {
-		switch sqliteErr.Code {
-		case sqlite3.ErrBusy, sqlite3.ErrLocked, sqlite3.ErrInterrupt:
-			return true
-		}
-	}
-	return false
-}
-
 func logSQLiteOptimizeError(trigger string, err error) {
 	if err == nil {
 		return
@@ -870,14 +849,29 @@ func (s *Store) withTxContext(ctx context.Context, fn func(tx *loggedTx) error) 
 func (s *Store) withReadSnapshotContext(
 	ctx context.Context, fn func(tx *loggedTx) error,
 ) error {
-	return s.withTxOptionsContext(ctx, &sql.TxOptions{
-		Isolation: sql.LevelRepeatableRead,
-		ReadOnly:  true,
-	}, fn)
+	ctx, release, err := s.BeginReadSnapshotContext(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	snapshot, _ := ctx.Value(readSnapshotKey{}).(*readSnapshot)
+	if err := fn(snapshot.tx); err != nil {
+		return err
+	}
+	return ctx.Err()
 }
 
 func (s *Store) withTxOptionsContext(
 	ctx context.Context, opts *sql.TxOptions, fn func(tx *loggedTx) error,
+) error {
+	return s.withTxLockedContext(ctx, opts, nil, fn)
+}
+
+// withTxLockedContext runs preFence after BEGIN and before the sync-generation
+// fence, so locks that must precede sync_runs are taken first.
+func (s *Store) withTxLockedContext(
+	ctx context.Context, opts *sql.TxOptions,
+	preFence func(*loggedTx) error, fn func(tx *loggedTx) error,
 ) error {
 	start := time.Now()
 	slog.Debug("sql tx begin")
@@ -885,6 +879,12 @@ func (s *Store) withTxOptionsContext(
 	if err != nil {
 		slog.Warn("sql tx begin failed", "error", err.Error())
 		return fmt.Errorf("begin tx: %w", err)
+	}
+	if preFence != nil {
+		if err := preFence(tx); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
 	}
 	if s.syncGeneration != nil && (opts == nil || !opts.ReadOnly) {
 		if err := s.fenceSyncGenerationTx(ctx, tx); err != nil {
@@ -999,6 +999,34 @@ func (s *Store) runMaintenance(ctx context.Context, fn func(ctx context.Context,
 	return nil
 }
 
+const messagesAccountIndexDefinition = "ON messages(account_address, account_path)"
+
+// messagesAccountPendingIndexDefinition lets each sync find a source's pending
+// rows without scanning the source; it holds only rows awaiting attribution.
+const messagesAccountPendingIndexDefinition = "ON messages(source_id, id) WHERE " + accountPendingPredicate
+
+// The first SQLite index build can take minutes, so log its start and finish.
+func (s *Store) ensureFromAddressIndex(ctx context.Context) error {
+	const name = "idx_message_recipients_email_from"
+	var exists bool
+	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?)`, name).Scan(&exists); err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+	started := time.Now()
+	slog.Info("building index", slog.String("index", name), slog.String("table", "message_recipients"))
+	if err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+		_, err := tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS `+name+` ON message_recipients(LOWER(email_address), message_id) WHERE recipient_type = 'from'`)
+		return err
+	}); err != nil {
+		return err
+	}
+	slog.Info("built index", slog.String("index", name), slog.Duration("elapsed", time.Since(started)))
+	return nil
+}
+
 // buildLargeIndexesConcurrently creates big-table indexes without blocking
 // writers. CREATE INDEX CONCURRENTLY cannot run inside a transaction (unlike
 // the runMaintenance escape hatch, which only disables the pool-wide
@@ -1058,10 +1086,14 @@ func (s *Store) buildLargeIndexesConcurrently(ctx context.Context) {
 	concurrentIndexes := []struct{ name, definition string }{
 		{"idx_messages_source_id", "ON messages(source_id, id)"},
 		{"idx_messages_reply_to_message_id", "ON messages(reply_to_message_id) WHERE reply_to_message_id IS NOT NULL"},
+		{"idx_messages_account", messagesAccountIndexDefinition},
+		{"idx_messages_account_pending", messagesAccountPendingIndexDefinition},
 		{rfc822CanonicalIndexName, s.dialect.RFC822CanonicalIDIndexDefinition()},
 		{"idx_participants_email_lower", "ON participants(LOWER(email_address))"},
 		{"idx_participant_identifiers_value_lower", "ON participant_identifiers(LOWER(identifier_value))"},
 		{"idx_person_match_scoring_contact_lookup", "ON participant_contact_observations(address_kind, normalized_value, participant_id) WHERE active_until IS NULL AND superseded_at IS NULL"},
+		{"idx_beeper_media_occurrences_source", "ON beeper_media_occurrences(source_type, source_identifier, source_message_id, destination_key)"},
+		{"idx_message_recipients_email_from", "ON message_recipients(LOWER(email_address), message_id) WHERE recipient_type = 'from'"},
 	}
 	for _, index := range concurrentIndexes {
 		if dropErr := dropInvalidIndexConcurrently(ctx, conn, index.name); dropErr != nil {
@@ -1139,6 +1171,11 @@ func queryInChunks[T any](db chunkQuerier, ids []T, prefixArgs []any, queryTempl
 }
 
 func queryInChunksContext[T any](ctx context.Context, db chunkQuerier, ids []T, prefixArgs []any, queryTemplate string, fn func(*loggedRows) error) error {
+	return queryInChunksWithValueExprContext(ctx, db, ids, prefixArgs, queryTemplate, "?", fn)
+}
+
+// valueExpr is trusted SQL with one bind, so indexed lookups can use database case folding.
+func queryInChunksWithValueExprContext[T any](ctx context.Context, db chunkQuerier, ids []T, prefixArgs []any, queryTemplate, valueExpr string, fn func(*loggedRows) error) error {
 	const chunkSize = 500
 	for i := 0; i < len(ids); i += chunkSize {
 		if err := ctx.Err(); err != nil {
@@ -1151,7 +1188,7 @@ func queryInChunksContext[T any](ctx context.Context, db chunkQuerier, ids []T, 
 		placeholders := make([]string, len(chunk))
 		args := slices.Clone(prefixArgs)
 		for j, id := range chunk {
-			placeholders[j] = "?"
+			placeholders[j] = valueExpr
 			args = append(args, id)
 		}
 
@@ -1345,6 +1382,13 @@ func (s *Store) InitSchema() error {
 // for the other ledger-gated migrations: a cancelled one is not marked applied,
 // so the next open runs it again.
 func (s *Store) InitSchemaContext(ctx context.Context) error {
+	version, err := s.SchemaVersionContext(ctx)
+	if err != nil {
+		return fmt.Errorf("read archive schema version: %w", err)
+	}
+	if version > SchemaVersion {
+		return fmt.Errorf("archive schema version %d is newer than supported version %d", version, SchemaVersion)
+	}
 	// A missing messages table identifies a fresh PostgreSQL schema. Build the
 	// canonical Message-ID expression index inline after the schema files create
 	// the empty table: CREATE INDEX is cheap there, while making every fresh test
@@ -1550,6 +1594,21 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 			lastModifiedColumnAdded = true
 		}
 	}
+	// account: and received: filter on the account columns, and each sync
+	// looks up pending rows; created here because the columns arrive through
+	// the legacy migrations above. PostgreSQL builds them concurrently in
+	// buildLargeIndexesConcurrently.
+	if !s.IsPostgreSQL() {
+		for _, index := range []struct{ name, definition string }{
+			{"idx_messages_account", messagesAccountIndexDefinition},
+			{"idx_messages_account_pending", messagesAccountPendingIndexDefinition},
+		} {
+			if _, err := s.db.ExecContext(ctx,
+				`CREATE INDEX IF NOT EXISTS `+index.name+` `+index.definition); err != nil {
+				return fmt.Errorf("create message index %s: %w", index.name, err)
+			}
+		}
+	}
 	if err := s.runOnceMigration(ctx, migrationCardDAVMultipleAccounts, 1, false, s.ensureCardDAVMultiAccountSchema); err != nil {
 		return fmt.Errorf("migrate CardDAV connections: %w", err)
 	}
@@ -1582,6 +1641,31 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	if err := s.ensureVCardSourceResourceIdentityIndexes(ctx); err != nil {
 		return fmt.Errorf("scope vCard identities to source resources: %w", err)
 	}
+	if err := s.runOnceMigration(ctx, migrationCardDAVDisplayNameOwnership, 1, false, func(ctx context.Context) error {
+		return s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+			_, err := tx.ExecContext(ctx, `UPDATE carddav_resources SET owns_display_name = TRUE
+				WHERE person_id IS NOT NULL AND (governance = 'remote' OR EXISTS (
+				  SELECT 1 FROM carddav_publications publication WHERE publication.person_id = carddav_resources.person_id
+				  AND publication.address_book_id = carddav_resources.address_book_id AND publication.href = carddav_resources.href
+				  AND publication.desired = TRUE AND publication.pending_operation IS NULL))
+				AND NOT EXISTS (SELECT 1 FROM carddav_resources other WHERE other.person_id = carddav_resources.person_id
+				  AND other.id <> carddav_resources.id) AND EXISTS (
+					SELECT 1 FROM persons p JOIN person_names n ON n.person_id = p.id
+					WHERE p.id = carddav_resources.person_id AND p.revision = carddav_resources.person_revision_at_bind
+					  AND p.display_name = n.formatted AND n.source = 'carddav_import'
+					  AND n.source_ref = 'carddav:' || CAST(carddav_resources.address_book_id AS TEXT)
+					  AND n.source_resource_uid = carddav_resources.href AND n.name_kind = 'formatted'
+					  AND n.active_until IS NULL AND n.superseded_at IS NULL
+					  AND NOT EXISTS (SELECT 1 FROM person_names other WHERE other.person_id = n.person_id
+						AND other.source = n.source AND other.source_ref = n.source_ref
+						AND other.source_resource_uid = n.source_resource_uid AND other.name_kind = n.name_kind
+						AND other.active_until IS NULL AND other.superseded_at IS NULL AND other.id <> n.id))`)
+			return err
+		})
+	}); err != nil {
+		return fmt.Errorf("migrate CardDAV display-name ownership: %w", err)
+	}
+
 	// Organization domains written before IDNA normalization may still contain
 	// Unicode. Canonicalize them before fact resolution compares incoming ASCII
 	// references with persisted roots and identifiers.
@@ -1906,6 +1990,10 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		}); err != nil {
 			return fmt.Errorf("create deletion timestamp indexes: %w", err)
 		}
+
+		if err := s.ensureFromAddressIndex(ctx); err != nil {
+			return fmt.Errorf("create identity From-envelope index: %w", err)
+		}
 	}
 
 	// Indexes over attachment thumbnail hash/path serve pack enumeration and
@@ -2191,6 +2279,10 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	// the archive's actual data distribution.
 	s.optimizeSQLiteBestEffort(ctx, "schema initialization")
 
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO archive_metadata (key, value)
+		VALUES ('schema_version', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value`, strconv.Itoa(SchemaVersion)); err != nil {
+		return fmt.Errorf("record completed archive schema version: %w", err)
+	}
 	return nil
 }
 
@@ -2543,6 +2635,12 @@ func (s *Store) NeedsFTSBackfill() bool {
 	}
 	return s.dialect.FTSNeedsBackfill(s.db.DB)
 }
+func (s *Store) NeedsFTSBackfillContext(ctx context.Context) (bool, error) {
+	if !s.fts5Available {
+		return false, nil
+	}
+	return s.dialect.FTSNeedsBackfillContext(ctx, s.db.DB)
+}
 
 // NeedsFTSBackfillQuick is the cheap, hot-path-safe form of NeedsFTSBackfill:
 // true means a backfill is certainly needed; false may miss interior index
@@ -2595,10 +2693,10 @@ func (s *Store) GetStatsContext(ctx context.Context) (*Stats, error) {
 }
 
 // GetStatsForScope returns statistics scoped to the given source IDs.
-// When sourceIDs is nil or empty, returns global counts.
+// A nil slice returns global counts; an empty non-nil slice matches no source.
 // All message-derived counts (threads, attachments, labels) exclude
 // dedup-hidden and source-deleted messages via LiveMessagesWhere.
-// DatabaseSize is always the global file size — it cannot be decomposed per source.
+// DatabaseSize is global and omitted within a read snapshot.
 func (s *Store) GetStatsForScope(sourceIDs []int64) (*Stats, error) {
 	return s.GetStatsForScopeContext(context.Background(), sourceIDs)
 }
@@ -2606,6 +2704,9 @@ func (s *Store) GetStatsForScope(sourceIDs []int64) (*Stats, error) {
 // GetStatsForScopeContext is the context-aware form of GetStatsForScope.
 func (s *Store) GetStatsForScopeContext(ctx context.Context, sourceIDs []int64) (*Stats, error) {
 	stats := &Stats{}
+	if sourceIDs != nil && len(sourceIDs) == 0 {
+		return stats, nil
+	}
 
 	var queries []struct {
 		query string
@@ -2613,7 +2714,7 @@ func (s *Store) GetStatsForScopeContext(ctx context.Context, sourceIDs []int64) 
 		dest  *int64
 	}
 
-	if len(sourceIDs) == 0 {
+	if sourceIDs == nil {
 		// Unscoped: global catalog counts, matching pre-slice-3 semantics.
 		// All message-linked counts apply LiveMessagesWhere so dedup-hidden
 		// and source-deleted rows aren't reported as live rows.
@@ -2661,9 +2762,9 @@ func (s *Store) GetStatsForScopeContext(ctx context.Context, sourceIDs []int64) 
 		}
 	} else {
 		// Build the IN (?, ?, ...) placeholder list. TrimSuffix is panic-safe
-		// for any len(sourceIDs); the outer guard already routes empty slices
-		// to the unscoped branch, but this avoids a negative slice index if
-		// the guard is ever refactored.
+		// for any len(sourceIDs); the early return already handles empty
+		// slices, but this avoids a negative slice index if that guard is
+		// ever refactored.
 		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(sourceIDs)), ",")
 
 		inClause := "source_id IN (" + placeholders + ")"
@@ -2737,12 +2838,13 @@ func (s *Store) GetStatsForScopeContext(ctx context.Context, sourceIDs []int64) 
 		}
 	}
 
-	// DatabaseSize: logical main-database page allocation for SQLite,
-	// pg_database_size() for PostgreSQL.
-	if size, err := s.dialect.DatabaseSize(ctx, s.db.DB, s.dbPath); err == nil {
-		stats.DatabaseSize = size
-	} else if ctxErr := ctx.Err(); ctxErr != nil {
-		return nil, ctxErr
+	// Scoped snapshots omit global size without acquiring a second connection.
+	if snapshot, ok := ctx.Value(readSnapshotKey{}).(*readSnapshot); !ok || snapshot.db != s.db.DB {
+		if size, err := s.dialect.DatabaseSize(ctx, s.db.DB, s.dbPath); err == nil {
+			stats.DatabaseSize = size
+		} else if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
 	}
 
 	return stats, nil

@@ -278,6 +278,13 @@ func (r *propertyRender) telephoneForV4() {
 	if r.valueType == valueTypeText || IsURIValue(value) {
 		return
 	}
+	if r.source != Version40 {
+		decoded, err := UnescapeText(value)
+		if err != nil {
+			return
+		}
+		value = decoded
+	}
 	uri, ok := telURIFromLegacyNumber(value)
 	if !ok {
 		r.valueType = valueTypeText
@@ -779,6 +786,17 @@ func isInlineMediaName(name string) bool {
 	default:
 		return false
 	}
+}
+
+// IsInlineMedia reports whether a PHOTO, LOGO, SOUND, or KEY property carries
+// its bytes inline, as a data URI or a base64 transfer encoding.
+func IsInlineMedia(property Property) bool {
+	if !isInlineMediaName(property.Name) {
+		return false
+	}
+	value := strings.TrimLeft(property.RawValue, " 	")
+	return len(value) >= 5 && strings.EqualFold(value[:5], "data:") ||
+		propertyIsBase64Encoded(property)
 }
 
 func propertyIsBase64Encoded(property Property) bool {

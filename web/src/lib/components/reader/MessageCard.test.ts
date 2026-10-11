@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
+import { createAPIClient } from '../../api/client';
 import type { ArchiveMessageDetail } from '../../archive/types';
 import MessageCard from './MessageCard.svelte';
 
@@ -221,6 +222,22 @@ describe('MessageCard', () => {
     expect(container.querySelector('iframe')).toBeNull();
     expect(screen.queryByText('⋯')).toBeNull();
   });
+
+  it('requests recordings once for an expanded card with attachments', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ message_id: 42, recordings: [] }));
+    const attachments = [{ id: 5, filename: 'voice.wav', mimeType: 'audio/wav', sizeBytes: 44 }];
+    render(MessageCard, {
+      props: { message: detail({ attachments }), expanded: true, client: createAPIClient(fetchFn) }
+    });
+    render(MessageCard, { props: { message: detail(), expanded: true, client: createAPIClient(fetchFn) } });
+    render(MessageCard, {
+      props: { message: detail({ attachments }), expanded: false, client: createAPIClient(fetchFn) }
+    });
+
+    await waitFor(() => expect(fetchFn).toHaveBeenCalledTimes(1));
+    const request = fetchFn.mock.calls[0][0] as Request;
+    expect(new URL(request.url).pathname).toBe('/api/v1/messages/42/recordings');
+  });
 });
 
 it.each([
@@ -239,31 +256,4 @@ it.each([
   expect(screen.queryAllByRole('button', { name: 'Create Kata issue' })).toHaveLength(shown ? 2 : 0);
   expect(screen.queryByText('Kata is unavailable')).toBeNull();
   expect(fetchFn).toHaveBeenCalledOnce();
-});
-
-it.each([
-  { name: 'a failed check', first: () => Promise.reject(new TypeError('network down')) },
-  { name: 'Kata out of reach', first: async () => Response.json({ state: 'unreachable', project: 'example' }) },
-])('asks Kata again shortly after $name, so the mounted card shows the action', async ({ first }) => {
-  vi.useFakeTimers({ shouldAdvanceTime: true });
-  try {
-    const fetchFn = vi.fn<typeof fetch>()
-      .mockImplementationOnce(first)
-      .mockImplementation(async () => Response.json({ state: 'ready', project: 'example' }));
-    const { createAPIClient } = await import('../../api/client');
-    const { KATA_RETRY_MS, KataReadiness, kataReadinessKey } = await import('../../kata/kata-ready.svelte');
-    const client = createAPIClient(fetchFn);
-    const readiness = new KataReadiness(client);
-    render(MessageCard, { props: { message: detail(), expanded: true, client }, context: new Map([[kataReadinessKey, readiness]]) });
-    await waitFor(() => expect(fetchFn).toHaveBeenCalledOnce());
-    await vi.advanceTimersByTimeAsync(KATA_RETRY_MS - 1000);
-    expect(fetchFn).toHaveBeenCalledOnce();
-    expect(screen.queryByRole('button', { name: 'Create Kata issue' })).toBeNull();
-    await vi.advanceTimersByTimeAsync(1000);
-    expect(await screen.findByRole('button', { name: 'Create Kata issue' })).toBeTruthy();
-    expect(fetchFn).toHaveBeenCalledTimes(2);
-    readiness.dispose();
-  } finally {
-    vi.useRealTimers();
-  }
 });

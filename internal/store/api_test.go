@@ -219,7 +219,7 @@ func TestContextAwareReadsHonorCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, _, err = st.ListMessagesContext(ctx, 0, 10)
+	_, _, err = st.ListMessagesContext(ctx, 0, 10, nil)
 	require.ErrorIs(err, context.Canceled, "ListMessagesContext must honor a cancelled context")
 
 	_, err = st.GetMessageContext(ctx, msgID)
@@ -288,6 +288,7 @@ func TestGetMessageCcBcc(t *testing.T) {
 	m, err := st.GetMessage(msgID)
 	require.NoError(err, "GetMessage")
 	assert.Equal(source.ID, m.SourceID, "SourceID")
+	assert.Equal("Thread", m.ConversationTitle, "ConversationTitle")
 	require.Len(m.To, 1)
 	assert.Equal("to@example.com", m.To[0], "To[0]")
 	gotCc := slices.Clone(m.Cc)

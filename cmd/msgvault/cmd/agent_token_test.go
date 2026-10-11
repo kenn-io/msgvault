@@ -386,7 +386,7 @@ func TestDelegatedGmailDraftGetThroughAgentCLI(t *testing.T) {
 	owner, err := daemonclient.New(daemonclient.Config{URL: server.URL, APIKey: "owner-test-key", AllowInsecure: true})
 	require.NoError(err)
 	t.Cleanup(func() { _ = owner.Close() })
-	grant, err := owner.IssueAgentToken(t.Context(), "test agent", []string{"draft.create"}, []int64{fixture.source.ID}, nil)
+	grant, err := owner.IssueAgentToken(t.Context(), "test agent", []string{"draft.create"}, []int64{fixture.source.ID}, nil, time.Time{})
 	require.NoError(err)
 	tokenFile := filepath.Join(t.TempDir(), "agent.token")
 	require.NoError(os.WriteFile(tokenFile, []byte(grant.Secret+"\n"), 0o600))
@@ -538,7 +538,7 @@ func TestOpenAgentDelegatedStore(t *testing.T) {
 	})
 	require.NoError(err)
 	t.Cleanup(func() { _ = owner.Close() })
-	grant, err := owner.IssueAgentToken(t.Context(), "test agent", []string{"draft.create"}, []int64{source.ID}, nil)
+	grant, err := owner.IssueAgentToken(t.Context(), "test agent", []string{"draft.create"}, []int64{source.ID}, nil, time.Time{})
 	require.NoError(err)
 
 	// Write the token to a temp file.

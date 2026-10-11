@@ -14,7 +14,7 @@ import (
 
 type messageDetailReader interface {
 	GetMessage(ctx context.Context, id int64) (*MessageDetail, error)
-	GetMessageBySourceID(ctx context.Context, sourceMessageID string) (*MessageDetail, error)
+	GetMessageBySourceID(ctx context.Context, sourceMessageID string, sourceIDs []int64) (*MessageDetail, error)
 }
 
 func seedMessageDetailSenderFixture(t *testing.T) (string, *sql.DB) {
@@ -62,7 +62,7 @@ func assertMessageDetailSenderFallback(t *testing.T, reader messageDetailReader)
 	require.NotNil(t, byID)
 	assert.Equal(t, []Address{{Email: "sender@example.com", Name: "Test Sender"}}, byID.From)
 
-	bySourceID, err := reader.GetMessageBySourceID(ctx, "sender-only")
+	bySourceID, err := reader.GetMessageBySourceID(ctx, "sender-only", nil)
 	require.NoError(t, err, "GetMessageBySourceID sender-only")
 	require.NotNil(t, bySourceID)
 	assert.Equal(t, byID.From, bySourceID.From)
@@ -123,7 +123,7 @@ func TestMessageDetailExposesRFCMessageID(t *testing.T) {
 				if ref == "numeric" {
 					msg, err = reader.GetMessage(t.Context(), 1)
 				} else {
-					msg, err = reader.GetMessageBySourceID(t.Context(), "sender-only")
+					msg, err = reader.GetMessageBySourceID(t.Context(), "sender-only", nil)
 				}
 				requirements.NoError(err)
 				requirements.NotNil(msg)

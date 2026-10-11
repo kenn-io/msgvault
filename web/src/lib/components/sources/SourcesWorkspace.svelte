@@ -426,7 +426,7 @@
               <span>On-demand API source</span>
             {:else}
               {@const reason = source.sync_unavailable_reason ?? 'sync_unavailable'}
-              <span class="reason" title={reason}>{syncUnavailableLabel(reason)}</span>
+              <span class="reason" title={reason}>{source.scheduler_queued && !source.active_sync ? 'Sync queued' : syncUnavailableLabel(reason)}</span>
             {/if}
           </td>
         </tr>

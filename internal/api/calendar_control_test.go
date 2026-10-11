@@ -49,7 +49,7 @@ func TestCalendarControlDelegationAndStrictJSON(t *testing.T) {
 	backend := &controlTestStore{mockStore: &mockStore{stats: &StoreStats{}}}
 	srv := NewServer(&config.Config{Server: config.ServerConfig{APIKey: "synthetic-owner-key", AgentAccess: true}}, backend, nil, testLogger())
 	srv.agentGrants = agentgrant.NewRegistry()
-	_, secret, issued, err := srv.agentGrants.Issue("calendar", []agentgrant.Permission{agentgrant.PermissionCalendarWrite}, []agentgrant.SourceRef{{ID: 1, Type: "gcal", Identifier: "person@example.com/team@example.com"}})
+	_, secret, issued, err := srv.agentGrants.Issue("calendar", []agentgrant.Permission{agentgrant.PermissionCalendarWrite}, []agentgrant.SourceRef{{ID: 1, Type: "gcal", Identifier: "person@example.com/team@example.com"}}, time.Time{})
 	requirements.NoError(err)
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/calendar/control", strings.NewReader(controlTestBody))
 	request.Header.Set("Content-Type", "application/json")

@@ -15,8 +15,10 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	"go.kenn.io/docbank/document/mistral"
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/documentindex"
 	"go.kenn.io/msgvault/internal/peoplesweep"
 	"go.kenn.io/msgvault/internal/providercredentials"
 	"go.kenn.io/msgvault/internal/store"
@@ -267,9 +269,13 @@ func setupDocumentConsent(ctx context.Context, cfg *config.Config, st *store.Sto
 	if !cfg.Attachments.Documents.Enabled {
 		return false
 	}
-	manifest, err := loadDocumentCapabilityManifest(setupMistralManifestPath(cfg))
-	if err != nil {
-		return false
+	var manifest mistral.CapabilityManifest
+	if cfg.Attachments.Documents.Provider == documentindex.ProviderMistral {
+		var err error
+		manifest, err = loadDocumentCapabilityManifest(setupMistralManifestPath(cfg))
+		if err != nil {
+			return false
+		}
 	}
 	_, profile, err := documentProfileForConfig(&cfg.Attachments.Documents, manifest)
 	if err != nil {
@@ -497,6 +503,25 @@ func visualProbeCommand(cfg *config.Config) string {
 func documentsLane(cfg *config.Config, env setupEnvironment) laneStatus {
 	lane := laneStatus{Lane: laneDocuments, Label: "Document attachments (extraction and lexical search)"}
 	documents := cfg.Attachments.Documents
+	if documents.Provider == documentindex.ProviderDocling {
+		lane.Provider, lane.Model = documents.Provider, documents.Model
+		lane.Reason = fmt.Sprintf("operator-controlled endpoint %s; retention=%s, training=%s; uploads are manual-only", documents.Endpoint, documents.RetentionPosture, documents.TrainingPosture)
+		if !documents.Enabled {
+			lane.State = laneStateOff
+			lane.Reason += "; set [attachments.documents] enabled = true"
+			return lane
+		}
+		lane.State = laneStateOn
+		lane.Consent = env.consentState(func(s setupConsentState) bool { return s.Documents })
+		if lane.Consent != consentActive {
+			lane.State = laneStatePending
+			lane.Next = []string{"msgvault documents consent-docling --yes", "msgvault documents build --yes"}
+		}
+		if documents.APIKeyEnv != "" {
+			env.reportMissingCredential(&lane, documents.APIKeyEnv)
+		}
+		return lane
+	}
 	manifest := setupMistralManifestPath(cfg)
 	if documents.Enabled {
 		lane.State = laneStateOn
@@ -529,7 +554,7 @@ func documentsLane(cfg *config.Config, env setupEnvironment) laneStatus {
 		lane.Next = []string{"msgvault setup providers"}
 		return lane
 	}
-	lane.Reason = "needs " + documents.APIKeyEnv + " (Mistral is the only document provider)"
+	lane.Reason = "needs " + documents.APIKeyEnv + "; or configure a self-hosted Docling endpoint"
 	return lane
 }
 

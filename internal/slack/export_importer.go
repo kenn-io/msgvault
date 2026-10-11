@@ -131,7 +131,7 @@ func ImportSlackdump(
 		AttachmentsDir: opts.AttachmentsDir,
 		Progress:       opts.Progress,
 	}
-	importer.sourceID = source.ID
+	importer.sourceID, importer.ownerID = source.ID, me.ID
 	defer func() {
 		if err != nil {
 			_ = scopedStore.FailSyncWithCheckpoint(syncID, err.Error(), slackdumpCheckpoint(summary))
@@ -156,7 +156,7 @@ func ImportSlackdump(
 
 		var toRecipients []messageRecipient
 		var participantCount int
-		toRecipients, participantCount, err = ensureSlackdumpMembership(
+		toRecipients, participantCount, err = ensureSlackdumpMembership(ctx,
 			scopedStore, importer.res, conversationID, conversation, me.ID, opts.MediaPolicy,
 		)
 		if err != nil {
@@ -273,7 +273,7 @@ func resolveSlackdumpIdentity(users []User, identity string) (User, error) {
 	}
 }
 
-func ensureSlackdumpMembership(
+func ensureSlackdumpMembership(ctx context.Context,
 	st *store.Store,
 	resolver *participantResolver,
 	conversationID int64,
@@ -307,7 +307,7 @@ func ensureSlackdumpMembership(
 			continue
 		}
 		seen[userID] = struct{}{}
-		participantID, err := resolver.resolveID(userID)
+		participantID, err := resolver.resolveID(ctx, userID)
 		if err != nil {
 			return nil, 0, err
 		}

@@ -16,8 +16,8 @@ import (
 // operation gate without a matching End call. A crashed or hung backup
 // subprocess would otherwise wedge the daemon's gate forever; the watchdog
 // auto-releases the gate and logs at error level so the daemon self-heals.
-// Package var so tests can shorten it.
-var backupFreezeWatchdogTimeout = 60 * time.Second
+// Allow Kit's 51 five-second checkpoint busy waits plus retry backoff and cleanup.
+const backupFreezeWatchdogTimeout = 5 * time.Minute
 
 const (
 	backupFreezeBeginPath = "/api/v1/backup/freeze/begin"
@@ -95,7 +95,7 @@ type backupFreezeEndResponse struct{}
 // caller must present that token to End. A second Begin while a freeze is
 // already active is rejected without touching the gate.
 func (s *Server) handleBackupFreezeBegin(w http.ResponseWriter, r *http.Request) {
-	if !isSameHostRequest(r) || !s.apiRequestAuthorized(r) {
+	if s.requestAuthentication(r).Mode != AuthModeCaller && (!isSameHostRequest(r) || !s.apiRequestAuthorized(r)) {
 		writeError(w, http.StatusNotFound, "not_found", "No route matches "+r.Method+" "+r.URL.Path)
 		return
 	}
@@ -142,7 +142,7 @@ func (s *Server) handleBackupFreezeBegin(w http.ResponseWriter, r *http.Request)
 // window the watchdog already auto-released) is rejected: the caller's
 // backup must fail rather than silently proceed unfrozen.
 func (s *Server) handleBackupFreezeEnd(w http.ResponseWriter, r *http.Request) {
-	if !isSameHostRequest(r) || !s.apiRequestAuthorized(r) {
+	if s.requestAuthentication(r).Mode != AuthModeCaller && (!isSameHostRequest(r) || !s.apiRequestAuthorized(r)) {
 		writeError(w, http.StatusNotFound, "not_found", "No route matches "+r.Method+" "+r.URL.Path)
 		return
 	}

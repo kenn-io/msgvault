@@ -297,11 +297,15 @@
   // shape): only re-focus the timeline when a pane was actually open, so
   // this stays a no-op when called defensively (e.g. from selectListRow).
   async function closeReadingPane(): Promise<void> {
+    if (clearReadingPane()) await focusTimelinePane();
+  }
+
+  function clearReadingPane(): boolean {
     const wasOpen = selection !== undefined;
     selection = undefined;
     conversationAnchorId = undefined;
     conversationBounds = undefined;
-    if (wasOpen) await focusTimelinePane();
+    return wasOpen;
   }
 
   function selectListRow(nextTarget: string): void {
@@ -420,9 +424,7 @@
   $effect(() => {
     if (target === previousTarget) return;
     previousTarget = target;
-    selection = undefined;
-    conversationAnchorId = undefined;
-    conversationBounds = undefined;
+    clearReadingPane();
   });
 
   async function closeDrawer(): Promise<void> {
@@ -449,6 +451,21 @@
       ? localDayBoundsUTC(row.first_at ?? row.occurred_at)
       : undefined;
   }
+
+  // Focus stays on the calendar control the person just used.
+  function selectCalendarDate(date: string | null): void {
+    clearReadingPane();
+    if (filesOpen) onFilesToggle(false);
+    void controller.selectTimelineDay(date
+      ? { date, ...localDayBoundsUTC(`${date}T00:00:00`) }
+      : null);
+  }
+
+  // The day filters only the message timeline, so Files never shows a day.
+  $effect(() => {
+    if (!filesOpen || !controller.timelineDay) return;
+    untrack(() => { void controller.selectTimelineDay(null); });
+  });
 
   function editableTarget(value: EventTarget | null): boolean {
     const element = value as HTMLElement | null;
@@ -555,7 +572,12 @@
                     year={controller.relationshipCalendarYear}
                     firstYear={controller.relationshipCalendarFirstYear}
                     currentYear={controller.relationshipCalendarCurrentYear}
-                    onYearChange={(year) => { void controller.loadRelationshipYear(year); }}
+                    selectedDate={controller.timelineDay?.date}
+                    onDateChange={selectCalendarDate}
+                    onYearChange={(year) => {
+                      if (controller.timelineDay) selectCalendarDate(null);
+                      void controller.loadRelationshipYear(year);
+                    }}
                   />
                 {/if}
                 {#if meetingContext?.scope}
@@ -595,6 +617,7 @@
                     hasMore={Boolean(controller.timelineCursor)}
                     error={controller.timelineError}
                     restartNotice={controller.timelineRestartNotice}
+                    daySelected={controller.timelineDay !== null}
                     selectedKey={selectedRowKey}
                     onRowOpen={openTimelineRow}
                     onLoadMore={() => { void controller.loadMoreTimeline(); }}

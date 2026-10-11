@@ -348,7 +348,15 @@ import (
 // 3.4.0 adds Kata issues that quote exact message and file evidence, the
 // microsoft CardDAV provider, microsoft_authorization_required and
 // microsoft_contact_too_large.
-const APISchemaVersion = "3.4.0"
+// 3.5.0 adds the account: and received: search operators.
+// 3.6.0 adds GET /api/v1/messages/{id}/recordings for live audio and transcript coverage.
+// 3.7.0 adds scoped lexical transcript search at GET /api/v1/media/search.
+// 3.8.0 adds reader credentials, HTTP 409 for ambiguous raw references, and HTTP 413 for remote read limits.
+// 3.9.0 adds source-scoped agent read permissions, optional expires_at, and GET /api/v1/agent-tokens/self.
+// 3.10.0 adds person UID lookup and exposes current vCard UIDs and CardDAV
+// bindings on person and directory responses.
+// 3.11.0 adds structured account scopes, the explore account filter, the virtual account catalog on /cli/accounts, GET /api/v1/media/search/status, participant_id to media search, source filename, title and date to media search results, and optional conversation_title to message detail.
+const APISchemaVersion = "3.11.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -1001,7 +1009,7 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 		}
 	}
 
-	for _, schemaName := range []string{"FileSearchRow", "FileMetadataResponse", "PersonFileSearchRow"} {
+	for _, schemaName := range []string{"FileSearchRow", "FileMetadataResponse", "PersonFileSearchRow", "MessageRecording"} {
 		if schema := schemas[schemaName]; schema != nil {
 			for _, property := range []string{"filename", "mime_type"} {
 				if schema.Properties[property] != nil {
@@ -1112,6 +1120,16 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 			schema.Extensions = map[string]any{}
 		}
 		schema.Extensions["x-enum-names"] = enumNames
+	}
+	if recording := schemas["MessageRecording"]; recording != nil {
+		setEnumNames(recording.Properties["state"], qualifiedEnumNames("MessageRecordingState",
+			[]string{recordingReady, recordingProcessing, recordingMissing, recordingFailed, recordingUnsupported, recordingMediaMissing, recordingUnavailable}))
+	}
+	if transcript := schemas["MessageTranscript"]; transcript != nil {
+		setEnumNames(transcript.Properties["origin"], qualifiedEnumNames("MessageTranscriptOrigin", []string{"supplied", "generated"}))
+	}
+	if result := schemas["MediaSearchResult"]; result != nil {
+		setEnumNames(result.Properties["origin"], qualifiedEnumNames("MediaSearchResultOrigin", []string{"supplied", "generated"}))
 	}
 	if request := schemas["CalendarRequest"]; request != nil {
 		for property, names := range map[string][]any{
@@ -1251,7 +1269,7 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 			"readiness": {"ExploreCacheUnavailableResponseReadinessAbsent", "ExploreCacheUnavailableResponseReadinessBuilding", "ExploreCacheUnavailableResponseReadinessInterrupted", "ExploreCacheUnavailableResponseReadinessStaleSchema", "ExploreCacheUnavailableResponseReadinessDrifted"},
 		},
 		"ExploreFilter": {
-			"dimension": {"ExploreFilterDimensionSource", "ExploreFilterDimensionParticipant", "ExploreFilterDimensionDomain", "ExploreFilterDimensionMessageType", "ExploreFilterDimensionMailingList", "ExploreFilterDimensionAfter", "ExploreFilterDimensionBefore", "ExploreFilterDimensionDeletion", "ExploreFilterDimensionIdentity"},
+			"dimension": {"ExploreFilterDimensionSource", "ExploreFilterDimensionParticipant", "ExploreFilterDimensionDomain", "ExploreFilterDimensionMessageType", "ExploreFilterDimensionMailingList", "ExploreFilterDimensionAfter", "ExploreFilterDimensionBefore", "ExploreFilterDimensionDeletion", "ExploreFilterDimensionIdentity", "ExploreFilterDimensionAccount"},
 		},
 		"ExploreGroupSort": {
 			"direction": {"ExploreGroupSortDirectionAsc", "ExploreGroupSortDirectionDesc"},

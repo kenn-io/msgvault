@@ -8,6 +8,10 @@ export type GetAggregatesParams = {
    */
   view_type?: string;
   /**
+   * JSON list of account scopes that intersect, for structured clients
+   */
+  account_scopes?: string;
+  /**
    * Sort field: count, size, attachment_size, or name
    */
   sort?: string;

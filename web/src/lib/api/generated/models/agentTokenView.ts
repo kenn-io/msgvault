@@ -5,6 +5,7 @@ import type { AgentTokenSourceView } from "./agentTokenSourceView";
 
 export interface AgentTokenView {
   created_at: string;
+  expires_at?: string;
   id: string;
   label: string;
   permissions: string[];

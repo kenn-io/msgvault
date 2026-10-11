@@ -30,6 +30,23 @@ afterEach(() => {
 });
 
 describe('SourcesWorkspace', () => {
+  it('shows a scheduler handoff as queued without concealing a real failure', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ sources: [
+      source({ display_name: 'Resuming archive', scheduled: true, scheduler_queued: true,
+        can_sync: false, sync_unavailable_reason: 'sync_already_running', latest_sync: run('cancelled', 5) }),
+      source({ id: 2, display_name: 'Broken archive', scheduled: true, scheduler_queued: true,
+        can_sync: false, sync_unavailable_reason: 'sync_already_running',
+        latest_sync: run('failed', 0, { errors_count: 1, error_message: 'Channel unavailable' }) })
+    ] }));
+    render(SourcesWorkspace, { client: createAPIClient(fetchFn) });
+    expect(await screen.findByText('Queued')).toBeDefined();
+    expect(screen.getByText('Failed')).toBeDefined();
+    expect(screen.getAllByText('Sync queued')).toHaveLength(2);
+    expect(screen.queryByText('Sync in progress')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Show details for Resuming archive' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Show details for Broken archive' })).toBeDefined();
+  });
+
   it('opens source-sync history from Sync history', async () => {
     const onOpenOperations = vi.fn();
     render(SourcesWorkspace, {

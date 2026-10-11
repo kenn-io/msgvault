@@ -430,7 +430,7 @@ func TestDiscoverCatalogFatalArchiveFailuresPreserveOnlyFailedWatermarks(t *test
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			if tt.cancel {
-				time.AfterFunc(20*time.Millisecond, cancel)
+				time.AfterFunc(20*time.Millisecond, cancel) //nolint:kennlint // the cancellation is the expected result; the handler blocks until it arrives
 			}
 			prior := map[string]ThreadCatalogState{
 				"301": {PublicArchiveWatermark: "2026-07-17T00:00:00Z", PrivateArchiveWatermark: "2026-07-17T00:00:00Z"},

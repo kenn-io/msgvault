@@ -49,7 +49,8 @@ const (
 	// scopeOfflineAccess is the OAuth scope requesting a refresh token.
 	scopeOfflineAccess = "offline_access"
 	// scopeEmail is the OpenID "email" scope requested alongside the IMAP scope.
-	scopeEmail = "email"
+	scopeEmail   = "email"
+	scopeProfile = "profile"
 	// logKeyEmail is the structured-log field key carrying the account email.
 	logKeyEmail = "email"
 )
@@ -61,7 +62,7 @@ func scopesForEmail(email string) []string {
 	if isPersonalMicrosoftAccount(email) {
 		imapScope = ScopeIMAPPersonal
 	}
-	return []string{imapScope, scopeOfflineAccess, "openid", scopeEmail}
+	return []string{imapScope, scopeOfflineAccess, "openid", scopeEmail, scopeProfile}
 }
 
 // isPersonalMicrosoftAccount returns true for common consumer Microsoft domains.
@@ -117,6 +118,8 @@ type Manager struct {
 	logger      *slog.Logger
 	// deviceCode selects the device-code flow instead of the browser flow.
 	deviceCode bool
+	// signInName is the Microsoft sign-in name when it differs from the mailbox.
+	signInName string
 	// authorityURL overrides the Microsoft identity host for testing.
 	authorityURL string
 
@@ -149,6 +152,13 @@ func (m *Manager) UseDeviceCode() {
 	m.deviceCode = true
 }
 
+// UseSignInName accepts name as the signed-in account for the mailbox, for
+// accounts whose sign-in name differs from their address. It is also the
+// browser login hint.
+func (m *Manager) UseSignInName(name string) {
+	m.signInName = name
+}
+
 func (m *Manager) oauthConfig(scopes []string) *oauth2.Config {
 	return m.oauthConfigWithTenant(m.tenantID, scopes)
 }
@@ -172,14 +182,18 @@ func (m *Manager) oauthConfigWithTenant(tenantID string, scopes []string) *oauth
 
 func (m *Manager) Authorize(ctx context.Context, email string) error {
 	scopes := scopesForEmail(email)
+	hint := email
+	if m.signInName != "" {
+		hint = m.signInName
+	}
 	flow := m.doBrowserFlow
-	token, nonce, err := flow(ctx, email, scopes)
+	token, nonce, err := flow(ctx, hint, scopes)
 	if err != nil {
 		return err
 	}
 	_, claims, err := m.resolveTokenEmail(ctx, email, token, nonce)
 	if err != nil {
-		return err
+		return m.signInHint(email, claims, err)
 	}
 
 	// Correct IMAP scope if the domain-based guess was wrong.
@@ -195,14 +209,14 @@ func (m *Manager) Authorize(ctx context.Context, email string) error {
 				"from", scopes[0],
 				"to", correctIMAPScope,
 			)
-			scopes = []string{correctIMAPScope, scopeOfflineAccess, "openid", scopeEmail}
-			token, nonce, err = flow(ctx, email, scopes)
+			scopes = []string{correctIMAPScope, scopeOfflineAccess, "openid", scopeEmail, scopeProfile}
+			token, nonce, err = flow(ctx, hint, scopes)
 			if err != nil {
 				return fmt.Errorf("re-authorize with correct IMAP scope: %w", err)
 			}
 			_, claims, err = m.resolveTokenEmail(ctx, email, token, nonce)
 			if err != nil {
-				return err
+				return m.signInHint(email, claims, err)
 			}
 		}
 	}
@@ -212,6 +226,20 @@ func (m *Manager) Authorize(ctx context.Context, email string) error {
 		tenantID = claims.TenantID
 	}
 	return m.saveToken(email, token, scopes, tenantID)
+}
+
+// signInHint explains a mismatch that came from the sign-in name, since that
+// name may legitimately differ from the mailbox.
+func (m *Manager) signInHint(email string, claims *idTokenClaims, err error) error {
+	var mismatch *TokenMismatchError
+	if !errors.As(err, &mismatch) || claims == nil || claims.Email != "" {
+		return err
+	}
+	if m.signInName != "" {
+		return fmt.Errorf("%w; that account is not the --sign-in name %s either", err, m.signInName)
+	}
+	return fmt.Errorf("%w; sign in as %s, or if %s is your own sign-in name for that mailbox, pass it with --sign-in",
+		err, email, mismatch.Actual)
 }
 
 // doBrowserFlow dispatches to browserFlowFn (test hook), the device-code flow,
@@ -626,6 +654,7 @@ func generateSelfSignedCert(hosts []string) (tls.Certificate, error) {
 // resolveTokenEmail verifies the ID token and validates the authenticated
 // email matches the expected address. Uses OIDC signature/issuer/audience
 // validation in production, or verifyIDTokenFn in tests.
+// Claims are returned only after ID token verification succeeds.
 func (m *Manager) resolveTokenEmail(ctx context.Context, email string, token *oauth2.Token, nonce string) (string, *idTokenClaims, error) {
 	rawIDToken, _ := token.Extra("id_token").(string)
 	if rawIDToken == "" {
@@ -651,20 +680,12 @@ func (m *Manager) resolveTokenEmail(ctx context.Context, email string, token *oa
 		return claims.Email, claims, nil
 	}
 
-	// Fall back to "preferred_username". In Entra/O365 setups the UPN
-	// (sign-in identifier) can differ from the SMTP mailbox address, so a
-	// mismatch is not necessarily an error — trust the user-entered email as
-	// the mailbox address and log a warning. If the address is wrong, IMAP
-	// authentication will fail with an explicit error pointing back here.
-	if claims.PreferredUsername != "" {
-		if !strings.EqualFold(claims.PreferredUsername, email) {
-			m.logger.Warn("Microsoft sign-in UPN differs from the address you specified — "+
-				"proceeding with your address as the IMAP mailbox; "+
-				"if sync fails with an authentication error, re-run 'add-o365' "+
-				"using the UPN shown below as the email argument",
-				"specified", email,
-				"upn", claims.PreferredUsername,
-			)
+	// Fall back to "preferred_username". In Entra/O365 setups the UPN can
+	// differ from the mailbox address, so a differing UPN is accepted only
+	// when the user named it as their sign-in.
+	if upn := claims.PreferredUsername; upn != "" {
+		if !strings.EqualFold(upn, email) && !strings.EqualFold(upn, m.signInName) {
+			return "", claims, &TokenMismatchError{Expected: email, Actual: upn}
 		}
 		return email, claims, nil
 	}

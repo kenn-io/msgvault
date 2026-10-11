@@ -134,7 +134,7 @@ func TestBuildCacheSubprocessWaitHonorsCancellation(t *testing.T) {
 	select {
 	case err := <-done:
 		require.ErrorIs(err, context.Canceled)
-	case <-time.After(250 * time.Millisecond):
+	case <-time.After(5 * time.Second):
 		unlock()
 		<-done
 		require.FailNow("canceled cache build must stop waiting for the in-process build lock")

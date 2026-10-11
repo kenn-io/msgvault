@@ -14,6 +14,7 @@
     error?: string | null;
     restartNotice?: string | null;
     selectedKey?: string | null;
+    daySelected?: boolean;
     onRowOpen: (row: RelationshipTimelineRow) => void;
     onLoadMore?: () => void;
   }
@@ -30,6 +31,7 @@
     error = null,
     restartNotice = null,
     selectedKey = null,
+    daySelected = false,
     onRowOpen,
     onLoadMore = undefined
   }: Props = $props();
@@ -197,7 +199,10 @@
         <div role="row"><div role="gridcell"><p class="timeline-empty" role="status">Loading activity…</p></div></div>
       {:else if rows.length === 0}
         <div role="row"><div role="gridcell">
-          <EmptyState title="No activity yet" description="Interactions will appear here as they land in the archive." />
+          <EmptyState
+            title={daySelected ? 'No activity on this day' : 'No activity yet'}
+            description={daySelected ? undefined : 'Interactions will appear here as they land in the archive.'}
+          />
         </div></div>
       {:else if !slice || rowHeight === undefined}
         <div role="row"><div role="gridcell"><p class="timeline-empty" role="status">Preparing timeline layout…</p></div></div>
