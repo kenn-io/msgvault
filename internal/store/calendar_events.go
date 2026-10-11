@@ -151,7 +151,7 @@ func (s *Store) PersistCalendarEventContext(ctx context.Context, data *MessagePe
 		if e != nil {
 			return e
 		}
-		return s.appendMCPEventTx(ctx, tx, MCPEvent{Family: "msgvault.calendar_event_changed", Kind: kind, ScopeKind: "source", ScopeID: source, SourceID: source, ConversationID: conversation, MessageID: id, FromMe: fromMe, OccurredAt: changedAt, Data: raw})
+		return s.appendMCPEventTx(ctx, tx, MCPEvent{Family: "msgvault.calendar_event_changed", Kind: kind, ScopeKind: mcpScopeSource, ScopeID: source, SourceID: source, ConversationID: conversation, MessageID: id, FromMe: fromMe, OccurredAt: changedAt, Data: raw})
 	})
 	return id, inserted, err
 }

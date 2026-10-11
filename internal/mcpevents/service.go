@@ -82,6 +82,7 @@ func New(ctx context.Context, st *store.Store, opts Options) (*Service, error) {
 		if err != nil {
 			return nil, err
 		}
+		s.webhook.now = s.now
 		if opts.LookupIP != nil {
 			s.webhook.resolve = func(ctx context.Context, _ string, host string) ([]netip.Addr, error) {
 				return opts.LookupIP(ctx, host)
@@ -108,7 +109,7 @@ func New(ctx context.Context, st *store.Store, opts Options) (*Service, error) {
 		return nil, safeStoreError(err)
 	}
 	if opts.Enabled {
-		if err := s.cleanupRetention(ctx, time.Now().UTC()); err != nil {
+		if err := s.cleanupRetention(ctx, s.now().UTC()); err != nil {
 			return nil, safeStoreError(err)
 		}
 	}
@@ -146,8 +147,10 @@ func safeStoreError(err error) error {
 		return nil
 	}
 	switch err.Error() {
-	case "unknown_scope", "wrong_scope_type", "source_not_capable", "kind_not_capable", "invalid_cursor", "invalid_subscription", "event_unavailable", "message_unavailable":
+	case "invalid_resource_reference", "resource_unavailable", "invalid_resource_query", "invalid_discovery_cursor", "unknown_scope", "wrong_scope_type", "source_not_capable", "kind_not_capable", "invalid_cursor", "invalid_subscription", "event_unavailable", "message_unavailable":
 		return invalid(err.Error())
+	case "native_authority_unavailable":
+		return &Error{Code: -32012, Reason: "native_authority_unavailable"}
 	case "subscription_limit", "concurrent_update":
 		return &Error{Code: -32013, Reason: err.Error()}
 	case "subscription_unavailable", "principal_revoked", "subscription_inactive":
@@ -182,10 +185,19 @@ func (s *Service) Subscribe(ctx context.Context, principal string, req Subscribe
 	var old *store.MCPSubscription
 	activation := store.MCPActivation{Subscription: store.MCPSubscription{ID: id, Principal: principal, Name: req.Name, Arguments: args.bytes, ScopeKind: args.scopeKind, ScopeID: args.scopeID, CallbackURL: req.Delivery.URL, SecretRevision: 1, VerifiedRevision: 1}}
 	err = s.operation(ctx, func() error {
+		sourceID, resource, resolveErr := s.st.ResolveMCPSubscriptionResource(ctx, req.Name, args.scopeKind, args.scopeID, requestedKinds(args.kinds), args.reference)
+		if resolveErr != nil {
+			return resolveErr
+		}
+		activation.ResourceBinding = resource
+		activation.Subscription.SourceID = sourceID
 		if err := s.st.BindMCPSubscriptionScope(ctx, &activation.Subscription); err != nil {
 			return err
 		}
 		old, err = s.st.GetMCPSubscription(ctx, id)
+		if err == nil && old != nil {
+			err = s.st.ValidateMCPSubscriptionResource(ctx, old)
+		}
 		return err
 	})
 	if err != nil {
@@ -225,6 +237,9 @@ func (s *Service) Subscribe(ctx context.Context, principal string, req Subscribe
 			return err
 		}
 		return s.operation(ctx, func() error {
+			if err := s.st.CheckMCPResourceBinding(ctx, activation.ResourceBinding); err != nil {
+				return safeStoreError(err)
+			}
 			_, _, err := s.st.ValidateMCPEventScope(ctx, req.Name, args.scopeKind, args.scopeID, requestedKinds(args.kinds))
 			return safeStoreError(err)
 		})
@@ -234,6 +249,7 @@ func (s *Service) Subscribe(ctx context.Context, principal string, req Subscribe
 			return result, err
 		}
 	}
+	now := s.now().UTC()
 	ttl := 24 * time.Hour
 	if req.TTLMS != nil {
 		ttl = time.Duration(*req.TTLMS) * time.Millisecond
@@ -298,7 +314,7 @@ func (s *Service) Unsubscribe(ctx context.Context, principal string, req Unsubsc
 		return err
 	}
 	id := subscriptionID(principal, req.Name, args.bytes, req.Delivery.URL)
-	err = s.operation(ctx, func() error { return s.st.EndMCPSubscription(ctx, id, principal, time.Now().UTC()) })
+	err = s.operation(ctx, func() error { return s.st.EndMCPSubscription(ctx, id, principal, s.now().UTC()) })
 	if err != nil {
 		return safeStoreError(err)
 	}
@@ -318,7 +334,7 @@ func (s *Service) GetEvent(ctx context.Context, principal, eventID string) (Enve
 		return Envelope{}, err
 	}
 	var event store.MCPEvent
-	err = s.operation(ctx, func() error { event, err = s.st.GetMCPEvent(ctx, id, seq, principal, time.Now().UTC()); return err })
+	err = s.operation(ctx, func() error { event, err = s.st.GetMCPEvent(ctx, id, seq, principal, s.now().UTC()); return err })
 	if err != nil {
 		return Envelope{}, safeStoreError(err)
 	}
@@ -334,7 +350,7 @@ func (s *Service) GetMessage(ctx context.Context, principal, eventID string, mes
 	}
 	var detail *query.MessageDetail
 	err = s.operation(ctx, func() error {
-		return s.st.ReadMCPEventMessage(ctx, id, seq, principal, messageID, time.Now().UTC(), func(tx *sql.Tx) error {
+		return s.st.ReadMCPEventMessage(ctx, id, seq, principal, messageID, s.now().UTC(), func(tx *sql.Tx) error {
 			detail, err = query.GetMessageInSnapshot(ctx, tx, s.st.Rebind, messageID)
 			return err
 		})
@@ -395,4 +411,11 @@ func (s *Service) Status(ctx context.Context, principal string) ([]SubscriptionS
 		result = append(result, SubscriptionStatus{ID: row.ID, Name: row.Name, ScopeKind: row.ScopeKind, ScopeID: strconv.FormatInt(row.ScopeID, 10), State: row.State, StopReason: row.StopReason, RefreshBefore: row.ExpiresAt.UnixMilli(), Cursor: encodeCursor(s.key, row.ID, row.CursorEpoch, row.CursorSeq), CursorEpoch: row.CursorEpoch, CursorSeq: row.CursorSeq, PendingAttempt: row.AttemptCount, LastOutcome: row.LastOutcome, DeadLetterCount: row.DeadLetterCount, LoopGuardSkips: row.LoopGuardSkips})
 	}
 	return result, nil
+}
+
+func (s *Service) now() time.Time {
+	if s.opts.Now != nil {
+		return s.opts.Now()
+	}
+	return time.Now()
 }

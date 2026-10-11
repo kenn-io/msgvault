@@ -40,6 +40,7 @@ func TestMCPEventsPruningOnlyStopsSubscriptionsThatLoseTheirOwnEvents(t *testing
 	assert := Assert.New(t)
 	require := Require.New(t)
 	f := storetest.New(t)
+	grantSyntheticSourceFixture(t, f)
 	now := time.Now().UTC()
 	cfg := mcpStoreConfig()
 	// Keep activation-time pruning out of the way; the explicit sweep below
@@ -94,6 +95,7 @@ func TestMCPEventsPruningKeepsExpiredSubscriptionLossVisible(t *testing.T) {
 	assert := Assert.New(t)
 	require := Require.New(t)
 	f := storetest.New(t)
+	grantSyntheticSourceFixture(t, f)
 	now := time.Now().UTC()
 	cfg := mcpStoreConfig()
 	cfg.Retention = 9 * 24 * time.Hour
@@ -125,6 +127,7 @@ func TestMCPEventsDisabledOwnerChangeRevokesRetainedSubscriptions(t *testing.T) 
 	assert := Assert.New(t)
 	require := Require.New(t)
 	f := storetest.New(t)
+	grantSyntheticSourceFixture(t, f)
 	now := time.Now().UTC()
 	_, err := f.Store.ConfigureMCPEvents(t.Context(), mcpStoreConfig())
 	require.NoError(err)

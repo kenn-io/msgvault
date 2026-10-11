@@ -342,6 +342,11 @@ func TestDaemonMCPVectorReadinessIsCheckedAtRequestTime(t *testing.T) {
 			})
 			return
 		}
+		if r.URL.Path == "/api/v1/mcp/events/resources" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"resources":[]}`))
+			return
+		}
 		http.Error(w, `{"error":"vector_initializing","message":"Vector search is initializing"}`, http.StatusServiceUnavailable)
 	})
 
@@ -357,6 +362,9 @@ func TestDaemonMCPVectorReadinessIsCheckedAtRequestTime(t *testing.T) {
 	assert.Equal("/api/v1/health", path, "startup reads the daemon schema")
 	path = <-requests
 	assert.Equal("/api/v1/media/search/status", path, "capability detection checks Docbank separately")
+	path = <-requests
+	assert.Equal("/api/v1/mcp/events/resources", path, "startup proves the owner-only resource route")
+	assert.NotNil(opts.EventResources)
 	path = <-requests
 	assert.Equal("/api/v1/search", path, "vector readiness belongs to the request")
 }

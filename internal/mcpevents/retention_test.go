@@ -41,8 +41,8 @@ func TestStartupRetentionPruneAdvancesFloorBeforeReplay(t *testing.T) {
 	s, f, req := eventServiceWithRetention(t, time.Minute)
 	first, err := s.Subscribe(t.Context(), s.principal, req)
 	require.NoError(err)
-	appendReceipt(t, s, f, 1)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE mcp_event_log SET recorded_at=? WHERE seq=1`), time.Now().UTC().Add(-2*time.Minute).Format("2006-01-02T15:04:05.000000000Z"))
+	messageID := appendReceipt(t, s, f, 1)
+	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE mcp_event_log SET recorded_at=? WHERE message_id=?`), time.Now().UTC().Add(-2*time.Minute).Format("2006-01-02T15:04:05.000000000Z"), messageID)
 	require.NoError(err)
 
 	opts := eventServiceOptionsWithWebhook(s.opts, s.webhook)
@@ -51,7 +51,7 @@ func TestStartupRetentionPruneAdvancesFloorBeforeReplay(t *testing.T) {
 	var floor, retained int64
 	require.NoError(f.Store.DB().QueryRow(`SELECT pruned_through_seq FROM mcp_event_clock WHERE singleton=1`).Scan(&floor))
 	require.NoError(f.Store.DB().QueryRow(`SELECT COUNT(*) FROM mcp_event_log`).Scan(&retained))
-	assert.Equal(int64(1), floor)
+	assert.Equal(int64(2), floor)
 	assert.Zero(retained)
 	stopped, err := f.Store.GetMCPSubscription(t.Context(), first.ID)
 	require.NoError(err)
@@ -67,7 +67,7 @@ func TestStartupRetentionPruneAdvancesFloorBeforeReplay(t *testing.T) {
 	require.NoError(err)
 	require.NotNil(active)
 	assert.Equal("active", active.State)
-	assert.Equal(int64(1), active.CursorSeq)
+	assert.Equal(int64(2), active.CursorSeq)
 }
 
 func TestRetentionSweepIntervalTracksConfiguredRetention(t *testing.T) {

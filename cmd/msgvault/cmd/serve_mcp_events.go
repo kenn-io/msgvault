@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -15,9 +16,15 @@ import (
 const mcpEventsKeyFile = "mcp-events.key"
 
 func newDaemonMCPEventsService(ctx context.Context, cfg *config.Config, st *store.Store, server *api.Server) (*mcpevents.Service, error) {
+	if _, err := nativeSourceInventory(rootCmd); err != nil {
+		return nil, err
+	}
 	opts, err := daemonMCPEventsOptions(cfg)
 	if err != nil {
 		return nil, err
+	}
+	if err := pausePersistedNativeMessageAuthority(ctx, st); err != nil {
+		return nil, fmt.Errorf("pause native source authority at startup: %w", err)
 	}
 	opts.WithOperation = server.MCPEventsOperation
 	opts.WithDeliveryOperation = server.MCPEventsDeliveryOperation

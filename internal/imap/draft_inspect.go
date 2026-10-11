@@ -69,6 +69,7 @@ func (c *Client) selectDraftMailbox(
 	c.selectedMailbox = receipt.Mailbox
 	c.selectedUIDValidity = selected.UIDValidity
 	c.selectedNumMessages = selected.NumMessages
+	c.recordNativeMailboxEpochLocked(receipt.Mailbox, selected.UIDValidity)
 	if selected.UIDValidity != receipt.UIDValidity {
 		observation.State = draftObservationStateIncomplete
 		observation.Code = "uidvalidity_mismatch"

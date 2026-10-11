@@ -389,6 +389,8 @@ import type {
   RelationshipTypesResponse,
   RemoteImageRequest,
   ResolveCardDAVConflictPathParameters,
+  ResourcePage,
+  ResourceQuery,
   ReviewAcceptIdentityMatchCandidatePathParameters,
   ReviewRejectIdentityMatchCandidatePathParameters,
   RevokeAgentTokenPathParameters,
@@ -2183,6 +2185,23 @@ export const getMCPEventMessage = (
       url: `/api/v1/mcp/events/messages/${encodeURIComponent(String(id))}`,
       method: "GET",
       params,
+    },
+    options,
+  );
+};
+/**
+ * @summary Discover native source and inbox subscription resources
+ */
+export const discoverMCPEventResources = (
+  resourceQuery: ResourceQuery,
+  options?: SecondParameter<typeof orvalFetch<ResourcePage>>,
+) => {
+  return orvalFetch<ResourcePage>(
+    {
+      url: `/api/v1/mcp/events/resources`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: resourceQuery,
     },
     options,
   );

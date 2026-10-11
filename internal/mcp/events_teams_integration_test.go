@@ -226,12 +226,23 @@ func TestEventsNativeTeamsImportAndReceiptRead(t *testing.T) {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
+		owner := "owner@example.test"
+		if r.Header.Get("Authorization") == "Bearer synthetic-other-token" {
+			owner = "other-owner@example.test"
+		} else {
+			assert.Equal("Bearer synthetic-token", r.Header.Get("Authorization"))
+		}
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
+		case "/me":
+			assert.NoError(json.NewEncoder(w).Encode(map[string]any{"id": owner, "mail": owner, "userPrincipalName": owner}))
 		case "/me/chats":
 			_, _ = w.Write([]byte(`{"value":[{"id":"synthetic-chat","chatType":"group","topic":"Synthetic Events"}]}`))
 		case "/chats/synthetic-chat/members":
-			_, _ = w.Write([]byte(`{"value":[{"id":"owner","userId":"owner","email":"owner@example.test","displayName":"Synthetic Owner"},{"id":"sender","userId":"sender","email":"sender@example.test","displayName":"Synthetic Sender"}]}`))
+			assert.NoError(json.NewEncoder(w).Encode(map[string]any{"value": []map[string]any{
+				{"id": owner, "userId": owner, "email": owner, "displayName": "Synthetic Owner"},
+				{"id": "sender", "userId": "sender", "email": "sender@example.test", "displayName": "Synthetic Sender"},
+			}}))
 		case "/me/chats/synthetic-chat/messages":
 			message := func(id, when, text, email, name string) map[string]any {
 				return map[string]any{"id": id, "createdDateTime": when, "lastModifiedDateTime": when, "from": map[string]any{"user": map[string]any{"id": email, "displayName": name, "userIdentityType": "emailUser"}}, "body": map[string]any{"contentType": "text", "content": text}}
@@ -248,7 +259,7 @@ func TestEventsNativeTeamsImportAndReceiptRead(t *testing.T) {
 		}
 	}))
 	t.Cleanup(provider.Close)
-	importer := teams.NewImporter(f.Store, teams.NewClient(provider.URL, func(context.Context) (string, error) { return "synthetic-token", nil }, 50))
+	importer := teams.NewImporter(f.Store, teams.NewClient(provider.URL, func(context.Context) (string, error) { return "synthetic-token", nil }, 50, teams.WithGrantedScopesReader(func() ([]string, error) { return []string{"Chat.Read"}, nil })))
 	importOpts := teams.ImportOptions{Email: "owner@example.test"}
 	source, err := f.Store.GetOrCreateSource("teams", importOpts.Email)
 	require.NoError(err)
@@ -313,14 +324,12 @@ func TestEventsNativeTeamsImportAndReceiptRead(t *testing.T) {
 	assert.Equal(strconv.FormatInt(messageID, 10), payload["message_id"])
 	require.NoError(resolvedPayload.Validate(payload), "actual occurrence must match its advertised schema")
 	assert.NotContains(string(envelope.Data), body)
+	var deliveredSeq int64
+	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT seq FROM mcp_event_log WHERE family='msgvault.message_archived' AND message_id=? AND source_id=?`), messageID, sourceID).Scan(&deliveredSeq))
 	require.Eventually(func() bool {
 		row, err := f.Store.GetMCPSubscription(t.Context(), subscriptionID)
-		var head int64
-		if queryErr := f.Store.DB().QueryRow(`SELECT head_seq FROM mcp_event_clock WHERE singleton=1`).Scan(&head); queryErr != nil {
-			return false
-		}
-		return err == nil && row != nil && row.CursorSeq == head && row.PendingSeq == 0
-	}, 30*time.Second, 20*time.Millisecond, "delivery success was not durably recorded")
+		return err == nil && row != nil && row.CursorSeq >= deliveredSeq && row.PendingSeq == 0
+	}, 30*time.Second, 20*time.Millisecond, "delivery acknowledgement includes the actual subscribed-family occurrence")
 	_, wire = call("tools/call", map[string]any{"name": "get_mcp_event", "arguments": map[string]any{"event_id": envelope.EventID}})
 	require.Nil(wire["error"])
 	assert.Equal(envelope.EventID, eventsWireObject(t, eventsWireObject(t, wire["result"])["structuredContent"])["eventId"])
@@ -357,7 +366,7 @@ func TestEventsNativeTeamsImportAndReceiptRead(t *testing.T) {
 
 	// An identical native chat/message identity in a second account cannot
 	// borrow the first source's receipt.
-	otherImporter := teams.NewImporter(f.Store, teams.NewClient(provider.URL, func(context.Context) (string, error) { return "synthetic-token", nil }, 50))
+	otherImporter := teams.NewImporter(f.Store, teams.NewClient(provider.URL, func(context.Context) (string, error) { return "synthetic-other-token", nil }, 50, teams.WithGrantedScopesReader(func() ([]string, error) { return []string{"Chat.Read"}, nil })))
 	otherOpts := importOpts
 	otherOpts.Email = "other-owner@example.test"
 	_, err = otherImporter.Import(t.Context(), otherOpts)
@@ -370,6 +379,6 @@ func TestEventsNativeTeamsImportAndReceiptRead(t *testing.T) {
 	_, wire = call("tools/call", map[string]any{"name": "get_message", "arguments": map[string]any{"id": strconv.FormatInt(otherMessageID, 10), "event_id": envelope.EventID}})
 	require.NotNil(wire["error"], "another source cannot borrow a receipt")
 	var occurrences int
-	require.NoError(f.Store.DB().QueryRow(`SELECT COUNT(*) FROM mcp_event_log`).Scan(&occurrences))
+	require.NoError(f.Store.DB().QueryRow(`SELECT COUNT(*) FROM mcp_event_log WHERE family='msgvault.message_archived'`).Scan(&occurrences))
 	assert.Equal(2, occurrences, "re-import does not duplicate either archived message")
 }

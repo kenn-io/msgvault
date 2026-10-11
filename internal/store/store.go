@@ -25,7 +25,7 @@ import (
 	"go.kenn.io/msgvault/internal/sqliteutil"
 )
 
-//go:embed schema.sql schema_sqlite.sql schema_pg.sql
+//go:embed schema.sql schema_sqlite.sql schema_pg.sql schema_mcp_resources_sqlite.sql schema_mcp_resources_pg.sql
 var schemaFS embed.FS
 
 // HNSWEfSearch is the per-connection value applied to pgvector's
@@ -1632,6 +1632,9 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 			lastModifiedColumnAdded = true
 		}
 	}
+	if err := s.ensureMCPResourceTriggers(ctx); err != nil {
+		return err
+	}
 	// account: and received: filter on the account columns, and each sync
 	// looks up pending rows; created here because the columns arrive through
 	// the legacy migrations above. PostgreSQL builds them concurrently in
@@ -2322,6 +2325,10 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	// Ensure the default "All" collection exists and contains every source.
 	if err := s.EnsureDefaultCollectionContext(ctx); err != nil {
 		return fmt.Errorf("ensure default collection: %w", err)
+	}
+
+	if err := s.sealUnusedMCPAdoption(ctx); err != nil {
+		return fmt.Errorf("seal unused Events upgrade exceptions: %w", err)
 	}
 
 	// Schema initialization can add indexes to an existing archive. Refresh

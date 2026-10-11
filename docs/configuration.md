@@ -832,7 +832,7 @@ sources = ["gmail", "imap", "gcal"]
 |---|---|---|
 | `enabled` | `false` | Capture occurrences and run daemon callback workers. Read at startup; restart after changes. |
 | `retention` | `"168h"` | Positive journal retention duration, at most seven days, measured from recording time. Expired occurrences become unavailable immediately; cleanup runs at half the configured duration, capped at one hour and floored at one second. |
-| `sources` | `["gmail", "imap", "gcal"]` | Allowed source types, further limited by implemented producers and readable projections. An empty array advertises no families. |
+| `sources` | `["gmail", "imap", "gcal"]` | Allowed source types, further limited by implemented producers and readable projections. Use `["*"]` alone to select all eligible source types. An empty array advertises no families. |
 | `trusted_callbacks` | `[]` | Explicit private receiver exceptions: objects with an HTTPS `origin` and fixed private IP `addresses`. |
 
 Accepted `sources` values are `gmail`, `imap`, `gcal`, `beeper`, `slack`,
@@ -840,7 +840,10 @@ Accepted `sources` values are `gmail`, `imap`, `gcal`, `beeper`, `slack`,
 to start if `sources` lists any other source type.
 
 Additional native sources are opt-in. Add the source types you need to `sources`;
-the default list stays unchanged.
+the default list stays unchanged. To include every implemented source type, set
+`sources = ["*"]`. This includes eligible sources created after daemon startup;
+unsupported producers and historical imports remain unavailable for live capture.
+Do not combine `"*"` with other entries.
 
 | Source | Message capture and limits |
 |---|---|

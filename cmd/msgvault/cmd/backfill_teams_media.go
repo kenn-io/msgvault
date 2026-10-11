@@ -52,7 +52,7 @@ Examples:
 		if err := requireMicrosoftOAuthConfig(cfg); err != nil {
 			return err
 		}
-		client, err := newTeamsClient(cmd.Context(), cfg, logger, email)
+		client, err := newTeamsClient(cmd.Context(), cfg, logger, email, s)
 		if err != nil {
 			return fmt.Errorf("load Teams token: %w (run 'add-teams' first)", err)
 		}

@@ -649,6 +649,7 @@ func (d *PostgreSQLDialect) FTSRebuildSchema(ctx context.Context, q contextQueri
 //	TEXT → TEXT, DATETIME → TIMESTAMPTZ, JSON → JSONB.
 func (d *PostgreSQLDialect) LegacyColumnMigrations() []ColumnMigration {
 	return []ColumnMigration{
+		{`ALTER TABLE mcp_event_subscriptions ADD COLUMN IF NOT EXISTS scope_reference_id BIGINT NOT NULL DEFAULT 0`, "mcp_event_subscriptions.scope_reference_id"},
 		{`ALTER TABLE carddav_resources ADD COLUMN IF NOT EXISTS owns_display_name BOOLEAN NOT NULL DEFAULT FALSE`, "carddav_resources.owns_display_name"},
 		{`ALTER TABLE person_match_judgment_cursor ADD COLUMN IF NOT EXISTS started_at_zero BOOLEAN NOT NULL DEFAULT FALSE`, "person_match_judgment_cursor.started_at_zero"},
 		{`ALTER TABLE carddav_publications ADD COLUMN IF NOT EXISTS outgoing_envelope_metadata BYTEA`, "carddav_publications.outgoing_envelope_metadata"},
@@ -2355,6 +2356,8 @@ func (d *PostgreSQLDialect) IsFTSValueTooLargeError(err error) bool {
 // collections is included (despite not being a direct sources cascade target)
 // so a concurrent collection rename cannot race the collection_sources cascade.
 var exclusiveLockTables = []string{
+	// Resource lifetimes and native scopes cascade with their source.
+	"mcp_source_resources", "mcp_conversation_resources", "native_message_scopes", "native_source_permissions",
 	"sync_runs", "sources", "mcp_event_source_refs", "conversations", "conversation_participants",
 	"messages", "message_recipients", "message_labels", "message_bodies", "message_raw",
 	"message_delivery_addresses",

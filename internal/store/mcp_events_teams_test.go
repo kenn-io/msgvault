@@ -20,6 +20,15 @@ func teamsEventScopeFixture(t *testing.T, kind string) (*storetest.Fixture, stor
 	conv, err := f.Store.EnsureConversationWithType(source.ID, "synthetic-chat", kind, "Synthetic conversation")
 	require.NoError(err)
 	f.Source, f.ConvID = source, conv
+	// This unit fixture isolates chat-kind and lifetime rules. Native importer
+	// and SDK tests establish real provider permission and chat-read evidence.
+	grantSyntheticSourceFixture(t, f)
+	resource, err := f.Store.GetMCPResource(t.Context(), "source", source.ID)
+	require.NoError(err)
+	require.NoError(f.Store.ObserveNativeMessageScopes(t.Context(), store.NativeMessageScopeInventory{
+		SourceID: source.ID, SourceReference: resource.Reference, SourceType: "teams", NativeIdentity: source.Identifier, Kind: "teams_chat",
+		Scopes: []store.NativeMessageScope{{ProviderID: "synthetic-chat"}},
+	}))
 	cfg := store.MCPEventsConfig{Enabled: true, Principal: "owner:synthetic", Capabilities: []store.MCPEventCapability{
 		{Family: "msgvault.message_archived", SourceType: "teams", Kinds: []string{"message"}},
 		{Family: "msgvault.draft_changed", SourceType: "teams", Kinds: []string{"created", "updated", "deleted"}},

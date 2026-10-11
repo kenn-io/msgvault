@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"go.kenn.io/msgvault/internal/msgraph"
 	"golang.org/x/oauth2"
@@ -84,6 +85,8 @@ type GraphManager struct {
 	scopes      []string
 	tokenPrefix string
 	reauthCmd   string
+
+	grantedScopesCache graphGrantedScopesCache
 
 	// graphURL is the Graph API base used to confirm the signed-in mailbox.
 	graphURL string
@@ -199,7 +202,7 @@ func (m *GraphManager) Authorize(ctx context.Context, email string) error {
 	if claims != nil {
 		tenantID = claims.TenantID
 	}
-	return m.saveToken(email, token, scopes, tenantID)
+	return m.saveToken(email, token, graphTokenGrantedScopes(token, scopes), tenantID)
 }
 
 // confirmMailbox accepts a sign-in name that differs from email when the
@@ -258,8 +261,19 @@ func (m *GraphManager) TokenSource(ctx context.Context, email string) (func(cont
 	oauthCfg := m.delegate().oauthConfigWithTenant(refreshTenant, scopes)
 	// context.Background so refreshes outlive the caller's (sync-scoped) ctx.
 	ts := oauthCfg.TokenSource(context.Background(), &tf.Token)
+	var grantMu sync.Mutex
+	grantedScopes := append([]string(nil), tf.Scopes...)
 	return refreshingAccessToken(ts, tf, email, "Microsoft Graph", func(tok *oauth2.Token) error {
-		return m.saveToken(email, tok, scopes, tf.TenantID)
+		grantMu.Lock()
+		defer grantMu.Unlock()
+		// An omitted response preserves the last native grant. An explicit scope
+		// response replaces it, including narrowing or an empty unknown grant.
+		current := graphTokenGrantedScopes(tok, grantedScopes)
+		if err := m.saveToken(email, tok, current, tf.TenantID); err != nil {
+			return err
+		}
+		grantedScopes = current
+		return nil
 	}), nil
 }
 
@@ -281,9 +295,13 @@ func (m *GraphManager) HasToken(email string) bool {
 // DeleteToken removes the local Graph token file. Missing files are not an
 // error. (Graph refresh tokens expire naturally; no remote revocation here.)
 func (m *GraphManager) DeleteToken(email string) error {
-	err := os.Remove(m.TokenPath(email))
+	path := m.TokenPath(email)
+	err := os.Remove(path)
 	if os.IsNotExist(err) {
-		return nil
+		err = nil
+	}
+	if err == nil {
+		m.grantedScopesCache.invalidate(path)
 	}
 	return err
 }
@@ -291,7 +309,12 @@ func (m *GraphManager) DeleteToken(email string) error {
 // saveToken atomically persists the token in the same on-disk JSON format as
 // the IMAP Manager (tokenFile), under the capability's filename prefix.
 func (m *GraphManager) saveToken(email string, token *oauth2.Token, scopes []string, tenantID string) error {
-	return saveTokenFile(m.tokensDir, m.TokenPath(email), token, scopes, tenantID)
+	path := m.TokenPath(email)
+	if err := saveTokenFile(m.tokensDir, path, token, scopes, tenantID); err != nil {
+		return err
+	}
+	m.grantedScopesCache.invalidate(path)
+	return nil
 }
 
 func (m *GraphManager) loadTokenFile(email string) (*tokenFile, error) {
@@ -313,4 +336,25 @@ func missingGraphScopes(scopes, want []string) []string {
 		}
 	}
 	return missing
+}
+
+// GrantedScopes returns only the selected account's saved native grant. Legacy
+// metadata remains unknown; requested defaults do not become permission evidence.
+func (m *GraphManager) GrantedScopes(email string) ([]string, error) {
+	return m.grantedScopesCache.get(m.TokenPath(email), func() (*tokenFile, error) {
+		return m.loadTokenFile(email)
+	})
+}
+
+// A returned grant takes precedence over requested or previously saved scopes.
+// Omission preserves the native prior grant; malformed evidence grants nothing.
+func graphTokenGrantedScopes(token *oauth2.Token, fallback []string) []string {
+	returned := token.Extra("scope")
+	if returned == nil {
+		return append([]string(nil), fallback...)
+	}
+	if value, ok := returned.(string); ok {
+		return strings.Fields(value)
+	}
+	return nil
 }

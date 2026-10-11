@@ -12509,6 +12509,110 @@ func (r RemoveResult) Validate() error {
 	return errors
 }
 
+type Resource struct {
+	Capabilities     ResourceCapabilities `json:"capabilities"`
+	DisplayName      string               `json:"display_name" validate:"required"`
+	ID               string               `json:"id" validate:"required"`
+	Kind             string               `json:"kind" validate:"required"`
+	NativeEpoch      *string              `json:"native_epoch,omitzero"`
+	ParentProviderID *string              `json:"parent_provider_id,omitzero"`
+	ProviderID       string               `json:"provider_id" validate:"required"`
+	Reference        string               `json:"reference" validate:"required"`
+	ScopeKind        *string              `json:"scope_kind,omitzero"`
+	SourceID         string               `json:"source_id" validate:"required"`
+	SourceType       string               `json:"source_type" validate:"required"`
+}
+
+func (r Resource) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(r.Capabilities).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Capabilities", err)
+		}
+	}
+	if err := typesValidator.Var(r.DisplayName, "required"); err != nil {
+		errors = errors.Append("DisplayName", err)
+	}
+	if err := typesValidator.Var(r.ID, "required"); err != nil {
+		errors = errors.Append("ID", err)
+	}
+	if err := typesValidator.Var(r.Kind, "required"); err != nil {
+		errors = errors.Append("Kind", err)
+	}
+	if err := typesValidator.Var(r.ProviderID, "required"); err != nil {
+		errors = errors.Append("ProviderID", err)
+	}
+	if err := typesValidator.Var(r.Reference, "required"); err != nil {
+		errors = errors.Append("Reference", err)
+	}
+	if err := typesValidator.Var(r.SourceID, "required"); err != nil {
+		errors = errors.Append("SourceID", err)
+	}
+	if err := typesValidator.Var(r.SourceType, "required"); err != nil {
+		errors = errors.Append("SourceType", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type ResourceCapabilities struct {
+	Events            []string `json:"events" validate:"required"`
+	Read              []string `json:"read" validate:"required"`
+	Transport         string   `json:"transport" validate:"required"`
+	UnavailableReason *string  `json:"unavailable_reason,omitzero"`
+}
+
+func (r ResourceCapabilities) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(r))
+}
+
+type ResourcePage struct {
+	NextCursor *string    `json:"next_cursor,omitzero"`
+	Resources  []Resource `json:"resources" validate:"required"`
+}
+
+func (r ResourcePage) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range r.Resources {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Resources[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type ResourceQuery struct {
+	Cursor   *string           `json:"cursor,omitzero"`
+	Kind     ResourceQueryKind `json:"kind" validate:"required"`
+	Limit    *int64            `json:"limit,omitempty" validate:"omitempty,gte=0,lte=100"`
+	SourceID *string           `json:"source_id,omitzero"`
+}
+
+func (r ResourceQuery) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(r.Kind).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Kind", err)
+		}
+	}
+	if r.Limit != nil {
+		if err := typesValidator.Var(r.Limit, "omitempty,gte=0,lte=100"); err != nil {
+			errors = errors.Append("Limit", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type Result struct {
 	Blockers        []string `json:"blockers" validate:"required"`
 	CandidateID     int64    `json:"candidate_id"`

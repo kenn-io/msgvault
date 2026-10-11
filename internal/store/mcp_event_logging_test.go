@@ -20,6 +20,7 @@ func TestMCPEventsFailedWriterCommitDoesNotLogDriverText(t *testing.T) {
 	if !f.Store.IsPostgreSQL() {
 		t.Skip("PostgreSQL deferred constraint trigger observes the commit boundary")
 	}
+	grantSyntheticSourceFixture(t, f)
 	_, err := f.Store.ConfigureMCPEvents(t.Context(), mcpStoreConfig())
 	require.NoError(err)
 	const marker = "synthetic-private-commit-marker"

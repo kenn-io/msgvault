@@ -101,7 +101,7 @@ func (s *Service) reconcileWithPriority(ctx context.Context, priority bool) erro
 		return safeStoreError(err)
 	}
 	active := make(map[string]int64)
-	now := time.Now()
+	now := s.now()
 	for _, row := range rows {
 		if row.State == "active" && now.Before(row.ExpiresAt) {
 			active[row.ID] = row.Generation
@@ -178,7 +178,7 @@ func (s *Service) Run(ctx context.Context) error {
 		s.running = false
 		s.workersMu.Unlock()
 	}()
-	now := time.Now().UTC()
+	now := s.now().UTC()
 	priority := s.maintain(ctx, false, "expire_subscriptions", func() error { return s.st.ExpireMCPSubscriptions(ctx, now) })
 	priority = s.maintain(ctx, priority, "prune_events", func() error { return s.st.PruneMCPEvents(ctx, now, s.opts.Retention) })
 	reconciliation := time.NewTicker(time.Second)
@@ -200,8 +200,14 @@ func (s *Service) Run(ctx context.Context) error {
 			priority = true
 		case <-reconciliation.C:
 		case now := <-expiry.C:
+			if s.opts.Now != nil {
+				now = s.now()
+			}
 			priority = s.maintain(ctx, false, "expire_subscriptions", func() error { return s.st.ExpireMCPSubscriptions(ctx, now) })
 		case now := <-pruning.C:
+			if s.opts.Now != nil {
+				now = s.now()
+			}
 			priority = s.maintain(ctx, false, "prune_events", func() error { return s.st.PruneMCPEvents(ctx, now, s.opts.Retention) })
 		}
 	}
@@ -327,7 +333,7 @@ func (s *Service) runWorker(ctx context.Context, id string, w *worker) {
 		var delivery *store.MCPDelivery
 		prepare := func(prepareCtx context.Context) error {
 			var err error
-			delivery, err = s.st.PrepareMCPDelivery(prepareCtx, id, w.generation, time.Now().UTC(), func(sub store.MCPSubscription, event store.MCPEvent) ([]byte, error) {
+			delivery, err = s.st.PrepareMCPDelivery(prepareCtx, id, w.generation, s.now().UTC(), func(sub store.MCPSubscription, event store.MCPEvent) ([]byte, error) {
 				return json.Marshal(s.envelope(sub, event))
 			})
 			return err
@@ -368,7 +374,7 @@ func (s *Service) runWorker(ctx context.Context, id string, w *worker) {
 // checkDelivery verifies that sub may still receive its pending occurrence.
 // It reads only its arguments, so it is safe on a transport dial goroutine.
 func (s *Service) checkDelivery(ctx context.Context, generation int64, sub store.MCPSubscription, beforeDelivery bool) error {
-	now := time.Now().UTC()
+	now := s.now().UTC()
 	if err := s.st.CheckMCPSubscription(ctx, sub.ID, generation, now); err != nil {
 		return safeStoreError(err)
 	}
@@ -412,7 +418,7 @@ func (s *Service) deliverySecrets(sub store.MCPSubscription) ([]byte, []byte, er
 	if err != nil {
 		return nil, nil, err
 	}
-	if !time.Now().Before(sub.PreviousSecretUntil) || len(sub.PreviousSecretEnc) == 0 {
+	if !s.now().Before(sub.PreviousSecretUntil) || len(sub.PreviousSecretEnc) == 0 {
 		return current, nil, nil
 	}
 	previous, err := decryptSecret(s.key, sub.ID, "previous", sub.PreviousSecretEnc)
@@ -492,7 +498,7 @@ func (a *deliveryAttempt) send(ctx context.Context, current, previous []byte) (s
 		if err == nil {
 			guard := a.s.dialGuard(a.w.generation, a.sub, a.priority)
 			signing := previous
-			if !time.Now().Before(a.sub.PreviousSecretUntil) {
+			if !a.s.now().Before(a.sub.PreviousSecretUntil) {
 				// Checks and retries can outlast the rotation overlap.
 				signing = nil
 			}
@@ -527,12 +533,12 @@ func (a *deliveryAttempt) send(ctx context.Context, current, previous []byte) (s
 // record rechecks authorization and stores the delivery outcome. The outcome
 // stays in memory until it is recorded, so retries never resend.
 func (a *deliveryAttempt) record(ctx context.Context, status int, header string) bool {
-	now := time.Now().UTC()
+	now := a.s.now().UTC()
 	retryAt := now.Add(retryDelay(status, header, a.sub.AttemptCount, now))
 	for {
 		err := a.check(ctx, false)
 		if err == nil {
-			finishNow := time.Now().UTC()
+			finishNow := a.s.now().UTC()
 			a.priority, _, err = a.s.workerOperation(ctx, a.w, a.priority, func(operationCtx context.Context) error {
 				return a.s.st.FinishMCPDelivery(operationCtx, a.sub.ID, a.w.generation, a.sub.PendingSeq, finishNow, status, retryAt)
 			})

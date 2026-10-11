@@ -17,6 +17,7 @@ import (
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/deletion"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
+	"go.kenn.io/msgvault/internal/mcpevents"
 	"go.kenn.io/msgvault/internal/providercredentials"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
@@ -236,6 +237,7 @@ const kataDocbankMinAPISchemaVersion = "3.13.0"
 
 // mcpEventsMinAPISchemaVersion adds owner-only native MCP Events.
 const mcpEventsMinAPISchemaVersion = "3.15.0"
+const mcpEventResourcesMinAPISchemaVersion = "3.16.0"
 
 // Schema 2.28.0 adds independent configured-lane facts to authenticated
 // health. Older health responses cannot distinguish text from visual search.
@@ -337,6 +339,13 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 		opts.DraftCommands = mcpDraftCommands(false)
 	}
 
+	// Prove the owner-only native route independently of delivery opt-in. An
+	// older daemon or non-owner credential cannot enable this read tool.
+	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, mcpEventResourcesMinAPISchemaVersion) && st.MCPEventsOwnerCredential() {
+		if _, err := st.DiscoverMCPEventResources(ctx, mcpevents.ResourceQuery{Kind: "source", Limit: 1}); err == nil {
+			opts.EventResources = st
+		}
+	}
 	if capabilityErr == nil && health != nil && health.McpEvents != nil && *health.McpEvents &&
 		daemonclient.APISchemaVersionAtLeast(schemaVersion, mcpEventsMinAPISchemaVersion) && st.MCPEventsOwnerCredential() {
 		if catalog, err := st.MCPEventsList(ctx); err == nil && len(catalog.Events) > 0 {

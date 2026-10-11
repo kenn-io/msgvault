@@ -101,10 +101,12 @@ type ContainerIssue struct {
 // Importer ingests one Discord guild through the shared store and sync-run
 // lifecycle.
 type Importer struct {
-	store    *store.Store
-	api      API
-	pageSize int
-	now      func() time.Time
+	nativeAuthority   *nativeDiscordAuthority
+	nativeMemberships map[string][]store.NativeMessageScopeIdentity
+	store             *store.Store
+	api               API
+	pageSize          int
+	now               func() time.Time
 	// resumeLoaded is a test hook run after resume state loads and before
 	// the run starts, where a concurrent purge must not interleave.
 	resumeLoaded func(sourceID int64)
@@ -220,6 +222,8 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (summary *I
 	}
 	scoped := *imp
 	scoped.store = imp.store.ScopedToSync(source.ID, syncID).WithIngestContext(store.IngestContext{Mode: store.IngestBackfill})
+	scoped.nativeAuthority = nil
+	scoped.nativeMemberships = map[string][]store.NativeMessageScopeIdentity{}
 	imp = &scoped
 	summary.SyncRunID = syncID
 	completed := false
@@ -238,12 +242,18 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (summary *I
 	if err := imp.saveCheckpoint(ctx, syncID, state, summary); err != nil {
 		return summary, err
 	}
+	if err := imp.pinNativeDiscordAuthority(ctx, source.ID, opts); err != nil {
+		return summary, err
+	}
 	guild, err := imp.api.Guild(ctx, opts.GuildID)
 	if err != nil {
-		return summary, fmt.Errorf("discover Discord guild %s: %w", opts.GuildID, err)
+		return summary, fmt.Errorf("discover Discord guild %s: %w", opts.GuildID, imp.nativeDiscordAuthorityError(ctx, err))
 	}
 	if guild.ID != "" && guild.ID != opts.GuildID {
-		return summary, fmt.Errorf("discover Discord guild %s: response identified guild %s", opts.GuildID, guild.ID)
+		return summary, imp.nativeDiscordAuthorityError(ctx, errNativeDiscordIdentityMismatch)
+	}
+	if err := imp.observeNativeDiscordAuthority(ctx, source.ID, opts, guild); err != nil {
+		return summary, err
 	}
 	if guild.Name != "" {
 		if err := imp.store.UpdateSourceDisplayNameContext(ctx, source.ID, guild.Name); err != nil {
@@ -257,9 +267,14 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (summary *I
 			publicOnly: opts.PublicChannels != nil,
 		},
 	)
+	if catalog.NativeChannelsComplete {
+		if err := imp.observeNativeDiscordCatalog(ctx, catalog.NativeChannels, catalog, opts); err != nil {
+			return summary, imp.nativeDiscordAuthorityError(ctx, err)
+		}
+	}
 	summary.CatalogIssues = append(summary.CatalogIssues, catalog.Issues...)
 	if catalogErr != nil {
-		return summary, fmt.Errorf("discover Discord catalog: %w", catalogErr)
+		return summary, fmt.Errorf("discover Discord catalog: %w", imp.nativeDiscordAuthorityError(ctx, catalogErr))
 	}
 
 	var media *MediaArchiver
@@ -765,7 +780,7 @@ func (imp *Importer) backfill(
 ) error {
 	before := containerState.BackfillBefore
 	if containerState.BackfillUpper == "" {
-		head, err := imp.api.Messages(ctx, containerID, MessageQuery{Limit: 1})
+		head, err := imp.nativeDiscordMessages(ctx, containerID, MessageQuery{Limit: 1})
 		if err != nil {
 			return fmt.Errorf("pin backfill head: %w", err)
 		}
@@ -812,7 +827,7 @@ func (imp *Importer) backfill(
 	}
 
 	for {
-		page, err := imp.api.Messages(ctx, containerID, MessageQuery{Before: before, Limit: imp.pageSize})
+		page, err := imp.nativeDiscordMessages(ctx, containerID, MessageQuery{Before: before, Limit: imp.pageSize})
 		if err != nil {
 			return fmt.Errorf("page backward before %s: %w", before, err)
 		}
@@ -869,7 +884,7 @@ func (imp *Importer) forward(
 		return nil
 	}
 	for {
-		page, err := imp.api.Messages(ctx, containerID, MessageQuery{After: after, Limit: imp.pageSize})
+		page, err := imp.nativeDiscordMessages(ctx, containerID, MessageQuery{After: after, Limit: imp.pageSize})
 		if err != nil {
 			return fmt.Errorf("page forward after %s: %w", after, err)
 		}
@@ -955,7 +970,7 @@ func (imp *Importer) reconcile(
 		return fmt.Errorf("pin local Discord repair interval: %w", err)
 	}
 
-	head, err := imp.api.Messages(ctx, containerID, MessageQuery{Limit: 1})
+	head, err := imp.nativeDiscordMessages(ctx, containerID, MessageQuery{Limit: 1})
 	if err != nil {
 		return fmt.Errorf("pin repair head: %w", err)
 	}
@@ -1026,7 +1041,7 @@ func (imp *Importer) reconcile(
 	}
 
 	for {
-		page, err := imp.api.Messages(ctx, containerID, MessageQuery{Before: before, Limit: imp.pageSize})
+		page, err := imp.nativeDiscordMessages(ctx, containerID, MessageQuery{Before: before, Limit: imp.pageSize})
 		if err != nil {
 			return fmt.Errorf("page repair before %s: %w", before, err)
 		}
@@ -1536,6 +1551,10 @@ func (imp *Importer) persistPage(
 	for i := range page {
 		message := &page[i]
 		_, alreadyProcessed := summary.processedMessageIDs[message.ID]
+		nativeScopes, err := imp.nativeDiscordMembership(message)
+		if err != nil {
+			return err
+		}
 		mapped, err := mapMessage(message, conversationID, sourceID)
 		if err != nil {
 			return err
@@ -1563,6 +1582,7 @@ func (imp *Importer) persistPage(
 			snapshot.ReplySourceGuildID = ref.GuildID
 		}
 		messageID, err := imp.store.PersistMessageContext(ctx, &store.MessagePersistData{
+			NativeScopes:    nativeScopes,
 			DiscordSnapshot: snapshot,
 			Conversation: &store.ConversationPersistData{
 				SourceConversationID: message.ChannelID, ConversationType: discordConversationType,
@@ -1614,9 +1634,10 @@ func (imp *Importer) persistPage(
 			for _, ref := range mapped.Attachments {
 				previous, seen := previousAttachments[ref.SourceAttachmentID]
 				stored := seen && keepArchivedAttachment(&ref, previous)
-				if !stored && (!alreadyProcessed || !seen) {
-					pendingCount++
+				if stored || (alreadyProcessed && seen) {
+					continue
 				}
+				pendingCount++
 			}
 			summary.MediaPending += int64(pendingCount)
 		}

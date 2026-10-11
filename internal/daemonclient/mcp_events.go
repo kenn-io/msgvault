@@ -28,15 +28,18 @@ func (c *Client) mcpEventsRequest(ctx context.Context, method, path string, opti
 	// Never expose request URLs, response bodies or driver diagnostics. The
 	// error body admits only a fixed code/reason pair from the service boundary.
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		if resp.StatusCode == http.StatusUnauthorized {
 			return &mcpevents.Error{Code: -32012, Reason: "owner_required"}
 		}
 		var wire mcpevents.Error
 		data, readErr := io.ReadAll(io.LimitReader(resp.Body, 4097))
 		if readErr == nil && len(data) <= 4096 && json.Unmarshal(data, &wire) == nil {
-			if safe, ok := mcpevents.SafeError(wire.Code, wire.Reason); ok {
+			if safe, ok := mcpevents.SafeError(wire.Code, wire.Reason); ok && (resp.StatusCode != http.StatusForbidden || safe.Code == -32012) {
 				return safe
 			}
+		}
+		if resp.StatusCode == http.StatusForbidden {
+			return &mcpevents.Error{Code: -32012, Reason: "owner_required"}
 		}
 		return &mcpevents.Error{Code: -32015, Reason: "events_unavailable"}
 	}
@@ -106,4 +109,22 @@ func mcpEventsDelivery(delivery mcpevents.Delivery) generated.Delivery {
 		out.Secret = &delivery.Secret
 	}
 	return out
+}
+
+// DiscoverMCPEventResources uses the generated owner-only request contract.
+func (c *Client) DiscoverMCPEventResources(ctx context.Context, query mcpevents.ResourceQuery) (mcpevents.ResourcePage, error) {
+	var out mcpevents.ResourcePage
+	body := &generated.DiscoverMCPEventResourcesBody{Kind: generated.ResourceQueryKind(query.Kind)}
+	if query.SourceID != "" {
+		body.SourceID = &query.SourceID
+	}
+	if query.Cursor != "" {
+		body.Cursor = &query.Cursor
+	}
+	if query.Limit != 0 {
+		limit := int64(query.Limit)
+		body.Limit = &limit
+	}
+	err := c.mcpEventsRequest(ctx, http.MethodPost, "/api/v1/mcp/events/resources", &generated.DiscoverMCPEventResourcesRequestOptions{Body: body}, &out)
+	return out, err
 }

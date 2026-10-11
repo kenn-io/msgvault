@@ -59,7 +59,7 @@ func TestVerificationRejectsConversationReusedDuringChallenge(t *testing.T) {
 		require.Error(err)
 		var eventErr *Error
 		require.ErrorAs(err, &eventErr)
-		assert.Equal("unknown_scope", eventErr.Reason)
+		assert.Equal("subscription_unavailable", eventErr.Reason)
 	case <-time.After(10 * time.Second):
 		require.FailNow("verification challenge did not finish")
 	}

@@ -25,11 +25,21 @@ import (
 func newMCPEventsAPIFixture(t *testing.T) (*Server, *storetest.Fixture) {
 	t.Helper()
 	f := storetest.New(t)
+	grantSyntheticMCPAPISource(t, f)
 	svc, err := mcpevents.New(t.Context(), f.Store, mcpevents.Options{Enabled: true, Retention: 7 * 24 * time.Hour, Sources: []string{"gmail", "imap", "gcal"}, KeyPath: filepath.Join(t.TempDir(), "mcp-events.key"), OwnerKey: testSessionAPIKey})
 	Require.NoError(t, err)
 	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: testSessionAPIKey}}, Store: f.Store, Logger: testLogger(), MCPEvents: svc})
 	t.Cleanup(func() { Require.NoError(t, srv.Shutdown(context.Background())) })
 	return srv, f
+}
+
+// API transport fixtures grant their synthetic Gmail source explicitly. Native
+// grant denial and provider discovery have separate production-path fixtures.
+func grantSyntheticMCPAPISource(t *testing.T, f *storetest.Fixture) {
+	t.Helper()
+	resource, err := f.Store.GetMCPResource(t.Context(), "source", f.Source.ID)
+	Require.NoError(t, err)
+	Require.NoError(t, f.Store.ObserveNativeSourcePermission(t.Context(), store.NativeSourcePermission{SourceID: f.Source.ID, SourceReference: resource.Reference, SourceType: f.Source.SourceType, NativeIdentity: f.Source.Identifier, Known: true, MessageRead: true}))
 }
 
 func mcpEventsAPIRequest(t *testing.T, srv *Server, path, body string, headers http.Header) *httptest.ResponseRecorder {
@@ -52,7 +62,7 @@ func TestMCPEventsAPIDerivesOwnerAndRejectsOtherAuthModes(t *testing.T) {
 	require.Equal(http.StatusOK, response.Code, response.Body.String())
 	var catalog mcpevents.ListResult
 	require.NoError(json.Unmarshal(response.Body.Bytes(), &catalog))
-	require.Len(catalog.Events, 3)
+	require.Len(catalog.Events, 5)
 	assert.Equal("no-store", response.Header().Get("Cache-Control"))
 	unauthenticated := mcpEventsAPIRequest(t, srv, "list", `{}`, nil)
 	assert.Equal(http.StatusUnauthorized, unauthenticated.Code)

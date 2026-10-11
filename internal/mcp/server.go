@@ -179,6 +179,8 @@ type ServeOptions struct {
 	// recorded through the CLI/API, never by an MCP tool.
 	IdentityScoring IdentityScoringBackend
 	Events          EventsBackend
+	// EventResources permits owner-only native discovery while delivery is disabled.
+	EventResources EventsResourceBackend
 	// Drafts runs managed draft commands with the caller's credential.
 	Drafts        DraftRunner
 	DraftCommands []string
@@ -327,6 +329,7 @@ var mcpSchemaCache = sdkmcp.NewSchemaCache()
 // newMCPServer builds an official MCP server from the operation catalog.
 func newMCPServer(opts ServeOptions, allowWrites bool) *sdkmcp.Server {
 	opts.Events = nil
+	opts.EventResources = nil
 	return newMCPServerWithPolicy(opts, allowWrites, newStdioInvocationPolicy())
 }
 
@@ -430,6 +433,15 @@ func newMCPServerWithPolicy(
 	if !opts.DelegatedOnly {
 		registerAttachmentResources(s, h)
 	}
+	if !opts.DelegatedOnly {
+		resources := opts.EventResources
+		if resources == nil && opts.Events != nil {
+			resources, _ = opts.Events.(EventsResourceBackend)
+		}
+		if resources != nil {
+			registerEventResources(s, resources)
+		}
+	}
 	if opts.Events != nil {
 		s.AddReceivingMiddleware(eventsCapabilityMiddleware)
 		registerEvents(s, opts.Events)
@@ -450,6 +462,7 @@ func Serve(ctx context.Context, engine query.Engine, attachmentsDir, dataDir str
 // ServeWithOptions creates an MCP server from opts and serves over stdio.
 func ServeWithOptions(ctx context.Context, opts ServeOptions) error {
 	opts.Events = nil
+	opts.EventResources = nil
 	if err := ServeTransport(ctx, opts, &sdkmcp.StdioTransport{}); err != nil {
 		return fmt.Errorf("serve MCP over stdio: %w", err)
 	}
@@ -459,6 +472,7 @@ func ServeWithOptions(ctx context.Context, opts ServeOptions) error {
 // ServeTransport creates an MCP server from opts and serves it on transport.
 func ServeTransport(ctx context.Context, opts ServeOptions, transport sdkmcp.Transport) error {
 	opts.Events = nil
+	opts.EventResources = nil
 	opts.downloads = &downloadCache{}
 	defer opts.downloads.close()
 	return newMCPServerWithPolicy(opts, true, newStdioInvocationPolicy()).Run(ctx, transport) //nolint:wrapcheck // ServeWithOptions adds transport-specific context.
@@ -535,6 +549,7 @@ func newMCPHTTPServerWithPolicy(
 			requestOpts := opts
 			if r.Header.Get("Mcp-Protocol-Version") != "2026-07-28" || httpOpts.APIKey == "" || httpOpts.IndependentCredential || opts.DelegatedOnly {
 				requestOpts.Events = nil
+				requestOpts.EventResources = nil
 			}
 			if r.Header.Get("Mcp-Protocol-Version") < "2026-07-28" {
 				// Stateless HTTP cannot initiate form elicitation on older protocols.

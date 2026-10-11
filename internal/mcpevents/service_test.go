@@ -105,6 +105,7 @@ func eventService(t *testing.T) (*Service, *storetest.Fixture, SubscribeRequest)
 func eventServiceWithRetention(t *testing.T, retention time.Duration) (*Service, *storetest.Fixture, SubscribeRequest) {
 	t.Helper()
 	f := storetest.New(t)
+	requireNativeGmailFixtureRead(t, f)
 	s, err := New(t.Context(), f.Store, Options{Enabled: true, Sources: []string{"gmail", "gcal"}, KeyPath: filepath.Join(t.TempDir(), "key"), OwnerKey: "synthetic-owner", Retention: retention})
 	Require.NoError(t, err)
 	s.webhook = tlsWebhook(t, func(rw http.ResponseWriter, r *http.Request) {
@@ -366,11 +367,13 @@ func TestCoalescedCommittedOccurrencesKeepDeliveryPriority(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		require.FailNow("second committed occurrence was not delivered")
 	}
+	assert.Equal(encodeEventID(s.key, subscription.ID, 1), first.EventID)
+	assert.Equal(encodeEventID(s.key, subscription.ID, 3), second.EventID)
 	assert.NotEmpty(second.EventID)
 	assert.NotEqual(first.EventID, second.EventID)
 	require.Eventually(func() bool {
 		row, err := s.st.GetMCPSubscription(t.Context(), subscription.ID)
-		return err == nil && row != nil && row.Generation == initial.Generation && row.CursorSeq == 2 && row.PendingSeq == 0
+		return err == nil && row != nil && row.Generation == initial.Generation && row.CursorSeq == 3 && row.PendingSeq == 0
 	}, 10*time.Second, 20*time.Millisecond, "both receipts should ACK in sequence without renewing the subscription")
 }
 
@@ -627,16 +630,15 @@ func TestCallbackNetworkRunsOutsideOperationGate(t *testing.T) {
 	Require.NoError(t, err)
 }
 
-func appendReceipt(t *testing.T, s *Service, f *storetest.Fixture, seq int64) {
+func appendReceipt(t *testing.T, s *Service, f *storetest.Fixture, seq int64) int64 {
 	t.Helper()
-	var epoch int64
-	Require.NoError(t, f.Store.DB().QueryRow(`SELECT capture_epoch FROM mcp_event_clock WHERE singleton=1`).Scan(&epoch))
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	_, err := f.Store.DB().Exec(f.Store.Rebind(`INSERT INTO mcp_event_log(seq,epoch,family,kind,scope_kind,scope_id,item_key,conversation_id,source_id,from_me,occurred_at,recorded_at,data) VALUES(?,?,'msgvault.message_archived','message','conversation',?,?,?, ?,FALSE,?,?,?)`), seq, epoch, f.ConvID, fmt.Sprintf("synthetic:%d", seq), f.ConvID, f.Source.ID, now, now, `{"kind":"message","from_me":false}`)
+	id, err := f.Store.WithIngestContext(store.IngestContext{Mode: store.IngestLive}).PersistMessageContext(t.Context(), &store.MessagePersistData{Message: f.NewMessage().WithSourceMessageID(fmt.Sprintf("synthetic:%d", seq)).Build()})
 	Require.NoError(t, err)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE mcp_event_clock SET head_seq=? WHERE singleton=1`), seq)
-	Require.NoError(t, err)
+	var capturedSeq int64
+	Require.NoError(t, f.Store.DB().QueryRow(f.Store.Rebind(`SELECT seq FROM mcp_event_log WHERE message_id=? AND kind='message' AND family=?`), id, messageFamily).Scan(&capturedSeq))
+	Require.Equal(t, seq, capturedSeq)
 	s.Wake()
+	return id
 }
 
 func TestIndependentWorkersAndShutdownJoin(t *testing.T) {
@@ -689,6 +691,36 @@ func TestIndependentWorkersAndShutdownJoin(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		require.FailNow("callback not cancelled")
 	}
+}
+
+func TestRenewalRejectsReboundResourceBeforeChallenge(t *testing.T) {
+	assert := Assert.New(t)
+	require := Require.New(t)
+	s, f, req := eventService(t)
+	first, err := s.Subscribe(t.Context(), s.principal, req)
+	require.NoError(err)
+	before, err := s.st.GetMCPSubscription(t.Context(), first.ID)
+	require.NoError(err)
+	require.NotNil(before)
+	require.NoError(f.Store.UpdateSourceIdentifier(f.Source.ID, "replacement-synthetic@example.com"))
+	var calls atomic.Int32
+	s.webhook = tlsWebhook(t, func(rw http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		var value map[string]any
+		if !Assert.NoError(t, json.NewDecoder(r.Body).Decode(&value)) {
+			return
+		}
+		Assert.NoError(t, json.NewEncoder(rw).Encode(map[string]any{"challenge": value["challenge"]}))
+	})
+	req.Delivery.Secret = "whsec_" + base64.StdEncoding.EncodeToString([]byte(strings.Repeat("r", 32)))
+	_, err = s.Subscribe(t.Context(), s.principal, req)
+	require.Error(err)
+	assert.Zero(calls.Load(), "reject removed lifetime before contacting its callback")
+	after, err := s.st.GetMCPSubscription(t.Context(), first.ID)
+	require.NoError(err)
+	require.NotNil(after)
+	assert.Equal(before.Generation, after.Generation)
+	assert.Equal(before.SecretRevision, after.SecretRevision)
 }
 
 func TestWorkerRetriesPostDeliveryCheckWithoutRedelivery(t *testing.T) {
@@ -945,4 +977,14 @@ func TestWorkerRetryBackoffWaitIsCancellationAware(t *testing.T) {
 	case <-time.After(time.Second):
 		require.FailNow("worker did not leave receipt retry backoff after cancellation")
 	}
+}
+
+// Positive service fixtures model the native adapter's verified account/grant
+// boundary. Generic archive fixtures remain unauthorized. Native lifecycle
+// integration tests separately exercise real provider parsing and SDK delivery.
+func requireNativeGmailFixtureRead(t *testing.T, fixture *storetest.Fixture) {
+	t.Helper()
+	resource, err := fixture.Store.GetMCPResource(t.Context(), "source", fixture.Source.ID)
+	Require.NoError(t, err)
+	Require.NoError(t, fixture.Store.ObserveNativeSourcePermission(t.Context(), store.NativeSourcePermission{SourceID: fixture.Source.ID, SourceReference: resource.Reference, SourceType: "gmail", NativeIdentity: fixture.Source.Identifier, Known: true, MessageRead: true}))
 }

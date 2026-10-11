@@ -301,14 +301,12 @@ func TestEventsNativeBeeperImportAndReceiptRead(t *testing.T) {
 	assert.Equal(strconv.FormatInt(messageID, 10), payload["message_id"])
 	require.NoError(resolvedPayload.Validate(payload), "actual occurrence must match its advertised schema")
 	assert.NotContains(string(envelope.Data), body)
+	var deliveredSeq int64
+	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT seq FROM mcp_event_log WHERE family='msgvault.message_archived' AND message_id=? AND source_id=?`), messageID, sourceID).Scan(&deliveredSeq))
 	require.Eventually(func() bool {
 		row, err := f.Store.GetMCPSubscription(t.Context(), subscriptionID)
-		var head int64
-		if queryErr := f.Store.DB().QueryRow(`SELECT head_seq FROM mcp_event_clock WHERE singleton=1`).Scan(&head); queryErr != nil {
-			return false
-		}
-		return err == nil && row != nil && row.CursorSeq == head && row.PendingSeq == 0
-	}, 30*time.Second, 20*time.Millisecond, "delivery success was not durably recorded")
+		return err == nil && row != nil && row.CursorSeq >= deliveredSeq && row.PendingSeq == 0
+	}, 30*time.Second, 20*time.Millisecond, "delivery acknowledgement must include the actual original-family occurrence")
 	_, wire = call("tools/call", map[string]any{"name": "get_mcp_event", "arguments": map[string]any{"event_id": envelope.EventID}})
 	require.Nil(wire["error"])
 	assert.Equal(envelope.EventID, eventsWireObject(t, eventsWireObject(t, wire["result"])["structuredContent"])["eventId"])
@@ -334,6 +332,6 @@ func TestEventsNativeBeeperImportAndReceiptRead(t *testing.T) {
 	_, err = importer.Import(t.Context(), importOpts)
 	require.NoError(err)
 	var occurrences int
-	require.NoError(f.Store.DB().QueryRow(`SELECT COUNT(*) FROM mcp_event_log`).Scan(&occurrences))
+	require.NoError(f.Store.DB().QueryRow(`SELECT COUNT(*) FROM mcp_event_log WHERE family='msgvault.message_archived'`).Scan(&occurrences))
 	assert.Equal(2, occurrences, "re-import does not duplicate either archived message")
 }

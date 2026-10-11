@@ -27,8 +27,9 @@ import (
 // folders and messages, and a change log. A deltaLink encodes a position in
 // that log, so the next delta returns only the changes made after it.
 type fakeGraph struct {
-	t   *testing.T
-	srv *httptest.Server
+	t            *testing.T
+	nativeScopes []string
+	srv          *httptest.Server
 
 	mu      sync.Mutex
 	folders []string          // folder IDs, in list order
@@ -125,6 +126,8 @@ func (f *fakeGraph) serve(w http.ResponseWriter, r *http.Request) {
 	p := r.URL.Path
 	q := r.URL.Query()
 	switch {
+	case p == "/me":
+		f.writeJSON(w, map[string]any{"id": "synthetic-native-account", "mail": "me@example.com", "userPrincipalName": "me@example.com"})
 	case p == "/me/mailFolders":
 		var out []map[string]any
 		for _, id := range f.folders {
@@ -326,7 +329,7 @@ func (f *fakeGraph) delta(w http.ResponseWriter, folder string, q map[string][]s
 
 func (f *fakeGraph) sync(t *testing.T, st *store.Store) (*Summary, error) {
 	t.Helper()
-	c := NewClient(f.srv.URL, func(context.Context) (string, error) { return "tok", nil }, 1000)
+	c := NewClient(f.srv.URL, func(context.Context) (string, error) { return "tok", nil }, 1000, WithGrantedScopesReader(func() ([]string, error) { return f.nativeScopes, nil }))
 	dir := f.attachDir
 	if dir == "" {
 		dir = f.t.TempDir()
@@ -1026,4 +1029,13 @@ func TestImportRetryDeletionErrorKeepsMarker(t *testing.T) {
 	var cursors map[string]string
 	require.NoError(json.Unmarshal([]byte(run.CursorBefore.String), &cursors))
 	assert.JSONEq(t, `{"version":1,"folder_id":"inbox","mode":"live"}`, cursors["retry:m1"])
+}
+
+// Positive Events fixtures state a native grant explicitly. Ordinary
+// newFakeGraph archive fixtures remain legacy/unknown by default.
+func newNativeEventMailGraph(t *testing.T) *fakeGraph {
+	t.Helper()
+	f := newFakeGraph(t)
+	f.nativeScopes = []string{"Mail.Read"}
+	return f
 }

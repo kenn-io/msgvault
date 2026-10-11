@@ -37,10 +37,27 @@ import (
 // destination validation, real TLS hostname verification, signing, the real
 // daemon router and its credential checks, and Store occurrence persistence.
 func TestEventsNativeDaemonBridgeAndReceiptPagination(t *testing.T) {
+	for _, withReference := range []bool{false, true} {
+		name := "legacy"
+		if withReference {
+			name = "lifetime_reference"
+		}
+		t.Run(name, func(t *testing.T) { testEventsNativeDaemonBridgeAndReceiptPagination(t, withReference) })
+	}
+}
+
+func testEventsNativeDaemonBridgeAndReceiptPagination(t *testing.T, withReference bool) {
+	t.Helper()
 	assert := Assert.New(t)
 	require := Require.New(t)
 	const owner = "synthetic-events-owner"
 	f := storetest.New(t)
+	// This daemon/Store fixture isolates wire and pagination behavior. Native
+	// provider grant verification is exercised by the provider SDK lifecycles.
+	source, err := f.Store.GetMCPResource(t.Context(), "source", f.Source.ID)
+	require.NoError(err)
+	require.NoError(f.Store.ObserveNativeSourcePermission(t.Context(), store.NativeSourcePermission{SourceID: f.Source.ID, SourceReference: source.Reference, SourceType: "gmail", NativeIdentity: source.ProviderID, Known: true, MessageRead: true}))
+
 	gate := api.NewSerialOperationGate()
 	daemon := api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: owner}}, Store: f.Store, Logger: slog.New(slog.DiscardHandler), OperationGate: gate})
 	t.Cleanup(func() { assert.NoError(daemon.Shutdown(context.Background())) })
@@ -184,6 +201,12 @@ func TestEventsNativeDaemonBridgeAndReceiptPagination(t *testing.T) {
 	assert.Equal([]any{"webhook"}, messageDefinition["delivery"])
 	assert.Equal(false, eventsWireObject(t, messageDefinition["inputSchema"])["additionalProperties"])
 	req := mcpevents.SubscribeRequest{Name: "msgvault.message_archived", Arguments: map[string]any{"conversation_id": strconv.FormatInt(f.ConvID, 10)}, Delivery: mcpevents.Delivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_" + base64.StdEncoding.EncodeToString(secret)}}
+
+	if withReference {
+		resource, err := f.Store.GetMCPResource(t.Context(), "conversation", f.ConvID)
+		require.NoError(err)
+		req.Arguments["conversation_ref"] = resource.Reference
+	}
 
 	forged, err := json.Marshal(req)
 	require.NoError(err)

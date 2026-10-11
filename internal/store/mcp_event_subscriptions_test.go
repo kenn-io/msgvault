@@ -24,6 +24,7 @@ func TestMCPEventsCoverageChangesEpochOnce(t *testing.T) {
 	assert := Assert.New(t)
 	require := Require.New(t)
 	f := storetest.New(t)
+	grantSyntheticSourceFixture(t, f)
 	cfg := mcpStoreConfig()
 	first, err := f.Store.ConfigureMCPEvents(t.Context(), cfg)
 	require.NoError(err)
@@ -56,6 +57,7 @@ func TestMCPEventsRenewalPreservesPendingGeneration(t *testing.T) {
 	assert := Assert.New(t)
 	require := Require.New(t)
 	f := storetest.New(t)
+	grantSyntheticSourceFixture(t, f)
 	now := time.Now().UTC()
 	clock, err := f.Store.ConfigureMCPEvents(t.Context(), mcpStoreConfig())
 	require.NoError(err)
@@ -65,10 +67,7 @@ func TestMCPEventsRenewalPreservesPendingGeneration(t *testing.T) {
 	assert.False(truncated)
 	require.NotNil(active)
 	assert.Equal(clock.HeadSeq, active.CursorSeq)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE mcp_event_clock SET head_seq = 1 WHERE singleton = 1`))
-	require.NoError(err)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`INSERT INTO mcp_event_log (seq,epoch,family,kind,scope_kind,scope_id,item_key,message_id,conversation_id,source_id,from_me,occurred_at,recorded_at,data) VALUES (1,?,'msgvault.message_archived','message','conversation',?,'message:1',1,?,?,FALSE,?,?,?)`), clock.Epoch, f.ConvID, f.ConvID, f.Source.ID, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), `{"kind":"message","from_me":false}`)
-	require.NoError(err)
+	appendMCPSubscriptionFixture(t, f, clock.Epoch, now)
 	pending, err := f.Store.PrepareMCPDelivery(t.Context(), active.ID, active.Generation, now, func(_ store.MCPSubscription, _ store.MCPEvent) ([]byte, error) {
 		return []byte(`{"eventId":"stable"}`), nil
 	})
@@ -92,6 +91,7 @@ func TestMCPEventsRenewalAppliesRetentionPruneAfterValidatingPredecessor(t *test
 	assert := Assert.New(t)
 	require := Require.New(t)
 	f := storetest.New(t)
+	grantSyntheticSourceFixture(t, f)
 	now := time.Now().UTC()
 	cfg := mcpStoreConfig()
 	cfg.Retention = time.Hour
@@ -131,6 +131,7 @@ func TestMCPEventsRenewalAppliesRetentionPruneAfterValidatingPredecessor(t *test
 func TestMCPEventsQuotaRejectsSixtyFifthActivation(t *testing.T) {
 	require := Require.New(t)
 	f := storetest.New(t)
+	grantSyntheticSourceFixture(t, f)
 	now := time.Now().UTC()
 	_, err := f.Store.ConfigureMCPEvents(t.Context(), mcpStoreConfig())
 	require.NoError(err)
@@ -147,6 +148,7 @@ func TestMCPEventsConcurrentActivationsCannotExceedQuota(t *testing.T) {
 	assert := Assert.New(t)
 	require := Require.New(t)
 	f := storetest.New(t)
+	grantSyntheticSourceFixture(t, f)
 	now := time.Now().UTC()
 	_, err := f.Store.ConfigureMCPEvents(t.Context(), mcpStoreConfig())
 	require.NoError(err)
@@ -184,6 +186,7 @@ func TestMCPEventsStaleCandidateCannotReactivateUnsubscribedGeneration(t *testin
 	assert := Assert.New(t)
 	require := Require.New(t)
 	f := storetest.New(t)
+	grantSyntheticSourceFixture(t, f)
 	now := time.Now().UTC()
 	_, err := f.Store.ConfigureMCPEvents(t.Context(), mcpStoreConfig())
 	require.NoError(err)
@@ -205,6 +208,7 @@ func TestMCPEventsPruningHoleStopsLaggingSubscriber(t *testing.T) {
 	assert := Assert.New(t)
 	require := Require.New(t)
 	f := storetest.New(t)
+	grantSyntheticSourceFixture(t, f)
 	now := time.Now().UTC()
 	cfg := mcpStoreConfig()
 	// Leave activation reads above the synthetic event age so the explicit
@@ -241,18 +245,21 @@ func TestMCPEventsPruningHoleStopsLaggingSubscriber(t *testing.T) {
 	assert.Equal(2, count)
 }
 
-func appendMCPSubscriptionFixture(t *testing.T, f *storetest.Fixture, epoch int64, now time.Time) {
+func appendMCPSubscriptionFixture(t *testing.T, f *storetest.Fixture, epoch int64, now time.Time) int64 {
 	t.Helper()
-	_, err := f.Store.DB().Exec(f.Store.Rebind(`INSERT INTO mcp_event_log (seq,epoch,family,kind,scope_kind,scope_id,item_key,message_id,conversation_id,source_id,from_me,occurred_at,recorded_at,data) VALUES (1,?,'msgvault.message_archived','message','conversation',?,'message:1',1,?,?,FALSE,?,?,?)`), epoch, f.ConvID, f.ConvID, f.Source.ID, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), `{"kind":"message","from_me":false}`)
+	id, err := f.Store.WithIngestContext(store.IngestContext{Mode: store.IngestLive, ObservedAt: now}).PersistMessageContext(t.Context(), &store.MessagePersistData{Message: f.NewMessage().Build()})
 	Require.NoError(t, err)
-	_, err = f.Store.DB().Exec(`UPDATE mcp_event_clock SET head_seq=1 WHERE singleton=1`)
-	Require.NoError(t, err)
+	var capturedEpoch int64
+	Require.NoError(t, f.Store.DB().QueryRow(f.Store.Rebind(`SELECT epoch FROM mcp_event_log WHERE message_id=? AND kind='message'`), id).Scan(&capturedEpoch))
+	Require.Equal(t, epoch, capturedEpoch)
+	return id
 }
 
 func TestMCPEventsRotationRebindsPendingAndRejectsOldCompletion(t *testing.T) {
 	assert := Assert.New(t)
 	require := Require.New(t)
 	f := storetest.New(t)
+	grantSyntheticSourceFixture(t, f)
 	now := time.Now().UTC()
 	clock, err := f.Store.ConfigureMCPEvents(t.Context(), mcpStoreConfig())
 	require.NoError(err)
@@ -293,6 +300,7 @@ func TestMCPEventsCoverageChangeInvalidatesPendingCompletion(t *testing.T) {
 	assert := Assert.New(t)
 	require := Require.New(t)
 	f := storetest.New(t)
+	grantSyntheticSourceFixture(t, f)
 	now := time.Now().UTC()
 	cfg := mcpStoreConfig()
 	clock, err := f.Store.ConfigureMCPEvents(t.Context(), cfg)
@@ -328,6 +336,7 @@ func TestMCPEventsOwnerRotationRevokesOldPendingWithoutCoverageChange(t *testing
 	assert := Assert.New(t)
 	require := Require.New(t)
 	f := storetest.New(t)
+	grantSyntheticSourceFixture(t, f)
 	now := time.Now().UTC()
 	cfg := mcpStoreConfig()
 	clock, err := f.Store.ConfigureMCPEvents(t.Context(), cfg)
@@ -363,6 +372,7 @@ func TestMCPEventsScopeRequiresAdvertisedSourceAndKind(t *testing.T) {
 	assert := Assert.New(t)
 	require := Require.New(t)
 	f := storetest.New(t)
+	grantSyntheticSourceFixture(t, f)
 	_, err := f.Store.ConfigureMCPEvents(t.Context(), mcpStoreConfig())
 	require.NoError(err)
 	sourceType, sourceID, err := f.Store.ValidateMCPEventScope(t.Context(), "msgvault.message_archived", "conversation", f.ConvID, []string{"message"})
@@ -391,6 +401,7 @@ func TestMCPEventsRetainedReceiptSurvivesFloorButNotUnsubscribe(t *testing.T) {
 	assert := Assert.New(t)
 	require := Require.New(t)
 	f := storetest.New(t)
+	grantSyntheticSourceFixture(t, f)
 	now := time.Now().UTC()
 	clock, err := f.Store.ConfigureMCPEvents(t.Context(), mcpStoreConfig())
 	require.NoError(err)
@@ -415,6 +426,7 @@ func TestMCPEventsRetainedReceiptSurvivesFloorButNotUnsubscribe(t *testing.T) {
 func TestMCPEventsExpiredReceiptHasFiniteReadGrace(t *testing.T) {
 	require := Require.New(t)
 	f := storetest.New(t)
+	grantSyntheticSourceFixture(t, f)
 	now := time.Now().UTC()
 	clock, err := f.Store.ConfigureMCPEvents(t.Context(), mcpStoreConfig())
 	require.NoError(err)
@@ -441,6 +453,7 @@ func TestMCPEventsFailedActivationDoesNotLogCallbackOrDriverText(t *testing.T) {
 	assert := Assert.New(t)
 	require := Require.New(t)
 	f := storetest.New(t)
+	grantSyntheticSourceFixture(t, f)
 	now := time.Now().UTC()
 	_, err := f.Store.ConfigureMCPEvents(t.Context(), mcpStoreConfig())
 	require.NoError(err)
@@ -475,6 +488,7 @@ func TestMCPEventsSourceRemovalCleansReceiptsAfterMessageDeletion(t *testing.T) 
 	assert := Assert.New(t)
 	require := Require.New(t)
 	f := storetest.New(t)
+	grantSyntheticSourceFixture(t, f)
 	now := time.Now().UTC()
 	clock, err := f.Store.ConfigureMCPEvents(t.Context(), mcpStoreConfig())
 	require.NoError(err)
@@ -503,6 +517,7 @@ func TestMCPEventsCoverageFingerprintIgnoresMatrixOrder(t *testing.T) {
 	assert := Assert.New(t)
 	require := Require.New(t)
 	f := storetest.New(t)
+	grantSyntheticSourceFixture(t, f)
 	cfg := mcpStoreConfig()
 	cfg.Capabilities = []store.MCPEventCapability{
 		{Family: "msgvault.message_archived", SourceType: "gmail", Kinds: []string{"message", "reaction"}},
@@ -526,6 +541,7 @@ func TestMCPEventsCoverageFingerprintIgnoresMatrixOrder(t *testing.T) {
 func TestMCPEventsDisabledArchiveWriterDoesNotLockEventClock(t *testing.T) {
 	require := Require.New(t)
 	f := storetest.New(t)
+	grantSyntheticSourceFixture(t, f)
 	cfg := mcpStoreConfig()
 	cfg.Enabled = false
 	_, err := f.Store.ConfigureMCPEvents(t.Context(), cfg)
@@ -545,6 +561,7 @@ func TestMCPEventsOwnMessageGuardDoesNotCountRetries(t *testing.T) {
 	assert := Assert.New(t)
 	require := Require.New(t)
 	f := storetest.New(t)
+	grantSyntheticSourceFixture(t, f)
 	now := time.Now().UTC()
 	clock, err := f.Store.ConfigureMCPEvents(t.Context(), mcpStoreConfig())
 	require.NoError(err)
@@ -590,6 +607,7 @@ func TestMCPEventsTerminalDeliveryPoliciesPreserveLossEvidence(t *testing.T) {
 			assert := Assert.New(t)
 			require := Require.New(t)
 			f := storetest.New(t)
+			grantSyntheticSourceFixture(t, f)
 			now := time.Now().UTC()
 			clock, err := f.Store.ConfigureMCPEvents(t.Context(), mcpStoreConfig())
 			require.NoError(err)
@@ -628,6 +646,7 @@ func TestMCPEventsIdleDeliveryDoesNotWrite(t *testing.T) {
 			assert := Assert.New(t)
 			require := Require.New(t)
 			f := storetest.New(t)
+			grantSyntheticSourceFixture(t, f)
 			now := time.Now().UTC()
 			clock, err := f.Store.ConfigureMCPEvents(t.Context(), mcpStoreConfig())
 			require.NoError(err)

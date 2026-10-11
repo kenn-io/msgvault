@@ -363,6 +363,7 @@ func writeOperationGateBusy(w http.ResponseWriter, r *http.Request, gate Operati
 // handled by the strings.HasPrefix check in operationGateRequest below.
 var operationGateExemptPaths = map[string]bool{
 	// Events take the gate for short Store steps, outside callback I/O.
+	mcpEventsPath + "/resources":   true,
 	mcpEventsPath + "/list":        true,
 	mcpEventsPath + "/subscribe":   true,
 	mcpEventsPath + "/unsubscribe": true,

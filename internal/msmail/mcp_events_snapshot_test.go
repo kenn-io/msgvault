@@ -21,6 +21,9 @@ func nativeMailSnapshotSyncer(t *testing.T, st *store.Store, f *fakeGraph) *sync
 	t.Helper()
 	source, err := st.GetOrCreateSource(SourceType, "me@example.com")
 	require.NoError(t, err)
+	resource, err := st.GetMCPResource(t.Context(), "source", source.ID)
+	require.NoError(t, err)
+	require.NoError(t, st.ObserveNativeSourcePermission(t.Context(), store.NativeSourcePermission{SourceID: source.ID, SourceReference: resource.Reference, SourceType: SourceType, NativeIdentity: source.Identifier, Known: true, MessageRead: true}))
 	_, err = st.ConfigureMCPEvents(t.Context(), store.MCPEventsConfig{Enabled: true, Principal: "synthetic-owner", Capabilities: []store.MCPEventCapability{{Family: "msgvault.message_archived", SourceType: SourceType, Kinds: []string{"message"}}}})
 	require.NoError(t, err)
 	c := NewClient(f.srv.URL, func(context.Context) (string, error) { return "synthetic-token", nil }, 1000)
@@ -194,7 +197,7 @@ func TestMCPMSMailIndexFailureKeepsArchiveAndProgress(t *testing.T) {
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	enableNativeMailEvents(t, st)
-	f := newFakeGraph(t)
+	f := newNativeEventMailGraph(t)
 	_, err := f.sync(t, st)
 	require.NoError(err)
 	var dense strings.Builder

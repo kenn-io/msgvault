@@ -15,8 +15,17 @@ import (
 
 func enableNativeDiscordEvents(t *testing.T, st *store.Store) {
 	t.Helper()
+	require := require.New(t)
 	_, err := st.ConfigureMCPEvents(t.Context(), store.MCPEventsConfig{Enabled: true, Principal: "synthetic-owner", Capabilities: []store.MCPEventCapability{{Family: "msgvault.message_archived", SourceType: "discord", Kinds: []string{"message"}}}})
-	require.NoError(t, err)
+	require.NoError(err)
+	// This fixture isolates native snapshot rollback and live provenance. Real
+	// bot, role/overwrite, parser and SDK admission are tested by native HTTP fixtures.
+	source, err := st.GetOrCreateSource("discord", "200")
+	require.NoError(err)
+	resource, err := st.GetMCPResource(t.Context(), "source", source.ID)
+	require.NoError(err)
+	require.NoError(st.ObserveNativeSourcePermission(t.Context(), store.NativeSourcePermission{SourceID: source.ID, SourceReference: resource.Reference, SourceType: "discord", NativeIdentity: "200", Known: true, MessageRead: true}))
+	require.NoError(st.ObserveNativeMessageScopes(t.Context(), store.NativeMessageScopeInventory{SourceID: source.ID, SourceReference: resource.Reference, SourceType: "discord", NativeIdentity: "200", Kind: "discord_channel", Scopes: []store.NativeMessageScope{{ProviderID: "300", DisplayName: "Synthetic channel"}}}))
 }
 
 // Exercise the native page writer under a live ingest context. Real database

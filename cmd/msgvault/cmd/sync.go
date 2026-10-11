@@ -117,6 +117,9 @@ func runSyncIncrementalLocal(cmd *cobra.Command, args []string) error {
 			return lookupErr
 		}
 		for _, src := range allMatches {
+			if !sourceSupportsCommand(src.SourceType, "sync") {
+				continue
+			}
 			switch src.SourceType {
 			case sourceTypeGmail:
 				gmailTargets = append(gmailTargets, syncTarget{source: src, email: src.Identifier})
@@ -145,6 +148,9 @@ func runSyncIncrementalLocal(cmd *cobra.Command, args []string) error {
 			return errors.New("no email accounts to sync; add one with 'msgvault add-account <gmail>', 'add-imap', or 'add-o365' (file imports are not synced)")
 		}
 		for _, src := range allSources {
+			if !sourceSupportsCommand(src.SourceType, "sync") {
+				continue
+			}
 			switch src.SourceType {
 			case sourceTypeGmail:
 				if !cfg.OAuth.HasAnyConfig() {
@@ -278,9 +284,12 @@ func runIncrementalSync(ctx context.Context, s *store.Store, getOAuthMgr func(ct
 	email := source.Identifier
 	appName := sourceOAuthApp(source)
 	var tokenSource oauth2.TokenSource
+	var readGrantedScopes func() []string
 	var tsErr error
 
 	if saKeyPath := cfg.OAuth.ServiceAccountKeyFor(appName); saKeyPath != "" {
+		granted := append([]string(nil), oauth.Scopes...)
+		readGrantedScopes = func() []string { return granted }
 		saMgr, saErr := oauth.NewServiceAccountManager(saKeyPath, oauth.Scopes)
 		if saErr != nil {
 			return fmt.Errorf("service account: %w", saErr)
@@ -294,6 +303,7 @@ func runIncrementalSync(ctx context.Context, s *store.Store, getOAuthMgr func(ct
 		if oaErr != nil {
 			return oaErr
 		}
+		readGrantedScopes = func() []string { return oauthMgr.GrantedScopes(email) }
 		interactive := isatty.IsTerminal(os.Stdin.Fd()) ||
 			isatty.IsCygwinTerminal(os.Stdin.Fd())
 		tokenSource, tsErr = getTokenSourceWithReauth(ctx, oauthMgr, email, interactive, gmailReauthHint)
@@ -307,6 +317,7 @@ func runIncrementalSync(ctx context.Context, s *store.Store, getOAuthMgr func(ct
 	client := gmail.NewClient(tokenSource,
 		gmail.WithLogger(logger),
 		gmail.WithRateLimiter(rateLimiter),
+		gmail.WithGrantedScopesReader(readGrantedScopes),
 	)
 	defer func() { _ = client.Close() }()
 

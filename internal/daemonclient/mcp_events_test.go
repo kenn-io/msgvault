@@ -79,6 +79,11 @@ func TestMCPEventsErrorsNeverExposeDaemonDiagnostics(t *testing.T) {
 		reason       string
 	}{
 		{"auth", "private daemon diagnostic", 401, -32012, "owner_required"},
+		{"unauthorized ignores safe body", `{"code":-32012,"reason":"native_authority_unavailable"}`, http.StatusUnauthorized, -32012, "owner_required"},
+		{"native authority", `{"code":-32012,"reason":"native_authority_unavailable"}`, http.StatusForbidden, -32012, "native_authority_unavailable"},
+		{"forbidden unknown", `{"code":-32012,"reason":"untrusted provider text"}`, http.StatusForbidden, -32012, "owner_required"},
+		{"forbidden wrong code", `{"code":-32602,"reason":"unknown_scope"}`, http.StatusForbidden, -32012, "owner_required"},
+		{"forbidden oversized", strings.Repeat("x", 4097), http.StatusForbidden, -32012, "owner_required"},
 		{"safe", "{\"code\":-32602,\"reason\":\"unknown_scope\"}", 400, -32602, "unknown_scope"},
 		{"unsafe reason", "{\"code\":-32602,\"reason\":\"https://private.example/secret\"}", 400, -32015, "events_unavailable"},
 		{"invalid JSON", "private daemon diagnostic", 500, -32015, "events_unavailable"},

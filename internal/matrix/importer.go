@@ -93,10 +93,14 @@ type ImportSummary struct {
 }
 
 type Importer struct {
-	store        *store.Store
-	runtime      *Runtime
-	users        map[id.UserID]int64
-	roomSnapshot *store.ConversationPersistData
+	store                 *store.Store
+	runtime               *Runtime
+	users                 map[id.UserID]int64
+	roomSnapshot          *store.ConversationPersistData
+	nativePermission      *store.NativeSourcePermission
+	nativeRoomMemberships map[id.RoomID]store.NativeMessageScopeIdentity
+	nativeRoomPins        map[id.RoomID]store.NativeMessageScopeLookup
+	nativeThreadPins      map[id.EventID]store.NativeMessageScopeLookup
 }
 
 func NewImporter(s *store.Store, runtime *Runtime) *Importer {
@@ -162,6 +166,9 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	if err = imp.checkpoint(syncID, state, sum); err != nil {
 		return sum, err
 	}
+	if err = imp.pinNativeMatrixAuthority(ctx, source.ID, state, opts); err != nil {
+		return sum, err
+	}
 	since := state.NextBatch
 	// mautrix omits an empty set_presence parameter, which makes the homeserver
 	// mark the client online. The client-server spec defines "offline" as "the
@@ -171,7 +178,10 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	// "unavailable" would mark the account idle.
 	resp, err := imp.runtime.Client.SyncRequest(ctx, 0, since, "", since == "", event.Presence("offline"))
 	if err != nil {
-		return sum, fmt.Errorf("matrix sync: %w", err)
+		return sum, fmt.Errorf("matrix sync: %w", imp.nativeMatrixAuthorityError(ctx, err, false))
+	}
+	if err = imp.observeNativeMatrixSync(ctx, resp, since == "", state, opts); err != nil {
+		return sum, err
 	}
 	// A later join cannot inherit live coverage from a membership that ended.
 	// Save this even if a subsequent account-data or room request fails.
@@ -249,7 +259,7 @@ func (imp *Importer) directRooms(ctx context.Context) (map[id.RoomID]bool, error
 		if errors.Is(err, mautrix.MNotFound) {
 			return map[id.RoomID]bool{}, nil
 		}
-		return nil, fmt.Errorf("load Matrix direct-chat map: %w", err)
+		return nil, fmt.Errorf("load Matrix direct-chat map: %w", imp.nativeMatrixAuthorityError(ctx, err, false))
 	}
 	out := map[id.RoomID]bool{}
 	for _, rooms := range direct {
@@ -328,7 +338,16 @@ func (imp *Importer) importRoom(ctx context.Context, sourceID, syncID int64, roo
 	for _, evt := range deferred {
 		deferredIDs[evt.ID] = struct{}{}
 	}
+	validateRoom := func(evt *event.Event) error {
+		if evt != nil && evt.RoomID != "" && evt.RoomID != roomID {
+			return imp.pauseNativeMatrixAuthority(ctx, errors.New("native_room_identity_mismatch"))
+		}
+		return nil
+	}
 	rememberDeferred := func(evt *event.Event) error {
+		if err := validateRoom(evt); err != nil {
+			return err
+		}
 		if evt == nil || evt.ID == "" {
 			return nil
 		}
@@ -368,6 +387,9 @@ func (imp *Importer) importRoom(ctx context.Context, sourceID, syncID int64, roo
 		return nil
 	}
 	persist := func(evt *event.Event) error {
+		if err := validateRoom(evt); err != nil {
+			return err
+		}
 		if evt != nil {
 			evt.RoomID = roomID
 		}
@@ -522,9 +544,13 @@ func (imp *Importer) resolveDeferredReply(ctx context.Context, sourceID int64, e
 // paginate walks room history backward from `from`, stopping at `to` when set.
 func (imp *Importer) paginate(ctx context.Context, roomID id.RoomID, from, to string, ingest func(*event.Event) error, saved func(end string) error) error {
 	for from != "" {
+		// Bind denied responses to the room read confirmed before this page.
+		// Looking up the current lifetime after IO could revoke a replacement.
+		membership, pinned := imp.nativeRoomMemberships[roomID]
+		pin := store.NativeMessageScopeLookup{Identity: membership, Present: true}
 		page, err := imp.runtime.Client.Messages(ctx, roomID, from, to, mautrix.DirectionBackward, nil, pageSize)
 		if err != nil {
-			return fmt.Errorf("read Matrix room %s history: %w", roomID, err)
+			return fmt.Errorf("read Matrix room %s history: %w", roomID, imp.nativeMatrixRoomReadError(ctx, pin, pinned, err, false))
 		}
 		for _, evt := range slices.Backward(page.Chunk) {
 			if err := ingest(evt); err != nil {
@@ -612,9 +638,37 @@ func roomTitle(events []*event.Event) (string, bool) {
 }
 
 func (imp *Importer) members(ctx context.Context, roomID id.RoomID) ([]store.ConversationParticipantRef, []string, error) {
+	var pin store.NativeMessageScopeLookup
+	var pinned bool
+	var pinErr error
+	if imp.nativePermission != nil {
+		pin, pinned = imp.nativeRoomPins[roomID]
+		if !pinned {
+			pin, pinned, pinErr = imp.store.LookupNativeMessageScope(ctx, imp.nativePermission.SourceID, imp.nativePermission.SourceReference, "matrix_room", roomID.String())
+			if pinErr != nil {
+				return nil, nil, pinErr
+			}
+		}
+	}
 	resp, err := imp.runtime.Client.JoinedMembers(ctx, roomID)
 	if err != nil {
-		return nil, nil, fmt.Errorf("list Matrix room %s members: %w", roomID, err)
+		return nil, nil, fmt.Errorf("list Matrix room %s members: %w", roomID, imp.nativeMatrixRoomReadError(ctx, pin, pinned, err, false))
+	}
+	if imp.nativePermission != nil {
+		if _, own := resp.Joined[imp.runtime.Client.UserID]; !own {
+			return nil, nil, imp.nativeMatrixRoomReadError(ctx, pin, pinned, errors.New("native_room_membership_unavailable"), true)
+		}
+		if !pinned {
+			return nil, nil, errors.New("native_room_identity_unavailable")
+		}
+		scopes, confirmErr := imp.store.ConfirmNativeMessageScopeRead(ctx, store.NativeMessageScopeRead{SourceID: imp.nativePermission.SourceID, SourceReference: imp.nativePermission.SourceReference, SourceType: SourceType, NativeIdentity: imp.nativePermission.NativeIdentity, Scopes: []store.NativeMessageScopeLookup{pin}})
+		if confirmErr != nil {
+			return nil, nil, confirmErr
+		}
+		if len(scopes) != 1 {
+			return nil, nil, errors.New("native_room_identity_unavailable")
+		}
+		imp.nativeRoomMemberships[roomID] = scopes[0]
 	}
 	refs := make([]store.ConversationParticipantRef, 0, len(resp.Joined))
 	names := make([]string, 0, len(resp.Joined))
@@ -807,9 +861,13 @@ func (imp *Importer) persistMessage(ctx context.Context, sourceID, convID int64,
 		SenderID: sql.NullInt64{Int64: senderID, Valid: senderID != 0}, IsFromMe: evt.Sender == imp.runtime.Client.UserID,
 		Snippet: sql.NullString{String: snippet(body), Valid: body != ""}, SizeEstimate: int64(len(body)),
 	}
+	nativeScopes, err := imp.nativeMatrixMessageMembership(ctx, evt, content)
+	if err != nil {
+		return err
+	}
 	_, linked, err := imp.store.PersistMatrixMessageContext(ctx, &store.MessagePersistData{
 		Conversation: imp.roomSnapshot, Message: msg, BodyText: sql.NullString{String: body, Valid: body != ""}, RawMIME: raw, RawFormat: rawFormat,
-		FTS: &store.FTSDoc{Body: body}, PreserveLabels: true,
+		FTS: &store.FTSDoc{Body: body}, PreserveLabels: true, NativeScopes: nativeScopes,
 	}, evt.RoomID.String(), replyID)
 	if err != nil {
 		return fmt.Errorf("persist Matrix event %s: %w", evt.ID, err)

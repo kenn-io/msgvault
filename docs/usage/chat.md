@@ -57,13 +57,91 @@ occurrences. A newly subscribed receiver starts at the current journal head.
 Keep the daemon running with `msgvault serve`, or disable background daemon idle
 shutdown when callbacks must remain available.
 
+Choose a resource before subscribing. In an owner-authenticated HTTP session,
+call `list_mcp_event_resources` with `{"kind":"source"}`,
+`{"kind":"conversation"}`, or `{"kind":"inbox"}`. Add `source_id` to restrict
+results to one account. The response contains each resource's decimal `id`,
+opaque `reference`, native `provider_id`, and current `capabilities`. Display
+names are presentation only; keep the returned ID and reference together.
+
+Discovery works while Events is disabled. It reports `events_disabled` and no
+subscribable families until capture is enabled. Discovery performs no provider
+request and creates no signing key. It has the same owner HTTP transport
+restrictions as Events; an independent listener credential cannot use it even
+when its bytes match the daemon key. Older daemons that lack the resource route
+omit the tool.
+
+The page size defaults to 25 and cannot exceed 100. Pass `next_cursor` as
+`cursor` with the same `kind`, `source_id`, and `limit` to continue. A cursor is
+bound to its owner, filters and resource lifetime. If its anchor is replaced,
+restart discovery rather than reusing the stale cursor.
+
 Choose an exact scope before subscribing:
 
 | Family | Scope argument | Find the scope |
 |---|---|---|
 | `msgvault.message_archived` | `conversation_id` | Message or conversation reads |
+| `msgvault.source_message_archived` | `source_id` and required `source_ref` | `list_mcp_event_resources` with `kind: "source"` |
+| `msgvault.inbox_message_archived` | `inbox_id` and required `inbox_ref` | `list_mcp_event_resources` with `kind: "inbox"` |
 | `msgvault.calendar_event_changed` | `calendar_source_id` | `list_calendar_sources` |
 | `msgvault.draft_changed` | `conversation_id` | Draft or conversation reads |
+
+The message and draft families also accept an optional `conversation_ref`;
+calendar accepts `source_ref`. A supplied reference pins the resource lifetime:
+stale, wrong-scope, or malformed references fail before receiver verification.
+Keep the same reference when renewing or unsubscribing. Omitting it preserves
+existing subscription argument bytes and IDs; retained subscriptions still
+cannot move to a replacement resource that reuses an archive ID.
+
+Source subscriptions include eligible arrivals in conversations created after
+subscription. Inbox subscriptions match the exact native container and account
+lifetime. Discovery returns the supported kinds for each source:
+
+| Source | Native inbox identity |
+|---|---|
+| Gmail | Label ID |
+| Microsoft mail | Graph folder ID |
+| IMAP | Mailbox identity and verified `UIDVALIDITY` epoch |
+| Slack | Channel ID, or channel ID and exact thread-root timestamp |
+| Teams | Chat ID; channel and chat-thread scopes remain unavailable |
+| Discord | Channel ID, or thread ID with its verified parent channel ID |
+| Matrix | Room ID, or room ID and exact standard `m.thread` root event ID |
+| Beeper | Exact source account and native member-chat route |
+
+Names are display values. A rename keeps the reference; observed removal and
+restoration create a new lifetime. A failed or incomplete inventory does not
+prove removal. Incremental thread catalogs also preserve quiet threads.
+
+Native adapters pin scope lifetimes before content requests. Message capture
+checks those lifetimes again in the snapshot transaction. A response in flight
+during revocation cannot restore a retired scope or borrow a replacement,
+including an exact thread whose parent remains readable.
+
+Discord verifies the selected bot, guild membership, roles and channel
+permission overwrites. An empty successful message list alone does not prove
+read-history permission. Quiet forum and media parents use their verified native
+permissions because they have no message-list endpoint. A thread's current
+read must also match its parent.
+
+Matrix distinguishes standard `m.thread` membership from an ordinary reply.
+The root can be absent from the archive. Incremental sync omission preserves
+quiet joined rooms; a positive leave or membership denial retires the affected
+room and its threads. Native sync and membership responses must match the room
+and exact thread lifetimes pinned before the request. Encrypted placeholders
+remain silent.
+
+Beeper pins the selected account and exact native chat. Two logins on one
+network remain separate. Activity-window omissions preserve quiet routes;
+positive chat denial or route replacement retires their old references. A
+merged view without an explicit native member route is unavailable. Membership
+and route lifetimes are committed with the message snapshot.
+
+The source and inbox message families default `include_from_me` to `false` and
+`include_reactions` to `true`. A reaction is still unavailable unless the
+runtime catalog advertises its native producer. One arrival can produce
+separate source, conversation and inbox occurrences; choose the scopes your
+receiver needs. Membership is captured with the message transaction. Moving an
+archived message later does not emit a new arrival or rewrite an old receipt.
 
 Archive IDs are canonical decimal strings. Subscribe with `events/subscribe`:
 
@@ -114,6 +192,35 @@ cursor moves up to the floor and keeps running. An expired subscription keeps it
 cursor, so renewing it after a sweep returns `truncated: true`. A recent
 receipt that remains physically stored below the floor can still authorize its
 own read until it expires.
+
+Subscriptions and receipts remain bound to the source and conversation admitted
+at subscription or capture time. Replacing either identity invalidates that
+binding, even if its archive ID is reused or its old provider identifier is
+restored. Message reads also require the original message to remain in the
+recorded source and conversation. Subscription admission checks that identity
+before webhook verification and again when activating the subscription. A change
+during verification rejects the request, including a change away and back.
+
+Live Events require the selected native adapter to verify its identity and read
+permission. Gmail and Microsoft mail require body/raw message-read permission;
+IMAP verifies the selected mailbox and epoch. Chat adapters check their native
+account, container and read authority. Unknown permission metadata pauses
+capture, delivery and receipt reads without asserting removal. Explicit denial
+or OAuth grant revocation retires the affected authority; restoring access cannot
+revive its old subscriptions or receipts. Ordinary archive reads remain separate.
+
+The daemon observes native permission and folder changes during sync. A fresh
+daemon pauses persisted permission until the selected native adapter verifies
+its current account and grant again. Delivery and receipt reads can therefore
+wait for the next successful native sync after startup. Discovery remains
+available during this pause.
+
+On upgrade, msgvault preserves valid existing subscriptions, receipt IDs and
+pending payload bytes. It records unavailable legacy bindings once; restoring
+archive rows later does not make those old receipts readable again. An archive
+that has never captured Events seals its upgrade markers during writable setup.
+Starting it with Events disabled then needs no archive write lock and leaves
+capture at epoch zero.
 
 Use `draft_get` to read a managed draft by its `draft_id`. Deleted drafts can
 return not-found while `get_mcp_event` still returns their retained occurrence.

@@ -104,10 +104,12 @@ const Trash = "Trash"
 
 // Client implements gmail.API for IMAP servers.
 type Client struct {
-	config      *Config
-	password    string
-	tokenSource func(ctx context.Context) (string, error) // XOAUTH2 token callback
-	logger      *slog.Logger
+	nativeMailboxIndex          *nativeMailboxMembershipIndex
+	nativeSelectedMailboxEpochs map[string]uint32
+	config                      *Config
+	password                    string
+	tokenSource                 func(ctx context.Context) (string, error) // XOAUTH2 token callback
+	logger                      *slog.Logger
 
 	mu                          sync.Mutex
 	conn                        *imapclient.Client
@@ -601,6 +603,7 @@ func (c *Client) selectMailbox(mailbox string) error {
 	c.selectedMailbox = mailbox
 	c.selectedUIDValidity = data.UIDValidity
 	c.selectedNumMessages = data.NumMessages
+	c.recordNativeMailboxEpochLocked(mailbox, data.UIDValidity)
 	return nil
 }
 
@@ -1222,6 +1225,7 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 	c.activeSourceAliases = nil
 	c.observedMailboxDeltas = nil
 	c.observedMemberships = nil
+	c.nativeMailboxIndex = nil
 
 	var allMailboxes, listMailboxes []string
 	var isGmailAllMail bool
@@ -2003,6 +2007,9 @@ func (c *Client) MessageIngestContext(sourceMessageID string) store.IngestContex
 		return observation
 	}
 	if _, known := slices.BinarySearch(prior.KnownUIDs, uint32(uid)); known {
+		return observation
+	}
+	if epoch := c.nativeSelectedMailboxEpochs[mailbox]; epoch != 0 && epoch != prior.UIDValidity {
 		return observation
 	}
 	for _, delta := range c.observedMailboxDeltas {

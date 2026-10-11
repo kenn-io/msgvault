@@ -47,6 +47,7 @@ func TestEventsNativeSlackImportAndReceiptRead(t *testing.T) {
 		headers  http.Header
 	}
 	received := make(chan delivery, 4)
+	var challenges atomic.Int64
 	var retryOnce atomic.Bool
 	retryOnce.Store(true)
 	receiver := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -88,6 +89,7 @@ func TestEventsNativeSlackImportAndReceiptRead(t *testing.T) {
 			return
 		}
 		if challenge, ok := data["challenge"]; ok {
+			challenges.Add(1)
 			var nonce string
 			if !assert.NoError(json.Unmarshal(challenge, &nonce)) || !assert.Equal("msg_verification_"+nonce, id) {
 				w.WriteHeader(http.StatusBadRequest)
@@ -188,7 +190,7 @@ func TestEventsNativeSlackImportAndReceiptRead(t *testing.T) {
 	assert.Equal(false, eventsWireObject(t, messageDefinition["inputSchema"])["additionalProperties"])
 	// Exercise native Slack HTTP decoding and checkpoints. Only allowlisted
 	// read methods are implemented; sending is outside this provider's scope.
-	var live atomic.Bool
+	var live, omitGrantHeader atomic.Bool
 	const body = "Synthetic Slack content for @Synthetic Owner read through a delivery receipt."
 	historyTime := time.Now().UTC().Add(-48 * time.Hour)
 	liveTime := time.Now().UTC()
@@ -207,9 +209,17 @@ func TestEventsNativeSlackImportAndReceiptRead(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("X-Oauth-Scopes", "channels:read,channels:history,users:read,users:read.email,search:read")
+		if !omitGrantHeader.Load() {
+			w.Header().Set("X-Oauth-Scopes", "channels:read,channels:history,users:read,users:read.email,search:read")
+		}
 		output := map[string]any{"ok": true, "response_metadata": map[string]any{"next_cursor": ""}}
 		switch r.URL.Path {
+		case "/auth.test":
+			output["team_id"] = "TSYNTHETIC"
+			if r.Header.Get("Authorization") == "Bearer synthetic-other-token" {
+				output["team_id"] = "TOTHER"
+			}
+			output["user_id"] = "UOWNER"
 		case "/users.list":
 			output["members"] = []any{
 				map[string]any{"id": "UOWNER", "name": "owner", "real_name": "Synthetic Owner", "tz": "UTC", "tz_offset": 0, "profile": map[string]any{"email": "owner@example.test"}},
@@ -276,6 +286,17 @@ func TestEventsNativeSlackImportAndReceiptRead(t *testing.T) {
 	subscriptions, err := f.Store.ListMCPSubscriptions(t.Context(), mcpevents.Principal(owner))
 	require.NoError(err)
 	assert.Empty(subscriptions)
+	// Native success without current grants pauses access, before receiver IO.
+	omitGrantHeader.Store(true)
+	_, err = importer.Import(t.Context(), importOpts)
+	require.Error(err, "native unknown grant cannot enumerate channel types")
+	beforeChallenges := challenges.Load()
+	_, wire = call("events/subscribe", req)
+	require.NotNil(wire["error"], "unknown native Slack grant cannot authorize a subscription")
+	assert.Equal(beforeChallenges, challenges.Load(), "unknown native authority must be rejected before callback challenge")
+	omitGrantHeader.Store(false)
+	_, err = importer.Import(t.Context(), importOpts)
+	require.NoError(err)
 	_, wire = call("events/subscribe", req)
 	require.Nil(wire["error"])
 	subscriptionID := eventsWireString(t, eventsWireObject(t, wire["result"])["id"])
@@ -315,13 +336,13 @@ func TestEventsNativeSlackImportAndReceiptRead(t *testing.T) {
 	assert.Equal(strconv.FormatInt(messageID, 10), payload["message_id"])
 	require.NoError(resolvedPayload.Validate(payload), "actual occurrence must match its advertised schema")
 	assert.NotContains(string(envelope.Data), body)
+	var deliveredSeq int64
+	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT seq FROM mcp_event_log WHERE family='msgvault.message_archived' AND message_id=?`), messageID).Scan(&deliveredSeq))
+	// Unrelated families can append beyond this subscription's last occurrence.
+	// The durable acknowledgement must cover the delivered message, not them.
 	require.Eventually(func() bool {
 		row, err := f.Store.GetMCPSubscription(t.Context(), subscriptionID)
-		var head int64
-		if queryErr := f.Store.DB().QueryRow(`SELECT head_seq FROM mcp_event_clock WHERE singleton=1`).Scan(&head); queryErr != nil {
-			return false
-		}
-		return err == nil && row != nil && row.CursorSeq == head && row.PendingSeq == 0
+		return err == nil && row != nil && row.CursorSeq >= deliveredSeq && row.PendingSeq == 0
 	}, 30*time.Second, 20*time.Millisecond, "delivery success was not durably recorded")
 	_, wire = call("tools/call", map[string]any{"name": "get_mcp_event", "arguments": map[string]any{"event_id": envelope.EventID}})
 	require.Nil(wire["error"])
@@ -367,7 +388,7 @@ func TestEventsNativeSlackImportAndReceiptRead(t *testing.T) {
 
 	// The same native conversation/message IDs in a different workspace cannot
 	// be read through the first source's receipt.
-	otherImporter := slack.NewImporter(f.Store, slack.NewClient(provider.URL, "synthetic-token"), "TOTHER")
+	otherImporter := slack.NewImporter(f.Store, slack.NewClient(provider.URL, "synthetic-other-token"), "TOTHER")
 	otherOpts := importOpts
 	otherOpts.TeamID = "TOTHER"
 	_, err = otherImporter.Import(t.Context(), otherOpts)
@@ -380,6 +401,6 @@ func TestEventsNativeSlackImportAndReceiptRead(t *testing.T) {
 	_, wire = call("tools/call", map[string]any{"name": "get_message", "arguments": map[string]any{"id": strconv.FormatInt(otherMessageID, 10), "event_id": envelope.EventID}})
 	require.NotNil(wire["error"], "another source cannot borrow a receipt")
 	var occurrences int
-	require.NoError(f.Store.DB().QueryRow(`SELECT COUNT(*) FROM mcp_event_log`).Scan(&occurrences))
+	require.NoError(f.Store.DB().QueryRow(`SELECT COUNT(*) FROM mcp_event_log WHERE family='msgvault.message_archived'`).Scan(&occurrences))
 	assert.Equal(2, occurrences, "re-import does not duplicate either archived message")
 }

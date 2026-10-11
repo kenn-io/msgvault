@@ -35,7 +35,7 @@ func TestMCPEventsHealthAdvertisesOnlyToOwner(t *testing.T) {
 	assert.Equal(true, owner["mcp_events"])
 	caps, ok := owner["mcp_event_capabilities"].([]any)
 	require.True(ok)
-	assert.Len(caps, 5)
+	assert.Len(caps, 9)
 	for _, raw := range caps {
 		capability, ok := raw.(map[string]any)
 		require.True(ok)
@@ -95,12 +95,18 @@ func TestMCPEventsHealthUsesManagedDraftReaders(t *testing.T) {
 	require.NoError(json.Unmarshal(response.Body.Bytes(), &health))
 	require.NotNil(health.MCPEvents)
 	assert.True(*health.MCPEvents)
-	require.Len(health.MCPEventCapabilities, 9)
+	require.Len(health.MCPEventCapabilities, 17)
 	for _, capability := range health.MCPEventCapabilities {
 		if capability.Family == "msgvault.message_archived" {
 			assert.Contains([]string{"beeper", "slack", "teams", "discord"}, capability.SourceType)
 			assert.Equal([]string{"message"}, capability.Kinds)
 			assert.Equal([]string{"get_message", "list_thread", "get_attachment"}, capability.ReadTools)
+			continue
+		}
+		if capability.Family == "msgvault.source_message_archived" || capability.Family == "msgvault.inbox_message_archived" {
+			assert.Contains([]string{"beeper", "slack", "teams", "discord"}, capability.SourceType)
+			assert.Equal([]string{"message"}, capability.Kinds)
+			Assert.Equal(t, []string{"get_message", "list_thread"}, capability.ReadTools)
 			continue
 		}
 		assert.Equal("msgvault.draft_changed", capability.Family)
@@ -122,12 +128,15 @@ func TestMCPEventsHealthMatrixReaders(t *testing.T) {
 	require.Equal(http.StatusOK, response.Code, response.Body.String())
 	var health HealthResponse
 	require.NoError(json.Unmarshal(response.Body.Bytes(), &health))
-	require.Len(health.MCPEventCapabilities, 1)
-	capability := health.MCPEventCapabilities[0]
-	assert.Equal("msgvault.message_archived", capability.Family)
-	assert.Equal("matrix", capability.SourceType)
-	assert.Equal([]string{"message"}, capability.Kinds)
-	assert.Equal([]string{"get_message", "list_thread"}, capability.ReadTools)
+	require.Len(health.MCPEventCapabilities, 3)
+	families := make([]string, 0, 3)
+	for _, capability := range health.MCPEventCapabilities {
+		families = append(families, capability.Family)
+		assert.Equal("matrix", capability.SourceType)
+		assert.Equal([]string{"message"}, capability.Kinds)
+		Assert.Equal(t, []string{"get_message", "list_thread"}, capability.ReadTools)
+	}
+	assert.ElementsMatch([]string{"msgvault.message_archived", "msgvault.source_message_archived", "msgvault.inbox_message_archived"}, families)
 }
 
 func TestMCPEventsHealthMSMailReaders(t *testing.T) {
@@ -144,10 +153,17 @@ func TestMCPEventsHealthMSMailReaders(t *testing.T) {
 	require.Equal(http.StatusOK, response.Code, response.Body.String())
 	var health HealthResponse
 	require.NoError(json.Unmarshal(response.Body.Bytes(), &health))
-	require.Len(health.MCPEventCapabilities, 1)
-	capability := health.MCPEventCapabilities[0]
-	assert.Equal("msgvault.message_archived", capability.Family)
-	assert.Equal("msmail", capability.SourceType)
-	assert.Equal([]string{"message"}, capability.Kinds)
-	assert.Equal([]string{"get_message", "list_thread", "get_attachment"}, capability.ReadTools)
+	require.Len(health.MCPEventCapabilities, 3)
+	families := make([]string, 0, 3)
+	for _, capability := range health.MCPEventCapabilities {
+		families = append(families, capability.Family)
+		assert.Equal("msmail", capability.SourceType)
+		assert.Equal([]string{"message"}, capability.Kinds)
+		if capability.Family == "msgvault.message_archived" {
+			assert.Equal([]string{"get_message", "list_thread", "get_attachment"}, capability.ReadTools)
+		} else {
+			Assert.Equal(t, []string{"get_message", "list_thread"}, capability.ReadTools)
+		}
+	}
+	assert.ElementsMatch([]string{"msgvault.message_archived", "msgvault.source_message_archived", "msgvault.inbox_message_archived"}, families)
 }

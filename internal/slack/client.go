@@ -96,7 +96,8 @@ type Client struct {
 	token   string
 	http    *http.Client
 	// scopes is refreshed from Slack's X-OAuth-Scopes response header.
-	scopes []string
+	scopes      []string
+	scopesKnown bool
 	// limiters holds one token bucket per rate tier (see methodTiers).
 	limiters map[int]*rate.Limiter
 	// mediaTransport overrides the file-download transport (tests only; the
@@ -200,6 +201,7 @@ func (c *Client) call(ctx context.Context, method string, params url.Values, out
 		if !envelope.OK {
 			return apiError(method, &envelope)
 		}
+		_, c.scopesKnown = resp.Header[http.CanonicalHeaderKey("X-Oauth-Scopes")]
 		c.scopes = strings.FieldsFunc(resp.Header.Get("X-Oauth-Scopes"), func(r rune) bool {
 			return r == ',' || r == ' '
 		})

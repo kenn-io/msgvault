@@ -77,7 +77,7 @@ func (s *Store) PersistIMAPDraftContext(
 			}
 			return fmt.Errorf("read IMAP draft source: %w", err)
 		}
-		if sourceType != "imap" {
+		if sourceType != sourceTypeIMAP {
 			return errors.New("invalid_source")
 		}
 		var existing int64
@@ -154,7 +154,7 @@ func (s *Store) PersistIMAPDraftContext(
 			DraftID: draftID, SourceID: receipt.SourceID, CurrentMessageID: id,
 			CurrentReceipt: receipt, Revision: 1,
 		}
-		return s.appendDraftEventTx(ctx, tx, "imap", draftID, "created")
+		return s.appendDraftEventTx(ctx, tx, sourceTypeIMAP, draftID, "created")
 	}
 	lock := attributionLock{Sources: []int64{receipt.SourceID}}
 	if _, err := s.persistMessageWithParticipantsTransaction(ctx, lock, before, participants, build, prepare, after); err != nil {

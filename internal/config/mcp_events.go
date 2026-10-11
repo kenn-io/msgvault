@@ -51,6 +51,9 @@ func (c *MCPEventsConfig) Validate() error {
 		return err
 	}
 	for _, source := range c.Sources {
+		if source == "*" && len(c.Sources) != 1 {
+			return errors.New("invalid [mcp.events] sources: use [\"*\"] alone to select all eligible sources")
+		}
 		if source == "" || source != strings.TrimSpace(source) {
 			return errors.New("invalid [mcp.events] sources: want nonempty source types")
 		}

@@ -88,13 +88,18 @@ func DefaultOptions() *Options {
 
 // Syncer performs Gmail synchronization.
 type Syncer struct {
-	client             gmail.API
-	store              *store.Store
-	logger             *slog.Logger
-	progress           gmail.SyncProgress
-	opts               *Options
-	successfulHookName string
-	successfulHook     SuccessfulSyncHook
+	// Set only on the per-run copy, before message fetches or worker startup.
+	nativeGmailSourceReference string
+	nativeGmailScopePins       map[string]store.NativeMessageScopeIdentity
+	nativeIMAPSourceReference  string
+	nativeIMAPAuthority        *nativeIMAPAuthorityState
+	client                     gmail.API
+	store                      *store.Store
+	logger                     *slog.Logger
+	progress                   gmail.SyncProgress
+	opts                       *Options
+	successfulHookName         string
+	successfulHook             SuccessfulSyncHook
 
 	// failedRelocationGuards holds run-scoped protection for forced
 	// relocation targets that failed this run. It is set only on the scoped
@@ -1348,7 +1353,7 @@ func (s *Syncer) full(
 	}()
 
 	// Get profile to verify connection and get historyId
-	profile, err := s.client.GetProfile(ctx)
+	profile, err := s.nativeProfileWithPermission(ctx, source)
 	if err != nil {
 		s.failStoppedSync(state.syncID, err)
 		return nil, fmt.Errorf("get profile: %w", err)
@@ -1395,6 +1400,9 @@ func (s *Syncer) full(
 	for {
 		// List messages
 		listResp, err := s.client.ListMessages(ctx, s.opts.Query, pageToken)
+		// SELECT can prove an epoch reset even when this page is empty or fails.
+		// Publish that lifetime observation before any message or receipt can use it.
+		err = errors.Join(err, s.observeNativeIMAPSelectedEpochs(ctx))
 		if err != nil {
 			s.failStoppedSync(state.syncID, err)
 			return nil, fmt.Errorf("list messages: %w", err)
@@ -1568,9 +1576,13 @@ func (s *Syncer) listCompleteMessageSnapshot(ctx context.Context) (map[string]st
 
 // syncLabels syncs all labels and returns a map of Gmail label ID to internal ID.
 func (s *Syncer) syncLabels(ctx context.Context, sourceID int64) (map[string]int64, error) {
-	labels, err := s.client.ListLabels(ctx)
+	inventory, err := s.pinNativeGmailLabelInventory(ctx, sourceID)
 	if err != nil {
 		return nil, err
+	}
+	labels, err := s.client.ListLabels(ctx)
+	if err != nil {
+		return nil, s.nativeGmailLabelInventoryError(ctx, inventory, err)
 	}
 
 	labelInfos := make(map[string]store.LabelInfo)
@@ -1589,6 +1601,31 @@ func (s *Syncer) syncLabels(ctx context.Context, sourceID int64) (map[string]int
 		}
 	}
 
+	if inventory != nil {
+		s.nativeGmailSourceReference = inventory.SourceReference
+		for _, label := range labels {
+			inventory.Scopes = append(inventory.Scopes, store.NativeMessageScope{ProviderID: label.ID, DisplayName: label.Name})
+		}
+		if err := s.store.ObserveNativeMessageScopes(ctx, *inventory); err != nil {
+			return nil, err
+		}
+		// Pin the admitted inventory before listing or downloading messages. The
+		// persistence transaction may reject a replacement, never adopt its key.
+		s.nativeGmailScopePins = make(map[string]store.NativeMessageScopeIdentity, len(labels))
+		for _, label := range labels {
+			pin, found, err := s.store.LookupNativeMessageScope(ctx, sourceID, inventory.SourceReference, "gmail_label", label.ID)
+			if err != nil {
+				return nil, err
+			}
+			if !found || !pin.Present {
+				return nil, errors.New("native Gmail label unavailable")
+			}
+			s.nativeGmailScopePins[label.ID] = pin.Identity
+		}
+	}
+	if err := s.observeNativeIMAPMailboxInventory(ctx, sourceID); err != nil {
+		return nil, err
+	}
 	return s.store.EnsureLabelsBatch(sourceID, labelInfos)
 }
 
@@ -1818,7 +1855,10 @@ func (s *Syncer) isGmailChat(labelIDs []string) bool {
 // the internal message ID to callers. No vector-search enqueue happens
 // here: persisted rows leave embed_gen NULL (column default) and the
 // scan-and-fill worker discovers them later.
-func (s *Syncer) persistMessage(data *messageData, labelMap map[string]int64) (int64, error) {
+func (s *Syncer) persistMessage(ctx context.Context, data *messageData, labelMap map[string]int64) (int64, error) {
+	if err := s.observeNativeIMAPSelectedEpochs(ctx); err != nil {
+		return 0, err
+	}
 	// Map Gmail label IDs to internal IDs
 	var labelIDs []int64
 	for _, gmailLabelID := range data.gmailLabelIDs {
@@ -1854,15 +1894,34 @@ func (s *Syncer) persistMessage(data *messageData, labelMap map[string]int64) (i
 			persistenceStore = s.store.WithIngestContext(store.IngestContext{Mode: store.IngestUnknown})
 		}
 	}
+	var nativeScopes *store.NativeMessageScopeMembership
+	if s.nativeGmailSourceReference != "" {
+		nativeScopes = &store.NativeMessageScopeMembership{SourceReference: s.nativeGmailSourceReference}
+		for _, id := range data.gmailLabelIDs {
+			identity, pinned := s.nativeGmailScopePins[id]
+			if !pinned {
+				return 0, errors.New("native Gmail label unavailable")
+			}
+			nativeScopes.Scopes = append(nativeScopes.Scopes, identity)
+		}
+	}
+	if s.nativeIMAPSourceReference != "" {
+		var err error
+		nativeScopes, err = s.nativeIMAPSnapshotScopes(data)
+		if err != nil {
+			return 0, err
+		}
+	}
 	// Persist atomically
 	messageID, err := persistenceStore.PersistMessage(&store.MessagePersistData{
-		Message:    data.message,
-		Metadata:   data.metadata,
-		BodyText:   sql.NullString{String: data.bodyText, Valid: data.bodyText != ""},
-		BodyHTML:   sql.NullString{String: data.bodyHTML, Valid: data.bodyHTML != ""},
-		RawMIME:    data.rawMIME,
-		Recipients: recipientSets,
-		LabelIDs:   labelIDs,
+		NativeScopes: nativeScopes,
+		Message:      data.message,
+		Metadata:     data.metadata,
+		BodyText:     sql.NullString{String: data.bodyText, Valid: data.bodyText != ""},
+		BodyHTML:     sql.NullString{String: data.bodyHTML, Valid: data.bodyHTML != ""},
+		RawMIME:      data.rawMIME,
+		Recipients:   recipientSets,
+		LabelIDs:     labelIDs,
 	})
 	if err != nil {
 		return 0, err
@@ -2128,7 +2187,7 @@ func (s *Syncer) ingestMessage(
 	if err != nil {
 		return false, err
 	}
-	messageID, err := s.persistMessage(data, labelMap)
+	messageID, err := s.persistMessage(ctx, data, labelMap)
 	if err == nil && s.opts.RemoteImages != nil && data.message.MessageType == store.MessageTypeEmail {
 		archived := s.opts.RemoteImages.Archive(ctx, s.store, s.opts.AttachmentsDir, messageID, data.bodyHTML)
 		for _, imageErr := range archived.Errors {

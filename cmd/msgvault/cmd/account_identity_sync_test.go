@@ -32,7 +32,7 @@ func (f testTransport) RoundTrip(r *http.Request) (*http.Response, error) { retu
 func TestAddServiceAccountDefaultIdentityScheduledSync(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	saveAddAccountFlags(t)
-	// Only Google's token and profile responses are simulated. Registration,
+	// Only Google's token, profile and label inventory responses are simulated. Registration,
 	// service-account token creation, scheduled sync, and database writes are real.
 	// Scheduled Gmail sync constructs its HTTP client with context.Background(),
 	// so oauth2.HTTPClient in the invocation context cannot intercept its requests.
@@ -46,6 +46,8 @@ func TestAddServiceAccountDefaultIdentityScheduledSync(t *testing.T) {
 			body = `{"access_token":"synthetic-token","token_type":"Bearer","expires_in":3600}`
 		case "GET https://gmail.googleapis.com/gmail/v1/users/me/profile":
 			body = `{"emailAddress":"user@example.com","historyId":"100"}`
+		case "GET https://gmail.googleapis.com/gmail/v1/users/me/labels":
+			body = `{"labels":[]}`
 		default:
 			return nil, fmt.Errorf("unexpected request: %s %s", req.Method, req.URL)
 		}

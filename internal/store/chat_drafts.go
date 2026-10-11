@@ -74,7 +74,7 @@ func loadChatDraftDestination(
 		return dest, err
 	}
 	switch dest.sourceType {
-	case "slack", "slackdump", "teams", "discord":
+	case sourceTypeSlack, "slackdump", "teams", sourceTypeDiscord:
 	default:
 		return dest, fmt.Errorf("source type %q: %w", dest.sourceType, ErrChatDraftUnsupportedSource)
 	}

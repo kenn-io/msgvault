@@ -21,8 +21,26 @@ func exercisePreEventsSchemaUpgrade(t *testing.T, setup func() error, open func(
 	source, err := st.GetOrCreateSource("gmail", "reader@example.com")
 	require.NoError(err)
 
+	// Events identity triggers refer to tables that did not exist in version 1.
+	// Remove them before SQLite validates the subsequent schema alterations.
+	for _, trigger := range []struct{ name, table string }{
+		{"trg_mcp_source_resources_identity", "sources"},
+		{"trg_mcp_conversation_resources_identity", "conversations"},
+		{"trg_mcp_message_reference_identity", "messages"},
+		{"trg_mcp_source_resources_calendar_config", "sources"},
+	} {
+		statement := "DROP TRIGGER " + trigger.name
+		if st.IsPostgreSQL() {
+			statement += " ON " + trigger.table
+		}
+		_, err := st.DB().ExecContext(t.Context(), statement)
+		require.NoError(err)
+	}
+
 	// Recreate version 1's schema, which predates Events tables and draft creators.
 	tables := []string{
+		"mcp_subscription_resource_bindings", "mcp_event_resource_bindings",
+		"mcp_event_origin_bindings",
 		"mcp_event_clock", "mcp_event_log", "mcp_event_subscriptions",
 		"mcp_event_dead_letters", "mcp_event_message_refs", "mcp_event_source_refs",
 		"mcp_event_conversation_refs",

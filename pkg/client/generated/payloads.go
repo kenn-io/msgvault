@@ -130,6 +130,8 @@ type LinkKataEvidenceBody = KataEvidenceLinkRequest
 
 type ListMCPEventsBody = MCPEventsListRequest
 
+type DiscoverMCPEventResourcesBody = ResourceQuery
+
 type SubscribeMCPEventsBody = SubscribeRequest
 
 type UnsubscribeMCPEventsBody = UnsubscribeRequest

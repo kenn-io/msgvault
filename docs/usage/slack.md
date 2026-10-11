@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-08"
+last_edited: "2026-10-10"
 title: Slack
 description: Archive Slack workspaces through the Web API or a Slackdump export.
 ---
