@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-08"
+last_edited: "2026-10-11"
 title: Web UI & API Server
 description: Daemon-served analytical Web UI and REST API for your msgvault archive, with optional background sync scheduling.
 ---

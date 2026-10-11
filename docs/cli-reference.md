@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-08"
+last_edited: "2026-10-11"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -3734,7 +3734,7 @@ msgvault mcp [flags]
 | `--http-allow-insecure` | `false` | Allow non-loopback HTTP binding without an effective inbound key. A configured key is still enforced; without one, use only behind a trusted network boundary or authenticated reverse proxy. |
 | `--http-allow-writes` | `false` | Expose Saved View management, attachment export, deletion staging, and managed draft writes over StreamableHTTP. Calendar event mutations also require `--allow-calendar-writes`, and Kata issue writes `--allow-kata-writes`. Enable only for trusted, authenticated clients. |
 | `--allow-calendar-writes` | `false` | Expose calendar event mutation tools. HTTP also requires `--http-allow-writes`; only enable for sessions where the user explicitly authorizes calendar writes. |
-| `--allow-kata-writes` | `false` | Expose `create_kata_issue` and `link_kata_evidence`; `find_kata_issues` needs no flag. HTTP also requires `--http-allow-writes`; archive text is untrusted input, so only enable for sessions where the user explicitly authorizes Kata issue writes. See [Kata issues](usage/kata-issues.md). |
+| `--allow-kata-writes` | `false` | Expose `create_kata_issue` and `link_kata_evidence`; `find_kata_issues` and `get_kata_issue_context` need no flag. HTTP also requires `--http-allow-writes`; archive text is untrusted input, so only enable for sessions where the user explicitly authorizes Kata issue writes. See [Kata issues](usage/kata-issues.md). |
 
 See [MCP Server](/docs/usage/chat/) for configuration and tool reference.
 

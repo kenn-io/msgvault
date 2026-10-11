@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-05"
+last_edited: "2026-10-11"
 title: Kata issues from archive evidence
 description: Create Kata issues that quote exact text from messages, meeting transcripts, and files.
 ---
