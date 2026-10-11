@@ -127,10 +127,10 @@ func TestRecordingReferenceFeed(t *testing.T) {
 	runDiscovery(t, w, 1)
 	_, _, operation := recordingState(t, f, one)
 	skipped := f.CreateMessage("skipped")
-	recordingBody(t, f, skipped, "[https://loom.com/share/label](https://loom.com/share/skipped)")
+	recordingBody(t, f, skipped, `[https://loom.com/share/label](https://loom.com/share/skipped "title")`)
 	before, err := f.Store.LoadRecordingReferenceCursor(t.Context(), "destination")
 	require.NoError(err)
-	oldPolicy := digest("discovery-v4\x00")
+	oldPolicy := digest("discovery-v5\x00")
 	_, err = f.Store.AdvanceRecordingReferenceCursor(t.Context(), "destination", before, store.RecordingReferenceCursor{At: time.Now().Add(time.Hour), Policy: oldPolicy})
 	require.NoError(err)
 	runDiscovery(t, w, 2)
@@ -207,19 +207,24 @@ func TestRecordingReferenceLegacyBeeper(t *testing.T) {
 
 func TestRecordingReferenceHTMLVisibleURL(t *testing.T) {
 	for _, tc := range []struct {
-		name, href, before, after string
-		extraAnchors              int
-		repeated                  bool
+		name, href, before, after, label string
+		extraAnchors                     int
+		repeated                         bool
 	}{
-		{"suffix with anchors", "https://cap.so/s/abc!", "", "...", 8, false},
-		{"encoded repeated anchor", "https://loom.com/share/abc?token=one&key=two!…", "", "", 0, true},
+		{"suffix with anchors", "https://cap.so/s/abc!", "", "...", "", 8, false},
+		{"encoded repeated anchor", "https://loom.com/share/abc?token=one&key=two!…", "", "", "", 0, true},
+		{"different URL label", "https://cap.so/s/target", "", "", "https://loom.com/share/label", 0, false},
 	} {
 		for _, textVariant := range []string{"both", "plain text without URL"} {
 			t.Run(tc.name+"/"+textVariant, func(t *testing.T) {
 				assert := assert.New(t)
-				visible := tc.before + tc.href + tc.after
+				label := tc.label
+				if label == "" {
+					label = tc.href
+				}
+				visible := tc.before + label + tc.after
 				text := visible + " https://cap.so/s/other"
-				anchor := `<a href="` + strings.ReplaceAll(tc.href, "&", "&amp;") + `">` + tc.href + `</a>`
+				anchor := `<a href="` + strings.ReplaceAll(tc.href, "&", "&amp;") + `">` + label + `</a>`
 				body := tc.before + anchor + tc.after + " https://cap.so/s/other"
 				if tc.repeated {
 					body += " " + anchor

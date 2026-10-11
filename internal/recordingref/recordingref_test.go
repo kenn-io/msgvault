@@ -45,6 +45,7 @@ func TestScan(t *testing.T) {
 		{"plain label punctuation", "[Watch](https://cap.so/s/abc!)", nil, []string{"https://cap.so/s/abc!"}},
 		{"URL label", "[https://loom.com/share/abc](https://loom.com/share/abc)", nil, []string{"https://loom.com/share/abc"}},
 		{"different URL label", "[https://loom.com/share/label](https://cap.so/s/target?token=a_b!)", nil, []string{"https://cap.so/s/target?token=a_b!"}},
+		{"URL label with title", `[https://loom.com/share/label](https://cap.so/s/target "title") https://loom.com/share/other`, nil, []string{"https://cap.so/s/target", "https://loom.com/share/other"}},
 		{"IPv6 URL label", "[https://[2001:db8::1]:8443/s/label](https://[2001:db8::1]:8443/s/abc?token=(one))", []string{"https://[2001:db8::1]:8443"}, []string{"https://[2001:db8::1]:8443/s/abc?token=(one)"}},
 		{"literal query", "https://cap.so/s/abc?token=keep_*_~", nil, []string{"https://cap.so/s/abc?token=keep_*_~"}},
 	} {
@@ -113,10 +114,11 @@ func TestScanHTML(t *testing.T) {
 	} {
 		t.Run(tc.target+tc.padding, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
-			refs := ScanHTML(`<a href="`+tc.padding+tc.target+tc.padding+`">Watch recording</a>`, nil)
+			refs, _ := scanHTML(`<a href="`+tc.padding+tc.target+tc.padding+`">Watch recording</a>`, originSet(nil))
 			require.Len(refs, 1)
 			assert.Equal(tc.target, refs[0].Reference)
 		})
 	}
-	assert.Empty(t, ScanHTML(`<a href="prefix https://cap.so/s/abc">Watch</a>`, nil))
+	refs, _ := scanHTML(`<a href="prefix https://cap.so/s/abc">Watch</a>`, originSet(nil))
+	assert.Empty(t, refs)
 }

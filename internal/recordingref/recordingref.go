@@ -39,7 +39,7 @@ func digest(value string) string {
 func (r Ref) ReferenceSHA256() string { return digest(r.Reference) }
 
 var tokens = regexp.MustCompile(`(?i)https?://[^\s<>"\x60]+`)
-var markdownLinks = regexp.MustCompile(`(?i)\[(?:[^\[\]\n]|\[[^\[\]\n]*\])*\]\((https?://(?:[^()\s<>]|\([^()\s<>]*\))*)\)`)
+var markdownLinks = regexp.MustCompile(`(?i)\[(?:[^\[\]\n]|\[[^\[\]\n]*\])*\]\((https?://(?:[^()\s<>]|\([^()\s<>]*\))*)(?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'|\([^()\n]*\)))?[ \t]*\)`)
 var recordingPath = regexp.MustCompile(`^/(share|embed|s|dev)/([^/]+)$`)
 
 func parse(raw string) (*url.URL, error) {
@@ -202,35 +202,44 @@ func scanProse(text string, allowed map[string]bool, exact map[string]bool) []Re
 	return refs
 }
 
-// ScanHTML sends archived anchor targets through the same offline admission rule.
-func ScanHTML(body string, origins []string) []Ref {
-	return scanHTML(body, originSet(origins))
-}
-
-func scanHTML(body string, allowed map[string]bool) []Ref {
+func scanHTML(body string, allowed map[string]bool) ([]Ref, string) {
 	z := html.NewTokenizer(strings.NewReader(body))
 	var refs []Ref
+	var prose strings.Builder
+	inAnchor := false
 	for {
-		switch z.Next() {
+		token := z.Next()
+		switch token {
 		case html.ErrorToken:
-			return refs
-		case html.TextToken, html.EndTagToken, html.CommentToken, html.DoctypeToken:
-			continue
+			return refs, prose.String()
+		case html.EndTagToken:
+			name, _ := z.TagName()
+			if bytes.EqualFold(name, []byte("a")) {
+				inAnchor = false
+				prose.WriteByte(' ')
+			}
 		case html.StartTagToken, html.SelfClosingTagToken:
 			name, more := z.TagName()
 			if !bytes.EqualFold(name, []byte("a")) {
-				continue
+				break
 			}
+			inAnchor = false
 			for more {
 				key, value, next := z.TagAttr()
 				more = next
 				if bytes.EqualFold(key, []byte("href")) {
+					inAnchor = len(value) > 0 && token != html.SelfClosingTagToken
 					if r, ok := admit(strings.Trim(string(value), " \t\r\n\f"), allowed); ok {
 						refs = append(refs, r)
 					}
 					break
 				}
 			}
+			prose.WriteByte(' ')
+			continue
+		}
+		if !inAnchor {
+			prose.Write(z.Raw())
 		}
 	}
 }

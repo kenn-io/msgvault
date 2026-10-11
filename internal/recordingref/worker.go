@@ -58,12 +58,15 @@ func (w *Worker) gated(ctx context.Context, fn func() error) error {
 func messageRefs(m store.RecordingMessage, allowed map[string]bool) []Ref {
 	var refs []Ref
 	seen := make(map[string]bool)
-	anchors := scanHTML(m.BodyHTML, allowed)
+	anchors, htmlProse := scanHTML(m.BodyHTML, allowed)
 	exact := make(map[string]bool, len(anchors))
 	for _, r := range anchors {
 		exact[r.Reference] = true
 	}
-	prose := m.Body + "\n" + mime.StripHTML(m.BodyHTML)
+	prose := m.Body
+	if m.BodyHTML != "" {
+		prose = mime.StripHTML(htmlProse)
+	}
 	// Exact anchor targets take precedence over prose punctuation heuristics.
 	for _, r := range append(anchors, scanProse(prose, allowed, exact)...) {
 		if !seen[r.RouteKey] {
@@ -130,7 +133,7 @@ func (w *Worker) reconcile(ctx context.Context, m store.RecordingMessage) error 
 func (w *Worker) RunBatch(ctx context.Context) error {
 	var examined, pages, attempted int
 	start := time.Now()
-	policy := digest("discovery-v5\x00" + strings.Join(w.origins, "\x00"))
+	policy := digest("discovery-v6\x00" + strings.Join(w.origins, "\x00"))
 	for pages < 50 && time.Since(start) < 20*time.Second {
 		var before, cursor store.RecordingReferenceCursor
 		var page store.ChangedMessagePage
