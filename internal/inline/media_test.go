@@ -412,7 +412,7 @@ func TestMediaImportPersistsAttachmentStatsForListingsAndSearch(t *testing.T) {
 			refs, err := imp.store.MessageInlineProviderAttachments(id)
 			requires.NoError(err)
 			assertions.Equal(state, refs["inline:document:1"].State)
-			engine := query.NewSQLiteEngine(imp.store.DB())
+			engine := query.NewEngine(imp.store.DB(), imp.store.IsPostgreSQL())
 			results, err := engine.Search(t.Context(), search.Parse("has:attachment"), 10, 0)
 			requires.NoError(err)
 			requires.Len(results, 1)
