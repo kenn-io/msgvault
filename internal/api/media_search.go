@@ -100,7 +100,7 @@ func (s *Server) handleMediaSearch(w http.ResponseWriter, r *http.Request) {
 			var members []int64
 			var err error
 			if clusters, ok := s.queryEngineForContext(r.Context()).(interface {
-				ExpandParticipantClusterMembers(context.Context, []int64) ([]int64, error)
+				ExpandParticipantClusterMembers(ctx context.Context, ids []int64) ([]int64, error)
 			}); ok {
 				members, err = clusters.ExpandParticipantClusterMembers(r.Context(), []int64{participantID})
 			} else {
