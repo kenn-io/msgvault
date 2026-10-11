@@ -12,7 +12,8 @@ import (
 )
 
 // SourceReader loads live archive text. Load derives provenance for a
-// selector; Read returns the text only while the reference still matches it.
+// selector; Read returns the text only while the reference still matches it,
+// and with ErrChanged returns the source's display alone.
 type SourceReader interface {
 	LoadKataEvidenceSource(ctx context.Context, selector Selector) (SourceRecord, error)
 	ReadKataEvidenceSource(ctx context.Context, ref Reference) (SourceRecord, error)
@@ -85,7 +86,8 @@ func (s *Service) ResolveAround(ctx context.Context, ref Reference, around int) 
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrChanged):
-			result.State = Changed
+			// The occurrence still matched, so its name is the cited source's.
+			result.State, result.Evidence.Display = Changed, record.Display
 		case errors.Is(err, ErrUnavailable):
 			result.State = Unavailable
 		case errors.Is(err, ErrUnprocessed):
@@ -101,7 +103,7 @@ func (s *Service) ResolveAround(ctx context.Context, ref Reference, around int) 
 	// Callers can hand-build references, so a range past the text is refused rather than shortened.
 	excerpt, ok := textutil.RuneSlice(record.Text, start, end)
 	if !utf8.ValidString(record.Text) || !ok {
-		result.State = Changed
+		result.State, result.Evidence.Display = Changed, record.Display
 		return result, nil
 	}
 	result.State = Available

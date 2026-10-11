@@ -162,6 +162,7 @@ func (s *Store) kataOccurrence(ctx context.Context, ref *kataevidence.Reference,
 
 // ReadKataEvidenceSource requires both the original occurrence and exact
 // representation. Numeric row reuse never authorizes a different source tuple.
+// A source whose text changed still returns its display with ErrChanged.
 func (s *Store) ReadKataEvidenceSource(ctx context.Context, ref kataevidence.Reference) (kataevidence.SourceRecord, error) {
 	var empty kataevidence.SourceRecord
 	uid, err := s.ArchiveUIDContext(ctx)
@@ -191,7 +192,7 @@ func (s *Store) ReadKataEvidenceSource(ctx context.Context, ref kataevidence.Ref
 			return empty, kataevidence.ErrInvalidReference
 		}
 		if !strings.EqualFold(ref.Message.BodySHA256, actual.Message.BodySHA256) {
-			return empty, kataevidence.ErrChanged
+			return kataevidence.SourceRecord{Display: record.Display}, kataevidence.ErrChanged
 		}
 	case "document_chunk":
 		if ref.DocumentChunk == nil || actual.DocumentChunk == nil {
@@ -200,7 +201,7 @@ func (s *Store) ReadKataEvidenceSource(ctx context.Context, ref kataevidence.Ref
 		want, got := ref.DocumentChunk, actual.DocumentChunk
 		if !strings.EqualFold(want.CanonicalBlobHash, got.CanonicalBlobHash) ||
 			!strings.EqualFold(want.ManifestChecksum, got.ManifestChecksum) || !strings.EqualFold(want.ChunkChecksum, got.ChunkChecksum) {
-			return empty, kataevidence.ErrChanged
+			return kataevidence.SourceRecord{Display: record.Display}, kataevidence.ErrChanged
 		}
 	default:
 		return empty, kataevidence.ErrUnsupported

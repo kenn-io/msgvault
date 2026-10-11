@@ -32,9 +32,13 @@ func TestKataEvidenceMessage(t *testing.T) {
 
 	_, err = f.Store.DB().Exec(f.Store.Rebind("UPDATE message_bodies SET body_text=? WHERE message_id=?"), "Please send the final budget by Friday.", id)
 	require.NoError(err)
+	_, err = f.Store.DB().Exec(f.Store.Rebind("UPDATE messages SET subject=? WHERE id=?"), "Budget", id)
+	require.NoError(err)
 	got, err = svc.ResolveAround(t.Context(), prepared[0].Reference, 0)
 	require.NoError(err)
 	assert.Equal(kataevidence.Changed, got.State)
+	assert.Equal("Budget", got.Evidence.Display.ContainingTitle, "a changed message is still named")
+	assert.Empty(got.Evidence.Excerpt)
 
 	// Without a stored body or raw MIME there is nothing to cite.
 	_, err = f.Store.DB().Exec(f.Store.Rebind("DELETE FROM message_bodies WHERE message_id=?"), id)
@@ -103,6 +107,7 @@ func TestKataEvidenceDocumentChunk(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(kataevidence.Changed, got.State)
 	assert.Empty(got.Evidence.Excerpt)
+	assert.Equal(prepared[0].Display, got.Evidence.Display, "a changed chunk still names its file")
 
 	_, err = f.Store.DB().Exec(f.Store.Rebind("UPDATE document_extractions SET normalization_version=NULL WHERE id=?"), "evidence-old")
 	require.NoError(err)

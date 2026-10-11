@@ -129,7 +129,7 @@ The first line shows the issue's ref, status, and title. Each passage the
 issue cites follows with its state in the archive today and its source. A
 passage linked again after a re-sync that left its text where it was shows
 once. If the re-sync moved the text, for example by adding words before it,
-the passage cited again shows as its own entry next to the original.
+the passage cited again shows as its own entry, after the passages cited before it.
 
 | State | Meaning |
 |---|---|
@@ -140,7 +140,8 @@ the passage cited again shows as its own entry next to the original.
 | `unsupported` | The source can't be cited. |
 
 An available passage shows the cited words in brackets with up to 500
-characters on each side, from the same message body or file chunk. When archive
+characters on each side, from the same message body or file chunk. A changed
+passage still shows its message subject or filename. When archive
 evidence isn't available, `saved_quote` returns the original words from the
 issue's body or comments, separately from the archive excerpt. If someone
 edited the quote so it no longer matches the passage, the saved quote is absent.
