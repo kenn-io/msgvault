@@ -15,6 +15,7 @@ import (
 	"go.kenn.io/kit/search/rrf"
 
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/sqliteutil"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
@@ -376,6 +377,14 @@ func (b *Backend) fusedSearchExact(ctx context.Context, req vector.FusedRequest)
 	   %s`,
 		store.LiveMessagesWhere("m", true), conversationSQL, messageTypeSQL, senderGroupSQL, senderExactGroupSQL,
 		recipientAnyGroupSQL, toGroupSQL, ccGroupSQL, bccGroupSQL, labelGroupSQL, listIDSQL)
+	var accountArgs []any
+	if clauses := search.AccountScopeConditionsBound(req.Filter.AccountScopes, "m", func(v any) string {
+		name := fmt.Sprintf("account_scope_%d", len(accountArgs))
+		accountArgs = append(accountArgs, sql.Named(name, v))
+		return ":" + name
+	}); len(clauses) > 0 {
+		filterWhere += " AND " + strings.Join(clauses, " AND ")
+	}
 
 	// buildQuery interpolates a fresh query string for a given chunkK,
 	// so the widening loop below can re-issue the fused CTE with a
@@ -514,6 +523,7 @@ SELECT message_id, rrf_score, bm25_score, vector_score,
 	filterArgs = append(filterArgs, ccGroupArgs...)
 	filterArgs = append(filterArgs, bccGroupArgs...)
 	filterArgs = append(filterArgs, labelGroupArgs...)
+	filterArgs = append(filterArgs, accountArgs...)
 
 	// Two ceilings bound the widening loop. The generation-wide
 	// chunkCeiling is the hard upper bound on currentChunkK so the

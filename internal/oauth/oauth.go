@@ -281,6 +281,9 @@ type Manager struct {
 	revokeURL  string // revocation endpoint override for tests
 	// Nil for Desktop clients, whose loopback redirects need no registration.
 	webRedirectURIs []string
+	// callbackAddress overrides terminalCallbackAddress in tests so they do
+	// not depend on the fixed production port being free.
+	callbackAddress string
 
 	// browserFlowFn overrides browserFlow in tests to avoid starting
 	// a real HTTP server and browser. When nil, the real browserFlow
@@ -634,8 +637,17 @@ func (m *Manager) verifyAndSaveToken(ctx context.Context, email string, token *o
 const (
 	callbackPath            = "/callback"
 	terminalCallbackAddress = "localhost:8089"
-	terminalRedirectURL     = "http://" + terminalCallbackAddress + callbackPath
 )
+
+// terminalCallback returns the loopback address the terminal flow listens on
+// and the redirect URL derived from it.
+func (m *Manager) terminalCallback() (address, redirectURL string) {
+	address = m.callbackAddress
+	if address == "" {
+		address = terminalCallbackAddress
+	}
+	return address, "http://" + address + callbackPath
+}
 
 // newCallbackHandler returns an HTTP handler that processes the OAuth callback.
 func (m *Manager) newCallbackHandler(expectedState string, codeChan chan<- string, errChan chan<- error) http.HandlerFunc {
@@ -668,11 +680,12 @@ func (m *Manager) browserFlow(
 		return nil, err
 	}
 
-	if m.webRedirectURIs != nil && !slices.Contains(m.webRedirectURIs, terminalRedirectURL) {
-		return nil, fmt.Errorf("to authorize from the terminal, register %s in this Web application OAuth client, or use a Desktop application client", terminalRedirectURL)
+	callbackAddress, redirectURL := m.terminalCallback()
+	if m.webRedirectURIs != nil && !slices.Contains(m.webRedirectURIs, redirectURL) {
+		return nil, fmt.Errorf("to authorize from the terminal, register %s in this Web application OAuth client, or use a Desktop application client", redirectURL)
 	}
 
-	listener, err := net.Listen("tcp", terminalCallbackAddress)
+	listener, err := net.Listen("tcp", callbackAddress)
 	if err != nil {
 		return nil, fmt.Errorf("listen for OAuth callback: %w", err)
 	}
@@ -706,7 +719,7 @@ func (m *Manager) browserFlow(
 	defer func() { _ = server.Shutdown(ctx) }()
 
 	// Generate auth URL with login_hint to pre-select account
-	m.config.RedirectURL = terminalRedirectURL
+	m.config.RedirectURL = redirectURL
 	authOpts := []oauth2.AuthCodeOption{
 		oauth2.AccessTypeOffline,
 		oauth2.ApprovalForce,

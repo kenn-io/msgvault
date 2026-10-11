@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 var (
@@ -107,6 +108,12 @@ type Engine interface {
 
 	// Close releases any resources held by the engine.
 	Close() error
+}
+
+// VirtualAccountLister reads the virtual account catalog: per source, its
+// confirmed identities and its unattributed rows, with live counts.
+type VirtualAccountLister interface {
+	ListVirtualAccounts(ctx context.Context) (map[int64][]store.VirtualAccount, error)
 }
 
 // DeletionSearchMode selects the search predicate used while resolving an

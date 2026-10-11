@@ -56,8 +56,8 @@ Supported operators:
   received:    Exact confirmed address that received the mail
   account:     Exact confirmed address that received or sent the mail, or owns the calendar event
 
-received: and account: need full-text mode. Unlike --account, which selects a
-whole archive source, account: matches only messages attributed to that address.
+Unlike --account, which selects a whole archive source, account: matches only
+messages attributed to that address.
 
 List-Id values are matched as case-insensitive literal substrings. Quote values
 that contain spaces. Repeating list: or list-id: requires every value to match.

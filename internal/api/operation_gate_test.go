@@ -275,6 +275,8 @@ func TestOperationGateMiddlewareStillGatesMutatingDocumentCommands(t *testing.T)
 		{"consent", `{"args":["documents","consent-mistral","--yes"]}`},
 		{"retry", `{"args":["documents","retry","--hash","abc"]}`},
 		{"retire", `{"args":["documents","retire","profile","--yes"]}`},
+		// Status reconciles the occurrence index, which writes.
+		{"status", `{"args":["documents","status","--json"]}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -720,7 +722,6 @@ func TestOperationGateMiddlewareSkipsReadOnlyCLIRunCommands(t *testing.T) {
 	}{
 		{"embeddings list", `{"args":["embeddings","list"]}`},
 		{"documents search", `{"args":["documents","search","shipping damage"]}`},
-		{"documents status", `{"args":["documents","status","--capabilities","manifest.json"]}`},
 		{"list-deletions", `{"args":["list-deletions"]}`},
 		{"show-deletion with id", `{"args":["show-deletion","batch-123"]}`},
 	}

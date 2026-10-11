@@ -1285,6 +1285,8 @@ func (m Model) handleAccountSelectorKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cm
 			switch selected.kind {
 			case scopeOptionAll:
 				m.sourceScope = allSourceScope()
+			case scopeOptionVirtual:
+				m.sourceScope = virtualSourceScope(*selected.virtualAccount)
 			case scopeOptionAccount:
 				m.sourceScope = accountSourceScope(selected.accountID)
 			case scopeOptionCollection:

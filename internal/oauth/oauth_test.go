@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -56,6 +57,24 @@ func writeLegacyTokenFile(t *testing.T, mgr *Manager, email string, token oauth2
 }
 
 var testToken = oauth2.Token{AccessToken: "test", TokenType: "Bearer"}
+
+// freeCallbackAddress returns a localhost address on a port that was free a
+// moment ago, so terminal-flow tests do not depend on the production port.
+func freeCallbackAddress(t *testing.T) string {
+	t.Helper()
+	listener, err := net.Listen("tcp", "localhost:0")
+	require.NoError(t, err)
+	address := callbackAddressFor(t, listener)
+	require.NoError(t, listener.Close())
+	return address
+}
+
+func callbackAddressFor(t *testing.T, listener net.Listener) string {
+	t.Helper()
+	addr, ok := listener.Addr().(*net.TCPAddr)
+	require.True(t, ok, "listener address must be TCP")
+	return net.JoinHostPort("localhost", strconv.Itoa(addr.Port))
+}
 
 // assertNoSend is a test helper to assert that a channel remains empty.
 // Uses a 100ms timeout to balance between flakiness on slow CI and detection
@@ -539,14 +558,23 @@ func TestNewCallbackHandler(t *testing.T) {
 
 func TestBrowserFlowUsesFixedCallbackWithPKCE(t *testing.T) {
 	for _, tc := range []struct {
-		kind, redirects string
+		kind              string
+		registersCallback bool
 	}{
-		{"installed", `["http://localhost"]`},
-		{"web", `["https://archive.example/", "http://localhost:8089/callback"]`},
+		{"installed", false},
+		{"web", true},
 	} {
 		t.Run(tc.kind, func(t *testing.T) {
 			assertions := assert.New(t)
 			required := require.New(t)
+			callbackAddress := freeCallbackAddress(t)
+			wantRedirectURI := "http://" + callbackAddress + "/callback"
+			redirects := []string{"http://localhost"}
+			if tc.registersCallback {
+				redirects = []string{"https://archive.example/", wantRedirectURI}
+			}
+			redirectsJSON, err := json.Marshal(redirects)
+			required.NoError(err)
 
 			var exchanged url.Values
 			tokenEndpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -561,10 +589,11 @@ func TestBrowserFlowUsesFixedCallbackWithPKCE(t *testing.T) {
 			t.Cleanup(tokenEndpoint.Close)
 
 			secretsPath := filepath.Join(t.TempDir(), "client.json")
-			secrets := fmt.Sprintf(`{%q:{"client_id":"synthetic-client","client_secret":"synthetic-secret","redirect_uris":%s}}`, tc.kind, tc.redirects)
+			secrets := fmt.Sprintf(`{%q:{"client_id":"synthetic-client","client_secret":"synthetic-secret","redirect_uris":%s}}`, tc.kind, redirectsJSON)
 			required.NoError(os.WriteFile(secretsPath, []byte(secrets), 0600))
 			mgr, err := NewManagerWithScopes(secretsPath, t.TempDir(), nil, Scopes)
 			required.NoError(err)
+			mgr.callbackAddress = callbackAddress
 			mgr.config.Endpoint = oauth2.Endpoint{
 				AuthURL:   "https://accounts.example/authorize",
 				TokenURL:  tokenEndpoint.URL,
@@ -613,7 +642,7 @@ func TestBrowserFlowUsesFixedCallbackWithPKCE(t *testing.T) {
 			redirectURI := authURL.Query().Get("redirect_uri")
 			redirect, err := url.Parse(redirectURI)
 			required.NoError(err)
-			assertions.Equal("http://localhost:8089/callback", redirectURI)
+			assertions.Equal(wantRedirectURI, redirectURI)
 			assertions.Equal("S256", authURL.Query().Get("code_challenge_method"))
 			challenge := authURL.Query().Get("code_challenge")
 			required.NotEmpty(challenge)
@@ -656,16 +685,19 @@ func TestBrowserFlowRejectsUnusableCallbackBeforePrintingURL(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			required := require.New(t)
-			if tc.occupyPort {
-				listener, err := net.Listen("tcp", "localhost:8089")
-				required.NoError(err)
-				t.Cleanup(func() { _ = listener.Close() })
-			}
 			secretsPath := filepath.Join(t.TempDir(), "client.json")
 			secrets := fmt.Sprintf(`{%q:{"client_id":"synthetic-client","redirect_uris":[%q]}}`, tc.kind, tc.redirect)
 			required.NoError(os.WriteFile(secretsPath, []byte(secrets), 0600))
 			mgr, err := NewManagerWithScopes(secretsPath, t.TempDir(), nil, Scopes)
 			required.NoError(err)
+			// The Web-client cases fail before listening and keep the production
+			// callback, whose URL is the registration users are told to add.
+			if tc.occupyPort {
+				listener, err := net.Listen("tcp", "localhost:0")
+				required.NoError(err)
+				t.Cleanup(func() { _ = listener.Close() })
+				mgr.callbackAddress = callbackAddressFor(t, listener)
+			}
 			output, err := os.CreateTemp(t.TempDir(), "stdout")
 			required.NoError(err)
 			oldStdout := os.Stdout

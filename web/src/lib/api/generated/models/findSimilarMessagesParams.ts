@@ -16,6 +16,10 @@ export type FindSimilarMessagesParams = {
    */
   account?: string;
   /**
+   * JSON list of account scopes that intersect, for structured clients
+   */
+  account_scopes?: string;
+  /**
    * Message type filter
    */
   message_type?: string;

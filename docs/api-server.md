@@ -100,7 +100,7 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.10.0**.
+it is separate from the binary release version. The current schema is **3.11.0**.
 Upgrade clients and daemon together across incompatible schema versions,
 including remote deployments.
 
@@ -137,6 +137,9 @@ UIDs, retired person UIDs, and UIDs on mapped CardDAV resources. It returns a
 conflict when one UID resolves to multiple people. Person responses expose
 `carddav_bindings`; directory responses now include both `vcard_uid` and
 `carddav_bindings`.
+
+Schema 3.11.0 adds structured `account_scopes` filters, the Explore account
+filter, and the virtual account catalog on `/cli/accounts`.
 
 Schema 3.1.0 adds unreleased [calendar event control](#calendar-control),
 availability queries, and opt-in `write` on Calendar consent plans.

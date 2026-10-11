@@ -17,6 +17,8 @@ import (
 	"go.kenn.io/msgvault/internal/deletion"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
 	"go.kenn.io/msgvault/internal/providercredentials"
+	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/vector/visual"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
@@ -362,6 +364,7 @@ func (s daemonMCPHybridSearcher) SearchHybrid(
 	resp, err := s.client.GetCLIHybridSearch(ctx, daemonclient.CLIHybridSearchRequest{
 		Query:          req.Query,
 		Account:        req.Account,
+		Filter:         query.MessageFilter{AccountScopes: search.CloneAccountScopes(req.AccountScopes)},
 		Mode:           req.Mode,
 		Limit:          req.Limit,
 		Offset:         req.Offset,
@@ -428,6 +431,7 @@ func (s daemonMCPSimilarSearcher) FindSimilar(
 	req mcpserver.SimilarSearchRequest,
 ) (*mcpserver.SimilarSearchResult, error) {
 	resp, err := s.client.FindSimilarMessages(ctx, daemonclient.SimilarSearchRequest{
+		AccountScopes: search.CloneAccountScopes(req.AccountScopes),
 		MessageID:     req.MessageID,
 		Limit:         req.Limit,
 		Account:       req.Account,

@@ -21,9 +21,12 @@ import (
 )
 
 const (
-	ProviderMistral = "mistral"
-	ModelMistralOCR = mistral.DefaultModel
-	RegionMistralEU = mistral.RegionEU
+	ProviderMistral    = "mistral"
+	ProviderDocling    = "docling"
+	ModelDocling       = "docling.serve-v1"
+	OperatorControlled = "operator-controlled"
+	ModelMistralOCR    = mistral.DefaultModel
+	RegionMistralEU    = mistral.RegionEU
 
 	RetentionUnknown  = "unknown"
 	RetentionStandard = mistral.RetentionStandard
@@ -57,6 +60,9 @@ var envNamePattern = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
 // field from an explicit zero, which Validate must reject.
 func DefaultDocumentsConfig() DocumentsConfig {
 	config := DocumentsConfig{
+		TotalTimeout:              10 * time.Minute,
+		PollInterval:              time.Second,
+		MaxPollAttempts:           300,
 		MaxFileBytes:              defaultMaxFileBytes,
 		MaxPagesPerDocument:       defaultMaxPages,
 		MaxResponseBytes:          defaultMaxResponseBytes,
@@ -78,11 +84,15 @@ type AttachmentsConfig struct {
 	Documents DocumentsConfig `toml:"documents"`
 }
 
-// DocumentsConfig controls hosted Mistral extraction and local indexing.
+// DocumentsConfig controls document extraction and local indexing.
 // Supplying an API key or setting Enabled never records provider consent.
 type DocumentsConfig struct {
 	Enabled                   bool             `toml:"enabled"`
 	Provider                  string           `toml:"provider"`
+	Endpoint                  string           `toml:"endpoint"`
+	TotalTimeout              time.Duration    `toml:"total_timeout"`
+	PollInterval              time.Duration    `toml:"poll_interval"`
+	MaxPollAttempts           int              `toml:"max_poll_attempts"`
 	Region                    string           `toml:"region"`
 	APIKeyEnv                 string           `toml:"api_key_env"`
 	Model                     string           `toml:"model"`
@@ -220,23 +230,30 @@ func (c *DocumentsConfig) MaxDocumentsWithinRunBudget(requested int) (int, error
 // Disabled configurations are validated too so enabling later cannot expose
 // bytes under an already-invalid policy.
 func (c *DocumentsConfig) Validate() error {
-	if c.Provider != ProviderMistral {
-		return fmt.Errorf("attachments.documents.provider: must be %q", ProviderMistral)
-	}
-	if c.Model != ModelMistralOCR {
-		return fmt.Errorf("attachments.documents.model: must be pinned to %q", ModelMistralOCR)
-	}
-	if c.Region != RegionMistralEU {
-		return fmt.Errorf("attachments.documents.region: unknown region %q (supported: %q)", c.Region, RegionMistralEU)
-	}
-	if !envNamePattern.MatchString(c.APIKeyEnv) {
-		return fmt.Errorf("attachments.documents.api_key_env: invalid environment variable name %q", c.APIKeyEnv)
-	}
-	if !slices.Contains([]string{RetentionUnknown, RetentionStandard, RetentionZDR}, c.RetentionPosture) {
-		return fmt.Errorf("attachments.documents.retention_posture: invalid value %q", c.RetentionPosture)
-	}
-	if !slices.Contains([]string{TrainingUnknown, TrainingDefaultOptOut, TrainingOptedOut}, c.TrainingPosture) {
-		return fmt.Errorf("attachments.documents.training_posture: invalid value %q", c.TrainingPosture)
+	switch c.Provider {
+	case ProviderDocling:
+		if err := c.validateDocling(); err != nil {
+			return err
+		}
+	case ProviderMistral:
+		if c.Model != ModelMistralOCR {
+			return fmt.Errorf("attachments.documents.model: must be pinned to %q", ModelMistralOCR)
+		}
+		if c.Region != RegionMistralEU {
+			return fmt.Errorf("attachments.documents.region: unknown region %q (supported: %q)", c.Region, RegionMistralEU)
+		}
+		if !envNamePattern.MatchString(c.APIKeyEnv) {
+			return fmt.Errorf("attachments.documents.api_key_env: invalid environment variable name %q", c.APIKeyEnv)
+		}
+		if !slices.Contains([]string{RetentionUnknown, RetentionStandard, RetentionZDR}, c.RetentionPosture) {
+			return fmt.Errorf("attachments.documents.retention_posture: invalid value %q", c.RetentionPosture)
+		}
+		if !slices.Contains([]string{TrainingUnknown, TrainingDefaultOptOut, TrainingOptedOut}, c.TrainingPosture) {
+			return fmt.Errorf("attachments.documents.training_posture: invalid value %q", c.TrainingPosture)
+		}
+
+	default:
+		return fmt.Errorf("attachments.documents.provider: must be %q or %q", ProviderMistral, ProviderDocling)
 	}
 	positive := []struct {
 		name  string
@@ -344,6 +361,9 @@ func (c *DocumentsConfig) CSVPolicy() (csvpdf.Policy, error) {
 }
 
 func ResolveInputPolicy(c *DocumentsConfig, manifest mistral.CapabilityManifest) (ResolvedInputPolicy, error) {
+	if c != nil && c.Provider == ProviderDocling {
+		return c.doclingInputPolicy()
+	}
 	if c == nil {
 		return ResolvedInputPolicy{}, errors.New("document input policy requires configuration")
 	}
@@ -420,6 +440,9 @@ func (c *DocumentsConfig) ProfilePolicyJSON(
 	manifest mistral.CapabilityManifest,
 	allowedMediaTypes []string,
 ) ([]byte, error) {
+	if c.Provider == ProviderDocling {
+		return c.doclingPolicyJSON(allowedMediaTypes)
+	}
 	if err := c.Validate(); err != nil {
 		return nil, err
 	}

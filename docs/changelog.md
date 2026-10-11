@@ -26,6 +26,10 @@ All notable changes to msgvault, grouped by release.
   the stored version using `schema-version`, then run `migrate` before replacing
   the executable. See [the upgrade procedure](setup.md#migrate-before-replacing-the-executable).
 
+- Owned-address changes recheck only matching messages. SQLite upgrades may
+  take several minutes to build a one-time From-address index. See
+  [startup progress](guides/daemon-migration.md#what-you-will-see).
+
 - msgvault sends anonymous usage telemetry: a daemon ping at startup and once
   each later UTC day, and an `app_opened` event the web UI reports through the
   daemon when it opens and on its first focus on a later UTC day. Events carry
@@ -51,6 +55,10 @@ All notable changes to msgvault, grouped by release.
   fills in on each source's next sync or import, or with
   `msgvault repair-derived`. API schema 3.5.0; older daemons refuse these
   operators.
+- Pick a receiving address or the unattributed mail of a source in the TUI
+  account picker, the Web UI's Explore account filter, and the MCP `account`
+  argument; vector and hybrid search accept `received:` and `account:`. API
+  schema 3.11.0.
 - Rerunning `import-whatsapp` on an Apple `ChatStorage.sqlite` reads only the
   chats that changed since the last successful import and writes only new and
   changed messages, instead of rewriting the whole archive. It picks up edits

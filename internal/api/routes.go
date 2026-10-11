@@ -1020,6 +1020,7 @@ func rawRouteParameters(operationID string) []*huma.Param {
 			queryRequiredIntegerParam("message_id", "Seed message ID"),
 			queryIntegerParam(limitParam, "Maximum number of rows to return"),
 			queryStringParam("account", "Account email or configured source identifier", false),
+			queryStringParam("account_scopes", "JSON list of account scopes that intersect, for structured clients", false),
 			queryStringParam("message_type", "Message type filter", false),
 			queryStringParam("after", "Lower date/time bound (RFC3339 or YYYY-MM-DD)", false),
 			queryStringParam("before", "Upper date/time bound (RFC3339 or YYYY-MM-DD)", false),
@@ -1127,6 +1128,7 @@ func paginationParams(pageName, pageSizeName string) []*huma.Param {
 
 func aggregateOptionParams() []*huma.Param {
 	return []*huma.Param{
+		queryStringParam("account_scopes", "JSON list of account scopes that intersect, for structured clients", false),
 		queryStringParam("sort", "Sort field: count, size, attachment_size, or name", false),
 		queryStringParam("direction", "Sort direction: asc or desc", false),
 		queryIntegerParam(limitParam, "Maximum number of rows to return (default 100; values below 1 fall back to the default)"),
@@ -1152,6 +1154,7 @@ func messageFilterParams() []*huma.Param {
 
 func messageFilterScopeParams() []*huma.Param {
 	return []*huma.Param{
+		queryStringParam("account_scopes", "JSON list of account scopes that intersect, for structured clients", false),
 		queryStringParam("sender", "Sender email/address filter", false),
 		queryStringParam("sender_name", "Sender display-name filter", false),
 		queryStringParam(recipientParam, "Recipient email/address filter", false),
@@ -1181,6 +1184,7 @@ func semanticMessageFilterParams() []*huma.Param {
 		queryStringParam("domain", "Exact sender domain filter (vector or hybrid mode only)", false),
 		queryStringParam("label", "Exact case-insensitive label filter (vector or hybrid mode only)", false),
 		queryStringParam("list_id", "Exact case-insensitive RFC 2919 List-Id filter (vector or hybrid mode only)", false),
+		queryStringParam("account_scopes", "JSON list of account scopes that intersect (vector or hybrid mode only)", false),
 		queryStringParam("time_period", "Calendar period in YYYY, YYYY-MM, or YYYY-MM-DD format (vector or hybrid mode only)", false),
 		queryStringParam("time_granularity", "Time bucket granularity (vector or hybrid mode only)", false),
 		queryIntegerParam("source_id", "Exact source ID (vector or hybrid mode only)"),

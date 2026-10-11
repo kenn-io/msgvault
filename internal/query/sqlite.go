@@ -264,6 +264,7 @@ func optsToFilterConditions(d Dialect, opts AggregateOptions, prefix string) ([]
 	conditions, args = appendSourceFilter(
 		conditions, args, prefix, opts.SourceID, opts.SourceIDs,
 	)
+	conditions, args = appendAccountScopeConditions(conditions, args, opts.AccountScopes, strings.TrimSuffix(prefix, "."))
 	// Normalize absolute instants through the active backend dialect.
 	if opts.After != nil {
 		conditions = append(conditions, d.DateComparison(prefix+"sent_at", ">="))
@@ -333,6 +334,7 @@ func (e *SQLiteEngine) buildFilterJoinsAndConditions(filter MessageFilter) (stri
 	conditions, args = appendSourceFilter(
 		conditions, args, prefix, filter.SourceID, filter.SourceIDs,
 	)
+	conditions, args = appendAccountScopeConditions(conditions, args, filter.AccountScopes, "m")
 
 	if filter.ConversationID != nil {
 		conditions = append(conditions, prefix+"conversation_id = ?")
@@ -647,7 +649,11 @@ func (e *SQLiteEngine) Aggregate(ctx context.Context, groupBy ViewType, opts Agg
 }
 
 func aggregateOverridesEmailDefault(filter MessageFilter, opts AggregateOptions) bool {
-	return filter.MessageType != "" || searchOverridesEmailDefault(opts.SearchQuery)
+	// An account scope selects email and calendar rows itself.
+	if strings.TrimSpace(filter.MessageType) != "" || len(filter.AccountScopes) > 0 || len(opts.AccountScopes) > 0 {
+		return true
+	}
+	return searchOverridesEmailDefault(opts.SearchQuery)
 }
 
 func sqliteMessageTypeCondition(alias string, messageTypes []string) (string, []any) {
@@ -1270,6 +1276,11 @@ func (e *SQLiteEngine) GetMessageRaw(ctx context.Context, id int64) ([]byte, err
 	return getMessageRawShared(ctx, store.ReadDBContext(ctx, e.db), e.dialect.Rebind, "", id)
 }
 
+// ListVirtualAccounts reads the virtual account catalog from the archive.
+func (e *SQLiteEngine) ListVirtualAccounts(ctx context.Context) (map[int64][]store.VirtualAccount, error) {
+	return store.ReadVirtualAccountsContext(ctx, e.db, e.dialect.Rebind)
+}
+
 // ListAccounts returns all source accounts.
 func (e *SQLiteEngine) ListAccounts(ctx context.Context) ([]AccountInfo, error) {
 	rows, err := e.queryContext(ctx, `
@@ -1490,6 +1501,7 @@ func (e *SQLiteEngine) GetDeletionTargetsByFilter(ctx context.Context, filter Me
 	}
 
 	conditions, args = appendSourceFilter(conditions, args, "m.", filter.SourceID, filter.SourceIDs)
+	conditions, args = appendAccountScopeConditions(conditions, args, filter.AccountScopes, "m")
 	if filter.ConversationID != nil {
 		conditions = append(conditions, "m.conversation_id = ?")
 		args = append(args, *filter.ConversationID)
@@ -1946,6 +1958,7 @@ func (e *SQLiteEngine) buildSearchQueryPartsWithVisibility(ctx context.Context, 
 		conditions = append(conditions, accountConditions...)
 		args = append(args, accountArgs...)
 	}
+	conditions, args = appendAccountScopeConditions(conditions, args, q.AccountScopes, "m")
 
 	// message_type: filter (e.g. sms, whatsapp, calendar_event). The store
 	// API path (store/api.go) honors q.MessageTypes; the FTS query path must
@@ -2360,6 +2373,7 @@ func MergeFilterIntoQuery(q *search.Query, filter MessageFilter) *search.Query {
 	merged.Labels = append([]string(nil), q.Labels...)
 	merged.AccountAddrs = append([]string(nil), q.AccountAddrs...)
 	merged.ReceivedAddrs = append([]string(nil), q.ReceivedAddrs...)
+	merged.AccountScopes = append(search.CloneAccountScopes(q.AccountScopes), search.CloneAccountScopes(filter.AccountScopes)...)
 	merged.MessageTypes = append([]string(nil), q.MessageTypes...)
 	if q.ConversationIDs != nil {
 		merged.ConversationIDs = make([]int64, len(q.ConversationIDs))
