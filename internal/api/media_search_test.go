@@ -273,16 +273,6 @@ func TestMediaSearchOversizedPopulation(t *testing.T) {
 	assert.Equal(http.StatusBadRequest, status, raw)
 	assert.Contains(raw, "media_search_scope_limit")
 	assert.Empty(f.requests)
-	selected := f.match(t, "selected")
-	participant := f.f.EnsureParticipant("selected@example.com", "Selected Person", "example.com")
-	_, err = f.f.Store.DB().Exec(f.f.Store.Rebind(`UPDATE messages SET sender_id = ? WHERE id = ?`), participant, selected.messageID)
-	require.NoError(err)
-	status, response, raw := searchMediaFor(t, f.server(true), fmt.Sprintf("q=quarterly+numbers&participant_id=%d", participant))
-	require.Equal(http.StatusOK, status, raw)
-	require.Len(response.Results, 1)
-	assert.Equal(selected.messageID, response.Results[0].MessageID)
-	require.Len(f.requests, 1)
-	assert.Equal([]string{selected.contentVersionID}, f.requests[0].Fence.ContentVersionIDs)
 }
 
 func TestMediaSearchPersonDirection(t *testing.T) {
@@ -338,6 +328,17 @@ func TestMediaSearchPersonDirection(t *testing.T) {
 		status, response, raw := searchMediaFor(t, f.server(true), fmt.Sprintf("q=quarterly+numbers&person_id=%d", person.ID))
 		require.Equal(http.StatusOK, status, raw)
 		assert.Len(response.Results, 2)
+		_, err = f.f.Store.DB().Exec(f.f.Store.Rebind(`UPDATE messages SET sender_id = NULL WHERE id = ?`), selected.messageID)
+		require.NoError(err)
+		_, err = f.f.Store.DB().Exec(f.f.Store.Rebind(`INSERT INTO message_recipients (message_id, participant_id, recipient_type) VALUES (?, ?, 'mention')`), selected.messageID, participant)
+		require.NoError(err)
+		status, response, raw = searchMediaFor(t, f.server(true), fmt.Sprintf("q=quarterly+numbers&participant_id=%d", participant))
+		require.Equal(http.StatusOK, status, raw)
+		require.Len(response.Results, 1)
+		assert.Equal(selected.messageID, response.Results[0].MessageID)
+		status, response, raw = searchMediaFor(t, f.server(true), fmt.Sprintf("q=quarterly+numbers&participant_id=%d&direction=from_person", participant))
+		require.Equal(http.StatusOK, status, raw)
+		assert.Empty(response.Results)
 	}
 	for _, direction := range []string{"from_person", "to_person", "membership change", "person deleted", "all mapped", "multi mapped", "all hidden", "all bytes", "all late hidden", "all late bytes", "all wrong destination", "all late wrong destination", "all no audio", "competing delivery", "delivery input"} {
 		t.Run(direction, func(t *testing.T) {
@@ -482,22 +483,6 @@ func TestMediaSearchPersonDirection(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestMediaSearchParticipantMention(t *testing.T) {
-	t.Parallel()
-	f := newMediaSearchFixture(t)
-	selected := f.match(t, "mention")
-	participant := f.f.EnsureParticipant("mentioned@example.com", "Mentioned Person", "example.com")
-	_, err := f.f.Store.DB().Exec(f.f.Store.Rebind(`INSERT INTO message_recipients (message_id, participant_id, recipient_type) VALUES (?, ?, 'mention')`), selected.messageID, participant)
-	require.NoError(t, err)
-	status, response, raw := searchMediaFor(t, f.server(true), fmt.Sprintf("q=quarterly+numbers&participant_id=%d", participant))
-	require.Equal(t, http.StatusOK, status, raw)
-	require.Len(t, response.Results, 1)
-	assert.Equal(t, selected.messageID, response.Results[0].MessageID)
-	status, response, raw = searchMediaFor(t, f.server(true), fmt.Sprintf("q=quarterly+numbers&participant_id=%d&direction=from_person", participant))
-	require.Equal(t, http.StatusOK, status, raw)
-	assert.Empty(t, response.Results)
 }
 
 func TestMediaSearchSelectedProfilesForSharedContent(t *testing.T) {

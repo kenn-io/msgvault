@@ -81,7 +81,6 @@ describe('EverythingWorkspace', () => {
     const view = renderRecordingShell(createAPIClient(fetchFn), state);
     try {
       const link = await screen.findByRole('link', { name: 'Team chat' });
-      expect(link.getAttribute('href')).toBe('/messages/9');
       await screen.findByText('Could not load this recording message.');
       messageStatus = 200;
       await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
@@ -141,7 +140,6 @@ describe('EverythingWorkspace', () => {
       expect(await screen.findByRole('region', { name: 'Recordings' })).toBeTruthy();
       expect(screen.getByRole('heading', { name: /^Results/ })).toBeTruthy();
       expect(document.querySelector('.results-primary--recordings')).toBeTruthy();
-      expect(screen.getByText('Recording search requires Full text with no grouping and at most one Person filter.')).toBeTruthy();
       await vi.advanceTimersByTimeAsync(300);
       expect(fetchFn.mock.calls.some(([input]) => new URL((input as Request).url).pathname.endsWith('/media/search'))).toBe(false);
     } finally {

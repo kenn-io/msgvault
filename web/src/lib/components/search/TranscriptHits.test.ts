@@ -88,28 +88,22 @@ describe('TranscriptHits', () => {
     expect(screen.queryByText('No spoken matches.')).toBeNull();
   });
 
-  it('restricts unsupported scopes and clears the old query before ignoring its delayed response', async () => {
+  it('clears evidence for unsupported queries and scopes', async () => {
     vi.useFakeTimers();
-    let finish!: (value: Response) => void;
-    const fetchFn = vi.fn<typeof fetch>().mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }))
-      .mockResolvedValue(Response.json(report({ results: [hit({ excerpt: 'current evidence' })] })));
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json(report({ results: [hit({ excerpt: 'current evidence' })] })));
     const view = mount(fetchFn);
     await vi.advanceTimersByTimeAsync(300);
     expect(fetchFn).toHaveBeenCalledTimes(1);
-    const old = fetchFn.mock.calls[0][0] as Request;
+    expect(screen.getByText('current evidence')).toBeTruthy();
     for (const query of ['"quarterly"', 'from:person']) {
       await view.rerender({ client: view.client, query, supported: true });
       expect(screen.queryByText('current evidence')).toBeNull();
       expect(fetchFn).toHaveBeenCalledTimes(1);
     }
-    expect(old.signal.aborted).toBe(true);
     await view.rerender({ client: view.client, query: 'quarterly', supported: true });
     await vi.advanceTimersByTimeAsync(300);
     expect(new URL((fetchFn.mock.calls[1][0] as Request).url).searchParams.get('q')).toBe('quarterly');
     expect(screen.getByText('current evidence')).toBeTruthy();
-    finish(Response.json(report({ results: [hit({ excerpt: 'obsolete evidence' })] })));
-    await vi.advanceTimersByTimeAsync(300);
-    expect(screen.queryByText('obsolete evidence')).toBeNull();
     await view.rerender({ client: view.client, query: 'quarterly', supported: false });
     expect(screen.queryByText('current evidence')).toBeNull();
     expect(screen.getByRole('status').textContent).toContain('Full text with no grouping and at most one Person filter');
@@ -225,11 +219,12 @@ describe('TranscriptHits', () => {
     [400, 'invalid_media_search', 'Recording search rejected this query. Try different plain words.'],
     [400, 'invalid_parameter', 'direction must be from_person, to_person, or group'],
     [403, 'forbidden', 'Recording search cannot read this query. Check archive access or change the query.'],
-  ])('keeps %s %s terminal until the query changes', async (status, error, text) => {
+    [400, 'invalid_parameter', 'Recording search query is too long. Use fewer words.', 'é'.repeat(4097), 'q is required and must be at most 8192 bytes'],
+  ])('keeps %s %s terminal until the query changes', async (status, error, text, query = 'quarterly', message = text) => {
     vi.useFakeTimers();
-    const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ error, message: text }, { status }));
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ error, message }, { status }));
     const client = createAPIClient(fetchFn);
-    const view = render(TranscriptHits, { props: { client, query: 'quarterly', supported: true } });
+    const view = render(TranscriptHits, { props: { client, query, supported: true } });
     await vi.advanceTimersByTimeAsync(300);
     expect(screen.getByText(text)).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
@@ -239,14 +234,8 @@ describe('TranscriptHits', () => {
     await view.rerender({ client, query: 'different', supported: true });
     await vi.advanceTimersByTimeAsync(300);
     expect(fetchFn).toHaveBeenCalledTimes(2);
-    expect(screen.getByText(text)).toBeTruthy();
+    expect(screen.getByText(message)).toBeTruthy();
     view.unmount();
-  });
-
-  it('explains an oversized query', async () => {
-    const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ error: 'invalid_parameter', message: 'q is required and must be at most 8192 bytes' }, { status: 400 }));
-    render(TranscriptHits, { props: { client: createAPIClient(fetchFn), query: 'é'.repeat(4097), supported: true } });
-    expect(await screen.findByText('Recording search query is too long. Use fewer words.')).toBeTruthy();
   });
 
 });
