@@ -44,6 +44,9 @@ type DeltaMessage struct {
 	ID               string    `json:"id"`
 	ReceivedDateTime time.Time `json:"receivedDateTime"`
 	Categories       *[]string `json:"categories"`
+	IsRead           *bool     `json:"isRead"`
+	ParentFolderID   string    `json:"parentFolderId"`
+	ETag             string    `json:"@odata.etag"`
 	Removed          *struct {
 		Reason string `json:"reason"`
 	} `json:"@removed"`
@@ -90,7 +93,7 @@ func (c *Client) WellKnownFolderID(ctx context.Context, name string) (string, er
 // DeltaStartURL is the first delta request for a folder with no saved cursor.
 // It returns every message in the folder and ends with a deltaLink.
 func DeltaStartURL(folderID string) string {
-	return "/me/mailFolders/" + url.PathEscape(folderID) + "/messages/delta?$select=receivedDateTime,categories"
+	return "/me/mailFolders/" + url.PathEscape(folderID) + "/messages/delta?$select=id,receivedDateTime,categories,isRead,parentFolderId"
 }
 
 // DeltaPage fetches one page of a delta walk. The page carries a NextLink
@@ -110,16 +113,22 @@ func (c *Client) GetMIME(ctx context.Context, id string) ([]byte, error) {
 
 // MessageInfo is where a message is now and when it arrived.
 type MessageInfo struct {
+	ID               string    `json:"id"`
 	ParentFolderID   string    `json:"parentFolderId"`
 	ReceivedDateTime time.Time `json:"receivedDateTime"`
 	Categories       *[]string `json:"categories"`
+	IsRead           *bool     `json:"isRead"`
+	ETag             string    `json:"@odata.etag"`
 }
 
 // LookupMessage returns a message's folder and receipt time. It returns
 // msgraph.ErrNotFound when the message no longer exists.
 func (c *Client) LookupMessage(ctx context.Context, id string) (MessageInfo, error) {
 	var m MessageInfo
-	err := c.GetJSON(ctx, "/me/messages/"+url.PathEscape(id)+"?$select=parentFolderId,receivedDateTime,categories", &m)
+	err := c.GetJSON(ctx, "/me/messages/"+url.PathEscape(id)+"?$select=id,parentFolderId,receivedDateTime,categories,isRead", &m)
+	if err == nil && m.ID != "" && m.ID != id {
+		return MessageInfo{}, errors.New("Microsoft message lookup returned a different immutable identity")
+	}
 	return m, err
 }
 
