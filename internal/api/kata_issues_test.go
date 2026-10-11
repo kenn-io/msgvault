@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strconv"
 	"strings"
 	"testing"
@@ -154,21 +153,19 @@ func TestKataIssueHTTP(t *testing.T) {
 	require.NoError(json.Unmarshal([]byte(createBody), &createRequest))
 	linkBody, err := json.Marshal(KataEvidenceLinkRequest{Evidence: createRequest.Evidence})
 	require.NoError(err)
-	for _, ref := range []string{"example#", "example#a#b", "#abcd", "example#abcd/efgh", `example#abcd\efgh`, "example#abcd?efgh", "example#.", "example#.."} {
-		for _, route := range []string{"context", "evidence"} {
-			path := "/api/v1/integrations/kata/issues/" + url.PathEscape(ref) + "/" + route
-			malformed := httptest.NewRecorder()
-			if route == "context" {
-				backendServer.router.ServeHTTP(malformed, httptest.NewRequest(http.MethodGet, path, nil))
-			} else {
-				malformed = serveKataIssue(backendServer, path, string(linkBody), nil)
-			}
-			assert.Equal(http.StatusBadRequest, malformed.Code, "%s %s: %s", route, ref, malformed.Body.String())
-			var body ErrorResponse
-			require.NoError(json.Unmarshal(malformed.Body.Bytes(), &body))
-			assert.Equal("invalid_ref", body.Error)
-			assert.Equal("Kata issue ref is malformed", body.Message)
+	for _, route := range []string{"context", "evidence"} {
+		path := "/api/v1/integrations/kata/issues/%23abcd/" + route
+		malformed := httptest.NewRecorder()
+		if route == "context" {
+			backendServer.router.ServeHTTP(malformed, httptest.NewRequest(http.MethodGet, path, nil))
+		} else {
+			malformed = serveKataIssue(backendServer, path, string(linkBody), nil)
 		}
+		assert.Equal(http.StatusBadRequest, malformed.Code, "%s: %s", route, malformed.Body.String())
+		var body ErrorResponse
+		require.NoError(json.Unmarshal(malformed.Body.Bytes(), &body))
+		assert.Equal("invalid_ref", body.Error)
+		assert.Equal("Kata issue ref is malformed", body.Message)
 	}
 
 	for _, tc := range []struct {

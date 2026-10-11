@@ -170,9 +170,7 @@ func TestKataCommandsRefuseAnOlderDaemon(t *testing.T) {
 		// The lookup and the context read need newer daemons than the other commands.
 		version.Store(new("3.3.0"))
 		switch args[0] {
-		case "issues":
-			version.Store(new("3.11.0"))
-		case "context":
+		case "issues", "context":
 			version.Store(new("3.11.0"))
 		}
 		command := newKataCmd()

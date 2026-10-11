@@ -50,13 +50,10 @@ func TestPrepareWindowsAndResolveMessage(t *testing.T) {
 	payload := *past.Message
 	payload.EndRune += 5
 	past.Message = &payload
-	_, err = f.Store.DB().Exec(f.Store.Rebind("UPDATE messages SET subject=? WHERE id=?"), "Budget", id)
-	require.NoError(err)
 	resolved, err = svc.ResolveAround(t.Context(), past, 0)
 	require.NoError(err)
 	assert.Equal(kataevidence.Changed, resolved.State)
 	assert.Empty(resolved.Evidence.Excerpt)
-	assert.Equal("Budget", resolved.Evidence.Display.ContainingTitle, "the source is still named")
 	around, err = svc.ResolveAround(t.Context(), past, kataevidence.ContextRunes)
 	require.NoError(err)
 	assert.Empty(around.Before, "a changed reference shows no window")

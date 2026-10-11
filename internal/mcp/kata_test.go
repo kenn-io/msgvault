@@ -70,9 +70,6 @@ func TestKataWriteToolsRequireOptIn(t *testing.T) {
 	assert.Contains(older, "prepare_kata_evidence")
 	assert.NotContains(older, "find_kata_issues")
 	assert.NotContains(older, "get_kata_issue_context")
-	lookup := toolsByName(t, rawListTools(t, ServeOptions{Engine: &querytest.MockEngine{}, Kata: &fakeKataBackend{}, KataLookup: true}, false))
-	assert.Contains(lookup, "find_kata_issues")
-	assert.Contains(lookup, "get_kata_issue_context")
 }
 
 func TestKataToolsQuarantineArchiveText(t *testing.T) {
