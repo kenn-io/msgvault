@@ -133,8 +133,11 @@ func (c *Client) EvidenceIdentity(ctx context.Context, contentVersionID, content
 	if receipt.State == "historical_unavailable" || receipt.State == "verified_empty" {
 		return EvidenceWindowRequest{NodeID: node.ID}, ErrEvidenceUnavailable
 	}
-	if receipt.State != "ready" {
+	if receipt.State == "unprocessed" {
 		return EvidenceWindowRequest{NodeID: node.ID}, &HTTPError{Status: http.StatusNotFound}
+	}
+	if receipt.State != "ready" {
+		return EvidenceWindowRequest{NodeID: node.ID}, ErrInvalidReceipt
 	}
 	identity := EvidenceWindowRequest{NodeID: version.NodeID, ContentVersionID: version.ID, ContentSHA256: version.BlobHash,
 		RenditionAttachmentID: receipt.AttachmentID, BuildID: receipt.BuildID}

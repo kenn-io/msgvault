@@ -22,6 +22,7 @@ type DocbankBindingStore interface {
 
 // DocbankClient reads rendition windows from the configured Docbank.
 type DocbankClient interface {
+	Status(ctx context.Context, sourceID string) (docbankmedia.Receipt, error)
 	Transcript(ctx context.Context, sourceID, sourceVersionID, contentVersionID string) (docbankmedia.MediaTranscript, error)
 	EvidenceIdentity(ctx context.Context, contentVersionID, contentSHA256, profile string) (docbankmedia.EvidenceWindowRequest, error)
 	CurrentVersion(ctx context.Context, nodeID int64) (string, error)
@@ -62,6 +63,20 @@ type transcriptKey struct {
 }
 
 func (r *DocbankReader) checkTranscript(ctx context.Context, binding DocbankBinding, request docbankmedia.EvidenceWindowRequest) error {
+	// Visibility can change without changing a transcript build.
+	status, err := r.client.Status(ctx, binding.SourceID)
+	if notFound(err) {
+		return ErrUnavailable
+	}
+	if err != nil {
+		return err
+	}
+	if status.VaultUID != binding.VaultUID || status.SourceID != binding.SourceID || status.SourceVersionID != binding.SourceVersionID || status.ContentVersionID != binding.ContentVersionID {
+		return ErrUnavailable
+	}
+	if binding.SuppliedInputID != "" && (status.CoverageState == "stale" || !docbankmedia.SuppliedTranscriptMatches(binding.SuppliedInputID, status.SuppliedInputID)) {
+		return ErrUnavailable
+	}
 	key := transcriptKey{binding.Revision, binding.SourceID, binding.SourceVersionID, binding.ContentVersionID, binding.ContentSHA256, binding.VaultUID, binding.SuppliedInputID, binding.Profile, request.BuildID, request.RenditionAttachmentID, request.RenditionSHA256}
 	r.mu.Lock()
 	verified := r.verified[key]
@@ -70,6 +85,9 @@ func (r *DocbankReader) checkTranscript(ctx context.Context, binding DocbankBind
 		return nil
 	}
 	transcript, err := r.client.Transcript(ctx, binding.SourceID, binding.SourceVersionID, binding.ContentVersionID)
+	if notFound(err) {
+		return ErrUnavailable
+	}
 	if err != nil {
 		return err
 	}
@@ -257,7 +275,7 @@ func docbankError(parent context.Context, err error) error {
 		return err
 	case errors.Is(err, docbankmedia.ErrEvidenceUnavailable):
 		return ErrUnavailable
-	case errors.Is(err, docbankmedia.ErrCredentialUnavailable):
+	case errors.Is(err, docbankmedia.ErrCredentialUnavailable), errors.Is(err, docbankmedia.ErrInvalidReceipt):
 		return ErrUnsupported
 	}
 	if httpErr, ok := errors.AsType[*docbankmedia.HTTPError](err); ok {

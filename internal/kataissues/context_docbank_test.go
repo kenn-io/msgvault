@@ -78,6 +78,10 @@ func (f *slowDocbank) MediaRevision(context.Context, int64) (string, error) {
 	return "revision", f.revisionErr
 }
 
+func (f *slowDocbank) Status(context.Context, string) (docbankmedia.Receipt, error) {
+	return docbankmedia.Receipt{VaultUID: f.binding.VaultUID, SourceID: f.binding.SourceID, SourceVersionID: f.binding.SourceVersionID, ContentVersionID: f.binding.ContentVersionID, SuppliedInputID: f.binding.SuppliedInputID}, nil
+}
+
 func (f *slowDocbank) Transcript(context.Context, string, string, string) (docbankmedia.MediaTranscript, error) {
 	return docbankmedia.MediaTranscript{VaultUID: f.binding.VaultUID, EvidenceState: "ready", Transcript: &docbankmedia.MediaTranscriptEvidence{
 		Origin: "supplied", SuppliedInputID: "input", BuildID: f.servedBuild,

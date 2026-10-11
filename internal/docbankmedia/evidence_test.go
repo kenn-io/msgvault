@@ -105,12 +105,14 @@ func TestEvidenceWindowWire(t *testing.T) {
 	require.NoError(err)
 	assert.Equal("revised", window.Text)
 
-	for _, state := range []string{"failed", "historical_unavailable", "verified_empty", "unconfigured", "profile_required", "pending"} {
+	for _, state := range []string{"failed", "historical_unavailable", "verified_empty", "unconfigured", "profile_required", "unprocessed", "pending", "unknown", ""} {
 		mu.Lock()
 		receiptState = state
 		mu.Unlock()
 		_, err := client.EvidenceIdentity(t.Context(), version, content, "supplied-transcript")
 		switch state {
+		case "pending", "unknown", "":
+			require.ErrorIs(err, docbankmedia.ErrInvalidReceipt)
 		case "historical_unavailable", "verified_empty":
 			require.ErrorIs(err, docbankmedia.ErrEvidenceUnavailable)
 		default:
@@ -119,7 +121,7 @@ func TestEvidenceWindowWire(t *testing.T) {
 			switch state {
 			case "failed":
 				assert.Equal("rendition_failed", httpErr.Reason)
-			case "pending":
+			case "unprocessed":
 				assert.Equal(http.StatusNotFound, httpErr.Status)
 			default:
 				assert.Equal("processing_profile_unavailable", httpErr.Reason)

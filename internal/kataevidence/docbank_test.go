@@ -19,13 +19,16 @@ import (
 // fakeDocbank serves one transcript and the binding that names it. Like
 // Docbank, it serves only the node's current version and transcript build.
 type fakeDocbank struct {
-	transcripts int
-	revisionErr error
-	reads       int
-	binding     kataevidence.DocbankBinding
-	text        []rune
-	err         error
-	destination string
+	revoked       bool
+	transcriptErr error
+	statusChange  func(*docbankmedia.Receipt)
+	transcripts   int
+	revisionErr   error
+	reads         int
+	binding       kataevidence.DocbankBinding
+	text          []rune
+	err           error
+	destination   string
 	// current is the node's current version, empty once the node is deleted;
 	// build is its current transcript build, empty before it is transcribed.
 	current, build string
@@ -48,8 +51,22 @@ func (f *fakeDocbank) MediaRevision(context.Context, int64) (string, error) {
 	return f.revision, f.revisionErr
 }
 
+func (f *fakeDocbank) Status(context.Context, string) (docbankmedia.Receipt, error) {
+	if f.revoked {
+		return docbankmedia.Receipt{}, errNotFound
+	}
+	status := docbankmedia.Receipt{VaultUID: f.binding.VaultUID, SourceID: f.binding.SourceID, SourceVersionID: f.binding.SourceVersionID, ContentVersionID: f.binding.ContentVersionID, SuppliedInputID: f.binding.SuppliedInputID}
+	if f.statusChange != nil {
+		f.statusChange(&status)
+	}
+	return status, f.err
+}
+
 func (f *fakeDocbank) Transcript(context.Context, string, string, string) (docbankmedia.MediaTranscript, error) {
 	f.transcripts++
+	if f.transcriptErr != nil {
+		return docbankmedia.MediaTranscript{}, f.transcriptErr
+	}
 	build := f.build
 	if f.transcriptBuild != nil {
 		build = *f.transcriptBuild
@@ -375,4 +392,41 @@ func TestDocbankWindowsPageAndResolve(t *testing.T) {
 	// msgvault reads a transcript a window at a time, so it can't find a quote in it.
 	_, err = svc.Prepare(t.Context(), []kataevidence.Selector{{Kind: "docbank_rendition", MessageID: 4, AttachmentID: 9, Quote: "Send"}})
 	require.ErrorIs(err, kataevidence.ErrInvalidReference)
+}
+
+func TestDocbankRechecksVisibilityAndColdAbsence(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		change func(*fakeDocbank)
+	}{
+		{"revoked", func(f *fakeDocbank) { f.revoked = true }},
+		{"transcript 404", func(f *fakeDocbank) { f.transcriptErr = errNotFound }},
+		{"vault changed", func(f *fakeDocbank) { f.statusChange = func(s *docbankmedia.Receipt) { s.VaultUID = "other" } }},
+		{"source changed", func(f *fakeDocbank) { f.statusChange = func(s *docbankmedia.Receipt) { s.SourceID = "other" } }},
+		{"source version changed", func(f *fakeDocbank) { f.statusChange = func(s *docbankmedia.Receipt) { s.SourceVersionID = "other" } }},
+		{"content version changed", func(f *fakeDocbank) { f.statusChange = func(s *docbankmedia.Receipt) { s.ContentVersionID = "other" } }},
+		{"input revoked", func(f *fakeDocbank) { f.statusChange = func(s *docbankmedia.Receipt) { s.CoverageState = "stale" } }},
+		{"input changed", func(f *fakeDocbank) { f.statusChange = func(s *docbankmedia.Receipt) { s.SuppliedInputID = "other" } }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFakeDocbank()
+			reader := kataevidence.NewDocbankReader(f, f, func(context.Context) (string, error) { return "destination", nil }, f.MediaRevision)
+			selector := kataevidence.Selector{Kind: "docbank_rendition", MessageID: 4, AttachmentID: 9, MaxChars: new(10)}
+			prepared, err := reader.LoadKataEvidenceSource(t.Context(), selector)
+			require.NoError(t, err)
+			prepared.Reference.DocbankRendition.EndRune = 10
+			tc.change(f)
+			if tc.name == "transcript 404" {
+				reader = kataevidence.NewDocbankReader(f, f, func(context.Context) (string, error) { return "destination", nil }, f.MediaRevision)
+			}
+			_, err = reader.LoadKataEvidenceSource(t.Context(), selector)
+			require.ErrorIs(t, err, kataevidence.ErrUnavailable)
+			resolved, err := kataevidence.New(nil).WithDocbank(reader).ResolveAround(t.Context(), prepared.Reference, 0)
+			require.NoError(t, err)
+			assert.Equal(t, kataevidence.Unavailable, resolved.State)
+			cold := kataevidence.NewDocbankReader(f, f, func(context.Context) (string, error) { return "destination", nil }, f.MediaRevision)
+			_, err = cold.ReadKataEvidenceSource(t.Context(), prepared.Reference)
+			require.ErrorIs(t, err, kataevidence.ErrUnavailable)
+		})
+	}
 }

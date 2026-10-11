@@ -246,6 +246,7 @@ func testKataDocbankThroughDaemonAdapter(t *testing.T, origin string) {
 		raw := []byte(fmt.Sprintf(`{"id":"voice1","timestamp":"2026-09-16T10:11:12.123Z","attachments":[{"id":"mxc://beeper.local/voice1","type":"audio","isVoiceNote":true,"mimeType":"audio/wav","fileName":"voice.wav","transcription":{"transcription":%q}}]}`, string(transcript)))
 		require.NoError(st.UpsertMessageRawWithFormat(messageID, raw, "beeper_json"))
 	}
+	var revoked atomic.Bool
 	docbank := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
@@ -257,6 +258,13 @@ func testKataDocbankThroughDaemonAdapter(t *testing.T, origin string) {
 			assert.NoError(json.MarshalWrite(w, map[string]any{"state": "ready", "source": map[string]any{"node_id": 7, "revision": 1,
 				"version_id": version, "blob_hash": hash, "size": 0}, "profile": map[string]any{"name": profile},
 				"attachment_id": strings.Repeat("b", 64), "build_id": strings.Repeat("c", 64), "artifact": map[string]any{"sha256": strings.Repeat("d", 64)}}))
+		case "/api/v1/media/sources/source":
+			if revoked.Load() {
+				http.NotFound(w, r)
+				return
+			}
+			assert.NoError(json.MarshalWrite(w, docbankmedia.Receipt{VaultUID: vault, SourceID: "source", SourceVersionID: "source-version", ContentVersionID: version, SuppliedInputID: inputID, OperationState: "succeeded"}))
+
 		case "/api/v1/media/sources/source/versions/source-version/transcript":
 			assert.NoError(json.MarshalWrite(w, docbankmedia.MediaTranscript{VaultUID: vault, SourceID: "source", SourceVersionID: "source-version", ContentVersionID: version,
 				EvidenceState: "ready", CoverageState: "transcribed", OperationState: "succeeded", Transcript: &docbankmedia.MediaTranscriptEvidence{
@@ -264,7 +272,7 @@ func testKataDocbankThroughDaemonAdapter(t *testing.T, origin string) {
 				}}))
 		case "/api/v1/evidence/windows":
 			var request docbankmedia.EvidenceWindowRequest
-			if !assert.NoError(json.UnmarshalRead(r.Body, &request, json.RejectUnknownMembers(true))) {
+			if !assert.NoError(json.UnmarshalRead(r.Body, &request)) {
 				http.Error(w, "invalid", http.StatusBadRequest)
 				return
 			}
@@ -378,6 +386,19 @@ func testKataDocbankThroughDaemonAdapter(t *testing.T, origin string) {
 	}
 	assert.Equal(int32(1), metadataScans.Load())
 	assert.Equal([]string{created.Issue.UID, chunkOnly.UID, both.UID, historicalIssue.UID}, uids)
+	revoked.Store(true)
+	create := newKataCmd()
+	create.SetArgs([]string{"create", "--idempotency-key", "revoked"})
+	create.SetIn(strings.NewReader(string(request)))
+	create.SetOut(io.Discard)
+	create.SetErr(io.Discard)
+	require.ErrorContains(create.ExecuteContext(ctx), "The cited source is unavailable")
+	var unavailable generated.KataIssueContextResponse
+	require.NoError(json.Unmarshal(runKataCommand(ctx, t, "", "context", created.Issue.QualifiedRef, "--json"), &unavailable))
+	require.Len(unavailable.Passages, 1)
+	assert.Equal("unavailable", unavailable.Passages[0].State)
+	revoked.Store(false)
+
 	require.NoError(st.UpsertMessageRawWithFormat(messageID, []byte(`{"id":"voice1","attachments":[]}`), "beeper_json"))
 	var changed generated.KataIssueContextResponse
 	require.NoError(json.Unmarshal(runKataCommand(ctx, t, "", "context", created.Issue.QualifiedRef, "--json"), &changed))
