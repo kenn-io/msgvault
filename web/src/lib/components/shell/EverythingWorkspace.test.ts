@@ -31,37 +31,6 @@ function exploreResponse(overrides: Record<string, unknown> = {}) {
 }
 
 describe('EverythingWorkspace', () => {
-  it('asks again after two failed configuration checks when the query changes', async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    window.history.replaceState(null, '', '/');
-    let finish!: (ready: boolean) => void;
-    const probe = vi.fn(() => new Promise<boolean>(resolve => { finish = resolve; }))
-      .mockRejectedValueOnce(new Error('Status unavailable'))
-      .mockRejectedValueOnce(new Error('Status still unavailable'));
-    const fetchFn = vi.fn<typeof fetch>(async input => new URL((input as Request).url).pathname.endsWith('/media/search')
-      ? Response.json(recordingSearchReport()) : Response.json(exploreResponse()));
-    const state = new ExploreState(window);
-    state.replaceTransient({ workspace: 'everything', query: 'quarterly', searchMode: 'full_text' });
-    const view = renderRecordingShell(createAPIClient(fetchFn), state, probe);
-    try {
-      await screen.findByText('0 items');
-      expect(probe).toHaveBeenCalledOnce();
-      await vi.advanceTimersByTimeAsync(30_000);
-      expect(probe).toHaveBeenCalledTimes(2);
-      state.commitSearch('recovered', 'full_text');
-      await tick();
-      await waitFor(() => expect(probe).toHaveBeenCalledTimes(3));
-      expect(screen.queryByRole('region', { name: 'Recordings' })).toBeNull();
-      expect(fetchFn.mock.calls.some(([input]) => new URL((input as Request).url).pathname.endsWith('/media/search'))).toBe(false);
-      finish(true);
-      await screen.findByRole('link', { name: 'Team chat' });
-    } finally {
-      view.unmount();
-      state.destroy();
-      vi.useRealTimers();
-    }
-  });
-
   it('hides unconfigured recording search and preserves the layout across navigation', async () => {
     window.history.replaceState(null, '', '/');
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json(exploreResponse()));

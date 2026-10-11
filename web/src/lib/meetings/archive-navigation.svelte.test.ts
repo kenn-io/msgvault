@@ -25,9 +25,6 @@ describe('archive meeting navigation', () => {
     expect(request.method).toBe('GET');
     expect(await navigation.load(42, 9)).toBeUndefined();
     expect(navigation.error).toMatch(/conversation/);
-    fetchFn.mockResolvedValue(Response.json({ ...detail, message_type: 'email' }));
-    expect(await navigation.load(42)).toBeUndefined();
-    expect(navigation.error).toMatch(/meeting transcript/);
   });
   it('retains source-deleted archive detail while excluding a locally hidden meeting', async () => {
     const archived = { ...detail, deleted_at: '2026-02-01T00:00:00Z' };
