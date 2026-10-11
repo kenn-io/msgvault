@@ -61,12 +61,13 @@ func TestArchiverCreatesProviderCanonicalMeeting(t *testing.T) {
 		body, rawFormat, metadata             string
 		sender                                sql.NullString
 		messageCount, participantCount        int
+		sizeEstimate                          int64
 	)
 	require.NoError(st.DB().QueryRow(st.Rebind(`
 		SELECT m.message_type, m.source_message_id, m.subject,
 		       c.conversation_type, c.source_conversation_id,
 		       mb.body_text, mr.raw_format, m.metadata, p.email_address,
-		       c.message_count, c.participant_count
+		       c.message_count, c.participant_count, m.size_estimate
 		FROM messages m
 		JOIN conversations c ON c.id = m.conversation_id
 		JOIN message_bodies mb ON mb.message_id = m.id
@@ -77,7 +78,7 @@ func TestArchiverCreatesProviderCanonicalMeeting(t *testing.T) {
 		&messageType, &sourceMessageID, &subject,
 		&conversationType, &conversationID,
 		&body, &rawFormat, &metadata, &sender,
-		&messageCount, &participantCount,
+		&messageCount, &participantCount, &sizeEstimate,
 	))
 	assert.Equal("meeting_transcript", messageType)
 	assert.Equal("meeting-note-42", sourceMessageID)
@@ -90,6 +91,16 @@ func TestArchiverCreatesProviderCanonicalMeeting(t *testing.T) {
 	assert.Equal("organizer@example.com", sender.String)
 	assert.Equal(1, messageCount)
 	assert.Equal(1, participantCount)
+	assert.EqualValues(78, sizeEstimate, "size estimate is the body's byte length")
+
+	var participantRole string
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT cp.role
+		FROM conversation_participants cp
+		JOIN messages m ON m.conversation_id = cp.conversation_id
+		WHERE m.id = ?
+	`), result.MessageID).Scan(&participantRole))
+	assert.Equal("member", participantRole)
 
 	var recipient, recipientEnvelope, recipientName string
 	require.NoError(st.DB().QueryRow(st.Rebind(`
@@ -111,13 +122,19 @@ func TestArchiverCreatesProviderCanonicalMeeting(t *testing.T) {
 	assert.Equal("organizer@example.com", organizerEnvelope)
 	assert.Equal("Test Organizer", organizerName)
 	var recipients, invalid int
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM message_recipients WHERE message_id = ?`), result.MessageID).Scan(&recipients))
+	require.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT COUNT(*) FROM message_recipients WHERE message_id = ?`,
+	), result.MessageID).Scan(&recipients))
 	assert.Equal(2, recipients)
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM participants WHERE email_address = 'not-an-email'`).Scan(&invalid))
+	require.NoError(st.DB().QueryRow(
+		`SELECT COUNT(*) FROM participants WHERE email_address = 'not-an-email'`,
+	).Scan(&invalid))
 	assert.Zero(invalid)
 	if st.FTS5Available() && !st.IsPostgreSQL() {
 		var to string
-		require.NoError(st.DB().QueryRow(st.Rebind(`SELECT to_addr FROM messages_fts WHERE rowid = ?`), result.MessageID).Scan(&to))
+		require.NoError(st.DB().QueryRow(st.Rebind(
+			`SELECT to_addr FROM messages_fts WHERE rowid = ?`,
+		), result.MessageID).Scan(&to))
 		assert.Equal("attendee@example.com", to)
 	}
 

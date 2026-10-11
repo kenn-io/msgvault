@@ -316,7 +316,11 @@ func TestImport_AccountIdentityControlsFromMe(t *testing.T) {
 
 	msgID := circlebackMessageIDFor(t, st, "primary")
 	var sender string
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT p.email_address FROM messages m JOIN participants p ON p.id = m.sender_id WHERE m.id = ?`), msgID).Scan(&sender))
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT p.email_address
+		FROM messages m
+		JOIN participants p ON p.id = m.sender_id
+		WHERE m.id = ?`), msgID).Scan(&sender))
 	assert.Equal("user-a@example.com", sender)
 	assert.Equal("work", circlebackMetadataMap(t, st, msgID)["account_identifier"],
 		"metadata preserves the source label")
@@ -1307,16 +1311,21 @@ func TestImport_IdempotentRefreshAndWatermark(t *testing.T) {
 	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&count))
 	assert.Equal(1, count)
 
+	// An incremental sync leaves a stale derived preview alone when the
+	// evidence is unchanged; --full must rewrite it.
+	const snippetQuery = `SELECT snippet FROM messages WHERE source_message_id = ?`
 	var snippet string
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT snippet FROM messages WHERE source_message_id = ?`), "meeting:42").Scan(&snippet))
-	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET snippet = ? WHERE source_message_id = ?`), "stale", "meeting:42")
+	require.NoError(st.DB().QueryRow(st.Rebind(snippetQuery), "meeting:42").Scan(&snippet))
+	_, err = st.DB().Exec(st.Rebind(
+		`UPDATE messages SET snippet = ? WHERE source_message_id = ?`), "stale", "meeting:42")
 	require.NoError(err)
-	forced, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com", Full: true})
+	forced, err := imp.Import(context.Background(),
+		ImportOptions{Identifier: "alice@example.com", Full: true})
 	require.NoError(err)
 	assert.EqualValues(0, forced.MeetingsAdded)
 	assert.EqualValues(1, forced.MeetingsUpdated)
 	var repaired string
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT snippet FROM messages WHERE source_message_id = ?`), "meeting:42").Scan(&repaired))
+	require.NoError(st.DB().QueryRow(st.Rebind(snippetQuery), "meeting:42").Scan(&repaired))
 	assert.Equal(snippet, repaired)
 
 	// Failing run: watermark holds.
