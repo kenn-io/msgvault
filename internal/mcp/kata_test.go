@@ -51,7 +51,7 @@ func TestKataWriteToolsRequireOptIn(t *testing.T) {
 	assert := assert.New(t)
 	for _, optIn := range []bool{false, true} {
 		for _, writes := range []bool{false, true} {
-			listed := toolsByName(t, rawListTools(t, ServeOptions{Engine: &querytest.MockEngine{}, Kata: &fakeKataBackend{}, KataLookup: true, KataContext: true, AllowKataWrites: optIn}, writes))
+			listed := toolsByName(t, rawListTools(t, ServeOptions{Engine: &querytest.MockEngine{}, Kata: &fakeKataBackend{}, KataLookup: true, AllowKataWrites: optIn}, writes))
 			assert.Contains(listed, "prepare_kata_evidence")
 			assert.Contains(listed, "find_kata_issues")
 			assert.Contains(listed, "get_kata_issue_context")
@@ -69,17 +69,17 @@ func TestKataWriteToolsRequireOptIn(t *testing.T) {
 	older := toolsByName(t, rawListTools(t, ServeOptions{Engine: &querytest.MockEngine{}, Kata: &fakeKataBackend{}}, false))
 	assert.Contains(older, "prepare_kata_evidence")
 	assert.NotContains(older, "find_kata_issues")
-	// Lookup can be enabled independently of context.
+	assert.NotContains(older, "get_kata_issue_context")
 	lookup := toolsByName(t, rawListTools(t, ServeOptions{Engine: &querytest.MockEngine{}, Kata: &fakeKataBackend{}, KataLookup: true}, false))
 	assert.Contains(lookup, "find_kata_issues")
-	assert.NotContains(lookup, "get_kata_issue_context")
+	assert.Contains(lookup, "get_kata_issue_context")
 }
 
 func TestKataToolsQuarantineArchiveText(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	backend := &fakeKataBackend{}
-	session := task5ConnectClient(t, ServeOptions{Engine: &querytest.MockEngine{}, Kata: backend, KataLookup: true, KataContext: true, AllowKataWrites: true}, true)
+	session := task5ConnectClient(t, ServeOptions{Engine: &querytest.MockEngine{}, Kata: backend, KataLookup: true, AllowKataWrites: true}, true)
 
 	prepared, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "prepare_kata_evidence", Arguments: map[string]any{"selectors": []any{map[string]any{"kind": "message", "message_id": 7, "max_chars": 1000}}}})
 	require.NoError(err)

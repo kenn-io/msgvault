@@ -146,7 +146,7 @@ func newKataCmd() *cobra.Command {
 		Short: "Show each passage a Kata issue cites, with its state in the archive and the text around it",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			client, closeClient, err := openKataClient(cmd, kataContextMinAPISchemaVersion)
+			client, closeClient, err := openKataClient(cmd, kataLookupMinAPISchemaVersion)
 			if err != nil {
 				return err
 			}
