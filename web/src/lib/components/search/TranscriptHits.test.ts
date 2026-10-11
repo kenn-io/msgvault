@@ -163,10 +163,12 @@ describe('TranscriptHits', () => {
     ['café 東京 2026', true], ['cafe\u0301', true], ['from:alice@example.com quarterly', false], ['"quarterly numbers"', false],
     ['not', true], ['AND', true], ['\u0301', false],
   ] as const)('admits plain words and rejects unsupported syntax %s', async (query, searched) => {
+    vi.useFakeTimers();
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json(report()));
     render(TranscriptHits, { props: { client: createAPIClient(fetchFn), query, supported: true } });
+    await vi.advanceTimersByTimeAsync(301);
     if (searched) {
-      await screen.findByText('Quarterly numbers');
+      expect(screen.getByText('Quarterly numbers')).toBeTruthy();
       expect(new URL((fetchFn.mock.calls.at(-1)![0] as Request).url).searchParams.get('q')).toBe(query);
     } else {
       expect(screen.getByRole('region', { name: 'Recordings' })).toBeTruthy();
