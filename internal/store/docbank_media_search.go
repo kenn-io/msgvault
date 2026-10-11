@@ -17,7 +17,7 @@ func (s *Store) MediaSearchLocalGaps(ctx context.Context, destination string, sc
 	where := ""
 	args := []any{destination}
 	if scope != nil {
-		predicate, values := personscope.MessagePredicate(*scope, "m", "c")
+		predicate, values := personscope.MessagePredicate(*scope, "m", "cv")
 		where = " AND (" + predicate + ")"
 		args = append(args, values...)
 	}
@@ -25,14 +25,14 @@ func (s *Store) MediaSearchLocalGaps(ctx context.Context, destination string, sc
 		SELECT COUNT(*)
 		FROM attachments a
 		JOIN messages m ON m.id = a.message_id
-		JOIN conversations c ON c.id = m.conversation_id
+		JOIN conversations cv ON cv.id = m.conversation_id
 		JOIN sources src ON src.id = m.source_id
 		WHERE `+LiveMessagesWhere("m", true)+` AND `+messageRecordingAudio("")+`
 		  AND NOT EXISTS (SELECT 1 FROM beeper_media_occurrences o
 		    WHERE o.destination_key = ? AND o.retention_state <> 'revoked'
 		      AND o.source_type = src.source_type AND o.source_identifier = src.identifier
 		      AND o.source_message_id = m.source_message_id
-		      AND o.source_conversation_id = COALESCE(c.source_conversation_id, '')
+		      AND o.source_conversation_id = COALESCE(cv.source_conversation_id, '')
 		      AND o.source_attachment_id = COALESCE(a.source_attachment_id, '')
 		      AND o.source_part_key = COALESCE(NULLIF(a.source_part_key, ''), NULLIF(a.source_attachment_id, ''), src.source_type || ':unknown')
 		      AND o.source_sha256 = a.content_hash AND `+beeperMediaEligible+`)`+where), args...).Scan(&unavailable)

@@ -9,6 +9,7 @@ All notable changes to msgvault, grouped by release.
 ## Unreleased
 
 - Remote edits update source-owned values on published CardDAV imports while preserving unrelated local values. Edits that would overwrite another owner create a conflict.
+- [Everything search](web-ui.md#recording-matches) shows recording transcript matches for plain-word Full text queries and supports one Person filter. API schema 3.11.0 adds `participant_id` to media search, `GET /media/search/status`, source filename, title and date to media search results and optional `conversation_title` to message detail.
 
 - Go programs can use msgvault as a library through `go.kenn.io/msgvault/pkg/archive`.
   It sets up and opens SQLite or PostgreSQL archives, runs the Slack and Discord
@@ -25,6 +26,10 @@ All notable changes to msgvault, grouped by release.
 - Applications can compare a candidate binary's expected archive version with
   the stored version using `schema-version`, then run `migrate` before replacing
   the executable. See [the upgrade procedure](setup.md#migrate-before-replacing-the-executable).
+
+- Owned-address changes recheck only matching messages. SQLite upgrades may
+  take several minutes to build a one-time From-address index. See
+  [startup progress](guides/daemon-migration.md#what-you-will-see).
 
 - msgvault sends anonymous usage telemetry: a daemon ping at startup and once
   each later UTC day, and an `app_opened` event the web UI reports through the

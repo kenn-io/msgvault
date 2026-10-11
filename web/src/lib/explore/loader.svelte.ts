@@ -13,6 +13,7 @@ import type {
 import { createExploreAPI, type ExploreAPI } from './api';
 import { parseAttachmentSelection } from './attachment-authority';
 import { parseArchiveMeetingSelection } from '../meetings/archive-selection';
+import { parseRecordingSelection } from '../archive/recording-selection';
 import { parseGroupSelection } from './group-context';
 import { LOAD_THROUGH_END_MAX_PAGES } from './paging';
 import { canonicalFingerprint, predicateFingerprint } from './selection';
@@ -370,7 +371,7 @@ export class ExploreLoader {
   private restorationKeys(): string[] {
     const current = this.state.current;
     const selectedAttachmentID = parseAttachmentSelection(current.selectedRow);
-    const selected = selectedAttachmentID === undefined && parseArchiveMeetingSelection(current.selectedRow) === undefined ? current.selectedRow : null;
+    const selected = selectedAttachmentID === undefined && parseArchiveMeetingSelection(current.selectedRow) === undefined && !parseRecordingSelection(current.selectedRow) ? current.selectedRow : null;
     return [...new Set([
       current.activeRow,
       current.scrollAnchor?.key,

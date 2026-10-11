@@ -161,6 +161,32 @@ cannot safely honor the selected search mode. Update or rebuild the named
 component, or deliberately select a supported mode. Msgvault does not quietly
 substitute full-text search for either state.
 
+### Recording matches
+
+With Docbank configured, Everything also searches recording transcripts and
+shows matches in **Recordings** above the ordinary results. Recording search
+sends the query text to the configured Docbank service.
+
+- **When it runs:** a **Full text** query of plain words, in **Table** view,
+  with no grouping and either no filters or one **Person** filter selecting one
+  person. Punctuation, quoted phrases, Semantic, Hybrid, other filters and
+  grouping leave recording search unavailable. The search starts once typing
+  pauses for 300 ms.
+- **What it shows:** up to 20 matching excerpts with source title, date,
+  filename, transcript origin and supplied timing. Matches have their own count
+  and coverage; incomplete coverage stays visible even with zero matches.
+- **Opening a match:** the reader shows its message and current transcript
+  while keeping your search. Modified clicks open the message in a new tab.
+- **Scope limits:** if the search exceeds 4,096 distinct versions or source
+  selectors, add a Person filter. If that person still exceeds the limit, use
+  person-scoped recording search in the CLI.
+- **Availability:** Recordings appears once the daemon confirms Docbank is
+  configured. Pending or failed checks keep it hidden; a failed check retries
+  after 30 seconds.
+- **Freshness and failures:** results expire 30 seconds after the request
+  starts; use **Refresh** for current matches. Transient failures offer
+  **Retry**. A query or Person filter change retries a refused search.
+
 ## Read messages
 
 Open a `/messages/<id>` link to go directly to an archived message. CLI
@@ -175,7 +201,7 @@ windows, choose **Preview position → Right** to read beside the results.
 Drag the divider to resize either layout, or focus it and use the arrow keys.
 Double-click the divider to reset its size. The browser remembers your layout
 choice and each layout's size. Narrow windows use the preview below the results
-and restore your right-side layout when there is room again.
+and restore your right-side layout when there is room again. Escape closes the reader. Next/previous result shortcuts move between ordinary message previews and are inactive while a recording match is open.
 
 HTML email follows the app's dark theme by replacing sender-defined text,
 background, and border colors. Images keep their original colors. Choose

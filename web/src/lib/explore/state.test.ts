@@ -722,10 +722,10 @@ describe('Explore URL state', () => {
     expect(malformed.personFileDirections).toEqual(['from_person']);
   });
 
-  it('drops malformed namespaced attachment authority instead of treating it as an entry key', () => {
+  it.each(['attachment:0', 'recording:abc'])('drops malformed namespaced selection %s', (selectedRow) => {
     const restored = parseExploreURLState(serializeExploreURLState({
       ...defaultExploreURLState,
-      selectedRow: 'attachment:0'
+      selectedRow
     }));
 
     expect(restored.selectedRow).toBeNull();

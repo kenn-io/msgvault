@@ -112,10 +112,12 @@ var (
 	schemaContractDigests = []string{
 		1: "08c288dc75ccc5c75f4513cf92a10f34a75b5e918f7ceea83bf870040e252358",
 		2: "ad86bbf0db74619be9eaefae6f34bcaad37f3520a9a302810c0fc867735cd4c1",
+		3: "bde397bba4bf884c55327b3956af11cd69400f7fdfdf60b34a05eaeeb5534b84",
 	}
 	schemaContractPostgresDigests = []string{
 		1: "7c554ff06468af9bf30950e6e4f2954b52f84d7dd0e6708f4fdd932fda007ed3",
 		2: "7f207ef54527a376aebc79ee9c2217e3af0bfb1171ed98af2ef5504ea7dec7ca",
+		3: "a60a2d5f70be37cbfd6ea4bf8c264be5d70f1dec16dd87d611ead7c0b01ec823",
 	}
 )
 

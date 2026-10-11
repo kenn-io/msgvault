@@ -5,11 +5,14 @@ import type { MediaSearchResultOrigin } from "./mediaSearchResultOrigin";
 
 export interface MediaSearchResult {
   attachment_id: number;
+  containing_title?: string;
   conversation_id: number;
   end_ms?: number;
   /** Plain transcript excerpt without search highlight markers */
   excerpt: string;
+  filename?: string;
   message_id: number;
+  occurred_at?: string;
   origin: MediaSearchResultOrigin;
   start_ms?: number;
   [key: string]: unknown;

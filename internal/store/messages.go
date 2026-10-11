@@ -1866,6 +1866,8 @@ func senderOwnerFallback(senderExpr, sourceExpr string) string {
 	)`
 }
 
+const usableFromEnvelope = `mr.recipient_type = 'from' AND mr.email_address IS NOT NULL AND TRIM(mr.email_address) <> ''`
+
 // messageIdentityAttributionMatch derives identity_is_from_me for one
 // messages row. A non-empty 'from' envelope snapshot is authoritative: the
 // sender's current participant aliases cannot reclassify that message after a
@@ -1887,9 +1889,7 @@ var messageIdentityAttributionMatch = fmt.Sprintf(`(
 	    SELECT 1
 	    FROM message_recipients mr
 	    WHERE mr.message_id = messages.id
-	      AND mr.recipient_type = 'from'
-	      AND mr.email_address IS NOT NULL
-	      AND TRIM(mr.email_address) <> ''
+	      AND `+usableFromEnvelope+`
 	  )
 	  AND (%s)
 	)
@@ -1897,29 +1897,25 @@ var messageIdentityAttributionMatch = fmt.Sprintf(`(
 
 const messageSourceAttribution = `COALESCE(source_is_from_me, FALSE)`
 
+// The scope predicate selects the rows; every refresh applies the same ownership rules.
+var messageAttributionUpdate = fmt.Sprintf(`
+	UPDATE messages
+	SET identity_is_from_me = %[2]s,
+	    is_from_me = (%[1]s OR %[2]s)
+	WHERE %%s
+	  AND (
+	    identity_is_from_me <> %[2]s
+	    OR is_from_me IS NULL
+	    OR is_from_me <> (%[1]s OR %[2]s)
+	  )
+`, messageSourceAttribution, messageIdentityAttributionMatch)
+
 func refreshSourceMessageAttributionContext(
 	ctx context.Context,
 	q contextQuerier,
 	sourceID int64,
-	excludeSourceMessageID string,
 ) error {
-	// InitSchema assigns source provenance to every legacy row once. Runtime
-	// identity changes therefore only need to update the derived and effective
-	// values, and the change predicate avoids firing last_modified triggers for
-	// messages whose attribution already agrees with the current identity set.
-	_, err := q.ExecContext(ctx, fmt.Sprintf(`
-		UPDATE messages
-		SET identity_is_from_me = %[2]s,
-		    is_from_me = (%[1]s OR %[2]s)
-		WHERE source_id = ?
-		  AND (? = '' OR source_message_id <> ?)
-		  AND (
-		    identity_is_from_me <> %[2]s
-		    OR is_from_me IS NULL
-		    OR is_from_me <> (%[1]s OR %[2]s)
-		  )
-	`, messageSourceAttribution, messageIdentityAttributionMatch),
-		sourceID, excludeSourceMessageID, excludeSourceMessageID)
+	_, err := q.ExecContext(ctx, fmt.Sprintf(messageAttributionUpdate, `source_id = ?`), sourceID)
 	if err != nil {
 		return fmt.Errorf("refresh source message attribution: %w", err)
 	}
@@ -1946,19 +1942,66 @@ func refreshParticipantMessageAttributionContext(
 	for i, participantID := range ids {
 		args[i] = participantID
 	}
-	_, err := q.ExecContext(ctx, fmt.Sprintf(`
-		UPDATE messages
-		SET identity_is_from_me = %[2]s,
-		    is_from_me = (%[1]s OR %[2]s)
-		WHERE sender_id IN (`+placeholders+`)
-		  AND (
-		    identity_is_from_me <> %[2]s
-		    OR is_from_me IS NULL
-		    OR is_from_me <> (%[1]s OR %[2]s)
-		  )
-	`, messageSourceAttribution, messageIdentityAttributionMatch), args...)
+	_, err := q.ExecContext(ctx, fmt.Sprintf(messageAttributionUpdate, `sender_id IN (`+placeholders+`)`), args...)
 	if err != nil {
 		return fmt.Errorf("refresh participant message attribution: %w", err)
+	}
+	return nil
+}
+
+const identityEnvelopeSelection = `
+	SELECT mr.message_id FROM message_recipients mr CROSS JOIN messages m
+	WHERE m.id = mr.message_id AND m.source_id = ?
+	  AND mr.recipient_type = 'from' AND LOWER(mr.email_address) IN (%s)
+`
+
+// Unary plus keeps SQLite on the sender index without statistics or with large chunks.
+const identitySenderSelection = `
+	SELECT m.id FROM messages m
+	WHERE +m.source_id = ? AND m.sender_id IN (%s)
+	  AND NOT EXISTS (
+	      SELECT 1 FROM message_recipients mr
+	      WHERE mr.message_id = m.id
+	        AND ` + usableFromEnvelope + `
+	  )
+`
+
+// Only changed addresses affect envelopes and legacy senders; other messages keep their attribution.
+func refreshIdentityMessageAttributionContext(
+	ctx context.Context,
+	tx *loggedTx,
+	sourceID int64,
+	addresses []string,
+	excludeSourceMessageID string,
+) error {
+	messageIDs := make(map[int64]struct{})
+	scanID := func(rows *loggedRows) error {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return err
+		}
+		messageIDs[id] = struct{}{}
+		return nil
+	}
+	// Database case folding must match messageIdentityAttributionMatch.
+	if err := queryInChunksWithValueExprContext(ctx, tx, addresses, []any{sourceID}, identityEnvelopeSelection, "LOWER(?)", scanID); err != nil {
+		return fmt.Errorf("resolve identity envelope messages: %w", err)
+	}
+	participants, err := participantIDsForAddressesContext(ctx, tx, addresses)
+	if err != nil {
+		return err
+	}
+	if err := queryInChunksContext(ctx, tx, participants, []any{sourceID}, identitySenderSelection, scanID); err != nil {
+		return fmt.Errorf("resolve legacy identity sender messages: %w", err)
+	}
+	ids := make([]int64, 0, len(messageIDs))
+	for id := range messageIDs {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	update := fmt.Sprintf(messageAttributionUpdate, `(? = '' OR source_message_id <> ?) AND id IN (%s)`)
+	if err := execInChunksContext(ctx, tx, ids, []any{excludeSourceMessageID, excludeSourceMessageID}, update); err != nil {
+		return fmt.Errorf("refresh identity message attribution: %w", err)
 	}
 	return nil
 }
@@ -1973,17 +2016,7 @@ func refreshParticipantMessageAttributionContext(
 // The change guard keeps the common agreeing case write-free, so it fires no
 // last_modified triggers.
 func refreshMessageAttributionWith(q querier, messageID int64) error {
-	_, err := q.Exec(fmt.Sprintf(`
-		UPDATE messages
-		SET identity_is_from_me = %[2]s,
-		    is_from_me = (%[1]s OR %[2]s)
-		WHERE id = ?
-		  AND (
-		    identity_is_from_me <> %[2]s
-		    OR is_from_me IS NULL
-		    OR is_from_me <> (%[1]s OR %[2]s)
-		  )
-	`, messageSourceAttribution, messageIdentityAttributionMatch), messageID)
+	_, err := q.Exec(fmt.Sprintf(messageAttributionUpdate, `id = ?`), messageID)
 	if err != nil {
 		return fmt.Errorf("refresh message attribution: %w", err)
 	}

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -27,6 +28,51 @@ type mediaSearchFixture struct {
 	duringSearch  func()
 	remoteStatus  int
 	waitForCancel bool
+}
+
+func TestMediaSearchStatus(t *testing.T) {
+	for _, state := range []string{"configured", "no reader", "no client"} {
+		t.Run(state, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			f := newMediaSearchFixture(t)
+			server := f.server(false)
+			server.documentSearchRateLimiter.Close()
+			server.documentSearchRateLimiter = NewRateLimiter(1, 1)
+			t.Cleanup(server.documentSearchRateLimiter.Close)
+			require.True(server.documentSearchRateLimiter.Allow("127.0.0.1"))
+			gate := &recordingOperationGate{allow: false}
+			server.operationGate = gate
+			switch state {
+			case "no reader":
+				server.messageRecordings = nil
+			case "no client":
+				server.messageRecordings.Client = nil
+			}
+			request := httptest.NewRequest(http.MethodGet, "/api/v1/media/search/status", nil)
+			request.RemoteAddr = "127.0.0.1:1234"
+			request.Header.Set("X-Api-Key", recordingsTestAPIKey)
+			response := httptest.NewRecorder()
+			server.Router().ServeHTTP(response, request)
+			assert.Zero(f.validated)
+			assert.Empty(f.requests)
+			require.Equal(http.StatusOK, response.Code, response.Body.String())
+			var status MediaSearchStatusResponse
+			require.NoError(json.Unmarshal(response.Body.Bytes(), &status))
+			assert.Equal(state == "configured", status.Configured)
+			assert.Zero(f.docbank.requestCount())
+			begin, _ := gate.counts()
+			assert.Zero(begin)
+			if state == "no reader" {
+				server.operationGate = nil
+				code, _, raw := searchMediaFor(t, server, "q=words")
+				assert.Equal(http.StatusServiceUnavailable, code, raw)
+				assert.Contains(raw, "media_search_unavailable")
+				assert.Contains(raw, "Configure the Docbank integration to search transcripts")
+				assert.Empty(f.requests)
+			}
+		})
+	}
 }
 
 func newMediaSearchFixture(t *testing.T) *mediaSearchFixture {
@@ -111,10 +157,17 @@ func TestMediaSearchOccurrencesAndTiming(t *testing.T) {
 	id := f.message(t, "second")
 	f.audio(t, id, "second", "", "delivery-first", &store.BeeperMediaResult{VaultUID: "vault", DocbankSourceID: seed.sourceID, ContentVersionID: seed.contentVersionID})
 	f.report.Results[0].Evidence[0].TimeSpan = &docbankmedia.MediaTimeSpan{StartMS: 1200, EndMS: 2800}
+	sentAt := time.Date(2026, time.July, 18, 12, 0, 0, 0, time.UTC)
+	_, err := f.f.Store.DB().Exec(f.f.Store.Rebind(`UPDATE messages SET subject = ?, sent_at = ? WHERE id = ?`), "Quarterly review", sentAt, seed.messageID)
+	require.NoError(err)
 	status, response, raw := searchMediaFor(t, f.server(true), "q=quarterly+numbers")
 	require.Equal(http.StatusOK, status, raw)
 	require.Len(response.Results, 2)
 	assert.Equal(seed.messageID, response.Results[0].MessageID)
+	assert.Equal("voice.wav", response.Results[0].Filename)
+	assert.Equal("Quarterly review", response.Results[0].ContainingTitle)
+	require.NotNil(response.Results[0].OccurredAt)
+	assert.True(sentAt.Equal(*response.Results[0].OccurredAt), "occurred_at %s", response.Results[0].OccurredAt)
 	assert.Equal(id, response.Results[1].MessageID)
 	assert.Equal(int64(1200), *response.Results[1].StartMS)
 	assert.False(response.Partial)
@@ -170,21 +223,26 @@ func TestMediaSearchCompletePopulation(t *testing.T) {
 }
 
 func TestMediaSearchParametersAndAuthorization(t *testing.T) {
+	assert := assert.New(t)
+
 	t.Parallel()
-	for _, query := range []string{"q=words&mode=semantic", "q=words&mode=hybrid", "q=words&mode=invalid", "q=words&limit=101", "q=words&person_id=0", "q=words&direction=from_person", "q=words&person_id=7&direction=invalid", "q=words&person_id=7&direction=", "q=" + url.QueryEscape(strings.Repeat("x", 8193))} {
+	for _, query := range []string{"q=words&mode=semantic", "q=words&mode=hybrid", "q=words&mode=invalid", "q=words&limit=101", "q=words&person_id=0", "q=words&participant_id=7&person_id=7", "q=words&direction=from_person", "q=words&person_id=7&direction=invalid", "q=words&person_id=7&direction=", "q=" + url.QueryEscape(strings.Repeat("x", 8193))} {
 		f := newMediaSearchFixture(t)
 		status, _, raw := searchMediaFor(t, f.server(true), query)
 		want := http.StatusBadRequest
 		if strings.Contains(query, "mode=semantic") || strings.Contains(query, "mode=hybrid") {
 			want = http.StatusServiceUnavailable
 		}
-		assert.Equal(t, want, status, raw)
-		assert.Empty(t, f.requests)
+		assert.Equal(want, status, raw)
+		if strings.Contains(query, "participant_id=7&person_id=7") {
+			assert.Contains(raw, "mutually exclusive")
+		}
+		assert.Empty(f.requests)
 	}
 	f := newMediaSearchFixture(t)
 	w := httptest.NewRecorder()
 	f.server(true).Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/media/search?q=words", nil))
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	assert.Equal(http.StatusUnauthorized, w.Code)
 }
 
 func TestMediaSearchOversizedPopulation(t *testing.T) {
@@ -193,7 +251,7 @@ func TestMediaSearchOversizedPopulation(t *testing.T) {
 
 	t.Parallel()
 	f := newMediaSearchFixture(t)
-	f.match(t, "seed")
+	f.retained(t, "seed")
 	// Clone mapped identities to exercise the public fence ceiling without thousands of imports.
 	transaction, err := f.f.Store.DB().BeginTx(t.Context(), nil)
 	require.NoError(err)
@@ -216,6 +274,66 @@ func TestMediaSearchOversizedPopulation(t *testing.T) {
 	assert.Equal(http.StatusBadRequest, status, raw)
 	assert.Contains(raw, "media_search_scope_limit")
 	assert.Empty(f.requests)
+}
+
+func TestMediaSearchParticipantScope(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	t.Parallel()
+	f := newMediaSearchFixture(t)
+	selected := f.match(t, "selected")
+	aliased := f.match(t, "aliased")
+	participant := f.f.EnsureParticipant("selected@example.com", "Selected Person", "example.com")
+	alias := f.f.EnsureParticipant("alias@example.com", "Alias", "example.com")
+	_, err := f.f.Store.LinkParticipants(participant, alias)
+	require.NoError(err)
+	for messageID, sender := range map[int64]int64{selected.messageID: participant, aliased.messageID: alias} {
+		_, err = f.f.Store.DB().Exec(f.f.Store.Rebind(`UPDATE messages SET sender_id = ? WHERE id = ?`), sender, messageID)
+		require.NoError(err)
+	}
+	fullReport := f.report
+	f.duringSearch = func() {
+		fence := f.requests[len(f.requests)-1].Fence.ContentVersionIDs
+		f.report = fullReport
+		f.report.Results = slices.DeleteFunc(slices.Clone(fullReport.Results), func(hit docbankmedia.SearchHit) bool {
+			return !slices.Contains(fence, hit.ContentVersionID)
+		})
+		f.report.MediaSelections = slices.DeleteFunc(slices.Clone(fullReport.MediaSelections), func(selection docbankmedia.SearchMediaSelection) bool {
+			return !slices.Contains(fence, selection.ContentVersionID)
+		})
+		f.report.Coverage.ScopedDocuments, f.report.Coverage.CompleteDocuments = len(f.report.Results), len(f.report.Results)
+	}
+	search := func(server *Server, parameters string) []int64 {
+		t.Helper()
+		status, response, raw := searchMediaFor(t, server, "q=quarterly+numbers&"+parameters)
+		require.Equal(http.StatusOK, status, raw)
+		var messageIDs []int64
+		for _, result := range response.Results {
+			messageIDs = append(messageIDs, result.MessageID)
+		}
+		return messageIDs
+	}
+	byParticipant := fmt.Sprintf("participant_id=%d", participant)
+
+	assert.ElementsMatch([]int64{selected.messageID, aliased.messageID}, search(f.server(true), byParticipant), "live links widen the cluster")
+	_, err = f.f.Store.UnlinkParticipants(participant, alias)
+	require.NoError(err)
+	assert.Equal([]int64{selected.messageID}, search(f.server(true), byParticipant), "unlinked alias leaves the cluster")
+	assert.Equal([]string{selected.contentVersionID}, f.requests[len(f.requests)-1].Fence.ContentVersionIDs)
+
+	analytical := f.server(true)
+	clusters := fmt.Sprintf(`(%d::BIGINT, %d::BIGINT), (%d::BIGINT, %d::BIGINT)`, participant, participant, alias, participant)
+	engine, _ := newExploreDuckDBFixtureWithClusters(t, exploreFixtureDefaultMessages, exploreFixtureDefaultRecipients, clusters, 3)
+	analytical.SetAnalyticsEngine(engine, AnalyticsModeDuckDB)
+	assert.ElementsMatch([]int64{selected.messageID, aliased.messageID}, search(analytical, byParticipant), "committed Explore clusters win over live links")
+
+	_, err = f.f.Store.DB().Exec(f.f.Store.Rebind(`UPDATE messages SET sender_id = NULL WHERE id = ?`), selected.messageID)
+	require.NoError(err)
+	_, err = f.f.Store.DB().Exec(f.f.Store.Rebind(`INSERT INTO message_recipients (message_id, participant_id, recipient_type) VALUES (?, ?, 'mention')`), selected.messageID, participant)
+	require.NoError(err)
+	assert.Equal([]int64{selected.messageID}, search(f.server(true), byParticipant), "a mention matches like Explore's Person filter")
+	assert.Empty(search(f.server(true), byParticipant+"&direction=from_person"), "a direction disables membership matching")
 }
 
 func TestMediaSearchPersonDirection(t *testing.T) {

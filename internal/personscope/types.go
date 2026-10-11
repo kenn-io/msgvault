@@ -30,6 +30,8 @@ const (
 type Scope struct {
 	ParticipantIDs []int64     `json:"participant_ids"`
 	Directions     []Direction `json:"directions"`
+	// ParticipantMembership matches sender, every recipient role, or conversation membership.
+	ParticipantMembership bool `json:"participant_membership"`
 	// IncludeUnclassifiedRosterRows preserves the historical default for
 	// conversation types without a dedicated direction selector.
 	IncludeUnclassifiedRosterRows bool `json:"include_unclassified_roster_rows"`

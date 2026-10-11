@@ -5,20 +5,18 @@ import type { APIClient } from '../api/client';
 export const kataReadinessKey = Symbol('kata-readiness');
 export const KATA_RETRY_MS = 30_000;
 
-// The page asks Kata once, the first time an action needs the answer, and
-// every card shares it. Kata settings apply only after a daemon restart.
-export class KataReadiness {
-  #client: APIClient;
+// Page-scoped integration settings apply only after a daemon restart.
+export class IntegrationReadiness {
+  #probe: (signal: AbortSignal) => Promise<boolean | undefined>;
   #ready = $state(false);
   #started = false;
   #controller?: AbortController;
   #retry?: ReturnType<typeof setTimeout>;
 
-  constructor(client: APIClient) {
-    this.#client = client;
+  constructor(probe: (signal: AbortSignal) => Promise<boolean | undefined>) {
+    this.#probe = probe;
   }
 
-  // Kata actions show only when the integration is ready; Settings explains any other state.
   get ready(): boolean {
     if (!this.#started) {
       this.#started = true;
@@ -36,17 +34,25 @@ export class KataReadiness {
     this.#started = true;
     this.dispose();
     const controller = this.#controller = new AbortController();
-    // A failed check, or Kata out of reach, is no lasting answer: mounted cards
-    // get one retry shortly, and the next read asks again.
+    // An inconclusive check gets one retry shortly, and the next read asks again.
     const failed = () => {
       if (controller.signal.aborted) return;
       this.#started = false;
       if (retryOnFailure) this.#retry = setTimeout(() => this.#check(false), KATA_RETRY_MS);
     };
-    void getKataIntegrationStatus({ ...this.#client, signal: controller.signal }).then(({ data }) => {
-      if (!data || data.state === 'unreachable') return failed();
-      if (!controller.signal.aborted) this.#ready = data.state === 'ready';
+    void this.#probe(controller.signal).then((ready) => {
+      if (ready === undefined) return failed();
+      if (!controller.signal.aborted) this.#ready = ready;
     }).catch(failed);
+  }
+}
+
+export class KataReadiness extends IntegrationReadiness {
+  constructor(client: APIClient) {
+    super(async signal => {
+      const { data } = await getKataIntegrationStatus({ ...client, signal });
+      return !data || data.state === 'unreachable' ? undefined : data.state === 'ready';
+    });
   }
 }
 

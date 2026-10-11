@@ -25,9 +25,6 @@ describe('archive meeting navigation', () => {
     expect(request.method).toBe('GET');
     expect(await navigation.load(42, 9)).toBeUndefined();
     expect(navigation.error).toMatch(/conversation/);
-    fetchFn.mockResolvedValue(Response.json({ ...detail, message_type: 'email' }));
-    expect(await navigation.load(42)).toBeUndefined();
-    expect(navigation.error).toMatch(/meeting transcript/);
   });
   it('retains source-deleted archive detail while excluding a locally hidden meeting', async () => {
     const archived = { ...detail, deleted_at: '2026-02-01T00:00:00Z' };
@@ -42,6 +39,20 @@ describe('archive meeting navigation', () => {
     expect(await navigation.load(42)).toBeUndefined();
     expect(navigation.detail).toBeUndefined();
     expect(navigation.error).toBe('This archived meeting is no longer available.');
+  });
+  it.each([
+    [{ id: 43, message_type: 'email', conversation_id: 0 }, 'This archived meeting is no longer available.'],
+    [{ message_type: 'email', conversation_id: 0 }, 'The selected archive item is no longer a meeting transcript.'],
+    [{ conversation_id: 0 }, 'The archived meeting conversation changed or is unavailable. Reload meeting activity.'],
+    [new Response(null, { status: 500 }), 'The archived meeting could not be loaded.'],
+  ])('checks message ID, then meeting type, then conversation %j', async (overrides, message) => {
+    const fetchFn = vi.fn<typeof fetch>(async () => overrides instanceof Response ? overrides : Response.json({ ...detail, ...overrides }));
+    const navigation = new ArchiveMeetingNavigation(createAPIClient(fetchFn));
+    expect(await navigation.load(42, 8)).toBeUndefined();
+    expect(navigation.error).toBe(message);
+    expect(navigation.detail).toBeUndefined();
+    expect(navigation.loading).toBe(false);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
   });
   it('reports eligibility request failures without presenting them as an unavailable meeting', async () => {
     const client = createAPIClient(async (input) => new URL((input as Request).url).pathname.endsWith('/meetings/metrics')

@@ -1,3 +1,5 @@
+import { parseArchiveSelection } from '../archive/selection';
+
 const PREFIX = 'archive-meeting:';
 export const ARCHIVE_MEETING_HISTORY_KEY = 'msgvaultArchivedMeeting';
 
@@ -12,11 +14,7 @@ export function archiveMeetingSelection(id: number): string {
 }
 
 export function parseArchiveMeetingSelection(value: string | null): number | undefined {
-  if (!value?.startsWith(PREFIX)) return undefined;
-  const encoded = value.slice(PREFIX.length);
-  if (!/^[1-9][0-9]*$/.test(encoded)) return undefined;
-  const id = Number(encoded);
-  return Number.isSafeInteger(id) ? id : undefined;
+  return parseArchiveSelection(value, PREFIX);
 }
 
 /** History ownership belongs only to the exact archive entry being rewritten. */

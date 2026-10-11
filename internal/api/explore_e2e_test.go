@@ -1015,6 +1015,19 @@ func newExploreDuckDBFixtureWithMessagesAndRecipients(
 	tb testing.TB, messageValues, recipientValues string, lastMessageID int64,
 ) (*query.DuckDBEngine, string) {
 	tb.Helper()
+	return newExploreDuckDBFixtureWithClusters(tb, messageValues, recipientValues, "", lastMessageID)
+}
+
+// newExploreDuckDBFixtureWithClusters also commits participant_clusters rows
+// (participant_id, canonical_id); empty clusterValues commits no clusters.
+func newExploreDuckDBFixtureWithClusters(
+	tb testing.TB, messageValues, recipientValues, clusterValues string, lastMessageID int64,
+) (*query.DuckDBEngine, string) {
+	tb.Helper()
+	clusters, noClusters := clusterValues, clusterValues == ""
+	if noClusters {
+		clusters = `(0::BIGINT, 0::BIGINT)`
+	}
 	analyticsDir := tb.TempDir()
 	db, err := sql.Open("duckdb", "")
 	require.NoError(tb, err)
@@ -1039,7 +1052,7 @@ func newExploreDuckDBFixtureWithMessagesAndRecipients(
 		{dir: "conversations", file: "conversations.parquet", columns: "id, source_conversation_id, title, conversation_type", values: `(101::BIGINT, 'c1', '', 'email'), (102::BIGINT, 'c2', '', 'email'), (103::BIGINT, 'c3', '', 'email')`},
 		{dir: "conversation_participants", file: "conversation_participants.parquet", columns: "conversation_id, participant_id", values: `(0::BIGINT, 0::BIGINT)`, empty: true},
 		{dir: "owner_participants", file: "owner_participants.parquet", columns: "source_id, participant_id", values: `(0::BIGINT, 0::BIGINT)`, empty: true},
-		{dir: "participant_clusters", file: "participant_clusters.parquet", columns: "participant_id, canonical_id", values: `(0::BIGINT, 0::BIGINT)`, empty: true},
+		{dir: "participant_clusters", file: "participant_clusters.parquet", columns: "participant_id, canonical_id", values: clusters, empty: noClusters},
 	}
 	for _, table := range tables {
 		dir := filepath.Join(analyticsDir, table.dir)

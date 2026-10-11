@@ -347,6 +347,13 @@ func (s *Store) SetCardDAVPublicationReviewBeforePersonLockHookForTest(fn func()
 	s.cardDAVReviewPersonLockHook = fn
 }
 
+// RefreshSourceMessageAttributionForTest is the full-refresh oracle for targeted attribution.
+func RefreshSourceMessageAttributionForTest(s *Store, sourceID int64) error {
+	return s.withTxContext(context.Background(), func(tx *loggedTx) error {
+		return refreshSourceMessageAttributionContext(context.Background(), tx, sourceID)
+	})
+}
+
 // Owner-address SQL builders, exported for their isolation test.
 var (
 	OwnerEmailMatch      = ownerEmailMatch

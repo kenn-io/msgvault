@@ -267,6 +267,7 @@ import type {
   ListTextConversationsParams,
   Manifest,
   MediaSearchResponse,
+  MediaSearchStatusResponse,
   MeetingImportRequest,
   MeetingImportResponse,
   MergeOrganizationBody,
@@ -2127,6 +2128,17 @@ export const searchMedia = (
 ) => {
   return orvalFetch<MediaSearchResponse>(
     { url: `/api/v1/media/search`, method: "GET", params },
+    options,
+  );
+};
+/**
+ * @summary Get recording transcript search configuration status
+ */
+export const getMediaSearchStatus = (
+  options?: SecondParameter<typeof orvalFetch<MediaSearchStatusResponse>>,
+) => {
+  return orvalFetch<MediaSearchStatusResponse>(
+    { url: `/api/v1/media/search/status`, method: "GET" },
     options,
   );
 };

@@ -6658,6 +6658,8 @@ components:
         attachment_id:
           format: int64
           type: integer
+        containing_title:
+          type: string
         conversation_id:
           format: int64
           type: integer
@@ -6667,9 +6669,14 @@ components:
         excerpt:
           description: Plain transcript excerpt without search highlight markers
           type: string
+        filename:
+          type: string
         message_id:
           format: int64
           type: integer
+        occurred_at:
+          format: date-time
+          type: string
         origin:
           enum:
             - supplied
@@ -6684,6 +6691,14 @@ components:
         - attachment_id
         - origin
         - excerpt
+      type: object
+    MediaSearchStatusResponse:
+      additionalProperties: true
+      properties:
+        configured:
+          type: boolean
+      required:
+        - configured
       type: object
     Meeting:
       additionalProperties: false
@@ -7129,6 +7144,9 @@ components:
         conversation_id:
           format: int64
           type: integer
+        conversation_title:
+          description: Conversation title, when available.
+          type: string
         deleted_at:
           type: string
         from:
@@ -22213,6 +22231,12 @@ paths:
           schema:
             format: int64
             type: integer
+        - description: Observed participant ID; selects its current Explore identity cluster; mutually exclusive with person_id
+          in: query
+          name: participant_id
+          schema:
+            format: int64
+            type: integer
         - description: "Person relation: from_person, to_person, or group"
           in: query
           name: direction
@@ -22290,6 +22314,27 @@ paths:
       security:
         - apiKey: []
       summary: Search source-selected transcripts as visible messages
+      tags:
+        - API
+  /api/v1/media/search/status:
+    get:
+      operationId: getMediaSearchStatus
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MediaSearchStatusResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get recording transcript search configuration status
       tags:
         - API
   /api/v1/meetings/actions:

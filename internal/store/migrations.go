@@ -475,7 +475,7 @@ func backfillLegacyMessageAttributionProvenance(
 	}
 
 	for _, sourceID := range sourceIDs {
-		if err := refreshSourceMessageAttributionContext(ctx, tx, sourceID, ""); err != nil {
+		if err := refreshSourceMessageAttributionContext(ctx, tx, sourceID); err != nil {
 			return fmt.Errorf("reconcile source %d attribution: %w", sourceID, err)
 		}
 	}
