@@ -21,7 +21,7 @@ type DocbankBindingStore interface {
 
 // DocbankClient reads rendition windows from the configured Docbank.
 type DocbankClient interface {
-	TranscriptIdentity(ctx context.Context, sourceID, sourceVersionID, contentVersionID string) (docbankmedia.MediaTranscript, error)
+	Transcript(ctx context.Context, sourceID, sourceVersionID, contentVersionID string) (docbankmedia.MediaTranscript, error)
 	EvidenceIdentity(ctx context.Context, contentVersionID, contentSHA256, profile string) (docbankmedia.EvidenceWindowRequest, error)
 	CurrentVersion(ctx context.Context, nodeID int64) (string, error)
 	ReadEvidenceWindow(ctx context.Context, request docbankmedia.EvidenceWindowRequest) (docbankmedia.EvidenceWindow, error)
@@ -54,13 +54,16 @@ func (r *DocbankReader) checkRevision(ctx context.Context, binding DocbankBindin
 }
 
 func (r *DocbankReader) checkTranscript(ctx context.Context, binding DocbankBinding, request docbankmedia.EvidenceWindowRequest) error {
-	transcript, err := r.client.TranscriptIdentity(ctx, binding.SourceID, binding.SourceVersionID, binding.ContentVersionID)
+	transcript, err := r.client.Transcript(ctx, binding.SourceID, binding.SourceVersionID, binding.ContentVersionID)
 	if err != nil {
 		return err
 	}
 	evidence := transcript.Transcript
-	if transcript.VaultUID != binding.VaultUID || evidence == nil || evidence.BuildID == "" {
+	if transcript.VaultUID != binding.VaultUID || evidence == nil {
 		return ErrUnavailable
+	}
+	if evidence.BuildID == "" {
+		return ErrUnsupported
 	}
 	switch evidence.Origin {
 	case "supplied":
@@ -70,16 +73,6 @@ func (r *DocbankReader) checkTranscript(ctx context.Context, binding DocbankBind
 	case "generated":
 		if binding.Profile == "supplied-transcript" || evidence.SuppliedInputID != "" || binding.SuppliedInputID != "" {
 			return ErrUnavailable
-		}
-		identity, err := r.client.EvidenceIdentity(ctx, binding.ContentVersionID, binding.ContentSHA256, binding.Profile)
-		if notFound(err) {
-			return ErrChanged
-		}
-		if err != nil {
-			return err
-		}
-		if identity.RenditionAttachmentID != request.RenditionAttachmentID || identity.BuildID != request.BuildID || identity.RenditionSHA256 != request.RenditionSHA256 {
-			return ErrChanged
 		}
 	default:
 		return ErrUnavailable

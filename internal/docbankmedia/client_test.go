@@ -416,6 +416,20 @@ func TestClientMediaTranscript(t *testing.T) {
 	assert.Equal("input", transcript.Transcript.SuppliedInputID)
 	assert.Equal("build", transcript.Transcript.BuildID)
 
+	mu.Lock()
+	raw[contentID] = []byte(`{"transcript":{"units":[{"text":"reordered transcript"}],"supplied_input_id":"input","origin":"supplied","build_id":"build"},"content_version_id":"content-1","source_version_id":"ver 1","source_id":"src/1","evidence_state":"ready","vault_uid":"vault","$schema":"https://example.com/transcript.schema.json"}`)
+	mu.Unlock()
+	transcript, err = client.Transcript(t.Context(), sourceID, versionID, contentID)
+	require.NoError(err)
+	require.NotNil(transcript.Transcript)
+	assert.Equal("build", transcript.Transcript.BuildID)
+	assert.Equal("input", transcript.Transcript.SuppliedInputID)
+	require.Len(transcript.Transcript.Units, 1)
+	assert.Equal("reordered transcript", transcript.Transcript.Units[0].Text)
+	mu.Lock()
+	delete(raw, contentID)
+	mu.Unlock()
+
 	respond(with(map[string]any{"evidence_state": "pending", "transcript": nil}))
 	transcript, err = client.Transcript(t.Context(), sourceID, versionID, contentID)
 	require.NoError(err)
@@ -458,7 +472,8 @@ func TestClientMediaTranscript(t *testing.T) {
 	assert.Len(transcript.Transcript.Units[0].Text, 2<<20)
 
 	mu.Lock()
-	raw[contentID] = bytes.Repeat([]byte(" "), 2*(16<<20)+(1<<20)+1)
+	raw[contentID] = []byte(`{"vault_uid":"vault","source_id":"src/1","source_version_id":"ver 1","content_version_id":"content-1","evidence_state":"ready","transcript":{"origin":"supplied","build_id":"build","supplied_input_id":"input","units":[{"text":"` +
+		strings.Repeat("a", 2*(16<<20)+(1<<20)) + `"}]}}`)
 	mu.Unlock()
 	_, err = client.Transcript(t.Context(), sourceID, versionID, contentID)
 	require.ErrorIs(err, docbankmedia.ErrResponseTooLarge)

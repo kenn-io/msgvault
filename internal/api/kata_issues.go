@@ -319,7 +319,6 @@ func newKataIssueBackend(cfg *config.Config, messageStore MessageStore) KataIssu
 	if docbank := cfg.Integrations.Docbank; docbank.Enabled {
 		client, err := docbankmedia.NewClient(docbank.URL, docbank.ResolveAPIKey)
 		revisions, ok := messageStore.(mediaRevisionReader)
-		// An invalid URL leaves Docbank citations unsupported; the media job reports it.
 		if err == nil && ok {
 			evidence.WithDocbank(kataevidence.NewDocbankReader(archive, client, func(ctx context.Context) (string, error) {
 				uid, err := archive.ArchiveUIDContext(ctx)

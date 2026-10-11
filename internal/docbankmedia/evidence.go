@@ -4,10 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json/jsontext"
-	"encoding/json/v2"
 	"errors"
-	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -179,100 +176,4 @@ func (c *Client) ReadEvidenceWindow(ctx context.Context, request EvidenceWindowR
 		return EvidenceWindow{}, ErrInvalidReceipt
 	}
 	return w, nil
-}
-
-// TranscriptIdentity reads v0.15.1's provenance prefix, capped at metadata size, without consuming units.
-func (c *Client) TranscriptIdentity(ctx context.Context, sourceID, sourceVersionID, contentVersionID string) (MediaTranscript, error) {
-	if sourceID == "" || sourceVersionID == "" || contentVersionID == "" {
-		return MediaTranscript{}, ErrInvalidRequest
-	}
-	endpoint := "/api/v1/media/sources/" + url.PathEscape(sourceID) + "/versions/" + url.PathEscape(sourceVersionID) +
-		"/transcript?" + url.Values{"content_version_id": {contentVersionID}}.Encode()
-	req, err := c.newJSONRequest(ctx, http.MethodGet, endpoint, nil, maxMetadataBytes)
-	if err != nil {
-		return MediaTranscript{}, err
-	}
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return MediaTranscript{}, transportError(err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		data, _ := io.ReadAll(io.LimitReader(resp.Body, maxMetadataBytes))
-		return MediaTranscript{}, newHTTPError(resp.StatusCode, data)
-	}
-	result, err := readTranscriptIdentity(io.LimitReader(resp.Body, maxMetadataBytes))
-	if ctx.Err() != nil {
-		return MediaTranscript{}, transportError(ctx.Err())
-	}
-	if err != nil || result.SourceID != sourceID || result.SourceVersionID != sourceVersionID || result.ContentVersionID != contentVersionID {
-		return MediaTranscript{}, ErrEvidenceUnavailable
-	}
-	return result, nil
-}
-
-func readTranscriptIdentity(reader io.Reader) (MediaTranscript, error) {
-	decoder := jsontext.NewDecoder(reader)
-	token, err := decoder.ReadToken()
-	if err != nil || token.Kind() != '{' {
-		return MediaTranscript{}, ErrEvidenceUnavailable
-	}
-	token, err = decoder.ReadToken()
-	if err == nil && token.Kind() == '"' && token.String() == "$schema" {
-		if err := decoder.SkipValue(); err != nil {
-			return MediaTranscript{}, ErrEvidenceUnavailable
-		}
-		token, err = decoder.ReadToken()
-	}
-	var result MediaTranscript
-	for _, field := range []struct {
-		name  string
-		value *string
-	}{
-		{"vault_uid", &result.VaultUID}, {"source_id", &result.SourceID}, {"source_version_id", &result.SourceVersionID},
-		{"content_version_id", &result.ContentVersionID}, {"evidence_state", &result.EvidenceState},
-		{"coverage_state", &result.CoverageState}, {"operation_state", &result.OperationState},
-	} {
-		if err != nil || token.Kind() != '"' || token.String() != field.name || json.UnmarshalDecode(decoder, field.value) != nil {
-			return MediaTranscript{}, ErrEvidenceUnavailable
-		}
-		token, err = decoder.ReadToken()
-	}
-	if result.VaultUID == "" || result.EvidenceState != "ready" {
-		return MediaTranscript{}, ErrEvidenceUnavailable
-	}
-	if err != nil || token.Kind() != '"' || token.String() != "transcript" {
-		return MediaTranscript{}, ErrEvidenceUnavailable
-	}
-	token, err = decoder.ReadToken()
-	if err != nil || token.Kind() != '{' {
-		return MediaTranscript{}, ErrEvidenceUnavailable
-	}
-	evidence := &MediaTranscriptEvidence{}
-	for {
-		token, err := decoder.ReadToken()
-		if err != nil || token.Kind() != '"' {
-			return MediaTranscript{}, ErrEvidenceUnavailable
-		}
-		switch token.String() {
-		case "units":
-			if evidence.BuildID == "" || evidence.Origin != "supplied" && evidence.Origin != "generated" ||
-				evidence.Origin == "supplied" && evidence.SuppliedInputID == "" || evidence.Origin == "generated" && evidence.SuppliedInputID != "" {
-				return MediaTranscript{}, ErrEvidenceUnavailable
-			}
-			result.Transcript = evidence
-			return result, nil
-		case "build_id":
-			err = json.UnmarshalDecode(decoder, &evidence.BuildID)
-		case "supplied_input_id":
-			err = json.UnmarshalDecode(decoder, &evidence.SuppliedInputID)
-		case "origin":
-			err = json.UnmarshalDecode(decoder, &evidence.Origin)
-		default:
-			err = decoder.SkipValue()
-		}
-		if err != nil {
-			return MediaTranscript{}, ErrEvidenceUnavailable
-		}
-	}
 }

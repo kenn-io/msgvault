@@ -110,8 +110,9 @@ Prepare, create, link, and the lookup work as for any other source. Page
 through a long transcript with `next_rune`, 1,000 characters at a time.
 Prepare, create, and link accept at most four transcript references per request.
 Exceeding this limit returns `invalid_evidence` (400).
-Transcripts don't take `quote`, because msgvault reads only one window of
-them at a time. The issue records the exact Docbank file version and
+Transcripts don't take `quote`. Msgvault reads the transcript to verify its
+provenance, with a 33 MiB response cap, and saves only the selected text
+window in Kata. The issue records the exact Docbank file version and
 transcript build it quoted, and `msgvault kata issues --message 42
 --attachment 7` finds it.
 

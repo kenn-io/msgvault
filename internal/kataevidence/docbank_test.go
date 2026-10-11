@@ -37,7 +37,7 @@ type fakeDocbank struct {
 	revision        string
 	inputID         string
 	origin          string
-	profileBuild    map[string]string
+	identities      int
 	transcriptBuild *string
 	afterRead       func()
 }
@@ -46,12 +46,12 @@ func (f *fakeDocbank) MediaRevision(context.Context, int64) (string, error) {
 	return f.revision, nil
 }
 
-func (f *fakeDocbank) TranscriptIdentity(context.Context, string, string, string) (docbankmedia.MediaTranscript, error) {
+func (f *fakeDocbank) Transcript(context.Context, string, string, string) (docbankmedia.MediaTranscript, error) {
 	build := f.build
 	if f.transcriptBuild != nil {
 		build = *f.transcriptBuild
 	}
-	return docbankmedia.MediaTranscript{VaultUID: f.binding.VaultUID, Transcript: &docbankmedia.MediaTranscriptEvidence{
+	return docbankmedia.MediaTranscript{VaultUID: f.binding.VaultUID, EvidenceState: "ready", Transcript: &docbankmedia.MediaTranscriptEvidence{
 		Origin: f.origin, BuildID: build, SuppliedInputID: f.inputID,
 	}}, f.err
 }
@@ -74,6 +74,7 @@ func (f *fakeDocbank) CurrentVersion(context.Context, int64) (string, error) {
 var errNotFound = &docbankmedia.HTTPError{Status: http.StatusNotFound, Code: "not_found"}
 
 func (f *fakeDocbank) EvidenceIdentity(_ context.Context, contentVersionID, contentSHA256, profile string) (docbankmedia.EvidenceWindowRequest, error) {
+	f.identities++
 	if f.err != nil {
 		return docbankmedia.EvidenceWindowRequest{}, f.err
 	}
@@ -87,12 +88,8 @@ func (f *fakeDocbank) EvidenceIdentity(_ context.Context, contentVersionID, cont
 	if contentVersionID != f.current || f.build == "" {
 		return docbankmedia.EvidenceWindowRequest{NodeID: 7}, errNotFound
 	}
-	build := f.build
-	if selected, ok := f.profileBuild[profile]; ok {
-		build = selected
-	}
 	return docbankmedia.EvidenceWindowRequest{NodeID: 7, ContentVersionID: contentVersionID, ContentSHA256: contentSHA256,
-		RenditionAttachmentID: strings.Repeat("b", 64), BuildID: build, RenditionSHA256: strings.Repeat("d", 64)}, nil
+		RenditionAttachmentID: strings.Repeat("b", 64), BuildID: f.build, RenditionSHA256: strings.Repeat("d", 64)}, nil
 }
 
 func (f *fakeDocbank) ReadEvidenceWindow(ctx context.Context, request docbankmedia.EvidenceWindowRequest) (docbankmedia.EvidenceWindow, error) {
@@ -148,7 +145,7 @@ func TestDocbankRejectsStaleTranscriptProvenance(t *testing.T) {
 		{"source edited during read", func(f *fakeDocbank) { f.afterRead = func() { f.revision = "edited" } }, kataevidence.ErrChanged},
 		{"shared audio with another input", func(f *fakeDocbank) { f.inputID = "other-message-input" }, kataevidence.ErrUnavailable},
 		{"missing input", func(f *fakeDocbank) { f.inputID = "" }, kataevidence.ErrUnavailable},
-		{"missing build", func(f *fakeDocbank) { f.transcriptBuild = new("") }, kataevidence.ErrUnavailable},
+		{"ready without build", func(f *fakeDocbank) { f.transcriptBuild = new("") }, kataevidence.ErrUnsupported},
 		{"another build", func(f *fakeDocbank) { f.transcriptBuild = new(strings.Repeat("e", 64)) }, kataevidence.ErrChanged},
 		{"build changed during read", func(f *fakeDocbank) { f.afterRead = func() { f.build = strings.Repeat("e", 64) } }, kataevidence.ErrChanged},
 	} {
@@ -207,15 +204,13 @@ func TestDocbankGeneratedTranscriptProvenance(t *testing.T) {
 	selector := kataevidence.Selector{Kind: "docbank_rendition", MessageID: 4, AttachmentID: 9, MaxChars: new(10)}
 	prepared, err := reader.LoadKataEvidenceSource(t.Context(), selector)
 	require.NoError(t, err)
+	assert.Equal(t, 1, f.identities)
 	prepared.Reference.DocbankRendition.EndRune = 10
 	resolved, err := kataevidence.New(nil).WithDocbank(reader).ResolveAround(t.Context(), prepared.Reference, 0)
 	require.NoError(t, err)
 	assert.Equal(t, kataevidence.Available, resolved.State)
 	assert.Equal(t, prepared.Text, resolved.Evidence.Excerpt)
-	f.profileBuild = map[string]string{"audio-transcript": strings.Repeat("e", 64)}
-	_, err = reader.ReadKataEvidenceSource(t.Context(), prepared.Reference)
-	require.ErrorIs(t, err, kataevidence.ErrChanged)
-	f.profileBuild = nil
+	assert.Equal(t, 1, f.identities)
 	f.inputID = "unexpected-supplied-input"
 	_, err = reader.ReadKataEvidenceSource(t.Context(), prepared.Reference)
 	require.ErrorIs(t, err, kataevidence.ErrUnavailable)
