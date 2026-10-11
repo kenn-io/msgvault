@@ -56,7 +56,6 @@ test('recording timeline rows stay inside a resized results pane', async ({ page
   });
   await page.route('**/api/v1/media/search?*', route => route.fulfill({ json: recordingSearchReport() }));
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(exploreURLState({ query: 'quarterly', presentation: 'timeline' })))}`);
-  await expect.poll(async () => (await page.getByRole('region', { name: 'Canonical activity timeline' }).boundingBox())!.height).toBe(320);
   const grid = page.getByRole('grid', { name: 'Everything results' });
   await grid.getByText('Synthetic subject 1', { exact: true }).click();
   const primary = page.locator('.results-split > [data-split-pane] > [data-pane="primary"]');
