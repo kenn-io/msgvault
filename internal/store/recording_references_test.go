@@ -21,6 +21,9 @@ func TestRecordingReferenceTeamsPointer(t *testing.T) {
 	var before, after string
 	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT content_changed_at FROM messages WHERE id=?`), id).Scan(&before))
 	assert.NotContains(before, "2000-01-01")
+	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET content_changed_at=? WHERE id=?`), "2000-01-01 00:00:00.000", id)
+	require.NoError(err)
+	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT content_changed_at FROM messages WHERE id=?`), id).Scan(&before))
 	require.NoError(f.Store.ReplaceMessageLinkAttachments(id, refs))
 	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT content_changed_at FROM messages WHERE id=?`), id).Scan(&after))
 	assert.Equal(before, after)

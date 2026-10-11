@@ -117,8 +117,10 @@ func TestRecordingReferenceFeed(t *testing.T) {
 	two, err := f.Store.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conv, SourceMessageID: "two", MessageType: "slack"})
 	require.NoError(err)
 	recordingBody(t, f, two, "https://cap.example.test/s/two")
-	err = w.RunBatch(t.Context())
-	require.NoError(err)
+	waitForRecordingChange(t, w, two)
+	var count int
+	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT COUNT(*) FROM recording_references WHERE message_id=?`), two).Scan(&count))
+	assert.Zero(count)
 	w = NewWorker(f.Store, client, "destination", []string{"https://cap.example.test"}, nil)
 	runDiscovery(t, w, 2)
 	recordingBody(t, f, one, "recording removed")
