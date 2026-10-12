@@ -302,6 +302,11 @@ func TestDelegatedOperationAllowlistIsClosed(t *testing.T) {
 	for _, op := range allowedDelegatedOps {
 		allowed[op] = true
 	}
+	// These routes perform their own native person/UID/book authorization.
+	// The person-delegation tests exercise their permitted and denied writes.
+	for _, op := range []string{"getPersonProfile", "patchPerson", "getPersonStructuredProfile", "patchPersonStructuredProfile", "listPersonAttributes", "setPersonAttribute", "clearPersonAttribute", "mergePersons"} {
+		allowed[op] = true
+	}
 	specRec := httptest.NewRecorder()
 	srv.Router().ServeHTTP(specRec, httptest.NewRequest(http.MethodGet, "/openapi.json", nil))
 	requirements.Equal(http.StatusOK, specRec.Code)

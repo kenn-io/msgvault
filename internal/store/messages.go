@@ -1128,7 +1128,7 @@ func (s *Store) MigrateSourceMessageID(sourceID, conversationID int64, legacySou
 	if err := s.requireSyncSource(sourceID); err != nil {
 		return err
 	}
-	return s.withTx(func(tx *loggedTx) error {
+	return s.withIdentityTxContext(context.Background(), nil, func(tx *loggedTx) error {
 		var newID int64
 		err := tx.QueryRow(
 			`SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?`,

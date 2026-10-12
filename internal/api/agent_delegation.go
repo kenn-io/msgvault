@@ -5,6 +5,9 @@ func delegatedOperationAllowed(operationID string) bool {
 	switch operationID {
 	case "runCLI", "getHealth", "controlCalendar", "getAgentTokenSelf":
 		return true
+	case "getPersonProfile", "patchPerson", "getPersonStructuredProfile", "patchPersonStructuredProfile",
+		"listPersonAttributes", "setPersonAttribute", "clearPersonAttribute", "mergePersons":
+		return true
 	}
 	_, ok := agentReadPermissions[operationID]
 	return ok

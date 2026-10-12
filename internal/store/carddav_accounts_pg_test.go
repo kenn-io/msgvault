@@ -31,6 +31,8 @@ func TestPostgreSQLCardDAVDiscoveryReplacementsSerializeCompleteSnapshots(t *tes
 	var singleton int
 	require.NoError(blocker.QueryRowContext(ctx,
 		`SELECT singleton FROM carddav_discovery_lock WHERE singleton = 1 FOR UPDATE`).Scan(&singleton))
+	var blockerPID int
+	require.NoError(blocker.QueryRowContext(ctx, `SELECT pg_backend_pid()`).Scan(&blockerPID))
 
 	inputs := []store.CardDAVDiscoveryInput{
 		cardDAVConcurrentInput("bob", "snapshot-a"),
@@ -45,13 +47,20 @@ func TestPostgreSQLCardDAVDiscoveryReplacementsSerializeCompleteSnapshots(t *tes
 	}
 	var blockedWriters int
 	require.Eventually(func() bool {
+		// Replacements reserve identity before discovery. The next writer can
+		// therefore wait on the first writer rather than directly on blocker.
 		err := st.DB().QueryRowContext(ctx, `SELECT COUNT(*)
-			FROM pg_stat_activity
-			WHERE cardinality(pg_blocking_pids(pid)) > 0
-			  AND POSITION('carddav_discovery_lock' IN query) > 0`).Scan(&blockedWriters)
+			FROM pg_stat_activity a
+			WHERE a.datname = current_database() AND (
+				$1 = ANY(pg_blocking_pids(a.pid)) OR EXISTS (
+					SELECT 1 FROM pg_stat_activity holding
+					WHERE holding.datname = current_database()
+					  AND holding.pid = ANY(pg_blocking_pids(a.pid))
+					  AND $1 = ANY(pg_blocking_pids(holding.pid))
+				))`, blockerPID).Scan(&blockedWriters)
 		return err == nil && blockedWriters == 2
 	}, 5*time.Second, 10*time.Millisecond,
-		"both replacement connections must wait on the singleton discovery lock")
+		"both replacements must wait behind the held discovery lock")
 	require.NoError(blocker.Commit())
 	require.NoError(<-errs)
 	require.NoError(<-errs)

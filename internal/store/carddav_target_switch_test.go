@@ -55,12 +55,13 @@ func TestCardDAVCrossAccountTargetSwitchRacingPublication(t *testing.T) {
 		roleDone <- st.SetCardDAVBookRolesContext(ctx, books[0].ID, store.CardDAVBookRoles{IsWriteTarget: true, IsSubscribed: true, IsLookupSource: true})
 	}()
 	// Wait for the role change to reach an actual database lock held by the
-	// old target publication before releasing that publication.
+	// old target publication before releasing that publication. The identity
+	// fence now precedes account/book locks, so either native lock is observable.
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
 	for {
 		var blocked bool
-		err := st.DB().QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND (query LIKE '%carddav_accounts%' OR query LIKE '%carddav_address_books%'))`).Scan(&blocked)
+		err := st.DB().QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND (query LIKE '%archive_metadata%' OR query LIKE '%carddav_accounts%' OR query LIKE '%carddav_address_books%'))`).Scan(&blocked)
 		require.NoError(err)
 		if blocked {
 			break

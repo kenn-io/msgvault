@@ -2271,13 +2271,21 @@ type GetPersonProfileErrorResponse = ErrorResponse
 
 type GetPersonProfileErrorResponseJSON = ErrorResponse
 
+type GetPersonProfileErrorResponseJSON503 = ErrorResponse
+
 type PatchPersonResponse = Person
 
 type PatchPersonErrorResponse = ErrorResponse
 
 type PatchPersonErrorResponseJSON = ErrorResponse
 
+type PatchPersonErrorResponseJSON409 = ErrorResponse
+
+type PatchPersonErrorResponseJSON413 = ErrorResponse
+
 type PatchPersonErrorResponseJSON428 = ErrorResponse
+
+type PatchPersonErrorResponseJSON501 = ErrorResponse
 
 type PatchPersonErrorResponseJSON503 = ErrorResponse
 
@@ -2353,13 +2361,27 @@ type ListPersonAttributesErrorResponse = ErrorResponse
 
 type ListPersonAttributesErrorResponseJSON = ErrorResponse
 
+type ListPersonAttributesErrorResponseJSON404 = ErrorResponse
+
+type ListPersonAttributesErrorResponseJSON501 = ErrorResponse
+
+type ListPersonAttributesErrorResponseJSON503 = ErrorResponse
+
 type ClearPersonAttributeResponse = PersonAttributeWrite
 
 type ClearPersonAttributeErrorResponse = ErrorResponse
 
 type ClearPersonAttributeErrorResponseJSON = ErrorResponse
 
+type ClearPersonAttributeErrorResponseJSON404 = ErrorResponse
+
 type ClearPersonAttributeErrorResponseJSON409 = PersonAttributeConflictResponse
+
+type ClearPersonAttributeErrorResponseJSON413 = ErrorResponse
+
+type ClearPersonAttributeErrorResponseJSON428 = ErrorResponse
+
+type ClearPersonAttributeErrorResponseJSON501 = ErrorResponse
 
 type ClearPersonAttributeErrorResponseJSON503 = ErrorResponse
 
@@ -2369,7 +2391,15 @@ type SetPersonAttributeErrorResponse = ErrorResponse
 
 type SetPersonAttributeErrorResponseJSON = ErrorResponse
 
+type SetPersonAttributeErrorResponseJSON404 = ErrorResponse
+
 type SetPersonAttributeErrorResponseJSON409 = PersonAttributeConflictResponse
+
+type SetPersonAttributeErrorResponseJSON413 = ErrorResponse
+
+type SetPersonAttributeErrorResponseJSON428 = ErrorResponse
+
+type SetPersonAttributeErrorResponseJSON501 = ErrorResponse
 
 type SetPersonAttributeErrorResponseJSON503 = ErrorResponse
 
@@ -2587,11 +2617,17 @@ type MergePersonsErrorResponse = ErrorResponse
 
 type MergePersonsErrorResponseJSON = ErrorResponse
 
+type MergePersonsErrorResponseJSON404 = ErrorResponse
+
 type MergePersonsErrorResponseJSON409 = ErrorResponse
+
+type MergePersonsErrorResponseJSON413 = ErrorResponse
 
 type MergePersonsErrorResponseJSON428 = ErrorResponse
 
 type MergePersonsErrorResponseJSON500 = ErrorResponse
+
+type MergePersonsErrorResponseJSON501 = ErrorResponse
 
 type MergePersonsErrorResponseJSON503 = ErrorResponse
 
@@ -2627,6 +2663,8 @@ type GetPersonStructuredProfileErrorResponse = ErrorResponse
 
 type GetPersonStructuredProfileErrorResponseJSON = ErrorResponse
 
+type GetPersonStructuredProfileErrorResponseJSON404 = ErrorResponse
+
 type GetPersonStructuredProfileErrorResponseJSON503 = ErrorResponse
 
 type PatchPersonStructuredProfileResponse = StructuredPersonProfile
@@ -2635,11 +2673,15 @@ type PatchPersonStructuredProfileErrorResponse = ErrorResponse
 
 type PatchPersonStructuredProfileErrorResponseJSON = ErrorResponse
 
+type PatchPersonStructuredProfileErrorResponseJSON404 = ErrorResponse
+
 type PatchPersonStructuredProfileErrorResponseJSON409 = ErrorResponse
 
 type PatchPersonStructuredProfileErrorResponseJSON413 = ErrorResponse
 
 type PatchPersonStructuredProfileErrorResponseJSON428 = ErrorResponse
+
+type PatchPersonStructuredProfileErrorResponseJSON501 = ErrorResponse
 
 type PatchPersonStructuredProfileErrorResponseJSON503 = ErrorResponse
 
@@ -5484,8 +5526,9 @@ type GetPersonProfileResp struct {
 	StatusCode   int
 	JSON200      *GetPersonProfileResponse
 	Headers200   *GetPersonProfileResp200Headers
-	JSON404      *GetPersonProfileErrorResponse
-	JSON503      *GetPersonProfileErrorResponseJSON
+	JSON403      *GetPersonProfileErrorResponse
+	JSON404      *GetPersonProfileErrorResponseJSON
+	JSON503      *GetPersonProfileErrorResponseJSON503
 }
 
 type PatchPersonResp200Headers struct {
@@ -5498,9 +5541,12 @@ type PatchPersonResp struct {
 	StatusCode   int
 	JSON200      *PatchPersonResponse
 	Headers200   *PatchPersonResp200Headers
-	JSON404      *PatchPersonErrorResponse
-	JSON409      *PatchPersonErrorResponseJSON
+	JSON403      *PatchPersonErrorResponse
+	JSON404      *PatchPersonErrorResponseJSON
+	JSON409      *PatchPersonErrorResponseJSON409
+	JSON413      *PatchPersonErrorResponseJSON413
 	JSON428      *PatchPersonErrorResponseJSON428
+	JSON501      *PatchPersonErrorResponseJSON501
 	JSON503      *PatchPersonErrorResponseJSON503
 }
 
@@ -5567,13 +5613,21 @@ type UpdatePersonAgendaItemResp struct {
 	JSON503      *UpdatePersonAgendaItemErrorResponseJSON503
 }
 
+type ListPersonAttributesResp200Headers struct {
+	ETag string `header:"ETag"`
+}
+
 type ListPersonAttributesResp struct {
 	HTTPResponse *http.Response
 	Body         []byte
 	StatusCode   int
 	JSON200      *ListPersonAttributesResponse
-	JSON404      *ListPersonAttributesErrorResponse
-	JSON503      *ListPersonAttributesErrorResponseJSON
+	Headers200   *ListPersonAttributesResp200Headers
+	JSON400      *ListPersonAttributesErrorResponse
+	JSON403      *ListPersonAttributesErrorResponseJSON
+	JSON404      *ListPersonAttributesErrorResponseJSON404
+	JSON501      *ListPersonAttributesErrorResponseJSON501
+	JSON503      *ListPersonAttributesErrorResponseJSON503
 }
 
 type ClearPersonAttributeResp struct {
@@ -5582,8 +5636,12 @@ type ClearPersonAttributeResp struct {
 	StatusCode   int
 	JSON200      *ClearPersonAttributeResponse
 	JSON400      *ClearPersonAttributeErrorResponse
-	JSON404      *ClearPersonAttributeErrorResponseJSON
+	JSON403      *ClearPersonAttributeErrorResponseJSON
+	JSON404      *ClearPersonAttributeErrorResponseJSON404
 	JSON409      *ClearPersonAttributeErrorResponseJSON409
+	JSON413      *ClearPersonAttributeErrorResponseJSON413
+	JSON428      *ClearPersonAttributeErrorResponseJSON428
+	JSON501      *ClearPersonAttributeErrorResponseJSON501
 	JSON503      *ClearPersonAttributeErrorResponseJSON503
 }
 
@@ -5593,8 +5651,12 @@ type SetPersonAttributeResp struct {
 	StatusCode   int
 	JSON200      *SetPersonAttributeResponse
 	JSON400      *SetPersonAttributeErrorResponse
-	JSON404      *SetPersonAttributeErrorResponseJSON
+	JSON403      *SetPersonAttributeErrorResponseJSON
+	JSON404      *SetPersonAttributeErrorResponseJSON404
 	JSON409      *SetPersonAttributeErrorResponseJSON409
+	JSON413      *SetPersonAttributeErrorResponseJSON413
+	JSON428      *SetPersonAttributeErrorResponseJSON428
+	JSON501      *SetPersonAttributeErrorResponseJSON501
 	JSON503      *SetPersonAttributeErrorResponseJSON503
 }
 
@@ -5803,10 +5865,13 @@ type MergePersonsResp struct {
 	JSON200      *MergePersonsResponse
 	Headers200   *MergePersonsResp200Headers
 	JSON400      *MergePersonsErrorResponse
-	JSON404      *MergePersonsErrorResponseJSON
+	JSON403      *MergePersonsErrorResponseJSON
+	JSON404      *MergePersonsErrorResponseJSON404
 	JSON409      *MergePersonsErrorResponseJSON409
+	JSON413      *MergePersonsErrorResponseJSON413
 	JSON428      *MergePersonsErrorResponseJSON428
 	JSON500      *MergePersonsErrorResponseJSON500
+	JSON501      *MergePersonsErrorResponseJSON501
 	JSON503      *MergePersonsErrorResponseJSON503
 }
 
@@ -5852,7 +5917,8 @@ type GetPersonStructuredProfileResp struct {
 	JSON200      *GetPersonStructuredProfileResponse
 	Headers200   *GetPersonStructuredProfileResp200Headers
 	JSON400      *GetPersonStructuredProfileErrorResponse
-	JSON404      *GetPersonStructuredProfileErrorResponseJSON
+	JSON403      *GetPersonStructuredProfileErrorResponseJSON
+	JSON404      *GetPersonStructuredProfileErrorResponseJSON404
 	JSON503      *GetPersonStructuredProfileErrorResponseJSON503
 }
 
@@ -5867,10 +5933,12 @@ type PatchPersonStructuredProfileResp struct {
 	JSON200      *PatchPersonStructuredProfileResponse
 	Headers200   *PatchPersonStructuredProfileResp200Headers
 	JSON400      *PatchPersonStructuredProfileErrorResponse
-	JSON404      *PatchPersonStructuredProfileErrorResponseJSON
+	JSON403      *PatchPersonStructuredProfileErrorResponseJSON
+	JSON404      *PatchPersonStructuredProfileErrorResponseJSON404
 	JSON409      *PatchPersonStructuredProfileErrorResponseJSON409
 	JSON413      *PatchPersonStructuredProfileErrorResponseJSON413
 	JSON428      *PatchPersonStructuredProfileErrorResponseJSON428
+	JSON501      *PatchPersonStructuredProfileErrorResponseJSON501
 	JSON503      *PatchPersonStructuredProfileErrorResponseJSON503
 }
 

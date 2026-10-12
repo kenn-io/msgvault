@@ -236,31 +236,79 @@ func (a Address) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(a))
 }
 
-type AgentTokenIssueRequest struct {
-	ExpiresAt        *time.Time          `json:"expires_at,omitempty"`
-	Label            string              `json:"label" validate:"required"`
-	Permissions      []string            `json:"permissions" validate:"required"`
-	SenderSelections map[string][]string `json:"sender_selections,omitempty"`
-	SourceIds        []int64             `json:"source_ids" validate:"required"`
+type AgentTokenAddressBookView struct {
+	AccountID            int64  `json:"account_id"`
+	BookID               int64  `json:"book_id"`
+	CanonicalURL         string `json:"canonical_url" validate:"required"`
+	OwnershipFingerprint string `json:"ownership_fingerprint" validate:"required"`
 }
 
-func (a AgentTokenIssueRequest) Validate() error {
+func (a AgentTokenAddressBookView) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(a))
 }
 
+// AgentTokenIssueRequest Select 1–100 explicit resources in total across sources, people and address books.
+type AgentTokenIssueRequest struct {
+	AddressBookIds   []int64             `json:"address_book_ids,omitempty"`
+	ExpiresAt        *time.Time          `json:"expires_at,omitempty"`
+	Label            string              `json:"label" validate:"required"`
+	Permissions      []string            `json:"permissions" validate:"required"`
+	PersonIds        []int64             `json:"person_ids,omitempty"`
+	SenderSelections map[string][]string `json:"sender_selections,omitempty"`
+	SourceIds        []int64             `json:"source_ids,omitempty"`
+}
+
+func (a AgentTokenIssueRequest) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range a.AddressBookIds {
+		if err := typesValidator.Var(item, "omitempty,gte=1,lte=9007199254740991"); err != nil {
+			errors = errors.Append(fmt.Sprintf("AddressBookIds[%d]", i), err)
+		}
+	}
+	if err := typesValidator.Var(a.Label, "required"); err != nil {
+		errors = errors.Append("Label", err)
+	}
+	if err := typesValidator.Var(a.Permissions, "required"); err != nil {
+		errors = errors.Append("Permissions", err)
+	}
+	for i, item := range a.PersonIds {
+		if err := typesValidator.Var(item, "omitempty,gte=1,lte=9007199254740991"); err != nil {
+			errors = errors.Append(fmt.Sprintf("PersonIds[%d]", i), err)
+		}
+	}
+	for i, item := range a.SourceIds {
+		if err := typesValidator.Var(item, "omitempty,gte=1,lte=9007199254740991"); err != nil {
+			errors = errors.Append(fmt.Sprintf("SourceIds[%d]", i), err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type AgentTokenIssueResponse struct {
-	CreatedAt   time.Time              `json:"created_at" validate:"required"`
-	DaemonURL   string                 `json:"daemon_url" validate:"required"`
-	ExpiresAt   *time.Time             `json:"expires_at,omitempty"`
-	ID          string                 `json:"id" validate:"required"`
-	Label       string                 `json:"label" validate:"required"`
-	Permissions []string               `json:"permissions" validate:"required"`
-	Secret      string                 `json:"secret" validate:"required"`
-	Sources     []AgentTokenSourceView `json:"sources" validate:"required"`
+	AddressBooks []AgentTokenAddressBookView `json:"address_books" validate:"required"`
+	CreatedAt    time.Time                   `json:"created_at" validate:"required"`
+	DaemonURL    string                      `json:"daemon_url" validate:"required"`
+	ExpiresAt    *time.Time                  `json:"expires_at,omitempty"`
+	ID           string                      `json:"id" validate:"required"`
+	Label        string                      `json:"label" validate:"required"`
+	Permissions  []string                    `json:"permissions" validate:"required"`
+	Persons      []AgentTokenPersonView      `json:"persons" validate:"required"`
+	Secret       string                      `json:"secret" validate:"required"`
+	Sources      []AgentTokenSourceView      `json:"sources" validate:"required"`
 }
 
 func (a AgentTokenIssueResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	for i, item := range a.AddressBooks {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("AddressBooks[%d]", i), err)
+			}
+		}
+	}
 	if err := typesValidator.Var(a.CreatedAt, "required"); err != nil {
 		errors = errors.Append("CreatedAt", err)
 	}
@@ -275,6 +323,13 @@ func (a AgentTokenIssueResponse) Validate() error {
 	}
 	if err := typesValidator.Var(a.Permissions, "required"); err != nil {
 		errors = errors.Append("Permissions", err)
+	}
+	for i, item := range a.Persons {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Persons[%d]", i), err)
+			}
+		}
 	}
 	if err := typesValidator.Var(a.Secret, "required"); err != nil {
 		errors = errors.Append("Secret", err)
@@ -311,6 +366,15 @@ func (a AgentTokenListResponse) Validate() error {
 	return errors
 }
 
+type AgentTokenPersonView struct {
+	ID  int64  `json:"id"`
+	UID string `json:"uid" validate:"required"`
+}
+
+func (a AgentTokenPersonView) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(a))
+}
+
 type AgentTokenSourceView struct {
 	ID         int64    `json:"id"`
 	Identifier string   `json:"identifier" validate:"required"`
@@ -323,16 +387,25 @@ func (a AgentTokenSourceView) Validate() error {
 }
 
 type AgentTokenView struct {
-	CreatedAt   time.Time              `json:"created_at" validate:"required"`
-	ExpiresAt   *time.Time             `json:"expires_at,omitempty"`
-	ID          string                 `json:"id" validate:"required"`
-	Label       string                 `json:"label" validate:"required"`
-	Permissions []string               `json:"permissions" validate:"required"`
-	Sources     []AgentTokenSourceView `json:"sources" validate:"required"`
+	AddressBooks []AgentTokenAddressBookView `json:"address_books" validate:"required"`
+	CreatedAt    time.Time                   `json:"created_at" validate:"required"`
+	ExpiresAt    *time.Time                  `json:"expires_at,omitempty"`
+	ID           string                      `json:"id" validate:"required"`
+	Label        string                      `json:"label" validate:"required"`
+	Permissions  []string                    `json:"permissions" validate:"required"`
+	Persons      []AgentTokenPersonView      `json:"persons" validate:"required"`
+	Sources      []AgentTokenSourceView      `json:"sources" validate:"required"`
 }
 
 func (a AgentTokenView) Validate() error {
 	var errors runtime.ValidationErrors
+	for i, item := range a.AddressBooks {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("AddressBooks[%d]", i), err)
+			}
+		}
+	}
 	if err := typesValidator.Var(a.CreatedAt, "required"); err != nil {
 		errors = errors.Append("CreatedAt", err)
 	}
@@ -344,6 +417,13 @@ func (a AgentTokenView) Validate() error {
 	}
 	if err := typesValidator.Var(a.Permissions, "required"); err != nil {
 		errors = errors.Append("Permissions", err)
+	}
+	for i, item := range a.Persons {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Persons[%d]", i), err)
+			}
+		}
 	}
 	for i, item := range a.Sources {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -12923,11 +13003,13 @@ func (s SetOrganizationAttributeBody) Validate() error {
 }
 
 type SetPersonAttributeRequest struct {
-	ActiveFrom      *time.Time                       `json:"active_from,omitempty"`
-	ActiveUntil     *time.Time                       `json:"active_until,omitempty"`
-	Actor           *string                          `json:"actor,omitzero"`
-	Confidence      *float64                         `json:"confidence,omitempty"`
-	ExpectedValueID *int64                           `json:"expected_value_id,omitempty"`
+	ActiveFrom  *time.Time `json:"active_from,omitempty"`
+	ActiveUntil *time.Time `json:"active_until,omitempty"`
+	Actor       *string    `json:"actor,omitzero"`
+	Confidence  *float64   `json:"confidence,omitempty"`
+
+	// ExpectedValueID Current value ID, or zero to require an empty slot; required for delegated edits. Multi-valued creation requires an explicit ordinal.
+	ExpectedValueID *int64                           `json:"expected_value_id,omitempty" validate:"omitempty,gte=0"`
 	Ordinal         *int64                           `json:"ordinal,omitempty"`
 	Source          *SetPersonAttributeRequestSource `json:"source,omitempty"`
 	SourceRef       *string                          `json:"source_ref,omitzero"`
@@ -12936,6 +13018,11 @@ type SetPersonAttributeRequest struct {
 
 func (s SetPersonAttributeRequest) Validate() error {
 	var errors runtime.ValidationErrors
+	if s.ExpectedValueID != nil {
+		if err := typesValidator.Var(s.ExpectedValueID, "omitempty,gte=0"); err != nil {
+			errors = errors.Append("ExpectedValueID", err)
+		}
+	}
 	if s.Source != nil {
 		if v, ok := any(s.Source).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {

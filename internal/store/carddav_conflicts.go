@@ -209,7 +209,7 @@ func (s *Store) PrepareCardDAVConflictLocalContext(
 		return nil, ErrCardDAVInvalidPlan
 	}
 	var prepared *CardDAVPublication
-	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+	err := s.withIdentityTxContext(ctx, nil, func(tx *loggedTx) error {
 		source, err := s.lockCardDAVConflictReviewTx(ctx, tx, plan.ConflictID)
 		if err != nil {
 			return err
@@ -358,7 +358,7 @@ func (s *Store) PrepareCardDAVConflictLocalTombstoneContext(
 		s.cardDAVTombstonePrepareSnapshotHook()
 	}
 	var prepared *CardDAVPublication
-	err = s.withTxContext(ctx, func(tx *loggedTx) error {
+	err = s.withIdentityTxContext(ctx, nil, func(tx *loggedTx) error {
 		var generation int64
 		if err := tx.QueryRowContext(ctx, `SELECT connection_generation FROM carddav_accounts
 			WHERE id = (SELECT account_id FROM carddav_address_books WHERE id = ?)`+s.dialect.SelectForUpdate(), identity.AddressBookID).Scan(&generation); err != nil {
@@ -369,9 +369,6 @@ func (s *Store) PrepareCardDAVConflictLocalTombstoneContext(
 		}
 		book, err := s.lockCardDAVConflictResolutionBookTx(ctx, tx, identity.AddressBookID)
 		if err != nil {
-			return err
-		}
-		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 			return err
 		}
 		mapping, err := s.findCardDAVResourceTx(ctx, tx, identity.AddressBookID, identity.Href)
@@ -500,7 +497,7 @@ func (s *Store) CommitCardDAVConflictLocalTombstoneContext(
 	if err != nil {
 		return err
 	}
-	return s.withTxContext(ctx, func(tx *loggedTx) error {
+	return s.withIdentityTxContext(ctx, nil, func(tx *loggedTx) error {
 		var generation int64
 		if err := tx.QueryRowContext(ctx, `SELECT connection_generation FROM carddav_accounts
 			WHERE id = (SELECT account_id FROM carddav_address_books WHERE id = ?)`+s.dialect.SelectForUpdate(), identity.AddressBookID).Scan(&generation); err != nil {
@@ -508,9 +505,6 @@ func (s *Store) CommitCardDAVConflictLocalTombstoneContext(
 		}
 		book, err := s.lockCardDAVConflictResolutionBookTx(ctx, tx, identity.AddressBookID)
 		if err != nil {
-			return err
-		}
-		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 			return err
 		}
 		mapping, err := s.findCardDAVResourceTx(ctx, tx, identity.AddressBookID, identity.Href)
@@ -787,7 +781,7 @@ func (s *Store) recordCardDAVPublicationConflictContext(
 		return nil, err
 	}
 	var conflict *CardDAVConflict
-	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+	err := s.withIdentityTxContext(ctx, nil, func(tx *loggedTx) error {
 		current, err := getCardDAVPublicationFrom(ctx, tx, pending.PersonID, s.dialect.SelectForUpdate())
 		if err != nil {
 			return err
@@ -828,7 +822,7 @@ func (s *Store) recordCardDAVPublicationConflictContext(
 func (s *Store) rollbackOversizedCardDAVPublicationConflictContext(
 	ctx context.Context, pending CardDAVPublication, retainIntent bool,
 ) error {
-	return s.withTxContext(ctx, func(tx *loggedTx) error {
+	return s.withIdentityTxContext(ctx, nil, func(tx *loggedTx) error {
 		current, err := getCardDAVPublicationFrom(ctx, tx, pending.PersonID, s.dialect.SelectForUpdate())
 		if err != nil {
 			return err
@@ -959,7 +953,7 @@ func (s *Store) RecordCardDAVConflictContext(
 		return nil, err
 	}
 	var conflict *CardDAVConflict
-	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+	err := s.withIdentityTxContext(ctx, nil, func(tx *loggedTx) error {
 		var err error
 		conflict, err = s.recordCardDAVConflictTx(ctx, tx, capture, cardDAVConflictRecordOptions{})
 		return err
@@ -977,6 +971,9 @@ func (s *Store) recordCardDAVConflictTx(
 	ctx context.Context, tx *loggedTx, capture CardDAVConflictCapture,
 	options cardDAVConflictRecordOptions,
 ) (*CardDAVConflict, error) {
+	if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+		return nil, err
+	}
 	var mappingID, revision int64
 	var baseLocalHash, baseRemoteHash, baseRemoteETag string
 	var personID sql.NullInt64
@@ -1254,12 +1251,9 @@ func (s *Store) ResolveCardDAVConflictRemoteContext(
 		s.cardDAVConflictResolveSnapshotHook()
 	}
 	var resolved *CardDAVConflict
-	err = s.withTxContext(ctx, func(tx *loggedTx) error {
+	err = s.withIdentityTxContext(ctx, nil, func(tx *loggedTx) error {
 		book, err := s.lockCardDAVConflictResolutionBookTx(ctx, tx, identity.AddressBookID)
 		if err != nil {
-			return err
-		}
-		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 			return err
 		}
 		mapping, err := s.findCardDAVResourceTx(ctx, tx, identity.AddressBookID, identity.Href)
@@ -1381,11 +1375,8 @@ func (s *Store) ResolveCardDAVConflictLocalTombstoneContext(
 		return nil, err
 	}
 	var resolved *CardDAVConflict
-	err = s.withTxContext(ctx, func(tx *loggedTx) error {
+	err = s.withIdentityTxContext(ctx, nil, func(tx *loggedTx) error {
 		if _, err := s.lockCardDAVConflictResolutionBookTx(ctx, tx, identity.AddressBookID); err != nil {
-			return err
-		}
-		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 			return err
 		}
 		mapping, err := s.findCardDAVResourceTx(ctx, tx, identity.AddressBookID, identity.Href)

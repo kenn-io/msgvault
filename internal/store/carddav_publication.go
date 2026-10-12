@@ -115,7 +115,7 @@ func (s *Store) prepareCardDAVPublicationContext(ctx context.Context, plan CardD
 	if review != nil {
 		options = &sql.TxOptions{Isolation: sql.LevelRepeatableRead}
 	}
-	err := s.withTxOptionsContext(ctx, options, func(tx *loggedTx) error {
+	err := s.withIdentityTxContext(ctx, options, func(tx *loggedTx) error {
 		var err error
 		prepared, err = s.prepareCardDAVPublicationTx(ctx, tx, plan, review)
 		return err
@@ -127,6 +127,9 @@ func (s *Store) prepareCardDAVPublicationContext(ctx context.Context, plan CardD
 }
 
 func (s *Store) prepareCardDAVPublicationTx(ctx context.Context, tx *loggedTx, plan CardDAVPublicationPlan, review *CardDAVReviewedPublicationPlan) (*CardDAVPublication, error) {
+	if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+		return nil, err
+	}
 	var prepared *CardDAVPublication
 	err := func() error {
 		account, err := getCardDAVAccountForBookFrom(ctx, tx.Tx, s.Rebind, plan.AddressBookID)
@@ -462,7 +465,7 @@ func (s *Store) RefreshCardDAVPublicationFenceContext(
 		return nil, err
 	}
 	var publication *CardDAVPublication
-	err = s.withTxContext(ctx, func(tx *loggedTx) error {
+	err = s.withIdentityTxContext(ctx, nil, func(tx *loggedTx) error {
 		current, err := s.lockCardDAVPublicationOperationTx(ctx, tx, personID, identity.AddressBookID)
 		if err != nil {
 			return err
@@ -520,14 +523,13 @@ func (s *Store) FenceCardDAVCreateCollisionContext(
 		return nil, ErrCardDAVInvalidPlan
 	}
 	var fenced *CardDAVPublication
-	err := s.withTxContext(ctx, func(tx *loggedTx) error {
-		if err := s.lockCardDAVPublicationTargetTx(ctx, tx, pending.AddressBookID); err != nil {
-			return err
-		}
+	err := s.withTxLockedContext(ctx, nil, func(tx *loggedTx) error {
 		if s.cardDAVCollisionIdentityLockHook != nil {
 			s.cardDAVCollisionIdentityLockHook()
 		}
-		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+		return s.lockIdentityMutationTxContext(ctx, tx)
+	}, func(tx *loggedTx) error {
+		if err := s.lockCardDAVPublicationTargetTx(ctx, tx, pending.AddressBookID); err != nil {
 			return err
 		}
 		current, err := s.lockCardDAVPublicationOperationTx(ctx, tx, pending.PersonID, pending.AddressBookID)
@@ -602,7 +604,7 @@ func (s *Store) CommitCardDAVPublicationContext(
 	ctx context.Context, input CardDAVCanonicalMutation,
 ) error {
 	pending := input.Publication
-	return s.withTxContext(ctx, func(tx *loggedTx) error {
+	return s.withIdentityTxContext(ctx, nil, func(tx *loggedTx) error {
 		current, err := s.lockCardDAVPublicationOperationTx(ctx, tx, pending.PersonID, pending.AddressBookID)
 		if err != nil {
 			return err
@@ -800,7 +802,7 @@ func (s *Store) rollbackCardDAVPublicationContext(
 	if pending == nil {
 		return ErrCardDAVInvalidPlan
 	}
-	return s.withTxContext(ctx, func(tx *loggedTx) error {
+	return s.withIdentityTxContext(ctx, nil, func(tx *loggedTx) error {
 		current, err := s.lockCardDAVPublicationOperationTx(ctx, tx, pending.PersonID, pending.AddressBookID)
 		if err != nil {
 			return err

@@ -17190,11 +17190,11 @@ func (c *Client) GetPersonProfileWithResponse(ctx context.Context, options *GetP
 			ETag: resp.Headers.Get("ETag"),
 		}
 		return out, nil
-	case 404:
-		out.JSON404 = new(GetPersonProfileErrorResponse)
+	case 403:
+		out.JSON403 = new(GetPersonProfileErrorResponse)
 		bodyBytes := resp.Content
 		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON404); err != nil {
+			if err := json.Unmarshal(bodyBytes, out.JSON403); err != nil {
 				return out, &runtime.ResponseDecodeError{
 					StatusCode:    resp.StatusCode,
 					ContentType:   resp.Headers.Get("Content-Type"),
@@ -17206,8 +17206,24 @@ func (c *Client) GetPersonProfileWithResponse(ctx context.Context, options *GetP
 			}
 		}
 		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+	case 404:
+		out.JSON404 = new(GetPersonProfileErrorResponseJSON)
+		bodyBytes := resp.Content
+		if len(bodyBytes) > 0 {
+			if err := json.Unmarshal(bodyBytes, out.JSON404); err != nil {
+				return out, &runtime.ResponseDecodeError{
+					StatusCode:    resp.StatusCode,
+					ContentType:   resp.Headers.Get("Content-Type"),
+					ContentLength: len(bodyBytes),
+					TargetType:    "GetPersonProfileErrorResponseJSON",
+					Body:          bodyBytes,
+					Err:           err,
+				}
+			}
+		}
+		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
 	case 503:
-		out.JSON503 = new(GetPersonProfileErrorResponseJSON)
+		out.JSON503 = new(GetPersonProfileErrorResponseJSON503)
 		bodyBytes := resp.Content
 		if len(bodyBytes) > 0 {
 			if err := json.Unmarshal(bodyBytes, out.JSON503); err != nil {
@@ -17215,7 +17231,7 @@ func (c *Client) GetPersonProfileWithResponse(ctx context.Context, options *GetP
 					StatusCode:    resp.StatusCode,
 					ContentType:   resp.Headers.Get("Content-Type"),
 					ContentLength: len(bodyBytes),
-					TargetType:    "GetPersonProfileErrorResponseJSON",
+					TargetType:    "GetPersonProfileErrorResponseJSON503",
 					Body:          bodyBytes,
 					Err:           err,
 				}
@@ -17273,11 +17289,11 @@ func (c *Client) PatchPersonWithResponse(ctx context.Context, options *PatchPers
 			ETag: resp.Headers.Get("ETag"),
 		}
 		return out, nil
-	case 404:
-		out.JSON404 = new(PatchPersonErrorResponse)
+	case 403:
+		out.JSON403 = new(PatchPersonErrorResponse)
 		bodyBytes := resp.Content
 		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON404); err != nil {
+			if err := json.Unmarshal(bodyBytes, out.JSON403); err != nil {
 				return out, &runtime.ResponseDecodeError{
 					StatusCode:    resp.StatusCode,
 					ContentType:   resp.Headers.Get("Content-Type"),
@@ -17289,8 +17305,24 @@ func (c *Client) PatchPersonWithResponse(ctx context.Context, options *PatchPers
 			}
 		}
 		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+	case 404:
+		out.JSON404 = new(PatchPersonErrorResponseJSON)
+		bodyBytes := resp.Content
+		if len(bodyBytes) > 0 {
+			if err := json.Unmarshal(bodyBytes, out.JSON404); err != nil {
+				return out, &runtime.ResponseDecodeError{
+					StatusCode:    resp.StatusCode,
+					ContentType:   resp.Headers.Get("Content-Type"),
+					ContentLength: len(bodyBytes),
+					TargetType:    "PatchPersonErrorResponseJSON",
+					Body:          bodyBytes,
+					Err:           err,
+				}
+			}
+		}
+		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
 	case 409:
-		out.JSON409 = new(PatchPersonErrorResponseJSON)
+		out.JSON409 = new(PatchPersonErrorResponseJSON409)
 		bodyBytes := resp.Content
 		if len(bodyBytes) > 0 {
 			if err := json.Unmarshal(bodyBytes, out.JSON409); err != nil {
@@ -17298,7 +17330,23 @@ func (c *Client) PatchPersonWithResponse(ctx context.Context, options *PatchPers
 					StatusCode:    resp.StatusCode,
 					ContentType:   resp.Headers.Get("Content-Type"),
 					ContentLength: len(bodyBytes),
-					TargetType:    "PatchPersonErrorResponseJSON",
+					TargetType:    "PatchPersonErrorResponseJSON409",
+					Body:          bodyBytes,
+					Err:           err,
+				}
+			}
+		}
+		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+	case 413:
+		out.JSON413 = new(PatchPersonErrorResponseJSON413)
+		bodyBytes := resp.Content
+		if len(bodyBytes) > 0 {
+			if err := json.Unmarshal(bodyBytes, out.JSON413); err != nil {
+				return out, &runtime.ResponseDecodeError{
+					StatusCode:    resp.StatusCode,
+					ContentType:   resp.Headers.Get("Content-Type"),
+					ContentLength: len(bodyBytes),
+					TargetType:    "PatchPersonErrorResponseJSON413",
 					Body:          bodyBytes,
 					Err:           err,
 				}
@@ -17315,6 +17363,22 @@ func (c *Client) PatchPersonWithResponse(ctx context.Context, options *PatchPers
 					ContentType:   resp.Headers.Get("Content-Type"),
 					ContentLength: len(bodyBytes),
 					TargetType:    "PatchPersonErrorResponseJSON428",
+					Body:          bodyBytes,
+					Err:           err,
+				}
+			}
+		}
+		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+	case 501:
+		out.JSON501 = new(PatchPersonErrorResponseJSON501)
+		bodyBytes := resp.Content
+		if len(bodyBytes) > 0 {
+			if err := json.Unmarshal(bodyBytes, out.JSON501); err != nil {
+				return out, &runtime.ResponseDecodeError{
+					StatusCode:    resp.StatusCode,
+					ContentType:   resp.Headers.Get("Content-Type"),
+					ContentLength: len(bodyBytes),
+					TargetType:    "PatchPersonErrorResponseJSON501",
 					Body:          bodyBytes,
 					Err:           err,
 				}
@@ -18069,12 +18133,15 @@ func (c *Client) ListPersonAttributesWithResponse(ctx context.Context, options *
 				}
 			}
 		}
+		out.Headers200 = &ListPersonAttributesResp200Headers{
+			ETag: resp.Headers.Get("ETag"),
+		}
 		return out, nil
-	case 404:
-		out.JSON404 = new(ListPersonAttributesErrorResponse)
+	case 400:
+		out.JSON400 = new(ListPersonAttributesErrorResponse)
 		bodyBytes := resp.Content
 		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON404); err != nil {
+			if err := json.Unmarshal(bodyBytes, out.JSON400); err != nil {
 				return out, &runtime.ResponseDecodeError{
 					StatusCode:    resp.StatusCode,
 					ContentType:   resp.Headers.Get("Content-Type"),
@@ -18086,8 +18153,56 @@ func (c *Client) ListPersonAttributesWithResponse(ctx context.Context, options *
 			}
 		}
 		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+	case 403:
+		out.JSON403 = new(ListPersonAttributesErrorResponseJSON)
+		bodyBytes := resp.Content
+		if len(bodyBytes) > 0 {
+			if err := json.Unmarshal(bodyBytes, out.JSON403); err != nil {
+				return out, &runtime.ResponseDecodeError{
+					StatusCode:    resp.StatusCode,
+					ContentType:   resp.Headers.Get("Content-Type"),
+					ContentLength: len(bodyBytes),
+					TargetType:    "ListPersonAttributesErrorResponseJSON",
+					Body:          bodyBytes,
+					Err:           err,
+				}
+			}
+		}
+		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+	case 404:
+		out.JSON404 = new(ListPersonAttributesErrorResponseJSON404)
+		bodyBytes := resp.Content
+		if len(bodyBytes) > 0 {
+			if err := json.Unmarshal(bodyBytes, out.JSON404); err != nil {
+				return out, &runtime.ResponseDecodeError{
+					StatusCode:    resp.StatusCode,
+					ContentType:   resp.Headers.Get("Content-Type"),
+					ContentLength: len(bodyBytes),
+					TargetType:    "ListPersonAttributesErrorResponseJSON404",
+					Body:          bodyBytes,
+					Err:           err,
+				}
+			}
+		}
+		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+	case 501:
+		out.JSON501 = new(ListPersonAttributesErrorResponseJSON501)
+		bodyBytes := resp.Content
+		if len(bodyBytes) > 0 {
+			if err := json.Unmarshal(bodyBytes, out.JSON501); err != nil {
+				return out, &runtime.ResponseDecodeError{
+					StatusCode:    resp.StatusCode,
+					ContentType:   resp.Headers.Get("Content-Type"),
+					ContentLength: len(bodyBytes),
+					TargetType:    "ListPersonAttributesErrorResponseJSON501",
+					Body:          bodyBytes,
+					Err:           err,
+				}
+			}
+		}
+		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
 	case 503:
-		out.JSON503 = new(ListPersonAttributesErrorResponseJSON)
+		out.JSON503 = new(ListPersonAttributesErrorResponseJSON503)
 		bodyBytes := resp.Content
 		if len(bodyBytes) > 0 {
 			if err := json.Unmarshal(bodyBytes, out.JSON503); err != nil {
@@ -18095,7 +18210,7 @@ func (c *Client) ListPersonAttributesWithResponse(ctx context.Context, options *
 					StatusCode:    resp.StatusCode,
 					ContentType:   resp.Headers.Get("Content-Type"),
 					ContentLength: len(bodyBytes),
-					TargetType:    "ListPersonAttributesErrorResponseJSON",
+					TargetType:    "ListPersonAttributesErrorResponseJSON503",
 					Body:          bodyBytes,
 					Err:           err,
 				}
@@ -18165,8 +18280,24 @@ func (c *Client) ClearPersonAttributeWithResponse(ctx context.Context, options *
 			}
 		}
 		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+	case 403:
+		out.JSON403 = new(ClearPersonAttributeErrorResponseJSON)
+		bodyBytes := resp.Content
+		if len(bodyBytes) > 0 {
+			if err := json.Unmarshal(bodyBytes, out.JSON403); err != nil {
+				return out, &runtime.ResponseDecodeError{
+					StatusCode:    resp.StatusCode,
+					ContentType:   resp.Headers.Get("Content-Type"),
+					ContentLength: len(bodyBytes),
+					TargetType:    "ClearPersonAttributeErrorResponseJSON",
+					Body:          bodyBytes,
+					Err:           err,
+				}
+			}
+		}
+		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
 	case 404:
-		out.JSON404 = new(ClearPersonAttributeErrorResponseJSON)
+		out.JSON404 = new(ClearPersonAttributeErrorResponseJSON404)
 		bodyBytes := resp.Content
 		if len(bodyBytes) > 0 {
 			if err := json.Unmarshal(bodyBytes, out.JSON404); err != nil {
@@ -18174,7 +18305,7 @@ func (c *Client) ClearPersonAttributeWithResponse(ctx context.Context, options *
 					StatusCode:    resp.StatusCode,
 					ContentType:   resp.Headers.Get("Content-Type"),
 					ContentLength: len(bodyBytes),
-					TargetType:    "ClearPersonAttributeErrorResponseJSON",
+					TargetType:    "ClearPersonAttributeErrorResponseJSON404",
 					Body:          bodyBytes,
 					Err:           err,
 				}
@@ -18191,6 +18322,54 @@ func (c *Client) ClearPersonAttributeWithResponse(ctx context.Context, options *
 					ContentType:   resp.Headers.Get("Content-Type"),
 					ContentLength: len(bodyBytes),
 					TargetType:    "ClearPersonAttributeErrorResponseJSON409",
+					Body:          bodyBytes,
+					Err:           err,
+				}
+			}
+		}
+		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+	case 413:
+		out.JSON413 = new(ClearPersonAttributeErrorResponseJSON413)
+		bodyBytes := resp.Content
+		if len(bodyBytes) > 0 {
+			if err := json.Unmarshal(bodyBytes, out.JSON413); err != nil {
+				return out, &runtime.ResponseDecodeError{
+					StatusCode:    resp.StatusCode,
+					ContentType:   resp.Headers.Get("Content-Type"),
+					ContentLength: len(bodyBytes),
+					TargetType:    "ClearPersonAttributeErrorResponseJSON413",
+					Body:          bodyBytes,
+					Err:           err,
+				}
+			}
+		}
+		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+	case 428:
+		out.JSON428 = new(ClearPersonAttributeErrorResponseJSON428)
+		bodyBytes := resp.Content
+		if len(bodyBytes) > 0 {
+			if err := json.Unmarshal(bodyBytes, out.JSON428); err != nil {
+				return out, &runtime.ResponseDecodeError{
+					StatusCode:    resp.StatusCode,
+					ContentType:   resp.Headers.Get("Content-Type"),
+					ContentLength: len(bodyBytes),
+					TargetType:    "ClearPersonAttributeErrorResponseJSON428",
+					Body:          bodyBytes,
+					Err:           err,
+				}
+			}
+		}
+		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+	case 501:
+		out.JSON501 = new(ClearPersonAttributeErrorResponseJSON501)
+		bodyBytes := resp.Content
+		if len(bodyBytes) > 0 {
+			if err := json.Unmarshal(bodyBytes, out.JSON501); err != nil {
+				return out, &runtime.ResponseDecodeError{
+					StatusCode:    resp.StatusCode,
+					ContentType:   resp.Headers.Get("Content-Type"),
+					ContentLength: len(bodyBytes),
+					TargetType:    "ClearPersonAttributeErrorResponseJSON501",
 					Body:          bodyBytes,
 					Err:           err,
 				}
@@ -18277,8 +18456,24 @@ func (c *Client) SetPersonAttributeWithResponse(ctx context.Context, options *Se
 			}
 		}
 		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+	case 403:
+		out.JSON403 = new(SetPersonAttributeErrorResponseJSON)
+		bodyBytes := resp.Content
+		if len(bodyBytes) > 0 {
+			if err := json.Unmarshal(bodyBytes, out.JSON403); err != nil {
+				return out, &runtime.ResponseDecodeError{
+					StatusCode:    resp.StatusCode,
+					ContentType:   resp.Headers.Get("Content-Type"),
+					ContentLength: len(bodyBytes),
+					TargetType:    "SetPersonAttributeErrorResponseJSON",
+					Body:          bodyBytes,
+					Err:           err,
+				}
+			}
+		}
+		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
 	case 404:
-		out.JSON404 = new(SetPersonAttributeErrorResponseJSON)
+		out.JSON404 = new(SetPersonAttributeErrorResponseJSON404)
 		bodyBytes := resp.Content
 		if len(bodyBytes) > 0 {
 			if err := json.Unmarshal(bodyBytes, out.JSON404); err != nil {
@@ -18286,7 +18481,7 @@ func (c *Client) SetPersonAttributeWithResponse(ctx context.Context, options *Se
 					StatusCode:    resp.StatusCode,
 					ContentType:   resp.Headers.Get("Content-Type"),
 					ContentLength: len(bodyBytes),
-					TargetType:    "SetPersonAttributeErrorResponseJSON",
+					TargetType:    "SetPersonAttributeErrorResponseJSON404",
 					Body:          bodyBytes,
 					Err:           err,
 				}
@@ -18303,6 +18498,54 @@ func (c *Client) SetPersonAttributeWithResponse(ctx context.Context, options *Se
 					ContentType:   resp.Headers.Get("Content-Type"),
 					ContentLength: len(bodyBytes),
 					TargetType:    "SetPersonAttributeErrorResponseJSON409",
+					Body:          bodyBytes,
+					Err:           err,
+				}
+			}
+		}
+		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+	case 413:
+		out.JSON413 = new(SetPersonAttributeErrorResponseJSON413)
+		bodyBytes := resp.Content
+		if len(bodyBytes) > 0 {
+			if err := json.Unmarshal(bodyBytes, out.JSON413); err != nil {
+				return out, &runtime.ResponseDecodeError{
+					StatusCode:    resp.StatusCode,
+					ContentType:   resp.Headers.Get("Content-Type"),
+					ContentLength: len(bodyBytes),
+					TargetType:    "SetPersonAttributeErrorResponseJSON413",
+					Body:          bodyBytes,
+					Err:           err,
+				}
+			}
+		}
+		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+	case 428:
+		out.JSON428 = new(SetPersonAttributeErrorResponseJSON428)
+		bodyBytes := resp.Content
+		if len(bodyBytes) > 0 {
+			if err := json.Unmarshal(bodyBytes, out.JSON428); err != nil {
+				return out, &runtime.ResponseDecodeError{
+					StatusCode:    resp.StatusCode,
+					ContentType:   resp.Headers.Get("Content-Type"),
+					ContentLength: len(bodyBytes),
+					TargetType:    "SetPersonAttributeErrorResponseJSON428",
+					Body:          bodyBytes,
+					Err:           err,
+				}
+			}
+		}
+		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+	case 501:
+		out.JSON501 = new(SetPersonAttributeErrorResponseJSON501)
+		bodyBytes := resp.Content
+		if len(bodyBytes) > 0 {
+			if err := json.Unmarshal(bodyBytes, out.JSON501); err != nil {
+				return out, &runtime.ResponseDecodeError{
+					StatusCode:    resp.StatusCode,
+					ContentType:   resp.Headers.Get("Content-Type"),
+					ContentLength: len(bodyBytes),
+					TargetType:    "SetPersonAttributeErrorResponseJSON501",
 					Body:          bodyBytes,
 					Err:           err,
 				}
@@ -20330,8 +20573,24 @@ func (c *Client) MergePersonsWithResponse(ctx context.Context, options *MergePer
 			}
 		}
 		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+	case 403:
+		out.JSON403 = new(MergePersonsErrorResponseJSON)
+		bodyBytes := resp.Content
+		if len(bodyBytes) > 0 {
+			if err := json.Unmarshal(bodyBytes, out.JSON403); err != nil {
+				return out, &runtime.ResponseDecodeError{
+					StatusCode:    resp.StatusCode,
+					ContentType:   resp.Headers.Get("Content-Type"),
+					ContentLength: len(bodyBytes),
+					TargetType:    "MergePersonsErrorResponseJSON",
+					Body:          bodyBytes,
+					Err:           err,
+				}
+			}
+		}
+		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
 	case 404:
-		out.JSON404 = new(MergePersonsErrorResponseJSON)
+		out.JSON404 = new(MergePersonsErrorResponseJSON404)
 		bodyBytes := resp.Content
 		if len(bodyBytes) > 0 {
 			if err := json.Unmarshal(bodyBytes, out.JSON404); err != nil {
@@ -20339,7 +20598,7 @@ func (c *Client) MergePersonsWithResponse(ctx context.Context, options *MergePer
 					StatusCode:    resp.StatusCode,
 					ContentType:   resp.Headers.Get("Content-Type"),
 					ContentLength: len(bodyBytes),
-					TargetType:    "MergePersonsErrorResponseJSON",
+					TargetType:    "MergePersonsErrorResponseJSON404",
 					Body:          bodyBytes,
 					Err:           err,
 				}
@@ -20356,6 +20615,22 @@ func (c *Client) MergePersonsWithResponse(ctx context.Context, options *MergePer
 					ContentType:   resp.Headers.Get("Content-Type"),
 					ContentLength: len(bodyBytes),
 					TargetType:    "MergePersonsErrorResponseJSON409",
+					Body:          bodyBytes,
+					Err:           err,
+				}
+			}
+		}
+		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+	case 413:
+		out.JSON413 = new(MergePersonsErrorResponseJSON413)
+		bodyBytes := resp.Content
+		if len(bodyBytes) > 0 {
+			if err := json.Unmarshal(bodyBytes, out.JSON413); err != nil {
+				return out, &runtime.ResponseDecodeError{
+					StatusCode:    resp.StatusCode,
+					ContentType:   resp.Headers.Get("Content-Type"),
+					ContentLength: len(bodyBytes),
+					TargetType:    "MergePersonsErrorResponseJSON413",
 					Body:          bodyBytes,
 					Err:           err,
 				}
@@ -20388,6 +20663,22 @@ func (c *Client) MergePersonsWithResponse(ctx context.Context, options *MergePer
 					ContentType:   resp.Headers.Get("Content-Type"),
 					ContentLength: len(bodyBytes),
 					TargetType:    "MergePersonsErrorResponseJSON500",
+					Body:          bodyBytes,
+					Err:           err,
+				}
+			}
+		}
+		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+	case 501:
+		out.JSON501 = new(MergePersonsErrorResponseJSON501)
+		bodyBytes := resp.Content
+		if len(bodyBytes) > 0 {
+			if err := json.Unmarshal(bodyBytes, out.JSON501); err != nil {
+				return out, &runtime.ResponseDecodeError{
+					StatusCode:    resp.StatusCode,
+					ContentType:   resp.Headers.Get("Content-Type"),
+					ContentLength: len(bodyBytes),
+					TargetType:    "MergePersonsErrorResponseJSON501",
 					Body:          bodyBytes,
 					Err:           err,
 				}
@@ -20778,8 +21069,24 @@ func (c *Client) GetPersonStructuredProfileWithResponse(ctx context.Context, opt
 			}
 		}
 		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+	case 403:
+		out.JSON403 = new(GetPersonStructuredProfileErrorResponseJSON)
+		bodyBytes := resp.Content
+		if len(bodyBytes) > 0 {
+			if err := json.Unmarshal(bodyBytes, out.JSON403); err != nil {
+				return out, &runtime.ResponseDecodeError{
+					StatusCode:    resp.StatusCode,
+					ContentType:   resp.Headers.Get("Content-Type"),
+					ContentLength: len(bodyBytes),
+					TargetType:    "GetPersonStructuredProfileErrorResponseJSON",
+					Body:          bodyBytes,
+					Err:           err,
+				}
+			}
+		}
+		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
 	case 404:
-		out.JSON404 = new(GetPersonStructuredProfileErrorResponseJSON)
+		out.JSON404 = new(GetPersonStructuredProfileErrorResponseJSON404)
 		bodyBytes := resp.Content
 		if len(bodyBytes) > 0 {
 			if err := json.Unmarshal(bodyBytes, out.JSON404); err != nil {
@@ -20787,7 +21094,7 @@ func (c *Client) GetPersonStructuredProfileWithResponse(ctx context.Context, opt
 					StatusCode:    resp.StatusCode,
 					ContentType:   resp.Headers.Get("Content-Type"),
 					ContentLength: len(bodyBytes),
-					TargetType:    "GetPersonStructuredProfileErrorResponseJSON",
+					TargetType:    "GetPersonStructuredProfileErrorResponseJSON404",
 					Body:          bodyBytes,
 					Err:           err,
 				}
@@ -20877,8 +21184,24 @@ func (c *Client) PatchPersonStructuredProfileWithResponse(ctx context.Context, o
 			}
 		}
 		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+	case 403:
+		out.JSON403 = new(PatchPersonStructuredProfileErrorResponseJSON)
+		bodyBytes := resp.Content
+		if len(bodyBytes) > 0 {
+			if err := json.Unmarshal(bodyBytes, out.JSON403); err != nil {
+				return out, &runtime.ResponseDecodeError{
+					StatusCode:    resp.StatusCode,
+					ContentType:   resp.Headers.Get("Content-Type"),
+					ContentLength: len(bodyBytes),
+					TargetType:    "PatchPersonStructuredProfileErrorResponseJSON",
+					Body:          bodyBytes,
+					Err:           err,
+				}
+			}
+		}
+		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
 	case 404:
-		out.JSON404 = new(PatchPersonStructuredProfileErrorResponseJSON)
+		out.JSON404 = new(PatchPersonStructuredProfileErrorResponseJSON404)
 		bodyBytes := resp.Content
 		if len(bodyBytes) > 0 {
 			if err := json.Unmarshal(bodyBytes, out.JSON404); err != nil {
@@ -20886,7 +21209,7 @@ func (c *Client) PatchPersonStructuredProfileWithResponse(ctx context.Context, o
 					StatusCode:    resp.StatusCode,
 					ContentType:   resp.Headers.Get("Content-Type"),
 					ContentLength: len(bodyBytes),
-					TargetType:    "PatchPersonStructuredProfileErrorResponseJSON",
+					TargetType:    "PatchPersonStructuredProfileErrorResponseJSON404",
 					Body:          bodyBytes,
 					Err:           err,
 				}
@@ -20935,6 +21258,22 @@ func (c *Client) PatchPersonStructuredProfileWithResponse(ctx context.Context, o
 					ContentType:   resp.Headers.Get("Content-Type"),
 					ContentLength: len(bodyBytes),
 					TargetType:    "PatchPersonStructuredProfileErrorResponseJSON428",
+					Body:          bodyBytes,
+					Err:           err,
+				}
+			}
+		}
+		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+	case 501:
+		out.JSON501 = new(PatchPersonStructuredProfileErrorResponseJSON501)
+		bodyBytes := resp.Content
+		if len(bodyBytes) > 0 {
+			if err := json.Unmarshal(bodyBytes, out.JSON501); err != nil {
+				return out, &runtime.ResponseDecodeError{
+					StatusCode:    resp.StatusCode,
+					ContentType:   resp.Headers.Get("Content-Type"),
+					ContentLength: len(bodyBytes),
+					TargetType:    "PatchPersonStructuredProfileErrorResponseJSON501",
 					Body:          bodyBytes,
 					Err:           err,
 				}

@@ -113,7 +113,7 @@ func (s *Store) SetOrganizationAttributeValueContext(
 	if _, err := attributeActiveFrom(input.ActiveFrom, input.ActiveUntil, time.Now().UTC()); err != nil {
 		return nil, err
 	}
-	write, err := s.runAttributeWrite(ctx, "set organization attribute value", input.DryRun,
+	write, err := s.runAttributeWrite(ctx, "set organization attribute value", input.DryRun, nil,
 		func(tx *loggedTx, now time.Time) (*attributeValueWrite, error) {
 			activeFrom, err := attributeActiveFrom(input.ActiveFrom, input.ActiveUntil, now)
 			if err != nil {
@@ -144,7 +144,7 @@ func (s *Store) SupersedeOrganizationAttributeValueContext(
 	if input.At != nil {
 		at = input.At.UTC()
 	}
-	write, err := s.runAttributeWrite(ctx, "supersede organization attribute value", input.DryRun,
+	write, err := s.runAttributeWrite(ctx, "supersede organization attribute value", input.DryRun, nil,
 		func(tx *loggedTx, now time.Time) (*attributeValueWrite, error) {
 			definition, err := s.getOrganizationAttributeDefinitionTx(ctx, tx, input.DefinitionSlug)
 			if err != nil {

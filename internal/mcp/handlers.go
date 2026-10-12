@@ -153,6 +153,8 @@ type handlers struct {
 	kata                KataBackend
 	identityReview      IdentityReviewBackend
 	personCardDAV       PersonCardDAVBackend
+	personMerge         PersonMergeBackend
+	personRecords       PersonRecordsBackend
 	identityScoring     IdentityScoringBackend
 	drafts              DraftRunner
 
