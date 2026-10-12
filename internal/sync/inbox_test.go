@@ -2,16 +2,16 @@ package sync
 
 import (
 	"errors"
-	Assert "github.com/stretchr/testify/assert"
-	Require "github.com/stretchr/testify/require"
+	assert "github.com/stretchr/testify/assert"
+	require "github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/inboxcontrol"
 	"go.kenn.io/msgvault/internal/store"
 	"testing"
 )
 
 func TestIncrementalSyncMetadataRefreshFailureKeepsHistoryCursor(t *testing.T) {
-	requirements := Require.New(t)
-	assertions := Assert.New(t)
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	env := newTestEnv(t)
 	env.Mock.Profile.MessagesTotal = 1
 	env.Mock.Profile.HistoryID = 12340
@@ -63,9 +63,9 @@ func TestIncrementalSyncMetadataRefreshFailureKeepsHistoryCursor(t *testing.T) {
 }
 
 func TestInboxGmailReceiveParsePersistsProviderObservation(t *testing.T) {
-	assert := Assert.New(t)
+	assert := assert.New(t)
 
-	require := Require.New(t)
+	require := require.New(t)
 
 	env := newTestEnv(t)
 	env.Mock.Profile.MessagesTotal = 1
