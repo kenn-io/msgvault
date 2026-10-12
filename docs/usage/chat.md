@@ -108,10 +108,10 @@ For a delegated Claude Desktop session, use these arguments with the daemon URL 
 
 For an HTTP loopback daemon URL, add `--agent-allow-insecure` before `mcp`. Delegated MCP serves over stdio; `--http` returns a usage error. Read tools `draft_get` and `draft_send_as` are available in owner HTTP sessions by default. Draft writes require `--http-allow-writes`.
 
-## Native Gmail Inbox control
+## Native Inbox control {#native-gmail-inbox-control}
 
-API schema 3.15.0 adds exact native Gmail actions to owner and delegated MCP
-sessions. Tools are `inbox_get_capabilities`, `inbox_get_state`,
+API schema 3.16.0 adds exact native Inbox controls for Gmail, IMAP, and Microsoft
+Graph mail to owner and delegated MCP sessions. Tools are `inbox_get_capabilities`, `inbox_get_state`,
 `inbox_list_folders`, `inbox_archive`, `inbox_unarchive`, `inbox_set_read`,
 `inbox_set_unread`, `inbox_move`, `inbox_create_folder`, `inbox_receipt_get`, and
 `inbox_reconcile`. Native tag edits use the existing `update_message_tags` tool.
@@ -127,7 +127,12 @@ cannot provide confirmation. Receipt retrieval and reconciliation require the
 original source/action grant and receipt principal, or owner authority.
 
 An owner can supply an exact target from the native tag GET route to a scoped
-agent. Gmail control does not discover candidates or run batches. See
+agent. Microsoft supports `inbox_get_capabilities`, `inbox_get_state`, category
+edits through `update_message_tags`, and receipt retrieval or reconciliation.
+Category writes need current `Mail.ReadWrite` evidence as well as `inbox.read`
+and `inbox.tag`; they preserve native read state and the actual folder. Other
+Microsoft Inbox actions are unsupported. Native control does not discover
+candidates or run batches. See
 [the API contract](../api-server.md#native-gmail-inbox-control) for request
 fields, label semantics, permissions, receipt recovery, and implemented limits.
 
@@ -153,7 +158,7 @@ keywords, or Microsoft Graph category names. Its `available_tags` lists existing
 Gmail user label IDs, the IMAP server's advertised permanent keywords, or the
 categories observed on that Microsoft message. `update_message_tags` adds or
 removes tags and verifies the result through the daemon. Both tools need
-API schema 3.15.0; older daemons omit them. On schema 3.15.0,
+API schema 3.15.0; older daemons omit them. On schema 3.16.0,
 `update_message_tags` also accepts an exact `target` instead of `message_id`.
 That form defaults to preview and accepts `expected`, `preview_token`, and
 `idempotency_key` for confirmed execution; its response is the Inbox
@@ -170,7 +175,7 @@ custom keyword atoms and optionally name a recorded `mailbox`. For Microsoft
 Graph, use category names and grant `Mail.ReadWrite` with
 [`add-o365 --graph --mail-write`](../cli-reference.md#add-o365). The update tool
 requires confirmation of the exact arguments and follows the normal
-[write controls](#write-controls). A preview never writes. On schema 3.15.0,
+[write controls](#write-controls). A preview never writes. On schema 3.16.0,
 Gmail edits use signed Inbox control; results retain `receipt_id`,
 `receipt_status`, and `idempotency_key` for recovery.
 A partial error keeps its last observed `result` in structured content; read

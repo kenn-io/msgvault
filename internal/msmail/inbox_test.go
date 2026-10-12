@@ -94,51 +94,55 @@ func TestMicrosoftInboxMatchesConfiguredMailboxAliases(t *testing.T) {
 		{"empty", map[string]any{}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
 			p, f, request := microsoftInboxFixture(t)
 			f.profile = tc.profile
 			before, err := p.Observe(t.Context(), request)
 			if !tc.want {
-				assert.ErrorIs(t, err, inboxcontrol.ErrDenied)
-				assert.Zero(t, f.writes)
-				assert.Zero(t, f.reads, "deny the account before reading the message")
+				assertions.ErrorIs(err, inboxcontrol.ErrDenied)
+				assertions.Zero(f.writes)
+				assertions.Zero(f.reads, "deny the account before reading the message")
 				return
 			}
-			require.NoError(t, err)
-			assert.Equal(t, "me@example.com", before.Target.AccountID)
-			assert.Equal(t, "me@example.com", before.Target.SourceIdentifier)
+			requirements.NoError(err)
+			assertions.Equal("me@example.com", before.Target.AccountID)
+			assertions.Equal("me@example.com", before.Target.SourceIdentifier)
 			_, err = p.Preview(t.Context(), request, before)
-			require.NoError(t, err)
-			assert.Zero(t, f.writes)
+			requirements.NoError(err)
+			assertions.Zero(f.writes)
 		})
 	}
 }
 
 func TestMicrosoftInboxCategoriesPreserveReadAndLocation(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	p, f, request := microsoftInboxFixture(t)
 	before, err := p.Observe(t.Context(), request)
-	require.NoError(t, err)
-	require.NotNil(t, before.Read)
-	assert.False(t, *before.Read)
-	assert.Equal(t, "inbox-id", before.Location)
-	assert.Equal(t, `W/"v1"`, before.Revision)
+	requirements.NoError(err)
+	requirements.NotNil(before.Read)
+	assertions.False(*before.Read)
+	assertions.Equal("inbox-id", before.Location)
+	assertions.Equal(`W/"v1"`, before.Revision)
 	projected, err := p.Preview(t.Context(), request, before)
-	require.NoError(t, err)
-	assert.ElementsMatch(t, []string{"Next", "Other"}, projected.Tags)
-	assert.Zero(t, f.writes)
+	requirements.NoError(err)
+	assertions.ElementsMatch([]string{"Next", "Other"}, projected.Tags)
+	assertions.Zero(f.writes)
 	request.DryRun = false
 	_, err = p.Dispatch(t.Context(), request, before)
-	require.NoError(t, err)
-	assert.Equal(t, 1, f.writes)
-	assert.Equal(t, 1, f.reads, "dispatch must not replace the signed snapshot with a fresh GET")
+	requirements.NoError(err)
+	assertions.Equal(1, f.writes)
+	assertions.Equal(1, f.reads, "dispatch must not replace the signed snapshot with a fresh GET")
 	after, err := p.Observe(t.Context(), request)
-	require.NoError(t, err)
-	require.NoError(t, p.Verify(request, before, projected, after))
-	assert.Equal(t, 2, f.reads, "verification uses independent complete readback")
-	assert.False(t, *after.Read)
-	assert.Equal(t, before.Location, after.Location)
+	requirements.NoError(err)
+	requirements.NoError(p.Verify(request, before, projected, after))
+	assertions.Equal(2, f.reads, "verification uses independent complete readback")
+	assertions.False(*after.Read)
+	assertions.Equal(before.Location, after.Location)
 	_, err = p.Dispatch(t.Context(), request, after)
-	require.NoError(t, err)
-	assert.Equal(t, 1, f.writes, "no-op does not PATCH")
+	requirements.NoError(err)
+	assertions.Equal(1, f.writes, "no-op does not PATCH")
 }
 
 func TestMicrosoftInboxRequiresCompleteMetadata(t *testing.T) {
@@ -168,37 +172,39 @@ func TestMicrosoftInboxRequiresCompleteMetadata(t *testing.T) {
 func TestMicrosoftInboxConditionalWriteOutcomes(t *testing.T) {
 	for _, status := range []int{400, 401, 403, 404, 412, 429, 500, 503} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
+			assertions := assert.New(t)
 			p, f, request := microsoftInboxFixture(t)
 			before, err := p.Observe(t.Context(), request)
 			require.NoError(t, err)
 			f.status = status
 			_, err = p.Dispatch(t.Context(), request, before)
 			if status >= 500 {
-				assert.ErrorIs(t, err, inboxcontrol.ErrOutcomeUnknown)
+				assertions.ErrorIs(err, inboxcontrol.ErrOutcomeUnknown)
 			} else {
-				assert.ErrorIs(t, err, inboxcontrol.ErrNoWrite)
+				assertions.ErrorIs(err, inboxcontrol.ErrNoWrite)
 			}
-			assert.Equal(t, 1, f.writes)
+			assertions.Equal(1, f.writes)
 		})
 	}
 }
 
 func TestMicrosoftInboxDeniesForeignIdentityAndUnsupportedWrites(t *testing.T) {
+	assertions := assert.New(t)
 	p, f, request := microsoftInboxFixture(t)
 	f.account = "other@example.com"
 	_, err := p.Observe(t.Context(), request)
-	assert.ErrorIs(t, err, inboxcontrol.ErrDenied)
+	assertions.ErrorIs(err, inboxcontrol.ErrDenied)
 	f.account = "me@example.com"
 	before, err := p.Observe(t.Context(), request)
 	require.NoError(t, err)
 	for _, op := range []inboxcontrol.Operation{inboxcontrol.OpArchive, inboxcontrol.OpUnarchive, inboxcontrol.OpSetRead, inboxcontrol.OpSetUnread, inboxcontrol.OpMove, inboxcontrol.OpCreateFolder} {
 		request.Operation = op
 		_, err := p.Preview(t.Context(), request, before)
-		assert.ErrorIs(t, err, inboxcontrol.ErrUnavailable)
+		assertions.ErrorIs(err, inboxcontrol.ErrUnavailable)
 		_, err = p.Dispatch(t.Context(), request, before)
-		assert.ErrorIs(t, err, inboxcontrol.ErrNoWrite)
+		assertions.ErrorIs(err, inboxcontrol.ErrNoWrite)
 	}
-	assert.Zero(t, f.writes)
+	assertions.Zero(f.writes)
 }
 
 func TestMicrosoftInboxRejectsUnverifiableCategoryProjection(t *testing.T) {
@@ -224,36 +230,38 @@ func TestMicrosoftInboxRejectsUnverifiableCategoryProjection(t *testing.T) {
 func TestMicrosoftInboxCapabilitiesRequireCurrentWriteEvidence(t *testing.T) {
 	for _, evidence := range []inboxcontrol.CapabilityStatus{"", inboxcontrol.CapabilityUnavailable, inboxcontrol.CapabilityPermissionRequired, inboxcontrol.CapabilitySupported} {
 		t.Run(string(evidence), func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
 			p, f, request := microsoftInboxFixture(t)
 			p.WithWriteCapability(evidence)
 			capabilities, err := p.Capabilities(t.Context(), inboxcontrol.Request{Operation: inboxcontrol.OpGetCapabilities, Source: &p.source})
-			require.NoError(t, err)
-			assert.False(t, capabilities.ConditionalWrite, "sending If-Match does not establish a service guarantee")
+			requirements.NoError(err)
+			assertions.False(capabilities.ConditionalWrite, "sending If-Match does not establish a service guarantee")
 			for _, capability := range capabilities.Operations {
 				switch capability.Operation {
 				case inboxcontrol.OpGetCapabilities, inboxcontrol.OpGetState:
-					assert.Equal(t, inboxcontrol.CapabilitySupported, capability.Status)
+					assertions.Equal(inboxcontrol.CapabilitySupported, capability.Status)
 				case inboxcontrol.OpTags:
 					want := evidence
 					if evidence == "" {
 						want = inboxcontrol.CapabilityUnavailable
 					}
-					assert.Equal(t, want, capability.Status)
+					assertions.Equal(want, capability.Status)
 				default:
-					assert.Equal(t, inboxcontrol.CapabilityUnsupported, capability.Status)
+					assertions.Equal(inboxcontrol.CapabilityUnsupported, capability.Status)
 				}
 			}
 			before, err := p.Observe(t.Context(), request)
-			require.NoError(t, err)
+			requirements.NoError(err)
 			_, err = p.Preview(t.Context(), request, before)
 			if evidence == inboxcontrol.CapabilitySupported {
-				require.NoError(t, err)
+				requirements.NoError(err)
 			} else {
-				assert.ErrorIs(t, err, inboxcontrol.ErrUnavailable)
+				assertions.ErrorIs(err, inboxcontrol.ErrUnavailable)
 				_, err = p.Dispatch(t.Context(), request, before)
-				assert.ErrorIs(t, err, inboxcontrol.ErrNoWrite)
+				assertions.ErrorIs(err, inboxcontrol.ErrNoWrite)
 			}
-			assert.Zero(t, f.writes)
+			assertions.Zero(f.writes)
 		})
 	}
 }

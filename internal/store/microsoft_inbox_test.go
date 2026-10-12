@@ -33,6 +33,8 @@ func microsoftSourceRevision(t *testing.T, st *store.Store, sourceID int64) int6
 }
 
 func TestMicrosoftInboxObservationKnownEmptyAndPartial(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	st, before, folder := microsoftObservationFixture(t)
 	revision := microsoftSourceRevision(t, st, before.Target.SourceID)
 	after := before
@@ -40,55 +42,58 @@ func TestMicrosoftInboxObservationKnownEmptyAndPartial(t *testing.T) {
 	after.Revision = "version-2"
 	after.ObservedAt = before.ObservedAt.Add(time.Second)
 	changed, err := st.ObserveMicrosoftMailStateContext(t.Context(), after, &folder, &after.Tags)
-	require.NoError(t, err)
-	assert.False(t, changed, "result means folder changed")
-	assert.Equal(t, []string{"Inbox"}, messageLabels(t, st, before.Target.ItemID))
+	requirements.NoError(err)
+	assertions.False(changed, "result means folder changed")
+	assertions.Equal([]string{"Inbox"}, messageLabels(t, st, before.Target.ItemID))
 	observed, err := st.GetInboxProviderState(t.Context(), before.Target)
-	require.NoError(t, err)
-	require.NotNil(t, observed)
-	require.NotNil(t, observed.Read)
-	assert.False(t, *observed.Read)
-	assert.Empty(t, observed.Tags)
-	assert.Equal(t, "version-2", observed.Revision, "complete fields distinguish known-empty from unknown after JSON")
-	assert.Equal(t, revision+1, microsoftSourceRevision(t, st, before.Target.SourceID))
+	requirements.NoError(err)
+	requirements.NotNil(observed)
+	requirements.NotNil(observed.Read)
+	assertions.False(*observed.Read)
+	assertions.NotNil(observed.Tags)
+	assertions.Equal([]string{}, observed.Tags)
+	assertions.Equal("version-2", observed.Revision, "complete fields distinguish known-empty from unknown after JSON")
+	assertions.Equal(revision+1, microsoftSourceRevision(t, st, before.Target.SourceID))
 	unknown := inboxcontrol.State{Target: before.Target, ObservedAt: after.ObservedAt.Add(time.Second)}
 	categories := []string{"Next"}
 	_, err = st.ObserveMicrosoftMailStateContext(t.Context(), unknown, &folder, &categories)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	observed, err = st.GetInboxProviderState(t.Context(), before.Target)
-	require.NoError(t, err)
-	require.NotNil(t, observed)
-	assert.Nil(t, observed.Read)
-	assert.Nil(t, observed.Inbox)
-	assert.Empty(t, observed.Revision)
-	assert.ElementsMatch(t, []string{"Inbox", "Category: Next"}, messageLabels(t, st, before.Target.ItemID))
-	assert.Equal(t, revision+2, microsoftSourceRevision(t, st, before.Target.SourceID))
+	requirements.NoError(err)
+	requirements.NotNil(observed)
+	assertions.Nil(observed.Read)
+	assertions.Nil(observed.Inbox)
+	assertions.Empty(observed.Revision)
+	assertions.ElementsMatch([]string{"Inbox", "Category: Next"}, messageLabels(t, st, before.Target.ItemID))
+	assertions.Equal(revision+2, microsoftSourceRevision(t, st, before.Target.SourceID))
 	var localRead bool
-	require.NoError(t, st.DB().QueryRow(st.Rebind(`SELECT is_read FROM messages WHERE id=?`), before.Target.ItemID).Scan(&localRead))
-	assert.True(t, localRead, "native read=false must preserve the local UI read=true")
+	requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT is_read FROM messages WHERE id=?`), before.Target.ItemID).Scan(&localRead))
+	assertions.True(localRead, "native read=false must preserve the local UI read=true")
 }
 
 func TestMicrosoftInboxObservationRequiresExactFolderMapping(t *testing.T) {
 	for _, kind := range []string{"missing", "wrong", "foreign", "category"} {
 		t.Run(kind, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
 			st, before, _ := microsoftObservationFixture(t)
 			revision := microsoftSourceRevision(t, st, before.Target.SourceID)
 			var mapping *int64
 			switch kind {
 			case "wrong":
 				id, err := st.LabelIDContext(t.Context(), before.Target.SourceID, "archive-id")
-				require.NoError(t, err)
+				requirements.NoError(err)
 				mapping = &id
 			case "foreign":
 				source, err := st.GetOrCreateSource("msmail", "other@example.test")
-				require.NoError(t, err)
+				requirements.NoError(err)
 				folders, err := st.EnsureMicrosoftMailFoldersContext(t.Context(), source.ID, map[string]store.LabelInfo{"inbox-id": {Name: "Inbox", Type: "system"}})
-				require.NoError(t, err)
+				requirements.NoError(err)
 				id := folders["inbox-id"]
 				mapping = &id
 			case "category":
 				id, err := st.LabelIDContext(t.Context(), before.Target.SourceID, "msmail-category:Old")
-				require.NoError(t, err)
+				requirements.NoError(err)
 				mapping = &id
 			}
 			after := before
@@ -99,12 +104,12 @@ func TestMicrosoftInboxObservationRequiresExactFolderMapping(t *testing.T) {
 			after.Revision = "version-2"
 			after.ObservedAt = before.ObservedAt.Add(time.Second)
 			_, err := st.ObserveMicrosoftMailStateContext(t.Context(), after, mapping, &after.Tags)
-			require.Error(t, err)
+			requirements.Error(err)
 			observed, err := st.GetInboxProviderState(t.Context(), before.Target)
-			require.NoError(t, err)
-			assert.Equal(t, before, *observed)
-			assert.ElementsMatch(t, []string{"Inbox", "Category: Old"}, messageLabels(t, st, before.Target.ItemID))
-			assert.Equal(t, revision, microsoftSourceRevision(t, st, before.Target.SourceID))
+			requirements.NoError(err)
+			assertions.Equal(before, *observed)
+			assertions.ElementsMatch([]string{"Inbox", "Category: Old"}, messageLabels(t, st, before.Target.ItemID))
+			assertions.Equal(revision, microsoftSourceRevision(t, st, before.Target.SourceID))
 		})
 	}
 }
@@ -128,28 +133,30 @@ func TestMicrosoftInboxObservationFreshnessBeforeProjection(t *testing.T) {
 func TestMicrosoftInboxObservationRollback(t *testing.T) {
 	for _, table := range []string{"inbox_provider_states", "inbox_source_revisions"} {
 		t.Run(table, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
 			st, before, folder := microsoftObservationFixture(t)
 			revision := microsoftSourceRevision(t, st, before.Target.SourceID)
 			var err error
 			if st.IsPostgreSQL() {
 				_, err = st.DB().Exec(`CREATE FUNCTION microsoft_observation_failure() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'synthetic observation failure'; END; $$ LANGUAGE plpgsql`)
-				require.NoError(t, err)
+				requirements.NoError(err)
 				_, err = st.DB().Exec(`CREATE TRIGGER microsoft_observation_failure BEFORE INSERT ON ` + table + ` FOR EACH ROW EXECUTE FUNCTION microsoft_observation_failure()`)
 			} else {
 				_, err = st.DB().Exec(`CREATE TRIGGER microsoft_observation_failure BEFORE INSERT ON ` + table + ` BEGIN SELECT RAISE(ABORT, 'synthetic observation failure'); END`)
 			}
-			require.NoError(t, err)
+			requirements.NoError(err)
 			after := before
 			after.Tags = []string{"Next"}
 			after.Revision = "version-2"
 			after.ObservedAt = before.ObservedAt.Add(time.Second)
 			_, err = st.ObserveMicrosoftMailStateContext(t.Context(), after, &folder, &after.Tags)
-			require.ErrorContains(t, err, "synthetic observation failure")
+			requirements.ErrorContains(err, "synthetic observation failure")
 			observed, err := st.GetInboxProviderState(t.Context(), before.Target)
-			require.NoError(t, err)
-			assert.Equal(t, before, *observed)
-			assert.ElementsMatch(t, []string{"Inbox", "Category: Old"}, messageLabels(t, st, before.Target.ItemID))
-			assert.Equal(t, revision, microsoftSourceRevision(t, st, before.Target.SourceID))
+			requirements.NoError(err)
+			assertions.Equal(before, *observed)
+			assertions.ElementsMatch([]string{"Inbox", "Category: Old"}, messageLabels(t, st, before.Target.ItemID))
+			assertions.Equal(revision, microsoftSourceRevision(t, st, before.Target.SourceID))
 		})
 	}
 }

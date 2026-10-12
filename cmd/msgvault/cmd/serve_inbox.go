@@ -170,6 +170,9 @@ func (a *storeAPIAdapter) resolveInboxProvider(ctx context.Context, request inbo
 		}
 		return imaplib.NewInboxProvider(native, binding), nil
 	}
+	if binding.SourceType == sourceTypeMSMail {
+		return a.resolveMicrosoftInboxProvider(ctx, source, binding, request)
+	}
 	if binding.SourceType != "gmail" {
 		return nil, inboxcontrol.ErrUnavailable
 	}

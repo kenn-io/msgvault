@@ -46,7 +46,7 @@ func (s *Store) ReconcileInboxProviderState(ctx context.Context, target inboxcon
 			}
 		}
 		tags := after.Tags
-		// State's wire format omits empty tags. Complete Microsoft metadata
+		// Older receipts omitted empty tags. Complete Microsoft metadata
 		// distinguishes a known empty category collection from unknown metadata.
 		if target.SourceType == "msmail" && tags == nil && microsoftInboxMetadataComplete(after) {
 			tags = []string{}

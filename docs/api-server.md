@@ -365,11 +365,12 @@ retired UID that still aliases a person, or the UID of a CardDAV card mapped to
 that person. If the same CardDAV UID is mapped to different people, the API
 returns `409 person_uid_ambiguous`.
 
-### Native Gmail Inbox control
+### Native Inbox control {#native-gmail-inbox-control}
 
 The unreleased `POST /api/v1/inbox/control` route observes or changes one exact
-Gmail item. The daemon owns provider credentials, verifies the Gmail
-account, and rechecks the current owner or delegated grant before execution,
+Gmail, IMAP, or Microsoft Graph mail item. The daemon owns provider credentials,
+verifies the native account, and rechecks the current owner or delegated grant
+before execution,
 replay, and reconciliation. A grant needs `inbox.read`, the action permission,
 and the exact source. Revoked or expired grants fail even for saved receipts.
 Inbox grants bind the selected source ID as well as its type and identifier.
@@ -392,9 +393,10 @@ does not admit a request. Missing or incompatible discovery fails closed.
 | `create-folder` | `source`, `destination.name`; `inbox.folder-create` |
 | `receipt-get`, `reconcile` | `receipt_id`; original source/action authority and receipt principal, or owner |
 
-`source` contains `source_id`, `source_type: "gmail"`, `source_identifier`, and
-`account_id`. `target` adds `scope: "message"`, the archived `item_id`, and exact
-Gmail `provider_id`. These fields must match live Store metadata; identifiers
+`source` contains `source_id`, `source_type` (`"gmail"`, `"imap"`, or `"msmail"`),
+`source_identifier`, and `account_id`. `target` adds `scope: "message"`, the archived `item_id`, and exact
+native `provider_id` (an immutable Graph message ID for Microsoft). These fields
+must match live Store metadata; identifiers
 never authorize access by themselves. Owners can obtain a target from
 `GET /api/v1/messages/{id}/tags` and pass it to an authorized agent.
 
@@ -410,7 +412,8 @@ Obtain a fresh preview if an upgrade changes the state representation.
 
 The daemon atomically claims the principal/source/key before dispatch. Repeating
 the same key and intent returns its receipt without another provider write;
-changed intent conflicts. A write requires current Gmail modification scope.
+changed intent conflicts. A write requires current Gmail modification scope
+or Microsoft `Mail.ReadWrite`.
 The daemon never starts consent or replaces credentials during control. The
 source lifecycle fence excludes sync and removal through detached settlement.
 Readback independently checks provider state before `verified` is recorded and
@@ -427,7 +430,7 @@ Capabilities describe current support and scope evidence; they grant no authorit
 Receipts survive restart. Startup marks interrupted prepared operations failed
 and interrupted dispatched operations unknown. `receipt-get` reads saved
 evidence; `reconcile` independently reads and reconciles an uncertain result
-without redispatch. Gmail outcomes include `verified`, `unknown`,
+without redispatch. Outcomes include `verified`, `unknown`,
 `reconcile-only`, and `failed`. Keep a returned receipt or the original key
 when transport or output fails. A removed source permanently retires its
 receipts' control authority, including when archive IDs are reused; trusted
@@ -442,10 +445,25 @@ provider outcomes return 502 `inbox_outcome_unknown`; local reconciliation
 failure returns 500 `inbox_reconcile_only`. Errors retain `result` when a receipt
 exists. Only execution and reconciliation hold the daemon mutation gate.
 
-Native control implements Gmail and the [IMAP operations below](#native-imap-inbox-control).
-Microsoft Inbox actions, chat actions, candidate/context discovery, and batch
-operations are not provided by this route. Existing native tag routes retain
-their separate IMAP and Microsoft behavior. See [`inbox`](cli-reference.md#inbox) and
+Native control supports Gmail, IMAP, and Microsoft Graph mail. Microsoft Graph
+mail supports `get-capabilities`, `get-state`, and `tags`, plus receipt retrieval
+and reconciliation. `tags` adds or removes Outlook category names with one PATCH
+and an independent metadata readback. It preserves native read state, the actual
+parent folder, and unrelated categories. Complete state requires categories
+(including an empty array), `isRead`, an actual parent folder ID, and an ETag.
+Missing metadata fails closed; false read markers and known-empty categories
+remain distinct from unknown values. Imports record these native observations
+separately from the local archive viewing state.
+
+Microsoft read-state, archive, move, folder writes, and folder catalog are
+unsupported. Its capabilities report `conditional_write: false`: the request
+carries the observed ETag in `If-Match`, but this route does not promise a Graph
+compare-and-swap guarantee. A signed preview and independent readback cannot
+exclude another client changing the message between those reads.
+
+Chat actions, candidate/context discovery, and batch operations are not provided
+by this route. Existing native tag routes retain their separate IMAP and
+Microsoft behavior. See [`inbox`](cli-reference.md#inbox) and
 [MCP Inbox tools](usage/chat.md#native-gmail-inbox-control).
 
 ### Native IMAP Inbox control

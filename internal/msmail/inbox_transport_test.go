@@ -53,6 +53,7 @@ func TestMicrosoftInboxTransportBoundsSuccessAndErrorBodies(t *testing.T) {
 		for _, status := range []int{200, 400, 500} {
 			for _, chunked := range []bool{false, true} {
 				t.Run(method+http.StatusText(status)+map[bool]string{false: " length", true: " stream"}[chunked], func(t *testing.T) {
+					assertions := assert.New(t)
 					var attempts atomic.Int32
 					srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 						attempts.Add(1)
@@ -61,7 +62,9 @@ func TestMicrosoftInboxTransportBoundsSuccessAndErrorBodies(t *testing.T) {
 						}
 						w.WriteHeader(status)
 						if chunked {
-							w.(http.Flusher).Flush()
+							flusher, ok := w.(http.Flusher)
+							require.True(t, ok)
+							flusher.Flush()
 						}
 						_, _ = w.Write([]byte(strings.Repeat("x", 2<<20)))
 					}))
@@ -75,9 +78,9 @@ func TestMicrosoftInboxTransportBoundsSuccessAndErrorBodies(t *testing.T) {
 						_, err = c.SendNoRetry(t.Context(), method, "/metadata", nil, `W/"v1"`)
 					}
 					require.Error(t, err)
-					assert.Less(t, len(err.Error()), (1<<20)+1024)
-					assert.Equal(t, int32(1), attempts.Load())
-					assert.True(t, errors.Is(err, msgraph.ErrTooLarge), "oversized response must be classified before parsing its status body")
+					assertions.Less(len(err.Error()), (1<<20)+1024)
+					assertions.Equal(int32(1), attempts.Load())
+					assertions.True(errors.Is(err, msgraph.ErrTooLarge), "oversized response must be classified before parsing its status body")
 				})
 			}
 		}
@@ -85,6 +88,8 @@ func TestMicrosoftInboxTransportBoundsSuccessAndErrorBodies(t *testing.T) {
 }
 
 func TestMicrosoftInboxTransportCrossOriginAndImporterPolicy(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	var destination, origin atomic.Int32
 	dest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		destination.Add(1)
@@ -99,13 +104,13 @@ func TestMicrosoftInboxTransportCrossOriginAndImporterPolicy(t *testing.T) {
 	defer srv.Close()
 	c := NewClient(srv.URL, func(context.Context) (string, error) { return "synthetic-token", nil }, 10000)
 	var out map[string]any
-	require.Error(t, c.GetJSONOnce(t.Context(), "/metadata", &out))
+	requirements.Error(c.GetJSONOnce(t.Context(), "/metadata", &out))
 	_, err := c.SendNoRetry(t.Context(), http.MethodPatch, "/metadata", map[string]any{"categories": []string{}}, "version")
-	require.Error(t, err)
-	assert.Zero(t, destination.Load())
-	assert.Equal(t, int32(2), origin.Load())
-	require.NoError(t, c.GetJSON(t.Context(), "/metadata", &out), "exact-target helpers must not alter importer HTTP policy")
-	assert.Equal(t, int32(1), destination.Load())
+	requirements.Error(err)
+	assertions.Zero(destination.Load())
+	assertions.Equal(int32(2), origin.Load())
+	requirements.NoError(c.GetJSON(t.Context(), "/metadata", &out), "exact-target helpers must not alter importer HTTP policy")
+	assertions.Equal(int32(1), destination.Load())
 }
 
 func TestMicrosoftInboxTransportDoesNotRetryFailures(t *testing.T) {
@@ -116,7 +121,9 @@ func TestMicrosoftInboxTransportDoesNotRetryFailures(t *testing.T) {
 				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 					attempts.Add(1)
 					if status == -1 {
-						connection, _, err := w.(http.Hijacker).Hijack()
+						hijacker, ok := w.(http.Hijacker)
+						require.True(t, ok)
+						connection, _, err := hijacker.Hijack()
 						if assert.NoError(t, err) {
 							assert.NoError(t, connection.Close())
 						}

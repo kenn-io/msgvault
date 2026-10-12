@@ -281,8 +281,9 @@ After adding an account, sync it with `msgvault sync-full`. IMAP accounts use th
 
 ## inbox
 
-Preview and control one exact Gmail item or IMAP mailbox copy through the selected daemon.
-Requires API schema 3.16.0. Available on `main`, unreleased. The daemon verifies
+Preview and control one exact Gmail item, IMAP mailbox copy, or Microsoft Graph
+mail item through the selected daemon. Requires API schema 3.16.0. Unreleased.
+The daemon verifies
 native account/item identity and current source/action authority on every call.
 The CLI also checks the daemon's live Inbox route and admitted operation before
 sending a control request. An unavailable or incompatible descriptor fails closed.
@@ -305,6 +306,12 @@ For Gmail, an owner obtains the exact `target` from the native tag GET route and
 in `target.json` as `{"target": {...}}`. Delegates use an owner-supplied target
 and an Inbox grant. IMAP requires an owner-supplied exact recorded mailbox copy;
 see [IMAP control](api-server.md#native-imap-inbox-control) for its binding fields.
+For Microsoft Graph, use an exact `msmail` target and obtain current
+`Mail.ReadWrite` permission with `add-o365 --graph --mail-write` before previewing
+or executing category changes. Microsoft supports `get-capabilities`,
+`get-state`, `tags`, `receipt-get`, and `reconcile`; other control operations are
+unsupported. Its first sync after upgrade refreshes native metadata for existing
+messages without re-downloading unchanged bodies.
 Keep the target unchanged and prepare execution from the
 preview with a caller-chosen key:
 
@@ -327,9 +334,9 @@ updates local evidence without repeating the mutation.
 |---|---|
 | `get-capabilities`, `list-folders` | Observe source support and native location catalog |
 | `get-state` | Observe exact native item state |
-| `archive`, `unarchive` | Remove/add Gmail `INBOX`, or move an IMAP copy to the archive mailbox or `INBOX` |
+| `archive`, `unarchive` | Change Gmail `INBOX` or move an exact IMAP copy to the archive mailbox or `INBOX` |
 | `set-read`, `set-unread` | Change native read state while preserving local archive read state |
-| `tags` | Add/remove existing Gmail user label IDs or advertised IMAP keywords |
+| `tags` | Add/remove Gmail label IDs, IMAP keywords, or Microsoft category names |
 | `move` | Change exact Gmail labels or move an exact IMAP mailbox copy |
 | `create-folder` | Create a Gmail user label or IMAP mailbox |
 | `receipt-get`, `reconcile` | Read or independently reconcile retained evidence |
