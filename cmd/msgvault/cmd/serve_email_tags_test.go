@@ -190,14 +190,11 @@ func TestDaemonMessageTagsReleaseFailureKeepsSavedResult(t *testing.T) {
 			return nil
 		},
 	}
-	srv := api.NewServerWithOptions(api.ServerOptions{Config: a.config, Store: a, Logger: a.logger})
-	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/messages/%d/tags", messageID), strings.NewReader(`{"add":["Label_next"]}`))
-	req.Header.Set("Content-Type", "application/json")
-	response := httptest.NewRecorder()
-	srv.Router().ServeHTTP(response, req)
-	assert.Equal(http.StatusOK, response.Code, response.Body.String())
-	var result emailtags.MessageTagResult
-	require.NoError(json.Unmarshal(response.Body.Bytes(), &result))
+	// Test cleanup at the adapter boundary. HTTP Gmail mutations require a
+	// signed Inbox preview and have their own native transport coverage.
+	result, err := a.MessageTags(t.Context(), messageID, &emailtags.MessageTagChange{Add: []string{"Label_next"}}, "", nil)
+	require.NoError(err)
+	require.NotNil(result)
 	assert.True(result.Verified)
 	assert.Equal([]string{"Label_next"}, result.Tags)
 	assert.Equal([]string{"Next"}, cachedLabels)

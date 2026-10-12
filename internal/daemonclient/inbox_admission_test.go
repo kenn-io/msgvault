@@ -7,8 +7,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	Assert "github.com/stretchr/testify/assert"
-	Require "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/inboxcontrol"
 )
@@ -56,17 +56,17 @@ func TestInboxClientRequiresLiveContractBeforeControl(t *testing.T) {
 			}))
 			defer server.Close()
 			client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true, HTTPClient: server.Client()})
-			Require.NoError(t, err)
-			defer func() { Assert.NoError(t, client.Close()) }()
+			require.NoError(t, err)
+			defer func() { assert.NoError(t, client.Close()) }()
 			_, err = client.ControlInbox(t.Context(), inboxcontrol.Request{Operation: inboxcontrol.OpReceiptGet, ReceiptID: "synthetic-receipt"})
-			Assert.ErrorIs(t, err, inboxcontrol.ErrUnavailable)
-			Assert.Zero(t, posts.Load(), "schema3.14 alone cannot admit an Inbox control POST")
+			require.ErrorIs(t, err, inboxcontrol.ErrUnavailable)
+			assert.Zero(t, posts.Load(), "schema3.14 alone cannot admit an Inbox control POST")
 		})
 	}
 }
 
 func TestInboxClientDiscoveryDoesNotFollowRedirect(t *testing.T) {
-	assert := Assert.New(t)
+	assertions := assert.New(t)
 
 	var posts, followed atomic.Int64
 	destination := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { followed.Add(1) }))
@@ -84,10 +84,10 @@ func TestInboxClientDiscoveryDoesNotFollowRedirect(t *testing.T) {
 	}))
 	defer server.Close()
 	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true, HTTPClient: server.Client()})
-	Require.NoError(t, err)
-	defer func() { assert.NoError(client.Close()) }()
+	require.NoError(t, err)
+	defer func() { assertions.NoError(client.Close()) }()
 	_, err = client.ControlInbox(t.Context(), inboxcontrol.Request{Operation: inboxcontrol.OpReceiptGet, ReceiptID: "synthetic-receipt"})
-	assert.ErrorIs(err, inboxcontrol.ErrUnavailable)
-	assert.Zero(posts.Load())
-	assert.Zero(followed.Load())
+	require.ErrorIs(t, err, inboxcontrol.ErrUnavailable)
+	assertions.Zero(posts.Load())
+	assertions.Zero(followed.Load())
 }

@@ -36,7 +36,8 @@ func (s *Store) ReconcileInboxProviderState(ctx context.Context, target inboxcon
 			return err
 		}
 		if (target.SourceType == "gmail" || target.SourceType == "msmail") && after.Tags != nil {
-			native := EmailTagTarget{MessageIdentityGuard: MessageIdentityGuard{ID: target.ItemID, SourceID: target.SourceID, SourceMessageID: target.ProviderID}, Provider: target.SourceType}
+			guard := MessageIdentityGuard{ID: target.ItemID, SourceID: target.SourceID, SourceMessageID: target.ProviderID}
+			native := EmailTagTarget{MessageIdentityGuard: guard, Provider: target.SourceType}
 			snapshot := &emailtags.MessageTagResult{Provider: target.SourceType, Tags: after.Tags, Verified: true}
 			if target.SourceType == "gmail" {
 				for _, folder := range after.Folders {
