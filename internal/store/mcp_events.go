@@ -21,9 +21,11 @@ const (
 	IngestUnknown  IngestMode = "unknown"
 	IngestLive     IngestMode = "live"
 	IngestBackfill IngestMode = "backfill"
+	IngestImport   IngestMode = "import"
 )
 
 type IngestContext struct {
+	importRun  *ImportRun
 	Mode       IngestMode
 	ObservedAt time.Time
 }
@@ -35,10 +37,11 @@ type MCPEventCapability struct {
 }
 
 type MCPEventsConfig struct {
-	Enabled      bool
-	Principal    string
-	Capabilities []MCPEventCapability
-	Retention    time.Duration
+	ImportNotifications bool
+	Enabled             bool
+	Principal           string
+	Capabilities        []MCPEventCapability
+	Retention           time.Duration
 }
 
 type MCPEventClock struct {
@@ -211,11 +214,20 @@ func mcpNewRuntime(cfg MCPEventsConfig) (*mcpRuntime, string) {
 		slices.Sort(kinds)
 		r.config.Capabilities = append(r.config.Capabilities, MCPEventCapability{Family: family, SourceType: sourceType, Kinds: kinds})
 	}
+	// Import permission and formats are independent of live coverage. A
+	// toggle must neither relabel history nor invalidate live cursors; native
+	// import decisions preserve silence during disabled periods.
+	var coverage []MCPEventCapability
+	for _, capability := range r.config.Capabilities {
+		if capability.Family != "msgvault.import_message_archived" {
+			coverage = append(coverage, capability)
+		}
+	}
 	// Principal changes revoke readers but do not change capture coverage.
 	data, _ := json.Marshal(struct {
 		Enabled      bool
 		Capabilities []MCPEventCapability
-	}{cfg.Enabled, r.config.Capabilities})
+	}{cfg.Enabled, coverage})
 	sum := sha256.Sum256(data)
 	return r, hex.EncodeToString(sum[:])
 }
@@ -301,6 +313,17 @@ func (s *Store) ConfigureMCPEvents(ctx context.Context, cfg MCPEventsConfig) (MC
 		if err := root.adoptMCPResources(ctx, tx); err != nil {
 			return err
 		}
+		if err := root.adoptImportIdentityDecisionsTx(ctx, tx, "TRUE"); err != nil {
+			return err
+		}
+		if cfg.Enabled && cfg.ImportNotifications {
+			if err := root.adoptLegacyImazingOccurrencesTx(ctx, tx, "TRUE"); err != nil {
+				return err
+			}
+			if err := root.adoptLegacySynctechMMSIdentitiesTx(ctx, tx, "TRUE"); err != nil {
+				return err
+			}
+		}
 		var oldFingerprint string
 		if err := tx.QueryRowContext(ctx, `SELECT coverage_fingerprint FROM mcp_event_clock WHERE singleton=1`).Scan(&oldFingerprint); err != nil {
 			return err
@@ -359,6 +382,42 @@ func (s *Store) ValidateMCPEventScope(ctx context.Context, family, scopeKind str
 }
 
 func (s *Store) validateMCPEventScope(ctx context.Context, db SQLReader, r *mcpRuntime, family, scopeKind string, scopeID int64, kinds []string) (string, int64, error) {
+	if family == "msgvault.import_message_archived" {
+		if r == nil || !r.config.Enabled || !r.config.ImportNotifications {
+			return "", 0, mcpStoreError("source_not_capable")
+		}
+		capable := false
+		for key, available := range r.kinds {
+			if strings.HasPrefix(key, family+"\x00") && available["message"] {
+				capable = true
+				break
+			}
+		}
+		if !capable {
+			return "", 0, mcpStoreError("source_not_capable")
+		}
+		for _, kind := range kinds {
+			if kind != "message" {
+				return "", 0, mcpStoreError("kind_not_capable")
+			}
+		}
+		if scopeKind == "archive" && scopeID == 0 {
+			return "", 0, nil
+		}
+		if scopeKind != "source" || scopeID <= 0 {
+			return "", 0, mcpStoreError("wrong_scope_type")
+		}
+		var sourceType string
+		err := db.QueryRowContext(ctx, s.Rebind(`SELECT source_type FROM sources WHERE id=?`), scopeID).Scan(&sourceType)
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", 0, mcpStoreError("unknown_scope")
+		}
+		if err != nil {
+			return "", 0, mcpSafeError(err)
+		}
+		return sourceType, scopeID, nil
+	}
+
 	wantScope := mcpScopeConversation
 	if family == "msgvault.calendar_event_changed" || family == mcpSourceMessageFamily {
 		wantScope = mcpScopeSource
@@ -434,13 +493,22 @@ func (s *Store) mcpNativeConversationAllowed(ctx context.Context, db SQLReader, 
 // appendMCPEventTx runs after the complete archive mutation under the outer
 // identity, sync-generation and Events clock fences. It never does network I/O.
 func (s *Store) appendMCPEventTx(ctx context.Context, logged *loggedTx, event MCPEvent) error {
-	if !s.captureMCPEnabled() || s.mcpIngest.Mode != IngestLive {
+	importEvent := s.mcpIngest.Mode == IngestImport && event.Family == "msgvault.import_message_archived"
+	if !s.captureMCPEnabled() || !importEvent && s.mcpIngest.Mode != IngestLive {
 		return nil
+	}
+	if importEvent {
+		if err := s.validateImportWriteTx(ctx, logged); err != nil {
+			return err
+		}
 	}
 	tx := logged.Tx
 	var sourceType string
 	if err := logged.QueryRowContext(ctx, `SELECT source_type FROM sources WHERE id=?`, event.SourceID).Scan(&sourceType); err != nil {
 		return mcpSafeError(err)
+	}
+	if importEvent {
+		sourceType = s.mcpIngest.importRun.Format
 	}
 	r := s.mcpRoot().mcpConfig.Load()
 	if !r.kinds[event.Family+"\x00"+sourceType][event.Kind] {
@@ -506,7 +574,7 @@ func (s *Store) appendMCPEventTx(ctx context.Context, logged *loggedTx, event MC
 	if err := s.bindMCPEventResource(ctx, tx, event, false); err != nil {
 		return mcpSafeError(err)
 	}
-	if event.Kind == "message" && event.MessageID > 0 {
+	if !importEvent && event.Kind == "message" && event.MessageID > 0 {
 		_, err = logged.ExecContext(ctx, `INSERT INTO mcp_live_admissions (message_id,source_id,message_reference_seq,epoch,admitted_at) VALUES (?,?,?,?,?) ON CONFLICT (message_id) DO UPDATE SET source_id=excluded.source_id,message_reference_seq=excluded.message_reference_seq,epoch=excluded.epoch,admitted_at=excluded.admitted_at`, event.MessageID, event.SourceID, event.MessageReferenceSeq, event.Epoch, mcpTime(event.RecordedAt))
 	}
 	if err != nil {
@@ -520,6 +588,8 @@ func (s *Store) appendMCPEventTx(ctx context.Context, logged *loggedTx, event MC
 // may already be deleted. Its caller owns identity and clock fences.
 func (s *Store) removeMCPEventSource(ctx context.Context, db contextQuerier, sourceID int64) error {
 	queries := []string{
+		`UPDATE mcp_event_subscriptions SET cursor_seq=CASE WHEN pending_seq>cursor_seq THEN pending_seq ELSE cursor_seq END,pending_seq=NULL,pending_envelope=NULL,pending_generation=NULL,attempt_count=0,next_attempt_at=NULL WHERE name='msgvault.import_message_archived' AND scope_kind='archive' AND source_id IS NULL AND EXISTS (SELECT 1 FROM mcp_event_log event WHERE event.seq=mcp_event_subscriptions.pending_seq AND event.source_id=?)`,
+		`DELETE FROM mcp_event_dead_letters WHERE EXISTS (SELECT 1 FROM mcp_event_log event WHERE event.seq=mcp_event_dead_letters.seq AND event.source_id=?)`,
 		`DELETE FROM mcp_event_log WHERE source_id=?`,
 		`DELETE FROM mcp_event_dead_letters WHERE EXISTS (SELECT 1 FROM mcp_event_subscriptions s WHERE s.id=mcp_event_dead_letters.subscription_id AND s.source_id=?)`,
 	}

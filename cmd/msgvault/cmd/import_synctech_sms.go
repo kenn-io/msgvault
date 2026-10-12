@@ -32,6 +32,7 @@ SMS Backup & Restore by SyncTech Pty Ltd.`,
 			if !isDaemonCLISubprocess() {
 				return runDaemonCLICommandHTTPFromCobra(cmd, args)
 			}
+			opts.NotifyImports = importNotificationsRequested(cmd)
 			opts.AttachmentsDir = cfg.AttachmentsDir()
 			st, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
 			if err != nil {
@@ -39,6 +40,7 @@ SMS Backup & Restore by SyncTech Pty Ltd.`,
 			}
 			defer cleanup()
 			summary, err := synctechsms.NewImporter(st, opts).ImportPath(args[0])
+			recordImportRun(cmd, summary.ImportRunID)
 			if err != nil {
 				return err
 			}
@@ -53,6 +55,7 @@ SMS Backup & Restore by SyncTech Pty Ltd.`,
 	cmd.Flags().BoolVar(&opts.IncludeMMS, "mms", true, "Import MMS records")
 	cmd.Flags().BoolVar(&opts.IncludeCalls, "calls", true, "Import call log records")
 	cmd.Flags().BoolVar(&opts.IncludeAttachments, "attachments", true, "Import MMS attachments")
+	addImportNotificationFlag(cmd)
 	return cmd
 }
 

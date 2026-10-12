@@ -71,6 +71,8 @@ type Result struct {
 
 // UpsertOptions controls archive repair behavior.
 type UpsertOptions struct {
+	// FTSBestEffort keeps notifying import success independent of derived search.
+	FTSBestEffort bool
 	// Force rewrites every derived projection even when the stored raw snapshot
 	// and sender attribution already match.
 	Force bool
@@ -119,6 +121,9 @@ func (a *Archiver) Upsert(
 
 	if existed && !opts.Force {
 		if a.storedMatches(snapshot, existingMessage, expectedIsFromMe) {
+			if err := a.store.RetainExistingImportMessageContext(ctx, store.MessageIdentityGuard{ID: existingMessageID, SourceID: snapshot.SourceID, SourceMessageID: snapshot.SourceMessageID}); err != nil {
+				return Result{}, fmt.Errorf("retain existing meeting import identity: %w", err)
+			}
 			if err := a.store.RecomputeConversationStatsForMessageContext(ctx, existingMessageID); err != nil {
 				return Result{}, fmt.Errorf("recompute meeting conversation stats: %w", err)
 			}
@@ -230,6 +235,7 @@ func (a *Archiver) Upsert(
 					},
 				},
 				PreserveLabels: true,
+				FTSBestEffort:  opts.FTSBestEffort,
 				FTS: &store.FTSDoc{
 					Subject:  snapshot.Title,
 					Body:     snapshot.Body,

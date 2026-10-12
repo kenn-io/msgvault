@@ -55,10 +55,17 @@ const mcpSubscriptionColumns = `id,principal_id,name,arguments,scope_kind,scope_
 const mcpEventColumns = `seq,epoch,family,kind,scope_kind,scope_id,item_key,COALESCE(message_id,0),COALESCE(message_reference_seq,0),conversation_id,source_id,COALESCE(attachment_id,0),from_me,occurred_at,recorded_at,data`
 const mcpSubscriptionActive = "active"
 
+func mcpImportArchiveScope(name, kind string, id, sourceID int64) bool {
+	return name == "msgvault.import_message_archived" && kind == "archive" && id == 0 && sourceID == 0
+}
+
 const mcpSubscriptionScopeExistsSQL = `(
  (sub.scope_kind='source' AND EXISTS (
   SELECT 1 FROM mcp_event_source_refs ref
   WHERE ref.source_id=sub.scope_id AND ref.reference_id=sub.scope_reference_id AND ref.source_id=sub.source_id
+ ))
+ OR (sub.name='msgvault.import_message_archived' AND sub.scope_kind='archive' AND sub.scope_id=0 AND sub.source_id IS NULL AND EXISTS (
+  SELECT 1 FROM archive_metadata archive WHERE archive.key='mcp_events_archive_resource_generation_v1'
  ))
  OR (sub.scope_kind='inbox' AND EXISTS (
   SELECT 1 FROM native_message_scopes n JOIN mcp_source_resources sr ON sr.source_id=n.source_id AND sr.generation=n.source_generation
@@ -108,6 +115,11 @@ func (s *Store) BindMCPSubscriptionScope(ctx context.Context, sub *MCPSubscripti
 		case mcpScopeInbox:
 			sub.ScopeReferenceID = 0
 			return nil
+		case "archive":
+			sub.SourceID = 0
+			sub.ScopeReferenceID = 0
+			_, err := s.ensureMCPScopeLifetime(ctx, tx, sub.ScopeKind, sub.ScopeID, sub.SourceID)
+			return err
 		default:
 			return mcpStoreError("unknown_scope")
 		}
@@ -120,12 +132,20 @@ func (s *Store) BindMCPSubscriptionScope(ctx context.Context, sub *MCPSubscripti
 
 func (s *Store) mcpSubscriptionScopeExists(ctx context.Context, db SQLReader, sub *MCPSubscription) (bool, error) {
 	var exists bool
-	var query string
-	args := []any{sub.ScopeID, sub.SourceID}
 	switch sub.ScopeKind {
+	case "archive":
+		if !mcpImportArchiveScope(sub.Name, sub.ScopeKind, sub.ScopeID, sub.SourceID) {
+			return false, nil
+		}
+		_, err := s.mcpScopeLifetime(ctx, db, sub.ScopeKind, sub.ScopeID, sub.SourceID)
+		if errors.Is(err, mcpStoreError("resource_unavailable")) {
+			return false, nil
+		}
+		return err == nil, err
 	case mcpScopeSource:
-		query = `SELECT EXISTS (SELECT 1 FROM mcp_event_source_refs WHERE source_id=? AND source_id=? AND reference_id=?)`
-		args = append(args, sub.ScopeReferenceID)
+		query := `SELECT EXISTS (SELECT 1 FROM mcp_event_source_refs WHERE source_id=? AND source_id=? AND reference_id=?)`
+		err := db.QueryRowContext(ctx, s.Rebind(query), sub.ScopeID, sub.SourceID, sub.ScopeReferenceID).Scan(&exists)
+		return exists, err
 	case mcpScopeConversation:
 		// Only a durably adopted generation binding can authorize a subscription
 		// from before conversation references existed. Fresh SDK subscriptions
@@ -133,15 +153,16 @@ func (s *Store) mcpSubscriptionScopeExists(ctx context.Context, db SQLReader, su
 		if sub.ScopeReferenceID == 0 {
 			return s.mcpSubscriptionResourceValid(ctx, db, sub)
 		}
-		query = `SELECT EXISTS (SELECT 1 FROM mcp_event_conversation_refs ref JOIN conversations c ON c.id=ref.conversation_id WHERE ref.conversation_id=? AND c.source_id=? AND ref.reference_id=?)`
-		args = append(args, sub.ScopeReferenceID)
+		query := `SELECT EXISTS (SELECT 1 FROM mcp_event_conversation_refs ref JOIN conversations c ON c.id=ref.conversation_id WHERE ref.conversation_id=? AND c.source_id=? AND ref.reference_id=?)`
+		err := db.QueryRowContext(ctx, s.Rebind(query), sub.ScopeID, sub.SourceID, sub.ScopeReferenceID).Scan(&exists)
+		return exists, err
 	case mcpScopeInbox:
-		query = `SELECT EXISTS (SELECT 1 FROM native_message_scopes n JOIN mcp_source_resources sr ON sr.source_id=n.source_id AND sr.generation=n.source_generation WHERE n.id=? AND n.source_id=? AND n.present)`
+		query := `SELECT EXISTS (SELECT 1 FROM native_message_scopes n JOIN mcp_source_resources sr ON sr.source_id=n.source_id AND sr.generation=n.source_generation WHERE n.id=? AND n.source_id=? AND n.present)`
+		err := db.QueryRowContext(ctx, s.Rebind(query), sub.ScopeID, sub.SourceID).Scan(&exists)
+		return exists, err
 	default:
 		return false, nil
 	}
-	err := db.QueryRowContext(ctx, s.Rebind(query), args...).Scan(&exists)
-	return exists, err
 }
 
 func scanMCPSubscription(row scanner) (*MCPSubscription, error) {
@@ -149,14 +170,15 @@ func scanMCPSubscription(row scanner) (*MCPSubscription, error) {
 	var arguments string
 	var previousUntil, due, window sql.NullString
 	var verified, expires, created, updated string
-	var pendingSeq, pendingGen sql.NullInt64
-	err := row.Scan(&sub.ID, &sub.Principal, &sub.Name, &arguments, &sub.ScopeKind, &sub.ScopeID, &sub.SourceID, &sub.ScopeReferenceID, &sub.CallbackURL, &sub.SecretEnc, &sub.PreviousSecretEnc, &previousUntil, &sub.SecretRevision, &sub.VerifiedRevision, &verified, &sub.Generation, &sub.State, &sub.StopReason, &expires, &sub.CursorEpoch, &sub.CursorSeq, &pendingSeq, &sub.PendingEnvelope, &pendingGen, &sub.AttemptCount, &due, &window, &sub.FromMeWindowCount, &sub.LoopGuardSkips, &sub.DeadLetterCount, &sub.LastOutcome, &created, &updated)
+	var pendingSeq, pendingGen, sourceID sql.NullInt64
+	err := row.Scan(&sub.ID, &sub.Principal, &sub.Name, &arguments, &sub.ScopeKind, &sub.ScopeID, &sourceID, &sub.ScopeReferenceID, &sub.CallbackURL, &sub.SecretEnc, &sub.PreviousSecretEnc, &previousUntil, &sub.SecretRevision, &sub.VerifiedRevision, &verified, &sub.Generation, &sub.State, &sub.StopReason, &expires, &sub.CursorEpoch, &sub.CursorSeq, &pendingSeq, &sub.PendingEnvelope, &pendingGen, &sub.AttemptCount, &due, &window, &sub.FromMeWindowCount, &sub.LoopGuardSkips, &sub.DeadLetterCount, &sub.LastOutcome, &created, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil //nolint:nilnil // A missing subscription is a valid absence state for lookup and first activation.
 	}
 	if err != nil {
 		return nil, err
 	}
+	sub.SourceID = sourceID.Int64
 	sub.Arguments = []byte(arguments)
 	sub.PendingSeq = pendingSeq.Int64
 	sub.PendingGeneration = pendingGen.Int64
@@ -202,7 +224,7 @@ func (s *Store) saveMCPSubscription(ctx context.Context, tx *sql.Tx, sub *MCPSub
 	if sub.PendingSeq > 0 {
 		pending = sub.PendingEnvelope
 	}
-	_, err := tx.ExecContext(ctx, s.Rebind(`INSERT INTO mcp_event_subscriptions (`+mcpSubscriptionColumns+`) VALUES (`+strings.TrimSuffix(strings.Repeat("?,", len(columns)), ",")+`) ON CONFLICT (id) DO UPDATE SET `+strings.Join(updates, ",")), sub.ID, sub.Principal, sub.Name, string(sub.Arguments), sub.ScopeKind, sub.ScopeID, sub.SourceID, sub.ScopeReferenceID, sub.CallbackURL, sub.SecretEnc, sub.PreviousSecretEnc, mcpOptionalTime(sub.PreviousSecretUntil), sub.SecretRevision, sub.VerifiedRevision, mcpTime(sub.VerifiedAt), sub.Generation, sub.State, sub.StopReason, mcpTime(sub.ExpiresAt), sub.CursorEpoch, sub.CursorSeq, mcpOptionalID(sub.PendingSeq), pending, mcpOptionalID(sub.PendingGeneration), sub.AttemptCount, mcpOptionalTime(sub.NextAttemptAt), mcpOptionalTime(sub.FromMeWindowStart), sub.FromMeWindowCount, sub.LoopGuardSkips, sub.DeadLetterCount, sub.LastOutcome, mcpTime(sub.CreatedAt), mcpTime(sub.UpdatedAt))
+	_, err := tx.ExecContext(ctx, s.Rebind(`INSERT INTO mcp_event_subscriptions (`+mcpSubscriptionColumns+`) VALUES (`+strings.TrimSuffix(strings.Repeat("?,", len(columns)), ",")+`) ON CONFLICT (id) DO UPDATE SET `+strings.Join(updates, ",")), sub.ID, sub.Principal, sub.Name, string(sub.Arguments), sub.ScopeKind, sub.ScopeID, mcpOptionalID(sub.SourceID), sub.ScopeReferenceID, sub.CallbackURL, sub.SecretEnc, sub.PreviousSecretEnc, mcpOptionalTime(sub.PreviousSecretUntil), sub.SecretRevision, sub.VerifiedRevision, mcpTime(sub.VerifiedAt), sub.Generation, sub.State, sub.StopReason, mcpTime(sub.ExpiresAt), sub.CursorEpoch, sub.CursorSeq, mcpOptionalID(sub.PendingSeq), pending, mcpOptionalID(sub.PendingGeneration), sub.AttemptCount, mcpOptionalTime(sub.NextAttemptAt), mcpOptionalTime(sub.FromMeWindowStart), sub.FromMeWindowCount, sub.LoopGuardSkips, sub.DeadLetterCount, sub.LastOutcome, mcpTime(sub.CreatedAt), mcpTime(sub.UpdatedAt))
 	return err
 }
 
@@ -268,7 +290,7 @@ func (s *Store) ActivateMCPSubscription(ctx context.Context, a MCPActivation) (*
 	root.mcpConfigMu.Lock()
 	defer root.mcpConfigMu.Unlock()
 	input := a.Subscription
-	if input.ID == "" || input.Principal == "" || input.Name == "" || input.ScopeID <= 0 || input.SourceID <= 0 || input.SecretRevision <= 0 || input.VerifiedRevision != input.SecretRevision || len(input.SecretEnc) == 0 || !a.Now.Before(input.ExpiresAt) || input.ExpiresAt.After(a.Now.Add(24*time.Hour)) {
+	if input.ID == "" || input.Principal == "" || input.Name == "" || (!mcpImportArchiveScope(input.Name, input.ScopeKind, input.ScopeID, input.SourceID) && (input.ScopeID <= 0 || input.SourceID <= 0)) || input.SecretRevision <= 0 || input.VerifiedRevision != input.SecretRevision || len(input.SecretEnc) == 0 || !a.Now.Before(input.ExpiresAt) || input.ExpiresAt.After(a.Now.Add(24*time.Hour)) {
 		return nil, false, mcpStoreError("invalid_subscription")
 	}
 	r := root.mcpConfig.Load()
@@ -474,7 +496,8 @@ func (s *Store) EndMCPSubscription(ctx context.Context, id, principal string, no
 }
 
 func mcpEventMatches(sub MCPSubscription, event MCPEvent) bool {
-	if sub.Name != event.Family || sub.ScopeKind != event.ScopeKind || sub.ScopeID != event.ScopeID || sub.SourceID != event.SourceID {
+	archive := mcpImportArchiveScope(sub.Name, sub.ScopeKind, sub.ScopeID, sub.SourceID)
+	if sub.Name != event.Family || (!archive && (sub.ScopeKind != event.ScopeKind || sub.ScopeID != event.ScopeID || sub.SourceID != event.SourceID)) || archive && (event.ScopeKind != mcpScopeSource || event.ScopeID != event.SourceID || event.SourceID <= 0) {
 		return false
 	}
 	var arguments struct {
@@ -485,7 +508,7 @@ func mcpEventMatches(sub MCPSubscription, event MCPEvent) bool {
 	if err := json.Unmarshal(sub.Arguments, &arguments); err != nil {
 		return false
 	}
-	if (event.Family == "msgvault.message_archived" || event.Family == mcpSourceMessageFamily || event.Family == mcpInboxMessageFamily) && event.FromMe && !arguments.IncludeFromMe {
+	if (event.Family == "msgvault.message_archived" || event.Family == mcpSourceMessageFamily || event.Family == mcpInboxMessageFamily || event.Family == "msgvault.import_message_archived") && event.FromMe && !arguments.IncludeFromMe {
 		return false
 	}
 	if (event.Family == mcpSourceMessageFamily || event.Family == mcpInboxMessageFamily) && event.Kind == "reaction" && arguments.IncludeReactions != nil && !*arguments.IncludeReactions {
@@ -595,13 +618,20 @@ func (s *Store) ReadMCPEventMessage(ctx context.Context, id string, seq int64, p
 	return mcpSafeError(tx.Commit())
 }
 
+// Delivery permission is separate from retained-receipt authority. Disabling
+// import notifications suspends the queue without consuming pending bytes.
+func mcpSubscriptionDeliveryEnabled(r *mcpRuntime, sub *MCPSubscription) bool {
+	return r != nil && r.config.Enabled && sub != nil && r.config.Principal == sub.Principal &&
+		(sub.Name != "msgvault.import_message_archived" || r.config.ImportNotifications)
+}
+
 func (s *Store) CheckMCPSubscription(ctx context.Context, id string, generation int64, now time.Time) error {
 	sub, err := s.GetMCPSubscription(ctx, id)
 	if err != nil {
 		return err
 	}
 	r := s.mcpRoot().mcpConfig.Load()
-	if sub == nil || sub.Generation != generation || sub.State != mcpSubscriptionActive || !now.Before(sub.ExpiresAt) || r == nil || !r.config.Enabled || r.config.Principal != sub.Principal {
+	if sub == nil || sub.Generation != generation || sub.State != mcpSubscriptionActive || !now.Before(sub.ExpiresAt) || !mcpSubscriptionDeliveryEnabled(r, sub) {
 		return mcpStoreError("subscription_inactive")
 	}
 	if err := s.ValidateMCPSubscriptionResource(ctx, sub); err != nil {
@@ -706,23 +736,35 @@ func (s *Store) mcpDeliveryNeedsWrite(ctx context.Context, id string, generation
    OR sub.cursor_seq<clock.pruned_through_seq
    OR NOT EXISTS (
     SELECT 1 FROM mcp_subscription_resource_bindings binding
-    JOIN mcp_source_resources source ON source.source_id=sub.source_id
     WHERE binding.subscription_id=sub.id AND binding.valid
-    AND binding.source_generation=source.generation
-    AND (
-     (sub.scope_kind='source' AND sub.scope_id=sub.source_id AND binding.scope_generation=source.generation)
-     OR (sub.scope_kind='inbox' AND EXISTS (
-      SELECT 1 FROM native_message_scopes inbox WHERE inbox.id=sub.scope_id AND inbox.source_id=sub.source_id
-      AND inbox.source_generation=source.generation AND inbox.generation=binding.scope_generation AND inbox.present
-     ))
-     OR (sub.scope_kind='conversation' AND EXISTS (
-      SELECT 1 FROM mcp_conversation_resources conversation
-      WHERE conversation.source_id=sub.source_id AND conversation.conversation_id=sub.scope_id
-      AND conversation.generation=binding.scope_generation
-      AND EXISTS (SELECT 1 FROM conversations current
-       WHERE current.id=conversation.conversation_id AND current.source_id=sub.source_id)
-     ))
-    )
+      AND (
+       (sub.name='msgvault.import_message_archived' AND sub.scope_kind='archive' AND sub.scope_id=0 AND sub.source_id IS NULL AND EXISTS (
+        SELECT 1 FROM archive_metadata archive
+        WHERE archive.key='mcp_events_archive_resource_generation_v1'
+          AND archive.value=binding.source_generation
+          AND archive.value=binding.scope_generation
+       ))
+       OR EXISTS (
+        SELECT 1 FROM mcp_source_resources source
+        WHERE source.source_id=sub.source_id
+          AND binding.source_generation=source.generation
+          AND (
+           (sub.scope_kind='source' AND sub.scope_id=sub.source_id AND binding.scope_generation=source.generation)
+           OR (sub.scope_kind='inbox' AND EXISTS (
+            SELECT 1 FROM native_message_scopes inbox
+            WHERE inbox.id=sub.scope_id AND inbox.source_id=sub.source_id
+              AND inbox.source_generation=source.generation
+              AND inbox.generation=binding.scope_generation AND inbox.present
+           ))
+           OR (sub.scope_kind='conversation' AND EXISTS (
+            SELECT 1 FROM mcp_conversation_resources conversation
+            WHERE conversation.source_id=sub.source_id AND conversation.conversation_id=sub.scope_id
+              AND conversation.generation=binding.scope_generation
+              AND EXISTS (SELECT 1 FROM conversations current WHERE current.id=conversation.conversation_id AND current.source_id=sub.source_id)
+           ))
+          )
+       )
+      )
    )
    OR (sub.pending_seq>0 AND (sub.next_attempt_at<=? OR EXISTS (
     SELECT 1 FROM mcp_event_log event WHERE event.seq=sub.pending_seq AND event.recorded_at<?
@@ -730,7 +772,7 @@ func (s *Store) mcpDeliveryNeedsWrite(ctx context.Context, id string, generation
    OR (sub.pending_seq IS NULL AND EXISTS (
     SELECT 1 FROM mcp_event_log event
     WHERE event.epoch=sub.cursor_epoch AND event.family=sub.name
-    AND event.scope_kind=sub.scope_kind AND event.scope_id=sub.scope_id
+    AND ((event.scope_kind=sub.scope_kind AND event.scope_id=sub.scope_id) OR (sub.name='msgvault.import_message_archived' AND sub.scope_kind='archive' AND sub.source_id IS NULL AND event.scope_kind='source' AND event.source_id>0))
     AND event.seq>sub.cursor_seq
    ))
   )
@@ -742,6 +784,18 @@ func (s *Store) mcpDeliveryNeedsWrite(ctx context.Context, id string, generation
 }
 
 func (s *Store) PrepareMCPDelivery(ctx context.Context, id string, generation int64, now time.Time, envelope func(MCPSubscription, MCPEvent) ([]byte, error)) (*MCPDelivery, error) {
+	// Use the same policy boundary as native import persistence. Configure
+	// takes this lock before identity and the Events clock as well.
+	root := s.mcpRoot()
+	root.mcpConfigMu.Lock()
+	defer root.mcpConfigMu.Unlock()
+	sub, err := s.GetMCPSubscription(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if !mcpSubscriptionDeliveryEnabled(root.mcpConfig.Load(), sub) {
+		return nil, nil //nolint:nilnil // Disabled queues retain their exact pending state.
+	}
 	ready, err := s.mcpDeliveryNeedsWrite(ctx, id, generation, now)
 	if err != nil || !ready {
 		return nil, err
@@ -826,7 +880,11 @@ func (s *Store) PrepareMCPDelivery(ctx context.Context, id string, generation in
 					continue
 				}
 			} else {
-				event, err = scanMCPEvent(tx.QueryRowContext(ctx, s.Rebind(`SELECT `+mcpEventColumns+` FROM mcp_event_log WHERE epoch=? AND family=? AND scope_kind=? AND scope_id=? AND seq>? ORDER BY seq LIMIT 1`), sub.CursorEpoch, sub.Name, sub.ScopeKind, sub.ScopeID, sub.CursorSeq))
+				if mcpImportArchiveScope(sub.Name, sub.ScopeKind, sub.ScopeID, sub.SourceID) {
+					event, err = scanMCPEvent(tx.QueryRowContext(ctx, s.Rebind(`SELECT `+mcpEventColumns+` FROM mcp_event_log WHERE epoch=? AND family=? AND seq>? ORDER BY seq LIMIT 1`), sub.CursorEpoch, sub.Name, sub.CursorSeq))
+				} else {
+					event, err = scanMCPEvent(tx.QueryRowContext(ctx, s.Rebind(`SELECT `+mcpEventColumns+` FROM mcp_event_log WHERE epoch=? AND family=? AND scope_kind=? AND scope_id=? AND seq>? ORDER BY seq LIMIT 1`), sub.CursorEpoch, sub.Name, sub.ScopeKind, sub.ScopeID, sub.CursorSeq))
+				}
 				if errors.Is(err, sql.ErrNoRows) {
 					if sub.CursorSeq == originalCursor {
 						return nil

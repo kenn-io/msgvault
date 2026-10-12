@@ -311,3 +311,76 @@ func attachmentSourceUnavailable(sourcePath string) bool {
 	}
 	return file.Close() != nil
 }
+
+// prepareNotificationAttachments performs all file work before the canonical
+// message transaction. Silent imports retain their native partial-failure path.
+func prepareNotificationAttachments(ctx context.Context, layout Layout, opts Options, plans []*plannedMessage) (stored, missing, skipped int, err error) {
+	index, err := newAttachmentIndex(layout.AttachmentsDir)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	maxBytes := opts.MaxAttachmentBytes
+	if maxBytes <= 0 {
+		maxBytes = defaultMaxAttachmentBytes
+	}
+	for _, plan := range plans {
+		if err := ctx.Err(); err != nil {
+			return stored, missing, skipped, err
+		}
+		a, b, c, prepareErr := prepareNotificationAttachment(opts, plan, index, maxBytes)
+		stored += a
+		missing += b
+		skipped += c
+		if prepareErr != nil {
+			plan.attachmentError = fmt.Errorf("%s record %d: %w", plan.row.File, plan.row.Record, prepareErr)
+		}
+	}
+	return stored, missing, skipped, nil
+}
+
+func prepareNotificationAttachment(opts Options, plan *plannedMessage, index *attachmentIndex, maxBytes int64) (stored, missing, skipped int, err error) {
+	plan.attachmentSnapshot = &store.KeyedAttachmentSnapshot{Prefix: SourceType + ":attachment:"}
+	reference := strings.TrimSpace(plan.row.Attachment)
+	if reference == "" {
+		return 0, 0, 0, nil
+	}
+	write, err := attachmentWrite(plan.row, reference)
+	if err != nil {
+		return stored, missing, skipped, err
+	}
+	sourcePath, found, err := index.resolve(reference)
+	if err != nil {
+		return stored, missing, skipped, err
+	}
+	if found {
+		info, statErr := os.Lstat(sourcePath)
+		switch {
+		case statErr == nil && info.Mode().IsRegular() && info.Size() > maxBytes:
+			write.Size = info.Size()
+			write.State = attachmentpolicy.StateSkipped
+			write.SkipReason = attachmentpolicy.SkipSizeCap
+			skipped++
+		case opts.AttachmentsDir == "":
+			return stored, missing, skipped, errors.New("iMazing attachment storage directory is required")
+		default:
+			relPath, hash, size, storeErr := export.StoreAttachmentFromPath(opts.AttachmentsDir, sourcePath, maxBytes)
+			if storeErr == nil {
+				write.StoragePath = relPath
+				write.ContentHash = hash
+				write.Size = size
+				write.State = attachmentpolicy.StateStored
+				write.SkipReason = ""
+				stored++
+			} else if attachmentSourceUnavailable(sourcePath) {
+				found = false
+			} else {
+				return stored, missing, skipped, fmt.Errorf("%s record %d: store attachment %q: %w", plan.row.File, plan.row.Record, reference, storeErr)
+			}
+		}
+	}
+	if !found {
+		missing++
+	}
+	plan.attachmentSnapshot.Writes = []store.AttachmentWrite{write}
+	return stored, missing, skipped, nil
+}

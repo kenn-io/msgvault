@@ -21,6 +21,8 @@ const (
 )
 
 type Result struct {
+	// ImportRunID is fresh per request; message decisions prevent replays.
+	ImportRunID     string
 	Status          Status
 	SourceID        int64
 	MessageID       int64
@@ -60,12 +62,20 @@ func (i *Importer) Import(ctx context.Context, req Request) (result Result, retE
 		return Result{}, err
 	}
 
+	scopedInput := *i
+	scopedInput.store = i.store.WithIngestContext(store.IngestContext{Mode: store.IngestBackfill})
+	i = &scopedInput
+
 	normalized, err := req.Normalize()
 	if err != nil {
 		return Result{}, err
 	}
 	snapshot, err := BuildSnapshot(normalized)
 	if err != nil {
+		return Result{}, err
+	}
+
+	if err := i.store.ValidateNativeImportChoice(ctx, SourceType, normalized.NotifyImports); err != nil {
 		return Result{}, err
 	}
 
@@ -117,6 +127,17 @@ func (i *Importer) Import(ctx context.Context, req Request) (result Result, retE
 		}
 	}()
 
+	ownershipCtx := context.WithoutCancel(ctx)
+	run, err := i.store.BeginNativeImportAttempt(ownershipCtx, source.ID, SourceType, normalized.NotifyImports, syncID, 0)
+	if err != nil {
+		return result, fmt.Errorf("begin meeting import: %w", err)
+	}
+	result.ImportRunID = run.ID
+	i.store, err = i.store.WithImportRun(ownershipCtx, run.ID)
+	if err != nil {
+		return result, fmt.Errorf("bind meeting import: %w", err)
+	}
+
 	var organizer *meetingarchive.Person
 	if snapshot.Organizer != nil {
 		person := archivePerson(snapshot.SourceIdentifier, *snapshot.Organizer)
@@ -140,7 +161,7 @@ func (i *Importer) Import(ctx context.Context, req Request) (result Result, retE
 		RawFormat:            RawFormat,
 		Organizer:            organizer,
 		Attendees:            attendees,
-	}, meetingarchive.UpsertOptions{})
+	}, meetingarchive.UpsertOptions{FTSBestEffort: normalized.NotifyImports})
 	if archiveResult.MessageID != 0 {
 		result.MessageID = archiveResult.MessageID
 		result.Status = StatusUpdated

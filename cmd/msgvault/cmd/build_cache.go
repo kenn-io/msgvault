@@ -881,7 +881,7 @@ func acquireCacheBuildLock(ctx context.Context, analyticsDir string) (*flock.Flo
 	if locked, err := buildLock.TryLock(); err != nil {
 		return nil, fmt.Errorf("acquire cache build lock: %w", err)
 	} else if !locked {
-		fmt.Println("Waiting for another msgvault process to finish a cache build...")
+		fmt.Fprintln(os.Stderr, "Waiting for another msgvault process to finish a cache build...")
 		if _, err := buildLock.TryLockContext(ctx, 50*time.Millisecond); err != nil {
 			return nil, fmt.Errorf("acquire cache build lock: %w", err)
 		}
@@ -1025,7 +1025,7 @@ func withFullBuildFallback(
 	if !errors.Is(err, ErrDerivedRefreshRequiresFullBuild) {
 		return result, err
 	}
-	fmt.Printf("%v. Forcing full rebuild...\n", err)
+	fmt.Fprintf(os.Stderr, "%v. Forcing full rebuild...\n", err)
 	return buildCacheLockedAttempt(dbPath, analyticsDir, true, false, locking, builderOverrides...)
 }
 
@@ -1075,11 +1075,11 @@ func buildCacheLockedAttempt(
 			return nil, fmt.Errorf("read analytics cache state before build: %w", err)
 		}
 		if state.SchemaVersion != cacheSchemaVersion {
-			fmt.Printf("Cache schema version mismatch (have v%d, need v%d). Forcing full rebuild.\n",
+			fmt.Fprintf(os.Stderr, "Cache schema version mismatch (have v%d, need v%d). Forcing full rebuild.\n",
 				state.SchemaVersion, cacheSchemaVersion)
 			fullRebuild = true
 		} else if state.FullRebuildRequired {
-			fmt.Println("Previous build published a partial snapshot. Forcing full rebuild...")
+			fmt.Fprintln(os.Stderr, "Previous build published a partial snapshot. Forcing full rebuild...")
 			fullRebuild = true
 		} else {
 			previousState = state
@@ -1126,7 +1126,7 @@ func buildCacheLockedAttempt(
 	if hasPreviousState && !fullRebuild &&
 		accountIdentityRevision != previousState.AccountIdentityRevision {
 		// Canonical links can reuse message facts; account attribution cannot.
-		fmt.Println("Account identities changed. Forcing full rebuild...")
+		fmt.Fprintln(os.Stderr, "Account identities changed. Forcing full rebuild...")
 		fullRebuild = true
 		lastMessageID = 0
 	}
@@ -1257,7 +1257,7 @@ func buildCacheLockedAttempt(
 		failedSyncChanged := syncCounters.failedRunCount != previousState.LastFailedSyncRunCount ||
 			syncCounters.failedRunIDSum != previousState.LastFailedSyncRunIDSum
 		if updatesChanged || additionsRegressed || failedSyncChanged || populationChanged {
-			fmt.Println("Existing cached messages changed. Forcing full rebuild...")
+			fmt.Fprintln(os.Stderr, "Existing cached messages changed. Forcing full rebuild...")
 			fullRebuild = true
 			lastMessageID = 0
 		}
@@ -1384,9 +1384,9 @@ func buildCacheLockedAttempt(
 	}
 
 	if replaceAll {
-		fmt.Println("Building analytics cache...")
+		fmt.Fprintln(os.Stderr, "Building analytics cache...")
 	} else {
-		fmt.Println("Updating analytics cache...")
+		fmt.Fprintln(os.Stderr, "Updating analytics cache...")
 	}
 	buildStart := time.Now()
 
@@ -1399,12 +1399,12 @@ func buildCacheLockedAttempt(
 	// runExport runs one dataset export and prints timing info.
 	runExport := func(label string, export func() error) error {
 		start := time.Now()
-		fmt.Printf("  %-25s", label+"...")
+		fmt.Fprintf(os.Stderr, "  %-25s", label+"...")
 		if err := export(); err != nil {
-			fmt.Println()
+			fmt.Fprintln(os.Stderr)
 			return query.HintRepairEncoding(err)
 		}
-		fmt.Printf(" done (%s)\n", time.Since(start).Round(time.Millisecond))
+		fmt.Fprintf(os.Stderr, " done (%s)\n", time.Since(start).Round(time.Millisecond))
 		return nil
 	}
 
@@ -1572,7 +1572,7 @@ func buildCacheLockedAttempt(
 	}
 	reportRelationshipActivityStats(derived.Activity)
 
-	fmt.Printf("  %-25s %s\n", "Total:", time.Since(buildStart).Round(time.Millisecond))
+	fmt.Fprintf(os.Stderr, "  %-25s %s\n", "Total:", time.Since(buildStart).Round(time.Millisecond))
 
 	stagedCount, err := countStagedMessages(exportDB, messagesDir, replaceAll)
 	if err != nil {
@@ -1681,12 +1681,12 @@ func buildCacheLockedAttempt(
 }
 
 func reportIdentityBuildProgress(dataset string, elapsed time.Duration) {
-	fmt.Printf("  %-25s done (%s)\n",
+	fmt.Fprintf(os.Stderr, "  %-25s done (%s)\n",
 		dataset+"...", elapsed.Round(time.Millisecond))
 }
 
 func reportRelationshipActivityStats(stats identityindex.ActivityStats) {
-	fmt.Printf(
+	fmt.Fprintf(os.Stderr,
 		"  %-25s direct=%d conversation=%d final=%d expansion=%.2fx\n",
 		"Relationship build rows:",
 		stats.DirectRows,

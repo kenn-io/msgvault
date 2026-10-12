@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 
@@ -45,7 +46,7 @@ var ErrMIMEAttachmentPreparation = errors.New("prepare MIME attachment")
 
 // IngestRawMessageSnapshot stores the ready native MIME snapshot atomically.
 // File publication happens before SQL; a failure leaves the previous archive
-// snapshot intact. Offline importers retain IngestRawMessage's best effort mode.
+// snapshot intact. Participants and required attachment references commit with it.
 func IngestRawMessageSnapshot(ctx context.Context, st *store.Store,
 	sourceID int64, identifier, attachmentsDir string, labelIDs []int64,
 	sourceMsgID, rawHash string, raw []byte, fallbackDate time.Time, log *slog.Logger,
@@ -59,9 +60,9 @@ func IngestRawMessageSnapshot(ctx context.Context, st *store.Store,
 
 type rawMessageIngestFunc func(context.Context, *store.Store, int64, string, string, []int64, string, string, []byte, time.Time, *slog.Logger) error
 
-func rawMessageIngester(images *remoteimage.Fetcher) rawMessageIngestFunc {
+func rawMessageIngester(images *remoteimage.Fetcher, notifyImports bool) rawMessageIngestFunc {
 	return func(ctx context.Context, st *store.Store, sourceID int64, identifier, attachmentsDir string, labelIDs []int64, sourceMsgID, rawHash string, raw []byte, fallbackDate time.Time, log *slog.Logger) error {
-		return ingestRawMessage(ctx, st, sourceID, identifier, attachmentsDir, labelIDs, sourceMsgID, rawHash, raw, fallbackDate, log, images, "")
+		return ingestRawMessageMode(ctx, st, sourceID, identifier, attachmentsDir, labelIDs, sourceMsgID, rawHash, raw, fallbackDate, log, images, "", notifyImports)
 	}
 }
 
@@ -92,11 +93,17 @@ func ingestRawMessageMode(
 		}
 		attachmentWrites = &writes
 	}
-
 	subject := textutil.EnsureUTF8(parsed.Subject)
 	bodyText := textutil.EnsureUTF8(parsed.GetBodyText())
 	bodyHTML := textutil.EnsureUTF8(parsed.BodyHTML)
-
+	var remoteImageWrites []store.AttachmentWrite
+	if coherent && images != nil {
+		var result remoteimage.ArchiveResult
+		remoteImageWrites, result = images.Prepare(ctx, attachmentsDir, bodyHTML, nil)
+		for _, imageErr := range result.Errors {
+			log.Warn("failed to prepare remote image", "error", imageErr)
+		}
+	}
 	// Sanitize address fields in place so all downstream consumers
 	// (participantMap, senderID lookup, buildRecipientSet) use consistent keys.
 	for _, addrs := range [][]mime.Address{
@@ -118,9 +125,32 @@ func ingestRawMessageMode(
 	allAddresses = append(allAddresses, parsed.To...)
 	allAddresses = append(allAddresses, parsed.Cc...)
 	allAddresses = append(allAddresses, parsed.Bcc...)
-	participantMap, err := st.EnsureParticipantsBatch(allAddresses)
-	if err != nil {
-		return fmt.Errorf("ensure participants: %w", err)
+	var err error
+	participantMap := make(map[string]int64)
+	var participantEmails []string
+	var participants []store.ParticipantPersistData
+	if coherent {
+		unique := make(map[string]mime.Address)
+		for _, addr := range allAddresses {
+			if addr.Email != "" {
+				if _, seen := unique[addr.Email]; !seen {
+					unique[addr.Email] = addr
+				}
+			}
+		}
+		for email := range unique {
+			participantEmails = append(participantEmails, email)
+		}
+		slices.Sort(participantEmails)
+		for _, email := range participantEmails {
+			addr := unique[email]
+			participants = append(participants, store.ParticipantPersistData{EmailAddress: email, DisplayName: addr.Name, Domain: addr.Domain})
+		}
+	} else {
+		participantMap, err = st.EnsureParticipantsBatch(allAddresses)
+		if err != nil {
+			return fmt.Errorf("ensure participants: %w", err)
+		}
 	}
 
 	var senderID sql.NullInt64
@@ -226,10 +256,11 @@ func ingestRawMessageMode(
 		nativeMembership = nativeScopes[0]
 	}
 	// Persist atomically
-	messageID, err := st.PersistMessageContext(ctx, &store.MessagePersistData{
+	data := &store.MessagePersistData{
 		Conversation:              conversation,
 		NativeScopes:              nativeMembership,
 		MIMEAttachmentReplacement: attachmentWrites,
+		RemoteImageWrites:         remoteImageWrites,
 		EmailInReplyTo:            replyHeader,
 		FTS:                       fts,
 		FTSBestEffort:             coherent,
@@ -239,7 +270,32 @@ func ingestRawMessageMode(
 		RawMIME:                   raw,
 		Recipients:                recipientSets,
 		LabelIDs:                  labelIDs,
-	})
+	}
+	var messageID int64
+	if coherent {
+		messageID, err = st.PersistMessageWithParticipantsContext(ctx, participants, func(ids []int64) *store.MessagePersistData {
+			for i, email := range participantEmails {
+				participantMap[email] = ids[i]
+			}
+			snapshot := *data
+			message := *rec
+			if len(parsed.From) > 0 && parsed.From[0].Email != "" {
+				if id, ok := participantMap[parsed.From[0].Email]; ok {
+					message.SenderID = sql.NullInt64{Int64: id, Valid: true}
+				}
+			}
+			snapshot.Message = &message
+			snapshot.Recipients = []store.RecipientSet{
+				buildRecipientSet("from", parsed.From, participantMap),
+				buildRecipientSet("to", parsed.To, participantMap),
+				buildRecipientSet("cc", parsed.Cc, participantMap),
+				buildRecipientSet("bcc", parsed.Bcc, participantMap),
+			}
+			return &snapshot
+		})
+	} else {
+		messageID, err = st.PersistMessageContext(ctx, data)
+	}
 	if err != nil {
 		return err
 	}
@@ -268,10 +324,8 @@ func ingestRawMessageMode(
 	// Correct attachment count if disk storage filtered some out
 	if attachmentsDir != "" && len(parsed.Attachments) > 0 {
 		var storedCount int
-		if err := st.DB().QueryRow(
-			st.Rebind(`SELECT COUNT(*) FROM attachments WHERE message_id = ?`),
-			messageID,
-		).Scan(&storedCount); err != nil {
+		// #nosec G701 -- Fixed SQL; Rebind changes placeholders and the message ID is bound.
+		if err := st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM attachments WHERE message_id = ?`), messageID).Scan(&storedCount); err != nil {
 			log.Warn("failed to count stored attachments",
 				"message", messageID, "error", err,
 			)

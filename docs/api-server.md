@@ -100,11 +100,13 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.16.0**.
+it is separate from the binary release version. The current schema is **3.17.0**.
 Upgrade clients and daemon together across incompatible schema versions,
 including remote deployments.
 
 Schema 3.16.0 adds owner-only native resource discovery and source/inbox subscriptions to [MCP Events](#mcp-events).
+
+Schema 3.17.0 adds separately opted-in native import notifications and opaque import-run results. Exact source subscriptions use a lifetime reference returned by the existing owner-only resource route.
 
 Schema 3.15.0 adds owner-only [MCP Events](#mcp-events) and typed calendar projections on message details.
 
@@ -490,7 +492,8 @@ There is no dedicated cancellation endpoint for these jobs.
 ## MCP Events
 
 Schema 3.15.0 adds these owner-key-only endpoints. Schema 3.16.0 adds
-`POST /resources` and source/inbox subscription families. These routes accept no
+`POST /resources` and source/inbox subscription families. Schema 3.17.0 adds
+the import notification event family. These routes accept no
 caller-supplied principal. Browser sessions, delegated agent tokens, and keyless
 access cannot use them. Disabled Events has no advertised capability.
 
@@ -518,6 +521,15 @@ with empty event capabilities and reason `events_disabled`. It does not
 contact a provider, enable capture, or create the signing key. Invalid queries
 and stale or mismatched cursors return a fixed request error. This read route
 shares the owner-only authentication and `no-store` rules below.
+
+Import notifications are separately opted in. Set
+[`mcp.events.import_notifications`](configuration.md#mcpevents) on the daemon
+and pass `--notify-imports` to an import command, or `notify_imports: true` in a
+meeting import request. A requested notification fails before writing when the
+daemon option is disabled. Successful import results include an opaque
+`import_run_id`; retries use a new run ID and do not notify already imported
+messages again. Exact source subscriptions require the current `source_ref`
+from `POST /resources`; the all-source subscription uses `source_id: "*"`.
 
 POST bodies reject unknown fields. Callback destinations and encrypted secrets
 are never returned by status. Authenticated owner health includes `mcp_events`

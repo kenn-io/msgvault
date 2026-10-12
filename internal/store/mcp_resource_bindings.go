@@ -20,6 +20,20 @@ func (s *Store) ensureMCPScopeLifetime(ctx context.Context, tx *sql.Tx, kind str
 	if err == nil {
 		return existing, nil
 	}
+	if kind == "archive" {
+		if id != 0 || sourceID != 0 {
+			return mcpScopeLifetime{}, mcpStoreError("resource_unavailable")
+		}
+		var random [32]byte
+		if _, err := rand.Read(random[:]); err != nil {
+			return mcpScopeLifetime{}, fmt.Errorf("generate archive lifetime: %w", err)
+		}
+		_, err := tx.ExecContext(ctx, s.Rebind(`INSERT INTO archive_metadata (key,value) VALUES ('mcp_events_archive_resource_generation_v1',?) ON CONFLICT (key) DO NOTHING`), hex.EncodeToString(random[:]))
+		if err != nil {
+			return mcpScopeLifetime{}, err
+		}
+		return s.mcpScopeLifetime(ctx, tx, kind, id, sourceID)
+	}
 	if kind == mcpScopeInbox {
 		return existing, err
 	}
@@ -52,6 +66,11 @@ func (s *Store) mcpScopeLifetime(ctx context.Context, db SQLReader, kind string,
 	var result mcpScopeLifetime
 	var err error
 	switch kind {
+	case "archive":
+		if id != 0 || sourceID != 0 {
+			return result, mcpStoreError("resource_unavailable")
+		}
+		err = db.QueryRowContext(ctx, s.Rebind(`SELECT value,value FROM archive_metadata WHERE key='mcp_events_archive_resource_generation_v1'`)).Scan(&result.source, &result.scope)
 	case mcpScopeSource:
 		if id != sourceID {
 			return result, mcpStoreError("resource_unavailable")
@@ -94,6 +113,8 @@ func mcpAdoptableResourceFamily(family, kind string) bool {
 		return kind == mcpScopeConversation
 	case "msgvault.calendar_event_changed":
 		return kind == mcpScopeSource
+	case "msgvault.import_message_archived":
+		return kind == "archive" || kind == mcpScopeSource
 	default:
 		return false
 	}

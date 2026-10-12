@@ -49,7 +49,9 @@ type convScope struct {
 	// filesHandledExternally lets the offline Slackdump importer preserve the
 	// shared message mapping while replacing file rows from exported bytes.
 	filesHandledExternally bool
-	budgetUsed             int
+	// offlineSnapshot commits the complete native export before its import occurrence.
+	offlineSnapshot func(context.Context, int64, *Message, store.Message, string, []byte) (int64, error)
+	budgetUsed      int
 }
 
 type messageRecipient struct {
@@ -1280,6 +1282,13 @@ func (imp *Importer) processMessage(ctx context.Context, cc *convScope, m *Messa
 	if len(raw) == 0 {
 		return fmt.Errorf("slack message %s has no raw JSON archive", msg.SourceMessageID)
 	}
+	if cc.offlineSnapshot != nil {
+		messageID, err := cc.offlineSnapshot(ctx, existing[msg.SourceMessageID], m, msg, text, raw)
+		if err != nil {
+			return fmt.Errorf("archive Slackdump message snapshot: %w", err)
+		}
+		return imp.recordMessageSnapshot(ctx, messageID, msg.SourceMessageID, text, m.User, wasExisting, sum)
+	}
 	var senderPID int64
 	if m.User != "" {
 		senderPID, err = imp.res.resolveID(ctx, m.User)
@@ -1374,6 +1383,29 @@ func (imp *Importer) processMessage(ctx context.Context, cc *convScope, m *Messa
 	}
 	if _, counted := sum.processedMessageIDs[msg.SourceMessageID]; !counted {
 		sum.processedMessageIDs[msg.SourceMessageID] = struct{}{}
+		sum.MessagesProcessed++
+		if wasExisting {
+			sum.MessagesUpdated++
+		} else {
+			sum.MessagesAdded++
+		}
+	}
+	return nil
+}
+
+func (imp *Importer) recordMessageSnapshot(ctx context.Context, messageID int64, sourceMessageID, text, userID string, wasExisting bool, sum *ImportSummary) error {
+	// FTS is derived and recoverable through rebuild-fts.
+	if err := imp.store.UpsertFTSContext(ctx, messageID, "", text, imp.res.displayName(userID), "", ""); err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return err
+		}
+		sum.Errors++
+	}
+	if sum.processedMessageIDs == nil {
+		sum.processedMessageIDs = make(map[string]struct{})
+	}
+	if _, counted := sum.processedMessageIDs[sourceMessageID]; !counted {
+		sum.processedMessageIDs[sourceMessageID] = struct{}{}
 		sum.MessagesProcessed++
 		if wasExisting {
 			sum.MessagesUpdated++

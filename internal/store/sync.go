@@ -1007,6 +1007,9 @@ func (s *Store) CompleteSyncContext(ctx context.Context, syncID int64, finalHist
 		if err != nil {
 			return fmt.Errorf("complete sync %d: %w", syncID, err)
 		}
+		if err := completionStore.completeImportRunTx(ctx, tx.Tx, syncID); err != nil {
+			return fmt.Errorf("complete sync %d: complete logical import: %w", syncID, err)
+		}
 		if err := completionStore.coalescePersonSweepChangesTx(ctx, tx, syncID, sourceID); err != nil {
 			return fmt.Errorf("complete sync %d: %w", syncID, err)
 		}
@@ -1109,6 +1112,9 @@ func (s *Store) completeSyncAndUpdateSourceContext(
 		}
 		if rows != 1 {
 			return fmt.Errorf("complete sync %d: %w", syncID, ErrSyncRunSuperseded)
+		}
+		if err := completionStore.completeImportRunTx(ctx, tx.Tx, syncID); err != nil {
+			return fmt.Errorf("complete sync %d: complete logical import: %w", syncID, err)
 		}
 		if err := completionStore.coalescePersonSweepChangesTx(ctx, tx, syncID, sourceID); err != nil {
 			return fmt.Errorf("complete sync %d: %w", syncID, err)

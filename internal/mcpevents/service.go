@@ -45,10 +45,11 @@ func StoreCaptureConfig(opts Options) store.MCPEventsConfig {
 		principal = Principal(opts.OwnerKey)
 	}
 	return store.MCPEventsConfig{
-		Enabled:      opts.Enabled,
-		Principal:    principal,
-		Capabilities: capabilities(opts.Enabled, opts.Sources),
-		Retention:    retention,
+		ImportNotifications: opts.ImportNotifications,
+		Enabled:             opts.Enabled,
+		Principal:           principal,
+		Capabilities:        configuredCapabilities(opts),
+		Retention:           retention,
 	}
 }
 
@@ -67,7 +68,7 @@ func New(ctx context.Context, st *store.Store, opts Options) (*Service, error) {
 			return nil, err
 		}
 	}
-	s := &Service{st: st, opts: opts, principal: Principal(opts.OwnerKey), caps: capabilities(opts.Enabled, opts.Sources), wake: make(chan struct{}, 1), deliveryHints: make(chan struct{}, 1), workers: make(map[string]*worker)}
+	s := &Service{st: st, opts: opts, principal: Principal(opts.OwnerKey), caps: configuredCapabilities(opts), wake: make(chan struct{}, 1), deliveryHints: make(chan struct{}, 1), workers: make(map[string]*worker)}
 	if opts.Enabled {
 		var rows []store.MCPSubscription
 		err := s.operation(ctx, func() error { var err error; rows, err = st.ListMCPSubscriptionsForStartup(ctx); return err })

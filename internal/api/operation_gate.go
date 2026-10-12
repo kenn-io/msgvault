@@ -367,6 +367,7 @@ var operationGateExemptPaths = map[string]bool{
 	mcpEventsPath + "/list":        true,
 	mcpEventsPath + "/subscribe":   true,
 	mcpEventsPath + "/unsubscribe": true,
+	mcpEventsPath + "/resources":   true,
 	// Calendar control acquires the gate after parsing, authorization, and preview.
 	"/api/v1/calendar/control": true,
 	// Scoring coordinates the gate around local mutations, never provider I/O.

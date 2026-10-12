@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/export"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -35,6 +36,9 @@ func NewImporter(s *store.Store, progress ImportProgress) *Importer {
 // Import detects the WhatsApp database schema and imports its messages.
 func (imp *Importer) Import(ctx context.Context, waDBPath string, opts ImportOptions) (*ImportSummary, error) {
 	startTime := time.Now()
+	view := *imp
+	view.store = imp.store.WithIngestContext(store.IngestContext{Mode: store.IngestBackfill})
+	imp = &view
 	summary := &ImportSummary{}
 
 	waDB, err := openReadOnlyDatabase(ctx, waDBPath)
@@ -45,6 +49,9 @@ func (imp *Importer) Import(ctx context.Context, waDBPath string, opts ImportOpt
 
 	kind, err := detectDatabaseKind(waDB)
 	if err != nil {
+		return nil, err
+	}
+	if err := imp.store.ValidateNativeImportChoice(ctx, "whatsapp", opts.NotifyImports); err != nil {
 		return nil, err
 	}
 	if kind == databaseKindApple {
@@ -90,15 +97,22 @@ func (imp *Importer) Import(ctx context.Context, waDBPath string, opts ImportOpt
 		}
 	}()
 
-	imp.progress.OnStart()
-
-	// Create participant for the phone owner (self).
-	selfParticipantID, err := imp.store.EnsureParticipantByPhone(opts.Phone, opts.DisplayName, "whatsapp")
+	ownershipCtx := context.WithoutCancel(ctx)
+	run, err := imp.store.BeginNativeImportAttempt(ownershipCtx, source.ID, "whatsapp", opts.NotifyImports, syncID, 0)
 	if err != nil {
 		syncErr = err
-		return nil, fmt.Errorf("ensure self participant: %w", err)
+		return nil, fmt.Errorf("begin Android WhatsApp import: %w", err)
 	}
-	summary.Participants++
+	summary.ImportRunID = run.ID
+	imp.store, err = imp.store.WithImportRun(ownershipCtx, run.ID)
+	if err != nil {
+		syncErr = err
+		return summary, fmt.Errorf("bind Android WhatsApp import: %w", err)
+	}
+
+	imp.progress.OnStart()
+
+	ownerCounted := false
 
 	// Fetch all chats from WhatsApp DB.
 	chats, err := fetchChats(waDB)
@@ -114,25 +128,26 @@ func (imp *Importer) Import(ctx context.Context, waDBPath string, opts ImportOpt
 		return nil, fmt.Errorf("fetch lid map: %w", err)
 	}
 
+	if len(chats) == 0 {
+		if _, err := imp.store.EnsureParticipantByPhone(opts.Phone, opts.DisplayName, "whatsapp"); err != nil {
+			syncErr = err
+			return nil, fmt.Errorf("ensure empty import owner: %w", err)
+		}
+		summary.Participants++
+	}
+
 	batchSize := opts.BatchSize
 	if batchSize <= 0 {
 		batchSize = 1000
 	}
 
-	// Track key_id → message_id for reply threading within each chat.
-	// Scoped per chat to bound memory; cross-chat quotes won't thread
-	// but that's rare and the quoted text is still in the message body.
-	keyIDToMsgID := make(map[string]int64)
-
 	totalLimit := opts.Limit
 	totalAdded := int64(0)
 
 	for _, chat := range chats {
-		// Clear reply map per chat to prevent unbounded growth.
-		clear(keyIDToMsgID)
 		if ctx.Err() != nil {
 			syncErr = ctx.Err()
-			return nil, ctx.Err()
+			return summary, ctx.Err()
 		}
 
 		// Check global limit.
@@ -142,60 +157,29 @@ func (imp *Importer) Import(ctx context.Context, waDBPath string, opts ImportOpt
 
 		summary.ChatsProcessed++
 
-		// Map chat to conversation.
 		sourceConvID, convType, title := mapConversation(chat)
-		conversationID, err := imp.store.EnsureConversationWithType(source.ID, sourceConvID, convType, title)
-		if err != nil {
-			summary.Errors++
-			imp.progress.OnError(fmt.Errorf("ensure conversation %s: %w", sourceConvID, err))
-			continue
-		}
-
 		imp.progress.OnChatStart(chat.RawString, chatTitle(chat), 0)
-
-		// For direct chats: add the remote participant. Skip non-phone JIDs
-		// (e.g. lid:..., broadcast) — normalizePhone returns "" for those.
-		if !isGroupChat(chat) && chat.User != "" {
+		plan := androidConversationPlan{}
+		plan.add(opts.Phone, opts.DisplayName, "member")
+		if !isGroupChat(chat) {
 			if phone := normalizePhone(chat.User, chat.Server); phone != "" {
-				if participantID, err := imp.store.EnsureParticipantByPhone(phone, "", "whatsapp"); err != nil {
-					summary.Errors++
-					imp.progress.OnError(fmt.Errorf("ensure participant %s: %w", phone, err))
-				} else {
-					summary.Participants++
-					_ = imp.store.EnsureConversationParticipant(conversationID, participantID, "member")
-					_ = imp.store.EnsureConversationParticipant(conversationID, selfParticipantID, "member")
-				}
+				plan.add(phone, "", "member")
 			}
-		}
-
-		// For group chats: add all group participants.
-		if isGroupChat(chat) {
+		} else {
 			members, err := fetchGroupParticipants(waDB, chat.RawString)
 			if err != nil {
 				summary.Errors++
 				imp.progress.OnError(fmt.Errorf("fetch group participants for %s: %w", sourceConvID, err))
 			} else {
 				for _, member := range members {
-					phone := normalizePhone(member.MemberUser, member.MemberServer)
-					if phone == "" {
-						continue // Non-phone JID — skip.
+					if phone := normalizePhone(member.MemberUser, member.MemberServer); phone != "" {
+						plan.add(phone, "", mapGroupRole(member.Admin))
 					}
-					participantID, err := imp.store.EnsureParticipantByPhone(phone, "", "whatsapp")
-					if err != nil {
-						summary.Errors++
-						continue
-					}
-					summary.Participants++
-					role := mapGroupRole(member.Admin)
-					_ = imp.store.EnsureConversationParticipant(conversationID, participantID, role)
 				}
 			}
 		}
-
-		// Track resolved sender participant IDs for participant fallback.
-		// After the message loop, we ensure each sender is a conversation
-		// participant — covers groups where group_participants is empty.
-		chatSenderIDs := make(map[int64]struct{})
+		chatParticipantsCounted := false
+		importableSeen := false
 
 		// Process messages in batches.
 		chatAdded := int64(0)
@@ -204,7 +188,7 @@ func (imp *Importer) Import(ctx context.Context, waDBPath string, opts ImportOpt
 		for {
 			if ctx.Err() != nil {
 				syncErr = ctx.Err()
-				return nil, ctx.Err()
+				return summary, ctx.Err()
 			}
 
 			// Check global limit for this batch.
@@ -275,95 +259,123 @@ func (imp *Importer) Import(ctx context.Context, waDBPath string, opts ImportOpt
 					continue
 				}
 
-				// Resolve sender.
-				var senderID sql.NullInt64
+				importableSeen = true
+				messagePlan := plan.clone()
+				senderIndex := -1
 				if waMsg.FromMe == 1 {
-					senderID = sql.NullInt64{Int64: selfParticipantID, Valid: true}
-				} else if waMsg.SenderServer.Valid && waMsg.SenderServer.String == "lid" {
-					// Lid JID — resolve via jid_map before trying normalizePhone,
-					// because lid user strings can be 15 digits and pass E.164
-					// validation despite not being real phone numbers.
-					phone := resolveLidSender(waMsg.SenderJIDRowID, waMsg.SenderServer.String, lidMap)
-					if phone != "" {
-						pid, err := imp.store.EnsureParticipantByPhone(phone, "", "whatsapp")
-						if err != nil {
-							summary.Errors++
-							imp.progress.OnError(fmt.Errorf("ensure sender participant %s: %w", phone, err))
-						} else {
-							senderID = sql.NullInt64{Int64: pid, Valid: true}
-						}
+					senderIndex = 0
+				} else {
+					phone := ""
+					if waMsg.SenderServer.Valid && waMsg.SenderServer.String == "lid" {
+						phone = resolveLidSender(waMsg.SenderJIDRowID, waMsg.SenderServer.String, lidMap)
+					} else if waMsg.SenderUser.Valid && waMsg.SenderUser.String != "" {
+						phone = normalizePhone(waMsg.SenderUser.String, waMsg.SenderServer.String)
+					} else if !isGroupChat(chat) {
+						phone = normalizePhone(chat.User, chat.Server)
 					}
-				} else if waMsg.SenderUser.Valid && waMsg.SenderUser.String != "" {
-					phone := normalizePhone(waMsg.SenderUser.String, waMsg.SenderServer.String)
 					if phone != "" {
-						pid, err := imp.store.EnsureParticipantByPhone(phone, "", "whatsapp")
-						if err != nil {
-							summary.Errors++
-							imp.progress.OnError(fmt.Errorf("ensure sender participant %s: %w", phone, err))
-						} else {
-							senderID = sql.NullInt64{Int64: pid, Valid: true}
-						}
-					}
-				} else if !isGroupChat(chat) && waMsg.FromMe == 0 {
-					// In a direct chat, the other person is the sender.
-					phone := normalizePhone(chat.User, chat.Server)
-					if phone != "" {
-						pid, err := imp.store.EnsureParticipantByPhone(phone, "", "whatsapp")
-						if err == nil {
-							senderID = sql.NullInt64{Int64: pid, Valid: true}
-						}
+						senderIndex = messagePlan.add(phone, "", "member")
 					}
 				}
-
-				// Track sender for participant fallback.
-				if senderID.Valid {
-					chatSenderIDs[senderID.Int64] = struct{}{}
+				memberCount := len(messagePlan.participants)
+				var nativeReactions []androidReactionPlan
+				for _, reaction := range reactionMap[waMsg.RowID] {
+					value := mapReaction(reaction)
+					if value == "" {
+						continue
+					}
+					phone := opts.Phone
+					if reaction.SenderServer.Valid && reaction.SenderServer.String == "lid" {
+						phone = resolveLidSender(reaction.SenderJIDRowID, reaction.SenderServer.String, lidMap)
+					} else if reaction.SenderUser.Valid && reaction.SenderUser.String != "" {
+						phone = normalizePhone(reaction.SenderUser.String, reaction.SenderServer.String)
+					}
+					if phone == "" {
+						continue
+					}
+					index := -1
+					for i, participant := range messagePlan.participants {
+						if participant.PhoneNumber == phone {
+							index = i
+							break
+						}
+					}
+					if index < 0 {
+						index = messagePlan.add(phone, "", "")
+					}
+					nativeReactions = append(nativeReactions, androidReactionPlan{participant: index, value: value, createdAt: time.Unix(reaction.Timestamp/1000, 0).UTC()})
 				}
-
-				// Build and upsert the message.
-				msg := mapMessage(waMsg, conversationID, source.ID, senderID)
-				messageID, err := imp.store.UpsertMessage(&msg)
-				if err != nil {
-					summary.Errors++
-					imp.progress.OnError(fmt.Errorf("upsert message %s: %w", waMsg.KeyID, err))
-					continue
-				}
-
-				// Track for reply threading.
-				keyIDToMsgID[waMsg.KeyID] = messageID
-
-				summary.MessagesAdded++
-				chatAdded++
-				totalAdded++
-
-				// Store message body.
 				bodyText := sql.NullString{}
 				if waMsg.TextData.Valid && waMsg.TextData.String != "" {
 					bodyText = waMsg.TextData
 				}
-				// Check for media caption as additional body text.
-				if media, ok := mediaMap[waMsg.RowID]; ok {
-					if media.MediaCaption.Valid && media.MediaCaption.String != "" {
-						if bodyText.Valid && bodyText.String != "" {
-							// Append caption to body.
-							bodyText.String += "\n\n" + media.MediaCaption.String
-						} else {
-							bodyText = media.MediaCaption
-						}
+				if media, ok := mediaMap[waMsg.RowID]; ok && media.MediaCaption.Valid && media.MediaCaption.String != "" {
+					if bodyText.Valid {
+						bodyText.String += "\n\n" + media.MediaCaption.String
+					} else {
+						bodyText = media.MediaCaption
 					}
 				}
-				if bodyText.Valid {
-					_ = imp.store.UpsertMessageBody(messageID, bodyText, sql.NullString{})
-				}
-
-				// Store raw JSON for re-parsing.
 				rawJSON, err := json.Marshal(waMsg, json.Deterministic(true))
-				if err == nil {
-					_ = imp.store.UpsertMessageRawWithFormat(messageID, rawJSON, "whatsapp_json")
+				if err != nil {
+					summary.Errors++
+					imp.progress.OnError(fmt.Errorf("encode message %s: %w", waMsg.KeyID, err))
+					continue
 				}
+				var readyMedia *store.KeyedAttachmentSnapshot
+				preparedMedia := false
+				if media, ok := mediaMap[waMsg.RowID]; ok && opts.NotifyImports {
+					write := prepareAndroidMedia(media, mapMediaType(waMsg.MessageType), opts)
+					preparedMedia = write.StoragePath != ""
+					readyMedia = &store.KeyedAttachmentSnapshot{Prefix: "whatsapp:", Writes: []store.AttachmentWrite{write}, PreserveStoredOnFailure: true, InvalidateCacheOnChange: true, PreserveUnmentioned: true}
+				}
+				messageID, err := imp.store.PersistMessageWithParticipantsContext(ctx, messagePlan.participants, func(ids []int64) *store.MessagePersistData {
+					var senderID sql.NullInt64
+					if senderIndex >= 0 {
+						senderID = sql.NullInt64{Int64: ids[senderIndex], Valid: true}
+					}
+					members := make([]store.ConversationParticipantRef, 0, len(ids))
+					for i, id := range ids[:memberCount] {
+						members = append(members, store.ConversationParticipantRef{ParticipantID: id, Role: messagePlan.roles[i]})
+					}
+					reactions := make([]store.ReactionRef, 0, len(nativeReactions))
+					for _, reaction := range nativeReactions {
+						reactions = append(reactions, store.ReactionRef{ParticipantID: ids[reaction.participant], Type: reactionTypeEmoji, Value: reaction.value, CreatedAt: reaction.createdAt})
+					}
+					msg := mapMessage(waMsg, 0, source.ID, senderID)
+					return &store.MessagePersistData{Message: &msg, Conversation: &store.ConversationPersistData{SourceConversationID: sourceConvID, ConversationType: convType, Title: title, Participants: members, PreserveExistingParticipants: true}, BodyText: bodyText, PreserveBodyIfOmitted: true, RawMIME: rawJSON, RawFormat: "whatsapp_json", PreserveLabels: true, AddReactionRefs: reactions, ReplyToSourceMessageID: quotedMap[waMsg.RowID].QuotedKeyID, PreserveReplyIfUnresolved: true, KeyedAttachmentSnapshot: readyMedia}
+				})
+				if err != nil {
+					if errors.Is(err, store.ErrReplyPersistence) {
+						syncErr = err
+						return summary, fmt.Errorf("link reply: %w", err)
+					}
+					summary.Errors++
+					imp.progress.OnError(fmt.Errorf("persist message %s: %w", waMsg.KeyID, err))
+					continue
+				}
+				if !ownerCounted {
+					summary.Participants++
+					ownerCounted = true
+				}
+				if !chatParticipantsCounted {
+					summary.Participants += int64(len(plan.participants) - 1)
+					chatParticipantsCounted = true
+				}
+				plan = androidConversationPlan{participants: messagePlan.participants[:memberCount], roles: messagePlan.roles[:memberCount]}
+				summary.ReactionsAdded += int64(len(nativeReactions))
+				summary.MessagesAdded++
+				chatAdded++
+				totalAdded++
 
-				// Handle media/attachments.
-				if media, ok := mediaMap[waMsg.RowID]; ok {
+				if readyMedia != nil {
+					summary.AttachmentsFound++
+					if preparedMedia {
+						summary.MediaCopied++
+					}
+				}
+				// Silent native imports retain their best-effort media behavior.
+				if media, ok := mediaMap[waMsg.RowID]; ok && !opts.NotifyImports {
 					summary.AttachmentsFound++
 					mediaType := mapMediaType(waMsg.MessageType)
 
@@ -434,69 +446,6 @@ func (imp *Importer) Import(ctx context.Context, waDBPath string, opts ImportOpt
 					}
 				}
 
-				// Handle quoted/reply messages.
-				if quoted, ok := quotedMap[waMsg.RowID]; ok {
-					if replyToMsgID, found := keyIDToMsgID[quoted.QuotedKeyID]; found {
-						if err := imp.setReplyTo(ctx, messageID, replyToMsgID); err != nil {
-							syncErr = err
-							return nil, fmt.Errorf("link reply: %w", err)
-						}
-					} else if dbMsgID, lookupErr := imp.lookupMessageByKeyID(source.ID, quoted.QuotedKeyID); lookupErr == nil && dbMsgID > 0 {
-						// Found in DB from a previous import run or another chat.
-						if err := imp.setReplyTo(ctx, messageID, dbMsgID); err != nil {
-							syncErr = err
-							return nil, fmt.Errorf("link reply: %w", err)
-						}
-					}
-				}
-
-				// Handle reactions.
-				if reactions, ok := reactionMap[waMsg.RowID]; ok {
-					for _, r := range reactions {
-						reactionValue := mapReaction(r)
-						if reactionValue == "" {
-							continue
-						}
-
-						var reactorID int64
-						if r.SenderServer.Valid && r.SenderServer.String == "lid" {
-							// Lid JID — resolve via jid_map first.
-							phone := resolveLidSender(r.SenderJIDRowID, r.SenderServer.String, lidMap)
-							if phone == "" {
-								continue
-							}
-							pid, err := imp.store.EnsureParticipantByPhone(phone, "", "whatsapp")
-							if err != nil {
-								summary.Errors++
-								continue
-							}
-							reactorID = pid
-						} else if r.SenderUser.Valid && r.SenderUser.String != "" {
-							phone := normalizePhone(r.SenderUser.String, r.SenderServer.String)
-							if phone == "" {
-								continue // Non-phone JID — skip reaction.
-							}
-							pid, err := imp.store.EnsureParticipantByPhone(phone, "", "whatsapp")
-							if err != nil {
-								summary.Errors++
-								continue
-							}
-							reactorID = pid
-						} else {
-							// Self reaction.
-							reactorID = selfParticipantID
-						}
-
-						createdAt := time.Unix(r.Timestamp/1000, 0).UTC()
-						if err := imp.store.UpsertReaction(messageID, reactorID, reactionTypeEmoji, reactionValue, createdAt); err != nil {
-							summary.Errors++
-							imp.progress.OnError(fmt.Errorf("upsert reaction: %w", err))
-						} else {
-							summary.ReactionsAdded++
-						}
-					}
-				}
-
 				// FTS indexing.
 				if bodyText.Valid {
 					senderAddr := ""
@@ -526,14 +475,34 @@ func (imp *Importer) Import(ctx context.Context, waDBPath string, opts ImportOpt
 			}
 		}
 
-		// Participant fallback: ensure every resolved sender is a conversation
-		// participant. Covers groups where group_participants is empty (newer
-		// WhatsApp versions) and any senders discovered via lid resolution.
-		for pid := range chatSenderIDs {
-			_ = imp.store.EnsureConversationParticipant(conversationID, pid, "member")
+		// Empty/system-only chats retain their native archival trace without
+		// manufacturing a message or notification. Failed message snapshots never
+		// take this path, so rolled-back identities cannot leak through cleanup.
+		if !importableSeen {
+			conversationID, err := imp.store.EnsureConversationWithType(source.ID, sourceConvID, convType, title)
+			if err != nil {
+				summary.Errors++
+				imp.progress.OnError(err)
+			} else {
+				for i, participant := range plan.participants {
+					id, err := imp.store.EnsureParticipantByPhone(participant.PhoneNumber, participant.DisplayName, "whatsapp")
+					if err != nil {
+						summary.Errors++
+						imp.progress.OnError(err)
+						continue
+					}
+					if err := imp.store.EnsureConversationParticipant(conversationID, id, plan.roles[i]); err != nil {
+						summary.Errors++
+						imp.progress.OnError(err)
+					}
+				}
+				if !ownerCounted {
+					summary.Participants++
+					ownerCounted = true
+				}
+				summary.Participants += int64(len(plan.participants) - 1)
+			}
 		}
-		// Always include self as participant.
-		_ = imp.store.EnsureConversationParticipant(conversationID, selfParticipantID, "member")
 
 		imp.progress.OnChatComplete(chat.RawString, chatAdded)
 	}
@@ -549,14 +518,69 @@ func (imp *Importer) Import(ctx context.Context, waDBPath string, opts ImportOpt
 	return summary, nil
 }
 
+type androidReactionPlan struct {
+	participant int
+	value       string
+	createdAt   time.Time
+}
+
+// androidConversationPlan prepares only native descriptors. Participant SQL
+// and additive membership commit together with each canonical message.
+type androidConversationPlan struct {
+	participants []store.ParticipantPersistData
+	roles        []string
+}
+
+func (p *androidConversationPlan) add(phone, name, role string) int {
+	for i, participant := range p.participants {
+		if participant.PhoneNumber == phone {
+			if name != "" {
+				p.participants[i].DisplayName = name
+			}
+			if role != "" && role != "member" {
+				p.roles[i] = role
+			}
+			return i
+		}
+	}
+	p.participants = append(p.participants, store.ParticipantPersistData{PhoneNumber: phone, DisplayName: name, IdentifierType: "whatsapp"})
+	p.roles = append(p.roles, role)
+	return len(p.participants) - 1
+}
+
+func (p *androidConversationPlan) clone() androidConversationPlan {
+	return androidConversationPlan{participants: append([]store.ParticipantPersistData(nil), p.participants...), roles: append([]string(nil), p.roles...)}
+}
+
 // handleMediaFile attempts to find and copy a media file to content-addressed storage.
 // Returns (storagePath, contentHash, storedSize). All are empty or zero if the
 // file is not found.
 func (imp *Importer) handleMediaFile(media waMedia, opts ImportOptions) (string, string, int64) {
-	if opts.MediaDir == "" || opts.AttachmentsDir == "" || !media.FilePath.Valid || media.FilePath.String == "" {
+	fullPath, info := findAndroidMediaFile(media, opts)
+	if info == nil || info.Size() > androidMediaSizeLimit(opts) {
 		return "", "", 0
 	}
+	relStoragePath, contentHash, storedSize, err := export.StoreAttachmentFromPath(opts.AttachmentsDir, fullPath, androidMediaSizeLimit(opts))
+	if err != nil {
+		// Preserve the native silent path's hash when storage fails after hashing.
+		return "", contentHash, 0
+	}
+	return relStoragePath, contentHash, storedSize
+}
 
+func androidMediaSizeLimit(opts ImportOptions) int64 {
+	if opts.MaxMediaFileSize > 0 {
+		return opts.MaxMediaFileSize
+	}
+	return 100 * 1024 * 1024
+}
+
+// findAndroidMediaFile retains native path normalization and basename fallback.
+// It runs before the canonical transaction, as do hashing and file storage.
+func findAndroidMediaFile(media waMedia, opts ImportOptions) (string, os.FileInfo) {
+	if opts.MediaDir == "" || opts.AttachmentsDir == "" || !media.FilePath.Valid || media.FilePath.String == "" {
+		return "", nil
+	}
 	mediaDir := opts.MediaDir
 
 	// Sanitize the path from the WhatsApp DB (untrusted data).
@@ -576,18 +600,18 @@ func (imp *Importer) handleMediaFile(media waMedia, opts ImportOptions) (string,
 	fullPath := filepath.Join(mediaDir, relPath)
 	absMediaDir, err := filepath.Abs(mediaDir)
 	if err != nil {
-		return "", "", 0
+		return "", nil
 	}
 	absFullPath, err := filepath.Abs(fullPath)
 	if err != nil {
-		return "", "", 0
+		return "", nil
 	}
 	if !strings.HasPrefix(absFullPath, absMediaDir+string(filepath.Separator)) && absFullPath != absMediaDir {
 		// Path escapes mediaDir — fall back to base filename only.
 		fullPath = filepath.Join(mediaDir, filepath.Base(relPath))
 		absFullPath, _ = filepath.Abs(fullPath)
 		if !strings.HasPrefix(absFullPath, absMediaDir+string(filepath.Separator)) {
-			return "", "", 0
+			return "", nil
 		}
 	}
 
@@ -598,27 +622,55 @@ func (imp *Importer) handleMediaFile(media waMedia, opts ImportOptions) (string,
 		fullPath = filepath.Join(mediaDir, filepath.Base(relPath))
 		info, err = os.Stat(fullPath)
 		if err != nil {
-			return "", "", 0
+			return "", nil
 		}
 	}
 
-	// Enforce max file size to prevent OOM.
-	maxSize := opts.MaxMediaFileSize
-	if maxSize <= 0 {
-		maxSize = 100 * 1024 * 1024 // 100MB default
-	}
-	if info.Size() > maxSize {
-		return "", "", 0
-	}
+	return fullPath, info
+}
 
-	relStoragePath, contentHash, storedSize, err := export.StoreAttachmentFromPath(
-		opts.AttachmentsDir, fullPath, maxSize)
-	if err != nil {
-		// contentHash is non-empty when hashing succeeded but storage failed;
-		// callers use it to attach metadata to the unstored attachment row.
-		return "", contentHash, 0
+func prepareAndroidMedia(media waMedia, mediaType string, opts ImportOptions) store.AttachmentWrite {
+	write := store.AttachmentWrite{SourcePartKey: "whatsapp:media", MediaType: mediaType, Role: store.AttachmentRoleStandalone, RoleSource: store.AttachmentRoleSourceImporterSemantics, State: attachmentpolicy.StateFailed}
+	if mediaType == "sticker" {
+		write.Role, write.RoleSource = store.AttachmentRoleSticker, store.AttachmentRoleSourceProviderExplicit
 	}
-	return relStoragePath, contentHash, storedSize
+	if media.MimeType.Valid {
+		write.MIMEType = media.MimeType.String
+	}
+	if media.FilePath.Valid {
+		write.Filename = filepath.Base(media.FilePath.String)
+	}
+	if media.FileSize.Valid && media.FileSize.Int64 > 0 {
+		write.Size = media.FileSize.Int64
+	}
+	if media.Width.Valid && media.Width.Int64 > 0 {
+		write.Width = media.Width.Int64
+	}
+	if media.Height.Valid && media.Height.Int64 > 0 {
+		write.Height = media.Height.Int64
+	}
+	if media.MediaDuration.Valid && media.MediaDuration.Int64 > 0 {
+		write.DurationMS = media.MediaDuration.Int64 * 1000
+	}
+	if opts.MediaDir == "" || opts.AttachmentsDir == "" {
+		write.State, write.SkipReason = attachmentpolicy.StateSkipped, attachmentpolicy.SkipPolicyScope
+		return write
+	}
+	fullPath, info := findAndroidMediaFile(media, opts)
+	if info == nil {
+		return write
+	}
+	maxSize := androidMediaSizeLimit(opts)
+	if info.Size() > maxSize {
+		write.State, write.SkipReason = attachmentpolicy.StateSkipped, attachmentpolicy.SkipSizeCap
+		return write
+	}
+	storagePath, hash, size, err := export.StoreAttachmentFromPath(opts.AttachmentsDir, fullPath, maxSize)
+	if err != nil {
+		return write
+	}
+	write.StoragePath, write.ContentHash, write.Size, write.State = storagePath, hash, size, attachmentpolicy.StateStored
+	return write
 }
 
 // updateAttachmentMetadata updates media-specific metadata on an attachment record.
@@ -639,25 +691,6 @@ func (imp *Importer) updateAttachmentMetadata(
 
 	return imp.store.UpdateAttachmentMediaMetadataContext(
 		ctx, messageID, contentHash, mediaType, width, height, durationMS)
-}
-
-// lookupMessageByKeyID looks up a previously imported message by its WhatsApp key_id.
-// Returns 0 if not found.
-func (imp *Importer) lookupMessageByKeyID(sourceID int64, keyID string) (int64, error) {
-	var msgID int64
-	err := imp.store.DB().QueryRow(
-		imp.store.Rebind(`SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?`),
-		sourceID, keyID,
-	).Scan(&msgID)
-	if err == sql.ErrNoRows {
-		return 0, nil
-	}
-	return msgID, err
-}
-
-// setReplyTo sets the reply_to_message_id on a message.
-func (imp *Importer) setReplyTo(ctx context.Context, messageID, replyToID int64) error {
-	return imp.store.SetMessageReplyContext(ctx, messageID, replyToID)
 }
 
 // verifyWhatsAppDB checks that the database looks like a WhatsApp msgstore.db.

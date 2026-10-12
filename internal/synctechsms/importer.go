@@ -8,12 +8,12 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"log/slog"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/export"
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
@@ -30,8 +30,16 @@ func NewImporter(st *store.Store, opts ImportOptions) *Importer {
 }
 
 func (i *Importer) ImportPath(path string) (ImportSummary, error) {
+	// An explicit backup import never inherits live or another run's authority.
+	copyImporter := *i
+	copyImporter.store = i.store.WithIngestContext(store.IngestContext{Mode: store.IngestBackfill})
+	i = &copyImporter
+	ctx := context.Background()
 	if strings.TrimSpace(i.opts.OwnerPhone) == "" {
 		return ImportSummary{}, errors.New("owner phone is required for synctech-sms imports")
+	}
+	if err := i.store.ValidateNativeImportChoice(ctx, SourceType, i.opts.NotifyImports); err != nil {
+		return ImportSummary{}, err
 	}
 	src, err := i.store.GetOrCreateSource(SourceType, i.opts.OwnerPhone)
 	if err != nil {
@@ -43,8 +51,19 @@ func (i *Importer) ImportPath(path string) (ImportSummary, error) {
 	}
 	scoped := *i
 	scoped.store = i.store.ScopedToSync(src.ID, syncID)
+	logicalRun, err := scoped.store.BeginNativeImportAttempt(ctx, src.ID, SourceType, i.opts.NotifyImports, syncID, 0)
+	if err != nil {
+		_ = i.store.FailSync(syncID, err.Error())
+		return ImportSummary{}, fmt.Errorf("begin Synctech import: %w", err)
+	}
+	scoped.store, err = scoped.store.WithImportRun(ctx, logicalRun.ID)
+	if err != nil {
+		_ = i.store.FailSync(syncID, err.Error())
+		return ImportSummary{ImportRunID: logicalRun.ID}, fmt.Errorf("validate Synctech import: %w", err)
+	}
 	i = &scoped
-	summary, importErr := i.ImportPathIntoSource(src.ID, path)
+	summary, importErr := i.importPathIntoSource(src.ID, path)
+	summary.ImportRunID = logicalRun.ID
 	if importErr != nil {
 		_ = i.store.FailSync(syncID, importErr.Error())
 		return summary, importErr
@@ -72,6 +91,15 @@ func (i *Importer) ImportPath(path string) (ImportSummary, error) {
 // a broader lifecycle, such as Google Drive polling, use this to avoid nested
 // sync_runs.
 func (i *Importer) ImportPathIntoSource(sourceID int64, path string) (ImportSummary, error) {
+	if i.opts.NotifyImports {
+		return ImportSummary{}, errors.New("notifications require an explicit backup import")
+	}
+	polling := *i
+	polling.store = i.store.WithIngestContext(store.IngestContext{Mode: store.IngestBackfill})
+	return polling.importPathIntoSource(sourceID, path)
+}
+
+func (i *Importer) importPathIntoSource(sourceID int64, path string) (ImportSummary, error) {
 	if strings.TrimSpace(i.opts.OwnerPhone) == "" {
 		return ImportSummary{}, errors.New("owner phone is required for synctech-sms imports")
 	}
@@ -79,12 +107,21 @@ func (i *Importer) ImportPathIntoSource(sourceID int64, path string) (ImportSumm
 	if err != nil {
 		return ImportSummary{}, err
 	}
-	return i.ImportFilesIntoSource(sourceID, files)
+	return i.importFilesIntoSource(sourceID, files)
 }
 
 // ImportFilesIntoSource imports already-discovered backup files into an
 // existing source without owning sync lifecycle.
 func (i *Importer) ImportFilesIntoSource(sourceID int64, files []BackupFile) (ImportSummary, error) {
+	if i.opts.NotifyImports {
+		return ImportSummary{}, errors.New("notifications require an explicit backup import")
+	}
+	polling := *i
+	polling.store = i.store.WithIngestContext(store.IngestContext{Mode: store.IngestBackfill})
+	return polling.importFilesIntoSource(sourceID, files)
+}
+
+func (i *Importer) importFilesIntoSource(sourceID int64, files []BackupFile) (ImportSummary, error) {
 	var summary ImportSummary
 	summary.FilesSeen = len(files)
 	for _, file := range files {
@@ -142,185 +179,140 @@ func (i *Importer) importRecord(sourceID int64, record Record, summary *ImportSu
 }
 
 func (i *Importer) importSMS(sourceID int64, sms SMS) (int64, error) {
-	remoteID, err := i.participantID(sms.Address, sms.ContactName.String)
-	if err != nil {
-		return 0, err
+	participants := []store.ParticipantPersistData{
+		synctechParticipant(sms.Address, sms.ContactName.String),
+		synctechParticipant(i.opts.OwnerPhone, "Me"),
 	}
-	ownerID, err := i.participantID(i.opts.OwnerPhone, "Me")
-	if err != nil {
-		return 0, err
-	}
-	// Drafts are owner-authored messages that never made it out, but
-	// they still belong on the owner's side of the conversation. Without
-	// SMSTypeDraft here a draft imports as if it came from the contact.
+	// Drafts remain owner-authored, like other unsent outgoing messages.
 	fromMe := sms.Type == SMSTypeSent || sms.Type == SMSTypeOutbox || sms.Type == SMSTypeFailed || sms.Type == SMSTypeQueued || sms.Type == SMSTypeDraft
-	senderID := remoteID
-	recipientIDs := []int64{ownerID}
-	if fromMe {
-		senderID = ownerID
-		recipientIDs = []int64{remoteID}
-	}
-	convID, err := i.ensureConversation(sourceID, textConversationKey([]int64{ownerID, remoteID}), sms.ContactName.String)
-	if err != nil {
-		return 0, err
-	}
-	if err := i.store.EnsureConversationParticipant(convID, remoteID, "member"); err != nil {
-		return 0, err
-	}
-	if err := i.store.EnsureConversationParticipant(convID, ownerID, "member"); err != nil {
-		return 0, err
-	}
-	msgID := stableID("sms", sms.Address, sms.Timestamp.String(), fmt.Sprint(sms.Type), sms.Body)
-	return i.upsertTextMessage(sourceID, convID, msgID, "sms", senderID, recipientIDs, fromMe, sms.Timestamp, sms.Body, sms.Body, 0, sms)
+	return i.persistTextMessage(participants, sms, func(ids []int64) *store.MessagePersistData {
+		remoteID, ownerID := ids[0], ids[1]
+		senderID, recipientIDs := remoteID, []int64{ownerID}
+		if fromMe {
+			senderID, recipientIDs = ownerID, []int64{remoteID}
+		}
+		sourceMessageID := stableID("sms", sms.Address, sms.Timestamp.String(), fmt.Sprint(sms.Type), sms.Body)
+		return textMessageSnapshot(sourceID, textConversationKey([]int64{ownerID, remoteID}), sms.ContactName.String, []int64{remoteID, ownerID}, sourceMessageID, "sms", senderID, recipientIDs, fromMe, sms.Timestamp, sms.Body, sms.Body, 0)
+	})
 }
 
 func (i *Importer) importMMS(sourceID int64, mms MMS) (int64, int, error) {
-	ownerID, err := i.participantID(i.opts.OwnerPhone, "Me")
-	if err != nil {
-		return 0, 0, err
-	}
-	participantIDs, senderID, recipientIDs, err := i.mmsParticipants(mms, ownerID)
-	if err != nil {
-		return 0, 0, err
-	}
-	// Drafts belong to the owner — see the matching note in importSMS.
-	fromMe := mms.MessageBox == MMSBoxSent || mms.MessageBox == MMSBoxOutbox || mms.MessageBox == MMSBoxDraft
-	convID, err := i.ensureConversation(sourceID, textConversationKey(participantIDs), mms.ContactName.String)
-	if err != nil {
-		return 0, 0, err
-	}
-	for _, participantID := range participantIDs {
-		if err := i.store.EnsureConversationParticipant(convID, participantID, "member"); err != nil {
+	var attachmentSnapshot *store.KeyedAttachmentSnapshot
+	if i.opts.NotifyImports && i.opts.IncludeAttachments {
+		writes, err := i.prepareMMSAttachmentWrites(mms)
+		if err != nil {
 			return 0, 0, err
 		}
+		attachmentSnapshot = &store.KeyedAttachmentSnapshot{Prefix: "synctech:mms:", Writes: writes, PreserveUnmentioned: true}
 	}
-	body := mmsText(mms)
-	srcIDPart := mms.MessageID.String
-	if srcIDPart == "" {
-		srcIDPart = body
-	}
-	msgID := stableID("mms", srcIDPart, mms.Timestamp.String(), sortedKey(participantIDs))
-	attachmentCount := countImportableAttachments(mms, i.opts.IncludeAttachments)
-	messageID, err := i.upsertTextMessage(sourceID, convID, msgID, "mms", senderID, recipientIDs, fromMe, mms.Timestamp, body, mms.Subject.String, attachmentCount, mms)
-	if err != nil {
-		return 0, 0, err
-	}
-	imported, err := i.importMMSAttachments(sourceID, msgID, mms)
-	if err != nil {
-		return messageID, imported, err
-	}
-	return messageID, imported, nil
-}
-
-func (i *Importer) importCall(sourceID int64, call Call) (int64, error) {
-	remoteAddress := callParticipantAddress(call)
-	remoteID, err := i.participantID(remoteAddress, call.ContactName.String)
-	if err != nil {
-		return 0, err
-	}
-	ownerID, err := i.participantID(i.opts.OwnerPhone, "Me")
-	if err != nil {
-		return 0, err
-	}
-	fromMe := call.Type == CallOutgoing
-	senderID := remoteID
-	recipientIDs := []int64{ownerID}
-	if fromMe {
-		senderID = ownerID
-		recipientIDs = []int64{remoteID}
-	}
-	convID, err := i.ensureConversation(sourceID, "calls:"+canonicalAddress(remoteAddress), call.ContactName.String)
-	if err != nil {
-		return 0, err
-	}
-	if err := i.store.EnsureConversationParticipant(convID, remoteID, "member"); err != nil {
-		return 0, err
-	}
-	if err := i.store.EnsureConversationParticipant(convID, ownerID, "member"); err != nil {
-		return 0, err
-	}
-	body := fmt.Sprintf("Call %s, %d seconds", callTypeLabel(call.Type), call.DurationSeconds)
-	msgID := stableID("call", remoteAddress, call.Timestamp.String(), fmt.Sprint(call.Type), strconv.Itoa(call.DurationSeconds))
-	return i.upsertTextMessage(sourceID, convID, msgID, "synctech_sms_call", senderID, recipientIDs, fromMe, call.Timestamp, body, body, 0, call)
-}
-
-func (i *Importer) upsertTextMessage(sourceID, convID int64, sourceMessageID, messageType string, senderID int64, recipientIDs []int64, fromMe bool, sentAt time.Time, body, subject string, attachmentCount int, raw any) (int64, error) {
-	msgID, err := i.store.UpsertMessage(&store.Message{
-		ConversationID:  convID,
-		SourceID:        sourceID,
-		SourceMessageID: sourceMessageID,
-		MessageType:     messageType,
-		SentAt:          sql.NullTime{Time: sentAt, Valid: !sentAt.IsZero()},
-		SenderID:        sql.NullInt64{Int64: senderID, Valid: senderID != 0},
-		IsFromMe:        fromMe,
-		Subject:         sql.NullString{String: subject, Valid: subject != ""},
-		Snippet:         sql.NullString{String: body, Valid: body != ""},
-		SizeEstimate:    int64(len(body)),
-		HasAttachments:  attachmentCount > 0,
-		AttachmentCount: attachmentCount,
-	})
-	if err != nil {
-		return 0, fmt.Errorf("upsert message: %w", err)
-	}
-	if body != "" {
-		if err := i.store.UpsertMessageBody(msgID, sql.NullString{String: body, Valid: true}, sql.NullString{}); err != nil {
-			return 0, fmt.Errorf("upsert body: %w", err)
-		}
-	}
-	rawJSON, err := json.Marshal(raw, json.Deterministic(true))
-	if err != nil {
-		return 0, fmt.Errorf("marshal raw record: %w", err)
-	}
-	if err := i.store.UpsertMessageRawWithFormat(msgID, rawJSON, RawFormat); err != nil {
-		return 0, fmt.Errorf("upsert raw record: %w", err)
-	}
-	if err := i.store.ReplaceMessageRecipients(msgID, "from", []int64{senderID}, []string{""}); err != nil {
-		return 0, fmt.Errorf("replace from recipient: %w", err)
-	}
-	if err := i.store.ReplaceMessageRecipients(msgID, "to", recipientIDs, blankNames(len(recipientIDs))); err != nil {
-		return 0, fmt.Errorf("replace to recipient: %w", err)
-	}
-	if err := i.store.UpsertFTS(msgID, subject, body, "", "", ""); err != nil {
-		slog.Warn("failed to update Synctech message FTS index",
-			"message_id", msgID,
-			"message_type", messageType,
-			"error", err)
-	}
-	return msgID, nil
-}
-
-func (i *Importer) participantID(address, displayName string) (int64, error) {
-	n := textimport.NormalizeAddress(address)
-	if n.Kind == textimport.AddressPhone {
-		return i.store.EnsureParticipantByPhone(n.Value, displayName, ParticipantIdentifierType)
-	}
-	return i.store.EnsureParticipantByIdentifier(ParticipantIdentifierType, n.Value, displayName)
-}
-
-func (i *Importer) ensureConversation(sourceID int64, sourceConversationID, title string) (int64, error) {
-	return i.store.EnsureConversationWithType(sourceID, sourceConversationID, "direct_chat", title)
-}
-
-func (i *Importer) mmsParticipants(mms MMS, ownerID int64) ([]int64, int64, []int64, error) {
-	ids := []int64{ownerID}
-	senderID := ownerID
-	// Drafts belong to the owner — see the matching note in importSMS.
-	fromMe := mms.MessageBox == MMSBoxSent || mms.MessageBox == MMSBoxOutbox || mms.MessageBox == MMSBoxDraft
-	var recipients []int64
+	participants := []store.ParticipantPersistData{synctechParticipant(i.opts.OwnerPhone, "Me")}
 	for _, addr := range mms.Addresses {
 		if strings.TrimSpace(addr.Address) == "" || addr.Address == "insert-address-token" {
 			continue
 		}
-		id, err := i.participantID(addr.Address, "")
-		if err != nil {
-			return nil, 0, nil, err
+		participants = append(participants, synctechParticipant(addr.Address, ""))
+	}
+	fromMe := mms.MessageBox == MMSBoxSent || mms.MessageBox == MMSBoxOutbox || mms.MessageBox == MMSBoxDraft
+	body := mmsText(mms)
+	sourcePart := mms.MessageID.String
+	if sourcePart == "" {
+		sourcePart = body
+	}
+	var sourceMessageID string
+	messageID, err := i.persistTextMessage(participants, mms, func(ids []int64) *store.MessagePersistData {
+		participantIDs, senderID, recipientIDs := mmsParticipantIDs(mms, ids)
+		// Native MMS identity and text-thread keys depend on resolved participant IDs.
+		sourceMessageID = stableID("mms", sourcePart, mms.Timestamp.String(), sortedKey(participantIDs))
+		data := textMessageSnapshot(sourceID, textConversationKey(participantIDs), mms.ContactName.String, participantIDs, sourceMessageID, "mms", senderID, recipientIDs, fromMe, mms.Timestamp, body, mms.Subject.String, countImportableAttachments(mms, i.opts.IncludeAttachments))
+		data.KeyedAttachmentSnapshot = attachmentSnapshot
+		return data
+	})
+	if err != nil {
+		return 0, 0, err
+	}
+	if i.opts.NotifyImports {
+		if attachmentSnapshot == nil {
+			return messageID, 0, nil
 		}
-		ids = append(ids, id)
-		if !fromMe && addr.Type == MMSAddressFrom {
-			senderID = id
+		return messageID, len(attachmentSnapshot.Writes), nil
+	}
+	// Silent native imports retain their post-message attachment/error semantics.
+	imported, err := i.importMMSAttachments(sourceID, sourceMessageID, mms)
+	return messageID, imported, err
+}
+
+func (i *Importer) importCall(sourceID int64, call Call) (int64, error) {
+	remoteAddress := callParticipantAddress(call)
+	participants := []store.ParticipantPersistData{synctechParticipant(remoteAddress, call.ContactName.String), synctechParticipant(i.opts.OwnerPhone, "Me")}
+	fromMe := call.Type == CallOutgoing
+	body := fmt.Sprintf("Call %s, %d seconds", callTypeLabel(call.Type), call.DurationSeconds)
+	return i.persistTextMessage(participants, call, func(ids []int64) *store.MessagePersistData {
+		remoteID, ownerID := ids[0], ids[1]
+		senderID, recipientIDs := remoteID, []int64{ownerID}
+		if fromMe {
+			senderID, recipientIDs = ownerID, []int64{remoteID}
+		}
+		sourceMessageID := stableID("call", remoteAddress, call.Timestamp.String(), fmt.Sprint(call.Type), strconv.Itoa(call.DurationSeconds))
+		return textMessageSnapshot(sourceID, "calls:"+canonicalAddress(remoteAddress), call.ContactName.String, []int64{remoteID, ownerID}, sourceMessageID, "synctech_sms_call", senderID, recipientIDs, fromMe, call.Timestamp, body, body, 0)
+	})
+}
+
+func (i *Importer) persistTextMessage(participants []store.ParticipantPersistData, raw any, build func([]int64) *store.MessagePersistData) (int64, error) {
+	rawJSON, err := json.Marshal(raw, json.Deterministic(true))
+	if err != nil {
+		return 0, fmt.Errorf("marshal raw record: %w", err)
+	}
+	id, err := i.store.PersistMessageWithParticipantsContext(context.Background(), participants, func(ids []int64) *store.MessagePersistData {
+		data := build(ids)
+		data.RawMIME, data.RawFormat = rawJSON, RawFormat
+		return data
+	})
+	if err != nil {
+		return 0, fmt.Errorf("persist Synctech message: %w", err)
+	}
+	return id, nil
+}
+
+func textMessageSnapshot(sourceID int64, conversationKey, title string, participantIDs []int64, sourceMessageID, messageType string, senderID int64, recipientIDs []int64, fromMe bool, sentAt time.Time, body, subject string, attachmentCount int) *store.MessagePersistData {
+	members := make([]store.ConversationParticipantRef, 0, len(participantIDs))
+	for _, id := range participantIDs {
+		members = append(members, store.ConversationParticipantRef{ParticipantID: id, Role: "member"})
+	}
+	return &store.MessagePersistData{
+		Message:      &store.Message{SourceID: sourceID, SourceMessageID: sourceMessageID, MessageType: messageType, SentAt: sql.NullTime{Time: sentAt, Valid: !sentAt.IsZero()}, SenderID: sql.NullInt64{Int64: senderID, Valid: senderID != 0}, IsFromMe: fromMe, Subject: sql.NullString{String: subject, Valid: subject != ""}, Snippet: sql.NullString{String: body, Valid: body != ""}, SizeEstimate: int64(len(body)), HasAttachments: attachmentCount > 0, AttachmentCount: attachmentCount},
+		Conversation: &store.ConversationPersistData{SourceConversationID: conversationKey, ConversationType: "direct_chat", Title: title, Participants: members, PreserveExistingParticipants: true},
+		BodyText:     sql.NullString{String: body, Valid: body != ""}, PreserveBodyIfOmitted: true,
+		Recipients:     []store.RecipientSet{{Type: "from", ParticipantIDs: []int64{senderID}, DisplayNames: []string{""}}, {Type: "to", ParticipantIDs: recipientIDs, DisplayNames: blankNames(len(recipientIDs))}},
+		PreserveLabels: true,
+		FTS:            &store.FTSDoc{Subject: subject, Body: body}, FTSBestEffort: true,
+	}
+}
+
+func synctechParticipant(address, displayName string) store.ParticipantPersistData {
+	normalized := textimport.NormalizeAddress(address)
+	if normalized.Kind == textimport.AddressPhone {
+		return store.ParticipantPersistData{PhoneNumber: normalized.Value, IdentifierType: ParticipantIdentifierType, DisplayName: displayName}
+	}
+	return store.ParticipantPersistData{IdentifierType: ParticipantIdentifierType, IdentifierValue: normalized.Value, DisplayName: displayName}
+}
+
+// ids follows owner then each non-placeholder address in native XML order.
+func mmsParticipantIDs(mms MMS, ids []int64) ([]int64, int64, []int64) {
+	ownerID := ids[0]
+	senderID := ownerID
+	fromMe := mms.MessageBox == MMSBoxSent || mms.MessageBox == MMSBoxOutbox || mms.MessageBox == MMSBoxDraft
+	var recipients []int64
+	next := 1
+	for _, addr := range mms.Addresses {
+		if strings.TrimSpace(addr.Address) == "" || addr.Address == "insert-address-token" {
 			continue
 		}
-		if fromMe && addr.Type == MMSAddressFrom {
+		id := ids[next]
+		next++
+		if addr.Type == MMSAddressFrom {
+			if !fromMe {
+				senderID = id
+			}
 			continue
 		}
 		recipients = append(recipients, id)
@@ -328,7 +320,7 @@ func (i *Importer) mmsParticipants(mms MMS, ownerID int64) ([]int64, int64, []in
 	if len(recipients) == 0 {
 		recipients = []int64{ownerID}
 	}
-	return uniqueInt64s(ids), senderID, uniqueInt64s(recipients), nil
+	return uniqueInt64s(ids), senderID, uniqueInt64s(recipients)
 }
 
 func stableID(parts ...string) string {
@@ -488,4 +480,36 @@ func (i *Importer) importMMSAttachments(sourceID int64, sourceMessageID string, 
 		count++
 	}
 	return count, nil
+}
+
+// File publication stays outside the identity, sync-generation and Events
+// writer fences. The prepared references commit with the ready message.
+func (i *Importer) prepareMMSAttachmentWrites(mms MMS) ([]store.AttachmentWrite, error) {
+	if strings.TrimSpace(i.opts.AttachmentsDir) == "" {
+		return nil, errors.New("attachments directory is required when importing MMS attachments")
+	}
+	maxBytes := i.opts.MaxAttachmentBytes
+	if maxBytes <= 0 {
+		maxBytes = 25 << 20
+	}
+	writes := make([]store.AttachmentWrite, 0, countImportableAttachments(mms, true))
+	for idx, part := range mms.Parts {
+		if len(part.Data) == 0 {
+			continue
+		}
+		if int64(len(part.Data)) > maxBytes {
+			return nil, fmt.Errorf("MMS attachment %d exceeds maximum size", idx)
+		}
+		filename := part.Filename.String
+		if filename == "" {
+			filename = fmt.Sprintf("mms-part-%d", idx)
+		}
+		attachment := &mime.Attachment{Filename: filename, ContentType: part.ContentType, Content: part.Data}
+		relativePath, err := export.StoreAttachmentFile(i.opts.AttachmentsDir, attachment)
+		if err != nil {
+			return nil, fmt.Errorf("store MMS attachment: %w", err)
+		}
+		writes = append(writes, store.AttachmentWrite{Filename: filename, MIMEType: part.ContentType, StoragePath: relativePath, ContentHash: attachment.ContentHash, Size: int64(len(part.Data)), State: attachmentpolicy.StateStored, Role: store.AttachmentRoleStandalone, RoleSource: store.AttachmentRoleSourceImporterSemantics, SourcePartKey: fmt.Sprintf("synctech:mms:%d", idx)})
+	}
+	return writes, nil
 }

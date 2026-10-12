@@ -363,7 +363,8 @@ import (
 // attachment names/counts, and hybrid_available on CLI search responses.
 // 3.15.0 adds owner-only native MCP Events and typed calendar message projections.
 // 3.16.0 adds owner-only MCP resource discovery and source/inbox subscriptions.
-const APISchemaVersion = "3.16.0"
+// 3.17.0 adds separately opted-in native import notifications.
+const APISchemaVersion = "3.17.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

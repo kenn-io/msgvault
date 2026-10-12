@@ -824,6 +824,7 @@ listener keys cannot use Events.
 ```toml
 [mcp.events]
 enabled = false
+import_notifications = false
 retention = "168h"
 sources = ["gmail", "imap", "gcal"]
 ```
@@ -831,6 +832,7 @@ sources = ["gmail", "imap", "gcal"]
 | Key | Default | Description |
 |---|---|---|
 | `enabled` | `false` | Capture occurrences and run daemon callback workers. Read at startup; restart after changes. |
+| `import_notifications` | `false` | Permit separately opted-in native imports to emit `msgvault.import_message_archived`. Requires Events and the daemon owner key; each command also needs `--notify-imports`, or a meeting request needs `notify_imports: true`. |
 | `retention` | `"168h"` | Positive journal retention duration, at most seven days, measured from recording time. Expired occurrences become unavailable immediately; cleanup runs at half the configured duration, capped at one hour and floored at one second. |
 | `sources` | `["gmail", "imap", "gcal"]` | Allowed source types, further limited by implemented producers and readable projections. Use `["*"]` alone to select all eligible source types. An empty array advertises no families. |
 | `trusted_callbacks` | `[]` | Explicit private receiver exceptions: objects with an HTTPS `origin` and fixed private IP `addresses`. |
@@ -853,6 +855,10 @@ Do not combine `"*"` with other entries.
 | `discord` | [Native channel and thread conversation arrivals](usage/discord.md#mcp-events), subject to verified sync coverage. |
 | `msmail` | [Native Microsoft mail arrivals](guides/oauth-setup.md#microsoft-mail-events). Initial history and historical recovery stay silent. |
 | `matrix` | [Readable Matrix room arrivals](usage/matrix.md#message-notifications), subject to coverage and encryption limits. |
+
+Offline imports, including Slackdump, stay silent unless the daemon option above
+and the import's `--notify-imports` flag (or meeting request field) are enabled.
+See [import notifications](usage/chat.md#import-notifications).
 
 Callbacks normally require public HTTPS on port 443 or 8443. The daemon rejects
 redirects, reserved destinations, and DNS answers containing an unsafe address.

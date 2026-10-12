@@ -194,6 +194,7 @@ func importSingleAccount(
 	logger := state.logger
 	summary, err := importer.ImportEmlxDir(
 		ctx, st, mailDir, importer.EmlxImportOptions{
+			NotifyImports:      importNotificationsRequested(cmd),
 			SourceType:         importEmlxSourceType,
 			Identifier:         identifier,
 			NoResume:           importEmlxNoResume,
@@ -203,6 +204,9 @@ func importSingleAccount(
 			Logger:             logger,
 		},
 	)
+	if summary != nil {
+		recordImportRun(cmd, summary.ImportRunID)
+	}
 	if err != nil {
 		return err
 	}
@@ -334,6 +338,7 @@ func importAutoAccounts(
 
 		summary, err := importer.ImportEmlxDir(
 			ctx, st, accountDir, importer.EmlxImportOptions{
+				NotifyImports:      importNotificationsRequested(cmd),
 				SourceType:         importEmlxSourceType,
 				Identifier:         identifier,
 				NoResume:           importEmlxNoResume,
@@ -343,6 +348,9 @@ func importAutoAccounts(
 				Logger:             logger,
 			},
 		)
+		if summary != nil {
+			recordImportRun(cmd, summary.ImportRunID)
+		}
 		if err != nil {
 			importErrors = append(importErrors, fmt.Errorf("%s: %w", identifier, err))
 			continue
@@ -479,6 +487,7 @@ func printImportStats(out io.Writer, summary importer.EmlxImportSummary) {
 }
 
 func init() {
+	addImportNotificationFlag(importEmlxCmd)
 	rootCmd.AddCommand(importEmlxCmd)
 
 	importEmlxCmd.Flags().StringVar(

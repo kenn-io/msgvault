@@ -16,9 +16,7 @@ func TestRetainedEventAndMessageReadsRecheckAuthorization(t *testing.T) {
 	s, f, req := eventService(t)
 	result, err := s.Subscribe(t.Context(), s.principal, req)
 	require.NoError(err)
-	appendReceipt(t, s, f, 1)
-	var id int64
-	require.NoError(f.Store.DB().QueryRow(`SELECT message_id FROM mcp_event_log WHERE seq=1`).Scan(&id))
+	id := appendReceipt(t, s, f, 1)
 	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET subject='Synthetic current subject' WHERE id=?`), id)
 	require.NoError(err)
 	eventID := encodeEventID(s.key, result.ID, 1)

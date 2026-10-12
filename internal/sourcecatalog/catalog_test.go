@@ -67,3 +67,13 @@ func TestSourceCatalogOmiIsNativeMeetingSync(t *testing.T) {
 	assert.Equal([]string{"sync-omi"}, Commands(Omi))
 	assert.Equal([]Descriptor{descriptor}, ForCommand("sync-omi"))
 }
+
+func TestSourceCatalogAdvertisesOnlyCompletedLiveMessageConsumers(t *testing.T) {
+	var live []string
+	for _, descriptor := range List() {
+		if descriptor.LiveMessages {
+			live = append(live, descriptor.Type)
+		}
+	}
+	Assert.Equal(t, []string{"gmail", "imap", "msmail", "beeper", "slack", "teams", "discord", "matrix"}, live)
+}

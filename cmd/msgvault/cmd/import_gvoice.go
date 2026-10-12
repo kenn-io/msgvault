@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -40,6 +41,7 @@ Examples:
 }
 
 func runImportGvoice(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
 	state := invocationFromCommand(cmd)
 	if state == nil || state.cfg == nil {
 		return errors.New("configuration is unavailable")
@@ -56,13 +58,16 @@ func runImportGvoice(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	defer cleanup()
+	if err := s.ValidateNativeImportChoice(cmd.Context(), "google_voice", importNotificationsRequested(cmd)); err != nil {
+		return err
+	}
 
 	clientOpts, err := buildGvoiceOpts(state.logger)
 	if err != nil {
 		return err
 	}
 	clientOpts = append(
-		clientOpts, gvoice.WithAttachmentsDir(cfg.AttachmentsDir()),
+		clientOpts, gvoice.WithNotifyImports(importNotificationsRequested(cmd)), gvoice.WithAttachmentsDir(cfg.AttachmentsDir()),
 	)
 
 	client, err := gvoice.NewClient(takeoutDir, clientOpts...)
@@ -85,25 +90,29 @@ func runImportGvoice(cmd *cobra.Command, args []string) error {
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-sigChan
-		fmt.Println("\nInterrupted.")
+		_, _ = fmt.Fprintln(out, "\nInterrupted.")
 		cancel()
 	}()
 
 	startTime := time.Now()
-	fmt.Printf(
+	_, _ = fmt.Fprintf(out,
 		"Importing Google Voice from %s\n", takeoutDir,
 	)
-	printGvoiceDateFilter()
+	printGvoiceDateFilter(out)
 	if importGvoiceLimit > 0 {
-		fmt.Printf("Limit: %d messages\n", importGvoiceLimit)
+		_, _ = fmt.Fprintf(out, "Limit: %d messages\n", importGvoiceLimit)
 	}
-	fmt.Println()
+	_, _ = fmt.Fprintln(out)
 
 	summary, err := client.Import(ctx, s, src.ID)
+	if summary != nil {
+		recordImportRun(cmd, summary.ImportRunID)
+	}
 	if err != nil {
 		if ctx.Err() != nil {
-			fmt.Println("\nImport interrupted.")
-			printGvoiceSummary(summary, startTime)
+			markImportCommandIncomplete(cmd)
+			_, _ = fmt.Fprintln(out, "\nImport interrupted.")
+			printGvoiceSummary(out, summary, startTime)
 			return rebuildCacheAfterWrite(cfg.DatabaseDSN(), state)
 		}
 		return fmt.Errorf("import failed: %w", err)
@@ -119,7 +128,7 @@ func runImportGvoice(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("post-source-create migrations: %w", err)
 	}
 
-	printGvoiceSummary(summary, startTime)
+	printGvoiceSummary(out, summary, startTime)
 	return rebuildCacheAfterWrite(cfg.DatabaseDSN(), state)
 }
 
@@ -160,7 +169,7 @@ func buildGvoiceOpts(logger *slog.Logger) ([]gvoice.ClientOption, error) {
 	return opts, nil
 }
 
-func printGvoiceDateFilter() {
+func printGvoiceDateFilter(out io.Writer) {
 	if importGvoiceAfter == "" && importGvoiceBefore == "" {
 		return
 	}
@@ -171,10 +180,11 @@ func printGvoiceDateFilter() {
 	if importGvoiceBefore != "" {
 		parts = append(parts, "before "+importGvoiceBefore)
 	}
-	fmt.Printf("Date filter: %s\n", strings.Join(parts, ", "))
+	_, _ = fmt.Fprintf(out, "Date filter: %s\n", strings.Join(parts, ", "))
 }
 
 func printGvoiceSummary(
+	out io.Writer,
 	summary *gvoice.ImportSummary,
 	startTime time.Time,
 ) {
@@ -182,27 +192,27 @@ func printGvoiceSummary(
 		return
 	}
 	elapsed := time.Since(startTime)
-	fmt.Println()
-	fmt.Println("Google Voice import complete!")
-	fmt.Printf("  Duration:         %s\n", elapsed.Round(time.Second))
-	fmt.Printf(
+	_, _ = fmt.Fprintln(out)
+	_, _ = fmt.Fprintln(out, "Google Voice import complete!")
+	_, _ = fmt.Fprintf(out, "  Duration:         %s\n", elapsed.Round(time.Second))
+	_, _ = fmt.Fprintf(out,
 		"  Messages:         %d imported\n",
 		summary.MessagesImported,
 	)
-	fmt.Printf(
+	_, _ = fmt.Fprintf(out,
 		"  Conversations:    %d\n",
 		summary.ConversationsImported,
 	)
-	fmt.Printf(
+	_, _ = fmt.Fprintf(out,
 		"  Participants:     %d resolved\n",
 		summary.ParticipantsResolved,
 	)
 	if summary.Skipped > 0 {
-		fmt.Printf("  Skipped:          %d\n", summary.Skipped)
+		_, _ = fmt.Fprintf(out, "  Skipped:          %d\n", summary.Skipped)
 	}
 	if summary.MessagesImported > 0 && elapsed.Seconds() > 0 {
 		rate := float64(summary.MessagesImported) / elapsed.Seconds()
-		fmt.Printf("  Rate:             %.1f messages/sec\n", rate)
+		_, _ = fmt.Fprintf(out, "  Rate:             %.1f messages/sec\n", rate)
 	}
 }
 
@@ -223,5 +233,6 @@ func init() {
 		&noDefaultIdentityImportGVoice, "no-default-identity", false,
 		noDefaultIdentityHelp,
 	)
+	addImportNotificationFlag(importGvoiceCmd)
 	rootCmd.AddCommand(importGvoiceCmd)
 }

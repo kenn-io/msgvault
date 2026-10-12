@@ -14,12 +14,13 @@ type Options struct {
 	// Now supplies evaluation and webhook-signature time. Nil uses the wall
 	// clock. It is an internal dependency, not configuration or wire input;
 	// wakeups and cancellation still use real timers.
-	Now               func() time.Time
-	Enabled           bool
-	Retention         time.Duration
-	Sources           []string
-	TrustedCallbacks  []TrustedCallback
-	KeyPath, OwnerKey string
+	Now                 func() time.Time
+	ImportNotifications bool
+	Enabled             bool
+	Retention           time.Duration
+	Sources             []string
+	TrustedCallbacks    []TrustedCallback
+	KeyPath, OwnerKey   string
 	// WithOperation takes the daemon's archive gate for a short Store operation.
 	// Callback resolution, verification and delivery never run in this callback.
 	WithOperation func(context.Context, func() error) error

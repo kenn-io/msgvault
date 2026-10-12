@@ -2356,8 +2356,8 @@ func (d *PostgreSQLDialect) IsFTSValueTooLargeError(err error) bool {
 // collections is included (despite not being a direct sources cascade target)
 // so a concurrent collection rename cannot race the collection_sources cascade.
 var exclusiveLockTables = []string{
-	// Resource lifetimes and native scopes cascade with their source.
-	"mcp_source_resources", "mcp_conversation_resources", "native_message_scopes", "native_source_permissions",
+	// Resource lifetimes, native scopes, and import runs cascade with their source.
+	"mcp_source_resources", "mcp_conversation_resources", "native_message_scopes", "native_source_permissions", "import_runs",
 	"sync_runs", "sources", "mcp_event_source_refs", "conversations", "conversation_participants",
 	"messages", "message_recipients", "message_labels", "message_bodies", "message_raw",
 	"message_delivery_addresses",

@@ -22,6 +22,7 @@ type messageRow struct {
 
 // ImportSummary holds statistics from a completed import run.
 type ImportSummary struct {
+	ImportRunID           string
 	MessagesImported      int
 	ConversationsImported int
 	ParticipantsResolved  int
