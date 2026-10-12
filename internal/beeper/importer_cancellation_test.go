@@ -53,6 +53,11 @@ func (h *cancelOnLogHandler) Handle(_ context.Context, record slog.Record) error
 
 // installCancelOnLog cancels on the at-th log record matching when. An at of
 // zero never cancels and only counts warnings.
+//
+// Slow-query logging stays off while the handler is installed. Otherwise a
+// statement or commit that crosses the threshold on a loaded runner logs
+// "sql slow" or "sql tx slow" in place of the line a trigger counts, and a
+// very slow one logs a warning.
 func installCancelOnLog(
 	t *testing.T, cancel context.CancelFunc, at int, when func(slog.Record) bool,
 ) *cancelOnLogHandler {
@@ -63,6 +68,8 @@ func installCancelOnLog(
 		cancelWhen: when,
 		cancelAt:   at,
 	}
+	store.ConfigureSQLLogging(store.SQLLogOptions{SlowMs: -1})
+	t.Cleanup(func() { store.ConfigureSQLLogging(store.SQLLogOptions{}) })
 	previous := slog.Default()
 	slog.SetDefault(slog.New(handler))
 	t.Cleanup(func() { slog.SetDefault(previous) })
