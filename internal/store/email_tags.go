@@ -10,6 +10,11 @@ import (
 	"go.kenn.io/msgvault/internal/emailtags"
 )
 
+const (
+	sourceTypeGmail = "gmail"
+	sourceTypeIMAP  = "imap"
+)
+
 // EmailTagTarget binds one archived message to its exact provider identity.
 type EmailTagTarget struct {
 	MessageIdentityGuard
@@ -33,13 +38,13 @@ func (s *Store) EmailTagTargetContext(ctx context.Context, id int64, mailbox str
 		return target, fmt.Errorf("resolve email tag target: %w", err)
 	}
 	if target.Provider == "" {
-		target.Provider = "gmail"
+		target.Provider = sourceTypeGmail
 	}
-	if target.Provider != "imap" {
+	if target.Provider != sourceTypeIMAP {
 		if mailbox != "" {
 			return target, emailtags.Failure("invalid_request", "mailbox selection applies only to IMAP", nil, nil)
 		}
-		if target.Provider != "gmail" && target.Provider != "msmail" {
+		if target.Provider != sourceTypeGmail && target.Provider != "msmail" {
 			return target, emailtags.Failure("unsupported_provider", "tags can be edited only on connected Gmail, IMAP, and Microsoft Graph messages", nil, nil)
 		}
 		return target, nil
@@ -91,7 +96,7 @@ func (s *Store) SaveEmailTagsContext(ctx context.Context, target EmailTagTarget,
 	if result == nil || !result.Verified || result.DryRun || result.Provider != target.Provider {
 		return errors.New("tag snapshot is not verified")
 	}
-	if target.Provider == "imap" && (result.Flags == nil || result.Mailbox != target.Mailbox || result.UIDValidity != target.UIDValidity || result.UID != target.UID) {
+	if target.Provider == sourceTypeIMAP && (result.Flags == nil || result.Mailbox != target.Mailbox || result.UIDValidity != target.UIDValidity || result.UID != target.UID) {
 		return errors.New("IMAP snapshot does not match the target membership")
 	}
 	return s.withAttributionTxContext(ctx, attributionLock{Sources: []int64{target.SourceID}}, func(tx *loggedTx) error {
@@ -109,7 +114,7 @@ func (s *Store) saveEmailTagsTx(ctx context.Context, tx *loggedTx, target EmailT
 	if err != nil {
 		return fmt.Errorf("archived tag identity changed: %w", err)
 	}
-	if target.Provider == "imap" {
+	if target.Provider == sourceTypeIMAP {
 		flags, err := json.Marshal(result.Flags)
 		if err != nil {
 			return err
@@ -129,7 +134,7 @@ func (s *Store) saveEmailTagsTx(ctx context.Context, tx *loggedTx, target EmailT
 		_, err := s.reconcileMicrosoftMailLabelsTx(ctx, tx, target.SourceID, target.ID, nil, &result.Tags)
 		return err
 	}
-	if target.Provider != "gmail" {
+	if target.Provider != sourceTypeGmail {
 		return errors.New("unsupported tag provider")
 	}
 	q := boundQuerier{ctx: ctx, q: tx}

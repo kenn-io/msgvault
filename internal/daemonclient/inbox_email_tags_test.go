@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	Assert "github.com/stretchr/testify/assert"
-	Require "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/emailtags"
 	"go.kenn.io/msgvault/internal/inboxcontrol"
@@ -17,9 +17,9 @@ import (
 // This peer proves the stable legacy-to-signed HTTP contract, not native Gmail
 // acceptance; the daemon native test separately uses the real Gmail transport.
 func TestInboxMessageTagsLegacyGmailPreservesReceipt(t *testing.T) {
-	assert := Assert.New(t)
+	assertions := assert.New(t)
 
-	require := Require.New(t)
+	requirements := require.New(t)
 
 	target := inboxcontrol.Target{SourceID: 2, SourceType: "gmail", SourceIdentifier: "owner@example.test", AccountID: "owner@example.test", Scope: inboxcontrol.ScopeMessage, ItemID: 7, ProviderID: "native-7"}
 	state := inboxcontrol.State{Target: target, Tags: []string{"INBOX"}, ObservedAt: time.Now().UTC()}
@@ -42,37 +42,44 @@ func TestInboxMessageTagsLegacyGmailPreservesReceipt(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"message_id": 7, "source_id": 2, "provider": "gmail", "tags": state.Tags, "before": state.Tags, "available_tags": []emailtags.MessageTag{{ID: "Label_next", Name: "Next"}}, "verified": true, "target": target})
 		case "/api/v1/inbox/control":
 			var request inboxcontrol.Request
-			require.NoError(json.NewDecoder(r.Body).Decode(&request))
+			if !assertions.NoError(json.NewDecoder(r.Body).Decode(&request)) {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
 			controls = append(controls, request)
-			require.Equal(inboxcontrol.OpTags, request.Operation)
-			require.Equal(target, *request.Target)
+			assertions.Equal(inboxcontrol.OpTags, request.Operation)
+			if !assertions.NotNil(request.Target) {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			assertions.Equal(target, *request.Target)
 			after := state
 			after.Tags = []string{"INBOX", "Label_next"}
 			if request.DryRun {
 				_ = json.NewEncoder(w).Encode(inboxcontrol.Result{Before: &state, Projected: &after, PreviewToken: "signed-preview"})
 				return
 			}
-			require.Equal("signed-preview", request.PreviewToken)
-			require.NotEmpty(request.IdempotencyKey)
-			require.NotNil(request.Expected)
+			assertions.Equal("signed-preview", request.PreviewToken)
+			assertions.NotEmpty(request.IdempotencyKey)
+			assertions.NotNil(request.Expected)
 			_ = json.NewEncoder(w).Encode(inboxcontrol.Result{After: &after, Receipt: &inboxcontrol.Receipt{ID: "native-receipt", Status: inboxcontrol.StatusVerified}})
 		default:
-			assert.Fail("unexpected request", r.URL.Path)
+			assertions.Fail("unexpected request", r.URL.Path)
 			http.NotFound(w, r)
 		}
 	}))
 	defer server.Close()
 	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true})
-	require.NoError(err)
-	defer client.Close()
+	requirements.NoError(err)
+	defer func() { assertions.NoError(client.Close()) }()
 	result, err := client.MessageTags(t.Context(), 7, &emailtags.MessageTagChange{Add: []string{"Label_next"}}, "")
-	require.NoError(err)
-	require.NotNil(result)
-	assert.True(result.Verified)
-	assert.Equal("native-receipt", result.ReceiptID)
-	assert.Equal("verified", result.ReceiptStatus)
-	assert.NotEmpty(result.IdempotencyKey)
-	assert.Equal([]string{"INBOX", "Label_next"}, result.Tags)
-	assert.Equal(1, legacyWrites)
-	assert.Len(controls, 2)
+	requirements.NoError(err)
+	requirements.NotNil(result)
+	assertions.True(result.Verified)
+	assertions.Equal("native-receipt", result.ReceiptID)
+	assertions.Equal("verified", result.ReceiptStatus)
+	assertions.NotEmpty(result.IdempotencyKey)
+	assertions.Equal([]string{"INBOX", "Label_next"}, result.Tags)
+	assertions.Equal(1, legacyWrites)
+	assertions.Len(controls, 2)
 }

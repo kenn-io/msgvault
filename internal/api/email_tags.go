@@ -18,11 +18,12 @@ type MessageTagStore interface {
 
 // MessageTagTargetResolver resolves archive identity without provider access.
 type MessageTagTargetResolver interface {
-	ResolveMessageTagTarget(context.Context, int64, string) (inboxcontrol.Target, error)
+	ResolveMessageTagTarget(ctx context.Context, id int64, mailbox string) (inboxcontrol.Target, error)
 }
 
 type MessageTagResponse struct {
 	emailtags.MessageTagResult
+
 	Target *inboxcontrol.Target `json:"target,omitempty"`
 }
 

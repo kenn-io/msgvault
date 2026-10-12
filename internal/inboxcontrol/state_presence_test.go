@@ -4,8 +4,8 @@ import (
 	"encoding/json/v2"
 	"testing"
 
-	Assert "github.com/stretchr/testify/assert"
-	Require "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestInboxStateJSONPreservesObservedEmptySets(t *testing.T) {
@@ -20,25 +20,25 @@ func TestInboxStateJSONPreservesObservedEmptySets(t *testing.T) {
 		{name: "known populated", state: State{Target: target, Read: new(true), Tags: []string{"Todo"}, Flags: []string{`\Seen`, "Todo"}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			assert := Assert.New(t)
+			assertions := assert.New(t)
 
-			require := Require.New(t)
+			requirements := require.New(t)
 
 			encoded, err := json.Marshal(tc.state)
-			require.NoError(err)
+			requirements.NoError(err)
 			var got State
-			require.NoError(json.Unmarshal(encoded, &got))
-			assert.Equal(tc.state.Tags, got.Tags)
-			assert.Equal(tc.state.Flags, got.Flags)
+			requirements.NoError(json.Unmarshal(encoded, &got))
+			assertions.Equal(tc.state.Tags, got.Tags)
+			assertions.Equal(tc.state.Flags, got.Flags)
 			wantHash, err := SemanticFingerprint(tc.state)
-			require.NoError(err)
+			requirements.NoError(err)
 			gotHash, err := SemanticFingerprint(got)
-			require.NoError(err)
-			assert.Equal(wantHash, gotHash)
+			requirements.NoError(err)
+			assertions.Equal(wantHash, gotHash)
 			if tc.name == "known empty" {
 				unknownHash, err := SemanticFingerprint(unknown)
-				require.NoError(err)
-				assert.NotEqual(unknownHash, gotHash, "signed state must distinguish missing from known-empty evidence")
+				requirements.NoError(err)
+				assertions.NotEqual(unknownHash, gotHash, "signed state must distinguish missing from known-empty evidence")
 			}
 		})
 	}

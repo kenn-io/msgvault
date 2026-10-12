@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	Assert "github.com/stretchr/testify/assert"
-	Require "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
@@ -66,13 +66,15 @@ func TestInboxHandlerOwnsAuthentication(t *testing.T) {
 					policy = "admitted"
 				}
 				t.Run(endpoint.name+"/"+credential.name+"/"+policy, func(t *testing.T) {
+					assertions := assert.New(t)
+					requirements := require.New(t)
 					backend := &inboxHTTPStore{}
 					srv := NewServer(&config.Config{Server: config.ServerConfig{APIKey: "synthetic-owner-key", AgentAccess: true}}, backend, nil, testLogger())
-					t.Cleanup(func() { Require.NoError(t, srv.Shutdown(context.Background())) })
+					t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.Background())) })
 					calls := 0
 					handler := srv.Handler(func(w http.ResponseWriter, _ *http.Request, operation Operation) bool {
 						calls++
-						Assert.Equal(t, endpoint.operation, operation)
+						assertions.Equal(endpoint.operation, operation)
 						if !admitted {
 							w.WriteHeader(http.StatusForbidden)
 						}
@@ -85,24 +87,24 @@ func TestInboxHandlerOwnsAuthentication(t *testing.T) {
 					}
 					w := httptest.NewRecorder()
 					handler.ServeHTTP(w, r)
-					Assert.Equal(t, 1, calls, "the caller authorizes the registered operation")
+					assertions.Equal(1, calls, "the caller authorizes the registered operation")
 					if !admitted {
-						Assert.Equal(t, http.StatusForbidden, w.Code)
-						Assert.Empty(t, w.Body.String())
-						Assert.Zero(t, backend.calls, "caller denial precedes archive access")
+						assertions.Equal(http.StatusForbidden, w.Code)
+						assertions.Empty(w.Body.String())
+						assertions.Zero(backend.calls, "caller denial precedes archive access")
 						return
 					}
-					Require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+					requirements.Equal(http.StatusOK, w.Code, w.Body.String())
 					if endpoint.name == "discovery" {
 						var descriptor apiprotocol.MCPCapabilities
-						Require.NoError(t, json.Unmarshal(w.Body.Bytes(), &descriptor))
-						Assert.False(t, descriptor.Delegated)
-						Assert.True(t, descriptor.HasInboxContract())
-						Assert.Contains(t, descriptor.InboxOperations, "get-state")
-						Assert.Zero(t, backend.calls, "discovery never dispatches control")
+						requirements.NoError(json.Unmarshal(w.Body.Bytes(), &descriptor))
+						assertions.False(descriptor.Delegated)
+						assertions.True(descriptor.HasInboxContract())
+						assertions.Contains(descriptor.InboxOperations, "get-state")
+						assertions.Zero(backend.calls, "discovery never dispatches control")
 					} else {
-						Assert.Equal(t, 1, backend.calls)
-						Assert.Equal(t, inboxcontrol.Principal{ID: "owner", Owner: true}, backend.principal)
+						assertions.Equal(1, backend.calls)
+						assertions.Equal(inboxcontrol.Principal{ID: "owner", Owner: true}, backend.principal)
 					}
 				})
 			}
@@ -111,8 +113,8 @@ func TestInboxHandlerOwnsAuthentication(t *testing.T) {
 }
 
 func TestInboxControlOpenAPIContract(t *testing.T) {
-	assertions := Assert.New(t)
-	requirements := Require.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 
 	document := OpenAPIDocument()
 	requirements.NotNil(document.Paths["/api/v1/inbox/control"])
@@ -135,8 +137,8 @@ func inboxHTTPCall(srv *Server, body, owner, agent string) *httptest.ResponseRec
 }
 
 func TestInboxHTTPDelegationAndStrictJSON(t *testing.T) {
-	assertions := Assert.New(t)
-	requirements := Require.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 
 	backend := &inboxHTTPStore{}
 	srv := NewServer(&config.Config{Server: config.ServerConfig{APIKey: "synthetic-owner-key", AgentAccess: true}}, backend, nil, testLogger())
@@ -170,40 +172,40 @@ func TestInboxHTTPRechecksRevokedGrant(t *testing.T) {
 	srv := NewServer(&config.Config{Server: config.ServerConfig{APIKey: "synthetic-owner-key", AgentAccess: true}}, backend, nil, testLogger())
 	srv.agentGrants = agentgrant.NewRegistry()
 	id, secret, _, err := srv.agentGrants.Issue("state-reader", []agentgrant.Permission{agentgrant.PermissionInboxRead}, []agentgrant.SourceRef{{ID: 1, Type: "gmail", Identifier: "owner@example.test"}}, time.Time{})
-	Require.NoError(t, err)
-	backend.beforeAuthorization = func() { Assert.True(t, srv.agentGrants.Revoke(id)) }
+	require.NoError(t, err)
+	backend.beforeAuthorization = func() { assert.True(t, srv.agentGrants.Revoke(id)) }
 	response := inboxHTTPCall(srv, inboxStateBody, "", secret)
-	Assert.Equal(t, http.StatusForbidden, response.Code, response.Body.String())
+	assert.Equal(t, http.StatusForbidden, response.Code, response.Body.String())
 }
 
 func TestInboxHTTPReadsAndPreviewsDoNotAcquireGate(t *testing.T) {
 	gate := NewSerialOperationGate()
 	release, ok := gate.BeginLabeledWorkContext(t.Context(), "fixture sync")
-	Require.True(t, ok)
+	require.True(t, ok)
 	defer release()
 	backend := &inboxHTTPStore{}
 	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: backend, Logger: testLogger(), OperationGate: gate})
 	for _, body := range []string{inboxStateBody, strings.Replace(inboxStateBody, `"operation":"get-state"`, `"operation":"archive","dry_run":true`, 1)} {
 		response := inboxHTTPCall(srv, body, "", "")
-		Assert.Equal(t, http.StatusOK, response.Code, response.Body.String())
+		assert.Equal(t, http.StatusOK, response.Code, response.Body.String())
 	}
 }
 
 // The backend is confined to this predicate test; daemon tests cover native
 // Store/provider resolution and dispatch.
 func TestInboxHTTPGrantRequiresSelectedSourceLifetime(t *testing.T) {
-	require := Require.New(t)
-	assert := Assert.New(t)
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	backend := &inboxHTTPStore{}
 	srv := NewServer(&config.Config{Server: config.ServerConfig{APIKey: "synthetic-owner-key", AgentAccess: true}}, backend, nil, testLogger())
 	srv.agentGrants = agentgrant.NewRegistry()
 	_, oldSecret, oldGrant, err := srv.agentGrants.Issue("old-reader", []agentgrant.Permission{agentgrant.PermissionInboxRead}, []agentgrant.SourceRef{{ID: 1, Type: "gmail", Identifier: "owner@example.test"}}, time.Time{})
-	require.NoError(err)
+	requirements.NoError(err)
 	body := strings.Replace(inboxStateBody, `"source_id":1`, `"source_id":2`, 1)
-	assert.Equal(http.StatusForbidden, inboxHTTPCall(srv, body, "", oldSecret).Code)
+	assertions.Equal(http.StatusForbidden, inboxHTTPCall(srv, body, "", oldSecret).Code)
 	_, freshSecret, _, err := srv.agentGrants.Issue("fresh-reader", []agentgrant.Permission{agentgrant.PermissionInboxRead}, []agentgrant.SourceRef{{ID: 2, Type: "gmail", Identifier: "owner@example.test"}}, time.Time{})
-	require.NoError(err)
-	assert.Equal(http.StatusOK, inboxHTTPCall(srv, body, "", freshSecret).Code)
-	assert.Equal(http.StatusOK, inboxHTTPCall(srv, body, "synthetic-owner-key", "").Code)
-	assert.True(oldGrant.MatchesSource(agentgrant.SourceRef{ID: 2, Type: "gmail", Identifier: "owner@example.test"}), "general archive grants retain tuple semantics")
+	requirements.NoError(err)
+	assertions.Equal(http.StatusOK, inboxHTTPCall(srv, body, "", freshSecret).Code)
+	assertions.Equal(http.StatusOK, inboxHTTPCall(srv, body, "synthetic-owner-key", "").Code)
+	assertions.True(oldGrant.MatchesSource(agentgrant.SourceRef{ID: 2, Type: "gmail", Identifier: "owner@example.test"}), "general archive grants retain tuple semantics")
 }

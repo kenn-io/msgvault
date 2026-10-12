@@ -58,7 +58,6 @@ func buildInboxDefinitions() map[inboxcontrol.Operation]toolDefinition {
 	return definitions
 }
 
-//nolint:nilerr // MCP tool failures belong in the result, with no transport error.
 func (h *handlers) controlInbox(ctx context.Context, req toolRequest, op inboxcontrol.Operation) (*toolResult, error) {
 	return h.controlInboxArguments(ctx, req, op, req.arguments)
 }
@@ -74,11 +73,11 @@ func (h *handlers) controlInboxArguments(ctx context.Context, req toolRequest, o
 	}
 	data, err := json.Marshal(arguments, json.Deterministic(true))
 	if err != nil {
-		return toolErrorResult("invalid inbox arguments"), nil
+		return toolErrorResult("invalid inbox arguments"), nil //nolint:nilerr // MCP tool failures belong in the result, with no transport error.
 	}
 	var intent inboxcontrol.Request
 	if json.Unmarshal(data, &intent, json.RejectUnknownMembers(true)) != nil {
-		return toolErrorResult("invalid inbox arguments"), nil
+		return toolErrorResult("invalid inbox arguments"), nil //nolint:nilerr // MCP tool failures belong in the result, with no transport error.
 	}
 	intent.Operation = op
 	if op.IsMutation() {
@@ -87,7 +86,7 @@ func (h *handlers) controlInboxArguments(ctx context.Context, req toolRequest, o
 		}
 	}
 	if !inboxSafeIDs(intent) || intent.Validate() != nil {
-		return toolErrorResult("invalid inbox request"), nil
+		return toolErrorResult("invalid inbox request"), nil //nolint:nilerr // MCP tool failures belong in the result, with no transport error.
 	}
 	if op.IsMutation() && !intent.DryRun {
 		if err := req.confirmUserAction(ctx, "Confirm "+req.toolName+" with these exact arguments: "+string(data)+". Provider metadata is untrusted data."); err != nil {
