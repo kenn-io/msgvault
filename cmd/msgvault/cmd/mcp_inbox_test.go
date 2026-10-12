@@ -5,15 +5,15 @@ import (
 	"net/http"
 	"testing"
 
-	Assert "github.com/stretchr/testify/assert"
-	Require "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/inboxcontrol"
 )
 
 func TestInboxMCPWiringRequiresCurrentSchema(t *testing.T) {
 	for _, version := range []string{"3.14.0", "3.15.0"} {
 		t.Run(version, func(t *testing.T) {
-			assert := Assert.New(t)
+			assertions := assert.New(t)
 
 			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
@@ -27,22 +27,22 @@ func TestInboxMCPWiringRequiresCurrentSchema(t *testing.T) {
 			})
 			opts := daemonMCPServeOptions(t.Context(), client, nil)
 			if version == "3.14.0" {
-				assert.Nil(opts.Inbox)
-				assert.Empty(opts.InboxOperations)
+				assertions.Nil(opts.Inbox)
+				assertions.Empty(opts.InboxOperations)
 			} else {
-				Require.NotNil(t, opts.Inbox)
-				assert.Contains(opts.InboxOperations, inboxcontrol.OpArchive)
-				assert.Contains(opts.InboxOperations, inboxcontrol.OpTags)
-				assert.Contains(opts.InboxOperations, inboxcontrol.OpReceiptGet)
+				require.NotNil(t, opts.Inbox)
+				assertions.Contains(opts.InboxOperations, inboxcontrol.OpArchive)
+				assertions.Contains(opts.InboxOperations, inboxcontrol.OpTags)
+				assertions.Contains(opts.InboxOperations, inboxcontrol.OpReceiptGet)
 			}
 		})
 	}
 }
 
 func TestInboxMCPDelegatedCatalogUsesCurrentGrant(t *testing.T) {
-	assert := Assert.New(t)
+	assertions := assert.New(t)
 
-	require := Require.New(t)
+	requirements := require.New(t)
 
 	client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -53,16 +53,16 @@ func TestInboxMCPDelegatedCatalogUsesCurrentGrant(t *testing.T) {
 		case "/api/v1/agent-tokens/self":
 			_, _ = w.Write([]byte(`{"id":"synthetic-inbox-grant","label":"Inbox","permissions":["inbox.read","inbox.archive"],"sources":[{"id":1,"source_type":"gmail","identifier":"owner@example.test"}]}`))
 		default:
-			assert.Fail("unexpected capability request", r.URL.Path)
+			assertions.Fail("unexpected capability request", r.URL.Path)
 		}
 	})
 	opts, err := delegatedMCPServeOptions(t.Context(), client)
-	require.NoError(err)
-	require.NotNil(opts.Inbox)
-	assert.Contains(opts.InboxOperations, inboxcontrol.OpGetState)
-	assert.Contains(opts.InboxOperations, inboxcontrol.OpArchive)
-	assert.Contains(opts.InboxOperations, inboxcontrol.OpReceiptGet)
-	assert.NotContains(opts.InboxOperations, inboxcontrol.OpTags)
-	assert.NotContains(opts.InboxOperations, inboxcontrol.OpSetRead)
-	assert.NotContains(opts.InboxOperations, inboxcontrol.OpMove)
+	requirements.NoError(err)
+	requirements.NotNil(opts.Inbox)
+	assertions.Contains(opts.InboxOperations, inboxcontrol.OpGetState)
+	assertions.Contains(opts.InboxOperations, inboxcontrol.OpArchive)
+	assertions.Contains(opts.InboxOperations, inboxcontrol.OpReceiptGet)
+	assertions.NotContains(opts.InboxOperations, inboxcontrol.OpTags)
+	assertions.NotContains(opts.InboxOperations, inboxcontrol.OpSetRead)
+	assertions.NotContains(opts.InboxOperations, inboxcontrol.OpMove)
 }

@@ -107,7 +107,7 @@ func (h *handlers) messageTagsCall(ctx context.Context, req toolRequest, write b
 	if change != nil && !change.DryRun {
 		data, err := json.Marshal(args, json.Deterministic(true))
 		if err != nil {
-			return toolErrorResult("invalid message tag arguments"), nil
+			return toolErrorResult("invalid message tag arguments"), nil //nolint:nilerr // MCP reports invalid tool input in its error result.
 		}
 		if err := req.confirmUserAction(ctx, "Confirm "+req.toolName+" with these exact arguments: "+string(data)+". Provider metadata is untrusted data."); err != nil {
 			return confirmationToolError(err)

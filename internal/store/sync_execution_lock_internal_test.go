@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	Require "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/require"
 )
 
 type failingSyncExecutionLock struct {
@@ -15,40 +15,40 @@ type failingSyncExecutionLock struct {
 func (l *failingSyncExecutionLock) release() (bool, error) { return l.released, l.err }
 
 func TestSyncExecutionReleaseRetriesFailedCleanup(t *testing.T) {
-	require := Require.New(t)
+	requirements := require.New(t)
 	st, err := OpenForTest(":memory:")
-	require.NoError(err)
+	requirements.NoError(err)
 	t.Cleanup(func() { _ = st.Close() })
-	require.NoError(st.InitSchema())
+	requirements.NoError(st.InitSchema())
 	source, err := st.GetOrCreateSource("gmail", "owner@example.test")
-	require.NoError(err)
+	requirements.NoError(err)
 	// Model a backend that still owns its lock after an unsuccessful unlock.
 	cleanupErr := errors.New("backend unlock failed")
 	lock := &failingSyncExecutionLock{err: cleanupErr}
 	st.syncExecutionLocks.bySource[source.ID] = lock
 	execution := &SyncExecution{store: st, sourceID: source.ID, lock: lock}
-	require.ErrorIs(execution.Release(), cleanupErr)
+	requirements.ErrorIs(execution.Release(), cleanupErr)
 	_, err = st.AcquireSyncExecutionContext(t.Context(), source.ID)
-	require.ErrorIs(err, ErrSyncAlreadyActive)
+	requirements.ErrorIs(err, ErrSyncAlreadyActive)
 
 	lock.released = true
-	require.ErrorIs(execution.Release(), cleanupErr)
-	require.NoError(execution.Release(), "completed cleanup must be idempotent")
+	requirements.ErrorIs(execution.Release(), cleanupErr)
+	requirements.NoError(execution.Release(), "completed cleanup must be idempotent")
 	next, err := st.AcquireSyncExecutionContext(t.Context(), source.ID)
-	require.NoError(err, "retrying cleanup must release the source")
-	require.NoError(next.Release())
+	requirements.NoError(err, "retrying cleanup must release the source")
+	requirements.NoError(next.Release())
 }
 
 func TestSyncExecutionCleanupRetainsOnlyUnreleasedSources(t *testing.T) {
 	for _, cleanup := range []string{"run", "abandon", "all"} {
 		t.Run(cleanup, func(t *testing.T) {
-			require := Require.New(t)
+			requirements := require.New(t)
 			st, err := OpenForTest(":memory:")
-			require.NoError(err)
+			requirements.NoError(err)
 			t.Cleanup(func() { _ = st.Close() })
-			require.NoError(st.InitSchema())
+			requirements.NoError(st.InitSchema())
 			source, err := st.GetOrCreateSource("gmail", "owner@example.test")
-			require.NoError(err)
+			requirements.NoError(err)
 			cleanupErr := errors.New("backend cleanup failed")
 			lock := &failingSyncExecutionLock{err: cleanupErr}
 			st.registerSyncExecutionLock(source.ID, 101, lock, true)
@@ -62,22 +62,22 @@ func TestSyncExecutionCleanupRetainsOnlyUnreleasedSources(t *testing.T) {
 					return st.releaseAllSyncExecutionLocks()
 				}
 			}
-			require.ErrorIs(release(), cleanupErr)
+			requirements.ErrorIs(release(), cleanupErr)
 			_, err = st.AcquireSyncExecutionContext(t.Context(), source.ID)
-			require.ErrorIs(err, ErrSyncAlreadyActive)
+			requirements.ErrorIs(err, ErrSyncAlreadyActive)
 
 			lock.released = true
-			require.ErrorIs(release(), cleanupErr)
+			requirements.ErrorIs(release(), cleanupErr)
 			next, err := st.AcquireSyncExecutionContext(t.Context(), source.ID)
-			require.NoError(err, "completed cleanup must release ownership despite its diagnostic error")
-			require.NoError(next.Release())
-			require.NoError(st.releaseSyncExecutionLock(101), "completed cleanup must also remove the run")
+			requirements.NoError(err, "completed cleanup must release ownership despite its diagnostic error")
+			requirements.NoError(next.Release())
+			requirements.NoError(st.releaseSyncExecutionLock(101), "completed cleanup must also remove the run")
 		})
 	}
 }
 
 func TestReleaseOwnedNoOpSyncExecutionLockPreservesOtherSource(t *testing.T) {
-	requirements := Require.New(t)
+	requirements := require.New(t)
 	st, err := OpenForTest(":memory:")
 	requirements.NoError(err)
 	t.Cleanup(func() { _ = st.Close() })
@@ -109,20 +109,20 @@ func TestReleaseOwnedNoOpSyncExecutionLockPreservesOtherSource(t *testing.T) {
 }
 
 func TestInboxExecutionReleasesFenceAfterCompletedSyncCleanupError(t *testing.T) {
-	require := Require.New(t)
+	requirements := require.New(t)
 
 	st, err := OpenForTest(":memory:")
-	require.NoError(err)
-	defer st.Close()
-	require.NoError(st.InitSchema())
+	requirements.NoError(err)
+	defer func() { requirements.NoError(st.Close()) }()
+	requirements.NoError(st.InitSchema())
 	source, err := st.GetOrCreateSource("gmail", "cleanup@example.test")
-	require.NoError(err)
+	requirements.NoError(err)
 	cleanupErr := errors.New("synthetic completed cleanup diagnostic")
 	lock := &failingSyncExecutionLock{released: true, err: cleanupErr}
 	st.syncExecutionLocks.bySource[source.ID] = lock
 	fence := &failingSyncExecutionLock{released: true}
 	execution := &InboxExecution{execution: &SyncExecution{store: st, sourceID: source.ID, lock: lock}, fence: fence}
-	require.ErrorIs(execution.Release(), cleanupErr)
-	require.Nil(execution.fence, "ended sync ownership must not strand the independent removal fence")
-	require.NoError(execution.Release())
+	requirements.ErrorIs(execution.Release(), cleanupErr)
+	requirements.Nil(execution.fence, "ended sync ownership must not strand the independent removal fence")
+	requirements.NoError(execution.Release())
 }

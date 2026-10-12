@@ -11,15 +11,10 @@ import (
 
 const sourceIDHighWaterKey = "source_id_high_water"
 
-type sourceIDTransaction interface {
-	ExecContext(context.Context, string, ...any) (sql.Result, error)
-	QueryRowContext(context.Context, string, ...any) *sql.Row
-}
-
 // reserveSourceIDWriterContext must precede every counter/live-max read. The
 // first write serializes independent SQLite connections, including first use
 // on an archive that predates the retained counter.
-func reserveSourceIDWriterContext(ctx context.Context, tx sourceIDTransaction) error {
+func reserveSourceIDWriterContext(ctx context.Context, tx contextStatementQuerier) error {
 	_, err := tx.ExecContext(ctx, `INSERT INTO archive_metadata(key,value)
 		VALUES(?,'0') ON CONFLICT(key) DO UPDATE
 		SET value=archive_metadata.value`, sourceIDHighWaterKey)
@@ -29,7 +24,7 @@ func reserveSourceIDWriterContext(ctx context.Context, tx sourceIDTransaction) e
 	return nil
 }
 
-func sourceIDHighWaterContext(ctx context.Context, tx sourceIDTransaction) (int64, error) {
+func sourceIDHighWaterContext(ctx context.Context, tx contextStatementQuerier) (int64, error) {
 	var text string
 	if err := tx.QueryRowContext(ctx, `SELECT value FROM archive_metadata WHERE key=?`, sourceIDHighWaterKey).Scan(&text); err != nil {
 		return 0, fmt.Errorf("read source ID counter: %w", err)
@@ -45,7 +40,7 @@ func sourceIDHighWaterContext(ctx context.Context, tx sourceIDTransaction) (int6
 	return max(value, liveMax), nil
 }
 
-func writeSourceIDHighWaterContext(ctx context.Context, tx sourceIDTransaction, value int64) error {
+func writeSourceIDHighWaterContext(ctx context.Context, tx contextStatementQuerier, value int64) error {
 	_, err := tx.ExecContext(ctx, `UPDATE archive_metadata SET value=? WHERE key=?`, strconv.FormatInt(value, 10), sourceIDHighWaterKey)
 	if err != nil {
 		return fmt.Errorf("retain source ID counter: %w", err)
@@ -56,14 +51,14 @@ func writeSourceIDHighWaterContext(ctx context.Context, tx sourceIDTransaction, 
 // retainSourceIDHighWaterContext runs inside the caller's removal transaction
 // before DELETE, so a legacy archive's highest ID is retained before it vanishes.
 // PostgreSQL already retains its native noncycling identity sequence.
-func (s *Store) retainSourceIDHighWaterContext(ctx context.Context, tx sourceIDTransaction) error {
+func (s *Store) retainSourceIDHighWaterContext(ctx context.Context, tx contextStatementQuerier) error {
 	if s.IsPostgreSQL() {
 		return nil
 	}
 	return retainSQLiteSourceIDHighWaterContext(ctx, tx)
 }
 
-func retainSQLiteSourceIDHighWaterContext(ctx context.Context, tx sourceIDTransaction) error {
+func retainSQLiteSourceIDHighWaterContext(ctx context.Context, tx contextStatementQuerier) error {
 	if err := reserveSourceIDWriterContext(ctx, tx); err != nil {
 		return err
 	}

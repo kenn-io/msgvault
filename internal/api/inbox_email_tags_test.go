@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	Assert "github.com/stretchr/testify/assert"
-	Require "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/inboxcontrol"
 )
@@ -20,9 +20,9 @@ func (s *inboxTagsHTTPStore) ResolveMessageTagTarget(context.Context, int64, str
 	return inboxcontrol.Target{SourceID: 2, SourceType: "gmail", SourceIdentifier: "owner@example.test", AccountID: "owner@example.test", Scope: inboxcontrol.ScopeMessage, ItemID: 7, ProviderID: "native-7"}, nil
 }
 func TestInboxEmailTagsGmailLegacyWriteRequiresSignedControl(t *testing.T) {
-	assert := Assert.New(t)
+	assertions := assert.New(t)
 
-	require := Require.New(t)
+	requirements := require.New(t)
 
 	st := &inboxTagsHTTPStore{}
 	srv := NewServer(&config.Config{}, st, newMockScheduler(), testLogger())
@@ -34,15 +34,15 @@ func TestInboxEmailTagsGmailLegacyWriteRequiresSignedControl(t *testing.T) {
 		return response
 	}
 	response := call(http.MethodPost, "/api/v1/messages/7/tags", `{"add":["Label_next"]}`)
-	require.Equal(http.StatusConflict, response.Code, response.Body.String())
-	assert.Contains(response.Body.String(), "inbox_preview_required")
-	assert.Equal(0, st.calls, "legacy write rejection must precede all provider access")
+	requirements.Equal(http.StatusConflict, response.Code, response.Body.String())
+	assertions.Contains(response.Body.String(), "inbox_preview_required")
+	assertions.Equal(0, st.calls, "legacy write rejection must precede all provider access")
 	response = call(http.MethodGet, "/api/v1/messages/7/tags", "")
-	require.Equal(http.StatusOK, response.Code, response.Body.String())
+	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
 	var result struct {
 		Target *inboxcontrol.Target `json:"target"`
 	}
-	require.NoError(json.Unmarshal(response.Body.Bytes(), &result))
-	require.NotNil(result.Target)
-	assert.Equal("native-7", result.Target.ProviderID)
+	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &result))
+	requirements.NotNil(result.Target)
+	assertions.Equal("native-7", result.Target.ProviderID)
 }

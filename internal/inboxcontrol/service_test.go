@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	Assert "github.com/stretchr/testify/assert"
-	Require "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/inboxcontrol"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
@@ -90,16 +90,16 @@ type controlFixture struct {
 }
 
 func TestInboxControlRejectsPreFixPreviewWithCollapsedEmptyEvidence(t *testing.T) {
-	assert := Assert.New(t)
+	assertions := assert.New(t)
 
-	require := Require.New(t)
+	requirements := require.New(t)
 
 	f := newControlFixture(t)
 	// The previous serializer omitted known-empty Tags/Flags, producing the
 	// same signed representation as nil. Model that historical provider contract
 	// through the real Service and Store; never accept both fingerprints.
 	preview, err := f.service.Control(t.Context(), f.request, f.principal, f.gate)
-	require.NoError(err)
+	requirements.NoError(err)
 	f.request.DryRun = false
 	f.request.Expected = preview.Before
 	f.request.PreviewToken = preview.PreviewToken
@@ -107,11 +107,11 @@ func TestInboxControlRejectsPreFixPreviewWithCollapsedEmptyEvidence(t *testing.T
 	f.provider.state.Tags = []string{}
 	f.provider.state.Flags = []string{}
 	_, err = f.service.Control(t.Context(), f.request, f.principal, f.gate)
-	require.ErrorIs(err, inboxcontrol.ErrPlanChanged)
-	assert.Zero(f.provider.dispatches)
+	requirements.ErrorIs(err, inboxcontrol.ErrPlanChanged)
+	assertions.Zero(f.provider.dispatches)
 	receipt, err := f.archive.Store.LookupInboxReceipt(t.Context(), f.principal.ID, f.request.Target.SourceID, f.request.IdempotencyKey)
-	require.NoError(err)
-	assert.Nil(receipt, "a stale signed preview never obtains a dispatch claim")
+	requirements.NoError(err)
+	assertions.Nil(receipt, "a stale signed preview never obtains a dispatch claim")
 }
 
 func newControlFixture(t *testing.T) *controlFixture {
@@ -156,16 +156,16 @@ func newControlFixture(t *testing.T) *controlFixture {
 func (f *controlFixture) execution(t *testing.T) inboxcontrol.Request {
 	t.Helper()
 	preview, err := f.service.Control(t.Context(), f.request, f.principal, f.gate)
-	Require.NoError(t, err)
-	Require.NotEmpty(t, preview.PreviewToken)
+	require.NoError(t, err)
+	require.NotEmpty(t, preview.PreviewToken)
 	r := f.request
 	r.DryRun, r.Expected, r.PreviewToken, r.IdempotencyKey = false, preview.Before, preview.PreviewToken, "operation-fixture"
 	return r
 }
 
 func TestInboxControlPreviewDoesNotWrite(t *testing.T) {
-	assertions := Assert.New(t)
-	requirements := Require.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 
 	f := newControlFixture(t)
 	result, err := f.service.Control(t.Context(), f.request, f.principal, f.gate)
@@ -185,8 +185,8 @@ func TestInboxControlPreviewDoesNotWrite(t *testing.T) {
 }
 
 func TestInboxControlVerifiedReplayBeforeExpiryAndChangedState(t *testing.T) {
-	assertions := Assert.New(t)
-	requirements := Require.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 
 	f := newControlFixture(t)
 	r := f.execution(t)
@@ -205,7 +205,7 @@ func TestInboxControlVerifiedReplayBeforeExpiryAndChangedState(t *testing.T) {
 	assertions.Equal(1, f.provider.dispatches)
 	f.denied = true
 	_, err = f.service.Control(t.Context(), r, f.principal, f.gate)
-	Require.ErrorIs(t, err, inboxcontrol.ErrDenied)
+	require.ErrorIs(t, err, inboxcontrol.ErrDenied)
 	assertions.Equal(1, f.provider.dispatches)
 }
 
@@ -213,11 +213,11 @@ func TestInboxControlChangedIntentCannotReuseKey(t *testing.T) {
 	f := newControlFixture(t)
 	r := f.execution(t)
 	_, err := f.service.Control(t.Context(), r, f.principal, f.gate)
-	Require.NoError(t, err)
+	require.NoError(t, err)
 	r.Operation = inboxcontrol.OpSetUnread
 	_, err = f.service.Control(t.Context(), r, f.principal, f.gate)
-	Require.ErrorIs(t, err, inboxcontrol.ErrConflict)
-	Assert.Equal(t, 1, f.provider.dispatches)
+	require.ErrorIs(t, err, inboxcontrol.ErrConflict)
+	assert.Equal(t, 1, f.provider.dispatches)
 }
 
 func TestInboxControlStaleOrForgedPreviewNeverDispatches(t *testing.T) {
@@ -245,8 +245,8 @@ func TestInboxControlStaleOrForgedPreviewNeverDispatches(t *testing.T) {
 				r.Expected = &expected
 			}
 			_, err := f.service.Control(t.Context(), r, f.principal, f.gate)
-			Require.Error(t, err)
-			Assert.Equal(t, 0, f.provider.dispatches)
+			require.Error(t, err)
+			assert.Equal(t, 0, f.provider.dispatches)
 		})
 	}
 }
@@ -255,22 +255,22 @@ func TestInboxControlSourceLeaseExcludesSync(t *testing.T) {
 	f := newControlFixture(t)
 	r := f.execution(t)
 	execution, err := f.archive.Store.AcquireSyncExecutionContext(t.Context(), r.Target.SourceID)
-	Require.NoError(t, err)
+	require.NoError(t, err)
 	t.Cleanup(func() { _ = execution.Release() })
 	_, err = f.service.Control(t.Context(), r, f.principal, f.gate)
-	Require.Error(t, err)
-	Assert.Equal(t, 0, f.provider.dispatches)
+	require.Error(t, err)
+	assert.Equal(t, 0, f.provider.dispatches)
 }
 
 func TestInboxControlLostResponseNeverRetriesAndSanitizesError(t *testing.T) {
-	assertions := Assert.New(t)
-	requirements := Require.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 
 	f := newControlFixture(t)
 	r := f.execution(t)
 	f.provider.dispatch = func(context.Context) error { return errors.New("Bearer secret-fixture https://personal.example.test") }
 	result, err := f.service.Control(t.Context(), r, f.principal, f.gate)
-	Require.ErrorIs(t, err, inboxcontrol.ErrOutcomeUnknown)
+	require.ErrorIs(t, err, inboxcontrol.ErrOutcomeUnknown)
 	assertions.NotContains(err.Error(), "secret-fixture")
 	requirements.NotNil(result.Receipt)
 	assertions.Equal(inboxcontrol.StatusUnknown, result.Receipt.Status)
@@ -281,8 +281,8 @@ func TestInboxControlLostResponseNeverRetriesAndSanitizesError(t *testing.T) {
 }
 
 func TestInboxControlCanceledDispatchFinalizesReceipt(t *testing.T) {
-	assertions := Assert.New(t)
-	requirements := Require.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 
 	f := newControlFixture(t)
 	r := f.execution(t)
@@ -290,7 +290,7 @@ func TestInboxControlCanceledDispatchFinalizesReceipt(t *testing.T) {
 	t.Cleanup(cancel)
 	f.provider.dispatch = func(context.Context) error { cancel(); return context.Canceled }
 	result, err := f.service.Control(ctx, r, f.principal, f.gate)
-	Require.ErrorIs(t, err, inboxcontrol.ErrOutcomeUnknown)
+	require.ErrorIs(t, err, inboxcontrol.ErrOutcomeUnknown)
 	requirements.NotNil(result.Receipt)
 	stored, err := f.archive.Store.GetInboxReceipt(t.Context(), result.Receipt.ID)
 	requirements.NoError(err)
@@ -316,14 +316,14 @@ func TestInboxControlReadbackDoesNotConsumeCompletionDeadline(t *testing.T) {
 	}
 
 	result, err := f.service.Control(t.Context(), r, f.principal, f.gate)
-	Require.NoError(t, err)
-	Require.NotNil(t, result.Receipt)
-	Assert.Equal(t, inboxcontrol.StatusVerified, result.Receipt.Status)
+	require.NoError(t, err)
+	require.NotNil(t, result.Receipt)
+	assert.Equal(t, inboxcontrol.StatusVerified, result.Receipt.Status)
 }
 
 func TestInboxControlLocalFailureReconcilesWithoutDispatch(t *testing.T) {
-	assertions := Assert.New(t)
-	requirements := Require.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 
 	f := newControlFixture(t)
 	r := f.execution(t)
@@ -332,7 +332,7 @@ func TestInboxControlLocalFailureReconcilesWithoutDispatch(t *testing.T) {
 		return errors.New("fixture local failure")
 	}
 	result, err := f.service.Control(t.Context(), r, f.principal, f.gate)
-	Require.ErrorIs(t, err, inboxcontrol.ErrReconcileOnly)
+	require.ErrorIs(t, err, inboxcontrol.ErrReconcileOnly)
 	requirements.NotNil(result.Receipt)
 	assertions.Equal(inboxcontrol.StatusReconcileOnly, result.Receipt.Status)
 	f.service.ReconcileState = reconcile
@@ -346,25 +346,25 @@ func TestInboxControlReceiptRequiresCurrentOriginalAuthority(t *testing.T) {
 	f := newControlFixture(t)
 	r := f.execution(t)
 	result, err := f.service.Control(t.Context(), r, f.principal, f.gate)
-	Require.NoError(t, err)
+	require.NoError(t, err)
 	read := inboxcontrol.Request{Operation: inboxcontrol.OpReceiptGet, ReceiptID: result.Receipt.ID}
 	other := inboxcontrol.Principal{ID: "other-delegate"}
 	_, err = f.service.Control(t.Context(), read, other, f.gate)
-	Require.ErrorIs(t, err, inboxcontrol.ErrDenied)
+	require.ErrorIs(t, err, inboxcontrol.ErrDenied)
 	f.denied = true
 	_, err = f.service.Control(t.Context(), read, f.principal, f.gate)
-	Assert.ErrorIs(t, err, inboxcontrol.ErrDenied)
+	assert.ErrorIs(t, err, inboxcontrol.ErrDenied)
 }
 
 func TestInboxControlReadbackIdentityMismatchRemainsUnknown(t *testing.T) {
-	assertions := Assert.New(t)
+	assertions := assert.New(t)
 
 	f := newControlFixture(t)
 	r := f.execution(t)
 	f.provider.dispatch = func(context.Context) error { f.provider.state.Target.ProviderID = "different-message"; return nil }
 	result, err := f.service.Control(t.Context(), r, f.principal, f.gate)
-	Require.ErrorIs(t, err, inboxcontrol.ErrOutcomeUnknown)
-	Require.NotNil(t, result.Receipt)
+	require.ErrorIs(t, err, inboxcontrol.ErrOutcomeUnknown)
+	require.NotNil(t, result.Receipt)
 	assertions.Equal(inboxcontrol.StatusUnknown, result.Receipt.Status)
 	assertions.Nil(result.Receipt.After)
 }
@@ -374,8 +374,8 @@ func TestInboxControlChangedProjectionInvalidatesPreview(t *testing.T) {
 	r := f.execution(t)
 	f.provider.previewLocation = "changed-destination"
 	_, err := f.service.Control(t.Context(), r, f.principal, f.gate)
-	Require.Error(t, err)
-	Assert.Equal(t, 0, f.provider.dispatches)
+	require.Error(t, err)
+	assert.Equal(t, 0, f.provider.dispatches)
 }
 
 type finishFailureLedger struct{ inboxcontrol.Ledger }
@@ -385,14 +385,14 @@ func (l finishFailureLedger) FinishInboxReceipt(context.Context, string, inboxco
 }
 
 func TestInboxControlFinalizationFailureRetainsDispatchEvidence(t *testing.T) {
-	assertions := Assert.New(t)
-	requirements := Require.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 
 	f := newControlFixture(t)
 	r := f.execution(t)
 	f.service.Ledger = finishFailureLedger{f.archive.Store}
 	result, err := f.service.Control(t.Context(), r, f.principal, f.gate)
-	Require.ErrorIs(t, err, inboxcontrol.ErrReconcileOnly)
+	require.ErrorIs(t, err, inboxcontrol.ErrReconcileOnly)
 	requirements.NotNil(result.Receipt)
 	assertions.Equal(inboxcontrol.StatusDispatching, result.Receipt.Status)
 	assertions.NotNil(result.Receipt.DispatchedAt)
@@ -411,23 +411,23 @@ func TestInboxControlDispatchRequiresCommittedReceiptAndSourceLease(t *testing.T
 	r := f.execution(t)
 	f.provider.dispatch = func(ctx context.Context) error {
 		receipt, err := f.archive.Store.LookupInboxReceipt(ctx, f.principal.ID, r.Target.SourceID, r.IdempotencyKey)
-		Require.NoError(t, err)
-		Require.NotNil(t, receipt)
-		Assert.Equal(t, inboxcontrol.StatusDispatching, receipt.Status)
-		Assert.NotNil(t, receipt.DispatchedAt)
+		require.NoError(t, err)
+		require.NotNil(t, receipt)
+		assert.Equal(t, inboxcontrol.StatusDispatching, receipt.Status)
+		assert.NotNil(t, receipt.DispatchedAt)
 		lease, err := f.archive.Store.AcquireSyncExecutionContext(ctx, r.Target.SourceID)
-		Assert.Error(t, err)
+		assert.Error(t, err)
 		if lease != nil {
 			_ = lease.Release()
 		}
 		return nil
 	}
 	_, err := f.service.Control(t.Context(), r, f.principal, f.gate)
-	Require.NoError(t, err)
+	require.NoError(t, err)
 }
 
 func TestInboxControlReceiptRetainsAuthenticatedProjection(t *testing.T) {
-	requirements := Require.New(t)
+	requirements := require.New(t)
 
 	f := newControlFixture(t)
 	r := f.execution(t)
@@ -442,7 +442,7 @@ func TestInboxControlReceiptRetainsAuthenticatedProjection(t *testing.T) {
 	}
 	requirements.NoError(json.Unmarshal(encoded, &durable))
 	requirements.NotNil(durable.Projected, "reconciliation must retain the preview's exact projected destination and delta")
-	Assert.Equal(t, result.Projected, durable.Projected)
+	assert.Equal(t, result.Projected, durable.Projected)
 }
 
 type capabilityProvider struct {
@@ -456,8 +456,8 @@ func (p *capabilityProvider) Capabilities(context.Context, inboxcontrol.Request)
 }
 
 func TestInboxControlCapabilitiesUseCurrentSourceGrantsWithoutWrites(t *testing.T) {
-	assertions := Assert.New(t)
-	requirements := Require.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 
 	f := newControlFixture(t)
 	target := *f.request.Target
@@ -511,16 +511,16 @@ func TestInboxControlCapabilitiesRejectUnprovedMetadata(t *testing.T) {
 			cp := &capabilityProvider{controlProvider: f.provider, capabilities: caps}
 			f.service.Resolve = func(context.Context, inboxcontrol.Request) (inboxcontrol.Provider, error) { return cp, nil }
 			_, err := f.service.Control(t.Context(), inboxcontrol.Request{Operation: inboxcontrol.OpGetCapabilities, Source: &source}, f.principal, f.gate)
-			Require.ErrorIs(t, err, inboxcontrol.ErrUnavailable)
-			Assert.Equal(t, 0, f.gateCalls)
+			require.ErrorIs(t, err, inboxcontrol.ErrUnavailable)
+			assert.Equal(t, 0, f.gateCalls)
 		})
 	}
 }
 
 func TestInboxControlReconcileDoesNotConsumeReceiptSettlementDeadline(t *testing.T) {
-	assert := Assert.New(t)
+	assertions := assert.New(t)
 
-	require := Require.New(t)
+	requirements := require.New(t)
 
 	f := newControlFixture(t)
 	r := f.execution(t)
@@ -529,24 +529,24 @@ func TestInboxControlReconcileDoesNotConsumeReceiptSettlementDeadline(t *testing
 		return ctx.Err()
 	}
 	result, err := f.service.Control(t.Context(), r, f.principal, f.gate)
-	require.ErrorIs(err, inboxcontrol.ErrReconcileOnly)
-	require.NotNil(result.Receipt)
-	assert.Equal(inboxcontrol.StatusReconcileOnly, result.Receipt.Status)
-	assert.NotNil(result.Receipt.DispatchedAt)
-	assert.NotNil(result.Receipt.FinishedAt)
-	assert.Equal(1, f.provider.dispatches)
+	requirements.ErrorIs(err, inboxcontrol.ErrReconcileOnly)
+	requirements.NotNil(result.Receipt)
+	assertions.Equal(inboxcontrol.StatusReconcileOnly, result.Receipt.Status)
+	assertions.NotNil(result.Receipt.DispatchedAt)
+	assertions.NotNil(result.Receipt.FinishedAt)
+	assertions.Equal(1, f.provider.dispatches)
 	// An expired preview is still an authorized replay of durable evidence.
 	f.now = f.now.Add(time.Hour)
 	replay, err := f.service.Control(t.Context(), r, f.principal, f.gate)
-	require.NoError(err)
-	assert.Equal(result.Receipt.ID, replay.Receipt.ID)
-	assert.Equal(1, f.provider.dispatches)
+	requirements.NoError(err)
+	assertions.Equal(result.Receipt.ID, replay.Receipt.ID)
+	assertions.Equal(1, f.provider.dispatches)
 }
 
 func TestInboxReceiptReconcileHasSeparateSettlementDeadline(t *testing.T) {
-	assert := Assert.New(t)
+	assertions := assert.New(t)
 
-	require := Require.New(t)
+	requirements := require.New(t)
 
 	f := newControlFixture(t)
 	r := f.execution(t)
@@ -554,17 +554,17 @@ func TestInboxReceiptReconcileHasSeparateSettlementDeadline(t *testing.T) {
 		return errors.New("synthetic local failure")
 	}
 	result, err := f.service.Control(t.Context(), r, f.principal, f.gate)
-	require.ErrorIs(err, inboxcontrol.ErrReconcileOnly)
-	require.NotNil(result.Receipt)
+	requirements.ErrorIs(err, inboxcontrol.ErrReconcileOnly)
+	requirements.NotNil(result.Receipt)
 	f.service.ReconcileState = func(ctx context.Context, _, _ inboxcontrol.State) error {
 		<-ctx.Done()
 		return ctx.Err()
 	}
 	request := inboxcontrol.Request{Operation: inboxcontrol.OpReconcile, ReceiptID: result.Receipt.ID}
 	result, err = f.service.Control(t.Context(), request, f.principal, f.gate)
-	require.ErrorIs(err, inboxcontrol.ErrReconcileOnly)
-	require.NotNil(result.Receipt)
-	assert.Equal(inboxcontrol.StatusReconcileOnly, result.Receipt.Status)
-	assert.Equal("local-reconcile-failed", result.Receipt.FailureCode)
-	assert.Equal(1, f.provider.dispatches)
+	requirements.ErrorIs(err, inboxcontrol.ErrReconcileOnly)
+	requirements.NotNil(result.Receipt)
+	assertions.Equal(inboxcontrol.StatusReconcileOnly, result.Receipt.Status)
+	assertions.Equal("local-reconcile-failed", result.Receipt.FailureCode)
+	assertions.Equal(1, f.provider.dispatches)
 }

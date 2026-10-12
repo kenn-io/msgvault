@@ -94,7 +94,7 @@ func TestDaemonInboxNativeMutationReconcilesUnsyncedUserLabel(t *testing.T) {
 			defer server.Close()
 			client, err := daemonclient.New(daemonclient.Config{URL: server.URL, APIKey: adapter.config.Server.APIKey, AllowInsecure: true})
 			requirements.NoError(err)
-			defer client.Close()
+			defer func() { assertions.NoError(client.Close()) }()
 			request := inboxcontrol.Request{Operation: tc.op, Target: &target, DryRun: true}
 			preview, err := client.ControlInbox(t.Context(), request)
 			requirements.NoError(err)
