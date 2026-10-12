@@ -288,8 +288,12 @@ func (s *Service) execute(ctx context.Context, request Request, principal Princi
 		mapping = &State{Target: *dispatch.Target, ObservedAt: s.now()}
 		readRequest.Target = dispatch.Target
 		if imapMoveRequest(request) {
+			mappingLedger, ok := s.Ledger.(ReceiptMappingLedger)
+			if !ok {
+				return s.finishDetached(ctx, result, StatusUnknown, nil, "mapping-persist-failed", ErrOutcomeUnknown)
+			}
 			mappingCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-			err := s.Ledger.(ReceiptMappingLedger).RecordInboxReceiptMapping(mappingCtx, receipt.ID, *mapping)
+			err := mappingLedger.RecordInboxReceiptMapping(mappingCtx, receipt.ID, *mapping)
 			cancel()
 			if err != nil {
 				return s.finishDetached(ctx, result, StatusUnknown, nil, "mapping-persist-failed", ErrOutcomeUnknown)
@@ -503,7 +507,7 @@ func closeProvider(provider Provider) {
 
 // MoveSourceVerifier independently proves the original UID disappeared.
 type MoveSourceVerifier interface {
-	VerifyMoveSource(context.Context, Target) error
+	VerifyMoveSource(ctx context.Context, target Target) error
 }
 
 func imapMoveRequest(request Request) bool {

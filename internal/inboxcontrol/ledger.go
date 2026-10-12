@@ -96,5 +96,5 @@ type Ledger interface {
 // ReceiptMappingLedger is optional; only native consumers whose dispatch returns
 // a changed identity require it. Ledger retains its five-method caller ABI.
 type ReceiptMappingLedger interface {
-	RecordInboxReceiptMapping(context.Context, string, State) error
+	RecordInboxReceiptMapping(ctx context.Context, receiptID string, state State) error
 }

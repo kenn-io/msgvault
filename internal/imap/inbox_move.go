@@ -66,7 +66,7 @@ func singletonIMAPUID(set imapapi.NumSet) (imapapi.UID, bool) {
 	return uids[0].Start, true
 }
 
-func (p *InboxProvider) dispatchMove(ctx context.Context, request inboxcontrol.Request, before, projected inboxcontrol.State) (inboxcontrol.DispatchResult, error) {
+func (p *InboxProvider) dispatchMove(ctx context.Context, before, projected inboxcontrol.State) (inboxcontrol.DispatchResult, error) {
 	if len(projected.Folders) != 1 {
 		return inboxcontrol.DispatchResult{}, inboxcontrol.ErrNoWrite
 	}

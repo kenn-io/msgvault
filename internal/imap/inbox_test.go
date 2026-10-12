@@ -1,6 +1,7 @@
 package imap
 
 import (
+	"fmt"
 	"sync/atomic"
 	"testing"
 
@@ -43,7 +44,10 @@ func TestInboxIMAPSingleFlagActions(t *testing.T) {
 			}
 			requirements.NoError(client.withConn(t.Context(), func(conn *imapclient.Client) error {
 				_, err := conn.Store(imapapi.UIDSetNum(1), &imapapi.StoreFlags{Op: imapapi.StoreFlagsAdd, Flags: flags}, nil).Collect()
-				return err
+				if err != nil {
+					return fmt.Errorf("collect IMAP store response in test: %w", err)
+				}
+				return nil
 			}))
 			stores.Store(0)
 			source, target := inboxIMAPBinding(client, id)

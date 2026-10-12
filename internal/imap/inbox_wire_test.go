@@ -51,7 +51,13 @@ func newInboxWireServer(t *testing.T, state *inboxWireServer) (*Client, *InboxPr
 	}()
 	t.Cleanup(func() {
 		_ = listener.Close()
-		connections.Range(func(key, value any) bool { _ = key.(net.Conn).Close(); return true })
+		connections.Range(func(key, value any) bool {
+			conn, ok := key.(net.Conn)
+			if ok {
+				_ = conn.Close()
+			}
+			return true
+		})
 	})
 	client := newTestClient(t, listener.Addr().String())
 	source, target := inboxIMAPBinding(client, DraftReceipt{Mailbox: "INBOX", UIDValidity: 77, UID: 1})
@@ -61,8 +67,8 @@ func newInboxWireServer(t *testing.T, state *inboxWireServer) (*Client, *InboxPr
 var inboxStorePattern = regexp.MustCompile(`^UID STORE 1 (?:\(UNCHANGEDSINCE ([0-9]+)\) )?([+-]?FLAGS(?:\.SILENT)?) \(([^)]*)\)$`)
 
 func (s *inboxWireServer) serve(conn net.Conn) {
-	defer conn.Close()
-	fmt.Fprint(conn, "* OK synthetic native server\r\n")
+	defer func() { _ = conn.Close() }()
+	_, _ = fmt.Fprint(conn, "* OK synthetic native server\r\n")
 	reader := bufio.NewReader(conn)
 	for {
 		line, err := reader.ReadString('\n')
@@ -75,9 +81,9 @@ func (s *inboxWireServer) serve(conn net.Conn) {
 		}
 		switch {
 		case command == "CAPABILITY":
-			fmt.Fprintf(conn, "* CAPABILITY IMAP4rev1 CONDSTORE\r\n%s OK capabilities\r\n", tag)
+			_, _ = fmt.Fprintf(conn, "* CAPABILITY IMAP4rev1 CONDSTORE\r\n%s OK capabilities\r\n", tag)
 		case strings.HasPrefix(command, "LOGIN "):
-			fmt.Fprintf(conn, "%s OK authenticated\r\n", tag)
+			_, _ = fmt.Fprintf(conn, "%s OK authenticated\r\n", tag)
 		case strings.HasPrefix(command, "SELECT ") || strings.HasPrefix(command, "EXAMINE "):
 			s.mu.Lock()
 			modSeq, mode := s.modSeq, s.access
@@ -106,7 +112,7 @@ func (s *inboxWireServer) serve(conn net.Conn) {
 			if mode != "missing" {
 				code = " [" + mode + "]"
 			}
-			fmt.Fprintf(conn, "* FLAGS (\\Seen \\Answered \\Flagged \\Deleted \\Recent Old Next Unrelated Concurrent Recent)\r\n* 1 EXISTS\r\n* OK [PERMANENTFLAGS (\\Seen \\Flagged Old Next Unrelated Concurrent)] flags\r\n* OK [UIDVALIDITY %d] epoch\r\n* OK [UIDNEXT 2] next\r\n* OK [HIGHESTMODSEQ %d] revision\r\n%s%s %s%s selected\r\n", epoch, modSeq, extra, tag, status, code)
+			_, _ = fmt.Fprintf(conn, "* FLAGS (\\Seen \\Answered \\Flagged \\Deleted \\Recent Old Next Unrelated Concurrent Recent)\r\n* 1 EXISTS\r\n* OK [PERMANENTFLAGS (\\Seen \\Flagged Old Next Unrelated Concurrent)] flags\r\n* OK [UIDVALIDITY %d] epoch\r\n* OK [UIDNEXT 2] next\r\n* OK [HIGHESTMODSEQ %d] revision\r\n%s%s %s%s selected\r\n", epoch, modSeq, extra, tag, status, code)
 		case strings.HasPrefix(command, "UID FETCH "):
 			s.mu.Lock()
 			flags, modSeq := slices.Clone(s.flags), s.modSeq
@@ -119,11 +125,11 @@ func (s *inboxWireServer) serve(conn net.Conn) {
 				}
 				revision = fmt.Sprintf(" MODSEQ (%d)", modSeq)
 			}
-			fmt.Fprintf(conn, "* 1 FETCH (UID 1 FLAGS (%s)%s)\r\n%s OK fetched\r\n", strings.Join(flags, " "), revision, tag)
+			_, _ = fmt.Fprintf(conn, "* 1 FETCH (UID 1 FLAGS (%s)%s)\r\n%s OK fetched\r\n", strings.Join(flags, " "), revision, tag)
 		case strings.HasPrefix(command, "UID STORE "):
 			matched := inboxStorePattern.FindStringSubmatch(command)
 			if matched == nil {
-				fmt.Fprintf(conn, "%s BAD invalid store\r\n", tag)
+				_, _ = fmt.Fprintf(conn, "%s BAD invalid store\r\n", tag)
 				continue
 			}
 			s.mu.Lock()
@@ -136,7 +142,7 @@ func (s *inboxWireServer) serve(conn net.Conn) {
 			unchanged, _ := strconv.ParseUint(matched[1], 10, 64)
 			if matched[1] != "" && s.modSeq > unchanged {
 				s.mu.Unlock()
-				fmt.Fprintf(conn, "%s OK [MODIFIED 1] conflict\r\n", tag)
+				_, _ = fmt.Fprintf(conn, "%s OK [MODIFIED 1] conflict\r\n", tag)
 				continue
 			}
 			values := strings.Fields(matched[3])
@@ -159,12 +165,12 @@ func (s *inboxWireServer) serve(conn net.Conn) {
 			if lost {
 				return
 			}
-			fmt.Fprintf(conn, "%s OK stored\r\n", tag)
+			_, _ = fmt.Fprintf(conn, "%s OK stored\r\n", tag)
 		case command == "LOGOUT":
-			fmt.Fprintf(conn, "* BYE done\r\n%s OK logout\r\n", tag)
+			_, _ = fmt.Fprintf(conn, "* BYE done\r\n%s OK logout\r\n", tag)
 			return
 		default:
-			fmt.Fprintf(conn, "%s BAD unsupported native fixture command\r\n", tag)
+			_, _ = fmt.Fprintf(conn, "%s BAD unsupported native fixture command\r\n", tag)
 		}
 	}
 }
@@ -288,7 +294,7 @@ func TestInboxIMAPLostStoreReplyRecoversWithoutSessionRecent(t *testing.T) {
 	assertions.Len(wire.stores, 1)
 	assertions.Equal(1, wire.writes)
 	wire.mu.Unlock()
-	assertions.NoError(provider.Verify(request, before, projected, after), "session-only Recent must not prevent recovery of the permanent read-state change")
+	requirements.NoError(provider.Verify(request, before, projected, after), "session-only Recent must not prevent recovery of the permanent read-state change")
 	assertions.Equal([]string{`\Recent`}, before.Flags, "raw signed observation is retained")
 	assertions.ElementsMatch([]string{`\Recent`, `\Seen`}, projected.Flags, "verification never mutates the signed projection")
 }
