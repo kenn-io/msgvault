@@ -46,14 +46,14 @@ func TestInboxContextBoundedExactMessage(t *testing.T) {
 	wrong := target
 	wrong.AccountID = "foreign@example.test"
 	_, err = f.Store.InboxContext(t.Context(), inboxcontrol.ContextRequest{Target: wrong})
-	require.ErrorIs(t, err, inboxcontrol.ErrDenied)
+	requirements.ErrorIs(err, inboxcontrol.ErrDenied)
 	wrong = target
 	wrong.ProviderID = "wrong-native-id"
 	_, err = f.Store.InboxContext(t.Context(), inboxcontrol.ContextRequest{Target: wrong})
-	require.ErrorIs(t, err, inboxcontrol.ErrInvalid)
+	requirements.ErrorIs(err, inboxcontrol.ErrInvalid)
 	for _, limit := range []int{-1, 65537} {
 		_, err = f.Store.InboxContext(t.Context(), inboxcontrol.ContextRequest{Target: target, MaxBytes: limit})
-		require.ErrorIs(t, err, inboxcontrol.ErrInvalid)
+		requirements.ErrorIs(err, inboxcontrol.ErrInvalid)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
@@ -112,7 +112,7 @@ func TestInboxContextChatRequiresExactMessageMembership(t *testing.T) {
 		mids = append(mids, mid)
 	}
 	_, err = st.InboxContext(t.Context(), inboxcontrol.ContextRequest{Target: target})
-	require.ErrorIs(t, err, inboxcontrol.ErrInvalid)
+	requirements.ErrorIs(err, inboxcontrol.ErrInvalid)
 	result, err := st.InboxContext(t.Context(), inboxcontrol.ContextRequest{Target: target, MessageID: mids[0]})
 	requirements.NoError(err)
 	assertions.Equal("Synthetic message", result.Text)
@@ -195,13 +195,14 @@ func TestInboxContextRejectsRetiredMessageBeforeBodyLookup(t *testing.T) {
 	for _, kind := range []string{"gmail", "beeper"} {
 		for _, column := range []string{"deleted_at", "deleted_from_source_at"} {
 			t.Run(kind+"/"+column, func(t *testing.T) {
+				requirements := require.New(t)
 				st := testutil.NewTestStore(t)
 				source, err := st.GetOrCreateSource(kind, "reader@example.test")
-				require.NoError(t, err)
+				requirements.NoError(err)
 				chat, err := st.EnsureConversation(source.ID, "context-chat", "Synthetic chat")
-				require.NoError(t, err)
+				requirements.NoError(err)
 				mid, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: chat, SourceMessageID: "context-message", MessageType: kind})
-				require.NoError(t, err)
+				requirements.NoError(err)
 				target := inboxcontrol.Target{SourceID: source.ID, SourceType: kind, SourceIdentifier: source.Identifier, AccountID: source.Identifier, Scope: inboxcontrol.ScopeMessage, ItemID: mid, ProviderID: "context-message"}
 				request := inboxcontrol.ContextRequest{Target: target}
 				if kind == "beeper" {
@@ -209,9 +210,9 @@ func TestInboxContextRejectsRetiredMessageBeforeBodyLookup(t *testing.T) {
 					request.MessageID = mid
 				}
 				_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET `+column+`=CURRENT_TIMESTAMP WHERE id=?`), mid)
-				require.NoError(t, err)
+				requirements.NoError(err)
 				_, err = st.DB().Exec(`DROP TABLE message_bodies`)
-				require.NoError(t, err)
+				requirements.NoError(err)
 				_, err = st.InboxContext(t.Context(), request)
 				assert.ErrorIs(t, err, inboxcontrol.ErrDenied)
 			})

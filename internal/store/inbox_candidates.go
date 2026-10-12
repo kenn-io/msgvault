@@ -169,6 +169,13 @@ func inboxCandidateMembershipSQL(source inboxcontrol.SourceIdentity) string {
 
 func inboxCandidateRevision(ctx context.Context, tx *loggedTx, source inboxcontrol.SourceIdentity, scope inboxcontrol.Scope) (string, bool, error) {
 	table, providerID, _, _, active := inboxCandidateRecordSQL(scope)
+	var archiveUID string
+	if err := tx.QueryRowContext(ctx, `SELECT value FROM archive_metadata WHERE key=?`, archiveUIDKey).Scan(&archiveUID); err != nil {
+		return "", false, fmt.Errorf("read inbox archive identity: %w", err)
+	}
+	if archiveUID == "" {
+		return "", false, inboxcontrol.ErrUnavailable
+	}
 	var generation, total, missing, unknown, messages, maxMessage int64
 	if err := tx.QueryRowContext(ctx, `SELECT COALESCE((SELECT revision FROM inbox_source_revisions WHERE source_id=?),0)`, source.SourceID).Scan(&generation); err != nil {
 		return "", false, fmt.Errorf("read inbox archive revision: %w", err)
@@ -196,10 +203,11 @@ func inboxCandidateRevision(ctx context.Context, tx *loggedTx, source inboxcontr
 		return "", false, fmt.Errorf("read inbox incoming watermark: %w", err)
 	}
 	encoded, err := json.Marshal(struct {
+		ArchiveUID                                                string
 		Source                                                    inboxcontrol.SourceIdentity
 		Scope                                                     inboxcontrol.Scope
 		Generation, Total, Missing, Unknown, Messages, MaxMessage int64
-	}{source, scope, generation, total, missing, unknown, messages, maxMessage})
+	}{archiveUID, source, scope, generation, total, missing, unknown, messages, maxMessage})
 	if err != nil {
 		return "", false, fmt.Errorf("encode inbox archive revision: %w", err)
 	}

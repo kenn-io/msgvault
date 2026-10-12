@@ -69,3 +69,55 @@ func TestInboxChatCandidatesSelectScopedContextMessage(t *testing.T) {
 	assertions.Equal(target, page.Candidates[0].State.Target)
 	assertions.True(page.Candidates[0].Available)
 }
+
+func TestInboxCandidatesAndContextRetainCallerSnapshot(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	t.Parallel()
+	f, source, states := inboxCandidateFixture(t)
+	for _, state := range states {
+		requirements.NoError(f.Store.UpsertMessageBody(state.Target.ItemID, sql.NullString{String: "original text", Valid: true}, sql.NullString{}))
+	}
+	ctx, release, err := f.Store.BeginReadSnapshotContext(t.Context())
+	requirements.NoError(err)
+	defer release()
+	before, err := f.Store.InboxCandidates(ctx, source, inboxcontrol.ScopeMessage, 1, "")
+	requirements.NoError(err)
+	requirements.Len(before.Candidates, 1)
+	requirements.NotEmpty(before.NextCursor)
+	selected := before.Candidates[0].State
+	request := inboxcontrol.ContextRequest{Target: selected.Target}
+	content, err := f.Store.InboxContext(ctx, request)
+	requirements.NoError(err)
+	assertions.Equal("original text", content.Text)
+
+	// Commit real writes outside the caller's snapshot. Later reads in that
+	// snapshot must keep its original metadata, cursor revision, and body.
+	selected.Inbox = new(false)
+	selected.ObservedAt = selected.ObservedAt.Add(time.Second)
+	_, err = f.Store.ObserveInboxState(t.Context(), selected)
+	requirements.NoError(err)
+	requirements.NoError(f.Store.UpsertMessageBody(selected.Target.ItemID, sql.NullString{String: "replacement text", Valid: true}, sql.NullString{}))
+	same, err := f.Store.InboxCandidates(ctx, source, inboxcontrol.ScopeMessage, 1, "")
+	requirements.NoError(err)
+	assertions.Equal(before, same)
+	content, err = f.Store.InboxContext(ctx, request)
+	requirements.NoError(err)
+	assertions.Equal("original text", content.Text)
+	continued, err := f.Store.InboxCandidates(ctx, source, inboxcontrol.ScopeMessage, 1, before.NextCursor)
+	requirements.NoError(err)
+	assertions.Equal(before.ArchiveRevision, continued.ArchiveRevision)
+
+	release()
+	current, err := f.Store.InboxCandidates(t.Context(), source, inboxcontrol.ScopeMessage, 100, "")
+	requirements.NoError(err)
+	assertions.NotEqual(before.ArchiveRevision, current.ArchiveRevision)
+	for _, candidate := range current.Candidates {
+		assertions.NotEqual(selected.Target.ItemID, candidate.State.Target.ItemID)
+	}
+	_, err = f.Store.InboxCandidates(t.Context(), source, inboxcontrol.ScopeMessage, 1, before.NextCursor)
+	assertions.ErrorIs(err, inboxcontrol.ErrPlanChanged)
+	content, err = f.Store.InboxContext(t.Context(), request)
+	requirements.NoError(err)
+	assertions.Equal("replacement text", content.Text)
+}

@@ -119,6 +119,29 @@ func TestInboxCandidatesCursorRejectsStaleAndForeignScope(t *testing.T) {
 	assertions.ErrorIs(err, inboxcontrol.ErrPlanChanged)
 }
 
+func TestInboxCandidatesCursorRejectsAnotherArchive(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	t.Parallel()
+	first, source, _ := inboxCandidateFixture(t)
+	second, secondSource, _ := inboxCandidateFixture(t)
+	requirements.Equal(source, secondSource, "separate archives can have identical local source IDs and identities")
+	firstUID, err := first.Store.ArchiveUIDContext(t.Context())
+	requirements.NoError(err)
+	secondUID, err := second.Store.ArchiveUIDContext(t.Context())
+	requirements.NoError(err)
+	requirements.NotEqual(firstUID, secondUID)
+	page, err := first.Store.InboxCandidates(t.Context(), source, inboxcontrol.ScopeMessage, 1, "")
+	requirements.NoError(err)
+	requirements.NotEmpty(page.NextCursor)
+	otherPage, err := second.Store.InboxCandidates(t.Context(), source, inboxcontrol.ScopeMessage, 1, "")
+	requirements.NoError(err)
+	assertions.NotEqual(page.ArchiveRevision, otherPage.ArchiveRevision)
+	continued, err := second.Store.InboxCandidates(t.Context(), source, inboxcontrol.ScopeMessage, 1, page.NextCursor)
+	assertions.ErrorIs(err, inboxcontrol.ErrPlanChanged)
+	assertions.Nil(continued)
+}
+
 func TestInboxCandidatesUnknownAndIncomingMetadata(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
@@ -133,7 +156,7 @@ func TestInboxCandidatesUnknownAndIncomingMetadata(t *testing.T) {
 	assertions.True(page.Unavailable)
 	assertions.NotEqual(initial.ArchiveRevision, page.ArchiveRevision)
 	_, err = f.Store.InboxCandidates(t.Context(), source, inboxcontrol.ScopeMessage, 1, initial.NextCursor)
-	require.ErrorIs(t, err, inboxcontrol.ErrPlanChanged)
+	requirements.ErrorIs(err, inboxcontrol.ErrPlanChanged)
 	states[0].Read = nil
 	states[0].ObservedAt = states[0].ObservedAt.Add(time.Hour)
 	_, err = f.Store.ObserveInboxState(t.Context(), states[0])
@@ -313,7 +336,6 @@ func TestInboxCandidatesBeeperIncomingAndMissingMarkers(t *testing.T) {
 }
 
 func TestInboxCandidatesIMAPVanishedMembershipInvalidatesPage(t *testing.T) {
-	assertions := assert.New(t)
 	requirements := require.New(t)
 
 	t.Parallel()
@@ -333,7 +355,7 @@ func TestInboxCandidatesIMAPVanishedMembershipInvalidatesPage(t *testing.T) {
 	requirements.NoError(st.ApplyIMAPMailboxDeltas(source.SourceID, []store.IMAPMailboxDelta{{Mailbox: "INBOX", State: store.IMAPFolderState{Mailbox: "INBOX", UIDValidity: 77, UIDNext: 3}, Reset: true, Memberships: memberships}}))
 	for i, member := range memberships {
 		var mid int64
-		require.NoError(t, st.DB().QueryRow(st.Rebind(`SELECT id FROM messages WHERE source_id=? AND source_message_id=?`), source.SourceID, member.SourceMessageID).Scan(&mid))
+		requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM messages WHERE source_id=? AND source_message_id=?`), source.SourceID, member.SourceMessageID).Scan(&mid))
 		seedInboxReadState(t, st, inboxcontrol.State{Target: inboxcontrol.Target{SourceID: source.SourceID, SourceType: source.SourceType, SourceIdentifier: source.SourceIdentifier, AccountID: source.AccountID, Scope: inboxcontrol.ScopeMessage, ItemID: mid, ProviderID: member.SourceMessageID, Mailbox: "INBOX", UIDValidity: 77, UID: uint32(i + 1)}, Inbox: new(true), Read: new(false), ObservedAt: time.Now().UTC()})
 	}
 	page, err := st.InboxCandidates(t.Context(), source, inboxcontrol.ScopeMessage, 1, "")
@@ -342,11 +364,11 @@ func TestInboxCandidatesIMAPVanishedMembershipInvalidatesPage(t *testing.T) {
 	// Only retirement occurs: no new membership observation can advance revision.
 	requirements.NoError(st.ApplyIMAPMailboxDeltas(source.SourceID, []store.IMAPMailboxDelta{{Mailbox: "INBOX", State: store.IMAPFolderState{Mailbox: "INBOX", UIDValidity: 77, UIDNext: 3}, VanishedUIDs: []uint32{1}}}))
 	_, err = st.InboxCandidates(t.Context(), source, inboxcontrol.ScopeMessage, 1, page.NextCursor)
-	require.ErrorIs(t, err, inboxcontrol.ErrPlanChanged)
+	requirements.ErrorIs(err, inboxcontrol.ErrPlanChanged)
 	page, err = st.InboxCandidates(t.Context(), source, inboxcontrol.ScopeMessage, 100, "")
 	requirements.NoError(err)
 	requirements.Len(page.Candidates, 1)
-	assertions.Equal(uint32(2), page.Candidates[0].State.Target.UID)
+	assert.Equal(t, uint32(2), page.Candidates[0].State.Target.UID)
 }
 
 func TestInboxCandidatesDeletedUnknownDoesNotMakeInboxUnavailable(t *testing.T) {
@@ -375,8 +397,8 @@ func TestInboxCandidatesDeletedUnknownDoesNotMakeInboxUnavailable(t *testing.T) 
 }
 
 func TestInboxCandidatesCommittedMarkersDoNotProveProviderCompleteness(t *testing.T) {
-	requirements := require.New(t)
 	assertions := assert.New(t)
+	requirements := require.New(t)
 	f, source, _ := inboxCandidateFixture(t)
 	page, err := f.Store.InboxCandidates(t.Context(), source, inboxcontrol.ScopeMessage, 25, "")
 	requirements.NoError(err)
@@ -418,49 +440,53 @@ func seedInboxReadState(t *testing.T, st *store.Store, state inboxcontrol.State)
 }
 
 func TestInboxCandidatesRejectMismatchedPersistedTarget(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	f, source, states := inboxCandidateFixture(t)
 	state := states[0]
 	state.Target.ProviderID = "foreign-provider-id"
 	encoded, err := json.Marshal(state)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE inbox_provider_states SET state_json=? WHERE item_id=?`), string(encoded), state.Target.ItemID)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	page, err := f.Store.InboxCandidates(t.Context(), source, inboxcontrol.ScopeMessage, 100, "")
-	assert.ErrorIs(t, err, inboxcontrol.ErrUnavailable)
-	assert.Nil(t, page)
+	assertions.ErrorIs(err, inboxcontrol.ErrUnavailable)
+	assertions.Nil(page)
 }
 
 func TestInboxCandidatesIMAPMailboxEpochInvalidatesPage(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
 	archived, err := st.GetOrCreateSource("imap", "imap://reader%40example.test@mail.example.test:143")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	source := inboxcontrol.SourceIdentity{SourceID: archived.ID, SourceType: "imap", SourceIdentifier: archived.Identifier, AccountID: "reader@example.test"}
 	conv, err := st.EnsureConversation(source.SourceID, "epoch-thread", "Synthetic mailbox")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	var states []inboxcontrol.State
 	var members []store.IMAPMembershipObservation
 	for i := range 2 {
 		providerID := fmt.Sprintf("epoch-%d", i+1)
 		mid, err := st.UpsertMessage(&store.Message{SourceID: source.SourceID, ConversationID: conv, SourceMessageID: providerID, MessageType: "email"})
-		require.NoError(t, err)
+		requirements.NoError(err)
 		members = append(members, store.IMAPMembershipObservation{Mailbox: "INBOX", UIDValidity: 77, UID: uint32(i + 1), SourceMessageID: providerID})
 		states = append(states, inboxcontrol.State{Target: inboxcontrol.Target{SourceID: source.SourceID, SourceType: source.SourceType, SourceIdentifier: source.SourceIdentifier, AccountID: source.AccountID, Scope: inboxcontrol.ScopeMessage, ItemID: mid, ProviderID: providerID, Mailbox: "INBOX", UIDValidity: 77, UID: uint32(i + 1)}, Inbox: new(true), Read: new(false), ObservedAt: time.Now().UTC()})
 	}
-	require.NoError(t, st.ApplyIMAPMailboxDeltas(source.SourceID, []store.IMAPMailboxDelta{{Mailbox: "INBOX", State: store.IMAPFolderState{Mailbox: "INBOX", UIDValidity: 77, UIDNext: 3}, Reset: true, Memberships: members}}))
+	requirements.NoError(st.ApplyIMAPMailboxDeltas(source.SourceID, []store.IMAPMailboxDelta{{Mailbox: "INBOX", State: store.IMAPFolderState{Mailbox: "INBOX", UIDValidity: 77, UIDNext: 3}, Reset: true, Memberships: members}}))
 	for _, state := range states {
 		seedInboxReadState(t, st, state)
 	}
 	page, err := st.InboxCandidates(t.Context(), source, inboxcontrol.ScopeMessage, 1, "")
-	require.NoError(t, err)
-	require.NotEmpty(t, page.NextCursor)
+	requirements.NoError(err)
+	requirements.NotEmpty(page.NextCursor)
 	// An importer may commit the new mailbox epoch before stale metadata is
 	// reconciled. Reads must compare against the current epoch independently.
 	_, err = st.DB().Exec(st.Rebind(`UPDATE imap_folder_state SET uidvalidity=78 WHERE source_id=? AND mailbox='INBOX'`), source.SourceID)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	_, err = st.InboxCandidates(t.Context(), source, inboxcontrol.ScopeMessage, 1, page.NextCursor)
-	assert.ErrorIs(t, err, inboxcontrol.ErrPlanChanged)
+	assertions.ErrorIs(err, inboxcontrol.ErrPlanChanged)
 	page, err = st.InboxCandidates(t.Context(), source, inboxcontrol.ScopeMessage, 100, "")
-	require.NoError(t, err)
-	assert.Empty(t, page.Candidates)
-	assert.True(t, page.Unavailable)
+	requirements.NoError(err)
+	assertions.Empty(page.Candidates)
+	assertions.True(page.Unavailable)
 }
