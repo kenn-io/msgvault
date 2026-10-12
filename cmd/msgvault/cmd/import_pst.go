@@ -115,6 +115,7 @@ Examples:
 		}
 
 		summary, err := importer.ImportPst(ctx, st, pstPath, importer.PstImportOptions{
+			NotifyImports:      importNotificationsRequested(cmd),
 			SourceType:         importPstSourceType,
 			Identifier:         identifier,
 			SkipFolders:        importPstSkipFolders,
@@ -124,6 +125,9 @@ Examples:
 			RemoteImages:       configuredRemoteImageFetcher(cfg),
 			Logger:             logger,
 		})
+		if summary != nil {
+			recordImportRun(cmd, summary.ImportRunID)
+		}
 		if err != nil {
 			return err
 		}
@@ -164,6 +168,7 @@ Examples:
 }
 
 func init() {
+	addImportNotificationFlag(importPstCmd)
 	rootCmd.AddCommand(importPstCmd)
 
 	importPstCmd.Flags().StringVar(&importPstSourceType, "source-type", "pst", "Source type recorded in the database")

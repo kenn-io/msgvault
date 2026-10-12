@@ -18,10 +18,11 @@ const daemonMCPEventsCaptureEnv = "MSGVAULT_DAEMON_MCP_EVENTS_CAPTURE"
 const daemonMCPEventsCaptureConfigEnv = "MSGVAULT_DAEMON_MCP_EVENTS_CAPTURE_CONFIG"
 
 type daemonMCPEventsCaptureConfigJSON struct {
-	Enabled      bool                           `json:"enabled"`
-	Principal    string                         `json:"principal"`
-	Capabilities []daemonMCPEventCapabilityJSON `json:"capabilities"`
-	Retention    int64                          `json:"retention"` // Nanoseconds.
+	ImportNotifications bool                           `json:"import_notifications"`
+	Enabled             bool                           `json:"enabled"`
+	Principal           string                         `json:"principal"`
+	Capabilities        []daemonMCPEventCapabilityJSON `json:"capabilities"`
+	Retention           int64                          `json:"retention"` // Nanoseconds.
 }
 
 type daemonMCPEventCapabilityJSON struct {
@@ -106,9 +107,10 @@ func daemonRuntimeChildEnv(ctx context.Context, env []string) []string {
 
 func encodeDaemonMCPEventsCaptureConfig(cfg store.MCPEventsConfig) (string, error) {
 	wire := daemonMCPEventsCaptureConfigJSON{
-		Enabled:   cfg.Enabled,
-		Principal: cfg.Principal,
-		Retention: int64(cfg.Retention),
+		ImportNotifications: cfg.ImportNotifications,
+		Enabled:             cfg.Enabled,
+		Principal:           cfg.Principal,
+		Retention:           int64(cfg.Retention),
 	}
 	wire.Capabilities = make([]daemonMCPEventCapabilityJSON, len(cfg.Capabilities))
 	for i, capability := range cfg.Capabilities {
@@ -131,13 +133,14 @@ func decodeDaemonMCPEventsCaptureConfig(encoded string) (store.MCPEventsConfig, 
 		return store.MCPEventsConfig{}, errors.New("invalid daemon MCP Events capture configuration")
 	}
 	var wire daemonMCPEventsCaptureConfigJSON
-	if err := json.Unmarshal(payload, &wire); err != nil || !wire.Enabled || wire.Principal == "" {
+	if err := json.Unmarshal(payload, &wire, json.RejectUnknownMembers(true)); err != nil || !wire.Enabled || wire.Principal == "" {
 		return store.MCPEventsConfig{}, errors.New("invalid daemon MCP Events capture configuration")
 	}
 	cfg := store.MCPEventsConfig{
-		Enabled:   wire.Enabled,
-		Principal: wire.Principal,
-		Retention: time.Duration(wire.Retention),
+		ImportNotifications: wire.ImportNotifications,
+		Enabled:             wire.Enabled,
+		Principal:           wire.Principal,
+		Retention:           time.Duration(wire.Retention),
 	}
 	cfg.Capabilities = make([]store.MCPEventCapability, len(wire.Capabilities))
 	for i, capability := range wire.Capabilities {

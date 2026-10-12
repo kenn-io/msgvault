@@ -164,6 +164,8 @@ Schema 3.19.0 adds pipe-separated OR in full-text message search queries.
 Upgrade clients and daemon together across incompatible schema versions,
 including remote deployments.
 
+Schema 3.24.0 adds opt-in native import notifications to [MCP Events](#mcp-events).
+
 Schema 3.14.0 adds owner-only [MCP Events](#mcp-events) and typed calendar projections on message details.
 
 Schema 3.11.0 adds `GET /media/search/status` to report whether Docbank transcript search is configured. It also adds source filename, title and date to transcript search results and optional `conversation_title` to `GET /messages/{id}`.
@@ -634,10 +636,10 @@ There is no dedicated cancellation endpoint for these jobs.
 
 ## MCP Events
 
-Schema 3.24.0 adds native source and inbox discovery and subscriptions. These
-owner-key-only endpoints accept no caller-supplied principal. Browser sessions,
-delegated agent tokens, and keyless access cannot use them. Disabled Events has
-no advertised capability.
+Schema 3.24.0 adds native source and inbox discovery and subscriptions, plus
+opt-in native import notifications. These owner-key-only endpoints accept no
+caller-supplied principal. Browser sessions, delegated agent tokens, and keyless
+access cannot use them. Disabled Events has no advertised capability.
 
 | Method | Path under `/api/v1/mcp/events` | Result |
 |---|---|---|
@@ -659,6 +661,15 @@ Inbox resources also include their native scope kind. Discovery remains
 available while Events is disabled; capabilities are empty with reason
 `events_disabled`. It does not contact a provider, enable capture, or create a
 signing key.
+
+Import notifications require `mcp.events.import_notifications` on the daemon
+and `--notify-imports` on an import command, or `notify_imports: true` in a
+meeting import request. Both settings default off. A request fails before
+writing if the daemon option is disabled. Successful import results include an
+opaque `import_run_id`; a resumed interrupted import keeps its logical run, and
+already imported messages aren't notified again. A new import gets a new run ID.
+Exact source subscriptions require the current `source_ref`
+from `POST /resources`; an all-source subscription uses `source_id: "*"`.
 
 POST bodies reject unknown fields. Callback destinations and encrypted secrets
 are never returned by status. Authenticated owner health includes `mcp_events`

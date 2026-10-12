@@ -294,6 +294,7 @@ func ingestRawMessageMode(
 	// Correct attachment count if disk storage filtered some out
 	if attachmentsDir != "" && len(parsed.Attachments) > 0 {
 		var storedCount int
+		// #nosec G701 -- Fixed SQL; Rebind changes placeholders and the message ID is bound.
 		if err := st.DB().QueryRow(
 			st.Rebind(`SELECT COUNT(*) FROM attachments WHERE message_id = ?`),
 			messageID,

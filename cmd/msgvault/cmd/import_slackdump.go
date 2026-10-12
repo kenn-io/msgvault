@@ -52,6 +52,7 @@ func newImportSlackdumpCmd() *cobra.Command {
 	cmd.Flags().Int64Var(&opts.MaxMediaMB, "max-media-mb", 0, "maximum exported file size in MiB (0 = configured/default limit)")
 	cmd.Flags().BoolVar(&opts.NoDefaultIdentity, "no-default-identity", false, noDefaultIdentityHelp)
 	_ = cmd.MarkFlagRequired("me")
+	addImportNotificationFlag(cmd)
 	return cmd
 }
 
@@ -81,6 +82,7 @@ func runImportSlackdump(cmd *cobra.Command, sourcePath string, opts slackdumpCLI
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Importing Slackdump export from %s\n", sourcePath)
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Me: %s\n\n", opts.Me)
 	summary, importErr := slack.ImportSlackdump(ctx, st, sourcePath, slack.SlackdumpImportOptions{
+		NotifyImports:  importNotificationsRequested(cmd),
 		Me:             opts.Me,
 		Limit:          opts.Limit,
 		AttachmentsDir: cfg.AttachmentsDir(),
@@ -89,6 +91,9 @@ func runImportSlackdump(cmd *cobra.Command, sourcePath string, opts slackdumpCLI
 		},
 		Progress: func(line string) { writeSlackProgress(cmd.OutOrStdout(), line) },
 	})
+	if summary != nil {
+		recordImportRun(cmd, summary.ImportRunID)
+	}
 	postImportErr := runSlackdumpPostImportMigrations(
 		cmd.OutOrStdout(), st, summary, opts.NoDefaultIdentity, state,
 	)

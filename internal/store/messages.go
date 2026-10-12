@@ -5394,6 +5394,32 @@ func (s *Store) EnsureParticipantByIdentifierContext(ctx context.Context, identi
 
 	var participantID int64
 	err := s.withAttributionTxContext(ctx, attributionLock{Exclusive: true}, func(tx *loggedTx) error {
+		var err error
+		participantID, err = s.ensureParticipantByIdentifierTx(ctx, tx, identifierType, identifierValue, displayName)
+		return err
+	})
+	if err != nil {
+		return 0, err
+	}
+	return participantID, nil
+}
+
+// ensureParticipantByIdentifierTx retains native identifier semantics in an atomic import.
+func (s *Store) ensureParticipantByIdentifierTx(ctx context.Context, tx *loggedTx, identifierType, identifierValue, displayName string) (int64, error) {
+	identifierType = strings.TrimSpace(identifierType)
+	identifierValue = strings.TrimSpace(identifierValue)
+	if identifierType == "" {
+		return 0, errors.New("identifier type is required")
+	}
+	if identifierValue == "" {
+		return 0, errors.New("identifier value is required")
+	}
+	if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+		return 0, err
+	}
+
+	var participantID int64
+	err := func() error {
 		err := tx.QueryRowContext(ctx, `
 			SELECT participant_id FROM participant_identifiers
 			WHERE identifier_type = ? AND identifier_value = ?
@@ -5463,7 +5489,7 @@ func (s *Store) EnsureParticipantByIdentifierContext(ctx context.Context, identi
 			}
 		}
 		return s.bumpParticipantIdentifierRevision(ctx, tx)
-	})
+	}()
 	if err != nil {
 		return 0, err
 	}

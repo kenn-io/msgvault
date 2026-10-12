@@ -13,8 +13,8 @@ import (
 
 // pstMessageIngester stores a new PST message and then records the threading
 // facts that ReconcilePstEmailThreadsContext reads when the import finishes.
-func pstMessageIngester(images *remoteimage.Fetcher) rawMessageIngestFunc {
-	ingest := rawMessageIngester(images)
+func pstMessageIngester(images *remoteimage.Fetcher, notifyImports bool) rawMessageIngestFunc {
+	ingest := rawMessageIngester(images, notifyImports)
 	return func(
 		ctx context.Context, st *store.Store, sourceID int64, identifier, attachmentsDir string,
 		labelIDs []int64, sourceMsgID, rawHash string, raw []byte, fallbackDate time.Time,

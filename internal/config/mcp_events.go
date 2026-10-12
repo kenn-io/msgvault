@@ -16,10 +16,11 @@ type MCPConfig struct {
 
 // MCPEventsConfig opts the daemon into scoped webhook delivery.
 type MCPEventsConfig struct {
-	Enabled          bool                 `toml:"enabled"`
-	Retention        string               `toml:"retention"`
-	Sources          []string             `toml:"sources"`
-	TrustedCallbacks []MCPTrustedCallback `toml:"trusted_callbacks"`
+	ImportNotifications bool                 `toml:"import_notifications"`
+	Enabled             bool                 `toml:"enabled"`
+	Retention           string               `toml:"retention"`
+	Sources             []string             `toml:"sources"`
+	TrustedCallbacks    []MCPTrustedCallback `toml:"trusted_callbacks"`
 }
 
 type MCPTrustedCallback struct {

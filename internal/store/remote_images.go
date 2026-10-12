@@ -8,15 +8,8 @@ import (
 // UpsertRemoteImageAttachment stores a distinct remote URL occurrence. Matching
 // bytes never establish that a legacy MIME attachment is the same occurrence.
 func (s *Store) UpsertRemoteImageAttachment(ctx context.Context, messageID int64, write AttachmentWrite) error {
-	write = write.normalized()
-	if err := write.validate(); err != nil {
-		return err
-	}
-	if write.SourcePartKey == "" {
-		return errors.New("remote image attachment requires a source-part key")
-	}
 	return s.withSyncMessageWriteContext(ctx, messageID, func(q querier) error {
-		return s.upsertAttachmentRecordWithPolicy(q, messageID, write, preserveLegacyAttachmentRows)
+		return s.upsertRemoteImageAttachmentWith(q, messageID, write)
 	})
 }
 
@@ -56,4 +49,15 @@ func (s *Store) RemoteImageBackfillMessageIDs(ctx context.Context, after, source
 		ids = append(ids, id)
 	}
 	return ids, rows.Err()
+}
+
+func (s *Store) upsertRemoteImageAttachmentWith(q querier, messageID int64, write AttachmentWrite) error {
+	write = write.normalized()
+	if err := write.validate(); err != nil {
+		return err
+	}
+	if write.SourcePartKey == "" {
+		return errors.New("remote image attachment requires a source-part key")
+	}
+	return s.upsertAttachmentRecordWithPolicy(q, messageID, write, preserveLegacyAttachmentRows)
 }

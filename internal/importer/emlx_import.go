@@ -2,6 +2,8 @@ package importer
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -17,6 +19,7 @@ import (
 
 // EmlxImportOptions configures an Apple Mail .emlx directory import.
 type EmlxImportOptions struct {
+	NotifyImports bool
 	// SourceType is the sources.source_type value.
 	// Defaults to "apple-mail".
 	SourceType string
@@ -60,6 +63,7 @@ type EmlxImportOptions struct {
 
 // EmlxImportSummary reports the results of an emlx import.
 type EmlxImportSummary struct {
+	ImportRunID       string `json:"import_run_id,omitempty"`
 	SourceID          int64
 	WasResumed        bool
 	Duration          time.Duration
@@ -141,11 +145,15 @@ func (r *emlxRun) saveCheckpoint() error {
 func importEmlxDir(
 	ctx context.Context, st *store.Store, rootDir string, opts EmlxImportOptions, io emlxImportIO,
 ) (retSummary *EmlxImportSummary, retErr error) {
+	st = st.WithIngestContext(store.IngestContext{Mode: store.IngestBackfill})
 	if opts.SourceType == "" {
 		opts.SourceType = "apple-mail"
 	}
 	if opts.Identifier == "" {
 		return nil, errors.New("identifier is required")
+	}
+	if err := st.ValidateNativeImportChoice(ctx, "apple-mail", opts.NotifyImports); err != nil {
+		return nil, err
 	}
 	if opts.CheckpointInterval <= 0 {
 		opts.CheckpointInterval = 200
@@ -164,6 +172,8 @@ func importEmlxDir(
 	if err != nil {
 		return nil, fmt.Errorf("abs path: %w", err)
 	}
+	requestSum := sha256.Sum256([]byte("apple-mail\x00" + absRoot))
+	requestFingerprint := hex.EncodeToString(requestSum[:])
 	src, err := st.GetOrCreateSource(opts.SourceType, opts.Identifier)
 	if err != nil {
 		return nil, fmt.Errorf("get/create source: %w", err)
@@ -176,17 +186,38 @@ func importEmlxDir(
 	}
 	defer func() { retErr = errors.Join(retErr, execution.Release()) }()
 	rederive.Heal(ctx, slog.Default(), st, src)
+	var recoveredSyncID int64
+	if !opts.NoResume && !opts.FullReconcile {
+		recoveredSyncID, err = st.FindResumableImportAttempt(ownershipCtx, src.ID, "apple-mail", requestFingerprint)
+		if err != nil {
+			return nil, fmt.Errorf("check logical Apple Mail import: %w", err)
+		}
+		summary.WasResumed = recoveredSyncID != 0
+	}
 	run := &emlxRun{absRoot: absRoot, opts: opts, log: log, summary: summary}
 	if !opts.NoResume && !opts.FullReconcile {
 		if err := run.resumeCounters(st, src.ID); err != nil {
 			return nil, err
 		}
 	}
-	syncID, err := execution.StartSyncContext(ownershipCtx, "import-emlx", "")
+	syncID, err := execution.StartSyncWithRequestContext(ownershipCtx, "import-emlx", "", requestFingerprint)
 	if err != nil {
 		return nil, fmt.Errorf("start sync: %w", err)
 	}
 	st = st.ScopedToSync(src.ID, syncID)
+	progressStore := st.WithIngestContext(store.IngestContext{Mode: store.IngestBackfill})
+	logicalRun, err := st.BeginNativeImportAttempt(ownershipCtx, src.ID, "apple-mail", opts.NotifyImports, syncID, recoveredSyncID)
+	if err != nil {
+		_ = progressStore.FailSync(syncID, err.Error())
+		return nil, fmt.Errorf("begin Apple Mail import: %w", err)
+	}
+	summary.ImportRunID = logicalRun.ID
+	view, err := st.WithImportRun(ownershipCtx, logicalRun.ID)
+	if err != nil {
+		_ = progressStore.FailSync(syncID, err.Error())
+		return nil, fmt.Errorf("validate Apple Mail import: %w", err)
+	}
+	st = view
 	run.st, run.syncID = st, syncID
 	// Fatal returns must finish the started run; cancellation keeps its checkpoint
 	// available for the next invocation.

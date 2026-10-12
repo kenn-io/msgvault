@@ -4,6 +4,7 @@
 import type { MeetingImportResponseStatus } from "./meetingImportResponseStatus";
 
 export interface MeetingImportResponse {
+  import_run_id?: string;
   message_id: number;
   source_id: number;
   source_message_id: string;

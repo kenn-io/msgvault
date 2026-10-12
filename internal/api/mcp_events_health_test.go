@@ -167,3 +167,33 @@ func TestMCPEventsHealthMSMailReaders(t *testing.T) {
 	}
 	assert.ElementsMatch([]string{"msgvault.message_archived", "msgvault.source_message_archived", "msgvault.inbox_message_archived"}, families)
 }
+
+func TestMCPEventsHealthImportReaders(t *testing.T) {
+	require := Require.New(t)
+	srv, f := newMCPEventsAPIFixture(t)
+	service, err := mcpevents.New(t.Context(), f.Store, mcpevents.Options{
+		Enabled:             true,
+		ImportNotifications: true,
+		Sources:             []string{"gmail"},
+		OwnerKey:            testSessionAPIKey,
+		KeyPath:             filepath.Join(t.TempDir(), "events.key"),
+	})
+	require.NoError(err)
+	srv.SetMCPEvents(service)
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+	request.Header.Set("Authorization", "Bearer "+testSessionAPIKey)
+	response := httptest.NewRecorder()
+	srv.Router().ServeHTTP(response, request)
+	require.Equal(http.StatusOK, response.Code, response.Body.String())
+	var health HealthResponse
+	require.NoError(json.Unmarshal(response.Body.Bytes(), &health))
+	foundImport := false
+	for _, capability := range health.MCPEventCapabilities {
+		if capability.Family != "msgvault.import_message_archived" {
+			continue
+		}
+		foundImport = true
+		Assert.Equal(t, []string{"get_message", "list_thread"}, capability.ReadTools)
+	}
+	require.True(foundImport, "enabled imports must advertise their read tools")
+}

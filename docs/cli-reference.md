@@ -1639,6 +1639,8 @@ msgvault import-slackdump --me U0123456789 --limit 100 /path/to/export.zip
 
 | Flag | Default | Description |
 |---|---|---|
+| `--notify-imports` | `false` | Emit notifications for new archive messages; also requires the daemon import opt-in. See [import notifications](usage/chat.md#import-notifications). |
+| `--json` | `false` | Write opaque `import_run_ids` and `completed` as JSON; progress goes to stderr. |
 | `--me` | required | Slack user ID or unique profile email in the export |
 | `--limit` | `0` | Max messages imported per conversation (0 = no limit) |
 | `--max-media-mb` | configured/default limit | Max exported file size in MiB (0 = configured/default limit) |
@@ -1799,6 +1801,8 @@ msgvault import-eml /path/to/mail --identifier user@example.com
 
 | Flag | Default | Description |
 |---|---|---|
+| `--notify-imports` | `false` | Emit notifications for new archive messages; also requires the daemon import opt-in. See [import notifications](usage/chat.md#import-notifications). |
+| `--json` | `false` | Write opaque `import_run_ids` and `completed` as JSON; progress goes to stderr. |
 | `--identifier` | required | Source identifier for imported messages |
 | `--source-type` | `eml` | Source type stored for this import |
 | `--no-resume` | `false` | Start a new import rather than resume its checkpoint |
@@ -1824,6 +1828,8 @@ The export file may be a plain mbox file (any extension) or a `.zip` containing 
 
 | Flag | Default | Description |
 |---|---|---|
+| `--notify-imports` | `false` | Emit notifications for new archive messages; also requires the daemon import opt-in. See [import notifications](usage/chat.md#import-notifications). |
+| `--json` | `false` | Write opaque `import_run_ids` and `completed` as JSON; progress goes to stderr. |
 | `--source-type` | `mbox` | Source type recorded in database (e.g., `hey` or `google-groups`) |
 | `--label` | — | Label(s) to apply to imported messages (repeatable, or comma-separated) |
 | `--no-resume` | `false` | Start fresh, ignoring interrupted progress |
@@ -1868,6 +1874,8 @@ messages are still archived.
 
 | Flag | Default | Description |
 |---|---|---|
+| `--notify-imports` | `false` | Emit notifications for new archive messages; also requires the daemon import opt-in. See [import notifications](usage/chat.md#import-notifications). |
+| `--json` | `false` | Write opaque `import_run_ids` and `completed` as JSON; progress goes to stderr. |
 | `--identifier` | — | Required account identifier |
 | `--source-type` | `maildir` | Source type stored for the archive |
 | `--no-resume` | `false` | Start a fresh run instead of resuming a checkpoint |
@@ -1914,6 +1922,8 @@ added to the archive.
 
 | Flag | Default | Description |
 |---|---|---|
+| `--notify-imports` | `false` | Emit notifications for new archive messages; also requires the daemon import opt-in. See [import notifications](usage/chat.md#import-notifications). |
+| `--json` | `false` | Write opaque `import_run_ids` and `completed` as JSON; progress goes to stderr. |
 | `--source-type` | `apple-mail` | Source type recorded in database |
 | `--account` | — | Filter to specific account(s) during auto-discover (repeatable) |
 | `--accounts-db` | — | Custom path to macOS `Accounts4.sqlite` |
@@ -1971,6 +1981,8 @@ The importer preserves PST folder structure as labels, imports email messages, a
 
 | Flag | Default | Description |
 |---|---|---|
+| `--notify-imports` | `false` | Emit notifications for new archive messages; also requires the daemon import opt-in. See [import notifications](usage/chat.md#import-notifications). |
+| `--json` | `false` | Write opaque `import_run_ids` and `completed` as JSON; progress goes to stderr. |
 | `--source-type` | `pst` | Source type recorded in database |
 | `--skip-folder` | — | Folder name to skip, case-insensitive; repeat for multiple folders |
 | `--no-resume` | `false` | Start fresh, ignoring interrupted progress |
@@ -1995,6 +2007,8 @@ The `--phone` flag is required and must be in E.164 format (e.g., `+447700900000
 
 | Flag | Required | Description |
 |---|---|---|
+| `--notify-imports` | `false` | Emit notifications for new archive messages; also requires the daemon import opt-in. See [import notifications](usage/chat.md#import-notifications). |
+| `--json` | `false` | Write opaque `import_run_ids` and `completed` as JSON; progress goes to stderr. |
 | `--phone` | Yes | Your phone number in E.164 format (must start with `+`) |
 | `--contacts` | No | Path to contacts `.vcf` file for name resolution |
 | `--media-dir` | No | Path to decrypted Media folder for attachments |
@@ -2023,6 +2037,8 @@ Reads from `~/Library/Messages/chat.db` by default. This is a read-only operatio
 
 | Flag | Default | Description |
 |---|---|---|
+| `--notify-imports` | `false` | Emit notifications for new archive messages; also requires the daemon import opt-in. See [import notifications](usage/chat.md#import-notifications). |
+| `--json` | `false` | Write opaque `import_run_ids` and `completed` as JSON; progress goes to stderr. |
 | `--db-path` | `~/Library/Messages/chat.db` | Path to chat.db |
 | `--before` | — | Only messages before this date (YYYY-MM-DD) |
 | `--after` | — | Only messages after this date (YYYY-MM-DD) |
@@ -2047,6 +2063,8 @@ msgvault import-imazing-csv ~/Downloads/messages-export \
 
 | Flag | Default | Description |
 |---|---|---|
+| `--notify-imports` | `false` | Emit notifications for new archive messages; also requires the daemon import opt-in. See [import notifications](usage/chat.md#import-notifications). |
+| `--json` | `false` | Write opaque `import_run_ids` and `completed` as JSON; progress goes to stderr. |
 | `--me` | (required) | Your phone number or email address |
 | `--timezone` | local IANA zone (required on Windows) | Timezone used for dates that do not include an offset |
 | `--contacts` | — | vCard file used to fill empty participant names |
@@ -2079,6 +2097,8 @@ The directory must be the "Voice" folder from a Google Takeout export, containin
 
 | Flag | Default | Description |
 |---|---|---|
+| `--notify-imports` | `false` | Emit notifications for new archive messages; also requires the daemon import opt-in. See [import notifications](usage/chat.md#import-notifications). |
+| `--json` | `false` | Write opaque `import_run_ids` and `completed` as JSON; progress goes to stderr. |
 | `--before` | — | Only messages before this date (YYYY-MM-DD) |
 | `--after` | — | Only messages after this date (YYYY-MM-DD) |
 | `--limit` | `0` | Limit number of messages (for testing) |
@@ -2098,6 +2118,8 @@ msgvault import-messenger --me <you@facebook.messenger> <dyi-export-dir>
 
 | Flag | Default | Description |
 |---|---|---|
+| `--notify-imports` | `false` | Emit notifications for new archive messages; also requires the daemon import opt-in. See [import notifications](usage/chat.md#import-notifications). |
+| `--json` | `false` | Write opaque `import_run_ids` and `completed` as JSON; progress goes to stderr. |
 | `--me` | (required) | Your synthetic Messenger identifier, e.g. `test.user@facebook.messenger` |
 | `--format` | `auto` | Export format: `auto`, `json`, `html`, or `both` |
 | `--limit` | `0` | Limit number of messages (for testing) |
@@ -2118,6 +2140,8 @@ msgvault import-synctech-sms <path> --owner-phone <your-number>
 
 | Flag | Default | Description |
 |---|---|---|
+| `--notify-imports` | `false` | Emit notifications for new archive messages; also requires the daemon import opt-in. See [import notifications](usage/chat.md#import-notifications). |
+| `--json` | `false` | Write opaque `import_run_ids` and `completed` as JSON; progress goes to stderr. |
 | `--owner-phone` | (required) | Your phone number in E.164 format |
 | `--sms` | `true` | Import SMS records |
 | `--mms` | `true` | Import MMS records |

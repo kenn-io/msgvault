@@ -242,6 +242,58 @@ Hosted ChatGPT integration remains experimental: a gateway must forward native
 callbacks directly from the daemon. A tunnel does not establish this auth
 bridge or forward callbacks automatically.
 
+### Import notifications
+
+On unreleased `main`, use `msgvault.import_message_archived` to learn when an
+explicit native import creates a new archive message. Enable
+[`mcp.events.import_notifications`](../configuration.md#mcpevents) on the daemon,
+then pass `--notify-imports` to the import command. Meeting-import HTTP requests
+use `"notify_imports": true`. Both choices default off. Enabling this permission
+or subscribing never starts an import or replays old archive content.
+
+Subscribe before running the import. Omit `source_id`, or use `"source_id": "*"`,
+for an archive-wide subscription that can receive imports into sources created
+later. For an existing source, call the owner-only `list_mcp_event_resources`
+tool with `{"kind":"source","source_id":"42"}`, using its canonical decimal ID.
+The resolver accepts one known source ID. Use the returned `reference` as
+`source_ref` alongside that `source_id` when subscribing. A source-specific
+subscription cannot follow a removed or replaced source. Archive-wide arguments
+do not accept `source_ref`. `include_from_me` defaults to `false` in either mode.
+When import notifications are enabled, the resolved source reports this family
+independently of live-provider permission. The native import run supplies its
+format and notification choice.
+
+The native consumers cover EML, Maildir, mbox, Apple Mail, PST, Google Voice,
+Apple Messages, iMazing CSV, Facebook Messenger, WhatsApp Android and Apple,
+Slackdump, explicit Synctech backups and meeting imports. A custom
+`--source-type` label does not change the actual parser's `import_format` or
+turn imported content into live traffic. Routine provider syncs, including
+Synctech Drive polling, keep their existing historical/live rules.
+
+Each occurrence identifies `ingestion_mode="import"`, the opaque `import_run_id`,
+the native `import_format`, and `archived_at`. Its event time is archive ingestion
+time; `sent_at` preserves the original message time when available. The callback
+contains identifiers, not message bodies, archive paths or exported media.
+Use its `eventId` with `get_message` on every page. Required body, raw content,
+recipient state and selected attachment references commit before publication.
+FTS indexing does not determine receipt readiness.
+
+An interrupted resumable import keeps its logical run and frozen notification
+choice. Re-running with a different choice or a different source file or
+directory fails with checkpoint guidance; use `--no-resume` to start a fresh
+native import where supported. Non-resumable imports and each meeting HTTP
+request create fresh logical runs. `--json` on an import command returns
+`import_run_ids` and `completed`; an automatic Apple Mail import includes every
+account run. Progress goes to stderr. No caller-supplied retry/run ID is accepted
+by meeting imports.
+
+Reimports, moves, metadata repair and previously silent messages do not create
+new notifications. Durable identity decisions survive journal pruning and
+physical message deletion. On upgrade, retained identities are adopted silently;
+msgvault cannot recognize an identity deleted before any retained record existed.
+The normal owner-only authorization, subscription expiry, retention and receipt
+invalidation rules still apply.
+
 ## Calendar control
 
 Unreleased daemon API schema 3.1.0 adds `calendar_create`, `calendar_update`,

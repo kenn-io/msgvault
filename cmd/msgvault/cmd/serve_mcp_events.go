@@ -79,11 +79,12 @@ func daemonMCPEventsOptions(cfg *config.Config) (mcpevents.Options, error) {
 		trusted = append(trusted, mcpevents.TrustedCallback{Origin: entry.Origin, Addresses: append([]string(nil), entry.Addresses...)})
 	}
 	return mcpevents.Options{
-		Enabled:          cfg.MCP.Events.Enabled,
-		Retention:        retention,
-		Sources:          append([]string(nil), cfg.MCP.Events.Sources...),
-		TrustedCallbacks: trusted,
-		KeyPath:          filepath.Join(cfg.Data.DataDir, mcpEventsKeyFile),
-		OwnerKey:         cfg.Server.AuthenticationKey(),
+		ImportNotifications: cfg.MCP.Events.ImportNotifications,
+		Enabled:             cfg.MCP.Events.Enabled,
+		Retention:           retention,
+		Sources:             append([]string(nil), cfg.MCP.Events.Sources...),
+		TrustedCallbacks:    trusted,
+		KeyPath:             filepath.Join(cfg.Data.DataDir, mcpEventsKeyFile),
+		OwnerKey:            cfg.Server.AuthenticationKey(),
 	}, nil
 }

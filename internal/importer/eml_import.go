@@ -23,6 +23,8 @@ const defaultMaxEMLMessageBytes int64 = 128 << 20
 
 // EMLImportOptions configures an import from a tree of .mailbox directories.
 type EMLImportOptions struct {
+	// NotifyImports requires the daemon's separate global import opt-in.
+	NotifyImports      bool
 	SourceType         string
 	Identifier         string
 	NoResume           bool
@@ -45,6 +47,8 @@ type EMLImportOptions struct {
 
 // EMLImportSummary reports the result of a directory tree import.
 type EMLImportSummary struct {
+	// ImportRunID identifies this logical native import, including recovery.
+	ImportRunID       string `json:"import_run_id,omitempty"`
 	SourceID          int64
 	WasResumed        bool
 	Duration          time.Duration
@@ -105,8 +109,14 @@ type rawDirectoryLayout struct {
 func importRawDirectory(ctx context.Context, st *store.Store, root string,
 	opts EMLImportOptions, layout rawDirectoryLayout,
 ) (retSummary *EMLImportSummary, retErr error) {
+	// This native file dispatcher owns offline provenance. A Store supplied
+	// by another caller cannot turn a file import into a live provider arrival.
+	st = st.WithIngestContext(store.IngestContext{Mode: store.IngestBackfill})
 	if opts.Identifier == "" {
 		return nil, errors.New("identifier is required")
+	}
+	if err := st.ValidateNativeImportChoice(ctx, layout.sourceType, opts.NotifyImports); err != nil {
+		return nil, err
 	}
 	if opts.SourceType == "" {
 		opts.SourceType = layout.sourceType
@@ -119,7 +129,7 @@ func importRawDirectory(ctx context.Context, st *store.Store, root string,
 	}
 	ingestFn := opts.IngestFunc
 	if ingestFn == nil {
-		ingestFn = rawMessageIngester(opts.RemoteImages)
+		ingestFn = rawMessageIngester(opts.RemoteImages, opts.NotifyImports)
 	}
 	log := opts.Logger
 	if log == nil {
@@ -157,21 +167,41 @@ func importRawDirectory(ctx context.Context, st *store.Store, root string,
 		checkpoint store.Checkpoint
 		startBox   int
 	)
+	// The native root and parser format identify the operation without putting
+	// paths into event payloads. A changed request needs an explicit fresh run.
+	requestHash := sha256.Sum256([]byte(layout.sourceType + "\x00" + absRoot))
+	requestFingerprint := hex.EncodeToString(requestHash[:])
+	var recoveredSyncID int64
 	if !opts.NoResume {
 		resumable, err := st.GetLatestCheckpointedSyncByType(source.ID, "import-"+layout.sourceType)
 		if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
 			return nil, fmt.Errorf("find resumable directory import: %w", err)
 		}
+		var saved emlCheckpoint
+		var checkpointDecodeErr error
+		// Check the native checkpoint identity before validating the durable
+		// logical attempt fingerprint, so a different directory gets actionable
+		// checkpoint guidance instead of an opaque import-run error.
 		if resumable != nil {
-			var saved emlCheckpoint
-			if err := json.Unmarshal([]byte(resumable.CursorBefore.String), &saved); err != nil {
-				return nil, fmt.Errorf("decode directory checkpoint: %w", err)
-			}
-			if saved.RootDir != absRoot {
+			checkpointDecodeErr = json.Unmarshal([]byte(resumable.CursorBefore.String), &saved)
+			if checkpointDecodeErr == nil && saved.RootDir != absRoot {
 				return nil, fmt.Errorf(
 					"saved directory import is for a different directory (%q), not %q; rerun with --no-resume to start fresh",
 					saved.RootDir, absRoot,
 				)
+			}
+		}
+		recoveredSyncID, err = st.FindResumableImportAttempt(ownershipCtx, source.ID, layout.sourceType, requestFingerprint)
+		if err != nil {
+			return nil, fmt.Errorf("find resumable directory import: %w", err)
+		}
+		summary.WasResumed = recoveredSyncID != 0
+		if resumable != nil {
+			if recoveredSyncID == 0 && opts.NotifyImports {
+				return nil, errors.New("legacy import checkpoint is silent; use --no-resume to start a new notifying run")
+			}
+			if checkpointDecodeErr != nil {
+				return nil, fmt.Errorf("decode directory checkpoint: %w", checkpointDecodeErr)
 			}
 			if saved.MailboxIndex < 0 || saved.MailboxIndex >= len(mailboxes) {
 				return nil, fmt.Errorf("directory checkpoint mailbox index %d is out of range", saved.MailboxIndex)
@@ -191,24 +221,42 @@ func importRawDirectory(ctx context.Context, st *store.Store, root string,
 			summary.WasResumed = true
 		}
 	}
-	syncID, err = execution.StartSyncContext(ownershipCtx, "import-"+layout.sourceType, "")
+	syncID, err = execution.StartSyncWithRequestContext(ownershipCtx, "import-"+layout.sourceType, "", requestFingerprint)
 	if err != nil {
 		return nil, fmt.Errorf("start directory import: %w", err)
 	}
 	st = st.ScopedToSync(source.ID, syncID)
+	// Native control writes retain the execution fence after ingestion policy
+	// is revoked. They only record progress or terminal failure, never content.
+	progressStore := st.WithIngestContext(store.IngestContext{Mode: store.IngestBackfill})
 
 	// A fatal return must not leave the run stuck as 'running'; intentional
 	// cancellation keeps 'running' so the checkpoint stays resumable.
 	failSync := func(msg string) {
-		if fsErr := st.FailSync(syncID, msg); fsErr != nil {
+		if fsErr := progressStore.FailSync(syncID, msg); fsErr != nil {
 			log.Warn("failed to record sync failure", "error", fsErr)
 		}
 	}
 
+	// Durable native run policy precedes even the initial progress checkpoint.
+	// The parser layout supplies trusted format independently of SourceType.
+	logicalRun, err := st.BeginNativeImportAttempt(ownershipCtx, source.ID, layout.sourceType, opts.NotifyImports, syncID, recoveredSyncID)
+	if err != nil {
+		failSync(err.Error())
+		return nil, fmt.Errorf("begin directory import: %w", err)
+	}
+	summary.ImportRunID = logicalRun.ID
+	importView, err := st.WithImportRun(ownershipCtx, logicalRun.ID)
+	if err != nil {
+		failSync(err.Error())
+		return nil, fmt.Errorf("validate directory import: %w", err)
+	}
+	st = importView
+
 	lastBox := startBox
 	lastPath := mailboxes[startBox].Path
 	lastFile := ""
-	if err := saveEMLCheckpoint(st, syncID, absRoot, lastBox, lastPath, lastFile, &checkpoint); err != nil {
+	if err := saveEMLCheckpoint(progressStore, syncID, absRoot, lastBox, lastPath, lastFile, &checkpoint); err != nil {
 		failSync(err.Error())
 		return nil, fmt.Errorf("save initial directory checkpoint: %w", err)
 	}
@@ -306,7 +354,7 @@ func importRawDirectory(ctx context.Context, st *store.Store, root string,
 				lastPath = mailbox.Path
 				lastFile = filename
 				if checkpoint.MessagesProcessed%int64(opts.CheckpointInterval) == 0 {
-					if err := saveEMLCheckpoint(st, syncID, absRoot, lastBox, lastPath, lastFile, &checkpoint); err != nil {
+					if err := saveEMLCheckpoint(progressStore, syncID, absRoot, lastBox, lastPath, lastFile, &checkpoint); err != nil {
 						failSync(err.Error())
 						return nil, fmt.Errorf("save directory checkpoint: %w", err)
 					}
@@ -321,7 +369,7 @@ func importRawDirectory(ctx context.Context, st *store.Store, root string,
 
 	summary.Duration = time.Since(started)
 	summary.HardErrors = hardErrors
-	if err := saveEMLCheckpoint(st, syncID, absRoot, lastBox, lastPath, lastFile, &checkpoint); err != nil {
+	if err := saveEMLCheckpoint(progressStore, syncID, absRoot, lastBox, lastPath, lastFile, &checkpoint); err != nil {
 		failSync(err.Error())
 		return nil, fmt.Errorf("save final directory checkpoint: %w", err)
 	}
@@ -329,12 +377,12 @@ func importRawDirectory(ctx context.Context, st *store.Store, root string,
 		return summary, err
 	}
 	if hardErrors {
-		if err := st.FailSync(syncID, fmt.Sprintf("completed with %d errors", checkpoint.ErrorsCount)); err != nil {
+		if err := progressStore.FailSync(syncID, fmt.Sprintf("completed with %d errors", checkpoint.ErrorsCount)); err != nil {
 			return nil, fmt.Errorf("fail directory import: %w", err)
 		}
 		return summary, nil
 	}
-	if err := st.CompleteSync(syncID, fmt.Sprintf("mailboxes:%d messages:%d", summary.MailboxesImported, summary.MessagesAdded)); err != nil {
+	if err := progressStore.CompleteSync(syncID, fmt.Sprintf("mailboxes:%d messages:%d", summary.MailboxesImported, summary.MessagesAdded)); err != nil {
 		return nil, fmt.Errorf("complete directory import: %w", err)
 	}
 	return summary, nil

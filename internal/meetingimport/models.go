@@ -39,8 +39,33 @@ var (
 )
 
 type MeetingImportRequest struct {
-	Source  Source  `json:"source"`
-	Meeting Meeting `json:"meeting"`
+	// NotifyImports requests notifications for this request; the archive must also opt in.
+	NotifyImports bool    `json:"notify_imports,omitempty"`
+	Source        Source  `json:"source"`
+	Meeting       Meeting `json:"meeting"`
+}
+
+// UnmarshalJSON keeps the notification choice a strict optional boolean.
+// Explicit null cannot silently turn a requested policy into the default.
+func (r *MeetingImportRequest) UnmarshalJSON(data []byte) error {
+	var fields map[string]jsontext.Value
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	if raw, exists := fields["notify_imports"]; exists {
+		value := string(bytes.TrimSpace(raw))
+		if value != "true" && value != "false" {
+			return errors.New("notify_imports must be a boolean")
+		}
+	}
+	type requestAlias MeetingImportRequest
+	decoder := jsontext.NewDecoder(bytes.NewReader(data), json.RejectUnknownMembers(true), jsonexact.PreserveNumbers)
+	var shadow requestAlias
+	if err := json.UnmarshalDecode(decoder, &shadow); err != nil {
+		return err
+	}
+	*r = MeetingImportRequest(shadow)
+	return nil
 }
 
 // Request is kept as a concise internal alias for the meeting import wire
@@ -120,8 +145,9 @@ type TranscriptSegment struct {
 }
 
 type NormalizedRequest struct {
-	Source  Source
-	Meeting NormalizedMeeting
+	NotifyImports bool
+	Source        Source
+	Meeting       NormalizedMeeting
 }
 
 type NormalizedMeeting struct {
@@ -148,7 +174,7 @@ func (r Request) Normalize() (NormalizedRequest, error) {
 	if err != nil {
 		return NormalizedRequest{}, err
 	}
-	return NormalizedRequest{Source: source, Meeting: meeting}, nil
+	return NormalizedRequest{NotifyImports: r.NotifyImports, Source: source, Meeting: meeting}, nil
 }
 
 func normalizeSource(source Source) (Source, error) {

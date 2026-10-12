@@ -918,6 +918,14 @@ func (s *Store) withTxLockedContext(
 	ctx context.Context, opts *sql.TxOptions,
 	preFence func(*loggedTx) error, fn func(tx *loggedTx) error,
 ) error {
+	mutable := opts == nil || !opts.ReadOnly
+	if mutable && s.mcpIngest.Mode == IngestImport {
+		// Policy changes and imported canonical writes serialize before either
+		// takes the identity fence. No file or provider IO runs under this lock.
+		root := s.mcpRoot()
+		root.mcpConfigMu.Lock()
+		defer root.mcpConfigMu.Unlock()
+	}
 	start := time.Now()
 	slog.Debug("sql tx begin")
 	tx, err := s.db.BeginTx(ctx, opts)
@@ -929,8 +937,11 @@ func (s *Store) withTxLockedContext(
 		slog.Log(ctx, level, "sql tx begin failed", "error", err.Error())
 		return fmt.Errorf("begin tx: %w", err)
 	}
-	captureEvents := (opts == nil || !opts.ReadOnly) && s.captureMCPEnabled()
-	if captureEvents {
+	captureEvents := mutable && (s.captureMCPEnabled() || s.mcpIngest.Mode == IngestImport)
+	// PostgreSQL attribution transactions already lock identity before source
+	// and sync generation. Preserve their shared identity entry when Events
+	// capture is off so independent sources can persist concurrently.
+	if mutable && (captureEvents || s.syncGeneration != nil && (preFence == nil || !s.IsPostgreSQL())) {
 		// Match the native writers' outer identity fence. Taking the clock
 		// before identity or the source generation can deadlock with source
 		// removal and providers that write their attributed message state.
@@ -957,6 +968,12 @@ func (s *Store) withTxLockedContext(
 		if _, err := s.mcpClockLock(ctx, tx.Tx); err != nil {
 			_ = tx.Rollback()
 			return fmt.Errorf("lock Events clock: %w", err)
+		}
+	}
+	if mutable && s.mcpIngest.Mode == IngestImport {
+		if err := s.validateImportWriteTx(ctx, tx); err != nil {
+			_ = tx.Rollback()
+			return err
 		}
 	}
 	if err := fn(tx); err != nil {
@@ -1671,6 +1688,11 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		} else if m.Desc == "last_modified" && !s.IsPostgreSQL() {
 			lastModifiedColumnAdded = true
 		}
+	}
+	// Rebuilding old subscription tables reads the current column list, so
+	// legacy reference columns must exist before copying retained deliveries.
+	if err := s.runOnceMigration(ctx, "mcp_import_archive_subscriptions_v1", 1, false, s.migrateMCPImportArchiveSubscriptions); err != nil {
+		return fmt.Errorf("migrate import archive subscriptions: %w", err)
 	}
 	if err := s.ensureMCPResourceTriggers(ctx); err != nil {
 		return err

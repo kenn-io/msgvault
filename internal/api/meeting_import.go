@@ -19,6 +19,7 @@ type MeetingImporter interface {
 }
 
 type MeetingImportResponse struct {
+	ImportRunID     string               `json:"import_run_id,omitempty"`
 	Status          meetingimport.Status `json:"status" enum:"created,updated"`
 	SourceID        int64                `json:"source_id"`
 	MessageID       int64                `json:"message_id"`
@@ -232,6 +233,7 @@ func (s *Server) handleMeetingImport(w http.ResponseWriter, r *http.Request) {
 		status = http.StatusCreated
 	}
 	writeJSON(w, status, MeetingImportResponse{
+		ImportRunID:     result.ImportRunID,
 		Status:          result.Status,
 		SourceID:        result.SourceID,
 		MessageID:       result.MessageID,

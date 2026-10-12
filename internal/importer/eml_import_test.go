@@ -403,6 +403,72 @@ func TestImportEMLDirRejectsCheckpointForDifferentRoot(t *testing.T) {
 	require.ErrorContains(err, "--no-resume")
 }
 
+func TestImportEMLDirReportsDifferentRootForFailedNativeAttempt(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st, tmp := openTestStore(t)
+	_, err := st.ConfigureMCPEvents(t.Context(), store.MCPEventsConfig{
+		Enabled: true, Principal: "owner:synthetic-directory-resume",
+		ImportNotifications: true,
+		Capabilities: []store.MCPEventCapability{{
+			Family: "msgvault.import_message_archived", SourceType: "eml", Kinds: []string{"message"},
+		}},
+	})
+	require.NoError(err)
+
+	rootA := filepath.Join(tmp, "MailA")
+	rootB := filepath.Join(tmp, "MailB")
+	for _, root := range []string{rootA, rootB} {
+		mailbox := filepath.Join(root, "Inbox.mailbox")
+		require.NoError(os.MkdirAll(mailbox, 0o700))
+		raw := email.NewMessage().
+			From("sender@example.net").
+			To("owner@example.net").
+			Subject("Synthetic directory resume").
+			Header("Message-ID", "<synthetic-directory-resume@example.net>").
+			Body("Synthetic directory resume body").
+			WithAttachment("synthetic.txt", "text/plain", []byte("synthetic attachment")).
+			Bytes()
+		require.NoError(os.WriteFile(filepath.Join(mailbox, "message.eml"), raw, 0o600))
+	}
+
+	attachments := filepath.Join(tmp, "attachments")
+	require.NoError(os.WriteFile(attachments, []byte("synthetic not a directory"), 0o600))
+	first, err := ImportEMLDir(t.Context(), st, rootA, EMLImportOptions{
+		Identifier: "owner@example.net", NotifyImports: true, AttachmentsDir: attachments,
+	})
+	require.NoError(err)
+	require.NotNil(first)
+	assert.True(first.HardErrors)
+	assert.Zero(first.MessagesAdded)
+	var count int
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM import_runs WHERE import_format='eml' AND completed=FALSE`).Scan(&count))
+	assert.Equal(1, count, "the failed native attempt remains resumable")
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&count))
+	assert.Zero(count, "the unready attachment must not leave a message")
+
+	_, err = ImportEMLDir(t.Context(), st, rootB, EMLImportOptions{
+		Identifier: "owner@example.net", NotifyImports: true, AttachmentsDir: attachments,
+	})
+	require.Error(err)
+	require.ErrorContains(err, "different directory")
+	require.ErrorContains(err, "--no-resume")
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM sync_runs`).Scan(&count))
+	assert.Equal(1, count, "the rejected resume request must not start a second sync")
+
+	require.NoError(os.Remove(attachments))
+	require.NoError(os.MkdirAll(attachments, 0o700))
+	second, err := ImportEMLDir(t.Context(), st, rootB, EMLImportOptions{
+		Identifier: "owner@example.net", NotifyImports: true, NoResume: true, AttachmentsDir: attachments,
+	})
+	require.NoError(err)
+	require.NotNil(second)
+	assert.False(second.WasResumed)
+	assert.Equal(int64(1), second.MessagesAdded)
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM mcp_event_log WHERE family='msgvault.import_message_archived'`).Scan(&count))
+	assert.Equal(1, count, "a fresh retry publishes only after the message snapshot is ready")
+}
+
 func writeTestEML(t *testing.T, path, subject string) {
 	t.Helper()
 	raw := email.NewMessage().

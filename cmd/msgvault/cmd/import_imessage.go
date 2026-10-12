@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -57,6 +58,7 @@ Examples:
 }
 
 func runImportImessage(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
 	state := invocationFromCommand(cmd)
 	if state == nil || state.cfg == nil {
 		return errors.New("configuration is unavailable")
@@ -70,6 +72,9 @@ func runImportImessage(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	defer cleanup()
+	if err := s.ValidateNativeImportChoice(cmd.Context(), "apple_messages", importNotificationsRequested(cmd)); err != nil {
+		return err
+	}
 
 	chatDBPath, err := resolveChatDBPath()
 	if err != nil {
@@ -80,6 +85,7 @@ func runImportImessage(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	clientOpts = append(clientOpts, imessage.WithNotifyImports(importNotificationsRequested(cmd)))
 	if importImessageMe != "" {
 		clientOpts = append(
 			clientOpts, imessage.WithOwnerHandle(importImessageMe),
@@ -107,33 +113,37 @@ func runImportImessage(cmd *cobra.Command, args []string) error {
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-sigChan
-		fmt.Println("\nInterrupted.")
+		_, _ = fmt.Fprintln(out, "\nInterrupted.")
 		cancel()
 	}()
 
 	startTime := time.Now()
 	totalEstimate := client.CountFilteredMessages(ctx)
-	fmt.Printf("Importing iMessages from %s\n", chatDBPath)
+	_, _ = fmt.Fprintf(out, "Importing iMessages from %s\n", chatDBPath)
 	if totalEstimate > 0 {
-		fmt.Printf("Messages to import: ~%d\n", totalEstimate)
+		_, _ = fmt.Fprintf(out, "Messages to import: ~%d\n", totalEstimate)
 	}
-	printImessageDateFilter()
+	printImessageDateFilter(out)
 	if importImessageLimit > 0 {
-		fmt.Printf("Limit: %d messages\n", importImessageLimit)
+		_, _ = fmt.Fprintf(out, "Limit: %d messages\n", importImessageLimit)
 	}
-	fmt.Println()
+	_, _ = fmt.Fprintln(out)
 
 	summary, err := client.Import(ctx, s, src.ID)
+	if summary != nil {
+		recordImportRun(cmd, summary.ImportRunID)
+	}
 	if err != nil {
 		if ctx.Err() != nil {
-			fmt.Println("\nImport interrupted.")
-			printImessageSummary(summary, startTime)
+			markImportCommandIncomplete(cmd)
+			_, _ = fmt.Fprintln(out, "\nImport interrupted.")
+			printImessageSummary(out, summary, startTime)
 			return finishImessageImport(s, state, summary)
 		}
 		return fmt.Errorf("import failed: %w", err)
 	}
 
-	printImessageSummary(summary, startTime)
+	printImessageSummary(out, summary, startTime)
 	return finishImessageImport(s, state, summary)
 }
 
@@ -180,11 +190,11 @@ func finishImessageImport(s *store.Store, state *invocation, summary *imessage.I
 func retitleImessageChats(s *store.Store) bool {
 	n, err := s.RetitleImessageChats()
 	if err != nil {
-		fmt.Printf("\nWarning: could not refresh iMessage chat titles: %v\n", err)
+		fmt.Fprintf(os.Stderr, "\nWarning: could not refresh iMessage chat titles: %v\n", err)
 		return false
 	}
 	if n > 0 {
-		fmt.Printf("iMessage chat titles refreshed: %d\n", n)
+		fmt.Fprintf(os.Stderr, "iMessage chat titles refreshed: %d\n", n)
 		return true
 	}
 	return false
@@ -198,7 +208,7 @@ func retitleImessageChats(s *store.Store) bool {
 func applyImessageContacts(s *store.Store, vcfPath string) bool {
 	contacts, err := vcard.ParseFile(vcfPath)
 	if err != nil {
-		fmt.Printf("\nWarning: could not read contacts %s: %v\n", vcfPath, err)
+		fmt.Fprintf(os.Stderr, "\nWarning: could not read contacts %s: %v\n", vcfPath, err)
 		return false
 	}
 
@@ -240,10 +250,10 @@ func applyImessageContacts(s *store.Store, vcfPath string) bool {
 		}
 	}
 
-	fmt.Println()
-	fmt.Println("Contacts applied:")
-	fmt.Printf("  Source:           %s (%d entries)\n", vcfPath, len(contacts))
-	fmt.Printf("  Names backfilled: %d by phone, %d by email\n",
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Contacts applied:")
+	fmt.Fprintf(os.Stderr, "  Source:           %s (%d entries)\n", vcfPath, len(contacts))
+	fmt.Fprintf(os.Stderr, "  Names backfilled: %d by phone, %d by email\n",
 		phoneMatches, emailMatches)
 	if phoneErrors > 0 || emailErrors > 0 {
 		fmt.Fprintf(os.Stderr,
@@ -320,7 +330,7 @@ func buildImessageOpts(logger *slog.Logger) ([]imessage.ClientOption, error) {
 	return opts, nil
 }
 
-func printImessageDateFilter() {
+func printImessageDateFilter(out io.Writer) {
 	if importImessageAfter == "" && importImessageBefore == "" {
 		return
 	}
@@ -331,10 +341,11 @@ func printImessageDateFilter() {
 	if importImessageBefore != "" {
 		parts = append(parts, "before "+importImessageBefore)
 	}
-	fmt.Printf("Date filter: %s\n", strings.Join(parts, ", "))
+	_, _ = fmt.Fprintf(out, "Date filter: %s\n", strings.Join(parts, ", "))
 }
 
 func printImessageSummary(
+	out io.Writer,
 	summary *imessage.ImportSummary,
 	startTime time.Time,
 ) {
@@ -342,21 +353,21 @@ func printImessageSummary(
 		return
 	}
 	elapsed := time.Since(startTime)
-	fmt.Println()
-	fmt.Println("iMessage import complete!")
-	fmt.Printf("  Duration:         %s\n", elapsed.Round(time.Second))
-	fmt.Printf("  Messages:         %d imported\n", summary.MessagesImported)
-	fmt.Printf("  Conversations:    %d\n", summary.ConversationsImported)
-	fmt.Printf("  Participants:     %d resolved\n", summary.ParticipantsResolved)
+	_, _ = fmt.Fprintln(out)
+	_, _ = fmt.Fprintln(out, "iMessage import complete!")
+	_, _ = fmt.Fprintf(out, "  Duration:         %s\n", elapsed.Round(time.Second))
+	_, _ = fmt.Fprintf(out, "  Messages:         %d imported\n", summary.MessagesImported)
+	_, _ = fmt.Fprintf(out, "  Conversations:    %d\n", summary.ConversationsImported)
+	_, _ = fmt.Fprintf(out, "  Participants:     %d resolved\n", summary.ParticipantsResolved)
 	if summary.Skipped > 0 {
-		fmt.Printf("  Skipped:          %d\n", summary.Skipped)
+		_, _ = fmt.Fprintf(out, "  Skipped:          %d\n", summary.Skipped)
 	}
 	if summary.DatesCleared > 0 {
-		fmt.Printf("  Dates cleared:    %d\n", summary.DatesCleared)
+		_, _ = fmt.Fprintf(out, "  Dates cleared:    %d\n", summary.DatesCleared)
 	}
 	if summary.MessagesImported > 0 && elapsed.Seconds() > 0 {
 		rate := float64(summary.MessagesImported) / elapsed.Seconds()
-		fmt.Printf("  Rate:             %.1f messages/sec\n", rate)
+		_, _ = fmt.Fprintf(out, "  Rate:             %.1f messages/sec\n", rate)
 	}
 }
 
@@ -407,5 +418,6 @@ func init() {
 		&importImessageContacts, "contacts", "",
 		"path to .vcf file used to backfill participant display names by phone/email",
 	)
+	addImportNotificationFlag(importImessageCmd)
 	rootCmd.AddCommand(importImessageCmd)
 }

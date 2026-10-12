@@ -57,7 +57,7 @@ CREATE TABLE IF NOT EXISTS mcp_event_subscriptions (
     arguments TEXT NOT NULL,
     scope_kind TEXT NOT NULL,
     scope_id BIGINT NOT NULL,
-    source_id BIGINT NOT NULL,
+    source_id BIGINT,
     scope_reference_id BIGINT NOT NULL DEFAULT 0,
     callback_url TEXT NOT NULL,
     secret_enc BYTEA NOT NULL,
@@ -84,6 +84,8 @@ CREATE TABLE IF NOT EXISTS mcp_event_subscriptions (
     last_outcome TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
+    CONSTRAINT mcp_event_subscriptions_scope_identity CHECK ((name='msgvault.import_message_archived' AND scope_kind='archive' AND scope_id=0 AND source_id IS NULL)
+        OR (scope_kind<>'archive' AND scope_id>0 AND source_id>0 AND source_id IS NOT NULL)),
     CHECK ((pending_seq IS NULL AND pending_envelope IS NULL AND pending_generation IS NULL)
         OR (pending_seq IS NOT NULL AND pending_seq > 0
             AND pending_envelope IS NOT NULL
@@ -4361,6 +4363,64 @@ CREATE TABLE IF NOT EXISTS mcp_event_resource_bindings (
     valid BOOLEAN NOT NULL,
     message_valid BOOLEAN NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS import_runs (
+ id TEXT PRIMARY KEY,
+ principal TEXT NOT NULL,
+ source_id BIGINT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+ source_generation TEXT NOT NULL CHECK (length(source_generation)=64),
+ import_format TEXT NOT NULL,
+ notify_imports BOOLEAN NOT NULL,
+ completed BOOLEAN NOT NULL DEFAULT FALSE,
+ created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_import_runs_source ON import_runs(source_id);
+CREATE TABLE IF NOT EXISTS import_run_attempts (
+ sync_run_id BIGINT PRIMARY KEY REFERENCES sync_runs(id) ON DELETE CASCADE,
+ import_run_id TEXT NOT NULL REFERENCES import_runs(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_import_run_attempts_run ON import_run_attempts(import_run_id);
+
+-- Durable first-import decisions survive journal and message retention.
+-- Native source identity is retained without bodies or parser metadata.
+CREATE TABLE IF NOT EXISTS import_message_decisions (
+    source_generation TEXT NOT NULL CHECK (length(source_generation)=64),
+    source_message_id TEXT NOT NULL,
+    source_id BIGINT NOT NULL,
+    import_run_id TEXT,
+    archived_at TEXT,
+    notified BOOLEAN NOT NULL,
+    PRIMARY KEY (source_generation, source_message_id)
+);
+CREATE INDEX IF NOT EXISTS idx_import_decisions_source ON import_message_decisions(source_id);
+
+CREATE INDEX IF NOT EXISTS idx_mcp_event_log_archive ON mcp_event_log(epoch,family,seq);
+
+-- Hashed native duplicate allocation evidence survives message deletion.
+CREATE TABLE IF NOT EXISTS import_occurrence_allocations (
+ source_generation TEXT NOT NULL CHECK(length(source_generation)=64),
+ source_id BIGINT NOT NULL,
+ import_format TEXT NOT NULL CHECK(import_format='imazing_csv'),
+ base_hash TEXT NOT NULL CHECK(length(base_hash)=64),
+ occurrence INTEGER NOT NULL CHECK(occurrence>=0),
+ source_message_id TEXT NOT NULL,
+ evidence_hashes TEXT NOT NULL,
+ PRIMARY KEY(source_generation,import_format,base_hash,occurrence)
+);
+
+CREATE INDEX IF NOT EXISTS idx_import_occurrence_source_key ON import_occurrence_allocations(source_generation,import_format,source_message_id);
+
+-- Opaque logical identities retain native import replay decisions across
+-- participant-ID-dependent archive keys, including physical message deletion.
+CREATE TABLE IF NOT EXISTS import_message_identities (
+ source_generation TEXT NOT NULL CHECK(length(source_generation)=64),
+ import_format TEXT NOT NULL CHECK(import_format='synctech_sms'),
+ identity_hash TEXT NOT NULL CHECK(length(identity_hash)=64),
+ source_id BIGINT NOT NULL,
+ source_message_id TEXT NOT NULL,
+ PRIMARY KEY(source_generation,import_format,identity_hash)
+);
+CREATE INDEX IF NOT EXISTS idx_import_message_identity_native_key ON import_message_identities(source_generation,import_format,source_message_id);
 
 -- A source occurrence pins its originating conversation while the encompassing
 -- source subscription remains usable for unrelated conversations. No archive

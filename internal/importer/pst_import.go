@@ -23,6 +23,9 @@ import (
 
 // PstImportOptions configures a PST import operation.
 type PstImportOptions struct {
+	// NotifyImports requires the daemon opt-in and is frozen for a resumed run.
+	NotifyImports bool
+
 	// SourceType is the sources.source_type value. Defaults to "pst".
 	SourceType string
 
@@ -65,9 +68,11 @@ type PstImportOptions struct {
 
 // PstImportSummary reports the results of a PST import.
 type PstImportSummary struct {
-	SourceID   int64
-	WasResumed bool
-	Duration   time.Duration
+	// ImportRunID is the opaque logical operation shared by native retries.
+	ImportRunID string
+	SourceID    int64
+	WasResumed  bool
+	Duration    time.Duration
 
 	FoldersTotal    int
 	FoldersImported int
@@ -110,11 +115,15 @@ func ImportPst(
 func importPstWithBatchSize(
 	ctx context.Context, st *store.Store, pstPath string, opts PstImportOptions, batchSize int,
 ) (retSummary *PstImportSummary, retErr error) {
+	st = st.WithIngestContext(store.IngestContext{Mode: store.IngestBackfill})
 	if opts.SourceType == "" {
 		opts.SourceType = "pst"
 	}
 	if opts.Identifier == "" {
 		return nil, errors.New("identifier is required")
+	}
+	if err := st.ValidateNativeImportChoice(ctx, "pst", opts.NotifyImports); err != nil {
+		return nil, err
 	}
 	if opts.CheckpointInterval <= 0 {
 		opts.CheckpointInterval = 200
@@ -125,7 +134,7 @@ func importPstWithBatchSize(
 
 	ingestFn := opts.IngestFunc
 	if ingestFn == nil {
-		ingestFn = pstMessageIngester(opts.RemoteImages)
+		ingestFn = pstMessageIngester(opts.RemoteImages, opts.NotifyImports)
 	}
 
 	log := opts.Logger
@@ -154,6 +163,13 @@ func importPstWithBatchSize(
 	if err != nil {
 		return nil, fmt.Errorf("fingerprint pst: %w", err)
 	}
+
+	// Native archive identity survives a rename and identifies the resumable
+	// parser operation independently of best-effort progress checkpoints.
+	requestHash := sha256.Sum256([]byte("pst\x00" + archiveID))
+	requestFingerprint := hex.EncodeToString(requestHash[:])
+	var recoveredSyncID int64
+	var nativeRestart bool
 
 	// Build skip-folder set (case-insensitive).
 	skipFolders := make(map[string]bool, len(opts.SkipFolders))
@@ -229,6 +245,7 @@ func importPstWithBatchSize(
 					// and re-import from the beginning.
 					archiveChanged := saved.ArchiveID != "" && saved.ArchiveID != archiveID
 					if sameFile && archiveChanged {
+						nativeRestart = true
 						log.Warn("pst archive fingerprint changed since last checkpoint; restarting from the beginning",
 							"file", absPath,
 							"saved_archive_id", saved.ArchiveID,
@@ -251,21 +268,45 @@ func importPstWithBatchSize(
 		}
 	}
 
-	syncID, err = execution.StartSyncContext(ownershipCtx, "import-pst", "")
+	if !opts.NoResume && !nativeRestart {
+		recoveredSyncID, err = st.FindResumableImportAttempt(ownershipCtx, src.ID, "pst", requestFingerprint)
+		if err != nil {
+			return nil, fmt.Errorf("find resumable PST import: %w", err)
+		}
+		if summary.WasResumed && recoveredSyncID == 0 && opts.NotifyImports {
+			return nil, errors.New("legacy PST checkpoint is silent; use --no-resume to start a new notifying run")
+		}
+		summary.WasResumed = summary.WasResumed || recoveredSyncID != 0
+	}
+
+	syncID, err = execution.StartSyncWithRequestContext(ownershipCtx, "import-pst", "", requestFingerprint)
 	if err != nil {
 		return nil, fmt.Errorf("start sync: %w", err)
 	}
 	st = st.ScopedToSync(src.ID, syncID)
+	progressStore := st.WithIngestContext(store.IngestContext{Mode: store.IngestBackfill})
 
 	failSync := func(msg string) {
-		if fsErr := st.FailSync(syncID, msg); fsErr != nil {
+		if fsErr := progressStore.FailSync(syncID, msg); fsErr != nil {
 			log.Warn("failed to record sync failure", "error", fsErr)
 		}
 	}
 
+	logicalRun, err := st.BeginNativeImportAttempt(ownershipCtx, src.ID, "pst", opts.NotifyImports, syncID, recoveredSyncID)
+	if err != nil {
+		failSync(err.Error())
+		return nil, fmt.Errorf("begin PST import: %w", err)
+	}
+	summary.ImportRunID = logicalRun.ID
+	st, err = st.WithImportRun(ownershipCtx, logicalRun.ID)
+	if err != nil {
+		failSync(err.Error())
+		return nil, fmt.Errorf("validate PST import: %w", err)
+	}
+
 	// Save initial checkpoint only for new syncs; resuming preserves the existing cursor.
 	if !summary.WasResumed {
-		if err := savePstCheckpoint(st, syncID, cpFile, archiveID, 0, "", 0, &cp); err != nil {
+		if err := savePstCheckpoint(progressStore, syncID, cpFile, archiveID, 0, "", 0, &cp); err != nil {
 			log.Warn("failed to save initial checkpoint", "error", err)
 		}
 	}
@@ -349,7 +390,7 @@ func importPstWithBatchSize(
 		if checkpointBlocked {
 			return
 		}
-		if err := savePstCheckpoint(st, syncID, cpFile, archiveID, fi, fp, mi, &cp); err != nil {
+		if err := savePstCheckpoint(progressStore, syncID, cpFile, archiveID, fi, fp, mi, &cp); err != nil {
 			cp.ErrorsCount++
 			summary.Errors++
 			log.Warn("failed to save checkpoint", "error", err)
@@ -402,6 +443,14 @@ func importPstWithBatchSize(
 				}
 			}
 			if exists {
+				if err := st.RetainExistingImportMessageContext(ctx, store.MessageIdentityGuard{ID: existingID, SourceID: src.ID, SourceMessageID: p.SourceMsgID}); err != nil {
+					cp.ErrorsCount++
+					summary.Errors++
+					checkpointBlocked = true
+					hardErrors = true
+					log.Warn("retain existing PST identity", "error", err)
+					continue
+				}
 				if err := recordPstMessageHeadersByID(ctx, st, src.ID, existingID, p.Raw); err != nil {
 					cp.ErrorsCount++
 					summary.Errors++
@@ -533,6 +582,13 @@ func importPstWithBatchSize(
 				cp.ErrorsCount++
 				summary.Errors++
 				log.Warn("read attachments failed", "entry_id", entry.EntryID, "error", err)
+				if opts.NotifyImports && opts.AttachmentsDir != "" {
+					// A selected native attachment must be prepared before the
+					// canonical snapshot can consume its replay decision.
+					checkpointBlocked = true
+					hardErrors = true
+					continue
+				}
 				// Continue without attachments rather than skipping the message.
 				attachments = nil
 			}
@@ -616,7 +672,7 @@ func importPstWithBatchSize(
 	}
 	finalMsg := fmt.Sprintf("folders:%d messages:%d", summary.FoldersImported, summary.MessagesProcessed)
 	if hardErrors {
-		if err := st.FailSync(syncID, fmt.Sprintf("completed with %d errors", cp.ErrorsCount)); err != nil {
+		if err := progressStore.FailSync(syncID, fmt.Sprintf("completed with %d errors", cp.ErrorsCount)); err != nil {
 			return summary, fmt.Errorf("fail sync: %w", err)
 		}
 		return summary, nil
@@ -629,7 +685,7 @@ func importPstWithBatchSize(
 		failSync(err.Error())
 		return summary, err
 	}
-	if err := st.CompleteSyncContext(ctx, syncID, finalMsg); err != nil {
+	if err := progressStore.CompleteSyncContext(ctx, syncID, finalMsg); err != nil {
 		if ctx.Err() != nil {
 			return summary, nil
 		}

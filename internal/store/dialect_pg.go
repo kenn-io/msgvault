@@ -2372,8 +2372,8 @@ var exclusiveLockTables = []string{
 	// Scoped writes fence sync_runs first. Source-first sync transactions take
 	// lockSyncMaintenanceGate before their source lock, so maintenance waits
 	// here without holding tables those transactions still need.
-	// Resource lifetimes and native scopes cascade with their source.
-	"mcp_source_resources", "mcp_conversation_resources", "native_message_scopes", "native_source_permissions",
+	// Resource lifetimes, native scopes, and import runs cascade with their source.
+	"mcp_source_resources", "mcp_conversation_resources", "native_message_scopes", "native_source_permissions", "import_runs",
 	"sync_runs", "sources", "source_messaging_route_failures", "mcp_event_source_refs", "conversations", "conversation_participants",
 	"messages", "message_recipients", "message_labels", "message_bodies", "message_raw",
 	"message_delivery_addresses",
