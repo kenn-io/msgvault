@@ -100,7 +100,7 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.17.0**.
+it is separate from the binary release version. The current schema is **3.18.0**.
 Upgrade clients and daemon together across incompatible schema versions,
 including remote deployments.
 
@@ -128,6 +128,8 @@ This schema also adds consented identity scoring. See
 [identity match review and scoring](#identity-match-review-and-scoring).
 
 Schema 3.14.0 adds `paused` source syncs to operation history and its state filter.
+
+Schema 3.15.0 adds [native email tags](#native-email-tags).
 
 Schema 3.13.0 adds the `docbank_rendition` evidence kind, which
 [cites a Docbank transcript](usage/kata-issues.md#cite-a-docbank-transcript).
@@ -161,8 +163,6 @@ conflict when one UID resolves to multiple people. Person responses expose
 
 Schema 3.11.0 adds structured `account_scopes` filters, the Explore account
 filter, and the virtual account catalog on `/cli/accounts`.
-
-Schema 3.14.0 adds unreleased [native email tags](#native-email-tags).
 
 Schema 3.1.0 adds unreleased [calendar event control](#calendar-control),
 availability queries, and opt-in `write` on Calendar consent plans.
@@ -296,7 +296,7 @@ returns `409 person_uid_ambiguous`.
 
 Read or update one archived message's live Gmail labels, IMAP keywords, or
 Microsoft Graph categories through the same routes.
-Requires API schema 3.14.0 and owner authorization. Delegated agent tokens cannot
+Requires API schema 3.15.0 and owner authorization. Delegated agent tokens cannot
 use these routes. The daemon owns provider credentials. Reads and previews work
 while the source syncs. A write waits up to 10 seconds for the daemon work gate,
 then returns 503 `operation_in_progress` if the gate remains unavailable.
