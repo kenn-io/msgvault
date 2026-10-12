@@ -4,19 +4,21 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
 
 	"go.kenn.io/kit/atomicfile"
+	"go.kenn.io/kit/safefileio"
 	"go.kenn.io/msgvault/internal/fileutil"
 	"go.kenn.io/msgvault/internal/store"
 )
 
 func loadKey(path string, rows []store.MCPSubscription) ([]byte, error) {
 	fail := func() ([]byte, error) { return nil, &Error{Code: -32015, Reason: "events_key_unavailable"} }
-	key, err := os.ReadFile(path)
+	key, err := readKeyFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		for _, row := range rows {
 			if len(row.SecretEnc) > 0 || len(row.PreviousSecretEnc) > 0 {
@@ -31,7 +33,7 @@ func loadKey(path string, rows []store.MCPSubscription) ([]byte, error) {
 		}
 		key, err = createKey(path)
 		if errors.Is(err, fs.ErrExist) {
-			key, err = os.ReadFile(path)
+			key, err = readKeyFile(path)
 		}
 	}
 	if err != nil || len(key) != 32 {
@@ -56,21 +58,65 @@ func loadKey(path string, rows []store.MCPSubscription) ([]byte, error) {
 	return key, nil
 }
 
-// createKey publishes a new key only when path does not exist. The key is
-// staged in a private temporary file, synced, and then linked into place, so
-// a crash cannot leave a partial key and a concurrent creator's key is never
-// replaced. An existing path fails with fs.ErrExist.
+// readKeyFile permits Windows delete sharing so concurrent no-replace
+// publishers can inspect the destination while another creator reads it.
+func readKeyFile(path string) ([]byte, error) {
+	if runtime.GOOS != "windows" {
+		return os.ReadFile(path)
+	}
+	file, err := safefileio.OpenCurrentUserFile(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = file.Close() }()
+	return io.ReadAll(io.LimitReader(file, 33))
+}
+
+// createKey publishes a complete owner-only key without replacing an
+// existing entry. Permissions are finalized on the staging file: changing
+// them after publication races concurrent readers on Windows.
 func createKey(path string) ([]byte, error) {
 	key := make([]byte, 32)
 	if _, err := rand.Read(key); err != nil {
 		return nil, fmt.Errorf("generate MCP Events key: %w", err)
 	}
-	if err := atomicfile.WriteNew(path, key, atomicfile.WithPrivate()); err != nil {
+	staged, err := os.CreateTemp(filepath.Dir(path), ".mcp-events-key-*")
+	if err != nil {
 		return nil, err
 	}
-	// WithPrivate also admits SYSTEM and Administrators on Windows; keep the
-	// repository's current-user-only policy for owner-only files.
-	if err := fileutil.SecureChmod(path, 0600); err != nil {
+	defer func() {
+		_ = staged.Close()
+		_ = os.Remove(staged.Name())
+	}()
+	// Apply the repository's current-user-only Windows DACL before writing
+	// the secret, while the temporary file is still private and empty.
+	if err := fileutil.SecureChmod(staged.Name(), 0600); err != nil {
+		return nil, err
+	}
+	if n, err := staged.Write(key); err != nil {
+		return nil, err
+	} else if n != len(key) {
+		return nil, io.ErrShortWrite
+	}
+	if err := staged.Sync(); err != nil {
+		return nil, err
+	}
+	if err := staged.Close(); err != nil {
+		return nil, err
+	}
+	if runtime.GOOS == "windows" {
+		// Windows needs a write-through rename for durable publication.
+		err = atomicfile.RenameNoReplace(staged.Name(), path)
+	} else {
+		err = atomicfile.PublishNoReplace(staged.Name(), path)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := os.Remove(staged.Name()); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return nil, err
+	}
+	if err := atomicfile.SyncDir(filepath.Dir(path)); err != nil {
 		return nil, err
 	}
 	return key, nil
