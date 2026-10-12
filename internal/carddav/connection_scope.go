@@ -106,6 +106,15 @@ func (s *Service) checkRetry(ctx context.Context) error {
 }
 
 func (s *Service) setRetry(ctx context.Context, gate time.Time) error {
+	if authority, scoped := ctx.Value(publicationAuthorityKey{}).(publicationRequestAuthority); scoped {
+		if authority.service != s || authority.authorize == nil {
+			return store.ErrCardDAVInvalidPlan
+		}
+		if err := s.requireOwnBook(ctx, authority.expected.AddressBookID); err != nil {
+			return err
+		}
+		return s.store.SetCardDAVPublicationRetryAfterAuthorizedContext(ctx, authority.expected, gate, authority.authorize)
+	}
 	id, err := s.scopedAccountID(ctx)
 	if err != nil {
 		return err
@@ -131,3 +140,11 @@ func (s *Service) scopedConflicts(ctx context.Context) ([]store.CardDAVConflict,
 
 // SyncFailure exposes the same safe fixed messages recorded in run history.
 func SyncFailure(err error) (string, string) { return cardDAVSyncPublicFailure(err) }
+
+func (s *Service) sweepResolvedConflicts(ctx context.Context, now time.Time) (int64, error) {
+	id, err := s.scopedAccountID(ctx)
+	if err != nil {
+		return 0, err
+	}
+	return s.store.SweepResolvedCardDAVConflictsForAccountContext(ctx, now, id)
+}

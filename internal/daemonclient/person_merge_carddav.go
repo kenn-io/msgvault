@@ -149,6 +149,7 @@ func SafeMCPError(err error) error {
 			"person_carddav_published", "person_merge_required",
 			"carddav_review_stale", "carddav_inference_review_required",
 			"carddav_unavailable", "google_authorization_required", "microsoft_authorization_required", "carddav_preview_too_large",
+			"carddav_scope_unavailable", "carddav_receipt_not_found",
 			"carddav_conflict_stale", "carddav_conflict_pending", "carddav_publication_pending",
 			"carddav_retry_after", "carddav_upstream_failed", "carddav_storage_failed", "carddav_failed",
 			"bad_request", "not_found", "conflict", "invalid_request",

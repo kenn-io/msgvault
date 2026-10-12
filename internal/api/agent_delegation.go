@@ -5,7 +5,7 @@ func delegatedOperationAllowed(operationID string) bool {
 	switch operationID {
 	case "getMCPCapabilities", "previewIdentityOperation", "applyIdentityOperation", "getIdentityOperationReceipt":
 		return true
-	case "runCLI", "getHealth", "controlCalendar", "getAgentTokenSelf":
+	case "runCLI", "getHealth", "controlCalendar", "getAgentTokenSelf", "previewScopedCardDAVPublication", "approveScopedCardDAVPublication", "reconcileScopedCardDAVPublication":
 		return true
 	case "getPersonProfile", "patchPerson", "getPersonStructuredProfile", "patchPersonStructuredProfile",
 		"listPersonAttributes", "setPersonAttribute", "clearPersonAttribute", "mergePersons":

@@ -126,6 +126,30 @@ func (p PreviewCardDAVPublicationPath) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(p))
 }
 
+type ApproveScopedCardDAVPublicationPath struct {
+	PersonID int64 `json:"person_id" validate:"gte=1"`
+}
+
+func (a ApproveScopedCardDAVPublicationPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(a))
+}
+
+type PreviewScopedCardDAVPublicationPath struct {
+	PersonID int64 `json:"person_id" validate:"gte=1"`
+}
+
+func (p PreviewScopedCardDAVPublicationPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type ReconcileScopedCardDAVPublicationPath struct {
+	PersonID int64 `json:"person_id" validate:"gte=1"`
+}
+
+func (r ReconcileScopedCardDAVPublicationPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(r))
+}
+
 type DeleteCLICollectionPath struct {
 	// Name Collection name
 	Name string `json:"name" validate:"required"`

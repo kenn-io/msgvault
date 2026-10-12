@@ -199,6 +199,18 @@ type ClientInterface interface {
 	ListCardDAVRuns(ctx context.Context, options *ListCardDAVRunsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListCardDAVRunsResponse, error)
 	ListCardDAVRunsWithResponse(ctx context.Context, options *ListCardDAVRunsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListCardDAVRunsResp, error)
 
+	// ApproveScopedCardDAVPublication Approve one mapped CardDAV update with a durable receipt
+	ApproveScopedCardDAVPublication(ctx context.Context, options *ApproveScopedCardDAVPublicationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ApproveScopedCardDAVPublicationResponseJSON, error)
+	ApproveScopedCardDAVPublicationWithResponse(ctx context.Context, options *ApproveScopedCardDAVPublicationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ApproveScopedCardDAVPublicationResp, error)
+
+	// PreviewScopedCardDAVPublication Preview one authorized mapped CardDAV update
+	PreviewScopedCardDAVPublication(ctx context.Context, options *PreviewScopedCardDAVPublicationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PreviewScopedCardDAVPublicationResponse, error)
+	PreviewScopedCardDAVPublicationWithResponse(ctx context.Context, options *PreviewScopedCardDAVPublicationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PreviewScopedCardDAVPublicationResp, error)
+
+	// ReconcileScopedCardDAVPublication Observe an existing reviewed CardDAV update without replaying it
+	ReconcileScopedCardDAVPublication(ctx context.Context, options *ReconcileScopedCardDAVPublicationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReconcileScopedCardDAVPublicationResponseJSON, error)
+	ReconcileScopedCardDAVPublicationWithResponse(ctx context.Context, options *ReconcileScopedCardDAVPublicationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReconcileScopedCardDAVPublicationResp, error)
+
 	// GetCardDAVStatus Get CardDAV synchronization status
 	GetCardDAVStatus(ctx context.Context, options *GetCardDAVStatusRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetCardDAVStatusResponse, error)
 	GetCardDAVStatusWithResponse(ctx context.Context, options *GetCardDAVStatusRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetCardDAVStatusResp, error)
@@ -611,7 +623,7 @@ type ClientInterface interface {
 	TestTaskIntegration(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*TestTaskIntegrationResponse, error)
 	TestTaskIntegrationWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*TestTaskIntegrationResp, error)
 
-	// GetMCPCapabilities Describe admitted native identity MCP operations
+	// GetMCPCapabilities Describe admitted identity and CardDAV MCP operations
 	GetMCPCapabilities(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetMCPCapabilitiesResponse, error)
 	GetMCPCapabilitiesWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetMCPCapabilitiesResp, error)
 
@@ -3750,6 +3762,197 @@ func (c *Client) ListCardDAVRuns(ctx context.Context, options *ListCardDAVRunsRe
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/carddav/runs")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ApproveScopedCardDAVPublication Approve one mapped CardDAV update with a durable receipt
+func (c *Client) ApproveScopedCardDAVPublication(ctx context.Context, options *ApproveScopedCardDAVPublicationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ApproveScopedCardDAVPublicationResponseJSON, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/carddav/scoped/publications/{person_id}/approve",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*ApproveScopedCardDAVPublicationResponseJSON, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 202 {
+			target := new(ApproveScopedCardDAVPublicationErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "ApproveScopedCardDAVPublicationErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(ApproveScopedCardDAVPublicationResponseJSON)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "ApproveScopedCardDAVPublicationResponseJSON",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/carddav/scoped/publications/{person_id}/approve")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// PreviewScopedCardDAVPublication Preview one authorized mapped CardDAV update
+func (c *Client) PreviewScopedCardDAVPublication(ctx context.Context, options *PreviewScopedCardDAVPublicationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PreviewScopedCardDAVPublicationResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/carddav/scoped/publications/{person_id}/preview",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*PreviewScopedCardDAVPublicationResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(PreviewScopedCardDAVPublicationErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "PreviewScopedCardDAVPublicationErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(PreviewScopedCardDAVPublicationResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "PreviewScopedCardDAVPublicationResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/carddav/scoped/publications/{person_id}/preview")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ReconcileScopedCardDAVPublication Observe an existing reviewed CardDAV update without replaying it
+func (c *Client) ReconcileScopedCardDAVPublication(ctx context.Context, options *ReconcileScopedCardDAVPublicationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReconcileScopedCardDAVPublicationResponseJSON, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/carddav/scoped/publications/{person_id}/reconcile",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*ReconcileScopedCardDAVPublicationResponseJSON, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 202 {
+			target := new(ReconcileScopedCardDAVPublicationErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "ReconcileScopedCardDAVPublicationErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(ReconcileScopedCardDAVPublicationResponseJSON)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "ReconcileScopedCardDAVPublicationResponseJSON",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/carddav/scoped/publications/{person_id}/reconcile")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -10094,7 +10297,7 @@ func (c *Client) TestTaskIntegration(ctx context.Context, reqEditors ...runtime.
 	return responseParser(ctx, resp)
 }
 
-// GetMCPCapabilities Describe admitted native identity MCP operations
+// GetMCPCapabilities Describe admitted identity and CardDAV MCP operations
 func (c *Client) GetMCPCapabilities(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetMCPCapabilitiesResponse, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{

@@ -33,6 +33,10 @@ type CompleteGoogleCardDAVAuthorizationBody = CardDAVGoogleCallbackRequest
 
 type ApproveCardDAVPublicationBody = CardDAVPublicationApprovalRequest
 
+type ApproveScopedCardDAVPublicationBody = CardDAVScopedPublicationApprovalRequest
+
+type ReconcileScopedCardDAVPublicationBody = CardDAVScopedPublicationApprovalRequest
+
 type SyncCardDAVBody = CardDAVSyncRequest
 
 type UpdateCLIAccountBody = UpdateRequest
