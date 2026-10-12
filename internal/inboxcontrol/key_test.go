@@ -64,17 +64,18 @@ func TestInboxPreviewKeyRefusesInvalidExistingFiles(t *testing.T) {
 			}
 			_, err := inboxcontrol.EnsurePreviewKey(path)
 			require.Error(t, err, "startup must not replace existing evidence")
-			assertions.ErrorIs(err, inboxcontrol.ErrInternal)
+			requirements.ErrorIs(err, inboxcontrol.ErrInternal)
 			assertions.ErrorContains(err, path)
 			reason := "exactly 32 bytes"
-			if shape == "directory" || shape == "symlink" {
+			switch shape {
+			case "directory", "symlink":
 				reason = "regular file"
-			} else if shape == "public" {
+			case "public":
 				reason = "permissions"
 			}
 			assertions.ErrorContains(err, reason)
 			_, err = inboxcontrol.LoadPreviewKey(path)
-			assertions.Error(err)
+			requirements.Error(err)
 			assertions.ErrorContains(err, path)
 			assertions.ErrorContains(err, reason)
 		})
