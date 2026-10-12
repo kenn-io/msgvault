@@ -67,6 +67,7 @@ Add and sync sources:
   add-muesli             Register a local Muesli meeting database
   add-notion-meetings    Register and validate a Notion AI Meeting Notes source
   add-o365               Add a Microsoft 365 account via OAuth
+  add-omi                Register an Omi account and validate its API key
   add-plaud              Authorize and register a Plaud cloud account
   add-slack              Add a Slack workspace as an archive source
   add-synctech-sms-drive Configure a Google Drive SMS Backup & Restore source
@@ -92,6 +93,7 @@ Add and sync sources:
   sync-matrix            Sync joined rooms from Matrix
   sync-muesli            Sync meetings from a local Muesli database
   sync-notion-meetings   Sync Notion AI Meeting Notes
+  sync-omi               Sync Omi meeting conversations and transcripts
   sync-plaud             Sync Plaud recordings, transcripts, and notes
   sync-slack             Sync Slack conversations (channels, group DMs, DMs)
   sync-synctech-sms      Run one configured synctech-sms source now
