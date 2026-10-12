@@ -30,7 +30,7 @@ func TestInboxConsumerUpgradesPopulatedPredecessor(t *testing.T) {
 	requirements.NotEmpty(beforeRecording[0])
 	// Reconstruct published recording schema 4 by removing only the Inbox
 	// consumer tables. Preserve actual recording data, identity and messages.
-	for _, table := range []string{"inbox_operation_receipts", "inbox_provider_states", "inbox_source_revisions"} {
+	for _, table := range []string{"inbox_operation_receipts", "inbox_provider_states", "inbox_source_revisions", "inbox_triage_mappings"} {
 		_, err = f.Store.DB().Exec("DROP TABLE " + table)
 		requirements.NoError(err)
 	}
@@ -59,7 +59,7 @@ func TestInboxConsumerUpgradesPopulatedPredecessor(t *testing.T) {
 
 func reconstructInboxPredecessor(t *testing.T, st *store.Store) {
 	t.Helper()
-	for _, table := range []string{"inbox_operation_receipts", "inbox_provider_states", "inbox_source_revisions"} {
+	for _, table := range []string{"inbox_operation_receipts", "inbox_provider_states", "inbox_source_revisions", "inbox_triage_mappings"} {
 		_, err := st.DB().Exec("DROP TABLE " + table)
 		require.NoError(t, err)
 	}
