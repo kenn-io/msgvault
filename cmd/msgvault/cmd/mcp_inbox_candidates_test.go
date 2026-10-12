@@ -69,6 +69,10 @@ func TestMCPInboxCandidatesRealDaemonScopeAndCursor(t *testing.T) {
 	assertions.True(call().IsError)
 	source["source_id"] = f.source.ID
 	delete(args, "limit")
+	// Full-page assertions are independent of the cursor sequence. Give them
+	// a fresh real daemon so discovery rechecks cannot exhaust its rate budget.
+	fullServer := mcpDraftTestDaemon(t, f.grantedAdapter(), nil)
+	session = mcpDraftTestSession(mcpDraftAgentContext(t, fullServer, f.source.ID, []string{"inbox.read"}), t)
 	full := decode(call())
 	assertions.Len(full.Candidates, 2)
 	assertions.True(full.Unavailable)
@@ -77,8 +81,7 @@ func TestMCPInboxCandidatesRealDaemonScopeAndCursor(t *testing.T) {
 	delete(args, "unexpected")
 	args["limit"] = 101
 	assertions.True(call().IsError)
-	// The independent caller gets its own server/limiter; the earlier cursor
-	// assertions deliberately make enough requests to consume a burst budget.
+	// The independent ungranted caller also gets its own server and rate budget.
 	deniedServer := mcpDraftTestDaemon(t, f.grantedAdapter(), nil)
 	ungranted := mcpDraftTestSession(mcpDraftAgentContext(t, deniedServer, f.source.ID, []string{"draft.create"}), t)
 	assertions.NotContains(mcpDraftToolNames(t, ungranted), "inbox_candidates")
