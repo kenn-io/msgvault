@@ -331,7 +331,11 @@ func (s *Store) ActivateMCPSubscription(ctx context.Context, a MCPActivation) (*
 			if old.Principal != input.Principal || old.StopReason == "principal_revoked" || old.StopReason == "scope_removed" {
 				return mcpStoreError("subscription_unavailable")
 			}
-			if old.ScopeReferenceID != input.ScopeReferenceID {
+			legacyConversationReference := old.Name == input.Name &&
+				old.ScopeKind == mcpScopeConversation && input.ScopeKind == mcpScopeConversation &&
+				old.ScopeID == input.ScopeID && old.SourceID == input.SourceID &&
+				old.ScopeReferenceID == 0 && input.ScopeReferenceID > 0
+			if old.ScopeReferenceID != input.ScopeReferenceID && !legacyConversationReference {
 				return mcpStoreError("unknown_scope")
 			}
 			if old.Generation != a.ExpectedGeneration || old.State != a.ExpectedState || old.SecretRevision != a.ExpectedSecretRevision {

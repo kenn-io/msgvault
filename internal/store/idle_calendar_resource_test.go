@@ -29,6 +29,7 @@ func TestMCPEventsIdleCalendarResourceInvalidation(t *testing.T) {
 	input.SourceID = source.ID
 	input.ScopeID = source.ID
 	input.Arguments = []byte(fmt.Sprintf(`{"calendar_source_id":"%d"}`, source.ID))
+	require.NoError(f.Store.BindMCPSubscriptionScope(t.Context(), &input))
 	active, _, err := f.Store.ActivateMCPSubscription(t.Context(), store.MCPActivation{Subscription: input, Now: now})
 	require.NoError(err)
 	require.NotNil(active)

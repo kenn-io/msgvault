@@ -716,6 +716,7 @@ func TestMCPEventsIdleDeliveryDoesNotWrite(t *testing.T) {
 func TestMCPEventsGoneSubscriptionCannotReadReceipts(t *testing.T) {
 	require := Require.New(t)
 	f := storetest.New(t)
+	grantSyntheticSourceFixture(t, f)
 	now := time.Now().UTC()
 	clock, err := f.Store.ConfigureMCPEvents(t.Context(), mcpStoreConfig())
 	require.NoError(err)
