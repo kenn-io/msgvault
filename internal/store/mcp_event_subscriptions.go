@@ -616,6 +616,9 @@ func (s *Store) CheckMCPSubscription(ctx context.Context, id string, generation 
 // checks are read-only; an expired pending event triggers the normal prune so
 // the retention floor and subscription stop reason stay consistent.
 func (s *Store) CheckMCPDeliveryOccurrence(ctx context.Context, id string, generation, seq int64, now time.Time) error {
+	if err := s.CheckMCPSubscription(ctx, id, generation, now); err != nil {
+		return err
+	}
 	retention := mcpEventRetention(s.mcpRoot().mcpConfig.Load())
 	cutoff := mcpTime(now.Add(-retention))
 	var retained, expired bool
