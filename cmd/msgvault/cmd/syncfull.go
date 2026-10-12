@@ -299,7 +299,7 @@ func buildAPIClient(ctx context.Context, src *store.Source, getOAuthMgr func(ctx
 				return nil, err
 			}
 			account := src.Identifier
-			readGrantedScopes = func() []string { return oauthMgr.GrantedScopes(account) }
+			readGrantedScopes = func() []string { return oauthMgr.GrantedScopes(ctx, account) }
 			interactive := isatty.IsTerminal(os.Stdin.Fd()) ||
 				isatty.IsCygwinTerminal(os.Stdin.Fd())
 			tokenSource, err = getTokenSourceWithReauth(ctx, oauthMgr, src.Identifier, interactive, gmailReauthHint)

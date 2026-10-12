@@ -4376,7 +4376,7 @@ func newDaemonGmailClient(
 				fmt.Errorf("resolve OAuth credentials for %s: %w", email, oaErr),
 			)
 		}
-		readGrantedScopes = func() []string { return oauthMgr.GrantedScopes(email) }
+		readGrantedScopes = func() []string { return oauthMgr.GrantedScopes(ctx, email) }
 		tokenSource, tsErr = oauthMgr.TokenSource(ctx, email)
 		if tsErr != nil {
 			// Distinguish transient network failures (DNS lookup timeout,

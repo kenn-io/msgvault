@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"net"
 	"os"
@@ -9,6 +10,7 @@ import (
 
 	Assert "github.com/stretchr/testify/assert"   //nolint:importas // Keep constructors available in nested scopes.
 	Require "github.com/stretchr/testify/require" //nolint:importas // Keep constructors available in nested scopes.
+	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -23,7 +25,7 @@ func TestScheduledGmailCredentialLossPausesNativeAuthority(t *testing.T) {
 			cfg := testConfigValue()
 			cfg.OAuth.ClientSecrets = filepath.Join(filepath.Dir(filepath.Dir(tokenPath)), "client_secret.json")
 			ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
-			manager, err := oauth.NewManager(cfg.OAuth.ClientSecrets, cfg.TokensDir(), testLoggerValue())
+			manager, err := oauth.NewManagerWithCredentials(ctx, config.OAuthApp{ClientSecrets: cfg.OAuth.ClientSecrets}, cfg.TokensDir(), cfg.OAuth.Tokens, testLoggerValue(), oauth.Scopes)
 			require.NoError(err)
 			st := testutil.NewTestStore(t)
 			source, err := st.GetOrCreateSource("gmail", scopeEscalationAccount)
@@ -39,7 +41,7 @@ func TestScheduledGmailCredentialLossPausesNativeAuthority(t *testing.T) {
 			require.NoError(st.ObserveNativeSourcePermission(t.Context(), store.NativeSourcePermission{SourceID: other.ID, SourceReference: otherResource.Reference, SourceType: "gmail", NativeIdentity: other.Identifier, Known: true, MessageRead: true}))
 			require.NoError(os.Remove(tokenPath))
 			replacedReference := ""
-			_, err = runScheduledGmailSync(ctx, source.Identifier, source, st, func(string) (*oauth.Manager, error) {
+			_, err = runScheduledGmailSync(ctx, source.Identifier, source, st, func(context.Context, string) (*oauth.Manager, error) {
 				switch mode {
 				case "missing_configuration":
 					return nil, errors.New("synthetic unavailable client configuration")
