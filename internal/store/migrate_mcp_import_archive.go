@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
@@ -60,6 +61,19 @@ func (s *Store) migrateMCPImportArchiveSubscriptionsSQLite(ctx context.Context) 
 	defer func() { _ = tx.Rollback() }()
 	if err := s.mcpIdentityFence(ctx, tx); err != nil {
 		return err
+	}
+	// Older SQLite archives can have MCP subscriptions from before native
+	// resource references were added. Such subscriptions had no reference ID,
+	// so preserve their legacy meaning as reference zero before copying them
+	// into the current table shape.
+	hasScopeReference, err := sqliteMCPSubscriptionHasScopeReference(ctx, tx)
+	if err != nil {
+		return fmt.Errorf("inspect import subscription columns: %w", err)
+	}
+	if !hasScopeReference {
+		if _, err := tx.ExecContext(ctx, `ALTER TABLE mcp_event_subscriptions ADD COLUMN scope_reference_id INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return fmt.Errorf("add legacy import subscription scope reference: %w", err)
+		}
 	}
 
 	// SQLite DROP TABLE otherwise cascades into resource bindings. Save every
@@ -123,4 +137,24 @@ func (s *Store) migrateMCPImportArchiveSubscriptionsSQLite(ctx context.Context) 
 		return errors.New("import subscription upgrade left dangling references")
 	}
 	return tx.Commit()
+}
+
+func sqliteMCPSubscriptionHasScopeReference(ctx context.Context, tx *sql.Tx) (has bool, err error) {
+	rows, err := tx.QueryContext(ctx, `PRAGMA table_info(mcp_event_subscriptions)`)
+	if err != nil {
+		return false, err
+	}
+	defer func() { err = errors.Join(err, rows.Close()) }()
+	for rows.Next() {
+		var cid, notNull, primaryKey int
+		var name, dataType string
+		var defaultValue sql.NullString
+		if err := rows.Scan(&cid, &name, &dataType, &notNull, &defaultValue, &primaryKey); err != nil {
+			return false, err
+		}
+		if name == "scope_reference_id" {
+			has = true
+		}
+	}
+	return has, rows.Err()
 }
