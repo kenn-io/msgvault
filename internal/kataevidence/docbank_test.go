@@ -275,7 +275,8 @@ func TestDocbankGeneratedTranscriptProvenance(t *testing.T) {
 	reader = kataevidence.NewDocbankReader(f, f, func(context.Context) (string, error) { return "destination", nil }, f.MediaRevision)
 	_, err = reader.ReadKataEvidenceSource(t.Context(), prepared.Reference)
 	require.ErrorIs(err, kataevidence.ErrUnavailable)
-	f.inputID, f.binding.Profile = "", "supplied-transcript"
+	// A supplied-transcript delivery can't cite a generated transcript.
+	f.inputID, f.binding.SuppliedInputID, f.binding.Profile = "", "input", "supplied-transcript"
 	_, err = reader.LoadKataEvidenceSource(t.Context(), selector)
 	require.ErrorIs(err, kataevidence.ErrUnavailable)
 }

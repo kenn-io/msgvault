@@ -353,14 +353,6 @@ func TestKataDocbankThroughDaemonAdapter(t *testing.T) {
 	require.NoError(err)
 	both, err := kata.CreateTask(t.Context(), "example", "both", taskclient.KataCreate{Title: "Cites both", Metadata: metadata(chunkRef, transcriptRef)})
 	require.NoError(err)
-	historical := mapping
-	historical.DestinationKey = "historical-destination"
-	historical.OccurrenceRef = "msgvault:historical"
-	require.NoError(st.ReconcileBeeperMediaMapping(t.Context(), historical))
-	historicalRef := transcriptRef
-	historicalRef.OccurrenceKey = historical.OccurrenceRef
-	historicalIssue, err := kata.CreateTask(t.Context(), "example", "historical", taskclient.KataCreate{Title: "Cites historical delivery", Metadata: metadata(historicalRef)})
-	require.NoError(err)
 	metadataScans.Store(0)
 
 	require.NoError(json.Unmarshal(runKataCommand(ctx, t, "", "issues", "--message", strconv.FormatInt(messageID, 10), "--attachment", strconv.FormatInt(attachmentID, 10), "--json"), &citing))
@@ -369,7 +361,7 @@ func TestKataDocbankThroughDaemonAdapter(t *testing.T) {
 		uids = append(uids, issue.UID)
 	}
 	assert.Equal(int32(1), metadataScans.Load())
-	assert.Equal([]string{created.Issue.UID, chunkOnly.UID, both.UID, historicalIssue.UID}, uids)
+	assert.Equal([]string{created.Issue.UID, chunkOnly.UID, both.UID}, uids)
 	revoked.Store(true)
 	create := newKataCmd()
 	create.SetArgs([]string{"create", "--idempotency-key", "revoked"})

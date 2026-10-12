@@ -527,7 +527,7 @@ func TestDocbankMediaLiveContract(t *testing.T) {
 		require.Eventually(func() bool {
 			identity, err = client.EvidenceIdentity(t.Context(), first.ContentVersionID, metadata.SHA256, "supplied-transcript")
 			httpErr, ok := errors.AsType[*docbankmedia.HTTPError](err)
-			return !ok || httpErr.Status != http.StatusNotFound
+			return !errors.Is(err, docbankmedia.ErrNoRendition) && (!ok || httpErr.Status != http.StatusNotFound)
 		}, 2*time.Minute, time.Second, sample.name)
 		require.NoError(err, sample.name)
 		identity.VaultUID, identity.MaxChars = first.VaultUID, 1000
