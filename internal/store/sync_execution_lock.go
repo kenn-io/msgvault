@@ -137,26 +137,49 @@ func (s *Store) acquireSyncExecutionLock(
 func (s *Store) acquireBackendSyncExecutionLock(
 	ctx context.Context, sourceID int64,
 ) (syncExecutionLock, error) {
+	return s.acquireBackendSourceExecutionLock(ctx, sourceID, "sync")
+}
+
+// acquireBackendSourceExecutionLock uses distinct namespaces for independent
+// source lifecycles while retaining the existing sync lock identity.
+func (s *Store) acquireBackendSourceExecutionLock(ctx context.Context, sourceID int64, namespace string) (syncExecutionLock, error) {
 	if s.IsPostgreSQL() {
-		conn, err := s.db.Conn(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("acquire PostgreSQL sync lock connection: %w", err)
+		db := s.db.DB
+		var closeOwnedDB func() error
+		if namespace == "inbox-control" {
+			// The lifecycle fence spans archive transactions. A dedicated
+			// session leaves even a single-connection Store pool usable.
+			owned, cleanup, err := openPostgresDB(s.dbPath, s.readOnly)
+			if err != nil {
+				return nil, err
+			}
+			db = owned
+			closeOwnedDB = func() error { err := owned.Close(); cleanup(); return err }
 		}
-		lock := &postgresSyncExecutionLock{conn: conn, sourceID: sourceID, rebind: s.Rebind}
+		conn, err := db.Conn(ctx)
+		if err != nil {
+			if closeOwnedDB != nil {
+				err = errors.Join(err, closeOwnedDB())
+			}
+			return nil, fmt.Errorf("acquire PostgreSQL source lock connection: %w", err)
+		}
+		lock := &postgresSyncExecutionLock{conn: conn, sourceID: sourceID, rebind: s.Rebind, namespace: namespace, closeOwnedDB: closeOwnedDB}
 		var acquired bool
 		err = conn.QueryRowContext(ctx, s.Rebind(`
 			SELECT pg_try_advisory_lock(
 				hashtextextended(
-					current_schema() || ':msgvault-sync:' || CAST(CAST(? AS BIGINT) AS TEXT), 0
+					current_schema() || ':msgvault-' || CAST(? AS TEXT) || ':' || CAST(CAST(? AS BIGINT) AS TEXT), 0
 				)
-			)`), sourceID).Scan(&acquired)
-		if err != nil {
-			_ = conn.Close()
-			return nil, fmt.Errorf("acquire PostgreSQL sync lock: %w", err)
-		}
-		if !acquired {
-			_ = conn.Close()
-			return nil, ErrSyncAlreadyActive
+			)`), namespace, sourceID).Scan(&acquired)
+		if err != nil || !acquired {
+			closeErr := conn.Close()
+			if closeOwnedDB != nil {
+				closeErr = errors.Join(closeErr, closeOwnedDB())
+			}
+			if err != nil {
+				return nil, errors.Join(fmt.Errorf("acquire PostgreSQL source lock: %w", err), closeErr)
+			}
+			return nil, errors.Join(ErrSyncAlreadyActive, closeErr)
 		}
 		return lock, nil
 	}
@@ -173,7 +196,7 @@ func (s *Store) acquireBackendSyncExecutionLock(
 	if resolved, resolveErr := filepath.EvalSymlinks(dbPath); resolveErr == nil {
 		dbPath = resolved
 	}
-	lockPath := dbPath + ".sync-" + strconv.FormatInt(sourceID, 10) + ".lock"
+	lockPath := dbPath + "." + namespace + "-" + strconv.FormatInt(sourceID, 10) + ".lock"
 
 	sqliteSyncLockRegistry.mu.Lock()
 	if _, exists := sqliteSyncLockRegistry.paths[lockPath]; exists {
@@ -346,11 +369,13 @@ func (l *sqliteSyncExecutionLock) release() (bool, error) {
 }
 
 type postgresSyncExecutionLock struct {
-	conn     *sql.Conn
-	sourceID int64
-	rebind   func(string) string
-	mu       sync.Mutex
-	released bool
+	closeOwnedDB func() error
+	namespace    string
+	conn         *sql.Conn
+	sourceID     int64
+	rebind       func(string) string
+	mu           sync.Mutex
+	released     bool
 }
 
 func (l *postgresSyncExecutionLock) release() (bool, error) {
@@ -374,9 +399,9 @@ func (l *postgresSyncExecutionLock) release() (bool, error) {
 		unlockErr = conn.QueryRow(ctx, l.rebind(`
 			SELECT pg_advisory_unlock(
 				hashtextextended(
-					current_schema() || ':msgvault-sync:' || CAST(CAST(? AS BIGINT) AS TEXT), 0
+					current_schema() || ':msgvault-' || CAST(? AS TEXT) || ':' || CAST(CAST(? AS BIGINT) AS TEXT), 0
 				)
-			)`), l.sourceID).Scan(&unlocked)
+			)`), l.namespace, l.sourceID).Scan(&unlocked)
 		if unlockErr == nil {
 			l.released = true
 			if !unlocked {
@@ -401,6 +426,10 @@ func (l *postgresSyncExecutionLock) release() (bool, error) {
 		rawErr = nil
 	} else if l.released {
 		closeErr = errors.Join(closeErr, l.conn.Close())
+	}
+	if l.released && l.closeOwnedDB != nil {
+		closeErr = errors.Join(closeErr, l.closeOwnedDB())
+		l.closeOwnedDB = nil
 	}
 	return l.released, errors.Join(unlockErr, closeErr, rawErr)
 }

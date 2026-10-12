@@ -122,6 +122,8 @@ type ImportMuesliBody = MuesliRemoteRequest
 
 type CreateImportJobBody = ImportJobRequest
 
+type ControlInboxBody = InboxRequest
+
 type PrepareKataEvidenceBody = KataEvidencePrepareRequest
 
 type CreateKataIssueBody = KataIssueCreateRequest

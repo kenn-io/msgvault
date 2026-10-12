@@ -379,6 +379,7 @@ func writeOperationGateBusy(w http.ResponseWriter, r *http.Request, gate Operati
 var operationGateExemptPaths = map[string]bool{
 	// Calendar control acquires the gate after parsing, authorization, and preview.
 	"/api/v1/calendar/control": true,
+	"/api/v1/inbox/control":    true,
 	// Scoring coordinates the gate around local mutations, never provider I/O.
 	"/api/v1/identity/scoring/run":     true,
 	"/api/v1/identity/scoring/consent": true,

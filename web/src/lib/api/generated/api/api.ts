@@ -267,6 +267,7 @@ import type {
   ListTextConversationMessagesParams,
   ListTextConversationMessagesPathParameters,
   ListTextConversationsParams,
+  MCPCapabilities,
   Manifest,
   MediaSearchResponse,
   MediaSearchStatusResponse,
@@ -280,6 +281,7 @@ import type {
   MessageListResponse,
   MessageRecordingsResponse,
   MessageTagChange,
+  MessageTagResponse,
   MessageTagResult,
   MuesliRemoteRequest,
   MuesliRemoteResult,
@@ -2125,6 +2127,17 @@ export const testTaskIntegration = (
   );
 };
 /**
+ * @summary Describe admitted MCP daemon operations
+ */
+export const getMCPCapabilities = (
+  options?: SecondParameter<typeof orvalFetch<MCPCapabilities>>,
+) => {
+  return orvalFetch<MCPCapabilities>(
+    { url: `/api/v1/mcp/capabilities`, method: "GET" },
+    options,
+  );
+};
+/**
  * @summary Search source-selected transcripts as visible messages
  */
 export const searchMedia = (
@@ -2249,9 +2262,9 @@ export const listMessageRecordings = (
 export const getMessageTags = (
   { id }: GetMessageTagsPathParameters,
   params?: GetMessageTagsParams,
-  options?: SecondParameter<typeof orvalFetch<MessageTagResult>>,
+  options?: SecondParameter<typeof orvalFetch<MessageTagResponse>>,
 ) => {
-  return orvalFetch<MessageTagResult>(
+  return orvalFetch<MessageTagResponse>(
     {
       url: `/api/v1/messages/${encodeURIComponent(String(id))}/tags`,
       method: "GET",
@@ -2261,6 +2274,7 @@ export const getMessageTags = (
   );
 };
 /**
+ * Gmail accepts dry_run=true previews only; execute through inbox/control with a signed preview, expected state and idempotency key. IMAP and Microsoft retain native direct tag editing.
  * @summary Add or remove native email tags
  */
 export const updateMessageTags = (

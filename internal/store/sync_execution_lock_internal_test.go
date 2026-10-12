@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/stretchr/testify/require"
+	Require "github.com/stretchr/testify/require"
 )
 
 type failingSyncExecutionLock struct {
@@ -15,7 +15,7 @@ type failingSyncExecutionLock struct {
 func (l *failingSyncExecutionLock) release() (bool, error) { return l.released, l.err }
 
 func TestSyncExecutionReleaseRetriesFailedCleanup(t *testing.T) {
-	require := require.New(t)
+	require := Require.New(t)
 	st, err := OpenForTest(":memory:")
 	require.NoError(err)
 	t.Cleanup(func() { _ = st.Close() })
@@ -42,7 +42,7 @@ func TestSyncExecutionReleaseRetriesFailedCleanup(t *testing.T) {
 func TestSyncExecutionCleanupRetainsOnlyUnreleasedSources(t *testing.T) {
 	for _, cleanup := range []string{"run", "abandon", "all"} {
 		t.Run(cleanup, func(t *testing.T) {
-			require := require.New(t)
+			require := Require.New(t)
 			st, err := OpenForTest(":memory:")
 			require.NoError(err)
 			t.Cleanup(func() { _ = st.Close() })
@@ -77,7 +77,7 @@ func TestSyncExecutionCleanupRetainsOnlyUnreleasedSources(t *testing.T) {
 }
 
 func TestReleaseOwnedNoOpSyncExecutionLockPreservesOtherSource(t *testing.T) {
-	requirements := require.New(t)
+	requirements := Require.New(t)
 	st, err := OpenForTest(":memory:")
 	requirements.NoError(err)
 	t.Cleanup(func() { _ = st.Close() })
@@ -106,4 +106,23 @@ func TestReleaseOwnedNoOpSyncExecutionLockPreservesOtherSource(t *testing.T) {
 	requirements.True(secondSourceExists)
 	requirements.False(firstRunExists)
 	requirements.True(secondRunExists)
+}
+
+func TestInboxExecutionReleasesFenceAfterCompletedSyncCleanupError(t *testing.T) {
+	require := Require.New(t)
+
+	st, err := OpenForTest(":memory:")
+	require.NoError(err)
+	defer st.Close()
+	require.NoError(st.InitSchema())
+	source, err := st.GetOrCreateSource("gmail", "cleanup@example.test")
+	require.NoError(err)
+	cleanupErr := errors.New("synthetic completed cleanup diagnostic")
+	lock := &failingSyncExecutionLock{released: true, err: cleanupErr}
+	st.syncExecutionLocks.bySource[source.ID] = lock
+	fence := &failingSyncExecutionLock{released: true}
+	execution := &InboxExecution{execution: &SyncExecution{store: st, sourceID: source.ID, lock: lock}, fence: fence}
+	require.ErrorIs(execution.Release(), cleanupErr)
+	require.Nil(execution.fence, "ended sync ownership must not strand the independent removal fence")
+	require.NoError(execution.Release())
 }

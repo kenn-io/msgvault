@@ -325,7 +325,6 @@ func TestDaemonMCPVectorReadinessIsCheckedAtRequestTime(t *testing.T) {
 
 	requests := make(chan string, 8)
 	client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
-		requests <- r.URL.Path
 		if r.URL.Path == "/api/v1/media/search/status" {
 			_ = json.NewEncoder(w).Encode(map[string]any{"configured": false})
 			return
@@ -341,10 +340,17 @@ func TestDaemonMCPVectorReadinessIsCheckedAtRequestTime(t *testing.T) {
 			})
 			return
 		}
+		if r.URL.Path == "/api/v1/mcp/capabilities" {
+			_, _ = w.Write([]byte(`{"version":1,"delegated":false,"routes":[],"inbox_operations":[]}`))
+			return
+		}
+		requests <- r.URL.Path
 		http.Error(w, `{"error":"vector_initializing","message":"Vector search is initializing"}`, http.StatusServiceUnavailable)
 	})
 
 	opts := daemonMCPServeOptions(testCtx, client, invocationFromContext(testCtx))
+	require.NotNil(opts.HybridSearcher)
+	assert.Empty(requests, "startup must not perform vector retrieval")
 	_, err := opts.HybridSearcher.SearchHybrid(testCtx, mcpserver.HybridSearchRequest{
 		Query: "term",
 		Mode:  "hybrid",
@@ -352,11 +358,8 @@ func TestDaemonMCPVectorReadinessIsCheckedAtRequestTime(t *testing.T) {
 	var coded interface{ APIErrorCode() string }
 	require.ErrorAs(err, &coded)
 	assert.Equal("vector_initializing", coded.APIErrorCode())
+	require.Len(requests, 1, "vector readiness requires one request-time search")
 	path := <-requests
-	assert.Equal("/api/v1/health", path, "startup reads the daemon schema")
-	path = <-requests
-	assert.Equal("/api/v1/media/search/status", path, "capability detection checks Docbank separately")
-	path = <-requests
 	assert.Equal("/api/v1/search", path, "vector readiness belongs to the request")
 }
 
