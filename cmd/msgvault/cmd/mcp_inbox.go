@@ -5,6 +5,7 @@ import (
 	"slices"
 
 	"go.kenn.io/msgvault/internal/agentgrant"
+	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/inboxcontrol"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
@@ -12,7 +13,14 @@ import (
 
 func admitInboxMCP(ctx context.Context, client *daemonclient.Client, opts *mcpserver.ServeOptions, owner bool) {
 	descriptor, err := client.MCPCapabilities(ctx)
-	if err != nil || !descriptor.HasInboxContract() {
+	if err != nil {
+		return
+	}
+	admitInboxMCPFromDescriptor(descriptor, client, opts, owner)
+}
+
+func admitInboxMCPFromDescriptor(descriptor *apiprotocol.MCPCapabilities, client *daemonclient.Client, opts *mcpserver.ServeOptions, owner bool) {
+	if !descriptor.HasInboxContract() {
 		return
 	}
 	for _, op := range inboxMCPOperations(opts.GrantPermissions, owner) {
@@ -23,6 +31,15 @@ func admitInboxMCP(ctx context.Context, client *daemonclient.Client, opts *mcpse
 	if len(opts.InboxOperations) != 0 {
 		opts.Inbox = client
 	}
+}
+
+func configureInboxMCPTools(ctx context.Context, client *daemonclient.Client, opts *mcpserver.ServeOptions, owner bool, schemaVersion string) {
+	descriptor, err := client.MCPCapabilitiesAtSchemaVersion(ctx, schemaVersion)
+	if err != nil {
+		return
+	}
+	admitInboxMCPFromDescriptor(descriptor, client, opts, owner)
+	configureInboxReadToolsFromDescriptor(descriptor, client, opts)
 }
 
 // inboxMCPOperations limits discovery to the current grant. The daemon still

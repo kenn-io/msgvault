@@ -19,7 +19,16 @@ var ErrMCPCapabilitiesUnavailable = errors.New("MCP operation discovery unavaila
 // observing a provider. Version eligibility alone never admits a control call.
 func (c *Client) MCPCapabilities(ctx context.Context) (*apiprotocol.MCPCapabilities, error) {
 	version, err := c.APISchemaVersion(ctx)
-	if err != nil || !strings.HasPrefix(version, "3.") || !APISchemaVersionAtLeast(version, MCPDiscoveryMinAPISchemaVersion) {
+	if err != nil {
+		return nil, ErrMCPCapabilitiesUnavailable
+	}
+	return c.MCPCapabilitiesAtSchemaVersion(ctx, version)
+}
+
+// MCPCapabilitiesAtSchemaVersion reads current caller admission after the
+// caller has already checked the daemon's API schema version.
+func (c *Client) MCPCapabilitiesAtSchemaVersion(ctx context.Context, version string) (*apiprotocol.MCPCapabilities, error) {
+	if !strings.HasPrefix(version, "3.") || !APISchemaVersionAtLeast(version, MCPDiscoveryMinAPISchemaVersion) {
 		return nil, ErrMCPCapabilitiesUnavailable
 	}
 	transport := *c.httpClient

@@ -1,17 +1,16 @@
 package cmd
 
 import (
-	"context"
 	"slices"
 
 	"go.kenn.io/msgvault/internal/agentgrant"
+	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
 )
 
-func configureInboxReadTools(ctx context.Context, client *daemonclient.Client, opts *mcpserver.ServeOptions) {
-	descriptor, err := client.MCPCapabilities(ctx)
-	if err != nil {
+func configureInboxReadToolsFromDescriptor(descriptor *apiprotocol.MCPCapabilities, client *daemonclient.Client, opts *mcpserver.ServeOptions) {
+	if descriptor == nil {
 		return
 	}
 	readable := !opts.DelegatedOnly || slices.Contains(opts.GrantPermissions, string(agentgrant.PermissionInboxRead))
