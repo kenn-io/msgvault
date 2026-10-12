@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/sqliteutil"
 	"go.kenn.io/msgvault/internal/vcard"
 )
 
@@ -183,7 +184,7 @@ func CopySubsetWithOptions(
 	// Phase 2: re-open with foreign keys OFF for bulk copy
 	dsn := dstDBPath +
 		"?_journal_mode=WAL&_busy_timeout=5000&_foreign_keys=OFF"
-	db, err := sql.Open("sqlite3", dsn)
+	db, err := sql.Open(sqliteutil.DriverName(), dsn)
 	if err != nil {
 		cleanup()
 		return nil, fmt.Errorf("reopen database: %w", err)

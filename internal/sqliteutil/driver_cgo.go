@@ -42,7 +42,12 @@ func RegisterFunctions(conn *sqlite3.SQLiteConn) error {
 func DriverName() string {
 	registerDriverOnce.Do(func() {
 		sql.Register(driverName, &sqlite3.SQLiteDriver{
-			ConnectHook: RegisterFunctions,
+			ConnectHook: func(conn *sqlite3.SQLiteConn) error {
+				if err := RegisterFunctions(conn); err != nil {
+					return err
+				}
+				return preloadMetadataFTS(conn)
+			},
 		})
 	})
 	return driverName

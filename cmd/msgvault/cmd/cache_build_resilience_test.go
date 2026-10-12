@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/sqliteutil"
 )
 
 func TestCacheSnapshotSyncCatchUp(t *testing.T) {
@@ -40,7 +41,7 @@ func TestCacheSnapshotSyncCatchUp(t *testing.T) {
 			// A separate connection writes after the export's read transaction
 			// is pinned, before any source tables are copied.
 			buildCacheAfterSnapshotHook = func() {
-				writer, err := sql.Open("sqlite3", c.DatabaseDSN())
+				writer, err := sql.Open(sqliteutil.DriverName(), c.DatabaseDSN())
 				require.NoError(err)
 				defer func() { require.NoError(writer.Close()) }()
 				if tt.appendMessage {
