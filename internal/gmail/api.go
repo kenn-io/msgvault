@@ -190,6 +190,7 @@ var ErrMessageGone = errors.New("message no longer present in the mailbox")
 type MessageLabelsBatchResult struct {
 	ID              string
 	LabelIDs        []string
+	HistoryID       uint64
 	RFC822MessageID string
 	Err             error
 }

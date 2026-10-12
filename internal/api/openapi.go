@@ -1008,6 +1008,16 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 			}
 		}
 	}
+	if state := schemas["InboxState"]; state != nil {
+		for _, name := range []string{"tags", "flags"} {
+			if property := state.Properties[name]; property != nil {
+				if property.Extensions == nil {
+					property.Extensions = map[string]any{}
+				}
+				property.Extensions["x-oapi-codegen-extra-tags"] = map[string]any{"json": name + ",omitzero"}
+			}
+		}
+	}
 	const emailProperty = "email"
 	if input := schemas["GCalEventInput"]; input != nil {
 		for name, goType := range map[string]string{"attendees": "*[]GCalAttendee", "recurrence": "*[]string"} {

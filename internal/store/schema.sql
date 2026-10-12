@@ -4673,3 +4673,46 @@ CREATE INDEX IF NOT EXISTS idx_docbank_attachments_ready
  ON docbank_attachment_deliveries(destination_key, state);
 CREATE INDEX IF NOT EXISTS idx_docbank_attachment_receipts
  ON docbank_attachment_deliveries(content_hash, state);
+
+-- Native Inbox observations retire with sources; operation receipts retain
+-- dispatch evidence after source removal.
+CREATE TABLE IF NOT EXISTS inbox_source_revisions (
+    source_id BIGINT PRIMARY KEY REFERENCES sources(id) ON DELETE CASCADE,
+    revision BIGINT NOT NULL CHECK (revision > 0)
+);
+CREATE TABLE IF NOT EXISTS inbox_provider_states (
+    target_key TEXT PRIMARY KEY,
+    source_id BIGINT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    scope TEXT NOT NULL CHECK (scope IN ('message', 'chat')),
+    item_id BIGINT NOT NULL,
+    provider_id TEXT NOT NULL,
+    mailbox TEXT NOT NULL DEFAULT '',
+    uidvalidity BIGINT NOT NULL DEFAULT 0,
+    uid BIGINT NOT NULL DEFAULT 0,
+    is_inbox BOOLEAN,
+    provider_read BOOLEAN,
+    marked_unread BOOLEAN,
+    semantic_hash TEXT NOT NULL,
+    state_json TEXT NOT NULL,
+    observed_at BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_inbox_provider_states_identity
+    ON inbox_provider_states(source_id, scope, item_id, provider_id);
+CREATE TABLE IF NOT EXISTS inbox_operation_receipts (
+    id TEXT PRIMARY KEY,
+    principal_id TEXT NOT NULL,
+    source_id BIGINT NOT NULL,
+    idempotency_key_hash TEXT NOT NULL,
+    intent_hash TEXT NOT NULL,
+    receipt_json TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('prepared', 'dispatching', 'verified', 'partial', 'unknown', 'reconcile-only', 'failed')),
+    created_at BIGINT NOT NULL,
+    source_removed_at BIGINT,
+    dispatched_at BIGINT,
+    finished_at BIGINT,
+    after_json TEXT,
+    failure_code TEXT NOT NULL DEFAULT '',
+    UNIQUE (principal_id, source_id, idempotency_key_hash)
+);
+CREATE INDEX IF NOT EXISTS idx_inbox_receipts_source_status
+    ON inbox_operation_receipts(source_id, status);

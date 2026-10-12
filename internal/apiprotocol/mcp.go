@@ -1,10 +1,17 @@
 package apiprotocol
 
+import (
+	"net/http"
+	"slices"
+)
+
 // MCPCapabilities describes implementation contracts, never configured accounts
 // or grant contents. Route presence comes from production registration.
 type MCPCapabilities struct {
-	Version int                  `json:"version"`
-	Routes  []MCPRouteDescriptor `json:"routes"`
+	Version         int                  `json:"version"`
+	Delegated       bool                 `json:"delegated"`
+	Routes          []MCPRouteDescriptor `json:"routes"`
+	InboxOperations []string             `json:"inbox_operations"`
 }
 
 type MCPRouteDescriptor struct {
@@ -13,4 +20,23 @@ type MCPRouteDescriptor struct {
 	Path              string   `json:"path"`
 	QueryParameters   []string `json:"query_parameters"`
 	RequestProperties []string `json:"request_properties"`
+}
+
+// HasInboxContract requires the registered signed control route and fields.
+func (c MCPCapabilities) HasInboxContract() bool {
+	if c.Version != 1 {
+		return false
+	}
+	for _, route := range c.Routes {
+		if route.OperationID != "controlInbox" || route.Method != http.MethodPost || route.Path != "/api/v1/inbox/control" {
+			continue
+		}
+		for _, name := range []string{"operation", "target", "source", "expected", "preview_token", "idempotency_key", "receipt_id", "dry_run", "tags", "destination", "origin_folder"} {
+			if !slices.Contains(route.RequestProperties, name) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
 }

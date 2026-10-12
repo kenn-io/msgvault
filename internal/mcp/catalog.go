@@ -12,6 +12,7 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.kenn.io/msgvault/internal/daemonclient"
+	"go.kenn.io/msgvault/internal/inboxcontrol"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector/visual"
@@ -197,6 +198,20 @@ func operationCatalog(opts ServeOptions, _ *handlers) []toolDefinition {
 		for _, command := range opts.DraftCommands {
 			if definition, ok := stableDraftDefinitions[command]; ok {
 				definitions = append(definitions, definition)
+			}
+		}
+	}
+	if opts.Inbox != nil {
+		if opts.DelegatedOnly && slices.Contains(opts.InboxOperations, inboxcontrol.OpTags) {
+			definitions = append(definitions, messageTagDefinition(true))
+		}
+		seen := make(map[inboxcontrol.Operation]bool)
+		for _, op := range opts.InboxOperations {
+			if !seen[op] {
+				if definition, ok := stableInboxDefinitions[op]; ok {
+					definitions = append(definitions, definition)
+				}
+				seen[op] = true
 			}
 		}
 	}

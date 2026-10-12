@@ -93,6 +93,7 @@ type MessageDeliveryEvidence struct {
 // MessagePersistData bundles everything needed to atomically
 // persist a message and its related rows in a single transaction.
 type MessagePersistData struct {
+	GmailInboxObservation     *GmailInboxObservation
 	Message                   *Message
 	Conversation              *ConversationPersistData
 	Delivery                  *MessageDeliveryEvidence
@@ -2433,6 +2434,11 @@ func (s *Store) persistMessageWith(
 		return 0, err
 	}
 
+	if data.GmailInboxObservation != nil {
+		if err := s.observeGmailInboxSyncTx(ctx, tx, data.Message.SourceID, messageID, data.Message.SourceMessageID, *data.GmailInboxObservation); err != nil {
+			return 0, fmt.Errorf("store Gmail inbox observation: %w", err)
+		}
+	}
 	if !data.PreserveLabels {
 		if err := replaceMessageLabelsTx(q, messageID, data.LabelIDs); err != nil {
 			return 0, fmt.Errorf("store labels: %w", err)
