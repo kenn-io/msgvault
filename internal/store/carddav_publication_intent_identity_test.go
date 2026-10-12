@@ -142,9 +142,9 @@ func TestCardDAVPublicationReceiptsUpgradeIdentityArchive5(t *testing.T) {
 	st, _, _, mapping := seededCardDAVConflictMapping(t)
 	pending := prepareSyntheticReviewedMappedUpdate(t, st, mapping, "Synthetic Identity Archive")
 	identityReceipt := `{"id":"synthetic-identity-receipt","state":"applied"}`
-	_, err := st.DB().ExecContext(t.Context(), `INSERT INTO identity_operation_receipts
+	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO identity_operation_receipts
 		(receipt_id, principal, idempotency_key, request_hash, receipt_json)
-		VALUES ('synthetic-identity-receipt', 'owner', 'synthetic-identity-key', 'synthetic-request-hash', ?)`, identityReceipt)
+		VALUES ('synthetic-identity-receipt', 'owner', 'synthetic-identity-key', 'synthetic-request-hash', ?)`), identityReceipt)
 	requirements.NoError(err)
 	_, err = st.DB().ExecContext(t.Context(), `DROP TABLE carddav_publication_receipts`)
 	requirements.NoError(err)
