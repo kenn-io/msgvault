@@ -84,9 +84,11 @@ transaction. Gmail sync retains prior label evidence when metadata refresh fails
 and preserves its history cursor for retry. IMAP sync distinguishes omitted
 FLAGS from observed empty flags. Native IMAP MOVE mappings become durable before
 destination readback; reconciliation changes only the exact mailbox copy while
-preserving unrelated memberships and local read state.
-[Inbox control](../api-server.md#native-gmail-inbox-control) and its
-[IMAP contract](../api-server.md#native-imap-inbox-control) own the public behavior.
+preserving unrelated memberships and local read state. Microsoft mail sync
+atomically refreshes category labels and native metadata, keeping local archive
+read markers separate. [Inbox control](../api-server.md#native-gmail-inbox-control)
+and its [IMAP contract](../api-server.md#native-imap-inbox-control) own the
+public behavior and current provider support.
 
 ## Responsibilities
 
