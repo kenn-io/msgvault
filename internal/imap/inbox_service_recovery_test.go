@@ -29,6 +29,7 @@ type inboxNativeServiceFixture struct {
 // the real provider's destination FETCH; no protocol command is replaced.
 type inboxMappingReadbackObserver struct {
 	*InboxProvider
+
 	beforeRead func(inboxcontrol.Request) error
 }
 
