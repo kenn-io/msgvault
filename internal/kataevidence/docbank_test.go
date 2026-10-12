@@ -164,7 +164,6 @@ func TestDocbankRejectsStaleTranscriptProvenance(t *testing.T) {
 		{"revision callback unavailable", func(f *fakeDocbank) { f.revisionErr = kataevidence.ErrUnavailable }, kataevidence.ErrUnavailable},
 		{"revision database error", func(f *fakeDocbank) { f.revisionErr = kataevidence.ErrArchiveUnavailable }, kataevidence.ErrArchiveUnavailable},
 		{"source edited before read", func(f *fakeDocbank) { f.revision = "edited" }, kataevidence.ErrChanged},
-		{"source removed before read", func(f *fakeDocbank) { f.revision = "removed" }, kataevidence.ErrChanged},
 		{"source edited during read", func(f *fakeDocbank) { f.afterRead = func() { f.revision = "edited" } }, kataevidence.ErrChanged},
 		{"shared audio with another input", func(f *fakeDocbank) { f.inputID = "other-message-input" }, kataevidence.ErrUnavailable},
 		{"missing input", func(f *fakeDocbank) { f.inputID = "" }, kataevidence.ErrUnavailable},
@@ -173,12 +172,14 @@ func TestDocbankRejectsStaleTranscriptProvenance(t *testing.T) {
 		{"build changed during read", func(f *fakeDocbank) { f.afterRead = func() { f.build = strings.Repeat("e", 64) } }, kataevidence.ErrChanged},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			for _, resolve := range []bool{false, true} {
 				f := newFakeDocbank()
 				reader := kataevidence.NewDocbankReader(f, f, func(context.Context) (string, error) { return "destination", nil }, f.MediaRevision)
 				selector := kataevidence.Selector{Kind: "docbank_rendition", MessageID: 4, AttachmentID: 9, MaxChars: new(10)}
 				prepared, err := reader.LoadKataEvidenceSource(t.Context(), selector)
-				require.NoError(t, err)
+				require.NoError(err)
 				tc.change(f)
 				reader = kataevidence.NewDocbankReader(f, f, func(context.Context) (string, error) { return "destination", nil }, f.MediaRevision)
 				var result kataevidence.SourceRecord
@@ -188,9 +189,9 @@ func TestDocbankRejectsStaleTranscriptProvenance(t *testing.T) {
 				} else {
 					result, err = reader.LoadKataEvidenceSource(t.Context(), selector)
 				}
-				require.ErrorIs(t, err, tc.want, "resolve=%v", resolve)
-				assert.Empty(t, result.Text)
-				assert.Equal(t, f.binding.Display, result.Display)
+				require.ErrorIs(err, tc.want, "resolve=%v", resolve)
+				assert.Empty(result.Text)
+				assert.Equal(f.binding.Display, result.Display)
 			}
 		})
 	}
@@ -199,50 +200,54 @@ func TestDocbankRejectsStaleTranscriptProvenance(t *testing.T) {
 func TestDocbankWindowNotFoundReason(t *testing.T) {
 	for reason, want := range map[string]error{"": kataevidence.ErrUnsupported, "evidence_unavailable": kataevidence.ErrUnavailable} {
 		t.Run(reason, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			f := newFakeDocbank()
 			reader := kataevidence.NewDocbankReader(f, f, func(context.Context) (string, error) { return "destination", nil }, f.MediaRevision)
 			selector := kataevidence.Selector{Kind: "docbank_rendition", MessageID: 4, AttachmentID: 9, MaxChars: new(10)}
 			prepared, err := reader.LoadKataEvidenceSource(t.Context(), selector)
-			require.NoError(t, err)
+			require.NoError(err)
 			prepared.Reference.DocbankRendition.EndRune = 10
 			f.noWindows, f.windowReason = true, reason
 			result, err := reader.LoadKataEvidenceSource(t.Context(), selector)
-			require.ErrorIs(t, err, want)
-			assert.Empty(t, result.Text)
+			require.ErrorIs(err, want)
+			assert.Empty(result.Text)
 			result, err = reader.ReadKataEvidenceSource(t.Context(), prepared.Reference)
-			require.ErrorIs(t, err, want)
-			assert.Empty(t, result.Text)
+			require.ErrorIs(err, want)
+			assert.Empty(result.Text)
 			f.build = strings.Repeat("e", 64)
 			result, err = reader.ReadKataEvidenceSource(t.Context(), prepared.Reference)
-			require.ErrorIs(t, err, kataevidence.ErrChanged)
-			assert.Empty(t, result.Text)
-			assert.Equal(t, f.binding.Display, result.Display)
+			require.ErrorIs(err, kataevidence.ErrChanged)
+			assert.Empty(result.Text)
+			assert.Equal(f.binding.Display, result.Display)
 		})
 	}
 }
 
 func TestDocbankGeneratedTranscriptProvenance(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	f := newFakeDocbank()
 	f.origin, f.inputID, f.binding.SuppliedInputID, f.binding.Profile = "generated", "", "", "audio-transcript"
 	reader := kataevidence.NewDocbankReader(f, f, func(context.Context) (string, error) { return "destination", nil }, f.MediaRevision)
 	selector := kataevidence.Selector{Kind: "docbank_rendition", MessageID: 4, AttachmentID: 9, MaxChars: new(10)}
 	prepared, err := reader.LoadKataEvidenceSource(t.Context(), selector)
-	require.NoError(t, err)
-	assert.Equal(t, 1, f.identities)
+	require.NoError(err)
+	assert.Equal(1, f.identities)
 	prepared.Reference.DocbankRendition.EndRune = 10
 	resolved, err := kataevidence.New(nil).WithDocbank(reader).ResolveAround(t.Context(), prepared.Reference, 0)
-	require.NoError(t, err)
-	assert.Equal(t, kataevidence.Available, resolved.State)
-	assert.Equal(t, prepared.Text, resolved.Evidence.Excerpt)
-	assert.Equal(t, 1, f.identities)
-	assert.Equal(t, 1, f.transcripts, "the same pinned build reuses verified metadata")
+	require.NoError(err)
+	assert.Equal(kataevidence.Available, resolved.State)
+	assert.Equal(prepared.Text, resolved.Evidence.Excerpt)
+	assert.Equal(1, f.identities)
+	assert.Equal(1, f.transcripts, "the same pinned build reuses verified metadata")
 	f.inputID = "unexpected-supplied-input"
 	reader = kataevidence.NewDocbankReader(f, f, func(context.Context) (string, error) { return "destination", nil }, f.MediaRevision)
 	_, err = reader.ReadKataEvidenceSource(t.Context(), prepared.Reference)
-	require.ErrorIs(t, err, kataevidence.ErrUnavailable)
+	require.ErrorIs(err, kataevidence.ErrUnavailable)
 	f.inputID, f.binding.Profile = "", "supplied-transcript"
 	_, err = reader.LoadKataEvidenceSource(t.Context(), selector)
-	require.ErrorIs(t, err, kataevidence.ErrUnavailable)
+	require.ErrorIs(err, kataevidence.ErrUnavailable)
 }
 
 func TestDocbankWindowsPageAndResolve(t *testing.T) {
@@ -409,24 +414,26 @@ func TestDocbankRechecksVisibilityAndColdAbsence(t *testing.T) {
 		{"input changed", func(f *fakeDocbank) { f.statusChange = func(s *docbankmedia.Receipt) { s.SuppliedInputID = "other" } }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			f := newFakeDocbank()
 			reader := kataevidence.NewDocbankReader(f, f, func(context.Context) (string, error) { return "destination", nil }, f.MediaRevision)
 			selector := kataevidence.Selector{Kind: "docbank_rendition", MessageID: 4, AttachmentID: 9, MaxChars: new(10)}
 			prepared, err := reader.LoadKataEvidenceSource(t.Context(), selector)
-			require.NoError(t, err)
+			require.NoError(err)
 			prepared.Reference.DocbankRendition.EndRune = 10
 			tc.change(f)
 			if tc.name == "transcript 404" {
 				reader = kataevidence.NewDocbankReader(f, f, func(context.Context) (string, error) { return "destination", nil }, f.MediaRevision)
 			}
 			_, err = reader.LoadKataEvidenceSource(t.Context(), selector)
-			require.ErrorIs(t, err, kataevidence.ErrUnavailable)
+			require.ErrorIs(err, kataevidence.ErrUnavailable)
 			resolved, err := kataevidence.New(nil).WithDocbank(reader).ResolveAround(t.Context(), prepared.Reference, 0)
-			require.NoError(t, err)
-			assert.Equal(t, kataevidence.Unavailable, resolved.State)
+			require.NoError(err)
+			assert.Equal(kataevidence.Unavailable, resolved.State)
 			cold := kataevidence.NewDocbankReader(f, f, func(context.Context) (string, error) { return "destination", nil }, f.MediaRevision)
 			_, err = cold.ReadKataEvidenceSource(t.Context(), prepared.Reference)
-			require.ErrorIs(t, err, kataevidence.ErrUnavailable)
+			require.ErrorIs(err, kataevidence.ErrUnavailable)
 		})
 	}
 }

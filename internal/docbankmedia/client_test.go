@@ -339,7 +339,7 @@ func TestClientMediaTranscript(t *testing.T) {
 	ready := map[string]any{
 		"vault_uid": "vault", "source_id": sourceID, "source_version_id": versionID,
 		"content_version_id": contentID, "evidence_state": "ready", "coverage_state": "complete",
-		"operation_state": "succeeded",
+		"operation_state": "succeeded", "$schema": "https://example.com/transcript.schema.json",
 		"transcript": map[string]any{
 			"origin": "generated", "completeness": "partial", "truncated": true, "has_omissions": true,
 			"units": []any{
@@ -415,20 +415,6 @@ func TestClientMediaTranscript(t *testing.T) {
 	require.NotNil(transcript.Transcript)
 	assert.Equal("input", transcript.Transcript.SuppliedInputID)
 	assert.Equal("build", transcript.Transcript.BuildID)
-
-	mu.Lock()
-	raw[contentID] = []byte(`{"transcript":{"units":[{"text":"reordered transcript"}],"supplied_input_id":"input","origin":"supplied","build_id":"build"},"content_version_id":"content-1","source_version_id":"ver 1","source_id":"src/1","evidence_state":"ready","vault_uid":"vault","$schema":"https://example.com/transcript.schema.json"}`)
-	mu.Unlock()
-	transcript, err = client.Transcript(t.Context(), sourceID, versionID, contentID)
-	require.NoError(err)
-	require.NotNil(transcript.Transcript)
-	assert.Equal("build", transcript.Transcript.BuildID)
-	assert.Equal("input", transcript.Transcript.SuppliedInputID)
-	require.Len(transcript.Transcript.Units, 1)
-	assert.Equal("reordered transcript", transcript.Transcript.Units[0].Text)
-	mu.Lock()
-	delete(raw, contentID)
-	mu.Unlock()
 
 	respond(with(map[string]any{"evidence_state": "pending", "transcript": nil}))
 	transcript, err = client.Transcript(t.Context(), sourceID, versionID, contentID)

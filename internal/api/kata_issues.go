@@ -320,7 +320,7 @@ func newKataIssueBackend(cfg *config.Config, messageStore MessageStore) KataIssu
 	if docbank := cfg.Integrations.Docbank; docbank.Enabled {
 		client, err := docbankmedia.NewClient(docbank.URL, docbank.ResolveAPIKey)
 		if err != nil {
-			configurationError := fmt.Errorf("%w: %v", kataevidence.ErrDocbankConfiguration, err)
+			configurationError := fmt.Errorf("%w: %w", kataevidence.ErrDocbankConfiguration, err)
 			evidence.WithDocbank(kataevidence.NewDocbankReader(archive, nil, func(context.Context) (string, error) { return "", configurationError }, nil))
 		}
 		revisions, ok := messageStore.(mediaRevisionReader)

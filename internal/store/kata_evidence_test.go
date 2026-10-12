@@ -17,32 +17,34 @@ import (
 func TestKataDocbankSourceEditBeforeReconciliation(t *testing.T) {
 	for _, transcript := range []string{"edited transcript", ""} {
 		t.Run(transcript, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			f := newBeeperMediaFixture(t)
 			audio := addBeeperAudio(t, f.Store, f.Source.ID, f.ConvID, "voice1", strings.Repeat("a", 64))
 			writeRaw := func(text string) {
 				raw := []byte(fmt.Sprintf(`{"id":"voice1","attachments":[{"id":"mxc://audio/voice1","isVoiceNote":true,"transcription":{"transcription":%q}}]}`, text))
-				require.NoError(t, f.Store.UpsertMessageRawWithFormat(audio.messageID, raw, "beeper_json"))
+				require.NoError(f.Store.UpsertMessageRawWithFormat(audio.messageID, raw, "beeper_json"))
 			}
 			writeRaw("original transcript")
 			revision := func(ctx context.Context, id int64) (string, error) { return beeper.MediaRevision(ctx, f.Store, id) }
 			original, err := revision(t.Context(), audio.attachmentID)
-			require.NoError(t, err)
+			require.NoError(err)
 			mapping := audio.mapping("destination", original, "processing")
 			retainAudio(t, f.Store, mapping, "occurrence")
 			_, err = f.Store.DB().Exec("UPDATE beeper_media_deliveries SET supplied_input_id='input'")
-			require.NoError(t, err)
+			require.NoError(err)
 			binding, err := f.Store.KataDocbankBinding(t.Context(), "destination", audio.attachmentID)
-			require.NoError(t, err)
+			require.NoError(err)
 			writeRaw(transcript)
 			reader := kataevidence.NewDocbankReader(f.Store, nil, func(context.Context) (string, error) { return "destination", nil }, revision)
 			result, err := reader.LoadKataEvidenceSource(t.Context(), kataevidence.Selector{Kind: "docbank_rendition", MessageID: audio.messageID, AttachmentID: audio.attachmentID, MaxChars: new(10)})
-			require.ErrorIs(t, err, kataevidence.ErrChanged)
-			assert.Empty(t, result.Text)
+			require.ErrorIs(err, kataevidence.ErrChanged)
+			assert.Empty(result.Text)
 			ref := binding.Reference
 			ref.DocbankRendition = &kataevidence.DocbankReference{VaultUID: binding.VaultUID, ContentVersionID: binding.ContentVersionID, ContentSHA256: binding.ContentSHA256, EndRune: 10}
 			result, err = reader.ReadKataEvidenceSource(t.Context(), ref)
-			require.ErrorIs(t, err, kataevidence.ErrChanged)
-			assert.Empty(t, result.Text)
+			require.ErrorIs(err, kataevidence.ErrChanged)
+			assert.Empty(result.Text)
 		})
 	}
 }

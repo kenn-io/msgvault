@@ -2175,16 +2175,17 @@ func sha256Hex(data []byte) string {
 }
 
 func TestMediaRevisionErrorClassification(t *testing.T) {
+	assert := assert.New(t)
 	for _, err := range []error{errBeeperMediaSourceChanged, errBeeperMediaPartMissing, errBeeperMediaPartAmbiguous, errBeeperMediaUnsupported, errBeeperMediaTranscriptInvalid, errBeeperMediaTranscriptTooLarge} {
-		assert.True(t, MediaRevisionChanged(fmt.Errorf("describe: %w", err)))
-		assert.False(t, MediaRevisionUnavailable(err))
+		assert.True(MediaRevisionChanged(fmt.Errorf("describe: %w", err)))
+		assert.False(MediaRevisionUnavailable(err))
 	}
 	for _, err := range []error{sql.ErrNoRows, errBeeperMediaRawInvalid, errBeeperMediaNoLiveOccurrence} {
-		assert.True(t, MediaRevisionUnavailable(fmt.Errorf("read: %w", err)))
-		assert.False(t, MediaRevisionChanged(err))
+		assert.True(MediaRevisionUnavailable(fmt.Errorf("read: %w", err)))
+		assert.False(MediaRevisionChanged(err))
 	}
 	for _, err := range []error{nil, sql.ErrConnDone, context.Canceled} {
-		assert.False(t, MediaRevisionChanged(err))
-		assert.False(t, MediaRevisionUnavailable(err))
+		assert.False(MediaRevisionChanged(err))
+		assert.False(MediaRevisionUnavailable(err))
 	}
 }
