@@ -46,6 +46,9 @@ type inboxObject map[string]jsontext.Value
 
 func decodeInboxObject(raw []byte) (inboxObject, error) {
 	var object inboxObject
+	if !jsontext.Value(raw).IsValid(jsontext.AllowDuplicateNames(false)) {
+		return nil, inboxcontrol.ErrUnavailable
+	}
 	if err := json.Unmarshal(raw, &object); err != nil || object == nil {
 		return nil, inboxcontrol.ErrUnavailable
 	}
