@@ -28,14 +28,8 @@ func observeIMAPSyncMembershipsTx(ctx context.Context, tx *loggedTx, sourceID in
 	if err := tx.QueryRowContext(ctx, `SELECT identifier,source_type,sync_config FROM sources WHERE id=?`, sourceID).Scan(&identifier, &kind, &config); err != nil {
 		return fmt.Errorf("resolve IMAP Inbox sync source: %w", err)
 	}
-	parsed, err := url.Parse(identifier)
-	var account struct {
-		Username string `json:"username"`
-	}
-	if err != nil || kind != "imap" || parsed.User == nil || parsed.User.Username() == "" || (parsed.Scheme != "imap" && parsed.Scheme != "imaps" && parsed.Scheme != "imap+starttls") || !config.Valid {
-		return nil
-	}
-	if err := json.Unmarshal([]byte(config.String), &account); err != nil || account.Username != parsed.User.Username() {
+	accountID, ok := parseIMAPInboxSyncAccount(identifier, kind, config)
+	if !ok {
 		return nil
 	}
 	observedAt := time.Now().UTC()
@@ -45,7 +39,7 @@ func observeIMAPSyncMembershipsTx(ctx context.Context, tx *loggedTx, sourceID in
 		if err := tx.QueryRowContext(ctx, `SELECT source_message_id FROM messages WHERE id=? AND source_id=?`, entry.MessageID, sourceID).Scan(&providerID); err != nil {
 			return fmt.Errorf("resolve IMAP Inbox sync item: %w", err)
 		}
-		target := inboxcontrol.Target{SourceID: sourceID, SourceType: kind, SourceIdentifier: identifier, AccountID: account.Username, Scope: inboxcontrol.ScopeMessage, ItemID: entry.MessageID, ProviderID: providerID, Mailbox: membership.Mailbox, UIDValidity: membership.UIDValidity, UID: membership.UID}
+		target := inboxcontrol.Target{SourceID: sourceID, SourceType: kind, SourceIdentifier: identifier, AccountID: accountID, Scope: inboxcontrol.ScopeMessage, ItemID: entry.MessageID, ProviderID: providerID, Mailbox: membership.Mailbox, UIDValidity: membership.UIDValidity, UID: membership.UID}
 		inbox := strings.EqualFold(membership.Mailbox, "INBOX")
 		state := inboxcontrol.State{Target: target, Inbox: &inbox, Location: membership.Mailbox, Revision: fmt.Sprintf("%d:0", membership.UIDValidity), ObservedAt: observedAt}
 		if membership.Flags != nil {
@@ -80,4 +74,21 @@ func observeIMAPSyncMembershipsTx(ctx context.Context, tx *loggedTx, sourceID in
 		return bumpInboxSourceRevisionTx(ctx, tx, sourceID)
 	}
 	return nil
+}
+
+func parseIMAPInboxSyncAccount(identifier, kind string, config sql.NullString) (string, bool) {
+	if kind != sourceTypeIMAP || !config.Valid {
+		return "", false
+	}
+	parsed, err := url.Parse(identifier)
+	if err != nil || parsed.User == nil || parsed.User.Username() == "" || (parsed.Scheme != "imap" && parsed.Scheme != "imaps" && parsed.Scheme != "imap+starttls") {
+		return "", false
+	}
+	var account struct {
+		Username string `json:"username"`
+	}
+	if err := json.Unmarshal([]byte(config.String), &account); err != nil || account.Username != parsed.User.Username() {
+		return "", false
+	}
+	return account.Username, true
 }

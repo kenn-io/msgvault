@@ -75,7 +75,7 @@ func validateInboxArchiveTarget(ctx context.Context, tx *loggedTx, target inboxc
 	if err := validateInboxArchiveIdentity(ctx, tx, target); err != nil {
 		return err
 	}
-	if target.SourceType == "imap" {
+	if target.SourceType == sourceTypeIMAP {
 		return validateInboxIMAPMembership(ctx, tx, target)
 	}
 	return nil

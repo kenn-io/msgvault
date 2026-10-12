@@ -2,6 +2,7 @@ package imap
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -41,6 +42,7 @@ func (p *inboxMappingReadbackObserver) Observe(ctx context.Context, request inbo
 }
 
 func newInboxNativeServiceFixture(t *testing.T) *inboxNativeServiceFixture {
+	t.Helper()
 	return newInboxNativeServiceFixtureWithFault(t, "native")
 }
 
@@ -269,7 +271,11 @@ func TestInboxIMAPServicePersistsMappingBeforeDestinationRead(t *testing.T) {
 				if err != nil {
 					return nil, err
 				}
-				return &inboxMappingReadbackObserver{InboxProvider: provider.(*InboxProvider), beforeRead: func(read inboxcontrol.Request) error {
+				imapProvider, ok := provider.(*InboxProvider)
+				if !ok {
+					return nil, fmt.Errorf("resolved provider has type %T, want *imap.InboxProvider", provider)
+				}
+				return &inboxMappingReadbackObserver{InboxProvider: imapProvider, beforeRead: func(read inboxcontrol.Request) error {
 					reads++
 					stored, err := f.store.LookupInboxReceipt(t.Context(), f.principal.ID, f.native.source.SourceID, "native-recovery")
 					requirements.NoError(err)
@@ -497,7 +503,11 @@ func TestInboxIMAPServiceRecoversCanceledMappedReadback(t *testing.T) {
 		if err != nil {
 			return nil, err
 		}
-		return &inboxMappingReadbackObserver{InboxProvider: provider.(*InboxProvider), beforeRead: func(read inboxcontrol.Request) error {
+		imapProvider, ok := provider.(*InboxProvider)
+		if !ok {
+			return nil, fmt.Errorf("resolved provider has type %T, want *imap.InboxProvider", provider)
+		}
+		return &inboxMappingReadbackObserver{InboxProvider: imapProvider, beforeRead: func(read inboxcontrol.Request) error {
 			stored, err := f.store.LookupInboxReceipt(context.WithoutCancel(ctx), f.principal.ID, f.native.source.SourceID, request.IdempotencyKey)
 			if err != nil || stored == nil || stored.After == nil || stored.After.Target != *read.Target {
 				return inboxcontrol.ErrInternal
@@ -565,7 +575,10 @@ func TestInboxIMAPServiceReconcileConflictsPreserveArchive(t *testing.T) {
 					if err == nil && status != nil {
 						collisionUID = uint32(status.UIDNext)
 					}
-					return err
+					if err != nil {
+						return fmt.Errorf("read Archive status in test: %w", err)
+					}
+					return nil
 				}))
 				requirements.NotZero(collisionUID)
 				conversation, err := f.store.EnsureConversation(f.native.source.SourceID, "native-collision", "Synthetic collision")

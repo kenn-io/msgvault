@@ -18,8 +18,8 @@ func observationWireClient(t *testing.T, response string) *imapclient.Client {
 	t.Helper()
 	clientConn, serverConn := net.Pipe()
 	go func() {
-		defer serverConn.Close()
-		fmt.Fprint(serverConn, "* PREAUTH [CAPABILITY IMAP4rev1 CONDSTORE] synthetic server\r\n")
+		defer func() { _ = serverConn.Close() }()
+		_, _ = fmt.Fprint(serverConn, "* PREAUTH [CAPABILITY IMAP4rev1 CONDSTORE] synthetic server\r\n")
 		reader := bufio.NewReader(serverConn)
 		for {
 			line, err := reader.ReadString('\n')
@@ -29,11 +29,11 @@ func observationWireClient(t *testing.T, response string) *imapclient.Client {
 			tag, command, _ := strings.Cut(strings.TrimSpace(line), " ")
 			switch {
 			case strings.HasPrefix(command, "UID FETCH "):
-				fmt.Fprintf(serverConn, "%s%s OK FETCH done\r\n", response, tag)
+				_, _ = fmt.Fprintf(serverConn, "%s%s OK FETCH done\r\n", response, tag)
 			case command == "CAPABILITY":
-				fmt.Fprintf(serverConn, "* CAPABILITY IMAP4rev1 CONDSTORE\r\n%s OK done\r\n", tag)
+				_, _ = fmt.Fprintf(serverConn, "* CAPABILITY IMAP4rev1 CONDSTORE\r\n%s OK done\r\n", tag)
 			default:
-				fmt.Fprintf(serverConn, "%s BAD unexpected command\r\n", tag)
+				_, _ = fmt.Fprintf(serverConn, "%s BAD unexpected command\r\n", tag)
 			}
 		}
 	}()

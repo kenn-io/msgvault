@@ -451,17 +451,20 @@ func cachedIMAPMembershipFlags(tx *loggedTx, sourceID int64, observation IMAPMem
 		WHERE source_id=? AND mailbox=? AND uidvalidity=? AND uid=? AND message_id=?`,
 		sourceID, observation.Mailbox, observation.UIDValidity, observation.UID, messageID).Scan(&encoded)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil //nolint:nilnil // No cached membership means unknown FLAGS.
+		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("read cached IMAP membership flags: %w", err)
 	}
+	return decodeCachedIMAPMembershipFlags(encoded), nil
+}
+
+func decodeCachedIMAPMembershipFlags(encoded string) []string {
 	var flags []string
 	if err := json.Unmarshal([]byte(encoded), &flags); err != nil {
-		// Malformed cached metadata provides no flag evidence.
-		return nil, nil //nolint:nilnil // Unknown cached FLAGS is not a database error.
+		return nil
 	}
-	return flags, nil
+	return flags
 }
 
 // deleteUnobservedIMAPMemberships removes the saved rows of a mailbox that a
