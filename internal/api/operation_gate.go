@@ -523,6 +523,12 @@ func operationGateRequest(r *http.Request, auth requestAuthentication) (bool, st
 	case http.MethodGet, http.MethodHead, http.MethodOptions:
 		return false, "", nil
 	}
+	// Scoped publication checks current authority and saved receipts before
+	// acquiring its own gate. An outer gate would deadlock owner requests and
+	// prevent observation of already settled receipts.
+	if strings.HasPrefix(r.URL.Path, scopedCardDAVPublicationPath) {
+		return false, "", nil
+	}
 	if operationGateExemptPaths[r.URL.Path] || strings.HasPrefix(r.URL.Path, agentTokensPath+"/") {
 		return false, "", nil
 	}

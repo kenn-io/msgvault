@@ -1212,7 +1212,7 @@ func cardDAVRequestNeedsProtectiveCeiling(r *http.Request) bool {
 		"POST /api/v1/carddav/sync":
 		return true
 	}
-	if strings.HasPrefix(r.URL.Path, "/api/v1/carddav/publications/") {
+	if strings.HasPrefix(r.URL.Path, "/api/v1/carddav/publications/") || strings.HasPrefix(r.URL.Path, scopedCardDAVPublicationPath) {
 		return r.Method == http.MethodPost || r.Method == http.MethodDelete
 	}
 	return r.Method == http.MethodPost &&

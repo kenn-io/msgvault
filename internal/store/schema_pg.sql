@@ -1207,6 +1207,7 @@ CREATE TABLE IF NOT EXISTS carddav_publications (
     address_book_id             BIGINT REFERENCES carddav_address_books(id) ON DELETE CASCADE,
     href                        TEXT,
     pending_operation           TEXT CHECK (pending_operation IN ('create', 'update', 'delete')),
+    pending_intent_id           TEXT,
     outgoing_body               BYTEA,
     outgoing_semantic_hash      TEXT,
     local_hash                  TEXT,
@@ -4127,4 +4128,37 @@ CREATE TABLE IF NOT EXISTS identity_operation_receipts (
     request_hash TEXT NOT NULL,
     receipt_json TEXT NOT NULL,
     UNIQUE (principal, idempotency_key)
+);
+
+-- CardDAV receipts settle with canonical observations and pending-intent removal.
+-- Retained receipt evidence survives later archive cleanup.
+CREATE TABLE IF NOT EXISTS carddav_publication_receipts (
+    receipt_id TEXT PRIMARY KEY,
+    principal_hash TEXT NOT NULL,
+    idempotency_key_hash TEXT NOT NULL,
+    request_hash TEXT NOT NULL,
+    posted_request_hash TEXT NOT NULL DEFAULT '',
+    pending_intent_id TEXT UNIQUE,
+    is_noop BOOLEAN NOT NULL DEFAULT FALSE,
+    person_id BIGINT NOT NULL,
+    person_uid TEXT NOT NULL,
+    person_revision BIGINT NOT NULL,
+    account_id BIGINT NOT NULL,
+    address_book_id BIGINT NOT NULL,
+    book_fingerprint TEXT NOT NULL,
+    connection_generation BIGINT NOT NULL,
+    mutation_revision BIGINT NOT NULL,
+    body_sha256 TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('dispatching', 'verified', 'rejected')),
+    remote_etag TEXT NOT NULL DEFAULT '',
+    error_code TEXT NOT NULL DEFAULT '',
+    retry_after TEXT,
+    created_at TEXT NOT NULL,
+    verified_at TEXT,
+    UNIQUE (principal_hash, idempotency_key_hash),
+    CHECK ((is_noop = FALSE AND pending_intent_id IS NOT NULL) OR
+           (is_noop = TRUE AND pending_intent_id IS NULL AND state = 'verified')),
+    CHECK ((state = 'rejected' AND error_code IN ('provider_rejected', 'retry_after')) OR
+           (state <> 'rejected' AND error_code = '')),
+    CHECK (retry_after IS NULL OR (state = 'rejected' AND error_code = 'retry_after'))
 );

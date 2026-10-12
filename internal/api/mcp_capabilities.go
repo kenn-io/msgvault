@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"sort"
 	"strings"
@@ -11,13 +12,14 @@ import (
 	"go.kenn.io/msgvault/internal/identitycontrol"
 )
 
-// registerMCPCapabilitiesRoute advertises only registered identity contracts.
-// Native target authorization is repeated by preview, apply and receipt reads.
+// registerMCPCapabilitiesRoute advertises registered identity and CardDAV contracts.
+// Each operation repeats its native resource authorization before effects.
 func (s *Server) registerMCPCapabilitiesRoute(api huma.API) {
-	registerAPIV1RawHumaJSONRoute[apiprotocol.MCPCapabilities](api, "getMCPCapabilities", http.MethodGet, "/mcp/capabilities", "Describe admitted native identity MCP operations", func(w http.ResponseWriter, r *http.Request) {
+	registerAPIV1RawHumaJSONRoute[apiprotocol.MCPCapabilities](api, "getMCPCapabilities", http.MethodGet, "/mcp/capabilities", "Describe admitted identity and CardDAV MCP operations", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		auth := s.identityOperationAuthentication(r)
-		if _, err := identityOperationPrincipal(auth); err != nil {
+		principal, err := identityOperationPrincipal(auth)
+		if err != nil {
 			s.writeIdentityOperationError(w, err)
 			return
 		}
@@ -39,6 +41,27 @@ func (s *Server) registerMCPCapabilitiesRoute(api huma.API) {
 			}
 		}
 		admitted["applyIdentityOperation"] = len(response.IdentityOperations) > 0
+		backend, supported := s.store.(scopedCardDAVReceiptStore)
+		allowed := supported && principal == "owner"
+		live := allowed && s.hasScopedCardDAVTransport()
+		if supported && auth.Grant != nil && auth.Grant.HasPermission(agentgrant.PermissionPersonRead) && auth.Grant.HasPermission(agentgrant.PermissionCardDAVWrite) && len(auth.Grant.AddressBooks) > 0 {
+			for _, person := range auth.Grant.Persons {
+				_, authorize, err := s.scopedCardDAVPublicationAuthority(r, person.ID)
+				if err != nil {
+					continue
+				}
+				source, err := backend.LoadCardDAVPublicationReviewSourceAuthorizedContext(r.Context(), person.ID, authorize)
+				if err == nil && source.Resource != nil {
+					allowed = true
+					live = live || s.hasScopedCardDAVTransportForBook(r.Context(), source.Book.ID)
+				}
+			}
+		}
+		admitted["reconcileScopedCardDAVPublication"] = allowed
+		if live {
+			admitted["previewScopedCardDAVPublication"] = true
+			admitted["approveScopedCardDAVPublication"] = true
+		}
 		for _, operation := range documentOperations(api.OpenAPI()) {
 			if admitted[operation.OperationID] {
 				response.Routes = append(response.Routes, mcpRouteDescriptor(api.OpenAPI(), operation))
@@ -119,4 +142,36 @@ func mcpRouteDescriptor(doc *huma.OpenAPI, operation *huma.Operation) apiprotoco
 	sort.Strings(result.QueryParameters)
 	sort.Strings(result.RequestProperties)
 	return result
+}
+
+func supportsScopedCardDAVTransport(operations CardDAVOperations) bool {
+	capability, ok := operations.(interface{ SupportsScopedPublication() bool })
+	return ok && capability.SupportsScopedPublication()
+}
+
+func (s *Server) hasScopedCardDAVTransport() bool {
+	if s.cardDAV == nil {
+		return false
+	}
+	if supportsScopedCardDAVTransport(s.cardDAV.Current()) {
+		return true
+	}
+	for _, name := range s.cardDAV.connectionNames() {
+		selected, err := s.cardDAV.Select(name, false)
+		if err == nil && supportsScopedCardDAVTransport(selected.Current()) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Server) hasScopedCardDAVTransportForBook(ctx context.Context, bookID int64) bool {
+	if s.cardDAV == nil {
+		return false
+	}
+	if s.cardDAV.store == nil || s.cardDAV.cfg == nil {
+		return supportsScopedCardDAVTransport(s.cardDAV.Current())
+	}
+	operations, err := (&cardDAVManagerOperations{controller: s.cardDAV.root()}).forBook(ctx, bookID)
+	return err == nil && supportsScopedCardDAVTransport(operations)
 }

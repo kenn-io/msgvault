@@ -358,9 +358,14 @@ func newPersonCardDAVCommand(action string, publish bool) *cobra.Command {
 	cmd := &cobra.Command{Use: action + " <person-id>", Short: strings.ToUpper(action[:1]) + action[1:] + " a person " + direction + " CardDAV", Args: cobra.ExactArgs(1)}
 	var preview bool
 	var approvalToken string
+	var scoped, reconcile bool
+	var idempotencyKey string
 	if publish {
 		cmd.Flags().BoolVar(&preview, "preview", false, "Print the exact vCard and approval token as JSON without publishing")
 		cmd.Flags().StringVar(&approvalToken, "approve", "", "Approve a --preview token; conflicts also need explicit keep_local resolution")
+		cmd.Flags().BoolVar(&scoped, "scoped", false, "Use reviewed mapped updates with durable receipts and current person/book authority")
+		cmd.Flags().StringVar(&idempotencyKey, "idempotency-key", "", "Original request key for --scoped approval or recovery; reuse with the same person and token")
+		cmd.Flags().BoolVar(&reconcile, "reconcile", false, "With --scoped, --approve and --idempotency-key, observe the original pending update without another PUT")
 	}
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		id, err := cardDAVCLIPositiveID(cmd, args[0])
@@ -370,11 +375,39 @@ func newPersonCardDAVCommand(action string, publish bool) *cobra.Command {
 		if preview && approvalToken != "" {
 			return usageErr(cmd, errors.New("--preview and --approve cannot be combined"))
 		}
+		if !scoped && (reconcile || idempotencyKey != "") {
+			return usageErr(cmd, errors.New("--reconcile and --idempotency-key require --scoped"))
+		}
+		if scoped && ((preview && (reconcile || idempotencyKey != "")) || (!preview && (approvalToken == "" || strings.TrimSpace(idempotencyKey) == ""))) {
+			return usageErr(cmd, errors.New("--scoped requires --preview, or the original --approve token and --idempotency-key; add --reconcile only for recovery"))
+		}
 		client, _, err := OpenHTTPStore(cmd.Context())
 		if err != nil {
 			return err
 		}
 		defer func() { _ = client.Close() }()
+		if scoped {
+			compatible, err := client.SupportsAPISchemaVersion(cmd.Context(), daemonclient.ScopedCardDAVMinAPISchemaVersion)
+			if err != nil {
+				return err
+			}
+			if !compatible {
+				return fmt.Errorf("scoped CardDAV publication requires daemon API schema %s or newer", daemonclient.ScopedCardDAVMinAPISchemaVersion)
+			}
+			var result any
+			switch {
+			case preview:
+				result, err = client.PreviewScopedCardDAVPublication(cmd.Context(), id)
+			case reconcile:
+				result, err = client.ReconcileScopedCardDAVPublication(cmd.Context(), id, approvalToken, idempotencyKey)
+			default:
+				result, err = client.ApproveScopedCardDAVPublication(cmd.Context(), id, approvalToken, idempotencyKey)
+			}
+			if err != nil {
+				return err
+			}
+			return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), result, json.Deterministic(true))
+		}
 		switch {
 		case preview:
 			resp, err := daemonclient.APIResponse(client, func(api *apiclient.Client) (*generated.PreviewCardDAVPublicationResp, error) {

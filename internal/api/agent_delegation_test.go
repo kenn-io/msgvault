@@ -307,6 +307,10 @@ func TestDelegatedOperationAllowlistIsClosed(t *testing.T) {
 	for _, op := range []string{"getPersonProfile", "patchPerson", "getPersonStructuredProfile", "patchPersonStructuredProfile", "listPersonAttributes", "setPersonAttribute", "clearPersonAttribute", "mergePersons"} {
 		allowed[op] = true
 	}
+	// Discovery and publication routes validate current person/book authority.
+	for _, op := range []string{"getMCPCapabilities", "previewScopedCardDAVPublication", "approveScopedCardDAVPublication", "reconcileScopedCardDAVPublication"} {
+		allowed[op] = true
+	}
 	specRec := httptest.NewRecorder()
 	srv.Router().ServeHTTP(specRec, httptest.NewRequest(http.MethodGet, "/openapi.json", nil))
 	requirements.Equal(http.StatusOK, specRec.Code)

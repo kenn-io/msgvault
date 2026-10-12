@@ -280,12 +280,34 @@ func (s *Service) preparePublicationEnvelope(source *store.CardDAVPublicationRev
 		if err != nil {
 			return vcard.ResourceEnvelope{}, err
 		}
-		fullName := person.VCardUID
-		if person.DisplayName != nil && strings.TrimSpace(*person.DisplayName) != "" {
-			fullName = strings.TrimSpace(*person.DisplayName)
+		// Explicit names belong to the native projector. Seeding an FN beside
+		// them would leave duplicate, unowned residue after a name correction.
+		// Keep the historical unowned display-name fallback for cards without
+		// explicit names, so accepting a remote name does not overwrite a local
+		// identity field or claim ownership of that remote value.
+		fallback := ""
+		hasExplicitName := false
+		for _, name := range snapshot.Profile.Names {
+			if name.NameKind == store.PersonNameFormatted && name.Formatted != nil && strings.TrimSpace(*name.Formatted) != "" {
+				hasExplicitName = true
+			}
+			if name.NameKind == store.PersonNameStructured {
+				for _, part := range []*string{name.HonorificPrefixes, name.GivenName, name.AdditionalNames, name.FamilyName, name.SecondarySurname, name.Generation, name.HonorificSuffixes} {
+					if part != nil && strings.TrimSpace(*part) != "" {
+						hasExplicitName = true
+					}
+				}
+			}
+		}
+		if !hasExplicitName {
+			fullName := person.VCardUID
+			if person.DisplayName != nil && strings.TrimSpace(*person.DisplayName) != "" {
+				fullName = strings.TrimSpace(*person.DisplayName)
+			}
+			fallback = "FN:" + vcard.EscapeText(fullName) + "\r\n"
 		}
 		raw := []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:" + vcard.EscapeText(person.VCardUID) +
-			"\r\nFN:" + vcard.EscapeText(fullName) + "\r\nEND:VCARD\r\n")
+			"\r\n" + fallback + "END:VCARD\r\n")
 		envelope, err = vcard.ParseResourceEnvelope(raw)
 		if err != nil {
 			return vcard.ResourceEnvelope{}, err

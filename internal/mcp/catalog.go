@@ -214,6 +214,16 @@ func operationCatalog(opts ServeOptions, _ *handlers) []toolDefinition {
 			definitions = append(definitions, mergePersonDefinition())
 		}
 	}
+	if !opts.DelegatedOnly || slices.Contains(opts.GrantPermissions, "person.read") && slices.Contains(opts.GrantPermissions, "carddav.write") {
+		for _, definition := range scopedCardDAVDefinitions() {
+			available := definition.name == ToolPreviewScopedCardDAVPublication && opts.ScopedCardDAVPreview != nil ||
+				definition.name == ToolApproveScopedCardDAVPublication && opts.ScopedCardDAVApprove != nil ||
+				definition.name == ToolReconcileScopedCardDAVPublication && opts.ScopedCardDAVReconcile != nil
+			if available {
+				definitions = append(definitions, definition)
+			}
+		}
+	}
 	if opts.Calendar != nil {
 		definitions = append(definitions, stableCalendarTools()...)
 	}
