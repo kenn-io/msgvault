@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	Require "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/inboxcontrol"
 	"go.kenn.io/msgvault/internal/slack"
 	"go.kenn.io/msgvault/internal/store"
@@ -23,7 +23,7 @@ func waitForAcquisitionQueryLock(ctx context.Context, t *testing.T, db *sql.DB, 
 	defer ticker.Stop()
 	for {
 		var waiting bool
-		Require.NoError(t, db.QueryRowContext(ctx, `SELECT EXISTS (
+		require.NoError(t, db.QueryRowContext(ctx, `SELECT EXISTS (
 			SELECT 1 FROM pg_stat_activity WHERE datname=current_database()
 			AND wait_event_type='Lock' AND $1 = ANY(pg_blocking_pids(pid))
 		)`, blockerPID).Scan(&waiting))
@@ -33,7 +33,7 @@ func waitForAcquisitionQueryLock(ctx context.Context, t *testing.T, db *sql.DB, 
 		select {
 		case <-ticker.C:
 		case <-ctx.Done():
-			Require.NoError(t, ctx.Err(), "source acquisition never reached the database lock")
+			require.NoError(t, ctx.Err(), "source acquisition never reached the database lock")
 		}
 	}
 }
@@ -45,7 +45,7 @@ func TestSourceDiscoveryAndAcquisitionCancellation(t *testing.T) {
 				continue
 			}
 			t.Run(phase+"/"+operation, func(t *testing.T) {
-				require := Require.New(t)
+				require := require.New(t)
 				st := testutil.NewTestStore(t)
 				if !st.IsPostgreSQL() {
 					t.Skip("requires PostgreSQL locks")
@@ -144,7 +144,7 @@ func TestSourceDiscoveryAndAcquisitionCancellation(t *testing.T) {
 }
 
 func TestPurgeSourceDeletedDuringAcquisition(t *testing.T) {
-	require := Require.New(t)
+	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	if !st.IsPostgreSQL() {
 		t.Skip("requires PostgreSQL row locks")
@@ -174,7 +174,7 @@ func TestPurgeSourceDeletedDuringAcquisition(t *testing.T) {
 }
 
 func TestPurgeSourceRetiresInboxReceiptWithoutNestedSyncLease(t *testing.T) {
-	require := Require.New(t)
+	require := require.New(t)
 
 	st := testutil.NewTestStore(t)
 	a := &Archive{store: st}
