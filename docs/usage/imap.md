@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-04"
+last_edited: "2026-10-11"
 title: IMAP Sync and Repair
 description: Archive IMAP mail efficiently, choose folders, and repair stored labels.
 ---
@@ -178,6 +178,51 @@ A dry run can check keyword syntax, identity, and advertised support. It cannot
 prove mailbox write access; the server's STORE response and readback decide
 whether a later edit succeeded. After a partial or uncertain write, read the
 current tags before retrying.
+
+## Control an exact server copy (unreleased)
+
+The [`inbox` commands](../cli-reference.md#inbox) preview and change one
+recorded IMAP mailbox copy through the daemon. Use an owner-supplied target
+containing the account, archived item, mailbox, UIDVALIDITY, and UID. These last
+two server values identify the mailbox generation and the message within it.
+Sync first if that membership is missing or stale. The daemon checks the
+target against the archive and the configured login account on every call.
+
+```bash
+msgvault inbox get-state --request target.json
+msgvault inbox set-read --request target.json > preview.json
+```
+
+Mutation commands preview by default. Prepare execution from the returned
+`before` state and signed `preview_token`, add an `idempotency_key`, and use
+`--apply` as described in the [CLI reference](../cli-reference.md#inbox).
+Preview reads the server without changing it. Execution separately checks
+mailbox write access. `set-read` and `set-unread` change the server's `\Seen`
+flag while preserving the local archive's read state.
+
+Use `list-folders` with the exact source binding to obtain destination names
+and mailbox generations. `move` requires an exact destination. `unarchive`
+requires that destination to be `INBOX`. Both require the server's `MOVE` and
+`UIDPLUS` extensions. `archive` also needs a configured archive mailbox or one
+selectable mailbox advertised by the server as `\Archive`; a folder named
+"Archive" alone is insufficient. A verified move keeps the archived item ID
+and returns its new mailbox, UIDVALIDITY, and UID in the receipt. Use that new
+target for later actions.
+
+`tags` edits existing keywords advertised by the mailbox. An intent that both
+adds and removes keywords requires `CONDSTORE`, a positive modification number
+for that exact message, and one conditional flag replacement. Missing evidence
+makes that intent unavailable. Other flags and keywords are preserved.
+`create-folder` takes a source and new mailbox name, then verifies the created
+mailbox's exact generation independently.
+
+Keep the receipt and original key after an uncertain response. An identical
+retry returns the receipt without repeating the write. `receipt-get` reads
+saved evidence; `reconcile` reads the server and repairs local evidence.
+Missing MOVE mapping or CREATE generation evidence remains unknown; a matching
+folder name does not recover it. Missing FLAGS is also unknown, while `FLAGS ()`
+is an observed empty flag set. Capabilities describe available protocol evidence
+and never grant mailbox write access.
 
 ## Repair stored labels
 

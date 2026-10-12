@@ -76,7 +76,7 @@ func validateInboxArchiveTarget(ctx context.Context, tx *loggedTx, target inboxc
 		return err
 	}
 	if target.SourceType == "imap" {
-		return fmt.Errorf("%w: IMAP membership control is unavailable", inboxcontrol.ErrInvalid)
+		return validateInboxIMAPMembership(ctx, tx, target)
 	}
 	return nil
 }
@@ -121,4 +121,17 @@ func (s *Store) GetInboxProviderState(ctx context.Context, target inboxcontrol.T
 		return nil, fmt.Errorf("decode inbox provider observation: %w", err)
 	}
 	return &state, nil
+}
+
+// Exact membership authority, independently of caller/provider ID formatting.
+func validateInboxIMAPMembership(ctx context.Context, tx *loggedTx, target inboxcontrol.Target) error {
+	var count int
+	err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM imap_message_memberships mm WHERE mm.source_id=? AND mm.message_id=? AND mm.mailbox=? AND mm.uidvalidity=? AND mm.uid=? AND EXISTS(SELECT 1 FROM imap_folder_state fs WHERE fs.source_id=mm.source_id AND fs.mailbox=mm.mailbox AND fs.uidvalidity=mm.uidvalidity)`, target.SourceID, target.ItemID, target.Mailbox, target.UIDValidity, target.UID).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("resolve Inbox IMAP membership: %w", err)
+	}
+	if count != 1 {
+		return inboxcontrol.ErrInvalid
+	}
+	return nil
 }

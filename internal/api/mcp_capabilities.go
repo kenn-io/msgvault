@@ -56,7 +56,7 @@ func (s *Server) registerMCPCapabilitiesRoute(root, apiV1 huma.API) {
 
 func inboxDiscoveryAllowed(grant *agentgrant.Grant, permission agentgrant.Permission) bool {
 	return grant != nil && grant.HasPermission(agentgrant.PermissionInboxRead) && grant.HasPermission(permission) && slices.ContainsFunc(grant.Sources, func(source agentgrant.SourceRef) bool {
-		return source.ID > 0 && source.Type == "gmail" && source.Identifier != ""
+		return source.ID > 0 && (source.Type == "gmail" || source.Type == "imap") && source.Identifier != ""
 	})
 }
 
