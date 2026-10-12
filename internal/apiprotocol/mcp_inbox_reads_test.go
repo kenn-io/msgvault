@@ -17,9 +17,10 @@ func TestInboxReadContractsRequireRegisteredRouteAndFields(t *testing.T) {
 		{"context", MCPRouteDescriptor{OperationID: "getInboxContext", Method: http.MethodPost, Path: "/api/v1/inbox/context", RequestProperties: []string{"target", "message_id", "max_bytes"}}, MCPCapabilities.HasInboxContextContract},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			assert.False(t, tc.admitted(MCPCapabilities{Version: 1}))
-			assert.True(t, tc.admitted(MCPCapabilities{Version: 1, Routes: []MCPRouteDescriptor{tc.route}}))
-			assert.False(t, tc.admitted(MCPCapabilities{Version: 2, Routes: []MCPRouteDescriptor{tc.route}}))
+			assertions := assert.New(t)
+			assertions.False(tc.admitted(MCPCapabilities{Version: 1}))
+			assertions.True(tc.admitted(MCPCapabilities{Version: 1, Routes: []MCPRouteDescriptor{tc.route}}))
+			assertions.False(tc.admitted(MCPCapabilities{Version: 2, Routes: []MCPRouteDescriptor{tc.route}}))
 			for _, mutation := range []func(*MCPRouteDescriptor){
 				func(r *MCPRouteDescriptor) { r.Path = "/api/v1/unsupported" },
 				func(r *MCPRouteDescriptor) { r.Method = http.MethodDelete },
@@ -27,7 +28,7 @@ func TestInboxReadContractsRequireRegisteredRouteAndFields(t *testing.T) {
 			} {
 				route := tc.route
 				mutation(&route)
-				assert.False(t, tc.admitted(MCPCapabilities{Version: 1, Routes: []MCPRouteDescriptor{route}}))
+				assertions.False(tc.admitted(MCPCapabilities{Version: 1, Routes: []MCPRouteDescriptor{route}}))
 			}
 			fields := tc.route.QueryParameters
 			if tc.name == "context" {
@@ -41,7 +42,7 @@ func TestInboxReadContractsRequireRegisteredRouteAndFields(t *testing.T) {
 				} else {
 					route.QueryParameters = remaining
 				}
-				assert.False(t, tc.admitted(MCPCapabilities{Version: 1, Routes: []MCPRouteDescriptor{route}}), "missing %s", fields[i])
+				assertions.False(tc.admitted(MCPCapabilities{Version: 1, Routes: []MCPRouteDescriptor{route}}), "missing %s", fields[i])
 			}
 		})
 	}

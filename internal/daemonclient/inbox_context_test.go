@@ -43,7 +43,7 @@ func TestInboxContextClientContract(t *testing.T) {
 				switch r.URL.Path {
 				case "/api/v1/health":
 					assert.Equal(t, http.MethodGet, r.Method)
-					_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"3.3.0"}`))
+					_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"3.15.0"}`))
 				case "/api/v1/mcp/capabilities":
 					assert.Equal(t, http.MethodGet, r.Method)
 					descriptor := apiprotocol.MCPCapabilities{Version: 1, Delegated: true, Routes: []apiprotocol.MCPRouteDescriptor{}}

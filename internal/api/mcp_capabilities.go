@@ -39,6 +39,19 @@ func (s *Server) registerMCPCapabilitiesRoute(api huma.API) {
 				}
 			}
 		}
+		allowed := map[string]bool{}
+		if _, ok := s.store.(InboxCandidateReader); ok {
+			allowed["listInboxCandidates"] = !response.Delegated || inboxReadDiscoveryAllowed(auth.Grant, agentgrant.PermissionInboxRead)
+		}
+		if _, ok := s.store.(InboxContextReader); ok {
+			allowed["getInboxContext"] = !response.Delegated || inboxReadDiscoveryAllowed(auth.Grant, agentgrant.PermissionInboxContentRead)
+		}
+		for _, operation := range documentOperations(api.OpenAPI()) {
+			if allowed[operation.OperationID] {
+				response.Routes = append(response.Routes, mcpRouteDescriptor(api.OpenAPI(), operation))
+			}
+		}
+		sort.Slice(response.Routes, func(i, j int) bool { return response.Routes[i].OperationID < response.Routes[j].OperationID })
 		sort.Strings(response.InboxOperations)
 		writeJSON(w, http.StatusOK, response)
 	})
@@ -47,6 +60,12 @@ func (s *Server) registerMCPCapabilitiesRoute(api huma.API) {
 func inboxDiscoveryAllowed(grant *agentgrant.Grant, permission agentgrant.Permission) bool {
 	return grant != nil && grant.HasPermission(agentgrant.PermissionInboxRead) && grant.HasPermission(permission) && slices.ContainsFunc(grant.Sources, func(source agentgrant.SourceRef) bool {
 		return source.ID > 0 && (source.Type == "gmail" || source.Type == "imap" || source.Type == "msmail" || source.Type == "beeper") && source.Identifier != ""
+	})
+}
+
+func inboxReadDiscoveryAllowed(grant *agentgrant.Grant, permission agentgrant.Permission) bool {
+	return grant != nil && grant.HasPermission(agentgrant.PermissionInboxRead) && grant.HasPermission(permission) && slices.ContainsFunc(grant.Sources, func(source agentgrant.SourceRef) bool {
+		return source.ID > 0 && source.Identifier != "" && slices.Contains([]string{"gmail", "imap", "msmail", "beeper"}, source.Type)
 	})
 }
 

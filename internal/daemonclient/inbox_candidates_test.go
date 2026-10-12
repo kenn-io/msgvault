@@ -40,7 +40,7 @@ func TestInboxCandidateClientContract(t *testing.T) {
 				assert.Equal(t, "synthetic-agent-token", r.Header.Get(apiprotocol.AgentTokenHeader))
 				switch r.URL.Path {
 				case "/api/v1/health":
-					_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"3.3.0"}`))
+					_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"3.15.0"}`))
 					return
 				case "/api/v1/mcp/capabilities":
 					descriptor := apiprotocol.MCPCapabilities{Version: 1, Routes: []apiprotocol.MCPRouteDescriptor{}}

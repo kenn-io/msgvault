@@ -22,6 +22,8 @@ import (
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/deletion"
 	msgexport "go.kenn.io/msgvault/internal/export"
+	"go.kenn.io/msgvault/internal/fileutil"
+	"go.kenn.io/msgvault/internal/inboxcontrol"
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/scheduler"
@@ -117,21 +119,22 @@ type SourceStatusResponse struct {
 
 // SourceStatus represents one source and its read-only sync status.
 type SourceStatus struct {
-	ID                    int64          `json:"id"`
-	SourceType            string         `json:"source_type"`
-	Identifier            string         `json:"identifier"`
-	DisplayName           *string        `json:"display_name"`
-	LastSyncAt            *string        `json:"last_sync_at"`
-	UpdatedAt             string         `json:"updated_at"`
-	ActiveSync            *SyncRunStatus `json:"active_sync"`
-	LatestSync            *SyncRunStatus `json:"latest_sync"`
-	LastSuccessfulSync    *SyncRunStatus `json:"last_successful_sync"`
-	CanSync               bool           `json:"can_sync"`
-	SyncUnavailableReason string         `json:"sync_unavailable_reason,omitempty"`
-	Scheduled             bool           `json:"scheduled"`
-	Schedule              string         `json:"schedule,omitempty"`
-	NextSyncAt            *string        `json:"next_sync_at"`
-	SchedulerLastError    string         `json:"scheduler_last_error,omitempty"`
+	ProviderIngestion     *inboxcontrol.ProviderIngestion `json:"provider_ingestion"`
+	ID                    int64                           `json:"id"`
+	SourceType            string                          `json:"source_type"`
+	Identifier            string                          `json:"identifier"`
+	DisplayName           *string                         `json:"display_name"`
+	LastSyncAt            *string                         `json:"last_sync_at"`
+	UpdatedAt             string                          `json:"updated_at"`
+	ActiveSync            *SyncRunStatus                  `json:"active_sync"`
+	LatestSync            *SyncRunStatus                  `json:"latest_sync"`
+	LastSuccessfulSync    *SyncRunStatus                  `json:"last_successful_sync"`
+	CanSync               bool                            `json:"can_sync"`
+	SyncUnavailableReason string                          `json:"sync_unavailable_reason,omitempty"`
+	Scheduled             bool                            `json:"scheduled"`
+	Schedule              string                          `json:"schedule,omitempty"`
+	NextSyncAt            *string                         `json:"next_sync_at"`
+	SchedulerLastError    string                          `json:"scheduler_last_error,omitempty"`
 	// SchedulerQueued reports a scheduled run waiting for another job to
 	// finish; SchedulerPending a follow-up run requested while one executes;
 	// SchedulerStartedAt when the executing run began.
@@ -1643,6 +1646,8 @@ func (s *Server) sourceStatus(ctx context.Context, statusStore SourceStatusStore
 	if err := s.hydrateSyncRunStatus(ctx, statusStore, status.LatestSync); err != nil {
 		return SourceStatus{}, err
 	}
+
+	status.ProviderIngestion = sourceProviderIngestion(status.LatestSync)
 
 	lastSuccessful, err := statusStore.GetLastSuccessfulSyncContext(ctx, source.ID)
 	if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
