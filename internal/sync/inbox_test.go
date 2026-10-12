@@ -2,8 +2,8 @@ package sync
 
 import (
 	"errors"
-	assert "github.com/stretchr/testify/assert"
-	require "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/inboxcontrol"
 	"go.kenn.io/msgvault/internal/store"
 	"testing"
@@ -33,7 +33,7 @@ func TestIncrementalSyncMetadataRefreshFailureKeepsHistoryCursor(t *testing.T) {
 	requirements.NoError(err)
 	_, err = env.Syncer.Incremental(env.Context, current)
 	requirements.ErrorContains(err, "metadata-refresh")
-	assertions.ErrorContains(err, "repair Gmail metadata access and retry sync")
+	requirements.ErrorContains(err, "repair Gmail metadata access and retry sync")
 	assertMessageNotHasLabel(t, env.Store, "metadata-refresh", "STARRED")
 
 	failedRun, err := env.Store.GetLatestSync(source.ID)
