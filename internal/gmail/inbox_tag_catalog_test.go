@@ -17,11 +17,11 @@ func TestInboxGmailTagCatalogExistingLabels(t *testing.T) {
 	for _, tc := range []struct {
 		name, labels, account string
 		foreignSource         bool
-		want                  []emailtags.Tag
+		want                  []emailtags.MessageTag
 		wantErr               error
 	}{
-		{name: "existing user labels", account: "owner@example.com", labels: `{"labels":[{"id":"INBOX","name":"Inbox","type":"system"},{"id":"UNREAD","name":"Unread","type":"system"},{"id":"LabelTodo","name":"Todo","type":"user"},{"id":"LabelWatch","name":"Watch","type":"user"}]}`, want: []emailtags.Tag{{ID: "LabelTodo", Name: "Todo"}, {ID: "LabelWatch", Name: "Watch"}}},
-		{name: "known empty", account: "owner@example.com", labels: `{"labels":[]}`, want: []emailtags.Tag{}},
+		{name: "existing user labels", account: "owner@example.com", labels: `{"labels":[{"id":"INBOX","name":"Inbox","type":"system"},{"id":"UNREAD","name":"Unread","type":"system"},{"id":"LabelTodo","name":"Todo","type":"user"},{"id":"LabelWatch","name":"Watch","type":"user"}]}`, want: []emailtags.MessageTag{{ID: "LabelTodo", Name: "Todo"}, {ID: "LabelWatch", Name: "Watch"}}},
+		{name: "known empty", account: "owner@example.com", labels: `{"labels":[]}`, want: []emailtags.MessageTag{}},
 		{name: "missing evidence", account: "owner@example.com", labels: `{}`, wantErr: inboxcontrol.ErrUnavailable},
 		{name: "duplicate identity", account: "owner@example.com", labels: `{"labels":[{"id":"LabelTodo","name":"Todo","type":"user"},{"id":"LabelTodo","name":"Watch","type":"user"}]}`, wantErr: inboxcontrol.ErrUnavailable},
 		{name: "foreign provider account", account: "foreign@example.test", labels: `{"labels":[]}`, wantErr: inboxcontrol.ErrDenied},
@@ -49,7 +49,7 @@ func TestInboxGmailTagCatalogExistingLabels(t *testing.T) {
 			source := inboxGmailSource()
 			provider := NewInboxProvider(client, source)
 			catalog, ok := any(provider).(interface {
-				TagCatalog(context.Context, inboxcontrol.SourceIdentity) ([]emailtags.Tag, error)
+				TagCatalog(context.Context, inboxcontrol.SourceIdentity) ([]emailtags.MessageTag, error)
 			})
 			require.True(t, ok, "native provider must expose existing GTD tag identities")
 			if tc.foreignSource {

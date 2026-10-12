@@ -575,6 +575,22 @@ type ClientInterface interface {
 	ControlInbox(ctx context.Context, options *ControlInboxRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ControlInboxResponse, error)
 	ControlInboxWithResponse(ctx context.Context, options *ControlInboxRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ControlInboxResp, error)
 
+	// ApplyInboxTriage Apply one authenticated triage proposal with per-item durable receipts
+	ApplyInboxTriage(ctx context.Context, options *ApplyInboxTriageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ApplyInboxTriageResponse, error)
+	ApplyInboxTriageWithResponse(ctx context.Context, options *ApplyInboxTriageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ApplyInboxTriageResp, error)
+
+	// GetInboxTriageMappings Read configured category mappings for one exact source
+	GetInboxTriageMappings(ctx context.Context, options *GetInboxTriageMappingsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetInboxTriageMappingsResponse, error)
+	GetInboxTriageMappingsWithResponse(ctx context.Context, options *GetInboxTriageMappingsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetInboxTriageMappingsResp, error)
+
+	// UpdateInboxTriageMappings Replace owner category mappings after native catalog validation
+	UpdateInboxTriageMappings(ctx context.Context, options *UpdateInboxTriageMappingsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UpdateInboxTriageMappingsResponse, error)
+	UpdateInboxTriageMappingsWithResponse(ctx context.Context, options *UpdateInboxTriageMappingsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UpdateInboxTriageMappingsResp, error)
+
+	// PreviewInboxTriage Preview a bounded tag-only triage proposal for explicit inbox targets
+	PreviewInboxTriage(ctx context.Context, options *PreviewInboxTriageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PreviewInboxTriageResponse, error)
+	PreviewInboxTriageWithResponse(ctx context.Context, options *PreviewInboxTriageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PreviewInboxTriageResp, error)
+
 	// PrepareKataEvidence Prepare exact message and file evidence for a Kata issue
 	PrepareKataEvidence(ctx context.Context, options *PrepareKataEvidenceRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PrepareKataEvidenceResponse, error)
 	PrepareKataEvidenceWithResponse(ctx context.Context, options *PrepareKataEvidenceRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PrepareKataEvidenceResp, error)
@@ -9529,6 +9545,261 @@ func (c *Client) ControlInbox(ctx context.Context, options *ControlInboxRequestO
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/inbox/control")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ApplyInboxTriage Apply one authenticated triage proposal with per-item durable receipts
+func (c *Client) ApplyInboxTriage(ctx context.Context, options *ApplyInboxTriageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ApplyInboxTriageResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/inbox/triage/apply",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*ApplyInboxTriageResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(ApplyInboxTriageErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "ApplyInboxTriageErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(ApplyInboxTriageResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "ApplyInboxTriageResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/inbox/triage/apply")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetInboxTriageMappings Read configured category mappings for one exact source
+func (c *Client) GetInboxTriageMappings(ctx context.Context, options *GetInboxTriageMappingsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetInboxTriageMappingsResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/inbox/triage/mappings",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetInboxTriageMappingsResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(GetInboxTriageMappingsErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "GetInboxTriageMappingsErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(GetInboxTriageMappingsResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "GetInboxTriageMappingsResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/inbox/triage/mappings")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// UpdateInboxTriageMappings Replace owner category mappings after native catalog validation
+func (c *Client) UpdateInboxTriageMappings(ctx context.Context, options *UpdateInboxTriageMappingsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UpdateInboxTriageMappingsResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/inbox/triage/mappings",
+		Method:      "PUT",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*UpdateInboxTriageMappingsResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(UpdateInboxTriageMappingsErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "UpdateInboxTriageMappingsErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(UpdateInboxTriageMappingsResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "UpdateInboxTriageMappingsResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/inbox/triage/mappings")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// PreviewInboxTriage Preview a bounded tag-only triage proposal for explicit inbox targets
+func (c *Client) PreviewInboxTriage(ctx context.Context, options *PreviewInboxTriageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PreviewInboxTriageResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/inbox/triage/preview",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*PreviewInboxTriageResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(PreviewInboxTriageErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "PreviewInboxTriageErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(PreviewInboxTriageResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "PreviewInboxTriageResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/inbox/triage/preview")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}

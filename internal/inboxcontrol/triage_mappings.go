@@ -25,7 +25,7 @@ func ValidateTriageMappingEntries(source SourceIdentity, entries map[string]stri
 		if !validTriageCategory(category) {
 			return ErrInvalid
 		}
-		if _, err := emailtags.Normalize(emailtags.Change{Add: []string{tag}}, source.SourceType == "imap"); err != nil {
+		if _, err := emailtags.Normalize(emailtags.MessageTagChange{Add: []string{tag}}, source.SourceType); err != nil {
 			return ErrInvalid
 		}
 	}
@@ -99,7 +99,7 @@ func (s *Service) UpdateTriageMappings(ctx context.Context, source SourceIdentit
 	for category, requested := range entries {
 		matches := 0
 		for _, tag := range tags {
-			if emailtags.Contains([]string{tag.ID}, requested, source.SourceType == "imap") {
+			if emailtags.Contains([]string{tag.ID}, requested, inboxTagCaseInsensitive(source.SourceType)) {
 				canonical[category] = tag.ID
 				matches++
 			}
@@ -112,4 +112,8 @@ func (s *Service) UpdateTriageMappings(ctx context.Context, source SourceIdentit
 		return 0, err
 	}
 	return store.ReplaceInboxTriageMappings(ctx, source, canonical, expectedRevision, principal)
+}
+
+func inboxTagCaseInsensitive(sourceType string) bool {
+	return sourceType == "imap" || sourceType == "msmail"
 }

@@ -110,6 +110,6 @@ func inboxTriageDiscoveryAllowed(grant *agentgrant.Grant) bool {
 		return false
 	}
 	return slices.ContainsFunc(grant.Sources, func(source agentgrant.SourceRef) bool {
-		return source.ID > 0 && source.Identifier != "" && (source.Type == "gmail" || source.Type == "imap" || source.Type == "msmail")
+		return source.ID > 0 && source.Identifier != "" && source.Type == "gmail"
 	})
 }

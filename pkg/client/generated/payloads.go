@@ -126,6 +126,12 @@ type GetInboxContextBody = InboxContextRequest
 
 type ControlInboxBody = InboxRequest
 
+type ApplyInboxTriageBody = InboxTriageProposal
+
+type UpdateInboxTriageMappingsBody = InboxTriageMappingUpdate
+
+type PreviewInboxTriageBody = InboxTriageInput
+
 type PrepareKataEvidenceBody = KataEvidencePrepareRequest
 
 type CreateKataIssueBody = KataIssueCreateRequest

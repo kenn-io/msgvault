@@ -251,7 +251,7 @@ func (s *Service) checkTriageApplyGuards(ctx context.Context, proposal TriagePro
 	for _, id := range item.Request.Tags.Add {
 		matches := 0
 		for _, tag := range tags {
-			if emailtags.Contains([]string{tag.ID}, id, proposal.Source.SourceType == "imap") {
+			if emailtags.Contains([]string{tag.ID}, id, inboxTagCaseInsensitive(proposal.Source.SourceType)) {
 				matches++
 			}
 		}

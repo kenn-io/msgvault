@@ -495,7 +495,7 @@ configured.
 Owners replace mappings with `PUT /api/v1/inbox/triage/mappings`, sending
 `source`, `entries`, and `expected_revision`. Supported category keys are
 `todo`, `reply-needed`, `watch`, `delegated`, `finished`, and `uncertain`.
-Values must identify existing native labels or categories. The daemon checks
+Values must identify existing Gmail user-label IDs. The daemon checks
 the catalog under its write gate and source lease, then compares the saved
 revision. A stale revision returns 409. Clearing entries never creates tags or
 changes provider location or read state. Mapping responses use
@@ -512,10 +512,10 @@ The proposal includes the reviewed classification, evidence references, exact
 native before/projected states, mapping and archive revisions, arrival
 watermark, per-item keys, expiry, and a caller-bound `preview_token`. Unknown
 classification uses `uncertain`; retained categories override `finished`.
-Conflicting categories retain Inbox. Apply adds existing mapped tags and
-preserves Inbox, read markers, and unrelated tags. Gmail labels, persistent
-IMAP keywords, and Microsoft categories support this workflow. Beeper has no
-native tag mapping.
+Conflicting categories retain Inbox. Apply adds existing mapped labels and
+preserves Inbox, read markers, and unrelated labels. Batch triage supports Gmail
+user labels; it does not route through IMAP or Microsoft providers. Beeper has
+no native tag mapping.
 
 Submit the complete proposal to `POST /api/v1/inbox/triage/apply`. The daemon
 authenticates the proposal and rechecks grants, revisions, arrivals, evidence,

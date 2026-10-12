@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -93,7 +94,7 @@ func TestInboxTriageMappingHTTPAuthorizationAndRevision(t *testing.T) {
 		srv.documentSearchRateLimiter.Close()
 	})
 	srv.agentGrants = agentgrant.NewRegistry()
-	grantID, secret, _, err := srv.agentGrants.Issue("mapping-reader", []agentgrant.Permission{agentgrant.PermissionInboxRead}, []agentgrant.SourceRef{{ID: source.SourceID, Type: source.SourceType, Identifier: source.SourceIdentifier}})
+	grantID, secret, _, err := srv.agentGrants.Issue("mapping-reader", []agentgrant.Permission{agentgrant.PermissionInboxRead}, []agentgrant.SourceRef{{ID: source.SourceID, Type: source.SourceType, Identifier: source.SourceIdentifier}}, time.Now().UTC().Add(time.Hour))
 	require.NoError(t, err)
 	query := url.Values{"source_id": {strconv.FormatInt(source.SourceID, 10)}, "source_type": {source.SourceType}, "source_identifier": {source.SourceIdentifier}, "account_id": {source.AccountID}}
 	call := func(method, body, owner, agent string) *httptest.ResponseRecorder {
@@ -163,7 +164,7 @@ func TestInboxTriageMappingHTTPAuthorizationAndRevision(t *testing.T) {
 			query.Set(field, strconv.FormatInt(source.SourceID, 10))
 		}
 	}
-	_, tagOnly, _, err := srv.agentGrants.Issue("tag-only", []agentgrant.Permission{agentgrant.PermissionInboxTag}, []agentgrant.SourceRef{{ID: source.SourceID, Type: source.SourceType, Identifier: source.SourceIdentifier}})
+	_, tagOnly, _, err := srv.agentGrants.Issue("tag-only", []agentgrant.Permission{agentgrant.PermissionInboxTag}, []agentgrant.SourceRef{{ID: source.SourceID, Type: source.SourceType, Identifier: source.SourceIdentifier}}, time.Now().UTC().Add(time.Hour))
 	require.NoError(t, err)
 	response = call(http.MethodGet, "", "", tagOnly)
 	assert.Equal(t, http.StatusForbidden, response.Code, response.Body.String())

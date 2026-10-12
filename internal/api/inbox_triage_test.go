@@ -169,7 +169,7 @@ func (f *triageHTTPFixture) call(t *testing.T, path string, body any, owner, del
 }
 func (f *triageHTTPFixture) grant(t *testing.T, permissions []agentgrant.Permission, sources []agentgrant.SourceRef) (string, string) {
 	t.Helper()
-	id, secret, _, err := f.srv.agentGrants.Issue("triage-fixture", permissions, sources)
+	id, secret, _, err := f.srv.agentGrants.Issue("triage-fixture", permissions, sources, time.Now().UTC().Add(time.Hour))
 	require.NoError(t, err)
 	return id, secret
 }

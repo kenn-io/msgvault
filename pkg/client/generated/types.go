@@ -6498,6 +6498,220 @@ func (i InboxTarget) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(i))
 }
 
+type InboxTriageError struct {
+	ErrorData string        `json:"error" validate:"required"`
+	Message   string        `json:"message" validate:"required"`
+	Results   []InboxResult `json:"results,omitempty"`
+}
+
+func (i InboxTriageError) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(i.ErrorData, "required"); err != nil {
+		errors = errors.Append("ErrorData", err)
+	}
+	if err := typesValidator.Var(i.Message, "required"); err != nil {
+		errors = errors.Append("Message", err)
+	}
+	for i, item := range i.Results {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Results[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+func (s InboxTriageError) Error() string {
+	return "unmapped client error"
+}
+
+type InboxTriageInput struct {
+	Items  []InboxTriageItemInput `json:"items" validate:"required"`
+	Source InboxSourceIdentity    `json:"source"`
+}
+
+func (i InboxTriageInput) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range i.Items {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Items[%d]", i), err)
+			}
+		}
+	}
+	if v, ok := any(i.Source).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Source", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type InboxTriageItemInput struct {
+	Categories         []string    `json:"categories" validate:"required"`
+	EvidenceMessageIds []int64     `json:"evidence_message_ids" validate:"required"`
+	IdempotencyKey     *string     `json:"idempotency_key,omitzero" validate:"omitempty,max=128"`
+	Target             InboxTarget `json:"target"`
+}
+
+func (i InboxTriageItemInput) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(i.Categories, "required"); err != nil {
+		errors = errors.Append("Categories", err)
+	}
+	if err := typesValidator.Var(i.EvidenceMessageIds, "required"); err != nil {
+		errors = errors.Append("EvidenceMessageIds", err)
+	}
+	if i.IdempotencyKey != nil {
+		if err := typesValidator.Var(i.IdempotencyKey, "omitempty,max=128"); err != nil {
+			errors = errors.Append("IdempotencyKey", err)
+		}
+	}
+	if v, ok := any(i.Target).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Target", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type InboxTriageMappingConfiguration struct {
+	Entries  map[string]string   `json:"entries"`
+	Revision int64               `json:"revision"`
+	Source   InboxSourceIdentity `json:"source"`
+}
+
+func (i InboxTriageMappingConfiguration) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(i.Source).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Source", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type InboxTriageMappingRevision struct {
+	Revision int64 `json:"revision"`
+}
+
+type InboxTriageMappingUpdate struct {
+	Entries          map[string]string   `json:"entries"`
+	ExpectedRevision int64               `json:"expected_revision" validate:"gte=0"`
+	Source           InboxSourceIdentity `json:"source"`
+}
+
+func (i InboxTriageMappingUpdate) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(i.ExpectedRevision, "gte=0"); err != nil {
+		errors = errors.Append("ExpectedRevision", err)
+	}
+	if v, ok := any(i.Source).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Source", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type InboxTriageProposal struct {
+	ArchiveRevision   string                    `json:"archive_revision" validate:"required"`
+	ExpiresAt         time.Time                 `json:"expires_at" validate:"required"`
+	IncomingWatermark string                    `json:"incoming_watermark" validate:"required"`
+	IssuedAt          time.Time                 `json:"issued_at" validate:"required"`
+	Items             []InboxTriageProposalItem `json:"items" validate:"required"`
+	MappingRevision   int64                     `json:"mapping_revision"`
+	PreviewToken      string                    `json:"preview_token" validate:"required"`
+	Source            InboxSourceIdentity       `json:"source"`
+}
+
+func (i InboxTriageProposal) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(i.ArchiveRevision, "required"); err != nil {
+		errors = errors.Append("ArchiveRevision", err)
+	}
+	if err := typesValidator.Var(i.ExpiresAt, "required"); err != nil {
+		errors = errors.Append("ExpiresAt", err)
+	}
+	if err := typesValidator.Var(i.IncomingWatermark, "required"); err != nil {
+		errors = errors.Append("IncomingWatermark", err)
+	}
+	if err := typesValidator.Var(i.IssuedAt, "required"); err != nil {
+		errors = errors.Append("IssuedAt", err)
+	}
+	for i, item := range i.Items {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Items[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(i.PreviewToken, "required"); err != nil {
+		errors = errors.Append("PreviewToken", err)
+	}
+	if v, ok := any(i.Source).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Source", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type InboxTriageProposalItem struct {
+	Categories         []string     `json:"categories" validate:"required"`
+	Classification     string       `json:"classification" validate:"required"`
+	EvidenceMessageIds []int64      `json:"evidence_message_ids" validate:"required"`
+	Projected          InboxState   `json:"projected"`
+	Request            InboxRequest `json:"request"`
+	RetainInbox        bool         `json:"retain_inbox"`
+}
+
+func (i InboxTriageProposalItem) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(i.Categories, "required"); err != nil {
+		errors = errors.Append("Categories", err)
+	}
+	if err := typesValidator.Var(i.Classification, "required"); err != nil {
+		errors = errors.Append("Classification", err)
+	}
+	if err := typesValidator.Var(i.EvidenceMessageIds, "required"); err != nil {
+		errors = errors.Append("EvidenceMessageIds", err)
+	}
+	if v, ok := any(i.Projected).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Projected", err)
+		}
+	}
+	if v, ok := any(i.Request).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Request", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type KataEvidenceLinkRequest struct {
 	Evidence []Reference `json:"evidence" validate:"required"`
 }

@@ -322,7 +322,7 @@ msgvault inbox triage apply --request proposal.json --apply > receipts.json
 The preview request contains one exact `source` and 1–100 `items`. Each item
 contains a candidate `target`, `categories`, and `evidence_message_ids` belonging
 to that archived message. Empty categories classify as `uncertain`. The daemon
-uses the owner's existing native tag mappings. Optional `idempotency_key` values
+uses the owner's existing Gmail user-label mappings. Optional `idempotency_key` values
 must be unique and at most 128 UTF-8 bytes; omitted keys are generated in the
 proposal. Both `inbox.read` and `inbox.tag` must cover the source.
 

@@ -153,7 +153,7 @@ func (c *Client) triageRequest(ctx context.Context, operation, path string, prop
 	}
 	transport := *c.httpClient
 	transport.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	response, err := c.doGeneratedRequestWithHTTPClient(ctx, http.MethodPost, path, options, &transport)
+	response, err := c.doGeneratedRequestWithHTTPClient(ctx, http.MethodPost, path, options, &transport, 8<<20)
 	if err != nil {
 		return nil, cause
 	}

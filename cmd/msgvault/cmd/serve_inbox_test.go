@@ -310,8 +310,7 @@ type tagGmailTransport func(*http.Request) (*http.Response, error)
 func (f tagGmailTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 func nativeInboxTriageFixture(t *testing.T) (*storeAPIAdapter, inboxcontrol.Target, *atomic.Int64, *atomic.Bool) {
 	t.Helper()
-	a, target, _, _ := inboxBindingFixture(t, "gmail")
-	a.inboxProviderFactory = nil
+	a, target := inboxGmailFixture(t)
 	// Native scope probes read a real saved synthetic token in this fixture home.
 	home := t.TempDir()
 	a.config = config.NewDefaultConfig()

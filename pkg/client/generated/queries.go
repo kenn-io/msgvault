@@ -614,6 +614,19 @@ func (g GetInboxTriageMappingsQuery) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(g))
 }
 
+type FindKataIssuesQuery struct {
+	// MessageID Message the issues cite
+	MessageID int64 `json:"message_id"`
+
+	// AttachmentID Only issues citing this attachment of the message
+	AttachmentID *int64 `json:"attachment_id,omitempty"`
+}
+
+type GetKataIssueContextQuery struct {
+	// Offset Index of the first passage to return; pass next_offset from the previous page
+	Offset *int64 `json:"offset,omitempty"`
+}
+
 type SearchIntegrationTasksQuery struct {
 	// Q Task title search within the configured project
 	Q string `json:"q" validate:"required"`

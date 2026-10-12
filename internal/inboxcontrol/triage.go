@@ -164,7 +164,7 @@ func (s *Service) PreviewTriage(ctx context.Context, input TriageInput, principa
 		observedCategories := slices.Clone(item.Categories)
 		if slices.Contains(observedCategories, "finished") {
 			for _, retained := range []string{"todo", "reply-needed", "watch", "delegated", "uncertain"} {
-				if tag, ok := snapshot.Mappings[retained]; ok && emailtags.Contains(candidate.State.Tags, tag, input.Source.SourceType == "imap") {
+				if tag, ok := snapshot.Mappings[retained]; ok && emailtags.Contains(candidate.State.Tags, tag, inboxTagCaseInsensitive(input.Source.SourceType)) {
 					observedCategories = append(observedCategories, retained)
 				}
 			}
@@ -178,13 +178,13 @@ func (s *Service) PreviewTriage(ctx context.Context, input TriageInput, principa
 			}
 			add = append(add, id)
 		}
-		normalized, err := emailtags.Normalize(emailtags.Change{Add: add}, input.Source.SourceType == "imap")
+		normalized, err := emailtags.Normalize(emailtags.MessageTagChange{Add: add}, input.Source.SourceType)
 		if err != nil {
 			return nil, ErrUnavailable
 		}
 		add = normalized.Add
 		slices.Sort(add)
-		request := Request{Operation: OpTags, Target: &targets[i], Tags: &emailtags.Change{Add: add}, DryRun: true}
+		request := Request{Operation: OpTags, Target: &targets[i], Tags: &emailtags.MessageTagChange{Add: add}, DryRun: true}
 		if err := s.authorize(ctx, principal, request); err != nil {
 			return nil, err
 		}
@@ -214,7 +214,7 @@ func (s *Service) PreviewTriage(ctx context.Context, input TriageInput, principa
 		}
 		// A provider's projection must preserve every marker and unrelated tag.
 		preserved := *result.Before
-		preserved.Tags = emailtags.Project(preserved.Tags, *request.Tags, input.Source.SourceType == "imap")
+		preserved.Tags = emailtags.Project(preserved.Tags, *request.Tags, inboxTagCaseInsensitive(input.Source.SourceType))
 		if input.Source.SourceType == "imap" {
 			preserved.Flags = emailtags.Project(preserved.Flags, *request.Tags, true)
 		}
@@ -242,7 +242,7 @@ func (s *Service) PreviewTriage(ctx context.Context, input TriageInput, principa
 		for _, id := range item.Request.Tags.Add {
 			matches := 0
 			for _, tag := range tags {
-				if emailtags.Contains([]string{tag.ID}, id, input.Source.SourceType == "imap") {
+				if emailtags.Contains([]string{tag.ID}, id, inboxTagCaseInsensitive(input.Source.SourceType)) {
 					matches++
 				}
 			}
@@ -329,10 +329,14 @@ func triageProposalFingerprint(proposal TriageProposal) (string, error) {
 // this comparison establishes that their common state markers still agree.
 func triageArchiveFingerprint(state State) (string, error) {
 	state.Revision = ""
+	// Folder catalogs are provider metadata, not item state changed by a
+	// tag-only triage action. The live provider may know native labels that the
+	// archive snapshot does not retain as folders.
+	state.Folders = nil
 	return SemanticFingerprint(state)
 }
 
-func (s *Service) triageNativeCatalog(ctx context.Context, source SourceIdentity, principal Principal) ([]emailtags.Tag, error) {
+func (s *Service) triageNativeCatalog(ctx context.Context, source SourceIdentity, principal Principal) ([]emailtags.MessageTag, error) {
 	request := Request{Operation: OpGetCapabilities, Source: &source, DryRun: true}
 	if err := s.authorize(ctx, principal, request); err != nil {
 		return nil, err

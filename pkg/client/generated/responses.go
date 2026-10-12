@@ -1607,6 +1607,78 @@ type ControlInboxErrorResponseJSON502 = InboxControlError
 
 type ControlInboxErrorResponseJSON503 = InboxControlError
 
+type ApplyInboxTriageResponse []InboxResult
+
+type ApplyInboxTriageErrorResponse = InboxTriageError
+
+type ApplyInboxTriageErrorResponseJSON = InboxTriageError
+
+type ApplyInboxTriageErrorResponseJSON403 = InboxTriageError
+
+type ApplyInboxTriageErrorResponseJSON409 = InboxTriageError
+
+type ApplyInboxTriageErrorResponseJSON413 = InboxTriageError
+
+type ApplyInboxTriageErrorResponseJSON415 = InboxTriageError
+
+type ApplyInboxTriageErrorResponseJSON500 = InboxTriageError
+
+type ApplyInboxTriageErrorResponseJSON502 = InboxTriageError
+
+type ApplyInboxTriageErrorResponseJSON503 = InboxTriageError
+
+type GetInboxTriageMappingsResponse = InboxTriageMappingConfiguration
+
+type GetInboxTriageMappingsErrorResponse = ErrorResponse
+
+type GetInboxTriageMappingsErrorResponseJSON = ErrorResponse
+
+type GetInboxTriageMappingsErrorResponseJSON403 = ErrorResponse
+
+type GetInboxTriageMappingsErrorResponseJSON409 = ErrorResponse
+
+type GetInboxTriageMappingsErrorResponseJSON500 = ErrorResponse
+
+type GetInboxTriageMappingsErrorResponseJSON503 = ErrorResponse
+
+type UpdateInboxTriageMappingsResponse = InboxTriageMappingRevision
+
+type UpdateInboxTriageMappingsErrorResponse = ErrorResponse
+
+type UpdateInboxTriageMappingsErrorResponseJSON = ErrorResponse
+
+type UpdateInboxTriageMappingsErrorResponseJSON403 = ErrorResponse
+
+type UpdateInboxTriageMappingsErrorResponseJSON409 = ErrorResponse
+
+type UpdateInboxTriageMappingsErrorResponseJSON413 = ErrorResponse
+
+type UpdateInboxTriageMappingsErrorResponseJSON415 = ErrorResponse
+
+type UpdateInboxTriageMappingsErrorResponseJSON500 = ErrorResponse
+
+type UpdateInboxTriageMappingsErrorResponseJSON503 = ErrorResponse
+
+type PreviewInboxTriageResponse = InboxTriageProposal
+
+type PreviewInboxTriageErrorResponse = InboxTriageError
+
+type PreviewInboxTriageErrorResponseJSON = InboxTriageError
+
+type PreviewInboxTriageErrorResponseJSON403 = InboxTriageError
+
+type PreviewInboxTriageErrorResponseJSON409 = InboxTriageError
+
+type PreviewInboxTriageErrorResponseJSON413 = InboxTriageError
+
+type PreviewInboxTriageErrorResponseJSON415 = InboxTriageError
+
+type PreviewInboxTriageErrorResponseJSON500 = InboxTriageError
+
+type PreviewInboxTriageErrorResponseJSON502 = InboxTriageError
+
+type PreviewInboxTriageErrorResponseJSON503 = InboxTriageError
+
 type PrepareKataEvidenceResponse = KataEvidencePrepareResponse
 
 type PrepareKataEvidenceErrorResponse = ErrorResponse
@@ -4996,6 +5068,66 @@ type ControlInboxResp struct {
 	JSON501      *ControlInboxErrorResponseJSON501
 	JSON502      *ControlInboxErrorResponseJSON502
 	JSON503      *ControlInboxErrorResponseJSON503
+}
+
+type ApplyInboxTriageResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ApplyInboxTriageResponse
+	JSON400      *ApplyInboxTriageErrorResponse
+	JSON401      *ApplyInboxTriageErrorResponseJSON
+	JSON403      *ApplyInboxTriageErrorResponseJSON403
+	JSON409      *ApplyInboxTriageErrorResponseJSON409
+	JSON413      *ApplyInboxTriageErrorResponseJSON413
+	JSON415      *ApplyInboxTriageErrorResponseJSON415
+	JSON500      *ApplyInboxTriageErrorResponseJSON500
+	JSON502      *ApplyInboxTriageErrorResponseJSON502
+	JSON503      *ApplyInboxTriageErrorResponseJSON503
+}
+
+type GetInboxTriageMappingsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetInboxTriageMappingsResponse
+	JSON400      *GetInboxTriageMappingsErrorResponse
+	JSON401      *GetInboxTriageMappingsErrorResponseJSON
+	JSON403      *GetInboxTriageMappingsErrorResponseJSON403
+	JSON409      *GetInboxTriageMappingsErrorResponseJSON409
+	JSON500      *GetInboxTriageMappingsErrorResponseJSON500
+	JSON503      *GetInboxTriageMappingsErrorResponseJSON503
+}
+
+type UpdateInboxTriageMappingsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *UpdateInboxTriageMappingsResponse
+	JSON400      *UpdateInboxTriageMappingsErrorResponse
+	JSON401      *UpdateInboxTriageMappingsErrorResponseJSON
+	JSON403      *UpdateInboxTriageMappingsErrorResponseJSON403
+	JSON409      *UpdateInboxTriageMappingsErrorResponseJSON409
+	JSON413      *UpdateInboxTriageMappingsErrorResponseJSON413
+	JSON415      *UpdateInboxTriageMappingsErrorResponseJSON415
+	JSON500      *UpdateInboxTriageMappingsErrorResponseJSON500
+	JSON503      *UpdateInboxTriageMappingsErrorResponseJSON503
+}
+
+type PreviewInboxTriageResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *PreviewInboxTriageResponse
+	JSON400      *PreviewInboxTriageErrorResponse
+	JSON401      *PreviewInboxTriageErrorResponseJSON
+	JSON403      *PreviewInboxTriageErrorResponseJSON403
+	JSON409      *PreviewInboxTriageErrorResponseJSON409
+	JSON413      *PreviewInboxTriageErrorResponseJSON413
+	JSON415      *PreviewInboxTriageErrorResponseJSON415
+	JSON500      *PreviewInboxTriageErrorResponseJSON500
+	JSON502      *PreviewInboxTriageErrorResponseJSON502
+	JSON503      *PreviewInboxTriageErrorResponseJSON503
 }
 
 type PrepareKataEvidenceResp struct {

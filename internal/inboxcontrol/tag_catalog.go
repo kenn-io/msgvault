@@ -10,5 +10,5 @@ import (
 // validation. Lookup is read-only and excludes protected location/read markers.
 // A provider without a native catalog cannot validate or provision a mapping.
 type TagCatalogProvider interface {
-	TagCatalog(context.Context, SourceIdentity) ([]emailtags.Tag, error)
+	TagCatalog(context.Context, SourceIdentity) ([]emailtags.MessageTag, error)
 }

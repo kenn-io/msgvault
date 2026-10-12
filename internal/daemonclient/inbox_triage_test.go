@@ -35,7 +35,7 @@ func triageClientInput() (inboxcontrol.TriageInput, inboxcontrol.TriageProposal)
 		projected.Tags = []string{"INBOX", "UNREAD", "TodoLabel"}
 		key := "item-" + target.ProviderID
 		input.Items = append(input.Items, inboxcontrol.TriageItemInput{Target: target, Categories: []string{"todo"}, EvidenceMessageIDs: []int64{id}, IdempotencyKey: key})
-		proposal.Items = append(proposal.Items, inboxcontrol.TriageProposalItem{Categories: []string{"todo"}, EvidenceMessageIDs: []int64{id}, Classification: "todo", RetainInbox: true, Request: inboxcontrol.Request{Operation: inboxcontrol.OpTags, Target: &target, Expected: &before, IdempotencyKey: key, Tags: &emailtags.Change{Add: []string{"TodoLabel"}}}, Projected: projected})
+		proposal.Items = append(proposal.Items, inboxcontrol.TriageProposalItem{Categories: []string{"todo"}, EvidenceMessageIDs: []int64{id}, Classification: "todo", RetainInbox: true, Request: inboxcontrol.Request{Operation: inboxcontrol.OpTags, Target: &target, Expected: &before, IdempotencyKey: key, Tags: &emailtags.MessageTagChange{Add: []string{"TodoLabel"}}}, Projected: projected})
 	}
 	return input, proposal
 }
@@ -66,7 +66,7 @@ func TestInboxTriageClientForwardsWholeProposalAndPreservesReceipts(t *testing.T
 				assert.Equal(t, "synthetic-agent-token", r.Header.Get(apiprotocol.AgentTokenHeader))
 				switch r.URL.Path {
 				case "/api/v1/health":
-					_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"3.3.0"}`))
+					_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"3.15.0"}`))
 				case "/api/v1/mcp/capabilities":
 					d := triageClientDiscovery()
 					if mode == "missing-discovery" {

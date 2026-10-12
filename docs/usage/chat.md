@@ -137,8 +137,9 @@ mappings, native state, and expiry before each new write.
 Keep the ordered per-item results and receipts even on error. A separately
 confirmed retry of the same proposal recovers existing receipts, including
 after preview expiry, without repeating completed or uncertain writes. Inspect
-or reconcile an `unknown` receipt before creating a new intent. Triage supports
-mail providers with native tags; use the separate flag tools for Beeper chats.
+or reconcile an `unknown` receipt before creating a new intent. Batch triage
+currently supports Gmail user labels; use the separate flag tools for Beeper
+chats.
 See the [HTTP inbox contract](../api-server.md#native-gmail-inbox-control) for
 provider limits and partial-batch recovery.
 

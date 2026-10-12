@@ -25,7 +25,7 @@ func TestInboxTriageCatalogSeparatesPreviewAndWriteAdmission(t *testing.T) {
 		{"both", true, true, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			opts := ServeOptions{CalendarOnly: true}
+			opts := ServeOptions{}
 			if tc.preview {
 				opts.InboxTriagePreview = client
 			}
