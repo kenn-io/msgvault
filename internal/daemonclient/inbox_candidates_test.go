@@ -23,10 +23,16 @@ type inboxCandidateClient interface {
 // binding and caller credentials; real candidate queries are tested by Store/API.
 func TestInboxCandidateClientContract(t *testing.T) {
 	source := inboxcontrol.SourceIdentity{SourceID: 1, SourceType: "gmail", SourceIdentifier: "owner@example.test", AccountID: "owner@example.test"}
-	for _, mode := range []string{"success", "missing-discovery", "partial-discovery", "conflict", "foreign-page", "foreign-item", "unknown-inbox", "missing-unavailable", "null-unavailable", "redirect", "oversized"} {
+	for _, mode := range []string{"success", "partial-read", "unknown-read", "hidden-unavailable", "chat-success", "chat-partial", "chat-unknown-marked-unread", "missing-discovery", "partial-discovery", "conflict", "foreign-page", "foreign-item", "unknown-inbox", "missing-unavailable", "null-unavailable", "redirect", "oversized"} {
 		t.Run(mode, func(t *testing.T) {
 			assertions := assert.New(t)
 			requirements := require.New(t)
+			source := source
+			scope := inboxcontrol.ScopeMessage
+			if mode == "chat-success" || mode == "chat-partial" || mode == "chat-unknown-marked-unread" {
+				source.SourceType, source.SourceIdentifier, source.AccountID = "beeper", "synthetic-account", "synthetic-account"
+				scope = inboxcontrol.ScopeChat
+			}
 
 			var calls atomic.Int64
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -49,10 +55,10 @@ func TestInboxCandidateClientContract(t *testing.T) {
 				case "/api/v1/inbox/candidates":
 					calls.Add(1)
 					assert.Equal(t, "1", r.URL.Query().Get("source_id"))
-					assert.Equal(t, "gmail", r.URL.Query().Get("source_type"))
+					assert.Equal(t, source.SourceType, r.URL.Query().Get("source_type"))
 					assert.Equal(t, source.SourceIdentifier, r.URL.Query().Get("source_identifier"))
 					assert.Equal(t, source.AccountID, r.URL.Query().Get("account_id"))
-					assert.Equal(t, "message", r.URL.Query().Get("scope"))
+					assert.Equal(t, string(scope), r.URL.Query().Get("scope"))
 					assert.Equal(t, "2", r.URL.Query().Get("limit"))
 					assert.Equal(t, "opaque-cursor", r.URL.Query().Get("cursor"))
 					if mode == "redirect" {
@@ -68,7 +74,12 @@ func TestInboxCandidateClientContract(t *testing.T) {
 						_, _ = w.Write(make([]byte, (8<<20)+1))
 						return
 					}
-					page := inboxcontrol.CandidatePage{Source: source, Scope: inboxcontrol.ScopeMessage, ArchiveRevision: "committed-revision", Candidates: []inboxcontrol.Candidate{{State: inboxcontrol.State{Target: inboxcontrol.Target{SourceID: source.SourceID, SourceType: source.SourceType, SourceIdentifier: source.SourceIdentifier, AccountID: source.AccountID, Scope: inboxcontrol.ScopeMessage, ItemID: 7, ProviderID: "synthetic-mail"}, Inbox: new(true), Read: new(false)}, Available: true}}, Unavailable: true}
+					page := inboxcontrol.CandidatePage{Source: source, Scope: scope, ArchiveRevision: "committed-revision", Candidates: []inboxcontrol.Candidate{{State: inboxcontrol.State{Target: inboxcontrol.Target{SourceID: source.SourceID, SourceType: source.SourceType, SourceIdentifier: source.SourceIdentifier, AccountID: source.AccountID, Scope: scope, ItemID: 7, ProviderID: "synthetic-item"}, Inbox: new(true), Read: new(false)}, Available: true}}, Unavailable: true}
+					if mode == "chat-success" {
+						page.Candidates[0].State.MarkedUnread = new(false)
+					} else if mode == "chat-partial" {
+						page.Candidates[0].Available = false
+					}
 					if mode == "foreign-page" {
 						page.Source.AccountID = "foreign@example.test"
 					}
@@ -77,6 +88,11 @@ func TestInboxCandidateClientContract(t *testing.T) {
 					}
 					if mode == "unknown-inbox" {
 						page.Candidates[0].State.Inbox = nil
+					}
+					if mode == "partial-read" || mode == "unknown-read" || mode == "hidden-unavailable" {
+						page.Candidates[0].State.Read = nil
+						page.Candidates[0].Available = mode == "unknown-read"
+						page.Unavailable = mode != "hidden-unavailable"
 					}
 					if mode == "missing-unavailable" || mode == "null-unavailable" {
 						data, err := json.Marshal(page)
@@ -103,14 +119,24 @@ func TestInboxCandidateClientContract(t *testing.T) {
 			defer func() { assert.NoError(t, client.Close()) }()
 			reader, ok := any(client).(inboxCandidateClient)
 			requirements.True(ok, "daemon client must expose candidate listing")
-			page, err := reader.InboxCandidates(t.Context(), source, inboxcontrol.ScopeMessage, 2, "opaque-cursor")
+			page, err := reader.InboxCandidates(t.Context(), source, scope, 2, "opaque-cursor")
 			switch mode {
-			case "success":
+			case "success", "partial-read", "chat-success", "chat-partial":
 				requirements.NoError(err)
 				requirements.NotNil(page)
+				requirements.Len(page.Candidates, 1)
 				assertions.Equal(source, page.Source)
+				assertions.Equal(scope, page.Scope)
 				assertions.True(page.Unavailable)
 				assertions.Equal("committed-revision", page.ArchiveRevision)
+				if mode == "partial-read" {
+					assertions.Nil(page.Candidates[0].State.Read)
+					assertions.False(page.Candidates[0].Available)
+				}
+				if mode == "chat-partial" {
+					assertions.Nil(page.Candidates[0].State.MarkedUnread)
+					assertions.False(page.Candidates[0].Available)
+				}
 			case "conflict":
 				requirements.ErrorIs(err, inboxcontrol.ErrConflict)
 				assertions.NotContains(err.Error(), "untrusted detail")

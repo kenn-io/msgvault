@@ -62,6 +62,10 @@ func (c *Client) InboxCandidates(ctx context.Context, source inboxcontrol.Source
 		if target.Validate() != nil || target.SourceID != source.SourceID || target.SourceType != source.SourceType || target.SourceIdentifier != source.SourceIdentifier || target.AccountID != source.AccountID || target.Scope != scope || candidate.State.Inbox == nil || !*candidate.State.Inbox {
 			return nil, inboxcontrol.ErrUnavailable
 		}
+		markersKnown := candidate.State.Read != nil && (source.SourceType != "beeper" || candidate.State.MarkedUnread != nil)
+		if (candidate.Available && !markersKnown) || (!candidate.Available && !page.Unavailable) {
+			return nil, inboxcontrol.ErrUnavailable
+		}
 	}
 	return &page, nil
 }
