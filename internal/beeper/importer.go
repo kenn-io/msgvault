@@ -817,9 +817,6 @@ func (m chatMembership) policyCount(policy attachmentpolicy.Policy) int {
 func (imp *Importer) ensureConversation(
 	ctx context.Context, syncID, sourceID int64, ch *Chat, opts ImportOptions, sum *ImportSummary,
 ) (int64, bool, chatMembership, error) {
-	if err := ctx.Err(); err != nil {
-		return 0, false, chatMembership{}, err
-	}
 	detail := ch
 	membershipComplete := !ch.Participants.HasMore
 	if ch.Participants.HasMore {
@@ -843,7 +840,9 @@ func (imp *Importer) ensureConversation(
 		}
 	}
 	membership := chatMembershipOf(detail, membershipComplete)
-	convID, err := imp.store.EnsureConversationWithTypeContext(ctx, sourceID, ch.ID, conversationType(ch.Type), ch.Title)
+	convID, err := imp.store.EnsureConversationWithTypeContext(
+		ctx, sourceID, ch.ID, conversationType(ch.Type), ch.Title,
+	)
 	if err != nil {
 		return 0, false, chatMembership{}, err
 	}
@@ -900,7 +899,10 @@ func (imp *Importer) ensureConversation(
 			if err := ctx.Err(); err != nil {
 				return 0, false, chatMembership{}, err
 			}
-			if cerr := imp.store.EnsureConversationParticipantContext(ctx, convID, member.ParticipantID, member.Role); cerr != nil {
+			cerr := imp.store.EnsureConversationParticipantContext(
+				ctx, convID, member.ParticipantID, member.Role,
+			)
+			if cerr != nil && ctx.Err() == nil {
 				sum.Errors++
 			}
 		}
