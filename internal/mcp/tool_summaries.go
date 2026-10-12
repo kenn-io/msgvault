@@ -21,6 +21,8 @@ func securityPolicyFor(class toolSecurityClass, opts ServeOptions) securityPolic
 		return securityPolicy{"write", "", true}
 	case toolSecurityProfileWrite:
 		return securityPolicy{"profile_write", "--allow-profile-writes", opts.AllowProfileWrites}
+	case toolSecurityDeliveryPolicyWrite:
+		return securityPolicy{"delivery_policy_write", "--allow-delivery-policy-writes", opts.AllowDeliveryPolicyWrites}
 	case toolSecurityIdentityDecision:
 		return securityPolicy{"identity_decision", "--allow-identity-decisions", opts.AllowIdentityDecisions}
 	case toolSecurityIdentityScoring:

@@ -86,6 +86,8 @@ All notable changes to msgvault, grouped by release.
 
 - Set `document_profile` in the [attachment mirror configuration](configuration.md#mirror-stored-attachments-to-docbank) to request text extraction in Docbank. Attachment status reports extracted, processing, and waiting counts, per-code counts for files without text, and worker errors in `last_error`.
 
+- Owners can approve sending to a person or to one email address saved on the person. MCP policy writes need `--allow-delivery-policy-writes`; sending remains unavailable. See [contact delivery policies](api-server.md#contact-delivery-policies).
+
 ## 0.23.0
 <small>2026-11-04</small>
 
