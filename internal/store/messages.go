@@ -93,6 +93,7 @@ type MessageDeliveryEvidence struct {
 // MessagePersistData bundles everything needed to atomically
 // persist a message and its related rows in a single transaction.
 type MessagePersistData struct {
+	GmailInboxObservation        *GmailInboxObservation
 	// NativeScopes is mandatory adapter evidence when supplied. Validate it and
 	// replace its current membership with the complete snapshot in one transaction.
 	NativeScopes    *NativeMessageScopeMembership
@@ -2505,6 +2506,11 @@ func (s *Store) persistMessageWith(
 
 	if err := s.refreshMeetingProjectionWith(ctx, tx, messageID); err != nil {
 		return 0, err
+	}
+	if data.GmailInboxObservation != nil {
+		if err := s.observeGmailInboxSyncTx(ctx, tx, data.Message.SourceID, messageID, data.Message.SourceMessageID, *data.GmailInboxObservation); err != nil {
+			return 0, fmt.Errorf("store Gmail inbox observation: %w", err)
+		}
 	}
 
 	if !data.PreserveLabels {

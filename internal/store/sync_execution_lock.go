@@ -221,6 +221,86 @@ func (s *Store) acquireBackendSyncExecutionLock(
 	return &sqliteSyncExecutionLock{lock: fileLock, path: lockPath}, nil
 }
 
+// acquireBackendSourceExecutionLock reserves a separate source lifecycle
+// namespace, used by native Inbox actions while sync ownership remains intact.
+func (s *Store) acquireBackendSourceExecutionLock(ctx context.Context, sourceID int64, namespace string) (syncExecutionLock, error) {
+	if s.IsPostgreSQL() {
+		db, cleanup, err := openPostgresDB(s.dbPath, s.readOnly)
+		if err != nil {
+			return nil, err
+		}
+		conn, err := db.Conn(ctx)
+		if err != nil {
+			return nil, errors.Join(fmt.Errorf("acquire PostgreSQL %s lock connection: %w", namespace, err), db.Close(), closePostgresConfig(cleanup))
+		}
+		lock := &postgresSourceExecutionLock{conn: conn, db: db, cleanup: cleanup, sourceID: sourceID, namespace: namespace, rebind: s.Rebind}
+		var acquired bool
+		err = conn.Raw(func(driverConn any) error {
+			postgresConn, ok := driverConn.(*stdlib.Conn)
+			if !ok {
+				return fmt.Errorf("unexpected PostgreSQL %s lock driver %T", namespace, driverConn)
+			}
+			return postgresConn.Conn().QueryRow(ctx, s.Rebind(`
+				SELECT pg_try_advisory_lock(
+					hashtextextended(
+						current_schema() || ':msgvault-' || CAST(? AS TEXT) || ':' || CAST(CAST(? AS BIGINT) AS TEXT), 0
+					)
+				)`), namespace, sourceID).Scan(&acquired)
+		})
+		if err != nil || !acquired {
+			if err != nil {
+				lock.discard = true // The server may have acquired the key before the response was lost.
+			}
+			lockErr := error(ErrSyncAlreadyActive)
+			if err != nil {
+				lockErr = fmt.Errorf("acquire PostgreSQL %s lock: %w", namespace, err)
+			}
+			released, releaseErr := lock.release()
+			if !released {
+				return lock, errors.Join(lockErr, releaseErr)
+			}
+			return nil, errors.Join(lockErr, releaseErr)
+		}
+		lock.acquired = true
+		return lock, nil
+	}
+
+	if strings.Contains(s.sqliteFilesystemPath, ":memory:") {
+		return &noOpSyncExecutionLock{}, nil
+	}
+	dbPath, err := filepath.Abs(s.sqliteFilesystemPath)
+	if err != nil {
+		return nil, fmt.Errorf("resolve %s lock database path: %w", namespace, err)
+	}
+	if resolved, resolveErr := filepath.EvalSymlinks(dbPath); resolveErr == nil {
+		dbPath = resolved
+	}
+	lockPath := dbPath + "." + namespace + "-" + strconv.FormatInt(sourceID, 10) + ".lock"
+	return acquireSQLiteSyncExecutionLock(lockPath, namespace)
+}
+
+func acquireSQLiteSyncExecutionLock(lockPath, namespace string) (syncExecutionLock, error) {
+	sqliteSyncLockRegistry.mu.Lock()
+	if _, exists := sqliteSyncLockRegistry.paths[lockPath]; exists {
+		sqliteSyncLockRegistry.mu.Unlock()
+		return nil, ErrSyncAlreadyActive
+	}
+	sqliteSyncLockRegistry.paths[lockPath] = struct{}{}
+	sqliteSyncLockRegistry.mu.Unlock()
+	fileLock := flock.New(lockPath)
+	acquired, err := fileLock.TryLock()
+	if err != nil || !acquired {
+		sqliteSyncLockRegistry.mu.Lock()
+		delete(sqliteSyncLockRegistry.paths, lockPath)
+		sqliteSyncLockRegistry.mu.Unlock()
+		if err != nil {
+			return nil, fmt.Errorf("acquire SQLite %s lock: %w", namespace, err)
+		}
+		return nil, ErrSyncAlreadyActive
+	}
+	return &sqliteSyncExecutionLock{lock: fileLock, path: lockPath}, nil
+}
+
 func (s *Store) registerSyncExecutionLock(
 	sourceID, runID int64, lock syncExecutionLock, releaseWhenDone bool,
 ) {
@@ -499,6 +579,85 @@ func (l *postgresSyncExecutionLock) release() (bool, error) {
 		closeErr = errors.Join(closeErr, l.conn.Close())
 	}
 	return l.released, errors.Join(unlockErr, closeErr, rawErr)
+}
+
+type postgresSourceExecutionLock struct {
+	conn      *sql.Conn
+	db        *sql.DB
+	cleanup   func()
+	sourceID  int64
+	namespace string
+	rebind    func(string) string
+	mu        sync.Mutex
+	acquired  bool
+	discard   bool
+	released  bool
+}
+
+func (l *postgresSourceExecutionLock) release() (bool, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.released {
+		return true, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), syncExecutionLockCleanupTimeout)
+	defer cancel()
+	var unlockErr, closeErr error
+	rawErr := l.conn.Raw(func(driverConn any) error {
+		postgresConn, ok := driverConn.(*stdlib.Conn)
+		if !ok {
+			return fmt.Errorf("unexpected PostgreSQL %s lock driver %T", l.namespace, driverConn)
+		}
+		conn := postgresConn.Conn()
+		if l.acquired && !l.discard {
+			var unlocked bool
+			unlockErr = conn.QueryRow(ctx, l.rebind(`
+				SELECT pg_advisory_unlock(
+					hashtextextended(
+						current_schema() || ':msgvault-' || CAST(? AS TEXT) || ':' || CAST(CAST(? AS BIGINT) AS TEXT), 0
+					)
+				)`), l.namespace, l.sourceID).Scan(&unlocked)
+			if unlockErr == nil {
+				l.acquired = false
+				if !unlocked {
+					unlockErr = errors.New("PostgreSQL source lock was not held")
+				}
+			} else {
+				unlockErr = fmt.Errorf("unlock PostgreSQL %s lock: %w", l.namespace, unlockErr)
+				l.discard = true
+			}
+		}
+		if !l.discard {
+			return nil
+		}
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), syncExecutionLockCleanupTimeout)
+		defer cleanupCancel()
+		closeErr = conn.Close(cleanupCtx)
+		select {
+		case <-conn.PgConn().CleanupDone():
+			l.released = true
+			return driver.ErrBadConn
+		case <-cleanupCtx.Done():
+			closeErr = errors.Join(closeErr, cleanupCtx.Err())
+			return nil
+		}
+	})
+	if l.released && errors.Is(rawErr, driver.ErrBadConn) {
+		rawErr = nil
+	} else if l.released || !l.discard {
+		closeErr = errors.Join(closeErr, l.conn.Close())
+		l.released = true
+	}
+	if l.released {
+		closeErr = errors.Join(closeErr, l.db.Close())
+		l.cleanup()
+	}
+	return l.released, errors.Join(unlockErr, closeErr, rawErr)
+}
+
+func closePostgresConfig(cleanup func()) error {
+	cleanup()
+	return nil
 }
 
 type syncExecutionLockGroup struct {

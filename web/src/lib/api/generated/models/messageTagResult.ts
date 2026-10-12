@@ -9,9 +9,12 @@ export interface MessageTagResult {
   can_create_keywords?: boolean;
   dry_run: boolean;
   flags?: string[];
+  idempotency_key?: string;
   mailbox?: string;
   message_id: number;
   provider: string;
+  receipt_id?: string;
+  receipt_status?: string;
   source_id: number;
   tags: string[];
   /**

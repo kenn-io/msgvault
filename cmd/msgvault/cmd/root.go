@@ -265,7 +265,7 @@ func skipsConfigLoad(cmd *cobra.Command) bool {
 // must be run by the owner.
 func agentDelegatedCapable(cmd *cobra.Command) bool {
 	for ancestor := cmd; ancestor != nil; ancestor = ancestor.Parent() {
-		if ancestor.Name() == "calendar" {
+		if ancestor.Name() == "calendar" || ancestor.Name() == "inbox" {
 			return true
 		}
 	}

@@ -219,6 +219,14 @@ func CopySubsetWithOptions(
 		closeAndCleanup()
 		return nil, err
 	}
+	// All source copies, including profile observations and explicit support
+	// provenance, are now complete. Retain their maximum in this same copy
+	// transaction before a future removal can discard the highest copied ID.
+	if err := retainSQLiteSourceIDHighWaterContext(context.Background(), tx); err != nil {
+		_ = tx.Rollback()
+		closeAndCleanup()
+		return nil, fmt.Errorf("retain subset source IDs: %w", err)
+	}
 
 	// The empty destination's schema initialization already recorded this
 	// migration. Rebuild derived meetings from copied raw, including old sources

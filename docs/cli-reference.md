@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-14"
+last_edited: "2026-10-21"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -20,6 +20,7 @@ appear in full under Inherited Flags.
 | Search and browse | [search](#search), [tui](#tui), [show-message](#show-message), [documents](#documents), [embeddings](#embeddings), [multimodal](#multimodal), [eval](#eval) |
 | Maintain people and contacts | [person](#person), [people guide](usage/people.md), [CardDAV](usage/people-carddav.md) |
 | Edit live email tags | [message-tags](#message-tags) |
+| Preview and control one Gmail Inbox item | [inbox](#inbox) |
 | Organize accounts | [identity](#identity), [collection](#collection), [update-account](#update-account), [merge-account](#merge-account) |
 | Read meeting evidence | [meetings](#meetings), [meeting workflow](usage/meetings.md) |
 | Export | [export-messages](#export-messages), [export-eml](#export-eml), [export-attachments](#export-attachments), [create-subset](#create-subset) |
@@ -278,6 +279,65 @@ After adding an account, sync it with `msgvault sync-full`. IMAP accounts use th
 
 ---
 
+## inbox
+
+Preview and control one exact Gmail Inbox item through the selected daemon.
+Requires API schema 3.25.0. Available on `main`, unreleased. The daemon verifies
+native account/item identity and current source/action authority on every call.
+The CLI also checks the daemon's live Inbox route and admitted operation before
+sending a control request. An unavailable or incompatible descriptor fails closed.
+
+```bash
+msgvault inbox get-state --request target.json
+msgvault inbox archive --request target.json > preview.json
+msgvault inbox archive --request execute.json --apply
+msgvault inbox receipt-get --request receipt.json
+msgvault inbox reconcile --request receipt.json
+```
+
+Every subcommand takes `--request <file>` or `--request -` for standard input.
+The limit is 1 MiB. Mutation commands preview by default; `--apply` executes
+only with `expected`, a signed `preview_token`, and an `idempotency_key` already
+in the request. The subcommand selects `operation`; a different operation in
+the JSON is rejected.
+
+An owner obtains the exact `target` from the native tag GET route and places it
+in `target.json` as `{"target": {...}}`. Delegates use an owner-supplied target
+and an Inbox grant. Keep the target unchanged and prepare execution from the
+preview with a caller-chosen key:
+
+```bash
+jq -n --slurpfile request target.json --slurpfile preview preview.json \
+  '{target: $request[0].target, expected: $preview[0].before,
+    preview_token: $preview[0].preview_token,
+    idempotency_key: "archive-example-1"}' > execute.json
+msgvault inbox archive --request execute.json --apply
+```
+
+Reuse that key to recover a lost acknowledgement. An identical retry returns
+the original receipt and does not write again. If stdout breaks after execution,
+the command reports an unknown outcome; keep the original request and key.
+For receipt reads or reconciliation, `receipt.json` contains
+`{"receipt_id":"<returned receipt ID>"}`. Reconciliation reads the provider and
+updates local evidence without repeating the mutation.
+
+| Subcommand | Purpose |
+|---|---|
+| `get-capabilities`, `list-folders` | Observe source support and user-label catalog |
+| `get-state` | Observe exact native item state |
+| `archive`, `unarchive` | Remove or add Gmail `INBOX` |
+| `set-read`, `set-unread` | Remove or add Gmail `UNREAD` |
+| `tags` | Add/remove existing Gmail user label IDs |
+| `move` | Remove an exact origin user label and add a destination user label |
+| `create-folder` | Create a Gmail user label |
+| `receipt-get`, `reconcile` | Read or independently reconcile retained evidence |
+
+[The API reference](api-server.md#native-gmail-inbox-control) owns exact request
+fields, permissions, native limitations, receipt states, and error behavior.
+These commands never send a message. They do not provide candidate discovery or
+batch actions. Existing `message-tags` continues to support IMAP keywords and
+Microsoft categories.
+
 ## message-tags
 
 Read or update native tags on one email through the selected daemon. Requires
@@ -301,6 +361,11 @@ The same command selects the backend from the archived message's account:
 
 Gmail uses existing user label IDs from `available_tags`, rather than label
 names or local label IDs. System labels cannot be edited through this command.
+On API schema 3.25.0, Gmail edits use a signed Inbox preview, execute once,
+and print a durable Inbox receipt. JSON results retain `receipt_id`,
+`receipt_status`, and `idempotency_key`; inspect that evidence before retrying
+an uncertain edit. If output fails after an edit, retrieve the receipt with
+`msgvault inbox receipt-get`.
 Reads and previews use the existing read grant. Edits need `gmail.modify` or
 `mail.google.com`; a saved read-only grant is rejected without changing its token. Reauthorize it with
 `msgvault add-account <account> --force` when you want write access.
@@ -861,6 +926,11 @@ the complete mailbox, then consumes changes made while that snapshot was in
 progress. Only a successfully completed snapshot is used to mark missing
 messages as source-deleted; interrupted or partial listings do not reconcile
 absence.
+
+If a Gmail label metadata refresh fails, the sync fails and retains its history
+cursor so the change can be retried. Repair Gmail metadata access and retry
+`msgvault sync`; the failed refresh does not replace archived labels with
+incomplete data.
 
 Source deletion updates archive metadata rather than deleting local message or
 raw MIME data. Search excludes source-deleted messages by default; use

@@ -376,7 +376,8 @@ import (
 // 3.23.0 adds the Docbank attachment mirror routes, receipts and status states.
 // 3.24.0 adds owner-only MCP Events, native resource discovery, source/inbox
 // subscriptions, import notifications, and typed calendar message projections.
-const APISchemaVersion = "3.24.0"
+// 3.25.0 adds exact Gmail Inbox control with signed previews and durable receipts.
+const APISchemaVersion = "3.25.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -452,6 +453,16 @@ func hardenCalendarControlSchemas(doc *huma.OpenAPI) {
 		return
 	}
 	schemas := doc.Components.Schemas.Map()
+	if state := schemas["InboxState"]; state != nil {
+		for _, name := range []string{"tags", "flags"} {
+			if property := state.Properties[name]; property != nil {
+				if property.Extensions == nil {
+					property.Extensions = map[string]any{}
+				}
+				property.Extensions["x-oapi-codegen-extra-tags"] = map[string]any{"json": name + ",omitzero"}
+			}
+		}
+	}
 	request := schemas["CalendarRequest"]
 	if request != nil {
 		// Availability can use calendar_ids without a positional calendar_id.

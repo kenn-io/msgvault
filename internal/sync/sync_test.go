@@ -598,6 +598,7 @@ func TestSyncPageRefreshesOnlyUnambiguousSentAliasesOnce(t *testing.T) { //nolin
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
+	env.Syncer = New(env.Mock, env.Store, &Options{SourceType: sourceTypeIMAP})
 	source, err := env.Store.GetOrCreateSource("imap", testEmail)
 	require.NoError(err, "GetOrCreateSource")
 	for _, address := range []string{
@@ -5547,6 +5548,7 @@ func (a *labelMetadataSnapshotAPI) GetMessageLabelsBatch(_ context.Context, mess
 			continue
 		}
 		results[i].LabelIDs = append([]string(nil), msg.LabelIDs...)
+		results[i].HistoryID = msg.HistoryID
 	}
 	return results, nil
 }

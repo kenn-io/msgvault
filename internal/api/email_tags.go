@@ -8,11 +8,22 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/msgvault/internal/emailtags"
+	"go.kenn.io/msgvault/internal/inboxcontrol"
 )
 
 // MessageTagStore edits native provider tags on an archived message.
 type MessageTagStore interface {
 	MessageTags(ctx context.Context, id int64, change *emailtags.MessageTagChange, mailbox string, acquireWrite func(context.Context) (func(), error)) (*emailtags.MessageTagResult, error)
+}
+
+// MessageTagTargetResolver resolves archive identity without provider access.
+type MessageTagTargetResolver interface {
+	ResolveMessageTagTarget(context.Context, int64, string) (inboxcontrol.Target, error)
+}
+
+type MessageTagResponse struct {
+	emailtags.MessageTagResult
+	Target *inboxcontrol.Target `json:"target,omitempty"`
 }
 
 func (s *Server) registerEmailTagRoutes(api huma.API) {
@@ -29,6 +40,12 @@ func (s *Server) registerEmailTagRoutes(api huma.API) {
 			op.Parameters = append(op.Parameters, queryStringParam("mailbox", "Exact IMAP mailbox; defaults to the current original copy or sole current membership", false))
 		}
 		op.Responses = jsonResponsesFor[emailtags.MessageTagResult](api)
+		if method == http.MethodGet {
+			op.Responses = jsonResponsesFor[MessageTagResponse](api)
+		}
+		if method == http.MethodPost {
+			op.Description = "Gmail accepts dry_run=true previews only; execute through inbox/control with a signed preview, expected state and idempotency key. IMAP and Microsoft retain native direct tag editing."
+		}
 		for key, response := range jsonResponsesFor[emailtags.MessageTagError](api, 400, 403, 404, 409, 500, 501, 502, 503) {
 			if key != "default" {
 				op.Responses[key] = response
@@ -62,6 +79,23 @@ func (s *Server) handleMessageTags(w http.ResponseWriter, r *http.Request) {
 		}
 		mailbox = change.Mailbox
 	}
+	if change != nil && !change.DryRun {
+		if resolver, ok := s.store.(MessageTagTargetResolver); ok {
+			target, err := resolver.ResolveMessageTagTarget(r.Context(), id, mailbox)
+			if err != nil {
+				s.writeEmailTagError(w, err)
+				return
+			}
+			if target.SourceType == "gmail" {
+				if _, err := emailtags.Normalize(*change, "gmail"); err != nil {
+					s.writeEmailTagError(w, err)
+					return
+				}
+				writeJSON(w, http.StatusConflict, emailtags.Failure("inbox_preview_required", "Use inbox/control with a signed preview, expected state and idempotency key", nil, nil))
+				return
+			}
+		}
+	}
 	result, err := backend.MessageTags(r.Context(), id, change, mailbox, s.beginMutation("native email tag change"))
 	w.Header().Set("Cache-Control", "no-store")
 	if err != nil {
@@ -70,6 +104,25 @@ func (s *Server) handleMessageTags(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.writeEmailTagError(w, err)
+		return
+	}
+	if result == nil {
+		writeError(w, http.StatusBadGateway, "tags_failed", "Provider returned no tag observation")
+		return
+	}
+	if r.Method == http.MethodGet {
+		response := MessageTagResponse{MessageTagResult: *result}
+		if resolver, ok := s.store.(MessageTagTargetResolver); ok {
+			target, err := resolver.ResolveMessageTagTarget(r.Context(), id, mailbox)
+			if err != nil {
+				s.writeEmailTagError(w, err)
+				return
+			}
+			if target.SourceType == "gmail" {
+				response.Target = &target
+			}
+		}
+		writeJSON(w, http.StatusOK, response)
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
