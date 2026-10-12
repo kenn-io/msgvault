@@ -121,6 +121,8 @@ schema fail before issuing archive requests. The HTTP prefix remains `/api/v1`.
 This schema also adds consented identity scoring. See
 [identity match review and scoring](#identity-match-review-and-scoring).
 
+Schema 3.14.0 adds `paused` source syncs to operation history and its state filter.
+
 Schema 3.13.0 adds the `docbank_rendition` evidence kind, which
 [cites a Docbank transcript](usage/kata-issues.md#cite-a-docbank-transcript).
 

@@ -305,7 +305,7 @@ func readCacheSyncCountersWithRow(queryRow func(string, ...any) *sql.Row) (cache
 			COALESCE(SUM(CASE WHEN sr.status IN ('failed', 'cancelled') THEN sr.id ELSE 0 END), 0)
 		FROM sync_runs sr
 		JOIN sources src ON src.id = sr.source_id
-		WHERE sr.status IN ('completed', 'failed', 'cancelled')
+		WHERE sr.status IN ('completed', 'failed', 'cancelled', 'paused')
 		  AND sr.completed_at IS NOT NULL
 	`).Scan(
 		&counters.additions,

@@ -76,3 +76,11 @@ test('narrow operations journey uses focused detail and returns focus to its row
   await page.getByRole('button', { name: 'Back to operation history' }).click();
   await expect(sourceRow).toBeFocused();
 });
+
+test('paused Operations filter can be selected', async ({ page }) => {
+  const fixture = await installOperations(page);
+  await page.goto(operationsURL());
+  await selectKitOption(page, 'State', 'Paused');
+  await expect.poll(() => fixture.listQueries.at(-1)?.get('state')).toBe('paused');
+  await expect(page.getByRole('combobox', { name: 'State: Paused' })).toBeVisible();
+});

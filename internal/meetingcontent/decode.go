@@ -27,6 +27,8 @@ func Decode(rawFormat string, raw, _ []byte) Content {
 		return unavailableContent("invalid_raw")
 	}
 	switch rawFormat {
+	case "omi_json":
+		return decodeOmi(fields)
 	case "granola_json":
 		return decodeGranola(fields)
 	case "circleback_json":
