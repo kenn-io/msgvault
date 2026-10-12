@@ -7,12 +7,12 @@ import (
 	"go.kenn.io/msgvault/internal/inboxcontrol"
 	"testing"
 
-	Assert "github.com/stretchr/testify/assert"
-	Require "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestInboxMCPWiringRequiresLiveContract(t *testing.T) {
-	assert := Assert.New(t)
+	assertions := assert.New(t)
 
 	for _, delegated := range []bool{false, true} {
 		client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
@@ -27,13 +27,13 @@ func TestInboxMCPWiringRequiresLiveContract(t *testing.T) {
 		})
 		if delegated {
 			opts, err := delegatedMCPServeOptions(t.Context(), client)
-			Require.NoError(t, err)
-			assert.Nil(opts.Inbox)
-			assert.Empty(opts.InboxOperations)
+			require.NoError(t, err)
+			assertions.Nil(opts.Inbox)
+			assertions.Empty(opts.InboxOperations)
 		} else {
 			opts := daemonMCPServeOptions(t.Context(), client, nil)
-			assert.Nil(opts.Inbox)
-			assert.Empty(opts.InboxOperations)
+			assertions.Nil(opts.Inbox)
+			assertions.Empty(opts.InboxOperations)
 		}
 	}
 }
@@ -45,8 +45,8 @@ const inboxMCPTestDescriptor = `{"version":1,"delegated":false,"routes":[{"opera
 func TestInboxMCPWiringIntersectsLiveOperations(t *testing.T) {
 	for _, delegated := range []bool{false, true} {
 		t.Run(map[bool]string{false: "owner", true: "delegated"}[delegated], func(t *testing.T) {
-			assert := Assert.New(t)
-			require := Require.New(t)
+			assertions := assert.New(t)
+			requirements := require.New(t)
 			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
 				case "/api/v1/health":
@@ -63,14 +63,14 @@ func TestInboxMCPWiringIntersectsLiveOperations(t *testing.T) {
 			if delegated {
 				var err error
 				opts, err = delegatedMCPServeOptions(t.Context(), client)
-				require.NoError(err)
+				requirements.NoError(err)
 			}
-			require.NotNil(opts.Inbox)
+			requirements.NotNil(opts.Inbox)
 			want := []inboxcontrol.Operation{inboxcontrol.OpArchive, inboxcontrol.OpTags}
 			if delegated {
 				want = []inboxcontrol.Operation{inboxcontrol.OpArchive}
 			}
-			assert.Equal(want, opts.InboxOperations)
+			assertions.Equal(want, opts.InboxOperations)
 		})
 	}
 }

@@ -46,7 +46,7 @@ func (c *Client) readMessageTags(ctx context.Context, id int64, change *emailtag
 	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, (8<<20)+1))
 	if len(body) > 8<<20 {
-		return nil, nil, messageTagResponseError(change, fmt.Errorf("message tag response exceeds 8 MiB"))
+		return nil, nil, messageTagResponseError(change, errors.New("message tag response exceeds 8 MiB"))
 	}
 	if err != nil {
 		return nil, nil, messageTagResponseError(change, fmt.Errorf("read message tags: %w", err))
@@ -60,6 +60,7 @@ func (c *Client) readMessageTags(ctx context.Context, id int64, change *emailtag
 	}
 	var result struct {
 		emailtags.MessageTagResult
+
 		Target *inboxcontrol.Target `json:"target,omitempty"`
 	}
 	if err := json.Unmarshal(body, &result); err != nil {

@@ -4,14 +4,14 @@ import (
 	"testing"
 	"time"
 
-	Assert "github.com/stretchr/testify/assert"
-	Require "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/emailtags"
 )
 
 func TestSemanticFingerprintIgnoresObservationTimeAndSetOrder(t *testing.T) {
-	assertions := Assert.New(t)
-	requirements := Require.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 
 	target := Target{SourceID: 1, SourceType: "gmail", SourceIdentifier: "reader@example.com", AccountID: "reader@example.com", Scope: ScopeMessage, ItemID: 2, ProviderID: "synthetic-message"}
 	state := State{Target: target, Tags: []string{"UNREAD", "INBOX", "Todo"}, ObservedAt: time.Date(2026, 10, 5, 0, 0, 0, 0, time.UTC)}
@@ -29,8 +29,8 @@ func TestSemanticFingerprintIgnoresObservationTimeAndSetOrder(t *testing.T) {
 }
 
 func TestSemanticFingerprintBindsUnknownStateAndIncomingWatermark(t *testing.T) {
-	assertions := Assert.New(t)
-	requirements := Require.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 
 	target := Target{SourceID: 1, SourceType: "beeper", SourceIdentifier: "synthetic-account", AccountID: "synthetic-account", Scope: ScopeChat, ItemID: 2, ProviderID: "!synthetic:example.com"}
 	state := State{Target: target, LastMessageID: "last-observed-message"}
@@ -49,8 +49,8 @@ func TestSemanticFingerprintBindsUnknownStateAndIncomingWatermark(t *testing.T) 
 }
 
 func TestIntentFingerprintExcludesTransportAndExecutionEvidence(t *testing.T) {
-	assertions := Assert.New(t)
-	requirements := Require.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 
 	target := Target{SourceID: 1, SourceType: "gmail", SourceIdentifier: "reader@example.com", AccountID: "reader@example.com", Scope: ScopeMessage, ItemID: 2, ProviderID: "synthetic-message"}
 	request := Request{Operation: OpTags, Target: &target, Tags: &emailtags.MessageTagChange{Add: []string{"Todo", "Watch"}}, DryRun: true}
@@ -77,16 +77,16 @@ func TestIntentFingerprintBindsGmailMoveOrigin(t *testing.T) {
 	target := Target{SourceID: 1, SourceType: "gmail", SourceIdentifier: "owner@example.com", AccountID: "owner@example.com", Scope: ScopeMessage, ItemID: 1, ProviderID: "message-1"}
 	request := Request{Operation: OpMove, Target: &target, OriginFolder: &Folder{ID: "LabelOld"}, Destination: &Folder{ID: "LabelNew"}, DryRun: true}
 	before, err := IntentFingerprint(request)
-	Require.NoError(t, err)
+	require.NoError(t, err)
 	request.OriginFolder = &Folder{ID: "LabelOther"}
 	after, err := IntentFingerprint(request)
-	Require.NoError(t, err)
-	Assert.NotEqual(t, before, after)
+	require.NoError(t, err)
+	assert.NotEqual(t, before, after)
 }
 
 func TestSemanticFingerprintCanonicalizesFolderCatalog(t *testing.T) {
-	assertions := Assert.New(t)
-	requirements := Require.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 
 	state := State{Source: SourceIdentity{SourceID: 1, SourceType: "gmail", SourceIdentifier: "owner@example.com", AccountID: "owner@example.com"}, Folders: []Folder{{ID: "LabelB", Name: "B"}, {ID: "LabelA", Name: "A"}}}
 	want, err := SemanticFingerprint(state)
@@ -104,9 +104,9 @@ func TestSemanticFingerprintCanonicalizesFolderCatalog(t *testing.T) {
 func TestIntentFingerprintUsesProviderCaseRules(t *testing.T) {
 	for _, provider := range []string{"gmail", "msmail", "imap"} {
 		t.Run(provider, func(t *testing.T) {
-			assert := Assert.New(t)
+			assertions := assert.New(t)
 
-			require := Require.New(t)
+			requirements := require.New(t)
 
 			target := Target{SourceID: 1, SourceType: provider, SourceIdentifier: "reader@example.test", AccountID: "reader@example.test", Scope: ScopeMessage, ItemID: 2, ProviderID: "message"}
 			if provider == "imap" {
@@ -116,14 +116,14 @@ func TestIntentFingerprintUsesProviderCaseRules(t *testing.T) {
 			}
 			request := Request{Operation: OpTags, Target: &target, DryRun: true, Tags: &emailtags.MessageTagChange{Add: []string{"Todo"}}}
 			first, err := IntentFingerprint(request)
-			require.NoError(err)
+			requirements.NoError(err)
 			request.Tags.Add = []string{"todo"}
 			second, err := IntentFingerprint(request)
-			require.NoError(err)
+			requirements.NoError(err)
 			if provider == "gmail" {
-				assert.NotEqual(first, second)
+				assertions.NotEqual(first, second)
 			} else {
-				assert.Equal(first, second)
+				assertions.Equal(first, second)
 			}
 		})
 	}
@@ -133,9 +133,9 @@ func TestIntentFingerprintUsesCanonicalUnicodeCaseEquivalence(t *testing.T) {
 	target := Target{SourceID: 1, SourceType: "msmail", SourceIdentifier: "reader@example.test", AccountID: "reader@example.test", Scope: ScopeMessage, ItemID: 2, ProviderID: "message"}
 	request := Request{Operation: OpTags, Target: &target, DryRun: true, Tags: &emailtags.MessageTagChange{Add: []string{"TodoΣ"}}}
 	first, err := IntentFingerprint(request)
-	Require.NoError(t, err)
+	require.NoError(t, err)
 	request.Tags.Add = []string{"Todoς"}
 	second, err := IntentFingerprint(request)
-	Require.NoError(t, err)
-	Assert.Equal(t, first, second, "canonical native tags compare Unicode category names with EqualFold")
+	require.NoError(t, err)
+	assert.Equal(t, first, second, "canonical native tags compare Unicode category names with EqualFold")
 }

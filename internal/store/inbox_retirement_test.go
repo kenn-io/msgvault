@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	Assert "github.com/stretchr/testify/assert"
-	Require "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/inboxcontrol"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -29,23 +29,23 @@ func removeInboxTestSource(t *testing.T, st *store.Store, id int64, serialized b
 func TestInboxSourceRemovalRetiresPreparedAuthority(t *testing.T) {
 	for _, serialized := range []bool{false, true} {
 		t.Run(map[bool]string{false: "ordinary", true: "serialized"}[serialized], func(t *testing.T) {
-			assert := Assert.New(t)
+			assertions := assert.New(t)
 
-			require := Require.New(t)
+			requirements := require.New(t)
 
 			f, receipt := inboxReceiptFixture(t)
 			before, _, err := f.Store.PrepareInboxReceipt(t.Context(), receipt)
-			require.NoError(err)
-			require.NoError(f.Store.ValidateInboxReceiptAuthorityContext(t.Context(), receipt.ID))
-			require.NoError(removeInboxTestSource(t, f.Store, receipt.SourceID, serialized))
+			requirements.NoError(err)
+			requirements.NoError(f.Store.ValidateInboxReceiptAuthorityContext(t.Context(), receipt.ID))
+			requirements.NoError(removeInboxTestSource(t, f.Store, receipt.SourceID, serialized))
 			audit, err := f.Store.GetInboxReceipt(t.Context(), receipt.ID)
-			require.NoError(err)
-			assert.Equal(before, audit, "source removal preserves original receipt/status for trusted audit")
-			require.ErrorIs(f.Store.ValidateInboxReceiptAuthorityContext(t.Context(), receipt.ID), inboxcontrol.ErrDenied)
-			require.ErrorIs(f.Store.MarkInboxDispatching(t.Context(), receipt.ID), inboxcontrol.ErrConflict)
+			requirements.NoError(err)
+			assertions.Equal(before, audit, "source removal preserves original receipt/status for trusted audit")
+			requirements.ErrorIs(f.Store.ValidateInboxReceiptAuthorityContext(t.Context(), receipt.ID), inboxcontrol.ErrDenied)
+			requirements.ErrorIs(f.Store.MarkInboxDispatching(t.Context(), receipt.ID), inboxcontrol.ErrConflict)
 			lookup, err := f.Store.LookupInboxReceipt(t.Context(), receipt.PrincipalID, receipt.SourceID, receipt.IdempotencyKey)
-			require.NoError(err)
-			assert.Equal(before, lookup)
+			requirements.NoError(err)
+			assertions.Equal(before, lookup)
 		})
 	}
 }
@@ -53,24 +53,24 @@ func TestInboxSourceRemovalRetiresPreparedAuthority(t *testing.T) {
 func TestInboxSourceRemovalRetirementRollsBack(t *testing.T) {
 	for _, serialized := range []bool{false, true} {
 		t.Run(map[bool]string{false: "ordinary", true: "serialized"}[serialized], func(t *testing.T) {
-			require := Require.New(t)
+			requirements := require.New(t)
 
 			f, receipt := inboxReceiptFixture(t)
 			_, _, err := f.Store.PrepareInboxReceipt(t.Context(), receipt)
-			require.NoError(err)
+			requirements.NoError(err)
 			if f.Store.IsPostgreSQL() {
 				_, err = f.Store.DB().Exec(`CREATE FUNCTION inbox_delete_failure() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'synthetic source delete failure'; END; $$ LANGUAGE plpgsql`)
-				require.NoError(err)
+				requirements.NoError(err)
 				_, err = f.Store.DB().Exec(`CREATE TRIGGER inbox_delete_failure BEFORE DELETE ON sources FOR EACH ROW EXECUTE FUNCTION inbox_delete_failure()`)
 			} else {
 				_, err = f.Store.DB().Exec(`CREATE TRIGGER inbox_delete_failure BEFORE DELETE ON sources BEGIN SELECT RAISE(ABORT, 'synthetic source delete failure'); END`)
 			}
-			require.NoError(err)
-			require.ErrorContains(removeInboxTestSource(t, f.Store, receipt.SourceID, serialized), "synthetic source delete failure")
-			require.NoError(f.Store.ValidateInboxReceiptAuthorityContext(t.Context(), receipt.ID))
-			require.NoError(f.Store.MarkInboxDispatching(t.Context(), receipt.ID))
+			requirements.NoError(err)
+			requirements.ErrorContains(removeInboxTestSource(t, f.Store, receipt.SourceID, serialized), "synthetic source delete failure")
+			requirements.NoError(f.Store.ValidateInboxReceiptAuthorityContext(t.Context(), receipt.ID))
+			requirements.NoError(f.Store.MarkInboxDispatching(t.Context(), receipt.ID))
 			_, err = f.Store.GetSourceByID(receipt.SourceID)
-			require.NoError(err)
+			requirements.NoError(err)
 		})
 	}
 }
@@ -78,19 +78,19 @@ func TestInboxSourceRemovalRetirementRollsBack(t *testing.T) {
 func TestInboxSourceRemovalExcludesActiveControl(t *testing.T) {
 	for _, serialized := range []bool{false, true} {
 		t.Run(map[bool]string{false: "ordinary", true: "serialized"}[serialized], func(t *testing.T) {
-			require := Require.New(t)
+			requirements := require.New(t)
 
 			f, receipt := inboxReceiptFixture(t)
 			_, _, err := f.Store.PrepareInboxReceipt(t.Context(), receipt)
-			require.NoError(err)
+			requirements.NoError(err)
 			execution, err := f.Store.AcquireInboxExecutionContext(t.Context(), receipt.SourceID)
-			require.NoError(err)
+			requirements.NoError(err)
 			t.Cleanup(func() { _ = execution.Release() })
-			require.ErrorIs(removeInboxTestSource(t, f.Store, receipt.SourceID, serialized), store.ErrSyncAlreadyActive)
-			require.NoError(f.Store.ValidateInboxReceiptAuthorityContext(t.Context(), receipt.ID))
-			require.NoError(execution.Release())
-			require.NoError(removeInboxTestSource(t, f.Store, receipt.SourceID, serialized))
-			require.ErrorIs(f.Store.ValidateInboxReceiptAuthorityContext(t.Context(), receipt.ID), inboxcontrol.ErrDenied)
+			requirements.ErrorIs(removeInboxTestSource(t, f.Store, receipt.SourceID, serialized), store.ErrSyncAlreadyActive)
+			requirements.NoError(f.Store.ValidateInboxReceiptAuthorityContext(t.Context(), receipt.ID))
+			requirements.NoError(execution.Release())
+			requirements.NoError(removeInboxTestSource(t, f.Store, receipt.SourceID, serialized))
+			requirements.ErrorIs(f.Store.ValidateInboxReceiptAuthorityContext(t.Context(), receipt.ID), inboxcontrol.ErrDenied)
 		})
 	}
 }
@@ -98,22 +98,22 @@ func TestInboxSourceRemovalExcludesActiveControl(t *testing.T) {
 func TestInboxSourceRetirementKeepsDispatchedSettlement(t *testing.T) {
 	for _, serialized := range []bool{false, true} {
 		t.Run(map[bool]string{false: "ordinary", true: "serialized"}[serialized], func(t *testing.T) {
-			assert := Assert.New(t)
+			assertions := assert.New(t)
 
-			require := Require.New(t)
+			requirements := require.New(t)
 
 			f, receipt := inboxReceiptFixture(t)
 			_, _, err := f.Store.PrepareInboxReceipt(t.Context(), receipt)
-			require.NoError(err)
-			require.NoError(f.Store.MarkInboxDispatching(t.Context(), receipt.ID))
-			require.NoError(removeInboxTestSource(t, f.Store, receipt.SourceID, serialized))
-			require.NoError(f.Store.FinishInboxReceipt(t.Context(), receipt.ID, inboxcontrol.StatusUnknown, nil, "synthetic-dispatch-completion"))
+			requirements.NoError(err)
+			requirements.NoError(f.Store.MarkInboxDispatching(t.Context(), receipt.ID))
+			requirements.NoError(removeInboxTestSource(t, f.Store, receipt.SourceID, serialized))
+			requirements.NoError(f.Store.FinishInboxReceipt(t.Context(), receipt.ID, inboxcontrol.StatusUnknown, nil, "synthetic-dispatch-completion"))
 			audit, err := f.Store.GetInboxReceipt(t.Context(), receipt.ID)
-			require.NoError(err)
-			require.NotNil(audit)
-			assert.Equal(inboxcontrol.StatusUnknown, audit.Status)
-			assert.Equal("synthetic-dispatch-completion", audit.FailureCode)
-			require.ErrorIs(f.Store.ValidateInboxReceiptAuthorityContext(t.Context(), receipt.ID), inboxcontrol.ErrDenied)
+			requirements.NoError(err)
+			requirements.NotNil(audit)
+			assertions.Equal(inboxcontrol.StatusUnknown, audit.Status)
+			assertions.Equal("synthetic-dispatch-completion", audit.FailureCode)
+			requirements.ErrorIs(f.Store.ValidateInboxReceiptAuthorityContext(t.Context(), receipt.ID), inboxcontrol.ErrDenied)
 		})
 	}
 }
@@ -127,76 +127,76 @@ func TestInboxSourceRemovalSingleConnectionPool(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 	defer cancel()
 	_, _, err := f.Store.RemoveSourceSerialized(ctx, receipt.SourceID)
-	Require.NoError(t, err, "the removal fence must leave the Store connection available to its transaction")
+	require.NoError(t, err, "the removal fence must leave the Store connection available to its transaction")
 }
 
 // The child is a real second process using the production backend locks. Its
 // stdin only bounds lock lifetime; no Store/provider commands are stubbed.
 func TestInboxSourceFenceProcess(t *testing.T) {
-	require := Require.New(t)
+	requirements := require.New(t)
 
 	if os.Getenv("MSGVAULT_INBOX_FENCE_HELPER") == "1" {
 		st, err := store.OpenForTest(os.Getenv("MSGVAULT_INBOX_FENCE_DB"))
-		require.NoError(err)
-		defer st.Close()
+		requirements.NoError(err)
+		defer func() { requirements.NoError(st.Close()) }()
 		id, err := strconv.ParseInt(os.Getenv("MSGVAULT_INBOX_FENCE_SOURCE"), 10, 64)
-		require.NoError(err)
+		requirements.NoError(err)
 		execution, err := st.AcquireInboxExecutionContext(t.Context(), id)
-		require.NoError(err)
+		requirements.NoError(err)
 		fmt.Println("inbox-fence-ready")
 		_, err = bufio.NewReader(os.Stdin).ReadString('\n')
-		require.NoError(err)
-		require.NoError(execution.Release())
+		requirements.NoError(err)
+		requirements.NoError(execution.Release())
 		return
 	}
 	f, receipt := inboxReceiptFixture(t)
 	_, _, err := f.Store.PrepareInboxReceipt(t.Context(), receipt)
-	require.NoError(err)
+	requirements.NoError(err)
 	second, err := store.OpenForTest(store.DBPathForTest(f.Store))
-	require.NoError(err)
+	requirements.NoError(err)
 	t.Cleanup(func() { _ = second.Close() })
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
-	child := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestInboxSourceFenceProcess$")
+	child := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestInboxSourceFenceProcess$") //nolint:gosec // Re-executes this test binary with a fixed test selector.
 	child.Env = append(os.Environ(), "MSGVAULT_INBOX_FENCE_HELPER=1", "MSGVAULT_INBOX_FENCE_DB="+store.DBPathForTest(f.Store), "MSGVAULT_INBOX_FENCE_SOURCE="+strconv.FormatInt(receipt.SourceID, 10))
 	stdout, err := child.StdoutPipe()
-	require.NoError(err)
+	requirements.NoError(err)
 	stdin, err := child.StdinPipe()
-	require.NoError(err)
+	requirements.NoError(err)
 	child.Stderr = os.Stderr
-	require.NoError(child.Start())
+	requirements.NoError(child.Start())
 	t.Cleanup(func() { _ = child.Process.Kill() })
 	scanner := bufio.NewScanner(stdout)
-	require.True(scanner.Scan())
-	require.Equal("inbox-fence-ready", scanner.Text())
-	require.ErrorIs(second.RemoveSource(receipt.SourceID), store.ErrSyncAlreadyActive)
+	requirements.True(scanner.Scan())
+	requirements.Equal("inbox-fence-ready", scanner.Text())
+	requirements.ErrorIs(second.RemoveSource(receipt.SourceID), store.ErrSyncAlreadyActive)
 	_, _, err = second.RemoveSourceSerialized(ctx, receipt.SourceID)
-	require.ErrorIs(err, store.ErrSyncAlreadyActive)
+	requirements.ErrorIs(err, store.ErrSyncAlreadyActive)
 	_, err = second.AcquireInboxExecutionContext(ctx, receipt.SourceID)
-	require.ErrorIs(err, store.ErrSyncAlreadyActive)
-	require.NoError(f.Store.ValidateInboxReceiptAuthorityContext(ctx, receipt.ID), "failed removal does not partially retire authority")
+	requirements.ErrorIs(err, store.ErrSyncAlreadyActive)
+	requirements.NoError(f.Store.ValidateInboxReceiptAuthorityContext(ctx, receipt.ID), "failed removal does not partially retire authority")
 	_, err = fmt.Fprintln(stdin, "release")
-	require.NoError(err)
-	require.NoError(stdin.Close())
+	requirements.NoError(err)
+	requirements.NoError(stdin.Close())
 	for scanner.Scan() {
 	}
-	require.NoError(scanner.Err())
-	require.NoError(child.Wait())
-	require.NoError(second.RemoveSource(receipt.SourceID))
-	require.ErrorIs(f.Store.ValidateInboxReceiptAuthorityContext(ctx, receipt.ID), inboxcontrol.ErrDenied)
+	requirements.NoError(scanner.Err())
+	requirements.NoError(child.Wait())
+	requirements.NoError(second.RemoveSource(receipt.SourceID))
+	requirements.ErrorIs(f.Store.ValidateInboxReceiptAuthorityContext(ctx, receipt.ID), inboxcontrol.ErrDenied)
 }
 
 func TestInboxSourceFenceReleasesAfterSyncBusy(t *testing.T) {
-	require := Require.New(t)
+	requirements := require.New(t)
 
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("gmail", "fence@example.test")
-	require.NoError(err)
+	requirements.NoError(err)
 	syncLease, err := st.AcquireSyncExecutionContext(t.Context(), source.ID)
-	require.NoError(err)
+	requirements.NoError(err)
 	t.Cleanup(func() { _ = syncLease.Release() })
 	_, err = st.AcquireInboxExecutionContext(t.Context(), source.ID)
-	require.ErrorIs(err, store.ErrSyncAlreadyActive)
-	require.NoError(st.RemoveSource(source.ID), "failed Inbox acquisition releases its separate fence while sync ownership remains held")
-	require.NoError(syncLease.Release())
+	requirements.ErrorIs(err, store.ErrSyncAlreadyActive)
+	requirements.NoError(st.RemoveSource(source.ID), "failed Inbox acquisition releases its separate fence while sync ownership remains held")
+	requirements.NoError(syncLease.Release())
 }
