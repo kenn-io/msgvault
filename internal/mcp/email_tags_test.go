@@ -42,7 +42,7 @@ func TestEmailTagsToolsAvailabilityAndPartialResult(t *testing.T) {
 	require.NotNil(backend.change)
 	assert.True(backend.change.DryRun)
 	backend.fail = true
-	got = rawCallTool(t, opts, ToolUpdateMessageTags, map[string]any{"message_id": float64(7), "add": []any{"Next"}})
+	got = rawCallTool(t, opts, ToolUpdateMessageTags, map[string]any{"message_id": float64(7), "add": []any{"Next"}, "dry_run": true})
 	assert.Equal(true, got["isError"])
 	data := toolStructuredContent(t, got)
 	assert.Equal("remote_unknown", data["error"])

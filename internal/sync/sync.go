@@ -770,6 +770,7 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 	result.skipped = int64(existingCount)
 
 	if len(labelRefreshIDs) > 0 {
+		metadataObservedAt := time.Now().UTC()
 		labelResults, err := labelReader.GetMessageLabelsBatch(ctx, labelRefreshIDs)
 		if err != nil {
 			for _, id := range labelRefreshIDs {
@@ -889,13 +890,12 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 				}
 			}
 
-			changed, err := s.reconcileValidatedMessageLabels(
-				existing.ID,
-				sourceMessageID,
-				labelResult.RFC822MessageID,
-				labelIDs,
-				snapshotComplete,
-			)
+			var changed bool
+			if s.opts.SourceType == "" || s.opts.SourceType == sourceTypeGmail {
+				changed, err = s.store.RefreshGmailInboxLabelsContext(ctx, sourceID, existing.ID, sourceMessageID, labelIDs, store.GmailInboxObservation{Tags: labelResult.LabelIDs, HistoryID: labelResult.HistoryID, ObservedAt: metadataObservedAt})
+			} else {
+				changed, err = s.reconcileValidatedMessageLabels(existing.ID, sourceMessageID, labelResult.RFC822MessageID, labelIDs, snapshotComplete)
+			}
 			if err != nil {
 				s.logger.Warn("failed to refresh existing message labels",
 					"id", sourceMessageID, "error", err)
@@ -1650,21 +1650,22 @@ func (s *Syncer) syncLabels(ctx context.Context, sourceID int64) (labelMap map[s
 
 // messageData holds all parsed data for a message before persistence.
 type messageData struct {
-	metadata          *sql.NullString
-	message           *store.Message
-	threadID          string
-	conversationType  string
-	conversationTitle string
-	bodyText          string
-	bodyHTML          string
-	rawMIME           []byte
-	from              []mime.Address
-	to                []mime.Address
-	cc                []mime.Address
-	bcc               []mime.Address
-	gmailLabelIDs     []string
-	attachments       []mime.Attachment
-	participantMap    map[string]int64
+	gmailInboxObservation *store.GmailInboxObservation
+	metadata              *sql.NullString
+	message               *store.Message
+	threadID              string
+	conversationType      string
+	conversationTitle     string
+	bodyText              string
+	bodyHTML              string
+	rawMIME               []byte
+	from                  []mime.Address
+	to                    []mime.Address
+	cc                    []mime.Address
+	bcc                   []mime.Address
+	gmailLabelIDs         []string
+	attachments           []mime.Attachment
+	participantMap        map[string]int64
 }
 
 // resolvePreparedMessage performs the store-mutating resolution needed by
@@ -1724,6 +1725,10 @@ func (s *Syncer) prepareMessage(
 		}
 	}
 
+	var gmailObservation *store.GmailInboxObservation
+	if s.opts.SourceType == "" || s.opts.SourceType == sourceTypeGmail {
+		gmailObservation = &store.GmailInboxObservation{Tags: slices.Clone(raw.LabelIDs), HistoryID: raw.HistoryID, ObservedAt: time.Now().UTC()}
+	}
 	// Parse MIME - on failure, salvage headers and store a placeholder body
 	// (threading override for IMAP happens after parsing below)
 	var parsed *mime.Message
@@ -1846,7 +1851,7 @@ func (s *Syncer) prepareMessage(
 	}
 
 	return &messageData{
-		metadata:          metadata,
+		gmailInboxObservation: gmailObservation, metadata: metadata,
 		message:           msg,
 		threadID:          threadID,
 		conversationType:  conversationType,
@@ -1933,6 +1938,8 @@ func (s *Syncer) persistMessage(ctx context.Context, data *messageData, labelMap
 	}
 	// Persist atomically
 	messageID, err := persistenceStore.PersistMessage(&store.MessagePersistData{
+		GmailInboxObservation: data.gmailInboxObservation,
+		PreserveLabels:        data.gmailInboxObservation != nil && data.gmailInboxObservation.Tags == nil,
 		NativeScopes: nativeScopes,
 		Message:      data.message,
 		Metadata:     data.metadata,

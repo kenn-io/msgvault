@@ -18,6 +18,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"go.kenn.io/msgvault/internal/agentgrant"
+	"go.kenn.io/msgvault/internal/inboxcontrol"
 	"go.kenn.io/msgvault/internal/mcpdiscovery"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -174,8 +175,10 @@ type ServeOptions struct {
 	IdentityReview IdentityReviewBackend
 	// PersonCardDAV is present only when the daemon serves revision-guarded
 	// person merge and token-guarded CardDAV publication routes.
-	PersonCardDAV PersonCardDAVBackend
-	MessageTags   MessageTagBackend
+	PersonCardDAV   PersonCardDAVBackend
+	Inbox           InboxBackend
+	InboxOperations []inboxcontrol.Operation
+	MessageTags     MessageTagBackend
 	// IdentityScoring exposes consented manual scoring. Consent is
 	// recorded through the CLI/API, never by an MCP tool.
 	IdentityScoring IdentityScoringBackend
@@ -393,6 +396,7 @@ func newMCPServerWithPolicy(
 		identityReview:      opts.IdentityReview,
 		personCardDAV:       opts.PersonCardDAV,
 		messageTags:         opts.MessageTags,
+		inbox:               opts.Inbox,
 		identityScoring:     opts.IdentityScoring,
 		events:              opts.Events,
 		drafts:              opts.Drafts,

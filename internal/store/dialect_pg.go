@@ -2377,6 +2377,7 @@ var exclusiveLockTables = []string{
 	"activity_projection_queue",
 	"collections", "collection_sources", "account_identities", "applied_migrations",
 	"sync_operations",
+	"inbox_source_revisions", "inbox_provider_states", "inbox_operation_receipts",
 	"source_import_items", "sync_run_items", "sync_checkpoints",
 	"imap_folder_state", "imap_message_memberships", "imap_drafts", "gmail_drafts", "chat_drafts", "beeper_drafts",
 }

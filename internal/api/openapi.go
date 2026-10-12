@@ -366,7 +366,8 @@ import (
 // 3.17.0 adds separately opted-in native import notifications.
 // 3.18.0 adds native Gmail label, IMAP keyword, and Microsoft Graph category
 // reads and delta updates.
-const APISchemaVersion = "3.18.0"
+// 3.19.0 adds exact Gmail Inbox control with signed previews and durable receipts.
+const APISchemaVersion = "3.19.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -928,6 +929,16 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 		return
 	}
 	schemas := doc.Components.Schemas.Map()
+	if state := schemas["InboxState"]; state != nil {
+		for _, name := range []string{"tags", "flags"} {
+			if property := state.Properties[name]; property != nil {
+				if property.Extensions == nil {
+					property.Extensions = map[string]any{}
+				}
+				property.Extensions["x-oapi-codegen-extra-tags"] = map[string]any{"json": name + ",omitzero"}
+			}
+		}
+	}
 	const emailProperty = "email"
 	// Events arguments and schema documents contain arbitrary JSON values.
 	// Empty object schemas otherwise generate struct{} and discard that data.
