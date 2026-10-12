@@ -49,7 +49,6 @@ const participantSummarySenderSQL = participantDisplaySQL + ` as from_display,
 // APIMessage represents a message for API responses.
 type APIMessage struct {
 	ConversationTitle    string
-
 	Calendar             *CalendarProjection
 	ID                   int64
 	SourceID             int64

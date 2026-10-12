@@ -339,8 +339,8 @@ type MessageSummary struct {
 type MessageDetail struct {
 	MessageSummary
 
-	ConversationTitle string `json:"conversation_title,omitempty" doc:"Conversation title, when available."`
-	Calendar *store.CalendarProjection `json:"calendar,omitempty"`
+	ConversationTitle string                    `json:"conversation_title,omitempty" doc:"Conversation title, when available."`
+	Calendar          *store.CalendarProjection `json:"calendar,omitempty"`
 
 	Body     string `json:"body"`
 	BodyHTML string `json:"body_html,omitempty"`
@@ -811,7 +811,7 @@ func (s *Server) handleGetMessage(w http.ResponseWriter, r *http.Request) {
 		Body:              msg.Body,
 		BodyHTML:          msg.BodyHTML,
 		IsFromMe:          msg.IsFromMe,
-		Calendar: msg.Calendar,
+		Calendar:          msg.Calendar,
 	}
 
 	attachments := make([]AttachmentInfo, 0, len(msg.Attachments))

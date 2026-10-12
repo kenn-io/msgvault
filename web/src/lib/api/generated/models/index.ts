@@ -359,7 +359,6 @@ export * from "./getIdentityMatchCandidatePathParameters";
 export * from "./getImportJobPathParameters";
 export * from "./getKataIssueContextParams";
 export * from "./getKataIssueContextPathParameters";
-
 export * from "./getMCPEventMessageParams";
 export * from "./getMCPEventMessagePathParameters";
 export * from "./getMCPEventParams";

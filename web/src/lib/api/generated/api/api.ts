@@ -163,7 +163,6 @@ import type {
   GetImportJobPathParameters,
   GetKataIssueContextParams,
   GetKataIssueContextPathParameters,
-
   GetMCPEventMessageParams,
   GetMCPEventMessagePathParameters,
   GetMCPEventParams,
