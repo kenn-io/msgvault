@@ -656,3 +656,25 @@ func TestDaemonMCPDocbankCapability(t *testing.T) {
 		})
 	}
 }
+
+func TestDaemonMCPDocbankProbeFailureIsLogged(t *testing.T) {
+	assert := assert.New(t)
+	ctx := withStoreResolverConfig(t, &config.Config{Data: config.DataConfig{DataDir: t.TempDir()}})
+	client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/health":
+			assert.NoError(json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": "3.13.0"}))
+		case "/api/v1/media/search/status":
+			http.Error(w, "unavailable", http.StatusServiceUnavailable)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	var logs bytes.Buffer
+	state := *invocationFromContext(ctx)
+	state.logger = slog.New(slog.NewTextHandler(&logs, nil))
+	opts := daemonMCPServeOptions(ctx, client, &state)
+	assert.False(opts.KataDocbank)
+	assert.Contains(logs.String(), "Kata transcript citations hidden because the Docbank status probe failed")
+	assert.Contains(logs.String(), "503")
+}

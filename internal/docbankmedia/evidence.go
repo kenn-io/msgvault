@@ -11,8 +11,17 @@ import (
 	"strings"
 )
 
-// ErrEvidenceUnavailable means Docbank no longer holds the delivered file.
-var ErrEvidenceUnavailable = errors.New("docbank evidence unavailable")
+var (
+	// ErrEvidenceUnavailable means Docbank no longer holds the delivered file.
+	ErrEvidenceUnavailable = errors.New("docbank evidence unavailable")
+	// ErrNoRendition means Docbank selects no rendition of the version: it is
+	// no longer the node's current version, or it hasn't been processed.
+	ErrNoRendition = errors.New("docbank selects no rendition of the version")
+	// ErrRenditionFailed means Docbank's rendition work for the version failed.
+	ErrRenditionFailed = errors.New("docbank rendition failed")
+	// ErrProfileUnavailable means Docbank has no usable processing profile.
+	ErrProfileUnavailable = errors.New("docbank processing profile unavailable")
+)
 
 // EvidenceWindowRequest mirrors Docbank's POST /api/v1/evidence/windows body.
 type EvidenceWindowRequest struct {
@@ -55,9 +64,10 @@ func DestinationKey(endpoint, archiveUID string) string {
 
 // EvidenceIdentity returns the node and selected rendition identities of one
 // content version, without VaultUID or a range. It resolves metadata without
-// streaming rendition bytes. When Docbank selects no rendition it
-// returns the 404 with the node ID set, so the caller can ask the node why. A
-// version Docbank no longer holds returns ErrEvidenceUnavailable.
+// streaming rendition bytes. When Docbank selects no rendition it returns
+// ErrNoRendition, or Docbank's 404, with the node ID set, so the caller can
+// ask the node why. A version Docbank no longer holds returns
+// ErrEvidenceUnavailable.
 func (c *Client) EvidenceIdentity(ctx context.Context, contentVersionID, contentSHA256, profile string) (EvidenceWindowRequest, error) {
 	var version struct {
 		ID       string `json:"id"`
@@ -93,7 +103,7 @@ func (c *Client) EvidenceIdentity(ctx context.Context, contentVersionID, content
 		return EvidenceWindowRequest{}, ErrEvidenceUnavailable
 	}
 	if node.CurrentVersionID != version.ID {
-		return EvidenceWindowRequest{NodeID: version.NodeID}, &HTTPError{Status: http.StatusNotFound}
+		return EvidenceWindowRequest{NodeID: version.NodeID}, ErrNoRendition
 	}
 	body := struct {
 		NodeID    int64  `json:"node_id"`
@@ -125,16 +135,16 @@ func (c *Client) EvidenceIdentity(ctx context.Context, contentVersionID, content
 		return EvidenceWindowRequest{NodeID: node.ID}, err
 	}
 	if receipt.State == "unconfigured" || receipt.State == "profile_required" {
-		return EvidenceWindowRequest{NodeID: node.ID}, &HTTPError{Status: http.StatusUnprocessableEntity, Reason: "processing_profile_unavailable"}
+		return EvidenceWindowRequest{NodeID: node.ID}, ErrProfileUnavailable
 	}
 	if receipt.State == "failed" {
-		return EvidenceWindowRequest{NodeID: node.ID}, &HTTPError{Status: http.StatusUnprocessableEntity, Reason: "rendition_failed"}
+		return EvidenceWindowRequest{NodeID: node.ID}, ErrRenditionFailed
 	}
 	if receipt.State == "historical_unavailable" || receipt.State == "verified_empty" {
 		return EvidenceWindowRequest{NodeID: node.ID}, ErrEvidenceUnavailable
 	}
 	if receipt.State == "unprocessed" {
-		return EvidenceWindowRequest{NodeID: node.ID}, &HTTPError{Status: http.StatusNotFound}
+		return EvidenceWindowRequest{NodeID: node.ID}, ErrNoRendition
 	}
 	if receipt.State != "ready" {
 		return EvidenceWindowRequest{NodeID: node.ID}, ErrInvalidReceipt

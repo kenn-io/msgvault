@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -259,6 +260,7 @@ func (s *Server) writeKataIssueError(w http.ResponseWriter, err error) {
 		{kataevidence.ErrInvalidReference, http.StatusBadRequest, "invalid_evidence", "Evidence identity or range is invalid"},
 		{taskclient.ErrInvalidRef, http.StatusBadRequest, "invalid_ref", "Kata issue ref is malformed"},
 		{kataissues.ErrInvalidRequest, http.StatusUnprocessableEntity, "invalid_request", "Title, brief, list or person is invalid"},
+		{kataevidence.ErrDocbankUnavailable, http.StatusServiceUnavailable, "archive_unavailable", "Docbank could not be reached; retry later"},
 		{kataevidence.ErrArchiveUnavailable, http.StatusServiceUnavailable, "archive_unavailable", "The archive could not be read"},
 		{kataevidence.ErrUnavailable, http.StatusNotFound, "evidence_unavailable", "The cited source is unavailable"},
 		{kataevidence.ErrChanged, http.StatusConflict, "evidence_changed", "The cited source has changed; prepare it again"},
@@ -311,7 +313,7 @@ type kataIssueBackend struct {
 	evidence *kataevidence.Service
 }
 
-func newKataIssueBackend(cfg *config.Config, messageStore MessageStore) KataIssueOperations {
+func newKataIssueBackend(cfg *config.Config, messageStore MessageStore, logger *slog.Logger) KataIssueOperations {
 	archive, ok := messageStore.(kataIssueStore)
 	if !ok || cfg == nil {
 		return nil
@@ -324,6 +326,9 @@ func newKataIssueBackend(cfg *config.Config, messageStore MessageStore) KataIssu
 			evidence.WithDocbank(kataevidence.NewDocbankReader(archive, nil, func(context.Context) (string, error) { return "", configurationError }, nil))
 		}
 		revisions, ok := messageStore.(mediaRevisionReader)
+		if !ok && logger != nil {
+			logger.Warn("Kata transcript citations disabled: the archive store cannot read media revisions")
+		}
 		if err == nil && ok {
 			evidence.WithDocbank(kataevidence.NewDocbankReader(archive, client, func(ctx context.Context) (string, error) {
 				uid, err := archive.ArchiveUIDContext(ctx)

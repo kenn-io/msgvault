@@ -51,7 +51,10 @@ func (s *Service) Prepare(ctx context.Context, selectors []Selector) ([]Evidence
 	selectorIDs := make([]string, len(selectors))
 	for i, sel := range selectors {
 		if sel.Kind == "docbank_rendition" {
-			data, _ := json.Marshal(sel)
+			data, err := json.Marshal(sel)
+			if err != nil {
+				return nil, fmt.Errorf("encode Docbank selector: %w", err)
+			}
 			selectorIDs[i] = Digest("msgvault.kata.selector.v1", string(data))
 			docbankIDs = append(docbankIDs, selectorIDs[i])
 		}

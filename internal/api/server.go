@@ -710,7 +710,7 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 		s.personAgendaOperations = newPersonAgendaBackend(opts.Config, opts.Store)
 	}
 	if s.kataIssueOperations == nil {
-		s.kataIssueOperations = newKataIssueBackend(opts.Config, opts.Store)
+		s.kataIssueOperations = newKataIssueBackend(opts.Config, opts.Store, s.logger)
 	}
 	s.vectorStatus = opts.VectorStatus
 	if s.vectorStatus == "" {

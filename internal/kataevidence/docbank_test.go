@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -45,6 +47,8 @@ type fakeDocbank struct {
 	identities      int
 	transcriptBuild *string
 	afterRead       func()
+	// transcriptDelay is how long a transcript download takes.
+	transcriptDelay time.Duration
 }
 
 func (f *fakeDocbank) MediaRevision(context.Context, int64) (string, error) {
@@ -62,8 +66,13 @@ func (f *fakeDocbank) Status(context.Context, string) (docbankmedia.Receipt, err
 	return status, f.err
 }
 
-func (f *fakeDocbank) Transcript(context.Context, string, string, string) (docbankmedia.MediaTranscript, error) {
+func (f *fakeDocbank) Transcript(ctx context.Context, _, _, _ string) (docbankmedia.MediaTranscript, error) {
 	f.transcripts++
+	select {
+	case <-time.After(f.transcriptDelay):
+	case <-ctx.Done():
+		return docbankmedia.MediaTranscript{}, fmt.Errorf("docbank transport: %w", ctx.Err())
+	}
 	if f.transcriptErr != nil {
 		return docbankmedia.MediaTranscript{}, f.transcriptErr
 	}
@@ -100,13 +109,13 @@ func (f *fakeDocbank) EvidenceIdentity(_ context.Context, contentVersionID, cont
 	}
 	if f.finishing {
 		f.finishing = false
-		return docbankmedia.EvidenceWindowRequest{NodeID: 7}, errNotFound
+		return docbankmedia.EvidenceWindowRequest{NodeID: 7}, docbankmedia.ErrNoRendition
 	}
 	if contentVersionID == f.pruned {
 		return docbankmedia.EvidenceWindowRequest{}, docbankmedia.ErrEvidenceUnavailable
 	}
 	if contentVersionID != f.current || f.build == "" {
-		return docbankmedia.EvidenceWindowRequest{NodeID: 7}, errNotFound
+		return docbankmedia.EvidenceWindowRequest{NodeID: 7}, docbankmedia.ErrNoRendition
 	}
 	return docbankmedia.EvidenceWindowRequest{NodeID: 7, ContentVersionID: contentVersionID, ContentSHA256: contentSHA256,
 		RenditionAttachmentID: strings.Repeat("b", 64), BuildID: f.build, RenditionSHA256: strings.Repeat("d", 64)}, nil
@@ -222,6 +231,27 @@ func TestDocbankWindowNotFoundReason(t *testing.T) {
 			assert.Equal(f.binding.Display, result.Display)
 		})
 	}
+}
+
+func TestDocbankSlowTranscriptCheckFinishesForRetry(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		f := newFakeDocbank()
+		f.transcriptDelay = 3 * kataevidence.DocbankTimeout
+		reader := kataevidence.NewDocbankReader(f, f, func(context.Context) (string, error) { return "destination", nil }, f.MediaRevision)
+		selector := kataevidence.Selector{Kind: "docbank_rendition", MessageID: 4, AttachmentID: 9, MaxChars: new(10)}
+		for range 2 {
+			_, err := reader.LoadKataEvidenceSource(t.Context(), selector)
+			require.ErrorIs(err, kataevidence.ErrDocbankUnavailable, "a timed-out check is worth retrying")
+		}
+		time.Sleep(f.transcriptDelay)
+		synctest.Wait()
+		prepared, err := reader.LoadKataEvidenceSource(t.Context(), selector)
+		require.NoError(err)
+		assert.Equal(string(f.text[:10]), prepared.Text)
+		assert.Equal(1, f.transcripts, "timed-out attempts share one download, and the retry reuses its result")
+	})
 }
 
 func TestDocbankGeneratedTranscriptProvenance(t *testing.T) {
@@ -401,17 +431,20 @@ func TestDocbankWindowsPageAndResolve(t *testing.T) {
 
 func TestDocbankRechecksVisibilityAndColdAbsence(t *testing.T) {
 	for _, tc := range []struct {
-		name   string
-		change func(*fakeDocbank)
+		name    string
+		change  func(*fakeDocbank)
+		wantErr error
+		want    kataevidence.State
 	}{
-		{"revoked", func(f *fakeDocbank) { f.revoked = true }},
-		{"transcript 404", func(f *fakeDocbank) { f.transcriptErr = errNotFound }},
-		{"vault changed", func(f *fakeDocbank) { f.statusChange = func(s *docbankmedia.Receipt) { s.VaultUID = "other" } }},
-		{"source changed", func(f *fakeDocbank) { f.statusChange = func(s *docbankmedia.Receipt) { s.SourceID = "other" } }},
-		{"source version changed", func(f *fakeDocbank) { f.statusChange = func(s *docbankmedia.Receipt) { s.SourceVersionID = "other" } }},
-		{"content version changed", func(f *fakeDocbank) { f.statusChange = func(s *docbankmedia.Receipt) { s.ContentVersionID = "other" } }},
-		{"input revoked", func(f *fakeDocbank) { f.statusChange = func(s *docbankmedia.Receipt) { s.CoverageState = "stale" } }},
-		{"input changed", func(f *fakeDocbank) { f.statusChange = func(s *docbankmedia.Receipt) { s.SuppliedInputID = "other" } }},
+		{"revoked", func(f *fakeDocbank) { f.revoked = true }, kataevidence.ErrUnavailable, kataevidence.Unavailable},
+		{"transcript 404", func(f *fakeDocbank) { f.transcriptErr = errNotFound }, kataevidence.ErrUnavailable, kataevidence.Unavailable},
+		{"vault changed", func(f *fakeDocbank) { f.statusChange = func(s *docbankmedia.Receipt) { s.VaultUID = "other" } }, kataevidence.ErrUnavailable, kataevidence.Unavailable},
+		{"source changed", func(f *fakeDocbank) { f.statusChange = func(s *docbankmedia.Receipt) { s.SourceID = "other" } }, kataevidence.ErrUnavailable, kataevidence.Unavailable},
+		{"source version changed", func(f *fakeDocbank) { f.statusChange = func(s *docbankmedia.Receipt) { s.SourceVersionID = "other" } }, kataevidence.ErrChanged, kataevidence.Changed},
+		{"content version changed", func(f *fakeDocbank) { f.statusChange = func(s *docbankmedia.Receipt) { s.ContentVersionID = "other" } }, kataevidence.ErrChanged, kataevidence.Changed},
+		{"input revoked", func(f *fakeDocbank) { f.statusChange = func(s *docbankmedia.Receipt) { s.CoverageState = "stale" } }, kataevidence.ErrUnavailable, kataevidence.Unavailable},
+		{"input withdrawn", func(f *fakeDocbank) { f.statusChange = func(s *docbankmedia.Receipt) { s.SuppliedInputID = "" } }, kataevidence.ErrUnavailable, kataevidence.Unavailable},
+		{"input changed", func(f *fakeDocbank) { f.statusChange = func(s *docbankmedia.Receipt) { s.SuppliedInputID = "other" } }, kataevidence.ErrChanged, kataevidence.Changed},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
@@ -427,13 +460,13 @@ func TestDocbankRechecksVisibilityAndColdAbsence(t *testing.T) {
 				reader = kataevidence.NewDocbankReader(f, f, func(context.Context) (string, error) { return "destination", nil }, f.MediaRevision)
 			}
 			_, err = reader.LoadKataEvidenceSource(t.Context(), selector)
-			require.ErrorIs(err, kataevidence.ErrUnavailable)
+			require.ErrorIs(err, tc.wantErr)
 			resolved, err := kataevidence.New(nil).WithDocbank(reader).ResolveAround(t.Context(), prepared.Reference, 0)
 			require.NoError(err)
-			assert.Equal(kataevidence.Unavailable, resolved.State)
+			assert.Equal(tc.want, resolved.State)
 			cold := kataevidence.NewDocbankReader(f, f, func(context.Context) (string, error) { return "destination", nil }, f.MediaRevision)
 			_, err = cold.ReadKataEvidenceSource(t.Context(), prepared.Reference)
-			require.ErrorIs(err, kataevidence.ErrUnavailable)
+			require.ErrorIs(err, tc.wantErr)
 		})
 	}
 }

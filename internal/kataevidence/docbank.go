@@ -15,6 +15,10 @@ import (
 // DocbankTimeout bounds one citation or transcript passage's Docbank calls.
 const DocbankTimeout = 5 * time.Second
 
+// transcriptCheckTimeout bounds one download of a transcript's producer
+// metadata, which keeps running after a caller's DocbankTimeout ends.
+const transcriptCheckTimeout = time.Minute
+
 // DocbankBindingStore finds the retained Docbank delivery of an attachment.
 type DocbankBindingStore interface {
 	KataDocbankBinding(ctx context.Context, destination string, attachmentID int64) (DocbankBinding, error)
@@ -38,6 +42,7 @@ type DocbankReader struct {
 	revision    func(context.Context, int64) (string, error)
 	mu          sync.Mutex
 	verified    map[transcriptKey]bool
+	checks      map[transcriptKey]*transcriptCheck
 }
 
 // NewDocbankReader reads bindings recorded under the destination key that
@@ -62,6 +67,12 @@ type transcriptKey struct {
 	revision, source, sourceVersion, contentVersion, contentHash, vault, input, profile, build, attachment, rendition string
 }
 
+// transcriptCheck is one shared download of a transcript's producer metadata.
+type transcriptCheck struct {
+	done chan struct{}
+	err  error
+}
+
 func (r *DocbankReader) checkTranscript(ctx context.Context, binding DocbankBinding, request docbankmedia.EvidenceWindowRequest) error {
 	// Visibility can change without changing a transcript build.
 	status, err := r.client.Status(ctx, binding.SourceID)
@@ -71,19 +82,67 @@ func (r *DocbankReader) checkTranscript(ctx context.Context, binding DocbankBind
 	if err != nil {
 		return err
 	}
-	if status.VaultUID != binding.VaultUID || status.SourceID != binding.SourceID || status.SourceVersionID != binding.SourceVersionID || status.ContentVersionID != binding.ContentVersionID {
+	if status.VaultUID != binding.VaultUID || status.SourceID != binding.SourceID {
 		return ErrUnavailable
 	}
-	if binding.SuppliedInputID != "" && (status.CoverageState == "stale" || !docbankmedia.SuppliedTranscriptMatches(binding.SuppliedInputID, status.SuppliedInputID)) {
-		return ErrUnavailable
+	if status.SourceVersionID != binding.SourceVersionID || status.ContentVersionID != binding.ContentVersionID {
+		return ErrChanged
+	}
+	if binding.SuppliedInputID != "" {
+		switch {
+		case status.CoverageState == "stale" || status.SuppliedInputID == "":
+			return ErrUnavailable
+		case !docbankmedia.SuppliedTranscriptMatches(binding.SuppliedInputID, status.SuppliedInputID):
+			return ErrChanged
+		}
 	}
 	key := transcriptKey{binding.Revision, binding.SourceID, binding.SourceVersionID, binding.ContentVersionID, binding.ContentSHA256, binding.VaultUID, binding.SuppliedInputID, binding.Profile, request.BuildID, request.RenditionAttachmentID, request.RenditionSHA256}
 	r.mu.Lock()
-	verified := r.verified[key]
-	r.mu.Unlock()
-	if verified {
+	if r.verified[key] {
+		r.mu.Unlock()
 		return nil
 	}
+	check := r.checks[key]
+	if check == nil {
+		check = &transcriptCheck{done: make(chan struct{})}
+		if r.checks == nil {
+			r.checks = make(map[transcriptKey]*transcriptCheck)
+		}
+		r.checks[key] = check
+		// A long transcript can outlast the caller's DocbankTimeout. The download
+		// finishes under its own bound and caches success, so a retry can cite it.
+		go r.runTranscriptCheck(context.WithoutCancel(ctx), key, check, binding, request)
+	}
+	r.mu.Unlock()
+	select {
+	case <-check.done:
+		return check.err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (r *DocbankReader) runTranscriptCheck(ctx context.Context, key transcriptKey, check *transcriptCheck, binding DocbankBinding, request docbankmedia.EvidenceWindowRequest) {
+	ctx, cancel := context.WithTimeout(ctx, transcriptCheckTimeout)
+	defer cancel()
+	check.err = r.verifyTranscript(ctx, binding, request)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.checks, key)
+	if check.err == nil {
+		if len(r.verified) >= 64 {
+			clear(r.verified)
+		}
+		if r.verified == nil {
+			r.verified = make(map[transcriptKey]bool)
+		}
+		r.verified[key] = true
+	}
+	close(check.done)
+}
+
+// verifyTranscript checks that the served build came from the retained delivery.
+func (r *DocbankReader) verifyTranscript(ctx context.Context, binding DocbankBinding, request docbankmedia.EvidenceWindowRequest) error {
 	transcript, err := r.client.Transcript(ctx, binding.SourceID, binding.SourceVersionID, binding.ContentVersionID)
 	if notFound(err) {
 		return ErrUnavailable
@@ -113,15 +172,6 @@ func (r *DocbankReader) checkTranscript(ctx context.Context, binding DocbankBind
 	if evidence.BuildID != request.BuildID {
 		return ErrChanged
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if len(r.verified) >= 64 {
-		clear(r.verified)
-	}
-	if r.verified == nil {
-		r.verified = make(map[transcriptKey]bool)
-	}
-	r.verified[key] = true
 	return nil
 }
 
@@ -152,7 +202,7 @@ func (r *DocbankReader) LoadKataEvidenceSource(ctx context.Context, selector Sel
 	ctx, cancel := context.WithTimeout(ctx, DocbankTimeout)
 	defer cancel()
 	request, err := r.client.EvidenceIdentity(ctx, binding.ContentVersionID, binding.ContentSHA256, binding.Profile)
-	if notFound(err) && request.NodeID > 0 {
+	if noRendition(err) && request.NodeID > 0 {
 		err = r.classify(ctx, request.NodeID, binding, nil, err)
 	}
 	if err != nil {
@@ -245,7 +295,7 @@ func (r *DocbankReader) classify(ctx context.Context, nodeID int64, binding Docb
 	}
 	identity, err := r.client.EvidenceIdentity(ctx, binding.ContentVersionID, binding.ContentSHA256, binding.Profile)
 	switch {
-	case notFound(err):
+	case noRendition(err):
 		return ErrUnprocessed
 	case err != nil:
 		return err
@@ -264,6 +314,11 @@ func notFound(err error) bool {
 	return ok && httpErr.Status == http.StatusNotFound
 }
 
+// noRendition reports whether Docbank selected no rendition of a version.
+func noRendition(err error) bool {
+	return notFound(err) || errors.Is(err, docbankmedia.ErrNoRendition)
+}
+
 // docbankError keeps what classify decided and reports a failure as retryable
 // only when a retry can change it. A missing transcript file or a window past
 // the transcript's end is unavailable; a refused request or credential is a
@@ -275,7 +330,10 @@ func docbankError(parent context.Context, err error) error {
 		return err
 	case errors.Is(err, docbankmedia.ErrEvidenceUnavailable):
 		return ErrUnavailable
-	case errors.Is(err, docbankmedia.ErrCredentialUnavailable), errors.Is(err, docbankmedia.ErrInvalidReceipt):
+	case errors.Is(err, docbankmedia.ErrRenditionFailed):
+		return ErrFailed
+	case errors.Is(err, docbankmedia.ErrCredentialUnavailable), errors.Is(err, docbankmedia.ErrInvalidReceipt),
+		errors.Is(err, docbankmedia.ErrProfileUnavailable):
 		return ErrUnsupported
 	}
 	if httpErr, ok := errors.AsType[*docbankmedia.HTTPError](err); ok {

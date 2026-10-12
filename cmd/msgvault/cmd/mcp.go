@@ -305,11 +305,7 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 		opts.Kata = st
 		opts.KataLookup = daemonclient.APISchemaVersionAtLeast(schemaVersion, kataLookupMinAPISchemaVersion)
 		if daemonclient.APISchemaVersionAtLeast(schemaVersion, kataDocbankMinAPISchemaVersion) {
-			client, err := st.GeneratedClient()
-			if err == nil {
-				status, err := client.GetMediaSearchStatusWithResponse(ctx)
-				opts.KataDocbank = err == nil && status != nil && status.JSON200 != nil && status.JSON200.Configured
-			}
+			opts.KataDocbank = probeKataDocbank(ctx, st, log)
 		}
 	}
 	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, archiveSQLMinAPISchemaVersion) &&
@@ -330,6 +326,26 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 	}
 
 	return opts
+}
+
+// probeKataDocbank reports whether the daemon can cite Docbank transcripts.
+// A failed probe leaves transcript citations out of the tool description.
+func probeKataDocbank(ctx context.Context, st *daemonclient.Client, log *slog.Logger) bool {
+	client, err := st.GeneratedClient()
+	if err != nil {
+		log.Warn("Kata transcript citations hidden because the daemon client failed", "error", err)
+		return false
+	}
+	status, err := client.GetMediaSearchStatusWithResponse(ctx)
+	if err != nil {
+		log.Warn("Kata transcript citations hidden because the Docbank status probe failed", "error", err)
+		return false
+	}
+	if status.JSON200 == nil {
+		log.Warn("Kata transcript citations hidden because the Docbank status probe failed", "status", status.StatusCode)
+		return false
+	}
+	return status.JSON200.Configured
 }
 
 type daemonMCPPersonFileSearcher struct{ client *daemonclient.Client }

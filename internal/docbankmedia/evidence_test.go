@@ -105,27 +105,26 @@ func TestEvidenceWindowWire(t *testing.T) {
 	require.NoError(err)
 	assert.Equal("revised", window.Text)
 
-	for _, state := range []string{"failed", "historical_unavailable", "verified_empty", "unconfigured", "profile_required", "unprocessed", "pending", "unknown", ""} {
+	for state, want := range map[string]error{
+		"failed":                 docbankmedia.ErrRenditionFailed,
+		"historical_unavailable": docbankmedia.ErrEvidenceUnavailable,
+		"verified_empty":         docbankmedia.ErrEvidenceUnavailable,
+		"unconfigured":           docbankmedia.ErrProfileUnavailable,
+		"profile_required":       docbankmedia.ErrProfileUnavailable,
+		"unprocessed":            docbankmedia.ErrNoRendition,
+		"pending":                docbankmedia.ErrInvalidReceipt,
+		"unknown":                docbankmedia.ErrInvalidReceipt,
+		"":                       docbankmedia.ErrInvalidReceipt,
+	} {
 		mu.Lock()
 		receiptState = state
 		mu.Unlock()
-		_, err := client.EvidenceIdentity(t.Context(), version, content, "supplied-transcript")
-		switch state {
-		case "pending", "unknown", "":
-			require.ErrorIs(err, docbankmedia.ErrInvalidReceipt)
-		case "historical_unavailable", "verified_empty":
-			require.ErrorIs(err, docbankmedia.ErrEvidenceUnavailable)
-		default:
-			httpErr, ok := errors.AsType[*docbankmedia.HTTPError](err)
-			require.True(ok)
-			switch state {
-			case "failed":
-				assert.Equal("rendition_failed", httpErr.Reason)
-			case "unprocessed":
-				assert.Equal(http.StatusNotFound, httpErr.Status)
-			default:
-				assert.Equal("processing_profile_unavailable", httpErr.Reason)
-			}
+		identity, err := client.EvidenceIdentity(t.Context(), version, content, "supplied-transcript")
+		require.ErrorIs(err, want, "receipt state %q", state)
+		_, isHTTP := errors.AsType[*docbankmedia.HTTPError](err)
+		assert.False(isHTTP, "receipt state %q is not a Docbank HTTP failure", state)
+		if state == "unprocessed" {
+			assert.Equal(int64(7), identity.NodeID, "the caller asks the node why nothing was selected")
 		}
 	}
 	mu.Lock()

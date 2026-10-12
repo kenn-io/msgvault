@@ -1,10 +1,12 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -132,26 +134,33 @@ func TestKataIssueHTTP(t *testing.T) {
 	assert.Equal(http.StatusBadRequest, negative.Code)
 
 	for _, tc := range []struct {
-		err    error
-		status int
-		code   string
+		err     error
+		status  int
+		code    string
+		message string
 	}{
-		{kataevidence.ErrChanged, http.StatusConflict, "evidence_changed"},
-		{kataevidence.ErrInvalidReference, http.StatusBadRequest, "invalid_evidence"},
-		{taskclient.ErrInvalidRef, http.StatusBadRequest, "invalid_ref"},
-		{fmt.Errorf("prepare: %w", kataevidence.ErrDocbankLimit), http.StatusBadRequest, "invalid_evidence"},
-		{kataissues.ErrInvalidRequest, http.StatusUnprocessableEntity, "invalid_request"},
-		{kataissues.ErrOutsideProject, http.StatusUnprocessableEntity, "kata_issue_outside_project"},
-		{fmt.Errorf("%w: person 404: %w", personagenda.ErrIdentityLookup, fmt.Errorf("get person: %w", store.ErrPersonNotFound)), http.StatusNotFound, "person_profile_not_found"},
-		{kataevidence.ErrDocbankConfiguration, http.StatusUnprocessableEntity, "docbank_configuration_invalid"},
-		{kataevidence.ErrFailed, http.StatusUnprocessableEntity, "evidence_failed"},
-		{kataevidence.ErrUnprocessed, http.StatusUnprocessableEntity, "evidence_unprocessed"},
-		{kataevidence.ErrUnsupported, http.StatusUnprocessableEntity, "evidence_unsupported"},
+		{kataevidence.ErrChanged, http.StatusConflict, "evidence_changed", ""},
+		{kataevidence.ErrInvalidReference, http.StatusBadRequest, "invalid_evidence", ""},
+		{taskclient.ErrInvalidRef, http.StatusBadRequest, "invalid_ref", ""},
+		{fmt.Errorf("prepare: %w", kataevidence.ErrDocbankLimit), http.StatusBadRequest, "invalid_evidence", ""},
+		{kataissues.ErrInvalidRequest, http.StatusUnprocessableEntity, "invalid_request", ""},
+		{kataissues.ErrOutsideProject, http.StatusUnprocessableEntity, "kata_issue_outside_project", ""},
+		{fmt.Errorf("%w: person 404: %w", personagenda.ErrIdentityLookup, fmt.Errorf("get person: %w", store.ErrPersonNotFound)), http.StatusNotFound, "person_profile_not_found", ""},
+		{kataevidence.ErrDocbankConfiguration, http.StatusUnprocessableEntity, "docbank_configuration_invalid", ""},
+		{kataevidence.ErrFailed, http.StatusUnprocessableEntity, "evidence_failed", ""},
+		{kataevidence.ErrUnprocessed, http.StatusUnprocessableEntity, "evidence_unprocessed", ""},
+		{kataevidence.ErrUnsupported, http.StatusUnprocessableEntity, "evidence_unsupported", ""},
+		{fmt.Errorf("%w: connection refused", kataevidence.ErrDocbankUnavailable), http.StatusServiceUnavailable, "archive_unavailable", "Docbank could not be reached; retry later"},
 	} {
 		operations.err = tc.err
 		failed := serveKataIssue(server, "/api/v1/integrations/kata/issues", createBody, map[string]string{"Idempotency-Key": "key-2"})
 		assert.Equal(tc.status, failed.Code)
 		assert.Contains(failed.Body.String(), tc.code)
+		if tc.message != "" {
+			var body ErrorResponse
+			require.NoError(json.Unmarshal(failed.Body.Bytes(), &body))
+			assert.Equal(tc.message, body.Message)
+		}
 		if errors.Is(tc.err, taskclient.ErrInvalidRef) {
 			var body ErrorResponse
 			require.NoError(json.Unmarshal(failed.Body.Bytes(), &body))
@@ -203,4 +212,15 @@ func TestKataIssueLookupArchiveErrors(t *testing.T) {
 			assert.Equal(t, tc.code, body.Error)
 		})
 	}
+}
+
+func TestKataIssueBackendWarnsWithoutMediaRevisions(t *testing.T) {
+	var logs bytes.Buffer
+	cfg := &config.Config{}
+	cfg.Integrations.Docbank = config.DocbankIntegrationConfig{Enabled: true, URL: "https://docbank.example.test"}
+	backend := newKataIssueBackend(cfg, storetest.New(t).Store, slog.New(slog.NewTextHandler(&logs, nil)))
+	require.NotNil(t, backend)
+	assert.Contains(t, logs.String(), "Kata transcript citations disabled: the archive store cannot read media revisions")
+	_, err := backend.Prepare(t.Context(), []kataevidence.Selector{{Kind: "docbank_rendition", MessageID: 1, AttachmentID: 1, MaxChars: new(10)}})
+	require.ErrorIs(t, err, kataevidence.ErrUnsupported)
 }

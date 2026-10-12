@@ -119,12 +119,16 @@ transcript build it quoted, and `msgvault kata issues --message 42
 Transcript citations require daemon API schema 3.13.0 or newer. A daemon with the Docbank integration disabled returns `evidence_unsupported`. A failed rendition returns `evidence_failed`; an empty or unavailable historical rendition returns `evidence_unavailable`.
 
 Prepare returns `evidence_unprocessed` while Docbank has no transcript for the
-file, `evidence_changed` once Docbank holds a newer version of it, and
-`evidence_unavailable` when msgvault has no delivery of it to the configured
-Docbank or Docbank deleted it. While Docbank can't be reached, prepare, create
-and link return `archive_unavailable` (503); retry later. A context read
-reports `changed` once Docbank holds a newer version of the file or
-transcribed it again, `unavailable` when Docbank deleted the file, and
+file, `evidence_changed` once Docbank holds a newer version of it or
+transcribed it again, and `evidence_unavailable` when msgvault has no delivery
+of it to the configured Docbank or Docbank deleted it. While Docbank can't be
+reached, prepare, create and link return `archive_unavailable` (503) with the
+message "Docbank could not be reached; retry later". The first citation of a
+transcript downloads it once to check where it came from. A long transcript can
+take longer than a request allows; the download keeps running for up to a
+minute, so a retry can cite it. A context read reports `changed` once Docbank
+holds a newer version of the file or transcribed it again, `unavailable` when
+Docbank deleted the file, and
 `unreachable` while Docbank can't be reached. Citing transcripts needs Docbank
 v0.15.1 or newer. Msgvault checks that the transcript came from the retained
 delivery and that the message's transcript hasn't changed. A Docbank that
