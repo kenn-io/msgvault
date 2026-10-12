@@ -21,7 +21,12 @@ func inboxReadAllowed(grant *agentgrant.Grant, permission agentgrant.Permission,
 }
 
 func (s *Server) authorizeInboxRead(w http.ResponseWriter, r *http.Request, source agentgrant.SourceRef, permission agentgrant.Permission) bool {
-	auth := s.classifyAPIRequestDirect(r)
+	// Library callers are already admitted as the archive owner. Daemon
+	// requests still need a fresh credential lookup before each disclosure.
+	auth := s.requestAuthentication(r)
+	if auth.Mode != AuthModeCaller {
+		auth = s.classifyAPIRequestDirect(r)
+	}
 	if auth.Mode == AuthModeRequired {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication is required")
 		return false

@@ -2,8 +2,6 @@ package cmd
 
 import (
 	"encoding/json/v2"
-	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"testing"
 	"time"
@@ -27,18 +25,7 @@ func TestMCPInboxCandidatesRealDaemonScopeAndCursor(t *testing.T) {
 	requirements.NoError(err)
 	requirements.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{{Mailbox: "INBOX", State: store.IMAPFolderState{Mailbox: "INBOX", UIDValidity: 77, UIDNext: 11}, Reset: true, Memberships: []store.IMAPMembershipObservation{{Mailbox: "INBOX", UIDValidity: 77, UID: 9, SourceMessageID: "INBOX|9", Flags: []string{}}, {Mailbox: "INBOX", UIDValidity: 77, UID: 10, SourceMessageID: "INBOX|10", Flags: []string{}}}}}))
 	seedArchivedIMAPInboxReads(t, f.store, f.source.ID)
-	server := mcpDraftTestDaemon(t, f.grantedAdapter(), func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			response := httptest.NewRecorder()
-			next.ServeHTTP(response, r)
-			t.Logf("native diagnostic: %s %s status=%d", r.Method, r.URL.Path, response.Code)
-			for key, values := range response.Header() {
-				w.Header()[key] = values
-			}
-			w.WriteHeader(response.Code)
-			_, _ = w.Write(response.Body.Bytes())
-		})
-	})
+	server := mcpDraftTestDaemon(t, f.grantedAdapter(), nil)
 	session := mcpDraftTestSession(mcpDraftAgentContext(t, server, f.source.ID, []string{"inbox.read"}), t)
 	requirements.Contains(mcpDraftToolNames(t, session), "inbox_candidates")
 	source := map[string]any{"source_id": f.source.ID, "source_type": "imap", "source_identifier": f.source.Identifier, "account_id": f.config.Username}
