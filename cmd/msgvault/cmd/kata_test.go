@@ -10,7 +10,9 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -88,6 +90,14 @@ func TestKataCreateThroughDaemonAdapter(t *testing.T) {
 	assert.True(retried.Replayed)
 	assert.Equal(created.Issue.UID, retried.Issue.UID)
 	assert.Equal(created.Issue.QualifiedRef+"\tSend the revised budget (already filed, "+created.Issue.Status+")\n", string(runKataCommand(ctx, t, string(request), "create", "--idempotency-key", "cli-key")))
+	var citing generated.KataIssueListResponse
+	require.NoError(json.Unmarshal(runKataCommand(ctx, t, "", "issues", "--message", strconv.FormatInt(id, 10), "--json"), &citing))
+	require.Len(citing.Issues, 1)
+	assert.Equal(created.Issue.UID, citing.Issues[0].UID)
+	var issueContext generated.KataIssueContextResponse
+	require.NoError(json.Unmarshal(runKataCommand(ctx, t, "", "context", created.Issue.QualifiedRef, "--json"), &issueContext))
+	assert.Equal(created.Issue.QualifiedRef, issueContext.Issue.QualifiedRef)
+	assert.Len(issueContext.Passages, 1)
 
 	// The exported generated client decodes a replay like a create, and the
 	// daemon client names the filed issue when a retry changes the request.
@@ -104,6 +114,29 @@ func TestKataCreateThroughDaemonAdapter(t *testing.T) {
 	conflict, ok := errors.AsType[*daemonclient.KataIssueConflictError](err)
 	require.True(ok, "%v", err)
 	assert.Equal(created.Issue.QualifiedRef, conflict.Issue.QualifiedRef)
+
+	// Truncation must not add a non-tabular row to stdout.
+	for i := range 10 {
+		runKataCommand(ctx, t, string(request), "create", "--idempotency-key", fmt.Sprintf("cli-extra-%d", i), "--json")
+	}
+	command = newKataCmd()
+	command.SetArgs([]string{"issues", "--message", strconv.FormatInt(id, 10)})
+	var stdout, stderr bytes.Buffer
+	command.SetOut(&stdout)
+	command.SetErr(&stderr)
+	require.NoError(command.ExecuteContext(ctx))
+	for row := range strings.SplitSeq(strings.TrimSpace(stdout.String()), "\n") {
+		assert.Len(strings.Split(row, "\t"), 3, row)
+	}
+	assert.Contains(stderr.String(), "This list may be incomplete; check Kata before filing again.")
+}
+
+func TestKataIssuesRequiresMessage(t *testing.T) {
+	command := newKataCmd()
+	command.SetArgs([]string{"issues"})
+	command.SetOut(io.Discard)
+	command.SetErr(io.Discard)
+	require.ErrorContains(t, command.ExecuteContext(t.Context()), `required flag(s) "message" not set`)
 }
 
 func runKataCommand(ctx context.Context, t *testing.T, input string, args ...string) []byte {
@@ -119,6 +152,7 @@ func runKataCommand(ctx context.Context, t *testing.T, input string, args ...str
 }
 
 func TestKataCommandsRefuseAnOlderDaemon(t *testing.T) {
+	var version atomic.Pointer[string]
 	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/v1/health" {
 			assert.Fail(t, "unexpected request", r.URL.Path)
@@ -126,11 +160,17 @@ func TestKataCommandsRefuseAnOlderDaemon(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"3.3.0"}`))
+		_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"` + *version.Load() + `"}`))
 	}))
 	t.Cleanup(daemon.Close)
 	ctx := configureRemoteDaemonForTest(t, daemon.URL)
-	for _, args := range [][]string{{"evidence", "prepare"}, {"create", "--idempotency-key", "key-1"}, {"link", "example#abcd"}} {
+	for _, args := range [][]string{{"evidence", "prepare"}, {"create", "--idempotency-key", "key-1"}, {"link", "example#abcd"}, {"issues", "--message", "1"}, {"context", "example#abcd"}} {
+		// The lookup and the context read need newer daemons than the other commands.
+		version.Store(new("3.3.0"))
+		switch args[0] {
+		case "issues", "context":
+			version.Store(new("3.11.0"))
+		}
 		command := newKataCmd()
 		command.SetArgs(args)
 		command.SetIn(strings.NewReader(kataInputFor(args[0])))
@@ -149,4 +189,19 @@ func kataInputFor(command string) string {
 		return `{"title":"Send the budget","evidence":[]}`
 	}
 	return `{"evidence":[]}`
+}
+
+// A passage names its source from its reference, then its subject or
+// filename, and drops IDs that may belong to another archive.
+func TestKataContextLabelsPassagesWithoutDisplay(t *testing.T) {
+	chunk := generated.Reference{MessageID: 4, AttachmentID: new(int64(9)), DocumentChunk: &generated.DocumentReference{}}
+	var out strings.Builder
+	require.NoError(t, writeKataIssueContext(&out, generated.KataIssueContextResponse{Passages: []generated.ContextPassage{
+		{State: "available", Evidence: generated.Evidence{Reference: generated.Reference{MessageID: 4}, Excerpt: "é界🙂 send the revised budget"}},
+		{State: "changed", Evidence: generated.Evidence{Reference: chunk}, SavedQuote: new("Send the budget")},
+		{State: "changed", Evidence: generated.Evidence{Reference: generated.Reference{MessageID: 4}, Display: generated.Display{ContainingTitle: new("Budget")}}},
+		{State: "unavailable", Evidence: generated.Evidence{Reference: chunk}},
+		{State: "unavailable", Evidence: generated.Evidence{Reference: generated.Reference{MessageID: 4}}},
+	}}))
+	assert.Equal(t, "\t\t\n\navailable\tmessage 4\n  [é界🙂 send the revised budget]\n\nchanged\tattachment 9 of message 4\n  saved quote: Send the budget\n\nchanged\tmessage 4: Budget\n\nunavailable\tattachment in this or another archive\n\nunavailable\tmessage in this or another archive\n", out.String())
 }

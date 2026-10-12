@@ -2655,6 +2655,35 @@ func (c ContactState) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(c))
 }
 
+type ContextPassage struct {
+	// After Up to 500 characters of source text after the excerpt, when available
+	After *string `json:"after,omitzero"`
+
+	// Before Up to 500 characters of source text before the excerpt, when available
+	Before   *string  `json:"before,omitzero"`
+	Evidence Evidence `json:"evidence"`
+
+	// SavedQuote Quoted words recovered from the issue body or comments when archive evidence is not available
+	SavedQuote *string `json:"saved_quote,omitzero"`
+	State      string  `json:"state" validate:"required"`
+}
+
+func (c ContextPassage) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(c.Evidence).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Evidence", err)
+		}
+	}
+	if err := typesValidator.Var(c.State, "required"); err != nil {
+		errors = errors.Append("State", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type ConversationResponse struct {
 	AnchorID  int64           `json:"anchor_id"`
 	HasAfter  bool            `json:"has_after"`
@@ -4088,7 +4117,7 @@ func (s ErrorResponse) Error() string {
 type Evidence struct {
 	ContentTrust string    `json:"content_trust" validate:"required"`
 	Display      Display   `json:"display"`
-	Excerpt      string    `json:"excerpt" validate:"required"`
+	Excerpt      string    `json:"excerpt" validate:"omitempty"`
 	ID           string    `json:"id" validate:"required"`
 	NextRune     *int64    `json:"next_rune,omitempty"`
 	Passage      string    `json:"passage" validate:"required"`
@@ -4104,9 +4133,6 @@ func (e Evidence) Validate() error {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("Display", err)
 		}
-	}
-	if err := typesValidator.Var(e.Excerpt, "required"); err != nil {
-		errors = errors.Append("Excerpt", err)
 	}
 	if err := typesValidator.Var(e.ID, "required"); err != nil {
 		errors = errors.Append("ID", err)
@@ -6033,6 +6059,34 @@ func (k KataIssueConflictResponse) Validate() error {
 	return errors
 }
 
+type KataIssueContextResponse struct {
+	Issue KataIssueReceipt `json:"issue"`
+
+	// NextOffset Offset of the next page of passages; absent on the last page
+	NextOffset *int64           `json:"next_offset,omitempty"`
+	Passages   []ContextPassage `json:"passages" validate:"required"`
+}
+
+func (k KataIssueContextResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(k.Issue).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Issue", err)
+		}
+	}
+	for i, item := range k.Passages {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Passages[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type KataIssueCreateRequest struct {
 	Brief    *string     `json:"brief,omitzero" validate:"omitempty,max=2000"`
 	Evidence []Reference `json:"evidence" validate:"required"`
@@ -6067,6 +6121,28 @@ func (k KataIssueCreateRequest) Validate() error {
 	}
 	if err := typesValidator.Var(k.Title, "required,max=512,min=1"); err != nil {
 		errors = errors.Append("Title", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type KataIssueListResponse struct {
+	Issues []KataIssueReceipt `json:"issues" validate:"required"`
+
+	// Truncated The list may omit issues that cite this source: more matched than were returned, or some issues could not be checked
+	Truncated bool `json:"truncated"`
+}
+
+func (k KataIssueListResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range k.Issues {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Issues[%d]", i), err)
+			}
+		}
 	}
 	if len(errors) == 0 {
 		return nil

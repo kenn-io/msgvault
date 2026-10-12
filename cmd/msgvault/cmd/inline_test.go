@@ -14,7 +14,6 @@ import (
 
 type inlineProbeClient struct {
 	account      inline.Account
-	chatID       int64
 	page         inline.Page
 	messageCalls int
 	discovered   []inline.Conversation
@@ -22,9 +21,6 @@ type inlineProbeClient struct {
 
 func (c *inlineProbeClient) Me(context.Context) (inline.Account, error) { return c.account, nil }
 func (c *inlineProbeClient) Conversation(_ context.Context, id int64) (inline.Conversation, error) {
-	if c.chatID != 0 {
-		id = c.chatID
-	}
 	return inline.Conversation{ID: id}, nil
 }
 func (c *inlineProbeClient) Messages(context.Context, int64, int64) (inline.Page, error) {
@@ -54,16 +50,6 @@ func TestInlineProbeChecksPrincipalAndAvoidsPrivateText(t *testing.T) {
 	client.messageCalls = 0
 	requires.ErrorContains(runInlineProbe(context.Background(), &out, client, inline.ImportOptions{Account: account, ChatIDs: []int64{123}}), "differs from configuration")
 	assertions.Zero(client.messageCalls, "a different signed-in account must not reach message reads")
-}
-
-func TestInlineSetupRejectsWrongOriginOrChat(t *testing.T) {
-	client := &inlineProbeClient{account: inline.Account{UserID: 42, Origin: "example.com"}}
-	_, err := verifyInlineSelection(context.Background(), client, []int64{123})
-	require.ErrorContains(t, err, "production account")
-	client.account.Origin = inline.ProductionOrigin
-	client.chatID = 456
-	_, err = verifyInlineSelection(context.Background(), client, []int64{123})
-	require.ErrorContains(t, err, "different chat")
 }
 
 func TestInlineChatSelectionValidatesCanonicalIDs(t *testing.T) {

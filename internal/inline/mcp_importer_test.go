@@ -55,6 +55,8 @@ func setMCPReactionHistory(f *inlineMCPFixture, chatID int64, base, suffix strin
 func TestMCPImportPersistsAndReplacesReactionSnapshots(t *testing.T) {
 	for _, structured := range []bool{true, false} {
 		t.Run(fmt.Sprintf("structured_%t", structured), func(t *testing.T) {
+			checks := assert.New(t)
+			requires := require.New(t)
 			f := newInlineMCPFixture(t, map[string]string{
 				"conversations.get": `{"chat":{"chatId":"7","title":"Example chat","kind":"space_chat"},"details":{},"participants":[]}`,
 			}, structured)
@@ -62,19 +64,19 @@ func TestMCPImportPersistsAndReplacesReactionSnapshots(t *testing.T) {
 			setMCPReactionHistory(f, 7, base, `,"reactions":[{"userId":"2","emoji":"👍"}]`)
 			client := connectInlineFixture(t, f)
 			account, err := client.Me(t.Context())
-			require.NoError(t, err)
+			requires.NoError(err)
 			st := testutil.NewTestStore(t)
 			_, err = st.GetOrCreateSource(SourceType, account.Identifier())
-			require.NoError(t, err)
+			requires.NoError(err)
 			imp := NewImporter(st, client)
 			opts := ImportOptions{Account: account, ChatIDs: []int64{7}, AttachmentsDir: t.TempDir()}
 			first, err := imp.Import(t.Context(), opts)
-			require.NoError(t, err)
-			assert.Equal(t, 1, first.MessagesAdded)
+			requires.NoError(err)
+			checks.Equal(1, first.MessagesAdded)
 			messageID := archivedMessage(t, st, first.SourceID, 7, 5)
 			one := []archivedMCPReaction{{UserIdentifier: "api.inline.chat:user:2", Type: "emoji", Emoji: "👍"}}
 			two := append(append([]archivedMCPReaction{}, one...), archivedMCPReaction{UserIdentifier: "api.inline.chat:user:3", Type: "emoji", Emoji: "👀"})
-			assert.Equal(t, one, readMCPReactionSnapshot(t, st, messageID))
+			checks.Equal(one, readMCPReactionSnapshot(t, st, messageID))
 
 			populated := `,"reactions":[{"userId":"2","emoji":"👍"},{"userId":"3","emoji":"👀"},{"userId":"3","emoji":"👀"}]`
 			opts.Full = true
@@ -89,12 +91,14 @@ func TestMCPImportPersistsAndReplacesReactionSnapshots(t *testing.T) {
 				{"empty replacement", `,"reactions":[]`, []archivedMCPReaction{}},
 			} {
 				t.Run(step.name, func(t *testing.T) {
+					checks := assert.New(t)
+					requires := require.New(t)
 					setMCPReactionHistory(f, 7, base, step.suffix)
 					summary, err := imp.Import(t.Context(), opts)
-					require.NoError(t, err)
-					assert.Equal(t, 1, summary.MessagesUpdated)
-					assert.Equal(t, messageID, archivedMessage(t, st, summary.SourceID, 7, 5))
-					assert.Equal(t, step.want, readMCPReactionSnapshot(t, st, messageID))
+					requires.NoError(err)
+					checks.Equal(1, summary.MessagesUpdated)
+					checks.Equal(messageID, archivedMessage(t, st, summary.SourceID, 7, 5))
+					checks.Equal(step.want, readMCPReactionSnapshot(t, st, messageID))
 				})
 			}
 		})
@@ -102,15 +106,16 @@ func TestMCPImportPersistsAndReplacesReactionSnapshots(t *testing.T) {
 }
 
 func TestMCPReactionRefreshRetainsCLIRawEvidence(t *testing.T) {
+	requires := require.New(t)
 	imp, cli, opts := importerFixture(t)
 	message, err := cliDecodeMessage(jsontext.Value(`{"id":1,"chat_id":1,"from_id":101,"date":1700000000,"message":"original","reactions":{"reactions":[{"user_id":101,"emoji":"👍","date":1700000200}]}}`), 1)
-	require.NoError(t, err)
+	requires.NoError(err)
 	cli.messages[1] = []Message{message}
 	first, err := imp.Import(t.Context(), opts)
-	require.NoError(t, err)
+	requires.NoError(err)
 	messageID := archivedMessage(t, imp.store, first.SourceID, 1, 1)
 	originalRaw, err := imp.store.GetMessageRaw(messageID)
-	require.NoError(t, err)
+	requires.NoError(err)
 	known := []archivedMCPReaction{{UserIdentifier: "api.inline.chat:user:101", Type: "emoji", Emoji: "👍", CreatedAt: sql.NullTime{Time: time.Unix(1700000200, 0).UTC(), Valid: true}}}
 	assert.Equal(t, known, readMCPReactionSnapshot(t, imp.store, messageID))
 

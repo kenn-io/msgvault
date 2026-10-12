@@ -5247,6 +5247,50 @@ func (o *PrepareKataEvidenceRequestOptions) GetHeader() (map[string]string, erro
 	return nil, nil
 }
 
+// FindKataIssuesRequestOptions is the options needed to make a request to FindKataIssues.
+type FindKataIssuesRequestOptions struct {
+	Query *FindKataIssuesQuery
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *FindKataIssuesRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Query != nil {
+		if v, ok := any(o.Query).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Query", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *FindKataIssuesRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *FindKataIssuesRequestOptions) GetQuery() (map[string]any, error) {
+	return runtime.AsMap[any](o.Query)
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *FindKataIssuesRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *FindKataIssuesRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // CreateKataIssueRequestOptions is the options needed to make a request to CreateKataIssue.
 type CreateKataIssueRequestOptions struct {
 	Body   *CreateKataIssueBody
@@ -5298,6 +5342,59 @@ func (o *CreateKataIssueRequestOptions) GetBody() any {
 // GetHeader returns the headers as a map.
 func (o *CreateKataIssueRequestOptions) GetHeader() (map[string]string, error) {
 	return runtime.AsMap[string](o.Header)
+}
+
+// GetKataIssueContextRequestOptions is the options needed to make a request to GetKataIssueContext.
+type GetKataIssueContextRequestOptions struct {
+	PathParams *GetKataIssueContextPath
+	Query      *GetKataIssueContextQuery
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *GetKataIssueContextRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.PathParams != nil {
+		if v, ok := any(o.PathParams).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("PathParams", err)
+			}
+		}
+	}
+
+	if o.Query != nil {
+		if v, ok := any(o.Query).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Query", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetKataIssueContextRequestOptions) GetPathParams() (map[string]any, error) {
+	return runtime.AsMap[any](o.PathParams)
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetKataIssueContextRequestOptions) GetQuery() (map[string]any, error) {
+	return runtime.AsMap[any](o.Query)
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetKataIssueContextRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetKataIssueContextRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
 }
 
 // LinkKataEvidenceRequestOptions is the options needed to make a request to LinkKataEvidence.

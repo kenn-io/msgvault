@@ -466,7 +466,7 @@ func (imp *Importer) persistMessage(ctx context.Context, sourceID, conversationI
 	if len(preview) > 100 {
 		preview = preview[:100]
 	}
-	stored := store.Message{SourceID: sourceID, ConversationID: conversationID, SourceMessageID: key, MessageType: SourceType, SentAt: sql.NullTime{Time: message.SentAt, Valid: true}, ReceivedAt: sql.NullTime{Time: message.SentAt, Valid: true}, SenderID: sql.NullInt64{Int64: senderID, Valid: true}, IsFromMe: message.SenderID == opts.Account.UserID, Snippet: sql.NullString{String: string(preview), Valid: body != ""}, SizeEstimate: int64(len(body)), PreserveAttachmentStats: true}
+	stored := store.Message{SourceID: sourceID, ConversationID: conversationID, SourceMessageID: key, MessageType: SourceType, SentAt: sql.NullTime{Time: message.SentAt, Valid: true}, ReceivedAt: sql.NullTime{Time: message.SentAt, Valid: true}, SenderID: sql.NullInt64{Int64: senderID, Valid: true}, IsFromMe: message.SenderID == opts.Account.UserID, Snippet: sql.NullString{String: string(preview), Valid: body != ""}, SizeEstimate: messageSizeEstimate(body, metadata.Media), PreserveAttachmentStats: true}
 	metaValue := sql.NullString{String: string(encoded), Valid: true}
 	messageID, err := imp.store.PersistMessageContext(ctx, &store.MessagePersistData{Message: &stored, Metadata: &metaValue, BodyText: sql.NullString{String: body, Valid: body != ""}, RawMIME: raw, RawFormat: message.RawFormat, PreserveLabels: true, Recipients: []store.RecipientSet{{Type: "from", ParticipantIDs: []int64{senderID}, DisplayNames: []string{message.SenderName}}}, FTS: &store.FTSDoc{Body: body, FromAddr: message.SenderName}})
 	if err != nil {
@@ -496,7 +496,7 @@ func (imp *Importer) persistMessage(ctx context.Context, sourceID, conversationI
 			return err
 		}
 	}
-	if err = imp.persistMedia(ctx, messageID, conversation, message.Media, opts, sum); err != nil {
+	if err = imp.persistMedia(ctx, messageID, body, conversation, message.Media, opts, sum); err != nil {
 		return err
 	}
 	if err = imp.store.ClearMessageDeletedFromSource(sourceID, key); err != nil {

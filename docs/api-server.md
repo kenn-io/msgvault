@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-08"
+last_edited: "2026-10-11"
 title: Web UI & API Server
 description: Daemon-served analytical Web UI and REST API for your msgvault archive, with optional background sync scheduling.
 ---
@@ -100,7 +100,7 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.11.0**.
+it is separate from the binary release version. The current schema is **3.12.0**.
 Upgrade clients and daemon together across incompatible schema versions,
 including remote deployments.
 
@@ -120,6 +120,14 @@ review token. Upgrade the CLI and daemon together; clients with an incompatible
 schema fail before issuing archive requests. The HTTP prefix remains `/api/v1`.
 This schema also adds consented identity scoring. See
 [identity match review and scoring](#identity-match-review-and-scoring).
+
+Schema 3.12.0 adds `GET /api/v1/integrations/kata/issues/{ref}/context`, which
+[reads an issue's evidence back](usage/kata-issues.md#read-an-issues-evidence-back),
+and the `ContextPassage` schema with optional `before` and `after` text.
+
+Schema 3.12.0 adds `GET /api/v1/integrations/kata/issues`, which
+[finds the Kata issues that cite a source](usage/kata-issues.md#find-issues-that-already-cite-a-source).
+It checks the newest 500 evidence-bearing issues, or 20 if the listing exceeds 16 MiB. `truncated: true` means the list may be incomplete; check Kata before filing again.
 
 Schema 3.4.0 adds [Kata issues from archive evidence](usage/kata-issues.md).
 It also adds the `microsoft` CardDAV account provider, the
@@ -1001,6 +1009,7 @@ feed, re-fetch its detail response if you cache either of these:
 * `body` and `body_html`. An added or edited body moves the watermark. A body
   *deletion* does not, so a body you already hold can still go stale — that one
   is in the exception list below.
+  Beeper repair can update `body_html` and advance `content_changed_at`, making the message reappear in this feed.
 * `from`. It is derived from the sender pointer, and a change of pointer moves
   the watermark. Renaming or correcting the participant the pointer names does
   not, so the address or display name can still change under you.
@@ -1475,7 +1484,7 @@ is outside it:
 |---|---|---|
 | Labels | `message_labels` | No — and label re-sync is the most frequent change in a mail archive |
 | Recipients (to/cc/bcc) | `message_recipients` | No |
-| Attachment metadata (filenames, hashes, sizes, storage paths) | `attachments` | No — but `has_attachments` and `attachment_count` are message columns, so an attachment set that changes those does appear |
+| Attachment metadata (filenames, hashes, sizes, storage paths) | `attachments` | Changes appear when they change the message's `has_attachments` or `attachment_count`, or a native `teams:recording:` pointer's ID or storage URL. Other attachment metadata changes don't move the watermark. |
 | Raw MIME | `message_raw` | No — including raw MIME added after the message row |
 | Read state and platform flags (`is_read`, `read_at`, `is_edited`, `archived_at`) | `messages` | No |
 | Threading and identity pointers (`reply_to_message_id`, `rfc822_message_id`) | `messages` | No |

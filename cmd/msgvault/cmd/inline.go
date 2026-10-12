@@ -6,13 +6,16 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/clirun"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/inline"
+	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -385,15 +388,51 @@ func runConfiguredInlineSync(ctx context.Context, s *store.Store) error {
 		return errors.New("configuration is unavailable")
 	}
 	var errs []error
-	for _, account := range state.cfg.Inline.Accounts {
-		if ctx.Err() != nil {
+	resumeAt := ""
+	accounts := scheduledInlineRotation.order(state.cfg.Inline.Accounts)
+	for index, account := range accounts {
+		if ctx.Err() != nil || jobctx.PreemptionRequested(ctx) {
+			resumeAt = account.Identifier
 			break
 		}
 		if _, err := runInlineAccount(ctx, state, s, account, false, false, false, 0); err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", account.Identifier, err))
 		}
+		if ctx.Err() != nil || jobctx.PreemptionRequested(ctx) {
+			resumeAt = accounts[(index+1)%len(accounts)].Identifier
+			break
+		}
 	}
+	scheduledInlineRotation.resumeAt(resumeAt)
 	return errors.Join(ctx.Err(), errors.Join(errs...), rebuildCacheAfterScheduledSync(context.WithoutCancel(ctx), "inline"))
+}
+
+// Keep the next account across scheduler yields so a large account cannot
+// consume every pass. Each importer retains its own durable history checkpoint.
+var scheduledInlineRotation = &inlineAccountRotation{}
+
+type inlineAccountRotation struct {
+	mu   sync.Mutex
+	next string
+}
+
+func (r *inlineAccountRotation) order(accounts []config.InlineAccount) []config.InlineAccount {
+	r.mu.Lock()
+	next := r.next
+	r.mu.Unlock()
+	start := slices.IndexFunc(accounts, func(account config.InlineAccount) bool {
+		return account.Identifier == next
+	})
+	if start <= 0 {
+		return slices.Clone(accounts)
+	}
+	return append(slices.Clone(accounts[start:]), accounts[:start]...)
+}
+
+func (r *inlineAccountRotation) resumeAt(identifier string) {
+	r.mu.Lock()
+	r.next = identifier
+	r.mu.Unlock()
 }
 
 func init() {

@@ -1569,6 +1569,18 @@ type PrepareKataEvidenceErrorResponseJSON422 = ErrorResponse
 
 type PrepareKataEvidenceErrorResponseJSON503 = ErrorResponse
 
+type FindKataIssuesResponse = KataIssueListResponse
+
+type FindKataIssuesErrorResponse = ErrorResponse
+
+type FindKataIssuesErrorResponseJSON = ErrorResponse
+
+type FindKataIssuesErrorResponseJSON404 = ErrorResponse
+
+type FindKataIssuesErrorResponseJSON422 = ErrorResponse
+
+type FindKataIssuesErrorResponseJSON503 = ErrorResponse
+
 type CreateKataIssueResponse = KataIssueResponse
 
 type CreateKataIssueErrorResponse = ErrorResponse
@@ -1584,6 +1596,20 @@ type CreateKataIssueErrorResponseJSON422 = ErrorResponse
 type CreateKataIssueErrorResponseJSON428 = ErrorResponse
 
 type CreateKataIssueErrorResponseJSON503 = ErrorResponse
+
+type GetKataIssueContextResponse = KataIssueContextResponse
+
+type GetKataIssueContextErrorResponse = ErrorResponse
+
+type GetKataIssueContextErrorResponseJSON = ErrorResponse
+
+type GetKataIssueContextErrorResponseJSON404 = ErrorResponse
+
+type GetKataIssueContextErrorResponseJSON409 = ErrorResponse
+
+type GetKataIssueContextErrorResponseJSON422 = ErrorResponse
+
+type GetKataIssueContextErrorResponseJSON503 = ErrorResponse
 
 type LinkKataEvidenceResponse = KataIssueResponse
 
@@ -4849,6 +4875,18 @@ type PrepareKataEvidenceResp struct {
 	JSON503      *PrepareKataEvidenceErrorResponseJSON503
 }
 
+type FindKataIssuesResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *FindKataIssuesResponse
+	JSON400      *FindKataIssuesErrorResponse
+	JSON401      *FindKataIssuesErrorResponseJSON
+	JSON404      *FindKataIssuesErrorResponseJSON404
+	JSON422      *FindKataIssuesErrorResponseJSON422
+	JSON503      *FindKataIssuesErrorResponseJSON503
+}
+
 type CreateKataIssueResp struct {
 	HTTPResponse *http.Response
 	Body         []byte
@@ -4861,6 +4899,19 @@ type CreateKataIssueResp struct {
 	JSON422      *CreateKataIssueErrorResponseJSON422
 	JSON428      *CreateKataIssueErrorResponseJSON428
 	JSON503      *CreateKataIssueErrorResponseJSON503
+}
+
+type GetKataIssueContextResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetKataIssueContextResponse
+	JSON400      *GetKataIssueContextErrorResponse
+	JSON401      *GetKataIssueContextErrorResponseJSON
+	JSON404      *GetKataIssueContextErrorResponseJSON404
+	JSON409      *GetKataIssueContextErrorResponseJSON409
+	JSON422      *GetKataIssueContextErrorResponseJSON422
+	JSON503      *GetKataIssueContextErrorResponseJSON503
 }
 
 type LinkKataEvidenceResp struct {

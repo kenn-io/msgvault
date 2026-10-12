@@ -356,7 +356,8 @@ import (
 // 3.10.0 adds person UID lookup and exposes current vCard UIDs and CardDAV
 // bindings on person and directory responses.
 // 3.11.0 adds structured account scopes, the explore account filter, the virtual account catalog on /cli/accounts, GET /api/v1/media/search/status, participant_id to media search, source filename, title and date to media search results, and optional conversation_title to message detail.
-const APISchemaVersion = "3.11.0"
+// 3.12.0 adds Kata source lookup and issue evidence context.
+const APISchemaVersion = "3.12.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -1025,6 +1026,17 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 			}
 			displayName.Extensions["x-omitempty"] = false
 			displayName.Extensions["x-oapi-codegen-extra-tags"] = map[string]any{
+				"validate": "omitempty",
+			}
+		}
+	}
+	// A changed or unavailable passage carries an empty excerpt.
+	if evidence := schemas["Evidence"]; evidence != nil {
+		if excerpt := evidence.Properties["excerpt"]; excerpt != nil {
+			if excerpt.Extensions == nil {
+				excerpt.Extensions = map[string]any{}
+			}
+			excerpt.Extensions["x-oapi-codegen-extra-tags"] = map[string]any{
 				"validate": "omitempty",
 			}
 		}

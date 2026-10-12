@@ -75,3 +75,28 @@ func (c *Client) LinkKataEvidence(ctx context.Context, ref string, request gener
 	}
 	return *resp.JSON200, nil
 }
+
+func (c *Client) FindKataIssues(ctx context.Context, query generated.FindKataIssuesQuery) (generated.KataIssueListResponse, error) {
+	resp, err := APIResponse(c, func(client *apiclient.Client) (*generated.FindKataIssuesResp, error) {
+		return client.FindKataIssuesWithResponse(ctx, &generated.FindKataIssuesRequestOptions{Query: &query})
+	})
+	if err != nil {
+		return generated.KataIssueListResponse{}, err
+	}
+	return *resp.JSON200, nil
+}
+
+func (c *Client) GetKataIssueContext(ctx context.Context, ref string, query generated.GetKataIssueContextQuery) (generated.KataIssueContextResponse, error) {
+	resp, err := APIResponse(c, func(client *apiclient.Client) (*generated.GetKataIssueContextResp, error) {
+		return client.GetKataIssueContextWithResponse(ctx, &generated.GetKataIssueContextRequestOptions{
+			PathParams: &generated.GetKataIssueContextPath{Ref: url.PathEscape(ref)}, Query: &query,
+		})
+	})
+	if err != nil {
+		return generated.KataIssueContextResponse{}, err
+	}
+	if resp.JSON200 == nil {
+		return generated.KataIssueContextResponse{}, errors.New("empty Kata issue context response")
+	}
+	return *resp.JSON200, nil
+}

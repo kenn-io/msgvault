@@ -221,6 +221,9 @@ const calendarControlMinAPISchemaVersion = "3.1.0"
 // kataIssuesMinAPISchemaVersion adds Kata issues that quote archive evidence.
 const kataIssuesMinAPISchemaVersion = "3.4.0"
 
+// kataLookupMinAPISchemaVersion adds finding Kata issues and reading their cited passages.
+const kataLookupMinAPISchemaVersion = "3.12.0"
+
 // Schema 2.28.0 adds independent configured-lane facts to authenticated
 // health. Older health responses cannot distinguish text from visual search.
 const vectorLaneHealthMinAPISchemaVersion = "2.28.0"
@@ -299,6 +302,7 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 	}
 	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, kataIssuesMinAPISchemaVersion) {
 		opts.Kata = st
+		opts.KataLookup = daemonclient.APISchemaVersionAtLeast(schemaVersion, kataLookupMinAPISchemaVersion)
 	}
 	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, archiveSQLMinAPISchemaVersion) &&
 		(health.AnalyticsEngine == nil || *health.AnalyticsEngine != api.AnalyticsModePostgres) {

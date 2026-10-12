@@ -32,34 +32,44 @@ func TestPrepareWindowsAndResolveMessage(t *testing.T) {
 	assert.Equal("é界🙂 send the budget by Friday", later[0].Excerpt)
 	assert.Zero(later[0].NextRune, "the last window has no following passage")
 
-	resolved, err := svc.Resolve(t.Context(), later[0].Reference)
+	resolved, err := svc.ResolveAround(t.Context(), later[0].Reference, 0)
 	require.NoError(err)
 	assert.Equal(kataevidence.Available, resolved.State)
 	assert.Equal(later[0].ID, resolved.Evidence.ID)
 	assert.Equal(later[0].Excerpt, resolved.Evidence.Excerpt)
+
+	around, err := svc.ResolveAround(t.Context(), later[0].Reference, kataevidence.ContextRunes)
+	require.NoError(err)
+	assert.Equal(strings.Repeat("a", kataevidence.ContextRunes), around.Before)
+	around, err = svc.ResolveAround(t.Context(), first[0].Reference, kataevidence.ContextRunes)
+	require.NoError(err)
+	assert.Equal(later[0].Excerpt, around.After, "the window stops at the end of the text")
 
 	// A hand-built range past the end of the text keeps a valid body hash.
 	past := later[0].Reference
 	payload := *past.Message
 	payload.EndRune += 5
 	past.Message = &payload
-	resolved, err = svc.Resolve(t.Context(), past)
+	resolved, err = svc.ResolveAround(t.Context(), past, 0)
 	require.NoError(err)
 	assert.Equal(kataevidence.Changed, resolved.State)
 	assert.Empty(resolved.Evidence.Excerpt)
+	around, err = svc.ResolveAround(t.Context(), past, kataevidence.ContextRunes)
+	require.NoError(err)
+	assert.Empty(around.Before, "a changed reference shows no window")
 
 	// The reader still shows messages deleted at their source, so they stay citable.
 	_, err = f.Store.DB().Exec(f.Store.Rebind("UPDATE messages SET deleted_from_source_at=CURRENT_TIMESTAMP WHERE id=?"), id)
 	require.NoError(err)
 	_, err = svc.Prepare(t.Context(), []kataevidence.Selector{{Kind: "message", MessageID: id, MaxChars: new(kataevidence.MaxChars)}})
 	require.NoError(err)
-	resolved, err = svc.Resolve(t.Context(), later[0].Reference)
+	resolved, err = svc.ResolveAround(t.Context(), later[0].Reference, 0)
 	require.NoError(err)
 	assert.Equal(kataevidence.Available, resolved.State)
 
 	_, err = f.Store.DB().Exec(f.Store.Rebind("UPDATE messages SET deleted_at=CURRENT_TIMESTAMP WHERE id=?"), id)
 	require.NoError(err)
-	resolved, err = svc.Resolve(t.Context(), first[0].Reference)
+	resolved, err = svc.ResolveAround(t.Context(), first[0].Reference, 0)
 	require.NoError(err)
 	assert.Equal(kataevidence.Unavailable, resolved.State)
 }

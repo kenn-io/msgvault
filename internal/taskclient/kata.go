@@ -36,6 +36,7 @@ type KataTask struct {
 	Project       string
 	Title         string
 	Body          string
+	CommentBodies []string
 	Revision      string
 	Status        string
 	Owner         string
@@ -143,11 +144,11 @@ func (c *KataClient) issuePath(ctx context.Context, project, suffix string) (str
 	return "/api/v1/projects/" + strconv.FormatInt(id, 10) + "/issues" + suffix, nil
 }
 
-// personListMaxResponseBytes bounds a person's agenda list, which Kata returns
+// issueListMaxResponseBytes bounds an issue list, which Kata returns
 // as whole issues. An issue msgvault files stays under 800 KiB even with every
 // quoted rune escaped, so this reads at least 20 of the largest, and a bigger
 // reply fails as too large instead of growing without limit.
-const personListMaxResponseBytes = 16 << 20
+const issueListMaxResponseBytes = 16 << 20
 
 // ListPersonTasks filters before Kata serializes issues, so unrelated tasks do
 // not consume the bounded response. The caller requests one extra to detect truncation.
@@ -161,7 +162,7 @@ func (c *KataClient) ListPersonTasks(ctx context.Context, project, personUID str
 		return nil, err
 	}
 	transport := *c.transport
-	transport.maxResponseBytes = max(transport.maxResponseBytes, personListMaxResponseBytes)
+	transport.maxResponseBytes = max(transport.maxResponseBytes, issueListMaxResponseBytes)
 	var response kata.ListIssuesResponseBody
 	if err := transport.doJSON(ctx, http.MethodGet, path, nil, nil, &response, http.StatusOK); err != nil {
 		return nil, err
@@ -209,7 +210,7 @@ func (c *KataClient) CreateTaskReused(ctx context.Context, project, idempotencyK
 
 func (c *KataClient) GetTask(ctx context.Context, project, taskID string) (KataTask, error) {
 	if err := validatePathSegment(taskID); err != nil {
-		return KataTask{}, err
+		return KataTask{}, fmt.Errorf("%w: invalid path identity", ErrInvalidRef)
 	}
 	path, err := c.issuePath(ctx, project, "/"+taskID)
 	if err != nil {
@@ -223,7 +224,11 @@ func (c *KataClient) GetTask(ctx context.Context, project, taskID string) (KataT
 	for _, label := range response.Labels {
 		labels = append(labels, label.Label)
 	}
-	return taskFromKataIssue(project, response.Issue, labels, response.WebURL), nil
+	task := taskFromKataIssue(project, response.Issue, labels, response.WebURL)
+	for _, comment := range response.Comments {
+		task.CommentBodies = append(task.CommentBodies, comment.Body)
+	}
+	return task, nil
 }
 
 // MutateMetadata binds compound edits to the revision read by the caller.
@@ -256,7 +261,7 @@ func (c *KataClient) MutateMetadataKey(ctx context.Context, project, taskID, key
 
 func (c *KataClient) patchMetadata(ctx context.Context, project, taskID string, request kata.PatchIssueMetadataRequestBody, headers http.Header) (KataTask, error) {
 	if err := validatePathSegment(taskID); err != nil {
-		return KataTask{}, err
+		return KataTask{}, fmt.Errorf("%w: invalid path identity", ErrInvalidRef)
 	}
 	path, err := c.issuePath(ctx, project, "/"+taskID+"/metadata")
 	if err != nil {

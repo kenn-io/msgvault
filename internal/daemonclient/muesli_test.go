@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -78,20 +79,33 @@ func TestImportMuesliWaitsOutRateLimit(t *testing.T) {
 }
 
 func TestImportMuesliRateLimitStopsWhenCanceled(t *testing.T) {
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		// The user interrupts while the client waits out a long Retry-After.
-		w.Header().Set("Retry-After", "3600")
-		w.WriteHeader(http.StatusTooManyRequests)
+	synctest.Test(t, func(t *testing.T) {
+		require := require.New(t)
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		attempts := 0
+		server := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			attempts++
+			w.Header().Set("Retry-After", "3600")
+			w.WriteHeader(http.StatusTooManyRequests)
+		}))
+		client, err := New(Config{URL: "http://127.0.0.1", AllowInsecure: true, APIKey: "test-owner-key", HTTPClient: server.Client()})
+		require.NoError(err)
+		done := make(chan error, 1)
+		go func() {
+			_, err := client.ImportMuesli(ctx, muesli.RemoteRequest{Action: "register", Source: meetingimport.Source{Identifier: "recorder", AccountEmail: "user@example.com"}})
+			done <- err
+		}()
+		// In-memory I/O finishes before Wait observes the goroutine blocked on Retry-After.
+		synctest.Wait()
+		require.Equal(1, attempts)
+		require.Empty(done)
 		cancel()
-	}))
-	defer server.Close()
-	client, err := New(Config{URL: server.URL, APIKey: "test-owner-key"})
-	require.NoError(t, err)
-	client.httpClient = server.Client()
-	_, err = client.ImportMuesli(ctx, muesli.RemoteRequest{Action: "register", Source: meetingimport.Source{Identifier: "recorder", AccountEmail: "user@example.com"}})
-	require.ErrorIs(t, err, context.Canceled)
+		synctest.Wait()
+		require.Len(done, 1, "cancellation interrupts Retry-After before its timer fires")
+		require.ErrorIs(<-done, context.Canceled)
+		assert.Equal(t, 1, attempts, "cancellation prevents another request")
+	})
 }
 
 func TestImportMuesliRemoteValidationIsFatal(t *testing.T) {

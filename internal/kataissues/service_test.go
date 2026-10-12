@@ -198,7 +198,7 @@ func TestCreateSavesPreparedQuotation(t *testing.T) {
 // resolvedAs reports every citation in one unavailable state.
 type resolvedAs kataevidence.State
 
-func (state resolvedAs) Resolve(context.Context, kataevidence.Reference) (kataevidence.Resolution, error) {
+func (state resolvedAs) ResolveAround(context.Context, kataevidence.Reference, int) (kataevidence.Resolution, error) {
 	return kataevidence.Resolution{State: kataevidence.State(state)}, nil
 }
 
@@ -267,9 +267,16 @@ func TestCreateRetryUnderTheSameKey(t *testing.T) {
 
 		// Link writes only to the configured project, so the moved issue and
 		// any other project are out of reach, and Kata sees no write.
-		for _, ref := range []string{again.Issue.QualifiedRef, "missing#abcd"} {
-			_, err = f.service.Link(t.Context(), ref, []kataevidence.Reference{f.evidence(t, f.evidence(t, 0).NextRune).Reference})
-			require.ErrorIs(err, kataissues.ErrOutsideProject, ref)
+		for _, tc := range []struct {
+			ref string
+			err error
+		}{
+			{again.Issue.QualifiedRef, kataissues.ErrOutsideProject},
+			{"missing#abcd", kataissues.ErrOutsideProject},
+			{"#abcd", taskclient.ErrInvalidRef},
+		} {
+			_, err = f.service.Link(t.Context(), tc.ref, []kataevidence.Reference{f.evidence(t, f.evidence(t, 0).NextRune).Reference})
+			require.ErrorIs(err, tc.err, tc.ref)
 		}
 		still, err := f.service.Create(t.Context(), "key-moved", input)
 		require.NoError(err)
@@ -532,7 +539,7 @@ func TestLinkCapsWhatAnIssueHolds(t *testing.T) {
 // file whose re-extraction produced identical chunk text.
 type fixedText string
 
-func (text fixedText) Resolve(_ context.Context, ref kataevidence.Reference) (kataevidence.Resolution, error) {
+func (text fixedText) ResolveAround(_ context.Context, ref kataevidence.Reference, _ int) (kataevidence.Resolution, error) {
 	ref, err := kataevidence.Canonicalize(ref)
 	return kataevidence.Resolution{State: kataevidence.Available, Evidence: kataevidence.Evidence{ID: kataevidence.ID(ref), Passage: kataevidence.PassageID(ref, string(text)), Reference: ref, Excerpt: string(text)}}, err
 }
@@ -729,4 +736,107 @@ func pendingOf(t *testing.T, issue taskclient.KataTask) int {
 		}
 	}
 	return pending
+}
+
+// An issue is found by every message and file it cites.
+func TestCitingFindsEveryCitedSource(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newFixture(t)
+	service := f.connect(t)
+	service.Evidence = fixedText("Please send the revised budget by Friday.")
+	archive, err := f.store.Store.ArchiveUIDContext(t.Context())
+	require.NoError(err)
+	message := f.evidence(t, 0).Reference
+	chunk := chunkReference(archive, f.message+1, "extraction-old", "b")
+	unrelated := message
+	unrelated.SourceMessageID = "unrelated"
+	for i := range 21 {
+		_, _, err := service.Kata.CreateTaskReused(t.Context(), "example", fmt.Sprintf("unrelated-%d", i), taskclient.KataCreate{Title: "Unrelated citation", Metadata: map[string]any{
+			kataissues.EvidenceMetadataKey: kataissues.Envelope{Version: 1, Entries: []kataissues.Entry{{ID: kataevidence.ID(unrelated), Passage: kataevidence.PassageID(unrelated, "Other words"), Reference: unrelated}}},
+		}})
+		require.NoError(err)
+	}
+	created, _, err := service.Kata.CreateTaskReused(t.Context(), "example", "key-citing", taskclient.KataCreate{Title: "Send the revised budget", Metadata: map[string]any{
+		kataissues.EvidenceMetadataKey: kataissues.Envelope{Version: 1, Entries: []kataissues.Entry{
+			{ID: kataevidence.ID(message), Passage: kataevidence.PassageID(message, "Please send the revised budget by Friday."), Reference: message},
+			{ID: kataevidence.ID(chunk), Passage: kataevidence.PassageID(chunk, "Please send the revised budget by Friday."), Reference: chunk},
+		}},
+	}})
+	require.NoError(err)
+	f.kata.endpoint().CloseIssue(t, created.UID)
+
+	chunkKeys := kataevidence.SourceKeys(chunk)
+	for _, key := range []string{kataevidence.SourceKeys(message)[0], chunkKeys[0], chunkKeys[1]} {
+		issues, truncated, err := service.Citing(t.Context(), key, 10)
+		require.NoError(err)
+		require.Len(issues, 1, "legacy evidence envelopes need no source markers to be found")
+		assert.Equal(created.UID, issues[0].UID)
+		assert.Equal("closed", issues[0].Status)
+		assert.False(truncated)
+	}
+
+	second, err := service.Create(t.Context(), "key-citing-second", kataissues.CreateInput{Title: "Review the revised budget", Evidence: []kataevidence.Reference{message}})
+	require.NoError(err)
+	for _, limit := range []int{1, 2} {
+		issues, truncated, err := service.Citing(t.Context(), kataevidence.SourceKeys(message)[0], limit)
+		require.NoError(err)
+		require.Len(issues, limit)
+		assert.Equal(created.UID, issues[0].UID)
+		assert.Equal(limit == 1, truncated)
+		if limit == 2 {
+			assert.Equal(second.Issue.UID, issues[1].UID)
+		}
+	}
+	var listingCalls atomic.Int32
+	fallbackServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/issues" {
+			listingCalls.Add(1)
+			if r.URL.Query().Get("limit") == "501" {
+				_, _ = io.WriteString(w, strings.Repeat(" ", (16<<20)+1))
+				return
+			}
+			assert.Equal("20", r.URL.Query().Get("limit"))
+		}
+		f.kata.service.Handler().ServeHTTP(w, r)
+	}))
+	t.Cleanup(fallbackServer.Close)
+	fallbackClient, err := taskclient.ConnectKata(t.Context(), taskclient.IntegrationConfig{Enabled: true, Endpoint: fallbackServer.URL, APIKey: katatest.Token, DefaultProject: "example"})
+	require.NoError(err)
+	fallback := *service
+	fallback.Kata = fallbackClient
+	issues, incomplete, err := fallback.Citing(t.Context(), kataevidence.SourceKeys(message)[0], 10)
+	require.NoError(err)
+	require.Len(issues, 2)
+	assert.Equal(created.UID, issues[0].UID)
+	assert.True(incomplete)
+	assert.Equal(int32(2), listingCalls.Load())
+
+	_, err = service.Kata.MutateMetadataKey(t.Context(), "example", created.UID, kataissues.EvidenceMetadataKey, created.Metadata[kataissues.EvidenceMetadataKey], kataissues.Envelope{Version: 2})
+	require.NoError(err)
+	issues, incomplete, err = service.Citing(t.Context(), kataevidence.SourceKeys(message)[0], 10)
+	require.NoError(err)
+	require.Len(issues, 1)
+	assert.Equal(second.Issue.UID, issues[0].UID)
+	assert.True(incomplete, "an unreadable candidate cannot imply no other citation exists")
+	recentBody, err := json.Marshal(katagen.CreateIssueRequestBody{Actor: new("msgvault"), ForceNew: new(true), Title: "Recent unrelated citation", Metadata: map[string]any{
+		kataissues.EvidenceMetadataKey: kataissues.Envelope{Version: 1, Entries: []kataissues.Entry{{ID: kataevidence.ID(unrelated), Passage: kataevidence.PassageID(unrelated, "Other words"), Reference: unrelated}}},
+	}})
+	require.NoError(err)
+	for i := range 500 {
+		request := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/projects/%d/issues", f.kata.projectID), strings.NewReader(string(recentBody)))
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Authorization", "Bearer "+katatest.Token)
+		request.Header.Set("Idempotency-Key", fmt.Sprintf("recent-%d", i))
+		recorder := httptest.NewRecorder()
+		f.kata.service.Handler().ServeHTTP(recorder, request)
+		require.Equal(http.StatusOK, recorder.Code, recorder.Body.String())
+	}
+	issues, incomplete, err = service.Citing(t.Context(), kataevidence.SourceKeys(message)[0], 10)
+	require.NoError(err)
+	assert.Empty(issues)
+	assert.True(incomplete, "a citation beyond the newest 500 cannot imply a complete miss")
+	f.kata.Close()
+	_, _, err = service.Citing(t.Context(), kataevidence.SourceKeys(message)[0], 10)
+	require.ErrorIs(err, taskclient.ErrUnreachable)
 }

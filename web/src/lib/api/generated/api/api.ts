@@ -127,6 +127,7 @@ import type {
   FileMetadataResponse,
   FilterMessagesParams,
   FilteredMessagesResponse,
+  FindKataIssuesParams,
   FindSimilarMessagesParams,
   GeneratePersonBriefPathParameters,
   GetActivityDayParams,
@@ -158,6 +159,8 @@ import type {
   GetGmailIDsByFilterParams,
   GetIdentityMatchCandidatePathParameters,
   GetImportJobPathParameters,
+  GetKataIssueContextParams,
+  GetKataIssueContextPathParameters,
   GetMessageInlinePartParams,
   GetMessageInlinePartPathParameters,
   GetMessagePathParameters,
@@ -204,7 +207,9 @@ import type {
   KataEvidenceLinkRequest,
   KataEvidencePrepareRequest,
   KataEvidencePrepareResponse,
+  KataIssueContextResponse,
   KataIssueCreateRequest,
+  KataIssueListResponse,
   KataIssueResponse,
   LinkKataEvidencePathParameters,
   LinkPersonAgendaItemPathParameters,
@@ -2005,6 +2010,18 @@ export const prepareKataEvidence = (
   );
 };
 /**
+ * @summary Find Kata issues, open or closed, that cite a message or one of its files
+ */
+export const findKataIssues = (
+  params: FindKataIssuesParams,
+  options?: SecondParameter<typeof orvalFetch<KataIssueListResponse>>,
+) => {
+  return orvalFetch<KataIssueListResponse>(
+    { url: `/api/v1/integrations/kata/issues`, method: "GET", params },
+    options,
+  );
+};
+/**
  * Returns 201 both when it files the issue and when an earlier request under the same Idempotency-Key already did; `replayed` tells them apart.
  * @summary Create a Kata issue that quotes exact archive evidence
  */
@@ -2018,6 +2035,23 @@ export const createKataIssue = (
       method: "POST",
       headers: { "Content-Type": "application/json" },
       data: kataIssueCreateRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary Read each passage a Kata issue cites with its state in the archive today
+ */
+export const getKataIssueContext = (
+  { ref }: GetKataIssueContextPathParameters,
+  params?: GetKataIssueContextParams,
+  options?: SecondParameter<typeof orvalFetch<KataIssueContextResponse>>,
+) => {
+  return orvalFetch<KataIssueContextResponse>(
+    {
+      url: `/api/v1/integrations/kata/issues/${encodeURIComponent(String(ref))}/context`,
+      method: "GET",
+      params,
     },
     options,
   );

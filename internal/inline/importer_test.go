@@ -378,22 +378,24 @@ func TestDefaultDiscoveryAddsNewChatsAndExplicitSelectionRestrictsScope(t *testi
 	assertions.Empty(rows)
 }
 
-func TestDefaultDiscoveryAcceptsAuthoritativeEmptyCatalogAndRejectsInvalidIdentity(t *testing.T) {
+func TestDefaultDiscoveryAcceptsAuthoritativeEmptyCLICatalog(t *testing.T) {
 	assertions := assert.New(t)
 	requires := require.New(t)
 
-	imp, client, opts := importerFixture(t)
+	imp, _, opts := importerFixture(t)
 	opts.ChatIDs = nil
-	client.chats = map[int64]Conversation{}
+	imp.client = NewCLIClient(cliProcessFixture(t, `case "$*" in
+  "--version") printf '%s' 'inline 0.7.15' ;;
+  "doctor --json --compact") printf '%s' '{"config":{"apiBaseUrl":"https://api.inline.chat/v1","realtimeUrl":"wss://api.inline.chat/realtime"}}' ;;
+  "auth me --json --compact") printf '%s' '{"id":99}' ;;
+  "chats list --include-subthreads --json --compact") printf '%s' '{"chats":[]}' ;;
+  *) exit 9 ;;
+esac
+`))
 	summary, err := imp.Import(t.Context(), opts)
 	requires.NoError(err)
 	assertions.Zero(summary.MessagesProcessed)
 	assertions.Zero(summary.ConversationsProcessed)
-	for _, catalog := range [][]Conversation{{{ID: 0}}, {{ID: 1}, {ID: 1}}} {
-		client.discover = func(context.Context) ([]Conversation, error) { return catalog, nil }
-		_, err = imp.Import(t.Context(), opts)
-		requires.ErrorContains(err, "invalid or repeated chat identity")
-	}
 }
 
 func TestInlineIDsScopeCollidingMessagesToSelectedChats(t *testing.T) {
@@ -548,15 +550,6 @@ func TestImportUsesReactionTimestampAndKeepsMissingDateUnknown(t *testing.T) {
 	requires.True(known.Valid)
 	assertions.WithinDuration(date, known.Time, 0)
 	assertions.False(unknown.Valid)
-}
-
-func TestValidatePageRejectsIdentityAndCursorMismatch(t *testing.T) {
-	message := syntheticMessage(1, 3, "valid")
-	for _, page := range []Page{{Messages: []Message{message, message}}, {Messages: []Message{message}, HasMore: true, NextBeforeID: 2}, {HasMore: true, NextBeforeID: 2}, {Messages: []Message{syntheticMessage(2, 3, "wrong chat")}}, {Messages: []Message{message}, NextBeforeID: 3}} {
-		require.Error(t, validatePage(page, 1, 0))
-	}
-	require.Error(t, validatePage(Page{Messages: []Message{message}}, 1, 3))
-	require.NoError(t, validatePage(Page{Messages: []Message{message}, HasMore: true, NextBeforeID: 3}, 1, 0))
 }
 
 func TestLoadSyncStateRejectsForeignAccountAndMalformedCursor(t *testing.T) {

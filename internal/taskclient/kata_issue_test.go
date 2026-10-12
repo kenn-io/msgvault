@@ -1,7 +1,9 @@
 package taskclient
 
 import (
+	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -46,11 +48,19 @@ func TestFindActionTask(t *testing.T) {
 			if name != "static token" {
 				handler = native.Handler()
 			}
-			server := httptest.NewTLSServer(handler)
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/v1/issues" {
+					if strings.HasPrefix(r.URL.Query().Get("meta"), ActionMetadataKey+"=") {
+						assert.Equal("oldest", r.URL.Query().Get("sort"))
+					}
+				}
+				handler.ServeHTTP(w, r)
+			}))
 			t.Cleanup(server.Close)
 			client, err := ConnectKata(t.Context(), IntegrationConfig{Enabled: true, Endpoint: server.URL, APIKey: katatest.Token, HTTPClient: server.Client(), DefaultProject: katatest.Project})
 			require.NoError(err)
-			created, err := client.CreateTask(t.Context(), "example", "marker-key", KataCreate{Title: "Send the revised budget", Metadata: map[string]any{ActionMetadataKey: "action-a"}})
+			metadata := map[string]any{ActionMetadataKey: "action-a", "msgvault.evidence": map[string]any{"version": 1, "entries": []any{}}}
+			created, err := client.CreateTask(t.Context(), "example", "marker-key", KataCreate{Title: "Send the revised budget", Metadata: metadata})
 			require.NoError(err)
 			native.Endpoint(server).CloseIssue(t, created.UID)
 
@@ -62,6 +72,23 @@ func TestFindActionTask(t *testing.T) {
 			_, ok, err = client.FindActionTask(t.Context(), "example", "action-b")
 			require.NoError(err)
 			assert.False(ok)
+
+			citing, err := client.FindMetadataTasks(t.Context(), "example", "msgvault.evidence", 2)
+			require.NoError(err)
+			require.Len(citing, 1)
+			assert.Equal(created.UID, citing[0].UID)
+			assert.Equal("closed", citing[0].Status)
+			delete(metadata, ActionMetadataKey)
+			second, err := client.CreateTask(t.Context(), "example", "second-key", KataCreate{Title: "Review the budget", Metadata: metadata})
+			require.NoError(err)
+			citing, err = client.FindMetadataTasks(t.Context(), "example", "msgvault.evidence", 0)
+			require.NoError(err)
+			require.Len(citing, 2)
+			assert.Equal(second.UID, citing[0].UID)
+			assert.Equal(created.UID, citing[1].UID)
+			citing, err = client.FindMetadataTasks(t.Context(), "example", "msgvault.missing", 2)
+			require.NoError(err)
+			assert.Empty(citing)
 		})
 	}
 }

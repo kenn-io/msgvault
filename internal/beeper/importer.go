@@ -1426,7 +1426,8 @@ func (imp *Importer) persistMessage(ctx context.Context, cc *chatScope, m *Messa
 	if err != nil {
 		return err
 	}
-	if err := imp.store.UpsertMessageBody(messageID, sql.NullString{String: text, Valid: text != ""}, sql.NullString{}); err != nil {
+	bodyHTML := MessageHTML(m)
+	if err := imp.store.UpsertMessageBody(messageID, sql.NullString{String: text, Valid: text != ""}, sql.NullString{String: bodyHTML, Valid: bodyHTML != ""}); err != nil {
 		return err
 	}
 	// Archive the exact original message JSON. m.Raw is captured verbatim at

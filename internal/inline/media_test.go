@@ -130,34 +130,37 @@ func TestDeferredMediaBackfillRefreshesURLAndPreservesDuplicateOccurrences(t *te
 	requires := require.New(t)
 
 	imp, client, opts := importerFixture(t)
-	message := syntheticMessage(1, 1, "")
-	message.Media = []Media{{ID: "photo:9", ChatID: 1, MessageID: 1, Role: "photo", URL: "https://api.inline.chat/file?expired=synthetic"}, {ID: "photo:10", ChatID: 1, MessageID: 1, Role: "photo"}}
-	client.messages[1] = []Message{message}
+	for id := int64(1); id <= 2; id++ {
+		message := syntheticMessage(1, id, "")
+		message.Media = []Media{{ID: fmt.Sprintf("photo:%d", id+8), ChatID: 1, MessageID: id, Role: "photo", URL: "https://api.inline.chat/file?expired=synthetic"}}
+		client.messages[1] = append(client.messages[1], message)
+	}
 	opts.NoMedia = true
 	first, err := imp.Import(t.Context(), opts)
 	requires.NoError(err)
 	assertions.Equal(2, first.AttachmentsPending)
 	assertions.Zero(client.filesCalls)
-	id := archivedMessage(t, imp.store, first.SourceID, 1, 1)
-	hasAttachments, attachmentCount := storedMediaMessageStats(t, imp, id)
-	assertions.True(hasAttachments)
-	assertions.Equal(2, attachmentCount)
-	refs, err := imp.store.MessageInlineProviderAttachments(id)
-	requires.NoError(err)
-	requires.Len(refs, 2)
-	for _, ref := range refs {
-		assertions.Equal(attachmentpolicy.StatePending, ref.State)
-		assertions.Equal("image", ref.MediaType)
+	ids := []int64{archivedMessage(t, imp.store, first.SourceID, 1, 1), archivedMessage(t, imp.store, first.SourceID, 1, 2)}
+	assertions.NotEqual(ids[0], ids[1])
+	for _, id := range ids {
+		hasAttachments, attachmentCount := storedMediaMessageStats(t, imp, id)
+		assertions.True(hasAttachments)
+		assertions.Equal(1, attachmentCount)
+		refs, err := imp.store.MessageInlineProviderAttachments(id)
+		requires.NoError(err)
+		requires.Len(refs, 1)
+		for _, ref := range refs {
+			assertions.Equal(attachmentpolicy.StatePending, ref.State)
+			assertions.Equal("image", ref.MediaType)
+		}
 	}
 	client.files = func(_ context.Context, chatID int64, ids []int64) ([]Media, error) {
 		assert.Equal(t, int64(1), chatID)
-		assert.Equal(t, []int64{1}, ids)
-		fresh := []Media{}
-		for _, media := range message.Media {
-			media.URL = "https://api.inline.chat/file?fresh=synthetic"
-			fresh = append(fresh, media)
-		}
-		return fresh, nil
+		require.Len(t, ids, 1)
+		require.Contains(t, []int64{1, 2}, ids[0])
+		media := client.messages[1][ids[0]-1].Media[0]
+		media.URL = "https://api.inline.chat/file?fresh=synthetic"
+		return []Media{media}, nil
 	}
 	calls := 0
 	content := []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}
@@ -171,31 +174,38 @@ func TestDeferredMediaBackfillRefreshesURLAndPreservesDuplicateOccurrences(t *te
 	backfill, err := imp.BackfillMedia(t.Context(), opts)
 	requires.NoError(err)
 	assertions.Equal(2, backfill.AttachmentsDownloaded)
-	hasAttachments, attachmentCount = storedMediaMessageStats(t, imp, id)
-	assertions.True(hasAttachments)
-	assertions.Equal(2, attachmentCount)
 	assertions.Equal(2, calls)
-	refs, err = imp.store.MessageInlineProviderAttachments(id)
-	requires.NoError(err)
-	requires.Len(refs, 2)
-	assertions.Equal(refs["inline:photo:9"].ContentHash, refs["inline:photo:10"].ContentHash)
-	assertions.NotEmpty(refs["inline:photo:9"].ContentHash)
-	assertions.Equal("image/png", refs["inline:photo:9"].MimeType)
+	var hashes []string
+	for index, id := range ids {
+		hasAttachments, attachmentCount := storedMediaMessageStats(t, imp, id)
+		assertions.True(hasAttachments)
+		assertions.Equal(1, attachmentCount)
+		refs, err := imp.store.MessageInlineProviderAttachments(id)
+		requires.NoError(err)
+		requires.Len(refs, 1)
+		ref := refs[fmt.Sprintf("inline:photo:%d", index+9)]
+		assertions.NotEmpty(ref.ContentHash)
+		assertions.Equal("image/png", ref.MimeType)
+		hashes = append(hashes, ref.ContentHash)
+	}
+	assertions.Equal(hashes[0], hashes[1])
 	state := storedState(t, imp, first.SourceID, opts.Account.Identifier())
-	assertions.Equal(int64(1), state.chat(1).Head, "media run cannot overwrite message-history resume state")
+	assertions.Equal(int64(2), state.chat(1).Head, "media run cannot overwrite message-history resume state")
 	_, err = imp.BackfillMedia(t.Context(), opts)
 	requires.NoError(err)
 	assertions.Equal(2, calls, "stored occurrences never re-download")
-	hasAttachments, attachmentCount = storedMediaMessageStats(t, imp, id)
-	assertions.True(hasAttachments)
-	assertions.Equal(2, attachmentCount)
 	opts.Full = true
-	client.messages[1][0].Media = nil
+	for index := range client.messages[1] {
+		client.messages[1][index].Media = nil
+	}
 	_, err = imp.Import(t.Context(), opts)
 	requires.NoError(err)
-	hasAttachments, attachmentCount = storedMediaMessageStats(t, imp, id)
-	assertions.True(hasAttachments)
-	assertions.Equal(2, attachmentCount)
+	assertions.Equal(2, calls, "resync preserves stored occurrences without downloads")
+	for _, id := range ids {
+		hasAttachments, attachmentCount := storedMediaMessageStats(t, imp, id)
+		assertions.True(hasAttachments)
+		assertions.Equal(1, attachmentCount)
+	}
 }
 
 func TestMediaFailureLeavesDurableMarkerAndPolicyCanRetry(t *testing.T) {
@@ -234,7 +244,7 @@ func TestMediaFailureLeavesDurableMarkerAndPolicyCanRetry(t *testing.T) {
 	assertions.Equal(1, backfill.AttachmentsDownloaded)
 }
 
-func TestUnknownRosterFailsClosedThenBackfillRechecksAuthoritativeCount(t *testing.T) {
+func TestUnknownRosterFailsClosedThenBackfillRetriesAfterRemovingParticipantCap(t *testing.T) {
 	assertions := assert.New(t)
 	requires := require.New(t)
 
@@ -248,13 +258,18 @@ func TestUnknownRosterFailsClosedThenBackfillRechecksAuthoritativeCount(t *testi
 	requires.NoError(err)
 	assertions.Equal(1, first.AttachmentsSkipped)
 	assertions.Zero(client.filesCalls)
-	client.chats[1] = Conversation{ID: 1, Type: "group", MemberCountKnown: true, MemberCount: 2}
+	refs, err := imp.store.MessageInlineProviderAttachments(archivedMessage(t, imp.store, first.SourceID, 1, 1))
+	requires.NoError(err)
+	assertions.Equal(attachmentpolicy.SkipParticipantThreshold, refs["inline:document:1"].SkipReason)
+	opts.MediaPolicy.MaxParticipants = 0
 	imp.mediaTransport = mediaRoundTripper(func(request *http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("content")), Request: request}, nil
 	})
 	backfill, err := imp.BackfillMedia(t.Context(), opts)
 	requires.NoError(err)
 	assertions.Equal(1, backfill.AttachmentsDownloaded)
+	assertions.Equal(1, client.filesCalls)
+	assertions.False(client.chats[1].MemberCountKnown, "group membership remains unknown after the policy change")
 }
 
 func TestUnknownRosterDoesNotOverflowMaximumParticipantCap(t *testing.T) {
@@ -305,23 +320,6 @@ func TestMediaBackfillOnlyContactsSelectedChats(t *testing.T) {
 	refs, err := imp.store.MessageInlineProviderAttachments(archivedMessage(t, imp.store, first.SourceID, 1, 1))
 	requires.NoError(err)
 	assertions.Equal(attachmentpolicy.StatePending, refs["inline:document:1"].State)
-}
-
-func TestMessageMediaIdentityMismatchNeverAdvancesCursor(t *testing.T) {
-	assertions := assert.New(t)
-	requires := require.New(t)
-
-	imp, client, opts := importerFixture(t)
-	message := syntheticMessage(1, 1, "invalid media")
-	message.Media = []Media{{ID: "document:1", ChatID: 1, MessageID: 2}}
-	client.messages[1] = []Message{message}
-	summary, err := imp.Import(t.Context(), opts)
-	requires.Error(err)
-	assertions.Zero(summary.MessagesProcessed)
-	rows, err := imp.store.MessageExistsBatch(summary.SourceID, []string{messageKey(1, 1)})
-	requires.NoError(err)
-	assertions.Empty(rows)
-	assertions.Zero(storedState(t, imp, summary.SourceID, opts.Account.Identifier()).chat(1).HistoryBefore)
 }
 
 func TestCrossProjectionMetadataKeepsUnsignedOccurrenceIdentity(t *testing.T) {

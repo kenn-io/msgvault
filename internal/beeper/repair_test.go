@@ -33,6 +33,9 @@ func TestRepairArchiveRewritesStaleDerivedRows(t *testing.T) {
 		"id": "mxc://x/sticker1", "type": beeperAttachmentTypeImage, "isSticker": true,
 		"mimeType": "image/webp", "fileName": "sticker.webp", "fileSize": 13,
 	}}
+	voice := mediaTranscriptChat().Msgs[0].Attachments[0]
+	ch.Msgs[0].Attachments = append(ch.Msgs[0].Attachments, voice)
+	f.setAsset("mxc://beeper.local/voice1", []byte("voice-bytes"))
 
 	imp, st, done := newTestImporter(t, f)
 	defer done()
@@ -66,7 +69,7 @@ func TestRepairArchiveRewritesStaleDerivedRows(t *testing.T) {
 
 	// Simulate rows written by an older build: raw HTML in the body and no
 	// share classification on the attachments.
-	_, err = st.DB().Exec(st.Rebind(`UPDATE message_bodies SET body_text = ?
+	_, err = st.DB().Exec(st.Rebind(`UPDATE message_bodies SET body_text = ?, body_html = NULL
 		WHERE message_id = (SELECT id FROM messages WHERE source_message_id = 'html1')`),
 		`<p>hello <a href="https://example.com" rel="noopener noreferrer">there</a></p>`)
 	require.NoError(err)
@@ -84,12 +87,13 @@ func TestRepairArchiveRewritesStaleDerivedRows(t *testing.T) {
 	assert.Zero(sum.Undecodable)
 	assert.Equal(int64(1), sum.BodiesRewritten, "only the stale body needs rewriting")
 
-	var body, snippet string
-	require.NoError(st.DB().QueryRow(`SELECT b.body_text, COALESCE(m.snippet, '')
+	var body, snippet, html string
+	require.NoError(st.DB().QueryRow(`SELECT b.body_text, COALESCE(m.snippet, ''), b.body_html
 		FROM messages m JOIN message_bodies b ON b.message_id = m.id
-		WHERE m.source_message_id = 'html1'`).Scan(&body, &snippet))
-	assert.Equal("hello there", body, "HTML must be converted to plain text")
-	assert.Equal("hello there", snippet)
+		WHERE m.source_message_id = 'html1'`).Scan(&body, &snippet, &html))
+	assert.Equal(`<p>hello <a href="https://example.com" rel="noopener noreferrer">there</a></p><br>🎤 transcript: source words`, html)
+	assert.Equal("hello there\n🎤 transcript: source words", body)
+	assert.Equal(body, snippet)
 
 	// The forwarded link keeps its share URL and is excluded from standalone
 	// processing; the composed photo remains standalone.

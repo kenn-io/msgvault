@@ -42,7 +42,9 @@ func TestExploreAttachmentByteEstimates(t *testing.T) {
 		{"beeper includes attachments", "beeper", "whatsapp", 12, 12},
 		{"slack includes attachments", "slack", "slack", 12, 12},
 		{"teams includes attachments", "teams", "teams", 12, 12},
+		{"inline includes attachments", "inline", "inline", 12, 12},
 		{"known attachments bound incomplete estimates", "teams", "teams", 0, 7},
+		{"inline attachments bound incomplete estimates", "inline", "inline", 0, 7},
 		{"body-only chat adds attachments", "imessage", "imessage", 5, 12},
 		{"email accounting is unchanged", "gmail", "email", 100, 107},
 	} {

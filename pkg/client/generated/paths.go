@@ -307,6 +307,15 @@ func (g GetImportJobPath) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(g))
 }
 
+type GetKataIssueContextPath struct {
+	// Ref Kata issue ref, qualified ref or UID
+	Ref string `json:"ref" validate:"required"`
+}
+
+func (g GetKataIssueContextPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+}
+
 type LinkKataEvidencePath struct {
 	// Ref Kata issue ref, qualified ref or UID
 	Ref string `json:"ref" validate:"required"`

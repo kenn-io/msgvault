@@ -108,6 +108,12 @@ func TestArchiverAttributesPhoneOrganizerToOwner(t *testing.T) {
 	fromMe, err := st.GetMessageIsFromMe(first.MessageID)
 	require.NoError(err)
 	assert.True(fromMe)
+	var sourceFromMe, identityFromMe bool
+	require.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT source_is_from_me, identity_is_from_me FROM messages WHERE id = ?`,
+	), first.MessageID).Scan(&sourceFromMe, &identityFromMe))
+	assert.False(sourceFromMe, "removing the owner identity must be able to clear is_from_me")
+	assert.True(identityFromMe)
 
 	second, err := archiver.Upsert(t.Context(), snapshot, UpsertOptions{})
 	require.NoError(err)

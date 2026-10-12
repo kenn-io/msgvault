@@ -113,3 +113,19 @@ func PassageLocation(ref Reference) string {
 	return Digest("msgvault.kata.passage-location.v1", ref.Kind, ref.ArchiveUID, strconv.FormatInt(ref.MessageID, 10),
 		ref.SourceType, ref.SourceIdentifier, ref.SourceMessageID, ref.OccurrenceKey, chunkKey, strconv.Itoa(start), strconv.Itoa(end))
 }
+
+// sourceKeyPrefix starts each source identity used to compare citations.
+const sourceKeyPrefix = "msgvault.source."
+
+// SourceKeys names the sources ref cites, without range or content hashes: its
+// message, and for a file chunk also the file, so a file citation is found by
+// its message too. The file key comes last.
+func SourceKeys(ref Reference) []string {
+	tuple := []string{ref.ArchiveUID, "message", ref.SourceType, ref.SourceIdentifier, ref.SourceMessageID}
+	keys := []string{sourceKeyPrefix + Digest("msgvault.kata.source.v1", tuple...)}
+	if ref.OccurrenceKey != "" {
+		tuple[1] = "file"
+		keys = append(keys, sourceKeyPrefix+Digest("msgvault.kata.source.v1", append(tuple, ref.OccurrenceKey)...))
+	}
+	return keys
+}

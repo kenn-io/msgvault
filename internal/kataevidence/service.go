@@ -12,7 +12,8 @@ import (
 )
 
 // SourceReader loads live archive text. Load derives provenance for a
-// selector; Read returns the text only while the reference still matches it.
+// selector; Read returns the text only while the reference still matches it,
+// and with ErrChanged returns the source's display alone.
 type SourceReader interface {
 	LoadKataEvidenceSource(ctx context.Context, selector Selector) (SourceRecord, error)
 	ReadKataEvidenceSource(ctx context.Context, ref Reference) (SourceRecord, error)
@@ -43,7 +44,7 @@ func (s *Service) Prepare(ctx context.Context, selectors []Selector) ([]Evidence
 		}
 		record, err := s.reader.LoadKataEvidenceSource(ctx, sel)
 		if err != nil {
-			return nil, archiveError(err)
+			return nil, ArchiveError(err)
 		}
 		if !utf8.ValidString(record.Text) {
 			return nil, ErrChanged
@@ -75,16 +76,18 @@ func (s *Service) Prepare(ctx context.Context, selectors []Selector) ([]Evidence
 	return result, nil
 }
 
-// Resolve re-reads a canonical citation; callers canonicalize at the request
-// boundary. A source that moved or disappeared is reported as a state rather
-// than an error.
-func (s *Service) Resolve(ctx context.Context, ref Reference) (Resolution, error) {
+// ResolveAround re-reads a canonical citation; callers canonicalize at the
+// request boundary. A source that moved or disappeared is reported as a state
+// rather than an error. When it is available, up to around runes of the cited
+// representation's text are added on each side of the excerpt.
+func (s *Service) ResolveAround(ctx context.Context, ref Reference, around int) (Resolution, error) {
 	result := Resolution{Evidence: Evidence{ID: ID(ref), Reference: ref, ContentTrust: "untrusted"}}
 	record, err := s.reader.ReadKataEvidenceSource(ctx, ref)
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrChanged):
-			result.State = Changed
+			// The occurrence still matched, so its name is the cited source's.
+			result.State, result.Evidence.Display = Changed, record.Display
 		case errors.Is(err, ErrUnavailable):
 			result.State = Unavailable
 		case errors.Is(err, ErrUnprocessed):
@@ -92,7 +95,7 @@ func (s *Service) Resolve(ctx context.Context, ref Reference) (Resolution, error
 		case errors.Is(err, ErrUnsupported):
 			result.State = Unsupported
 		default:
-			return Resolution{}, archiveError(err)
+			return Resolution{}, ArchiveError(err)
 		}
 		return result, nil
 	}
@@ -100,12 +103,16 @@ func (s *Service) Resolve(ctx context.Context, ref Reference) (Resolution, error
 	// Callers can hand-build references, so a range past the text is refused rather than shortened.
 	excerpt, ok := textutil.RuneSlice(record.Text, start, end)
 	if !utf8.ValidString(record.Text) || !ok {
-		result.State = Changed
+		result.State, result.Evidence.Display = Changed, record.Display
 		return result, nil
 	}
 	result.State = Available
 	result.Evidence.Excerpt, result.Evidence.Passage = excerpt, PassageID(ref, excerpt)
 	result.Evidence.Display = record.Display
+	if around > 0 {
+		result.Before, _ = textutil.RuneSlice(record.Text, max(0, start-around), start)
+		result.After, _ = textutil.RuneSlice(record.Text, end, min(utf8.RuneCountInString(record.Text), end+around))
+	}
 	return result, nil
 }
 
@@ -179,9 +186,9 @@ func setRange(ref Reference, start, end int) Reference {
 	return ref
 }
 
-// archiveError keeps evidence outcomes recognizable and marks anything else
+// ArchiveError keeps evidence outcomes recognizable and marks anything else
 // as a failure to read the archive.
-func archiveError(err error) error {
+func ArchiveError(err error) error {
 	for _, known := range []error{ErrInvalidReference, ErrUnavailable, ErrChanged, ErrUnprocessed, ErrUnsupported, context.Canceled, context.DeadlineExceeded} {
 		if errors.Is(err, known) {
 			return err

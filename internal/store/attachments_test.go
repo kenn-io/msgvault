@@ -636,11 +636,11 @@ func TestInlineAttachmentReplacementRecomputesStatsAndPreservesOtherOccurrences(
 	requires.NoError(st.ReplaceMessageInlineProviderAttachments(messageID, []store.AttachmentRef{{
 		SourceAttachmentID: "inline:document:1", StoragePath: "inline:pending:document:1", State: attachmentpolicy.StatePending,
 	}}))
-	requires.NoError(st.DB().QueryRow(`SELECT has_attachments, attachment_count FROM messages WHERE id = ?`, messageID).Scan(&has, &count))
+	requires.NoError(st.DB().QueryRow(st.Rebind(`SELECT has_attachments, attachment_count FROM messages WHERE id = ?`), messageID).Scan(&has, &count))
 	assertions.True(has)
 	assertions.Equal(2, count)
 	requires.NoError(st.ReplaceMessageInlineProviderAttachments(messageID, nil))
-	requires.NoError(st.DB().QueryRow(`SELECT has_attachments, attachment_count FROM messages WHERE id = ?`, messageID).Scan(&has, &count))
+	requires.NoError(st.DB().QueryRow(st.Rebind(`SELECT has_attachments, attachment_count FROM messages WHERE id = ?`), messageID).Scan(&has, &count))
 	assertions.True(has)
 	assertions.Equal(1, count)
 	refs, err := st.MessageInlineProviderAttachments(messageID)

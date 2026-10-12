@@ -6193,17 +6193,10 @@ type AttachmentRef struct {
 	SkipReason attachmentpolicy.SkipReason
 }
 
-// replaceMessageAttachmentsWhere atomically reconciles a message's attachment
+// replaceMessageAttachmentsWhereContext atomically reconciles a message's attachment
 // rows matching deleteWhere with refs. Retained source-part keys keep their row
 // IDs so resync does not invalidate cached file listings. Refs with an empty
 // StoragePath (and, when requireHash is set, an empty ContentHash) are skipped.
-func (s *Store) replaceMessageAttachmentsWhere(
-	messageID int64, deleteWhere string, requireHash bool, refs []AttachmentRef, deleteArgs ...any,
-) error {
-	return s.replaceMessageAttachmentsWhereContext(context.Background(), messageID, deleteWhere, requireHash, refs, deleteArgs...)
-}
-
-// replaceMessageAttachmentsWhereContext honors cancellation during replaceMessageAttachmentsWhere.
 func (s *Store) replaceMessageAttachmentsWhereContext(ctx context.Context,
 	messageID int64, deleteWhere string, requireHash bool, refs []AttachmentRef, deleteArgs ...any,
 ) error {
@@ -6830,9 +6823,25 @@ func (s *Store) MessageSlackAttachmentsContext(ctx context.Context, messageID in
 // rows (source_attachment_id 'teams:inline:%'), whose URL-backed storage_path
 // records a durable pending/skipped/failed outcome, not a link attachment.
 func (s *Store) ReplaceMessageLinkAttachments(messageID int64, refs []AttachmentRef) error {
-	return s.replaceMessageAttachmentsWhere(messageID,
-		`(storage_path LIKE 'http://%' OR storage_path LIKE 'https://%')
-		 AND COALESCE(source_attachment_id, '') NOT LIKE 'teams:inline:%'`, false, refs)
+	return s.withTx(func(tx *loggedTx) error {
+		before, err := readRecordingPointers(context.Background(), tx, messageID, "source_attachment_id, storage_path")
+		if err != nil {
+			return err
+		}
+		if err := s.replaceMessageAttachmentsWhereTx(tx, messageID,
+			`(storage_path LIKE 'http://%' OR storage_path LIKE 'https://%')
+			 AND COALESCE(source_attachment_id, '') NOT LIKE 'teams:inline:%'`, false, refs); err != nil {
+			return err
+		}
+		after, err := readRecordingPointers(context.Background(), tx, messageID, "source_attachment_id, storage_path")
+		if err != nil {
+			return err
+		}
+		if !slices.Equal(before, after) {
+			_, err = tx.Exec(`UPDATE messages SET content_changed_at = `+s.dialect.ContentChangedNow()+` WHERE id = ?`, messageID)
+		}
+		return err
+	})
 }
 
 // LabelIDContext finds a label by its provider ID within a source.

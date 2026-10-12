@@ -174,8 +174,9 @@ func TestCLICatalogRejectsMalformedOrAmbiguousShapes(t *testing.T) {
 		`{"chats":null}`,
 		`{"chats":[],"chats":[]}`,
 		`{"chats":[null]}`,
-		`{"chats":[{"id":1e3}]}`,
-		`{"chats":[{"id":9007199254740992}]}`,
+		`{"chats":[{"id":0,"peer_id":{"type":{"Chat":{"chat_id":0}}}}]}`,
+		`{"chats":[{"id":1e3,"peer_id":{"type":{"Chat":{"chat_id":1000}}}}]}`,
+		`{"chats":[{"id":9007199254740992,"peer_id":{"type":{"Chat":{"chat_id":9007199254740992}}}}]}`,
 		`{"chats":[{"id":123,"peerId":{"chatId":123}}]}`,
 		`{"chats":[{"id":123,"peer_id":{"type":{"Chat":{"chat_id":123}}}},{"id":123,"peer_id":{"type":{"Chat":{"chat_id":123}}}}]}`,
 	} {
@@ -188,6 +189,55 @@ func TestCLIDiscoverReportsUnsupportedCatalogCommand(t *testing.T) {
 	_, err := NewCLIClient(cliProcessFixture(t, "exit 2\n")).Discover(context.Background())
 	require.ErrorContains(t, err, "upgrade Inline")
 	require.ErrorContains(t, err, "--include-subthreads")
+}
+
+func TestCLIClientRejectsMalformedExternalReadResponses(t *testing.T) {
+	for _, test := range []struct {
+		name, response, wantError string
+		read                      func(context.Context, *CLIClient) error
+	}{
+		{
+			name:      "different selected chat",
+			response:  `{"chat":{"id":124,"peer_id":{"type":{"Chat":{"chat_id":124}}}}}`,
+			wantError: "canonical chat and native peer required",
+			read: func(ctx context.Context, client *CLIClient) error {
+				_, err := client.Conversation(ctx, 123)
+				return err
+			},
+		},
+		{
+			name:      "duplicate catalog identity",
+			response:  `{"chats":[{"id":123,"peer_id":{"type":{"Chat":{"chat_id":123}}}},{"id":123,"peer_id":{"type":{"Chat":{"chat_id":123}}}}]}`,
+			wantError: "duplicate Inline CLI catalog chat ID",
+			read: func(ctx context.Context, client *CLIClient) error {
+				_, err := client.Discover(ctx)
+				return err
+			},
+		},
+		{
+			name:      "nonexclusive cursor",
+			response:  `{"messages":[` + cliMessageFixture(7) + `]}`,
+			wantError: "did not advance exclusively",
+			read: func(ctx context.Context, client *CLIClient) error {
+				_, err := client.Messages(ctx, 123, 7)
+				return err
+			},
+		},
+		{
+			name:      "mismatched page cursor",
+			response:  `{"messages":[` + cliMessageFixture(7) + `],"page":{"fetchedCount":1,"returnedCount":1,"nextOffsetId":6,"filtersAppliedToPage":false}}`,
+			wantError: "unsupported or filtered Inline CLI page metadata",
+			read: func(ctx context.Context, client *CLIClient) error {
+				_, err := client.Messages(ctx, 123, 8)
+				return err
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := NewCLIClient(cliProcessFixture(t, "printf '%s' '"+test.response+"'\n"))
+			require.ErrorContains(t, test.read(t.Context(), client), test.wantError)
+		})
+	}
 }
 
 func TestCLIReactionSnapshotIncludesAuthoritativeEmptySet(t *testing.T) {
@@ -322,15 +372,21 @@ func TestCLIClientBoundsPipesCancelsAndDoesNotEchoDiagnostics(t *testing.T) {
 func TestCLIClientRejectsUnsupportedVersionAndOrigin(t *testing.T) {
 	assertions := assert.New(t)
 
-	for _, test := range []struct{ name, version, origin string }{
-		{"version", "different-cli 1.0.0", "https://api.inline.chat/v1"},
-		{"origin", "inline 0.7.15", "https://dev.example.test/v1"},
+	for _, test := range []struct{ name, version, origin, wantError string }{
+		{"version", "different-cli 1.0.0", "https://api.inline.chat/v1", "unsupported Inline CLI version response"},
+		{"origin", "inline 0.7.15", "https://dev.example.test/v1", "inline CLI must use the production API and realtime endpoints"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			body := fmt.Sprintf("case \"$1\" in\n--version) printf '%%s' '%s' ;;\ndoctor) printf '%%s' '{\"config\":{\"apiBaseUrl\":\"%s\",\"realtimeUrl\":\"wss://api.inline.chat/realtime\"}}' ;;\n*) exit 9 ;;\nesac\n", test.version, test.origin)
+			body := fmt.Sprintf(`case "$*" in
+  "--version") printf '%%s' '%s' ;;
+  "doctor --json --compact") printf '%%s' '{"config":{"apiBaseUrl":"%s","realtimeUrl":"wss://api.inline.chat/realtime"}}' ;;
+  "auth me --json --compact") printf '%%s' '{"id":42}' ;;
+  *) exit 9 ;;
+esac
+`, test.version, test.origin)
 			client := NewCLIClient(cliProcessFixture(t, body))
 			_, err := client.Me(context.Background())
-			require.Error(t, err)
+			require.EqualError(t, err, test.wantError)
 		})
 	}
 	assertions.False(cliProductionEndpoint("https://api.inline.chat@evil.example.test/v1", "https"))

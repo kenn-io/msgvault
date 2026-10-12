@@ -123,13 +123,41 @@ func refsSlice(refs map[string]store.AttachmentRef) []store.AttachmentRef {
 	return result
 }
 
-func (imp *Importer) persistMedia(ctx context.Context, messageID int64, conversation Conversation, media []Media, opts ImportOptions, sum *ImportSummary) error {
+func messageSizeEstimate(body string, media []Media) int64 {
+	size := int64(len(body))
+	for _, item := range media {
+		if item.Size > 0 && item.Size <= math.MaxInt64-size {
+			size += item.Size
+		}
+	}
+	return size
+}
+
+func (imp *Importer) persistMediaReferences(messageID int64, body string, refs map[string]store.AttachmentRef) error {
+	attachments := refsSlice(refs)
+	if err := imp.store.ReplaceMessageInlineProviderAttachments(messageID, attachments); err != nil {
+		return err
+	}
+	// Pending and excluded occurrences retain known provider sizes. Stored
+	// occurrences carry actual archived bytes, including retained media absent
+	// from a later provider projection. Count occurrences even when blobs match.
+	size := int64(len(body))
+	for _, ref := range attachments {
+		n := int64(ref.Size)
+		if n > 0 && n <= math.MaxInt64-size {
+			size += n
+		}
+	}
+	return imp.store.SetMessageSizeEstimate(messageID, size)
+}
+
+func (imp *Importer) persistMedia(ctx context.Context, messageID int64, body string, conversation Conversation, media []Media, opts ImportOptions, sum *ImportSummary) error {
 	refs, err := imp.store.MessageInlineProviderAttachments(messageID)
 	if err != nil {
 		return err
 	}
 	if len(media) == 0 {
-		return nil
+		return imp.persistMediaReferences(messageID, body, refs)
 	}
 	policy := opts.MediaPolicy
 	if policy.MaxBytes == 0 {
@@ -189,7 +217,7 @@ func (imp *Importer) persistMedia(ctx context.Context, messageID int64, conversa
 	}
 	// Metadata-only markers are durable before refresh/download, so a crash or
 	// transient provider failure can always be repaired by media backfill.
-	if err = imp.store.ReplaceMessageInlineProviderAttachments(messageID, refsSlice(refs)); err != nil {
+	if err = imp.persistMediaReferences(messageID, body, refs); err != nil {
 		return err
 	}
 	if len(eligible) == 0 {
@@ -208,7 +236,7 @@ func (imp *Importer) persistMedia(ctx context.Context, messageID int64, conversa
 			sum.AttachmentsPending++
 			sum.Errors++
 		}
-		return imp.store.ReplaceMessageInlineProviderAttachments(messageID, refsSlice(refs))
+		return imp.persistMediaReferences(messageID, body, refs)
 	}
 	fresh := map[string]Media{}
 	for _, item := range refreshed {
@@ -230,7 +258,7 @@ func (imp *Importer) persistMedia(ctx context.Context, messageID int64, conversa
 			refs[key] = ref
 		}
 	}
-	if err = imp.store.ReplaceMessageInlineProviderAttachments(messageID, refsSlice(refs)); err != nil {
+	if err = imp.persistMediaReferences(messageID, body, refs); err != nil {
 		return err
 	}
 	for key := range eligible {
@@ -292,11 +320,11 @@ func (imp *Importer) persistMedia(ctx context.Context, messageID int64, conversa
 		ref.SkipReason = ""
 		refs[key] = ref
 		sum.AttachmentsDownloaded++
-		if err = imp.store.ReplaceMessageInlineProviderAttachments(messageID, refsSlice(refs)); err != nil {
+		if err = imp.persistMediaReferences(messageID, body, refs); err != nil {
 			return err
 		}
 	}
-	return imp.store.ReplaceMessageInlineProviderAttachments(messageID, refsSlice(refs))
+	return imp.persistMediaReferences(messageID, body, refs)
 }
 
 // BackfillMedia refreshes signed URLs only for selected chats and retries their
@@ -371,7 +399,11 @@ func (imp *Importer) BackfillMedia(ctx context.Context, opts ImportOptions) (sum
 		}
 		conversation := conversations[metadata.ChatID]
 		opts.NoMedia = false
-		if err = scoped.persistMedia(ctx, row.MessageID, conversation, metadata.Media, opts, sum); err != nil {
+		body, readErr := scoped.store.GetMessageBodyText(row.MessageID)
+		if readErr != nil {
+			return sum, readErr
+		}
+		if err = scoped.persistMedia(ctx, row.MessageID, body, conversation, metadata.Media, opts, sum); err != nil {
 			return sum, err
 		}
 		sum.MessagesProcessed++

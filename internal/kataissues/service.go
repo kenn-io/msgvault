@@ -38,12 +38,13 @@ type Kata interface {
 	CreateTaskReused(ctx context.Context, project, idempotencyKey string, create taskclient.KataCreate) (taskclient.KataTask, bool, error)
 	GetTask(ctx context.Context, project, taskID string) (taskclient.KataTask, error)
 	FindActionTask(ctx context.Context, project, action string) (taskclient.KataTask, bool, error)
+	FindMetadataTasks(ctx context.Context, project, key string, limit int) ([]taskclient.KataTask, error)
 	MutateMetadataKey(ctx context.Context, project, taskID, key string, previous, value any) (taskclient.KataTask, error)
 	AddComment(ctx context.Context, project, taskID, idempotencyKey, body string) error
 }
 
 type Evidence interface {
-	Resolve(ctx context.Context, ref kataevidence.Reference) (kataevidence.Resolution, error)
+	ResolveAround(ctx context.Context, ref kataevidence.Reference, around int) (kataevidence.Resolution, error)
 }
 
 type Service struct {
@@ -169,12 +170,12 @@ func (s *Service) Link(ctx context.Context, issueRef string, evidence []kataevid
 	// Writes stay in the configured project, the scope --allow-kata-writes
 	// grants, even when the credential reaches others. An issue moved to
 	// another project takes new evidence there through Kata itself.
-	project := s.Project
-	if named, short, qualified := strings.Cut(strings.TrimSpace(issueRef), "#"); qualified {
-		if named != s.Project {
-			return taskclient.KataTask{}, ErrOutsideProject
-		}
-		issueRef = short
+	project, issueRef, err := s.splitRef(issueRef)
+	if err != nil {
+		return taskclient.KataTask{}, err
+	}
+	if project != s.Project {
+		return taskclient.KataTask{}, ErrOutsideProject
 	}
 	resolved := map[string]quotation{}
 	for range maxLinkAttempts {
@@ -245,9 +246,61 @@ func (s *Service) Link(ctx context.Context, issueRef string, evidence []kataevid
 	return taskclient.KataTask{}, ErrIssueChanged
 }
 
+// Citing scans recent issues and returns matches oldest first, with a flag when the list may be incomplete.
+func (s *Service) Citing(ctx context.Context, key string, limit int) ([]taskclient.KataTask, bool, error) {
+	const maxCandidates = 500
+	candidates, err := s.Kata.FindMetadataTasks(ctx, s.Project, EvidenceMetadataKey, maxCandidates+1)
+	incomplete := errors.Is(err, taskclient.ErrResponseTooLarge)
+	if incomplete {
+		// Twenty issues fit under 16 MiB within msgvault's per-issue producer bound.
+		candidates, err = s.Kata.FindMetadataTasks(ctx, s.Project, EvidenceMetadataKey, 20)
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	if len(candidates) > maxCandidates {
+		candidates, incomplete = candidates[:maxCandidates], true
+	}
+	var issues []taskclient.KataTask
+	for _, candidate := range candidates {
+		envelope, err := parseEnvelope(candidate.Metadata[EvidenceMetadataKey])
+		if err != nil {
+			incomplete = true
+			continue
+		}
+		for _, entry := range envelope.Entries {
+			if slices.Contains(kataevidence.SourceKeys(entry.Reference), key) {
+				issues = append(issues, candidate)
+				break
+			}
+		}
+	}
+	slices.Reverse(issues)
+	if len(issues) > limit {
+		return issues[:limit], true, nil
+	}
+	return issues, incomplete, nil
+}
+
+// splitRef returns the project and issue a ref names. A qualified ref names
+// its project, such as an issue moved after filing; Kata decides whether the
+// caller may reach it.
+func (s *Service) splitRef(issueRef string) (string, string, error) {
+	if named, short, qualified := strings.Cut(strings.TrimSpace(issueRef), "#"); qualified {
+		if named == "" {
+			return "", "", taskclient.ErrInvalidRef
+		}
+		return named, short, nil
+	}
+	return s.Project, issueRef, nil
+}
+
 // issueEvidence reads an issue and the evidence it records.
 func (s *Service) issueEvidence(ctx context.Context, project, issueRef string) (taskclient.KataTask, Envelope, error) {
 	current, err := s.Kata.GetTask(ctx, project, issueRef)
+	if errors.Is(err, taskclient.ErrWrongProject) && project != s.Project {
+		return taskclient.KataTask{}, Envelope{}, taskclient.ErrNotFound
+	}
 	if err != nil {
 		return taskclient.KataTask{}, Envelope{}, err
 	}
@@ -353,7 +406,7 @@ func (s *Service) archiveUID(ctx context.Context) (string, error) {
 func (s *Service) resolve(ctx context.Context, refs []kataevidence.Reference) ([]quotation, error) {
 	quotes := make([]quotation, 0, len(refs))
 	for _, ref := range refs {
-		resolved, err := s.Evidence.Resolve(ctx, ref)
+		resolved, err := s.Evidence.ResolveAround(ctx, ref, 0)
 		if err != nil {
 			return nil, err
 		}
