@@ -18,6 +18,7 @@ type inboxLedgerWithoutMapping struct{ inboxcontrol.Ledger }
 type inboxProviderWithoutSourceProof struct{ inboxcontrol.Provider }
 type inboxAdmissionLedger struct {
 	inboxcontrol.Ledger
+
 	mappingCalls int
 }
 
