@@ -29,6 +29,7 @@ type Conversation struct {
 	ID                          int64
 	Type, Title                 string
 	ParentChatID, RootMessageID int64
+	PeerUserID                  int64 // Verified direct-chat peer; zero when unavailable.
 	MemberCount                 int
 	MemberCountKnown            bool
 	Raw                         jsontext.Value

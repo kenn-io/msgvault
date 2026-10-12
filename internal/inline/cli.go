@@ -241,6 +241,7 @@ func cliDecodeConversation(raw jsontext.Value, chatID, accountUserID int64) (Con
 			return Conversation{}, errors.New("unsupported Inline CLI direct chat peer")
 		}
 		conv.Type = "direct_chat"
+		conv.PeerUserID = *user.ID
 		if cliValidID(accountUserID) {
 			conv.MemberCount, conv.MemberCountKnown = 2, true
 			if *user.ID == accountUserID {

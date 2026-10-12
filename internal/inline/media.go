@@ -370,7 +370,7 @@ func (imp *Importer) BackfillMedia(ctx context.Context, opts ImportOptions) (sum
 		if conversation.ID != chatID {
 			return sum, errors.New("inline backfill chat response does not match selection")
 		}
-		if _, err = scoped.persistConversation(source.ID, conversation); err != nil {
+		if _, err = scoped.persistConversation(source.ID, conversation, opts.Account); err != nil {
 			return sum, err
 		}
 		conversations[chatID] = conversation

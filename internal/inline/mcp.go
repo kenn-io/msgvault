@@ -389,6 +389,7 @@ func (c *MCPClient) Conversation(ctx context.Context, chatID int64) (Conversatio
 			if err != nil {
 				return Conversation{}, err
 			}
+			conversation.PeerUserID = peerID
 			c.mu.Lock()
 			ownerID := c.ownerID
 			c.mu.Unlock()

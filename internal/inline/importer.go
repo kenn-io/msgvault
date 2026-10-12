@@ -218,7 +218,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			return sum, errors.New("inline conversation response does not match selected chat")
 		}
 		var conversationID int64
-		conversationID, err = scoped.persistConversation(source.ID, conversation)
+		conversationID, err = scoped.persistConversation(source.ID, conversation, opts.Account)
 		if err != nil {
 			return sum, err
 		}
@@ -284,8 +284,8 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	return sum, err
 }
 
-func (imp *Importer) persistConversation(sourceID int64, conversation Conversation) (int64, error) {
-	if !validID(conversation.ID) || conversation.ParentChatID < 0 || conversation.ParentChatID > MaxID || conversation.RootMessageID < 0 || conversation.RootMessageID > MaxID || conversation.MemberCount < 0 {
+func (imp *Importer) persistConversation(sourceID int64, conversation Conversation, account Account) (int64, error) {
+	if !validID(conversation.ID) || conversation.ParentChatID < 0 || conversation.ParentChatID > MaxID || conversation.RootMessageID < 0 || conversation.RootMessageID > MaxID || conversation.PeerUserID < 0 || conversation.PeerUserID > MaxID || conversation.MemberCount < 0 {
 		return 0, errors.New("invalid Inline conversation identity or roster metadata")
 	}
 	id, err := imp.store.EnsureConversationWithType(sourceID, chatKey(conversation.ID), conversationType(conversation.Type), conversation.Title)
@@ -302,6 +302,24 @@ func (imp *Importer) persistConversation(sourceID int64, conversation Conversati
 	}
 	if err = imp.store.SetConversationMetadata(id, sql.NullString{String: string(data), Valid: true}); err != nil {
 		return 0, err
+	}
+	// Direct-chat membership is known independently of who has authored the
+	// captured history. Outgoing-only history still belongs to the peer's person
+	// scope, and a self chat has one distinct participant.
+	if conversationType(conversation.Type) == "direct_chat" {
+		members := []Account{account}
+		if conversation.PeerUserID != 0 && conversation.PeerUserID != account.UserID {
+			members = append(members, Account{UserID: conversation.PeerUserID})
+		}
+		for _, member := range members {
+			participantID, resolveErr := imp.store.EnsureParticipantByIdentifier(SourceType, member.Identifier(), member.DisplayName)
+			if resolveErr != nil {
+				return 0, resolveErr
+			}
+			if err = imp.store.EnsureConversationParticipant(id, participantID, "member"); err != nil {
+				return 0, err
+			}
+		}
 	}
 	if conversation.MemberCountKnown {
 		err = imp.store.SetConversationMemberCount(id, conversation.MemberCount)

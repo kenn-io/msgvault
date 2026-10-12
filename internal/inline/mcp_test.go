@@ -167,6 +167,7 @@ func TestMCPHistoryBothResultFormats(t *testing.T) {
 			assertions.Equal("channel", conv.Type)
 			assertions.Equal(int64(6), conv.ParentChatID)
 			assertions.Equal(int64(3), conv.RootMessageID)
+			assertions.Zero(conv.PeerUserID)
 			assertions.False(conv.MemberCountKnown)
 			page, err := c.Messages(t.Context(), 7, 9)
 			requires.NoError(err)
@@ -443,19 +444,20 @@ func TestMCPDiscoverValidatesEveryCatalogPage(t *testing.T) {
 func TestMCPDMPeerEstablishesOnlyKnownDirectMembership(t *testing.T) {
 	for _, tc := range []struct {
 		name, peer string
+		peerUserID int64
 		count      int
 		known      bool
 		invalid    bool
 	}{
-		{"self DM", `{"userId":"1"}`, 1, true, false},
-		{"other DM", `{"userId":"2"}`, 2, true, false},
-		{"unknown peer", `null`, 0, false, false},
-		{"null peer ID", `{"userId":null}`, 0, false, false},
-		{"missing peer ID", `{}`, 0, false, true},
-		{"malformed peer ID", `{"userId":"other"}`, 0, false, true},
-		{"noncanonical peer ID", `{"userId":"02"}`, 0, false, true},
-		{"unsafe peer ID", `{"userId":"9007199254740992"}`, 0, false, true},
-		{"numeric peer ID", `{"userId":2}`, 0, false, true},
+		{"self DM", `{"userId":"1"}`, 1, 1, true, false},
+		{"other DM", `{"userId":"2"}`, 2, 2, true, false},
+		{"unknown peer", `null`, 0, 0, false, false},
+		{"null peer ID", `{"userId":null}`, 0, 0, false, false},
+		{"missing peer ID", `{}`, 0, 0, false, true},
+		{"malformed peer ID", `{"userId":"other"}`, 0, 0, false, true},
+		{"noncanonical peer ID", `{"userId":"02"}`, 0, 0, false, true},
+		{"unsafe peer ID", `{"userId":"9007199254740992"}`, 0, 0, false, true},
+		{"numeric peer ID", `{"userId":2}`, 0, 0, false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assertions := assert.New(t)
@@ -469,6 +471,7 @@ func TestMCPDMPeerEstablishesOnlyKnownDirectMembership(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
+			assertions.Equal(tc.peerUserID, conversation.PeerUserID)
 			assertions.Equal(tc.known, conversation.MemberCountKnown)
 			assertions.Equal(tc.count, conversation.MemberCount)
 		})
