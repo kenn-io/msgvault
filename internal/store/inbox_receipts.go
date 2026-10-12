@@ -119,6 +119,50 @@ func inboxReceiptTransition(result sql.Result, err error) error {
 	return nil
 }
 
+// RecordInboxReceiptMapping commits native dispatch identity before readback.
+// The five-method Ledger stays unchanged. A mapping is append-only evidence.
+func (s *Store) RecordInboxReceiptMapping(ctx context.Context, id string, mapping inboxcontrol.State) error {
+	if _, err := inboxcontrol.SemanticFingerprint(mapping); err != nil {
+		return err
+	}
+	if mapping.Source != (inboxcontrol.SourceIdentity{}) || mapping.ObservedAt.IsZero() || mapping.Inbox != nil || mapping.Read != nil || mapping.MarkedUnread != nil || mapping.ProvisionedFolder != nil || len(mapping.Folders) != 0 || len(mapping.Tags) != 0 || len(mapping.Flags) != 0 || mapping.Location != "" || mapping.Revision != "" || mapping.LastMessageID != "" {
+		return inboxcontrol.ErrInvalid
+	}
+	receipt, err := s.GetInboxReceipt(ctx, id)
+	if err != nil {
+		return err
+	}
+	if receipt == nil || receipt.Status != inboxcontrol.StatusDispatching {
+		return inboxcontrol.ErrConflict
+	}
+	if !inboxReceiptMoveMapping(receipt, mapping.Target) {
+		return inboxcontrol.ErrInvalid
+	}
+	encoded, err := json.Marshal(mapping)
+	if err != nil {
+		return fmt.Errorf("encode Inbox dispatch mapping: %w", err)
+	}
+	result, err := s.db.ExecContext(ctx, `UPDATE inbox_operation_receipts SET after_json=? WHERE id=? AND status='dispatching' AND after_json IS NULL AND source_removed_at IS NULL`, string(encoded), id)
+	return inboxReceiptTransition(result, err)
+}
+
+// Match only the signed destination and preserve every immutable item field.
+func inboxReceiptMoveMapping(receipt *inboxcontrol.Receipt, target inboxcontrol.Target) bool {
+	if receipt == nil || receipt.Projected == nil || receipt.Intent.Target == nil || *receipt.Intent.Target != receipt.Before.Target || target.Validate() != nil || receipt.SourceID != target.SourceID {
+		return false
+	}
+	before := receipt.Before.Target
+	if before.SourceType != "imap" || target.Mailbox == before.Mailbox || (receipt.Intent.Operation != inboxcontrol.OpMove && receipt.Intent.Operation != inboxcontrol.OpArchive && receipt.Intent.Operation != inboxcontrol.OpUnarchive) || len(receipt.Projected.Folders) != 1 {
+		return false
+	}
+	destination := receipt.Projected.Folders[0]
+	if destination.ID == "" || destination.UIDValidity == 0 || destination.ParentID != "" || target.Mailbox != destination.ID || target.UIDValidity != destination.UIDValidity || target.UID == 0 {
+		return false
+	}
+	target.Mailbox, target.UIDValidity, target.UID = before.Mailbox, before.UIDValidity, before.UID
+	return target == before
+}
+
 // FinishInboxReceipt preserves immutable dispatch evidence. Reconciliation may
 // resolve uncertain/partial outcomes, but cannot overwrite a verified receipt.
 func (s *Store) FinishInboxReceipt(ctx context.Context, id string, status inboxcontrol.Status, after *inboxcontrol.State, code string) error {
@@ -144,6 +188,14 @@ func (s *Store) FinishInboxReceipt(ctx context.Context, id string, status inboxc
 		}
 		target := after.Target
 		before := receipt.Before.Target
+		if target != before {
+			if !inboxReceiptMoveMapping(receipt, target) || receipt.After == nil || receipt.After.Target != target {
+				return inboxcontrol.ErrInvalid
+			}
+			target = before
+		} else if receipt.After != nil && receipt.After.Target != before {
+			return inboxcontrol.ErrInvalid
+		}
 		if target != before || after.Source != receipt.Before.Source || after.ObservedAt.IsZero() {
 			return fmt.Errorf("%w: final observation differs from receipt identity", inboxcontrol.ErrInvalid)
 		}
@@ -153,7 +205,7 @@ func (s *Store) FinishInboxReceipt(ctx context.Context, id string, status inboxc
 		}
 		encoded = string(data)
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE inbox_operation_receipts SET status = ?, finished_at = ?, after_json = ?, failure_code = ?
+	result, err := s.db.ExecContext(ctx, `UPDATE inbox_operation_receipts SET status = ?, finished_at = ?, after_json = COALESCE(?, after_json), failure_code = ?
 		WHERE id = ? AND (status IN ('dispatching', 'unknown', 'partial', 'reconcile-only') OR (status = 'prepared' AND ? = 'failed'))`,
 		status, time.Now().UTC().UnixNano(), encoded, code, id, status)
 	return inboxReceiptTransition(result, err)

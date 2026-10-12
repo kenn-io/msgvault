@@ -25,22 +25,39 @@ func keywordTags(flags []string) []string {
 
 // fetchKeywordFlags tracks FETCH item presence: FLAGS () is valid, omitted FLAGS is not.
 func fetchKeywordFlags(conn *imapclient.Client, uid uint32) ([]string, error) {
+	flags, _, err := fetchKeywordObservation(conn, uid, false)
+	return flags, err
+}
+
+// fetchKeywordObservation requires positive per-message MODSEQ when requested.
+// Mailbox HIGHESTMODSEQ cannot stand in for the requested UID's revision.
+func fetchKeywordObservation(conn *imapclient.Client, uid uint32, includeModSeq bool) ([]string, uint64, error) {
 	var set imaplib.UIDSet
 	set.AddNum(imaplib.UID(uid))
-	cmd := conn.Fetch(set, &imaplib.FetchOptions{UID: true, Flags: true})
+	cmd := conn.Fetch(set, &imaplib.FetchOptions{UID: true, Flags: true, ModSeq: includeModSeq})
 	var flags []string
+	var modSeq uint64
 	found := false
 	complete := false
+	ambiguous := false
 	for message := cmd.Next(); message != nil; message = cmd.Next() {
 		var actual imaplib.UID
-		hasUID, hasFlags := false, false
+		hasUID, hasFlags, hasModSeq := false, false, false
+		var currentModSeq uint64
+		duplicate := false
 		var current []string
 		for item := message.Next(); item != nil; item = message.Next() {
 			switch data := item.(type) {
 			case imapclient.FetchItemDataUID:
+				duplicate = duplicate || hasUID
 				actual = data.UID
 				hasUID = true
+			case imapclient.FetchItemDataModSeq:
+				duplicate = duplicate || hasModSeq
+				hasModSeq = true
+				currentModSeq = data.ModSeq
 			case imapclient.FetchItemDataFlags:
+				duplicate = duplicate || hasFlags
 				hasFlags = true
 				current = make([]string, len(data.Flags))
 				for i, flag := range data.Flags {
@@ -49,22 +66,23 @@ func fetchKeywordFlags(conn *imapclient.Client, uid uint32) ([]string, error) {
 			}
 		}
 		if hasUID && uint32(actual) == uid {
+			ambiguous = ambiguous || found || duplicate
 			found = true
-			complete = hasFlags
-			flags = current
+			complete = hasFlags && (!includeModSeq || (hasModSeq && currentModSeq > 0))
+			flags, modSeq = current, currentModSeq
 		}
 	}
 	if err := cmd.Close(); err != nil {
-		return nil, fmt.Errorf("fetch IMAP keyword flags: %w", err)
+		return nil, 0, fmt.Errorf("fetch IMAP keyword flags: %w", err)
 	}
 	if !found {
-		return nil, emailtags.Failure("stale_identity", "IMAP message moved or disappeared; sync the account before retrying", nil, nil)
+		return nil, 0, emailtags.Failure("stale_identity", "IMAP message moved or disappeared; sync the account before retrying", nil, nil)
 	}
-	if !complete {
-		return nil, emailtags.Failure("provider_read_failed", "IMAP FETCH omitted FLAGS; no complete tag state is available", nil, nil)
+	if !complete || ambiguous {
+		return nil, 0, emailtags.Failure("provider_read_failed", "IMAP FETCH omitted FLAGS or requested positive MODSEQ; no complete state is available", nil, nil)
 	}
 	slices.Sort(flags)
-	return flags, nil
+	return flags, modSeq, nil
 }
 
 // MessageKeywords reads or changes custom keyword flags on one exact mailbox copy.

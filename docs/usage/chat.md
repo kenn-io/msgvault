@@ -131,6 +131,21 @@ agent. Gmail control does not discover candidates or run batches. See
 [the API contract](../api-server.md#native-gmail-inbox-control) for request
 fields, label semantics, permissions, receipt recovery, and implemented limits.
 
+## Native IMAP Inbox control
+
+The same Inbox tools and signed preview workflow support exact IMAP mailbox
+copies. An owner supplies the recorded account/item/mailbox/UIDVALIDITY/UID
+target. `inbox_list_folders` returns exact destination mailbox generations;
+IMAP `inbox_move` needs that destination and does not accept `origin_folder`.
+`inbox_unarchive` requires an explicit `INBOX` destination. Use the exact-target
+form of `update_message_tags` for signed keyword edits.
+
+Capabilities depend on current native evidence and do not establish write
+access. Uncertain writes retain receipts; reconciliation never repeats MOVE or
+CREATE. See [the IMAP contract](../api-server.md#native-imap-inbox-control) for
+extension requirements, account binding, and recovery limits. The existing
+owner tag tool form keeps its separate behavior.
+
 ## Native email tags
 
 `get_message_tags` reads one archived message's live Gmail label IDs, IMAP
