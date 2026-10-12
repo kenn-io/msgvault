@@ -33,6 +33,7 @@ func TestNativeSourcePermissionUnknownPausesEveryEventsBoundary(t *testing.T) {
 				input.ScopeID = f.Source.ID
 				input.Arguments = []byte(`{"include_from_me":false}`)
 			}
+			require.NoError(f.Store.BindMCPSubscriptionScope(t.Context(), &input))
 			_, binding, err := f.Store.ResolveMCPSubscriptionResource(t.Context(), family, input.ScopeKind, input.ScopeID, []string{"message"}, "")
 			require.NoError(err)
 			sub, _, err := f.Store.ActivateMCPSubscription(t.Context(), store.MCPActivation{Subscription: input, ResourceBinding: binding, Now: now})

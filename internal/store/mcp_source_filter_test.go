@@ -46,6 +46,7 @@ func TestMCPSourceMessageFiltersUseNativeAttributionAndReactions(t *testing.T) {
 				input.ScopeID = f.Source.ID
 				input.Arguments, err = json.Marshal(map[string]any{"source_id": strconv.FormatInt(f.Source.ID, 10), "source_ref": resource.Reference, "include_from_me": own, "include_reactions": reactions})
 				require.NoError(err)
+				require.NoError(f.Store.BindMCPSubscriptionScope(t.Context(), &input))
 				sub, _, err := f.Store.ActivateMCPSubscription(t.Context(), store.MCPActivation{Subscription: input, Now: now})
 				require.NoError(err)
 				live := f.Store.WithIngestContext(store.IngestContext{Mode: store.IngestLive})
@@ -118,6 +119,7 @@ func TestMCPSourceTeamsOriginRevocationKeepsSourceActive(t *testing.T) {
 	input.ScopeID = f.Source.ID
 	input.Arguments, err = json.Marshal(map[string]any{"source_id": strconv.FormatInt(f.Source.ID, 10), "source_ref": resource.Reference, "include_from_me": false, "include_reactions": true})
 	require.NoError(err)
+	require.NoError(f.Store.BindMCPSubscriptionScope(t.Context(), &input))
 	sub, _, err := f.Store.ActivateMCPSubscription(t.Context(), store.MCPActivation{Subscription: input, Now: now})
 	require.NoError(err)
 	live := f.Store.WithIngestContext(store.IngestContext{Mode: store.IngestLive})
