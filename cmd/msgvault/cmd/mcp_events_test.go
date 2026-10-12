@@ -14,6 +14,7 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/fileutil"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
+	"go.kenn.io/msgvault/internal/mcpevents"
 )
 
 func TestDaemonMCPEventsRequireAuthorizedRuntimeCatalog(t *testing.T) {
@@ -34,7 +35,7 @@ func TestDaemonMCPEventsRequireAuthorizedRuntimeCatalog(t *testing.T) {
 			c := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
 				case "/api/v1/health":
-					_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"3.14.0","mcp_events":true}`))
+					_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"3.15.0","mcp_events":true}`))
 				case "/api/v1/mcp/events/list":
 					w.WriteHeader(tc.status)
 					_, _ = w.Write([]byte(tc.body))
@@ -52,9 +53,9 @@ func TestDaemonMCPEventsDisabledHealthSkipsCatalogProbe(t *testing.T) {
 		name   string
 		health string
 	}{
-		{name: "API 3.13 with Events flag is denied", health: `{"status":"ok","api_schema_version":"3.13.0","mcp_events":true}`},
-		{name: "schema without Events field", health: `{"status":"ok","api_schema_version":"3.14.0"}`},
-		{name: "Events disabled", health: `{"status":"ok","api_schema_version":"3.14.0","mcp_events":false}`},
+		{name: "API 3.14 with Events flag is denied", health: `{"status":"ok","api_schema_version":"3.14.0","mcp_events":true}`},
+		{name: "schema without Events field", health: `{"status":"ok","api_schema_version":"3.15.0"}`},
+		{name: "Events disabled", health: `{"status":"ok","api_schema_version":"3.15.0","mcp_events":false}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
@@ -95,7 +96,7 @@ func TestMCPIndependentCredentialAlwaysSuppressesEvents(t *testing.T) {
 			daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
 				case "/api/v1/health":
-					_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"3.14.0","mcp_events":true}`))
+					_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"3.15.0","mcp_events":true}`))
 				case "/api/v1/mcp/events/list":
 					_, _ = w.Write([]byte(`{"events":[{"name":"msgvault.message_archived"}]}`))
 				default:
@@ -158,7 +159,7 @@ func TestMCPRemoteEventsRequireInboundKeyToBeRemoteOwnerKey(t *testing.T) {
 			daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
 				case "/api/v1/health":
-					_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"3.14.0","mcp_events":true}`))
+					_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"3.15.0","mcp_events":true}`))
 				case "/api/v1/mcp/events/list":
 					_, _ = w.Write([]byte(`{"events":[{"name":"msgvault.message_archived"}]}`))
 				default:
