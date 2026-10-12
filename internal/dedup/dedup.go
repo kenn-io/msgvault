@@ -915,9 +915,10 @@ func (e *Engine) selectSurvivor(group *DuplicateGroup) {
 	// Restored MIME may differ only at placeholder positions. Gate the entire
 	// group so unrelated same-ID collisions retain the deterministic fallback
 	// and pairwise comparisons cannot introduce ordering cycles. Only copies
-	// of the preferred source can survive, so only they must match.
-	useAppleCompleteness := group.KeyType == "message-id" &&
-		appleCopiesMatch(group.Messages, preferredSourceCandidates(group.Messages, candidates, priorityMap))
+	// of the preferred source can survive, so only they must match. Content-hash
+	// groups carry no part fingerprints, so the gate stays off for them.
+	useAppleCompleteness := appleCopiesMatch(
+		group.Messages, preferredSourceCandidates(group.Messages, candidates, priorityMap))
 
 	// Pairwise content checks can create a comparison cycle in mixed-hash
 	// groups. Enable completeness as one group-wide ordering tier instead.

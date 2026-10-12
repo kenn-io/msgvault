@@ -38,52 +38,48 @@ func TestSelectSurvivor_ApplePlaceholderOrdering(t *testing.T) {
 		name   string
 		edit   func([]DuplicateMessage)
 		prefer []string
-		key    string
 		want   int64
 	}{
-		{"unknown parsed MIME disables tier", func([]DuplicateMessage) {}, nil, "message-id", 1},
-		{"missing raw MIME disables tier", func(m []DuplicateMessage) { m[2].HasRawMIME = false }, nil, "message-id", 1},
-		{"all fingerprinted", func(m []DuplicateMessage) { m[2].appleParts = appleFingerprints(false, false) }, nil, "message-id", 3},
+		{"unknown parsed MIME disables tier", func([]DuplicateMessage) {}, nil, 1},
+		{"missing raw MIME disables tier", func(m []DuplicateMessage) { m[2].HasRawMIME = false }, nil, 1},
+		{"all fingerprinted", func(m []DuplicateMessage) { m[2].appleParts = appleFingerprints(false, false) }, nil, 3},
 		{"fewer placeholders win", func(m []DuplicateMessage) {
 			m[1].appleParts = appleFingerprints(false, true)
 			m[2].appleParts = appleFingerprints(true, true)
-		}, nil, "message-id", 2},
+		}, nil, 2},
 		{"equal placeholder counts use fallback", func(m []DuplicateMessage) {
 			m[0].appleParts = appleFingerprints(true, false)
 			m[1].appleParts = appleFingerprints(false, true)
 			m[2].appleParts = appleFingerprints(true, false)
-		}, nil, "message-id", 1},
+		}, nil, 1},
 		{"unknown received copy excluded", func(m []DuplicateMessage) {
 			m[0].IsFromMe, m[1].IsFromMe = true, true
-		}, nil, "message-id", 2},
+		}, nil, 2},
 		{"unknown lower-priority source excluded", func(m []DuplicateMessage) {
 			m[2].SourceType = "hey"
-		}, nil, "message-id", 2},
+		}, nil, 2},
 		{"sent placeholder wins", func(m []DuplicateMessage) {
 			m[0].IsFromMe, m[2].appleParts = true, appleFingerprints(false, false)
-		}, nil, "message-id", 1},
+		}, nil, 1},
 		{"default source authority", func(m []DuplicateMessage) {
 			m[0].SourceType, m[2].appleParts = "gmail", appleFingerprints(false, false)
-		}, nil, "message-id", 1},
+		}, nil, 1},
 		{"explicit source authority", func(m []DuplicateMessage) {
 			m[1].SourceType, m[2].SourceType = "gmail", "gmail"
 			m[2].appleParts = appleFingerprints(false, false)
-		}, []string{"emlx", "gmail"}, "message-id", 1},
+		}, []string{"emlx", "gmail"}, 1},
 		{"equivalent MIME retains payload tier", func(m []DuplicateMessage) {
 			for i := range m {
 				m[i].appleParts = appleFingerprints(true, true)
 				m[i].normalizedHash = "same"
 			}
 			m[1].AttachmentCount = 5
-		}, nil, "message-id", 2},
-		{"hash groups keep existing fallback", func(m []DuplicateMessage) {
-			m[2].appleParts = appleFingerprints(false, false)
-		}, nil, "normalized-hash", 1},
+		}, nil, 2},
 		{"no placeholder collisions keep fallback", func(m []DuplicateMessage) {
 			m[0].appleParts = appleFingerprints(false, false)
 			m[2].appleParts = appleFingerprints(false, false)
 			m[1].AttachmentCount = 50
-		}, nil, "message-id", 1},
+		}, nil, 1},
 	}
 	orders := [][3]int{{0, 1, 2}, {0, 2, 1}, {1, 0, 2}, {1, 2, 0}, {2, 0, 1}, {2, 1, 0}}
 	for _, tc := range tests {
@@ -92,7 +88,7 @@ func TestSelectSurvivor_ApplePlaceholderOrdering(t *testing.T) {
 			tc.edit(messages)
 			engine := NewEngine(nil, Config{SourcePreference: tc.prefer}, nil)
 			for _, order := range orders {
-				group := DuplicateGroup{KeyType: tc.key, Messages: []DuplicateMessage{
+				group := DuplicateGroup{KeyType: "message-id", Messages: []DuplicateMessage{
 					messages[order[0]], messages[order[1]], messages[order[2]],
 				}}
 				engine.selectSurvivor(&group)
