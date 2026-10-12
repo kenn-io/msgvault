@@ -28,14 +28,14 @@ func TestEmlxReceiptStrictIdentity(t *testing.T) {
 }
 
 // FuzzEmlxReceiptDecode feeds arbitrary ledger text to the decoder. Anything
-// it accepts must satisfy every receipt rule and re-encode to stable text.
+// it accepts must satisfy every receipt rule and keep its evidence, including
+// attachment parts, through re-encoding.
 func FuzzEmlxReceiptDecode(f *testing.F) {
 	id := strings.Repeat("a", 64) + "/Messages/1.emlx"
-	valid, err := encodeEmlxReceipt(emlxReceipt{
-		Version: 1, ID: id, Signature: strings.Repeat("b", 64),
-		SourceParts: map[string]string{"2": strings.Repeat("d", 64)}, Target: "emlx-" + strings.Repeat("c", 64),
-	})
-	require.NoError(f, err)
+	// Written by hand rather than by the encoder under test.
+	valid := `{"version":1,"id":"` + id + `","signature":"` + strings.Repeat("b", 64) +
+		`","source_parts":{"2":"` + strings.Repeat("d", 64) + `","3":"` + strings.Repeat("e", 64) +
+		`"},"target":"emlx-` + strings.Repeat("c", 64) + `"}`
 	f.Add(valid)
 	f.Add(strings.Replace(valid, `"2"`, `"02"`, 1))
 	f.Add(strings.Replace(valid, `"2"`, `"0"`, 1))
@@ -63,9 +63,11 @@ func FuzzEmlxReceiptDecode(f *testing.F) {
 		require.NoError(t, err)
 		again, ok := decodeEmlxReceipt(encoded, id)
 		require.True(t, ok)
-		reencoded, err := encodeEmlxReceipt(again)
-		require.NoError(t, err)
-		assert.Equal(t, encoded, reencoded)
+		// The encoder writes no attachment parts as {}; the evidence is the same.
+		if len(receipt.SourceParts) == 0 && len(again.SourceParts) == 0 {
+			receipt.SourceParts, again.SourceParts = nil, nil
+		}
+		assert.Equal(t, receipt, again)
 	})
 }
 

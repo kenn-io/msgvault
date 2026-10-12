@@ -283,3 +283,109 @@ func TestImportEmlxCreditKeepsNewerReceiptForOtherMessage(t *testing.T) {
 	a.Equal("imported", status, "the historical credit must not reopen the newer receipt")
 	a.Equal(before, receipt)
 }
+
+// stoppedAfterCommit ingests normally, then reports a stop, leaving the state
+// a process killed between ingestion and receipt publication would leave.
+func stoppedAfterCommit(t *testing.T, opts EmlxImportOptions) emlxImportIO {
+	t.Helper()
+	io := defaultEmlxImportIO(opts)
+	ingest := io.ingest
+	io.ingest = func(
+		ctx context.Context, s *store.Store, sid int64, identifier, dest string, labels []int64,
+		target, hash string, raw []byte, date time.Time, log *slog.Logger,
+	) error {
+		require.NoError(t, ingest(ctx, s, sid, identifier, dest, labels, target, hash, raw, date, log))
+		return errors.New("simulated process stop")
+	}
+	return io
+}
+
+func messageAttachment(t *testing.T, st *store.Store, rfcID string) []byte {
+	t.Helper()
+	var messageID int64
+	require.NoError(t, st.DB().QueryRow(st.Rebind(`SELECT id FROM messages WHERE rfc822_message_id = ?`), rfcID).
+		Scan(&messageID))
+	raw, err := st.GetMessageRawContext(t.Context(), messageID)
+	require.NoError(t, err)
+	parsed, err := mime.Parse(raw)
+	require.NoError(t, err)
+	require.Len(t, parsed.Attachments, 1)
+	return parsed.Attachments[0].Content
+}
+
+// A file that switches to another message and stops after that write landed
+// must still be credited for it, even though its last receipt named the old
+// message.
+func TestImportEmlxCreditFollowsFileThatSwitchedMessages(t *testing.T) {
+	r, a := require.New(t), assert.New(t)
+	st, tmp := openTestStore(t)
+	rootA, rootB := filepath.Join(tmp, "A.mbox"), filepath.Join(tmp, "B.mbox")
+	mkMailboxDir(t, rootA, map[string][]byte{"1.partial.emlx": partialRaw(nil, "one.bin")})
+	cacheAttachment(t, rootA, "1", "2", "one.bin", []byte("A bytes for the old message"))
+	opts := EmlxImportOptions{Identifier: "owner@example.test", AttachmentsDir: filepath.Join(tmp, "blobs")}
+	_, err := ImportEmlxDir(t.Context(), st, rootA, opts)
+	r.NoError(err)
+
+	switched := partialRaw([]string{"Message-ID: <switched@example.test>"}, "one.bin")
+	mkMailboxDir(t, rootA, map[string][]byte{"1.partial.emlx": switched})
+	cacheAttachment(t, rootA, "1", "2", "one.bin", []byte("A bytes for the new message"))
+	_, err = importEmlxDir(t.Context(), st, rootA, opts, stoppedAfterCommit(t, opts))
+	r.NoError(err)
+
+	bBytes := []byte("B newer bytes")
+	mkMailboxDir(t, rootB, map[string][]byte{"1.partial.emlx": switched})
+	cacheAttachment(t, rootB, "1", "2", "one.bin", bBytes)
+	_, err = ImportEmlxDir(t.Context(), st, rootB, opts)
+	r.NoError(err)
+	a.Equal(bBytes, messageAttachment(t, st, "switched@example.test"))
+
+	retried, err := ImportEmlxDir(t.Context(), st, rootA, opts)
+	r.NoError(err)
+	a.Zero(retried.Errors)
+	a.Equal(bBytes, messageAttachment(t, st, "switched@example.test"),
+		"A's landed write was credited, so A does not replay its older bytes")
+}
+
+// A file whose content already matches the archive writes no in-progress
+// marker. If its completed receipt cannot be saved, the pending receipt must
+// still record the attachments it accounts for.
+func TestImportEmlxFailedReceiptSaveKeepsAttachmentRecord(t *testing.T) {
+	r, a := require.New(t), assert.New(t)
+	st, tmp := openTestStore(t)
+	rootA, rootB := filepath.Join(tmp, "A.mbox"), filepath.Join(tmp, "B.mbox")
+	raw := partialRaw([]string{"Message-ID: <receipt-save@example.test>"}, "one.bin")
+	shared := []byte("bytes both copies hold")
+	mkMailboxDir(t, rootB, map[string][]byte{"1.partial.emlx": raw})
+	cacheAttachment(t, rootB, "1", "2", "one.bin", shared)
+	opts := EmlxImportOptions{Identifier: "owner@example.test", AttachmentsDir: filepath.Join(tmp, "blobs")}
+	_, err := ImportEmlxDir(t.Context(), st, rootB, opts)
+	r.NoError(err)
+
+	// A hex digest and a fixed path: safe to embed, since triggers cannot bind.
+	receiptA := emlxDigest(rootA) + "/Messages/1.partial.emlx"
+	for _, event := range []string{"INSERT", "UPDATE"} {
+		_, err = st.DB().Exec(`CREATE TRIGGER block_completed_receipt_` + event + ` BEFORE ` + event +
+			` ON source_import_items WHEN NEW.provider_id = '` + receiptA + `' AND NEW.status = 'imported'
+ BEGIN SELECT RAISE(ABORT, 'synthetic receipt failure'); END`)
+		r.NoError(err)
+	}
+	mkMailboxDir(t, rootA, map[string][]byte{"1.partial.emlx": raw})
+	cacheAttachment(t, rootA, "1", "2", "one.bin", shared)
+	failed, err := ImportEmlxDir(t.Context(), st, rootA, opts)
+	r.NoError(err)
+	r.True(failed.HardErrors, "the blocked receipt save is a database failure")
+	for _, event := range []string{"INSERT", "UPDATE"} {
+		_, err = st.DB().Exec(`DROP TRIGGER block_completed_receipt_` + event)
+		r.NoError(err)
+	}
+
+	bBytes := []byte("B newer bytes")
+	cacheAttachment(t, rootB, "1", "2", "one.bin", bBytes)
+	_, err = ImportEmlxDir(t.Context(), st, rootB, opts)
+	r.NoError(err)
+	a.Equal(bBytes, messageAttachment(t, st, "receipt-save@example.test"))
+	_, err = ImportEmlxDir(t.Context(), st, rootA, opts)
+	r.NoError(err)
+	a.Equal(bBytes, messageAttachment(t, st, "receipt-save@example.test"),
+		"A's unchanged copy does not replay over B's newer bytes")
+}

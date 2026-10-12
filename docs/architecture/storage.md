@@ -122,7 +122,9 @@ On unreleased `main`, Apple Mail imports keep two kinds of rows here:
   archived raw. A `pending` row also names the file being written, the
   attachments it contributes, and a digest of the new raw. If the import stops
   before that file's row is updated, the next import that finishes the message
-  credits those attachments to the file when the archived raw matches.
+  credits those attachments to the file when the archived raw matches. The
+  file's own row names that message before the write starts, so a row that
+  names a different message is always the newer one.
 - `emlx-occurrence` rows track one `.emlx` file, keyed by a digest of the
   import root plus the file's relative path. An `imported` row stores a
   filesystem fingerprint of the file and its cached attachments, and a hash of
