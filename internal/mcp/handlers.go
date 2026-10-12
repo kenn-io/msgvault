@@ -152,6 +152,7 @@ type handlers struct {
 	personAgendaBackend PersonAgendaBackend
 	kata                KataBackend
 	identityReview      IdentityReviewBackend
+	identityOperations  IdentityOperationBackend
 	personCardDAV       PersonCardDAVBackend
 	personMerge         PersonMergeBackend
 	personRecords       PersonRecordsBackend

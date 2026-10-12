@@ -4117,3 +4117,14 @@ CREATE TABLE IF NOT EXISTS recording_references (
 );
 CREATE INDEX IF NOT EXISTS idx_recording_references_due
     ON recording_references(destination_key, state, next_action_at);
+
+-- Identity effects and digest-only receipts commit atomically. Terminal receipts
+-- have no endpoint foreign keys so archive cleanup preserves recovery evidence.
+CREATE TABLE IF NOT EXISTS identity_operation_receipts (
+    receipt_id TEXT PRIMARY KEY,
+    principal TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    request_hash TEXT NOT NULL,
+    receipt_json TEXT NOT NULL,
+    UNIQUE (principal, idempotency_key)
+);

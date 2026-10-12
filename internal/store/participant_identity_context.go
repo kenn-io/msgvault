@@ -88,7 +88,11 @@ func (s *Store) GetParticipantIdentityContext(
 func (s *Store) readParticipantIdentityMembers(
 	ctx context.Context, dest *[]ParticipantIdentityMember, in string, args []any,
 ) error {
-	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`SELECT id,
+	return readParticipantIdentityMembersWith(ctx, s.db, dest, in, args)
+}
+
+func readParticipantIdentityMembersWith(ctx context.Context, q contextRowsQuerier, dest *[]ParticipantIdentityMember, in string, args []any) error {
+	rows, err := q.QueryContext(ctx, fmt.Sprintf(`SELECT id,
 		COALESCE(display_name, ''), COALESCE(email_address, ''), COALESCE(phone_number, '')
 		FROM participants WHERE id IN (%s) ORDER BY id`, in), args...)
 	if err != nil {
@@ -108,7 +112,11 @@ func (s *Store) readParticipantIdentityMembers(
 func (s *Store) readParticipantIdentifierContext(
 	ctx context.Context, dest *[]ParticipantIdentifierContext, in string, args []any,
 ) error {
-	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`SELECT pi.participant_id,
+	return readParticipantIdentifierContextWith(ctx, s.db, dest, in, args)
+}
+
+func readParticipantIdentifierContextWith(ctx context.Context, q contextRowsQuerier, dest *[]ParticipantIdentifierContext, in string, args []any) error {
+	rows, err := q.QueryContext(ctx, fmt.Sprintf(`SELECT pi.participant_id,
 		pi.identifier_type, pi.identifier_value, COALESCE(cs.slug, ''),
 		COALESCE(cs.display_label, ''), COALESCE(pi.scope_kind, ''),
 		COALESCE(pi.scope_value, '')

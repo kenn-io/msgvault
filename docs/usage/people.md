@@ -21,6 +21,7 @@ save selected people in **Directory**. You can also use the
 | Sync contacts with an address book | [CardDAV contacts](/docs/usage/people-carddav/) |
 | Tell msgvault which accounts and aliases are mine | [Source identities](#discover-source-identities) |
 | Review suggested identity links | [Identity match review](#review-identity-matches) |
+| Link or unlink known identities | [Explicit identity changes](#apply-an-explicit-identity-change) |
 
 Ordinary profile editing and identity discovery use your archive. Briefs,
 automatic fact extraction, semantic person search, and external enrichment
@@ -84,6 +85,49 @@ Review notes are private profile data. Avoid putting unnecessary personal
 details in them. The matching CLI and token-guarded API are documented in the
 [CLI reference](/docs/cli-reference/#identity-matches) and
 [API reference](/docs/api-server/#identity-match-review-and-scoring).
+
+## Apply an explicit identity change
+
+On `main`, the CLI and MCP can preview and apply a specific identity change
+without a matching suggestion. This requires daemon API schema 3.16.0 and
+archive setup at schema 5.
+
+Graph operations link or unlink two participant IDs. Person operations attach
+the target participant's whole linked component to a saved person, or detach
+it from that person. Review `component_members` in the preview to see that set.
+A graph link preserves message authorship and separate conversations. A graph
+unlink retains saved person bindings; use `person-unlink` to detach them.
+
+1. Put the exact target in a JSON request file. Run the operation without
+   `--apply` to inspect its complete affected set, evidence, and blockers.
+2. Copy the returned `snapshot.fingerprint` into `expected_fingerprint` and
+   retain the exact `preview_token`. Add a new opaque `idempotency_key`.
+3. Run the same command with `--apply` within five minutes. Changed evidence,
+   published-contact constraints, or active merge recovery can block the write.
+
+```bash
+# request.json: {"target":{"participant_id":12,"other_participant_id":13}}
+msgvault identity operations graph-link --request request.json
+# Add the reviewed fingerprint, token, and a new request key to request.json.
+msgvault identity operations graph-link --request request.json --apply
+msgvault identity operations receipt --idempotency-key example-request-1
+```
+
+The effect and its receipt commit together. If the connection or output fails,
+read the receipt with the original key before retrying. An exact committed
+retry returns its saved receipt. Do not reuse the key for a different request.
+Receipt recovery survives daemon restart and preview expiry. The owner can
+also recover by receipt ID, or by the original principal and key, after archive
+cleanup. Delegated reads and retries still require current authority over the
+original resources and the current affected set.
+
+Previews contain private archive evidence. Delegated grants need `identity.read`
+and exact source, person UID, and address-book ownership scopes for every
+affected resource. Apply also needs `identity.link` or `identity.unlink`.
+Sets larger than 100 participants are rejected. MCP exposes writes only with
+`--allow-identity-decisions` and asks for confirmation of the reviewed operation.
+See [the CLI reference](/docs/cli-reference/#identity-operations) for request
+fields and recovery selectors.
 
 ## Optional identity scoring
 

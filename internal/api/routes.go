@@ -331,6 +331,8 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	s.registerRelationshipRoutes(apiV1)
 	s.registerPersonRelationshipRoutes(apiV1)
 	s.registerIdentityLinkRoutes(apiV1)
+	s.registerIdentityOperationRoutes(apiV1)
+	s.registerMCPCapabilitiesRoute(apiV1)
 	s.registerIdentityMatchRoutes(apiV1)
 	s.registerPersonMatchScoringRoutes(apiV1)
 	s.registerTaskIntegrationRoutes(apiV1)

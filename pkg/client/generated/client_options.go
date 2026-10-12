@@ -4807,6 +4807,138 @@ func (o *ReviewRejectIdentityMatchCandidateRequestOptions) GetHeader() (map[stri
 	return nil, nil
 }
 
+// ApplyIdentityOperationRequestOptions is the options needed to make a request to ApplyIdentityOperation.
+type ApplyIdentityOperationRequestOptions struct {
+	Body *ApplyIdentityOperationBody
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *ApplyIdentityOperationRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Body != nil {
+		if v, ok := any(o.Body).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Body", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ApplyIdentityOperationRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ApplyIdentityOperationRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ApplyIdentityOperationRequestOptions) GetBody() any {
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *ApplyIdentityOperationRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// PreviewIdentityOperationRequestOptions is the options needed to make a request to PreviewIdentityOperation.
+type PreviewIdentityOperationRequestOptions struct {
+	Body *PreviewIdentityOperationBody
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *PreviewIdentityOperationRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Body != nil {
+		if v, ok := any(o.Body).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Body", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *PreviewIdentityOperationRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *PreviewIdentityOperationRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *PreviewIdentityOperationRequestOptions) GetBody() any {
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *PreviewIdentityOperationRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// GetIdentityOperationReceiptRequestOptions is the options needed to make a request to GetIdentityOperationReceipt.
+type GetIdentityOperationReceiptRequestOptions struct {
+	Query *GetIdentityOperationReceiptQuery
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *GetIdentityOperationReceiptRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Query != nil {
+		if v, ok := any(o.Query).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Query", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetIdentityOperationReceiptRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetIdentityOperationReceiptRequestOptions) GetQuery() (map[string]any, error) {
+	return runtime.AsMap[any](o.Query)
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetIdentityOperationReceiptRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetIdentityOperationReceiptRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // PersonMatchScoringConsentRequestOptions is the options needed to make a request to PersonMatchScoringConsent.
 type PersonMatchScoringConsentRequestOptions struct {
 	Body *PersonMatchScoringConsentBody

@@ -2628,6 +2628,55 @@ successful acceptance records the decision and applies the link. Review notes
 are private data. See [people and profiles](/docs/usage/people/#review-identity-matches)
 for how to review candidates safely.
 
+### identity operations
+
+Preview and apply one explicit native identity change. Available on `main` with
+daemon API schema 3.16.0 and archive schema 5. See
+[explicit identity changes](/docs/usage/people/#apply-an-explicit-identity-change)
+for the review workflow and graph/person distinction.
+
+| Command | Target in the JSON request |
+|---|---|
+| `identity operations graph-link --request <path|-> [--apply]` | `participant_id` and `other_participant_id` |
+| `identity operations graph-unlink --request <path|-> [--apply]` | `participant_id` and `other_participant_id` |
+| `identity operations person-link --request <path|-> [--apply]` | `participant_id` and `person_id` |
+| `identity operations person-unlink --request <path|-> [--apply]` | `participant_id` and `person_id` |
+| `identity operations receipt --idempotency-key <key>` | Read the current principal's saved result |
+| `identity operations receipt --receipt-id <id>` | Owner recovery by exact receipt ID |
+| `identity operations receipt --principal <principal> --idempotency-key <key>` | Owner recovery for a prior principal |
+
+`status` is an alias for `receipt`. Commands emit JSON. Request files and stdin
+are limited to 16 KiB. Use one object with canonical field names, no unknown
+fields, and no `null` values. IDs must be positive integers no greater than
+9007199254740991. A graph target has exactly two different participant IDs; a
+person target has one participant ID and one person ID. Person operations
+attach or detach that participant's entire linked component; review
+`component_members` in the preview.
+
+```json
+{"target":{"participant_id":12,"other_participant_id":13}}
+```
+
+Without `--apply`, the command returns a snapshot and a signed preview valid
+for five minutes. To apply, retain that target and add `expected_fingerprint`
+from `snapshot.fingerprint`, the exact `preview_token`, and an opaque
+`idempotency_key`. The optional `operation` field must match the command.
+Inspect blockers before applying; changed evidence requires a fresh preview.
+
+Effects and digest-only receipts commit atomically. If the connection or stdout
+fails, use the original key to read the saved result before retrying. Exact
+committed retries recover without requiring a still-valid preview. A key reused
+with different request or authority fingerprints conflicts. Delegated receipt
+reads and retries recheck current authority and resource identities; owner
+recovery remains available after cleanup. `cache_state` describes the derived
+search cache, separately from the committed archive effect.
+
+Delegated access requires `identity.read` over every affected source, person,
+and address book. Apply also requires `identity.link` or `identity.unlink` over
+the same complete scope. Scope denial returns 403, stale previews or conflicting
+effects return 409, and more than 100 affected participants returns 413. MCP
+requires `--allow-identity-decisions` and explicit client confirmation for writes.
+
 ### person scoring
 
 Run a bounded scoring batch to create identity review suggestions and journal
@@ -4696,6 +4745,8 @@ msgvault --agent-url https://archive.example.test \
 | `person.edit` | Rename selected people and patch their structured profile or attribute values; also requires `person.read` |
 | `person.merge` | Merge selected people; also requires `person.read` and `--allow-person-merges` in MCP |
 | `carddav.write` | Authorize edits that affect the selected address books; this permission alone exposes no publication or sync tools |
+| `identity.read` | Preview explicit identity operations and recover receipts within the complete affected resource scope |
+| `identity.link`, `identity.unlink` | Apply the corresponding explicit identity operation; also requires `identity.read` and `--allow-identity-decisions` in MCP |
 
 The daemon resolves person UIDs and address-book ownership at issuance. Callers
 cannot supply that evidence. Person grants match both the ID and UID. Book
@@ -4719,7 +4770,8 @@ references. MCP asks for confirmation before a contact write. Scope denial
 returns 403, stale revisions or slots return 409, and an affected set over 100
 resources returns 413. An adapter without native scoped authorization returns
 501. Contact creation, deletion, splitting, broad people discovery, identity
-operations, and publication workflows remain owner-only.
+match-review decisions, and publication workflows remain owner-only. Explicit
+[identity operations](#identity-operations) have their own scoped permissions.
 
 ### agent-token issue
 
@@ -4737,7 +4789,7 @@ msgvault agent-token issue --label <name> \
 | Flag | Description |
 |---|---|
 | `--label <name>` | (required) Human-readable name for the grant |
-| `--permissions <perms>` | Comma-separated permissions: `search.read`, `message.read`, `attachment.read`, `stats.read` (see [scoped archive reads](#scoped-archive-reads)); `person.read`, `person.edit`, `person.merge`, and `carddav.write` (see [scoped contact edits](#scoped-contact-edits)); `calendar.read` for availability, `calendar.event.read` for provider-derived event details in delegated plans and write receipts, `calendar.write` for calendar mutations, and additional `calendar.invite` for guest changes; `draft.create` for `draft-reply`, `draft-compose`, and `draft-get`; `draft.edit` for `draft-get`, `draft-edit`, and `draft-recover`; `draft.delete` for `draft-get`, `draft-delete`, and `draft-recover` (see [managed drafts](#draft-get-draft-edit-draft-delete-and-draft-recover)) |
+| `--permissions <perms>` | Comma-separated permissions: `search.read`, `message.read`, `attachment.read`, `stats.read` (see [scoped archive reads](#scoped-archive-reads)); `person.read`, `person.edit`, `person.merge`, and `carddav.write` (see [scoped contact edits](#scoped-contact-edits)); `identity.read`, `identity.link`, and `identity.unlink` (see [identity operations](#identity-operations)); `calendar.read` for availability, `calendar.event.read` for provider-derived event details in delegated plans and write receipts, `calendar.write` for calendar mutations, and additional `calendar.invite` for guest changes; `draft.create` for `draft-reply`, `draft-compose`, and `draft-get`; `draft.edit` for `draft-get`, `draft-edit`, and `draft-recover`; `draft.delete` for `draft-get`, `draft-delete`, and `draft-recover` (see [managed drafts](#draft-get-draft-edit-draft-delete-and-draft-recover)) |
 | `--source-ids <ids>` | Comma-separated source IDs that the permissions apply to |
 | `--person-ids <ids>` | Comma-separated saved person IDs; the daemon binds their current UIDs |
 | `--address-book-ids <ids>` | Comma-separated CardDAV address-book IDs; the daemon binds current ownership |

@@ -514,6 +514,17 @@ type ListIdentityMatchCandidatesQuery struct {
 	Offset *int64 `json:"offset,omitempty"`
 }
 
+type GetIdentityOperationReceiptQuery struct {
+	// IdempotencyKey Exact key for this principal
+	IdempotencyKey *string `json:"idempotency_key,omitempty"`
+
+	// ReceiptID Exact receipt ID; owner only
+	ReceiptID *string `json:"receipt_id,omitempty"`
+
+	// Principal Exact prior principal for owner recovery
+	Principal *string `json:"principal,omitempty"`
+}
+
 type ListPersonMatchJudgmentsQuery struct {
 	// CandidateID Optional candidate ID; zero lists all
 	CandidateID *int64 `json:"candidate_id,omitempty"`

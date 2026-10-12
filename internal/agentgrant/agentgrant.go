@@ -30,9 +30,15 @@ const (
 	PermissionPersonEdit        Permission = "person.edit"
 	PermissionPersonMerge       Permission = "person.merge"
 	PermissionCardDAVWrite      Permission = "carddav.write"
+	PermissionIdentityRead      Permission = "identity.read"
+	PermissionIdentityLink      Permission = "identity.link"
+	PermissionIdentityUnlink    Permission = "identity.unlink"
 )
 
 var knownPermissions = map[string]Permission{
+	string(PermissionIdentityRead):      PermissionIdentityRead,
+	string(PermissionIdentityLink):      PermissionIdentityLink,
+	string(PermissionIdentityUnlink):    PermissionIdentityUnlink,
 	string(PermissionSearchRead):        PermissionSearchRead,
 	string(PermissionMessageRead):       PermissionMessageRead,
 	string(PermissionAttachmentRead):    PermissionAttachmentRead,

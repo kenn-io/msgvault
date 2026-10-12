@@ -158,6 +158,7 @@ import type {
   GetFilePathParameters,
   GetGmailIDsByFilterParams,
   GetIdentityMatchCandidatePathParameters,
+  GetIdentityOperationReceiptParams,
   GetImportJobPathParameters,
   GetKataIssueContextParams,
   GetKataIssueContextPathParameters,
@@ -202,6 +203,10 @@ import type {
   IdentityMatchCandidate,
   IdentityMatchCandidatesResponse,
   IdentityMatchRejectResponse,
+  IdentityOperationApplyRequest,
+  IdentityOperationApplyResponse,
+  IdentityOperationPreviewResponse,
+  IdentityReceipt,
   ImportJobRequest,
   ImportJobResponse,
   KataEvidenceLinkRequest,
@@ -265,6 +270,7 @@ import type {
   ListTextConversationMessagesParams,
   ListTextConversationMessagesPathParameters,
   ListTextConversationsParams,
+  MCPCapabilities,
   Manifest,
   MediaSearchResponse,
   MediaSearchStatusResponse,
@@ -362,6 +368,7 @@ import type {
   PersonSummary,
   PersonTracking,
   PreviewCardDAVPublicationPathParameters,
+  PreviewRequest,
   ProviderCredentialResponse,
   ProviderCredentialWriteRequest,
   PublishCardDAVPersonPathParameters,
@@ -1830,6 +1837,54 @@ export const reviewRejectIdentityMatchCandidate = (
   );
 };
 /**
+ * @summary Apply one signed identity preview or recover its exact committed retry
+ */
+export const applyIdentityOperation = (
+  identityOperationApplyRequest: IdentityOperationApplyRequest,
+  options?: SecondParameter<typeof orvalFetch<IdentityOperationApplyResponse>>,
+) => {
+  return orvalFetch<IdentityOperationApplyResponse>(
+    {
+      url: `/api/v1/identity/operations/apply`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: identityOperationApplyRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary Preview one explicit identity operation without mutation
+ */
+export const previewIdentityOperation = (
+  previewRequest: PreviewRequest,
+  options?: SecondParameter<
+    typeof orvalFetch<IdentityOperationPreviewResponse>
+  >,
+) => {
+  return orvalFetch<IdentityOperationPreviewResponse>(
+    {
+      url: `/api/v1/identity/operations/preview`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: previewRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary Read one committed identity outcome without replaying its mutation
+ */
+export const getIdentityOperationReceipt = (
+  params?: GetIdentityOperationReceiptParams,
+  options?: SecondParameter<typeof orvalFetch<IdentityReceipt>>,
+) => {
+  return orvalFetch<IdentityReceipt>(
+    { url: `/api/v1/identity/operations/receipt`, method: "GET", params },
+    options,
+  );
+};
+/**
  * @summary Grant identity scoring consent
  */
 export const personMatchScoringConsent = (
@@ -2116,6 +2171,17 @@ export const testTaskIntegration = (
 ) => {
   return orvalFetch<TaskIntegrationStatusResponse>(
     { url: `/api/v1/integrations/tasks/test`, method: "POST" },
+    options,
+  );
+};
+/**
+ * @summary Describe admitted native identity MCP operations
+ */
+export const getMCPCapabilities = (
+  options?: SecondParameter<typeof orvalFetch<MCPCapabilities>>,
+) => {
+  return orvalFetch<MCPCapabilities>(
+    { url: `/api/v1/mcp/capabilities`, method: "GET" },
     options,
   );
 };

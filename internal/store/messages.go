@@ -22,7 +22,6 @@ import (
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/emailattribution"
 	"go.kenn.io/msgvault/internal/mime"
-	"go.kenn.io/msgvault/internal/peoplesweep"
 )
 
 // querier is satisfied by both *sql.DB and *sql.Tx, allowing
@@ -4801,8 +4800,7 @@ func (s *Store) MergeParticipantsContext(ctx context.Context, oldID, newID int64
 		}
 		if personID != 0 {
 			if err := s.publishPersonIdentityScopeChangesTx(
-				ctx, tx, []int64{personID},
-				peoplesweep.EvidenceEffectIdentityReassigned); err != nil {
+				ctx, tx, []int64{personID}); err != nil {
 				return err
 			}
 			if personRevisionBumped {
