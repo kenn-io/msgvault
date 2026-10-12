@@ -22,7 +22,7 @@ func newArchiveRemoteImagesCmd() *cobra.Command {
 	var limit int
 	command := &cobra.Command{
 		Use:   "archive-remote-images",
-		Short: "Archive remote images in existing email (requires tracking consent)",
+		Short: "Download remote images in archived email (needs consent)",
 		Long:  "Download remote img src images from archived email for offline viewing.\n\nDownloading can activate tracking pixels and disclose the archive server's IP\naddress to senders. This command always requires --allow-tracking. It does not\nenable automatic archiving, change original messages, or re-fetch stored images.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {

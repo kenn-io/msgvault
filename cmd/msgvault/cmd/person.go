@@ -26,13 +26,31 @@ const personValue = "person"
 
 var personCmd = &cobra.Command{
 	Use:   personValue,
-	Short: "Manage durable person profiles",
+	Short: "Find contacts and manage durable person profiles",
+	Long: `A participant is one address or handle seen in messages. A person is a
+durable profile that groups participants and carries notes, attributes,
+relationships, and briefs. People come from 'person promote' or from
+imported CardDAV contacts.
+
+Find a contact by address (read-only):
+  msgvault query "SELECT id, email_address, display_name FROM participants WHERE email_address ILIKE '%alice%'"
+Promote that participant id to a person (writes):
+  msgvault person promote <participant-id> --json
+Then read it with person get, identities, or files <person-id>.
+person search needs semantic search; see 'msgvault setup status'.`,
+	Example: `  msgvault person list --json
+  msgvault person identities 1 --json`,
 }
 
 var personPromoteCmd = &cobra.Command{
 	Use:   "promote <participant-id>",
 	Short: "Promote a participant's identity cluster to a durable person",
-	Args:  cobra.ExactArgs(1),
+	Long: `Create a durable person from a participant and its identity cluster, or
+return the person it already belongs to. <participant-id> is an id from
+the participants query in 'msgvault person --help'. Prints the person;
+--json prints it as JSON.`,
+	Example: `  msgvault person promote 1 --json`,
+	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		participantID, err := positivePersonCLIArg(cmd, args[0], "participant")
 		if err != nil {
@@ -65,7 +83,13 @@ var personPromoteCmd = &cobra.Command{
 var personGetCmd = &cobra.Command{
 	Use:   "get [person-id]",
 	Short: "Get a durable person profile",
-	Args:  personGetArgs,
+	Long: `Show one durable person: id, display_name (when known), vcard_uid,
+participant_ids, revision, created_at, and updated_at. Pass a <person-id>
+from 'msgvault person list --json', or --vcard-uid with the person's vcard_uid
+or a bound CardDAV contact UID. Addresses are in 'person identities'.`,
+	Example: `  msgvault person get 1 --json
+  msgvault person get --vcard-uid 4f6c1a2e-0000-4000-8000-000000000001 --json`,
+	Args: personGetArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		uid, err := personGetUID(cmd)
 		if err != nil {
@@ -126,7 +150,12 @@ func personGetArgs(cmd *cobra.Command, args []string) error {
 var personListCmd = &cobra.Command{
 	Use:   cmdUseList,
 	Short: "List durable person profiles",
-	Args:  cobra.NoArgs,
+	Long: `List durable people as id, participant_ids, revision, vcard_uid,
+created_at, updated_at, and display_name (when known). Addresses
+are not included: use 'person identities <id>'. Empty until a participant is
+promoted with 'person promote' or a CardDAV contact is imported.`,
+	Example: `  msgvault person list --json`,
+	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		client, _, err := OpenHTTPStore(cmd.Context())
 		if err != nil {

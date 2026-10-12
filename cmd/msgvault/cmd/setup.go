@@ -22,7 +22,7 @@ import (
 
 var setupCmd = &cobra.Command{
 	Use:   "setup",
-	Short: "Interactive setup wizard for first-run configuration",
+	Short: "Run first-time setup; 'setup status' shows enabled features",
 	Long: `Interactive setup wizard to configure msgvault for first use.
 
 This command helps you:
@@ -34,6 +34,8 @@ This command helps you:
 Run this once after installing msgvault to get started quickly. Then run
 "msgvault setup providers" to turn on search, attachment, and people lanes
 from the API keys you have, and "msgvault setup status" to see what is on.`,
+	Example: `  msgvault setup
+  msgvault setup status --json`,
 	Args: cobra.NoArgs,
 	RunE: runSetup,
 }

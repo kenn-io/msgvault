@@ -39,10 +39,12 @@ Output formats:
   csv    - CSV with header row
   table  - Aligned text table
 
-Examples:
-  msgvault query "SELECT from_email, COUNT(*) AS n FROM v_messages GROUP BY 1 ORDER BY 2 DESC LIMIT 10"
-	msgvault query --format csv "SELECT * FROM v_senders ORDER BY message_count DESC"
-	msgvault query --format table "SELECT name, message_count FROM v_labels"`,
+Columns: run SELECT * FROM <view> LIMIT 1. The analytics cache includes
+messages deleted at the source; 'msgvault stats' breaks out active and
+source-deleted message counts.`,
+	Example: `  msgvault query "SELECT from_email, COUNT(*) AS n FROM v_messages GROUP BY 1 ORDER BY 2 DESC LIMIT 10"
+  msgvault query --format csv "SELECT * FROM v_senders ORDER BY message_count DESC"
+  msgvault query --format table "SELECT name, message_count FROM v_labels"`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runHTTPQuery(cmd, args[0])

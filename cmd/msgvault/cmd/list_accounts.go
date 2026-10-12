@@ -17,19 +17,16 @@ var listAccountsJSON bool
 
 var listAccountsCmd = &cobra.Command{
 	Use:   "list-accounts",
-	Short: "List synced accounts",
-	Long: `List all accounts that have been added to msgvault, across email,
-chat, and meeting sources.
+	Short: "List archive accounts with type, message count, last sync",
+	Long: `List every account in the archive: email, chat, meeting, and file-import
+sources. JSON rows have id, email, type (gmail, imap, mbox, slack, ...),
+display_name, and last_sync. message_count and source_deleted_count are
+included when ready; counts_pending: true replaces them while refreshing.
 
-Uses configured remote server or the local daemon by default.
-Use --local to use the local daemon even when a remote is configured.
-
-Shows the account identifier, source type, message count, and last sync time.
-
-Examples:
-	msgvault list-accounts
-	msgvault list-accounts --json`,
-	Args: cobra.NoArgs,
+Pass email to --account or id to --source-id on other commands;
+export-messages takes --source <type>:<email>.`,
+	Example: `  msgvault list-accounts --json`,
+	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return listHTTPAccounts(cmd)
 	},

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -19,14 +20,23 @@ import (
 	"golang.org/x/oauth2"
 )
 
+// isIncrementalSyncSource reports whether 'msgvault sync' downloads src.
+func isIncrementalSyncSource(src *store.Source) bool {
+	switch src.SourceType {
+	case sourceTypeGmail, sourceTypeIMAP, sourceTypeMSMail:
+		return true
+	}
+	return false
+}
+
 var syncIncrementalCmd = &cobra.Command{
 	Use:     "sync [email]",
 	Aliases: []string{"sync-incremental"},
-	Short:   "Sync new and changed messages from configured accounts",
-	Long: `Perform an incremental synchronization using the Gmail History API.
-
-This is faster than a full sync as it only fetches changes since the last sync.
-Requires a prior full sync to establish the history ID baseline.
+	Short:   "Sync new mail from Gmail, IMAP, and Microsoft accounts",
+	Long: `Fetch new and changed mail for email accounts. Gmail uses the History API
+after a first 'sync-full'; IMAP compares folder high-water marks; Microsoft
+Graph mail (add-o365 --graph) uses per-folder delta cursors. Chat and meeting
+sources have their own sync-<source> commands; file imports are not synced.
 
 IMAP accounts use folder-based sync. Unchanged folders are skipped when
 UIDVALIDITY/UIDNEXT high water marks are available.
@@ -39,11 +49,9 @@ If no email is specified, syncs all accounts that have credentials configured.
 Accounts without tokens or history IDs are skipped.
 
 If history is too old (Gmail returns 404), automatically reconciles the complete
-mailbox, preserving archived content while repairing source-deletion metadata.
-
-Examples:
-  msgvault sync                 # Sync all accounts
-  msgvault sync you@gmail.com   # Sync specific account`,
+mailbox, preserving archived content while repairing source-deletion metadata.`,
+	Example: `  msgvault sync                 # Sync all accounts
+  msgvault sync you@example.com   # Sync specific account`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if isDaemonCLISubprocess() {
@@ -133,8 +141,8 @@ func runSyncIncrementalLocal(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("list sources: %w", err)
 		}
-		if len(allSources) == 0 {
-			return errors.New("no accounts configured - run 'add-account' or 'add-imap' first")
+		if !slices.ContainsFunc(allSources, isIncrementalSyncSource) {
+			return errors.New("no email accounts to sync; add one with 'msgvault add-account <gmail>', 'add-imap', or 'add-o365' (file imports are not synced)")
 		}
 		for _, src := range allSources {
 			switch src.SourceType {

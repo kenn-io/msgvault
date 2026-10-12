@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/daemonclient"
+	"go.kenn.io/msgvault/internal/vector"
 	apiclient "go.kenn.io/msgvault/pkg/client"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
@@ -37,7 +38,12 @@ type personSearchCLIResponse struct {
 var personSearchCmd = &cobra.Command{
 	Use:   "search <free-text>",
 	Short: "Search durable person profiles semantically",
-	Args:  cobra.MinimumNArgs(1),
+	Long: `Rank durable people by semantic similarity to free text. Needs the semantic
+people lane; 'msgvault setup status' shows whether it is on and how to
+enable it. To match an exact address, use the participants query in
+'msgvault person --help'.`,
+	Example: `  msgvault person search "works on billing" --json`,
+	Args:    cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		query := strings.TrimSpace(strings.Join(args, " "))
 		if query == "" {
@@ -62,6 +68,9 @@ var personSearchCmd = &cobra.Command{
 				})
 			})
 		if err != nil {
+			if semanticPeopleSearchDisabled(err) {
+				return fmt.Errorf("%w; run 'msgvault setup status' to see how to enable semantic people search", err)
+			}
 			return err
 		}
 		if response.JSON200 == nil {
@@ -93,4 +102,14 @@ func init() {
 		&personSearchLimit, "limit", defaultPersonSearchLimit, "Maximum number of results",
 	)
 	personSearchCmd.Flags().BoolVar(&personSearchJSON, flagJSON, false, "Output as JSON")
+}
+
+// semanticPeopleSearchDisabled reports whether the daemon refused person
+// search because vector search or the [vector.people] lane is off.
+func semanticPeopleSearchDisabled(err error) bool {
+	if errors.Is(err, vector.ErrNotEnabled) {
+		return true
+	}
+	var apiErr *daemonclient.APIError
+	return errors.As(err, &apiErr) && apiErr.APIErrorCode() == "person_embeddings_disabled"
 }

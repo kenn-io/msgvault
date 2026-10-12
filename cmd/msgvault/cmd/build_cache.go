@@ -339,7 +339,7 @@ The cache files are stored in ~/.msgvault/analytics/:
   - attachments/         Attachment metadata
 
 By default, this performs an incremental update (only adding new messages).
-	Use --full-rebuild to recreate all cache files from scratch.`,
+  Use --full-rebuild to recreate all cache files from scratch.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		state := invocationFromCommand(cmd)
 		if state == nil || state.cfg == nil {

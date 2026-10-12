@@ -45,6 +45,10 @@ func newMeetingsCommand(deps meetingCommandDeps) *cobra.Command {
 	command := &cobra.Command{
 		Use:   "meetings",
 		Short: "Read archived meeting context, actions, and metrics",
+		Long: `Read meetings archived from meeting sources (Granola, Circleback, Plaud,
+Muesli, Notion, Twenty, Twilio). Meeting IDs are message IDs; find them with
+  msgvault search 'message_type:meeting_transcript newer_than:30d' --json`,
+		Example: `  msgvault meetings context --id 42 --format json`,
 	}
 	command.AddCommand(
 		newMeetingContextCommand(deps),
@@ -92,7 +96,13 @@ func newMeetingContextCommand(deps meetingCommandDeps) *cobra.Command {
 	command := &cobra.Command{
 		Use:   "context",
 		Short: "Export deterministic context for selected meetings",
-		Args:  cobra.NoArgs,
+		Long: `Write a deterministic context packet for up to 100 meetings to stdout or
+-o FILE: markdown by default, or --format json. --include-transcript adds
+archived transcript evidence; --max-bytes caps the content (4096 to 1048576,
+default 131072). Meeting IDs come from the search in 'msgvault meetings'.`,
+		Example: `  msgvault meetings context --id 42 --format json
+  msgvault meetings context --id 42 --id 43 --include-transcript -o context.md`,
+		Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
 			if err := validateMeetingIDs("--id", messageIDs, true); err != nil {
 				return usageErr(command, err)
@@ -123,7 +133,7 @@ func newMeetingContextCommand(deps meetingCommandDeps) *cobra.Command {
 			return writeMeetingContext(command, output, result.Content)
 		},
 	}
-	command.Flags().Int64SliceVar(&messageIDs, "id", nil, "Meeting message ID (repeatable)")
+	command.Flags().Int64SliceVar(&messageIDs, "id", nil, "meeting message ID from search (repeatable, required, at most 100)")
 	command.Flags().StringVar(&format, "format", "markdown", "Context format: json or markdown")
 	command.Flags().BoolVar(&includeTranscript, "include-transcript", false, "Include archived transcript evidence")
 	command.Flags().Int64Var(&maxBytes, "max-bytes", 131072, "Maximum UTF-8 content bytes")

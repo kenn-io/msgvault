@@ -71,7 +71,7 @@ specify a named app from config.toml.
 Examples:
   msgvault add-account you@gmail.com
   msgvault add-account you@gmail.com --headless
- msgvault add-account you@gmail.com --force
+  msgvault add-account you@example.com --force
   msgvault add-account you@gmail.com --readonly
   msgvault add-account you@acme.com --oauth-app acme
   msgvault add-account you@gmail.com --display-name "Work Account"`,

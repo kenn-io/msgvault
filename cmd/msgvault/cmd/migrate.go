@@ -18,6 +18,8 @@ This command is local-only; run it on the archive host or use --local to select
 this machine's archive. It can initialize a fresh archive and is safe to repeat.
 On failure, retry with this binary or restore the backup before using an older
 binary. Optional vector and analytics cache upgrades run in their own subsystems.`,
+		Example: `  msgvault --home /path/to/archive-home daemon stop
+  msgvault --home /path/to/archive-home migrate`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error { return runMigrate(cmd) },
 	}

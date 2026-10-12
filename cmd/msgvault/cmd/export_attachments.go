@@ -20,13 +20,12 @@ var exportAttachmentsCmd = &cobra.Command{
 	Use:   "export-attachments <message-id>",
 	Short: "Export all attachments from a message as individual files",
 	Long: `Export all attachments from a message to a directory with original filenames.
+<message-id> is the "id" from 'msgvault search --json' or a provider message ID.
 
 Takes a message ID (internal numeric or Gmail ID) and writes each attachment
 as a separate file. Filenames are sanitized and deduplicated automatically.
-Files are never overwritten — a numeric suffix is appended on conflict.
-
-Examples:
-  msgvault export-attachments 45                  # all attachments → cwd
+Files are never overwritten — a numeric suffix is appended on conflict.`,
+	Example: `  msgvault export-attachments 45                  # all attachments → cwd
   msgvault export-attachments 45 -o ~/Downloads   # all attachments → specific dir
   msgvault export-attachments 18f0abc123def       # by Gmail ID`,
 	Args: cobra.ExactArgs(1),

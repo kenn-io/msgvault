@@ -11,7 +11,7 @@ import (
 
 var deleteDedupedCmd = &cobra.Command{
 	Use:   "delete-deduped",
-	Short: "Permanently delete dedup-hidden messages from the local archive",
+	Short: "Permanently delete dedup-hidden messages locally",
 	Long: `Permanently delete dedup-hidden messages from the local archive. This is
 the third rung of the safety progression: scan -> hide -> local hard
 delete -> remote delete. Each rung is a separate, explicit user action.
