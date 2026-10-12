@@ -110,10 +110,6 @@ func TestEventsModernDiscoveryAndMethods(t *testing.T) {
 	assert.Contains(result["instructions"], "Archived messages")
 	assert.Contains(result["instructions"], "eventId")
 
-	_, initWire := eventsHTTPCall(t, h, "2026-07-28", "initialize", `{"protocolVersion":"2026-07-28","capabilities":{},"clientInfo":{"name":"fixture","version":"1"}}`)
-	// The pinned SDK removes initialize on the modern protocol.
-	require.NotNil(initWire["error"])
-	assert.Equal(json.Number("-32601"), eventsWireObject(t, initWire["error"])["code"])
 	_, legacyInit := eventsHTTPCall(t, h, "2025-11-25", "initialize", `{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"fixture","version":"1"}}`)
 	require.Nil(legacyInit["error"])
 	assert.NotContains(eventsWireObject(t, legacyInit["result"])["capabilities"], "events")

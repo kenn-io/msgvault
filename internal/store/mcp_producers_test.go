@@ -125,14 +125,14 @@ func TestMCPMessageProducerExplicitProvenance(t *testing.T) {
 
 func TestMCPMessageProducerOnlyProbesInsertionForLiveIngest(t *testing.T) {
 	for _, tc := range []struct {
-		name         string
-		mode         store.IngestMode
-		wantProbes   int
-		wantReceipts int
+		name            string
+		mode            store.IngestMode
+		duplicateProbes int
+		wantReceipts    int
 	}{
-		{name: "live", mode: store.IngestLive, wantProbes: 1, wantReceipts: 1},
-		{name: "backfill", mode: store.IngestBackfill, wantProbes: 1},
-		{name: "unknown", mode: store.IngestUnknown, wantProbes: 1},
+		{name: "live", mode: store.IngestLive, duplicateProbes: 2, wantReceipts: 1},
+		{name: "backfill", mode: store.IngestBackfill, duplicateProbes: 1},
+		{name: "unknown", mode: store.IngestUnknown, duplicateProbes: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := Assert.New(t)
@@ -164,20 +164,22 @@ func TestMCPMessageProducerOnlyProbesInsertionForLiveIngest(t *testing.T) {
 			require.NoError(err)
 			var probes, updates int
 			require.NoError(f.Store.DB().QueryRow(`SELECT inserts, updates FROM synthetic_mcp_message_writes`).Scan(&probes, &updates))
-			assert.Equal(tc.wantProbes, probes, "only live first-arrival capture needs the insertion outcome probe")
+			assert.Equal(1, probes, "a fresh message needs one insert in every ingest mode")
 			assert.Zero(updates, "a first-arrival insert must not run the update path")
 			events := readProducerEvents(t, f.Store, "msgvault.message_archived")
 			require.Len(events, tc.wantReceipts)
 			if tc.wantReceipts == 1 {
 				assert.Equal(id, events[0].messageID)
-				message.Snippet = sql.NullString{String: "Synthetic duplicate update", Valid: true}
-				_, err = view.PersistMessageContext(t.Context(), &store.MessagePersistData{Message: message, BodyText: sql.NullString{String: "Synthetic producer probe", Valid: true}})
-				require.NoError(err)
-				require.NoError(f.Store.DB().QueryRow(`SELECT updates FROM synthetic_mcp_message_writes`).Scan(&updates))
-				assert.Equal(1, updates, "a duplicate must continue through the existing update path")
-				events = readProducerEvents(t, f.Store, "msgvault.message_archived")
-				require.Len(events, 1, "a duplicate update must not create another first-arrival receipt")
 			}
+			message.Snippet = sql.NullString{String: "Synthetic duplicate update", Valid: true}
+			duplicateID, err := view.PersistMessageContext(t.Context(), &store.MessagePersistData{Message: message, BodyText: sql.NullString{String: "Synthetic producer probe", Valid: true}})
+			require.NoError(err)
+			assert.Equal(id, duplicateID)
+			require.NoError(f.Store.DB().QueryRow(`SELECT inserts, updates FROM synthetic_mcp_message_writes`).Scan(&probes, &updates))
+			assert.Equal(1+tc.duplicateProbes, probes, "only live duplicates need an extra insertion-outcome probe before the upsert")
+			assert.Equal(1, updates, "a duplicate must continue through the existing update path")
+			events = readProducerEvents(t, f.Store, "msgvault.message_archived")
+			require.Len(events, tc.wantReceipts, "duplicate updates must not create a first-arrival receipt")
 		})
 	}
 }
