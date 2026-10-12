@@ -178,6 +178,8 @@ type ServeOptions struct {
 	PersonCardDAV   PersonCardDAVBackend
 	Inbox           InboxBackend
 	InboxOperations []inboxcontrol.Operation
+	InboxCandidates InboxCandidateBackend
+	InboxContext    InboxContextBackend
 	MessageTags     MessageTagBackend
 	// IdentityScoring exposes consented manual scoring. Consent is
 	// recorded through the CLI/API, never by an MCP tool.
@@ -387,6 +389,8 @@ func newMCPServerWithPolicy(
 		personCardDAV:       opts.PersonCardDAV,
 		messageTags:         opts.MessageTags,
 		inbox:               opts.Inbox,
+		inboxCandidates:     opts.InboxCandidates,
+		inboxContext:        opts.InboxContext,
 		identityScoring:     opts.IdentityScoring,
 		drafts:              opts.Drafts,
 	}
