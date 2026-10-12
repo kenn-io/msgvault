@@ -17,6 +17,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -558,10 +559,15 @@ func TestInlineOAuthRefreshRotationAcrossManagers(t *testing.T) {
 	// its caller cancels. This proves contention rather than relying on the
 	// scheduler to overlap Token calls. Only the first manager has started a
 	// Token call, so this also rejects a lock confined to one manager instance.
-	blockedCtx, blockedCancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
-	_, blockedErr := second.TokenSource(blockedCtx, identifier)
-	blockedCancel()
-	requires.ErrorIs(blockedErr, context.DeadlineExceeded)
+	// The held refresh owns a real file lock outside this bubble. The second
+	// manager's nonblocking lock retries and cancellation use virtual time;
+	// neither the HTTP server nor runner throughput controls the deadline.
+	synctest.Test(t, func(t *testing.T) {
+		blockedCtx, blockedCancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+		defer blockedCancel()
+		_, blockedErr := second.TokenSource(blockedCtx, identifier)
+		require.ErrorIs(t, blockedErr, context.DeadlineExceeded)
+	})
 	go func() { token, err := secondSource.Token(); results <- result{token, err} }()
 	releaseRefresh()
 	for range 2 {

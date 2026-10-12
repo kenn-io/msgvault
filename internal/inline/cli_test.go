@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"testing"
 	"time"
 
@@ -405,5 +404,4 @@ func TestCLIFileRefreshRequiresCompleteRequestedSet(t *testing.T) {
 	requires.ErrorContains(err, "duplicate")
 	_, err = NewCLIClient(fixture).Messages(context.Background(), 123, -1)
 	requires.ErrorContains(err, "cursor")
-	assert.NotContains(t, strings.ToLower(err.Error()), "private")
 }

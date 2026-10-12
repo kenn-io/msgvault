@@ -184,7 +184,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		if err != nil {
 			checkpoint, cpErr := checkpointFor(state, sum)
 			if cpErr == nil {
-				err = errors.Join(err, scoped.store.FailSyncWithCheckpoint(runID, "Inline sync did not complete", checkpoint))
+				err = errors.Join(err, scoped.store.InterruptSyncWithCheckpoint(ctx, runID, err, checkpoint))
 			} else {
 				err = errors.Join(err, scoped.store.FailSync(runID, "Inline sync did not complete"), cpErr)
 			}

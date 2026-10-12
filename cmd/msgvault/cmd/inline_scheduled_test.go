@@ -79,6 +79,11 @@ func TestRunConfiguredInlineSyncRotatesAccountsAfterYield(t *testing.T) {
 				if !cooperative {
 					run, err := st.GetLatestCheckpointedSync(source.ID)
 					requires.NoError(err)
+					checks.Equal(store.SyncStatusCancelled, run.Status, "scheduler handoff must not report a provider failure")
+					checks.Empty(run.ErrorMessage.String)
+					checks.Equal(int64(0), run.ErrorsCount)
+					checks.Equal(int64(1), run.MessagesProcessed)
+					checks.Equal(int64(1), run.MessagesAdded)
 					state, err := inline.LoadSyncState(run.CursorBefore.String, source.Identifier)
 					requires.NoError(err)
 					requires.NotNil(state.Chats["chat:7"])

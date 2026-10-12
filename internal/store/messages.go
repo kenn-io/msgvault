@@ -6196,31 +6196,31 @@ type AttachmentRef struct {
 // replaceMessageAttachmentsWhereContext atomically reconciles a message's attachment
 // rows matching deleteWhere with refs. Retained source-part keys keep their row
 // IDs so resync does not invalidate cached file listings. Refs with an empty
-// StoragePath (and, when requireHash is set, an empty ContentHash) are skipped.
+// StoragePath are skipped.
 func (s *Store) replaceMessageAttachmentsWhereContext(ctx context.Context,
-	messageID int64, deleteWhere string, requireHash bool, refs []AttachmentRef, deleteArgs ...any,
+	messageID int64, deleteWhere string, refs []AttachmentRef, deleteArgs ...any,
 ) error {
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
-		return s.replaceMessageAttachmentsWhereTxContext(ctx, tx, messageID, deleteWhere, requireHash, refs, deleteArgs...)
+		return s.replaceMessageAttachmentsWhereTxContext(ctx, tx, messageID, deleteWhere, refs, deleteArgs...)
 	})
 }
 
 func (s *Store) replaceMessageAttachmentsWhereTx(
-	tx *loggedTx, messageID int64, deleteWhere string, requireHash bool,
+	tx *loggedTx, messageID int64, deleteWhere string,
 	refs []AttachmentRef, deleteArgs ...any,
 ) error {
-	return s.replaceMessageAttachmentsWhereTxContext(context.Background(), tx, messageID, deleteWhere, requireHash, refs, deleteArgs...)
+	return s.replaceMessageAttachmentsWhereTxContext(context.Background(), tx, messageID, deleteWhere, refs, deleteArgs...)
 }
 
 // replaceMessageAttachmentsWhereTxContext honors cancellation during replaceMessageAttachmentsWhereTx.
 func (s *Store) replaceMessageAttachmentsWhereTxContext(ctx context.Context,
-	tx *loggedTx, messageID int64, deleteWhere string, requireHash bool,
+	tx *loggedTx, messageID int64, deleteWhere string,
 	refs []AttachmentRef, deleteArgs ...any,
 ) error {
 	writes := make([]AttachmentWrite, 0, len(refs))
 	keys := make([]any, 0, len(refs))
 	for _, ref := range refs {
-		if ref.StoragePath == "" || (requireHash && ref.ContentHash == "") {
+		if ref.StoragePath == "" {
 			continue
 		}
 		write := AttachmentWrite{
@@ -6316,7 +6316,7 @@ func (s *Store) ReplaceMessageInlineAttachments(messageID int64, refs []Attachme
 		)`
 	}
 	return s.withTx(func(tx *loggedTx) error {
-		if err := s.replaceMessageAttachmentsWhereTx(tx, messageID, deleteWhere, false, refs); err != nil {
+		if err := s.replaceMessageAttachmentsWhereTx(tx, messageID, deleteWhere, refs); err != nil {
 			return err
 		}
 		var body sql.NullString
@@ -6354,7 +6354,7 @@ func (s *Store) ReplaceMessageBeeperAttachments(messageID int64, refs []Attachme
 		if err != nil {
 			return err
 		}
-		if err := s.replaceMessageAttachmentsWhereTx(tx, messageID, `source_attachment_id LIKE ?`, false, refs, "beeper:%"); err != nil {
+		if err := s.replaceMessageAttachmentsWhereTx(tx, messageID, `source_attachment_id LIKE ?`, refs, "beeper:%"); err != nil {
 			return err
 		}
 		if metadataChanged {
@@ -6830,7 +6830,7 @@ func (s *Store) ReplaceMessageLinkAttachments(messageID int64, refs []Attachment
 		}
 		if err := s.replaceMessageAttachmentsWhereTx(tx, messageID,
 			`(storage_path LIKE 'http://%' OR storage_path LIKE 'https://%')
-			 AND COALESCE(source_attachment_id, '') NOT LIKE 'teams:inline:%'`, false, refs); err != nil {
+			 AND COALESCE(source_attachment_id, '') NOT LIKE 'teams:inline:%'`, refs); err != nil {
 			return err
 		}
 		after, err := readRecordingPointers(context.Background(), tx, messageID, "source_attachment_id, storage_path")

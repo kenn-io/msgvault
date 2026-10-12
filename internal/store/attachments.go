@@ -33,7 +33,7 @@ type DiscordAttachmentMessage = PendingAttachmentMessage
 
 func (s *Store) replaceMessageProviderAttachmentsContext(ctx context.Context, messageID int64, providerPrefix string, refs []AttachmentRef) error {
 	return s.replaceMessageAttachmentsWhereContext(ctx,
-		messageID, `source_attachment_id LIKE ?`, false, refs, providerPrefix+"%",
+		messageID, `source_attachment_id LIKE ?`, refs, providerPrefix+"%",
 	)
 }
 
@@ -161,7 +161,7 @@ func (s *Store) ReplaceMessageInlineProviderAttachments(messageID int64, refs []
 		if err := s.requireSyncMessageSourceTx(tx, messageID); err != nil {
 			return err
 		}
-		if err := s.replaceMessageAttachmentsWhereTx(tx, messageID, `source_attachment_id LIKE ?`, false, refs, "inline:%"); err != nil {
+		if err := s.replaceMessageAttachmentsWhereTx(tx, messageID, `source_attachment_id LIKE ?`, refs, "inline:%"); err != nil {
 			return err
 		}
 		return recomputeMessageAttachmentStatsWith(tx, messageID)

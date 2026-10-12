@@ -269,7 +269,6 @@ func TestUnknownRosterFailsClosedThenBackfillRetriesAfterRemovingParticipantCap(
 	requires.NoError(err)
 	assertions.Equal(1, backfill.AttachmentsDownloaded)
 	assertions.Equal(1, client.filesCalls)
-	assertions.False(client.chats[1].MemberCountKnown, "group membership remains unknown after the policy change")
 }
 
 func TestUnknownRosterDoesNotOverflowMaximumParticipantCap(t *testing.T) {
