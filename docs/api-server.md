@@ -365,11 +365,60 @@ provider outcomes return 502 `inbox_outcome_unknown`; local reconciliation
 failure returns 500 `inbox_reconcile_only`. Errors retain `result` when a receipt
 exists. Only execution and reconciliation hold the daemon mutation gate.
 
-Native control currently implements Gmail only. IMAP mapping, Microsoft Inbox
-actions, chat actions, candidate/context discovery, and batch operations are
-not provided by this route. Existing native tag routes retain their separate
-IMAP and Microsoft behavior. See [`inbox`](cli-reference.md#inbox) and
+Native control implements Gmail and the [IMAP operations below](#native-imap-inbox-control).
+Microsoft Inbox actions, chat actions, candidate/context discovery, and batch
+operations are not provided by this route. Existing native tag routes retain
+their separate IMAP and Microsoft behavior. See [`inbox`](cli-reference.md#inbox) and
 [MCP Inbox tools](usage/chat.md#native-gmail-inbox-control).
+
+### Native IMAP Inbox control
+
+Unreleased. IMAP uses the same `/api/v1/inbox/control`
+route, signed preview, current grants, execution fence, and receipt workflow
+described above. It operates on one recorded mailbox copy. An owner supplies
+its exact `target`; this route does not discover candidate messages.
+
+For IMAP, `source_type` is `imap`, `source_identifier` is the persisted IMAP
+source identifier, and `account_id` is its configured login username. A message
+target also requires its archived `item_id`, canonical `provider_id`, exact
+`mailbox`, positive `uidvalidity`, and positive `uid`. The daemon checks these
+against current source configuration and membership. `list-folders` returns
+selectable mailbox `id`, `name`, and `uidvalidity`; use that complete identity
+as a destination. `origin_folder` applies only to Gmail label moves.
+
+| Operation | Native IMAP behavior |
+|---|---|
+| `set-read`, `set-unread` | Add or remove `\Seen`; preserve local archive read state |
+| `tags` | Edit mailbox-advertised keywords; preserve unrelated flags |
+| `move` | Move the exact copy into `destination.id` at its observed `uidvalidity` |
+| `archive` | Move to a configured archive mailbox or the server's unique selectable `\Archive` mailbox |
+| `unarchive` | Move into an explicitly supplied `INBOX` destination |
+| `create-folder` | Create `destination.name` and retain its independently observed native mailbox generation |
+
+Preview uses read-only mailbox selection. It does not establish write access;
+execution requires a successful writable selection and current persistent-flag
+permissions. A mixed keyword add/remove requires `CONDSTORE`, a positive
+per-message modification number, and one conditional `FLAGS` replacement.
+A conflict or missing concurrency evidence cannot fall back to two writes.
+Capabilities report observed protocol support, with `unavailable` for missing
+evidence and `unsupported` for absent required extensions. They grant no authority.
+
+Moves require both `MOVE` and `UIDPLUS`. The daemon durably records the exact
+native `COPYUID` mapping before destination readback, then independently checks
+that the original UID is absent in its original mailbox generation. It never
+falls back to COPY plus deletion or guesses a destination by Message-ID or
+folder name. Reconciliation preserves the archived item, unrelated memberships,
+message bodies, and local read state. The receipt's `after.target` identifies
+the moved copy for later operations. A provider tombstone can be recovered only
+with this durable mapping; local archive deletion cannot be reversed.
+
+Missing FLAGS or omitted tag evidence is unknown. Explicit empty `flags: []`
+or `tags: []` remains known-empty through responses, signed requests, and saved
+receipts. Obtain a fresh preview if an older preview encoded that evidence
+differently. Lost MOVE mapping or CREATE generation evidence remains unknown;
+reconciliation never repeats the mutation or recovers identity from a name.
+See [IMAP usage](usage/imap.md#control-an-exact-server-copy-unreleased) for the
+command workflow.
 
 ### Native email tags
 

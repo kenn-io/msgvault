@@ -92,3 +92,9 @@ type Ledger interface {
 	MarkInboxDispatching(ctx context.Context, receiptID string) error
 	FinishInboxReceipt(ctx context.Context, receiptID string, status Status, after *State, failureCode string) error
 }
+
+// ReceiptMappingLedger is optional; only native consumers whose dispatch returns
+// a changed identity require it. Ledger retains its five-method caller ABI.
+type ReceiptMappingLedger interface {
+	RecordInboxReceiptMapping(context.Context, string, State) error
+}

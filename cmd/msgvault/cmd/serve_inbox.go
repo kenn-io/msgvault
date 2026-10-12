@@ -7,6 +7,7 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/emailtags"
 	"go.kenn.io/msgvault/internal/gmail"
+	imaplib "go.kenn.io/msgvault/internal/imap"
 	"go.kenn.io/msgvault/internal/inboxcontrol"
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/store"
@@ -105,12 +106,37 @@ func (a *storeAPIAdapter) inboxBinding(ctx context.Context, request inboxcontrol
 	if kind == "" {
 		kind = "gmail"
 	}
-	if binding.SourceType != kind || binding.SourceIdentifier != source.Identifier || binding.AccountID != source.Identifier {
+	accountID := source.Identifier
+	if kind == sourceTypeIMAP {
+		if !source.SyncConfig.Valid {
+			return nil, binding, inboxcontrol.ErrDenied
+		}
+		cfg, err := imaplib.ConfigFromJSON(source.SyncConfig.String)
+		if err != nil || cfg.Username == "" || cfg.Identifier() != source.Identifier {
+			return nil, binding, inboxcontrol.ErrDenied
+		}
+		accountID = cfg.Username
+	}
+	if binding.SourceType != kind || binding.SourceIdentifier != source.Identifier || binding.AccountID != accountID {
 		return nil, binding, inboxcontrol.ErrDenied
 	}
 	if request.Target != nil {
 		if request.Target.Scope != inboxcontrol.ScopeMessage {
 			return nil, binding, inboxcontrol.ErrUnavailable
+		}
+		if original, ok := inboxcontrol.ReceiptAuthorityTarget(ctx); ok && original == *request.Target {
+			if err := a.store.ValidateInboxItemIdentityContext(ctx, original); err != nil {
+				return nil, binding, inboxcontrol.ErrDenied
+			}
+			return source, binding, nil
+		}
+		// Only Service recovery can supply this hint, after validating a durable
+		// mapping against the original receipt and signed projected destination.
+		if mapped, ok := inboxcontrol.ReceiptMoveTarget(ctx); ok && mapped == *request.Target {
+			if err := a.store.ValidateInboxItemIdentityContext(ctx, mapped); err != nil {
+				return nil, binding, inboxcontrol.ErrDenied
+			}
+			return source, binding, nil
 		}
 		native, err := a.store.EmailTagTargetContext(ctx, request.Target.ItemID, request.Target.Mailbox)
 		if err != nil || native.SourceID != request.Target.SourceID || native.Provider != request.Target.SourceType || native.SourceMessageID != request.Target.ProviderID || native.Mailbox != request.Target.Mailbox || native.UIDValidity != request.Target.UIDValidity || native.UID != request.Target.UID {
@@ -123,6 +149,26 @@ func (a *storeAPIAdapter) resolveInboxProvider(ctx context.Context, request inbo
 	source, binding, err := a.inboxBinding(ctx, request)
 	if err != nil {
 		return nil, err
+	}
+	if binding.SourceType == sourceTypeIMAP {
+		factory := a.emailTagClientFactory
+		if factory == nil {
+			factory = func(ctx context.Context, source *store.Source) (gmail.API, error) {
+				return buildAPIClient(ctx, source, oauthManagerCache(invocationFromContext(ctx)), nil)
+			}
+		}
+		client, err := factory(ctx, source)
+		if err != nil {
+			return nil, inboxcontrol.ErrUnavailable
+		}
+		native, ok := client.(*imaplib.Client)
+		if !ok || native == nil {
+			if client != nil {
+				_ = client.Close()
+			}
+			return nil, inboxcontrol.ErrUnavailable
+		}
+		return imaplib.NewInboxProvider(native, binding), nil
 	}
 	if binding.SourceType != "gmail" {
 		return nil, inboxcontrol.ErrUnavailable

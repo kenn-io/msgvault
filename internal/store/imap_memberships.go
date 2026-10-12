@@ -202,6 +202,7 @@ func (s *Store) applyIMAPMailboxDeltas(
 			return err
 		}
 
+		var inboxObservations []imapInboxSyncObservation
 		affected := make(map[int64]struct{})
 		if err := captureUntrackedIMAPMessageIDs(tx, sourceID, affected); err != nil {
 			return err
@@ -268,23 +269,32 @@ func (s *Store) applyIMAPMailboxDeltas(
 				if err != nil {
 					return err
 				}
+				inboxObservations = append(inboxObservations, imapInboxSyncObservation{Membership: observation, MessageID: messageID})
 				flags := observation.Flags
-				if flags == nil {
-					flags = []string{}
-				}
 				if delta.Reset {
 					key := imapMembershipUID{
 						uidValidity: observation.UIDValidity, uid: observation.UID,
 					}
 					prior, saved := stored[key]
 					delete(stored, key)
+					if flags == nil && saved && prior.flagsDecoded && prior.messageID == messageID {
+						flags = prior.flags
+					}
 					// Servers may return the same flags in a different order.
 					if saved && prior.flagsDecoded &&
-						prior.messageID == messageID &&
+						prior.messageID == messageID && (prior.flags == nil) == (flags == nil) &&
 						slices.Equal(slices.Sorted(slices.Values(prior.flags)), slices.Sorted(slices.Values(flags))) {
 						// Identical membership: writing it would only move
 						// updated_at and rebuild labels that cannot have changed.
 						continue
+					}
+				} else if flags == nil {
+					// Omitted current evidence may retain cached metadata only for
+					// this exact membership and archived item. It cannot clear flags
+					// or transfer them to a replacement message at the same UID.
+					flags, err = cachedIMAPMembershipFlags(tx, sourceID, observation, messageID)
+					if err != nil {
+						return err
 					}
 				}
 				if observation.SourceMessageID != "" {
@@ -306,7 +316,7 @@ func (s *Store) applyIMAPMailboxDeltas(
 					return fmt.Errorf("capture replaced IMAP membership: %w", err)
 				}
 
-				flagsJSON, err := json.Marshal(flags, json.Deterministic(true))
+				flagsJSON, err := json.Marshal(flags, json.Deterministic(true), json.FormatNilSliceAsNull(true))
 				if err != nil {
 					return fmt.Errorf("marshal IMAP flags: %w", err)
 				}
@@ -379,7 +389,7 @@ func (s *Store) applyIMAPMailboxDeltas(
 				return fmt.Errorf("upsert IMAP folder state for %q: %w", normalized.mailbox, err)
 			}
 		}
-		return nil
+		return observeIMAPSyncMembershipsTx(ctx, tx, sourceID, inboxObservations)
 	})
 }
 
@@ -422,7 +432,7 @@ func loadIMAPMailboxMemberships(
 		if err := rows.Scan(&key.uidValidity, &key.uid, &messageID, &flagsJSON); err != nil {
 			return nil, err
 		}
-		saved := storedIMAPMembership{messageID: messageID, flags: []string{}, flagsDecoded: true}
+		saved := storedIMAPMembership{messageID: messageID, flagsDecoded: true}
 		if flagsJSON.Valid && flagsJSON.String != "" {
 			if err := json.Unmarshal([]byte(flagsJSON.String), &saved.flags); err != nil {
 				saved.flags, saved.flagsDecoded = nil, false
@@ -431,6 +441,27 @@ func loadIMAPMailboxMemberships(
 		stored[key] = saved
 	}
 	return stored, rows.Err()
+}
+
+// Only an omitted FLAGS response needs this bounded cache lookup. Complete
+// observations remain on the normal upsert path without extra membership reads.
+func cachedIMAPMembershipFlags(tx *loggedTx, sourceID int64, observation IMAPMembershipObservation, messageID int64) ([]string, error) {
+	var encoded string
+	err := tx.QueryRow(`SELECT flags FROM imap_message_memberships
+		WHERE source_id=? AND mailbox=? AND uidvalidity=? AND uid=? AND message_id=?`,
+		sourceID, observation.Mailbox, observation.UIDValidity, observation.UID, messageID).Scan(&encoded)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil //nolint:nilnil // No cached membership means unknown FLAGS.
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read cached IMAP membership flags: %w", err)
+	}
+	var flags []string
+	if err := json.Unmarshal([]byte(encoded), &flags); err != nil {
+		// Malformed cached metadata provides no flag evidence.
+		return nil, nil //nolint:nilnil // Unknown cached FLAGS is not a database error.
+	}
+	return flags, nil
 }
 
 // deleteUnobservedIMAPMemberships removes the saved rows of a mailbox that a

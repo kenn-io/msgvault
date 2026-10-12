@@ -91,14 +91,14 @@ func (s *Service) Control(ctx context.Context, request Request, principal Princi
 	if err := request.Validate(); err != nil {
 		return nil, err
 	}
+	if !validIdentity(principal.ID) {
+		return nil, ErrDenied
+	}
 	if s.Ledger == nil || s.Resolve == nil || len(s.Key) < 32 {
 		return nil, ErrInternal
 	}
 	if request.Operation == OpReceiptGet || request.Operation == OpReconcile {
 		return s.controlReceipt(ctx, request, principal, acquireWrite)
-	}
-	if err := s.authorize(ctx, principal, request); err != nil {
-		return nil, err
 	}
 	mutation := request.Operation.IsMutation()
 	intentHash, err := IntentFingerprint(request)
@@ -113,6 +113,9 @@ func (s *Service) Control(ctx context.Context, request Request, principal Princi
 		if receipt != nil {
 			return s.replay(ctx, receipt, intentHash, principal)
 		}
+	}
+	if err := s.authorize(ctx, principal, request); err != nil {
+		return nil, err
 	}
 	if !mutation || request.DryRun {
 		provider, err := s.Resolve(ctx, request)
@@ -192,9 +195,6 @@ func (s *Service) execute(ctx context.Context, request Request, principal Princi
 		return nil, err
 	}
 	defer done()
-	if err := s.authorize(ctx, principal, request); err != nil {
-		return nil, err
-	}
 	// A competing claim could have completed while this request waited.
 	existing, err := s.Ledger.LookupInboxReceipt(ctx, principal.ID, requestSourceID(request), request.IdempotencyKey)
 	if err != nil {
@@ -202,6 +202,9 @@ func (s *Service) execute(ctx context.Context, request Request, principal Princi
 	}
 	if existing != nil {
 		return s.replay(ctx, existing, intentHash, principal)
+	}
+	if err := s.authorize(ctx, principal, request); err != nil {
+		return nil, err
 	}
 	provider, err := s.Resolve(ctx, request)
 	if err != nil {
@@ -211,6 +214,14 @@ func (s *Service) execute(ctx context.Context, request Request, principal Princi
 		return nil, ErrUnavailable
 	}
 	defer closeProvider(provider)
+	if imapMoveRequest(request) {
+		if _, ok := s.Ledger.(ReceiptMappingLedger); !ok {
+			return nil, ErrUnavailable
+		}
+		if _, ok := provider.(MoveSourceVerifier); !ok {
+			return nil, ErrUnavailable
+		}
+	}
 	before, err := provider.Observe(ctx, request)
 	if err != nil {
 		return nil, safePreflightError(err)
@@ -254,6 +265,10 @@ func (s *Service) execute(ctx context.Context, request Request, principal Princi
 	}
 	result := &Result{Before: &before, Projected: &projected, Receipt: receipt}
 	dispatchRequest := request
+	if imapMoveRequest(request) && len(projected.Folders) == 1 {
+		destination := projected.Folders[0]
+		dispatchRequest.ResolvedFolder = &destination
+	}
 	dispatch, dispatchErr := provider.Dispatch(ctx, dispatchRequest, before)
 	readRequest := intent
 	var mapping *State
@@ -266,12 +281,20 @@ func (s *Service) execute(ctx context.Context, request Request, principal Princi
 		mapping = &State{Source: before.Source, ProvisionedFolder: &folder, ObservedAt: s.now()}
 	}
 	if dispatch.Target != nil {
-		if !sameItemIdentity(before.Target, *dispatch.Target) {
+		if !validDispatchMapping(request, before, projected, *dispatch.Target) {
 			return s.finishDetached(ctx, result, StatusUnknown, nil, "mapping-unverified", ErrOutcomeUnknown)
 		}
 		// Preserve the dispatch response independently of provider readback.
 		mapping = &State{Target: *dispatch.Target, ObservedAt: s.now()}
 		readRequest.Target = dispatch.Target
+		if imapMoveRequest(request) {
+			mappingCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			err := s.Ledger.(ReceiptMappingLedger).RecordInboxReceiptMapping(mappingCtx, receipt.ID, *mapping)
+			cancel()
+			if err != nil {
+				return s.finishDetached(ctx, result, StatusUnknown, nil, "mapping-persist-failed", ErrOutcomeUnknown)
+			}
+		}
 	}
 	if dispatchErr != nil {
 		if errors.Is(dispatchErr, ErrNoWrite) && mapping == nil {
@@ -291,10 +314,17 @@ func (s *Service) execute(ctx context.Context, request Request, principal Princi
 	if err := provider.Verify(readRequest, before, projected, after); err != nil {
 		return s.finishDetached(ctx, result, StatusUnknown, &after, "delta-unverified", ErrOutcomeUnknown)
 	}
+	if err := verifyMovedSource(ctx, provider, before, after); err != nil {
+		return s.finishDetached(ctx, result, StatusUnknown, &after, "source-unverified", ErrOutcomeUnknown)
+	}
 	result.After = &after
 	// Local reconciliation and durable receipt settlement have independent
 	// deadlines, even after cancellation or a slow provider readback.
-	completion, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	completionBase := ctx
+	if imapMoveRequest(request) && mapping != nil {
+		completionBase = context.WithValue(ctx, receiptReconcileIDKey{}, receipt.ID)
+	}
+	completion, cancel := context.WithTimeout(context.WithoutCancel(completionBase), 5*time.Second)
 	defer cancel()
 	if s.ReconcileState == nil || s.ReconcileState(completion, before, after) != nil {
 		return s.finishDetached(ctx, result, StatusReconcileOnly, &after, "local-reconcile-failed", ErrReconcileOnly)
@@ -326,14 +356,17 @@ func (s *Service) finish(ctx context.Context, result *Result, status Status, aft
 }
 
 func (s *Service) replay(ctx context.Context, receipt *Receipt, intentHash string, principal Principal) (*Result, error) {
-	if receipt == nil || receipt.IntentHash != intentHash {
-		return nil, ErrConflict
+	if receipt == nil || !validIdentity(principal.ID) {
+		return nil, ErrDenied
 	}
 	if !principal.Owner && receipt.PrincipalID != principal.ID {
 		return nil, ErrDenied
 	}
-	if err := s.authorize(ctx, principal, receipt.Intent); err != nil {
+	if err := s.authorize(receiptAuthorityContext(ctx, receipt), principal, receipt.Intent); err != nil {
 		return nil, err
+	}
+	if receipt.IntentHash != intentHash {
+		return nil, ErrConflict
 	}
 	return &Result{Receipt: receipt, Before: &receipt.Before, Projected: receipt.Projected, After: receipt.After}, nil
 }
@@ -355,7 +388,7 @@ func (s *Service) controlReceipt(ctx context.Context, request Request, principal
 		return nil, err
 	}
 	defer done()
-	if err := s.authorize(ctx, principal, receipt.Intent); err != nil {
+	if err := s.authorize(receiptAuthorityContext(ctx, receipt), principal, receipt.Intent); err != nil {
 		return nil, err
 	}
 	read := receipt.Intent
@@ -375,7 +408,14 @@ func (s *Service) controlReceipt(ctx context.Context, request Request, principal
 			return result, ErrUnavailable
 		}
 	}
-	provider, err := s.Resolve(ctx, read)
+	resolveContext := ctx
+	if imapMoveRequest(receipt.Intent) && read.Target != nil && *read.Target != receipt.Before.Target {
+		if receipt.After == nil || !validDispatchMapping(receipt.Intent, receipt.Before, *receipt.Projected, *read.Target) {
+			return result, ErrOutcomeUnknown
+		}
+		resolveContext = context.WithValue(ctx, receiptMoveTargetKey{}, *read.Target)
+	}
+	provider, err := s.Resolve(resolveContext, read)
 	if err != nil || provider == nil {
 		return result, ErrUnavailable
 	}
@@ -387,9 +427,16 @@ func (s *Service) controlReceipt(ctx context.Context, request Request, principal
 	if err := provider.Verify(read, receipt.Before, *receipt.Projected, after); err != nil {
 		return result, ErrOutcomeUnknown
 	}
+	if err := verifyMovedSource(ctx, provider, receipt.Before, after); err != nil {
+		return result, ErrOutcomeUnknown
+	}
 	// Local reconciliation and durable receipt settlement have independent
 	// deadlines, even after cancellation or a slow provider readback.
-	completion, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	completionBase := resolveContext
+	if imapMoveRequest(receipt.Intent) && read.Target != nil && *read.Target != receipt.Before.Target {
+		completionBase = context.WithValue(resolveContext, receiptReconcileIDKey{}, receipt.ID)
+	}
+	completion, cancel := context.WithTimeout(context.WithoutCancel(completionBase), 5*time.Second)
 	defer cancel()
 	if s.ReconcileState == nil || s.ReconcileState(completion, receipt.Before, after) != nil {
 		return s.finishDetached(ctx, result, StatusReconcileOnly, &after, "local-reconcile-failed", ErrReconcileOnly)
@@ -452,4 +499,79 @@ func closeProvider(provider Provider) {
 	if closer, ok := provider.(interface{ Close() error }); ok {
 		_ = closer.Close()
 	}
+}
+
+// MoveSourceVerifier independently proves the original UID disappeared.
+type MoveSourceVerifier interface {
+	VerifyMoveSource(context.Context, Target) error
+}
+
+func imapMoveRequest(request Request) bool {
+	return request.Target != nil && request.Target.SourceType == sourceTypeIMAP && (request.Operation == OpMove || request.Operation == OpArchive || request.Operation == OpUnarchive)
+}
+
+func validDispatchMapping(request Request, before, projected State, target Target) bool {
+	if target.Validate() != nil {
+		return false
+	}
+	if !imapMoveRequest(request) {
+		return sameItemIdentity(before.Target, target)
+	}
+	if len(projected.Folders) != 1 {
+		return false
+	}
+	destination := projected.Folders[0]
+	if destination.ID == "" || destination.UIDValidity == 0 || destination.ParentID != "" || target.Mailbox != destination.ID || target.UIDValidity != destination.UIDValidity || target.UID == 0 {
+		return false
+	}
+	origin := target
+	origin.Mailbox, origin.UIDValidity, origin.UID = before.Target.Mailbox, before.Target.UIDValidity, before.Target.UID
+	return origin == before.Target
+}
+
+func verifyMovedSource(ctx context.Context, provider Provider, before, after State) error {
+	if before.Target.SourceType != sourceTypeIMAP || before.Target == after.Target {
+		return nil
+	}
+	verifier, ok := provider.(MoveSourceVerifier)
+	if !ok {
+		return ErrOutcomeUnknown
+	}
+	return verifier.VerifyMoveSource(ctx, before.Target)
+}
+
+type receiptMoveTargetKey struct{}
+
+// ReceiptMoveTarget is an internal resolver hint from durable dispatch mapping.
+// It never replaces archive item/source/receipt authority checks.
+func ReceiptMoveTarget(ctx context.Context) (Target, bool) {
+	target, ok := ctx.Value(receiptMoveTargetKey{}).(Target)
+	return target, ok
+}
+
+// A durable validated mapping permits receipt authorization on the original
+// live item after local reconciliation has retired only its origin membership.
+// Principal/intent checks precede this context; current grants remain required.
+type receiptAuthorityTargetKey struct{}
+
+func receiptAuthorityContext(ctx context.Context, receipt *Receipt) context.Context {
+	if receipt == nil || receipt.Projected == nil || receipt.After == nil || !imapMoveRequest(receipt.Intent) || *receipt.Intent.Target != receipt.Before.Target || receipt.SourceID != receipt.Before.Target.SourceID || receipt.Before.Target.Validate() != nil || receipt.Projected.Target != receipt.Before.Target || receipt.After.Target == receipt.Before.Target || !validDispatchMapping(receipt.Intent, receipt.Before, *receipt.Projected, receipt.After.Target) {
+		return ctx
+	}
+	return context.WithValue(ctx, receiptAuthorityTargetKey{}, receipt.Before.Target)
+}
+
+// ReceiptAuthorityTarget is an internal hint, never a request field.
+func ReceiptAuthorityTarget(ctx context.Context) (Target, bool) {
+	target, ok := ctx.Value(receiptAuthorityTargetKey{}).(Target)
+	return target, ok
+}
+
+// Only Service can attach an authenticated receipt identity to reconciliation.
+// Store independently reloads its append-only mapping inside the transaction.
+type receiptReconcileIDKey struct{}
+
+func ReceiptReconcileID(ctx context.Context) (string, bool) {
+	id, ok := ctx.Value(receiptReconcileIDKey{}).(string)
+	return id, ok && validIdentity(id)
 }
