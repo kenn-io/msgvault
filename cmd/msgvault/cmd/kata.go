@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -31,7 +32,7 @@ func newKataCmd() *cobra.Command {
 			if err != nil {
 				return usageErr(cmd, err)
 			}
-			client, closeClient, err := openKataClient(cmd, kataIssuesMinAPISchemaVersion)
+			client, closeClient, err := openKataClient(cmd, kataEvidenceMinVersion(request.Selectors, func(s generated.Selector) bool { return s.Kind == generated.SelectorKindDocbankRendition }))
 			if err != nil {
 				return err
 			}
@@ -61,7 +62,7 @@ func newKataCmd() *cobra.Command {
 			if key == "" {
 				return usageErr(cmd, errors.New("--idempotency-key is required; choose a key that names this issue, and reuse it to retry"))
 			}
-			client, closeClient, err := openKataClient(cmd, kataIssuesMinAPISchemaVersion)
+			client, closeClient, err := openKataClient(cmd, kataEvidenceMinVersion(request.Evidence, citesDocbank))
 			if err != nil {
 				return err
 			}
@@ -86,7 +87,7 @@ func newKataCmd() *cobra.Command {
 			if err != nil {
 				return usageErr(cmd, err)
 			}
-			client, closeClient, err := openKataClient(cmd, kataIssuesMinAPISchemaVersion)
+			client, closeClient, err := openKataClient(cmd, kataEvidenceMinVersion(request.Evidence, citesDocbank))
 			if err != nil {
 				return err
 			}
@@ -167,6 +168,17 @@ func newKataCmd() *cobra.Command {
 	return root
 }
 
+// kataEvidenceMinVersion needs a daemon that reads Docbank transcripts only
+// when the input cites one.
+func kataEvidenceMinVersion[T any](items []T, docbank func(T) bool) string {
+	if slices.ContainsFunc(items, docbank) {
+		return kataDocbankMinAPISchemaVersion
+	}
+	return kataIssuesMinAPISchemaVersion
+}
+
+func citesDocbank(ref generated.Reference) bool { return ref.Kind == generated.DocbankRendition }
+
 // openKataClient refuses daemons older than the Kata route a command needs,
 // which would otherwise answer with a bare 404.
 func openKataClient(cmd *cobra.Command, minVersion string) (*daemonclient.Client, func(), error) {
@@ -235,11 +247,13 @@ func writeKataIssueContext(out io.Writer, result generated.KataIssueContextRespo
 		ref := passage.Evidence.Reference
 		source := fmt.Sprintf("message %d", ref.MessageID)
 		switch {
-		case passage.State == "unavailable" && ref.DocumentChunk != nil:
+		case passage.State == "unreachable":
+			source = "Docbank unreachable; retry later"
+		case passage.State == "unavailable" && ref.AttachmentID != nil:
 			source = "attachment in this or another archive"
 		case passage.State == "unavailable":
 			source = "message in this or another archive"
-		case ref.DocumentChunk != nil && ref.AttachmentID != nil:
+		case ref.AttachmentID != nil:
 			source = fmt.Sprintf("attachment %d of message %d", *ref.AttachmentID, ref.MessageID)
 		}
 		if name := cmp.Or(stringOrEmpty(display.Filename), stringOrEmpty(display.ContainingTitle)); name != "" {

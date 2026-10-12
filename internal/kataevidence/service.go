@@ -2,6 +2,7 @@ package kataevidence
 
 import (
 	"context"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"math"
@@ -19,15 +20,47 @@ type SourceReader interface {
 	ReadKataEvidenceSource(ctx context.Context, ref Reference) (SourceRecord, error)
 }
 
-type Service struct{ reader SourceReader }
+type Service struct{ reader, docbank SourceReader }
 
 func New(reader SourceReader) *Service { return &Service{reader: reader} }
+
+// WithDocbank reads docbank_rendition citations through reader.
+func (s *Service) WithDocbank(reader SourceReader) *Service {
+	s.docbank = reader
+	return s
+}
+
+// sourceReader picks the reader for kind; Docbank citations need one configured.
+func (s *Service) sourceReader(kind string) (SourceReader, error) {
+	if kind != "docbank_rendition" {
+		return s.reader, nil
+	}
+	if s.docbank == nil {
+		return nil, ErrUnsupported
+	}
+	return s.docbank, nil
+}
 
 // Prepare turns selectors into exact citations whose excerpts are the text a
 // Kata issue saves.
 func (s *Service) Prepare(ctx context.Context, selectors []Selector) ([]Evidence, error) {
 	if len(selectors) < 1 || len(selectors) > MaxReferences {
 		return nil, ErrInvalidReference
+	}
+	var docbankIDs []string
+	selectorIDs := make([]string, len(selectors))
+	for i, sel := range selectors {
+		if sel.Kind == "docbank_rendition" {
+			data, err := json.Marshal(sel)
+			if err != nil {
+				return nil, fmt.Errorf("encode Docbank selector: %w", err)
+			}
+			selectorIDs[i] = Digest("msgvault.kata.selector.v1", string(data))
+			docbankIDs = append(docbankIDs, selectorIDs[i])
+		}
+	}
+	if err := CheckDocbankLimit(docbankIDs); err != nil {
+		return nil, err
 	}
 	ranges := make([][2]int, len(selectors))
 	for i, sel := range selectors {
@@ -38,11 +71,23 @@ func (s *Service) Prepare(ctx context.Context, selectors []Selector) ([]Evidence
 		ranges[i] = [2]int{start, end}
 	}
 	result := make([]Evidence, 0, len(selectors))
+	prepared := map[string]Evidence{}
 	for i, sel := range selectors {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		record, err := s.reader.LoadKataEvidenceSource(ctx, sel)
+		id := selectorIDs[i]
+		if sel.Kind == "docbank_rendition" {
+			if evidence, ok := prepared[id]; ok {
+				result = append(result, evidence)
+				continue
+			}
+		}
+		reader, err := s.sourceReader(sel.Kind)
+		if err != nil {
+			return nil, err
+		}
+		record, err := reader.LoadKataEvidenceSource(ctx, sel)
 		if err != nil {
 			return nil, ArchiveError(err)
 		}
@@ -55,7 +100,7 @@ func (s *Service) Prepare(ctx context.Context, selectors []Selector) ([]Evidence
 				return nil, err
 			}
 		}
-		textEnd := utf8.RuneCountInString(record.Text)
+		textEnd := record.TextStart + utf8.RuneCountInString(record.Text)
 		if sel.MaxChars != nil {
 			end = min(end, textEnd)
 		}
@@ -66,14 +111,29 @@ func (s *Service) Prepare(ctx context.Context, selectors []Selector) ([]Evidence
 		if err != nil {
 			return nil, err
 		}
-		excerpt, _ := textutil.RuneSlice(record.Text, start, end)
+		excerpt, _ := textutil.RuneSlice(record.Text, start-record.TextStart, end-record.TextStart)
 		evidence := Evidence{ID: ID(ref), Passage: PassageID(ref, excerpt), Reference: ref, Excerpt: excerpt, Display: record.Display, ContentTrust: "untrusted"}
-		if end < textEnd {
+		if end < textEnd || record.More {
 			evidence.NextRune = end
 		}
 		result = append(result, evidence)
+		if id != "" {
+			prepared[id] = evidence
+		}
 	}
 	return result, nil
+}
+
+// CheckDocbankLimit bounds distinct transcript reads before archive access.
+func CheckDocbankLimit(identities []string) error {
+	seen := make(map[string]bool, len(identities))
+	for _, id := range identities {
+		seen[id] = true
+	}
+	if len(seen) > MaxDocbankReferences {
+		return ErrDocbankLimit
+	}
+	return nil
 }
 
 // ResolveAround re-reads a canonical citation; callers canonicalize at the
@@ -82,7 +142,11 @@ func (s *Service) Prepare(ctx context.Context, selectors []Selector) ([]Evidence
 // representation's text are added on each side of the excerpt.
 func (s *Service) ResolveAround(ctx context.Context, ref Reference, around int) (Resolution, error) {
 	result := Resolution{Evidence: Evidence{ID: ID(ref), Reference: ref, ContentTrust: "untrusted"}}
-	record, err := s.reader.ReadKataEvidenceSource(ctx, ref)
+	reader, err := s.sourceReader(ref.Kind)
+	var record SourceRecord
+	if err == nil {
+		record, err = reader.ReadKataEvidenceSource(ctx, ref)
+	}
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrChanged):
@@ -90,6 +154,8 @@ func (s *Service) ResolveAround(ctx context.Context, ref Reference, around int) 
 			result.State, result.Evidence.Display = Changed, record.Display
 		case errors.Is(err, ErrUnavailable):
 			result.State = Unavailable
+		case errors.Is(err, ErrFailed):
+			result.State = Failed
 		case errors.Is(err, ErrUnprocessed):
 			result.State = Unprocessed
 		case errors.Is(err, ErrUnsupported):
@@ -100,6 +166,7 @@ func (s *Service) ResolveAround(ctx context.Context, ref Reference, around int) 
 		return result, nil
 	}
 	start, end := ref.Range()
+	start, end = start-record.TextStart, end-record.TextStart
 	// Callers can hand-build references, so a range past the text is refused rather than shortened.
 	excerpt, ok := textutil.RuneSlice(record.Text, start, end)
 	if !utf8.ValidString(record.Text) || !ok {
@@ -128,6 +195,11 @@ func selectorRange(sel Selector) (int, int, error) {
 		return 0, 0, ErrInvalidReference
 	}
 	switch sel.Kind {
+	case "docbank_rendition":
+		// msgvault reads a transcript a window at a time, so it can't search all of it for a quote.
+		if sel.AttachmentID < 1 || sel.ExtractionID != "" || sel.ChunkKey != "" || sel.Quote != "" {
+			return 0, 0, ErrInvalidReference
+		}
 	case "message":
 		if sel.AttachmentID != 0 || sel.ExtractionID != "" || sel.ChunkKey != "" {
 			return 0, 0, ErrInvalidReference
@@ -182,6 +254,10 @@ func setRange(ref Reference, start, end int) Reference {
 		p := *ref.DocumentChunk
 		p.StartRune, p.EndRune = start, end
 		ref.DocumentChunk = &p
+	case ref.Kind == "docbank_rendition" && ref.DocbankRendition != nil:
+		p := *ref.DocbankRendition
+		p.StartRune, p.EndRune = start, end
+		ref.DocbankRendition = &p
 	}
 	return ref
 }
@@ -189,7 +265,7 @@ func setRange(ref Reference, start, end int) Reference {
 // ArchiveError keeps evidence outcomes recognizable and marks anything else
 // as a failure to read the archive.
 func ArchiveError(err error) error {
-	for _, known := range []error{ErrInvalidReference, ErrUnavailable, ErrChanged, ErrUnprocessed, ErrUnsupported, context.Canceled, context.DeadlineExceeded} {
+	for _, known := range []error{ErrInvalidReference, ErrUnavailable, ErrChanged, ErrFailed, ErrUnprocessed, ErrUnsupported, ErrArchiveUnavailable, context.Canceled, context.DeadlineExceeded} {
 		if errors.Is(err, known) {
 			return err
 		}

@@ -11,6 +11,7 @@ export interface ContextPassage {
   evidence: Evidence;
   /** Quoted words recovered from the issue body or comments when archive evidence is not available */
   saved_quote?: string;
+  /** available, changed, unavailable, unprocessed, failed, unsupported, or unreachable */
   state: string;
   [key: string]: unknown;
 }

@@ -454,6 +454,21 @@ func MediaRevision(ctx context.Context, st *store.Store, attachmentID int64) (st
 	return descriptor.Occurrence.Revision, err
 }
 
+// MediaRevisionUnavailable identifies source metadata that can no longer be read.
+func MediaRevisionUnavailable(err error) bool {
+	return beeperMediaRawGap(err) || errors.Is(err, errBeeperMediaRawInvalid) || errors.Is(err, errBeeperMediaNoLiveOccurrence)
+}
+
+// MediaRevisionChanged identifies changes detected while describing the current source.
+func MediaRevisionChanged(err error) bool {
+	for _, known := range []error{errBeeperMediaSourceChanged, errBeeperMediaPartMissing, errBeeperMediaPartAmbiguous, errBeeperMediaUnsupported, errBeeperMediaTranscriptInvalid, errBeeperMediaTranscriptTooLarge} {
+		if errors.Is(err, known) {
+			return true
+		}
+	}
+	return false
+}
+
 // MediaRevisions shares the worker's descriptor parsing across selected attachments.
 func MediaRevisions(ctx context.Context, st *store.Store, attachmentIDs []int64) (map[int64]string, error) {
 	revisions := make(map[int64]string, len(attachmentIDs))

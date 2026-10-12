@@ -22,6 +22,7 @@ import (
 	"github.com/spf13/cobra"
 	"go.kenn.io/kit/telemetry/posthog"
 	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/beeper"
 	"go.kenn.io/msgvault/internal/carddav"
 	"go.kenn.io/msgvault/internal/circleback"
 	"go.kenn.io/msgvault/internal/config"
@@ -1872,8 +1873,23 @@ func (a *storeAPIAdapter) ReadKataEvidenceSource(ctx context.Context, ref kataev
 	return a.store.ReadKataEvidenceSource(ctx, ref)
 }
 
-func (a *storeAPIAdapter) KataCitationSource(ctx context.Context, messageID, attachmentID int64) (kataevidence.Reference, error) {
+func (a *storeAPIAdapter) KataCitationSource(ctx context.Context, messageID, attachmentID int64) ([]kataevidence.Reference, error) {
 	return a.store.KataCitationSource(ctx, messageID, attachmentID)
+}
+
+func (a *storeAPIAdapter) KataDocbankBinding(ctx context.Context, destination string, attachmentID int64) (kataevidence.DocbankBinding, error) {
+	return a.store.KataDocbankBinding(ctx, destination, attachmentID)
+}
+
+func (a *storeAPIAdapter) MediaRevision(ctx context.Context, attachmentID int64) (string, error) {
+	revision, err := beeper.MediaRevision(ctx, a.store, attachmentID)
+	if beeper.MediaRevisionUnavailable(err) {
+		return "", kataevidence.ErrUnavailable
+	}
+	if beeper.MediaRevisionChanged(err) {
+		return "", kataevidence.ErrChanged
+	}
+	return revision, err
 }
 
 // ListPersonUIDsContext forwards to the store so the daemon's adapter, not a

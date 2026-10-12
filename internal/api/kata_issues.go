@@ -3,11 +3,14 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/docbankmedia"
 	"go.kenn.io/msgvault/internal/kataevidence"
 	"go.kenn.io/msgvault/internal/kataissues"
 	"go.kenn.io/msgvault/internal/personagenda"
@@ -253,15 +256,19 @@ func (s *Server) writeKataIssueError(w http.ResponseWriter, err error) {
 		status        int
 		code, message string
 	}{
+		{kataevidence.ErrDocbankLimit, http.StatusBadRequest, "invalid_evidence", kataevidence.ErrDocbankLimit.Error()},
 		{kataevidence.ErrInvalidReference, http.StatusBadRequest, "invalid_evidence", "Evidence identity or range is invalid"},
 		{taskclient.ErrInvalidRef, http.StatusBadRequest, "invalid_ref", "Kata issue ref is malformed"},
 		{kataissues.ErrInvalidRequest, http.StatusUnprocessableEntity, "invalid_request", "Title, brief, list or person is invalid"},
+		{kataevidence.ErrDocbankUnavailable, http.StatusServiceUnavailable, "archive_unavailable", "Docbank could not be reached; retry later"},
 		{kataevidence.ErrArchiveUnavailable, http.StatusServiceUnavailable, "archive_unavailable", "The archive could not be read"},
 		{kataevidence.ErrUnavailable, http.StatusNotFound, "evidence_unavailable", "The cited source is unavailable"},
 		{kataevidence.ErrChanged, http.StatusConflict, "evidence_changed", "The cited source has changed; prepare it again"},
-		{kataevidence.ErrUnprocessed, http.StatusUnprocessableEntity, "evidence_unprocessed", "The file has no extracted text"},
+		{kataevidence.ErrFailed, http.StatusUnprocessableEntity, "evidence_failed", "Transcript processing failed in Docbank"},
+		{kataevidence.ErrUnprocessed, http.StatusUnprocessableEntity, "evidence_unprocessed", "The file has no extracted text or transcript"},
 		{kataevidence.ErrQuoteNotFound, http.StatusUnprocessableEntity, "quote_not_found", "The quoted text does not appear in the source"},
 		{kataevidence.ErrQuoteAmbiguous, http.StatusUnprocessableEntity, "quote_ambiguous", "The quoted text appears more than once; quote more of it"},
+		{kataevidence.ErrDocbankConfiguration, http.StatusUnprocessableEntity, "docbank_configuration_invalid", "The enabled Docbank integration has an invalid URL"},
 		{kataevidence.ErrUnsupported, http.StatusUnprocessableEntity, "evidence_unsupported", "This source cannot be cited"},
 		{kataissues.ErrEvidenceLimit, http.StatusUnprocessableEntity, "evidence_limit", "A request can cite at most 32 passages"},
 		{kataissues.ErrIssueDeleted, http.StatusConflict, "kata_issue_deleted", "The issue this key filed was deleted in Kata or is not visible to this credential; use a new idempotency key, or restore the issue in Kata"},
@@ -290,9 +297,14 @@ func (s *Server) writeKataIssueError(w http.ResponseWriter, err error) {
 
 type kataIssueStore interface {
 	kataevidence.SourceReader
-	KataCitationSource(ctx context.Context, messageID, attachmentID int64) (kataevidence.Reference, error)
+	KataCitationSource(ctx context.Context, messageID, attachmentID int64) ([]kataevidence.Reference, error)
+	kataevidence.DocbankBindingStore
 	kataissues.Archive
 	personagenda.IdentityStore
+}
+
+type mediaRevisionReader interface {
+	MediaRevision(ctx context.Context, attachmentID int64) (string, error)
 }
 
 type kataIssueBackend struct {
@@ -301,12 +313,30 @@ type kataIssueBackend struct {
 	evidence *kataevidence.Service
 }
 
-func newKataIssueBackend(cfg *config.Config, messageStore MessageStore) KataIssueOperations {
-	store, ok := messageStore.(kataIssueStore)
+func newKataIssueBackend(cfg *config.Config, messageStore MessageStore, logger *slog.Logger) KataIssueOperations {
+	archive, ok := messageStore.(kataIssueStore)
 	if !ok || cfg == nil {
 		return nil
 	}
-	return &kataIssueBackend{config: cfg.Integrations.Kata, store: store, evidence: kataevidence.New(store)}
+	evidence := kataevidence.New(archive)
+	if docbank := cfg.Integrations.Docbank; docbank.Enabled {
+		client, err := docbankmedia.NewClient(docbank.URL, docbank.ResolveAPIKey)
+		if err != nil {
+			configurationError := fmt.Errorf("%w: %w", kataevidence.ErrDocbankConfiguration, err)
+			evidence.WithDocbank(kataevidence.NewDocbankReader(archive, nil, func(context.Context) (string, error) { return "", configurationError }, nil))
+		}
+		revisions, ok := messageStore.(mediaRevisionReader)
+		if !ok && logger != nil {
+			logger.Warn("Kata transcript citations disabled: the archive store cannot read media revisions")
+		}
+		if err == nil && ok {
+			evidence.WithDocbank(kataevidence.NewDocbankReader(archive, client, func(ctx context.Context) (string, error) {
+				uid, err := archive.ArchiveUIDContext(ctx)
+				return docbankmedia.DestinationKey(docbank.URL, uid), err
+			}, revisions.MediaRevision))
+		}
+	}
+	return &kataIssueBackend{config: cfg.Integrations.Kata, store: archive, evidence: evidence}
 }
 
 func (b *kataIssueBackend) Prepare(ctx context.Context, selectors []kataevidence.Selector) ([]kataevidence.Evidence, error) {
@@ -346,7 +376,7 @@ func (b *kataIssueBackend) Context(ctx context.Context, ref string, offset int) 
 }
 
 func (b *kataIssueBackend) Find(ctx context.Context, messageID, attachmentID int64) ([]taskclient.KataTask, bool, error) {
-	ref, err := b.store.KataCitationSource(ctx, messageID, attachmentID)
+	refs, err := b.store.KataCitationSource(ctx, messageID, attachmentID)
 	if err != nil {
 		return nil, false, kataevidence.ArchiveError(err)
 	}
@@ -354,7 +384,10 @@ func (b *kataIssueBackend) Find(ctx context.Context, messageID, attachmentID int
 	if err != nil {
 		return nil, false, err
 	}
-	// The last key names the attachment when there is one, else the message.
-	keys := kataevidence.SourceKeys(ref)
-	return service.Citing(ctx, keys[len(keys)-1], kataIssueFindLimit)
+	var keys []string
+	for _, ref := range refs {
+		sourceKeys := kataevidence.SourceKeys(ref)
+		keys = append(keys, sourceKeys[len(sourceKeys)-1])
+	}
+	return service.Citing(ctx, keys, kataIssueFindLimit)
 }

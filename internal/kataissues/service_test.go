@@ -8,6 +8,7 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -193,6 +194,44 @@ func TestCreateSavesPreparedQuotation(t *testing.T) {
 		require.ErrorIs(err, want)
 	}
 	assert.Equal(sent, f.kata.creates.Load())
+}
+
+func TestCreateAndLinkDocbankReferenceLimit(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newFixture(t)
+	uid, err := f.store.Store.ArchiveUIDContext(t.Context())
+	require.NoError(err)
+	ref := kataevidence.Reference{Version: kataevidence.Version, Kind: "docbank_rendition", ArchiveUID: uid, MessageID: 4,
+		SourceType: "beeper", SourceIdentifier: "signal", SourceMessageID: "voice1", AttachmentID: 9, OccurrenceKey: "msgvault:voice1"}
+	docbank := &slowDocbank{binding: kataevidence.DocbankBinding{Reference: ref, VaultUID: "22222222-2222-4222-8222-222222222222",
+		Revision: "revision", SourceID: "source", SourceVersionID: "version", SuppliedInputID: "input",
+		ContentVersionID: "11111111-1111-4111-8111-111111111111", ContentSHA256: strings.Repeat("a", 64)}, healthy: true}
+	evidence := kataevidence.New(nil).WithDocbank(kataevidence.NewDocbankReader(docbank, docbank, func(context.Context) (string, error) { return "destination", nil }, docbank.MediaRevision))
+	f.service.Evidence = evidence
+	ref.DocbankRendition = &kataevidence.DocbankReference{VaultUID: docbank.binding.VaultUID, NodeID: 7, ContentVersionID: docbank.binding.ContentVersionID,
+		ContentSHA256: docbank.binding.ContentSHA256, RenditionAttachmentID: strings.Repeat("b", 64), BuildID: strings.Repeat("f", 64),
+		RenditionSHA256: strings.Repeat("d", 64), EndRune: 1}
+	ref, err = kataevidence.Canonicalize(ref)
+	require.NoError(err)
+	refs := slices.Repeat([]kataevidence.Reference{ref}, kataevidence.MaxDocbankReferences+1)
+	created, err := f.service.Create(t.Context(), "key-duplicates", kataissues.CreateInput{Title: "Send email", Evidence: refs})
+	require.NoError(err)
+	assert.Len(envelopeOf(t, created.Issue).Entries, 1)
+	assert.Equal(1, docbank.reads)
+	_, err = f.service.Link(t.Context(), created.Issue.QualifiedRef, refs)
+	require.NoError(err)
+	assert.Equal(1, docbank.reads, "repeated links reuse recorded evidence")
+	for i := range refs {
+		payload := *refs[i].DocbankRendition
+		payload.StartRune, payload.EndRune = i, i+1
+		refs[i].DocbankRendition = &payload
+	}
+	_, err = f.service.Create(t.Context(), "key-limit", kataissues.CreateInput{Title: "Send email", Evidence: refs})
+	require.ErrorIs(err, kataevidence.ErrDocbankLimit)
+	_, err = f.service.Link(t.Context(), created.Issue.QualifiedRef, refs)
+	require.ErrorIs(err, kataevidence.ErrDocbankLimit)
+	assert.Equal(1, docbank.reads, "over-limit requests never read Docbank")
 }
 
 // resolvedAs reports every citation in one unavailable state.
@@ -768,7 +807,7 @@ func TestCitingFindsEveryCitedSource(t *testing.T) {
 
 	chunkKeys := kataevidence.SourceKeys(chunk)
 	for _, key := range []string{kataevidence.SourceKeys(message)[0], chunkKeys[0], chunkKeys[1]} {
-		issues, truncated, err := service.Citing(t.Context(), key, 10)
+		issues, truncated, err := service.Citing(t.Context(), []string{key}, 10)
 		require.NoError(err)
 		require.Len(issues, 1, "legacy evidence envelopes need no source markers to be found")
 		assert.Equal(created.UID, issues[0].UID)
@@ -779,7 +818,7 @@ func TestCitingFindsEveryCitedSource(t *testing.T) {
 	second, err := service.Create(t.Context(), "key-citing-second", kataissues.CreateInput{Title: "Review the revised budget", Evidence: []kataevidence.Reference{message}})
 	require.NoError(err)
 	for _, limit := range []int{1, 2} {
-		issues, truncated, err := service.Citing(t.Context(), kataevidence.SourceKeys(message)[0], limit)
+		issues, truncated, err := service.Citing(t.Context(), kataevidence.SourceKeys(message), limit)
 		require.NoError(err)
 		require.Len(issues, limit)
 		assert.Equal(created.UID, issues[0].UID)
@@ -805,7 +844,7 @@ func TestCitingFindsEveryCitedSource(t *testing.T) {
 	require.NoError(err)
 	fallback := *service
 	fallback.Kata = fallbackClient
-	issues, incomplete, err := fallback.Citing(t.Context(), kataevidence.SourceKeys(message)[0], 10)
+	issues, incomplete, err := fallback.Citing(t.Context(), kataevidence.SourceKeys(message), 10)
 	require.NoError(err)
 	require.Len(issues, 2)
 	assert.Equal(created.UID, issues[0].UID)
@@ -814,7 +853,7 @@ func TestCitingFindsEveryCitedSource(t *testing.T) {
 
 	_, err = service.Kata.MutateMetadataKey(t.Context(), "example", created.UID, kataissues.EvidenceMetadataKey, created.Metadata[kataissues.EvidenceMetadataKey], kataissues.Envelope{Version: 2})
 	require.NoError(err)
-	issues, incomplete, err = service.Citing(t.Context(), kataevidence.SourceKeys(message)[0], 10)
+	issues, incomplete, err = service.Citing(t.Context(), kataevidence.SourceKeys(message), 10)
 	require.NoError(err)
 	require.Len(issues, 1)
 	assert.Equal(second.Issue.UID, issues[0].UID)
@@ -832,11 +871,11 @@ func TestCitingFindsEveryCitedSource(t *testing.T) {
 		f.kata.service.Handler().ServeHTTP(recorder, request)
 		require.Equal(http.StatusOK, recorder.Code, recorder.Body.String())
 	}
-	issues, incomplete, err = service.Citing(t.Context(), kataevidence.SourceKeys(message)[0], 10)
+	issues, incomplete, err = service.Citing(t.Context(), kataevidence.SourceKeys(message), 10)
 	require.NoError(err)
 	assert.Empty(issues)
 	assert.True(incomplete, "a citation beyond the newest 500 cannot imply a complete miss")
 	f.kata.Close()
-	_, _, err = service.Citing(t.Context(), kataevidence.SourceKeys(message)[0], 10)
+	_, _, err = service.Citing(t.Context(), kataevidence.SourceKeys(message), 10)
 	require.ErrorIs(err, taskclient.ErrUnreachable)
 }

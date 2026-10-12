@@ -9,6 +9,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestBeeperDocbankConfigDefersURLValidation(t *testing.T) {
+	t.Setenv("MSGVAULT_HOME", t.TempDir())
+	path := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(path, []byte("[integrations.docbank]\nenabled = true\nurl = \"invalid\"\n"), 0o600))
+	_, err := Load(path, "")
+	require.NoError(t, err)
+}
+
 func TestBeeperDocbankConfig(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	t.Setenv("MSGVAULT_HOME", t.TempDir())

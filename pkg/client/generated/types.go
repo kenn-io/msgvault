@@ -2665,7 +2665,9 @@ type ContextPassage struct {
 
 	// SavedQuote Quoted words recovered from the issue body or comments when archive evidence is not available
 	SavedQuote *string `json:"saved_quote,omitzero"`
-	State      string  `json:"state" validate:"required"`
+
+	// State available, changed, unavailable, unprocessed, failed, unsupported, or unreachable
+	State string `json:"state" validate:"required"`
 }
 
 func (c ContextPassage) Validate() error {
@@ -3328,6 +3330,22 @@ type Display struct {
 	ContainingTitle *string    `json:"containing_title,omitzero"`
 	Filename        *string    `json:"filename,omitzero"`
 	Timestamp       *time.Time `json:"timestamp,omitempty"`
+}
+
+type DocbankReference struct {
+	BuildID               string `json:"build_id" validate:"required"`
+	ContentSha256         string `json:"content_sha256" validate:"required"`
+	ContentVersionID      string `json:"content_version_id" validate:"required"`
+	EndRune               int64  `json:"end_rune"`
+	NodeID                int64  `json:"node_id"`
+	RenditionAttachmentID string `json:"rendition_attachment_id" validate:"required"`
+	RenditionSha256       string `json:"rendition_sha256" validate:"required"`
+	StartRune             int64  `json:"start_rune"`
+	VaultUID              string `json:"vault_uid" validate:"required"`
+}
+
+func (d DocbankReference) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(d))
 }
 
 type DocumentFailureDiagnostic struct {
@@ -11808,6 +11826,7 @@ func (q QueryResult) Validate() error {
 type Reference struct {
 	ArchiveUID       string             `json:"archive_uid" validate:"required"`
 	AttachmentID     *int64             `json:"attachment_id,omitempty"`
+	DocbankRendition *DocbankReference  `json:"docbank_rendition,omitempty"`
 	DocumentChunk    *DocumentReference `json:"document_chunk,omitempty"`
 	Kind             ReferenceKind      `json:"kind" validate:"required"`
 	Message          *MessageReference  `json:"message,omitempty"`
@@ -11823,6 +11842,13 @@ func (r Reference) Validate() error {
 	var errors runtime.ValidationErrors
 	if err := typesValidator.Var(r.ArchiveUID, "required"); err != nil {
 		errors = errors.Append("ArchiveUID", err)
+	}
+	if r.DocbankRendition != nil {
+		if v, ok := any(r.DocbankRendition).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("DocbankRendition", err)
+			}
+		}
 	}
 	if r.DocumentChunk != nil {
 		if v, ok := any(r.DocumentChunk).(runtime.Validator); ok {

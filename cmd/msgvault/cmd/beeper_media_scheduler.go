@@ -2,11 +2,8 @@ package cmd
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"log/slog"
-	"strings"
 	"time"
 
 	"go.kenn.io/msgvault/internal/api"
@@ -135,8 +132,7 @@ func addBeeperMediaRoute(
 func docbankMediaClient(
 	ctx context.Context, st *store.Store, cfg config.DocbankIntegrationConfig,
 ) (*docbankmedia.Client, string, error) {
-	endpoint := strings.TrimRight(strings.TrimSpace(cfg.URL), "/")
-	client, err := docbankmedia.NewClient(endpoint, cfg.ResolveAPIKey)
+	client, err := docbankmedia.NewClient(cfg.URL, cfg.ResolveAPIKey)
 	if err != nil {
 		return nil, "", err
 	}
@@ -144,7 +140,7 @@ func docbankMediaClient(
 	if err != nil {
 		return nil, "", err
 	}
-	return client, beeperMediaDestinationKey(endpoint, archiveUID), nil
+	return client, docbankmedia.DestinationKey(cfg.URL, archiveUID), nil
 }
 
 // newMessageRecordingReader lists archived audio even when Docbank is off.
@@ -161,9 +157,4 @@ func newMessageRecordingReader(
 	}
 	reader.Client, reader.Destination, reader.UploadConsent = client, destination, cfg.AllSourcesUploadConsent
 	return reader, nil
-}
-
-func beeperMediaDestinationKey(endpoint, archiveUID string) string {
-	digest := sha256.Sum256([]byte("beeper-media/v1\x00" + endpoint + "\x00" + archiveUID))
-	return "beeper:" + hex.EncodeToString(digest[:])
 }

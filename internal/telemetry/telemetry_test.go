@@ -52,6 +52,18 @@ func TestEnabledReporterWireHelper(t *testing.T) {
 	require := require.New(t)
 	reporter := newReporterOrDisabled(opts, stub, slog.New(slog.NewTextHandler(os.Stdout, nil)))
 	require.True(reporter.EventAllowed(EventAppOpened), "an opted-out reporter keeps the allowlist")
+	if os.Getenv("MSGVAULT_SESSION_TEST") != "" {
+		h := CaptureHandler(reporter, opts.DataDir)
+		for _, body := range []string{
+			`{"event":"session_ended","properties":{"surface":"web","duration_bucket":"1_to_5m"}}`,
+			`{"event":"session_ended","properties":{"surface":"tui","duration_bucket":"5_to_30m"}}`,
+			`{"event":"session_ended","properties":{"surface":"private","duration_bucket":"private"}}`,
+		} {
+			require.Equal(http.StatusAccepted, screenRequest(h, body).Code)
+		}
+		require.NoError(reporter.Close())
+		return
+	}
 	if os.Getenv("MSGVAULT_SCREEN_VIEWS_TEST") != "" {
 		exerciseScreenViews(t, reporter, opts)
 		require.NoError(reporter.Close())

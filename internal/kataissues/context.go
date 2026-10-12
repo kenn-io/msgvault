@@ -2,14 +2,16 @@ package kataissues
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"strings"
+	"time"
 
 	"go.kenn.io/msgvault/internal/kataevidence"
 	"go.kenn.io/msgvault/internal/taskclient"
 )
 
-// ContextPageSize is how many passages one read returns.
+// ContextPageSize is the maximum number of passages one read returns.
 const ContextPageSize = 10
 
 // Context is one page of the passages an issue cites, each with its state in
@@ -30,6 +32,8 @@ type ContextPassage struct {
 
 // Context reads the passages an issue cites, in the order they were added,
 // starting at offset; an offset past the last passage reads an empty page.
+// It returns up to ContextPageSize passages, admitting transcript passages while
+// their accumulated read time is below kataevidence.DocbankTimeout.
 // It never writes to Kata or starts archive processing.
 func (s *Service) Context(ctx context.Context, issueRef string, offset int) (Context, error) {
 	project, issueRef, err := s.splitRef(issueRef)
@@ -58,8 +62,21 @@ func (s *Service) Context(ctx context.Context, issueRef string, offset int) (Con
 	}
 	start := min(offset, len(passages))
 	end := min(start+ContextPageSize, len(passages))
-	for _, entries := range passages[start:end] {
+	var docbankElapsed time.Duration
+	for i, entries := range passages[start:end] {
+		if err := ctx.Err(); err != nil {
+			return Context{}, err
+		}
+		remote := entries[len(entries)-1].Reference.Kind == "docbank_rendition"
+		if remote && docbankElapsed >= kataevidence.DocbankTimeout {
+			end = start + i
+			break
+		}
+		started := time.Now()
 		resolution, err := s.resolvePassage(ctx, entries)
+		if remote {
+			docbankElapsed += time.Since(started)
+		}
 		if err != nil {
 			return Context{}, err
 		}
@@ -113,9 +130,32 @@ func savedQuotes(body string) []string {
 // available one, so a passage re-linked after a re-sync reads as available
 // rather than also as changed. Otherwise it reports the newest entry's state.
 func (s *Service) resolvePassage(ctx context.Context, entries []Entry) (kataevidence.Resolution, error) {
+	parent := ctx
+	if entries[len(entries)-1].Reference.Kind == "docbank_rendition" {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, kataevidence.DocbankTimeout)
+		defer cancel()
+	}
 	var newest kataevidence.Resolution
 	for i, entry := range slices.Backward(entries) {
-		resolution, err := s.Evidence.ResolveAround(ctx, entry.Reference, kataevidence.ContextRunes)
+		var resolution kataevidence.Resolution
+		err := ctx.Err()
+		if err == nil {
+			resolution, err = s.Evidence.ResolveAround(ctx, entry.Reference, kataevidence.ContextRunes)
+		}
+		if errors.Is(err, context.DeadlineExceeded) && parent.Err() == nil && ctx.Err() != nil {
+			if newest.State != "" {
+				return newest, nil
+			}
+			return unreachable(entries[len(entries)-1]), nil
+		}
+		// Stop asking older entries during an outage, keeping the newest known state.
+		if errors.Is(err, kataevidence.ErrDocbankUnavailable) && entry.Reference.Kind == "docbank_rendition" {
+			if newest.State != "" {
+				return newest, nil
+			}
+			return unreachable(entries[len(entries)-1]), nil
+		}
 		if err != nil {
 			return kataevidence.Resolution{}, err
 		}
@@ -128,4 +168,10 @@ func (s *Service) resolvePassage(ctx context.Context, entries []Entry) (kataevid
 		}
 	}
 	return newest, nil
+}
+
+// unreachable reports a passage whose Docbank transcript couldn't be read now.
+func unreachable(newest Entry) kataevidence.Resolution {
+	return kataevidence.Resolution{State: kataevidence.Unreachable, Evidence: kataevidence.Evidence{ID: kataevidence.ID(newest.Reference), Passage: newest.Passage,
+		Reference: newest.Reference, ContentTrust: "untrusted"}}
 }

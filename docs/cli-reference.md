@@ -3086,7 +3086,7 @@ instead of a duplicate.
 ref. `issues` lists the issues, open or closed, that already cite a message
 or one of its files, one `ref<TAB>status<TAB>title` line each. It checks the newest 500 evidence-bearing issues, or 20 if the listing exceeds 16 MiB, and warns on stderr when the list may be incomplete; check Kata before filing again. JSON reports this as `truncated`. `context`
 shows each passage an issue cites, its state in the archive today, and the
-text around it, 10 passages at a time; `--offset` reads the next page. See
+text around it, up to 10 passages at a time; `--offset` reads the next page. See
 [Kata issues](usage/kata-issues.md) for request shapes and limits.
 
 ---

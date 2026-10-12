@@ -247,7 +247,7 @@ func (s *Service) Link(ctx context.Context, issueRef string, evidence []kataevid
 }
 
 // Citing scans recent issues and returns matches oldest first, with a flag when the list may be incomplete.
-func (s *Service) Citing(ctx context.Context, key string, limit int) ([]taskclient.KataTask, bool, error) {
+func (s *Service) Citing(ctx context.Context, keys []string, limit int) ([]taskclient.KataTask, bool, error) {
 	const maxCandidates = 500
 	candidates, err := s.Kata.FindMetadataTasks(ctx, s.Project, EvidenceMetadataKey, maxCandidates+1)
 	incomplete := errors.Is(err, taskclient.ErrResponseTooLarge)
@@ -269,7 +269,7 @@ func (s *Service) Citing(ctx context.Context, key string, limit int) ([]taskclie
 			continue
 		}
 		for _, entry := range envelope.Entries {
-			if slices.Contains(kataevidence.SourceKeys(entry.Reference), key) {
+			if slices.ContainsFunc(kataevidence.SourceKeys(entry.Reference), func(key string) bool { return slices.Contains(keys, key) }) {
 				issues = append(issues, candidate)
 				break
 			}
@@ -414,6 +414,8 @@ func (s *Service) resolve(ctx context.Context, refs []kataevidence.Reference) ([
 		case kataevidence.Available:
 		case kataevidence.Changed:
 			return nil, kataevidence.ErrChanged
+		case kataevidence.Failed:
+			return nil, kataevidence.ErrFailed
 		case kataevidence.Unprocessed:
 			return nil, kataevidence.ErrUnprocessed
 		case kataevidence.Unsupported:
@@ -464,6 +466,7 @@ func canonicalReferences(refs []kataevidence.Reference) ([]kataevidence.Referenc
 	}
 	seen := make(map[string]bool, len(refs))
 	result := make([]kataevidence.Reference, 0, len(refs))
+	var docbankIDs []string
 	for _, ref := range refs {
 		canonical, err := kataevidence.Canonicalize(ref)
 		if err != nil {
@@ -472,7 +475,13 @@ func canonicalReferences(refs []kataevidence.Reference) ([]kataevidence.Referenc
 		if id := kataevidence.ID(canonical); !seen[id] {
 			seen[id] = true
 			result = append(result, canonical)
+			if canonical.Kind == "docbank_rendition" {
+				docbankIDs = append(docbankIDs, id)
+			}
 		}
+	}
+	if err := kataevidence.CheckDocbankLimit(docbankIDs); err != nil {
+		return nil, err
 	}
 	return result, nil
 }
