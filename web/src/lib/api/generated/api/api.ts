@@ -112,6 +112,10 @@ import type {
   DeleteSettingsPeopleInferenceProviderPathParameters,
   DeleteSettingsProviderCredentialPathParameters,
   DeletionManifestDetail,
+  DeliveryPolicyQuery,
+  DeliveryPolicyReceipt,
+  DeliveryPolicyState,
+  DeliveryPolicyWrite,
   DirectoryPeopleResponse,
   DiscoverEvent,
   DiscoverRequest,
@@ -2796,6 +2800,60 @@ export const findContactCandidates = (
 ) => {
   return orvalFetch<ContactCandidatePage>(
     { url: `/api/v1/people/contact-candidates`, method: "GET", params },
+    options,
+  );
+};
+/**
+ * Owner only. No drafting, sending or delegated credential grants policy-write. Writes require expected_revision, the delivery policy revision from the read route; send_allowed on an address needs an active declared email contact point of the person that no other person holds. Approving the person-wide default requires scope_acknowledgement person_all_routes. send_allowed never sends or disables drafting. Clear restores inheritance; clearing the default restores draft_only.
+ * @summary Clear an address delivery policy
+ */
+export const clearDeliveryPolicy = (
+  deliveryPolicyWrite: DeliveryPolicyWrite,
+  options?: SecondParameter<typeof orvalFetch<DeliveryPolicyReceipt>>,
+) => {
+  return orvalFetch<DeliveryPolicyReceipt>(
+    {
+      url: `/api/v1/people/delivery-policy/clear`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: deliveryPolicyWrite,
+    },
+    options,
+  );
+};
+/**
+ * Returns stored and effective policy, inheritance, canonical UID, the saved address, and the delivery policy revision. Pass that revision as expected_revision on a write; it is not the person profile revision. Policy is one app gate; it is not live reachability or provider authorization. An omitted endpoint reads the person-wide default.
+ * @summary Inspect an exact delivery policy
+ */
+export const getDeliveryPolicy = (
+  deliveryPolicyQuery: DeliveryPolicyQuery,
+  options?: SecondParameter<typeof orvalFetch<DeliveryPolicyState>>,
+) => {
+  return orvalFetch<DeliveryPolicyState>(
+    {
+      url: `/api/v1/people/delivery-policy/read`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: deliveryPolicyQuery,
+    },
+    options,
+  );
+};
+/**
+ * Owner only. No drafting, sending or delegated credential grants policy-write. Writes require expected_revision, the delivery policy revision from the read route; send_allowed on an address needs an active declared email contact point of the person that no other person holds. Approving the person-wide default requires scope_acknowledgement person_all_routes. send_allowed never sends or disables drafting. Clear restores inheritance; clearing the default restores draft_only.
+ * @summary Explicitly approve or restrict a delivery policy
+ */
+export const setDeliveryPolicy = (
+  deliveryPolicyWrite: DeliveryPolicyWrite,
+  options?: SecondParameter<typeof orvalFetch<DeliveryPolicyReceipt>>,
+) => {
+  return orvalFetch<DeliveryPolicyReceipt>(
+    {
+      url: `/api/v1/people/delivery-policy/set`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: deliveryPolicyWrite,
+    },
     options,
   );
 };

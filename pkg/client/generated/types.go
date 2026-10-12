@@ -3281,6 +3281,87 @@ func (d DeletionTarget) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(d))
 }
 
+type DeliveryPolicyAudit struct {
+	Actor          string    `json:"actor" validate:"required"`
+	AfterPolicy    *string   `json:"after_policy,omitzero"`
+	BeforePolicy   *string   `json:"before_policy,omitzero"`
+	ContactPointID *int64    `json:"contact_point_id,omitempty"`
+	CreatedAt      time.Time `json:"created_at" validate:"required"`
+	Reason         string    `json:"reason" validate:"required"`
+	Scope          string    `json:"scope" validate:"required"`
+}
+
+func (d DeliveryPolicyAudit) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(d))
+}
+
+type DeliveryPolicyQuery struct {
+	Endpoint  *string `json:"endpoint,omitzero"`
+	PersonUID string  `json:"person_uid" validate:"required"`
+}
+
+func (d DeliveryPolicyQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(d))
+}
+
+type DeliveryPolicyReceipt struct {
+	After  DeliveryPolicyState  `json:"after"`
+	Audit  *DeliveryPolicyAudit `json:"audit,omitempty"`
+	Before DeliveryPolicyState  `json:"before"`
+}
+
+func (d DeliveryPolicyReceipt) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(d.After).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("After", err)
+		}
+	}
+	if d.Audit != nil {
+		if v, ok := any(d.Audit).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Audit", err)
+			}
+		}
+	}
+	if v, ok := any(d.Before).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Before", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type DeliveryPolicyState struct {
+	EffectivePolicy   string  `json:"effective_policy" validate:"required"`
+	Endpoint          *string `json:"endpoint,omitzero"`
+	InheritanceSource string  `json:"inheritance_source" validate:"required"`
+	PersonUID         string  `json:"person_uid" validate:"required"`
+	Reason            string  `json:"reason" validate:"required"`
+	Revision          int64   `json:"revision"`
+	StoredPolicy      *string `json:"stored_policy,omitzero"`
+}
+
+func (d DeliveryPolicyState) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(d))
+}
+
+type DeliveryPolicyWrite struct {
+	Endpoint             *string `json:"endpoint,omitzero"`
+	ExpectedRevision     int64   `json:"expected_revision"`
+	PersonUID            string  `json:"person_uid" validate:"required"`
+	Policy               *string `json:"policy,omitzero"`
+	Reason               string  `json:"reason" validate:"required"`
+	ScopeAcknowledgement *string `json:"scope_acknowledgement,omitzero"`
+}
+
+func (d DeliveryPolicyWrite) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(d))
+}
+
 type DirectoryPeopleResponse struct {
 	NextCursor *string                  `json:"next_cursor,omitzero"`
 	People     []DirectoryPersonSummary `json:"people" validate:"required"`

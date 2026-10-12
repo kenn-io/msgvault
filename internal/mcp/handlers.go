@@ -158,6 +158,7 @@ type handlers struct {
 	identityScoring      IdentityScoringBackend
 	drafts               DraftRunner
 	contactRoutesBackend ContactRoutesBackend
+	deliveryPolicies     DeliveryPolicyBackend
 
 	// Optional vector-search wiring. When hybridEngine is nil, the
 	// search_message_bodies handler rejects mode=vector and mode=hybrid with
