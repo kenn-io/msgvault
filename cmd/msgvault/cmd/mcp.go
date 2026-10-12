@@ -32,6 +32,7 @@ var mcpAllowProfileWrites bool
 var mcpAllowIdentityDecisions bool
 var mcpAllowIdentityScoring bool
 var mcpAllowPersonMerges bool
+var mcpAllowDeliveryPolicyWrites bool
 var mcpAllowCardDAVWrites bool
 var mcpAllowKataWrites bool
 var mcpAllowCalendarWrites bool
@@ -171,6 +172,7 @@ const personCardDAVMinAPISchemaVersion = "2.32.0"
 const identityReviewMinAPISchemaVersion = "3.0.0"
 const identityScoringMinAPISchemaVersion = "3.0.0"
 const draftsMinAPISchemaVersion = "3.0.0"
+const deliveryPolicyMinAPISchemaVersion = "3.43.0"
 
 // delegatedMCPServeOptions offers only the tools an agent grant can use.
 // Draft tools are the floor, so an older daemon fails instead of serving an empty msgvault.
@@ -273,6 +275,9 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 	var schemaVersion string
 	if health != nil && health.APISchemaVersion != nil {
 		schemaVersion = *health.APISchemaVersion
+	}
+	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, deliveryPolicyMinAPISchemaVersion) {
+		opts.DeliveryPolicies = st
 	}
 	if capabilityErr == nil && health != nil && health.Vector != nil &&
 		daemonclient.APISchemaVersionAtLeast(schemaVersion, vectorLaneHealthMinAPISchemaVersion) {
@@ -536,7 +541,7 @@ func init() {
 	mcpCmd.Flags().BoolVar(&mcpHTTPAllowWrites, "http-allow-writes", false,
 		"Expose write-class MCP tools over HTTP. This permits attachment exports, "+
 			"deletion manifests, Saved View management, managed draft writes, and profile writes separately enabled with "+
-			"--allow-profile-writes, identity decisions, identity scoring, person merges, CardDAV writes, calendar writes, source writes, and Kata issue writes enabled "+
+			"--allow-profile-writes, identity decisions, identity scoring, person merges, CardDAV writes, calendar writes, source writes, delivery-policy writes, and Kata issue writes enabled "+
 			"with their separate opt-ins; enable it only for trusted, authenticated clients.")
 	addMCPWriteFlags(mcpCmd, "")
 	_ = mcpCmd.Flags().MarkDeprecated("force-sql", "deprecated in 0.17.0; set [analytics].engine = \"sql\" in config.toml")
@@ -627,6 +632,7 @@ func addMCPWriteFlags(cmd *cobra.Command, prefix string) {
 		"Expose identity match accept/reject tools. Each call requires MCP client confirmation; the client must obtain user approval.")
 	flags.BoolVar(bind(&mcpAllowIdentityScoring), prefix+"allow-identity-scoring", false,
 		"Expose manual identity scoring that sends evidence to the fixed Jev provider. Each call requires MCP client confirmation; the client must obtain user approval.")
+	flags.BoolVar(bind(&mcpAllowDeliveryPolicyWrites), prefix+"allow-delivery-policy-writes", false, "Expose separate owner-authorized contact delivery policy writes with client confirmation")
 	flags.BoolVar(bind(&mcpAllowPersonMerges), prefix+"allow-person-merges", false,
 		"Expose local person merge tools. Each call requires MCP client confirmation; the client must obtain user approval.")
 	flags.BoolVar(bind(&mcpAllowKataWrites), prefix+"allow-kata-writes", false,
@@ -643,6 +649,7 @@ func applyMCPWriteFlags(cmd *cobra.Command, prefix string, opts *mcpserver.Serve
 	opts.AllowProfileWrites, _ = cmd.Flags().GetBool(prefix + "allow-profile-writes")
 	opts.AllowIdentityDecisions, _ = cmd.Flags().GetBool(prefix + "allow-identity-decisions")
 	opts.AllowIdentityScoring, _ = cmd.Flags().GetBool(prefix + "allow-identity-scoring")
+	opts.AllowDeliveryPolicyWrites, _ = cmd.Flags().GetBool(prefix + "allow-delivery-policy-writes")
 	opts.AllowPersonMerges, _ = cmd.Flags().GetBool(prefix + "allow-person-merges")
 	opts.AllowKataWrites, _ = cmd.Flags().GetBool(prefix + "allow-kata-writes")
 	opts.AllowCardDAVWrites, _ = cmd.Flags().GetBool(prefix + "allow-carddav-writes")

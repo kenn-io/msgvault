@@ -201,6 +201,21 @@ func TestRootHelpGolden(t *testing.T) {
 	assertions.NotContains(output.String(), "/Users/")
 }
 
+func TestPersonHelpDeliveryCommands(t *testing.T) {
+	if helpTestSubprocess(t) {
+		return
+	}
+	ensureHelpLayout(rootCmd)
+	var output bytes.Buffer
+	rootCmd.SetOut(&output)
+	rootCmd.SetErr(&output)
+	rootCmd.SetArgs([]string{personValue, "--help"})
+	require.NoError(t, executeRootContext(t.Context(), rootCmd))
+	for _, name := range []string{"read-delivery-policy", "set-delivery-policy", "clear-delivery-policy"} {
+		assert.Contains(t, output.String(), name)
+	}
+}
+
 func TestSubcommandHelpHasCompactGlobalFlags(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

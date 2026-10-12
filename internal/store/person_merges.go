@@ -327,6 +327,11 @@ func (s *Store) mergePersonsOnce(
 			return err
 		}
 
+		// The absorbed person is retired, so its audit uses the next revision.
+		if err := s.endDeliveryPoliciesTx(ctx, tx, absorbed, absorbed.Revision+1, request.Actor, "person_merged", false); err != nil {
+			return err
+		}
+
 		inferenceBefore, err := s.captureInferenceExportPeopleTx(ctx, tx, survivor.ID)
 		if err != nil {
 			return err
@@ -451,6 +456,14 @@ func (s *Store) mergePersonsOnce(
 			return fmt.Errorf("retire absorbed person UID: %w", err)
 		}
 		if err := s.bumpPersonRevisionsTx(ctx, tx, survivor.ID); err != nil {
+			return err
+		}
+		// The survivor audits under the revision this merge just committed.
+		var survivorRevision int64
+		if err := tx.QueryRowContext(ctx, `SELECT revision FROM persons WHERE id=?`, survivor.ID).Scan(&survivorRevision); err != nil {
+			return err
+		}
+		if err := s.endDeliveryPoliciesTx(ctx, tx, survivor, survivorRevision, request.Actor, "person_merged", true); err != nil {
 			return err
 		}
 		if err := s.invalidatePersonEnrichmentIdentitiesAfterRevisionTx(

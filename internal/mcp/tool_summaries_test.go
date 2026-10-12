@@ -56,6 +56,7 @@ func TestToolClassWriteGates(t *testing.T) {
 	assertions := assert.New(t)
 	opts := ServeOptions{
 		AllowProfileWrites: true, AllowIdentityDecisions: true, AllowIdentityScoring: true,
+		AllowDeliveryPolicyWrites: true,
 		AllowPersonMerges: true, AllowCardDAVWrites: true, AllowCalendarWrites: true, AllowKataWrites: true,
 	}
 	for class := toolSecurityRead; class <= toolSecurityKataWrite; class++ {
