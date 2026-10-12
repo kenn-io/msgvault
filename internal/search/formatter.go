@@ -26,6 +26,7 @@ func Format(q *Query) string {
 	parts = appendSearchOperators(parts, "bcc", q.BccAddrs)
 	parts = appendSearchOperators(parts, "subject", q.SubjectTerms)
 	parts = appendSearchOperators(parts, "label", q.Labels)
+	parts = appendSearchOperators(parts, "filename", q.Filenames)
 	parts = appendSearchOperators(parts, "list", q.ListIDs)
 	parts = appendSearchOperators(parts, "account", q.AccountAddrs)
 	parts = appendSearchOperators(parts, "received", q.ReceivedAddrs)

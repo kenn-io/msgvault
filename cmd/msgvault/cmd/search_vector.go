@@ -6,6 +6,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -76,6 +77,9 @@ func runHybridSearch(cmd *cobra.Command, queryStr, mode string, explain bool) er
 		"duration_ms", time.Since(started).Milliseconds(),
 	)
 
+	if searchSort == "date" {
+		sortSemanticResultsByDate(resp.Results)
+	}
 	if searchJSON {
 		return outputHybridResultsJSON(resp, explain)
 	}
@@ -109,6 +113,9 @@ func writeHybridResultsTableWidth(out io.Writer, results []daemonclient.CLIHybri
 	if explain {
 		headers = append(headers, "RRF", "BM25", "VEC")
 	}
+	if searchShowSnippet {
+		headers = append(headers, "SNIPPET")
+	}
 	rows := make([][]searchTableCell, 0, len(results))
 	for _, r := range results {
 		from := r.FromEmail
@@ -132,6 +139,9 @@ func writeHybridResultsTableWidth(out io.Writer, results []daemonclient.CLIHybri
 				searchTableCell{text: formatOptionalScorePtr(r.VectorScore)},
 			)
 		}
+		if searchShowSnippet {
+			row = append(row, searchTableCell{text: searchSnippetText(r.Message.Snippet)})
+		}
 		rows = append(rows, row)
 	}
 	return writeSearchTable(out, headers, rows, width)
@@ -152,11 +162,19 @@ func outputHybridResultsJSON(resp *daemonclient.CLIHybridSearch, explain bool) e
 	rows := make([]map[string]any, len(resp.Results))
 	for i, r := range resp.Results {
 		row := map[string]any{
-			"id":         r.ID,
-			"subject":    r.Subject,
-			"from_email": r.FromEmail,
-			"sent_at":    r.SentAt.Format(time.RFC3339),
-			"boosted":    r.SubjectBoosted,
+			"id":              r.ID,
+			"subject":         r.Subject,
+			"from_email":      r.FromEmail,
+			"sent_at":         r.SentAt.Format(time.RFC3339),
+			"boosted":         r.SubjectBoosted,
+			"conversation_id": r.Message.ConversationID,
+			"snippet":         r.Message.Snippet,
+		}
+		if r.AttachmentCount != nil {
+			row["attachment_count"] = *r.AttachmentCount
+		}
+		if r.Message.AttachmentNames != nil {
+			row["attachment_names"] = r.Message.AttachmentNames
 		}
 		if r.Message.WebURL != "" {
 			row["web_url"] = r.Message.WebURL
@@ -197,4 +215,19 @@ func formatOptionalScorePtr(v *float64) string {
 		return "-"
 	}
 	return fmt.Sprintf("%.4f", *v)
+}
+
+func sortSemanticResultsByDate(results []daemonclient.CLIHybridSearchResult) {
+	slices.SortStableFunc(results, func(a, b daemonclient.CLIHybridSearchResult) int {
+		if order := b.SentAt.Compare(a.SentAt); order != 0 {
+			return order
+		}
+		if a.ID < b.ID {
+			return -1
+		}
+		if a.ID > b.ID {
+			return 1
+		}
+		return 0
+	})
 }

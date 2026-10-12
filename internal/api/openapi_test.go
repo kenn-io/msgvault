@@ -2322,3 +2322,24 @@ func TestOpenAPICollectionScopeContracts(t *testing.T) {
 	}
 	assertions.Fail("deep search documents source_ids rejection")
 }
+
+func TestSearchAttachmentMetadataSchemaScope(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	for _, doc := range []*huma.OpenAPI{OpenAPIDocument(), openAPIClientDocument()} {
+		schemas := doc.Components.Schemas.Map()
+		for _, name := range []string{"MessageSummary", "MessageDetail"} {
+			schema := schemas[name]
+			require.NotNil(schema)
+			assert.NotContains(schema.Properties, "attachment_names")
+			assert.NotContains(schema.Properties, "attachment_count")
+		}
+		for _, name := range []string{"HybridSearchItem", "CLIQueryMessageSummary"} {
+			schema := schemas[name]
+			require.NotNil(schema)
+			assert.Contains(schema.Properties, "attachment_names")
+		}
+		assert.Contains(schemas["HybridSearchItem"].Properties, "attachment_count")
+		assert.Contains(schemas["CLIQueryMessageSummary"].Properties, "attachment_count")
+	}
+}

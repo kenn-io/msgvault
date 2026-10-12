@@ -359,6 +359,8 @@ import (
 // 3.12.0 adds Kata source lookup and issue evidence context.
 // 3.13.0 adds Docbank transcript evidence.
 // 3.14.0 adds resumable paused source syncs to operation history.
+// 3.14.0 adds filename: filters, optional include_snippet/match_snippet context,
+// attachment names/counts, and hybrid_available on CLI search responses.
 const APISchemaVersion = "3.14.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration

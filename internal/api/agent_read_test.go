@@ -24,7 +24,69 @@ import (
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/internal/vector"
+	"go.kenn.io/msgvault/internal/vector/hybrid"
 )
+
+func TestAgentCLISearchOmitsHybridHint(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st := testutil.NewTestStore(t)
+	source, _, err := testutil.CreateIndexedSourceMessage(st, "reader@example.com", "message", "Project plan", "")
+	requirements.NoError(err)
+	vectorCfg := vector.Config{}
+	backend := &fakeVectorBackend{active: &vector.Generation{
+		ID: 1, State: vector.GenerationActive, Fingerprint: vectorCfg.GenerationFingerprint(),
+	}}
+	srv := NewServerWithOptions(ServerOptions{
+		Config:       &config.Config{HomeDir: t.TempDir(), Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}},
+		Store:        st,
+		Engine:       query.NewEngine(st.DB(), st.IsPostgreSQL()),
+		HybridEngine: hybrid.NewEngine(backend, st.DB(), stubEmbedder{}, hybrid.Config{}),
+		Backend:      backend,
+		VectorCfg:    vectorCfg,
+		Logger:       testLogger(),
+	})
+	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.Background())) })
+	_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
+	requirements.NoError(err)
+
+	for _, tc := range []struct {
+		name, header, credential string
+		wantHybridHint           bool
+	}{
+		{"owner", "X-Api-Key", "owner", true},
+		{"agent", apiprotocol.AgentTokenHeader, token, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/search?q=missingterm", nil)
+			req.Header.Set(tc.header, tc.credential)
+			w := httptest.NewRecorder()
+			srv.Router().ServeHTTP(w, req)
+			requirements.Equal(http.StatusOK, w.Code, w.Body.String())
+			var response struct {
+				Results         []json.RawMessage `json:"results"`
+				HybridAvailable bool              `json:"hybrid_available"`
+			}
+			requirements.NoError(json.Unmarshal(w.Body.Bytes(), &response))
+			assertions.Empty(response.Results)
+			assertions.Equal(tc.wantHybridHint, response.HybridAvailable)
+		})
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search?q=missingterm&mode=hybrid", nil)
+	req.Header.Set(apiprotocol.AgentTokenHeader, token)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+	requirements.Equal(http.StatusBadRequest, w.Code, w.Body.String())
+	var response struct {
+		Error string `json:"error"`
+	}
+	requirements.NoError(json.Unmarshal(w.Body.Bytes(), &response))
+	assertions.Equal("unsupported_agent_scope", response.Error)
+}
 
 func TestAgentReadAuthorization(t *testing.T) {
 	assertions := assert.New(t)
