@@ -100,7 +100,7 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.17.0**.
+it is separate from the binary release version. The current schema is **3.18.0**.
 Upgrade clients and daemon together across incompatible schema versions,
 including remote deployments.
 
@@ -125,11 +125,15 @@ Schema 3.14.0 adds `paused` source syncs to operation history and its state filt
 
 Schema 3.15.0 adds [native email tags](#native-email-tags).
 
-Schema 3.16.0 adds [native Gmail Inbox control](#native-gmail-inbox-control).
+Schema 3.16.0 adds [native Inbox control](#native-gmail-inbox-control) for Gmail,
+IMAP, and Microsoft Graph, plus read-only Beeper chat observation.
 
 Schema 3.17.0 adds [bounded archived Inbox candidates and context](#archived-inbox-candidates-and-context),
 registered read discovery on `/api/v1/mcp/capabilities`, and `provider_ingestion`
 on source status.
+
+Schema 3.18.0 adds configured Inbox triage mappings and signed batch triage
+preview and apply routes.
 
 Schema 3.13.0 adds the `docbank_rendition` evidence kind, which
 [cites a Docbank transcript](usage/kata-issues.md#cite-a-docbank-transcript).
@@ -340,10 +344,10 @@ and [MCP reads](usage/chat.md#archived-inbox-reads).
 ### Native Inbox control {#native-gmail-inbox-control}
 
 The unreleased `POST /api/v1/inbox/control` route observes or changes one exact
-Gmail, IMAP, or Microsoft Graph mail item. The daemon owns provider credentials,
-verifies the native account, and rechecks the current owner or delegated grant
-before execution,
-replay, and reconciliation. A grant needs `inbox.read`, the action permission,
+Gmail, IMAP, or Microsoft Graph mail item, or reads one exact Beeper chat. The
+daemon owns provider credentials, verifies the native account, and rechecks the
+current owner or delegated grant before execution, replay, and reconciliation.
+A grant needs `inbox.read`, the action permission,
 and the exact source. Revoked or expired grants fail even for saved receipts.
 Inbox grants bind the selected source ID as well as its type and identifier.
 Removing and re-adding the same account requires a new Inbox grant and preview.
@@ -365,11 +369,13 @@ does not admit a request. Missing or incompatible discovery fails closed.
 | `create-folder` | `source`, `destination.name`; `inbox.folder-create` |
 | `receipt-get`, `reconcile` | `receipt_id`; original source/action authority and receipt principal, or owner |
 
-`source` contains `source_id`, `source_type` (`"gmail"`, `"imap"`, or `"msmail"`),
-`source_identifier`, and `account_id`. `target` adds `scope: "message"`, the archived `item_id`, and exact
-native `provider_id` (an immutable Graph message ID for Microsoft). These fields
-must match live Store metadata; identifiers
-never authorize access by themselves. Owners can obtain a target from
+`source` contains `source_id`, `source_type` (`"gmail"`, `"imap"`, `"msmail"`, or
+`"beeper"`), `source_identifier`, and `account_id`. Mail targets use
+`scope: "message"`, the archived `item_id`, and exact native `provider_id` (an
+immutable Graph message ID for Microsoft). Beeper targets use `scope: "chat"`,
+an archived conversation `item_id`, and its exact provider conversation ID.
+These fields must match live Store metadata; identifiers never authorize access
+by themselves. Owners can obtain a mail target from
 `GET /api/v1/messages/{id}/tags` and pass it to an authorized agent.
 
 For mutations, send `dry_run: true` first. Preview makes no provider or archive
@@ -417,7 +423,9 @@ provider outcomes return 502 `inbox_outcome_unknown`; local reconciliation
 failure returns 500 `inbox_reconcile_only`. Errors retain `result` when a receipt
 exists. Only execution and reconciliation hold the daemon mutation gate.
 
-Native control supports Gmail, IMAP, and Microsoft Graph mail. Microsoft Graph
+Native control supports Gmail, IMAP, and Microsoft Graph mail. Beeper supports
+read-only capability and exact chat state observations; its mutations are
+unavailable. Microsoft Graph
 mail supports `get-capabilities`, `get-state`, and `tags`, plus receipt retrieval
 and reconciliation. `tags` adds or removes Outlook category names with one PATCH
 and an independent metadata readback. It preserves native read state, the actual
@@ -433,8 +441,8 @@ carries the observed ETag in `If-Match`, but this route does not promise a Graph
 compare-and-swap guarantee. A signed preview and independent readback cannot
 exclude another client changing the message between those reads.
 
-Chat actions, candidate/context discovery, and batch operations are not provided
-by this route. Existing native tag routes retain their separate IMAP and
+Beeper chat mutations, candidate/context discovery, and batch operations are not
+provided by this route. Existing native tag routes retain their separate IMAP and
 Microsoft behavior. See [`inbox`](cli-reference.md#inbox) and
 [MCP Inbox tools](usage/chat.md#native-gmail-inbox-control).
 

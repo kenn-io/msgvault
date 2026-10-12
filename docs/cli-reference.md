@@ -282,7 +282,8 @@ After adding an account, sync it with `msgvault sync-full`. IMAP accounts use th
 ## inbox
 
 Read archived Inbox metadata and text, or preview and control one exact Gmail,
-IMAP, or Microsoft Graph mail item through the selected daemon. Unreleased.
+IMAP, or Microsoft Graph mail item through the selected daemon. Beeper chat
+targets support capability and state observations only. Unreleased.
 Archived reads require API schema 3.17.0 and a compatible registered read
 contract; native control requires API schema 3.16.0 and its registered control
 contract. The daemon verifies exact identity and current authority on every call.

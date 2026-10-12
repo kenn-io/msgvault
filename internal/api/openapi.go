@@ -363,10 +363,12 @@ import (
 // attachment names/counts, and hybrid_available on CLI search responses.
 // 3.15.0 adds native Gmail label, IMAP keyword, and Microsoft Graph category
 // reads and delta updates.
-// 3.16.0 adds exact Gmail Inbox control with signed previews and durable receipts.
+// 3.16.0 adds Inbox control for Gmail, IMAP, and Microsoft Graph, plus read-only
+// Beeper chat observations.
 // 3.17.0 adds bounded archived Inbox candidates/context, registered read
 // discovery, and conservative source ingestion evidence.
-const APISchemaVersion = "3.17.0"
+// 3.18.0 adds configured Inbox triage mappings and signed batch triage routes.
+const APISchemaVersion = "3.18.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

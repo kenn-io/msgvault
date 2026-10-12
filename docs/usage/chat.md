@@ -138,8 +138,8 @@ Keep the ordered per-item results and receipts even on error. A separately
 confirmed retry of the same proposal recovers existing receipts, including
 after preview expiry, without repeating completed or uncertain writes. Inspect
 or reconcile an `unknown` receipt before creating a new intent. Batch triage
-currently supports Gmail user labels; use the separate flag tools for Beeper
-chats.
+currently supports Gmail user labels; use `inbox_get_state` for read-only
+Beeper chat observations.
 See the [HTTP inbox contract](../api-server.md#native-gmail-inbox-control) for
 provider limits and partial-batch recovery.
 
@@ -154,7 +154,8 @@ for exact binding, limits and errors.
 ## Native Inbox control {#native-gmail-inbox-control}
 
 API schema 3.16.0 adds exact native Inbox controls for Gmail, IMAP, and Microsoft
-Graph mail to owner and delegated MCP sessions. Tools are `inbox_get_capabilities`, `inbox_get_state`,
+Graph mail, plus read-only Beeper chat observations, to owner and delegated MCP
+sessions. Tools are `inbox_get_capabilities`, `inbox_get_state`,
 `inbox_list_folders`, `inbox_archive`, `inbox_unarchive`, `inbox_set_read`,
 `inbox_set_unread`, `inbox_move`, `inbox_create_folder`, `inbox_receipt_get`, and
 `inbox_reconcile`. Native tag edits use the existing `update_message_tags` tool.
