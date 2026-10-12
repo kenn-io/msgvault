@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	Assert "github.com/stretchr/testify/assert"
-	Require "github.com/stretchr/testify/require"
+	assert "github.com/stretchr/testify/assert"
+	require "github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/emailtags"
 	"go.kenn.io/msgvault/internal/inboxcontrol"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
@@ -40,8 +40,8 @@ func TestInboxGmailNativeDeltas(t *testing.T) {
 		{name: "tag removal added concurrently", op: inboxcontrol.OpTags, add: []string{"LabelNew"}, tags: &emailtags.MessageTagChange{Add: []string{"LabelNew"}, Remove: []string{"ConcurrentLabel"}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			assertions := Assert.New(t)
-			requirements := Require.New(t)
+			assertions := assert.New(t)
+			requirements := require.New(t)
 
 			labels := []string{"INBOX", "UNREAD", "STARRED", "LabelOld", "LabelOther"}
 			for _, id := range tc.add {
@@ -57,28 +57,28 @@ func TestInboxGmailNativeDeltas(t *testing.T) {
 					_, _ = w.Write([]byte(`{"labels":[{"id":"INBOX","name":"Inbox","type":"system"},{"id":"LabelOld","name":"Old","type":"user"},{"id":"LabelNew","name":"New","type":"user"},{"id":"LabelOther","name":"Other","type":"user"},{"id":"ConcurrentLabel","name":"Concurrent","type":"user"}]}`))
 				case "/gmail/v1/users/me/messages/message-1":
 					gets++
-					Assert.Equal(t, http.MethodGet, r.Method)
-					Assert.Equal(t, "metadata", r.URL.Query().Get("format"))
-					Assert.NotContains(t, r.URL.Query().Get("fields"), "payload")
+					assert.Equal(t, http.MethodGet, r.Method)
+					assert.Equal(t, "metadata", r.URL.Query().Get("format"))
+					assert.NotContains(t, r.URL.Query().Get("fields"), "payload")
 					_ = json.NewEncoder(w).Encode(map[string]any{"id": "message-1", "labelIds": labels, "historyId": "12"})
 				case "/gmail/v1/users/me/messages/message-1/modify":
 					posts++
-					Assert.Equal(t, http.MethodPost, r.Method)
+					assert.Equal(t, http.MethodPost, r.Method)
 					var delta struct {
 						Add    []string `json:"addLabelIds"`
 						Remove []string `json:"removeLabelIds"`
 					}
-					if !Assert.NoError(t, json.NewDecoder(r.Body).Decode(&delta)) {
+					if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&delta)) {
 						return
 					}
-					Assert.ElementsMatch(t, tc.add, delta.Add)
-					Assert.ElementsMatch(t, tc.remove, delta.Remove)
+					assert.ElementsMatch(t, tc.add, delta.Add)
+					assert.ElementsMatch(t, tc.remove, delta.Remove)
 					labels = emailtags.Project(labels, emailtags.MessageTagChange{Add: delta.Add, Remove: delta.Remove}, false)
 					// Another actor adds a label after dispatch. Never restore a full snapshot.
 					labels = append(labels, "ConcurrentLabel")
 					_, _ = w.Write([]byte(`{"id":"message-1"}`))
 				default:
-					Assert.Fail(t, "unexpected Gmail request", r.URL.String())
+					assert.Fail(t, "unexpected Gmail request", r.URL.String())
 					http.NotFound(w, r)
 				}
 			}))
@@ -122,7 +122,7 @@ func TestInboxGmailRejectsUnprovenState(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			client := newDraftTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				Assert.Equal(t, http.MethodGet, r.Method)
+				assert.Equal(t, http.MethodGet, r.Method)
 				if r.URL.Path == "/gmail/v1/users/me/profile" {
 					_, _ = w.Write([]byte(tc.profile))
 					return
@@ -132,14 +132,14 @@ func TestInboxGmailRejectsUnprovenState(t *testing.T) {
 			provider := NewInboxProvider(client, inboxGmailSource())
 			target := inboxGmailTarget()
 			_, err := provider.Observe(context.Background(), inboxcontrol.Request{Operation: inboxcontrol.OpGetState, Target: &target})
-			Require.Error(t, err)
+			require.Error(t, err)
 		})
 	}
 }
 
 func TestInboxGmailRejectsUnavailableTagsAndLostWrite(t *testing.T) {
-	assertions := Assert.New(t)
-	requirements := Require.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 
 	posts := 0
 	client := newDraftTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -174,7 +174,7 @@ func TestInboxGmailRejectsUnavailableTagsAndLostWrite(t *testing.T) {
 
 func TestInboxGmailMoveRejectsUnselectedOrSystemLabels(t *testing.T) {
 	client := newDraftTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		Assert.Equal(t, http.MethodGet, r.Method)
+		assert.Equal(t, http.MethodGet, r.Method)
 		switch r.URL.Path {
 		case "/gmail/v1/users/me/profile":
 			_, _ = w.Write([]byte(`{"emailAddress":"owner@example.com"}`))
@@ -183,21 +183,21 @@ func TestInboxGmailMoveRejectsUnselectedOrSystemLabels(t *testing.T) {
 		case "/gmail/v1/users/me/labels":
 			_, _ = w.Write([]byte(`{"labels":[{"id":"INBOX","name":"Inbox","type":"system"},{"id":"LabelOld","name":"Old","type":"user"},{"id":"LabelNew","name":"New","type":"user"}]}`))
 		default:
-			Assert.Fail(t, "unexpected Gmail request", r.URL.String())
+			assert.Fail(t, "unexpected Gmail request", r.URL.String())
 			http.NotFound(w, r)
 		}
 	}))
 	provider := NewInboxProvider(client, inboxGmailSource())
 	target := inboxGmailTarget()
 	before, err := provider.Observe(t.Context(), inboxcontrol.Request{Operation: inboxcontrol.OpGetState, Target: &target})
-	Require.NoError(t, err)
+	require.NoError(t, err)
 	for _, tc := range []struct{ name, origin, destination string }{
 		{"missing selection", "", "LabelNew"}, {"unselected origin", "LabelNew", "LabelOld"}, {"unavailable destination", "LabelOld", "Missing"}, {"system destination", "LabelOld", "INBOX"}, {"system origin", "INBOX", "LabelNew"}, {"same location", "LabelOld", "LabelOld"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			request := inboxcontrol.Request{Operation: inboxcontrol.OpMove, Target: &target, OriginFolder: &inboxcontrol.Folder{ID: tc.origin}, Destination: &inboxcontrol.Folder{ID: tc.destination}, DryRun: true}
 			_, err := provider.Preview(t.Context(), request, before)
-			Assert.Error(t, err)
+			assert.Error(t, err)
 		})
 	}
 }
@@ -213,14 +213,14 @@ func TestInboxGmailMetadataBatchRequiresAuthoritativeMarkers(t *testing.T) {
 		{"missing revision", `{"id":"metadata-1","labelIds":[]}`, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			assertions := Assert.New(t)
-			requirements := Require.New(t)
+			assertions := assert.New(t)
+			requirements := require.New(t)
 
 			client := newDraftTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				Assert.Equal(t, http.MethodGet, r.Method)
-				Assert.Equal(t, "/gmail/v1/users/me/messages/metadata-1", r.URL.Path)
-				Assert.Equal(t, "metadata", r.URL.Query().Get("format"))
-				Assert.Equal(t, "id,labelIds,historyId", r.URL.Query().Get("fields"))
+				assert.Equal(t, http.MethodGet, r.Method)
+				assert.Equal(t, "/gmail/v1/users/me/messages/metadata-1", r.URL.Path)
+				assert.Equal(t, "metadata", r.URL.Query().Get("format"))
+				assert.Equal(t, "id,labelIds,historyId", r.URL.Query().Get("fields"))
 				_, _ = w.Write([]byte(tc.body))
 			}))
 			results, err := client.GetMessageLabelsBatch(t.Context(), []string{"metadata-1"})
@@ -238,8 +238,8 @@ func TestInboxGmailMetadataBatchRequiresAuthoritativeMarkers(t *testing.T) {
 }
 
 func TestInboxGmailFolderCreationUsesNativeIdentity(t *testing.T) {
-	assertions := Assert.New(t)
-	requirements := Require.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 
 	labels := []map[string]string{{"id": "LabelExisting", "name": "Existing", "type": "user"}}
 	posts := 0
@@ -253,19 +253,19 @@ func TestInboxGmailFolderCreationUsesNativeIdentity(t *testing.T) {
 				var body struct {
 					Name string `json:"name"`
 				}
-				if !Assert.NoError(t, json.NewDecoder(r.Body).Decode(&body)) {
+				if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&body)) {
 					return
 				}
-				Assert.Equal(t, "Review", body.Name)
+				assert.Equal(t, "Review", body.Name)
 				created := map[string]string{"id": "LabelCreated", "name": body.Name, "type": "user"}
 				labels = append(labels, created)
 				_ = json.NewEncoder(w).Encode(created)
 				return
 			}
-			Assert.Equal(t, http.MethodGet, r.Method)
+			assert.Equal(t, http.MethodGet, r.Method)
 			_ = json.NewEncoder(w).Encode(map[string]any{"labels": labels})
 		default:
-			Assert.Fail(t, "unexpected Gmail request", r.URL.String())
+			assert.Fail(t, "unexpected Gmail request", r.URL.String())
 			http.NotFound(w, r)
 		}
 	}))
@@ -304,14 +304,14 @@ func TestInboxGmailFolderCreationUsesNativeIdentity(t *testing.T) {
 }
 
 func TestInboxGmailMetadataBatchPreservesGoneCause(t *testing.T) {
-	assertions := Assert.New(t)
-	requirements := Require.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 
 	client := newDraftTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNotFound) }))
 	results, err := client.GetMessageLabelsBatch(t.Context(), []string{"gone"})
 	requirements.NoError(err)
 	requirements.Len(results, 1)
-	Require.ErrorIs(t, results[0].Err, ErrMessageGone)
+	require.ErrorIs(t, results[0].Err, ErrMessageGone)
 	var gone *NotFoundError
 	assertions.ErrorAs(results[0].Err, &gone)
 }
@@ -319,8 +319,8 @@ func TestInboxGmailMetadataBatchPreservesGoneCause(t *testing.T) {
 func TestInboxGmailFolderCreationThroughController(t *testing.T) {
 	for _, mode := range []string{"verified", "readback lost", "mapping lost"} {
 		t.Run(mode, func(t *testing.T) {
-			assertions := Assert.New(t)
-			requirements := Require.New(t)
+			assertions := assert.New(t)
+			requirements := require.New(t)
 
 			archive := storetest.New(t)
 			source := inboxGmailSource()
@@ -350,7 +350,7 @@ func TestInboxGmailFolderCreationThroughController(t *testing.T) {
 						_ = json.NewEncoder(w).Encode(map[string]any{"labels": labels})
 					}
 				default:
-					Assert.Fail(t, "unexpected Gmail request", r.URL.String())
+					assert.Fail(t, "unexpected Gmail request", r.URL.String())
 					http.NotFound(w, r)
 				}
 			}))
@@ -427,8 +427,8 @@ func TestInboxGmailFolderPreviewRejectsUnprovedCatalog(t *testing.T) {
 			source := inboxGmailSource()
 			provider := NewInboxProvider(client, source)
 			_, err := provider.Observe(t.Context(), inboxcontrol.Request{Operation: inboxcontrol.OpCreateFolder, Source: &source, Destination: &inboxcontrol.Folder{Name: "Review"}, DryRun: true})
-			Require.ErrorIs(t, err, inboxcontrol.ErrUnavailable)
-			Assert.Equal(t, 0, posts)
+			require.ErrorIs(t, err, inboxcontrol.ErrUnavailable)
+			assert.Equal(t, 0, posts)
 		})
 	}
 }
@@ -436,7 +436,7 @@ func TestInboxGmailFolderPreviewRejectsUnprovedCatalog(t *testing.T) {
 func TestInboxGmailCapabilitiesAreReadOnlyAndNonconditional(t *testing.T) {
 	for _, writeStatus := range []inboxcontrol.CapabilityStatus{inboxcontrol.CapabilitySupported, inboxcontrol.CapabilityPermissionRequired, inboxcontrol.CapabilityUnavailable} {
 		t.Run(string(writeStatus), func(t *testing.T) {
-			assertions := Assert.New(t)
+			assertions := assert.New(t)
 
 			writes := 0
 			client := newDraftTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -457,7 +457,7 @@ func TestInboxGmailCapabilitiesAreReadOnlyAndNonconditional(t *testing.T) {
 			source := inboxGmailSource()
 			provider := NewInboxProvider(client, source).WithWriteCapability(writeStatus)
 			result, err := provider.Capabilities(t.Context(), inboxcontrol.Request{Operation: inboxcontrol.OpGetCapabilities, Source: &source})
-			Require.NoError(t, err)
+			require.NoError(t, err)
 			assertions.Equal(source, result.Source)
 			assertions.Equal("labels", result.LocationModel)
 			assertions.False(result.ConditionalWrite)
@@ -479,8 +479,8 @@ func TestInboxGmailCapabilitiesAreReadOnlyAndNonconditional(t *testing.T) {
 func TestInboxGmailCapabilitiesRequireCatalogForEveryMutation(t *testing.T) {
 	for _, catalog := range []string{`{}`, `{"labels":null}`} {
 		t.Run(catalog, func(t *testing.T) {
-			require := Require.New(t)
-			assert := Assert.New(t)
+			require := require.New(t)
+			assert := assert.New(t)
 			writes := 0
 			client := newDraftTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Method != http.MethodGet {
@@ -516,7 +516,7 @@ func TestInboxGmailCapabilitiesRequireCatalogForEveryMutation(t *testing.T) {
 }
 
 func TestInboxGmailFolderMutationHasNativeWriteSemantics(t *testing.T) {
-	assert := Assert.New(t)
+	assert := assert.New(t)
 
 	assert.Equal(5, OpLabelsCreate.Cost())
 	assert.True(OpLabelsCreate.remoteMutation())
@@ -532,6 +532,6 @@ func TestInboxGmailFolderMutationHasNativeWriteSemantics(t *testing.T) {
 	provider := NewInboxProvider(client, source)
 	request := inboxcontrol.Request{Operation: inboxcontrol.OpCreateFolder, Source: &source, Destination: &inboxcontrol.Folder{Name: "Review"}, DryRun: true}
 	_, err := provider.Dispatch(t.Context(), request, inboxcontrol.State{Source: source, Folders: []inboxcontrol.Folder{}})
-	Require.ErrorIs(t, err, inboxcontrol.ErrOutcomeUnknown)
+	require.ErrorIs(t, err, inboxcontrol.ErrOutcomeUnknown)
 	assert.Equal(1, posts, "an ambiguous native creation must not be retried")
 }
