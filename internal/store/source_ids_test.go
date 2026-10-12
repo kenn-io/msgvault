@@ -63,7 +63,7 @@ func TestSourceLifetimeCounterCorruptionAndExhaustionFailClosed(t *testing.T) {
 			_, err = st.GetOrCreateSource("gmail", "new@example.test")
 			requirements.Error(err, "never ignore a corrupt or exhausted retained ID supply")
 			_, err = st.GetSourceByTypeAndIdentifier("gmail", "new@example.test")
-			assertions.ErrorIs(err, store.ErrSourceNotFound)
+			requirements.ErrorIs(err, store.ErrSourceNotFound)
 			var retained string
 			requirements.NoError(st.DB().QueryRow("SELECT value FROM archive_metadata WHERE key='source_id_high_water'").Scan(&retained))
 			assertions.Equal(value, retained, "refused allocation must not repair or advance metadata")
