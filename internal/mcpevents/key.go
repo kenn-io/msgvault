@@ -66,7 +66,7 @@ func readKeyFile(path string) ([]byte, error) {
 	}
 	file, err := safefileio.OpenCurrentUserFile(path)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("open MCP Events key: %w", err)
 	}
 	defer func() { _ = file.Close() }()
 	return io.ReadAll(io.LimitReader(file, 33))
@@ -80,9 +80,17 @@ func createKey(path string) ([]byte, error) {
 	if _, err := rand.Read(key); err != nil {
 		return nil, fmt.Errorf("generate MCP Events key: %w", err)
 	}
-	staged, err := os.CreateTemp(filepath.Dir(path), ".mcp-events-key-*")
+	var staged *os.File
+	var err error
+	if runtime.GOOS == "windows" {
+		// Protect the staging file from creation, before narrowing its DACL
+		// to the repository's current-user-only policy below.
+		staged, err = safefileio.CreatePrivateTemp(filepath.Dir(path), ".mcp-events-key-*")
+	} else {
+		staged, err = os.CreateTemp(filepath.Dir(path), ".mcp-events-key-*")
+	}
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create MCP Events staging key: %w", err)
 	}
 	defer func() {
 		_ = staged.Close()
