@@ -18,8 +18,8 @@ func TestInboxPreviewKeyPersistsAcrossStartup(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "daemon", "inbox-preview.key")
 	_, err := inboxcontrol.LoadPreviewKey(path)
 	require.Error(t, err)
-	assertions.ErrorIs(err, os.ErrNotExist)
-	assertions.ErrorContains(err, path)
+	requirements.ErrorIs(err, os.ErrNotExist)
+	requirements.ErrorContains(err, path)
 	_, err = os.Stat(path)
 	require.ErrorIs(t, err, os.ErrNotExist, "preview must not create a missing key")
 	first, err := inboxcontrol.EnsurePreviewKey(path)
@@ -41,7 +41,6 @@ func TestInboxPreviewKeyPersistsAcrossStartup(t *testing.T) {
 func TestInboxPreviewKeyRefusesInvalidExistingFiles(t *testing.T) {
 	for _, shape := range []string{"short", "long", "directory", "symlink", "public"} {
 		t.Run(shape, func(t *testing.T) {
-			assertions := assert.New(t)
 			requirements := require.New(t)
 
 			if runtime.GOOS == "windows" && (shape == "symlink" || shape == "public") {
@@ -77,7 +76,7 @@ func TestInboxPreviewKeyRefusesInvalidExistingFiles(t *testing.T) {
 			_, err = inboxcontrol.LoadPreviewKey(path)
 			requirements.Error(err)
 			requirements.ErrorContains(err, path)
-			assertions.ErrorContains(err, reason)
+			requirements.ErrorContains(err, reason)
 		})
 	}
 }

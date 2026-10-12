@@ -1,8 +1,8 @@
 package fakevault_test
 
 import (
-	assert "github.com/stretchr/testify/assert"
-	require "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/fakevault"
 	"go.kenn.io/msgvault/internal/store"
 	"path/filepath"
