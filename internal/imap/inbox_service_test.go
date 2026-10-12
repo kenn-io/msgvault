@@ -77,7 +77,7 @@ func TestInboxIMAPServiceRequiresMoveProofBeforeClaim(t *testing.T) {
 			request.PreviewToken = preview.PreviewToken
 			request.IdempotencyKey = "native-admission"
 			_, err = service.Control(t.Context(), request, principal, gate)
-			assertions.ErrorIs(err, inboxcontrol.ErrUnavailable)
+			requirements.ErrorIs(err, inboxcontrol.ErrUnavailable)
 			assertions.Zero(native.moves.Load())
 			assertions.Zero(native.copies.Load())
 			assertions.Zero(native.expunges.Load())

@@ -3,6 +3,7 @@ package imap
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"time"
 
@@ -71,7 +72,7 @@ func (p *InboxProvider) createFolder(ctx context.Context, request inboxcontrol.R
 			if response, ok := errors.AsType[*imapapi.Error](err); ok && (response.Type == imapapi.StatusResponseTypeNo || response.Type == imapapi.StatusResponseTypeBad) {
 				dispatched = false
 			}
-			return err
+			return fmt.Errorf("create IMAP mailbox: %w", err)
 		}
 		// CREATE itself returns no epoch. Losing STATUS evidence leaves the receipt
 		// unknown; a later mailbox with the same name is not dispatch proof.

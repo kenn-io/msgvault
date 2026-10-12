@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json/v2"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -119,7 +120,10 @@ func TestDaemonInboxIMAPRejectsAccountAndConfigMismatchBeforeFactory(t *testing.
 			requirements := require.New(t)
 			a, target := inboxIMAPDaemonFixture(t)
 			calls := 0
-			a.emailTagClientFactory = func(context.Context, *store.Source) (gmail.API, error) { calls++; return nil, nil }
+			a.emailTagClientFactory = func(context.Context, *store.Source) (gmail.API, error) {
+				calls++
+				return nil, errors.New("unexpected Gmail client factory call")
+			}
 			if mismatch == "account" {
 				target.AccountID = target.SourceIdentifier
 			} else {
@@ -209,17 +213,19 @@ type inboxIMAPCommandCounts struct {
 
 type inboxIMAPCommandSession struct {
 	imapserver.Session
+
 	counts *inboxIMAPCommandCounts
 }
 
 func (s *inboxIMAPCommandSession) Select(name string, opts *imapapi.SelectOptions) (*imapapi.SelectData, error) {
 	data, err := s.Session.Select(name, opts)
-	if err == nil {
-		// The memory server derives its catalog from present flags. Explicitly
-		// model a mailbox permitting Seen even while its only message is unread.
-		data.PermanentFlags = append(data.PermanentFlags, imapapi.FlagSeen)
+	if err != nil {
+		return data, fmt.Errorf("select IMAP mailbox %q in test session: %w", name, err)
 	}
-	return data, err
+	// The memory server derives its catalog from present flags. Explicitly
+	// model a mailbox permitting Seen even while its only message is unread.
+	data.PermanentFlags = append(data.PermanentFlags, imapapi.FlagSeen)
+	return data, nil
 }
 
 func inboxIMAPDelegatedClient(t *testing.T, url, ownerKey string, sourceID int64, permissions ...string) *daemonclient.Client {
@@ -236,7 +242,7 @@ func inboxIMAPDelegatedClient(t *testing.T, url, ownerKey string, sourceID int64
 	request.Header.Set("Authorization", "Bearer "+ownerKey)
 	response, err := http.DefaultClient.Do(request)
 	requirements.NoError(err)
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	requirements.Equal(http.StatusCreated, response.StatusCode)
 	var grant struct {
 		Secret string `json:"secret"`
@@ -251,27 +257,47 @@ func inboxIMAPDelegatedClient(t *testing.T, url, ownerKey string, sourceID int64
 
 func (s *inboxIMAPCommandSession) Store(w *imapserver.FetchWriter, set imapapi.NumSet, flags *imapapi.StoreFlags, opts *imapapi.StoreOptions) error {
 	s.counts.stores.Add(1)
-	return s.Session.Store(w, set, flags, opts)
+	if err := s.Session.Store(w, set, flags, opts); err != nil {
+		return fmt.Errorf("store IMAP flags in test session: %w", err)
+	}
+	return nil
 }
 
 func (s *inboxIMAPCommandSession) Move(w *imapserver.MoveWriter, set imapapi.NumSet, destination string) error {
 	s.counts.moves.Add(1)
-	return s.Session.(imapserver.SessionMove).Move(w, set, destination)
+	mover, ok := s.Session.(imapserver.SessionMove)
+	if !ok {
+		return errors.New("memory server does not support MOVE")
+	}
+	if err := mover.Move(w, set, destination); err != nil {
+		return fmt.Errorf("move message in IMAP test session: %w", err)
+	}
+	return nil
 }
 
 func (s *inboxIMAPCommandSession) Copy(set imapapi.NumSet, destination string) (*imapapi.CopyData, error) {
 	s.counts.copies.Add(1)
-	return s.Session.Copy(set, destination)
+	data, err := s.Session.Copy(set, destination)
+	if err != nil {
+		return nil, fmt.Errorf("copy message in IMAP test session: %w", err)
+	}
+	return data, nil
 }
 
 func (s *inboxIMAPCommandSession) Expunge(w *imapserver.ExpungeWriter, set *imapapi.UIDSet) error {
 	s.counts.expunges.Add(1)
-	return s.Session.Expunge(w, set)
+	if err := s.Session.Expunge(w, set); err != nil {
+		return fmt.Errorf("expunge message in IMAP test session: %w", err)
+	}
+	return nil
 }
 
 func (s *inboxIMAPCommandSession) Create(name string, opts *imapapi.CreateOptions) error {
 	s.counts.creates.Add(1)
-	return s.Session.Create(name, opts)
+	if err := s.Session.Create(name, opts); err != nil {
+		return fmt.Errorf("create IMAP mailbox in test session: %w", err)
+	}
+	return nil
 }
 
 // Count commands while delegating every operation to real native mailboxes.
@@ -361,10 +387,12 @@ func TestDaemonInboxIMAPConfirmedTransportsRetainReceipts(t *testing.T) {
 	r, w, err := os.Pipe()
 	requirements.NoError(err)
 	requirements.NoError(r.Close())
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
-	child := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestInboxIMAPCLINativeClosedStdoutHelper$")
+	executable, err := os.Executable()
+	requirements.NoError(err)
+	child := exec.CommandContext(ctx, executable, "-test.run=^TestInboxIMAPCLINativeClosedStdoutHelper$")
 	child.Env = append(os.Environ(), "MSGVAULT_IMAP_CLOSED_STDOUT=1", "MSGVAULT_IMAP_DAEMON_URL="+server.URL, "MSGVAULT_IMAP_REQUEST="+requestFile, "MSGVAULT_IMAP_OWNER_KEY_FILE="+keyFile)
 	child.Stdout = w
 	var childError bytes.Buffer

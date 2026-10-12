@@ -2,6 +2,7 @@ package imap
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"net"
 	"strings"
@@ -45,7 +46,7 @@ func TestInboxIMAPSelectModeBindsExactCommand(t *testing.T) {
 				selected, command, _ := strings.Cut(strings.TrimSpace(selectLine), " ")
 				noop, other, _ := strings.Cut(strings.TrimSpace(noopLine), " ")
 				if !strings.HasPrefix(command, "SELECT ") || other != "NOOP" {
-					done <- fmt.Errorf("unexpected native commands")
+					done <- errors.New("unexpected native commands")
 					return
 				}
 				code := ""

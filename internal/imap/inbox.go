@@ -180,7 +180,7 @@ func (p *InboxProvider) Dispatch(ctx context.Context, request inboxcontrol.Reque
 		return inboxcontrol.DispatchResult{}, inboxcontrol.ErrNoWrite
 	}
 	if isIMAPMove(request.Operation) {
-		return p.dispatchMove(ctx, request, before, projected)
+		return p.dispatchMove(ctx, before, projected)
 	}
 	dispatched := false
 	noWriteProved := false
@@ -242,7 +242,7 @@ func (p *InboxProvider) Dispatch(ctx context.Context, request inboxcontrol.Reque
 		cmd := conn.Store(imapapi.UIDSetNum(imapapi.UID(before.Target.UID)), &imapapi.StoreFlags{Op: op, Silent: true, Flags: values}, options)
 		_, err = cmd.Collect()
 		if err != nil {
-			return err
+			return fmt.Errorf("collect IMAP message flags: %w", err)
 		}
 		if modified := cmd.ModifiedUIDs(); len(modified) > 0 {
 			if len(modified) == 1 && modified[0].Start == imapapi.UID(before.Target.UID) && modified[0].Stop == imapapi.UID(before.Target.UID) {

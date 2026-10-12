@@ -3,6 +3,7 @@ package imap
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"net"
 	"regexp"
 	"strings"
@@ -21,6 +22,7 @@ import (
 
 type inboxMoveSession struct {
 	imapserver.Session
+
 	moves, copies, expunges, creates *atomic.Int64
 	omitCreatedEpoch                 bool
 	moveFault                        string
@@ -33,11 +35,14 @@ type inboxMoveSession struct {
 // and all mutations still use its real mailboxes.
 func (s *inboxMoveSession) List(w *imapserver.ListWriter, ref string, patterns []string, opts *imapapi.ListOptions) error {
 	if !opts.SelectSpecialUse {
-		return s.Session.List(w, ref, patterns, opts)
+		if err := s.Session.List(w, ref, patterns, opts); err != nil {
+			return fmt.Errorf("list IMAP mailboxes in test session: %w", err)
+		}
+		return nil
 	}
 	for _, name := range s.archives {
 		if err := w.WriteList(&imapapi.ListData{Mailbox: name, Attrs: []imapapi.MailboxAttr{imapapi.MailboxAttrArchive}}); err != nil {
-			return err
+			return fmt.Errorf("write special-use IMAP mailbox: %w", err)
 		}
 	}
 	return nil
@@ -51,55 +56,81 @@ func (s *inboxMoveSession) Move(w *imapserver.MoveWriter, set imapapi.NumSet, de
 		// the production client still sends one MOVE and no fallback commands.
 		data, err := s.Session.Copy(set, dest)
 		if err != nil {
-			return err
+			return fmt.Errorf("copy source message in IMAP test session: %w", err)
 		}
-		return w.WriteCopyData(data)
+		if err := w.WriteCopyData(data); err != nil {
+			return fmt.Errorf("write IMAP COPYUID response: %w", err)
+		}
+		return nil
 	}
 	mover, ok := s.Session.(imapserver.SessionMove)
 	if !ok {
 		return errors.New("native fixture missing MOVE")
 	}
-	return mover.Move(w, set, dest)
+	if err := mover.Move(w, set, dest); err != nil {
+		return fmt.Errorf("move source message in IMAP test session: %w", err)
+	}
+	return nil
 }
 func (s *inboxMoveSession) Select(name string, opts *imapapi.SelectOptions) (*imapapi.SelectData, error) {
 	s.selected = name
 	data, err := s.Session.Select(name, opts)
-	if err == nil && name == "INBOX" && s.moves.Load() > 0 && s.moveFault == "changed origin epoch" {
+	if err != nil {
+		return data, fmt.Errorf("select IMAP mailbox %q in test session: %w", name, err)
+	}
+	if name == "INBOX" && s.moves.Load() > 0 && s.moveFault == "changed origin epoch" {
 		data.UIDValidity++
 	}
-	return data, err
+	return data, nil
 }
 
 func (s *inboxMoveSession) Fetch(w *imapserver.FetchWriter, set imapapi.NumSet, opts *imapapi.FetchOptions) error {
 	if s.selected == "INBOX" && s.moves.Load() > 0 && s.moveFault == "source FETCH unavailable" {
 		return &imapapi.Error{Type: imapapi.StatusResponseTypeNo, Text: "synthetic source readback failure"}
 	}
-	return s.Session.Fetch(w, set, opts)
+	if err := s.Session.Fetch(w, set, opts); err != nil {
+		return fmt.Errorf("fetch IMAP message in test session: %w", err)
+	}
+	return nil
 }
 
 func (s *inboxMoveSession) Copy(set imapapi.NumSet, dest string) (*imapapi.CopyData, error) {
 	s.copies.Add(1)
-	return s.Session.Copy(set, dest)
+	data, err := s.Session.Copy(set, dest)
+	if err != nil {
+		return nil, fmt.Errorf("copy IMAP message in test session: %w", err)
+	}
+	return data, nil
 }
 func (s *inboxMoveSession) Expunge(w *imapserver.ExpungeWriter, set *imapapi.UIDSet) error {
 	s.expunges.Add(1)
-	return s.Session.Expunge(w, set)
+	if err := s.Session.Expunge(w, set); err != nil {
+		return fmt.Errorf("expunge IMAP message in test session: %w", err)
+	}
+	return nil
 }
 func (s *inboxMoveSession) Create(name string, opts *imapapi.CreateOptions) error {
 	s.creates.Add(1)
-	return s.Session.Create(name, opts)
+	if err := s.Session.Create(name, opts); err != nil {
+		return fmt.Errorf("create IMAP mailbox in test session: %w", err)
+	}
+	return nil
 }
 
 func (s *inboxMoveSession) Status(name string, opts *imapapi.StatusOptions) (*imapapi.StatusData, error) {
 	data, err := s.Session.Status(name, opts)
-	if err == nil && s.omitCreatedEpoch && name == "Triage" {
+	if err != nil {
+		return data, fmt.Errorf("read IMAP mailbox status in test session: %w", err)
+	}
+	if s.omitCreatedEpoch && name == "Triage" {
 		data.UIDValidity = 0
 	}
-	return data, err
+	return data, nil
 }
 
 type inboxFaultListener struct {
 	net.Listener
+
 	fault string
 	moves *atomic.Int64
 }
@@ -107,13 +138,14 @@ type inboxFaultListener struct {
 func (l inboxFaultListener) Accept() (net.Conn, error) {
 	conn, err := l.Listener.Accept()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("accept IMAP test connection: %w", err)
 	}
 	return inboxFaultConn{Conn: conn, fault: l.fault, moves: l.moves}, nil
 }
 
 type inboxFaultConn struct {
 	net.Conn
+
 	fault string
 	moves *atomic.Int64
 }
@@ -122,7 +154,7 @@ var inboxCopyUIDCode = regexp.MustCompile(`\[COPYUID [^\]]+\]`)
 
 func (c inboxFaultConn) Write(data []byte) (int, error) {
 	if c.fault == "lost CREATE reply" && bytes.Contains(data, []byte("CREATE completed")) {
-		_ = c.Conn.Close()
+		_ = c.Close()
 		return len(data), nil
 	}
 	changed := data
@@ -152,13 +184,13 @@ func (c inboxFaultConn) Write(data []byte) (int, error) {
 		case "huge destination range":
 			fields[3] = "1:4294967295"
 		case "lost MOVE reply":
-			_ = c.Conn.Close()
+			_ = c.Close()
 			return nil
 		}
 		return []byte("[" + strings.Join(fields, " ") + "]")
 	})
 	if _, err := c.Conn.Write(changed); err != nil {
-		return 0, err
+		return 0, fmt.Errorf("write IMAP test response: %w", err)
 	}
 	return len(data), nil
 }
@@ -213,10 +245,13 @@ func newInboxNativeFixture(t *testing.T, fault string) *inboxNativeFixture {
 		var err error
 		origin, err = conn.Status("INBOX", &imapapi.StatusOptions{UIDValidity: true}).Wait()
 		if err != nil {
-			return err
+			return fmt.Errorf("read INBOX status in test: %w", err)
 		}
 		dest, err = conn.Status("Archive", &imapapi.StatusOptions{UIDValidity: true}).Wait()
-		return err
+		if err != nil {
+			return fmt.Errorf("read Archive status in test: %w", err)
+		}
+		return nil
 	}))
 	fixture.source, fixture.target = inboxIMAPBinding(client, DraftReceipt{Mailbox: "INBOX", UIDValidity: origin.UIDValidity, UID: 1})
 	fixture.destination = inboxcontrol.Folder{ID: "Archive", Name: "Archive", UIDValidity: dest.UIDValidity}
