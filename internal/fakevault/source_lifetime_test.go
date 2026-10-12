@@ -1,8 +1,8 @@
 package fakevault_test
 
 import (
-	Assert "github.com/stretchr/testify/assert"
-	Require "github.com/stretchr/testify/require"
+	assert "github.com/stretchr/testify/assert"
+	require "github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/fakevault"
 	"go.kenn.io/msgvault/internal/store"
 	"path/filepath"
@@ -12,8 +12,8 @@ import (
 func TestAppendRefusesRemovedOrReplacedSourceLifetime(t *testing.T) {
 	for _, replaced := range []bool{false, true} {
 		t.Run(map[bool]string{false: "removed", true: "replaced"}[replaced], func(t *testing.T) {
-			require := Require.New(t)
-			assert := Assert.New(t)
+			require := require.New(t)
+			assert := assert.New(t)
 			opts := fakevault.Options{Dir: t.TempDir(), Messages: 8, Seed: 42}
 			_, err := fakevault.Generate(t.Context(), opts)
 			require.NoError(err)
@@ -51,8 +51,8 @@ func TestAppendRefusesRemovedOrReplacedSourceLifetime(t *testing.T) {
 }
 
 func TestAppendPreservesOriginalSourceLifetimes(t *testing.T) {
-	require := Require.New(t)
-	assert := Assert.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	opts := fakevault.Options{Dir: t.TempDir(), Messages: 8, Seed: 42}
 	first, err := fakevault.Generate(t.Context(), opts)
 	require.NoError(err)
