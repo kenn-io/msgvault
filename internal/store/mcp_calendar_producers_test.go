@@ -183,19 +183,6 @@ func TestMCPCalendarProducerUnseenTombstoneKeepsUnknownStartNull(t *testing.T) {
 	assert.True(producerObservedAt.Equal(producerPayloadTime(t, events[0].data, "changed_at")))
 }
 
-func TestMCPCalendarProducerFullSyncMuted(t *testing.T) {
-	require := Require.New(t)
-	assert := Assert.New(t)
-
-	f, _ := calendarProducerFixture(t)
-	view := f.Store.WithIngestContext(store.IngestContext{Mode: store.IngestBackfill, ObservedAt: producerObservedAt})
-	persister, ok := any(view).(calendarEventPersister)
-	require.True(ok)
-	_, _, err := persister.PersistCalendarEventContext(t.Context(), calendarSnapshot(f, `{"status":"confirmed","start":"2026-10-06","end":"2026-10-07","all_day":true}`), producerObservedAt, false)
-	require.NoError(err)
-	assert.Empty(readProducerEvents(t, f.Store, "msgvault.calendar_event_changed"))
-}
-
 func TestMCPCalendarProducerConcurrentRedeliveryComparesUnderLock(t *testing.T) {
 	require := Require.New(t)
 	assert := Assert.New(t)

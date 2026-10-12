@@ -82,14 +82,28 @@ func TestTokensRejectNonCanonicalAndCrossSubscriptionInputs(t *testing.T) {
 	require := Require.New(t)
 	key, id := make([]byte, 32), "sub_"+strings.Repeat("a", 64)
 	valid := encodeCursor(key, id, 3, 42)
-	for _, token := range []string{"", "c1.03.42.bad", "c1.+3.42.bad", "c1.3.-1.bad", "c1.3.9223372036854775808.bad", valid + "=", valid + ".extra", "c1.3.42.AAAAAAAAAAAAAAAAAAAAAA"} {
+	for _, token := range []string{"", valid + "=", valid + ".extra", "c1.3.42.AAAAAAAAAAAAAAAAAAAAAA"} {
+		_, _, err := decodeCursor(key, id, token)
+		require.Error(err, token)
+	}
+	// Sign the malformed decimal spelling itself so a bad MAC cannot mask
+	// a missing canonical-decimal check.
+	for _, parts := range [][2]string{{"03", "42"}, {"+3", "42"}, {"3", "-1"}, {"3", "042"}, {"3", "9223372036854775808"}} {
+		prefix := "c1." + parts[0] + "." + parts[1]
+		token := prefix + "." + tokenMAC(key, "c1."+id+"."+parts[0]+"."+parts[1])
 		_, _, err := decodeCursor(key, id, token)
 		require.Error(err, token)
 	}
 	_, _, err := decodeCursor(key, "sub_"+strings.Repeat("b", 64), valid)
 	require.Error(err)
 	event := encodeEventID(key, id, 42)
-	for _, token := range []string{"", event + "=", event + ".extra", strings.Replace(event, ".42.", ".042.", 1), strings.Replace(event, "sub_"+strings.Repeat("a", 64), "sub_"+strings.Repeat("b", 64), 1)} {
+	for _, token := range []string{"", event + "=", event + ".extra", strings.Replace(event, "sub_"+strings.Repeat("a", 64), "sub_"+strings.Repeat("b", 64), 1)} {
+		_, _, err := decodeEventID(key, token)
+		require.Error(err, token)
+	}
+	for _, seq := range []string{"042", "+42", "-1", "9223372036854775808"} {
+		prefix := "evt1." + id + "." + seq
+		token := prefix + "." + tokenMAC(key, prefix)
 		_, _, err := decodeEventID(key, token)
 		require.Error(err, token)
 	}

@@ -75,10 +75,12 @@ func TestMCPEventsRejectsUnsupportedDeliveryAndTTL(t *testing.T) {
 }
 
 func TestMCPEventsRejectsUnsafeCallbackURLs(t *testing.T) {
+	assert := Assert.New(t)
+	require := Require.New(t)
 	f := storetest.New(t)
 	ownerKey := "synthetic-owner-key"
 	svc, err := mcpevents.New(t.Context(), f.Store, mcpevents.Options{Enabled: true, Retention: 7 * 24 * time.Hour, Sources: []string{"gmail"}, KeyPath: filepath.Join(t.TempDir(), "mcp-events.key"), OwnerKey: ownerKey})
-	Require.NoError(t, err)
+	require.NoError(err)
 	for _, callback := range []string{
 		"http://receiver.example.net/events",
 		"https://receiver.example.net:9443/events",
@@ -93,26 +95,36 @@ func TestMCPEventsRejectsUnsafeCallbackURLs(t *testing.T) {
 		"https://[fc00::1]/events",
 	} {
 		t.Run(callback, func(t *testing.T) {
+			assert := Assert.New(t)
+			require := Require.New(t)
 			_, err := svc.Subscribe(t.Context(), mcpevents.Principal(ownerKey), mcpevents.SubscribeRequest{Name: "msgvault.message_archived", Arguments: map[string]any{"conversation_id": strconv.FormatInt(f.ConvID, 10)}, Delivery: mcpevents.Delivery{Mode: "webhook", URL: callback, Secret: "whsec_" + base64.StdEncoding.EncodeToString(make([]byte, 32))}})
-			Require.Error(t, err)
-			Assert.NotContains(t, err.Error(), callback)
+			var rpcErr *mcpevents.Error
+			require.ErrorAs(err, &rpcErr)
+			assert.Equal(-32602, rpcErr.Code)
+			assert.Equal("invalid_callback", rpcErr.Reason)
+			assert.NotContains(err.Error(), callback)
 		})
 	}
 	rows, err := svc.Status(t.Context(), mcpevents.Principal(ownerKey))
-	Require.NoError(t, err)
-	Assert.Empty(t, rows)
+	require.NoError(err)
+	assert.Empty(rows)
 }
 
 func TestMCPEventsRejectsMalformedWebhookSecrets(t *testing.T) {
+	assert := Assert.New(t)
+	require := Require.New(t)
 	f := storetest.New(t)
 	ownerKey := "synthetic-owner-key"
 	svc, err := mcpevents.New(t.Context(), f.Store, mcpevents.Options{Enabled: true, Retention: 7 * 24 * time.Hour, Sources: []string{"gmail"}, KeyPath: filepath.Join(t.TempDir(), "mcp-events.key"), OwnerKey: ownerKey})
-	Require.NoError(t, err)
+	require.NoError(err)
 	for _, secret := range []string{"", "plain-secret", "whsec_!!!", "whsec_" + base64.StdEncoding.EncodeToString(make([]byte, 23)), "whsec_" + base64.StdEncoding.EncodeToString(make([]byte, 65))} {
 		_, err := svc.Subscribe(t.Context(), mcpevents.Principal(ownerKey), mcpevents.SubscribeRequest{Name: "msgvault.message_archived", Arguments: map[string]any{"conversation_id": strconv.FormatInt(f.ConvID, 10)}, Delivery: mcpevents.Delivery{Mode: "webhook", URL: "https://receiver.example.net/events", Secret: secret}})
-		Require.Error(t, err)
+		var rpcErr *mcpevents.Error
+		require.ErrorAs(err, &rpcErr)
+		assert.Equal(-32602, rpcErr.Code)
+		assert.Equal("invalid_secret", rpcErr.Reason)
 		if secret != "" {
-			Assert.NotContains(t, err.Error(), secret)
+			assert.NotContains(err.Error(), secret)
 		}
 	}
 }
