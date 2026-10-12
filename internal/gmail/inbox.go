@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/emailtags"
+	"go.kenn.io/msgvault/internal/googleaccount"
 	"go.kenn.io/msgvault/internal/inboxcontrol"
-	"go.kenn.io/msgvault/internal/oauth"
 )
 
 // InboxProvider applies native label deltas to one Store-resolved Gmail account.
@@ -55,7 +55,7 @@ func (p *InboxProvider) account(ctx context.Context) error {
 	if err != nil {
 		return inboxcontrol.ErrUnavailable
 	}
-	if profile == nil || !oauth.SameGoogleAccount(p.source.AccountID, profile.EmailAddress) {
+	if profile == nil || !googleaccount.Same(p.source.AccountID, profile.EmailAddress) {
 		return inboxcontrol.ErrDenied
 	}
 	return nil
