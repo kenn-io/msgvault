@@ -213,6 +213,9 @@ func delegatedMCPServeOptions(ctx context.Context, st *daemonclient.Client) (mcp
 	if daemonclient.APISchemaVersionAtLeast(schemaVersion, calendarControlMinAPISchemaVersion) {
 		opts.Calendar = st
 	}
+	if daemonclient.APISchemaVersionAtLeast(schemaVersion, daemonclient.InboxMinAPISchemaVersion) {
+		admitInboxMCP(ctx, st, &opts, false)
+	}
 	return opts, nil
 }
 
@@ -349,6 +352,9 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 	}
 	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, messageTagsMinAPISchemaVersion) {
 		opts.MessageTags = st
+	}
+	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, daemonclient.InboxMinAPISchemaVersion) {
+		admitInboxMCP(ctx, st, &opts, true)
 	}
 	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, identityScoringMinAPISchemaVersion) {
 		opts.IdentityScoring = st

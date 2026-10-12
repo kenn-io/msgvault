@@ -3,6 +3,8 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"errors"
+	"io"
 	"net/http"
 	"testing"
 
@@ -88,4 +90,52 @@ func TestMessageTagsClientRequiresSchema(t *testing.T) {
 	err := command.Execute()
 	require.ErrorContains(t, err, "API schema "+messageTagsMinAPISchemaVersion)
 	assert.Zero(t, requests)
+}
+
+type cliInboxTagsBackend struct{ cliTagsBackend }
+
+func (b *cliInboxTagsBackend) MessageTags(ctx context.Context, id int64, change *emailtags.MessageTagChange, mailbox string) (*emailtags.MessageTagResult, error) {
+	result, err := b.cliTagsBackend.MessageTags(ctx, id, change, mailbox)
+	result.ReceiptID, result.ReceiptStatus, result.IdempotencyKey = "receipt-fixture", "verified", "tags-fixture"
+	return result, err
+}
+func TestInboxMessageTagsCommandPrintsReceipt(t *testing.T) {
+	command := newMessageTagsCommand(&cliInboxTagsBackend{})
+	var output bytes.Buffer
+	command.SetOut(&output)
+	command.SetErr(&output)
+	command.SetArgs([]string{"7", "--add", "Next"})
+	require.NoError(t, command.Execute())
+	assert.Contains(t, output.String(), "Inbox receipt: receipt-fixture (verified)")
+}
+
+type inboxTagOutputWriter struct{}
+
+func (inboxTagOutputWriter) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
+
+func TestInboxMessageTagsOutputFailureNamesRecoverableReceipt(t *testing.T) {
+	for _, asJSON := range []bool{false, true} {
+		t.Run(map[bool]string{false: "human", true: "json"}[asJSON], func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			backend := &cliInboxTagsBackend{}
+			command := newMessageTagsCommand(backend)
+			command.SetOut(inboxTagOutputWriter{})
+			command.SetErr(io.Discard)
+			command.SilenceUsage, command.SilenceErrors = true, true
+			args := []string{"7", "--add", "Next"}
+			if asJSON {
+				args = append(args, "--json")
+			}
+			command.SetArgs(args)
+			err := command.Execute()
+			requirements.ErrorContains(err, "receipt-fixture")
+			failure, ok := errors.AsType[*emailtags.MessageTagError](err)
+			requirements.True(ok)
+			assertions.Equal("remote_unknown", failure.Code)
+			requirements.NotNil(failure.Result)
+			assertions.Equal("receipt-fixture", failure.Result.ReceiptID)
+			assertions.Equal(1, backend.calls)
+		})
+	}
 }

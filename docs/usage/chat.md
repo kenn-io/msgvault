@@ -108,6 +108,29 @@ For a delegated Claude Desktop session, use these arguments with the daemon URL 
 
 For an HTTP loopback daemon URL, add `--agent-allow-insecure` before `mcp`. Delegated MCP serves over stdio; `--http` returns a usage error. Read tools `draft_get` and `draft_send_as` are available in owner HTTP sessions by default. Draft writes require `--http-allow-writes`.
 
+## Native Gmail Inbox control
+
+API schema 3.15.0 adds exact native Gmail actions to owner and delegated MCP
+sessions. Tools are `inbox_get_capabilities`, `inbox_get_state`,
+`inbox_list_folders`, `inbox_archive`, `inbox_unarchive`, `inbox_set_read`,
+`inbox_set_unread`, `inbox_move`, `inbox_create_folder`, `inbox_receipt_get`, and
+`inbox_reconcile`. Native tag edits use the existing `update_message_tags` tool.
+The catalog exposes Inbox tools only when the daemon's live descriptor admits
+the registered control contract and operation for the caller. Write tools also
+require the normal transport write policy. The daemon rechecks current authority
+per call.
+
+Mutation previews default to `dry_run: true`. Execution requires the unchanged
+exact intent, `expected`, signed `preview_token`, `idempotency_key`, and client
+confirmation of those specific arguments. Provider text is untrusted data and
+cannot provide confirmation. Receipt retrieval and reconciliation require the
+original source/action grant and receipt principal, or owner authority.
+
+An owner can supply an exact target from the native tag GET route to a scoped
+agent. Gmail control does not discover candidates or run batches. See
+[the API contract](../api-server.md#native-gmail-inbox-control) for request
+fields, label semantics, permissions, receipt recovery, and implemented limits.
+
 ## Native email tags
 
 `get_message_tags` reads one archived message's live Gmail label IDs, IMAP
@@ -115,7 +138,13 @@ keywords, or Microsoft Graph category names. Its `available_tags` lists existing
 Gmail user label IDs, the IMAP server's advertised permanent keywords, or the
 categories observed on that Microsoft message. `update_message_tags` adds or
 removes tags and verifies the result through the daemon. Both tools need
-API schema 3.15.0; older daemons omit them.
+API schema 3.15.0; older daemons omit them. On schema 3.15.0,
+`update_message_tags` also accepts an exact `target` instead of `message_id`.
+That form defaults to preview and accepts `expected`, `preview_token`, and
+`idempotency_key` for confirmed execution; its response is the Inbox
+`result`/`error` envelope. It excludes `message_id` and `mailbox`. Delegates with
+`inbox.read` and `inbox.tag` use this form because legacy tag reads are owner-only.
+The existing owner form keeps its native tag result and provider compatibility.
 
 ```json
 {"message_id":42,"add":["Label_123"],"remove":["Label_456"],"dry_run":true}
@@ -125,7 +154,10 @@ Use the exact Gmail user label IDs returned by the read tool. For IMAP, use
 custom keyword atoms and optionally name a recorded `mailbox`. For Microsoft
 Graph, use category names and grant `Mail.ReadWrite` with
 [`add-o365 --graph --mail-write`](../cli-reference.md#add-o365). The update tool
-follows the normal [write controls](#write-controls). A preview never writes.
+requires confirmation of the exact arguments and follows the normal
+[write controls](#write-controls). A preview never writes. On schema 3.15.0,
+Gmail edits use signed Inbox control; results retain `receipt_id`,
+`receipt_status`, and `idempotency_key` for recovery.
 A partial error keeps its last observed `result` in structured content; read
 tags before retrying. See [`message-tags`](../cli-reference.md#message-tags)
 for provider permissions, category limits, IMAP copy selection, and failure

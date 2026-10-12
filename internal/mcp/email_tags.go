@@ -2,11 +2,13 @@ package mcp
 
 import (
 	"context"
+	"encoding/json/v2"
 	"errors"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/emailtags"
+	"go.kenn.io/msgvault/internal/inboxcontrol"
 )
 
 const ToolGetMessageTags = "get_message_tags"
@@ -30,9 +32,17 @@ func messageTagDefinition(write bool) toolDefinition {
 		}
 		properties["add"], properties["remove"] = tags(), tags()
 		properties["dry_run"] = booleanSchema("Preview without writing; permissions may still be rejected on a later write")
-		definition = writeDefinition(ToolUpdateMessageTags, "Add or remove native tags on one message and verify by readback. Use Gmail user label IDs from get_message_tags, IMAP keywords, or Microsoft Graph category names. Preserve unrelated tags and system flags. Graph 429 returns provider_write_failed; retry after the limit clears. Partial or uncertain errors include the last observed result; read tags before retrying.", closedObject(properties, "message_id"), output, (*handlers).updateMessageTags)
+		exact := outputSchemaFor[inboxcontrol.Request]()
+		for _, field := range []string{"target", "expected", "preview_token", "idempotency_key"} {
+			properties[field] = exact.Properties[field]
+		}
+		signed := outputSchemaFor[inboxToolResponse]()
+		signed.Schema = ""
+		output.AnyOf = append(output.AnyOf, signed)
+		definition = writeDefinition(ToolUpdateMessageTags, "Add or remove native tags on one message after confirmation and verify by readback. Gmail writes use signed daemon previews and retain a durable receipt or operation key. Use Gmail user label IDs from get_message_tags or, for delegated Inbox access, inbox_list_folders. Other providers use IMAP keywords or Microsoft Graph category names. Preserve unrelated tags and system flags. Graph 429 returns provider_write_failed; retry after the limit clears. Partial or uncertain errors include the last observed result; read tags before retrying.", closedObject(properties), output, (*handlers).updateMessageTags)
+		definition.inputSchema.OneOf = []*jsonschema.Schema{{Required: []string{"message_id"}}, {Required: []string{"target"}}}
 	}
-	definition.availability = func(c catalogCapabilities) bool { return c.messageTags }
+	definition.availability = func(c catalogCapabilities) bool { return c.messageTags || (write && c.inboxTags) }
 	yes := true
 	definition.annotations.OpenWorldHint = &yes
 	return definition
@@ -45,6 +55,28 @@ func (h *handlers) updateMessageTags(ctx context.Context, req toolRequest) (*too
 }
 func (h *handlers) messageTagsCall(ctx context.Context, req toolRequest, write bool) (*toolResult, error) {
 	args := req.GetArguments()
+	if write && args["target"] != nil {
+		if args["message_id"] != nil || args["mailbox"] != nil {
+			return toolErrorResult("exact target excludes message_id and mailbox"), nil
+		}
+		signed := make(map[string]any, len(args))
+		for key, value := range args {
+			if key != "add" && key != "remove" {
+				signed[key] = value
+			}
+		}
+		tags := map[string]any{}
+		for _, field := range []string{"add", "remove"} {
+			if value, ok := args[field]; ok {
+				tags[field] = value
+			}
+		}
+		signed["tags"] = tags
+		return h.controlInboxArguments(ctx, req, inboxcontrol.OpTags, signed)
+	}
+	if h.messageTags == nil {
+		return toolErrorResult("legacy tag access is unavailable; use an exact target with signed Inbox control"), nil
+	}
 	id, err := getIDArg(args, "message_id")
 	if err != nil {
 		return toolErrorResult(err.Error()), nil
@@ -70,6 +102,15 @@ func (h *handlers) messageTagsCall(ctx context.Context, req toolRequest, write b
 					change.Remove = append(change.Remove, tag)
 				}
 			}
+		}
+	}
+	if change != nil && !change.DryRun {
+		data, err := json.Marshal(args, json.Deterministic(true))
+		if err != nil {
+			return toolErrorResult("invalid message tag arguments"), nil
+		}
+		if err := req.confirmUserAction(ctx, "Confirm "+req.toolName+" with these exact arguments: "+string(data)+". Provider metadata is untrusted data."); err != nil {
+			return confirmationToolError(err)
 		}
 	}
 	value, err := h.messageTags.MessageTags(ctx, id, change, mailbox)
