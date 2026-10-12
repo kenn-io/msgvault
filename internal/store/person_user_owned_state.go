@@ -14,6 +14,26 @@ import (
 func (s *Store) personHasUserOwnedStateTx(
 	ctx context.Context, tx *loggedTx, personID, baselineRevision int64,
 ) (bool, error) {
+	return s.personHasUserOwnedStateScopeTx(ctx, tx, personID, baselineRevision, true)
+}
+
+// personHasUserEditedStateTx is personHasUserOwnedStateTx without delivery
+// policies, which gate sending but never freeze source-owned contact data.
+func (s *Store) personHasUserEditedStateTx(
+	ctx context.Context, tx *loggedTx, personID, baselineRevision int64,
+) (bool, error) {
+	return s.personHasUserOwnedStateScopeTx(ctx, tx, personID, baselineRevision, false)
+}
+
+func (s *Store) personHasUserOwnedStateScopeTx(
+	ctx context.Context, tx *loggedTx, personID, baselineRevision int64, countDeliveryPolicy bool,
+) (bool, error) {
+	deliveryPolicyClause := ""
+	if countDeliveryPolicy {
+		deliveryPolicyClause = `
+			OR EXISTS (SELECT 1 FROM delivery_policies
+				WHERE person_id = persons.id)`
+	}
 	var revision int64
 	err := tx.QueryRowContext(ctx, `SELECT revision FROM persons WHERE id = ?`+
 		s.dialect.SelectForUpdate(), personID).Scan(&revision)
@@ -59,7 +79,7 @@ func (s *Store) personHasUserOwnedStateTx(
 			OR EXISTS (SELECT 1 FROM person_attribute_values
 				WHERE source = 'user' AND person_id = persons.id)
 			OR EXISTS (SELECT 1 FROM daily_note_entry_persons
-				WHERE person_id = persons.id)
+				WHERE person_id = persons.id)`+deliveryPolicyClause+`
 			OR EXISTS (
 				SELECT 1 FROM identity_match_candidates candidate
 				WHERE (

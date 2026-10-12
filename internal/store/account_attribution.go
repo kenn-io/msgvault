@@ -370,8 +370,20 @@ func imapIdentifierUser(identifier string) string {
 }
 
 func isExactMailbox(address string) bool {
-	parsed, err := mail.ParseAddress(address)
-	return err == nil && parsed.Address == address && strings.Contains(address, "@")
+	parsed, ok := parseMailboxAddress(address)
+	return ok && parsed == address
+}
+
+// parseMailboxAddress is the one net/mail parse of a single mailbox. Values are
+// lower-cased on save, but net/mail accepts the IPv6 literal tag only in its
+// exact case, so that tag is restored before parsing.
+func parseMailboxAddress(s string) (string, bool) {
+	s = strings.ReplaceAll(s, "[ipv6:", "[IPv6:")
+	parsed, err := mail.ParseAddress(s)
+	if err != nil || !strings.Contains(parsed.Address, "@") {
+		return "", false
+	}
+	return parsed.Address, true
 }
 
 // deliveryInput tells the owner where delivery evidence comes from. The zero

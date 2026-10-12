@@ -8,6 +8,8 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- Owners can approve sending to a person or to one email address saved on the person, and every send is checked against it before a provider is called. MCP policy writes need `--allow-delivery-policy-writes` on `mcp`, and nothing sends yet. See [contact delivery policies](api-server.md#contact-delivery-policies).
+
 - Remote edits update source-owned values on published CardDAV imports while preserving unrelated local values. Edits that would overwrite another owner create a conflict.
 - [Everything search](web-ui.md#recording-matches) shows recording transcript matches for plain-word Full text queries and supports one Person filter. API schema 3.11.0 adds `participant_id` to media search, `GET /media/search/status`, source filename, title and date to media search results and optional `conversation_title` to message detail.
 

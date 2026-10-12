@@ -132,6 +132,7 @@ func listLimitArg(args map[string]any) int {
 
 type handlers struct {
 	delegatedOnly       bool
+	deliveryPolicies    DeliveryPolicyBackend
 	downloads           *downloadCache
 	engine              query.Engine
 	archiveSQLQuerier   ArchiveSQLQuerier

@@ -120,8 +120,10 @@ type ServeOptions struct {
 	PersonAgendaBackend PersonAgendaBackend
 	Kata                KataBackend
 	// KataLookup enables issue lookup and context reads.
-	KataLookup  bool
-	KataDocbank bool
+	KataLookup                bool
+	KataDocbank               bool
+	DeliveryPolicies          DeliveryPolicyBackend
+	AllowDeliveryPolicyWrites bool
 	// AllowProfileWrites exposes person promotion and Notes mutation tools.
 	// It remains false unless the operator explicitly opts in.
 	AllowProfileWrites bool
@@ -382,6 +384,7 @@ func newMCPServerWithPolicy(
 		identityReview:      opts.IdentityReview,
 		personCardDAV:       opts.PersonCardDAV,
 		identityScoring:     opts.IdentityScoring,
+		deliveryPolicies:    opts.DeliveryPolicies,
 		drafts:              opts.Drafts,
 	}
 
@@ -403,6 +406,9 @@ func newMCPServerWithPolicy(
 		}
 		if definition.security == toolSecurityPersonMerge &&
 			(!allowWrites || !opts.AllowPersonMerges) {
+			continue
+		}
+		if definition.security == toolSecurityDeliveryPolicyWrite && (!allowWrites || !opts.AllowDeliveryPolicyWrites) {
 			continue
 		}
 		if definition.security == toolSecurityCardDAVWrite &&
@@ -524,6 +530,7 @@ func newMCPHTTPServerWithPolicy(
 				requestOpts.AllowIdentityDecisions = false
 				requestOpts.AllowIdentityScoring = false
 				requestOpts.AllowPersonMerges = false
+				requestOpts.AllowDeliveryPolicyWrites = false
 				requestOpts.AllowCardDAVWrites = false
 				requestOpts.AllowCalendarWrites = false
 			}

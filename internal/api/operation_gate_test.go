@@ -821,6 +821,7 @@ func TestOperationGateMiddlewareSkipsReadOnlyAnalyticalPosts(t *testing.T) {
 		"/api/v1/relationships/7/calendar",
 		"/api/v1/relationships/7/timeline",
 		"/api/v1/search/coverage",
+		"/api/v1/people/delivery-policy/read",
 	}
 	for _, path := range paths {
 		t.Run(path, func(t *testing.T) {
@@ -875,9 +876,9 @@ func TestOperationGateMiddlewareSkipsCardDAVAccountTestWhileGateHeld(t *testing.
 // operation tagged "Exploration" (registerExploreRoute and the search
 // coverage route) must be classified read-only, and the table must not
 // carry stale entries for routes that no longer exist. The remote-image proxy,
-// CardDAV account test, participant completion, and Saved View run endpoints
-// are the pinned non-Exploration entries. They must remain registered POST routes for
-// their table entries to stay valid.
+// CardDAV account test, participant completion, delivery-policy read, and Saved
+// View run endpoints are the pinned non-Exploration entries. They must remain
+// registered POST routes for their table entries to stay valid.
 func TestReadOnlyPostRoutePatternsMatchExplorationRoutes(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)
@@ -894,8 +895,11 @@ func TestReadOnlyPostRoutePatternsMatchExplorationRoutes(t *testing.T) {
 	completion := doc.Paths[completionPath]
 	require.NotNil(completion, "participant completion route must exist")
 	require.NotNil(completion.Post, "participant completion must be registered as POST")
+	deliveryRead := doc.Paths["/api/v1/people/delivery-policy/read"]
+	require.NotNil(deliveryRead, "delivery-policy read route must exist")
+	require.NotNil(deliveryRead.Post, "delivery-policy read must be registered as POST")
 
-	expected := []string{remoteImagePath, cardDAVAccountTestPath, completionPath, kataEvidencePreparePath, "/api/v1/saved-views/{id}/run"}
+	expected := []string{remoteImagePath, cardDAVAccountTestPath, completionPath, kataEvidencePreparePath, "/api/v1/people/delivery-policy/read", "/api/v1/saved-views/{id}/run"}
 	for path, item := range doc.Paths {
 		if item.Post != nil && slices.Contains(item.Post.Tags, "Exploration") {
 			expected = append(expected, path)
