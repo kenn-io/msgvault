@@ -383,6 +383,13 @@ func TestKataDocbankThroughDaemonAdapter(t *testing.T) {
 	assert.Equal("unavailable", unavailable.Passages[0].State)
 	revoked.Store(false)
 
+	_, err = st.DB().Exec(st.Rebind(`UPDATE message_raw SET raw_data = ?, compression = 'zlib' WHERE message_id = ?`), []byte("invalid zlib"), messageID)
+	require.NoError(err)
+	require.NoError(json.Unmarshal(runKataCommand(ctx, t, "", "context", created.Issue.QualifiedRef, "--json"), &unavailable))
+	require.Len(unavailable.Passages, 1)
+	assert.Equal("unavailable", unavailable.Passages[0].State)
+	assert.Equal("Send the revised budget by Friday.", *unavailable.Passages[0].SavedQuote)
+
 	require.NoError(st.UpsertMessageRawWithFormat(messageID, []byte(`{"id":"voice1","attachments":[]}`), "beeper_json"))
 	var changed generated.KataIssueContextResponse
 	require.NoError(json.Unmarshal(runKataCommand(ctx, t, "", "context", created.Issue.QualifiedRef, "--json"), &changed))

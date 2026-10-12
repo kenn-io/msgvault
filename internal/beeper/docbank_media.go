@@ -456,7 +456,7 @@ func MediaRevision(ctx context.Context, st *store.Store, attachmentID int64) (st
 
 // MediaRevisionUnavailable identifies source metadata that can no longer be read.
 func MediaRevisionUnavailable(err error) bool {
-	return errors.Is(err, sql.ErrNoRows) || errors.Is(err, errBeeperMediaRawInvalid) || errors.Is(err, errBeeperMediaNoLiveOccurrence)
+	return beeperMediaRawGap(err) || errors.Is(err, errBeeperMediaRawInvalid) || errors.Is(err, errBeeperMediaNoLiveOccurrence)
 }
 
 // MediaRevisionChanged identifies changes detected while describing the current source.

@@ -2180,7 +2180,7 @@ func TestMediaRevisionErrorClassification(t *testing.T) {
 		assert.True(MediaRevisionChanged(fmt.Errorf("describe: %w", err)))
 		assert.False(MediaRevisionUnavailable(err))
 	}
-	for _, err := range []error{sql.ErrNoRows, errBeeperMediaRawInvalid, errBeeperMediaNoLiveOccurrence} {
+	for _, err := range []error{sql.ErrNoRows, store.ErrInvalidMessageRaw, errBeeperMediaRawInvalid, errBeeperMediaNoLiveOccurrence} {
 		assert.True(MediaRevisionUnavailable(fmt.Errorf("read: %w", err)))
 		assert.False(MediaRevisionChanged(err))
 	}
