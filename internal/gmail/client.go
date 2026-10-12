@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/httpretry"
-	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/store"
 
 	"golang.org/x/oauth2"
@@ -28,11 +27,14 @@ import (
 )
 
 const (
-	baseURL         = "https://gmail.googleapis.com/gmail/v1"
-	maxRetries      = 12  // Upper bound; the request deadline also limits retries
-	maxQuotaRetries = 5   // Quota waits use the caller's context, outside the request budget
-	maxBackoff      = 600 // Max backoff in seconds
-	defaultTimeout  = 30 * time.Second
+	baseURL            = "https://gmail.googleapis.com/gmail/v1"
+	gmailScopeReadonly = "https://www.googleapis.com/auth/gmail.readonly"
+	gmailScopeModify   = "https://www.googleapis.com/auth/gmail.modify"
+	gmailScopeFull     = "https://mail.google.com/"
+	maxRetries         = 12  // Upper bound; the request deadline also limits retries
+	maxQuotaRetries    = 5   // Quota waits use the caller's context, outside the request budget
+	maxBackoff         = 600 // Max backoff in seconds
+	defaultTimeout     = 30 * time.Second
 	// Raw MIME includes attachments and needs more time on slow connections.
 	rawRequestTimeout = 5 * time.Minute
 )
@@ -113,7 +115,13 @@ func (c *Client) NativeMessageReadPermission() (read, known bool) {
 	if len(scopes) == 0 {
 		return false, false
 	}
-	return oauth.GrantCoversAnyScope(scopes, []string{oauth.ScopeGmailReadonly, oauth.ScopeGmailModify, oauth.ScopeGmailFull}), true
+	for _, scope := range scopes {
+		switch strings.TrimSpace(scope) {
+		case gmailScopeReadonly, gmailScopeModify, gmailScopeFull:
+			return true, true
+		}
+	}
+	return false, true
 }
 
 // NewClient creates a new Gmail API client.

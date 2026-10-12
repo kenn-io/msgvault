@@ -91,6 +91,7 @@ func runMatrixSync(ctx context.Context, s *store.Store, cfg *config.Config, acco
 			permission, pinErr := pinNativeMessagePermission(ctx, current.Identifier, current, s)
 			if pinErr != nil {
 				return pinErr
+			}
 			creds, loadErr := matrixsource.LoadCredentials(cfg.TokensDir(), current.Identifier)
 			if loadErr != nil {
 				return pauseNativeMessagePermission(ctx, s, permission, loadErr)
