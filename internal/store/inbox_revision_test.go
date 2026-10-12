@@ -3,7 +3,6 @@ package store_test
 import (
 	"strconv"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -139,7 +138,6 @@ func TestInboxRevisionBelongsToObservationConsumer(t *testing.T) {
 	requirements.NoError(err)
 	assertions.False(changed)
 	assertions.Equal(int64(1), readRevision())
-	state.ObservedAt = state.ObservedAt.Add(time.Second)
 	state.Inbox = new(false)
 	changed, err = f.Store.ObserveInboxState(t.Context(), state)
 	requirements.NoError(err)
