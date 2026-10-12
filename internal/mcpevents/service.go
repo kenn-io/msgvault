@@ -249,7 +249,6 @@ func (s *Service) Subscribe(ctx context.Context, principal string, req Subscribe
 			return result, err
 		}
 	}
-	now := s.now().UTC()
 	ttl := 24 * time.Hour
 	if req.TTLMS != nil {
 		ttl = time.Duration(*req.TTLMS) * time.Millisecond
@@ -276,7 +275,7 @@ func (s *Service) Subscribe(ctx context.Context, principal string, req Subscribe
 	err = s.operation(ctx, func() error {
 		// The gate can be held longer than a short TTL, so the subscription's
 		// times start once activation can run.
-		now := time.Now().UTC()
+		now := s.now().UTC()
 		activation.Now = now
 		activation.Subscription.ExpiresAt = now.Add(ttl)
 		activation.Subscription.VerifiedAt = now

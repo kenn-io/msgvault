@@ -1,9 +1,10 @@
-package gmail
+package gmail_test
 
 import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"go.kenn.io/msgvault/internal/gmail"
 	"go.kenn.io/msgvault/internal/oauth"
 	"golang.org/x/oauth2"
 )
@@ -24,7 +25,7 @@ func TestGmailNativeMessagePermissionUsesSavedGrant(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			granted := append([]string(nil), tc.scopes...)
-			client := NewClient(oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "synthetic-token"}), WithGrantedScopes(granted))
+			client := gmail.NewClient(oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "synthetic-token"}), gmail.WithGrantedScopes(granted))
 			if len(granted) > 0 {
 				granted[0] = "https://example.net/unrelated"
 			}
