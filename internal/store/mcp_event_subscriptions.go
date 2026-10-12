@@ -116,6 +116,9 @@ func (s *Store) BindMCPSubscriptionScope(ctx context.Context, sub *MCPSubscripti
 			sub.ScopeReferenceID = 0
 			return nil
 		case "archive":
+			if !mcpImportArchiveScope(sub.Name, sub.ScopeKind, sub.ScopeID, sourceID) {
+				return mcpStoreError("invalid_resource_reference")
+			}
 			sub.SourceID = 0
 			sub.ScopeReferenceID = 0
 			_, err := s.ensureMCPScopeLifetime(ctx, tx, sub.ScopeKind, sub.ScopeID, sub.SourceID)
