@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -19,7 +20,7 @@ func TestInboxPreviewKeyPersistsAcrossStartup(t *testing.T) {
 	_, err := inboxcontrol.LoadPreviewKey(path)
 	require.Error(t, err)
 	requirements.ErrorIs(err, os.ErrNotExist)
-	requirements.ErrorContains(err, path)
+	requirements.ErrorContains(err, strconv.Quote(path))
 	_, err = os.Stat(path)
 	require.ErrorIs(t, err, os.ErrNotExist, "preview must not create a missing key")
 	first, err := inboxcontrol.EnsurePreviewKey(path)
@@ -64,7 +65,7 @@ func TestInboxPreviewKeyRefusesInvalidExistingFiles(t *testing.T) {
 			_, err := inboxcontrol.EnsurePreviewKey(path)
 			require.Error(t, err, "startup must not replace existing evidence")
 			requirements.ErrorIs(err, inboxcontrol.ErrInternal)
-			requirements.ErrorContains(err, path)
+			requirements.ErrorContains(err, strconv.Quote(path))
 			reason := "exactly 32 bytes"
 			switch shape {
 			case "directory", "symlink":
@@ -75,7 +76,7 @@ func TestInboxPreviewKeyRefusesInvalidExistingFiles(t *testing.T) {
 			requirements.ErrorContains(err, reason)
 			_, err = inboxcontrol.LoadPreviewKey(path)
 			requirements.Error(err)
-			requirements.ErrorContains(err, path)
+			requirements.ErrorContains(err, strconv.Quote(path))
 			requirements.ErrorContains(err, reason)
 		})
 	}
