@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json/v2"
 	"errors"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/calevent"
 	"go.kenn.io/msgvault/internal/sqliteutil"
 	"go.kenn.io/msgvault/internal/vcard"
 )
@@ -37,6 +39,8 @@ type CopyResult struct {
 // structured profiles they project into.
 var ErrSubsetVCardResourcesRequireProfiles = errors.New(
 	"vCard resources require profiles: set IncludeProfiles with IncludeVCardResources")
+
+var errSubsetCalDAVResourceTooLarge = errors.New("CalDAV resource exceeds 2 MiB")
 
 // CopySubsetOptions controls optional sensitive metadata included in a subset.
 type CopySubsetOptions struct {
@@ -828,8 +832,12 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 
 	if _, err := tx.Exec(`
 		INSERT INTO message_raw SELECT * FROM src.message_raw
-		WHERE message_id IN (SELECT id FROM selected_messages)`); err != nil {
+		WHERE message_id IN (SELECT id FROM selected_messages)
+		  AND COALESCE(raw_format, '') <> ?`, calevent.CalDAVRawFormat); err != nil {
 		return nil, fmt.Errorf("copy message_raw: %w", err)
+	}
+	if err := scopeSubsetCalDAVRaw(tx); err != nil {
+		return nil, err
 	}
 
 	if _, err := copyByName(tx, "message_recipients",
@@ -2450,6 +2458,127 @@ func vcardMappingOwnerCopied(tx *sql.Tx, mapping vcard.NativeMapping) (bool, err
 		return false, fmt.Errorf("check copied review %d accepted edge: %w", mapping.RowID, err)
 	}
 	return !edgeCleared, nil
+}
+
+type subsetCalDAVRaw struct {
+	id, sourceID int64
+	metadata     calevent.CalDAVMetadata
+	syncConfig   string
+}
+
+type subsetCalDAVScopeKey struct {
+	sourceID int64
+	href     string
+	etag     string
+	timeZone string
+	rawHash  [sha256.Size]byte
+}
+
+// scopeSubsetCalDAVRaw keeps only the event selected by each copied message's
+// metadata. CalDAV sync stores complete resources as source evidence, but a
+// subset crosses an archive boundary and must not carry unselected events. It
+// reads complete resources from the attached source and inserts only scoped
+// bytes into the destination, avoiding recoverable copies in SQLite free pages.
+func scopeSubsetCalDAVRaw(tx *sql.Tx) error {
+	rows, err := tx.Query(`
+		SELECT m.id, m.source_id, COALESCE(m.metadata, ''), COALESCE(s.sync_config, '')
+		FROM messages m
+		JOIN src.message_raw r ON r.message_id = m.id
+		JOIN sources s ON s.id = m.source_id
+		WHERE r.raw_format = ?`, calevent.CalDAVRawFormat)
+	if err != nil {
+		return fmt.Errorf("select source CalDAV resources for copied messages: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	selected := make([]subsetCalDAVRaw, 0)
+	for rows.Next() {
+		var item subsetCalDAVRaw
+		var metadata string
+		if err := rows.Scan(&item.id, &item.sourceID, &metadata, &item.syncConfig); err != nil {
+			return fmt.Errorf("scan copied CalDAV resource: %w", err)
+		}
+		if metadata != "" {
+			if err := json.Unmarshal([]byte(metadata), &item.metadata); err != nil {
+				return fmt.Errorf("decode copied CalDAV metadata for message %d: %w", item.id, err)
+			}
+		}
+		selected = append(selected, item)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate copied CalDAV resources: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close copied CalDAV resources: %w", err)
+	}
+	sort.Slice(selected, func(i, j int) bool {
+		a, b := selected[i], selected[j]
+		if a.sourceID != b.sourceID {
+			return a.sourceID < b.sourceID
+		}
+		if a.metadata.Href != b.metadata.Href {
+			return a.metadata.Href < b.metadata.Href
+		}
+		if a.metadata.ETag != b.metadata.ETag {
+			return a.metadata.ETag < b.metadata.ETag
+		}
+		return a.id < b.id
+	})
+
+	var cachedKey subsetCalDAVScopeKey
+	var cachedScoper *calevent.CalDAVResourceScoper
+	for _, item := range selected {
+		var compressed []byte
+		var compression sql.NullString
+		if err := tx.QueryRow(`SELECT raw_data, compression FROM src.message_raw WHERE message_id = ? AND raw_format = ?`,
+			item.id, calevent.CalDAVRawFormat).Scan(&compressed, &compression); err != nil {
+			return fmt.Errorf("read source CalDAV raw for message %d: %w", item.id, err)
+		}
+		key := subsetCalDAVScopeKey{
+			sourceID: item.sourceID,
+			href:     item.metadata.Href,
+			etag:     item.metadata.ETag,
+			rawHash:  sha256.Sum256(compressed),
+		}
+		var sourceConfig struct {
+			CalendarID string `json:"calendar_id"`
+			TimeZone   string `json:"time_zone"`
+		}
+		// Match calendar projection behavior for legacy rows with invalid config:
+		// use the decoder's default namespace and time zone. An ambiguous event
+		// selector still fails closed below.
+		if err := json.Unmarshal([]byte(item.syncConfig), &sourceConfig); err != nil {
+			sourceConfig = struct {
+				CalendarID string `json:"calendar_id"`
+				TimeZone   string `json:"time_zone"`
+			}{}
+		}
+		key.timeZone = sourceConfig.TimeZone
+		if cachedScoper == nil || cachedKey != key {
+			raw, _, err := decodeMessageRawBounded(compressed, compression, 2<<20, errSubsetCalDAVResourceTooLarge)
+			if err != nil {
+				return fmt.Errorf("decode copied CalDAV raw for message %d: %w", item.id, err)
+			}
+			cachedScoper, err = calevent.NewCalDAVResourceScoper(raw, calevent.SourceContext{
+				CalendarID:       sourceConfig.CalendarID,
+				CalendarTimeZone: sourceConfig.TimeZone,
+			})
+			if err != nil {
+				return fmt.Errorf("parse copied CalDAV resource for message %d: %w", item.id, err)
+			}
+			cachedKey = key
+		}
+		scoped, err := cachedScoper.ForEvent(item.metadata.EventID)
+		if err != nil {
+			return fmt.Errorf("scope copied CalDAV resource for message %d: %w", item.id, err)
+		}
+		if err := upsertMessageRawWithFormat(tx, item.id, scoped, calevent.CalDAVRawFormat); err != nil {
+			return fmt.Errorf("write scoped CalDAV resource for message %d: %w", item.id, err)
+		}
+		if _, err := tx.Exec(`UPDATE messages SET size_estimate = ? WHERE id = ?`, len(scoped), item.id); err != nil {
+			return fmt.Errorf("update scoped CalDAV size for message %d: %w", item.id, err)
+		}
+	}
+	return nil
 }
 
 // copyMessages copies the selected messages, naming the columns the source and

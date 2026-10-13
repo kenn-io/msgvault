@@ -56,6 +56,15 @@ func JoinKey(rawURL string) string {
 	return ""
 }
 
+func validConferenceJoinURL(rawURL string) bool {
+	u, err := url.Parse(rawURL)
+	if err != nil || u.User != nil || u.Hostname() == "" {
+		return false
+	}
+	scheme := strings.ToLower(u.Scheme)
+	return scheme == "http" || scheme == "https"
+}
+
 // SourceContext provides the calendar identity and current source time zone.
 type SourceContext struct{ CalendarID, CalendarTimeZone string }
 
@@ -75,6 +84,7 @@ type Event struct {
 	StartDate, EndDate                                           string
 	EventTimeZone, CalendarTimeZone                              string
 	Recurrence                                                   []string
+	RecurrenceDurationDays                                       int
 
 	JoinURL              string
 	JoinKey              string

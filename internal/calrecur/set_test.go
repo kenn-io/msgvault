@@ -56,6 +56,22 @@ func TestIterRDateAddsAndDedupes(t *testing.T) {
 		keys(t, parsed(t, "RRULE:FREQ=DAILY;COUNT=2", "RDATE:20270305T170000Z,20270302T170000Z,20270301T170000Z")))
 }
 
+func TestParseSetRejectsNonexistentLocalRDateAndExDate(t *testing.T) {
+	zone, err := time.LoadLocation("America/New_York")
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		name, line string
+	}{
+		{"RDATE", "RDATE;TZID=America/New_York:20270314T023000"},
+		{"EXDATE", "EXDATE;TZID=America/New_York:20270314T023000"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := ParseSet(instant(t, "2027-03-13T06:30:00Z"), false, "", zone, []string{tc.line})
+			require.ErrorIs(t, err, ErrUnsupportedRecurrence)
+		})
+	}
+}
+
 func TestIterBudgetCountsUnderlyingCandidates(t *testing.T) {
 	s, err := ParseSet(instant(t, "1997-03-02T17:00:00Z"), false, "", time.UTC, []string{"RRULE:FREQ=DAILY"})
 	require.NoError(t, err)
@@ -72,6 +88,68 @@ func TestIterHonorsContextCancel(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 	assert.Equal(t, 1, count)
 	require.ErrorIs(t, Iter(ctx, s, instant(t, "2028-01-01T00:00:00Z"), 100, func(i Instance) bool { return true }), context.Canceled)
+}
+
+func TestTimedDailyRecurrenceAcrossSkippedMidnightKeepsCountAndEnd(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	zone, err := time.LoadLocation("America/Sao_Paulo")
+	requirements.NoError(err)
+	start := time.Date(2018, time.November, 3, 9, 0, 0, 0, zone)
+	s, err := ParseSet(start, false, "", zone, []string{"RRULE:FREQ=DAILY;COUNT=2"})
+	requirements.NoError(err)
+
+	assertions.Equal([]string{"20181103T120000Z", "20181104T110000Z"}, keys(t, s))
+
+	end, bounded := ConservativeEnd(t.Context(), s, time.Hour, 0, 100)
+	requirements.True(bounded)
+	assertions.Equal(time.Date(2018, time.November, 4, 10, 0, 0, 0, zone), end)
+}
+
+func TestTimedRecurrencePreservesDTStartInstantInRepeatedHour(t *testing.T) {
+	zone, err := time.LoadLocation("America/New_York")
+	require.NoError(t, err)
+	start := instant(t, "2027-11-07T06:30:00Z")
+	s, err := ParseSet(start, false, "", zone, []string{"RRULE:FREQ=DAILY;COUNT=2"})
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"20271107T063000Z", "20271108T063000Z"}, keys(t, s))
+}
+
+func TestTimedRecurrenceUntilUsesAbsoluteInstantDuringRepeatedHour(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	zone, err := time.LoadLocation("America/New_York")
+	requirements.NoError(err)
+	start := time.Date(2027, time.November, 1, 1, 30, 0, 0, zone)
+	s, err := ParseSet(start, false, "", zone, []string{
+		"RRULE:FREQ=MONTHLY;BYDAY=1SU;UNTIL=20271107T061500Z",
+	})
+	requirements.NoError(err)
+
+	assertions.Equal([]string{"20271101T053000Z", "20271107T053000Z"}, keys(t, s))
+
+	end, bounded := ConservativeEnd(t.Context(), s, time.Hour, 0, 100)
+	requirements.True(bounded)
+	assertions.Equal(instant(t, "2027-11-07T06:30:00Z"), end.UTC())
+}
+
+func TestTimedRecurrenceQueryHorizonUsesAbsoluteInstantDuringRepeatedHour(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	zone, err := time.LoadLocation("America/New_York")
+	requirements.NoError(err)
+	start := time.Date(2027, time.October, 31, 1, 30, 0, 0, zone)
+	s, err := ParseSet(start, false, "", zone, []string{"RRULE:FREQ=DAILY"})
+	requirements.NoError(err)
+
+	var got []string
+	err = Iter(t.Context(), s, instant(t, "2027-11-07T06:00:00Z"), 100, func(i Instance) bool {
+		got = append(got, i.Identity.Key())
+		return true
+	})
+	requirements.NoError(err)
+	assertions.Equal([]string{
+		"20271031T053000Z", "20271101T053000Z", "20271102T053000Z", "20271103T053000Z",
+		"20271104T053000Z", "20271105T053000Z", "20271106T053000Z", "20271107T053000Z",
+	}, got)
 }
 
 func TestAllDayIdentityCivilDate(t *testing.T) {
@@ -230,6 +308,122 @@ func TestParseSetUnsupportedLine(t *testing.T) {
 	}
 }
 
+func TestParseSetRejectsMonthBasedWeekdayOrdinalsOutsideFive(t *testing.T) {
+	for _, rule := range []string{
+		"FREQ=MONTHLY;BYDAY=-53MO",
+		"FREQ=MONTHLY;BYDAY=6MO",
+		"FREQ=YEARLY;BYMONTH=2;BYDAY=-53MO",
+		"FREQ=YEARLY;BYMONTH=2;BYDAY=6MO",
+	} {
+		t.Run(rule, func(t *testing.T) {
+			_, err := ParseSet(instant(t, "2027-03-02T17:00:00Z"), false, "", time.UTC, []string{"RRULE:" + rule})
+			require.ErrorIs(t, err, ErrUnsupportedRecurrence)
+		})
+	}
+}
+
+func TestParseSetRejectsUnattainableMonthlySetPositions(t *testing.T) {
+	for _, rule := range []string{
+		"FREQ=MONTHLY;BYDAY=MO;BYSETPOS=366",
+		"FREQ=MONTHLY;BYDAY=1MO;BYSETPOS=2",
+		"FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=24",
+	} {
+		t.Run(rule, func(t *testing.T) {
+			_, err := ParseSet(instant(t, "2027-03-02T17:00:00Z"), false, "", time.UTC, []string{"RRULE:" + rule})
+			require.ErrorIs(t, err, ErrUnsupportedRecurrence)
+		})
+	}
+}
+
+func TestParseSetRejectsMonthlyWeekdaySkippedByInterval(t *testing.T) {
+	start := instant(t, "2027-04-01T17:00:00Z")
+	for _, line := range []string{
+		"RRULE:FREQ=MONTHLY;BYDAY=5MO;BYSETPOS=1;INTERVAL=4800",
+		"RRULE:FREQ=MONTHLY;BYDAY=5MO;INTERVAL=4800",
+	} {
+		t.Run(line, func(t *testing.T) {
+			_, err := ParseSet(start, false, "", time.UTC, []string{line})
+			require.ErrorIs(t, err, ErrUnsupportedRecurrence)
+		})
+	}
+}
+
+func TestIterRejectsUnattainableMonthlySetPosition(t *testing.T) {
+	set := Set{
+		DTStart: instant(t, "2027-03-02T17:00:00Z"),
+		RRules:  []string{"RRULE:FREQ=MONTHLY;BYDAY=MO;BYSETPOS=366"},
+	}
+	until := time.Date(9999, 12, 31, 23, 59, 59, 0, time.UTC)
+	err := Iter(t.Context(), set, until, 10, func(Instance) bool { return true })
+	require.ErrorIs(t, err, ErrUnsupportedRecurrence)
+}
+
+func TestIterRejectsMonthlyWeekdaySkippedByInterval(t *testing.T) {
+	for _, line := range []string{
+		"RRULE:FREQ=MONTHLY;BYDAY=5MO;BYSETPOS=1;INTERVAL=4800",
+		"RRULE:FREQ=MONTHLY;BYDAY=5MO;INTERVAL=4800",
+	} {
+		t.Run(line, func(t *testing.T) {
+			set := Set{DTStart: instant(t, "2027-04-01T17:00:00Z"), RRules: []string{line}}
+			until := time.Date(9999, 12, 31, 23, 59, 59, 0, time.UTC)
+			err := Iter(t.Context(), set, until, 10, func(Instance) bool { return true })
+			require.ErrorIs(t, err, ErrUnsupportedRecurrence)
+		})
+	}
+}
+
+func TestParseSetRejectsMonthlyMonthDaySkippedByInterval(t *testing.T) {
+	start := instant(t, "2027-02-01T17:00:00Z")
+	for _, line := range []string{
+		"RRULE:FREQ=MONTHLY;BYMONTHDAY=31;INTERVAL=12",
+		"RRULE:FREQ=MONTHLY;BYMONTHDAY=-30;INTERVAL=12",
+		"RRULE:FREQ=MONTHLY;BYMONTHDAY=-31;INTERVAL=12",
+	} {
+		t.Run(line, func(t *testing.T) {
+			_, err := ParseSet(start, false, "", time.UTC, []string{line})
+			require.ErrorIs(t, err, ErrUnsupportedRecurrence)
+		})
+	}
+}
+
+func TestIterRejectsMonthlyMonthDaySkippedByInterval(t *testing.T) {
+	for _, line := range []string{
+		"RRULE:FREQ=MONTHLY;BYMONTHDAY=31;INTERVAL=12",
+		"RRULE:FREQ=MONTHLY;BYMONTHDAY=-30;INTERVAL=12",
+		"RRULE:FREQ=MONTHLY;BYMONTHDAY=-31;INTERVAL=12",
+	} {
+		t.Run(line, func(t *testing.T) {
+			set := Set{DTStart: instant(t, "2027-02-01T17:00:00Z"), RRules: []string{line}}
+			until := time.Date(9999, 12, 31, 23, 59, 59, 0, time.UTC)
+			err := Iter(t.Context(), set, until, 10, func(Instance) bool { return true })
+			require.ErrorIs(t, err, ErrUnsupportedRecurrence)
+		})
+	}
+}
+
+func TestIterAllowsMonthlySelectorAfterDTStartInIntervalCycle(t *testing.T) {
+	for _, tc := range []struct {
+		line string
+		want string
+	}{
+		{line: "RRULE:FREQ=MONTHLY;BYDAY=1MO;BYSETPOS=1;INTERVAL=4800;COUNT=1", want: "2427-04-05"},
+		{line: "RRULE:FREQ=MONTHLY;BYMONTHDAY=1;INTERVAL=4800;COUNT=1", want: "2427-04-01"},
+	} {
+		t.Run(tc.line, func(t *testing.T) {
+			set, err := ParseSet(instant(t, "2027-04-06T17:00:00Z"), false, "", time.UTC, []string{tc.line})
+			require.NoError(t, err)
+			until := time.Date(9999, 12, 31, 23, 59, 59, 0, time.UTC)
+			var dates []string
+			err = Iter(t.Context(), set, until, 2, func(instance Instance) bool {
+				dates = append(dates, instance.Start.Format(dateLayout))
+				return true
+			})
+			require.NoError(t, err)
+			assert.Equal(t, []string{"2027-04-06", tc.want}, dates)
+		})
+	}
+}
+
 func TestInstanceIDRoundTrip(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
@@ -310,6 +504,21 @@ func TestParseSetRejectsInvalidRuleParameters(t *testing.T) {
 			assert.Contains(t, err.Error(), line)
 		})
 	}
+}
+
+func TestParseSetRejectsOverflowingMonthlyInterval(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	start := time.Date(2027, time.March, 1, 9, 0, 0, 0, time.UTC)
+	line := "RRULE:FREQ=MONTHLY;BYDAY=1MO;COUNT=2;INTERVAL=9223372036854775807"
+	var bounded bool
+	assert.NotPanics(func() {
+		_, bounded = ConservativeEnd(t.Context(), Set{DTStart: start, RRules: []string{line}}, time.Hour, 0, 100)
+	})
+	assert.False(bounded)
+	s, err := ParseSet(start, false, "", time.UTC, []string{line})
+	require.ErrorIs(err, ErrUnsupportedRecurrence)
+	assert.Empty(s.RRules)
 }
 
 func TestParseSetAllDayRejectsTimeRules(t *testing.T) {
@@ -507,19 +716,18 @@ func TestParseSetAllowsReachableSelectorIntervalRules(t *testing.T) {
 	}
 }
 
-func TestParseSetRejectsUnreachableOrdinalWeekdayPosition(t *testing.T) {
-	requirements := require.New(t)
-	rule := "RRULE:FREQ=MONTHLY;BYDAY=1MO;BYSETPOS=2"
-	_, err := ParseSet(instant(t, "2027-03-01T17:00:00Z"), false, "", time.UTC, []string{rule})
-	requirements.ErrorIs(err, ErrUnsupportedRecurrence)
-}
-
 func TestIterMonthlyOrdinalWeekday(t *testing.T) {
 	assertions := assert.New(t)
 	s, err := ParseSet(instant(t, "2027-03-01T17:00:00Z"), false, "", time.UTC,
 		[]string{"RRULE:FREQ=MONTHLY;BYDAY=1MO;COUNT=3"})
 	require.NoError(t, err)
 	assertions.Equal([]string{"20270301T170000Z", "20270405T170000Z", "20270503T170000Z"}, keys(t, s))
+}
+
+func TestParseSetRejectsMixedPlainAndOrdinalWeekdays(t *testing.T) {
+	rule := "RRULE:FREQ=MONTHLY;BYDAY=MO,1MO;COUNT=3"
+	_, err := ParseSet(instant(t, "2027-03-01T17:00:00Z"), false, "", time.UTC, []string{rule})
+	require.ErrorIs(t, err, ErrUnsupportedRecurrence)
 }
 
 func TestIterBudgetCountsDuplicateStreams(t *testing.T) {

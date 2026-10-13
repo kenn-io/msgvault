@@ -70,11 +70,11 @@ func Iter(ctx context.Context, s Set, until time.Time, budget int, yield func(In
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		rule, err := s.rule(line, ruleUntil)
+		next, err := s.ruleIterator(line, ruleUntil)
 		if err != nil {
 			return err
 		}
-		streams = append(streams, stream{next: rule.Iterator()})
+		streams = append(streams, stream{next: next})
 	}
 	excluded := map[string]bool{}
 	for _, id := range s.ExDates {

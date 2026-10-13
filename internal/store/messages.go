@@ -442,6 +442,7 @@ type MessageMetadataRecord struct {
 	ID                   int64
 	Metadata             sql.NullString
 	SourceConversationID sql.NullString
+	DeletedFromSource    bool
 }
 
 // MessageWithRawMetadata identifies an archived message and the RFC822
@@ -833,11 +834,28 @@ func (s *Store) MessageMetadataBatch(
 // result is keyed by source_message_id, holds no message bodies, and stays
 // linear in the archived messages of the source.
 func (s *Store) SourceMessageMetadata(sourceID int64) (map[string]MessageMetadataRecord, error) {
-	rows, err := s.db.Query(`
-		SELECT m.source_message_id, m.id, m.metadata, c.source_conversation_id
+	return s.sourceMessageMetadataContext(context.Background(), sourceID, 0)
+}
+
+// SourceMessageMetadataLimitContext bounds the inventory used to reconcile
+// provider resource members, including rows persisted by interrupted runs.
+func (s *Store) SourceMessageMetadataLimitContext(ctx context.Context, sourceID int64, limit int) (map[string]MessageMetadataRecord, error) {
+	if limit <= 0 || limit > 20000 {
+		return nil, errors.New("source metadata limit must be between 1 and 20000")
+	}
+	return s.sourceMessageMetadataContext(ctx, sourceID, limit)
+}
+
+func (s *Store) sourceMessageMetadataContext(ctx context.Context, sourceID int64, limit int) (map[string]MessageMetadataRecord, error) {
+	query := `
+		SELECT m.source_message_id, m.id, m.metadata, c.source_conversation_id, m.deleted_from_source_at IS NOT NULL
 		FROM messages m
 		JOIN conversations c ON c.id = m.conversation_id
-		WHERE m.source_id = ?`, sourceID)
+		WHERE m.source_id = ?`
+	if limit > 0 {
+		query += fmt.Sprintf(" LIMIT %d", limit+1)
+	}
+	rows, err := s.db.QueryContext(ctx, query, sourceID)
 	if err != nil {
 		return nil, fmt.Errorf("load source message metadata: %w", err)
 	}
@@ -848,11 +866,14 @@ func (s *Store) SourceMessageMetadata(sourceID int64) (map[string]MessageMetadat
 		var sourceMessageID string
 		var record MessageMetadataRecord
 		if err := rows.Scan(
-			&sourceMessageID, &record.ID, &record.Metadata, &record.SourceConversationID,
+			&sourceMessageID, &record.ID, &record.Metadata, &record.SourceConversationID, &record.DeletedFromSource,
 		); err != nil {
 			return nil, fmt.Errorf("scan source message metadata: %w", err)
 		}
 		result[sourceMessageID] = record
+		if limit > 0 && len(result) > limit {
+			return nil, errors.New("source metadata inventory limit exceeded")
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate source message metadata: %w", err)

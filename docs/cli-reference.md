@@ -1690,6 +1690,42 @@ msgvault sync-calendar <name|email> [flags]
 
 ---
 
+## sync-caldav
+
+Archive events from a configured CalDAV connection through the daemon. This is
+unreleased functionality. Set up
+[CalDAV sources](configuration.md#caldav-sources-unreleased) first.
+
+```bash
+msgvault sync-caldav personal
+msgvault sync-caldav personal --full
+```
+
+| Flag | Description |
+|---|---|
+| `--full` | Ignore the saved token and reconcile a complete calendar snapshot |
+| `--build-cache` | Refresh the analytics cache after this sync |
+| `--no-build-cache` | Skip analytics cache refresh after this sync |
+
+The first run discovers calendars and archives their events. Later runs use
+`sync-collection` tokens where supported; other servers use complete snapshots.
+Expired tokens trigger a fresh snapshot. A missing configured calendar is an
+error. Sync makes no provider writes.
+
+Events are searchable `calendar_event` messages, with typed event and attendee
+rows rebuilt from `caldav_ics` raw data. A resource may contain a recurring
+master and its exceptions. Task-only resources advance sync without becoming
+messages. Recurrence stays unexpanded in the archive. Rooms remain typed
+attendees and do not become people.
+
+Raw data keeps the iCalendar payload returned by the server. XML
+`calendar-data` normalizes line endings; GET fallback keeps the returned body
+bytes. Updated resources replace their archived event snapshots. Events removed
+from a resource or deleted upstream retain their last raw data and are marked
+as deleted from the source. Cancelled events carry `status=cancelled`.
+
+---
+
 ## calendar
 
 Control live Google Calendar events through the daemon. This is unreleased

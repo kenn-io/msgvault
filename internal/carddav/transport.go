@@ -178,6 +178,11 @@ func (c *Client) Do(ctx context.Context, request Request) (*Response, error) {
 	}
 }
 
+// DoWithBudget retains redirect and response byte accounting across requests.
+func (c *Client) DoWithBudget(ctx context.Context, request Request, budget *Budget) (*Response, error) {
+	return c.doWithBudget(ctx, request, budget)
+}
+
 func (c *Client) doWithBudget(
 	ctx context.Context, request Request, budget *Budget,
 ) (*Response, error) {

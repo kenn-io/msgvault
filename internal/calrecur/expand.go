@@ -30,6 +30,10 @@ type Occurrence struct {
 	ExceptionRef                   int64
 }
 
+// nominal treats durationDays as a civil span in s's location and duration as
+// the elapsed remainder after that span. Callers deriving the pair from timed
+// event bounds must subtract start.AddDate(0, 0, durationDays).Sub(start), with
+// start in s's location, from end.Sub(start). All-day events ignore duration.
 func nominal(s Set, id Identity, duration time.Duration, durationDays int) (Occurrence, error) {
 	start, err := s.identityStart(id)
 	if err != nil {
@@ -50,6 +54,8 @@ func nominal(s Set, id Identity, duration time.Duration, durationDays int) (Occu
 		if err != nil {
 			return Occurrence{}, unsupported("occurrence end date", err)
 		}
+	} else if durationDays > 0 {
+		o.End = start.AddDate(0, 0, durationDays).Add(duration)
 	}
 	return o, nil
 }
@@ -75,7 +81,11 @@ func effective(s Set, e Exception, duration time.Duration, durationDays int) (Oc
 			o.EndDate, err = addCivilDays(e.Original.Date, durationDays)
 		} else {
 			o.StartDate = start.In(zone).Format(dateLayout)
-			o.EndDate = start.Add(duration).In(zone).Format(dateLayout)
+			nominalEnd := start.Add(duration)
+			if durationDays > 0 {
+				nominalEnd = start.AddDate(0, 0, durationDays).Add(duration)
+			}
+			o.EndDate = nominalEnd.In(zone).Format(dateLayout)
 		}
 		if err != nil {
 			return Occurrence{}, unsupported("exception nominal dates", err)
@@ -122,6 +132,9 @@ func effective(s Set, e Exception, duration time.Duration, durationDays int) (Oc
 		} else {
 			o.Start = start
 			o.End = start.Add(duration)
+			if durationDays > 0 {
+				o.End = start.AddDate(0, 0, durationDays).Add(duration)
+			}
 		}
 		if e.Start != nil {
 			o.Start = *e.Start
@@ -143,9 +156,13 @@ func effective(s Set, e Exception, duration time.Duration, durationDays int) (Oc
 }
 
 // Expand returns effective occurrences overlapping the half-open [from,to)
-// window, sorted by effective start and original identity. Exceptions are
-// considered independently so a move can enter a window beyond the series end.
-// A generation error returns no partial result.
+// window, sorted by effective start and original identity. For timed events,
+// durationDays is the civil-day span in s's location and duration is the elapsed
+// remainder after that span. When deriving the pair from event bounds, subtract
+// start.AddDate(0, 0, durationDays).Sub(start), with start in s's location, from
+// end.Sub(start). All-day events ignore duration. Exceptions are considered
+// independently so a move can enter a window beyond the series end. A
+// generation error returns no partial result.
 func Expand(ctx context.Context, s Set, duration time.Duration, durationDays int, exc []Exception, from, to time.Time, budget int) ([]Occurrence, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -254,7 +271,8 @@ func Contains(ctx context.Context, s Set, exc []Exception, original Identity, bu
 // only the generated recurrence set; callers bounding effective occurrences
 // must also account for moved exceptions' effective bounds. Unbounded rules,
 // malformed input, context cancellation or exhausted budget make the bound
-// unknown. All-day ends use civil days and a 14-hour conservative margin.
+// unknown. Timed civil days combine with the elapsed remainder; all-day ends
+// use civil days and a 14-hour conservative margin.
 func ConservativeEnd(ctx context.Context, s Set, duration time.Duration, durationDays int, budget int) (end time.Time, bounded bool) {
 	if duration < 0 || durationDays < 0 || ctx.Err() != nil {
 		return time.Time{}, false
@@ -283,6 +301,8 @@ func ConservativeEnd(ctx context.Context, s Set, duration time.Duration, duratio
 				return false
 			}
 			candidate = candidate.Add(14 * time.Hour)
+		} else if durationDays > 0 {
+			candidate = start.AddDate(0, 0, durationDays).Add(duration)
 		}
 		if candidate.After(end) {
 			end = candidate
@@ -307,23 +327,22 @@ func ConservativeEnd(ctx context.Context, s Set, duration time.Duration, duratio
 		if ctx.Err() != nil {
 			return time.Time{}, false
 		}
-		rule, err := s.rule(line, time.Time{})
+		rule, absoluteUntil, err := s.rule(line, time.Time{})
 		if err != nil {
 			return time.Time{}, false
 		}
 		opt := rule.OrigOptions
-		if opt.Count == 0 && opt.Until.IsZero() {
+		if opt.Count == 0 && absoluteUntil.IsZero() {
 			return time.Time{}, false
 		}
-		until := opt.Until
-		if until.IsZero() {
+		until := time.Date(9999, 12, 31, 23, 59, 59, 0, s.location())
+		if s.AllDay {
 			until = time.Date(9999, 12, 31, 23, 59, 59, 0, time.UTC)
 		}
-		rule, err = s.rule(line, until)
+		next, err := s.ruleIterator(line, until)
 		if err != nil {
 			return time.Time{}, false
 		}
-		next := rule.Iterator()
 		generated := 0
 		for {
 			if ctx.Err() != nil {
@@ -340,7 +359,7 @@ func ConservativeEnd(ctx context.Context, s Set, duration time.Duration, duratio
 		}
 		// COUNT without UNTIL must reach its count. The library's maximum year
 		// cannot establish an end for a rule whose requested count was not reached.
-		if opt.Until.IsZero() && generated < opt.Count {
+		if absoluteUntil.IsZero() && generated < opt.Count {
 			return time.Time{}, false
 		}
 	}

@@ -137,12 +137,29 @@ func localDateStart(date string, loc *time.Location) (time.Time, error) {
 	return start, nil
 }
 
+// CivilDateStart resolves a civil date to its first valid instant in loc.
+// It preserves the supplied date when local midnight is skipped.
+func CivilDateStart(date string, loc *time.Location) (time.Time, error) {
+	return localDateStart(date, loc)
+}
+
+// CivilDateBoundary resolves a civil date to the first instant whose local
+// date is at or after it. exists reports whether that date occurs in loc.
+func CivilDateBoundary(date string, loc *time.Location) (start time.Time, exists bool, err error) {
+	return localDateBoundary(date, loc)
+}
+
 func addCivilDays(date string, days int) (string, error) {
 	civil, err := time.Parse(dateLayout, date)
 	if err != nil {
 		return "", fmt.Errorf("parse civil date for arithmetic: %w", err)
 	}
 	return civil.AddDate(0, 0, days).Format(dateLayout), nil
+}
+
+// AddCivilDays advances an ISO civil date without interpreting it in a zone.
+func AddCivilDays(date string, days int) (string, error) {
+	return addCivilDays(date, days)
 }
 
 func (s Set) instanceStart(anchor time.Time) (time.Time, error) {
@@ -156,35 +173,40 @@ func unsupported(line string, err error) error {
 	return fmt.Errorf("%w: %q: %w", ErrUnsupportedRecurrence, line, err)
 }
 
-func (s Set) rule(line string, until time.Time) (*rrule.RRule, error) {
+func (s Set) rule(line string, until time.Time) (*rrule.RRule, time.Time, error) {
 	if !strings.HasPrefix(line, "RRULE:") || strings.ContainsAny(line, "\r\n") {
-		return nil, unsupported(line, errors.New("expected RRULE"))
+		return nil, time.Time{}, unsupported(line, errors.New("expected RRULE"))
 	}
 	start, err := s.start()
 	if err != nil {
-		return nil, unsupported(line, err)
+		return nil, time.Time{}, unsupported(line, err)
 	}
 	seen := map[string]bool{}
 	for part := range strings.SplitSeq(strings.TrimPrefix(line, "RRULE:"), ";") {
 		key, _, ok := strings.Cut(part, "=")
 		if !ok || seen[key] || key == "DTSTART" || key == "BYEASTER" {
-			return nil, unsupported(line, errors.New("invalid or repeated rule parameter"))
+			return nil, time.Time{}, unsupported(line, errors.New("invalid or repeated rule parameter"))
 		}
 		seen[key] = true
 	}
-	loc := s.location()
-	if s.AllDay {
-		loc = time.UTC
+	loc := time.UTC
+	ruleStart := start
+	if !s.AllDay {
+		loc = s.location()
+		ruleStart = s.wallAnchor(start)
 	}
 	opt, err := rrule.StrToROptionInLocation(strings.TrimPrefix(line, "RRULE:"), loc)
 	if err != nil {
-		return nil, unsupported(line, err)
+		return nil, time.Time{}, unsupported(line, err)
 	}
 	if seen["COUNT"] && opt.Count <= 0 || seen["INTERVAL"] && opt.Interval <= 0 {
-		return nil, unsupported(line, errors.New("COUNT and INTERVAL must be positive"))
+		return nil, time.Time{}, unsupported(line, errors.New("COUNT and INTERVAL must be positive"))
 	}
 	if err := supportedRule(opt, seen, start); err != nil {
-		return nil, unsupported(line, err)
+		return nil, time.Time{}, unsupported(line, err)
+	}
+	if opt.Interval > maxRuleInterval(opt.Freq) {
+		return nil, time.Time{}, unsupported(line, errors.New("INTERVAL exceeds the supported calendar range"))
 	}
 	opt.Bysetpos = unique(opt.Bysetpos)
 	opt.Bymonth = unique(opt.Bymonth)
@@ -195,15 +217,114 @@ func (s Set) rule(line string, until time.Time) (*rrule.RRule, error) {
 	opt.Byhour = unique(opt.Byhour)
 	opt.Byminute = unique(opt.Byminute)
 	opt.Bysecond = unique(opt.Bysecond)
-	if !until.IsZero() && (opt.Until.IsZero() || until.Before(opt.Until)) {
-		opt.Until = until
+	absoluteUntil := opt.Until
+	if !until.IsZero() && (absoluteUntil.IsZero() || until.Before(absoluteUntil)) {
+		absoluteUntil = until
 	}
-	opt.Dtstart = start
+	if !s.AllDay && !absoluteUntil.IsZero() {
+		opt.Until = s.wallHorizon(absoluteUntil)
+	} else {
+		opt.Until = absoluteUntil
+	}
+	opt.Dtstart = ruleStart
 	rule, err := rrule.NewRRule(*opt)
+	if err != nil {
+		return nil, time.Time{}, unsupported(line, err)
+	}
+	return rule, absoluteUntil, nil
+}
+
+// wallAnchor represents a local date and clock as a UTC timestamp so rule
+// iteration advances civil dates without DST changing the recurrence clock.
+func (s Set) wallAnchor(value time.Time) time.Time {
+	local := value.In(s.location())
+	return time.Date(local.Year(), local.Month(), local.Day(), local.Hour(), local.Minute(), local.Second(), local.Nanosecond(), time.UTC)
+}
+
+// wallHorizon extends an absolute limit by two civil days before converting it
+// to a wall-clock anchor. That margin covers candidates in a repeated local
+// hour whose wall ordering differs from their absolute ordering. Candidates
+// are still checked against the original absolute limit after zone resolution.
+func (s Set) wallHorizon(limit time.Time) time.Time {
+	horizon := limit.In(s.location()).AddDate(0, 0, 2)
+	if horizon.Year() > 9999 {
+		horizon = time.Date(9999, time.December, 31, 23, 59, 59, 0, time.UTC)
+	}
+	return s.wallAnchor(horizon)
+}
+
+func maxRuleInterval(freq rrule.Frequency) int {
+	switch freq {
+	case rrule.YEARLY:
+		return rrule.MAXYEAR
+	case rrule.MONTHLY:
+		return rrule.MAXYEAR * 12
+	case rrule.WEEKLY:
+		return rrule.MAXYEAR * 53
+	case rrule.DAILY:
+		return rrule.MAXYEAR * 366
+	default:
+		return 0
+	}
+}
+
+func (s Set) ruleIterator(line string, until time.Time) (rrule.Next, error) {
+	rule, absoluteUntil, err := s.rule(line, until)
+	if err != nil {
+		return nil, err
+	}
+	options := rule.OrigOptions
+	countLimit := options.Count
+	if countLimit > 0 {
+		options.Count = 0
+		rule, err = rrule.NewRRule(options)
+		if err != nil {
+			return nil, unsupported(line, err)
+		}
+	}
+	start, err := s.start()
 	if err != nil {
 		return nil, unsupported(line, err)
 	}
-	return rule, nil
+	wallClock := start.In(s.location())
+	next := rule.Iterator()
+	generated := 0
+	return func() (time.Time, bool) {
+		for {
+			candidate, ok := next()
+			if !ok {
+				return time.Time{}, false
+			}
+			if candidate.Hour() != start.Hour() || candidate.Minute() != start.Minute() || candidate.Second() != start.Second() {
+				continue
+			}
+			if !s.AllDay {
+				year, month, day := candidate.UTC().Date()
+				if candidate.Equal(s.wallAnchor(start)) {
+					// A wall time in the repeated hour is ambiguous. DTSTART already
+					// identifies which instant starts the series; retain that instant.
+					candidate = start
+				} else {
+					candidate = time.Date(year, month, day, wallClock.Hour(), wallClock.Minute(), wallClock.Second(), wallClock.Nanosecond(), s.location())
+					if candidate.Year() != year || candidate.Month() != month || candidate.Day() != day ||
+						candidate.Hour() != wallClock.Hour() || candidate.Minute() != wallClock.Minute() || candidate.Second() != wallClock.Second() {
+						continue
+					}
+				}
+			}
+			if candidate.Before(start) {
+				continue
+			}
+			if !absoluteUntil.IsZero() && candidate.After(absoluteUntil) {
+				return time.Time{}, false
+			}
+			generated++
+			if countLimit > 0 && generated > countLimit {
+				return time.Time{}, false
+			}
+			return candidate, true
+		}
+	}, nil
 }
 
 // UNTIL is checked only after rrule-go finds a matching date. Verify that
@@ -241,10 +362,23 @@ func supportedRule(opt *rrule.ROption, seen map[string]bool, start time.Time) er
 		(!seen["BYMONTH"] || seen["BYMONTHDAY"] == seen["BYDAY"]) {
 		return errors.New("yearly selectors require BYMONTH with either BYMONTHDAY or BYDAY")
 	}
+	monthBased := opt.Freq == rrule.MONTHLY || opt.Freq == rrule.YEARLY && seen["BYMONTH"]
+	hasPlainWeekday, hasOrdinalWeekday := false, false
 	for _, day := range opt.Byweekday {
+		if day.N() == 0 {
+			hasPlainWeekday = true
+		} else {
+			hasOrdinalWeekday = true
+		}
 		if opt.Freq >= rrule.WEEKLY && day.N() != 0 {
 			return errors.New("weekday ordinals require monthly or yearly recurrence")
 		}
+		if monthBased && (day.N() < -5 || day.N() > 5) {
+			return errors.New("month-based weekday ordinals must be between -5 and 5")
+		}
+	}
+	if monthBased && hasPlainWeekday && hasOrdinalWeekday {
+		return errors.New("mixed plain and ordinal weekdays are unsupported")
 	}
 	if len(opt.Bymonth) > 0 && len(opt.Bymonthday) > 0 && !possibleMonthDay(opt.Bymonth, opt.Bymonthday) {
 		return errors.New("no selected month can contain a selected month day")
@@ -432,7 +566,7 @@ func ParseSet(dtstart time.Time, allDay bool, startDate string, zone *time.Locat
 	}
 	for _, line := range lines {
 		if strings.HasPrefix(line, "RRULE:") {
-			if _, err := s.rule(line, time.Time{}); err != nil {
+			if _, _, err := s.rule(line, time.Time{}); err != nil {
 				return Set{}, err
 			}
 			s.RRules = append(s.RRules, line)
@@ -514,7 +648,11 @@ func (s Set) parseDates(line string) ([]Identity, string, error) {
 		if dateValue {
 			d, err = time.Parse(layout, v)
 		} else {
-			d, err = time.ParseInLocation(layout, v, valueLoc)
+			if strings.HasSuffix(v, "Z") {
+				d, err = time.Parse(layout, v)
+			} else {
+				d, err = parseLocalDateTime(layout, v, valueLoc)
+			}
 		}
 		if err != nil {
 			return nil, "", fmt.Errorf("parse recurrence value: %w", err)
@@ -529,6 +667,25 @@ func (s Set) parseDates(line string) ([]Identity, string, error) {
 		}
 	}
 	return ids, property, nil
+}
+
+// parseLocalDateTime rejects local values that time.Date would normalize
+// across a time-zone gap. Ambiguous values remain valid and use Go's selected
+// occurrence, while nonexistent values must not silently change their wall
+// clock fields.
+func parseLocalDateTime(layout, value string, loc *time.Location) (time.Time, error) {
+	wall, err := time.Parse(layout, value)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("parse local recurrence time: %w", err)
+	}
+	year, month, day := wall.Date()
+	resolved := time.Date(year, month, day, wall.Hour(), wall.Minute(), wall.Second(), wall.Nanosecond(), loc)
+	local := resolved.In(loc)
+	if local.Year() != year || local.Month() != month || local.Day() != day ||
+		local.Hour() != wall.Hour() || local.Minute() != wall.Minute() || local.Second() != wall.Second() {
+		return time.Time{}, errors.New("local recurrence time does not exist in time zone")
+	}
+	return resolved, nil
 }
 
 // Repeated BY selectors describe a set, not extra instances counted by COUNT.

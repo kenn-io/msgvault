@@ -15,7 +15,7 @@ import (
 	"go.kenn.io/msgvault/internal/calrecur"
 )
 
-const calendarEventProjectionVersion = 1
+const calendarEventProjectionVersion = 2
 
 func (s *Store) refreshCalendarEventProjectionWith(ctx context.Context, tx *loggedTx, messageID int64) error {
 	q := boundQuerier{ctx: ctx, q: tx}
@@ -103,8 +103,8 @@ func (s *Store) refreshCalendarEventProjectionWith(ctx context.Context, tx *logg
 			originalAt = &event.Original.Instant
 		}
 	}
-	columns := []string{"message_id", "projection_version", "content_hash", "provider", "namespace", "provider_event_id", "series_provider_id", "kind", "original_start_at", "original_start_date", "ical_uid", "sequence", "status", "has_bounds", "all_day", "start_at", "end_at", "start_date", "end_date", "event_time_zone", "calendar_time_zone", "recurrence_json", "recurrence_end_at", "recurrence_error", "join_url", "join_key", "organizer_email", "calendar_id", "transparency", "visibility", "event_type", "location", "copy_self_rsvp", "description", "description_truncated"}
-	values := []any{messageID, calendarEventProjectionVersion, hash, event.Provider, event.Namespace, event.ProviderEventID, event.SeriesProviderID, event.Kind, originalAt, originalDate, event.ICalUID, event.Sequence, event.Status, event.HasBounds, event.AllDay, event.Start, event.End, event.StartDate, event.EndDate, event.EventTimeZone, event.CalendarTimeZone, string(recurrence), recurrenceEnd, recurrenceError, event.JoinURL, event.JoinKey, event.OrganizerEmail, event.CalendarID, event.Transparency, event.Visibility, event.EventType, event.Location, event.CopySelfRSVP, event.Description, event.DescriptionTruncated}
+	columns := []string{"message_id", "projection_version", "content_hash", "provider", "namespace", "provider_event_id", "series_provider_id", "kind", "original_start_at", "original_start_date", "ical_uid", "sequence", "status", "has_bounds", "all_day", "start_at", "end_at", "start_date", "end_date", "event_time_zone", "calendar_time_zone", "recurrence_json", "recurrence_duration_days", "recurrence_end_at", "recurrence_error", "join_url", "join_key", "organizer_email", "calendar_id", "transparency", "visibility", "event_type", "location", "copy_self_rsvp", "description", "description_truncated"}
+	values := []any{messageID, calendarEventProjectionVersion, hash, event.Provider, event.Namespace, event.ProviderEventID, event.SeriesProviderID, event.Kind, originalAt, originalDate, event.ICalUID, event.Sequence, event.Status, event.HasBounds, event.AllDay, event.Start, event.End, event.StartDate, event.EndDate, event.EventTimeZone, event.CalendarTimeZone, string(recurrence), event.RecurrenceDurationDays, recurrenceEnd, recurrenceError, event.JoinURL, event.JoinKey, event.OrganizerEmail, event.CalendarID, event.Transparency, event.Visibility, event.EventType, event.Location, event.CopySelfRSVP, event.Description, event.DescriptionTruncated}
 	updates := make([]string, 0, len(columns)-1)
 	for _, column := range columns[1:] {
 		updates = append(updates, column+" = excluded."+column)
@@ -152,7 +152,7 @@ func calendarRecurrenceEnd(ctx context.Context, event calevent.Event) (*time.Tim
 		return nil, "missing event bounds"
 	}
 	duration := event.End.Sub(*event.Start)
-	days := 0
+	days := event.RecurrenceDurationDays
 	if event.AllDay {
 		first, err := time.Parse(time.DateOnly, event.StartDate)
 		if err != nil {
@@ -163,6 +163,15 @@ func calendarRecurrenceEnd(ctx context.Context, event calevent.Event) (*time.Tim
 			return nil, err.Error()
 		}
 		days = int(last.Sub(first) / (24 * time.Hour))
+		duration = 0
+	} else if days > 0 {
+		civilStart := start.In(zone)
+		civilEnd := civilStart.AddDate(0, 0, days)
+		civilDuration := civilEnd.Sub(civilStart)
+		if civilDuration > duration {
+			return nil, "invalid timed CalDAV recurrence duration"
+		}
+		duration -= civilDuration
 	}
 	end, bounded := calrecur.ConservativeEnd(ctx, set, duration, days, calrecur.SeriesReadBudget)
 	if !bounded {

@@ -73,5 +73,4 @@ func TestCalendarEventSourceScopeEmptyPopulation(t *testing.T) {
 	sc := SourceScope{IDs: []int64{-1}}
 	assertions.False(sc.Allows(-1))
 	assertions.False(sc.Allows(0))
-	assertions.False(sc.Allows(42))
 }

@@ -89,6 +89,9 @@ type Budget struct {
 	remaining int64
 }
 
+// NewBudget creates a byte budget shared across a DAV operation.
+func NewBudget(bytes int64) *Budget { return &Budget{remaining: bytes} }
+
 // Consume charges bytes to the budget, and returns ErrOperationLimit when the
 // budget is spent.
 func (b *Budget) Consume(bytes int64) error {

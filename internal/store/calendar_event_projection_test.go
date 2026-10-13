@@ -4,15 +4,18 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"encoding/json/v2"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/calevent"
 )
 
 const calendarRaw = `{"id":"event-example","status":"confirmed","start":{"dateTime":"2027-03-02T17:00:00Z"},"end":{"dateTime":"2027-03-02T18:00:00Z"},"iCalUID":"event-uid@example.com","description":"Raw description","attendees":[{"email":"PERSON@EXAMPLE.COM","responseStatus":"accepted"}]}`
@@ -85,6 +88,205 @@ func TestCalendarEventProjectionPersistRefreshDelete(t *testing.T) {
 	requirements.Len(calendarRows(t, st, id), 1)
 	requirements.NoError(st.UpsertMessageRawWithFormat(id, []byte(`{}`), "unknown_calendar"))
 	assertions.Empty(calendarRows(t, st, id))
+}
+
+func TestCalDAVAllDayProjectionPersistsSkippedMidnightCivilDates(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	const calendarID = "skipped-midnight-calendar"
+	source, err := st.GetOrCreateSource("caldav", calendarID)
+	requirements.NoError(err)
+	requirements.NoError(st.UpdateSourceSyncConfig(source.ID, `{"calendar_id":"skipped-midnight-calendar","time_zone":"America/Sao_Paulo"}`))
+	raw := []byte("BEGIN:VCALENDAR\r\nVERSION:2.0\r\n" +
+		"BEGIN:VEVENT\r\nUID:skipped-midnight@example.org\r\n" +
+		"DTSTART;VALUE=DATE:20181104\r\nDTEND;VALUE=DATE:20181105\r\n" +
+		"RRULE:FREQ=DAILY;COUNT=2\r\nEND:VEVENT\r\n" +
+		"BEGIN:VEVENT\r\nUID:skipped-midnight@example.org\r\n" +
+		"RECURRENCE-ID;VALUE=DATE:20181104\r\nSTATUS:CANCELLED\r\nEND:VEVENT\r\n" +
+		"END:VCALENDAR\r\n")
+	sc := calevent.SourceContext{CalendarID: calendarID, CalendarTimeZone: "America/Sao_Paulo"}
+	events, err := calevent.ParseCalDAVResource(raw, sc)
+	requirements.NoError(err)
+	requirements.Len(events, 2)
+	for i, item := range events {
+		metadata, err := json.Marshal(calevent.CalDAVMetadata{EventID: item.Event.ProviderEventID})
+		requirements.NoError(err)
+		message := &MessagePersistData{
+			Message:      &Message{SourceID: source.ID, SourceMessageID: item.Event.ProviderEventID, MessageType: "calendar_event"},
+			Conversation: &ConversationPersistData{SourceConversationID: item.Event.ICalUID, ConversationType: "calendar"},
+			RawMIME:      raw,
+			RawFormat:    calevent.CalDAVRawFormat,
+			Metadata:     &sql.NullString{String: string(metadata), Valid: true},
+		}
+		messageID, err := st.PersistMessage(message)
+		requirements.NoError(err)
+		rows := calendarRows(t, st, messageID)
+		requirements.Len(rows, 1)
+		if i == 0 {
+			assertions.Equal("2018-11-04", rows[0].Event.StartDate)
+			assertions.Equal("2018-11-05", rows[0].Event.EndDate)
+			assertions.Equal(time.Date(2018, time.November, 4, 3, 0, 0, 0, time.UTC), *rows[0].Event.Start)
+			assertions.Equal(time.Date(2018, time.November, 5, 2, 0, 0, 0, time.UTC), *rows[0].Event.End)
+		} else {
+			requirements.NotNil(rows[0].Event.Original)
+			assertions.Equal("2018-11-04", rows[0].Event.Original.Date)
+		}
+	}
+}
+
+func TestCalDAVAllDayProjectionPersistsWhollySkippedExclusiveEnd(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	const calendarID = "skipped-exclusive-end-calendar"
+	source, err := st.GetOrCreateSource("caldav", calendarID)
+	requirements.NoError(err)
+	requirements.NoError(st.UpdateSourceSyncConfig(source.ID, `{"calendar_id":"skipped-exclusive-end-calendar","time_zone":"Pacific/Apia"}`))
+	raw := []byte("BEGIN:VCALENDAR\r\nVERSION:2.0\r\n" +
+		"BEGIN:VEVENT\r\nUID:skipped-end@example.org\r\n" +
+		"DTSTART;VALUE=DATE:20111229\r\nDTEND;VALUE=DATE:20111230\r\n" +
+		"SUMMARY:Skipped exclusive date\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
+	sc := calevent.SourceContext{CalendarID: calendarID, CalendarTimeZone: "Pacific/Apia"}
+	events, err := calevent.ParseCalDAVResource(raw, sc)
+	requirements.NoError(err)
+	requirements.Len(events, 1)
+	metadata, err := json.Marshal(calevent.CalDAVMetadata{EventID: events[0].Event.ProviderEventID})
+	requirements.NoError(err)
+	message := &MessagePersistData{
+		Message:      &Message{SourceID: source.ID, SourceMessageID: events[0].Event.ProviderEventID, MessageType: "calendar_event"},
+		Conversation: &ConversationPersistData{SourceConversationID: events[0].Event.ICalUID, ConversationType: "calendar"},
+		RawMIME:      raw,
+		RawFormat:    calevent.CalDAVRawFormat,
+		Metadata:     &sql.NullString{String: string(metadata), Valid: true},
+	}
+	messageID, err := st.PersistMessage(message)
+	requirements.NoError(err)
+	rows := calendarRows(t, st, messageID)
+	requirements.Len(rows, 1)
+	assertions.Equal("2011-12-29", rows[0].Event.StartDate)
+	assertions.Equal("2011-12-30", rows[0].Event.EndDate)
+	assertions.Equal(time.Date(2011, time.December, 29, 10, 0, 0, 0, time.UTC), *rows[0].Event.Start)
+	assertions.Equal(time.Date(2011, time.December, 30, 10, 0, 0, 0, time.UTC), *rows[0].Event.End)
+}
+
+func TestGoogleAllDayProjectionPersistsSkippedMidnightCivilDates(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	const calendarID = "google-skipped-midnight-calendar"
+	source, err := st.GetOrCreateSource("gcal", calendarID)
+	requirements.NoError(err)
+	requirements.NoError(st.UpdateSourceSyncConfig(source.ID, `{"calendar_id":"google-skipped-midnight-calendar","time_zone":"America/Sao_Paulo"}`))
+	message := &MessagePersistData{
+		Message:      &Message{SourceID: source.ID, SourceMessageID: "google-skipped-midnight-event", MessageType: "calendar_event"},
+		Conversation: &ConversationPersistData{SourceConversationID: "google-skipped-midnight-event", ConversationType: "calendar"},
+		RawMIME:      []byte(`{"id":"google-skipped-midnight-event","start":{"date":"2018-11-04"},"end":{"date":"2018-11-05"}}`),
+		RawFormat:    "gcal_json",
+		Metadata:     &sql.NullString{String: `{"calendar_id":"google-skipped-midnight-calendar"}`, Valid: true},
+	}
+	messageID, err := st.PersistMessage(message)
+	requirements.NoError(err)
+	rows := calendarRows(t, st, messageID)
+	requirements.Len(rows, 1)
+	assertions.Equal("2018-11-04", rows[0].Event.StartDate)
+	assertions.Equal("2018-11-05", rows[0].Event.EndDate)
+	assertions.Equal(time.Date(2018, time.November, 4, 3, 0, 0, 0, time.UTC), *rows[0].Event.Start)
+	assertions.Equal(time.Date(2018, time.November, 5, 2, 0, 0, 0, time.UTC), *rows[0].Event.End)
+}
+
+func TestGoogleAllDayProjectionPersistsWhollySkippedExclusiveEnd(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	const calendarID = "google-skipped-exclusive-end-calendar"
+	source, err := st.GetOrCreateSource("gcal", calendarID)
+	requirements.NoError(err)
+	requirements.NoError(st.UpdateSourceSyncConfig(source.ID, `{"calendar_id":"google-skipped-exclusive-end-calendar","time_zone":"Pacific/Apia"}`))
+	message := &MessagePersistData{
+		Message:      &Message{SourceID: source.ID, SourceMessageID: "google-skipped-end-event", MessageType: "calendar_event"},
+		Conversation: &ConversationPersistData{SourceConversationID: "google-skipped-end-event", ConversationType: "calendar"},
+		RawMIME:      []byte(`{"id":"google-skipped-end-event","start":{"date":"2011-12-29"},"end":{"date":"2011-12-30"}}`),
+		RawFormat:    "gcal_json",
+		Metadata:     &sql.NullString{String: `{"calendar_id":"google-skipped-exclusive-end-calendar"}`, Valid: true},
+	}
+	messageID, err := st.PersistMessage(message)
+	requirements.NoError(err)
+	rows := calendarRows(t, st, messageID)
+	requirements.Len(rows, 1)
+	assertions.Equal("2011-12-29", rows[0].Event.StartDate)
+	assertions.Equal("2011-12-30", rows[0].Event.EndDate)
+	assertions.Equal(time.Date(2011, time.December, 29, 10, 0, 0, 0, time.UTC), *rows[0].Event.Start)
+	assertions.Equal(time.Date(2011, time.December, 30, 10, 0, 0, 0, time.UTC), *rows[0].Event.End)
+}
+
+func TestCalendarRecurrenceEndPreservesTimedCivilDurationAcrossDST(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	source, err := st.GetOrCreateSource("caldav", "civil-duration-calendar")
+	require.NoError(err)
+	require.NoError(st.UpdateSourceSyncConfig(source.ID, `{"calendar_id":"civil-duration-calendar","time_zone":"America/New_York"}`))
+	raw := []byte("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:civil-duration@example.org\r\nDTSTART;TZID=America/New_York:20270313T090000\r\nDURATION:P1D\r\nRRULE:FREQ=WEEKLY;COUNT=2\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
+	sc := calevent.SourceContext{CalendarID: "civil-duration-calendar", CalendarTimeZone: "America/New_York"}
+	events, err := calevent.ParseCalDAVResource(raw, sc)
+	require.NoError(err)
+	require.Len(events, 1)
+	metadata, err := json.Marshal(calevent.CalDAVMetadata{EventID: events[0].Event.ProviderEventID})
+	require.NoError(err)
+	message := &MessagePersistData{
+		Message:      &Message{SourceID: source.ID, SourceMessageID: events[0].Event.ProviderEventID, MessageType: "calendar_event"},
+		Conversation: &ConversationPersistData{SourceConversationID: "civil-duration", ConversationType: "calendar"},
+		RawMIME:      raw,
+		RawFormat:    calevent.CalDAVRawFormat,
+		Metadata:     &sql.NullString{String: string(metadata), Valid: true},
+	}
+	messageID, err := st.PersistMessage(message)
+	require.NoError(err)
+	rows := calendarRows(t, st, messageID)
+	require.Len(rows, 1)
+	require.NotNil(rows[0].RecurrenceEndAt)
+	assert.Equal(time.Date(2027, 3, 21, 13, 0, 0, 0, time.UTC), *rows[0].RecurrenceEndAt)
+	projected := calendarRows(t, st, messageID)
+	require.Len(projected, 1)
+	assert.Equal(1, projected[0].Event.RecurrenceDurationDays)
+}
+
+func TestCalendarRecurrenceDurationMigratesSchema6Projection(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	source, err := st.GetOrCreateSource("caldav", "schema6-civil-duration-calendar")
+	require.NoError(err)
+	require.NoError(st.UpdateSourceSyncConfig(source.ID, `{"calendar_id":"schema6-civil-duration-calendar","time_zone":"America/New_York"}`))
+	raw := []byte("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:schema6-civil-duration@example.org\r\nDTSTART;TZID=America/New_York:20270313T090000\r\nDURATION:P1D\r\nRRULE:FREQ=WEEKLY;COUNT=2\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
+	events, err := calevent.ParseCalDAVResource(raw, calevent.SourceContext{CalendarID: "schema6-civil-duration-calendar", CalendarTimeZone: "America/New_York"})
+	require.NoError(err)
+	require.Len(events, 1)
+	metadata, err := json.Marshal(calevent.CalDAVMetadata{EventID: events[0].Event.ProviderEventID})
+	require.NoError(err)
+	message := &MessagePersistData{
+		Message:      &Message{SourceID: source.ID, SourceMessageID: "schema6-civil-duration", MessageType: "calendar_event"},
+		Conversation: &ConversationPersistData{SourceConversationID: "schema6-civil-duration", ConversationType: "calendar"},
+		RawMIME:      raw,
+		RawFormat:    calevent.CalDAVRawFormat,
+		Metadata:     &sql.NullString{String: string(metadata), Valid: true},
+	}
+	messageID, err := st.PersistMessage(message)
+	require.NoError(err)
+
+	_, err = st.DB().Exec(`ALTER TABLE calendar_events DROP COLUMN recurrence_duration_days`)
+	require.NoError(err)
+	_, err = st.DB().Exec(st.Rebind(`UPDATE calendar_events SET projection_version = 1 WHERE message_id = ?`), messageID)
+	require.NoError(err)
+	_, err = st.DB().Exec(st.Rebind(`DELETE FROM applied_migrations WHERE name IN (?, ?)`), migrationCalendarEventRecurrenceDuration, migrationCalendarEventProjectionV2)
+	require.NoError(err)
+	_, err = st.DB().Exec(`UPDATE archive_metadata SET value = '6' WHERE key = 'schema_version'`)
+	require.NoError(err)
+
+	require.NoError(st.InitSchemaContext(t.Context()))
+	projected := calendarRows(t, st, messageID)
+	require.Len(projected, 1)
+	assert.Equal(1, projected[0].Event.RecurrenceDurationDays)
+	version, err := st.SchemaVersionContext(t.Context())
+	require.NoError(err)
+	assert.Equal(SchemaVersion, version)
 }
 
 func TestCalendarEventProjectionSkipsUnchanged(t *testing.T) {
@@ -167,6 +369,43 @@ func TestCalendarEventBackfillMalformedRecurrenceDoesNotFailInit(t *testing.T) {
 	_, err = st.db.Exec(`DELETE FROM applied_migrations WHERE name = 'calendar_event_projection_v1'`)
 	requirements.NoError(err)
 	requirements.NoError(st.InitSchemaContext(t.Context()))
+	rows := calendarRows(t, st, id)
+	requirements.Len(rows, 1)
+	assertions.NotEmpty(rows[0].RecurrenceError)
+	assertions.Nil(rows[0].RecurrenceEndAt)
+}
+
+func TestCalendarEventProjectionAndBackfillRejectOutOfRangeWeekdayOrdinal(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	raw := `{"id":"bad-ordinal","start":{"dateTime":"2027-03-02T17:00:00Z"},"end":{"dateTime":"2027-03-02T18:00:00Z"},"recurrence":["RRULE:FREQ=MONTHLY;BYDAY=-53MO;COUNT=2"]}`
+	var id int64
+	if !assert.NotPanics(t, func() {
+		_, id = calendarFixture(t, st, "bad-ordinal", raw)
+	}) {
+		return
+	}
+	rows := calendarRows(t, st, id)
+	requirements.Len(rows, 1)
+	assertions.NotEmpty(rows[0].RecurrenceError)
+	assertions.Nil(rows[0].RecurrenceEndAt)
+
+	_, err := st.db.Exec(`DELETE FROM calendar_events WHERE message_id = ?`, id)
+	requirements.NoError(err)
+	_, err = st.db.Exec(`DELETE FROM applied_migrations WHERE name = 'calendar_event_projection_v1'`)
+	requirements.NoError(err)
+	requirements.NoError(st.InitSchemaContext(t.Context()))
+	rows = calendarRows(t, st, id)
+	requirements.Len(rows, 1)
+	assertions.NotEmpty(rows[0].RecurrenceError)
+	assertions.Nil(rows[0].RecurrenceEndAt)
+}
+
+func TestCalendarEventProjectionRejectsUnattainableMonthlySetPosition(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	raw := `{"id":"bad-set-position","start":{"dateTime":"2027-03-02T17:00:00Z"},"end":{"dateTime":"2027-03-02T18:00:00Z"},"recurrence":["RRULE:FREQ=MONTHLY;BYDAY=MO;BYSETPOS=366;COUNT=1"]}`
+	_, id := calendarFixture(t, st, "bad-set-position", raw)
 	rows := calendarRows(t, st, id)
 	requirements.Len(rows, 1)
 	assertions.NotEmpty(rows[0].RecurrenceError)

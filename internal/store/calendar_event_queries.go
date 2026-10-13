@@ -44,7 +44,8 @@ const calendarEventSelect = `SELECT e.message_id, m.source_id, COALESCE(m.subjec
  e.provider, e.namespace, e.provider_event_id, e.series_provider_id, e.kind,
  e.original_start_at, e.original_start_date, e.ical_uid, e.sequence, e.status,
  e.has_bounds, e.all_day, e.start_at, e.end_at, e.start_date, e.end_date,
- e.event_time_zone, e.calendar_time_zone, e.recurrence_json, e.recurrence_end_at,
+ e.event_time_zone, e.calendar_time_zone, e.recurrence_json, e.recurrence_duration_days,
+ e.recurrence_end_at,
  e.recurrence_error, e.join_url, e.join_key, e.organizer_email, e.calendar_id,
  e.transparency, e.visibility, e.event_type, e.location, e.copy_self_rsvp,
  e.description, e.description_truncated
@@ -125,7 +126,7 @@ func queryCalendarEventRows(ctx context.Context, r rowReader, scope SourceScope,
 			&e.Provider, &e.Namespace, &e.ProviderEventID, &e.SeriesProviderID, &e.Kind,
 			&original, &originalDate, &e.ICalUID, &e.Sequence, &e.Status, &e.HasBounds, &e.AllDay,
 			&start, &end, &e.StartDate, &e.EndDate, &e.EventTimeZone, &e.CalendarTimeZone,
-			&recurrence, &recurrenceEnd, &row.RecurrenceError, &e.JoinURL, &e.JoinKey, &e.OrganizerEmail,
+			&recurrence, &e.RecurrenceDurationDays, &recurrenceEnd, &row.RecurrenceError, &e.JoinURL, &e.JoinKey, &e.OrganizerEmail,
 			&e.CalendarID, &e.Transparency, &e.Visibility, &e.EventType, &e.Location, &e.CopySelfRSVP,
 			&e.Description, &e.DescriptionTruncated)
 		if err != nil {

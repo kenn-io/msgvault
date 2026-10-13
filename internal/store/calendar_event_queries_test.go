@@ -74,7 +74,11 @@ func TestCalendarEventRowsWindowIncludesEarlierRDate(t *testing.T) {
 			set, err := calrecur.ParseSet(*event.Start, event.AllDay, event.StartDate, zone, event.Recurrence)
 			requirements.NoError(err)
 			from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
-			occurrences, err := calrecur.Expand(t.Context(), set, event.End.Sub(*event.Start), 1, nil, from, from.AddDate(0, 0, 1), calrecur.SeriesReadBudget)
+			durationDays := 0
+			if tc.allDay {
+				durationDays = 1
+			}
+			occurrences, err := calrecur.Expand(t.Context(), set, event.End.Sub(*event.Start), durationDays, nil, from, from.AddDate(0, 0, 1), calrecur.SeriesReadBudget)
 			requirements.NoError(err)
 			requirements.Len(occurrences, 1)
 			assertions.Equal(tc.wantStart, occurrences[0].Start.UTC().Format(time.RFC3339))

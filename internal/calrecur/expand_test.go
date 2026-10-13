@@ -260,6 +260,52 @@ func TestExpandRejectsReversedAllDayDatesAcrossSkippedCivilDate(t *testing.T) {
 	assert.Empty(t, got)
 }
 
+func TestExpandTimedCivilDurationAcrossDST(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	zone, err := time.LoadLocation("America/New_York")
+	require.NoError(err)
+	start := time.Date(2027, 3, 13, 9, 0, 0, 0, zone)
+	s, err := ParseSet(start, false, "", zone, []string{"RRULE:FREQ=WEEKLY;COUNT=2"})
+	require.NoError(err)
+	from, to := instant(t, "2027-03-14T12:00:00Z"), instant(t, "2027-03-14T12:30:00Z")
+
+	got, err := Expand(t.Context(), s, 0, 1, nil, from, to, 100)
+	require.NoError(err)
+	require.Len(got, 1)
+	assert.Equal(start, got[0].Start)
+	assert.Equal(instant(t, "2027-03-14T13:00:00Z"), got[0].End.UTC())
+}
+
+func TestIterSkipsNonexistentCivilTimeBeforeApplyingCount(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	zone, err := time.LoadLocation("America/New_York")
+	require.NoError(err)
+	start := time.Date(2027, time.March, 13, 2, 30, 0, 0, zone)
+	s, err := ParseSet(start, false, "", zone, []string{"RRULE:FREQ=DAILY;COUNT=2"})
+	require.NoError(err)
+
+	var identities []string
+	err = Iter(t.Context(), s, instant(t, "2027-03-17T00:00:00Z"), 100, func(i Instance) bool {
+		identities = append(identities, i.Identity.Key())
+		return true
+	})
+	require.NoError(err)
+	assert.Equal([]string{"20270313T073000Z", "20270315T063000Z"}, identities)
+
+	from, to := instant(t, "2027-03-15T06:00:00Z"), instant(t, "2027-03-15T13:00:00Z")
+	occurrences, err := Expand(t.Context(), s, 30*time.Hour, 0, nil, from, to, 100)
+	require.NoError(err)
+	require.Len(occurrences, 1)
+	assert.Equal(instant(t, "2027-03-15T06:30:00Z"), occurrences[0].Start.UTC())
+	assert.Equal(instant(t, "2027-03-16T12:30:00Z"), occurrences[0].End.UTC())
+
+	end, bounded := ConservativeEnd(t.Context(), s, 30*time.Hour, 0, 100)
+	assert.True(bounded)
+	assert.Equal(instant(t, "2027-03-16T12:30:00Z"), end.UTC())
+}
+
 func TestExpandHalfOpenWindow(t *testing.T) {
 	s := parsed(t, "RRULE:FREQ=DAILY;COUNT=2")
 	start := instant(t, "2027-03-02T17:00:00Z")
@@ -347,6 +393,26 @@ func TestExpandExceptionEffectiveType(t *testing.T) {
 	}
 }
 
+func TestExpandStartDateOnlyExceptionInheritsTimedCivilDuration(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	zone, err := time.LoadLocation("America/Los_Angeles")
+	requirements.NoError(err)
+	start := instant(t, "2027-03-13T17:00:00Z")
+	s, err := ParseSet(start, false, "", zone, nil)
+	requirements.NoError(err)
+	exception := Exception{Original: timed(t, "2027-03-13T17:00:00Z"), StartDate: "2027-03-13", Zone: zone}
+	from, to := instant(t, "2027-03-13T08:00:00Z"), instant(t, "2027-03-14T08:00:00Z")
+
+	got, err := Expand(t.Context(), s, 0, 1, []Exception{exception}, from, to, 100)
+	requirements.NoError(err)
+	requirements.Len(got, 1)
+	assertions.True(got[0].AllDay)
+	assertions.Equal("2027-03-13", got[0].StartDate)
+	assertions.Equal("2027-03-14", got[0].EndDate)
+	assertions.Equal(from, got[0].Start.UTC())
+	assertions.Equal(to, got[0].End.UTC())
+}
+
 func TestExpandAllDayExceptionUsesCalendarZone(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
@@ -407,4 +473,34 @@ func FuzzExpandTimedException(f *testing.F) {
 		assertions.Empty(got[0].StartDate)
 		assertions.Empty(got[0].EndDate)
 	})
+}
+
+func TestExpandTimedExceptionRetainsNominalCivilDuration(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	zone, err := time.LoadLocation("America/New_York")
+	requirements.NoError(err)
+	start := time.Date(2027, 3, 13, 9, 0, 0, 0, zone)
+	s, err := ParseSet(start, false, "", zone, nil)
+	requirements.NoError(err)
+	exception := Exception{Original: Identity{Instant: start}, Ref: 42}
+	got, err := Expand(t.Context(), s, 0, 1, []Exception{exception}, start.Add(-time.Hour), start.Add(48*time.Hour), 100)
+	requirements.NoError(err)
+	requirements.Len(got, 1)
+	assertions.Equal(int64(42), got[0].ExceptionRef)
+	assertions.Equal(instant(t, "2027-03-14T13:00:00Z"), got[0].End.UTC())
+}
+
+func TestExpandTimedExceptionPreservesRepeatedHourInstant(t *testing.T) {
+	requirements := require.New(t)
+	zone, err := time.LoadLocation("America/New_York")
+	requirements.NoError(err)
+	start := instant(t, "2027-11-07T06:30:00Z").In(zone)
+	s, err := ParseSet(start, false, "", zone, nil)
+	requirements.NoError(err)
+	exception := Exception{Original: Identity{Instant: start}, Ref: 42}
+	got, err := Expand(t.Context(), s, time.Hour, 0, []Exception{exception}, start.Add(-time.Hour), start.Add(2*time.Hour), 100)
+	requirements.NoError(err)
+	requirements.Len(got, 1)
+	assert.Equal(t, instant(t, "2027-11-07T07:30:00Z"), got[0].End.UTC())
 }
