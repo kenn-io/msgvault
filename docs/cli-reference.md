@@ -1770,7 +1770,7 @@ attachment or search-index write counts as an error. That file stays pending and
 is retried on the next import, and the run still completes and links replies.
 Database failures fail the run. A message whose MIME structure cannot be parsed
 is archived with its raw bytes and the headers that could be recovered, and is
-not retried.
+not retried. A file with no message content is skipped with a warning.
 
 If restored attachments would exceed the merged message limit, the importer
 keeps previously archived attachments and leaves the file pending. Retry with a

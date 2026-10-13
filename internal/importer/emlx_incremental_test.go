@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -139,4 +140,26 @@ func TestImportEmlxLabelFailureFailsRun(t *testing.T) {
 	var status string
 	r.NoError(st.DB().QueryRow(`SELECT status FROM sync_runs ORDER BY id DESC LIMIT 1`).Scan(&status))
 	a.Equal(store.SyncStatusFailed, status)
+}
+
+func TestImportEmlxSkipsFileWithoutContent(t *testing.T) {
+	r, a := require.New(t), assert.New(t)
+	st, tmp := openTestStore(t)
+	root := filepath.Join(tmp, "Inbox.mbox")
+	mkMailboxDir(t, root, map[string][]byte{
+		"2.emlx": email.NewMessage().From("sender@example.test").Body("synthetic valid").Bytes(),
+	})
+	r.NoError(os.WriteFile(filepath.Join(root, "Messages", "1.emlx"), []byte("0\n"), 0600))
+	for range 2 {
+		summary, err := ImportEmlxDir(t.Context(), st, root, EmlxImportOptions{Identifier: "owner@example.test"})
+		r.NoError(err)
+		a.False(summary.HardErrors)
+		a.Zero(summary.Errors, "an empty file has nothing to archive")
+		var status string
+		r.NoError(st.DB().QueryRow(`SELECT status FROM sync_runs ORDER BY id DESC LIMIT 1`).Scan(&status))
+		a.Equal(store.SyncStatusCompleted, status)
+	}
+	var messages int
+	r.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&messages))
+	a.Equal(1, messages)
 }

@@ -416,6 +416,7 @@ type emlxCandidate struct {
 	target       store.EmlxTargetState
 	current      []byte
 	recovered    bool
+	empty        bool
 	legacy       bool
 	acknowledged map[string]string
 	merged       emlx.MergeResult
@@ -436,7 +437,7 @@ func (r *emlxOccurrenceImporter) importCold(
 	if c != nil && emlx.IsPartial(filepath.Base(v.file)) {
 		out.partial = 1
 	}
-	if err != nil || c.target.Deleted {
+	if err != nil || c.empty || c.target.Deleted {
 		if err == nil {
 			out.kind = emlxOutcomeSkipped
 		}
@@ -496,6 +497,13 @@ func (r *emlxOccurrenceImporter) readCandidate(
 	msg, err := r.io.parse(v.file, r.opts.MaxMessageBytes)
 	if err != nil {
 		return nil, emlxRetryable(err)
+	}
+	if len(msg.OriginalRaw) == 0 {
+		// A file with no message content, such as one Apple Mail has not
+		// finished writing, has nothing to archive. A later rewrite changes
+		// its fingerprint, so the next import reads it again.
+		r.log.Warn("skipping EMLX file without message content", "file", v.file)
+		return &emlxCandidate{msg: msg, empty: true}, nil
 	}
 	c := &emlxCandidate{msg: msg, size: info.Size(), targetID: "emlx-" + msg.SourceHash}
 	c.target, err = r.target(ctx, chunk, c.targetID)
