@@ -23,7 +23,7 @@ func TestNativeSourceInventory(t *testing.T) {
 	assert.ElementsMatch([]string{
 		"gmail", "imap", "msmail", "beeper", "slack", "teams", "discord",
 		"matrix", "gcal", "granola", "circleback", "plaud", "notion_meetings",
-		"muesli", "synctech_sms", "carddav", "eml", "maildir", "mbox",
+		"omi", "muesli", "synctech_sms", "carddav", "eml", "maildir", "mbox",
 		"apple-mail", "pst", "google_voice", "apple_messages", "imazing_csv",
 		"facebook_messenger", "whatsapp", "slackdump", "meeting_import", "twilio", "twenty",
 	}, types)
