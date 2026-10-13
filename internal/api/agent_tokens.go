@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/agentgrant"
+	"go.kenn.io/msgvault/internal/identitycontrol"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -35,7 +36,9 @@ type agentTokenIssueRequest struct {
 	ExpiresAt        *time.Time          `json:"expires_at,omitempty"`
 	Label            string              `json:"label"`
 	Permissions      []string            `json:"permissions"`
-	SourceIDs        []int64             `json:"source_ids"`
+	SourceIDs        []int64             `json:"source_ids,omitempty"`
+	PersonIDs        []int64             `json:"person_ids,omitempty"`
+	AddressBookIDs   []int64             `json:"address_book_ids,omitempty"`
 	SenderSelections map[string][]string `json:"sender_selections,omitempty"`
 }
 
@@ -43,24 +46,28 @@ type agentTokenIssueRequest struct {
 // The secret is returned exactly once. Fields are inlined (not embedded) so the
 // schema generator exposes every field, including id, to generated clients.
 type agentTokenIssueResponse struct {
-	ExpiresAt   *time.Time             `json:"expires_at,omitempty"`
-	ID          string                 `json:"id"`
-	Label       string                 `json:"label"`
-	Permissions []string               `json:"permissions"`
-	Sources     []agentTokenSourceView `json:"sources"`
-	CreatedAt   time.Time              `json:"created_at"`
-	Secret      string                 `json:"secret"`
-	DaemonURL   string                 `json:"daemon_url"`
+	Persons      []agentTokenPersonView      `json:"persons"`
+	AddressBooks []agentTokenAddressBookView `json:"address_books"`
+	ExpiresAt    *time.Time                  `json:"expires_at,omitempty"`
+	ID           string                      `json:"id"`
+	Label        string                      `json:"label"`
+	Permissions  []string                    `json:"permissions"`
+	Sources      []agentTokenSourceView      `json:"sources"`
+	CreatedAt    time.Time                   `json:"created_at"`
+	Secret       string                      `json:"secret"`
+	DaemonURL    string                      `json:"daemon_url"`
 }
 
 // agentTokenView is the list/revoke-safe view of a grant: no secret or digest.
 type agentTokenView struct {
-	ExpiresAt   *time.Time             `json:"expires_at,omitempty"`
-	ID          string                 `json:"id"`
-	Label       string                 `json:"label"`
-	Permissions []string               `json:"permissions"`
-	Sources     []agentTokenSourceView `json:"sources"`
-	CreatedAt   time.Time              `json:"created_at"`
+	Persons      []agentTokenPersonView      `json:"persons"`
+	AddressBooks []agentTokenAddressBookView `json:"address_books"`
+	ExpiresAt    *time.Time                  `json:"expires_at,omitempty"`
+	ID           string                      `json:"id"`
+	Label        string                      `json:"label"`
+	Permissions  []string                    `json:"permissions"`
+	Sources      []agentTokenSourceView      `json:"sources"`
+	CreatedAt    time.Time                   `json:"created_at"`
 }
 
 type agentTokenSourceView struct {
@@ -68,6 +75,22 @@ type agentTokenSourceView struct {
 	Type       string   `json:"type"`
 	Identifier string   `json:"identifier"`
 	SenderKeys []string `json:"sender_keys"`
+}
+
+type agentTokenPersonView struct {
+	ID  int64  `json:"id"`
+	UID string `json:"uid"`
+}
+
+type agentTokenAddressBookView struct {
+	AccountID            int64  `json:"account_id"`
+	BookID               int64  `json:"book_id"`
+	CanonicalURL         string `json:"canonical_url"`
+	OwnershipFingerprint string `json:"ownership_fingerprint"`
+}
+
+type agentGrantResourceResolver interface {
+	IdentityGrantSelectionContext(ctx context.Context, personIDs, bookIDs []int64) (*store.IdentityGrantSelection, error)
 }
 
 type agentTokenListResponse struct {
@@ -92,6 +115,7 @@ func grantToView(g agentgrant.Grant) agentTokenView {
 		}
 	}
 	return agentTokenView{
+		Persons: grantPersonViews(g.Persons), AddressBooks: grantAddressBookViews(g.AddressBooks),
 		ID:          g.ID,
 		Label:       g.Label,
 		Permissions: perms,
@@ -196,7 +220,7 @@ func (s *Server) handleIssueAgentToken(w http.ResponseWriter, r *http.Request) {
 
 	var req agentTokenIssueRequest
 	dec := jsontext.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
-	if err := json.UnmarshalDecode(dec, &req); err != nil {
+	if err := json.UnmarshalDecode(dec, &req, json.RejectUnknownMembers(true)); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON request body")
 		return
 	}
@@ -213,8 +237,8 @@ func (s *Server) handleIssueAgentToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request", "permissions must not be empty")
 		return
 	}
-	if len(req.SourceIDs) == 0 {
-		writeError(w, http.StatusBadRequest, "invalid_request", "source_ids must not be empty")
+	if err := validateAgentTokenResourceSelection(req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
 
@@ -231,7 +255,7 @@ func (s *Server) handleIssueAgentToken(w http.ResponseWriter, r *http.Request) {
 
 	// Resolve source IDs to live SourceRefs
 	resolver, ok := s.store.(agentGrantSourceResolver)
-	if !ok {
+	if !ok && len(req.SourceIDs) > 0 {
 		writeError(w, http.StatusInternalServerError, "internal_error", "store does not support source resolution")
 		return
 	}
@@ -264,7 +288,7 @@ func (s *Server) handleIssueAgentToken(w http.ResponseWriter, r *http.Request) {
 	}
 	for sourceID := range req.SenderSelections {
 		id, err := strconv.ParseInt(sourceID, 10, 64)
-		if err != nil || id <= 0 {
+		if err != nil || !identitycontrol.ValidID(id) {
 			writeError(w, http.StatusBadRequest, "invalid_sender", "sender selection source ID is invalid")
 			return
 		}
@@ -296,7 +320,31 @@ func (s *Server) handleIssueAgentToken(w http.ResponseWriter, r *http.Request) {
 		}
 		expires = *req.ExpiresAt
 	}
-	_, secret, g, err := s.agentGrants.Issue(req.Label, perms, sources, expires)
+	scopes := agentgrant.ResourceScopes{Sources: sources}
+	if len(req.PersonIDs)+len(req.AddressBookIDs) > 0 {
+		resourceResolver, ok := s.store.(agentGrantResourceResolver)
+		if !ok {
+			writeError(w, http.StatusNotImplemented, "person_scope_unavailable", "Native contact resource selection is unavailable")
+			return
+		}
+		selection, err := resourceResolver.IdentityGrantSelectionContext(r.Context(), req.PersonIDs, req.AddressBookIDs)
+		if errors.Is(err, store.ErrPersonNotFound) || errors.Is(err, store.ErrCardDAVAddressBookNotFound) || errors.Is(err, identitycontrol.ErrInvalidRequest) {
+			writeError(w, http.StatusBadRequest, "invalid_resource", "Selected contact resource does not exist or is invalid")
+			return
+		}
+		if err != nil {
+			s.logger.Error("resolve agent contact scope", "error", err)
+			writeError(w, http.StatusInternalServerError, "internal_error", "Could not resolve contact resources")
+			return
+		}
+		for _, person := range selection.Persons {
+			scopes.Persons = append(scopes.Persons, agentgrant.PersonRef{ID: person.ID, UID: person.UID})
+		}
+		for _, book := range selection.AddressBooks {
+			scopes.AddressBooks = append(scopes.AddressBooks, agentgrant.AddressBookRef{AccountID: book.AccountID, BookID: book.BookID, CanonicalURL: book.CanonicalURL, OwnershipFingerprint: book.OwnershipFingerprint})
+		}
+	}
+	_, secret, g, err := s.agentGrants.IssueScoped(req.Label, perms, scopes, expires)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
@@ -308,6 +356,7 @@ func (s *Server) handleIssueAgentToken(w http.ResponseWriter, r *http.Request) {
 
 	v := grantToView(g)
 	writeJSON(w, http.StatusCreated, agentTokenIssueResponse{
+		Persons: v.Persons, AddressBooks: v.AddressBooks,
 		ID:          v.ID,
 		Label:       v.Label,
 		Permissions: v.Permissions,

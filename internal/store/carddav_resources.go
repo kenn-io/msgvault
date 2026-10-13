@@ -101,7 +101,7 @@ func (s *Store) ApplyCardDAVSyncPlanContext(
 		return nil, err
 	}
 	result := &CardDAVApplyResult{}
-	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+	err := s.withIdentityTxContext(ctx, nil, func(tx *loggedTx) error {
 		var generation int64
 		if err := tx.QueryRowContext(ctx, `SELECT connection_generation
 			FROM carddav_accounts WHERE id = (SELECT account_id FROM carddav_address_books WHERE id = ?)`+s.dialect.SelectForUpdate(), plan.AddressBookID).Scan(&generation); err != nil {
@@ -129,10 +129,6 @@ func (s *Store) ApplyCardDAVSyncPlanContext(
 			(!book.IsSubscribed && !book.IsLookupSource) {
 			return ErrCardDAVStalePlan
 		}
-		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
-			return err
-		}
-
 		type preparedUpsert struct {
 			input    CardDAVRemoteResource
 			envelope *vcard.ResourceEnvelope

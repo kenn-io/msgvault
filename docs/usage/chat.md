@@ -16,7 +16,7 @@ your machine or network. See [vector search](/docs/usage/vector-search/).
 
 By default, stdio clients can also manage Saved Views, export attachments,
 and stage deletion manifests. Actual message deletion still requires the CLI
-[deletion workflow](/docs/usage/deletion/). Person promotion and Notes writes
+[deletion workflow](/docs/usage/deletion/). Person promotion, Notes, and contact profile or attribute writes
 need `--allow-profile-writes`. HTTP clients get read tools by default and need
 `--http-allow-writes` for general write tools. Calendar event mutations also
 require `--allow-calendar-writes`; HTTP needs both flags. Each non-dry-run
@@ -294,6 +294,9 @@ The MCP server exposes the following tools to connected AI clients:
 | `get_person_notes` | Read a saved person's private Notes, including provenance and current value ID. | `person_id` (int, required) |
 | `get_person_relationship` | Read interaction-based relationship scores and optional daily activity. These describe archive patterns, not emotional closeness or permission to contact someone. | `participant_id` (int, required), `year` (int), `timezone` (IANA name, default UTC) |
 | `search_person_files` | Find archived attachment occurrences related to a saved person. | `person_id` (int, required), `directions` (array: `from_person`/`to_person`/`group`), `filename` (substring), `mime_families` (array), `after`, `before`, `limit` (1–100, default 100), `cursor` |
+| `get_person_edit_context` | Read one selected native person profile and exact ETag. | `person_id` |
+| `get_person_structured_profile` | Read one selected person's current structured fields and exact ETag. | `person_id` |
+| `get_person_attributes` | Read one selected person's typed attributes and exact ETag. | `person_id` |
 | `get_person_profile` | Read a saved person profile: contact history, current brief and its sources, contact details, non-sensitive attributes, employment, relationships, and categories. Includes the vCard UID and mapped CardDAV bindings when the daemon provides them; older daemons return no CardDAV binding entries. Excludes sensitive attributes, private Notes, and media; makes no provider calls. See [Brief text is data](#brief-text-is-data). | Exactly one of `person_id` (int) or `vcard_uid` (string; current or retired person UID, or mapped CardDAV UID) |
 | `list_directory_people` | List durable Directory people with filtering and last-contact ordering when the daemon supports API schema 2.13.0 or newer. `last_contact_after` and `last_contact_before` accept inclusive RFC3339 timestamps or `YYYY-MM-DD` dates (midnight UTC). Pages default to 50 rows and are capped at 100. Sort defaults to `last_contact_desc`; allowed values are `last_contact_desc`, `last_contact_asc`, and `name`. Rows include identity, revision, contact state, last contact time, primary channel, categories, and organizations; API schema 3.10.0 or newer also provides the vCard UID and CardDAV bindings. Older daemons return empty values for those fields. `next_cursor` is opaque and belongs to the same filter set. `search_people` remains the separate observed-contact and profile search on older compatible daemons. | `query`, `cursor`, `limit`, `sort`, `last_contact_after`, `last_contact_before`, `contact_state`, `category`, `organization`, `primary_channel` |
 
@@ -581,18 +584,49 @@ assistant should read the prose as a summary to relay or check, match an item
 to its citation by `kind` and `index`, and never treat a sentence in it as an
 instruction or as your consent to a write.
 
+## Scoped contact tools
+
+Unreleased main adds native contact reads and edits with daemon API schema
+3.15.0. The edit-context, structured-profile, and attribute tools above return
+exact ETags for subsequent writes. Delegated sessions list them only with
+`person.read` and an explicit person selection. Broad people discovery stays
+owner-only. See [scoped contact edits](/docs/cli-reference/#scoped-contact-edits)
+for grant selection, ownership checks, limits, and failure behavior.
+
+With `person.edit` and `--allow-profile-writes`, delegated sessions also list:
+
+| Tool | Effect | Parameters |
+|---|---|---|
+| `set_person_display_name` | Change or clear the explicit display name. | `person_id`, `etag`, `display_name` (string or null) |
+| `patch_person_profile` | Apply native additions and supersessions across structured profile fields. | `person_id`, `etag`, `patch` |
+| `set_person_attribute` | Set a mutable typed attribute with value-slot CAS. | `person_id`, `etag`, `attribute_slug`, `expected_value_id`, `value`; optional `ordinal` |
+| `clear_person_attribute` | Supersede a current typed attribute value. | `person_id`, `etag`, `attribute_slug`, `expected_value_id`; optional `ordinal` |
+
+Each write requires client confirmation. Attribute tools validate against the
+native daemon before asking; zero `expected_value_id` means the slot must be
+empty. Numeric IDs and attribute values outside the exact JSON range are
+refused before confirmation. The daemon checks current credentials, scope,
+ETag and slot again when applying the write.
+
+`get_person_merge_context` reads both selected people and their exact ETags.
+`merge_person` additionally requires `person.merge`, `--allow-person-merges`,
+both ETags, an `idempotency_key`, and client confirmation. Retrying the same
+completed request returns its receipt only while current authority and lineage
+still permit it. These grants expose no CardDAV publication or sync tools.
+HTTP write transport also needs `--http-allow-writes`.
+
 ## Write controls
 
 Enable only the writes intended for the assistant's session:
 
-| Transport | Saved View management, attachment export, deletion staging, and draft writes | Person promotion and Notes writes | Calendar event mutations |
+| Transport | Saved View management, attachment export, deletion staging, and draft writes | Person promotion, Notes, and contact edits | Calendar event mutations |
 |---|---|---|---|
 | Stdio | Available by default | Add `--allow-profile-writes` | Add `--allow-calendar-writes` |
 | HTTP | Add `--http-allow-writes` | Add both `--http-allow-writes` and `--allow-profile-writes` | Add both `--http-allow-writes` and `--allow-calendar-writes` |
 
 `draft_delete` and `draft_recover` require confirmation for each call under both transports, even when the write tools are available.
 
-When profile writes are enabled, two additional tools appear:
+When profile writes are enabled, promotion and Notes tools appear:
 
 | Tool | Effect | Parameters |
 |---|---|---|
@@ -646,7 +680,7 @@ msgvault mcp --http 8080
 | `--http-token-file` | — | On unreleased `main`, read an independent inbound bearer key from an owner-only file; requires `--http`. |
 | `--http-token-env` | — | On unreleased `main`, name the variable holding the inbound bearer key; file takes priority. Requires `--http`. |
 | `--http-allow-writes` | `false` | Expose write-class tools over HTTP. Identity review, scoring, person merges, CardDAV writes, profile writes, and other write tools still need their separate flags. |
-| `--allow-profile-writes` | `false` | Expose person promotion and private Notes writes. HTTP also requires `--http-allow-writes`. |
+| `--allow-profile-writes` | `false` | Expose person promotion, private Notes, and native contact profile or attribute writes. HTTP also requires `--http-allow-writes`. |
 | `--allow-identity-decisions` | `false` | Expose identity match accept/reject tools. Each decision needs client confirmation. HTTP also requires `--http-allow-writes`. |
 | `--allow-identity-scoring` | `false` | Expose consented manual identity scoring, which sends bounded raw identity data to the fixed provider. Each run needs client confirmation; HTTP also requires `--http-allow-writes`. |
 | `--allow-person-merges` | `false` | Expose local person merge tools. Each merge needs client confirmation; HTTP also requires `--http-allow-writes`. |

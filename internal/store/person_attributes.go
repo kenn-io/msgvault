@@ -31,16 +31,18 @@ type PersonAttributeValue struct {
 
 // PersonAttributeValueInput sets one typed person attribute value.
 type PersonAttributeValueInput struct {
-	PersonID        int64
-	DefinitionSlug  string
-	Ordinal         *int64
-	Value           AttributeValue
-	ActiveFrom      *time.Time
-	ActiveUntil     *time.Time
-	Source          Provenance
-	SourceRef       *string
-	Confidence      *float64
-	Actor           *string
+	PersonID       int64
+	DefinitionSlug string
+	Ordinal        *int64
+	Value          AttributeValue
+	ActiveFrom     *time.Time
+	ActiveUntil    *time.Time
+	Source         Provenance
+	SourceRef      *string
+	Confidence     *float64
+	Actor          *string
+	// ExpectedValueID requires the current value ID; zero requires an empty
+	// slot, with an explicit Ordinal for multi-valued definitions.
 	ExpectedValueID *int64
 	DryRun          bool
 }
@@ -102,6 +104,29 @@ func (s *Store) ListPersonAttributeValuesContext(
 	return s.listPersonAttributeValuesContext(ctx, s.db, personID, query)
 }
 
+// ListPersonAttributeValuesForUIDContext binds identity and values to one
+// native snapshot. Restored numeric IDs cannot inherit an old person's reads.
+func (s *Store) ListPersonAttributeValuesForUIDContext(ctx context.Context, personID int64, uid string, query PersonAttributeQuery) (*Person, []PersonAttributeValue, error) {
+	var person *Person
+	var values []PersonAttributeValue
+	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
+		var err error
+		person, err = s.getPersonTx(ctx, tx, personID)
+		if err != nil {
+			return err
+		}
+		if person.VCardUID != uid {
+			return ErrPersonNotFound
+		}
+		values, err = s.listPersonAttributeValuesContext(ctx, tx, personID, query)
+		return err
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return person, values, nil
+}
+
 func (s *Store) listPersonAttributeValuesContext(
 	ctx context.Context, queryer contextRowsQuerier,
 	personID int64, query PersonAttributeQuery,
@@ -121,6 +146,15 @@ func (s *Store) listPersonAttributeValuesContext(
 func (s *Store) SetPersonAttributeValueContext(
 	ctx context.Context, input PersonAttributeValueInput,
 ) (*PersonAttributeWrite, error) {
+	return s.SetPersonAttributeValueAuthorizedContext(ctx, input, nil)
+}
+
+// SetPersonAttributeValueAuthorizedContext retains native validation, value CAS,
+// history and dry runs while authorizing the current person and book ownership
+// inside the write transaction, before fact pins or values change.
+func (s *Store) SetPersonAttributeValueAuthorizedContext(
+	ctx context.Context, input PersonAttributeValueInput, authorize PersonEditAuthorizer,
+) (*PersonAttributeWrite, error) {
 	if err := validateProvenance(input.Source, input.Confidence); err != nil {
 		return nil, err
 	}
@@ -131,6 +165,7 @@ func (s *Store) SetPersonAttributeValueContext(
 		return nil, err
 	}
 	write, err := s.runAttributeWrite(ctx, "set person attribute value", input.DryRun,
+		func(tx *loggedTx) error { return s.lockPersonAttributeWriteTx(ctx, tx) },
 		func(tx *loggedTx, now time.Time) (*attributeValueWrite, error) {
 			activeFrom, err := attributeActiveFrom(input.ActiveFrom, input.ActiveUntil, now)
 			if err != nil {
@@ -146,6 +181,9 @@ func (s *Store) SetPersonAttributeValueContext(
 				return nil, err
 			}
 			if err := s.lockEmploymentPeopleTx(ctx, tx, input.PersonID); err != nil {
+				return nil, err
+			}
+			if err := s.authorizePersonEditTx(ctx, tx, input.PersonID, false, authorize); err != nil {
 				return nil, err
 			}
 			var inferenceProjectionBefore map[int64]personInferenceExportProjection
@@ -233,6 +271,14 @@ func (s *Store) insertPersonAttributeValueTx(
 func (s *Store) SupersedePersonAttributeValueContext(
 	ctx context.Context, input PersonAttributeSupersedeInput,
 ) (*PersonAttributeWrite, error) {
+	return s.SupersedePersonAttributeValueAuthorizedContext(ctx, input, nil)
+}
+
+// SupersedePersonAttributeValueAuthorizedContext authorizes the current native
+// person and book scope before closing a value or changing its fact pin.
+func (s *Store) SupersedePersonAttributeValueAuthorizedContext(
+	ctx context.Context, input PersonAttributeSupersedeInput, authorize PersonEditAuthorizer,
+) (*PersonAttributeWrite, error) {
 	if err := validateAttributeOrdinal(input.Ordinal); err != nil {
 		return nil, err
 	}
@@ -241,6 +287,7 @@ func (s *Store) SupersedePersonAttributeValueContext(
 		at = input.At.UTC()
 	}
 	write, err := s.runAttributeWrite(ctx, "supersede person attribute value", input.DryRun,
+		func(tx *loggedTx) error { return s.lockPersonAttributeWriteTx(ctx, tx) },
 		func(tx *loggedTx, now time.Time) (*attributeValueWrite, error) {
 			if err := s.lockPersonFactAttributeTx(
 				ctx, tx, input.PersonID, input.DefinitionSlug); err != nil {
@@ -249,6 +296,9 @@ func (s *Store) SupersedePersonAttributeValueContext(
 			definition, err := s.getAttributeDefinitionBySlugTx(
 				ctx, tx, AttributeObjectPerson, input.DefinitionSlug)
 			if err != nil {
+				return nil, err
+			}
+			if err := s.authorizePersonEditTx(ctx, tx, input.PersonID, false, authorize); err != nil {
 				return nil, err
 			}
 			closed, err := s.supersedeAttributeValueTx(ctx, tx, personAttributeOwner, *definition,

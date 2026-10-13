@@ -710,6 +710,9 @@ func (s *Store) putCardDAVPublicationEnvelopeTx(ctx context.Context, tx *loggedT
 }
 
 func (s *Store) lockCardDAVPublicationTargetTx(ctx context.Context, tx *loggedTx, bookID int64) error {
+	if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+		return err
+	}
 	account, err := getCardDAVAccountForBookFrom(ctx, tx.Tx, s.Rebind, bookID)
 	if err != nil {
 		return err

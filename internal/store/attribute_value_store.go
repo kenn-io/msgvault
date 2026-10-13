@@ -146,11 +146,12 @@ func attributeActiveFrom(activeFrom, activeUntil *time.Time, now time.Time) (tim
 // attempt reads a fresh clock, and a dry run rolls back after the full write.
 func (s *Store) runAttributeWrite(
 	ctx context.Context, operation string, dryRun bool,
+	preFence func(*loggedTx) error,
 	write func(tx *loggedTx, now time.Time) (*attributeValueWrite, error),
 ) (*attributeValueWrite, error) {
 	return retryContendedWrite(ctx, s, operation, func() (*attributeValueWrite, error) {
 		var result *attributeValueWrite
-		err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		err := s.withTxLockedContext(ctx, nil, preFence, func(tx *loggedTx) error {
 			var err error
 			result, err = write(tx, time.Now().UTC())
 			if err != nil {
@@ -220,6 +221,7 @@ func (s *Store) listAttributeValuesContext(
 
 // setAttributeValueTx supersedes the current value in the slot and inserts a
 // replacement. The caller has loaded the definition and taken its own locks.
+// A zero expected value ID requires an empty, explicitly selected slot.
 func (s *Store) setAttributeValueTx(
 	ctx context.Context, tx *loggedTx, owner attributeOwner, definition AttributeDefinition,
 	input attributeValueInput, activeFrom, transactionTime time.Time,
@@ -237,6 +239,11 @@ func (s *Store) setAttributeValueTx(
 		return nil, fmt.Errorf(
 			"%w: ordinal %d is not allowed on %s, which declares cardinality single",
 			ErrAttributeValueInvalid, *input.Ordinal, definition.Slug)
+	}
+	if input.ExpectedValueID != nil && *input.ExpectedValueID == 0 &&
+		definition.Cardinality == AttributeCardinalityMulti && input.Ordinal == nil {
+		return nil, fmt.Errorf("%w: an absent-value precondition requires an explicit ordinal for %s",
+			ErrAttributeValueInvalid, definition.Slug)
 	}
 	if input.Value.Type == AttributeValueRecordReference {
 		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
@@ -267,8 +274,11 @@ func (s *Store) setAttributeValueTx(
 	if err != nil {
 		return nil, err
 	}
-	if input.ExpectedValueID != nil && (!hasCurrent || current.ID != *input.ExpectedValueID) {
-		return nil, owner.conflict(current)
+	if input.ExpectedValueID != nil {
+		expected := *input.ExpectedValueID
+		if expected == 0 && hasCurrent || expected != 0 && (!hasCurrent || current.ID != expected) {
+			return nil, owner.conflict(current)
+		}
 	}
 	write := &attributeValueWrite{}
 	if hasCurrent {

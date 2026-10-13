@@ -91,6 +91,12 @@ func (s *Store) ApplyPersonProfilePatchContext(
 	personID, expectedRevision int64,
 	patch PersonProfilePatch,
 ) (*PersonProfile, error) {
+	return s.ApplyPersonProfilePatchAuthorizedContext(ctx, personID, expectedRevision, patch, nil)
+}
+
+// ApplyPersonProfilePatchAuthorizedContext retains native CAS and provenance
+// while checking the current affected resource scope before the first write.
+func (s *Store) ApplyPersonProfilePatchAuthorizedContext(ctx context.Context, personID, expectedRevision int64, patch PersonProfilePatch, authorize PersonEditAuthorizer) (*PersonProfile, error) {
 	operations := countPersonProfilePatchOperations(patch)
 	if operations == 0 {
 		return nil, ErrPersonProfilePatchEmpty
@@ -99,8 +105,8 @@ func (s *Store) ApplyPersonProfilePatchContext(
 		return nil, ErrPersonProfilePatchTooLarge
 	}
 	var profile *PersonProfile
-	err := s.withTxContext(ctx, func(tx *loggedTx) error {
-		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+	err := s.withIdentityTxContext(ctx, nil, func(tx *loggedTx) error {
+		if err := s.authorizePersonEditTx(ctx, tx, personID, false, authorize); err != nil {
 			return err
 		}
 		var updatedID int64

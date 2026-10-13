@@ -167,7 +167,7 @@ func (s *Server) registerPersonProfileValueRoutes(api huma.API) {
 	get.Responses = jsonResponsesFor[StructuredPersonProfile](api)
 	addPersonETagHeader(get.Responses[httpStatusKey(http.StatusOK)])
 	addErrorResponses(api, get.Responses, http.StatusBadRequest, http.StatusNotFound,
-		http.StatusServiceUnavailable)
+		http.StatusForbidden, http.StatusServiceUnavailable)
 	registerRawHumaRoute(api, get, s.handleGetPersonStructuredProfile)
 
 	patch := rawAPIV1Operation(
@@ -183,7 +183,7 @@ func (s *Server) registerPersonProfileValueRoutes(api huma.API) {
 	addPersonETagHeader(patch.Responses[httpStatusKey(http.StatusOK)])
 	addErrorResponses(api, patch.Responses, http.StatusBadRequest, http.StatusConflict,
 		http.StatusNotFound, http.StatusPreconditionRequired, http.StatusRequestEntityTooLarge,
-		http.StatusServiceUnavailable)
+		http.StatusForbidden, http.StatusNotImplemented, http.StatusServiceUnavailable)
 	registerRawHumaRoute(api, patch, s.handlePatchPersonStructuredProfile)
 
 	history := rawAPIV1Operation(
@@ -225,9 +225,15 @@ func (s *Server) handleGetPersonStructuredProfile(w http.ResponseWriter, r *http
 	if !ok {
 		return
 	}
+	if !s.admitPersonTarget(w, r, id, false) {
+		return
+	}
 	profile, err := profiles.GetPersonProfileContext(r.Context(), id)
 	if err != nil {
 		s.writePersonProfileValueError(w, err)
+		return
+	}
+	if !s.admitPersonRead(w, r, &profile.Person) {
 		return
 	}
 	writePersonStructuredProfile(w, http.StatusOK, profile)
@@ -242,6 +248,9 @@ func (s *Server) handlePatchPersonStructuredProfile(w http.ResponseWriter, r *ht
 	if !ok {
 		return
 	}
+	if !s.admitPersonTarget(w, r, id, true) {
+		return
+	}
 	revision, ok := personIfMatch(w, r, id)
 	if !ok {
 		return
@@ -250,9 +259,22 @@ func (s *Server) handlePatchPersonStructuredProfile(w http.ResponseWriter, r *ht
 	if !ok {
 		return
 	}
-	profile, err := profiles.ApplyPersonProfilePatchContext(
-		r.Context(), id, revision, patch,
-	)
+	var profile *store.PersonProfile
+	var err error
+	if s.requestAuthentication(r).Mode == AuthModeDelegated {
+		backend, authorize, ok := s.scopedPersonEditAdmission(w, r, id, true)
+		if !ok {
+			return
+		}
+		release, ok := s.beginScopedPersonEdit(w, r)
+		if !ok {
+			return
+		}
+		defer release()
+		profile, err = backend.ApplyPersonProfilePatchAuthorizedContext(r.Context(), id, revision, patch, authorize)
+	} else {
+		profile, err = profiles.ApplyPersonProfilePatchContext(r.Context(), id, revision, patch)
+	}
 	if err != nil {
 		s.writePersonProfileValueError(w, err)
 		return
@@ -347,6 +369,8 @@ func (s *Server) writePersonProfileValueError(w http.ResponseWriter, err error) 
 		return
 	}
 	switch {
+	case errors.Is(err, errPersonScopeDenied), errors.Is(err, store.ErrIdentityOperationTooLarge):
+		s.writePersonError(w, err)
 	case errors.Is(err, store.ErrPersonNotFound):
 		writeError(w, http.StatusNotFound, "person_profile_not_found", "Person profile not found")
 	case errors.Is(err, store.ErrPersonRevisionConflict):

@@ -15,12 +15,14 @@ import (
 )
 
 var (
-	agentTokenExpires     string
-	agentTokenLabel       string
-	agentTokenPermissions []string
-	agentTokenSourceIDs   string // comma-separated source IDs
-	agentTokenSenders     []string
-	agentTokenJSON        bool
+	agentTokenExpires        string
+	agentTokenLabel          string
+	agentTokenPermissions    []string
+	agentTokenPersonIDs      string
+	agentTokenAddressBookIDs string
+	agentTokenSourceIDs      string // comma-separated source IDs
+	agentTokenSenders        []string
+	agentTokenJSON           bool
 )
 
 var agentTokenCmd = &cobra.Command{
@@ -30,7 +32,7 @@ var agentTokenCmd = &cobra.Command{
 		"Agent tokens allow delegated callers (e.g. AI agents) to perform a\n" +
 		"limited set of operations on behalf of the archive owner without\n" +
 		"exposing the full owner API key. Each token declares the permissions\n" +
-		"and source IDs it may access. A grant is valid until revoked or until\n" +
+		"and explicit source, person and address-book IDs it may access. A grant is valid until revoked or until\n" +
 		"its optional expiry, or until the daemon restarts.\n\n" +
 		"Requires agent_access = true and api_key to be set in config.toml.",
 }
@@ -47,6 +49,17 @@ var agentTokenIssueCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		personIDs, err := parseAgentTokenResourceIDs(agentTokenPersonIDs, "person")
+		if err != nil {
+			return err
+		}
+		bookIDs, err := parseAgentTokenResourceIDs(agentTokenAddressBookIDs, "address book")
+		if err != nil {
+			return err
+		}
+		if len(sourceIDs)+len(personIDs)+len(bookIDs) < 1 || len(sourceIDs)+len(personIDs)+len(bookIDs) > 100 {
+			return errors.New("select between 1 and 100 explicit sources, people or address books")
+		}
 		senderSelections, err := parseAgentTokenSenders(agentTokenSenders)
 		if err != nil {
 			return err
@@ -59,7 +72,7 @@ var agentTokenIssueCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		result, err := client.IssueAgentToken(cmd.Context(), agentTokenLabel, agentTokenPermissions, sourceIDs, senderSelections, expires)
+		result, err := client.IssueScopedAgentToken(cmd.Context(), agentTokenLabel, agentTokenPermissions, sourceIDs, personIDs, bookIDs, senderSelections, expires)
 		if err != nil {
 			return err
 		}
@@ -115,16 +128,22 @@ var agentTokenRevokeCmd = &cobra.Command{
 
 // parseAgentTokenSourceIDs parses the comma-separated source IDs flag.
 func parseAgentTokenSourceIDs(raw string) ([]int64, error) {
+	return parseAgentTokenResourceIDs(raw, "source")
+}
+
+func parseAgentTokenResourceIDs(raw, kind string) ([]int64, error) {
 	var ids []int64
+	seen := map[int64]bool{}
 	for part := range strings.SplitSeq(raw, ",") {
 		part = strings.TrimSpace(part)
 		if part == "" {
 			continue
 		}
 		id, err := strconv.ParseInt(part, 10, 64)
-		if err != nil {
-			return nil, fmt.Errorf("invalid source ID %q: %w", part, err)
+		if err != nil || id <= 0 || id > 9007199254740991 || seen[id] {
+			return nil, fmt.Errorf("invalid or duplicate %s ID %q; use exact positive JSON integers", kind, part)
 		}
+		seen[id] = true
 		ids = append(ids, id)
 	}
 	return ids, nil
@@ -161,6 +180,20 @@ func printAgentTokenIssueResult(cmd *cobra.Command, r *generated.AgentTokenIssue
 		}
 		_, _ = fmt.Fprintf(w, "Sources:     %s\n", strings.Join(parts, ", "))
 	}
+	if len(r.Persons) > 0 {
+		parts := make([]string, len(r.Persons))
+		for i, p := range r.Persons {
+			parts[i] = fmt.Sprintf("%d/%s", p.ID, p.UID)
+		}
+		_, _ = fmt.Fprintf(w, "People:      %s\n", strings.Join(parts, ", "))
+	}
+	if len(r.AddressBooks) > 0 {
+		parts := make([]string, len(r.AddressBooks))
+		for i, b := range r.AddressBooks {
+			parts[i] = fmt.Sprintf("%d/%d/%s", b.AccountID, b.BookID, b.CanonicalURL)
+		}
+		_, _ = fmt.Fprintf(w, "Books:       %s\n", strings.Join(parts, ", "))
+	}
 	_, _ = fmt.Fprintf(w, "Created:     %s\n", r.CreatedAt.Format(time.RFC3339))
 	if r.ExpiresAt != nil {
 		_, _ = fmt.Fprintf(w, "Valid until: %s, revocation, or daemon restart\n", r.ExpiresAt.Format(time.RFC3339))
@@ -179,11 +212,17 @@ func printAgentTokenList(cmd *cobra.Command, tokens []generated.AgentTokenView) 
 		return
 	}
 	tw := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "ID\tLABEL\tPERMISSIONS\tSOURCES\tCREATED\tEXPIRES")
+	_, _ = fmt.Fprintln(tw, "ID\tLABEL\tPERMISSIONS\tRESOURCES\tCREATED\tEXPIRES")
 	for _, t := range tokens {
-		sourceParts := make([]string, len(t.Sources))
-		for i, s := range t.Sources {
-			sourceParts[i] = fmt.Sprintf("%d/%s/%s[%s]", s.ID, s.Type, s.Identifier, strings.Join(s.SenderKeys, ","))
+		sourceParts := make([]string, 0, len(t.Sources)+len(t.Persons)+len(t.AddressBooks))
+		for _, s := range t.Sources {
+			sourceParts = append(sourceParts, fmt.Sprintf("%d/%s/%s[%s]", s.ID, s.Type, s.Identifier, strings.Join(s.SenderKeys, ",")))
+		}
+		for _, p := range t.Persons {
+			sourceParts = append(sourceParts, fmt.Sprintf("person:%d/%s", p.ID, p.UID))
+		}
+		for _, b := range t.AddressBooks {
+			sourceParts = append(sourceParts, fmt.Sprintf("book:%d/%d/%s", b.AccountID, b.BookID, b.CanonicalURL))
 		}
 		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n",
 			t.ID,
@@ -205,9 +244,11 @@ func init() {
 	agentTokenIssueCmd.Flags().StringVar(&agentTokenLabel, "label", "",
 		"Human-readable label for the token (required)")
 	agentTokenIssueCmd.Flags().StringSliceVar(&agentTokenPermissions, "permissions", nil,
-		"Comma-separated permissions (search.read, message.read, attachment.read, stats.read, draft.create, draft.edit, draft.delete, calendar.read, calendar.event.read, calendar.write, calendar.invite)")
+		"Comma-separated permissions (search.read, message.read, attachment.read, stats.read, person.read, person.edit, person.merge, carddav.write, draft.create, draft.edit, draft.delete, calendar.read, calendar.event.read, calendar.write, calendar.invite)")
 	agentTokenIssueCmd.Flags().StringVar(&agentTokenSourceIDs, "source-ids", "",
 		"Comma-separated list of source IDs the token may access")
+	agentTokenIssueCmd.Flags().StringVar(&agentTokenPersonIDs, "person-ids", "", "Comma-separated list of explicit person IDs")
+	agentTokenIssueCmd.Flags().StringVar(&agentTokenAddressBookIDs, "address-book-ids", "", "Comma-separated list of explicit address-book IDs")
 	agentTokenIssueCmd.Flags().StringArrayVar(&agentTokenSenders, "sender", nil,
 		"Restrict one source's sender identity (repeat as SOURCE_ID=ADDRESS)")
 	agentTokenIssueCmd.Flags().BoolVar(&agentTokenJSON, flagJSON, false, "Output as JSON")

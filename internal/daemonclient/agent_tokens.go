@@ -26,6 +26,21 @@ func (c *Client) IssueAgentToken(
 	senderSelections map[int64][]string,
 	expires time.Time,
 ) (*generated.AgentTokenIssueResponse, error) {
+	return c.IssueScopedAgentToken(ctx, label, permissions, sourceIDs, nil, nil, senderSelections, expires)
+}
+
+// IssueScopedAgentToken resolves explicit resources on the daemon. It preserves
+// sender selection and expiry support for existing source-only callers.
+func (c *Client) IssueScopedAgentToken(ctx context.Context, label string, permissions []string, sourceIDs, personIDs, addressBookIDs []int64, senderSelections map[int64][]string, expires time.Time) (*generated.AgentTokenIssueResponse, error) {
+	if len(personIDs)+len(addressBookIDs) > 0 {
+		compatible, err := c.SupportsAPISchemaVersion(ctx, ContactScopesMinAPISchemaVersion)
+		if err != nil {
+			return nil, fmt.Errorf("check contact grant capability: %w", err)
+		}
+		if !compatible {
+			return nil, fmt.Errorf("contact grant selection requires daemon API schema %s or newer", ContactScopesMinAPISchemaVersion)
+		}
+	}
 	if senderSelections != nil {
 		compatible, err := c.SupportsAPISchemaVersion(ctx, agentTokenSenderMinAPISchemaVersion)
 		if err != nil {
@@ -55,6 +70,7 @@ func (c *Client) IssueAgentToken(
 		return client.IssueAgentTokenWithResponse(ctx, &generated.IssueAgentTokenRequestOptions{
 			Body: &generated.IssueAgentTokenBody{
 				Label: label, Permissions: permissions, SourceIds: sourceIDs,
+				PersonIds: personIDs, AddressBookIds: addressBookIDs,
 				ExpiresAt:        expiresAt,
 				SenderSelections: encodedSelections,
 			},

@@ -69,7 +69,7 @@ func (s *Store) validatePendingCreateTx(ctx context.Context, tx *loggedTx, pendi
 // ValidateCardDAVPendingCreateRetryContext checks immutable authorization after
 // canonical absence has been observed. The service holds the person operation guard.
 func (s *Store) ValidateCardDAVPendingCreateRetryContext(ctx context.Context, pending CardDAVPublication) error {
-	return s.withTxContext(ctx, func(tx *loggedTx) error {
+	return s.withIdentityTxContext(ctx, nil, func(tx *loggedTx) error {
 		current, err := s.validatePendingCreateTx(ctx, tx, pending)
 		if err != nil {
 			return err
@@ -83,7 +83,7 @@ func (s *Store) ValidateCardDAVPendingCreateRetryContext(ctx context.Context, pe
 
 func (s *Store) ApprovePendingCardDAVCreateContext(ctx context.Context, plan CardDAVPendingCreateApprovalPlan) (*CardDAVPublication, error) {
 	var approved *CardDAVPublication
-	err := s.withTxOptionsContext(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead}, func(tx *loggedTx) error {
+	err := s.withIdentityTxContext(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead}, func(tx *loggedTx) error {
 		identity, err := getCardDAVPublicationFrom(ctx, tx, plan.Fence.PersonID, "")
 		if err != nil {
 			return err
@@ -127,7 +127,7 @@ func (s *Store) ApprovePendingCardDAVCreateContext(ctx context.Context, plan Car
 // CancelAbsentCardDAVCreateContext consumes canonical absence under the same
 // durable fences as replay. Deleting the intent also removes all artifact metadata.
 func (s *Store) CancelAbsentCardDAVCreateContext(ctx context.Context, pending CardDAVPublication) error {
-	return s.withTxContext(ctx, func(tx *loggedTx) error {
+	return s.withIdentityTxContext(ctx, nil, func(tx *loggedTx) error {
 		current, err := s.validatePendingCreateTx(ctx, tx, pending)
 		if err != nil {
 			return err
@@ -289,7 +289,7 @@ func (s *Store) ApproveCardDAVConflictLocalContext(ctx context.Context, plan Car
 	if plan.Fence.ConflictID == nil {
 		return ErrCardDAVInvalidPlan
 	}
-	err := s.withTxOptionsContext(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead}, func(tx *loggedTx) error {
+	err := s.withIdentityTxContext(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead}, func(tx *loggedTx) error {
 		source, err := s.lockCardDAVConflictReviewTx(ctx, tx, *plan.Fence.ConflictID)
 		if err != nil {
 			return err
