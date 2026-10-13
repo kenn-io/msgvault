@@ -6,7 +6,7 @@ tool github.com/doordash-oss/oapi-codegen-dd/v3/cmd/oapi-codegen
 
 require (
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
-	github.com/buger/jsonparser v1.1.1 // indirect
+	github.com/buger/jsonparser v1.1.2 // indirect
 	github.com/doordash-oss/oapi-codegen-dd/v3 v3.75.5 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.13 // indirect
 	github.com/go-playground/locales v0.14.1 // indirect
