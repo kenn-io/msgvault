@@ -1036,6 +1036,23 @@ func (i ImportJobResponseStatus) Validate() error {
 	}
 }
 
+type InboxProviderIngestionStatus string
+
+const (
+	InboxProviderIngestionStatusPartial InboxProviderIngestionStatus = "partial"
+	Unknown                             InboxProviderIngestionStatus = "unknown"
+)
+
+// Validate checks if the InboxProviderIngestionStatus value is valid
+func (i InboxProviderIngestionStatus) Validate() error {
+	switch i {
+	case InboxProviderIngestionStatusPartial, Unknown:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid InboxProviderIngestionStatus value, got: %v", i))
+	}
+}
+
 type MediaSearchResultOrigin string
 
 const (
@@ -2710,6 +2727,23 @@ func (t TelemetryEventResponseStatus) Validate() error {
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid TelemetryEventResponseStatus value, got: %v", t))
+	}
+}
+
+type ListInboxCandidatesQueryScope string
+
+const (
+	Chat                                 ListInboxCandidatesQueryScope = "chat"
+	ListInboxCandidatesQueryScopeMessage ListInboxCandidatesQueryScope = "message"
+)
+
+// Validate checks if the ListInboxCandidatesQueryScope value is valid
+func (l ListInboxCandidatesQueryScope) Validate() error {
+	switch l {
+	case Chat, ListInboxCandidatesQueryScopeMessage:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid ListInboxCandidatesQueryScope value, got: %v", l))
 	}
 }
 

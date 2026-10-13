@@ -525,6 +525,82 @@ type ListPersonMatchJudgmentsQuery struct {
 	BeforeID *int64 `json:"before_id,omitempty"`
 }
 
+type ListInboxCandidatesQuery struct {
+	// SourceID Exact archive source ID
+	SourceID int64 `json:"source_id" validate:"gte=1"`
+
+	// SourceType Exact provider type
+	SourceType string `json:"source_type" validate:"required"`
+
+	// SourceIdentifier Exact source identifier
+	SourceIdentifier string `json:"source_identifier" validate:"required"`
+
+	// AccountID Exact provider account
+	AccountID string `json:"account_id" validate:"required"`
+
+	// Scope Native target scope
+	Scope ListInboxCandidatesQueryScope `json:"scope" validate:"required"`
+
+	// Limit Maximum candidates (default 25, range 1–100)
+	Limit *int64 `json:"limit,omitempty" validate:"omitempty,gte=1,lte=100"`
+
+	// Cursor Opaque source/scope/archive revision pagination cursor
+	Cursor *string `json:"cursor,omitempty" validate:"omitempty,max=16384"`
+}
+
+func (l ListInboxCandidatesQuery) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(l.SourceID, "gte=1"); err != nil {
+		errors = errors.Append("SourceID", err)
+	}
+	if err := typesValidator.Var(l.SourceType, "required"); err != nil {
+		errors = errors.Append("SourceType", err)
+	}
+	if err := typesValidator.Var(l.SourceIdentifier, "required"); err != nil {
+		errors = errors.Append("SourceIdentifier", err)
+	}
+	if err := typesValidator.Var(l.AccountID, "required"); err != nil {
+		errors = errors.Append("AccountID", err)
+	}
+	if v, ok := any(l.Scope).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Scope", err)
+		}
+	}
+	if l.Limit != nil {
+		if err := typesValidator.Var(l.Limit, "omitempty,gte=1,lte=100"); err != nil {
+			errors = errors.Append("Limit", err)
+		}
+	}
+	if l.Cursor != nil {
+		if err := typesValidator.Var(l.Cursor, "omitempty,max=16384"); err != nil {
+			errors = errors.Append("Cursor", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type GetInboxTriageMappingsQuery struct {
+	// SourceID Exact archive source ID
+	SourceID int64 `json:"source_id"`
+
+	// SourceType Exact provider type
+	SourceType string `json:"source_type" validate:"required"`
+
+	// SourceIdentifier Exact source identifier
+	SourceIdentifier string `json:"source_identifier" validate:"required"`
+
+	// AccountID Exact provider account
+	AccountID string `json:"account_id" validate:"required"`
+}
+
+func (g GetInboxTriageMappingsQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+}
+
 type FindKataIssuesQuery struct {
 	// MessageID Message the issues cite
 	MessageID int64 `json:"message_id"`
@@ -748,6 +824,11 @@ type GetMessageInlinePartQuery struct {
 
 func (g GetMessageInlinePartQuery) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+}
+
+type GetMessageTagsQuery struct {
+	// Mailbox Exact IMAP mailbox; defaults to the current original copy or sole current membership
+	Mailbox *string `json:"mailbox,omitempty"`
 }
 
 type ListOperationRunsQuery struct {

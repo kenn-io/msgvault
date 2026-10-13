@@ -19,6 +19,8 @@ appear in full under Inherited Flags.
 | Import local exports | [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [import-imazing-csv](#import-imazing-csv), [text imports](usage/text-messages.md) |
 | Search and browse | [search](#search), [tui](#tui), [show-message](#show-message), [documents](#documents), [embeddings](#embeddings), [multimodal](#multimodal), [eval](#eval) |
 | Maintain people and contacts | [person](#person), [people guide](usage/people.md), [CardDAV](usage/people-carddav.md) |
+| Edit live email tags | [message-tags](#message-tags) |
+| Read archived Inbox candidates/context or control one native Inbox item | [inbox](#inbox) |
 | Organize accounts | [identity](#identity), [collection](#collection), [update-account](#update-account) |
 | Read meeting evidence | [meetings](#meetings), [meeting workflow](usage/meetings.md) |
 | Export | [export-messages](#export-messages), [export-eml](#export-eml), [export-attachments](#export-attachments), [create-subset](#create-subset) |
@@ -276,6 +278,213 @@ Credentials are stored in `tokens/imap_<hash>.json` with restricted file permiss
 After adding an account, sync it with `msgvault sync-full`. IMAP accounts use the same `sync` and `sync-full` commands as Gmail. See [Setup Guide](/docs/setup/#add-an-imap-account) for a walkthrough.
 
 ---
+
+## inbox
+
+Read archived Inbox metadata and text, or preview and control one exact Gmail,
+IMAP, or Microsoft Graph mail item through the selected daemon. Beeper chat
+targets support capability and state observations only. Unreleased.
+Archived reads require API schema 3.17.0 and a compatible registered read
+contract; native control requires API schema 3.16.0 and its registered control
+contract. The daemon verifies exact identity and current authority on every call.
+The CLI also checks the daemon's live Inbox route and admitted operation before
+sending a control request. An unavailable or incompatible descriptor fails closed.
+
+```bash
+msgvault inbox candidates --source-id 1 --source-type gmail \
+  --source-identifier reader@example.test --account-id reader@example.test \
+  --scope message --limit 25
+msgvault inbox context --request context.json
+```
+
+Candidate pages contain metadata, exact targets, and an optional `next_cursor`.
+Use `--cursor` with the same source and scope to continue. `--limit` accepts
+1–100 (default 25); cursors are at most 16384 bytes. Changed archive evidence
+requires a fresh listing. Missing provider evidence is reported as unavailable.
+
+For context, put a candidate's `target` in `context.json` as
+`{"target": {...}, "max_bytes": 16384}`. A chat target also needs the exact
+`message_id` from its candidate's `context_message_id`. Context returns bounded
+archived text, with separate `truncated` and `unavailable` markers. Its byte
+limit defaults to 16384 and cannot exceed 65536. Candidates require `inbox.read`;
+context also requires `inbox.content.read`. These commands make no provider
+calls and do not change read state. The [API reference](api-server.md#archived-inbox-candidates-and-context)
+owns exact identity, bounds, and error behavior.
+
+### inbox triage
+
+Preview a bounded tag-only proposal, review the saved JSON, then apply it:
+
+```bash
+msgvault inbox triage preview --request triage.json > proposal.json
+msgvault inbox triage apply --request proposal.json --apply > receipts.json
+```
+
+The preview request contains one exact `source` and 1–100 `items`. Each item
+contains a candidate `target`, `categories`, and `evidence_message_ids` belonging
+to that archived message. Empty categories classify as `uncertain`. The daemon
+uses the owner's existing Gmail user-label mappings. Optional `idempotency_key` values
+must be unique and at most 128 UTF-8 bytes; omitted keys are generated in the
+proposal. Both `inbox.read` and `inbox.tag` must cover the source.
+
+Apply requires the complete proposal and `--apply`. Preserve its signed token,
+revisions, evidence, expected/projected states, and item keys. The daemon checks
+current authority and state before each write. It adds mapped tags while
+preserving Inbox, read state, and unrelated tags. Unknown or conflicting
+classification retains Inbox.
+
+Apply prints results in proposal order, including available receipts when an
+error stops the batch. Keep that output even when the command exits with an
+error. Unknown outcomes require receipt inspection or reconciliation. Reusing
+the same proposal recovers authorized receipts without retrying completed or
+uncertain writes, including after expiry. Unexecuted items may need a new
+preview after the archive changes. See [inbox control](api-server.md#native-gmail-inbox-control)
+for the whole-proposal checks and provider limits.
+
+Both commands accept `--request -` for standard input and limit request files to
+1 MiB. They use current daemon discovery and do not follow redirects or retry
+triage POSTs.
+
+```bash
+msgvault inbox get-state --request target.json
+msgvault inbox archive --request target.json > preview.json
+msgvault inbox archive --request execute.json --apply
+msgvault inbox receipt-get --request receipt.json
+msgvault inbox reconcile --request receipt.json
+```
+
+Control and context subcommands take `--request <file>` or `--request -` for standard input.
+The limit is 1 MiB. Mutation commands preview by default; `--apply` executes
+only with `expected`, a signed `preview_token`, and an `idempotency_key` already
+in the request. The subcommand selects `operation`; a different operation in
+the JSON is rejected.
+
+For Gmail, an owner obtains the exact `target` from the native tag GET route and places it
+in `target.json` as `{"target": {...}}`. Delegates use an owner-supplied target
+and an Inbox grant. IMAP requires an owner-supplied exact recorded mailbox copy;
+see [IMAP control](api-server.md#native-imap-inbox-control) for its binding fields.
+For Microsoft Graph, use an exact `msmail` target and obtain current
+`Mail.ReadWrite` permission with `add-o365 --graph --mail-write` before previewing
+or executing category changes. Microsoft supports `get-capabilities`,
+`get-state`, `tags`, `receipt-get`, and `reconcile`; other control operations are
+unsupported. Its first sync after upgrade refreshes native metadata for existing
+messages without re-downloading unchanged bodies.
+Keep the target unchanged and prepare execution from the
+preview with a caller-chosen key:
+
+```bash
+jq -n --slurpfile request target.json --slurpfile preview preview.json \
+  '{target: $request[0].target, expected: $preview[0].before,
+    preview_token: $preview[0].preview_token,
+    idempotency_key: "archive-example-1"}' > execute.json
+msgvault inbox archive --request execute.json --apply
+```
+
+Reuse that key to recover a lost acknowledgement. An identical retry returns
+the original receipt and does not write again. If stdout breaks after execution,
+the command reports an unknown outcome; keep the original request and key.
+For receipt reads or reconciliation, `receipt.json` contains
+`{"receipt_id":"<returned receipt ID>"}`. Reconciliation reads the provider and
+updates local evidence without repeating the mutation.
+
+| Subcommand | Purpose |
+|---|---|
+| `get-capabilities`, `list-folders` | Observe source support and native location catalog |
+| `get-state` | Observe exact native item state |
+| `archive`, `unarchive` | Change Gmail `INBOX` or move an exact IMAP copy to the archive mailbox or `INBOX` |
+| `set-read`, `set-unread` | Change native read state while preserving local archive read state |
+| `tags` | Add/remove Gmail label IDs, IMAP keywords, or Microsoft category names |
+| `move` | Change exact Gmail labels or move an exact IMAP mailbox copy |
+| `create-folder` | Create a Gmail user label or IMAP mailbox |
+| `receipt-get`, `reconcile` | Read or independently reconcile retained evidence |
+
+[The API reference](api-server.md#native-gmail-inbox-control), including
+[IMAP control](api-server.md#native-imap-inbox-control), owns exact request
+fields, permissions, native limitations, receipt states, and error behavior.
+These commands never send a message. Batch actions are not provided.
+Existing `message-tags` continues to support IMAP keywords and
+Microsoft categories.
+
+## message-tags
+
+Read or update native tags on one email through the selected daemon. Requires
+API schema 3.16.0 or newer. The positional ID is msgvault's positive archived
+message ID.
+
+```bash
+msgvault message-tags 42 --json
+msgvault message-tags 42 --add Label_123 --remove Label_456 --dry-run --json
+msgvault message-tags 42 --add Next --remove Old --mailbox INBOX
+msgvault message-tags 73 --add Next --remove Old --json
+```
+
+The same command selects the backend from the archived message's account:
+
+| Account connection | Editable tags |
+|---|---|
+| Gmail API | Existing user label IDs |
+| IMAP, including Microsoft and Fastmail accounts | Persistent custom keywords advertised by the server |
+| Microsoft Graph (`msmail`) | Outlook category names |
+
+Gmail uses existing user label IDs from `available_tags`, rather than label
+names or local label IDs. System labels cannot be edited through this command.
+On API schema 3.16.0, Gmail edits automatically use a signed Inbox preview,
+execute once, and print an Inbox receipt. JSON results retain `receipt_id`,
+`receipt_status`, and `idempotency_key`; inspect that evidence before retrying
+an uncertain edit.
+If output fails after an edit, the terminal error names the receipt ID when the
+daemon returned one, so it can be retrieved through `inbox receipt-get`.
+Reads and previews use the existing read grant. Edits need `gmail.modify` or
+`mail.google.com`; a saved read-only grant is rejected without changing its token. Reauthorize it with
+`msgvault add-account <account> --force` when you want write access.
+
+IMAP uses custom ASCII keyword atoms, up to 255 bytes, compared without case.
+The mailbox must advertise persistent support for the keyword, or `\*` to
+allow new keywords. An omitted `PERMANENTFLAGS` allows all flags; an explicit
+empty list allows none. System flags such as `\Seen` and `\Flagged` are preserved.
+The edit targets a recorded mailbox UID and UIDVALIDITY. With no `--mailbox`,
+it uses the current original copy, or the sole current membership if the
+original is absent. Multiple surviving copies require `--mailbox`. Sync first
+if no current membership remains. See [IMAP keywords](usage/imap.md#edit-keyword-tags).
+
+Microsoft Graph uses category names up to 255 Unicode characters, excludes
+commas, and compares names without case while preserving provider spelling.
+Reads and previews use the existing read grant. Writes need `Mail.ReadWrite`; grant it with
+`msgvault add-o365 <account> --graph --mail-write`. The daemon never starts a
+sign-in flow or replaces a read-only token during a tag edit. An edit preserves
+other categories and checks the provider version before replacing the category
+collection. If another client changed the message, read its tags and retry.
+The archive shows categories as `Category: <name>` separately from mail folders,
+and later syncs retain and refresh them. Its available category catalog contains
+only names on this message. A Graph 429 returns `provider_write_failed`; retry
+after the limit clears. Transport failures and 5xx return `remote_unknown`;
+read the current tags before retrying.
+
+Fastmail messages currently use IMAP, even when a JMAP token is configured for
+address discovery. JMAP and IMAP share custom keywords, so the existing IMAP
+connection edits those shared tags without another credential. Outlook
+categories require a Microsoft Graph account; an IMAP connection can edit only
+the keywords its server supports. File imports such as MBOX, PST, and EML have
+no connected provider to update and return `unsupported_provider`.
+
+| Flag | Contract |
+|---|---|
+| `--add` | Add one native tag; repeat for multiple tags, at most 100 |
+| `--remove` | Remove one native tag; repeat for multiple tags, at most 100 |
+| `--mailbox` | Select an exact recorded IMAP mailbox copy |
+| `--dry-run` | Preview an edit without a provider write or local update |
+| `--json` | Return the result, or an error with the last observed result |
+
+An edit needs at least one add or remove tag. A tag cannot occur in both lists.
+With neither flag, the command reads the current tags and available tag IDs.
+Unrelated tags are preserved. A satisfied retry makes no provider write.
+
+`verified: true` means provider readback satisfied the requested changes at
+that time. Another client can edit the message afterward. Preview does not
+prove write access: the provider can still reject a later write. If an edit
+partly applies or readback fails, inspect current tags before retrying. If
+`remote_accepted_local_failed` is returned, the provider result was verified
+but local persistence failed; sync the account.
 
 ## draft-reply
 
@@ -642,6 +851,7 @@ Requires a `[microsoft]` section with `client_id` in `config.toml`. See the [OAu
 | `--no-default-identity` | `false` | Do not auto-confirm the email address as this account's "me" identity. Saved across syncs and re-authorization; only explicit `--no-default-identity=false` clears the choice. See [saved identity choice](#saved-default-identity-choice) |
 | `--graph` | `false` | Sync through the Microsoft Graph mail API instead of IMAP. Creates an `msmail` account. Needs the `Mail.Read` permission. `delete-staged` asks for `Mail.ReadWrite` on first use |
 | `--sign-in` | | Microsoft sign-in name and browser login hint when it differs from the mailbox address. IMAP only; mutually exclusive with `--graph` |
+| `--mail-write` | `false` | With `--graph`, request `Mail.ReadWrite` for category edits and remote deletion |
 
 IMAP checks Microsoft's `email` claim when present, otherwise `preferred_username`. A differing username now requires `--sign-in`, including during re-authorization; msgvault previously accepted it with a warning. The flag permits that username only when `email` is absent. Failed checks preserve existing credentials. Graph mail and Teams also consult your Microsoft profile when token identity fields differ or are absent, accepting your mailbox or an SMTP alias listed there.
 
@@ -784,6 +994,11 @@ the complete mailbox, then consumes changes made while that snapshot was in
 progress. Only a successfully completed snapshot is used to mark missing
 messages as source-deleted; interrupted or partial listings do not reconcile
 absence.
+
+If a Gmail label metadata refresh fails, the sync fails and retains its history
+cursor so the change can be retried. The terminal error and saved failed run
+include a recovery hint: repair Gmail metadata access and retry `msgvault sync`.
+The failed refresh does not replace the archived labels with incomplete data.
 
 Source deletion updates archive metadata rather than deleting local message or
 raw MIME data. Search excludes source-deleted messages by default; use
@@ -3845,7 +4060,7 @@ msgvault mcp [flags]
 | `--http-token-file` | — | On unreleased `main`, read an independent inbound bearer key from an owner-only file; takes priority over `--http-token-env`. Requires `--http`. |
 | `--http-token-env` | — | On unreleased `main`, name the environment variable holding an independent inbound bearer key. Requires `--http`. |
 | `--http-allow-insecure` | `false` | Allow non-loopback HTTP binding without an effective inbound key. A configured key is still enforced; without one, use only behind a trusted network boundary or authenticated reverse proxy. |
-| `--http-allow-writes` | `false` | Expose Saved View management, attachment export, deletion staging, and managed draft writes over StreamableHTTP. Calendar event mutations also require `--allow-calendar-writes`, and Kata issue writes `--allow-kata-writes`. Enable only for trusted, authenticated clients. |
+| `--http-allow-writes` | `false` | Expose native email tag edits, Saved View management, attachment export, deletion staging, and managed draft writes over StreamableHTTP. Calendar event mutations also require `--allow-calendar-writes`, and Kata issue writes `--allow-kata-writes`. Enable only for trusted, authenticated clients. |
 | `--allow-calendar-writes` | `false` | Expose calendar event mutation tools. HTTP also requires `--http-allow-writes`; only enable for sessions where the user explicitly authorizes calendar writes. |
 | `--allow-kata-writes` | `false` | Expose `create_kata_issue` and `link_kata_evidence`; `find_kata_issues` and `get_kata_issue_context` need no flag. HTTP also requires `--http-allow-writes`; archive text is untrusted input, so only enable for sessions where the user explicitly authorizes Kata issue writes. See [Kata issues](usage/kata-issues.md). |
 
@@ -4650,8 +4865,10 @@ Unscoped reads select the grant's live sources. Explicit accounts, collections,
 and source sets must fit entirely inside that grant. Collection membership is
 resolved for every request; adding an ungranted source makes that collection
 unavailable to the grant. CLI search and stats return `400 empty_scope` for an explicitly empty collection. Other supported reads return no matches, and discovery hides empty collections. Source matching
-uses source type and identifier, so removing and re-adding the same source
-preserves authority. A request without the needed permission, or one that
+for archive reads uses source type and identifier, so removing and re-adding
+the same source preserves that read authority. [Inbox control](#inbox) binds
+the selected source ID too; re-adding an account requires a new Inbox grant
+and preview. A request without the needed permission, or one that
 selects accounts outside the grant, returns 403 `permission_denied` and names the
 required permission. A message, thread, or attachment outside the grant returns
 the same 404 as one that does not exist.
@@ -4690,7 +4907,7 @@ msgvault agent-token issue --label <name> \
 | Flag | Description |
 |---|---|
 | `--label <name>` | (required) Human-readable name for the grant |
-| `--permissions <perms>` | Comma-separated permissions: `search.read`, `message.read`, `attachment.read`, `stats.read` (see [scoped archive reads](#scoped-archive-reads)); `calendar.read` for availability, `calendar.event.read` for provider-derived event details in delegated plans and write receipts, `calendar.write` for calendar mutations, and additional `calendar.invite` for guest changes; `draft.create` for `draft-reply`, `draft-compose`, and `draft-get`; `draft.edit` for `draft-get`, `draft-edit`, and `draft-recover`; `draft.delete` for `draft-get`, `draft-delete`, and `draft-recover` (see [managed drafts](#draft-get-draft-edit-draft-delete-and-draft-recover)) |
+| `--permissions <perms>` | Comma-separated permissions: `search.read`, `message.read`, `attachment.read`, `stats.read` (see [scoped archive reads](#scoped-archive-reads)); `calendar.read` for availability, `calendar.event.read` for provider-derived event details in delegated plans and write receipts, `calendar.write` for calendar mutations, and additional `calendar.invite` for guest changes; `inbox.read` plus `inbox.content.read` for [archived Inbox context](api-server.md#archived-inbox-candidates-and-context), or `inbox.tag`, `inbox.archive`, `inbox.read-state`, `inbox.move`, or `inbox.folder-create` for [exact Gmail control](api-server.md#native-gmail-inbox-control); `draft.create` for `draft-reply`, `draft-compose`, and `draft-get`; `draft.edit` for `draft-get`, `draft-edit`, and `draft-recover`; `draft.delete` for `draft-get`, `draft-delete`, and `draft-recover` (see [managed drafts](#draft-get-draft-edit-draft-delete-and-draft-recover)) |
 | `--source-ids <ids>` | Comma-separated source IDs that the permissions apply to |
 | `--expires <expiry>` | Optional future RFC3339 timestamp or positive duration such as `24h`; the CLI clock converts a duration to absolute expiry |
 | `--sender <source-id>=<address>` | Restrict a source to one confirmed sender identity; repeat for multiple choices |

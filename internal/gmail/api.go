@@ -4,8 +4,6 @@ package gmail
 import (
 	"context"
 	"errors"
-
-	"go.kenn.io/msgvault/internal/store"
 )
 
 // AccountReader provides read access to account-level Gmail data.
@@ -147,18 +145,6 @@ type Label struct {
 	LabelListVisibility   string
 }
 
-// SystemRoleForLabelID returns roles Gmail identifies canonically, never by
-// the localized label name returned to users.
-func SystemRoleForLabelID(sourceLabelID string) string {
-	switch sourceLabelID {
-	case "SENT":
-		return store.LabelSystemRoleSent
-	case "DRAFT":
-		return store.LabelSystemRoleDrafts
-	}
-	return ""
-}
-
 // MessageListResponse contains a page of message IDs.
 type MessageListResponse struct {
 	Messages           []MessageID
@@ -204,6 +190,7 @@ var ErrMessageGone = errors.New("message no longer present in the mailbox")
 type MessageLabelsBatchResult struct {
 	ID              string
 	LabelIDs        []string
+	HistoryID       uint64
 	RFC822MessageID string
 	Err             error
 }

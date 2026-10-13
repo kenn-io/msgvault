@@ -19,6 +19,13 @@ const (
 	PermissionMessageRead       Permission = "message.read"
 	PermissionAttachmentRead    Permission = "attachment.read"
 	PermissionStatsRead         Permission = "stats.read"
+	PermissionInboxRead         Permission = "inbox.read"
+	PermissionInboxContentRead  Permission = "inbox.content.read"
+	PermissionInboxTag          Permission = "inbox.tag"
+	PermissionInboxArchive      Permission = "inbox.archive"
+	PermissionInboxReadState    Permission = "inbox.read-state"
+	PermissionInboxMove         Permission = "inbox.move"
+	PermissionInboxFolderCreate Permission = "inbox.folder-create"
 	PermissionDraftCreate       Permission = "draft.create"
 	PermissionDraftEdit         Permission = "draft.edit"
 	PermissionDraftDelete       Permission = "draft.delete"
@@ -33,6 +40,13 @@ var knownPermissions = map[string]Permission{
 	string(PermissionMessageRead):       PermissionMessageRead,
 	string(PermissionAttachmentRead):    PermissionAttachmentRead,
 	string(PermissionStatsRead):         PermissionStatsRead,
+	string(PermissionInboxRead):         PermissionInboxRead,
+	string(PermissionInboxContentRead):  PermissionInboxContentRead,
+	string(PermissionInboxTag):          PermissionInboxTag,
+	string(PermissionInboxArchive):      PermissionInboxArchive,
+	string(PermissionInboxReadState):    PermissionInboxReadState,
+	string(PermissionInboxMove):         PermissionInboxMove,
+	string(PermissionInboxFolderCreate): PermissionInboxFolderCreate,
 	string(PermissionDraftCreate):       PermissionDraftCreate,
 	string(PermissionDraftEdit):         PermissionDraftEdit,
 	string(PermissionDraftDelete):       PermissionDraftDelete,

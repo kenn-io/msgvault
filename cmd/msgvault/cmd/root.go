@@ -35,7 +35,7 @@ or use [remote].url from config.toml (--local forces the local daemon).
 Start here:
   msgvault list-accounts --json    # id, email, type, counts, sync
   msgvault search 'from:alice@example.com newer_than:30d' --json
-  # "id" feeds the commands below
+  # Use id below
   msgvault show-message <id> --json  # body_text, attachments
   msgvault export-eml <id> -o msg.eml  # export-attachments <id> -o DIR
   msgvault export-messages --start 2026-09-01T00:00:00Z --end 2026-10-01T00:00:00Z
@@ -43,7 +43,7 @@ Start here:
   msgvault stats
   msgvault person --help  # contacts
   msgvault daemon status
-  msgvault setup status --json  # features and next steps
+  msgvault setup status --json  # next steps
 
 Output and exit status:
   --json prints JSON on stdout (export-messages prints JSON Lines). Progress and
@@ -264,7 +264,7 @@ func skipsConfigLoad(cmd *cobra.Command) bool {
 // must be run by the owner.
 func agentDelegatedCapable(cmd *cobra.Command) bool {
 	for ancestor := cmd; ancestor != nil; ancestor = ancestor.Parent() {
-		if ancestor.Name() == "calendar" {
+		if ancestor.Name() == "calendar" || ancestor.Name() == "inbox" {
 			return true
 		}
 	}
