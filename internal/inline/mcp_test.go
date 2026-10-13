@@ -534,18 +534,18 @@ func TestMCPResponseByteLimitChecksOverflowAndExactEOF(t *testing.T) {
 			t.Cleanup(srv.Close)
 			client := &http.Client{Transport: &mcpResponseTransport{base: http.DefaultTransport, limit: 8}}
 			resp, err := client.Get(srv.URL)
-			if err == nil {
-				var body []byte
-				body, err = io.ReadAll(resp.Body)
-				requires.NoError(resp.Body.Close(), "the response byte limit must still permit closing the HTTP body")
-				if !tc.invalid {
-					assertions.Equal(tc.body, string(body))
-				}
+			if tc.invalid && !tc.streamed {
+				requires.ErrorIs(err, ErrContract, "declared overflow must fail the request before the response body is read")
+				return
 			}
+			requires.NoError(err)
+			body, err := io.ReadAll(resp.Body)
+			requires.NoError(resp.Body.Close(), "the response byte limit must still permit closing the HTTP body")
 			if tc.invalid {
-				requires.ErrorIs(err, ErrContract, "overflow must produce an error, never silent truncation")
+				requires.ErrorIs(err, ErrContract, "streamed overflow must produce an error, never silent truncation")
 			} else {
 				requires.NoError(err)
+				assertions.Equal(tc.body, string(body))
 			}
 		})
 	}

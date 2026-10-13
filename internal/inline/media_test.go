@@ -57,11 +57,15 @@ func TestMediaDownloadCapsDeclaredAndStreamedBytes(t *testing.T) {
 	for _, declared := range []int64{-1, 100} {
 		t.Run(fmt.Sprintf("declared_%d", declared), func(t *testing.T) {
 			imp := NewImporter(nil, nil)
+			body := strings.NewReader("too long")
 			imp.mediaTransport = mediaRoundTripper(func(request *http.Request) (*http.Response, error) {
-				return &http.Response{StatusCode: http.StatusOK, ContentLength: declared, Body: io.NopCloser(strings.NewReader("too long")), Request: request}, nil
+				return &http.Response{StatusCode: http.StatusOK, ContentLength: declared, Body: io.NopCloser(body), Request: request}, nil
 			})
 			_, err := imp.download(t.Context(), "https://api.inline.chat/file", 3)
 			require.ErrorIs(t, err, errMediaTooLarge)
+			if declared > 0 {
+				assert.Equal(t, body.Size(), int64(body.Len()), "declared overflow must be rejected before consuming the body")
+			}
 		})
 	}
 	imp := NewImporter(nil, nil)

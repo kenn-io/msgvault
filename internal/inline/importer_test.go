@@ -330,13 +330,23 @@ func TestSQLiteBodyWriteFailureHoldsCursorAndRetriesSnapshot(t *testing.T) {
 }
 
 func TestAccountMismatchRejectsBeforeMessageWrites(t *testing.T) {
+	assertions := assert.New(t)
+	requires := require.New(t)
+
 	imp, client, opts := importerFixture(t)
+	client.messages[1] = []Message{syntheticMessage(1, 1, "selected history")}
 	client.account.UserID = 100
 	_, err := imp.Import(t.Context(), opts)
-	require.ErrorContains(t, err, "different account")
+	requires.ErrorContains(err, "different account")
 	var count int
-	require.NoError(t, imp.store.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='inline'`).Scan(&count))
-	assert.Zero(t, count)
+	requires.NoError(imp.store.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='inline'`).Scan(&count))
+	assertions.Zero(count)
+
+	client.account = opts.Account
+	_, err = imp.Import(t.Context(), opts)
+	requires.NoError(err)
+	requires.NoError(imp.store.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='inline'`).Scan(&count))
+	assertions.Equal(1, count, "the same history must be archived once account verification succeeds")
 }
 
 func TestImportRequiresRegisteredSourceWithoutRecreatingAccount(t *testing.T) {
