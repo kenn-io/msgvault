@@ -325,7 +325,6 @@ func TestDaemonMCPVectorReadinessIsCheckedAtRequestTime(t *testing.T) {
 
 	requests := make(chan string, 8)
 	client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
-		requests <- r.URL.Path
 		if r.URL.Path == "/api/v1/media/search/status" {
 			_ = json.NewEncoder(w).Encode(map[string]any{"configured": false})
 			return
@@ -341,10 +340,17 @@ func TestDaemonMCPVectorReadinessIsCheckedAtRequestTime(t *testing.T) {
 			})
 			return
 		}
+		if r.URL.Path == "/api/v1/mcp/capabilities" {
+			_, _ = w.Write([]byte(`{"version":1,"delegated":false,"routes":[],"inbox_operations":[]}`))
+			return
+		}
+		requests <- r.URL.Path
 		http.Error(w, `{"error":"vector_initializing","message":"Vector search is initializing"}`, http.StatusServiceUnavailable)
 	})
 
 	opts := daemonMCPServeOptions(testCtx, client, invocationFromContext(testCtx))
+	require.NotNil(opts.HybridSearcher)
+	assert.Empty(requests, "startup must not perform vector retrieval")
 	_, err := opts.HybridSearcher.SearchHybrid(testCtx, mcpserver.HybridSearchRequest{
 		Query: "term",
 		Mode:  "hybrid",
@@ -352,11 +358,8 @@ func TestDaemonMCPVectorReadinessIsCheckedAtRequestTime(t *testing.T) {
 	var coded interface{ APIErrorCode() string }
 	require.ErrorAs(err, &coded)
 	assert.Equal("vector_initializing", coded.APIErrorCode())
+	require.Len(requests, 1, "vector readiness requires one request-time search")
 	path := <-requests
-	assert.Equal("/api/v1/health", path, "startup reads the daemon schema")
-	path = <-requests
-	assert.Equal("/api/v1/media/search/status", path, "capability detection checks Docbank separately")
-	path = <-requests
 	assert.Equal("/api/v1/search", path, "vector readiness belongs to the request")
 }
 
@@ -366,17 +369,18 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 	})
 	_ = testCtx
 	tests := []struct {
-		name           string
-		schemaVersion  string
-		wantPeople     bool
-		wantDirectory  bool
-		wantSavedViews bool
-		wantMeetings   bool
-		wantAgenda     bool
-		wantArchiveSQL bool
-		wantReview     bool
-		wantScoring    bool
-		wantCardDAV    bool
+		name            string
+		schemaVersion   string
+		wantPeople      bool
+		wantDirectory   bool
+		wantSavedViews  bool
+		wantMeetings    bool
+		wantAgenda      bool
+		wantArchiveSQL  bool
+		wantReview      bool
+		wantScoring     bool
+		wantCardDAV     bool
+		wantMessageTags bool
 	}{
 		{name: "people schema", schemaVersion: "2.10.0", wantPeople: true},
 		{name: "directory predecessor", schemaVersion: "2.12.9", wantPeople: true},
@@ -394,6 +398,8 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 		{name: "person CardDAV schema", schemaVersion: "2.32.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true},
 		{name: "identity review and scoring predecessor", schemaVersion: "2.35.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true},
 		{name: "identity review and scoring schema", schemaVersion: "3.0.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true},
+		{name: "native message tags schema", schemaVersion: "3.15.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantMessageTags: true},
+		{name: "tags predecessor 3.14.0", schemaVersion: "3.14.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true},
 		{name: "older same-major schema", schemaVersion: "2.9.9"},
 		{name: "malformed schema", schemaVersion: "not-a-version"},
 		{name: "missing schema"},
@@ -432,6 +438,7 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 			assert.Equal(tt.wantReview, opts.IdentityReview != nil)
 			assert.Equal(tt.wantCardDAV, opts.PersonCardDAV != nil)
 			assert.Equal(tt.wantScoring, opts.IdentityScoring != nil)
+			assert.Equal(tt.wantMessageTags, opts.MessageTags != nil)
 		})
 	}
 }

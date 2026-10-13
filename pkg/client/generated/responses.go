@@ -1555,6 +1555,58 @@ type GetImportJobErrorResponse = ErrorResponse
 
 type GetImportJobErrorResponseJSON = ErrorResponse
 
+type ListInboxCandidatesResponse = InboxCandidatePage
+
+type ListInboxCandidatesErrorResponse = ErrorResponse
+
+type ListInboxCandidatesErrorResponseJSON = ErrorResponse
+
+type ListInboxCandidatesErrorResponseJSON403 = ErrorResponse
+
+type ListInboxCandidatesErrorResponseJSON409 = ErrorResponse
+
+type ListInboxCandidatesErrorResponseJSON500 = ErrorResponse
+
+type ListInboxCandidatesErrorResponseJSON503 = ErrorResponse
+
+type GetInboxContextResponse = InboxContext
+
+type GetInboxContextErrorResponse = ErrorResponse
+
+type GetInboxContextErrorResponseJSON = ErrorResponse
+
+type GetInboxContextErrorResponseJSON403 = ErrorResponse
+
+type GetInboxContextErrorResponseJSON413 = ErrorResponse
+
+type GetInboxContextErrorResponseJSON415 = ErrorResponse
+
+type GetInboxContextErrorResponseJSON500 = ErrorResponse
+
+type GetInboxContextErrorResponseJSON503 = ErrorResponse
+
+type ControlInboxResponse = InboxResult
+
+type ControlInboxErrorResponse = InboxControlError
+
+type ControlInboxErrorResponseJSON = InboxControlError
+
+type ControlInboxErrorResponseJSON403 = InboxControlError
+
+type ControlInboxErrorResponseJSON409 = InboxControlError
+
+type ControlInboxErrorResponseJSON413 = InboxControlError
+
+type ControlInboxErrorResponseJSON415 = InboxControlError
+
+type ControlInboxErrorResponseJSON500 = InboxControlError
+
+type ControlInboxErrorResponseJSON501 = InboxControlError
+
+type ControlInboxErrorResponseJSON502 = InboxControlError
+
+type ControlInboxErrorResponseJSON503 = InboxControlError
+
 type PrepareKataEvidenceResponse = KataEvidencePrepareResponse
 
 type PrepareKataEvidenceErrorResponse = ErrorResponse
@@ -1640,6 +1692,10 @@ type GetTaskIntegrationStatusErrorResponse = ErrorResponse
 type TestTaskIntegrationResponse = TaskIntegrationStatusResponse
 
 type TestTaskIntegrationErrorResponse = ErrorResponse
+
+type GetMCPCapabilitiesResponse = MCPCapabilities
+
+type GetMCPCapabilitiesErrorResponse = ErrorResponse
 
 type SearchMediaResponse = MediaSearchResponse
 
@@ -1764,6 +1820,42 @@ type GetMessageInlinePartErrorResponseJSON503 = ErrorResponse
 type ListMessageRecordingsResponse = MessageRecordingsResponse
 
 type ListMessageRecordingsErrorResponse = ErrorResponse
+
+type GetMessageTagsResponse = MessageTagResponse
+
+type GetMessageTagsErrorResponse = MessageTagError
+
+type GetMessageTagsErrorResponseJSON = MessageTagError
+
+type GetMessageTagsErrorResponseJSON404 = MessageTagError
+
+type GetMessageTagsErrorResponseJSON409 = MessageTagError
+
+type GetMessageTagsErrorResponseJSON500 = MessageTagError
+
+type GetMessageTagsErrorResponseJSON501 = MessageTagError
+
+type GetMessageTagsErrorResponseJSON502 = MessageTagError
+
+type GetMessageTagsErrorResponseJSON503 = MessageTagError
+
+type UpdateMessageTagsResponse = MessageTagResult
+
+type UpdateMessageTagsErrorResponse = MessageTagError
+
+type UpdateMessageTagsErrorResponseJSON = MessageTagError
+
+type UpdateMessageTagsErrorResponseJSON404 = MessageTagError
+
+type UpdateMessageTagsErrorResponseJSON409 = MessageTagError
+
+type UpdateMessageTagsErrorResponseJSON500 = MessageTagError
+
+type UpdateMessageTagsErrorResponseJSON501 = MessageTagError
+
+type UpdateMessageTagsErrorResponseJSON502 = MessageTagError
+
+type UpdateMessageTagsErrorResponseJSON503 = MessageTagError
 
 type ListMessageTasksResponse = TaskLinkLookupResponse
 
@@ -4862,6 +4954,50 @@ type GetImportJobResp struct {
 	JSON404      *GetImportJobErrorResponseJSON
 }
 
+type ListInboxCandidatesResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListInboxCandidatesResponse
+	JSON400      *ListInboxCandidatesErrorResponse
+	JSON401      *ListInboxCandidatesErrorResponseJSON
+	JSON403      *ListInboxCandidatesErrorResponseJSON403
+	JSON409      *ListInboxCandidatesErrorResponseJSON409
+	JSON500      *ListInboxCandidatesErrorResponseJSON500
+	JSON503      *ListInboxCandidatesErrorResponseJSON503
+}
+
+type GetInboxContextResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetInboxContextResponse
+	JSON400      *GetInboxContextErrorResponse
+	JSON401      *GetInboxContextErrorResponseJSON
+	JSON403      *GetInboxContextErrorResponseJSON403
+	JSON413      *GetInboxContextErrorResponseJSON413
+	JSON415      *GetInboxContextErrorResponseJSON415
+	JSON500      *GetInboxContextErrorResponseJSON500
+	JSON503      *GetInboxContextErrorResponseJSON503
+}
+
+type ControlInboxResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ControlInboxResponse
+	JSON400      *ControlInboxErrorResponse
+	JSON401      *ControlInboxErrorResponseJSON
+	JSON403      *ControlInboxErrorResponseJSON403
+	JSON409      *ControlInboxErrorResponseJSON409
+	JSON413      *ControlInboxErrorResponseJSON413
+	JSON415      *ControlInboxErrorResponseJSON415
+	JSON500      *ControlInboxErrorResponseJSON500
+	JSON501      *ControlInboxErrorResponseJSON501
+	JSON502      *ControlInboxErrorResponseJSON502
+	JSON503      *ControlInboxErrorResponseJSON503
+}
+
 type PrepareKataEvidenceResp struct {
 	HTTPResponse *http.Response
 	Body         []byte
@@ -4953,6 +5089,13 @@ type TestTaskIntegrationResp struct {
 	Body         []byte
 	StatusCode   int
 	JSON200      *TestTaskIntegrationResponse
+}
+
+type GetMCPCapabilitiesResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetMCPCapabilitiesResponse
 }
 
 type SearchMediaResp struct {
@@ -5080,6 +5223,36 @@ type ListMessageRecordingsResp struct {
 	Body         []byte
 	StatusCode   int
 	JSON200      *ListMessageRecordingsResponse
+}
+
+type GetMessageTagsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetMessageTagsResponse
+	JSON400      *GetMessageTagsErrorResponse
+	JSON403      *GetMessageTagsErrorResponseJSON
+	JSON404      *GetMessageTagsErrorResponseJSON404
+	JSON409      *GetMessageTagsErrorResponseJSON409
+	JSON500      *GetMessageTagsErrorResponseJSON500
+	JSON501      *GetMessageTagsErrorResponseJSON501
+	JSON502      *GetMessageTagsErrorResponseJSON502
+	JSON503      *GetMessageTagsErrorResponseJSON503
+}
+
+type UpdateMessageTagsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *UpdateMessageTagsResponse
+	JSON400      *UpdateMessageTagsErrorResponse
+	JSON403      *UpdateMessageTagsErrorResponseJSON
+	JSON404      *UpdateMessageTagsErrorResponseJSON404
+	JSON409      *UpdateMessageTagsErrorResponseJSON409
+	JSON500      *UpdateMessageTagsErrorResponseJSON500
+	JSON501      *UpdateMessageTagsErrorResponseJSON501
+	JSON502      *UpdateMessageTagsErrorResponseJSON502
+	JSON503      *UpdateMessageTagsErrorResponseJSON503
 }
 
 type ListMessageTasksResp struct {
