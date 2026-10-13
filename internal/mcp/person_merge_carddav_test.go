@@ -2,14 +2,17 @@ package mcp
 
 import (
 	"encoding/json"
+	"encoding/json/jsontext"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
 
+	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
@@ -18,6 +21,60 @@ import (
 	"go.kenn.io/msgvault/internal/query/querytest"
 	"go.kenn.io/msgvault/internal/testutil"
 )
+
+func TestPersonMergeRejectsFractionalRawIDs(t *testing.T) {
+	setup := require.New(t)
+	st := testutil.NewTestStore(t)
+	leftID, err := st.EnsureParticipantByIdentifier("email", "left@example.com", "Left")
+	setup.NoError(err)
+	rightID, err := st.EnsureParticipantByIdentifier("email", "right@example.com", "Right")
+	setup.NoError(err)
+	left, _, err := st.CreatePersonFromParticipant(leftID)
+	setup.NoError(err)
+	right, _, err := st.CreatePersonFromParticipant(rightID)
+	setup.NoError(err)
+	srv := httptest.NewServer(api.NewServer(&config.Config{}, st, nil, slog.New(slog.DiscardHandler)).Router())
+	t.Cleanup(srv.Close)
+	backend, err := daemonclient.New(daemonclient.Config{URL: srv.URL, AllowInsecure: true, HTTPClient: srv.Client()})
+	setup.NoError(err)
+	t.Cleanup(func() { assert.NoError(t, backend.Close()) })
+	profiles, err := backend.GetPersonMergeContext(t.Context(), left.ID, right.ID)
+	setup.NoError(err)
+	clientTransport, serverTransport := sdkmcp.NewInMemoryTransports()
+	serverSession, err := newMCPServer(ServeOptions{Engine: &querytest.MockEngine{}, PersonMerge: backend, AllowPersonMerges: true}, true).Connect(t.Context(), serverTransport, nil)
+	setup.NoError(err)
+	t.Cleanup(func() { assert.NoError(t, serverSession.Close()) })
+	client := sdkmcp.NewClient(&sdkmcp.Implementation{Name: "contact-merge-number-test", Version: "1.0"}, &sdkmcp.ClientOptions{MultiRoundTrip: &sdkmcp.MultiRoundTripOptions{Disabled: true}})
+	session, err := client.Connect(t.Context(), clientTransport, nil)
+	setup.NoError(err)
+	t.Cleanup(func() { assert.NoError(t, session.Close()) })
+	for _, tool := range []string{ToolGetPersonMergeContext, ToolMergePerson} {
+		for _, field := range []string{"survivor_person_id", "absorbed_person_id"} {
+			t.Run(tool+"/"+field, func(t *testing.T) {
+				assert := assert.New(t)
+				require := require.New(t)
+				survivor, absorbed := strconv.FormatInt(left.ID, 10), strconv.FormatInt(right.ID, 10)
+				if field == "survivor_person_id" {
+					survivor += ".0000000000000001"
+				} else {
+					absorbed += ".0000000000000001"
+				}
+				args := fmt.Sprintf(`{"survivor_person_id":%s,"absorbed_person_id":%s}`, survivor, absorbed)
+				if tool == ToolMergePerson {
+					args = fmt.Sprintf(`{"survivor_person_id":%s,"absorbed_person_id":%s,"survivor_etag":%q,"absorbed_etag":%q,"idempotency_key":"raw-number-merge"}`, survivor, absorbed, profiles.SurvivorETag, profiles.AbsorbedETag)
+				}
+				result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: tool, Arguments: jsontext.Value(args)})
+				require.NoError(err)
+				assert.True(result.IsError)
+				assert.False(result.NeedsInput())
+			})
+		}
+	}
+	_, err = st.GetPersonContext(t.Context(), right.ID)
+	setup.NoError(err, "invalid raw IDs must leave both people intact")
+	_, err = st.GetPersonContext(t.Context(), left.ID)
+	setup.NoError(err)
+}
 
 func TestMCPPersonCardDAVCompletionToolGates(t *testing.T) {
 	assert := assert.New(t)

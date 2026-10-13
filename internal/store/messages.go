@@ -22,7 +22,6 @@ import (
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/emailattribution"
 	"go.kenn.io/msgvault/internal/mime"
-	"go.kenn.io/msgvault/internal/peoplesweep"
 )
 
 // querier is satisfied by both *sql.DB and *sql.Tx, allowing
@@ -1128,7 +1127,7 @@ func (s *Store) MigrateSourceMessageID(sourceID, conversationID int64, legacySou
 	if err := s.requireSyncSource(sourceID); err != nil {
 		return err
 	}
-	return s.withTx(func(tx *loggedTx) error {
+	return s.withIdentityTxContext(context.Background(), nil, func(tx *loggedTx) error {
 		var newID int64
 		err := tx.QueryRow(
 			`SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?`,
@@ -4801,8 +4800,7 @@ func (s *Store) MergeParticipantsContext(ctx context.Context, oldID, newID int64
 		}
 		if personID != 0 {
 			if err := s.publishPersonIdentityScopeChangesTx(
-				ctx, tx, []int64{personID},
-				peoplesweep.EvidenceEffectIdentityReassigned); err != nil {
+				ctx, tx, []int64{personID}); err != nil {
 				return err
 			}
 			if personRevisionBumped {

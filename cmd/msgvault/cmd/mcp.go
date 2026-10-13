@@ -202,10 +202,15 @@ func delegatedMCPServeOptions(ctx context.Context, st *daemonclient.Client) (mcp
 		opts.Engine = daemonclient.NewEngineAdapter(st)
 		opts.AttachmentReader = st
 		opts.GrantPermissions = grant.Permissions
+		if daemonclient.APISchemaVersionAtLeast(schemaVersion, daemonclient.ContactScopesMinAPISchemaVersion) && len(grant.Persons) > 0 {
+			opts.PersonRecords = st
+			opts.PersonMerge = st
+		}
 	}
 	if daemonclient.APISchemaVersionAtLeast(schemaVersion, calendarControlMinAPISchemaVersion) {
 		opts.Calendar = st
 	}
+	applyIdentityOperationCapabilities(ctx, st, &opts, schemaVersion)
 	return opts, nil
 }
 
@@ -318,6 +323,9 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, personCardDAVMinAPISchemaVersion) {
 		opts.PersonCardDAV = st
 	}
+	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, daemonclient.ContactScopesMinAPISchemaVersion) {
+		opts.PersonRecords = st
+	}
 	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, identityScoringMinAPISchemaVersion) {
 		opts.IdentityScoring = st
 	}
@@ -325,6 +333,9 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 		opts.DraftCommands = mcpDraftCommands(false)
 	}
 
+	if capabilityErr == nil {
+		applyIdentityOperationCapabilities(ctx, st, &opts, schemaVersion)
+	}
 	return opts
 }
 
@@ -510,7 +521,7 @@ func init() {
 			"--allow-profile-writes, identity decisions, identity scoring, person merges, CardDAV writes, calendar writes, and Kata issue writes enabled "+
 			"with their separate opt-ins; enable it only for trusted, authenticated clients.")
 	mcpCmd.Flags().BoolVar(&mcpAllowProfileWrites, "allow-profile-writes", false,
-		"Expose person promotion and private Notes writes. Model tool calls "+
+		"Expose person promotion, private Notes writes, and native contact profile or attribute writes. Model tool calls "+
 			"can persist profile data, so enable this only for sessions where the user "+
 			"has explicitly authorized profile writes.")
 	mcpCmd.Flags().BoolVar(&mcpAllowIdentityDecisions, "allow-identity-decisions", false,

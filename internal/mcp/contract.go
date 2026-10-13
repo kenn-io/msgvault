@@ -18,6 +18,7 @@ import (
 
 type toolRequest struct {
 	arguments                     map[string]any
+	argumentsJSON                 []byte
 	session                       *sdkmcp.ServerSession
 	inputResponses                sdkmcp.InputResponseMap
 	toolName                      string

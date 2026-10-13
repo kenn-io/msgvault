@@ -2628,6 +2628,55 @@ successful acceptance records the decision and applies the link. Review notes
 are private data. See [people and profiles](/docs/usage/people/#review-identity-matches)
 for how to review candidates safely.
 
+### identity operations
+
+Preview and apply one explicit native identity change. Available on `main` with
+daemon API schema 3.16.0 and archive schema 5. See
+[explicit identity changes](/docs/usage/people/#apply-an-explicit-identity-change)
+for the review workflow and graph/person distinction.
+
+| Command | Target in the JSON request |
+|---|---|
+| `identity operations graph-link --request <path|-> [--apply]` | `participant_id` and `other_participant_id` |
+| `identity operations graph-unlink --request <path|-> [--apply]` | `participant_id` and `other_participant_id` |
+| `identity operations person-link --request <path|-> [--apply]` | `participant_id` and `person_id` |
+| `identity operations person-unlink --request <path|-> [--apply]` | `participant_id` and `person_id` |
+| `identity operations receipt --idempotency-key <key>` | Read the current principal's saved result |
+| `identity operations receipt --receipt-id <id>` | Owner recovery by exact receipt ID |
+| `identity operations receipt --principal <principal> --idempotency-key <key>` | Owner recovery for a prior principal |
+
+`status` is an alias for `receipt`. Commands emit JSON. Request files and stdin
+are limited to 16 KiB. Use one object with canonical field names, no unknown
+fields, and no `null` values. IDs must be positive integers no greater than
+9007199254740991. A graph target has exactly two different participant IDs; a
+person target has one participant ID and one person ID. Person operations
+attach or detach that participant's entire linked component; review
+`component_members` in the preview.
+
+```json
+{"target":{"participant_id":12,"other_participant_id":13}}
+```
+
+Without `--apply`, the command returns a snapshot and a signed preview valid
+for five minutes. To apply, retain that target and add `expected_fingerprint`
+from `snapshot.fingerprint`, the exact `preview_token`, and an opaque
+`idempotency_key`. The optional `operation` field must match the command.
+Inspect blockers before applying; changed evidence requires a fresh preview.
+
+Effects and digest-only receipts commit atomically. If the connection or stdout
+fails, use the original key to read the saved result before retrying. Exact
+committed retries recover without requiring a still-valid preview. A key reused
+with different request or authority fingerprints conflicts. Delegated receipt
+reads and retries recheck current authority and resource identities; owner
+recovery remains available after cleanup. `cache_state` describes the derived
+search cache, separately from the committed archive effect.
+
+Delegated access requires `identity.read` over every affected source, person,
+and address book. Apply also requires `identity.link` or `identity.unlink` over
+the same complete scope. Scope denial returns 403, stale previews or conflicting
+effects return 409, and more than 100 affected participants returns 413. MCP
+requires `--allow-identity-decisions` and explicit client confirmation for writes.
+
 ### person scoring
 
 Run a bounded scoring batch to create identity review suggestions and journal
@@ -4671,8 +4720,58 @@ Scoped archive reads return a consistent authorized view. Scoped aggregates read
 The delegated MCP catalog lists a read tool only when the grant holds its permission. Draft and calendar tools are listed for every grant. The daemon checks each call against the token, and a denial names the permission the call needs.
 
 Sync, deletion, configuration, account and token administration, SQL, exports,
-people administration, and all other ungranted routes are rejected. Existing
+ungranted people administration, and all other ungranted routes are rejected. Existing
 `draft.*` and `calendar.*` permissions retain their separate authority.
+
+### Scoped contact edits
+
+On unreleased main (daemon API schema 3.15.0 or newer), select saved people and their address
+books explicitly. These selections share a limit of 100 resources with selected
+sources. Within each resource type, IDs must be distinct positive integers no greater
+than 9007199254740991.
+
+```bash
+msgvault agent-token issue --label contact-editor \
+  --permissions person.read,person.edit,carddav.write \
+  --person-ids 12,13 --address-book-ids 4 --expires 24h
+# Save the one-time secret to ./contacts.token with mode 0600.
+msgvault --agent-url https://archive.example.test \
+  --agent-token-file ./contacts.token mcp --allow-profile-writes
+```
+
+| Permission | Granted contact operations |
+|---|---|
+| `person.read` | Read the selected person's edit context, structured profile, and attributes |
+| `person.edit` | Rename selected people and patch their structured profile or attribute values; also requires `person.read` |
+| `person.merge` | Merge selected people; also requires `person.read` and `--allow-person-merges` in MCP |
+| `carddav.write` | Authorize edits that affect the selected address books; this permission alone exposes no publication or sync tools |
+| `identity.read` | Preview explicit identity operations and recover receipts within the complete affected resource scope |
+| `identity.link`, `identity.unlink` | Apply the corresponding explicit identity operation; also requires `identity.read` and `--allow-identity-decisions` in MCP |
+
+The daemon resolves person UIDs and address-book ownership at issuance. Callers
+cannot supply that evidence. Person grants match both the ID and UID. Book
+grants match the account, book, canonical URL, and ownership fingerprint. A
+recreated person or book does not inherit a prior grant.
+
+Every edit checks current authority inside the native write transaction. A
+rename must authorize relationship counterparts whose projections change. A
+merge must authorize every affected person and book, including owners of
+historical references. Organization references are unsupported for delegated
+merges. Completed merge retries recheck current authority and lineage before
+returning the existing result. Revocation or expiry while waiting for a write
+gate prevents the edit.
+
+Profile writes require the current person ETag in `If-Match`. Delegated
+attribute writes also require `expected_value_id`: zero requires an empty slot;
+an existing value requires its current ID. Creating a multi-valued attribute
+with zero also requires an explicit ordinal. Delegated attribute values use user
+provenance and cannot forge actors, source references, confidence, or record
+references. MCP asks for confirmation before a contact write. Scope denial
+returns 403, stale revisions or slots return 409, and an affected set over 100
+resources returns 413. An adapter without native scoped authorization returns
+501. Contact creation, deletion, splitting, broad people discovery, identity
+match-review decisions, and publication workflows remain owner-only. Explicit
+[identity operations](#identity-operations) have their own scoped permissions.
 
 ### agent-token issue
 
@@ -4690,8 +4789,10 @@ msgvault agent-token issue --label <name> \
 | Flag | Description |
 |---|---|
 | `--label <name>` | (required) Human-readable name for the grant |
-| `--permissions <perms>` | Comma-separated permissions: `search.read`, `message.read`, `attachment.read`, `stats.read` (see [scoped archive reads](#scoped-archive-reads)); `calendar.read` for availability, `calendar.event.read` for provider-derived event details in delegated plans and write receipts, `calendar.write` for calendar mutations, and additional `calendar.invite` for guest changes; `draft.create` for `draft-reply`, `draft-compose`, and `draft-get`; `draft.edit` for `draft-get`, `draft-edit`, and `draft-recover`; `draft.delete` for `draft-get`, `draft-delete`, and `draft-recover` (see [managed drafts](#draft-get-draft-edit-draft-delete-and-draft-recover)) |
+| `--permissions <perms>` | Comma-separated permissions: `search.read`, `message.read`, `attachment.read`, `stats.read` (see [scoped archive reads](#scoped-archive-reads)); `person.read`, `person.edit`, `person.merge`, and `carddav.write` (see [scoped contact edits](#scoped-contact-edits)); `identity.read`, `identity.link`, and `identity.unlink` (see [identity operations](#identity-operations)); `calendar.read` for availability, `calendar.event.read` for provider-derived event details in delegated plans and write receipts, `calendar.write` for calendar mutations, and additional `calendar.invite` for guest changes; `draft.create` for `draft-reply`, `draft-compose`, and `draft-get`; `draft.edit` for `draft-get`, `draft-edit`, and `draft-recover`; `draft.delete` for `draft-get`, `draft-delete`, and `draft-recover` (see [managed drafts](#draft-get-draft-edit-draft-delete-and-draft-recover)) |
 | `--source-ids <ids>` | Comma-separated source IDs that the permissions apply to |
+| `--person-ids <ids>` | Comma-separated saved person IDs; the daemon binds their current UIDs |
+| `--address-book-ids <ids>` | Comma-separated CardDAV address-book IDs; the daemon binds current ownership |
 | `--expires <expiry>` | Optional future RFC3339 timestamp or positive duration such as `24h`; the CLI clock converts a duration to absolute expiry |
 | `--sender <source-id>=<address>` | Restrict a source to one confirmed sender identity; repeat for multiple choices |
 
@@ -4706,7 +4807,10 @@ has no delegated draft sender authority. Calendar grants use exact calendar sour
 identities and do not require a draft sender selection. Delegated callers can run
 `calendar` commands and `mcp` over stdio; the delegated MCP bridge combines scoped read, draft, and calendar tools.
 
-The response includes the daemon address, the secret, and the granted source references.
+Select at least one source, person, or address book, with at most 100 resources
+in total. Person-only and book-only grants do not require `--source-ids`.
+The response includes the daemon address, the secret, expiry, and the granted
+source, person, and address-book references.
 Pass `--agent-url <address>` and the file path to `--agent-token-file` when invoking delegated commands.
 Delegated commands include `msgvault mcp`, which offers the admitted draft tools over stdio using that grant.
 The address comes from the issuing request. On a default local install it is an

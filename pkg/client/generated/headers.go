@@ -150,6 +150,16 @@ func (c CreatePersonAgendaItemHeaders) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(c))
 }
 
+type ClearPersonAttributeHeaders struct {
+	// IfMatch Person revision tag from the attributes response. Required for delegated edits; checked when supplied by an owner. Value-slot CAS is separate.
+	IfMatch *string `json:"If-Match,omitempty"`
+}
+
+type SetPersonAttributeHeaders struct {
+	// IfMatch Person revision tag from the attributes response. Required for delegated edits; checked when supplied by an owner. Value-slot CAS is separate.
+	IfMatch *string `json:"If-Match,omitempty"`
+}
+
 type MergePersonsHeaders struct {
 	// IfMatch Exactly two comma-separated strong person revision tags, one for each profile
 	IfMatch string `json:"If-Match" validate:"required"`
