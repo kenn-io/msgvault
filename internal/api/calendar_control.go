@@ -29,6 +29,8 @@ func prefixedSchemaName(t reflect.Type, hint string) string {
 	switch t.PkgPath() {
 	case "go.kenn.io/msgvault/internal/gcal":
 		return "GCal" + name
+	case "go.kenn.io/msgvault/internal/inboxcontrol":
+		return "Inbox" + name
 	case "go.kenn.io/msgvault/internal/calcontrol":
 		return "Calendar" + name
 	case "go.kenn.io/msgvault/internal/muesli":
@@ -43,8 +45,6 @@ func prefixedSchemaName(t reflect.Type, hint string) string {
 type CalendarController interface {
 	ControlCalendar(ctx context.Context, request calcontrol.Request, grant *agentgrant.Grant, acquireWrite func(context.Context) (func(), error)) (*calcontrol.Result, error)
 }
-
-var errCalendarGateBusy = errors.New("archive is busy or shutting down")
 
 func (s *Server) registerCalendarControlRoute(api huma.API) {
 	op := rawAPIV1Operation("controlCalendar", http.MethodPost, "/calendar/control", "Control a live calendar event or query availability")
@@ -69,9 +69,9 @@ func (s *Server) handleCalendarControl(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "calendar_unavailable", "Calendar control is unavailable")
 		return
 	}
-	result, err := controller.ControlCalendar(r.Context(), request, s.requestAuthentication(r).Grant, s.beginCalendarMutation)
+	result, err := controller.ControlCalendar(r.Context(), request, s.requestAuthentication(r).Grant, s.beginMutation("calendar event change"))
 	if err != nil {
-		if errors.Is(err, errCalendarGateBusy) {
+		if errors.Is(err, errMutationGateBusy) {
 			writeOperationGateBusy(w, r, s.operationGate)
 			return
 		}
@@ -109,17 +109,6 @@ func (s *Server) handleCalendarControl(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
-}
-
-func (s *Server) beginCalendarMutation(ctx context.Context) (func(), error) {
-	if s.operationGate == nil {
-		return func() {}, nil
-	}
-	done, ok := beginGateWorkBounded(ctx, s.operationGate, "calendar event change")
-	if !ok {
-		return nil, errCalendarGateBusy
-	}
-	return done, nil
 }
 
 func decodeCalendarControlRequest(w http.ResponseWriter, r *http.Request, destination *calcontrol.Request) bool {

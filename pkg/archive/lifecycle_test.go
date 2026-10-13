@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/inboxcontrol"
 	"go.kenn.io/msgvault/internal/slack"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -158,4 +159,35 @@ func TestPurgeSourceDeletedDuringAcquisition(t *testing.T) {
 	require.NoError(a.PurgeSource(t.Context(), source.ID))
 	_, err = st.AcquireSyncExecutionContext(t.Context(), source.ID)
 	require.ErrorIs(err, store.ErrSourceNotFound)
+}
+
+func TestPurgeSourceRetiresInboxReceiptWithoutNestedSyncLease(t *testing.T) {
+	require := require.New(t)
+
+	st := testutil.NewTestStore(t)
+	a := &Archive{store: st}
+	source, err := st.GetOrCreateSource("gmail", "purge-inbox@example.test")
+	require.NoError(err)
+	target := inboxcontrol.Target{SourceID: source.ID, SourceType: "gmail", SourceIdentifier: source.Identifier, AccountID: source.Identifier, Scope: inboxcontrol.ScopeMessage, ItemID: 1, ProviderID: "synthetic-message"}
+	before := inboxcontrol.State{Target: target, ObservedAt: time.Now().UTC()}
+	intent := inboxcontrol.Request{Operation: inboxcontrol.OpArchive, Target: &target, DryRun: true}
+	intentHash, err := inboxcontrol.IntentFingerprint(intent)
+	require.NoError(err)
+	stateHash, err := inboxcontrol.SemanticFingerprint(before)
+	require.NoError(err)
+	receipt := inboxcontrol.Receipt{ID: "purge-inbox-receipt", PrincipalID: "owner", SourceID: source.ID, IdempotencyKey: "purge-inbox", IntentHash: intentHash, StateHash: stateHash, Intent: intent, Before: before, Status: inboxcontrol.StatusPrepared, CreatedAt: time.Now().UTC()}
+	_, claimed, err := st.PrepareInboxReceipt(t.Context(), receipt)
+	require.NoError(err)
+	require.True(claimed)
+	execution, err := st.AcquireInboxExecutionContext(t.Context(), source.ID)
+	require.NoError(err)
+	t.Cleanup(func() { _ = execution.Release() })
+	require.ErrorIs(a.PurgeSource(t.Context(), source.ID), store.ErrSyncAlreadyActive)
+	require.NoError(st.ValidateInboxReceiptAuthorityContext(t.Context(), receipt.ID))
+	require.NoError(execution.Release())
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	require.NoError(a.PurgeSource(ctx, source.ID))
+	require.ErrorIs(st.ValidateInboxReceiptAuthorityContext(ctx, receipt.ID), inboxcontrol.ErrDenied)
+	require.NoError(a.PurgeSource(ctx, source.ID))
 }
