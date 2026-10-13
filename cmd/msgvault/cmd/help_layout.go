@@ -142,6 +142,7 @@ var topLevelCommandGroups = map[string]string{
 	"setup":                  helpGroupOperations,
 	"show-deletion":          helpGroupDelete,
 	"show-message":           helpGroupRead,
+	"show-thread":            helpGroupRead,
 	"skills":                 helpGroupOperations,
 	"stage-delete":           helpGroupDelete,
 	"stats":                  helpGroupRead,

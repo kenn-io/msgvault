@@ -33,6 +33,7 @@ Search and read:
   query         Run a SQL query against the analytics cache
   search        Search messages using Gmail-like query syntax
   show-message  Show full message details
+  show-thread   Show a message's thread in chronological order
   stats         Show archive message, thread, attachment and account totals
   tui           Open the interactive terminal UI
 
