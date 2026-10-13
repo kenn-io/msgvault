@@ -51,8 +51,8 @@ func FuzzInboxMutationNeverDispatches(f *testing.F) {
 		before := inboxcontrol.State{Target: target, Inbox: new(false), Read: new(false)}
 		_, previewErr := provider.Preview(t.Context(), request, before)
 		_, dispatchErr := provider.Dispatch(t.Context(), request, before)
-		assert.ErrorIs(t, previewErr, inboxcontrol.ErrUnavailable)
-		assert.ErrorIs(t, dispatchErr, inboxcontrol.ErrUnavailable)
+		require.ErrorIs(t, previewErr, inboxcontrol.ErrUnavailable)
+		require.ErrorIs(t, dispatchErr, inboxcontrol.ErrUnavailable)
 		assert.Empty(t, peer.calls())
 	})
 }
