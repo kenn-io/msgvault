@@ -73,6 +73,7 @@
   import ArchivedMeetingReader from '../meetings/ArchivedMeetingReader.svelte';
   import { ArchiveMeetingNavigation, archiveMeetingSelection, parseArchiveMeetingSelection } from '../../meetings/archive-navigation.svelte';
   import { ARCHIVE_MEETING_HISTORY_KEY, parseArchiveMeetingHistory } from '../../meetings/archive-selection';
+  import { recordingSelection, parseRecordingSelection } from '../../archive/recording-selection';
   import EverythingWorkspace from './EverythingWorkspace.svelte';
   import AppSidebar from './AppSidebar.svelte';
   import DisplayMenu from './DisplayMenu.svelte';
@@ -820,9 +821,18 @@
     grid.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...init }));
   }
   async function closeReadingPane(): Promise<void> {
+    const recordingOpen = parseRecordingSelection(exploreState.current.selectedRow) !== undefined;
     commitNavigation({ selectedRow: null });
+    if (recordingOpen) {
+      await restoreArchiveFocus(document.querySelector<HTMLElement>('[data-recording-hits]') ?? undefined);
+      return;
+    }
     await tick();
     focusGrid();
+  }
+  function openRecording(messageID: number): void {
+    archiveReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
+    commitNavigation({ selectedRow: recordingSelection(messageID), conversationAnchor: null });
   }
   async function openArchivedMeeting(meeting: MeetingRef): Promise<void> {
     const origin = canonicalFingerprint(exploreState.current);
@@ -838,14 +848,14 @@
     }, '', window.location.href);
   }
 
-  async function restoreArchiveFocus(): Promise<void> {
+  async function restoreArchiveFocus(fallback: HTMLElement | undefined = undefined): Promise<void> {
     await tick();
     // Kit releases its focus trap during teardown; focus the surviving source
     // link after that cleanup (or the current workspace's own control).
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
     const target = archiveReturnFocus?.isConnected
       ? archiveReturnFocus
-      : focusableResultsGrid() ?? navigationFocusTarget();
+      : fallback ?? focusableResultsGrid() ?? navigationFocusTarget();
     target?.focus();
   }
 
@@ -1590,6 +1600,7 @@
           {fixedSortNotice}
           {focusGrid}
           {openRow}
+          onOpenRecording={openRecording}
           {drillGroup}
           closeReadingPane={() => void closeReadingPane()}
           {openRelationship}

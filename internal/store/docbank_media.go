@@ -71,7 +71,7 @@ const hashlessProviderAlias = `(COALESCE(a.content_hash, '') = ''
 	    OR COALESCE(a.source_attachment_id, '') LIKE 'discord:%'))`
 
 // beeperMediaEligible is the shared provider, capture and role predicate. It
-// assumes a (attachments), m (messages), c (conversations) and src (sources).
+// assumes a (attachments), m (messages), cv (conversations) and src (sources).
 // Archives older than attachment_state leave it NULL on stored Beeper audio.
 const beeperMediaEligible = attachmentBytesArchived + `
 	  AND COALESCE(src.source_type, '') <> ''
@@ -84,21 +84,22 @@ const beeperMediaEligible = attachmentBytesArchived + `
 		  AND COALESCE(a.attachment_role, 'unknown') = 'standalone')
 		OR (src.source_type <> 'beeper'
 		  AND COALESCE(NULLIF(a.source_part_key, ''), a.source_attachment_id, '') <> ''
-		  AND COALESCE(c.source_conversation_id, '') <> ''
+		  AND COALESCE(cv.source_conversation_id, '') <> ''
 		  AND COALESCE(a.attachment_state, '') IN ('', 'stored')
 		  AND COALESCE(a.attachment_role, 'unknown') IN ('standalone', 'unknown'))
 	  )`
 
-// beeperMediaCurrentJoin follows occurrence row o to its live source
-// attachment by stable source tuple, never by attachment row ID.
-var beeperMediaCurrentJoin = `
+// beeperMediaTupleJoin follows occurrence row o by stable source tuple, including historical deliveries.
+var beeperMediaTupleJoin = `
 	JOIN sources src ON src.source_type = o.source_type AND src.identifier = o.source_identifier
 	JOIN messages m ON m.source_id = src.id AND m.source_message_id = o.source_message_id
-	JOIN conversations c ON c.id = m.conversation_id
+	JOIN conversations cv ON cv.id = m.conversation_id
 	JOIN attachments a ON a.message_id = m.id
-	WHERE COALESCE(c.source_conversation_id, '') = o.source_conversation_id
+	WHERE COALESCE(cv.source_conversation_id, '') = o.source_conversation_id
 	  AND COALESCE(a.source_attachment_id, '') = o.source_attachment_id
-	  AND COALESCE(NULLIF(a.source_part_key, ''), NULLIF(a.source_attachment_id, ''), src.source_type || ':unknown') = o.source_part_key
+	  AND COALESCE(NULLIF(a.source_part_key, ''), NULLIF(a.source_attachment_id, ''), src.source_type || ':unknown') = o.source_part_key`
+
+var beeperMediaCurrentJoin = beeperMediaTupleJoin + `
 	  AND a.content_hash = o.source_sha256
 	  AND ` + beeperMediaEligible + `
 	  AND ` + LiveMessagesWhere("m", true)
@@ -235,8 +236,8 @@ type BeeperMediaScan struct {
 }
 
 const beeperMediaCandidateColumns = `
-	SELECT a.id, m.id, c.id, src.id, src.source_type, src.identifier,
-	       COALESCE(c.source_conversation_id, ''), COALESCE(m.source_message_id, ''),
+	SELECT a.id, m.id, cv.id, src.id, src.source_type, src.identifier,
+	       COALESCE(cv.source_conversation_id, ''), COALESCE(m.source_message_id, ''),
 	       COALESCE(a.source_attachment_id, ''),
 	       COALESCE(NULLIF(a.source_part_key, ''), a.source_attachment_id, ''),
 	       COALESCE(a.filename, ''), COALESCE(a.mime_type, ''),
@@ -246,7 +247,7 @@ const beeperMediaCandidateColumns = `
 	       COALESCE(CAST(a.attachment_metadata AS TEXT), ''), m.sent_at
 	FROM attachments a
 	JOIN messages m ON m.id = a.message_id
-	JOIN conversations c ON c.id = m.conversation_id
+	JOIN conversations cv ON cv.id = m.conversation_id
 	JOIN sources src ON src.id = m.source_id`
 
 // ListBeeperMediaCandidates returns a bounded page of captured attachments on
@@ -613,6 +614,8 @@ type MessageMediaOccurrence struct {
 	ConversationID   int64
 	AttachmentID     int64
 	Filename         string
+	ContainingTitle  string
+	OccurredAt       *time.Time
 	Size             int64
 	OccurrenceRef    string
 	Revision         string
@@ -719,15 +722,17 @@ func (s *Store) listMessageOccurrenceRows(
 		args = append(args, messageID)
 	}
 	if scope != nil {
-		predicate, values := personscope.MessagePredicate(*scope, "m", "c")
+		predicate, values := personscope.MessagePredicate(*scope, "m", "cv")
 		where += " AND (" + predicate + ")"
 		args = append(args, values...)
 	}
 	rows, err := s.db.QueryContext(ctx, s.Rebind(`
-		SELECT m.id, c.id, a.id, COALESCE(a.filename, ''), COALESCE(a.size, 0), COALESCE(a.attachment_state, ''), o.occurrence_ref, o.revision,
+		SELECT m.id, cv.id, a.id, COALESCE(a.filename, ''), COALESCE(a.size, 0), COALESCE(a.attachment_state, ''), o.occurrence_ref, o.revision,
 		       o.retention_state, o.error_code, o.vault_uid, o.source_id, o.source_version_id,
 		       o.content_version_id, COALESCE(d.profile, ''), COALESCE(d.phase, ''),
-		       COALESCE(d.operation_state, ''), COALESCE(d.supplied_input_id, '')
+		       COALESCE(d.operation_state, ''), COALESCE(d.supplied_input_id, ''),
+		       `+containingTitleMCVSQL+`,
+		       COALESCE(m.sent_at, m.received_at, m.internal_date)
 		FROM beeper_media_occurrences o
 		LEFT JOIN beeper_media_deliveries d
 		  ON d.destination_key = o.destination_key AND d.processing_key = o.processing_key`+
@@ -741,13 +746,15 @@ func (s *Store) listMessageOccurrenceRows(
 	var occurrences []MessageMediaOccurrence
 	for rows.Next() {
 		var o MessageMediaOccurrence
+		var occurredAt nullableTimestamp
 		if err := rows.Scan(&o.MessageID, &o.ConversationID, &o.AttachmentID, &o.Filename, &o.Size, &o.AttachmentState, &o.OccurrenceRef, &o.Revision,
 			&o.RetentionState, &o.ErrorCode, &o.VaultUID, &o.DocbankSourceID, &o.SourceVersionID,
 			&o.ContentVersionID, &o.DeliveryProfile, &o.DeliveryPhase, &o.DeliveryOperationState,
-			&o.SuppliedInputID); err != nil {
+			&o.SuppliedInputID, &o.ContainingTitle, &occurredAt); err != nil {
 			return nil, fmt.Errorf("scan message media occurrence: %w", err)
 		}
 		o.BytesArchived = true
+		o.OccurredAt = optionalTimestamp(occurredAt)
 		occurrences = append(occurrences, o)
 	}
 	if err := rows.Err(); err != nil {

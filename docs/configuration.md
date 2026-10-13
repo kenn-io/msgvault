@@ -361,33 +361,51 @@ attachments loose while this setting is enabled.
 
 ### `[attachments.documents]`
 
-Hosted extraction and local full-text indexing for standalone document
-attachments. It is disabled by default. Enabling it does not grant consent or
-send data: an operator must generate an authenticated capability manifest and
-record consent for the exact effective policy before a build can upload a
-document.
+Document extraction and local full-text indexing are disabled by default.
+Enabling them does not grant consent or send data. Record consent for the exact
+effective policy before a build can upload a document. Mistral also requires an
+authenticated capability manifest. On `main` after v0.21.0, self-hosted Docling
+uses a configured endpoint without a manifest.
 
 | Key | Default | Description |
 |---|---:|---|
 | `enabled` | `false` | Allow explicit document extraction commands |
-| `provider` | `mistral` | Pinned extraction provider |
-| `region` | `eu` | Pinned provider region and EU endpoint |
-| `api_key_env` | `MISTRAL_API_KEY` | Environment variable containing the provider key |
-| `model` | `mistral-ocr-4-0` | Pinned OCR model |
-| `retention_posture` | `unknown` | Confirmed provider posture: `standard` or `zdr` |
-| `training_posture` | `unknown` | Confirmed provider posture: `default-opt-out` or `opted-out` |
+| `provider` | `mistral` | `mistral` or `docling` |
+| `endpoint` | — | Required for Docling: exact HTTP(S) origin with optional port; no trailing slash, path, user information, query, or fragment. Plain HTTP is allowed only for `localhost` and loopback IP addresses; other hosts require HTTPS |
+| `region` | `eu` | Mistral’s pinned EU region; Docling defaults to `operator_network` |
+| `api_key_env` | `MISTRAL_API_KEY` | Environment variable containing the provider key; Docling defaults to empty and sends a configured key as `X-Api-Key` |
+| `model` | `mistral-ocr-4-0` | Pinned model; Docling defaults to `docling.serve-v1` |
+| `retention_posture` | `unknown` | Mistral: `standard` or `zdr`; Docling: `operator-controlled` (default) |
+| `training_posture` | `unknown` | Mistral: `default-opt-out` or `opted-out`; Docling: `operator-controlled` (default) |
 | `max_file_bytes` | `52428800` | Maximum original document size (50 MiB) |
 | `max_pages_per_document` | `500` | Maximum provider units for one document |
 | `max_response_bytes` | `67108864` | Maximum provider response size (64 MiB) |
 | `max_normalized_chars` | `25000000` | Maximum locally retained normalized characters |
-| `max_spool_bytes` | `536870912` | Maximum private staging-directory usage (512 MiB) |
-| `min_free_space_bytes` | `1073741824` | Free space preserved before staging (1 GiB) |
-| `request_timeout` | `5m` | Timeout for each provider request attempt |
-| `max_retries` | `3` | Maximum transient retries |
+| `max_spool_bytes` | `536870912` | Mistral private staging-directory limit (512 MiB) |
+| `min_free_space_bytes` | `1073741824` | Mistral free-space reserve before staging (1 GiB) |
+| `request_timeout` | `5m` | Timeout for each request; Docling defaults to `30s` |
+| `total_timeout` | `10m` | Docling job timeout, positive and at most `24h` |
+| `poll_interval` | `1s` | Docling polling interval, positive and no longer than `total_timeout` |
+| `max_poll_attempts` | `300` | Docling poll limit, between 1 and 10,000. A job that outlasts this or `total_timeout` fails with `provider_timeout` and needs a manual retry |
+| `max_retries` | `3` | Mistral transient retry limit; Docling uses its polling limits |
 | `max_pages_per_run` | `10000` | Conservative provider-unit budget for one run |
 | `max_estimated_cost_usd_per_run` | `50` | Cost-planning ceiling for one run |
 | `estimated_cost_usd_per_1000_units` | `0` | Operator-supplied current price assumption; zero disables cost calculation |
 | `pricing_assumption_on` | — | Date for the price assumption, in `YYYY-MM-DD` form |
+
+Docling uploads original PDF, DOCX, PPTX, XLSX, UTF-8 text, Markdown, CSV, and
+HTML bytes. It verifies sources in bounded memory and does not use the Mistral
+disk spool. Its `max_pages_per_document` bounds returned evidence units before
+any whole-document Markdown fallback. It cannot enforce a pre-upload page
+count for every native format.
+
+Docling’s operator-controlled postures assign responsibility for deployment,
+credentials, model downloads, egress, resource limits, retention, and training
+behavior to you. They are not privacy guarantees. Endpoints off the local
+machine use HTTPS so document bytes and configured API keys have transport
+encryption. See the
+[Docling workflow](usage/document-indexing.md#use-a-self-hosted-docling-service)
+for a minimal configuration and consent commands.
 
 #### CSV conversion
 
@@ -395,18 +413,21 @@ document.
 |---|---:|---|
 | `enabled` | `false` | Convert standalone `text/csv` attachments locally to PDF before the authorized PDF upload; disabled conversion leaves raw CSV outside the provider-authorized scope |
 
-CSV conversion uses Docbank's default record, cell, cell byte, and PDF limits,
-tightened by the configured original file, response, and page ceilings. The
+CSV conversion is Mistral-only. Docling accepts native CSV and rejects enabled
+CSV conversion. Mistral conversion uses Docbank's default record, cell, cell
+byte, and PDF limits, tightened by the configured original file, response, and
+page ceilings. The
 generated PDF is transient. The archive keeps the original CSV hash and MIME
 type plus the conversion receipt and page, record, and cell provenance. The
 conversion declaration participates in the exact consent fingerprint only when
 enabled.
 
 Provider uploads are manual-only: `msgvault serve` does not schedule document
-extraction. Each `documents build` or `documents resume` receives its capability
-manifest explicitly and displays its upload and cost preflight before requiring
-`--yes`. When document indexing is enabled, the daemon's weekly reconciliation
-and local derivative cleanup remain automatic and make no provider requests.
+extraction. Each `documents build` or `documents resume` displays its upload
+and cost preflight before requiring `--yes`. Mistral receives its capability
+manifest explicitly; Docling uses its configured endpoint and policy. When
+document indexing is enabled, the daemon’s weekly reconciliation and local
+derivative cleanup remain automatic and make no provider requests.
 
 `[attachments.documents.scope]` accepts these fields:
 
@@ -417,10 +438,11 @@ and local derivative cleanup remain automatic and make no provider requests.
 
 Inline scope support is available in v0.21.0. Some mail clients mark
 ordinary document attachments as inline. Set `include_inline = true` to include
-them; other roles remain excluded. This changes the consent fingerprint. Run
-`msgvault documents consent-mistral --capabilities <manifest> --yes` again before
-building. Selecting a standalone-only profile stops inline search results from
-serving, including results extracted under an earlier profile.
+them; other roles remain excluded. This changes the consent fingerprint. Record
+consent again with `consent-mistral --capabilities <manifest> --yes` or
+`consent-docling --yes` for the selected provider before building. Selecting a
+standalone-only profile stops inline search results from serving, including
+results extracted under an earlier profile.
 
 The first release requires
 `[attachments.documents.index].lexical = true` and `store_chunk_text = true`.
@@ -442,6 +464,7 @@ probe, consent, build, and recovery flow.
 | Key | Default | Description |
 |---|---|---|
 | `client_secrets` | — | Path to Google OAuth `client_secret.json` for browser OAuth flows |
+| `client_secrets_command` | — | Command argv that prints the client JSON; mutually exclusive with `client_secrets` |
 | `service_account_key` | — | Path to a Google service account key JSON for Workspace domain-wide delegation |
 
 #### `[oauth.apps.<name>]`
@@ -451,6 +474,7 @@ Named OAuth apps for Google Workspace organizations that require their own OAuth
 | Key | Default | Description |
 |---|---|---|
 | `client_secrets` | — | Path to the org's `client_secret.json` |
+| `client_secrets_command` | — | Command argv that prints this app's client JSON; mutually exclusive with `client_secrets` |
 | `service_account_key` | — | Path to the org's Google service account key JSON |
 
 See [OAuth Setup: Google Workspace Accounts](/docs/guides/oauth-setup/#google-workspace-accounts) for when and why you need named apps.
@@ -463,6 +487,105 @@ calls. The older `export-discord` compatibility command has the same read-only
 provider behavior.
 
 When `service_account_key` is configured, `msgvault add-account <email>` validates the delegated Gmail profile and registers the account without storing a per-user refresh token. The service account key file must be owner-only on Unix-like systems, for example `chmod 600 /path/to/service-account.json`.
+
+#### Command-backed Google credentials and tokens
+
+Use commands to keep Google client credentials and tokens in your secret store.
+Gmail, Calendar, Drive, and Google Contacts use the same configuration.
+
+```toml
+[oauth]
+client_secrets_command = ["pass", "show", "msgvault/google-client"]
+
+[oauth.tokens]
+read_command = ["/path/to/token-store", "read"]
+write_command = ["/path/to/token-store", "write"]
+delete_command = ["/path/to/token-store", "delete"]
+list_command = ["/path/to/token-store", "list"]
+```
+
+`client_secrets_command` prints the complete Google `client_secret.json` on
+stdout. You can also set it under `[oauth.apps.<name>]`. Each application must
+choose either `client_secrets` or `client_secrets_command`. Named applications
+do not inherit the default application's client credentials. Service account
+keys remain files.
+
+Token commands replace Google token files for every application, including
+separate Google Contacts authorizations. Configure all four commands together,
+or omit all four to keep file storage. Other providers keep their existing
+storage. msgvault validates configuration without executing commands.
+
+| Command | Input | Successful output or effect |
+|---|---|---|
+| `read_command` | Account and namespace environment variables | Complete msgvault token JSON on stdout |
+| `write_command` | Token JSON on stdin; account and namespace environment variables | Save the exact bytes received |
+| `delete_command` | Account and namespace environment variables | Remove the token; succeed if already absent |
+| `list_command` | Namespace environment variable | JSON array of every stored account spelling in this namespace, such as `["reader@example.com"]`; use `[]` when empty |
+
+If a read command returns malformed JSON or no token fields, fix `read_command` or the stored token JSON and retry. msgvault leaves the stored record unchanged.
+
+Token commands receive these environment variables:
+
+| Variable | Meaning |
+|---|---|
+| `MSGVAULT_TOKEN_NAMESPACE` | Token namespace: empty for Gmail, Calendar, and Drive tokens; `carddav-google/<hash>` for a separate Google Contacts authorization, where `<hash>` is the lowercase hex SHA-256 of the OAuth app name (empty for the default app) |
+| `MSGVAULT_ACCOUNT` | Account spelling used for this token; empty for listing |
+
+Key each record by namespace and account. These values do not depend on the data
+directory or machine, so moving the data directory or reading the store from
+another machine finds the same records. Preserve
+namespaces: a Google Contacts token can have the same account as its Gmail token
+in a different namespace. Do not collapse distinct account spellings or
+namespaces in a wrapper.
+
+Only token reads may exit with status **3** to report a missing record. Other
+nonzero exits fail the operation. Successful empty or malformed JSON is an error.
+If `write_command` fails after a token refresh, the sync or request that needed
+the token fails instead of continuing with a token msgvault couldn't save.
+Listing must include credentials without registered source rows so Gmail alias
+checks can detect them. Read or listing failures stop those decisions.
+
+Commands are executable-and-argument arrays. msgvault does not invoke a shell or
+expand tildes, environment variables, redirects, or pipes. Executables use `PATH`;
+relative executables use the process working directory. Use absolute paths for
+scripts that must run from the daemon. A command that cannot start, such as a
+missing or non-executable program, is a configuration error; for
+`client_secrets_command`, msgvault asks you to fix the OAuth app settings.
+Commands inherit the user's environment and run with the user's privileges. They must work unattended for scheduled sync.
+
+Each invocation has a 30-second deadline and a 1 MiB stdout limit, and stops
+when the operation that needs it is cancelled. When msgvault's stderr is a
+terminal, a command's stderr is shown there; otherwise, including in the daemon,
+msgvault discards it. msgvault never includes command output or arguments in its
+errors. Write and delete stdout is ignored.
+Pass secrets through stdin rather than placing them in command arguments.
+
+Google Contacts reuses an access token until it expires, so the daemon runs these
+commands about once per token lifetime rather than for every contacts request.
+Saving or authorizing a Google Contacts connection, or Google rejecting the
+token, reads the stored token again.
+
+Keep token JSON unchanged, including `scopes` and `client_id`. A write followed by
+a read must return the same bytes. msgvault uses private local lock files to
+coordinate its processes and compares snapshots before replacing a token. It
+never writes secret temporary files in command mode.
+
+The lock files coordinate only processes on one machine. msgvault reads the
+token to compare it and then calls `write_command` as a separate step, so a
+store cannot make that sequence atomic. If msgvault runs on more than one
+machine against the same store, a refresh on one machine can overwrite a
+sign-in saved by another at the same moment. Run msgvault against a store from
+only one machine at a time. Other programs that change the store need to avoid
+writing while msgvault runs.
+
+Configure the command backend separately on each machine. To migrate a file
+credential, move its JSON into your store under its namespace and account
+and verify a sync before removing the old file. Changing configuration leaves
+existing plaintext files in place; msgvault does not migrate them automatically.
+`export-token` reads the selected backend, and the receiving server's token-upload
+endpoint writes its configured backend. Configure the receiving backend before
+uploading. Client credentials remain separately configured; setup does not put
+command output into a NAS bundle.
 
 ### `[carddav]` and `[carddav_connections.<name>]` {#carddav}
 
@@ -1165,12 +1288,37 @@ all_sources_upload_consent = true # allow audio from every captured source to le
 | `api_key_file` | — | Owner-only Docbank key file, read for each request; takes priority over `api_key_env` |
 | `all_sources_upload_consent` | `false` | Allow stored audio and explicit source transcripts from every captured source, including future providers, to be sent to `url`. Without it the job only records local state |
 | `asr_profile` | — | Optional Docbank processing profile for stored audio without usable source text. An empty value retains audio without requesting processing. Msgvault rejects `supplied-transcript`, which Docbank reserves for supplied transcript input. |
+| `reference_consent` | `false` | Send Loom/Cap links from every message source and native Teams recording pointers to `url` as references. This consent is separate from audio upload consent. |
+| `reference_origins` | `[]` | Exact origins for self-hosted Cap, such as `https://cap.example.test`. Include only scheme, host and optional port. Register each origin in Docbank too. |
+
+With `enabled = true` and `reference_consent = true`, the daemon routes Loom and
+Cap links from normalized message text and HTML across every message source,
+including existing messages and links behind display text. It also routes native
+Teams recording pointers from typed attachment records.
+HTML messages use actual link destinations and surrounding text; the plain body is used when HTML is absent.
+Beeper imports and repairs retain HTML outside quoted replies, so links behind display text and changes to link targets remain discoverable.
+It submits references with acquisition disabled. Docbank records outcome
+`access_required` or `unsupported`. Coverage stays `unprocessed` until media is imported.
+Delivery log events include delivery state and Docbank's
+`source_id` and `occurrence_id` for `docbank media import-artifact`.
+
+Each run attempts at most 20 deliveries. HTTP requests time out after 30 seconds; slow Docbank responses delay backfill, and the scheduler skips overlapping runs.
+
+Removing a recording link or deleting its message stops future submissions once
+the worker sees the change. A request already prepared for sending can still
+finish. The local `withdrawn` state does not retract an occurrence or delete media
+already retained by Docbank; manage those records in Docbank separately.
+
+A definite submission rejection leaves the reference blocked until the daemon restarts
+and sets up the enabled, consented route. Fix the rejection, then restart the
+daemon to reconsider it. Waiting for the next scheduled minute leaves it blocked.
+Transient failures and uncertain sends keep their scheduled retry and receipt recovery.
 
 The former Beeper-only `upload_consent` setting no longer enables uploads.
 Existing users must explicitly set `all_sources_upload_consent = true` to resume
 sending audio, including Beeper recordings.
 
-The daemon reads these settings at startup, so restart it after a change. A new
+Restart the daemon after changing these settings, including `reference_consent` or `reference_origins`. A new
 `url` starts a separate delivery record; earlier rows stay. Disabling the route
 stops the job and keeps its rows. A failed setup, such as an invalid `url`,
 does the same and logs a warning. `all_sources_upload_consent` covers transport only; the
@@ -1178,6 +1326,9 @@ Docbank daemon's processing consent still decides whether a configured profile
 may run. The route inspects stored CAS bytes, so MIME claims do not expand
 Docbank's WAV and MP3 capability. Capture gaps and unsupported formats remain
 typed local states.
+
+Agents can quote the transcripts of delivered files in
+[Kata issues](usage/kata-issues.md#cite-a-docbank-transcript).
 
 ### `[slack]`
 
@@ -1249,6 +1400,37 @@ max_media_mb = 500
 | `media_max_participants` | `20` | Skip media from chats and channels above this many members; `0` = no cap |
 | `max_media_mb` | `250` | Per-attachment download cap in MiB |
 | `accounts_config` | — | Per-account overrides of `media` and `max_media_mb`, keyed by the Teams account email |
+
+### Omi Sources
+
+Use one `[[omi]]` entry per hosted or self-hosted Omi account. Register each
+entry with `msgvault add-omi`; see [Omi setup](usage/meetings.md#omi).
+Use HTTPS for non-loopback backends. Plain HTTP is accepted only for loopback
+hosts such as `localhost`, `127.0.0.1`, or `[::1]`.
+
+```toml
+[[omi]]
+identifier = "omi-personal"
+account_email = "you@example.com"
+api_key = "omi_dev_..."
+# base_url = "http://localhost:8000" # self-hosted backend root
+schedule = "0 */6 * * *"
+enabled = true
+```
+
+| Field | Default | Description |
+|---|---|---|
+| `identifier` | `default` for a single entry | Stable source label; required and unique when multiple entries exist |
+| `account_email` | required | Primary account identity; independent of the source label |
+| `api_key` | required for add/sync | Developer API key with `conversations:read` on this backend |
+| `base_url` | `https://api.omi.me` | HTTPS backend root, or HTTP loopback root, with optional proxy prefix; omit `/v1/dev`; credentials, query, and fragment are rejected |
+| `schedule` | empty | Five-field cron expression; empty disables daemon scheduling |
+| `enabled` | `false` | Enables scheduled sync when a schedule is present |
+
+Explicit CLI sync can run entries regardless of `enabled`. Credentials belong
+in the daemon's configuration, including when the CLI connects remotely.
+
+Omi sync gives each source a resumable five-minute pass. Schedules continue unfinished creation-date windows; a provider cooldown beyond a pass waits for the next configured trigger. Manual commands report how to continue. See [Omi sync behavior](usage/meetings.md#how-omi-sync-runs).
 
 ### Granola Sources
 
@@ -1797,6 +1979,15 @@ features once published. No startup hook or entrypoint wrapper is required.
 - `screen_viewed` when a web or terminal screen opens, counted once per installation
   per UTC day across both interfaces and daemon restarts. The daemon keeps the
   current day's screens in `telemetry-screen-views.json` beside its install ID.
+- `session_ended` when a browser tab closes, reloads, stays hidden for 30 minutes, or the
+  terminal UI exits normally or after an interrupt. Browser sessions add visible
+  time across tab switches;
+  terminal sessions measure UI runtime. Returning after 30 minutes hidden starts
+  a fresh browser session. Delivery is best effort; terminal delivery has a
+  three-second request timeout. Terminal startup failures, forced termination,
+  or crashes may send nothing.
+  Time spent signed out doesn't count. Earlier signed-in time carries across
+  signing in again, and a tab that closes or expires while signed out sends nothing.
 
 For `app_opened`, the web UI records the day it last reported in browser storage, which the
 browser keeps separately for each daemon address. With the default
@@ -1806,6 +1997,9 @@ that blocks storage, can also each send one. Each event carries only:
 
 - the product name and source (`msgvault`, `daemon`)
 - on `app_opened`, the surface (`web`)
+- on `session_ended`, the surface (`web` or `tui`) and `duration_bucket`:
+  `under_1m` below one minute, `1_to_5m` below five minutes, `5_to_30m` through
+  30 minutes, and `over_30m` above 30 minutes
 - on `screen_viewed`, the first surface (`web` or `tui`) and a fixed screen name:
   `everything`, `directory`, `directory_review`, `files`, `operations`,
   `relationships`, `saved_views`, `sources`, `deletions`, `settings`, `message`,
@@ -1854,6 +2048,7 @@ home; `[log].dir` can override the log location.
 | `tokens/server-api-key` | Persisted daemon API key, reused on later loopback and non-loopback starts |
 | `logs/` | Structured log files (when [file logging](/docs/configuration/#log) is enabled) |
 | `analytics/` | Parquet cache files for Web UI and TUI analytical views |
+| `omi/` | Omi request pacing and provider cooldowns per backend and API key, shared by scheduled and manual syncs |
 | `telemetry-install.json` | Random anonymous install ID for [telemetry](#telemetry); created only while telemetry is on |
 | `telemetry-screen-views.json` | Current UTC day's screen claims shared by web and terminal UIs; created only while telemetry is on |
 

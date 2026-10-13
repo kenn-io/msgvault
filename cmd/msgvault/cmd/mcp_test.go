@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync/atomic"
 	"testing"
 
@@ -325,6 +326,10 @@ func TestDaemonMCPVectorReadinessIsCheckedAtRequestTime(t *testing.T) {
 	requests := make(chan string, 8)
 	client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
 		requests <- r.URL.Path
+		if r.URL.Path == "/api/v1/media/search/status" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"configured": false})
+			return
+		}
 		if r.URL.Path == "/api/v1/health" {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"status": "ok", "api_schema_version": api.APISchemaVersion,
@@ -348,7 +353,9 @@ func TestDaemonMCPVectorReadinessIsCheckedAtRequestTime(t *testing.T) {
 	require.ErrorAs(err, &coded)
 	assert.Equal("vector_initializing", coded.APIErrorCode())
 	path := <-requests
-	assert.Equal("/api/v1/health", path, "startup should only probe health")
+	assert.Equal("/api/v1/health", path, "startup reads the daemon schema")
+	path = <-requests
+	assert.Equal("/api/v1/media/search/status", path, "capability detection checks Docbank separately")
 	path = <-requests
 	assert.Equal("/api/v1/search", path, "vector readiness belongs to the request")
 }
@@ -614,4 +621,60 @@ func TestNormalizeMCPHTTPAddr(t *testing.T) {
 		_, err := normalizeMCPHTTPAddr("not-a-port", false, false)
 		require.Error(t, err, "expected error for non-port, non-host:port")
 	})
+}
+
+func TestDaemonMCPDocbankCapability(t *testing.T) {
+	for _, tc := range []struct {
+		version          string
+		configured, want bool
+	}{
+		{"3.12.0", true, false}, {"3.13.0", false, false}, {"3.13.0", true, true},
+	} {
+		t.Run(tc.version+"/"+strconv.FormatBool(tc.configured), func(t *testing.T) {
+			assert := assert.New(t)
+			ctx := withStoreResolverConfig(t, &config.Config{Data: config.DataConfig{DataDir: t.TempDir()}})
+			var probes atomic.Int32
+			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/v1/health":
+					assert.NoError(json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": tc.version}))
+				case "/api/v1/media/search/status":
+					probes.Add(1)
+					assert.NoError(json.NewEncoder(w).Encode(map[string]any{"configured": tc.configured}))
+				default:
+					http.NotFound(w, r)
+				}
+			})
+			opts := daemonMCPServeOptions(ctx, client, invocationFromContext(ctx))
+			assert.True(opts.KataLookup)
+			assert.Equal(tc.want, opts.KataDocbank)
+			if tc.version == "3.12.0" {
+				assert.Zero(probes.Load())
+			} else {
+				assert.Equal(int32(1), probes.Load())
+			}
+		})
+	}
+}
+
+func TestDaemonMCPDocbankProbeFailureIsLogged(t *testing.T) {
+	assert := assert.New(t)
+	ctx := withStoreResolverConfig(t, &config.Config{Data: config.DataConfig{DataDir: t.TempDir()}})
+	client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/health":
+			assert.NoError(json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": "3.13.0"}))
+		case "/api/v1/media/search/status":
+			http.Error(w, "unavailable", http.StatusServiceUnavailable)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	var logs bytes.Buffer
+	state := *invocationFromContext(ctx)
+	state.logger = slog.New(slog.NewTextHandler(&logs, nil))
+	opts := daemonMCPServeOptions(ctx, client, &state)
+	assert.False(opts.KataDocbank)
+	assert.Contains(logs.String(), "Kata transcript citations hidden because the Docbank status probe failed")
+	assert.Contains(logs.String(), "503")
 }

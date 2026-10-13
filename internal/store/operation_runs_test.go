@@ -76,6 +76,11 @@ func TestOperationRunsSourceProjectsStatesCountersAndFilters(t *testing.T) {
 			wantError: sourceOperationPublicError(),
 		},
 		{
+			name:      "paused after progress",
+			seed:      sourceOperationRunSeed{startedAt: base.Add(5*time.Minute + 30*time.Second), state: "paused", processed: 5, added: 2},
+			wantState: operations.StatePaused,
+		},
+		{
 			name: "exact legacy cancelled",
 			seed: sourceOperationRunSeed{
 				startedAt: base.Add(6 * time.Minute), state: "cancelled", processed: 1,
@@ -124,6 +129,7 @@ func TestOperationRunsSourceProjectsStatesCountersAndFilters(t *testing.T) {
 		operations.StatePartial,
 		operations.StateFailed,
 		operations.StateCancelled,
+		operations.StatePaused,
 	} {
 		filtered, filterErr := store.ListSourceOperationRunsForTest(st, t.Context(), operations.Query{
 			States: []operations.State{state}, Limit: 100,

@@ -858,6 +858,7 @@ type CLIEmbeddingsPlanResponse struct {
 
 type CLIQueryMessageSummary struct {
 	AttachmentCount      int64      `json:"attachment_count"`
+	AttachmentNames      []string   `json:"attachment_names,omitempty"`
 	Bcc                  []Address  `json:"bcc,omitempty"`
 	BodyText             *string    `json:"body_text,omitzero"`
 	Cc                   []Address  `json:"cc,omitempty"`
@@ -870,6 +871,7 @@ type CLIQueryMessageSummary struct {
 	HasAttachments       bool       `json:"has_attachments"`
 	ID                   int64      `json:"id"`
 	Labels               []string   `json:"labels" validate:"required"`
+	MatchSnippet         *string    `json:"match_snippet,omitzero"`
 	MessageType          *string    `json:"message_type,omitzero"`
 	SentAt               time.Time  `json:"sent_at" validate:"required"`
 	SizeEstimate         int64      `json:"size_estimate"`
@@ -2087,25 +2089,52 @@ func (c ChoiceDescriptor) Validate() error {
 }
 
 type CliAccountResponse struct {
-	DisplayName        string     `json:"display_name" validate:"required"`
-	Email              string     `json:"email" validate:"required"`
-	ID                 int64      `json:"id"`
-	LastSync           *time.Time `json:"last_sync,omitempty" validate:"required"`
-	MessageCount       int64      `json:"message_count"`
-	OauthApp           *string    `json:"oauth_app,omitzero"`
-	SourceDeletedCount int64      `json:"source_deleted_count"`
-	Type               string     `json:"type" validate:"required"`
+	DisplayName        string           `json:"display_name" validate:"required"`
+	Email              string           `json:"email" validate:"required"`
+	ID                 int64            `json:"id"`
+	LastSync           *time.Time       `json:"last_sync,omitempty" validate:"required"`
+	MessageCount       int64            `json:"message_count"`
+	OauthApp           *string          `json:"oauth_app,omitzero"`
+	SourceDeletedCount int64            `json:"source_deleted_count"`
+	Type               string           `json:"type" validate:"required"`
+	VirtualAccounts    []VirtualAccount `json:"virtual_accounts,omitempty"`
 }
 
 func (c CliAccountResponse) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(c))
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(c.DisplayName, "required"); err != nil {
+		errors = errors.Append("DisplayName", err)
+	}
+	if err := typesValidator.Var(c.Email, "required"); err != nil {
+		errors = errors.Append("Email", err)
+	}
+	if c.LastSync != nil {
+		if err := typesValidator.Var(c.LastSync, "required"); err != nil {
+			errors = errors.Append("LastSync", err)
+		}
+	}
+	if err := typesValidator.Var(c.Type, "required"); err != nil {
+		errors = errors.Append("Type", err)
+	}
+	for i, item := range c.VirtualAccounts {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("VirtualAccounts[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type CliAccountsResponse struct {
-	Accounts      []CliAccountResponse `json:"accounts" validate:"required"`
-	AsOf          *time.Time           `json:"as_of,omitempty"`
-	CountsPending *bool                `json:"counts_pending,omitempty"`
-	Stale         *bool                `json:"stale,omitempty"`
+	Accounts                   []CliAccountResponse `json:"accounts" validate:"required"`
+	AsOf                       *time.Time           `json:"as_of,omitempty"`
+	CountsPending              *bool                `json:"counts_pending,omitempty"`
+	Stale                      *bool                `json:"stale,omitempty"`
+	VirtualAccountsUnavailable *bool                `json:"virtual_accounts_unavailable,omitempty"`
 }
 
 func (c CliAccountsResponse) Validate() error {
@@ -2477,6 +2506,7 @@ func (c CliRebuildFTSEvent) Validate() error {
 }
 
 type CliSearchResponse struct {
+	HybridAvailable  *bool                    `json:"hybrid_available,omitempty"`
 	IndexBuilt       *bool                    `json:"index_built,omitempty"`
 	IndexState       *string                  `json:"index_state,omitzero"`
 	IndexedMessages  *int64                   `json:"indexed_messages,omitempty"`
@@ -2626,6 +2656,37 @@ type ContactState struct {
 
 func (c ContactState) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(c))
+}
+
+type ContextPassage struct {
+	// After Up to 500 characters of source text after the excerpt, when available
+	After *string `json:"after,omitzero"`
+
+	// Before Up to 500 characters of source text before the excerpt, when available
+	Before   *string  `json:"before,omitzero"`
+	Evidence Evidence `json:"evidence"`
+
+	// SavedQuote Quoted words recovered from the issue body or comments when archive evidence is not available
+	SavedQuote *string `json:"saved_quote,omitzero"`
+
+	// State available, changed, unavailable, unprocessed, failed, unsupported, or unreachable
+	State string `json:"state" validate:"required"`
+}
+
+func (c ContextPassage) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(c.Evidence).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Evidence", err)
+		}
+	}
+	if err := typesValidator.Var(c.State, "required"); err != nil {
+		errors = errors.Append("State", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type ConversationResponse struct {
@@ -3272,6 +3333,22 @@ type Display struct {
 	ContainingTitle *string    `json:"containing_title,omitzero"`
 	Filename        *string    `json:"filename,omitzero"`
 	Timestamp       *time.Time `json:"timestamp,omitempty"`
+}
+
+type DocbankReference struct {
+	BuildID               string `json:"build_id" validate:"required"`
+	ContentSha256         string `json:"content_sha256" validate:"required"`
+	ContentVersionID      string `json:"content_version_id" validate:"required"`
+	EndRune               int64  `json:"end_rune"`
+	NodeID                int64  `json:"node_id"`
+	RenditionAttachmentID string `json:"rendition_attachment_id" validate:"required"`
+	RenditionSha256       string `json:"rendition_sha256" validate:"required"`
+	StartRune             int64  `json:"start_rune"`
+	VaultUID              string `json:"vault_uid" validate:"required"`
+}
+
+func (d DocbankReference) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(d))
 }
 
 type DocumentFailureDiagnostic struct {
@@ -4061,7 +4138,7 @@ func (s ErrorResponse) Error() string {
 type Evidence struct {
 	ContentTrust string    `json:"content_trust" validate:"required"`
 	Display      Display   `json:"display"`
-	Excerpt      string    `json:"excerpt" validate:"required"`
+	Excerpt      string    `json:"excerpt" validate:"omitempty"`
 	ID           string    `json:"id" validate:"required"`
 	NextRune     *int64    `json:"next_rune,omitempty"`
 	Passage      string    `json:"passage" validate:"required"`
@@ -4077,9 +4154,6 @@ func (e Evidence) Validate() error {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("Display", err)
 		}
-	}
-	if err := typesValidator.Var(e.Excerpt, "required"); err != nil {
-		errors = errors.Append("Excerpt", err)
 	}
 	if err := typesValidator.Var(e.ID, "required"); err != nil {
 		errors = errors.Append("ID", err)
@@ -5346,6 +5420,8 @@ func (h HybridGenerationSummary) Validate() error {
 }
 
 type HybridSearchItem struct {
+	AttachmentCount  *int64              `json:"attachment_count,omitempty"`
+	AttachmentNames  []string            `json:"attachment_names,omitempty"`
 	Bcc              []string            `json:"bcc,omitempty"`
 	Cc               []string            `json:"cc,omitempty"`
 	ConversationID   *int64              `json:"conversation_id,omitempty"`
@@ -6006,6 +6082,34 @@ func (k KataIssueConflictResponse) Validate() error {
 	return errors
 }
 
+type KataIssueContextResponse struct {
+	Issue KataIssueReceipt `json:"issue"`
+
+	// NextOffset Offset of the next page of passages; absent on the last page
+	NextOffset *int64           `json:"next_offset,omitempty"`
+	Passages   []ContextPassage `json:"passages" validate:"required"`
+}
+
+func (k KataIssueContextResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(k.Issue).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Issue", err)
+		}
+	}
+	for i, item := range k.Passages {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Passages[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type KataIssueCreateRequest struct {
 	Brief    *string     `json:"brief,omitzero" validate:"omitempty,max=2000"`
 	Evidence []Reference `json:"evidence" validate:"required"`
@@ -6040,6 +6144,28 @@ func (k KataIssueCreateRequest) Validate() error {
 	}
 	if err := typesValidator.Var(k.Title, "required,max=512,min=1"); err != nil {
 		errors = errors.Append("Title", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type KataIssueListResponse struct {
+	Issues []KataIssueReceipt `json:"issues" validate:"required"`
+
+	// Truncated The list may omit issues that cite this source: more matched than were returned, or some issues could not be checked
+	Truncated bool `json:"truncated"`
+}
+
+func (k KataIssueListResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range k.Issues {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Issues[%d]", i), err)
+			}
+		}
 	}
 	if len(errors) == 0 {
 		return nil
@@ -6215,15 +6341,18 @@ func (m MediaSearchResponse) Validate() error {
 }
 
 type MediaSearchResult struct {
-	AttachmentID   int64  `json:"attachment_id"`
-	ConversationID int64  `json:"conversation_id"`
-	EndMs          *int64 `json:"end_ms,omitempty"`
+	AttachmentID    int64   `json:"attachment_id"`
+	ContainingTitle *string `json:"containing_title,omitzero"`
+	ConversationID  int64   `json:"conversation_id"`
+	EndMs           *int64  `json:"end_ms,omitempty"`
 
 	// Excerpt Plain transcript excerpt without search highlight markers
-	Excerpt   string                  `json:"excerpt" validate:"required"`
-	MessageID int64                   `json:"message_id"`
-	Origin    MediaSearchResultOrigin `json:"origin" validate:"required"`
-	StartMs   *int64                  `json:"start_ms,omitempty"`
+	Excerpt    string                  `json:"excerpt" validate:"required"`
+	Filename   *string                 `json:"filename,omitzero"`
+	MessageID  int64                   `json:"message_id"`
+	OccurredAt *time.Time              `json:"occurred_at,omitempty"`
+	Origin     MediaSearchResultOrigin `json:"origin" validate:"required"`
+	StartMs    *int64                  `json:"start_ms,omitempty"`
 }
 
 func (m MediaSearchResult) Validate() error {
@@ -6240,6 +6369,10 @@ func (m MediaSearchResult) Validate() error {
 		return nil
 	}
 	return errors
+}
+
+type MediaSearchStatusResponse struct {
+	Configured bool `json:"configured"`
 }
 
 type Meeting struct {
@@ -6638,30 +6771,33 @@ type MergePersonRequest struct {
 }
 
 type MessageDetail struct {
-	Attachments     []AttachmentInfo `json:"attachments" validate:"required"`
-	Bcc             []string         `json:"bcc,omitempty"`
-	Body            string           `json:"body" validate:"required"`
-	BodyHTML        *string          `json:"body_html,omitzero"`
-	BodyOmitted     *bool            `json:"body_omitted,omitempty"`
-	Cc              []string         `json:"cc,omitempty"`
-	ConversationID  *int64           `json:"conversation_id,omitempty"`
-	DeletedAt       *string          `json:"deleted_at,omitzero"`
-	From            string           `json:"from" validate:"required"`
-	FromEmail       *string          `json:"from_email,omitzero"`
-	FromName        *string          `json:"from_name,omitzero"`
-	FromPhone       *string          `json:"from_phone,omitzero"`
-	HasAttachments  bool             `json:"has_attachments"`
-	ID              int64            `json:"id"`
-	IsFromMe        *bool            `json:"is_from_me,omitempty"`
-	Labels          []string         `json:"labels" validate:"required"`
-	MessageType     *string          `json:"message_type,omitzero"`
-	SentAt          string           `json:"sent_at" validate:"required"`
-	SizeBytes       int64            `json:"size_bytes"`
-	Snippet         string           `json:"snippet" validate:"required"`
-	SourceID        *int64           `json:"source_id,omitempty"`
-	SourceMessageID *string          `json:"source_message_id,omitzero"`
-	Subject         string           `json:"subject" validate:"required"`
-	To              []string         `json:"to" validate:"required"`
+	Attachments    []AttachmentInfo `json:"attachments" validate:"required"`
+	Bcc            []string         `json:"bcc,omitempty"`
+	Body           string           `json:"body" validate:"required"`
+	BodyHTML       *string          `json:"body_html,omitzero"`
+	BodyOmitted    *bool            `json:"body_omitted,omitempty"`
+	Cc             []string         `json:"cc,omitempty"`
+	ConversationID *int64           `json:"conversation_id,omitempty"`
+
+	// ConversationTitle Conversation title, when available.
+	ConversationTitle *string  `json:"conversation_title,omitzero"`
+	DeletedAt         *string  `json:"deleted_at,omitzero"`
+	From              string   `json:"from" validate:"required"`
+	FromEmail         *string  `json:"from_email,omitzero"`
+	FromName          *string  `json:"from_name,omitzero"`
+	FromPhone         *string  `json:"from_phone,omitzero"`
+	HasAttachments    bool     `json:"has_attachments"`
+	ID                int64    `json:"id"`
+	IsFromMe          *bool    `json:"is_from_me,omitempty"`
+	Labels            []string `json:"labels" validate:"required"`
+	MessageType       *string  `json:"message_type,omitzero"`
+	SentAt            string   `json:"sent_at" validate:"required"`
+	SizeBytes         int64    `json:"size_bytes"`
+	Snippet           string   `json:"snippet" validate:"required"`
+	SourceID          *int64   `json:"source_id,omitempty"`
+	SourceMessageID   *string  `json:"source_message_id,omitzero"`
+	Subject           string   `json:"subject" validate:"required"`
+	To                []string `json:"to" validate:"required"`
 }
 
 func (m MessageDetail) Validate() error {
@@ -11695,6 +11831,7 @@ func (q QueryResult) Validate() error {
 type Reference struct {
 	ArchiveUID       string             `json:"archive_uid" validate:"required"`
 	AttachmentID     *int64             `json:"attachment_id,omitempty"`
+	DocbankRendition *DocbankReference  `json:"docbank_rendition,omitempty"`
 	DocumentChunk    *DocumentReference `json:"document_chunk,omitempty"`
 	Kind             ReferenceKind      `json:"kind" validate:"required"`
 	Message          *MessageReference  `json:"message,omitempty"`
@@ -11710,6 +11847,13 @@ func (r Reference) Validate() error {
 	var errors runtime.ValidationErrors
 	if err := typesValidator.Var(r.ArchiveUID, "required"); err != nil {
 		errors = errors.Append("ArchiveUID", err)
+	}
+	if r.DocbankRendition != nil {
+		if v, ok := any(r.DocbankRendition).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("DocbankRendition", err)
+			}
+		}
 	}
 	if r.DocumentChunk != nil {
 		if v, ok := any(r.DocumentChunk).(runtime.Validator); ok {
@@ -14337,6 +14481,20 @@ type VectorHealth struct {
 }
 
 func (v VectorHealth) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(v))
+}
+
+type VirtualAccount struct {
+	AccountAddress     *string `json:"account_address,omitzero"`
+	Key                string  `json:"key" validate:"required"`
+	MessageCount       int64   `json:"message_count"`
+	PendingCount       *int64  `json:"pending_count,omitempty"`
+	SourceDeletedCount int64   `json:"source_deleted_count"`
+	SourceID           int64   `json:"source_id"`
+	Unattributed       *bool   `json:"unattributed,omitempty"`
+}
+
+func (v VirtualAccount) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(v))
 }
 

@@ -31,8 +31,8 @@ whole query is optional.
 | `older_than:` `newer_than:` | relative age | `7d`, `2w`, `1m`, `1y` |
 | `larger:` `smaller:` | whole-message size | `5M`, `100K`, `1G` |
 | `message_type:` | source kind | `email`, `sms`, `mms`, `whatsapp`, `imessage`, `teams`, `fbmessenger`, `calendar_event`, `synctech_sms_call`, `google_voice_text`, `google_voice_call`, `google_voice_voicemail` |
-| `received:` | confirmed address that received the mail | full email; `--mode=fts` only |
-| `account:` | confirmed address that received or sent it, or owns the calendar event | full email; `--mode=fts` only |
+| `received:` | confirmed address that received the mail | full email |
+| `account:` | confirmed address that received or sent it, or owns the calendar event | full email |
 
 Bare words and `"quoted phrases"` are full-text terms, matched as
 prefixes and combined with AND (no OR/NEAR support). If a search

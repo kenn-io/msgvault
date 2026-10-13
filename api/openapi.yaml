@@ -1022,6 +1022,10 @@ components:
         attachment_count:
           format: int64
           type: integer
+        attachment_names:
+          items:
+            type: string
+          type: array
         bcc:
           items:
             $ref: "#/components/schemas/Address"
@@ -1055,6 +1059,8 @@ components:
           items:
             type: string
           type: array
+        match_snippet:
+          type: string
         message_type:
           type: string
         sent_at:
@@ -2282,6 +2288,10 @@ components:
           type: integer
         type:
           type: string
+        virtual_accounts:
+          items:
+            $ref: "#/components/schemas/VirtualAccount"
+          type: array
       required:
         - id
         - email
@@ -2304,6 +2314,8 @@ components:
         counts_pending:
           type: boolean
         stale:
+          type: boolean
+        virtual_accounts_unavailable:
           type: boolean
       required:
         - accounts
@@ -2660,6 +2672,8 @@ components:
     CliSearchResponse:
       additionalProperties: true
       properties:
+        hybrid_available:
+          type: boolean
         index_built:
           type: boolean
         index_state:
@@ -2875,6 +2889,27 @@ components:
         - cadence_status
         - stale
         - computed_at
+      type: object
+    ContextPassage:
+      additionalProperties: true
+      properties:
+        after:
+          description: Up to 500 characters of source text after the excerpt, when available
+          type: string
+        before:
+          description: Up to 500 characters of source text before the excerpt, when available
+          type: string
+        evidence:
+          $ref: "#/components/schemas/Evidence"
+        saved_quote:
+          description: Quoted words recovered from the issue body or comments when archive evidence is not available
+          type: string
+        state:
+          description: available, changed, unavailable, unprocessed, failed, unsupported, or unreachable
+          type: string
+      required:
+        - state
+        - evidence
       type: object
     ConversationResponse:
       additionalProperties: true
@@ -3550,6 +3585,41 @@ components:
         timestamp:
           format: date-time
           type: string
+      type: object
+    DocbankReference:
+      additionalProperties: false
+      properties:
+        build_id:
+          type: string
+        content_sha256:
+          type: string
+        content_version_id:
+          type: string
+        end_rune:
+          format: int64
+          type: integer
+        node_id:
+          format: int64
+          type: integer
+        rendition_attachment_id:
+          type: string
+        rendition_sha256:
+          type: string
+        start_rune:
+          format: int64
+          type: integer
+        vault_uid:
+          type: string
+      required:
+        - vault_uid
+        - node_id
+        - content_version_id
+        - content_sha256
+        - rendition_attachment_id
+        - build_id
+        - rendition_sha256
+        - start_rune
+        - end_rune
       type: object
     DocumentFailureDiagnostic:
       additionalProperties: true
@@ -4735,6 +4805,7 @@ components:
             - before
             - deletion
             - identity
+            - account
           type: string
         values:
           items:
@@ -5762,6 +5833,13 @@ components:
     HybridSearchItem:
       additionalProperties: true
       properties:
+        attachment_count:
+          format: int64
+          type: integer
+        attachment_names:
+          items:
+            type: string
+          type: array
         bcc:
           items:
             type: string
@@ -6432,6 +6510,23 @@ components:
       required:
         - error
       type: object
+    KataIssueContextResponse:
+      additionalProperties: true
+      properties:
+        issue:
+          $ref: "#/components/schemas/KataIssueReceipt"
+        next_offset:
+          description: Offset of the next page of passages; absent on the last page
+          format: int64
+          type: integer
+        passages:
+          items:
+            $ref: "#/components/schemas/ContextPassage"
+          type: array
+      required:
+        - issue
+        - passages
+      type: object
     KataIssueCreateRequest:
       additionalProperties: false
       properties:
@@ -6458,6 +6553,20 @@ components:
       required:
         - title
         - evidence
+      type: object
+    KataIssueListResponse:
+      additionalProperties: true
+      properties:
+        issues:
+          items:
+            $ref: "#/components/schemas/KataIssueReceipt"
+          type: array
+        truncated:
+          description: "The list may omit issues that cite this source: more matched than were returned, or some issues could not be checked"
+          type: boolean
+      required:
+        - issues
+        - truncated
       type: object
     KataIssueReceipt:
       additionalProperties: true
@@ -6600,6 +6709,8 @@ components:
         attachment_id:
           format: int64
           type: integer
+        containing_title:
+          type: string
         conversation_id:
           format: int64
           type: integer
@@ -6609,9 +6720,14 @@ components:
         excerpt:
           description: Plain transcript excerpt without search highlight markers
           type: string
+        filename:
+          type: string
         message_id:
           format: int64
           type: integer
+        occurred_at:
+          format: date-time
+          type: string
         origin:
           enum:
             - supplied
@@ -6626,6 +6742,14 @@ components:
         - attachment_id
         - origin
         - excerpt
+      type: object
+    MediaSearchStatusResponse:
+      additionalProperties: true
+      properties:
+        configured:
+          type: boolean
+      required:
+        - configured
       type: object
     Meeting:
       additionalProperties: false
@@ -7071,6 +7195,9 @@ components:
         conversation_id:
           format: int64
           type: integer
+        conversation_title:
+          description: Conversation title, when available.
+          type: string
         deleted_at:
           type: string
         from:
@@ -7849,6 +7976,7 @@ components:
             - cancelled
             - failed
             - partial
+            - paused
             - queued
             - running
             - succeeded
@@ -7922,6 +8050,7 @@ components:
             - cancelled
             - failed
             - partial
+            - paused
             - queued
             - running
             - succeeded
@@ -12327,12 +12456,15 @@ components:
         attachment_id:
           format: int64
           type: integer
+        docbank_rendition:
+          $ref: "#/components/schemas/DocbankReference"
         document_chunk:
           $ref: "#/components/schemas/DocumentReference"
         kind:
           enum:
             - message
             - document_chunk
+            - docbank_rendition
           type: string
         message:
           $ref: "#/components/schemas/MessageReference"
@@ -12956,6 +13088,7 @@ components:
             - participant
             - domain
             - mailing_list
+            - account
             - message_type
             - after
             - before
@@ -13309,6 +13442,7 @@ components:
           enum:
             - message
             - document_chunk
+            - docbank_rendition
           type: string
         max_chars:
           format: int64
@@ -15111,6 +15245,33 @@ components:
       required:
         - status
       type: object
+    VirtualAccount:
+      additionalProperties: true
+      properties:
+        account_address:
+          type: string
+        key:
+          type: string
+        message_count:
+          format: int64
+          type: integer
+        pending_count:
+          format: int64
+          type: integer
+        source_deleted_count:
+          format: int64
+          type: integer
+        source_id:
+          format: int64
+          type: integer
+        unattributed:
+          type: boolean
+      required:
+        - key
+        - source_id
+        - message_count
+        - source_deleted_count
+      type: object
     VisualBuildRequest:
       additionalProperties: false
       properties:
@@ -15218,7 +15379,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.10.0
+  version: 3.14.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -15454,6 +15615,11 @@ paths:
           name: view_type
           schema:
             type: string
+        - description: JSON list of account scopes that intersect, for structured clients
+          in: query
+          name: account_scopes
+          schema:
+            type: string
         - description: "Sort field: count, size, attachment_size, or name"
           in: query
           name: sort
@@ -15540,6 +15706,11 @@ paths:
           in: query
           name: view_type
           required: true
+          schema:
+            type: string
+        - description: JSON list of account scopes that intersect, for structured clients
+          in: query
+          name: account_scopes
           schema:
             type: string
         - description: "Sort field: count, size, attachment_size, or name"
@@ -18685,6 +18856,11 @@ paths:
     get:
       operationId: searchCLI
       parameters:
+        - description: Include attachment names and bounded FTS match context
+          in: query
+          name: include_snippet
+          schema:
+            type: boolean
         - description: Search query
           in: query
           name: q
@@ -21723,6 +21899,70 @@ paths:
       tags:
         - API
   /api/v1/integrations/kata/issues:
+    get:
+      operationId: findKataIssues
+      parameters:
+        - description: Message the issues cite
+          in: query
+          name: message_id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Only issues citing this attachment of the message
+          in: query
+          name: attachment_id
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KataIssueListResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Find Kata issues, open or closed, that cite a message or one of its files
+      tags:
+        - API
     post:
       description: Returns 201 both when it files the issue and when an earlier request under the same Idempotency-Key already did; `replayed` tells them apart.
       operationId: createKataIssue
@@ -21799,6 +22039,76 @@ paths:
       security:
         - apiKey: []
       summary: Create a Kata issue that quotes exact archive evidence
+      tags:
+        - API
+  /api/v1/integrations/kata/issues/{ref}/context:
+    get:
+      operationId: getKataIssueContext
+      parameters:
+        - description: Kata issue ref, qualified ref or UID
+          in: path
+          name: ref
+          required: true
+          schema:
+            type: string
+        - description: Index of the first passage to return; pass next_offset from the previous page
+          in: query
+          name: offset
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KataIssueContextResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Read each passage a Kata issue cites with its state in the archive today
       tags:
         - API
   /api/v1/integrations/kata/issues/{ref}/evidence:
@@ -21983,6 +22293,12 @@ paths:
           schema:
             format: int64
             type: integer
+        - description: Observed participant ID; selects its current Explore identity cluster; mutually exclusive with person_id
+          in: query
+          name: participant_id
+          schema:
+            format: int64
+            type: integer
         - description: "Person relation: from_person, to_person, or group"
           in: query
           name: direction
@@ -22060,6 +22376,27 @@ paths:
       security:
         - apiKey: []
       summary: Search source-selected transcripts as visible messages
+      tags:
+        - API
+  /api/v1/media/search/status:
+    get:
+      operationId: getMediaSearchStatus
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MediaSearchStatusResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get recording transcript search configuration status
       tags:
         - API
   /api/v1/meetings/actions:
@@ -22388,6 +22725,11 @@ paths:
     get:
       operationId: filterMessages
       parameters:
+        - description: JSON list of account scopes that intersect, for structured clients
+          in: query
+          name: account_scopes
+          schema:
+            type: string
         - description: Sender email/address filter
           in: query
           name: sender
@@ -22527,6 +22869,11 @@ paths:
     get:
       operationId: getGmailIDsByFilter
       parameters:
+        - description: JSON list of account scopes that intersect, for structured clients
+          in: query
+          name: account_scopes
+          schema:
+            type: string
         - description: Sender email/address filter
           in: query
           name: sender
@@ -23076,6 +23423,7 @@ paths:
               - cancelled
               - failed
               - partial
+              - paused
               - queued
               - running
               - succeeded
@@ -28753,6 +29101,11 @@ paths:
           name: list_id
           schema:
             type: string
+        - description: JSON list of account scopes that intersect (vector or hybrid mode only)
+          in: query
+          name: account_scopes
+          schema:
+            type: string
         - description: Calendar period in YYYY, YYYY-MM, or YYYY-MM-DD format (vector or hybrid mode only)
           in: query
           name: time_period
@@ -28950,6 +29303,11 @@ paths:
         - description: "Exact search scope: body; omit for composite full-text search"
           in: query
           name: scope
+          schema:
+            type: string
+        - description: JSON list of account scopes that intersect, for structured clients
+          in: query
+          name: account_scopes
           schema:
             type: string
         - description: Sender email/address filter; not supported when scope=body
@@ -29166,6 +29524,11 @@ paths:
           name: view_type
           schema:
             type: string
+        - description: JSON list of account scopes that intersect, for structured clients
+          in: query
+          name: account_scopes
+          schema:
+            type: string
         - description: Sender email/address filter
           in: query
           name: sender
@@ -29321,6 +29684,11 @@ paths:
         - description: Account email or configured source identifier
           in: query
           name: account
+          schema:
+            type: string
+        - description: JSON list of account scopes that intersect, for structured clients
+          in: query
+          name: account_scopes
           schema:
             type: string
         - description: Message type filter
@@ -30858,6 +31226,11 @@ paths:
         - description: Aggregate view type for grouping
           in: query
           name: group_by
+          schema:
+            type: string
+        - description: JSON list of account scopes that intersect, for structured clients
+          in: query
+          name: account_scopes
           schema:
             type: string
         - description: Sender email/address filter

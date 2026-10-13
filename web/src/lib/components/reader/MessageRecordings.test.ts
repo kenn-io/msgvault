@@ -3,10 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
 import MessageRecordings from './MessageRecordings.svelte';
-
-function recording(overrides: Record<string, unknown>) {
-  return { attachment_id: 1, filename: 'voice.wav', size_bytes: 2048, state: 'ready', ...overrides };
-}
+import { recording } from '../../archive/recording-fixtures.test-support';
 
 function mount(body: unknown, status = 200) {
   const fetchFn = vi.fn<typeof fetch>(async () => Response.json(body, { status }));

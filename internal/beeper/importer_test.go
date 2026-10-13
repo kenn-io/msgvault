@@ -100,6 +100,22 @@ func newTestImporter(t *testing.T, f *fakeBeeper) (*Importer, *store.Store, func
 	return imp, st, srv.Close
 }
 
+func TestBeeperHTMLPersists(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	f := newFakeBeeper(t)
+	ch := mediaTranscriptChat()
+	ch.Msgs[0].ID = "html1"
+	ch.Msgs[0].Text = `<a href="https://loom.com/share/abc">Watch recording</a>`
+	f.addChat(ch)
+	imp, st, done := newTestImporter(t, f)
+	defer done()
+	_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
+	require.NoError(err)
+	var html string
+	require.NoError(st.DB().QueryRow(`SELECT COALESCE(b.body_html,'') FROM messages m JOIN message_bodies b ON b.message_id=m.id WHERE m.source_message_id='html1'`).Scan(&html))
+	assert.Equal(`<a href="https://loom.com/share/abc">Watch recording</a><br>🎤 transcript: source words`, html)
+}
+
 func TestImportBackfillEndToEnd(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

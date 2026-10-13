@@ -567,9 +567,17 @@ type ClientInterface interface {
 	PrepareKataEvidence(ctx context.Context, options *PrepareKataEvidenceRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PrepareKataEvidenceResponse, error)
 	PrepareKataEvidenceWithResponse(ctx context.Context, options *PrepareKataEvidenceRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PrepareKataEvidenceResp, error)
 
+	// FindKataIssues Find Kata issues, open or closed, that cite a message or one of its files
+	FindKataIssues(ctx context.Context, options *FindKataIssuesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*FindKataIssuesResponse, error)
+	FindKataIssuesWithResponse(ctx context.Context, options *FindKataIssuesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*FindKataIssuesResp, error)
+
 	// CreateKataIssue Create a Kata issue that quotes exact archive evidence
 	CreateKataIssue(ctx context.Context, options *CreateKataIssueRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateKataIssueResponse, error)
 	CreateKataIssueWithResponse(ctx context.Context, options *CreateKataIssueRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateKataIssueResp, error)
+
+	// GetKataIssueContext Read each passage a Kata issue cites with its state in the archive today
+	GetKataIssueContext(ctx context.Context, options *GetKataIssueContextRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetKataIssueContextResponse, error)
+	GetKataIssueContextWithResponse(ctx context.Context, options *GetKataIssueContextRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetKataIssueContextResp, error)
 
 	// LinkKataEvidence Add exact archive evidence to an existing Kata issue
 	LinkKataEvidence(ctx context.Context, options *LinkKataEvidenceRequestOptions, reqEditors ...runtime.RequestEditorFn) (*LinkKataEvidenceResponse, error)
@@ -594,6 +602,10 @@ type ClientInterface interface {
 	// SearchMedia Search source-selected transcripts as visible messages
 	SearchMedia(ctx context.Context, options *SearchMediaRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchMediaResponse, error)
 	SearchMediaWithResponse(ctx context.Context, options *SearchMediaRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchMediaResp, error)
+
+	// GetMediaSearchStatus Get recording transcript search configuration status
+	GetMediaSearchStatus(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetMediaSearchStatusResponse, error)
+	GetMediaSearchStatusWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetMediaSearchStatusResp, error)
 
 	// ListMeetingActionItems List archived meeting action items
 	ListMeetingActionItems(ctx context.Context, options *ListMeetingActionItemsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListMeetingActionItemsResponse, error)
@@ -9372,6 +9384,69 @@ func (c *Client) PrepareKataEvidence(ctx context.Context, options *PrepareKataEv
 	return responseParser(ctx, resp)
 }
 
+// FindKataIssues Find Kata issues, open or closed, that cite a message or one of its files
+func (c *Client) FindKataIssues(ctx context.Context, options *FindKataIssuesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*FindKataIssuesResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/integrations/kata/issues",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*FindKataIssuesResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(FindKataIssuesErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "FindKataIssuesErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(FindKataIssuesResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "FindKataIssuesResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/integrations/kata/issues")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
 // CreateKataIssue Create a Kata issue that quotes exact archive evidence
 func (c *Client) CreateKataIssue(ctx context.Context, options *CreateKataIssueRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateKataIssueResponse, error) {
 	var err error
@@ -9430,6 +9505,69 @@ func (c *Client) CreateKataIssue(ctx context.Context, options *CreateKataIssueRe
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/integrations/kata/issues")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetKataIssueContext Read each passage a Kata issue cites with its state in the archive today
+func (c *Client) GetKataIssueContext(ctx context.Context, options *GetKataIssueContextRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetKataIssueContextResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/integrations/kata/issues/{ref}/context",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetKataIssueContextResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(GetKataIssueContextErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "GetKataIssueContextErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(GetKataIssueContextResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "GetKataIssueContextResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/integrations/kata/issues/{ref}/context")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -9806,6 +9944,68 @@ func (c *Client) SearchMedia(ctx context.Context, options *SearchMediaRequestOpt
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/media/search")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetMediaSearchStatus Get recording transcript search configuration status
+func (c *Client) GetMediaSearchStatus(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetMediaSearchStatusResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/media/search/status",
+		Method:     "GET",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetMediaSearchStatusResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(GetMediaSearchStatusErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "GetMediaSearchStatusErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(GetMediaSearchStatusResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "GetMediaSearchStatusResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/media/search/status")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}

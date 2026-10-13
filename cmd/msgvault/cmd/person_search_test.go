@@ -203,14 +203,17 @@ func TestPersonSearchCommandRejectsInvalidInputBeforeDaemonRequest(t *testing.T)
 	assert.Zero(t, requests.Load(), "invalid input must not reach or start a daemon")
 }
 
-func TestPersonSearchCommandPropagatesDisabledAndStaleDaemonErrors(t *testing.T) {
+func TestPersonSearchCommandUsesVectorErrorCodeForSetupHint(t *testing.T) {
 	tests := []struct {
-		name    string
-		code    string
-		message string
+		name          string
+		code          string
+		message       string
+		wantSetupHint bool
 	}{
-		{name: "disabled", code: "vector_not_enabled", message: "Vector search is not configured"},
+		{name: "disabled", code: "vector_not_enabled", message: "Semantic people search is disabled", wantSetupHint: true},
+		{name: "people lane disabled", code: "person_embeddings_disabled", message: "Semantic person search requires [vector.people] enabled = true", wantSetupHint: true},
 		{name: "stale", code: "index_stale", message: "The vector index does not match configured embedding settings"},
+		{name: "unrelated matching text", code: "other_error", message: "Vector search is not configured"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -234,6 +237,11 @@ func TestPersonSearchCommandPropagatesDisabledAndStaleDaemonErrors(t *testing.T)
 			requirements.Error(err)
 			requirements.ErrorContains(err, "API error (503)")
 			requirements.ErrorContains(err, test.message)
+			if test.wantSetupHint {
+				assert.Contains(t, err.Error(), "run 'msgvault setup status'")
+			} else {
+				assert.NotContains(t, err.Error(), "run 'msgvault setup status'")
+			}
 		})
 	}
 }

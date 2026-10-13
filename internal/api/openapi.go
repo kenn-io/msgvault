@@ -355,7 +355,13 @@ import (
 // 3.9.0 adds source-scoped agent read permissions, optional expires_at, and GET /api/v1/agent-tokens/self.
 // 3.10.0 adds person UID lookup and exposes current vCard UIDs and CardDAV
 // bindings on person and directory responses.
-const APISchemaVersion = "3.10.0"
+// 3.11.0 adds structured account scopes, the explore account filter, the virtual account catalog on /cli/accounts, GET /api/v1/media/search/status, participant_id to media search, source filename, title and date to media search results, and optional conversation_title to message detail.
+// 3.12.0 adds Kata source lookup and issue evidence context.
+// 3.13.0 adds Docbank transcript evidence.
+// 3.14.0 adds resumable paused source syncs to operation history.
+// 3.14.0 adds filename: filters, optional include_snippet/match_snippet context,
+// attachment names/counts, and hybrid_available on CLI search responses.
+const APISchemaVersion = "3.14.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -1028,6 +1034,17 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 			}
 		}
 	}
+	// A changed or unavailable passage carries an empty excerpt.
+	if evidence := schemas["Evidence"]; evidence != nil {
+		if excerpt := evidence.Properties["excerpt"]; excerpt != nil {
+			if excerpt.Extensions == nil {
+				excerpt.Extensions = map[string]any{}
+			}
+			excerpt.Extensions["x-oapi-codegen-extra-tags"] = map[string]any{
+				"validate": "omitempty",
+			}
+		}
+	}
 	nullableSchemaProperty(schemas["PersonTracking"], "tracked_at")
 	// The brief's structure and input boundary are raw JSON documents the
 	// client hands back untouched; without this the generator emits struct{}.
@@ -1268,7 +1285,7 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 			"readiness": {"ExploreCacheUnavailableResponseReadinessAbsent", "ExploreCacheUnavailableResponseReadinessBuilding", "ExploreCacheUnavailableResponseReadinessInterrupted", "ExploreCacheUnavailableResponseReadinessStaleSchema", "ExploreCacheUnavailableResponseReadinessDrifted"},
 		},
 		"ExploreFilter": {
-			"dimension": {"ExploreFilterDimensionSource", "ExploreFilterDimensionParticipant", "ExploreFilterDimensionDomain", "ExploreFilterDimensionMessageType", "ExploreFilterDimensionMailingList", "ExploreFilterDimensionAfter", "ExploreFilterDimensionBefore", "ExploreFilterDimensionDeletion", "ExploreFilterDimensionIdentity"},
+			"dimension": {"ExploreFilterDimensionSource", "ExploreFilterDimensionParticipant", "ExploreFilterDimensionDomain", "ExploreFilterDimensionMessageType", "ExploreFilterDimensionMailingList", "ExploreFilterDimensionAfter", "ExploreFilterDimensionBefore", "ExploreFilterDimensionDeletion", "ExploreFilterDimensionIdentity", "ExploreFilterDimensionAccount"},
 		},
 		"ExploreGroupSort": {
 			"direction": {"ExploreGroupSortDirectionAsc", "ExploreGroupSortDirectionDesc"},

@@ -3,7 +3,6 @@ package hybrid
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"strings"
 
@@ -11,10 +10,6 @@ import (
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/vector"
 )
-
-// ErrAccountFiltersUnsupported rejects account: and received: in vector and
-// hybrid search, which cannot filter on them yet.
-var ErrAccountFiltersUnsupported = errors.New("account: and received: filters are not supported in vector or hybrid search yet; use full-text search")
 
 // BuildFilter translates a parsed Gmail-syntax query into a
 // vector.Filter by resolving address/label tokens to IDs against the
@@ -45,9 +40,7 @@ func BuildFilter(ctx context.Context, db *sql.DB, rebind func(string) string, q 
 	if q == nil {
 		return f, nil
 	}
-	if len(q.AccountAddrs) > 0 || len(q.ReceivedAddrs) > 0 {
-		return f, ErrAccountFiltersUnsupported
-	}
+	f.AccountScopes = append(search.AccountScopesFromQuery(q), search.CloneAccountScopes(q.AccountScopes)...)
 	if rebind == nil {
 		rebind = identityRebind
 	}
@@ -101,6 +94,7 @@ func BuildFilter(ctx context.Context, db *sql.DB, rebind func(string) string, q 
 	if len(q.SubjectTerms) > 0 {
 		f.SubjectSubstrings = append([]string(nil), q.SubjectTerms...)
 	}
+	f.FilenameSubstrings = append([]string(nil), q.Filenames...)
 	if len(q.ListIDs) > 0 {
 		f.ListIDSubstrings = append([]string(nil), q.ListIDs...)
 	}
@@ -147,6 +141,7 @@ func ApplyMessageFilter(
 		}
 	}
 
+	f.AccountScopes = append(f.AccountScopes, search.CloneAccountScopes(structured.AccountScopes)...)
 	derived := query.MergeFilterIntoQuery(&search.Query{}, structured)
 	intersectSourceIDs(f, derived.AccountIDs)
 	intersectConversationIDs(f, derived.ConversationIDs)

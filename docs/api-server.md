@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-08"
+last_edited: "2026-10-11"
 title: Web UI & API Server
 description: Daemon-served analytical Web UI and REST API for your msgvault archive, with optional background sync scheduling.
 ---
@@ -100,9 +100,11 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.10.0**.
+it is separate from the binary release version. The current schema is **3.14.0**.
 Upgrade clients and daemon together across incompatible schema versions,
 including remote deployments.
+
+Schema 3.11.0 adds `GET /media/search/status` to report whether Docbank transcript search is configured. It also adds source filename, title and date to transcript search results and optional `conversation_title` to `GET /messages/{id}`.
 
 Schema 3.9.0 adds source-scoped agent read permissions and optional `expires_at`. Admitted FTS search responses, including aggregates, filtered messages and total statistics with search text, carry optional `index_state`. Agent checks are bounded; owner CLI searches retain automatic verification and repair.
 See [scoped archive reads](cli-reference.md#scoped-archive-reads).
@@ -118,6 +120,19 @@ review token. Upgrade the CLI and daemon together; clients with an incompatible
 schema fail before issuing archive requests. The HTTP prefix remains `/api/v1`.
 This schema also adds consented identity scoring. See
 [identity match review and scoring](#identity-match-review-and-scoring).
+
+Schema 3.14.0 adds `paused` source syncs to operation history and its state filter.
+
+Schema 3.13.0 adds the `docbank_rendition` evidence kind, which
+[cites a Docbank transcript](usage/kata-issues.md#cite-a-docbank-transcript).
+
+Schema 3.12.0 adds `GET /api/v1/integrations/kata/issues/{ref}/context`, which
+[reads an issue's evidence back](usage/kata-issues.md#read-an-issues-evidence-back),
+and the `ContextPassage` schema with optional `before` and `after` text.
+
+Schema 3.12.0 adds `GET /api/v1/integrations/kata/issues`, which
+[finds the Kata issues that cite a source](usage/kata-issues.md#find-issues-that-already-cite-a-source).
+It checks the newest 500 evidence-bearing issues, or 20 if the listing exceeds 16 MiB. `truncated: true` means the list may be incomplete; check Kata before filing again.
 
 Schema 3.4.0 adds [Kata issues from archive evidence](usage/kata-issues.md).
 It also adds the `microsoft` CardDAV account provider, the
@@ -138,6 +153,9 @@ conflict when one UID resolves to multiple people. Person responses expose
 `carddav_bindings`; directory responses now include both `vcard_uid` and
 `carddav_bindings`.
 
+Schema 3.11.0 adds structured `account_scopes` filters, the Explore account
+filter, and the virtual account catalog on `/cli/accounts`.
+
 Schema 3.1.0 adds unreleased [calendar event control](#calendar-control),
 availability queries, and opt-in `write` on Calendar consent plans.
 
@@ -149,6 +167,9 @@ message's recordings with their Docbank transcript state. Existing routes are
 unchanged.
 
 Schema 3.7.0 adds `GET /api/v1/media/search` for scoped lexical transcript search.
+
+Schema 3.14.0 adds `filename:` search filters, optional match snippets,
+attachment names and counts, and `hybrid_available` to CLI search responses.
 
 Schema 2.35.0 adds `scope_escalation_source_type` (`gmail` or `msmail`) to
 `POST /api/v1/cli/delete-staged/plan` responses that require a permission
@@ -996,6 +1017,7 @@ feed, re-fetch its detail response if you cache either of these:
 * `body` and `body_html`. An added or edited body moves the watermark. A body
   *deletion* does not, so a body you already hold can still go stale — that one
   is in the exception list below.
+  Beeper repair can update `body_html` and advance `content_changed_at`, making the message reappear in this feed.
 * `from`. It is derived from the sender pointer, and a change of pointer moves
   the watermark. Renaming or correcting the participant the pointer names does
   not, so the address or display name can still change under you.
@@ -1470,7 +1492,7 @@ is outside it:
 |---|---|---|
 | Labels | `message_labels` | No — and label re-sync is the most frequent change in a mail archive |
 | Recipients (to/cc/bcc) | `message_recipients` | No |
-| Attachment metadata (filenames, hashes, sizes, storage paths) | `attachments` | No — but `has_attachments` and `attachment_count` are message columns, so an attachment set that changes those does appear |
+| Attachment metadata (filenames, hashes, sizes, storage paths) | `attachments` | Changes appear when they change the message's `has_attachments` or `attachment_count`, or a native `teams:recording:` pointer's ID or storage URL. Other attachment metadata changes don't move the watermark. |
 | Raw MIME | `message_raw` | No — including raw MIME added after the message row |
 | Read state and platform flags (`is_read`, `read_at`, `is_edited`, `archived_at`) | `messages` | No |
 | Threading and identity pointers (`reply_to_message_id`, `rfc822_message_id`) | `messages` | No |
@@ -1603,9 +1625,11 @@ Successful responses set:
 
 ### Media transcript search
 
-`GET /api/v1/media/search?q=quarterly%20numbers&mode=lexical&limit=20` finds spoken words and returns every matching live message occurrence. Results include message, conversation and attachment IDs, supplied or generated origin, an excerpt, and timing when Docbank recorded it. Optional `person_id` and repeated `direction` values select `from_person`, `to_person` or `group` relations.
+`GET /api/v1/media/search/status` returns a boolean `configured` field. It reports `false` when the recording reader or its Docbank client is absent. It checks configuration without contacting Docbank.
 
-The daemon searches the complete allowed population, with a ceiling of 4,096 distinct versions and source selectors and 64 distinct current supplied transcript input IDs per recording source. Repeated occurrences of the same input count once. Oversized scopes return `media_search_scope_limit` before contacting Docbank; set `person_id` to narrow the scope. Semantic and hybrid modes return `media_search_mode_unavailable`. A disabled or unreachable integration returns `media_search_unavailable`.
+`GET /api/v1/media/search?q=quarterly%20numbers&mode=lexical&limit=20` finds spoken words and returns every matching live message occurrence. Results include message, conversation and attachment IDs, optional `filename`, `containing_title` and `occurred_at`, supplied or generated origin, an excerpt, and timing when Docbank recorded it. Optional `person_id` selects durable person bindings; `participant_id` selects the current identity cluster used by Explore's Person filter. They can't be combined. Repeated `direction` values select `from_person`, `to_person` or `group` relations and require either ID.
+
+The daemon searches the complete allowed population, with a ceiling of 4,096 distinct versions and source selectors. Oversized scopes return `media_search_scope_limit` before contacting Docbank; set `person_id` or `participant_id` to narrow the scope. A recording with more than 64 distinct current supplied transcript input IDs is left out of the search. Its message occurrences count in `unavailable_occurrences`, and `partial=true`. Repeated occurrences of the same input count once. Semantic and hybrid modes return `media_search_mode_unavailable`. An unconfigured or unreachable integration returns `media_search_unavailable`.
 
 The response has Docbank `coverage`, local `pending_occurrences` and `unavailable_occurrences`, `attribution_unavailable`, `partial`, and `truncated`. Pending counts require durable worker work; unmapped audio counts as unavailable. Coverage state `unknown` stays unknown. `partial` also reports local gaps and withheld excerpts. An empty result with complete coverage and `partial=false` means the query found no transcript match. The output limit applies after shared recordings expand into messages; `truncated` reports remaining occurrences or Docbank's retrieval limit.
 
@@ -2132,7 +2156,7 @@ This endpoint is used by `msgvault export-token` during remote/headless deployme
 
 Register or ensure an account is scheduled for sync on the remote server.
 
-`msgvault export-token` posts to this endpoint automatically after uploading a token.
+`msgvault export-token` posts to this endpoint automatically after uploading a token. With `--upload-only`, it skips this request and does not create a Gmail sync schedule.
 
 ```json
 {

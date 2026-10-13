@@ -165,8 +165,8 @@ func TestMergePersons_CardDAVState(t *testing.T) {
 		var resourceID int64
 		require.NoError(st.DB().QueryRowContext(ctx, st.Rebind(`INSERT INTO carddav_resources (
 			address_book_id, href, remote_etag, remote_body, remote_semantic_hash,
-			local_hash, mapping_status, governance, person_id, person_revision_at_bind
-		) VALUES (?, ?, ?, ?, ?, ?, 'mapped', 'local', ?, ?) RETURNING id`),
+			local_hash, mapping_status, governance, person_id, person_revision_at_bind, owns_display_name
+		) VALUES (?, ?, ?, ?, ?, ?, 'mapped', 'remote', ?, ?, TRUE) RETURNING id`),
 			book.ID, book.CanonicalURL+"absorbed.vcf", `"etag"`, []byte("card"),
 			"remote-hash", "local-hash", absorbed.ID, absorbed.Revision,
 		).Scan(&resourceID))
@@ -179,9 +179,11 @@ func TestMergePersons_CardDAVState(t *testing.T) {
 		})
 		require.NoError(err)
 		var ownerID int64
+		var ownsDisplayName bool
 		require.NoError(st.DB().QueryRowContext(ctx, st.Rebind(
-			`SELECT person_id FROM carddav_resources WHERE id = ?`), resourceID).Scan(&ownerID))
+			`SELECT person_id, owns_display_name FROM carddav_resources WHERE id = ?`), resourceID).Scan(&ownerID, &ownsDisplayName))
 		assert.Equal(survivor.ID, ownerID)
+		assert.False(ownsDisplayName)
 
 		split, err := st.SplitPersonMergeContext(ctx, store.PersonSplitRequest{
 			SourcePersonID: merged.Person.ID, MergeID: merged.Merge.ID,
@@ -191,8 +193,9 @@ func TestMergePersons_CardDAVState(t *testing.T) {
 		})
 		require.NoError(err)
 		require.NoError(st.DB().QueryRowContext(ctx, st.Rebind(
-			`SELECT person_id FROM carddav_resources WHERE id = ?`), resourceID).Scan(&ownerID))
+			`SELECT person_id, owns_display_name FROM carddav_resources WHERE id = ?`), resourceID).Scan(&ownerID, &ownsDisplayName))
 		assert.Equal(split.NewPerson.ID, ownerID)
+		assert.True(ownsDisplayName)
 	})
 
 	t.Run("publication blocks merge", func(t *testing.T) {

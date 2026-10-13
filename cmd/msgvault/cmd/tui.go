@@ -11,10 +11,12 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/logging"
 	"go.kenn.io/msgvault/internal/peoplebrowser"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/telemetry"
 	"go.kenn.io/msgvault/internal/tui"
 	apiclient "go.kenn.io/msgvault/pkg/client/generated"
 )
@@ -142,7 +144,11 @@ HTTP Mode:
 		// everything, so 'msgvault logs -f' in another pane
 		// continues to work for diagnostics.
 		if err := withTUIFileLogger(currentLogResult, func() error {
+			started := time.Now()
 			_, err := p.Run()
+			if err == nil || errors.Is(err, tea.ErrInterrupted) {
+				reportTUISession(cmd.Context(), currentCfg, backend.info, time.Since(started))
+			}
 			if err != nil {
 				return fmt.Errorf("run tui: %w", err)
 			}
@@ -153,6 +159,25 @@ HTTP Mode:
 
 		return nil
 	},
+}
+
+func reportTUISession(ctx context.Context, cfg *config.Config, info HTTPStoreInfo, duration time.Duration) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+	defer cancel()
+	clientConfig := daemonclient.Config{URL: info.URL, APIKey: httpStoreAPIKey(info, cfg), AllowInsecure: true}
+	if info.Kind == HTTPStoreConfiguredRemote {
+		clientConfig.AllowInsecure = cfg.Remote.AllowInsecure
+	}
+	client, err := newDaemonCLIClient(ctx, clientConfig)
+	if err != nil {
+		return
+	}
+	defer func() { _ = client.Close() }()
+	// daemonclient.New already built and cached the generated client.
+	generated, _ := client.GeneratedClient()
+	_, _ = generated.CaptureTelemetryEvent(ctx, &apiclient.CaptureTelemetryEventRequestOptions{
+		Body: &apiclient.CaptureTelemetryEventBody{Event: telemetry.EventSessionEnded, Properties: map[string]any{"surface": "tui", "duration_bucket": telemetry.DurationBucket(duration)}},
+	})
 }
 
 func tuiScreenReporter(client *daemonclient.Client) func(context.Context, string) error {

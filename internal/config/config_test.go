@@ -1823,14 +1823,17 @@ func TestSave_OverwritesExisting(t *testing.T) {
 	assert.Equal(t, 42, loaded.Sync.RateLimitQPS)
 }
 
-func TestOAuthConfig_ClientSecretsFor(t *testing.T) {
+func TestOAuthConfig_CredentialsFor(t *testing.T) {
 	tests := []struct {
-		name    string
-		config  OAuthConfig
-		appName string
-		want    string
-		wantErr bool
+		name        string
+		config      OAuthConfig
+		appName     string
+		want        string
+		wantCommand []string
+		wantErr     bool
 	}{
+		{name: "default command", config: OAuthConfig{ClientSecretsCommand: []string{"secret-store", "literal $HOME; value"}}, wantCommand: []string{"secret-store", "literal $HOME; value"}},
+		{name: "named command", config: OAuthConfig{Apps: map[string]OAuthApp{"work": {ClientSecretsCommand: []string{"secret-store", "work"}}}}, appName: "work", wantCommand: []string{"secret-store", "work"}},
 		{
 			name:    "empty name returns default",
 			config:  OAuthConfig{ClientSecrets: "/path/to/default.json"},
@@ -1879,13 +1882,16 @@ func TestOAuthConfig_ClientSecretsFor(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := tt.config.ClientSecretsFor(tt.appName)
+			assert := assert.New(t)
+			require := require.New(t)
+			got, err := tt.config.CredentialsFor(tt.appName)
 			if tt.wantErr {
-				assert.Error(t, err, "ClientSecretsFor(%q)", tt.appName)
+				assert.Error(err, "CredentialsFor(%q)", tt.appName)
 				return
 			}
-			require.NoError(t, err, "ClientSecretsFor(%q)", tt.appName)
-			assert.Equal(t, tt.want, got, "ClientSecretsFor(%q)", tt.appName)
+			require.NoError(err, "CredentialsFor(%q)", tt.appName)
+			assert.Equal(tt.want, got.ClientSecrets, "CredentialsFor(%q)", tt.appName)
+			assert.Equal(tt.wantCommand, got.ClientSecretsCommand, "CredentialsFor(%q)", tt.appName)
 		})
 	}
 }
@@ -2260,14 +2266,14 @@ client_secrets = "/path/to/acme.json"
 	// HasAnyConfig should still be true
 	assert.True(cfg.OAuth.HasAnyConfig())
 
-	// ClientSecretsFor("") should fail
-	_, err = cfg.OAuth.ClientSecretsFor("")
-	require.Error(err, "ClientSecretsFor(\"\") should error with no default")
+	// CredentialsFor("") should fail
+	_, err = cfg.OAuth.CredentialsFor("")
+	require.Error(err, "CredentialsFor(\"\") should error with no default")
 
-	// ClientSecretsFor("acme") should work
-	path, err := cfg.OAuth.ClientSecretsFor("acme")
-	require.NoError(err, "ClientSecretsFor(acme)")
-	assert.Equal("/path/to/acme.json", path)
+	// CredentialsFor("acme") should work
+	path, err := cfg.OAuth.CredentialsFor("acme")
+	require.NoError(err, "CredentialsFor(acme)")
+	assert.Equal("/path/to/acme.json", path.ClientSecrets)
 }
 
 func TestSave_AllowInsecureRoundTrip(t *testing.T) {

@@ -6,6 +6,7 @@ import { createAPIClient } from './lib/api/client';
 import { createSessionController } from './lib/api/session.svelte';
 import { resolveInitialSearchMode, SEARCH_MODE_PREFERENCE_KEY } from './lib/search/modes';
 import { chooseSelectOption } from './test/kit-ui';
+import * as sessionReporting from './lib/telemetry/session';
 describe('application foundation', () => {
   it('reports resolved workspaces and standalone messages', async () => {
     const events: Array<{ event: string; properties?: { screen?: string; surface?: string } }> = [];
@@ -36,6 +37,8 @@ describe('application foundation', () => {
     await waitFor(() => expect(events.at(-1)?.properties?.screen).toBe('message'));
   });
   afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
     localStorage.removeItem(SEARCH_MODE_PREFERENCE_KEY);
     sessionStorage.removeItem('msgvault.appearance.override');
     document.documentElement.classList.remove('dark');
@@ -246,8 +249,12 @@ describe('application foundation', () => {
     expect(settingsRequests).toBe(1);
   });
   it('reports app_opened once after interactive login and never from the login screen', async () => {
+    const startReporting = vi.spyOn(sessionReporting, 'startSessionReporting');
     window.history.replaceState(null, '', '/');
+    let now = 0;
+    vi.spyOn(performance, 'now').mockImplementation(() => now);
     const telemetryRequests: Request[] = [];
+    const sessionRequests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       const path = new URL(request.url).pathname;
@@ -263,25 +270,53 @@ describe('application foundation', () => {
         });
       }
       if (path === '/api/v1/telemetry/events') {
-        if ((await request.clone().json()).event === 'app_opened') telemetryRequests.push(request);
+        const event = (await request.clone().json()).event;
+        if (event === 'app_opened') telemetryRequests.push(request);
+        if (event === 'session_ended') {
+          sessionRequests.push(request);
+          return Response.json({ error: 'unauthorized' }, { status: 401 });
+        }
         return Response.json({ status: 'disabled' }, { status: 202 });
       }
+      if (path === '/api/v1/expired') return Response.json({ error: 'unauthorized' }, { status: 401 });
       if (path === '/api/v1/settings') return Response.json({ settings: [], pending_restart: false });
       if (path === '/api/v1/explore') {
         return Response.json({ rows: [], total_count: 0, cache_revision: 'login', search_provenance: {} });
       }
       return Response.json({}, { status: 404 });
     });
+    vi.stubGlobal('fetch', fetchFn);
     const session = createSessionController(fetchFn);
     render(App, { session });
     expect(await screen.findByRole('form', { name: 'Log in' })).toBeDefined();
+    window.dispatchEvent(new PageTransitionEvent('pagehide'));
+    expect(sessionRequests).toHaveLength(0);
+    expect(startReporting).not.toHaveBeenCalled();
     expect(telemetryRequests).toHaveLength(0);
     await fireEvent.input(screen.getByLabelText('API key'), { target: { value: 'test-key' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Log in' }));
     expect(await screen.findByRole('main', { name: 'Relationships' })).toBeDefined();
     await waitFor(() => expect(telemetryRequests).toHaveLength(1));
+    expect(startReporting).toHaveBeenCalledTimes(1);
     expect(telemetryRequests[0].method).toBe('POST');
     expect(telemetryRequests[0].headers.get('X-CSRF-Token')).toBe('csrf-token');
+    now = 40_000;
+    await session.client.fetch('/api/v1/expired');
+    expect(await screen.findByRole('form', { name: 'Log in' })).toBeDefined();
+    expect(sessionRequests).toHaveLength(0);
+    now = 100_000;
+    await fireEvent.input(screen.getByLabelText('API key'), { target: { value: 'test-key' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Log in' }));
+    expect(await screen.findByRole('main', { name: 'Relationships' })).toBeDefined();
+    now = 110_000;
+    window.dispatchEvent(new PageTransitionEvent('pagehide'));
+    await waitFor(() => expect(sessionRequests).toHaveLength(1));
+    expect(startReporting).toHaveBeenCalledTimes(1);
+    expect((await sessionRequests[0].clone().json()).properties.duration_bucket).toBe('under_1m');
+    expect(sessionRequests[0].headers.get('X-CSRF-Token')).toBe('csrf-token');
+    await new Promise((resolve) => setTimeout(resolve));
+    expect(screen.queryByRole('form', { name: 'Log in' })).toBeNull();
+    expect(screen.getByRole('main', { name: 'Relationships' })).toBeDefined();
   });
   it.each([
     ['semantic', 'Semantic'],

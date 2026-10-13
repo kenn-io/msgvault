@@ -89,6 +89,10 @@ func DistinctAttachments(parts []Attachment) []Attachment {
 
 // Parse parses raw MIME data into a Message.
 func Parse(raw []byte) (*Message, error) {
+	return parse(raw, nil)
+}
+
+func parse(raw []byte, inspect func(*enmime.Part)) (*Message, error) {
 	root, err := envelopeParser.ReadParts(bytes.NewReader(raw))
 	if err != nil {
 		return nil, fmt.Errorf("read MIME envelope: Failed to ReadParts: %w", err)
@@ -149,6 +153,9 @@ func Parse(raw []byte) (*Message, error) {
 		msg.Errors = append(msg.Errors, e.Error())
 	}
 
+	if inspect != nil {
+		inspect(root)
+	}
 	return msg, nil
 }
 
@@ -156,7 +163,11 @@ func Parse(raw []byte) (*Message, error) {
 // malformed MIME structure prevents full envelope parsing. Body content and
 // attachments remain unavailable after a fatal parse error.
 func ParseWithRecovery(raw []byte, fallbackSubject string) (*Message, error) {
-	msg, err := Parse(raw)
+	return parseWithRecovery(raw, fallbackSubject, nil)
+}
+
+func parseWithRecovery(raw []byte, fallbackSubject string, inspect func(*enmime.Part)) (*Message, error) {
+	msg, err := parse(raw, inspect)
 	if err == nil {
 		return msg, nil
 	}

@@ -16,6 +16,10 @@ export type SearchMediaParams = {
    */
   person_id?: number;
   /**
+   * Observed participant ID; selects its current Explore identity cluster; mutually exclusive with person_id
+   */
+  participant_id?: number;
+  /**
    * Person relation: from_person, to_person, or group
    */
   direction?: string[];

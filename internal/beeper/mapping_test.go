@@ -60,6 +60,20 @@ func TestBodyText(t *testing.T) {
 	}
 }
 
+func TestMessageHTML(t *testing.T) {
+	attachments := []Attachment{{Transcription: &Transcription{Transcription: "<b>quoted</b> & plain\nsecond line"}}}
+	for _, tc := range []struct {
+		name, text, want string
+	}{
+		{"reply and transcript", `<mx-reply><a href="https://loom.com/share/parent">Parent</a></mx-reply><a href="https://loom.com/share/abc">Watch recording</a>`, `<a href="https://loom.com/share/abc">Watch recording</a><br>🎤 transcript: &lt;b&gt;quoted&lt;/b&gt; &amp; plain<br>second line`},
+		{"plain text", "source words", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, MessageHTML(&Message{Text: tc.text, Attachments: attachments}))
+		})
+	}
+}
+
 // TestBodyTextHTML covers the Beeper API serving HTML in the `text` field for
 // some messages and plain text for others, with no field distinguishing them.
 // The inputs are shapes observed from a live account across bridges.

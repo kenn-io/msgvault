@@ -53,11 +53,11 @@ func TestAuthorizeGoogleScopeAliases(t *testing.T) {
 				return (&oauth2.Token{AccessToken: "alias-token", TokenType: "Bearer", Expiry: time.Now().Add(time.Hour)}).WithExtra(map[string]any{"scope": strings.Join(granted, " ")}), nil
 			}
 			requirements.NoError(mgr.Authorize(context.Background(), "person@example.com"))
-			tf, err := mgr.loadTokenFile("person@example.com")
+			tf, err := mgr.loadTokenFile(t.Context(), "person@example.com")
 			requirements.NoError(err)
 			assertions.Equal(expanded, tf.Scopes)
-			assertions.True(mgr.HasScope("person@example.com", "email"))
-			assertions.True(mgr.HasScope("person@example.com", ScopeUserinfoEmail))
+			assertions.True(mgr.HasScope(t.Context(), "person@example.com", "email"))
+			assertions.True(mgr.HasScope(t.Context(), "person@example.com", ScopeUserinfoEmail))
 		})
 	}
 }
@@ -68,7 +68,7 @@ func TestLegacyGoogleScopeAliases(t *testing.T) {
 	mgr := setupTestManager(t, ScopesCalendar)
 	// Seed a historical token directly so saveToken cannot normalize the fixture.
 	requirements.NoError(os.WriteFile(mgr.tokenPath("person@example.com"), []byte(`{"access_token":"legacy","scopes":["email","profile","openid"]}`), 0600))
-	assertions.True(mgr.HasScope("person@example.com", ScopeUserinfoEmail))
-	assertions.Equal([]string{ScopeUserinfoEmail, "https://www.googleapis.com/auth/userinfo.profile", "openid"}, mgr.GrantedScopes("person@example.com"))
+	assertions.True(mgr.HasScope(t.Context(), "person@example.com", ScopeUserinfoEmail))
+	assertions.Equal([]string{ScopeUserinfoEmail, "https://www.googleapis.com/auth/userinfo.profile", "openid"}, mgr.GrantedScopes(t.Context(), "person@example.com"))
 	assertions.Contains(tokenProfileEndpointForScopes([]string{"email"}).url, "userinfo")
 }

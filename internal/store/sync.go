@@ -16,6 +16,7 @@ const (
 	SyncStatusCompleted                    = "completed"
 	SyncStatusFailed                       = "failed"
 	SyncStatusCancelled                    = "cancelled"
+	SyncStatusPaused                       = "paused"
 	GmailHistoryRecoveryRequestFingerprint = "gmail-history-recovery:v1"
 
 	SyncRunItemStatusError   = "error"
@@ -313,7 +314,7 @@ type SyncRun struct {
 	SourceID           int64
 	StartedAt          time.Time
 	CompletedAt        sql.NullTime
-	Status             string // SyncStatusRunning, SyncStatusCompleted, SyncStatusFailed
+	Status             string // SyncStatusRunning, SyncStatusCompleted, SyncStatusFailed, SyncStatusCancelled, SyncStatusPaused
 	MessagesProcessed  int64
 	MessagesAdded      int64
 	MessagesUpdated    int64
@@ -1278,6 +1279,11 @@ func (s *Store) InterruptSyncWithCheckpoint(ctx context.Context, syncID int64, s
 	return s.FailSyncWithCheckpointContext(cleanupCtx, syncID, syncErr.Error(), cp)
 }
 
+// PauseSyncWithCheckpoint finishes a resumable pass without recording a failure.
+func (s *Store) PauseSyncWithCheckpoint(syncID int64, cp *Checkpoint) error {
+	return s.finishSyncWithCheckpoint(context.Background(), syncID, SyncStatusPaused, "", cp)
+}
+
 func (s *Store) finishSyncWithCheckpoint(ctx context.Context, syncID int64, status, errMsg string, cp *Checkpoint) error {
 	if cp == nil {
 		return s.FailSyncContext(ctx, syncID, errMsg)
@@ -1386,7 +1392,7 @@ func (s *Store) GetLatestCheckpointedSyncContext(ctx context.Context, sourceID i
 		       error_message, cursor_before, cursor_after, request_fingerprint
 		FROM sync_runs sr
 		WHERE sr.source_id = ?
-		  AND status IN ('running', 'failed', 'cancelled')
+		  AND status IN ('running', 'failed', 'cancelled', 'paused')
 		  AND cursor_before IS NOT NULL AND cursor_before != ''
 		  AND id > COALESCE((
 		    SELECT MAX(completed.id)
@@ -1415,7 +1421,7 @@ func (s *Store) GetLatestCheckpointedSyncByType(sourceID int64, syncType string)
 		FROM sync_runs sr
 		WHERE sr.source_id = ?
 		  AND sr.sync_type = ?
-		  AND status IN ('running', 'failed', 'cancelled')
+		  AND status IN ('running', 'failed', 'cancelled', 'paused')
 		  AND cursor_before IS NOT NULL AND cursor_before != ''
 		  AND id > COALESCE((
 		    SELECT MAX(completed.id)

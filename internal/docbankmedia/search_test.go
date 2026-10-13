@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/google/uuid"
@@ -26,20 +27,27 @@ func TestSearchFenceAndContract(t *testing.T) {
 	for i, id := range ids {
 		sources[i] = SearchMediaSelector{SourceID: strings.Repeat("\x01", 252) + fmt.Sprintf("%04x", i), SourceVersionID: strings.Repeat("\x02", 256), ContentVersionID: id, SuppliedInputIDs: []string{strings.Repeat("a", 64)}}
 	}
-	requests := 0
+	var requests atomic.Int64
 	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests++
+		requests.Add(1)
 		var body json.RawMessage
 		if !assert.NoError(json.NewDecoder(r.Body).Decode(&body)) {
 			return
 		}
 		var request SearchRequest
 		var wire struct {
+			Fence        map[string]json.RawMessage   `json:"fence"`
 			MediaSources []map[string]json.RawMessage `json:"media_sources"`
 		}
 		if !assert.NoError(json.Unmarshal(body, &request)) || !assert.NoError(json.Unmarshal(body, &wire)) {
 			return
 		}
+		assert.JSONEq(`"vault"`, string(wire.Fence["vault_uid"]))
+		encodedIDs, err := json.Marshal(ids)
+		if !assert.NoError(err) {
+			return
+		}
+		assert.JSONEq(string(encodedIDs), string(wire.Fence["content_version_ids"]))
 		value, exists := wire.MediaSources[0]["supplied_input_ids"]
 		assert.Equal(sources[0].SuppliedInputIDs != nil, exists)
 		if sources[0].SuppliedInputIDs != nil {
@@ -51,9 +59,8 @@ func TestSearchFenceAndContract(t *testing.T) {
 		}
 		assert.True(request.ContentFirst)
 		assert.Equal("lexical", request.Mode)
-		assert.Equal(ids, request.Fence.ContentVersionIDs)
 		assert.Equal(sources, request.MediaSources)
-		_ = json.NewEncoder(w).Encode(SearchReport{MediaSourceSelection: true, MediaSelections: []SearchMediaSelection{}, RequestedMode: "lexical", ActualMode: "lexical", Coverage: SearchCoverage{State: "unknown"}, Results: []SearchHit{}})
+		_, _ = w.Write([]byte(`{"media_source_selection":true,"media_selections":[],"requested_mode":"lexical","actual_mode":"lexical","coverage":{"binding_required":true,"scoped_documents":2,"complete_documents":1,"state":"unknown"},"results":[]}`))
 	}))
 	t.Cleanup(remote.Close)
 	client, err := NewClient(remote.URL, nil)
@@ -61,7 +68,7 @@ func TestSearchFenceAndContract(t *testing.T) {
 	request := SearchRequest{Query: "quarterly numbers", Mode: "lexical", Limit: 100, Profile: "supplied-transcript", ContentFirst: true, MediaSources: sources, Fence: &SearchFence{VaultUID: "vault", ContentVersionIDs: ids}}
 	report, err := client.Search(t.Context(), request)
 	require.NoError(err)
-	assert.Equal("unknown", report.Coverage.State)
+	assert.Equal(SearchCoverage{BindingRequired: true, ScopedDocuments: 2, CompleteDocuments: 1, State: "unknown"}, report.Coverage)
 	for _, inputs := range [][]string{nil, {}} {
 		for i := range sources {
 			sources[i].SuppliedInputIDs = inputs
@@ -69,10 +76,29 @@ func TestSearchFenceAndContract(t *testing.T) {
 		_, err = client.Search(t.Context(), request)
 		require.NoError(err)
 	}
+	for _, tc := range []struct {
+		name   string
+		mutate func(*SearchRequest)
+	}{
+		{"blank query", func(r *SearchRequest) { r.Query = " \t\n" }},
+		{"non-lexical mode", func(r *SearchRequest) { r.Mode = "semantic" }},
+		{"empty profile", func(r *SearchRequest) { r.Profile = "" }},
+		{"content first disabled", func(r *SearchRequest) { r.ContentFirst = false }},
+		{"zero limit", func(r *SearchRequest) { r.Limit = 0 }},
+		{"excessive limit", func(r *SearchRequest) { r.Limit = 101 }},
+	} {
+		invalid := request
+		tc.mutate(&invalid)
+		validation := invalid
+		validation.Fence, validation.MediaSources = nil, nil
+		require.ErrorIs(client.ValidateSearch(t.Context(), validation), ErrInvalidRequest, tc.name)
+		_, err := client.Search(t.Context(), invalid)
+		require.ErrorIs(err, ErrInvalidRequest, tc.name)
+	}
 	request.MediaSources = nil
 	_, err = client.Search(t.Context(), request)
 	require.ErrorIs(err, ErrInvalidRequest)
-	assert.Equal(3, requests)
+	assert.Equal(int64(3), requests.Load())
 }
 
 func TestSearchSelectedEvidenceBoundary(t *testing.T) {

@@ -430,7 +430,7 @@ func TestCardDAVMultipleConnectionsScheduleReconciliation(t *testing.T) {
 		seen[name] = cfg
 		return nil
 	})
-	require.NoError(controller.ReconcileSchedule())
+	require.NoError(controller.ReconcileSchedule(t.Context()))
 	assertions.True(seen["personal"].Enabled)
 	assertions.True(seen["work"].Enabled)
 	clear(seen)

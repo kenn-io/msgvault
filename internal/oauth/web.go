@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -25,8 +24,8 @@ func (e *AuthorizationUnavailableError) Error() string { return e.Cause.Error() 
 func (e *AuthorizationUnavailableError) Unwrap() error { return e.Cause }
 
 func authorizationProviderError(err error, response *http.Response, errorCode string) error {
-	if err == nil {
-		return nil
+	if err == nil || errors.Is(err, context.Canceled) {
+		return err
 	}
 	var retryAfter time.Duration
 	if response != nil {
@@ -41,11 +40,11 @@ func authorizationProviderError(err error, response *http.Response, errorCode st
 	if errorCode == "temporarily_unavailable" || errorCode == "server_error" {
 		return &AuthorizationUnavailableError{Cause: err, RetryAfter: retryAfter}
 	}
-	var networkErr net.Error
-	if errors.As(err, &networkErr) && !errors.Is(err, context.Canceled) {
-		return &AuthorizationUnavailableError{Cause: err}
+	// Only an explicit provider answer rejects the sign-in; anything else may pass on retry.
+	if errorCode != "" || (response != nil && response.StatusCode >= 400) {
+		return err
 	}
-	return err
+	return &AuthorizationUnavailableError{Cause: err}
 }
 
 // WebAuthorization retains the verifier and expected account on the daemon
@@ -61,15 +60,15 @@ type WebAuthorization struct {
 
 // BeginWebAuthorization builds an authorization-code request with PKCE. The
 // caller owns expiration and one-time consumption of the returned flow.
-func (m *Manager) BeginWebAuthorization(email, redirectURI string) (*WebAuthorization, error) {
+func (m *Manager) BeginWebAuthorization(ctx context.Context, email, redirectURI string) (*WebAuthorization, error) {
 	u, err := url.Parse(redirectURI)
 	if err != nil || u.Host == "" || u.User != nil || u.Fragment != "" ||
 		(u.Scheme != "https" && (u.Scheme != "http" || (u.Hostname() != "localhost" && u.Hostname() != "127.0.0.1" && u.Hostname() != "::1"))) {
 		return nil, errors.New("OAuth callback requires HTTPS or a loopback HTTP address")
 	}
-	scoped, expected, err := m.prepareAuthorization(email, true)
+	scoped, expected, err := m.prepareAuthorizationContext(ctx, email, true)
 	if err != nil {
-		return nil, err
+		return nil, &AuthorizationUnavailableError{Cause: err}
 	}
 	scoped.config.RedirectURL = redirectURI
 	flow := &WebAuthorization{State: "msgvault-carddav-" + oauth2.GenerateVerifier(), manager: scoped, email: email, verifier: oauth2.GenerateVerifier(), expected: expected}
@@ -94,5 +93,13 @@ func (f *WebAuthorization) Complete(ctx context.Context, state, code string) err
 		}
 		return fmt.Errorf("exchange Google authorization code: %w", authorizationProviderError(err, response, errorCode))
 	}
-	return f.manager.verifyAndSaveToken(ctx, f.email, token, f.expected)
+	scopes, err := f.manager.verifyToken(ctx, f.email, token)
+	if err != nil {
+		return err
+	}
+	err = f.manager.saveTokenComparedContext(ctx, f.email, token, scopes, f.expected)
+	if err != nil && !errors.Is(err, ErrTokenChanged) {
+		return &AuthorizationUnavailableError{Cause: err}
+	}
+	return err
 }

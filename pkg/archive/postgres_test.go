@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -149,6 +150,13 @@ func TestPostgreSQLRuntimeAndReader(t *testing.T) {
 	assert.Equal(source.ID, accounts.Accounts[0].ID)
 	exerciseSlackReplacement(t, runtime)
 	exerciseDiscordCollection(t, runtime)
+	_, err = admin.Exec("UPDATE "+quote(schema)+".archive_metadata SET value = $1 WHERE key = 'schema_version'", strconv.Itoa(store.SchemaVersion-1))
+	require.NoError(err)
+	legacy, err := archive.Open(t.Context(), opts)
+	if legacy != nil {
+		require.NoError(legacy.Close())
+	}
+	require.ErrorContains(err, "run setup")
 
 	// An incompatible setup must fail without trying to repair its marker.
 	_, err = admin.Exec("UPDATE " + quote(schema) + ".archive_metadata SET value = 'unsupported' WHERE key = 'schema_version'")

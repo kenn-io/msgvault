@@ -803,6 +803,8 @@ func TestAgentReadSnapshotPoolPressure(t *testing.T) {
 			srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}, Store: barrier, Engine: engine, Logger: testLogger()})
 			t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.Background())) })
 			t.Cleanup(srv.agentGrants.Close)
+			// Background index verification would race the snapshot connection counts.
+			srv.ftsIndexComplete.Store(true)
 			_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{tc.permission}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
 			requirements.NoError(err)
 			responses := make(chan *httptest.ResponseRecorder, 4)
@@ -865,7 +867,8 @@ func TestAgentReadSnapshotPoolPressure(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, path, nil).WithContext(canceled)
 			req.Header.Set(apiprotocol.AgentTokenHeader, token)
 			srv.Router().ServeHTTP(httptest.NewRecorder(), req)
-			assertions.Zero(st.DB().Stats().InUse)
+			// database/sql settles pool counts asynchronously; a leaked connection never returns.
+			assertions.Eventually(func() bool { return st.DB().Stats().InUse == 0 }, 10*time.Second, time.Millisecond)
 		})
 	}
 }

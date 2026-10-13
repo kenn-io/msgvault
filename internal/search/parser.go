@@ -4,7 +4,6 @@ package search
 import (
 	"errors"
 	"fmt"
-	"net/mail"
 	"regexp"
 	"strconv"
 	"strings"
@@ -13,6 +12,12 @@ import (
 
 // Query represents a parsed search query with all supported filters.
 type Query struct {
+	// AccountScopes carries picker and API account selections into the
+	// engines. Only MergeFilterIntoQuery and engine code set it; the query
+	// syntax never parses or formats it, so a client must send scopes in
+	// its filter rather than in the query text.
+	AccountScopes []AccountScope
+
 	TextTerms       []string   // Full-text search terms
 	FromAddrs       []string   // from: filters
 	ToAddrs         []string   // to: filters
@@ -20,6 +25,7 @@ type Query struct {
 	BccAddrs        []string   // bcc: filters
 	SubjectTerms    []string   // subject: filters
 	Labels          []string   // label: filters
+	Filenames       []string   // filename: literal attachment-name filters
 	ListIDs         []string   // list: or list-id: filters
 	AccountAddrs    []string   // account: exact attributed account address
 	ReceivedAddrs   []string   // received: exact address that received the message
@@ -118,13 +124,14 @@ type UnsupportedOperator struct {
 
 // IsEmpty returns true if the query has no search criteria.
 func (q *Query) IsEmpty() bool {
-	return len(q.TextTerms) == 0 &&
+	return len(q.AccountScopes) == 0 && len(q.TextTerms) == 0 &&
 		len(q.FromAddrs) == 0 &&
 		len(q.ToAddrs) == 0 &&
 		len(q.CcAddrs) == 0 &&
 		len(q.BccAddrs) == 0 &&
 		len(q.SubjectTerms) == 0 &&
 		len(q.Labels) == 0 &&
+		len(q.Filenames) == 0 &&
 		len(q.ListIDs) == 0 &&
 		len(q.AccountAddrs) == 0 &&
 		len(q.ReceivedAddrs) == 0 &&
@@ -249,6 +256,12 @@ var operators = map[string]operatorFn{
 		}
 		return nil
 	},
+	"filename": func(q *Query, v string, _ time.Time) error {
+		if v = strings.TrimSpace(v); v != "" {
+			q.Filenames = append(q.Filenames, v)
+		}
+		return nil
+	},
 	"label": func(q *Query, v string, _ time.Time) error {
 		if v = strings.TrimSpace(v); v != "" {
 			q.Labels = append(q.Labels, v)
@@ -363,12 +376,11 @@ func listIDOperator(name string) operatorFn {
 // accountAddressOperator accepts one exact email address, lowercased.
 func accountAddressOperator(name string, field func(*Query) *[]string) operatorFn {
 	return func(q *Query, value string, _ time.Time) error {
-		value = strings.ToLower(strings.TrimSpace(value))
-		parsed, err := mail.ParseAddress(value)
-		if err != nil || parsed.Address != value || !strings.Contains(value, "@") {
-			return operatorValueError(name, value, "expected an exact email address")
+		address, err := ParseAccountAddress(value)
+		if err != nil {
+			return operatorValueError(name, strings.ToLower(strings.TrimSpace(value)), err.Error())
 		}
-		*field(q) = append(*field(q), value)
+		*field(q) = append(*field(q), address)
 		return nil
 	}
 }
@@ -622,12 +634,13 @@ func parseRelativeDate(value string, now time.Time) *time.Time {
 // HasOperators returns true if the query contains any structured
 // operators beyond plain text terms.
 func (q *Query) HasOperators() bool {
-	return len(q.FromAddrs) > 0 ||
+	return len(q.AccountScopes) > 0 || len(q.FromAddrs) > 0 ||
 		len(q.ToAddrs) > 0 ||
 		len(q.CcAddrs) > 0 ||
 		len(q.BccAddrs) > 0 ||
 		len(q.SubjectTerms) > 0 ||
 		len(q.Labels) > 0 ||
+		len(q.Filenames) > 0 ||
 		len(q.ListIDs) > 0 ||
 		len(q.AccountAddrs) > 0 ||
 		len(q.ReceivedAddrs) > 0 ||

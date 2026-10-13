@@ -3,6 +3,7 @@ package beeper
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json/v2"
@@ -2171,4 +2172,20 @@ func syntheticMP3(frames int) []byte {
 func sha256Hex(data []byte) string {
 	digest := sha256.Sum256(data)
 	return hex.EncodeToString(digest[:])
+}
+
+func TestMediaRevisionErrorClassification(t *testing.T) {
+	assert := assert.New(t)
+	for _, err := range []error{errBeeperMediaSourceChanged, errBeeperMediaPartMissing, errBeeperMediaPartAmbiguous, errBeeperMediaUnsupported, errBeeperMediaTranscriptInvalid, errBeeperMediaTranscriptTooLarge} {
+		assert.True(MediaRevisionChanged(fmt.Errorf("describe: %w", err)))
+		assert.False(MediaRevisionUnavailable(err))
+	}
+	for _, err := range []error{sql.ErrNoRows, store.ErrInvalidMessageRaw, errBeeperMediaRawInvalid, errBeeperMediaNoLiveOccurrence} {
+		assert.True(MediaRevisionUnavailable(fmt.Errorf("read: %w", err)))
+		assert.False(MediaRevisionChanged(err))
+	}
+	for _, err := range []error{nil, sql.ErrConnDone, context.Canceled} {
+		assert.False(MediaRevisionChanged(err))
+		assert.False(MediaRevisionUnavailable(err))
+	}
 }

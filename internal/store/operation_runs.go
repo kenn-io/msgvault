@@ -232,6 +232,8 @@ func sourceOperationStateCondition(states []operations.State) string {
 			conditions = append(conditions, `(status = 'failed' AND messages_added = 0 AND messages_updated = 0)`)
 		case operations.StateCancelled:
 			conditions = append(conditions, `status = 'cancelled'`)
+		case operations.StatePaused:
+			conditions = append(conditions, `status = 'paused'`)
 		case operations.StateQueued:
 			// Source sync has no durable queued rows.
 		}
@@ -487,8 +489,8 @@ func personSweepOperationStateCondition(states []operations.State) string {
 			conditions = append(conditions, `r.status = 'partial'`)
 		case operations.StateFailed:
 			conditions = append(conditions, `r.status = 'failed'`)
-		case operations.StateQueued, operations.StateCancelled:
-			// Person sweep has no durable queued or cancelled run state.
+		case operations.StateQueued, operations.StateCancelled, operations.StatePaused:
+			// Person sweep has no durable queued, cancelled or paused run state.
 		}
 	}
 	if len(conditions) == 0 {
@@ -748,8 +750,8 @@ func cardDAVOperationStateCondition(states []operations.State) string {
 			conditions = append(conditions, `state = 'failed'`)
 		case operations.StateCancelled:
 			conditions = append(conditions, `state = 'cancelled'`)
-		case operations.StateQueued:
-			// CardDAV has no durable queued rows.
+		case operations.StateQueued, operations.StatePaused:
+			// CardDAV has no durable queued or paused rows.
 		}
 	}
 	if len(conditions) == 0 {

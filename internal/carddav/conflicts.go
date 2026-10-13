@@ -299,9 +299,35 @@ func (s *Service) prepareMappingConflict(
 	if conflictErr != nil && !errors.Is(conflictErr, store.ErrCardDAVConflictNotFound) {
 		return store.CardDAVConflictCapture{}, false, conflictErr
 	}
+	remoteChanged := remoteTombstone || remote.SemanticHash != mapping.RemoteSemanticHash
+	if !unresolved && !remoteChanged {
+		return store.CardDAVConflictCapture{}, false, nil
+	}
 	localTombstone := mapping.PersonID == nil || (existingConflict != nil && existingConflict.LocalTombstone)
 	localHash := mapping.LocalHash
 	var localBody []byte
+	if mapping.PersonID != nil && !localTombstone {
+		snapshot, err := s.store.LoadPersonVCardSnapshotContext(ctx, *mapping.PersonID)
+		if err != nil {
+			return store.CardDAVConflictCapture{}, false, err
+		}
+		localHash = snapshot.Fingerprint
+	}
+	localChanged := localTombstone || localHash != mapping.LocalHash
+	unsafe := false
+	if !unresolved && !localChanged && remoteChanged && !remoteTombstone {
+		var err error
+		unsafe, err = s.store.CardDAVRemoteUpdateNeedsConflictContext(ctx, book.ID, mapping.Href, *remote)
+		if err != nil {
+			return store.CardDAVConflictCapture{}, false, err
+		}
+	}
+	if !unresolved && !unsafe && (!localChanged || !remoteChanged) {
+		return store.CardDAVConflictCapture{}, false, nil
+	}
+	if !unresolved && localTombstone && remoteTombstone {
+		return store.CardDAVConflictCapture{}, false, nil
+	}
 	if mapping.PersonID != nil && !localTombstone {
 		person, err := s.store.GetPersonContext(ctx, *mapping.PersonID)
 		if err != nil {
@@ -312,14 +338,6 @@ func (s *Service) prepareMappingConflict(
 			return store.CardDAVConflictCapture{}, false, err
 		}
 		localBody, localHash = body, hash
-	}
-	localChanged := localTombstone || localHash != mapping.LocalHash
-	remoteChanged := remoteTombstone || remote.SemanticHash != mapping.RemoteSemanticHash
-	if !unresolved && (!localChanged || !remoteChanged) {
-		return store.CardDAVConflictCapture{}, false, nil
-	}
-	if !unresolved && localTombstone && remoteTombstone {
-		return store.CardDAVConflictCapture{}, false, nil
 	}
 	if !unresolved && !localTombstone && !remoteTombstone {
 		localSemanticHash, err := SemanticHash(localBody)

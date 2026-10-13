@@ -12,7 +12,7 @@
   import { DEFAULT_EXPLORE_COLUMNS, isEmailMessageType } from '../../explore/models';
   import type { ExploreSelectionState } from '../../explore/state.svelte';
   import { rebaseVirtualScroll, RowGeometry, tableViewportHeight } from '../../theme/preferences.svelte';
-  import { formatBytes } from '../../util/format';
+  import { formatBytes, formatShortDate as formatTime } from '../../util/format';
   import SelectionCheckbox from '../common/SelectionCheckbox.svelte';
   import IdentityBadge from './IdentityBadge.svelte';
   import RowKind from './RowKind.svelte';
@@ -240,15 +240,6 @@
     return labels.length > 0 ? labels.join(', ') : row.source_identifier;
   }
 
-  function formatTime(value: string): string {
-    const date = new Date(value);
-    if (Number.isNaN(date.valueOf())) return value;
-    return new Intl.DateTimeFormat(undefined, {
-      month: 'short',
-      day: 'numeric',
-      year: date.getFullYear() === new Date().getFullYear() ? undefined : 'numeric'
-    }).format(date);
-  }
 
   function scrollActiveIntoView(index: number): void {
     const height = rowHeight;

@@ -679,6 +679,7 @@ type cliDeleteDedupedExecuteResponse struct {
 }
 
 type cliSearchResponse struct {
+	HybridAvailable  bool                   `json:"hybrid_available,omitzero"`
 	Results          []query.MessageSummary `json:"results"`
 	ScopeLabel       string                 `json:"scope_label,omitempty"`
 	ScopeSourceCount int                    `json:"scope_source_count,omitzero"`
@@ -712,12 +713,40 @@ type cliAccountsResponse struct {
 	// every count is a zero placeholder. Only callers sending
 	// apiprotocol.AllowPendingCountsHeader get it.
 	CountsPending bool `json:"counts_pending,omitempty"`
+	// VirtualAccountsUnavailable reports that the catalog read failed, timed
+	// out, or was served from an earlier snapshot. Accounts then carry the
+	// last known virtual_accounts, if any, which can miss identities confirmed
+	// since, so absence from them does not prove an address is unknown.
+	VirtualAccountsUnavailable bool `json:"virtual_accounts_unavailable,omitempty"`
 }
 
 // sourceMessageCounter is implemented by stores that count every source's
 // messages in one pass.
 type sourceMessageCounter interface {
 	CountMessagesBySourceContext(ctx context.Context) (map[int64]store.SourceMessageCounts, error)
+}
+
+// virtualAccountLister reads the virtual account catalog. Its freshness
+// depends on the confirmed identities, so a store that offers the catalog
+// also reports the revision that changes when one is added or removed.
+type virtualAccountLister interface {
+	ListVirtualAccountsContext(ctx context.Context) (map[int64][]store.VirtualAccount, error)
+	AccountIdentityRevisionContext(ctx context.Context) (int64, error)
+}
+
+// virtualAccountCatalogFreshFor is how long a completed catalog read serves
+// as current. Confirming or removing an identity starts a new read at once.
+const virtualAccountCatalogFreshFor = 2 * time.Minute
+
+// virtualAccountCatalogVersion is the identity revision a catalog read
+// depends on, so a read from before an identity change is never fresh.
+func (s *Server) virtualAccountCatalogVersion(ctx context.Context, lister virtualAccountLister) string {
+	revision, err := lister.AccountIdentityRevisionContext(ctx)
+	if err != nil {
+		s.logger.Warn("reading account identity revision for the account catalog", "error", err)
+		return ""
+	}
+	return strconv.FormatInt(revision, 10)
 }
 
 type cliCollectionsResponse struct {
@@ -842,6 +871,9 @@ type cliAccountResponse struct {
 	MessageCount       int64      `json:"message_count"`
 	SourceDeletedCount int64      `json:"source_deleted_count"`
 	LastSync           *time.Time `json:"last_sync"`
+	// VirtualAccounts lists the source's confirmed identities and its
+	// unattributed rows, each with live counts, for account pickers.
+	VirtualAccounts []store.VirtualAccount `json:"virtual_accounts,omitempty"`
 }
 
 type cliMessageResponse struct {
@@ -1634,6 +1666,10 @@ const cliRunPersonCommand = "person"
 // nested command path. Backup admits only the frozen create path, documents
 // admits only mutations that must run under the daemon's writer lock, and
 // person admits only the provider consent boundary and sweep operations.
+// cliRunStatusSubcommand is the read-only status subcommand shared by the
+// document and document-vector command groups.
+const cliRunStatusSubcommand = "status"
+
 func cliRunCommandAllowed(args []string) bool {
 	if len(args) == 0 {
 		return false
@@ -1664,14 +1700,14 @@ func cliRunCommandAllowed(args []string) bool {
 				return false
 			}
 			switch args[2] {
-			case "build", "consent", "rebuild", "resume", "retire", "retry", "status":
+			case "build", "consent", "rebuild", "resume", "retire", "retry", cliRunStatusSubcommand:
 				return true
 			default:
 				return false
 			}
 		}
 		switch args[1] {
-		case "build", "consent-mistral", "purge-derived", "resume", "retire", "retry":
+		case "build", "consent-mistral", "consent-docling", "purge-derived", "resume", "retire", "retry", cliRunStatusSubcommand:
 			return true
 		default:
 			return false
@@ -1707,6 +1743,7 @@ func cliRunCommandAllowed(args []string) bool {
 		"add-twenty",
 		"add-discord",
 		"add-granola",
+		"add-omi",
 		"add-imap",
 		"add-muesli",
 		"add-notion-meetings",
@@ -1764,6 +1801,7 @@ func cliRunCommandAllowed(args []string) bool {
 		"sync-discord",
 		"sync-granola",
 		"sync-muesli",
+		"sync-omi",
 		"sync-notion-meetings",
 		"sync-slack",
 		"sync-synctech-sms",
@@ -2333,6 +2371,16 @@ func (s *Server) handleCLISearch(w http.ResponseWriter, r *http.Request) {
 	account := r.URL.Query().Get("account")
 	collection := r.URL.Query().Get("collection")
 
+	includeSnippet := false
+	if r.URL.Query().Has("include_snippet") {
+		var err error
+		includeSnippet, err = strconv.ParseBool(r.URL.Query().Get("include_snippet"))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_include_snippet", "include_snippet must be a boolean")
+			return
+		}
+	}
+
 	limit := parseCLISearchInt(r.URL.Query().Get("limit"), 50)
 	if limit <= 0 {
 		limit = 50
@@ -2417,7 +2465,25 @@ func (s *Server) handleCLISearch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "search_failed", err.Error())
 		return
 	}
+	if includeSnippet {
+		metadata, err := s.searchMetadata(r.Context(), resultIDs(results), parsed, true)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "search_failed", err.Error())
+			return
+		}
+		for i := range results {
+			if item, ok := metadata[results[i].ID]; ok {
+				results[i].AttachmentNames = item.AttachmentNames
+				results[i].MatchSnippet = item.MatchSnippet
+			}
+		}
+	}
 	resp.Results = results
+	if grant == nil && len(results) == 0 && offset == 0 && len(parsed.TextTerms) > 0 &&
+		len(parsed.AccountAddrs) == 0 && len(parsed.ReceivedAddrs) == 0 &&
+		parsed.DeletionScope != search.DeletionScopeDeleted && parsed.DeletionScope != search.DeletionScopeAny {
+		resp.HybridAvailable = s.hybridHintAvailable(r.Context(), parsed.MessageTypes)
+	}
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -2750,6 +2816,34 @@ func (s *Server) handleCLIAccounts(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		accounts = append(accounts, newCLIAccountResponse(src, count, sourceDeleted))
+	}
+
+	if lister, ok := s.store.(virtualAccountLister); ok {
+		var virtual map[int64][]store.VirtualAccount
+		var stale bool
+		var err error
+		if s.requestAuthentication(r).Grant != nil {
+			// An agent reads the catalog inside its authorization snapshot:
+			// the shared cache may predate a source whose ID was reused.
+			virtual, err = lister.ListVirtualAccountsContext(r.Context())
+		} else {
+			virtual, _, stale, err = s.virtualAccountSnapshots.getVersion(
+				r.Context(), s.importContext, "", s.virtualAccountCatalogVersion(r.Context(), lister),
+				s.statsSnapshotWait, lister.ListVirtualAccountsContext,
+			)
+		}
+		// The catalog is extra detail; a slow or failed read still returns
+		// the accounts with whatever children the last snapshot held.
+		if err != nil && s.writeIfContextError(w, r.Context().Err()) {
+			return
+		}
+		if err != nil {
+			s.logger.Warn("listing accounts without virtual accounts", "error", err)
+		}
+		response.VirtualAccountsUnavailable = stale || err != nil
+		for i := range accounts {
+			accounts[i].VirtualAccounts = virtual[accounts[i].ID]
+		}
 	}
 
 	response.Accounts = accounts

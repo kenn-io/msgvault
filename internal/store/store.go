@@ -397,7 +397,7 @@ func OpenReadOnlyContext(ctx context.Context, dbPath string) (*Store, error) {
 	if _, err := os.Stat(filesystemPath); err != nil {
 		return nil, fmt.Errorf(
 			"database not found: %s "+
-				"(run 'msgvault init-db' first)", dbPath,
+				"(run 'msgvault migrate' first)", dbPath,
 		)
 	}
 
@@ -1009,6 +1009,28 @@ const messagesAccountIndexDefinition = "ON messages(account_address, account_pat
 // rows without scanning the source; it holds only rows awaiting attribution.
 const messagesAccountPendingIndexDefinition = "ON messages(source_id, id) WHERE " + accountPendingPredicate
 
+// The first SQLite index build can take minutes, so log its start and finish.
+func (s *Store) ensureFromAddressIndex(ctx context.Context) error {
+	const name = "idx_message_recipients_email_from"
+	var exists bool
+	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?)`, name).Scan(&exists); err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+	started := time.Now()
+	slog.Info("building index", slog.String("index", name), slog.String("table", "message_recipients"))
+	if err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+		_, err := tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS `+name+` ON message_recipients(LOWER(email_address), message_id) WHERE recipient_type = 'from'`)
+		return err
+	}); err != nil {
+		return err
+	}
+	slog.Info("built index", slog.String("index", name), slog.Duration("elapsed", time.Since(started)))
+	return nil
+}
+
 // buildLargeIndexesConcurrently creates big-table indexes without blocking
 // writers. CREATE INDEX CONCURRENTLY cannot run inside a transaction (unlike
 // the runMaintenance escape hatch, which only disables the pool-wide
@@ -1075,6 +1097,7 @@ func (s *Store) buildLargeIndexesConcurrently(ctx context.Context) {
 		{"idx_participant_identifiers_value_lower", "ON participant_identifiers(LOWER(identifier_value))"},
 		{"idx_person_match_scoring_contact_lookup", "ON participant_contact_observations(address_kind, normalized_value, participant_id) WHERE active_until IS NULL AND superseded_at IS NULL"},
 		{"idx_beeper_media_occurrences_source", "ON beeper_media_occurrences(source_type, source_identifier, source_message_id, destination_key)"},
+		{"idx_message_recipients_email_from", "ON message_recipients(LOWER(email_address), message_id) WHERE recipient_type = 'from'"},
 	}
 	for _, index := range concurrentIndexes {
 		if dropErr := dropInvalidIndexConcurrently(ctx, conn, index.name); dropErr != nil {
@@ -1152,6 +1175,11 @@ func queryInChunks[T any](db chunkQuerier, ids []T, prefixArgs []any, queryTempl
 }
 
 func queryInChunksContext[T any](ctx context.Context, db chunkQuerier, ids []T, prefixArgs []any, queryTemplate string, fn func(*loggedRows) error) error {
+	return queryInChunksWithValueExprContext(ctx, db, ids, prefixArgs, queryTemplate, "?", fn)
+}
+
+// valueExpr is trusted SQL with one bind, so indexed lookups can use database case folding.
+func queryInChunksWithValueExprContext[T any](ctx context.Context, db chunkQuerier, ids []T, prefixArgs []any, queryTemplate, valueExpr string, fn func(*loggedRows) error) error {
 	const chunkSize = 500
 	for i := 0; i < len(ids); i += chunkSize {
 		if err := ctx.Err(); err != nil {
@@ -1164,7 +1192,7 @@ func queryInChunksContext[T any](ctx context.Context, db chunkQuerier, ids []T, 
 		placeholders := make([]string, len(chunk))
 		args := slices.Clone(prefixArgs)
 		for j, id := range chunk {
-			placeholders[j] = "?"
+			placeholders[j] = valueExpr
 			args = append(args, id)
 		}
 
@@ -1358,7 +1386,7 @@ func (s *Store) InitSchema() error {
 // for the other ledger-gated migrations: a cancelled one is not marked applied,
 // so the next open runs it again.
 func (s *Store) InitSchemaContext(ctx context.Context) error {
-	version, err := s.schemaVersion(ctx)
+	version, err := s.SchemaVersionContext(ctx)
 	if err != nil {
 		return fmt.Errorf("read archive schema version: %w", err)
 	}
@@ -1617,6 +1645,31 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	if err := s.ensureVCardSourceResourceIdentityIndexes(ctx); err != nil {
 		return fmt.Errorf("scope vCard identities to source resources: %w", err)
 	}
+	if err := s.runOnceMigration(ctx, migrationCardDAVDisplayNameOwnership, 1, false, func(ctx context.Context) error {
+		return s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+			_, err := tx.ExecContext(ctx, `UPDATE carddav_resources SET owns_display_name = TRUE
+				WHERE person_id IS NOT NULL AND (governance = 'remote' OR EXISTS (
+				  SELECT 1 FROM carddav_publications publication WHERE publication.person_id = carddav_resources.person_id
+				  AND publication.address_book_id = carddav_resources.address_book_id AND publication.href = carddav_resources.href
+				  AND publication.desired = TRUE AND publication.pending_operation IS NULL))
+				AND NOT EXISTS (SELECT 1 FROM carddav_resources other WHERE other.person_id = carddav_resources.person_id
+				  AND other.id <> carddav_resources.id) AND EXISTS (
+					SELECT 1 FROM persons p JOIN person_names n ON n.person_id = p.id
+					WHERE p.id = carddav_resources.person_id AND p.revision = carddav_resources.person_revision_at_bind
+					  AND p.display_name = n.formatted AND n.source = 'carddav_import'
+					  AND n.source_ref = 'carddav:' || CAST(carddav_resources.address_book_id AS TEXT)
+					  AND n.source_resource_uid = carddav_resources.href AND n.name_kind = 'formatted'
+					  AND n.active_until IS NULL AND n.superseded_at IS NULL
+					  AND NOT EXISTS (SELECT 1 FROM person_names other WHERE other.person_id = n.person_id
+						AND other.source = n.source AND other.source_ref = n.source_ref
+						AND other.source_resource_uid = n.source_resource_uid AND other.name_kind = n.name_kind
+						AND other.active_until IS NULL AND other.superseded_at IS NULL AND other.id <> n.id))`)
+			return err
+		})
+	}); err != nil {
+		return fmt.Errorf("migrate CardDAV display-name ownership: %w", err)
+	}
+
 	// Organization domains written before IDNA normalization may still contain
 	// Unicode. Canonicalize them before fact resolution compares incoming ASCII
 	// references with persisted roots and identifiers.
@@ -1940,6 +1993,10 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 			return err
 		}); err != nil {
 			return fmt.Errorf("create deletion timestamp indexes: %w", err)
+		}
+
+		if err := s.ensureFromAddressIndex(ctx); err != nil {
+			return fmt.Errorf("create identity From-envelope index: %w", err)
 		}
 	}
 

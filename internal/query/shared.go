@@ -71,7 +71,20 @@ func searchOverridesEmailDefault(searchQuery string) bool {
 // message-type scope as search, while an explicit message_type remains
 // authoritative in either mode.
 func shouldDefaultStatsToEmail(opts StatsOptions) bool {
+	// An account scope selects email and calendar rows itself.
+	if opts.Filter != nil && len(opts.Filter.AccountScopes) > 0 {
+		return false
+	}
 	return !opts.SearchScope && !searchOverridesEmailDefault(opts.SearchQuery)
+}
+
+// appendAccountScopeConditions adds one predicate per account scope against
+// the messages table aliased as alias.
+func appendAccountScopeConditions(
+	conditions []string, args []any, scopes []search.AccountScope, alias string,
+) ([]string, []any) {
+	scopeConditions, scopeArgs := search.AccountScopeConditions(scopes, alias)
+	return append(conditions, scopeConditions...), append(args, scopeArgs...)
 }
 
 // effectiveStatsFilter returns the complete message scope for a stats query.
@@ -486,6 +499,7 @@ func getMessageByQueryShared(ctx context.Context, db store.SQLReader, rebind reb
 			COALESCE(m.rfc822_message_id, ''),
 			m.conversation_id,
 			COALESCE(conv.source_conversation_id, ''),
+			COALESCE(conv.title, ''),
 			COALESCE(m.subject, ''),
 			COALESCE(m.message_type, ''),
 			COALESCE(m.snippet, ''),
@@ -509,6 +523,7 @@ func getMessageByQueryShared(ctx context.Context, db store.SQLReader, rebind reb
 		&msg.RFC822MessageID,
 		&msg.ConversationID,
 		&msg.SourceConversationID,
+		&msg.ConversationTitle,
 		&msg.Subject,
 		&msg.MessageType,
 		&msg.Snippet,

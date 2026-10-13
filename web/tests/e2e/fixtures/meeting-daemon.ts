@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 
 const run = promisify(execFile);
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
-const binary = join(repo, "msgvault");
+const binary = join(repo, process.platform === "win32" ? "msgvault.exe" : "msgvault");
 const apiKey = "synthetic-meeting-acceptance-key";
 const userAgent = "OpenAI File Downloader, XaiImageApiFetch/1.0";
 
@@ -57,6 +57,7 @@ export const test = base.extend<{ daemon: MeetingDaemon }>({
         await mkdir(join(scratch, "os-home"));
         const env: NodeJS.ProcessEnv = {
           PATH: process.env.PATH,
+          ...(process.platform === "win32" ? { SystemRoot: process.env.SystemRoot, WINDIR: process.env.WINDIR, TMP: scratch, TEMP: scratch, GOTMPDIR: scratch } : {}),
           HOME: join(scratch, "os-home"),
           MSGVAULT_HOME: archive,
           XDG_CONFIG_HOME: join(scratch, "xdg-config"),
@@ -92,7 +93,14 @@ export const test = base.extend<{ daemon: MeetingDaemon }>({
           ],
           {
             cwd: repo,
-            env: { ...env, ...caches, CGO_ENABLED: "1" },
+            env: {
+              ...env, ...caches, CGO_ENABLED: "1",
+              ...(process.platform === "win32" ? Object.fromEntries(
+                ["CC", "CGO_CFLAGS", "CGO_LDFLAGS"].flatMap((key) =>
+                  process.env[key] ? [[key, process.env[key]]] : [],
+                ),
+              ) : {}),
+            },
             timeout: 120_000,
             maxBuffer: 256 * 1024,
           },

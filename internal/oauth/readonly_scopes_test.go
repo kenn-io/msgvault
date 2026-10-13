@@ -207,7 +207,7 @@ func TestTokenIssuedByDifferentClient(t *testing.T) {
 					filepath.Join(mgr.tokensDir, email+".json"), data, 0600))
 			}
 
-			assert.Equal(t, tt.want, mgr.TokenIssuedByDifferentClient(email))
+			assert.Equal(t, tt.want, mgr.TokenIssuedByDifferentClient(t.Context(), email))
 		})
 	}
 }
@@ -319,11 +319,11 @@ func TestAuthorize_NarrowedRequestPersistsNarrowedGrant(t *testing.T) {
 
 	require.NoError(mgr.Authorize(context.Background(), email), "Authorize")
 
-	assert.ElementsMatch(narrowed, mgr.GrantedScopes(email),
+	assert.ElementsMatch(narrowed, mgr.GrantedScopes(t.Context(), email),
 		"stored grant must be exactly what was requested")
-	assert.False(HasGmailWriteScope(mgr.GrantedScopes(email)),
+	assert.False(HasGmailWriteScope(mgr.GrantedScopes(t.Context(), email)),
 		"narrowing must remove Gmail write access")
-	assert.True(mgr.HasScope(email, ScopeCalendarReadonly),
+	assert.True(mgr.HasScope(t.Context(), email, ScopeCalendarReadonly),
 		"narrowing must not discard Calendar")
 }
 

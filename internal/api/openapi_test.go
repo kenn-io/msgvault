@@ -1357,7 +1357,7 @@ func TestOpenAPIDocumentsAllExplorationOperations(t *testing.T) {
 	requirements.NotNil(filter)
 	requirements.NotNil(filter.Properties["dimension"])
 	assertions.ElementsMatch(
-		[]any{"source", "participant", "domain", "mailing_list", "message_type", "after", "before", "deletion", "identity"},
+		[]any{"source", "participant", "domain", "mailing_list", "message_type", "after", "before", "deletion", "identity", "account"},
 		filter.Properties["dimension"].Enum,
 	)
 	clientFilter := openAPIClientDocument().Components.Schemas.Map()["ExploreFilter"]
@@ -1366,7 +1366,7 @@ func TestOpenAPIDocumentsAllExplorationOperations(t *testing.T) {
 	assertions.Equal([]any{
 		"ExploreFilterDimensionSource", "ExploreFilterDimensionParticipant", "ExploreFilterDimensionDomain", "ExploreFilterDimensionMessageType",
 		"ExploreFilterDimensionMailingList", "ExploreFilterDimensionAfter", "ExploreFilterDimensionBefore",
-		"ExploreFilterDimensionDeletion", "ExploreFilterDimensionIdentity",
+		"ExploreFilterDimensionDeletion", "ExploreFilterDimensionIdentity", "ExploreFilterDimensionAccount",
 	}, clientFilter.Properties["dimension"].Extensions["x-enum-names"])
 	for schemaName, properties := range map[string][]string{
 		"DirectoryPeopleResponse":    {"people"},
@@ -2321,4 +2321,25 @@ func TestOpenAPICollectionScopeContracts(t *testing.T) {
 		}
 	}
 	assertions.Fail("deep search documents source_ids rejection")
+}
+
+func TestSearchAttachmentMetadataSchemaScope(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	for _, doc := range []*huma.OpenAPI{OpenAPIDocument(), openAPIClientDocument()} {
+		schemas := doc.Components.Schemas.Map()
+		for _, name := range []string{"MessageSummary", "MessageDetail"} {
+			schema := schemas[name]
+			require.NotNil(schema)
+			assert.NotContains(schema.Properties, "attachment_names")
+			assert.NotContains(schema.Properties, "attachment_count")
+		}
+		for _, name := range []string{"HybridSearchItem", "CLIQueryMessageSummary"} {
+			schema := schemas[name]
+			require.NotNil(schema)
+			assert.Contains(schema.Properties, "attachment_names")
+		}
+		assert.Contains(schemas["HybridSearchItem"].Properties, "attachment_count")
+		assert.Contains(schemas["CLIQueryMessageSummary"].Properties, "attachment_count")
+	}
 }

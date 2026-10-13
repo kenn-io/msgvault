@@ -1196,6 +1196,7 @@ CREATE TABLE IF NOT EXISTS carddav_resources (
     governance              TEXT NOT NULL CHECK (governance IN ('remote', 'local', 'none')),
     person_id               BIGINT REFERENCES persons(id) ON DELETE SET NULL,
     person_revision_at_bind BIGINT,
+    owns_display_name       BOOLEAN NOT NULL DEFAULT FALSE,
     created_at              TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at              TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (address_book_id, href)
@@ -3889,6 +3890,7 @@ CREATE INDEX IF NOT EXISTS idx_messages_source_message_id ON messages(source_mes
 -- column, not here: a legacy DB missing search_fts would fail this index
 -- during the schema-file Exec and roll back the whole apply. [cr2-10]
 
+-- idx_message_recipients_email_from is built concurrently by Store.
 CREATE INDEX IF NOT EXISTS idx_message_recipients_message ON message_recipients(message_id);
 CREATE INDEX IF NOT EXISTS idx_message_recipients_participant ON message_recipients(participant_id, recipient_type);
 
@@ -4094,3 +4096,24 @@ CREATE TABLE IF NOT EXISTS message_delivery_addresses (
 );
 CREATE INDEX IF NOT EXISTS idx_message_delivery_addresses_address
     ON message_delivery_addresses(address, message_id);
+
+CREATE TABLE IF NOT EXISTS recording_references (
+    destination_key TEXT NOT NULL,
+    message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    route_key TEXT NOT NULL,
+    ref_sha256 TEXT NOT NULL,
+    operation_id TEXT NOT NULL,
+    occurrence_json TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('pending','uncertain','retained','blocked','withdrawn')),
+    next_action_at TIMESTAMPTZ NOT NULL,
+    error_code TEXT NOT NULL DEFAULT '',
+    source_id TEXT NOT NULL DEFAULT '',
+    occurrence_id TEXT NOT NULL DEFAULT '',
+    outcome TEXT NOT NULL DEFAULT '',
+    coverage_state TEXT NOT NULL DEFAULT '',
+    last_send_at TIMESTAMPTZ,
+    retry_count INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (destination_key, message_id, route_key)
+);
+CREATE INDEX IF NOT EXISTS idx_recording_references_due
+    ON recording_references(destination_key, state, next_action_at);

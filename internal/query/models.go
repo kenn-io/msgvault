@@ -7,6 +7,9 @@ package query
 import (
 	"maps"
 	"time"
+
+	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 // AggregateRow represents a single row in an aggregate view.
@@ -23,6 +26,8 @@ type AggregateRow struct {
 // MessageSummary represents a message in list views.
 // Contains enough information for display without fetching the full body.
 type MessageSummary struct {
+	AttachmentNames []string `json:"attachment_names,omitzero"`
+	MatchSnippet    string   `json:"match_snippet,omitempty"`
 	// WebURL is derived by the daemon client for browser navigation.
 	WebURL                       string     `json:"web_url,omitempty"`
 	ID                           int64      `json:"id"`
@@ -63,6 +68,7 @@ type DeletionTarget struct {
 
 // MessageDetail represents a full message with body and attachments.
 type MessageDetail struct {
+	ConversationTitle string `json:"conversation_title,omitempty"`
 	// WebURL is derived by the daemon client for browser navigation.
 	WebURL               string     `json:"web_url,omitempty"`
 	ID                   int64      `json:"id"`
@@ -223,6 +229,8 @@ const (
 
 // MessageFilter specifies which messages to retrieve.
 type MessageFilter struct {
+	AccountScopes []search.AccountScope // picker account selections; intersect with source filters
+
 	// Filter by aggregate key
 	Sender        string // filter by sender email
 	SenderName    string // filter by sender display name (COALESCE(display_name, email))
@@ -312,6 +320,7 @@ func (f *MessageFilter) HasEmptyTargets() bool {
 // copy would share the underlying map between the original and copy.
 func (f *MessageFilter) Clone() MessageFilter {
 	clone := *f
+	clone.AccountScopes = search.CloneAccountScopes(f.AccountScopes)
 	if f.EmptyValueTargets != nil {
 		clone.EmptyValueTargets = make(map[ViewType]bool, len(f.EmptyValueTargets))
 		maps.Copy(clone.EmptyValueTargets, f.EmptyValueTargets)
@@ -325,6 +334,8 @@ func (f *MessageFilter) Clone() MessageFilter {
 
 // AggregateOptions configures an aggregate query.
 type AggregateOptions struct {
+	AccountScopes []search.AccountScope
+
 	// Account filter
 	SourceID  *int64  // nil means all accounts
 	SourceIDs []int64 // multi-source filter (collections)
@@ -363,6 +374,10 @@ func DefaultAggregateOptions() AggregateOptions {
 
 // AccountInfo represents a source account.
 type AccountInfo struct {
+	// VirtualAccounts lists the source's identity and unattributed children,
+	// filled only by callers that load the catalog.
+	VirtualAccounts []store.VirtualAccount `json:"virtual_accounts,omitempty"`
+
 	ID          int64
 	SourceType  string
 	Identifier  string // email address

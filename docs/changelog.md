@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-08"
+last_edited: "2026-10-09"
 title: Changelog
 description: Release history for msgvault
 ---
@@ -7,6 +7,16 @@ description: Release history for msgvault
 All notable changes to msgvault, grouped by release.
 
 ## Unreleased
+
+- Remote edits update source-owned values on published CardDAV imports while preserving unrelated local values. Edits that would overwrite another owner create a conflict.
+- [Everything search](web-ui.md#recording-matches) shows recording transcript matches for plain-word Full text queries and supports one Person filter. API schema 3.11.0 adds `participant_id` to media search, `GET /media/search/status`, source filename, title and date to media search results and optional `conversation_title` to message detail.
+
+- Root help groups commands by task and includes start-here commands. Subcommand
+  help lists global flags compactly and explains common ID and output paths.
+- Unknown subcommands under help-only groups now exit 1 with suggestions;
+  `person find` previously printed help and exited 0.
+- `export-messages` reports missing `--start` and `--end` before contacting the
+  daemon.
 
 - Go programs can use msgvault as a library through `go.kenn.io/msgvault/pkg/archive`.
   It sets up and opens SQLite or PostgreSQL archives, runs the Slack and Discord
@@ -17,8 +27,17 @@ All notable changes to msgvault, grouped by release.
 - [Read-only remote clients](guides/remote-deployment.md#read-only-remote-clients) get separate reader credentials with response limits and optional collection writes.
 - Single-message [export-eml](cli-reference.md#export-eml) refuses ambiguous provider IDs for owner and reader keys.
 - Consume streamed [export-attachment](cli-reference.md#export-attachment) stdout only after the command succeeds.
+- [Omi](usage/meetings.md#omi) conversations can sync into the local archive with summaries, action items, and speaker transcripts. Hosted and self-hosted sources share resumable sync and per-key request pacing.
 
 - Agent tokens grant scoped archive reads through the remote CLI and MCP, with optional `--expires`. Search responses report index uncertainty; owner searches retain automatic index repair.
+
+- Applications can compare a candidate binary's expected archive version with
+  the stored version using `schema-version`, then run `migrate` before replacing
+  the executable. See [the upgrade procedure](setup.md#migrate-before-replacing-the-executable).
+
+- Owned-address changes recheck only matching messages. SQLite upgrades may
+  take several minutes to build a one-time From-address index. See
+  [startup progress](guides/daemon-migration.md#what-you-will-see).
 
 - msgvault sends anonymous usage telemetry: a daemon ping at startup and once
   each later UTC day, and an `app_opened` event the web UI reports through the
@@ -30,6 +49,13 @@ All notable changes to msgvault, grouped by release.
 
 - `list-accounts` and `embeddings list` keep working while a sync, import, or
   embedding build runs. Accounts whose counts aren't ready yet show `pending`.
+- `search --help` explains the fts, vector and hybrid modes, and an empty
+  keyword search suggests `--mode hybrid` when embeddings can answer it. Search
+  adds `--snippet`, `--sort date` for semantic pages, and a `filename:` operator
+  that needs daemon API 3.14.0. `show` aliases `show-message`, which gains
+  `--body-only` and `--strip-quoted`, and `show-thread` reads a conversation
+  oldest first with quoted history removed. The reading view keeps complete
+  URLs and uncertain wrapped headers.
 
 - Granola and Circleback save meetings through the same path as Muesli, Notion,
   and meeting file import. Organizer and attendee names are trimmed, a value
@@ -45,6 +71,10 @@ All notable changes to msgvault, grouped by release.
   fills in on each source's next sync or import, or with
   `msgvault repair-derived`. API schema 3.5.0; older daemons refuse these
   operators.
+- Pick a receiving address or the unattributed mail of a source in the TUI
+  account picker, the Web UI's Explore account filter, and the MCP `account`
+  argument; vector and hybrid search accept `received:` and `account:`. API
+  schema 3.11.0.
 - Rerunning `import-whatsapp` on an Apple `ChatStorage.sqlite` reads only the
   chats that changed since the last successful import and writes only new and
   changed messages, instead of rewriting the whole archive. It picks up edits
@@ -70,7 +100,11 @@ All notable changes to msgvault, grouped by release.
   their recordings saved locally.
 - [Kata issues](usage/kata-issues.md) can quote an exact passage from a
   message, transcript, or file, from the Web UI, `msgvault kata`, HTTP, or MCP
-  (`--allow-kata-writes`). Retrying a create returns the original issue.
+  (`--allow-kata-writes`). Retrying a create returns the original issue, and
+  `msgvault kata issues` finds the issues, open or closed, that already cite
+  a message or file. `msgvault kata context` reads back each passage an issue
+  cites, with its state in the archive today and the text around it.
+  Agents can also cite the Docbank transcript of a delivered voice note.
   Person agenda writes now work with a static Kata token.
 - Adding Calendar to a Gmail token recognizes Google's short and expanded
   `email`/`profile` scope names, avoiding false missing-scope errors on re-consent.
@@ -86,7 +120,7 @@ All notable changes to msgvault, grouped by release.
   See [Microsoft contacts](usage/people-carddav.md#microsoft-contacts).
 - A CardDAV update or unpublish attempted while the Google sign-in is missing
   goes out after sign-in, instead of turning into a conflict to review.
-
+- **Recording references:** Route Loom/Cap links and native Teams recording pointers to Docbank in the background with separate reference consent, including existing messages. Self-hosted Cap requires an exact configured origin.
 - **Transcripts beside recordings:** the Web reader shows each recording's
   Docbank transcript, or why there isn't one, under the expanded message.
   `GET /api/v1/messages/{id}/recordings` serves the same list (API schema 3.6.0).

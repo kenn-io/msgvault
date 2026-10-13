@@ -336,7 +336,7 @@ func newPersonFactPinCommand(options *personFactsCLIOptions, pinned bool) *cobra
 	}
 	return &cobra.Command{
 		Use:   action + " <person-id> <kind> <key>",
-		Short: action + " an automatic person fact target",
+		Short: strings.ToUpper(action[:1]) + action[1:] + " an automatic person fact target",
 		Args:  cobra.ExactArgs(3),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			personID, err := positivePersonCLIArg(cmd, args[0], personValue)

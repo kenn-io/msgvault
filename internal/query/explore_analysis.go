@@ -384,10 +384,16 @@ func validateIdentityPredicate(analyticalContext Context) error {
 	return nil
 }
 
-// expandParticipantClusterMembers widens a set of participant IDs to every
-// member of each requested ID's identity cluster (see
-// expandParticipantFilterClusters). An empty input returns nil without
-// querying the cache.
+// ExpandParticipantClusterMembers uses the same committed identity clusters as Explore filters.
+func (e *DuckDBEngine) ExpandParticipantClusterMembers(ctx context.Context, ids []int64) ([]int64, error) {
+	release, err := e.acquireQuerySlot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	return e.expandParticipantClusterMembers(ctx, ids)
+}
+
 func (e *DuckDBEngine) expandParticipantClusterMembers(ctx context.Context, ids []int64) ([]int64, error) {
 	if len(ids) == 0 {
 		return nil, nil

@@ -278,6 +278,13 @@ func (r *propertyRender) telephoneForV4() {
 	if r.valueType == valueTypeText || IsURIValue(value) {
 		return
 	}
+	if r.source != Version40 {
+		decoded, err := UnescapeText(value)
+		if err != nil {
+			return
+		}
+		value = decoded
+	}
 	uri, ok := telURIFromLegacyNumber(value)
 	if !ok {
 		r.valueType = valueTypeText

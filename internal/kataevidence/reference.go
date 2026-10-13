@@ -20,7 +20,7 @@ func Canonicalize(r Reference) (Reference, error) {
 	}
 	switch r.Kind {
 	case "message":
-		if r.Message == nil || r.DocumentChunk != nil || r.AttachmentID != 0 || r.OccurrenceKey != "" {
+		if r.Message == nil || r.DocumentChunk != nil || r.DocbankRendition != nil || r.AttachmentID != 0 || r.OccurrenceKey != "" {
 			return invalid()
 		}
 		p := *r.Message
@@ -29,13 +29,23 @@ func Canonicalize(r Reference) (Reference, error) {
 			return invalid()
 		}
 	case "document_chunk":
-		if r.DocumentChunk == nil || r.Message != nil || r.AttachmentID < 1 || !validIdentity(r.OccurrenceKey) {
+		if r.DocumentChunk == nil || r.Message != nil || r.DocbankRendition != nil || r.AttachmentID < 1 || !validIdentity(r.OccurrenceKey) {
 			return invalid()
 		}
 		p := *r.DocumentChunk
 		r.DocumentChunk = &p
 		if !validIdentity(p.ExtractionID) || !validIdentity(p.ChunkKey) ||
 			!normalizeDigest(&p.CanonicalBlobHash) || !normalizeDigest(&p.ManifestChecksum) || !normalizeDigest(&p.ChunkChecksum) {
+			return invalid()
+		}
+	case "docbank_rendition":
+		if r.DocbankRendition == nil || r.Message != nil || r.DocumentChunk != nil || r.AttachmentID < 1 || !validIdentity(r.OccurrenceKey) {
+			return invalid()
+		}
+		p := *r.DocbankRendition
+		r.DocbankRendition = &p
+		if p.NodeID < 1 || !validIdentity(p.VaultUID) || !validIdentity(p.ContentVersionID) ||
+			!normalizeDigest(&p.ContentSHA256) || !normalizeDigest(&p.RenditionAttachmentID) || !normalizeDigest(&p.BuildID) || !normalizeDigest(&p.RenditionSHA256) {
 			return invalid()
 		}
 	default:
@@ -62,6 +72,10 @@ func ID(r Reference) string {
 		p := r.DocumentChunk
 		fields = append(fields, p.CanonicalBlobHash, p.ExtractionID, p.ManifestChecksum, p.ChunkKey, p.ChunkChecksum,
 			strconv.Itoa(p.StartRune), strconv.Itoa(p.EndRune))
+	case r.DocbankRendition != nil:
+		p := r.DocbankRendition
+		fields = append(fields, p.VaultUID, strconv.FormatInt(p.NodeID, 10), p.ContentVersionID, p.ContentSHA256,
+			p.RenditionAttachmentID, p.BuildID, p.RenditionSHA256, strconv.Itoa(p.StartRune), strconv.Itoa(p.EndRune))
 	}
 	return Digest("msgvault.kata.evidence.v1", fields...)
 }
@@ -112,4 +126,20 @@ func PassageLocation(ref Reference) string {
 	start, end := ref.Range()
 	return Digest("msgvault.kata.passage-location.v1", ref.Kind, ref.ArchiveUID, strconv.FormatInt(ref.MessageID, 10),
 		ref.SourceType, ref.SourceIdentifier, ref.SourceMessageID, ref.OccurrenceKey, chunkKey, strconv.Itoa(start), strconv.Itoa(end))
+}
+
+// sourceKeyPrefix starts each source identity used to compare citations.
+const sourceKeyPrefix = "msgvault.source."
+
+// SourceKeys names the sources ref cites, without range or content hashes: its
+// message, and for a file chunk also the file, so a file citation is found by
+// its message too. The file key comes last.
+func SourceKeys(ref Reference) []string {
+	tuple := []string{ref.ArchiveUID, "message", ref.SourceType, ref.SourceIdentifier, ref.SourceMessageID}
+	keys := []string{sourceKeyPrefix + Digest("msgvault.kata.source.v1", tuple...)}
+	if ref.OccurrenceKey != "" {
+		tuple[1] = "file"
+		keys = append(keys, sourceKeyPrefix+Digest("msgvault.kata.source.v1", append(tuple, ref.OccurrenceKey)...))
+	}
+	return keys
 }

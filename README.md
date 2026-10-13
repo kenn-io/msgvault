@@ -53,8 +53,8 @@ features send selected data to the endpoints you configure; local embedding
 servers are also supported. See [recommended configuration](docs/usage/recommended-configuration.md)
 for the choices and consent steps.
 
-The daemon also sends anonymous usage telemetry, a daily ping and a web UI open
-event carrying the version, platform and a random install ID, never archive
+The daemon also sends anonymous usage telemetry, a daily ping and web and terminal
+UI usage carrying the version, platform and a random install ID, never archive
 content. See [telemetry](docs/configuration.md#telemetry) for the full list and
 how to turn it off.
 
@@ -125,7 +125,7 @@ first sync, and running on your own server.
 |---|---|
 | Understand the product | [Product overview](https://msgvault.io/) and [archive lifecycle](https://msgvault.io/guide/) |
 | Upgrade an existing archive | [Changelog and upgrade notes](docs/changelog.md#0210) |
-| Search messages and attachments | [Searching](docs/usage/searching.md) and [document indexing](docs/usage/document-indexing.md) |
+| Find messages by words or meaning, read threads, and locate attachments | [Searching](docs/usage/searching.md) and [document indexing](docs/usage/document-indexing.md) |
 | Maintain contacts and relationships | [People and profiles](docs/usage/people.md) |
 | Import local text-message history | [Text message imports](docs/usage/text-messages.md) |
 | Configure optional AI features | [Recommended configuration](docs/usage/recommended-configuration.md) |

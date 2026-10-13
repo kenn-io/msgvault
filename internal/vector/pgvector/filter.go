@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
@@ -29,7 +30,7 @@ func escapeLikeSubject(s string) string {
 // filteredChunkAndMessageCount seed it from store.LiveMessagesWhere;
 // applyFilterClauses uses it inline).
 func buildPGFilterClauses(f vector.Filter, bind func(any) string) []string {
-	var clauses []string
+	clauses := search.AccountScopeConditionsBound(f.AccountScopes, "m", bind)
 	if len(f.MessageIDs) > 0 {
 		clauses = append(clauses, fmt.Sprintf("m.id = ANY(%s::bigint[])", bind(int64Array(f.MessageIDs))))
 	}
@@ -148,6 +149,9 @@ func buildPGFilterClauses(f vector.Filter, bind func(any) string) []string {
 		clauses = append(clauses, fmt.Sprintf(
 			`LOWER(m.subject) LIKE LOWER(%s) ESCAPE '\'`,
 			bind("%"+escapeLikeSubject(term)+"%")))
+	}
+	for _, filename := range f.FilenameSubstrings {
+		clauses = append(clauses, fmt.Sprintf(`EXISTS (SELECT 1 FROM attachments fa WHERE fa.message_id = m.id AND LOWER(fa.filename) LIKE LOWER(%s) ESCAPE '\')`, bind("%"+escapeLikeSubject(filename)+"%")))
 	}
 	for _, term := range f.ListIDSubstrings {
 		clauses = append(clauses, fmt.Sprintf(

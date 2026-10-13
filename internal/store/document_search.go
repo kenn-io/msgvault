@@ -560,13 +560,15 @@ func (s *Store) searchDocumentFilenames(
 	return s.scanDocumentSearchRows(ctx, query, args, false, limit)
 }
 
+const containingTitleMCVSQL = "COALESCE(NULLIF(m.subject, ''), NULLIF(cv.title, ''), '')"
+
 const documentSearchSelectColumns = `
 		a.id, m.id, m.conversation_id, m.source_id,
 		COALESCE(m.source_message_id, ''),
 		COALESCE(m.sent_at, m.received_at, m.internal_date),
 		o.occurrence_key,
 		COALESCE(o.source_part_key, ''), COALESCE(o.filename, ''),
-		COALESCE(NULLIF(m.subject, ''), NULLIF(cv.title, ''), ''),
+		` + containingTitleMCVSQL + `,
 		COALESCE(o.mime_type, ''), h.canonical_blob_hash,
 		dc.chunk_key, dc.ordinal, CAST(dc.heading_path AS TEXT),
 		dc.first_unit_index, dc.last_unit_index, dc.text,
@@ -581,7 +583,7 @@ const documentSearchRankedSelectColumns = `
 		o.occurrence_key AS occurrence_key,
 		COALESCE(o.source_part_key, '') AS source_part_key,
 		COALESCE(o.filename, '') AS filename,
-		COALESCE(NULLIF(m.subject, ''), NULLIF(cv.title, ''), '') AS containing_title,
+		` + containingTitleMCVSQL + ` AS containing_title,
 		COALESCE(o.mime_type, '') AS mime_type,
 		h.canonical_blob_hash AS canonical_blob_hash,
 		dc.chunk_key AS chunk_key, dc.ordinal AS chunk_ordinal,

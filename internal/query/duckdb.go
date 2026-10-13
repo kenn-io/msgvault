@@ -538,6 +538,12 @@ func (e *DuckDBEngine) parquetPath(table string) string {
 	return filepath.Join(e.analyticsDir, table, "*.parquet")
 }
 
+// filenameCondition matches msg rows with an attachment name ILIKE the bound pattern.
+// It reads the cached Parquet because the daemon never attaches sqlite_db.
+func (e *DuckDBEngine) filenameCondition() string {
+	return fmt.Sprintf(`EXISTS (SELECT 1 FROM read_parquet('%s') fa WHERE CAST(fa.message_id AS BIGINT) = msg.id AND CAST(fa.filename AS VARCHAR) ILIKE ? ESCAPE '\')`, e.parquetPath("attachments"))
+}
+
 // hasCol returns true if the named column exists in the Parquet schema for the given table.
 func (e *DuckDBEngine) hasCol(table, col string) bool {
 	e.optColsMu.RLock()
@@ -1032,6 +1038,11 @@ func (e *DuckDBEngine) buildNonTextSearchConditions(q *search.Query, keyColumns 
 		conditions = append(conditions, accountConditions...)
 		args = append(args, accountArgs...)
 	}
+	conditions, args = appendAccountScopeConditions(conditions, args, q.AccountScopes, "msg")
+	for _, filename := range q.Filenames {
+		conditions = append(conditions, e.filenameCondition())
+		args = append(args, "%"+escapeILIKE(filename)+"%")
+	}
 
 	// label: filter - case-insensitive substring match.
 	// In the Labels aggregate view (keyColumns includes the label column),
@@ -1203,11 +1214,12 @@ func (e *DuckDBEngine) buildWhereClause(opts AggregateOptions, keyColumns ...str
 	var conditions []string
 	var args []any
 
-	if !searchOverridesEmailDefault(opts.SearchQuery) {
+	if !aggregateOverridesEmailDefault(MessageFilter{}, opts) {
 		conditions = append(conditions, emailOnlyFilterMsg)
 	}
 	conditions = append(conditions, store.LiveMessagesWhere("msg", opts.HideDeletedFromSource))
 	conditions, args = appendSourceFilter(conditions, args, "msg.", opts.SourceID, opts.SourceIDs)
+	conditions, args = appendAccountScopeConditions(conditions, args, opts.AccountScopes, "msg")
 
 	if opts.After != nil {
 		conditions = append(conditions, "msg.sent_at >= CAST(? AS TIMESTAMP)")
@@ -1436,6 +1448,7 @@ func (e *DuckDBEngine) buildFilterConditions(filter MessageFilter) (string, []an
 
 	conditions = append(conditions, store.LiveMessagesWhere("msg", filter.HideDeletedFromSource))
 	conditions, args = appendSourceFilter(conditions, args, "msg.", filter.SourceID, filter.SourceIDs)
+	conditions, args = appendAccountScopeConditions(conditions, args, filter.AccountScopes, "msg")
 
 	if filter.ConversationID != nil {
 		conditions = append(conditions, "msg.conversation_id = ?")
@@ -1690,12 +1703,13 @@ func (e *DuckDBEngine) SubAggregate(ctx context.Context, filter MessageFilter, g
 		filter.HideDeletedFromSource = true
 	}
 	where, args := e.buildFilterConditions(filter)
-	if strings.TrimSpace(filter.MessageType) == "" && !searchOverridesEmailDefault(opts.SearchQuery) {
+	if strings.TrimSpace(filter.MessageType) == "" && !aggregateOverridesEmailDefault(filter, opts) {
 		where += " AND " + emailOnlyFilterMsg
 	}
 
 	// Add opts-based conditions (source IDs, date range, attachment filter).
 	whereParts, args := appendSourceFilter(nil, args, "msg.", opts.SourceID, opts.SourceIDs)
+	whereParts, args = appendAccountScopeConditions(whereParts, args, opts.AccountScopes, "msg")
 	if len(whereParts) > 0 {
 		where += " AND " + strings.Join(whereParts, " AND ")
 	}
@@ -1866,6 +1880,15 @@ func (e *DuckDBEngine) GetTotalStats(ctx context.Context, opts StatsOptions) (*T
 	}
 
 	return stats, nil
+}
+
+// ListVirtualAccounts reads the virtual account catalog through the live
+// SQLite engine, or returns none when only the Parquet cache is available.
+func (e *DuckDBEngine) ListVirtualAccounts(ctx context.Context) (map[int64][]store.VirtualAccount, error) {
+	if e.sqliteEngine != nil {
+		return e.sqliteEngine.ListVirtualAccounts(ctx)
+	}
+	return map[int64][]store.VirtualAccount{}, nil
 }
 
 // ListAccounts returns accounts from SQLite via DuckDB's sqlite_scan,
@@ -2310,6 +2333,11 @@ func (e *DuckDBEngine) Search(ctx context.Context, q *search.Query, limit, offse
 	if accountConditions, accountArgs := search.AccountConditions(q, "m"); len(accountConditions) > 0 {
 		conditions = append(conditions, accountConditions...)
 		args = append(args, accountArgs...)
+	}
+	conditions, args = appendAccountScopeConditions(conditions, args, q.AccountScopes, "m")
+	for _, filename := range q.Filenames {
+		conditions = append(conditions, `EXISTS (SELECT 1 FROM sqlite_db.attachments fa WHERE fa.message_id = m.id AND fa.filename ILIKE ? ESCAPE '\')`)
+		args = append(args, "%"+escapeILIKE(filename)+"%")
 	}
 
 	if len(q.MessageTypes) > 0 {
@@ -3205,6 +3233,11 @@ func (e *DuckDBEngine) buildSearchConditions(q *search.Query, filter MessageFilt
 	if accountConditions, accountArgs := search.AccountConditions(q, "msg"); len(accountConditions) > 0 {
 		conditions = append(conditions, accountConditions...)
 		args = append(args, accountArgs...)
+	}
+	conditions, args = appendAccountScopeConditions(conditions, args, q.AccountScopes, "msg")
+	for _, filename := range q.Filenames {
+		conditions = append(conditions, e.filenameCondition())
+		args = append(args, "%"+escapeILIKE(filename)+"%")
 	}
 
 	// Label filter - case-insensitive substring match

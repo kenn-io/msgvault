@@ -17,6 +17,15 @@ import { createAllMatchingSelection, predicateFingerprint } from './selection';
 import { SEARCH_MODE_PREFERENCE_KEY } from '../search/modes';
 
 describe('Explore URL state', () => {
+  it('preserves paused Operations filters from handwritten URLs and saved state', () => {
+    const handwritten = new URLSearchParams({ explore: JSON.stringify({ workspace: 'operations', operationState: 'paused' }) });
+    expect(parseExploreURLState(handwritten.toString()).operationState).toBe('paused');
+    const saved = { ...defaultExploreURLState, workspace: 'operations' as const, operationState: 'paused' as const };
+    window.history.replaceState({ exploreSearch: '?workspace=operations', exploreState: saved }, '', '?workspace=operations');
+    const state = new ExploreState(window);
+    expect(state.current.operationState).toBe('paused');
+    state.destroy();
+  });
   it('drops an impossible Directory date when reading the URL', () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({
       workspace: 'directory', directoryLastContactAfter: '2026-02-31', directoryLastContactBefore: '2026-03-01'
@@ -722,10 +731,10 @@ describe('Explore URL state', () => {
     expect(malformed.personFileDirections).toEqual(['from_person']);
   });
 
-  it('drops malformed namespaced attachment authority instead of treating it as an entry key', () => {
+  it.each(['attachment:0', 'recording:abc'])('drops malformed namespaced selection %s', (selectedRow) => {
     const restored = parseExploreURLState(serializeExploreURLState({
       ...defaultExploreURLState,
-      selectedRow: 'attachment:0'
+      selectedRow
     }));
 
     expect(restored.selectedRow).toBeNull();

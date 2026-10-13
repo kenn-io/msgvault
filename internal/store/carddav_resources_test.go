@@ -1,12 +1,16 @@
 package store_test
 
 import (
+	"bytes"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/internal/vcard"
+	"go.kenn.io/msgvault/internal/vcardmap"
 )
 
 func newCardDAVResourceStore(t *testing.T) (*store.Store, store.CardDAVAccount, store.CardDAVAddressBook) {
@@ -271,6 +275,7 @@ func TestCardDAVResourceMoveRewritesProjectionProvenanceBeforeRemoteEdit(t *test
 	require.NoError(err)
 	require.NotNil(mapping.PersonID)
 	personID := *mapping.PersonID
+	assert.True(mapping.OwnsDisplayName)
 
 	newHref := book.CanonicalURL + "alice-new.vcf"
 	moved := remoteResource(newHref, "remote-alice", "Alice Moved", "moved@example.test", `"two"`)
@@ -293,8 +298,9 @@ func TestCardDAVResourceMoveRewritesProjectionProvenanceBeforeRemoteEdit(t *test
 	assert.Equal("moved@example.test", points[0].OriginalValue)
 	_, err = st.GetCardDAVResourceContext(t.Context(), book.ID, oldHref)
 	require.ErrorIs(err, store.ErrCardDAVResourceNotFound)
-	_, err = st.GetCardDAVResourceContext(t.Context(), book.ID, newHref)
+	mapping, err = st.GetCardDAVResourceContext(t.Context(), book.ID, newHref)
 	require.NoError(err)
+	assert.True(mapping.OwnsDisplayName)
 }
 
 func TestCardDAVResourceMovePreservesConcurrentLocalEditConflict(t *testing.T) {
@@ -316,6 +322,10 @@ func TestCardDAVResourceMovePreservesConcurrentLocalEditConflict(t *testing.T) {
 		AddressKind: store.ContactAddressEmail, OriginalValue: "local-edit@example.test",
 		Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
 	})
+	require.NoError(err)
+	person, err := st.GetPersonContext(t.Context(), *mapping.PersonID)
+	require.NoError(err)
+	_, err = st.UpdatePersonDisplayNameContext(t.Context(), person.ID, person.Revision, new("Local Label"))
 	require.NoError(err)
 	beforeMove, err := st.LoadPersonVCardSnapshotContext(t.Context(), *mapping.PersonID)
 	require.NoError(err)
@@ -340,6 +350,7 @@ func TestCardDAVResourceMovePreservesConcurrentLocalEditConflict(t *testing.T) {
 
 	movedMapping, err := st.GetCardDAVResourceContext(t.Context(), book.ID, newHref)
 	require.NoError(err)
+	assert.False(movedMapping.OwnsDisplayName)
 	assert.Equal(mapping.LocalHash, movedMapping.LocalHash,
 		"the href rewrite must not rebase away the genuine local edit")
 	afterMove, err := st.LoadPersonVCardSnapshotContext(t.Context(), *mapping.PersonID)
@@ -644,6 +655,21 @@ func TestCardDAVApplyNeverRebasesLocalGovernedProjection(t *testing.T) {
 	envelope, err := st.GetVCardResourceEnvelopeContext(t.Context(), "carddav:1", href)
 	require.NoError(err)
 	assert.Equal(updated.RemoteBody, envelope.StoredBody)
+	baseline := mapping.LocalHash
+	_, err = st.UpdatePersonDisplayNameContext(t.Context(), person.ID, person.Revision, new("Unpublished Local Label"))
+	require.NoError(err)
+	updated.RemoteETag = `"metadata-only"`
+	_, err = st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
+		AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration,
+		SyncRevision: book.SyncRevision + 2, Upserts: []store.CardDAVRemoteResource{updated},
+	})
+	require.NoError(err)
+	mapping, err = st.GetCardDAVResourceContext(t.Context(), book.ID, href)
+	require.NoError(err)
+	snapshot, err := st.LoadPersonVCardSnapshotContext(t.Context(), personID)
+	require.NoError(err)
+	assert.Equal(baseline, mapping.LocalHash)
+	assert.NotEqual(snapshot.Fingerprint, mapping.LocalHash)
 }
 
 func TestCardDAVEmailBindingStoresLocalCanonicalUIDInEnvelope(t *testing.T) {
@@ -1015,6 +1041,95 @@ func TestCardDAVApplyFenceRollsBackWholePlan(t *testing.T) {
 	assert.Empty(t, books[0].SyncToken)
 }
 
+func publishCardDAVResource(t *testing.T, st *store.Store, book store.CardDAVAddressBook, input store.CardDAVRemoteResource) store.CardDAVRemoteResource {
+	t.Helper()
+	require := require.New(t)
+	mapping, err := st.GetCardDAVResourceContext(t.Context(), book.ID, input.Href)
+	require.NoError(err)
+	snapshot, err := st.LoadPersonVCardSnapshotContext(t.Context(), *mapping.PersonID)
+	require.NoError(err)
+	sourceRef := fmt.Sprintf("carddav:%d", book.ID)
+	envelope, err := st.GetVCardResourceEnvelopeContext(t.Context(), sourceRef, input.Href)
+	require.NoError(err)
+	projected, err := vcardmap.ProjectPersonEnvelope(*snapshot, envelope.ResourceEnvelope)
+	require.NoError(err)
+	metadata, err := vcard.MarshalResourceMetadata(projected)
+	require.NoError(err)
+	pending, err := st.PrepareCardDAVPublicationContext(t.Context(), store.CardDAVPublicationPlan{
+		PersonID: *mapping.PersonID, Desired: true, AddressBookID: book.ID, Href: input.Href,
+		OutgoingBody: projected.StoredBody, OutgoingEnvelopeMetadata: metadata,
+		OutgoingSemanticHash: "published", LocalHash: snapshot.Fingerprint,
+	})
+	require.NoError(err)
+	input.RemoteBody, input.SemanticHash, input.RemoteETag = projected.StoredBody, "published", `"published"`
+	require.NoError(st.CommitCardDAVPublicationContext(t.Context(), store.CardDAVCanonicalMutation{Publication: *pending, Remote: input}))
+
+	return input
+}
+
+func TestCardDAVApplyMissingOwnerConflictCaptureRollsBackWholePlan(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st, account, book := newCardDAVResourceStore(t)
+	ordinary := remoteResource(book.CanonicalURL+"ordinary.vcf", "00000000-0000-4000-8000-000000000001", "Ordinary", "source@example.test", `"one"`)
+	protected := remoteResource(book.CanonicalURL+"protected.vcf", "00000000-0000-4000-8000-000000000002", "Protected", "import@example.test", `"one"`)
+	_, err := st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
+		AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration,
+		SyncRevision: book.SyncRevision, NextSyncToken: "before",
+		Upserts: []store.CardDAVRemoteResource{ordinary, protected},
+	})
+	require.NoError(err)
+	mapping, err := st.GetCardDAVResourceContext(t.Context(), book.ID, protected.Href)
+	require.NoError(err)
+	require.NotNil(mapping.PersonID)
+	_, err = st.AddPersonContactPointContext(t.Context(), *mapping.PersonID, store.PersonContactPointInput{
+		AddressKind: store.ContactAddressEmail, OriginalValue: "local@example.test",
+		Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
+	})
+	require.NoError(err)
+	protected = publishCardDAVResource(t, st, book, protected)
+
+	resources := make([]*store.CardDAVResource, 0, 2)
+	snapshots := make([]*store.PersonVCardSnapshot, 0, 2)
+	for _, input := range []store.CardDAVRemoteResource{ordinary, protected} {
+		resource, err := st.GetCardDAVResourceContext(t.Context(), book.ID, input.Href)
+		require.NoError(err)
+		resources = append(resources, resource)
+		native, err := st.LoadPersonVCardSnapshotContext(t.Context(), *resource.PersonID)
+		require.NoError(err)
+		require.Equal(native.Fingerprint, resource.LocalHash)
+		snapshots = append(snapshots, native)
+	}
+	books, err := st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
+	require.NoError(err)
+	beforeBook := books[0]
+	ordinary = remoteResource(ordinary.Href, ordinary.RemoteUID, "Ordinary", "changed@example.test", `"two"`)
+	ordinary.SemanticHash = "source-edit"
+	protected.RemoteBody = bytes.Replace(protected.RemoteBody, []byte("local@example.test"), []byte("edited@example.test"), 1)
+	protected.SemanticHash, protected.RemoteETag = "protected-edit", `"two"`
+	_, err = st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
+		AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration,
+		SyncRevision: beforeBook.SyncRevision, NextSyncToken: "must-not-land",
+		Upserts: []store.CardDAVRemoteResource{ordinary, protected},
+	})
+	require.ErrorIs(err, store.ErrCardDAVStalePlan)
+	for i, before := range resources {
+		after, err := st.GetCardDAVResourceContext(t.Context(), book.ID, before.Href)
+		require.NoError(err)
+		assert.Equal(before, after)
+		native, err := st.LoadPersonVCardSnapshotContext(t.Context(), *before.PersonID)
+		require.NoError(err)
+		assert.Equal(snapshots[i].Fingerprint, native.Fingerprint)
+	}
+	books, err = st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
+	require.NoError(err)
+	assert.Equal(beforeBook.SyncToken, books[0].SyncToken)
+	assert.Equal(beforeBook.SyncRevision, books[0].SyncRevision)
+	conflicts, err := st.ListCardDAVConflictsContext(t.Context(), true, store.AllCardDAVAccounts)
+	require.NoError(err)
+	assert.Empty(conflicts)
+}
+
 func TestCardDAVTombstoneDeletesOnlyUntouchedRemoteGovernedPerson(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -1329,4 +1444,124 @@ func TestCardDAVTombstoneRemovesIdentityCandidatesReferencingImportedPerson(t *t
 		WHERE (left_kind = 'person' AND left_id = ?)
 		   OR (right_kind = 'person' AND right_id = ?)`), personID, personID).Scan(&dangling))
 	assert.Zero(t, dangling)
+}
+
+func TestCardDAVRelatedRemoteUpdatesUseOneTransactionSnapshot(t *testing.T) {
+	for _, reverse := range []bool{false, true} {
+		t.Run(fmt.Sprintf("reverse=%t", reverse), func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			st, account, book := newCardDAVResourceStore(t)
+			inputs := []store.CardDAVRemoteResource{
+				remoteResource(book.CanonicalURL+"a.vcf", "a", "Alice", "alice@example.test", `"one"`),
+				remoteResource(book.CanonicalURL+"b.vcf", "b", "Bob", "bob@example.test", `"one"`),
+			}
+			_, err := st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration, SyncRevision: book.SyncRevision, Upserts: inputs})
+			require.NoError(err)
+			first, err := st.GetCardDAVResourceContext(t.Context(), book.ID, inputs[0].Href)
+			require.NoError(err)
+			second, err := st.GetCardDAVResourceContext(t.Context(), book.ID, inputs[1].Href)
+			require.NoError(err)
+			_, err = st.AddPersonRelationshipContext(t.Context(), store.PersonRelationshipInput{SourcePersonID: *first.PersonID, TargetPersonID: *second.PersonID, TypeSlug: "friend", Source: store.ProvenanceUser, Actor: "test"})
+			require.NoError(err)
+			for i := range inputs {
+				inputs[i] = publishCardDAVResource(t, st, book, inputs[i])
+			}
+			inputs[0].RemoteBody = bytes.Replace(inputs[0].RemoteBody, []byte("FN:Alice"), []byte("FN:Alicia"), 1)
+			inputs[0].DisplayName, inputs[0].SemanticHash, inputs[0].RemoteETag = "Alicia", "renamed", `"two"`
+			inputs[1].RemoteBody = bytes.Replace(inputs[1].RemoteBody, []byte("bob@example.test"), []byte("changed@example.test"), 1)
+			inputs[1].Emails, inputs[1].SemanticHash, inputs[1].RemoteETag = []string{"changed@example.test"}, "email-edit", `"two"`
+			if reverse {
+				inputs[0], inputs[1] = inputs[1], inputs[0]
+			}
+			books, err := st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
+			require.NoError(err)
+			_, err = st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration, SyncRevision: books[0].SyncRevision, Upserts: inputs, NextSyncToken: "after"})
+			require.NoError(err)
+			for _, input := range inputs {
+				resource, err := st.GetCardDAVResourceContext(t.Context(), book.ID, input.Href)
+				require.NoError(err)
+				snapshot, err := st.LoadPersonVCardSnapshotContext(t.Context(), *resource.PersonID)
+				require.NoError(err)
+				assert.Equal(snapshot.Fingerprint, resource.LocalHash)
+			}
+			person, err := st.GetPersonContext(t.Context(), *first.PersonID)
+			require.NoError(err)
+			assert.Equal(new("Alicia"), person.DisplayName)
+			points, err := st.ListPersonContactPointsContext(t.Context(), *second.PersonID, true)
+			require.NoError(err)
+			require.Len(points, 1)
+			assert.Equal("changed@example.test", points[0].OriginalValue)
+		})
+	}
+}
+
+func TestCardDAVDisplayNameOwnershipUpgrade(t *testing.T) {
+	for _, local := range []string{"untouched", "published", "renamed", "cleared", "same-text", "ambiguous"} {
+		t.Run(local, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			st, account, book := newCardDAVResourceStore(t)
+			input := remoteResource(book.CanonicalURL+"person.vcf", "person", "Alice", "alice@example.test", `"one"`)
+			_, err := st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration, SyncRevision: book.SyncRevision, Upserts: []store.CardDAVRemoteResource{input}})
+			require.NoError(err)
+			resource, err := st.GetCardDAVResourceContext(t.Context(), book.ID, input.Href)
+			require.NoError(err)
+			assert.True(resource.OwnsDisplayName)
+			if local == "published" {
+				input = publishCardDAVResource(t, st, book, input)
+			}
+			if local != "untouched" && local != "published" {
+				person, err := st.GetPersonContext(t.Context(), *resource.PersonID)
+				require.NoError(err)
+				label := new("Alice")
+				if local == "renamed" {
+					label = new("Local")
+				}
+				if local == "cleared" {
+					label = nil
+				}
+				_, err = st.UpdatePersonDisplayNameContext(t.Context(), person.ID, person.Revision, label)
+				require.NoError(err)
+				resource, err = st.GetCardDAVResourceContext(t.Context(), book.ID, input.Href)
+				require.NoError(err)
+				assert.False(resource.OwnsDisplayName)
+			}
+			if local == "ambiguous" {
+				_, err = st.AddPersonNameContext(t.Context(), *resource.PersonID, store.PersonNameInput{
+					NameKind: store.PersonNameFormatted, Formatted: new("Other"), OriginalValue: "Other",
+					Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceCardDAVImport, SourceRef: new(fmt.Sprintf("carddav:%d", book.ID)), SourceResourceUID: new(input.Href)},
+				})
+				require.NoError(err)
+				_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE carddav_resources SET person_revision_at_bind = (SELECT revision FROM persons WHERE id = ?) WHERE id = ?`), *resource.PersonID, resource.ID)
+				require.NoError(err)
+			}
+
+			_, err = st.DB().ExecContext(t.Context(), st.Rebind(`DELETE FROM applied_migrations WHERE name = ?`), "carddav_display_name_ownership_v1")
+			require.NoError(err)
+			_, err = st.DB().ExecContext(t.Context(), `ALTER TABLE carddav_resources DROP COLUMN owns_display_name`)
+			require.NoError(err)
+			_, err = st.DB().ExecContext(t.Context(), `UPDATE archive_metadata SET value = '1' WHERE key = 'schema_version'`)
+			require.NoError(err)
+			require.NoError(st.InitSchema())
+			resource, err = st.GetCardDAVResourceContext(t.Context(), book.ID, input.Href)
+			require.NoError(err)
+			assert.Equal(local == "untouched" || local == "published", resource.OwnsDisplayName)
+			require.NoError(st.InitSchema())
+			resource, err = st.GetCardDAVResourceContext(t.Context(), book.ID, input.Href)
+			require.NoError(err)
+			assert.Equal(local == "untouched" || local == "published", resource.OwnsDisplayName)
+			if local == "published" {
+				input.RemoteBody = bytes.Replace(input.RemoteBody, []byte("FN:Alice"), []byte("FN:Alicia"), 1)
+				input.DisplayName, input.SemanticHash, input.RemoteETag = "Alicia", "renamed", `"two"`
+				books, err := st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
+				require.NoError(err)
+				_, err = st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration, SyncRevision: books[0].SyncRevision, Upserts: []store.CardDAVRemoteResource{input}})
+				require.NoError(err)
+				person, err := st.GetPersonContext(t.Context(), *resource.PersonID)
+				require.NoError(err)
+				assert.Equal(new("Alicia"), person.DisplayName)
+			}
+		})
+	}
 }

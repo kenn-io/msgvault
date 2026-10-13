@@ -33,11 +33,28 @@ var (
 	ErrInvalidRequest        = errors.New("docbank request is invalid")
 )
 
-// HTTPError preserves only the response status class and a stable local code.
-// Response bodies are deliberately discarded because Docbank may echo input.
+// HTTPError preserves only the response status class, a stable local code, and
+// Docbank's own error code when it is a plain token. The rest of the body is
+// discarded because Docbank may echo input.
 type HTTPError struct {
 	Status int
 	Code   string
+	// Reason is Docbank's error code, such as content_missing.
+	Reason string
+}
+
+func newHTTPError(status int, body []byte) *HTTPError {
+	var problem struct {
+		Code string `json:"code"`
+	}
+	code := statusCode(status)
+	if json.Unmarshal(body, &problem) == nil && problem.Code == "capability_unavailable" {
+		code = problem.Code
+	}
+	if len(problem.Code) > 64 || strings.Trim(problem.Code, "abcdefghijklmnopqrstuvwxyz_") != "" {
+		problem.Code = ""
+	}
+	return &HTTPError{Status: status, Code: code, Reason: problem.Code}
 }
 
 func (e *HTTPError) Error() string {
@@ -150,6 +167,44 @@ type Receipt struct {
 	SuppliedInputID  string `json:"supplied_input_id,omitempty"`
 }
 
+// ReferenceRequest URLs are access material; never log or store them.
+type ReferenceRequest struct {
+	OperationID  string     `json:"operation_id"`
+	ReferenceURL string     `json:"reference_url"`
+	CanonicalURL string     `json:"canonical_url,omitempty"`
+	Acquire      bool       `json:"acquire"`
+	Occurrence   Occurrence `json:"occurrence"`
+}
+
+func (c *Client) SubmitReference(ctx context.Context, request ReferenceRequest) (Receipt, error) {
+	var receipt Receipt
+	err := c.jsonRequest(ctx, http.MethodPost, "/api/v1/media/sources", request, &receipt)
+	if err = validateReceipt(receipt, request.OperationID, err); err != nil {
+		return Receipt{}, err
+	}
+	if receipt.OccurrenceID == "" {
+		return Receipt{}, ErrInvalidReceipt
+	}
+	return receipt, nil
+}
+
+func (c *Client) OperationReceipt(ctx context.Context, operationID string) (Receipt, error) {
+	var receipt Receipt
+	err := c.jsonRequest(ctx, http.MethodGet, "/api/v1/media/operations/"+url.PathEscape(operationID), nil, &receipt)
+	if err = validateReceipt(receipt, operationID, err); err != nil {
+		return Receipt{}, err
+	}
+	if receipt.OccurrenceID == "" {
+		return Receipt{}, ErrInvalidReceipt
+	}
+	return receipt, nil
+}
+
+func IsNotFound(err error) bool {
+	httpErr, ok := errors.AsType[*HTTPError](err)
+	return ok && httpErr.Status == http.StatusNotFound
+}
+
 type JobStatus struct {
 	JobID       string `json:"job_id"`
 	State       string `json:"state"`
@@ -170,6 +225,7 @@ type MediaTranscriptUnit struct {
 }
 
 type MediaTranscriptEvidence struct {
+	BuildID         string                `json:"build_id"`
 	SuppliedInputID string                `json:"supplied_input_id,omitempty"`
 	Origin          string                `json:"origin"`
 	Completeness    string                `json:"completeness"`
@@ -412,38 +468,42 @@ func writeMultipart(
 	return err
 }
 
-func (c *Client) jsonRequest(ctx context.Context, method, endpoint string, body any, out any) error {
-	return c.jsonRequestLimit(ctx, method, endpoint, body, out, maxResponseBytes)
-}
-
-func (c *Client) jsonRequestLimit(
-	ctx context.Context, method, endpoint string, body any, out any, limit int64,
-) error {
-	return c.jsonRequestLimits(ctx, method, endpoint, body, out, maxMetadataBytes, limit)
-}
-
-func (c *Client) jsonRequestLimits(
-	ctx context.Context, method, endpoint string, body any, out any, requestLimit, limit int64,
-) error {
+func (c *Client) newJSONRequest(ctx context.Context, method, endpoint string, body any, requestLimit int64) (*http.Request, error) {
 	var reader io.Reader
 	if body != nil {
 		encoded, err := json.Marshal(body)
 		if err != nil {
-			return fmt.Errorf("%w: encode request", ErrInvalidRequest)
+			return nil, fmt.Errorf("%w: encode request", ErrInvalidRequest)
 		}
 		if int64(len(encoded)) > requestLimit {
-			return fmt.Errorf("%w: request exceeds the size limit", ErrInvalidRequest)
+			return nil, fmt.Errorf("%w: request exceeds the size limit", ErrInvalidRequest)
 		}
 		reader = strings.NewReader(string(encoded))
 	}
 	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+endpoint, reader)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
 	if err := c.setAPIKey(req); err != nil {
+		return nil, err
+	}
+	return req, nil
+}
+
+func (c *Client) jsonRequest(ctx context.Context, method, endpoint string, body any, out any) error {
+	return c.jsonRequestLimit(ctx, method, endpoint, body, out, maxResponseBytes)
+}
+
+func (c *Client) jsonRequestLimit(ctx context.Context, method, endpoint string, body any, out any, limit int64) error {
+	return c.jsonRequestLimits(ctx, method, endpoint, body, out, maxMetadataBytes, limit)
+}
+
+func (c *Client) jsonRequestLimits(ctx context.Context, method, endpoint string, body any, out any, requestLimit, limit int64) error {
+	req, err := c.newJSONRequest(ctx, method, endpoint, body, requestLimit)
+	if err != nil {
 		return err
 	}
 	resp, err := c.http.Do(req)
@@ -456,7 +516,7 @@ func (c *Client) jsonRequestLimits(
 		return err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return &HTTPError{Status: resp.StatusCode, Code: statusCode(resp.StatusCode)}
+		return newHTTPError(resp.StatusCode, data)
 	}
 	if out == nil {
 		return nil

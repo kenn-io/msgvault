@@ -35,6 +35,70 @@ func runSyncFullLocalForTest(cmd *cobra.Command, args []string) error {
 	return runSyncFullLocal(cmd, args)
 }
 
+func TestSyncCommandsEmptySourceGuidanceMatchesCapabilities(t *testing.T) {
+	tests := []struct {
+		name     string
+		run      func(*cobra.Command, []string) error
+		sources  []string
+		want     []string
+		unwanted []string
+	}{
+		{
+			name: "sync",
+			run:  runSyncIncrementalLocal,
+			want: []string{"add-o365", "file imports are not synced"},
+		},
+		{
+			name:    "sync with only file imports",
+			run:     runSyncIncrementalLocal,
+			sources: []string{"mbox"},
+			want:    []string{"no email accounts to sync", "file imports are not synced"},
+		},
+		{
+			name:     "sync-full",
+			run:      runSyncFullLocal,
+			want:     []string{"add-account <gmail>", "add-imap", "msgvault sync", "file imports are not synced"},
+			unwanted: []string{"add-o365"},
+		},
+		{
+			name:    "sync-full with only file imports and Graph mail",
+			run:     runSyncFullLocal,
+			sources: []string{"mbox", sourceTypeMSMail},
+			want:    []string{"no Gmail or IMAP accounts to sync", "msgvault sync"},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+
+			dir := t.TempDir()
+			cfg := &config.Config{HomeDir: dir, Data: config.DataConfig{DataDir: dir}}
+			if len(test.sources) > 0 {
+				s, err := store.Open(cfg.DatabaseDSN())
+				requirements.NoError(err)
+				requirements.NoError(s.InitSchema())
+				for _, sourceType := range test.sources {
+					_, err := s.GetOrCreateSource(sourceType, "archive@example.com")
+					requirements.NoError(err)
+				}
+				requirements.NoError(s.Close())
+			}
+			command := &cobra.Command{Use: test.name}
+			command.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
+
+			err := test.run(command, nil)
+			requirements.Error(err)
+			for _, want := range test.want {
+				requirements.ErrorContains(err, want)
+			}
+			for _, unwanted := range test.unwanted {
+				assertions.NotContains(err.Error(), unwanted)
+			}
+		})
+	}
+}
+
 // TestSyncCmd_DuplicateIdentifierRoutesCorrectly verifies that when
 // Gmail and IMAP sources share the same identifier, the single-arg
 // sync path resolves both and routes each to the correct backend.

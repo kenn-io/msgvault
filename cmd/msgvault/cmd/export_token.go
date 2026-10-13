@@ -2,25 +2,26 @@ package cmd
 
 import (
 	"bytes"
-	"crypto/sha256"
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/oauth"
 )
 
 var (
-	exportTokenTo       string
-	exportTokenAPIKey   string
-	exportAllowInsecure bool
+	exportTokenTo         string
+	exportTokenAPIKey     string
+	exportAllowInsecure   bool
+	exportTokenUploadOnly bool
 )
 
 var exportTokenCmd = &cobra.Command{
@@ -32,6 +33,10 @@ This command reads your local token and uploads it to a remote msgvault
 instance via the API. Use this to set up msgvault on a NAS or server
 without a browser.
 
+By default, the remote server also registers an enabled daily Gmail sync
+account. Use --upload-only to store the token without registering that account,
+for example when setting up Calendar-only access.
+
 SECURITY: HTTPS is required by default to protect OAuth tokens in transit.
 Use --allow-insecure only for trusted local networks (e.g., Tailscale).
 
@@ -42,6 +47,9 @@ Environment variables:
 Examples:
   # Export token to NAS over HTTPS
   msgvault export-token user@example.com --to https://archive.example:8080 --api-key YOUR_KEY
+
+  # Upload a Calendar token without registering a Gmail sync account
+  msgvault export-token user@example.com --upload-only
 
   # Using environment variables
   export MSGVAULT_REMOTE_URL=https://archive.example:8080
@@ -58,15 +66,18 @@ func init() {
 	exportTokenCmd.Flags().StringVar(&exportTokenTo, "to", "", "Remote msgvault URL (or MSGVAULT_REMOTE_URL env var)")
 	exportTokenCmd.Flags().StringVar(&exportTokenAPIKey, "api-key", "", "API key (or MSGVAULT_REMOTE_API_KEY env var)")
 	exportTokenCmd.Flags().BoolVar(&exportAllowInsecure, "allow-insecure", false, "Allow HTTP (insecure) connections for trusted networks")
+	exportTokenCmd.Flags().BoolVar(&exportTokenUploadOnly, "upload-only", false, "Upload the token without registering a Gmail sync account")
 	rootCmd.AddCommand(exportTokenCmd)
 }
 
 // tokenExporter uploads OAuth tokens to a remote msgvault server.
 type tokenExporter struct {
-	httpClient *http.Client
-	tokensDir  string
-	stdout     io.Writer
-	stderr     io.Writer
+	tokenCommands config.OAuthTokenCommands
+	httpClient    *http.Client
+	tokensDir     string
+	uploadOnly    bool
+	stdout        io.Writer
+	stderr        io.Writer
 }
 
 // exportResult holds the resolved parameters after a successful export,
@@ -77,10 +88,10 @@ type exportResult struct {
 	allowInsecure bool
 }
 
-// export validates inputs, reads the local token, uploads it to the
-// remote server, and registers the account.
+// export validates inputs, reads the local token, uploads it to the remote
+// server, and registers the account unless upload-only was requested.
 func (e *tokenExporter) export(
-	email, remoteURL, apiKey string, allowInsecure bool,
+	ctx context.Context, email, remoteURL, apiKey string, allowInsecure bool,
 ) (*exportResult, error) {
 	// Parse and validate URL
 	parsedURL, err := url.Parse(remoteURL)
@@ -101,14 +112,10 @@ func (e *tokenExporter) export(
 		return nil, err
 	}
 
-	// Read local token
-	tokenPath := sanitizeExportTokenPath(e.tokensDir, email)
-	if _, err := os.Stat(tokenPath); os.IsNotExist(err) {
-		return nil, fmt.Errorf(
-			"no token found for %s\n\nRun 'msgvault add-account %s' first to authenticate",
-			email, email)
+	tokenData, err := oauth.NewTokenStore(e.tokensDir, e.tokenCommands).Read(ctx, email)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("no token found for %s\n\nRun 'msgvault add-account %s' first to authenticate", email, email)
 	}
-	tokenData, err := os.ReadFile(tokenPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read token: %w", err)
 	}
@@ -120,13 +127,15 @@ func (e *tokenExporter) export(
 	if parsedURL.Scheme == "http" {
 		_, _ = fmt.Fprintf(e.stderr, "WARNING: Sending credentials over insecure HTTP connection\n")
 	}
-	if err := e.uploadToken(baseURL, apiKey, email, tokenData); err != nil {
+	if err := e.uploadToken(ctx, baseURL, apiKey, email, tokenData); err != nil {
 		return nil, err
 	}
 	_, _ = fmt.Fprintf(e.stdout, "Token uploaded successfully for %s\n", email)
 
-	// Register account (best-effort)
-	e.addAccount(baseURL, apiKey, email)
+	if !e.uploadOnly {
+		// Register account (best-effort)
+		e.addAccount(ctx, baseURL, apiKey, email)
+	}
 
 	return &exportResult{
 		remoteURL:     remoteURL,
@@ -137,11 +146,11 @@ func (e *tokenExporter) export(
 
 // uploadToken POSTs the token data to the remote server.
 func (e *tokenExporter) uploadToken(
-	baseURL, apiKey, email string, tokenData []byte,
+	ctx context.Context, baseURL, apiKey, email string, tokenData []byte,
 ) error {
 	reqURL := baseURL + "/api/v1/auth/token/" + url.PathEscape(email)
 
-	req, err := http.NewRequest(http.MethodPost, reqURL, bytes.NewReader(tokenData))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, bytes.NewReader(tokenData))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
@@ -163,13 +172,13 @@ func (e *tokenExporter) uploadToken(
 
 // addAccount registers the email on the remote server. Failures are
 // logged as warnings since the token upload already succeeded.
-func (e *tokenExporter) addAccount(baseURL, apiKey, email string) {
+func (e *tokenExporter) addAccount(ctx context.Context, baseURL, apiKey, email string) {
 	_, _ = fmt.Fprintf(e.stdout, "Adding account to remote config...\n")
 	accountURL := baseURL + "/api/v1/accounts"
 	accountBody := fmt.Sprintf(
 		`{"email":%q,"schedule":"0 2 * * *","enabled":true}`, email)
 
-	req, err := http.NewRequest(http.MethodPost, accountURL, strings.NewReader(accountBody))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, accountURL, strings.NewReader(accountBody))
 	if err != nil {
 		_, _ = fmt.Fprintf(e.stderr, "Warning: Could not create account request: %v\n", err)
 		return
@@ -231,17 +240,19 @@ func runExportTokenWithClient(cmd *cobra.Command, args []string, client *http.Cl
 	}
 
 	exporter := &tokenExporter{
-		httpClient: client,
-		tokensDir:  cfg.TokensDir(),
-		stdout:     os.Stdout,
-		stderr:     os.Stderr,
+		tokenCommands: cfg.OAuth.Tokens,
+		httpClient:    client,
+		tokensDir:     cfg.TokensDir(),
+		uploadOnly:    exportTokenUploadOnly,
+		stdout:        os.Stdout,
+		stderr:        os.Stderr,
 	}
 
 	allowInsecure := cfg.Remote.AllowInsecure
 	if cmd.Flags().Changed("allow-insecure") {
 		allowInsecure = exportAllowInsecure
 	}
-	result, err := exporter.export(email, remoteURL, apiKey, allowInsecure)
+	result, err := exporter.export(cmd.Context(), email, remoteURL, apiKey, allowInsecure)
 	if err != nil {
 		return err
 	}
@@ -272,10 +283,15 @@ func runExportTokenWithClient(cmd *cobra.Command, args []string, client *http.Cl
 		}
 	}
 
-	fmt.Println("\nSetup complete! The remote server will sync daily at 2am.")
-	fmt.Printf("To trigger an immediate sync:\n")
-	fmt.Printf("  curl -X POST -H 'X-API-Key: ...' %s/api/v1/sync/%s\n",
-		result.remoteURL, email)
+	if exportTokenUploadOnly {
+		fmt.Println("\nSetup complete! The token was uploaded without registering a Gmail sync account.")
+		fmt.Println("Run the appropriate account-registration command on the remote server.")
+	} else {
+		fmt.Println("\nSetup complete! The remote server will sync daily at 2am.")
+		fmt.Printf("To trigger an immediate sync:\n")
+		fmt.Printf("  curl -X POST -H 'X-API-Key: ...' %s/api/v1/sync/%s\n",
+			result.remoteURL, email)
+	}
 
 	return nil
 }
@@ -301,29 +317,4 @@ func validateExportEmail(email string) error {
 		return errors.New("invalid email format: contains path characters")
 	}
 	return nil
-}
-
-// sanitizeExportTokenPath returns a safe file path for the token.
-// Matches the server-side sanitizeTokenPath function in handlers.go.
-func sanitizeExportTokenPath(tokensDir, email string) string {
-	// Remove dangerous characters
-	safe := strings.Map(func(r rune) rune {
-		if r == '/' || r == '\\' || r == '\x00' {
-			return -1
-		}
-		return r
-	}, email)
-
-	// Build path and verify it's within tokensDir
-	path := filepath.Join(tokensDir, safe+".json")
-	cleanPath := filepath.Clean(path)
-	cleanTokensDir := filepath.Clean(tokensDir)
-
-	// If path escapes tokensDir, use hash-based fallback
-	if !strings.HasPrefix(cleanPath, cleanTokensDir+string(os.PathSeparator)) {
-		return filepath.Join(tokensDir,
-			fmt.Sprintf("%x.json", sha256.Sum256([]byte(email))))
-	}
-
-	return cleanPath
 }

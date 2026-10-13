@@ -84,10 +84,7 @@ func openFusedMainDB(t *testing.T) (*sql.DB, string) {
 	require.NoError(t, err, "open main")
 	t.Cleanup(func() { _ = db.Close() })
 
-	// sent_at is DATETIME (text in canonical "2006-01-02 15:04:05"
-	// format) to match the production messages schema. The fused query
-	// compares it as a string; using INTEGER here would let bugs in
-	// boundary semantics slip past the fused tests.
+	// Text DATETIME values match the production schema and expose date comparison bugs.
 	schema := `
 CREATE TABLE messages (
     id INTEGER PRIMARY KEY,

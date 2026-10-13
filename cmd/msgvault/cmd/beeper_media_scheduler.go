@@ -2,11 +2,8 @@ package cmd
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"log/slog"
-	"strings"
 	"time"
 
 	"go.kenn.io/msgvault/internal/api"
@@ -29,25 +26,25 @@ const (
 var beeperMediaGateWait = 30 * time.Second
 
 // beeperMediaGate takes the operation gate for one media Store step.
-func beeperMediaGate(gate api.LabeledOperationGate) func(context.Context) (func(), bool) {
+func beeperMediaGate(gate api.LabeledOperationGate, label string) func(context.Context) (func(), bool) {
 	if gate == nil {
 		return nil
 	}
 	return func(ctx context.Context) (func(), bool) {
 		waitCtx, cancel := context.WithTimeout(ctx, beeperMediaGateWait)
 		defer cancel()
-		return gate.BeginLabeledWorkContext(waitCtx, beeperMediaGateLabel)
+		return gate.BeginLabeledWorkContext(waitCtx, label)
 	}
 }
 
 // withBeeperMediaGate runs a setup Store write under the operation gate.
-func withBeeperMediaGate(ctx context.Context, gate api.LabeledOperationGate, write func() error) error {
+func withBeeperMediaGate(ctx context.Context, gate api.LabeledOperationGate, label string, write func() error) error {
 	if gate == nil {
 		return write()
 	}
-	release, ok := beeperMediaGate(gate)(ctx)
+	release, ok := beeperMediaGate(gate, label)(ctx)
 	if !ok {
-		return errors.New("operation gate unavailable for Beeper media setup")
+		return errors.New("operation gate unavailable for " + label)
 	}
 	defer release()
 	return write()
@@ -77,7 +74,7 @@ func configureBeeperMediaJob(
 // removeBeeperMediaRoute drops the job and its journal consumer; receipts stay.
 func removeBeeperMediaRoute(ctx context.Context, sched *scheduler.Scheduler, gate api.LabeledOperationGate, st *store.Store) error {
 	sched.RemoveJob(beeperMediaSubmitJob)
-	err := withBeeperMediaGate(ctx, gate, func() error {
+	err := withBeeperMediaGate(ctx, gate, beeperMediaGateLabel, func() error {
 		return st.UnregisterAttachmentChangeConsumer(ctx, store.BeeperMediaAttachmentConsumerKey)
 	})
 	if errors.Is(err, store.ErrAttachmentChangeConsumerMissing) {
@@ -104,14 +101,14 @@ func addBeeperMediaRoute(
 	var submitClient *docbankmedia.Client
 	if cfg.AllSourcesUploadConsent {
 		submitClient = client
-		if err := withBeeperMediaGate(ctx, gate, func() error {
+		if err := withBeeperMediaGate(ctx, gate, beeperMediaGateLabel, func() error {
 			return st.ReconsiderBlockedBeeperMediaOperations(ctx, destination)
 		}); err != nil {
 			return err
 		}
 	}
 	submitter := beeper.NewMediaSubmitter(st, blobs, submitClient, destination, spoolDir).
-		WithASRProfile(cfg.ASRProfile).WithOperationGate(beeperMediaGate(gate))
+		WithASRProfile(cfg.ASRProfile).WithOperationGate(beeperMediaGate(gate, beeperMediaGateLabel))
 	return sched.AddJob(scheduler.Job{
 		Name:     beeperMediaSubmitJob,
 		Schedule: beeperMediaSubmitCron,
@@ -135,8 +132,7 @@ func addBeeperMediaRoute(
 func docbankMediaClient(
 	ctx context.Context, st *store.Store, cfg config.DocbankIntegrationConfig,
 ) (*docbankmedia.Client, string, error) {
-	endpoint := strings.TrimRight(strings.TrimSpace(cfg.URL), "/")
-	client, err := docbankmedia.NewClient(endpoint, cfg.ResolveAPIKey)
+	client, err := docbankmedia.NewClient(cfg.URL, cfg.ResolveAPIKey)
 	if err != nil {
 		return nil, "", err
 	}
@@ -144,7 +140,7 @@ func docbankMediaClient(
 	if err != nil {
 		return nil, "", err
 	}
-	return client, beeperMediaDestinationKey(endpoint, archiveUID), nil
+	return client, docbankmedia.DestinationKey(cfg.URL, archiveUID), nil
 }
 
 // newMessageRecordingReader lists archived audio even when Docbank is off.
@@ -161,9 +157,4 @@ func newMessageRecordingReader(
 	}
 	reader.Client, reader.Destination, reader.UploadConsent = client, destination, cfg.AllSourcesUploadConsent
 	return reader, nil
-}
-
-func beeperMediaDestinationKey(endpoint, archiveUID string) string {
-	digest := sha256.Sum256([]byte("beeper-media/v1\x00" + endpoint + "\x00" + archiveUID))
-	return "beeper:" + hex.EncodeToString(digest[:])
 }

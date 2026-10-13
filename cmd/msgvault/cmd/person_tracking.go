@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/daemonclient"
@@ -19,7 +20,7 @@ var (
 func newPersonTrackingCommand(action string, tracked bool) *cobra.Command {
 	return &cobra.Command{
 		Use:   action + " <person-id>",
-		Short: action + " a durable person for future profile maintenance",
+		Short: strings.ToUpper(action[:1]) + action[1:] + " a durable person for future profile maintenance",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			personID, err := positivePersonCLIArg(cmd, args[0], personValue)

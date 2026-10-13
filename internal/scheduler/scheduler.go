@@ -47,6 +47,9 @@ var ErrYieldedToWaiter = jobctx.ErrYieldedToWaiter
 // work. It does not record a job failure or wait for the next cron tick.
 var ErrReschedule = errors.New("scheduled job has more work")
 
+// ErrDeferUntilNextTrigger finishes this attempt without an immediate follow-up.
+var ErrDeferUntilNextTrigger = errors.New("scheduled job deferred until next trigger")
+
 // yieldPollInterval is how often a running scheduled job checks for waiters.
 // Variable only so tests can shorten it.
 var yieldPollInterval = 5 * time.Second
@@ -830,6 +833,12 @@ func (s *Scheduler) runJob(name string, run func(context.Context) error) error {
 	endRun()
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err == ErrDeferUntilNextTrigger { //nolint:errorlint // Only a bare deferral suppresses failure; joined errors must remain visible.
+		delete(s.genericPending, name)
+		delete(s.genericLastErr, name)
+		s.genericLastRun[name] = time.Now()
+		return nil
+	}
 	budgetExpired := errors.Is(context.Cause(runCtx), jobctx.ErrRunBudgetExceeded)
 	if budgetExpired && !jobctx.HasProgress(runCtx) {
 		delete(s.genericPending, name)
@@ -858,6 +867,7 @@ func (s *Scheduler) runJob(name string, run func(context.Context) error) error {
 				"error", callbackErr)
 			return callbackErr
 		}
+		delete(s.genericLastErr, name)
 		s.logger.Info("scheduled job yielded to waiting work; queued follow-up",
 			"job", name)
 		return nil

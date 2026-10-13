@@ -3,9 +3,11 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"slices"
 	"strings"
+	"time"
 
 	"go.kenn.io/msgvault/internal/beeper"
 	"go.kenn.io/msgvault/internal/docbankmedia"
@@ -15,13 +17,25 @@ import (
 )
 
 type MediaSearchResult struct {
-	MessageID      int64  `json:"message_id"`
-	ConversationID int64  `json:"conversation_id"`
-	AttachmentID   int64  `json:"attachment_id"`
-	Origin         string `json:"origin" enum:"supplied,generated"`
-	Excerpt        string `json:"excerpt" doc:"Plain transcript excerpt without search highlight markers"`
-	StartMS        *int64 `json:"start_ms,omitempty"`
-	EndMS          *int64 `json:"end_ms,omitempty"`
+	Filename        string     `json:"filename,omitempty"`
+	ContainingTitle string     `json:"containing_title,omitempty"`
+	OccurredAt      *time.Time `json:"occurred_at,omitempty"`
+	MessageID       int64      `json:"message_id"`
+	ConversationID  int64      `json:"conversation_id"`
+	AttachmentID    int64      `json:"attachment_id"`
+	Origin          string     `json:"origin" enum:"supplied,generated"`
+	Excerpt         string     `json:"excerpt" doc:"Plain transcript excerpt without search highlight markers"`
+	StartMS         *int64     `json:"start_ms,omitempty"`
+	EndMS           *int64     `json:"end_ms,omitempty"`
+}
+
+type MediaSearchStatusResponse struct {
+	Configured bool `json:"configured"`
+}
+
+func (s *Server) handleMediaSearchStatus(w http.ResponseWriter, r *http.Request) {
+	reader := s.messageRecordings
+	writeJSON(w, http.StatusOK, MediaSearchStatusResponse{Configured: reader != nil && reader.Client != nil})
 }
 
 type MediaSearchResponse struct {
@@ -34,6 +48,35 @@ type MediaSearchResponse struct {
 	Results                []MediaSearchResult         `json:"results"`
 }
 
+// participantClusterExpander is implemented by analytics engines that expand
+// Explore participant filters through committed identity clusters.
+type participantClusterExpander interface {
+	ExpandParticipantClusterMembers(ctx context.Context, ids []int64) ([]int64, error)
+}
+
+// participantScope selects participantID's identity cluster with the
+// membership Explore's Person filter matches unless directions narrow it.
+// Engines without committed clusters fall back to the archive's current links.
+func (s *Server) participantScope(
+	ctx context.Context, st *store.Store, participantID int64, directions []personscope.Direction,
+) (*personscope.Scope, error) {
+	var members []int64
+	var err error
+	if clusters, ok := s.queryEngineForContext(ctx).(participantClusterExpander); ok {
+		members, err = clusters.ExpandParticipantClusterMembers(ctx, []int64{participantID})
+	} else {
+		members, err = st.ClusterMembers(participantID)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("expand participant %d identity cluster: %w", participantID, err)
+	}
+	normalized, membership, err := resolver.NormalizeDirections(directions)
+	if err != nil {
+		return nil, err
+	}
+	return &personscope.Scope{ParticipantIDs: members, Directions: normalized, ParticipantMembership: membership}, nil
+}
+
 func (s *Server) handleMediaSearch(w http.ResponseWriter, r *http.Request) {
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	mode := r.URL.Query().Get("mode")
@@ -42,15 +85,23 @@ func (s *Server) handleMediaSearch(w http.ResponseWriter, r *http.Request) {
 		limit = 20
 	}
 	personID, _, personErr := queryInt64(r, "person_id")
+	participantID, _, participantErr := queryInt64(r, "participant_id")
 	directions := make([]personscope.Direction, 0)
 	for _, value := range r.URL.Query()["direction"] {
 		for direction := range strings.SplitSeq(value, ",") {
 			directions = append(directions, personscope.Direction(direction))
 		}
 	}
-	if err != nil || personErr != nil || q == "" || len(q) > 8192 || limit < 1 || limit > 100 || personID < 0 ||
-		(len(directions) > 0 && personID == 0) || (r.URL.Query().Has("person_id") && personID == 0) {
-		s.rejectBadParam(w, errors.New("q is required and must be at most 8192 bytes, limit must be 1 to 100, and directions require a positive person_id"))
+	invalidQuery := q == "" || len(q) > 8192 || limit < 1 || limit > 100
+	invalidPerson := personID < 0 || (r.URL.Query().Has("person_id") && personID == 0)
+	invalidParticipant := participantID < 0 || (r.URL.Query().Has("participant_id") && participantID == 0)
+	unscopedDirections := len(directions) > 0 && personID == 0 && participantID == 0
+	if err != nil || personErr != nil || participantErr != nil || invalidQuery || invalidPerson || invalidParticipant || unscopedDirections {
+		s.rejectBadParam(w, errors.New("q is required and must be at most 8192 bytes, limit must be 1 to 100, and directions require a positive person_id or participant_id"))
+		return
+	}
+	if personID > 0 && participantID > 0 {
+		s.rejectBadParam(w, errors.New("person_id and participant_id are mutually exclusive"))
 		return
 	}
 	if _, _, err := resolver.NormalizeDirections(directions); err != nil {
@@ -70,22 +121,29 @@ func (s *Server) handleMediaSearch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "media_search_unavailable", "Configure the Docbank integration to search transcripts")
 		return
 	}
+	reference := resolver.Reference{Kind: resolver.ReferencePerson, ID: personID}
+	if participantID > 0 {
+		reference = resolver.Reference{Kind: resolver.ReferenceParticipant, ID: participantID}
+	}
 	resolve := func() (*personscope.Scope, error) {
-		if personID == 0 {
+		if reference.ID == 0 {
 			return nil, nil //nolint:nilnil // No person scope searches the full visible archive.
 		}
-		resolution, err := resolver.Resolve(r.Context(), reader.Store, resolver.Reference{Kind: resolver.ReferencePerson, ID: personID}, directions)
+		if participantID > 0 {
+			return s.participantScope(r.Context(), reader.Store, participantID, directions)
+		}
+		resolution, err := resolver.Resolve(r.Context(), reader.Store, reference, directions)
 		return &resolution.Scope, err
 	}
 	scope, err := resolve()
 	if err != nil {
-		s.writePersonScopeError(w, resolver.Reference{Kind: resolver.ReferencePerson, ID: personID}, err, "media")
+		s.writePersonScopeError(w, reference, err, "media")
 		return
 	}
 	response, err := reader.search(r.Context(), q, limit, scope, resolve)
 	if err != nil {
 		if scopeErr, ok := errors.AsType[*mediaSearchScopeError](err); ok {
-			s.writePersonScopeError(w, resolver.Reference{Kind: resolver.ReferencePerson, ID: personID}, scopeErr.err, "media")
+			s.writePersonScopeError(w, reference, scopeErr.err, "media")
 			return
 		}
 		if s.writeIfContextError(w, err) {
@@ -94,7 +152,7 @@ func (s *Server) handleMediaSearch(w http.ResponseWriter, r *http.Request) {
 		httpErr, httpError := errors.AsType[*docbankmedia.HTTPError](err)
 		switch {
 		case errors.Is(err, errMediaSearchScope):
-			writeError(w, http.StatusBadRequest, "media_search_scope_limit", "Search supports at most 4096 media versions and source selectors, and 64 distinct current captions per recording source; set --person in the CLI or person_id in the API to narrow the scope")
+			writeError(w, http.StatusBadRequest, "media_search_scope_limit", "Search supports at most 4096 media versions and source selectors; add a Person filter in the browser, set --person in the CLI, or person_id or participant_id in the API to narrow the scope")
 		case httpError && httpErr.Status == http.StatusBadRequest:
 			writeError(w, http.StatusBadRequest, "invalid_media_search", "Docbank rejected the search query")
 		default:
@@ -140,7 +198,6 @@ func (reader *MessageRecordingReader) search(ctx context.Context, query string, 
 	if err != nil {
 		return response, err
 	}
-	versions := make(map[string]bool)
 	selectors := []docbankmedia.SearchMediaSelector{}
 	selectorIndex := make(map[docbankmedia.SearchMediaSource]int)
 	fence := docbankmedia.SearchFence{}
@@ -149,17 +206,13 @@ func (reader *MessageRecordingReader) search(ctx context.Context, query string, 
 			continue
 		}
 		fence.VaultUID = o.VaultUID
-		if !versions[o.ContentVersionID] {
-			versions[o.ContentVersionID] = true
-			fence.ContentVersionIDs = append(fence.ContentVersionIDs, o.ContentVersionID)
-		}
 		source := mediaSearchSource(o)
 		if _, exists := selectorIndex[source]; !exists {
 			selectorIndex[source] = len(selectors)
 			selectors = append(selectors, docbankmedia.SearchMediaSelector{SearchMediaSource: source, SuppliedInputIDs: []string{}})
 		}
 	}
-	if len(fence.ContentVersionIDs) > docbankmedia.MaxSearchVersions || len(selectors) > docbankmedia.MaxSearchVersions {
+	if len(selectors) > docbankmedia.MaxSearchVersions {
 		return response, errMediaSearchScope
 	}
 	supplied := []store.MessageMediaOccurrence{}
@@ -172,15 +225,27 @@ func (reader *MessageRecordingReader) search(ctx context.Context, query string, 
 	if err != nil {
 		return response, err
 	}
+	oversized := make(map[docbankmedia.SearchMediaSource]bool)
 	for _, o := range supplied {
 		if transcriptRevisionMatches(o, "supplied", revisions[o.AttachmentID]) {
 			selector := &selectors[selectorIndex[mediaSearchSource(o)]]
 			if !slices.Contains(selector.SuppliedInputIDs, o.SuppliedInputID) {
 				if len(selector.SuppliedInputIDs) == docbankmedia.MaxSearchSuppliedInputs {
-					return response, errMediaSearchScope
+					oversized[selector.SearchMediaSource] = true
+					continue
 				}
 				selector.SuppliedInputIDs = append(selector.SuppliedInputIDs, o.SuppliedInputID)
 			}
+		}
+	}
+	selectors = slices.DeleteFunc(selectors, func(selector docbankmedia.SearchMediaSelector) bool {
+		return oversized[selector.SearchMediaSource]
+	})
+	versions := make(map[string]bool)
+	for _, selector := range selectors {
+		if !versions[selector.ContentVersionID] {
+			versions[selector.ContentVersionID] = true
+			fence.ContentVersionIDs = append(fence.ContentVersionIDs, selector.ContentVersionID)
 		}
 	}
 	remoteCtx, cancel := context.WithTimeout(ctx, docbankBudget(ctx))
@@ -219,6 +284,9 @@ func (reader *MessageRecordingReader) search(ctx context.Context, query string, 
 	fresh := make(map[string]store.MessageMediaOccurrence, len(current))
 	for _, o := range current {
 		fresh[o.OccurrenceRef] = o
+		if oversized[mediaSearchSource(o)] {
+			continue
+		}
 		if selection, found := selections[mediaSearchSource(o)]; o.SuppliedInputID != "" && (!found || selection.Origin == "supplied") {
 			supplied = append(supplied, o)
 		}
@@ -248,7 +316,7 @@ func (reader *MessageRecordingReader) search(ctx context.Context, query string, 
 		selection, selected := selections[source]
 		if !selected {
 			currentRevision := o.SuppliedInputID == "" || transcriptRevisionMatches(o, "supplied", revisions[o.AttachmentID])
-			if currentRevision && reader.UploadConsent && (o.RetentionState == store.BeeperMediaRetentionPending || o.RetentionState == store.BeeperMediaRetentionSourceUnavailable ||
+			if !oversized[source] && currentRevision && reader.UploadConsent && (o.RetentionState == store.BeeperMediaRetentionPending || o.RetentionState == store.BeeperMediaRetentionSourceUnavailable ||
 				o.DeliveryPhase == "pending-artifact" || o.DeliveryPhase == "pending-process" || o.DeliveryPhase == "observing") {
 				response.PendingOccurrences++
 			} else {
@@ -273,7 +341,8 @@ func (reader *MessageRecordingReader) search(ctx context.Context, query string, 
 					response.Truncated = true
 					return response, nil
 				}
-				result := MediaSearchResult{MessageID: o.MessageID, ConversationID: o.ConversationID, AttachmentID: o.AttachmentID, Origin: selections[source].Origin, Excerpt: hit.Excerpt}
+				result := MediaSearchResult{MessageID: o.MessageID, ConversationID: o.ConversationID, AttachmentID: o.AttachmentID, Origin: selections[source].Origin, Excerpt: hit.Excerpt,
+					Filename: o.Filename, ContainingTitle: o.ContainingTitle, OccurredAt: o.OccurredAt}
 				if evidence.TimeSpan != nil {
 					result.StartMS, result.EndMS = &evidence.TimeSpan.StartMS, &evidence.TimeSpan.EndMS
 				}

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
@@ -33,6 +34,7 @@ import (
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/slack"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 func TestRevokeMatrixCredentialsPreservesCredentialsUntilLogoutSucceeds(t *testing.T) {
@@ -1881,4 +1883,82 @@ func TestRemoveAccountCmd_ClosedStdinReturnsError(t *testing.T) {
 	err = root.Execute()
 	require.Error(err, "expected error when stdin is closed")
 	assert.ErrorContains(t, err, "use --yes")
+}
+
+func TestRemoveAccountCommandStorePreservesSharedGrant(t *testing.T) {
+	for _, shared := range []bool{true, false} {
+		t.Run(fmt.Sprintf("shared=%v", shared), func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			commands := config.OAuthTokenCommands(testutil.SecretStoreFixture(t))
+			cfg := config.NewDefaultConfig()
+			cfg.HomeDir = t.TempDir()
+			cfg.Data.DataDir = cfg.HomeDir
+			cfg.OAuth.Tokens = commands
+			var revoked atomic.Int32
+			provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if !assert.NoError(r.ParseForm()) {
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				assert.Equal("example-refresh", r.Form.Get("refresh_token"))
+				w.Header().Set("Content-Type", "application/json")
+				if revoked.Load() > 0 {
+					w.WriteHeader(http.StatusBadRequest)
+					_, _ = io.WriteString(w, `{"error":"invalid_grant"}`)
+					return
+				}
+				_, _ = io.WriteString(w, `{"access_token":"remaining-access","token_type":"Bearer","expires_in":3600}`)
+			}))
+			defer provider.Close()
+			cfg.OAuth.ClientSecretsCommand = append(testutil.SecretCommand(t, "echo"), fmt.Sprintf(`{"installed":{"client_id":"example-client","client_secret":"example-secret","token_uri":%q,"redirect_uris":["http://localhost"]}}`, provider.URL))
+			previous := http.DefaultTransport
+			http.DefaultTransport = testTransport(func(r *http.Request) (*http.Response, error) {
+				if r.URL.String() == "https://oauth2.googleapis.com/revoke" {
+					revoked.Add(1)
+					return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
+				}
+				return previous.RoundTrip(r)
+			})
+			defer func() { http.DefaultTransport = previous }()
+			tokenStore := oauth.NewTokenStore(cfg.TokensDir(), commands)
+			token := []byte(`{"access_token":"expired","refresh_token":"example-refresh","expiry":"2000-01-01T00:00:00Z","client_id":"example-client","scopes":["https://www.googleapis.com/auth/gmail.readonly"]}`)
+			const removedEmail, remainingEmail = "user.name@gmail.com", "username@gmail.com"
+			require.NoError(tokenStore.Write(t.Context(), removedEmail, token))
+			st, err := store.Open(cfg.DatabaseDSN())
+			require.NoError(err)
+			require.NoError(st.InitSchema())
+			removed, err := st.GetOrCreateSource("gmail", removedEmail)
+			require.NoError(err)
+			if shared {
+				_, err = st.GetOrCreateSource("gmail", remainingEmail)
+				require.NoError(err)
+				require.NoError(tokenStore.Write(t.Context(), remainingEmail, token))
+			}
+			require.NoError(st.Close())
+			cmd := newRemoveAccountLocalTestCmd()
+			cmd.SetContext(withTestConfig(t, cfg))
+			cmd.SetArgs([]string{"--source-id", strconv.FormatInt(removed.ID, 10), "--yes"})
+			if err := cmd.Execute(); err != nil {
+				// Cache rebuilding follows credential cleanup and has its own regression tests.
+				require.ErrorContains(err, "account was removed, but analytics cache refresh failed")
+			}
+			_, err = tokenStore.Read(t.Context(), removedEmail)
+			require.ErrorIs(err, os.ErrNotExist)
+			if shared {
+				assert.Zero(revoked.Load())
+				credentials, err := cfg.OAuth.CredentialsFor("")
+				require.NoError(err)
+				mgr, err := oauth.NewManagerWithCredentials(t.Context(), credentials, cfg.TokensDir(), commands, nil, oauth.ScopesGmailReadonly)
+				require.NoError(err)
+				source, err := mgr.TokenSource(t.Context(), remainingEmail)
+				require.NoError(err)
+				remaining, err := source.Token()
+				require.NoError(err)
+				assert.Equal("remaining-access", remaining.AccessToken)
+			} else {
+				assert.EqualValues(1, revoked.Load())
+			}
+		})
+	}
 }

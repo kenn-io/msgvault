@@ -7,4 +7,5 @@ export type SelectorKind = (typeof SelectorKind)[keyof typeof SelectorKind];
 export const SelectorKind = {
   message: "message",
   document_chunk: "document_chunk",
+  docbank_rendition: "docbank_rendition",
 } as const;

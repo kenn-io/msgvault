@@ -52,6 +52,8 @@ type catalogCapabilities struct {
 	meetings        bool
 	personAgenda    bool
 	kata            bool
+	kataLookup      bool
+	kataDocbank     bool
 	identityReview  bool
 	personCardDAV   bool
 }
@@ -136,6 +138,8 @@ func capabilitiesFor(opts ServeOptions) catalogCapabilities {
 		meetings:        opts.Meetings != nil,
 		personAgenda:    opts.PersonAgendaBackend != nil,
 		kata:            opts.Kata != nil,
+		kataLookup:      opts.Kata != nil && opts.KataLookup,
+		kataDocbank:     opts.Kata != nil && opts.KataDocbank,
 		identityReview:  opts.IdentityReview != nil,
 		personCardDAV:   opts.PersonCardDAV != nil,
 	}
@@ -246,7 +250,7 @@ func buildOperationCatalog(capabilities catalogCapabilities) []toolDefinition {
 		updatePersonNotesDefinition(nil),
 		updateSavedViewDefinition(nil),
 	}
-	definitions = append(definitions, kataDefinitions()...)
+	definitions = append(definitions, kataDefinitions(capabilities.kataDocbank)...)
 
 	available := definitions[:0]
 	for _, definition := range definitions {
@@ -465,7 +469,7 @@ func searchMessagesOutputSchema() *jsonschema.Schema {
 }
 
 func accountProperty() *jsonschema.Schema {
-	return stringSchema("Filter by account email address (use get_stats to list available accounts)")
+	return stringSchema("Filter by account: a source email or display name in any letter case (the whole source), a virtual account key from get_stats (identity:... or unattributed:...), or another confirmed address (mail attributed to it on every source)")
 }
 
 func afterProperty() *jsonschema.Schema {
@@ -485,7 +489,7 @@ func offsetProperty() *jsonschema.Schema {
 }
 
 const (
-	searchMetadataOperatorDoc = "Supported operators: from:, to:, cc:, bcc:, subject:, label: (or l:), has:attachment, " +
+	searchMetadataOperatorDoc = "Supported operators: from:, to:, cc:, bcc:, subject:, label: (or l:), filename: (attachment name substring), has:attachment, " +
 		"before:/after: (YYYY-MM-DD), older_than:/newer_than: (e.g. 7d, 2w, 1m, 1y), larger:/smaller: (e.g. 5M), " +
 		"account:, received: (exact addresses; received: excludes sent mail and calendar events). " +
 		"Bare domains on from:/to: match any address at that domain. Different operators are ANDed; " +

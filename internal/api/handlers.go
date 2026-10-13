@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
@@ -23,7 +22,7 @@ import (
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/deletion"
 	msgexport "go.kenn.io/msgvault/internal/export"
-	"go.kenn.io/msgvault/internal/fileutil"
+	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/search"
@@ -330,6 +329,8 @@ type MessageSummary struct {
 type MessageDetail struct {
 	MessageSummary
 
+	ConversationTitle string `json:"conversation_title,omitempty" doc:"Conversation title, when available."`
+
 	Body     string `json:"body"`
 	BodyHTML string `json:"body_html,omitempty"`
 	IsFromMe bool   `json:"is_from_me,omitzero"`
@@ -416,11 +417,13 @@ type hybridGenerationSummary struct {
 // hybridSearchItem is a single hit in a vector/hybrid response. It
 // embeds MessageSummary (not APIMessage) so the JSON schema matches
 // /api/v1/search's summary surface — callers get the same snake-case
-// fields, and we do not leak full message bodies, headers, or
-// attachment metadata in search results. Score is present only when
-// explain=1 was requested.
+// fields. Full bodies and headers are excluded; attachment names and counts
+// are included intentionally. Score is present only when explain=1 was requested.
 type hybridSearchItem struct {
 	MessageSummary
+
+	AttachmentNames []string `json:"attachment_names,omitzero"`
+	AttachmentCount *int     `json:"attachment_count,omitzero" nullable:"false"`
 
 	Score            *scoreBreakdown     `json:"score,omitzero" nullable:"false"`
 	Matches          []hybridSearchMatch `json:"matches,omitempty"`
@@ -553,6 +556,8 @@ func messageDetailFromQuery(qMsg *query.MessageDetail) MessageDetail {
 	}
 
 	return MessageDetail{
+		ConversationTitle: qMsg.ConversationTitle,
+
 		ID:              qMsg.ID,
 		SourceID:        qMsg.SourceID,
 		SourceMessageID: qMsg.SourceMessageID,
@@ -789,10 +794,11 @@ func (s *Server) handleGetMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	detail := MessageDetail{
-		MessageSummary: toMessageSummary(*msg),
-		Body:           msg.Body,
-		BodyHTML:       msg.BodyHTML,
-		IsFromMe:       msg.IsFromMe,
+		MessageSummary:    toMessageSummary(*msg),
+		ConversationTitle: msg.ConversationTitle,
+		Body:              msg.Body,
+		BodyHTML:          msg.BodyHTML,
+		IsFromMe:          msg.IsFromMe,
 	}
 
 	attachments := make([]AttachmentInfo, 0, len(msg.Attachments))
@@ -1020,6 +1026,7 @@ func parseSearchQueryRequest(r *http.Request, query string) *search.Query {
 }
 
 var semanticSearchStructuredFilterParamNames = []string{
+	"account_scopes",
 	"sender",
 	recipientParam,
 	"domain",
@@ -1083,10 +1090,6 @@ func (s *Server) handleHybridSearch(
 	}
 
 	filter, err := hybridEngine.BuildFilter(ctx, parsed, structuredFilter)
-	if errors.Is(err, hybrid.ErrAccountFiltersUnsupported) {
-		writeError(w, http.StatusBadRequest, "unsupported_filter_mode", err.Error())
-		return
-	}
 	if err != nil {
 		s.logger.Error("build hybrid filter failed", "query", q, "error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "filter resolution failed")
@@ -1157,6 +1160,13 @@ func (s *Server) handleHybridSearch(
 	for _, m := range summaries {
 		byID[m.ID] = m
 	}
+	metadata, err := s.searchMetadata(ctx, hitIDs, nil, false)
+	if err != nil {
+		if s.writeIfContextError(w, err) {
+			return
+		}
+		s.logger.Warn("hybrid attachment names failed", "ids", len(hitIDs), "error", err)
+	}
 	items := make([]hybridSearchItem, 0, len(pageHits))
 	for _, h := range pageHits {
 		msg, ok := byID[h.MessageID]
@@ -1168,6 +1178,10 @@ func (s *Server) handleHybridSearch(
 			continue
 		}
 		item := hybridSearchItem{MessageSummary: toMessageSummary(msg)}
+		if extra, ok := metadata[msg.ID]; ok {
+			item.AttachmentNames = extra.AttachmentNames
+			item.AttachmentCount = &extra.AttachmentCount
+		}
 		if explain {
 			sb := &scoreBreakdown{SubjectBoosted: h.SubjectBoosted}
 			if !math.IsNaN(h.RRFScore) {
@@ -1389,6 +1403,11 @@ func parseRequiredInt64Query(r *http.Request, name string) (int64, error) {
 
 func (s *Server) similarSearchFilter(r *http.Request) (vector.Filter, *apiHTTPError) {
 	var filter vector.Filter
+	scopes, err := parseAccountScopes(r)
+	if err != nil {
+		return filter, apiHTTPErrorFromParam(err)
+	}
+	filter.AccountScopes = scopes
 	if account := r.URL.Query().Get("account"); account != "" {
 		cliStore, apiErr := s.cliStore()
 		if apiErr != nil {
@@ -1865,28 +1884,13 @@ func (s *Server) handleUploadToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get tokens directory from config
-	tokensDir := s.cfg.TokensDir()
-
-	// Create tokens directory if needed
-	if err := fileutil.SecureMkdirAll(tokensDir, 0700); err != nil {
-		s.logger.Error("failed to create tokens directory", "error", err)
-		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to create tokens directory")
-		return
-	}
-
-	// Sanitize email for filename
-	tokenPath := sanitizeTokenPath(tokensDir, email)
-
-	// Marshal token back to JSON (normalized)
 	data, err := json.Marshal(tf, jsontext.WithIndent("  "), json.Deterministic(true))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to serialize token")
 		return
 	}
-
-	if err := fileutil.SecureReplaceFile(tokenPath, data, 0o600); err != nil {
-		s.logger.Error("failed to save token", "error", err)
+	if err := oauth.NewTokenStore(s.cfg.TokensDir(), s.cfg.OAuth.Tokens).Write(r.Context(), email, data); err != nil {
+		s.logger.Error("failed to save uploaded token", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to save token")
 		return
 	}
@@ -1896,29 +1900,6 @@ func (s *Server) handleUploadToken(w http.ResponseWriter, r *http.Request) {
 		Status:  "created",
 		Message: "Token saved for " + email,
 	})
-}
-
-// sanitizeTokenPath returns a safe file path for the token.
-func sanitizeTokenPath(tokensDir, email string) string {
-	// Remove dangerous characters
-	safe := strings.Map(func(r rune) rune {
-		if r == '/' || r == '\\' || r == '\x00' {
-			return -1
-		}
-		return r
-	}, email)
-
-	// Build path and verify it's within tokensDir
-	path := filepath.Join(tokensDir, safe+".json")
-	cleanPath := filepath.Clean(path)
-	cleanTokensDir := filepath.Clean(tokensDir)
-
-	// If path escapes tokensDir, use hash-based fallback
-	if !strings.HasPrefix(cleanPath, cleanTokensDir+string(os.PathSeparator)) {
-		return filepath.Join(tokensDir, fmt.Sprintf("%x.json", sha256.Sum256([]byte(email))))
-	}
-
-	return cleanPath
 }
 
 // AddAccountRequest represents a request to add an account to the config.
@@ -2420,6 +2401,11 @@ func parseTextSortField(s string) (query.TextSortField, bool) {
 // handler can reject them with a 400; out-of-range limits are clamped.
 func parseAggregateOptions(r *http.Request) (query.AggregateOptions, error) {
 	opts := query.DefaultAggregateOptions()
+	scopes, err := parseAccountScopes(r)
+	if err != nil {
+		return opts, err
+	}
+	opts.AccountScopes = scopes
 
 	if v := r.URL.Query().Get("sort"); v != "" {
 		field, ok := parseSortField(v)
@@ -2503,6 +2489,11 @@ func requestWithoutParams(r *http.Request, keys ...string) *http.Request {
 
 func parseMessageFilter(r *http.Request) (query.MessageFilter, error) {
 	var filter query.MessageFilter
+	scopes, err := parseAccountScopes(r)
+	if err != nil {
+		return filter, err
+	}
+	filter.AccountScopes = scopes
 	filter.Pagination.Limit = -1 // sentinel: "not provided"
 
 	filter.Sender = r.URL.Query().Get("sender")
@@ -3740,6 +3731,7 @@ func (s *Server) handleTotalStats(w http.ResponseWriter, r *http.Request) {
 	for _, name := range []string{
 		"sender", "sender_name", recipientParam, "recipient_name", "domain", "label", "list_id",
 		"message_type", "time_period", "time_granularity", "conversation_id", "after", "before", "empty_targets",
+		"account_scopes",
 	} {
 		if _, present := r.URL.Query()[name]; present {
 			opts.Filter = &filter

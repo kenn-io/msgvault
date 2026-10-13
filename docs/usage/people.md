@@ -487,6 +487,9 @@ msgvault identity discover --source-id 14 --apply \
 `--json` suppresses progress and returns the final structured result. Discovery
 does not modify source messages or provider state.
 
+Adding, confirming, or removing an owned address rechecks only matching messages.
+Analytics still rebuilds the full archive after ownership changes.
+
 ## Import an owned identity list
 
 `identity import` accepts either a text file with one identifier per line or a

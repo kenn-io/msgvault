@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"go.kenn.io/msgvault/internal/vcard"
 )
 
 const MaxCardDAVConflictSnapshotBytes = 32 << 20
@@ -31,6 +33,8 @@ var (
 	ErrCardDAVConflictStale      = errors.New("CardDAV conflict is stale or already resolved")
 	ErrCardDAVConflictTooLarge   = errors.New("CardDAV conflict snapshots exceed 32 MiB")
 	ErrCardDAVConflictResolution = errors.New("invalid CardDAV conflict resolution")
+	ErrCardDAVRemoteProtected    = errors.New("remote card would overwrite a protected value")
+	ErrCardDAVRemoteInvalid      = errors.New("remote card cannot be published safely")
 )
 
 type CardDAVConflict struct {
@@ -712,26 +716,26 @@ func (s *Store) completeCardDAVConflictLocalTombstoneTx(
 		conflict.ID, CardDAVResolutionKeepLocal)
 }
 
-func (s *Store) completePendingCardDAVConflictTombstoneFromPullTx(
+func (s *Store) preparePendingCardDAVConflictTombstoneFromPullTx(
 	ctx context.Context, tx *loggedTx, book CardDAVAddressBook, connectionGeneration int64,
 	capture CardDAVConflictCapture,
-) (bool, error) {
+) (*CardDAVConflict, *CardDAVResource, error) {
 	conflict, err := scanCardDAVConflict(tx.QueryRowContext(ctx,
 		`SELECT `+cardDAVConflictColumns+` FROM carddav_conflicts
 		 WHERE address_book_id = ? AND href = ? AND status = 'unresolved'`+
 			s.dialect.SelectForUpdate(), book.ID, capture.Href))
 	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
+		return nil, nil, nil
 	}
 	if err != nil {
-		return false, fmt.Errorf("lock pulled CardDAV tombstone conflict: %w", err)
+		return nil, nil, fmt.Errorf("lock pulled CardDAV tombstone conflict: %w", err)
 	}
 	if conflict.PendingOperation == "" {
-		return false, nil
+		return nil, nil, nil
 	}
 	mapping, err := s.validatePendingCardDAVConflictTombstoneTx(ctx, tx, conflict)
 	if err != nil {
-		return false, err
+		return nil, nil, err
 	}
 	if !capture.LocalTombstone || !capture.RemoteTombstone ||
 		capture.AddressBookID != conflict.AddressBookID || capture.Href != conflict.Href ||
@@ -741,12 +745,9 @@ func (s *Store) completePendingCardDAVConflictTombstoneFromPullTx(
 		capture.BaseRemoteETag != mapping.RemoteETag ||
 		conflict.ConnectionGeneration != connectionGeneration ||
 		conflict.BookSyncRevision != book.SyncRevision {
-		return false, ErrCardDAVConflictStale
+		return nil, nil, ErrCardDAVConflictStale
 	}
-	if _, err := s.completeCardDAVConflictLocalTombstoneTx(ctx, tx, conflict, mapping); err != nil {
-		return false, err
-	}
-	return true, nil
+	return conflict, mapping, nil
 }
 
 func cardDAVPublicationFromConflict(conflict *CardDAVConflict) *CardDAVPublication {
@@ -1307,28 +1308,45 @@ func (s *Store) ResolveCardDAVConflictRemoteContext(
 				!bytes.Equal(input.Remote.RemoteBody, conflict.RemoteBody) || input.Remote.SemanticHash == "" {
 				return ErrCardDAVConflictStale
 			}
-			remoteOwnsDisplay := false
+			var preparedEnvelope *vcard.ResourceEnvelope
 			if mapping.PersonID != nil {
-				remoteOwnsDisplay, err = s.rebaseCardDAVImportedProjectionTx(
-					ctx, tx, book.ID, *mapping.PersonID, input.Remote,
-				)
+				envelope, dropped, err := s.prepareCardDAVEnvelopeTx(ctx, tx, book.ID, *mapping.PersonID, input.Remote)
 				if err != nil {
 					return err
 				}
+				unsafe, err := s.cardDAVRebaseDisplacesOwnerTx(ctx, tx, book.ID, *mapping.PersonID, input.Remote.Href, envelope, dropped)
+				if err != nil {
+					return err
+				}
+				if unsafe {
+					return fmt.Errorf("%w: %w", ErrCardDAVRemoteProtected, vcard.ErrResourceOwnershipMismatch)
+				}
+				publication, publicationErr := getCardDAVPublicationFrom(ctx, tx, *mapping.PersonID, "")
+				if publicationErr != nil && !errors.Is(publicationErr, ErrCardDAVPublicationNotFound) {
+					return publicationErr
+				}
+				if publicationErr == nil && publication.AddressBookID == book.ID && publication.Href == input.Remote.Href {
+					publicationEnvelope := envelope
+					publicationEnvelope.RenderMetadata.RenderRequired = true
+					if _, err := publicationEnvelope.PrepareCanonicalRender(); err != nil {
+						return fmt.Errorf("%w: %w", ErrCardDAVRemoteInvalid, err)
+					}
+				}
+				preparedEnvelope = &envelope
+				if _, err := tx.ExecContext(ctx, `UPDATE carddav_resources SET owns_display_name = TRUE
+					WHERE id = ? AND EXISTS (SELECT 1 FROM persons WHERE id = ? AND display_name IS NULL)
+					AND EXISTS (SELECT 1 FROM person_names WHERE `+cardDAVImportedSourceFilter+` AND name_kind = ?)`,
+					mapping.ID, *mapping.PersonID, *mapping.PersonID, ProvenanceCardDAVImport,
+					fmt.Sprintf("carddav:%d", book.ID), mapping.Href, PersonNameFormatted); err != nil {
+					return fmt.Errorf("accept remote ownership of cleared imported display name: %w", err)
+				}
 			}
-			_, changed, err := s.applyCardDAVResourceTx(ctx, tx, book, input.Remote, false)
+			_, changed, err := s.applyCardDAVResourceTx(ctx, tx, book, input.Remote, false, preparedEnvelope)
 			if err != nil {
 				return err
 			}
 			if !changed {
 				return ErrCardDAVConflictStale
-			}
-			if mapping.PersonID != nil && mapping.Governance == CardDAVGovernanceRemote {
-				if err := s.refreshCardDAVImportedPersonBindBaselineTx(
-					ctx, tx, mapping.ID, *mapping.PersonID, remoteOwnsDisplay,
-				); err != nil {
-					return err
-				}
 			}
 			if publicationPersonID != nil {
 				if _, err := tx.ExecContext(ctx, `UPDATE carddav_publications SET

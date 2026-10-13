@@ -23,6 +23,7 @@ import (
 	"go.kenn.io/msgvault/internal/collectionops"
 	"go.kenn.io/msgvault/internal/contentverify"
 	"go.kenn.io/msgvault/internal/deletion"
+	"go.kenn.io/msgvault/internal/httpretry"
 	"go.kenn.io/msgvault/internal/identityops"
 	"go.kenn.io/msgvault/internal/jsonexact"
 	"go.kenn.io/msgvault/internal/query"
@@ -166,16 +167,18 @@ type CLIInitDB struct {
 }
 
 type CLISearchRequest struct {
-	Query         string
-	Account       string
-	Collection    string
-	DeletionScope string
-	MessageTypes  []string
-	Limit         int
-	Offset        int
+	IncludeSnippet bool
+	Query          string
+	Account        string
+	Collection     string
+	DeletionScope  string
+	MessageTypes   []string
+	Limit          int
+	Offset         int
 }
 
 type CLISearch struct {
+	HybridAvailable  bool                   `json:"hybrid_available,omitzero"`
 	Results          []query.MessageSummary `json:"results"`
 	ScopeLabel       string                 `json:"scope_label,omitempty"`
 	ScopeSourceCount int                    `json:"scope_source_count,omitzero"`
@@ -230,6 +233,7 @@ type CLIHybridGeneration struct {
 
 type CLIHybridSearchResult struct {
 	Message          query.MessageSummary
+	AttachmentCount  *int64
 	ID               int64
 	Subject          string
 	FromEmail        string
@@ -250,6 +254,7 @@ type CLIHybridSearchMatch struct {
 }
 
 type SimilarSearchRequest struct {
+	AccountScopes []search.AccountScope
 	MessageID     int64
 	Limit         int
 	Account       string
@@ -267,6 +272,8 @@ type SimilarSearch struct {
 }
 
 type CLIAccount struct {
+	VirtualAccounts []store.VirtualAccount `json:"virtual_accounts,omitempty"`
+
 	ID                 int64      `json:"id"`
 	Email              string     `json:"email"`
 	Type               string     `json:"type"`
@@ -958,13 +965,14 @@ func (c *Client) GetCLISearch(ctx context.Context, req CLISearchRequest) (*CLISe
 	resp, err := APIResponse(c, func(client *apiclient.Client) (*generated.SearchCLIResp, error) {
 		return client.SearchCLIWithResponse(ctx, &generated.SearchCLIRequestOptions{
 			Query: &generated.SearchCLIQuery{
-				Q:             req.Query,
-				Account:       optionalString(req.Account),
-				Collection:    optionalString(req.Collection),
-				DeletionScope: optionalString(req.DeletionScope),
-				MessageType:   optionalMessageTypes(req.MessageTypes),
-				Limit:         optionalPositiveInt64(req.Limit),
-				Offset:        optionalPositiveInt64(req.Offset),
+				Q:              req.Query,
+				IncludeSnippet: optionalBool(req.IncludeSnippet),
+				Account:        optionalString(req.Account),
+				Collection:     optionalString(req.Collection),
+				DeletionScope:  optionalString(req.DeletionScope),
+				MessageType:    optionalMessageTypes(req.MessageTypes),
+				Limit:          optionalPositiveInt64(req.Limit),
+				Offset:         optionalPositiveInt64(req.Offset),
 			},
 		})
 	})
@@ -1003,6 +1011,7 @@ func (c *Client) GetCLIHybridSearch(
 				Domain:          optionalString(req.Filter.Domain),
 				Label:           optionalString(req.Filter.Label),
 				ListID:          optionalString(req.Filter.ListID),
+				AccountScopes:   encodedAccountScopes(req.Filter.AccountScopes),
 				TimePeriod:      optionalString(req.Filter.TimeRange.Period),
 				TimeGranularity: optionalString(timeGranularityToString(req.Filter.TimeRange.Granularity)),
 				ConversationID:  req.Filter.ConversationID,
@@ -1038,10 +1047,17 @@ func (c *Client) FindSimilarMessages(
 	ctx context.Context,
 	req SimilarSearchRequest,
 ) (*SimilarSearch, error) {
+	if err := search.ValidateAccountScopes(req.AccountScopes); err != nil {
+		return nil, err
+	}
+	if err := c.requireListIDCapability(ctx, nil, query.MessageFilter{AccountScopes: req.AccountScopes}); err != nil {
+		return nil, err
+	}
 	resp, err := APIResponse(c, func(client *apiclient.Client) (*generated.FindSimilarMessagesResp, error) {
 		return client.FindSimilarMessagesWithResponse(ctx, &generated.FindSimilarMessagesRequestOptions{
 			Query: &generated.FindSimilarMessagesQuery{
 				MessageID:     req.MessageID,
+				AccountScopes: encodedAccountScopes(req.AccountScopes),
 				Limit:         optionalPositiveInt64(req.Limit),
 				Account:       optionalString(req.Account),
 				MessageType:   optionalString(req.MessageType),
@@ -1085,6 +1101,31 @@ func (c *Client) GetCLIAccounts(ctx context.Context) (accounts []CLIAccount, cou
 		return nil, false, err
 	}
 	return cliAccountsFromGenerated(resp.JSON200), resp.JSON200 != nil && boolValue(resp.JSON200.CountsPending), nil
+}
+
+// errVirtualAccountsUnavailable means the daemon could not read a current
+// virtual account catalog, which is different from a catalog with no entries.
+var errVirtualAccountsUnavailable = errors.New("virtual account catalog unavailable")
+
+// GetCLIVirtualAccounts reads each source's virtual accounts from
+// /cli/accounts, failing when the daemon could not read the catalog.
+func (c *Client) GetCLIVirtualAccounts(ctx context.Context) (map[int64][]store.VirtualAccount, error) {
+	resp, err := APIResponse(c, func(client *apiclient.Client) (*generated.ListCLIAccountsResp, error) {
+		return client.ListCLIAccountsWithResponse(ctx)
+	})
+	if err != nil {
+		return nil, err
+	}
+	if resp.JSON200 != nil && resp.JSON200.VirtualAccountsUnavailable != nil && *resp.JSON200.VirtualAccountsUnavailable {
+		return nil, errVirtualAccountsUnavailable
+	}
+	out := make(map[int64][]store.VirtualAccount)
+	for _, account := range cliAccountsFromGenerated(resp.JSON200) {
+		if len(account.VirtualAccounts) > 0 {
+			out[account.ID] = account.VirtualAccounts
+		}
+	}
+	return out, nil
 }
 
 func (c *Client) UpdateCLIAccount(
@@ -1355,19 +1396,44 @@ func (c *Client) RebuildCLIFTS(
 }
 
 func (c *Client) GetCLIMessage(ctx context.Context, id string) (*query.MessageDetail, error) {
-	resp, err := APIResponseWithNotFound(
-		c,
-		func(client *apiclient.Client) (*generated.GetCLIMessageResp, error) {
-			return client.GetCLIMessageWithResponse(ctx, &generated.GetCLIMessageRequestOptions{
-				Query: &generated.GetCLIMessageQuery{ID: id},
-			})
-		},
-		func(*generated.GetCLIMessageResp) error {
-			return fmt.Errorf("message %s: %w", id, store.ErrMessageNotFound)
-		},
-	)
-	if err != nil {
+	// Thread pages can exhaust a remote daemon's shared request burst.
+	policy := backoff.NewExponentialBackOff()
+	policy.InitialInterval = time.Second
+	policy.MaxInterval = 10 * time.Second
+	resp, err := backoff.Retry(ctx, func() (*generated.GetCLIMessageResp, error) {
+		var retryAfter string
+		resp, err := APIResponseWithNotFound(
+			c,
+			func(client *apiclient.Client) (*generated.GetCLIMessageResp, error) {
+				resp, err := client.GetCLIMessageWithResponse(ctx, &generated.GetCLIMessageRequestOptions{
+					Query: &generated.GetCLIMessageQuery{ID: id},
+				})
+				if resp != nil && resp.HTTPResponse != nil {
+					retryAfter = resp.HTTPResponse.Header.Get("Retry-After")
+				}
+				return resp, err
+			},
+			func(*generated.GetCLIMessageResp) error {
+				return fmt.Errorf("message %s: %w", id, store.ErrMessageNotFound)
+			},
+		)
+		if err == nil {
+			return resp, nil
+		}
+		apiErr, ok := errors.AsType[*APIError](err)
+		if !ok || apiErr.Status != http.StatusTooManyRequests {
+			return nil, backoff.Permanent(err)
+		}
+		if delay, ok := httpretry.ParseRetryAfter(retryAfter, 0, time.Now()); ok {
+			return nil, backoff.RetryAfter(delay, err)
+		}
 		return nil, err
+	}, backoff.WithBackOff(policy), backoff.WithMaxTries(5), backoff.WithMaxElapsedTime(time.Minute))
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, backoff.AsRetryError(err).LastErr
 	}
 	message := cliMessageDetailFromGenerated(resp.JSON200)
 	if message != nil {

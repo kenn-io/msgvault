@@ -175,6 +175,11 @@ func (s *Store) splitPersonMergeOnce(
 		if selection.restoresAbsorbed && absorbedRoot.DisplayName != nil {
 			displayName = *absorbedRoot.DisplayName
 		}
+		displayOwnerRows := snapshot.Rows
+		displayOwnerPerson := absorbedRoot.ID
+		if !selection.restoresAbsorbed {
+			displayOwnerRows = nil
+		}
 		var newPersonID int64
 		if err := tx.QueryRowContext(ctx,
 			`INSERT INTO persons (vcard_uid, display_name) VALUES (?, ?) RETURNING id`,
@@ -243,6 +248,11 @@ func (s *Store) splitPersonMergeOnce(
 					*ancestor.absorbedRoot.DisplayName, newPersonID); err != nil {
 					return fmt.Errorf("restore ancestor split display name: %w", err)
 				}
+				if displayName == nil {
+					displayName = *ancestor.absorbedRoot.DisplayName
+					displayOwnerRows = ancestor.snapshot.Rows
+					displayOwnerPerson = ancestor.absorbedRoot.ID
+				}
 			}
 			if _, err := tx.ExecContext(ctx, `UPDATE person_merge_review_candidates SET
 				state = 'rejected', reviewed_by = ?, reviewed_at = `+s.dialect.Now()+`
@@ -261,6 +271,22 @@ func (s *Store) splitPersonMergeOnce(
 				return fmt.Errorf("%w: ancestor absorbed UID alias is not owned by source",
 					ErrPersonSplitParticipants)
 			}
+		}
+		var ownershipQuery strings.Builder
+		ownershipQuery.WriteString(`UPDATE carddav_resources SET owns_display_name = FALSE WHERE person_id = ?`)
+		ownershipArgs := []any{newPersonID}
+		for _, row := range displayOwnerRows {
+			if row.TableName != "carddav_resources" || personSplitSnapshotRowInteger(row, "person_id") != displayOwnerPerson {
+				continue
+			}
+			owner := personSplitSnapshotColumnsByName(row.Columns)["owns_display_name"]
+			if owner.Boolean != nil && *owner.Boolean {
+				ownershipQuery.WriteString(" AND id <> ?")
+				ownershipArgs = append(ownershipArgs, row.RowID)
+			}
+		}
+		if _, err := tx.ExecContext(ctx, ownershipQuery.String(), ownershipArgs...); err != nil {
+			return fmt.Errorf("retain split scalar source ownership: %w", err)
 		}
 		if selection.restoresAbsorbed {
 			if _, err := tx.ExecContext(ctx, `UPDATE person_merge_review_candidates SET

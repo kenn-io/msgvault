@@ -7,6 +7,8 @@ explore, search, and manage their archive.
 
 All data is stored in `~/.msgvault/` by default (override with `MSGVAULT_HOME`).
 
+For current search and reading options, run `msgvault search --help`, `msgvault show --help`, and `msgvault show-thread --help`.
+
 ## Setup and account management
 
 ### Initialize the database
@@ -156,9 +158,8 @@ msgvault search "quarterly report" --limit 100 --offset 50
 | `received:`   | Confirmed address that received it   | `received:work@example.org` |
 | `account:`    | Confirmed address that received or sent it | `account:work@example.org` |
 
-`received:` and `account:` need full-text mode. Unlike `--account`, which
-selects a whole archive source, `account:` matches only messages attributed to
-that address.
+Unlike `--account`, which selects a whole archive source, `account:` matches
+only messages attributed to that address.
 
 `list:` and `list-id:` match case-insensitive literal substrings. Quote values
 that contain spaces; repeat either operator to require every value. Bare words

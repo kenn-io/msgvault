@@ -1,14 +1,24 @@
+import { recordingMessage, recordingTranscript, recordingSearchReport } from '../../archive/recording-fixtures.test-support';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { appShortcuts } from '@kenn-io/kit-ui';
+import { tick } from 'svelte';
 import { describe, expect, it, vi } from 'vitest';
 
 import { meetingFixtureResponse } from '../../meetings/fixtures.test-support';
 import { createAPIClient } from '../../api/client';
+import { IntegrationReadiness } from '../../kata/kata-ready.svelte';
+import { mediaReadinessKey } from '../../search/media-ready.svelte';
 import { LOAD_THROUGH_END_MAX_PAGES } from '../../explore/paging';
 import { ExploreState, parseExploreURLState } from '../../explore/state.svelte';
 import AppShell from './AppShell.svelte';
 
 vi.mock('../../telemetry/screen-views', () => ({ startScreenViewReporting: () => () => {} }));
+
+function renderRecordingShell(client: ReturnType<typeof createAPIClient>, state: ExploreState, probe: (signal: AbortSignal) => Promise<boolean | undefined> = async () => true) {
+  const readiness = new IntegrationReadiness(probe);
+  const view = render(AppShell, { props: { client, state }, context: new Map([[mediaReadinessKey, readiness]]) });
+  return { ...view, unmount: () => { view.unmount(); readiness.dispose(); } };
+}
 
 function exploreResponse(overrides: Record<string, unknown> = {}) {
   return {
@@ -21,6 +31,125 @@ function exploreResponse(overrides: Record<string, unknown> = {}) {
 }
 
 describe('EverythingWorkspace', () => {
+  it('hides unconfigured recording search and preserves the layout across navigation', async () => {
+    window.history.replaceState(null, '', '/');
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json(exploreResponse()));
+    const probe = vi.fn(async () => false);
+    const state = new ExploreState(window);
+    state.replaceTransient({ workspace: 'everything', query: 'quarterly', searchMode: 'full_text' });
+    const view = renderRecordingShell(createAPIClient(fetchFn), state, probe);
+    try {
+      await screen.findByText('0 items');
+      vi.useFakeTimers();
+      state.commitSearch('different', 'full_text');
+      await tick();
+      await vi.advanceTimersByTimeAsync(300);
+      state.commitNavigation({ workspace: 'files' });
+      await tick();
+      state.commitNavigation({ workspace: 'everything' });
+      await tick();
+      await vi.advanceTimersByTimeAsync(300);
+      expect(probe).toHaveBeenCalledOnce();
+      expect(screen.queryByRole('region', { name: 'Recordings' })).toBeNull();
+      expect(screen.queryByRole('heading', { name: /^Results/ })).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+      expect(document.querySelector('.results-primary--recordings')).toBeNull();
+      expect(fetchFn.mock.calls.some(([input]) => new URL((input as Request).url).pathname.endsWith('/media/search'))).toBe(false);
+    } finally {
+      view.unmount();
+      state.destroy();
+      vi.useRealTimers();
+    }
+  });
+
+  it('retries recording details and distinguishes missing messages', async () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', query: 'quarterly', searchMode: 'full_text', selectedRow: 'recording:9' }))}`);
+    const message = recordingMessage;
+    let messageStatus = 500;
+    const exploreBodies: Array<{ cursor?: string }> = [];
+    const fetchFn = vi.fn<typeof fetch>(async input => {
+      const request = input as Request;
+      const path = new URL(request.url).pathname;
+      if (path.endsWith('/explore')) exploreBodies.push(await request.clone().json());
+      if (path.endsWith('/media/search')) return Response.json(recordingSearchReport());
+      if (path.endsWith('/messages/9/recordings')) return Response.json(recordingTranscript);
+      if (path.endsWith('/messages/9')) return messageStatus === 200 ? Response.json(message) : Response.json({ error: 'unavailable' }, { status: messageStatus });
+      if (path.endsWith('/conversations/2')) return Response.json({ id: 2, messages: [message], anchor_id: 9, has_before: false, has_after: false, total: 1 });
+      return Response.json(exploreResponse({ next_cursor: 'more' }));
+    });
+    const state = new ExploreState(window);
+    const view = renderRecordingShell(createAPIClient(fetchFn), state);
+    try {
+      const link = await screen.findByRole('link', { name: 'Team chat' });
+      await screen.findByText('Could not load this recording message.');
+      messageStatus = 200;
+      await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+      const pane = await screen.findByRole('complementary', { name: 'Reading pane: Team chat' });
+      expect(await within(pane).findByText('Source recording')).toBeTruthy();
+      expect(await within(pane).findByText('Quarterly numbers in the source transcript')).toBeTruthy();
+      expect(screen.getByRole('heading', { name: 'Results 0 items' })).toBeTruthy();
+      expect(link.getAttribute('aria-current')).toBe('true');
+      expect(exploreBodies.length).toBeGreaterThan(0);
+      expect(exploreBodies.filter(body => body.cursor)).toHaveLength(0);
+      await fireEvent.click(screen.getByRole('button', { name: 'Close reading pane' }));
+      messageStatus = 404;
+      await fireEvent.click(await screen.findByRole('link', { name: 'Team chat' }));
+      await screen.findByText('This recording message is no longer available.');
+      expect(screen.queryByRole('link', { name: 'Team chat' })).toBeNull();
+      expect(screen.queryByText('Quarterly numbers')).toBeNull();
+      await fireEvent.click(screen.getByRole('button', { name: 'Close reading pane' }));
+      expect(screen.queryByText('Quarterly numbers')).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+    } finally {
+      view.unmount();
+      state.destroy();
+    }
+  });
+
+  it('uses the single Person filter for recording search', async () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', query: 'quarterly', searchMode: 'full_text', filters: [{ dimension: 'participant', values: ['7'] }] }))}`);
+    const fetchFn = vi.fn<typeof fetch>(async input => {
+      const url = new URL((input as Request).url);
+      return Response.json(url.pathname.endsWith('/media/search') ? recordingSearchReport() : exploreResponse());
+    });
+    const state = new ExploreState(window);
+    const view = renderRecordingShell(createAPIClient(fetchFn), state);
+    try {
+      await screen.findByText('Quarterly numbers');
+      const request = fetchFn.mock.calls.find(([input]) => new URL((input as Request).url).pathname.endsWith('/media/search'))![0] as Request;
+      expect(new URL(request.url).searchParams.get('participant_id')).toBe('7');
+    } finally {
+      view.unmount();
+      state.destroy();
+    }
+  });
+
+  it.each([
+    { searchMode: 'semantic' }, { filters: [{ dimension: 'source', values: ['1'] }] },
+    { groupingChain: ['kind'] },
+    { filters: [{ dimension: 'participant', values: ['1', '2'] }] },
+    { filters: [{ dimension: 'participant', values: ['1'] }, { dimension: 'participant', values: ['2'] }] },
+    ...['1e3', '0x7', '7.0'].map(value => ({ filters: [{ dimension: 'participant', values: [value] }] })),
+  ])('shows recording search hints for configured unsupported queries %j', async patch => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', query: 'quarterly', searchMode: 'full_text', ...patch }))}`);
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json(exploreResponse()));
+    const state = new ExploreState(window);
+    const view = renderRecordingShell(createAPIClient(fetchFn), state);
+    try {
+      await screen.findByText('groupingChain' in patch ? '0 groups' : '0 items');
+      expect(await screen.findByRole('region', { name: 'Recordings' })).toBeTruthy();
+      expect(screen.getByRole('heading', { name: /^Results/ })).toBeTruthy();
+      expect(document.querySelector('.results-primary--recordings')).toBeTruthy();
+      await vi.advanceTimersByTimeAsync(300);
+      expect(fetchFn.mock.calls.some(([input]) => new URL((input as Request).url).pathname.endsWith('/media/search'))).toBe(false);
+    } finally {
+      view.unmount();
+      state.destroy();
+      vi.useRealTimers();
+    }
+  });
+
   it.each(['everything', 'files'] as const)('keeps non-filterable groups in %s visible without opening an unavailable inspector', async (workspace) => {
     window.history.replaceState(null, '', '/');
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json({
@@ -943,7 +1072,8 @@ describe('EverythingWorkspace', () => {
     });
     const state = new ExploreState(window);
     state.commitNavigation({ groupingChain: ['source'] });
-    const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
+    state.commitSearch('quarterly', 'full_text');
+    const rendered = renderRecordingShell(createAPIClient(fetchFn), state);
 
     await waitFor(() => expect(requests).toHaveLength(1));
     expect(new URL(requests[0]!.url).pathname).toBe('/api/v1/explore/groups');
@@ -951,12 +1081,16 @@ describe('EverythingWorkspace', () => {
     state.commitNavigation({ groupingChain: [], presentation: 'timeline' });
     expect(await screen.findByRole('region', { name: 'Canonical activity timeline' })).toBeDefined();
     expect(await screen.findByText('Synthetic subject 1')).toBeDefined();
+    expect(screen.queryByRole('region', { name: 'Recordings' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: /^Results/ })).toBeNull();
+    expect(document.querySelector('.results-primary--recordings')).toBeNull();
     expect(new URL(requests.at(-1)!.url).pathname).toBe('/api/v1/explore');
 
     state.commitNavigation({ presentation: 'files' });
     expect(state.current).toMatchObject({ workspace: 'files', presentation: 'files' });
     expect(await screen.findByRole('main', { name: 'Files' })).toBeDefined();
     expect(screen.queryByRole('grid', { name: 'Files in current context' })).toBeNull();
+    expect(screen.queryByRole('region', { name: 'Recordings' })).toBeNull();
     rendered.unmount();
     state.destroy();
   });
@@ -1095,6 +1229,7 @@ describe('EverythingWorkspace', () => {
     const signals: AbortSignal[] = [];
     const fetchFn = vi.fn<typeof fetch>((input) => {
       const request = input instanceof Request ? input : new Request(input);
+      if (new URL(request.url).pathname.endsWith('/media/search')) return Promise.resolve(Response.json({}, { status: 503 }));
       signals.push(request.signal);
       return new Promise<Response>(() => undefined);
     });

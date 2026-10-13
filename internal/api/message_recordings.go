@@ -263,7 +263,7 @@ func (reader *MessageRecordingReader) recording(
 }
 
 func suppliedTranscriptMatches(o store.MessageMediaOccurrence, inputID string) bool {
-	return inputID != "" && o.SuppliedInputID == inputID
+	return docbankmedia.SuppliedTranscriptMatches(o.SuppliedInputID, inputID)
 }
 
 // undeliveredTranscriptState labels provider text msgvault cannot yet attribute

@@ -14,7 +14,7 @@ var backfillTeamsMediaOnlyIncomplete bool
 
 var backfillTeamsMediaCmd = &cobra.Command{
 	Use:   "backfill-teams-media <email>",
-	Short: "Re-fetch Teams inline media (hostedContents) for already-imported messages",
+	Short: "Re-fetch missing Teams inline images for imported messages",
 	Long: `Re-fetch Microsoft Teams inline media (hostedContents) for messages that
 were already imported but whose inline images were never downloaded.
 

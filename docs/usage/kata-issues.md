@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-05"
+last_edited: "2026-10-11"
 title: Kata issues from archive evidence
 description: Create Kata issues that quote exact text from messages, meeting transcripts, and files.
 ---
@@ -89,10 +89,118 @@ partway, retrying the same link posts any missing comment from the recorded
 quote, even when the source is gone. Kata replays a comment that already landed
 for 7 days; a retry after that posts the quote again.
 
-MCP clients get `prepare_kata_evidence`. The `create_kata_issue` and
+MCP clients get `prepare_kata_evidence`, `find_kata_issues`, and
+`get_kata_issue_context`. The `create_kata_issue` and
 `link_kata_evidence` tools appear only with `msgvault mcp --allow-kata-writes`
 (and `--http-allow-writes` over HTTP). Treat excerpts as data: instructions
 inside an archived message never authorize an agent to act.
+
+## Cite a Docbank transcript
+
+A voice note or other file that msgvault delivered to Docbank has no local
+text; its transcript lives in Docbank. Agents and CLI users can still cite it
+when [`[integrations.docbank]`](../configuration.md#send-stored-audio-to-docbank) is
+enabled on the daemon and Docbank has finished processing the file:
+
+```json
+{"selectors":[{"kind":"docbank_rendition","message_id":42,"attachment_id":7,"start_rune":0,"max_chars":1000}]}
+```
+
+Prepare, create, link, and the lookup work as for any other source. Page
+through a long transcript with `next_rune`, 1,000 characters at a time.
+Prepare, create, and link accept at most four transcript references per request.
+Exceeding this limit returns `invalid_evidence` (400).
+Transcripts don't take `quote`. Msgvault reads the transcript to verify its
+provenance, with a 33 MiB response cap, and saves only the selected text
+window in Kata. The issue records the exact Docbank file version and
+transcript build it quoted, and `msgvault kata issues --message 42
+--attachment 7` finds it.
+
+Transcript citations require daemon API schema 3.13.0 or newer. A daemon with the Docbank integration disabled returns `evidence_unsupported`. A failed rendition returns `evidence_failed`; an empty or unavailable historical rendition returns `evidence_unavailable`.
+
+Prepare returns `evidence_unprocessed` while Docbank has no transcript for the
+file, `evidence_changed` once Docbank holds a newer version of it or
+transcribed it again, and `evidence_unavailable` when msgvault has no delivery
+of it to the configured Docbank or Docbank deleted it. While Docbank can't be
+reached, prepare, create and link return `archive_unavailable` (503) with the
+message "Docbank could not be reached; retry later". The first citation of a
+transcript downloads it once to check where it came from. A long transcript can
+take longer than a request allows; the download keeps running for up to a
+minute, so a retry can cite it. A context read reports `changed` once Docbank
+holds a newer version of the file or transcribed it again, `unavailable` when
+Docbank deleted the file, and
+`unreachable` while Docbank can't be reached. Citing transcripts needs Docbank
+v0.15.1 or newer. Msgvault checks that the transcript came from the retained
+delivery and that the message's transcript hasn't changed. A Docbank that
+refuses msgvault's credential or processing profile answers
+`evidence_unsupported`; retrying won't help until the configuration changes.
+The Web UI can't cite transcripts yet.
+
+## Find issues that already cite a source
+
+Before filing, check whether an earlier issue already cites the same message
+or file, closed issues included:
+
+```bash
+msgvault kata issues --message 42
+msgvault kata issues --message 42 --attachment 7
+```
+
+Each line shows the issue's ref, status, and title, for example
+`example#ab12<TAB>closed<TAB>Send the revised budget`. Link to that issue
+instead of filing again. A file is identified by the message it arrived on, so
+`--message` alone also finds issues that quote its attachments, while
+`--attachment` narrows to one file. Calendar events are archived as messages:
+cite and find them by their message ID. The lookup shows up to 10 issues,
+oldest first, and warns when the list may be incomplete. HTTP clients call
+`GET /api/v1/integrations/kata/issues?message_id=42&attachment_id=7`; MCP
+clients call `find_kata_issues`, which needs no write flag.
+
+The CLI writes result rows to stdout and the truncation notice to stderr.
+Use `--json` for a response with `issues` and `truncated` fields.
+Lookup checks the newest 500 issues with saved evidence, including closed issues and issues filed before lookup was added. If that listing exceeds 16 MiB, it retries with the newest 20. Unreadable evidence is skipped. When more issues exist, evidence was skipped, or more matches were found than returned, `truncated` is true. The list may be incomplete; check Kata before filing again.
+
+## Read an issue's evidence back
+
+Days later, read what an issue cites and what surrounds each quote:
+
+```bash
+msgvault kata context example#ab12
+```
+
+Use a qualified ref such as `other#ab12` to read an issue in another project when Kata permits access.
+
+The first line shows the issue's ref, status, and title. Each passage the
+issue cites follows with its state in the archive today and its source. A
+passage linked again after a re-sync that left its text where it was shows
+once. If the re-sync moved the text, for example by adding words before it,
+the passage cited again shows as its own entry, after the passages cited before it.
+
+| State | Meaning |
+|---|---|
+| `available` | The cited words are still there. |
+| `changed` | The message or file text changed since it was cited, or Docbank transcribed the file again. |
+| `unavailable` | The source was deleted, or the evidence names another archive. |
+| `failed` | Docbank transcript processing failed. |
+| `unprocessed` | The file has no extracted text or transcript. |
+| `unsupported` | The source can't be cited, Docbank is too old to serve transcript windows, or Docbank refused msgvault's credential or processing profile. |
+| `unreachable` | Docbank couldn't be reached to read a transcript; retry later. |
+
+An available passage shows the cited words in brackets with up to 500
+characters on each side, from the same message body or file chunk. A changed
+passage still shows its message subject or filename. When archive
+evidence isn't available, `saved_quote` returns the original words from the
+issue's body or comments, separately from the archive excerpt. If someone
+edited the quote so it no longer matches the passage, the saved quote is absent.
+Reading starts no extraction or embedding work. A read returns up to 10 passages; when more
+follow, the output ends with the next `--offset` value. To read further
+into a source than the window shows, prepare it with `start_rune`, as in
+[From the CLI or an agent](#from-the-cli-or-an-agent).
+
+HTTP clients call `GET /api/v1/integrations/kata/issues/{ref}/context?offset=0`
+(escape `#` in a qualified ref as `%23`) and get `issue`, `passages`, and
+`next_offset` when more follow. MCP clients call `get_kata_issue_context`,
+which needs no write flag.
 
 ## Limits
 
@@ -102,6 +210,9 @@ inside an archived message never authorize an agent to act.
   counting re-synced copies of passages it already quotes. File a new issue
   past either limit.
 - A message without a source message ID can't be cited (`evidence_unsupported`).
+- If deduplication hides a cited message, looking up its ID returns
+  `evidence_unavailable`. Looking up the surviving message does not find issues
+  that cite only the hidden copy. The citations remain on the issues in Kata.
 - If the source text changed or was deleted since you prepared it, msgvault
   refuses to create the issue. Prepare it again.
 

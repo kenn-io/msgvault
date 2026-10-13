@@ -280,7 +280,7 @@ func TestImport_AccountIdentityControlsFromMe(t *testing.T) {
 	}
 	f := &fakeSource{
 		meetings: map[string]json.RawMessage{
-			"primary": meetingFor("primary", "USER-A@EXAMPLE.COM"),
+			"primary": meetingFor("primary", " User-A@Example.COM "),
 			"alias":   meetingFor("alias", "user-b@example.com"),
 			"other":   meetingFor("other", "user-c@example.com"),
 		},
@@ -315,6 +315,13 @@ func TestImport_AccountIdentityControlsFromMe(t *testing.T) {
 	}
 
 	msgID := circlebackMessageIDFor(t, st, "primary")
+	var sender string
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT p.email_address
+		FROM messages m
+		JOIN participants p ON p.id = m.sender_id
+		WHERE m.id = ?`), msgID).Scan(&sender))
+	assert.Equal("user-a@example.com", sender)
 	assert.Equal("work", circlebackMetadataMap(t, st, msgID)["account_identifier"],
 		"metadata preserves the source label")
 }
@@ -1255,6 +1262,7 @@ func TestImport_RoundTrip(t *testing.T) {
 	assert.Equal("Update mockups", meta.ActionItems[0].Title)
 	assert.Equal([]string{"design"}, meta.Tags)
 	assert.Equal(2, meta.TranscriptSegments)
+	assert.Equal("c0b60658390c9b0405c21a63d672324fe56334dcd3bcfa23918d93ec2bd8489e", meta.SnapshotHash)
 
 	// Raw archive composes both verbatim payloads.
 	raw, err := st.GetMessageRaw(msgID)
@@ -1302,6 +1310,23 @@ func TestImport_IdempotentRefreshAndWatermark(t *testing.T) {
 	var count int
 	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&count))
 	assert.Equal(1, count)
+
+	// An incremental sync leaves a stale derived preview alone when the
+	// evidence is unchanged; --full must rewrite it.
+	const snippetQuery = `SELECT snippet FROM messages WHERE source_message_id = ?`
+	var snippet string
+	require.NoError(st.DB().QueryRow(st.Rebind(snippetQuery), "meeting:42").Scan(&snippet))
+	_, err = st.DB().Exec(st.Rebind(
+		`UPDATE messages SET snippet = ? WHERE source_message_id = ?`), "stale", "meeting:42")
+	require.NoError(err)
+	forced, err := imp.Import(context.Background(),
+		ImportOptions{Identifier: "alice@example.com", Full: true})
+	require.NoError(err)
+	assert.EqualValues(0, forced.MeetingsAdded)
+	assert.EqualValues(1, forced.MeetingsUpdated)
+	var repaired string
+	require.NoError(st.DB().QueryRow(st.Rebind(snippetQuery), "meeting:42").Scan(&repaired))
+	assert.Equal(snippet, repaired)
 
 	// Failing run: watermark holds.
 	f.failRead = true

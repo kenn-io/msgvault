@@ -29,6 +29,7 @@ import { isCalendarDate } from '../directory/dates';
 import { isGroupingDimension, validateGroupingChain } from '../grouping/catalog';
 import { hasValidSearchAuthority, predicateFingerprint } from './selection';
 import { parseAttachmentSelection } from './attachment-authority';
+import { parseRecordingSelection } from '../archive/recording-selection';
 import { ARCHIVE_MEETING_HISTORY_KEY, parseArchiveMeetingHistory, type ArchiveMeetingHistory } from '../meetings/archive-selection';
 import {
   normalizeSettingsNavigationAuthority,
@@ -45,6 +46,7 @@ import {
 
 const STATE_PARAMETER = 'explore';
 const FILTER_DIMENSIONS = new Set([
+  'account',
   'source',
   'identity',
   'participant',
@@ -121,7 +123,7 @@ const OPERATION_KINDS = new Set<OperationKind>([
   'visual_embedding'
 ]);
 const OPERATION_STATES = new Set<OperationState>([
-  'cancelled', 'failed', 'partial', 'queued', 'running', 'succeeded'
+  'cancelled', 'failed', 'partial', 'paused', 'queued', 'running', 'succeeded'
 ]);
 const OPERATION_STATUS_AUTHORITIES = new Set<OperationStatusAuthority>([
   'getDocumentIndexStatus', 'getDocumentVectorStatus', 'getVisualAttachmentStatus'
@@ -314,6 +316,7 @@ function scrollAnchor(value: unknown): ExploreScrollAnchor | null {
 function selectedRow(value: unknown): string | null {
   if (value === null) return null;
   if (typeof value !== 'string') return null;
+  if (value.startsWith('recording:')) return parseRecordingSelection(value) === undefined ? null : value;
   if (!value.startsWith('attachment:')) return value;
   return parseAttachmentSelection(value) === undefined ? null : value;
 }
