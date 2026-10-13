@@ -192,7 +192,10 @@ func (c *Client) do(ctx context.Context, method, rawURL string, reqBody []byte, 
 			lastErr = err
 			continue
 		}
-		if maxBytes > 0 && resp.ContentLength > maxBytes {
+		// Keep importer status handling when an error body exceeds the cap.
+		// Requests that disable retries enforce the cap on every response.
+		enforceCap := maxBytes > 0 && (ok(resp.StatusCode) || mode == retryNone)
+		if enforceCap && resp.ContentLength > maxBytes {
 			_ = resp.Body.Close()
 			return nil, ErrTooLarge
 		}
@@ -218,7 +221,7 @@ func (c *Client) do(ctx context.Context, method, rawURL string, reqBody []byte, 
 		if closeErr != nil {
 			return nil, fmt.Errorf("graph %s %s: close body: %w", method, reqURL, closeErr)
 		}
-		if maxBytes > 0 && int64(len(body)) > maxBytes {
+		if enforceCap && int64(len(body)) > maxBytes {
 			return nil, ErrTooLarge
 		}
 		var graphError struct {
