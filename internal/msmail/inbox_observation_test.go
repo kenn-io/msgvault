@@ -2,6 +2,7 @@ package msmail
 
 import (
 	"encoding/json/v2"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -49,9 +50,7 @@ func newNativeSyncGraph(t *testing.T) *nativeSyncGraph {
 			return
 		}
 		decorate := func(item map[string]any, id string, omitted []string) {
-			for key, value := range n.metadata[id] {
-				item[key] = value
-			}
+			maps.Copy(item, n.metadata[id])
 			if n.metadata[id] != nil && n.metadata[id]["parentFolderId"] == nil {
 				item["parentFolderId"] = f.folder[id]
 			}
