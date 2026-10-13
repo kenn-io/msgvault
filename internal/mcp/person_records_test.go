@@ -152,7 +152,7 @@ func (t *personAttributePreviewCaptureTransport) RoundTrip(req *http.Request) (*
 			return nil, err
 		}
 		if _, err := time.Parse(time.RFC3339Nano, nativeClock); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("parse native trial clock %s: %w", key, err)
 		}
 		value[key] = clock
 	}
