@@ -16,27 +16,29 @@ import (
 )
 
 func TestInboxCapabilitiesNeverPromiseChatWrites(t *testing.T) {
+	assertions := assert.New(t)
+
 	for _, info := range []string{inboxTestInfo, `{}`, `{"app":null}`, `{"app":{"version":4}}`, strings.Replace(inboxTestInfo, "4.2.808", "4.2.807", 1), strings.Replace(inboxTestInfo, "4.2.808", "4.2.809", 1)} {
 		peer := &inboxHTTPPeer{info: info, chat: inboxTestChat, page: inboxTestPage}
 		provider := NewInboxProvider(peer.client(t), inboxTestSource())
 		source := inboxTestSource()
 		caps, err := provider.Capabilities(t.Context(), inboxcontrol.Request{Operation: inboxcontrol.OpGetCapabilities, Source: &source})
 		require.NoError(t, err)
-		assert.Equal(t, source, caps.Source)
-		assert.Equal(t, "chat-archive-flag", caps.LocationModel)
-		assert.False(t, caps.ConditionalWrite)
-		assert.False(t, caps.ObservedAt.IsZero())
+		assertions.Equal(source, caps.Source)
+		assertions.Equal("chat-archive-flag", caps.LocationModel)
+		assertions.False(caps.ConditionalWrite)
+		assertions.False(caps.ObservedAt.IsZero())
 		for _, op := range []inboxcontrol.Operation{inboxcontrol.OpArchive, inboxcontrol.OpUnarchive, inboxcontrol.OpSetRead, inboxcontrol.OpSetUnread} {
 			var found bool
 			for _, capability := range caps.Operations {
 				if capability.Operation == op {
 					found = true
-					assert.Equal(t, inboxcontrol.CapabilityUnavailable, capability.Status)
+					assertions.Equal(inboxcontrol.CapabilityUnavailable, capability.Status)
 				}
 			}
-			assert.True(t, found, string(op))
+			assertions.True(found, string(op))
 		}
-		assert.Equal(t, []string{"GET /v1/info"}, peer.calls(), "discovery URLs must never be followed")
+		assertions.Equal([]string{"GET /v1/info"}, peer.calls(), "discovery URLs must never be followed")
 	}
 }
 
@@ -58,6 +60,8 @@ func TestInboxProfileVersionAloneIsInsufficient(t *testing.T) {
 }
 
 func TestInboxAllMutationsRefusedWithoutHTTP(t *testing.T) {
+	requirements := require.New(t)
+
 	peer := &inboxHTTPPeer{info: inboxTestInfo, chat: inboxTestChat, page: inboxTestPage}
 	provider := NewInboxProvider(peer.client(t), inboxTestSource())
 	target := inboxTestTarget()
@@ -65,17 +69,20 @@ func TestInboxAllMutationsRefusedWithoutHTTP(t *testing.T) {
 		r := inboxcontrol.Request{Operation: op, Target: &target, DryRun: true}
 		before := inboxcontrol.State{Target: target, Inbox: new(false), Read: new(false)}
 		_, err := provider.Preview(t.Context(), r, before)
-		require.ErrorIs(t, err, inboxcontrol.ErrUnavailable)
+		requirements.ErrorIs(err, inboxcontrol.ErrUnavailable)
 		_, err = provider.Dispatch(t.Context(), r, before)
-		require.ErrorIs(t, err, inboxcontrol.ErrUnavailable)
-		require.ErrorIs(t, provider.Verify(r, before, before, before), inboxcontrol.ErrOutcomeUnknown)
+		requirements.ErrorIs(err, inboxcontrol.ErrUnavailable)
+		requirements.ErrorIs(provider.Verify(r, before, before, before), inboxcontrol.ErrOutcomeUnknown)
 	}
 	_, err := provider.Folders(t.Context(), inboxTestSource())
-	require.ErrorIs(t, err, inboxcontrol.ErrUnavailable)
+	requirements.ErrorIs(err, inboxcontrol.ErrUnavailable)
 	assert.Empty(t, peer.calls())
 }
 
 func TestInboxMessageDirectionFromRaw(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+
 	for _, tt := range []struct {
 		field string
 		want  bool
@@ -85,41 +92,44 @@ func TestInboxMessageDirectionFromRaw(t *testing.T) {
 		raw := `{"id":"message-A","chatID":"!chat:example.invalid","accountID":"account-example","sortKey":"10:opaque","timestamp":"2026-01-01T00:00:00Z"` + tt.field + `}`
 		candidate, incoming, err := inboxIncomingCandidate([]byte(raw), inboxTestTarget())
 		if tt.want {
-			require.NoError(t, err)
-			require.True(t, incoming)
-			assert.Equal(t, "message-A", candidate.ID)
-			assert.Equal(t, "10:opaque", candidate.SortKey)
+			requirements.NoError(err)
+			requirements.True(incoming)
+			assertions.Equal("message-A", candidate.ID)
+			assertions.Equal("10:opaque", candidate.SortKey)
 		} else {
-			assert.False(t, incoming)
+			assertions.False(incoming)
 		}
 		if tt.field != `,"isSender":"false"` {
 			var message Message
-			require.NoError(t, json.Unmarshal([]byte(raw), &message))
-			assert.Equal(t, raw, string(message.Raw), "ordinary importer Raw bytes remain intact")
+			requirements.NoError(json.Unmarshal([]byte(raw), &message))
+			assertions.Equal(raw, string(message.Raw), "ordinary importer Raw bytes remain intact")
 		}
 	}
 }
 
 func TestInboxLocalEnumerationNeverAdmitsFrontier(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+
 	message := `{"id":"message-A","chatID":"!chat:example.invalid","accountID":"account-example","sortKey":"999:opaque","timestamp":"2026-01-01T00:00:00Z","isSender":false}`
 	page := `{"items":[` + message + `],"hasMore":false,"oldestCursor":"opaque:old","newestCursor":"opaque:new"}`
 	peer := &inboxHTTPPeer{info: inboxTestInfo, chat: inboxTestChat, page: page}
 	provider := NewInboxProvider(peer.client(t), inboxTestSource())
 	window := provider.localInboxWindow(t.Context(), inboxTestTarget())
-	assert.True(t, window.LocalComplete)
-	assert.Equal(t, []inboxCandidate{{ID: "message-A", SortKey: "999:opaque"}}, window.Candidates)
+	assertions.True(window.LocalComplete)
+	assertions.Equal([]inboxCandidate{{ID: "message-A", SortKey: "999:opaque"}}, window.Candidates)
 	for range 2 {
 		target := inboxTestTarget()
 		state, err := provider.Observe(t.Context(), inboxcontrol.Request{Operation: inboxcontrol.OpGetState, Target: &target})
-		require.NoError(t, err)
-		assert.Nil(t, state.Read)
-		assert.Empty(t, state.LastMessageID)
+		requirements.NoError(err)
+		assertions.Nil(state.Read)
+		assertions.Empty(state.LastMessageID)
 		_, err = provider.Preview(t.Context(), inboxcontrol.Request{Operation: inboxcontrol.OpArchive, Target: &target, DryRun: true}, state)
-		require.ErrorIs(t, err, inboxcontrol.ErrUnavailable)
+		requirements.ErrorIs(err, inboxcontrol.ErrUnavailable)
 	}
 	for _, call := range peer.calls() {
-		assert.True(t, strings.HasPrefix(call, "GET "), call)
-		assert.NotContains(t, call, "search")
+		assertions.True(strings.HasPrefix(call, "GET "), call)
+		assertions.NotContains(call, "search")
 	}
 }
 
@@ -145,12 +155,15 @@ func TestInboxLocalEnumerationLimits(t *testing.T) {
 }
 
 func TestInboxObservationBoundsAndRedirect(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+
 	for _, body := range []string{`{"id":`, strings.Repeat(" ", (1<<20)+1)} {
 		peer := &inboxHTTPPeer{info: inboxTestInfo, chat: body, page: inboxTestPage}
 		provider := NewInboxProvider(peer.client(t), inboxTestSource())
 		target := inboxTestTarget()
 		_, err := provider.Observe(t.Context(), inboxcontrol.Request{Operation: inboxcontrol.OpGetState, Target: &target})
-		require.ErrorIs(t, err, inboxcontrol.ErrUnavailable)
+		requirements.ErrorIs(err, inboxcontrol.ErrUnavailable)
 	}
 	var redirected atomic.Int32
 	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { redirected.Add(1); _, _ = w.Write([]byte(inboxTestChat)) }))
@@ -160,12 +173,12 @@ func TestInboxObservationBoundsAndRedirect(t *testing.T) {
 	provider := NewInboxProvider(NewClient(server.URL, testToken, 10000), inboxTestSource())
 	target := inboxTestTarget()
 	_, err := provider.Observe(t.Context(), inboxcontrol.Request{Operation: inboxcontrol.OpGetState, Target: &target})
-	require.ErrorIs(t, err, inboxcontrol.ErrUnavailable)
-	assert.EqualValues(t, 0, redirected.Load())
+	requirements.ErrorIs(err, inboxcontrol.ErrUnavailable)
+	assertions.EqualValues(0, redirected.Load())
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	_, err = provider.Observe(ctx, inboxcontrol.Request{Operation: inboxcontrol.OpGetState, Target: &target})
-	assert.ErrorIs(t, err, inboxcontrol.ErrUnavailable)
+	assertions.ErrorIs(err, inboxcontrol.ErrUnavailable)
 }
 
 func TestInboxOpaqueCursorsAndKeys(t *testing.T) {
@@ -183,6 +196,8 @@ func TestInboxOpaqueCursorsAndKeys(t *testing.T) {
 }
 
 func TestInboxEnumerationPageAndMessageCaps(t *testing.T) {
+	assertions := assert.New(t)
+
 	message := func(id int) string {
 		return fmt.Sprintf(`{"id":"message-%d","chatID":"!chat:example.invalid","accountID":"account-example","sortKey":"opaque","timestamp":"2026-01-01T00:00:00Z","isSender":false}`, id)
 	}
@@ -195,9 +210,9 @@ func TestInboxEnumerationPageAndMessageCaps(t *testing.T) {
 	}
 	provider := NewInboxProvider(peer.client(t), inboxTestSource())
 	window := provider.localInboxWindow(t.Context(), inboxTestTarget())
-	assert.False(t, window.LocalComplete)
-	assert.Equal(t, "page-limit", window.Stopped)
-	assert.Len(t, peer.calls(), 4)
+	assertions.False(window.LocalComplete)
+	assertions.Equal("page-limit", window.Stopped)
+	assertions.Len(peer.calls(), 4)
 	items := make([]string, 129)
 	for i := range items {
 		items[i] = message(i)
@@ -205,7 +220,7 @@ func TestInboxEnumerationPageAndMessageCaps(t *testing.T) {
 	peer = &inboxHTTPPeer{page: page(items, false, "old")}
 	provider = NewInboxProvider(peer.client(t), inboxTestSource())
 	window = provider.localInboxWindow(t.Context(), inboxTestTarget())
-	assert.False(t, window.LocalComplete)
-	assert.Equal(t, "message-limit", window.Stopped)
-	assert.Len(t, peer.calls(), 1)
+	assertions.False(window.LocalComplete)
+	assertions.Equal("message-limit", window.Stopped)
+	assertions.Len(peer.calls(), 1)
 }
