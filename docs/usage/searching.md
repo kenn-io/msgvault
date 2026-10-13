@@ -54,8 +54,8 @@ Source-only scopes can still use the trigram indexes. Very common terms can
 still require substantial work.
 
 Archive initialization builds and backfills these indexes once, which can take
-time on large archives. They add disk space for folded metadata and trigram
-entries. SQLite triggers keep them current as metadata changes. This adds work
+time on large archives. They add disk space for trigram entries but store no
+copy of the indexed text. SQLite triggers keep them current as metadata changes. This adds work
 to imports and metadata updates. Initialization without FTS5 disables their
 maintenance; initialization with FTS5 rebuilds them before indexed search resumes.
 

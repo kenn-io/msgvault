@@ -11,6 +11,8 @@ import (
 // These indexes deliberately exclude bodies and keep fields separate. Folding
 // before case-sensitive tokenization uses the same Unicode rules as metadata
 // LIKE predicates; the query engine still verifies every candidate with LIKE.
+// Searches need only candidate rowids, so the indexes are contentless and
+// store no second copy of the folded text.
 var metadataFTSIndexes = []struct {
 	table, index string
 	columns      []string
@@ -72,7 +74,7 @@ func (s *Store) ensureMetadataFTS(ctx context.Context, available bool) error {
 				return err
 			}
 			columns := strings.Join(idx.columns, ", ")
-			if _, err := tx.ExecContext(ctx, fmt.Sprintf(`CREATE VIRTUAL TABLE %s USING fts5(%s, tokenize='trigram case_sensitive 1', detail=full)`, idx.index, columns)); err != nil {
+			if _, err := tx.ExecContext(ctx, fmt.Sprintf(`CREATE VIRTUAL TABLE %s USING fts5(%s, tokenize='trigram case_sensitive 1', detail=full, content='', contentless_delete=1)`, idx.index, columns)); err != nil {
 				return err
 			}
 			folded := func(prefix string) string {
