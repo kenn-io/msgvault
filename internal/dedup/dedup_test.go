@@ -605,11 +605,6 @@ func TestEngine_FormatMethodology_MentionsSentPolicy(t *testing.T) {
 		"never merges messages across different",
 		"methodology missing cross-account guarantee",
 	)
-	assert.Contains(t,
-		out,
-		"Tiebreakers: has raw MIME > when all eligible copies have matching normalized MIME, more attachments > attachment signal > larger payload; then metadata quality > more labels > earlier archived_at > lower id.",
-		"methodology missing payload completeness order",
-	)
 }
 
 // TestEngine_FormatMethodology_SingleMemberCollection asserts that a

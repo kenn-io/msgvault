@@ -354,19 +354,19 @@ func newSynctechSMSDriveClient(ctx context.Context, src config.SynctechSMSSource
 		return nil, errors.New("configuration is unavailable")
 	}
 	cfg := state.cfg
-	clientSecrets, err := cfg.OAuth.ClientSecretsFor(src.OAuthApp)
+	clientSecrets, err := cfg.OAuth.CredentialsFor(src.OAuthApp)
 	if err != nil {
 		return nil, err
 	}
-	mgr, err := newSynctechSMSDriveOAuthManager(cfg, state.logger, clientSecrets)
+	mgr, err := newSynctechSMSDriveOAuthManager(ctx, cfg, state.logger, clientSecrets)
 	if err != nil {
 		return nil, err
-	}
-	if !mgr.HasToken(src.GoogleAccount) {
-		return nil, fmt.Errorf("no Drive OAuth token for %s; run add-synctech-sms-drive on a machine with browser auth first", src.GoogleAccount)
 	}
 	ts, err := mgr.TokenSource(ctx, src.GoogleAccount)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("no Drive OAuth token for %s; run add-synctech-sms-drive on a machine with browser auth first: %w", src.GoogleAccount, err)
+		}
 		return nil, err
 	}
 	service, err := drive.NewService(ctx, option.WithTokenSource(ts))
@@ -382,24 +382,28 @@ func ensureSynctechSMSDriveToken(ctx context.Context, googleAccount, oauthApp st
 		return errors.New("configuration is unavailable")
 	}
 	cfg := state.cfg
-	clientSecrets, err := cfg.OAuth.ClientSecretsFor(oauthApp)
+	clientSecrets, err := cfg.OAuth.CredentialsFor(oauthApp)
 	if err != nil {
 		return err
 	}
-	mgr, err := newSynctechSMSDriveOAuthManager(cfg, state.logger, clientSecrets)
+	mgr, err := newSynctechSMSDriveOAuthManager(ctx, cfg, state.logger, clientSecrets)
 	if err != nil {
 		return err
 	}
-	if mgr.HasToken(googleAccount) {
+	info, err := mgr.InspectToken(ctx, googleAccount)
+	if err != nil && !errors.Is(err, oauth.ErrInvalidTokenJSON) {
+		return err
+	}
+	if info.Exists {
 		return nil
 	}
 	return mgr.Authorize(ctx, googleAccount)
 }
 
-func newSynctechSMSDriveOAuthManager(cfg *config.Config, logger *slog.Logger, clientSecrets string) (*oauth.Manager, error) {
+func newSynctechSMSDriveOAuthManager(ctx context.Context, cfg *config.Config, logger *slog.Logger, clientSecrets config.OAuthApp) (*oauth.Manager, error) {
 	// The current OAuth manager validates account identity through Gmail's
 	// profile endpoint, so request a read-only Gmail scope alongside Drive.
-	return oauth.NewManagerWithScopes(clientSecrets, cfg.TokensDir(), logger, []string{
+	return oauth.NewManagerWithCredentials(ctx, clientSecrets, cfg.TokensDir(), cfg.OAuth.Tokens, logger, []string{
 		drive.DriveReadonlyScope,
 		"https://www.googleapis.com/auth/gmail.readonly",
 	})

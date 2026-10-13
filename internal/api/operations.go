@@ -61,7 +61,7 @@ type OperationRunSummary struct {
 	ID         string                   `json:"id"`
 	Kind       operations.Kind          `json:"kind" enum:"carddav_sync,document_embedding,document_extraction,message_embedding,person_embedding,person_enrichment,person_sweep,source_sync,visual_embedding"`
 	Lane       operations.Lane          `json:"lane" enum:"contacts,documents,messages,person_facts,visual_attachments"`
-	State      operations.State         `json:"state" enum:"cancelled,failed,partial,queued,running,succeeded"`
+	State      operations.State         `json:"state" enum:"cancelled,failed,partial,paused,queued,running,succeeded"`
 	Trigger    *operations.Trigger      `json:"trigger,omitzero" nullable:"false" enum:"manual,scheduled"`
 	StartedAt  time.Time                `json:"started_at"`
 	FinishedAt *time.Time               `json:"finished_at,omitempty"`
@@ -570,6 +570,7 @@ func operationStateValues() []string {
 		string(operations.StateRunning),
 		string(operations.StateSucceeded),
 		string(operations.StatePartial),
+		string(operations.StatePaused),
 		string(operations.StateFailed),
 		string(operations.StateCancelled),
 	}

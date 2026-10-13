@@ -305,7 +305,7 @@ func readCacheSyncCountersWithRow(queryRow func(string, ...any) *sql.Row) (cache
 			COALESCE(SUM(CASE WHEN sr.status IN ('failed', 'cancelled') THEN sr.id ELSE 0 END), 0)
 		FROM sync_runs sr
 		JOIN sources src ON src.id = sr.source_id
-		WHERE sr.status IN ('completed', 'failed', 'cancelled')
+		WHERE sr.status IN ('completed', 'failed', 'cancelled', 'paused')
 		  AND sr.completed_at IS NOT NULL
 	`).Scan(
 		&counters.additions,
@@ -339,7 +339,7 @@ The cache files are stored in ~/.msgvault/analytics/:
   - attachments/         Attachment metadata
 
 By default, this performs an incremental update (only adding new messages).
-	Use --full-rebuild to recreate all cache files from scratch.`,
+  Use --full-rebuild to recreate all cache files from scratch.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		state := invocationFromCommand(cmd)
 		if state == nil || state.cfg == nil {

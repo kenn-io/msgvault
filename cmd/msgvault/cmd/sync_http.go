@@ -95,7 +95,6 @@ func runSyncHTTP(cmd *cobra.Command, req daemonclient.CLISyncRequest) error {
 // preflightReauthManager is the subset of oauth.Manager the sync preflight
 // needs. Keeping it an interface lets tests inject a fake without real OAuth.
 type preflightReauthManager interface {
-	HasToken(email string) bool
 	TokenSource(ctx context.Context, email string) (oauth2.TokenSource, error)
 	AuthorizePreservingGrantedScopes(ctx context.Context, email string) error
 }
@@ -126,7 +125,7 @@ type preflightConfig struct {
 	// service account (tokens minted on demand; no browser reauth needed).
 	ServiceAccountKey func(appName string) string
 	// ManagerFor resolves the OAuth manager for a given app name.
-	ManagerFor func(appName string) (preflightReauthManager, error)
+	ManagerFor func(ctx context.Context, appName string) (preflightReauthManager, error)
 }
 
 // buildSyncPreflight wires the production preflight config from global config,
@@ -171,8 +170,8 @@ func buildSyncPreflight(st *daemonclient.Client, info HTTPStoreInfo, state *invo
 			return gmail, nil
 		},
 		ServiceAccountKey: serviceAccountKey,
-		ManagerFor: func(appName string) (preflightReauthManager, error) {
-			mgr, err := getMgr(appName)
+		ManagerFor: func(ctx context.Context, appName string) (preflightReauthManager, error) {
+			mgr, err := getMgr(ctx, appName)
 			if err != nil {
 				return nil, err
 			}
@@ -242,16 +241,11 @@ func preflightReauthAccount(ctx context.Context, p preflightConfig, target prefl
 		return nil
 	}
 
-	mgr, err := p.ManagerFor(target.OAuthApp)
+	mgr, err := p.ManagerFor(ctx, target.OAuthApp)
 	if err != nil {
 		// A manager build failure is a config problem the daemon reports with
 		// its own skip line; don't abort the whole sync over it.
 		return nil //nolint:nilerr // best-effort: config errors surface via the daemon
-	}
-
-	// A bare sync must not newly enroll an account.
-	if !mgr.HasToken(target.Email) {
-		return nil
 	}
 
 	_, err = mgr.TokenSource(ctx, target.Email)

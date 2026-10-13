@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
@@ -23,7 +22,7 @@ import (
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/deletion"
 	msgexport "go.kenn.io/msgvault/internal/export"
-	"go.kenn.io/msgvault/internal/fileutil"
+	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/search"
@@ -418,11 +417,13 @@ type hybridGenerationSummary struct {
 // hybridSearchItem is a single hit in a vector/hybrid response. It
 // embeds MessageSummary (not APIMessage) so the JSON schema matches
 // /api/v1/search's summary surface — callers get the same snake-case
-// fields, and we do not leak full message bodies, headers, or
-// attachment metadata in search results. Score is present only when
-// explain=1 was requested.
+// fields. Full bodies and headers are excluded; attachment names and counts
+// are included intentionally. Score is present only when explain=1 was requested.
 type hybridSearchItem struct {
 	MessageSummary
+
+	AttachmentNames []string `json:"attachment_names,omitzero"`
+	AttachmentCount *int     `json:"attachment_count,omitzero" nullable:"false"`
 
 	Score            *scoreBreakdown     `json:"score,omitzero" nullable:"false"`
 	Matches          []hybridSearchMatch `json:"matches,omitempty"`
@@ -1159,6 +1160,13 @@ func (s *Server) handleHybridSearch(
 	for _, m := range summaries {
 		byID[m.ID] = m
 	}
+	metadata, err := s.searchMetadata(ctx, hitIDs, nil, false)
+	if err != nil {
+		if s.writeIfContextError(w, err) {
+			return
+		}
+		s.logger.Warn("hybrid attachment names failed", "ids", len(hitIDs), "error", err)
+	}
 	items := make([]hybridSearchItem, 0, len(pageHits))
 	for _, h := range pageHits {
 		msg, ok := byID[h.MessageID]
@@ -1170,6 +1178,10 @@ func (s *Server) handleHybridSearch(
 			continue
 		}
 		item := hybridSearchItem{MessageSummary: toMessageSummary(msg)}
+		if extra, ok := metadata[msg.ID]; ok {
+			item.AttachmentNames = extra.AttachmentNames
+			item.AttachmentCount = &extra.AttachmentCount
+		}
 		if explain {
 			sb := &scoreBreakdown{SubjectBoosted: h.SubjectBoosted}
 			if !math.IsNaN(h.RRFScore) {
@@ -1872,28 +1884,13 @@ func (s *Server) handleUploadToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get tokens directory from config
-	tokensDir := s.cfg.TokensDir()
-
-	// Create tokens directory if needed
-	if err := fileutil.SecureMkdirAll(tokensDir, 0700); err != nil {
-		s.logger.Error("failed to create tokens directory", "error", err)
-		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to create tokens directory")
-		return
-	}
-
-	// Sanitize email for filename
-	tokenPath := sanitizeTokenPath(tokensDir, email)
-
-	// Marshal token back to JSON (normalized)
 	data, err := json.Marshal(tf, jsontext.WithIndent("  "), json.Deterministic(true))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to serialize token")
 		return
 	}
-
-	if err := fileutil.SecureReplaceFile(tokenPath, data, 0o600); err != nil {
-		s.logger.Error("failed to save token", "error", err)
+	if err := oauth.NewTokenStore(s.cfg.TokensDir(), s.cfg.OAuth.Tokens).Write(r.Context(), email, data); err != nil {
+		s.logger.Error("failed to save uploaded token", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to save token")
 		return
 	}
@@ -1903,29 +1900,6 @@ func (s *Server) handleUploadToken(w http.ResponseWriter, r *http.Request) {
 		Status:  "created",
 		Message: "Token saved for " + email,
 	})
-}
-
-// sanitizeTokenPath returns a safe file path for the token.
-func sanitizeTokenPath(tokensDir, email string) string {
-	// Remove dangerous characters
-	safe := strings.Map(func(r rune) rune {
-		if r == '/' || r == '\\' || r == '\x00' {
-			return -1
-		}
-		return r
-	}, email)
-
-	// Build path and verify it's within tokensDir
-	path := filepath.Join(tokensDir, safe+".json")
-	cleanPath := filepath.Clean(path)
-	cleanTokensDir := filepath.Clean(tokensDir)
-
-	// If path escapes tokensDir, use hash-based fallback
-	if !strings.HasPrefix(cleanPath, cleanTokensDir+string(os.PathSeparator)) {
-		return filepath.Join(tokensDir, fmt.Sprintf("%x.json", sha256.Sum256([]byte(email))))
-	}
-
-	return cleanPath
 }
 
 // AddAccountRequest represents a request to add an account to the config.

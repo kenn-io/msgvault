@@ -46,7 +46,7 @@ func TestCardDAVGoogleConnectionsRestartRollbackAndSchedules(t *testing.T) {
 		dir, err := carddav.ConnectionTokenDir(cfg.TokensDir(), name)
 		required.NoError(err)
 		required.NoError(carddav.SaveCredential(dir, carddav.Credential{Google: true, BaseURL: carddav.GoogleDiscoveryURL, Username: name + "@example.com", OAuthApp: name, ConnectionGeneration: 1}))
-		manager, err := carddav.NewGoogleOAuthManager(secrets, cfg.TokensDir(), name, name+"@example.com", testLogger())
+		manager, err := carddav.NewGoogleOAuthManagerWithCredentials(t.Context(), config.OAuthApp{ClientSecrets: secrets}, cfg.TokensDir(), config.OAuthTokenCommands{}, name, name+"@example.com", testLogger())
 		required.NoError(err)
 		token, err := json.Marshal(map[string]any{"access_token": name + "-synthetic-access", "client_id": name + "-client", "scopes": []string{oauth.ScopeCardDAV}})
 		required.NoError(err)
@@ -81,7 +81,7 @@ func TestCardDAVGoogleConnectionsRestartRollbackAndSchedules(t *testing.T) {
 		scheduled = append(scheduled, name)
 		return nil
 	})
-	required.NoError(root.reconcileGoogleSchedules(cardDAVGoogleAuthorization{connection: "work", email: "work@example.com", oauthApp: "work"}))
+	required.NoError(root.reconcileGoogleSchedules(t.Context(), cardDAVGoogleAuthorization{connection: "work", email: "work@example.com", oauthApp: "work"}))
 	assertions.ElementsMatch([]string{"work"}, scheduled)
 	work, err := root.Select("work", false)
 	required.NoError(err)

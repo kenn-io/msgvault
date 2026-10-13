@@ -57,14 +57,18 @@ func gmailDraftScopeGate(ctx context.Context, cfg *config.Config, source *store.
 	if cfg != nil && cfg.OAuth.ServiceAccountKeyFor(sourceOAuthApp(source)) != "" {
 		return nil
 	}
-	manager, err := oauthManagerCache(invocationFromContext(ctx))(sourceOAuthApp(source))
+	manager, err := oauthManagerCache(invocationFromContext(ctx))(ctx, sourceOAuthApp(source))
 	if err != nil {
 		return draftReplyError("invalid_source", err)
 	}
-	if !manager.HasScopeMetadata(source.Identifier) {
+	info, err := manager.InspectToken(ctx, source.Identifier)
+	if err != nil && manager.CommandTokens() {
+		return err
+	}
+	if len(info.Scopes) == 0 {
 		return nil
 	}
-	if oauth.GrantCoversAnyScope(manager.GrantedScopes(source.Identifier), accepted) {
+	if oauth.GrantCoversAnyScope(info.Scopes, accepted) {
 		return nil
 	}
 	return draftReplyError("insufficient_scope", fmt.Errorf(

@@ -17,10 +17,9 @@ Counts come from the analytics cache and include messages deleted from their
 source account (the archive retains them), so per-label totals may exceed the
 active message count shown by 'stats'.
 
-Examples:
-  msgvault list-labels
-  msgvault list-labels --limit 50
-  msgvault list-labels --json`,
+JSON rows have key, count, total_size, and attachment_size.`,
+	Example: `  msgvault list-labels --json
+  msgvault list-labels --limit 50`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runAggregateListCommand(cmd, query.ViewLabels, "No labels found.", "Label", "label")

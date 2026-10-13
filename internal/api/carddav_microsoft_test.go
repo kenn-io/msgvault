@@ -61,6 +61,6 @@ func TestCardDAVMicrosoftScheduleSurvivesMissingToken(t *testing.T) {
 		scheduled = service
 		return nil
 	})
-	require.NoError(controller.ReconcileSchedule())
+	require.NoError(controller.ReconcileSchedule(t.Context()))
 	require.NotNil(scheduled)
 }

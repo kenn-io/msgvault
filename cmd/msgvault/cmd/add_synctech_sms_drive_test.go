@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/synctechsms"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -488,4 +489,21 @@ func assertSourceConversationMessageCount(t *testing.T, st *store.Store, sourceI
 	err := st.DB().QueryRow(st.Rebind(`SELECT COALESCE(MAX(message_count), 0) FROM conversations WHERE source_id = ?`), sourceID).Scan(&got)
 	require.NoError(t, err, "read conversation message_count")
 	assert.Equal(t, want, got, "conversation message_count")
+}
+
+func TestSynctechSMSDriveRepairsMalformedFileToken(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	cfg := config.NewDefaultConfig()
+	cfg.HomeDir = t.TempDir()
+	cfg.Data.DataDir = cfg.HomeDir
+	cfg.OAuth.ClientSecrets = filepath.Join(cfg.HomeDir, "client.json")
+	require.NoError(os.WriteFile(cfg.OAuth.ClientSecrets, []byte(fakeClientSecrets), 0600))
+	require.NoError(os.MkdirAll(cfg.TokensDir(), 0700))
+	require.NoError(os.WriteFile(filepath.Join(cfg.TokensDir(), "reader@example.com.json"), []byte("{"), 0600))
+	ctx, cancel := context.WithCancel(testInvocationContext(t.Context(), cfg, invocationOptions{}))
+	cancel()
+	err := ensureSynctechSMSDriveToken(ctx, "reader@example.com", "")
+	require.ErrorIs(err, context.Canceled)
+	assert.NotErrorIs(err, oauth.ErrInvalidTokenJSON)
 }

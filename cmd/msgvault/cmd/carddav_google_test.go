@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/carddav"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 func TestAuthorizeGoogleCardDAVValidatesEmailAndExplainsMissingSecrets(t *testing.T) {
@@ -45,7 +46,7 @@ func TestAuthorizeGoogleCardDAVAllowsClientRotation(t *testing.T) {
 		OAuth:   config.OAuthConfig{ClientSecrets: secrets},
 	}
 	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
-	mgr, err := carddav.NewGoogleOAuthManager(secrets, cfg.TokensDir(), "", "person@example.com", nil)
+	mgr, err := carddav.NewGoogleOAuthManagerWithCredentials(t.Context(), config.OAuthApp{ClientSecrets: secrets}, cfg.TokensDir(), config.OAuthTokenCommands{}, "", "person@example.com", nil)
 	required.NoError(err)
 	required.NoError(os.MkdirAll(filepath.Dir(mgr.TokenPath("person@example.com")), 0700))
 	oldToken := []byte(`{"access_token":"synthetic-old-access","client_id":"previous-client","scopes":["https://www.googleapis.com/auth/carddav"]}`)
@@ -64,4 +65,24 @@ func TestAuthorizeGoogleCardDAVAllowsClientRotation(t *testing.T) {
 			assert.Equal(t, oldToken, unchanged)
 		})
 	}
+}
+
+func TestAuthorizeGoogleCardDAVReportsTokenStoreReadFailure(t *testing.T) {
+	required := require.New(t)
+	dir := t.TempDir()
+	secrets := filepath.Join(dir, "client.json")
+	required.NoError(os.WriteFile(secrets, []byte(`{"web":{"client_id":"synthetic-client","client_secret":"synthetic-secret","auth_uri":"https://accounts.example/authorize","token_uri":"https://accounts.example/token","redirect_uris":["http://localhost"]}}`), 0600))
+	commands := config.OAuthTokenCommands(testutil.SecretStoreFixture(t))
+	commands.ReadCommand = testutil.SecretCommand(t, "fail")
+	cfg := &config.Config{
+		HomeDir: dir,
+		Data:    config.DataConfig{DataDir: dir},
+		OAuth:   config.OAuthConfig{ClientSecrets: secrets, Tokens: commands},
+	}
+	cmd := newAuthorizeGoogleCardDAVCmd()
+	cmd.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
+
+	err := cmd.RunE(cmd, []string{"person@example.com"})
+	required.ErrorContains(err, "inspect dedicated Google Contacts token")
+	required.NotContains(err.Error(), "OAuth client secrets file not accessible")
 }

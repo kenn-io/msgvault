@@ -17,7 +17,7 @@ func init() {
 func newDraftGetCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "draft-get (<draft-id> | --conversation <conversation-id>)",
-		Short: "Read a managed draft, or list a chat conversation's local drafts",
+		Short: "Read a managed draft or list a chat's local drafts",
 		Args: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 && !cmd.Flags().Changed("conversation") {
 				return errors.New("requires a draft ID or --conversation")

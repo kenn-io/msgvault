@@ -72,6 +72,11 @@ func newLifecycleCommand(name string, hidden bool) *cobra.Command {
 		}
 	case statusValue:
 		cmd.Short = "Show msgvault daemon status"
+		cmd.Long = `Report the daemon for this machine's archive: URL, pid, version, API
+schema, and uptime, plus vector and operation health when it answers.
+Prints "No msgvault daemon is running." when there is none and exits 0
+either way. It never checks [remote].url. Text output only.`
+		cmd.Example = "  msgvault daemon status"
 		cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 			state := invocationFromCommand(cmd)
 			if state == nil || state.cfg == nil {
@@ -122,7 +127,10 @@ func newDaemonCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "daemon",
 		Short: "Manage the background daemon",
-		Args:  cobra.NoArgs,
+		Long: `The daemon owns the archive. Commands that need it start it on demand and
+reuse it. 'msgvault serve' runs it in the foreground instead.`,
+		Example: `  msgvault daemon status
+  msgvault daemon restart`,
 	}
 	for _, name := range []string{"start", statusValue, "stop", "restart"} {
 		cmd.AddCommand(newLifecycleCommand(name, false))

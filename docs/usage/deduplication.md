@@ -27,19 +27,28 @@ Survivor selection is deterministic and explainable, and the reasoning is printe
 
 1. Source type, following `--prefer` or the default order `gmail,imap,msmail,mbox,emlx,hey`.
 2. Presence of the complete raw MIME payload.
-3. More attachments.
-4. An attachment-presence signal when attachment counts tie.
-5. A larger payload.
-6. Higher source metadata quality.
-7. Richer label or folder metadata.
-8. Earlier archive timestamp.
-9. A stable row ID, as the final tie-breaker.
+3. Fewer Apple Mail attachment placeholders.
+4. More attachments.
+5. An attachment-presence signal when attachment counts tie.
+6. A larger payload.
+7. Higher source metadata quality.
+8. Richer label or folder metadata.
+9. Earlier archive timestamp.
+10. A stable row ID, as the final tie-breaker.
 
 Earlier rules win outright; later rules apply only when all earlier ones tie.
 The attachment-count, attachment-presence, and payload-size rules apply only
 when every eligible copy has raw MIME and all their normalized MIME hashes
 match. A shared `Message-ID` alone cannot make those payload-completeness
 signals authoritative.
+
+The placeholder rule handles Apple Mail `.partial.emlx` copies, where an
+attachment part carries an `X-Apple-Content-Length` header instead of its
+bytes, next to a copy with some of those attachments restored. It applies only
+in `Message-ID` groups where every eligible copy from the preferred source type
+has raw MIME that parses into the same parts with the same headers and content,
+except at placeholder parts. Copies that restore the same part must restore the
+same bytes. Otherwise the group skips this rule.
 
 Source metadata quality counts three independent facts, one point each: a
 native Gmail, IMAP, or Microsoft Mail message ID, threading evidence, and an
@@ -64,15 +73,18 @@ flowchart TD
     C --> E[1. Source preference]
     D --> E
     E --> F[2. Raw MIME present]
-    F --> G{All eligible normalized MIME hashes match?}
-    G -- Yes --> H[3. Attachment count]
-    H --> I[4. Attachment presence]
-    I --> J[5. Payload size]
-    J --> K[6. Source metadata quality]
+    F --> P{Apple Mail copies match outside placeholders?}
+    P -- Yes --> Q[3. Fewer attachment placeholders]
+    P -- No --> G
+    Q --> G{All eligible normalized MIME hashes match?}
+    G -- Yes --> H[4. Attachment count]
+    H --> I[5. Attachment presence]
+    I --> J[6. Payload size]
+    J --> K[7. Source metadata quality]
     G -- No --> K
-    K --> L[7. Label or folder richness]
-    L --> M[8. Earlier archive timestamp]
-    M --> N[9. Stable row ID]
+    K --> L[8. Label or folder richness]
+    L --> M[9. Earlier archive timestamp]
+    M --> N[10. Stable row ID]
 ```
 
 ## Choosing a Scope

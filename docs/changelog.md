@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-08"
+last_edited: "2026-10-09"
 title: Changelog
 description: Release history for msgvault
 ---
@@ -11,6 +11,13 @@ All notable changes to msgvault, grouped by release.
 - Remote edits update source-owned values on published CardDAV imports while preserving unrelated local values. Edits that would overwrite another owner create a conflict.
 - [Everything search](web-ui.md#recording-matches) shows recording transcript matches for plain-word Full text queries and supports one Person filter. API schema 3.11.0 adds `participant_id` to media search, `GET /media/search/status`, source filename, title and date to media search results and optional `conversation_title` to message detail.
 
+- Root help groups commands by task and includes start-here commands. Subcommand
+  help lists global flags compactly and explains common ID and output paths.
+- Unknown subcommands under help-only groups now exit 1 with suggestions;
+  `person find` previously printed help and exited 0.
+- `export-messages` reports missing `--start` and `--end` before contacting the
+  daemon.
+
 - Go programs can use msgvault as a library through `go.kenn.io/msgvault/pkg/archive`.
   It sets up and opens SQLite or PostgreSQL archives, runs the Slack and Discord
   importers with caller-supplied credentials, purges channels and sources, and
@@ -20,6 +27,7 @@ All notable changes to msgvault, grouped by release.
 - [Read-only remote clients](guides/remote-deployment.md#read-only-remote-clients) get separate reader credentials with response limits and optional collection writes.
 - Single-message [export-eml](cli-reference.md#export-eml) refuses ambiguous provider IDs for owner and reader keys.
 - Consume streamed [export-attachment](cli-reference.md#export-attachment) stdout only after the command succeeds.
+- [Omi](usage/meetings.md#omi) conversations can sync into the local archive with summaries, action items, and speaker transcripts. Hosted and self-hosted sources share resumable sync and per-key request pacing.
 
 - Agent tokens grant scoped archive reads through the remote CLI and MCP, with optional `--expires`. Search responses report index uncertainty; owner searches retain automatic index repair.
 
@@ -41,6 +49,13 @@ All notable changes to msgvault, grouped by release.
 
 - `list-accounts` and `embeddings list` keep working while a sync, import, or
   embedding build runs. Accounts whose counts aren't ready yet show `pending`.
+- `search --help` explains the fts, vector and hybrid modes, and an empty
+  keyword search suggests `--mode hybrid` when embeddings can answer it. Search
+  adds `--snippet`, `--sort date` for semantic pages, and a `filename:` operator
+  that needs daemon API 3.14.0. `show` aliases `show-message`, which gains
+  `--body-only` and `--strip-quoted`, and `show-thread` reads a conversation
+  oldest first with quoted history removed. The reading view keeps complete
+  URLs and uncertain wrapped headers.
 
 - Granola and Circleback save meetings through the same path as Muesli, Notion,
   and meeting file import. Organizer and attendee names are trimmed, a value

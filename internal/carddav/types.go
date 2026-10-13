@@ -40,13 +40,16 @@ type ClientOptions struct {
 	Username         string
 	Password         string
 	// BearerToken obtains a current token after the request target is validated.
-	BearerToken      func(context.Context) (string, error)
-	RequestTimeout   time.Duration
-	OperationTimeout time.Duration
-	ResponseBytes    int64
-	OperationBytes   int64
-	Resolver         *net.Resolver
-	DialContext      func(context.Context, string, string) (net.Conn, error)
+	BearerToken func(context.Context) (string, error)
+	// BearerTokenRejected runs when the server answers a bearer request with
+	// 401, so a token cache can stop reusing a token the server refuses.
+	BearerTokenRejected func()
+	RequestTimeout      time.Duration
+	OperationTimeout    time.Duration
+	ResponseBytes       int64
+	OperationBytes      int64
+	Resolver            *net.Resolver
+	DialContext         func(context.Context, string, string) (net.Conn, error)
 	// TrustedOrigin and TrustedAddresses are operator-supplied local policy.
 	// The pins apply only to requests whose origin matches TrustedOrigin.
 	// Exact private pins replace DNS only for this HTTPS credential origin.

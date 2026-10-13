@@ -11,6 +11,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"time"
 
 	"go.kenn.io/kit/search/rrf"
 
@@ -247,15 +248,12 @@ func (b *Backend) fusedSearchExact(ctx context.Context, req vector.FusedRequest)
 	if req.Filter.HasAttachment != nil {
 		hasAttachment = sql.NullBool{Valid: true, Bool: *req.Filter.HasAttachment}
 	}
-	// Format date bounds with the canonical SQLite datetime layout used
-	// elsewhere in the repo so boundary comparisons on the text sent_at
-	// column agree with the existing SQLite query paths.
 	var after, before sql.NullString
 	if req.Filter.After != nil {
-		after = sql.NullString{Valid: true, String: req.Filter.After.Format(sqliteDatetimeFormat)}
+		after = sql.NullString{Valid: true, String: req.Filter.After.UTC().Format(time.RFC3339Nano)}
 	}
 	if req.Filter.Before != nil {
-		before = sql.NullString{Valid: true, String: req.Filter.Before.Format(sqliteDatetimeFormat)}
+		before = sql.NullString{Valid: true, String: req.Filter.Before.UTC().Format(time.RFC3339Nano)}
 	}
 	var largerThan, smallerThan sql.NullInt64
 	if req.Filter.LargerThan != nil {
@@ -354,6 +352,21 @@ func (b *Backend) fusedSearchExact(ctx context.Context, req vector.FusedRequest)
 			sqliteutil.UnicodeLowerFunction, sqliteutil.UnicodeLowerFunction)
 	}
 
+	filenameSQL := ""
+	var filenamePatterns string
+	if len(req.Filter.FilenameSubstrings) > 0 {
+		patterns := make([]string, len(req.Filter.FilenameSubstrings))
+		for i, term := range req.Filter.FilenameSubstrings {
+			patterns[i] = "%" + escapeLikeSubject(term) + "%"
+		}
+		buf, err := json.Marshal(patterns, json.Deterministic(true))
+		if err != nil {
+			return nil, false, fmt.Errorf("encode filename filters: %w", err)
+		}
+		filenamePatterns = string(buf)
+		filenameSQL = fmt.Sprintf(`AND NOT EXISTS (SELECT 1 FROM json_each(:filename_patterns) fp WHERE NOT EXISTS (SELECT 1 FROM attachments fa WHERE fa.message_id = m.id AND %s(fa.filename) LIKE %s(fp.value) ESCAPE '\'))`, sqliteutil.UnicodeLowerFunction, sqliteutil.UnicodeLowerFunction)
+	}
+
 	filterWhere := fmt.Sprintf(`%s
        AND (:message_ids IS NULL OR m.id IN (SELECT value FROM json_each(:message_ids)))
        AND (:source_ids IS NULL OR m.source_id IN (SELECT value FROM json_each(:source_ids)))
@@ -366,8 +379,8 @@ func (b *Backend) fusedSearchExact(ctx context.Context, req vector.FusedRequest)
 	   %s
 	   %s
        AND (:has_attachment IS NULL OR m.has_attachments = :has_attachment)
-       AND (:after IS NULL OR m.sent_at >= :after)
-       AND (:before IS NULL OR m.sent_at < :before)
+       AND (:after IS NULL OR julianday(m.sent_at) >= julianday(:after))
+       AND (:before IS NULL OR julianday(m.sent_at) < julianday(:before))
        AND (:larger_than IS NULL OR m.size_estimate > :larger_than)
        AND (:smaller_than IS NULL OR m.size_estimate < :smaller_than)
        AND (:subject_patterns IS NULL OR NOT EXISTS (
@@ -376,7 +389,7 @@ func (b *Backend) fusedSearchExact(ctx context.Context, req vector.FusedRequest)
 	   %s
 	   %s`,
 		store.LiveMessagesWhere("m", true), conversationSQL, messageTypeSQL, senderGroupSQL, senderExactGroupSQL,
-		recipientAnyGroupSQL, toGroupSQL, ccGroupSQL, bccGroupSQL, labelGroupSQL, listIDSQL)
+		recipientAnyGroupSQL, toGroupSQL, ccGroupSQL, bccGroupSQL, labelGroupSQL, listIDSQL+"\n"+filenameSQL)
 	var accountArgs []any
 	if clauses := search.AccountScopeConditionsBound(req.Filter.AccountScopes, "m", func(v any) string {
 		name := fmt.Sprintf("account_scope_%d", len(accountArgs))
@@ -516,6 +529,10 @@ SELECT message_id, rrf_score, bm25_score, vector_score,
 			sql.Named("list_id_exact_groups", exactListIDGroups),
 		)
 	}
+	if filenameSQL != "" {
+		filterArgs = append(filterArgs, sql.Named("filename_patterns", filenamePatterns))
+	}
+
 	filterArgs = append(filterArgs, senderGroupArgs...)
 	filterArgs = append(filterArgs, senderExactGroupArgs...)
 	filterArgs = append(filterArgs, recipientAnyGroupArgs...)

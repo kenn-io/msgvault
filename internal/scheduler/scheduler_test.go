@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -3502,5 +3503,77 @@ func TestScheduledVectorJobsHoldGateUnderOwnLabel(t *testing.T) {
 		s.cron.Entry(s.documentVector.entry).Job.Run()
 		synctest.Wait()
 		assert.Equal(t, []string{"scheduled embedding", "scheduled document indexing"}, tracker.labels)
+	})
+}
+
+func TestGenericJobDefersUntilNextTrigger(t *testing.T) {
+	for _, joined := range []bool{false, true} {
+		t.Run(strconv.FormatBool(joined), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				s := New(nil).WithLogger(slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil)))
+				defer func() { <-s.Stop().Done() }()
+				runs := 0
+				require.NoError(t, s.AddJob(Job{Name: "deferred", Schedule: "0 0 1 1 *", MaxRuntime: time.Minute, Run: func(ctx context.Context) error {
+					runs++
+					if runs == 1 {
+						return errors.New("synthetic previous failure")
+					}
+					<-ctx.Done()
+					if joined {
+						return errors.Join(ErrDeferUntilNextTrigger, errors.New("synthetic independent failure"))
+					}
+					return ErrDeferUntilNextTrigger
+				}}))
+				require.Error(t, s.TriggerJob("deferred"))
+				_, err := s.StartJob("deferred")
+				require.NoError(t, err)
+				time.Sleep(5 * time.Minute)
+				synctest.Wait()
+				assert.Equal(t, 2, runs)
+				status := s.JobStatus()[0]
+				assert.False(t, status.Pending)
+				assert.False(t, status.Running)
+				if joined {
+					assert.Contains(t, status.LastError, "synthetic independent failure")
+				} else {
+					assert.Empty(t, status.LastError)
+				}
+			})
+		})
+	}
+}
+
+func TestGenericJobYieldWithProgressClearsEarlierFailure(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		require := require.New(t)
+		s := New(nil).WithLogger(slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil)))
+		defer func() { <-s.Stop().Done() }()
+		runs := 0
+		release := make(chan struct{})
+		require.NoError(s.AddJob(Job{Name: "bounded", Schedule: "0 0 1 1 *", MaxRuntime: time.Minute, Run: func(ctx context.Context) error {
+			runs++
+			switch runs {
+			case 1:
+				return errors.New("synthetic earlier failure")
+			case 2:
+				jobctx.RecordProgress(ctx)
+				<-ctx.Done()
+				return nil
+			default:
+				<-release
+				return nil
+			}
+		}}))
+		require.Error(s.TriggerJob("bounded"))
+		mustStartJob(t, s, "bounded")
+		time.Sleep(2 * time.Minute)
+		synctest.Wait()
+
+		status := s.JobStatus()[0]
+		assert.Equal(t, 3, runs, "the yielded pass queues its follow-up")
+		assert.True(t, status.Running)
+		assert.Empty(t, status.LastError, "a pass that saved progress clears the earlier failure")
+		close(release)
+		synctest.Wait()
 	})
 }

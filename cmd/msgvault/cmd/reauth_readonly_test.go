@@ -20,7 +20,7 @@ type scopedMockReauthorizer struct {
 	scopes []string
 }
 
-func (m *scopedMockReauthorizer) GrantedScopes(string) []string {
+func (m *scopedMockReauthorizer) GrantedScopes(context.Context, string) []string {
 	return append([]string(nil), m.scopes...)
 }
 

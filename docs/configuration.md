@@ -464,6 +464,7 @@ probe, consent, build, and recovery flow.
 | Key | Default | Description |
 |---|---|---|
 | `client_secrets` | — | Path to Google OAuth `client_secret.json` for browser OAuth flows |
+| `client_secrets_command` | — | Command argv that prints the client JSON; mutually exclusive with `client_secrets` |
 | `service_account_key` | — | Path to a Google service account key JSON for Workspace domain-wide delegation |
 
 #### `[oauth.apps.<name>]`
@@ -473,6 +474,7 @@ Named OAuth apps for Google Workspace organizations that require their own OAuth
 | Key | Default | Description |
 |---|---|---|
 | `client_secrets` | — | Path to the org's `client_secret.json` |
+| `client_secrets_command` | — | Command argv that prints this app's client JSON; mutually exclusive with `client_secrets` |
 | `service_account_key` | — | Path to the org's Google service account key JSON |
 
 See [OAuth Setup: Google Workspace Accounts](/docs/guides/oauth-setup/#google-workspace-accounts) for when and why you need named apps.
@@ -485,6 +487,105 @@ calls. The older `export-discord` compatibility command has the same read-only
 provider behavior.
 
 When `service_account_key` is configured, `msgvault add-account <email>` validates the delegated Gmail profile and registers the account without storing a per-user refresh token. The service account key file must be owner-only on Unix-like systems, for example `chmod 600 /path/to/service-account.json`.
+
+#### Command-backed Google credentials and tokens
+
+Use commands to keep Google client credentials and tokens in your secret store.
+Gmail, Calendar, Drive, and Google Contacts use the same configuration.
+
+```toml
+[oauth]
+client_secrets_command = ["pass", "show", "msgvault/google-client"]
+
+[oauth.tokens]
+read_command = ["/path/to/token-store", "read"]
+write_command = ["/path/to/token-store", "write"]
+delete_command = ["/path/to/token-store", "delete"]
+list_command = ["/path/to/token-store", "list"]
+```
+
+`client_secrets_command` prints the complete Google `client_secret.json` on
+stdout. You can also set it under `[oauth.apps.<name>]`. Each application must
+choose either `client_secrets` or `client_secrets_command`. Named applications
+do not inherit the default application's client credentials. Service account
+keys remain files.
+
+Token commands replace Google token files for every application, including
+separate Google Contacts authorizations. Configure all four commands together,
+or omit all four to keep file storage. Other providers keep their existing
+storage. msgvault validates configuration without executing commands.
+
+| Command | Input | Successful output or effect |
+|---|---|---|
+| `read_command` | Account and namespace environment variables | Complete msgvault token JSON on stdout |
+| `write_command` | Token JSON on stdin; account and namespace environment variables | Save the exact bytes received |
+| `delete_command` | Account and namespace environment variables | Remove the token; succeed if already absent |
+| `list_command` | Namespace environment variable | JSON array of every stored account spelling in this namespace, such as `["reader@example.com"]`; use `[]` when empty |
+
+If a read command returns malformed JSON or no token fields, fix `read_command` or the stored token JSON and retry. msgvault leaves the stored record unchanged.
+
+Token commands receive these environment variables:
+
+| Variable | Meaning |
+|---|---|
+| `MSGVAULT_TOKEN_NAMESPACE` | Token namespace: empty for Gmail, Calendar, and Drive tokens; `carddav-google/<hash>` for a separate Google Contacts authorization, where `<hash>` is the lowercase hex SHA-256 of the OAuth app name (empty for the default app) |
+| `MSGVAULT_ACCOUNT` | Account spelling used for this token; empty for listing |
+
+Key each record by namespace and account. These values do not depend on the data
+directory or machine, so moving the data directory or reading the store from
+another machine finds the same records. Preserve
+namespaces: a Google Contacts token can have the same account as its Gmail token
+in a different namespace. Do not collapse distinct account spellings or
+namespaces in a wrapper.
+
+Only token reads may exit with status **3** to report a missing record. Other
+nonzero exits fail the operation. Successful empty or malformed JSON is an error.
+If `write_command` fails after a token refresh, the sync or request that needed
+the token fails instead of continuing with a token msgvault couldn't save.
+Listing must include credentials without registered source rows so Gmail alias
+checks can detect them. Read or listing failures stop those decisions.
+
+Commands are executable-and-argument arrays. msgvault does not invoke a shell or
+expand tildes, environment variables, redirects, or pipes. Executables use `PATH`;
+relative executables use the process working directory. Use absolute paths for
+scripts that must run from the daemon. A command that cannot start, such as a
+missing or non-executable program, is a configuration error; for
+`client_secrets_command`, msgvault asks you to fix the OAuth app settings.
+Commands inherit the user's environment and run with the user's privileges. They must work unattended for scheduled sync.
+
+Each invocation has a 30-second deadline and a 1 MiB stdout limit, and stops
+when the operation that needs it is cancelled. When msgvault's stderr is a
+terminal, a command's stderr is shown there; otherwise, including in the daemon,
+msgvault discards it. msgvault never includes command output or arguments in its
+errors. Write and delete stdout is ignored.
+Pass secrets through stdin rather than placing them in command arguments.
+
+Google Contacts reuses an access token until it expires, so the daemon runs these
+commands about once per token lifetime rather than for every contacts request.
+Saving or authorizing a Google Contacts connection, or Google rejecting the
+token, reads the stored token again.
+
+Keep token JSON unchanged, including `scopes` and `client_id`. A write followed by
+a read must return the same bytes. msgvault uses private local lock files to
+coordinate its processes and compares snapshots before replacing a token. It
+never writes secret temporary files in command mode.
+
+The lock files coordinate only processes on one machine. msgvault reads the
+token to compare it and then calls `write_command` as a separate step, so a
+store cannot make that sequence atomic. If msgvault runs on more than one
+machine against the same store, a refresh on one machine can overwrite a
+sign-in saved by another at the same moment. Run msgvault against a store from
+only one machine at a time. Other programs that change the store need to avoid
+writing while msgvault runs.
+
+Configure the command backend separately on each machine. To migrate a file
+credential, move its JSON into your store under its namespace and account
+and verify a sync before removing the old file. Changing configuration leaves
+existing plaintext files in place; msgvault does not migrate them automatically.
+`export-token` reads the selected backend, and the receiving server's token-upload
+endpoint writes its configured backend. Configure the receiving backend before
+uploading. Client credentials remain separately configured; setup does not put
+command output into a NAS bundle.
 
 ### `[carddav]` and `[carddav_connections.<name>]` {#carddav}
 
@@ -1362,6 +1463,37 @@ max_media_mb = 500
 | `max_media_mb` | `250` | Per-attachment download cap in MiB |
 | `accounts_config` | — | Per-account overrides of `media` and `max_media_mb`, keyed by the Teams account email |
 
+### Omi Sources
+
+Use one `[[omi]]` entry per hosted or self-hosted Omi account. Register each
+entry with `msgvault add-omi`; see [Omi setup](usage/meetings.md#omi).
+Use HTTPS for non-loopback backends. Plain HTTP is accepted only for loopback
+hosts such as `localhost`, `127.0.0.1`, or `[::1]`.
+
+```toml
+[[omi]]
+identifier = "omi-personal"
+account_email = "you@example.com"
+api_key = "omi_dev_..."
+# base_url = "http://localhost:8000" # self-hosted backend root
+schedule = "0 */6 * * *"
+enabled = true
+```
+
+| Field | Default | Description |
+|---|---|---|
+| `identifier` | `default` for a single entry | Stable source label; required and unique when multiple entries exist |
+| `account_email` | required | Primary account identity; independent of the source label |
+| `api_key` | required for add/sync | Developer API key with `conversations:read` on this backend |
+| `base_url` | `https://api.omi.me` | HTTPS backend root, or HTTP loopback root, with optional proxy prefix; omit `/v1/dev`; credentials, query, and fragment are rejected |
+| `schedule` | empty | Five-field cron expression; empty disables daemon scheduling |
+| `enabled` | `false` | Enables scheduled sync when a schedule is present |
+
+Explicit CLI sync can run entries regardless of `enabled`. Credentials belong
+in the daemon's configuration, including when the CLI connects remotely.
+
+Omi sync gives each source a resumable five-minute pass. Schedules continue unfinished creation-date windows; a provider cooldown beyond a pass waits for the next configured trigger. Manual commands report how to continue. See [Omi sync behavior](usage/meetings.md#how-omi-sync-runs).
+
 ### Granola Sources
 
 Granola meeting-notes sync is configured with top-level `[[granola]]` entries.
@@ -1978,6 +2110,7 @@ home; `[log].dir` can override the log location.
 | `tokens/server-api-key` | Persisted daemon API key, reused on later loopback and non-loopback starts |
 | `logs/` | Structured log files (when [file logging](/docs/configuration/#log) is enabled) |
 | `analytics/` | Parquet cache files for Web UI and TUI analytical views |
+| `omi/` | Omi request pacing and provider cooldowns per backend and API key, shared by scheduled and manual syncs |
 | `telemetry-install.json` | Random anonymous install ID for [telemetry](#telemetry); created only while telemetry is on |
 | `telemetry-screen-views.json` | Current UTC day's screen claims shared by web and terminal UIs; created only while telemetry is on |
 

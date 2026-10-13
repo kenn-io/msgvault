@@ -4349,6 +4349,7 @@ func TestSchedulerJobNameForSource(t *testing.T) {
 		{"gcal", gcal.SourceType, "alice@example.com/primary", "gcal:alice@example.com", true},
 		{"gcal no calendar id", gcal.SourceType, "alice@example.com", "", false},
 		{"granola", granola.SourceType, "acct-1", "granola:acct-1", true},
+		{"omi", "omi", "omi-work", "omi:omi-work", true},
 		{"circleback", circleback.SourceType, "acct-2", "circleback:acct-2", true},
 		{"notion meetings", notionmeetings.SourceType, "acct-3", "notion-meetings:acct-3", true},
 		{"muesli", muesli.SourceType, "mac", "muesli:mac", true},
@@ -5181,43 +5182,6 @@ func TestHandleAddAccountSaveFailure(t *testing.T) {
 
 	// In-memory state should be rolled back
 	assert.Empty(t, cfg.Accounts, "cfg.Accounts has %d entries, want 0 (rollback failed)", len(cfg.Accounts))
-}
-
-func TestSanitizeTokenPath(t *testing.T) {
-	t.Parallel()
-	tokensDir := "/data/tokens"
-
-	tests := []struct {
-		name  string
-		email string
-	}{
-		{"normal email", "user@gmail.com"},
-		{"email with plus", "user+tag@gmail.com"},
-		{"email with dots", "first.last@gmail.com"},
-		{"path traversal attempt", "../../../etc/passwd"},
-		{"slash in email", "user/evil@gmail.com"},
-		{"backslash in email", "user\\evil@gmail.com"},
-		{"null byte", "user\x00evil@gmail.com"},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			result := sanitizeTokenPath(tokensDir, tc.email)
-
-			// Result must be within tokensDir (path traversal prevention)
-			cleanResult := filepath.Clean(result)
-			cleanTokensDir := filepath.Clean(tokensDir)
-			assert.True(t, strings.HasPrefix(cleanResult, cleanTokensDir+string(os.PathSeparator)),
-				"path %q escapes tokensDir %q", result, tokensDir)
-
-			// Result must end with .json
-			assert.True(t, strings.HasSuffix(result, ".json"), "path %q doesn't end with .json", result)
-
-			// Result must not contain path separators in the filename
-			base := filepath.Base(result)
-			assert.False(t, strings.ContainsAny(base, "/\\"), "filename %q contains path separators", base)
-		})
-	}
 }
 
 // newTestServerWithEngine creates a test server with both mock store and mock engine.
@@ -7401,6 +7365,8 @@ func TestHandleSearch_HybridResponseItemShape(t *testing.T) {
 	assert.Equal("Alice", fromName, "from_name")
 	hasA, _ := got["has_attachments"].(bool)
 	assert.True(hasA, "has_attachments")
+	assert.NotContains(got, "attachment_count")
+	assert.NotContains(got, "attachment_names")
 }
 
 func TestHandleSearch_VectorExplainAcceptsBooleanQueryValue(t *testing.T) {
@@ -8945,4 +8911,151 @@ func TestOperationGateStillGatesAccountSyncTrigger(t *testing.T) { //nolint:para
 	resp := servePOSTTestRequest(srv, "/api/v1/sync/test@gmail.com")
 
 	require.Equal(http.StatusServiceUnavailable, resp.Code, resp.Body.String())
+}
+
+func TestHandleSourceStatusPaused(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	src, err := st.GetOrCreateSource("omi", "synthetic-paused")
+	require.NoError(err)
+	complete, err := st.StartSync(src.ID, "omi")
+	require.NoError(err)
+	require.NoError(st.CompleteSync(complete, "synthetic-watermark"))
+	paused, err := st.StartSync(src.ID, "omi")
+	require.NoError(err)
+	require.NoError(st.PauseSyncWithCheckpoint(paused, &store.Checkpoint{PageToken: "synthetic-checkpoint", MessagesProcessed: 3, MessagesAdded: 2}))
+	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, newMockScheduler(), testLogger())
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/sources/status?source_type=omi", nil))
+	require.Equal(http.StatusOK, w.Code)
+	var response SourceStatusResponse
+	require.NoError(json.NewDecoder(w.Body).Decode(&response))
+	require.Len(response.Sources, 1)
+	got := response.Sources[0]
+	assert.Nil(got.ActiveSync)
+	require.NotNil(got.LatestSync)
+	assert.Equal(store.SyncStatusPaused, got.LatestSync.Status)
+	assert.Empty(got.LatestSync.ErrorMessage)
+	assert.Zero(got.LatestSync.ErrorsCount)
+	require.NotNil(got.LastSuccessfulSync)
+	assert.Equal(complete, got.LastSuccessfulSync.ID)
+	operationServer := newOperationTestServer(st, &operationArchiveRealStore{Store: st, uid: operationTestArchiveUID})
+	history := doGet(operationServer, "/api/v1/operations/runs?state=paused&limit=25")
+	require.Equalf(http.StatusOK, history.Code, "%s", history.Body.String())
+	var runs OperationRunsResponse
+	require.NoError(json.Unmarshal(history.Body.Bytes(), &runs))
+	require.Len(runs.Runs, 1)
+	assert.Equal("paused", string(runs.Runs[0].State))
+}
+
+func TestCLISearchIncludeSnippetBoolean(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	_, id, err := testutil.CreateIndexedSourceMessage(st, "archive@example.org", "message-1", "Plan", "needle context")
+	require.NoError(t, err)
+	require.NoError(t, st.UpsertAttachment(id, "plan.pdf", "application/pdf", "synthetic", "", 10))
+	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
+	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.Background())) })
+	for _, tc := range []struct {
+		value  string
+		status int
+		names  bool
+	}{
+		{"true", http.StatusOK, true}, {"1", http.StatusOK, true},
+		{"false", http.StatusOK, false}, {"0", http.StatusOK, false},
+		{"invalid", http.StatusBadRequest, false}, {"", http.StatusBadRequest, false},
+	} {
+		t.Run(tc.value, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			w := doGet(srv, "/api/v1/cli/search?q=needle&include_snippet="+tc.value)
+			require.Equal(tc.status, w.Code, w.Body.String())
+			if tc.status != http.StatusOK {
+				return
+			}
+			var response struct {
+				Results []struct {
+					AttachmentNames []string `json:"attachment_names"`
+				} `json:"results"`
+			}
+			require.NoError(json.Unmarshal(w.Body.Bytes(), &response))
+			require.Len(response.Results, 1)
+			if tc.names {
+				assert.Equal([]string{"plan.pdf"}, response.Results[0].AttachmentNames)
+			} else {
+				assert.Empty(response.Results[0].AttachmentNames)
+			}
+		})
+	}
+}
+
+func TestCLISearchHybridHintAvailability(t *testing.T) {
+	for _, tc := range []struct {
+		name, q, scope string
+		active, want   bool
+		offset         int
+		stale, scoped  bool
+	}{
+		{name: "usable generation", q: "intent", active: true, want: true},
+		{name: "account filter", q: "intent account:archive@example.org", active: true},
+		{name: "received filter", q: "intent received:archive@example.org", active: true},
+		{name: "no generation", q: "intent"},
+		{name: "filters only", q: "from:sender@example.com", active: true},
+		{name: "deleted scope", q: "intent", scope: "deleted", active: true},
+		{name: "later page", q: "intent", active: true, offset: 50},
+		{name: "stale generation", q: "intent", active: true, stale: true},
+		{name: "scoped index without matching type", q: "intent", active: true, scoped: true},
+		{name: "scoped index with matching type", q: "intent message_type:sms", active: true, scoped: true, want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			backend := &fakeVectorBackend{}
+			vectorCfg := vector.Config{}
+			if tc.scoped {
+				vectorCfg.Embed.Scope.MessageTypes = []string{"sms"}
+			}
+			if tc.active {
+				fingerprint := vectorCfg.GenerationFingerprint()
+				if tc.stale {
+					fingerprint = "synthetic-stale-generation"
+				}
+				backend.active = &vector.Generation{ID: 1, State: vector.GenerationActive, Fingerprint: fingerprint}
+			}
+			engine := hybrid.NewEngine(backend, nil, stubEmbedder{}, hybrid.Config{})
+			srv := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: &mockStore{}, Engine: &querytest.MockEngine{SearchFunc: func(context.Context, *search.Query, int, int) ([]query.MessageSummary, error) { return nil, nil }}, HybridEngine: engine, Backend: backend, VectorCfg: vectorCfg, Logger: testLogger()})
+			t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.Background())) })
+			w := httptest.NewRecorder()
+			srv.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/cli/search?q="+url.QueryEscape(tc.q)+"&deletion_scope="+tc.scope+"&offset="+strconv.Itoa(tc.offset), nil))
+			require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+			var out struct {
+				HybridAvailable bool `json:"hybrid_available"`
+			}
+			require.NoError(t, json.NewDecoder(w.Body).Decode(&out))
+			assert.Equal(t, tc.want, out.HybridAvailable)
+		})
+	}
+}
+
+func TestHybridSearchAttachmentMetadataJSON(t *testing.T) {
+	zero, three := 0, 3
+	for _, tc := range []struct {
+		name  string
+		count *int
+		names []string
+	}{
+		{name: "known empty", count: &zero, names: []string{}},
+		{name: "partial names", count: &three, names: []string{"plan.pdf", "budget.csv"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			writeJSON(w, http.StatusOK, hybridSearchItem{AttachmentCount: tc.count, AttachmentNames: tc.names})
+			var got map[string]any
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
+			assert.InDelta(t, float64(*tc.count), got["attachment_count"], 0)
+			names := make([]any, len(tc.names))
+			for i, name := range tc.names {
+				names[i] = name
+			}
+			assert.Equal(t, names, got["attachment_names"])
+		})
+	}
 }

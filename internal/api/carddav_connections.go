@@ -252,7 +252,7 @@ func (c *CardDAVController) storedAccountID(ctx context.Context) (int64, error) 
 	return account.ID, nil
 }
 
-func (c *CardDAVController) reconcileGoogleSchedules(entry cardDAVGoogleAuthorization) error {
+func (c *CardDAVController) reconcileGoogleSchedules(ctx context.Context, entry cardDAVGoogleAuthorization) error {
 	root := c.root()
 	root.saveMu.Lock()
 	defer root.saveMu.Unlock()
@@ -274,7 +274,7 @@ func (c *CardDAVController) reconcileGoogleSchedules(entry cardDAVGoogleAuthoriz
 	for name := range names {
 		selected, err := root.Select(name, true)
 		if err == nil {
-			err = selected.reconcileCurrentSchedule()
+			err = selected.reconcileCurrentSchedule(ctx)
 		}
 		failures = append(failures, err)
 	}

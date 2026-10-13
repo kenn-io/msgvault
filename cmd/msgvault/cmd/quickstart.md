@@ -7,6 +7,8 @@ explore, search, and manage their archive.
 
 All data is stored in `~/.msgvault/` by default (override with `MSGVAULT_HOME`).
 
+For current search and reading options, run `msgvault search --help`, `msgvault show --help`, and `msgvault show-thread --help`.
+
 ## Setup and account management
 
 ### Initialize the database

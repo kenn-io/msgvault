@@ -17,6 +17,8 @@ func newSchemaVersionCommand() *cobra.Command {
 With --database, read the configured local archive's version without migrating
 or starting a daemon. A missing archive is an error. Remote archives must be
 probed on their host; --local intentionally selects this machine's archive.`,
+		Example: `  msgvault schema-version
+  msgvault --home /path/to/archive-home schema-version --database`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) (runErr error) {
 			version := store.SchemaVersion

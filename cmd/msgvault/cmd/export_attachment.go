@@ -28,16 +28,13 @@ var exportAttachmentCmd = &cobra.Command{
 Get the content hash from 'show-message --json':
   msgvault show-message 45 --json | jq '.attachments[0].content_hash'
 
-Examples:
-  msgvault export-attachment 61ccf192b5bd358738802dc2676d3ceab856f47d26dd29681ac3d335bfd5bbd0
-  msgvault export-attachment 61ccf192... --output invoice.pdf
-
 To export all attachments from a message with original filenames, use
 'msgvault export-attachments <message-id> -o <dir>', which sanitizes
 filenames. Attachment filenames are sender-controlled: do not pass the
 JSON 'filename' field to -o (a name like ../../evil escapes the output
-directory). Use content hashes or your own fixed paths instead.
-
+directory). Use content hashes or your own fixed paths instead.`,
+	Example: `  msgvault export-attachment 61ccf192b5bd358738802dc2676d3ceab856f47d26dd29681ac3d335bfd5bbd0
+  msgvault export-attachment 61ccf192... --output invoice.pdf
   msgvault export-attachment 61ccf192... -o -       # stdout (binary)
   msgvault export-attachment 61ccf192... --base64  # stdout (base64)
   msgvault export-attachment 61ccf192... --json    # JSON with base64 data`,

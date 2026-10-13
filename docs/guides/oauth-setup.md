@@ -32,6 +32,11 @@ project. Google's [Gmail quickstart](https://developers.google.com/workspace/gma
 and [consent setup guide](https://developers.google.com/workspace/guides/configure-oauth-consent)
 are the references for current button names.
 
+The examples below use file storage. You can also use
+[command-backed Google credentials and tokens](/docs/configuration/#command-backed-google-credentials-and-tokens)
+with your secret store. That reference covers configuration, migration, and
+headless export. Apply the file inspection and removal steps below to file storage.
+
 ### Step 1: Create a Google Cloud Project
 
 1. Open [Google Cloud Console](https://console.cloud.google.com/). Sign in with

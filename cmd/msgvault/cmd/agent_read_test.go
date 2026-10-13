@@ -1,7 +1,10 @@
 package cmd
 
 import (
+	"bytes"
+	"context"
 	"log/slog"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -17,8 +20,92 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
+
+func TestShowThreadDelegatedThroughRoot(t *testing.T) {
+	requirements := require.New(t)
+	previousCheck := remoteAPISchemaCheckEnabled
+	remoteAPISchemaCheckEnabled = true
+	t.Cleanup(func() { remoteAPISchemaCheckEnabled = previousCheck })
+	st := testutil.NewTestStore(t)
+	src, id, err := testutil.CreateIndexedSourceMessage(st, "reader@example.org", "message-1", "Plan", "Synthetic reply")
+	requirements.NoError(err)
+	other, _, err := testutil.CreateIndexedSourceMessage(st, "other@example.org", "message-2", "Other", "Outside the grant")
+	requirements.NoError(err)
+	cfg := &config.Config{Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}
+	srv := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: &storeAPIAdapter{store: st}, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: slog.New(slog.DiscardHandler)})
+	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.Background())) })
+	server := httptest.NewServer(srv.Router())
+	t.Cleanup(server.Close)
+	owner, err := daemonclient.New(daemonclient.Config{URL: server.URL, APIKey: "owner", AllowInsecure: true})
+	requirements.NoError(err)
+	t.Cleanup(func() { requirements.NoError(owner.Close()) })
+	for _, tc := range []struct {
+		name, permission, wantError, wantCode string
+		sourceID                              int64
+		wantStatus                            int
+		wantCause                             error
+		oldSchema                             bool
+	}{
+		{name: "message read", permission: "message.read", sourceID: src.ID},
+		{name: "missing permission", permission: "search.read", sourceID: src.ID, wantCode: "permission_denied", wantStatus: http.StatusForbidden},
+		{name: "outside source grant", permission: "message.read", sourceID: other.ID, wantCause: store.ErrMessageNotFound},
+		{name: "old schema", permission: "message.read", sourceID: src.ID, oldSchema: true, wantError: "agent archive reads require daemon API schema"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			grant, err := owner.IssueAgentToken(t.Context(), "reader", []string{tc.permission}, []int64{tc.sourceID}, nil, time.Time{})
+			require.NoError(err)
+			tokenFile := filepath.Join(t.TempDir(), "agent.token")
+			require.NoError(os.WriteFile(tokenFile, []byte(grant.Secret), 0600))
+			endpoint := server.URL
+			if tc.oldSchema {
+				old := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.URL.Path == "/api/v1/health" {
+						w.Header().Set("Content-Type", "application/json")
+						_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"3.8.0"}`))
+						return
+					}
+					srv.Router().ServeHTTP(w, r)
+				}))
+				t.Cleanup(old.Close)
+				endpoint = old.URL
+			}
+			root := newRootCommand()
+			root.AddCommand(newShowThreadCmd())
+			root.SetArgs([]string{"--agent-url", endpoint, "--agent-token-file", tokenFile, "--agent-allow-insecure", "show-thread", strconv.FormatInt(id, 10), "--json"})
+			var stderr bytes.Buffer
+			root.SetErr(&stderr)
+			done := captureStdout(t)
+			err = executeRootContext(t.Context(), root)
+			output := done()
+			if tc.wantCause != nil {
+				require.ErrorIs(err, tc.wantCause)
+				assert.NotContains(output, "Synthetic reply")
+				return
+			}
+			if tc.wantCode != "" {
+				var apiErr *daemonclient.APIError
+				require.ErrorAs(err, &apiErr)
+				assert.Equal(tc.wantCode, apiErr.Code)
+				assert.Equal(tc.wantStatus, apiErr.Status)
+				assert.NotContains(output, "Synthetic reply")
+				return
+			}
+			if tc.wantError != "" {
+				require.ErrorContains(err, tc.wantError)
+				assert.NotContains(output, "Synthetic reply")
+				return
+			}
+			require.NoError(err)
+			assert.Contains(output, "Synthetic reply")
+			assert.NotContains(output, "Outside the grant")
+		})
+	}
+}
 
 func TestRemoteAgentReadCommands(t *testing.T) {
 	requirements := require.New(t)

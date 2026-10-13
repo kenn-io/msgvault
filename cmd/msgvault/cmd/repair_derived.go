@@ -23,7 +23,7 @@ var (
 func newRepairDerivedCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "repair-derived",
-		Short: "Re-derive stored message text and metadata from archived payloads",
+		Short: "Re-derive message text and metadata from stored payloads",
 		Long: `Re-derive stored message columns from the payloads archived with them.
 
 Message bodies, snippets, the search index, and attachment metadata are computed

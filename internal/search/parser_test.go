@@ -26,6 +26,11 @@ func TestParse(t *testing.T) {
 			name: "BasicOperators",
 			tests: []testCase{
 				{
+					name:  "filename values",
+					query: `filename:"Budget Plan%.pdf" filename:界.csv`,
+					want:  Query{Filenames: []string{"Budget Plan%.pdf", "界.csv"}},
+				},
+				{
 					name:  "from operator",
 					query: "from:alice@example.com",
 					want:  Query{FromAddrs: []string{"alice@example.com"}},
@@ -517,6 +522,7 @@ func TestQuery_IsEmpty(t *testing.T) {
 		{"list:alerts.example.test", false},
 		{"hello", false},
 		{"has:attachment", false},
+		{`filename:"Budget Plan%.pdf" filename:界.csv`, false},
 	}
 
 	for _, tt := range tests {

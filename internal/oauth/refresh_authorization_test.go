@@ -65,13 +65,13 @@ func TestRefreshCannotOverwriteNewAuthorization(t *testing.T) {
 			case <-time.After(10 * time.Second):
 				required.FailNow("refresh did not reach the token endpoint")
 			}
-			authorizer := mgr.withScopes([]string{ScopeCardDAV, ScopeUserinfoEmail})
-			flow, err := authorizer.BeginWebAuthorization(email, "https://archive.example/")
+			authorizer := mgr.WithScopes([]string{ScopeCardDAV, ScopeUserinfoEmail})
+			flow, err := authorizer.BeginWebAuthorization(t.Context(), email, "https://archive.example/")
 			required.NoError(err)
 			required.NoError(flow.Complete(t.Context(), flow.State, "synthetic-code"))
 			release()
 			required.NoError(<-refreshed)
-			saved, err := mgr.loadTokenFile(email)
+			saved, err := mgr.loadTokenFile(t.Context(), email)
 			required.NoError(err)
 			assertions.Equal("new-authorization", saved.AccessToken)
 			assertions.Equal("new-refresh", saved.RefreshToken)

@@ -243,15 +243,17 @@ func TestSetupAddAccountCommand(t *testing.T) {
 		want  string
 	}{
 		{"none", config.OAuthConfig{}, ""},
-		{"default secrets", config.OAuthConfig{ClientSecrets: "/c.json"}, "msgvault add-account you@gmail.com"},
-		{"service account", config.OAuthConfig{ServiceAccountKey: "/sa.json"}, "msgvault add-account you@gmail.com"},
+		{"default secrets", config.OAuthConfig{ClientSecrets: "/c.json"}, "msgvault add-account you@example.com"},
+		{"default command", config.OAuthConfig{ClientSecretsCommand: []string{"secret-store"}}, "msgvault add-account you@example.com"},
+		{"named command", config.OAuthConfig{Apps: map[string]config.OAuthApp{"work": {ClientSecretsCommand: []string{"secret-store"}}}}, "msgvault add-account you@example.com --oauth-app 'work'"},
+		{"service account", config.OAuthConfig{ServiceAccountKey: "/sa.json"}, "msgvault add-account you@example.com"},
 		{
 			"named apps only",
 			config.OAuthConfig{Apps: map[string]config.OAuthApp{
 				"work":  {ClientSecrets: "/w.json"},
 				"empty": {},
 			}},
-			"msgvault add-account you@gmail.com --oauth-app 'work'",
+			"msgvault add-account you@example.com --oauth-app 'work'",
 		},
 	}
 	for _, tt := range tests {
@@ -263,16 +265,44 @@ func TestSetupAddAccountCommand(t *testing.T) {
 
 func TestPrintSetupNextStepsExportNeedsBundledSecrets(t *testing.T) {
 	assert := assert.New(t)
-	const named = "msgvault add-account you@gmail.com --oauth-app 'work'"
+	const named = "msgvault add-account you@example.com --oauth-app 'work'"
 
 	var withSecrets bytes.Buffer
-	printSetupNextSteps(&withSecrets, "msgvault add-account you@gmail.com", true, true)
+	printSetupNextSteps(&withSecrets, "msgvault add-account you@example.com", true, true, false, "")
 	assert.Contains(withSecrets.String(), "msgvault export-token")
 
 	var namedOnly bytes.Buffer
-	printSetupNextSteps(&namedOnly, named, true, false)
-	assert.NotContains(namedOnly.String(), "msgvault export-token")
-	assert.Contains(namedOnly.String(), "cannot be exported to the NAS")
+	printSetupNextSteps(&namedOnly, named, true, false, false, "work")
+	assert.Contains(namedOnly.String(), "msgvault export-token")
+	assert.Contains(namedOnly.String(), "Configure the same OAuth app")
+	assert.Contains(namedOnly.String(), "On the NAS, after token upload, bind the account to this app with:\n     msgvault add-account you@example.com --oauth-app 'work'")
+}
+
+func TestSetupUsesServiceAccountForSelectedCredential(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		oauth config.OAuthConfig
+		want  bool
+	}{
+		{name: "default service account", oauth: config.OAuthConfig{ServiceAccountKey: "/keys/default.json"}, want: true},
+		{name: "default client takes precedence", oauth: config.OAuthConfig{ClientSecretsCommand: []string{"secret-store"}, Apps: map[string]config.OAuthApp{"work": {ServiceAccountKey: "/keys/work.json"}}}},
+		{name: "named service account", oauth: config.OAuthConfig{Apps: map[string]config.OAuthApp{"work": {ServiceAccountKey: "/keys/work.json"}}}, want: true},
+		{name: "named OAuth client", oauth: config.OAuthConfig{Apps: map[string]config.OAuthApp{"work": {ClientSecrets: "/keys/client.json"}}}},
+		{name: "no credential"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, setupUsesServiceAccount(&tc.oauth))
+		})
+	}
+}
+
+func TestPrintSetupNextStepsServiceAccountDoesNotExportToken(t *testing.T) {
+	var output bytes.Buffer
+	printSetupNextSteps(&output, "msgvault add-account you@example.com", true, false, true, "")
+
+	assert.Contains(t, output.String(), "service-account key")
+	assert.Contains(t, output.String(), "mint tokens on demand")
+	assert.NotContains(t, output.String(), "msgvault export-token")
 }
 
 func TestCreateNASBundle_RebuildWithoutSecretsRemovesOldCopy(t *testing.T) {
@@ -290,9 +320,35 @@ func TestCreateNASBundle_RebuildWithoutSecretsRemovesOldCopy(t *testing.T) {
 
 func TestPrintSetupNextStepsOmitsLocalImportForRemote(t *testing.T) {
 	var local, remote bytes.Buffer
-	printSetupNextSteps(&local, "", false, false)
-	printSetupNextSteps(&remote, "", true, false)
+	printSetupNextSteps(&local, "", false, false, false, "")
+	printSetupNextSteps(&remote, "", true, false, false, "")
 
 	assert.Contains(t, local.String(), "import-mbox")
 	assert.NotContains(t, remote.String(), "import-mbox")
+}
+
+func TestSetupReplacesClientCommandWithFile(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	home := t.TempDir()
+	path := filepath.Join(home, "config.toml")
+	require.NoError(os.WriteFile(path, []byte("[oauth]\nclient_secrets_command = [\n \"secret-store\", \"client\"\n] # selected source\n[remote]\nurl = \"https://archive.example\"\n"), 0600))
+	secrets := filepath.Join(home, "client.json")
+	require.NoError(os.WriteFile(secrets, []byte(`{"installed":{"client_id":"example-client"}}`), 0600))
+	cfg := config.NewDefaultConfig()
+	cfg.HomeDir, cfg.Data.DataDir = home, home
+	cfg.OAuth.ClientSecretsCommand = []string{"secret-store", "client"}
+	cfg.Remote.URL = "https://archive.example"
+	cmd := &cobra.Command{}
+	cmd.SetContext(withTestConfig(t, cfg))
+	cmd.SetIn(strings.NewReader("n\n" + secrets + "\nn\n"))
+	cmd.SetOut(&bytes.Buffer{})
+	require.NoError(runSetup(cmd, nil))
+	snapshot, err := config.ReadConfigFile(path)
+	require.NoError(err)
+	persisted, err := config.LoadConfigFile(snapshot, home)
+	require.NoError(err)
+	assert.Nil(persisted.OAuth.ClientSecretsCommand)
+	assert.Equal(cfg.OAuth.ClientSecrets, persisted.OAuth.ClientSecrets)
+	assert.Equal("https://archive.example", persisted.Remote.URL)
 }

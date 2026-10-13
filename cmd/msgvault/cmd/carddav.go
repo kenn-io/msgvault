@@ -355,7 +355,7 @@ func newPersonCardDAVCommand(action string, publish bool) *cobra.Command {
 	if publish {
 		direction = "to"
 	}
-	cmd := &cobra.Command{Use: action + " <person-id>", Short: action + " a person " + direction + " CardDAV", Args: cobra.ExactArgs(1)}
+	cmd := &cobra.Command{Use: action + " <person-id>", Short: strings.ToUpper(action[:1]) + action[1:] + " a person " + direction + " CardDAV", Args: cobra.ExactArgs(1)}
 	var preview bool
 	var approvalToken string
 	if publish {

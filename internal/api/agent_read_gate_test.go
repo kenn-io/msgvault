@@ -867,7 +867,8 @@ func TestAgentReadSnapshotPoolPressure(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, path, nil).WithContext(canceled)
 			req.Header.Set(apiprotocol.AgentTokenHeader, token)
 			srv.Router().ServeHTTP(httptest.NewRecorder(), req)
-			assertions.Zero(st.DB().Stats().InUse)
+			// database/sql settles pool counts asynchronously; a leaked connection never returns.
+			assertions.Eventually(func() bool { return st.DB().Stats().InUse == 0 }, 10*time.Second, time.Millisecond)
 		})
 	}
 }

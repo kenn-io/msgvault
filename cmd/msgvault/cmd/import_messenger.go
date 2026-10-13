@@ -20,7 +20,7 @@ var (
 
 var importMessengerCmd = &cobra.Command{
 	Use:   "import-messenger <dyi-export-dir>",
-	Short: "Import Facebook Messenger from a Download Your Information export",
+	Short: "Import Facebook Messenger from a Meta data export",
 	Long: `Import Facebook Messenger conversations from a DYI export (JSON or HTML).
 
 Both JSON and HTML DYI formats are supported. When a thread contains both, the
@@ -45,7 +45,7 @@ Examples:
   msgvault import-messenger --me test.user@facebook.messenger ~/downloads/facebook-export
   msgvault import-messenger --me test.user@facebook.messenger --format both ./dyi
   msgvault import-messenger --me test.user@facebook.messenger --limit 100 ./dyi
-	`,
+  `,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if !isDaemonCLISubprocess() {

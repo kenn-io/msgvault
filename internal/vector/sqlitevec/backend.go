@@ -22,14 +22,7 @@ import (
 	"go.kenn.io/msgvault/internal/vector"
 )
 
-// sqliteDatetimeFormat is the text DATETIME layout used everywhere
-// else in the repository (see internal/query/sqlite.go). Bind date
-// bounds with this format so boundary comparisons are consistent
-// with the existing query paths.
-const (
-	sqliteDatetimeFormat          = "2006-01-02 15:04:05"
-	listIDSchemaRequiredErrorText = "List-Id filter requires messages.list_id; open the archive with a writable msgvault version first"
-)
+const listIDSchemaRequiredErrorText = "List-Id filter requires messages.list_id; open the archive with a writable msgvault version first"
 
 // Compile-time check that *Backend satisfies the vector.Backend interface.
 var _ vector.Backend = (*Backend)(nil)
@@ -1581,12 +1574,12 @@ func (b *Backend) filteredMessageIDsLimit(ctx context.Context, f vector.Filter, 
 		args = append(args, *f.HasAttachment)
 	}
 	if f.After != nil {
-		clauses = append(clauses, "m.sent_at >= ?")
-		args = append(args, f.After.Format(sqliteDatetimeFormat))
+		clauses = append(clauses, "julianday(m.sent_at) >= julianday(?)")
+		args = append(args, f.After.UTC().Format(time.RFC3339Nano))
 	}
 	if f.Before != nil {
-		clauses = append(clauses, "m.sent_at < ?")
-		args = append(args, f.Before.Format(sqliteDatetimeFormat))
+		clauses = append(clauses, "julianday(m.sent_at) < julianday(?)")
+		args = append(args, f.Before.UTC().Format(time.RFC3339Nano))
 	}
 	if f.LargerThan != nil {
 		clauses = append(clauses, "m.size_estimate > ?")
@@ -1599,6 +1592,10 @@ func (b *Backend) filteredMessageIDsLimit(ctx context.Context, f vector.Filter, 
 	for _, term := range f.SubjectSubstrings {
 		clauses = append(clauses, `m.subject LIKE ? ESCAPE '\'`)
 		args = append(args, "%"+escapeLikeSubject(term)+"%")
+	}
+	for _, filename := range f.FilenameSubstrings {
+		clauses = append(clauses, `EXISTS (SELECT 1 FROM attachments fa WHERE fa.message_id = m.id AND `+sqliteutil.UnicodeLowerFunction+`(fa.filename) LIKE `+sqliteutil.UnicodeLowerFunction+`(?) ESCAPE '\')`)
+		args = append(args, "%"+escapeLikeSubject(filename)+"%")
 	}
 	for _, term := range f.ListIDSubstrings {
 		clauses = append(clauses, sqliteutil.UnicodeLowerFunction+`(m.list_id) LIKE `+sqliteutil.UnicodeLowerFunction+`(?) ESCAPE '\'`)
