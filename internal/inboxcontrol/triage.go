@@ -45,10 +45,11 @@ type TriageProposal struct {
 	PreviewToken      string               `json:"preview_token"`
 }
 
-// Evidence lookup reads membership only. Neither references nor classification
-// input authorize content access, native writes, or additional tool execution.
+// TriageEvidenceStore validates evidence membership only. Neither references
+// nor classification input authorize content access, native writes, or
+// additional tool execution.
 type TriageEvidenceStore interface {
-	ValidateInboxTriageEvidence(context.Context, Target, []int64) error
+	ValidateInboxTriageEvidence(ctx context.Context, target Target, messageIDs []int64) error
 }
 
 func (input TriageInput) Validate() error {

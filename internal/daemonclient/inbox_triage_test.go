@@ -19,8 +19,8 @@ import (
 )
 
 type inboxTriageClient interface {
-	PreviewInboxTriage(context.Context, inboxcontrol.TriageInput) (*inboxcontrol.TriageProposal, error)
-	ApplyInboxTriage(context.Context, inboxcontrol.TriageProposal) ([]inboxcontrol.Result, error)
+	PreviewInboxTriage(ctx context.Context, input inboxcontrol.TriageInput) (*inboxcontrol.TriageProposal, error)
+	ApplyInboxTriage(ctx context.Context, proposal inboxcontrol.TriageProposal) ([]inboxcontrol.Result, error)
 }
 
 func triageClientInput() (inboxcontrol.TriageInput, inboxcontrol.TriageProposal) {
@@ -54,6 +54,9 @@ func triageClientDiscovery() apiprotocol.MCPCapabilities {
 func TestInboxTriageClientForwardsWholeProposalAndPreservesReceipts(t *testing.T) {
 	for _, mode := range []string{"success", "partial", "unknown", "lost", "redirect", "empty", "short", "wrong-order", "missing-discovery", "partial-discovery", "wrong-method", "empty-evidence", "expired-replay"} {
 		t.Run(mode, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+
 			input, proposal := triageClientInput()
 			if mode == "empty-evidence" {
 				input.Items[0].EvidenceMessageIDs = []int64{}
@@ -83,14 +86,18 @@ func TestInboxTriageClientForwardsWholeProposalAndPreservesReceipts(t *testing.T
 					previews.Add(1)
 					assert.Equal(t, http.MethodPost, r.Method)
 					var got inboxcontrol.TriageInput
-					require.NoError(t, json.UnmarshalRead(r.Body, &got))
+					if !assert.NoError(t, json.UnmarshalRead(r.Body, &got)) {
+						return
+					}
 					assert.Equal(t, input, got)
 					assert.NoError(t, json.MarshalWrite(w, proposal))
 				case "/api/v1/inbox/triage/apply":
 					applies.Add(1)
 					assert.Equal(t, http.MethodPost, r.Method)
 					var got inboxcontrol.TriageProposal
-					require.NoError(t, json.UnmarshalRead(r.Body, &got))
+					if !assert.NoError(t, json.UnmarshalRead(r.Body, &got)) {
+						return
+					}
 					assert.Equal(t, proposal, got)
 					results := make([]inboxcontrol.Result, 2)
 					for i, id := range []string{"receipt-one", "receipt-two"} {
@@ -112,8 +119,14 @@ func TestInboxTriageClientForwardsWholeProposalAndPreservesReceipts(t *testing.T
 						w.WriteHeader(status)
 						assert.NoError(t, json.MarshalWrite(w, map[string]any{"error": code, "message": "untrusted provider detail", "results": results}))
 					case "lost":
-						conn, _, err := w.(http.Hijacker).Hijack()
-						require.NoError(t, err)
+						hijacker, ok := w.(http.Hijacker)
+						if !assert.True(t, ok) {
+							return
+						}
+						conn, _, err := hijacker.Hijack()
+						if !assert.NoError(t, err) {
+							return
+						}
 						assert.NoError(t, conn.Close())
 					case "redirect":
 						http.Redirect(w, r, destination.URL, http.StatusTemporaryRedirect)
@@ -132,20 +145,20 @@ func TestInboxTriageClientForwardsWholeProposalAndPreservesReceipts(t *testing.T
 			}))
 			defer server.Close()
 			client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true, AgentToken: "synthetic-agent-token", HTTPClient: server.Client()})
-			require.NoError(t, err)
+			requirements.NoError(err)
 			defer func() { assert.NoError(t, client.Close()) }()
 			triage, ok := any(client).(inboxTriageClient)
-			require.True(t, ok, "daemon client must expose bounded triage preview/apply")
+			requirements.True(ok, "daemon client must expose bounded triage preview/apply")
 			got, err := triage.PreviewInboxTriage(t.Context(), input)
 			if mode == "missing-discovery" || mode == "partial-discovery" || mode == "wrong-method" {
-				assert.ErrorIs(t, err, inboxcontrol.ErrUnavailable)
-				assert.Nil(t, got)
-				assert.Zero(t, previews.Load())
+				requirements.ErrorIs(err, inboxcontrol.ErrUnavailable)
+				assertions.Nil(got)
+				assertions.Zero(previews.Load())
 				return
 			}
-			require.NoError(t, err)
-			require.NotNil(t, got)
-			assert.Equal(t, proposal, *got)
+			requirements.NoError(err)
+			requirements.NotNil(got)
+			assertions.Equal(proposal, *got)
 			if mode == "expired-replay" {
 				proposal.IssuedAt = proposal.IssuedAt.Add(-10 * time.Minute)
 				proposal.ExpiresAt = proposal.ExpiresAt.Add(-10 * time.Minute)
@@ -154,31 +167,34 @@ func TestInboxTriageClientForwardsWholeProposalAndPreservesReceipts(t *testing.T
 			results, err := triage.ApplyInboxTriage(t.Context(), *got)
 			switch mode {
 			case "success", "empty-evidence", "expired-replay":
-				require.NoError(t, err)
-				require.Len(t, results, 2)
-				assert.Equal(t, "receipt-one", results[0].Receipt.ID)
+				requirements.NoError(err)
+				requirements.Len(results, 2)
+				assertions.Equal("receipt-one", results[0].Receipt.ID)
 			case "partial", "unknown":
 				want := inboxcontrol.ErrConflict
 				if mode == "unknown" {
 					want = inboxcontrol.ErrOutcomeUnknown
 				}
-				assert.ErrorIs(t, err, want)
-				require.Len(t, results, 2)
-				require.NotNil(t, results[0].Receipt)
-				assert.Equal(t, "receipt-one", results[0].Receipt.ID)
-				assert.Nil(t, results[1].Receipt)
-				assert.NotContains(t, err.Error(), "untrusted provider detail")
+				requirements.ErrorIs(err, want)
+				requirements.Len(results, 2)
+				requirements.NotNil(results[0].Receipt)
+				assertions.Equal("receipt-one", results[0].Receipt.ID)
+				assertions.Nil(results[1].Receipt)
+				assertions.NotContains(err.Error(), "untrusted provider detail")
 			default:
-				assert.ErrorIs(t, err, inboxcontrol.ErrOutcomeUnknown)
+				requirements.ErrorIs(err, inboxcontrol.ErrOutcomeUnknown)
 			}
-			assert.Equal(t, int64(1), previews.Load())
-			assert.Equal(t, int64(1), applies.Load())
-			assert.Zero(t, followed.Load())
+			assertions.Equal(int64(1), previews.Load())
+			assertions.Equal(int64(1), applies.Load())
+			assertions.Zero(followed.Load())
 		})
 	}
 }
 
 func TestInboxTriageClientRejectsInvalidBeforeHTTP(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+
 	var calls atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		calls.Add(1)
@@ -186,15 +202,15 @@ func TestInboxTriageClientRejectsInvalidBeforeHTTP(t *testing.T) {
 	}))
 	defer server.Close()
 	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true, HTTPClient: server.Client()})
-	require.NoError(t, err)
+	requirements.NoError(err)
 	defer func() { assert.NoError(t, client.Close()) }()
 	triage, ok := any(client).(inboxTriageClient)
-	require.True(t, ok)
+	requirements.True(ok)
 	for _, count := range []int{0, 101} {
 		input, _ := triageClientInput()
 		input.Items = make([]inboxcontrol.TriageItemInput, count)
 		_, err := triage.PreviewInboxTriage(t.Context(), input)
-		assert.ErrorIs(t, err, inboxcontrol.ErrInvalid)
+		requirements.ErrorIs(err, inboxcontrol.ErrInvalid)
 	}
 	for _, mode := range []string{"unsigned", "remove", "inner-token", "foreign-source", "empty-key"} {
 		_, proposal := triageClientInput()
@@ -211,7 +227,7 @@ func TestInboxTriageClientRejectsInvalidBeforeHTTP(t *testing.T) {
 			proposal.Items[0].Request.IdempotencyKey = ""
 		}
 		_, err := triage.ApplyInboxTriage(t.Context(), proposal)
-		assert.Error(t, err)
+		requirements.Error(err)
 	}
-	assert.Zero(t, calls.Load())
+	assertions.Zero(calls.Load())
 }

@@ -13,8 +13,8 @@ import (
 // Preview reads only; apply owns one daemon gate and exact source lease and
 // preserves ordered durable receipts when any item fails.
 type InboxTriageController interface {
-	PreviewInboxTriage(context.Context, inboxcontrol.TriageInput, inboxcontrol.Principal, func(context.Context, inboxcontrol.Principal, inboxcontrol.Request) error) (*inboxcontrol.TriageProposal, error)
-	ApplyInboxTriage(context.Context, inboxcontrol.TriageProposal, inboxcontrol.Principal, func(context.Context, inboxcontrol.Principal, inboxcontrol.Request) error, func(context.Context) (func(), error)) ([]inboxcontrol.Result, error)
+	PreviewInboxTriage(ctx context.Context, input inboxcontrol.TriageInput, principal inboxcontrol.Principal, authorize func(context.Context, inboxcontrol.Principal, inboxcontrol.Request) error) (*inboxcontrol.TriageProposal, error)
+	ApplyInboxTriage(ctx context.Context, proposal inboxcontrol.TriageProposal, principal inboxcontrol.Principal, authorize func(context.Context, inboxcontrol.Principal, inboxcontrol.Request) error, acquireGate func(context.Context) (func(), error)) ([]inboxcontrol.Result, error)
 }
 
 type InboxTriageError struct {

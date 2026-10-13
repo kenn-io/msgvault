@@ -14,12 +14,12 @@ import (
 
 // InboxTriageMappingReader reads configuration without contacting a provider.
 type InboxTriageMappingReader interface {
-	InboxTriageMappings(context.Context, inboxcontrol.SourceIdentity) (map[string]string, int64, error)
+	InboxTriageMappings(ctx context.Context, source inboxcontrol.SourceIdentity) (map[string]string, int64, error)
 }
 
 // InboxTriageMappingUpdater validates native existence under controller gates.
 type InboxTriageMappingUpdater interface {
-	UpdateInboxTriageMappings(context.Context, inboxcontrol.SourceIdentity, map[string]string, int64, inboxcontrol.Principal, func(context.Context, inboxcontrol.Principal, inboxcontrol.Request) error, func(context.Context) (func(), error)) (int64, error)
+	UpdateInboxTriageMappings(ctx context.Context, source inboxcontrol.SourceIdentity, entries map[string]string, expectedRevision int64, principal inboxcontrol.Principal, authorize func(context.Context, inboxcontrol.Principal, inboxcontrol.Request) error, acquireGate func(context.Context) (func(), error)) (int64, error)
 }
 
 type inboxTriageMappingConfiguration struct {

@@ -27,6 +27,7 @@ import (
 
 type triageHTTPStore struct {
 	inboxCandidateHTTPStore
+
 	client *gmail.Client
 	key    []byte
 }
@@ -112,7 +113,9 @@ func newTriageHTTPFixture(t *testing.T, count int) *triageHTTPFixture {
 					Add    []string `json:"addLabelIds"`
 					Remove []string `json:"removeLabelIds"`
 				}
-				require.NoError(t, json.UnmarshalRead(r.Body, &change))
+				if !assert.NoError(t, json.UnmarshalRead(r.Body, &change)) {
+					return
+				}
 				assert.Equal(t, []string{"TodoLabel"}, change.Add)
 				assert.Empty(t, change.Remove)
 				f.labels[id] = append(f.labels[id], change.Add...)
@@ -140,7 +143,9 @@ func newTriageHTTPFixture(t *testing.T, count int) *triageHTTPFixture {
 	endpoint, err := url.Parse(native.URL)
 	require.NoError(t, err)
 	client := gmail.NewClient(oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "synthetic-token"}), gmail.WithTransport(mappingNativeTransport{endpoint}), gmail.WithRateLimiter(gmail.NewRateLimiter(10000)))
-	f.srv = NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: "synthetic-owner-key", AgentAccess: true}}, Store: &triageHTTPStore{inboxCandidateHTTPStore: inboxCandidateHTTPStore{archive: a.Store}, client: client, key: []byte(strings.Repeat("k", 32))}, Logger: testLogger(), OperationGate: NewSerialOperationGate()})
+	triageStore := &triageHTTPStore{client: client, key: []byte(strings.Repeat("k", 32))}
+	triageStore.inboxCandidateHTTPStore = inboxCandidateHTTPStore{archive: a.Store}
+	f.srv = NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: "synthetic-owner-key", AgentAccess: true}}, Store: triageStore, Logger: testLogger(), OperationGate: NewSerialOperationGate()})
 	f.srv.agentGrants = agentgrant.NewRegistry()
 	f.srv.rateLimiter.rate = 1000
 	f.srv.rateLimiter.burst = 1000
@@ -177,51 +182,57 @@ func (f *triageHTTPFixture) grant(t *testing.T, permissions []agentgrant.Permiss
 // Missing routes, write-gate middleware around readonly preview, scope expansion,
 // direct writes without durable receipts, or automatic retry break native behavior.
 func TestInboxTriageHTTPPreviewApplyAndReceiptReplay(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+
 	f := newTriageHTTPFixture(t, 2)
 	_, secret := f.grant(t, []agentgrant.Permission{agentgrant.PermissionInboxRead, agentgrant.PermissionInboxTag}, []agentgrant.SourceRef{{ID: f.source.SourceID, Type: "gmail", Identifier: f.source.SourceIdentifier}})
 	// Preview must remain available while another operation owns the daemon gate.
 	release, ok := f.srv.operationGate.BeginWork()
-	require.True(t, ok)
+	requirements.True(ok)
 	response := f.call(t, "/api/v1/inbox/triage/preview", f.input, "", secret)
 	release()
-	require.Equal(t, http.StatusOK, response.Code)
-	assert.Equal(t, "no-store", response.Header().Get("Cache-Control"))
+	requirements.Equal(http.StatusOK, response.Code)
+	assertions.Equal("no-store", response.Header().Get("Cache-Control"))
 	var proposal inboxcontrol.TriageProposal
-	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &proposal))
-	assert.Zero(t, f.writes.Load())
-	require.Len(t, proposal.Items, 2)
-	assert.Empty(t, proposal.Items[0].Request.PreviewToken)
+	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &proposal))
+	assertions.Zero(f.writes.Load())
+	requirements.Len(proposal.Items, 2)
+	assertions.Empty(proposal.Items[0].Request.PreviewToken)
 	response = f.call(t, "/api/v1/inbox/triage/apply", proposal, "", secret)
-	require.Equal(t, http.StatusOK, response.Code)
+	requirements.Equal(http.StatusOK, response.Code)
 	var results []inboxcontrol.Result
-	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &results))
-	require.Len(t, results, 2)
+	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &results))
+	requirements.Len(results, 2)
 	for _, result := range results {
-		require.NotNil(t, result.Receipt)
-		assert.Equal(t, inboxcontrol.StatusVerified, result.Receipt.Status)
-		assert.True(t, *result.After.Inbox)
-		assert.False(t, *result.After.Read)
-		assert.Contains(t, result.After.Tags, "Unrelated")
+		requirements.NotNil(result.Receipt)
+		assertions.Equal(inboxcontrol.StatusVerified, result.Receipt.Status)
+		assertions.True(*result.After.Inbox)
+		assertions.False(*result.After.Read)
+		assertions.Contains(result.After.Tags, "Unrelated")
 	}
-	assert.Equal(t, int64(2), f.writes.Load())
+	assertions.Equal(int64(2), f.writes.Load())
 	response = f.call(t, "/api/v1/inbox/triage/apply", proposal, "", secret)
-	require.Equal(t, http.StatusOK, response.Code)
+	requirements.Equal(http.StatusOK, response.Code)
 	var again []inboxcontrol.Result
-	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &again))
-	require.Len(t, again, 2)
+	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &again))
+	requirements.Len(again, 2)
 	for i := range results {
-		assert.Equal(t, results[i].Receipt.ID, again[i].Receipt.ID)
+		assertions.Equal(results[i].Receipt.ID, again[i].Receipt.ID)
 	}
-	assert.Equal(t, int64(2), f.writes.Load())
+	assertions.Equal(int64(2), f.writes.Load())
 }
 
 func TestInboxTriageHTTPUsesExactCurrentSourceAndActionGrants(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+
 	f := newTriageHTTPFixture(t, 1)
 	sources := []agentgrant.SourceRef{{ID: f.source.SourceID, Type: "gmail", Identifier: f.source.SourceIdentifier}}
 	_, reader := f.grant(t, []agentgrant.Permission{agentgrant.PermissionInboxRead}, sources)
 	_, tagOnly := f.grant(t, []agentgrant.Permission{agentgrant.PermissionInboxTag}, sources)
 	foreignSource, err := f.archive.Store.GetOrCreateSource("gmail", "other@example.test")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	_, foreign := f.grant(t, []agentgrant.Permission{agentgrant.PermissionInboxRead, agentgrant.PermissionInboxTag}, []agentgrant.SourceRef{{ID: foreignSource.ID, Type: "gmail", Identifier: foreignSource.Identifier}})
 	id, writer := f.grant(t, []agentgrant.Permission{agentgrant.PermissionInboxRead, agentgrant.PermissionInboxTag}, sources)
 	for _, tc := range []struct {
@@ -236,28 +247,31 @@ func TestInboxTriageHTTPUsesExactCurrentSourceAndActionGrants(t *testing.T) {
 		})
 	}
 	response := f.call(t, "/api/v1/inbox/triage/preview", f.input, "", writer)
-	require.Equal(t, 200, response.Code)
+	requirements.Equal(200, response.Code)
 	var proposal inboxcontrol.TriageProposal
-	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &proposal))
+	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &proposal))
 	// Caller binding is enforced even for a second equally scoped delegate.
 	_, other := f.grant(t, []agentgrant.Permission{agentgrant.PermissionInboxRead, agentgrant.PermissionInboxTag}, sources)
 	response = f.call(t, "/api/v1/inbox/triage/apply", proposal, "", other)
-	assert.Equal(t, 400, response.Code)
+	assertions.Equal(400, response.Code)
 	// Revoke after live observation; stale admission metadata cannot dispatch.
 	f.onRead = func() { f.srv.agentGrants.Revoke(id) }
 	response = f.call(t, "/api/v1/inbox/triage/apply", proposal, "", writer)
-	assert.Equal(t, 403, response.Code)
-	assert.Zero(t, f.writes.Load())
+	assertions.Equal(403, response.Code)
+	assertions.Zero(f.writes.Load())
 }
 
 func TestInboxTriageHTTPPreservesPartialAndUnknownReceipts(t *testing.T) {
 	for _, mode := range []string{"arrival", "unknown"} {
 		t.Run(mode, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+
 			f := newTriageHTTPFixture(t, 2)
 			response := f.call(t, "/api/v1/inbox/triage/preview", f.input, "synthetic-owner-key", "")
-			require.Equal(t, 200, response.Code)
+			requirements.Equal(200, response.Code)
 			var proposal inboxcontrol.TriageProposal
-			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &proposal))
+			requirements.NoError(json.Unmarshal(response.Body.Bytes(), &proposal))
 			status, code := 409, "inbox_conflict"
 			if mode == "arrival" {
 				f.onWrite = func() { f.archive.CreateMessage("new-arrival") }
@@ -266,27 +280,27 @@ func TestInboxTriageHTTPPreservesPartialAndUnknownReceipts(t *testing.T) {
 				status, code = 502, "inbox_outcome_unknown"
 			}
 			response = f.call(t, "/api/v1/inbox/triage/apply", proposal, "synthetic-owner-key", "")
-			require.Equal(t, status, response.Code)
+			requirements.Equal(status, response.Code)
 			var failure struct {
 				Error   string                `json:"error"`
 				Results []inboxcontrol.Result `json:"results"`
 			}
-			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &failure))
-			assert.Equal(t, code, failure.Error)
-			require.Len(t, failure.Results, 2)
-			require.NotNil(t, failure.Results[0].Receipt)
-			assert.Nil(t, failure.Results[1].Receipt)
-			assert.Equal(t, int64(1), f.writes.Load())
+			requirements.NoError(json.Unmarshal(response.Body.Bytes(), &failure))
+			assertions.Equal(code, failure.Error)
+			requirements.Len(failure.Results, 2)
+			requirements.NotNil(failure.Results[0].Receipt)
+			assertions.Nil(failure.Results[1].Receipt)
+			assertions.Equal(int64(1), f.writes.Load())
 			response = f.call(t, "/api/v1/inbox/triage/apply", proposal, "synthetic-owner-key", "")
-			require.Equal(t, status, response.Code)
+			requirements.Equal(status, response.Code)
 			var again struct {
 				Results []inboxcontrol.Result `json:"results"`
 			}
-			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &again))
-			require.Len(t, again.Results, 2)
-			require.NotNil(t, again.Results[0].Receipt)
-			assert.Equal(t, failure.Results[0].Receipt.ID, again.Results[0].Receipt.ID)
-			assert.Equal(t, int64(1), f.writes.Load())
+			requirements.NoError(json.Unmarshal(response.Body.Bytes(), &again))
+			requirements.Len(again.Results, 2)
+			requirements.NotNil(again.Results[0].Receipt)
+			assertions.Equal(failure.Results[0].Receipt.ID, again.Results[0].Receipt.ID)
+			assertions.Equal(int64(1), f.writes.Load())
 		})
 	}
 }
@@ -339,6 +353,9 @@ func TestInboxTriageDiscoveryAdmitsOnlyImplementedScopedTagRoutes(t *testing.T) 
 		want                  bool
 	}{{"owner", "synthetic-owner-key", "", true}, {"writer", "", writer, true}, {"reader", "", reader, false}, {"chat unsupported", "", chatWriter, false}, {"backend missing", "synthetic-owner-key", "", false}} {
 		t.Run(tc.name, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+
 			original := f.srv.store
 			if tc.name == "backend missing" {
 				f.srv.store = &mockStore{}
@@ -353,24 +370,24 @@ func TestInboxTriageDiscoveryAdmitsOnlyImplementedScopedTagRoutes(t *testing.T) 
 			}
 			response := httptest.NewRecorder()
 			f.srv.Router().ServeHTTP(response, r)
-			require.Equal(t, 200, response.Code)
+			requirements.Equal(200, response.Code)
 			var capabilities apiprotocol.MCPCapabilities
-			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &capabilities))
+			requirements.NoError(json.Unmarshal(response.Body.Bytes(), &capabilities))
 			preview, apply := false, false
 			for _, route := range capabilities.Routes {
 				if route.OperationID == "previewInboxTriage" {
 					preview = true
-					assert.Equal(t, "/api/v1/inbox/triage/preview", route.Path)
-					assert.Contains(t, route.RequestProperties, "items")
+					assertions.Equal("/api/v1/inbox/triage/preview", route.Path)
+					assertions.Contains(route.RequestProperties, "items")
 				}
 				if route.OperationID == "applyInboxTriage" {
 					apply = true
-					assert.Equal(t, "/api/v1/inbox/triage/apply", route.Path)
-					assert.Contains(t, route.RequestProperties, "preview_token")
+					assertions.Equal("/api/v1/inbox/triage/apply", route.Path)
+					assertions.Contains(route.RequestProperties, "preview_token")
 				}
 			}
-			assert.Equal(t, tc.want, preview)
-			assert.Equal(t, tc.want, apply)
+			assertions.Equal(tc.want, preview)
+			assertions.Equal(tc.want, apply)
 		})
 	}
 	assert.Zero(t, f.writes.Load())

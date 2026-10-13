@@ -11,50 +11,53 @@ import (
 )
 
 type triageMappingStore interface {
-	InboxTriageMappings(context.Context, inboxcontrol.SourceIdentity) (map[string]string, int64, error)
-	ReplaceInboxTriageMappings(context.Context, inboxcontrol.SourceIdentity, map[string]string, int64, inboxcontrol.Principal) (int64, error)
+	InboxTriageMappings(ctx context.Context, source inboxcontrol.SourceIdentity) (map[string]string, int64, error)
+	ReplaceInboxTriageMappings(ctx context.Context, source inboxcontrol.SourceIdentity, entries map[string]string, expectedRevision int64, principal inboxcontrol.Principal) (int64, error)
 }
 
 func TestInboxTriageMappingsRevisionAndScope(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+
 	f, receipt := inboxReceiptFixture(t)
 	source := inboxcontrol.SourceIdentity{SourceID: f.Source.ID, SourceType: "gmail", SourceIdentifier: f.Source.Identifier, AccountID: f.Source.Identifier}
 	bindings, ok := any(f.Store).(triageMappingStore)
-	require.True(t, ok, "native owner mappings require durable source-bound revision checks")
+	requirements.True(ok, "native owner mappings require durable source-bound revision checks")
 	owner := inboxcontrol.Principal{ID: "owner-fixture", Owner: true}
 	got, revision, err := bindings.InboxTriageMappings(t.Context(), source)
-	require.NoError(t, err)
-	assert.Empty(t, got)
-	assert.Zero(t, revision)
+	requirements.NoError(err)
+	assertions.Empty(got)
+	assertions.Zero(revision)
 	want := map[string]string{"todo": "Label_1", "watch": "Label_2"}
 	revision, err = bindings.ReplaceInboxTriageMappings(t.Context(), source, want, 0, owner)
-	require.NoError(t, err)
-	assert.Equal(t, int64(1), revision)
+	requirements.NoError(err)
+	assertions.Equal(int64(1), revision)
 	got, revision, err = bindings.InboxTriageMappings(t.Context(), source)
-	require.NoError(t, err)
-	assert.Equal(t, want, got)
-	assert.Equal(t, int64(1), revision)
+	requirements.NoError(err)
+	assertions.Equal(want, got)
+	assertions.Equal(int64(1), revision)
 	got["todo"] = "caller-edit"
 	got, _, err = bindings.InboxTriageMappings(t.Context(), source)
-	require.NoError(t, err)
-	assert.Equal(t, want, got, "caller-owned maps cannot change stored configuration")
+	requirements.NoError(err)
+	assertions.Equal(want, got, "caller-owned maps cannot change stored configuration")
 	_, err = bindings.ReplaceInboxTriageMappings(t.Context(), source, map[string]string{"todo": "Label_3"}, 0, owner)
-	assert.ErrorIs(t, err, inboxcontrol.ErrConflict)
+	requirements.ErrorIs(err, inboxcontrol.ErrConflict)
 	foreign := source
 	foreign.AccountID = "other@example.com"
 	_, _, err = bindings.InboxTriageMappings(t.Context(), foreign)
-	assert.ErrorIs(t, err, inboxcontrol.ErrDenied)
+	requirements.ErrorIs(err, inboxcontrol.ErrDenied)
 	_, err = bindings.ReplaceInboxTriageMappings(t.Context(), foreign, want, 1, owner)
-	assert.ErrorIs(t, err, inboxcontrol.ErrDenied)
+	requirements.ErrorIs(err, inboxcontrol.ErrDenied)
 	revision, err = bindings.ReplaceInboxTriageMappings(t.Context(), source, map[string]string{}, 1, owner)
-	require.NoError(t, err)
-	assert.Equal(t, int64(2), revision)
+	requirements.NoError(err)
+	assertions.Equal(int64(2), revision)
 	got, revision, err = bindings.InboxTriageMappings(t.Context(), source)
-	require.NoError(t, err)
-	assert.Empty(t, got)
-	assert.Equal(t, int64(2), revision, "clear must retain the revision against stale creates")
+	requirements.NoError(err)
+	assertions.Empty(got)
+	assertions.Equal(int64(2), revision, "clear must retain the revision against stale creates")
 	state, err := f.Store.GetInboxProviderState(t.Context(), receipt.Before.Target)
-	require.NoError(t, err)
-	assert.Nil(t, state, "mapping updates cannot invent provider observations")
+	requirements.NoError(err)
+	assertions.Nil(state, "mapping updates cannot invent provider observations")
 }
 
 func TestInboxTriageMappingsRejectDelegateAndInvalidConfig(t *testing.T) {
@@ -72,28 +75,34 @@ func TestInboxTriageMappingsRejectDelegateAndInvalidConfig(t *testing.T) {
 		{name: "negative revision", principal: inboxcontrol.Principal{ID: "owner-fixture", Owner: true}, entries: map[string]string{"todo": "Label_1"}, revision: -1, want: inboxcontrol.ErrInvalid},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+
 			f, _ := inboxReceiptFixture(t)
 			bindings, ok := any(f.Store).(triageMappingStore)
-			require.True(t, ok, "native mapping persistence is missing")
+			requirements.True(ok, "native mapping persistence is missing")
 			source := inboxcontrol.SourceIdentity{SourceID: f.Source.ID, SourceType: "gmail", SourceIdentifier: f.Source.Identifier, AccountID: f.Source.Identifier}
 			_, err := bindings.ReplaceInboxTriageMappings(t.Context(), source, tc.entries, tc.revision, tc.principal)
-			assert.ErrorIs(t, err, tc.want)
+			requirements.ErrorIs(err, tc.want)
 			got, revision, err := bindings.InboxTriageMappings(t.Context(), source)
-			require.NoError(t, err)
-			assert.Empty(t, got)
-			assert.Zero(t, revision)
+			requirements.NoError(err)
+			assertions.Empty(got)
+			assertions.Zero(revision)
 		})
 	}
 }
 
 func TestInboxTriageMappingsConcurrentCAS(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+
 	f, _ := inboxReceiptFixture(t)
 	bindings, ok := any(f.Store).(triageMappingStore)
-	require.True(t, ok, "native mapping revision CAS is missing")
+	requirements.True(ok, "native mapping revision CAS is missing")
 	source := inboxcontrol.SourceIdentity{SourceID: f.Source.ID, SourceType: "gmail", SourceIdentifier: f.Source.Identifier, AccountID: f.Source.Identifier}
 	owner := inboxcontrol.Principal{ID: "owner-fixture", Owner: true}
 	_, err := bindings.ReplaceInboxTriageMappings(t.Context(), source, map[string]string{"todo": "Label_1"}, 0, owner)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	outcomes := make(chan error, 8)
 	var wg sync.WaitGroup
 	for range 8 {
@@ -109,12 +118,12 @@ func TestInboxTriageMappingsConcurrentCAS(t *testing.T) {
 		if err == nil {
 			succeeded++
 		} else {
-			assert.ErrorIs(t, err, inboxcontrol.ErrConflict)
+			requirements.ErrorIs(err, inboxcontrol.ErrConflict)
 		}
 	}
-	assert.Equal(t, 1, succeeded)
+	assertions.Equal(1, succeeded)
 	got, revision, err := bindings.InboxTriageMappings(t.Context(), source)
-	require.NoError(t, err)
-	assert.Equal(t, map[string]string{"todo": "Label_2"}, got)
-	assert.Equal(t, int64(2), revision)
+	requirements.NoError(err)
+	assertions.Equal(map[string]string{"todo": "Label_2"}, got)
+	assertions.Equal(int64(2), revision)
 }

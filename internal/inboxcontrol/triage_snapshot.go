@@ -14,5 +14,5 @@ type TriageSnapshot struct {
 }
 
 type TriageSnapshotStore interface {
-	InboxTriageSnapshot(context.Context, SourceIdentity, []Target) (*TriageSnapshot, error)
+	InboxTriageSnapshot(ctx context.Context, source SourceIdentity, targets []Target) (*TriageSnapshot, error)
 }

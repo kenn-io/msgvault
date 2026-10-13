@@ -26,6 +26,7 @@ import (
 
 type mappingHTTPStore struct {
 	inboxCandidateHTTPStore
+
 	client *gmail.Client
 }
 
@@ -59,6 +60,9 @@ func (tr mappingNativeTransport) RoundTrip(r *http.Request) (*http.Response, err
 // Removing owner admission, source grants or CAS exposes or overwrites durable
 // configuration. Real Gmail catalog reads and Store writes cover the boundary.
 func TestInboxTriageMappingHTTPAuthorizationAndRevision(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+
 	f := storetest.New(t)
 	source := inboxcontrol.SourceIdentity{SourceID: f.Source.ID, SourceType: "gmail", SourceIdentifier: f.Source.Identifier, AccountID: f.Source.Identifier}
 	var nativeWrites atomic.Int64
@@ -81,9 +85,11 @@ func TestInboxTriageMappingHTTPAuthorizationAndRevision(t *testing.T) {
 	}))
 	defer native.Close()
 	nativeURL, err := url.Parse(native.URL)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	client := gmail.NewClient(oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "synthetic-token"}), gmail.WithTransport(mappingNativeTransport{nativeURL}), gmail.WithRateLimiter(gmail.NewRateLimiter(10000)))
-	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: "synthetic-owner-key", AgentAccess: true}}, Store: &mappingHTTPStore{inboxCandidateHTTPStore: inboxCandidateHTTPStore{archive: f.Store}, client: client}, Logger: testLogger(), OperationGate: NewSerialOperationGate()})
+	mappingStore := &mappingHTTPStore{client: client}
+	mappingStore.inboxCandidateHTTPStore = inboxCandidateHTTPStore{archive: f.Store}
+	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: "synthetic-owner-key", AgentAccess: true}}, Store: mappingStore, Logger: testLogger(), OperationGate: NewSerialOperationGate()})
 	// This matrix exercises authorization, not the default per-IP burst limit.
 	// Configure the real limiter before any request creates its token bucket.
 	srv.rateLimiter.rate = 1000
@@ -95,7 +101,7 @@ func TestInboxTriageMappingHTTPAuthorizationAndRevision(t *testing.T) {
 	})
 	srv.agentGrants = agentgrant.NewRegistry()
 	grantID, secret, _, err := srv.agentGrants.Issue("mapping-reader", []agentgrant.Permission{agentgrant.PermissionInboxRead}, []agentgrant.SourceRef{{ID: source.SourceID, Type: source.SourceType, Identifier: source.SourceIdentifier}}, time.Now().UTC().Add(time.Hour))
-	require.NoError(t, err)
+	requirements.NoError(err)
 	query := url.Values{"source_id": {strconv.FormatInt(source.SourceID, 10)}, "source_type": {source.SourceType}, "source_identifier": {source.SourceIdentifier}, "account_id": {source.AccountID}}
 	call := func(method, body, owner, agent string) *httptest.ResponseRecorder {
 		path := "/api/v1/inbox/triage/mappings"
@@ -126,80 +132,80 @@ func TestInboxTriageMappingHTTPAuthorizationAndRevision(t *testing.T) {
 	entries := map[string]string{"todo": "Label_1"}
 	body := bodyFor(entries, 0)
 	response := call(http.MethodPut, body, "", secret)
-	assert.Equal(t, http.StatusUnauthorized, response.Code, response.Body.String())
+	assertions.Equal(http.StatusUnauthorized, response.Code, response.Body.String())
 	response = call(http.MethodPut, body, "", "")
-	assert.Equal(t, http.StatusUnauthorized, response.Code, response.Body.String())
+	assertions.Equal(http.StatusUnauthorized, response.Code, response.Body.String())
 	response = call(http.MethodPut, body, "synthetic-owner-key", "")
-	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
 	response = call(http.MethodGet, "", "", secret)
-	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
-	assert.Equal(t, "no-store", response.Header().Get("Cache-Control"))
+	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+	assertions.Equal("no-store", response.Header().Get("Cache-Control"))
 	var stored struct {
 		Source   inboxcontrol.SourceIdentity `json:"source"`
 		Entries  map[string]string           `json:"entries"`
 		Revision int64                       `json:"revision"`
 	}
-	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &stored))
-	assert.Equal(t, source, stored.Source)
-	assert.Equal(t, entries, stored.Entries)
-	assert.Equal(t, int64(1), stored.Revision)
+	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &stored))
+	assertions.Equal(source, stored.Source)
+	assertions.Equal(entries, stored.Entries)
+	assertions.Equal(int64(1), stored.Revision)
 	response = call(http.MethodPut, body, "synthetic-owner-key", "")
-	assert.Equal(t, http.StatusConflict, response.Code, response.Body.String())
+	assertions.Equal(http.StatusConflict, response.Code, response.Body.String())
 	for _, tag := range []string{"NewLabel", "INBOX"} {
 		response = call(http.MethodPut, bodyFor(map[string]string{"todo": tag}, 1), "synthetic-owner-key", "")
-		assert.Equal(t, http.StatusForbidden, response.Code, response.Body.String())
+		assertions.Equal(http.StatusForbidden, response.Code, response.Body.String())
 	}
 	response = call(http.MethodPut, bodyFor(map[string]string{"autoarchive": "Label_1"}, 1), "synthetic-owner-key", "")
-	assert.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
+	assertions.Equal(http.StatusBadRequest, response.Code, response.Body.String())
 	for _, bad := range []string{body + " {}", strings.TrimSuffix(body, "}") + `,"owner":true}`, strings.Replace(body, `"entries":{"todo":"Label_1"}`, `"entries":null`, 1), strings.Replace(body, `,"expected_revision":0`, "", 1)} {
 		response = call(http.MethodPut, bad, "synthetic-owner-key", "")
-		assert.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
+		assertions.Equal(http.StatusBadRequest, response.Code, response.Body.String())
 	}
 	for _, field := range []string{"extra", "source_id"} {
 		query.Add(field, "1")
 		response = call(http.MethodGet, "", "synthetic-owner-key", "")
-		assert.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
+		assertions.Equal(http.StatusBadRequest, response.Code, response.Body.String())
 		query.Del(field)
 		if field == "source_id" {
 			query.Set(field, strconv.FormatInt(source.SourceID, 10))
 		}
 	}
 	_, tagOnly, _, err := srv.agentGrants.Issue("tag-only", []agentgrant.Permission{agentgrant.PermissionInboxTag}, []agentgrant.SourceRef{{ID: source.SourceID, Type: source.SourceType, Identifier: source.SourceIdentifier}}, time.Now().UTC().Add(time.Hour))
-	require.NoError(t, err)
+	requirements.NoError(err)
 	response = call(http.MethodGet, "", "", tagOnly)
-	assert.Equal(t, http.StatusForbidden, response.Code, response.Body.String())
+	assertions.Equal(http.StatusForbidden, response.Code, response.Body.String())
 
 	// A configured foreign source passes Store identity checks. Its denial
 	// must come from this reader's exact source grant, not a malformed binding.
 	foreignSource, err := f.Store.GetOrCreateSource("gmail", "foreign@example.test")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	query.Set("source_id", strconv.FormatInt(foreignSource.ID, 10))
 	query.Set("source_identifier", foreignSource.Identifier)
 	query.Set("account_id", foreignSource.Identifier)
 	response = call(http.MethodGet, "", "synthetic-owner-key", "")
-	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
 	response = call(http.MethodGet, "", "", secret)
-	assert.Equal(t, http.StatusForbidden, response.Code, response.Body.String())
+	assertions.Equal(http.StatusForbidden, response.Code, response.Body.String())
 	query.Set("source_id", strconv.FormatInt(source.SourceID, 10))
 	query.Set("source_identifier", source.SourceIdentifier)
 	query.Set("account_id", source.AccountID)
 	query.Set("account_id", "foreign@example.test")
 	response = call(http.MethodGet, "", "synthetic-owner-key", "")
-	assert.Equal(t, http.StatusForbidden, response.Code, response.Body.String())
+	assertions.Equal(http.StatusForbidden, response.Code, response.Body.String())
 	query.Set("account_id", source.AccountID)
 	query.Set("source_identifier", "foreign@example.test")
 	response = call(http.MethodGet, "", "", secret)
-	assert.Equal(t, http.StatusForbidden, response.Code, response.Body.String())
+	assertions.Equal(http.StatusForbidden, response.Code, response.Body.String())
 	query.Set("source_identifier", source.SourceIdentifier)
 	response = call(http.MethodPut, bodyFor(map[string]string{}, 1), "synthetic-owner-key", "")
-	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
 	response = call(http.MethodGet, "", "", secret)
-	require.Equal(t, http.StatusOK, response.Code)
+	requirements.Equal(http.StatusOK, response.Code)
 	// JSON map decoding merges into an existing map; each response is fresh.
 	stored.Entries = nil
-	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &stored))
-	assert.Empty(t, stored.Entries)
-	assert.Equal(t, int64(2), stored.Revision)
+	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &stored))
+	assertions.Empty(stored.Entries)
+	assertions.Equal(int64(2), stored.Revision)
 	for _, delegated := range []bool{false, true} {
 		r := httptest.NewRequest(http.MethodGet, "/api/v1/mcp/capabilities", nil)
 		if delegated {
@@ -209,27 +215,27 @@ func TestInboxTriageMappingHTTPAuthorizationAndRevision(t *testing.T) {
 		}
 		w := httptest.NewRecorder()
 		srv.Router().ServeHTTP(w, r)
-		require.Equal(t, http.StatusOK, w.Code)
+		requirements.Equal(http.StatusOK, w.Code)
 		var descriptor apiprotocol.MCPCapabilities
-		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &descriptor))
+		requirements.NoError(json.Unmarshal(w.Body.Bytes(), &descriptor))
 		read, update := false, false
 		for _, route := range descriptor.Routes {
 			switch route.OperationID {
 			case "getInboxTriageMappings":
 				read = true
-				assert.Equal(t, http.MethodGet, route.Method)
-				assert.Equal(t, "/api/v1/inbox/triage/mappings", route.Path)
+				assertions.Equal(http.MethodGet, route.Method)
+				assertions.Equal("/api/v1/inbox/triage/mappings", route.Path)
 			case "updateInboxTriageMappings":
 				update = true
-				assert.Equal(t, http.MethodPut, route.Method)
-				assert.ElementsMatch(t, []string{"source", "entries", "expected_revision"}, route.RequestProperties)
+				assertions.Equal(http.MethodPut, route.Method)
+				assertions.ElementsMatch([]string{"source", "entries", "expected_revision"}, route.RequestProperties)
 			}
 		}
-		assert.True(t, read)
-		assert.Equal(t, !delegated, update)
+		assertions.True(read)
+		assertions.Equal(!delegated, update)
 	}
-	require.True(t, srv.agentGrants.Revoke(grantID))
+	requirements.True(srv.agentGrants.Revoke(grantID))
 	response = call(http.MethodGet, "", "", secret)
-	assert.Equal(t, http.StatusUnauthorized, response.Code)
-	assert.Zero(t, nativeWrites.Load(), "configuration cannot provision or mutate native state")
+	assertions.Equal(http.StatusUnauthorized, response.Code)
+	assertions.Zero(nativeWrites.Load(), "configuration cannot provision or mutate native state")
 }

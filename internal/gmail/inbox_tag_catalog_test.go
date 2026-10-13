@@ -28,6 +28,9 @@ func TestInboxGmailTagCatalogExistingLabels(t *testing.T) {
 		{name: "foreign archive source", account: "owner@example.com", foreignSource: true, labels: `{"labels":[]}`, wantErr: inboxcontrol.ErrDenied},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+
 			reads, writes := 0, 0
 			client := newDraftTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Method != http.MethodGet {
@@ -49,22 +52,22 @@ func TestInboxGmailTagCatalogExistingLabels(t *testing.T) {
 			source := inboxGmailSource()
 			provider := NewInboxProvider(client, source)
 			catalog, ok := any(provider).(interface {
-				TagCatalog(context.Context, inboxcontrol.SourceIdentity) ([]emailtags.MessageTag, error)
+				TagCatalog(ctx context.Context, source inboxcontrol.SourceIdentity) ([]emailtags.MessageTag, error)
 			})
-			require.True(t, ok, "native provider must expose existing GTD tag identities")
+			requirements.True(ok, "native provider must expose existing GTD tag identities")
 			if tc.foreignSource {
 				source.SourceID++
 			}
 			tags, err := catalog.TagCatalog(t.Context(), source)
 			if tc.wantErr != nil {
-				assert.ErrorIs(t, err, tc.wantErr)
+				requirements.ErrorIs(err, tc.wantErr)
 			} else {
-				require.NoError(t, err)
-				assert.Equal(t, tc.want, tags)
+				requirements.NoError(err)
+				assertions.Equal(tc.want, tags)
 			}
-			assert.Zero(t, writes, "catalog lookup must not provision or change provider state")
+			assertions.Zero(writes, "catalog lookup must not provision or change provider state")
 			if tc.foreignSource {
-				assert.Zero(t, reads, "foreign source must be rejected before provider access")
+				assertions.Zero(reads, "foreign source must be rejected before provider access")
 			}
 		})
 	}

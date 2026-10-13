@@ -25,6 +25,8 @@ func TestInboxTriageCatalogSeparatesPreviewAndWriteAdmission(t *testing.T) {
 		{"both", true, true, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			assertions := assert.New(t)
+
 			opts := ServeOptions{}
 			if tc.preview {
 				opts.InboxTriagePreview = client
@@ -35,13 +37,13 @@ func TestInboxTriageCatalogSeparatesPreviewAndWriteAdmission(t *testing.T) {
 			tools := toolsByName(t, rawListTools(t, opts, tc.writes))
 			_, preview := tools["inbox_triage_preview"]
 			_, apply := tools["inbox_triage_apply"]
-			assert.Equal(t, tc.preview, preview)
-			assert.Equal(t, tc.apply && tc.writes, apply)
+			assertions.Equal(tc.preview, preview)
+			assertions.Equal(tc.apply && tc.writes, apply)
 			if preview {
-				assert.Equal(t, true, toolReadOnlyHint(t, tools["inbox_triage_preview"]))
+				assertions.Equal(true, toolReadOnlyHint(t, tools["inbox_triage_preview"]))
 			}
 			if apply {
-				assert.Equal(t, false, toolReadOnlyHint(t, tools["inbox_triage_apply"]))
+				assertions.Equal(false, toolReadOnlyHint(t, tools["inbox_triage_apply"]))
 			}
 		})
 	}

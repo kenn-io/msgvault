@@ -22,6 +22,9 @@ import (
 func TestMCPInboxTriageNativeConfirmationAndReceipts(t *testing.T) {
 	for _, mode := range []string{"verified", "unknown", "revoked"} {
 		t.Run(mode, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+
 			a, target, writes, lost := nativeInboxTriageFixture(t)
 			source := inboxcontrol.SourceIdentity{SourceID: target.SourceID, SourceType: target.SourceType, SourceIdentifier: target.SourceIdentifier, AccountID: target.AccountID}
 			var applyCalls atomic.Int64
@@ -39,8 +42,8 @@ func TestMCPInboxTriageNativeConfirmationAndReceipts(t *testing.T) {
 			ctx := mcpDraftAgentContext(t, server, source.SourceID, []string{"inbox.read", "inbox.tag"})
 			session := mcpDraftTestSession(ctx, t)
 			names := mcpDraftToolNames(t, session)
-			require.Contains(t, names, "inbox_triage_preview")
-			require.Contains(t, names, "inbox_triage_apply")
+			requirements.Contains(names, "inbox_triage_preview")
+			requirements.Contains(names, "inbox_triage_apply")
 			arguments := func(value any) map[string]any {
 				data, err := json.Marshal(value)
 				require.NoError(t, err)
@@ -57,102 +60,102 @@ func TestMCPInboxTriageNativeConfirmationAndReceipts(t *testing.T) {
 				} {
 					result, callErr := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "inbox_triage_preview", Arguments: invalid})
 					if callErr == nil {
-						require.True(t, result.IsError)
+						requirements.True(result.IsError)
 					}
-					assert.Zero(t, writes.Load())
-					assert.Zero(t, applyCalls.Load())
+					assertions.Zero(writes.Load())
+					assertions.Zero(applyCalls.Load())
 				}
 			}
 			preview, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "inbox_triage_preview", Arguments: arguments(input)})
-			require.NoError(t, err)
-			require.False(t, preview.IsError, mcpDraftResultText(t, preview))
+			requirements.NoError(err)
+			requirements.False(preview.IsError, mcpDraftResultText(t, preview))
 			var prepared struct {
 				Proposal *inboxcontrol.TriageProposal `json:"proposal"`
 			}
 			data, err := json.Marshal(preview.StructuredContent)
-			require.NoError(t, err)
-			require.NoError(t, json.Unmarshal(data, &prepared))
-			require.NotNil(t, prepared.Proposal)
-			assert.Zero(t, writes.Load())
+			requirements.NoError(err)
+			requirements.NoError(json.Unmarshal(data, &prepared))
+			requirements.NotNil(prepared.Proposal)
+			assertions.Zero(writes.Load())
 			args := arguments(*prepared.Proposal)
 			pending, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "inbox_triage_apply", Arguments: args})
-			require.NoError(t, err)
-			require.True(t, pending.NeedsInput())
-			assert.Zero(t, applyCalls.Load())
-			assert.Zero(t, writes.Load())
+			requirements.NoError(err)
+			requirements.True(pending.NeedsInput())
+			assertions.Zero(applyCalls.Load())
+			assertions.Zero(writes.Load())
 			changed := arguments(*prepared.Proposal)
 			changed["preview_token"] = "changed-envelope"
 			rejected, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "inbox_triage_apply", Arguments: changed, RequestState: pending.RequestState, InputResponses: sdkmcp.InputResponseMap{"confirm": &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}}})
-			require.NoError(t, err)
-			assert.True(t, rejected.IsError)
-			assert.Zero(t, applyCalls.Load())
+			requirements.NoError(err)
+			assertions.True(rejected.IsError)
+			assertions.Zero(applyCalls.Load())
 			// A changed confirmation consumes that interaction; request a fresh one.
 			pending, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "inbox_triage_apply", Arguments: args})
-			require.NoError(t, err)
-			require.True(t, pending.NeedsInput())
+			requirements.NoError(err)
+			requirements.True(pending.NeedsInput())
 			if mode == "unknown" {
 				lost.Store(true)
 			}
 			if mode == "revoked" {
 				owner, err := daemonclient.New(daemonclient.Config{URL: server.URL, APIKey: "owner-test-key", AllowInsecure: true})
-				require.NoError(t, err)
+				requirements.NoError(err)
 				defer func() { assert.NoError(t, owner.Close()) }()
 				grants, err := owner.ListAgentTokens(t.Context())
-				require.NoError(t, err)
-				require.Len(t, grants, 1)
-				require.NoError(t, owner.RevokeAgentToken(t.Context(), grants[0].ID))
+				requirements.NoError(err)
+				requirements.Len(grants, 1)
+				requirements.NoError(owner.RevokeAgentToken(t.Context(), grants[0].ID))
 			}
 			accepted := &sdkmcp.CallToolParams{Name: "inbox_triage_apply", Arguments: args, RequestState: pending.RequestState, InputResponses: sdkmcp.InputResponseMap{"confirm": &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}}}
 			result, err := session.CallTool(t.Context(), accepted)
-			require.NoError(t, err)
+			requirements.NoError(err)
 			if mode == "revoked" {
-				assert.True(t, result.IsError)
-				assert.Zero(t, writes.Load())
+				assertions.True(result.IsError)
+				assertions.Zero(writes.Load())
 				return
 			}
-			assert.Equal(t, mode == "unknown", result.IsError, mcpDraftResultText(t, result))
+			assertions.Equal(mode == "unknown", result.IsError, mcpDraftResultText(t, result))
 			var applied struct {
 				Results []inboxcontrol.Result `json:"results"`
 				Error   string                `json:"error"`
 			}
 			data, err = json.Marshal(result.StructuredContent)
-			require.NoError(t, err)
-			require.NoError(t, json.Unmarshal(data, &applied))
-			require.Len(t, applied.Results, 1)
-			require.NotNil(t, applied.Results[0].Receipt)
+			requirements.NoError(err)
+			requirements.NoError(json.Unmarshal(data, &applied))
+			requirements.Len(applied.Results, 1)
+			requirements.NotNil(applied.Results[0].Receipt)
 			want := inboxcontrol.StatusVerified
 			if mode == "unknown" {
 				want = inboxcontrol.StatusUnknown
-				assert.Equal(t, "unknown", applied.Error)
+				assertions.Equal("unknown", applied.Error)
 			}
-			assert.Equal(t, want, applied.Results[0].Receipt.Status)
-			assert.Equal(t, int64(1), writes.Load())
+			assertions.Equal(want, applied.Results[0].Receipt.Status)
+			assertions.Equal(int64(1), writes.Load())
 			// Reusing a consumed SDK confirmation cannot dispatch again.
 			replay, err := session.CallTool(t.Context(), accepted)
-			require.NoError(t, err)
-			assert.True(t, replay.IsError)
-			assert.Equal(t, int64(1), applyCalls.Load())
-			assert.Equal(t, int64(1), writes.Load())
+			requirements.NoError(err)
+			assertions.True(replay.IsError)
+			assertions.Equal(int64(1), applyCalls.Load())
+			assertions.Equal(int64(1), writes.Load())
 			// An independent confirmed retry recovers the same durable receipt.
 			pending, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "inbox_triage_apply", Arguments: args})
-			require.NoError(t, err)
-			require.True(t, pending.NeedsInput())
+			requirements.NoError(err)
+			requirements.True(pending.NeedsInput())
 			accepted.RequestState = pending.RequestState
 			recovered, err := session.CallTool(t.Context(), accepted)
-			require.NoError(t, err)
-			assert.Equal(t, mode == "unknown", recovered.IsError)
+			requirements.NoError(err)
+			assertions.Equal(mode == "unknown", recovered.IsError)
 			var recoveredResults struct {
 				Results []inboxcontrol.Result `json:"results"`
 			}
 			data, err = json.Marshal(recovered.StructuredContent)
-			require.NoError(t, err)
-			require.NoError(t, json.Unmarshal(data, &recoveredResults))
-			require.Len(t, recoveredResults.Results, 1)
-			require.NotNil(t, recoveredResults.Results[0].Receipt)
-			assert.Equal(t, applied.Results[0].Receipt.ID, recoveredResults.Results[0].Receipt.ID)
-			assert.Equal(t, want, recoveredResults.Results[0].Receipt.Status)
-			assert.Equal(t, int64(2), applyCalls.Load())
-			assert.Equal(t, int64(1), writes.Load())
+			requirements.NoError(err)
+			requirements.NoError(json.Unmarshal(data, &recoveredResults))
+			requirements.Len(recoveredResults.Results, 1)
+			requirements.NotNil(recoveredResults.Results[0].Receipt)
+			assertions.Equal(applied.Results[0].Receipt.ID, recoveredResults.Results[0].Receipt.ID)
+			assertions.Equal(want, recoveredResults.Results[0].Receipt.Status)
+			assertions.Equal(int64(2), applyCalls.Load())
+			assertions.Equal(int64(1), writes.Load())
 		})
 	}
 }
@@ -168,18 +171,20 @@ func TestMCPInboxTriageDiscoveryRequiresCurrentReadAndTag(t *testing.T) {
 		{"writer", []string{"inbox.read", "inbox.tag"}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			assertions := assert.New(t)
+
 			a, target, writes, _ := nativeInboxTriageFixture(t)
 			server := mcpDraftTestDaemon(t, a, nil)
 			session := mcpDraftTestSession(mcpDraftAgentContext(t, server, target.SourceID, tc.permissions), t)
 			names := mcpDraftToolNames(t, session)
 			if tc.admitted {
-				assert.Contains(t, names, "inbox_triage_preview")
-				assert.Contains(t, names, "inbox_triage_apply")
+				assertions.Contains(names, "inbox_triage_preview")
+				assertions.Contains(names, "inbox_triage_apply")
 			} else {
-				assert.NotContains(t, names, "inbox_triage_preview")
-				assert.NotContains(t, names, "inbox_triage_apply")
+				assertions.NotContains(names, "inbox_triage_preview")
+				assertions.NotContains(names, "inbox_triage_apply")
 			}
-			assert.Zero(t, writes.Load())
+			assertions.Zero(writes.Load())
 		})
 	}
 }

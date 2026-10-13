@@ -11,8 +11,8 @@ import (
 // TriageMappingStore retains source-bound owner configuration independently of
 // provider observations. Replacing or clearing it advances a durable revision.
 type TriageMappingStore interface {
-	InboxTriageMappings(context.Context, SourceIdentity) (map[string]string, int64, error)
-	ReplaceInboxTriageMappings(context.Context, SourceIdentity, map[string]string, int64, Principal) (int64, error)
+	InboxTriageMappings(ctx context.Context, source SourceIdentity) (map[string]string, int64, error)
+	ReplaceInboxTriageMappings(ctx context.Context, source SourceIdentity, entries map[string]string, expectedRevision int64, principal Principal) (int64, error)
 }
 
 // ValidateTriageMappingEntries checks configuration shape, not native existence.

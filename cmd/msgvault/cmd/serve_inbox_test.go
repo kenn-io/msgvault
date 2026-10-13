@@ -354,7 +354,9 @@ func nativeInboxTriageFixture(t *testing.T) (*storeAPIAdapter, inboxcontrol.Targ
 				Add    []string `json:"addLabelIds"`
 				Remove []string `json:"removeLabelIds"`
 			}
-			require.NoError(t, json.NewDecoder(r.Body).Decode(&change))
+			if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&change)) {
+				return
+			}
 			assert.Equal(t, []string{"Label_1"}, change.Add)
 			assert.Empty(t, change.Remove)
 			labels = append(labels, change.Add...)
@@ -398,12 +400,15 @@ func nativeInboxTriageFixture(t *testing.T) (*storeAPIAdapter, inboxcontrol.Targ
 }
 
 func TestDaemonInboxTriageUsesNativeRuntimeAuthorizationAndReceipts(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+
 	a, target, writes, _ := nativeInboxTriageFixture(t)
 	backend, ok := any(a).(interface {
-		PreviewInboxTriage(context.Context, inboxcontrol.TriageInput, inboxcontrol.Principal, func(context.Context, inboxcontrol.Principal, inboxcontrol.Request) error) (*inboxcontrol.TriageProposal, error)
-		ApplyInboxTriage(context.Context, inboxcontrol.TriageProposal, inboxcontrol.Principal, func(context.Context, inboxcontrol.Principal, inboxcontrol.Request) error, func(context.Context) (func(), error)) ([]inboxcontrol.Result, error)
+		PreviewInboxTriage(ctx context.Context, input inboxcontrol.TriageInput, principal inboxcontrol.Principal, authorize func(context.Context, inboxcontrol.Principal, inboxcontrol.Request) error) (*inboxcontrol.TriageProposal, error)
+		ApplyInboxTriage(ctx context.Context, proposal inboxcontrol.TriageProposal, principal inboxcontrol.Principal, authorize func(context.Context, inboxcontrol.Principal, inboxcontrol.Request) error, acquireGate func(context.Context) (func(), error)) ([]inboxcontrol.Result, error)
 	})
-	require.True(t, ok, "daemon must expose native triage preview/apply")
+	requirements.True(ok, "daemon must expose native triage preview/apply")
 	source := inboxcontrol.SourceIdentity{SourceID: target.SourceID, SourceType: target.SourceType, SourceIdentifier: target.SourceIdentifier, AccountID: target.AccountID}
 	principal := inboxcontrol.Principal{ID: "triage-delegate"}
 	allowed := true
@@ -422,27 +427,27 @@ func TestDaemonInboxTriageUsesNativeRuntimeAuthorizationAndReceipts(t *testing.T
 	}
 	input := inboxcontrol.TriageInput{Source: source, Items: []inboxcontrol.TriageItemInput{{Target: target, Categories: []string{"todo"}, EvidenceMessageIDs: []int64{target.ItemID}, IdempotencyKey: "daemon-triage-1"}}}
 	proposal, err := backend.PreviewInboxTriage(t.Context(), input, principal, authorize)
-	require.NoError(t, err)
-	assert.Zero(t, writes.Load())
+	requirements.NoError(err)
+	assertions.Zero(writes.Load())
 	allowed = false
 	_, err = backend.ApplyInboxTriage(t.Context(), *proposal, principal, authorize, nil)
-	assert.ErrorIs(t, err, inboxcontrol.ErrDenied)
-	assert.Zero(t, writes.Load())
+	requirements.ErrorIs(err, inboxcontrol.ErrDenied)
+	assertions.Zero(writes.Load())
 	allowed = true
 	gateCalls := 0
 	results, err := backend.ApplyInboxTriage(t.Context(), *proposal, principal, authorize, func(context.Context) (func(), error) { gateCalls++; return func() {}, nil })
-	require.NoError(t, err)
-	require.Len(t, results, 1)
-	require.NotNil(t, results[0].Receipt)
-	assert.Equal(t, inboxcontrol.StatusVerified, results[0].Receipt.Status)
-	assert.True(t, *results[0].After.Inbox)
-	assert.False(t, *results[0].After.Read)
-	assert.Equal(t, int64(1), writes.Load())
-	assert.Equal(t, 1, gateCalls)
+	requirements.NoError(err)
+	requirements.Len(results, 1)
+	requirements.NotNil(results[0].Receipt)
+	assertions.Equal(inboxcontrol.StatusVerified, results[0].Receipt.Status)
+	assertions.True(*results[0].After.Inbox)
+	assertions.False(*results[0].After.Read)
+	assertions.Equal(int64(1), writes.Load())
+	assertions.Equal(1, gateCalls)
 	again, err := backend.ApplyInboxTriage(t.Context(), *proposal, principal, authorize, nil)
-	require.NoError(t, err)
-	require.Len(t, again, 1)
-	require.NotNil(t, again[0].Receipt)
-	assert.Equal(t, results[0].Receipt.ID, again[0].Receipt.ID)
-	assert.Equal(t, int64(1), writes.Load())
+	requirements.NoError(err)
+	requirements.Len(again, 1)
+	requirements.NotNil(again[0].Receipt)
+	assertions.Equal(results[0].Receipt.ID, again[0].Receipt.ID)
+	assertions.Equal(int64(1), writes.Load())
 }

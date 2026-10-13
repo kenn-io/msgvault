@@ -57,7 +57,7 @@ func newTriagePreviewFixture(t *testing.T) *triagePreviewFixture {
 			client := newDraftTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Method != http.MethodGet {
 					f.writes.Add(1)
-					http.Error(w, "write forbidden", 405)
+					http.Error(w, "write forbidden", http.StatusMethodNotAllowed)
 					return
 				}
 				switch {
@@ -103,31 +103,34 @@ func TestInboxGmailTriagePreviewRetainsInboxWithoutWrites(t *testing.T) {
 		{"finished", []string{"finished"}, []string{"FinishedLabel"}, "finished"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+
 			f := newTriagePreviewFixture(t)
 			f.input.Items[0].Categories = tc.categories
 			proposal, err := f.service.PreviewTriage(t.Context(), f.input, f.principal)
-			require.NoError(t, err)
-			require.Len(t, proposal.Items, 1)
+			requirements.NoError(err)
+			requirements.Len(proposal.Items, 1)
 			item := proposal.Items[0]
-			assert.Equal(t, tc.classification, item.Classification)
-			assert.True(t, item.RetainInbox)
-			assert.Equal(t, inboxcontrol.OpTags, item.Request.Operation)
-			require.NotNil(t, item.Request.Tags)
-			assert.ElementsMatch(t, tc.add, item.Request.Tags.Add)
-			assert.Empty(t, item.Request.Tags.Remove)
-			require.NotNil(t, item.Request.Expected)
-			require.NotNil(t, item.Projected.Inbox)
-			require.NotNil(t, item.Projected.Read)
-			assert.True(t, *item.Projected.Inbox)
-			assert.False(t, *item.Projected.Read)
-			assert.Contains(t, item.Projected.Tags, "STARRED")
-			assert.Contains(t, item.Projected.Tags, "Unrelated")
-			assert.Equal(t, "triage-item-1", item.Request.IdempotencyKey)
-			assert.NoError(t, inboxcontrol.VerifyTriageProposal(f.service.Key, *proposal, f.principal, f.now))
-			assert.Zero(t, f.writes.Load())
+			assertions.Equal(tc.classification, item.Classification)
+			assertions.True(item.RetainInbox)
+			assertions.Equal(inboxcontrol.OpTags, item.Request.Operation)
+			requirements.NotNil(item.Request.Tags)
+			assertions.ElementsMatch(tc.add, item.Request.Tags.Add)
+			assertions.Empty(item.Request.Tags.Remove)
+			requirements.NotNil(item.Request.Expected)
+			requirements.NotNil(item.Projected.Inbox)
+			requirements.NotNil(item.Projected.Read)
+			assertions.True(*item.Projected.Inbox)
+			assertions.False(*item.Projected.Read)
+			assertions.Contains(item.Projected.Tags, "STARRED")
+			assertions.Contains(item.Projected.Tags, "Unrelated")
+			assertions.Equal("triage-item-1", item.Request.IdempotencyKey)
+			requirements.NoError(inboxcontrol.VerifyTriageProposal(f.service.Key, *proposal, f.principal, f.now))
+			assertions.Zero(f.writes.Load())
 			receipt, err := f.archive.Store.LookupInboxReceipt(t.Context(), f.principal.ID, f.source.SourceID, "triage-item-1")
-			require.NoError(t, err)
-			assert.Nil(t, receipt)
+			requirements.NoError(err)
+			assertions.Nil(receipt)
 		})
 	}
 }
@@ -156,7 +159,7 @@ func TestInboxGmailTriagePreviewRejectsChangedArchiveAndAuthority(t *testing.T) 
 			f := newTriagePreviewFixture(t)
 			tc.change(f)
 			p, err := f.service.PreviewTriage(t.Context(), f.input, f.principal)
-			assert.ErrorIs(t, err, tc.want)
+			require.ErrorIs(t, err, tc.want)
 			assert.Nil(t, p)
 			assert.Zero(t, f.writes.Load())
 		})
@@ -164,11 +167,13 @@ func TestInboxGmailTriagePreviewRejectsChangedArchiveAndAuthority(t *testing.T) 
 }
 
 func TestInboxGmailTriageProposalAuthenticatesEveryReviewField(t *testing.T) {
+	requirements := require.New(t)
+
 	f := newTriagePreviewFixture(t)
 	p, err := f.service.PreviewTriage(t.Context(), f.input, f.principal)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	encoded, err := json.Marshal(p)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	for _, mutate := range []func(*inboxcontrol.TriageProposal){
 		func(p *inboxcontrol.TriageProposal) { p.MappingRevision++ },
 		func(p *inboxcontrol.TriageProposal) { p.ArchiveRevision = strings.Repeat("a", 64) },
@@ -182,15 +187,17 @@ func TestInboxGmailTriageProposalAuthenticatesEveryReviewField(t *testing.T) {
 		func(p *inboxcontrol.TriageProposal) { p.ExpiresAt = p.ExpiresAt.Add(time.Minute) },
 	} {
 		var changed inboxcontrol.TriageProposal
-		require.NoError(t, json.Unmarshal(encoded, &changed))
+		requirements.NoError(json.Unmarshal(encoded, &changed))
 		mutate(&changed)
-		assert.Error(t, inboxcontrol.VerifyTriageProposal(f.service.Key, changed, f.principal, f.now))
+		requirements.Error(inboxcontrol.VerifyTriageProposal(f.service.Key, changed, f.principal, f.now))
 	}
-	assert.Error(t, inboxcontrol.VerifyTriageProposal(f.service.Key, *p, inboxcontrol.Principal{ID: "other-delegate"}, f.now))
-	assert.Error(t, inboxcontrol.VerifyTriageProposal(f.service.Key, *p, f.principal, p.ExpiresAt))
+	requirements.Error(inboxcontrol.VerifyTriageProposal(f.service.Key, *p, inboxcontrol.Principal{ID: "other-delegate"}, f.now))
+	requirements.Error(inboxcontrol.VerifyTriageProposal(f.service.Key, *p, f.principal, p.ExpiresAt))
 }
 
 func TestInboxGmailTriagePreviewBoundsAndMissingMappings(t *testing.T) {
+	assertions := assert.New(t)
+
 	f := newTriagePreviewFixture(t)
 	for _, tc := range []struct {
 		name   string
@@ -218,72 +225,84 @@ func TestInboxGmailTriagePreviewBoundsAndMissingMappings(t *testing.T) {
 	_, err := f.archive.Store.DB().Exec(`DELETE FROM inbox_triage_mappings`)
 	require.NoError(t, err)
 	p, err := f.service.PreviewTriage(t.Context(), f.input, f.principal)
-	assert.Nil(t, p)
-	assert.ErrorIs(t, err, inboxcontrol.ErrDenied)
-	assert.Zero(t, f.writes.Load())
+	assertions.Nil(p)
+	require.ErrorIs(t, err, inboxcontrol.ErrDenied)
+	assertions.Zero(f.writes.Load())
 }
 
 func TestInboxGmailTriagePreviewAcceptsHundredExplicitTargets(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+
 	f := newTriagePreviewFixture(t)
 	f.input.Items = make([]inboxcontrol.TriageItemInput, 100)
 	for i := range f.input.Items {
 		target := inboxcontrol.Target{SourceID: f.source.SourceID, SourceType: "gmail", SourceIdentifier: f.source.SourceIdentifier, AccountID: f.source.AccountID, Scope: inboxcontrol.ScopeMessage, ProviderID: fmt.Sprintf("triage-message-%d", i)}
 		target.ItemID = f.archive.CreateMessage(target.ProviderID)
 		_, err := f.archive.Store.ObserveInboxState(t.Context(), inboxcontrol.State{Target: target, Inbox: new(true), Read: new(false), Tags: slices.Clone(f.labels), Revision: "12", ObservedAt: f.now})
-		require.NoError(t, err)
+		requirements.NoError(err)
 		f.input.Items[i] = inboxcontrol.TriageItemInput{Target: target, Categories: []string{"todo"}, IdempotencyKey: fmt.Sprintf("triage-key-%d", i)}
 	}
 	p, err := f.service.PreviewTriage(t.Context(), f.input, f.principal)
-	require.NoError(t, err)
-	require.Len(t, p.Items, 100)
+	requirements.NoError(err)
+	requirements.Len(p.Items, 100)
 	for i, item := range p.Items {
-		assert.Equal(t, f.input.Items[i].Target, *item.Request.Target)
-		assert.Equal(t, f.input.Items[i].IdempotencyKey, item.Request.IdempotencyKey)
+		assertions.Equal(f.input.Items[i].Target, *item.Request.Target)
+		assertions.Equal(f.input.Items[i].IdempotencyKey, item.Request.IdempotencyKey)
 	}
-	assert.NoError(t, inboxcontrol.VerifyTriageProposal(f.service.Key, *p, f.principal, f.now))
-	assert.Zero(t, f.writes.Load())
+	requirements.NoError(inboxcontrol.VerifyTriageProposal(f.service.Key, *p, f.principal, f.now))
+	assertions.Zero(f.writes.Load())
 }
 
 func TestInboxGmailTriageExistingRetainedTagOverridesFinished(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+
 	f := newTriagePreviewFixture(t)
 	f.labels = append(f.labels, "TodoLabel")
 	target := f.input.Items[0].Target
 	_, err := f.archive.Store.ObserveInboxState(t.Context(), inboxcontrol.State{Target: target, Inbox: new(true), Read: new(false), Tags: slices.Clone(f.labels), Revision: "12", ObservedAt: f.now.Add(time.Second)})
-	require.NoError(t, err)
+	requirements.NoError(err)
 	f.input.Items[0].Categories = []string{"finished"}
 	p, err := f.service.PreviewTriage(t.Context(), f.input, f.principal)
-	require.NoError(t, err)
-	require.Len(t, p.Items, 1)
-	assert.Equal(t, "todo", p.Items[0].Classification)
-	assert.Equal(t, []string{"TodoLabel"}, p.Items[0].Request.Tags.Add)
-	assert.NotContains(t, p.Items[0].Projected.Tags, "FinishedLabel")
-	assert.True(t, p.Items[0].RetainInbox)
-	assert.Zero(t, f.writes.Load())
+	requirements.NoError(err)
+	requirements.Len(p.Items, 1)
+	assertions.Equal("todo", p.Items[0].Classification)
+	assertions.Equal([]string{"TodoLabel"}, p.Items[0].Request.Tags.Add)
+	assertions.NotContains(p.Items[0].Projected.Tags, "FinishedLabel")
+	assertions.True(p.Items[0].RetainInbox)
+	assertions.Zero(f.writes.Load())
 }
 
 func TestInboxGmailTriagePreviewGeneratesBoundedKeysWhenOmitted(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+
 	f := newTriagePreviewFixture(t)
 	f.input.Items[0].IdempotencyKey = ""
 	first, err := f.service.PreviewTriage(t.Context(), f.input, f.principal)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	second, err := f.service.PreviewTriage(t.Context(), f.input, f.principal)
-	require.NoError(t, err)
-	require.Len(t, first.Items, 1)
-	require.Len(t, second.Items, 1)
-	assert.Len(t, first.Items[0].Request.IdempotencyKey, 32)
-	assert.NotEqual(t, first.Items[0].Request.IdempotencyKey, second.Items[0].Request.IdempotencyKey)
-	assert.NoError(t, inboxcontrol.VerifyTriageProposal(f.service.Key, *first, f.principal, f.now))
-	assert.Zero(t, f.writes.Load())
+	requirements.NoError(err)
+	requirements.Len(first.Items, 1)
+	requirements.Len(second.Items, 1)
+	assertions.Len(first.Items[0].Request.IdempotencyKey, 32)
+	assertions.NotEqual(first.Items[0].Request.IdempotencyKey, second.Items[0].Request.IdempotencyKey)
+	requirements.NoError(inboxcontrol.VerifyTriageProposal(f.service.Key, *first, f.principal, f.now))
+	assertions.Zero(f.writes.Load())
 }
 
 func TestInboxGmailTriageProposalCannotBypassApplyGuardsViaControl(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+
 	f := newTriagePreviewFixture(t)
 	p, err := f.service.PreviewTriage(t.Context(), f.input, f.principal)
-	require.NoError(t, err)
-	require.Len(t, p.Items, 1)
-	assert.Empty(t, p.Items[0].Request.PreviewToken, "only the whole triage proposal may authorize its apply path")
+	requirements.NoError(err)
+	requirements.Len(p.Items, 1)
+	assertions.Empty(p.Items[0].Request.PreviewToken, "only the whole triage proposal may authorize its apply path")
 	result, err := f.service.Control(t.Context(), p.Items[0].Request, f.principal, nil)
-	assert.Nil(t, result)
-	assert.ErrorIs(t, err, inboxcontrol.ErrInvalid)
-	assert.Zero(t, f.writes.Load())
+	assertions.Nil(result)
+	requirements.ErrorIs(err, inboxcontrol.ErrInvalid)
+	assertions.Zero(f.writes.Load())
 }

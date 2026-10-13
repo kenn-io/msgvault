@@ -17,11 +17,12 @@ import (
 )
 
 type triageApplyService interface {
-	ApplyTriage(context.Context, inboxcontrol.TriageProposal, inboxcontrol.Principal, func(context.Context) (func(), error)) ([]inboxcontrol.Result, error)
+	ApplyTriage(ctx context.Context, proposal inboxcontrol.TriageProposal, principal inboxcontrol.Principal, acquireGate func(context.Context) (func(), error)) ([]inboxcontrol.Result, error)
 }
 
 type triageApplyFixture struct {
 	*triagePreviewFixture
+
 	onCatalog             func()
 	mu                    sync.Mutex
 	native                map[string][]string
@@ -39,7 +40,7 @@ func newTriageApplyFixture(t *testing.T, count int) *triageApplyFixture {
 		_, err := f.archive.Store.EnsureLabel(f.source.SourceID, id, id, "user")
 		require.NoError(t, err)
 	}
-	for i := 0; i < count; i++ {
+	for i := range count {
 		if i > 0 {
 			target := f.input.Items[0].Target
 			target.ProviderID = "triage-message-" + strings.Repeat("x", i)
@@ -55,7 +56,9 @@ func newTriageApplyFixture(t *testing.T, count int) *triageApplyFixture {
 		defer f.mu.Unlock()
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/gmail/v1/users/me/profile":
-			require.NoError(t, json.NewEncoder(w).Encode(map[string]string{"emailAddress": f.source.AccountID}))
+			if !assert.NoError(t, json.NewEncoder(w).Encode(map[string]string{"emailAddress": f.source.AccountID})) {
+				return
+			}
 		case r.Method == http.MethodGet && r.URL.Path == "/gmail/v1/users/me/labels":
 			labels := []map[string]string{{"id": "TodoLabel", "name": "Todo", "type": "user"}}
 			if f.catalogDeleted {
@@ -64,7 +67,9 @@ func newTriageApplyFixture(t *testing.T, count int) *triageApplyFixture {
 			if f.onCatalog != nil {
 				f.onCatalog()
 			}
-			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"labels": labels}))
+			if !assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{"labels": labels})) {
+				return
+			}
 		case strings.HasPrefix(r.URL.Path, "/gmail/v1/users/me/messages/"):
 			id := strings.TrimPrefix(r.URL.Path, "/gmail/v1/users/me/messages/")
 			if r.Method == http.MethodPost && strings.HasSuffix(id, "/modify") {
@@ -78,19 +83,27 @@ func newTriageApplyFixture(t *testing.T, count int) *triageApplyFixture {
 					}
 				}
 				receipt, err := f.archive.Store.LookupInboxReceipt(r.Context(), f.principal.ID, f.source.SourceID, item.IdempotencyKey)
-				require.NoError(t, err)
-				require.NotNil(t, receipt)
+				if !assert.NoError(t, err) {
+					return
+				}
+				if !assert.NotNil(t, receipt) {
+					return
+				}
 				assert.Equal(t, inboxcontrol.StatusDispatching, receipt.Status)
 				lease, err := f.archive.Store.AcquireSyncExecutionContext(r.Context(), f.source.SourceID)
 				assert.Error(t, err)
 				if lease != nil {
-					require.NoError(t, lease.Release())
+					if !assert.NoError(t, lease.Release()) {
+						return
+					}
 				}
 				var change struct {
 					Add    []string `json:"addLabelIds"`
 					Remove []string `json:"removeLabelIds"`
 				}
-				require.NoError(t, json.NewDecoder(r.Body).Decode(&change))
+				if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&change)) {
+					return
+				}
 				assert.Equal(t, []string{"TodoLabel"}, change.Add)
 				assert.Empty(t, change.Remove)
 				f.native[id] = append(f.native[id], change.Add...)
@@ -108,7 +121,9 @@ func newTriageApplyFixture(t *testing.T, count int) *triageApplyFixture {
 				assert.Equal(t, http.MethodGet, r.Method)
 				assert.Equal(t, "metadata", r.URL.Query().Get("format"))
 			}
-			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"id": id, "labelIds": f.native[id], "historyId": "12"}))
+			if !assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{"id": id, "labelIds": f.native[id], "historyId": "12"})) {
+				return
+			}
 		default:
 			assert.Fail(t, "unexpected native request", r.Method+" "+r.URL.Path)
 			http.NotFound(w, r)
@@ -150,28 +165,31 @@ func (f *triageApplyFixture) acquireGate(ctx context.Context) (func(), error) {
 // Omitting dispatch, double dispatch, nested gate acquisition, or treating our
 // own reconciliation as a stale second item breaks this native batch test.
 func TestInboxGmailTriageApplyBatchAndExpiredReceiptReplay(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+
 	f := newTriageApplyFixture(t, 2)
 	apply, ok := any(f.service).(triageApplyService)
-	require.True(t, ok, "triage apply must use the native controller")
+	requirements.True(ok, "triage apply must use the native controller")
 	p, err := f.service.PreviewTriage(t.Context(), f.input, f.principal)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	results, err := apply.ApplyTriage(t.Context(), *p, f.principal, f.acquireGate)
-	require.NoError(t, err)
-	require.Len(t, results, 2)
-	assert.Equal(t, 1, f.gateCalls)
-	assert.Equal(t, 1, f.leaseCalls)
-	assert.Empty(t, f.gate, "batch must release the daemon gate")
+	requirements.NoError(err)
+	requirements.Len(results, 2)
+	assertions.Equal(1, f.gateCalls)
+	assertions.Equal(1, f.leaseCalls)
+	assertions.Empty(f.gate, "batch must release the daemon gate")
 	lease, err := f.archive.Store.AcquireSyncExecutionContext(t.Context(), f.source.SourceID)
-	require.NoError(t, err)
-	require.NoError(t, lease.Release())
-	assert.Equal(t, int64(2), f.writes.Load())
+	requirements.NoError(err)
+	requirements.NoError(lease.Release())
+	assertions.Equal(int64(2), f.writes.Load())
 	for _, r := range results {
-		require.NotNil(t, r.Receipt)
-		assert.Equal(t, inboxcontrol.StatusVerified, r.Receipt.Status)
-		require.NotNil(t, r.After)
-		assert.True(t, *r.After.Inbox)
-		assert.False(t, *r.After.Read)
-		assert.ElementsMatch(t, []string{"INBOX", "UNREAD", "STARRED", "Unrelated", "TodoLabel"}, r.After.Tags)
+		requirements.NotNil(r.Receipt)
+		assertions.Equal(inboxcontrol.StatusVerified, r.Receipt.Status)
+		requirements.NotNil(r.After)
+		assertions.True(*r.After.Inbox)
+		assertions.False(*r.After.Read)
+		assertions.ElementsMatch([]string{"INBOX", "UNREAD", "STARRED", "Unrelated", "TodoLabel"}, r.After.Tags)
 	}
 	// A new service instance sharing the durable ledger and signing key can replay
 	// after expiry without live provider access, a gate, or a source lease.
@@ -181,14 +199,15 @@ func TestInboxGmailTriageApplyBatchAndExpiredReceiptReplay(t *testing.T) {
 		assert.Fail(t, "receipt replay reached provider")
 		return nil, inboxcontrol.ErrUnavailable
 	}
-	replay := any(&restarted).(triageApplyService)
+	replay, ok := any(&restarted).(triageApplyService)
+	requirements.True(ok, "restarted service must support triage apply")
 	again, err := replay.ApplyTriage(t.Context(), *p, f.principal, nil)
-	require.NoError(t, err)
-	require.Len(t, again, 2)
+	requirements.NoError(err)
+	requirements.Len(again, 2)
 	for i := range results {
-		assert.Equal(t, results[i].Receipt.ID, again[i].Receipt.ID)
+		assertions.Equal(results[i].Receipt.ID, again[i].Receipt.ID)
 	}
-	assert.Equal(t, int64(2), f.writes.Load())
+	assertions.Equal(int64(2), f.writes.Load())
 }
 
 func TestInboxGmailTriageApplyRejectsChangesBeforeDispatch(t *testing.T) {
@@ -198,28 +217,48 @@ func TestInboxGmailTriageApplyRejectsChangesBeforeDispatch(t *testing.T) {
 		want   error
 	}{
 		{"incoming after preview", func(t *testing.T, f *triageApplyFixture, _ *inboxcontrol.TriageProposal) {
+			t.Helper()
+
 			f.archive.CreateMessage("late-incoming")
 		}, inboxcontrol.ErrPlanChanged},
 		{"incoming during live read", func(t *testing.T, f *triageApplyFixture, _ *inboxcontrol.TriageProposal) {
+			t.Helper()
+
 			var once sync.Once
 			f.onRead = func() { once.Do(func() { f.archive.CreateMessage("late-live-incoming") }) }
 		}, inboxcontrol.ErrPlanChanged},
 		{"mapping", func(t *testing.T, f *triageApplyFixture, _ *inboxcontrol.TriageProposal) {
+			t.Helper()
+
 			_, err := f.archive.Store.ReplaceInboxTriageMappings(t.Context(), f.source, map[string]string{"todo": "DifferentLabel"}, 1, inboxcontrol.Principal{ID: "owner-fixture", Owner: true})
 			require.NoError(t, err)
 		}, inboxcontrol.ErrPlanChanged},
-		{"native catalog deleted", func(t *testing.T, f *triageApplyFixture, _ *inboxcontrol.TriageProposal) { f.catalogDeleted = true }, inboxcontrol.ErrDenied},
+		{"native catalog deleted", func(t *testing.T, f *triageApplyFixture, _ *inboxcontrol.TriageProposal) {
+			t.Helper()
+			f.catalogDeleted = true
+		}, inboxcontrol.ErrDenied},
 		{"native read changed", func(t *testing.T, f *triageApplyFixture, _ *inboxcontrol.TriageProposal) {
+			t.Helper()
+
 			f.native["triage-message"] = []string{"INBOX", "STARRED", "Unrelated"}
 		}, inboxcontrol.ErrPlanChanged},
 		{"native location changed", func(t *testing.T, f *triageApplyFixture, _ *inboxcontrol.TriageProposal) {
+			t.Helper()
+
 			f.native["triage-message"] = []string{"UNREAD", "STARRED", "Unrelated"}
 		}, inboxcontrol.ErrPlanChanged},
 		{"native unrelated tag changed", func(t *testing.T, f *triageApplyFixture, _ *inboxcontrol.TriageProposal) {
+			t.Helper()
+
 			f.native["triage-message"] = append(f.native["triage-message"], "OtherTag")
 		}, inboxcontrol.ErrPlanChanged},
-		{"revoked", func(t *testing.T, f *triageApplyFixture, _ *inboxcontrol.TriageProposal) { f.denied.Store(true) }, inboxcontrol.ErrDenied},
+		{"revoked", func(t *testing.T, f *triageApplyFixture, _ *inboxcontrol.TriageProposal) {
+			t.Helper()
+			f.denied.Store(true)
+		}, inboxcontrol.ErrDenied},
 		{"expires during final catalog", func(t *testing.T, f *triageApplyFixture, p *inboxcontrol.TriageProposal) {
+			t.Helper()
+
 			var expired atomic.Bool
 			original := f.now
 			f.service.Now = func() time.Time {
@@ -236,84 +275,100 @@ func TestInboxGmailTriageApplyRejectsChangesBeforeDispatch(t *testing.T) {
 				}
 			}
 		}, inboxcontrol.ErrInvalid},
-		{"expired", func(t *testing.T, f *triageApplyFixture, p *inboxcontrol.TriageProposal) { f.now = p.ExpiresAt }, inboxcontrol.ErrInvalid},
+		{"expired", func(t *testing.T, f *triageApplyFixture, p *inboxcontrol.TriageProposal) {
+			t.Helper()
+			f.now = p.ExpiresAt
+		}, inboxcontrol.ErrInvalid},
 		{"changed signed classification", func(t *testing.T, f *triageApplyFixture, p *inboxcontrol.TriageProposal) {
+			t.Helper()
+
 			p.Items[0].Classification = "finished"
 		}, inboxcontrol.ErrInvalid},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+
 			f := newTriageApplyFixture(t, 1)
 			apply, ok := any(f.service).(triageApplyService)
-			require.True(t, ok)
+			requirements.True(ok)
 			p, err := f.service.PreviewTriage(t.Context(), f.input, f.principal)
-			require.NoError(t, err)
+			requirements.NoError(err)
 			tc.change(t, f, p)
 			results, err := apply.ApplyTriage(t.Context(), *p, f.principal, f.acquireGate)
-			assert.ErrorIs(t, err, tc.want)
-			assert.Zero(t, f.writes.Load())
+			requirements.ErrorIs(err, tc.want)
+			assertions.Zero(f.writes.Load())
 			for _, r := range results {
-				assert.Nil(t, r.Receipt)
+				assertions.Nil(r.Receipt)
 			}
 		})
 	}
 }
 
 func TestInboxGmailTriageApplyPreservesPartialReceiptsOnNewArrival(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+
 	f := newTriageApplyFixture(t, 2)
 	apply, ok := any(f.service).(triageApplyService)
-	require.True(t, ok)
+	requirements.True(ok)
 	p, err := f.service.PreviewTriage(t.Context(), f.input, f.principal)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	f.afterWrite = func() { f.archive.CreateMessage("arrival-after-first-dispatch") }
 	results, err := apply.ApplyTriage(t.Context(), *p, f.principal, f.acquireGate)
-	require.ErrorIs(t, err, inboxcontrol.ErrPlanChanged)
-	require.Len(t, results, 2)
-	require.NotNil(t, results[0].Receipt)
-	assert.Equal(t, inboxcontrol.StatusVerified, results[0].Receipt.Status)
-	assert.Nil(t, results[1].Receipt)
-	assert.Equal(t, int64(1), f.writes.Load())
+	requirements.ErrorIs(err, inboxcontrol.ErrPlanChanged)
+	requirements.Len(results, 2)
+	requirements.NotNil(results[0].Receipt)
+	assertions.Equal(inboxcontrol.StatusVerified, results[0].Receipt.Status)
+	assertions.Nil(results[1].Receipt)
+	assertions.Equal(int64(1), f.writes.Load())
 	// Reusing the old batch returns its completed receipt but cannot silently
 	// authorize the remaining item across the changed arrival watermark.
 	again, err := apply.ApplyTriage(t.Context(), *p, f.principal, f.acquireGate)
-	require.ErrorIs(t, err, inboxcontrol.ErrPlanChanged)
-	require.Len(t, again, 2)
-	require.NotNil(t, again[0].Receipt)
-	assert.Equal(t, results[0].Receipt.ID, again[0].Receipt.ID)
-	assert.Nil(t, again[1].Receipt)
-	assert.Equal(t, int64(1), f.writes.Load())
+	requirements.ErrorIs(err, inboxcontrol.ErrPlanChanged)
+	requirements.Len(again, 2)
+	requirements.NotNil(again[0].Receipt)
+	assertions.Equal(results[0].Receipt.ID, again[0].Receipt.ID)
+	assertions.Nil(again[1].Receipt)
+	assertions.Equal(int64(1), f.writes.Load())
 }
 
 func TestInboxGmailTriageApplyUnknownOutcomeNeverRedispatches(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+
 	f := newTriageApplyFixture(t, 2)
 	apply, ok := any(f.service).(triageApplyService)
-	require.True(t, ok)
+	requirements.True(ok)
 	p, err := f.service.PreviewTriage(t.Context(), f.input, f.principal)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	f.loseResponse = true
 	results, err := apply.ApplyTriage(t.Context(), *p, f.principal, f.acquireGate)
-	require.ErrorIs(t, err, inboxcontrol.ErrOutcomeUnknown)
-	require.Len(t, results, 2)
-	require.NotNil(t, results[0].Receipt)
-	assert.Equal(t, inboxcontrol.StatusUnknown, results[0].Receipt.Status)
-	assert.Nil(t, results[1].Receipt)
-	assert.Equal(t, int64(1), f.writes.Load())
+	requirements.ErrorIs(err, inboxcontrol.ErrOutcomeUnknown)
+	requirements.Len(results, 2)
+	requirements.NotNil(results[0].Receipt)
+	assertions.Equal(inboxcontrol.StatusUnknown, results[0].Receipt.Status)
+	assertions.Nil(results[1].Receipt)
+	assertions.Equal(int64(1), f.writes.Load())
 	restarted := *f.service
 	restarted.Now = func() time.Time { return p.ExpiresAt.Add(time.Hour) }
 	restarted.Resolve = func(context.Context, inboxcontrol.Request) (inboxcontrol.Provider, error) {
 		assert.Fail(t, "unknown replay reached provider")
 		return nil, inboxcontrol.ErrUnavailable
 	}
-	again, err := any(&restarted).(triageApplyService).ApplyTriage(t.Context(), *p, f.principal, nil)
-	require.ErrorIs(t, err, inboxcontrol.ErrOutcomeUnknown)
-	require.Len(t, again, 2)
-	require.NotNil(t, again[0].Receipt)
-	assert.Equal(t, results[0].Receipt.ID, again[0].Receipt.ID)
-	assert.Equal(t, int64(1), f.writes.Load())
+	replay, ok := any(&restarted).(triageApplyService)
+	requirements.True(ok, "restarted service must support triage apply")
+	again, err := replay.ApplyTriage(t.Context(), *p, f.principal, nil)
+	requirements.ErrorIs(err, inboxcontrol.ErrOutcomeUnknown)
+	requirements.Len(again, 2)
+	requirements.NotNil(again[0].Receipt)
+	assertions.Equal(results[0].Receipt.ID, again[0].Receipt.ID)
+	assertions.Equal(int64(1), f.writes.Load())
 	// Original current authorization is still required to expose the receipt.
 	f.denied.Store(true)
 	denied, err := apply.ApplyTriage(t.Context(), *p, f.principal, nil)
-	require.ErrorIs(t, err, inboxcontrol.ErrDenied)
+	requirements.ErrorIs(err, inboxcontrol.ErrDenied)
 	for _, r := range denied {
-		assert.Nil(t, r.Receipt)
+		assertions.Nil(r.Receipt)
 	}
 }

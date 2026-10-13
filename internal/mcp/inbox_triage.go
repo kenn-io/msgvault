@@ -8,11 +8,11 @@ import (
 )
 
 type InboxTriagePreviewBackend interface {
-	PreviewInboxTriage(context.Context, inboxcontrol.TriageInput) (*inboxcontrol.TriageProposal, error)
+	PreviewInboxTriage(ctx context.Context, input inboxcontrol.TriageInput) (*inboxcontrol.TriageProposal, error)
 }
 
 type InboxTriageApplyBackend interface {
-	ApplyInboxTriage(context.Context, inboxcontrol.TriageProposal) ([]inboxcontrol.Result, error)
+	ApplyInboxTriage(ctx context.Context, proposal inboxcontrol.TriageProposal) ([]inboxcontrol.Result, error)
 }
 
 type inboxTriagePreviewResponse struct {
@@ -45,11 +45,11 @@ func (h *handlers) previewInboxTriage(ctx context.Context, req toolRequest) (*to
 	}
 	data, err := json.Marshal(req.arguments, json.Deterministic(true))
 	if err != nil || len(data) > 1<<20 {
-		return toolErrorResult("invalid inbox triage arguments"), nil
+		return toolErrorResult("invalid inbox triage arguments"), nil //nolint:nilerr // MCP input errors belong in the tool result.
 	}
 	var input inboxcontrol.TriageInput
 	if json.Unmarshal(data, &input, json.RejectUnknownMembers(true)) != nil || !triageSafeInput(input) {
-		return toolErrorResult("invalid inbox triage request"), nil
+		return toolErrorResult("invalid inbox triage request"), nil //nolint:nilerr // MCP input errors belong in the tool result.
 	}
 	proposal, callErr := h.inboxTriagePreview.PreviewInboxTriage(ctx, input)
 	response := inboxTriagePreviewResponse{Proposal: proposal}
@@ -69,11 +69,11 @@ func (h *handlers) applyInboxTriage(ctx context.Context, req toolRequest) (*tool
 	}
 	data, err := json.Marshal(req.arguments, json.Deterministic(true))
 	if err != nil || len(data) > 1<<20 {
-		return toolErrorResult("invalid inbox triage arguments"), nil
+		return toolErrorResult("invalid inbox triage arguments"), nil //nolint:nilerr // MCP input errors belong in the tool result.
 	}
 	var proposal inboxcontrol.TriageProposal
 	if json.Unmarshal(data, &proposal, json.RejectUnknownMembers(true)) != nil || proposal.PreviewToken == "" || proposal.MappingRevision <= 0 || proposal.ArchiveRevision == "" || proposal.IncomingWatermark == "" || proposal.IssuedAt.IsZero() || !proposal.ExpiresAt.After(proposal.IssuedAt) || len(proposal.Items) < 1 || len(proposal.Items) > 100 {
-		return toolErrorResult("invalid inbox triage proposal"), nil
+		return toolErrorResult("invalid inbox triage proposal"), nil //nolint:nilerr // MCP input errors belong in the tool result.
 	}
 	input := inboxcontrol.TriageInput{Source: proposal.Source}
 	for _, item := range proposal.Items {
@@ -84,7 +84,7 @@ func (h *handlers) applyInboxTriage(ctx context.Context, req toolRequest) (*tool
 		intent := r
 		intent.DryRun, intent.Expected, intent.IdempotencyKey = true, nil, ""
 		if intent.Validate() != nil {
-			return toolErrorResult("invalid inbox triage proposal"), nil
+			return toolErrorResult("invalid inbox triage proposal"), nil //nolint:nilerr // MCP input errors belong in the tool result.
 		}
 		input.Items = append(input.Items, inboxcontrol.TriageItemInput{Target: *r.Target, Categories: item.Categories, EvidenceMessageIDs: item.EvidenceMessageIDs, IdempotencyKey: r.IdempotencyKey})
 	}

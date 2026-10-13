@@ -14,7 +14,7 @@ import (
 )
 
 type triageMappingService interface {
-	UpdateTriageMappings(context.Context, inboxcontrol.SourceIdentity, map[string]string, int64, inboxcontrol.Principal, func(context.Context) (func(), error)) (int64, error)
+	UpdateTriageMappings(ctx context.Context, source inboxcontrol.SourceIdentity, entries map[string]string, expectedRevision int64, principal inboxcontrol.Principal, acquireGate func(context.Context) (func(), error)) (int64, error)
 }
 
 func TestInboxGmailOwnerMappingValidatesExistingLabels(t *testing.T) {
@@ -33,6 +33,9 @@ func TestInboxGmailOwnerMappingValidatesExistingLabels(t *testing.T) {
 		{name: "provider catalog absent", entries: map[string]string{"todo": "Label_1"}, noCatalog: true, want: inboxcontrol.ErrUnavailable},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+
 			f := storetest.New(t)
 			source := inboxcontrol.SourceIdentity{SourceID: f.Source.ID, SourceType: "gmail", SourceIdentifier: f.Source.Identifier, AccountID: f.Source.Identifier}
 			var reads, writes atomic.Int64
@@ -85,7 +88,7 @@ func TestInboxGmailOwnerMappingValidatesExistingLabels(t *testing.T) {
 				},
 			}
 			updater, ok := any(service).(triageMappingService)
-			require.True(t, ok, "owner mapping update must validate native catalog under source/write gates")
+			requirements.True(ok, "owner mapping update must validate native catalog under source/write gates")
 			principal := inboxcontrol.Principal{ID: "owner-fixture", Owner: !tc.delegate}
 			gate := func(context.Context) (func(), error) {
 				gateCalls++
@@ -96,32 +99,32 @@ func TestInboxGmailOwnerMappingValidatesExistingLabels(t *testing.T) {
 			}
 			revision, err := updater.UpdateTriageMappings(t.Context(), source, tc.entries, 0, principal, gate)
 			if tc.want != nil {
-				assert.ErrorIs(t, err, tc.want)
-				assert.Zero(t, revision)
+				requirements.ErrorIs(err, tc.want)
+				assertions.Zero(revision)
 			} else {
-				require.NoError(t, err)
-				assert.Equal(t, int64(1), revision)
+				requirements.NoError(err)
+				assertions.Equal(int64(1), revision)
 			}
-			assert.Zero(t, writes.Load(), "mapping updates cannot provision labels or mutate Inbox/read state")
-			assert.Equal(t, gateCalls, releases, "failed and successful updates must release write gate")
+			assertions.Zero(writes.Load(), "mapping updates cannot provision labels or mutate Inbox/read state")
+			assertions.Equal(gateCalls, releases, "failed and successful updates must release write gate")
 			if tc.delegate || tc.denied {
-				assert.Zero(t, gateCalls)
+				assertions.Zero(gateCalls)
 			}
 			if tc.delegate || tc.denied || tc.revoked || tc.noCatalog {
-				assert.Zero(t, reads.Load())
+				assertions.Zero(reads.Load())
 			}
 			reader, ok := any(f.Store).(interface {
-				InboxTriageMappings(context.Context, inboxcontrol.SourceIdentity) (map[string]string, int64, error)
+				InboxTriageMappings(ctx context.Context, source inboxcontrol.SourceIdentity) (map[string]string, int64, error)
 			})
-			require.True(t, ok)
+			requirements.True(ok)
 			stored, storedRevision, err := reader.InboxTriageMappings(t.Context(), source)
-			require.NoError(t, err)
+			requirements.NoError(err)
 			if tc.want != nil {
-				assert.Empty(t, stored)
-				assert.Zero(t, storedRevision)
+				assertions.Empty(stored)
+				assertions.Zero(storedRevision)
 			} else {
-				assert.Equal(t, tc.entries, stored)
-				assert.Equal(t, int64(1), storedRevision)
+				assertions.Equal(tc.entries, stored)
+				assertions.Equal(int64(1), storedRevision)
 			}
 		})
 	}
