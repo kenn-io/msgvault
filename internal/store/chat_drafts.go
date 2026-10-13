@@ -116,14 +116,17 @@ func (s *Store) CreateChatDraftContext(
 			INSERT INTO chat_drafts (
 				draft_id, source_id, conversation_id, source_conversation_id,
 				conversation_type, reply_to_source_message_id, body, revision,
-				created_at, updated_at
-			) VALUES (?, ?, ?, ?, ?, ?, ?, 1, %s, %s)
+				created_by_principal, created_at, updated_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, %s, %s)
 		`, s.dialect.ContentChangedNow(), s.dialect.Now()), draftID, dest.sourceID, conversationID,
-			dest.nativeID.String, dest.conversationType.String, reply, body); err != nil {
+			dest.nativeID.String, dest.conversationType.String, reply, body, draftCreatorSQL(ctx)); err != nil {
 			return fmt.Errorf("insert chat draft: %w", err)
 		}
 		draft, err = loadChatDraft(ctx, tx, draftID)
-		return err
+		if err != nil {
+			return err
+		}
+		return s.appendDraftEventTx(ctx, tx, "chat", draftID, "created")
 	})
 	return draft, err
 }
@@ -176,7 +179,10 @@ func (s *Store) UpdateChatDraftContext(
 			return err
 		}
 		draft, err = loadChatDraft(ctx, tx, draftID)
-		return err
+		if err != nil {
+			return err
+		}
+		return s.appendDraftEventTx(ctx, tx, "chat", draftID, "updated")
 	})
 	return draft, err
 }
@@ -184,10 +190,25 @@ func (s *Store) UpdateChatDraftContext(
 // DeleteChatDraftContext removes the draft when expectedRevision is current.
 func (s *Store) DeleteChatDraftContext(ctx context.Context, draftID string, expectedRevision int64) error {
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		var snapshot draftEventSnapshot
+		if s.captureMCPEnabled() {
+			var err error
+			snapshot, err = s.draftEventSnapshotTx(ctx, tx, "chat", draftID)
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrChatDraftNotFound
+			}
+			if err != nil {
+				return err
+			}
+			snapshot.revision++
+		}
 		result, err := tx.ExecContext(ctx, `
 			DELETE FROM chat_drafts WHERE draft_id = ? AND revision = ?
 		`, draftID, expectedRevision)
-		return chatDraftWriteResult(ctx, tx, draftID, result, err)
+		if err := chatDraftWriteResult(ctx, tx, draftID, result, err); err != nil {
+			return err
+		}
+		return s.appendDraftSnapshotTx(ctx, tx, "chat", draftID, "deleted", snapshot)
 	})
 }
 

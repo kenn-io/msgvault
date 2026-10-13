@@ -57,6 +57,14 @@ func TestOpenSQLiteRequiresExistingArchive(t *testing.T) {
 	require.ErrorContains(archive.SetupSQLite(t.Context(), "postgres://archive.invalid/msgvault"), "use Setup for PostgreSQL")
 }
 
+func TestOpenSQLiteRequiresEventsSchemaUpgrade(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "archive.db")
+	exercisePreEventsSchemaUpgrade(t,
+		func() error { return archive.SetupSQLite(t.Context(), path) },
+		func() (*archive.Archive, error) { return archive.OpenSQLite(t.Context(), path) },
+	)
+}
+
 func TestSlackCallerSelectsPrivateConversation(t *testing.T) {
 	require := require.New(t)
 	path := filepath.Join(t.TempDir(), "archive.db")

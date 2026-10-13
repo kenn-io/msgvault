@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-08"
+last_edited: "2026-10-11"
 title: Configuration
 description: Configuration file reference, environment variables, and file locations.
 ---
@@ -812,6 +812,71 @@ that carries `\All`, `\Junk`, or `\Trash` roles, or INBOX, is never
 trusted — not even when listed here explicitly. A configured name the server
 itself advertises as `\Drafts` keeps its Drafts meaning: explicit
 configuration cannot turn a Drafts folder into the account's Sent folder.
+
+### `[mcp.events]`
+
+On unreleased `main`, the daemon can send scoped MCP Events to HTTPS
+receivers. Enable this only when you want outbound callbacks. The MCP
+listener's inbound `[server]` key must be the selected daemon's owner API key.
+Browser sessions, delegated agent tokens, keyless access, and independent MCP
+listener keys cannot use Events.
+
+```toml
+[mcp.events]
+enabled = false
+retention = "168h"
+sources = ["gmail", "imap", "gcal"]
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `enabled` | `false` | Capture occurrences and run daemon callback workers. Read at startup; restart after changes. |
+| `retention` | `"168h"` | Positive journal retention duration, at most seven days, measured from recording time. Expired occurrences become unavailable immediately; cleanup runs at half the configured duration, capped at one hour and floored at one second. |
+| `sources` | `["gmail", "imap", "gcal"]` | Allowed source types, further limited by implemented producers and readable projections. An empty array advertises no families. |
+| `trusted_callbacks` | `[]` | Explicit private receiver exceptions: objects with an HTTPS `origin` and fixed private IP `addresses`. |
+
+Accepted `sources` values are `gmail`, `imap`, `gcal`, `beeper`, `slack`,
+`slackdump`, `teams`, `discord`, `msmail`, and `matrix`. When Events is enabled, the daemon refuses
+to start if `sources` lists any other source type.
+
+Additional native sources are opt-in. Add the source types you need to `sources`;
+the default list stays unchanged.
+
+| Source | Message capture and limits |
+|---|---|
+| `beeper` | [Exact conversation arrivals](usage/beeper.md#live-message-notifications), with managed draft events. Reaction events are unavailable. |
+| `slack` | [Native Slack arrivals](usage/slack.md#mcp-events). Slackdump imports remain silent. |
+| `teams` | [Teams chat arrivals](usage/teams.md#mcp-events). Channel message events are unavailable. |
+| `discord` | [Native channel and thread conversation arrivals](usage/discord.md#mcp-events), subject to verified sync coverage. |
+| `msmail` | [Native Microsoft mail arrivals](guides/oauth-setup.md#microsoft-mail-events). Initial history and historical recovery stay silent. |
+| `matrix` | [Readable Matrix room arrivals](usage/matrix.md#message-notifications), subject to coverage and encryption limits. |
+
+Callbacks normally require public HTTPS on port 443 or 8443. The daemon rejects
+redirects, reserved destinations, and DNS answers containing an unsafe address.
+Private receivers require an exact origin and address pins:
+
+```toml
+[mcp.events]
+enabled = true
+trusted_callbacks = [{ origin = "https://receiver.example.net:8443", addresses = ["10.0.0.5"] }]
+```
+
+The daemon creates `<data_dir>/mcp-events.key` with owner-only access when Events
+is enabled. `msgvault backup create --include-tokens` captures it with the
+archive; without it, a restored archive cannot decrypt its subscription
+secrets. A missing key with retained encrypted state, or a corrupt key, disables
+Events without replacing it. Events status reports
+`events_key_unavailable`. Keep Events disabled when opening an archive clone; rotate
+the clone's owner API key before enabling callbacks. Run one daemon per archive.
+
+CLI commands that write the archive without the daemon apply the same
+`[mcp.events]` settings. With the daemon's settings, their live writes are
+recorded for the daemon to deliver. With Events disabled, or without a readable
+owner key, a CLI writer cannot record them; the archive starts a new capture
+epoch and active subscriptions stop with reason `capture_gap`.
+
+See [MCP Events](usage/chat.md#events) for transport requirements, scope selection,
+renewal, and delivery limits.
 
 ### `[server]`
 

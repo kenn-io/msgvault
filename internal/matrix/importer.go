@@ -29,6 +29,13 @@ const (
 var errRelationTargetMissing = errors.New("matrix relation target is not archived yet")
 
 type RoomState struct {
+	// Events provenance is pinned to the requested sync token until the entire
+	// sync completes. Completing one room must not upgrade an interrupted run.
+	EventsCovered bool             `json:"events_covered,omitzero"`
+	EventsSince   string           `json:"events_since,omitempty"`
+	EventsMode    store.IngestMode `json:"events_mode,omitempty"`
+	GapMode       store.IngestMode `json:"gap_mode,omitempty"`
+
 	Backfilled bool   `json:"backfilled,omitzero"`
 	PrevBatch  string `json:"prev_batch,omitempty"`
 	// SyncedTo is the /sync next_batch through which this room's timeline is
@@ -86,9 +93,10 @@ type ImportSummary struct {
 }
 
 type Importer struct {
-	store   *store.Store
-	runtime *Runtime
-	users   map[id.UserID]int64
+	store        *store.Store
+	runtime      *Runtime
+	users        map[id.UserID]int64
+	roomSnapshot *store.ConversationPersistData
 }
 
 func NewImporter(s *store.Store, runtime *Runtime) *Importer {
@@ -98,6 +106,9 @@ func NewImporter(s *store.Store, runtime *Runtime) *Importer {
 func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *ImportSummary, err error) {
 	if opts.UserID == "" {
 		return nil, errors.New("matrix user ID required")
+	}
+	if imp.runtime == nil || imp.runtime.Client == nil || imp.runtime.Client.UserID.String() != opts.UserID {
+		return nil, errors.New("matrix runtime does not match source account")
 	}
 	source, err := imp.store.GetSourceByTypeAndIdentifier(SourceType, opts.UserID)
 	if err != nil {
@@ -130,7 +141,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	if err != nil {
 		return nil, err
 	}
-	scoped := imp.store.ScopedToSync(source.ID, syncID)
+	scoped := imp.store.ScopedToSync(source.ID, syncID).WithIngestContext(store.IngestContext{Mode: store.IngestBackfill})
 	imp = NewImporter(scoped, imp.runtime)
 	sum = &ImportSummary{}
 	completed := false
@@ -140,6 +151,17 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		}
 	}()
 
+	// Persist full resets and scope exclusions before the first network request.
+	for roomID, rs := range state.Rooms {
+		if rs != nil && !roomIncluded(roomID, opts.Rooms, opts.ExcludeRooms) {
+			rs.EventsCovered = false
+			rs.EventsMode = store.IngestBackfill
+			rs.GapMode = store.IngestBackfill
+		}
+	}
+	if err = imp.checkpoint(syncID, state, sum); err != nil {
+		return sum, err
+	}
 	since := state.NextBatch
 	// mautrix omits an empty set_presence parameter, which makes the homeserver
 	// mark the client online. The client-server spec defines "offline" as "the
@@ -151,11 +173,20 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	if err != nil {
 		return sum, fmt.Errorf("matrix sync: %w", err)
 	}
-	directRooms, err := imp.directRooms(ctx)
-	if err != nil {
+	// A later join cannot inherit live coverage from a membership that ended.
+	// Save this even if a subsequent account-data or room request fails.
+	for roomID := range resp.Rooms.Leave {
+		if rs := state.Rooms[roomID.String()]; rs != nil {
+			rs.EventsCovered = false
+			rs.EventsMode = store.IngestBackfill
+			rs.GapMode = store.IngestBackfill
+		}
+	}
+	if err = imp.checkpoint(syncID, state, sum); err != nil {
 		return sum, err
 	}
-	if err = imp.reclassifyArchivedRooms(source.ID, state, directRooms); err != nil {
+	directRooms, err := imp.directRooms(ctx)
+	if err != nil {
 		return sum, err
 	}
 	roomIDs := make([]id.RoomID, 0, len(resp.Rooms.Join))
@@ -165,6 +196,9 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		}
 	}
 	slices.Sort(roomIDs)
+	if err = imp.reclassifyArchivedRooms(source.ID, state, directRooms, roomIDs); err != nil {
+		return sum, err
+	}
 	for _, roomID := range roomIDs {
 		room := resp.Rooms.Join[roomID]
 		if err = imp.importRoom(ctx, source.ID, syncID, roomID, room, resp.NextBatch, directRooms[roomID], state, opts, sum); err != nil {
@@ -186,8 +220,11 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	return sum, nil
 }
 
-func (imp *Importer) reclassifyArchivedRooms(sourceID int64, state *SyncState, directRooms map[id.RoomID]bool) error {
+func (imp *Importer) reclassifyArchivedRooms(sourceID int64, state *SyncState, directRooms map[id.RoomID]bool, active []id.RoomID) error {
 	for roomID := range state.Rooms {
+		if slices.Contains(active, id.RoomID(roomID)) {
+			continue
+		}
 		roomType := "group_chat"
 		if directRooms[id.RoomID(roomID)] {
 			roomType = "direct_chat"
@@ -235,6 +272,22 @@ func (imp *Importer) importRoom(ctx context.Context, sourceID, syncID int64, roo
 	} else {
 		gapTo = rs.SyncedTo
 	}
+	mode := store.IngestBackfill
+	if rs.EventsCovered && rs.Backfilled && state.NextBatch != "" &&
+		(rs.EventsMode == store.IngestLive || rs.EventsMode == store.IngestBackfill) {
+		if rs.EventsSince == state.NextBatch {
+			mode = rs.EventsMode
+		} else {
+			mode = store.IngestLive
+		}
+	}
+	rs.EventsMode, rs.EventsSince = mode, state.NextBatch
+	if mode != store.IngestLive {
+		rs.GapMode = store.IngestBackfill
+	}
+	if err := imp.checkpoint(syncID, state, sum); err != nil {
+		return err
+	}
 	roomType := "group_chat"
 	if direct {
 		roomType = "direct_chat"
@@ -254,21 +307,19 @@ func (imp *Importer) importRoom(ctx context.Context, sourceID, syncID int64, roo
 	if title == "" && !titlePresent && (!hadRoomState || opts.Full) {
 		title = textutil.SanitizeTerminal(strings.Join(memberNames, ", "))
 	}
-	convID, err := imp.store.EnsureConversationWithType(sourceID, roomID.String(), roomType, title)
+	// Reserve only room identity here. The prepared projection belongs to the
+	// message transaction; inactive/empty rooms are refreshed after success.
+	convID, err := imp.store.ApplyConversationSnapshotContext(ctx, sourceID, &store.ConversationPersistData{
+		SourceConversationID: roomID.String(), ConversationType: roomType, PreserveExistingType: true,
+	})
 	if err != nil {
 		return fmt.Errorf("ensure Matrix room %s: %w", roomID, err)
 	}
-	if titlePresent && title == "" {
-		if err := imp.store.SetConversationTitle(sourceID, convID, ""); err != nil {
-			return fmt.Errorf("clear Matrix room %s title: %w", roomID, err)
-		}
-	}
-	if err := imp.store.ReplaceConversationParticipants(convID, members); err != nil {
-		return fmt.Errorf("replace Matrix room members: %w", err)
-	}
-	if err := imp.store.SetConversationMemberCount(convID, len(members)); err != nil {
-		return err
-	}
+	memberCount := len(members)
+	roomImporter := *imp
+	roomImporter.store = imp.store.WithIngestContext(store.IngestContext{Mode: mode})
+	roomImporter.roomSnapshot = &store.ConversationPersistData{SourceConversationID: roomID.String(), ConversationType: roomType, Title: title, ClearTitle: titlePresent && title == "", Participants: members, MemberCount: &memberCount}
+	imp = &roomImporter
 	deferred, err := decodeDeferredRelations(rs.DeferredRelations)
 	if err != nil {
 		return fmt.Errorf("decode deferred Matrix relations for room %s: %w", roomID, err)
@@ -354,10 +405,18 @@ func (imp *Importer) importRoom(ctx context.Context, sourceID, syncID int64, roo
 		}
 		return saveProgress(end)
 	}
+	ingestMode := func(mode store.IngestMode) func(*event.Event) error {
+		return func(evt *event.Event) error {
+			original := imp.store
+			imp.store = original.WithIngestContext(store.IngestContext{Mode: mode})
+			defer func() { imp.store = original }()
+			return ingest(evt)
+		}
+	}
 	if rs.GapFrom != "" {
 		// An earlier run stopped inside this gap. Finish it from the saved page;
 		// that run had archived everything after the gap, through GapTo.
-		if err := imp.paginate(ctx, roomID, rs.GapFrom, gapTo, ingest, saveGap); err != nil {
+		if err := imp.paginate(ctx, roomID, rs.GapFrom, gapTo, ingestMode(rs.GapMode), saveGap); err != nil {
 			return err
 		}
 		gapTo, rs.SyncedTo, rs.GapFrom, rs.GapTo = rs.GapTo, rs.GapTo, "", ""
@@ -367,8 +426,11 @@ func (imp *Importer) importRoom(ctx context.Context, sourceID, syncID int64, roo
 	}
 	if gapTo != "" && room.Timeline.Limited {
 		// The previous sync token stops the walk where this room's archive ends.
-		rs.GapTo = nextBatch
-		if err := imp.paginate(ctx, roomID, room.Timeline.PrevBatch, gapTo, ingest, saveGap); err != nil {
+		rs.GapFrom, rs.GapTo, rs.GapMode = room.Timeline.PrevBatch, nextBatch, mode
+		if err := saveProgress(""); err != nil {
+			return err
+		}
+		if err := imp.paginate(ctx, roomID, rs.GapFrom, gapTo, ingestMode(mode), saveGap); err != nil {
 			return err
 		}
 	}
@@ -377,7 +439,7 @@ func (imp *Importer) importRoom(ctx context.Context, sourceID, syncID int64, roo
 		return err
 	}
 	if !rs.Backfilled {
-		if err := imp.paginate(ctx, roomID, rs.PrevBatch, "", ingest, func(end string) error {
+		if err := imp.paginate(ctx, roomID, rs.PrevBatch, "", ingestMode(store.IngestBackfill), func(end string) error {
 			rs.PrevBatch = end
 			return saveProgress(end)
 		}); err != nil {
@@ -410,7 +472,13 @@ func (imp *Importer) importRoom(ctx context.Context, sourceID, syncID int64, roo
 			return err
 		}
 	}
+	if imp.roomSnapshot != nil {
+		if _, err := imp.store.ApplyConversationSnapshotContext(ctx, sourceID, imp.roomSnapshot); err != nil {
+			return err
+		}
+	}
 	rs.Backfilled = true
+	rs.EventsCovered = true
 	rs.DeferredRelations = nil
 	sum.RoomsProcessed++
 	if opts.Progress != nil {
@@ -434,29 +502,21 @@ func (imp *Importer) replayDeferredRelation(ctx context.Context, sourceID, convI
 		}
 		content := evt.Content.AsMessage()
 		if content.RelatesTo.GetReplaceID() == "" && content.RelatesTo.GetReplyTo() != "" {
-			return imp.resolveDeferredReply(ctx, sourceID, convID, evt, content.RelatesTo.GetReplyTo())
+			return imp.resolveDeferredReply(ctx, sourceID, evt, content.RelatesTo.GetReplyTo())
 		}
 	}
 	return imp.persistEvent(ctx, sourceID, convID, evt, sum)
 }
 
-func (imp *Importer) resolveDeferredReply(ctx context.Context, sourceID, convID int64, evt *event.Event, target id.EventID) error {
-	found, err := imp.store.MessageExistsBatch(sourceID, []string{evt.ID.String(), target.String()})
+func (imp *Importer) resolveDeferredReply(ctx context.Context, sourceID int64, evt *event.Event, target id.EventID) error {
+	linked, err := imp.store.SetMatrixReplyContext(ctx, sourceID, evt.RoomID.String(), evt.ID.String(), target.String())
 	if err != nil {
 		return err
 	}
-	messageID, targetID := found[evt.ID.String()], found[target.String()]
-	if messageID == 0 || targetID == 0 {
+	if !linked {
 		return errRelationTargetMissing
 	}
-	targetMessage, err := imp.store.GetMessageRelationTarget(targetID)
-	if err != nil {
-		return err
-	}
-	if targetMessage.ConversationID != convID {
-		return nil
-	}
-	return imp.store.SetMessageReplyContext(ctx, messageID, targetID)
+	return nil
 }
 
 // paginate walks room history backward from `from`, stopping at `to` when set.
@@ -622,7 +682,9 @@ func (imp *Importer) persistEvent(ctx context.Context, sourceID, convID int64, e
 	}
 	if evt.Type == event.EventEncrypted {
 		sum.Undecryptable++
-		return imp.persistMessage(ctx, sourceID, convID, evt, raw, encryptedPlaceholder, nil, sum)
+		history := *imp
+		history.store = imp.store.WithIngestContext(store.IngestContext{Mode: store.IngestBackfill})
+		return history.persistMessage(ctx, sourceID, convID, evt, raw, encryptedPlaceholder, nil, sum)
 	}
 	return imp.persistPlainEvent(ctx, sourceID, convID, evt, raw, sum)
 }
@@ -719,39 +781,18 @@ func messageBody(content *event.MessageEventContent) string {
 }
 
 func (imp *Importer) persistMessage(ctx context.Context, sourceID, convID int64, evt *event.Event, raw []byte, body string, content *event.MessageEventContent, sum *ImportSummary) error {
-	var replyToMessageID int64
-	replyTargetMissing := false
+	replyID := ""
 	if content != nil && content.RelatesTo != nil {
-		if reply := content.RelatesTo.GetReplyTo(); reply != "" {
-			found, err := imp.store.MessageExistsBatch(sourceID, []string{reply.String()})
-			if err != nil {
-				return err
-			}
-			replyToMessageID = found[reply.String()]
-			if replyToMessageID == 0 {
-				replyTargetMissing = true
-			} else {
-				target, err := imp.store.GetMessageRelationTarget(replyToMessageID)
-				if err != nil {
-					return err
-				}
-				if target.ConversationID != convID {
-					replyToMessageID = 0
-				}
-			}
-		}
+		replyID = content.RelatesTo.GetReplyTo().String()
 	}
 	existing, err := imp.store.MessageExistsBatch(sourceID, []string{evt.ID.String()})
 	if err != nil {
 		return err
 	}
-	if existingID := existing[evt.ID.String()]; existingID != 0 {
-		// Matrix events never change, so only a reply link may still be missing.
-		if replyToMessageID != 0 {
-			return imp.store.SetMessageReplyContext(ctx, existingID, replyToMessageID)
-		}
-		if replyTargetMissing {
-			return errRelationTargetMissing
+	if existing[evt.ID.String()] != 0 {
+		// Matrix events are immutable; only optional reply context can improve.
+		if replyID != "" {
+			return imp.resolveDeferredReply(ctx, sourceID, evt, id.EventID(replyID))
 		}
 		return nil
 	}
@@ -766,21 +807,20 @@ func (imp *Importer) persistMessage(ctx context.Context, sourceID, convID int64,
 		SenderID: sql.NullInt64{Int64: senderID, Valid: senderID != 0}, IsFromMe: evt.Sender == imp.runtime.Client.UserID,
 		Snippet: sql.NullString{String: snippet(body), Valid: body != ""}, SizeEstimate: int64(len(body)),
 	}
-	messageID, err := imp.store.PersistMessageContext(ctx, &store.MessagePersistData{
-		Message: msg, BodyText: sql.NullString{String: body, Valid: body != ""}, RawMIME: raw, RawFormat: rawFormat,
+	_, linked, err := imp.store.PersistMatrixMessageContext(ctx, &store.MessagePersistData{
+		Conversation: imp.roomSnapshot, Message: msg, BodyText: sql.NullString{String: body, Valid: body != ""}, RawMIME: raw, RawFormat: rawFormat,
 		FTS: &store.FTSDoc{Body: body}, PreserveLabels: true,
-	})
+	}, evt.RoomID.String(), replyID)
 	if err != nil {
 		return fmt.Errorf("persist Matrix event %s: %w", evt.ID, err)
 	}
-	if replyToMessageID != 0 {
-		if err := imp.store.SetMessageReplyContext(ctx, messageID, replyToMessageID); err != nil {
-			return err
-		}
-	}
+	// The prepared room projection is identical throughout this room pass.
+	// Its first successful message commit makes it visible before any event;
+	// repeating it for every message would repeatedly scan the member journal.
+	imp.roomSnapshot = nil
 	sum.MessagesProcessed++
 	sum.MessagesAdded++
-	if replyTargetMissing {
+	if replyID != "" && !linked {
 		return errRelationTargetMissing
 	}
 	return nil

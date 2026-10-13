@@ -346,6 +346,17 @@ func TestDelegatedOperationAllowlistIsClosed(t *testing.T) {
 				assertions.NotContains(w.Body.String(), "outside@example.test", op.OperationID)
 			} else if allowed[op.OperationID] {
 				assertions.NotEqual(http.StatusUnauthorized, w.Code, op.OperationID)
+			} else if strings.HasPrefix(rawPath, "/api/v1/mcp/events/") {
+				// Events are owner-only: a delegated caller learns that, not 401.
+				assertions.Equal(http.StatusForbidden, w.Code, op.OperationID)
+				var denial struct {
+					Code   int    `json:"code"`
+					Reason string `json:"reason"`
+				}
+				requirements.NoError(json.Unmarshal(w.Body.Bytes(), &denial), op.OperationID)
+				assertions.Equal(-32012, denial.Code, op.OperationID)
+				assertions.Equal("owner_required", denial.Reason, op.OperationID)
+				denied++
 			} else {
 				assertions.Equal(http.StatusUnauthorized, w.Code, op.OperationID)
 				denied++
