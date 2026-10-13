@@ -156,7 +156,7 @@ func TestMicrosoftInboxRequiresCompleteMetadata(t *testing.T) {
 					delete(f.message, field)
 				}
 				_, err := p.Observe(t.Context(), request)
-				assert.Error(t, err)
+				require.Error(t, err)
 				assert.Zero(t, f.writes)
 			})
 		}

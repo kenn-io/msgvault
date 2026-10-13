@@ -123,7 +123,7 @@ func TestMicrosoftInboxObservationFreshnessBeforeProjection(t *testing.T) {
 			after.Tags = []string{"Next"}
 			after.ObservedAt = before.ObservedAt.Add(delta)
 			_, err := st.ObserveMicrosoftMailStateContext(t.Context(), after, &folder, &after.Tags)
-			assert.ErrorIs(t, err, inboxcontrol.ErrConflict)
+			require.ErrorIs(t, err, inboxcontrol.ErrConflict)
 			assert.ElementsMatch(t, []string{"Inbox", "Category: Old"}, messageLabels(t, st, before.Target.ItemID))
 			assert.Equal(t, revision, microsoftSourceRevision(t, st, before.Target.SourceID))
 		})
