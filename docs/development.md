@@ -320,6 +320,50 @@ go test -tags 'fts5 sqlite_vec' ./internal/query -run '^$' \
   -fuzz '^FuzzMetadataSearchParity$' -fuzztime=30s -parallel=2
 ```
 
+## MCP memory measurements
+
+`TestMCPMemory` guards the retained Go heap of a `msgvault mcp` process. It
+samples two fresh child processes, because the package caches tool catalogs and
+resolved SDK schemas for reuse:
+
+- `startup`: package initialization, before a server exists.
+- `initialized`: a server after `initialize` and `tools/list` over OS pipes,
+  with every backend a daemon-backed stdio proxy can enable. The backends are
+  empty stand-ins; neither sample opens an archive or calls a tool.
+
+Each sample must keep less than 64 MiB of Go heap after garbage collection.
+The budget catches eager construction of tool catalogs, which retained over
+300 MiB in v0.20.0, without setting a startup-time target. If you add a catalog
+capability, enable it in `daemonProxyMemoryOptions`; the test fails until you do.
+
+Run the guard and the allocation benchmarks:
+
+```bash
+go test -tags 'fts5 sqlite_vec' ./internal/mcp -run '^TestMCPMemory$' -count=1 -v
+go test -tags 'fts5 sqlite_vec' ./internal/mcp -run '^$' \
+  -bench '^BenchmarkOperationCatalogMemory$' -benchtime=3x -benchmem
+```
+
+The `cold` benchmark builds one catalog, `cached` looks it up again, and
+`server` constructs a server with warmed caches, as the stateless HTTP listener
+does for each request. Benchmark bytes are allocations, not retained heap.
+
+To profile one phase, run the child test directly so the profile covers the
+measured process rather than the parent:
+
+```bash
+MSGVAULT_MCP_MEMORY_PHASE=initialized go test -tags 'fts5 sqlite_vec' ./internal/mcp \
+  -run '^TestMCPMemoryChild$' -count=1 -v -memprofile=/tmp/mcp.heap
+go tool pprof -top -inuse_space /tmp/mcp.heap
+```
+
+`HeapAlloc` is live Go heap; `TotalAlloc` counts cumulative allocation. Neither
+includes native allocations or executable mappings. Linux RSS and the macOS
+`top` MEM column (physical footprint, which includes compressed memory) measure
+different things, so do not compare them directly with Go heap figures.
+
+For several simultaneous clients, see [transport selection](usage/chat.md#choose-a-transport-for-concurrent-sessions).
+
 ## Evaluate search quality
 
 Use [`msgvault eval`](cli-reference.md#eval) to compare keyword, semantic, and

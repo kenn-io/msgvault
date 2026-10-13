@@ -162,6 +162,32 @@ Add the following to your Claude Desktop config file:
 
 If `msgvault` is not on your PATH, use the full path to the binary. Restart Claude Desktop after saving the config.
 
+### Choose a transport for concurrent sessions
+
+A stdio MCP client starts one `msgvault mcp` proxy for each session. Each proxy forwards
+archive operations to the same msgvault daemon; it does not load a separate archive
+engine. For many simultaneous sessions, prefer one shared StreamableHTTP listener when
+your clients support a direct HTTP connection. A client-side stdio-to-HTTP bridge still
+starts a process per session.
+
+Start the listener once with `msgvault mcp --http 8080` and keep it running, then point
+every client at `http://127.0.0.1:8080/mcp` using the
+[authentication configuration](#streamablehttp-transport) below. The two transports
+expose different tools:
+
+- Write tools such as deletion staging, Saved View management, and draft writes are
+  available by default over stdio. Over HTTP they require `--http-allow-writes`, which
+  enables them for every client of that listener. See
+  [Write controls](#write-controls).
+- Tools that ask you to confirm through the client, such as identity decisions, person
+  merges, and calendar event changes, keep their own opt-ins and over HTTP also
+  require protocol `2026-07-28` or newer.
+- On unreleased `main`, agent-delegated credentials (`--agent-url` and
+  `--agent-token-file`) require stdio.
+
+If you run v0.20.0, upgrade and restart existing proxies. That release built every
+combination of tool schemas in each proxy at startup, which v0.21.0 removed.
+
 ### StreamableHTTP Transport
 
 For MCP clients that connect over HTTP instead of stdio, run:
