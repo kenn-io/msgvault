@@ -284,6 +284,9 @@ type Manager struct {
 	// callbackAddress overrides terminalCallbackAddress in tests so they do
 	// not depend on the fixed production port being free.
 	callbackAddress string
+	// callbackListener, when set, is the already-bound listener for
+	// callbackAddress, so a test's port cannot be taken before the flow serves.
+	callbackListener net.Listener
 
 	// browserFlowFn overrides browserFlow in tests to avoid starting
 	// a real HTTP server and browser. When nil, the real browserFlow
@@ -713,9 +716,13 @@ func (m *Manager) browserFlow(
 		return nil, fmt.Errorf("to authorize from the terminal, register %s in this Web application OAuth client, or use a Desktop application client", redirectURL)
 	}
 
-	listener, err := net.Listen("tcp", callbackAddress)
-	if err != nil {
-		return nil, fmt.Errorf("listen for OAuth callback: %w", err)
+	listener := m.callbackListener
+	if listener == nil {
+		var err error
+		listener, err = net.Listen("tcp", callbackAddress)
+		if err != nil {
+			return nil, fmt.Errorf("listen for OAuth callback: %w", err)
+		}
 	}
 
 	// Generate random state for CSRF protection.

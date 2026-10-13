@@ -60,17 +60,6 @@ func writeLegacyTokenFile(t *testing.T, mgr *Manager, email string, token oauth2
 
 var testToken = oauth2.Token{AccessToken: "test", TokenType: "Bearer"}
 
-// freeCallbackAddress returns a localhost address on a port that was free a
-// moment ago, so terminal-flow tests do not depend on the production port.
-func freeCallbackAddress(t *testing.T) string {
-	t.Helper()
-	listener, err := net.Listen("tcp", "localhost:0")
-	require.NoError(t, err)
-	address := callbackAddressFor(t, listener)
-	require.NoError(t, listener.Close())
-	return address
-}
-
 func callbackAddressFor(t *testing.T, listener net.Listener) string {
 	t.Helper()
 	addr, ok := listener.Addr().(*net.TCPAddr)
@@ -570,7 +559,10 @@ func TestBrowserFlowUsesFixedCallbackWithPKCE(t *testing.T) {
 		t.Run(tc.kind, func(t *testing.T) {
 			assertions := assert.New(t)
 			required := require.New(t)
-			callbackAddress := freeCallbackAddress(t)
+			listener, err := net.Listen("tcp", "localhost:0")
+			required.NoError(err)
+			t.Cleanup(func() { _ = listener.Close() })
+			callbackAddress := callbackAddressFor(t, listener)
 			wantRedirectURI := "http://" + callbackAddress + "/callback"
 			redirects := []string{"http://localhost"}
 			if tc.registersCallback {
@@ -597,6 +589,7 @@ func TestBrowserFlowUsesFixedCallbackWithPKCE(t *testing.T) {
 			mgr, err := NewManagerWithCredentials(t.Context(), config.OAuthApp{ClientSecrets: secretsPath}, t.TempDir(), config.OAuthTokenCommands{}, nil, Scopes)
 			required.NoError(err)
 			mgr.callbackAddress = callbackAddress
+			mgr.callbackListener = listener
 			mgr.config.Endpoint = oauth2.Endpoint{
 				AuthURL:   "https://accounts.example/authorize",
 				TokenURL:  tokenEndpoint.URL,
