@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/sqliteutil"
 )
 
 func metadataTrigramStore(t *testing.T) *Store {
@@ -136,4 +138,33 @@ func TestFTSDataRangeDeletesKeepRowidPlan(t *testing.T) {
 	plans(st, "close-time statistics refresh")
 	require.NoError(st.optimizeSQLite(t.Context()))
 	plans(st, "scheduled statistics refresh")
+}
+
+// FTS5 reads its configuration the first time a connection uses an index.
+// Inside a deferred transaction that read would pin a snapshot, and a commit
+// from another connection before the write would make the write fail with
+// SQLITE_BUSY_SNAPSHOT. New connections load the indexes before any
+// transaction starts.
+func TestMetadataTriggerWriteAfterConcurrentCommit(t *testing.T) {
+	require := require.New(t)
+	st := metadataTrigramStore(t)
+	require.NoError(st.InitSchema())
+	db, err := sql.Open(sqliteutil.DriverName(), st.dbPath+"?_busy_timeout=5000")
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(db.Close()) })
+	conn, err := db.Conn(t.Context())
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(conn.Close()) })
+
+	tx, err := conn.BeginTx(t.Context(), nil)
+	require.NoError(err)
+	defer func() { _ = tx.Rollback() }()
+	update, err := tx.PrepareContext(t.Context(), `UPDATE messages SET subject = ? WHERE id = 1`)
+	require.NoError(err)
+	defer func() { require.NoError(update.Close()) }()
+	_, err = st.DB().Exec(`UPDATE participants SET display_name = 'Concurrent Writer' WHERE id = 1`)
+	require.NoError(err)
+	_, err = update.ExecContext(t.Context(), "written after a concurrent commit")
+	require.NoError(err)
+	require.NoError(tx.Commit())
 }
