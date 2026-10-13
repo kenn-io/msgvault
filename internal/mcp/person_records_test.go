@@ -14,6 +14,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
@@ -109,6 +110,9 @@ type personAttributePreviewCaptureTransport struct {
 	base     http.RoundTripper
 	mu       sync.Mutex
 	previews [][]byte
+	// Vary only trial clocks after the real native dry run. Wall clocks can
+	// repeat on Windows; confirmation must tolerate changing clocks regardless.
+	trialClock atomic.Int64
 }
 
 func (t *personAttributePreviewCaptureTransport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -122,6 +126,42 @@ func (t *personAttributePreviewCaptureTransport) RoundTrip(req *http.Request) (*
 		return nil, err
 	}
 	if err := resp.Body.Close(); err != nil {
+		return nil, err
+	}
+	var preview map[string]json.RawMessage
+	if err := json.Unmarshal(body, &preview); err != nil {
+		return nil, err
+	}
+	selected := "value"
+	clocks := []string{"active_from", "created_at"}
+	if req.Method == http.MethodDelete {
+		selected = "superseded"
+		clocks = []string{"active_until", "superseded_at"}
+	}
+	var value map[string]json.RawMessage
+	if err := json.Unmarshal(preview[selected], &value); err != nil {
+		return nil, err
+	}
+	clock, err := json.Marshal(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC).Add(time.Duration(t.trialClock.Add(1)) * time.Second))
+	if err != nil {
+		return nil, err
+	}
+	for _, key := range clocks {
+		var nativeClock string
+		if err := json.Unmarshal(value[key], &nativeClock); err != nil {
+			return nil, err
+		}
+		if _, err := time.Parse(time.RFC3339Nano, nativeClock); err != nil {
+			return nil, err
+		}
+		value[key] = clock
+	}
+	preview[selected], err = json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	body, err = json.Marshal(preview)
+	if err != nil {
 		return nil, err
 	}
 	t.mu.Lock()
@@ -317,7 +357,7 @@ func TestPersonAttributeConfirmationBindsStablePreview(t *testing.T) {
 			}
 			for i, clock := range secondClocks {
 				requirements.NotEmpty(clock)
-				assertions.NotEqual(firstClocks[i], clock, "separate native dry runs use fresh trial clocks")
+				assertions.NotEqual(firstClocks[i], clock, "the transport varies native trial clocks deterministically")
 				assertions.NotContains(secondPrompt.Message, clock, "native trial clocks do not bind confirmation")
 			}
 			assertions.Equal(prompt.Message, secondPrompt.Message, "equivalent raw JSON and changed native trial clocks must preserve disclosure and hash")
