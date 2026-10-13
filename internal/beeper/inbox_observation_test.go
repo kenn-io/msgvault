@@ -33,8 +33,8 @@ type inboxHTTPPeer struct {
 	status           int
 }
 
-func (p *inboxHTTPPeer) client(t testing.TB) *Client {
-	t.Helper()
+func (p *inboxHTTPPeer) client(tb testing.TB) *Client {
+	tb.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p.mu.Lock()
 		defer p.mu.Unlock()
@@ -59,7 +59,7 @@ func (p *inboxHTTPPeer) client(t testing.TB) *Client {
 			w.WriteHeader(http.StatusNotFound)
 		}
 	}))
-	t.Cleanup(srv.Close)
+	tb.Cleanup(srv.Close)
 	return NewClient(srv.URL, testToken, 10000)
 }
 
@@ -77,9 +77,9 @@ func TestInboxObservePresence(t *testing.T) {
 		{"absent", ``, nil, nil, nil},
 		{"null", `,"isArchived":null,"unreadCount":null,"isMarkedUnread":null`, nil, nil, nil},
 		{"wrong types", `,"isArchived":"false","unreadCount":"0","isMarkedUnread":0`, nil, nil, nil},
-		{"explicit false", `,"isArchived":false,"unreadCount":0,"isMarkedUnread":false`, inboxBool(true), nil, inboxBool(false)},
-		{"archived unread", `,"isArchived":true,"unreadCount":3,"isMarkedUnread":false`, inboxBool(false), inboxBool(false), inboxBool(false)},
-		{"marked unread zero", `,"isArchived":false,"unreadCount":0,"isMarkedUnread":true`, inboxBool(true), inboxBool(false), inboxBool(true)},
+		{"explicit false", `,"isArchived":false,"unreadCount":0,"isMarkedUnread":false`, new(true), nil, new(false)},
+		{"archived unread", `,"isArchived":true,"unreadCount":3,"isMarkedUnread":false`, new(false), new(false), new(false)},
+		{"marked unread zero", `,"isArchived":false,"unreadCount":0,"isMarkedUnread":true`, new(true), new(false), new(true)},
 		{"negative count", `,"unreadCount":-1`, nil, nil, nil},
 		{"fractional count", `,"unreadCount":0.5`, nil, nil, nil},
 	} {
@@ -166,5 +166,3 @@ func TestInboxObserveDurableMarkerAndRevision(t *testing.T) {
 		assert.NotEqual(t, state.Revision, observe(strings.Replace(inboxTestChat, replacement.old, replacement.new, 1)).Revision)
 	}
 }
-
-func inboxBool(v bool) *bool { return &v }

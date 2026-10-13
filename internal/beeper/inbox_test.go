@@ -63,7 +63,7 @@ func TestInboxAllMutationsRefusedWithoutHTTP(t *testing.T) {
 	target := inboxTestTarget()
 	for _, op := range []inboxcontrol.Operation{inboxcontrol.OpArchive, inboxcontrol.OpUnarchive, inboxcontrol.OpSetRead, inboxcontrol.OpSetUnread, inboxcontrol.OpTags, inboxcontrol.OpMove, inboxcontrol.OpCreateFolder} {
 		r := inboxcontrol.Request{Operation: op, Target: &target, DryRun: true}
-		before := inboxcontrol.State{Target: target, Inbox: inboxBool(false), Read: inboxBool(false)}
+		before := inboxcontrol.State{Target: target, Inbox: new(false), Read: new(false)}
 		_, err := provider.Preview(t.Context(), r, before)
 		assert.ErrorIs(t, err, inboxcontrol.ErrUnavailable)
 		_, err = provider.Dispatch(t.Context(), r, before)
@@ -83,14 +83,14 @@ func TestInboxMessageDirectionFromRaw(t *testing.T) {
 		{``, false}, {`,"isSender":null`, false}, {`,"isSender":"false"`, false}, {`,"isSender":true`, false}, {`,"isSender":false`, true},
 	} {
 		raw := `{"id":"message-A","chatID":"!chat:example.invalid","accountID":"account-example","sortKey":"10:opaque","timestamp":"2026-01-01T00:00:00Z"` + tt.field + `}`
-		candidate, err := inboxIncomingCandidate([]byte(raw), inboxTestTarget())
+		candidate, incoming, err := inboxIncomingCandidate([]byte(raw), inboxTestTarget())
 		if tt.want {
 			require.NoError(t, err)
-			require.NotNil(t, candidate)
+			require.True(t, incoming)
 			assert.Equal(t, "message-A", candidate.ID)
 			assert.Equal(t, "10:opaque", candidate.SortKey)
 		} else {
-			assert.Nil(t, candidate)
+			assert.False(t, incoming)
 		}
 		if tt.field != `,"isSender":"false"` {
 			var message Message

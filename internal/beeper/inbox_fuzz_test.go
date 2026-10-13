@@ -24,13 +24,13 @@ func FuzzInboxIncomingRequiresExplicitFalse(f *testing.F) {
 		object, isObject := decoded.(map[string]any)
 		boolean, isBoolean := object["isSender"].(bool)
 		want := valid && isObject && isBoolean && !boolean
-		candidate, err := inboxIncomingCandidate(raw, inboxTestTarget())
+		candidate, incoming, err := inboxIncomingCandidate(raw, inboxTestTarget())
 		if want {
 			require.NoError(t, err)
-			require.NotNil(t, candidate)
-			assert.Equal(t, inboxCandidate{ID: "message-A", SortKey: "opaque"}, *candidate)
+			require.True(t, incoming)
+			assert.Equal(t, inboxCandidate{ID: "message-A", SortKey: "opaque"}, candidate)
 		} else {
-			assert.Nil(t, candidate)
+			assert.False(t, incoming)
 		}
 	})
 }
@@ -48,7 +48,7 @@ func FuzzInboxMutationNeverDispatches(f *testing.F) {
 		target.ProviderID = id
 		target.SourceID = sourceID
 		request := inboxcontrol.Request{Operation: inboxcontrol.Operation(operation), Target: &target, DryRun: dryRun}
-		before := inboxcontrol.State{Target: target, Inbox: inboxBool(false), Read: inboxBool(false)}
+		before := inboxcontrol.State{Target: target, Inbox: new(false), Read: new(false)}
 		_, previewErr := provider.Preview(t.Context(), request, before)
 		_, dispatchErr := provider.Dispatch(t.Context(), request, before)
 		assert.ErrorIs(t, previewErr, inboxcontrol.ErrUnavailable)

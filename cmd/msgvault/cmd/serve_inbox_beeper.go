@@ -36,6 +36,7 @@ func (a *storeAPIAdapter) resolveBeeperInboxProvider(ctx context.Context, reques
 // execution/removal fence. It does not introduce an Events writer or a crawl.
 type beeperInboxObservationProvider struct {
 	*beeper.InboxProvider
+
 	adapter *storeAPIAdapter
 }
 
