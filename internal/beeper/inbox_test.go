@@ -115,7 +115,7 @@ func TestInboxLocalEnumerationNeverAdmitsFrontier(t *testing.T) {
 		assert.Nil(t, state.Read)
 		assert.Empty(t, state.LastMessageID)
 		_, err = provider.Preview(t.Context(), inboxcontrol.Request{Operation: inboxcontrol.OpArchive, Target: &target, DryRun: true}, state)
-		assert.ErrorIs(t, err, inboxcontrol.ErrUnavailable)
+		require.ErrorIs(t, err, inboxcontrol.ErrUnavailable)
 	}
 	for _, call := range peer.calls() {
 		assert.True(t, strings.HasPrefix(call, "GET "), call)
