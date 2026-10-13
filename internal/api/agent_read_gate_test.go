@@ -127,7 +127,10 @@ func TestAgentReadSourceReplacementSnapshot(t *testing.T) {
 						_, err = st.DB().Exec(st.Rebind("INSERT INTO sources (id, source_type, identifier) OVERRIDING SYSTEM VALUE VALUES (?, ?, ?)"), src.ID, "test", "outside@example.test")
 						outside = &store.Source{ID: src.ID}
 					} else {
-						outside, err = st.GetOrCreateSource("test", "outside@example.test")
+						// Reproduce a legacy writer reusing the removed ID. Normal
+						// Store creation deliberately retains a fresh source lifetime.
+						_, err = st.DB().Exec(`INSERT INTO sources (id, source_type, identifier) VALUES (?, ?, ?)`, src.ID, "test", "outside@example.test")
+						outside = &store.Source{ID: src.ID}
 					}
 					if err == nil {
 						var conv int64
