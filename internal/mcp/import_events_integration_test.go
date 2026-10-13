@@ -19,6 +19,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -990,7 +991,12 @@ INSERT INTO ZWACHATSESSION VALUES(10,'15550000002@s.whatsapp.net','Synthetic Con
 		for _, part := range []string{"cur", "new", "tmp"} {
 			require.NoError(os.MkdirAll(filepath.Join(directory, part), 0o700))
 		}
-		require.NoError(os.WriteFile(filepath.Join(directory, "cur", "synthetic:2,S"), []byte(raw), 0o600))
+		filename := "synthetic:2,S"
+		if runtime.GOOS == "windows" {
+			// Colons select alternate data streams on Windows, not regular files.
+			filename = "synthetic-seen"
+		}
+		require.NoError(os.WriteFile(filepath.Join(directory, "cur", filename), []byte(raw), 0o600))
 		summary, err := importer.ImportMaildir(t.Context(), f.Store, directory, importer.MaildirImportOptions{Identifier: importIdentifier, NotifyImports: true, NoResume: true, AttachmentsDir: cfg.AttachmentsDir()})
 		require.NoError(err)
 		require.NotNil(summary)
