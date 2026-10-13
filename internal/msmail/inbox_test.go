@@ -200,9 +200,9 @@ func TestMicrosoftInboxDeniesForeignIdentityAndUnsupportedWrites(t *testing.T) {
 	for _, op := range []inboxcontrol.Operation{inboxcontrol.OpArchive, inboxcontrol.OpUnarchive, inboxcontrol.OpSetRead, inboxcontrol.OpSetUnread, inboxcontrol.OpMove, inboxcontrol.OpCreateFolder} {
 		request.Operation = op
 		_, err := p.Preview(t.Context(), request, before)
-		assertions.ErrorIs(err, inboxcontrol.ErrUnavailable)
+		require.ErrorIs(t, err, inboxcontrol.ErrUnavailable)
 		_, err = p.Dispatch(t.Context(), request, before)
-		assertions.ErrorIs(err, inboxcontrol.ErrNoWrite)
+		require.ErrorIs(t, err, inboxcontrol.ErrNoWrite)
 	}
 	assertions.Zero(f.writes)
 }
@@ -257,9 +257,9 @@ func TestMicrosoftInboxCapabilitiesRequireCurrentWriteEvidence(t *testing.T) {
 			if evidence == inboxcontrol.CapabilitySupported {
 				requirements.NoError(err)
 			} else {
-				assertions.ErrorIs(err, inboxcontrol.ErrUnavailable)
+				require.ErrorIs(t, err, inboxcontrol.ErrUnavailable)
 				_, err = p.Dispatch(t.Context(), request, before)
-				assertions.ErrorIs(err, inboxcontrol.ErrNoWrite)
+				require.ErrorIs(t, err, inboxcontrol.ErrNoWrite)
 			}
 			assertions.Zero(f.writes)
 		})
