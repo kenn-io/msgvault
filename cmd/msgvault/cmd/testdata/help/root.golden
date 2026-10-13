@@ -131,6 +131,7 @@ Drafts, calendar, and Kata (write to providers):
   draft-recover Recover an interrupted managed IMAP draft edit or delete
   draft-reply   Create an IMAP or Gmail reply draft from an archived message
   draft-send-as List Gmail send-as identities
+  inbox         Observe and control exact native inbox items through the daemon
   kata          Create Kata issues that quote archived evidence
   message-tags  Read or update native email tags
 
