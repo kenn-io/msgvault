@@ -45,7 +45,7 @@ func (s *Store) persistNativeMessageSnapshot(ctx context.Context, tx *loggedTx, 
 		}
 	}
 	if data.SlackAttachmentSnapshot != nil {
-		if err := s.replaceMessageAttachmentsWhereTxContext(context.Background(), tx, messageID, `source_attachment_id LIKE ?`, false, *data.SlackAttachmentSnapshot, "slack:%"); err != nil {
+		if err := s.replaceMessageAttachmentsWhereTxContext(context.Background(), tx, messageID, `source_attachment_id LIKE ?`, *data.SlackAttachmentSnapshot, "slack:%"); err != nil {
 			return fmt.Errorf("persist Slack attachments: %w", err)
 		}
 		if err := recomputeMessageAttachmentStatsWith(boundQuerier{ctx: ctx, q: tx}, messageID); err != nil {
@@ -68,7 +68,7 @@ func (s *Store) persistNativeMessageSnapshot(ctx context.Context, tx *loggedTx, 
 	}
 	if data.LinkAttachmentSnapshot != nil {
 		if err := s.replaceMessageAttachmentsWhereTxContext(context.Background(), tx, messageID,
-			linkAttachmentDeletePredicate, false, *data.LinkAttachmentSnapshot); err != nil {
+			linkAttachmentDeletePredicate, *data.LinkAttachmentSnapshot); err != nil {
 			return fmt.Errorf("persist native link attachments: %w", err)
 		}
 	}
