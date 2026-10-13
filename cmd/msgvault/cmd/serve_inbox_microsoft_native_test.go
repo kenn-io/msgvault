@@ -696,13 +696,23 @@ func TestDaemonInboxMicrosoftNativeMCPConfirmationAndCLIRecovery(t *testing.T) {
 	_, err = foreignClient.ControlInbox(t.Context(), inboxcontrol.Request{Operation: inboxcontrol.OpReceiptGet, ReceiptID: envelope.Result.Receipt.ID})
 	requirements.ErrorIs(err, inboxcontrol.ErrDenied)
 	assertions.Equal(beforeForeign, graph.factory.Load(), "a grant for the same source/action cannot read another principal's receipt")
-	request := microsoftSignedTags(t, client, target, emailtags.MessageTagChange{Add: []string{"Last"}}, "microsoft-cli-lost-stdout")
+	// CLI recovery gets its own server so earlier MCP calls cannot exhaust the
+	// delegated client's per-IP rate-limit burst before the child process runs.
+	cliOwner, cliDaemonURL := microsoftDaemonSDK(t, adapter)
+	cliGrant, err := cliOwner.IssueAgentToken(t.Context(), "native-microsoft-cli", []string{"inbox.read", "inbox.tag"}, []int64{target.SourceID}, nil, time.Time{})
+	requirements.NoError(err)
+	cliClient, err := daemonclient.New(daemonclient.Config{URL: cliDaemonURL, AgentToken: cliGrant.Secret, AllowInsecure: true})
+	requirements.NoError(err)
+	t.Cleanup(func() {
+		requirements.NoError(cliClient.Close())
+	})
+	request := microsoftSignedTags(t, cliClient, target, emailtags.MessageTagChange{Add: []string{"Last"}}, "microsoft-cli-lost-stdout")
 	requestData, err := json.Marshal(request)
 	requirements.NoError(err)
 	requestFile := filepath.Join(t.TempDir(), "request.json")
 	tokenFile := filepath.Join(t.TempDir(), "agent.token")
 	requirements.NoError(os.WriteFile(requestFile, requestData, 0o600))
-	requirements.NoError(os.WriteFile(tokenFile, []byte(grant.Secret), 0o600))
+	requirements.NoError(os.WriteFile(tokenFile, []byte(cliGrant.Secret), 0o600))
 	reader, writer, err := os.Pipe()
 	requirements.NoError(err)
 	requirements.NoError(reader.Close())
@@ -710,21 +720,21 @@ func TestDaemonInboxMicrosoftNativeMCPConfirmationAndCLIRecovery(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 	child := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestInboxCLIMicrosoftClosedStdoutHelper$") //nolint:gosec // Re-executes this test binary with a fixed test selector.
-	child.Env = append(os.Environ(), "MSGVAULT_MICROSOFT_CLOSED_STDOUT=1", "MSGVAULT_MICROSOFT_DAEMON_URL="+daemonURL, "MSGVAULT_MICROSOFT_REQUEST="+requestFile, "MSGVAULT_MICROSOFT_AGENT_TOKEN_FILE="+tokenFile)
+	child.Env = append(os.Environ(), "MSGVAULT_MICROSOFT_CLOSED_STDOUT=1", "MSGVAULT_MICROSOFT_DAEMON_URL="+cliDaemonURL, "MSGVAULT_MICROSOFT_REQUEST="+requestFile, "MSGVAULT_MICROSOFT_AGENT_TOKEN_FILE="+tokenFile)
 	child.Stdout = writer
 	var stderr bytes.Buffer
 	child.Stderr = &stderr
 	requirements.NoError(child.Run(), stderr.String())
-	recovered, err := client.ControlInbox(t.Context(), request)
+	recovered, err := cliClient.ControlInbox(t.Context(), request)
 	requirements.NoError(err)
 	requirements.NotNil(recovered.Receipt)
 	assertions.Equal(inboxcontrol.StatusVerified, recovered.Receipt.Status)
 	assertions.Equal(request.IdempotencyKey, recovered.Receipt.IdempotencyKey)
-	requirements.NoError(owner.RevokeAgentToken(t.Context(), grant.ID))
+	requirements.NoError(cliOwner.RevokeAgentToken(t.Context(), cliGrant.ID))
 	beforeFactory := graph.factory.Load()
-	_, err = client.ControlInbox(t.Context(), request)
+	_, err = cliClient.ControlInbox(t.Context(), request)
 	requirements.ErrorIs(err, inboxcontrol.ErrUnavailable, "the schema-version request also refuses a revoked grant")
-	typed, err := client.GeneratedClient()
+	typed, err := cliClient.GeneratedClient()
 	requirements.NoError(err)
 	var body generated.ControlInboxBody
 	requirements.NoError(json.Unmarshal(requestData, &body))
