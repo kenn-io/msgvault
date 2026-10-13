@@ -4,32 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"strings"
-	"time"
 	"unicode/utf8"
 
 	"go.kenn.io/msgvault/internal/search"
 )
-
-const metadataSearchTimeout = 10 * time.Second
-
-func (e *SQLiteEngine) metadataSearchContext(ctx context.Context, q *search.Query) (context.Context, context.CancelFunc) {
-	if len(q.TextTerms) > 0 && e.dialect.Rebind("?") == "?" {
-		return context.WithTimeout(ctx, metadataSearchTimeout)
-	}
-	return ctx, func() {}
-}
-
-func metadataSearchError(ctx context.Context, err error) error {
-	if ctx.Err() != nil {
-		err = ctx.Err()
-	}
-	if errors.Is(err, context.DeadlineExceeded) {
-		return fmt.Errorf("metadata search exceeded its deadline; narrow the date/account scope or use a longer term: %w", err)
-	}
-	return err
-}
 
 // hasMetadataFTS caches only a successful, complete readiness check. A failed
 // probe (including cancellation) is retried, so setup can enable indexing on an

@@ -2259,14 +2259,8 @@ func (e *SQLiteEngine) SearchDeepWithStats(
 // SearchFast searches message metadata and merges MessageFilter context into
 // the query (drill-down filters, hide-deleted, etc.).
 func (e *SQLiteEngine) SearchFast(ctx context.Context, q *search.Query, filter MessageFilter, limit, offset int) ([]MessageSummary, error) {
-	ctx, cancel := e.metadataSearchContext(ctx, q)
-	defer cancel()
 	conditions, args, ftsJoin := e.buildFilteredMetadataSearchQueryParts(ctx, q, filter)
-	results, err := e.executeSearchQuery(ctx, conditions, args, ftsJoin, limit, offset)
-	if err = metadataSearchError(ctx, err); err != nil {
-		return nil, err
-	}
-	return results, nil
+	return e.executeSearchQuery(ctx, conditions, args, ftsJoin, limit, offset)
 }
 
 // executeSearchQuery runs a search query built from conditions and the
@@ -2551,11 +2545,8 @@ func ParseTimePeriodBounds(period string) (after, before time.Time, ok bool) {
 // SearchFastCount returns the total count of messages matching a search query.
 // Uses the same query logic as SearchFast to ensure consistent counts.
 func (e *SQLiteEngine) SearchFastCount(ctx context.Context, q *search.Query, filter MessageFilter) (int64, error) {
-	ctx, cancel := e.metadataSearchContext(ctx, q)
-	defer cancel()
 	conditions, args, ftsJoin := e.buildFilteredMetadataSearchQueryParts(ctx, q, filter)
-	count, err := e.executeSearchCount(ctx, conditions, args, ftsJoin)
-	return count, metadataSearchError(ctx, err)
+	return e.executeSearchCount(ctx, conditions, args, ftsJoin)
 }
 
 func (e *SQLiteEngine) executeSearchCount(ctx context.Context, conditions []string, args []any, ftsJoin string) (int64, error) {
@@ -2650,19 +2641,17 @@ func (e *SQLiteEngine) getSearchMatchStats(ctx context.Context, conditions []str
 // for messages, count, and stats so all three describe the same match set.
 func (e *SQLiteEngine) SearchFastWithStats(ctx context.Context, q *search.Query, queryStr string,
 	filter MessageFilter, statsGroupBy ViewType, limit, offset int) (*SearchFastResult, error) {
-	ctx, cancel := e.metadataSearchContext(ctx, q)
-	defer cancel()
 	conditions, args, ftsJoin := e.buildFilteredMetadataSearchQueryParts(ctx, q, filter)
 	results, err := e.executeSearchQuery(ctx, conditions, args, ftsJoin, limit, offset)
-	if err = metadataSearchError(ctx, err); err != nil {
+	if err != nil {
 		return nil, err
 	}
 
-	// Unrelated aggregate errors remain best-effort; cancellation and deadlines
-	// must never be reported as a successful partial search.
+	// Unrelated aggregate errors remain best-effort; a cancelled request must
+	// never be reported as a successful partial search.
 	count, countErr := e.executeSearchCount(ctx, conditions, args, ftsJoin)
-	if err := metadataSearchError(ctx, countErr); errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return nil, err
+	if countErr != nil && ctx.Err() != nil {
+		return nil, ctx.Err()
 	}
 	if countErr != nil {
 		log.Printf("warning: search count failed (using -1): %v", countErr)
@@ -2670,8 +2659,8 @@ func (e *SQLiteEngine) SearchFastWithStats(ctx context.Context, q *search.Query,
 	}
 
 	stats, statsErr := e.getSearchMatchStats(ctx, conditions, args, ftsJoin)
-	if err := metadataSearchError(ctx, statsErr); errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return nil, err
+	if statsErr != nil && ctx.Err() != nil {
+		return nil, ctx.Err()
 	}
 
 	return &SearchFastResult{

@@ -59,15 +59,11 @@ entries. SQLite triggers keep them current as metadata changes. This adds work
 to imports and metadata updates. Initialization without FTS5 disables their
 maintenance; initialization with FTS5 rebuilds them before indexed search resumes.
 
-SQLite metadata queries with free text have a 10-second budget. Combined
-results, labels, count, and stats share that budget. Callers that fetch a page
-and count separately receive a budget for each query. Earlier caller deadlines
-still apply. Terms shorter than three Unicode characters, terms containing NUL
-or invalid UTF-8, and archives without usable indexes use the substring scan
-within that budget.
-If it expires, the request fails with a deadline error instead of returning a
-partial success. Narrow the date or account scope, or use a longer term.
-PostgreSQL retains its existing metadata substring queries and statement timeout.
+Terms shorter than three Unicode characters, terms containing NUL or invalid
+UTF-8, and archives without usable indexes use the substring scan. When a
+caller cancels a combined request, it fails instead of returning results
+without their count or stats. PostgreSQL retains its existing metadata
+substring queries and statement timeout.
 
 ## Search Operators
 

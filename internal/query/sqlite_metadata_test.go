@@ -6,8 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"testing/synctest"
-	"time"
 
 	"github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
@@ -156,57 +154,4 @@ func TestMetadataSearchCancellationDuringAggregates(t *testing.T) {
 			assert.ErrorIs(err, context.Canceled)
 		})
 	}
-}
-
-func TestMetadataSearchDeadlineError(t *testing.T) {
-	e := NewSQLiteEngine(metadataSearchDB(t))
-	ctx, cancel := context.WithDeadline(t.Context(), time.Now().Add(-time.Second))
-	defer cancel()
-	for _, call := range []func() error{
-		func() error {
-			_, err := e.SearchFast(ctx, &search.Query{TextTerms: []string{"ab"}}, MessageFilter{}, 50, 0)
-			return err
-		},
-		func() error {
-			_, err := e.SearchFastCount(ctx, &search.Query{TextTerms: []string{"ab"}}, MessageFilter{})
-			return err
-		},
-		func() error {
-			_, err := e.SearchFastWithStats(ctx, &search.Query{TextTerms: []string{"ab"}}, "", MessageFilter{}, ViewSenders, 50, 0)
-			return err
-		},
-	} {
-		err := call()
-		require.ErrorIs(t, err, context.DeadlineExceeded)
-		assert.ErrorContains(t, err, "narrow")
-	}
-}
-
-func TestMetadataSearchDeadlineBudget(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		assert := assert.New(t)
-		engine := NewSQLiteEngine(nil)
-		start := time.Now()
-		ctx, cancel := engine.metadataSearchContext(t.Context(), &search.Query{TextTerms: []string{"ab"}})
-		defer cancel()
-		deadline, ok := ctx.Deadline()
-		require.True(t, ok)
-		assert.Equal(start.Add(10*time.Second), deadline)
-		parent, parentCancel := context.WithTimeout(t.Context(), time.Second)
-		defer parentCancel()
-		child, childCancel := engine.metadataSearchContext(parent, &search.Query{TextTerms: []string{"needle"}})
-		defer childCancel()
-		got, _ := child.Deadline()
-		want, _ := parent.Deadline()
-		assert.Equal(want, got)
-		plain, plainCancel := engine.metadataSearchContext(t.Context(), &search.Query{})
-		defer plainCancel()
-		_, ok = plain.Deadline()
-		assert.False(ok, "filter-only searches keep existing budgets")
-		pg := NewEngineWithDialect(nil, PostgreSQLQueryDialect{})
-		pgCtx, pgCancel := pg.metadataSearchContext(t.Context(), &search.Query{TextTerms: []string{"needle"}})
-		defer pgCancel()
-		_, ok = pgCtx.Deadline()
-		assert.False(ok, "PostgreSQL keeps its own statement timeout")
-	})
 }
