@@ -1,6 +1,6 @@
 name: Docker
 
-# Run the main-pinned build and smoke checks on Namespace.
+# Run the main-pinned build and smoke checks on GitHub-hosted runners.
 on:
   pull_request:
     paths:
