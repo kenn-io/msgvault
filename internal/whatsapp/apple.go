@@ -135,6 +135,17 @@ func (imp *Importer) importApple(
 		}
 	}()
 
+	ownershipCtx := context.WithoutCancel(ctx)
+	run, err := imp.store.BeginNativeImportAttempt(ownershipCtx, source.ID, "whatsapp", opts.NotifyImports, syncID, 0)
+	if err != nil {
+		return nil, fmt.Errorf("begin Apple WhatsApp import: %w", err)
+	}
+	summary.ImportRunID = run.ID
+	imp.store, err = imp.store.WithImportRun(ownershipCtx, run.ID)
+	if err != nil {
+		return nil, fmt.Errorf("bind Apple WhatsApp import: %w", err)
+	}
+
 	imp.progress.OnStart()
 
 	lidMap, err := loadAppleLIDMap(ctx, chatDBPath)
@@ -157,9 +168,12 @@ func (imp *Importer) importApple(
 		))
 	}
 
-	selfParticipantID, err := imp.store.EnsureParticipantByPhone(
-		opts.Phone, opts.DisplayName, "whatsapp",
-	)
+	var selfParticipantID int64
+	if opts.NotifyImports {
+		selfParticipantID, _, err = imp.store.ParticipantByIdentifier("whatsapp", opts.Phone)
+	} else {
+		selfParticipantID, err = imp.store.EnsureParticipantByPhone(opts.Phone, opts.DisplayName, "whatsapp")
+	}
 	if err != nil {
 		return nil, fmt.Errorf("ensure self participant: %w", err)
 	}
@@ -230,21 +244,14 @@ func (imp *Importer) importApple(
 			conversationType = "group_chat"
 			conversationTitle = chat.Name
 		}
-		conversationID, err := imp.store.EnsureConversationWithType(
-			source.ID, canonicalChatJID, conversationType, conversationTitle,
-		)
+		plan := appleConversationPlan{}
+		plan.add(opts.Phone, opts.DisplayName, "member")
+		conversationID, err := imp.store.ConversationIDContext(ctx, source.ID, canonicalChatJID)
 		if err != nil {
-			return summary, fmt.Errorf("ensure Apple conversation: %w", err)
+			return summary, fmt.Errorf("find Apple conversation: %w", err)
 		}
 		summary.ChatsProcessed++
 		imp.progress.OnChatStart(canonicalChatJID, appleChatTitle(chat, lidMap), 0)
-
-		if err := imp.store.EnsureConversationParticipant(
-			conversationID, selfParticipantID, "member",
-		); err != nil {
-			return summary, fmt.Errorf("add self to Apple conversation: %w", err)
-		}
-
 		if isAppleGroupJID(chat.RawJID) {
 			members, err := fetchAppleGroupMembers(ctx, db, chat.RowID)
 			if err != nil {
@@ -255,50 +262,47 @@ func (imp *Importer) importApple(
 				if phone == "" {
 					continue
 				}
-				legacyName := firstNonEmptyApple(member.ContactName, member.FirstName)
-				participantID, err := ensureAppleParticipant(
-					imp.store, phone, legacyName,
-					participantIDs, summary,
-				)
-				if err != nil {
-					return summary, err
-				}
-				if legacyName == "" {
+				name := firstNonEmptyApple(member.ContactName, member.FirstName)
+				if name == "" {
 					if pushName := applePushNameFor(pushNames, member.JID); pushName != "" {
 						pendingPushNames[phone] = pushName
+						if opts.NotifyImports {
+							name = pushName
+						}
 					}
 				}
 				role := "member"
 				if member.IsAdmin {
 					role = "admin"
 				}
-				if err := imp.store.EnsureConversationParticipant(
-					conversationID, participantID, role,
-				); err != nil {
-					return summary, fmt.Errorf("add Apple group participant: %w", err)
-				}
+				plan.add(phone, name, role)
 			}
 		} else if phone := applePhoneForJID(chat.RawJID, lidMap); phone != "" {
-			participantID, err := ensureAppleParticipant(
-				imp.store, phone, chat.Name, participantIDs, summary,
-			)
-			if err != nil {
-				return summary, err
-			}
-			if strings.TrimSpace(chat.Name) == "" {
+			name := chat.Name
+			if strings.TrimSpace(name) == "" {
 				if pushName := applePushNameFor(pushNames, chat.RawJID); pushName != "" {
 					pendingPushNames[phone] = pushName
+					if opts.NotifyImports {
+						name = pushName
+					}
 				}
 			}
-			if err := imp.store.EnsureConversationParticipant(
-				conversationID, participantID, "member",
-			); err != nil {
-				return summary, fmt.Errorf("add Apple direct participant: %w", err)
+			plan.add(phone, name, "member")
+		}
+		if !opts.NotifyImports {
+			conversationID, err = imp.applyAppleConversationPlan(ctx, source.ID, canonicalChatJID, conversationType, conversationTitle, plan, participantIDs, summary)
+			if err != nil {
+				return summary, err
 			}
 		}
 
 		marker := appleChatMarker(aggregates, chat, conversationID)
 		if marker != "" && previousMarkers[chat.RowID] == marker {
+			if opts.NotifyImports {
+				if _, err := imp.applyAppleConversationPlan(ctx, source.ID, canonicalChatJID, conversationType, conversationTitle, plan, participantIDs, summary); err != nil {
+					return summary, err
+				}
+			}
 			imp.progress.OnChatComplete(canonicalChatJID, 0)
 			continue
 		}
@@ -352,28 +356,48 @@ func (imp *Importer) importApple(
 					continue
 				}
 
-				senderID, senderPhone, err := resolveAppleMessageSender(
-					imp.store, sourceMessage, chat, lidMap,
-					selfParticipantID, participantIDs, summary,
-				)
-				if err != nil {
-					return summary, err
+				var senderID sql.NullInt64
+				var senderPhone string
+				messagePlan := plan.clone()
+				senderIndex := -1
+				if opts.NotifyImports {
+					phone, name := appleMessageSenderIdentity(sourceMessage, chat, lidMap)
+					if sourceMessage.FromMe != 0 {
+						phone, name = opts.Phone, opts.DisplayName
+					}
+					if phone != "" {
+						if name == "" && sourceMessage.GroupMemberJID != "" {
+							name = applePushNameFor(pushNames, sourceMessage.GroupMemberJID)
+						}
+						senderIndex = messagePlan.add(phone, name, "member")
+						senderPhone = phone
+						id := participantIDs[phone]
+						if id == 0 {
+							id, _, err = imp.store.ParticipantByIdentifier("whatsapp", phone)
+							if err != nil {
+								return summary, fmt.Errorf("find Apple sender: %w", err)
+							}
+						}
+						senderID = sql.NullInt64{Int64: id, Valid: id != 0}
+					}
+				} else {
+					senderID, senderPhone, err = resolveAppleMessageSender(imp.store, sourceMessage, chat, lidMap, selfParticipantID, participantIDs, summary)
+					if err != nil {
+						return summary, err
+					}
+					if senderID.Valid {
+						if err := imp.store.EnsureConversationParticipant(conversationID, senderID.Int64, "member"); err != nil {
+							return summary, fmt.Errorf("add Apple message sender: %w", err)
+						}
+					}
 				}
-				if sourceMessage.FromMe == 0 && senderPhone != "" && sourceMessage.GroupMemberJID != "" &&
-					firstNonEmptyApple(sourceMessage.GroupContact, sourceMessage.GroupFirstName) == "" {
+				if sourceMessage.FromMe == 0 && senderPhone != "" && sourceMessage.GroupMemberJID != "" && firstNonEmptyApple(sourceMessage.GroupContact, sourceMessage.GroupFirstName) == "" {
 					if pushName := applePushNameFor(pushNames, sourceMessage.GroupMemberJID); pushName != "" {
 						pendingPushNames[senderPhone] = pushName
 					}
 				}
 				if sourceMessage.FromMe != 0 {
 					senderPhone = opts.Phone
-				}
-				if senderID.Valid {
-					if err := imp.store.EnsureConversationParticipant(
-						conversationID, senderID.Int64, "member",
-					); err != nil {
-						return summary, fmt.Errorf("add Apple message sender: %w", err)
-					}
 				}
 
 				message := mapAppleMessage(
@@ -389,6 +413,7 @@ func (imp *Importer) importApple(
 					RawMIME:        rawJSON,
 					RawFormat:      appleRawFormat,
 					PreserveLabels: true,
+					FTSBestEffort:  opts.NotifyImports,
 					FTS: &store.FTSDoc{
 						Body:     sourceMessage.Text.String,
 						FromAddr: senderPhone,
@@ -402,11 +427,45 @@ func (imp *Importer) importApple(
 						return summary, fmt.Errorf("compare stored Apple message: %w", err)
 					}
 					if unchanged {
+						if opts.NotifyImports {
+							if _, err := imp.applyAppleConversationPlan(ctx, source.ID, canonicalChatJID, conversationType, conversationTitle, messagePlan, participantIDs, summary); err != nil {
+								return summary, err
+							}
+						}
 						summary.MessagesSkipped++
 						continue
 					}
 				}
-				if _, err := imp.store.PersistMessageContext(ctx, data); err != nil {
+				if opts.NotifyImports {
+					var resolved []int64
+					_, err = imp.store.PersistMessageWithParticipantsContext(ctx, messagePlan.participants, func(ids []int64) *store.MessagePersistData {
+						resolved = append([]int64(nil), ids...)
+						snapshot := *data
+						msg := *data.Message
+						msg.SenderID = sql.NullInt64{}
+						if senderIndex >= 0 {
+							msg.SenderID = sql.NullInt64{Int64: ids[senderIndex], Valid: true}
+						}
+						snapshot.Message = &msg
+						snapshot.Conversation = messagePlan.snapshot(canonicalChatJID, conversationType, conversationTitle, ids)
+						return &snapshot
+					})
+					if err == nil {
+						for i, id := range resolved {
+							phone := messagePlan.participants[i].PhoneNumber
+							if _, ok := participantIDs[phone]; !ok {
+								summary.Participants++
+							}
+							participantIDs[phone] = id
+						}
+						selfParticipantID = participantIDs[opts.Phone]
+						plan = messagePlan
+						conversationID, err = imp.store.ConversationIDContext(ctx, source.ID, canonicalChatJID)
+					}
+				} else {
+					_, err = imp.store.PersistMessageContext(ctx, data)
+				}
+				if err != nil {
 					return summary, fmt.Errorf("persist Apple message: %w", err)
 				}
 				summary.MessagesAdded++
@@ -430,6 +489,15 @@ func (imp *Importer) importApple(
 				break
 			}
 		}
+		if opts.NotifyImports && conversationID == 0 {
+			// Native empty and filtered chats retain their archive trace without an event.
+			conversationID, err = imp.applyAppleConversationPlan(ctx, source.ID, canonicalChatJID, conversationType, conversationTitle, plan, participantIDs, summary)
+			if err != nil {
+				return summary, err
+			}
+			selfParticipantID = participantIDs[opts.Phone]
+		}
+		marker = appleChatMarker(aggregates, chat, conversationID)
 		// A chat cut short by --limit may still hold unread changes. A date
 		// window leaves older messages unwritten on purpose, so those chats
 		// stay unmarked and a later unfiltered run still imports them.
@@ -451,6 +519,10 @@ func (imp *Importer) importApple(
 		return summary, fmt.Errorf("recompute Apple conversation stats: %w", err)
 	}
 	if markersAvailable {
+		importContext, err = appleImportContext(storeIdentity, selfParticipantID, lidMap, pushNames, duplicateStanzas)
+		if err != nil {
+			return summary, err
+		}
 		if err := imp.saveAppleChatMarkers(
 			ctx, source.ID, syncID, importContext, nextMarkers,
 		); err != nil {
@@ -716,13 +788,7 @@ func resolveAppleMessageSender(
 		return sql.NullInt64{Int64: selfParticipantID, Valid: true}, "", nil
 	}
 
-	jid := message.GroupMemberJID
-	name := firstNonEmptyApple(message.GroupContact, message.GroupFirstName)
-	if jid == "" && !isAppleGroupJID(chat.RawJID) {
-		jid = firstNonEmptyApple(message.FromJID, chat.RawJID)
-		name = firstNonEmptyApple(name, chat.Name)
-	}
-	phone := applePhoneForJID(jid, lidMap)
+	phone, name := appleMessageSenderIdentity(message, chat, lidMap)
 	if phone == "" {
 		return sql.NullInt64{}, "", nil
 	}
@@ -735,13 +801,24 @@ func resolveAppleMessageSender(
 	return sql.NullInt64{Int64: participantID, Valid: true}, phone, nil
 }
 
+func appleMessageSenderIdentity(message appleMessage, chat appleChat, lidMap map[string]string) (string, string) {
+	jid := message.GroupMemberJID
+	name := firstNonEmptyApple(message.GroupContact, message.GroupFirstName)
+	if jid == "" && !isAppleGroupJID(chat.RawJID) {
+		jid = firstNonEmptyApple(message.FromJID, chat.RawJID)
+		name = firstNonEmptyApple(name, chat.Name)
+	}
+	phone := applePhoneForJID(jid, lidMap)
+	return phone, name
+}
+
 func ensureAppleParticipant(
 	s *store.Store,
 	phone, displayName string,
 	participantIDs map[string]int64,
 	summary *ImportSummary,
 ) (int64, error) {
-	if participantID, ok := participantIDs[phone]; ok {
+	if participantID, ok := participantIDs[phone]; ok && participantID != 0 {
 		if displayName != "" {
 			if _, err := s.EnsureParticipantByPhone(phone, displayName, "whatsapp"); err != nil {
 				return 0, fmt.Errorf("update Apple participant: %w", err)
@@ -753,8 +830,10 @@ func ensureAppleParticipant(
 	if err != nil {
 		return 0, fmt.Errorf("ensure Apple participant: %w", err)
 	}
+	if _, counted := participantIDs[phone]; !counted {
+		summary.Participants++
+	}
 	participantIDs[phone] = participantID
-	summary.Participants++
 	return participantID, nil
 }
 
@@ -926,4 +1005,59 @@ func applePushNameFor(pushNames map[string]string, jid string) string {
 		return ""
 	}
 	return pushNames[key]
+}
+
+// appleConversationPlan carries native identities without publishing them before a message commits.
+type appleConversationPlan struct {
+	participants []store.ParticipantPersistData
+	roles        []string
+}
+
+func (p *appleConversationPlan) add(phone, name, role string) int {
+	for i := range p.participants {
+		if p.participants[i].PhoneNumber == phone {
+			if name != "" {
+				p.participants[i].DisplayName = name
+			}
+			return i
+		}
+	}
+	i := len(p.participants)
+	p.participants = append(p.participants, store.ParticipantPersistData{PhoneNumber: phone, IdentifierType: "whatsapp", DisplayName: name})
+	p.roles = append(p.roles, role)
+	return i
+}
+
+func (p *appleConversationPlan) clone() appleConversationPlan {
+	return appleConversationPlan{participants: append([]store.ParticipantPersistData(nil), p.participants...), roles: append([]string(nil), p.roles...)}
+}
+
+func (p *appleConversationPlan) snapshot(key, kind, title string, ids []int64) *store.ConversationPersistData {
+	members := make([]store.ConversationParticipantRef, len(ids))
+	for i, id := range ids {
+		members[i] = store.ConversationParticipantRef{ParticipantID: id, Role: p.roles[i]}
+	}
+	return &store.ConversationPersistData{SourceConversationID: key, ConversationType: kind, Title: title, Participants: members, PreserveExistingParticipants: true, PreserveExistingParticipantRoles: true}
+}
+
+// applyAppleConversationPlan preserves the native refresh path for silent,
+// unchanged and empty chats. New notifying messages instead persist the plan atomically.
+func (imp *Importer) applyAppleConversationPlan(ctx context.Context, sourceID int64, key, kind, title string, plan appleConversationPlan, cache map[string]int64, summary *ImportSummary) (int64, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	id, err := imp.store.EnsureConversationWithType(sourceID, key, kind, title)
+	if err != nil {
+		return 0, fmt.Errorf("ensure Apple conversation: %w", err)
+	}
+	for i, participant := range plan.participants {
+		pid, err := ensureAppleParticipant(imp.store, participant.PhoneNumber, participant.DisplayName, cache, summary)
+		if err != nil {
+			return 0, err
+		}
+		if err := imp.store.EnsureConversationParticipant(id, pid, plan.roles[i]); err != nil {
+			return 0, fmt.Errorf("add Apple conversation participant: %w", err)
+		}
+	}
+	return id, nil
 }

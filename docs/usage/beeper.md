@@ -24,6 +24,28 @@ typed between the check and write can still be lost.
 - A Beeper Desktop access token: in Beeper Desktop open **Settings →
   Developer** and create an access token.
 
+## Live message notifications
+
+On unreleased `main`, MCP Events can notify an HTTPS receiver when an incremental
+Beeper sync archives a new message in a subscribed conversation. Enable Events
+and include `"beeper"` in [`mcp.events.sources`](../configuration.md#mcpevents).
+Beeper is not in the default source list. See [MCP Events](chat.md#events) for
+subscription, delivery, and receipt-bound reads.
+
+The message body, original provider JSON, mentions, and conversation participants
+commit before its event becomes visible. Attachment downloads remain separate;
+a message event does not promise that media is ready. Duplicate syncs do not
+create another message occurrence.
+
+Initial history, full syncs, tail backfill, and reaction-target recovery stay
+silent. Once a chat has an incremental head cursor, new messages can notify
+subscribers while its older history continues to backfill. A previously empty
+chat without a head cursor is still treated as history.
+
+Reaction snapshots remain archived, but reaction events are not advertised.
+The provider's current reaction snapshots do not reliably identify which
+reaction was newly added when recovering an older target.
+
 ## Review identities across sources
 
 Beeper can expose the same person through several networks or through both a

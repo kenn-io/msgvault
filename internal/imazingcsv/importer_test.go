@@ -33,7 +33,9 @@ func TestImporterMessagesConversationsAndIdentity(t *testing.T) {
 		Owner: "+1 (555) 000-0001", Timezone: "UTC",
 	}).ImportPath(context.Background(), exportDir)
 	require.NoError(err)
-	assert.Equal(Summary{Files: 1, Conversations: 1, Messages: 3, Participants: 3}, summary)
+	var runID string
+	require.NoError(st.DB().QueryRow("SELECT id FROM import_runs").Scan(&runID))
+	assert.Equal(Summary{ImportRunID: runID, Files: 1, Conversations: 1, Messages: 3, Participants: 3}, summary)
 
 	source, err := st.GetSourceByTypeAndIdentifier(SourceType, "+15550000001")
 	require.NoError(err)

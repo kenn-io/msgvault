@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"math"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -186,10 +187,10 @@ func TestFinishImessageImportSkipsCacheBuildForPostgres(t *testing.T) {
 func TestPrintImessageSummaryReportsClearedDates(t *testing.T) {
 	assert := assert.New(t)
 	done := captureStdout(t)
-	printImessageSummary(&imessage.ImportSummary{DatesCleared: 2}, time.Now())
+	printImessageSummary(os.Stdout, &imessage.ImportSummary{DatesCleared: 2}, time.Now())
 	assert.Contains(done(), "  Dates cleared:    2\n")
 
 	done = captureStdout(t)
-	printImessageSummary(&imessage.ImportSummary{}, time.Now())
+	printImessageSummary(os.Stdout, &imessage.ImportSummary{}, time.Now())
 	assert.NotContains(done(), "Dates cleared")
 }

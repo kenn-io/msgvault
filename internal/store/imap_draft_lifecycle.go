@@ -378,7 +378,7 @@ func (s *Store) PublishIMAPDraftReplacementContext(
 				OriginalReceipt: draft.Pending.OriginalReceipt, Raw: append([]byte(nil), draft.Pending.Raw...),
 				ReplacementReceipt: &receipt, Code: IMAPDraftCodeCleanup,
 			}
-			return nil
+			return s.appendDraftEventTx(ctx, tx, "imap", draftID, "updated")
 		}
 		_, err := s.persistMessageWithParticipantsTx(ctx, tx, nil, participants, build, prepare, after)
 		return err
@@ -424,7 +424,7 @@ func (s *Store) FinishIMAPDraftRemovalContext(ctx context.Context, draftID strin
 			finished.Revision++
 			finished.DiscardedAt = ptrTimeNow()
 			finished.Pending = nil
-			return nil
+			return s.appendDraftEventTx(ctx, tx, "imap", draftID, "deleted")
 		}
 		if err := imapDrafts.clearPendingTx(ctx, s, tx, draftID, revision); err != nil {
 			return err

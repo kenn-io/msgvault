@@ -268,6 +268,7 @@ Examples:
 
 		for _, mboxPath := range mboxFiles {
 			summary, err := importer.ImportMbox(ctx, st, mboxPath, importer.MboxImportOptions{
+				NotifyImports:      importNotificationsRequested(cmd),
 				SourceType:         importMboxSourceType,
 				Identifier:         identifier,
 				Labels:             importMboxLabels,
@@ -277,6 +278,9 @@ Examples:
 				RemoteImages:       configuredRemoteImageFetcher(cfg),
 				Logger:             logger,
 			})
+			if summary != nil {
+				recordImportRun(cmd, summary.ImportRunID)
+			}
 			if err != nil {
 				return err
 			}
@@ -381,6 +385,7 @@ Examples:
 }
 
 func init() {
+	addImportNotificationFlag(importMboxCmd)
 	rootCmd.AddCommand(importMboxCmd)
 
 	importMboxCmd.Flags().StringVar(&importMboxSourceType, "source-type", "mbox", "Source type to record in the database (e.g. mbox, hey, google-groups)")

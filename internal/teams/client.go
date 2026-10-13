@@ -9,12 +9,18 @@ import (
 // Client adds the Teams endpoints to the shared Graph transport.
 type Client struct {
 	*msgraph.Client
+
+	grantedScopes func() ([]string, error)
 }
 
 // NewClient creates a Client. baseURL is injected so tests can point at
 // httptest servers. qps controls the token-bucket rate limit (default 5).
-func NewClient(baseURL string, token msgraph.TokenFunc, qps float64) *Client {
-	return &Client{msgraph.NewClient(baseURL, token, qps)}
+func NewClient(baseURL string, token msgraph.TokenFunc, qps float64, options ...ClientOption) *Client {
+	c := &Client{Client: msgraph.NewClient(baseURL, token, qps)}
+	for _, option := range options {
+		option(c)
+	}
+	return c
 }
 
 // SelfChatID is the Teams chat a user holds with themselves. Graph never
@@ -116,4 +122,13 @@ func (c *Client) ListChannelMembers(ctx context.Context, teamID, channelID strin
 	_, err := msgraph.PageThrough[ChatMember](ctx, c.Client, "/teams/"+teamID+"/channels/"+channelID+"/members",
 		func(p []ChatMember) { out = append(out, p...) })
 	return out, err
+}
+
+// ClientOption supplies account grant evidence independently of bearer tokens.
+type ClientOption func(*Client)
+
+// WithGrantedScopesReader reads the selected account's actual saved grants.
+// Requested defaults and successful archive reads are not grant evidence.
+func WithGrantedScopesReader(reader func() ([]string, error)) ClientOption {
+	return func(c *Client) { c.grantedScopes = reader }
 }

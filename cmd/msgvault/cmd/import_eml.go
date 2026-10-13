@@ -69,6 +69,7 @@ duplicate messages receive every mailbox label where they appear.`,
 			}
 			dbPath := cfg.DatabaseDSN()
 			summary, importErr := runImport(ctx, st, args[0], importer.EMLImportOptions{
+				NotifyImports:      importNotificationsRequested(cmd),
 				SourceType:         flags.sourceType,
 				Identifier:         flags.identifier,
 				NoResume:           flags.noResume,
@@ -77,6 +78,9 @@ duplicate messages receive every mailbox label where they appear.`,
 				RemoteImages:       configuredRemoteImageFetcher(cfg),
 				Logger:             logger,
 			})
+			if summary != nil {
+				recordImportRun(cmd, summary.ImportRunID)
+			}
 			if importErr != nil {
 				return errors.Join(importErr, rebuildCacheAfterWrite(dbPath, state))
 			}
@@ -120,6 +124,7 @@ Example:
 	cmd.Flags().IntVar(&flags.checkpointInterval, "checkpoint-interval", 200, "Save progress after this many messages")
 	cmd.Flags().BoolVar(&flags.noAttachments, "no-attachments", false, "Do not write attachment files")
 	cmd.Flags().BoolVar(&flags.noDefaultIdentity, "no-default-identity", false, "Do not confirm the identifier as the source's default identity")
+	addImportNotificationFlag(cmd)
 	return cmd
 }
 

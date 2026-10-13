@@ -79,6 +79,7 @@ func runImportMessenger(cmd *cobra.Command, rootDir string) error {
 	defer stop()
 
 	opts := fbmessenger.ImportOptions{
+		NotifyImports:   importNotificationsRequested(cmd),
 		Me:              importMessengerMe,
 		RootDir:         rootDir,
 		Format:          importMessengerFormat,
@@ -94,8 +95,15 @@ func runImportMessenger(cmd *cobra.Command, rootDir string) error {
 	_, _ = fmt.Fprintln(cmd.OutOrStdout())
 
 	summary, err := fbmessenger.ImportDYI(ctx, s, opts)
+	if summary != nil {
+		recordImportRun(cmd, summary.ImportRunID)
+		if summary.HardErrors {
+			markImportCommandIncomplete(cmd)
+		}
+	}
 	if err != nil {
 		if ctx.Err() != nil {
+			markImportCommandIncomplete(cmd)
 			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "\nImport interrupted. Re-run to continue.")
 			return rebuildCacheAfterWrite(dbPath, state)
 		}
@@ -140,5 +148,6 @@ func init() {
 	importMessengerCmd.Flags().BoolVar(&importMessengerNoResume, "no-resume", false, "ignore any existing checkpoint and start fresh")
 	importMessengerCmd.Flags().IntVar(&importMessengerCheckpointEvery, "checkpoint-interval", 200, "checkpoint every N messages")
 	_ = importMessengerCmd.MarkFlagRequired("me")
+	addImportNotificationFlag(importMessengerCmd)
 	rootCmd.AddCommand(importMessengerCmd)
 }

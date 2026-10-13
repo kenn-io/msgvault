@@ -3,8 +3,10 @@ package importer
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 
@@ -38,11 +40,29 @@ func IngestRawMessage(
 	return ingestRawMessage(ctx, st, sourceID, identifier, attachmentsDir, labelIDs, sourceMsgID, rawHash, raw, fallbackDate, log, nil, "")
 }
 
+// ErrMIMEAttachmentPreparation identifies a retryable file preparation failure.
+// The coherent snapshot has not committed when this error is returned.
+var ErrMIMEAttachmentPreparation = errors.New("prepare MIME attachment")
+
+// IngestRawMessageSnapshot stores the ready native MIME snapshot atomically.
+// File publication happens before SQL; a failure leaves the previous archive
+// snapshot intact. Participants and required attachment references commit with it.
+func IngestRawMessageSnapshot(ctx context.Context, st *store.Store,
+	sourceID int64, identifier, attachmentsDir string, labelIDs []int64,
+	sourceMsgID, rawHash string, raw []byte, fallbackDate time.Time, log *slog.Logger,
+	nativeScopes ...*store.NativeMessageScopeMembership,
+) error {
+	if len(nativeScopes) > 1 {
+		return errors.New("multiple native scope snapshots")
+	}
+	return ingestRawMessageMode(ctx, st, sourceID, identifier, attachmentsDir, labelIDs, sourceMsgID, rawHash, raw, fallbackDate, log, nil, "", true, nativeScopes...)
+}
+
 type rawMessageIngestFunc func(context.Context, *store.Store, int64, string, string, []int64, string, string, []byte, time.Time, *slog.Logger) error
 
-func rawMessageIngester(images *remoteimage.Fetcher) rawMessageIngestFunc {
+func rawMessageIngester(images *remoteimage.Fetcher, notifyImports bool) rawMessageIngestFunc {
 	return func(ctx context.Context, st *store.Store, sourceID int64, identifier, attachmentsDir string, labelIDs []int64, sourceMsgID, rawHash string, raw []byte, fallbackDate time.Time, log *slog.Logger) error {
-		return ingestRawMessage(ctx, st, sourceID, identifier, attachmentsDir, labelIDs, sourceMsgID, rawHash, raw, fallbackDate, log, images, "")
+		return ingestRawMessageMode(ctx, st, sourceID, identifier, attachmentsDir, labelIDs, sourceMsgID, rawHash, raw, fallbackDate, log, images, "", notifyImports)
 	}
 }
 
@@ -53,12 +73,37 @@ func ingestRawMessage(
 	raw []byte, fallbackDate time.Time,
 	log *slog.Logger, images *remoteimage.Fetcher, threadID string,
 ) error {
-	parsed, _ := mime.ParseWithRecovery(raw, "(MIME parse error)")
+	return ingestRawMessageMode(ctx, st, sourceID, identifier, attachmentsDir, labelIDs, sourceMsgID, rawHash, raw, fallbackDate, log, images, threadID, false)
+}
 
+func ingestRawMessageMode(
+	ctx context.Context, st *store.Store,
+	sourceID int64, identifier, attachmentsDir string,
+	labelIDs []int64, sourceMsgID, rawHash string,
+	raw []byte, fallbackDate time.Time,
+	log *slog.Logger, images *remoteimage.Fetcher, threadID string, coherent bool,
+	nativeScopes ...*store.NativeMessageScopeMembership,
+) error {
+	parsed, parseErr := mime.ParseWithRecovery(raw, "(MIME parse error)")
+	var attachmentWrites *[]store.AttachmentWrite
+	if coherent && attachmentsDir != "" && parseErr == nil {
+		writes, err := prepareMIMEAttachmentWrites(ctx, attachmentsDir, parsed.Attachments)
+		if err != nil {
+			return err
+		}
+		attachmentWrites = &writes
+	}
 	subject := textutil.EnsureUTF8(parsed.Subject)
 	bodyText := textutil.EnsureUTF8(parsed.GetBodyText())
 	bodyHTML := textutil.EnsureUTF8(parsed.BodyHTML)
-
+	var remoteImageWrites []store.AttachmentWrite
+	if coherent && images != nil {
+		var result remoteimage.ArchiveResult
+		remoteImageWrites, result = images.Prepare(ctx, attachmentsDir, bodyHTML, nil)
+		for _, imageErr := range result.Errors {
+			log.Warn("failed to prepare remote image", "error", imageErr)
+		}
+	}
 	// Sanitize address fields in place so all downstream consumers
 	// (participantMap, senderID lookup, buildRecipientSet) use consistent keys.
 	for _, addrs := range [][]mime.Address{
@@ -80,9 +125,32 @@ func ingestRawMessage(
 	allAddresses = append(allAddresses, parsed.To...)
 	allAddresses = append(allAddresses, parsed.Cc...)
 	allAddresses = append(allAddresses, parsed.Bcc...)
-	participantMap, err := st.EnsureParticipantsBatch(allAddresses)
-	if err != nil {
-		return fmt.Errorf("ensure participants: %w", err)
+	var err error
+	participantMap := make(map[string]int64)
+	var participantEmails []string
+	var participants []store.ParticipantPersistData
+	if coherent {
+		unique := make(map[string]mime.Address)
+		for _, addr := range allAddresses {
+			if addr.Email != "" {
+				if _, seen := unique[addr.Email]; !seen {
+					unique[addr.Email] = addr
+				}
+			}
+		}
+		for email := range unique {
+			participantEmails = append(participantEmails, email)
+		}
+		slices.Sort(participantEmails)
+		for _, email := range participantEmails {
+			addr := unique[email]
+			participants = append(participants, store.ParticipantPersistData{EmailAddress: email, DisplayName: addr.Name, Domain: addr.Domain})
+		}
+	} else {
+		participantMap, err = st.EnsureParticipantsBatch(allAddresses)
+		if err != nil {
+			return fmt.Errorf("ensure participants: %w", err)
+		}
 	}
 
 	var senderID sql.NullInt64
@@ -107,11 +175,15 @@ func ingestRawMessage(
 	if convSubject == "" {
 		convSubject = "(no subject)"
 	}
-	conversationID, err := st.EnsureConversation(
-		sourceID, threadID, convSubject,
-	)
-	if err != nil {
-		return fmt.Errorf("ensure conversation: %w", err)
+	var conversationID int64
+	var conversation *store.ConversationPersistData
+	if coherent {
+		conversation = &store.ConversationPersistData{SourceConversationID: threadID, ConversationType: "email_thread", Title: convSubject, PreserveExistingType: true}
+	} else {
+		conversationID, err = st.EnsureConversation(sourceID, threadID, convSubject)
+		if err != nil {
+			return fmt.Errorf("ensure conversation: %w", err)
+		}
 	}
 
 	now := time.Now().UTC()
@@ -173,17 +245,63 @@ func ingestRawMessage(
 		buildRecipientSet("bcc", parsed.Bcc, participantMap),
 	}
 
+	var replyHeader *string
+	var fts *store.FTSDoc
+	if coherent {
+		replyHeader = &parsed.InReplyTo
+		fts = &store.FTSDoc{Subject: subject, Body: bodyText, FromAddr: joinEmails(parsed.From), ToAddrs: joinEmails(parsed.To), CcAddrs: joinEmails(parsed.Cc)}
+	}
+	var nativeMembership *store.NativeMessageScopeMembership
+	if len(nativeScopes) > 0 {
+		nativeMembership = nativeScopes[0]
+	}
 	// Persist atomically
-	messageID, err := st.PersistMessageContext(ctx, &store.MessagePersistData{
-		Message:    rec,
-		BodyText:   sql.NullString{String: bodyText, Valid: bodyText != ""},
-		BodyHTML:   sql.NullString{String: bodyHTML, Valid: bodyHTML != ""},
-		RawMIME:    raw,
-		Recipients: recipientSets,
-		LabelIDs:   labelIDs,
-	})
+	data := &store.MessagePersistData{
+		Conversation:              conversation,
+		NativeScopes:              nativeMembership,
+		MIMEAttachmentReplacement: attachmentWrites,
+		RemoteImageWrites:         remoteImageWrites,
+		EmailInReplyTo:            replyHeader,
+		FTS:                       fts,
+		FTSBestEffort:             coherent,
+		Message:                   rec,
+		BodyText:                  sql.NullString{String: bodyText, Valid: bodyText != ""},
+		BodyHTML:                  sql.NullString{String: bodyHTML, Valid: bodyHTML != ""},
+		RawMIME:                   raw,
+		Recipients:                recipientSets,
+		LabelIDs:                  labelIDs,
+	}
+	var messageID int64
+	if coherent {
+		messageID, err = st.PersistMessageWithParticipantsContext(ctx, participants, func(ids []int64) *store.MessagePersistData {
+			for i, email := range participantEmails {
+				participantMap[email] = ids[i]
+			}
+			snapshot := *data
+			message := *rec
+			if len(parsed.From) > 0 && parsed.From[0].Email != "" {
+				if id, ok := participantMap[parsed.From[0].Email]; ok {
+					message.SenderID = sql.NullInt64{Int64: id, Valid: true}
+				}
+			}
+			snapshot.Message = &message
+			snapshot.Recipients = []store.RecipientSet{
+				buildRecipientSet("from", parsed.From, participantMap),
+				buildRecipientSet("to", parsed.To, participantMap),
+				buildRecipientSet("cc", parsed.Cc, participantMap),
+				buildRecipientSet("bcc", parsed.Bcc, participantMap),
+			}
+			return &snapshot
+		})
+	} else {
+		messageID, err = st.PersistMessageContext(ctx, data)
+	}
 	if err != nil {
 		return err
+	}
+
+	if coherent {
+		return nil
 	}
 
 	// Attachments: best-effort outside the transaction (file I/O).
@@ -206,10 +324,8 @@ func ingestRawMessage(
 	// Correct attachment count if disk storage filtered some out
 	if attachmentsDir != "" && len(parsed.Attachments) > 0 {
 		var storedCount int
-		if err := st.DB().QueryRow(
-			st.Rebind(`SELECT COUNT(*) FROM attachments WHERE message_id = ?`),
-			messageID,
-		).Scan(&storedCount); err != nil {
+		// #nosec G701 -- Fixed SQL; Rebind changes placeholders and the message ID is bound.
+		if err := st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM attachments WHERE message_id = ?`), messageID).Scan(&storedCount); err != nil {
 			log.Warn("failed to count stored attachments",
 				"message", messageID, "error", err,
 			)
@@ -360,4 +476,25 @@ func storeAttachment(
 		SourcePartKey: att.PartKey,
 		ContentID:     att.ContentID,
 	})
+}
+
+func prepareMIMEAttachmentWrites(ctx context.Context, dir string, attachments []mime.Attachment) ([]store.AttachmentWrite, error) {
+	writes := make([]store.AttachmentWrite, 0, len(attachments))
+	for i := range attachments {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		att := &attachments[i]
+		// Preserve the native importer's intentional omission of empty files.
+		if len(att.Content) == 0 {
+			continue
+		}
+		receipt, err := export.StoreAttachmentFileDurable(dir, att)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %w", ErrMIMEAttachmentPreparation, err)
+		}
+		role, roleSource := store.AttachmentRoleFromMIME(att.Disposition, att.IsInline, att.ContentID)
+		writes = append(writes, store.AttachmentWrite{Filename: att.Filename, MIMEType: att.ContentType, StoragePath: receipt.StoragePath, ContentHash: att.ContentHash, Size: int64(len(att.Content)), Role: role, RoleSource: roleSource, SourcePartKey: att.PartKey, ContentID: att.ContentID})
+	}
+	return writes, nil
 }

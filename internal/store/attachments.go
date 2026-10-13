@@ -33,7 +33,7 @@ type DiscordAttachmentMessage = PendingAttachmentMessage
 
 func (s *Store) replaceMessageProviderAttachmentsContext(ctx context.Context, messageID int64, providerPrefix string, refs []AttachmentRef) error {
 	return s.replaceMessageAttachmentsWhereContext(ctx,
-		messageID, `source_attachment_id LIKE ?`, false, refs, providerPrefix+"%",
+		messageID, `source_attachment_id LIKE ?`, refs, providerPrefix+"%",
 	)
 }
 
@@ -749,7 +749,7 @@ func (s *Store) ListDiscordAttachmentMessages(sourceID int64) ([]DiscordAttachme
 			return nil, err
 		}
 		message.ParticipantCount = attachmentPolicyParticipantCount(
-			"discord", message.ParticipantCount, metadata,
+			sourceTypeDiscord, message.ParticipantCount, metadata,
 		)
 		messages = append(messages, message)
 	}

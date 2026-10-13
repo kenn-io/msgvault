@@ -47,7 +47,7 @@ func TestRawImportRemoteImagesRequireOptIn(t *testing.T) {
 				}
 			}
 			raw := []byte("From: user@example.com\r\nTo: other@example.com\r\nSubject: Receipt\r\nContent-Type: text/html\r\n\r\n<img src=\"http://images.example/chart\">")
-			err = rawMessageIngester(fetcher)(t.Context(), st, src.ID, "user@example.com", t.TempDir(), nil, "message", "hash", raw, time.Time{}, slog.Default())
+			err = rawMessageIngester(fetcher, true)(t.Context(), st, src.ID, "user@example.com", t.TempDir(), nil, "message", "hash", raw, time.Time{}, slog.Default())
 			require.NoError(err)
 			var id int64
 			require.NoError(st.DB().QueryRow("SELECT id FROM messages").Scan(&id))

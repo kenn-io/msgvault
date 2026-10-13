@@ -1013,6 +1013,50 @@ func TestImportDYI_SelfParticipantSeeded(t *testing.T) {
 	assert.Equal(1, n, "self participant count")
 }
 
+func TestImportDYI_EmptyThreadRetainsConversationAndMembers(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	root := t.TempDir()
+	threadPath := filepath.Join(root, "your_activity_across_facebook", "messages", "inbox", "synthetic_EMPTY")
+	require.NoError(os.MkdirAll(threadPath, 0755))
+	require.NoError(os.WriteFile(filepath.Join(threadPath, "message_1.json"), []byte(
+		`{"participants":[{"name":"Synthetic Contact"}],"messages":[],"title":"Synthetic empty thread","thread_type":"Regular","thread_path":"inbox/synthetic_EMPTY"}`,
+	), 0600))
+
+	owner := "test.user@facebook.messenger"
+	summary, err := ImportDYI(context.Background(), st, ImportOptions{
+		Me:             owner,
+		RootDir:        root,
+		AttachmentsDir: t.TempDir(),
+	})
+	require.NoError(err)
+	assert.Zero(summary.MessagesProcessed, "empty thread must not create messages")
+
+	var sourceID int64
+	require.NoError(st.DB().QueryRow(
+		`SELECT id FROM sources WHERE source_type = 'facebook_messenger'`,
+	).Scan(&sourceID))
+	var conversationID int64
+	require.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT id FROM conversations WHERE source_id = ? AND source_conversation_id = ?`,
+	), sourceID, "inbox/synthetic_EMPTY").Scan(&conversationID), "empty thread conversation")
+	var memberCount int
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT COUNT(*) FROM conversation_participants cp
+		JOIN participants p ON p.id = cp.participant_id
+		WHERE cp.conversation_id = ? AND p.domain = ?`,
+	), conversationID, Domain).Scan(&memberCount))
+	assert.Equal(2, memberCount, "empty thread must retain its owner and source participant")
+	var ownerMembership int
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT COUNT(*) FROM conversation_participants cp
+		JOIN participants p ON p.id = cp.participant_id
+		WHERE cp.conversation_id = ? AND p.email_address = ?`,
+	), conversationID, owner).Scan(&ownerMembership))
+	assert.Equal(1, ownerMembership, "empty thread must retain the owner membership")
+}
+
 func TestImportDYI_MeDomainValidation(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

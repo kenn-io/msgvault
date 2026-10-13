@@ -268,12 +268,12 @@ func openBeeperImporter(flagAccounts []string, state *invocation) (imp *beeper.I
 	if err != nil {
 		return nil, nil, "", nil, err
 	}
-	token, err := beeper.LoadToken(cfg.TokensDir())
+	accountIDs, err = resolveBeeperSyncAccounts(s, flagAccounts, cfg)
 	if err != nil {
 		cleanup()
 		return nil, nil, "", nil, err
 	}
-	accountIDs, err = resolveBeeperSyncAccounts(s, flagAccounts, cfg)
+	token, err := loadBeeperTokenForAccounts(context.Background(), s, cfg, accountIDs)
 	if err != nil {
 		cleanup()
 		return nil, nil, "", nil, err
@@ -319,7 +319,7 @@ func runConfiguredBeeperSync(ctx context.Context, s *store.Store) error {
 	if len(accountIDs) == 0 {
 		return nil
 	}
-	token, err := beeper.LoadToken(cfg.TokensDir())
+	token, err := loadBeeperTokenForAccounts(ctx, s, cfg, accountIDs)
 	if err != nil {
 		return err
 	}
@@ -429,4 +429,29 @@ func runScheduledBeeperAttempts(
 
 func init() {
 	rootCmd.AddCommand(addManualSyncCacheFlags(newSyncBeeperCmd()))
+}
+
+// Pin each selected account before singleton credential IO. A local token
+// failure pauses only those accounts and cannot assert native route removal.
+func loadBeeperTokenForAccounts(ctx context.Context, st *store.Store, cfg *config.Config, accounts []string) (string, error) {
+	permissions := make([]*store.NativeSourcePermission, 0, len(accounts))
+	for _, account := range accounts {
+		source, err := st.GetSourceByTypeAndIdentifier(sourceTypeBeeper, account)
+		if err != nil {
+			return "", err
+		}
+		permission, err := pinNativeMessagePermission(ctx, account, source, st)
+		if err != nil {
+			return "", err
+		}
+		permissions = append(permissions, permission)
+	}
+	token, err := beeper.LoadToken(cfg.TokensDir())
+	if err == nil {
+		return token, nil
+	}
+	for _, permission := range permissions {
+		err = errors.Join(err, pauseNativeMessagePermission(ctx, st, permission, nil))
+	}
+	return "", err
 }

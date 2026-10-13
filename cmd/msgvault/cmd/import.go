@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"strings"
@@ -55,6 +56,7 @@ imports the rest. Android msgstore.db imports reject both flags.`,
 }
 
 func runWhatsAppImport(cmd *cobra.Command, sourcePath string) error {
+	out := cmd.OutOrStdout()
 	state := invocationFromCommand(cmd)
 	if state == nil || state.cfg == nil {
 		return errors.New("configuration is unavailable")
@@ -101,12 +103,13 @@ func runWhatsAppImport(cmd *cobra.Command, sourcePath string) error {
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-sigChan
-		fmt.Println("\nInterrupted. Saving checkpoint...")
+		_, _ = fmt.Fprintln(out, "\nInterrupted. Saving checkpoint...")
 		cancel()
 	}()
 
 	// Build import options.
 	opts := whatsapp.DefaultOptions()
+	opts.NotifyImports = importNotificationsRequested(cmd)
 	opts.Phone = importPhone
 	opts.DisplayName = importDisplayName
 	opts.MediaDir = importMediaDir
@@ -117,29 +120,33 @@ func runWhatsAppImport(cmd *cobra.Command, sourcePath string) error {
 	opts.Before = before
 
 	// Create importer with CLI progress.
-	progress := &ImportCLIProgress{}
+	progress := &ImportCLIProgress{output: out}
 	importer := whatsapp.NewImporter(s, progress)
 
-	fmt.Printf("Importing WhatsApp messages from %s\n", sourcePath)
-	fmt.Printf("Phone: %s\n", importPhone)
+	_, _ = fmt.Fprintf(out, "Importing WhatsApp messages from %s\n", sourcePath)
+	_, _ = fmt.Fprintf(out, "Phone: %s\n", importPhone)
 	if importMediaDir != "" {
-		fmt.Printf("Media: %s\n", importMediaDir)
+		_, _ = fmt.Fprintf(out, "Media: %s\n", importMediaDir)
 	}
 	if importLimit > 0 {
-		fmt.Printf("Limit: %d messages\n", importLimit)
+		_, _ = fmt.Fprintf(out, "Limit: %d messages\n", importLimit)
 	}
 	if importWhatsAppAfter != "" {
-		fmt.Printf("After: %s\n", importWhatsAppAfter)
+		_, _ = fmt.Fprintf(out, "After: %s\n", importWhatsAppAfter)
 	}
 	if importWhatsAppBefore != "" {
-		fmt.Printf("Before: %s\n", importWhatsAppBefore)
+		_, _ = fmt.Fprintf(out, "Before: %s\n", importWhatsAppBefore)
 	}
-	fmt.Println()
+	_, _ = fmt.Fprintln(out)
 
 	summary, err := importer.Import(ctx, sourcePath, opts)
+	if summary != nil {
+		recordImportRun(cmd, summary.ImportRunID)
+	}
 	if err != nil {
 		if ctx.Err() != nil {
-			fmt.Println("\nImport interrupted. Run again to continue.")
+			markImportCommandIncomplete(cmd)
+			_, _ = fmt.Fprintln(out, "\nImport interrupted. Run again to continue.")
 			return rebuildCacheAfterWrite(dbPath, state)
 		}
 		return fmt.Errorf("import failed: %w", err)
@@ -159,35 +166,35 @@ func runWhatsAppImport(cmd *cobra.Command, sourcePath string) error {
 
 	// Import contacts if provided.
 	if importContacts != "" {
-		fmt.Printf("\nImporting contacts from %s...\n", importContacts)
+		_, _ = fmt.Fprintf(out, "\nImporting contacts from %s...\n", importContacts)
 		matched, total, err := whatsapp.ImportContacts(s, importContacts)
 		if err != nil {
 			return fmt.Errorf("contact import: %w", err)
 		}
-		fmt.Printf("  Contacts: %d in file, %d phone numbers matched to participants\n", total, matched)
+		_, _ = fmt.Fprintf(out, "  Contacts: %d in file, %d phone numbers matched to participants\n", total, matched)
 	}
 
 	// Print summary.
-	fmt.Println()
-	fmt.Println("Import complete!")
-	fmt.Printf("  Duration:       %s\n", summary.Duration.Round(time.Second))
-	fmt.Printf("  Chats:          %d\n", summary.ChatsProcessed)
-	fmt.Printf("  Messages:       %d processed, %d added, %d skipped\n",
+	_, _ = fmt.Fprintln(out)
+	_, _ = fmt.Fprintln(out, "Import complete!")
+	_, _ = fmt.Fprintf(out, "  Duration:       %s\n", summary.Duration.Round(time.Second))
+	_, _ = fmt.Fprintf(out, "  Chats:          %d\n", summary.ChatsProcessed)
+	_, _ = fmt.Fprintf(out, "  Messages:       %d processed, %d added, %d skipped\n",
 		summary.MessagesProcessed, summary.MessagesAdded, summary.MessagesSkipped)
-	fmt.Printf("  Participants:   %d\n", summary.Participants)
-	fmt.Printf("  Reactions:      %d\n", summary.ReactionsAdded)
-	fmt.Printf("  Attachments:    %d found", summary.AttachmentsFound)
+	_, _ = fmt.Fprintf(out, "  Participants:   %d\n", summary.Participants)
+	_, _ = fmt.Fprintf(out, "  Reactions:      %d\n", summary.ReactionsAdded)
+	_, _ = fmt.Fprintf(out, "  Attachments:    %d found", summary.AttachmentsFound)
 	if summary.MediaCopied > 0 {
-		fmt.Printf(", %d files copied", summary.MediaCopied)
+		_, _ = fmt.Fprintf(out, ", %d files copied", summary.MediaCopied)
 	}
-	fmt.Println()
+	_, _ = fmt.Fprintln(out)
 	if summary.Errors > 0 {
-		fmt.Printf("  Errors:         %d\n", summary.Errors)
+		_, _ = fmt.Fprintf(out, "  Errors:         %d\n", summary.Errors)
 	}
 
 	if summary.MessagesAdded > 0 {
 		rate := float64(summary.MessagesAdded) / summary.Duration.Seconds()
-		fmt.Printf("  Rate:           %.0f messages/sec\n", rate)
+		_, _ = fmt.Fprintf(out, "  Rate:           %.0f messages/sec\n", rate)
 	}
 
 	return rebuildCacheAfterWrite(dbPath, state)
@@ -216,9 +223,17 @@ func parseWhatsAppDateWindow(afterFlag, beforeFlag string) (after, before time.T
 
 // ImportCLIProgress implements whatsapp.ImportProgress for terminal output.
 type ImportCLIProgress struct {
+	output      io.Writer
 	startTime   time.Time
 	lastPrint   time.Time
 	currentChat string
+}
+
+func (p *ImportCLIProgress) writer() io.Writer {
+	if p.output != nil {
+		return p.output
+	}
+	return os.Stdout
 }
 
 func (p *ImportCLIProgress) OnStart() {
@@ -256,7 +271,7 @@ func (p *ImportCLIProgress) OnProgress(processed, added, skipped int64) {
 		chatStr = " | Chat: " + name
 	}
 
-	fmt.Printf("\r  Processed: %d | Added: %d | Skipped: %d | Rate: %.0f/s | Elapsed: %s%s    ",
+	_, _ = fmt.Fprintf(p.writer(), "\r  Processed: %d | Added: %d | Skipped: %d | Rate: %.0f/s | Elapsed: %s%s    ",
 		processed, added, skipped, rate, elapsedStr, chatStr)
 }
 
@@ -265,11 +280,11 @@ func (p *ImportCLIProgress) OnChatComplete(chatJID string, messagesAdded int64) 
 }
 
 func (p *ImportCLIProgress) OnComplete(summary *whatsapp.ImportSummary) {
-	fmt.Println() // Clear the progress line.
+	_, _ = fmt.Fprintln(p.writer()) // Clear the progress line.
 }
 
 func (p *ImportCLIProgress) OnError(err error) {
-	fmt.Printf("\nWarning: %s\n", textutil.SanitizeTerminal(err.Error()))
+	_, _ = fmt.Fprintf(p.writer(), "\nWarning: %s\n", textutil.SanitizeTerminal(err.Error()))
 }
 
 // Deprecated: "import --type whatsapp" forwards to "import-whatsapp".
@@ -311,6 +326,7 @@ func init() {
 	importWhatsappCmd.Flags().StringVar(&importWhatsAppBefore, "before", "", "only Apple messages before this date (YYYY-MM-DD)")
 	importWhatsappCmd.Flags().BoolVar(&noDefaultIdentityImportWhatsApp, "no-default-identity", false, noDefaultIdentityHelp)
 	_ = importWhatsappCmd.MarkFlagRequired("phone")
+	addImportNotificationFlag(importWhatsappCmd)
 	rootCmd.AddCommand(importWhatsappCmd)
 
 	// Deprecated "import --type whatsapp" alias
@@ -320,5 +336,6 @@ func init() {
 	importCmd.Flags().StringVar(&importContacts, "contacts", "", "path to contacts .vcf file")
 	importCmd.Flags().IntVar(&importLimit, "limit", 0, "limit number of messages")
 	importCmd.Flags().StringVar(&importDisplayName, "display-name", "", "display name for the phone owner")
+	addImportNotificationFlag(importCmd)
 	rootCmd.AddCommand(importCmd)
 }

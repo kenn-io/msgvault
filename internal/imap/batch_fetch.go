@@ -178,9 +178,8 @@ func (c *Client) applyFetchResults(
 			continue
 		}
 		canonicalSourceMessageID := ""
-		var rawSHA256 [32]byte
+		rawSHA256 := sha256.Sum256(rawMIME)
 		if rfc822MessageID == "" && c.preferredRawSourceIDs != nil {
-			rawSHA256 = sha256.Sum256(rawMIME)
 			if mailbox == c.allMailFolder {
 				// A canonical-mailbox UID is its own durable identity. Raw
 				// matching is only a fallback for copies in secondary mailboxes;

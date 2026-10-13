@@ -115,17 +115,6 @@ func (f *Fetcher) Archive(ctx context.Context, st *store.Store, dir string, mess
 		result.Errors = append(result.Errors, err)
 		return result
 	}
-	if dir == "" {
-		result.Errors = append(result.Errors, errors.New("remote image storage directory is not configured"))
-		return result
-	}
-	if len(source) > maxArchiveHTMLBytes {
-		result.Errors = append(result.Errors, errors.New("remote image HTML exceeds size limit"))
-		return result
-	}
-	if source == "" {
-		return result
-	}
 	ctx, cancel := context.WithTimeout(ctx, archiveTimeout)
 	defer cancel()
 	refs, err := st.MessageRemoteImages(messageID)
@@ -133,6 +122,47 @@ func (f *Fetcher) Archive(ctx context.Context, st *store.Store, dir string, mess
 		result.Errors = append(result.Errors, fmt.Errorf("load archived remote images: %w", err))
 		return result
 	}
+	writes, result := f.Prepare(ctx, dir, source, refs)
+	result.Downloaded = 0
+	for _, write := range writes {
+		if err := st.UpsertRemoteImageAttachment(ctx, messageID, write); err != nil {
+			result.Errors = append(result.Errors, fmt.Errorf("record remote image: %w", err))
+			continue
+		}
+		result.Downloaded++
+	}
+	if result.Downloaded > 0 || result.Reused > 0 {
+		if err := st.RecomputeMessageAttachmentStats(messageID); err != nil {
+			result.Errors = append(result.Errors, fmt.Errorf("update remote image metadata: %w", err))
+		}
+	}
+	return result
+}
+
+// Prepare fetches opted-in remote images and durably stores their bytes before
+// the caller's message transaction. It does not read or mutate the archive.
+// Errors retain best-effort network semantics; every returned reference must
+// commit with the caller's selected ready snapshot.
+func (f *Fetcher) Prepare(ctx context.Context, dir, source string, refs map[string]store.AttachmentRef) ([]store.AttachmentWrite, ArchiveResult) {
+	var result ArchiveResult
+	var writes []store.AttachmentWrite
+	if err := ctx.Err(); err != nil {
+		result.Errors = append(result.Errors, err)
+		return writes, result
+	}
+	if dir == "" {
+		result.Errors = append(result.Errors, errors.New("remote image storage directory is not configured"))
+		return writes, result
+	}
+	if len(source) > maxArchiveHTMLBytes {
+		result.Errors = append(result.Errors, errors.New("remote image HTML exceeds size limit"))
+		return writes, result
+	}
+	if source == "" {
+		return writes, result
+	}
+	ctx, cancel := context.WithTimeout(ctx, archiveTimeout)
+	defer cancel()
 	var targets []string
 	seen := map[string]bool{}
 	truncated := false
@@ -191,24 +221,15 @@ func (f *Fetcher) Archive(ctx context.Context, st *store.Store, dir string, mess
 			result.Errors = append(result.Errors, fmt.Errorf("store remote image bytes: %w", err))
 			continue
 		}
-		err = st.UpsertRemoteImageAttachment(ctx, messageID, store.AttachmentWrite{
+		writes = append(writes, store.AttachmentWrite{
 			Filename: "remote-image-" + strings.TrimPrefix(key, "remote-image:") + rasterExtension(contentType),
 			MIMEType: contentType, StoragePath: receipt.StoragePath, ContentHash: receipt.ContentHash, Size: int64(len(body)),
 			SourceAttachmentID: key, SourcePartKey: key, ContentID: key, MediaType: "image",
 			Role: store.AttachmentRoleInline, RoleSource: store.AttachmentRoleSourceImporterSemantics,
 		})
-		if err != nil {
-			result.Errors = append(result.Errors, fmt.Errorf("record remote image: %w", err))
-			continue
-		}
 		result.Downloaded++
 	}
-	if result.Downloaded > 0 || result.Reused > 0 {
-		if err := st.RecomputeMessageAttachmentStats(messageID); err != nil {
-			result.Errors = append(result.Errors, fmt.Errorf("update remote image metadata: %w", err))
-		}
-	}
-	return result
+	return writes, result
 }
 
 func rasterExtension(contentType string) string {

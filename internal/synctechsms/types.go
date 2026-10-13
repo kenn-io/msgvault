@@ -142,6 +142,7 @@ type Call struct {
 }
 
 type ImportOptions struct {
+	NotifyImports      bool
 	OwnerPhone         string
 	AttachmentsDir     string
 	MaxAttachmentBytes int64
@@ -153,6 +154,7 @@ type ImportOptions struct {
 }
 
 type ImportSummary struct {
+	ImportRunID         string `json:"import_run_id,omitempty"`
 	FilesSeen           int
 	FilesImported       int
 	FilesSkipped        int

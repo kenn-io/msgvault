@@ -60,6 +60,8 @@ func (s *Store) ScopedToSync(sourceID, syncRunID int64) *Store {
 		dialect:              base.dialect,
 		readOnly:             base.readOnly,
 		fts5Available:        base.fts5Available,
+		mcpBase:              base.mcpRoot(),
+		mcpIngest:            s.mcpIngest,
 
 		syncGeneration:     &syncGeneration{sourceID: sourceID, runID: syncRunID},
 		syncBase:           base,
@@ -1005,6 +1007,9 @@ func (s *Store) CompleteSyncContext(ctx context.Context, syncID int64, finalHist
 		if err != nil {
 			return fmt.Errorf("complete sync %d: %w", syncID, err)
 		}
+		if err := completionStore.completeImportRunTx(ctx, tx.Tx, syncID); err != nil {
+			return fmt.Errorf("complete sync %d: complete logical import: %w", syncID, err)
+		}
 		if err := completionStore.coalescePersonSweepChangesTx(ctx, tx, syncID, sourceID); err != nil {
 			return fmt.Errorf("complete sync %d: %w", syncID, err)
 		}
@@ -1107,6 +1112,9 @@ func (s *Store) completeSyncAndUpdateSourceContext(
 		}
 		if rows != 1 {
 			return fmt.Errorf("complete sync %d: %w", syncID, ErrSyncRunSuperseded)
+		}
+		if err := completionStore.completeImportRunTx(ctx, tx.Tx, syncID); err != nil {
+			return fmt.Errorf("complete sync %d: complete logical import: %w", syncID, err)
 		}
 		if err := completionStore.coalescePersonSweepChangesTx(ctx, tx, syncID, sourceID); err != nil {
 			return fmt.Errorf("complete sync %d: %w", syncID, err)
@@ -1769,6 +1777,9 @@ func (s *Store) UpdateSourceDisplayNameContext(
 // change to that mailbox re-derives the source's events in the same
 // transaction.
 func (s *Store) UpdateSourceSyncConfig(sourceID int64, configJSON string) error {
+	if err := s.requireSyncSource(sourceID); err != nil {
+		return err
+	}
 	ctx := context.Background()
 	newConfig := sql.NullString{String: configJSON, Valid: true}
 	// The source lock orders this write against every derivation of the
@@ -1781,6 +1792,9 @@ func (s *Store) UpdateSourceSyncConfig(sourceID int64, configJSON string) error 
 		}
 		if err != nil {
 			return fmt.Errorf("read source %d sync config: %w", sourceID, err)
+		}
+		if err := s.invalidateMCPIMAPConfigTx(ctx, tx, sourceID, configJSON); err != nil {
+			return err
 		}
 		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
 			UPDATE sources
@@ -1803,6 +1817,9 @@ func (s *Store) UpdateSourceSyncConfig(sourceID int64, configJSON string) error 
 // A changed mailbox changes which rows fall back to the source default, so
 // those rows return to pending in the same transaction and re-derive after it.
 func (s *Store) UpdateSourceIdentifier(sourceID int64, identifier string) error {
+	if err := s.requireSyncSource(sourceID); err != nil {
+		return err
+	}
 	ctx := context.Background()
 	var pending []int64
 	err := s.withAttributionTxContext(ctx, attributionLock{Exclusive: true}, func(tx *loggedTx) error {

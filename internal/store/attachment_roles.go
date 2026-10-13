@@ -173,28 +173,11 @@ func (s *Store) UpsertAttachmentRecordPreservingStored(
 				return err
 			}
 		}
-		if write.StoragePath == "" && write.ContentHash == "" {
-			var storagePath, contentHash, state, skipReason string
-			var size int64
-			err := tx.QueryRow(`
-				SELECT storage_path, COALESCE(content_hash, ''), COALESCE(size, 0),
-				       COALESCE(attachment_state, ''), COALESCE(attachment_skip_reason, '')
-				FROM attachments WHERE message_id = ? AND source_part_key = ?
-			`, messageID, write.SourcePartKey).Scan(
-				&storagePath, &contentHash, &size, &state, &skipReason,
-			)
-			switch {
-			case err == nil && storagePath != "" && contentHash != "":
-				write.StoragePath = storagePath
-				write.ContentHash = contentHash
-				write.Size = size
-				write.State = attachmentpolicy.DownloadState(state)
-				write.SkipReason = attachmentpolicy.SkipReason(skipReason)
-			case err == nil, errors.Is(err, sql.ErrNoRows):
-			default:
-				return fmt.Errorf("load stored attachment occurrence: %w", err)
-			}
+		prepared, err := preserveStoredAttachmentWith(boundQuerier{ctx: ctx, q: tx}, messageID, write)
+		if err != nil {
+			return err
 		}
+		write = prepared
 		return s.upsertAttachmentRecord(tx, messageID, write)
 	})
 }
@@ -567,4 +550,152 @@ func (s *Store) AttachmentPartsStoredContext(ctx context.Context, messageID int6
 		return false, fmt.Errorf("check stored attachment parts: %w", err)
 	}
 	return n == len(want), nil
+}
+
+// ErrReadyAttachmentSnapshot identifies a failed mandatory native attachment
+// projection. Importers can continue independent rows after its rollback.
+var ErrReadyAttachmentSnapshot = errors.New("required attachment snapshot is unavailable")
+
+// KeyedAttachmentSnapshot replaces only one native source-part namespace.
+// Files are prepared before persistence. Selected references must resolve to
+// stored bytes or an explicit policy skip before the message can be published.
+type KeyedAttachmentSnapshot struct {
+	// PreserveStoredOnFailure retains the complete native occurrence after a
+	// failed reacquisition, including its filename and media metadata.
+	PreserveStoredOnFailure bool
+	// InvalidateCacheOnChange preserves native cache invalidation for changed
+	// references. Unchanged occurrences do not advance the revision.
+	InvalidateCacheOnChange bool
+	// PreserveUnmentioned retains earlier native references when an incremental
+	// export omits parts; selected writes remain mandatory and atomic.
+	PreserveUnmentioned bool
+	Prefix              string
+	Writes              []AttachmentWrite
+}
+
+func preserveStoredAttachmentWith(q querier, messageID int64, write AttachmentWrite) (AttachmentWrite, error) {
+	if write.StoragePath == "" && write.ContentHash == "" {
+		var storagePath, contentHash, state, skipReason string
+		var size int64
+		err := q.QueryRow(`
+				SELECT storage_path, COALESCE(content_hash, ''), COALESCE(size, 0),
+				       COALESCE(attachment_state, ''), COALESCE(attachment_skip_reason, '')
+				FROM attachments WHERE message_id = ? AND source_part_key = ?
+			`, messageID, write.SourcePartKey).Scan(
+			&storagePath, &contentHash, &size, &state, &skipReason,
+		)
+		switch {
+		case err == nil && storagePath != "" && contentHash != "":
+			write.StoragePath = storagePath
+			write.ContentHash = contentHash
+			write.Size = size
+			write.State = attachmentpolicy.DownloadState(state)
+			write.SkipReason = attachmentpolicy.SkipReason(skipReason)
+		case err == nil, errors.Is(err, sql.ErrNoRows):
+		default:
+			return write, fmt.Errorf("load stored attachment occurrence: %w", err)
+		}
+	}
+	return write, nil
+}
+
+func keyedAttachmentWriteWith(q querier, messageID int64, key string) (AttachmentWrite, bool, error) {
+	var write AttachmentWrite
+	err := q.QueryRow(`
+ SELECT COALESCE(filename,''),COALESCE(mime_type,''),COALESCE(storage_path,''),COALESCE(content_hash,''),COALESCE(size,0),
+ COALESCE(source_attachment_id,''),COALESCE(media_type,''),COALESCE(width,0),COALESCE(height,0),COALESCE(duration_ms,0),
+ COALESCE(CAST(attachment_metadata AS TEXT),''),COALESCE(attachment_role,''),COALESCE(role_source,''),COALESCE(source_part_key,''),COALESCE(content_id,''),
+ COALESCE(attachment_state,''),COALESCE(attachment_skip_reason,'')
+ FROM attachments WHERE message_id=? AND source_part_key=?`, messageID, key).Scan(
+		&write.Filename, &write.MIMEType, &write.StoragePath, &write.ContentHash, &write.Size, &write.SourceAttachmentID, &write.MediaType, &write.Width, &write.Height, &write.DurationMS,
+		&write.Metadata, &write.Role, &write.RoleSource, &write.SourcePartKey, &write.ContentID, &write.State, &write.SkipReason)
+	if errors.Is(err, sql.ErrNoRows) {
+		return write, false, nil
+	}
+	return write, err == nil, err
+}
+
+func (s *Store) replaceKeyedAttachmentSnapshotTx(ctx context.Context, tx *loggedTx, messageID int64, snapshot *KeyedAttachmentSnapshot) error {
+	if snapshot == nil {
+		return nil
+	}
+	if snapshot.Prefix == "" {
+		return errors.New("native attachment snapshot requires a source-part prefix")
+	}
+	q := boundQuerier{ctx: ctx, q: tx}
+	writes := make([]AttachmentWrite, 0, len(snapshot.Writes))
+	seen := make(map[string]bool, len(snapshot.Writes))
+	unchanged := make(map[string]bool, len(snapshot.Writes))
+	changed := false
+	for _, write := range snapshot.Writes {
+		write = write.normalized()
+		if err := write.validate(); err != nil {
+			return err
+		}
+		if write.SourcePartKey == "" || !strings.HasPrefix(write.SourcePartKey, snapshot.Prefix) || seen[write.SourcePartKey] {
+			return errors.New("invalid native attachment snapshot key")
+		}
+		seen[write.SourcePartKey] = true
+		var previous AttachmentWrite
+		var exists bool
+		if snapshot.PreserveStoredOnFailure || snapshot.InvalidateCacheOnChange {
+			var err error
+			previous, exists, err = keyedAttachmentWriteWith(q, messageID, write.SourcePartKey)
+			if err != nil {
+				return fmt.Errorf("load native attachment occurrence: %w", err)
+			}
+			if snapshot.PreserveStoredOnFailure && write.State == attachmentpolicy.StateFailed && exists && previous.State == attachmentpolicy.StateStored && previous.StoragePath != "" && previous.ContentHash != "" {
+				write = previous
+			}
+		}
+		var err error
+		write, err = preserveStoredAttachmentWith(q, messageID, write)
+		if err != nil {
+			return err
+		}
+		if write.State != attachmentpolicy.StateSkipped && (write.State != attachmentpolicy.StateStored || write.StoragePath == "" || write.ContentHash == "") {
+			return errors.New("selected attachment unavailable")
+		}
+		if snapshot.InvalidateCacheOnChange {
+			unchanged[write.SourcePartKey] = exists && previous.normalized() == write
+			changed = changed || !unchanged[write.SourcePartKey]
+		}
+		writes = append(writes, write)
+	}
+	if !snapshot.PreserveUnmentioned {
+		query := `DELETE FROM attachments WHERE message_id=? AND SUBSTR(source_part_key,1,LENGTH(?))=?`
+		args := []any{messageID, snapshot.Prefix, snapshot.Prefix}
+		if len(writes) > 0 {
+			query += ` AND source_part_key NOT IN (?` + strings.Repeat(`, ?`, len(writes)-1) + `)`
+			for _, write := range writes {
+				args = append(args, write.SourcePartKey)
+			}
+		}
+		result, err := q.Exec(query, args...)
+		if err != nil {
+			return fmt.Errorf("replace native attachment references: %w", err)
+		}
+		if snapshot.InvalidateCacheOnChange {
+			deleted, err := result.RowsAffected()
+			if err != nil {
+				return err
+			}
+			changed = changed || deleted > 0
+		}
+	}
+	for _, write := range writes {
+		if snapshot.InvalidateCacheOnChange && unchanged[write.SourcePartKey] {
+			continue
+		}
+		if err := s.upsertAttachmentRecord(q, messageID, write); err != nil {
+			return err
+		}
+	}
+	if err := recomputeMessageAttachmentStatsWith(q, messageID); err != nil {
+		return err
+	}
+	if snapshot.InvalidateCacheOnChange && changed {
+		return s.bumpDerivedDataRevision(tx)
+	}
+	return nil
 }

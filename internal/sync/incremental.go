@@ -57,7 +57,7 @@ func (s *Syncer) incremental(
 		return nil, fmt.Errorf("start sync: %w", err)
 	}
 	scoped := *s
-	scoped.store = s.store.ScopedToSync(source.ID, syncID)
+	scoped.store = s.store.ScopedToSync(source.ID, syncID).WithIngestContext(store.IngestContext{Mode: store.IngestUnknown, ObservedAt: time.Now().UTC()})
 	s = &scoped
 	summary.SyncRunID = syncID
 
@@ -75,7 +75,7 @@ func (s *Syncer) incremental(
 	}()
 
 	// Get profile for current history ID
-	profile, err := s.client.GetProfile(ctx)
+	profile, err := s.nativeProfileWithPermission(ctx, source)
 	if err != nil {
 		_ = s.store.FailSync(syncID, err.Error())
 		return nil, fmt.Errorf("get profile: %w", err)
@@ -94,6 +94,20 @@ func (s *Syncer) incremental(
 	// it most. Unlike the post-completion hook below, this re-derives evidence
 	// from local messages and costs one key lookup when there is no debt.
 	s.drainIdentityDiscoveryBacklog(ctx, source.ID)
+
+	// Message history is not a label-presence inventory. Native Gmail refreshes
+	// its complete scope domain even on an otherwise idle sync. Generic archive
+	// readers retain their existing no-op behavior.
+	var labelMap map[string]int64
+	labelsRefreshed := false
+	if _, native := s.client.(nativeMessageReadPermission); native && source.SourceType == sourceTypeGmail {
+		labelMap, err = s.syncLabels(ctx, source.ID)
+		if err != nil {
+			_ = s.store.FailSync(syncID, err.Error())
+			return nil, fmt.Errorf("sync labels: %w", err)
+		}
+		labelsRefreshed = true
+	}
 
 	// If history IDs match, nothing to do locally — but provider inventory can
 	// change while a mailbox is idle, so the post-completion hook still runs,
@@ -114,10 +128,12 @@ func (s *Syncer) incremental(
 	}
 
 	// Sync labels first (new labels may have been created)
-	labelMap, err := s.syncLabels(ctx, source.ID)
-	if err != nil {
-		_ = s.store.FailSync(syncID, err.Error())
-		return nil, fmt.Errorf("sync labels: %w", err)
+	if !labelsRefreshed {
+		labelMap, err = s.syncLabels(ctx, source.ID)
+		if err != nil {
+			_ = s.store.FailSync(syncID, err.Error())
+			return nil, fmt.Errorf("sync labels: %w", err)
+		}
 	}
 
 	checkpoint := &store.Checkpoint{}
@@ -247,7 +263,7 @@ func (s *Syncer) incremental(
 							continue
 						}
 						threadID := newMsgThreads[newMsgIDs[i]]
-						if _, err := s.ingestMessage(
+						if _, err := s.ingestLiveMessage(
 							ctx, source.ID, raw, threadID, labelMap,
 						); err != nil {
 							s.logger.Warn("failed to ingest added message", "id", newMsgIDs[i], "error", err)
@@ -492,9 +508,9 @@ func (s *Syncer) handleLabelChange(ctx context.Context, syncID, sourceID int64, 
 				checkpoint.ErrorsCount++
 				return false, false, err
 			}
-			if _, err := s.ingestMessage(
-				ctx, sourceID, raw, threadID, labelMap,
-			); err != nil {
+			// A label change does not mean the message just arrived; a
+			// new arrival in this history page is fetched by messagesAdded.
+			if _, err := s.ingestMessage(ctx, sourceID, raw, threadID, labelMap); err != nil {
 				s.recordSyncItem(syncID, messageID, syncItemPhaseIngest, store.SyncRunItemStatusError, syncItemKindIngestError, err)
 				checkpoint.ErrorsCount++
 				return false, false, err
@@ -542,4 +558,12 @@ func (s *Syncer) logLabelChangeError(action, messageID string, err error) {
 	} else {
 		s.logger.Warn("failed to handle label "+action, "id", messageID, "error", err)
 	}
+}
+
+// ingestLiveMessage is restricted to messages obtained from the current
+// history delta. Recovery of earlier fetch failures keeps unknown provenance.
+func (s *Syncer) ingestLiveMessage(ctx context.Context, sourceID int64, raw *gmail.RawMessage, threadID string, labelMap map[string]int64) (bool, error) {
+	scoped := *s
+	scoped.store = s.store.WithIngestContext(store.IngestContext{Mode: store.IngestLive, ObservedAt: time.Now().UTC()})
+	return scoped.ingestMessage(ctx, sourceID, raw, threadID, labelMap)
 }

@@ -1,27 +1,27 @@
 package cmd
 
-import "go.kenn.io/msgvault/internal/msmail"
+import "go.kenn.io/msgvault/internal/sourcecatalog"
 
 // Source-type identifiers stored in sources.source_type and matched against
 // when dispatching sync/import logic per account kind.
 const (
-	sourceTypeGmail          = "gmail"
-	sourceTypeIMAP           = "imap"
-	sourceTypeMbox           = "mbox"
-	sourceTypeTeams          = "teams"
-	sourceTypeMSMail         = msmail.SourceType
-	sourceTypeCalendar       = "gcal"
-	sourceTypeBeeper         = "beeper"
-	sourceTypeMatrix         = "matrix"
-	sourceTypeSlack          = "slack"
-	sourceTypeSlackdump      = "slackdump"
-	sourceTypeGranola        = "granola"
-	sourceTypeCircleback     = "circleback"
-	sourceTypePlaud          = "plaud"
-	sourceTypeNotionMeetings = "notion_meetings"
-	sourceTypeTwilio         = "twilio"
-	sourceTypeMuesli         = "muesli"
-	sourceTypeTwenty         = "twenty"
+	sourceTypeGmail          = sourcecatalog.Gmail
+	sourceTypeIMAP           = sourcecatalog.IMAP
+	sourceTypeMbox           = sourcecatalog.Mbox
+	sourceTypeTeams          = sourcecatalog.Teams
+	sourceTypeMSMail         = sourcecatalog.MicrosoftMail
+	sourceTypeCalendar       = sourcecatalog.GoogleCalendar
+	sourceTypeBeeper         = sourcecatalog.Beeper
+	sourceTypeMatrix         = sourcecatalog.Matrix
+	sourceTypeSlack          = sourcecatalog.Slack
+	sourceTypeSlackdump      = sourcecatalog.Slackdump
+	sourceTypeGranola        = sourcecatalog.Granola
+	sourceTypeCircleback     = sourcecatalog.Circleback
+	sourceTypePlaud          = sourcecatalog.Plaud
+	sourceTypeNotionMeetings = sourcecatalog.NotionMeetings
+	sourceTypeTwilio         = sourcecatalog.Twilio
+	sourceTypeMuesli         = sourcecatalog.Muesli
+	sourceTypeTwenty         = sourcecatalog.Twenty
 )
 
 // Analytics dataset / SQLite table names: the Parquet subdirectory under

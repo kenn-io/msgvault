@@ -24,6 +24,8 @@ import (
 )
 
 type MboxImportOptions struct {
+	// NotifyImports requires the daemon's separate global import opt-in.
+	NotifyImports bool
 	// SourceType is the sources.source_type value (e.g. "mbox" or "hey").
 	SourceType string
 
@@ -59,6 +61,7 @@ type MboxImportOptions struct {
 }
 
 type MboxImportSummary struct {
+	ImportRunID    string `json:"import_run_id,omitempty"`
 	SourceID       int64
 	WasResumed     bool
 	ResumedOffset  int64
@@ -100,6 +103,9 @@ func ImportMbox(
 	if opts.Identifier == "" {
 		return nil, errors.New("identifier is required")
 	}
+	if err := st.ValidateNativeImportChoice(ctx, sourceTypeMbox, opts.NotifyImports); err != nil {
+		return nil, err
+	}
 	if opts.CheckpointInterval <= 0 {
 		opts.CheckpointInterval = 200
 	}
@@ -112,7 +118,7 @@ func ImportMbox(
 	}
 	ingestFn := opts.IngestFunc
 	if ingestFn == nil {
-		ingestFn = mboxMessageIngester(opts.RemoteImages, groupFallback)
+		ingestFn = mboxMessageIngester(opts.RemoteImages, groupFallback, opts.NotifyImports)
 	}
 	log := opts.Logger
 	if log == nil {
@@ -130,6 +136,8 @@ func ImportMbox(
 	if resolved, err := filepath.EvalSymlinks(absPath); err == nil {
 		cpFile = resolved
 	}
+	requestSum := sha256.Sum256([]byte(sourceTypeMbox + "\x00" + cpFile))
+	requestFingerprint := hex.EncodeToString(requestSum[:])
 	// Ensure / get the source.
 	src, err := st.GetOrCreateSource(opts.SourceType, opts.Identifier)
 	if err != nil {
@@ -155,11 +163,35 @@ func ImportMbox(
 		seq    int64
 	)
 
+	var recoveredSyncID int64
 	if !opts.NoResume {
 		active, err := st.GetLatestCheckpointedSyncByType(src.ID, "import-mbox")
 		if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
 			return nil, fmt.Errorf("check resumable sync: %w", err)
 		}
+		// Resolve a changed-file checkpoint before the logical-run fingerprint
+		// check can turn it into an opaque invalid_import_run error.
+		if active != nil && active.CursorBefore.Valid && active.CursorBefore.String != "" {
+			var mcp mboxCheckpoint
+			if err := json.Unmarshal([]byte(active.CursorBefore.String), &mcp); err == nil && mcp.File != "" {
+				sameFile := mcp.File == absPath || mcp.File == cpFile
+				if !sameFile {
+					if curInfo, err := os.Stat(absPath); err == nil {
+						if cpInfo, err := os.Stat(mcp.File); err == nil && os.SameFile(curInfo, cpInfo) {
+							sameFile = true
+						}
+					}
+				}
+				if !sameFile {
+					return nil, fmt.Errorf("active mbox import is for a different file (%q), not %q; rerun with --no-resume to start fresh", mcp.File, absPath)
+				}
+			}
+		}
+		recoveredSyncID, err = st.FindResumableImportAttempt(ownershipCtx, src.ID, sourceTypeMbox, requestFingerprint)
+		if err != nil {
+			return nil, fmt.Errorf("check logical mbox import: %w", err)
+		}
+		summary.WasResumed = recoveredSyncID != 0
 		if active != nil {
 			cp.MessagesProcessed = active.MessagesProcessed
 			cp.MessagesAdded = active.MessagesAdded
@@ -188,26 +220,49 @@ func ImportMbox(
 					} else if mcp.File != "" && !sameFile {
 						return nil, fmt.Errorf("active mbox import is for a different file (%q), not %q; rerun with --no-resume to start fresh", mcp.File, absPath)
 					}
+					if opts.NotifyImports && recoveredSyncID == 0 {
+						return nil, errors.New("legacy import checkpoint is silent; use --no-resume to start a new notifying run")
+					}
 				}
+			}
+			if opts.NotifyImports && recoveredSyncID == 0 {
+				return nil, errors.New("legacy import checkpoint is silent; use --no-resume to start a new notifying run")
 			}
 		}
 	}
 
-	syncID, err = execution.StartSyncContext(ownershipCtx, "import-mbox", "")
+	syncID, err = execution.StartSyncWithRequestContext(ownershipCtx, "import-mbox", "", requestFingerprint)
 	if err != nil {
 		return nil, fmt.Errorf("start sync: %w", err)
 	}
 	st = st.ScopedToSync(src.ID, syncID)
+	// Native control writes retain the execution fence after ingestion policy
+	// is revoked. They only record progress or terminal failure, never content.
+	progressStore := st.WithIngestContext(store.IngestContext{Mode: store.IngestBackfill})
 
 	failSync := func(msg string) {
-		if fsErr := st.FailSync(syncID, msg); fsErr != nil {
+		if fsErr := progressStore.FailSync(syncID, msg); fsErr != nil {
 			log.Warn("failed to record sync failure", "error", fsErr)
 		}
 	}
 
+	// Logical policy must commit before even the initial progress checkpoint.
+	logicalRun, err := st.BeginNativeImportAttempt(ownershipCtx, src.ID, sourceTypeMbox, opts.NotifyImports, syncID, recoveredSyncID)
+	if err != nil {
+		failSync(err.Error())
+		return nil, fmt.Errorf("begin mbox import: %w", err)
+	}
+	summary.ImportRunID = logicalRun.ID
+	view, err := st.WithImportRun(ownershipCtx, logicalRun.ID)
+	if err != nil {
+		failSync(err.Error())
+		return nil, fmt.Errorf("validate mbox import: %w", err)
+	}
+	st = view
+
 	// Save an initial checkpoint so the active sync always records which file it's importing,
 	// even if the run is interrupted before the first periodic checkpoint.
-	if err := saveMboxCheckpoint(st, syncID, cpFile, offset, seq, &cp); err != nil {
+	if err := saveMboxCheckpoint(progressStore, syncID, cpFile, offset, seq, &cp); err != nil {
 		cp.ErrorsCount++
 		summary.Errors++
 		log.Warn("failed to save initial checkpoint", "error", err)
@@ -332,7 +387,7 @@ func ImportMbox(
 			if err := ctx.Err(); err != nil {
 				summary.FinalOffset = lastCheckpointOffset
 				summary.Duration = time.Since(start)
-				if err := saveMboxCheckpoint(st, syncID, cpFile, lastCheckpointOffset, lastCheckpointSeq, &cp); err != nil {
+				if err := saveMboxCheckpoint(progressStore, syncID, cpFile, lastCheckpointOffset, lastCheckpointSeq, &cp); err != nil {
 					cp.ErrorsCount++
 					summary.Errors++
 					log.Warn("failed to save checkpoint", "error", err)
@@ -411,7 +466,7 @@ func ImportMbox(
 					lastCheckpointSeq = p.Seq
 				}
 				if cp.MessagesProcessed%int64(opts.CheckpointInterval) == 0 {
-					if err := saveMboxCheckpoint(st, syncID, cpFile, lastCheckpointOffset, lastCheckpointSeq, &cp); err != nil {
+					if err := saveMboxCheckpoint(progressStore, syncID, cpFile, lastCheckpointOffset, lastCheckpointSeq, &cp); err != nil {
 						cp.ErrorsCount++
 						summary.Errors++
 						log.Warn("failed to save checkpoint", "error", err)
@@ -456,7 +511,7 @@ func ImportMbox(
 			}
 
 			if cp.MessagesProcessed%int64(opts.CheckpointInterval) == 0 {
-				if err := saveMboxCheckpoint(st, syncID, cpFile, lastCheckpointOffset, lastCheckpointSeq, &cp); err != nil {
+				if err := saveMboxCheckpoint(progressStore, syncID, cpFile, lastCheckpointOffset, lastCheckpointSeq, &cp); err != nil {
 					cp.ErrorsCount++
 					summary.Errors++
 					log.Warn("failed to save checkpoint", "error", err)
@@ -475,7 +530,7 @@ func ImportMbox(
 			summary.FinalOffset = lastCheckpointOffset
 			summary.Duration = time.Since(start)
 			// Record best-effort checkpoint before returning.
-			if err := saveMboxCheckpoint(st, syncID, cpFile, lastCheckpointOffset, lastCheckpointSeq, &cp); err != nil {
+			if err := saveMboxCheckpoint(progressStore, syncID, cpFile, lastCheckpointOffset, lastCheckpointSeq, &cp); err != nil {
 				cp.ErrorsCount++
 				summary.Errors++
 				log.Warn("failed to save checkpoint", "error", err)
@@ -536,7 +591,7 @@ func ImportMbox(
 	summary.Duration = time.Since(start)
 
 	// Final checkpoint and mark sync complete.
-	if err := saveMboxCheckpoint(st, syncID, cpFile, finalOffset, lastCheckpointSeq, &cp); err != nil {
+	if err := saveMboxCheckpoint(progressStore, syncID, cpFile, finalOffset, lastCheckpointSeq, &cp); err != nil {
 		cp.ErrorsCount++
 		summary.Errors++
 		log.Warn("failed to save checkpoint", "error", err)
@@ -544,7 +599,7 @@ func ImportMbox(
 
 	summary.HardErrors = hardErrors
 	if hardErrors {
-		if err := st.FailSync(syncID, fmt.Sprintf("completed with %d errors", cp.ErrorsCount)); err != nil {
+		if err := progressStore.FailSync(syncID, fmt.Sprintf("completed with %d errors", cp.ErrorsCount)); err != nil {
 			return summary, fmt.Errorf("fail sync: %w", err)
 		}
 		return summary, nil
@@ -554,7 +609,7 @@ func ImportMbox(
 	if cp.ErrorsCount > 0 {
 		finalMsg = fmt.Sprintf("offset:%d errors:%d", r.Offset(), cp.ErrorsCount)
 	}
-	if err := st.CompleteSync(syncID, finalMsg); err != nil {
+	if err := progressStore.CompleteSync(syncID, finalMsg); err != nil {
 		return summary, fmt.Errorf("complete sync: %w", err)
 	}
 
@@ -583,10 +638,10 @@ func ingestRawEmail(
 	labelIDs []int64, sourceMsgID, rawHash string,
 	msg *mbox.Message, log *slog.Logger,
 ) error {
-	return mboxMessageIngester(nil, "")(ctx, st, sourceID, identifier, attachmentsDir, labelIDs, sourceMsgID, rawHash, msg, log)
+	return mboxMessageIngester(nil, "", false)(ctx, st, sourceID, identifier, attachmentsDir, labelIDs, sourceMsgID, rawHash, msg, log)
 }
 
-func mboxMessageIngester(images *remoteimage.Fetcher, groupFallback string) func(context.Context, *store.Store, int64, string, string, []int64, string, string, *mbox.Message, *slog.Logger) error {
+func mboxMessageIngester(images *remoteimage.Fetcher, groupFallback string, coherent bool) func(context.Context, *store.Store, int64, string, string, []int64, string, string, *mbox.Message, *slog.Logger) error {
 	return func(ctx context.Context, st *store.Store, sourceID int64, identifier, attachmentsDir string, labelIDs []int64, sourceMsgID, rawHash string, msg *mbox.Message, log *slog.Logger) error {
 		threadID := ""
 		if groupFallback != "" {
@@ -601,10 +656,10 @@ func mboxMessageIngester(images *remoteimage.Fetcher, groupFallback string) func
 		if t, ok := parseFromLineDate(msg.FromLine); ok {
 			fallbackDate = t
 		}
-		return ingestRawMessage(
+		return ingestRawMessageMode(
 			ctx, st, sourceID, identifier, attachmentsDir,
 			labelIDs, sourceMsgID, rawHash,
-			msg.Raw, fallbackDate, log, images, threadID,
+			msg.Raw, fallbackDate, log, images, threadID, coherent,
 		)
 	}
 }

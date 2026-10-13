@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/importer"
-	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/msgraph"
 	"go.kenn.io/msgvault/internal/rederive"
 	"go.kenn.io/msgvault/internal/store"
@@ -76,6 +75,11 @@ func Import(ctx context.Context, st *store.Store, c *Client, opts Options, log *
 	}
 	sum = &Summary{SourceID: src.ID}
 
+	permission, err := observeNativeMailPermission(ctx, st, src, c)
+	if err != nil {
+		return nil, err
+	}
+
 	// Cursors: the last completed run, then any checkpoint of an interrupted
 	// run after it. A delta link is opaque, so the newer checkpoint wins.
 	cursors := map[string]string{}
@@ -91,7 +95,7 @@ func Import(ctx context.Context, st *store.Store, c *Client, opts Options, log *
 	if err != nil {
 		return nil, err
 	}
-	st = st.ScopedToSync(src.ID, syncID)
+	st = st.ScopedToSync(src.ID, syncID).WithIngestContext(store.IngestContext{Mode: store.IngestBackfill})
 	checkpoint := func() *store.Checkpoint {
 		blob, _ := json.Marshal(cursors, json.Deterministic(true))
 		return &store.Checkpoint{
@@ -108,10 +112,33 @@ func Import(ctx context.Context, st *store.Store, c *Client, opts Options, log *
 		}
 	}()
 
-	s := &syncer{st: st, c: c, opts: opts, log: log, sourceID: src.ID, sum: sum, cursors: cursors}
+	// Run before FailSync releases this generation. A late native response from
+	// a superseded run cannot revoke a newer run's verified account authority.
+	defer func() {
+		if err != nil && nativeMailDenied(err) {
+			denied := *permission
+			denied.Known = true
+			denied.MessageRead = false
+			err = errors.Join(err, st.ObserveNativeSourcePermission(ctx, denied))
+		}
+	}()
+	s := &syncer{st: st, c: c, opts: opts, log: log, sourceID: src.ID, sum: sum, cursors: cursors, nativePermission: permission}
 	folders, err := c.ListFolders(ctx)
 	if err != nil {
 		return sum, fmt.Errorf("list mail folders: %w", err)
+	}
+	if permission.MessageRead {
+		inventory := store.NativeMessageScopeInventory{SourceID: src.ID, SourceReference: permission.SourceReference, SourceType: SourceType, NativeIdentity: src.Identifier, Kind: "msmail_folder", Complete: true}
+		for _, folder := range folders {
+			inventory.Scopes = append(inventory.Scopes, store.NativeMessageScope{ProviderID: folder.ID, DisplayName: folder.Path})
+		}
+		if err = st.ObserveNativeMessageScopes(ctx, inventory); err != nil {
+			return sum, err
+		}
+		s.nativeFolderScopes, err = pinNativeMailFolders(ctx, st, permission, folders)
+		if err != nil {
+			return sum, err
+		}
 	}
 	if s.labels, err = s.ensureLabels(ctx, folders); err != nil {
 		return sum, err
@@ -150,6 +177,12 @@ func Import(ctx context.Context, st *store.Store, c *Client, opts Options, log *
 				// in the vault are not downloaded again.
 				log.Info("delta token expired, walking folder again", "folder", f.Path)
 				link, seen, restarted = DeltaStartURL(f.ID), map[string]bool{}, true
+				// Persist recovery provenance before even its first request.
+				// A failed fresh request must not resume the expired live link.
+				cursors[f.ID] = walkPrefix + link
+				if err = st.UpdateSyncCheckpoint(syncID, checkpoint()); err != nil {
+					return sum, err
+				}
 				continue
 			}
 			if perr != nil {
@@ -209,15 +242,18 @@ func mergeCursors(dst map[string]string, blob string) {
 type syncer struct {
 	// cursors is the saved state: folder ID -> delta link, and
 	// retryPrefix + message ID -> folder ID for messages to download again.
-	cursors map[string]string
+	cursors    map[string]string
+	ingestMode store.IngestMode
 
-	st       *store.Store
-	c        *Client
-	opts     Options
-	log      *slog.Logger
-	sourceID int64
-	sum      *Summary
-	labels   map[string]int64 // Graph folder ID -> label ID
+	st                 *store.Store
+	c                  *Client
+	opts               Options
+	log                *slog.Logger
+	sourceID           int64
+	nativePermission   *store.NativeSourcePermission
+	nativeFolderScopes map[string]store.NativeMessageScopeIdentity
+	sum                *Summary
+	labels             map[string]int64 // Graph folder ID -> label ID
 
 	// drafts is the Drafts folder. A draft keeps its ID while it is edited,
 	// so a known draft is downloaded again when delta reports it.
@@ -323,7 +359,13 @@ func (s *syncer) applyPage(ctx context.Context, folderID string, items []DeltaMe
 			todo = append(todo, m)
 		}
 	}
-	if err := s.download(ctx, folderID, todo); err != nil {
+	pageSync := *s
+	pageSync.ingestMode = store.IngestBackfill
+	if seen == nil {
+		pageSync.ingestMode = store.IngestLive
+	}
+	pageSync.st = s.st.WithIngestContext(store.IngestContext{Mode: pageSync.ingestMode, ObservedAt: time.Now().UTC()})
+	if err := pageSync.download(ctx, folderID, todo); err != nil {
 		return err
 	}
 
@@ -336,59 +378,30 @@ func (s *syncer) applyPage(ctx context.Context, folderID string, items []DeltaMe
 	return s.relocate(ctx, removed)
 }
 
-// afterStore makes sure that every attachment of a stored MIME has a row. For
-// a refreshed message, it then drops the rows of parts that the new MIME no
-// longer has. If a row is missing, the old rows stay and it returns an error.
-func (s *syncer) afterStore(ctx context.Context, m DeltaMessage, raw []byte) error {
-	if s.opts.AttachmentsDir == "" {
-		return nil // no attachment rows are written
-	}
-	msgID := m.archiveID
-	if msgID == 0 {
-		ids, err := s.st.MessageExistsBatch(s.sourceID, []string{m.ID})
-		if err != nil {
-			return err
-		}
-		msgID = ids[m.ID]
-	}
-	parsed, err := mime.ParseWithRecovery(raw, "")
-	if err != nil {
-		// The MIME did not parse, so its attachments are unknown. Keep the
-		// rows that are there.
-		s.log.Warn("MIME did not parse, keeping attachment rows", "id", m.ID, "error", err)
-		return nil
-	}
-	complete, err := s.attachmentsStored(ctx, msgID, parsed.Attachments)
-	if err != nil {
-		return err
-	}
-	if !complete {
-		return errors.New("an attachment was not stored")
-	}
-	if m.archiveID == 0 {
-		return nil
-	}
-	keep := make([]string, 0, len(parsed.Attachments))
-	for _, a := range parsed.Attachments {
-		if len(a.Content) > 0 { // storage writes no row for an empty file
-			keep = append(keep, a.PartKey)
-		}
-	}
-	if err := s.st.DeleteMIMEAttachmentsExceptContext(ctx, msgID, keep); err != nil {
-		return err
-	}
-	return s.st.RecomputeMessageAttachmentStats(msgID)
+// Versioned live retry evidence is distinct from legacy folder-only markers.
+// Unknown or malformed evidence stays historical rather than gaining delivery.
+type retryProvenance struct {
+	Version  int              `json:"version"`
+	FolderID string           `json:"folder_id"`
+	Mode     store.IngestMode `json:"mode"`
 }
 
-// attachmentsStored checks only nonempty parts, since storage skips empty files.
-func (s *syncer) attachmentsStored(ctx context.Context, messageID int64, atts []mime.Attachment) (bool, error) {
-	parts := make([]store.AttachmentRef, 0, len(atts))
-	for _, a := range atts {
-		if len(a.Content) > 0 {
-			parts = append(parts, store.AttachmentRef{SourcePartKey: a.PartKey, ContentHash: a.ContentHash})
-		}
+func (s *syncer) retryIsLive(id string) bool {
+	var saved retryProvenance
+	return json.Unmarshal([]byte(s.cursors[retryPrefix+id]), &saved) == nil && saved.Version == 1 && saved.FolderID != "" && saved.Mode == store.IngestLive
+}
+
+func (s *syncer) saveRetry(id, folderID string) {
+	if folderID == "" {
+		return
+	} // an incomplete lookup cannot erase prior evidence
+	_, pending := s.cursors[retryPrefix+id]
+	if s.retryIsLive(id) || (!pending && s.ingestMode == store.IngestLive) {
+		saved, _ := json.Marshal(retryProvenance{Version: 1, FolderID: folderID, Mode: store.IngestLive})
+		s.cursors[retryPrefix+id] = string(saved)
+		return
 	}
-	return s.st.AttachmentPartsStoredContext(ctx, messageID, parts)
+	s.cursors[retryPrefix+id] = folderID
 }
 
 // retryMessages retries failed message downloads and incomplete attachments. A message that is gone is marked deleted.
@@ -423,17 +436,27 @@ func (s *syncer) retryMessages(ctx context.Context) error {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
+			if nativeMailDenied(err) {
+				return err
+			}
 			s.log.Warn("message lookup failed, retrying on the next sync", "id", id, "error", err)
 			s.sum.Errors++
 			continue
 		}
 		if _, ok := s.labels[parent]; !ok {
-			s.cursors[key] = parent // a folder this run did not list
+			s.saveRetry(id, parent) // a folder this run did not list
 			continue
 		}
-		// download clears the marker only after the message is stored.
-		if err := s.download(ctx, parent, []DeltaMessage{{ID: id, ReceivedDateTime: info.ReceivedDateTime, archiveID: known[id]}}); err != nil {
-			s.cursors[key] = parent
+		// Pin the original mode even if download removes its marker before a
+		// later relocation error. That error must restore the same evidence.
+		retrySync := *s
+		retrySync.ingestMode = store.IngestBackfill
+		if s.retryIsLive(id) {
+			retrySync.ingestMode = store.IngestLive
+		}
+		retrySync.st = s.st.WithIngestContext(store.IngestContext{Mode: retrySync.ingestMode, ObservedAt: time.Now().UTC()})
+		if err := retrySync.download(ctx, parent, []DeltaMessage{{ID: id, ReceivedDateTime: info.ReceivedDateTime, archiveID: known[id]}}); err != nil {
+			retrySync.saveRetry(id, parent)
 			return err
 		}
 	}
@@ -578,27 +601,76 @@ func (s *syncer) download(ctx context.Context, folderID string, msgs []DeltaMess
 			continue
 		}
 		if r.err != nil {
+			if nativeMailDenied(r.err) {
+				storeErr = r.err
+				cancel()
+				continue
+			}
 			s.log.Warn("message download failed, retrying on the next sync", "id", r.msg.ID, "error", r.err)
 			s.sum.Errors++
-			s.cursors[retryPrefix+r.msg.ID] = folderID
+			s.saveRetry(r.msg.ID, folderID)
 			continue
 		}
 		sum := sha256.Sum256(r.raw)
-		if err := importer.IngestRawMessage(ctx, s.st, s.sourceID, s.opts.Email, s.opts.AttachmentsDir,
-			[]int64{folderLabel}, r.msg.ID, hex.EncodeToString(sum[:]), r.raw, r.msg.ReceivedDateTime, s.log); err != nil {
-			storeErr = fmt.Errorf("store message %s: %w", r.msg.ID, err)
+		messageStore := s.st
+		if _, pending := s.cursors[retryPrefix+r.msg.ID]; pending {
+			mode := store.IngestBackfill
+			if s.retryIsLive(r.msg.ID) {
+				mode = store.IngestLive
+			}
+			messageStore = s.st.WithIngestContext(store.IngestContext{Mode: mode, ObservedAt: time.Now().UTC()})
+		}
+		var nativeScopes *store.NativeMessageScopeMembership
+		snapshotLabel := folderLabel
+		if s.nativePermission != nil && s.nativePermission.MessageRead {
+			current, lookupErr := s.c.LookupMessage(ctx, r.msg.ID)
+			if errors.Is(lookupErr, msgraph.ErrNotFound) {
+				delete(s.cursors, retryPrefix+r.msg.ID)
+				if r.msg.archiveID != 0 {
+					vanished[r.msg.ID] = r.msg.archiveID
+				}
+				continue
+			}
+			if lookupErr != nil {
+				storeErr = lookupErr
+				cancel()
+				continue
+			}
+			label, observed := s.labels[current.ParentFolderID]
+			if !observed {
+				s.saveRetry(r.msg.ID, current.ParentFolderID)
+				continue
+			}
+			snapshotLabel = label
+			identity, pinned := s.nativeFolderScopes[current.ParentFolderID]
+			if !pinned {
+				s.saveRetry(r.msg.ID, current.ParentFolderID)
+				continue
+			}
+			nativeScopes = &store.NativeMessageScopeMembership{SourceReference: s.nativePermission.SourceReference, Scopes: []store.NativeMessageScopeIdentity{identity}}
+		}
+		if err := recheckNativeMailPermission(ctx, s.st, s.nativePermission, s.c); err != nil {
+			storeErr = err
+			cancel()
+			continue
+		}
+		if s.nativePermission == nil || !s.nativePermission.MessageRead {
+			nativeScopes = nil
+		}
+		if err := importer.IngestRawMessageSnapshot(ctx, messageStore, s.sourceID, s.opts.Email, s.opts.AttachmentsDir,
+			[]int64{snapshotLabel}, r.msg.ID, hex.EncodeToString(sum[:]), r.raw, r.msg.ReceivedDateTime, s.log, nativeScopes); err != nil {
+			s.saveRetry(r.msg.ID, folderID)
 			s.sum.Errors++
+			if errors.Is(err, importer.ErrMIMEAttachmentPreparation) {
+				s.log.Warn("attachment preparation failed, retrying on the next sync", "id", r.msg.ID, "error", err)
+				continue
+			}
+			storeErr = fmt.Errorf("store message %s: %w", r.msg.ID, err)
 			cancel()
 			continue
 		}
 		delete(s.cursors, retryPrefix+r.msg.ID)
-		if err := s.afterStore(ctx, r.msg, r.raw); err != nil {
-			// The message is stored, but an attachment is not. A later walk
-			// would skip the known message, so it goes on the retry list.
-			s.log.Warn("attachment not stored, retrying on the next sync", "id", r.msg.ID, "error", err)
-			s.sum.Errors++
-			s.cursors[retryPrefix+r.msg.ID] = folderID
-		}
+
 		if r.msg.archiveID == 0 {
 			s.sum.Added++
 			continue

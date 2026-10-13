@@ -134,7 +134,7 @@ func TestSyncDiscordWarnsWhenGuildMembershipIsUnavailable(t *testing.T) {
 	assert.NotContains(output.String(), testDiscordBotToken)
 }
 
-func TestSyncDiscordRebuildsCacheAfterPartialDurableImportFailure(t *testing.T) {
+func TestSyncDiscordRebuildsCacheAfterSnapshotFailure(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := newDiscordCLIStore(t)
@@ -149,7 +149,7 @@ func TestSyncDiscordRebuildsCacheAfterPartialDurableImportFailure(t *testing.T) 
 	api.messages[testDiscordChannel] = []discord.Message{{
 		ID: "400000000000000001", ChannelID: testDiscordChannel, GuildID: testDiscordGuildA,
 		Author:    discord.User{ID: "500000000000000001", Username: "synthetic-user"},
-		Content:   "durable before the later failure",
+		Content:   "Synthetic snapshot rolled back after roster failure",
 		Timestamp: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
 	}}
 	deps := testDiscordCommandDeps(t, st, tokensDir, api.server.URL)
@@ -167,8 +167,8 @@ func TestSyncDiscordRebuildsCacheAfterPartialDurableImportFailure(t *testing.T) 
 	require.NoError(st.DB().QueryRow(
 		st.Rebind("SELECT COUNT(*) FROM messages WHERE source_id = ?"), source.ID,
 	).Scan(&messageCount))
-	assert.Equal(1, messageCount, "core message persistence must precede the injected failure")
-	assert.Equal(1, rebuilds, "a failed importer attempt with durable writes must refresh analytics")
+	assert.Zero(messageCount, "roster failure must roll back the message snapshot")
+	assert.Equal(1, rebuilds, "a failed importer attempt can still persist catalog and identity writes")
 }
 
 func TestSyncDiscordRebuildsCacheAfterRepairBeforeSyncSetupFailure(t *testing.T) {

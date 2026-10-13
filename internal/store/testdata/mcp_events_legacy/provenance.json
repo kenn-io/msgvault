@@ -1,0 +1,12 @@
+{
+  "sqlite": {
+    "source_commit": "5ee2f2bc52a5b6131a1d9cd2f0f0e1b80ad7f5be",
+    "archive": "legacy.sqlite.gz",
+    "sha256": "453258e7be4fd86cc9fbbda94ad9b7668b59e8ce8afdc19f4b9ae97ddaecf1c0"
+  },
+  "postgres": {
+    "source_commit": "440ae55f8e73328ef0b386f1d03fc48dc8b71a6f",
+    "archive": "legacy.sql.gz",
+    "sha256": "63bacf40bab00ff5525fe7723722359d00e39a43fb3f0f7c32b1daffb2d66361"
+  }
+}

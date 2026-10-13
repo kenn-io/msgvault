@@ -3,6 +3,8 @@ package importer
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -21,6 +23,7 @@ import (
 
 // EmlxImportOptions configures an Apple Mail .emlx directory import.
 type EmlxImportOptions struct {
+	NotifyImports bool
 	// SourceType is the sources.source_type value.
 	// Defaults to "apple-mail".
 	SourceType string
@@ -61,6 +64,7 @@ type EmlxImportOptions struct {
 
 // EmlxImportSummary reports the results of an emlx import.
 type EmlxImportSummary struct {
+	ImportRunID       string `json:"import_run_id,omitempty"`
 	SourceID          int64
 	WasResumed        bool
 	Duration          time.Duration
@@ -107,11 +111,15 @@ func ImportEmlxDir(
 	ctx context.Context, st *store.Store,
 	rootDir string, opts EmlxImportOptions,
 ) (retSummary *EmlxImportSummary, retErr error) {
+	st = st.WithIngestContext(store.IngestContext{Mode: store.IngestBackfill})
 	if opts.SourceType == "" {
 		opts.SourceType = "apple-mail"
 	}
 	if opts.Identifier == "" {
 		return nil, errors.New("identifier is required")
+	}
+	if err := st.ValidateNativeImportChoice(ctx, "apple-mail", opts.NotifyImports); err != nil {
+		return nil, err
 	}
 	if opts.CheckpointInterval <= 0 {
 		opts.CheckpointInterval = 200
@@ -121,7 +129,7 @@ func ImportEmlxDir(
 	}
 	ingestFn := opts.IngestFunc
 	if ingestFn == nil {
-		ingestFn = rawMessageIngester(opts.RemoteImages)
+		ingestFn = rawMessageIngester(opts.RemoteImages, opts.NotifyImports)
 	}
 	log := opts.Logger
 	if log == nil {
@@ -153,6 +161,8 @@ func ImportEmlxDir(
 		return nil, fmt.Errorf("abs path: %w", err)
 	}
 
+	requestSum := sha256.Sum256([]byte("apple-mail\x00" + absRoot))
+	requestFingerprint := hex.EncodeToString(requestSum[:])
 	src, err := st.GetOrCreateSource(opts.SourceType, opts.Identifier)
 	if err != nil {
 		return nil, fmt.Errorf("get/create source: %w", err)
@@ -178,11 +188,28 @@ func ImportEmlxDir(
 		startAfter   string // skip files <= this name within the start mailbox
 	)
 
+	var recoveredSyncID int64
 	if !opts.NoResume {
 		active, err := st.GetLatestCheckpointedSyncByType(src.ID, "import-emlx")
 		if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
 			return nil, fmt.Errorf("check resumable sync: %w", err)
 		}
+		// Validate the native directory identity before checking the durable
+		// logical attempt fingerprint, which otherwise hides this guidance.
+		if active != nil && active.CursorBefore.Valid && active.CursorBefore.String != "" {
+			var ecp emlxCheckpoint
+			if err := json.Unmarshal([]byte(active.CursorBefore.String), &ecp); err == nil && ecp.RootDir != absRoot {
+				return nil, fmt.Errorf(
+					"active emlx import is for a different directory (%q), not %q; rerun with --no-resume to start fresh",
+					ecp.RootDir, absRoot,
+				)
+			}
+		}
+		recoveredSyncID, err = st.FindResumableImportAttempt(ownershipCtx, src.ID, "apple-mail", requestFingerprint)
+		if err != nil {
+			return nil, fmt.Errorf("check logical Apple Mail import: %w", err)
+		}
+		summary.WasResumed = recoveredSyncID != 0
 		if active != nil {
 			if active.CursorBefore.Valid &&
 				active.CursorBefore.String != "" {
@@ -190,11 +217,8 @@ func ImportEmlxDir(
 				if err := json.Unmarshal(
 					[]byte(active.CursorBefore.String), &ecp,
 				); err == nil {
-					if ecp.RootDir != absRoot {
-						return nil, fmt.Errorf(
-							"active emlx import is for a different directory (%q), not %q; rerun with --no-resume to start fresh",
-							ecp.RootDir, absRoot,
-						)
+					if opts.NotifyImports && recoveredSyncID == 0 {
+						return nil, errors.New("legacy import checkpoint is silent; use --no-resume to start a new notifying run")
 					}
 					if ecp.MailboxIndex < 0 ||
 						ecp.MailboxIndex >= len(mailboxes) {
@@ -250,6 +274,9 @@ func ImportEmlxDir(
 					)
 				}
 			}
+			if opts.NotifyImports && recoveredSyncID == 0 {
+				return nil, errors.New("legacy import checkpoint is silent; use --no-resume to start a new notifying run")
+			}
 		}
 	}
 
@@ -257,11 +284,24 @@ func ImportEmlxDir(
 	// The checkpoint is cumulative across resumes; summary.Errors reports only
 	// this invocation. Skipping this on resume would lose newly denied paths.
 	cp.ErrorsCount += summary.Errors
-	syncID, err = execution.StartSyncContext(ownershipCtx, "import-emlx", "")
+	syncID, err = execution.StartSyncWithRequestContext(ownershipCtx, "import-emlx", "", requestFingerprint)
 	if err != nil {
 		return nil, fmt.Errorf("start sync: %w", err)
 	}
 	st = st.ScopedToSync(src.ID, syncID)
+	progressStore := st.WithIngestContext(store.IngestContext{Mode: store.IngestBackfill})
+	logicalRun, err := st.BeginNativeImportAttempt(ownershipCtx, src.ID, "apple-mail", opts.NotifyImports, syncID, recoveredSyncID)
+	if err != nil {
+		_ = progressStore.FailSync(syncID, err.Error())
+		return nil, fmt.Errorf("begin Apple Mail import: %w", err)
+	}
+	summary.ImportRunID = logicalRun.ID
+	view, err := st.WithImportRun(ownershipCtx, logicalRun.ID)
+	if err != nil {
+		_ = progressStore.FailSync(syncID, err.Error())
+		return nil, fmt.Errorf("validate Apple Mail import: %w", err)
+	}
+	st = view
 
 	hardErrors := false
 
@@ -297,7 +337,7 @@ func ImportEmlxDir(
 	if phase != "email-replies" {
 		// Save initial checkpoint.
 		if err := saveEmlxCheckpoint(
-			st, syncID, absRoot, startMbox, lastCpMboxPath,
+			progressStore, syncID, absRoot, startMbox, lastCpMboxPath,
 			startAfter, &cp,
 		); err != nil {
 			cp.ErrorsCount++
@@ -339,7 +379,7 @@ func ImportEmlxDir(
 			if err := ctx.Err(); err != nil {
 				summary.Duration = time.Since(start)
 				if err := saveEmlxCheckpoint(
-					st, syncID, absRoot, lastCpMbox,
+					progressStore, syncID, absRoot, lastCpMbox,
 					lastCpMboxPath, lastCpFile, &cp,
 				); err != nil {
 					log.Warn("checkpoint save failed", "error", err)
@@ -435,7 +475,7 @@ func ImportEmlxDir(
 					lastCpFile = p.FileName
 					checkpointIfDue(
 						&cp, summary, opts.CheckpointInterval,
-						st, syncID, absRoot, lastCpMbox,
+						progressStore, syncID, absRoot, lastCpMbox,
 						lastCpMboxPath, lastCpFile, log,
 					)
 				}
@@ -499,7 +539,7 @@ func ImportEmlxDir(
 				lastCpFile = p.FileName
 				checkpointIfDue(
 					&cp, summary, opts.CheckpointInterval,
-					st, syncID, absRoot, lastCpMbox,
+					progressStore, syncID, absRoot, lastCpMbox,
 					lastCpMboxPath, lastCpFile, log,
 				)
 			}
@@ -650,7 +690,7 @@ func ImportEmlxDir(
 	if phase != "email-replies" {
 		// Final checkpoint.
 		if err := saveEmlxCheckpoint(
-			st, syncID, absRoot, lastCpMbox, lastCpMboxPath,
+			progressStore, syncID, absRoot, lastCpMbox, lastCpMboxPath,
 			lastCpFile, &cp,
 		); err != nil {
 			cp.ErrorsCount++
@@ -665,7 +705,7 @@ func ImportEmlxDir(
 	}
 
 	if hardErrors {
-		if err := st.FailSync(syncID, fmt.Sprintf(
+		if err := progressStore.FailSync(syncID, fmt.Sprintf(
 			"completed with %d errors", cp.ErrorsCount,
 		)); err != nil {
 			return summary, fmt.Errorf("fail sync: %w", err)
@@ -677,7 +717,7 @@ func ImportEmlxDir(
 		replyAfterID = 0
 	}
 	saveReplies := func(afterID int64) error {
-		return saveEmlxCheckpointPhase(st, syncID, absRoot, lastCpMbox, lastCpMboxPath,
+		return saveEmlxCheckpointPhase(progressStore, syncID, absRoot, lastCpMbox, lastCpMboxPath,
 			lastCpFile, &cp, "email-replies", afterID)
 	}
 	if err := saveReplies(replyAfterID); err != nil {
@@ -698,7 +738,7 @@ func ImportEmlxDir(
 			cp.ErrorsCount,
 		)
 	}
-	if err := st.CompleteSyncContext(ctx, syncID, finalMsg); err != nil {
+	if err := progressStore.CompleteSyncContext(ctx, syncID, finalMsg); err != nil {
 		return summary, fmt.Errorf("complete sync: %w", err)
 	}
 
