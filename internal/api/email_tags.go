@@ -48,7 +48,7 @@ func (s *Server) registerEmailTagRoutes(api huma.API) {
 			op.Description = "Gmail accepts dry_run=true previews only; execute through inbox/control with a signed preview, expected state and idempotency key. IMAP and Microsoft retain native direct tag editing."
 		}
 		for key, response := range jsonResponsesFor[emailtags.MessageTagError](api, 400, 403, 404, 409, 500, 501, 502, 503) {
-			if key != "default" {
+			if key != defaultResponseKey {
 				op.Responses[key] = response
 			}
 		}

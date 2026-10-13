@@ -35,7 +35,7 @@ func (s *Server) registerInboxCandidatesRoute(api huma.API) {
 	op.Parameters = []*huma.Param{id, queryStringParam("source_type", "Exact provider type", true), queryStringParam("source_identifier", "Exact source identifier", true), queryStringParam("account_id", "Exact provider account", true), scope, limit, cursor}
 	op.Responses = jsonResponsesFor[inboxcontrol.CandidatePage](api)
 	for code, response := range jsonResponsesFor[ErrorResponse](api, 400, 401, 403, 409, 500, 503) {
-		if code != "default" {
+		if code != defaultResponseKey {
 			op.Responses[code] = response
 		}
 	}

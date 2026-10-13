@@ -46,7 +46,7 @@ func (s *Server) registerInboxTriageMappingRoutes(api huma.API) {
 	read.Parameters = []*huma.Param{id, queryStringParam("source_type", "Exact provider type", true), queryStringParam("source_identifier", "Exact source identifier", true), queryStringParam("account_id", "Exact provider account", true)}
 	read.Responses = jsonResponsesFor[inboxTriageMappingConfiguration](api)
 	for code, response := range jsonResponsesFor[ErrorResponse](api, 400, 401, 403, 409, 500, 503) {
-		if code != "default" {
+		if code != defaultResponseKey {
 			read.Responses[code] = response
 		}
 	}
@@ -56,7 +56,7 @@ func (s *Server) registerInboxTriageMappingRoutes(api huma.API) {
 	update.RequestBody = jsonRequestBodyFor[inboxTriageMappingUpdate](api)
 	update.Responses = jsonResponsesFor[inboxTriageMappingRevision](api)
 	for code, response := range jsonResponsesFor[ErrorResponse](api, 400, 401, 403, 409, 413, 415, 500, 503) {
-		if code != "default" {
+		if code != defaultResponseKey {
 			update.Responses[code] = response
 		}
 	}

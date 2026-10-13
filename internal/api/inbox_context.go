@@ -22,7 +22,7 @@ func (s *Server) registerInboxContextRoute(api huma.API) {
 	op.RequestBody = jsonRequestBodyFor[inboxcontrol.ContextRequest](api)
 	op.Responses = jsonResponsesFor[inboxcontrol.Context](api)
 	for code, response := range jsonResponsesFor[ErrorResponse](api, 400, 401, 403, 413, 415, 500, 503) {
-		if code != "default" {
+		if code != defaultResponseKey {
 			op.Responses[code] = response
 		}
 	}

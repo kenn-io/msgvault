@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"net/http"
 	"slices"
 
 	"go.kenn.io/msgvault/internal/agentgrant"
@@ -31,7 +32,7 @@ func configureInboxReadToolsFromDescriptor(descriptor *apiprotocol.MCPCapabiliti
 
 func admittedMCPRoute(descriptor *apiprotocol.MCPCapabilities, operation, path string, fields ...string) bool {
 	for _, route := range descriptor.Routes {
-		if route.OperationID != operation || route.Method != "POST" || route.Path != path {
+		if route.OperationID != operation || route.Method != http.MethodPost || route.Path != path {
 			continue
 		}
 		for _, field := range fields {

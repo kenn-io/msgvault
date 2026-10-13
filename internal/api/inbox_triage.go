@@ -34,7 +34,7 @@ func (s *Server) registerInboxTriageRoutes(api huma.API) {
 	apply.Responses = jsonResponsesFor[[]inboxcontrol.Result](api)
 	for _, operation := range []*huma.Operation{&preview, &apply} {
 		for code, response := range jsonResponsesFor[InboxTriageError](api, 400, 401, 403, 409, 413, 415, 500, 502, 503) {
-			if code != "default" {
+			if code != defaultResponseKey {
 				operation.Responses[code] = response
 			}
 		}
