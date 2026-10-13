@@ -48,7 +48,8 @@ func observeInboxStateTx(ctx context.Context, tx *loggedTx, state inboxcontrol.S
 			ON CONFLICT (target_key) DO UPDATE SET is_inbox = excluded.is_inbox,
 			provider_read = excluded.provider_read, marked_unread = excluded.marked_unread,
 			semantic_hash = excluded.semantic_hash, state_json = excluded.state_json, observed_at = excluded.observed_at
-			WHERE inbox_provider_states.observed_at < excluded.observed_at`,
+			WHERE inbox_provider_states.observed_at < excluded.observed_at
+			OR (inbox_provider_states.observed_at = excluded.observed_at AND inbox_provider_states.semantic_hash <> excluded.semantic_hash)`,
 		key, state.Target.SourceID, state.Target.Scope, state.Target.ItemID, state.Target.ProviderID, state.Target.Mailbox, state.Target.UIDValidity, state.Target.UID,
 		state.Inbox, state.Read, state.MarkedUnread, revision, string(encoded), state.ObservedAt.UnixNano())
 	if err != nil {
