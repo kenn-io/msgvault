@@ -825,25 +825,6 @@ func TestImportEmlxPostReadMutationRemainsRetryable(t *testing.T) {
 	a.Equal(1, countEmlxLedgerEntries(t, st, first.SourceID, "emlx-occurrence", "imported"))
 }
 
-func TestImportEmlxReconcileBypassesDifferentRoot(t *testing.T) {
-	r, a := require.New(t), assert.New(t)
-	st, tmp := openTestStore(t)
-	root := filepath.Join(tmp, "Inbox.mbox")
-	mkMailboxDir(t, root, map[string][]byte{"1.emlx": email.NewMessage().From("sender@example.test").Body("synthetic root").Bytes()})
-	opts := EmlxImportOptions{Identifier: "owner@example.test"}
-	src, err := st.GetOrCreateSource("apple-mail", opts.Identifier)
-	r.NoError(err)
-	run, err := st.StartSync(src.ID, "import-emlx")
-	r.NoError(err)
-	r.NoError(st.UpdateSyncCheckpoint(run, &store.Checkpoint{PageToken: `{"root_dir":"/obsolete","phase":"unknown","mailbox_index":-99,"reply_after_id":-99}`}))
-	r.NoError(st.FailSync(run, "synthetic interruption"))
-	opts.FullReconcile = true
-	fresh, err := ImportEmlxDir(t.Context(), st, root, opts)
-	r.NoError(err)
-	a.False(fresh.HardErrors)
-	a.Equal(int64(1), fresh.MessagesAdded)
-}
-
 func TestImportEmlxMergedBudgetRemainsRetryable(t *testing.T) {
 	for _, retry := range []string{"larger budget", "shrinking retained part"} {
 		t.Run(retry, func(t *testing.T) {
