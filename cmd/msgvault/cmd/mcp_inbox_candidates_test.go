@@ -95,7 +95,7 @@ func seedArchivedIMAPInboxReads(t *testing.T, st *store.Store, sourceID int64) {
 		FROM imap_message_memberships member JOIN messages m ON m.id=member.message_id AND m.source_id=member.source_id
 		JOIN sources s ON s.id=member.source_id WHERE member.source_id=? AND member.mailbox='INBOX'`), sourceID)
 	require.NoError(t, err)
-	defer rows.Close()
+	defer func() { require.NoError(t, rows.Close()) }()
 	var states []inboxcontrol.State
 	for rows.Next() {
 		target := inboxcontrol.Target{SourceID: sourceID, SourceType: "imap", Scope: inboxcontrol.ScopeMessage}
