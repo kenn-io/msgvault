@@ -127,7 +127,7 @@ func (c *Client) LookupMessage(ctx context.Context, id string) (MessageInfo, err
 	var m MessageInfo
 	err := c.GetJSON(ctx, "/me/messages/"+url.PathEscape(id)+"?$select=id,parentFolderId,receivedDateTime,categories,isRead", &m)
 	if err == nil && m.ID != "" && m.ID != id {
-		return MessageInfo{}, errors.New("Microsoft message lookup returned a different immutable identity")
+		return MessageInfo{}, errors.New("microsoft message lookup returned a different immutable identity")
 	}
 	return m, err
 }

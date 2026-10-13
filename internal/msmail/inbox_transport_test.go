@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -63,7 +62,9 @@ func TestMicrosoftInboxTransportBoundsSuccessAndErrorBodies(t *testing.T) {
 						w.WriteHeader(status)
 						if chunked {
 							flusher, ok := w.(http.Flusher)
-							require.True(t, ok)
+							if !assert.True(t, ok) {
+								return
+							}
 							flusher.Flush()
 						}
 						_, _ = w.Write([]byte(strings.Repeat("x", 2<<20)))
@@ -80,7 +81,7 @@ func TestMicrosoftInboxTransportBoundsSuccessAndErrorBodies(t *testing.T) {
 					require.Error(t, err)
 					assertions.Less(len(err.Error()), (1<<20)+1024)
 					assertions.Equal(int32(1), attempts.Load())
-					assertions.True(errors.Is(err, msgraph.ErrTooLarge), "oversized response must be classified before parsing its status body")
+					assertions.ErrorIs(err, msgraph.ErrTooLarge, "oversized response must be classified before parsing its status body")
 				})
 			}
 		}
@@ -122,7 +123,9 @@ func TestMicrosoftInboxTransportDoesNotRetryFailures(t *testing.T) {
 					attempts.Add(1)
 					if status == -1 {
 						hijacker, ok := w.(http.Hijacker)
-						require.True(t, ok)
+						if !assert.True(t, ok) {
+							return
+						}
 						connection, _, err := hijacker.Hijack()
 						if assert.NoError(t, err) {
 							assert.NoError(t, connection.Close())

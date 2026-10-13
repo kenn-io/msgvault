@@ -28,6 +28,7 @@ type nativeSyncGraph struct {
 }
 
 func newNativeSyncGraph(t *testing.T) *nativeSyncGraph {
+	t.Helper()
 	f := newFakeGraph(t)
 	n := &nativeSyncGraph{fakeGraph: f, metadata: map[string]map[string]any{}, omitDelta: map[string][]string{}, omitLookup: map[string][]string{}}
 	f.srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -44,7 +45,9 @@ func newNativeSyncGraph(t *testing.T) *nativeSyncGraph {
 			return
 		}
 		var response map[string]any
-		require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
+		if !assert.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response)) {
+			return
+		}
 		decorate := func(item map[string]any, id string, omitted []string) {
 			for key, value := range n.metadata[id] {
 				item[key] = value
@@ -61,7 +64,9 @@ func newNativeSyncGraph(t *testing.T) *nativeSyncGraph {
 			if values, ok := response["value"].([]any); ok {
 				for _, value := range values {
 					item, ok := value.(map[string]any)
-					require.True(t, ok, "Graph delta fixture entries must be objects")
+					if !assert.True(t, ok, "Graph delta fixture entries must be objects") {
+						return
+					}
 					if item["@removed"] != nil {
 						continue
 					}
@@ -83,12 +88,13 @@ func newNativeSyncGraph(t *testing.T) *nativeSyncGraph {
 	return n
 }
 
-func (n *nativeSyncGraph) complete(id string, categories []string, read bool, revision string) {
-	n.metadata[id] = map[string]any{"id": id, "categories": categories, "isRead": read, "@odata.etag": revision}
+func (n *nativeSyncGraph) complete(categories []string, read bool, revision string) {
+	n.metadata["m1"] = map[string]any{"id": "m1", "categories": categories, "isRead": read, "@odata.etag": revision}
 }
 
-func nativeImportedState(t *testing.T, st *store.Store, sourceID int64, id string) inboxcontrol.State {
+func nativeImportedState(t *testing.T, st *store.Store, sourceID int64) inboxcontrol.State {
 	t.Helper()
+	const id = "m1"
 	ids, err := st.MessageExistsBatch(sourceID, []string{id})
 	require.NoError(t, err)
 	require.NotZero(t, ids[id])
@@ -106,14 +112,14 @@ func TestMicrosoftInboxSyncCompleteAndSparseObservations(t *testing.T) {
 			assertions := assert.New(t)
 			f := newNativeSyncGraph(t)
 			f.put("m1", "inbox")
-			f.complete("m1", []string{}, false, "version-1")
+			f.complete([]string{}, false, "version-1")
 			if sparse {
 				f.omitDelta["m1"] = []string{"isRead", "@odata.etag"}
 			}
 			st := testutil.NewTestStore(t)
 			sum, err := f.sync(t, st)
 			requirements.NoError(err)
-			before := nativeImportedState(t, st, sum.SourceID, "m1")
+			before := nativeImportedState(t, st, sum.SourceID)
 			requirements.NotNil(before.Read)
 			assertions.False(*before.Read)
 			requirements.NotNil(before.Inbox)
@@ -128,11 +134,11 @@ func TestMicrosoftInboxSyncCompleteAndSparseObservations(t *testing.T) {
 			}
 			_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET is_read=TRUE WHERE id=?`), before.Target.ItemID)
 			requirements.NoError(err)
-			f.complete("m1", []string{"Next"}, false, "version-2")
+			f.complete([]string{"Next"}, false, "version-2")
 			f.put("m1", "archive")
 			_, err = f.sync(t, st)
 			requirements.NoError(err)
-			after := nativeImportedState(t, st, sum.SourceID, "m1")
+			after := nativeImportedState(t, st, sum.SourceID)
 			assertions.Equal(before.Target, after.Target)
 			assertions.Equal("archive", after.Location)
 			requirements.NotNil(after.Inbox)
@@ -152,15 +158,15 @@ func TestMicrosoftInboxSyncPartialInvalidatesActionableState(t *testing.T) {
 			assertions := assert.New(t)
 			f := newNativeSyncGraph(t)
 			f.put("m1", "inbox")
-			f.complete("m1", []string{"Old"}, false, "version-1")
+			f.complete([]string{"Old"}, false, "version-1")
 			st := testutil.NewTestStore(t)
 			sum, err := f.sync(t, st)
 			requirements.NoError(err)
-			before := nativeImportedState(t, st, sum.SourceID, "m1")
+			before := nativeImportedState(t, st, sum.SourceID)
 			requirements.NotNil(before.Read)
 			// A partial delta and a partial independent lookup cannot be combined into
 			// an invented full snapshot, even when the previous observation was complete.
-			f.complete("m1", []string{"Next"}, true, "version-2")
+			f.complete([]string{"Next"}, true, "version-2")
 			f.omitDelta["m1"] = []string{field}
 			f.omitLookup["m1"] = []string{field}
 			if field == "id" {
@@ -169,7 +175,7 @@ func TestMicrosoftInboxSyncPartialInvalidatesActionableState(t *testing.T) {
 			f.put("m1", "inbox")
 			_, err = f.sync(t, st)
 			requirements.NoError(err)
-			after := nativeImportedState(t, st, sum.SourceID, "m1")
+			after := nativeImportedState(t, st, sum.SourceID)
 			assertions.Nil(after.Read)
 			assertions.Nil(after.Inbox)
 			assertions.Nil(after.Tags)
@@ -191,20 +197,20 @@ func TestMicrosoftInboxSyncActualTrashParentPreservesDeletionMark(t *testing.T) 
 	f := newNativeSyncGraph(t)
 	f.folders = append(f.folders, "deleteditems")
 	f.put("m1", "inbox")
-	f.complete("m1", []string{}, false, "version-1")
+	f.complete([]string{}, false, "version-1")
 	st := testutil.NewTestStore(t)
 	sum, err := f.sync(t, st)
 	requirements.NoError(err)
-	before := nativeImportedState(t, st, sum.SourceID, "m1")
+	before := nativeImportedState(t, st, sum.SourceID)
 	requirements.NoError(st.MarkMessagesDeletedBatch(sum.SourceID, []string{"m1"}))
-	f.complete("m1", []string{}, false, "version-2")
+	f.complete([]string{}, false, "version-2")
 	// A message can move between the folder delta snapshot and its metadata
 	// observation. Its actual parent is authoritative for both state and labels.
 	f.metadata["m1"]["parentFolderId"] = "deleteditems"
 	f.put("m1", "inbox")
 	_, err = f.sync(t, st)
 	requirements.NoError(err)
-	after := nativeImportedState(t, st, sum.SourceID, "m1")
+	after := nativeImportedState(t, st, sum.SourceID)
 	assertions.Equal("deleteditems", after.Location)
 	assertions.ElementsMatch([]string{"Deleteditems"}, nativeMessageLabels(t, st, before.Target.ItemID))
 	var deleted bool
@@ -217,7 +223,7 @@ func TestMicrosoftInboxSyncRetryPersistsCompleteMetadata(t *testing.T) {
 	assertions := assert.New(t)
 	f := newNativeSyncGraph(t)
 	f.put("m1", "inbox")
-	f.complete("m1", []string{}, false, "version-1")
+	f.complete([]string{}, false, "version-1")
 	f.badValue["m1"] = true
 	st := testutil.NewTestStore(t)
 	sum, err := f.sync(t, st)
@@ -226,7 +232,7 @@ func TestMicrosoftInboxSyncRetryPersistsCompleteMetadata(t *testing.T) {
 	delete(f.badValue, "m1")
 	_, err = f.sync(t, st)
 	requirements.NoError(err)
-	after := nativeImportedState(t, st, sum.SourceID, "m1")
+	after := nativeImportedState(t, st, sum.SourceID)
 	requirements.NotNil(after.Read)
 	assertions.False(*after.Read)
 	assertions.Equal("version-1", after.Revision)
@@ -260,17 +266,17 @@ func TestMicrosoftInboxSyncKnownEmptyAndOneRevision(t *testing.T) {
 	assertions := assert.New(t)
 	f := newNativeSyncGraph(t)
 	f.put("m1", "inbox")
-	f.complete("m1", []string{"Old"}, false, "version-1")
+	f.complete([]string{"Old"}, false, "version-1")
 	st := testutil.NewTestStore(t)
 	sum, err := f.sync(t, st)
 	requirements.NoError(err)
-	before := nativeImportedState(t, st, sum.SourceID, "m1")
+	before := nativeImportedState(t, st, sum.SourceID)
 	revision := nativeSourceRevision(t, st, sum.SourceID)
-	f.complete("m1", []string{}, false, "version-2")
+	f.complete([]string{}, false, "version-2")
 	f.put("m1", "inbox")
 	_, err = f.sync(t, st)
 	requirements.NoError(err)
-	after := nativeImportedState(t, st, sum.SourceID, "m1")
+	after := nativeImportedState(t, st, sum.SourceID)
 	assertions.Empty(after.Tags)
 	assertions.Equal("version-2", after.Revision)
 	assertions.ElementsMatch([]string{"Inbox"}, nativeMessageLabels(t, st, before.Target.ItemID))
@@ -282,15 +288,15 @@ func TestMicrosoftInboxSyncUnlistedParentInvalidatesUntilMapped(t *testing.T) {
 	assertions := assert.New(t)
 	f := newNativeSyncGraph(t)
 	f.put("m1", "inbox")
-	f.complete("m1", []string{"Old"}, false, "version-1")
+	f.complete([]string{"Old"}, false, "version-1")
 	st := testutil.NewTestStore(t)
 	sum, err := f.sync(t, st)
 	requirements.NoError(err)
-	f.complete("m1", []string{"Next"}, true, "version-2")
+	f.complete([]string{"Next"}, true, "version-2")
 	f.put("m1", "unlisted")
 	_, err = f.sync(t, st)
 	requirements.NoError(err)
-	unknown := nativeImportedState(t, st, sum.SourceID, "m1")
+	unknown := nativeImportedState(t, st, sum.SourceID)
 	assertions.Nil(unknown.Read)
 	assertions.Nil(unknown.Inbox)
 	assertions.Empty(unknown.Location)
@@ -299,7 +305,7 @@ func TestMicrosoftInboxSyncUnlistedParentInvalidatesUntilMapped(t *testing.T) {
 	f.folders = append(f.folders, "unlisted")
 	_, err = f.sync(t, st)
 	requirements.NoError(err)
-	after := nativeImportedState(t, st, sum.SourceID, "m1")
+	after := nativeImportedState(t, st, sum.SourceID)
 	requirements.NotNil(after.Read)
 	assertions.True(*after.Read)
 	requirements.NotNil(after.Inbox)
