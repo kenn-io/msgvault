@@ -189,20 +189,21 @@ func TestMicrosoftInboxConditionalWriteOutcomes(t *testing.T) {
 }
 
 func TestMicrosoftInboxDeniesForeignIdentityAndUnsupportedWrites(t *testing.T) {
+	requirements := require.New(t)
 	assertions := assert.New(t)
 	p, f, request := microsoftInboxFixture(t)
 	f.account = "other@example.com"
 	_, err := p.Observe(t.Context(), request)
-	require.ErrorIs(t, err, inboxcontrol.ErrDenied)
+	requirements.ErrorIs(err, inboxcontrol.ErrDenied)
 	f.account = "me@example.com"
 	before, err := p.Observe(t.Context(), request)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	for _, op := range []inboxcontrol.Operation{inboxcontrol.OpArchive, inboxcontrol.OpUnarchive, inboxcontrol.OpSetRead, inboxcontrol.OpSetUnread, inboxcontrol.OpMove, inboxcontrol.OpCreateFolder} {
 		request.Operation = op
 		_, err := p.Preview(t.Context(), request, before)
-		require.ErrorIs(t, err, inboxcontrol.ErrUnavailable)
+		requirements.ErrorIs(err, inboxcontrol.ErrUnavailable)
 		_, err = p.Dispatch(t.Context(), request, before)
-		require.ErrorIs(t, err, inboxcontrol.ErrNoWrite)
+		requirements.ErrorIs(err, inboxcontrol.ErrNoWrite)
 	}
 	assertions.Zero(f.writes)
 }
