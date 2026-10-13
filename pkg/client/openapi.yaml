@@ -7582,6 +7582,8 @@ components:
       properties:
         meeting:
           $ref: "#/components/schemas/Meeting"
+        notify_imports:
+          type: boolean
         source:
           $ref: "#/components/schemas/Source"
       required:
@@ -7590,6 +7592,8 @@ components:
       type: object
     MeetingImportResponse:
       properties:
+        import_run_id:
+          type: string
         message_id:
           format: int64
           type: integer

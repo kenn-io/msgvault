@@ -7185,8 +7185,9 @@ func (m MeetingExploreScope) Validate() error {
 }
 
 type MeetingImportRequest struct {
-	Meeting Meeting `json:"meeting"`
-	Source  Source  `json:"source"`
+	Meeting       Meeting `json:"meeting"`
+	NotifyImports *bool   `json:"notify_imports,omitempty"`
+	Source        Source  `json:"source"`
 }
 
 func (m MeetingImportRequest) Validate() error {
@@ -7208,6 +7209,7 @@ func (m MeetingImportRequest) Validate() error {
 }
 
 type MeetingImportResponse struct {
+	ImportRunID     *string                     `json:"import_run_id,omitzero"`
 	MessageID       int64                       `json:"message_id"`
 	SourceID        int64                       `json:"source_id"`
 	SourceMessageID string                      `json:"source_message_id" validate:"required"`
