@@ -138,7 +138,7 @@ func TestInboxCandidatesCursorRejectsAnotherArchive(t *testing.T) {
 	requirements.NoError(err)
 	assertions.NotEqual(page.ArchiveRevision, otherPage.ArchiveRevision)
 	continued, err := second.Store.InboxCandidates(t.Context(), source, inboxcontrol.ScopeMessage, 1, page.NextCursor)
-	assertions.ErrorIs(err, inboxcontrol.ErrPlanChanged)
+	requirements.ErrorIs(err, inboxcontrol.ErrPlanChanged)
 	assertions.Nil(continued)
 }
 
@@ -449,7 +449,7 @@ func TestInboxCandidatesRejectMismatchedPersistedTarget(t *testing.T) {
 	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE inbox_provider_states SET state_json=? WHERE item_id=?`), string(encoded), state.Target.ItemID)
 	requirements.NoError(err)
 	page, err := f.Store.InboxCandidates(t.Context(), source, inboxcontrol.ScopeMessage, 100, "")
-	assertions.ErrorIs(err, inboxcontrol.ErrUnavailable)
+	requirements.ErrorIs(err, inboxcontrol.ErrUnavailable)
 	assertions.Nil(page)
 }
 
@@ -483,7 +483,7 @@ func TestInboxCandidatesIMAPMailboxEpochInvalidatesPage(t *testing.T) {
 	_, err = st.DB().Exec(st.Rebind(`UPDATE imap_folder_state SET uidvalidity=78 WHERE source_id=? AND mailbox='INBOX'`), source.SourceID)
 	requirements.NoError(err)
 	_, err = st.InboxCandidates(t.Context(), source, inboxcontrol.ScopeMessage, 1, page.NextCursor)
-	assertions.ErrorIs(err, inboxcontrol.ErrPlanChanged)
+	requirements.ErrorIs(err, inboxcontrol.ErrPlanChanged)
 	page, err = st.InboxCandidates(t.Context(), source, inboxcontrol.ScopeMessage, 100, "")
 	requirements.NoError(err)
 	assertions.Empty(page.Candidates)

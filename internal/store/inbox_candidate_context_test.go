@@ -116,7 +116,7 @@ func TestInboxCandidatesAndContextRetainCallerSnapshot(t *testing.T) {
 		assertions.NotEqual(selected.Target.ItemID, candidate.State.Target.ItemID)
 	}
 	_, err = f.Store.InboxCandidates(t.Context(), source, inboxcontrol.ScopeMessage, 1, before.NextCursor)
-	assertions.ErrorIs(err, inboxcontrol.ErrPlanChanged)
+	requirements.ErrorIs(err, inboxcontrol.ErrPlanChanged)
 	content, err = f.Store.InboxContext(t.Context(), request)
 	requirements.NoError(err)
 	assertions.Equal("replacement text", content.Text)
