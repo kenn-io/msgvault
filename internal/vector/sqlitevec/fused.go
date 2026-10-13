@@ -11,6 +11,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"time"
 
 	"go.kenn.io/kit/search/rrf"
 
@@ -247,15 +248,12 @@ func (b *Backend) fusedSearchExact(ctx context.Context, req vector.FusedRequest)
 	if req.Filter.HasAttachment != nil {
 		hasAttachment = sql.NullBool{Valid: true, Bool: *req.Filter.HasAttachment}
 	}
-	// Format date bounds with the canonical SQLite datetime layout used
-	// elsewhere in the repo so boundary comparisons on the text sent_at
-	// column agree with the existing SQLite query paths.
 	var after, before sql.NullString
 	if req.Filter.After != nil {
-		after = sql.NullString{Valid: true, String: req.Filter.After.Format(sqliteDatetimeFormat)}
+		after = sql.NullString{Valid: true, String: req.Filter.After.UTC().Format(time.RFC3339Nano)}
 	}
 	if req.Filter.Before != nil {
-		before = sql.NullString{Valid: true, String: req.Filter.Before.Format(sqliteDatetimeFormat)}
+		before = sql.NullString{Valid: true, String: req.Filter.Before.UTC().Format(time.RFC3339Nano)}
 	}
 	var largerThan, smallerThan sql.NullInt64
 	if req.Filter.LargerThan != nil {
@@ -381,8 +379,8 @@ func (b *Backend) fusedSearchExact(ctx context.Context, req vector.FusedRequest)
 	   %s
 	   %s
        AND (:has_attachment IS NULL OR m.has_attachments = :has_attachment)
-       AND (:after IS NULL OR m.sent_at >= :after)
-       AND (:before IS NULL OR m.sent_at < :before)
+       AND (:after IS NULL OR julianday(m.sent_at) >= julianday(:after))
+       AND (:before IS NULL OR julianday(m.sent_at) < julianday(:before))
        AND (:larger_than IS NULL OR m.size_estimate > :larger_than)
        AND (:smaller_than IS NULL OR m.size_estimate < :smaller_than)
        AND (:subject_patterns IS NULL OR NOT EXISTS (
