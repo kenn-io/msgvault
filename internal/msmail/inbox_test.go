@@ -100,7 +100,7 @@ func TestMicrosoftInboxMatchesConfiguredMailboxAliases(t *testing.T) {
 			f.profile = tc.profile
 			before, err := p.Observe(t.Context(), request)
 			if !tc.want {
-				assertions.ErrorIs(err, inboxcontrol.ErrDenied)
+				requirements.ErrorIs(err, inboxcontrol.ErrDenied)
 				assertions.Zero(f.writes)
 				assertions.Zero(f.reads, "deny the account before reading the message")
 				return
@@ -179,9 +179,9 @@ func TestMicrosoftInboxConditionalWriteOutcomes(t *testing.T) {
 			f.status = status
 			_, err = p.Dispatch(t.Context(), request, before)
 			if status >= 500 {
-				assertions.ErrorIs(err, inboxcontrol.ErrOutcomeUnknown)
+				require.ErrorIs(t, err, inboxcontrol.ErrOutcomeUnknown)
 			} else {
-				assertions.ErrorIs(err, inboxcontrol.ErrNoWrite)
+				require.ErrorIs(t, err, inboxcontrol.ErrNoWrite)
 			}
 			assertions.Equal(1, f.writes)
 		})
