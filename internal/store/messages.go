@@ -6349,31 +6349,29 @@ type AttachmentRef struct {
 // replaceMessageAttachmentsWhereContext atomically reconciles a message's attachment
 // rows matching deleteWhere with refs. Retained source-part keys keep their row
 // IDs so resync does not invalidate cached file listings. Refs with an empty
-// StoragePath (and, when requireHash is set, an empty ContentHash) are skipped.
+// StoragePath are skipped.
 func (s *Store) replaceMessageAttachmentsWhereContext(ctx context.Context,
-	messageID int64, deleteWhere string, requireHash bool, refs []AttachmentRef, deleteArgs ...any,
+	messageID int64, deleteWhere string, refs []AttachmentRef, deleteArgs ...any,
 ) error {
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
-		return s.replaceMessageAttachmentsWhereTxContext(ctx, tx, messageID, deleteWhere, requireHash, refs, deleteArgs...)
+		return s.replaceMessageAttachmentsWhereTxContext(ctx, tx, messageID, deleteWhere, refs, deleteArgs...)
 	})
 }
 
 func (s *Store) replaceMessageAttachmentsWhereTx(
-	tx *loggedTx, messageID int64, deleteWhere string,
-	refs []AttachmentRef, deleteArgs ...any,
+	tx *loggedTx, messageID int64, deleteWhere string, refs []AttachmentRef, deleteArgs ...any,
 ) error {
-	return s.replaceMessageAttachmentsWhereTxContext(context.Background(), tx, messageID, deleteWhere, false, refs, deleteArgs...)
+	return s.replaceMessageAttachmentsWhereTxContext(context.Background(), tx, messageID, deleteWhere, refs, deleteArgs...)
 }
 
 // replaceMessageAttachmentsWhereTxContext honors cancellation during replaceMessageAttachmentsWhereTx.
 func (s *Store) replaceMessageAttachmentsWhereTxContext(ctx context.Context,
-	tx *loggedTx, messageID int64, deleteWhere string, requireHash bool,
-	refs []AttachmentRef, deleteArgs ...any,
+	tx *loggedTx, messageID int64, deleteWhere string, refs []AttachmentRef, deleteArgs ...any,
 ) error {
 	writes := make([]AttachmentWrite, 0, len(refs))
 	keys := make([]any, 0, len(refs))
 	for _, ref := range refs {
-		if ref.StoragePath == "" || (requireHash && ref.ContentHash == "") {
+		if ref.StoragePath == "" {
 			continue
 		}
 		write := AttachmentWrite{
