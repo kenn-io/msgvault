@@ -95,6 +95,7 @@ func seedArchivedIMAPInboxReads(t *testing.T, st *store.Store, sourceID int64) {
 		FROM imap_message_memberships member JOIN messages m ON m.id=member.message_id AND m.source_id=member.source_id
 		JOIN sources s ON s.id=member.source_id WHERE member.source_id=? AND member.mailbox='INBOX'`), sourceID)
 	require.NoError(t, err)
+	defer rows.Close()
 	var states []inboxcontrol.State
 	for rows.Next() {
 		target := inboxcontrol.Target{SourceID: sourceID, SourceType: "imap", Scope: inboxcontrol.ScopeMessage}
@@ -106,7 +107,6 @@ func seedArchivedIMAPInboxReads(t *testing.T, st *store.Store, sourceID int64) {
 		states = append(states, inboxcontrol.State{Target: target, Inbox: new(true), Read: new(false), ObservedAt: time.Now().UTC()})
 	}
 	require.NoError(t, rows.Err())
-	require.NoError(t, rows.Close())
 	for _, state := range states {
 		key, err := inboxcontrol.SemanticFingerprint(inboxcontrol.State{Target: state.Target})
 		require.NoError(t, err)

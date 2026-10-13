@@ -124,9 +124,11 @@ func TestInboxCandidatesHTTPSourceAuthorization(t *testing.T) {
 	query.Del("cursor")
 	// Revoke after the native lookup, before its result can be returned.
 	reads := 0
-	srv.store.(*inboxCandidateHTTPStore).afterRead = func() {
+	candidateStore, ok := srv.store.(*inboxCandidateHTTPStore)
+	requirements.True(ok)
+	candidateStore.afterRead = func() {
 		reads++
-		require.True(t, srv.agentGrants.Revoke(grantID))
+		assertions.True(srv.agentGrants.Revoke(grantID))
 	}
 	response = call(query, "", secret)
 	assertions.Equal(1, reads)

@@ -47,7 +47,7 @@ func (s *Store) InboxContext(ctx context.Context, request inboxcontrol.ContextRe
 		if count != 1 {
 			return inboxcontrol.ErrDenied
 		}
-		if target.SourceType == "imap" {
+		if target.SourceType == sourceTypeIMAP {
 			if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM imap_message_memberships member
 				WHERE member.source_id=? AND member.message_id=? AND member.mailbox=? AND member.uidvalidity=? AND member.uid=?
 				AND EXISTS (SELECT 1 FROM imap_folder_state folder WHERE folder.source_id=member.source_id AND folder.mailbox=member.mailbox AND folder.uidvalidity=member.uidvalidity)`,

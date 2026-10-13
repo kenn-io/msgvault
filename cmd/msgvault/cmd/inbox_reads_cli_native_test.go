@@ -40,13 +40,13 @@ func TestInboxArchivedReadsClosedStdout(t *testing.T) {
 			defer server.Close()
 			input, err := json.Marshal(inboxcontrol.ContextRequest{Target: target})
 			requirements.NoError(err)
-			child := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestInboxArchivedReadsClosedStdoutHelper$")
+			child := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestInboxArchivedReadsClosedStdoutHelper$") //nolint:gosec // Re-executes this test binary with a fixed test selector.
 			child.Env = []string{"HOME=" + t.TempDir(), "GOMAXPROCS=2", "MSGVAULT_READ_TEST_SERVER=" + server.URL, "MSGVAULT_READ_TEST_KIND=" + kind, "MSGVAULT_READ_TEST_SOURCE_ID=" + strconv.FormatInt(f.Source.ID, 10), "MSGVAULT_READ_TEST_SOURCE_IDENTIFIER=" + f.Source.Identifier}
 			child.Stdin = bytes.NewReader(input)
 			reader, writer, err := os.Pipe()
 			requirements.NoError(err)
 			requirements.NoError(reader.Close())
-			defer writer.Close()
+			defer func() { assertions.NoError(writer.Close()) }()
 			child.Stdout = writer
 			var stderr bytes.Buffer
 			child.Stderr = &stderr

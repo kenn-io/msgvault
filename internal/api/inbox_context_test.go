@@ -120,9 +120,11 @@ func TestInboxContextHTTPExactSourceContentAuthorization(t *testing.T) {
 	assertions.Equal(http.StatusUnauthorized, response.Code, response.Body.String())
 	// The real Store lookup succeeds, but revocation before disclosure wins.
 	reads := 0
-	srv.store.(*inboxCandidateHTTPStore).afterRead = func() {
+	candidateStore, ok := srv.store.(*inboxCandidateHTTPStore)
+	requirements.True(ok)
+	candidateStore.afterRead = func() {
 		reads++
-		require.True(t, srv.agentGrants.Revoke(grantID))
+		assertions.True(srv.agentGrants.Revoke(grantID))
 	}
 	response = call(string(encoded), "", reader)
 	assertions.Equal(1, reads)

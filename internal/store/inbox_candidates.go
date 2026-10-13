@@ -138,7 +138,7 @@ func validateInboxCandidateSource(ctx context.Context, tx *loggedTx, source inbo
 		kind = "gmail"
 	}
 	account := identifier
-	if kind == "imap" {
+	if kind == sourceTypeIMAP {
 		parsed, err := url.Parse(identifier)
 		if err != nil || parsed.User == nil || parsed.User.Username() == "" {
 			return inboxcontrol.ErrUnavailable

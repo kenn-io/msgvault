@@ -75,9 +75,10 @@ func TestInboxCandidateClientContract(t *testing.T) {
 						return
 					}
 					page := inboxcontrol.CandidatePage{Source: source, Scope: scope, ArchiveRevision: "committed-revision", Candidates: []inboxcontrol.Candidate{{State: inboxcontrol.State{Target: inboxcontrol.Target{SourceID: source.SourceID, SourceType: source.SourceType, SourceIdentifier: source.SourceIdentifier, AccountID: source.AccountID, Scope: scope, ItemID: 7, ProviderID: "synthetic-item"}, Inbox: new(true), Read: new(false)}, Available: true}}, Unavailable: true}
-					if mode == "chat-success" {
+					switch mode {
+					case "chat-success":
 						page.Candidates[0].State.MarkedUnread = new(false)
-					} else if mode == "chat-partial" {
+					case "chat-partial":
 						page.Candidates[0].Available = false
 					}
 					if mode == "foreign-page" {
@@ -96,9 +97,13 @@ func TestInboxCandidateClientContract(t *testing.T) {
 					}
 					if mode == "missing-unavailable" || mode == "null-unavailable" {
 						data, err := json.Marshal(page)
-						require.NoError(t, err)
+						if !assert.NoError(t, err) {
+							return
+						}
 						var fields map[string]any
-						require.NoError(t, json.Unmarshal(data, &fields))
+						if !assert.NoError(t, json.Unmarshal(data, &fields)) {
+							return
+						}
 						if mode == "missing-unavailable" {
 							delete(fields, "unavailable")
 						} else {
