@@ -281,7 +281,7 @@ After adding an account, sync it with `msgvault sync-full`. IMAP accounts use th
 ## message-tags
 
 Read or update native tags on one email through the selected daemon. Requires
-API schema 3.14.0 or newer. The positional ID is msgvault's positive archived
+API schema 3.15.0 or newer. The positional ID is msgvault's positive archived
 message ID.
 
 ```bash

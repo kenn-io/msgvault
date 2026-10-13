@@ -75,7 +75,7 @@ func TestMessageTagsClientRequiresSchema(t *testing.T) {
 	requests := 0
 	client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v1/health" {
-			_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"3.13.0"}`))
+			_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"3.14.0"}`))
 			return
 		}
 		requests++

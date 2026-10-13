@@ -113,7 +113,7 @@ keywords, or Microsoft Graph category names. Its `available_tags` lists existing
 Gmail user label IDs, the IMAP server's advertised permanent keywords, or the
 categories observed on that Microsoft message. `update_message_tags` adds or
 removes tags and verifies the result through the daemon. Both tools need
-API schema 3.14.0; older daemons omit them.
+API schema 3.15.0; older daemons omit them.
 
 ```json
 {"message_id":42,"add":["Label_123"],"remove":["Label_456"],"dry_run":true}

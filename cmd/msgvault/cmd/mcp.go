@@ -210,7 +210,7 @@ func delegatedMCPServeOptions(ctx context.Context, st *daemonclient.Client) (mcp
 }
 
 // messageTagsMinAPISchemaVersion adds native email tag reads and edits.
-const messageTagsMinAPISchemaVersion = "3.14.0"
+const messageTagsMinAPISchemaVersion = "3.15.0"
 
 // personAgendaMinAPISchemaVersion adds live task-backed person agendas.
 const personAgendaMinAPISchemaVersion = "2.30.0"
