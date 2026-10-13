@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -442,30 +443,31 @@ func TestExaRejectsRedirects(t *testing.T) {
 }
 
 func TestExaEnforcesConfiguredRequestTimeout(t *testing.T) {
-	checks := assert.New(t)
-	requirements := require.New(t)
-	fixture := exaFixture(t, "exa_people_success.json")
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = io.Copy(io.Discard, r.Body)
-		select {
-		case <-r.Context().Done():
-		case <-time.After(5 * time.Second):
+	synctest.Test(t, func(t *testing.T) {
+		requirements := require.New(t)
+		fixture := exaFixture(t, "exa_people_success.json")
+		var handlerCalls atomic.Int32
+		server := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			handlerCalls.Add(1)
+			time.Sleep(100 * time.Millisecond)
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write(fixture)
-		}
-	}))
-	defer server.Close()
-	config := exaConfig(server.URL+"/search", "people", 1)
-	config.RequestTimeout = 10 * time.Millisecond
-	provider, err := personenrichment.NewExaProvider(config, "test-key", server.Client())
-	requirements.NoError(err)
-	_, err = provider.Start(t.Context(), personenrichment.Request{
-		Identity: personenrichment.Identity{Name: "Test User"}, Targets: exaTypedTargets(t),
+		}))
+		client := server.Client()
+		serverURL := strings.Replace(server.URL, "http://", "https://", 1)
+		config := exaConfig(serverURL+"/search", "people", 1)
+		config.RequestTimeout = 10 * time.Millisecond
+		provider, err := personenrichment.NewExaProvider(config, "test-key", client)
+		requirements.NoError(err)
+		_, err = provider.Start(t.Context(), personenrichment.Request{
+			Identity: personenrichment.Identity{Name: "Test User"}, Targets: exaTypedTargets(t),
+		})
+		requirements.Error(err)
+		var providerErr *personenrichment.ProviderError
+		requirements.ErrorAs(err, &providerErr)
+		assert.Equal(t, personenrichment.FailureTransient, providerErr.Class)
+		requirements.Equal(int32(1), handlerCalls.Load())
 	})
-	requirements.Error(err)
-	var providerErr *personenrichment.ProviderError
-	requirements.ErrorAs(err, &providerErr)
-	checks.Equal(personenrichment.FailureTransient, providerErr.Class)
 }
 
 func TestExaRejectsInvalidTypedEntitiesAndStructuredOutput(t *testing.T) {

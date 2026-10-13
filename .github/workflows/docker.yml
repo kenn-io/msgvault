@@ -9,7 +9,7 @@ permissions: read-all
 jobs:
   # PR validation: build and smoke-test only, no registry access
   validate:
-    runs-on: namespace-profile-linux-4cpu
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
 

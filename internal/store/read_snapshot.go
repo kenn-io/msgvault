@@ -32,7 +32,11 @@ func (s *Store) BeginReadSnapshotContext(ctx context.Context) (context.Context, 
 	slog.Debug("sql tx begin", "request_id", RequestIDFromContext(ctx))
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
 	if err != nil {
-		slog.Warn("sql tx begin failed", "request_id", RequestIDFromContext(ctx), "error", err.Error(), "duration_ms", time.Since(start).Milliseconds())
+		level := slog.LevelWarn
+		if errors.Is(err, context.Canceled) {
+			level = slog.LevelDebug
+		}
+		slog.Log(ctx, level, "sql tx begin failed", "request_id", RequestIDFromContext(ctx), "error", err.Error(), "duration_ms", time.Since(start).Milliseconds())
 		return ctx, nil, fmt.Errorf("begin read snapshot: %w", err)
 	}
 	var once sync.Once

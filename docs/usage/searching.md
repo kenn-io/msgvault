@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-11"
+last_edited: "2026-10-12"
 title: Searching
 description: Find archived messages by words, meaning, account, conversation, or message type.
 ---
@@ -34,6 +34,36 @@ msgvault search <query>
     incomplete results only for a known gap or rebuild, including a queued
     rebuild. A completeness check alone stays quiet. See the
     [CLI reference](../cli-reference.md#search) for details.
+
+## Search metadata
+
+The TUI's Fast search, MCP `search_metadata`, and HTTP
+`/api/v1/search/fast` search subjects, snippets, participant addresses, names,
+phone numbers, and names captured on individual recipient occurrences. They
+exclude message bodies. Each free-text term is a literal substring; terms use
+AND semantics and may match different fields or participants. Case is ignored
+using Unicode lowercasing. Accents remain significant, and `%`, `_`, and `\`
+are literal characters.
+
+SQLite uses separate FTS5 trigram indexes to find candidates for broad metadata
+searches, then checks the original substring predicates. This preserves infix,
+phrase, punctuation, and participant matches without adding body-only results.
+Date, address, and conversation scopes retain their existing scoped query
+paths, which avoid enumerating a global candidate set for common terms.
+Source-only scopes can still use the trigram indexes. Very common terms can
+still require substantial work.
+
+Archive initialization builds and backfills these indexes once, which can take
+time on large archives. They add disk space for trigram entries but store no
+copy of the indexed text. SQLite triggers keep them current as metadata changes. This adds work
+to imports and metadata updates. Initialization without FTS5 disables their
+maintenance; initialization with FTS5 rebuilds them before indexed search resumes.
+
+Terms shorter than three Unicode characters, terms containing NUL or invalid
+UTF-8, and archives without usable indexes use the substring scan. When a
+caller cancels a combined request, it fails instead of returning results
+without their count or stats. PostgreSQL retains its existing metadata
+substring queries and statement timeout.
 
 ## Search Operators
 

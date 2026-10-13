@@ -18,6 +18,10 @@ All notable changes to msgvault, grouped by release.
 - `export-messages` reports missing `--start` and `--end` before contacting the
   daemon.
 
+- SQLite [metadata searches](usage/searching.md#search-metadata) use substring
+  indexes. Archive initialization backfills metadata once; large archives need
+  additional startup time and disk space.
+
 - Go programs can use msgvault as a library through `go.kenn.io/msgvault/pkg/archive`.
   It sets up and opens SQLite or PostgreSQL archives, runs the Slack and Discord
   importers with caller-supplied credentials, purges channels and sources, and

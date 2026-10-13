@@ -26,6 +26,9 @@ type SQLiteEngine struct {
 	ftsMu      sync.Mutex
 	ftsResult  bool
 	ftsChecked bool
+
+	metadataFTSMu     sync.Mutex
+	metadataFTSProbed bool
 }
 
 // NewSQLiteEngine creates a new SQLite-backed query engine.
@@ -2192,6 +2195,16 @@ func (e *SQLiteEngine) buildFilteredMetadataSearchQueryParts(
 	ctx context.Context, q *search.Query, filter MessageFilter,
 ) ([]string, []any, string) {
 	conditions, args, ftsJoin := e.buildMetadataSearchQueryParts(ctx, q)
+	if len(q.TextTerms) > 0 && !metadataSearchScoped(q, filter) && e.hasMetadataFTS(ctx) {
+		for _, term := range q.TextTerms {
+			if candidate, ok := metadataTermCandidate(term); ok {
+				conditions = append(conditions, metadataCandidateSQL)
+				for range 4 {
+					args = append(args, candidate)
+				}
+			}
+		}
+	}
 	_, filterConditions, filterArgs := e.buildFilterJoinsAndConditions(filter)
 	conditions = append(filterConditions, conditions...)
 	args = append(filterArgs, args...)
@@ -2634,14 +2647,21 @@ func (e *SQLiteEngine) SearchFastWithStats(ctx context.Context, q *search.Query,
 		return nil, err
 	}
 
-	// Best-effort count: don't abort the search if count fails.
+	// Unrelated aggregate errors remain best-effort; a cancelled request must
+	// never be reported as a successful partial search.
 	count, countErr := e.executeSearchCount(ctx, conditions, args, ftsJoin)
+	if countErr != nil && ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
 	if countErr != nil {
 		log.Printf("warning: search count failed (using -1): %v", countErr)
 		count = -1
 	}
 
-	stats, _ := e.getSearchMatchStats(ctx, conditions, args, ftsJoin)
+	stats, statsErr := e.getSearchMatchStats(ctx, conditions, args, ftsJoin)
+	if statsErr != nil && ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
 
 	return &SearchFastResult{
 		Messages:   results,
