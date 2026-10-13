@@ -513,6 +513,9 @@ func (s *Store) MergeDuplicates(
 		}
 	}
 	err := s.withAttributionTxContext(ctx, lock, func(tx *loggedTx) error {
+		if err := s.lockMeetingEvidenceWith(ctx, tx, survivorID); err != nil {
+			return fmt.Errorf("lock dedup survivor evidence: %w", err)
+		}
 		for _, dupID := range duplicateIDs {
 			res, err := tx.Exec(unionLabelsSQL, survivorID, dupID)
 			if err != nil {
@@ -553,6 +556,12 @@ func (s *Store) MergeDuplicates(
 			}
 		}
 		if result.RawMIMEBackfilled > 0 {
+			if err := s.refreshMeetingProjectionWith(ctx, tx, survivorID); err != nil {
+				return err
+			}
+			if err := s.refreshCalendarEventProjectionWith(ctx, tx, survivorID); err != nil {
+				return err
+			}
 			_, err := s.refreshAccountAttributionTx(ctx, tx, survivorID, deliveryInput{reloadMIME: true})
 			return err
 		}
