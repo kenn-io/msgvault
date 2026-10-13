@@ -490,7 +490,8 @@ Run it again until the summary says the sync is complete.
 
 - **Audio.** Each completed recording is downloaded as WAV, in two channels
   when Twilio has them. WAV takes about 1 MB per minute of a mono recording
-  and 2 MB for dual-channel. The default limit is 250 MiB per recording.
+  and 2 MB for dual-channel. The default limit is 4 GiB per recording;
+  [`max_media_mb`](../configuration.md#twilio-sources) changes it.
   An opened meeting in the Web UI links each stored recording for download.
 - **Transcripts.** Legacy recording transcriptions and completed Conversation
   Intelligence transcripts. When a recording has both, the Intelligence
@@ -499,6 +500,14 @@ Run it again until the summary says the sync is complete.
   stores redacted text.
 - **Call details.** Phone numbers, direction, status and duration stay as
   provider evidence. A phone number is not treated as proof of who spoke.
+
+Stored WAV recordings also reach Docbank when `[integrations.docbank]` has
+`enabled = true` and `all_sources_upload_consent = true`. Without upload consent,
+the job only records local discovery. The current Docbank audio pipeline accepts
+recordings up to 1 GiB; larger recordings stay archived in msgvault. See
+[Send stored audio to Docbank](../configuration.md#send-stored-audio-to-docbank)
+for credentials and optional audio processing. Twilio transcripts remain in the
+meeting archive; this route sends the recording audio without a supplied transcript.
 
 Summaries and action items are not available from Twilio. A call with audio
 but no transcript shows the transcript as unavailable. An encrypted recording

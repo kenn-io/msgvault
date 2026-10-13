@@ -8,6 +8,10 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- [Twilio recordings](usage/meetings.md#twilio) now default to a 4 GiB capture cap
+  per recording, configurable with `max_media_mb`. Stored WAV audio reaches
+  Docbank under `all_sources_upload_consent`, within its current 1 GiB audio limit.
+
 - Remote edits update source-owned values on published CardDAV imports while preserving unrelated local values. Edits that would overwrite another owner create a conflict.
 - [Everything search](web-ui.md#recording-matches) shows recording transcript matches for plain-word Full text queries and supports one Person filter. API schema 3.11.0 adds `participant_id` to media search, `GET /media/search/status`, source filename, title and date to media search results and optional `conversation_title` to message detail.
 
