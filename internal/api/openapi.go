@@ -361,7 +361,10 @@ import (
 // 3.14.0 adds resumable paused source syncs to operation history.
 // 3.14.0 adds filename: filters, optional include_snippet/match_snippet context,
 // attachment names/counts, and hybrid_available on CLI search responses.
-const APISchemaVersion = "3.14.0"
+// 3.15.0 adds native Gmail label, IMAP keyword, and Microsoft Graph category
+// reads and delta updates.
+// 3.16.0 adds exact Gmail Inbox control with signed previews and durable receipts.
+const APISchemaVersion = "3.16.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -923,6 +926,16 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 		return
 	}
 	schemas := doc.Components.Schemas.Map()
+	if state := schemas["InboxState"]; state != nil {
+		for _, name := range []string{"tags", "flags"} {
+			if property := state.Properties[name]; property != nil {
+				if property.Extensions == nil {
+					property.Extensions = map[string]any{}
+				}
+				property.Extensions["x-oapi-codegen-extra-tags"] = map[string]any{"json": name + ",omitzero"}
+			}
+		}
+	}
 	const emailProperty = "email"
 	if input := schemas["GCalEventInput"]; input != nil {
 		for name, goType := range map[string]string{"attendees": "*[]GCalAttendee", "recurrence": "*[]string"} {

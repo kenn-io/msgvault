@@ -30,14 +30,15 @@ type fakeGraph struct {
 	t   *testing.T
 	srv *httptest.Server
 
-	mu      sync.Mutex
-	folders []string          // folder IDs, in list order
-	names   map[string]string // folder ID -> display name, when not derived from the ID
-	folder  map[string]string // message ID -> folder ID; absent when deleted
-	log     []change          // one entry per change
-	expired map[string]bool   // folder IDs whose next delta reports an expired token
-	gone    map[string]bool   // folder IDs whose every delta answers 410
-	version map[string]int    // message ID -> content version
+	mu         sync.Mutex
+	folders    []string            // folder IDs, in list order
+	names      map[string]string   // folder ID -> display name, when not derived from the ID
+	folder     map[string]string   // message ID -> folder ID; absent when deleted
+	log        []change            // one entry per change
+	expired    map[string]bool     // folder IDs whose next delta reports an expired token
+	gone       map[string]bool     // folder IDs whose every delta answers 410
+	version    map[string]int      // message ID -> content version
+	categories map[string][]string // present entries are authoritative category snapshots
 
 	withAttachment map[string]bool   // message IDs whose MIME carries a file
 	shifted        map[string]bool   // message IDs whose file moves to another part
@@ -50,7 +51,10 @@ type fakeGraph struct {
 	throttle       bool              // answer the next $value with 429 once
 	denied         bool              // answer move and permanentDelete with 403
 	pageSize       int
-	stopAt         int // fail the delta page at this skip offset, when non-zero
+	stopAt         int    // fail the delta page at this skip offset, when non-zero
+	stopStatus     int    // HTTP status returned by stopAt
+	stopInDelta    bool   // stopAt applies to incremental pages instead of a walk
+	changeOnWalk   string // change this message's MIME when the next walk starts
 
 	mimeCalls     atomic.Int32
 	walkStarts    atomic.Int32 // delta requests with no token and no nextLink
@@ -62,7 +66,7 @@ type change struct{ id, from string }
 
 func newFakeGraph(t *testing.T) *fakeGraph {
 	t.Helper()
-	f := &fakeGraph{t: t, folder: map[string]string{}, expired: map[string]bool{}, gone: map[string]bool{}, version: map[string]int{}, withAttachment: map[string]bool{}, shifted: map[string]bool{}, attachmentBody: map[string]string{}, broken: map[string]bool{}, goneOnValue: map[string]bool{}, badValue: map[string]bool{}, pageSize: 2}
+	f := &fakeGraph{t: t, folder: map[string]string{}, expired: map[string]bool{}, gone: map[string]bool{}, version: map[string]int{}, withAttachment: map[string]bool{}, shifted: map[string]bool{}, attachmentBody: map[string]string{}, broken: map[string]bool{}, goneOnValue: map[string]bool{}, badValue: map[string]bool{}, pageSize: 2, stopStatus: http.StatusBadRequest}
 	f.folders = []string{"inbox", "archive"}
 	f.expiredStatus = http.StatusGone
 	f.srv = httptest.NewServer(http.HandlerFunc(f.serve))
@@ -187,7 +191,14 @@ func (f *fakeGraph) serve(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, `{"error":{"code":"ErrorItemNotFound"}}`, http.StatusNotFound)
 			return
 		}
-		f.writeJSON(w, map[string]any{"parentFolderId": folder, "receivedDateTime": "2024-01-01T10:00:00Z"})
+		item := map[string]any{"parentFolderId": folder, "receivedDateTime": "2024-01-01T10:00:00Z"}
+		if f.categories != nil {
+			assert.Contains(f.t, strings.Split(q.Get("$select"), ","), "categories")
+		}
+		if categories, ok := f.categories[id]; ok {
+			item["categories"] = categories
+		}
+		f.writeJSON(w, item)
 	default:
 		http.Error(w, "unexpected "+p, http.StatusBadRequest)
 	}
@@ -231,8 +242,26 @@ func (f *fakeGraph) delta(w http.ResponseWriter, folder string, q map[string][]s
 		}
 		return ""
 	}
+	if f.categories != nil && get("token") == "" && get("skip") == "" {
+		assert.Contains(f.t, strings.Split(get("$select"), ","), "categories")
+	}
+	if id := f.changeOnWalk; id != "" && get("token") == "" && get("skip") == "" {
+		f.changeOnWalk = ""
+		f.version[id]++
+		f.log = append(f.log, change{id, f.folder[id]})
+	}
 	link := func(kind string, vals ...string) string {
 		return f.srv.URL + "/me/mailFolders/" + folder + "/messages/delta?" + kind + "&" + strings.Join(vals, "&")
+	}
+	pos := get("pos")
+	if pos == "" {
+		pos = strconv.Itoa(len(f.log))
+	}
+	skip, _ := strconv.Atoi(get("skip"))
+	if f.stopAt != 0 && skip == f.stopAt && (get("token") != "") == f.stopInDelta {
+		f.stopAt = 0
+		http.Error(w, "boom", f.stopStatus)
+		return
 	}
 	if f.gone[folder] {
 		http.Error(w, `{"error":{"code":"syncStateNotFound"}}`, http.StatusGone)
@@ -244,38 +273,40 @@ func (f *fakeGraph) delta(w http.ResponseWriter, folder string, q map[string][]s
 			http.Error(w, `{"error":{"code":"syncStateNotFound"}}`, f.expiredStatus)
 			return
 		}
-		pos, _ := strconv.Atoi(tok)
+		start, _ := strconv.Atoi(tok)
+		stop, _ := strconv.Atoi(pos)
 		seen := map[string]bool{}
 		var out []map[string]any
-		for _, c := range f.log[pos:] {
+		for _, c := range f.log[start:stop] {
 			id := c.id
 			if seen[id] || (c.from != folder && f.folder[id] != folder) {
 				continue
 			}
 			seen[id] = true
 			if f.folder[id] == folder {
-				out = append(out, map[string]any{"id": id})
+				item := map[string]any{"id": id}
+				if categories, ok := f.categories[id]; ok {
+					item["categories"] = categories
+				}
+				out = append(out, item)
 			} else {
 				out = append(out, map[string]any{"id": id, "@removed": map[string]any{"reason": "deleted"}})
 			}
 		}
-		f.writeJSON(w, map[string]any{"value": out, "@odata.deltaLink": link("t", "token="+strconv.Itoa(len(f.log)))})
+		end := min(skip+f.pageSize, len(out))
+		resp := map[string]any{"value": out[skip:end]}
+		if end < len(out) {
+			resp["@odata.nextLink"] = link("t", "token="+tok, "skip="+strconv.Itoa(end), "pos="+pos)
+		} else {
+			resp["@odata.deltaLink"] = link("t", "token="+pos)
+		}
+		f.writeJSON(w, resp)
 		return
 	}
 	// A walk lists the folder in log order. pos pins the log position that
 	// the final deltaLink carries, taken when the walk started.
-	pos := get("pos")
-	if pos == "" {
-		pos = strconv.Itoa(len(f.log))
-	}
-	skip, _ := strconv.Atoi(get("skip"))
 	if get("skip") == "" {
 		f.walkStarts.Add(1)
-	}
-	if f.stopAt != 0 && skip == f.stopAt {
-		f.stopAt = 0
-		http.Error(w, "boom", http.StatusBadRequest)
-		return
 	}
 	var ids []string
 	for _, c := range f.log {
@@ -286,7 +317,11 @@ func (f *fakeGraph) delta(w http.ResponseWriter, folder string, q map[string][]s
 	end := min(skip+f.pageSize, len(ids))
 	var out []map[string]any
 	for _, id := range ids[skip:end] {
-		out = append(out, map[string]any{"id": id, "receivedDateTime": "2024-01-01T10:00:00Z"})
+		item := map[string]any{"id": id, "receivedDateTime": "2024-01-01T10:00:00Z"}
+		if categories, ok := f.categories[id]; ok {
+			item["categories"] = categories
+		}
+		out = append(out, item)
 	}
 	resp := map[string]any{"value": out}
 	if end < len(ids) {

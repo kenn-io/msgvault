@@ -146,9 +146,9 @@ func TestHandleCLIAccountsShowsNewIdentityDespiteCachedCatalog(t *testing.T) {
 }
 
 // TestAgentAccountCatalogReadsReusedSourceIDFresh covers a SQLite source ID
-// reused after a removal: the shared catalog still lists the removed source's
-// addresses under that ID, and an agent granted the new source must not see
-// them.
+// reused by a legacy writer after removal. The shared catalog still lists the
+// removed source's addresses under that ID; an agent granted the replacement
+// must not see them.
 func TestAgentAccountCatalogReadsReusedSourceIDFresh(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -185,8 +185,11 @@ func TestAgentAccountCatalogReadsReusedSourceIDFresh(t *testing.T) {
 	require.NoError(st.AddAccountIdentity(removed.ID, "private@example.org", "manual"))
 	require.Contains(accounts("Authorization", "Bearer owner"), "private@example.org", "the owner warms the shared catalog")
 	require.NoError(st.RemoveSource(removed.ID))
+	// Emulate a legacy writer restoring the removed ID; Store allocation never reuses it.
+	_, err := st.DB().Exec(`INSERT INTO sources (id, source_type, identifier) VALUES (?, ?, ?)`, removed.ID, "mbox", "granted@example.net")
+	require.NoError(err)
 	granted := addSourceWithMail("granted@example.net")
-	require.Equal(removed.ID, granted.ID, "SQLite reuses the removed source's ID")
+	require.Equal(removed.ID, granted.ID, "the legacy replacement retains the removed source ID")
 
 	_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead},
 		[]agentgrant.SourceRef{{ID: granted.ID, Type: granted.SourceType, Identifier: granted.Identifier}}, time.Time{})
@@ -246,8 +249,11 @@ func TestAgentAccountCatalogUsesAuthorizationSnapshot(t *testing.T) {
 	}()
 	<-paused
 	require.NoError(st.RemoveSource(granted.ID))
+	// Simulate ID reuse by a legacy writer, bypassing the retained Store counter.
+	_, err = st.DB().Exec(`INSERT INTO sources (id, source_type, identifier) VALUES (?, ?, ?)`, granted.ID, "mbox", "replacement@example.net")
+	require.NoError(err)
 	replacement := addSourceWithMail("replacement@example.net")
-	require.Equal(granted.ID, replacement.ID, "SQLite reuses the removed source's ID")
+	require.Equal(granted.ID, replacement.ID, "the legacy replacement retains the removed source ID")
 	require.NoError(st.AddAccountIdentity(replacement.ID, "private@example.org", "manual"))
 	close(resume)
 
