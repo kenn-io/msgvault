@@ -27,7 +27,7 @@ func newGraphMailManager(state *invocation) *microsoft.GraphManager {
 }
 
 // newGraphMailWriteManager requests Mail.ReadWrite on top of the sync scopes.
-// delete-staged uses it.
+// Tag editing and delete-staged use it.
 func newGraphMailWriteManager(state *invocation) *microsoft.GraphManager {
 	cfg := state.cfg
 	return microsoft.NewGraphMailWriteManager(

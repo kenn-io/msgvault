@@ -197,7 +197,7 @@ func TestCommandTokenFailuresAvoidReauthorization(t *testing.T) {
 				assert.NotContains(err.Error(), "add-account")
 			}
 			src := &store.Source{SourceType: "gmail", Identifier: "reader@example.com"}
-			_, _, err := newDaemonGmailClient(withInvocation(t.Context(), state), src.Identifier, src, cache, state)
+			_, _, err := newDaemonGmailClient(withInvocation(t.Context(), state), src.Identifier, src, cache, state, oauth.Scopes)
 			require.Error(err)
 			_, settingsHint := errors.AsType[*provideridentity.GmailCredentialError](err)
 			assert.False(settingsHint)

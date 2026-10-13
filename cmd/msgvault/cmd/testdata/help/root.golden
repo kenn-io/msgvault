@@ -129,6 +129,7 @@ Drafts, calendar, and Kata (write to providers):
   draft-reply   Create an IMAP or Gmail reply draft from an archived message
   draft-send-as List Gmail send-as identities
   kata          Create Kata issues that quote archived evidence
+  message-tags  Read or update native email tags
 
 Review and delete:
   cancel-deletion Cancel pending or in-progress deletion batches

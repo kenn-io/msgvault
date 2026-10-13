@@ -37,6 +37,10 @@ func newAddO365Cmd() *cobra.Command {
 // before proxying, so the daemon subprocess never opens a browser or waits
 // on human consent while holding the operation gate.
 func preflightAddO365Authorize(cmd *cobra.Command, email string) error {
+	mailWrite, err := o365MailWrite(cmd)
+	if err != nil {
+		return err
+	}
 	state := invocationFromCommand(cmd)
 	if state == nil || state.cfg == nil {
 		return errors.New("configuration is unavailable")
@@ -49,7 +53,7 @@ func preflightAddO365Authorize(cmd *cobra.Command, email string) error {
 	if err := requireMicrosoftOAuthConfig(cfg); err != nil {
 		return err
 	}
-	if err := authorizeO365(cmd, email); err != nil {
+	if err := authorizeO365(cmd, email, mailWrite); err != nil {
 		return err
 	}
 	if err := cmd.Flags().Set(oauthPreflightedFlag, "true"); err != nil {
@@ -75,7 +79,8 @@ With --graph, the account syncs through the Microsoft Graph mail API instead
 of IMAP. Use it when IMAP is turned off for the mailbox. It needs the Mail.Read
 permission on the app registration. The first delete-staged for the account
 asks for Mail.ReadWrite, which the app registration must also list. A Graph
-account is a separate account: if the mailbox is also synced over IMAP, the
+account can request it during sign-in with --mail-write for category editing.
+The Graph account is separate: if the mailbox is also synced over IMAP, the
 vault holds two copies, and 'msgvault dedup --collection' hides the extra ones.
 
 Examples:
@@ -96,11 +101,16 @@ Examples:
 	cmd.Flags().StringVar(&o365SignIn, "sign-in", "",
 		"Microsoft sign-in name and browser login hint when it differs from the mailbox address (IMAP only)")
 	cmd.MarkFlagsMutuallyExclusive("graph", "sign-in")
+	cmd.Flags().Bool("mail-write", false, "With --graph, authorize category editing and remote deletion")
 	registerOAuthPreflightedFlag(cmd)
 	return cmd
 }
 
 func runAddO365Local(cmd *cobra.Command, args []string) error {
+	mailWrite, err := o365MailWrite(cmd)
+	if err != nil {
+		return err
+	}
 	state := invocationFromCommand(cmd)
 	if state == nil || state.cfg == nil {
 		return errors.New("configuration is unavailable")
@@ -113,7 +123,7 @@ func runAddO365Local(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if o365Graph {
-		return runAddO365GraphLocal(cmd, email)
+		return runAddO365GraphLocal(cmd, email, mailWrite)
 	}
 
 	msMgr := microsoft.NewManager(
@@ -129,7 +139,7 @@ func runAddO365Local(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if !preflighted {
-		if err := authorizeO365(cmd, email); err != nil {
+		if err := authorizeO365(cmd, email, mailWrite); err != nil {
 			return err
 		}
 	}
@@ -220,9 +230,20 @@ func runAddO365Local(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func o365MailWrite(cmd *cobra.Command) (bool, error) {
+	write, err := cmd.Flags().GetBool("mail-write")
+	if err != nil {
+		return false, fmt.Errorf("read --mail-write flag: %w", err)
+	}
+	if write && !o365Graph {
+		return false, errors.New("--mail-write requires --graph")
+	}
+	return write, nil
+}
+
 // authorizeO365 runs the Microsoft sign-in for the account kind: Graph mail
 // with --graph, IMAP otherwise.
-func authorizeO365(cmd *cobra.Command, email string) error {
+func authorizeO365(cmd *cobra.Command, email string, mailWrite bool) error {
 	state := invocationFromCommand(cmd)
 	if state == nil || state.cfg == nil {
 		return errors.New("configuration is unavailable")
@@ -235,6 +256,9 @@ func authorizeO365(cmd *cobra.Command, email string) error {
 	var err error
 	if o365Graph {
 		mgr := microsoft.NewGraphMailManager(cfg.Microsoft.ClientID, tenant, redirect, cfg.TokensDir(), logger)
+		if mailWrite {
+			mgr = microsoft.NewGraphMailWriteManager(cfg.Microsoft.ClientID, tenant, redirect, cfg.TokensDir(), logger)
+		}
 		if o365Headless {
 			mgr.UseDeviceCode()
 		}
@@ -257,7 +281,7 @@ func authorizeO365(cmd *cobra.Command, email string) error {
 
 // runAddO365GraphLocal creates an msmail source, the Graph mail counterpart of
 // the IMAP source that add-o365 makes by default.
-func runAddO365GraphLocal(cmd *cobra.Command, email string) error {
+func runAddO365GraphLocal(cmd *cobra.Command, email string, mailWrite bool) error {
 	state := invocationFromCommand(cmd)
 	if state == nil || state.cfg == nil {
 		return errors.New("configuration is unavailable")
@@ -267,7 +291,7 @@ func runAddO365GraphLocal(cmd *cobra.Command, email string) error {
 		return err
 	}
 	if !preflighted {
-		if err := authorizeO365(cmd, email); err != nil {
+		if err := authorizeO365(cmd, email, mailWrite); err != nil {
 			return err
 		}
 	}

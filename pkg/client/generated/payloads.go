@@ -134,6 +134,8 @@ type GetMeetingContextBody = MeetingContextRequest
 
 type GetMeetingMetricsBody = MeetingMetricsRequest
 
+type UpdateMessageTagsBody = MessageTagChange
+
 type CreateOrLinkMessageTaskBody = TaskLinkMutationRequest
 
 type StartVisualAttachmentBuildBody = VisualBuildRequest
