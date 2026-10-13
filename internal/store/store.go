@@ -563,6 +563,9 @@ func (s *Store) Close() error {
 			// Log maintenance errors here so expected deadlines do not also emit SQL warnings.
 			// Include 0x10 to bound ANALYZE even on a fresh connection without an analysis_limit.
 			_, err := s.db.DB.ExecContext(ctx, "PRAGMA optimize=0x10012")
+			if err == nil {
+				err = dropFTSDataStatistics(ctx, s.db.DB)
+			}
 			logSQLiteOptimizeError("store close", err)
 			cancel()
 		}
@@ -648,10 +651,46 @@ func (s *Store) optimizeSQLiteWithin(ctx context.Context, timeout time.Duration)
 	if _, err := connections[0].ExecContext(ctx, "PRAGMA optimize=0x10002"); err != nil {
 		return fmt.Errorf("optimize SQLite planner statistics: %w", err)
 	}
+	if err := dropFTSDataStatistics(ctx, connections[0]); err != nil {
+		return err
+	}
 	for _, conn := range connections {
 		if _, err := conn.ExecContext(ctx, "ANALYZE sqlite_schema"); err != nil {
 			return fmt.Errorf("reload SQLite planner statistics: %w", err)
 		}
+	}
+	return nil
+}
+
+type sqliteStatisticsExecer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+// dropFTSDataStatistics keeps planner statistics off FTS5 _data shadow tables.
+// FTS5 merges segments by deleting rowid ranges from _data, and trigger-
+// maintained indexes merge on nearly every insert. ANALYZE on a new archive
+// records an empty index as two rows; SQLite then plans each range delete as
+// a full scan, so ingest time grows with the square of the index size. FTS5
+// reaches these tables only through rowid and primary-key statements, so
+// statistics never improve their plans.
+func dropFTSDataStatistics(ctx context.Context, db sqliteStatisticsExecer) error {
+	var analyzed bool
+	err := db.QueryRowContext(ctx,
+		`SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'sqlite_stat1')`,
+	).Scan(&analyzed)
+	if err != nil {
+		return fmt.Errorf("check SQLite planner statistics: %w", err)
+	}
+	if !analyzed {
+		return nil
+	}
+	_, err = db.ExecContext(ctx, `DELETE FROM sqlite_stat1 WHERE tbl IN (
+		SELECT name || '_data' FROM sqlite_master
+		WHERE type = 'table' AND sql LIKE 'CREATE VIRTUAL TABLE % USING fts5%'
+	)`)
+	if err != nil {
+		return fmt.Errorf("drop FTS5 planner statistics: %w", err)
 	}
 	return nil
 }

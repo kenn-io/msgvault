@@ -108,3 +108,32 @@ func TestMetadataTrigramCapabilityTransition(t *testing.T) {
 	cancel()
 	require.ErrorIs(st.ensureMetadataFTS(ctx, true), context.Canceled)
 }
+
+// FTS5 deletes rowid ranges from _data on nearly every trigger-maintained
+// insert. A plan that scans _data makes ingest time grow with index size.
+func TestFTSDataRangeDeletesKeepRowidPlan(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	path := filepath.Join(t.TempDir(), "msgvault.db")
+	plans := func(st *Store, phase string) {
+		for _, table := range []string{"messages_fts_data", "messages_metadata_fts_data"} {
+			var id, parent, unused int
+			var detail string
+			require.NoError(st.DB().QueryRow(
+				"EXPLAIN QUERY PLAN SELECT block FROM "+table+" WHERE id >= ? AND id <= ?", 1, 2,
+			).Scan(&id, &parent, &unused, &detail))
+			assert.Contains(detail, "USING INTEGER PRIMARY KEY", table+" after "+phase)
+		}
+	}
+	st, err := OpenForTest(path)
+	require.NoError(err)
+	require.NoError(st.InitSchema())
+	plans(st, "schema initialization")
+	require.NoError(st.Close())
+	st, err = OpenForTest(path)
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(st.Close()) })
+	plans(st, "close-time statistics refresh")
+	require.NoError(st.optimizeSQLite(t.Context()))
+	plans(st, "scheduled statistics refresh")
+}
