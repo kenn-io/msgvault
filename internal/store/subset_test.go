@@ -1476,6 +1476,11 @@ func TestCopySubsetExcludesPersonEnrichmentSuppressionAndOperations(t *testing.T
 		{`INSERT INTO person_enrichment_profile_accounting
 			(profile_fingerprint, starts_disabled, safe_error)
 		 VALUES (?, 1, 'synthetic accounting stop')`, []any{fingerprint}},
+		{`INSERT INTO delivery_policies (person_id, mailbox, policy)
+		 VALUES (?, '', 'send_allowed')`, []any{person.ID}},
+		{`INSERT INTO delivery_policy_audit
+			(person_uid, revision, scope, after_policy, actor, reason)
+		 VALUES (?, 1, 'person', 'send_allowed', 'subset-test', 'synthetic approval')`, []any{person.VCardUID}},
 	}
 	for _, statement := range statements {
 		_, err = tx.ExecContext(ctx, statement.query, statement.args...)
@@ -1501,6 +1506,8 @@ func TestCopySubsetExcludesPersonEnrichmentSuppressionAndOperations(t *testing.T
 		"person_enrichment_person_day_counters",
 		"person_enrichment_day_counters",
 		"person_enrichment_profile_accounting",
+		"delivery_policies",
+		"delivery_policy_audit",
 	}
 	sourceDB, err := sql.Open("sqlite3", srcDB)
 	require.NoError(err)

@@ -537,7 +537,7 @@ func (s *Store) cardDAVResourceNeedsConflictTx(
 		}
 		imported = imported || resource.OwnsDisplayName
 		if imported && !published && resource.PersonRevisionAtBind != nil {
-			userOwned, err := s.personHasUserOwnedStateTx(ctx, tx, *resource.PersonID, *resource.PersonRevisionAtBind)
+			userOwned, err := s.personHasUserEditedStateTx(ctx, tx, *resource.PersonID, *resource.PersonRevisionAtBind)
 			if err != nil {
 				return false, nil, err
 			}
@@ -696,7 +696,7 @@ func (s *Store) applyCardDAVResourceTx(
 	if !created && (semanticRemoteChanged || rebasedEnvelope != nil) && current.MappingStatus == CardDAVMappingMapped && current.PersonID != nil {
 		shouldRebase := rebasedEnvelope != nil
 		if current.Governance == CardDAVGovernanceRemote && current.PersonRevisionAtBind != nil {
-			hasUserOwnedState, err := s.personHasUserOwnedStateTx(ctx, tx, *personID, *current.PersonRevisionAtBind)
+			hasUserOwnedState, err := s.personHasUserEditedStateTx(ctx, tx, *personID, *current.PersonRevisionAtBind)
 			if err != nil {
 				return false, false, err
 			}
@@ -1332,7 +1332,7 @@ func (s *Store) refreshCardDAVImportedPersonBindBaselineTx(
 		s.dialect.SelectForUpdate(), personID).Scan(&revision); err != nil {
 		return fmt.Errorf("load rebased CardDAV person revision: %w", err)
 	}
-	hasUserOwnedState, err := s.personHasUserOwnedStateTx(ctx, tx, personID, revision)
+	hasUserOwnedState, err := s.personHasUserEditedStateTx(ctx, tx, personID, revision)
 	if err != nil {
 		return err
 	}

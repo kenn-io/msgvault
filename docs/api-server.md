@@ -100,7 +100,7 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.14.0**.
+it is separate from the binary release version. The current schema is **3.15.0**.
 Upgrade clients and daemon together across incompatible schema versions,
 including remote deployments.
 
@@ -155,6 +155,9 @@ conflict when one UID resolves to multiple people. Person responses expose
 
 Schema 3.11.0 adds structured `account_scopes` filters, the Explore account
 filter, and the virtual account catalog on `/cli/accounts`.
+
+Schema 3.15.0 adds the unreleased [contact delivery policy](#contact-delivery-policies)
+routes.
 
 Schema 3.1.0 adds unreleased [calendar event control](#calendar-control),
 availability queries, and opt-in `write` on Calendar consent plans.
@@ -2846,3 +2849,71 @@ policy and deletion visibility. Changes under
 | `enabled` | `true` | Whether scheduled sync is active |
 
 See the [Configuration](/docs/configuration/) page for the full config file reference.
+
+## Contact delivery policies
+
+On unreleased `main`, every person starts at `draft_only`. An owner can approve
+`send_allowed` for a person, or for one email address saved on that person. The
+approval names no sending account and needs no prior mail with the address. An
+address must be an active declared contact point of the person that no other
+person holds. Approval permits admission of an explicit send without a draft
+first. It does not send anything, disable drafting, change existing drafts, or
+replace provider credentials and platform confirmation. Policies are managed
+over HTTP, MCP, and the owner CLI commands [person read-delivery-policy, set-delivery-policy, and clear-delivery-policy](cli-reference.md#person-delivery-policies).
+
+These owner-only routes require API schema 3.15.0:
+
+| Operation | POST path | Request |
+| --- | --- | --- |
+| Inspect | `/api/v1/people/delivery-policy/read` | `person_uid`, optional `endpoint` |
+| Set | `/api/v1/people/delivery-policy/set` | `person_uid`, optional `endpoint`, `policy`, `expected_revision`, `reason`, and `scope_acknowledgement: "person_all_routes"` to approve the person default |
+| Clear | `/api/v1/people/delivery-policy/clear` | `person_uid`, optional `endpoint`, `expected_revision`, `reason` |
+
+An empty `endpoint` is the person default. An `endpoint` is the saved normalized
+address, the form the contact writer stores (trimmed, lower case, versioned with
+contact points), and must be one mailbox: display names and lists return
+`invalid_policy`. Reads return the stored and effective policy, inheritance
+source, canonical person UID, and `revision`, the delivery policy revision. It
+moves on any edit to the person and on every policy write, and it is not the
+person profile revision. Read it from the delivery-policy read route and pass it
+as `expected_revision`. A policy write leaves the person's own record
+revision alone, so it does not discard pending enrichment work. Writes check
+`expected_revision` against it, bump it, and return before and after state plus
+an audit receipt with actor, timestamp, scope, reason and, for an approval, the
+`contact_point_id` it binds to. A write that changes nothing returns no audit
+and leaves the revision alone. A stale revision returns `revision_conflict`.
+Approving an address returns `detached_endpoint` when the person has no active
+declared contact point for it, and `ambiguous_endpoint` when another person
+holds it. An approval
+without the required acknowledgement returns `scope_acknowledgement_missing`.
+A new restriction on an address needs a saved address of the person and returns
+`detached_endpoint` otherwise; revoking or clearing an existing address policy
+stays possible after the address goes away.
+
+An address policy wins, then the person default, then `draft_only`. Merging two
+people ends every delivery policy of the absorbed person and the survivor's
+person-wide `send_allowed`, each with an audit row (reason `person_merged`).
+The survivor's exact-address approvals and person-wide `draft_only` stay.
+Those ended policies need the owner's approval again on the survivor, and a
+split does not bring the policies back. An approval of one
+address lasts only while the saved address it was granted on stays active. If
+that address is removed and saved again, sending is blocked with
+`binding_changed` until the owner approves it again. A person-wide approval
+covers only addresses the person held when the owner approved it. An address
+saved later resolves as `draft_only` with reason `approval_predates_address`
+until the owner approves that address or re-approves the person-wide default
+with the `person_all_routes` acknowledgement. A restriction survives removing and re-saving the
+address. Policy is an application gate, not proof of live reachability.
+
+Msgvault has draft operations and no send command. A future send adapter calls
+`Store.ExecuteDeliveryContext(ctx, recipients, content, attempt)` immediately
+before every provider attempt, including retries and queued work, with every
+recipient including cc and bcc, outside any read snapshot. One snapshot reads
+each recipient's current policy, and the callback then makes one attempt with no
+lock held. A revocation committed before admission blocks the attempt; a later
+one blocks the next, so a revocation that commits between the snapshot and the
+attempt does not stop that one attempt. A denied send returns `draft_required` and the original
+content with zero provider calls. A cancelled context returns
+`admission_cancelled` and a store failure returns `admission_unavailable`; both
+also make zero provider calls. A provider failure after admission returns
+`delivery_uncertain`, which needs provider-native reconciliation before a retry.

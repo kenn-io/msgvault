@@ -408,7 +408,8 @@ var operationGateExemptPaths = map[string]bool{
 // entries. Both perform SSRF-validated outbound reads without changing
 // archive or persistent configuration state, so they must stay available
 // while a long archive operation holds the gate. Kata evidence preparation
-// only reads message bodies and extracted document text.
+// only reads message bodies and extracted document text. Delivery policy
+// inspection is also read-only.
 const cardDAVAccountTestPath = "/api/v1/carddav/account/test"
 
 var readOnlyPostRoutePatterns = []string{
@@ -416,6 +417,7 @@ var readOnlyPostRoutePatterns = []string{
 	remoteImagePath,
 	cardDAVAccountTestPath,
 	kataEvidencePreparePath,
+	"/api/v1/people/delivery-policy/read",
 	"/api/v1/explore",
 	"/api/v1/explore/groups",
 	"/api/v1/explore/preflight",

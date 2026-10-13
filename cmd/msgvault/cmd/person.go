@@ -763,6 +763,7 @@ func positivePersonCLIArg(cmd *cobra.Command, raw, kind string) (int64, error) {
 }
 
 func init() {
+	personCmd.AddCommand(newPersonDeliveryPolicyCommand("read"), newPersonDeliveryPolicyCommand("set"), newPersonDeliveryPolicyCommand("clear"))
 	rootCmd.AddCommand(personCmd)
 	personCmd.AddCommand(newPersonProviderCommand(defaultPersonProviderCommandDeps()))
 	personCmd.AddCommand(newPersonSweepCommand(defaultPersonSweepCommandDeps()))

@@ -358,6 +358,9 @@ CREATE TABLE IF NOT EXISTS persons (
     display_name              TEXT,
     revision                  BIGINT NOT NULL DEFAULT 1,
     vcard_projection_revision BIGINT NOT NULL DEFAULT 1,
+    -- Moves only on delivery policy writes, so they leave `revision` (and any
+    -- enrichment bound to it) alone; clients see revision + delivery_revision.
+    delivery_revision         BIGINT NOT NULL DEFAULT 0,
     created_at                TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at                TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -2905,6 +2908,11 @@ CREATE TABLE IF NOT EXISTS person_contact_points (
 CREATE INDEX IF NOT EXISTS idx_person_contact_points_current_lookup
     ON person_contact_points(address_kind, service_id, scope_kind, scope_value, normalized_value)
     WHERE active_until IS NULL AND superseded_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_person_contact_points_email_spelling
+    ON person_contact_points(normalized_value)
+    WHERE address_kind = 'email'
+      AND active_until IS NULL AND superseded_at IS NULL
+      AND (normalized_value LIKE '% %' OR normalized_value LIKE '%	%' OR normalized_value LIKE '%<%' OR normalized_value LIKE '%>%' OR normalized_value LIKE '%"%' OR normalized_value LIKE '%(%' OR normalized_value LIKE '%)%' OR normalized_value LIKE '%:%' OR normalized_value LIKE '%;%' OR normalized_value LIKE '%,%' OR normalized_value <> LOWER(normalized_value) OR LENGTH(normalized_value) <> OCTET_LENGTH(normalized_value));
 CREATE INDEX IF NOT EXISTS idx_person_contact_points_person_current
     ON person_contact_points(person_id, address_kind, pref, ordinal)
     WHERE active_until IS NULL AND superseded_at IS NULL;
@@ -4117,3 +4125,29 @@ CREATE TABLE IF NOT EXISTS recording_references (
 );
 CREATE INDEX IF NOT EXISTS idx_recording_references_due
     ON recording_references(destination_key, state, next_action_at);
+-- Delivery authorization is separate from draft state and provider credentials.
+-- No row means draft_only. Policies follow their person; audit is retained by person UID.
+CREATE TABLE IF NOT EXISTS delivery_policies (
+    person_id BIGINT NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+    -- Empty is the person-wide default; otherwise the saved normalized address.
+    mailbox TEXT NOT NULL DEFAULT '',
+    policy TEXT NOT NULL CHECK (policy IN ('draft_only','send_allowed')),
+    -- An approval lasts only while this saved address row stays active.
+    contact_point_id BIGINT REFERENCES person_contact_points(id) ON DELETE SET NULL,
+    approved_through_contact_point_id BIGINT,
+    PRIMARY KEY (person_id, mailbox)
+);
+CREATE TABLE IF NOT EXISTS delivery_policy_audit (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    person_uid TEXT NOT NULL,
+    revision BIGINT NOT NULL,
+    scope TEXT NOT NULL,
+    before_policy TEXT,
+    after_policy TEXT,
+    actor TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    contact_point_id BIGINT
+);
+CREATE INDEX IF NOT EXISTS idx_delivery_policy_audit_latest
+    ON delivery_policy_audit(person_uid, scope, revision DESC);

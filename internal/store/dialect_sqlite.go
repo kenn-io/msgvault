@@ -2064,6 +2064,7 @@ func (d *SQLiteDialect) LegacyColumnMigrations() []ColumnMigration {
 		// write moves it, so no backfill is needed.
 		{`ALTER TABLE persons ADD COLUMN vcard_projection_revision INTEGER NOT NULL DEFAULT 1`,
 			"persons.vcard_projection_revision"},
+		{`ALTER TABLE persons ADD COLUMN delivery_revision INTEGER NOT NULL DEFAULT 0`, "persons.delivery_revision"},
 		{`ALTER TABLE person_names ADD COLUMN source_resource_uid TEXT`, "person_names.source_resource_uid"},
 		{`ALTER TABLE person_contact_points ADD COLUMN source_resource_uid TEXT`, "person_contact_points.source_resource_uid"},
 		{`ALTER TABLE person_addresses ADD COLUMN source_resource_uid TEXT`, "person_addresses.source_resource_uid"},

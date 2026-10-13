@@ -2241,6 +2241,46 @@ type GetPersonByUIDErrorResponseJSON409 = ErrorResponse
 
 type GetPersonByUIDErrorResponseJSON503 = ErrorResponse
 
+type ClearDeliveryPolicyResponse = DeliveryPolicyReceipt
+
+type ClearDeliveryPolicyErrorResponse = ErrorResponse
+
+type ClearDeliveryPolicyErrorResponseJSON = ErrorResponse
+
+type ClearDeliveryPolicyErrorResponseJSON403 = ErrorResponse
+
+type ClearDeliveryPolicyErrorResponseJSON404 = ErrorResponse
+
+type ClearDeliveryPolicyErrorResponseJSON409 = ErrorResponse
+
+type ClearDeliveryPolicyErrorResponseJSON503 = ErrorResponse
+
+type GetDeliveryPolicyResponse = DeliveryPolicyState
+
+type GetDeliveryPolicyErrorResponse = ErrorResponse
+
+type GetDeliveryPolicyErrorResponseJSON = ErrorResponse
+
+type GetDeliveryPolicyErrorResponseJSON403 = ErrorResponse
+
+type GetDeliveryPolicyErrorResponseJSON404 = ErrorResponse
+
+type GetDeliveryPolicyErrorResponseJSON503 = ErrorResponse
+
+type SetDeliveryPolicyResponse = DeliveryPolicyReceipt
+
+type SetDeliveryPolicyErrorResponse = ErrorResponse
+
+type SetDeliveryPolicyErrorResponseJSON = ErrorResponse
+
+type SetDeliveryPolicyErrorResponseJSON403 = ErrorResponse
+
+type SetDeliveryPolicyErrorResponseJSON404 = ErrorResponse
+
+type SetDeliveryPolicyErrorResponseJSON409 = ErrorResponse
+
+type SetDeliveryPolicyErrorResponseJSON503 = ErrorResponse
+
 type ListDirectoryPeopleResponse = DirectoryPeopleResponse
 
 type ListDirectoryPeopleErrorResponse = ErrorResponse
@@ -5442,6 +5482,44 @@ type GetPersonByUIDResp struct {
 	JSON404      *GetPersonByUIDErrorResponseJSON
 	JSON409      *GetPersonByUIDErrorResponseJSON409
 	JSON503      *GetPersonByUIDErrorResponseJSON503
+}
+
+type ClearDeliveryPolicyResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ClearDeliveryPolicyResponse
+	JSON400      *ClearDeliveryPolicyErrorResponse
+	JSON401      *ClearDeliveryPolicyErrorResponseJSON
+	JSON403      *ClearDeliveryPolicyErrorResponseJSON403
+	JSON404      *ClearDeliveryPolicyErrorResponseJSON404
+	JSON409      *ClearDeliveryPolicyErrorResponseJSON409
+	JSON503      *ClearDeliveryPolicyErrorResponseJSON503
+}
+
+type GetDeliveryPolicyResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetDeliveryPolicyResponse
+	JSON400      *GetDeliveryPolicyErrorResponse
+	JSON401      *GetDeliveryPolicyErrorResponseJSON
+	JSON403      *GetDeliveryPolicyErrorResponseJSON403
+	JSON404      *GetDeliveryPolicyErrorResponseJSON404
+	JSON503      *GetDeliveryPolicyErrorResponseJSON503
+}
+
+type SetDeliveryPolicyResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *SetDeliveryPolicyResponse
+	JSON400      *SetDeliveryPolicyErrorResponse
+	JSON401      *SetDeliveryPolicyErrorResponseJSON
+	JSON403      *SetDeliveryPolicyErrorResponseJSON403
+	JSON404      *SetDeliveryPolicyErrorResponseJSON404
+	JSON409      *SetDeliveryPolicyErrorResponseJSON409
+	JSON503      *SetDeliveryPolicyErrorResponseJSON503
 }
 
 type ListDirectoryPeopleResp struct {

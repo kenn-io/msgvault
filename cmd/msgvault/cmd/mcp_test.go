@@ -28,7 +28,7 @@ func TestMCPWriteHelpDisclosesMutationClassesAndProfileOptIn(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	require.NotNil(mcpCmd.Flags().Lookup("allow-profile-writes"))
-	for _, name := range []string{"allow-identity-decisions", "allow-identity-scoring", "allow-person-merges", "allow-carddav-writes"} {
+	for _, name := range []string{"allow-identity-decisions", "allow-identity-scoring", "allow-person-merges", "allow-carddav-writes", "allow-delivery-policy-writes"} {
 		require.NotNil(mcpCmd.Flags().Lookup(name))
 	}
 	require.NotNil(mcpCmd.Flags().Lookup("allow-calendar-writes"))
@@ -377,6 +377,7 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 		wantReview     bool
 		wantScoring    bool
 		wantCardDAV    bool
+		wantDelivery   bool
 	}{
 		{name: "people schema", schemaVersion: "2.10.0", wantPeople: true},
 		{name: "directory predecessor", schemaVersion: "2.12.9", wantPeople: true},
@@ -394,6 +395,8 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 		{name: "person CardDAV schema", schemaVersion: "2.32.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true},
 		{name: "identity review and scoring predecessor", schemaVersion: "2.35.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true},
 		{name: "identity review and scoring schema", schemaVersion: "3.0.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true},
+		{name: "delivery policy routes absent", schemaVersion: "3.14.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true},
+		{name: "delivery policy routes available", schemaVersion: "3.15.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantDelivery: true},
 		{name: "older same-major schema", schemaVersion: "2.9.9"},
 		{name: "malformed schema", schemaVersion: "not-a-version"},
 		{name: "missing schema"},
@@ -432,6 +435,7 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 			assert.Equal(tt.wantReview, opts.IdentityReview != nil)
 			assert.Equal(tt.wantCardDAV, opts.PersonCardDAV != nil)
 			assert.Equal(tt.wantScoring, opts.IdentityScoring != nil)
+			assert.Equal(tt.wantDelivery, opts.DeliveryPolicies != nil)
 		})
 	}
 }
