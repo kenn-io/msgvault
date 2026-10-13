@@ -6,9 +6,11 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -177,37 +179,119 @@ func TestDaemonMCPOperationsRealSyncAcceptance(t *testing.T) {
 	}
 }
 
-func TestDaemonMCPOperationsPreserveSyncDisposition(t *testing.T) {
-	requirements := require.New(t)
-	assertions := assert.New(t)
-	started := make(chan struct{}, 1)
-	sched := scheduler.New(func(context.Context, string) error { return nil })
-	requirements.NoError(sched.AddJob(scheduler.Job{
-		Name: "granola:workspace", Schedule: "0 2 * * *",
-		Run: func(ctx context.Context) error {
-			started <- struct{}{}
-			<-ctx.Done()
-			return ctx.Err()
-		},
-	}))
-	t.Cleanup(func() { <-sched.Stop().Done() })
-	backend := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{
-		Config: &config.Config{}, Scheduler: &schedulerAdapter{scheduler: sched}, Logger: slog.New(slog.DiscardHandler),
-	}))
-	for _, disposition := range []string{"started", "pending", "coalesced"} {
-		result, err := backend.ExecuteOperation(t.Context(), "sync_source", map[string]any{
-			"account": "workspace", "source_type": "granola",
-		})
-		requirements.NoError(err)
-		receipt := operationOutput[generated.TriggerSyncResponse](t, result)
-		assertions.Equal("accepted", receipt.Status)
-		assertions.Equal(new(disposition), receipt.Disposition)
-		if disposition == "started" {
-			select {
-			case <-started:
-			case <-time.After(10 * time.Second):
-				requirements.FailNow("accepted generic sync did not start")
-			}
+func TestMCPSyncSourceConfirmsRunningAndQueuedJobs(t *testing.T) {
+	for _, queued := range []bool{false, true} {
+		name := "running"
+		if queued {
+			name = "queued"
 		}
+		t.Run(name, func(t *testing.T) {
+			requirements, assertions := require.New(t), assert.New(t)
+			st := testutil.NewTestStore(t)
+			_, err := st.GetOrCreateSource("granola", "workspace")
+			requirements.NoError(err)
+			gate := api.NewSerialOperationGate()
+			release := func() {}
+			if queued {
+				var ok bool
+				release, ok = gate.BeginWork()
+				requirements.True(ok)
+			}
+			started := make(chan struct{}, 1)
+			sched := scheduler.New(func(context.Context, string) error { return nil }).WithWorkTracker(gate)
+			requirements.NoError(sched.AddJob(scheduler.Job{
+				Name: "granola:workspace", Schedule: "0 2 * * *",
+				Run: func(ctx context.Context) error {
+					started <- struct{}{}
+					<-ctx.Done()
+					return ctx.Err()
+				},
+			}))
+			t.Cleanup(func() { release(); <-sched.Stop().Done() })
+			backend := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{
+				Config: &config.Config{}, Store: &storeAPIAdapter{store: st},
+				Scheduler: &schedulerAdapter{scheduler: sched}, Logger: slog.New(slog.DiscardHandler),
+			}))
+			var approvals atomic.Int32
+			session := operationMCPSession(t, backend, []mcpserver.OperationFamily{mcpserver.OperationFamilySources}, &sdkmcp.ClientOptions{
+				ElicitationHandler: func(context.Context, *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
+					approvals.Add(1)
+					return &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}, nil
+				},
+			})
+			want := []string{"started", "pending", "coalesced"}
+			if queued {
+				want = []string{"started", "coalesced"}
+			}
+			for i, disposition := range want {
+				result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "sync_source", Arguments: map[string]any{
+					"account": "workspace", "source_type": "granola",
+				}})
+				requirements.NoError(err)
+				requirements.False(result.IsError, "expected %s; got %v", disposition, result.StructuredContent)
+				data, err := json.Marshal(result.StructuredContent)
+				requirements.NoError(err)
+				var receipt generated.TriggerSyncResponse
+				requirements.NoError(json.Unmarshal(data, &receipt))
+				assertions.Equal("accepted", receipt.Status)
+				assertions.Equal(new(disposition), receipt.Disposition)
+				assertions.Equal(int32(i+1), approvals.Load())
+				if i == 0 && !queued {
+					select {
+					case <-started:
+					case <-time.After(10 * time.Second):
+						requirements.FailNow("accepted generic sync did not start")
+					}
+				}
+			}
+			status := sched.JobStatus()
+			requirements.Len(status, 1)
+			assertions.Equal(queued, status[0].Queued)
+			assertions.Equal(!queued, status[0].Pending)
+		})
+	}
+}
+
+func TestMCPSyncSourceRejectsUnavailableSourcesBeforeConfirmation(t *testing.T) {
+	for _, tc := range []struct {
+		name, sourceType string
+		active           bool
+	}{
+		{"unconfigured generic", "granola", false},
+		{"unconfigured active generic", "granola", true},
+		{"unsupported import", "mbox", false},
+		{"busy account", "gmail", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requirements, assertions := require.New(t), assert.New(t)
+			st := testutil.NewTestStore(t)
+			source, err := st.GetOrCreateSource(tc.sourceType, "sender@example.com")
+			requirements.NoError(err)
+			if tc.active {
+				_, err = st.StartSync(source.ID, "incremental")
+				requirements.NoError(err)
+			}
+			sched := scheduler.New(func(context.Context, string) error { return nil })
+			t.Cleanup(func() { <-sched.Stop().Done() })
+			requirements.NoError(sched.AddAccount("sender@example.com", "0 2 * * *"))
+			backend := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{
+				Config: &config.Config{}, Store: &storeAPIAdapter{store: st},
+				Scheduler: &schedulerAdapter{scheduler: sched}, Logger: slog.New(slog.DiscardHandler),
+			}))
+			var approvals atomic.Int32
+			session := operationMCPSession(t, backend, []mcpserver.OperationFamily{mcpserver.OperationFamilySources}, &sdkmcp.ClientOptions{
+				ElicitationHandler: func(context.Context, *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
+					approvals.Add(1)
+					return &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}, nil
+				},
+			})
+			result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "sync_source", Arguments: map[string]any{
+				"account": "sender@example.com", "source_type": tc.sourceType,
+			}})
+			requirements.NoError(err)
+			assertions.True(result.IsError)
+			assertions.Equal(map[string]any{"error": "source_not_schedulable"}, result.StructuredContent)
+			assertions.Zero(approvals.Load())
+		})
 	}
 }

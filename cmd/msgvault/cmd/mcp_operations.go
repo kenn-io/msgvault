@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
+	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
@@ -102,7 +103,11 @@ func (b *daemonMCPOperations) OperationDisclosure(ctx context.Context, name stri
 			continue
 		}
 		if !source.CanSync {
-			return "", &mcpserver.OperationRefusalError{Code: "source_not_schedulable"}
+			_, generic := api.SchedulerJobNameForSource(sourceType, account)
+			// Generic jobs accept follow-up requests while running or queued.
+			if !generic || !source.Scheduled || source.SyncUnavailableReason == nil || *source.SyncUnavailableReason != "sync_already_running" {
+				return "", &mcpserver.OperationRefusalError{Code: "source_not_schedulable"}
+			}
 		}
 		disclosure := struct {
 			Operation  string `json:"operation"`

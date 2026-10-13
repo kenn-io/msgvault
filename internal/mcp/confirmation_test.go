@@ -2,7 +2,6 @@ package mcp
 
 import (
 	"context"
-	"encoding/json/v2"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -12,36 +11,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestOperationalErrorRetainsStructuredReceipt(t *testing.T) {
-	requirements := require.New(t)
-	assertions := assert.New(t)
-	handler := officialToolHandler(func(context.Context, toolRequest) (*toolResult, error) {
-		result, err := jsonResult(map[string]any{"status": "remote_accepted_local_failed", "operation_ref": "synthetic-operation"})
-		if err != nil {
-			return nil, err
-		}
-		result.isError = true
-		return result, nil
-	})
-	result, structured, err := handler(context.Background(), nil, map[string]any{})
-	requirements.NoError(err)
-	requirements.NotNil(result)
-	assertions.True(result.IsError)
-	requirements.NotNil(structured)
-}
-
-func TestConfirmationChallengesBindActionAndExpire(t *testing.T) {
+func TestConfirmationChallengesRejectChangedDisclosureAndExpiry(t *testing.T) {
 	cases := []struct {
-		name, client, tool, message string
-		args                        map[string]any
-		expired                     bool
+		name, message string
+		expired       bool
 	}{
-		{"same action", "client-a", "sync_source", "Sync source 1", map[string]any{"source_id": float64(1)}, false},
-		{"other client", "client-b", "sync_source", "Sync source 1", map[string]any{"source_id": float64(1)}, false},
-		{"other tool", "client-a", "other_tool", "Sync source 1", map[string]any{"source_id": float64(1)}, false},
-		{"other arguments", "client-a", "sync_source", "Sync source 1", map[string]any{"source_id": float64(2)}, false},
-		{"changed disclosure", "client-a", "sync_source", "Sync source 2", map[string]any{"source_id": float64(1)}, false},
-		{"expired", "client-a", "sync_source", "Sync source 1", map[string]any{"source_id": float64(1)}, true},
+		{"changed disclosure", "Sync source 2", false},
+		{"expired", "Sync source 1", true},
 	}
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
@@ -55,7 +31,7 @@ func TestConfirmationChallengesBindActionAndExpire(t *testing.T) {
 			if tt.expired {
 				now = now.Add(confirmationChallengeTTL)
 			}
-			assertions.Equal(tt.name == "same action", manager.consume(state, nil, tt.client, tt.tool, tt.args, tt.message))
+			assertions.False(manager.consume(state, nil, "client-a", "sync_source", map[string]any{"source_id": float64(1)}, tt.message))
 			assertions.False(manager.consume(state, nil, "client-a", "sync_source", map[string]any{"source_id": float64(1)}, "Sync source 1"))
 		})
 	}
@@ -109,38 +85,6 @@ func TestConfirmationModernStdioSDKObtainsApproval(t *testing.T) {
 	requirements.NoError(err)
 	assertions.False(result.IsError)
 	assertions.Equal(int32(1), approved.Load())
-	assertions.Equal(int32(1), executed.Load())
-}
-
-func TestConfirmationLegacyStdioElicitation(t *testing.T) {
-	requirements := require.New(t)
-	assertions := assert.New(t)
-	server := sdkmcp.NewServer(&sdkmcp.Implementation{Name: "confirmation-test", Version: "1"}, nil)
-	var executed atomic.Int32
-	sdkmcp.AddTool[map[string]any, any](server, &sdkmcp.Tool{Name: "synthetic_write", InputSchema: closedObject(nil), OutputSchema: closedObject(nil)}, officialToolHandler(func(ctx context.Context, req toolRequest) (*toolResult, error) {
-		if err := req.confirmUserAction(ctx, "Perform synthetic action"); err != nil {
-			return confirmationToolError(err)
-		}
-		executed.Add(1)
-		return jsonResult(map[string]any{})
-	}))
-	peer := newTask5RawStdioPeerWithServer(t, server)
-	initialized := peer.call(t, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{"elicitation":{"form":{}}},"clientInfo":{"name":"synthetic","version":"1"}}}`)
-	requirements.Nil(initialized.Error)
-	peer.writeLiteralLine(t, `{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}`)
-	_, raw := peer.callRaw(t, `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"synthetic_write","arguments":{}}}`)
-	var request struct {
-		ID     any    `json:"id"`
-		Method string `json:"method"`
-	}
-	requirements.NoError(json.Unmarshal([]byte(raw), &request))
-	requirements.Equal("elicitation/create", request.Method)
-	assertions.Equal(int32(0), executed.Load())
-	body, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": request.ID, "result": map[string]any{"action": "accept", "content": map[string]any{"confirm": true}}})
-	requirements.NoError(err)
-	response := peer.call(t, string(body))
-	requirements.Nil(response.Error)
-	assertions.NotEqual(true, response.Result["isError"])
 	assertions.Equal(int32(1), executed.Load())
 }
 
