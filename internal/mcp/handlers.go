@@ -152,9 +152,17 @@ type handlers struct {
 	personAgendaBackend PersonAgendaBackend
 	kata                KataBackend
 	identityReview      IdentityReviewBackend
+	identityOperations  IdentityOperationBackend
 	personCardDAV       PersonCardDAVBackend
-	identityScoring     IdentityScoringBackend
-	drafts              DraftRunner
+
+	scopedCardDAVPreview   ScopedCardDAVPreviewBackend
+	scopedCardDAVApprove   ScopedCardDAVApproveBackend
+	scopedCardDAVReconcile ScopedCardDAVReconcileBackend
+
+	personMerge     PersonMergeBackend
+	personRecords   PersonRecordsBackend
+	identityScoring IdentityScoringBackend
+	drafts          DraftRunner
 
 	// Optional vector-search wiring. When hybridEngine is nil, the
 	// search_message_bodies handler rejects mode=vector and mode=hybrid with

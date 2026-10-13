@@ -18,6 +18,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"go.kenn.io/msgvault/internal/agentgrant"
+	"go.kenn.io/msgvault/internal/identitycontrol"
 	"go.kenn.io/msgvault/internal/mcpdiscovery"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -31,65 +32,77 @@ import (
 
 // Tool name constants.
 const (
-	ToolDraftReply                = "draft_reply"
-	ToolDraftCompose              = "draft_compose"
-	ToolDraftForward              = "draft_forward"
-	ToolDraftGet                  = "draft_get"
-	ToolDraftEdit                 = "draft_edit"
-	ToolDraftDelete               = "draft_delete"
-	ToolDraftRecover              = "draft_recover"
-	ToolDraftSendAs               = "draft_send_as"
-	ToolSearchMessages            = "search_messages"
-	ToolQuerySQL                  = "query_sql"
-	ToolSearchMetadata            = "search_metadata"
-	ToolSearchMessageBodies       = "search_message_bodies"
-	ToolSemanticSearchMessages    = "semantic_search_messages"
-	ToolGetMessage                = "get_message"
-	ToolGetAttachment             = "get_attachment"
-	ToolExportAttachment          = "export_attachment"
-	ToolExportEML                 = "export_eml"
-	ToolListThread                = "list_thread"
-	ToolListMessages              = "list_messages"
-	ToolGetStats                  = "get_stats"
-	ToolAggregate                 = "aggregate"
-	ToolStageDeletion             = "stage_deletion"
-	ToolSearchByDomains           = "search_by_domains"
-	ToolFindSimilarMessages       = "find_similar_messages"
-	ToolSearchVisualAttachments   = "search_visual_attachments"
-	ToolSearchInMessage           = "search_in_message"
-	ToolSearchDocuments           = "search_document_attachments"
-	ToolSearchPersonFiles         = "search_person_files"
-	ToolSearchPeople              = "search_people"
-	ToolListDirectoryPeople       = "list_directory_people"
-	ToolGetPersonNotes            = "get_person_notes"
-	ToolGetPersonProfile          = "get_person_profile"
-	ToolGetPersonRelationship     = "get_person_relationship"
-	ToolGetPersonAgenda           = "get_person_agenda"
-	ToolPromotePerson             = "promote_person"
-	ToolUpdatePersonNotes         = "update_person_notes"
-	ToolListSavedViews            = "list_saved_views"
-	ToolGetSavedView              = "get_saved_view"
-	ToolRunSavedView              = "run_saved_view"
-	ToolCreateSavedView           = "create_saved_view"
-	ToolUpdateSavedView           = "update_saved_view"
-	ToolDeleteSavedView           = "delete_saved_view"
-	ToolGetMeetingContext         = "get_meeting_context"
-	ToolListMeetingActionItems    = "list_meeting_action_items"
-	ToolGetMeetingMetrics         = "get_meeting_metrics"
-	ToolListIdentityMatches       = "list_identity_matches"
-	ToolGetIdentityMatch          = "get_identity_match"
-	ToolAcceptIdentityMatch       = "accept_identity_match"
-	ToolRejectIdentityMatch       = "reject_identity_match"
-	ToolGetPersonMergeContext     = "get_person_merge_context"
-	ToolMergePerson               = "merge_person"
-	ToolGetCardDAVPublication     = "get_carddav_publication"
-	ToolPreviewCardDAVPublication = "preview_carddav_publication"
-	ToolApproveCardDAVPublication = "approve_carddav_publication"
-	ToolSyncCardDAV               = "sync_carddav"
-	ToolGetCardDAVSyncStatus      = "get_carddav_sync_status"
-	ToolGetIdentityScoringStatus  = "get_identity_scoring_status"
-	ToolScoreIdentityMatches      = "score_identity_matches"
-	ToolListIdentityJudgments     = "list_identity_judgments"
+	ToolDraftReply                  = "draft_reply"
+	ToolDraftCompose                = "draft_compose"
+	ToolDraftForward                = "draft_forward"
+	ToolDraftGet                    = "draft_get"
+	ToolDraftEdit                   = "draft_edit"
+	ToolDraftDelete                 = "draft_delete"
+	ToolDraftRecover                = "draft_recover"
+	ToolDraftSendAs                 = "draft_send_as"
+	ToolSearchMessages              = "search_messages"
+	ToolQuerySQL                    = "query_sql"
+	ToolSearchMetadata              = "search_metadata"
+	ToolSearchMessageBodies         = "search_message_bodies"
+	ToolSemanticSearchMessages      = "semantic_search_messages"
+	ToolGetMessage                  = "get_message"
+	ToolGetAttachment               = "get_attachment"
+	ToolExportAttachment            = "export_attachment"
+	ToolExportEML                   = "export_eml"
+	ToolListThread                  = "list_thread"
+	ToolListMessages                = "list_messages"
+	ToolGetStats                    = "get_stats"
+	ToolAggregate                   = "aggregate"
+	ToolStageDeletion               = "stage_deletion"
+	ToolSearchByDomains             = "search_by_domains"
+	ToolFindSimilarMessages         = "find_similar_messages"
+	ToolSearchVisualAttachments     = "search_visual_attachments"
+	ToolSearchInMessage             = "search_in_message"
+	ToolSearchDocuments             = "search_document_attachments"
+	ToolSearchPersonFiles           = "search_person_files"
+	ToolSearchPeople                = "search_people"
+	ToolListDirectoryPeople         = "list_directory_people"
+	ToolGetPersonNotes              = "get_person_notes"
+	ToolGetPersonProfile            = "get_person_profile"
+	ToolGetPersonRelationship       = "get_person_relationship"
+	ToolGetPersonAgenda             = "get_person_agenda"
+	ToolPromotePerson               = "promote_person"
+	ToolUpdatePersonNotes           = "update_person_notes"
+	ToolListSavedViews              = "list_saved_views"
+	ToolGetSavedView                = "get_saved_view"
+	ToolRunSavedView                = "run_saved_view"
+	ToolCreateSavedView             = "create_saved_view"
+	ToolUpdateSavedView             = "update_saved_view"
+	ToolDeleteSavedView             = "delete_saved_view"
+	ToolGetMeetingContext           = "get_meeting_context"
+	ToolListMeetingActionItems      = "list_meeting_action_items"
+	ToolGetMeetingMetrics           = "get_meeting_metrics"
+	ToolPreviewIdentityOperation    = "preview_identity_operation"
+	ToolGetIdentityReceipt          = "get_identity_receipt"
+	ToolLinkParticipantIdentity     = "link_participant_identity"
+	ToolUnlinkParticipantIdentity   = "unlink_participant_identity"
+	ToolLinkParticipantToPerson     = "link_participant_to_person"
+	ToolUnlinkParticipantFromPerson = "unlink_participant_from_person"
+	ToolListIdentityMatches         = "list_identity_matches"
+	ToolGetIdentityMatch            = "get_identity_match"
+	ToolAcceptIdentityMatch         = "accept_identity_match"
+	ToolRejectIdentityMatch         = "reject_identity_match"
+	ToolGetPersonMergeContext       = "get_person_merge_context"
+	ToolMergePerson                 = "merge_person"
+	ToolGetCardDAVPublication       = "get_carddav_publication"
+	ToolPreviewCardDAVPublication   = "preview_carddav_publication"
+	ToolApproveCardDAVPublication   = "approve_carddav_publication"
+	ToolSyncCardDAV                 = "sync_carddav"
+	ToolGetCardDAVSyncStatus        = "get_carddav_sync_status"
+	ToolGetIdentityScoringStatus    = "get_identity_scoring_status"
+	ToolScoreIdentityMatches        = "score_identity_matches"
+	ToolListIdentityJudgments       = "list_identity_judgments"
+)
+
+const (
+	ToolPreviewScopedCardDAVPublication   = "preview_scoped_carddav_publication"
+	ToolApproveScopedCardDAVPublication   = "approve_scoped_carddav_publication"
+	ToolReconcileScopedCardDAVPublication = "reconcile_scoped_carddav_publication"
 )
 
 // search_message_bodies/search_in_message mode values (wire format).
@@ -172,9 +185,21 @@ type ServeOptions struct {
 	// IdentityReview is present only when the daemon serves token-guarded
 	// identity match decisions. Older daemons omit these tools entirely.
 	IdentityReview IdentityReviewBackend
+	// IdentityOperations keeps all scope admission and mutations in the daemon.
+	IdentityOperations IdentityOperationBackend
+	// IdentityActions bounds production mutations; nil enables all for library callers.
+	IdentityActions []identitycontrol.Operation
 	// PersonCardDAV is present only when the daemon serves revision-guarded
 	// person merge and token-guarded CardDAV publication routes.
 	PersonCardDAV PersonCardDAVBackend
+
+	ScopedCardDAVPreview   ScopedCardDAVPreviewBackend
+	ScopedCardDAVApprove   ScopedCardDAVApproveBackend
+	ScopedCardDAVReconcile ScopedCardDAVReconcileBackend
+
+	// PersonMerge and PersonRecords expose only native contact routes.
+	PersonMerge   PersonMergeBackend
+	PersonRecords PersonRecordsBackend
 	// IdentityScoring exposes consented manual scoring. Consent is
 	// recorded through the CLI/API, never by an MCP tool.
 	IdentityScoring IdentityScoringBackend
@@ -205,16 +230,18 @@ func officialToolHandler(
 		var session *sdkmcp.ServerSession
 		var inputResponses sdkmcp.InputResponseMap
 		var toolName, requestState string
+		var argumentsJSON []byte
 		if request != nil {
 			session = request.Session
 			if request.Params != nil {
+				argumentsJSON = request.Params.Arguments
 				inputResponses = request.Params.InputResponses
 				toolName = request.Params.Name
 				requestState = request.Params.RequestState
 			}
 		}
 		result, err := handler(ctx, toolRequest{
-			arguments: arguments, session: session, inputResponses: inputResponses,
+			arguments: arguments, argumentsJSON: argumentsJSON, session: session, inputResponses: inputResponses,
 			toolName: toolName, requestState: requestState, confirmations: confirmation.manager,
 			confirmationSessionKey:        confirmation.sessionKey,
 			requireConfirmationSessionKey: confirmation.requireSessionKey,
@@ -380,11 +407,22 @@ func newMCPServerWithPolicy(
 		personAgendaBackend: opts.PersonAgendaBackend,
 		kata:                opts.Kata,
 		identityReview:      opts.IdentityReview,
+		identityOperations:  opts.IdentityOperations,
 		personCardDAV:       opts.PersonCardDAV,
-		identityScoring:     opts.IdentityScoring,
-		drafts:              opts.Drafts,
+
+		scopedCardDAVPreview:   opts.ScopedCardDAVPreview,
+		scopedCardDAVApprove:   opts.ScopedCardDAVApprove,
+		scopedCardDAVReconcile: opts.ScopedCardDAVReconcile,
+
+		personMerge:     opts.PersonMerge,
+		personRecords:   opts.PersonRecords,
+		identityScoring: opts.IdentityScoring,
+		drafts:          opts.Drafts,
 	}
 
+	if h.personMerge == nil {
+		h.personMerge = opts.PersonCardDAV
+	}
 	for _, definition := range operationCatalog(opts, h) {
 		if definition.security == toolSecurityWrite && !allowWrites {
 			continue

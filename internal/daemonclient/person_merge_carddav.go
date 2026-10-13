@@ -142,12 +142,14 @@ func SafeMCPError(err error) error {
 		switch apiErr.Code {
 		case "microsoft_contact_too_large":
 			return fmt.Errorf("daemon request failed (%d, %s): %s", apiErr.Status, apiErr.Code, operations.FixedPublicError(operations.PublicErrorMicrosoftContactTooLarge).Message)
-		case "person_merge_revision_conflict", "person_merge_idempotency_conflict",
+		case "identity_denied", "identity_conflict", "invalid_identity_request", "identity_scope_too_large", "identity_not_found", "identity_operations_unavailable", "identity_operation_failed",
+			"person_merge_revision_conflict", "person_merge_idempotency_conflict",
 			"invalid_if_match", "invalid_idempotency_key", "if_match_required", "idempotency_key_required",
 			"person_profile_not_found", "person_merge_invalid", "person_merge_failed",
 			"person_carddav_published", "person_merge_required",
 			"carddav_review_stale", "carddav_inference_review_required",
 			"carddav_unavailable", "google_authorization_required", "microsoft_authorization_required", "carddav_preview_too_large",
+			"carddav_scope_unavailable", "carddav_receipt_not_found",
 			"carddav_conflict_stale", "carddav_conflict_pending", "carddav_publication_pending",
 			"carddav_retry_after", "carddav_upstream_failed", "carddav_storage_failed", "carddav_failed",
 			"bad_request", "not_found", "conflict", "invalid_request",

@@ -867,6 +867,17 @@ func (s *Store) withTxOptionsContext(
 	return s.withTxLockedContext(ctx, opts, nil, fn)
 }
 
+// withIdentityTxContext reserves the identity writer before sync-generation
+// fencing or any snapshot reads. Native contact writers use this entry point
+// so scoped and unscoped stores share the same ownership lock order.
+func (s *Store) withIdentityTxContext(
+	ctx context.Context, opts *sql.TxOptions, fn func(*loggedTx) error,
+) error {
+	return s.withTxLockedContext(ctx, opts, func(tx *loggedTx) error {
+		return s.lockIdentityMutationTxContext(ctx, tx)
+	}, fn)
+}
+
 // withTxLockedContext runs preFence after BEGIN and before the sync-generation
 // fence, so locks that must precede sync_runs are taken first.
 func (s *Store) withTxLockedContext(

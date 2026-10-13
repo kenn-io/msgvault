@@ -362,6 +362,10 @@ func writeOperationGateBusy(w http.ResponseWriter, r *http.Request, gate Operati
 // DELETE /api/v1/agent-tokens/{id} uses a dynamic path; its exemption is
 // handled by the strings.HasPrefix check in operationGateRequest below.
 var operationGateExemptPaths = map[string]bool{
+	// Identity operations authorize before taking the write gate.
+	identityOperationsPath + "/preview": true,
+	identityOperationsPath + "/apply":   true,
+
 	// Calendar control acquires the gate after parsing, authorization, and preview.
 	"/api/v1/calendar/control": true,
 	// Scoring coordinates the gate around local mutations, never provider I/O.
@@ -517,6 +521,12 @@ func operationGateRequest(r *http.Request, auth requestAuthentication) (bool, st
 	}
 	switch r.Method {
 	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return false, "", nil
+	}
+	// Scoped publication checks current authority and saved receipts before
+	// acquiring its own gate. An outer gate would deadlock owner requests and
+	// prevent observation of already settled receipts.
+	if strings.HasPrefix(r.URL.Path, scopedCardDAVPublicationPath) {
 		return false, "", nil
 	}
 	if operationGateExemptPaths[r.URL.Path] || strings.HasPrefix(r.URL.Path, agentTokensPath+"/") {

@@ -6,6 +6,7 @@ type LoginSessionBody = SessionLoginRequest
 
 type AddAccountBody = AddAccountRequest
 
+// IssueAgentTokenBody Select 1–100 explicit resources in total across sources, people and address books.
 type IssueAgentTokenBody = AgentTokenIssueRequest
 
 type CreateAttributeDefinitionBody = CreateAttributeDefinitionRequest
@@ -31,6 +32,10 @@ type BeginGoogleCardDAVAuthorizationBody = CardDAVGoogleAuthorizeRequest
 type CompleteGoogleCardDAVAuthorizationBody = CardDAVGoogleCallbackRequest
 
 type ApproveCardDAVPublicationBody = CardDAVPublicationApprovalRequest
+
+type ApproveScopedCardDAVPublicationBody = CardDAVScopedPublicationApprovalRequest
+
+type ReconcileScopedCardDAVPublicationBody = CardDAVScopedPublicationApprovalRequest
 
 type SyncCardDAVBody = CardDAVSyncRequest
 
@@ -107,6 +112,10 @@ type LinkIdentityParticipantsBody = IdentityLinkRequest
 type ReviewAcceptIdentityMatchCandidateBody = DecideIdentityMatchReviewedRequest
 
 type ReviewRejectIdentityMatchCandidateBody = DecideIdentityMatchReviewedRequest
+
+type ApplyIdentityOperationBody = IdentityOperationApplyRequest
+
+type PreviewIdentityOperationBody = PreviewRequest
 
 type PersonMatchScoringConsentBody = PersonMatchConsentDecisionRequest
 

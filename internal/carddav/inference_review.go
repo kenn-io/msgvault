@@ -114,6 +114,11 @@ func (s *Service) currentPublicationPlan(ctx context.Context, personID int64) (*
 	if err != nil {
 		return nil, plan, err
 	}
+	return s.publicationPlanFromSource(ctx, personID, source)
+}
+
+func (s *Service) publicationPlanFromSource(ctx context.Context, personID int64, source *store.CardDAVPublicationReviewSource) (*store.CardDAVPublicationReviewSource, store.CardDAVPublicationPlan, error) {
+	var plan store.CardDAVPublicationPlan
 	if err := s.requireOwnBook(ctx, source.Book.ID); err != nil {
 		return nil, plan, err
 	}

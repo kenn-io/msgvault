@@ -12,6 +12,7 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.kenn.io/msgvault/internal/daemonclient"
+	"go.kenn.io/msgvault/internal/identitycontrol"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector/visual"
@@ -56,6 +57,7 @@ type catalogCapabilities struct {
 	kataDocbank     bool
 	identityReview  bool
 	personCardDAV   bool
+	personMerge     bool
 }
 
 func visualSearchAvailable(capabilities catalogCapabilities) bool {
@@ -142,6 +144,7 @@ func capabilitiesFor(opts ServeOptions) catalogCapabilities {
 		kataDocbank:     opts.Kata != nil && opts.KataDocbank,
 		identityReview:  opts.IdentityReview != nil,
 		personCardDAV:   opts.PersonCardDAV != nil,
+		personMerge:     opts.PersonMerge != nil || opts.PersonCardDAV != nil,
 	}
 }
 
@@ -180,6 +183,43 @@ func operationCatalog(opts ServeOptions, _ *handlers) []toolDefinition {
 	if opts.DelegatedOnly && opts.Engine != nil {
 		for _, definition := range stableOperationCatalogs.get(capabilitiesFor(opts)) {
 			if permission, ok := agentReadToolPermission(definition.name); ok && slices.Contains(opts.GrantPermissions, string(permission)) {
+				definitions = append(definitions, definition)
+			}
+		}
+	}
+	if opts.IdentityOperations != nil {
+		actions := map[string]identitycontrol.Operation{
+			ToolLinkParticipantIdentity:     identitycontrol.OperationGraphLink,
+			ToolUnlinkParticipantIdentity:   identitycontrol.OperationGraphUnlink,
+			ToolLinkParticipantToPerson:     identitycontrol.OperationPersonLink,
+			ToolUnlinkParticipantFromPerson: identitycontrol.OperationPersonUnlink,
+		}
+		for _, definition := range stableIdentityOperationDefinitions() {
+			if action, write := actions[definition.name]; write && opts.IdentityActions != nil && !slices.Contains(opts.IdentityActions, action) {
+				continue
+			}
+			definitions = append(definitions, definition)
+		}
+	}
+	if opts.PersonRecords != nil && (!opts.DelegatedOnly || slices.Contains(opts.GrantPermissions, "person.read")) {
+		for _, definition := range stablePersonRecordDefinitions {
+			if !opts.DelegatedOnly || definition.security == toolSecurityRead || slices.Contains(opts.GrantPermissions, "person.edit") {
+				definitions = append(definitions, definition)
+			}
+		}
+	}
+	if opts.DelegatedOnly && opts.PersonMerge != nil && slices.Contains(opts.GrantPermissions, "person.read") {
+		definitions = append(definitions, getPersonMergeContextDefinition())
+		if slices.Contains(opts.GrantPermissions, "person.merge") {
+			definitions = append(definitions, mergePersonDefinition())
+		}
+	}
+	if !opts.DelegatedOnly || slices.Contains(opts.GrantPermissions, "person.read") && slices.Contains(opts.GrantPermissions, "carddav.write") {
+		for _, definition := range scopedCardDAVDefinitions() {
+			available := definition.name == ToolPreviewScopedCardDAVPublication && opts.ScopedCardDAVPreview != nil ||
+				definition.name == ToolApproveScopedCardDAVPublication && opts.ScopedCardDAVApprove != nil ||
+				definition.name == ToolReconcileScopedCardDAVPublication && opts.ScopedCardDAVReconcile != nil
+			if available {
 				definitions = append(definitions, definition)
 			}
 		}

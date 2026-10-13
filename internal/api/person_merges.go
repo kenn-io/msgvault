@@ -63,7 +63,8 @@ func (s *Server) registerPersonMergeRoutes(api huma.API) {
 	addPersonETagHeader(merge.Responses[httpStatusKey(http.StatusOK)])
 	addErrorResponses(api, merge.Responses, http.StatusBadRequest, http.StatusConflict,
 		http.StatusNotFound, http.StatusPreconditionRequired, http.StatusInternalServerError,
-		http.StatusServiceUnavailable)
+		http.StatusServiceUnavailable, http.StatusForbidden, http.StatusRequestEntityTooLarge,
+		http.StatusNotImplemented)
 	registerRawHumaRoute(api, merge, s.handleMergePersons)
 
 	split := rawAPIV1Operation("splitPersonMerge", http.MethodPost, "/people/{id}/split",
@@ -148,12 +149,29 @@ func (s *Server) handleMergePersons(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	result, err := profiles.MergePersonsContext(r.Context(), store.PersonMergeRequest{
+	request := store.PersonMergeRequest{
 		SurvivorID: survivorID, AbsorbedID: body.AbsorbedPersonID,
 		ExpectedSurvivorRevision: revisions[survivorID],
 		ExpectedAbsorbedRevision: revisions[body.AbsorbedPersonID],
 		IdempotencyKey:           idempotencyKey, Actor: apiPersonMergeActor,
-	})
+	}
+	var result *store.PersonMergeResult
+	var err error
+	if s.requestAuthentication(r).Mode == AuthModeDelegated {
+		backend, authorize, actor, admitted := s.scopedPersonMergeAdmission(w, r, survivorID, body.AbsorbedPersonID)
+		if !admitted {
+			return
+		}
+		release, admitted := s.beginScopedPersonEdit(w, r)
+		if !admitted {
+			return
+		}
+		defer release()
+		request.Actor = actor
+		result, err = backend.MergePersonsAuthorizedContext(r.Context(), request, authorize)
+	} else {
+		result, err = profiles.MergePersonsContext(r.Context(), request)
+	}
 	if err != nil {
 		s.writePersonMergeError(w, err)
 		return
@@ -319,6 +337,14 @@ func (s *Server) writePersonMergeError(w http.ResponseWriter, err error) {
 		return
 	}
 	switch {
+	case errors.Is(err, errPersonScopeDenied):
+		writeError(w, http.StatusForbidden, "person_scope_denied", "Current credentials do not authorize every affected person and address book")
+	case errors.Is(err, store.ErrIdentityOperationTooLarge):
+		writeError(w, http.StatusRequestEntityTooLarge, "person_scope_too_large", "Person merge affects too many resources")
+	case errors.Is(err, store.ErrPersonMergeScopeUnsupported):
+		writeError(w, http.StatusNotImplemented, "person_merge_scope_unsupported", "Scoped person merging cannot authorize organization references")
+	case errors.Is(err, store.ErrPersonMergeLineageConflict):
+		writeError(w, http.StatusConflict, "person_merge_lineage_conflict", "Person merge lineage changed; reload the current people")
 	case errors.Is(err, store.ErrPersonNotFound):
 		writeError(w, http.StatusNotFound, "person_profile_not_found", "Person profile not found")
 	case errors.Is(err, store.ErrPersonMergeNotFound), errors.Is(err, store.ErrPersonSplitNotFound):

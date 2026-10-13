@@ -13,6 +13,7 @@ import type {
   AppendPersonNotePathParameters,
   AppendPersonNoteRequest,
   ApproveCardDAVPublicationPathParameters,
+  ApproveScopedCardDAVPublicationPathParameters,
   AttachmentInfo,
   AttributeDefinition,
   AttributeDefinitionsResponse,
@@ -58,6 +59,8 @@ import type {
   CardDAVPublicationResponse,
   CardDAVResolveRequest,
   CardDAVRunsResponse,
+  CardDAVScopedPublicationApprovalRequest,
+  CardDAVScopedPublicationReceiptResponse,
   CardDAVStatusResponse,
   CardDAVSyncRequest,
   Catalog,
@@ -158,6 +161,7 @@ import type {
   GetFilePathParameters,
   GetGmailIDsByFilterParams,
   GetIdentityMatchCandidatePathParameters,
+  GetIdentityOperationReceiptParams,
   GetImportJobPathParameters,
   GetKataIssueContextParams,
   GetKataIssueContextPathParameters,
@@ -202,6 +206,10 @@ import type {
   IdentityMatchCandidate,
   IdentityMatchCandidatesResponse,
   IdentityMatchRejectResponse,
+  IdentityOperationApplyRequest,
+  IdentityOperationApplyResponse,
+  IdentityOperationPreviewResponse,
+  IdentityReceipt,
   ImportJobRequest,
   ImportJobResponse,
   KataEvidenceLinkRequest,
@@ -265,6 +273,7 @@ import type {
   ListTextConversationMessagesParams,
   ListTextConversationMessagesPathParameters,
   ListTextConversationsParams,
+  MCPCapabilities,
   Manifest,
   MediaSearchResponse,
   MediaSearchStatusResponse,
@@ -362,6 +371,8 @@ import type {
   PersonSummary,
   PersonTracking,
   PreviewCardDAVPublicationPathParameters,
+  PreviewRequest,
+  PreviewScopedCardDAVPublicationPathParameters,
   ProviderCredentialResponse,
   ProviderCredentialWriteRequest,
   PublishCardDAVPersonPathParameters,
@@ -375,6 +386,7 @@ import type {
   PutSettingsProviderCredentialPathParameters,
   QueryRequest,
   QueryResult,
+  ReconcileScopedCardDAVPublicationPathParameters,
   RejectPersonBriefPathParameters,
   RejectPersonBriefRequest,
   RelationshipReviewsResponse,
@@ -982,6 +994,63 @@ export const listCardDAVRuns = (
 ) => {
   return orvalFetch<CardDAVRunsResponse>(
     { url: `/api/v1/carddav/runs`, method: "GET", params },
+    options,
+  );
+};
+/**
+ * @summary Approve one mapped CardDAV update with a durable receipt
+ */
+export const approveScopedCardDAVPublication = (
+  { personId }: ApproveScopedCardDAVPublicationPathParameters,
+  cardDAVScopedPublicationApprovalRequest: CardDAVScopedPublicationApprovalRequest,
+  options?: SecondParameter<
+    typeof orvalFetch<CardDAVScopedPublicationReceiptResponse>
+  >,
+) => {
+  return orvalFetch<CardDAVScopedPublicationReceiptResponse>(
+    {
+      url: `/api/v1/carddav/scoped/publications/${encodeURIComponent(String(personId))}/approve`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: cardDAVScopedPublicationApprovalRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary Preview one authorized mapped CardDAV update
+ */
+export const previewScopedCardDAVPublication = (
+  { personId }: PreviewScopedCardDAVPublicationPathParameters,
+  options?: SecondParameter<
+    typeof orvalFetch<CardDAVPublicationPreviewResponse>
+  >,
+) => {
+  return orvalFetch<CardDAVPublicationPreviewResponse>(
+    {
+      url: `/api/v1/carddav/scoped/publications/${encodeURIComponent(String(personId))}/preview`,
+      method: "GET",
+    },
+    options,
+  );
+};
+/**
+ * @summary Observe an existing reviewed CardDAV update without replaying it
+ */
+export const reconcileScopedCardDAVPublication = (
+  { personId }: ReconcileScopedCardDAVPublicationPathParameters,
+  cardDAVScopedPublicationApprovalRequest: CardDAVScopedPublicationApprovalRequest,
+  options?: SecondParameter<
+    typeof orvalFetch<CardDAVScopedPublicationReceiptResponse>
+  >,
+) => {
+  return orvalFetch<CardDAVScopedPublicationReceiptResponse>(
+    {
+      url: `/api/v1/carddav/scoped/publications/${encodeURIComponent(String(personId))}/reconcile`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: cardDAVScopedPublicationApprovalRequest,
+    },
     options,
   );
 };
@@ -1830,6 +1899,54 @@ export const reviewRejectIdentityMatchCandidate = (
   );
 };
 /**
+ * @summary Apply one signed identity preview or recover its exact committed retry
+ */
+export const applyIdentityOperation = (
+  identityOperationApplyRequest: IdentityOperationApplyRequest,
+  options?: SecondParameter<typeof orvalFetch<IdentityOperationApplyResponse>>,
+) => {
+  return orvalFetch<IdentityOperationApplyResponse>(
+    {
+      url: `/api/v1/identity/operations/apply`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: identityOperationApplyRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary Preview one explicit identity operation without mutation
+ */
+export const previewIdentityOperation = (
+  previewRequest: PreviewRequest,
+  options?: SecondParameter<
+    typeof orvalFetch<IdentityOperationPreviewResponse>
+  >,
+) => {
+  return orvalFetch<IdentityOperationPreviewResponse>(
+    {
+      url: `/api/v1/identity/operations/preview`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: previewRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary Read one committed identity outcome without replaying its mutation
+ */
+export const getIdentityOperationReceipt = (
+  params?: GetIdentityOperationReceiptParams,
+  options?: SecondParameter<typeof orvalFetch<IdentityReceipt>>,
+) => {
+  return orvalFetch<IdentityReceipt>(
+    { url: `/api/v1/identity/operations/receipt`, method: "GET", params },
+    options,
+  );
+};
+/**
  * @summary Grant identity scoring consent
  */
 export const personMatchScoringConsent = (
@@ -2116,6 +2233,17 @@ export const testTaskIntegration = (
 ) => {
   return orvalFetch<TaskIntegrationStatusResponse>(
     { url: `/api/v1/integrations/tasks/test`, method: "POST" },
+    options,
+  );
+};
+/**
+ * @summary Describe admitted identity and CardDAV MCP operations
+ */
+export const getMCPCapabilities = (
+  options?: SecondParameter<typeof orvalFetch<MCPCapabilities>>,
+) => {
+  return orvalFetch<MCPCapabilities>(
+    { url: `/api/v1/mcp/capabilities`, method: "GET" },
     options,
   );
 };

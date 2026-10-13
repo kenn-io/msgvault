@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-06"
+last_edited: "2026-10-12"
 title: CardDAV Contacts
 description: Bring address-book contacts into msgvault, publish selected profiles, and resolve competing edits.
 ---
@@ -326,6 +326,50 @@ without publishing or resolving the conflict. Then run
 The preview route is the one CardDAV response that returns a raw vCard, and
 it can include Private Notes. The Directory UI directs you to the CLI review
 commands when approval is required.
+
+### Recover a reviewed mapped update
+
+On `main` (daemon API 3.16 or newer), scoped publication can update an existing
+mapped CardDAV contact and retain a durable receipt. A delegated token needs
+`person.read` for that person and `carddav.write` for its current write target.
+The native CardDAV transport supports this workflow; Microsoft Graph contacts
+continue to use the owner publication workflow above.
+
+1. Run `msgvault person publish 7 --scoped --preview` and review the returned
+   `vcard`. Save its original `approval_token` and choose an idempotency key
+   of 1–256 UTF-8 bytes.
+2. Run `msgvault person publish 7 --scoped --approve <approval_token> --idempotency-key <key>`.
+   Keep the person, token and key together. Repeating this exact request returns
+   its saved receipt without another provider write. Reusing a key with a
+   different token or person fails.
+3. Inspect `receipt.state`. `verified` means canonical readback matched the
+   reviewed update. `rejected` records a definitive rejection, including a
+   `retry_after` deadline when the provider throttled the request. `dispatching`
+   means the outcome is still unknown.
+4. After a timeout, restart or lost command output, repeat the original request.
+   If its receipt is still `dispatching`, run the same command with `--reconcile`.
+   Recovery observes the saved contact with GET requests and can settle the
+   receipt. It never repeats the PUT. A missing or different remote contact
+   remains unverified and requires owner reconciliation.
+
+An unchanged card produces a verified receipt with `noop: true` without provider
+requests. A rejected request keeps its original outcome; after resolving the
+failure or waiting out throttling, review a fresh preview and use a new key.
+Receipts contain identifiers and digests rather than vCards or credentials.
+Their lookup survives preview expiry, but every read and recovery checks current
+authority. Revoked, expired or narrowed grants, a replaced person or book, or a
+changed write target deny access. Owner historical receipt reads can survive
+resource cleanup without dispatching another update.
+
+API clients use `GET /api/v1/carddav/scoped/publications/{person_id}/preview`
+and `POST` to the same prefix's `/approve` or `/reconcile` route with
+`approval_token` and `idempotency_key`. A settled receipt returns HTTP 200;
+`dispatching` returns HTTP 202. MCP clients discover these routes independently
+through `/api/v1/mcp/capabilities`. The three corresponding tools are
+`preview_scoped_carddav_publication`, `approve_scoped_carddav_publication` and
+`reconcile_scoped_carddav_publication`. The last two require
+`--allow-carddav-writes` and explicit MCP client confirmation. A daemon without
+provider transport can still return retained settled receipts through recovery.
 
 ### Recover a connection removed from config
 

@@ -100,11 +100,13 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.14.0**.
+it is separate from the binary release version. The current schema is **3.17.0**.
 Upgrade clients and daemon together across incompatible schema versions,
 including remote deployments.
 
-Schema 3.11.0 adds `GET /media/search/status` to report whether Docbank transcript search is configured. It also adds source filename, title and date to transcript search results and optional `conversation_title` to `GET /messages/{id}`.
+Schema 3.17.0 adds [reviewed scoped CardDAV publication and recovery](usage/people-carddav.md#recover-a-reviewed-mapped-update) with durable receipts.
+
+Schema 3.15.0 adds [scoped contact grants](#restricted-contact-operations) and delegated native person edits.
 
 Schema 3.9.0 adds source-scoped agent read permissions and optional `expires_at`. Admitted FTS search responses, including aggregates, filtered messages and total statistics with search text, carry optional `index_state`. Agent checks are bounded; owner CLI searches retain automatic verification and repair.
 See [scoped archive reads](cli-reference.md#scoped-archive-reads).
@@ -154,7 +156,10 @@ conflict when one UID resolves to multiple people. Person responses expose
 `carddav_bindings`.
 
 Schema 3.11.0 adds structured `account_scopes` filters, the Explore account
-filter, and the virtual account catalog on `/cli/accounts`.
+filter, and the virtual account catalog on `/cli/accounts`. It also adds
+`GET /media/search/status`, the `participant_id` media search filter, source
+filename, title and date to transcript search results, and optional
+`conversation_title` to `GET /messages/{id}`.
 
 Schema 3.1.0 adds unreleased [calendar event control](#calendar-control),
 availability queries, and opt-in `write` on Calendar consent plans.
@@ -325,6 +330,54 @@ request's `before_id`. The complete contracts are in `/openapi.json` from the
 daemon or printed by `msgvault openapi`. See
 [configuration](configuration.md#people-identity-scoring) and the
 [people guide](usage/people.md#optional-identity-scoring) for setup and consent.
+
+### Explicit identity operations
+
+Unreleased main (API schema 3.16.0, archive schema 5) adds native graph and
+person link/unlink with durable recovery. These operations do not require a
+match candidate. See [the people guide](usage/people.md#apply-an-explicit-identity-change)
+for the workflow and [the CLI reference](cli-reference.md#identity-operations)
+for target fields and limits.
+
+| Route | Request and result |
+|---|---|
+| `POST /api/v1/identity/operations/preview` | `operation` and `target`; returns `snapshot`, `preview_token`, and `expires_at` |
+| `POST /api/v1/identity/operations/apply` | Same operation and target, plus `expected_fingerprint`, `preview_token`, and `idempotency_key`; returns the committed receipt and `cache_state` |
+| `GET /api/v1/identity/operations/receipt` | Select `idempotency_key`; owner recovery can instead select `receipt_id`, or `principal` with `idempotency_key` |
+
+`operation` is `graph-link`, `graph-unlink`, `person-link`, or `person-unlink`.
+Person operations affect every member of the target participant's linked
+component, disclosed as `component_members` in the preview.
+JSON requests require `Content-Type: application/json` and are limited to
+16 KiB. Unknown, noncanonical, duplicate, and null fields are rejected. The
+signed preview binds the exact request, principal, authority, and native
+evidence for five minutes. Apply checks those values again inside the native
+transaction. The effect and digest-only receipt commit together.
+
+An exact committed retry returns the saved receipt without requiring an
+unexpired preview. After a lost response, use receipt lookup before retrying.
+`504 identity_outcome_unknown` means the caller must reconcile with that
+original key. A stale preview, changed evidence, blocked effect, or reused key
+returns `409 identity_conflict`; scope denial returns `403 identity_denied`.
+More than 100 affected participants returns `413 identity_scope_too_large`.
+`cache_state` is `ready`, `stale`, or `unknown`; it does not change whether the
+archive effect committed.
+
+Delegated preview and receipt reads need `identity.read` over all affected
+sources, saved person UIDs, and address-book ownership identities. Apply also
+needs the corresponding `identity.link` or `identity.unlink` permission.
+Receipt read and retry admission recheck current grants and both original and
+current resource identities. Revoked or expired grants cannot recover a
+receipt; an owner can recover it without replaying a mutation, including after
+archive cleanup. Receipt ID and prior-principal selectors are owner-only.
+
+MCP discovers these contracts through `GET /api/v1/mcp/capabilities`.
+The version-1 descriptor lists registered route methods, paths, request and
+query fields, caller mode, and currently admitted identity operations. MCP
+requires matching preview and receipt contracts before offering identity
+tools, and a matching apply contract for each admitted action. Missing or
+incompatible discovery leaves these tools unavailable. Authorization is
+checked again on every call.
 
 ### Archive and processing boundaries
 
@@ -2774,14 +2827,31 @@ reads select only granted sources. Explicit accounts, collections, and source ID
 sets must fit entirely inside the grant. A missing permission or an account
 selector outside the grant returns `403 permission_denied` and names the
 permission. A message, thread, or attachment outside the grant returns the same
-`404` as a missing one. At most two agent reads run at once; others wait, and a
+`404` as a missing one. At most two delegated archive reads run at once; others wait, and a
 request that ends while waiting returns `503 agent_read_busy`. Unsupported routes remain
-owner-only, including SQL, exports, writes, configuration, and grant management.
+owner-only, including SQL, exports, configuration, and grant management.
+Native contact writes have a separate explicit resource grant described below.
 
 Delegated reads use the daemon's ordinary request deadline, normally 60 seconds.
 
 See [agent-token](cli-reference.md#agent-token) for grant lifetime, expiry,
 revocation, issuance, remote CLI and MCP usage, and supported read capabilities.
+
+### Restricted contact operations
+
+Unreleased main (schema 3.15.0) adds `person_ids` and `address_book_ids` to
+`POST /api/v1/agent-tokens`. The daemon resolves current UID and ownership
+references and returns them in `persons` and `address_books`. Existing source
+selections, expiry, listing, self-inspection and revocation retain their behavior.
+
+Delegated callers can read `GET /people/{id}`, `GET /people/{id}/profile`, and
+`GET /people/{id}/attributes`; patch the first two; set or clear
+`/people/{id}/attributes/{slug}`; and `POST /people/{id}/merge`. These paths are
+relative to `/api/v1`. Each mutation uses native transaction authorization.
+See [scoped contact edits](cli-reference.md#scoped-contact-edits) for exact
+permissions, resource bounds, ETag and slot CAS requirements, and denial codes.
+Explicit [identity operations](#explicit-identity-operations) use separate
+scoped permissions. Other person and identity routes remain owner-only.
 
 ## Configuration Reference
 

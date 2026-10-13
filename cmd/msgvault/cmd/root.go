@@ -263,6 +263,9 @@ func skipsConfigLoad(cmd *cobra.Command) bool {
 // work without local configuration or a local daemon are permitted; all others
 // must be run by the owner.
 func agentDelegatedCapable(cmd *cobra.Command) bool {
+	if isIdentityOperationCommand(cmd) {
+		return true
+	}
 	for ancestor := cmd; ancestor != nil; ancestor = ancestor.Parent() {
 		if ancestor.Name() == "calendar" {
 			return true

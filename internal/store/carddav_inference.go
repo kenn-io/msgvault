@@ -577,12 +577,18 @@ func CardDAVCurrentReviewFence(source *CardDAVPublicationReviewSource, body []by
 }
 
 func (s *Store) PrepareReviewedCardDAVPublicationContext(ctx context.Context, plan CardDAVReviewedPublicationPlan) (*CardDAVPublication, error) {
+	return s.PrepareReviewedCardDAVPublicationAuthorizedContext(ctx, plan, nil)
+}
+
+// PrepareReviewedCardDAVPublicationAuthorizedContext checks native person and
+// address-book authority under the existing preparation fence before any write.
+func (s *Store) PrepareReviewedCardDAVPublicationAuthorizedContext(ctx context.Context, plan CardDAVReviewedPublicationPlan, authorize PersonEditAuthorizer) (*CardDAVPublication, error) {
 	if !plan.Publication.Desired || plan.Publication.PersonID <= 0 || plan.Publication.AddressBookID <= 0 ||
 		plan.Publication.Href == "" || len(plan.Publication.OutgoingBody) == 0 || plan.Publication.OutgoingSemanticHash == "" ||
 		plan.Publication.LocalHash == "" || plan.ApprovalToken == "" {
 		return nil, ErrCardDAVInvalidPlan
 	}
-	return s.prepareCardDAVPublicationContext(ctx, plan.Publication, &plan)
+	return s.prepareCardDAVPublicationContext(ctx, plan.Publication, &plan, authorize)
 }
 
 func (s *Store) approveCardDAVInferenceTx(ctx context.Context, tx *loggedTx, state CardDAVInferenceExportState, generation, bookID int64) error {
@@ -710,6 +716,9 @@ func (s *Store) putCardDAVPublicationEnvelopeTx(ctx context.Context, tx *loggedT
 }
 
 func (s *Store) lockCardDAVPublicationTargetTx(ctx context.Context, tx *loggedTx, bookID int64) error {
+	if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+		return err
+	}
 	account, err := getCardDAVAccountForBookFrom(ctx, tx.Tx, s.Rebind, bookID)
 	if err != nil {
 		return err

@@ -26,7 +26,7 @@ import (
 )
 
 // allowedDelegatedOps is the exact set. Keep in sync with delegatedOperationAllowed.
-var allowedDelegatedOps = []string{"runCLI", "getHealth", "controlCalendar", "getAgentTokenSelf"}
+var allowedDelegatedOps = []string{"runCLI", "getHealth", "controlCalendar", "getAgentTokenSelf", "getMCPCapabilities", "previewIdentityOperation", "applyIdentityOperation", "getIdentityOperationReceipt"}
 
 // stubSourceResolverStore wraps mockStore and adds GetSourceByIDContext.
 type stubSourceStore struct {
@@ -300,6 +300,15 @@ func TestDelegatedOperationAllowlistIsClosed(t *testing.T) {
 	}
 	allowed := make(map[string]bool, len(allowedDelegatedOps))
 	for _, op := range allowedDelegatedOps {
+		allowed[op] = true
+	}
+	// These routes perform their own native person/UID/book authorization.
+	// The person-delegation tests exercise their permitted and denied writes.
+	for _, op := range []string{"getPersonProfile", "patchPerson", "getPersonStructuredProfile", "patchPersonStructuredProfile", "listPersonAttributes", "setPersonAttribute", "clearPersonAttribute", "mergePersons"} {
+		allowed[op] = true
+	}
+	// Discovery and publication routes validate current person/book authority.
+	for _, op := range []string{"getMCPCapabilities", "previewScopedCardDAVPublication", "approveScopedCardDAVPublication", "reconcileScopedCardDAVPublication"} {
 		allowed[op] = true
 	}
 	specRec := httptest.NewRecorder()
