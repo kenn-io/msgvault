@@ -347,6 +347,31 @@ func TestExpandExceptionEffectiveType(t *testing.T) {
 	}
 }
 
+func TestExpandAllDayExceptionUsesCalendarZone(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	seriesZone, err := time.LoadLocation("America/Los_Angeles")
+	requirements.NoError(err)
+	calendarZone, err := time.LoadLocation("Asia/Tokyo")
+	requirements.NoError(err)
+	nominalStart := instant(t, "2027-03-13T17:00:00Z")
+	set, err := ParseSet(nominalStart, false, "", seriesZone, []string{"RRULE:FREQ=DAILY;COUNT=1"})
+	requirements.NoError(err)
+	start := time.Date(2027, time.March, 13, 0, 0, 0, 0, calendarZone).UTC()
+	end := time.Date(2027, time.March, 14, 0, 0, 0, 0, calendarZone).UTC()
+	exception := Exception{
+		Original:  timed(t, "2027-03-13T17:00:00Z"),
+		StartDate: "2027-03-13", EndDate: "2027-03-14",
+		Zone: calendarZone,
+	}
+	got, err := Expand(t.Context(), set, time.Hour, 0, []Exception{exception}, start, end, 100)
+	requirements.NoError(err)
+	requirements.Len(got, 1)
+	assertions.True(got[0].AllDay)
+	assertions.Equal(start, got[0].Start.UTC())
+	assertions.Equal(end, got[0].End.UTC())
+}
+
 func TestExpandExceptionInvalidDates(t *testing.T) {
 	for _, e := range []Exception{
 		{StartDate: "2027-02-30", EndDate: "2027-03-15"},

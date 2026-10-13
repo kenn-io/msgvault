@@ -11,12 +11,13 @@ import (
 // Exception overrides a generated instance at Original, preserving its identity.
 // Any date bound makes the effective event all-day; otherwise any instant bound
 // makes it timed. With no bounds, the master's type and bounds are inherited.
-// All-day endpoints use their date, instant's local date, or nominal local date,
-// in that order. Missing timed endpoints inherit their nominal instants.
+// Missing all-day dates are derived from effective bounds in Zone, or the series
+// zone when Zone is nil. Missing timed endpoints inherit their nominal instants.
 type Exception struct {
 	Original           Identity
 	Start, End         *time.Time
 	StartDate, EndDate string
+	Zone               *time.Location // Date-bound zone; nil inherits the recurrence set zone.
 	Cancelled          bool
 	Ref                int64
 }
@@ -58,6 +59,10 @@ func effective(s Set, e Exception, duration time.Duration, durationDays int) (Oc
 	if err != nil {
 		return Occurrence{}, unsupported("original identity", err)
 	}
+	zone := e.Zone
+	if zone == nil {
+		zone = s.location()
+	}
 	o := Occurrence{Original: e.Original, AllDay: s.AllDay, BoundsKnown: true}
 	if e.StartDate != "" || e.EndDate != "" {
 		o.AllDay = true
@@ -69,17 +74,17 @@ func effective(s Set, e Exception, duration time.Duration, durationDays int) (Oc
 			o.StartDate = e.Original.Date
 			o.EndDate, err = addCivilDays(e.Original.Date, durationDays)
 		} else {
-			o.StartDate = start.In(s.location()).Format(dateLayout)
-			o.EndDate = start.Add(duration).In(s.location()).Format(dateLayout)
+			o.StartDate = start.In(zone).Format(dateLayout)
+			o.EndDate = start.Add(duration).In(zone).Format(dateLayout)
 		}
 		if err != nil {
 			return Occurrence{}, unsupported("exception nominal dates", err)
 		}
 		if e.Start != nil {
-			o.StartDate = e.Start.In(s.location()).Format(dateLayout)
+			o.StartDate = e.Start.In(zone).Format(dateLayout)
 		}
 		if e.End != nil {
-			o.EndDate = e.End.In(s.location()).Format(dateLayout)
+			o.EndDate = e.End.In(zone).Format(dateLayout)
 		}
 		if e.StartDate != "" {
 			o.StartDate = e.StartDate
@@ -87,11 +92,11 @@ func effective(s Set, e Exception, duration time.Duration, durationDays int) (Oc
 		if e.EndDate != "" {
 			o.EndDate = e.EndDate
 		}
-		o.Start, err = localDateStart(o.StartDate, s.location())
+		o.Start, err = localDateStart(o.StartDate, zone)
 		if err != nil {
 			return Occurrence{}, unsupported("exception start date", err)
 		}
-		o.End, _, err = localDateBoundary(o.EndDate, s.location())
+		o.End, _, err = localDateBoundary(o.EndDate, zone)
 		if err != nil {
 			return Occurrence{}, unsupported("exception end date", err)
 		}
