@@ -662,11 +662,6 @@ func (s *Store) optimizeSQLiteWithin(ctx context.Context, timeout time.Duration)
 	return nil
 }
 
-type sqliteStatisticsExecer interface {
-	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
-	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
-}
-
 // dropFTSDataStatistics keeps planner statistics off FTS5 _data shadow tables.
 // FTS5 merges segments by deleting rowid ranges from _data, and trigger-
 // maintained indexes merge on nearly every insert. ANALYZE on a new archive
@@ -674,7 +669,7 @@ type sqliteStatisticsExecer interface {
 // a full scan, so ingest time grows with the square of the index size. FTS5
 // reaches these tables only through rowid and primary-key statements, so
 // statistics never improve their plans.
-func dropFTSDataStatistics(ctx context.Context, db sqliteStatisticsExecer) error {
+func dropFTSDataStatistics(ctx context.Context, db contextStatementQuerier) error {
 	var analyzed bool
 	err := db.QueryRowContext(ctx,
 		`SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'sqlite_stat1')`,
