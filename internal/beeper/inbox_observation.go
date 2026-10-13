@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
-	"fmt"
 	"net/http"
 	"net/url"
 	"time"
@@ -159,6 +158,6 @@ func (p *InboxProvider) Observe(ctx context.Context, request inboxcontrol.Reques
 		return inboxcontrol.State{}, inboxcontrol.ErrUnavailable
 	}
 	digest := sha256.Sum256(encoded)
-	state.Revision = fmt.Sprintf("beeper-observation-v1:%s", hex.EncodeToString(digest[:]))
+	state.Revision = "beeper-observation-v1:" + hex.EncodeToString(digest[:])
 	return state, nil
 }

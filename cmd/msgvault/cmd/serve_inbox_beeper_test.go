@@ -159,9 +159,9 @@ func TestBeeperInboxControlPersistsMetadataUnderSourceFence(t *testing.T) {
 	require.NoError(t, err)
 	before := beeperUnrelatedState(t, a)
 	peer.onInfo = func() {
-		assert.ErrorIs(t, a.store.RemoveSource(target.SourceID), store.ErrSyncAlreadyActive)
+		require.ErrorIs(t, a.store.RemoveSource(target.SourceID), store.ErrSyncAlreadyActive)
 		execution, err := a.store.AcquireSyncExecutionContext(t.Context(), target.SourceID)
-		assert.ErrorIs(t, err, store.ErrSyncAlreadyActive)
+		require.ErrorIs(t, err, store.ErrSyncAlreadyActive)
 		if execution != nil {
 			assert.NoError(t, execution.Release())
 		}
@@ -313,6 +313,7 @@ func TestBeeperInboxHTTPGeneratedSDKMCPCLIAndCurrentGrants(t *testing.T) {
 }
 
 func testBeeperInboxWireScenario(t *testing.T, scenario string) {
+	t.Helper()
 	a, target := beeperInboxFixture(t)
 	peer := newBeeperControlPeer(t, a)
 	const ownerKey = "synthetic-beeper-owner-key"
@@ -341,7 +342,10 @@ func testBeeperInboxWireScenario(t *testing.T, scenario string) {
 		t.Helper()
 		response := call(http.MethodPost, "/api/v1/agent-tokens", map[string]any{"label": "synthetic-beeper", "permissions": permissions, "source_ids": sources}, "")
 		require.Equal(t, http.StatusCreated, response.Code, response.Body.String())
-		var grant struct{ ID, Secret string }
+		var grant struct {
+			ID     string `json:"id"`
+			Secret string `json:"secret"`
+		}
 		require.NoError(t, json.Unmarshal(response.Body.Bytes(), &grant))
 		return grant.ID, grant.Secret
 	}
@@ -490,7 +494,6 @@ func testBeeperInboxWireScenario(t *testing.T, scenario string) {
 		return
 	}
 	if scenario != "grants" {
-
 		session := nativeInboxMCPSession(t, daemon)
 		_, err = daemon.Health(t.Context())
 		require.NoError(t, err)

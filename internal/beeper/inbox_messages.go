@@ -26,23 +26,23 @@ type inboxWindow struct {
 	Stopped       string
 }
 
-func inboxIncomingCandidate(raw []byte, target inboxcontrol.Target) (*inboxCandidate, error) {
+func inboxIncomingCandidate(raw []byte, target inboxcontrol.Target) (inboxCandidate, bool, error) {
 	var message Message
 	if err := json.Unmarshal(raw, &message); err != nil {
-		return nil, inboxcontrol.ErrUnavailable
+		return inboxCandidate{}, false, inboxcontrol.ErrUnavailable
 	}
 	if message.ID == "" || message.ChatID != target.ProviderID || message.AccountID != target.AccountID || message.SortKey == "" || message.Timestamp.IsZero() {
-		return nil, inboxcontrol.ErrUnavailable
+		return inboxCandidate{}, false, inboxcontrol.ErrUnavailable
 	}
 	object, err := decodeInboxObject(message.Raw)
 	if err != nil {
-		return nil, err
+		return inboxCandidate{}, false, err
 	}
 	sender := inboxBoolean(object["isSender"])
 	if sender == nil || *sender {
-		return nil, nil
+		return inboxCandidate{}, false, nil
 	}
-	return &inboxCandidate{ID: message.ID, SortKey: message.SortKey}, nil
+	return inboxCandidate{ID: message.ID, SortKey: message.SortKey}, true, nil
 }
 
 func (p *InboxProvider) localInboxWindow(ctx context.Context, target inboxcontrol.Target) inboxWindow {
@@ -93,13 +93,13 @@ func (p *InboxProvider) localInboxWindow(ctx context.Context, target inboxcontro
 				return window
 			}
 			seenIDs[id] = true
-			candidate, err := inboxIncomingCandidate(raw, target)
+			candidate, incoming, err := inboxIncomingCandidate(raw, target)
 			if err != nil {
 				window.Stopped = "message"
 				return window
 			}
-			if candidate != nil {
-				window.Candidates = append(window.Candidates, *candidate)
+			if incoming {
+				window.Candidates = append(window.Candidates, candidate)
 			}
 			metadata := inboxObject{}
 			for _, key := range []string{"id", "chatID", "accountID", "sortKey", "timestamp", "isSender", "isHidden", "isDeleted"} {
