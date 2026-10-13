@@ -150,7 +150,7 @@ func TestInboxObservationBoundsAndRedirect(t *testing.T) {
 		provider := NewInboxProvider(peer.client(t), inboxTestSource())
 		target := inboxTestTarget()
 		_, err := provider.Observe(t.Context(), inboxcontrol.Request{Operation: inboxcontrol.OpGetState, Target: &target})
-		assert.ErrorIs(t, err, inboxcontrol.ErrUnavailable)
+		require.ErrorIs(t, err, inboxcontrol.ErrUnavailable)
 	}
 	var redirected atomic.Int32
 	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { redirected.Add(1); _, _ = w.Write([]byte(inboxTestChat)) }))
@@ -160,7 +160,7 @@ func TestInboxObservationBoundsAndRedirect(t *testing.T) {
 	provider := NewInboxProvider(NewClient(server.URL, testToken, 10000), inboxTestSource())
 	target := inboxTestTarget()
 	_, err := provider.Observe(t.Context(), inboxcontrol.Request{Operation: inboxcontrol.OpGetState, Target: &target})
-	assert.ErrorIs(t, err, inboxcontrol.ErrUnavailable)
+	require.ErrorIs(t, err, inboxcontrol.ErrUnavailable)
 	assert.EqualValues(t, 0, redirected.Load())
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
