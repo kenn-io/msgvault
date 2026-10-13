@@ -100,9 +100,13 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.14.0**.
+it is separate from the binary release version. The current schema is **3.16.0**.
 Upgrade clients and daemon together across incompatible schema versions,
 including remote deployments.
+
+Schema 3.16.0 adds owner-only native resource discovery and source/inbox subscriptions to [MCP Events](#mcp-events).
+
+Schema 3.15.0 adds owner-only [MCP Events](#mcp-events) and typed calendar projections on message details.
 
 Schema 3.11.0 adds `GET /media/search/status` to report whether Docbank transcript search is configured. It also adds source filename, title and date to transcript search results and optional `conversation_title` to `GET /messages/{id}`.
 
@@ -482,6 +486,47 @@ Messages already committed remain archived after a failure. Submit a new job
 with the same account and bounds to continue through the normal resumable
 importer. Leave `noresume` false when you want to reuse available progress.
 There is no dedicated cancellation endpoint for these jobs.
+
+## MCP Events
+
+Schema 3.15.0 adds these owner-key-only endpoints. Schema 3.16.0 adds
+`POST /resources` and source/inbox subscription families. These routes accept no
+caller-supplied principal. Browser sessions, delegated agent tokens, and keyless
+access cannot use them. Disabled Events has no advertised capability.
+
+| Method | Path under `/api/v1/mcp/events` | Result |
+|---|---|---|
+| POST | `/resources` | Paginated native resource identities and current capabilities |
+| POST | `/list` | Runtime catalog; request body `{}` |
+| POST | `/subscribe` | Verified subscription ID, cursor, refresh deadline, and truncation flag |
+| POST | `/unsubscribe` | End the selected subscription; `204` on success |
+| GET | `/status` | Safe subscription delivery state |
+| GET | `/calendar-sources` | Subscribable calendar source IDs, summaries, and accounts |
+| GET | `/event?event_id=...` | Retained occurrence envelope |
+| GET | `/messages/{id}?event_id=...` | Full message details authorized by that occurrence |
+
+`POST /resources` accepts required `kind` (`source`, `conversation`, or
+`inbox`), optional decimal `source_id`, `limit` (default 25, maximum 100), and
+`cursor`. It returns `resources` and, when another page exists, `next_cursor`.
+Keep all filters and the page size unchanged when continuing a page. Each
+resource includes its `id`, lifetime `reference`, native `provider_id`, source
+identity, display name, and `capabilities`; inbox resources also identify their
+native `scope_kind`.
+
+Resource discovery remains available to the owner while Events is disabled,
+with empty event capabilities and reason `events_disabled`. It does not
+contact a provider, enable capture, or create the signing key. Invalid queries
+and stale or mismatched cursors return a fixed request error. This read route
+shares the owner-only authentication and `no-store` rules below.
+
+POST bodies reject unknown fields. Callback destinations and encrypted secrets
+are never returned by status. Authenticated owner health includes `mcp_events`
+and, when enabled, `mcp_event_capabilities`; public and delegated health omit
+these fields. All Events responses use `Cache-Control: no-store`.
+
+The [MCP Events guide](usage/chat.md#events) owns scope arguments, signed
+verification, delivery and replay behavior, read authority, and transport limits.
+The generated OpenAPI document owns the exact request and error schemas.
 
 ## API Endpoints
 

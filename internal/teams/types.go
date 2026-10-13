@@ -34,6 +34,7 @@ type Channel struct {
 // ---- Messages ----
 
 type ChatMessage struct {
+	ChatID               string       `json:"chatId"`
 	ID                   string       `json:"id"`
 	ReplyToID            string       `json:"replyToId"`
 	MessageType          string       `json:"messageType"`

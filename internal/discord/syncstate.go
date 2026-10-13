@@ -8,6 +8,8 @@ import (
 	"io"
 	"strings"
 	"time"
+
+	"go.kenn.io/msgvault/internal/store"
 )
 
 const SyncStateVersion = 1
@@ -15,12 +17,32 @@ const SyncStateVersion = 1
 // ContainerState holds independent message progress for one channel, thread,
 // or forum post.
 type ContainerState struct {
-	HighWater        string `json:"high_water,omitempty"`
-	BackfillBefore   string `json:"backfill_before,omitempty"`
-	BackfillUpper    string `json:"backfill_upper,omitempty"`
-	BackfillComplete bool   `json:"backfill_complete,omitzero"`
-	RetryRequired    bool   `json:"retry_required,omitzero"`
-	RepairLower      string `json:"repair_lower,omitempty"`
+	EventsCovered     bool   `json:"events_covered,omitzero"`
+	EventsForwardMode string `json:"events_forward_mode,omitempty"`
+	HighWater         string `json:"high_water,omitempty"`
+	BackfillBefore    string `json:"backfill_before,omitempty"`
+	BackfillUpper     string `json:"backfill_upper,omitempty"`
+	BackfillComplete  bool   `json:"backfill_complete,omitzero"`
+	RetryRequired     bool   `json:"retry_required,omitzero"`
+	RepairLower       string `json:"repair_lower,omitempty"`
+}
+
+// forwardIngestContext uses the classification pinned before this container's
+// first write, not progress advanced by the current run.
+func (s ContainerState) forwardIngestContext() store.IngestContext {
+	mode := store.IngestBackfill
+	if s.EventsForwardMode == "live" {
+		mode = store.IngestLive
+	}
+	return store.IngestContext{Mode: mode, ObservedAt: time.Now().UTC()}
+}
+
+func (s *SyncState) resetEventsCoverage() {
+	for id, c := range s.Containers {
+		c.EventsCovered = false
+		c.EventsForwardMode = ""
+		s.Containers[id] = c
+	}
 }
 
 // ThreadCatalogState tracks completed archived-thread enumeration for one
@@ -121,6 +143,9 @@ func (s *SyncState) validate() error {
 		}
 	}
 	for containerID, container := range s.Containers {
+		if container.EventsForwardMode != "" && container.EventsForwardMode != "live" && container.EventsForwardMode != "history" {
+			return fmt.Errorf("containers[%q].events_forward_mode: invalid mode", containerID)
+		}
 		fields := []struct {
 			name  string
 			value string
@@ -189,6 +214,8 @@ func (s *SyncState) Merge(other *SyncState) error {
 		if after {
 			baseline.HighWater = checkpoint.HighWater
 		}
+		baseline.EventsCovered = checkpoint.EventsCovered
+		baseline.EventsForwardMode = checkpoint.EventsForwardMode
 		baseline.BackfillBefore = checkpoint.BackfillBefore
 		baseline.BackfillUpper = checkpoint.BackfillUpper
 		baseline.BackfillComplete = checkpoint.BackfillComplete

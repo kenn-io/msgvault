@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-08"
+last_edited: "2026-10-08"
 title: Microsoft Teams
 description: Archive Microsoft Teams chats and channels through delegated Microsoft Graph sync.
 ---
@@ -80,6 +80,65 @@ incomplete ones continue.
 | `--no-channels` | Sync chats only and skip team channels |
 | `--limit` | Maximum messages per conversation (`0` means no limit) |
 | `--full` | Ignore stored cursors and re-fetch every message, repairing/backfilling rows in place |
+
+## MCP Events
+
+Subscribe to newly archived messages in one Teams chat with
+[native MCP Events](chat.md#events). Direct chats, group chats, meeting chats,
+and self-chat are supported. Team channels and channel replies remain outside
+message-event support; their existing archive and draft workflows still work.
+Graph's native `replyToId` identifies channel threads, not chat threads, so
+chat-thread subscriptions are unavailable.
+
+Events are off by default. Add `teams` to `[mcp.events].sources` alongside any
+other sources you use, then enable Events on the daemon:
+
+```toml
+[mcp.events]
+enabled = true
+sources = ["gmail", "imap", "gcal", "teams"]
+```
+
+Use owner resource discovery to choose the account or exact native chat:
+
+| Family | Required scope arguments | Messages included |
+| --- | --- | --- |
+| `msgvault.message_archived` | `conversation_id`; optional `conversation_ref` | One archived Teams conversation |
+| `msgvault.source_message_archived` | `source_id`, `source_ref` | Eligible arrivals across the account, including chats created later |
+| `msgvault.inbox_message_archived` | `inbox_id`, `inbox_ref` | One exact native Teams chat |
+
+Chat names are presentation. A rename preserves its reference. Native removal
+or a positive message-read denial retires the chat reference and its receipt
+authority, while keeping archived messages. Restoration creates a new lifetime
+and cannot revive old subscriptions or receipts. A failed or partial inventory
+cannot remove a quiet chat. A listing alone cannot restore a denied chat; its
+next message read must succeed first.
+
+The [Events guide](chat.md#events) owns authentication, discovery, receiver
+verification, renewal, and receipt reads. Own-message delivery is excluded by default and
+uses the source's confirmed identities, including the account email normally
+confirmed by `add-teams`.
+
+Events require saved `Chat.Read` or `Chat.ReadWrite` grant evidence and a Graph
+`/me` profile matching the selected account. Metadata-only `Chat.ReadBasic`
+does not grant message Events. Missing legacy grant metadata or local
+credentials pauses Events without removing archived content. A fresh daemon
+waits for a verified native sync before reusing persisted Events authority.
+Permission changes take effect when native sync observes them; admission,
+delivery, renewal, and receipt reads recheck that observed state.
+
+Notifications follow successful incremental syncs, so scheduled sync frequency
+affects delivery time. The first history import and `--full` repair stay
+silent. Limiting either operation does not turn unfinished history into live
+arrivals when you resume it. A completed empty chat also establishes coverage:
+its first later message can notify. Re-reading overlap, editing a message, or
+updating its reactions does not create another arrival.
+
+The message's text, source JSON, recipients, known chat members, reaction
+snapshot, and link attachment references are committed before its occurrence
+is published. Optional inline-media downloads can finish later; an arrival
+notification does not promise that media is ready. Use the receipt's `eventId`
+with `get_message` to read the committed message.
 
 ## What Gets Archived
 

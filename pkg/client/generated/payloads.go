@@ -128,6 +128,14 @@ type CreateKataIssueBody = KataIssueCreateRequest
 
 type LinkKataEvidenceBody = KataEvidenceLinkRequest
 
+type ListMCPEventsBody = MCPEventsListRequest
+
+type DiscoverMCPEventResourcesBody = ResourceQuery
+
+type SubscribeMCPEventsBody = SubscribeRequest
+
+type UnsubscribeMCPEventsBody = UnsubscribeRequest
+
 type ListMeetingActionItemsBody = MeetingActionsRequest
 
 type GetMeetingContextBody = MeetingContextRequest

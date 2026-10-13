@@ -34,6 +34,7 @@ import (
 	imaplib "go.kenn.io/msgvault/internal/imap"
 	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/kataevidence"
+	"go.kenn.io/msgvault/internal/mcpevents"
 	"go.kenn.io/msgvault/internal/meetingimport"
 	"go.kenn.io/msgvault/internal/muesli"
 	"go.kenn.io/msgvault/internal/notionmeetings"
@@ -49,6 +50,7 @@ import (
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/sourcecatalog"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/sync"
 	"go.kenn.io/msgvault/internal/syncerr"
@@ -821,8 +823,6 @@ func runServe(cmd *cobra.Command, args []string) error {
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
 	// Start the schedulers
-	sched.Start()
-	mediaSched.Start()
 
 	// Create adapters for the API interfaces
 	refreshCacheAfterWrite := func(_ context.Context, label string) error {
@@ -916,6 +916,44 @@ func runServe(cmd *cobra.Command, args []string) error {
 		apiOpts.VectorStatus = api.VectorStatusInitializing
 	}
 	apiServer = api.NewServerWithOptions(apiOpts)
+	mcpEventService, eventsErr := newDaemonMCPEventsService(ctx, cfg, s, apiServer)
+	if eventsErr != nil {
+		keyFailure, ok := errors.AsType[*mcpevents.Error](eventsErr)
+		if !ok || keyFailure.Reason != "events_key_unavailable" {
+			return fmt.Errorf("start MCP Events: %w", eventsErr)
+		}
+		// Disable coverage before any scheduled writer starts, while retaining
+		// the fixed key failure for the owner's status command.
+		disabledConfig := *cfg
+		disabledConfig.MCP.Events.Enabled = false
+		mcpEventService, err = newDaemonMCPEventsService(ctx, &disabledConfig, s, apiServer)
+		if err != nil {
+			return fmt.Errorf("disable MCP Events after key failure: %w", err)
+		}
+		apiServer.SetMCPEventsUnavailable(keyFailure)
+		logger.Warn("MCP Events unavailable", "reason", keyFailure.Reason)
+	} else {
+		apiServer.SetMCPEvents(mcpEventService)
+	}
+	storeAdapter.mcpEventsCapture = eventsErr == nil && cfg.MCP.Events.Enabled
+	if storeAdapter.mcpEventsCapture {
+		captureConfig, err := daemonMCPEventsStoreConfig(cfg)
+		if err != nil {
+			return fmt.Errorf("snapshot MCP Events capture configuration: %w", err)
+		}
+		storeAdapter.mcpEventsCaptureConfig = &captureConfig
+	}
+	var mcpEventsDone chan error
+	if eventsErr == nil && cfg.MCP.Events.Enabled && len(mcpEventService.Capabilities()) > 0 {
+		mcpEventsDone = make(chan error, 1)
+		go func() {
+			mcpEventsDone <- mcpEventService.Run(ctx)
+			close(mcpEventsDone)
+		}()
+	}
+	// Coverage is published before scheduled providers may write live data.
+	sched.Start()
+	mediaSched.Start()
 	if cfg.People.Sweep.Enabled {
 		// The daemon owns the people sweep worker, so it owns manual brief
 		// generation: POST /api/v1/people/{id}/brief/generate reports
@@ -1020,6 +1058,12 @@ func runServe(cmd *cobra.Command, args []string) error {
 				serverStartupErr = err
 				cancel()
 			}
+		case eventsRunErr := <-mcpEventsDone:
+			if eventsRunErr != nil {
+				serverStartupErr = eventsRunErr
+				logger.Warn("MCP Events stopped", "reason", "events_storage_unavailable")
+			}
+			cancel()
 		case <-ctx.Done():
 			logger.Info("context cancelled")
 		}
@@ -1032,6 +1076,14 @@ func runServe(cmd *cobra.Command, args []string) error {
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), serveOperationDrainTimeout)
 	defer shutdownCancel()
 	shutdownErr := shutdownServeRuntime(shutdownCtx, cmd.OutOrStdout(), apiServer, serveSchedulers{sched, mediaSched}, operationGate)
+	if mcpEventsDone != nil {
+		select {
+		case eventsRunErr := <-mcpEventsDone:
+			shutdownErr = errors.Join(shutdownErr, eventsRunErr)
+		case <-shutdownCtx.Done():
+			shutdownErr = errors.Join(shutdownErr, errors.New("MCP Events workers did not stop during shutdown"))
+		}
+	}
 	if !cacheJobs.waitContext(shutdownCtx) {
 		logger.Warn("analytics cache build did not stop within the shutdown drain timeout")
 		shutdownErr = errors.Join(shutdownErr, errors.New("analytics cache build did not stop during shutdown"))
@@ -1722,6 +1774,8 @@ type storeAPIAdapter struct {
 	store                   *store.Store
 	config                  *config.Config
 	options                 invocationOptions
+	mcpEventsCapture        bool
+	mcpEventsCaptureConfig  *store.MCPEventsConfig
 	logger                  *slog.Logger
 	draftPolicy             []config.IMAPDraftSource
 	draftClientFactory      func(context.Context, *store.Source) (*imaplib.Client, error)
@@ -1749,6 +1803,11 @@ func (a *storeAPIAdapter) invocationContext(ctx context.Context) context.Context
 	state := newInvocation()
 	state.cfg = a.config
 	state.options = a.options
+	state.mcpEventsCapture = a.mcpEventsCapture
+	if a.mcpEventsCaptureConfig != nil {
+		captureConfig := cloneMCPEventsConfig(*a.mcpEventsCaptureConfig)
+		state.mcpEventsCaptureConfig = &captureConfig
+	}
 	if a.logger != nil {
 		state.logger = a.logger
 	}
@@ -4217,6 +4276,9 @@ func findScheduledSyncSources(s *store.Store, identifier string) ([]*store.Sourc
 	// Collect first occurrence of each syncable type.
 	seen := make(map[string]*store.Source, 4)
 	for _, src := range rows {
+		if !sourcecatalog.ScheduledAccountSync(src.SourceType) {
+			continue
+		}
 		switch src.SourceType {
 		case sourceTypeGmail, sourceTypeIMAP, sourceTypeMSMail, sourceTypeTeams:
 			if _, dup := seen[src.SourceType]; !dup {
@@ -4282,10 +4344,13 @@ func newDaemonGmailClient(
 	}
 
 	var tokenSource oauth2.TokenSource
+	var readGrantedScopes func() []string
 	var tsErr error
 
 	saKeyPath := cfg.OAuth.ServiceAccountKeyFor(appName)
 	if saKeyPath != "" {
+		granted := append([]string(nil), oauth.Scopes...)
+		readGrantedScopes = func() []string { return granted }
 		saMgr, saErr := oauth.NewServiceAccountManager(saKeyPath, oauth.Scopes)
 		if saErr != nil {
 			return nil, false, provideridentity.NewGmailCredentialError(
@@ -4311,6 +4376,7 @@ func newDaemonGmailClient(
 				fmt.Errorf("resolve OAuth credentials for %s: %w", email, oaErr),
 			)
 		}
+		readGrantedScopes = func() []string { return oauthMgr.GrantedScopes(ctx, email) }
 		tokenSource, tsErr = oauthMgr.TokenSource(ctx, email)
 		if tsErr != nil {
 			// Distinguish transient network failures (DNS lookup timeout,
@@ -4337,6 +4403,7 @@ func newDaemonGmailClient(
 	return gmail.NewClient(tokenSource,
 		gmail.WithLogger(logger),
 		gmail.WithRateLimiter(rateLimiter),
+		gmail.WithGrantedScopesReader(readGrantedScopes),
 	), saKeyPath != "", nil
 }
 
@@ -4346,17 +4413,21 @@ func newDaemonGmailClient(
 // open a browser for OAuth — the error path tells the user how to
 // re-authorize from a terminal.
 func runScheduledGmailSync(ctx context.Context, email string, src *store.Source, s *store.Store, getOAuthMgr func(ctx context.Context, _ string) (*oauth.Manager, error), state *invocation) (*gmail.SyncSummary, error) {
+	permission, err := pinNativeGmailPermission(ctx, email, src, s)
+	if err != nil {
+		return nil, err
+	}
 	if state == nil {
 		state = invocationFromContext(ctx)
 	}
 	if state == nil || state.cfg == nil || state.logger == nil {
-		return nil, errors.New("configuration is unavailable")
+		return nil, pauseNativeGmailPermission(ctx, s, permission, errors.New("configuration is unavailable"))
 	}
 	cfg := state.cfg
 	logger := state.logger
 	client, _, err := newDaemonGmailClient(ctx, email, src, getOAuthMgr, state)
 	if err != nil {
-		return nil, err
+		return nil, pauseNativeGmailPermission(ctx, s, permission, err)
 	}
 	defer func() { _ = client.Close() }()
 
@@ -4398,18 +4469,22 @@ func runScheduledGmailSync(ctx context.Context, email string, src *store.Source,
 // on because IMAP page tokens are numeric offsets that don't survive
 // across processes (see syncfull.go).
 func runScheduledIMAPSync(ctx context.Context, src *store.Source, s *store.Store, state *invocation) (*gmail.SyncSummary, error) {
+	permission, err := pinNativeMessagePermission(ctx, src.Identifier, src, s)
+	if err != nil {
+		return nil, err
+	}
 	if state == nil {
 		state = invocationFromContext(ctx)
 	}
 	if state == nil || state.cfg == nil || state.logger == nil {
-		return nil, errors.New("configuration is unavailable")
+		return nil, pauseNativeMessagePermission(ctx, s, permission, errors.New("configuration is unavailable"))
 	}
 	cfg := state.cfg
 	logger := state.logger
 	imapOpts := imapFolderStateOptions(s, src, false, cfg, logger)
 	apiClient, err := buildAPIClient(ctx, src, nil, nil, imapOpts...)
 	if err != nil {
-		return nil, fmt.Errorf("build IMAP client: %w", err)
+		return nil, pauseNativeMessagePermission(ctx, s, permission, fmt.Errorf("build IMAP client: %w", err))
 	}
 	defer func() { _ = apiClient.Close() }()
 
@@ -4478,7 +4553,7 @@ func runScheduledTeamsSync(ctx context.Context, src *store.Source, s *store.Stor
 		return fmt.Errorf("post-source-create migrations: %w", err)
 	}
 
-	client, err := newTeamsClient(ctx, cfg, logger, email)
+	client, err := newTeamsClient(ctx, cfg, logger, email, s)
 	if err != nil {
 		return err
 	}

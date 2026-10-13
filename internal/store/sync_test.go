@@ -1227,3 +1227,23 @@ func TestStore_InterruptSyncWithCheckpoint(t *testing.T) {
 		})
 	}
 }
+
+func TestScopedStoreReplaceReactionsRejectsAnotherSourcesMessage(t *testing.T) {
+	requirements := require.New(t)
+	checks := assert.New(t)
+	f := storetest.New(t)
+	messageID := f.CreateMessage("other-source-reaction-target")
+	participantID := f.EnsureParticipant("reactor@example.test", "Reactor", "example.test")
+	requirements.NoError(f.Store.ReplaceReactions(messageID, []store.ReactionRef{{ParticipantID: participantID, Type: "emoji", Value: "kept"}}))
+	other, err := f.Store.GetOrCreateSource("gmail", "other-reaction-source@example.test")
+	requirements.NoError(err)
+	runID, err := f.Store.StartSync(other.ID, "incremental")
+	requirements.NoError(err)
+	scoped := f.Store.ScopedToSync(other.ID, runID)
+
+	err = scoped.ReplaceReactions(messageID, nil)
+	requirements.Error(err)
+	var count int
+	requirements.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT COUNT(*) FROM reactions WHERE message_id = ?`), messageID).Scan(&count))
+	checks.Equal(1, count, "a sync scoped to another source must not replace this message's reactions")
+}

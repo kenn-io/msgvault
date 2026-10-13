@@ -19,14 +19,20 @@ const GraphBaseURL = msgraph.GraphBaseURL
 // Client adds the mail endpoints to the shared Graph transport.
 type Client struct {
 	*msgraph.Client
+
+	grantedScopes func() ([]string, error)
 }
 
 // NewClient creates a mail Client. Every request asks for immutable IDs, so a
 // message keeps its ID when it moves between folders, and for 1,000-item pages.
-func NewClient(baseURL string, token msgraph.TokenFunc, qps float64) *Client {
+func NewClient(baseURL string, token msgraph.TokenFunc, qps float64, options ...ClientOption) *Client {
 	c := msgraph.NewClient(baseURL, token, qps)
 	c.Headers = map[string]string{"Prefer": `IdType="ImmutableId", odata.maxpagesize=1000`}
-	return &Client{c}
+	client := &Client{Client: c}
+	for _, option := range options {
+		option(client)
+	}
+	return client
 }
 
 // Folder is a mail folder. Path joins the display names from the top of the
@@ -147,4 +153,13 @@ func (c *Client) post(ctx context.Context, id, action string, body any) error {
 		return &gmail.NotFoundError{Path: path}
 	}
 	return err
+}
+
+// ClientOption supplies native account evidence independently of bearer tokens.
+type ClientOption func(*Client)
+
+// WithGrantedScopesReader reads saved grant metadata for the selected account.
+// Requested defaults and successful archive requests cannot supply this evidence.
+func WithGrantedScopesReader(reader func() ([]string, error)) ClientOption {
+	return func(c *Client) { c.grantedScopes = reader }
 }

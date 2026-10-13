@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -43,11 +44,20 @@ func newGraphMailWriteManager(state *invocation) *microsoft.GraphManager {
 // folder; later runs fetch only the changes.
 func runMSMailSync(ctx context.Context, s *store.Store, email string, progress func(string), state *invocation) (*msmail.Summary, error) {
 	cfg := state.cfg
-	tokenFn, err := newGraphMailManager(state).TokenSource(ctx, email)
+	source, err := s.GetSourceByTypeAndIdentifier(msmail.SourceType, email)
+	if err != nil && !errors.Is(err, store.ErrSourceNotFound) {
+		return nil, err
+	}
+	permission, err := pinNativeMessagePermission(ctx, email, source, s)
 	if err != nil {
 		return nil, err
 	}
-	client := msmail.NewClient(msmail.GraphBaseURL, tokenFn, msmailQPS)
+	manager := newGraphMailManager(state)
+	tokenFn, err := manager.TokenSource(ctx, email)
+	if err != nil {
+		return nil, pauseNativeMessagePermission(ctx, s, permission, err)
+	}
+	client := msmail.NewClient(msmail.GraphBaseURL, tokenFn, msmailQPS, msmail.WithGrantedScopesReader(func() ([]string, error) { return manager.GrantedScopes(email) }))
 	return msmail.Import(ctx, s, client, msmail.Options{
 		Email:          email,
 		AttachmentsDir: cfg.AttachmentsDir(),

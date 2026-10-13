@@ -27,8 +27,9 @@ import (
 // folders and messages, and a change log. A deltaLink encodes a position in
 // that log, so the next delta returns only the changes made after it.
 type fakeGraph struct {
-	t   *testing.T
-	srv *httptest.Server
+	t            *testing.T
+	nativeScopes []string
+	srv          *httptest.Server
 
 	mu      sync.Mutex
 	folders []string          // folder IDs, in list order
@@ -39,6 +40,7 @@ type fakeGraph struct {
 	gone    map[string]bool   // folder IDs whose every delta answers 410
 	version map[string]int    // message ID -> content version
 
+	rawOverride    map[string]string // optional complete synthetic MIME
 	withAttachment map[string]bool   // message IDs whose MIME carries a file
 	shifted        map[string]bool   // message IDs whose file moves to another part
 	attachmentBody map[string]string // message ID -> base64 file content
@@ -49,6 +51,8 @@ type fakeGraph struct {
 	attachDir      string            // attachments directory; a fresh one when empty
 	throttle       bool              // answer the next $value with 429 once
 	denied         bool              // answer move and permanentDelete with 403
+	deltaPageSize  int               // zero retains an unpaginated incremental response
+	deltaStopAt    int               // fail one incremental continuation at this offset
 	pageSize       int
 	stopAt         int // fail the delta page at this skip offset, when non-zero
 
@@ -122,6 +126,8 @@ func (f *fakeGraph) serve(w http.ResponseWriter, r *http.Request) {
 	p := r.URL.Path
 	q := r.URL.Query()
 	switch {
+	case p == "/me":
+		f.writeJSON(w, map[string]any{"id": "synthetic-native-account", "mail": "me@example.com", "userPrincipalName": "me@example.com"})
 	case p == "/me/mailFolders":
 		var out []map[string]any
 		for _, id := range f.folders {
@@ -172,6 +178,9 @@ func (f *fakeGraph) serve(w http.ResponseWriter, r *http.Request) {
 		if f.broken[id] {
 			body = "From: a@example.com\r\nSubject: " + id + "\r\nMIME-Version: 1.0\r\n" +
 				"Content-Type: multipart mixed; boundary=b\r\n\r\n--b\r\n\r\nbody\r\n--b--\r\n"
+		}
+		if override, ok := f.rawOverride[id]; ok {
+			body = override
 		}
 		_, _ = w.Write([]byte(body)) //nolint:gosec // local test server returns fixture MIME
 	case r.Method == http.MethodPost && strings.HasPrefix(p, "/me/messages/"):
@@ -245,9 +254,13 @@ func (f *fakeGraph) delta(w http.ResponseWriter, folder string, q map[string][]s
 			return
 		}
 		pos, _ := strconv.Atoi(tok)
+		roundEnd := len(f.log)
+		if saved := get("delta_end"); saved != "" {
+			roundEnd, _ = strconv.Atoi(saved)
+		}
 		seen := map[string]bool{}
 		var out []map[string]any
-		for _, c := range f.log[pos:] {
+		for _, c := range f.log[pos:roundEnd] {
 			id := c.id
 			if seen[id] || (c.from != folder && f.folder[id] != folder) {
 				continue
@@ -259,7 +272,24 @@ func (f *fakeGraph) delta(w http.ResponseWriter, folder string, q map[string][]s
 				out = append(out, map[string]any{"id": id, "@removed": map[string]any{"reason": "deleted"}})
 			}
 		}
-		f.writeJSON(w, map[string]any{"value": out, "@odata.deltaLink": link("t", "token="+strconv.Itoa(len(f.log)))})
+		if f.deltaPageSize > 0 {
+			skip, _ := strconv.Atoi(get("delta_skip"))
+			if f.deltaStopAt > 0 && skip == f.deltaStopAt {
+				f.deltaStopAt = 0
+				http.Error(w, "synthetic delta interruption", http.StatusBadRequest)
+				return
+			}
+			end := min(skip+f.deltaPageSize, len(out))
+			response := map[string]any{"value": out[skip:end]}
+			if end < len(out) {
+				response["@odata.nextLink"] = link("d", "token="+tok, "delta_skip="+strconv.Itoa(end), "delta_end="+strconv.Itoa(roundEnd))
+			} else {
+				response["@odata.deltaLink"] = link("t", "token="+strconv.Itoa(roundEnd))
+			}
+			f.writeJSON(w, response)
+			return
+		}
+		f.writeJSON(w, map[string]any{"value": out, "@odata.deltaLink": link("t", "token="+strconv.Itoa(roundEnd))})
 		return
 	}
 	// A walk lists the folder in log order. pos pins the log position that
@@ -299,7 +329,7 @@ func (f *fakeGraph) delta(w http.ResponseWriter, folder string, q map[string][]s
 
 func (f *fakeGraph) sync(t *testing.T, st *store.Store) (*Summary, error) {
 	t.Helper()
-	c := NewClient(f.srv.URL, func(context.Context) (string, error) { return "tok", nil }, 1000)
+	c := NewClient(f.srv.URL, func(context.Context) (string, error) { return "tok", nil }, 1000, WithGrantedScopesReader(func() ([]string, error) { return f.nativeScopes, nil }))
 	dir := f.attachDir
 	if dir == "" {
 		dir = f.t.TempDir()
@@ -717,7 +747,7 @@ func TestImportNewMessageAttachmentWriteFails(t *testing.T) {
 	sum, err := f.sync(t, st)
 	require.NoError(err)
 	assert.Equal(1, sum.Errors)
-	assert.Equal([2]int{0, 0}, attachments(t, st))
+	assert.Empty(state(t, st), "failed file preparation must not publish a partial message")
 
 	f.attachDir = ""
 	f.expired["inbox"] = true // the next sync walks, and a walk skips known messages
@@ -866,7 +896,7 @@ func TestImportFailedRetryKeepsMarker(t *testing.T) {
 	f.put("m1", "inbox")
 	f.put("m2", "inbox")
 	f.put("m3", "inbox")
-	f.stopAt = 2 // the second page fails after m1 is stored
+	f.stopAt = 2 // the second page fails after m1 is queued for retry
 	_, err := f.sync(t, st)
 	require.Error(err)
 
@@ -874,7 +904,7 @@ func TestImportFailedRetryKeepsMarker(t *testing.T) {
 	f.badValue["m1"] = true
 	sum, err := f.sync(t, st)
 	require.NoError(err)
-	assert.Equal(1, sum.Errors)
+	assert.Equal(2, sum.Errors, "the queued retry and restarted history page both observe the failed download")
 
 	f.badValue["m1"] = false
 	_, err = f.sync(t, st)
@@ -975,16 +1005,17 @@ func TestImportRetryDeletionErrorKeepsMarker(t *testing.T) {
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	f := newFakeGraph(t)
-	blocker := filepath.Join(t.TempDir(), "file")
-	require.NoError(os.WriteFile(blocker, nil, 0o600))
-	f.attachDir = filepath.Join(blocker, "attachments")
 	f.withAttachment["m1"] = true
 	f.put("m1", "inbox")
-	f.put("m2", "inbox")
-	f.put("m3", "inbox")
-	f.stopAt = 2
 	_, err := f.sync(t, st)
+	require.NoError(err) // deletion failure needs an already archived message
+	f.badValue["m1"] = true
+	f.put("m1", "inbox")
+	f.gone["archive"] = true // keep the retry only in a failed run's checkpoint
+	_, err = f.sync(t, st)
 	require.Error(err)
+	f.badValue["m1"] = false
+	f.gone["archive"] = false
 
 	f.goneOnValue["m1"] = true
 	_, err = st.DB().Exec(`CREATE TRIGGER reject_delete BEFORE UPDATE OF deleted_from_source_at ON messages
@@ -997,5 +1028,14 @@ func TestImportRetryDeletionErrorKeepsMarker(t *testing.T) {
 	require.NotNil(run)
 	var cursors map[string]string
 	require.NoError(json.Unmarshal([]byte(run.CursorBefore.String), &cursors))
-	assert.Equal(t, "inbox", cursors["retry:m1"])
+	assert.JSONEq(t, `{"version":1,"folder_id":"inbox","mode":"live"}`, cursors["retry:m1"])
+}
+
+// Positive Events fixtures state a native grant explicitly. Ordinary
+// newFakeGraph archive fixtures remain legacy/unknown by default.
+func newNativeEventMailGraph(t *testing.T) *fakeGraph {
+	t.Helper()
+	f := newFakeGraph(t)
+	f.nativeScopes = []string{"Mail.Read"}
+	return f
 }
