@@ -120,6 +120,30 @@ func TestMetadataSearchUnavailableIndex(t *testing.T) {
 	assert.Contains(t, metadataPlan(t, e, &search.Query{TextTerms: []string{"needle"}}), "messages_metadata_fts VIRTUAL TABLE INDEX", "cancelled probe must retry")
 }
 
+// A setup without FTS5 removes the readiness marker and stops index
+// maintenance while a long-running engine may already be using the index.
+func TestMetadataSearchStopsUsingDisabledIndex(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	db := metadataSearchDB(t)
+	e := NewSQLiteEngine(db)
+	needle := &search.Query{TextTerms: []string{"needle"}}
+	require.Contains(metadataPlan(t, e, needle), "messages_metadata_fts VIRTUAL TABLE INDEX")
+	_, err := db.Exec(`DELETE FROM archive_metadata WHERE key='metadata_fts_version';
+ DROP TRIGGER messages_metadata_fts_insert;
+ INSERT INTO messages(id,conversation_id,source_id,message_type,source_message_id,subject,snippet,sent_at)
+ VALUES(5,1,1,'email','synthetic-5','unindexed needle','other','2024-01-05');`)
+	require.NoError(err)
+	assert.NotContains(metadataPlan(t, e, needle), "messages_metadata_fts VIRTUAL TABLE INDEX")
+	got, err := e.SearchFast(t.Context(), needle, MessageFilter{}, 50, 0)
+	require.NoError(err)
+	var ids []int64
+	for _, m := range got {
+		ids = append(ids, m.ID)
+	}
+	assert.Equal([]int64{5, 2, 1}, ids)
+}
+
 // The real SQLite authorizer lets cancellation land at a particular query
 // phase without a throughput race or a fake database implementation.
 func TestMetadataSearchCancellationDuringAggregates(t *testing.T) {

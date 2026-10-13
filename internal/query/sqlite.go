@@ -27,8 +27,8 @@ type SQLiteEngine struct {
 	ftsResult  bool
 	ftsChecked bool
 
-	metadataFTSMu    sync.Mutex
-	metadataFTSReady bool
+	metadataFTSMu     sync.Mutex
+	metadataFTSProbed bool
 }
 
 // NewSQLiteEngine creates a new SQLite-backed query engine.

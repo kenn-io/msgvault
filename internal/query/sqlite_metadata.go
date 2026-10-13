@@ -10,22 +10,23 @@ import (
 	"go.kenn.io/msgvault/internal/search"
 )
 
-// hasMetadataFTS caches only a successful, complete readiness check. A failed
-// probe (including cancellation) is retried, so setup can enable indexing on an
-// engine that previously used the scan path.
+// hasMetadataFTS reads the readiness marker on every search, so the engine
+// stops using the indexes as soon as a setup without FTS5 disables their
+// maintenance. Only the probe that this process can open the index tables is
+// cached; a failed probe (including cancellation) is retried.
 func (e *SQLiteEngine) hasMetadataFTS(ctx context.Context) bool {
 	if _, ok := e.dialect.(SQLiteQueryDialect); !ok {
 		return false
 	}
-	e.metadataFTSMu.Lock()
-	ready := e.metadataFTSReady
-	e.metadataFTSMu.Unlock()
-	if ready {
-		return true
-	}
 	var version string
 	if err := e.queryRowContext(ctx, `SELECT value FROM archive_metadata WHERE key='metadata_fts_version'`).Scan(&version); err != nil || version != "1" {
 		return false
+	}
+	e.metadataFTSMu.Lock()
+	probed := e.metadataFTSProbed
+	e.metadataFTSMu.Unlock()
+	if probed {
+		return true
 	}
 	for _, table := range []string{"messages_metadata_fts", "participants_metadata_fts", "recipients_metadata_fts"} {
 		var id int64
@@ -35,7 +36,7 @@ func (e *SQLiteEngine) hasMetadataFTS(ctx context.Context) bool {
 		}
 	}
 	e.metadataFTSMu.Lock()
-	e.metadataFTSReady = true
+	e.metadataFTSProbed = true
 	e.metadataFTSMu.Unlock()
 	return true
 }
