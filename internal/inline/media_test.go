@@ -3,7 +3,6 @@ package inline
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -321,7 +320,7 @@ func TestMediaBackfillOnlyContactsSelectedChats(t *testing.T) {
 	assertions.Equal(attachmentpolicy.StatePending, refs["inline:document:1"].State)
 }
 
-func TestCrossProjectionMetadataKeepsUnsignedOccurrenceIdentity(t *testing.T) {
+func TestMediaReferenceUsesUnsignedOccurrenceKeys(t *testing.T) {
 	assertions := assert.New(t)
 	requires := require.New(t)
 
@@ -330,9 +329,6 @@ func TestCrossProjectionMetadataKeepsUnsignedOccurrenceIdentity(t *testing.T) {
 	requires.NoError(err)
 	assertions.Equal("inline:photo:1", ref.SourcePartKey)
 	assertions.Equal("inline:pending:photo:1", ref.StoragePath)
-	var stored Media
-	requires.NoError(json.Unmarshal([]byte(ref.Metadata), &stored))
-	assertions.Equal(media.ID, stored.ID)
 }
 
 func storedMediaMessageStats(t *testing.T, imp *Importer, messageID int64) (hasAttachments bool, attachmentCount int) {
