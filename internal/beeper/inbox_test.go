@@ -65,13 +65,13 @@ func TestInboxAllMutationsRefusedWithoutHTTP(t *testing.T) {
 		r := inboxcontrol.Request{Operation: op, Target: &target, DryRun: true}
 		before := inboxcontrol.State{Target: target, Inbox: new(false), Read: new(false)}
 		_, err := provider.Preview(t.Context(), r, before)
-		assert.ErrorIs(t, err, inboxcontrol.ErrUnavailable)
+		require.ErrorIs(t, err, inboxcontrol.ErrUnavailable)
 		_, err = provider.Dispatch(t.Context(), r, before)
-		assert.ErrorIs(t, err, inboxcontrol.ErrUnavailable)
-		assert.ErrorIs(t, provider.Verify(r, before, before, before), inboxcontrol.ErrOutcomeUnknown)
+		require.ErrorIs(t, err, inboxcontrol.ErrUnavailable)
+		require.ErrorIs(t, provider.Verify(r, before, before, before), inboxcontrol.ErrOutcomeUnknown)
 	}
 	_, err := provider.Folders(t.Context(), inboxTestSource())
-	assert.ErrorIs(t, err, inboxcontrol.ErrUnavailable)
+	require.ErrorIs(t, err, inboxcontrol.ErrUnavailable)
 	assert.Empty(t, peer.calls())
 }
 
