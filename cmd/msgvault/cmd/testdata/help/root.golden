@@ -5,7 +5,7 @@ or use [remote].url from config.toml (--local forces the local daemon).
 Start here:
   msgvault list-accounts --json    # id, email, type, counts, sync
   msgvault search 'from:alice@example.com newer_than:30d' --json
-  # "id" feeds the commands below
+  # Use id below
   msgvault show-message <id> --json  # body_text, attachments
   msgvault export-eml <id> -o msg.eml  # export-attachments <id> -o DIR
   msgvault export-messages --start 2026-09-01T00:00:00Z --end 2026-10-01T00:00:00Z
@@ -13,7 +13,7 @@ Start here:
   msgvault stats
   msgvault person --help  # contacts
   msgvault daemon status
-  msgvault setup status --json  # features and next steps
+  msgvault setup status --json  # next steps
 
 Output and exit status:
   --json prints JSON on stdout (export-messages prints JSON Lines). Progress and
@@ -128,7 +128,9 @@ Drafts, calendar, and Kata (write to providers):
   draft-recover Recover an interrupted managed IMAP draft edit or delete
   draft-reply   Create an IMAP or Gmail reply draft from an archived message
   draft-send-as List Gmail send-as identities
+  inbox         Observe and control exact native inbox items through the daemon
   kata          Create Kata issues that quote archived evidence
+  message-tags  Read or update native email tags
 
 Review and delete:
   cancel-deletion Cancel pending or in-progress deletion batches

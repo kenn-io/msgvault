@@ -979,7 +979,7 @@ func TestErrorResponseBodiesAreBounded(t *testing.T) {
 				must := require.New(t)
 				resp := boundErrorBody(&http.Response{StatusCode: http.StatusBadRequest, Body: &boundaryErrorReader{
 					Reader: strings.NewReader(strings.Repeat("x", size)), eofWithData: eofWithData,
-				}})
+				}}, maxErrorBodyBytes)
 				t.Cleanup(func() { must.NoError(resp.Body.Close()) })
 				body := resp.Body
 				p := make([]byte, maxErrorBodyBytes+1)

@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"sync"
+
+	"go.kenn.io/msgvault/internal/store"
 )
 
 // MockAPI is a mock implementation of the Gmail API for testing.
@@ -92,7 +94,7 @@ func (m *MockAPI) ListLabels(ctx context.Context) ([]*Label, error) {
 	if m.Labels == nil {
 		return []*Label{
 			{ID: "INBOX", Name: "INBOX", Type: "system"},
-			{ID: "SENT", Name: "SENT", Type: "system", SystemRole: SystemRoleForLabelID("SENT")},
+			{ID: "SENT", Name: "SENT", Type: "system", SystemRole: store.GmailSystemRoleForLabelID("SENT")},
 			{ID: "STARRED", Name: "STARRED", Type: "system"},
 			{ID: "TRASH", Name: "TRASH", Type: "system"},
 			{ID: "UNREAD", Name: "UNREAD", Type: "system"},
@@ -104,7 +106,7 @@ func (m *MockAPI) ListLabels(ctx context.Context) ([]*Label, error) {
 	labels := make([]*Label, len(m.Labels))
 	for i, source := range m.Labels {
 		label := *source
-		label.SystemRole = SystemRoleForLabelID(label.ID)
+		label.SystemRole = store.GmailSystemRoleForLabelID(label.ID)
 		labels[i] = &label
 	}
 	return labels, nil
