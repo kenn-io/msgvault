@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -86,15 +87,21 @@ func newMicrosoftDaemonGraph(t *testing.T) *microsoftDaemonGraph {
 		case r.URL.Path == "/me/messages/native-message/$value":
 			g.mime++
 			w.Header().Set("Content-Type", "message/rfc822")
-			_, _ = w.Write([]byte("From: sender@example.test\r\nTo: owner@example.test\r\nSubject: Native Microsoft fixture\r\nMessage-ID: <native-microsoft@example.test>\r\nDate: Mon, 1 Jan 2024 10:00:00 +0000\r\n\r\nSynthetic native body.\r\n")) //nolint:gosec // reserved synthetic MIME fixture
+			_, _ = w.Write([]byte("From: sender@example.test\r\nTo: owner@example.test\r\nSubject: Native Microsoft fixture\r\nMessage-ID: <native-microsoft@example.test>\r\nDate: Mon, 1 Jan 2024 10:00:00 +0000\r\n\r\nSynthetic native body.\r\n"))
 		case r.URL.Path == "/me/messages/native-message":
 			if r.Method == http.MethodPatch {
 				g.writes++
 				assert.Equal(t, g.etag, r.Header.Get("If-Match"))
 				var body map[string][]string
-				require.NoError(t, json.UnmarshalRead(r.Body, &body))
-				require.Len(t, body, 1)
-				require.NotNil(t, body["categories"])
+				if !assert.NoError(t, json.UnmarshalRead(r.Body, &body)) {
+					return
+				}
+				if !assert.Len(t, body, 1) {
+					return
+				}
+				if !assert.NotNil(t, body["categories"]) {
+					return
+				}
 				if g.writeStatus != 0 {
 					w.WriteHeader(g.writeStatus)
 					return
@@ -107,9 +114,13 @@ func newMicrosoftDaemonGraph(t *testing.T) *microsoftDaemonGraph {
 				}
 				if g.disconnectAfterWrite {
 					hijacker, ok := w.(http.Hijacker)
-					require.True(t, ok)
+					if !assert.True(t, ok) {
+						return
+					}
 					connection, _, err := hijacker.Hijack()
-					require.NoError(t, err)
+					if !assert.NoError(t, err) {
+						return
+					}
 					assert.NoError(t, connection.Close())
 					return
 				}
@@ -652,9 +663,7 @@ func TestDaemonInboxMicrosoftNativeMCPConfirmationAndCLIRecovery(t *testing.T) {
 	assertions.Zero(graph.writes, "MCP must obtain confirmation before mutation")
 	graph.mu.Unlock()
 	changed := make(map[string]any, len(args))
-	for key, value := range args {
-		changed[key] = value
-	}
+	maps.Copy(changed, args)
 	changed["add"] = []any{"Unconfirmed"}
 	refused, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "update_message_tags", Arguments: changed, RequestState: pending.RequestState, InputResponses: sdkmcp.InputResponseMap{"confirm": &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}}})
 	requirements.NoError(err)
@@ -700,7 +709,7 @@ func TestDaemonInboxMicrosoftNativeMCPConfirmationAndCLIRecovery(t *testing.T) {
 	t.Cleanup(func() { _ = writer.Close() })
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
-	child := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestInboxCLIMicrosoftClosedStdoutHelper$")
+	child := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestInboxCLIMicrosoftClosedStdoutHelper$") //nolint:gosec // Re-executes this test binary with a fixed test selector.
 	child.Env = append(os.Environ(), "MSGVAULT_MICROSOFT_CLOSED_STDOUT=1", "MSGVAULT_MICROSOFT_DAEMON_URL="+daemonURL, "MSGVAULT_MICROSOFT_REQUEST="+requestFile, "MSGVAULT_MICROSOFT_AGENT_TOKEN_FILE="+tokenFile)
 	child.Stdout = writer
 	var stderr bytes.Buffer
@@ -865,7 +874,7 @@ func TestDaemonInboxMicrosoftNativeReimportDoesNotReviveGrant(t *testing.T) {
 		{Operation: inboxcontrol.OpTags, Target: &current, Tags: &emailtags.MessageTagChange{Add: []string{"Next"}}, DryRun: true},
 	} {
 		_, err := delegated.ControlInbox(t.Context(), request)
-		assert.ErrorIs(err, inboxcontrol.ErrDenied, "an old grant cannot authorize a new native source lifetime")
+		require.ErrorIs(err, inboxcontrol.ErrDenied, "an old grant cannot authorize a new native source lifetime")
 	}
 	assert.Equal(beforeFactory, graph.factory.Load(), "retired source grants are refused before any native access")
 	freshGrant, err := owner.IssueAgentToken(t.Context(), "native-current-source", []string{"inbox.read", "inbox.tag"}, []int64{current.SourceID}, nil, time.Time{})

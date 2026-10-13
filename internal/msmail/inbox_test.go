@@ -49,7 +49,7 @@ func microsoftInboxFixture(t *testing.T) (*InboxProvider, *inboxGraph, inboxcont
 				assert.Equal(t, f.message["@odata.etag"], r.Header.Get("If-Match"))
 				var body map[string][]string
 				if !assert.NoError(t, json.UnmarshalRead(r.Body, &body)) {
-					w.WriteHeader(400)
+					w.WriteHeader(http.StatusBadRequest)
 					return
 				}
 				assert.Len(t, body, 1)
@@ -68,7 +68,7 @@ func microsoftInboxFixture(t *testing.T) (*InboxProvider, *inboxGraph, inboxcont
 			assert.NoError(t, json.MarshalWrite(w, f.message))
 		default:
 			assert.Fail(t, "unexpected Graph endpoint", "%s", r.URL.Path)
-			w.WriteHeader(404)
+			w.WriteHeader(http.StatusNotFound)
 		}
 	}))
 	t.Cleanup(srv.Close)
@@ -193,7 +193,7 @@ func TestMicrosoftInboxDeniesForeignIdentityAndUnsupportedWrites(t *testing.T) {
 	p, f, request := microsoftInboxFixture(t)
 	f.account = "other@example.com"
 	_, err := p.Observe(t.Context(), request)
-	assertions.ErrorIs(err, inboxcontrol.ErrDenied)
+	require.ErrorIs(t, err, inboxcontrol.ErrDenied)
 	f.account = "me@example.com"
 	before, err := p.Observe(t.Context(), request)
 	require.NoError(t, err)
