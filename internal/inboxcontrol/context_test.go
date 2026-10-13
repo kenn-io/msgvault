@@ -14,10 +14,10 @@ func TestContextRequestExactSelectorAndBounds(t *testing.T) {
 		require.NoError(t, (ContextRequest{Target: target, MaxBytes: limit}).Validate())
 	}
 	for _, limit := range []int{-1, 65537} {
-		assertions.ErrorIs((ContextRequest{Target: target, MaxBytes: limit}).Validate(), ErrInvalid)
+		require.ErrorIs(t, (ContextRequest{Target: target, MaxBytes: limit}).Validate(), ErrInvalid)
 	}
-	assertions.ErrorIs((ContextRequest{Target: target, MessageID: 2}).Validate(), ErrInvalid)
+	require.ErrorIs(t, (ContextRequest{Target: target, MessageID: 2}).Validate(), ErrInvalid)
 	target.SourceType, target.Scope = "beeper", ScopeChat
-	assertions.ErrorIs((ContextRequest{Target: target}).Validate(), ErrInvalid)
+	require.ErrorIs(t, (ContextRequest{Target: target}).Validate(), ErrInvalid)
 	assertions.NoError((ContextRequest{Target: target, MessageID: 3}).Validate())
 }
