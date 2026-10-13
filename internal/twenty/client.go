@@ -34,7 +34,7 @@ const maxAttempts = 5
 const maxReportedGraphQLErrors = 3
 
 const recordingFields = `id title status applicationId createdAt updatedAt startedAt endedAt calendarEventId transcript summary { markdown } calendarEvent { ` + calendarFields + ` }`
-const calendarFields = `id title startsAt endsAt`
+const calendarFields = `id title startsAt endsAt iCalUid`
 const participantFields = `id calendarEventId displayName handle isOrganizer`
 const recordingQuery = `query Recordings($after: String, $first: Int!, $filter: CallRecordingFilterInput) {
  callRecordings(first: $first, after: $after, filter: $filter, orderBy: [{updatedAt: AscNullsFirst}, {id: AscNullsFirst}]) {
@@ -92,6 +92,10 @@ type Client struct {
 	// response bound. It shrinks after an overflow so later pages don't
 	// repeat the oversized downloads.
 	pageLimit atomic.Int64
+	// Serialize the optional-field probe so an older server rejects iCalUid
+	// only once, even when callers share this client.
+	calendarQueryMu sync.Mutex
+	withoutICalUID  bool
 }
 
 // ValidateBaseURL accepts an API root, never an API path or a URL with
@@ -210,7 +214,7 @@ func (c *Client) send(ctx context.Context, body []byte) (map[string]jsontext.Val
 		retryAfter := response.Header.Get("Retry-After")
 		return nil, &retryAfter, fmt.Errorf("twenty API returned HTTP %d", response.StatusCode)
 	}
-	if response.StatusCode != http.StatusOK {
+	if response.StatusCode != http.StatusOK && response.StatusCode != http.StatusBadRequest {
 		return nil, nil, fmt.Errorf("twenty API returned HTTP %d", response.StatusCode)
 	}
 	data, err := io.ReadAll(io.LimitReader(response.Body, maxResponseBytes+1))
@@ -225,7 +229,19 @@ func (c *Client) send(ctx context.Context, body []byte) (map[string]jsontext.Val
 		Errors []graphQLError            `json:"errors"`
 	}
 	if json.Unmarshal(data, &wire) != nil {
+		if response.StatusCode != http.StatusOK {
+			return nil, nil, fmt.Errorf("twenty API returned HTTP %d", response.StatusCode)
+		}
 		return nil, nil, errors.New("invalid Twenty response JSON")
+	}
+	if response.StatusCode == http.StatusBadRequest {
+		// GraphQL validation can use HTTP 400. Keep the unknown-field
+		// diagnostic available to the optional calendar-field probe.
+		failure := &graphQLRequestError{errs: wire.Errors}
+		if failure.rejectsICalUID() {
+			return nil, nil, failure
+		}
+		return nil, nil, fmt.Errorf("twenty API returned HTTP %d", response.StatusCode)
 	}
 	if len(wire.Errors) > 0 {
 		// Twenty reports its workspace request limit as a GraphQL error.
@@ -238,7 +254,7 @@ func (c *Client) send(ctx context.Context, body []byte) (map[string]jsontext.Val
 				return nil, &retryAfter, errors.New("twenty API rate limit reached")
 			}
 		}
-		return nil, nil, graphQLFailure(wire.Errors)
+		return nil, nil, &graphQLRequestError{errs: wire.Errors}
 	}
 	if wire.Data == nil {
 		return nil, nil, errors.New("twenty response has no data")
@@ -252,6 +268,41 @@ type graphQLError struct {
 		Code         string  `json:"code"`
 		RetryAfterMS float64 `json:"retryAfterMs"`
 	} `json:"extensions"`
+}
+
+type graphQLRequestError struct {
+	errs []graphQLError
+}
+
+func (e *graphQLRequestError) Error() string { return graphQLFailure(e.errs).Error() }
+
+func (e *graphQLRequestError) rejectsICalUID() bool {
+	for _, fieldErr := range e.errs {
+		if code := fieldErr.Extensions.Code; code != "" && code != "GRAPHQL_VALIDATION_FAILED" {
+			continue
+		}
+		if strings.HasPrefix(fieldErr.Message, `Cannot query field "iCalUid" on type "`) {
+			return true
+		}
+	}
+	return false
+}
+
+// queryCalendar retries only an unknown iCalUid field. Permission and other
+// schema failures must still stop the import with their original diagnostics.
+func (c *Client) queryCalendar(ctx context.Context, query string, variables map[string]any) (map[string]jsontext.Value, error) {
+	c.calendarQueryMu.Lock()
+	defer c.calendarQueryMu.Unlock()
+	if c.withoutICalUID {
+		return c.query(ctx, strings.ReplaceAll(query, " iCalUid", ""), variables)
+	}
+	data, err := c.query(ctx, query, variables)
+	var failure *graphQLRequestError
+	if errors.As(err, &failure) && failure.rejectsICalUID() {
+		c.withoutICalUID = true
+		return c.query(ctx, strings.ReplaceAll(query, " iCalUid", ""), variables)
+	}
+	return data, err
 }
 
 // graphQLFailure reports Twenty's own error codes and messages, which name
@@ -311,7 +362,7 @@ func readConnection(raw jsontext.Value, paginated bool, current string) (*connec
 }
 
 func (c *Client) Probe(ctx context.Context) error {
-	data, err := c.query(ctx, probeQuery, nil)
+	data, err := c.queryCalendar(ctx, probeQuery, nil)
 	if err != nil {
 		return err
 	}
@@ -348,7 +399,7 @@ func (c *Client) ListRecordings(ctx context.Context, updatedSince, after string,
 }
 
 func (c *Client) recordingPage(ctx context.Context, variables map[string]any, after string) (*Page, error) {
-	data, err := c.query(ctx, recordingQuery, variables)
+	data, err := c.queryCalendar(ctx, recordingQuery, variables)
 	if err != nil {
 		return nil, err
 	}

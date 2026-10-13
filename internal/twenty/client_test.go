@@ -331,7 +331,7 @@ func TestClientRejectsRedirectAndCancellation(t *testing.T) {
 }
 
 func TestClientHTTPFailuresAreRedacted(t *testing.T) {
-	for _, status := range []int{401, 403, 429, 500} {
+	for _, status := range []int{400, 401, 403, 429, 500} {
 		t.Run(strconv.Itoa(status), func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)

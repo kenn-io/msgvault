@@ -576,11 +576,11 @@ func TestTwentyArchiveRecordsWritingApplication(t *testing.T) {
 	snapshot, eligible, err := archiveSnapshot(1, "recorder@example.com", recording, recording.Calendar)
 	require.NoError(err)
 	require.True(eligible)
-	assert.JSONEq(`{"application_id":"app-1","provider":"twenty","recording_id":"r1"}`, string(snapshot.Metadata))
+	assert.JSONEq(`{"application_id":"app-1","provider":"twenty","recording_id":"r1","scheduled_start":"2026-09-01T09:30:00Z"}`, string(snapshot.Metadata))
 	recording.ApplicationID = ""
 	snapshot, _, err = archiveSnapshot(1, "recorder@example.com", recording, recording.Calendar)
 	require.NoError(err)
-	assert.JSONEq(`{"provider":"twenty","recording_id":"r1"}`, string(snapshot.Metadata))
+	assert.JSONEq(`{"provider":"twenty","recording_id":"r1","scheduled_start":"2026-09-01T09:30:00Z"}`, string(snapshot.Metadata))
 }
 
 func TestTwentyArchiveBoundsUnicodeSnippet(t *testing.T) {

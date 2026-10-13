@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -36,7 +37,7 @@ const (
 	unknownTranscriptRetrySpan = 48 * time.Hour
 	// Bump after a released canonical format changes so archived rows receive
 	// one repair refresh under the new rules.
-	circlebackSnapshotVersion = 1
+	circlebackSnapshotVersion = 2
 )
 
 // meetingSource is the narrow client surface the importer needs (satisfied
@@ -826,6 +827,7 @@ type meetingMetadata struct {
 	DurationSeconds    int64               `json:"duration_seconds,omitzero"`
 	OrganizerEmail     string              `json:"organizer_email,omitempty"`
 	MeetingURL         string              `json:"meeting_url,omitempty"`
+	JoinURL            string              `json:"join_url,omitempty"`
 	RecordingURL       string              `json:"recording_url,omitempty"`
 	RecordingFetchedAt string              `json:"recording_url_fetched_at,omitempty"`
 	Tags               []string            `json:"tags,omitempty"`
@@ -999,6 +1001,7 @@ func (imp *Importer) buildMetadata(
 		DurationSeconds: m.DurationSecs(),
 		OrganizerEmail:  organizerEmail,
 		MeetingURL:      m.PlatformURL(),
+		JoinURL:         knownJoinURL(m.MeetingURL),
 		RecordingURL:    m.RecordingURL,
 		Tags:            m.Tags,
 		TranscriptState: desiredTranscriptState,
@@ -1033,6 +1036,20 @@ func (imp *Importer) buildMetadata(
 		meta.TranscriptSegments = len(tr.ContentEntries())
 	}
 	return meta
+}
+
+// knownJoinURL preserves the usable provider URL, including passcodes and
+// context parameters. Join-key normalization belongs to the link projection.
+func knownJoinURL(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || (u.Scheme != "https" && u.Scheme != "http") {
+		return ""
+	}
+	host := strings.ToLower(u.Hostname())
+	if host == "meet.google.com" || host == "teams.microsoft.com" || host == "zoom.us" || strings.HasSuffix(host, ".zoom.us") {
+		return raw
+	}
+	return ""
 }
 
 // composeRaw archives both tool payloads verbatim in one JSON object.

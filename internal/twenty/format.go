@@ -38,6 +38,7 @@ func archiveSnapshot(sourceID int64, accountEmail string, recording Recording, c
 	var calendarFields struct {
 		StartsAt string `json:"startsAt"`
 		Title    string `json:"title"`
+		ICalUID  string `json:"iCalUid"`
 	}
 	if calendar != nil {
 		if err := json.Unmarshal(calendar.Raw, &calendarFields); err != nil {
@@ -96,6 +97,12 @@ func archiveSnapshot(sourceID int64, accountEmail string, recording Recording, c
 	metadata := map[string]any{"provider": SourceType, "recording_id": recording.ID}
 	if recording.ApplicationID != "" {
 		metadata["application_id"] = recording.ApplicationID
+	}
+	if uid := strings.TrimSpace(calendarFields.ICalUID); uid != "" {
+		metadata["calendar_ical_uid"] = uid
+	}
+	if scheduled, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(calendarFields.StartsAt)); err == nil {
+		metadata["scheduled_start"] = scheduled.UTC().Format(time.RFC3339Nano)
 	}
 	snapshot.Metadata, err = json.Marshal(metadata, json.Deterministic(true))
 	return snapshot, true, err
