@@ -15,6 +15,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/emlx"
 	"go.kenn.io/msgvault/internal/export"
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/query"
@@ -388,4 +389,57 @@ func TestImportEmlxFailedReceiptSaveKeepsAttachmentRecord(t *testing.T) {
 	r.NoError(err)
 	a.Equal(bBytes, messageAttachment(t, st, "receipt-save@example.test"),
 		"A's unchanged copy does not replay over B's newer bytes")
+}
+
+// A message archived before receipts keeps the attachment an earlier import
+// stored, even when the copy that supplied it is gone and a remaining copy
+// caches different bytes. That copy may replace it only after its own cache
+// changes.
+func TestImportEmlxLegacyArchiveKeepsStoredAttachment(t *testing.T) {
+	r, a := require.New(t), assert.New(t)
+	st, tmp := openTestStore(t)
+	root := filepath.Join(tmp, "Inbox.mbox")
+	raw := partialRaw([]string{"Message-ID: <legacy-merge@example.test>"}, "one.bin")
+	mkMailboxDir(t, root, map[string][]byte{"1.partial.emlx": raw})
+	opts := EmlxImportOptions{Identifier: "owner@example.test", AttachmentsDir: filepath.Join(tmp, "blobs")}
+
+	// An older importer stored the copy that 1.partial.emlx supplied.
+	kept := []byte("bytes the older import kept")
+	cacheAttachment(t, root, "1", "2", "one.bin", kept)
+	seedRaw, restored, err := emlx.RestoreAttachments(raw, filepath.Join(root, "Messages", "1.partial.emlx"), 128<<20)
+	r.NoError(err)
+	r.Equal(1, restored)
+	source, err := st.GetOrCreateSource("apple-mail", opts.Identifier)
+	r.NoError(err)
+	label, err := st.EnsureLabel(source.ID, "Inbox", "Inbox", "user")
+	r.NoError(err)
+	hash := emlxRawDigest(raw)
+	r.NoError(IngestRawMessage(t.Context(), st, source.ID, opts.Identifier, opts.AttachmentsDir,
+		[]int64{label}, "emlx-"+hash, hash, seedRaw, time.Now(), slog.Default()))
+	r.NoError(os.RemoveAll(filepath.Join(root, "Messages")))
+	r.NoError(os.RemoveAll(filepath.Join(root, "Attachments")))
+
+	mkMailboxDir(t, root, map[string][]byte{"2.partial.emlx": raw})
+	cacheAttachment(t, root, "2", "2", "one.bin", []byte("a remaining copy's other bytes"))
+	for range 2 {
+		summary, err := ImportEmlxDir(t.Context(), st, root, opts)
+		r.NoError(err)
+		a.Zero(summary.Errors)
+		a.Equal(kept, messageAttachment(t, st, "legacy-merge@example.test"))
+	}
+
+	// The legacy mark outlives the first completion: a copy found later
+	// without its own record cannot replace the stored attachment either.
+	mkMailboxDir(t, root, map[string][]byte{"3.partial.emlx": raw})
+	cacheAttachment(t, root, "3", "2", "one.bin", []byte("a copy found later"))
+	_, err = ImportEmlxDir(t.Context(), st, root, opts)
+	r.NoError(err)
+	a.Equal(kept, messageAttachment(t, st, "legacy-merge@example.test"))
+
+	changed := []byte("the remaining copy changed")
+	cacheAttachment(t, root, "2", "2", "one.bin", changed)
+	_, err = ImportEmlxDir(t.Context(), st, root, opts)
+	r.NoError(err)
+	a.Equal(changed, messageAttachment(t, st, "legacy-merge@example.test"),
+		"a change observed in the copy's own cache can replace the stored attachment")
 }

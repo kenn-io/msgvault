@@ -26,13 +26,15 @@ type emlxReceipt struct {
 // records the sync run that completed the target, so one run completes a
 // shared target once even when it forces reconciliation of every occurrence.
 // A pending row's Intent names the occurrence whose attachments the
-// interrupted ingest was writing.
+// interrupted ingest was writing. Legacy marks a message archived before
+// receipts existed: copies without their own record only fill placeholders.
 type emlxCompletion struct {
 	Version int         `json:"version"`
 	Target  string      `json:"target"`
 	Policy  string      `json:"policy"`
 	Run     int64       `json:"run,omitzero"`
 	Intent  *emlxIntent `json:"intent,omitzero"`
+	Legacy  bool        `json:"legacy,omitzero"`
 }
 
 // emlxIntent records, before an ingest, which occurrence contributes which
@@ -85,6 +87,20 @@ func emlxTargetCompletion(st store.EmlxTargetState, id, policy string) (emlxComp
 		return c, false
 	}
 	return c, c.Version == emlxReceiptVersion && c.Target == id && c.Policy == policy
+}
+
+// emlxLegacyTarget reports whether an archived message predates receipts:
+// it has raw but no target row, or its row carries the legacy mark forward.
+func emlxLegacyTarget(st store.EmlxTargetState, id string) bool {
+	if !st.HasRaw {
+		return false
+	}
+	if st.Item == nil {
+		return true
+	}
+	var c emlxCompletion
+	return json.Unmarshal([]byte(st.Item.Checksum), &c, json.RejectUnknownMembers(true)) == nil &&
+		c.Target == id && c.Legacy
 }
 
 // emlxPendingIntent returns the intent recorded on a pending target row.

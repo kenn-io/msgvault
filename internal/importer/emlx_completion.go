@@ -372,7 +372,10 @@ func (r *emlxOccurrenceImporter) ingestTarget(
 			}
 		}
 	}
-	completion := emlxCompletion{Target: targetID, Policy: r.policy, Run: r.syncID, Intent: intent}
+	completion := emlxCompletion{
+		Target: targetID, Policy: r.policy, Run: r.syncID, Intent: intent,
+		Legacy: emlxLegacyTarget(target, targetID),
+	}
 	dirty, err := emlxTargetItem(r.sourceID, completion, "pending")
 	if err != nil {
 		return dirty, err
@@ -413,6 +416,7 @@ type emlxCandidate struct {
 	target       store.EmlxTargetState
 	current      []byte
 	recovered    bool
+	legacy       bool
 	acknowledged map[string]string
 	merged       emlx.MergeResult
 	restoreErr   error
@@ -498,6 +502,7 @@ func (r *emlxOccurrenceImporter) readCandidate(
 	if err != nil || c.target.Deleted {
 		return c, err
 	}
+	c.legacy = emlxLegacyTarget(c.target, c.targetID)
 	if c.target.HasRaw {
 		if c.current, err = r.io.raw(ctx, r.st, c.target.MessageID); err != nil {
 			return c, err
@@ -527,6 +532,12 @@ func (r *emlxOccurrenceImporter) mergeCandidate(ctx context.Context, v *emlxVisi
 		c.acknowledged = v.receipt.SourceParts
 	}
 	acknowledged := c.acknowledged
+	// A message archived before receipts keeps the attachment content an
+	// earlier import stored until a copy observes a change to its own cache.
+	var preserve map[string]bool
+	if c.legacy {
+		preserve = emlx.PopulatedParts(c.current)
+	}
 	if len(c.current) == 0 && len(msg.RestorationParts) == 0 {
 		c.merged = emlx.MergeResult{Raw: msg.Raw, SourceParts: acknowledged}
 		c.restoreErr = msg.RestorationError
@@ -539,13 +550,13 @@ func (r *emlxOccurrenceImporter) mergeCandidate(ctx context.Context, v *emlxVisi
 		// The occurrence stays pending until all supported work succeeds.
 		var err error
 		c.merged, err = emlx.MergeAttachmentsFromFile(ctx, msg.OriginalRaw, c.current, v.file,
-			r.opts.MaxMessageBytes, acknowledged)
+			r.opts.MaxMessageBytes, acknowledged, preserve)
 		c.restoreErr = err
 		return ctx.Err()
 	}
 	var err error
 	c.merged, err = emlx.MergeAttachments(msg.OriginalRaw, msg.Raw, c.current, msg.RestorationParts,
-		r.opts.MaxMessageBytes, acknowledged)
+		r.opts.MaxMessageBytes, acknowledged, preserve)
 	c.restoreErr = msg.RestorationError
 	return err
 }

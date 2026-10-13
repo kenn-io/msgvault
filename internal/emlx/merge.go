@@ -18,8 +18,14 @@ type MergeResult struct {
 }
 
 // MergeAttachments overlays supported top-level parts using the original layout.
-// It never charges preserved bytes against a lower new-material budget.
-func MergeAttachments(original, restored, archived []byte, parts []RestorationPart, maxBytes int64, acknowledged map[string]string) (MergeResult, error) {
+// It never charges preserved bytes against a lower new-material budget. A part
+// in preserve that the occurrence has not acknowledged keeps its archived
+// bytes; the occurrence only records the content it holds, so a later change
+// to its cache can replace the part.
+func MergeAttachments(
+	original, restored, archived []byte, parts []RestorationPart, maxBytes int64,
+	acknowledged map[string]string, preserve map[string]bool,
+) (MergeResult, error) {
 	result := MergeResult{Raw: archived, SourceParts: maps.Clone(acknowledged)}
 	if len(archived) == 0 {
 		result.Raw = original
@@ -48,6 +54,7 @@ func MergeAttachments(original, restored, archived []byte, parts []RestorationPa
 		}
 	}
 	chosen := append([][]byte(nil), old...)
+	observed := make(map[string]bool)
 	// Apply shrinking replacements first so their released space can admit additions.
 	var candidates []int
 	for _, part := range parts {
@@ -60,6 +67,10 @@ func MergeAttachments(original, restored, archived []byte, parts []RestorationPa
 			// A previously acknowledged source part cannot replay older bytes
 			// over another occurrence's newer contribution to the archive.
 			if part.ContentHash != "" && len(archived) > 0 && acknowledged[part.Key] == part.ContentHash {
+				continue
+			}
+			if preserve[part.Key] && acknowledged[part.Key] == "" {
+				observed[part.Key] = true
 				continue
 			}
 			if !bytes.Equal(fresh[i], old[i]) {
@@ -100,7 +111,7 @@ func MergeAttachments(original, restored, archived []byte, parts []RestorationPa
 		i, _ := strconv.Atoi(part.Key) // Every key was validated above.
 		// Only selected bytes can become new contribution evidence. Rejected
 		// replacements retain their previous acknowledgment and remain retryable.
-		if bytes.Equal(chosen[i], fresh[i]) {
+		if bytes.Equal(chosen[i], fresh[i]) || observed[part.Key] {
 			if result.SourceParts == nil {
 				result.SourceParts = make(map[string]string)
 			}
@@ -109,6 +120,23 @@ func MergeAttachments(original, restored, archived []byte, parts []RestorationPa
 	}
 	result.Raw = bytes.Join(chosen, nil)
 	return result, nil
+}
+
+// PopulatedParts reports which top-level parts of archived MIME already hold
+// content rather than an Apple Mail placeholder.
+func PopulatedParts(archived []byte) map[string]bool {
+	parts, err := splitParts(archived)
+	if err != nil {
+		return nil
+	}
+	populated := make(map[string]bool)
+	for i := 1; i < len(parts)-1; i++ {
+		lines := strings.Split(string(parts[i]), "\n")
+		if end := indexBlank(lines, 1); end >= 0 && !hasPlaceholder(lines[1:end]) {
+			populated[strconv.Itoa(i)] = true
+		}
+	}
+	return populated
 }
 
 // splitParts keeps every original byte, including mixed line endings and the

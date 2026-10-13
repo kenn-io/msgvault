@@ -125,6 +125,10 @@ On unreleased `main`, Apple Mail imports keep two kinds of rows here:
   credits those attachments to the file when the archived raw matches. The
   file's own row names that message before the write starts, so a row that
   names a different message is always the newer one.
+  A message archived before receipts existed is marked legacy. For it, a file
+  without its own attachment record only fills empty placeholders and records
+  what it holds; it can replace stored attachment content only after its own
+  cache changes.
 - `emlx-occurrence` rows track one `.emlx` file, keyed by a digest of the
   import root plus the file's relative path. An `imported` row stores a
   filesystem fingerprint of the file and its cached attachments, and a hash of

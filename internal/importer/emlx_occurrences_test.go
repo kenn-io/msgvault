@@ -742,6 +742,8 @@ func TestImportEmlxSourceBudgetColdRetries(t *testing.T) {
 				retry, err := ImportEmlxDir(t.Context(), st, root, opts)
 				r.NoError(err)
 				a.False(retry.HardErrors, "unchanged source exclusions must remain complete at the same limit")
+				a.Zero(retry.Errors, "a source exclusion is not an incomplete merge")
+				a.Equal(1, countEmlxLedgerEntries(t, st, first.SourceID, "emlx-occurrence", "imported"))
 				retained, err := st.GetMessageRawContext(t.Context(), mid)
 				r.NoError(err)
 				a.Equal(archived, retained)

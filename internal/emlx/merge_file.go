@@ -14,7 +14,11 @@ import (
 // occupancy before reading them. A shrinking replacement frees space before
 // additions; excluded growth preserves archived bytes and remains retryable.
 // Each read is bounded by the source policy and holds at most one new part.
-func MergeAttachmentsFromFile(ctx context.Context, original, archived []byte, messagePath string, maxBytes int64, acknowledged map[string]string) (MergeResult, error) {
+// Parts in preserve follow MergeAttachments.
+func MergeAttachmentsFromFile(
+	ctx context.Context, original, archived []byte, messagePath string, maxBytes int64,
+	acknowledged map[string]string, preserve map[string]bool,
+) (MergeResult, error) {
 	result := MergeResult{Raw: archived, SourceParts: maps.Clone(acknowledged)}
 	dir := attachmentsDir(messagePath)
 	if dir == "" || !bytes.Contains(original, []byte(applePlaceholderHeader)) {
@@ -96,12 +100,13 @@ func MergeAttachmentsFromFile(ctx context.Context, original, archived []byte, me
 		// Previously acknowledged parts need a bounded read to distinguish an
 		// unchanged older source from a new replacement that exceeds the budget.
 		if delta > 0 && int64(len(result.Raw))+delta > maxBytes && acknowledged[c.key] == "" {
-			result.Incomplete = true
+			// A preserved part keeps its archived bytes whether or not it fits.
+			result.Incomplete = result.Incomplete || !preserve[c.key]
 			continue
 		}
 		restored, _, parts, err := restoreSelectedAttachments(original, messagePath, maxBytes, c.key)
 		restoreErr = errors.Join(restoreErr, err)
-		merged, err := MergeAttachments(original, restored, result.Raw, parts, maxBytes, result.SourceParts)
+		merged, err := MergeAttachments(original, restored, result.Raw, parts, maxBytes, result.SourceParts, preserve)
 		if err != nil {
 			return result, errors.Join(restoreErr, err)
 		}
