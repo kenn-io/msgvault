@@ -28,6 +28,7 @@ func (s *Store) ensureMCPScopeLifetime(ctx context.Context, tx *sql.Tx, kind str
 		if _, err := rand.Read(random[:]); err != nil {
 			return mcpScopeLifetime{}, fmt.Errorf("generate archive lifetime: %w", err)
 		}
+		// #nosec G701 -- Fixed SQL; Rebind only changes placeholders and the generated lifetime is bound.
 		_, err := tx.ExecContext(ctx, s.Rebind(`INSERT INTO archive_metadata (key,value) VALUES ('mcp_events_archive_resource_generation_v1',?) ON CONFLICT (key) DO NOTHING`), hex.EncodeToString(random[:]))
 		if err != nil {
 			return mcpScopeLifetime{}, err

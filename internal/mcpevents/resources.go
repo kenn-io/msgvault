@@ -97,13 +97,28 @@ func (s *Service) resourceCapabilities(ctx context.Context, row store.MCPResourc
 		result.UnavailableReason = "events_disabled"
 		return result, nil
 	}
+	// Import permission belongs to the archive, independently of the source's
+	// native provider authority, type, or selection for live capture.
+	if row.Kind == "source" && s.opts.ImportNotifications {
+		if _, _, err := s.st.ValidateMCPEventScope(ctx, importFamily, row.Kind, row.ID, []string{"message"}); err != nil {
+			return result, err
+		}
+		result.Events = append(result.Events, importFamily)
+		for _, tool := range ReadToolsForCapability(importFamily, row.SourceType) {
+			if !slices.Contains(result.Read, tool) {
+				result.Read = append(result.Read, tool)
+			}
+		}
+	}
 	if row.SourceType == sourcecatalog.Gmail || row.SourceType == sourcecatalog.MicrosoftMail || row.SourceType == sourcecatalog.IMAP || row.SourceType == sourcecatalog.Slack || row.SourceType == sourcecatalog.Teams || row.SourceType == sourcecatalog.Discord || row.SourceType == sourcecatalog.Matrix || row.SourceType == sourcecatalog.Beeper {
 		allowed, err := s.st.NativeSourceMessagePermission(ctx, row.SourceID)
 		if err != nil {
 			return result, err
 		}
 		if !allowed {
-			result.UnavailableReason = "native_authority_unavailable"
+			if len(result.Events) == 0 {
+				result.UnavailableReason = "native_authority_unavailable"
+			}
 			return result, nil
 		}
 	}

@@ -103,6 +103,7 @@ func TestImportArchiveUpgradePreservesOriginalReceiptsPendingBytesAndBindings(t 
 	require := Require.New(t)
 
 	f := storetest.New(t)
+	grantSyntheticSourceFixture(t, f)
 	const owner = "owner:synthetic-import-upgrade"
 	const family = "msgvault.import_message_archived"
 	cfg := store.MCPEventsConfig{Enabled: true, Principal: owner, ImportNotifications: true, Capabilities: []store.MCPEventCapability{{Family: family, SourceType: "eml", Kinds: []string{"message"}}, {Family: "msgvault.message_archived", SourceType: "gmail", Kinds: []string{"message"}}}}

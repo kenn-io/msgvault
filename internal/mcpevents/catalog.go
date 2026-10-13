@@ -31,7 +31,7 @@ func ReadToolsForCapability(family, sourceType string) []string {
 			tools = append(tools, "get_attachment")
 		}
 		return tools
-	case sourceMessageFamily, inboxMessageFamily:
+	case sourceMessageFamily, inboxMessageFamily, importFamily:
 		return []string{"get_message", "list_thread"}
 	case draftFamily:
 		tools := []string{"draft_get"}

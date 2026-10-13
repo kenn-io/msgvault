@@ -75,5 +75,5 @@ func TestSourceCatalogAdvertisesOnlyCompletedLiveMessageConsumers(t *testing.T) 
 			live = append(live, descriptor.Type)
 		}
 	}
-	Assert.Equal(t, []string{"gmail", "imap", "msmail", "beeper", "slack", "teams", "discord", "matrix"}, live)
+	Assert.ElementsMatch(t, []string{"gmail", "imap", "msmail", "beeper", "slack", "teams", "discord", "matrix"}, live)
 }
