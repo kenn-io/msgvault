@@ -7,6 +7,7 @@ import (
 
 	Assert "github.com/stretchr/testify/assert"   //nolint:importas // Keep constructors available inside subtests.
 	Require "github.com/stretchr/testify/require" //nolint:importas // Keep constructors available inside subtests.
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
@@ -40,6 +41,17 @@ func TestImportSourceDiscoveryDoesNotRequireLiveProviderAuthority(t *testing.T) 
 					_, id, err := f.Store.ValidateMCPEventScope(t.Context(), "msgvault.import_message_archived", "source", source.ID, []string{"message"})
 					require.NoError(err)
 					assert.Equal(source.ID, id)
+					if sourceType == "gmail" {
+						require.NoError(f.Store.ObserveNativeSourcePermission(t.Context(), store.NativeSourcePermission{
+							SourceID: source.ID, SourceReference: resource.Reference, SourceType: sourceType,
+							NativeIdentity: source.Identifier, Known: true, MessageRead: true,
+						}))
+						page, err = svc.DiscoverResources(t.Context(), svc.principal, ResourceQuery{Kind: "source", SourceID: strconv.FormatInt(source.ID, 10)})
+						require.NoError(err)
+						require.Len(page.Resources, 1)
+						assert.ElementsMatch([]string{importFamily, sourceMessageFamily}, page.Resources[0].Capabilities.Events, "import and native source families coexist after native permission is granted")
+						assert.Empty(page.Resources[0].Capabilities.UnavailableReason)
+					}
 				} else {
 					assert.Empty(resource.Capabilities.Events)
 				}

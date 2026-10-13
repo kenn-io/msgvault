@@ -9,8 +9,8 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
-// The source resolver must not authorize source/inbox enumeration, accept a
-// caller-selected owner, or revive an observed lifetime after identity reuse.
+// Resource discovery must require the authenticated owner and canonical IDs,
+// and cannot revive an observed lifetime after identity reuse.
 func TestImportSourceReferenceResolverRequiresOwnerAndExactSource(t *testing.T) {
 	assert, require := Assert.New(t), Require.New(t)
 	f := storetest.New(t)
@@ -22,9 +22,6 @@ func TestImportSourceReferenceResolverRequiresOwnerAndExactSource(t *testing.T) 
 		query           ResourceQuery
 	}{
 		{"different owner", "owner:synthetic-other", ResourceQuery{Kind: "source", SourceID: id}},
-		{"all sources", svc.principal, ResourceQuery{Kind: "source"}},
-		{"conversations", svc.principal, ResourceQuery{Kind: "conversation", SourceID: id}},
-		{"inboxes", svc.principal, ResourceQuery{Kind: "inbox", SourceID: id}},
 		{"noncanonical ID", svc.principal, ResourceQuery{Kind: "source", SourceID: "0" + id}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -35,6 +32,10 @@ func TestImportSourceReferenceResolverRequiresOwnerAndExactSource(t *testing.T) 
 	var before int
 	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM mcp_source_resources`).Scan(&before))
 	assert.Zero(before, "denied requests cannot allocate resource identities")
+	for _, query := range []ResourceQuery{{Kind: "source"}, {Kind: "conversation", SourceID: id}, {Kind: "inbox", SourceID: id}} {
+		_, err := svc.DiscoverResources(t.Context(), svc.principal, query)
+		require.NoError(err, "owner discovery supports native resource enumeration even with capture disabled")
+	}
 	resolve := func() Resource {
 		page, err := svc.DiscoverResources(t.Context(), svc.principal, ResourceQuery{Kind: "source", SourceID: id})
 		require.NoError(err)

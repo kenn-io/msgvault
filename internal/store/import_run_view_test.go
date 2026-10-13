@@ -16,6 +16,7 @@ func TestImportRunViewPinsNativeAttemptAndOfflineProvenance(t *testing.T) {
 	require := Require.New(t)
 
 	f := storetest.New(t)
+	grantSyntheticSourceFixture(t, f)
 	const owner = "owner:synthetic-import"
 	_, err := f.Store.ConfigureMCPEvents(t.Context(), store.MCPEventsConfig{Enabled: true, Principal: owner, ImportNotifications: true, Capabilities: []store.MCPEventCapability{{Family: "msgvault.message_archived", SourceType: "gmail", Kinds: []string{"message"}}}})
 	require.NoError(err)

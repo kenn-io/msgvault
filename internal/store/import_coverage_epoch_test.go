@@ -17,6 +17,7 @@ func TestImportPermissionCoverageDoesNotInterruptLiveEvents(t *testing.T) {
 	require := Require.New(t)
 
 	f := storetest.New(t)
+	grantSyntheticSourceFixture(t, f)
 	const owner = "owner:synthetic-independent-coverage"
 	liveCap := store.MCPEventCapability{Family: "msgvault.message_archived", SourceType: "gmail", Kinds: []string{"message"}}
 	cfg := store.MCPEventsConfig{Enabled: true, Principal: owner, Capabilities: []store.MCPEventCapability{liveCap}}
