@@ -282,7 +282,7 @@ After adding an account, sync it with `msgvault sync-full`. IMAP accounts use th
 ## inbox
 
 Preview and control one exact Gmail Inbox item through the selected daemon.
-Requires API schema 3.15.0. Available on `main`, unreleased. The daemon verifies
+Requires API schema 3.16.0. Available on `main`, unreleased. The daemon verifies
 native account/item identity and current source/action authority on every call.
 The CLI also checks the daemon's live Inbox route and admitted operation before
 sending a control request. An unavailable or incompatible descriptor fails closed.
@@ -341,7 +341,7 @@ Microsoft categories.
 ## message-tags
 
 Read or update native tags on one email through the selected daemon. Requires
-API schema 3.15.0 or newer. The positional ID is msgvault's positive archived
+API schema 3.16.0 or newer. The positional ID is msgvault's positive archived
 message ID.
 
 ```bash
@@ -361,7 +361,7 @@ The same command selects the backend from the archived message's account:
 
 Gmail uses existing user label IDs from `available_tags`, rather than label
 names or local label IDs. System labels cannot be edited through this command.
-On API schema 3.15.0, Gmail edits automatically use a signed Inbox preview,
+On API schema 3.16.0, Gmail edits automatically use a signed Inbox preview,
 execute once, and print an Inbox receipt. JSON results retain `receipt_id`,
 `receipt_status`, and `idempotency_key`; inspect that evidence before retrying
 an uncertain edit.
