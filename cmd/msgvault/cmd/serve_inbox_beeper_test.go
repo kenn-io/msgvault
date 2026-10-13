@@ -40,12 +40,14 @@ func beeperInboxFixture(t *testing.T) (*storeAPIAdapter, inboxcontrol.Target) {
 }
 
 func TestBeeperInboxBindingAcceptsExactNativeConversation(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	a, target := beeperInboxFixture(t)
 	source, binding, err := a.inboxBinding(context.Background(), inboxcontrol.Request{Operation: inboxcontrol.OpGetState, Target: &target})
-	require.NoError(t, err)
-	require.NotNil(t, source)
-	assert.Equal(t, target.SourceID, source.ID)
-	assert.Equal(t, target.AccountID, binding.AccountID)
+	requirements.NoError(err)
+	requirements.NotNil(source)
+	assertions.Equal(target.SourceID, source.ID)
+	assertions.Equal(target.AccountID, binding.AccountID)
 }
 
 func TestBeeperInboxBindingRejectsForeignConversation(t *testing.T) {
@@ -150,59 +152,63 @@ func beeperUnrelatedState(t *testing.T, a *storeAPIAdapter) map[string]int64 {
 }
 
 func TestBeeperInboxControlPersistsMetadataUnderSourceFence(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	a, target := beeperInboxFixture(t)
 	peer := newBeeperControlPeer(t, a)
 	id, err := a.store.UpsertMessage(&store.Message{SourceID: target.SourceID, SourceMessageID: "old-A", ConversationID: target.ItemID, MessageType: "chat"})
-	require.NoError(t, err)
-	require.NoError(t, a.store.UpsertMessageBody(id, sql.NullString{String: "Synthetic archived body.", Valid: true}, sql.NullString{}))
+	requirements.NoError(err)
+	requirements.NoError(a.store.UpsertMessageBody(id, sql.NullString{String: "Synthetic archived body.", Valid: true}, sql.NullString{}))
 	_, err = a.store.DB().Exec(a.store.Rebind("UPDATE messages SET is_read = ? WHERE id = ?"), false, id)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	before := beeperUnrelatedState(t, a)
 	peer.onInfo = func() {
-		require.ErrorIs(t, a.store.RemoveSource(target.SourceID), store.ErrSyncAlreadyActive)
+		requirements.ErrorIs(a.store.RemoveSource(target.SourceID), store.ErrSyncAlreadyActive)
 		execution, err := a.store.AcquireSyncExecutionContext(t.Context(), target.SourceID)
-		require.ErrorIs(t, err, store.ErrSyncAlreadyActive)
+		requirements.ErrorIs(err, store.ErrSyncAlreadyActive)
 		if execution != nil {
-			assert.NoError(t, execution.Release())
+			assertions.NoError(execution.Release())
 		}
 	}
 	request := inboxcontrol.Request{Operation: inboxcontrol.OpGetState, Target: &target}
 	result, err := controlBeeper(t, a, request)
-	require.NoError(t, err)
-	require.NotNil(t, result.Before)
-	assert.Equal(t, target, result.Before.Target)
-	assert.Equal(t, new(true), result.Before.Inbox)
-	assert.Nil(t, result.Before.Read)
-	assert.Empty(t, result.Before.LastMessageID)
-	assert.Contains(t, result.Before.Flags, "beeper:last-read-message-sort-key:opaque:9")
+	requirements.NoError(err)
+	requirements.NotNil(result.Before)
+	assertions.Equal(target, result.Before.Target)
+	assertions.Equal(new(true), result.Before.Inbox)
+	assertions.Nil(result.Before.Read)
+	assertions.Empty(result.Before.LastMessageID)
+	assertions.Contains(result.Before.Flags, "beeper:last-read-message-sort-key:opaque:9")
 	stored, err := a.store.GetInboxProviderState(t.Context(), target)
-	require.NoError(t, err)
-	assert.Equal(t, result.Before, stored)
+	requirements.NoError(err)
+	assertions.Equal(result.Before, stored)
 	var body string
 	var read bool
-	require.NoError(t, a.store.DB().QueryRow(a.store.Rebind("SELECT is_read FROM messages WHERE id = ?"), id).Scan(&read))
-	require.NoError(t, a.store.DB().QueryRow(a.store.Rebind("SELECT body_text FROM message_bodies WHERE message_id = ?"), id).Scan(&body))
-	assert.False(t, read)
-	assert.Equal(t, "Synthetic archived body.", body)
-	assert.Equal(t, before, beeperUnrelatedState(t, a))
+	requirements.NoError(a.store.DB().QueryRow(a.store.Rebind("SELECT is_read FROM messages WHERE id = ?"), id).Scan(&read))
+	requirements.NoError(a.store.DB().QueryRow(a.store.Rebind("SELECT body_text FROM message_bodies WHERE message_id = ?"), id).Scan(&body))
+	assertions.False(read)
+	assertions.Equal("Synthetic archived body.", body)
+	assertions.Equal(before, beeperUnrelatedState(t, a))
 	calls, factories := peer.snapshot()
-	assert.Equal(t, 1, factories)
-	assert.Len(t, calls, 3)
+	assertions.Equal(1, factories)
+	assertions.Len(calls, 3)
 	// A second observation must release the first lease and preserve the digest.
 	second, err := controlBeeper(t, a, request)
-	require.NoError(t, err)
-	assert.Equal(t, result.Before.Revision, second.Before.Revision)
-	require.NoError(t, a.store.RemoveSource(target.SourceID))
+	requirements.NoError(err)
+	assertions.Equal(result.Before.Revision, second.Before.Revision)
+	requirements.NoError(a.store.RemoveSource(target.SourceID))
 }
 
 func TestBeeperInboxControlIdentityAndLifetimeNegatives(t *testing.T) {
 	for _, scenario := range []string{"removed", "reused ID", "removed during factory", "foreign source", "foreign account", "foreign conversation", "foreign provider"} {
 		t.Run(scenario, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
 			a, target := beeperInboxFixture(t)
 			peer := newBeeperControlPeer(t, a)
 			switch scenario {
 			case "removed", "reused ID":
-				require.NoError(t, a.store.RemoveSource(target.SourceID))
+				requirements.NoError(a.store.RemoveSource(target.SourceID))
 				if scenario == "reused ID" {
 					insert := "INSERT INTO sources (id,source_type,identifier) VALUES (?, ?, ?)"
 					if a.store.IsPostgreSQL() {
@@ -210,13 +216,13 @@ func TestBeeperInboxControlIdentityAndLifetimeNegatives(t *testing.T) {
 						insert = "INSERT INTO sources (id,source_type,identifier) OVERRIDING SYSTEM VALUE VALUES (?, ?, ?)"
 					}
 					_, err := a.store.DB().Exec(a.store.Rebind(insert), target.SourceID, "beeper", "replacement-account")
-					require.NoError(t, err)
+					requirements.NoError(err)
 					_, err = a.store.EnsureConversation(target.SourceID, target.ProviderID, "Replacement")
-					require.NoError(t, err)
+					requirements.NoError(err)
 				}
 			case "removed during factory":
 				a.beeperInboxClientFactory = func(context.Context, *store.Source) (*beeper.Client, error) {
-					require.NoError(t, a.store.RemoveSource(target.SourceID))
+					requirements.NoError(a.store.RemoveSource(target.SourceID))
 					return peer.client, nil
 				}
 			case "foreign source":
@@ -234,15 +240,17 @@ func TestBeeperInboxControlIdentityAndLifetimeNegatives(t *testing.T) {
 				// The existing execution lease cannot recover an absent source.
 				want = inboxcontrol.ErrUnavailable
 			}
-			require.ErrorIs(t, err, want)
+			requirements.ErrorIs(err, want)
 			calls, factories := peer.snapshot()
-			assert.Empty(t, calls)
-			assert.Zero(t, factories)
+			assertions.Empty(calls)
+			assertions.Zero(factories)
 		})
 	}
 }
 
 func TestBeeperInboxControlRejectsMergedAndMemberAliases(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	for _, change := range []string{
 		`,"merge":{"chatIDs":["!member:example.invalid"],"defaultChatID":"!chat:example.invalid"}`,
 		`,"mergedIntoChatID":"!parent:example.invalid"`,
@@ -251,14 +259,14 @@ func TestBeeperInboxControlRejectsMergedAndMemberAliases(t *testing.T) {
 		peer := newBeeperControlPeer(t, a)
 		peer.chat = strings.TrimSuffix(beeperControlChat, "}") + change + "}"
 		_, err := controlBeeper(t, a, inboxcontrol.Request{Operation: inboxcontrol.OpGetState, Target: &target})
-		require.ErrorIs(t, err, inboxcontrol.ErrDenied)
+		requirements.ErrorIs(err, inboxcontrol.ErrDenied)
 		stored, err := a.store.GetInboxProviderState(t.Context(), target)
-		require.NoError(t, err)
-		assert.Nil(t, stored)
+		requirements.NoError(err)
+		assertions.Nil(stored)
 		calls, _ := peer.snapshot()
-		assert.Len(t, calls, 2)
+		assertions.Len(calls, 2)
 		for _, call := range calls {
-			assert.NotContains(t, call, "/messages")
+			assertions.NotContains(call, "/messages")
 		}
 	}
 }
@@ -266,6 +274,8 @@ func TestBeeperInboxControlRejectsMergedAndMemberAliases(t *testing.T) {
 func TestBeeperInboxControlPrimaryEvidenceNeverAdmitsMutations(t *testing.T) {
 	for _, scenario := range []string{"chat markers and latest prose", "singleton terminal repeated with retrieved A", "outgoing preview with retrieved old A", "omitted preview with retrieved old A"} {
 		t.Run(scenario, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
 			a, target := beeperInboxFixture(t)
 			peer := newBeeperControlPeer(t, a)
 			switch scenario {
@@ -278,28 +288,28 @@ func TestBeeperInboxControlPrimaryEvidenceNeverAdmitsMutations(t *testing.T) {
 			}
 			if scenario != "chat markers and latest prose" {
 				message, err := peer.client.GetMessage(t.Context(), target.ProviderID, "old-A")
-				require.NoError(t, err)
-				assert.Equal(t, "old-A", message.ID)
+				requirements.NoError(err)
+				assertions.Equal("old-A", message.ID)
 			}
 			request := inboxcontrol.Request{Operation: inboxcontrol.OpGetState, Target: &target}
 			for range 2 {
 				observed, err := controlBeeper(t, a, request)
-				require.NoError(t, err)
-				assert.Nil(t, observed.Before.Read)
-				assert.Empty(t, observed.Before.LastMessageID)
+				requirements.NoError(err)
+				assertions.Nil(observed.Before.Read)
+				assertions.Empty(observed.Before.LastMessageID)
 			}
 			callsBefore, factoriesBefore := peer.snapshot()
 			before := beeperUnrelatedState(t, a)
 			for _, op := range []inboxcontrol.Operation{inboxcontrol.OpArchive, inboxcontrol.OpUnarchive, inboxcontrol.OpSetRead, inboxcontrol.OpSetUnread} {
 				request.Operation, request.DryRun = op, true
 				result, err := controlBeeper(t, a, request)
-				require.ErrorIs(t, err, inboxcontrol.ErrUnavailable)
-				assert.Nil(t, result)
+				requirements.ErrorIs(err, inboxcontrol.ErrUnavailable)
+				assertions.Nil(result)
 			}
 			callsAfter, factoriesAfter := peer.snapshot()
-			assert.Equal(t, callsBefore, callsAfter)
-			assert.Equal(t, factoriesBefore, factoriesAfter, "mutations are refused before client construction")
-			assert.Equal(t, before, beeperUnrelatedState(t, a))
+			assertions.Equal(callsBefore, callsAfter)
+			assertions.Equal(factoriesBefore, factoriesAfter, "mutations are refused before client construction")
+			assertions.Equal(before, beeperUnrelatedState(t, a))
 		})
 	}
 }
@@ -449,33 +459,34 @@ func testBeeperInboxWireScenario(t *testing.T, scenario string) {
 			continue
 		}
 		t.Run(string(request.Operation), func(t *testing.T) {
+			requirements := require.New(t)
 			response := call(http.MethodPost, "/api/v1/inbox/control", request, secret)
-			require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+			requirements.Equal(http.StatusOK, response.Code, response.Body.String())
 			var wire inboxcontrol.Result
-			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &wire))
+			requirements.NoError(json.Unmarshal(response.Body.Bytes(), &wire))
 			assertResult(t, request, &wire)
 			// ControlInbox uses the actual generated Go request/response transport.
 			result, err := daemon.ControlInbox(t.Context(), request)
-			require.NoError(t, err)
+			requirements.NoError(err)
 			assertResult(t, request, result)
 			session := nativeInboxMCPSession(t, daemon)
 			input, err := json.Marshal(request)
-			require.NoError(t, err)
+			requirements.NoError(err)
 			var args map[string]any
-			require.NoError(t, json.Unmarshal(input, &args))
+			requirements.NoError(json.Unmarshal(input, &args))
 			delete(args, "operation")
 			tool, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "inbox_" + strings.ReplaceAll(string(request.Operation), "-", "_"), Arguments: args})
-			require.NoError(t, err)
-			require.False(t, tool.IsError)
+			requirements.NoError(err)
+			requirements.False(tool.IsError)
 			content, err := json.Marshal(tool.StructuredContent)
-			require.NoError(t, err)
+			requirements.NoError(err)
 			var envelope struct {
 				Result *inboxcontrol.Result `json:"result"`
 			}
-			require.NoError(t, json.Unmarshal(content, &envelope))
+			requirements.NoError(json.Unmarshal(content, &envelope))
 			assertResult(t, request, envelope.Result)
 			tokenFile := filepath.Join(t.TempDir(), "agent.token")
-			require.NoError(t, os.WriteFile(tokenFile, []byte(secret), 0o600))
+			requirements.NoError(os.WriteFile(tokenFile, []byte(secret), 0o600))
 			ctx := testInvocationContext(t.Context(), a.config, invocationOptions{agentURL: network.URL, agentTokenFile: tokenFile, agentAllowInsecure: true, agentURLChanged: true, agentTokenChanged: true})
 			command := newInboxCmd()
 			command.SetContext(ctx)
@@ -484,9 +495,9 @@ func testBeeperInboxWireScenario(t *testing.T, scenario string) {
 			var output bytes.Buffer
 			command.SetOut(&output)
 			command.SetErr(io.Discard)
-			require.NoError(t, command.Execute())
+			requirements.NoError(command.Execute())
 			var cli inboxcontrol.Result
-			require.NoError(t, json.Unmarshal(output.Bytes(), &cli))
+			requirements.NoError(json.Unmarshal(output.Bytes(), &cli))
 			assertResult(t, request, &cli)
 		})
 	}

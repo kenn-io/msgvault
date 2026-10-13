@@ -84,23 +84,26 @@ func TestInboxObservePresence(t *testing.T) {
 		{"fractional count", `,"unreadCount":0.5`, nil, nil, nil},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+
 			peer := &inboxHTTPPeer{info: inboxTestInfo, chat: `{"id":"!chat:example.invalid","accountID":"account-example","type":"single"` + tt.fields + `}`, page: inboxTestPage}
 			provider := NewInboxProvider(peer.client(t), inboxTestSource())
 			target := inboxTestTarget()
 			state, err := provider.Observe(context.Background(), inboxcontrol.Request{Operation: inboxcontrol.OpGetState, Target: &target})
-			require.NoError(t, err)
-			assert.Equal(t, target, state.Target)
+			requirements.NoError(err)
+			assertions.Equal(target, state.Target)
 			_, fingerprintErr := inboxcontrol.SemanticFingerprint(state)
-			require.NoError(t, fingerprintErr, "item observations must be accepted by the existing native state contract")
-			assert.Equal(t, inboxcontrol.SourceIdentity{}, state.Source)
-			assert.Equal(t, tt.inbox, state.Inbox)
-			assert.Equal(t, tt.read, state.Read)
-			assert.Equal(t, tt.marked, state.MarkedUnread)
-			assert.Empty(t, state.LastMessageID, "local enumeration cannot authorize an incoming boundary")
-			assert.NotEmpty(t, state.Revision)
-			assert.False(t, state.ObservedAt.IsZero())
+			requirements.NoError(fingerprintErr, "item observations must be accepted by the existing native state contract")
+			assertions.Equal(inboxcontrol.SourceIdentity{}, state.Source)
+			assertions.Equal(tt.inbox, state.Inbox)
+			assertions.Equal(tt.read, state.Read)
+			assertions.Equal(tt.marked, state.MarkedUnread)
+			assertions.Empty(state.LastMessageID, "local enumeration cannot authorize an incoming boundary")
+			assertions.NotEmpty(state.Revision)
+			assertions.False(state.ObservedAt.IsZero())
 			for _, call := range peer.calls() {
-				assert.True(t, strings.HasPrefix(call, "GET "), call)
+				assertions.True(strings.HasPrefix(call, "GET "), call)
 			}
 		})
 	}
@@ -145,6 +148,8 @@ func TestInboxObserveBindingBeforeHTTP(t *testing.T) {
 }
 
 func TestInboxObserveDurableMarkerAndRevision(t *testing.T) {
+	assertions := assert.New(t)
+
 	observe := func(chat string) inboxcontrol.State {
 		peer := &inboxHTTPPeer{info: inboxTestInfo, chat: chat, page: inboxTestPage}
 		provider := NewInboxProvider(peer.client(t), inboxTestSource())
@@ -154,15 +159,15 @@ func TestInboxObserveDurableMarkerAndRevision(t *testing.T) {
 		return state
 	}
 	state := observe(inboxTestChat)
-	assert.Contains(t, state.Flags, `beeper:last-read-message-sort-key:opaque:9`)
-	assert.Equal(t, state.Revision, observe(inboxTestChat).Revision)
-	assert.Equal(t, state.Revision, observe(strings.TrimSuffix(inboxTestChat, "}")+`,"title":"Cosmetic title"}`).Revision)
+	assertions.Contains(state.Flags, `beeper:last-read-message-sort-key:opaque:9`)
+	assertions.Equal(state.Revision, observe(inboxTestChat).Revision)
+	assertions.Equal(state.Revision, observe(strings.TrimSuffix(inboxTestChat, "}")+`,"title":"Cosmetic title"}`).Revision)
 	for _, replacement := range []struct{ old, new string }{
 		{`"opaque:9"`, `"opaque:10"`},
 		{`"isArchived":false`, `"isArchived":true`},
 		{`"archive":true`, `"archive":false`},
 		{`"isMarkedUnread":false`, `"isMarkedUnread":null`},
 	} {
-		assert.NotEqual(t, state.Revision, observe(strings.Replace(inboxTestChat, replacement.old, replacement.new, 1)).Revision)
+		assertions.NotEqual(state.Revision, observe(strings.Replace(inboxTestChat, replacement.old, replacement.new, 1)).Revision)
 	}
 }
