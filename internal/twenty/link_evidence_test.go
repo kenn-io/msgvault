@@ -142,7 +142,7 @@ func TestTwentyFallbackOnlyOnFieldRejection(t *testing.T) {
 	}{
 		{"permission error naming field", 200, `{"errors":[{"message":"Cannot query field \"iCalUid\" on type \"CalendarEvent\".","extensions":{"code":"FORBIDDEN"}}]}`, "FORBIDDEN", 1, false},
 		{"permission error naming field HTTP 400", 400, `{"errors":[{"message":"Cannot query field \"iCalUid\" on type \"CalendarEvent\".","extensions":{"code":"FORBIDDEN"}}]}`, "HTTP 400", 1, false},
-		{"access denied", 200, `{"errors":[{"message":"Access denied to iCalUid","extensions":{"code":"FORBIDDEN"}}]}`, "Access denied to iCalUid", 1, false},
+		{"uncoded error naming field", 200, `{"errors":[{"message":"Access denied to iCalUid"}]}`, "Access denied to iCalUid", 1, false},
 		{"other field", 200, `{"errors":[{"message":"Cannot query field \"transcript\" on type \"CallRecording\".","extensions":{"code":"GRAPHQL_VALIDATION_FAILED"}}]}`, "transcript", 1, false},
 		{"auth", 401, "Unauthorized", "HTTP 401", 1, true},
 		{"HTTP throttling", 429, "Rate limit reached", "HTTP 429", 5, true},
