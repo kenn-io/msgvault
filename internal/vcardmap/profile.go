@@ -484,36 +484,15 @@ func projectContactPoint(point store.PersonContactPoint) (projectedProperty, boo
 // contactPointValue returns the wire value of a contact point, whether it is
 // rendered in the text form, and whether there is anything to render at all.
 func contactPointValue(point store.PersonContactPoint, form contactForm) (string, bool, bool) {
-	value := rawContactValue(point, form)
+	value := point.VCardValue()
 	if value == "" {
 		return "", false, false
 	}
 	isURI := vcard.IsURIValue(value)
-	if form == contactURI && !isURI {
-		return "", false, false
-	}
 	if form == contactText || (form == contactURIOrText && !isURI) {
 		return vcard.EscapeText(value), true, true
 	}
 	return value, false, true
-}
-
-// rawContactValue prefers the row's URI over its original text and, for a
-// telephone that is not already a URI, synthesizes tel: from the normalized
-// number.
-func rawContactValue(point store.PersonContactPoint, form contactForm) string {
-	value := strings.TrimSpace(point.OriginalValue)
-	if !isBlank(point.URI) {
-		value = strings.TrimSpace(*point.URI)
-	}
-	if form != contactTelephone || value == "" || vcard.IsURIValue(value) {
-		return value
-	}
-	phone := strings.TrimSpace(point.NormalizedValue)
-	if phone == "" {
-		phone = strings.ReplaceAll(value, " ", "")
-	}
-	return "tel:" + phone
 }
 
 // appendContactParameters sets SERVICE-TYPE when the service is known (an

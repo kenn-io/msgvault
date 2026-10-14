@@ -117,7 +117,9 @@ func (s *Store) ApplyPersonProfilePatchContext(
 		if err != nil {
 			return fmt.Errorf("update person profile revision: %w", err)
 		}
-		if err := s.applyPersonProfilePatchTx(ctx, tx, personID, patch); err != nil {
+		if err := s.reviewInferenceExportChangesTx(ctx, tx, personID, func() error {
+			return s.applyPersonProfilePatchTx(ctx, tx, personID, patch)
+		}); err != nil {
 			return err
 		}
 		if personProfilePatchChangesEnrichmentIdentity(patch) {

@@ -95,6 +95,7 @@ type PersonSearchResponse struct {
 }
 
 func (s *Server) registerPersonProfileRoutes(api huma.API) {
+	s.registerStandalonePersonRoute(api)
 	search := rawAPIV1Operation("searchPeople", http.MethodPost, "/people/search",
 		"Search durable people semantically")
 	search.Description = "Searches only the curated person vector corpus and returns durable person roots in relevance order."

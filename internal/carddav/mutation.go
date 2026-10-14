@@ -280,12 +280,10 @@ func (s *Service) preparePublicationEnvelope(source *store.CardDAVPublicationRev
 		if err != nil {
 			return vcard.ResourceEnvelope{}, err
 		}
-		fullName := person.VCardUID
-		if person.DisplayName != nil && strings.TrimSpace(*person.DisplayName) != "" {
-			fullName = strings.TrimSpace(*person.DisplayName)
-		}
+		// Let the projector own FN so renames update it. The renderer supplies
+		// a fallback only when the profile has no projected name.
 		raw := []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:" + vcard.EscapeText(person.VCardUID) +
-			"\r\nFN:" + vcard.EscapeText(fullName) + "\r\nEND:VCARD\r\n")
+			"\r\nEND:VCARD\r\n")
 		envelope, err = vcard.ParseResourceEnvelope(raw)
 		if err != nil {
 			return vcard.ResourceEnvelope{}, err
