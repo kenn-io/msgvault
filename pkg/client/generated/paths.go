@@ -62,6 +62,15 @@ func (g GetCacheBuildStatusPath) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(g))
 }
 
+type GetCalendarEventPath struct {
+	// Ref Occurrence ref returned by listCalendarEvents
+	Ref string `json:"ref" validate:"required"`
+}
+
+func (g GetCalendarEventPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+}
+
 type UpdateCardDAVBookRolesPath struct {
 	ID int64 `json:"id" validate:"gte=1"`
 }
