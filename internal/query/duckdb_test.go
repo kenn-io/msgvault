@@ -2514,18 +2514,19 @@ func TestDuckDBEngine_GetDeletionTargetsByFilter(t *testing.T) {
 	}
 }
 
-func TestDuckDBEngine_GetDeletionTargetsByFilter_MessageTypeEmailIncludesLegacy(t *testing.T) {
+func TestDuckDBEngine_GetDeletionTargetsByFilter_ExcludesNonEmailMessages(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	b := NewTestDataBuilder(t)
 	b.AddSource("test@example.com")
 	typedEmailID := b.AddMessage(MessageOpt{Subject: "typed email", MessageType: "email"})
-	legacyEmailID := b.AddMessage(MessageOpt{Subject: "legacy email", MessageType: ""})
+	legacyEmailID := b.AddMessage(MessageOpt{Subject: "legacy email", LegacyEmptyMessageType: true})
+	b.AddMessage(MessageOpt{Subject: "calendar", MessageType: "calendar_event"})
 	b.AddMessage(MessageOpt{Subject: "meeting", MessageType: "meeting_transcript"})
 	b.AddMessage(MessageOpt{Subject: "text", MessageType: "sms"})
 	engine := b.BuildEngine()
 
-	ids, err := deletionTargetSourceMessageIDs(engine.GetDeletionTargetsByFilter(context.Background(), MessageFilter{MessageType: "email"}))
+	ids, err := deletionTargetSourceMessageIDs(engine.GetDeletionTargetsByFilter(context.Background(), MessageFilter{}))
 	require.NoError(err)
 	assert.ElementsMatch(
 		[]string{fmt.Sprintf("msg%d", typedEmailID), fmt.Sprintf("msg%d", legacyEmailID)},

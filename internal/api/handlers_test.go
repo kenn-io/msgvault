@@ -1808,6 +1808,7 @@ func TestHandleCLIRunBackupSubcommandAdmission(t *testing.T) {
 		{"logs still allowed", []string{"logs"}, true},
 		{"gc allowed", []string{"gc", "--yes"}, true},
 		{"import-maildir allowed", []string{"import-maildir", "--identifier", "me@example.test", "dir"}, true},
+		{"import-ics allowed", []string{"import-ics", "--identifier", "example-export", "example.ics"}, true},
 		{"import-eml allowed", []string{"import-eml", "--identifier", "me@example.test", "dir"}, true},
 		{"remove-account still allowed", []string{"remove-account", "alice@example.com", "--yes"}, true},
 		{"purge excluded media dry-run allowed", []string{"purge-excluded-media", "--dry-run"}, true},

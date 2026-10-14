@@ -58,8 +58,9 @@ type ActivityCandidate struct {
 }
 
 type activityMessageMetadata struct {
-	AllDay bool   `json:"all_day"`
-	Status string `json:"status"`
+	AllDay          bool   `json:"all_day"`
+	Status          string `json:"status"`
+	FamilyCancelled bool   `json:"ics_family_cancelled"`
 }
 
 type activityCandidateRow struct {
@@ -67,6 +68,9 @@ type activityCandidateRow struct {
 	deletedAt           *time.Time
 	deletedFromSourceAt *time.Time
 	metadata            sql.NullString
+	hasCalendarEvent    bool
+	calendarStatus      string
+	calendarAllDay      bool
 }
 
 const activityCandidateStateCTE = `
@@ -115,6 +119,7 @@ const activityCandidateColumns = `
 	COALESCE(c.conversation_type, ''), COALESCE(m.message_type, ''),
 	m.sent_at, m.received_at, m.internal_date, m.last_modified,
 	m.deleted_at, m.deleted_from_source_at, m.metadata,
+	(ce.message_id IS NOT NULL), COALESCE(ce.status, ''), COALESCE(ce.all_day, FALSE),
 	COALESCE(m.source_is_from_me, FALSE),
 	r.identity_revision, r.account_identity_revision,
 	r.timezone_active, r.timezone_target, r.timezone_generation,
@@ -136,6 +141,7 @@ func (s *Store) LoadQueuedActivityCandidatesContext(
 		FROM activity_projection_queue q
 		JOIN messages m ON m.id = q.message_id
 		LEFT JOIN conversations c ON c.id = m.conversation_id
+		LEFT JOIN calendar_events ce ON ce.message_id = m.id
 		CROSS JOIN activity_current_state r
 		WHERE q.revision > q.processed_revision
 		ORDER BY m.id
@@ -172,6 +178,7 @@ func (s *Store) ScanForActivityProjectionContext(
 		LEFT JOIN conversations c ON c.id = m.conversation_id
 		LEFT JOIN activity_events ae ON ae.message_id = m.id
 		LEFT JOIN activity_projection_queue q ON q.message_id = m.id
+		LEFT JOIN calendar_events ce ON ce.message_id = m.id
 		CROSS JOIN activity_current_state r
 		WHERE m.id > ?
 		  AND (
@@ -217,6 +224,7 @@ func (s *Store) ScanAllActivityCandidatesContext(
 		FROM messages m
 		LEFT JOIN conversations c ON c.id = m.conversation_id
 		LEFT JOIN activity_projection_queue q ON q.message_id = m.id
+		LEFT JOIN calendar_events ce ON ce.message_id = m.id
 		CROSS JOIN activity_current_state r
 		WHERE m.id > ?
 		ORDER BY m.id
@@ -282,6 +290,7 @@ func (s *Store) loadActivityCandidatesByIDQueryerContext(
 		FROM messages m
 		LEFT JOIN conversations c ON c.id = m.conversation_id
 		LEFT JOIN activity_projection_queue q ON q.message_id = m.id
+		LEFT JOIN calendar_events ce ON ce.message_id = m.id
 		CROSS JOIN activity_current_state r
 		WHERE m.id IN (`+placeholders+`)
 		ORDER BY m.id
@@ -318,6 +327,9 @@ func scanActivityCandidateRows(rows rowsScanner) ([]ActivityCandidate, error) {
 			&row.deletedAt,
 			&row.deletedFromSourceAt,
 			&row.metadata,
+			&row.hasCalendarEvent,
+			&row.calendarStatus,
+			&row.calendarAllDay,
 			&row.candidate.SourceIsFromMe,
 			&row.candidate.IdentityRevision,
 			&row.candidate.AccountIdentityRevision,
@@ -365,11 +377,16 @@ func applyActivityEligibility(row *activityCandidateRow) {
 		_ = json.Unmarshal([]byte(row.metadata.String), &metadata)
 	}
 	row.candidate.DateOnly = metadata.AllDay
+	status := metadata.Status
+	if row.hasCalendarEvent {
+		row.candidate.DateOnly = row.calendarAllDay
+		status = row.calendarStatus
+	}
 	hasTimestamp := activityUsableTime(row.candidate.SentAt) ||
 		activityUsableTime(row.candidate.ReceivedAt) ||
 		activityUsableTime(row.candidate.InternalDate)
 	cancelled := row.candidate.MessageType == "calendar_event" &&
-		strings.EqualFold(strings.TrimSpace(metadata.Status), "cancelled")
+		(strings.EqualFold(strings.TrimSpace(status), SyncStatusCancelled) || metadata.FamilyCancelled)
 	row.candidate.Eligible = row.deletedAt == nil &&
 		row.deletedFromSourceAt == nil &&
 		hasTimestamp &&

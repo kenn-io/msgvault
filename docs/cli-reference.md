@@ -16,7 +16,7 @@ appear in full under Inherited Flags.
 | Task | Commands and guides |
 |---|---|
 | Add and sync a source | [Choose a source](guides/sources.md), [sync](#sync), [sync-full](#sync-full) |
-| Import local exports | [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [import-imazing-csv](#import-imazing-csv), [text imports](usage/text-messages.md) |
+| Import local exports | [import-ics](#import-ics), [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [import-imazing-csv](#import-imazing-csv), [text imports](usage/text-messages.md) |
 | Search and browse | [search](#search), [tui](#tui), [show-message](#show-message), [documents](#documents), [embeddings](#embeddings), [multimodal](#multimodal), [eval](#eval) |
 | Maintain people and contacts | [person](#person), [people guide](usage/people.md), [CardDAV](usage/people-carddav.md) |
 | Edit live email tags | [message-tags](#message-tags) |
@@ -1743,6 +1743,59 @@ remote failure or an archive failure exits with an error after printing the
 receipts. Reconcile the reported event; do not repeat a completed mutation.
 
 ---
+
+## import-ics
+
+Import a local iCalendar file as separate calendar event messages:
+
+```bash
+msgvault import-ics calendar.ics --identifier personal-calendar
+```
+
+Choose a stable `--identifier` for each calendar. Re-importing into that source
+updates events by UID and original recurrence identity. Higher SEQUENCE wins;
+equal sequences use DTSTAMP, with cancellation winning an exact tie. Older
+invitations cannot undo a cancellation. Each event keeps a stable message ID
+and the original calendar payload. The daemon reads the file locally; importing
+files through a remote daemon is unavailable.
+
+Each VEVENT becomes its own entry. A malformed or unsupported component rejects
+the whole file. Valid series with unsupported recurrence remain archived with
+an expansion error. The command reports updated, unchanged and unexpandable
+event counts. Imports support UTC times, IANA time zones, all-day dates and
+floating times. Floating times use the source's `time_zone` or UTC, and retain
+that interpretation for later revisions. Unsupported custom time zones and
+RECURRENCE-ID RANGE reject a file or email part. For email, the original MIME
+preserves that raw evidence.
+Timed recurring DURATION values containing days or weeks remain unexpandable.
+
+Files are limited to 4 MiB, 1000 VEVENTs, 32 component levels and 8 KiB per
+unfolded line. Retaining the full payload for each event is limited to 64 MiB
+per import.
+
+### Invitations in email
+
+Archiving email also extracts decoded `text/calendar` MIME parts, including
+inline alternatives, into event messages in the same source. A `.ics` filename
+alone does not qualify. Attached forwarded emails and iTIP messages with the
+ADD, REFRESH, REPLY, COUNTER, or DECLINECOUNTER method are not applied to event
+entries. Email content and attachments remain available. Event entries survive
+replacement or deletion of their contributing email.
+
+Cancellation preserves an event and cancels its detached exceptions. A newer
+active master restores each exception's own status. Invalid calendar parts
+leave the email intact and record `calendar_invite_errors` in its metadata.
+The last successfully interpreted event revision remains readable when a later
+update cannot be interpreted. This does not guarantee that every archived
+calendar update has been applied.
+
+To extract invites from emails already in the archive, run
+[`repair-derived`](#repair-derived). It works from stored MIME without a provider
+connection or a schema migration:
+
+```bash
+msgvault repair-derived --source-type mbox
+```
 
 ## import-eml
 

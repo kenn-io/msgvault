@@ -770,7 +770,7 @@ func TestAccountAttributionNonDerivedWritesKeepWorking(t *testing.T) {
 	assert := assert.New(t)
 	f := newAttrFixture(t, "mbox", "archive-1")
 	f.confirm("work@example.org")
-	meeting, err := f.st.PersistMessageWithParticipantsContext(t.Context(),
+	meeting, err := f.st.PersistMessageWithParticipantsContext(t.Context(), f.source.ID,
 		[]store.ParticipantPersistData{{EmailAddress: "host@example.com", Domain: "example.com"}},
 		func(ids []int64) *store.MessagePersistData {
 			return &store.MessagePersistData{Message: &store.Message{

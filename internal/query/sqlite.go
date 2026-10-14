@@ -1493,7 +1493,7 @@ func (e *SQLiteEngine) GetDeletionTargetsByFilter(ctx context.Context, filter Me
 	// Exclude remote-deleted and dedup-soft-deleted messages.
 	// Always pass true: this surface feeds remote-deletion staging and
 	// must never honor an opt-in.
-	conditions = append(conditions, store.LiveMessagesWhere("m", true))
+	conditions = append(conditions, store.LiveMessagesWhere("m", true), emailOnlyFilterM)
 	if filter.HasEmptyTargets() {
 		_, emptyConditions, emptyArgs := e.buildFilterJoinsAndConditions(MessageFilter{
 			EmptyValueTargets:     filter.EmptyValueTargets,
@@ -1733,6 +1733,7 @@ func (e *SQLiteEngine) GetDeletionTargetsBySearch(
 	default:
 		return nil, fmt.Errorf("unsupported deletion search mode %q", mode)
 	}
+	searchConditions = append(searchConditions, emailOnlyFilterM)
 
 	queryText := fmt.Sprintf(`
 		SELECT m.id, m.source_id, s_gmail.source_type, s_gmail.identifier,
@@ -1771,6 +1772,7 @@ func (e *SQLiteEngine) GetDeletionTargetsByAggregateSearch(
 	filter.Pagination = Pagination{}
 	filter.HideDeletedFromSource = true
 	filterJoins, conditions, args := e.buildFilterJoinsAndConditions(filter)
+	conditions = append(conditions, emailOnlyFilterM)
 	timeGranularity := filter.TimeRange.Granularity
 	if groupBy == ViewTime {
 		timeGranularity = inferTimeGranularity(timeGranularity, key)

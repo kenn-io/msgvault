@@ -90,6 +90,8 @@ type MessageDeliveryEvidence struct {
 	IsDelivered sql.NullBool
 }
 
+const rawFormatMIME = "mime"
+
 // MessagePersistData bundles everything needed to atomically
 // persist a message and its related rows in a single transaction.
 type MessagePersistData struct {
@@ -320,7 +322,7 @@ func (s *Store) loadGmailAuditEvidenceTx(
 	}
 	item.RawMIMEPresent = rawMessageID.Valid
 	if item.RawMIMEPresent {
-		if !rawFormat.Valid || rawFormat.String != "mime" {
+		if !rawFormat.Valid || rawFormat.String != rawFormatMIME {
 			item.RawMIMEError = fmt.Sprintf("stored raw format %q is not MIME", rawFormat.String)
 		} else {
 			raw, _, decodeErr := decodeMessageRawBounded(
@@ -957,7 +959,10 @@ func (s *Store) SetMessageMetadataContext(ctx context.Context, messageID int64, 
 		if err := setMessageMetadataWith(boundQuerier{ctx: ctx, q: tx}, s.dialect, messageID, metadata); err != nil {
 			return err
 		}
-		return s.refreshMeetingProjectionWith(ctx, tx, messageID)
+		if err := s.refreshMeetingProjectionWith(ctx, tx, messageID); err != nil {
+			return err
+		}
+		return s.refreshCalendarEventProjectionWith(ctx, tx, messageID)
 	})
 }
 
@@ -1027,11 +1032,14 @@ func (s *Store) RekeyMessageSourceID(
 	expectedSourceMessageID, newSourceMessageID string,
 ) (bool, error) {
 	var rekeyed bool
-	write := func(q querier) error {
-		if err := s.requireSyncMessageSourceTx(q, messageID); err != nil {
+	err := s.withMessageAttributionTxContext(context.Background(), messageID, func(tx *loggedTx) error {
+		if err := s.requireSyncMessageSourceTx(tx, messageID); err != nil {
 			return err
 		}
-		result, err := q.Exec(
+		if err := s.migrateLegacyEmailICSClaimsWith(context.Background(), tx, messageID, expectedSourceMessageID); err != nil {
+			return fmt.Errorf("migrate calendar claims before message rekey: %w", err)
+		}
+		result, err := tx.Exec(
 			`UPDATE messages SET source_message_id = ?
 			 WHERE id = ? AND source_message_id = ?`,
 			newSourceMessageID, messageID, expectedSourceMessageID)
@@ -1044,12 +1052,7 @@ func (s *Store) RekeyMessageSourceID(
 		}
 		rekeyed = affected == 1
 		return nil
-	}
-	if s.syncGeneration == nil {
-		err := write(s.db)
-		return rekeyed, err
-	}
-	err := s.withTx(func(tx *loggedTx) error { return write(tx) })
+	})
 	return rekeyed, err
 }
 
@@ -1095,6 +1098,9 @@ func (s *Store) updateMessageOnDedup(
 
 		sourceIDChanged := currentSourceMessageID != newSourceMessageID
 		if sourceIDChanged {
+			if err := s.migrateLegacyEmailICSClaimsWith(context.Background(), tx, messageID, currentSourceMessageID); err != nil {
+				return fmt.Errorf("migrate calendar claims before dedup rekey: %w", err)
+			}
 			if _, err := tx.Exec(
 				`UPDATE messages SET source_message_id = ?
 				 WHERE id = ?`,
@@ -1172,7 +1178,7 @@ func (s *Store) MigrateSourceMessageID(sourceID, conversationID int64, legacySou
 			if err != nil {
 				return fmt.Errorf("delete legacy source_message_id: %w", err)
 			}
-			return nil
+			return s.refreshCalendarEventProjectionWith(context.Background(), tx, newID)
 		}
 
 		_, err = tx.Exec(
@@ -1184,7 +1190,15 @@ func (s *Store) MigrateSourceMessageID(sourceID, conversationID int64, legacySou
 		if err != nil {
 			return fmt.Errorf("migrate source_message_id: %w", err)
 		}
-		return nil
+		var survivor int64
+		err = tx.QueryRow(`SELECT id FROM messages WHERE source_id = ? AND conversation_id = ? AND source_message_id = ?`, sourceID, conversationID, newSourceMessageID).Scan(&survivor)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("read migrated survivor: %w", err)
+		}
+		return s.refreshCalendarEventProjectionWith(context.Background(), tx, survivor)
 	})
 }
 
@@ -1389,12 +1403,21 @@ func (s *Store) UpsertMessageContext(ctx context.Context, msg *Message) (int64, 
 				return fmt.Errorf("lock message upsert: %w", err)
 			}
 		}
+		if err := s.lockEmailCalendarParticipantsWith(ctx, tx, &MessagePersistData{Message: msg}); err != nil {
+			return err
+		}
 		var err error
 		id, err = upsertMessageWith(q, s.dialect, msg)
 		if err != nil {
 			return err
 		}
 		if err := s.refreshMeetingProjectionWith(ctx, tx, id); err != nil {
+			return err
+		}
+		if err := s.refreshCalendarEventProjectionWith(ctx, tx, id); err != nil {
+			return err
+		}
+		if _, _, err := s.refreshEmailCalendarEventsWith(ctx, tx, id, nil); err != nil {
 			return err
 		}
 		return s.refreshAccountAttributionAfterWriteTx(ctx, tx, id, deliveryInput{})
@@ -1700,7 +1723,7 @@ func nullStringValue(ns sql.NullString) string {
 
 // UpsertMessageRaw stores the compressed raw MIME data for a message.
 func (s *Store) UpsertMessageRaw(messageID int64, rawData []byte) error {
-	return s.UpsertMessageRawWithFormat(messageID, rawData, "mime")
+	return s.UpsertMessageRawWithFormat(messageID, rawData, rawFormatMIME)
 }
 
 func upsertMessageRawWithFormat(q querier, messageID int64, rawData []byte, format string) error {
@@ -2047,17 +2070,23 @@ func (s *Store) PersistMessageContext(ctx context.Context, data *MessagePersistD
 // PersistMessageWithParticipantsContext resolves participants and persists the
 // message snapshot in one request-aware transaction. build receives IDs in the
 // same order as participants and must return the snapshot that references them.
+// sourceID is locked before participant writes and must match the built message.
 func (s *Store) PersistMessageWithParticipantsContext(
 	ctx context.Context,
+	sourceID int64,
 	participants []ParticipantPersistData,
 	build func(participantIDs []int64) *MessagePersistData,
 ) (int64, error) {
 	if build == nil {
 		return 0, errors.New("persist message requires a participant builder")
 	}
-	// The source is known only after build runs, so this entry locks none.
-	// Meeting archives are the only caller and meeting rows are not derived.
-	return s.persistMessageWithParticipantsTransaction(ctx, attributionLock{}, nil, participants, build, nil, nil)
+	prepare := func(_ context.Context, _ *loggedTx, data *MessagePersistData) (*MessagePersistData, error) {
+		if data.Message.SourceID != sourceID {
+			return nil, fmt.Errorf("persist message source mismatch: expected %d, got %d", sourceID, data.Message.SourceID)
+		}
+		return data, nil
+	}
+	return s.persistMessageWithParticipantsTransaction(ctx, attributionLock{Sources: []int64{sourceID}}, nil, participants, build, prepare, nil)
 }
 
 // PersistRepairMessageWithParticipantsContext atomically replaces one
@@ -2221,10 +2250,11 @@ func (s *Store) persistMessageWithParticipantsTx(
 			return 0, err
 		}
 	}
-	if len(participants) > 1 || hasPhoneParticipant {
+	if len(participants) > 0 || hasPhoneParticipant {
 		// Participant merges take the directory lock before rewriting
-		// message rows. Keep the same order when a repair's preflight
-		// callback locks its target message for identity revalidation.
+		// message rows. Acquire it before any participant row, including a
+		// single envelope participant when calendar extraction may add more
+		// participants later in this transaction.
 		if err := s.lockParticipantDirectoryMutationTxContext(ctx, tx); err != nil {
 			return 0, err
 		}
@@ -2309,6 +2339,9 @@ func (s *Store) persistMessageWith(
 	if data == nil || data.Message == nil {
 		return 0, errors.New("persist message requires a message")
 	}
+	if err := s.lockEmailCalendarParticipantsWith(ctx, tx, data); err != nil {
+		return 0, err
+	}
 	q := boundQuerier{ctx: ctx, q: tx}
 	message := data.Message
 	if data.Conversation != nil {
@@ -2359,13 +2392,17 @@ func (s *Store) persistMessageWith(
 		return 0, fmt.Errorf("upsert body: %w", err)
 	}
 
+	var inMemoryCalendarRaw *[]byte
 	if len(data.RawMIME) > 0 {
 		if err := ctx.Err(); err != nil {
 			return 0, err
 		}
 		rawFormat := data.RawFormat
 		if rawFormat == "" {
-			rawFormat = "mime"
+			rawFormat = rawFormatMIME
+		}
+		if rawFormat == rawFormatMIME {
+			inMemoryCalendarRaw = &data.RawMIME
 		}
 		if err := upsertMessageRawWithFormat(q, messageID, data.RawMIME, rawFormat); err != nil {
 			return 0, fmt.Errorf("upsert raw: %w", err)
@@ -2389,6 +2426,12 @@ func (s *Store) persistMessageWith(
 	if err := s.refreshMeetingProjectionWith(ctx, tx, messageID); err != nil {
 		return 0, err
 	}
+	if err := s.refreshCalendarEventProjectionWith(ctx, tx, messageID); err != nil {
+		return 0, err
+	}
+	if _, _, err := s.refreshEmailCalendarEventsWith(ctx, tx, messageID, inMemoryCalendarRaw); err != nil {
+		return 0, err
+	}
 
 	if !data.PreserveLabels {
 		if err := replaceMessageLabelsTx(q, messageID, data.LabelIDs); err != nil {
@@ -2397,7 +2440,7 @@ func (s *Store) persistMessageWith(
 	}
 	delivery := deliveryInput{}
 	switch {
-	case len(data.RawMIME) > 0 && (data.RawFormat == "" || data.RawFormat == "mime"):
+	case len(data.RawMIME) > 0 && (data.RawFormat == "" || data.RawFormat == rawFormatMIME):
 		delivery = deliveryFromMIME(data.RawMIME)
 	case len(data.RawMIME) > 0:
 		// A non-MIME payload replaced any stored MIME, so its delivery
@@ -3401,6 +3444,7 @@ func (s *Store) ReconcileSourceMessageSnapshot(
 			SELECT source_message_id
 			FROM messages
 			WHERE source_id = ?
+			  AND COALESCE(message_type, '') IN ('', 'email')
 			  AND deleted_at IS NULL
 			  AND deleted_from_source_at IS NULL
 		`, sourceID)
@@ -6004,7 +6048,7 @@ func (s *Store) UpsertMessageRawWithFormatContext(ctx context.Context, messageID
 			return err
 		}
 		replacesMIME := false
-		if format != "mime" {
+		if format != rawFormatMIME {
 			var stored int
 			err := tx.QueryRowContext(ctx,
 				`SELECT 1 FROM message_raw WHERE message_id = ? AND raw_format = 'mime'`, messageID).Scan(&stored)
@@ -6024,8 +6068,18 @@ func (s *Store) UpsertMessageRawWithFormatContext(ctx context.Context, messageID
 		if err := s.refreshMeetingProjectionWith(ctx, tx, messageID); err != nil {
 			return err
 		}
+		if err := s.refreshCalendarEventProjectionWith(ctx, tx, messageID); err != nil {
+			return err
+		}
+		var inMemoryCalendarRaw *[]byte
+		if format == rawFormatMIME {
+			inMemoryCalendarRaw = &rawData
+		}
+		if _, _, err := s.refreshEmailCalendarEventsWith(ctx, tx, messageID, inMemoryCalendarRaw); err != nil {
+			return err
+		}
 		switch {
-		case format == "mime":
+		case format == rawFormatMIME:
 			return s.refreshAccountAttributionAfterWriteTx(ctx, tx, messageID, deliveryFromMIME(rawData))
 		case replacesMIME:
 			return s.refreshAccountAttributionAfterWriteTx(ctx, tx, messageID,
@@ -6033,7 +6087,7 @@ func (s *Store) UpsertMessageRawWithFormatContext(ctx context.Context, messageID
 		}
 		return nil
 	}
-	if format != "mime" {
+	if format != rawFormatMIME {
 		// Delivery evidence comes only from MIME, so a write that neither
 		// stores MIME nor replaces it takes no attribution lock. One that
 		// finds MIME to replace rolls back and retries holding the lock.

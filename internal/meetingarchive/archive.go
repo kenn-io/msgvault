@@ -167,7 +167,7 @@ func (a *Archiver) Upsert(
 	}
 	metadata := sql.NullString{String: string(snapshot.Metadata), Valid: len(snapshot.Metadata) > 0}
 	messageID, err := a.store.PersistMessageWithParticipantsContext(
-		ctx,
+		ctx, snapshot.SourceID,
 		participants,
 		func(participantIDs []int64) *store.MessagePersistData {
 			attendeeOffset := 0

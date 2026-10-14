@@ -3,12 +3,14 @@ package store_test
 import (
 	"context"
 	"database/sql"
+	"encoding/json/v2"
 	"slices"
 	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/calevent"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -47,7 +49,7 @@ func seedRelocationFixtureWithSourceType(
 	require.NoError(err)
 
 	targetID, err := st.PersistMessageWithParticipantsContext(
-		t.Context(),
+		t.Context(), source.ID,
 		[]store.ParticipantPersistData{
 			{EmailAddress: "draft-author@example.test", DisplayName: "Draft Author", Domain: "example.test"},
 			{EmailAddress: "draft-to@example.test", DisplayName: "Draft To", Domain: "example.test"},
@@ -195,6 +197,77 @@ func TestPersistIMAPRelocationReplacesCompleteSnapshotAtomically(t *testing.T) {
 	_, draftHits, err := fixture.Store.SearchMessages("draftword", 0, 10)
 	require.NoError(err)
 	assert.Zero(draftHits)
+}
+
+func TestPersistIMAPRelocationMigratesEmailCalendarClaimBeforeRepair(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	fixture := seedIMAPRelocationFixture(t)
+	const calendarRaw = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nMETHOD:REQUEST\r\nBEGIN:VEVENT\r\nUID:relocation-event@example.test\r\nSEQUENCE:1\r\nDTSTART:20270302T120000Z\r\nDURATION:PT1H\r\nSUMMARY:Relocated invitation\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+	inviteMIME := []byte("From: draft-author@example.test\r\nTo: draft-to@example.test\r\nMessage-ID: <relocation@example.test>\r\nSubject: Draft subject\r\nMIME-Version: 1.0\r\nContent-Type: multipart/alternative; boundary=calendar-invite\r\n\r\n--calendar-invite\r\nContent-Type: text/plain\r\n\r\nInvitation message\r\n--calendar-invite\r\nContent-Type: text/calendar; method=REQUEST\r\n\r\n" + calendarRaw + "\r\n--calendar-invite--\r\n")
+	require.NoError(fixture.Scoped.UpsertMessageRawWithFormat(fixture.TargetID, inviteMIME, "mime"))
+
+	readEventIDs := func() []int64 {
+		rows, err := fixture.Store.DB().Query(fixture.Store.Rebind(`SELECT m.id FROM messages m JOIN calendar_events e ON e.message_id=m.id WHERE m.source_id=? AND e.provider='ics' ORDER BY m.id`), fixture.SourceID)
+		require.NoError(err)
+		defer func() { require.NoError(rows.Close()) }()
+		var ids []int64
+		for rows.Next() {
+			var id int64
+			require.NoError(rows.Scan(&id))
+			ids = append(ids, id)
+		}
+		require.NoError(rows.Err())
+		return ids
+	}
+	ids := readEventIDs()
+	require.Len(ids, 1)
+	eventID := ids[0]
+	var storedMetadata string
+	require.NoError(fixture.Store.DB().QueryRow(fixture.Store.Rebind(`SELECT metadata FROM messages WHERE id=?`), eventID).Scan(&storedMetadata))
+	var legacy struct {
+		Version               int    `json:"ics_version"`
+		Index                 *int   `json:"ics_event_index"`
+		Namespace             string `json:"ics_namespace"`
+		Method                string `json:"ics_method"`
+		TimeZone              string `json:"ics_time_zone"`
+		ParentSourceMessageID string `json:"invite_source_message_id"`
+		PartKey               string `json:"invite_part_key"`
+	}
+	require.NoError(json.Unmarshal([]byte(storedMetadata), &legacy))
+	components, err := calevent.ParseICS([]byte(calendarRaw), "REQUEST", calevent.SourceContext{CalendarTimeZone: "UTC"})
+	require.NoError(err)
+	require.Len(components, 1)
+	legacyKey := calevent.ICSMessageIDForImport(components[0].Event, calevent.ICSMetadata{
+		ParentSourceMessageID: legacy.ParentSourceMessageID, PartKey: legacy.PartKey,
+	})
+	legacyBytes, err := json.Marshal(legacy)
+	require.NoError(err)
+	_, err = fixture.Store.DB().Exec(fixture.Store.Rebind(`UPDATE messages SET source_message_id=?,metadata=? WHERE id=?`), legacyKey, string(legacyBytes), eventID)
+	require.NoError(err)
+
+	gotID, err := fixture.Scoped.PersistIMAPRelocationWithParticipantsContext(
+		t.Context(), fixture.Guard, imapRelocationParticipants(),
+		func(participantIDs []int64) *store.MessagePersistData {
+			data := relocatedIMAPMessageData(fixture, participantIDs)
+			data.RawMIME = inviteMIME
+			return data
+		}, true,
+	)
+	require.NoError(err)
+	assert.Equal(fixture.TargetID, gotID)
+
+	_, err = fixture.Scoped.RepairEmailCalendarEventsContext(t.Context(), fixture.SourceID)
+	require.NoError(err)
+	assert.Equal([]int64{eventID}, readEventIDs(), "repair after IMAP rekey preserves the migrated event row")
+	var migrated struct {
+		ParentMessageID *int64 `json:"invite_parent_message_id"`
+	}
+	var finalMetadata string
+	require.NoError(fixture.Store.DB().QueryRow(fixture.Store.Rebind(`SELECT metadata FROM messages WHERE id=?`), eventID).Scan(&finalMetadata))
+	require.NoError(json.Unmarshal([]byte(finalMetadata), &migrated))
+	require.NotNil(migrated.ParentMessageID)
+	assert.Equal(fixture.TargetID, *migrated.ParentMessageID)
 }
 
 func TestPersistIMAPRelocationRequiresGuardedIMAPSyncScope(t *testing.T) {

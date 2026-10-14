@@ -37,6 +37,9 @@ func (s *Store) AdoptMessageSourceIDContext(
 		if err := s.requireSyncMessageSourceTx(tx, messageID); err != nil {
 			return err
 		}
+		if err := s.migrateLegacyEmailICSClaimsWith(ctx, tx, messageID, expectedSourceMessageID); err != nil {
+			return fmt.Errorf("migrate calendar claims before source ID adoption: %w", err)
+		}
 		result, err := tx.ExecContext(ctx, `
 			UPDATE messages SET source_message_id = ?
 			WHERE id = ? AND source_message_id = ?
