@@ -363,7 +363,9 @@ import (
 // attachment names/counts, and hybrid_available on CLI search responses.
 // 3.15.0 adds native Gmail label, IMAP keyword, and Microsoft Graph category
 // reads and delta updates.
-const APISchemaVersion = "3.15.0"
+// 3.16.0 adds archived calendar occurrence reads at GET /api/v1/calendar/events
+// and GET /api/v1/calendar/events/{ref}.
+const APISchemaVersion = "3.16.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -926,6 +928,22 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 	}
 	schemas := doc.Components.Schemas.Map()
 	const emailProperty = "email"
+	// These required response properties legitimately carry empty strings or
+	// zero timestamps. Client-only nullable overrides produce pointers that
+	// distinguish presence from value; codegenfix requires their presence.
+	for schemaName, fields := range map[string][]string{
+		"Identity":           {"Date", "Instant"},
+		"Attendee":           {"DisplayName", "Email"},
+		"CalendarOccurrence": {"subject", "status", "start", "end"},
+	} {
+		if schema := schemas[schemaName]; schema != nil {
+			for _, field := range fields {
+				if property := schema.Properties[field]; property != nil {
+					property.Nullable = true
+				}
+			}
+		}
+	}
 	if input := schemas["GCalEventInput"]; input != nil {
 		for name, goType := range map[string]string{"attendees": "*[]GCalAttendee", "recurrence": "*[]string"} {
 			if field := input.Properties[name]; field != nil {
