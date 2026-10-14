@@ -687,7 +687,7 @@ jobs:
         if: ${{ !cancelled() && matrix.followups && steps.postgres-shards.outcome != 'skipped' }}
         run: make test-pg-nocgo
 
-      # Store concurrency tests use the API runner's spare capacity to keep the store shard short.
+      # Run store concurrency tests after the API package test, away from the store package shard.
       # Five repetitions catch intermittent lost updates and uniqueness races.
       - name: Concurrency tests (-count=5)
         if: ${{ !cancelled() && matrix.followups && steps.postgres-shards.outcome != 'skipped' }}
