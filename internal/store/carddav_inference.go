@@ -224,6 +224,9 @@ func (s *Store) loadPersonInferenceExportContactsTx(
 	}
 	projection.Names = make([]personInferenceExportComponent, 0, len(names))
 	for _, name := range names {
+		if property, _ := name.VCardValue(); property == "" {
+			continue
+		}
 		envelope := name.Envelope
 		name.PersonID, name.Envelope = 0, ValueEnvelope{}
 		component, err := newInferenceExportComponent(name, envelope)
@@ -375,36 +378,8 @@ func (s *Store) backfillCardDAVInferenceExportStateVersion(ctx context.Context, 
 		}
 		for _, personID := range personIDs {
 			if contactsOnly {
-				var projection personInferenceExportProjection
-				if err := s.loadPersonInferenceExportContactsTx(ctx, tx, personID, true, &projection); err != nil {
+				if err := s.backfillPersonCardDAVInferenceV2Tx(ctx, tx, personID); err != nil {
 					return err
-				}
-				// v1 approvals never covered names, contacts, or addresses.
-				if inferenceExportProjectionHasInferred(projection) {
-					if err := s.advancePersonInferenceExportRevisionTx(ctx, tx, personID); err != nil {
-						return err
-					}
-				}
-				var pendingCreate bool
-				if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM carddav_publications
-                    WHERE person_id=? AND pending_operation=?)`, personID, CardDAVMutationCreate).Scan(&pendingCreate); err != nil {
-					return fmt.Errorf("check legacy CardDAV create: %w", err)
-				}
-				if !pendingCreate {
-					continue
-				}
-				// Frozen v1 creates may still contain contributors retired since
-				// the request. Their automatic approval never covered these fields
-				// and is checked independently of the current person revision.
-				if err := s.loadPersonInferenceExportContactsTx(ctx, tx, personID, false, &projection); err != nil {
-					return err
-				}
-				if inferenceExportProjectionHasInferred(projection) {
-					if _, err := tx.ExecContext(ctx, `UPDATE carddav_publications
-                        SET approved_body_sha256=NULL, approved_inference_revision=NULL, approved_mutation_revision=NULL
-                        WHERE person_id=? AND pending_operation=?`, personID, CardDAVMutationCreate); err != nil {
-						return fmt.Errorf("invalidate legacy CardDAV create approval: %w", err)
-					}
 				}
 				continue
 			}
@@ -429,6 +404,140 @@ func (s *Store) backfillCardDAVInferenceExportStateVersion(ctx context.Context, 
 		}
 		return nil
 	})
+}
+
+func (s *Store) backfillPersonCardDAVInferenceV2Tx(ctx context.Context, tx *loggedTx, personID int64) error {
+	var current, history personInferenceExportProjection
+	if err := s.loadPersonInferenceExportContactsTx(ctx, tx, personID, true, &current); err != nil {
+		return err
+	}
+	needsReview := inferenceExportProjectionHasInferred(current)
+	if err := s.loadPersonInferenceExportContactsTx(ctx, tx, personID, false, &history); err != nil {
+		return err
+	}
+	if inferenceExportProjectionHasInferred(history) {
+		if !needsReview {
+			var err error
+			needsReview, err = s.personHasPublishedContactInferenceTx(ctx, tx, personID, history)
+			if err != nil {
+				return err
+			}
+		}
+		// Frozen requests may still contain inferred contributors retired since
+		// the request. Their v1 approval never covered these fields.
+		result, err := tx.ExecContext(ctx, `UPDATE carddav_publications
+            SET approved_body_sha256=NULL, approved_inference_revision=NULL, approved_mutation_revision=NULL
+            WHERE person_id=? AND pending_operation=?`, personID, CardDAVMutationCreate)
+		if err != nil {
+			return fmt.Errorf("invalidate legacy CardDAV create approval: %w", err)
+		}
+		pending, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		conflict, err := s.invalidateLegacyCardDAVConflictCreatesTx(ctx, tx, personID)
+		if err != nil {
+			return err
+		}
+		needsReview = needsReview || pending > 0 || conflict
+	}
+	if needsReview {
+		return s.advancePersonInferenceExportRevisionTx(ctx, tx, personID)
+	}
+	return nil
+}
+
+func (s *Store) personHasPublishedContactInferenceTx(ctx context.Context, tx *loggedTx, personID int64, history personInferenceExportProjection) (bool, error) {
+	byTable := map[string]map[int64]bool{}
+	for table, components := range map[string][]personInferenceExportComponent{
+		"person_names": history.Names, "person_contact_points": history.ContactPoints, "person_addresses": history.Addresses,
+	} {
+		byTable[table] = make(map[int64]bool)
+		for _, component := range components {
+			if component.Inferred {
+				byTable[table][component.RowID] = true
+			}
+		}
+	}
+	mappingsExpr := "json_extract(e.resource_metadata, '$.native_mappings')"
+	if s.IsPostgreSQL() {
+		mappingsExpr = "e.resource_metadata ->> 'native_mappings'"
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT `+mappingsExpr+` FROM vcard_resource_envelopes e
+        WHERE e.person_id=? AND EXISTS(SELECT 1 FROM carddav_publications p
+            WHERE p.person_id=e.person_id AND p.desired=TRUE
+              AND e.source_ref='carddav:' || CAST(p.address_book_id AS TEXT)
+              AND e.source_resource_uid=p.href)`, personID)
+	if err != nil {
+		return false, fmt.Errorf("load published contact inference mappings: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var raw sql.NullString
+		if err := rows.Scan(&raw); err != nil {
+			return false, err
+		}
+		if !raw.Valid {
+			continue
+		}
+		var mappings []vcard.NativeMapping
+		if err := json.Unmarshal([]byte(raw.String), &mappings); err != nil {
+			return false, fmt.Errorf("decode published contact inference mappings: %w", err)
+		}
+		for _, mapping := range mappings {
+			if byTable[mapping.Table][mapping.RowID] {
+				return true, nil
+			}
+		}
+	}
+	return false, rows.Err()
+}
+
+func (s *Store) invalidateLegacyCardDAVConflictCreatesTx(ctx context.Context, tx *loggedTx, personID int64) (bool, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT c.id, c.local_mutation_intent FROM carddav_conflicts c
+        WHERE c.status=? AND c.local_mutation_intent IS NOT NULL
+          AND EXISTS(SELECT 1 FROM carddav_resources r WHERE r.address_book_id=c.address_book_id
+            AND r.href=c.href AND r.person_id=?)`, CardDAVConflictUnresolved, personID)
+	if err != nil {
+		return false, fmt.Errorf("load legacy CardDAV conflict creates: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	intents := make(map[int64]cardDAVConflictIntentV1)
+	for rows.Next() {
+		var id int64
+		var raw []byte
+		if err := rows.Scan(&id, &raw); err != nil {
+			return false, err
+		}
+		var intent cardDAVConflictIntentV1
+		if err := json.Unmarshal(raw, &intent); err != nil {
+			return false, fmt.Errorf("decode legacy CardDAV conflict create: %w", err)
+		}
+		if intent.Operation == CardDAVMutationCreate {
+			intents[id] = intent
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return false, err
+	}
+	if err := rows.Close(); err != nil {
+		return false, err
+	}
+	for id, intent := range intents {
+		// Preserve bytes for canonical confirmation. After a 404, the stale
+		// authorization releases this intent and requires a fresh review.
+		intent.AuthorizationGeneration = 0
+		encoded, err := json.Marshal(intent, json.Deterministic(true))
+		if err != nil {
+			return false, err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE carddav_conflicts SET local_mutation_intent=?,
+            approved_local_body_sha256=NULL, approved_local_inference_revision=NULL, approved_conflict_revision=NULL
+            WHERE id=?`, encoded, id); err != nil {
+			return false, fmt.Errorf("invalidate legacy CardDAV conflict create approval: %w", err)
+		}
+	}
+	return len(intents) > 0, nil
 }
 
 // personHasPublishedInferenceHistoryTx conservatively recognizes prior inferred

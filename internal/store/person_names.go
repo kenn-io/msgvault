@@ -80,6 +80,8 @@ func (n PersonName) VCardValue() (propertyName, rawValue string) {
 			// Each row is one nickname, including any literal commas.
 			return "NICKNAME", vcard.EscapeText(value)
 		}
+	case PersonNameSort:
+		return "", ""
 	}
 	return "", ""
 }

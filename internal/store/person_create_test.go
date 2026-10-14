@@ -281,6 +281,12 @@ func TestEnrichmentCreatedContactsKeepReviewThroughMerge(t *testing.T) {
 		Source: store.ProvenanceEnrichment,
 	})
 	require.NoError(err)
+	names, err := f.Store.ListPersonNamesContext(t.Context(), absorbed.ID, true)
+	require.NoError(err)
+	require.Len(names, 1)
+	require.NoError(f.Store.SupersedePersonNameContext(t.Context(), absorbed.ID, names[0].Envelope.ID, nil))
+	absorbed, err = f.Store.GetPersonContext(t.Context(), absorbed.ID)
+	require.NoError(err)
 	require.Equal(int64(0), inferenceRevision(t, f.Store, survivor.ID))
 	_, err = f.Store.MergePersonsContext(t.Context(), store.PersonMergeRequest{
 		SurvivorID: survivor.ID, AbsorbedID: absorbed.ID,
@@ -291,6 +297,7 @@ func TestEnrichmentCreatedContactsKeepReviewThroughMerge(t *testing.T) {
 	points, err := f.Store.ListPersonContactPointsContext(t.Context(), survivor.ID, true)
 	require.NoError(err)
 	require.Len(points, 1)
+	assert.Equal("alex@example.com", points[0].OriginalValue)
 	assert.Equal(store.ProvenanceEnrichment, points[0].Envelope.Source)
 	assert.Equal(int64(1), inferenceRevision(t, f.Store, survivor.ID))
 }
