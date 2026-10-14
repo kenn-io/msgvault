@@ -3,6 +3,7 @@
 package importer
 
 import (
+	"bytes"
 	"context"
 	"encoding/json/v2"
 	"errors"
@@ -442,4 +443,68 @@ func TestImportEmlxLegacyArchiveKeepsStoredAttachment(t *testing.T) {
 	r.NoError(err)
 	a.Equal(changed, messageAttachment(t, st, "legacy-merge@example.test"),
 		"a change observed in the copy's own cache can replace the stored attachment")
+}
+
+// A preserved attachment too large to add to the archive under the combined
+// limit is still read so the copy records its hash. Otherwise a later,
+// smaller change to that cache would look like a first sighting and be
+// recorded without replacing the stored attachment.
+func TestImportEmlxLegacyOversizedCopyRecordsHash(t *testing.T) {
+	r, a := require.New(t), assert.New(t)
+	st, tmp := openTestStore(t)
+	root := filepath.Join(tmp, "Inbox.mbox")
+	raw := partialRaw([]string{"Message-ID: <legacy-budget@example.test>"}, "one.bin", "two.bin")
+	mkMailboxDir(t, root, map[string][]byte{"1.partial.emlx": raw})
+	kept := bytes.Repeat([]byte("k"), 100)
+	cacheAttachment(t, root, "1", "2", "one.bin", kept)
+	cacheAttachment(t, root, "1", "3", "two.bin", bytes.Repeat([]byte("m"), 100))
+	seedRaw, restored, err := emlx.RestoreAttachments(raw, filepath.Join(root, "Messages", "1.partial.emlx"), 128<<20)
+	r.NoError(err)
+	r.Equal(2, restored)
+	opts := EmlxImportOptions{Identifier: "owner@example.test", AttachmentsDir: filepath.Join(tmp, "blobs")}
+	source, err := st.GetOrCreateSource("apple-mail", opts.Identifier)
+	r.NoError(err)
+	label, err := st.EnsureLabel(source.ID, "Inbox", "Inbox", "user")
+	r.NoError(err)
+	hash := emlxRawDigest(raw)
+	r.NoError(IngestRawMessage(t.Context(), st, source.ID, opts.Identifier, opts.AttachmentsDir,
+		[]int64{label}, "emlx-"+hash, hash, seedRaw, time.Now(), slog.Default()))
+	r.NoError(os.RemoveAll(filepath.Join(root, "Messages")))
+	r.NoError(os.RemoveAll(filepath.Join(root, "Attachments")))
+
+	// The remaining copy's attachment fits the limit by itself, but not on top
+	// of the archive's current size.
+	larger := bytes.Repeat([]byte("n"), 220)
+	mkMailboxDir(t, root, map[string][]byte{"2.partial.emlx": raw})
+	cacheAttachment(t, root, "2", "2", "one.bin", larger)
+	file := filepath.Join(root, "Messages", "2.partial.emlx")
+	opts.MaxMessageBytes = int64(len(seedRaw)) + 100
+	alone, err := emlx.ParseFile(file, opts.MaxMessageBytes)
+	r.NoError(err)
+	r.Equal(1, alone.RestoredAttachments, "the copy's attachment must fit the limit by itself")
+	r.Greater(int64(len(seedRaw)+len(alone.Raw)-len(raw)), opts.MaxMessageBytes,
+		"adding it to the archive must exceed the limit")
+
+	firstAttachment := func() []byte {
+		t.Helper()
+		var messageID int64
+		r.NoError(st.DB().QueryRow(`SELECT id FROM messages`).Scan(&messageID))
+		archived, err := st.GetMessageRawContext(t.Context(), messageID)
+		r.NoError(err)
+		parsed, err := mime.Parse(archived)
+		r.NoError(err)
+		r.Len(parsed.Attachments, 2)
+		return parsed.Attachments[0].Content
+	}
+	first, err := ImportEmlxDir(t.Context(), st, root, opts)
+	r.NoError(err)
+	a.Zero(first.Errors)
+	a.Equal(kept, firstAttachment())
+
+	smaller := []byte("a smaller change")
+	cacheAttachment(t, root, "2", "2", "one.bin", smaller)
+	_, err = ImportEmlxDir(t.Context(), st, root, opts)
+	r.NoError(err)
+	a.Equal(smaller, firstAttachment(),
+		"the copy's own cache changed, so its new attachment replaces the stored one")
 }

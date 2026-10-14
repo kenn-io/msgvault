@@ -99,9 +99,10 @@ func MergeAttachmentsFromFile(
 		delta := c.size - int64(len(old[c.index]))
 		// Previously acknowledged parts need a bounded read to distinguish an
 		// unchanged older source from a new replacement that exceeds the budget.
-		if delta > 0 && int64(len(result.Raw))+delta > maxBytes && acknowledged[c.key] == "" {
-			// A preserved part keeps its archived bytes whether or not it fits.
-			result.Incomplete = result.Incomplete || !preserve[c.key]
+		// A preserved part is read too: it replaces nothing, but its hash must be
+		// recorded so a later change to the copy's cache can replace it.
+		if delta > 0 && int64(len(result.Raw))+delta > maxBytes && acknowledged[c.key] == "" && !preserve[c.key] {
+			result.Incomplete = true
 			continue
 		}
 		restored, _, parts, err := restoreSelectedAttachments(original, messagePath, maxBytes, c.key)
