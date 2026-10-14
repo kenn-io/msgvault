@@ -62,6 +62,72 @@ func TestIdentityActivityPreservesNonChatConversationEdgeSemantics(t *testing.T)
 		"non-chat domain fan-out includes direct and conversation edges")
 }
 
+func TestDomainPersonCountsExcludeRoomOnlyIdentitiesAndKeepActivity(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	builder := NewTestDataBuilder(t)
+	source := builder.AddSource("owner@example.test")
+	human := builder.AddParticipant("human@example.test", "example.test", "Human")
+	room := builder.AddParticipant(
+		"room@resource.calendar.google.com",
+		"resource.calendar.google.com",
+		"Example Room",
+	)
+	message := builder.AddMessage(MessageOpt{SourceID: source})
+	builder.AddFrom(message, human, "Human")
+	builder.AddTo(message, room, "Example Room")
+	engine := builder.BuildEngine()
+	ctx := context.Background()
+
+	people, err := engine.SearchPeople(ctx, PersonSearchRequest{
+		Query: "resource.calendar.google.com",
+		Page:  PageSpec{Limit: 25},
+	})
+	requirements.NoError(err)
+	assertions.Empty(people.Rows, "room-only identities are excluded from the people directory")
+
+	assertRoomDomain := func(response *DomainSearchResponse) {
+		requirements.Len(response.Rows, 1)
+		assertions.Equal("resource.calendar.google.com", response.Rows[0].Domain)
+		assertions.Equal(int64(1), response.Rows[0].ActivityCount,
+			"archived activity from the room remains in the domain")
+		assertions.Zero(response.Rows[0].PersonCount,
+			"room-only identities are excluded from domain person counts")
+	}
+
+	indexed, err := engine.SearchDomains(ctx, DomainSearchRequest{
+		Query: "resource.calendar.google.com",
+		Page:  PageSpec{Limit: 25},
+	})
+	requirements.NoError(err)
+	assertRoomDomain(indexed)
+
+	filtered, err := engine.SearchDomains(ctx, DomainSearchRequest{
+		Query: "resource.calendar.google.com",
+		Explore: ExploreRequest{Context: Context{
+			ParticipantIDs: []int64{room},
+		}},
+		Page: PageSpec{Limit: 25},
+	})
+	requirements.NoError(err)
+	assertRoomDomain(filtered)
+
+	legacy, err := engine.searchDomainsLegacy(ctx, DomainSearchRequest{
+		Page: PageSpec{Limit: 25},
+	}, "resource.calendar.google.com")
+	requirements.NoError(err)
+	assertRoomDomain(legacy)
+
+	legacyFiltered, err := engine.searchDomainsLegacy(ctx, DomainSearchRequest{
+		Explore: ExploreRequest{Context: Context{
+			ParticipantIDs: []int64{room},
+		}},
+		Page: PageSpec{Limit: 25},
+	}, "resource.calendar.google.com")
+	requirements.NoError(err)
+	assertRoomDomain(legacyFiltered)
+}
+
 func TestUnfilteredIdentityIndexMatchesLegacyPeopleAndDomains(t *testing.T) {
 	requirementsForTest := require.New(t)
 	builder := NewTestDataBuilder(t)

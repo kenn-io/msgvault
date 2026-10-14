@@ -2086,8 +2086,35 @@ func reconcilePersonEnrichmentCostTx(
 func (s *Store) LoadRequestInput(
 	ctx context.Context, lease personenrichment.WorkLease,
 ) (personenrichment.RequestInput, error) {
-	person, err := s.GetPersonContext(ctx, lease.PersonID)
+	return s.loadRequestInput(ctx, lease, false)
+}
+
+// LoadRequestInputForDeletionContext reconstructs current identifiers for
+// suppression when a person is no longer visible in people reads. Callers must
+// use this only to build deletion suppressions and never to dispatch requests.
+func (s *Store) LoadRequestInputForDeletionContext(
+	ctx context.Context, lease personenrichment.WorkLease,
+) (personenrichment.RequestInput, error) {
+	return s.loadRequestInput(ctx, lease, true)
+}
+
+func (s *Store) loadRequestInput(
+	ctx context.Context, lease personenrichment.WorkLease, includeHidden bool,
+) (personenrichment.RequestInput, error) {
+	var person *Person
+	var err error
+	if includeHidden {
+		err = s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
+			person, err = s.getPersonTx(ctx, tx, lease.PersonID)
+			return err
+		})
+	} else {
+		person, err = s.GetPersonContext(ctx, lease.PersonID)
+	}
 	if err != nil {
+		if !includeHidden && errors.Is(err, ErrPersonNotFound) {
+			return personenrichment.RequestInput{}, personenrichment.ErrRequestIdentityUnavailable
+		}
 		return personenrichment.RequestInput{}, err
 	}
 	catalog, err := s.BuildPersonFactCatalogContext(ctx, true)
@@ -2159,7 +2186,15 @@ func (s *Store) LoadRequestInput(
 	if err := participantRows.Err(); err != nil {
 		return input, fmt.Errorf("iterate person enrichment participant identities: %w", err)
 	}
-	points, err := s.ListPersonContactPointsContext(ctx, person.ID, true)
+	var points []PersonContactPoint
+	if includeHidden {
+		err = s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
+			points, err = s.listPersonContactPointsTx(ctx, tx, person.ID, true)
+			return err
+		})
+	} else {
+		points, err = s.ListPersonContactPointsContext(ctx, person.ID, true)
+	}
 	if err != nil {
 		return input, err
 	}

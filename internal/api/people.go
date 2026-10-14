@@ -11,6 +11,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 type IdentitySearchSort struct {
@@ -252,7 +253,13 @@ func (s *Server) handleGetParticipant(w http.ResponseWriter, r *http.Request) {
 		if len(identityIDs) == 0 {
 			identityIDs = []int64{id}
 		}
-		details, err := identityStore.GetParticipantIdentityContext(r.Context(), identityIDs)
+		var details *store.ParticipantIdentityContext
+		var err error
+		if visibleStore, ok := s.store.(ParticipantVisibleIdentityContextStore); ok {
+			details, err = visibleStore.GetVisibleParticipantIdentityContext(r.Context(), identityIDs)
+		} else {
+			details, err = identityStore.GetParticipantIdentityContext(r.Context(), identityIDs)
+		}
 		if err != nil {
 			s.logger.Warn("participant identity context lookup failed", "error", err, "participant_id", id)
 		} else {

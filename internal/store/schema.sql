@@ -4606,6 +4606,8 @@ CREATE TABLE IF NOT EXISTS calendar_event_attendees (
     PRIMARY KEY (message_id, ordinal)
 );
 CREATE INDEX IF NOT EXISTS idx_calendar_event_attendees_email ON calendar_event_attendees(email);
+CREATE INDEX IF NOT EXISTS idx_calendar_event_attendees_room_email
+    ON calendar_event_attendees(lower(trim(email))) WHERE role = 'room';
 -- Independent projection state covers empty key sets as well as keyed notes.
 CREATE TABLE IF NOT EXISTS meeting_link_key_state (
  message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,

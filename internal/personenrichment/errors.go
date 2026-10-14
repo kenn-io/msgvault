@@ -26,6 +26,7 @@ var (
 	ErrCredentialUnavailable      = errors.New("person enrichment credential is unavailable")
 	ErrSuppressionKeyMismatch     = errors.New("person enrichment suppression key does not match durable state")
 	ErrProgramFingerprintMismatch = errors.New("person enrichment program fingerprint changed")
+	ErrRequestIdentityUnavailable = errors.New("person enrichment request identity is unavailable")
 	ErrRequestBudgetExceeded      = errors.New("person enrichment request budget exceeded")
 	ErrCostBudgetExceeded         = errors.New("person enrichment cost budget exceeded")
 	ErrAccountingDisabled         = errors.New("person enrichment starts disabled by accounting violation")

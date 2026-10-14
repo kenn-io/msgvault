@@ -114,18 +114,23 @@ func TestPurgesAdvanceDerivedDataRevision(t *testing.T) {
 	_, err = st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: "C01:1", MessageType: "slack"})
 	require.NoError(err)
 
+	wantSourceDelta := int64(1)
+	if !st.IsPostgreSQL() {
+		// SQLite also invalidates meeting counts when the source row is deleted.
+		wantSourceDelta++
+	}
 	before, err := st.DerivedDataRevisionContext(t.Context())
 	require.NoError(err)
 	require.NoError(st.PurgeChannelContext(t.Context(), source.ID, "C01"))
 	afterChannel, err := st.DerivedDataRevisionContext(t.Context())
 	require.NoError(err)
-	assert.Equal(t, before+1, afterChannel, "channel purge")
+	assert.Equal(t, before+1, afterChannel, "channel purge advances the cache revision once")
 
 	_, _, err = st.RemoveSourceSerialized(t.Context(), source.ID)
 	require.NoError(err)
 	afterSource, err := st.DerivedDataRevisionContext(t.Context())
 	require.NoError(err)
-	assert.Equal(t, afterChannel+1, afterSource, "source removal")
+	assert.Equal(t, afterChannel+wantSourceDelta, afterSource, "source removal")
 }
 
 func TestPurgeChannelRefusesQueuedSyncOperation(t *testing.T) {

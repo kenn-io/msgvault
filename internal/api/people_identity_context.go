@@ -2,7 +2,9 @@ package api
 
 import (
 	"context"
+	"strings"
 
+	"go.kenn.io/msgvault/internal/calevent"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -13,10 +15,26 @@ type ParticipantIdentityContextStore interface {
 	GetParticipantIdentityContext(ctx context.Context, participantIDs []int64) (*store.ParticipantIdentityContext, error)
 }
 
+type ParticipantVisibleIdentityContextStore interface {
+	GetVisibleParticipantIdentityContext(ctx context.Context, participantIDs []int64) (*store.ParticipantIdentityContext, error)
+}
+
 func enrichIdentityContext(person *query.PersonSummary, details *store.ParticipantIdentityContext) {
 	if person == nil || details == nil {
 		return
 	}
+	roomEmails := make(map[string]bool, len(details.RoomEmails))
+	for _, email := range details.RoomEmails {
+		roomEmails[email] = true
+	}
+	identifiersVisible := make([]query.PersonIdentifier, 0, len(person.Identifiers))
+	for _, identifier := range person.Identifiers {
+		if identifier.Type == "email" && (roomEmails[strings.ToLower(strings.TrimSpace(identifier.Value))] || calevent.IsRoomAttendee(identifier.Value, false)) {
+			continue
+		}
+		identifiersVisible = append(identifiersVisible, identifier)
+	}
+	person.Identifiers = identifiersVisible
 	members := make(map[int64]store.ParticipantIdentityMember, len(details.Members))
 	if person.Cluster != nil {
 		person.Cluster.Members = make([]query.PersonClusterMember, 0, len(details.Members))

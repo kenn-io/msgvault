@@ -78,7 +78,14 @@ func (s *Store) ListPersonContactPointsContext(
 	var points []PersonContactPoint
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
 		var err error
+		if err = s.requireVisiblePersonTx(ctx, tx, personID); err != nil {
+			return err
+		}
 		points, err = s.listPersonContactPointsTx(ctx, tx, personID, currentOnly)
+		if err != nil {
+			return err
+		}
+		points, err = s.visibleContactPointsTx(ctx, tx, points)
 		return err
 	})
 	return points, err

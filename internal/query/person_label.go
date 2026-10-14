@@ -19,7 +19,11 @@ package query
 // pbn.id pins the tie-break so a cluster with several named members renders
 // the same label across cache rebuilds.
 func sqlClusterBestNameExpr(memberFilter string) string {
-	return "(SELECT NULLIF(TRIM(pbn.display_name), '') FROM participants pbn WHERE " + memberFilter +
+	return sqlClusterBestNameExprFrom("participants", memberFilter)
+}
+
+func sqlClusterBestNameExprFrom(participantsRelation, memberFilter string) string {
+	return "(SELECT NULLIF(TRIM(pbn.display_name), '') FROM " + participantsRelation + " pbn WHERE " + memberFilter +
 		" AND TRIM(COALESCE(pbn.display_name, '')) <> '' ORDER BY pbn.id LIMIT 1)"
 }
 
@@ -29,8 +33,12 @@ func sqlClusterBestNameExpr(memberFilter string) string {
 // callers put a best-name expression (the participant's own name, or
 // sqlClusterBestNameExpr across its cluster) in front of it.
 func sqlPersonIdentifierFallbackExpr(alias string) string {
+	return sqlPersonIdentifierFallbackExprFrom(alias, "participant_identifiers")
+}
+
+func sqlPersonIdentifierFallbackExprFrom(alias, identifiersRelation string) string {
 	return "COALESCE(NULLIF(TRIM(" + alias + ".phone_number), ''), NULLIF(TRIM(" + alias + ".email_address), ''),\n" +
-		"        (SELECT COALESCE(NULLIF(TRIM(pi.display_value), ''), pi.identifier_value) FROM participant_identifiers pi\n" +
+		"        (SELECT COALESCE(NULLIF(TRIM(pi.display_value), ''), pi.identifier_value) FROM " + identifiersRelation + " pi\n" +
 		"         WHERE pi.participant_id = " + alias + ".id ORDER BY pi.is_primary DESC, pi.identifier_type, pi.identifier_value LIMIT 1),\n" +
 		"        'Unknown person #' || CAST(" + alias + ".id AS VARCHAR))"
 }

@@ -12,6 +12,7 @@ type ParticipantIdentityContext struct {
 	Members     []ParticipantIdentityMember
 	Identifiers []ParticipantIdentifierContext
 	Links       []ParticipantLinkContext
+	RoomEmails  []string `json:"-"`
 }
 
 // ParticipantIdentityMember describes a participant in the requested cluster.
@@ -88,7 +89,7 @@ func (s *Store) GetParticipantIdentityContext(
 func (s *Store) readParticipantIdentityMembers(
 	ctx context.Context, dest *[]ParticipantIdentityMember, in string, args []any,
 ) error {
-	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`SELECT id,
+	rows, err := s.snapshotReader(ctx).QueryContext(ctx, fmt.Sprintf(`SELECT id,
 		COALESCE(display_name, ''), COALESCE(email_address, ''), COALESCE(phone_number, '')
 		FROM participants WHERE id IN (%s) ORDER BY id`, in), args...)
 	if err != nil {
@@ -108,7 +109,7 @@ func (s *Store) readParticipantIdentityMembers(
 func (s *Store) readParticipantIdentifierContext(
 	ctx context.Context, dest *[]ParticipantIdentifierContext, in string, args []any,
 ) error {
-	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`SELECT pi.participant_id,
+	rows, err := s.snapshotReader(ctx).QueryContext(ctx, fmt.Sprintf(`SELECT pi.participant_id,
 		pi.identifier_type, pi.identifier_value, COALESCE(cs.slug, ''),
 		COALESCE(cs.display_label, ''), COALESCE(pi.scope_kind, ''),
 		COALESCE(pi.scope_value, '')
@@ -135,7 +136,7 @@ func (s *Store) readParticipantIdentifierContext(
 func (s *Store) readParticipantLinkContext(
 	ctx context.Context, dest *[]ParticipantLinkContext, wanted map[int64]struct{}, in string, args []any,
 ) error {
-	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`SELECT pl.participant_a,
+	rows, err := s.snapshotReader(ctx).QueryContext(ctx, fmt.Sprintf(`SELECT pl.participant_a,
 		pl.participant_b, pl.identity_match_candidate_id,
 		COALESCE(imc.source, ''), COALESCE(imc.basis, '')
 		FROM participant_links pl

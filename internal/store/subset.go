@@ -225,10 +225,10 @@ func CopySubsetWithOptions(
 	// The empty destination's schema initialization already recorded this
 	// migration. Rebuild derived meetings from copied raw, including old sources
 	// with no projection tables, through the normal resumable upgrade below.
-	if _, err := tx.Exec(`DELETE FROM applied_migrations WHERE name IN (?, ?)`, migrationMeetingProjectionV1, migrationMeetingLinkKeysV1); err != nil {
+	if _, err := tx.Exec(`DELETE FROM applied_migrations WHERE name IN (?, ?, ?)`, migrationMeetingProjectionV1, migrationMeetingLinkKeysV1, migrationRoomRecipientsV1); err != nil {
 		_ = tx.Rollback()
 		closeAndCleanup()
-		return nil, fmt.Errorf("reset copied meeting projection migration: %w", err)
+		return nil, fmt.Errorf("reset copied derived archive migrations: %w", err)
 	}
 
 	if _, err := tx.Exec(`DELETE FROM applied_migrations WHERE name = ?`, migrationCalendarEventProjectionV1); err != nil {

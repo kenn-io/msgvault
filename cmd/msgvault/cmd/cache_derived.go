@@ -149,6 +149,22 @@ func refreshDerivedDatasetsOnly(
 		return nil, err
 	}
 	defer func() { _ = sourceSnapshot.Close() }()
+	derivedDataRevision, err = snapshotDerivedRevision(sourceSnapshot)
+	if err != nil {
+		return nil, err
+	}
+	if derivedDataRevision != state.DerivedDataRevision {
+		relatedOnly, revisionErr := snapshotRevisionsRelatedOnly(sourceSnapshot, state.DerivedDataRevision, derivedDataRevision)
+		if revisionErr != nil {
+			return nil, revisionErr
+		}
+		if !repairRelated || !relatedOnly {
+			return nil, fmt.Errorf("%w: snapshot derived revision changed", ErrDerivedRefreshRequiresFullBuild)
+		}
+	}
+	if err := stageCachePeopleRooms(ctx, sourceSnapshot); err != nil {
+		return nil, err
+	}
 	datasets := []string{
 		tableMessages,
 		tableConversations,
@@ -289,6 +305,9 @@ func refreshDerivedDatasetsOnly(
 	}
 	if err := derivedCopy(tableParticipantClusters, participantClustersSelectSQL); err != nil {
 		return nil, fmt.Errorf("export derived participant clusters: %w", err)
+	}
+	if err := exportCachePeopleRooms(ctx, exportDB, staging.root); err != nil {
+		return nil, err
 	}
 	conversationChanged :=
 		conversationFingerprint != state.ConversationParticipantsFingerprint
@@ -521,6 +540,7 @@ func derivedCachePublishPlan(
 	}
 	for _, dataset := range []string{
 		tableOwnerParticipants,
+		"room_addresses", "person_contacts",
 		tableParticipantClusters,
 		identityindex.DatasetActivity,
 		identityindex.DatasetPeople,

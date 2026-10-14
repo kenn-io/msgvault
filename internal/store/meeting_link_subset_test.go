@@ -61,3 +61,37 @@ func TestDecisionsSubsetCopy(t *testing.T) {
 		})
 	}
 }
+
+func TestCopySubsetReappliesRoomRecipientMigration(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+
+	sourcePath := filepath.Join(t.TempDir(), "source.db")
+	st, err := OpenForTest(sourcePath)
+	requirements.NoError(err)
+	t.Cleanup(func() { _ = st.Close() })
+	requirements.NoError(st.InitSchema())
+	event, _ := calendarLinkFixture(t, st, "primary@example.test", `{"id":"room-event","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"attendees":[{"email":"room@resource.calendar.google.com","resource":true}]}`)
+	room, err := st.EnsureParticipant("room@resource.calendar.google.com", "Example Room", "")
+	requirements.NoError(err)
+	requirements.NoError(st.ReplaceMessageRecipients(event, "to", []int64{room}, []string{"Example Room"}))
+	requirements.NoError(st.ReplaceMessageRecipients(event, "from", []int64{room}, []string{"Example Room"}))
+	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET sender_id=? WHERE id=?`), room, event)
+	requirements.NoError(err)
+
+	destination := t.TempDir()
+	_, err = CopySubset(sourcePath, destination, 1, false)
+	requirements.NoError(err)
+	copiedStore, err := Open(filepath.Join(destination, "msgvault.db"))
+	requirements.NoError(err)
+	t.Cleanup(func() { _ = copiedStore.Close() })
+	var recipientCount int64
+	requirements.NoError(copiedStore.DB().QueryRow(copiedStore.Rebind(`SELECT count(*) FROM message_recipients WHERE message_id=?`), event).Scan(&recipientCount))
+	assertions.Zero(recipientCount, "room attendee edges from the legacy recipient table must be migrated after copy")
+	var sender sql.NullInt64
+	requirements.NoError(copiedStore.DB().QueryRow(copiedStore.Rebind(`SELECT sender_id FROM messages WHERE id=?`), event).Scan(&sender))
+	assertions.False(sender.Valid, "room sender edges must be migrated after copy")
+	var roomAttendees int64
+	requirements.NoError(copiedStore.DB().QueryRow(copiedStore.Rebind(`SELECT count(*) FROM calendar_event_attendees WHERE message_id=? AND role='room'`), event).Scan(&roomAttendees))
+	assertions.Equal(int64(1), roomAttendees, "the analytical calendar attendee projection retains the room")
+}

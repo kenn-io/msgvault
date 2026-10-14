@@ -399,8 +399,8 @@ func (s *Store) refreshDirectoryPersonTx(ctx context.Context, tx *loggedTx, pers
 	for _, query := range []string{
 		`SELECT COALESCE(formatted, '') || ' ' || COALESCE(family_name, '') || ' ' || COALESCE(given_name, '') || ' ' || COALESCE(additional_names, '') || ' ' || original_value
 			FROM person_names WHERE person_id = ? AND active_until IS NULL AND superseded_at IS NULL`,
-		`SELECT normalized_value FROM person_contact_points
-			WHERE person_id = ? AND active_until IS NULL AND superseded_at IS NULL`,
+		`SELECT normalized_value FROM person_contact_points cp
+			WHERE person_id = ? AND active_until IS NULL AND superseded_at IS NULL AND (address_kind <> 'email' OR NOT ` + RoomAddressSQL("cp.normalized_value") + `)`,
 		`SELECT organization.name FROM employments
 			JOIN organizations organization ON organization.id = employments.organization_id
 			WHERE employments.person_id = ? AND ` + s.dialect.BoolTrueExpr("employments.is_current") + `

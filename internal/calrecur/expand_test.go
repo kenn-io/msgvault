@@ -38,6 +38,25 @@ func TestExpandWeekly6WeeksExdateCancelledMoved(t *testing.T) {
 	assertions.Equal(4, live)
 }
 
+func TestExpandWeeklyUntilAcrossFallBackUsesResolvedInstant(t *testing.T) {
+	requirements := require.New(t)
+	zone, err := time.LoadLocation("America/New_York")
+	requirements.NoError(err)
+	start := time.Date(2027, time.October, 31, 1, 30, 0, 0, zone)
+	s, err := ParseSet(start, false, "", zone,
+		[]string{"RRULE:FREQ=WEEKLY;UNTIL=20271107T061500Z"})
+	requirements.NoError(err)
+
+	got, err := Expand(t.Context(), s, time.Hour, 0, nil,
+		instant(t, "2027-10-31T00:00:00Z"), instant(t, "2027-11-08T00:00:00Z"), 100)
+	requirements.NoError(err)
+	keys := make([]string, 0, len(got))
+	for _, occurrence := range got {
+		keys = append(keys, occurrence.Original.Key())
+	}
+	assert.Equal(t, []string{"20271031T053000Z", "20271107T053000Z"}, keys)
+}
+
 func TestExpandSparseTombstoneInheritsBounds(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)

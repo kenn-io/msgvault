@@ -474,8 +474,16 @@ func TestRebuildCacheAfterDerivedRepairRefreshesCurrentCache(t *testing.T) {
 	assert.Contains(logs.String(), "exported=")
 	repairedState, err := query.ReadCacheSyncState(analyticsDir)
 	require.NoError(err)
-	assert.Equal(int64(3), repairedState.DerivedDataRevision,
-		"initial attachment, classification commit, and completed rederive ledger each advance the existing revision")
+	repairedStore, err := store.Open(dbPath)
+	require.NoError(err)
+	archiveRevision, err := repairedStore.DerivedDataRevision()
+	require.NoError(err)
+	require.NoError(repairedStore.Close())
+	assert.Greater(repairedState.DerivedDataRevision, initialState.DerivedDataRevision,
+		"derived repairs advance the cache generation")
+	assert.Equal(archiveRevision, repairedState.DerivedDataRevision,
+		"the rebuilt cache records the archive's current derived-data revision")
+	assert.False(cacheNeedsBuild(dbPath, analyticsDir).NeedsBuild)
 	afterSnippet, afterMetadata := readCached()
 	assert.Equal("https://example.com/post", afterSnippet)
 	require.NotNil(afterMetadata)
@@ -1189,13 +1197,14 @@ func TestParticipantDisplayNameDriftDetectedAndRepairedByDerivedRefresh(t *testi
 		"repaired cache must be clean (reason: %q)", repaired.Reason)
 }
 
-// TestParticipantIdentifierDriftDetectedAndRepairedByDerivedRefresh pins the
-// staleness contract for identifier-mapping changes without message
-// activity: SetParticipantIdentifier alone must surface as derived-only
-// drift (never a full rebuild), and the derived refresh must republish the
-// participant_identifiers dataset and rebuild relationship_people search
-// values from the new mapping.
-func TestParticipantIdentifierDriftDetectedAndRepairedByDerivedRefresh(t *testing.T) {
+// TestParticipantIdentifierRevisionOnlyDriftRepairsByDerivedRefresh exercises
+// the cache planner's identifier-revision-only path using setupTestSQLite,
+// whose schema intentionally omits InitSchema's production invalidation
+// triggers. Production stores advance derived_data_revision for identifier
+// changes and require a full rebuild; TestCacheExportParityFullVersusRepair
+// covers that path. This test verifies identifier datasets are republished
+// when the identifier revision is the only drift signal.
+func TestParticipantIdentifierRevisionOnlyDriftRepairsByDerivedRefresh(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	tmp := setupTestSQLite(t)
@@ -1220,7 +1229,7 @@ func TestParticipantIdentifierDriftDetectedAndRepairedByDerivedRefresh(t *testin
 	requirements.True(staleness.NeedsBuild)
 	assertions.True(staleness.HasParticipantIdentifierDrift)
 	assertions.False(staleness.FullRebuild,
-		"identifier drift without new messages must stay repairable by the derived refresh")
+		"the trigger-less planner fixture should classify identifier-revision-only drift as derived")
 	assertions.True(derivedDriftOnly(staleness))
 	assertions.Contains(staleness.Reason, "participant identifiers changed")
 
@@ -1264,11 +1273,12 @@ func TestParticipantIdentifierDriftDetectedAndRepairedByDerivedRefresh(t *testin
 		"repaired cache must be clean (reason: %q)", repaired.Reason)
 }
 
-// TestParticipantIdentifierDriftCreatingParticipantRestagesParticipants pins
-// the new-participant variant of identifier drift. Creating an identifier
-// without message activity still adds a participants row that the derived
-// refresh must publish; the message dataset must remain untouched.
-func TestParticipantIdentifierDriftCreatingParticipantRestagesParticipants(t *testing.T) {
+// TestParticipantIdentifierRevisionOnlyDriftCreatesAndRestagesParticipant
+// uses the same trigger-less planner fixture to verify a new participants row
+// is republished when only the participant-identifier revision changed. Real
+// stores with initialized triggers require the full rebuild covered by
+// TestCacheExportParityFullVersusRepair.
+func TestParticipantIdentifierRevisionOnlyDriftCreatesAndRestagesParticipant(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	tmp := setupTestSQLite(t)
@@ -1302,7 +1312,7 @@ func TestParticipantIdentifierDriftCreatingParticipantRestagesParticipants(t *te
 	requirements.True(staleness.NeedsBuild)
 	assertions.True(staleness.HasParticipantIdentifierDrift)
 	assertions.False(staleness.FullRebuild,
-		"identifier drift that creates a participant must stay derived-only")
+		"the trigger-less planner fixture should classify identifier-revision-only drift as derived")
 	assertions.True(derivedDriftOnly(staleness))
 	assertions.Contains(staleness.Reason, "participant identifiers changed")
 
@@ -1335,12 +1345,12 @@ func TestParticipantIdentifierDriftCreatingParticipantRestagesParticipants(t *te
 		"repaired cache must be clean (reason: %q)", repaired.Reason)
 }
 
-// TestIncrementalBuildRepairsParticipantIdentifierDriftWithNewMessages pins
-// that identifier drift coinciding with new messages does NOT escalate to a
-// full rebuild the way link/membership/type drift does: identifiers are not
-// baked into per-row activity facts, and incremental builds re-stage the
-// participant_identifiers dataset in full anyway.
-func TestIncrementalBuildRepairsParticipantIdentifierDriftWithNewMessages(t *testing.T) {
+// TestIncrementalBuildWithParticipantIdentifierRevisionOnlyDrift uses the
+// trigger-less setupTestSQLite schema to verify the planner handles identifier
+// revision drift alongside a new message. It does not model InitSchema's
+// production invalidation triggers, which require full repair; see
+// TestCacheExportParityFullVersusRepair.
+func TestIncrementalBuildWithParticipantIdentifierRevisionOnlyDrift(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	tmp := setupTestSQLite(t)
@@ -1365,7 +1375,7 @@ func TestIncrementalBuildRepairsParticipantIdentifierDriftWithNewMessages(t *tes
 	assertions.True(staleness.HasNew)
 	assertions.True(staleness.HasParticipantIdentifierDrift)
 	assertions.False(staleness.FullRebuild,
-		"identifier drift with new messages must stay incremental")
+		"the trigger-less planner fixture should keep identifier-revision-only drift incremental")
 	assertions.False(derivedDriftOnly(staleness))
 
 	result, err := buildCache(dbPath, analyticsDir, false)
@@ -1477,6 +1487,10 @@ func TestPersonDisplayNameDriftDetectedAndRepairedByDerivedRefresh(t *testing.T)
 	name := "Alice Curated"
 	person, err = st.UpdatePersonDisplayName(person.ID, person.Revision, &name)
 	requirements.NoError(err)
+	derivedRevisionAfterRename, err := st.DerivedDataRevision()
+	requirements.NoError(err)
+	assertions.Equal(before.DerivedDataRevision, derivedRevisionAfterRename,
+		"name-only edits must stay on the lighter identity refresh path")
 	requirements.NoError(st.Close())
 	st = nil
 	stale := cacheNeedsBuild(dbPath, analyticsDir)
@@ -1512,13 +1526,17 @@ func TestPersonDisplayNameDriftDetectedAndRepairedByDerivedRefresh(t *testing.T)
 	requirements.NoError(st.Close())
 	st = nil
 	assertions.False(cacheNeedsBuild(dbPath, analyticsDir).NeedsBuild)
-	// Deletion changes only identity_revision and must replace the binding projection.
+	// Deleting a curated person also changes room visibility inputs, so it
+	// requires a full cache rebuild before the old binding projection is served.
 	st, err = store.Open(dbPath)
 	requirements.NoError(err)
 	requirements.NoError(st.DeletePerson(person.ID, person.Revision))
 	requirements.NoError(st.Close())
 	st = nil
-	_, err = buildCacheDerivedOnly(dbPath, analyticsDir)
+	stale = cacheNeedsBuild(dbPath, analyticsDir)
+	requirements.True(stale.NeedsBuild)
+	assertions.True(stale.FullRebuild)
+	_, err = buildCache(dbPath, analyticsDir, false)
 	requirements.NoError(err)
 	e, err = query.NewDuckDBEngine(analyticsDir, "", nil)
 	requirements.NoError(err)

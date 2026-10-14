@@ -10,7 +10,7 @@ func buildSparseRelationshipActivitySQL(path func(string) string, messages strin
 WITH message_facts AS (
 	SELECT m.id::BIGINT AS message_id, m.conversation_id::BIGINT AS conversation_id,
 	       m.source_id::BIGINT AS source_id, s.source_type::VARCHAR AS source_type,
-	       m.sent_at::TIMESTAMP AS occurred_at, m.message_type::VARCHAR AS message_type,
+	       m.sent_at::TIMESTAMP AS occurred_at, m.message_type::VARCHAR AS message_type, m.meeting_key::VARCHAR AS meeting_key,
 	       coalesce(c.conversation_type, '')::VARCHAR AS conversation_type,
 	       %s AS entry_kind, (%s) AS is_chat,
 	       m.is_from_me::BOOLEAN AS is_from_me, m.attachment_count::INTEGER AS attachment_count,
@@ -55,7 +55,7 @@ WITH message_facts AS (
 	GROUP BY message_id, canonical_id, participant_domain
 )
 SELECT m.message_id, m.conversation_id, m.source_id, m.source_type,
-       m.occurred_at, m.message_type, m.conversation_type, m.entry_kind,
+       m.occurred_at, m.message_type, m.meeting_key, m.conversation_type, m.entry_kind,
        m.is_chat, m.is_from_me, m.attachment_count, m.has_attachments,
        m.deleted_from_source, d.canonical_id, d.participant_domain,
        true AS is_direct, false AS is_conversation_member,
@@ -66,7 +66,7 @@ FROM message_facts m JOIN direct_agg d USING (message_id)
 LEFT JOIN owner_canon o ON o.canonical_id = d.canonical_id
 UNION ALL
 SELECT m.message_id, m.conversation_id, m.source_id, m.source_type,
-       m.occurred_at, m.message_type, m.conversation_type, m.entry_kind,
+       m.occurred_at, m.message_type, m.meeting_key, m.conversation_type, m.entry_kind,
        m.is_chat, m.is_from_me, m.attachment_count, m.has_attachments,
        m.deleted_from_source, NULL::BIGINT AS canonical_id,
        NULL::VARCHAR AS participant_domain,
@@ -147,7 +147,7 @@ canon AS NOT MATERIALIZED (
 	LEFT JOIN owner_canon o ON o.canonical_id = c.canonical_id
 )%[6]s
 SELECT f.message_id, f.conversation_id, f.source_id, f.source_type,
-       f.occurred_at, f.message_type, f.conversation_type, f.entry_kind,
+       f.occurred_at, f.message_type, f.meeting_key, f.conversation_type, f.entry_kind,
        f.is_chat, f.is_from_me, f.attachment_count, f.has_attachments,
        f.deleted_from_source, cm.canonical_id, cm.participant_domain,
        coalesce(d.is_direct, false) AS is_direct,
@@ -163,7 +163,7 @@ LEFT JOIN direct d ON d.message_id = f.message_id
 WHERE cm.canonical_id IS NOT NULL
 UNION ALL
 SELECT d.message_id, d.conversation_id, d.source_id, d.source_type,
-       d.occurred_at, d.message_type, d.conversation_type, d.entry_kind,
+       d.occurred_at, d.message_type, d.meeting_key, d.conversation_type, d.entry_kind,
        d.is_chat, d.is_from_me, d.attachment_count, d.has_attachments,
        d.deleted_from_source, d.canonical_id, d.participant_domain,
        d.is_direct, false AS is_conversation_member,
@@ -176,7 +176,7 @@ WHERE NOT EXISTS (
 )
 UNION ALL
 SELECT f.message_id, f.conversation_id, f.source_id, f.source_type,
-       f.occurred_at, f.message_type, f.conversation_type, f.entry_kind,
+       f.occurred_at, f.message_type, f.meeting_key, f.conversation_type, f.entry_kind,
        f.is_chat, f.is_from_me, f.attachment_count, f.has_attachments,
        f.deleted_from_source, NULL::BIGINT AS canonical_id,
        NULL::VARCHAR AS participant_domain,

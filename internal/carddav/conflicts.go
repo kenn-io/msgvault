@@ -253,11 +253,7 @@ func (s *Service) recordPublicationConflict(
 			if !ok {
 				return store.ErrCardDAVStalePlan
 			}
-			person, err := s.store.GetPersonContext(ctx, *mapping.PersonID)
-			if err != nil {
-				return err
-			}
-			localBody, localHash, err = s.renderPublicationCard(ctx, *person, book, mapping)
+			localBody, localHash, err = s.renderPublicationCard(ctx, snapshot.Profile.Person, book, mapping)
 			if err != nil {
 				return err
 			}
@@ -329,11 +325,11 @@ func (s *Service) prepareMappingConflict(
 		return store.CardDAVConflictCapture{}, false, nil
 	}
 	if mapping.PersonID != nil && !localTombstone {
-		person, err := s.store.GetPersonContext(ctx, *mapping.PersonID)
+		personSnapshot, err := s.store.LoadPersonVCardSnapshotContext(ctx, *mapping.PersonID)
 		if err != nil {
 			return store.CardDAVConflictCapture{}, false, err
 		}
-		body, hash, err := s.renderPublicationCard(ctx, *person, book, &mapping)
+		body, hash, err := s.renderPublicationCard(ctx, personSnapshot.Profile.Person, book, &mapping)
 		if err != nil {
 			return store.CardDAVConflictCapture{}, false, err
 		}

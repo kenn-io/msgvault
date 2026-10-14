@@ -62,7 +62,7 @@ func TestGCDeletesOnlySourceDeletedMessagesAndVacuumsSQLite(t *testing.T) {
 	revisionAfter, err := f.Store.DerivedDataRevision()
 	require.NoError(err, "DerivedDataRevision after GC")
 	assert.Equal(revisionBefore+1, revisionAfter,
-		"GC must invalidate caches containing purged messages")
+		"GC advances the cache revision once for the purge operation")
 	assert.ElementsMatch([]int64{active, dedupOnly}, remainingGCMessageIDs(t, f.Store))
 	var staleFTSRows int64
 	require.NoError(f.Store.DB().QueryRow(

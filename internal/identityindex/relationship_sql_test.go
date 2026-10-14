@@ -39,6 +39,8 @@ func TestRelationshipActivityMatchesLegacyRowSet(t *testing.T) {
 		readParquetRelation([]string{path("participant_clusters")}, false),
 		readParquetRelation([]string{path("owner_participants")}, false),
 	)
+	// Compare the existing activity grain without its new retained meeting key.
+	normalized = "(SELECT * EXCLUDE(meeting_key) FROM " + normalized + ")"
 	query = `SELECT count(*) FROM (
 		(SELECT * FROM (` + buildLegacyRelationshipActivitySQL(path) + `)
 		 EXCEPT ALL SELECT * FROM ` + normalized + `)
@@ -197,6 +199,7 @@ func TestBuildStoresConversationMembershipOncePerConversation(t *testing.T) {
 		readParquetRelation([]string{parquetDatasetGlob(root, "participant_clusters")}, false),
 		readParquetRelation([]string{parquetDatasetGlob(root, "owner_participants")}, false),
 	)
+	newRelation = "(SELECT * EXCLUDE(meeting_key) FROM " + newRelation + ")"
 	for _, pair := range [][2]string{{oldRelation, newRelation}, {newRelation, oldRelation}} {
 		var difference int64
 		requirements.NoError(db.QueryRow("SELECT count(*) FROM (SELECT * FROM " + pair[0] +
@@ -225,6 +228,8 @@ func TestBuildIncrementalAppendsIntervalOverFanOut(t *testing.T) {
 	requirements.NoError(err)
 
 	stagedRoot := t.TempDir()
+	writeRelationshipParquet(t, db, stagedRoot, "room_addresses", `SELECT NULL::VARCHAR AS email WHERE false`)
+	writeRelationshipParquet(t, db, stagedRoot, "person_contacts", `SELECT 0::BIGINT AS participant_id, NULL::VARCHAR AS address_kind, NULL::VARCHAR AS normalized_value WHERE false`)
 	writeRelationshipParquet(t, db, stagedRoot, "person_display_names", `SELECT 0::BIGINT AS participant_id, 0::BIGINT AS person_id, NULL::VARCHAR AS display_name WHERE false`)
 	writeSyntheticRelationshipFanOut(t, db, stagedRoot, syntheticRelationshipFanOutOptions{
 		firstMessageID:   101,

@@ -515,6 +515,9 @@ func (s *Store) GetPersonContext(ctx context.Context, id int64) (*Person, error)
 	var person *Person
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
 		var err error
+		if err = s.requireVisiblePersonTx(ctx, tx, id); err != nil {
+			return err
+		}
 		person, err = s.getPersonTx(ctx, tx, id)
 		return err
 	})
@@ -567,6 +570,9 @@ func (s *Store) GetPersonByUIDContext(ctx context.Context, uid string) (*Person,
 		}
 		if count == 0 {
 			return ErrPersonNotFound
+		}
+		if err = s.requireVisiblePersonTx(ctx, tx, personID); err != nil {
+			return err
 		}
 		person, err = s.getPersonTx(ctx, tx, personID)
 		return err
@@ -782,6 +788,7 @@ func (s *Store) listPersonsTx(ctx context.Context, tx *loggedTx) ([]Person, erro
 		       pp.participant_id
 		FROM persons p
 		LEFT JOIN person_participants pp ON pp.person_id = p.id
+		WHERE `+visiblePersonSQL("p.id")+`
 		ORDER BY CASE WHEN p.display_name IS NULL THEN 1 ELSE 0 END,
 		         LOWER(p.display_name), p.id, pp.participant_id
 	`)

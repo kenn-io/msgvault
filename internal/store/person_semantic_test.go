@@ -394,6 +394,36 @@ func TestResolvePersonSemanticCandidatesReturnsOnlyCurrentRootsInCandidateOrder(
 	})
 }
 
+func TestResolvePersonSemanticCandidatesHidesNewRoomOnlyProfiles(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	f := storetest.New(t)
+	person := createRoomTestPerson(t, f.Store, "Example Room", "resource@example.test")
+	document, err := f.Store.LoadPersonSemanticDocumentContext(t.Context(), person.ID)
+	requirements.NoError(err)
+	source, err := f.Store.GetOrCreateSource("gcal", "semantic-room@example.test")
+	requirements.NoError(err)
+	_, err = f.Store.PersistMessage(&store.MessagePersistData{
+		Message:      &store.Message{SourceID: source.ID, SourceMessageID: "semantic-room-event", MessageType: "calendar_event"},
+		Conversation: &store.ConversationPersistData{SourceConversationID: "semantic-room-event", ConversationType: "calendar_event"},
+		RawMIME:      []byte(`{"id":"semantic-room-event","start":{"dateTime":"2027-03-02T17:00:00Z"},"end":{"dateTime":"2027-03-02T18:00:00Z"},"attendees":[{"email":"resource@example.test","resource":true}]}`),
+		RawFormat:    "gcal_json",
+	})
+	requirements.NoError(err)
+	updatedDocument, err := f.Store.LoadPersonSemanticDocumentContext(t.Context(), person.ID)
+	requirements.NoError(err)
+	assertions.Equal(document.Revision, updatedDocument.Revision,
+		"calendar resource evidence changes visibility without changing the indexed document revision")
+	_, err = f.Store.GetPersonContext(t.Context(), person.ID)
+	requirements.ErrorIs(err, store.ErrPersonNotFound)
+
+	people, err := f.Store.ResolvePersonSemanticCandidatesContext(t.Context(), []store.PersonSemanticCandidate{{
+		PersonID: person.ID, Revision: document.Revision,
+	}})
+	requirements.NoError(err)
+	assertions.Empty(people)
+}
+
 func TestPersonSemanticScanFailsButResolverSkipsOneUnrenderablePerson(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

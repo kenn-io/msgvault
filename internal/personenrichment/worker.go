@@ -243,6 +243,9 @@ func (w *Worker) processLease(
 	}
 	input, err := w.work.LoadRequestInput(ctx, lease)
 	if err != nil {
+		if errors.Is(err, ErrRequestIdentityUnavailable) {
+			return w.terminalizePolicyDrift(ctx, lease, RequestInput{}, RequestHashes{})
+		}
 		return w.releaseRetry(ctx, lease, nil, safeFailure(FailureTransient, 0, "", "request state unavailable"))
 	}
 	request, hashes, err := BuildRequest(input, profile)

@@ -123,6 +123,78 @@ func TestAllDayIdentityPreservesCivilDateAtMidnightDSTTransition(t *testing.T) {
 	assertions.True(found)
 }
 
+func TestIterWeeklyLosAngelesSpringGapDoesNotConsumeCount(t *testing.T) {
+	requirements := require.New(t)
+	zone, err := time.LoadLocation("America/Los_Angeles")
+	requirements.NoError(err)
+	start := time.Date(2027, time.March, 7, 2, 30, 0, 0, zone)
+	s, err := ParseSet(start, false, "", zone, []string{"RRULE:FREQ=WEEKLY;COUNT=2"})
+	requirements.NoError(err)
+
+	var got []string
+	err = Iter(t.Context(), s, time.Date(2027, time.March, 28, 0, 0, 0, 0, zone), 100, func(i Instance) bool {
+		got = append(got, i.Identity.Key())
+		return true
+	})
+	requirements.NoError(err)
+	assert.Equal(t, []string{"20270307T103000Z", "20270321T093000Z"}, got)
+
+	end, bounded := ConservativeEnd(t.Context(), s, time.Hour, 0, 100)
+	requirements.True(bounded)
+	assert.Equal(t, instant(t, "2027-03-21T10:30:00Z"), end.UTC())
+}
+
+func TestIterDailyFallBackPreservesLaterDTStartOffset(t *testing.T) {
+	zone, err := time.LoadLocation("America/New_York")
+	require.NoError(t, err)
+	start := instant(t, "2027-11-07T06:30:00Z").In(zone)
+	s, err := ParseSet(start, false, "", zone, []string{"RRULE:FREQ=DAILY;COUNT=1"})
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"20271107T063000Z"}, keys(t, s))
+}
+
+func TestConservativeEndWeeklyUntilAcrossFallBackUsesResolvedInstant(t *testing.T) {
+	requirements := require.New(t)
+	zone, err := time.LoadLocation("America/New_York")
+	requirements.NoError(err)
+	start := time.Date(2027, time.October, 31, 1, 30, 0, 0, zone)
+	s, err := ParseSet(start, false, "", zone,
+		[]string{"RRULE:FREQ=WEEKLY;UNTIL=20271107T061500Z"})
+	requirements.NoError(err)
+
+	end, bounded := ConservativeEnd(t.Context(), s, time.Hour, 0, 100)
+	requirements.True(bounded)
+	assert.Equal(t, instant(t, "2027-11-07T06:30:00Z"), end.UTC())
+}
+
+func TestIterDailySaoPauloSkippedMidnightPreservesNextDate(t *testing.T) {
+	requirements := require.New(t)
+	zone, err := time.LoadLocation("America/Sao_Paulo")
+	requirements.NoError(err)
+	start := time.Date(2018, time.November, 3, 9, 0, 0, 0, zone)
+	s, err := ParseSet(start, false, "", zone, []string{"RRULE:FREQ=DAILY;COUNT=2"})
+	requirements.NoError(err)
+
+	var got []string
+	err = Iter(t.Context(), s, time.Date(2018, time.November, 7, 0, 0, 0, 0, zone), 100, func(i Instance) bool {
+		got = append(got, i.Identity.Key())
+		return true
+	})
+	requirements.NoError(err)
+	assert.Equal(t, []string{"20181103T120000Z", "20181104T110000Z"}, got)
+
+	end, bounded := ConservativeEnd(t.Context(), s, time.Hour, 0, 100)
+	requirements.True(bounded)
+	assert.Equal(t, instant(t, "2018-11-04T12:00:00Z"), end.UTC())
+}
+
+func TestParseSetRejectsMixedPlainAndOrdinalMonthlyByday(t *testing.T) {
+	_, err := ParseSet(instant(t, "2027-03-01T17:00:00Z"), false, "", time.UTC,
+		[]string{"RRULE:FREQ=MONTHLY;BYDAY=MO,1MO;COUNT=3"})
+	require.ErrorIs(t, err, ErrUnsupportedRecurrence)
+}
+
 func TestAllDayDateValuesPreserveCivilDateAtMidnightDSTTransition(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
@@ -520,6 +592,12 @@ func TestIterMonthlyOrdinalWeekday(t *testing.T) {
 		[]string{"RRULE:FREQ=MONTHLY;BYDAY=1MO;COUNT=3"})
 	require.NoError(t, err)
 	assertions.Equal([]string{"20270301T170000Z", "20270405T170000Z", "20270503T170000Z"}, keys(t, s))
+}
+
+func TestParseSetRejectsMixedPlainAndOrdinalYearlyWeekdays(t *testing.T) {
+	_, err := ParseSet(instant(t, "2027-03-01T17:00:00Z"), false, "", time.UTC,
+		[]string{"RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=MO,1MO;COUNT=3"})
+	require.ErrorIs(t, err, ErrUnsupportedRecurrence)
 }
 
 func TestIterBudgetCountsDuplicateStreams(t *testing.T) {

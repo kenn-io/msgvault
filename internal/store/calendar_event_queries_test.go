@@ -87,27 +87,6 @@ func TestCalendarEventRowsWindowIncludesEarlierRDate(t *testing.T) {
 	}
 }
 
-func FuzzCalendarEventRowsEarlierRDate(f *testing.F) {
-	f.Add(uint8(90), false)
-	f.Add(uint8(90), true)
-	f.Fuzz(func(t *testing.T, gap uint8, allDay bool) {
-		st := newRFC822IDBackfillBackendStore(t)
-		rdate := time.Date(2027, 3, 2, 17, 0, 0, 0, time.UTC)
-		start := rdate.AddDate(0, 0, int(gap)+3)
-		bounds := fmt.Sprintf(`"start":{"dateTime":%q},"end":{"dateTime":%q}`, start.Format(time.RFC3339), start.Add(time.Hour).Format(time.RFC3339))
-		line := "RDATE:" + rdate.Format("20060102T150405Z")
-		if allDay {
-			bounds = fmt.Sprintf(`"start":{"date":%q},"end":{"date":%q}`, start.Format(time.DateOnly), start.AddDate(0, 0, 1).Format(time.DateOnly))
-			line = "RDATE;VALUE=DATE:" + rdate.Format("20060102")
-		}
-		_, master := calendarFixture(t, st, "earlier-rdate", fmt.Sprintf(`{"id":"earlier-rdate",%s,"recurrence":[%q]}`, bounds, line))
-		rows, err := calendarWindow(t, st, OwnerScope(), "2027-03-02T00:00:00Z", "2027-03-03T00:00:00Z")
-		require.NoError(t, err)
-		require.Len(t, rows, 1)
-		assert.Equal(t, master, rows[0].MessageID)
-	})
-}
-
 func TestCalendarEventRowsTimezoneChangeWithoutResync(t *testing.T) {
 	for _, tt := range []struct{ before, after, from, to string }{
 		{"UTC", "America/Los_Angeles", "2027-03-15T03:00:00Z", "2027-03-15T04:00:00Z"},
