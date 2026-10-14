@@ -260,8 +260,9 @@ func personNameOwner(kind store.PersonNameKind) (ownerField, bool) {
 }
 
 func projectPersonName(name store.PersonName) (projectedProperty, bool, error) {
-	owner, propertyName, rawValue, ok := personNameValue(name)
-	if !ok {
+	owner, known := personNameOwner(name.NameKind)
+	propertyName, rawValue := name.VCardValue()
+	if !known || propertyName == "" {
 		return projectedProperty{}, false, nil
 	}
 	property, err := newOwnedProperty(propertyName, rawValue, name.Envelope)
@@ -272,53 +273,6 @@ func projectPersonName(name store.PersonName) (projectedProperty, bool, error) {
 		return projectedProperty{}, false, err
 	}
 	return ownedProjection(owner, name.Envelope, nameOwnedParameters, property), true, nil
-}
-
-// personNameValue picks the property, owner field, and raw value one name row
-// renders.
-func personNameValue(name store.PersonName) (ownerField, string, string, bool) {
-	owner, known := personNameOwner(name.NameKind)
-	if !known {
-		return ownerField{}, "", "", false
-	}
-	switch name.NameKind {
-	case store.PersonNameFormatted:
-		if isBlank(name.Formatted) {
-			return ownerField{}, "", "", false
-		}
-		return owner, "FN", vcard.EscapeText(*name.Formatted), true
-	case store.PersonNameStructured, store.PersonNamePhonetic:
-		components := structuredNameComponents(name)
-		if allBlank(components) {
-			return ownerField{}, "", "", false
-		}
-		return owner, "N", vcard.JoinStructuredText(components), true
-	default:
-		value := nicknameValue(name)
-		if strings.TrimSpace(value) == "" {
-			return ownerField{}, "", "", false
-		}
-		return owner, "NICKNAME", vcard.EscapeText(value), true
-	}
-}
-
-// nicknameValue is the row's formatted nickname, else its original value. A
-// NICKNAME row is one nickname: the text is escaped as a single list value,
-// so a comma inside it is a literal comma. An import mapper that splits a
-// comma-separated NICKNAME must store one row per value.
-func nicknameValue(name store.PersonName) string {
-	if !isBlank(name.Formatted) {
-		return *name.Formatted
-	}
-	return name.OriginalValue
-}
-
-func structuredNameComponents(name store.PersonName) []string {
-	return []string{
-		deref(name.FamilyName), deref(name.GivenName), deref(name.AdditionalNames),
-		deref(name.HonorificPrefixes), deref(name.HonorificSuffixes),
-		deref(name.SecondarySurname), deref(name.Generation),
-	}
 }
 
 // appendNameParameters renders the name's typed parameters. A phonetic N

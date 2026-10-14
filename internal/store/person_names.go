@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"go.kenn.io/msgvault/internal/vcard"
 )
 
 type PersonNameKind string
@@ -48,6 +50,38 @@ type PersonName struct {
 	SortAs            *string        `json:"sort_as,omitzero" nullable:"false"`
 	IsDerived         bool           `json:"is_derived"`
 	OriginalValue     string         `json:"original_value"`
+}
+
+// VCardValue returns the property name and escaped value, or empty strings when
+// the name cannot render. Projection and inference review use the same rules.
+func (n PersonName) VCardValue() (propertyName, rawValue string) {
+	switch n.NameKind {
+	case PersonNameFormatted:
+		if n.Formatted != nil && strings.TrimSpace(*n.Formatted) != "" {
+			return "FN", vcard.EscapeText(*n.Formatted)
+		}
+	case PersonNameStructured, PersonNamePhonetic:
+		components := []string{
+			derefString(n.FamilyName), derefString(n.GivenName), derefString(n.AdditionalNames),
+			derefString(n.HonorificPrefixes), derefString(n.HonorificSuffixes),
+			derefString(n.SecondarySurname), derefString(n.Generation),
+		}
+		for _, component := range components {
+			if strings.TrimSpace(component) != "" {
+				return "N", vcard.JoinStructuredText(components)
+			}
+		}
+	case PersonNameNickname:
+		value := n.OriginalValue
+		if n.Formatted != nil && strings.TrimSpace(*n.Formatted) != "" {
+			value = *n.Formatted
+		}
+		if strings.TrimSpace(value) != "" {
+			// Each row is one nickname, including any literal commas.
+			return "NICKNAME", vcard.EscapeText(value)
+		}
+	}
+	return "", ""
 }
 
 type PersonNameInput struct {
