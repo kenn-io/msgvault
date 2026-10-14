@@ -12,7 +12,7 @@ import (
 	"go.kenn.io/msgvault/internal/meetingcontent"
 )
 
-const meetingProjectionVersion = 1
+const meetingProjectionVersion = 2
 const maxMeetingRawBytes = 64 << 20
 
 var errMeetingRawTooLarge = errors.New("meeting raw exceeds decode limit")
@@ -57,6 +57,9 @@ func (s *Store) refreshMeetingProjectionWith(ctx context.Context, tx *loggedTx, 
 		if err != nil {
 			return fmt.Errorf("read prior meeting projection: %w", err)
 		}
+		if err := s.refreshMeetingLinkKeysWith(ctx, tx, messageID, messageType.String, "", nil, nil); err != nil {
+			return err
+		}
 		if _, err := q.Exec(`DELETE FROM meeting_action_items WHERE message_id = ?`, messageID); err != nil {
 			return fmt.Errorf("clear meeting actions: %w", err)
 		}
@@ -72,6 +75,9 @@ func (s *Store) refreshMeetingProjectionWith(ctx context.Context, tx *loggedTx, 
 		return fmt.Errorf("read meeting projection raw: %w", err)
 	}
 	raw, _, decodeErr := decodeMessageRawBounded(stored, compression, maxMeetingRawBytes, errMeetingRawTooLarge)
+	if err := s.refreshMeetingLinkKeysWith(ctx, tx, messageID, messageType.String, format.String, raw, []byte(metadata.String)); err != nil {
+		return err
+	}
 	content := meetingcontent.Decode(format.String, raw, []byte(metadata.String))
 	if decodeErr != nil {
 		reason := "invalid_raw"

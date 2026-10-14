@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -96,6 +98,37 @@ func TestCalendarEventProjectionSkipsUnchanged(t *testing.T) {
 	// Canonical persistence also skips an identical typed projection.
 	_, err := st.PersistMessage(data)
 	requirements.NoError(err)
+}
+
+func TestCalendarEventProjectionUpgradeBackfillsSkippedMidnightBoundsWithoutNewLedgerVersion(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	raw := `{"id":"skipped-midnight","start":{"date":"2018-11-04"},"end":{"date":"2018-11-05"}}`
+	data, id := calendarFixture(t, st, "skipped-midnight", raw)
+	requirements.NoError(st.UpdateSourceSyncConfig(data.Message.SourceID, `{"calendar_id":"calendar@example.com","time_zone":"America/Sao_Paulo"}`))
+	oldStart := time.Date(2018, time.November, 4, 2, 0, 0, 0, time.UTC)
+	oldEnd := time.Date(2018, time.November, 5, 2, 0, 0, 0, time.UTC)
+	_, err := st.db.Exec(`UPDATE calendar_events SET projection_version = 1,start_at = ?,end_at = ? WHERE message_id = ?`, oldStart, oldEnd, id)
+	requirements.NoError(err)
+	_, err = st.db.Exec(`UPDATE applied_migrations SET version = 1 WHERE name = ?`, migrationCalendarEventProjectionV1)
+	requirements.NoError(err)
+	_, err = st.db.Exec(st.Rebind(`UPDATE archive_metadata SET value = ? WHERE key = 'schema_version'`), strconv.Itoa(SchemaVersion-1))
+	requirements.NoError(err)
+
+	requirements.NoError(st.InitSchemaContext(t.Context()))
+	rows := calendarRows(t, st, id)
+	requirements.Len(rows, 1)
+	assertions.Equal("2018-11-04T03:00:00Z", rows[0].Event.Start.UTC().Format(time.RFC3339))
+	assertions.Equal("2018-11-05T02:00:00Z", rows[0].Event.End.UTC().Format(time.RFC3339))
+	var version int
+	requirements.NoError(st.db.QueryRow(`SELECT projection_version FROM calendar_events WHERE message_id = ?`, id).Scan(&version))
+	assertions.Equal(2, version)
+	var ledgerVersion int
+	requirements.NoError(st.db.QueryRow(`SELECT version FROM applied_migrations WHERE name = ?`, migrationCalendarEventProjectionV1).Scan(&ledgerVersion))
+	assertions.Equal(1, ledgerVersion)
+	archiveVersion, err := st.SchemaVersionContext(t.Context())
+	requirements.NoError(err)
+	assertions.Equal(SchemaVersion, archiveVersion)
 }
 
 func TestCalendarEventProjectionStorageFailureRollsBack(t *testing.T) {

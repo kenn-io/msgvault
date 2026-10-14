@@ -42,7 +42,7 @@ func googleInstant(value googleDateTime, calendarZone string) (*time.Time, error
 		}
 	}
 	if value.Date != "" {
-		instant, err = time.ParseInLocation(time.DateOnly, value.Date, loc)
+		instant, _, err = calrecur.ResolveCivilDateBoundary(value.Date, loc)
 	} else {
 		instant, err = time.ParseInLocation("2006-01-02T15:04:05", value.DateTime, loc)
 	}
