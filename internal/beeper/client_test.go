@@ -344,3 +344,63 @@ func TestClientDoesNotSleepAfterFinalAttempt(t *testing.T) {
 	// after the last attempt would push this to at least 1.5s.
 	assert.Less(time.Since(start), 1400*time.Millisecond)
 }
+
+func TestGetAssetBytesNotFound(t *testing.T) {
+	for _, tt := range []struct {
+		name        string
+		responses   []assetResponse
+		calls       int32
+		missing     bool
+		unavailable bool
+	}{
+		{"telegram", []assetResponse{{status: 502, body: `{"message":"Failed to download asset: Transfer failed for mxc://example.test/a downloadFileWithParams failed: Media not found","code":"SERVE_ASSET_ERROR"}`}}, 1, true, false},
+		{"matrix", []assetResponse{{status: 502, body: `{"message":"Failed to download asset: Transfer failed for mxc://example.test/a downloadFileWithParams failed: failed to download file: M_NOT_FOUND (HTTP 404): ","code":"SERVE_ASSET_ERROR"}`}}, 1, true, false},
+		{"instagram", []assetResponse{{status: 502, body: `{"message":"Failed to download asset: Transfer failed for mxc://example.test/a downloadFileWithParams failed: failed to download file: HTTP 404","code":"SERVE_ASSET_ERROR"}`}}, 1, true, false},
+		{"direct 404", []assetResponse{{status: 404}}, 1, true, false},
+		{"mixed case", []assetResponse{{status: 502, body: "mEdIa NoT fOuNd"}}, 1, true, false},
+		{"success", []assetResponse{{status: 200, body: "Media not found"}}, 1, false, false},
+		{"unauthorized", []assetResponse{{status: 401, body: "Media not found"}}, 1, false, false},
+		{"forbidden", []assetResponse{{status: 403, body: "Media not found"}}, 1, false, false},
+		{"forbidden definitive", []assetResponse{{status: 403, body: "Media is no longer available"}}, 1, false, false},
+		{"throttled", []assetResponse{{status: 429, body: "Media not found"}}, 3, false, false},
+		{"mixed definitive", []assetResponse{{status: 502, body: "Media not found: Media is no longer available"}}, 1, false, true},
+		{"transient then missing", []assetResponse{{status: 500}, {status: 502, body: "M_NOT_FOUND"}, {status: 200}}, 2, true, false},
+		{"unrelated 502", []assetResponse{{status: 502, body: "upstream timeout"}}, 3, false, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			c, calls := assetServer(t, tt.responses...)
+			_, err := c.GetAssetBytes(t.Context(), "mxc://example.test/a", 16)
+			assert.Equal(tt.calls, calls.Load())
+			if tt.responses[0].status == http.StatusOK {
+				require.NoError(err)
+			} else {
+				require.Error(err)
+			}
+			// The dedicated class must differ from generic message/chat 404.
+			if tt.missing {
+				require.ErrorIs(err, ErrAssetNotFound)
+				require.NotErrorIs(err, ErrNotFound)
+			} else if err != nil {
+				require.NotErrorIs(err, ErrAssetNotFound)
+			}
+			assert.Equal(tt.unavailable, errors.Is(err, ErrAssetUnavailable))
+		})
+	}
+}
+
+func TestClientNotFoundPhraseIgnoredOffAssets(t *testing.T) {
+	assert := assert.New(t)
+	c, calls := assetServer(t,
+		assetResponse{status: 502, body: "M_NOT_FOUND"},
+		assetResponse{status: 200, body: `[]`},
+	)
+	accounts, err := c.ListAccounts(t.Context())
+	require.NoError(t, err)
+	assert.Empty(accounts)
+	assert.EqualValues(2, calls.Load())
+	c, _ = assetServer(t, assetResponse{status: 404, body: "Media not found"})
+	_, err = c.GetMessage(t.Context(), "chat", "message")
+	require.ErrorIs(t, err, ErrNotFound)
+}

@@ -138,6 +138,15 @@ func attachmentMetadataJSON(m *Message, att *Attachment) string {
 	return string(b)
 }
 
+// assetNotFoundMaxAge gives recently sent media time to reach the bridge.
+// Older not-found responses become terminal by policy, even on their first miss.
+const assetNotFoundMaxAge = 30 * 24 * time.Hour
+
+func isAgedAssetNotFound(err error, timestamp, now time.Time) bool {
+	return errors.Is(err, ErrAssetNotFound) && !timestamp.IsZero() &&
+		!timestamp.After(now.Add(-assetNotFoundMaxAge))
+}
+
 // persistAttachments downloads a message's media into content-addressed
 // storage and replaces the message's Beeper attachment rows. Media already
 // downloaded for this message (matched by source_attachment_id) is kept
@@ -191,7 +200,7 @@ func (imp *Importer) persistAttachments(ctx context.Context, syncID, messageID i
 			continue
 		}
 		if hadPrevious && previous.State == attachmentpolicy.StateUnavailable {
-			// The source already said this media is gone for good.
+			// A previous download decision marked this media terminal.
 			previous.Metadata = attachmentMetadataJSON(m, att)
 			setBeeperAttachmentRole(&previous, att, isPreview)
 			refs = append(refs, previous)
@@ -286,7 +295,7 @@ func (imp *Importer) persistAttachments(ctx context.Context, syncID, messageID i
 			pend(store.SyncRunItemStatusSkipped, "beeper_media_too_large", true, err)
 			continue
 		}
-		if errors.Is(err, ErrAssetUnavailable) {
+		if errors.Is(err, ErrAssetUnavailable) || isAgedAssetNotFound(err, m.Timestamp, time.Now()) {
 			marker.State = attachmentpolicy.StateUnavailable
 			marker.SkipReason = attachmentpolicy.SkipSourceUnavailable
 			imp.recordItem(syncID, m.ID, "attachment", store.SyncRunItemStatusSkipped, "beeper_media_unavailable", err)

@@ -137,9 +137,22 @@ excluded markers, which become eligible when the policy allows them.
 Some networks delete old media from their servers. WhatsApp, for example,
 reports `Media is no longer available`. msgvault requests such a file once,
 records it as `unavailable` with reason `source_unavailable`, and never retries
-it. Sync and backfill summaries report these as "media no longer available at
-source". Other failed downloads get at most three attempts per run and stay
-pending for the next backfill.
+it.
+
+Beeper can also report `Media not found`, `M_NOT_FOUND`, or
+`failed to download file: HTTP 404`, sometimes wrapped in an HTTP 502 response.
+A direct asset HTTP 404 follows the same policy. msgvault stops retrying that
+download as soon as it sees not-found. If the message is at least 30 days old,
+it records the same terminal marker, even on the first miss. Recent media stays
+pending and can recover on a later sync or backfill. Missing or future message
+timestamps also leave the download retryable.
+
+The 30-day cutoff limits repeated requests for old missing media. It does not
+prove the file is permanently gone: an old file that later returns will remain
+skipped, including during `sync-beeper --full`. Sync and backfill summaries
+report newly terminal files as "media no longer available at source". Other
+failed downloads get at most three attempts per message attachment per run and
+stay pending for the next backfill.
 
 Because Beeper's API serves what Beeper Desktop has synced locally, archive
 depth equals your local Beeper history: a freshly added Beeper account may only

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"math"
 	"net/http"
 	"os"
@@ -132,9 +133,10 @@ func mediaTranscriptChat() *fakeChat {
 }
 
 // mediaChat builds a chat with one image message whose asset may or may not
-// be present on the fake server.
+// be present on the fake server. Its timestamp is inside the not-found
+// recovery window so generic missing-media fixtures remain retryable.
 func mediaChat() *fakeChat {
-	base := time.Now().Add(-30 * 24 * time.Hour).UTC().Truncate(time.Second)
+	base := time.Now().Add(-29 * 24 * time.Hour).UTC().Truncate(time.Second)
 	return &fakeChat{
 		ID: "!media:beeper.local", AccountID: "signal", Network: "Signal", Title: "Media", Type: "single",
 		Participants: []map[string]any{
@@ -1241,20 +1243,24 @@ func TestImportBoundsRepeatedAssetAttemptsAcrossIncrementalAndReconcile(t *testi
 	assert.Len(assetRequests(f), 3, "the incremental and reconcile passes share one retry budget")
 }
 
-func TestBackfillMediaGoneMessageKeepsUnavailableRow(t *testing.T) {
+func TestBackfillMediaDefinitiveLossKeepsUnavailableRow(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 
 	f := newFakeBeeper(t)
 	ch := mediaChat()
+	ch.Msgs[0].Timestamp = time.Now().Add(-31 * 24 * time.Hour).UTC()
+	ch.LastActivity = ch.Msgs[0].Timestamp
 	ch.Msgs[0].Attachments = append(ch.Msgs[0].Attachments, map[string]any{
 		"id": "mxc://beeper.local/photo2", "type": "img", "mimeType": "image/png", "fileName": "later.png",
 	})
 	addFillerMessages(ch, 5)
 	f.addChat(ch)
-	f.setAssetError("mxc://beeper.local/photo1", http.StatusInternalServerError, expiredAssetBody)
+	f.setAssetError("mxc://beeper.local/photo1", http.StatusBadGateway, expiredAssetBody)
+	f.setAssetError("mxc://beeper.local/photo2", http.StatusBadGateway, "temporary failure")
 	imp, st, done := newTestImporter(t, f)
 	defer done()
+	imp.client.retryAfterMax = time.Millisecond
 
 	opts := mediaImportOptions(t)
 	sum, err := imp.Import(context.Background(), opts)
@@ -1347,4 +1353,156 @@ func TestMediaTypeOf(t *testing.T) {
 	assert.Equal("mxc://x/1", assetRef(&Attachment{ID: "mxc://x/1", SrcURL: "http://y"}))
 	assert.Equal("http://y", assetRef(&Attachment{SrcURL: "http://y"}), "srcURL is the fallback when the asset ID is empty")
 	assert.Empty(assetRef(&Attachment{}))
+}
+
+func TestImportMediaNotFoundAgePolicy(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		age      time.Duration
+		body     string
+		terminal bool
+		calls    int
+	}{
+		{"old missing", 31 * 24 * time.Hour, "Media not found", true, 1},
+		{"recent missing", time.Hour, "M_NOT_FOUND", false, 1},
+		{"future missing", -time.Hour, "failed to download file: HTTP 404", false, 1},
+		{"old transient", 31 * 24 * time.Hour, "upstream timeout", false, 3},
+		{"recent definitive", time.Hour, "Media not found: Media is no longer available", true, 1},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			f := newFakeBeeper(t)
+			ch := mediaChat()
+			ch.Msgs[0].Timestamp = time.Now().Add(-tt.age).UTC()
+			ch.LastActivity = ch.Msgs[0].Timestamp
+			f.addChat(ch)
+			f.setAssetError("mxc://beeper.local/photo1", http.StatusBadGateway, tt.body)
+			imp, st, done := newTestImporter(t, f)
+			defer done()
+			imp.client.retryAfterMax = time.Millisecond
+			opts := mediaImportOptions(t)
+			sum, err := imp.Import(t.Context(), opts)
+			require.NoError(err)
+			assert.Len(assetRequests(f), tt.calls)
+			var state, reason string
+			require.NoError(st.DB().QueryRow(`SELECT attachment_state, attachment_skip_reason FROM attachments`).Scan(&state, &reason))
+			if tt.terminal {
+				assert.Equal("unavailable", state)
+				assert.Equal("source_unavailable", reason)
+				assert.EqualValues(1, sum.AttachmentsUnavailable)
+				assert.Zero(sum.AttachmentsPending)
+				assert.Zero(sum.Errors)
+				var status string
+				require.NoError(st.DB().QueryRow(`SELECT status FROM sync_run_items WHERE error_kind = 'beeper_media_unavailable'`).Scan(&status))
+				assert.Equal(store.SyncRunItemStatusSkipped, status)
+				f.resetRequests()
+				bsum, err := imp.BackfillMedia(t.Context(), opts)
+				require.NoError(err)
+				assert.Zero(bsum.MessagesProcessed)
+				opts.Full = true
+				_, err = imp.Import(t.Context(), opts)
+				require.NoError(err)
+				assert.Empty(assetRequests(f))
+			} else {
+				assert.Equal("failed", state)
+				assert.Equal("fetch_failure", reason)
+				assert.Zero(sum.AttachmentsUnavailable)
+				assert.EqualValues(1, sum.AttachmentsPending)
+				assert.EqualValues(1, sum.Errors)
+				f.mu.Lock()
+				delete(f.assetErrors, "mxc://beeper.local/photo1")
+				f.mu.Unlock()
+				f.setAsset("mxc://beeper.local/photo1", []byte("recovered bytes"))
+				f.resetRequests()
+				bsum, err := imp.BackfillMedia(t.Context(), opts)
+				require.NoError(err)
+				assert.EqualValues(1, bsum.AttachmentsDownloaded)
+				assert.Len(assetRequests(f), 1)
+			}
+		})
+	}
+}
+
+func TestBackfillMediaNotFoundLegacyFailureKeepsTerminalSibling(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newFakeBeeper(t)
+	ch := mediaChat()
+	ch.Msgs[0].Timestamp = time.Now().Add(-31 * 24 * time.Hour).UTC()
+	ch.LastActivity = ch.Msgs[0].Timestamp
+	ch.Msgs[0].Attachments = append(ch.Msgs[0].Attachments, map[string]any{
+		"id": "mxc://example.test/later", "type": "img", "mimeType": "image/png", "fileName": "later.png",
+	})
+	f.addChat(ch)
+	f.setAssetError("mxc://beeper.local/photo1", http.StatusBadGateway, "Media not found")
+	f.setAssetError("mxc://example.test/later", http.StatusBadGateway, "temporary failure")
+	imp, st, done := newTestImporter(t, f)
+	defer done()
+	imp.client.retryAfterMax = time.Millisecond
+	opts := mediaImportOptions(t)
+	// Seed the retryable marker written by older versions using real import.
+	f.setAssetError("mxc://beeper.local/photo1", http.StatusBadGateway, "temporary failure")
+	sum, err := imp.Import(t.Context(), opts)
+	require.NoError(err)
+	require.EqualValues(2, sum.AttachmentsPending)
+	f.setAssetError("mxc://beeper.local/photo1", http.StatusBadGateway, "Media not found")
+	f.resetRequests()
+	sum, err = imp.BackfillMedia(t.Context(), opts)
+	require.NoError(err)
+	assert.EqualValues(1, sum.AttachmentsUnavailable)
+	assert.EqualValues(1, sum.AttachmentsPending)
+	assert.Len(assetRequests(f), 4)
+
+	var messageID int64
+	require.NoError(st.DB().QueryRow(`SELECT message_id FROM attachments LIMIT 1`).Scan(&messageID))
+	before, err := st.MessageBeeperAttachments(messageID)
+	require.NoError(err)
+	terminal := before["beeper:mxc://beeper.local/photo1"]
+	require.Equal(attachmentpolicy.StateUnavailable, terminal.State)
+	f.mu.Lock()
+	delete(f.assetErrors, "mxc://example.test/later")
+	f.mu.Unlock()
+	f.setAsset("mxc://example.test/later", []byte("recovered bytes"))
+	f.resetRequests()
+	sum, err = imp.BackfillMedia(t.Context(), opts)
+	require.NoError(err)
+	assert.Zero(sum.AttachmentsUnavailable, "retained terminal markers are not counted again")
+	assert.EqualValues(1, sum.AttachmentsDownloaded)
+	requests := assetRequests(f)
+	require.Len(requests, 1)
+	assert.Contains(requests[0], "later")
+	after, err := st.MessageBeeperAttachments(messageID)
+	require.NoError(err)
+	retained := after["beeper:mxc://beeper.local/photo1"]
+	assert.Equal(terminal.State, retained.State)
+	assert.Equal(terminal.SkipReason, retained.SkipReason)
+	assert.Equal(terminal.SourceAttachmentID, retained.SourceAttachmentID)
+	assert.Equal(terminal.StoragePath, retained.StoragePath)
+	assert.Equal(terminal.Size, retained.Size)
+}
+
+func TestAgedAssetNotFoundCutoff(t *testing.T) {
+	now := time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC)
+	cutoff := time.Date(2026, 9, 13, 12, 0, 0, 0, time.UTC)
+	for _, tt := range []struct {
+		name      string
+		timestamp time.Time
+		err       error
+		want      bool
+	}{
+		{"exactly 30 days", cutoff, ErrAssetNotFound, true},
+		{"older", cutoff.Add(-time.Nanosecond), ErrAssetNotFound, true},
+		{"younger", cutoff.Add(time.Nanosecond), ErrAssetNotFound, false},
+		{"other timezone", cutoff.In(time.FixedZone("example", 9*60*60)), ErrAssetNotFound, true},
+		{"zero", time.Time{}, ErrAssetNotFound, false},
+		{"future", now.Add(time.Hour), ErrAssetNotFound, false},
+		{"other error", cutoff, ErrNotFound, false},
+		{"success", cutoff, nil, false},
+		{"wrapped", cutoff, fmt.Errorf("asset response: %w", ErrAssetNotFound), true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, isAgedAssetNotFound(tt.err, tt.timestamp, now))
+		})
+	}
 }
