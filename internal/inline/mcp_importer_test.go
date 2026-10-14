@@ -157,6 +157,91 @@ func TestMCPReactionRefreshRetainsCLIRawEvidence(t *testing.T) {
 	}
 }
 
+// Exercise failed reconnect verification through real MCP media reads and Store
+// writes, including the recoverable media-error path that permits later reads.
+func TestMCPMediaRefreshVerificationFailureBlocksFurtherReads(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		structured  bool
+		accountJSON string
+		reject      bool
+		expirations int32
+	}{
+		{name: "tool error", structured: true, reject: true, expirations: 1},
+		{name: "malformed tool JSON", accountJSON: `not JSON`, expirations: 1},
+		{name: "malformed account", structured: true, accountJSON: `{"user":{"id":2},"session":{"scopes":["messages:read"]}}`, expirations: 1},
+		{name: "missing read scope", structured: true, accountJSON: `{"user":{"id":"2"},"session":{"scopes":[]}}`, expirations: 1},
+		{name: "expired verification request", structured: true, expirations: 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			checks := assert.New(t)
+			requires := require.New(t)
+			media := `{"kind":"document","id":"11","url":"https://api.inline.chat/file?fresh=synthetic","fileName":"notes.txt","mimeType":"text/plain","sizeBytes":6}`
+			message := inlineMessageJSON(t, 5, "original body", media)
+			fixture := newInlineMCPFixture(t, map[string]string{
+				"conversations.get": `{"chat":{"chatId":"7","kind":"dm","peer":{"userId":"2"}},"details":{}}`,
+				"messages.list":     `{"chat":{"chatId":"7"},"nextOffsetId":null,"messages":[` + message + `]}`,
+				"files.get":         `{"chat":{"chatId":"7"},"items":[]}`,
+			}, tc.structured)
+			client := connectInlineFixture(t, fixture)
+			st := testutil.NewTestStore(t)
+			account := Account{UserID: 1, Origin: ProductionOrigin}
+			_, err := st.GetOrCreateSource(SourceType, account.Identifier())
+			requires.NoError(err)
+			imp := NewImporter(st, client)
+			opts := ImportOptions{Account: account, ChatIDs: []int64{7}, AttachmentsDir: t.TempDir(), NoMedia: true}
+			first, err := imp.Import(t.Context(), opts)
+			requires.NoError(err)
+			requires.Equal(1, first.AttachmentsPending)
+			id := archivedMessage(t, st, first.SourceID, 7, 5)
+			conversation, err := client.Conversation(t.Context(), 7)
+			requires.NoError(err)
+			parsed, err := decodeMCPMessage(jsontext.Value(message), 7)
+			requires.NoError(err)
+
+			initial := fixture.inits.Load()
+			fixture.owner.Store(2)
+			fixture.mu.Lock()
+			if tc.reject {
+				fixture.reject = "account.me"
+			}
+			fixture.payloads["account.me"] = tc.accountJSON
+			fixture.mu.Unlock()
+			fixture.missing.Store(tc.expirations)
+			opts.NoMedia = false
+			summary := &ImportSummary{}
+			// Media refresh failures are recoverable, so the caller can proceed
+			// to another media or history read after this returns successfully.
+			requires.NoError(imp.persistMedia(t.Context(), id, parsed.Text, conversation, parsed.Media, opts, summary))
+			checks.Equal(1, summary.Errors)
+			checks.Equal(1, summary.AttachmentsPending)
+			refs, err := st.MessageInlineProviderAttachments(id)
+			requires.NoError(err)
+			requires.Contains(refs, "inline:document:11")
+			checks.Equal(attachmentpolicy.StateFailed, refs["inline:document:11"].State)
+			checks.Empty(refs["inline:document:11"].ContentHash)
+			checks.Equal(tc.expirations, fixture.expired.Load())
+
+			// The provider recovers under a different account. The unverified
+			// session must stay blocked rather than reading that account's data.
+			fixture.mu.Lock()
+			fixture.reject = ""
+			delete(fixture.payloads, "account.me")
+			calls := len(fixture.calls)
+			fixture.mu.Unlock()
+			fixture.missing.Store(0)
+			_, err = client.Files(t.Context(), 7, []int64{5})
+			checks.ErrorIs(err, ErrContract)
+			_, err = client.Messages(t.Context(), 7, 0)
+			checks.ErrorIs(err, ErrContract)
+			checks.Equal(initial+1, fixture.inits.Load(), "a failed verification must not reconnect on later reads")
+			fixture.mu.Lock()
+			checks.Len(fixture.calls, calls, "later reads must not reach the unverified session")
+			fixture.mu.Unlock()
+		})
+	}
+}
+
 // Exercise the SDK transport, provider parser and archive together. The local
 // server supplies the external read contract; the importer and Store are real.
 func TestMCPImportPersistsDiscoveredHistoryAndBackfill(t *testing.T) {

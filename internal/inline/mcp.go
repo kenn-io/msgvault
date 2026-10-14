@@ -170,7 +170,7 @@ func (c *MCPClient) call(ctx context.Context, name string, args map[string]any) 
 		return nil, errors.New("inline MCP client is closed")
 	}
 	if c.invalidPrincipal {
-		return nil, fmt.Errorf("%w: account changed; create a new client", ErrContract)
+		return nil, fmt.Errorf("%w: account is unverified; create a new client", ErrContract)
 	}
 	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
@@ -178,6 +178,8 @@ func (c *MCPClient) call(ctx context.Context, name string, args map[string]any) 
 	if errors.Is(err, mcp.ErrSessionMissing) {
 		// A provider restart or idle expiry invalidates the session, not the
 		// archive cursor. Reinitialize once, verify its principal, then retry.
+		// Any reconnect or verification failure must also block later reads.
+		c.invalidPrincipal = true
 		_ = c.session.Close()
 		if err = c.connect(ctx); err != nil {
 			return nil, err
@@ -195,10 +197,10 @@ func (c *MCPClient) call(ctx context.Context, name string, args map[string]any) 
 			return nil, checkErr
 		}
 		if c.ownerID != 0 && account.UserID != c.ownerID {
-			c.invalidPrincipal = true
 			return nil, fmt.Errorf("%w: reconnected account differs from archive owner", ErrContract)
 		}
 		c.ownerID = account.UserID
+		c.invalidPrincipal = false
 		result, err = c.session.CallTool(ctx, &mcp.CallToolParams{Name: name, Arguments: args})
 	}
 	if err != nil {

@@ -56,7 +56,7 @@ func newInlineMCPFixture(t *testing.T, payloads map[string]string, structured bo
 			if req.Params.Name == "conversations.list" && catalog != nil {
 				body = catalog(args)
 			}
-			if req.Params.Name == "account.me" {
+			if req.Params.Name == "account.me" && body == "" {
 				body = fmt.Sprintf(`{"user":{"id":"%d"},"session":{"scopes":["messages:read","offline_access"]},"allowed":{"spaceIds":["9"],"allowDms":true,"allowHomeThreads":true}}`, f.owner.Load())
 			}
 			if req.Params.Name == reject {
