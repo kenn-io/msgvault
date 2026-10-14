@@ -28,10 +28,12 @@ func (s TwilioSource) EffectiveAccountEmail() (string, error) {
 	return effectiveMeetingAccountEmail("twilio", s.Identifier, s.AccountEmail)
 }
 
-// MediaPolicy caps each recording at the shared chat default unless
-// max_media_mb is set.
+// DefaultTwilioRecordingMaxBytes permits long WAV recordings without buffering them.
+const DefaultTwilioRecordingMaxBytes int64 = 4 << 30
+
+// MediaPolicy caps each recording at 4 GiB unless max_media_mb is set.
 func (s TwilioSource) MediaPolicy() attachmentpolicy.Policy {
-	return resolveMediaPolicy(s.Media, "", 0, s.MaxMediaMB, attachmentpolicy.DefaultChatMaxBytes, MediaAccountConfig{}, false)
+	return resolveMediaPolicy(s.Media, "", 0, s.MaxMediaMB, DefaultTwilioRecordingMaxBytes, MediaAccountConfig{}, false)
 }
 
 // GetTwilioSource returns the configured Twilio source matching identifier

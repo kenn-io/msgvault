@@ -1327,6 +1327,9 @@ may run. The route inspects stored CAS bytes, so MIME claims do not expand
 Docbank's WAV and MP3 capability. Capture gaps and unsupported formats remain
 typed local states.
 
+The current audio pipeline accepts files up to 1 GiB, even when a source's
+capture limit is higher. Larger files remain in the msgvault archive.
+
 Agents can quote the transcripts of delivered files in
 [Kata issues](usage/kata-issues.md#cite-a-docbank-transcript).
 
@@ -1625,7 +1628,7 @@ schedule = "15 */6 * * *"
 | `enabled` | `false` | Allow daemon scheduling |
 | `schedule` | — | Five-field cron expression |
 | `media` | `true` | Download recordings; `false` archives calls and transcripts only. After turning it back on, run `sync-twilio --full` to fetch the skipped recordings |
-| `max_media_mb` | `250` | Per-recording size cap in MiB; `0` uses the default |
+| `max_media_mb` | `4096` (4 GiB) | Per-recording size cap in MiB; `0` uses the default. Oversized recordings are skipped; raise the cap and run `sync-twilio --full` to retry |
 
 ### Muesli Sources
 
