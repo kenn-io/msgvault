@@ -2272,6 +2272,15 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	if err := s.runOnceMigration(ctx, migrationMeetingProjectionV1, meetingProjectionVersion, false, s.backfillMeetingProjectionsContext); err != nil {
 		return fmt.Errorf("initialize meeting projections: %w", err)
 	}
+	if err := s.runOnceMigration(ctx, migrationCalendarEventRecurrenceDuration, 1, false, s.ensureCalendarEventRecurrenceDurationColumn); err != nil {
+		return fmt.Errorf("add calendar event recurrence duration: %w", err)
+	}
+	if err := s.runOnceMigration(ctx, migrationCalendarEventProjectionV1, 1, false, s.backfillCalendarEventProjectionsContext); err != nil {
+		return fmt.Errorf("initialize calendar event projections: %w", err)
+	}
+	if err := s.runOnceMigration(ctx, migrationCalendarEventProjectionV2, 1, false, s.backfillCalendarEventProjectionsContext); err != nil {
+		return fmt.Errorf("refresh calendar event projections: %w", err)
+	}
 
 	// Probe availability through the dialect so it works uniformly for
 	// backends that carry FTS inside their main schema. The probe is a query

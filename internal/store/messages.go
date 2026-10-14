@@ -442,6 +442,7 @@ type MessageMetadataRecord struct {
 	ID                   int64
 	Metadata             sql.NullString
 	SourceConversationID sql.NullString
+	DeletedFromSource    bool
 }
 
 // MessageWithRawMetadata identifies an archived message and the RFC822
@@ -833,11 +834,28 @@ func (s *Store) MessageMetadataBatch(
 // result is keyed by source_message_id, holds no message bodies, and stays
 // linear in the archived messages of the source.
 func (s *Store) SourceMessageMetadata(sourceID int64) (map[string]MessageMetadataRecord, error) {
-	rows, err := s.db.Query(`
-		SELECT m.source_message_id, m.id, m.metadata, c.source_conversation_id
+	return s.sourceMessageMetadataContext(context.Background(), sourceID, 0)
+}
+
+// SourceMessageMetadataLimitContext bounds the inventory used to reconcile
+// provider resource members, including rows persisted by interrupted runs.
+func (s *Store) SourceMessageMetadataLimitContext(ctx context.Context, sourceID int64, limit int) (map[string]MessageMetadataRecord, error) {
+	if limit <= 0 || limit > 20000 {
+		return nil, errors.New("source metadata limit must be between 1 and 20000")
+	}
+	return s.sourceMessageMetadataContext(ctx, sourceID, limit)
+}
+
+func (s *Store) sourceMessageMetadataContext(ctx context.Context, sourceID int64, limit int) (map[string]MessageMetadataRecord, error) {
+	query := `
+		SELECT m.source_message_id, m.id, m.metadata, c.source_conversation_id, m.deleted_from_source_at IS NOT NULL
 		FROM messages m
 		JOIN conversations c ON c.id = m.conversation_id
-		WHERE m.source_id = ?`, sourceID)
+		WHERE m.source_id = ?`
+	if limit > 0 {
+		query += fmt.Sprintf(" LIMIT %d", limit+1)
+	}
+	rows, err := s.db.QueryContext(ctx, query, sourceID)
 	if err != nil {
 		return nil, fmt.Errorf("load source message metadata: %w", err)
 	}
@@ -848,11 +866,14 @@ func (s *Store) SourceMessageMetadata(sourceID int64) (map[string]MessageMetadat
 		var sourceMessageID string
 		var record MessageMetadataRecord
 		if err := rows.Scan(
-			&sourceMessageID, &record.ID, &record.Metadata, &record.SourceConversationID,
+			&sourceMessageID, &record.ID, &record.Metadata, &record.SourceConversationID, &record.DeletedFromSource,
 		); err != nil {
 			return nil, fmt.Errorf("scan source message metadata: %w", err)
 		}
 		result[sourceMessageID] = record
+		if limit > 0 && len(result) > limit {
+			return nil, errors.New("source metadata inventory limit exceeded")
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate source message metadata: %w", err)
@@ -957,7 +978,10 @@ func (s *Store) SetMessageMetadataContext(ctx context.Context, messageID int64, 
 		if err := setMessageMetadataWith(boundQuerier{ctx: ctx, q: tx}, s.dialect, messageID, metadata); err != nil {
 			return err
 		}
-		return s.refreshMeetingProjectionWith(ctx, tx, messageID)
+		if err := s.refreshMeetingProjectionWith(ctx, tx, messageID); err != nil {
+			return err
+		}
+		return s.refreshCalendarEventProjectionWith(ctx, tx, messageID)
 	})
 }
 
@@ -1172,7 +1196,7 @@ func (s *Store) MigrateSourceMessageID(sourceID, conversationID int64, legacySou
 			if err != nil {
 				return fmt.Errorf("delete legacy source_message_id: %w", err)
 			}
-			return nil
+			return s.refreshCalendarEventProjectionWith(context.Background(), tx, newID)
 		}
 
 		_, err = tx.Exec(
@@ -1184,7 +1208,15 @@ func (s *Store) MigrateSourceMessageID(sourceID, conversationID int64, legacySou
 		if err != nil {
 			return fmt.Errorf("migrate source_message_id: %w", err)
 		}
-		return nil
+		var survivor int64
+		err = tx.QueryRow(`SELECT id FROM messages WHERE source_id = ? AND conversation_id = ? AND source_message_id = ?`, sourceID, conversationID, newSourceMessageID).Scan(&survivor)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("read migrated survivor: %w", err)
+		}
+		return s.refreshCalendarEventProjectionWith(context.Background(), tx, survivor)
 	})
 }
 
@@ -1395,6 +1427,9 @@ func (s *Store) UpsertMessageContext(ctx context.Context, msg *Message) (int64, 
 			return err
 		}
 		if err := s.refreshMeetingProjectionWith(ctx, tx, id); err != nil {
+			return err
+		}
+		if err := s.refreshCalendarEventProjectionWith(ctx, tx, id); err != nil {
 			return err
 		}
 		return s.refreshAccountAttributionAfterWriteTx(ctx, tx, id, deliveryInput{})
@@ -2387,6 +2422,9 @@ func (s *Store) persistMessageWith(
 	}
 
 	if err := s.refreshMeetingProjectionWith(ctx, tx, messageID); err != nil {
+		return 0, err
+	}
+	if err := s.refreshCalendarEventProjectionWith(ctx, tx, messageID); err != nil {
 		return 0, err
 	}
 
@@ -6022,6 +6060,9 @@ func (s *Store) UpsertMessageRawWithFormatContext(ctx context.Context, messageID
 			return err
 		}
 		if err := s.refreshMeetingProjectionWith(ctx, tx, messageID); err != nil {
+			return err
+		}
+		if err := s.refreshCalendarEventProjectionWith(ctx, tx, messageID); err != nil {
 			return err
 		}
 		switch {

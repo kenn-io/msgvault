@@ -1202,6 +1202,59 @@ currently reports `owner` or `writer` for that calendar. `primary` resolves to t
 live primary calendar ID before the daemon checks policy. List the actual ID in
 both permission lists; neither list supports wildcards or alias names.
 
+### CalDAV Sources (unreleased)
+
+Archive CalDAV calendars with `msgvault sync-caldav <name>`. The daemon reads
+these settings and the password file on its own host. Sync is manual and
+read-only. Each discovered calendar becomes a separate archive source.
+
+```toml
+[[caldav.sources]]
+name = "personal"
+url = "https://calendar.example.org/dav"
+username = "owner@example.org"
+password_file = "caldav-password"
+time_zone = "UTC"
+calendars = []
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `name` | Required | 1–64 lowercase letters, digits, `_` or `-`; start with a letter |
+| `url` | Required | HTTPS discovery URL without embedded credentials, query or fragment |
+| `username` | Required | Basic/Digest authentication username |
+| `password_file` | Required | Plain password file; relative paths resolve from the configuration directory |
+| `time_zone` | `UTC` | IANA timezone for floating times and all-day dates |
+| `calendars` | `[]` | Absolute same-origin calendar collection URLs ending in `/`; empty selects all discovered calendars |
+| `trusted_origin` | Empty | Optional HTTPS origin approved for a private server, with no path |
+| `trusted_addresses` | `[]` | Exact private IP pins for that origin; use with `trusted_origin` |
+
+Keep the password in a regular file readable only by its owner (`chmod 600`
+on Unix). A trailing newline is ignored. The daemon rejects empty files and
+files over 64 KiB. On Windows, restrict the file's ACL to the daemon user.
+Passwords are not copied into archive metadata.
+
+The shared DAV client accepts Basic and Digest authentication over HTTPS.
+For a private server, configure the same explicit
+[trusted destination policy](#carddav) used by CardDAV. A public discovery URL
+cannot redirect credentials to another origin.
+
+The configured `time_zone` cannot change after a calendar source is registered:
+floating recurrence identities depend on it. IANA `TZID` values and UTC times
+are supported. `Local` is rejected because it depends on the daemon host's
+timezone and can change event identities when that host changes zones. Custom
+timezone definitions and `RANGE=THISANDFUTURE` fail visibly. Unsupported
+recurrence rules remain in raw data and appear in the calendar projection's
+recurrence error field.
+
+Sync fails rather than accepting incomplete reports or advancing a cursor
+past a failed fetch or write. Per connection, it allows five minutes and
+256 MiB of response data. Per calendar, it allows 10,000 resource entries,
+20,000 archived event identities, and 64 MiB of raw data multiplied by event
+count. Each resource is limited to 2 MiB, 1,000 events, eight component levels,
+20,000 content lines, and 16 KiB per unfolded line. Narrow the calendar selection
+when a connection exceeds these limits.
+
 ### `[matrix]`
 
 Archive joined rooms from native [Matrix](/docs/usage/matrix/) accounts. One

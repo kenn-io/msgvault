@@ -5,6 +5,7 @@ import (
 	"compress/zlib"
 	"context"
 	"database/sql"
+	"encoding/json/v2"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,6 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/msgvault/internal/calevent"
 	"go.kenn.io/msgvault/internal/sqliteutil"
 	"go.kenn.io/msgvault/internal/vcard"
 )
@@ -1315,6 +1317,93 @@ func TestCopySubset_Basic(t *testing.T) {
 	hasViolation := fkRows.Next()
 	require.NoError(fkRows.Err(), "foreign_key_check rows")
 	assert.False(hasViolation, "foreign key violations found in destination database")
+}
+
+func TestCopySubsetScopesCalDAVRawToSelectedEvent(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	sourceDir := t.TempDir()
+	destinationDir := filepath.Join(t.TempDir(), "subset")
+	sourcePath := createTestSourceDB(t, sourceDir, 3)
+
+	const raw = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//msgvault//EN\r\n" +
+		"X-WR-CALNAME:Private calendar label\r\n" +
+		"BEGIN:VTODO\r\nUID:todo@example.test\r\nDTSTAMP:20270301T000000Z\r\n" +
+		"SUMMARY:Excluded task\r\nDESCRIPTION:Task-only private details\r\nEND:VTODO\r\n" +
+		"BEGIN:VEVENT\r\nUID:series@example.test\r\nDTSTAMP:20270301T000000Z\r\n" +
+		"DTSTART:20270307T130000Z\r\nDURATION:PT1H\r\nSUMMARY:Master event\r\n" +
+		"DESCRIPTION:Master-only private details\r\nATTENDEE:mailto:master@example.test\r\nEND:VEVENT\r\n" +
+		"BEGIN:VEVENT\r\nUID:series@example.test\r\nDTSTAMP:20270301T000000Z\r\n" +
+		"RECURRENCE-ID:20270314T130000Z\r\nDTSTART:20270314T140000Z\r\nDURATION:PT1H\r\n" +
+		"SUMMARY:Earlier exception\r\nDESCRIPTION:Earlier-only private details\r\n" +
+		"ATTENDEE:mailto:earlier@example.test\r\nEND:VEVENT\r\n" +
+		"BEGIN:VEVENT\r\nUID:series@example.test\r\nDTSTAMP:20270301T000000Z\r\n" +
+		"RECURRENCE-ID:20270321T130000Z\r\nDTSTART:20270321T150000Z\r\nDURATION:PT1H\r\n" +
+		"SUMMARY:Selected exception\r\nDESCRIPTION:Selected event details\r\n" +
+		"ATTENDEE:mailto:selected@example.test\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+	events, err := calevent.ParseCalDAVResource([]byte(raw), calevent.SourceContext{CalendarTimeZone: "UTC"})
+	requirements.NoError(err)
+	requirements.Len(events, 3)
+
+	st, err := Open(sourcePath)
+	requirements.NoError(err)
+	t.Cleanup(func() { requirements.NoError(st.Close()) })
+	_, err = st.DB().Exec(`UPDATE sources SET source_type='caldav', identifier='calendar@example.test',
+		sync_config='{"calendar_id":"calendar@example.test","time_zone":"UTC"}' WHERE id=1`)
+	requirements.NoError(err)
+	_, err = st.DB().Exec(`UPDATE conversations SET conversation_type='calendar', title='Series' WHERE id=1`)
+	requirements.NoError(err)
+	for i, item := range events {
+		metadata, err := json.Marshal(calevent.CalDAVMetadata{
+			EventID: item.Event.ProviderEventID, Href: "/calendar/shared.ics", ETag: "etag-1",
+			AccountEmail: "owner@example.test",
+		})
+		requirements.NoError(err)
+		_, err = st.DB().Exec(`UPDATE messages SET message_type='calendar_event', source_message_id=?,
+			sent_at=?, subject=?, snippet=?, metadata=? WHERE id=?`,
+			item.Event.ProviderEventID, fmt.Sprintf("2030-01-01 00:00:0%d", i), item.Summary, item.Summary,
+			string(metadata), i+1)
+		requirements.NoError(err)
+		requirements.NoError(st.UpsertMessageRawWithFormat(int64(i+1), []byte(raw), calevent.CalDAVRawFormat))
+	}
+	var originalCompressed []byte
+	requirements.NoError(st.DB().QueryRow(`SELECT raw_data FROM message_raw WHERE message_id = 3`).Scan(&originalCompressed))
+	requirements.NotEmpty(originalCompressed, "source raw resource should be compressed into a stored BLOB")
+
+	_, err = CopySubset(sourcePath, destinationDir, 1, false)
+	requirements.NoError(err)
+
+	archivedRaw, err := st.GetMessageRaw(3)
+	requirements.NoError(err)
+	assertions.Equal(raw, string(archivedRaw), "source archive keeps the complete original resource")
+
+	subset, err := Open(filepath.Join(destinationDir, "msgvault.db"))
+	requirements.NoError(err)
+	t.Cleanup(func() { requirements.NoError(subset.Close()) })
+	subsetRaw, err := subset.GetMessageRaw(3)
+	requirements.NoError(err)
+	assertions.Contains(string(subsetRaw), "Selected event details")
+	assertions.Contains(string(subsetRaw), "selected@example.test")
+	assertions.NotContains(string(subsetRaw), "Master-only private details")
+	assertions.NotContains(string(subsetRaw), "master@example.test")
+	assertions.NotContains(string(subsetRaw), "Earlier-only private details")
+	assertions.NotContains(string(subsetRaw), "earlier@example.test")
+	assertions.NotContains(string(subsetRaw), "Task-only private details")
+	assertions.NotContains(string(subsetRaw), "Private calendar label")
+	selectedEvents, err := calevent.ParseCalDAVResource(subsetRaw, calevent.SourceContext{CalendarTimeZone: "UTC"})
+	requirements.NoError(err)
+	requirements.Len(selectedEvents, 1)
+	assertions.Equal(events[2].Event.ProviderEventID, selectedEvents[0].Event.ProviderEventID)
+	var databaseBytes []byte
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		part, readErr := os.ReadFile(filepath.Join(destinationDir, "msgvault.db"+suffix))
+		if os.IsNotExist(readErr) {
+			continue
+		}
+		requirements.NoError(readErr)
+		databaseBytes = append(databaseBytes, part...)
+	}
+	assertions.False(bytes.Contains(databaseBytes, originalCompressed),
+		"destination database files must not retain the original complete CalDAV resource blob")
 }
 
 func TestCopySubsetExcludesDocumentDerivativesAndHostedConsent(t *testing.T) {
