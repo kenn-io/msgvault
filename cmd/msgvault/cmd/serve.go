@@ -3256,11 +3256,7 @@ func (a *storeAPIAdapter) personEnrichmentDeletionDigests(
 	personID int64,
 	hasher *personenrichment.SuppressionHasher,
 ) ([]store.PersonEnrichmentSuppressionInput, int64, error) {
-	person, err := a.store.GetPersonContext(ctx, personID)
-	if err != nil {
-		return nil, 0, err
-	}
-	input, err := a.store.LoadRequestInput(ctx, personenrichment.WorkLease{PersonID: person.ID})
+	input, err := a.store.LoadRequestInputForDeletionContext(ctx, personenrichment.WorkLease{PersonID: personID})
 	if err != nil {
 		return nil, 0, fmt.Errorf("load current person enrichment identifiers for deletion: %w", err)
 	}
@@ -3356,7 +3352,7 @@ func (a *storeAPIAdapter) personEnrichmentDeletionDigests(
 		}
 		clearPersonEnrichmentStrings(providerIDs)
 	}
-	return digests, person.Revision, nil
+	return digests, input.PersonRevision, nil
 }
 
 func clearPersonEnrichmentCandidates(values []personenrichment.IdentityCandidate) {
@@ -3723,6 +3719,12 @@ func (a *storeAPIAdapter) GetParticipantIdentityContext(
 	ctx context.Context, participantIDs []int64,
 ) (*store.ParticipantIdentityContext, error) {
 	return a.store.GetParticipantIdentityContext(ctx, participantIDs)
+}
+
+func (a *storeAPIAdapter) GetVisibleParticipantIdentityContext(
+	ctx context.Context, participantIDs []int64,
+) (*store.ParticipantIdentityContext, error) {
+	return a.store.GetVisibleParticipantIdentityContext(ctx, participantIDs)
 }
 
 // RefreshIdentityDatasets rebuilds identity-derived Parquet in a short-lived,

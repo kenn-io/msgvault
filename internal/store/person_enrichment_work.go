@@ -2086,8 +2086,35 @@ func reconcilePersonEnrichmentCostTx(
 func (s *Store) LoadRequestInput(
 	ctx context.Context, lease personenrichment.WorkLease,
 ) (personenrichment.RequestInput, error) {
-	person, err := s.GetPersonContext(ctx, lease.PersonID)
+	return s.loadRequestInput(ctx, lease, false)
+}
+
+// LoadRequestInputForDeletionContext reconstructs current identifiers for
+// suppression when a person is no longer visible in people reads. Callers must
+// use this only to build deletion suppressions and never to dispatch requests.
+func (s *Store) LoadRequestInputForDeletionContext(
+	ctx context.Context, lease personenrichment.WorkLease,
+) (personenrichment.RequestInput, error) {
+	return s.loadRequestInput(ctx, lease, true)
+}
+
+func (s *Store) loadRequestInput(
+	ctx context.Context, lease personenrichment.WorkLease, includeHidden bool,
+) (personenrichment.RequestInput, error) {
+	var person *Person
+	var err error
+	if includeHidden {
+		err = s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
+			person, err = s.getPersonTx(ctx, tx, lease.PersonID)
+			return err
+		})
+	} else {
+		person, err = s.GetPersonContext(ctx, lease.PersonID)
+	}
 	if err != nil {
+		if !includeHidden && errors.Is(err, ErrPersonNotFound) {
+			return personenrichment.RequestInput{}, personenrichment.ErrRequestIdentityUnavailable
+		}
 		return personenrichment.RequestInput{}, err
 	}
 	catalog, err := s.BuildPersonFactCatalogContext(ctx, true)
@@ -2117,8 +2144,17 @@ func (s *Store) LoadRequestInput(
 			})
 		}
 	}
+	displayNameExpr := "p.display_name"
+	emailExpr := "p.email_address"
+	if !includeHidden {
+		// Observed names from room-only participants and resource email
+		// addresses are not enrichment identity inputs for a visible mixed
+		// person. Deletion suppressions keep the authoritative raw values.
+		displayNameExpr = "CASE WHEN " + participantObservedRoomOnlySQL("p.id") + " THEN NULL ELSE p.display_name END"
+		emailExpr = "CASE WHEN " + RoomAddressSQL("p.email_address") + " THEN NULL ELSE p.email_address END"
+	}
 	participantRows, err := s.db.QueryContext(ctx, `
-		SELECT p.id, p.display_name, p.email_address, p.phone_number, p.created_at
+		SELECT p.id, `+displayNameExpr+`, `+emailExpr+`, p.phone_number, p.created_at
 		FROM person_participants pp
 		JOIN participants p ON p.id = pp.participant_id
 		WHERE pp.person_id = ? ORDER BY p.id`, person.ID)
@@ -2159,7 +2195,15 @@ func (s *Store) LoadRequestInput(
 	if err := participantRows.Err(); err != nil {
 		return input, fmt.Errorf("iterate person enrichment participant identities: %w", err)
 	}
-	points, err := s.ListPersonContactPointsContext(ctx, person.ID, true)
+	var points []PersonContactPoint
+	if includeHidden {
+		err = s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
+			points, err = s.listPersonContactPointsTx(ctx, tx, person.ID, true)
+			return err
+		})
+	} else {
+		points, err = s.ListPersonContactPointsContext(ctx, person.ID, true)
+	}
 	if err != nil {
 		return input, err
 	}

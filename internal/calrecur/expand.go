@@ -319,11 +319,10 @@ func ConservativeEnd(ctx context.Context, s Set, duration time.Duration, duratio
 		if until.IsZero() {
 			until = time.Date(9999, 12, 31, 23, 59, 59, 0, time.UTC)
 		}
-		rule, err = s.rule(line, until)
+		next, err := s.recurrence(line, until)
 		if err != nil {
 			return time.Time{}, false
 		}
-		next := rule.Iterator()
 		generated := 0
 		for {
 			if ctx.Err() != nil {

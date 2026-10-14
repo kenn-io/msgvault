@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/calevent"
 	"go.kenn.io/msgvault/internal/meetingarchive"
 	"go.kenn.io/msgvault/internal/meetingidentity"
 	"go.kenn.io/msgvault/internal/store"
@@ -312,6 +313,10 @@ func (imp *Importer) ingestNote(
 	n *Note,
 ) (meetingarchive.Result, error) {
 	organizerEmail, organizerName := organizer(n)
+	var organizerPerson *meetingarchive.Person
+	if !calevent.IsRoomAttendee(organizerEmail, false) {
+		organizerPerson = &meetingarchive.Person{Name: organizerName, Email: organizerEmail}
+	}
 	metadata := buildMetadata(n, opts.Identifier, organizerEmail)
 	metaJSON, err := json.Marshal(metadata, json.Deterministic(true))
 	if err != nil {
@@ -340,7 +345,7 @@ func (imp *Importer) ingestNote(
 		Metadata:             metaJSON,
 		Raw:                  raw,
 		RawFormat:            RawFormat,
-		Organizer:            &meetingarchive.Person{Name: organizerName, Email: organizerEmail},
+		Organizer:            organizerPerson,
 		Attendees:            people,
 	}, meetingarchive.UpsertOptions{Force: opts.Full})
 }
@@ -369,15 +374,15 @@ func organizer(n *Note) (email, name string) {
 func attendees(n *Note) []User {
 	var out []User
 	for _, a := range n.Attendees {
-		if e := meetingidentity.Normalize(a.Email); e != "" {
+		if e := meetingidentity.Normalize(a.Email); e != "" && !calevent.IsRoomAttendee(e, false) {
 			out = append(out, User{Name: a.Name, Email: e})
 		}
 	}
-	if len(out) > 0 || n.CalendarEvent == nil {
+	if len(n.Attendees) > 0 || n.CalendarEvent == nil {
 		return out
 	}
 	for _, inv := range n.CalendarEvent.Invitees {
-		if e := meetingidentity.Normalize(inv.Email); e != "" {
+		if e := meetingidentity.Normalize(inv.Email); e != "" && !calevent.IsRoomAttendee(e, false) {
 			out = append(out, User{Email: e})
 		}
 	}

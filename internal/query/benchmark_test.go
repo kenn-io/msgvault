@@ -216,6 +216,9 @@ func buildBenchData(tb testing.TB) *DuckDBEngine {
 	}
 
 	tables := []tableSpec{
+		{"SELECT NULL::VARCHAR AS email WHERE false", "room_addresses", "room_addresses.parquet"},
+		{"SELECT 0::BIGINT AS participant_id, NULL::VARCHAR AS address_kind, NULL::VARCHAR AS normalized_value WHERE false",
+			"person_contacts", "person_contacts.parquet"},
 		{"SELECT id, account_email, source_type FROM bench_sources",
 			"sources", "sources.parquet"},
 		{"SELECT id, email_address, domain, display_name, phone_number FROM bench_participants",
@@ -264,7 +267,7 @@ func buildBenchData(tb testing.TB) *DuckDBEngine {
 				   subject, snippet, sent_at, size_estimate, has_attachments,
 				   deleted_from_source_at, attachment_count, sender_id,
 				   NULL::BIGINT AS owner_participant_id,
-				   message_type, is_from_me, year, month
+				   message_type, is_from_me, year, month, NULL::VARCHAR AS meeting_key
 			FROM bench_messages
 		) TO '%s' (FORMAT PARQUET, PARTITION_BY (year), OVERWRITE_OR_IGNORE)
 	`, msgPath)

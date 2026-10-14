@@ -8,6 +8,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"go.kenn.io/msgvault/internal/calevent"
 	"go.kenn.io/msgvault/internal/gcal"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -67,7 +68,14 @@ func (s *Syncer) ingestEvent(sourceID int64, cal gcal.Calendar, ev gcal.Event) (
 	// Organizer → sender, resolved through the email-keyed participant path so
 	// calendar people dedupe with email contacts.
 	var senderID int64
-	if ev.Organizer.Email != "" {
+	organizerResource := false
+	for _, attendee := range ev.Attendees {
+		if attendee.Email == ev.Organizer.Email && attendee.Resource {
+			organizerResource = true
+		}
+	}
+	organizerRoom := calevent.IsRoomAttendee(ev.Organizer.Email, organizerResource)
+	if ev.Organizer.Email != "" && !organizerRoom {
 		id, err := s.store.EnsureParticipant(ev.Organizer.Email, ev.Organizer.DisplayName, emailDomain(ev.Organizer.Email))
 		if err != nil {
 			return 0, fmt.Errorf("organizer participant: %w", err)
@@ -80,7 +88,7 @@ func (s *Syncer) ingestEvent(sourceID int64, cal gcal.Calendar, ev gcal.Event) (
 	var attendeeNames []string
 	var attendeeEmails []string
 	for _, a := range ev.Attendees {
-		if a.Email == "" {
+		if a.Email == "" || calevent.IsRoomAttendee(a.Email, a.Resource) {
 			continue
 		}
 		pid, err := s.store.EnsureParticipant(a.Email, a.DisplayName, emailDomain(a.Email))
@@ -175,7 +183,11 @@ func (s *Syncer) ingestEvent(sourceID int64, cal gcal.Calendar, ev gcal.Event) (
 	// FTS: raw attendee emails go ONLY through the toAddrs column, never the
 	// body, so BM25/ts_rank doesn't double-count them and embeddings see only
 	// semantic prose.
-	if err := s.store.UpsertFTS(msgID, subject, body, ev.Organizer.Email, strings.Join(attendeeEmails, " "), ""); err != nil {
+	ftsFrom := ev.Organizer.Email
+	if organizerRoom {
+		ftsFrom = ""
+	}
+	if err := s.store.UpsertFTS(msgID, subject, body, ftsFrom, strings.Join(attendeeEmails, " "), ""); err != nil {
 		s.logger.Warn("upsert calendar event fts failed", "message_id", msgID, "event_id", smid, "error", err)
 	}
 

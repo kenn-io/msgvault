@@ -302,7 +302,7 @@ func TestImportVoicemailAttachmentRevision(t *testing.T) {
 		withAudio         bool
 		wantRevisionDelta int64
 	}{
-		// New messages advance the revision only for their voicemail label.
+		// The voicemail label advances the revision independently of new identifiers.
 		{name: "new message", wantRevisionDelta: 1},
 		{name: "existing message without attachment", preimport: true, wantRevisionDelta: 1},
 		{name: "unchanged attachment", preimport: true, withAudio: true},
@@ -324,12 +324,20 @@ func TestImportVoicemailAttachmentRevision(t *testing.T) {
 				importVoice(t, st, voice, initialDir)
 			}
 
+			var beforeIdentifiers, afterIdentifiers int64
+			require.NoError(st.DB().QueryRow("SELECT count(*) FROM participant_identifiers").Scan(&beforeIdentifiers))
 			before, err := st.DerivedDataRevision()
 			require.NoError(err)
 			importVoice(t, st, voice, attachments)
 			after, err := st.DerivedDataRevision()
 			require.NoError(err)
-			assert.Equal(tt.wantRevisionDelta, after-before)
+			require.NoError(st.DB().QueryRow("SELECT count(*) FROM participant_identifiers").Scan(&afterIdentifiers))
+			wantDelta := tt.wantRevisionDelta
+			if !st.IsPostgreSQL() {
+				// SQLite also invalidates cached people when identifiers arrive.
+				wantDelta += afterIdentifiers - beforeIdentifiers
+			}
+			assert.Equal(wantDelta, after-before)
 			rows := attachmentRows(t, st)
 			require.Len(rows, 1)
 			assert.Equal("stored", rows[0].state.String)

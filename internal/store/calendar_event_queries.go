@@ -22,9 +22,6 @@ type SourceScope struct {
 }
 
 func OwnerScope() SourceScope { return SourceScope{All: true} }
-func (sc SourceScope) Allows(sourceID int64) bool {
-	return sc.All || (sourceID > 0 && slices.Contains(sc.IDs, sourceID))
-}
 
 type CalendarEventRow struct {
 	MessageID, SourceID int64

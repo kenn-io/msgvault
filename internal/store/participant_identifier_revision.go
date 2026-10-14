@@ -13,11 +13,12 @@ const participantIdentifierRevisionKey = "participant_identifier_revision"
 // ParticipantIdentifierRevision returns the current participant-identifier
 // revision (0 if never bumped). It increments whenever an identifier row is
 // created, repointed, or given new service/scope classification. Identifiers
-// bake into the identity directory datasets (relationship_people search values
-// and display labels, the participant_identifiers Parquet export) but not into
-// per-row activity facts, so drift on this revision alone is repairable by the
-// derived-dataset refresh — unlike AccountIdentityRevision drift, it never
-// demands a full rebuild, and coinciding new messages stay incremental.
+// bake into identity directory datasets and participant_identifiers exports.
+// Drift on this revision alone is repairable by a derived-dataset refresh.
+// SQLite identifier mutations also advance the full-repair derived revision:
+// adding or removing a human phone or username can change room-only visibility,
+// and identity evidence can change exported meeting keys. This conservatively
+// requires a full rebuild, including when new messages arrive at the same time.
 func (s *Store) ParticipantIdentifierRevision() (int64, error) {
 	var value string
 	err := s.db.QueryRow(

@@ -344,7 +344,7 @@ func (e *DuckDBEngine) searchPeopleLegacy(
 	}
 	conditions, args := buildExploreConditions(request.Explore)
 	entriesCTE, entryArgs := personEntriesCTE(exactID, clusterMemberIDs, conditions,
-		e.parquetPath(datasetParticipantClusters))
+		e.parquetPath(datasetParticipantClusters), "visible_participants")
 	args = append(args, entryArgs...)
 	// bestNameExpr is the shared cluster label policy (see person_label.go).
 	// Listing/search rows are canonical identities, so the label evaluates
@@ -358,10 +358,10 @@ func (e *DuckDBEngine) searchPeopleLegacy(
 	bestNameExpr := "NULLIF(TRIM(p.display_name), '')"
 	switch {
 	case exactID == nil:
-		bestNameExpr = sqlClusterBestNameExpr("pbn.id IN (SELECT cnl.participant_id FROM canon cnl WHERE cnl.canonical_id = p.id)")
+		bestNameExpr = sqlClusterBestNameExprFrom("visible_label_participants", "pbn.id IN (SELECT cnl.participant_id FROM canon cnl WHERE cnl.canonical_id = p.id)")
 	case len(clusterMemberIDs) > 1:
 		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(clusterMemberIDs)), ",")
-		bestNameExpr = sqlClusterBestNameExpr("pbn.id IN (" + placeholders + ")")
+		bestNameExpr = sqlClusterBestNameExprFrom("visible_label_participants", "pbn.id IN ("+placeholders+")")
 		for _, memberID := range clusterMemberIDs {
 			args = append(args, memberID)
 		}
@@ -378,6 +378,43 @@ func (e *DuckDBEngine) searchPeopleLegacy(
 		}
 	}
 	overrideExpr := sqlPersonNameOverrideExpr(e.parquetPath(datasetPersonDisplayNames), overrideFilter)
+	fallbackExpr := sqlPersonIdentifierFallbackExprFrom("p", "visible_identifiers")
+	// Human fallback values are drawn from the visible participant and curated
+	// contact inputs for either ordinary or room-bound canonical rows.
+	fallbackMemberFilter := "pbf.id = p.id"
+	if exactID == nil {
+		fallbackMemberFilter = "pbf.id IN (SELECT cnb.participant_id FROM canon cnb WHERE cnb.canonical_id=p.id)"
+	} else if len(clusterMemberIDs) > 1 {
+		fallbackMemberFilter = "pbf.id IN (" + strings.TrimSuffix(strings.Repeat("?,", len(clusterMemberIDs)), ",") + ")"
+		for _, memberID := range clusterMemberIDs {
+			args = append(args, memberID)
+		}
+	}
+	// The indexed directory permits cluster-wide identifier fallback only when
+	// the canonical participant is room-only. Mirror that policy here for
+	// ordinary human identities while retaining the wider fallback for room
+	// canonical rows.
+	humanFallbackFor := func(memberFilter string) string {
+		return `(SELECT candidate.value FROM visible_participants pbf CROSS JOIN LATERAL (
+		SELECT 1 AS priority, '' AS identifier_type, trim(pbf.phone_number) AS value
+		WHERE trim(coalesce(pbf.phone_number,'')) <> ''
+		UNION ALL SELECT 2, 'email', trim(pbf.email_address)
+		WHERE trim(coalesce(pbf.email_address,'')) <> ''
+		UNION ALL SELECT CASE WHEN pbi.is_primary THEN 3 ELSE 4 END,
+			lower(trim(pbi.identifier_type)), coalesce(nullif(trim(pbi.display_value),''),trim(pbi.identifier_value))
+		FROM visible_identifiers pbi WHERE pbi.participant_id=pbf.id
+			AND coalesce(nullif(trim(pbi.display_value),''),trim(pbi.identifier_value)) <> ''
+		UNION ALL SELECT 5, cp.address_kind, cp.normalized_value
+		FROM read_parquet('` + quoteIdentitySQLPath(e.parquetPath("person_contacts")) + `') cp
+		WHERE cp.participant_id=pbf.id AND (cp.address_kind <> 'email' OR NOT ` + e.roomAddressSQL("cp.normalized_value") + `)
+	) candidate WHERE ` + memberFilter + `
+	ORDER BY candidate.priority,pbf.id,candidate.identifier_type,candidate.value LIMIT 1)`
+	}
+	canonicalHumanFallback := humanFallbackFor("pbf.id = p.id")
+	clusterHumanFallback := humanFallbackFor(fallbackMemberFilter)
+	fallbackExpr = "CASE WHEN p.room_only THEN COALESCE(" + clusterHumanFallback + "," + fallbackExpr +
+		") ELSE COALESCE(" + canonicalHumanFallback + "," + fallbackExpr + ") END"
+
 	personWhere := []string{"true"}
 	if exactID != nil {
 		personWhere = append(personWhere, "person_id = ?")
@@ -388,19 +425,19 @@ func (e *DuckDBEngine) searchPeopleLegacy(
 		// match when it matches ANY cluster member's name, address, phone, or
 		// stored identifier evidence — otherwise a linked alias would be
 		// unfindable by the identifier it was linked under.
-		matchExpr := `(EXISTS (SELECT 1 FROM canon cq JOIN participants pq ON pq.id = cq.participant_id
+		matchExpr := `(EXISTS (SELECT 1 FROM canon cq JOIN visible_participants pq ON pq.id = cq.participant_id
 			WHERE cq.canonical_id = person_id
 				AND (contains(lower(COALESCE(pq.display_name, '')), lower(?))
 					OR contains(lower(COALESCE(pq.email_address, '')), lower(?))
 					OR contains(lower(COALESCE(pq.phone_number, '')), lower(?))))
-			OR EXISTS (SELECT 1 FROM participant_identifiers pi
+			OR EXISTS (SELECT 1 FROM visible_identifiers pi
 				JOIN canon cq ON cq.participant_id = pi.participant_id
 				WHERE cq.canonical_id = person_id AND (contains(lower(pi.identifier_value), lower(?))
 					OR contains(lower(pi.display_value), lower(?)))))`
 		if exactID != nil {
 			matchExpr = `(contains(lower(display_name), lower(?))
 			OR contains(lower(email_address), lower(?)) OR contains(lower(phone_number), lower(?))
-			OR EXISTS (SELECT 1 FROM participant_identifiers pi
+			OR EXISTS (SELECT 1 FROM visible_identifiers pi
 				WHERE pi.participant_id = person_id AND (contains(lower(pi.identifier_value), lower(?))
 					OR contains(lower(pi.display_value), lower(?)))))`
 		}
@@ -450,13 +487,13 @@ func (e *DuckDBEngine) searchPeopleLegacy(
 		COALESCE(p.email_address, '') AS email_address, COALESCE(p.phone_number, '') AS phone_number,
 		` + bestNameExpr + ` AS best_display_name,
 		` + overrideExpr + ` AS person_display_name,
-		` + sqlPersonIdentifierFallbackExpr("p") + ` AS fallback_label,
+		` + fallbackExpr + ` AS fallback_label,
 		COUNT(*)::BIGINT AS activity_count,
-		COUNT(*) FILTER (WHERE pe.message_type = 'meeting_transcript')::BIGINT AS meeting_count,
+		COUNT(DISTINCT pe.meeting_key) FILTER (WHERE pe.message_type = 'meeting_transcript')::BIGINT AS meeting_count,
 		COALESCE(SUM(pe.attachment_count), 0)::BIGINT AS file_count,
 		MIN(pe.occurred_at) AS first_at, MAX(pe.occurred_at) AS last_at
-	FROM person_entries pe JOIN participants p ON p.id = pe.person_id
-	GROUP BY p.id, p.display_name, p.email_address, p.phone_number
+	FROM person_entries pe JOIN visible_participants p ON p.id = pe.person_id
+	GROUP BY p.id, p.display_name, p.email_address, p.phone_number, p.room_only
 ), filtered_people AS (
 	SELECT *, COALESCE(person_display_name, best_display_name, fallback_label) AS display_label,
 		(person_display_name IS NULL AND best_display_name IS NULL) AS partial_label
@@ -470,7 +507,7 @@ SELECT person_id, display_label, display_name,
 		type := pi.identifier_type, value := pi.identifier_value, display_value := pi.display_value,
 		is_primary := pi.is_primary, provenance := 'participant_identifiers', participant_id := pi.participant_id)
 		ORDER BY pi.is_primary DESC, pi.identifier_type, pi.identifier_value))
-		FROM participant_identifiers pi WHERE ` + identifierFilter + `) AS VARCHAR), '[]'),
+		FROM visible_identifiers pi WHERE ` + identifierFilter + `) AS VARCHAR), '[]'),
 	activity_count, meeting_count, file_count,
 	COALESCE((SELECT rp.current_temperature FROM read_parquet('` + peopleRollup + `') rp
 		WHERE rp.canonical_id = ` + relationshipPersonExpr + `), 0),
@@ -483,6 +520,47 @@ SELECT person_id, display_label, display_name,
 		FROM person_entries pe WHERE pe.person_id = counted.person_id GROUP BY source_type)) AS VARCHAR), '[]'),
 	first_at, last_at, total_count
 FROM counted ORDER BY ` + order + ` LIMIT ? OFFSET ?`
+	// Restrict legacy fallback to the visible cached population and sanitize
+	// observed room values before label/search hydration. Raw views remain intact.
+	roomNameSuppressed := e.roomNameSuppressedSQL("room_raw")
+	visiblePopulation := "EXISTS (SELECT 1 FROM read_parquet('" + peopleRollup + "') visible_people WHERE list_contains(visible_people.member_ids, room_raw.id))"
+	var populationArgs []any
+	if exactID != nil {
+		currentMemberIDs := clusterMemberIDs
+		if len(currentMemberIDs) == 0 {
+			currentMemberIDs = []int64{*exactID}
+		}
+		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(currentMemberIDs)), ",")
+		// Exact detail can use a stale rollup while cache refresh is pending.
+		// Apply the directory's cluster-wide rule: an addressless alias cannot
+		// keep a room-only cluster visible, while a cluster with no contacts
+		// remains visible as an unidentified person.
+		currentMembers := "SELECT 1 FROM participants current_member WHERE current_member.id IN (" + placeholders + ") AND "
+		clusterHasContacts := "EXISTS (" + currentMembers + e.personHasAnyContactSQL("current_member") + ")"
+		clusterHasNonRoomContact := "EXISTS (" + currentMembers + e.personHasNonRoomContactSQL("current_member") + ")"
+		visiblePopulation = "NOT (" + clusterHasContacts + " AND NOT " + clusterHasNonRoomContact + ") AND (" + visiblePopulation
+		for _, memberID := range currentMemberIDs {
+			populationArgs = append(populationArgs, memberID)
+		}
+		for _, memberID := range currentMemberIDs {
+			populationArgs = append(populationArgs, memberID)
+		}
+	}
+	if exactID != nil && len(clusterMemberIDs) > 1 {
+		// A live supplied cluster may contain an alias that has no cached activity.
+		// Admit its requested row only through a member of the visible population.
+		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(clusterMemberIDs)), ",")
+		visiblePopulation += " OR (room_raw.id = ? AND EXISTS (SELECT 1 FROM read_parquet('" + peopleRollup + "') visible_people WHERE list_has_any(visible_people.member_ids, [" + placeholders + "]::BIGINT[])))"
+		populationArgs = append(populationArgs, *exactID)
+		for _, memberID := range clusterMemberIDs {
+			populationArgs = append(populationArgs, memberID)
+		}
+	}
+	if exactID != nil {
+		visiblePopulation += ")"
+		args = append(populationArgs, args...)
+	}
+	queryText = "WITH visible_identifiers AS (SELECT * FROM participant_identifiers room_pi WHERE room_pi.identifier_type <> 'email' OR NOT " + e.roomAddressSQL("room_pi.identifier_value") + "), visible_participants AS (SELECT room_raw.* REPLACE (CASE WHEN " + roomNameSuppressed + " THEN '' ELSE room_raw.display_name END AS display_name, CASE WHEN " + e.roomAddressSQL("room_raw.email_address") + " THEN '' ELSE room_raw.email_address END AS email_address), " + roomNameSuppressed + " AS room_only FROM participants room_raw WHERE " + visiblePopulation + "), visible_label_participants AS (SELECT room_label.* REPLACE (CASE WHEN " + e.roomNameSuppressedSQL("room_label") + " THEN '' ELSE room_label.display_name END AS display_name) FROM participants room_label WHERE NOT " + e.personRoomOnlySQL("room_label") + "), " + strings.TrimPrefix(strings.TrimSpace(queryText), "WITH ")
 	rows, err := e.db.QueryContext(ctx, queryText, args...)
 	if err != nil {
 		return nil, fmt.Errorf("search analytical people: %w", err)
@@ -556,17 +634,17 @@ FROM counted ORDER BY ` + order + ` LIMIT ? OFFSET ?`
 //     cluster (e.g. cc'ing a contact's work and personal addresses) is never
 //     double-counted. The clusters/canon CTEs remain only for the caller's
 //     label, search-match, and identifier subqueries.
-func personEntriesCTE(exactID *int64, memberIDs []int64, conditions, clustersGlob string) (string, []any) {
+func personEntriesCTE(exactID *int64, memberIDs []int64, conditions, clustersGlob, participantsRelation string) (string, []any) {
 	if exactID == nil {
 		return fmt.Sprintf(`
 ), clusters AS (
 	SELECT participant_id, canonical_id FROM read_parquet('%s')
 ), canon AS (
 	SELECT p.id AS participant_id, COALESCE(c.canonical_id, p.id) AS canonical_id
-	FROM participants p LEFT JOIN clusters c ON c.participant_id = p.id
+	FROM `+participantsRelation+` p LEFT JOIN clusters c ON c.participant_id = p.id
 ), person_entries AS (`, clustersGlob) +
 			sqlActivityEntryEdges(
-				"a.canonical_id AS person_id, le.occurred_at, le.message_type, le.attachment_count, le.source_type",
+				"a.canonical_id AS person_id, le.occurred_at, le.message_type, le.meeting_key, le.attachment_count, le.source_type",
 				"a.is_direct", "(a.is_direct OR a.is_conversation_member)"), nil
 	}
 	if len(memberIDs) == 0 {
@@ -591,7 +669,7 @@ func personEntriesCTE(exactID *int64, memberIDs []int64, conditions, clustersGlo
 		}
 		return `
 ), person_entries AS (
-	SELECT ?::BIGINT AS person_id, occurred_at, message_type, attachment_count, source_type
+	SELECT ?::BIGINT AS person_id, occurred_at, message_type, meeting_key, attachment_count, source_type
 	FROM logical_entries
 	WHERE entry_key IN (
 		SELECT edge.entry_key FROM (` +
@@ -623,7 +701,7 @@ func personEntriesCTE(exactID *int64, memberIDs []int64, conditions, clustersGlo
 	LEFT JOIN conversations c ON c.id = m.conversation_id
 	WHERE ` + sqlIsChatPredicate("m.message_type", "COALESCE(c.conversation_type, '')") + `
 ), person_entries AS (
-	SELECT ?::BIGINT AS person_id, occurred_at, message_type, attachment_count, source_type
+	SELECT ?::BIGINT AS person_id, occurred_at, message_type, meeting_key, attachment_count, source_type
 	FROM logical_entries le
 	WHERE (le.entry_kind <> 'conversation'
 	       AND le.anchor_message_id IN (SELECT message_id FROM person_message_ids))
@@ -703,6 +781,7 @@ func (e *DuckDBEngine) searchDomainsLegacy(ctx context.Context, request DomainSe
 		limit = defaultExploreLimit
 	}
 	args = append(args, limit, request.Page.Offset)
+	peopleRollup := quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetPeople))
 	// person_count counts identities with at least one address on the domain:
 	// each relationship_activity edge pairs the participant's OWN address
 	// domain with its baked cluster canonical_id, so counting distinct
@@ -712,8 +791,8 @@ func (e *DuckDBEngine) searchDomainsLegacy(ctx context.Context, request DomainSe
 	// The dedup only counts direct edges for non-chat entries (chat entries
 	// keep conversation-roster edges), mirroring the relationship_domains
 	// person-domain pairing so opening a domain cannot change its person
-	// count; the domain activity rows themselves keep roster domains exactly
-	// as the index's domain entries do.
+	// count. Canonical IDs absent from the people directory are excluded;
+	// domain activity rows still retain all archived roster domains.
 	queryText := buildExploreLogicalSQLNoLists(conditions) + `
 ), domain_edges AS (` +
 		sqlActivityEntryEdges(
@@ -738,7 +817,9 @@ func (e *DuckDBEngine) searchDomainsLegacy(ctx context.Context, request DomainSe
 SELECT domain, activity_count,
 	(SELECT COUNT(DISTINCT de.person_id)::BIGINT
 		FROM domain_edges de WHERE de.domain = counted.domain
-		  AND (de.is_chat_entry OR de.is_direct)) AS person_count,
+		  AND (de.is_chat_entry OR de.is_direct)
+		  AND EXISTS (SELECT 1 FROM read_parquet('` + peopleRollup + `') visible
+		              WHERE visible.canonical_id = de.person_id)) AS person_count,
 	file_count,
 	COALESCE(CAST((SELECT to_json(list(struct_pack(source_type := source_type, count := source_count)
 		ORDER BY source_type)) FROM (SELECT source_type, COUNT(*)::BIGINT AS source_count

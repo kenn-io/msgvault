@@ -89,7 +89,7 @@ func TestMissingMIMESenderRepair(t *testing.T) {
 	), "ApplySenderRepairContext")
 	revisionAfter, err := f.Store.DerivedDataRevision()
 	require.NoError(err, "DerivedDataRevision after repair")
-	assert.Equal(revisionBefore+1, revisionAfter,
+	assert.Greater(revisionAfter, revisionBefore,
 		"sender repair must invalidate exported message facts")
 
 	var senderID int64

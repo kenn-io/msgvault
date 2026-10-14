@@ -29,6 +29,42 @@ func TestGetPersonProfileReturnsEveryValueKindWithOneRevision(t *testing.T) {
 	assert.Greater(profile.Person.Revision, int64(1), "profile writes bump the person revision")
 }
 
+func TestApplyPersonProfilePatchHidesRoomContactPointsInResponse(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st := storetest.New(t).Store
+	person := createRoomTestPerson(t, st, "Mixed Profile", "human@example.test")
+	_, err := st.AddPersonContactPointContext(t.Context(), person.ID, store.PersonContactPointInput{
+		AddressKind: store.ContactAddressEmail, OriginalValue: "room-alias@example.test",
+		Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
+	})
+	requirements.NoError(err)
+	source, err := st.GetOrCreateSource("gcal", "room-profile@example.test")
+	requirements.NoError(err)
+	_, err = st.PersistMessage(&store.MessagePersistData{
+		Message:      &store.Message{SourceID: source.ID, SourceMessageID: "room-profile-event", MessageType: "calendar_event"},
+		Conversation: &store.ConversationPersistData{SourceConversationID: "room-profile-event", ConversationType: "calendar_event"},
+		RawMIME:      []byte(`{"id":"room-profile-event","start":{"dateTime":"2027-03-02T17:00:00Z"},"end":{"dateTime":"2027-03-02T18:00:00Z"},"attendees":[{"email":"room-alias@example.test","resource":true}]}`),
+		RawFormat:    "gcal_json",
+	})
+	requirements.NoError(err)
+
+	before, err := st.GetPersonProfileContext(t.Context(), person.ID)
+	requirements.NoError(err)
+	requirements.Len(before.ContactPoints, 1)
+	assertions.Equal("human@example.test", before.ContactPoints[0].NormalizedValue)
+	patched, err := st.ApplyPersonProfilePatchContext(t.Context(), person.ID, before.Person.Revision,
+		store.PersonProfilePatch{Categories: &store.PersonCategoryPatch{Add: []store.PersonCategoryInput{{
+			OriginalValue: "Colleague", Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
+		}}}})
+	requirements.NoError(err)
+	requirements.Len(patched.ContactPoints, 1)
+	assertions.Equal("human@example.test", patched.ContactPoints[0].NormalizedValue)
+	var stored int
+	requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM person_contact_points WHERE person_id = ? AND active_until IS NULL AND superseded_at IS NULL`), person.ID).Scan(&stored))
+	assertions.Equal(2, stored, "the PATCH response filters room addresses without deleting authoritative contacts")
+}
+
 func TestProfileInputsPreserveExplicitZeroOrdinal(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -250,6 +286,47 @@ func TestGetPersonProfileHistoryIncludesParticipantObservations(t *testing.T) {
 	require.NoError(err)
 	assert.Empty(profile.ContactPoints,
 		"an archive observation is not curated reachability and must not appear as one")
+}
+
+func TestGetPersonProfileHistoryHidesRoomEmailObservations(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st := storetest.New(t).Store
+	ctx := t.Context()
+	participantID, err := st.EnsureParticipantByIdentifier("email", "alice@example.test", "Alice Example")
+	requirements.NoError(err)
+	person, _, err := st.CreatePersonFromParticipantContext(ctx, participantID)
+	requirements.NoError(err)
+	for _, observation := range []store.ParticipantContactObservationInput{
+		{AddressKind: store.ContactAddressEmail, OriginalValue: "alice@example.test",
+			Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceArchiveObservation}},
+		{AddressKind: store.ContactAddressEmail, OriginalValue: "room-alias@example.test",
+			Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceArchiveObservation}},
+		{AddressKind: store.ContactAddressUsername, OriginalValue: "@alice",
+			Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceArchiveObservation}},
+	} {
+		_, err := st.RecordContactObservationContext(ctx, participantID, observation)
+		requirements.NoError(err)
+	}
+	source, err := st.GetOrCreateSource("gcal", "calendar@example.test")
+	requirements.NoError(err)
+	_, err = st.PersistMessage(&store.MessagePersistData{
+		Message:      &store.Message{SourceID: source.ID, SourceMessageID: "profile-history-room", MessageType: "calendar_event"},
+		Conversation: &store.ConversationPersistData{SourceConversationID: "profile-history-room", ConversationType: "calendar_event"},
+		RawMIME:      []byte(`{"id":"profile-history-room","start":{"dateTime":"2027-03-02T17:00:00Z"},"end":{"dateTime":"2027-03-02T18:00:00Z"},"attendees":[{"email":"room-alias@example.test","resource":true}]}`),
+		RawFormat:    "gcal_json",
+	})
+	requirements.NoError(err)
+
+	history, err := st.GetPersonProfileHistoryContext(ctx, person.ID)
+	requirements.NoError(err)
+	requirements.Len(history.Observations, 2)
+	assertions.Equal([]string{"alice@example.test", "@alice"}, []string{
+		history.Observations[0].NormalizedValue, history.Observations[1].NormalizedValue,
+	})
+	authoritative, err := st.ListParticipantObservationsContext(ctx, participantID, false)
+	requirements.NoError(err)
+	requirements.Len(authoritative, 3, "the authoritative observation reader retains the room email")
 }
 
 func TestGetPersonProfileRejectsUnknownPerson(t *testing.T) {

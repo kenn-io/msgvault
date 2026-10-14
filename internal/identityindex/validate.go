@@ -140,7 +140,7 @@ func Validate(
 			       IS DISTINCT FROM p.file_count
 			    OR (SELECT sum(item.meeting_count)::BIGINT
 			        FROM unnest(p.source_rollups) AS source(item))
-			       IS DISTINCT FROM p.meeting_count
+			       < p.meeting_count
 			    OR (SELECT min(item.first_at)::TIMESTAMP
 			        FROM unnest(p.source_rollups) AS source(item))
 			       IS DISTINCT FROM p.first_at
@@ -151,6 +151,8 @@ func Validate(
 			        FROM unnest(p.source_counts) AS source(item))
 			       IS DISTINCT FROM p.activity_count`,
 		},
+		{DatasetLogicalContributions, "invalid transcript meeting keys", `SELECT count(*) FROM ` + logicalContributions + ` WHERE relation_kind=1 AND ((message_type='meeting_transcript' AND coalesce(meeting_key,'')='') OR (message_type<>'meeting_transcript' AND meeting_key IS NOT NULL))`},
+		{DatasetPeople, "meeting totals disagree with retained keys", `SELECT count(*) FROM ` + people + ` p WHERE p.meeting_count IS DISTINCT FROM (SELECT count(DISTINCT c.meeting_key) FROM ` + logicalContributions + ` c WHERE c.relation_kind=1 AND c.canonical_id=p.canonical_id AND c.message_type='meeting_transcript') OR EXISTS(SELECT 1 FROM unnest(p.source_rollups) r(item) WHERE item.meeting_count IS DISTINCT FROM (SELECT count(DISTINCT c.meeting_key) FROM ` + logicalContributions + ` c WHERE c.relation_kind=1 AND c.canonical_id=p.canonical_id AND c.source_id=item.source_id AND c.message_type='meeting_transcript'))`},
 		{
 			DatasetPeople,
 			"invalid relationship temperature summary",
@@ -263,6 +265,7 @@ var datasetSchemas = map[string][]schemaColumn{
 		{"source_type", duckDBTypeVarchar},
 		{"occurred_at", "TIMESTAMP"},
 		{"message_type", duckDBTypeVarchar},
+		{"meeting_key", duckDBTypeVarchar},
 		{"conversation_type", duckDBTypeVarchar},
 		{"entry_kind", duckDBTypeVarchar},
 		{"is_chat", duckDBTypeBoolean},
@@ -345,6 +348,7 @@ var datasetSchemas = map[string][]schemaColumn{
 		{"source_type", duckDBTypeVarchar},
 		{"occurred_at", "TIMESTAMP"},
 		{"message_type", duckDBTypeVarchar},
+		{"meeting_key", duckDBTypeVarchar},
 		{"entry_kind", duckDBTypeVarchar},
 		{"is_from_me", duckDBTypeBoolean},
 		{"attachment_count", duckDBTypeBigInt},

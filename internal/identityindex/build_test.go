@@ -73,6 +73,45 @@ func TestBuildPublishesFourRelationshipDatasets(t *testing.T) {
 		"non-chat domain fan-out includes conversation-only domains")
 }
 
+func TestBuildDomainsExcludeRoomOnlyPeopleButRetainActivity(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	root, db := writeRelationshipBaseFixture(t, false)
+	replaceRelationshipParquet(t, db, root, "participants", `
+		SELECT * FROM (VALUES
+			(1::BIGINT, 'alice@example.com'::VARCHAR, 'example.com'::VARCHAR, 'Alice'::VARCHAR, ''::VARCHAR),
+			(2::BIGINT, 'bob@example.net'::VARCHAR, 'example.net'::VARCHAR, ''::VARCHAR, ''::VARCHAR),
+			(3::BIGINT, 'alias@example.net'::VARCHAR, 'example.net'::VARCHAR, 'Bob Alias'::VARCHAR, ''::VARCHAR),
+			(4::BIGINT, 'member@community.test'::VARCHAR, 'community.test'::VARCHAR, 'Member'::VARCHAR, ''::VARCHAR),
+			(5::BIGINT, 'room@resource.calendar.google.com'::VARCHAR, 'resource.calendar.google.com'::VARCHAR, 'Example Room'::VARCHAR, ''::VARCHAR)
+		) AS t(id, email_address, domain, display_name, phone_number)`)
+	replaceRelationshipParquet(t, db, root, "message_recipients", `
+		SELECT * FROM (VALUES
+			(100::BIGINT, 1::BIGINT, 'from'::VARCHAR, 'Alice'::VARCHAR),
+			(100::BIGINT, 2::BIGINT, 'to'::VARCHAR, ''::VARCHAR),
+			(100::BIGINT, 2::BIGINT, 'cc'::VARCHAR, ''::VARCHAR),
+			(100::BIGINT, 5::BIGINT, 'to'::VARCHAR, 'Example Room'::VARCHAR)
+		) AS t(message_id, participant_id, recipient_type, display_name)`)
+
+	_, err := Build(context.Background(), db, BuildOptions{
+		Mode: ModeFull, StagedBaseRoot: root, OutputRoot: root,
+	})
+	requirements.NoError(err)
+
+	var roomPeople, activityCount, personCount int64
+	requirements.NoError(db.QueryRow(`
+		SELECT count(*) FROM read_parquet(?) WHERE canonical_id = 5
+	`, relationshipParquetGlob(root, DatasetPeople)).Scan(&roomPeople))
+	requirements.NoError(db.QueryRow(`
+		SELECT activity_count, person_count
+		FROM read_parquet(?) WHERE domain = 'resource.calendar.google.com'
+	`, relationshipParquetGlob(root, DatasetDomains)).Scan(&activityCount, &personCount))
+
+	assertions.Zero(roomPeople, "room-only identities are absent from the people directory")
+	assertions.Equal(int64(1), activityCount, "room activity remains available in the domain rollup")
+	assertions.Zero(personCount, "room-only identities do not contribute to domain person counts")
+}
+
 func TestBuildChunksRelationshipActivityByOccurrenceYear(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
@@ -850,6 +889,8 @@ func writeRelationshipBaseFixture(t *testing.T, empty bool) (string, *sql.DB) {
 		SELECT * FROM (VALUES
 			(1::BIGINT, 1::BIGINT)
 		) AS t(source_id, participant_id)`+where)
+	writeRelationshipParquet(t, db, root, "room_addresses", `SELECT ''::VARCHAR AS email WHERE false`)
+	writeRelationshipParquet(t, db, root, "person_contacts", `SELECT 0::BIGINT AS participant_id, ''::VARCHAR AS address_kind, ''::VARCHAR AS normalized_value WHERE false`)
 	writeRelationshipParquet(t, db, root, "person_display_names", `SELECT 0::BIGINT AS participant_id, 0::BIGINT AS person_id, NULL::VARCHAR AS display_name WHERE false`)
 	writeRelationshipParquet(t, db, root, "participant_clusters", `
 		SELECT * FROM (VALUES
@@ -938,6 +979,26 @@ func writeRelationshipParquet(
 	root, dataset, query string,
 ) {
 	t.Helper()
+	if dataset == "messages" {
+		columns := func() []string {
+			rows, err := db.Query("SELECT * FROM (" + query + ") LIMIT 0")
+			require.NoError(t, err)
+			defer func() { require.NoError(t, rows.Close()) }()
+			columns, err := rows.Columns()
+			require.NoError(t, err)
+			require.NoError(t, rows.Err())
+			return columns
+		}()
+		hasKey := false
+		for _, column := range columns {
+			if column == "meeting_key" {
+				hasKey = true
+			}
+		}
+		if !hasKey {
+			query = "SELECT *, CASE WHEN message_type = 'meeting_transcript' THEN 'msg:' || id ELSE NULL END::VARCHAR AS meeting_key FROM (" + query + ")"
+		}
+	}
 	directory := filepath.Join(root, dataset)
 	require.NoError(t, os.MkdirAll(directory, 0o755))
 	path := filepath.Join(directory, dataset+".parquet")

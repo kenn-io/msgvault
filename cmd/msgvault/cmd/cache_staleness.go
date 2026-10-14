@@ -53,12 +53,10 @@ type cacheStaleness struct {
 	HasConversationTypeDrift bool
 	// HasParticipantIdentifierDrift signals identifier rows or their
 	// service/scope classification changed since the last build. Identifiers
-	// bake into the identity directory datasets
-	// (participant_identifiers, relationship_people search values) but not
-	// into per-row activity facts, so this drift is repaired by the
-	// index-only refresh and — unlike link or conversation drift — never
-	// escalates to a full rebuild when new messages coincide: incremental
-	// builds re-stage participant_identifiers in full anyway.
+	// bake into identity directory datasets and can normally be repaired by an
+	// index-only refresh. On SQLite, identifier mutations also advance the
+	// full-repair derived revision because contacts can change room visibility
+	// and exported meeting keys; HasDerivedDataDrift then forces a full rebuild.
 	HasParticipantIdentifierDrift bool
 	// HasParticipantDisplayNameDrift signals participant display-name changes
 	// since the last build. Display names are baked into participants.parquet

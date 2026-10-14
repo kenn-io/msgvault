@@ -149,6 +149,22 @@ func refreshDerivedDatasetsOnly(
 		return nil, err
 	}
 	defer func() { _ = sourceSnapshot.Close() }()
+	derivedDataRevision, err = snapshotDerivedRevision(sourceSnapshot)
+	if err != nil {
+		return nil, err
+	}
+	if derivedDataRevision != state.DerivedDataRevision {
+		relatedOnly, revisionErr := snapshotRevisionsRelatedOnly(sourceSnapshot, state.DerivedDataRevision, derivedDataRevision)
+		if revisionErr != nil {
+			return nil, revisionErr
+		}
+		if !repairRelated || !relatedOnly {
+			return nil, fmt.Errorf("%w: snapshot derived revision changed", ErrDerivedRefreshRequiresFullBuild)
+		}
+	}
+	if err := stageCachePeopleRooms(ctx, sourceSnapshot); err != nil {
+		return nil, err
+	}
 	datasets := []string{
 		tableMessages,
 		tableConversations,
@@ -289,6 +305,9 @@ func refreshDerivedDatasetsOnly(
 	}
 	if err := derivedCopy(tableParticipantClusters, participantClustersSelectSQL); err != nil {
 		return nil, fmt.Errorf("export derived participant clusters: %w", err)
+	}
+	if err := exportCachePeopleRooms(ctx, exportDB, staging.root); err != nil {
+		return nil, err
 	}
 	conversationChanged :=
 		conversationFingerprint != state.ConversationParticipantsFingerprint
@@ -463,12 +482,12 @@ func fingerprintConversationTypesFromSnapshot(
 	return fingerprint, err
 }
 
-// stageParticipantClusters loads the Go-computed clusters into a DuckDB temp
-// table that participantClustersSelectSQL reads.
+// stageParticipantClusters loads the Go-computed clusters into a DuckDB table
+// that participantClustersSelectSQL reads across pooled connections.
 func stageParticipantClusters(ctx context.Context, db sqlRunner, clusters map[int64]int64) error {
 	if _, err := db.ExecContext(ctx,
-		`CREATE TEMP TABLE tmp_participant_clusters (participant_id BIGINT, canonical_id BIGINT)`); err != nil {
-		return fmt.Errorf("create participant clusters temp table: %w", err)
+		`CREATE OR REPLACE TABLE tmp_participant_clusters (participant_id BIGINT, canonical_id BIGINT)`); err != nil {
+		return fmt.Errorf("create participant clusters staging table: %w", err)
 	}
 	if len(clusters) == 0 {
 		return nil
@@ -521,6 +540,7 @@ func derivedCachePublishPlan(
 	}
 	for _, dataset := range []string{
 		tableOwnerParticipants,
+		"room_addresses", "person_contacts",
 		tableParticipantClusters,
 		identityindex.DatasetActivity,
 		identityindex.DatasetPeople,

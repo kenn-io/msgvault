@@ -136,7 +136,8 @@ func relationshipTemperatureCTEs(effectiveAt time.Time) string {
 	       sum(exp(-%[1]g * date_diff('day', event_date, DATE '%[2]s'))
 	           * meeting_count)::DOUBLE AS meeting_signal,
 	       bit_count(bit_or(modality_mask))::INTEGER AS modalities
-	FROM %[3]s
+	FROM %[3]s daily
+ WHERE EXISTS (SELECT 1 FROM `+directoryBuildRelation+` visible WHERE visible.canonical_id = daily.canonical_id)
 	GROUP BY canonical_id
 ), current_scored AS (
 	SELECT *,
@@ -165,8 +166,8 @@ func relationshipTemperatureCTEs(effectiveAt time.Time) string {
 	       sum(received_count)::DOUBLE AS received_volume,
 	       sum(meeting_count)::DOUBLE AS meeting_signal,
 	       bit_count(bit_or(modality_mask))::INTEGER AS modalities
-	FROM %[3]s
-	WHERE year(event_date) >= %[8]d
+	FROM %[3]s daily
+	WHERE EXISTS (SELECT 1 FROM `+directoryBuildRelation+` visible WHERE visible.canonical_id = daily.canonical_id) AND year(event_date) >= %[8]d
 	GROUP BY canonical_id, score_year
 ), annual_scored AS (
 	SELECT *,

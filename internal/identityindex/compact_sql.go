@@ -2,6 +2,7 @@ package identityindex
 
 import (
 	"fmt"
+	"go.kenn.io/msgvault/internal/calevent"
 	"strconv"
 	"strings"
 	"time"
@@ -15,14 +16,14 @@ const (
 func buildRelationshipPeopleSQL(effectiveAt time.Time) string {
 	return `
 WITH logical_people AS (
-	SELECT entry_key, source_id, source_type, occurred_at, message_type, attachment_count,
+	SELECT entry_key, source_id, source_type, occurred_at, message_type, meeting_key, attachment_count,
 	       canonical_id
 	FROM ` + logicalBuildRelation + `
 	WHERE relation_kind = 1
 ), people_totals AS (
 	SELECT canonical_id,
 	       count(*)::BIGINT AS activity_count,
-	       count(*) FILTER (WHERE message_type = 'meeting_transcript')::BIGINT AS meeting_count,
+	       count(DISTINCT meeting_key) FILTER (WHERE message_type = 'meeting_transcript')::BIGINT AS meeting_count,
 	       coalesce(sum(attachment_count), 0)::BIGINT AS file_count,
 	       min(occurred_at)::TIMESTAMP AS first_at,
 	       max(occurred_at)::TIMESTAMP AS last_at
@@ -31,7 +32,7 @@ WITH logical_people AS (
 ), source_rows AS (
 	SELECT canonical_id, source_id, source_type,
 	       count(*)::BIGINT AS activity_count,
-	       count(*) FILTER (WHERE message_type = 'meeting_transcript')::BIGINT AS meeting_count,
+	       count(DISTINCT meeting_key) FILTER (WHERE message_type = 'meeting_transcript')::BIGINT AS meeting_count,
 	       coalesce(sum(attachment_count), 0)::BIGINT AS file_count,
 	       min(occurred_at)::TIMESTAMP AS first_at,
 	       max(occurred_at)::TIMESTAMP AS last_at
@@ -124,10 +125,14 @@ WITH domain_entries AS (
 	FROM domain_source_rows
 	GROUP BY domain
 ), domain_people AS (
-	SELECT domain, count(DISTINCT canonical_id)::BIGINT AS person_count
-	FROM logical_person_domains
-	WHERE domain <> ''
-	GROUP BY domain
+	SELECT p.domain, count(DISTINCT p.canonical_id)::BIGINT AS person_count
+	FROM logical_person_domains p
+	WHERE p.domain <> ''
+	  AND EXISTS (
+		SELECT 1 FROM ` + directoryBuildRelation + ` visible
+		WHERE visible.canonical_id = p.canonical_id
+	  )
+	GROUP BY p.domain
 )
 SELECT t.domain, t.activity_count, coalesce(p.person_count, 0)::BIGINT AS person_count,
        t.file_count, t.first_at, t.last_at, s.source_counts
@@ -143,7 +148,7 @@ WITH logical_people AS (
 	SELECT entry_key, occurred_at, entry_kind, is_from_me, canonical_id,
 	       is_author, is_owner, with_owner
 	FROM `+logicalBuildRelation+`
-	WHERE relation_kind = 1
+	WHERE relation_kind = 1 AND EXISTS (SELECT 1 FROM `+directoryBuildRelation+` visible WHERE visible.canonical_id = `+logicalBuildRelation+`.canonical_id)
 ), interactions AS (
 	SELECT p.*,
 	       CASE WHEN p.is_from_me
@@ -193,9 +198,15 @@ func activityRelation(path string, hivePartitioning bool) string {
 	return "read_parquet('" + quoteSQLString(path) + "'" + options + ")"
 }
 
-func buildDirectorySQL(path func(string) string) string {
+func buildDirectorySQL(path func(string) string, identifiersRelation string) string {
 	return fmt.Sprintf(`
-WITH canon AS (
+WITH raw_identifiers AS (SELECT * FROM read_parquet('%s')),
+curated_contacts AS (SELECT * FROM read_parquet('%s')),
+room_addresses AS (SELECT * FROM read_parquet('%s')),
+visible_identifiers AS (
+	SELECT * FROM raw_identifiers pi
+	WHERE pi.identifier_type <> 'email' OR NOT %s
+), raw_canon AS (
 	SELECT p.id::BIGINT AS participant_id,
 	       coalesce(c.canonical_id, p.id)::BIGINT AS canonical_id,
 	       trim(coalesce(p.display_name, ''))::VARCHAR AS display_name,
@@ -203,10 +214,33 @@ WITH canon AS (
 	       trim(coalesce(p.email_address, ''))::VARCHAR AS email_address
 	FROM read_parquet('%s') p
 	LEFT JOIN read_parquet('%s') c ON c.participant_id = p.id
+), observed_contacts AS (
+ SELECT participant_id, 'email' AS kind, email_address AS value FROM raw_canon WHERE email_address <> ''
+ UNION ALL SELECT participant_id, 'phone', phone_number FROM raw_canon WHERE phone_number <> ''
+ UNION ALL SELECT participant_id, identifier_type, identifier_value FROM raw_identifiers WHERE trim(coalesce(identifier_value,'')) <> ''
+), all_contacts AS (
+ SELECT * FROM observed_contacts
+ UNION ALL SELECT participant_id, address_kind, normalized_value FROM curated_contacts WHERE trim(normalized_value) <> ''
+), visibility AS (
+ SELECT c.participant_id,
+   EXISTS (SELECT 1 FROM all_contacts ac WHERE ac.participant_id=c.participant_id) AS has_contacts,
+	   EXISTS (SELECT 1 FROM all_contacts ac WHERE ac.participant_id=c.participant_id AND (ac.kind <> 'email' OR NOT %s)) AS has_human_contact,
+   (EXISTS (SELECT 1 FROM observed_contacts oc WHERE oc.participant_id=c.participant_id)
+	    AND NOT EXISTS (SELECT 1 FROM observed_contacts oc WHERE oc.participant_id=c.participant_id AND (oc.kind <> 'email' OR NOT %s))) AS observed_room_only
+ FROM raw_canon c
+), canon AS (
+ SELECT c.participant_id,c.canonical_id,
+   CASE WHEN v.observed_room_only OR (v.has_contacts AND NOT v.has_human_contact) THEN '' ELSE c.display_name END AS display_name,
+   c.phone_number,
+	   CASE WHEN %s THEN '' ELSE c.email_address END AS email_address,
+   v.has_contacts, v.has_human_contact,
+   (c.participant_id=c.canonical_id OR EXISTS (SELECT 1 FROM raw_canon original JOIN visibility original_v USING(participant_id) WHERE original.participant_id=c.canonical_id AND (original_v.observed_room_only OR (original_v.has_contacts AND NOT original_v.has_human_contact)))) AS can_fallback
+ FROM raw_canon c JOIN visibility v USING(participant_id)
 ), members AS (
 	SELECT canonical_id, list(participant_id ORDER BY participant_id) AS member_ids
 	FROM canon
 	GROUP BY canonical_id
+ HAVING NOT bool_or(has_contacts) OR bool_or(has_human_contact)
 ), named AS (
 	SELECT canonical_id, display_name
 	FROM (
@@ -231,16 +265,15 @@ WITH canon AS (
 		FROM person_display_names
 	) WHERE position = 1
 ), fallback_candidates AS (
-	-- The identifier fallback matches the legacy label policy: only the
-	-- canonical participant's own phone, email, and identifiers are
-	-- considered, while the best display name above spans the whole cluster.
+	-- Prefer surviving human identifiers across the cluster, including when
+	-- its smallest member is a room.
 	SELECT canonical_id, participant_id, 1 AS priority,
 	       ''::VARCHAR AS identifier_type, phone_number AS value
-	FROM canon WHERE participant_id = canonical_id AND phone_number != ''
+	FROM canon WHERE can_fallback AND phone_number != ''
 	UNION ALL
 	SELECT canonical_id, participant_id, 2,
 	       'email', email_address
-	FROM canon WHERE participant_id = canonical_id AND email_address != ''
+	FROM canon WHERE can_fallback AND email_address != ''
 	UNION ALL
 	SELECT c.canonical_id, c.participant_id,
 	       CASE WHEN pi.is_primary THEN 3 ELSE 4 END,
@@ -248,10 +281,10 @@ WITH canon AS (
 	       coalesce(nullif(trim(pi.display_value), ''),
 	                trim(pi.identifier_value))
 	FROM canon c
-	JOIN read_parquet('%s') pi ON pi.participant_id = c.participant_id
-	WHERE c.participant_id = c.canonical_id
-	  AND coalesce(nullif(trim(pi.display_value), ''),
+	JOIN %s pi ON pi.participant_id = c.participant_id
+	WHERE c.can_fallback AND coalesce(nullif(trim(pi.display_value), ''),
 	               trim(pi.identifier_value)) != ''
+	UNION ALL SELECT c.canonical_id,c.participant_id,5,cp.address_kind,cp.normalized_value FROM canon c JOIN curated_contacts cp USING(participant_id) WHERE c.can_fallback AND (cp.address_kind <> 'email' OR NOT %s)
 ), fallback AS (
 	SELECT canonical_id, value AS display_label
 	FROM (
@@ -276,15 +309,16 @@ WITH canon AS (
 	UNION
 	SELECT c.canonical_id, lower(trim(pi.identifier_value))
 	FROM canon c
-	JOIN read_parquet('%s') pi ON pi.participant_id = c.participant_id
+	JOIN %s pi ON pi.participant_id = c.participant_id
 	WHERE trim(coalesce(pi.identifier_value, '')) != ''
 	UNION
 	SELECT c.canonical_id, lower(trim(pi.display_value))
 	FROM canon c
-	JOIN read_parquet('%s') pi ON pi.participant_id = c.participant_id
+	JOIN %s pi ON pi.participant_id = c.participant_id
 	WHERE trim(coalesce(pi.display_value, '')) != ''
 	UNION
 	SELECT canonical_id, lower(display_name) FROM person_display_names
+	UNION SELECT c.canonical_id, lower(cp.normalized_value) FROM canon c JOIN curated_contacts cp USING(participant_id) WHERE cp.address_kind <> 'email' OR NOT %s
 ), searches AS (
 	SELECT canonical_id, list(value ORDER BY value) AS search_values
 	FROM raw_searches
@@ -317,11 +351,12 @@ WITH canon AS (
 	       coalesce(nullif(lower(trim(pi.identifier_type)), ''),
 	                'observed')::VARCHAR AS source
 	FROM canon c
-	JOIN read_parquet('%s') pi ON pi.participant_id = c.participant_id
+	JOIN %s pi ON pi.participant_id = c.participant_id
 	WHERE trim(coalesce(pi.identifier_value, '')) != ''
 	UNION ALL
 	SELECT canonical_id, participant_id, 'name', lower(display_name), display_name, 'person'
 	FROM person_display_names
+	UNION ALL SELECT c.canonical_id,c.participant_id,cp.address_kind,lower(cp.normalized_value),cp.normalized_value,'person' FROM canon c JOIN curated_contacts cp USING(participant_id) WHERE cp.address_kind IN ('email','phone','username','impp') AND (cp.address_kind <> 'email' OR NOT %s)
 ), primitives AS (
 	SELECT canonical_id,
 	       list(struct_pack(
@@ -360,14 +395,28 @@ LEFT JOIN fallback f USING (canonical_id)
 LEFT JOIN searches s USING (canonical_id)
 LEFT JOIN primitives p USING (canonical_id)
 LEFT JOIN owners o USING (canonical_id)
-ORDER BY m.canonical_id`,
+	ORDER BY m.canonical_id`,
+		quoteSQLString(path("participant_identifiers")),
+		quoteSQLString(path("person_contacts")),
+		quoteSQLString(path("room_addresses")),
+		cacheRoomSQL("pi.identifier_value"),
 		quoteSQLString(path("participants")),
 		quoteSQLString(path("participant_clusters")),
+		cacheRoomSQL("ac.value"),
+		cacheRoomSQL("oc.value"),
+		cacheRoomSQL("c.email_address"),
 		quoteSQLString(path("person_display_names")),
-		quoteSQLString(path("participant_identifiers")),
-		quoteSQLString(path("participant_identifiers")),
-		quoteSQLString(path("participant_identifiers")),
-		quoteSQLString(path("participant_identifiers")),
+		identifiersRelation,
+		cacheRoomSQL("cp.normalized_value"),
+		identifiersRelation,
+		identifiersRelation,
+		cacheRoomSQL("cp.normalized_value"),
+		identifiersRelation,
+		cacheRoomSQL("cp.normalized_value"),
 		quoteSQLString(path("owner_participants")),
 	)
+}
+
+func cacheRoomSQL(email string) string {
+	return calevent.RoomAddressSQL(email, "EXISTS (SELECT 1 FROM room_addresses room WHERE room.email = lower(trim("+email+")))")
 }

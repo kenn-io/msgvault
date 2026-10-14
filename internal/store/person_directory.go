@@ -285,7 +285,7 @@ func (s *Store) selectDirectoryPeopleTx(ctx context.Context, tx *loggedTx, query
 }
 
 func directoryCandidateProjectionSQL(query normalizedDirectoryPeopleQuery) (string, []any) {
-	where, filterArgs := []string{}, []any{}
+	where, filterArgs := []string{visiblePersonSQL("dp.person_id")}, []any{}
 	if query.contactState != "" {
 		where, filterArgs = append(where, "dp.contact_state = ?"), append(filterArgs, query.contactState)
 	}

@@ -253,6 +253,22 @@ func supportedRule(opt *rrule.ROption, seen map[string]bool, start time.Time) er
 			return errors.New("weekday ordinals require monthly or yearly recurrence")
 		}
 	}
+	if opt.Freq == rrule.MONTHLY || opt.Freq == rrule.YEARLY {
+		hasPlain, hasOrdinal := false, false
+		for _, day := range opt.Byweekday {
+			if day.N() == 0 {
+				hasPlain = true
+			} else {
+				hasOrdinal = true
+			}
+		}
+		if hasPlain && hasOrdinal {
+			if opt.Freq == rrule.MONTHLY {
+				return errors.New("mixed plain and ordinal monthly weekdays are not supported")
+			}
+			return errors.New("mixed plain and ordinal yearly weekdays are not supported")
+		}
+	}
 	if len(opt.Bymonth) > 0 && len(opt.Bymonthday) > 0 && !possibleMonthDay(opt.Bymonth, opt.Bymonthday) {
 		return errors.New("no selected month can contain a selected month day")
 	}

@@ -1324,6 +1324,50 @@ func TestWorkerRetainsWorkForTransientRequestLoadFailure(t *testing.T) {
 	checks.Empty(attempts)
 }
 
+func TestWorkerClearsQueuedWorkWhenPersonBecomesRoomOnly(t *testing.T) {
+	checks := assert.New(t)
+	requirements := require.New(t)
+	f := newWorkerFixture(t, "room-only-after-queued", nil)
+	f.enqueue(t)
+
+	profile, err := f.store.GetPersonProfileContext(t.Context(), f.person.ID)
+	requirements.NoError(err)
+	requirements.Len(profile.ContactPoints, 1)
+	err = f.store.SupersedePersonContactPointContext(
+		t.Context(), f.person.ID, profile.ContactPoints[0].Envelope.ID, nil,
+	)
+	requirements.NoError(err)
+	source, err := f.store.GetOrCreateSource("gcal", "calendar@example.test")
+	requirements.NoError(err)
+	_, err = f.store.PersistMessage(&store.MessagePersistData{
+		Message:      &store.Message{SourceID: source.ID, SourceMessageID: "queued-room-only", MessageType: "calendar_event"},
+		Conversation: &store.ConversationPersistData{SourceConversationID: "queued-room-only", ConversationType: "calendar_event"},
+		RawMIME:      []byte(`{"id":"queued-room-only","start":{"dateTime":"2027-03-02T17:00:00Z"},"end":{"dateTime":"2027-03-02T18:00:00Z"},"attendees":[{"email":"worker-person@example.test","resource":true}]}`),
+		RawFormat:    "gcal_json",
+	})
+	requirements.NoError(err)
+	_, err = f.store.GetPersonContext(t.Context(), f.person.ID)
+	requirements.ErrorIs(err, store.ErrPersonNotFound)
+
+	worker := f.newWorker(t,
+		map[string]personenrichment.ProviderFactory{f.config.Name: func(personenrichment.ProviderConfig, string) (personenrichment.Provider, error) {
+			return nil, errors.New("room-only work must not construct a provider")
+		}}, map[string]personenrichment.ProviderConfig{f.config.Name: f.config},
+		func(string) (string, bool) { return "test-key", true },
+	)
+	processed, err := worker.RunOnce(t.Context(), f.run.ID)
+	requirements.NoError(err)
+	checks.True(processed)
+	workRows, err := f.store.ListPersonEnrichmentWorkContext(t.Context(), store.PersonEnrichmentWorkFilter{
+		PersonID: f.person.ID, ProfileFingerprint: f.profile.Fingerprint, Limit: 10,
+	})
+	requirements.NoError(err)
+	checks.Empty(workRows, "room-only visibility is a terminal policy outcome for queued work")
+	requirements.NoError(f.store.CompleteRun(t.Context(), f.run.ID, personenrichment.RunCompletion{
+		State: "succeeded", CompletedAt: f.now,
+	}))
+}
+
 type renewFailStore struct {
 	personenrichment.WorkStore
 

@@ -40,15 +40,6 @@ func TestParseMeetingRefForms(t *testing.T) {
 	}
 }
 
-func TestCalendarEventSourceScope(t *testing.T) {
-	assertions := assert.New(t)
-
-	assertions.True(OwnerScope().Allows(42))
-	assertions.False((SourceScope{}).Allows(42))
-	assertions.True((SourceScope{IDs: []int64{42}}).Allows(42))
-	assertions.False((SourceScope{IDs: []int64{-1}}).Allows(42))
-}
-
 func TestMeetingRefSignedArchiveIDs(t *testing.T) {
 	for _, tt := range []struct {
 		ref string
@@ -66,12 +57,4 @@ func TestMeetingRefSignedArchiveIDs(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestCalendarEventSourceScopeEmptyPopulation(t *testing.T) {
-	assertions := assert.New(t)
-	sc := SourceScope{IDs: []int64{-1}}
-	assertions.False(sc.Allows(-1))
-	assertions.False(sc.Allows(0))
-	assertions.False(sc.Allows(42))
 }

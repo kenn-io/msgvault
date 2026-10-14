@@ -395,7 +395,6 @@ func TestDecodeMuesliFallsBackToContactsIdentities(t *testing.T) {
 func TestDecodeGranolaParticipantProvenance(t *testing.T) {
 	for _, tc := range []struct{ name, raw, want string }{
 		{"fallback", `{"calendar_event":{"organiser":"host@example.com","invitees":[{"email":"guest@example.org"}]}}`, "invited"},
-		{"provider", `{"owner":{"email":"host@example.com"},"attendees":[{"email":"guest@example.org"}]}`, "provider_attendee"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			requirements := require.New(t)

@@ -38,6 +38,68 @@ func TestExpandWeekly6WeeksExdateCancelledMoved(t *testing.T) {
 	assertions.Equal(4, live)
 }
 
+func TestExpandWeeklyUntilAcrossFallBackUsesResolvedInstant(t *testing.T) {
+	requirements := require.New(t)
+	zone, err := time.LoadLocation("America/New_York")
+	requirements.NoError(err)
+	start := time.Date(2027, time.October, 31, 1, 30, 0, 0, zone)
+	s, err := ParseSet(start, false, "", zone,
+		[]string{"RRULE:FREQ=WEEKLY;UNTIL=20271107T061500Z"})
+	requirements.NoError(err)
+
+	got, err := Expand(t.Context(), s, time.Hour, 0, nil,
+		instant(t, "2027-10-31T00:00:00Z"), instant(t, "2027-11-08T00:00:00Z"), 100)
+	requirements.NoError(err)
+	keys := make([]string, 0, len(got))
+	for _, occurrence := range got {
+		keys = append(keys, occurrence.Original.Key())
+	}
+	assert.Equal(t, []string{"20271031T053000Z", "20271107T053000Z"}, keys)
+}
+
+func TestBerlinFallBackUsesFirstAmbiguousOccurrence(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	zone, err := time.LoadLocation("Europe/Berlin")
+	requirements.NoError(err)
+	dtstart := time.Date(2027, time.October, 24, 2, 30, 0, 0, zone)
+	set, err := ParseSet(dtstart, false, "", zone, []string{"RRULE:FREQ=WEEKLY;COUNT=2"})
+	requirements.NoError(err)
+
+	got, err := Expand(t.Context(), set, time.Hour, 0, nil,
+		instant(t, "2027-10-24T00:00:00Z"), instant(t, "2027-11-01T00:00:00Z"), 100)
+	requirements.NoError(err)
+	keys := make([]string, 0, len(got))
+	for _, occurrence := range got {
+		keys = append(keys, occurrence.Original.Key())
+	}
+	want := []string{"20271024T003000Z", "20271031T003000Z"}
+	assertions.Equal(want, keys)
+
+	found, err := Contains(t.Context(), set, nil, Identity{Instant: instant(t, "2027-10-31T00:30:00Z")}, 100)
+	requirements.NoError(err)
+	assertions.True(found)
+}
+
+func TestBerlinFallBackUNTILIncludesFirstAmbiguousOccurrence(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	zone, err := time.LoadLocation("Europe/Berlin")
+	requirements.NoError(err)
+	dtstart := time.Date(2027, time.October, 24, 2, 30, 0, 0, zone)
+	set, err := ParseSet(dtstart, false, "", zone, []string{"RRULE:FREQ=WEEKLY;UNTIL=20271031T003000Z"})
+	requirements.NoError(err)
+
+	got, err := Expand(t.Context(), set, time.Hour, 0, nil,
+		instant(t, "2027-10-24T00:00:00Z"), instant(t, "2027-11-01T00:00:00Z"), 100)
+	requirements.NoError(err)
+	keys := make([]string, 0, len(got))
+	for _, occurrence := range got {
+		keys = append(keys, occurrence.Original.Key())
+	}
+	assertions.Equal([]string{"20271024T003000Z", "20271031T003000Z"}, keys)
+}
+
 func TestExpandSparseTombstoneInheritsBounds(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)

@@ -72,6 +72,8 @@ func TestRelationshipTemperatureCurrentHalfLifeKeepsOlderSignalsInWholeGraph(t *
 	require := require.New(t)
 	_, db := writeRelationshipBaseFixture(t, true)
 	_, err := db.Exec(`
+		CREATE TEMP TABLE ` + directoryBuildRelation + ` AS
+		SELECT canonical_id FROM (VALUES (2::BIGINT), (3::BIGINT)) AS humans(canonical_id);
 		CREATE TEMP TABLE ` + temperatureBuildRelation + ` (
 			canonical_id BIGINT, event_date DATE, sent_count BIGINT,
 			received_count BIGINT, meeting_count BIGINT, email_count BIGINT,
@@ -111,6 +113,8 @@ func TestRelationshipTemperatureAnnualRollupsStartAtFirstYear(t *testing.T) {
 	require := require.New(t)
 	_, db := writeRelationshipBaseFixture(t, true)
 	_, err := db.Exec(`
+		CREATE TEMP TABLE ` + directoryBuildRelation + ` AS
+		SELECT canonical_id FROM (VALUES (2::BIGINT), (3::BIGINT)) AS humans(canonical_id);
 		CREATE TEMP TABLE ` + temperatureBuildRelation + ` (
 			canonical_id BIGINT, event_date DATE, sent_count BIGINT,
 			received_count BIGINT, meeting_count BIGINT, email_count BIGINT,

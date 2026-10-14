@@ -43,7 +43,7 @@ func (s *Store) CompletePersonProfilesContext(
 	rows, err := s.db.QueryContext(ctx, `
 		WITH bindings AS (
 			SELECT person_id, MIN(participant_id) AS participant_id
-			FROM person_participants GROUP BY person_id
+			FROM person_participants pp WHERE `+visiblePersonSQL("pp.person_id")+` GROUP BY person_id
 		), raw_primitives AS (
 			SELECT b.participant_id, p.display_name AS profile_label,
 			       'name' AS kind,
@@ -72,7 +72,7 @@ func (s *Store) CompletePersonProfilesContext(
 			JOIN bindings b ON b.person_id = p.id
 			LEFT JOIN communication_services cs ON cs.id = cp.service_id
 			WHERE cp.active_until IS NULL AND cp.superseded_at IS NULL
-			  AND cp.address_kind IN ('email', 'phone', 'username', 'impp')
+			  AND cp.address_kind IN ('email', 'phone', 'username', 'impp') AND (cp.address_kind <> 'email' OR NOT `+RoomAddressSQL("cp.normalized_value")+`)
 			UNION ALL
 			SELECT b.participant_id, p.display_name, 'organization', o.name,
 			       LOWER(o.name_normalized), 'profile'

@@ -2266,6 +2266,9 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 			// through so the rest of schema init still runs.
 		}
 	}
+	if err := s.installMeetingCountInvalidationContext(ctx); err != nil {
+		return err
+	}
 	if err := s.ensureArchiveUIDContext(ctx); err != nil {
 		return err
 	}
@@ -2302,6 +2305,16 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 
 	if err := s.runOnceMigration(ctx, migrationMeetingLinkKeysV1, meetingLinkKeyVersion, false, s.backfillMeetingLinkKeysContext); err != nil {
 		return fmt.Errorf("initialize meeting keys: %w", err)
+	}
+
+	if err := s.installRoomDirectoryInvalidation(ctx); err != nil {
+		return fmt.Errorf("install room directory invalidation: %w", err)
+	}
+	if err := s.runOnceMigration(ctx, migrationRoomRecipientsV1, 1, false, s.repairRoomRecipientsContext); err != nil {
+		return fmt.Errorf("repair calendar room recipients: %w", err)
+	}
+	if err := s.runOnceMigration(ctx, "room_directory_v1", 1, false, s.backfillRoomDirectoryContext); err != nil {
+		return fmt.Errorf("backfill room directory: %w", err)
 	}
 
 	// Probe availability through the dialect so it works uniformly for

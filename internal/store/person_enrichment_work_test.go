@@ -1452,6 +1452,81 @@ func TestPersonEnrichmentRequestUsesPersonDisplayName(t *testing.T) {
 	checks.Equal("example labs", request.Identity.CurrentCompany)
 }
 
+func TestPersonEnrichmentRequestExcludesBoundRoomIdentityButDeletionRetainsIt(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := newEnrichmentWorkFixture(t)
+
+	roomParticipantID, err := f.store.EnsureParticipant("room-contact@example.com", "Example Room", "example.com")
+	requirements.NoError(err)
+	roomPerson, _, err := f.store.CreatePersonFromParticipantContext(t.Context(), roomParticipantID)
+	requirements.NoError(err)
+	survivor, err := f.store.GetPersonContext(t.Context(), f.person.ID)
+	requirements.NoError(err)
+	merged, err := f.store.MergePersonsContext(t.Context(), store.PersonMergeRequest{
+		SurvivorID: survivor.ID, AbsorbedID: roomPerson.ID,
+		ExpectedSurvivorRevision: survivor.Revision,
+		ExpectedAbsorbedRevision: roomPerson.Revision,
+		IdempotencyKey:           "enrichment-room-identity-merge", Actor: "test",
+	})
+	requirements.NoError(err)
+	f.person = &merged.Person
+
+	_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(
+		`UPDATE participants SET email_address = ?, domain = ? WHERE id = ?`),
+		"room@resource.calendar.google.com", "resource.calendar.google.com", roomParticipantID)
+	requirements.NoError(err)
+	lease := personenrichment.WorkLease{
+		PersonID: f.person.ID,
+		Trigger:  personenrichment.Trigger{Kind: personenrichment.TriggerManual, Generation: "manual:room-filter"},
+	}
+
+	input, err := f.store.LoadRequestInput(t.Context(), lease)
+	requirements.NoError(err)
+	var visibleEmails, visibleNames []string
+	for _, candidate := range input.Emails {
+		visibleEmails = append(visibleEmails, candidate.Value)
+	}
+	for _, candidate := range input.Names {
+		visibleNames = append(visibleNames, candidate.Value)
+	}
+	assertions.NotContains(visibleEmails, "room@resource.calendar.google.com")
+	assertions.NotContains(visibleNames, "Example Room")
+	var target personfacts.TargetDescriptor
+	for _, candidate := range input.Catalog.Targets {
+		if !candidate.Sensitive {
+			target = candidate
+			break
+		}
+	}
+	requirements.NotEmpty(target.Key)
+	profile := f.profile
+	profile.AllowedIdentifiers = []personenrichment.IdentifierClass{
+		personenrichment.IdentifierEmail, personenrichment.IdentifierPublicProfileURL,
+	}
+	profile.Targets = []personfacts.TargetDescriptor{target}
+	input.PublicProfileURLs = append(input.PublicProfileURLs, personenrichment.IdentityCandidate{
+		StableID: 1, Value: "https://profiles.example.test/work-person",
+	})
+	request, _, err := personenrichment.BuildRequest(input, profile)
+	requirements.NoError(err)
+	assertions.Equal("work-person@example.com", request.Identity.Email)
+
+	deletionInput, err := f.store.LoadRequestInputForDeletionContext(t.Context(), lease)
+	requirements.NoError(err)
+	var deletionEmails, deletionNames []string
+	for _, candidate := range deletionInput.Emails {
+		deletionEmails = append(deletionEmails, candidate.Value)
+	}
+	for _, candidate := range deletionInput.Names {
+		deletionNames = append(deletionNames, candidate.Value)
+	}
+	assertions.Contains(deletionEmails, "room@resource.calendar.google.com",
+		"deletion suppression retains authoritative raw identifiers")
+	assertions.Contains(deletionNames, "Example Room",
+		"deletion suppression retains authoritative observed names")
+}
+
 func TestPersonEnrichmentTerminalRefreshBecomesUnboundWork(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

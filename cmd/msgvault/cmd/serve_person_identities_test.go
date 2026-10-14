@@ -124,6 +124,41 @@ func TestPersonIdentitiesListsArchivedIdentities(t *testing.T) {
 	assert.NotContains(output, "\x1b")
 }
 
+func TestPersonIdentitiesHidesRoomAddressesForMixedPerson(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	fixture := newDraftReplyFixture(t)
+	st := fixture.store
+
+	humanID, err := st.EnsureParticipant("human@example.test", "Example Human", "example.test")
+	requirements.NoError(err)
+	roomID, err := st.EnsureParticipant("resource@example.test", "Example Room", "example.test")
+	requirements.NoError(err)
+	_, err = st.LinkParticipants(humanID, roomID)
+	requirements.NoError(err)
+	person, _, err := st.CreatePersonFromParticipantContext(t.Context(), humanID)
+	requirements.NoError(err)
+	requirements.ElementsMatch([]int64{humanID, roomID}, person.ParticipantIDs)
+
+	calendarSource, err := st.GetOrCreateSource("gcal", "calendar@example.test")
+	requirements.NoError(err)
+	eventID, err := st.PersistMessage(&store.MessagePersistData{
+		Message:      &store.Message{SourceID: calendarSource.ID, SourceMessageID: "room-recipient-identity", MessageType: "calendar_event"},
+		Conversation: &store.ConversationPersistData{SourceConversationID: "room-recipient-identity", ConversationType: "calendar_event"},
+		RawMIME: []byte(`{"id":"room-recipient-identity","start":{"dateTime":"2027-03-14T10:00:00Z"},` +
+			`"end":{"dateTime":"2027-03-14T11:00:00Z"},"attendees":[{"email":"resource@example.test","resource":true}]}`),
+		RawFormat: "gcal_json",
+	})
+	requirements.NoError(err)
+	var role string
+	requirements.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT role FROM calendar_event_attendees WHERE message_id=? AND email=?`), eventID, "resource@example.test").Scan(&role))
+	requirements.Equal("room", role)
+
+	assertions.Equal([]api.PersonIdentity{{Kind: "email", Value: "human@example.test", Supported: true}},
+		listPersonIdentitiesJSON(t, fixture, person.ID))
+}
+
 func TestPersonIdentitiesRejectsUnknownPerson(t *testing.T) {
 	fixture := newDraftReplyFixture(t)
 	_, err := runPersonIdentitiesCommand(t, fixture, "999999")

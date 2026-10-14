@@ -124,6 +124,45 @@ func TestStoreAPIAdapterDeletePersonSuppressesCurrentIdentifiers(t *testing.T) {
 	assert.True(t, found)
 }
 
+func TestStoreAPIAdapterDeletesRoomOnlyPersonWithEnrichmentEnabled(t *testing.T) {
+	requirements := require.New(t)
+	f := storetest.New(t)
+	participantID := f.EnsureParticipant("room-person@example.test", "Example Room", "example.test")
+	person, _, err := f.Store.CreatePersonFromParticipantContext(t.Context(), participantID)
+	requirements.NoError(err)
+	_, providerProfile, _ := scheduleWorkerProfile(t, f, "room-deletion-provider", "TEST_ROOM_DELETE_PROVIDER_KEY")
+	source, err := f.Store.GetOrCreateSource("gcal", "room-deletion@example.test")
+	requirements.NoError(err)
+	_, err = f.Store.PersistMessage(&store.MessagePersistData{
+		Message:      &store.Message{SourceID: source.ID, SourceMessageID: "room-person-event", MessageType: "calendar_event"},
+		Conversation: &store.ConversationPersistData{SourceConversationID: "room-person-event", ConversationType: "calendar_event"},
+		RawMIME:      []byte(`{"id":"room-person-event","start":{"dateTime":"2027-03-02T17:00:00Z"},"end":{"dateTime":"2027-03-02T18:00:00Z"},"attendees":[{"email":"room-person@example.test","resource":true}]}`),
+		RawFormat:    "gcal_json",
+	})
+	requirements.NoError(err)
+	_, err = f.Store.GetPersonContext(t.Context(), person.ID)
+	requirements.ErrorIs(err, store.ErrPersonNotFound)
+	key := strings.Repeat("d", 32)
+	hasher, err := personenrichment.NewSuppressionHasher([]byte(key))
+	requirements.NoError(err)
+	adapter := &storeAPIAdapter{
+		store: f.Store,
+		personEnrichmentConfig: personenrichment.Config{
+			Enabled: true, SuppressionKeyEnv: "TEST_ROOM_DELETE_SUPPRESSION_KEY",
+		},
+		lookupEnv: func(string) (string, bool) { return key, true },
+	}
+	requirements.NoError(adapter.DeletePersonContext(t.Context(), person.ID, person.Revision))
+	digest := hasher.Digest(providerProfile.ProviderNamespace, personenrichment.SuppressionEmail,
+		personenrichment.EmailNormalizationV1, "room-person@example.test")
+	found, err := f.Store.HasPersonEnrichmentSuppressionContext(t.Context(), digest)
+	requirements.NoError(err)
+	requirements.True(found, "deletion must retain suppression for the hidden room identity")
+	var remaining int
+	requirements.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT COUNT(*) FROM persons WHERE id = ?`), person.ID).Scan(&remaining))
+	requirements.Zero(remaining)
+}
+
 func TestStoreAPIAdapterDeletePersonWithoutEnrichmentHistoryNeedsNoSuppressionKey(t *testing.T) {
 	f := storetest.New(t)
 	participantID := f.EnsureParticipant("unenriched-delete@example.test", "Unenriched Delete", "example.test")

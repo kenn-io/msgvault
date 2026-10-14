@@ -29,9 +29,9 @@ type PersonIdentitiesResponse struct {
 func (s *Server) registerPersonIdentityRoutes(api huma.API) {
 	list := rawAPIV1Operation("listPersonIdentities", http.MethodGet, "/people/{id}/identities",
 		"List a durable person's archived identities")
-	list.Description = "Lists the identities of the person's current participants. Email addresses are " +
-		"supported draft recipients; phone numbers and chat identifiers are not. " +
-		"Curated contact points and postal addresses are not listed."
+	list.Description = "Lists the visible identities of the person's current participants. Room/resource addresses, " +
+		"curated contact points, and postal addresses are omitted. Email addresses are supported draft recipients; " +
+		"phone numbers and chat identifiers are not."
 	addPersonIDParameter(&list)
 	list.Responses = jsonResponsesFor[PersonIdentitiesResponse](api)
 	addErrorResponses(api, list.Responses, http.StatusBadRequest, http.StatusNotFound, http.StatusServiceUnavailable)

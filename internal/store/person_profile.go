@@ -80,7 +80,14 @@ func (s *Store) GetPersonProfileContext(
 	var profile *PersonProfile
 	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
 		var err error
+		if err = s.requireVisiblePersonTx(ctx, tx, personID); err != nil {
+			return err
+		}
 		profile, err = s.getPersonProfileTx(ctx, tx, personID, true)
+		if err != nil {
+			return err
+		}
+		profile.ContactPoints, err = s.visibleContactPointsTx(ctx, tx, profile.ContactPoints)
 		return err
 	})
 	return profile, err
@@ -127,6 +134,10 @@ func (s *Store) ApplyPersonProfilePatchContext(
 			}
 		}
 		profile, err = s.getPersonProfileTx(ctx, tx, updatedID, true)
+		if err != nil {
+			return err
+		}
+		profile.ContactPoints, err = s.visibleContactPointsTx(ctx, tx, profile.ContactPoints)
 		return err
 	})
 	return profile, err
@@ -145,7 +156,14 @@ func (s *Store) GetPersonProfileHistoryContext(
 ) (*PersonProfileHistory, error) {
 	var history *PersonProfileHistory
 	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
+		if err := s.requireVisiblePersonTx(ctx, tx, personID); err != nil {
+			return err
+		}
 		profile, err := s.getPersonProfileTx(ctx, tx, personID, false)
+		if err != nil {
+			return err
+		}
+		profile.ContactPoints, err = s.visibleContactPointsTx(ctx, tx, profile.ContactPoints)
 		if err != nil {
 			return err
 		}

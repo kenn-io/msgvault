@@ -5,6 +5,8 @@ import (
 	"encoding/json/v2"
 	"strings"
 	"time"
+
+	"go.kenn.io/msgvault/internal/calevent"
 )
 
 func decodeGranola(fields map[string]jsontext.Value) Content {
@@ -163,7 +165,17 @@ func granolaParticipants(fields map[string]jsontext.Value) []Participant {
 			organizer.Name = attendee.Name
 		}
 	}
-	participants := participantsFromPeople(&organizer, attendees)
+	var humanAttendees []personWire
+	for _, attendee := range attendees {
+		if !calevent.IsRoomAttendee(attendee.Email, false) {
+			humanAttendees = append(humanAttendees, attendee)
+		}
+	}
+	var humanOrganizer *personWire
+	if !calevent.IsRoomAttendee(organizer.Email, false) {
+		humanOrganizer = &organizer
+	}
+	participants := participantsFromPeople(humanOrganizer, humanAttendees)
 	for i := range participants {
 		participants[i].Provenance = provenance
 		if participants[i].Role == "from" {

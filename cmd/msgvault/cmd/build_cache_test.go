@@ -199,6 +199,26 @@ func setupTestSQLite(t *testing.T) string {
 			CHECK (participant_a < participant_b)
 		);
 
+		CREATE TABLE meeting_link_keys (
+			message_id INTEGER NOT NULL REFERENCES messages(id),
+			ordinal INTEGER NOT NULL,
+			kind TEXT NOT NULL,
+			value TEXT NOT NULL,
+			base TEXT NOT NULL DEFAULT '',
+			instance_key TEXT NOT NULL DEFAULT '',
+			scheduled_at DATETIME,
+			PRIMARY KEY (message_id, ordinal)
+		);
+
+		CREATE TABLE meeting_link_decisions (
+			member_message_id INTEGER NOT NULL REFERENCES messages(id),
+			target_ref TEXT NOT NULL,
+			target_logical TEXT NOT NULL DEFAULT '',
+			decision TEXT NOT NULL,
+			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (member_message_id, target_ref)
+		);
+
 		CREATE TABLE persons (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			vcard_uid TEXT NOT NULL UNIQUE,

@@ -4678,6 +4678,11 @@ func (s *Store) MergeParticipantsContext(ctx context.Context, oldID, newID int64
 		}
 		personRevisionBumped := false
 		if personID != 0 {
+			if _, err := lockPersonEnrichmentPersonTx(
+				ctx, tx, s.dialect, personID,
+			); err != nil {
+				return fmt.Errorf("lock person before participant merge: %w", err)
+			}
 			changed, err := s.mergePersonBindingsTx(
 				ctx, tx, personID, oldID, unionMembers)
 			if err != nil {

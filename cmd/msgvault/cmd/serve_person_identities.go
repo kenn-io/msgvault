@@ -10,9 +10,9 @@ import (
 
 var _ api.PersonIdentityStore = (*storeAPIAdapter)(nil)
 
-// ListPersonIdentitiesContext lists the archived participant identities
-// currently bound to the person. Curated contact points and postal addresses
-// are not archived participant identities, so they never appear here.
+// ListPersonIdentitiesContext lists visible archived participant identities
+// currently bound to the person. It omits room identities, curated contact
+// points, and postal addresses.
 func (a *storeAPIAdapter) ListPersonIdentitiesContext(
 	ctx context.Context, personID int64,
 ) ([]api.PersonIdentity, error) {
@@ -20,7 +20,7 @@ func (a *storeAPIAdapter) ListPersonIdentitiesContext(
 	if err != nil {
 		return nil, fmt.Errorf("load person %d: %w", personID, err)
 	}
-	identity, err := a.store.GetParticipantIdentityContext(ctx, person.ParticipantIDs)
+	identity, err := a.store.GetVisibleParticipantIdentityContext(ctx, person.ParticipantIDs)
 	if err != nil {
 		return nil, fmt.Errorf("load identities for person %d: %w", personID, err)
 	}

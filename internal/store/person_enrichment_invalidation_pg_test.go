@@ -74,8 +74,9 @@ func TestPersonEnrichmentResultAndInvalidationSharePersonFirstLockOrder(t *testi
 		mergeDone <- f.store.MergeParticipants(participantID, survivorID)
 	}()
 	if f.store.IsPostgreSQL() {
-		// The merge must reach its person revision update after inserting the
-		// survivor binding, whose foreign key holds a KEY SHARE lock on person.
+		// The merge must wait for the person's lock before inserting the
+		// survivor binding. Inserting first leaves its foreign-key KEY SHARE
+		// lock held while it waits to update the same person row.
 		require.Eventually(func() bool {
 			var blocked bool
 			err := f.store.db.QueryRowContext(t.Context(), `SELECT EXISTS (SELECT 1 FROM pg_stat_activity activity
@@ -83,6 +84,15 @@ func TestPersonEnrichmentResultAndInvalidationSharePersonFirstLockOrder(t *testi
 			require.NoError(err)
 			return blocked
 		}, 5*time.Second, 10*time.Millisecond, "merge did not wait for enrichment's person lock")
+		var mergeWaitingForPersonLock bool
+		require.NoError(f.store.db.QueryRowContext(t.Context(), `SELECT EXISTS (
+			SELECT 1 FROM pg_stat_activity activity
+			WHERE activity.datname = current_database()
+			  AND ? = ANY(pg_blocking_pids(activity.pid))
+			  AND activity.query ILIKE '%FOR NO KEY UPDATE%'
+		)`, resultPID).Scan(&mergeWaitingForPersonLock))
+		assert.True(mergeWaitingForPersonLock,
+			"merge must wait for the person lock before inserting its survivor binding")
 		select {
 		case <-invalidationLocked:
 			require.Fail("invalidation acquired person while result still owned it")
