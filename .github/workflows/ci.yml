@@ -323,7 +323,7 @@ jobs:
         name: Set cache and scratch paths
         shell: pwsh
         run: |
-          $paths = @{ GOCACHE = 'go-build'; GOMODCACHE = 'go-mod'; GOTMPDIR = 'go-tmp'; TEMP = 'test-tmp'; TMP = 'test-tmp' }
+          $paths = @{ GOCACHE = 'go-build'; GOMODCACHE = 'go-mod'; GOTMPDIR = 'go-tmp'; TEMP = 'test-tmp'; TMP = 'test-tmp'; GOLANGCI_LINT_CACHE = 'golangci-lint' }
           foreach ($entry in $paths.GetEnumerator()) {
             $path = Join-Path $env:RUNNER_TEMP $entry.Value
             New-Item -ItemType Directory -Force -Path $path | Out-Null
@@ -368,7 +368,6 @@ jobs:
           CGO_CFLAGS: "-IC:/msys64/mingw64/include -fgnu89-inline"
           CGO_LDFLAGS: "-Wl,--allow-multiple-definition"
           GOFLAGS: "-buildvcs=false"
-          GOLANGCI_LINT_CACHE: ${{ runner.temp }}/golangci-lint
         run: |
           $version = (Select-String -Path .custom-gcl.yml -Pattern '^version: (\S+)').Matches[0].Groups[1].Value
           go run "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$version" custom --destination "$env:RUNNER_TEMP" --name custom-gcl
