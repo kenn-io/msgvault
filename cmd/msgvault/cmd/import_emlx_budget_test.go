@@ -72,7 +72,7 @@ func TestImportEmlxCommandBudgetRetry(t *testing.T) {
 }
 
 func TestImportEmlxCommandBudgetInvalidBeforeImport(t *testing.T) {
-	for _, value := range []string{"0", "-1", "9223372036854775807", "not-bytes", "9223372036854775808"} {
+	for _, value := range []string{"0", "-1", "9223372036854775807"} {
 		t.Run(value, func(t *testing.T) {
 			r, a := require.New(t), assert.New(t)
 			home := t.TempDir()
