@@ -97,9 +97,7 @@ func daemonProxyMemoryOptions() ServeOptions {
 		PersonCardDAV:       struct{ PersonCardDAVBackend }{},
 		IdentityScoring:     struct{ IdentityScoringBackend }{},
 		Drafts:              struct{ DraftRunner }{},
-		MessageTags:         struct{ MessageTagBackend }{},
 		DraftCommands:       slices.Sorted(maps.Keys(stableDraftDefinitions)),
-		MessageTags:         struct{ MessageTagBackend }{},
 	}
 }
 
