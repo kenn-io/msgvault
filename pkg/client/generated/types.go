@@ -46,6 +46,13 @@ func (a AccountListResponse) Validate() error {
 	return errors
 }
 
+type AccountScope struct {
+	Addresses    []string `json:"addresses,omitempty"`
+	Inbound      *bool    `json:"inbound,omitempty"`
+	SourceID     *int64   `json:"source_id,omitempty"`
+	Unattributed *bool    `json:"unattributed,omitempty"`
+}
+
 type AccountStatus struct {
 	Email     string     `json:"email" validate:"required"`
 	LastError *string    `json:"last_error,omitzero"`
@@ -5015,6 +5022,119 @@ func (f FileSearchSort) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(f))
 }
 
+type FileSuggestionHTTPRequest struct {
+	AccountScopes []AccountScope                          `json:"account_scopes,omitempty"`
+	After         *time.Time                              `json:"after,omitempty"`
+	Before        *time.Time                              `json:"before,omitempty"`
+	FilenameQuery string                                  `json:"filename_query" validate:"required"`
+	Limit         *int64                                  `json:"limit,omitempty" validate:"omitempty,gte=1,lte=100"`
+	MimeFamilies  []FileSuggestionHTTPRequestMimeFamilies `json:"mime_families,omitempty"`
+	SourceIds     []int64                                 `json:"source_ids,omitempty"`
+}
+
+func (f FileSuggestionHTTPRequest) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range f.AccountScopes {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("AccountScopes[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(f.FilenameQuery, "required"); err != nil {
+		errors = errors.Append("FilenameQuery", err)
+	}
+	if f.Limit != nil {
+		if err := typesValidator.Var(f.Limit, "omitempty,gte=1,lte=100"); err != nil {
+			errors = errors.Append("Limit", err)
+		}
+	}
+	for i, item := range f.MimeFamilies {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("MimeFamilies[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type FileSuggestionHTTPResponse struct {
+	CandidateLimitReached bool                `json:"candidate_limit_reached"`
+	IndexRevision         string              `json:"index_revision" validate:"required"`
+	Suggestions           []FileSuggestionRow `json:"suggestions" validate:"required"`
+}
+
+func (f FileSuggestionHTTPResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(f.IndexRevision, "required"); err != nil {
+		errors = errors.Append("IndexRevision", err)
+	}
+	for i, item := range f.Suggestions {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Suggestions[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type FileSuggestionRow struct {
+	ContentAvailable bool                           `json:"content_available"`
+	ContentState     FileSuggestionRowContentState  `json:"content_state" validate:"required"`
+	ConversationID   int64                          `json:"conversation_id"`
+	Filename         string                         `json:"filename" validate:"required"`
+	FilenameMatch    FileSuggestionRowFilenameMatch `json:"filename_match" validate:"required"`
+	ID               int64                          `json:"id"`
+	MessageID        int64                          `json:"message_id"`
+	MimeFamily       FileSuggestionRowMimeFamily    `json:"mime_family" validate:"required"`
+	MimeType         *string                        `json:"mime_type,omitzero" validate:"required"`
+	OccurredAt       *time.Time                     `json:"occurred_at" validate:"omitempty"`
+	SizeBytes        int64                          `json:"size_bytes"`
+	SourceID         int64                          `json:"source_id"`
+}
+
+func (f FileSuggestionRow) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(f.ContentState).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("ContentState", err)
+		}
+	}
+	if err := typesValidator.Var(f.Filename, "required"); err != nil {
+		errors = errors.Append("Filename", err)
+	}
+	if v, ok := any(f.FilenameMatch).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("FilenameMatch", err)
+		}
+	}
+	if v, ok := any(f.MimeFamily).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("MimeFamily", err)
+		}
+	}
+	if err := typesValidator.Var(f.MimeType, "required"); err != nil {
+		errors = errors.Append("MimeType", err)
+	}
+	if f.OccurredAt != nil {
+		if err := typesValidator.Var(f.OccurredAt, "required"); err != nil {
+			errors = errors.Append("OccurredAt", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type FilteredMessagesResponse struct {
 	AppliedSourceIds []int64          `json:"applied_source_ids,omitempty"`
 	Count            int64            `json:"count"`
@@ -6227,6 +6347,38 @@ func (l ListDeletionsResponse) Validate() error {
 	return errors
 }
 
+type MCPCapabilities struct {
+	Routes  []MCPRouteDescriptor `json:"routes" validate:"required"`
+	Version int64                `json:"version"`
+}
+
+func (m MCPCapabilities) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range m.Routes {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Routes[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type MCPRouteDescriptor struct {
+	Method            string   `json:"method" validate:"required"`
+	OperationID       string   `json:"operation_id" validate:"required"`
+	Path              string   `json:"path" validate:"required"`
+	QueryParameters   []string `json:"query_parameters" validate:"required"`
+	RequestProperties []string `json:"request_properties" validate:"required"`
+}
+
+func (m MCPRouteDescriptor) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(m))
+}
+
 type Manifest struct {
 	CreatedAt   time.Time        `json:"created_at" validate:"required"`
 	CreatedBy   string           `json:"created_by" validate:"required"`
@@ -6958,6 +7110,103 @@ type MessageSummary struct {
 
 func (m MessageSummary) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(m))
+}
+
+type MessageTag struct {
+	ID   string `json:"id" validate:"required"`
+	Name string `json:"name" validate:"required"`
+}
+
+func (m MessageTag) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(m))
+}
+
+type MessageTagChange struct {
+	Add     []string `json:"add,omitempty"`
+	DryRun  *bool    `json:"dry_run,omitempty"`
+	Mailbox *string  `json:"mailbox,omitzero"`
+	Remove  []string `json:"remove,omitempty"`
+}
+
+type MessageTagError struct {
+	ErrorData string            `json:"error" validate:"required"`
+	Message   string            `json:"message" validate:"required"`
+	Result    *MessageTagResult `json:"result,omitempty"`
+}
+
+func (m MessageTagError) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(m.ErrorData, "required"); err != nil {
+		errors = errors.Append("ErrorData", err)
+	}
+	if err := typesValidator.Var(m.Message, "required"); err != nil {
+		errors = errors.Append("Message", err)
+	}
+	if m.Result != nil {
+		if v, ok := any(m.Result).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Result", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+func (s MessageTagError) Error() string {
+	return "unmapped client error"
+}
+
+type MessageTagResult struct {
+	AvailableTags     []MessageTag `json:"available_tags" validate:"required"`
+	Before            []string     `json:"before" validate:"required"`
+	CanCreateKeywords *bool        `json:"can_create_keywords,omitempty"`
+	DryRun            bool         `json:"dry_run"`
+	Flags             []string     `json:"flags,omitempty"`
+	Mailbox           *string      `json:"mailbox,omitzero"`
+	MessageID         int64        `json:"message_id"`
+	Provider          string       `json:"provider" validate:"required"`
+	SourceID          int64        `json:"source_id"`
+	Tags              []string     `json:"tags" validate:"required"`
+	UID               *int64       `json:"uid,omitempty" validate:"omitempty,gte=0,lte=4294967295"`
+	Uidvalidity       *int64       `json:"uidvalidity,omitempty" validate:"omitempty,gte=0,lte=4294967295"`
+	Verified          bool         `json:"verified"`
+}
+
+func (m MessageTagResult) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range m.AvailableTags {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("AvailableTags[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(m.Before, "required"); err != nil {
+		errors = errors.Append("Before", err)
+	}
+	if err := typesValidator.Var(m.Provider, "required"); err != nil {
+		errors = errors.Append("Provider", err)
+	}
+	if err := typesValidator.Var(m.Tags, "required"); err != nil {
+		errors = errors.Append("Tags", err)
+	}
+	if m.UID != nil {
+		if err := typesValidator.Var(m.UID, "omitempty,gte=0,lte=4294967295"); err != nil {
+			errors = errors.Append("UID", err)
+		}
+	}
+	if m.Uidvalidity != nil {
+		if err := typesValidator.Var(m.Uidvalidity, "omitempty,gte=0,lte=4294967295"); err != nil {
+			errors = errors.Append("Uidvalidity", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type MessageTranscript struct {
@@ -10511,6 +10760,133 @@ func (p PersonFileSearchRow) Validate() error {
 	}
 	if err := typesValidator.Var(p.SourceType, "required"); err != nil {
 		errors = errors.Append("SourceType", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonFileSuggestionHTTPRequest struct {
+	AccountScopes []AccountScope                                `json:"account_scopes,omitempty"`
+	After         *time.Time                                    `json:"after,omitempty"`
+	Before        *time.Time                                    `json:"before,omitempty"`
+	Directions    []PersonFileSuggestionHTTPRequestDirections   `json:"directions,omitempty"`
+	FilenameQuery string                                        `json:"filename_query" validate:"required"`
+	Limit         *int64                                        `json:"limit,omitempty" validate:"omitempty,gte=1,lte=100"`
+	MimeFamilies  []PersonFileSuggestionHTTPRequestMimeFamilies `json:"mime_families,omitempty"`
+	SourceIds     []int64                                       `json:"source_ids,omitempty"`
+}
+
+func (p PersonFileSuggestionHTTPRequest) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range p.AccountScopes {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("AccountScopes[%d]", i), err)
+			}
+		}
+	}
+	for i, item := range p.Directions {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Directions[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(p.FilenameQuery, "required"); err != nil {
+		errors = errors.Append("FilenameQuery", err)
+	}
+	if p.Limit != nil {
+		if err := typesValidator.Var(p.Limit, "omitempty,gte=1,lte=100"); err != nil {
+			errors = errors.Append("Limit", err)
+		}
+	}
+	for i, item := range p.MimeFamilies {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("MimeFamilies[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonFileSuggestionHTTPResponse struct {
+	CandidateLimitReached bool                      `json:"candidate_limit_reached"`
+	IndexRevision         string                    `json:"index_revision" validate:"required"`
+	Suggestions           []PersonFileSuggestionRow `json:"suggestions" validate:"required"`
+}
+
+func (p PersonFileSuggestionHTTPResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.IndexRevision, "required"); err != nil {
+		errors = errors.Append("IndexRevision", err)
+	}
+	for i, item := range p.Suggestions {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Suggestions[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonFileSuggestionRow struct {
+	ContentAvailable bool                                 `json:"content_available"`
+	ContentState     PersonFileSuggestionRowContentState  `json:"content_state" validate:"required"`
+	ConversationID   int64                                `json:"conversation_id"`
+	Filename         string                               `json:"filename" validate:"required"`
+	FilenameMatch    PersonFileSuggestionRowFilenameMatch `json:"filename_match" validate:"required"`
+	ID               int64                                `json:"id"`
+	MessageID        int64                                `json:"message_id"`
+	MimeFamily       PersonFileSuggestionRowMimeFamily    `json:"mime_family" validate:"required"`
+	MimeType         *string                              `json:"mime_type,omitzero" validate:"required"`
+	OccurredAt       *time.Time                           `json:"occurred_at" validate:"omitempty"`
+	PersonProvenance Provenance                           `json:"person_provenance"`
+	SizeBytes        int64                                `json:"size_bytes"`
+	SourceID         int64                                `json:"source_id"`
+}
+
+func (p PersonFileSuggestionRow) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(p.ContentState).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("ContentState", err)
+		}
+	}
+	if err := typesValidator.Var(p.Filename, "required"); err != nil {
+		errors = errors.Append("Filename", err)
+	}
+	if v, ok := any(p.FilenameMatch).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("FilenameMatch", err)
+		}
+	}
+	if v, ok := any(p.MimeFamily).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("MimeFamily", err)
+		}
+	}
+	if err := typesValidator.Var(p.MimeType, "required"); err != nil {
+		errors = errors.Append("MimeType", err)
+	}
+	if p.OccurredAt != nil {
+		if err := typesValidator.Var(p.OccurredAt, "required"); err != nil {
+			errors = errors.Append("OccurredAt", err)
+		}
+	}
+	if v, ok := any(p.PersonProvenance).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("PersonProvenance", err)
+		}
 	}
 	if len(errors) == 0 {
 		return nil

@@ -119,3 +119,101 @@ rebuilding existing vector tables. That migration is not implemented today.
 - Use field operators such as `subject:` and `from:` when you remember a
   specific message field.
 - Use `--explain` with vector or hybrid search to inspect per-signal scores.
+
+## Filename suggestions
+
+Newer than the latest release, explicit filename suggestions use one bounded
+Store snapshot on SQLite and PostgreSQL. They preserve ordinary filename
+substring search, message search, Directory ranking and identity behavior.
+The [API reference](../api-server.md#filename-suggestions) owns request and
+response fields; the [CLI reference](../cli-reference.md#typo-tolerant-filenames)
+owns the opt-in flag and output.
+
+### Matching and order
+
+Names and queries use NFC normalization, case folding, then NFC again. Tokens
+start with a Unicode letter or number; attached combining marks stay in the
+token. Punctuation, slashes and isolated combining marks separate tokens.
+Filenames are metadata, never filesystem paths. This tokenizer is separate
+from Directory's existing rules.
+
+Every query token must match. Rank classes, in order, are exact normalized full
+filename, all-exact tokens, clean token prefixes, then one typo. A typo permits
+one insertion, deletion, substitution or adjacent transposition in at most one
+query token of at least five runes. All-number tokens on either side match
+exactly. Mixed tokens permit clean prefixes, such as `invoice2` to `invoice20`,
+but an edit cannot add, remove, replace or transpose a Unicode number.
+There is no accent stripping, transliteration or synonym expansion.
+
+Within each class, the newest attachment comes first. Both exact classes have
+`filename_match: exact`. Separate occurrences remain separate even when names
+or content hashes agree. The candidate pool selects the best matches across
+all postings read, using the same rank and recency order. It cannot guarantee
+the globally best results when the posting budget leaves some ranges unread.
+
+### Projection and readiness
+
+Schema setup creates an empty filename projection. Each daemon maintenance
+batch bootstraps at most 500 attachments or replays at most 500 journal events,
+rechecking each event's old and new occurrence IDs. Bootstrap starts from a
+durable maximum attachment ID and catches up to a finite journal fence. It indexes every
+extant attachment within the name limits, including attachments whose messages
+are currently hidden or whose content is unavailable. Visibility and every
+scope filter apply at request time, so a visibility change needs no filename
+rebuild.
+
+Each pass first checks, in a read-only query, whether journal events or old
+generations remain. An idle pass ends there and takes no writer slot or table
+lock. PostgreSQL maintenance fences attachment and message writers before
+taking its first batch snapshot. Its two-second lock timeout leaves the checkpoint intact
+for a later retry. SQLite reserves the writer before reading batch state.
+Projection updates, acknowledgement and pruning commit atomically. Interrupted
+bootstrap resumes; a reset replaces only this consumer's generation and
+garbage-collects old generations in bounded batches. Other journal consumers
+keep their state. Read-only archive readers perform no DDL or maintenance.
+
+Suggestions return a warming-index error until finite bootstrap and catchup
+finish. The daemon then runs bounded maintenance on a five-second cadence.
+A pass that waits behind a long sync or import does not ask that work to
+yield; it runs when the work finishes.
+Current filenames, message visibility, scope and provenance are rechecked in
+the same snapshot as candidate generation and person resolution. Stale names
+cannot appear as current matches, but new or renamed files can be omitted until
+maintenance catches up. An exhausted candidate stream does not prove that the
+index has caught up with every recent write.
+
+### Work and population limits
+
+Each request reads strong exact streams before weaker ones. Exact streams
+visit newest attachments first; prefix and deletion streams visit token keys
+in descending order, then newest attachments within each key. Every posting
+row is checked against message visibility and the request's source, account,
+date, MIME-family and person filters with primary-key and indexed relation
+probes. The projected name must match every query token before competing for
+the candidate pool. After reading within the posting budget, the request
+selects the best 500 distinct attachment IDs by rank and recency, verifies
+their current filenames and authority, and returns at most 100 rows.
+
+Every posting row read counts toward a work budget, including duplicates,
+rejected rows and page lookahead. Unscoped requests read at most 2,048 rows.
+Requests with any filter read at most 8,192 rows, because filters can reject
+most postings of a common word. A filtered request that exhausts its streams
+within that budget is complete, including when it is empty. The response
+exposes candidate exhaustion separately from readiness and freshness; an empty
+limited result is incomplete.
+
+Queries reject more than 128 normalized runes, eight tokens or 64 runes per
+token. Projection skips an entire filename exceeding 512 normalized runes,
+64 tokens before deduplication, or 64 runes in any token. It does not index a
+truncated prefix of an oversized name. Punctuation-only names remain valid
+metadata but contribute no token postings. The maintenance state tracks
+skipped names; filename suggestions do not cover that excluded population.
+Deletion keys retain all Unicode numbers, since a typo may only edit other
+characters. All-number tokens need only exact postings.
+
+Person resolution reads at most 65 bindings to detect a 64-participant overflow.
+Provenance uses bounded indexed relation probes and rejects more than 4,096
+unique edges. No request repairs person bindings, publishes contacts, scans
+message bodies or backfills the projection. Directory's existing four-rune
+typo threshold and numeric behavior remain unchanged; its one-edit verifier now
+uses linear work instead of a distance matrix.

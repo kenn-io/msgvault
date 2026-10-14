@@ -33,6 +33,21 @@ components:
       required:
         - accounts
       type: object
+    AccountScope:
+      additionalProperties: false
+      properties:
+        addresses:
+          items:
+            type: string
+          type: array
+        inbound:
+          type: boolean
+        source_id:
+          format: int64
+          type: integer
+        unattributed:
+          type: boolean
+      type: object
     AccountStatus:
       additionalProperties: true
       properties:
@@ -5431,6 +5446,133 @@ components:
         - field
         - direction
       type: object
+    FileSuggestionHTTPRequest:
+      additionalProperties: false
+      properties:
+        account_scopes:
+          items:
+            $ref: "#/components/schemas/AccountScope"
+          maxItems: 16
+          type: array
+        after:
+          format: date-time
+          type: string
+        before:
+          format: date-time
+          type: string
+        filename_query:
+          type: string
+        limit:
+          format: int64
+          maximum: 100
+          minimum: 1
+          type: integer
+        mime_families:
+          items:
+            enum:
+              - image
+              - pdf
+              - audio
+              - video
+              - text
+              - document
+              - archive
+              - other
+            type: string
+          maxItems: 8
+          type: array
+        source_ids:
+          items:
+            format: int64
+            type: integer
+          maxItems: 64
+          type: array
+      required:
+        - filename_query
+      type: object
+    FileSuggestionHTTPResponse:
+      additionalProperties: true
+      properties:
+        candidate_limit_reached:
+          type: boolean
+        index_revision:
+          type: string
+        suggestions:
+          items:
+            $ref: "#/components/schemas/FileSuggestionRow"
+          type: array
+      required:
+        - suggestions
+        - candidate_limit_reached
+        - index_revision
+      type: object
+    FileSuggestionRow:
+      additionalProperties: true
+      properties:
+        content_available:
+          type: boolean
+        content_state:
+          enum:
+            - metadata_only
+            - url_only
+            - missing_blob
+            - local_content
+          type: string
+        conversation_id:
+          format: int64
+          type: integer
+        filename:
+          type: string
+        filename_match:
+          enum:
+            - exact
+            - prefix
+            - typo
+          type: string
+        id:
+          format: int64
+          type: integer
+        message_id:
+          format: int64
+          type: integer
+        mime_family:
+          enum:
+            - image
+            - pdf
+            - audio
+            - video
+            - text
+            - document
+            - archive
+            - other
+          type: string
+        mime_type:
+          type: string
+        occurred_at:
+          format: date-time
+          type:
+            - string
+            - "null"
+        size_bytes:
+          format: int64
+          type: integer
+        source_id:
+          format: int64
+          type: integer
+      required:
+        - id
+        - message_id
+        - conversation_id
+        - source_id
+        - occurred_at
+        - filename
+        - mime_type
+        - mime_family
+        - filename_match
+        - size_bytes
+        - content_state
+        - content_available
+      type: object
     FilteredMessagesResponse:
       additionalProperties: true
       properties:
@@ -6618,6 +6760,44 @@ components:
       required:
         - manifests
       type: object
+    MCPCapabilities:
+      additionalProperties: true
+      properties:
+        routes:
+          items:
+            $ref: "#/components/schemas/MCPRouteDescriptor"
+          type: array
+        version:
+          format: int64
+          type: integer
+      required:
+        - version
+        - routes
+      type: object
+    MCPRouteDescriptor:
+      additionalProperties: true
+      properties:
+        method:
+          type: string
+        operation_id:
+          type: string
+        path:
+          type: string
+        query_parameters:
+          items:
+            type: string
+          type: array
+        request_properties:
+          items:
+            type: string
+          type: array
+      required:
+        - operation_id
+        - method
+        - path
+        - query_parameters
+        - request_properties
+      type: object
     Manifest:
       additionalProperties: false
       properties:
@@ -7428,6 +7608,103 @@ components:
         - labels
         - has_attachments
         - size_bytes
+      type: object
+    MessageTag:
+      additionalProperties: true
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+      required:
+        - id
+        - name
+      type: object
+    MessageTagChange:
+      additionalProperties: false
+      properties:
+        add:
+          items:
+            type: string
+          maxItems: 100
+          type: array
+        dry_run:
+          type: boolean
+        mailbox:
+          type: string
+        remove:
+          items:
+            type: string
+          maxItems: 100
+          type: array
+      type: object
+    MessageTagError:
+      additionalProperties: true
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+        result:
+          $ref: "#/components/schemas/MessageTagResult"
+      required:
+        - error
+        - message
+      type: object
+    MessageTagResult:
+      additionalProperties: true
+      properties:
+        available_tags:
+          items:
+            $ref: "#/components/schemas/MessageTag"
+          type: array
+        before:
+          items:
+            type: string
+          type: array
+        can_create_keywords:
+          type: boolean
+        dry_run:
+          type: boolean
+        flags:
+          items:
+            type: string
+          type: array
+        mailbox:
+          type: string
+        message_id:
+          format: int64
+          type: integer
+        provider:
+          type: string
+        source_id:
+          format: int64
+          type: integer
+        tags:
+          items:
+            type: string
+          type: array
+        uid:
+          format: int64
+          maximum: 4294967295
+          minimum: 0
+          type: integer
+        uidvalidity:
+          format: int64
+          maximum: 4294967295
+          minimum: 0
+          type: integer
+        verified:
+          type: boolean
+      required:
+        - message_id
+        - source_id
+        - provider
+        - tags
+        - before
+        - available_tags
+        - dry_run
+        - verified
       type: object
     MessageTranscript:
       additionalProperties: true
@@ -11143,6 +11420,144 @@ components:
         - filename
         - mime_type
         - mime_family
+        - size_bytes
+        - content_state
+        - content_available
+      type: object
+    PersonFileSuggestionHTTPRequest:
+      additionalProperties: false
+      properties:
+        account_scopes:
+          items:
+            $ref: "#/components/schemas/AccountScope"
+          maxItems: 16
+          type: array
+        after:
+          format: date-time
+          type: string
+        before:
+          format: date-time
+          type: string
+        directions:
+          items:
+            enum:
+              - from_person
+              - to_person
+              - group
+            type: string
+          type: array
+        filename_query:
+          type: string
+        limit:
+          format: int64
+          maximum: 100
+          minimum: 1
+          type: integer
+        mime_families:
+          items:
+            enum:
+              - image
+              - pdf
+              - audio
+              - video
+              - text
+              - document
+              - archive
+              - other
+            type: string
+          maxItems: 8
+          type: array
+        source_ids:
+          items:
+            format: int64
+            type: integer
+          maxItems: 64
+          type: array
+      required:
+        - filename_query
+      type: object
+    PersonFileSuggestionHTTPResponse:
+      additionalProperties: true
+      properties:
+        candidate_limit_reached:
+          type: boolean
+        index_revision:
+          type: string
+        suggestions:
+          items:
+            $ref: "#/components/schemas/PersonFileSuggestionRow"
+          type: array
+      required:
+        - suggestions
+        - candidate_limit_reached
+        - index_revision
+      type: object
+    PersonFileSuggestionRow:
+      additionalProperties: true
+      properties:
+        content_available:
+          type: boolean
+        content_state:
+          enum:
+            - metadata_only
+            - url_only
+            - missing_blob
+            - local_content
+          type: string
+        conversation_id:
+          format: int64
+          type: integer
+        filename:
+          type: string
+        filename_match:
+          enum:
+            - exact
+            - prefix
+            - typo
+          type: string
+        id:
+          format: int64
+          type: integer
+        message_id:
+          format: int64
+          type: integer
+        mime_family:
+          enum:
+            - image
+            - pdf
+            - audio
+            - video
+            - text
+            - document
+            - archive
+            - other
+          type: string
+        mime_type:
+          type: string
+        occurred_at:
+          format: date-time
+          type:
+            - string
+            - "null"
+        person_provenance:
+          $ref: "#/components/schemas/Provenance"
+        size_bytes:
+          format: int64
+          type: integer
+        source_id:
+          format: int64
+          type: integer
+      required:
+        - person_provenance
+        - id
+        - message_id
+        - conversation_id
+        - source_id
+        - occurred_at
+        - filename
+        - mime_type
+        - mime_family
+        - filename_match
         - size_bytes
         - content_state
         - content_available
@@ -15379,7 +15794,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.14.0
+  version: 3.17.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -21052,6 +21467,51 @@ paths:
       summary: Search analytical files
       tags:
         - Exploration
+  /api/v1/files/suggest:
+    post:
+      operationId: suggestFiles
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FileSuggestionHTTPRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FileSuggestionHTTPResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Suggest bounded attachment filenames
+      tags:
+        - Exploration
   /api/v1/files/{id}:
     get:
       operationId: getFile
@@ -22272,6 +22732,27 @@ paths:
       summary: Test task integration discovery, authentication, capabilities, and project
       tags:
         - API
+  /api/v1/mcp/capabilities:
+    get:
+      operationId: getMCPCapabilities
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MCPCapabilities"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Describe supported MCP daemon operations
+      tags:
+        - API
   /api/v1/media/search:
     get:
       operationId: searchMedia
@@ -23164,6 +23645,168 @@ paths:
       security:
         - apiKey: []
       summary: List a message's recordings with transcript state
+      tags:
+        - API
+  /api/v1/messages/{id}/tags:
+    get:
+      operationId: getMessageTags
+      parameters:
+        - description: Archived message ID
+          in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+        - description: Exact IMAP mailbox; defaults to the current original copy or sole current membership
+          in: query
+          name: mailbox
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTagResult"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTagError"
+          description: Bad Request
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTagError"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTagError"
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTagError"
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTagError"
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTagError"
+          description: Not Implemented
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTagError"
+          description: Bad Gateway
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTagError"
+          description: Service Unavailable
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Read native email tags
+      tags:
+        - API
+    post:
+      operationId: updateMessageTags
+      parameters:
+        - description: Archived message ID
+          in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MessageTagChange"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTagResult"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTagError"
+          description: Bad Request
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTagError"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTagError"
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTagError"
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTagError"
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTagError"
+          description: Not Implemented
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTagError"
+          description: Bad Gateway
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTagError"
+          description: Service Unavailable
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Add or remove native email tags
       tags:
         - API
   /api/v1/messages/{id}/tasks:
@@ -26834,6 +27477,65 @@ paths:
       security:
         - apiKey: []
       summary: Search one durable person's analytical files
+      tags:
+        - Exploration
+  /api/v1/people/{id}/files/suggest:
+    post:
+      operationId: suggestPersonFiles
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PersonFileSuggestionHTTPRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonFileSuggestionHTTPResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Suggest bounded attachment filenames for one person
       tags:
         - Exploration
   /api/v1/people/{id}/identities:

@@ -116,6 +116,7 @@ var topLevelCommandGroups = map[string]string{
 	"mcp":                    helpGroupOperations,
 	"media":                  helpGroupRead,
 	"meetings":               helpGroupRead,
+	"message-tags":           helpGroupWrite,
 	"migrate":                helpGroupMaintenance,
 	"multimodal":             helpGroupIndex,
 	"muesli-hook":            helpGroupSources,

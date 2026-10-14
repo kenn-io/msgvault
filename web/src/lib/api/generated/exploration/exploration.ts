@@ -18,6 +18,8 @@ import type {
   FileGroupsHTTPResponse,
   FileSearchHTTPRequest,
   FileSearchHTTPResponse,
+  FileSuggestionHTTPRequest,
+  FileSuggestionHTTPResponse,
   GetDomainContextSummaryPathParameters,
   GetDomainTimelinePathParameters,
   GetParticipantContextSummaryPathParameters,
@@ -29,6 +31,8 @@ import type {
   ParticipantSearchHTTPResponse,
   PersonFileSearchHTTPRequest,
   PersonFileSearchHTTPResponse,
+  PersonFileSuggestionHTTPRequest,
+  PersonFileSuggestionHTTPResponse,
   RelationshipCalendarHTTPRequest,
   RelationshipCalendarHTTPResponse,
   RelationshipTimelineHTTPRequest,
@@ -42,6 +46,7 @@ import type {
   SearchPersonFilesPathParameters,
   SearchResponse,
   SearchVisualAttachmentsBodyTwo,
+  SuggestPersonFilesPathParameters,
   VisualTextSearchRequest,
 } from "../models";
 
@@ -243,6 +248,23 @@ export const searchFiles = (
   );
 };
 /**
+ * @summary Suggest bounded attachment filenames
+ */
+export const suggestFiles = (
+  fileSuggestionHTTPRequest: FileSuggestionHTTPRequest,
+  options?: SecondParameter<typeof orvalFetch<FileSuggestionHTTPResponse>>,
+) => {
+  return orvalFetch<FileSuggestionHTTPResponse>(
+    {
+      url: `/api/v1/files/suggest`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: fileSuggestionHTTPRequest,
+    },
+    options,
+  );
+};
+/**
  * @summary Search observed participant clusters
  */
 export const searchParticipants = (
@@ -329,6 +351,26 @@ export const searchPersonFiles = (
       method: "POST",
       headers: { "Content-Type": "application/json" },
       data: personFileSearchHTTPRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary Suggest bounded attachment filenames for one person
+ */
+export const suggestPersonFiles = (
+  { id }: SuggestPersonFilesPathParameters,
+  personFileSuggestionHTTPRequest: PersonFileSuggestionHTTPRequest,
+  options?: SecondParameter<
+    typeof orvalFetch<PersonFileSuggestionHTTPResponse>
+  >,
+) => {
+  return orvalFetch<PersonFileSuggestionHTTPResponse>(
+    {
+      url: `/api/v1/people/${encodeURIComponent(String(id))}/files/suggest`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: personFileSuggestionHTTPRequest,
     },
     options,
   );

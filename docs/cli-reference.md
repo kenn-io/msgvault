@@ -19,6 +19,7 @@ appear in full under Inherited Flags.
 | Import local exports | [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [import-imazing-csv](#import-imazing-csv), [text imports](usage/text-messages.md) |
 | Search and browse | [search](#search), [tui](#tui), [show-message](#show-message), [documents](#documents), [embeddings](#embeddings), [multimodal](#multimodal), [eval](#eval) |
 | Maintain people and contacts | [person](#person), [people guide](usage/people.md), [CardDAV](usage/people-carddav.md) |
+| Edit live email tags | [message-tags](#message-tags) |
 | Organize accounts | [identity](#identity), [collection](#collection), [update-account](#update-account) |
 | Read meeting evidence | [meetings](#meetings), [meeting workflow](usage/meetings.md) |
 | Export | [export-messages](#export-messages), [export-eml](#export-eml), [export-attachments](#export-attachments), [create-subset](#create-subset) |
@@ -276,6 +277,81 @@ Credentials are stored in `tokens/imap_<hash>.json` with restricted file permiss
 After adding an account, sync it with `msgvault sync-full`. IMAP accounts use the same `sync` and `sync-full` commands as Gmail. See [Setup Guide](/docs/setup/#add-an-imap-account) for a walkthrough.
 
 ---
+
+## message-tags
+
+Read or update native tags on one email through the selected daemon. Requires
+API schema 3.15.0 or newer. The positional ID is msgvault's positive archived
+message ID.
+
+```bash
+msgvault message-tags 42 --json
+msgvault message-tags 42 --add Label_123 --remove Label_456 --dry-run --json
+msgvault message-tags 42 --add Next --remove Old --mailbox INBOX
+msgvault message-tags 73 --add Next --remove Old --json
+```
+
+The same command selects the backend from the archived message's account:
+
+| Account connection | Editable tags |
+|---|---|
+| Gmail API | Existing user label IDs |
+| IMAP, including Microsoft and Fastmail accounts | Persistent custom keywords advertised by the server |
+| Microsoft Graph (`msmail`) | Outlook category names |
+
+Gmail uses existing user label IDs from `available_tags`, rather than label
+names or local label IDs. System labels cannot be edited through this command.
+Reads and previews use the existing read grant. Edits need `gmail.modify` or
+`mail.google.com`; a saved read-only grant is rejected without changing its token. Reauthorize it with
+`msgvault add-account <account> --force` when you want write access.
+
+IMAP uses custom ASCII keyword atoms, up to 255 bytes, compared without case.
+The mailbox must advertise persistent support for the keyword, or `\*` to
+allow new keywords. An omitted `PERMANENTFLAGS` allows all flags; an explicit
+empty list allows none. System flags such as `\Seen` and `\Flagged` are preserved.
+The edit targets a recorded mailbox UID and UIDVALIDITY. With no `--mailbox`,
+it uses the current original copy, or the sole current membership if the
+original is absent. Multiple surviving copies require `--mailbox`. Sync first
+if no current membership remains. See [IMAP keywords](usage/imap.md#edit-keyword-tags).
+
+Microsoft Graph uses category names up to 255 Unicode characters, excludes
+commas, and compares names without case while preserving provider spelling.
+Reads and previews use the existing read grant. Writes need `Mail.ReadWrite`; grant it with
+`msgvault add-o365 <account> --graph --mail-write`. The daemon never starts a
+sign-in flow or replaces a read-only token during a tag edit. An edit preserves
+other categories and checks the provider version before replacing the category
+collection. If another client changed the message, read its tags and retry.
+The archive shows categories as `Category: <name>` separately from mail folders,
+and later syncs retain and refresh them. Its available category catalog contains
+only names on this message. A Graph 429 returns `provider_write_failed`; retry
+after the limit clears. Transport failures and 5xx return `remote_unknown`;
+read the current tags before retrying.
+
+Fastmail messages currently use IMAP, even when a JMAP token is configured for
+address discovery. JMAP and IMAP share custom keywords, so the existing IMAP
+connection edits those shared tags without another credential. Outlook
+categories require a Microsoft Graph account; an IMAP connection can edit only
+the keywords its server supports. File imports such as MBOX, PST, and EML have
+no connected provider to update and return `unsupported_provider`.
+
+| Flag | Contract |
+|---|---|
+| `--add` | Add one native tag; repeat for multiple tags, at most 100 |
+| `--remove` | Remove one native tag; repeat for multiple tags, at most 100 |
+| `--mailbox` | Select an exact recorded IMAP mailbox copy |
+| `--dry-run` | Preview an edit without a provider write or local update |
+| `--json` | Return the result, or an error with the last observed result |
+
+An edit needs at least one add or remove tag. A tag cannot occur in both lists.
+With neither flag, the command reads the current tags and available tag IDs.
+Unrelated tags are preserved. A satisfied retry makes no provider write.
+
+`verified: true` means provider readback satisfied the requested changes at
+that time. Another client can edit the message afterward. Preview does not
+prove write access: the provider can still reject a later write. If an edit
+partly applies or readback fails, inspect current tags before retrying. If
+`remote_accepted_local_failed` is returned, the provider result was verified
+but local persistence failed; sync the account.
 
 ## draft-reply
 
@@ -642,6 +718,7 @@ Requires a `[microsoft]` section with `client_id` in `config.toml`. See the [OAu
 | `--no-default-identity` | `false` | Do not auto-confirm the email address as this account's "me" identity. Saved across syncs and re-authorization; only explicit `--no-default-identity=false` clears the choice. See [saved identity choice](#saved-default-identity-choice) |
 | `--graph` | `false` | Sync through the Microsoft Graph mail API instead of IMAP. Creates an `msmail` account. Needs the `Mail.Read` permission. `delete-staged` asks for `Mail.ReadWrite` on first use |
 | `--sign-in` | | Microsoft sign-in name and browser login hint when it differs from the mailbox address. IMAP only; mutually exclusive with `--graph` |
+| `--mail-write` | `false` | With `--graph`, request `Mail.ReadWrite` for category edits and remote deletion |
 
 IMAP checks Microsoft's `email` claim when present, otherwise `preferred_username`. A differing username now requires `--sign-in`, including during re-authorization; msgvault previously accepted it with a warning. The flag permits that username only when `email` is absent. Failed checks preserve existing credentials. Graph mail and Teams also consult your Microsoft profile when token identity fields differ or are absent, accepting your mailbox or an SMTP alias listed there.
 
@@ -1892,11 +1969,12 @@ attachments of these messages outside the MIME payload, in a sibling
 `Attachments/N/` directory. The importer restores cached attachments directly
 inside the message's outer multipart, within the message size limit.
 Attachments in nested parts, such as inside some forwarded messages, are not
-restored. An attachment without a cached file stays absent; unreadable files
-or directories produce a warning. Re-importing a partial message adds newly
-cached attachments to the existing message without creating another copy.
+restored. An attachment without a cached file stays absent. An unreadable
+cached file or directory counts as an error and leaves the `.emlx` file to be
+retried on the next import. Re-importing a partial message adds newly cached
+attachments to the existing message without creating another copy.
 When the archived message already holds every cached attachment, the rerun
-skips it instead of rewriting it. If both `N.emlx` and
+skips ingestion instead of rewriting it. If both `N.emlx` and
 `N.partial.emlx` exist, the complete `N.emlx` copy wins. The command summary
 reports the number of partial files read and how many attachments the run
 added to the archive.
@@ -1907,10 +1985,42 @@ added to the archive.
 | `--account` | — | Filter to specific account(s) during auto-discover (repeatable) |
 | `--accounts-db` | — | Custom path to macOS `Accounts4.sqlite` |
 | `--identifier` | — | Manual identifier when auto-discover is not suitable |
-| `--no-resume` | `false` | Start fresh, ignoring interrupted progress |
+| `--no-resume` | `false` | Report totals for this run only, without an interrupted run's counts; completed file receipts still apply |
+| `--full-reconcile` | `false` | Invalidate this root's receipts and reconcile every discovered file |
+| `--max-message-bytes` | `134217728` (128 MiB) | Maximum EMLX file and merged MIME size in bytes, including MIME encoding; explicit values must be 1–9223372036854775806 |
 | `--checkpoint-interval` | `200` | Save progress every N messages |
 | `--no-attachments` | `false` | Skip writing attachments to disk |
 | `--no-default-identity` | `false` | Do not auto-confirm the identifier as this source's "me" identity |
+
+On unreleased `main`, each completed `.emlx` file gets a receipt. Repeat
+imports still walk every mailbox directory and check each file's metadata,
+including its cached attachments. They skip reading files whose metadata is
+unchanged and whose message is complete; the summary reports them as
+`Unchanged`. New files are imported whatever their sent date. A message found
+in another mailbox keeps the labels it already has. Removing files from Apple
+Mail's local cache never deletes archived messages.
+
+A file is complete once its message, attachments under the current
+`--no-attachments` setting, and full-text index entry are stored. Skipping
+reads requires Linux or macOS file metadata and a path without symbolic links;
+other files are read on every import. Remote-image archiving also turns
+skipping off. Receipts trust file metadata and do not check archived content.
+Run `--full-reconcile` after you suspect stale state or change archived
+messages, attachment files or the search index directly; it re-imports every
+discovered file, including ones whose content matches the archive.
+
+Problems with one file do not fail the import. An unreadable or oversized file,
+an unreadable cached attachment, a merge over the byte limit, or a failed
+attachment or search-index write counts as an error. That file stays pending and
+is retried on the next import, and the run still completes and links replies.
+Database failures fail the run. A message whose MIME structure cannot be parsed
+is archived with its raw bytes and the headers that could be recovered, and is
+not retried. A file with no message content is skipped with a warning.
+
+If restored attachments would exceed the merged message limit, the importer
+keeps previously archived attachments and leaves the file pending. Retry with a
+larger `--max-message-bytes` value that fits your memory. The limit applies in
+both automatic and manual account modes and only to the run that sets it.
 
 See [Importing Local Email](/docs/usage/importing/) for usage examples.
 
@@ -2802,6 +2912,35 @@ to one lane and cannot be used with `all`. See
 [person search](/docs/usage/people/#find-a-person-by-what-you-remember) and
 [person files](/docs/usage/people/#find-files-related-to-a-person) for index
 requirements, supported filters, and pagination.
+
+#### Typo-tolerant filenames
+
+Newer than the latest release, `--fuzzy-filename` explicitly selects filename
+suggestions:
+
+```bash
+msgvault person files 42 --filename 'quaterly report' --fuzzy-filename
+msgvault person files 42 --filename 'quaterly report' --fuzzy-filename --direction to_person --mime-family pdf --limit 20 --json
+```
+
+The flag requires a nonempty `--filename` in the `metadata` lane. It rejects
+`--query` and `--cursor`, including explicitly supplied empty values. Direction,
+MIME-family and date filters still apply. Suggestions default to 20 results;
+an explicit `--limit` must be 1–100. Ordinary file lookup keeps its existing
+substring filter, output, pagination and default limit of 100.
+
+Human output includes `MATCH` (`exact`, `prefix`, or `typo`) and person
+provenance. It prints “Candidate limit reached; suggestions may be incomplete.”
+when the bounded lookup cannot prove exhaustion. `--json` returns a separate
+object with `suggestions`, `candidate_limit_reached`, and `index_revision`;
+there is no cursor or total count. Each suggestion retains the actual filename,
+attachment occurrence and matching person roles.
+
+An unavailable or warming index returns `filename_index_unavailable`; a person
+scope exceeding the bounds returns `filename_scope_too_large`. The command
+reports those errors rather than retrying an ordinary or unscoped search. See
+[filename suggestion limits](architecture/search-ranking.md#filename-suggestions)
+and the [API contract](api-server.md#filename-suggestions).
 
 ### person track, provider, sweep, and facts
 
@@ -3955,7 +4094,9 @@ msgvault mcp [flags]
 | `--http-token-file` | — | On unreleased `main`, read an independent inbound bearer key from an owner-only file; takes priority over `--http-token-env`. Requires `--http`. |
 | `--http-token-env` | — | On unreleased `main`, name the environment variable holding an independent inbound bearer key. Requires `--http`. |
 | `--http-allow-insecure` | `false` | Allow non-loopback HTTP binding without an effective inbound key. A configured key is still enforced; without one, use only behind a trusted network boundary or authenticated reverse proxy. |
-| `--http-allow-writes` | `false` | Expose Saved View management, attachment export, deletion staging, and managed draft writes over StreamableHTTP. Calendar event mutations also require `--allow-calendar-writes`, and Kata issue writes `--allow-kata-writes`. Enable only for trusted, authenticated clients. |
+| `--http-allow-writes` | `false` | Expose native email tag edits, Saved View management, attachment export, deletion staging, and managed draft writes over StreamableHTTP. Profile, source, calendar, identity, CardDAV, and Kata writes also need their separate opt-ins; see [write controls](usage/chat.md#write-controls). Enable only for trusted, authenticated clients. |
+| `--allow-profile-writes` | `false` | Expose person promotion, display-name edits, and private Notes writes. HTTP also requires `--http-allow-writes`. |
+| `--allow-source-writes` | `false` | On unreleased `main`, expose source sync and Slack selection writes. Each call requires confirmation. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-calendar-writes` | `false` | Expose calendar event mutation tools. HTTP also requires `--http-allow-writes`; only enable for sessions where the user explicitly authorizes calendar writes. |
 | `--allow-kata-writes` | `false` | Expose `create_kata_issue` and `link_kata_evidence`; `find_kata_issues` and `get_kata_issue_context` need no flag. HTTP also requires `--http-allow-writes`; archive text is untrusted input, so only enable for sessions where the user explicitly authorizes Kata issue writes. See [Kata issues](usage/kata-issues.md). |
 

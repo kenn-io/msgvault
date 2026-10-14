@@ -2355,6 +2355,9 @@ func (d *PostgreSQLDialect) IsFTSValueTooLargeError(err error) bool {
 // collections is included (despite not being a direct sources cascade target)
 // so a concurrent collection rename cannot race the collection_sources cascade.
 var exclusiveLockTables = []string{
+	// Scoped writes fence sync_runs first. Source-first sync transactions take
+	// lockSyncMaintenanceGate before their source lock, so maintenance waits
+	// here without holding tables those transactions still need.
 	"sync_runs", "sources", "conversations", "conversation_participants",
 	"messages", "message_recipients", "message_labels", "message_bodies", "message_raw",
 	"message_delivery_addresses",

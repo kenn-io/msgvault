@@ -39,6 +39,27 @@ func TestOpenAPIDocumentUsesAPISchemaVersion(t *testing.T) {
 	}
 }
 
+func TestFilenameSuggestionIntegratedAPIVersion(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	for _, doc := range []*huma.OpenAPI{OpenAPIDocument(), openAPIClientDocument()} {
+		requirements.NotNil(doc.Info)
+		for _, path := range []string{"/api/v1/files/suggest", "/api/v1/people/{id}/files/suggest", "/api/v1/integrations/kata/issues/{ref}/context", "/api/v1/media/search/status"} {
+			assertions.NotNil(doc.Paths[path], "new routes must coexist with upstream API contracts: %s", path)
+		}
+		reference := doc.Components.Schemas.Map()["Reference"]
+		requirements.NotNil(reference)
+		requirements.NotNil(reference.Properties["kind"])
+		assertions.Contains(reference.Properties["kind"].Enum, "docbank_rendition")
+		assertions.Contains(reference.Properties, "docbank_rendition")
+		transcript := doc.Components.Schemas.Map()["DocbankReference"]
+		requirements.NotNil(transcript)
+		for _, field := range []string{"vault_uid", "node_id", "content_version_id", "content_sha256", "rendition_attachment_id", "build_id", "rendition_sha256", "start_rune", "end_rune"} {
+			assertions.Contains(transcript.Required, field)
+		}
+	}
+}
+
 func TestCalendarEventInputSchemaMatchesControlRequests(t *testing.T) {
 	t.Parallel()
 	for name, build := range map[string]func() *huma.OpenAPI{

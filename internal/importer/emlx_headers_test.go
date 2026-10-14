@@ -71,7 +71,7 @@ func TestImportEmlxLinksReplyRegardlessOfOrder(t *testing.T) {
 	}
 }
 
-func TestImportEmlxRepairsMissingMessageIDOnReimport(t *testing.T) {
+func TestImportEmlxFullReconcileRepairsMissingMessageID(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st, tmp := openTestStore(t)
@@ -123,9 +123,11 @@ func TestImportEmlxRepairsMissingMessageIDOnReimport(t *testing.T) {
 		return result
 	}
 	originalContent := snapshot()
-	before, err := st.DerivedDataRevision()
-	requirements.NoError(err)
-	result, err := ImportEmlxDir(t.Context(), st, root, opts)
+	// A completed receipt is a cache hint: full reconciliation repairs archive
+	// changes made behind it.
+	reconcile := opts
+	reconcile.FullReconcile = true
+	result, err := ImportEmlxDir(t.Context(), st, root, reconcile)
 	requirements.NoError(err)
 	assertions.Equal(int64(0), result.MessagesAdded)
 	var gotID int64
@@ -137,7 +139,6 @@ func TestImportEmlxRepairsMissingMessageIDOnReimport(t *testing.T) {
 	assertions.JSONEq(`{"other":"keep"}`, metadata)
 	after, err := st.DerivedDataRevision()
 	requirements.NoError(err)
-	assertions.Greater(after, before)
 	_, err = ImportEmlxDir(t.Context(), st, root, opts)
 	requirements.NoError(err)
 	again, err := st.DerivedDataRevision()
@@ -170,7 +171,7 @@ func TestImportEmlxLinksReplyWhenParentArrivesLater(t *testing.T) {
 	assertions.Equal(sql.NullInt64{Int64: parentID, Valid: true}, reply)
 }
 
-func TestImportEmlxResumesReplyPhaseWithoutReimporting(t *testing.T) {
+func TestImportEmlxReplyPhaseRevisitsChangedOccurrences(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st, tmp := openTestStore(t)
@@ -181,19 +182,21 @@ func TestImportEmlxResumesReplyPhaseWithoutReimporting(t *testing.T) {
 	opts := EmlxImportOptions{Identifier: "recipient@example.test"}
 	first, err := ImportEmlxDir(t.Context(), st, root, opts)
 	requirements.NoError(err)
-	// Reopen the durable checkpoint at the reply phase, as after an interrupted
-	// reply pass. The file is now invalid, so a file-phase restart would fail.
+	// A reply checkpoint cannot hide a changed file. The archived raw remains
+	// preserved and the changed occurrence must remain retryable.
 	_, err = st.DB().Exec(`UPDATE sync_runs SET status = 'running', completed_at = NULL WHERE source_id = ?`, first.SourceID)
 	requirements.NoError(err)
 	requirements.NoError(os.WriteFile(filepath.Join(root, "Messages", "1.emlx"), []byte("invalid emlx"), 0600))
 	resumed, err := ImportEmlxDir(t.Context(), st, root, opts)
 	requirements.NoError(err)
 	assertions.True(resumed.WasResumed)
-	assertions.Zero(resumed.MessagesProcessed)
-	assertions.Zero(resumed.Errors)
+	assertions.Equal(int64(1), resumed.MessagesProcessed)
+	assertions.Equal(int64(1), resumed.Errors)
+	assertions.False(resumed.HardErrors)
+	assertions.Zero(countEmlxLedgerEntries(t, st, first.SourceID, "emlx-occurrence", "imported"))
 	var status string
 	requirements.NoError(st.DB().QueryRow(`SELECT status FROM sync_runs ORDER BY id DESC LIMIT 1`).Scan(&status))
-	assertions.Equal(store.SyncStatusCompleted, status)
+	assertions.Equal(store.SyncStatusCompleted, status, "an unreadable file does not fail the run")
 }
 
 func TestImportEmlxHeaderFailureDoesNotLoseAttachmentsOnResume(t *testing.T) {

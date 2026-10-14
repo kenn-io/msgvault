@@ -1,5 +1,5 @@
-msgvault archives email, chats, and meetings offline. Commands use a local daemon
-or config.toml's [remote].url; --local forces local use.
+Archive email, chats, and meetings offline. Use a local daemon
+or config.toml's [remote].url; --local forces local.
 
 Start here:
   msgvault list-accounts --json    # id, email, type, counts, sync
@@ -14,10 +14,10 @@ Start here:
   msgvault daemon status
   msgvault setup status --json  # features and next steps
 
-Output and exit status:
+Output:
   --json: JSON stdout (export-messages: JSON Lines). Logs/progress: stderr.
   --log-level=warn quiets logs. Exit: 0 success, 1 error, 130 interrupted.
-  See 'msgvault quickstart' for more.
+  More: msgvault quickstart.
 
 Usage:
   msgvault [command]
@@ -131,6 +131,7 @@ Drafts, calendar, and Kata (write to providers):
   draft-reply   Create an IMAP or Gmail reply draft from an archived message
   draft-send-as List Gmail send-as identities
   kata          Create Kata issues that quote archived evidence
+  message-tags  Read or update native email tags
 
 Review and delete:
   cancel-deletion Cancel pending or in-progress deletion batches

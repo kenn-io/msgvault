@@ -184,7 +184,7 @@ func (s *Store) applyIMAPMailboxDeltas(
 	}
 	return s.withAttributionTxContext(ctx, attributionLock{Sources: []int64{sourceID}}, func(tx *loggedTx) error {
 		if syncRunID > 0 {
-			if err := validateCurrentSyncGeneration(
+			if err := s.validateCurrentSyncGeneration(
 				ctx, tx, sourceID, syncRunID, SyncStatusCompleted,
 			); err != nil {
 				return err
@@ -278,8 +278,10 @@ func (s *Store) applyIMAPMailboxDeltas(
 					}
 					prior, saved := stored[key]
 					delete(stored, key)
+					// Servers may return the same flags in a different order.
 					if saved && prior.flagsDecoded &&
-						prior.messageID == messageID && slices.Equal(prior.flags, flags) {
+						prior.messageID == messageID &&
+						slices.Equal(slices.Sorted(slices.Values(prior.flags)), slices.Sorted(slices.Values(flags))) {
 						// Identical membership: writing it would only move
 						// updated_at and rebuild labels that cannot have changed.
 						continue

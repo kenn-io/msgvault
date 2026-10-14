@@ -296,7 +296,13 @@ func TestDaemonMCPServeOptionsUsesHealthForVectorTools(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			assert := assert.New(t)
 			var healthRequests atomic.Int32
+			var discoveryRequests atomic.Int32
 			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/v1/mcp/capabilities" {
+					discoveryRequests.Add(1)
+					http.NotFound(w, r)
+					return
+				}
 				assert.Equal("/api/v1/health", r.URL.Path, "startup must not request archive statistics")
 				healthRequests.Add(1)
 				if tt.health == "" {
@@ -312,6 +318,7 @@ func TestDaemonMCPServeOptionsUsesHealthForVectorTools(t *testing.T) {
 			assert.Equal(tt.wantText, opts.SimilarSearcher != nil, "similar messages")
 			assert.Equal(tt.wantVisual, opts.VisualSearcher != nil, "visual search")
 			assert.Equal(int32(1), healthRequests.Load(), "reuse the schema probe")
+			assert.Equal(int32(1), discoveryRequests.Load(), "probe optional operations once")
 		})
 	}
 }
@@ -353,6 +360,8 @@ func TestDaemonMCPVectorReadinessIsCheckedAtRequestTime(t *testing.T) {
 	require.ErrorAs(err, &coded)
 	assert.Equal("vector_initializing", coded.APIErrorCode())
 	path := <-requests
+	assert.Equal("/api/v1/mcp/capabilities", path, "startup probes optional operations")
+	path = <-requests
 	assert.Equal("/api/v1/health", path, "startup reads the daemon schema")
 	path = <-requests
 	assert.Equal("/api/v1/media/search/status", path, "capability detection checks Docbank separately")
@@ -366,17 +375,18 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 	})
 	_ = testCtx
 	tests := []struct {
-		name           string
-		schemaVersion  string
-		wantPeople     bool
-		wantDirectory  bool
-		wantSavedViews bool
-		wantMeetings   bool
-		wantAgenda     bool
-		wantArchiveSQL bool
-		wantReview     bool
-		wantScoring    bool
-		wantCardDAV    bool
+		name            string
+		schemaVersion   string
+		wantPeople      bool
+		wantDirectory   bool
+		wantSavedViews  bool
+		wantMeetings    bool
+		wantAgenda      bool
+		wantArchiveSQL  bool
+		wantReview      bool
+		wantScoring     bool
+		wantCardDAV     bool
+		wantMessageTags bool
 	}{
 		{name: "people schema", schemaVersion: "2.10.0", wantPeople: true},
 		{name: "directory predecessor", schemaVersion: "2.12.9", wantPeople: true},
@@ -394,6 +404,8 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 		{name: "person CardDAV schema", schemaVersion: "2.32.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true},
 		{name: "identity review and scoring predecessor", schemaVersion: "2.35.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true},
 		{name: "identity review and scoring schema", schemaVersion: "3.0.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true},
+		{name: "native message tags schema", schemaVersion: "3.15.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantMessageTags: true},
+		{name: "tags predecessor 3.14.0", schemaVersion: "3.14.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true},
 		{name: "older same-major schema", schemaVersion: "2.9.9"},
 		{name: "malformed schema", schemaVersion: "not-a-version"},
 		{name: "missing schema"},
@@ -432,6 +444,7 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 			assert.Equal(tt.wantReview, opts.IdentityReview != nil)
 			assert.Equal(tt.wantCardDAV, opts.PersonCardDAV != nil)
 			assert.Equal(tt.wantScoring, opts.IdentityScoring != nil)
+			assert.Equal(tt.wantMessageTags, opts.MessageTags != nil)
 		})
 	}
 }

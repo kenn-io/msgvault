@@ -102,6 +102,8 @@ type GroupFilesBody = FileGroupsHTTPRequest
 
 type SearchFilesBody = FileSearchHTTPRequest
 
+type SuggestFilesBody = FileSuggestionHTTPRequest
+
 type LinkIdentityParticipantsBody = IdentityLinkRequest
 
 type ReviewAcceptIdentityMatchCandidateBody = DecideIdentityMatchReviewedRequest
@@ -133,6 +135,8 @@ type ListMeetingActionItemsBody = MeetingActionsRequest
 type GetMeetingContextBody = MeetingContextRequest
 
 type GetMeetingMetricsBody = MeetingMetricsRequest
+
+type UpdateMessageTagsBody = MessageTagChange
 
 type CreateOrLinkMessageTaskBody = TaskLinkMutationRequest
 
@@ -179,6 +183,8 @@ type RejectPersonBriefBody = RejectPersonBriefRequest
 type SetPersonFactPinBody = SetPersonFactPinRequest
 
 type SearchPersonFilesBody = PersonFileSearchHTTPRequest
+
+type SuggestPersonFilesBody = PersonFileSuggestionHTTPRequest
 
 type MergePersonsBody = MergePersonRequest
 

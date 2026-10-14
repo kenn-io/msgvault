@@ -18,6 +18,39 @@ func labelWorkTracker(gate api.LabeledOperationGate, label string) scheduler.Wor
 	return labeledWorkTracker{gate: gate, label: label}
 }
 
+type scheduledIdleWorkTracker struct {
+	tracker scheduler.WorkTracker
+}
+
+func scheduleIdleWorkTracker(tracker scheduler.WorkTracker) scheduler.WorkTracker {
+	if tracker == nil {
+		return nil
+	}
+	return scheduledIdleWorkTracker{tracker: tracker}
+}
+
+func (t scheduledIdleWorkTracker) BeginWork() (func(), bool) {
+	return t.tracker.BeginWork()
+}
+
+func (t scheduledIdleWorkTracker) BeginWorkContext(ctx context.Context) (func(), bool) {
+	return t.tracker.BeginWorkContext(ctx)
+}
+
+func (t scheduledIdleWorkTracker) BeginLabeledWorkContext(ctx context.Context, label string) (func(), bool) {
+	if label == filenameDiscoveryJobName {
+		if maintenance, ok := t.tracker.(interface {
+			BeginMaintenanceWorkContext(ctx context.Context) (func(), bool)
+		}); ok {
+			return maintenance.BeginMaintenanceWorkContext(ctx)
+		}
+	}
+	if labeled, ok := t.tracker.(scheduler.LabeledWorkTracker); ok {
+		return labeled.BeginLabeledWorkContext(ctx, label)
+	}
+	return t.tracker.BeginWorkContext(ctx)
+}
+
 type labeledWorkTracker struct {
 	gate  api.LabeledOperationGate
 	label string

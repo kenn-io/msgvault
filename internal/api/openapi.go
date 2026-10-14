@@ -361,7 +361,11 @@ import (
 // 3.14.0 adds resumable paused source syncs to operation history.
 // 3.14.0 adds filename: filters, optional include_snippet/match_snippet context,
 // attachment names/counts, and hybrid_available on CLI search responses.
-const APISchemaVersion = "3.14.0"
+// 3.15.0 adds native Gmail label, IMAP keyword, and Microsoft Graph category
+// reads and delta updates.
+// 3.16.0 adds authenticated implementation-only MCP capability discovery.
+// 3.17.0 adds bounded opt-in filename suggestions, including person scope.
+const APISchemaVersion = "3.17.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -1136,6 +1140,42 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 			schema.Extensions = map[string]any{}
 		}
 		schema.Extensions["x-enum-names"] = enumNames
+	}
+	for _, name := range []string{"FileSuggestionRow", "PersonFileSuggestionRow"} {
+		schema := schemas[name]
+		nullableSchemaProperty(schema, "occurred_at")
+		if schema == nil {
+			continue
+		}
+		// Unknown MIME is an empty string, not a missing property.
+		if mime := schema.Properties["mime_type"]; mime != nil {
+			mime.Nullable = true
+		}
+	}
+	for _, name := range []string{"FileSuggestionHTTPRequest", "PersonFileSuggestionHTTPRequest", "FileSuggestionRow", "PersonFileSuggestionRow"} {
+		if schema := schemas[name]; schema != nil {
+			for property, suffix := range map[string]string{
+				"mime_families": "MimeFamilies", "mime_family": "MimeFamily",
+				"directions": "Directions", "content_state": "ContentState", "filename_match": "FilenameMatch",
+			} {
+				field := schema.Properties[property]
+				if field == nil {
+					continue
+				}
+				if field.Type == huma.TypeArray {
+					field = field.Items
+				}
+				values := make([]string, len(field.Enum))
+				for i, value := range field.Enum {
+					text, ok := value.(string)
+					if !ok {
+						panic("filename suggestion enum must contain strings")
+					}
+					values[i] = text
+				}
+				setEnumNames(field, qualifiedEnumNames(name+suffix, values))
+			}
+		}
 	}
 	if recording := schemas["MessageRecording"]; recording != nil {
 		setEnumNames(recording.Properties["state"], qualifiedEnumNames("MessageRecordingState",

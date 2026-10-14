@@ -39,8 +39,6 @@ jobs:
             VERSION=test
             COMMIT=${{ github.sha }}
             BUILD_DATE=test
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
 
       - name: Smoke test (amd64)
         run: scripts/smoke-container.sh msgvault:test

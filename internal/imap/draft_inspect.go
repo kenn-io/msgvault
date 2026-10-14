@@ -11,7 +11,7 @@ import (
 	"github.com/emersion/go-imap/v2/imapclient"
 )
 
-// DraftReceipt is the immutable provider identity recorded by APPEND.
+// DraftReceipt identifies a message by its mailbox UID and UIDVALIDITY.
 type DraftReceipt struct {
 	Mailbox     string
 	UIDValidity uint32

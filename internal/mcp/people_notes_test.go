@@ -41,6 +41,83 @@ type recordingPeopleBackend struct {
 	calendarErr          error
 }
 
+type namedPromotionTestBackend struct {
+	*recordingPeopleBackend
+
+	namedParticipantID int64
+	displayName        *string
+}
+
+func (b *namedPromotionTestBackend) PromoteWithDisplayName(_ context.Context, participantID int64, displayName *string) (*OperationResult, error) {
+	b.namedParticipantID = participantID
+	b.displayName = displayName
+	return &OperationResult{Output: b.promotedPerson}, b.promoteErr
+}
+
+func TestNamedPromotionSchemaIsLimitedToSupportingBackends(t *testing.T) {
+	legacy := &recordingPeopleBackend{}
+	legacyTools := toolsByName(t, rawListTools(t, peopleToolOptions(legacy), true))
+	assert.Equal(t, []string{"participant_id"}, toolPropertyNames(t, legacyTools[ToolPromotePerson]))
+	named := &namedPromotionTestBackend{recordingPeopleBackend: legacy}
+	namedTools := toolsByName(t, rawListTools(t, peopleToolOptions(named), true))
+	assert.Equal(t, []string{"display_name", "participant_id"}, toolPropertyNames(t, namedTools[ToolPromotePerson]))
+}
+
+func TestNamedPromotionWithoutDisplayNameNeedsNoConfirmation(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		args map[string]any
+	}{
+		{name: "omitted", args: map[string]any{"participant_id": 11}},
+		{name: "null", args: map[string]any{"participant_id": 11, "display_name": nil}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			assertions := assert.New(t)
+			now := time.Date(2026, 8, 20, 12, 30, 0, 0, time.UTC)
+			backend := &namedPromotionTestBackend{recordingPeopleBackend: &recordingPeopleBackend{
+				promotedPerson: &store.Person{ID: 7, VCardUID: "person-7", DisplayName: new("Observed Example"), Revision: 1, ParticipantIDs: []int64{11}, CreatedAt: now, UpdatedAt: now},
+			}}
+			result := rawCallTool(t, peopleToolOptions(backend), ToolPromotePerson, test.args)
+			require.NotEqual(t, true, result["isError"], "result: %#v", result)
+			assertions.Empty(result["inputRequests"])
+			assertions.Equal(int64(11), backend.promoteParticipantID)
+			assertions.Zero(backend.namedParticipantID)
+			structured := toolStructuredContent(t, result)
+			assertions.InDelta(7, structured["id"], 0)
+			assertions.Equal("Observed Example", structured["display_name"])
+		})
+	}
+}
+
+func TestNamedPromotionStringRequiresConfirmation(t *testing.T) {
+	for _, displayName := range []string{"Chosen Example", ""} {
+		t.Run(displayName, func(t *testing.T) {
+			assertions := assert.New(t)
+			now := time.Date(2026, 8, 20, 12, 30, 0, 0, time.UTC)
+			backend := &namedPromotionTestBackend{recordingPeopleBackend: &recordingPeopleBackend{
+				promotedPerson: &store.Person{ID: 7, VCardUID: "person-7", Revision: 1, ParticipantIDs: []int64{11}, CreatedAt: now, UpdatedAt: now},
+			}}
+			args := map[string]any{"participant_id": 11, "display_name": displayName}
+			rejected := confirmedCallTool(t, peopleToolOptions(backend), ToolPromotePerson, args, false)
+			assertions.Equal(true, rejected["isError"])
+			assertions.Zero(backend.namedParticipantID)
+			assertions.Zero(backend.promoteParticipantID)
+
+			prompted := false
+			result := confirmedCallTool(t, peopleToolOptions(backend), ToolPromotePerson, args, true, func(message string) {
+				prompted = true
+				assertions.Contains(message, `"participant_id":11`)
+			})
+			assertions.True(prompted)
+			assertions.Equal(false, result["isError"])
+			assertions.Equal(int64(11), backend.namedParticipantID)
+			require.NotNil(t, backend.displayName)
+			assertions.Equal(displayName, *backend.displayName)
+			assertions.Zero(backend.promoteParticipantID)
+		})
+	}
+}
+
 func (b *recordingPeopleBackend) GetContact(_ context.Context, participantID int64) (*query.PersonSummary, error) {
 	b.contactParticipantID = participantID
 	return b.contact, b.contactErr

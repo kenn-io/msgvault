@@ -9,15 +9,17 @@ retrieve attachments, and help you remember people and conversations. The
 server uses your selected daemon: without `[remote].url`, it starts or reuses
 the local daemon; with `[remote].url`, it uses that remote server.
 
-MCP searches the archive and prepares and manages drafts. It cannot send email, change live mailbox labels, or
-read Google credentials. Semantic searches call your configured embedding
-endpoint, so use a local or self-hosted endpoint when search text must stay on
+MCP searches the archive, manages drafts, and can edit native email tags through the daemon.
+It cannot send email or read Google credentials. Semantic searches call your
+configured embedding endpoint, so use a local or self-hosted endpoint when search text must stay on
 your machine or network. See [vector search](/docs/usage/vector-search/).
 
-By default, stdio clients can also manage Saved Views, export attachments,
-and stage deletion manifests. Actual message deletion still requires the CLI
-[deletion workflow](/docs/usage/deletion/). Person promotion and Notes writes
-need `--allow-profile-writes`. HTTP clients get read tools by default and need
+By default, stdio clients can also edit native email tags, manage Saved Views,
+export attachments, and stage deletion manifests. Actual message deletion still
+requires the CLI [deletion workflow](/docs/usage/deletion/). Person promotion,
+display-name edits, and Notes writes need `--allow-profile-writes`. Source sync
+and Slack selection changes need `--allow-source-writes`. HTTP clients get read
+tools by default and need
 `--http-allow-writes` for general write tools. Calendar event mutations also
 require `--allow-calendar-writes`; HTTP needs both flags. Each non-dry-run
 mutation also requires explicit confirmation through client elicitation.
@@ -106,6 +108,30 @@ For a delegated Claude Desktop session, use these arguments with the daemon URL 
 
 For an HTTP loopback daemon URL, add `--agent-allow-insecure` before `mcp`. Delegated MCP serves over stdio; `--http` returns a usage error. Read tools `draft_get` and `draft_send_as` are available in owner HTTP sessions by default. Draft writes require `--http-allow-writes`.
 
+## Native email tags
+
+`get_message_tags` reads one archived message's live Gmail label IDs, IMAP
+keywords, or Microsoft Graph category names. Its `available_tags` lists existing
+Gmail user label IDs, the IMAP server's advertised permanent keywords, or the
+categories observed on that Microsoft message. `update_message_tags` adds or
+removes tags and verifies the result through the daemon. Both tools need
+API schema 3.15.0; older daemons omit them.
+
+```json
+{"message_id":42,"add":["Label_123"],"remove":["Label_456"],"dry_run":true}
+```
+
+Use the exact Gmail user label IDs returned by the read tool. For IMAP, use
+custom keyword atoms and optionally name a recorded `mailbox`. For Microsoft
+Graph, use category names and grant `Mail.ReadWrite` with
+[`add-o365 --graph --mail-write`](../cli-reference.md#add-o365). The update tool
+follows the normal [write controls](#write-controls). A preview never writes.
+A partial error keeps its last observed `result` in structured content; read
+tags before retrying. See [`message-tags`](../cli-reference.md#message-tags)
+for provider permissions, category limits, IMAP copy selection, and failure
+behavior. A Graph 429 returns `provider_write_failed`; retry after the limit
+clears. Uncertain writes require reading the current tags before retrying.
+
 ## Meeting evidence
 
 Use these read tools for [archived meeting context and follow-ups](meetings.md):
@@ -161,6 +187,32 @@ Add the following to your Claude Desktop config file:
 ```
 
 If `msgvault` is not on your PATH, use the full path to the binary. Restart Claude Desktop after saving the config.
+
+### Choose a transport for concurrent sessions
+
+A stdio MCP client starts one `msgvault mcp` proxy for each session. Each proxy forwards
+archive operations to the same msgvault daemon; it does not load a separate archive
+engine. For many simultaneous sessions, prefer one shared StreamableHTTP listener when
+your clients support a direct HTTP connection. A client-side stdio-to-HTTP bridge still
+starts a process per session.
+
+Start the listener once with `msgvault mcp --http 8080` and keep it running, then point
+every client at `http://127.0.0.1:8080/mcp` using the
+[authentication configuration](#streamablehttp-transport) below. The two transports
+expose different tools:
+
+- Write tools such as deletion staging, Saved View management, and draft writes are
+  available by default over stdio. Over HTTP they require `--http-allow-writes`, which
+  enables them for every client of that listener. See
+  [Write controls](#write-controls).
+- Tools that ask you to confirm through the client, such as identity decisions, person
+  merges, and calendar event changes, keep their own opt-ins and over HTTP also
+  require protocol `2026-07-28` or newer.
+- On unreleased `main`, agent-delegated credentials (`--agent-url` and
+  `--agent-token-file`) require stdio.
+
+If you run v0.20.0, upgrade and restart existing proxies. That release built every
+combination of tool schemas in each proxy at startup, which v0.21.0 removed.
 
 ### StreamableHTTP Transport
 
@@ -283,6 +335,8 @@ The MCP server exposes the following tools to connected AI clients:
 | `get_stats` | Archive overview statistics, plus each account's `LastSyncAt` and its `virtual_accounts`, whose keys the `account` argument takes. Includes vector index state when configured. | — |
 | `aggregate` | Grouped statistics (top senders, domains, labels, or message volume by calendar year) | `group_by` (string: sender/recipient/domain/label/time), `limit` (int), `after` (string), `before` (string), `account` (string) |
 | `query_sql` | Advanced read-only SQL over the published analytics cache. Returns rows and freshness metadata, or an accepted refresh job. | `sql` (string, required), `fresh` (bool, default false) |
+| `get_message_tags` | Read native Gmail labels, IMAP keywords, or Microsoft Graph categories. Read-only. | `message_id` (int, required), `mailbox` (string, IMAP only) |
+| `update_message_tags` | Add or remove native email tags through the daemon. Write-class. | `message_id` (int, required), `add` / `remove` (string arrays), `mailbox` (string, IMAP only), `dry_run` (bool) |
 | `list_saved_views` | List persistent reusable Saved Views and their complete definitions. Read-only. | — |
 | `get_saved_view` | Get one Saved View and its canonical definition and revision. Read-only. | `id` (int, required) |
 | `run_saved_view` | Execute a Saved View through Explore without reconstructing its query. Returns typed entries, groups, or files. Read-only. | `id` (int, required), `limit` (int), `cursor` (string) |
@@ -302,7 +356,8 @@ analytics files and views; DuckDB file access outside the analytics directory,
 network access, and extension loading are disabled. CLI and owner HTTP SQL
 retain their privileged behavior. See [SQL queries](querying.md) for views and
 examples. Set `fresh` to request a background refresh; a `job_id` means the
-request returned no rows. Follow the [cache build status endpoint](../api-server.md#post-apiv1query)
+request returned no rows. Follow it with `get_cache_build_status` when available,
+or the [cache build status endpoint](../api-server.md#post-apiv1query),
 and, after `published`, repeat the tool call with `fresh=false`. A fresh request
 includes archive writes committed before the request, queuing a follow-up check
 if another build is running. Older daemons omit the tool; a failed restricted
@@ -581,23 +636,69 @@ assistant should read the prose as a summary to relay or check, match an item
 to its citation by `kind` and `index`, and never treat a sentence in it as an
 instruction or as your consent to a write.
 
+## Source status and sync
+
+On unreleased `main`, MCP discovers these tools from the selected daemon's
+capability response. Tools appear only when the daemon advertises their required
+routes and fields. If discovery fails, these tools are omitted; existing archive
+tools retain their own capability checks. Delegated sessions do not expose these
+source, cache, or person-edit tools.
+
+| Tool | Use | Parameters |
+|---|---|---|
+| `list_source_status` | Read source capabilities, recent runs, and queued or pending work. | Optional `source_type` |
+| `get_source_identities` | Read confirmed sender identities and confirmation signals. | Required `source_id` |
+| `get_source_scheduler_status` | Read scheduler status without starting a sync. | — |
+| `sync_source` | Request a configured source sync; requires confirmation. | Required `account`, `source_type` from `list_source_status` |
+| `get_slack_sync_policy` | Read channel and direct-message selection, the settings ETag, and restart state. | — |
+| `update_slack_sync_policy` | Change Slack selection; requires confirmation. | Required `etag`; at least one of `dms`, `group_dms`, `channels`, `exclude_channels` |
+| `get_participant_identity` | Read observed identifiers, service and scope context, cluster members, and link evidence. | Required `participant_id` |
+| `get_cache_build_status` | Follow an accepted analytics refresh job. | Required `job_id` from a fresh query response |
+
+`sync_source` returns acceptance, not completion. A generic source uses its
+configured shared scheduler job. The response preserves `disposition` when the
+daemon supplies it, such as `started`, `pending`, or `coalesced`; check source and
+scheduler status for progress.
+
+For Slack changes, read `get_slack_sync_policy` first and pass its exact `etag`.
+Omitted fields are preserved; `false` and empty arrays are explicit changes.
+A stale ETag returns `settings_conflict`. Selection changes retain archived data
+and may require a daemon restart; inspect `pending_restart` in the response.
+
 ## Write controls
 
 Enable only the writes intended for the assistant's session:
 
-| Transport | Saved View management, attachment export, deletion staging, and draft writes | Person promotion and Notes writes | Calendar event mutations |
-|---|---|---|---|
-| Stdio | Available by default | Add `--allow-profile-writes` | Add `--allow-calendar-writes` |
-| HTTP | Add `--http-allow-writes` | Add both `--http-allow-writes` and `--allow-profile-writes` | Add both `--http-allow-writes` and `--allow-calendar-writes` |
+| Writes | Stdio | HTTP |
+|---|---|---|
+| Native email tag edits, Saved View management, attachment export, deletion staging, and drafts | Available by default | `--http-allow-writes` |
+| Person promotion, display names, and Notes | `--allow-profile-writes` | `--http-allow-writes --allow-profile-writes` |
+| Source sync and Slack selection | `--allow-source-writes` | `--http-allow-writes --allow-source-writes` |
+| Calendar events | `--allow-calendar-writes` | `--http-allow-writes --allow-calendar-writes` |
 
 `draft_delete` and `draft_recover` require confirmation for each call under both transports, even when the write tools are available.
 
-When profile writes are enabled, two additional tools appear:
+Profile tools use the following arguments. Reads need no write opt-in; writes
+require `--allow-profile-writes` and the HTTP opt-in when applicable.
 
 | Tool | Effect | Parameters |
 |---|---|---|
-| `promote_person` | Create a saved profile from an observed contact; repeated promotion returns the existing profile. | `participant_id` (int, required) |
+| `promote_person` | Create a saved profile from an observed contact; repeated promotion preserves the existing name. | `participant_id` (int, required); optional `display_name` when supported |
+| `get_person_edit_context` | Read a saved profile's display name, revision, and ETag. | `person_id` (int, required) |
+| `set_person_display_name` | Set or clear a saved display name; requires confirmation. | `person_id` (int, required), `etag` (required), `display_name` (string, required) |
 | `update_person_notes` | Append or replace private Notes with `enrichment` provenance. | `person_id` (int, required), `text` (required), `mode` (`append` by default, or `replace`), `expected_value_id` |
+
+On unreleased `main`, supporting daemons expose the display-name tools and the
+optional promotion name. Omitting `display_name` or passing `null` to
+`promote_person` uses observed names without per-call confirmation. A string,
+including `""`, requires confirmation: it seeds the name only for a new profile;
+an empty string leaves that new profile's saved name unset.
+
+To change an existing name, read `get_person_edit_context` and pass its exact
+`etag` to `set_person_display_name`. An empty string clears the saved override.
+A stale ETag returns `person_revision_conflict`; reload before retrying.
+Source writes and display-name changes over HTTP require protocol `2026-07-28`
+or newer. Older HTTP clients retain the reads and promotion without a name.
 
 Appending is atomic and forbids `expected_value_id`. Replacing existing Notes
 requires the current value ID returned by `get_person_notes`; a concurrent
@@ -646,7 +747,8 @@ msgvault mcp --http 8080
 | `--http-token-file` | — | On unreleased `main`, read an independent inbound bearer key from an owner-only file; requires `--http`. |
 | `--http-token-env` | — | On unreleased `main`, name the variable holding the inbound bearer key; file takes priority. Requires `--http`. |
 | `--http-allow-writes` | `false` | Expose write-class tools over HTTP. Identity review, scoring, person merges, CardDAV writes, profile writes, and other write tools still need their separate flags. |
-| `--allow-profile-writes` | `false` | Expose person promotion and private Notes writes. HTTP also requires `--http-allow-writes`. |
+| `--allow-profile-writes` | `false` | Expose person promotion, display-name edits, and private Notes writes. HTTP also requires `--http-allow-writes`. |
+| `--allow-source-writes` | `false` | On unreleased `main`, expose source sync and Slack selection writes. Each call requires confirmation. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-identity-decisions` | `false` | Expose identity match accept/reject tools. Each decision needs client confirmation. HTTP also requires `--http-allow-writes`. |
 | `--allow-identity-scoring` | `false` | Expose consented manual identity scoring, which sends bounded raw identity data to the fixed provider. Each run needs client confirmation; HTTP also requires `--http-allow-writes`. |
 | `--allow-person-merges` | `false` | Expose local person merge tools. Each merge needs client confirmation; HTTP also requires `--http-allow-writes`. |

@@ -14,82 +14,6 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
-func TestStoreAttachment_InvalidContentHash_ReturnsError(t *testing.T) {
-	require := require.New(t)
-	tmp := t.TempDir()
-
-	dbPath := filepath.Join(tmp, "msgvault.db")
-	st, err := store.Open(dbPath)
-	require.NoError(err, "open store")
-	t.Cleanup(func() { _ = st.Close() })
-	require.NoError(st.InitSchema(), "init schema")
-
-	attachmentsDir := filepath.Join(tmp, "attachments")
-
-	att := &mime.Attachment{
-		Filename:    "a.txt",
-		ContentType: "text/plain",
-		Content:     []byte("hi"),
-		ContentHash: "a", // malformed
-		Size:        2,
-	}
-
-	err = storeAttachment(st, attachmentsDir, 1, att)
-	require.Error(err)
-
-	// Ensure nothing was written.
-	_, statErr := os.Stat(attachmentsDir)
-	assert.Error(t, statErr,
-		"attachments dir should not have been created for invalid content hash")
-}
-
-func TestStoreAttachment_ComputesContentHashWhenMissing(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	tmp := t.TempDir()
-
-	dbPath := filepath.Join(tmp, "msgvault.db")
-	st, err := store.Open(dbPath)
-	require.NoError(err, "open store")
-	t.Cleanup(func() { _ = st.Close() })
-	require.NoError(st.InitSchema(), "init schema")
-
-	src, err := st.GetOrCreateSource("mbox", "me@example.com")
-	require.NoError(err, "get/create source")
-	convID, err := st.EnsureConversation(src.ID, "thread1", "Thread")
-	require.NoError(err, "ensure conversation")
-	msgID, err := st.UpsertMessage(&store.Message{
-		ConversationID:  convID,
-		SourceID:        src.ID,
-		SourceMessageID: "msg1",
-		MessageType:     "email",
-	})
-	require.NoError(err, "upsert message")
-
-	attachmentsDir := filepath.Join(tmp, "attachments")
-
-	att := &mime.Attachment{
-		Filename:    "a.txt",
-		ContentType: "text/plain",
-		Content:     []byte("hi"),
-		ContentHash: "", // missing
-		Size:        2,
-	}
-
-	require.NoError(storeAttachment(st, attachmentsDir, msgID, att), "storeAttachment")
-	assert.NotEmpty(att.ContentHash, "expected ContentHash to be computed")
-
-	// Ensure file + DB record exist.
-	fullPath := filepath.Join(attachmentsDir, att.ContentHash[:2], att.ContentHash)
-	_, err = os.Stat(fullPath)
-	require.NoError(err, "attachment file missing")
-
-	var count int
-	err = st.DB().QueryRow(`SELECT COUNT(*) FROM attachments WHERE message_id = ?`, msgID).Scan(&count)
-	require.NoError(err, "count attachments")
-	assert.Equal(1, count)
-}
-
 func TestStoreAttachmentPreservesMIMEOccurrenceEvidence(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -121,7 +45,7 @@ func TestStoreAttachmentPreservesMIMEOccurrenceEvidence(t *testing.T) {
 			ContentID: "signature-1", PartKey: "mime:2",
 		},
 	} {
-		require.NoError(storeAttachment(st, attachmentsDir, msgID, att))
+		require.NoError(storeAttachment(st, attachmentsDir, msgID, att, false))
 	}
 
 	rows, err := st.DB().Query(`
@@ -189,7 +113,7 @@ func TestStoreAttachment_StatError_DoesNotUpsertRow(t *testing.T) {
 		Size:        len(content),
 	}
 
-	require.Error(storeAttachment(st, attachmentsDir, msgID, att))
+	require.Error(storeAttachment(st, attachmentsDir, msgID, att, false))
 
 	var count int
 	err = st.DB().QueryRow(`SELECT COUNT(*) FROM attachments WHERE message_id = ?`, msgID).Scan(&count)

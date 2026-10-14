@@ -198,7 +198,7 @@ func (s *Store) withSyncSourceWriteContext(
 	}
 	base := s.withoutSyncScope()
 	return base.withTxContext(ctx, func(tx *loggedTx) error {
-		if err := lockSyncSourceTx(ctx, tx, sourceID); err != nil {
+		if err := s.lockSyncSourceTx(ctx, tx, sourceID); err != nil {
 			return err
 		}
 		if err := s.fenceSyncGenerationTx(ctx, tx); err != nil {
@@ -487,6 +487,9 @@ func (s *Store) startSyncOnce(
 			return 0, err
 		}
 	} else {
+		if err := s.lockSyncMaintenanceGate(ctx, conn); err != nil {
+			return 0, err
+		}
 		var lockedID int64
 		if err := conn.QueryRowContext(ctx,
 			rebind(`SELECT id FROM sources WHERE id = ?`+s.dialect.SelectForUpdate()),
@@ -560,6 +563,9 @@ func (s *Store) recoverAbandonedSyncSource(ctx context.Context, sourceID int64) 
 func (s *Store) recoverAbandonedSyncSourceQueries(
 	ctx context.Context, q contextStatementQuerier, sourceID int64, now string,
 ) error {
+	if err := s.lockSyncMaintenanceGate(ctx, q); err != nil {
+		return err
+	}
 	var lockedID int64
 	if err := q.QueryRowContext(ctx,
 		s.Rebind(`SELECT id FROM sources WHERE id = ?`+s.dialect.SelectForUpdate()),
@@ -644,7 +650,7 @@ func (s *Store) CreateSyncOperation(
 
 	var createdAt sql.NullTime
 	err = s.withTx(func(tx *loggedTx) error {
-		if err := lockSyncSourceTx(context.Background(), tx, sourceID); err != nil {
+		if err := s.lockSyncSourceTx(context.Background(), tx, sourceID); err != nil {
 			return err
 		}
 		if err := s.rejectConflictingSyncOperation(
@@ -789,6 +795,9 @@ func (s *Store) FinishSyncOperation(operationID, status string) error {
 	}
 	base := s.withoutSyncScope()
 	return base.withTx(func(tx *loggedTx) error {
+		if err := base.lockSyncMaintenanceGate(context.Background(), tx); err != nil {
+			return err
+		}
 		now := base.dialect.Now()
 		result, err := tx.Exec(fmt.Sprintf(`
 			UPDATE sync_operations
@@ -1058,7 +1067,7 @@ func (s *Store) completeSyncAndUpdateSourceContext(
 ) error {
 	completionStore := s.withoutSyncScope()
 	err := completionStore.withTxContext(ctx, func(tx *loggedTx) error {
-		if err := validateCurrentSyncGeneration(
+		if err := s.validateCurrentSyncGeneration(
 			ctx, tx, sourceID, syncID, SyncStatusRunning,
 		); err != nil {
 			return fmt.Errorf("complete sync %d: %w", syncID, err)
@@ -1134,14 +1143,14 @@ func (s *Store) finalizeSyncExecution(syncID int64, writeErr error) error {
 	return errors.Join(writeErr, releaseErr)
 }
 
-func validateCurrentSyncGeneration(
+func (s *Store) validateCurrentSyncGeneration(
 	ctx context.Context,
 	tx *loggedTx,
 	sourceID int64,
 	syncRunID int64,
 	expectedStatus string,
 ) error {
-	if err := lockSyncSourceTx(ctx, tx, sourceID); err != nil {
+	if err := s.lockSyncSourceTx(ctx, tx, sourceID); err != nil {
 		return err
 	}
 
@@ -1168,7 +1177,25 @@ func validateCurrentSyncGeneration(
 	return nil
 }
 
-func lockSyncSourceTx(ctx context.Context, tx *loggedTx, sourceID int64) error {
+// lockSyncMaintenanceGate must precede source/operation locks in transactions
+// that later write sync_runs. Scoped writes already take this table lock in
+// their generation fence. ROW EXCLUSIVE lets syncs proceed together but makes
+// BeginExclusive wait before it holds any of their table locks. Attribution
+// transactions instead gate maintenance on the identity row before their fence.
+func (s *Store) lockSyncMaintenanceGate(ctx context.Context, q contextStatementQuerier) error {
+	if !s.IsPostgreSQL() {
+		return nil
+	}
+	if _, err := q.ExecContext(ctx, "LOCK TABLE sync_runs IN ROW EXCLUSIVE MODE"); err != nil {
+		return fmt.Errorf("lock sync maintenance gate: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) lockSyncSourceTx(ctx context.Context, tx *loggedTx, sourceID int64) error {
+	if err := s.lockSyncMaintenanceGate(ctx, tx); err != nil {
+		return err
+	}
 	result, err := tx.ExecContext(
 		ctx, `UPDATE sources SET updated_at = updated_at WHERE id = ?`, sourceID,
 	)
@@ -1209,7 +1236,7 @@ func (s *Store) FailSyncAndClearSourceCursorContext(
 ) error {
 	transitionStore := s.withoutSyncScope()
 	err := transitionStore.withTxContext(ctx, func(tx *loggedTx) error {
-		if err := validateCurrentSyncGeneration(
+		if err := s.validateCurrentSyncGeneration(
 			ctx, tx, sourceID, syncID, SyncStatusRunning,
 		); err != nil {
 			return fmt.Errorf("fail sync %d and clear source cursor: %w", syncID, err)

@@ -931,6 +931,89 @@ func (f FileSearchRowContentState) Validate() error {
 	}
 }
 
+type FileSuggestionHTTPRequestMimeFamilies string
+
+const (
+	FileSuggestionHTTPRequestMimeFamiliesArchive  FileSuggestionHTTPRequestMimeFamilies = "archive"
+	FileSuggestionHTTPRequestMimeFamiliesAudio    FileSuggestionHTTPRequestMimeFamilies = "audio"
+	FileSuggestionHTTPRequestMimeFamiliesDocument FileSuggestionHTTPRequestMimeFamilies = "document"
+	FileSuggestionHTTPRequestMimeFamiliesImage    FileSuggestionHTTPRequestMimeFamilies = "image"
+	FileSuggestionHTTPRequestMimeFamiliesOther    FileSuggestionHTTPRequestMimeFamilies = "other"
+	FileSuggestionHTTPRequestMimeFamiliesPdf      FileSuggestionHTTPRequestMimeFamilies = "pdf"
+	FileSuggestionHTTPRequestMimeFamiliesText     FileSuggestionHTTPRequestMimeFamilies = "text"
+	FileSuggestionHTTPRequestMimeFamiliesVideo    FileSuggestionHTTPRequestMimeFamilies = "video"
+)
+
+// Validate checks if the FileSuggestionHTTPRequestMimeFamilies value is valid
+func (f FileSuggestionHTTPRequestMimeFamilies) Validate() error {
+	switch f {
+	case FileSuggestionHTTPRequestMimeFamiliesArchive, FileSuggestionHTTPRequestMimeFamiliesAudio, FileSuggestionHTTPRequestMimeFamiliesDocument, FileSuggestionHTTPRequestMimeFamiliesImage, FileSuggestionHTTPRequestMimeFamiliesOther, FileSuggestionHTTPRequestMimeFamiliesPdf, FileSuggestionHTTPRequestMimeFamiliesText, FileSuggestionHTTPRequestMimeFamiliesVideo:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid FileSuggestionHTTPRequestMimeFamilies value, got: %v", f))
+	}
+}
+
+type FileSuggestionRowContentState string
+
+const (
+	FileSuggestionRowContentStateLocalContent FileSuggestionRowContentState = "local_content"
+	FileSuggestionRowContentStateMetadataOnly FileSuggestionRowContentState = "metadata_only"
+	FileSuggestionRowContentStateMissingBlob  FileSuggestionRowContentState = "missing_blob"
+	FileSuggestionRowContentStateURLOnly      FileSuggestionRowContentState = "url_only"
+)
+
+// Validate checks if the FileSuggestionRowContentState value is valid
+func (f FileSuggestionRowContentState) Validate() error {
+	switch f {
+	case FileSuggestionRowContentStateLocalContent, FileSuggestionRowContentStateMetadataOnly, FileSuggestionRowContentStateMissingBlob, FileSuggestionRowContentStateURLOnly:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid FileSuggestionRowContentState value, got: %v", f))
+	}
+}
+
+type FileSuggestionRowFilenameMatch string
+
+const (
+	FileSuggestionRowFilenameMatchExact  FileSuggestionRowFilenameMatch = "exact"
+	FileSuggestionRowFilenameMatchPrefix FileSuggestionRowFilenameMatch = "prefix"
+	FileSuggestionRowFilenameMatchTypo   FileSuggestionRowFilenameMatch = "typo"
+)
+
+// Validate checks if the FileSuggestionRowFilenameMatch value is valid
+func (f FileSuggestionRowFilenameMatch) Validate() error {
+	switch f {
+	case FileSuggestionRowFilenameMatchExact, FileSuggestionRowFilenameMatchPrefix, FileSuggestionRowFilenameMatchTypo:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid FileSuggestionRowFilenameMatch value, got: %v", f))
+	}
+}
+
+type FileSuggestionRowMimeFamily string
+
+const (
+	FileSuggestionRowMimeFamilyArchive  FileSuggestionRowMimeFamily = "archive"
+	FileSuggestionRowMimeFamilyAudio    FileSuggestionRowMimeFamily = "audio"
+	FileSuggestionRowMimeFamilyDocument FileSuggestionRowMimeFamily = "document"
+	FileSuggestionRowMimeFamilyImage    FileSuggestionRowMimeFamily = "image"
+	FileSuggestionRowMimeFamilyOther    FileSuggestionRowMimeFamily = "other"
+	FileSuggestionRowMimeFamilyPdf      FileSuggestionRowMimeFamily = "pdf"
+	FileSuggestionRowMimeFamilyText     FileSuggestionRowMimeFamily = "text"
+	FileSuggestionRowMimeFamilyVideo    FileSuggestionRowMimeFamily = "video"
+)
+
+// Validate checks if the FileSuggestionRowMimeFamily value is valid
+func (f FileSuggestionRowMimeFamily) Validate() error {
+	switch f {
+	case FileSuggestionRowMimeFamilyArchive, FileSuggestionRowMimeFamilyAudio, FileSuggestionRowMimeFamilyDocument, FileSuggestionRowMimeFamilyImage, FileSuggestionRowMimeFamilyOther, FileSuggestionRowMimeFamilyPdf, FileSuggestionRowMimeFamilyText, FileSuggestionRowMimeFamilyVideo:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid FileSuggestionRowMimeFamily value, got: %v", f))
+	}
+}
+
 type IdentityLinkResponseCacheState string
 
 const (
@@ -2129,6 +2212,107 @@ func (p PersonFileSearchRowContentState) Validate() error {
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid PersonFileSearchRowContentState value, got: %v", p))
+	}
+}
+
+type PersonFileSuggestionHTTPRequestDirections string
+
+const (
+	PersonFileSuggestionHTTPRequestDirectionsFromPerson PersonFileSuggestionHTTPRequestDirections = "from_person"
+	PersonFileSuggestionHTTPRequestDirectionsGroup      PersonFileSuggestionHTTPRequestDirections = "group"
+	PersonFileSuggestionHTTPRequestDirectionsToPerson   PersonFileSuggestionHTTPRequestDirections = "to_person"
+)
+
+// Validate checks if the PersonFileSuggestionHTTPRequestDirections value is valid
+func (p PersonFileSuggestionHTTPRequestDirections) Validate() error {
+	switch p {
+	case PersonFileSuggestionHTTPRequestDirectionsFromPerson, PersonFileSuggestionHTTPRequestDirectionsGroup, PersonFileSuggestionHTTPRequestDirectionsToPerson:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid PersonFileSuggestionHTTPRequestDirections value, got: %v", p))
+	}
+}
+
+type PersonFileSuggestionHTTPRequestMimeFamilies string
+
+const (
+	PersonFileSuggestionHTTPRequestMimeFamiliesArchive  PersonFileSuggestionHTTPRequestMimeFamilies = "archive"
+	PersonFileSuggestionHTTPRequestMimeFamiliesAudio    PersonFileSuggestionHTTPRequestMimeFamilies = "audio"
+	PersonFileSuggestionHTTPRequestMimeFamiliesDocument PersonFileSuggestionHTTPRequestMimeFamilies = "document"
+	PersonFileSuggestionHTTPRequestMimeFamiliesImage    PersonFileSuggestionHTTPRequestMimeFamilies = "image"
+	PersonFileSuggestionHTTPRequestMimeFamiliesOther    PersonFileSuggestionHTTPRequestMimeFamilies = "other"
+	PersonFileSuggestionHTTPRequestMimeFamiliesPdf      PersonFileSuggestionHTTPRequestMimeFamilies = "pdf"
+	PersonFileSuggestionHTTPRequestMimeFamiliesText     PersonFileSuggestionHTTPRequestMimeFamilies = "text"
+	PersonFileSuggestionHTTPRequestMimeFamiliesVideo    PersonFileSuggestionHTTPRequestMimeFamilies = "video"
+)
+
+// Validate checks if the PersonFileSuggestionHTTPRequestMimeFamilies value is valid
+func (p PersonFileSuggestionHTTPRequestMimeFamilies) Validate() error {
+	switch p {
+	case PersonFileSuggestionHTTPRequestMimeFamiliesArchive, PersonFileSuggestionHTTPRequestMimeFamiliesAudio, PersonFileSuggestionHTTPRequestMimeFamiliesDocument, PersonFileSuggestionHTTPRequestMimeFamiliesImage, PersonFileSuggestionHTTPRequestMimeFamiliesOther, PersonFileSuggestionHTTPRequestMimeFamiliesPdf, PersonFileSuggestionHTTPRequestMimeFamiliesText, PersonFileSuggestionHTTPRequestMimeFamiliesVideo:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid PersonFileSuggestionHTTPRequestMimeFamilies value, got: %v", p))
+	}
+}
+
+type PersonFileSuggestionRowContentState string
+
+const (
+	PersonFileSuggestionRowContentStateLocalContent PersonFileSuggestionRowContentState = "local_content"
+	PersonFileSuggestionRowContentStateMetadataOnly PersonFileSuggestionRowContentState = "metadata_only"
+	PersonFileSuggestionRowContentStateMissingBlob  PersonFileSuggestionRowContentState = "missing_blob"
+	PersonFileSuggestionRowContentStateURLOnly      PersonFileSuggestionRowContentState = "url_only"
+)
+
+// Validate checks if the PersonFileSuggestionRowContentState value is valid
+func (p PersonFileSuggestionRowContentState) Validate() error {
+	switch p {
+	case PersonFileSuggestionRowContentStateLocalContent, PersonFileSuggestionRowContentStateMetadataOnly, PersonFileSuggestionRowContentStateMissingBlob, PersonFileSuggestionRowContentStateURLOnly:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid PersonFileSuggestionRowContentState value, got: %v", p))
+	}
+}
+
+type PersonFileSuggestionRowFilenameMatch string
+
+const (
+	PersonFileSuggestionRowFilenameMatchExact  PersonFileSuggestionRowFilenameMatch = "exact"
+	PersonFileSuggestionRowFilenameMatchPrefix PersonFileSuggestionRowFilenameMatch = "prefix"
+	PersonFileSuggestionRowFilenameMatchTypo   PersonFileSuggestionRowFilenameMatch = "typo"
+)
+
+// Validate checks if the PersonFileSuggestionRowFilenameMatch value is valid
+func (p PersonFileSuggestionRowFilenameMatch) Validate() error {
+	switch p {
+	case PersonFileSuggestionRowFilenameMatchExact, PersonFileSuggestionRowFilenameMatchPrefix, PersonFileSuggestionRowFilenameMatchTypo:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid PersonFileSuggestionRowFilenameMatch value, got: %v", p))
+	}
+}
+
+type PersonFileSuggestionRowMimeFamily string
+
+const (
+	PersonFileSuggestionRowMimeFamilyArchive  PersonFileSuggestionRowMimeFamily = "archive"
+	PersonFileSuggestionRowMimeFamilyAudio    PersonFileSuggestionRowMimeFamily = "audio"
+	PersonFileSuggestionRowMimeFamilyDocument PersonFileSuggestionRowMimeFamily = "document"
+	PersonFileSuggestionRowMimeFamilyImage    PersonFileSuggestionRowMimeFamily = "image"
+	PersonFileSuggestionRowMimeFamilyOther    PersonFileSuggestionRowMimeFamily = "other"
+	PersonFileSuggestionRowMimeFamilyPdf      PersonFileSuggestionRowMimeFamily = "pdf"
+	PersonFileSuggestionRowMimeFamilyText     PersonFileSuggestionRowMimeFamily = "text"
+	PersonFileSuggestionRowMimeFamilyVideo    PersonFileSuggestionRowMimeFamily = "video"
+)
+
+// Validate checks if the PersonFileSuggestionRowMimeFamily value is valid
+func (p PersonFileSuggestionRowMimeFamily) Validate() error {
+	switch p {
+	case PersonFileSuggestionRowMimeFamilyArchive, PersonFileSuggestionRowMimeFamilyAudio, PersonFileSuggestionRowMimeFamilyDocument, PersonFileSuggestionRowMimeFamilyImage, PersonFileSuggestionRowMimeFamilyOther, PersonFileSuggestionRowMimeFamilyPdf, PersonFileSuggestionRowMimeFamilyText, PersonFileSuggestionRowMimeFamilyVideo:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid PersonFileSuggestionRowMimeFamily value, got: %v", p))
 	}
 }
 

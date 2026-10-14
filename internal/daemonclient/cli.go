@@ -1428,7 +1428,7 @@ func (c *Client) GetCLIMessage(ctx context.Context, id string) (*query.MessageDe
 			return nil, backoff.RetryAfter(delay, err)
 		}
 		return nil, err
-	}, backoff.WithBackOff(policy), backoff.WithMaxTries(5), backoff.WithMaxElapsedTime(time.Minute))
+	}, backoff.WithBackOff(policy), backoff.WithMaxElapsedTime(time.Minute))
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()

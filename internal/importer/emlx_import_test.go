@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -40,7 +41,8 @@ func mkMailboxDir(t *testing.T, base string, emlxFiles map[string][]byte) {
 
 func openTestStore(t *testing.T) (*store.Store, string) {
 	t.Helper()
-	tmp := t.TempDir()
+	tmp, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err, "canonical fixture root")
 	dbPath := filepath.Join(tmp, "msgvault.db")
 	st, err := store.Open(dbPath)
 	require.NoError(t, err, "open store")
@@ -481,7 +483,7 @@ func TestImportEmlxDir_Idempotent(t *testing.T) {
 	require.Equal(1, msgCount, "msgCount")
 }
 
-func TestImportEmlxDir_MailboxPathMismatchRejectsResume(t *testing.T) {
+func TestImportEmlxDir_MailboxPathMismatchRechecksDiscovery(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st, tmp := openTestStore(t)
@@ -513,19 +515,15 @@ func TestImportEmlxDir_MailboxPathMismatchRejectsResume(t *testing.T) {
 	), "save checkpoint")
 	require.NoError(st.FailSync(syncID, "worker stopped"), "fail prior sync")
 
-	_, err = ImportEmlxDir(
-		context.Background(), st, root, EmlxImportOptions{
-			Identifier:         "alice@example.com",
-			NoResume:           false,
-			CheckpointInterval: 1,
-		},
+	summary, err := ImportEmlxDir(
+		context.Background(), st, root, EmlxImportOptions{Identifier: "alice@example.com", CheckpointInterval: 1},
 	)
-	require.Error(err, "expected error for mailbox path mismatch")
-	require.ErrorContains(err, "--no-resume")
-	assert.ErrorContains(err, "changed")
+	require.NoError(err)
+	assert.True(summary.WasResumed)
+	assert.Equal(int64(1), summary.MessagesAdded)
 }
 
-func TestImportEmlxDir_NegativeIndexRejectsResume(t *testing.T) {
+func TestImportEmlxDir_ObsoleteIndexRechecksDiscovery(t *testing.T) {
 	require := require.New(t)
 	st, tmp := openTestStore(t)
 
@@ -558,18 +556,13 @@ func TestImportEmlxDir_NegativeIndexRejectsResume(t *testing.T) {
 	}), "save checkpoint")
 	require.NoError(st.FailSync(syncID, "worker stopped"), "fail prior sync")
 
-	_, err = ImportEmlxDir(
-		context.Background(), st, root, EmlxImportOptions{
-			Identifier: "alice@example.com",
-			NoResume:   false,
-		},
-	)
-	require.Error(err, "expected error for negative index")
-	require.ErrorContains(err, "out of range")
-	require.ErrorContains(err, "--no-resume")
+	summary, err := ImportEmlxDir(context.Background(), st, root, EmlxImportOptions{Identifier: "alice@example.com"})
+	require.NoError(err)
+	assert.True(t, summary.WasResumed)
+	assert.Equal(t, int64(1), summary.MessagesAdded)
 }
 
-func TestImportEmlxDir_RootMismatchRejectsResume(t *testing.T) {
+func TestImportEmlxDir_RootMismatchDoesNotResume(t *testing.T) {
 	require := require.New(t)
 	st, tmp := openTestStore(t)
 
@@ -596,16 +589,17 @@ func TestImportEmlxDir_RootMismatchRejectsResume(t *testing.T) {
 	mboxB := filepath.Join(rootB, "Mailboxes", "Other.mbox")
 	mkMailboxDir(t, mboxB, map[string][]byte{"1.emlx": raw})
 
-	// Attempt import from root B without --no-resume.
-	_, err = ImportEmlxDir(
+	// Receipts, not the interrupted root's position, decide what is complete,
+	// so another root imports without carrying that run's counters.
+	summary, err := ImportEmlxDir(
 		context.Background(), st, rootB, EmlxImportOptions{
 			Identifier:         "alice@example.com",
-			NoResume:           false,
 			CheckpointInterval: 1,
 		},
 	)
-	require.Error(err, "expected error for root mismatch")
-	assert.ErrorContains(t, err, "--no-resume")
+	require.NoError(err)
+	assert.False(t, summary.WasResumed)
+	assert.Equal(t, int64(1), summary.MessagesAdded)
 }
 
 func TestImportEmlxDir_CheckpointBlockedOnIngestFailure(t *testing.T) {
@@ -762,6 +756,10 @@ func TestImportEmlxDir_PartialAttachmentRestoredFromSiblingDir(t *testing.T) {
 	notes := []byte("More notes.\n")
 	// Runs 2 and 3 offer nothing the archive lacks, so they skip ingestion.
 	updated := []int64{1, 1, 0, 0}
+	parsedCounts := []int64{2, 2, 2, 2}
+	if runtime.GOOS == "linux" || runtime.GOOS == "darwin" {
+		parsedCounts = []int64{2, 1, 1, 0}
+	}
 	for run, restored := range []int64{1, 1, 0, 0} {
 		if run == 1 {
 			secondDir := filepath.Join(mboxDir, "Attachments", "2", "3")
@@ -776,9 +774,9 @@ func TestImportEmlxDir_PartialAttachmentRestoredFromSiblingDir(t *testing.T) {
 		require.NoError(err)
 		require.Zero(summary.Errors)
 		assert.Zero(summary.MessagesAdded)
-		assert.Equal(updated[run], summary.MessagesUpdated)
-		assert.Equal(1-updated[run], summary.MessagesSkipped)
-		assert.Equal(int64(2), summary.PartialFiles)
+		assert.Equal(updated[run], summary.MessagesUpdated, "run %d", run)
+		assert.Equal(2-updated[run], summary.MessagesSkipped, "run %d", run)
+		assert.Equal(parsedCounts[run], summary.PartialFiles)
 		assert.Equal(restored, summary.AttachmentsRestored)
 		var count int
 		require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&count))
@@ -835,6 +833,9 @@ func TestImportEmlxDir_WarnsOnAttachmentReadFailure(t *testing.T) {
 			require.NoError(err)
 			assert.Equal(int64(1), summary.MessagesAdded)
 			assert.Zero(summary.AttachmentsRestored)
+			assert.False(summary.HardErrors, "an unreadable cache file leaves the file pending, not a failed run")
+			assert.Positive(summary.Errors)
+			assert.Zero(countEmlxLedgerEntries(t, st, summary.SourceID, "emlx-occurrence", "imported"))
 			assert.Contains(logs.String(), "level=WARN")
 			assert.Contains(logs.String(), "permission denied")
 		})

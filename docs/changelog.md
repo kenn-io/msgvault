@@ -110,6 +110,11 @@ All notable changes to msgvault, grouped by release.
   cites, with its state in the archive today and the text around it.
   Agents can also cite the Docbank transcript of a delivered voice note.
   Person agenda writes now work with a static Kata token.
+- [`message-tags`](cli-reference.md#message-tags) reads and edits Gmail
+  labels, IMAP keywords, and Microsoft Graph categories on one archived message
+  through the CLI, HTTP API, and MCP, and saves the verified result to the
+  archive. Microsoft Graph sync now archives categories, so the first sync of an
+  existing Microsoft account after upgrading walks every folder once.
 - Adding Calendar to a Gmail token recognizes Google's short and expanded
   `email`/`profile` scope names, avoiding false missing-scope errors on re-consent.
 - Prepare and manage drafts through MCP with the caller's own daemon permissions, including restricted agent grants. Msgvault never sends.

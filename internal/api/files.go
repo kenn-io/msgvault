@@ -180,6 +180,7 @@ type fileMetadataCatalog interface {
 }
 
 func (s *Server) registerFilesRoutes(api huma.API) {
+	s.registerFileSuggestionRoutes(api)
 	registerExploreRoute[FileSearchHTTPRequest, FileSearchHTTPResponse](
 		api, "searchFiles", "/files/search", "Search analytical files", s.handleSearchFiles,
 	)

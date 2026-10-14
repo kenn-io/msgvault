@@ -3,6 +3,7 @@ package importer
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -53,7 +54,30 @@ func ingestRawMessage(
 	raw []byte, fallbackDate time.Time,
 	log *slog.Logger, images *remoteimage.Fetcher, threadID string,
 ) error {
-	parsed, _ := mime.ParseWithRecovery(raw, "(MIME parse error)")
+	return ingestRawMessageWithCompletion(ctx, st, sourceID, identifier, attachmentsDir, labelIDs,
+		sourceMsgID, rawHash, raw, fallbackDate, log, images, threadID, false)
+}
+
+// ingestRawMessageWithCompletion reports, when strict, attachment storage and
+// search-index failures as retryable errors after the raw message commits.
+// Other importers retain the shared path's best-effort postcommit behavior.
+// Fatally malformed MIME is complete once its raw and salvaged headers are
+// archived: the same bytes always fail the same way.
+func ingestRawMessageWithCompletion(ctx context.Context, st *store.Store,
+	sourceID int64, identifier, attachmentsDir string, labelIDs []int64,
+	sourceMsgID, rawHash string, raw []byte, fallbackDate time.Time,
+	log *slog.Logger, images *remoteimage.Fetcher, threadID string, strict bool,
+) error {
+	parsed, parseErr := mime.ParseWithRecovery(raw, "(MIME parse error)")
+	if strict && parseErr != nil {
+		log.Warn("archived malformed MIME with salvaged headers", "source_msg", sourceMsgID, "error", parseErr)
+	}
+	var completionErr error
+	incomplete := func(err error) {
+		if strict {
+			completionErr = errors.Join(completionErr, err)
+		}
+	}
 
 	subject := textutil.EnsureUTF8(parsed.Subject)
 	bodyText := textutil.EnsureUTF8(parsed.GetBodyText())
@@ -193,8 +217,9 @@ func ingestRawMessage(
 	for i := range parsed.Attachments {
 		att := &parsed.Attachments[i]
 		if err := storeAttachment(
-			st, attachmentsDir, messageID, att,
+			st, attachmentsDir, messageID, att, strict,
 		); err != nil {
+			incomplete(fmt.Errorf("store attachment: %w", err))
 			log.Warn("failed to store attachment",
 				"message", messageID,
 				"filename", att.Filename,
@@ -210,11 +235,13 @@ func ingestRawMessage(
 			st.Rebind(`SELECT COUNT(*) FROM attachments WHERE message_id = ?`),
 			messageID,
 		).Scan(&storedCount); err != nil {
+			incomplete(fmt.Errorf("count attachments: %w", err))
 			log.Warn("failed to count stored attachments",
 				"message", messageID, "error", err,
 			)
 		} else if storedCount != attachmentCount {
 			if err := st.RecomputeMessageAttachmentStats(messageID); err != nil {
+				incomplete(fmt.Errorf("attachment metadata: %w", err))
 				log.Warn("failed to update attachment metadata",
 					"message", messageID, "error", err,
 				)
@@ -238,6 +265,7 @@ func ingestRawMessage(
 			messageID, subject, bodyText,
 			fromAddr, toAddrs, ccAddrs,
 		); err != nil {
+			incomplete(fmt.Errorf("index message: %w", err))
 			log.Warn("failed to upsert FTS",
 				"message", messageID, "error", err,
 			)
@@ -248,6 +276,9 @@ func ingestRawMessage(
 		return fmt.Errorf("record email reply header: %w", err)
 	}
 
+	if strict {
+		return errors.Join(emlxRetryable(completionErr), ctx.Err())
+	}
 	return nil
 }
 
@@ -340,9 +371,13 @@ func buildRecipientSet(recipientType string, addresses []mime.Address, participa
 
 func storeAttachment(
 	st *store.Store, attachmentsDir string,
-	messageID int64, att *mime.Attachment,
+	messageID int64, att *mime.Attachment, includeEmpty bool,
 ) error {
-	storagePath, err := export.StoreAttachmentFile(attachmentsDir, att)
+	storeFile := export.StoreAttachmentFile
+	if includeEmpty && !att.IsApplePlaceholder {
+		storeFile = export.StoreAttachmentFileIncludingEmpty
+	}
+	storagePath, err := storeFile(attachmentsDir, att)
 	if err != nil || storagePath == "" {
 		return err
 	}

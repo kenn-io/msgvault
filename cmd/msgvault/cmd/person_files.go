@@ -12,6 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/daemonclient"
+	"go.kenn.io/msgvault/internal/filenamediscovery"
 	"go.kenn.io/msgvault/internal/personscope"
 	personresolver "go.kenn.io/msgvault/internal/personscope/resolver"
 	"go.kenn.io/msgvault/internal/query"
@@ -29,6 +30,7 @@ const (
 
 type personFilesClient interface {
 	SearchPersonFiles(ctx context.Context, options daemonclient.PersonFileSearchOptions) (generated.PersonFileSearchHTTPResponse, error)
+	SuggestPersonFiles(ctx context.Context, options daemonclient.PersonFileSuggestionOptions) (generated.PersonFileSuggestionHTTPResponse, error)
 	SearchDocuments(ctx context.Context, request store.DocumentSearchRequest) (store.DocumentSearchResponse, error)
 	SearchVisualAttachmentsFiltered(ctx context.Context, options daemonclient.VisualSearchOptions) (*visual.SearchResponse, error)
 }
@@ -65,7 +67,7 @@ func newPersonFilesCommand(deps personFilesCommandDeps) *cobra.Command {
 	var lane, queryText, filename, afterValue, beforeValue, cursor string
 	var rawDirections, rawMIMEFamilies []string
 	var limit int
-	var jsonOutput bool
+	var jsonOutput, fuzzyFilename bool
 	command := &cobra.Command{
 		Use:   "files <person-id>",
 		Short: "Retrieve files related to one durable person",
@@ -80,6 +82,23 @@ func newPersonFilesCommand(deps personFilesCommandDeps) *cobra.Command {
 			case personFilesLaneMetadata, personFilesLaneDocuments, personFilesLaneVisual, personFilesLaneAll:
 			default:
 				return usageErr(command, errors.New("--lane must be metadata, documents, visual, or all"))
+			}
+			if fuzzyFilename {
+				if lane != personFilesLaneMetadata {
+					return usageErr(command, errors.New("--fuzzy-filename requires the metadata lane"))
+				}
+				if command.Flags().Changed("cursor") {
+					return usageErr(command, errors.New("--cursor cannot be used with --fuzzy-filename"))
+				}
+				if command.Flags().Changed("query") {
+					return usageErr(command, errors.New("--query cannot be used with --fuzzy-filename"))
+				}
+				if _, err := filenamediscovery.ParseQuery(filename); err != nil {
+					return usageErr(command, fmt.Errorf("--filename is required and must be a valid filename query: %w", err))
+				}
+				if len(rawMIMEFamilies) > 8 {
+					return usageErr(command, errors.New("--mime-family accepts at most eight values for filename suggestions"))
+				}
 			}
 			if limit < 1 || limit > 100 {
 				return usageErr(command, errors.New("--limit must be between 1 and 100"))
@@ -126,6 +145,23 @@ func newPersonFilesCommand(deps personFilesCommandDeps) *cobra.Command {
 				return err
 			}
 			defer cleanup()
+			if fuzzyFilename {
+				suggestionLimit := 0
+				if command.Flags().Changed("limit") {
+					suggestionLimit = limit
+				}
+				response, err := client.SuggestPersonFiles(command.Context(), daemonclient.PersonFileSuggestionOptions{
+					PersonID: personID, Filename: filename, Directions: directions,
+					After: after, Before: before, MIMEFamilies: mimeFamilies, Limit: suggestionLimit,
+				})
+				if err != nil {
+					return err
+				}
+				if jsonOutput {
+					return json.MarshalEncode(jsontext.NewEncoder(command.OutOrStdout()), response, json.Deterministic(true))
+				}
+				return writePersonFilenameSuggestionsOutput(command, response)
+			}
 			output := personFilesOutput{
 				PersonID: personID, RequestedLane: lane,
 				Availability: make(map[string]personFilesLaneStatus, 3),
@@ -210,12 +246,33 @@ func newPersonFilesCommand(deps personFilesCommandDeps) *cobra.Command {
 	command.Flags().StringVar(&beforeValue, "before", "", "Only messages before YYYY-MM-DD or RFC3339")
 	command.Flags().StringSliceVar(&rawMIMEFamilies, "mime-family", nil, "Stable MIME family (repeatable)")
 	command.Flags().StringVar(&filename, "filename", "", "Case-insensitive filename substring")
+	command.Flags().BoolVar(&fuzzyFilename, "fuzzy-filename", false, "Suggest typo-tolerant filenames in the metadata lane (default limit 20)")
 	command.Flags().StringVar(&lane, "lane", personFilesLaneMetadata, "Retrieval lane: metadata, documents, visual, or all")
 	command.Flags().StringVar(&queryText, "query", "", "Semantic query required by documents, visual, and all lanes")
 	command.Flags().IntVarP(&limit, "limit", "n", 100, "Maximum results per lane")
 	command.Flags().StringVar(&cursor, "cursor", "", "Opaque cursor for one selected lane")
 	command.Flags().BoolVar(&jsonOutput, flagJSON, false, "Output structured grouped JSON")
 	return command
+}
+
+func writePersonFilenameSuggestionsOutput(command *cobra.Command, response generated.PersonFileSuggestionHTTPResponse) error {
+	w := tabwriter.NewWriter(command.OutOrStdout(), 0, 0, 2, ' ', 0)
+	_, _ = fmt.Fprintln(w, "ATTACHMENT\tMESSAGE\tCONVERSATION\tSOURCE\tDATE\tFILE\tMIME\tSIZE\tCONTENT\tMATCH\tPARTICIPANTS\tROLES\tDIRECTIONS")
+	for _, row := range response.Suggestions {
+		_, _ = fmt.Fprintf(w, "%d\t%d\t%d\t%d\t%s\t%s\t%s\t%d\t%s\t%s\t%v\t%v\t%v\n",
+			row.ID, row.MessageID, row.ConversationID, row.SourceID, personFilesTimestamp(row.OccurredAt),
+			row.Filename, pointerString(row.MimeType), row.SizeBytes, row.ContentState, row.FilenameMatch,
+			row.PersonProvenance.ParticipantIds, row.PersonProvenance.Roles, row.PersonProvenance.Directions)
+	}
+	if err := w.Flush(); err != nil {
+		return fmt.Errorf("flush filename suggestions output: %w", err)
+	}
+	if response.CandidateLimitReached {
+		if _, err := fmt.Fprintln(command.OutOrStdout(), "Candidate limit reached; suggestions may be incomplete."); err != nil {
+			return fmt.Errorf("write filename suggestion notice: %w", err)
+		}
+	}
+	return nil
 }
 
 func parsePersonFileMIMEFamilies(raw []string) ([]query.FileMIMEFamily, error) {

@@ -318,6 +318,18 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
+      # Reuse these scratch paths in all four Windows jobs.
+      - &windows-go-paths
+        name: Set cache and scratch paths
+        shell: pwsh
+        run: |
+          $paths = @{ GOCACHE = 'go-build'; GOMODCACHE = 'go-mod'; GOTMPDIR = 'go-tmp'; TEMP = 'test-tmp'; TMP = 'test-tmp'; GOLANGCI_LINT_CACHE = 'golangci-lint' }
+          foreach ($entry in $paths.GetEnumerator()) {
+            $path = Join-Path $env:RUNNER_TEMP $entry.Value
+            New-Item -ItemType Directory -Force -Path $path | Out-Null
+            "$($entry.Key)=$path" >> $env:GITHUB_ENV
+          }
+
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
@@ -394,6 +406,8 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
+      - *windows-go-paths
+
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
@@ -442,6 +456,8 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
+      - *windows-go-paths
+
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
@@ -478,6 +494,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - *windows-go-paths
 
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:

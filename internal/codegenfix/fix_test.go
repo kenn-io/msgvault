@@ -138,6 +138,8 @@ func (f FileGroupsHTTPRequest) Validate() error {
 }
 ` + pointerValidatorFixture("FileMetadataResponse", "f") + pointerValidatorFixture("FileSearchRow", "f") +
 		pointerValidatorFixture("PersonFileSearchRow", "p") +
+		requiredStringPointerValidatorFixture("FileSuggestionRow", "f", "MimeType") +
+		requiredStringPointerValidatorFixture("PersonFileSuggestionRow", "p", "MimeType") +
 		requiredStringPointerValidatorFixture("MessageRecording", "m", "Filename") +
 		requiredStringPointerValidatorFixture("PersonFactEvidence", "p",
 			"SourceRef", "SourceURL", "ContentSha256", "SourceVersion", "SubjectRef", "Excerpt") + `

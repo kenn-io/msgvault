@@ -164,6 +164,8 @@ import type {
   GetMessageInlinePartParams,
   GetMessageInlinePartPathParameters,
   GetMessagePathParameters,
+  GetMessageTagsParams,
+  GetMessageTagsPathParameters,
   GetOperationRunPathParameters,
   GetOrganizationHistoryPathParameters,
   GetOrganizationPathParameters,
@@ -265,6 +267,7 @@ import type {
   ListTextConversationMessagesParams,
   ListTextConversationMessagesPathParameters,
   ListTextConversationsParams,
+  MCPCapabilities,
   Manifest,
   MediaSearchResponse,
   MediaSearchStatusResponse,
@@ -277,6 +280,8 @@ import type {
   MessageDetail,
   MessageListResponse,
   MessageRecordingsResponse,
+  MessageTagChange,
+  MessageTagResult,
   MuesliRemoteRequest,
   MuesliRemoteResult,
   OperationRunDetail,
@@ -449,6 +454,7 @@ import type {
   UnlinkPersonAgendaItemPathParameters,
   UnpublishCardDAVPersonPathParameters,
   UpdateCardDAVBookRolesPathParameters,
+  UpdateMessageTagsPathParameters,
   UpdatePersonAgendaItemPathParameters,
   UploadTokenPathParameters,
   VerifyCLIParams,
@@ -2120,6 +2126,17 @@ export const testTaskIntegration = (
   );
 };
 /**
+ * @summary Describe supported MCP daemon operations
+ */
+export const getMCPCapabilities = (
+  options?: SecondParameter<typeof orvalFetch<MCPCapabilities>>,
+) => {
+  return orvalFetch<MCPCapabilities>(
+    { url: `/api/v1/mcp/capabilities`, method: "GET" },
+    options,
+  );
+};
+/**
  * @summary Search source-selected transcripts as visible messages
  */
 export const searchMedia = (
@@ -2234,6 +2251,41 @@ export const listMessageRecordings = (
     {
       url: `/api/v1/messages/${encodeURIComponent(String(id))}/recordings`,
       method: "GET",
+    },
+    options,
+  );
+};
+/**
+ * @summary Read native email tags
+ */
+export const getMessageTags = (
+  { id }: GetMessageTagsPathParameters,
+  params?: GetMessageTagsParams,
+  options?: SecondParameter<typeof orvalFetch<MessageTagResult>>,
+) => {
+  return orvalFetch<MessageTagResult>(
+    {
+      url: `/api/v1/messages/${encodeURIComponent(String(id))}/tags`,
+      method: "GET",
+      params,
+    },
+    options,
+  );
+};
+/**
+ * @summary Add or remove native email tags
+ */
+export const updateMessageTags = (
+  { id }: UpdateMessageTagsPathParameters,
+  messageTagChange: MessageTagChange,
+  options?: SecondParameter<typeof orvalFetch<MessageTagResult>>,
+) => {
+  return orvalFetch<MessageTagResult>(
+    {
+      url: `/api/v1/messages/${encodeURIComponent(String(id))}/tags`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: messageTagChange,
     },
     options,
   );
