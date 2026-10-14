@@ -407,13 +407,14 @@ func (imp *Importer) BackfillMedia(ctx context.Context, opts ImportOptions) (sum
 			return sum, err
 		}
 		sum.MessagesProcessed++
+		sum.MessagesUpdated++
 	}
 	var blob string
 	blob, err = state.Marshal()
 	if err != nil {
 		return sum, err
 	}
-	if err = scoped.store.UpdateSyncCheckpointContext(ctx, runID, &store.Checkpoint{PageToken: blob, MessagesProcessed: int64(sum.MessagesProcessed), ErrorsCount: int64(sum.Errors)}); err != nil {
+	if err = scoped.store.UpdateSyncCheckpointContext(ctx, runID, &store.Checkpoint{PageToken: blob, MessagesProcessed: int64(sum.MessagesProcessed), MessagesUpdated: int64(sum.MessagesUpdated), ErrorsCount: int64(sum.Errors)}); err != nil {
 		return sum, err
 	}
 	err = scoped.store.CompleteSyncAndPreserveSourceCursorContext(ctx, runID, source.ID, blob)
