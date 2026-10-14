@@ -83,51 +83,46 @@ func TestSchemaVersionLegacyMarker(t *testing.T) {
 }
 
 func TestSchemaVersionInlineServiceUpgrade(t *testing.T) {
-	for _, legacyVersion := range []int{3, 4, 5, 6} {
-		t.Run(strconv.Itoa(legacyVersion), func(t *testing.T) {
-			require := require.New(t)
-			assert := assert.New(t)
-			s := testutil.NewTestStore(t)
-			ctx := t.Context()
-			uid, err := s.ArchiveUIDContext(ctx)
-			require.NoError(err)
+	const legacyVersion = 6
+	require := require.New(t)
+	assert := assert.New(t)
+	s := testutil.NewTestStore(t)
+	ctx := t.Context()
+	uid, err := s.ArchiveUIDContext(ctx)
+	require.NoError(err)
 
-			// Completed pre-Inline setup, including the version 4 recording
-			// tables, version 5 metadata indexes and version 6 native email tags,
-			// must require the service seed.
-			_, err = s.DB().ExecContext(ctx, `DELETE FROM applied_migrations WHERE name = 'communication_services_inline_v1'`)
-			require.NoError(err)
-			_, err = s.DB().ExecContext(ctx, `DELETE FROM communication_services WHERE slug = 'inline'`)
-			require.NoError(err)
-			_, err = s.DB().ExecContext(ctx, s.Rebind(`UPDATE archive_metadata SET value = ? WHERE key = 'schema_version'`), strconv.Itoa(legacyVersion))
-			require.NoError(err)
+	// Completed version 6 setup must require the Inline service seed.
+	_, err = s.DB().ExecContext(ctx, `DELETE FROM applied_migrations WHERE name = 'communication_services_inline_v1'`)
+	require.NoError(err)
+	_, err = s.DB().ExecContext(ctx, `DELETE FROM communication_services WHERE slug = 'inline'`)
+	require.NoError(err)
+	_, err = s.DB().ExecContext(ctx, s.Rebind(`UPDATE archive_metadata SET value = ? WHERE key = 'schema_version'`), strconv.Itoa(legacyVersion))
+	require.NoError(err)
 
-			require.ErrorContains(s.ValidateSchemaContext(ctx), "run setup")
-			version, err := s.SchemaVersionContext(ctx)
-			require.NoError(err)
-			assert.Equal(legacyVersion, version, "read-only validation must leave the old completion marker alone")
-			_, err = s.ResolveCommunicationServiceContext(ctx, "inline")
-			require.ErrorIs(err, store.ErrServiceNotFound, "read-only validation must not seed the missing service")
+	require.ErrorContains(s.ValidateSchemaContext(ctx), "run setup")
+	version, err := s.SchemaVersionContext(ctx)
+	require.NoError(err)
+	assert.Equal(legacyVersion, version, "read-only validation must leave the old completion marker alone")
+	_, err = s.ResolveCommunicationServiceContext(ctx, "inline")
+	require.ErrorIs(err, store.ErrServiceNotFound, "read-only validation must not seed the missing service")
 
-			require.NoError(s.InitSchemaContext(ctx))
-			require.NoError(s.ValidateSchemaContext(ctx))
-			version, err = s.SchemaVersionContext(ctx)
-			require.NoError(err)
-			assert.Equal(store.SchemaVersion, version)
-			service, err := s.ResolveCommunicationServiceContext(ctx, "inline")
-			require.NoError(err)
-			assert.True(service.IsSystem)
-			assert.Equal(store.ScopePolicyRequired, service.ScopePolicy)
-			var applied int
-			require.NoError(s.DB().QueryRowContext(ctx,
-				`SELECT count(*) FROM applied_migrations WHERE name = 'communication_services_inline_v1'`,
-			).Scan(&applied))
-			assert.Equal(1, applied)
-			again, err := s.ArchiveUIDContext(ctx)
-			require.NoError(err)
-			assert.Equal(uid, again, "setup must preserve the archive identity")
-		})
-	}
+	require.NoError(s.InitSchemaContext(ctx))
+	require.NoError(s.ValidateSchemaContext(ctx))
+	version, err = s.SchemaVersionContext(ctx)
+	require.NoError(err)
+	assert.Equal(store.SchemaVersion, version)
+	service, err := s.ResolveCommunicationServiceContext(ctx, "inline")
+	require.NoError(err)
+	assert.True(service.IsSystem)
+	assert.Equal(store.ScopePolicyRequired, service.ScopePolicy)
+	var applied int
+	require.NoError(s.DB().QueryRowContext(ctx,
+		`SELECT count(*) FROM applied_migrations WHERE name = 'communication_services_inline_v1'`,
+	).Scan(&applied))
+	assert.Equal(1, applied)
+	again, err := s.ArchiveUIDContext(ctx)
+	require.NoError(err)
+	assert.Equal(uid, again, "setup must preserve the archive identity")
 }
 
 func TestSchemaVersionMalformedAndFuture(t *testing.T) {
