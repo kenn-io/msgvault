@@ -676,6 +676,11 @@ type SearchPersonFilesPath struct {
 	ID int64 `json:"id"`
 }
 
+type SuggestPersonFilesPath struct {
+	// ID Durable person ID
+	ID int64 `json:"id"`
+}
+
 type ListPersonIdentitiesPath struct {
 	// ID Durable person ID
 	ID int64 `json:"id"`

@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-11"
+last_edited: "2026-10-12"
 title: Web UI & API Server
 description: Daemon-served analytical Web UI and REST API for your msgvault archive, with optional background sync scheduling.
 ---
@@ -23,6 +23,64 @@ browser login, secure remote deployment, search states, and keyboard controls.
 | Submit a background backfill | [Historical import jobs](#historical-import-jobs) |
 | Follow background work | `/api/v1/operations/runs` and `/api/v1/operations/status` |
 | Integrate an AI assistant | [MCP server](usage/chat.md) |
+
+### Filename suggestions
+
+Newer than the latest release, API schema 3.15 adds
+`POST /api/v1/files/suggest` and `POST /api/v1/people/{id}/files/suggest`.
+They suggest attachment filenames without changing existing file or message
+search. Both are read-only operations under existing owner authentication;
+delegated agent tokens and remote-client credentials gain no new access.
+They use archive metadata directly and need no analytical cache or embedding
+provider.
+
+Send one JSON object of at most 64 KiB. Unknown fields, invalid field casing
+and trailing objects are rejected. Duplicate field names use the last value.
+There is no query-language field, cursor, caller-selected sort or
+semantic-search input.
+
+| Field | Contract |
+|---|---|
+| `filename_query` | Required; nonempty normalized text, at most 128 runes, eight tokens and 64 runes per token |
+| `source_ids` | Optional positive IDs; at most 64 supplied values; empty means every source |
+| `account_scopes` | Optional structured account selections; at most 16 scopes and 64 addresses per scope |
+| `after`, `before` | Optional RFC3339 instants; inclusive `after`, exclusive `before`; when both are supplied, `after` must precede `before` |
+| `mime_families` | At most eight supplied values: `image`, `pdf`, `audio`, `video`, `text`, `document`, `archive`, `other` |
+| `limit` | Optional integer 1–100, default 20; explicit `null` is invalid |
+| `directions` | Person endpoint only: `from_person`, `to_person`, `group`; omitted means all three |
+
+Every filter intersects. Each account scope has optional `source_id`,
+`addresses`, `unattributed`, and `inbound` fields. Addresses and unattributed
+rows are alternatives within one scope; separate scopes intersect. Addresses
+must be canonical lowercase bare mailboxes. `inbound` selects received mail;
+without it, sent copies and calendar events can also match. Source-specific
+and unattributed selections retain ordinary account-filter semantics.
+Input array limits count supplied values before deduplication.
+
+The response contains `suggestions`, `candidate_limit_reached`, and
+`index_revision`. Rows contain `id`, `message_id`, `conversation_id`, `source_id`,
+`occurred_at` (always present, possibly `null`), the current `filename`,
+`mime_type` (possibly empty), `mime_family`, `filename_match`
+(`exact`, `prefix`, `typo`), `size_bytes`, `content_state`, and
+`content_available`. Content states are `metadata_only`, `url_only`,
+`missing_blob`, and `local_content`. Rows contain no storage paths, download
+URLs or content hashes. Person rows also contain `person_provenance` with the
+matching participant IDs, roles and directions.
+
+There is no total count or pagination cursor. A false
+`candidate_limit_reached` proves candidate-stream exhaustion for that index
+snapshot, subject to the requested output limit and index freshness. A true
+value means suggestions may be incomplete, even when empty. A person can have
+at most 64 resolved participants; provenance is bounded to 4,096 unique
+message/participant/role edges per request. Overflow fails the whole request
+with HTTP 422 `filename_scope_too_large`; identities are never changed.
+
+Invalid input returns HTTP 400. An absent person retains ordinary HTTP 404
+behavior. Missing index support, unfinished bootstrap or a mismatched index
+consumer returns retryable HTTP 503 `filename_index_unavailable`; requests
+never scan or rebuild the archive. See
+[ranking and maintenance](architecture/search-ranking.md#filename-suggestions)
+and [CLI usage](cli-reference.md#typo-tolerant-filenames).
 
 ### Calendar control
 
@@ -100,7 +158,7 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.15.0**.
+it is separate from the binary release version. The current schema is **3.17.0**.
 Upgrade clients and daemon together across incompatible schema versions,
 including remote deployments.
 

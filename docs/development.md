@@ -320,6 +320,44 @@ go test -tags 'fts5 sqlite_vec' ./internal/query -run '^$' \
   -fuzz '^FuzzMetadataSearchParity$' -fuzztime=30s -parallel=2
 ```
 
+### Synthetic filename discovery measurements
+
+Use generated metadata to compare the Directory verifier and bounded filename
+suggestions without a private archive:
+
+```bash
+go test -tags 'fts5 sqlite_vec' ./internal/store \
+  -run '^TestFilenameDiscoverySyntheticRecall$' -count=1
+go test -tags 'fts5 sqlite_vec' ./internal/namematch -run '^$' \
+  -bench '^BenchmarkDirectoryVerifier$' -benchmem -count=3
+go test -tags 'fts5 sqlite_vec sqlite_dbstat' ./internal/store -run '^$' \
+  -bench '^BenchmarkFilenameDiscovery$' -benchtime=3x -benchmem -count=3
+```
+
+The existing native-driver `sqlite_dbstat` diagnostic tag enables physical
+projection table and index page-byte measurement. Ordinary correctness and
+shipped builds retain their usual tags. The filename benchmark uses durable
+SQLite at 1k, 10k and 100k generated names plus one 512-rune filename, with 64
+synthetic identities bound to one person. Exact, typo, short-prefix, no-hit,
+dense-collision, restrictive-empty, maximum-name and 64-person cases share the
+same fixture and policy.
+
+Indexed timings cover in-process HTTP dispatch and response decoding. The
+exhaustive baseline scans the same fixture's filename metadata in memory,
+applies the same policy and sorts results; it is test-only and excludes HTTP
+overhead. Setup and warmup are outside request timings. Separate metrics report
+durable bootstrap, one journaled rename, one idle maintenance batch, physical
+index bytes, posting rows, admitted/verified IDs, returned rows, recall, and
+missing matches for limited results. Repeated short samples characterize this
+synthetic workload; they do not predict every archive or impose latency
+thresholds on correctness tests. Complete results must equal the exhaustive
+oracle within the requested output limit; limited results report their missing
+output and candidate-pool matches explicitly.
+
+Run the recall test with `MSGVAULT_TEST_DB` set to a disposable PostgreSQL test
+database for backend parity. Existing native query-plan tests exercise indexed
+posting seeks and bounded authority/provenance reads on both backends.
+
 ## MCP memory measurements
 
 `TestMCPMemory` guards the retained Go heap of a `msgvault mcp` process. It
@@ -398,6 +436,12 @@ archive schema changes, including indexes, or a required data migration changes.
 Embedded readers require an exact version match. Once an archive is migrated to
 a higher version, applications using an older `pkg/archive` must upgrade too,
 even if the schema change only added an index.
+
+Filename suggestions require archive schema version 6 and API schema 3.15,
+newer than the latest release. Version 6 creates empty projection tables;
+background maintenance establishes readiness separately. Schema migration does
+not scan attachments or populate the index, and suggestion requests never
+perform setup or backfill. Embedded readers require completed version-6 setup.
 
 `TestSchemaVersionContract` hashes the schema and migration ledger a fresh archive
 gets on each backend, plus the legacy column statements only older archives run,

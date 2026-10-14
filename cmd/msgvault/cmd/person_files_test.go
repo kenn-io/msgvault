@@ -35,6 +35,10 @@ func (f *fakePersonFilesClient) SearchPersonFiles(_ context.Context, request dae
 	return f.metadata, nil
 }
 
+func (f *fakePersonFilesClient) SuggestPersonFiles(context.Context, daemonclient.PersonFileSuggestionOptions) (generated.PersonFileSuggestionHTTPResponse, error) {
+	return generated.PersonFileSuggestionHTTPResponse{}, errors.New("unexpected filename suggestion call in ordinary file search")
+}
+
 func (f *fakePersonFilesClient) SearchDocuments(_ context.Context, request store.DocumentSearchRequest) (store.DocumentSearchResponse, error) {
 	f.documentRequest = request
 	return f.documents, f.documentErr

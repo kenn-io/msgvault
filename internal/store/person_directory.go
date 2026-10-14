@@ -16,6 +16,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"go.kenn.io/msgvault/internal/namematch"
 )
 
 const (
@@ -471,51 +473,7 @@ func directoryCandidateQuality(tokens, terms []string) (int, bool) {
 }
 
 func directoryEditDistanceAtMostOne(left, right string) bool {
-	a, b := []rune(left), []rune(right)
-	if len(a)-len(b) > 1 || len(b)-len(a) > 1 {
-		return false
-	}
-	if len(a) == len(b) {
-		first, second := -1, -1
-		for index := range a {
-			if a[index] == b[index] {
-				continue
-			}
-			if first == -1 {
-				first = index
-			} else if second == -1 {
-				second = index
-			} else {
-				return false
-			}
-		}
-		if second == first+1 && a[first] == b[second] && a[second] == b[first] {
-			return true
-		}
-	}
-	previous, current := make([]int, len(b)+1), make([]int, len(b)+1)
-	for index := range previous {
-		previous[index] = index
-	}
-	for i := 1; i <= len(a); i++ {
-		current[0] = i
-		minimum := current[0]
-		for j := 1; j <= len(b); j++ {
-			cost := 0
-			if a[i-1] != b[j-1] {
-				cost = 1
-			}
-			current[j] = min(previous[j]+1, current[j-1]+1, previous[j-1]+cost)
-			if current[j] < minimum {
-				minimum = current[j]
-			}
-		}
-		if minimum > 1 {
-			return false
-		}
-		previous, current = current, previous
-	}
-	return previous[len(b)] <= 1
+	return namematch.AtMostOne(left, right)
 }
 
 func directoryTermProjectionSQL(term string, index int) (string, []any) {

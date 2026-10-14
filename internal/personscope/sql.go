@@ -32,6 +32,16 @@ func Validate(scope Scope) error {
 // placeholders) for the shared message-person relation. Callers must provide
 // aliases for the messages and conversations tables.
 func MessagePredicate(scope Scope, message, conversation string) (string, []any) {
+	return messagePredicate(scope, message, conversation, "")
+}
+
+// BoundedMessagePredicate uses the same relation with correlated EXISTS probes.
+// The OFFSET barrier prevents PostgreSQL hashed whole-relation subplans.
+func BoundedMessagePredicate(scope Scope, message, conversation string) (string, []any) {
+	return messagePredicate(scope, message, conversation, " LIMIT 1 OFFSET 0")
+}
+
+func messagePredicate(scope Scope, message, conversation, probe string) (string, []any) {
 	if len(scope.ParticipantIDs) == 0 || len(scope.Directions) == 0 {
 		return "FALSE", nil
 	}
@@ -48,15 +58,15 @@ func MessagePredicate(scope Scope, message, conversation string) (string, []any)
 		return `(` + message + `.sender_id IN (` + senderIDs + `) OR EXISTS (
 			SELECT 1 FROM message_recipients person_recipient
 			WHERE person_recipient.message_id = ` + message + `.id
-			  AND person_recipient.participant_id IN (` + recipientIDs + `)) OR EXISTS (
+			  AND person_recipient.participant_id IN (` + recipientIDs + `)` + probe + `) OR EXISTS (
 			SELECT 1 FROM conversation_participants person_member
 			WHERE person_member.conversation_id = ` + message + `.conversation_id
-			  AND person_member.participant_id IN (` + rosterIDs + `)))`, args
+			  AND person_member.participant_id IN (` + rosterIDs + `)` + probe + `))`, args
 	}
 	directionEvidence := `(` + message + `.is_from_me = TRUE OR ` + message + `.sender_id IS NOT NULL OR EXISTS (
 		SELECT 1 FROM message_recipients known_from
 		WHERE known_from.message_id = ` + message + `.id
-		  AND LOWER(known_from.recipient_type) = 'from'))`
+		  AND LOWER(known_from.recipient_type) = 'from'` + probe + `))`
 	for _, direction := range scope.Directions {
 		switch direction {
 		case FromPerson:
@@ -65,7 +75,7 @@ func MessagePredicate(scope Scope, message, conversation string) (string, []any)
 				SELECT 1 FROM message_recipients person_from
 				WHERE person_from.message_id = `+message+`.id
 				  AND LOWER(person_from.recipient_type) = 'from'
-				  AND person_from.participant_id IN (`+envelopeIDs+`)))`)
+				  AND person_from.participant_id IN (`+envelopeIDs+`)`+probe+`))`)
 		case ToPerson:
 			explicitIDs, rosterIDs := appendIDs(), appendIDs()
 			senderIDs, envelopeSenderIDs := appendIDs(), appendIDs()
@@ -73,18 +83,18 @@ func MessagePredicate(scope Scope, message, conversation string) (string, []any)
 				SELECT 1 FROM message_recipients person_to
 				WHERE person_to.message_id = `+message+`.id
 				  AND LOWER(person_to.recipient_type) IN ('to', 'cc', 'bcc')
-				  AND person_to.participant_id IN (`+explicitIDs+`)) OR (
+				  AND person_to.participant_id IN (`+explicitIDs+`)`+probe+`) OR (
 				LOWER(COALESCE(`+conversation+`.conversation_type, '')) = 'direct_chat'
 				AND `+directionEvidence+`
 				AND EXISTS (SELECT 1 FROM conversation_participants person_roster
 					WHERE person_roster.conversation_id = `+message+`.conversation_id
-					  AND person_roster.participant_id IN (`+rosterIDs+`))
+					  AND person_roster.participant_id IN (`+rosterIDs+`)`+probe+`)
 				AND NOT ((`+message+`.sender_id IS NOT NULL AND `+message+`.sender_id IN (`+senderIDs+`)) OR (
 					`+message+`.sender_id IS NULL AND EXISTS (
 						SELECT 1 FROM message_recipients scoped_sender
 						WHERE scoped_sender.message_id = `+message+`.id
 						  AND LOWER(scoped_sender.recipient_type) = 'from'
-						  AND scoped_sender.participant_id IN (`+envelopeSenderIDs+`))))))`)
+						  AND scoped_sender.participant_id IN (`+envelopeSenderIDs+`)`+probe+`)))))`)
 		case Group:
 			rosterIDs := appendIDs()
 			rosterType := `LOWER(COALESCE(` + conversation + `.conversation_type, '')) IN ('group_chat', 'channel')`
@@ -94,7 +104,7 @@ func MessagePredicate(scope Scope, message, conversation string) (string, []any)
 			conditions = append(conditions, `(`+rosterType+` AND EXISTS (
 				SELECT 1 FROM conversation_participants person_group
 				WHERE person_group.conversation_id = `+message+`.conversation_id
-				  AND person_group.participant_id IN (`+rosterIDs+`)))`)
+				  AND person_group.participant_id IN (`+rosterIDs+`)`+probe+`))`)
 		}
 	}
 	return strings.Join(conditions, " OR "), args

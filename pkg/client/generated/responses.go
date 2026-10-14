@@ -1349,6 +1349,14 @@ func (s *SearchFilesErrorResponseJSON503) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+type SuggestFilesResponse = FileSuggestionHTTPResponse
+
+type SuggestFilesErrorResponse = ErrorResponse
+
+type SuggestFilesErrorResponseJSON = ErrorResponse
+
+type SuggestFilesErrorResponseJSON503 = ErrorResponse
+
 type GetFileResponse = FileMetadataResponse
 
 type GetFileErrorResponse = ErrorResponse
@@ -2612,6 +2620,16 @@ func (s *SearchPersonFilesErrorResponseJSON503) UnmarshalJSON(data []byte) error
 
 	return nil
 }
+
+type SuggestPersonFilesResponse = PersonFileSuggestionHTTPResponse
+
+type SuggestPersonFilesErrorResponse = ErrorResponse
+
+type SuggestPersonFilesErrorResponseJSON = ErrorResponse
+
+type SuggestPersonFilesErrorResponseJSON422 = ErrorResponse
+
+type SuggestPersonFilesErrorResponseJSON503 = ErrorResponse
 
 type ListPersonIdentitiesResponse = PersonIdentitiesResponse
 
@@ -4735,6 +4753,16 @@ type SearchFilesResp struct {
 	JSON503      *SearchFilesErrorResponseJSON503
 }
 
+type SuggestFilesResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *SuggestFilesResponse
+	JSON400      *SuggestFilesErrorResponse
+	JSON422      *SuggestFilesErrorResponseJSON
+	JSON503      *SuggestFilesErrorResponseJSON503
+}
+
 type GetFileResp struct {
 	HTTPResponse *http.Response
 	Body         []byte
@@ -5857,6 +5885,17 @@ type SearchPersonFilesResp struct {
 	JSON409      *SearchPersonFilesErrorResponseJSON409
 	JSON422      *SearchPersonFilesErrorResponseJSON422
 	JSON503      *SearchPersonFilesErrorResponseJSON503
+}
+
+type SuggestPersonFilesResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *SuggestPersonFilesResponse
+	JSON400      *SuggestPersonFilesErrorResponse
+	JSON404      *SuggestPersonFilesErrorResponseJSON
+	JSON422      *SuggestPersonFilesErrorResponseJSON422
+	JSON503      *SuggestPersonFilesErrorResponseJSON503
 }
 
 type ListPersonIdentitiesResp struct {

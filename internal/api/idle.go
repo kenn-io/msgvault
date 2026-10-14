@@ -48,8 +48,25 @@ func (t *IdleTracker) Wrap(next http.Handler) http.Handler {
 }
 
 func (t *IdleTracker) BeginWork() (func(), bool) {
+	return t.beginWork(context.Background(), true)
+}
+
+func (t *IdleTracker) BeginWorkContext(ctx context.Context) (func(), bool) {
+	return t.beginWork(ctx, true)
+}
+
+// BeginMaintenanceWorkContext prevents idle shutdown while maintenance is
+// active without counting recurring no-op passes as external activity.
+func (t *IdleTracker) BeginMaintenanceWorkContext(ctx context.Context) (func(), bool) {
+	return t.beginWork(ctx, false)
+}
+
+func (t *IdleTracker) beginWork(ctx context.Context, refreshExternal bool) (func(), bool) {
 	if t == nil {
 		return func() {}, true
+	}
+	if ctx != nil && ctx.Err() != nil {
+		return func() {}, false
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -65,18 +82,13 @@ func (t *IdleTracker) BeginWork() (func(), bool) {
 			if t.activeWork > 0 {
 				t.activeWork--
 			}
-			t.lastExternal = time.Now()
+			if refreshExternal {
+				t.lastExternal = time.Now()
+			}
 			t.signalLocked()
 			t.mu.Unlock()
 		})
 	}, true
-}
-
-func (t *IdleTracker) BeginWorkContext(ctx context.Context) (func(), bool) {
-	if ctx != nil && ctx.Err() != nil {
-		return func() {}, false
-	}
-	return t.BeginWork()
 }
 
 func (t *IdleTracker) Do(fn func()) bool {

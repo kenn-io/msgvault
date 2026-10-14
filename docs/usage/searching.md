@@ -17,9 +17,35 @@ to read a message. On newer `main` builds, `show` is an alias; use
 | Words or topics inside an attached document | [Document attachment search](/docs/usage/document-indexing/#search-and-inspect-status) |
 | An image or video by its visual content | [Visual attachment search](/docs/usage/vector-search/#visual-attachment-search) |
 | A person by their curated profile | [Semantic person search](/docs/usage/people/#find-a-person-by-what-you-remember) |
+| An attachment with a misspelled filename | [Opt-in filename suggestions](#filename-suggestions) |
 
 Message search does not search extracted document text or attachment pixels.
 Those have separate indexes and setup steps.
+
+## Filename suggestions
+
+Newer than the latest release, person file lookup can suggest a filename when
+you remember its spelling approximately:
+
+```bash
+msgvault person files 42 --filename 'quaterly report' --fuzzy-filename --mime-family pdf
+```
+
+Choose the existing person's ID first. The command keeps the person's identity
+bindings and applies the selected direction, dates and MIME families. It labels
+matches as `exact`, `prefix`, or `typo`. Suggestions do not bind or merge people.
+
+Use `--fuzzy-filename` explicitly. Without it, `--filename` remains a literal
+substring filter; message search and document or visual search keep their
+existing meaning. Suggestions work only in the metadata lane, default to 20
+results, and do not paginate.
+
+A candidate-limit notice means the results may be incomplete, including an
+empty result. A warming-index error means background maintenance has not yet
+made suggestions ready. Newly added or renamed attachments can be absent until
+that maintenance catches up. See the [CLI reference](../cli-reference.md#typo-tolerant-filenames)
+for flags and output, and [search ranking](../architecture/search-ranking.md#filename-suggestions)
+for matching, freshness and bounds.
 
 ## Basic Usage
 

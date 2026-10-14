@@ -2770,6 +2770,35 @@ to one lane and cannot be used with `all`. See
 [person files](/docs/usage/people/#find-files-related-to-a-person) for index
 requirements, supported filters, and pagination.
 
+#### Typo-tolerant filenames
+
+Newer than the latest release, `--fuzzy-filename` explicitly selects filename
+suggestions:
+
+```bash
+msgvault person files 42 --filename 'quaterly report' --fuzzy-filename
+msgvault person files 42 --filename 'quaterly report' --fuzzy-filename --direction to_person --mime-family pdf --limit 20 --json
+```
+
+The flag requires a nonempty `--filename` in the `metadata` lane. It rejects
+`--query` and `--cursor`, including explicitly supplied empty values. Direction,
+MIME-family and date filters still apply. Suggestions default to 20 results;
+an explicit `--limit` must be 1–100. Ordinary file lookup keeps its existing
+substring filter, output, pagination and default limit of 100.
+
+Human output includes `MATCH` (`exact`, `prefix`, or `typo`) and person
+provenance. It prints “Candidate limit reached; suggestions may be incomplete.”
+when the bounded lookup cannot prove exhaustion. `--json` returns a separate
+object with `suggestions`, `candidate_limit_reached`, and `index_revision`;
+there is no cursor or total count. Each suggestion retains the actual filename,
+attachment occurrence and matching person roles.
+
+An unavailable or warming index returns `filename_index_unavailable`; a person
+scope exceeding the bounds returns `filename_scope_too_large`. The command
+reports those errors rather than retrying an ordinary or unscoped search. See
+[filename suggestion limits](architecture/search-ranking.md#filename-suggestions)
+and the [API contract](api-server.md#filename-suggestions).
+
 ### person track, provider, sweep, and facts
 
 Tracking chooses which profiles automatic maintenance may process. It does not

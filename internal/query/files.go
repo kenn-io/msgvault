@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/filemeta"
 	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/personscope"
 )
@@ -649,20 +650,7 @@ func fileSearchOrder(sort SortSpec) (string, error) {
 // mapping for attachment alias a. Shared by the population
 // CTE and the fast-path count scan so classifications cannot drift.
 func sqlFileMIMEFamilyExpr() string {
-	mime := "lower(a.mime_type)"
-	return `CASE
-			WHEN ` + mime + ` LIKE 'image/%' THEN 'image'
-			WHEN ` + mime + ` = 'application/pdf' THEN 'pdf'
-			WHEN ` + mime + ` LIKE 'audio/%' THEN 'audio'
-			WHEN ` + mime + ` LIKE 'video/%' THEN 'video'
-			WHEN ` + mime + ` LIKE 'text/%' THEN 'text'
-			WHEN ` + mime + ` IN ('application/msword', 'application/rtf',
-				'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-				'application/vnd.oasis.opendocument.text') THEN 'document'
-			WHEN ` + mime + ` IN ('application/zip', 'application/gzip', 'application/x-tar',
-				'application/x-7z-compressed', 'application/x-rar-compressed') THEN 'archive'
-			ELSE 'other'
-		END`
+	return filemeta.MIMEFamilySQL("a.mime_type")
 }
 
 // fileFilteredCTE renders the selected → classified → filtered CTE chain

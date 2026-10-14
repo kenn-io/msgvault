@@ -102,6 +102,8 @@ type GroupFilesBody = FileGroupsHTTPRequest
 
 type SearchFilesBody = FileSearchHTTPRequest
 
+type SuggestFilesBody = FileSuggestionHTTPRequest
+
 type LinkIdentityParticipantsBody = IdentityLinkRequest
 
 type ReviewAcceptIdentityMatchCandidateBody = DecideIdentityMatchReviewedRequest
@@ -181,6 +183,8 @@ type RejectPersonBriefBody = RejectPersonBriefRequest
 type SetPersonFactPinBody = SetPersonFactPinRequest
 
 type SearchPersonFilesBody = PersonFileSearchHTTPRequest
+
+type SuggestPersonFilesBody = PersonFileSuggestionHTTPRequest
 
 type MergePersonsBody = MergePersonRequest
 

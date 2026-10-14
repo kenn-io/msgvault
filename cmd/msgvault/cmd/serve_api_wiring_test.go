@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -345,5 +346,45 @@ func TestStoreAPIAdapterServesOrganizationAndEmploymentRoutes(t *testing.T) {
 
 			require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 		})
+	}
+}
+
+func TestServeFilenameDiscoveryWiring(t *testing.T) {
+	require := require.New(t)
+
+	f := storetest.New(t)
+	member, err := f.Store.EnsureParticipant("member@example.test", "Member Example", "example.test")
+	require.NoError(err)
+	person, _, err := f.Store.CreatePersonFromParticipant(member)
+	require.NoError(err)
+	message := f.CreateMessage("suggestion-wire")
+	require.NoError(f.Store.ReplaceMessageRecipients(message, "to", []int64{member}, []string{"Member Example"}))
+	var attachment int64
+	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`INSERT INTO attachments(message_id,filename,storage_path) VALUES(?,'report.pdf','') RETURNING id`), message).Scan(&attachment))
+	for range 100 {
+		batch, err := f.Store.FilenameDiscoveryBatchContext(t.Context())
+		require.NoError(err)
+		if batch.Status.Phase == "ready" && !batch.More {
+			break
+		}
+	}
+	f.Store.DB().SetMaxOpenConns(1)
+	srv := api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{}, Store: &storeAPIAdapter{store: f.Store}, Logger: slog.New(slog.DiscardHandler)})
+	for _, path := range []string{"/api/v1/files/suggest", fmt.Sprintf("/api/v1/people/%d/files/suggest", person.ID)} {
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"filename_query":"report.pdf"}`))
+		r.Header.Set("Content-Type", "application/json")
+		srv.Router().ServeHTTP(w, r)
+		require.Equal(200, w.Code, w.Body.String())
+		var body map[string]any
+		decoder := json.NewDecoder(w.Body)
+		decoder.UseNumber()
+		require.NoError(decoder.Decode(&body))
+		rows, ok := body["suggestions"].([]any)
+		require.True(ok)
+		require.Len(rows, 1)
+		row, ok := rows[0].(map[string]any)
+		require.True(ok)
+		assert.Equal(t, json.Number(strconv.FormatInt(attachment, 10)), row["id"])
 	}
 }

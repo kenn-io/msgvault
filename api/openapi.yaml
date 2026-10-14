@@ -33,6 +33,21 @@ components:
       required:
         - accounts
       type: object
+    AccountScope:
+      additionalProperties: false
+      properties:
+        addresses:
+          items:
+            type: string
+          type: array
+        inbound:
+          type: boolean
+        source_id:
+          format: int64
+          type: integer
+        unattributed:
+          type: boolean
+      type: object
     AccountStatus:
       additionalProperties: true
       properties:
@@ -5430,6 +5445,133 @@ components:
       required:
         - field
         - direction
+      type: object
+    FileSuggestionHTTPRequest:
+      additionalProperties: false
+      properties:
+        account_scopes:
+          items:
+            $ref: "#/components/schemas/AccountScope"
+          maxItems: 16
+          type: array
+        after:
+          format: date-time
+          type: string
+        before:
+          format: date-time
+          type: string
+        filename_query:
+          type: string
+        limit:
+          format: int64
+          maximum: 100
+          minimum: 1
+          type: integer
+        mime_families:
+          items:
+            enum:
+              - image
+              - pdf
+              - audio
+              - video
+              - text
+              - document
+              - archive
+              - other
+            type: string
+          maxItems: 8
+          type: array
+        source_ids:
+          items:
+            format: int64
+            type: integer
+          maxItems: 64
+          type: array
+      required:
+        - filename_query
+      type: object
+    FileSuggestionHTTPResponse:
+      additionalProperties: true
+      properties:
+        candidate_limit_reached:
+          type: boolean
+        index_revision:
+          type: string
+        suggestions:
+          items:
+            $ref: "#/components/schemas/FileSuggestionRow"
+          type: array
+      required:
+        - suggestions
+        - candidate_limit_reached
+        - index_revision
+      type: object
+    FileSuggestionRow:
+      additionalProperties: true
+      properties:
+        content_available:
+          type: boolean
+        content_state:
+          enum:
+            - metadata_only
+            - url_only
+            - missing_blob
+            - local_content
+          type: string
+        conversation_id:
+          format: int64
+          type: integer
+        filename:
+          type: string
+        filename_match:
+          enum:
+            - exact
+            - prefix
+            - typo
+          type: string
+        id:
+          format: int64
+          type: integer
+        message_id:
+          format: int64
+          type: integer
+        mime_family:
+          enum:
+            - image
+            - pdf
+            - audio
+            - video
+            - text
+            - document
+            - archive
+            - other
+          type: string
+        mime_type:
+          type: string
+        occurred_at:
+          format: date-time
+          type:
+            - string
+            - "null"
+        size_bytes:
+          format: int64
+          type: integer
+        source_id:
+          format: int64
+          type: integer
+      required:
+        - id
+        - message_id
+        - conversation_id
+        - source_id
+        - occurred_at
+        - filename
+        - mime_type
+        - mime_family
+        - filename_match
+        - size_bytes
+        - content_state
+        - content_available
       type: object
     FilteredMessagesResponse:
       additionalProperties: true
@@ -11282,6 +11424,144 @@ components:
         - content_state
         - content_available
       type: object
+    PersonFileSuggestionHTTPRequest:
+      additionalProperties: false
+      properties:
+        account_scopes:
+          items:
+            $ref: "#/components/schemas/AccountScope"
+          maxItems: 16
+          type: array
+        after:
+          format: date-time
+          type: string
+        before:
+          format: date-time
+          type: string
+        directions:
+          items:
+            enum:
+              - from_person
+              - to_person
+              - group
+            type: string
+          type: array
+        filename_query:
+          type: string
+        limit:
+          format: int64
+          maximum: 100
+          minimum: 1
+          type: integer
+        mime_families:
+          items:
+            enum:
+              - image
+              - pdf
+              - audio
+              - video
+              - text
+              - document
+              - archive
+              - other
+            type: string
+          maxItems: 8
+          type: array
+        source_ids:
+          items:
+            format: int64
+            type: integer
+          maxItems: 64
+          type: array
+      required:
+        - filename_query
+      type: object
+    PersonFileSuggestionHTTPResponse:
+      additionalProperties: true
+      properties:
+        candidate_limit_reached:
+          type: boolean
+        index_revision:
+          type: string
+        suggestions:
+          items:
+            $ref: "#/components/schemas/PersonFileSuggestionRow"
+          type: array
+      required:
+        - suggestions
+        - candidate_limit_reached
+        - index_revision
+      type: object
+    PersonFileSuggestionRow:
+      additionalProperties: true
+      properties:
+        content_available:
+          type: boolean
+        content_state:
+          enum:
+            - metadata_only
+            - url_only
+            - missing_blob
+            - local_content
+          type: string
+        conversation_id:
+          format: int64
+          type: integer
+        filename:
+          type: string
+        filename_match:
+          enum:
+            - exact
+            - prefix
+            - typo
+          type: string
+        id:
+          format: int64
+          type: integer
+        message_id:
+          format: int64
+          type: integer
+        mime_family:
+          enum:
+            - image
+            - pdf
+            - audio
+            - video
+            - text
+            - document
+            - archive
+            - other
+          type: string
+        mime_type:
+          type: string
+        occurred_at:
+          format: date-time
+          type:
+            - string
+            - "null"
+        person_provenance:
+          $ref: "#/components/schemas/Provenance"
+        size_bytes:
+          format: int64
+          type: integer
+        source_id:
+          format: int64
+          type: integer
+      required:
+        - person_provenance
+        - id
+        - message_id
+        - conversation_id
+        - source_id
+        - occurred_at
+        - filename
+        - mime_type
+        - mime_family
+        - filename_match
+        - size_bytes
+        - content_state
+        - content_available
+      type: object
     PersonIdentifier:
       additionalProperties: true
       properties:
@@ -15514,7 +15794,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.16.0
+  version: 3.17.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -21185,6 +21465,51 @@ paths:
       security:
         - apiKey: []
       summary: Search analytical files
+      tags:
+        - Exploration
+  /api/v1/files/suggest:
+    post:
+      operationId: suggestFiles
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FileSuggestionHTTPRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FileSuggestionHTTPResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Suggest bounded attachment filenames
       tags:
         - Exploration
   /api/v1/files/{id}:
@@ -27152,6 +27477,65 @@ paths:
       security:
         - apiKey: []
       summary: Search one durable person's analytical files
+      tags:
+        - Exploration
+  /api/v1/people/{id}/files/suggest:
+    post:
+      operationId: suggestPersonFiles
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PersonFileSuggestionHTTPRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonFileSuggestionHTTPResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Suggest bounded attachment filenames for one person
       tags:
         - Exploration
   /api/v1/people/{id}/identities:

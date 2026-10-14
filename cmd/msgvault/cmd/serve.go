@@ -172,7 +172,7 @@ func newServeSchedulers(
 	syncFunc scheduler.SyncFunc, logger *slog.Logger, idle scheduler.WorkTracker, gate api.LabeledOperationGate,
 ) (*scheduler.Scheduler, *scheduler.Scheduler) {
 	sched := scheduler.New(syncFunc).WithLogger(logger).
-		WithWorkTracker(combineWorkTrackers(idle, labelWorkTracker(gate, "a scheduled sync")))
+		WithWorkTracker(combineWorkTrackers(scheduleIdleWorkTracker(idle), labelWorkTracker(gate, "a scheduled sync")))
 	media := scheduler.New(nil).WithLogger(logger)
 	return sched, media
 }
@@ -527,6 +527,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 		ctx, sched, s, cfg.Attachments.Documents.Enabled,
 	); err != nil {
 		return fmt.Errorf("configure document reconciliation: %w", err)
+	}
+	if err := registerFilenameDiscoveryJob(sched, s); err != nil {
+		return fmt.Errorf("schedule filename discovery: %w", err)
 	}
 	if err := configureBeeperMediaJob(ctx, mediaSched, operationGate, s, blobStore,
 		filepath.Join(cfg.Data.DataDir, "tmp", "beeper-media"), cfg.Integrations.Docbank, logger); err != nil {

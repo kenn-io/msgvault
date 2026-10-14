@@ -364,3 +364,43 @@ func createDirectoryPerson(
 	}
 	return person
 }
+
+// Lookup must preserve existing ranking/cursors and must never change identity bindings.
+func TestDirectoryLinearMatcherPreservesAcceptance(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	st := testutil.NewTestStore(t)
+	exact := createDirectoryPerson(t, st, "Alice Example", "linear-exact@example.test", "friend", "active", "Example Co")
+	prefix := createDirectoryPerson(t, st, "Alicef Example", "linear-prefix@example.test", "friend", "active", "Example Co")
+	typo := createDirectoryPerson(t, st, "Alcie Example", "linear-typo@example.test", "friend", "active", "Example Co")
+	before := make([]*store.Person, 0, 3)
+	for _, p := range []*store.Person{exact, prefix, typo} {
+		got, err := st.GetPersonContext(t.Context(), p.ID)
+		require.NoError(err)
+		before = append(before, got)
+	}
+	var ids []int64
+	cursor := ""
+	var cursors []string
+	for {
+		page, err := st.DirectoryPeoplePageContext(t.Context(), store.DirectoryPeopleQuery{Query: "alice", Limit: 1, Cursor: cursor, Category: "friend", Organization: "Example Co"})
+		require.NoError(err)
+		ids = append(ids, directoryPersonIDs(page.People)...)
+		cursor = page.NextCursor
+		if cursor == "" {
+			break
+		}
+		cursors = append(cursors, cursor)
+	}
+	assert.Equal([]int64{exact.ID, prefix.ID, typo.ID}, ids)
+	first, err := st.DirectoryPeoplePageContext(t.Context(), store.DirectoryPeopleQuery{Query: "alice", Limit: 1, Category: "friend", Organization: "Example Co"})
+	require.NoError(err)
+	require.Len(cursors, 2)
+	assert.Equal(cursors[0], first.NextCursor)
+	for _, p := range before {
+		after, err := st.GetPersonContext(t.Context(), p.ID)
+		require.NoError(err)
+		assert.Equal(p, after)
+	}
+}

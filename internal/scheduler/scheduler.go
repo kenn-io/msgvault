@@ -83,6 +83,13 @@ type Job struct {
 	// Expiry without progress reports an error and waits for the next trigger.
 	// Enable only for jobs that can resume committed progress. Zero disables it.
 	MaxRuntime time.Duration
+	// Interval runs the job every whole number of seconds instead of on a cron
+	// Schedule. It is for internal maintenance; set exactly one of the two.
+	Interval time.Duration
+	// Background runs wait for the work gate without counting as queued work,
+	// so they never ask a preemptible holder to yield. Use it for frequent
+	// maintenance that can wait behind a long run.
+	Background bool
 }
 
 type JobStatus struct {
@@ -123,6 +130,7 @@ type Scheduler struct {
 	genericFuncs       map[string]func(context.Context) error
 	genericPreemptible map[string]bool
 	genericMaxRuntime  map[string]time.Duration
+	genericBackground  map[string]bool
 	genericQueued      map[string]bool
 	genericPending     map[string]bool
 	genericStartedAt   map[string]time.Time
@@ -189,6 +197,7 @@ func New(syncFunc SyncFunc) *Scheduler {
 		genericFuncs:       make(map[string]func(context.Context) error),
 		genericPreemptible: make(map[string]bool),
 		genericMaxRuntime:  make(map[string]time.Duration),
+		genericBackground:  make(map[string]bool),
 		genericQueued:      make(map[string]bool),
 		genericPending:     make(map[string]bool),
 		genericStartedAt:   make(map[string]time.Time),
@@ -315,14 +324,31 @@ func (s *Scheduler) AddJob(job Job) error {
 	if job.Name == "" || job.Run == nil {
 		return errors.New("job name and run function are required")
 	}
-	if err := ValidateCronExpr(job.Schedule); err != nil {
-		return err
-	}
-	entryID, err := s.cron.AddFunc(job.Schedule, func() {
+	callback := func() {
 		s.onJobTick(job.Name)
-	})
-	if err != nil {
-		return fmt.Errorf("invalid cron expression %q: %w", job.Schedule, err)
+	}
+	var entryID cron.EntryID
+	schedule := job.Schedule
+	if job.Interval != 0 {
+		// Interval is a typed field so configured schedule strings can never
+		// select it; they always pass the five-field cron validator below.
+		if job.Schedule != "" {
+			return errors.New("job must set either a schedule or an interval, not both")
+		}
+		if job.Interval < time.Second || job.Interval%time.Second != 0 {
+			return fmt.Errorf("invalid job interval %s: use positive whole seconds", job.Interval)
+		}
+		entryID = s.cron.Schedule(cron.Every(job.Interval), cron.FuncJob(callback))
+		schedule = "@every " + job.Interval.String()
+	} else {
+		if err := ValidateCronExpr(job.Schedule); err != nil {
+			return err
+		}
+		var err error
+		entryID, err = s.cron.AddFunc(job.Schedule, callback)
+		if err != nil {
+			return fmt.Errorf("invalid cron expression %q: %w", job.Schedule, err)
+		}
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -330,11 +356,12 @@ func (s *Scheduler) AddJob(job Job) error {
 		s.cron.Remove(old)
 	}
 	s.genericJobs[job.Name] = entryID
-	s.genericSchedules[job.Name] = job.Schedule
+	s.genericSchedules[job.Name] = schedule
 	s.genericFuncs[job.Name] = job.Run
 	s.genericPreemptible[job.Name] = job.Preemptible
 	s.genericMaxRuntime[job.Name] = job.MaxRuntime
-	s.logger.Info("scheduled job", "job", job.Name, "schedule", job.Schedule, "next_run", s.nextRun(entryID))
+	s.genericBackground[job.Name] = job.Background
+	s.logger.Info("scheduled job", "job", job.Name, "schedule", schedule, "next_run", s.nextRun(entryID))
 	return nil
 }
 
@@ -352,6 +379,7 @@ func (s *Scheduler) RemoveJob(name string) {
 	delete(s.genericFuncs, name)
 	delete(s.genericPreemptible, name)
 	delete(s.genericMaxRuntime, name)
+	delete(s.genericBackground, name)
 	delete(s.genericLastRun, name)
 	delete(s.genericLastErr, name)
 	if s.genericPending[name] {
@@ -424,7 +452,7 @@ func (s *Scheduler) setCronSlot(slot *cronSlot, job func(context.Context) error,
 		if s.isStopped() {
 			return
 		}
-		done, ok := s.beginWork(slot.workLabel)
+		done, ok := s.beginWork(slot.workLabel, true)
 		if !ok {
 			return
 		}
@@ -515,7 +543,7 @@ func (s *Scheduler) runSync(email string) {
 	s.mu.Lock()
 	s.queued[email] = true
 	s.mu.Unlock()
-	done, ok := s.beginWork("scheduled sync of " + email)
+	done, ok := s.beginWork("scheduled sync of "+email, true)
 	s.mu.Lock()
 	delete(s.queued, email)
 	if ok {
@@ -656,7 +684,7 @@ func (s *Scheduler) startVisualPostSync() {
 				s.startVisualPostSync()
 			}
 		}()
-		done, ok := s.beginWork("post-sync multimodal indexing")
+		done, ok := s.beginWork("post-sync multimodal indexing", true)
 		if !ok {
 			return
 		}
@@ -815,8 +843,9 @@ func (s *Scheduler) runJob(name string, run func(context.Context) error) error {
 	s.genericQueued[name] = true
 	preemptible := s.genericPreemptible[name]
 	maxRuntime := s.genericMaxRuntime[name]
+	background := s.genericBackground[name]
 	s.mu.Unlock()
-	done, ok := s.beginWork(name)
+	done, ok := s.beginWork(name, !background)
 	s.mu.Lock()
 	delete(s.genericQueued, name)
 	if ok {
@@ -909,13 +938,17 @@ func (s *Scheduler) finishGenericRun(name string) {
 	s.genericRunning[name] = false
 }
 
-func (s *Scheduler) beginWork(label string) (func(), bool) {
+// beginWork waits for the work gate. A counted wait makes preemptible
+// holders yield after preemptAfter; background maintenance waits uncounted.
+func (s *Scheduler) beginWork(label string, counted bool) (func(), bool) {
 	if s.work == nil {
 		return func() {}, true
 	}
-	s.mu.Lock()
-	s.queuedRuns++
-	s.mu.Unlock()
+	if counted {
+		s.mu.Lock()
+		s.queuedRuns++
+		s.mu.Unlock()
+	}
 	var done func()
 	var ok bool
 	if labeled, supportsLabels := s.work.(LabeledWorkTracker); supportsLabels {
@@ -923,9 +956,11 @@ func (s *Scheduler) beginWork(label string) (func(), bool) {
 	} else {
 		done, ok = s.work.BeginWorkContext(s.ctx)
 	}
-	s.mu.Lock()
-	s.queuedRuns--
-	s.mu.Unlock()
+	if counted {
+		s.mu.Lock()
+		s.queuedRuns--
+		s.mu.Unlock()
+	}
 	return done, ok
 }
 

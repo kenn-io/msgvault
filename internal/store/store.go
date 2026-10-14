@@ -2321,6 +2321,10 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	// the archive's actual data distribution.
 	s.optimizeSQLiteBestEffort(ctx, "schema initialization")
 
+	if err := s.ensureFilenameDiscoveryInfrastructure(ctx); err != nil {
+		return err
+	}
+
 	if _, err := s.db.ExecContext(ctx, `INSERT INTO archive_metadata (key, value)
 		VALUES ('schema_version', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value`, strconv.Itoa(SchemaVersion)); err != nil {
 		return fmt.Errorf("record completed archive schema version: %w", err)

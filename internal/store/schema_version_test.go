@@ -115,6 +115,7 @@ var (
 		3: "bde397bba4bf884c55327b3956af11cd69400f7fdfdf60b34a05eaeeb5534b84",
 		4: "ed0092e4f507e327350bb9bbf2f0cfcd3cb8e53c9ca57f509c514e7e3f68579e",
 		5: "ed0092e4f507e327350bb9bbf2f0cfcd3cb8e53c9ca57f509c514e7e3f68579e",
+		6: "c4e06b60819045ffe63afda9caeb916e2b5f9d3b77f7ffc7c06b037625a8a2b7",
 	}
 	schemaContractPostgresDigests = []string{
 		1: "7c554ff06468af9bf30950e6e4f2954b52f84d7dd0e6708f4fdd932fda007ed3",
@@ -122,6 +123,7 @@ var (
 		3: "a60a2d5f70be37cbfd6ea4bf8c264be5d70f1dec16dd87d611ead7c0b01ec823",
 		4: "68f409716bd517ddda67402e966ff5d8fb2d00326ffef42fedccb77a0f11584c",
 		5: "68f409716bd517ddda67402e966ff5d8fb2d00326ffef42fedccb77a0f11584c",
+		6: "9a63d5ae5ad40ebca9500de9b3de10cdbce185d7ca8f0039e49db3b22e2f2fc0",
 	}
 )
 
