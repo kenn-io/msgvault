@@ -184,7 +184,7 @@ func (s *Store) applyIMAPMailboxDeltas(
 	}
 	return s.withAttributionTxContext(ctx, attributionLock{Sources: []int64{sourceID}}, func(tx *loggedTx) error {
 		if syncRunID > 0 {
-			if err := validateCurrentSyncGeneration(
+			if err := s.validateCurrentSyncGeneration(
 				ctx, tx, sourceID, syncRunID, SyncStatusCompleted,
 			); err != nil {
 				return err
