@@ -8,8 +8,8 @@ import gzip
 import io
 import json
 import os
-import subprocess
 import shutil
+import subprocess
 import tarfile
 import tempfile
 from pathlib import Path
@@ -729,7 +729,6 @@ class ReviewFilterTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "attestation digest"):
                 validate_fixture_directory(fixture_dir)
 
-
     def test_hydrator_uses_upstream_fixture_in_fork_or_originless_checkout(self) -> None:
         repo_root = Path(__file__).resolve().parents[2]
         records = [
@@ -811,10 +810,11 @@ class ReviewFilterTest(unittest.TestCase):
                     self.assertEqual(
                         locked_commit, git(checkout, "rev-parse", "refs/msgvault-fixtures/docs-fixtures"),
                     )
-                    self.assertEqual(
-                        str(fork_dir) if with_origin else "",
-                        git(checkout, "remote", "get-url", "origin") if with_origin else git(checkout, "remote"),
-                    )
+                    if with_origin:
+                        self.assertEqual(str(fork_dir), git(checkout, "remote", "get-url", "origin"))
+                        self.assertEqual("", git(checkout, "for-each-ref", "refs/remotes/origin"))
+                    else:
+                        self.assertEqual("", git(checkout, "remote"))
 
     def test_hydrator_rejects_lock_for_uncontrolled_branch(self) -> None:
         repo_root = Path(__file__).resolve().parents[2]
