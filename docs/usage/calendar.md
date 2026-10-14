@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-04"
+last_edited: "2026-10-13"
 title: Google Calendar
 description: Archive Google Calendar events alongside your email, with full-text and semantic search over meetings, organizers, and attendees.
 ---
@@ -86,6 +86,41 @@ only what changed. Interrupted full syncs resume from a checkpoint; pass
 
 The first argument can be an account email or the `name` of a `[[gcal]]` entry in
 `config.toml` (see [Scheduled sync](#scheduled-sync-daemon) below).
+
+## Read archived occurrences (unreleased)
+
+List the meetings scheduled in an archive window, including ordinary instances
+of recurring events:
+
+```bash
+msgvault calendar events --from 2027-03-01T00:00:00Z --to 2027-04-01T00:00:00Z --json
+msgvault calendar events --from 2027-03-01T00:00:00Z --to 2027-04-01T00:00:00Z --source 42 --attendee invited@example.com
+msgvault calendar event 'evt:123@20270301T100000Z' --json
+```
+
+The daemon expands series when you read them. Edited instances replace the
+series time and attendees. All-day events keep their civil dates in the
+calendar's current time zone. Cancelled instances are hidden unless you pass
+`--include-cancelled`. Events removed at the provider remain readable with
+`deleted_from_source:true`; locally deleted messages are excluded.
+
+The window uses RFC3339 timestamps and must be positive and at most 400 days.
+`--source` accepts archive source IDs and can be repeated. `--attendee` matches
+an exact effective attendee email. The page limit defaults to 100 and cannot
+exceed 500. Use the returned `next_cursor` with `--cursor` and the same filters
+to continue in start-time and ref order.
+
+The page reports series that cannot be expanded in `unexpandable`, with reasons
+`budget`, `recurrence_error`, or `unsupported`. It includes at most 50 entries;
+`unexpandable_more:true` means more exist. A request exceeding 2,000 candidate
+series, 20,000 exception rows, or the total recurrence budget fails with
+`query_too_broad`. Narrow the window or sources before retrying.
+
+Archived reads require daemon API schema 3.16.0 or newer. Delegated callers need
+`message.read` on the calendar sources. `--source` narrows that grant.
+`calendar.read` permits live availability only. The HTTP routes are
+`GET /api/v1/calendar/events` and `GET /api/v1/calendar/events/{ref}`.
+The MCP tools are described in [MCP Server](chat.md#archived-calendar-events-unreleased).
 
 ## Control events (unreleased)
 

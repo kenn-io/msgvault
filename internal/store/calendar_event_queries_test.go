@@ -50,6 +50,7 @@ func TestCalendarEventRowsWindowIncludesEarlierRDate(t *testing.T) {
 		{"TZID", `"start":{"dateTime":"2027-06-01T09:00:00-07:00","timeZone":"America/Los_Angeles"},"end":{"dateTime":"2027-06-01T10:00:00-07:00"}`, `"RDATE;TZID=America/Los_Angeles:20270302T090000"`, "2027-03-02T17:00:00Z", "2027-03-02T18:00:00Z", false},
 		{"floating", `"start":{"dateTime":"2027-06-01T17:00:00Z"},"end":{"dateTime":"2027-06-01T18:00:00Z"}`, `"RDATE:20270302T170000"`, "2027-03-02T17:00:00Z", "2027-03-02T18:00:00Z", false},
 		{"DATE", `"start":{"date":"2027-06-01"},"end":{"date":"2027-06-02"}`, `"RRULE:FREQ=DAILY;COUNT=1","RDATE;VALUE=DATE:20270302"`, "2027-03-02T00:00:00Z", "2027-03-03T00:00:00Z", true},
+		{"DATE_RDATE_only", `"start":{"date":"2027-06-01"},"end":{"date":"2027-06-02"}`, `"RDATE;VALUE=DATE:20270302"`, "2027-03-02T00:00:00Z", "2027-03-03T00:00:00Z", true},
 		{"RDATE_only", `"start":{"dateTime":"2027-06-01T17:00:00Z"},"end":{"dateTime":"2027-06-01T18:00:00Z"}`, `"RDATE:20270302T170000Z"`, "2027-03-02T17:00:00Z", "2027-03-02T18:00:00Z", false},
 		{"escaped_JSON", `"start":{"dateTime":"2027-06-01T17:00:00Z"},"end":{"dateTime":"2027-06-01T18:00:00Z"}`, `"\u0052DATE:20270302T170000Z"`, "2027-03-02T17:00:00Z", "2027-03-02T18:00:00Z", false},
 	} {
@@ -85,27 +86,6 @@ func TestCalendarEventRowsWindowIncludesEarlierRDate(t *testing.T) {
 			assertions.Empty(rows)
 		})
 	}
-}
-
-func FuzzCalendarEventRowsEarlierRDate(f *testing.F) {
-	f.Add(uint8(90), false)
-	f.Add(uint8(90), true)
-	f.Fuzz(func(t *testing.T, gap uint8, allDay bool) {
-		st := newRFC822IDBackfillBackendStore(t)
-		rdate := time.Date(2027, 3, 2, 17, 0, 0, 0, time.UTC)
-		start := rdate.AddDate(0, 0, int(gap)+3)
-		bounds := fmt.Sprintf(`"start":{"dateTime":%q},"end":{"dateTime":%q}`, start.Format(time.RFC3339), start.Add(time.Hour).Format(time.RFC3339))
-		line := "RDATE:" + rdate.Format("20060102T150405Z")
-		if allDay {
-			bounds = fmt.Sprintf(`"start":{"date":%q},"end":{"date":%q}`, start.Format(time.DateOnly), start.AddDate(0, 0, 1).Format(time.DateOnly))
-			line = "RDATE;VALUE=DATE:" + rdate.Format("20060102")
-		}
-		_, master := calendarFixture(t, st, "earlier-rdate", fmt.Sprintf(`{"id":"earlier-rdate",%s,"recurrence":[%q]}`, bounds, line))
-		rows, err := calendarWindow(t, st, OwnerScope(), "2027-03-02T00:00:00Z", "2027-03-03T00:00:00Z")
-		require.NoError(t, err)
-		require.Len(t, rows, 1)
-		assert.Equal(t, master, rows[0].MessageID)
-	})
 }
 
 func TestCalendarEventRowsTimezoneChangeWithoutResync(t *testing.T) {

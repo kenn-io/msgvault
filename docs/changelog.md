@@ -8,6 +8,8 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- Read [archived calendar occurrences](usage/calendar.md#read-archived-occurrences-unreleased) with `calendar events` / `calendar event`, HTTP and MCP. Delegated reads use `message.read`; queries exceeding the work limits return `query_too_broad`.
+
 - Remote edits update source-owned values on published CardDAV imports while preserving unrelated local values. Edits that would overwrite another owner create a conflict.
 - [Everything search](web-ui.md#recording-matches) shows recording transcript matches for plain-word Full text queries and supports one Person filter. API schema 3.11.0 adds `participant_id` to media search, `GET /media/search/status`, source filename, title and date to media search results and optional `conversation_title` to message detail.
 
