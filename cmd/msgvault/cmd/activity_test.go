@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -247,6 +248,10 @@ func TestRegisterActivityProjectionJobHonorsDisabledSchedule(t *testing.T) {
 }
 
 func TestScheduledProjectionYieldsToSyncBetweenPasses(t *testing.T) {
+	synctest.Test(t, testScheduledProjectionYieldsToSyncBetweenPasses)
+}
+
+func testScheduledProjectionYieldsToSyncBetweenPasses(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -277,7 +282,9 @@ func TestScheduledProjectionYieldsToSyncBetweenPasses(t *testing.T) {
 		require.FailNow("projection did not acquire the gate")
 	}
 	require.NoError(sched.TriggerSync("short@example.com"))
-	require.Eventually(func() bool { return sched.Status()[0].Queued }, 10*time.Second, 10*time.Millisecond)
+	// Queued is set before the sync goroutine reaches the gate.
+	synctest.Wait()
+	require.True(sched.Status()[0].Queued)
 	release()
 	select {
 	case count := <-syncObserved:
