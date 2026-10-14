@@ -1,6 +1,7 @@
 package store
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -39,8 +40,9 @@ type FilenameCandidateSet struct {
 	IndexRevision         string
 }
 
-// filenamePostingStream selects (key, attachment_id) from table alias p,
-// newest attachment first. where binds args, then the cursor bounds.
+// filenamePostingStream seeks table alias p in index order: descending token
+// key when needed, then descending attachment ID. where binds args, then the
+// cursor bounds. Ranking happens after the bounded retrieval.
 type filenamePostingStream struct {
 	table string
 	key   string
@@ -53,12 +55,14 @@ type filenamePosting struct {
 	key     string
 	id      int64
 	inScope bool
+	name    string
 }
 
 // FilenameCandidatesContext honors an existing authority snapshot, or owns a
 // read snapshot for this call. It never initializes or repairs maintenance.
-// Only postings whose attachment is live and inside scope are admitted; every
-// physical posting row, admitted or not, is charged to the work budget.
+// Only live, in-scope postings whose projected name matches the whole query
+// compete for the candidate budget. Every physical posting row, admitted or
+// not, is charged to the work budget.
 func (s *Store) FilenameCandidatesContext(ctx context.Context, query filenamediscovery.Query, scope FilenameSuggestionScope) (FilenameCandidateSet, error) {
 	if err := ctx.Err(); err != nil {
 		return FilenameCandidateSet{}, err
@@ -99,14 +103,20 @@ func (s *Store) FilenameCandidatesContext(ctx context.Context, query filenamedis
 	}
 	conditions, scopeArgs := s.filenameScopeConditions(scope)
 	inScope := s.filenameAttachmentScopeExists("p.attachment_id", conditions)
+	type candidate struct {
+		id   int64
+		rank filenamediscovery.Rank
+	}
+	var matches []candidate
 	seen := make(map[int64]struct{}, filenameCandidateBudget)
+streams:
 	for _, stream := range filenameCandidateStreams(query, generation) {
 		lastKey, lastID := filenameKeyCeiling, int64(math.MaxInt64)
 		for {
 			limit := min(pageSize, budget-set.PostingRows)
 			if limit == 0 {
 				set.CandidateLimitReached = true
-				return set, nil
+				break streams
 			}
 			page, err := s.filenamePostingPage(ctx, db, stream, inScope, scopeArgs, lastKey, lastID, limit)
 			if err != nil {
@@ -118,19 +128,35 @@ func (s *Store) FilenameCandidatesContext(ctx context.Context, query filenamedis
 				if _, exists := seen[row.id]; exists || !row.inScope {
 					continue
 				}
-				if len(set.IDs) == filenameCandidateBudget {
-					// Exactly one new in-scope ID proves incompleteness. Already
-					// fetched page tails are charged but never admitted here.
-					set.CandidateLimitReached = true
-					return set, nil
-				}
 				seen[row.id] = struct{}{}
-				set.IDs = append(set.IDs, row.id)
+				name, ok := filenamediscovery.ProjectName(row.name)
+				if !ok {
+					continue
+				}
+				if rank, matched := filenamediscovery.Match(query, name); matched {
+					matches = append(matches, candidate{id: row.id, rank: rank})
+				}
 			}
 			if len(page) < limit {
 				break
 			}
 		}
+	}
+	// The posting budget also bounds this list. Select across all observed
+	// token groups before the 500-ID authority limit, so partial matches and
+	// lexical token order cannot crowd out better matches already read.
+	slices.SortFunc(matches, func(a, b candidate) int {
+		if order := cmp.Compare(a.rank, b.rank); order != 0 {
+			return order
+		}
+		return cmp.Compare(b.id, a.id)
+	})
+	if len(matches) > filenameCandidateBudget {
+		set.CandidateLimitReached = true
+		matches = matches[:filenameCandidateBudget]
+	}
+	for _, match := range matches {
+		set.IDs = append(set.IDs, match.id)
 	}
 	return set, nil
 }
@@ -141,7 +167,13 @@ func (s *Store) filenamePostingPage(ctx context.Context, db SQLReader, stream fi
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	query := `SELECT ` + stream.key + `, p.attachment_id, ` + inScope + ` FROM ` + stream.table + ` p
+	// A scalar primary-key probe preserves the posting seek's bounded plan.
+	name := `(SELECT e.normalized_name FROM filename_discovery_entries e
+		WHERE e.generation=p.generation AND e.attachment_id=p.attachment_id)`
+	if stream.table == "filename_discovery_entries" {
+		name = "p.normalized_name"
+	}
+	query := `SELECT ` + stream.key + `, p.attachment_id, ` + inScope + `, ` + name + ` FROM ` + stream.table + ` p
 		WHERE p.generation=? AND ` + stream.where
 	args := slices.Concat(scopeArgs, stream.args)
 	if stream.tuple {
@@ -160,7 +192,7 @@ func (s *Store) filenamePostingPage(ctx context.Context, db SQLReader, stream fi
 	page := make([]filenamePosting, 0, limit)
 	for rows.Next() {
 		var row filenamePosting
-		if err := rows.Scan(&row.key, &row.id, &row.inScope); err != nil {
+		if err := rows.Scan(&row.key, &row.id, &row.inScope, &row.name); err != nil {
 			return nil, fmt.Errorf("scan filename posting: %w", err)
 		}
 		page = append(page, row)

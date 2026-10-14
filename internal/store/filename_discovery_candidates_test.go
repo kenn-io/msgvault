@@ -81,14 +81,10 @@ func TestFilenameCandidatesDistinctBudget(t *testing.T) {
 			set := filenameCandidates(t, f.Store, "rep.pdf")
 			newest := slices.Clone(ids[max(total-500, 0):])
 			slices.Reverse(newest)
-			assert.Equal(newest, set.IDs, "admission is newest first")
+			assert.Equal(newest, set.IDs, "equal-rank candidates are newest first")
 			assert.Equal(total > 500, set.CandidateLimitReached)
-			if total <= 500 {
-				assert.Equal(2*total, set.PostingRows,
-					"full-name and seed-exact duplicates are charged; exhaustion proves completeness at 500")
-			} else {
-				assert.Equal(501, set.PostingRows, "the extra occurrence is charged but never admitted")
-			}
+			assert.Equal(2*total, set.PostingRows,
+				"full-name and seed-exact duplicates are charged, including after the candidate cap")
 		})
 	}
 }

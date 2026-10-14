@@ -262,8 +262,8 @@ func TestFilenameCandidatesQueryPlans(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)
 
-		// Keep 499 matching IDs so repeated streams, rather than the 501st
-		// distinct ID, exhaust the physical work budget.
+		// Keep 499 matching IDs so incompleteness can only come from the
+		// physical posting budget, not the candidate count.
 		_, err := st.db.ExecContext(t.Context(), `DELETE FROM filename_discovery_entries WHERE generation=1 AND attachment_id BETWEEN 500 AND 600`)
 		require.NoError(err)
 		observer.rows = 0

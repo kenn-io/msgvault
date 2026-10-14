@@ -120,9 +120,44 @@ func TestFileSuggestionsHTTP(t *testing.T) {
 	assert.Equal("typo", rows[2]["filename_match"])
 }
 
+func TestFileSuggestionsHTTPDenseCandidates(t *testing.T) {
+	for _, tc := range []struct {
+		name, query, common, want, wantMatch string
+		wantIndex                            int
+		wantLimited                          bool
+	}{
+		{"all query tokens", "invoice report", "invoice other.pdf", "invoice report.pdf", "exact", 0, true},
+		{"complete partial matches", "rep abc", "rep other.pdf", "rep abc.pdf", "exact", 0, false},
+		{"rank before recency", "invoice rep", "invoice repzebra.pdf", "invoice rep.pdf", "exact", 0, true},
+		{"prefix recency across tokens", "rep", "repzebra.pdf", "repalpha.pdf", "prefix", 600, true},
+		{"typo recency across tokens", "reports", "reportz.pdf", "reporta.pdf", "typo", 600, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+
+			names := make([]string, 601)
+			for i := range names {
+				names[i] = tc.common
+			}
+			names[tc.wantIndex] = tc.want
+			srv, _, ids := suggestionFixture(t, names, true)
+			w := suggestionPost(t, srv, "/api/v1/files/suggest", fmt.Sprintf(`{"filename_query":%q,"limit":1}`, tc.query))
+			require.Equal(http.StatusOK, w.Code, w.Body.String())
+			body := suggestionBody(t, w)
+			rows := suggestionRows(t, body)
+			require.Len(rows, 1)
+			assert.Equal(json.Number(strconv.FormatInt(ids[tc.wantIndex], 10)), rows[0]["id"])
+			assert.Equal(tc.want, rows[0]["filename"])
+			assert.Equal(tc.wantMatch, rows[0]["filename_match"])
+			assert.Equal(tc.wantLimited, body["candidate_limit_reached"])
+		})
+	}
+}
+
 func TestFileSuggestionsHTTPStrictRequest(t *testing.T) {
 	_, f, _ := suggestionFixture(t, []string{"report.pdf"}, true)
-	for _, body := range []string{`null`, `[]`, `{} {}`, `{"filename_query":"!!!"}`, `{"filename_query":"report","cursor":"x"}`, `{"filename_query":"report","sort":{}}`, `{"filename_query":"report","predicate":{}}`, `{"filename_query":"report","query":"x"}`, `{"filename_query":"report","visual_query":"x"}`, `{"filename_query":"report","labels":[]}`, `{"filename_query":"report","limit":0}`, `{"filename_query":"report","limit":-1}`, `{"filename_query":"report","limit":101}`, `{"filename_query":"report","limit":1.5}`, `{"filename_query":"report","source_ids":[0]}`, `{"filename_query":"report","mime_families":["unknown"]}`, `{"filename_query":"report","after":"not-a-date"}`, `{"filename_query":"report","after":"2026-02-02T00:00:00Z","before":"2026-02-01T00:00:00Z"}`, `{"filename_query":"report","account_scopes":[{}]}`, `{"filename_query":"report","directions":["from_person"]}`, `{"filename_query":"report"` + strings.Repeat(" ", 64<<10) + `}`} {
+	for _, body := range []string{`null`, `[]`, `{"filename_query":"report"} {}`, `{"filename_query":"!!!"}`, `{"filename_query":"report","cursor":"x"}`, `{"filename_query":"report","sort":{}}`, `{"filename_query":"report","predicate":{}}`, `{"filename_query":"report","query":"x"}`, `{"filename_query":"report","visual_query":"x"}`, `{"filename_query":"report","labels":[]}`, `{"filename_query":"report","limit":0}`, `{"filename_query":"report","limit":-1}`, `{"filename_query":"report","limit":101}`, `{"filename_query":"report","limit":1.5}`, `{"filename_query":"report","source_ids":[0]}`, `{"filename_query":"report","mime_families":["unknown"]}`, `{"filename_query":"report","after":"not-a-date"}`, `{"filename_query":"report","after":"2026-02-02T00:00:00Z","before":"2026-02-01T00:00:00Z"}`, `{"filename_query":"report","account_scopes":[{}]}`, `{"filename_query":"report","directions":["from_person"]}`, `{"filename_query":"report"` + strings.Repeat(" ", 64<<10) + `}`} {
 		// The last body is a valid request padded past 64 KiB with JSON
 		// whitespace, so only the body limit can reject it.
 		t.Run(fmt.Sprintf("%d-%s", len(body), body[:min(40, len(body))]), func(t *testing.T) {

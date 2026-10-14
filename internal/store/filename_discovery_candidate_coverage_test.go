@@ -33,11 +33,31 @@ func TestFilenameCandidatesSeekCoverage(t *testing.T) {
 }
 
 func TestFilenameCandidatesNumericSeed(t *testing.T) {
+	assert := assert.New(t)
+
 	f, ids := filenameCandidateFixture(t, []string{"12345.pdf", "x12345.pdf", "123456.pdf", "12354.pdf", "12345 extra.pdf"})
 	set := filenameCandidates(t, f.Store, "12345.pdf")
-	assert.Equal(t, []int64{ids[0], ids[4]}, set.IDs, "all-number seed uses equality only")
-	assert.Equal(t, 3, set.PostingRows, "one full-name hit plus two exact-token hits")
-	assert.False(t, set.CandidateLimitReached)
+	assert.Equal([]int64{ids[0], ids[4]}, set.IDs, "all-number seed uses equality only")
+	assert.Equal(3, set.PostingRows, "one full-name hit plus two exact-token hits")
+	assert.False(set.CandidateLimitReached)
+	var deletes int
+	require.NoError(t, f.Store.DB().QueryRow(f.Store.Rebind(`SELECT count(*) FROM filename_discovery_deletes WHERE attachment_id=?`), ids[0]).Scan(&deletes))
+	assert.Zero(deletes, "an all-number basename needs no typo postings")
+}
+
+func TestFilenameCandidatesMixedNumbers(t *testing.T) {
+	for _, number := range []string{"2", "٢"} {
+		t.Run(number, func(t *testing.T) {
+			names := []string{"abc2de.pdf", "ab2cde.pdf", "abc3de.pdf", "abc2df.pdf", "abc2ed.pdf", "xabc2de.pdf", "ab2de.pdf", "abcde.pdf"}
+			for i := range names {
+				names[i] = strings.ReplaceAll(names[i], "2", number)
+			}
+			f, ids := filenameCandidateFixture(t, names)
+			set := filenameCandidates(t, f.Store, "abc"+number+"de")
+			assert.ElementsMatch(t, []int64{ids[0], ids[3], ids[4], ids[5], ids[6]}, set.IDs)
+			assert.False(t, set.CandidateLimitReached)
+		})
+	}
 }
 
 func TestFilenameCandidatesUnicodeKeys(t *testing.T) {
@@ -52,14 +72,18 @@ func TestFilenameCandidatesUnicodeKeys(t *testing.T) {
 	assert.False(prefix.CandidateLimitReached)
 }
 
-// Equal-length terms retain query-position seed selection, and repeated
-// executions retain identical native stream order and revision.
+// Equal-length terms can select different posting seeds, but the whole query
+// must match and the final candidate order follows rank and recency.
 func TestFilenameCandidatesStableOrder(t *testing.T) {
-	f, ids := filenameCandidateFixture(t, []string{"hello alpha.pdf", "world beta.pdf", "xello alpha.pdf", "wqrld beta.pdf"})
+	f, ids := filenameCandidateFixture(t, []string{
+		"hello alpha.pdf", "world beta.pdf", "xello alpha.pdf", "wqrld beta.pdf",
+		"hello world.pdf", "helloworld world.pdf", "xello world.pdf", "hello wqrld.pdf", "xello wqrld.pdf",
+	})
 	first := filenameCandidates(t, f.Store, "hello world.pdf")
-	assert.Equal(t, []int64{ids[0], ids[2]}, first.IDs)
+	want := []int64{ids[4], ids[5], ids[7], ids[6]}
+	assert.Equal(t, want, first.IDs)
 	assert.Equal(t, first, filenameCandidates(t, f.Store, "hello world.pdf"))
-	assert.Equal(t, []int64{ids[1], ids[3]}, filenameCandidates(t, f.Store, "world hello.pdf").IDs)
+	assert.Equal(t, want, filenameCandidates(t, f.Store, "world hello.pdf").IDs)
 }
 
 // Requests cannot register/bootstrap/repair an index, even after an otherwise

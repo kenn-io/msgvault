@@ -147,9 +147,9 @@ There is no accent stripping, transliteration or synonym expansion.
 
 Within each class, the newest attachment comes first. Both exact classes have
 `filename_match: exact`. Separate occurrences remain separate even when names
-or content hashes agree. Candidate streams are also read newest first, so a
-limited lookup usually returns the newest matches. It cannot guarantee the
-globally best results, because each stream is bounded separately.
+or content hashes agree. The candidate pool selects the best matches across
+all postings read, using the same rank and recency order. It cannot guarantee
+the globally best results when the posting budget leaves some ranges unread.
 
 ### Projection and readiness
 
@@ -184,12 +184,15 @@ index has caught up with every recent write.
 
 ### Work and population limits
 
-Each request reads posting streams newest attachment first. Strong exact
-streams are read before weaker ones. Every posting row is checked against
-message visibility and the request's source, account, date, MIME-family and
-person filters with primary-key and indexed relation probes; only rows that
-pass are admitted. Requests admit at most 500 distinct attachment IDs, verify
-only those IDs, and return at most 100 rows.
+Each request reads strong exact streams before weaker ones. Exact streams
+visit newest attachments first; prefix and deletion streams visit token keys
+in descending order, then newest attachments within each key. Every posting
+row is checked against message visibility and the request's source, account,
+date, MIME-family and person filters with primary-key and indexed relation
+probes. The projected name must match every query token before competing for
+the candidate pool. After reading within the posting budget, the request
+selects the best 500 distinct attachment IDs by rank and recency, verifies
+their current filenames and authority, and returns at most 100 rows.
 
 Every posting row read counts toward a work budget, including duplicates,
 rejected rows and page lookahead. Unscoped requests read at most 2,048 rows.
@@ -205,6 +208,8 @@ token. Projection skips an entire filename exceeding 512 normalized runes,
 truncated prefix of an oversized name. Punctuation-only names remain valid
 metadata but contribute no token postings. The maintenance state tracks
 skipped names; filename suggestions do not cover that excluded population.
+Deletion keys retain all Unicode numbers, since a typo may only edit other
+characters. All-number tokens need only exact postings.
 
 Person resolution reads at most 65 bindings to detect a 64-participant overflow.
 Provenance uses bounded indexed relation probes and rejects more than 4,096

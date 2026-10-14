@@ -167,12 +167,16 @@ func allNumbers(token string) bool {
 	return true
 }
 
-// DeleteKeys returns unique rune-deletion keys in deterministic string order.
+// DeleteKeys returns unique non-number rune-deletion keys in deterministic
+// string order. Number edits cannot match, so they need no postings.
 // Retrieval must still verify the actual token: key collisions are expected.
 func DeleteKeys(token string) []string {
 	runes := []rune(token)
 	seen := make(map[string]struct{}, len(runes))
-	for i := range runes {
+	for i, r := range runes {
+		if unicode.IsNumber(r) {
+			continue
+		}
 		seen[string(runes[:i])+string(runes[i+1:])] = struct{}{}
 	}
 	keys := make([]string, 0, len(seen))
