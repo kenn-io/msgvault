@@ -4173,3 +4173,31 @@ CREATE TABLE IF NOT EXISTS calendar_event_attendees (
     PRIMARY KEY (message_id, ordinal)
 );
 CREATE INDEX IF NOT EXISTS idx_calendar_event_attendees_email ON calendar_event_attendees(email);
+-- Independent projection state covers empty key sets as well as keyed notes.
+CREATE TABLE IF NOT EXISTS meeting_link_key_state (
+ message_id BIGINT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+ key_version INTEGER NOT NULL,
+ key_hash TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS meeting_link_keys (
+ message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+ ordinal INTEGER NOT NULL,
+ kind TEXT NOT NULL,
+ value TEXT NOT NULL,
+ base TEXT NOT NULL DEFAULT '',
+ instance_key TEXT NOT NULL DEFAULT '',
+ scheduled_at TIMESTAMPTZ,
+ PRIMARY KEY(message_id, ordinal)
+);
+CREATE INDEX IF NOT EXISTS idx_meeting_link_keys_value ON meeting_link_keys(kind, value);
+CREATE INDEX IF NOT EXISTS idx_meeting_link_keys_base ON meeting_link_keys(kind, base);
+CREATE TABLE IF NOT EXISTS meeting_link_decisions (
+ member_message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+ target_ref TEXT NOT NULL,
+ target_logical TEXT NOT NULL DEFAULT '',
+ decision TEXT NOT NULL CHECK(decision IN ('link','split')),
+ created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ PRIMARY KEY(member_message_id, target_ref)
+);
+CREATE INDEX IF NOT EXISTS idx_meeting_link_decisions_ref ON meeting_link_decisions(target_ref);
+CREATE INDEX IF NOT EXISTS idx_meeting_link_decisions_logical ON meeting_link_decisions(target_logical);

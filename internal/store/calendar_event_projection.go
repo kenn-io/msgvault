@@ -15,7 +15,11 @@ import (
 	"go.kenn.io/msgvault/internal/calrecur"
 )
 
-const calendarEventProjectionVersion = 1
+// v2 recomputes all-day bounds when local midnight is skipped by a zone.
+const (
+	calendarEventProjectionVersion       = 2
+	calendarEventProjectionLedgerVersion = 1
+)
 
 func (s *Store) refreshCalendarEventProjectionWith(ctx context.Context, tx *loggedTx, messageID int64) error {
 	q := boundQuerier{ctx: ctx, q: tx}

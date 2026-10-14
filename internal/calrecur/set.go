@@ -124,6 +124,13 @@ func localDateBoundary(date string, loc *time.Location) (time.Time, bool, error)
 	return start, compare(start) == 0, nil
 }
 
+// ResolveCivilDateBoundary returns the first instant whose local date is at or
+// after date. The bool reports whether date exists in loc; an entirely skipped
+// date resolves to the first instant of the next existing date.
+func ResolveCivilDateBoundary(date string, loc *time.Location) (time.Time, bool, error) {
+	return localDateBoundary(date, loc)
+}
+
 // localDateStart resolves a civil date to the first instant belonging to it.
 // A zone may skip local midnight or the entire date.
 func localDateStart(date string, loc *time.Location) (time.Time, error) {

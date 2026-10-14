@@ -43,6 +43,23 @@ func TestGoogleDateTimeBounds(t *testing.T) {
 	}
 }
 
+func TestGoogleSkippedMidnightDateBoundary(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+
+	event := decodeGoogle(t, `{"id":"event-example","start":{"date":"2018-11-04"},"end":{"date":"2018-11-05"}}`, `{}`, SourceContext{CalendarTimeZone: "America/Sao_Paulo"})
+	requirements.NotNil(event.Start)
+	requirements.NotNil(event.End)
+	assertions.Equal("2018-11-04T03:00:00Z", event.Start.UTC().Format(time.RFC3339), "all-day start must stay on November 4")
+	assertions.Equal("2018-11-05T02:00:00Z", event.End.UTC().Format(time.RFC3339))
+
+	event = decodeGoogle(t, `{"id":"event-example","start":{"date":"2018-11-03"},"end":{"date":"2018-11-04"}}`, `{}`, SourceContext{CalendarTimeZone: "America/Sao_Paulo"})
+	requirements.NotNil(event.Start)
+	requirements.NotNil(event.End)
+	assertions.Equal("2018-11-03T03:00:00Z", event.Start.UTC().Format(time.RFC3339))
+	assertions.Equal("2018-11-04T03:00:00Z", event.End.UTC().Format(time.RFC3339), "exclusive end must start on November 4")
+}
+
 func TestGoogleWireRejectsInvalidID(t *testing.T) {
 	assertions := assert.New(t)
 	for _, raw := range []string{`null`, `{}`, `{"id":123}`} {
