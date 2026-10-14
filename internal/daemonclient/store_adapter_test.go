@@ -1966,16 +1966,17 @@ func TestGetCLIMessageRateLimitRetryAfter(t *testing.T) {
 				assert := assert.New(t)
 				require := require.New(t)
 				start := time.Now()
-				retryAfter := "2"
-				if dateHeader {
-					retryAfter = start.Add(2 * time.Second).UTC().Format(http.TimeFormat)
-				}
+				const refusals = 6 // Shared daemon traffic can consume several refill windows.
 				var requests atomic.Int32
 				srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					assert.Equal("/api/v1/cli/message", r.URL.Path)
 					assert.Equal("42", r.URL.Query().Get("id"))
 					w.Header().Set("Content-Type", "application/json")
-					if requests.Add(1) == 1 {
+					if requests.Add(1) <= refusals {
+						retryAfter := "2"
+						if dateHeader {
+							retryAfter = time.Now().Add(2 * time.Second).UTC().Format(http.TimeFormat)
+						}
 						w.Header().Set("Retry-After", retryAfter)
 						w.WriteHeader(http.StatusTooManyRequests)
 						_, _ = w.Write([]byte(`{"error":"rate_limit_exceeded","message":"Try again later"}`))
@@ -1990,37 +1991,56 @@ func TestGetCLIMessageRateLimitRetryAfter(t *testing.T) {
 				message, err := client.GetCLIMessage(t.Context(), "42")
 				require.NoError(err)
 				assert.Equal(int64(42), message.ID)
-				assert.Equal(int32(2), requests.Load())
-				assert.Equal(2*time.Second, time.Since(start))
+				assert.Equal(int32(refusals+1), requests.Load())
+				assert.Equal(refusals*2*time.Second, time.Since(start))
 			})
 		})
 	}
 }
 
-func TestGetCLIMessageRateLimitCancellation(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		assert := assert.New(t)
-		require := require.New(t)
-		var requests atomic.Int32
-		srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			requests.Add(1)
-			w.Header().Set("Content-Type", "application/json")
-			w.Header().Set("Retry-After", "30")
-			w.WriteHeader(http.StatusTooManyRequests)
-			_, _ = w.Write([]byte(`{"error":"rate_limit_exceeded","message":"Try again later"}`))
-		}))
-		httpClient := srv.Client()
-		client, err := New(Config{URL: srv.URL, AllowInsecure: true, HTTPClient: httpClient})
-		require.NoError(err)
-		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
-		defer cancel()
-		start := time.Now()
+func TestGetCLIMessageRateLimitWaitIsBounded(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		deadline time.Duration
+		elapsed  time.Duration
+		requests int32
+	}{
+		{"context cancellation", time.Second, time.Second, 1},
+		{"retry budget", 2 * time.Minute, time.Minute, 3},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				assert := assert.New(t)
+				require := require.New(t)
+				var requests atomic.Int32
+				srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					requests.Add(1)
+					w.Header().Set("Content-Type", "application/json")
+					w.Header().Set("Retry-After", "30")
+					w.WriteHeader(http.StatusTooManyRequests)
+					_, _ = w.Write([]byte(`{"error":"rate_limit_exceeded","message":"Try again later"}`))
+				}))
+				httpClient := srv.Client()
+				client, err := New(Config{URL: srv.URL, AllowInsecure: true, HTTPClient: httpClient})
+				require.NoError(err)
+				ctx, cancel := context.WithTimeout(t.Context(), tc.deadline)
+				defer cancel()
+				start := time.Now()
 
-		_, err = client.GetCLIMessage(ctx, "42")
-		require.ErrorIs(err, context.DeadlineExceeded)
-		assert.Equal(time.Second, time.Since(start))
-		assert.Equal(int32(1), requests.Load(), "cancellation must stop the wait before another request")
-	})
+				_, err = client.GetCLIMessage(ctx, "42")
+				if tc.deadline == time.Second {
+					require.ErrorIs(err, context.DeadlineExceeded)
+				} else {
+					var apiErr *APIError
+					require.ErrorAs(err, &apiErr)
+					assert.Equal(http.StatusTooManyRequests, apiErr.Status)
+					require.NoError(ctx.Err(), "the retry budget must expire before the caller's deadline")
+				}
+				assert.Equal(tc.elapsed, time.Since(start))
+				assert.Equal(tc.requests, requests.Load())
+			})
+		})
+	}
 }
 
 func TestGetCLIMessageRaw_Success(t *testing.T) {
