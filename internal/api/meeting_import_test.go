@@ -384,8 +384,8 @@ func testMeetingImportReadsBodyBeforeWaitingOnOperationGate(t *testing.T) {
 	defer func() { require.NoError(srv.Shutdown(context.Background())) }()
 
 	reader, writer := io.Pipe()
-	defer reader.Close()
-	defer writer.Close()
+	defer func() { _ = reader.Close() }()
+	defer func() { _ = writer.Close() }()
 	body := io.MultiReader(strings.NewReader(validMeetingImportBody[:len(validMeetingImportBody)-1]), reader)
 	req := httptest.NewRequest(http.MethodPost, meetingImportEndpointPath, body)
 	req.Header.Set("Content-Type", "application/json")
