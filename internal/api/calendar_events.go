@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
+	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -42,7 +43,11 @@ func (s *Server) handleCalendarEvents(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 503, "calendar_unavailable", "Archived calendar events are unavailable")
 		return
 	}
-	page, err := backend.ListCalendarOccurrencesContext(r.Context(), from, to)
+	ctx := r.Context()
+	if s.requestAuthentication(r).Grant != nil {
+		ctx = sourcescope.WithSourceIDs(ctx, agentReadSourceIDs(r))
+	}
+	page, err := backend.ListCalendarOccurrencesContext(ctx, from, to)
 	if err != nil {
 		if errors.Is(err, store.ErrQueryTooBroad) {
 			writeError(w, 400, "query_too_broad", err.Error())

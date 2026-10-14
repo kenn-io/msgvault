@@ -46,8 +46,10 @@ func queryCalendarEventRowsWithinBudget(ctx context.Context, r *loggedDB, predic
 	}
 	// Public callers supply a snapshot: probe only IDs before decoding event
 	// payloads or loading attendees, and stop once the budget is exceeded.
-	probe := `SELECT COUNT(*) FROM (SELECT e.message_id ` + calendarEventFrom + "(" + predicate + ") LIMIT ?) AS candidates"
+	scope, scopeArgs := sourceScopeClause(ctx, "m.source_id")
+	probe := `SELECT COUNT(*) FROM (SELECT e.message_id ` + calendarEventFrom + "(" + predicate + ")" + scope + " LIMIT ?) AS candidates"
 	probeArgs := append([]any(nil), args...)
+	probeArgs = append(probeArgs, scopeArgs...)
 	probeArgs = append(probeArgs, budget+1)
 	var count int
 	if err := r.QueryRowContext(ctx, probe, probeArgs...).Scan(&count); err != nil {
@@ -63,7 +65,9 @@ func queryCalendarEventRows(ctx context.Context, r *loggedDB, predicate string, 
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	query := calendarEventSelect + "(" + predicate + ") ORDER BY e.message_id"
+	scope, scopeArgs := sourceScopeClause(ctx, "m.source_id")
+	args = append(slices.Clone(args), scopeArgs...)
+	query := calendarEventSelect + "(" + predicate + ")" + scope + " ORDER BY e.message_id"
 	if limit > 0 {
 		query += " LIMIT ?"
 		args = append(args, limit)

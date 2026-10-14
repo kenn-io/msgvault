@@ -24,6 +24,7 @@ var agentReadPermissions = map[string]agentgrant.Permission{
 	"searchMessagesByDomains": agentgrant.PermissionSearchRead,
 	"getStats":                agentgrant.PermissionStatsRead, "getCLIStats": agentgrant.PermissionStatsRead, "getTotalStats": agentgrant.PermissionStatsRead,
 	"getCLIMessageThread": agentgrant.PermissionMessageRead,
+	"listCalendarEvents":  agentgrant.PermissionCalendarEventRead,
 	"getMessage":          agentgrant.PermissionMessageRead, "getCLIMessage": agentgrant.PermissionMessageRead,
 	"getAttachment": agentgrant.PermissionAttachmentRead, "getAttachmentContent": agentgrant.PermissionAttachmentRead,
 	"getCLIAttachment": agentgrant.PermissionAttachmentRead,
@@ -52,6 +53,9 @@ func agentReadPermission(operation string, grant *agentgrant.Grant) (agentgrant.
 			return "", newAPIHTTPError(http.StatusForbidden, "permission_denied", "Agent grant requires search.read, message.read, attachment.read, or stats.read on the requested sources")
 		}
 		return permission, nil
+	}
+	if operation == "listCalendarEvents" && grant != nil && grant.HasPermission(agentgrant.PermissionMessageRead) {
+		permission = agentgrant.PermissionMessageRead
 	}
 	if grant == nil || permission == "" || !grant.HasPermission(permission) {
 		return "", agentReadDenied(permission)
@@ -148,6 +152,8 @@ func (s *Server) authorizeAgentRead(r *http.Request, operation string, grant *ag
 	}
 	*r = *r.WithContext(context.WithValue(r.Context(), agentReadScopeKey{}, agentReadScope{ids: allowed}))
 	switch operation {
+	case "listCalendarEvents", "getCalendarEvent":
+		return nil
 	case "getCLIMessageThread":
 		if account != "" && !accountGranted {
 			return agentReadDenied(permission)
@@ -301,7 +307,7 @@ func (s *Server) agentScopedStats(w http.ResponseWriter, r *http.Request, cli bo
 // collection discovery, in a fixed order so denials and logs are stable.
 var agentDiscoveryPermissions = []agentgrant.Permission{
 	agentgrant.PermissionSearchRead, agentgrant.PermissionMessageRead,
-	agentgrant.PermissionAttachmentRead, agentgrant.PermissionStatsRead,
+	agentgrant.PermissionAttachmentRead, agentgrant.PermissionStatsRead, agentgrant.PermissionCalendarEventRead,
 }
 
 func agentDiscoveryPermission(grant *agentgrant.Grant) agentgrant.Permission {
