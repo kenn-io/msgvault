@@ -38,7 +38,7 @@ else
     exit 1
   fi
   locked_commit="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["commit"])' "$lock_path")"
-  fixture_ref="refs/remotes/upstream/docs-fixtures"
+  fixture_ref="refs/msgvault-fixtures/docs-fixtures"
   git -C "$repo_root" fetch --no-tags https://github.com/kenn-io/msgvault.git "+refs/heads/docs-fixtures:$fixture_ref" >/dev/null
   git -C "$repo_root" cat-file -e "$locked_commit^{commit}"
   if ! git -C "$repo_root" merge-base --is-ancestor "$locked_commit" "$fixture_ref"; then

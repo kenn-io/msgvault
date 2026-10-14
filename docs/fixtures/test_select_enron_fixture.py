@@ -117,6 +117,27 @@ def write_test_fixture(
     return manifest
 
 
+def write_reviewed_fixture(
+    fixture_dir: Path,
+    records: list[dict],
+    *,
+    reviewer: str = "Test reviewer",
+    reviewed_at: str = "2001-01-01T00:00:00Z",
+) -> dict:
+    manifest = write_test_fixture(fixture_dir, records)
+    fixture_digest = sha256_file(fixture_dir / "enron-web-fixture.mbox.gz")
+    manifest["manual_review"] = {
+        "status": "complete",
+        "reviewed_message_count": len(records),
+        "reviewed_fixture_sha256": fixture_digest,
+        "review_attestation_sha256": review_attestation_digest(manifest, fixture_digest),
+        "reviewer": reviewer,
+        "reviewed_at": reviewed_at,
+    }
+    (fixture_dir / "manifest.json").write_bytes(canonical_json(manifest) + b"\n")
+    return manifest
+
+
 class ReviewFilterTest(unittest.TestCase):
     def test_selector_rejects_unpinned_source_archive(self) -> None:
         repo_root = Path(__file__).resolve().parents[2]
@@ -695,17 +716,7 @@ class ReviewFilterTest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temporary:
             fixture_dir = Path(temporary)
-            manifest = write_test_fixture(fixture_dir, records)
-            fixture_digest = sha256_file(fixture_dir / "enron-web-fixture.mbox.gz")
-            manifest["manual_review"] = {
-                "status": "complete",
-                "reviewed_message_count": len(records),
-                "reviewed_fixture_sha256": fixture_digest,
-                "review_attestation_sha256": review_attestation_digest(manifest, fixture_digest),
-                "reviewer": "Test reviewer",
-                "reviewed_at": "2001-01-01T00:00:00Z",
-            }
-            (fixture_dir / "manifest.json").write_bytes(canonical_json(manifest) + b"\n")
+            manifest = write_reviewed_fixture(fixture_dir, records)
             validate_fixture_directory(fixture_dir)
 
             manifest["selection"]["excluded_message_ids"] = ["<not-selected@example.com>"]
@@ -735,19 +746,12 @@ class ReviewFilterTest(unittest.TestCase):
             temporary_path = Path(temporary)
             fixture_dir = temporary_path / "upstream"
             fixture_dir.mkdir()
-            manifest = write_test_fixture(fixture_dir, records)
-            fixture_digest = sha256_file(fixture_dir / "enron-web-fixture.mbox.gz")
-            manifest["manual_review"] = {
-                "status": "complete",
-                "reviewed_message_count": len(records),
-                "reviewed_fixture_sha256": fixture_digest,
-                "review_attestation_sha256": review_attestation_digest(manifest, fixture_digest),
-                "reviewer": "Test reviewer",
-                "reviewed_at": "2001-01-01T00:00:00Z",
-            }
-            (fixture_dir / "manifest.json").write_bytes(canonical_json(manifest) + b"\n")
+            manifest = write_reviewed_fixture(fixture_dir, records)
+            fixture_digest = manifest["manual_review"]["reviewed_fixture_sha256"]
             validate_fixture_directory(fixture_dir)
-            environment = os.environ.copy()
+            environment = {
+                key: value for key, value in os.environ.items() if not key.startswith("GIT_")
+            }
             for name in ("MSGVAULT_DOCS_FIXTURE_DIR", "MSGVAULT_DOCS_FIXTURES_OFFLINE"):
                 environment.pop(name, None)
             environment.update(
@@ -805,7 +809,7 @@ class ReviewFilterTest(unittest.TestCase):
                     self.assertEqual(fixture_digest, sha256_file(output_dir / "enron-web-fixture.mbox.gz"))
                     self.assertEqual(lock["manifest_sha256"], sha256_file(output_dir / "manifest.json"))
                     self.assertEqual(
-                        locked_commit, git(checkout, "rev-parse", "refs/remotes/upstream/docs-fixtures"),
+                        locked_commit, git(checkout, "rev-parse", "refs/msgvault-fixtures/docs-fixtures"),
                     )
                     self.assertEqual(
                         str(fork_dir) if with_origin else "",
