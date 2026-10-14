@@ -17,6 +17,8 @@ import (
 // last_modified backfill alone is a full messages-table scan — seconds of
 // startup on a large archive).
 const (
+	migrationCalendarEventProjectionV1      = "calendar_event_projection_v1"
+	migrationMeetingLinkKeysV1              = "meeting_link_keys_v1"
 	migrationMeetingProjectionV1            = "meeting_projection_v1"
 	migrationAttachmentsContentHashUnique   = "attachments_content_hash_unique_index"
 	migrationAttachmentOccurrenceUnique     = "attachment_occurrence_unique_indexes_v1"

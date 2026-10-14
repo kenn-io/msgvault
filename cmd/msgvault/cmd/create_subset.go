@@ -158,6 +158,9 @@ func runCreateSubset(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Merge packets: %d copied, %d omitted\n",
 			result.PersonMergePackets, result.OmittedPersonMergePackets)
 	}
+	if result.MeetingLinkDecisions > 0 || result.OmittedMeetingLinkDecisions > 0 {
+		fmt.Printf("Meeting links: %d copied, %d omitted\n", result.MeetingLinkDecisions, result.OmittedMeetingLinkDecisions)
+	}
 	fmt.Printf("Database size: %s\n", formatSize(result.DBSize))
 
 	if int64(subsetRows) > result.Messages {

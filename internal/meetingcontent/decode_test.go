@@ -1,6 +1,7 @@
 package meetingcontent
 
 import (
+	"encoding/json/v2"
 	"testing"
 	"time"
 
@@ -37,8 +38,8 @@ func TestDecodeGranolaEvidence(t *testing.T) {
 	assertions.InDelta(120.5, *content.DurationSeconds, 0)
 	assertions.Equal(DurationTranscriptSpan, content.DurationBasis)
 	assertions.Equal([]Participant{
-		{Name: "Morgan Example", Email: "morgan@example.com", Role: "from"},
-		{Name: "Riley Example", Email: "riley@example.com", Role: "to"},
+		{Name: "Morgan Example", Email: "morgan@example.com", Role: "from", Provenance: "provider_attendee"},
+		{Name: "Riley Example", Email: "riley@example.com", Role: "to", Provenance: "provider_attendee"},
 	}, content.SourceParticipants)
 
 	scheduled := Decode("granola_json", []byte(`{
@@ -388,4 +389,45 @@ func TestDecodeMuesliFallsBackToContactsIdentities(t *testing.T) {
 		{Name: "Alex Example", Email: "alex@example.com", Role: "to"},
 		{Name: "Phone Example", Phone: "+16045550101", Role: "to"},
 	}, content.SourceParticipants, "packets merge these with the archived recipients instead of listing them twice")
+}
+
+// Calendar invitees must never become evidence of actual attendance.
+func TestDecodeGranolaParticipantProvenance(t *testing.T) {
+	for _, tc := range []struct{ name, raw, want string }{
+		{"fallback", `{"calendar_event":{"organiser":"host@example.com","invitees":[{"email":"guest@example.org"}]}}`, "invited"},
+		{"provider", `{"owner":{"email":"host@example.com"},"attendees":[{"email":"guest@example.org"}]}`, "provider_attendee"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requirements := require.New(t)
+
+			content := Decode("granola_json", []byte(tc.raw), nil)
+			requirements.Len(content.SourceParticipants, 2)
+			encoded, err := json.Marshal(content.SourceParticipants)
+			requirements.NoError(err)
+			var participants []map[string]any
+			requirements.NoError(json.Unmarshal(encoded, &participants))
+			assert.Equal(t, tc.want, participants[1]["provenance"])
+		})
+	}
+}
+
+func TestDecodeGranolaMixedParticipantProvenance(t *testing.T) {
+	for _, tc := range []struct {
+		name, raw string
+		want      []string
+	}{
+		{"owner-and-invitee", `{"owner":{"email":"host@example.com"},"calendar_event":{"organiser":"host@example.com","invitees":[{"email":"guest@example.org"}]}}`, []string{"provider_attendee", "invited"}},
+		{"calendar-organizer-and-provider-attendee", `{"calendar_event":{"organiser":"host@example.com"},"attendees":[{"email":"guest@example.org"}]}`, []string{"invited", "provider_attendee"}},
+		{"provider-attendee-is-calendar-organizer", `{"calendar_event":{"organiser":"host@example.com"},"attendees":[{"email":"host@example.com"},{"email":"guest@example.org"}]}`, []string{"provider_attendee", "provider_attendee", "provider_attendee"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			content := Decode("granola_json", []byte(tc.raw), nil)
+			require.Len(t, content.SourceParticipants, len(tc.want))
+			var got []string
+			for _, participant := range content.SourceParticipants {
+				got = append(got, participant.Provenance)
+			}
+			assert.Equal(t, tc.want, got)
+		})
+	}
 }
