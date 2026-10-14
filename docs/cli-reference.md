@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-12"
+last_edited: "2026-10-14"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -1692,13 +1692,19 @@ msgvault sync-calendar <name|email> [flags]
 
 ## calendar
 
-Control live Google Calendar events through the daemon. This is unreleased
-functionality. Follow [Calendar event setup](usage/calendar.md#control-events-unreleased)
-for consent and source permissions. Calendar IDs can be `primary`, a calendar
-ID, or an alias from `config.toml`.
+Read archived occurrences from synced calendar messages and control live Google
+Calendar events through the daemon. Both features are unreleased. Delegated
+archived reads require `message.read` on the selected calendar sources. Follow
+[Read archived occurrences](usage/calendar.md#read-archived-occurrences-unreleased)
+for recurrence, query budgets, and pagination. Follow
+[Calendar event setup](usage/calendar.md#control-events-unreleased) for live
+write consent and source permissions. Live calendar IDs can be `primary`, a
+calendar ID, or an alias from `config.toml`.
 
 | Command | Purpose |
 |---|---|
+| `calendar events` | List archived occurrences in a time window |
+| `calendar event <ref>` | Read one archived occurrence by its `evt:` reference |
 | `calendar create` | Create an event on a calendar |
 | `calendar update` | Update an event's fields, guests, or recurrence |
 | `calendar delete` | Delete an event or recurring occurrences |
@@ -1708,6 +1714,8 @@ ID, or an alias from `config.toml`.
 | `calendar conflicts` | Find overlapping events in a time range |
 
 ```bash
+msgvault calendar events --from <start> --to <end> [flags]
+msgvault calendar event <evt-ref> [--json]
 msgvault calendar create <calendar-id> --account <name|email> --summary <title> --from <start> --to <end>
 msgvault calendar update <calendar-id> <event-id> --account <name|email> [field flags]
 msgvault calendar delete <calendar-id> <event-id> --account <name|email>
@@ -1716,6 +1724,17 @@ msgvault calendar respond <calendar-id> <event-id> --account <name|email> --stat
 msgvault calendar freebusy <calendar-id> --account <name|email> --from <start> --to <end>
 msgvault calendar conflicts <calendar-id> --account <name|email> --from <start> --to <end> --calendars <ids>
 ```
+
+| Flag | Applies to | Default | Contract |
+|---|---|---|---|
+| `--from` | `calendar events` | required | Inclusive RFC3339 window start |
+| `--to` | `calendar events` | required | Exclusive RFC3339 window end |
+| `--source` | `calendar events` | none | Repeatable archive source ID; narrows the delegated source grant |
+| `--attendee` | `calendar events` | none | Exact effective attendee email |
+| `--include-cancelled` | `calendar events` | `false` | Include cancelled occurrences |
+| `--limit` | `calendar events` | `100` | Page size from 1 to 500 occurrences |
+| `--cursor` | `calendar events` | none | Opaque continuation cursor for the same query filters |
+| `--json` | Both archived-read commands | `false` | Print the complete page or occurrence as JSON |
 
 | Flag | Applies to | Contract |
 |---|---|---|

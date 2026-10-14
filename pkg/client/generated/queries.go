@@ -138,6 +138,33 @@ type ListAttributeDefinitionsQuery struct {
 	IncludeHidden *bool `json:"include_hidden,omitempty"`
 }
 
+type ListCalendarEventsQuery struct {
+	// From Inclusive RFC3339 window start
+	From string `json:"from" validate:"required"`
+
+	// To Exclusive RFC3339 window end; window at most 400 days
+	To string `json:"to" validate:"required"`
+
+	// SourceIds Comma-separated source IDs narrowing the admitted scope
+	SourceIds *string `json:"source_ids,omitempty"`
+
+	// Attendee Exact effective attendee email
+	Attendee *string `json:"attendee,omitempty"`
+
+	// IncludeCancelled Include cancelled occurrences
+	IncludeCancelled *bool `json:"include_cancelled,omitempty"`
+
+	// Limit Maximum occurrences (default 100, maximum 500)
+	Limit *int64 `json:"limit,omitempty" validate:"omitempty,gte=1,lte=500"`
+
+	// Cursor Opaque next_cursor from the same query
+	Cursor *string `json:"cursor,omitempty"`
+}
+
+func (l ListCalendarEventsQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(l))
+}
+
 type ListCardDAVBooksQuery struct {
 	// Connection Saved connection name; omit for all connections
 	Connection *string `json:"connection,omitempty"`

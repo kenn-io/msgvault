@@ -136,7 +136,11 @@ func (e ExploreGroupsHTTPRequest) Validate() error {
 func (f FileGroupsHTTPRequest) Validate() error {
 	var errors runtime.ValidationErrors
 }
-` + pointerValidatorFixture("FileMetadataResponse", "f") + pointerValidatorFixture("FileSearchRow", "f") +
+func (c CalendarOccurrencePage) Validate() error {
+	var errors runtime.ValidationErrors
+}
+` + requiredStringPointerValidatorFixture("CalendarOccurrence", "c", "Subject", "Status", "Start", "End") +
+		pointerValidatorFixture("FileMetadataResponse", "f") + pointerValidatorFixture("FileSearchRow", "f") +
 		pointerValidatorFixture("PersonFileSearchRow", "p") +
 		requiredStringPointerValidatorFixture("MessageRecording", "m", "Filename") +
 		requiredStringPointerValidatorFixture("PersonFactEvidence", "p",

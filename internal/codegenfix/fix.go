@@ -46,6 +46,10 @@ func RewriteRunQueryClient(source []byte) ([]byte, error) {
 var optionalValueJSONTag = regexp.MustCompile("((?:\\*string|\\*?jsontext\\.Value)\\s+`json:\"[^\"]+),omitempty(\")")
 
 var requiredPointerValidators = [][3]string{
+	{"CalendarOccurrence", "Subject", "c"},
+	{"CalendarOccurrence", "Status", "c"},
+	{"CalendarOccurrence", "Start", "c"},
+	{"CalendarOccurrence", "End", "c"},
 	{"FileMetadataResponse", "Filename", "f"},
 	{"FileMetadataResponse", "MimeType", "f"},
 	{"FileSearchRow", "Filename", "f"},
@@ -61,14 +65,20 @@ var requiredPointerValidators = [][3]string{
 	{"PersonFactEvidence", "Excerpt", "p"},
 }
 
-// RewriteGeneratedValidators preserves required-but-empty string fields as
-// pointers while making their generated presence validation unconditional.
+// RewriteGeneratedValidators preserves required-but-empty or zero response fields as
+// pointers and requires non-nil response collections without rejecting empty arrays.
 func RewriteGeneratedValidators(source []byte) ([]byte, error) {
 	result := append([]byte(nil), source...)
-	for _, target := range [][2]string{{"ExploreGroupsHTTPRequest", "e"}, {"FileGroupsHTTPRequest", "f"}} {
-		typeName, receiver := target[0], target[1]
+	for _, target := range [][4]string{
+		{"ExploreGroupsHTTPRequest", "e", "Grouping", "required,min=1,max=1"},
+		{"FileGroupsHTTPRequest", "f", "Grouping", "required,min=1,max=1"},
+		{"CalendarOccurrence", "c", "Attendees", "required"},
+		{"CalendarOccurrencePage", "c", "Items", "required"},
+		{"CalendarOccurrencePage", "c", "Unexpandable", "required"},
+	} {
+		typeName, receiver, field, rule := target[0], target[1], target[2], target[3]
 		marker := []byte("func (" + receiver + " " + typeName + ") Validate() error {\n\tvar errors runtime.ValidationErrors\n")
-		validation := []byte("\tif err := typesValidator.Var(" + receiver + ".Grouping, \"required,min=1,max=1\"); err != nil {\n\t\terrors = errors.Append(\"Grouping\", err)\n\t}\n")
+		validation := []byte("\tif err := typesValidator.Var(" + receiver + "." + field + ", \"" + rule + "\"); err != nil {\n\t\terrors = errors.Append(\"" + field + "\", err)\n\t}\n")
 		start := bytes.Index(result, marker)
 		if start < 0 {
 			return nil, fmt.Errorf("generated %s validator shape changed", typeName)

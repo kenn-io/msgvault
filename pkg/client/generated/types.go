@@ -516,6 +516,18 @@ func (a AttachmentSearchResult) Validate() error {
 	return errors
 }
 
+type Attendee struct {
+	DisplayName *string `json:"DisplayName,omitzero" validate:"required"`
+	Email       *string `json:"Email,omitzero" validate:"required"`
+	IsCopySelf  bool    `json:"IsCopySelf"`
+	RSVP        string  `json:"RSVP" validate:"required"`
+	Role        string  `json:"Role" validate:"required"`
+}
+
+func (a Attendee) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(a))
+}
+
 type AttributeChoice struct {
 	Label string `json:"label" validate:"required"`
 	Value string `json:"value" validate:"required"`
@@ -1094,6 +1106,102 @@ func (c CalendarEventTarget) Validate() error {
 	if v, ok := any(c.Start).(runtime.Validator); ok {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("Start", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type CalendarOccurrence struct {
+	AllDay            bool       `json:"all_day"`
+	Attendees         []Attendee `json:"attendees" validate:"required"`
+	BoundsKnown       bool       `json:"bounds_known"`
+	Cancelled         bool       `json:"cancelled"`
+	DeletedFromSource bool       `json:"deleted_from_source"`
+	End               *time.Time `json:"end,omitempty" validate:"required"`
+	EndDate           *string    `json:"end_date,omitzero"`
+	IcalUID           *string    `json:"ical_uid,omitzero"`
+	JoinURL           *string    `json:"join_url,omitzero"`
+	Location          *string    `json:"location,omitzero"`
+	MessageID         int64      `json:"message_id"`
+	OrganizerEmail    *string    `json:"organizer_email,omitzero"`
+	Original          Identity   `json:"original"`
+	Ref               string     `json:"ref" validate:"required"`
+	SeriesMessageID   int64      `json:"series_message_id"`
+	SourceID          int64      `json:"source_id"`
+	Start             *time.Time `json:"start,omitempty" validate:"required"`
+	StartDate         *string    `json:"start_date,omitzero"`
+	Status            *string    `json:"status,omitzero" validate:"required"`
+	Subject           *string    `json:"subject,omitzero" validate:"required"`
+}
+
+func (c CalendarOccurrence) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(c.Attendees, "required"); err != nil {
+		errors = errors.Append("Attendees", err)
+	}
+	for i, item := range c.Attendees {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Attendees[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(c.End, "required"); err != nil {
+		errors = errors.Append("End", err)
+	}
+	if v, ok := any(c.Original).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Original", err)
+		}
+	}
+	if err := typesValidator.Var(c.Ref, "required"); err != nil {
+		errors = errors.Append("Ref", err)
+	}
+	if err := typesValidator.Var(c.Start, "required"); err != nil {
+		errors = errors.Append("Start", err)
+	}
+	if err := typesValidator.Var(c.Status, "required"); err != nil {
+		errors = errors.Append("Status", err)
+	}
+	if err := typesValidator.Var(c.Subject, "required"); err != nil {
+		errors = errors.Append("Subject", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type CalendarOccurrencePage struct {
+	Items            []CalendarOccurrence `json:"items" validate:"required"`
+	NextCursor       *string              `json:"next_cursor,omitzero"`
+	Unexpandable     []UnexpandableSeries `json:"unexpandable" validate:"required"`
+	UnexpandableMore bool                 `json:"unexpandable_more"`
+}
+
+func (c CalendarOccurrencePage) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(c.Unexpandable, "required"); err != nil {
+		errors = errors.Append("Unexpandable", err)
+	}
+	if err := typesValidator.Var(c.Items, "required"); err != nil {
+		errors = errors.Append("Items", err)
+	}
+	for i, item := range c.Items {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Items[%d]", i), err)
+			}
+		}
+	}
+	for i, item := range c.Unexpandable {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Unexpandable[%d]", i), err)
+			}
 		}
 	}
 	if len(errors) == 0 {
@@ -5547,6 +5655,16 @@ type HybridSearchTimings struct {
 	HydrationMs      int64 `json:"hydration_ms"`
 	QueryEmbeddingMs int64 `json:"query_embedding_ms"`
 	RetrievalMs      int64 `json:"retrieval_ms"`
+}
+
+type Identity struct {
+	AllDay  bool       `json:"AllDay"`
+	Date    *string    `json:"Date,omitzero" validate:"required"`
+	Instant *time.Time `json:"Instant,omitempty" validate:"required"`
+}
+
+func (i Identity) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(i))
 }
 
 type IdentityConfirmationOutcome struct {
@@ -14458,6 +14576,27 @@ type TriggerSyncResponse struct {
 
 func (t TriggerSyncResponse) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(t))
+}
+
+type UnexpandableSeries struct {
+	Reason UnexpandableSeriesReason `json:"reason" validate:"required"`
+	Ref    string                   `json:"ref" validate:"required"`
+}
+
+func (u UnexpandableSeries) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(u.Reason).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Reason", err)
+		}
+	}
+	if err := typesValidator.Var(u.Ref, "required"); err != nil {
+		errors = errors.Append("Ref", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type UpdateRequest struct {

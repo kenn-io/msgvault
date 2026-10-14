@@ -160,8 +160,9 @@ type ServeOptions struct {
 	SavedViews savedview.Service
 	// Meetings exposes daemon-backed archived meeting context, action, and
 	// metric reads. Leave it nil when the daemon predates those routes.
-	Meetings MeetingBackend
-	Calendar CalendarBackend
+	Meetings              MeetingBackend
+	ArchiveCalendarEvents CalendarEventsBackend
+	Calendar              CalendarBackend
 	// DelegatedOnly limits an agent-delegated caller to scoped reads, calendars and drafts.
 	DelegatedOnly bool
 	// GrantPermissions holds the agent grant's permissions. In DelegatedOnly
@@ -356,35 +357,36 @@ func newMCPServerWithPolicy(
 		opts.downloads = &downloadCache{}
 	}
 	h := &handlers{
-		delegatedOnly:       opts.DelegatedOnly,
-		downloads:           opts.downloads,
-		engine:              opts.Engine,
-		archiveSQLQuerier:   opts.ArchiveSQLQuerier,
-		attachmentsDir:      opts.AttachmentsDir,
-		attachmentReader:    opts.AttachmentReader,
-		manifestSaver:       opts.ManifestSaver,
-		hybridSearcher:      opts.HybridSearcher,
-		similarSearcher:     opts.SimilarSearcher,
-		dataDir:             opts.DataDir,
-		documentSearcher:    opts.DocumentSearcher,
-		mediaSearcher:       opts.MediaSearcher,
-		personFileSearcher:  opts.PersonFileSearcher,
-		peopleBackend:       opts.PeopleBackend,
-		directoryBackend:    opts.DirectoryBackend,
-		hybridEngine:        opts.HybridEngine,
-		vectorCfg:           opts.VectorCfg,
-		backend:             opts.Backend,
-		visualSearcher:      opts.VisualSearcher,
-		savedViews:          opts.SavedViews,
-		meetings:            opts.Meetings,
-		calendar:            opts.Calendar,
-		personAgendaBackend: opts.PersonAgendaBackend,
-		kata:                opts.Kata,
-		identityReview:      opts.IdentityReview,
-		personCardDAV:       opts.PersonCardDAV,
-		messageTags:         opts.MessageTags,
-		identityScoring:     opts.IdentityScoring,
-		drafts:              opts.Drafts,
+		delegatedOnly:         opts.DelegatedOnly,
+		downloads:             opts.downloads,
+		engine:                opts.Engine,
+		archiveSQLQuerier:     opts.ArchiveSQLQuerier,
+		attachmentsDir:        opts.AttachmentsDir,
+		attachmentReader:      opts.AttachmentReader,
+		manifestSaver:         opts.ManifestSaver,
+		hybridSearcher:        opts.HybridSearcher,
+		similarSearcher:       opts.SimilarSearcher,
+		dataDir:               opts.DataDir,
+		documentSearcher:      opts.DocumentSearcher,
+		mediaSearcher:         opts.MediaSearcher,
+		personFileSearcher:    opts.PersonFileSearcher,
+		peopleBackend:         opts.PeopleBackend,
+		directoryBackend:      opts.DirectoryBackend,
+		hybridEngine:          opts.HybridEngine,
+		vectorCfg:             opts.VectorCfg,
+		backend:               opts.Backend,
+		visualSearcher:        opts.VisualSearcher,
+		savedViews:            opts.SavedViews,
+		meetings:              opts.Meetings,
+		archiveCalendarEvents: opts.ArchiveCalendarEvents,
+		calendar:              opts.Calendar,
+		personAgendaBackend:   opts.PersonAgendaBackend,
+		kata:                  opts.Kata,
+		identityReview:        opts.IdentityReview,
+		personCardDAV:         opts.PersonCardDAV,
+		messageTags:           opts.MessageTags,
+		identityScoring:       opts.IdentityScoring,
+		drafts:                opts.Drafts,
 	}
 
 	for _, definition := range operationCatalog(opts, h) {
@@ -626,7 +628,7 @@ func agentReadToolPermission(name string) (agentgrant.Permission, bool) {
 	switch name {
 	case ToolSearchMessages, ToolSearchMetadata, ToolSearchMessageBodies, ToolListMessages, ToolAggregate, ToolSearchByDomains:
 		return agentgrant.PermissionSearchRead, true
-	case ToolGetMessage, ToolListThread, ToolSearchInMessage:
+	case ToolGetMessage, ToolListThread, ToolSearchInMessage, ToolListCalendarEvents, ToolGetCalendarEvent:
 		return agentgrant.PermissionMessageRead, true
 	case ToolGetAttachment:
 		return agentgrant.PermissionAttachmentRead, true

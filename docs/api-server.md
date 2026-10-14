@@ -100,7 +100,7 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.15.0**.
+it is separate from the binary release version. The current schema is **3.16.0**.
 Upgrade clients and daemon together across incompatible schema versions,
 including remote deployments.
 
@@ -124,6 +124,10 @@ This schema also adds consented identity scoring. See
 Schema 3.14.0 adds `paused` source syncs to operation history and its state filter.
 
 Schema 3.15.0 adds [native email tags](#native-email-tags).
+
+Schema 3.16.0 adds archived calendar occurrence reads at
+`GET /api/v1/calendar/events` and `GET /api/v1/calendar/events/{ref}`.
+See [archived calendar reads](usage/calendar.md#read-archived-occurrences-unreleased).
 
 Schema 3.13.0 adds the `docbank_rendition` evidence kind, which
 [cites a Docbank transcript](usage/kata-issues.md#cite-a-docbank-transcript).
