@@ -55,6 +55,22 @@ func (s *Store) invalidateInferenceExportChangesTx(
 	return nil
 }
 
+// reviewInferenceExportChangesTx runs mutate and advances personID's CardDAV
+// export review revision when it changes the person's inferred contributors,
+// so an approved card is not republished with replaced inferred data.
+func (s *Store) reviewInferenceExportChangesTx(
+	ctx context.Context, tx *loggedTx, personID int64, mutate func() error,
+) error {
+	before, err := s.captureInferenceExportPeopleTx(ctx, tx, personID)
+	if err != nil {
+		return err
+	}
+	if err := mutate(); err != nil {
+		return err
+	}
+	return s.invalidateInferenceExportChangesTx(ctx, tx, before)
+}
+
 func inferredExportContributors(projection personInferenceExportProjection) personInferenceExportProjection {
 	result := personInferenceExportProjection{Attributes: make([]personInferenceExportAttribute, 0), Employments: make([]personInferenceExportEmployment, 0)}
 	for _, a := range projection.Attributes {
@@ -65,6 +81,21 @@ func inferredExportContributors(projection personInferenceExportProjection) pers
 	for _, e := range projection.Employments {
 		if e.Inferred {
 			result.Employments = append(result.Employments, e)
+		}
+	}
+	for _, c := range projection.ContactPoints {
+		if c.Inferred {
+			result.ContactPoints = append(result.ContactPoints, c)
+		}
+	}
+	for _, a := range projection.Addresses {
+		if a.Inferred {
+			result.Addresses = append(result.Addresses, a)
+		}
+	}
+	for _, n := range projection.Names {
+		if n.Inferred {
+			result.Names = append(result.Names, n)
 		}
 	}
 	return result
@@ -150,7 +181,11 @@ func (s *Store) invalidateResolverInferenceExportTx(
 			declaredEmployments[employment.RowID] = true
 		}
 	}
-	exportable := personInferenceExportProjection{}
+	// The resolver writes only attributes and employment; contact points,
+	// addresses, and names carry over unchanged.
+	exportable := personInferenceExportProjection{
+		ContactPoints: before.ContactPoints, Addresses: before.Addresses, Names: before.Names,
+	}
 	for _, attribute := range before.Attributes {
 		_, retired := systemRetirements[personfacts.ProjectionRef{Kind: "person_attribute", RowID: attribute.RowID}]
 		if !declaredAttributes[attribute.Slot] && !retired {

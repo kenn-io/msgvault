@@ -296,7 +296,7 @@ func TestInferenceExportResolverStatusAndUnpin(t *testing.T) {
 }
 
 func TestInferenceExportMergeAndSplit(t *testing.T) {
-	for _, kind := range []string{"attribute", "employment", "declared"} {
+	for _, kind := range []string{"attribute", "employment", "contact", "address", "declared"} {
 		t.Run(kind, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
@@ -306,12 +306,20 @@ func TestInferenceExportMergeAndSplit(t *testing.T) {
 			if kind == "declared" {
 				source = ProvenanceUser
 			}
-			if kind == "employment" {
+			switch kind {
+			case "employment":
 				org, err := st.CreateOrganizationContext(t.Context(), OrganizationInput{Name: "Example Org", Kind: OrganizationKindCompany})
 				require.NoError(err)
 				_, err = st.AddEmploymentContext(t.Context(), EmploymentInput{PersonID: absorbed.ID, OrganizationID: org.ID, Source: source})
 				require.NoError(err)
-			} else {
+			case "contact":
+				_, err := st.AddPersonContactPointContext(t.Context(), absorbed.ID, PersonContactPointInput{AddressKind: ContactAddressEmail, OriginalValue: "inferred@example.com", Envelope: ValueEnvelopeInput{Source: source}})
+				require.NoError(err)
+			case "address":
+				street := "1 Inferred Street"
+				_, err := st.AddPersonAddressContext(t.Context(), absorbed.ID, PersonAddressInput{AddressKind: PersonAddressPostal, StreetAddress: &street, OriginalValue: street, Envelope: ValueEnvelopeInput{Source: source}})
+				require.NoError(err)
+			default:
 				inferenceNote(t, st, absorbed.ID, source, "Transferred")
 			}
 			_, err := st.db.Exec(`UPDATE person_carddav_inference_state SET approved_revision=inference_revision WHERE person_id=?`, absorbed.ID)

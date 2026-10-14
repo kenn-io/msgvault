@@ -83,9 +83,11 @@ func (s *Store) AddPersonAddressContext(
 		if err := ensureProfilePersonTx(ctx, tx, personID); err != nil {
 			return err
 		}
-		var err error
-		result, err = s.addPersonAddressTx(ctx, tx, personID, input)
-		if err != nil {
+		if err := s.reviewInferenceExportChangesTx(ctx, tx, personID, func() error {
+			var err error
+			result, err = s.addPersonAddressTx(ctx, tx, personID, input)
+			return err
+		}); err != nil {
 			return err
 		}
 		if err := s.bumpPersonRevisionsTx(ctx, tx, personID); err != nil {
@@ -115,9 +117,9 @@ func (s *Store) SupersedePersonAddressContext(
 		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 			return err
 		}
-		if err := s.supersedePersonAddressTx(
-			ctx, tx, personID, addressID, activeUntil,
-		); err != nil {
+		if err := s.reviewInferenceExportChangesTx(ctx, tx, personID, func() error {
+			return s.supersedePersonAddressTx(ctx, tx, personID, addressID, activeUntil)
+		}); err != nil {
 			return err
 		}
 		return s.bumpPersonRevisionsTx(ctx, tx, personID)

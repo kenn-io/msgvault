@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"go.kenn.io/msgvault/internal/vcard"
 )
 
 type PersonNameKind string
@@ -50,6 +52,40 @@ type PersonName struct {
 	OriginalValue     string         `json:"original_value"`
 }
 
+// VCardValue returns the property name and escaped value, or empty strings when
+// the name cannot render. Projection and inference review use the same rules.
+func (n PersonName) VCardValue() (propertyName, rawValue string) {
+	switch n.NameKind {
+	case PersonNameFormatted:
+		if n.Formatted != nil && strings.TrimSpace(*n.Formatted) != "" {
+			return "FN", vcard.EscapeText(*n.Formatted)
+		}
+	case PersonNameStructured, PersonNamePhonetic:
+		components := []string{
+			derefString(n.FamilyName), derefString(n.GivenName), derefString(n.AdditionalNames),
+			derefString(n.HonorificPrefixes), derefString(n.HonorificSuffixes),
+			derefString(n.SecondarySurname), derefString(n.Generation),
+		}
+		for _, component := range components {
+			if strings.TrimSpace(component) != "" {
+				return "N", vcard.JoinStructuredText(components)
+			}
+		}
+	case PersonNameNickname:
+		value := n.OriginalValue
+		if n.Formatted != nil && strings.TrimSpace(*n.Formatted) != "" {
+			value = *n.Formatted
+		}
+		if strings.TrimSpace(value) != "" {
+			// Each row is one nickname, including any literal commas.
+			return "NICKNAME", vcard.EscapeText(value)
+		}
+	case PersonNameSort:
+		return "", ""
+	}
+	return "", ""
+}
+
 type PersonNameInput struct {
 	NameKind          PersonNameKind     `json:"name_kind"`
 	Formatted         *string            `json:"formatted,omitzero" nullable:"false"`
@@ -84,9 +120,11 @@ func (s *Store) AddPersonNameContext(ctx context.Context, personID int64, input 
 		if err := ensureProfilePersonTx(ctx, tx, personID); err != nil {
 			return err
 		}
-		var err error
-		result, err = s.addPersonNameTx(ctx, tx, personID, input)
-		if err != nil {
+		if err := s.reviewInferenceExportChangesTx(ctx, tx, personID, func() error {
+			var err error
+			result, err = s.addPersonNameTx(ctx, tx, personID, input)
+			return err
+		}); err != nil {
 			return err
 		}
 		if err := s.bumpPersonRevisionsTx(ctx, tx, personID); err != nil {
@@ -112,7 +150,9 @@ func (s *Store) SupersedePersonNameContext(ctx context.Context, personID, nameID
 		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 			return err
 		}
-		if err := s.supersedePersonNameTx(ctx, tx, personID, nameID, activeUntil); err != nil {
+		if err := s.reviewInferenceExportChangesTx(ctx, tx, personID, func() error {
+			return s.supersedePersonNameTx(ctx, tx, personID, nameID, activeUntil)
+		}); err != nil {
 			return err
 		}
 		if err := s.bumpPersonRevisionsTx(ctx, tx, personID); err != nil {

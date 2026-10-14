@@ -2302,6 +2302,12 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	); err != nil {
 		return fmt.Errorf("backfill CardDAV inference export state: %w", err)
 	}
+	if err := s.runOnceMigration(
+		ctx, migrationCardDAVInferenceExportStateV2, 1, false,
+		s.backfillCardDAVInferenceExportStateV2,
+	); err != nil {
+		return fmt.Errorf("backfill CardDAV inference export state for names and contacts: %w", err)
+	}
 
 	// Reconcile the system relationship type catalog on every open: insert
 	// missing seeds, repair structural drift, and leave user-owned labels,

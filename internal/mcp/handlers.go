@@ -154,6 +154,7 @@ type handlers struct {
 	identityReview      IdentityReviewBackend
 	personCardDAV       PersonCardDAVBackend
 	messageTags         MessageTagBackend
+	personCreator       PersonCreator
 	identityScoring     IdentityScoringBackend
 	drafts              DraftRunner
 
