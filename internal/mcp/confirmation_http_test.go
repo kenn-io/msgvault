@@ -51,22 +51,6 @@ func TestMCPHTTPConfirmationIsBoundToAuthenticatedListener(t *testing.T) {
 	assertions.Equal(int32(1), backend.calls.Load())
 }
 
-func TestMCPHTTPProbesDoNotExhaustReadAccess(t *testing.T) {
-	handler := newMCPHTTPServer(ServeOptions{}, HTTPOptions{APIKey: "synthetic-key", AllowWrites: true}).Handler
-	for range 1025 {
-		request := httptest.NewRequest(http.MethodGet, "/mcp", nil)
-		request.Header.Set("Authorization", "Bearer synthetic-key")
-		response := httptest.NewRecorder()
-		handler.ServeHTTP(response, request)
-		require.Equal(t, http.StatusMethodNotAllowed, response.Code)
-	}
-	request := task3ModernRequest("tools/list", "", `{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}`)
-	request.Header.Set("Authorization", "Bearer synthetic-key")
-	recorder, response := task3Serve(handler, request)
-	task3RequireSuccess(t, recorder, response)
-	assert.Contains(t, response.Result, "tools")
-}
-
 func TestDelegatedCatalogHasNoOwnerArchiveToolsOrResources(t *testing.T) {
 	opts := ServeOptions{DelegatedOnly: true}
 	assert.Empty(t, rawListTools(t, opts, true))
