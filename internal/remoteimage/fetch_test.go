@@ -2,6 +2,7 @@ package remoteimage
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -47,4 +48,44 @@ func TestFetcherPinsPublicAddressAndRejectsPrivateRedirect(t *testing.T) {
 	require.NotNil(err)
 	assert.Equal("prohibited_host", err.Code)
 	assert.Equal(int64(2), requests.Load())
+}
+
+func TestFetcherAddressFallbackPreservesImageDefaults(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal("image/*", r.Header.Get("Accept"))
+		assert.Equal(remoteImageUserAgent, r.UserAgent())
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write([]byte("synthetic image"))
+	}))
+	defer upstream.Close()
+	f := NewFetcher()
+	f.LookupNetIP = func(context.Context, string) ([]netip.Addr, error) {
+		return []netip.Addr{netip.MustParseAddr("203.0.113.7"), netip.MustParseAddr("203.0.113.8")}, nil
+	}
+	var dials []string
+	f.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+		dials = append(dials, address)
+		if address == "203.0.113.7:80" {
+			return nil, errors.New("synthetic dial failure")
+		}
+		return (&net.Dialer{}).DialContext(ctx, network, strings.TrimPrefix(upstream.URL, "http://"))
+	}
+	_, _, fetchErr := f.Fetch(t.Context(), "http://images.example/image")
+	require.NotNil(fetchErr)
+	assert.Equal([]string{"203.0.113.7:80"}, dials)
+	f.TryAllAddresses = true
+	dials = nil
+	_, body, fetchErr := f.Fetch(t.Context(), "http://images.example/image")
+	require.Nil(fetchErr)
+	assert.Equal([]byte("synthetic image"), body)
+	assert.Equal([]string{"203.0.113.7:80", "203.0.113.8:80"}, dials)
+	f.LookupNetIP = func(context.Context, string) ([]netip.Addr, error) {
+		return []netip.Addr{netip.MustParseAddr("203.0.113.7"), netip.MustParseAddr("10.4.5.6")}, nil
+	}
+	dials = nil
+	_, _, fetchErr = f.Fetch(t.Context(), "http://images.example/image")
+	require.NotNil(fetchErr)
+	assert.Equal(remoteImageErrProhibitedDest, fetchErr.Code)
+	assert.Empty(dials)
 }

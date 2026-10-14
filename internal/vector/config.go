@@ -10,11 +10,12 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
-	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
 	"time"
+
+	"go.kenn.io/msgvault/internal/envutil"
 )
 
 // EmbeddingAPIFormat selects the request and response contract used by the
@@ -75,8 +76,6 @@ const (
 	// manifest whose probe authorized them.
 	multimodalAnimatedGIFDefault = false
 )
-
-var environmentVariableName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // Config is the top-level vector-search configuration, loaded from the
 // [vector] TOML table.
@@ -616,7 +615,7 @@ func (m MultimodalConfig) validate() error {
 		return fmt.Errorf("vector.multimodal.endpoint: only the pinned provider endpoint %s is supported (got %q)",
 			defaultMultimodalEndpoint, m.Endpoint)
 	}
-	if m.APIKeyEnv == "" || !environmentVariableName.MatchString(m.APIKeyEnv) {
+	if !envutil.ValidName(m.APIKeyEnv) {
 		return fmt.Errorf("vector.multimodal.api_key_env: must be a valid environment variable name, got %q", m.APIKeyEnv)
 	}
 	if m.Model != "voyage-multimodal-3.5" {

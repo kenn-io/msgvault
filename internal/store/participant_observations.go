@@ -192,13 +192,7 @@ func (s *Store) RecordContactObservationContext(
 		}
 	}
 	result := &RecordContactObservationResult{}
-	err = s.withTxContext(ctx, func(tx *loggedTx) error {
-		// Observation writes can create participant-level identity conflicts.
-		// Use the same outer lock as conflict cleanup, source removal, and
-		// participant merge so none of them can act on a stale observation set.
-		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
-			return err
-		}
+	err = s.withAttributionTxContext(ctx, attributionLock{Exclusive: true}, func(tx *loggedTx) error {
 		// Normal source removal takes this source-scoped lock before it
 		// recomputes generated conflicts and deletes the source. An importer for
 		// that source must finish its observation/candidate transaction before

@@ -550,6 +550,7 @@ type Config struct {
 	SynctechSMS        SynctechSMSConfig               `toml:"synctech_sms"`
 	GCal               []GCalSource                    `toml:"gcal"`
 	Beeper             BeeperConfig                    `toml:"beeper"`
+	Chatwoot           []ChatwootSource                `toml:"chatwoot"`
 	Matrix             MatrixConfig                    `toml:"matrix"`
 	Slack              SlackConfig                     `toml:"slack"`
 	Omi                []OmiSource                     `toml:"omi"`
@@ -1022,6 +1023,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	}
 	cfg.People.Sweep.ApplyDefaults()
 	for _, key := range metadata.Undecoded() {
+		if len(key) > 0 && key[0] == "chatwoot" {
+			return nil, fmt.Errorf("unknown Chatwoot config key %q", key.String())
+		}
 		if key.String() == "carddav.password" {
 			return nil, errors.New("[carddav] password is not allowed in config; store it in tokens/carddav.json")
 		}
@@ -1175,6 +1179,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	}
 	cfg.applySynctechSMSDefaults()
 	cfg.applyGCalDefaults()
+	if err := cfg.validateChatwootSources(); err != nil {
+		return nil, err
+	}
 	cfg.applyMeetingSourceDefaults()
 	if err := cfg.validateMeetingSources(); err != nil {
 		return nil, err

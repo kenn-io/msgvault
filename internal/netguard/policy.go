@@ -4,9 +4,20 @@
 package netguard
 
 import (
+	"net"
 	"net/netip"
 	"strings"
 )
+
+// IsLoopbackHost recognizes localhost and literal loopback addresses.
+func IsLoopbackHost(host string) bool {
+	host = strings.TrimSuffix(strings.ToLower(host), ".")
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
 
 var prohibitedV4 = []netip.Prefix{
 	netip.MustParsePrefix("0.0.0.0/8"),

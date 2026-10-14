@@ -19,6 +19,7 @@ const (
 	meetingSourceTwilio     = "twilio"
 	meetingSourceTwenty     = "twenty"
 	meetingSourceImported   = "meeting_import"
+	meetingSourceChatwoot   = "chatwoot"
 )
 
 type meetingViewLevel int
@@ -83,7 +84,7 @@ func (m Model) meetingAccounts() []query.AccountInfo {
 	accounts := make([]query.AccountInfo, 0, len(m.accounts))
 	for _, account := range m.accounts {
 		switch strings.ToLower(strings.TrimSpace(account.SourceType)) {
-		case meetingSourceOmi, meetingSourceGranola, meetingSourceCircleback, meetingSourcePlaud, meetingSourceNotion, meetingSourceMuesli, meetingSourceTwilio, meetingSourceTwenty, meetingSourceImported:
+		case meetingSourceOmi, meetingSourceGranola, meetingSourceCircleback, meetingSourcePlaud, meetingSourceNotion, meetingSourceMuesli, meetingSourceTwilio, meetingSourceTwenty, meetingSourceImported, meetingSourceChatwoot:
 			accounts = append(accounts, account)
 		}
 	}

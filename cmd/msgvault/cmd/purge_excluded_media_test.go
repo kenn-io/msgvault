@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
+	"go.kenn.io/msgvault/internal/chatwoot"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -28,7 +29,7 @@ type purgeMediaFixture struct {
 	fullPath    string
 }
 
-func newPurgeMediaFixture(t *testing.T) purgeMediaFixture {
+func newPurgeMediaFixture(t *testing.T, provider string) purgeMediaFixture {
 	t.Helper()
 	st := testutil.NewTestStore(t)
 	dataDir := t.TempDir()
@@ -38,9 +39,17 @@ func newPurgeMediaFixture(t *testing.T) purgeMediaFixture {
 	}
 	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 	_ = testCtx
-	source, err := st.GetOrCreateSource(sourceTypeBeeper, "signal")
-	require.NoError(t, err)
 	newMessage := func(sourceMessageID, conversationType string, participants int) int64 {
+		identifier, messageType := "signal", provider
+		if provider == chatwoot.SourceType {
+			accountID := int64(9)
+			if sourceMessageID == "retained" {
+				accountID, messageType = 10, "meeting_transcript"
+			}
+			identifier = chatwoot.SourceIdentifier("https://chatwoot.example.com", accountID, 8)
+		}
+		source, err := st.GetOrCreateSource(provider, identifier)
+		require.NoError(t, err)
 		conversationID, err := st.EnsureConversationWithType(
 			source.ID, "conversation-"+sourceMessageID, conversationType, sourceMessageID,
 		)
@@ -49,7 +58,7 @@ func newPurgeMediaFixture(t *testing.T) purgeMediaFixture {
 		require.NoError(t, err)
 		messageID, err := st.UpsertMessage(&store.Message{
 			SourceID: source.ID, ConversationID: conversationID,
-			SourceMessageID: sourceMessageID, MessageType: sourceTypeBeeper,
+			SourceMessageID: sourceMessageID, MessageType: messageType,
 		})
 		require.NoError(t, err)
 		return messageID
@@ -58,11 +67,15 @@ func newPurgeMediaFixture(t *testing.T) purgeMediaFixture {
 	retainedMessageID := newMessage("retained", "direct_chat", 2)
 	hash := strings.Repeat("ab", 32)
 	path := hash[:2] + "/" + hash
+	replaceAttachments := st.ReplaceMessageBeeperAttachments
+	if provider == chatwoot.SourceType {
+		replaceAttachments = st.ReplaceMessageChatwootAttachments
+	}
 	for messageID, sourceAttachmentID := range map[int64]string{
-		excludedMessageID: "beeper:excluded",
-		retainedMessageID: "beeper:retained",
+		excludedMessageID: provider + ":excluded",
+		retainedMessageID: provider + ":retained",
 	} {
-		require.NoError(t, st.ReplaceMessageBeeperAttachments(messageID, []store.AttachmentRef{{
+		require.NoError(t, replaceAttachments(messageID, []store.AttachmentRef{{
 			SourceAttachmentID: sourceAttachmentID,
 			StoragePath:        path,
 			ContentHash:        hash,
@@ -106,7 +119,7 @@ func (f purgeMediaFixture) state(t *testing.T, attachmentID int64) attachmentpol
 func TestPurgeExcludedMediaDryRunAndApplyPreservesSharedBlob(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	f := newPurgeMediaFixture(t)
+	f := newPurgeMediaFixture(t, sourceTypeBeeper)
 
 	dryRun := newPurgeExcludedMediaLocalCmd(f.deps())
 	var dryOutput bytes.Buffer
@@ -162,7 +175,7 @@ func TestMediaPolicyForSlackdumpUsesSlackWorkspaceConfig(t *testing.T) {
 func TestPurgeExcludedMediaPreservesBlobReferencedByThumbnail(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	f := newPurgeMediaFixture(t)
+	f := newPurgeMediaFixture(t, sourceTypeBeeper)
 	require.NoError(f.store.DB().QueryRow(f.store.Rebind(`
 		UPDATE attachments
 		SET content_hash = NULL, storage_path = ?, thumbnail_hash = ?, thumbnail_path = ?
@@ -183,7 +196,7 @@ func TestPurgeExcludedMediaPreservesBlobReferencedByThumbnail(t *testing.T) {
 func TestPurgeExcludedMediaRefusalLeavesArchiveUnchanged(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	f := newPurgeMediaFixture(t)
+	f := newPurgeMediaFixture(t, sourceTypeBeeper)
 	command := newPurgeExcludedMediaLocalCmd(f.deps())
 	var output bytes.Buffer
 	command.SetIn(strings.NewReader("n\n"))
@@ -199,7 +212,7 @@ func TestPurgeExcludedMediaRefusalLeavesArchiveUnchanged(t *testing.T) {
 func TestPurgeExcludedMediaRetriesAndContinuesLooseBlobCleanup(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	f := newPurgeMediaFixture(t)
+	f := newPurgeMediaFixture(t, sourceTypeBeeper)
 	f.config.Beeper.MediaScope = string(attachmentpolicy.ScopeNone)
 	orphanHash := strings.Repeat("cd", 32)
 	orphanPath := orphanHash[:2] + "/" + orphanHash
@@ -234,7 +247,7 @@ func TestPurgeExcludedMediaRetriesAndContinuesLooseBlobCleanup(t *testing.T) {
 
 func TestSweepAttachmentCandidates(t *testing.T) {
 	assert := assert.New(t)
-	f := newPurgeMediaFixture(t)
+	f := newPurgeMediaFixture(t, sourceTypeBeeper)
 	dir := f.config.AttachmentsDir()
 	removed := seedAttachmentFile(t, dir, "aa/orphan", "orphan")
 	failed := seedAttachmentFile(t, dir, "aa/failed", "failed")
@@ -261,7 +274,7 @@ func TestSweepAttachmentCandidates(t *testing.T) {
 func TestSweepUnreferencedLooseMedia(t *testing.T) {
 	t.Run("cancellation", func(t *testing.T) {
 		assert := assert.New(t)
-		f := newPurgeMediaFixture(t)
+		f := newPurgeMediaFixture(t, sourceTypeBeeper)
 		dir := f.config.AttachmentsDir()
 		paths := make([]string, 0, 3)
 		for _, hash := range []string{strings.Repeat("cd", 32), "cd" + strings.Repeat("ef", 31), strings.Repeat("ef", 32)} {
@@ -283,7 +296,7 @@ func TestSweepUnreferencedLooseMedia(t *testing.T) {
 		assert.Equal(1, strings.Count(err.Error(), context.Canceled.Error()), "report cancellation once")
 	})
 	t.Run("missing files", func(t *testing.T) {
-		f := newPurgeMediaFixture(t)
+		f := newPurgeMediaFixture(t, sourceTypeBeeper)
 		hash := strings.Repeat("cd", 32)
 		seedAttachmentFile(t, f.config.AttachmentsDir(), hash[:2]+"/"+hash, "orphan")
 		removed, err := sweepUnreferencedLooseMedia(t.Context(), f.store, f.config.AttachmentsDir(), func(path string) error {
@@ -387,4 +400,46 @@ func TestPurgeExcludedMediaRetainsUnresolvedRostersUnderParticipantLimit(t *test
 	assert.Contains(output, "Would exclude 3 stored attachment occurrence(s)")
 	assert.Contains(output, "participant_threshold: 3")
 	assert.NotContains(output, "left in place")
+}
+
+func TestChatwootPurgeResolvesAccountPolicyAndSharedMeetings(t *testing.T) {
+	for _, state := range []attachmentpolicy.DownloadState{attachmentpolicy.StateStored, attachmentpolicy.StateFailed, attachmentpolicy.StatePending, attachmentpolicy.StateSkipped} {
+		t.Run(string(state), func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			f := newPurgeMediaFixture(t, chatwoot.SourceType)
+			disabled := false
+			f.config.Chatwoot = []config.ChatwootSource{
+				{Identifier: "renamed", URL: "https://chatwoot.example.com/", AccountID: 9, Media: &disabled},
+				{Identifier: "other", URL: "https://chatwoot.example.com", AccountID: 10},
+			}
+			for _, invalid := range []string{"https://chatwoot.example.com/accounts/9/inboxes/08", "https://chatwoot.example.com/accounts/99/inboxes/8"} {
+				_, ok := mediaPolicyForSource(f.config, chatwoot.SourceType, invalid)
+				assert.False(ok)
+			}
+			run := func() {
+				command := newPurgeExcludedMediaLocalCmd(f.deps())
+				command.SetOut(&bytes.Buffer{})
+				command.SetErr(&bytes.Buffer{})
+				command.SetArgs([]string{"--yes"})
+				require.NoError(command.Execute())
+			}
+			_, err := f.store.DB().Exec(f.store.Rebind(`UPDATE attachments SET attachment_state = ? WHERE id IN (?, ?)`), state, f.excludedID, f.retainedID)
+			require.NoError(err)
+			dryRun := newPurgeExcludedMediaLocalCmd(f.deps())
+			dryRun.SetOut(&bytes.Buffer{})
+			dryRun.SetErr(&bytes.Buffer{})
+			dryRun.SetArgs([]string{"--dry-run"})
+			require.NoError(dryRun.Execute())
+			assert.Equal(state, f.state(t, f.excludedID))
+			assert.FileExists(f.fullPath)
+			run()
+			assert.Equal(attachmentpolicy.StateSkipped, f.state(t, f.excludedID))
+			assert.Equal(state, f.state(t, f.retainedID))
+			assert.FileExists(f.fullPath)
+			f.config.Chatwoot[1].Media = &disabled
+			run()
+			assert.Equal(attachmentpolicy.StateSkipped, f.state(t, f.retainedID))
+			assert.NoFileExists(f.fullPath)
+		})
+	}
 }

@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -17,6 +16,7 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/jsonexact"
+	"go.kenn.io/msgvault/internal/netguard"
 )
 
 const (
@@ -85,7 +85,7 @@ func NewClient(baseURL, botToken string) (*Client, error) {
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.User != nil {
 		return nil, errors.New("invalid Discord API base URL")
 	}
-	if parsed.Scheme != "https" && (parsed.Scheme != "http" || !isLoopbackHost(parsed.Hostname())) {
+	if parsed.Scheme != "https" && (parsed.Scheme != "http" || !netguard.IsLoopbackHost(parsed.Hostname())) {
 		return nil, errors.New("discord API base URL must use HTTPS")
 	}
 	if botToken == "" {
@@ -104,14 +104,6 @@ func NewClient(baseURL, botToken string) (*Client, error) {
 		},
 		limits: newRateLimitState(),
 	}, nil
-}
-
-func isLoopbackHost(host string) bool {
-	if strings.EqualFold(host, "localhost") {
-		return true
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
 }
 
 type discordRoute struct {

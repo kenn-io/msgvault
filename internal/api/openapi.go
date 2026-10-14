@@ -365,7 +365,8 @@ import (
 // reads and delta updates.
 // 3.16.0 adds authenticated implementation-only MCP capability discovery.
 // 3.17.0 adds bounded opt-in filename suggestions, including person scope.
-const APISchemaVersion = "3.17.0"
+// 3.18.0 adds optional related_message_id to message detail and conversation windows.
+const APISchemaVersion = "3.18.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

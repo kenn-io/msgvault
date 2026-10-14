@@ -2612,6 +2612,9 @@ components:
           type:
             - string
             - "null"
+        related_message_id:
+          format: int64
+          type: integer
         rfc822_message_id:
           type: string
         sent_at:
@@ -7401,6 +7404,9 @@ components:
           type: array
         message_type:
           type: string
+        related_message_id:
+          format: int64
+          type: integer
         sent_at:
           type: string
         size_bytes:
@@ -15794,7 +15800,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.17.0
+  version: 3.18.0
 openapi: 3.1.0
 paths:
   /api/ping:
