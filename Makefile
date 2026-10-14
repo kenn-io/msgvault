@@ -197,7 +197,7 @@ test-v:
 #
 # CI does not run this target as-is: .github/workflows/ci.yml splits the same
 # ground into test-pgvector (pgvector image, pgvector-tagged packages) and
-# test-postgres (stock image, test-pg-shipped below).
+# test-postgres and test-postgres-sharded (stock images, test-pg-shipped below).
 # See docs/internal/PG_STATUS.md for the supported feature surface.
 test-pg: require-test-db
 	go test -timeout $(TEST_TIMEOUT) -p $(PG_TEST_PARALLEL) -tags "$(PG_TEST_TAGS)" ./...
@@ -210,8 +210,8 @@ test-pg-nocgo: require-test-db
 
 # Run the SHIPPED build's tests against PostgreSQL (set MSGVAULT_TEST_DB first).
 # The released binary is built with BUILD_TAGS and no pgvector, so that build
-# has to be exercised against a PostgreSQL archive too. This is the lane
-# .github/workflows/ci.yml's test-postgres job runs.
+# has to be exercised against a PostgreSQL archive too.
+# CI splits this between the test-postgres remainder and test-postgres-sharded jobs.
 #
 # Run the unsharded remainder first, then the large packages as shards. The
 # steps stay sequential here so at most TEST_SHARDS test processes share the
