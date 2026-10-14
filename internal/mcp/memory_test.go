@@ -91,6 +91,7 @@ func daemonProxyMemoryOptions() ServeOptions {
 		SavedViews:          struct{ savedview.Service }{},
 		Meetings:            struct{ MeetingBackend }{},
 		Calendar:            struct{ CalendarBackend }{},
+		MessageTags:         struct{ MessageTagBackend }{},
 		ArchiveSQLQuerier:   struct{ ArchiveSQLQuerier }{},
 		IdentityReview:      struct{ IdentityReviewBackend }{},
 		PersonCardDAV:       struct{ PersonCardDAVBackend }{},
