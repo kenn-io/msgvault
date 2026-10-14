@@ -92,10 +92,10 @@ type Client struct {
 	// response bound. It shrinks after an overflow so later pages don't
 	// repeat the oversized downloads.
 	pageLimit atomic.Int64
-	// Serialize the optional-field probe so an older server rejects iCalUid
-	// only once, even when callers share this client.
-	calendarQueryMu sync.Mutex
-	withoutICalUID  bool
+	// withoutICalUID records that the server rejected iCalUid, so later
+	// requests omit it instead of failing once per page. The client is not
+	// used concurrently.
+	withoutICalUID bool
 }
 
 // ValidateBaseURL accepts an API root, never an API path or a URL with
@@ -291,8 +291,6 @@ func (e *graphQLRequestError) rejectsICalUID() bool {
 // queryCalendar retries only an unknown iCalUid field. Permission and other
 // schema failures must still stop the import with their original diagnostics.
 func (c *Client) queryCalendar(ctx context.Context, query string, variables map[string]any) (map[string]jsontext.Value, error) {
-	c.calendarQueryMu.Lock()
-	defer c.calendarQueryMu.Unlock()
 	if c.withoutICalUID {
 		return c.query(ctx, strings.ReplaceAll(query, " iCalUid", ""), variables)
 	}

@@ -3,6 +3,7 @@ package circleback
 import (
 	"database/sql"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -11,20 +12,28 @@ import (
 )
 
 func TestCirclebackJoinURLKnownHostsOnly(t *testing.T) {
+	const meet = "https://meet.google.com/abc-defg-hij"
 	for _, tt := range []struct {
 		name, url string
 		known     bool
 	}{
-		{"meet", "https://meet.google.com/abc-defg-hij", true},
+		{"meet", meet, true},
 		{"zoom", "https://zoom.us/j/123456789?pwd=example", true},
 		{"zoom subdomain", "https://us02web.zoom.us/j/123456789?pwd=example", true},
+		{"zoom government", "https://zoomgov.com/j/123456789?pwd=example", true},
+		{"zoom government subdomain", "https://example.zoomgov.com/j/123456789", true},
 		{"teams", "https://teams.microsoft.com/l/meetup-join/19%3Aexample%40thread.v2/0?context=example", true},
+		{"teams consumer", "https://teams.live.com/meet/123456789?p=example", true},
+		{"teams government", "https://gov.teams.microsoft.us/l/meetup-join/example", true},
 		{"unknown", "https://meet.example.com/planning", false},
 		{"deceptive zoom", "https://evilzoom.us/j/123456789", false},
+		{"deceptive zoom government", "https://evilzoomgov.com/j/123456789", false},
 		{"deceptive meet", "https://meet.google.com.example.org/abc-defg-hij", false},
 		{"deceptive teams", "https://teams.microsoft.com.example.org/l/meetup-join/example", false},
+		{"deceptive teams government", "https://teams.microsoft.us.example.org/l/meetup-join/example", false},
 		{"invalid", "://meet.google.com", false},
 		{"non web scheme", "ftp://zoom.us/j/123456789", false},
+		{"padded", " " + meet + "\n", true},
 		{"empty", "", false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -40,7 +49,7 @@ func TestCirclebackJoinURLKnownHostsOnly(t *testing.T) {
 				assert.Equal(tt.url, metadata["meeting_url"])
 			}
 			if tt.known {
-				assert.Equal(tt.url, metadata["join_url"])
+				assert.Equal(strings.TrimSpace(tt.url), metadata["join_url"])
 			} else {
 				assert.NotContains(metadata, "join_url")
 			}

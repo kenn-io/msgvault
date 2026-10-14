@@ -1041,13 +1041,19 @@ func (imp *Importer) buildMetadata(
 // knownJoinURL preserves the usable provider URL, including passcodes and
 // context parameters. Join-key normalization belongs to the link projection.
 func knownJoinURL(raw string) string {
-	u, err := url.Parse(strings.TrimSpace(raw))
+	trimmed := strings.TrimSpace(raw)
+	u, err := url.Parse(trimmed)
 	if err != nil || (u.Scheme != "https" && u.Scheme != "http") {
 		return ""
 	}
 	host := strings.ToLower(u.Hostname())
-	if host == "meet.google.com" || host == "teams.microsoft.com" || host == "zoom.us" || strings.HasSuffix(host, ".zoom.us") {
-		return raw
+	switch {
+	case host == "meet.google.com",
+		host == "teams.microsoft.com", host == "teams.live.com",
+		strings.HasSuffix(host, ".teams.microsoft.us"),
+		host == "zoom.us", strings.HasSuffix(host, ".zoom.us"),
+		host == "zoomgov.com", strings.HasSuffix(host, ".zoomgov.com"):
+		return trimmed
 	}
 	return ""
 }
