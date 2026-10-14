@@ -34,7 +34,7 @@ const maxAttempts = 5
 const maxReportedGraphQLErrors = 3
 
 const recordingFields = `id title status applicationId createdAt updatedAt startedAt endedAt calendarEventId transcript summary { markdown } calendarEvent { ` + calendarFields + ` }`
-const calendarFields = `id title startsAt endsAt`
+const calendarFields = `id title startsAt endsAt iCalUid`
 const participantFields = `id calendarEventId displayName handle isOrganizer`
 const recordingQuery = `query Recordings($after: String, $first: Int!, $filter: CallRecordingFilterInput) {
  callRecordings(first: $first, after: $after, filter: $filter, orderBy: [{updatedAt: AscNullsFirst}, {id: AscNullsFirst}]) {

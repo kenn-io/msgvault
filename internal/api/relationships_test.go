@@ -121,7 +121,7 @@ func newRelationshipsDuckDBFixtureWithDir(t *testing.T, now time.Time) (*query.D
 		id := nextID
 		nextID++
 		messageRows = append(messageRows, fmt.Sprintf(
-			"(%d::BIGINT, 1::BIGINT, 'm%d', %d::BIGINT, '', 'Preview %d', TIMESTAMP '%s', 10::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, NULL::BIGINT, %s, %v, %d, %d)",
+			"(%d::BIGINT, 1::BIGINT, 'm%d', %d::BIGINT, '', 'Preview %d', TIMESTAMP '%s', 10::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, NULL::BIGINT, %s, %v, %d, %d, NULL::VARCHAR)",
 			id, id, id, id, sentAt.Format("2006-01-02 15:04:05"), sqlQuote(messageType), isFromMe, sentAt.Year(), int(sentAt.Month())))
 		recipientRows = append(recipientRows,
 			fmt.Sprintf("(%d::BIGINT, %d::BIGINT, 'from', '')", id, fromID),
@@ -142,7 +142,7 @@ func newRelationshipsDuckDBFixtureWithDir(t *testing.T, now time.Time) (*query.D
 	}{
 		{
 			dir: "messages/year=2026", file: "messages.parquet",
-			columns: "id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments, attachment_count, deleted_from_source_at, sender_id, owner_participant_id, message_type, is_from_me, year, month",
+			columns: "id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments, attachment_count, deleted_from_source_at, sender_id, owner_participant_id, message_type, is_from_me, year, month, meeting_key",
 			values:  strings.Join(messageRows, ",\n"),
 		},
 		{dir: "sources", file: "sources.parquet", columns: "id, account_email, source_type", values: `(1::BIGINT, 'owner@example.com', 'gmail')`},
@@ -154,6 +154,8 @@ func newRelationshipsDuckDBFixtureWithDir(t *testing.T, now time.Time) (*query.D
 				(4::BIGINT, 'newsletter@example.com', 'example.com', 'Newsletter', '')`,
 		},
 		{dir: "participant_identifiers", file: "participant_identifiers.parquet", columns: "participant_id, identifier_type, identifier_value, display_value, is_primary", values: `(0::BIGINT, '', '', '', false)`, empty: true},
+		{dir: "room_addresses", file: "room_addresses.parquet", columns: "email", values: `('')`, empty: true},
+		{dir: "person_contacts", file: "person_contacts.parquet", columns: "participant_id, address_kind, normalized_value", values: `(0::BIGINT, '', '')`, empty: true},
 		{dir: "message_recipients", file: "message_recipients.parquet", columns: "message_id, participant_id, recipient_type, display_name", values: strings.Join(recipientRows, ",\n")},
 		{dir: "labels", file: "labels.parquet", columns: "id, name", values: `(0::BIGINT, '')`, empty: true},
 		{dir: "message_labels", file: "message_labels.parquet", columns: "message_id, label_id", values: `(0::BIGINT, 0::BIGINT)`, empty: true},

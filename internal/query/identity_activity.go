@@ -104,7 +104,7 @@ func (e *DuckDBEngine) buildIdentityLogicalSQL(
 ), person_flags AS (
 	SELECT le.anchor_message_id AS entry_num, mp.canonical_id,
 	       mp.is_author, mp.is_owner,
-	       le.occurred_at, le.is_from_me, le.message_type, le.entry_kind,
+	       le.occurred_at, le.is_from_me, le.message_type, le.meeting_key, le.entry_kind,
 	       le.attachment_count, le.source_type
 	FROM logical_entries le
 	JOIN message_person mp ON mp.message_id = le.anchor_message_id
@@ -112,7 +112,7 @@ func (e *DuckDBEngine) buildIdentityLogicalSQL(
 	UNION ALL
 	SELECT -le.conversation_id AS entry_num, cp.canonical_id,
 	       cp.is_author, cp.is_owner,
-	       le.occurred_at, le.is_from_me, le.message_type, le.entry_kind,
+	       le.occurred_at, le.is_from_me, le.message_type, le.meeting_key, le.entry_kind,
 	       le.attachment_count, le.source_type
 	FROM logical_entries le
 	JOIN chat_person cp ON cp.conversation_id = le.conversation_id
@@ -172,12 +172,17 @@ func (e *DuckDBEngine) buildIdentityDomainLogicalSQL(
 	  AND a.canonical_id IS NOT NULL
 	  AND a.participant_domain <> ''
 ), logical_person_domains AS (
-	SELECT DISTINCT a.participant_domain AS domain, a.canonical_id
+	SELECT a.participant_domain AS domain, a.canonical_id
 	FROM logical_entries le
 	JOIN relationship_activity_expanded a ON a.message_id = le.anchor_message_id
 	WHERE le.entry_kind <> 'conversation'
 	  AND a.canonical_id IS NOT NULL
 	  AND a.participant_domain <> '' AND a.is_direct
+	  AND EXISTS (
+		SELECT 1 FROM read_parquet('` + quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetPeople)) + `') visible
+		WHERE visible.canonical_id = a.canonical_id
+	  )
+	GROUP BY a.participant_domain, a.canonical_id
 	UNION
 	SELECT a.participant_domain AS domain, a.canonical_id
 	FROM logical_entries le
@@ -186,6 +191,10 @@ func (e *DuckDBEngine) buildIdentityDomainLogicalSQL(
 	WHERE le.entry_kind = 'conversation'
 	  AND a.canonical_id IS NOT NULL
 	  AND a.participant_domain <> ''
+	  AND EXISTS (
+		SELECT 1 FROM read_parquet('` + quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetPeople)) + `') visible
+		WHERE visible.canonical_id = a.canonical_id
+	  )
 )`
 	return sql, args, nil
 }
@@ -527,14 +536,15 @@ func (e *DuckDBEngine) filteredPeopleSQL(
 	// owner_presence join inside logical_people serves only the filtered
 	// relationships ranking, so consuming person_flags lets the optimizer
 	// drop it entirely here. Totals and per-source counts both reduce from
-	// the compact (person, source_type) stats, and the candidate
+	// the compact (person, source_type) stats; transcript key sets are unioned
+	// across sources for the total. The candidate
 	// restriction happens in the population join below rather than inside
 	// the aggregate.
 	return logicalSQL + `,
 person_stats AS (
 	SELECT p.canonical_id, p.source_type,
 	       count(*)::BIGINT AS source_count,
-	       count(*) FILTER (WHERE p.message_type = 'meeting_transcript')::BIGINT AS meeting_count,
+	       coalesce(list(DISTINCT p.meeting_key) FILTER (WHERE p.message_type = 'meeting_transcript'), []::VARCHAR[]) AS meeting_keys,
 	       coalesce(sum(p.attachment_count), 0)::BIGINT AS file_count,
 	       min(p.occurred_at)::TIMESTAMP AS first_at,
 	       max(p.occurred_at)::TIMESTAMP AS last_at
@@ -543,7 +553,7 @@ person_stats AS (
 ), person_totals AS (
 	SELECT canonical_id,
 	       sum(source_count)::BIGINT AS activity_count,
-	       sum(meeting_count)::BIGINT AS meeting_count,
+	       len(list_distinct(flatten(list(meeting_keys))))::BIGINT AS meeting_count,
 	       sum(file_count)::BIGINT AS file_count,
 	       min(first_at)::TIMESTAMP AS first_at,
 	       max(last_at)::TIMESTAMP AS last_at
@@ -583,6 +593,7 @@ func (e *DuckDBEngine) sourceFilteredPeopleSQL(
 	return `WITH identity_candidates AS (` + candidates + `
 ), selected_source_rollups AS (
 	SELECT c.canonical_id,
+	       item.source_id,
 	       item.source_type,
 	       item.activity_count,
 	       item.meeting_count,
@@ -595,7 +606,13 @@ func (e *DuckDBEngine) sourceFilteredPeopleSQL(
 ), person_totals AS (
 	SELECT canonical_id,
 	       sum(activity_count)::BIGINT AS activity_count,
-	       sum(meeting_count)::BIGINT AS meeting_count,
+	       (SELECT count(DISTINCT lc.meeting_key)
+               FROM read_parquet('` + quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetLogicalContributions)) + `') lc
+               WHERE lc.relation_kind = 1
+                 AND lc.canonical_id = selected_source_rollups.canonical_id
+                 AND lc.message_type = 'meeting_transcript'
+                 AND EXISTS (SELECT 1 FROM selected_source_rollups sr
+                             WHERE sr.canonical_id = lc.canonical_id AND sr.source_id = lc.source_id))::BIGINT AS meeting_count,
 	       sum(file_count)::BIGINT AS file_count,
 	       min(first_at)::TIMESTAMP AS first_at,
 	       max(last_at)::TIMESTAMP AS last_at
@@ -643,9 +660,12 @@ func (e *DuckDBEngine) peoplePageSelectSQL() string {
 SELECT p.person_id,
        p.display_label,
        coalesce((
-	       SELECT raw.display_name
+	       SELECT CASE WHEN NOT ` + e.roomNameSuppressedSQL("raw") + ` THEN raw.display_name
+                   ELSE (SELECT human.display_name FROM read_parquet('` + participants + `') human
+                         WHERE list_contains(p.member_ids,human.id) AND NOT ` + e.roomNameSuppressedSQL("human") + `
+                           AND trim(coalesce(human.display_name,'')) <> '' ORDER BY human.id LIMIT 1) END
 	       FROM read_parquet('` + participants + `') raw
-	       WHERE raw.id = p.person_id
+	       WHERE raw.id=p.person_id
        ), '') AS display_name,
        p.partial_label,
        coalesce(CAST((
@@ -658,7 +678,7 @@ SELECT p.person_id,
 		       participant_id := pi.participant_id
 	       ) ORDER BY pi.is_primary DESC, pi.identifier_type, pi.identifier_value))
 	       FROM read_parquet('` + identifiers + `') pi
-	       WHERE list_contains(p.member_ids, pi.participant_id)
+	       WHERE list_contains(p.member_ids, pi.participant_id) AND (pi.identifier_type <> 'email' OR NOT ` + e.roomAddressSQL("pi.identifier_value") + `)
        ) AS VARCHAR), '[]') AS identifiers,
 	       p.activity_count,
 	       p.meeting_count,

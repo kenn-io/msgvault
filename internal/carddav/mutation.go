@@ -162,7 +162,7 @@ func (s *Service) mutateUnlocked(ctx context.Context, mutation Mutation) error {
 		return publicationErr
 	}
 	if !mutation.Desired && errors.Is(publicationErr, store.ErrCardDAVPublicationNotFound) {
-		_, err := s.store.GetPersonContext(operationCtx, mutation.PersonID)
+		_, err := s.store.LoadPersonVCardSnapshotContext(operationCtx, mutation.PersonID)
 		return err
 	}
 
@@ -185,7 +185,7 @@ func (s *Service) mutateUnlocked(ctx context.Context, mutation Mutation) error {
 	if !ok {
 		return store.ErrCardDAVNoWriteTarget
 	}
-	person, err := s.store.GetPersonContext(operationCtx, mutation.PersonID)
+	personSnapshot, err := s.store.LoadPersonVCardSnapshotContext(operationCtx, mutation.PersonID)
 	if err != nil {
 		return err
 	}
@@ -205,7 +205,7 @@ func (s *Service) mutateUnlocked(ctx context.Context, mutation Mutation) error {
 			return conflictErr
 		}
 	}
-	href, err := s.publicationHref(book.CanonicalURL, person.VCardUID)
+	href, err := s.publicationHref(book.CanonicalURL, personSnapshot.Profile.Person.VCardUID)
 	if err != nil {
 		return err
 	}

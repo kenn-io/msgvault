@@ -158,6 +158,12 @@ func (s *Store) ResolvePersonSemanticCandidatesContext(
 			return err
 		}
 		for _, candidate := range candidates {
+			if err := s.requireVisiblePersonTx(ctx, tx, candidate.PersonID); err != nil {
+				if errors.Is(err, ErrPersonNotFound) {
+					continue
+				}
+				return fmt.Errorf("resolve person %d semantic search visibility: %w", candidate.PersonID, err)
+			}
 			snapshot, err := s.loadPersonSemanticSnapshotTx(ctx, tx, candidate.PersonID, allowed)
 			if errors.Is(err, ErrPersonNotFound) {
 				continue

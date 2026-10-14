@@ -390,6 +390,13 @@ func TestGetPersonClusterLabelPrefersNamedMember(t *testing.T) {
 		"an unnamed member linked to a named alias must show the alias's name")
 	assertions.False(clustered.PartialLabel, "a real cluster name is not a partial label")
 
+	aliasSummary, err := engine.GetPerson(ctx, alias, Context{}, []int64{primary, alias})
+	requirements.NoError(err)
+	requirements.NotNil(aliasSummary, "an inactive requested alias shares its active cluster summary")
+	assertions.Equal("Real Name", aliasSummary.DisplayLabel)
+	assertions.Equal(clustered.ActivityCount, aliasSummary.ActivityCount)
+	assertions.False(aliasSummary.PartialLabel)
+
 	solo, err := engine.GetPerson(ctx, primary, Context{}, nil)
 	requirements.NoError(err)
 	requirements.NotNil(solo)

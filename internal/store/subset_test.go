@@ -4061,6 +4061,9 @@ func TestCopySubset_UpgradedAuxiliaryColumnOrder(t *testing.T) {
 		`DROP TRIGGER IF EXISTS participants_metadata_fts_insert`,
 		`DROP TRIGGER IF EXISTS participants_metadata_fts_update`,
 		`DROP TRIGGER IF EXISTS participants_metadata_fts_delete`,
+		// This identity-cache invalidation trigger reads both participant
+		// address columns; remove it while restoring their legacy shape.
+		`DROP TRIGGER IF EXISTS meeting_counts_participants_update`,
 		`ALTER TABLE participants DROP COLUMN phone_number`,
 		`ALTER TABLE participants DROP COLUMN canonical_id`,
 		`ALTER TABLE participants ADD COLUMN phone_number TEXT`,

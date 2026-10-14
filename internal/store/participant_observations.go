@@ -412,6 +412,7 @@ func (s *Store) listObservationsForPersonTx(
 			SELECT 1 FROM person_participants pp
 			WHERE pp.participant_id = o.participant_id AND pp.person_id = ?
 		)
+		  AND (o.address_kind <> 'email' OR NOT ` + RoomAddressSQL("o.normalized_value") + `)
 		ORDER BY o.participant_id, o.id`
 	return queryProfileRowsTx(ctx, tx, query, scanParticipantObservation, personID)
 }

@@ -90,6 +90,10 @@ func (s *Store) GetMeetingContextContext(
 			if loadErr != nil {
 				return loadErr
 			}
+			row.content.SourceParticipants, loadErr = filterRoomMeetingSourceParticipants(ctx, tx, row.content.SourceParticipants)
+			if loadErr != nil {
+				return loadErr
+			}
 			participants, participantErr := loadMeetingContextParticipants(ctx, tx, id)
 			if participantErr != nil {
 				return participantErr
@@ -281,6 +285,33 @@ func (s *Store) loadMeetingContextRow(
 	return row, nil
 }
 
+func filterRoomMeetingSourceParticipants(
+	ctx context.Context, tx *loggedTx, sourceParticipants []meetingcontent.Participant,
+) ([]meetingcontent.Participant, error) {
+	visible := make([]meetingcontent.Participant, 0, len(sourceParticipants))
+	for _, participant := range sourceParticipants {
+		room := false
+		if strings.TrimSpace(participant.Email) != "" {
+			if err := tx.QueryRowContext(ctx,
+				`SELECT `+RoomAddressSQL("room_input.email")+` FROM (SELECT ? AS email) room_input`,
+				participant.Email).Scan(&room); err != nil {
+				return nil, fmt.Errorf("classify meeting source participant email: %w", err)
+			}
+		}
+		if !room && participant.ParticipantID != nil {
+			if err := tx.QueryRowContext(ctx, `SELECT (`+participantObservedRoomOnlySQL("room_p.id")+
+				` OR `+participantRoomOnlySQL("room_p.id")+
+				`) FROM participants room_p WHERE room_p.id = ?`, *participant.ParticipantID).Scan(&room); err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return nil, fmt.Errorf("classify meeting source participant identity: %w", err)
+			}
+		}
+		if !room {
+			visible = append(visible, participant)
+		}
+	}
+	return visible, nil
+}
+
 func (s *Store) loadMeetingTranscript(
 	ctx context.Context, tx *loggedTx, id int64, metadata sql.NullString,
 ) (meetingcontent.Transcript, error) {
@@ -313,15 +344,19 @@ func loadMeetingContextParticipants(
 	participants := make([]meetingcontent.Participant, 0)
 	seen := make(map[string]struct{})
 	seenRoleID := make(map[string]struct{})
+	resolvedEmail := `COALESCE(NULLIF(mr.email_address, ''), NULLIF(p.email_address, ''), '')`
+	visibleEmail := `CASE WHEN trim(` + resolvedEmail + `) <> '' AND ` + RoomAddressSQL(resolvedEmail) +
+		` THEN '' ELSE ` + resolvedEmail + ` END`
 	rows, err := tx.QueryContext(ctx, `
 		SELECT mr.participant_id,
 			COALESCE(NULLIF(mr.display_name, ''), NULLIF(p.display_name, ''), ''),
-			COALESCE(NULLIF(mr.email_address, ''), NULLIF(p.email_address, ''), ''),
+			`+visibleEmail+`,
 			COALESCE(p.phone_number, ''),
 			LOWER(mr.recipient_type)
 		FROM message_recipients mr
 		JOIN participants p ON p.id = mr.participant_id
 		WHERE mr.message_id = ?
+			AND NOT ((trim(COALESCE(mr.email_address, '')) <> '' AND `+RoomAddressSQL("mr.email_address")+`) OR `+participantObservedRoomOnlySQL("mr.participant_id")+` OR `+participantRoomOnlySQL("mr.participant_id")+`)
 		ORDER BY mr.id`, id)
 	if err != nil {
 		return nil, fmt.Errorf("load meeting recipients %d: %w", id, err)
@@ -357,7 +392,7 @@ func loadMeetingContextParticipants(
 			COALESCE(p.phone_number, '')
 		FROM messages m
 		JOIN participants p ON p.id = m.sender_id
-		WHERE m.id = ?`, id).Scan(&senderID, &sender.Name, &sender.Email, &sender.Phone)
+		WHERE m.id = ? AND NOT (`+RoomAddressSQL("p.email_address")+` OR `+participantObservedRoomOnlySQL("p.id")+` OR `+participantRoomOnlySQL("p.id")+`)`, id).Scan(&senderID, &sender.Name, &sender.Email, &sender.Phone)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("load meeting sender %d: %w", id, err)
 	}

@@ -957,7 +957,10 @@ func (s *Store) SetMessageMetadataContext(ctx context.Context, messageID int64, 
 		if err := setMessageMetadataWith(boundQuerier{ctx: ctx, q: tx}, s.dialect, messageID, metadata); err != nil {
 			return err
 		}
-		return s.refreshMeetingProjectionWith(ctx, tx, messageID)
+		if err := s.refreshMeetingProjectionWith(ctx, tx, messageID); err != nil {
+			return err
+		}
+		return s.refreshCalendarEventProjectionWith(ctx, tx, messageID)
 	})
 }
 
@@ -1155,6 +1158,9 @@ func (s *Store) MigrateSourceMessageID(sourceID, conversationID int64, legacySou
 				return fmt.Errorf("find legacy message id: %w", legacyErr)
 			}
 			if legacyErr == nil {
+				if err := s.repointMeetingLinkDecisionsWith(context.Background(), tx, legacyID, newID); err != nil {
+					return err
+				}
 				if _, err = tx.Exec(
 					`UPDATE messages SET reply_to_message_id = ?
 					 WHERE reply_to_message_id = ?`,
@@ -1172,7 +1178,7 @@ func (s *Store) MigrateSourceMessageID(sourceID, conversationID int64, legacySou
 			if err != nil {
 				return fmt.Errorf("delete legacy source_message_id: %w", err)
 			}
-			return nil
+			return s.refreshCalendarEventProjectionWith(context.Background(), tx, newID)
 		}
 
 		_, err = tx.Exec(
@@ -1184,7 +1190,15 @@ func (s *Store) MigrateSourceMessageID(sourceID, conversationID int64, legacySou
 		if err != nil {
 			return fmt.Errorf("migrate source_message_id: %w", err)
 		}
-		return nil
+		var survivor int64
+		err = tx.QueryRow(`SELECT id FROM messages WHERE source_id = ? AND conversation_id = ? AND source_message_id = ?`, sourceID, conversationID, newSourceMessageID).Scan(&survivor)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("read migrated survivor: %w", err)
+		}
+		return s.refreshCalendarEventProjectionWith(context.Background(), tx, survivor)
 	})
 }
 
@@ -1395,6 +1409,9 @@ func (s *Store) UpsertMessageContext(ctx context.Context, msg *Message) (int64, 
 			return err
 		}
 		if err := s.refreshMeetingProjectionWith(ctx, tx, id); err != nil {
+			return err
+		}
+		if err := s.refreshCalendarEventProjectionWith(ctx, tx, id); err != nil {
 			return err
 		}
 		return s.refreshAccountAttributionAfterWriteTx(ctx, tx, id, deliveryInput{})
@@ -2387,6 +2404,9 @@ func (s *Store) persistMessageWith(
 	}
 
 	if err := s.refreshMeetingProjectionWith(ctx, tx, messageID); err != nil {
+		return 0, err
+	}
+	if err := s.refreshCalendarEventProjectionWith(ctx, tx, messageID); err != nil {
 		return 0, err
 	}
 
@@ -6022,6 +6042,9 @@ func (s *Store) UpsertMessageRawWithFormatContext(ctx context.Context, messageID
 			return err
 		}
 		if err := s.refreshMeetingProjectionWith(ctx, tx, messageID); err != nil {
+			return err
+		}
+		if err := s.refreshCalendarEventProjectionWith(ctx, tx, messageID); err != nil {
 			return err
 		}
 		switch {

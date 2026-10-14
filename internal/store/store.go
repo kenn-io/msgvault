@@ -2266,11 +2266,55 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 			// through so the rest of schema init still runs.
 		}
 	}
+	if err := s.installMeetingCountInvalidationContext(ctx); err != nil {
+		return err
+	}
 	if err := s.ensureArchiveUIDContext(ctx); err != nil {
 		return err
 	}
 	if err := s.runOnceMigration(ctx, migrationMeetingProjectionV1, meetingProjectionVersion, false, s.backfillMeetingProjectionsContext); err != nil {
 		return fmt.Errorf("initialize meeting projections: %w", err)
+	}
+	calendarProjectionMigrationAlreadyApplied := false
+	if version < SchemaVersion {
+		calendarProjectionMigrationAlreadyApplied, err = s.IsMigrationAppliedContext(
+			ctx, migrationCalendarEventProjectionV1, calendarEventProjectionLedgerVersion,
+		)
+		if err != nil {
+			return fmt.Errorf("check calendar event projection migration: %w", err)
+		}
+	}
+	if err := s.runOnceMigration(
+		ctx, migrationCalendarEventProjectionV1, calendarEventProjectionLedgerVersion, false,
+		s.backfillCalendarEventProjectionsContext,
+	); err != nil {
+		return fmt.Errorf("initialize calendar event projections: %w", err)
+	}
+	// Projection revisions track decoder semantics, while the migration ledger
+	// entry remains at v1 because its value is part of SchemaVersion's archive
+	// contract. Archives that already applied that migration need revision-2
+	// rows rebuilt as part of this schema upgrade. The schema marker is written
+	// only after this step, so a cancelled or failed backfill resumes on reopen.
+	if calendarProjectionMigrationAlreadyApplied {
+		if err := s.backfillCalendarEventProjectionsContext(ctx); err != nil {
+			return fmt.Errorf(
+				"upgrade calendar event projections to revision %d: %w", calendarEventProjectionVersion, err,
+			)
+		}
+	}
+
+	if err := s.runOnceMigration(ctx, migrationMeetingLinkKeysV1, meetingLinkKeyVersion, false, s.backfillMeetingLinkKeysContext); err != nil {
+		return fmt.Errorf("initialize meeting keys: %w", err)
+	}
+
+	if err := s.installRoomDirectoryInvalidation(ctx); err != nil {
+		return fmt.Errorf("install room directory invalidation: %w", err)
+	}
+	if err := s.runOnceMigration(ctx, migrationRoomRecipientsV1, 1, false, s.repairRoomRecipientsContext); err != nil {
+		return fmt.Errorf("repair calendar room recipients: %w", err)
+	}
+	if err := s.runOnceMigration(ctx, "room_directory_v1", 1, false, s.backfillRoomDirectoryContext); err != nil {
+		return fmt.Errorf("backfill room directory: %w", err)
 	}
 
 	// Probe availability through the dialect so it works uniformly for

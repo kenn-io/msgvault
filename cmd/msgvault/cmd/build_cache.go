@@ -638,7 +638,7 @@ func ownerParticipantsSelectSQL(primaryEmailPresence string) string {
 		accountIdentities, participants, accountIdentities, identifiers, participants)
 }
 
-// messageExportColumns is the messages Parquet column list through is_from_me.
+// messageExportColumns includes the snapshot-resolved transcript meeting key.
 func messageExportColumns(source *cacheSourceSnapshot, ownerParticipant, attribution string) string {
 	return fmt.Sprintf(`
 			m.id,
@@ -658,7 +658,8 @@ func messageExportColumns(source *cacheSourceSnapshot, ownerParticipant, attribu
 			%s AS owner_participant_id,
 			COALESCE(%s, '') as message_type,
 			%s AS list_id,
-			%s AS is_from_me`, source.identityExportSQL("m.source_message_id"), source.identityExportSQL("m.rfc822_message_id"),
+			%s AS is_from_me,
+			(SELECT k.meeting_key FROM cache_meeting_keys k WHERE k.message_id=m.id)::VARCHAR AS meeting_key`, source.identityExportSQL("m.source_message_id"), source.identityExportSQL("m.rfc822_message_id"),
 		source.textSQL("m.subject"), source.textSQL("m.snippet"), ownerParticipant,
 		source.textSQL("m.message_type"), source.identityExportSQL("m.list_id"), attribution)
 }
@@ -1099,11 +1100,12 @@ func buildCacheLockedAttempt(
 	// concurrent identity mutation therefore makes the stamped revision LAG
 	// the store, which HasIdentityDrift detects on the next staleness check —
 	// the cache self-heals. Never move this read after the export. The same
-	// invariant applies to the derived-data, account-identity,
+	// invariant applies to the account-identity,
 	// participant-identifier, and participant display-name revisions read
 	// alongside it: this full build exports those facts from the current store
 	// state, so stamping a lagging revision here is likewise self-healing — the
 	// matching staleness check catches it on the next pass.
+	// The derived-data revision instead comes from the pinned export snapshot.
 	identityStore, err := store.Open(dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("open store for identity export: %w", err)
@@ -1112,11 +1114,6 @@ func buildCacheLockedAttempt(
 	if err != nil {
 		_ = identityStore.Close()
 		return nil, fmt.Errorf("read identity revision: %w", err)
-	}
-	derivedDataRevision, err := identityStore.DerivedDataRevision()
-	if err != nil {
-		_ = identityStore.Close()
-		return nil, fmt.Errorf("read derived-data revision: %w", err)
 	}
 	accountIdentityRevision, err := identityStore.AccountIdentityRevision()
 	if err != nil {
@@ -1236,6 +1233,20 @@ func buildCacheLockedAttempt(
 				WHERE name = 'cache_related_change_journal'), 0)
 		`).Scan(&relatedChangeSeq); err != nil {
 			return nil, fmt.Errorf("read cache related-change sequence: %w", err)
+		}
+	}
+	derivedDataRevision, err := snapshotDerivedRevision(sourceSnapshot)
+	if err != nil {
+		return nil, fmt.Errorf("read snapshot derived revision: %w", err)
+	}
+	if hasPreviousState && !fullRebuild && derivedDataRevision != previousState.DerivedDataRevision {
+		relatedOnly, revisionErr := snapshotRevisionsRelatedOnly(sourceSnapshot, previousState.DerivedDataRevision, derivedDataRevision)
+		if revisionErr != nil {
+			return nil, revisionErr
+		}
+		if !relatedOnly {
+			fullRebuild = true
+			lastMessageID = 0
 		}
 	}
 	// Messages at or below the committed boundary, counted once and reused
@@ -1369,6 +1380,12 @@ func buildCacheLockedAttempt(
 		return nil, fmt.Errorf("inspect recipient envelope schema: %w", err)
 	}
 	sourceSnapshot.hasRecipientEnvelope = recipientEnvelopeColumnCount > 0
+	if err := stageCacheMeetingKeys(context.Background(), sourceSnapshot, dbPath, lastMessageID, maxID); err != nil {
+		return nil, err
+	}
+	if err := stageCachePeopleRooms(context.Background(), sourceSnapshot); err != nil {
+		return nil, err
+	}
 	if err := sourceSnapshot.Prepare(); err != nil {
 		return nil, err
 	}
@@ -1412,6 +1429,9 @@ func buildCacheLockedAttempt(
 	// because DuckDB can use SQLite indexes efficiently for simple queries
 
 	publicationPlan := cachePublishPlanForMode(replaceAll)
+	if err := exportCachePeopleRooms(context.Background(), exportDB, staging.root); err != nil {
+		return nil, err
+	}
 	for dataset, changed := range relatedKinds.datasets() {
 		if changed {
 			delete(publicationPlan.Append, dataset)

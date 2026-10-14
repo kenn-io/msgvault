@@ -99,6 +99,7 @@ type Content struct {
 }
 
 type Participant struct {
+	Provenance    string `json:"provenance,omitempty"`
 	ParticipantID *int64 `json:"participant_id,omitempty"`
 	Name          string `json:"name,omitempty"`
 	Email         string `json:"email,omitempty"`

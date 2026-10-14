@@ -13,10 +13,12 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
-// TestCacheExportParityFullVersusDerived pins the shared export SQL: a derived
-// refresh after identity, identifier, display-name, membership and type
-// changes must write the same rows a full rebuild writes.
-func TestCacheExportParityFullVersusDerived(t *testing.T) {
+// TestCacheExportParityFullVersusRepair pins cache repair after identity,
+// identifier, display-name, membership and type changes against a full rebuild.
+// Curated-name edits stay derived-only. Identifier/contact/binding changes
+// conservatively repair all facts because human contacts can change room-only
+// visibility, and identity evidence can affect exported meeting keys.
+func TestCacheExportParityFullVersusRepair(t *testing.T) {
 	require := require.New(t)
 	tmp := t.TempDir()
 	dbPath := filepath.Join(tmp, "msgvault.db")
@@ -62,6 +64,13 @@ func TestCacheExportParityFullVersusDerived(t *testing.T) {
 	name := "Bob Curated"
 	_, err = st.UpdatePersonDisplayName(person.ID, person.Revision, &name)
 	require.NoError(err)
+	require.NoError(st.Close())
+	result, err := buildCacheDerivedOnly(dbPath, derivedDir)
+	require.NoError(err)
+	require.True(result.IdentityOnly, "curated name edits retain the derived refresh path")
+	require.False(result.Skipped)
+	st, err = store.Open(dbPath)
+	require.NoError(err)
 	_, err = st.LinkParticipants(bob, carol)
 	require.NoError(err)
 	_, err = st.DB().Exec(`UPDATE participants SET display_name = NULL WHERE id = ?`, alice)
@@ -76,9 +85,11 @@ func TestCacheExportParityFullVersusDerived(t *testing.T) {
 	require.NoError(err)
 	require.NoError(st.Close())
 
-	result, err := buildCacheDerivedOnly(dbPath, derivedDir)
+	_, err = buildCacheDerivedOnly(dbPath, derivedDir)
+	require.ErrorIs(err, ErrDerivedRefreshRequiresFullBuild, "identifier edits conservatively invalidate room visibility and meeting key facts")
+	result, err = buildCache(dbPath, derivedDir, false)
 	require.NoError(err)
-	require.True(result.IdentityOnly, "the mutations must take the derived refresh path")
+	require.False(result.IdentityOnly, "classification changes require a full repair")
 	require.False(result.Skipped)
 	_, err = buildCache(dbPath, fullDir, true)
 	require.NoError(err)

@@ -40,6 +40,7 @@ type MessageFixture struct {
 	DeletedFromSourceAt *time.Time // nil = NULL
 	SenderID            *int64     // nil = NULL (direct sender for WhatsApp/chat messages)
 	OwnerParticipantID  *int64     // nil = NULL (message-relative owner identity)
+	MeetingKey          string     // Logical meeting identity for transcript fixtures.
 	MessageType         string     // e.g. "email", "whatsapp"; "" defaults to "email"
 	ListID              *string    // nil = NULL (RFC 2919 List-Id for email messages)
 	// LegacyEmptyMessageType writes '' instead of the "email" default,
@@ -48,6 +49,17 @@ type MessageFixture struct {
 	IsFromMe               bool
 	Year                   int
 	Month                  int
+}
+
+// meetingKeySQL supplies logical identity in current-schema synthetic caches.
+func (m MessageFixture) meetingKeySQL() string {
+	if m.resolvedMessageType() != "meeting_transcript" {
+		return "NULL::VARCHAR"
+	}
+	if m.MeetingKey != "" {
+		return sqlStr(m.MeetingKey) + "::VARCHAR"
+	}
+	return sqlStr(fmt.Sprintf("msg:%d", m.ID)) + "::VARCHAR"
 }
 
 // resolvedMessageType returns the message_type value written to Parquet:
@@ -157,6 +169,7 @@ type ParticipantClusterFixture struct {
 // TestDataBuilder accumulates typed fixture data and generates Parquet files.
 type TestDataBuilder struct {
 	personDisplayNames []string
+	personContacts     []string
 	t                  testing.TB
 	nextMsgID          int64
 	nextSrcID          int64
@@ -255,6 +268,7 @@ type MessageOpt struct {
 	DeletedFromSourceAt *time.Time
 	SourceID            int64  // defaults to 1
 	ConversationID      int64  // 0 = auto-assign
+	MeetingKey          string // Logical meeting identity for transcript fixtures.
 	MessageType         string // defaults to "email"
 	// LegacyEmptyMessageType writes '' instead of the "email" default,
 	// modeling rows imported before message_type existed.
@@ -307,6 +321,7 @@ func (b *TestDataBuilder) AddMessage(opt MessageOpt) int64 {
 		SenderID:               opt.SenderID,
 		OwnerParticipantID:     opt.OwnerParticipantID,
 		MessageType:            opt.MessageType,
+		MeetingKey:             opt.MeetingKey,
 		ListID:                 opt.ListID,
 		LegacyEmptyMessageType: opt.LegacyEmptyMessageType,
 		IsFromMe:               opt.IsFromMe,
@@ -511,6 +526,7 @@ func (m MessageFixture) sqlValues() []string {
 		strconv.FormatBool(m.IsFromMe),
 		strconv.Itoa(m.Year),
 		strconv.Itoa(m.Month),
+		m.meetingKeySQL(),
 	}
 }
 
@@ -560,6 +576,7 @@ func (m MessageFixture) sqlValuesWithInternalDeletion() []string {
 		strconv.FormatBool(m.IsFromMe),
 		strconv.Itoa(m.Year),
 		strconv.Itoa(m.Month),
+		m.meetingKeySQL(),
 	}
 }
 
@@ -674,8 +691,8 @@ func (b *TestDataBuilder) participantClustersSQL() string {
 
 // column definitions (coupled to SQL generation methods above).
 const (
-	messagesCols               = "id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments, attachment_count, deleted_from_source_at, sender_id, owner_participant_id, message_type, list_id, is_from_me, year, month"
-	messagesColsWithDeletedAt  = "id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments, attachment_count, deleted_at, deleted_from_source_at, sender_id, owner_participant_id, message_type, list_id, is_from_me, year, month"
+	messagesCols               = "id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments, attachment_count, deleted_from_source_at, sender_id, owner_participant_id, message_type, list_id, is_from_me, year, month, meeting_key"
+	messagesColsWithDeletedAt  = "id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments, attachment_count, deleted_at, deleted_from_source_at, sender_id, owner_participant_id, message_type, list_id, is_from_me, year, month, meeting_key"
 	sourcesCols                = "id, account_email, source_type"
 	participantsCols           = "id, email_address, domain, display_name, phone_number"
 	participantIdentifiersCols = "participant_id, identifier_type, identifier_value, display_value, is_primary"
@@ -773,6 +790,7 @@ func (b *TestDataBuilder) addAuxiliaryTables(pb *parquetBuilder) {
 		name, subdir, file, cols, dummy, sql string
 		empty                                bool
 	}{
+		{"person_contacts", "person_contacts", "person_contacts.parquet", "participant_id, address_kind, normalized_value", "(0::BIGINT,''::VARCHAR,''::VARCHAR)", strings.Join(b.personContacts, ","), len(b.personContacts) == 0},
 		{"sources", "sources", "sources.parquet", sourcesCols, "(0::BIGINT, '', 'gmail')", b.sourcesSQL(), len(b.sources) == 0},
 		{datasetPersonDisplayNames, datasetPersonDisplayNames, "person_display_names.parquet", "participant_id, person_id, display_name", "(0::BIGINT, 0::BIGINT, NULL::VARCHAR)", strings.Join(b.personDisplayNames, ","), len(b.personDisplayNames) == 0},
 		{"participants", "participants", "participants.parquet", participantsCols, "(0::BIGINT, '', '', '', '')", b.participantsSQL(), len(b.participants) == 0},
@@ -922,6 +940,21 @@ func (b *parquetBuilder) ensureParticipantIdentifiersTable() {
 }
 
 func (b *parquetBuilder) ensurePersonDisplayNamesTable() {
+	for _, item := range []struct{ name, cols, dummy string }{
+		{"room_addresses", "email", "(''::VARCHAR)"},
+		{"person_contacts", "participant_id, address_kind, normalized_value", "(0::BIGINT,''::VARCHAR,''::VARCHAR)"},
+	} {
+		found := false
+		for _, table := range b.tables {
+			if table.name == item.name {
+				found = true
+			}
+		}
+		if !found {
+			b.addEmptyTable(item.name, item.name, item.name+".parquet", item.cols, item.dummy)
+		}
+	}
+
 	for _, table := range b.tables {
 		if table.name == datasetPersonDisplayNames {
 			return
@@ -1017,11 +1050,19 @@ func writeTableParquet(tb testing.TB, db *sql.DB, path, columns, values string, 
 	if empty {
 		whereClause = "\n\t\t\t\tWHERE false"
 	}
+	extraColumn := ""
+	if strings.Contains(filepath.ToSlash(path), "/messages/") && !strings.Contains(columns, "meeting_key") {
+		if strings.Contains(columns, "message_type") {
+			extraColumn = ", CASE WHEN message_type='meeting_transcript' THEN 'msg:' || CAST(id AS VARCHAR) ELSE NULL END::VARCHAR AS meeting_key"
+		} else {
+			extraColumn = ", NULL::VARCHAR AS meeting_key"
+		}
+	}
 	query := fmt.Sprintf(`
-			COPY (
-				SELECT * FROM (VALUES %s) AS t(%s)%s
+   COPY (
+    SELECT *%s FROM (VALUES %s) AS t(%s)%s
 			) TO '%s' (FORMAT PARQUET)
-		`, values, columns, whereClause, path)
+		`, extraColumn, values, columns, whereClause, path)
 
 	_, err = db.Exec(query)
 	require.NoError(tb, err, "create parquet %s", path)

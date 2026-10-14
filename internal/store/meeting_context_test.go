@@ -67,6 +67,121 @@ func TestMeetingContextLoadsCompactEvidenceAndArchivedParticipants(t *testing.T)
 	assertions.True(unresolvedName)
 }
 
+func TestMeetingContextFiltersArchivedRoomRecipientsAndKeepsRawRows(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	room, err := st.EnsureParticipant("room@resource.calendar.google.com", "Example Room", "resource.calendar.google.com")
+	requirements.NoError(err)
+	human, err := st.EnsureParticipant("current-human@example.test", "Current Human", "example.test")
+	requirements.NoError(err)
+	_, meetingID := projectionFixture(t, st, "old-granola-room", "granola_json", `{"summary_text":"Archived meeting"}`)
+	_, err = st.DB().Exec(st.Rebind(`INSERT INTO message_recipients (message_id, participant_id, recipient_type, display_name, email_address) VALUES (?, ?, 'to', ?, ?), (?, ?, 'to', ?, ?)`),
+		meetingID, room, "Archived Room", "archived-room-alias@example.test",
+		meetingID, human, "Archived Human", "human-alias@example.test",
+	)
+	requirements.NoError(err)
+	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET sender_id = ? WHERE id = ?`), room, meetingID)
+	requirements.NoError(err)
+
+	result, err := st.GetMeetingContextContext(t.Context(),
+		MeetingQueryScope{MessageIDs: new([]int64{meetingID})},
+		meetingcontent.PacketOptions{Format: meetingcontent.FormatJSON, MaxBytes: 1 << 20},
+	)
+	requirements.NoError(err)
+	var packet meetingcontent.Packet
+	requirements.NoError(json.Unmarshal([]byte(result.Content), &packet))
+	requirements.Len(packet.Meetings, 1)
+
+	var roomReturned, humanReturned bool
+	for _, participant := range packet.Meetings[0].Participants {
+		if participant.ParticipantID == nil {
+			continue
+		}
+		if *participant.ParticipantID == room {
+			roomReturned = true
+		}
+		if *participant.ParticipantID == human && participant.Role == "to" {
+			humanReturned = true
+			assertions.Equal("Archived Human", participant.Name)
+			assertions.Equal("human-alias@example.test", participant.Email)
+		}
+	}
+	assertions.False(roomReturned, "live context must not rehydrate the archived room recipient")
+	assertions.True(humanReturned, "live context must retain archived human recipients")
+
+	var rawRows int
+	requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM message_recipients WHERE message_id = ?`), meetingID).Scan(&rawRows))
+	assertions.Equal(2, rawRows, "context filtering must preserve authoritative recipient rows")
+	var archivedRoomEmail string
+	requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT email_address FROM message_recipients WHERE message_id = ? AND participant_id = ?`), meetingID, room).Scan(&archivedRoomEmail))
+	assertions.Equal("archived-room-alias@example.test", archivedRoomEmail)
+}
+
+func TestMeetingContextFiltersDecodedSourceParticipantsWithRoomEvidence(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, roomEventID := calendarFixture(t, st, "explicit-room-evidence",
+		`{"id":"explicit-room-evidence","start":{"dateTime":"2027-03-02T17:00:00Z"},"end":{"dateTime":"2027-03-02T18:00:00Z"},"attendees":[{"email":"room-alias@example.test","resource":true}]}`)
+	var roomEvidence int
+	requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM calendar_event_attendees WHERE message_id = ? AND role = 'room' AND email = ?`),
+		roomEventID, "room-alias@example.test").Scan(&roomEvidence))
+	assertions.Equal(1, roomEvidence)
+
+	_, meetingID := projectionFixture(t, st, "decoded-room-source-participant", "granola_json",
+		`{"calendar_event":{"organiser":"host@example.test","invitees":[{"email":"room-alias@example.test"},{"email":"human@example.test"}]}}`)
+	stored, _ := readProjection(t, st, meetingID)
+	requirements.Contains(stored.SourceParticipants, meetingcontent.Participant{Email: "room-alias@example.test", Role: "to", Provenance: "invited"})
+
+	result, err := st.GetMeetingContextContext(t.Context(), MeetingQueryScope{MessageIDs: new([]int64{meetingID})},
+		meetingcontent.PacketOptions{Format: meetingcontent.FormatJSON, MaxBytes: 1 << 20})
+	requirements.NoError(err)
+	assertions.NotContains(result.Content, "room-alias@example.test")
+	assertions.Contains(result.Content, "human@example.test")
+}
+
+func TestMeetingContextOmitsRoomFallbackEmailForAddresslessMixedRecipient(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, roomEventID := calendarFixture(t, st, "mixed-recipient-room-evidence",
+		`{"id":"mixed-recipient-room-evidence","start":{"dateTime":"2027-03-02T17:00:00Z"},"end":{"dateTime":"2027-03-02T18:00:00Z"},"attendees":[{"email":"primary@example.test","resource":true}]}`)
+	var roomEvidence int
+	requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM calendar_event_attendees WHERE message_id = ? AND role = 'room' AND email = ?`),
+		roomEventID, "primary@example.test").Scan(&roomEvidence))
+	assertions.Equal(1, roomEvidence)
+
+	participantID, err := st.EnsureParticipant("primary@example.test", "Mixed Human", "example.test")
+	requirements.NoError(err)
+	requirements.NoError(st.SetParticipantIdentifier(participantID, "email", "human-alias@example.test"))
+	phone := "+15550000001"
+	_, err = st.DB().Exec(st.Rebind(`UPDATE participants SET phone_number = ? WHERE id = ?`), phone, participantID)
+	requirements.NoError(err)
+	_, meetingID := projectionFixture(t, st, "addressless-mixed-recipient", "granola_json", `{"summary_text":"Synthetic meeting"}`)
+	_, err = st.DB().Exec(st.Rebind(`INSERT INTO message_recipients (message_id, participant_id, recipient_type, display_name, email_address) VALUES (?, ?, 'to', ?, '')`),
+		meetingID, participantID, "Mixed Human")
+	requirements.NoError(err)
+
+	result, err := st.GetMeetingContextContext(t.Context(), MeetingQueryScope{MessageIDs: new([]int64{meetingID})},
+		meetingcontent.PacketOptions{Format: meetingcontent.FormatJSON, MaxBytes: 1 << 20})
+	requirements.NoError(err)
+	assertions.NotContains(result.Content, "primary@example.test")
+	var packet meetingcontent.Packet
+	requirements.NoError(json.Unmarshal([]byte(result.Content), &packet))
+	requirements.Len(packet.Meetings, 1)
+	var visible bool
+	for _, participant := range packet.Meetings[0].Participants {
+		if participant.ParticipantID != nil && *participant.ParticipantID == participantID && participant.Role == "to" {
+			visible = true
+			assertions.Equal("Mixed Human", participant.Name)
+			assertions.Empty(participant.Email)
+			assertions.Equal(phone, participant.Phone)
+		}
+	}
+	assertions.True(visible, "the mixed human recipient and non-room fields remain visible")
+}
+
 func TestMeetingContextTranscriptOptInUsesBoundedRawRead(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

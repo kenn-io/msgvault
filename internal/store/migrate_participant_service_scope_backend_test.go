@@ -22,6 +22,14 @@ func rebuildLegacyParticipantIdentifiers(t *testing.T, st *store.Store) {
 		require.NoError(t, err)
 		return
 	}
+	for _, trigger := range []string{
+		"directory_rooms_calendar_event_attendees_INSERT",
+		"directory_rooms_calendar_event_attendees_UPDATE",
+		"directory_rooms_calendar_event_attendees_DELETE",
+	} {
+		_, err := st.DB().ExecContext(ctx, `DROP TRIGGER IF EXISTS `+trigger)
+		require.NoError(t, err)
+	}
 	for _, statement := range []string{
 		`CREATE TABLE participant_identifiers_legacy (
 			id INTEGER PRIMARY KEY,

@@ -213,6 +213,7 @@ var baseIdentityDatasets = []string{
 	"owner_participants",
 	"participant_clusters",
 	"person_display_names",
+	"room_addresses", "person_contacts",
 	"attachments",
 }
 

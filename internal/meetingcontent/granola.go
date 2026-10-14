@@ -5,6 +5,8 @@ import (
 	"encoding/json/v2"
 	"strings"
 	"time"
+
+	"go.kenn.io/msgvault/internal/calevent"
 )
 
 func decodeGranola(fields map[string]jsontext.Value) Content {
@@ -134,15 +136,26 @@ func granolaParticipants(fields map[string]jsontext.Value) []Participant {
 	}
 	_ = json.Unmarshal(fields["calendar_event"], &calendar)
 	organizer := owner
+	organizerProvenance := "provider_attendee"
 	if email := strings.TrimSpace(calendar.Organiser); email != "" {
 		organizer = personWire{Email: email}
+		if !strings.EqualFold(strings.TrimSpace(owner.Email), email) {
+			organizerProvenance = "invited"
+		}
 		if strings.EqualFold(owner.Email, email) {
 			organizer.Name = owner.Name
 		}
 	}
 	var attendees []personWire
 	_ = json.Unmarshal(fields["attendees"], &attendees)
+	provenance := "provider_attendee"
+	for _, attendee := range attendees {
+		if strings.TrimSpace(organizer.Email) != "" && strings.EqualFold(strings.TrimSpace(attendee.Email), strings.TrimSpace(organizer.Email)) {
+			organizerProvenance = "provider_attendee"
+		}
+	}
 	if len(attendees) == 0 {
+		provenance = "invited"
 		for _, invitee := range calendar.Invitees {
 			attendees = append(attendees, personWire{Email: invitee.Email})
 		}
@@ -152,5 +165,22 @@ func granolaParticipants(fields map[string]jsontext.Value) []Participant {
 			organizer.Name = attendee.Name
 		}
 	}
-	return participantsFromPeople(&organizer, attendees)
+	var humanAttendees []personWire
+	for _, attendee := range attendees {
+		if !calevent.IsRoomAttendee(attendee.Email, false) {
+			humanAttendees = append(humanAttendees, attendee)
+		}
+	}
+	var humanOrganizer *personWire
+	if !calevent.IsRoomAttendee(organizer.Email, false) {
+		humanOrganizer = &organizer
+	}
+	participants := participantsFromPeople(humanOrganizer, humanAttendees)
+	for i := range participants {
+		participants[i].Provenance = provenance
+		if participants[i].Role == "from" {
+			participants[i].Provenance = organizerProvenance
+		}
+	}
+	return participants
 }
