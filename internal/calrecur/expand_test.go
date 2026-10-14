@@ -74,6 +74,117 @@ func TestExpandMovedOutOfWindow(t *testing.T) {
 	assert.Empty(t, got)
 }
 
+func TestWeeklyRecurrenceSkipsNonexistentLocalTimeBeforeCount(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	zone, err := time.LoadLocation("America/Los_Angeles")
+	requirements.NoError(err)
+	s, err := ParseSet(time.Date(2027, 3, 7, 2, 30, 0, 0, zone), false, "", zone,
+		[]string{"RRULE:FREQ=WEEKLY;COUNT=2"})
+	requirements.NoError(err)
+
+	var identities []string
+	err = Iter(t.Context(), s, time.Date(2027, 3, 29, 0, 0, 0, 0, zone), 100, func(i Instance) bool {
+		identities = append(identities, i.Identity.Key())
+		return true
+	})
+	requirements.NoError(err)
+	wantIdentities := []string{"20270307T103000Z", "20270321T093000Z"}
+	assertions.Equal(wantIdentities, identities)
+
+	got, err := Expand(t.Context(), s, time.Hour, 0, nil,
+		time.Date(2027, 3, 7, 0, 0, 0, 0, zone), time.Date(2027, 3, 29, 0, 0, 0, 0, zone), 100)
+	requirements.NoError(err)
+	requirements.Len(got, 2)
+	assertions.Equal(wantIdentities, []string{got[0].Original.Key(), got[1].Original.Key()})
+
+	end, bounded := ConservativeEnd(t.Context(), s, time.Hour, 0, 100)
+	requirements.True(bounded)
+	assertions.Equal(time.Date(2027, 3, 21, 3, 30, 0, 0, zone), end)
+}
+
+func TestDailyAbsoluteUntilKeepsFirstOccurrenceDuringFallBack(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	zone, err := time.LoadLocation("America/New_York")
+	requirements.NoError(err)
+	s, err := ParseSet(time.Date(2027, 11, 6, 1, 30, 0, 0, zone), false, "", zone,
+		[]string{"RRULE:FREQ=DAILY;UNTIL=20271107T061500Z"})
+	requirements.NoError(err)
+
+	var identities []string
+	err = Iter(t.Context(), s, time.Date(2027, 11, 8, 0, 0, 0, 0, zone), 100, func(i Instance) bool {
+		identities = append(identities, i.Identity.Key())
+		return true
+	})
+	requirements.NoError(err)
+	assertions.Equal([]string{"20271106T053000Z", "20271107T053000Z"}, identities)
+}
+
+func TestConservativeEndKeepsFirstOccurrenceDuringFallBack(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	zone, err := time.LoadLocation("America/New_York")
+	requirements.NoError(err)
+	s, err := ParseSet(time.Date(2027, 11, 6, 1, 30, 0, 0, zone), false, "", zone,
+		[]string{"RRULE:FREQ=DAILY;UNTIL=20271107T061500Z"})
+	requirements.NoError(err)
+
+	end, bounded := ConservativeEnd(t.Context(), s, time.Hour, 0, 100)
+	requirements.True(bounded)
+	assertions.Equal(time.Date(2027, 11, 7, 6, 30, 0, 0, time.UTC), end.UTC())
+}
+
+func TestBasicDateUntilBoundsTimedIterationAndEnd(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	start := time.Date(2027, 11, 6, 1, 30, 0, 0, time.UTC)
+	s, err := ParseSet(start, false, "", time.UTC,
+		[]string{"RRULE:FREQ=DAILY;UNTIL=20271107"})
+	requirements.NoError(err)
+
+	var identities []string
+	err = Iter(t.Context(), s, time.Date(2027, 11, 10, 0, 0, 0, 0, time.UTC), 100, func(i Instance) bool {
+		identities = append(identities, i.Identity.Key())
+		return true
+	})
+	requirements.NoError(err)
+	assertions.Equal([]string{"20271106T013000Z"}, identities)
+
+	end, bounded := ConservativeEnd(t.Context(), s, time.Hour, 0, 100)
+	requirements.True(bounded)
+	assertions.Equal(time.Date(2027, 11, 6, 2, 30, 0, 0, time.UTC), end.UTC())
+}
+
+func TestDailyRecurrenceKeepsCivilDatesAcrossMidnightGap(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	zone, err := time.LoadLocation("America/Sao_Paulo")
+	requirements.NoError(err)
+	s, err := ParseSet(time.Date(2018, 11, 3, 9, 0, 0, 0, zone), false, "", zone,
+		[]string{"RRULE:FREQ=DAILY;COUNT=2"})
+	requirements.NoError(err)
+
+	var identities []string
+	err = Iter(t.Context(), s, time.Date(2018, 11, 6, 0, 0, 0, 0, zone), 100, func(i Instance) bool {
+		identities = append(identities, i.Identity.Key())
+		return true
+	})
+	requirements.NoError(err)
+	wantIdentities := []string{"20181103T120000Z", "20181104T110000Z"}
+	assertions.Equal(wantIdentities, identities)
+
+	got, err := Expand(t.Context(), s, time.Hour, 0, nil,
+		time.Date(2018, 11, 2, 0, 0, 0, 0, zone), time.Date(2018, 11, 6, 0, 0, 0, 0, zone), 100)
+	requirements.NoError(err)
+	requirements.Len(got, 2)
+	assertions.Equal(wantIdentities, []string{got[0].Original.Key(), got[1].Original.Key()})
+
+	end, bounded := ConservativeEnd(t.Context(), s, time.Hour, 0, 100)
+	requirements.True(bounded)
+	assertions.Equal(time.Date(2018, 11, 4, 10, 0, 0, 0, zone), end)
+}
+
 func TestExpandRejectsStartOnlyExceptionWithReversedBounds(t *testing.T) {
 	original := timed(t, "2027-03-02T17:00:00Z")
 	movedStart := instant(t, "2027-03-02T19:00:00Z")

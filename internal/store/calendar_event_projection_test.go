@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -87,6 +88,23 @@ func TestCalendarEventProjectionPersistRefreshDelete(t *testing.T) {
 	assertions.Empty(calendarRows(t, st, id))
 }
 
+func TestCalendarEventProjectionPreservesSkippedCivilDateExclusiveEnd(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	const raw = `{"id":"apia-event","status":"confirmed","start":{"date":"2011-12-29"},"end":{"date":"2011-12-30"}}`
+	data, id := calendarFixture(t, st, "apia-exclusive-end", raw)
+	requirements.NoError(st.UpdateSourceSyncConfig(data.Message.SourceID, `{"calendar_id":"calendar@example.com","time_zone":"Pacific/Apia"}`))
+	requirements.NoError(st.UpsertMessageRawWithFormat(id, []byte(raw), "gcal_json"))
+
+	rows := calendarRows(t, st, id)
+	requirements.Len(rows, 1)
+	assertions.True(rows[0].Event.HasBounds)
+	assertions.Equal("2011-12-29", rows[0].Event.StartDate)
+	assertions.Equal("2011-12-30", rows[0].Event.EndDate)
+	assertions.Equal("2011-12-29T10:00:00Z", rows[0].Event.Start.Format(time.RFC3339))
+	assertions.Equal("2011-12-30T10:00:00Z", rows[0].Event.End.Format(time.RFC3339))
+}
+
 func TestCalendarEventProjectionSkipsUnchanged(t *testing.T) {
 	requirements := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
@@ -96,6 +114,45 @@ func TestCalendarEventProjectionSkipsUnchanged(t *testing.T) {
 	// Canonical persistence also skips an identical typed projection.
 	_, err := st.PersistMessage(data)
 	requirements.NoError(err)
+}
+
+func TestCalendarEventProjectionRequeuesActivityAfterRawChanges(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		raw            string
+		wantStatus     string
+		wantAllDay     bool
+		wantProjection bool
+	}{
+		{"status", strings.Replace(calendarRaw, `"confirmed"`, `"cancelled"`, 1), "cancelled", false, true},
+		{"precision", strings.NewReplacer(
+			`"dateTime":"2027-03-02T17:00:00Z"`, `"date":"2027-03-02"`,
+			`"dateTime":"2027-03-02T18:00:00Z"`, `"date":"2027-03-03"`,
+		).Replace(calendarRaw), "confirmed", true, true},
+		{"projection removed", `{}`, "", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requirements := require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			_, id := calendarFixture(t, st, "activity-requeue-"+tc.name, calendarRaw)
+			_, err := st.db.Exec(`UPDATE activity_projection_queue SET processed_revision=revision WHERE message_id=?`, id)
+			requirements.NoError(err)
+
+			requirements.NoError(st.UpsertMessageRawWithFormat(id, []byte(tc.raw), "gcal_json"))
+			queued, err := st.ListActivityProjectionQueueContext(t.Context(), 10)
+			requirements.NoError(err)
+			requirements.Len(queued, 1)
+			requirements.Equal(id, queued[0].MessageID)
+			rows := calendarRows(t, st, id)
+			if !tc.wantProjection {
+				requirements.Empty(rows)
+				return
+			}
+			requirements.Len(rows, 1)
+			requirements.Equal(tc.wantStatus, rows[0].Event.Status)
+			requirements.Equal(tc.wantAllDay, rows[0].Event.AllDay)
+		})
+	}
 }
 
 func TestCalendarEventProjectionStorageFailureRollsBack(t *testing.T) {
@@ -156,6 +213,23 @@ func TestCalendarEventBackfillResumesAfterCancel(t *testing.T) {
 	assertions.Equal(103, count)
 	rejectCalendarWrites(t, base)
 	requirements.NoError(st.InitSchemaContext(t.Context()))
+}
+
+func TestCalendarEventProjectionPreservesAllDayDateAcrossMidnightGap(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	data, id := calendarFixture(t, st, "sao-all-day", `{"id":"sao-all-day","start":{"date":"2018-11-04"},"end":{"date":"2018-11-05"}}`)
+	requirements.NoError(st.UpdateSourceSyncConfig(data.Message.SourceID, `{"calendar_id":"calendar@example.com","time_zone":"America/Sao_Paulo"}`))
+	_, err := st.PersistMessage(data)
+	requirements.NoError(err)
+	rows := calendarRows(t, st, id)
+	requirements.Len(rows, 1)
+	assertions.Equal("2018-11-04", rows[0].Event.StartDate)
+	assertions.Equal("2018-11-05", rows[0].Event.EndDate)
+	requirements.NotNil(rows[0].Event.Start)
+	requirements.NotNil(rows[0].Event.End)
+	assertions.Equal("2018-11-04T03:00:00Z", rows[0].Event.Start.Format(time.RFC3339))
+	assertions.Equal("2018-11-05T02:00:00Z", rows[0].Event.End.Format(time.RFC3339))
 }
 
 func TestCalendarEventBackfillMalformedRecurrenceDoesNotFailInit(t *testing.T) {
@@ -235,6 +309,50 @@ func TestCopySubsetRebuildsCalendarEvents(t *testing.T) {
 	rows := calendarRows(t, copied, id)
 	requirements.Len(rows, 1)
 	assert.Equal(t, "event-example", rows[0].Event.ProviderEventID)
+}
+
+func TestCopySubsetDropsUnselectedICalendarEvents(t *testing.T) {
+	if IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
+		t.Skip("SQLite subset copy")
+	}
+	requirements, assertions := require.New(t), assert.New(t)
+	sourcePath := filepath.Join(t.TempDir(), "source.db")
+	st, err := OpenForTest(sourcePath)
+	requirements.NoError(err)
+	requirements.NoError(st.InitSchemaContext(t.Context()))
+	source := icsSource(t, st)
+	raw := []byte("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nMETHOD:REQUEST\r\n" +
+		"BEGIN:VEVENT\r\nUID:omitted-event@example.test\r\nDTSTAMP:20270301T120000Z\r\nDTSTART:20270302T120000Z\r\nDTEND:20270302T130000Z\r\n" +
+		"SUMMARY:Omitted summary\r\nDESCRIPTION:OMITTED-DESCRIPTION-SECRET\r\nATTENDEE:mailto:omitted@example.test\r\nLOCATION:OMITTED-LOCATION-SECRET\r\nEND:VEVENT\r\n" +
+		"BEGIN:VEVENT\r\nUID:selected-event@example.test\r\nDTSTAMP:20270301T120000Z\r\nDTSTART:20270303T120000Z\r\nDTEND:20270303T130000Z\r\n" +
+		"SUMMARY:Selected summary\r\nDESCRIPTION:SELECTED-DESCRIPTION\r\nATTENDEE:mailto:selected@example.test\r\nLOCATION:Selected location\r\nEND:VEVENT\r\n" +
+		"END:VCALENDAR\r\n")
+	imported, err := st.PersistICalendarContext(t.Context(), source, raw)
+	requirements.NoError(err)
+	requirements.Len(imported.MessageIDs, 2)
+	selectedID := imported.MessageIDs[1]
+	requirements.NoError(st.Close())
+
+	destination := filepath.Join(t.TempDir(), "subset")
+	_, err = CopySubset(sourcePath, destination, 1, false)
+	requirements.NoError(err)
+	copied, err := OpenForTest(filepath.Join(destination, "msgvault.db"))
+	requirements.NoError(err)
+	defer func() { requirements.NoError(copied.Close()) }()
+	requirements.NoError(copied.InitSchemaContext(t.Context()))
+
+	copiedRaw, err := copied.GetMessageRaw(selectedID)
+	requirements.NoError(err)
+	assertions.Equal(1, strings.Count(string(copiedRaw), "BEGIN:VEVENT"))
+	assertions.Contains(string(copiedRaw), "SELECTED-DESCRIPTION")
+	assertions.Contains(string(copiedRaw), "Selected location")
+	assertions.NotContains(string(copiedRaw), "Omitted summary")
+	assertions.NotContains(string(copiedRaw), "OMITTED-DESCRIPTION-SECRET")
+	assertions.NotContains(string(copiedRaw), "omitted@example.test")
+	assertions.NotContains(string(copiedRaw), "OMITTED-LOCATION-SECRET")
+	rows := calendarRows(t, copied, selectedID)
+	requirements.Len(rows, 1)
+	assertions.Equal("selected-event@example.test", rows[0].Event.ICalUID)
 }
 
 func TestDedupRawCopyRefreshesSurvivor(t *testing.T) {

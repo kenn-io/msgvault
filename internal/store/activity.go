@@ -220,6 +220,21 @@ type ActivityProjectionQueueItem struct {
 	Revision  int64
 }
 
+func requeueActivityProjectionMessage(q querier, d Dialect, messageID int64) error {
+	statement := d.Rebind(`
+		INSERT INTO activity_projection_queue
+			(message_id, revision, processed_revision, queued_at)
+		VALUES (?, 1, 0, CURRENT_TIMESTAMP)
+		ON CONFLICT(message_id) DO UPDATE SET
+			revision = activity_projection_queue.revision + 1,
+			queued_at = CURRENT_TIMESTAMP
+	`)
+	if _, err := q.Exec(statement, messageID); err != nil {
+		return fmt.Errorf("requeue activity projection message %d: %w", messageID, err)
+	}
+	return nil
+}
+
 func (s *Store) ListActivityProjectionQueueContext(
 	ctx context.Context, limit int,
 ) ([]ActivityProjectionQueueItem, error) {

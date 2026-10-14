@@ -88,6 +88,33 @@ func TestAllDayExceptionOriginalDate(t *testing.T) {
 	}
 }
 
+func TestGoogleAllDayDatesPreserveCivilDateAcrossMidnightGap(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	event := decodeGoogle(t, `{"id":"sao-example","start":{"date":"2018-11-04"},"end":{"date":"2018-11-05"}}`, `{}`, SourceContext{CalendarTimeZone: "America/Sao_Paulo"})
+	assertions.Equal("2018-11-04", event.StartDate)
+	assertions.Equal("2018-11-05", event.EndDate)
+	requirements.NotNil(event.Start)
+	requirements.NotNil(event.End)
+	assertions.Equal("2018-11-04T03:00:00Z", event.Start.Format(time.RFC3339))
+	assertions.Equal("2018-11-05T02:00:00Z", event.End.Format(time.RFC3339))
+}
+
+func TestGoogleAllDayExclusiveEndUsesBoundaryAfterSkippedCivilDate(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	zone, err := time.LoadLocation("Pacific/Apia")
+	requirements.NoError(err)
+	event := decodeGoogle(t, `{"id":"apia-event","start":{"date":"2011-12-29"},"end":{"date":"2011-12-30"}}`, `{}`, SourceContext{CalendarTimeZone: "Pacific/Apia"})
+	assertions.True(event.HasBounds)
+	assertions.Equal("2011-12-29", event.StartDate)
+	assertions.Equal("2011-12-30", event.EndDate)
+	requirements.NotNil(event.Start)
+	requirements.NotNil(event.End)
+	assertions.Equal(time.Date(2011, 12, 29, 0, 0, 0, 0, zone).UTC(), *event.Start)
+	assertions.Equal(time.Date(2011, 12, 31, 0, 0, 0, 0, zone).UTC(), *event.End)
+}
+
 func TestGoogleSparseCancelledTombstone(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

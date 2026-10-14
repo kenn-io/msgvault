@@ -193,7 +193,34 @@ func TestIterSkipsExcludedSkippedCivilDate(t *testing.T) {
 		return true
 	})
 	requirements.NoError(err)
-	assert.Equal(t, []string{"2011-12-29", "2011-12-31"}, dates)
+	assert.Equal(t, []string{"2011-12-29", "2011-12-31", "2012-01-01"}, dates)
+}
+
+func TestIterSkipsNonexistentAllDayDateWithoutConsumingCount(t *testing.T) {
+	requirements := require.New(t)
+	zone, err := time.LoadLocation("Pacific/Apia")
+	requirements.NoError(err)
+	s, err := ParseSet(time.Time{}, true, "2011-12-29", zone, []string{"RRULE:FREQ=DAILY;COUNT=3"})
+	requirements.NoError(err)
+	var dates []string
+	err = Iter(t.Context(), s, time.Date(2012, 1, 3, 12, 0, 0, 0, zone), 100, func(i Instance) bool {
+		dates = append(dates, i.Identity.Date)
+		return true
+	})
+	requirements.NoError(err)
+	assert.Equal(t, []string{"2011-12-29", "2011-12-31", "2012-01-01"}, dates)
+}
+
+func TestConservativeEndAllDaySkipsNonexistentDateWithoutConsumingCount(t *testing.T) {
+	requirements, assertions := require.New(t), assert.New(t)
+	zone, err := time.LoadLocation("Pacific/Apia")
+	requirements.NoError(err)
+	s, err := ParseSet(time.Time{}, true, "2011-12-29", zone, []string{"RRULE:FREQ=DAILY;COUNT=3"})
+	requirements.NoError(err)
+
+	end, bounded := ConservativeEnd(t.Context(), s, 0, 1, 100)
+	requirements.True(bounded)
+	assertions.Equal(time.Date(2012, 1, 2, 0, 0, 0, 0, zone).Add(14*time.Hour), end)
 }
 
 func TestContainsAfterExcludedSkippedCivilDate(t *testing.T) {
@@ -520,6 +547,24 @@ func TestIterMonthlyOrdinalWeekday(t *testing.T) {
 		[]string{"RRULE:FREQ=MONTHLY;BYDAY=1MO;COUNT=3"})
 	require.NoError(t, err)
 	assertions.Equal([]string{"20270301T170000Z", "20270405T170000Z", "20270503T170000Z"}, keys(t, s))
+}
+
+func TestParseSetRejectsMixedPlainAndOrdinalWeekdaySelectors(t *testing.T) {
+	_, err := ParseSet(instant(t, "2027-03-01T17:00:00Z"), false, "", time.UTC,
+		[]string{"RRULE:FREQ=MONTHLY;BYDAY=MO,1TU;COUNT=6"})
+	require.ErrorIs(t, err, ErrUnsupportedRecurrence)
+}
+
+func TestParseSetRejectsMixedPlainAndOrdinalYearlyWeekdaySelectors(t *testing.T) {
+	rule := "RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=MO,1MO;COUNT=3"
+	_, err := ParseSet(instant(t, "2027-03-01T17:00:00Z"), false, "", time.UTC, []string{rule})
+	require.ErrorIs(t, err, ErrUnsupportedRecurrence)
+}
+
+func TestParseSetRejectsOverflowingMonthlyInterval(t *testing.T) {
+	rule := "RRULE:FREQ=MONTHLY;INTERVAL=9223372036854775807;COUNT=2"
+	_, err := ParseSet(instant(t, "2027-03-01T17:00:00Z"), false, "", time.UTC, []string{rule})
+	require.ErrorIs(t, err, ErrUnsupportedRecurrence)
 }
 
 func TestIterBudgetCountsDuplicateStreams(t *testing.T) {

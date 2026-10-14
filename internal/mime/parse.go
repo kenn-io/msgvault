@@ -48,8 +48,15 @@ type Message struct {
 	References    []string
 	BodyText      string
 	BodyHTML      string
+	CalendarParts []CalendarPart
 	Attachments   []Attachment
 	Errors        []string // Non-fatal parsing errors
+}
+
+// CalendarPart is decoded calendar evidence from a physical MIME part.
+type CalendarPart struct {
+	Content                []byte
+	Method, PartKey, Error string
 }
 
 // Address represents an email address with optional display name.
@@ -147,6 +154,8 @@ func parse(raw []byte, inspect func(*enmime.Part)) (*Message, error) {
 	// enmime can list one inline octet-stream part in both categories.
 	// Preserve physical occurrences so parsed evidence matches keyed storage.
 	msg.Attachments = DistinctAttachments(msg.Attachments)
+
+	msg.CalendarParts = calendarParts(root)
 
 	// Collect any parsing errors
 	for _, e := range env.Errors {
@@ -831,4 +840,37 @@ func (m *Message) GetFirstFrom() Address {
 		return m.From[0]
 	}
 	return Address{}
+}
+
+// calendarParts visits physical parts, excluding attached forwarded messages.
+func calendarParts(root *enmime.Part) []CalendarPart {
+	var out []CalendarPart
+	var walk func(*enmime.Part)
+	walk = func(part *enmime.Part) {
+		if strings.EqualFold(part.ContentType, "message/rfc822") {
+			return
+		}
+		if strings.EqualFold(part.ContentType, "text/calendar") {
+			_, params, invalid, err := parseMediaTypeLenient(part.Header.Get("Content-Type"))
+			value := CalendarPart{Content: part.Content, Method: strings.ToUpper(params["method"]), PartKey: part.PartID}
+			if err != nil || len(invalid) != 0 {
+				value.Error = "invalid calendar Content-Type parameters"
+			}
+			if value.PartKey == "" {
+				value.PartKey = "root"
+			}
+			for _, problem := range part.Errors {
+				if problem.Severe {
+					value.Error = "calendar MIME decoding failed"
+					break
+				}
+			}
+			out = append(out, value)
+		}
+		for child := part.FirstChild; child != nil; child = child.NextSibling {
+			walk(child)
+		}
+	}
+	walk(root)
+	return out
 }

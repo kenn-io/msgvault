@@ -124,9 +124,17 @@ func localDateBoundary(date string, loc *time.Location) (time.Time, bool, error)
 	return start, compare(start) == 0, nil
 }
 
-// localDateStart resolves a civil date to the first instant belonging to it.
+// CivilDateBoundary resolves a civil date to the first instant whose local
+// date is at or after it. For an entirely skipped date, this is the start of
+// the next existing date.
+func CivilDateBoundary(date string, loc *time.Location) (time.Time, error) {
+	boundary, _, err := localDateBoundary(date, loc)
+	return boundary, err
+}
+
+// CivilDateStart resolves a civil date to the first instant belonging to it.
 // A zone may skip local midnight or the entire date.
-func localDateStart(date string, loc *time.Location) (time.Time, error) {
+func CivilDateStart(date string, loc *time.Location) (time.Time, error) {
 	start, exists, err := localDateBoundary(date, loc)
 	if err != nil {
 		return time.Time{}, err
@@ -149,11 +157,40 @@ func (s Set) instanceStart(anchor time.Time) (time.Time, error) {
 	if !s.AllDay {
 		return anchor, nil
 	}
-	return localDateStart(anchor.UTC().Format(dateLayout), s.location())
+	return CivilDateStart(anchor.UTC().Format(dateLayout), s.location())
 }
 
 func unsupported(line string, err error) error {
 	return fmt.Errorf("%w: %q: %w", ErrUnsupportedRecurrence, line, err)
+}
+
+func wallClockUTC(value time.Time, loc *time.Location) time.Time {
+	local := value.In(loc)
+	return time.Date(local.Year(), local.Month(), local.Day(), local.Hour(), local.Minute(), local.Second(), local.Nanosecond(), time.UTC)
+}
+
+func wallClockGenerationBound(value time.Time, loc *time.Location) time.Time {
+	return wallClockUTC(value, loc).Add(48 * time.Hour)
+}
+
+func recurrenceUntil(line string, loc *time.Location) time.Time {
+	for part := range strings.SplitSeq(strings.TrimPrefix(line, "RRULE:"), ";") {
+		key, value, ok := strings.Cut(part, "=")
+		if !ok || key != "UNTIL" {
+			continue
+		}
+		if strings.HasSuffix(value, "Z") {
+			until, _ := time.Parse(keyInstantLayout, value)
+			return until
+		}
+		if len(value) == len(keyDateLayout) {
+			until, _ := time.ParseInLocation(keyDateLayout, value, loc)
+			return until
+		}
+		until, _ := time.ParseInLocation("20060102T150405", value, loc)
+		return until
+	}
+	return time.Time{}
 }
 
 func (s Set) rule(line string, until time.Time) (*rrule.RRule, error) {
@@ -186,6 +223,15 @@ func (s Set) rule(line string, until time.Time) (*rrule.RRule, error) {
 	if err := supportedRule(opt, seen, start); err != nil {
 		return nil, unsupported(line, err)
 	}
+	if !s.AllDay {
+		if !opt.Until.IsZero() {
+			opt.Until = wallClockGenerationBound(opt.Until, loc)
+		}
+		if !until.IsZero() {
+			until = wallClockGenerationBound(until, loc)
+		}
+		start = wallClockUTC(start, loc)
+	}
 	opt.Bysetpos = unique(opt.Bysetpos)
 	opt.Bymonth = unique(opt.Bymonth)
 	opt.Bymonthday = unique(opt.Bymonthday)
@@ -216,6 +262,22 @@ func supportedRule(opt *rrule.ROption, seen map[string]bool, start time.Time) er
 	if opt.Freq < rrule.YEARLY || opt.Freq > rrule.DAILY {
 		return errors.New("only daily, weekly, monthly and yearly recurrence is supported")
 	}
+	maxInterval := gregorianCycleDays
+	switch opt.Freq {
+	case rrule.DAILY:
+		// maxInterval already spans one daily Gregorian cycle.
+	case rrule.WEEKLY:
+		maxInterval = gregorianCycleDays / 7
+	case rrule.MONTHLY:
+		maxInterval = gregorianCycleMonths
+	case rrule.YEARLY:
+		maxInterval = gregorianCycleYears
+	default:
+		return errors.New("unsupported recurrence frequency")
+	}
+	if opt.Interval > maxInterval {
+		return fmt.Errorf("interval exceeds the %d-period Gregorian cycle", maxInterval)
+	}
 	for key := range seen {
 		allowed := false
 		switch key {
@@ -244,6 +306,19 @@ func supportedRule(opt *rrule.ROption, seen map[string]bool, start time.Time) er
 	for _, day := range opt.Byweekday {
 		if opt.Freq >= rrule.WEEKLY && day.N() != 0 {
 			return errors.New("weekday ordinals require monthly or yearly recurrence")
+		}
+	}
+	if opt.Freq == rrule.MONTHLY || opt.Freq == rrule.YEARLY {
+		hasPlain, hasOrdinal := false, false
+		for _, day := range opt.Byweekday {
+			if day.N() == 0 {
+				hasPlain = true
+			} else {
+				hasOrdinal = true
+			}
+		}
+		if hasPlain && hasOrdinal {
+			return errors.New("mixing plain and ordinal weekdays is unsupported")
 		}
 	}
 	if len(opt.Bymonth) > 0 && len(opt.Bymonthday) > 0 && !possibleMonthDay(opt.Bymonth, opt.Bymonthday) {

@@ -74,6 +74,8 @@ type MergeResult struct {
 }
 
 // ContentHashCandidate holds message metadata for raw-MIME hash scans.
+// ICS payloads are excluded: several independent VEVENT messages can preserve
+// the same complete VCALENDAR document. Their import identity handles repeats.
 type ContentHashCandidate struct {
 	ID               int64
 	SourceID         int64
@@ -607,7 +609,7 @@ func (s *Store) GetAllRawMIMECandidates(
 		FROM messages m
 		JOIN sources s ON s.id = m.source_id
 		JOIN message_raw mr ON mr.message_id = m.id
-		WHERE ` + LiveMessagesWhere("m", true)
+		WHERE ` + LiveMessagesWhere("m", true) + ` AND COALESCE(mr.raw_format, 'mime') <> 'ics'`
 	var args []any
 	if len(sourceIDs) > 0 {
 		placeholders := make([]string, len(sourceIDs))

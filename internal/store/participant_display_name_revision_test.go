@@ -27,7 +27,7 @@ func TestPersistMessageWithParticipantsBumpsDisplayNameRevisionOnce(t *testing.T
 	)
 	require.NoError(err)
 	before := participantDisplayNameRevision(t, st)
-	_, err = st.PersistMessageWithParticipantsContext(t.Context(), []store.ParticipantPersistData{
+	_, err = st.PersistMessageWithParticipantsContext(t.Context(), source.ID, []store.ParticipantPersistData{
 		{EmailAddress: "persist-one@example.com", DisplayName: "Persist One", Domain: "example.com"},
 		{EmailAddress: "persist-two@example.com", DisplayName: "Persist Two", Domain: "example.com"},
 	}, func([]int64) *store.MessagePersistData {

@@ -11,6 +11,9 @@ import (
 	"go.kenn.io/msgvault/internal/calrecur"
 )
 
+// MessageType is the archived message classification for calendar events.
+const MessageType = "calendar_event"
+
 // IsRoomAttendee identifies provider resource addresses and explicit resources.
 func IsRoomAttendee(email string, resourceFlag bool) bool {
 	if resourceFlag {
@@ -75,10 +78,12 @@ type Event struct {
 	StartDate, EndDate                                           string
 	EventTimeZone, CalendarTimeZone                              string
 	Recurrence                                                   []string
+	RecurrenceError                                              string
 
 	JoinURL              string
 	JoinKey              string
 	OrganizerEmail       string
+	OrganizerDisplayName string
 	CalendarID           string
 	Transparency         string
 	Visibility           string

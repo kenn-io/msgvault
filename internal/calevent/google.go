@@ -18,6 +18,10 @@ type googleDateTime struct {
 }
 
 func googleInstant(value googleDateTime, calendarZone string) (*time.Time, error) {
+	return googleInstantWithDateBoundary(value, calendarZone, false)
+}
+
+func googleInstantWithDateBoundary(value googleDateTime, calendarZone string, allowSkippedDate bool) (*time.Time, error) {
 	if value.Date == "" && value.DateTime == "" {
 		return nil, nil //nolint:nilnil // Sparse cancellation tombstones have no bound.
 	}
@@ -42,7 +46,11 @@ func googleInstant(value googleDateTime, calendarZone string) (*time.Time, error
 		}
 	}
 	if value.Date != "" {
-		instant, err = time.ParseInLocation(time.DateOnly, value.Date, loc)
+		if allowSkippedDate {
+			instant, err = calrecur.CivilDateBoundary(value.Date, loc)
+		} else {
+			instant, err = calrecur.CivilDateStart(value.Date, loc)
+		}
 	} else {
 		instant, err = time.ParseInLocation("2006-01-02T15:04:05", value.DateTime, loc)
 	}
@@ -148,7 +156,7 @@ func decodeGoogleEvent(raw, metadata []byte, sc SourceContext) (Event, bool, err
 	if err != nil {
 		return Event{}, false, err
 	}
-	e.End, err = googleInstant(g.End, sc.CalendarTimeZone)
+	e.End, err = googleInstantWithDateBoundary(g.End, sc.CalendarTimeZone, true)
 	if err != nil {
 		return Event{}, false, err
 	}

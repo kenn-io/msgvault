@@ -30,7 +30,9 @@ func (s *Store) refreshCalendarEventProjectionWith(ctx context.Context, tx *logg
 	}
 	var oldVersion int
 	var oldHash string
-	err = q.QueryRow(`SELECT projection_version, content_hash FROM calendar_events WHERE message_id = ?`, messageID).Scan(&oldVersion, &oldHash)
+	var oldStatus sql.NullString
+	var oldAllDay bool
+	err = q.QueryRow(`SELECT projection_version, content_hash, status, all_day FROM calendar_events WHERE message_id = ?`, messageID).Scan(&oldVersion, &oldHash, &oldStatus, &oldAllDay)
 	exists := err == nil
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("read calendar projection version: %w", err)
@@ -43,7 +45,7 @@ func (s *Store) refreshCalendarEventProjectionWith(ctx context.Context, tx *logg
 		if err != nil {
 			return fmt.Errorf("clear calendar projection: %w", err)
 		}
-		return nil
+		return requeueActivityProjectionMessage(q, s.dialect, messageID)
 	}
 	if messageType.String != "calendar_event" {
 		return clearProjection()
@@ -121,10 +123,18 @@ func (s *Store) refreshCalendarEventProjectionWith(ctx context.Context, tx *logg
 			return fmt.Errorf("write calendar attendee %d: %w", ordinal, err)
 		}
 	}
+	if !exists || oldStatus.String != event.Status || oldAllDay != event.AllDay {
+		if err := requeueActivityProjectionMessage(q, s.dialect, messageID); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
 func calendarRecurrenceEnd(ctx context.Context, event calevent.Event) (*time.Time, string) {
+	if event.RecurrenceError != "" {
+		return nil, event.RecurrenceError
+	}
 	if event.Kind != "series" {
 		return nil, ""
 	}

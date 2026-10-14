@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json/v2"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/calevent"
 	"go.kenn.io/msgvault/internal/sqliteutil"
 	"go.kenn.io/msgvault/internal/vcard"
 )
@@ -831,6 +833,9 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 		WHERE message_id IN (SELECT id FROM selected_messages)`); err != nil {
 		return nil, fmt.Errorf("copy message_raw: %w", err)
 	}
+	if err := sanitizeSubsetICalendarMessages(tx); err != nil {
+		return nil, err
+	}
 
 	if _, err := copyByName(tx, "message_recipients",
 		`message_id IN (SELECT id FROM selected_messages)`); err != nil {
@@ -913,6 +918,99 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 	}
 
 	return result, nil
+}
+
+// sanitizeSubsetICalendarMessages strips sibling VEVENTs from each selected
+// ICS message. Imports retain the complete source document per event, so the
+// ordinary raw copy would otherwise carry unselected event data across the
+// subset boundary.
+func sanitizeSubsetICalendarMessages(tx *sql.Tx) error {
+	const batchSize = 100
+	var after int64
+	for {
+		ids, err := selectSubsetICalendarMessageIDs(tx, after, batchSize)
+		if err != nil {
+			return err
+		}
+		if len(ids) == 0 {
+			return nil
+		}
+		after = ids[len(ids)-1]
+		for _, id := range ids {
+			var metadata sql.NullString
+			var compression sql.NullString
+			var rawData []byte
+			if err := tx.QueryRow(`
+				SELECT m.metadata, r.raw_data, r.compression
+				FROM messages m JOIN message_raw r ON r.message_id = m.id
+				WHERE m.id = ? AND r.raw_format = 'ics'`, id).
+				Scan(&metadata, &rawData, &compression); err != nil {
+				return fmt.Errorf("read copied ICS message %d: %w", id, err)
+			}
+			if !metadata.Valid {
+				return fmt.Errorf("sanitize copied ICS message %d: missing interpretation metadata", id)
+			}
+			var interpretation calevent.ICSMetadata
+			if err := json.Unmarshal([]byte(metadata.String), &interpretation); err != nil {
+				return fmt.Errorf("decode copied ICS metadata for message %d: %w", id, err)
+			}
+			if interpretation.Version != 1 || interpretation.Index == nil {
+				return fmt.Errorf("sanitize copied ICS message %d: missing version or event index", id)
+			}
+			raw, _, err := decodeMessageRawBounded(
+				rawData, compression, calevent.MaxICSBytes,
+				errors.New("copied ICS raw exceeds size limit"),
+			)
+			if err != nil {
+				return fmt.Errorf("decode copied ICS raw for message %d: %w", id, err)
+			}
+			filtered, err := calevent.RetainICSComponentAtIndex(
+				raw, interpretation.Method, *interpretation.Index,
+				calevent.SourceContext{CalendarTimeZone: interpretation.TimeZone},
+			)
+			if err != nil {
+				return fmt.Errorf("retain copied ICS event for message %d: %w", id, err)
+			}
+			if bytes.Equal(raw, filtered) {
+				continue
+			}
+			index := 0
+			interpretation.Index = &index
+			encodedMetadata, err := json.Marshal(interpretation)
+			if err != nil {
+				return fmt.Errorf("encode filtered ICS metadata for message %d: %w", id, err)
+			}
+			if err := upsertMessageRawWithFormat(tx, id, filtered, "ics"); err != nil {
+				return fmt.Errorf("store filtered ICS raw for message %d: %w", id, err)
+			}
+			if _, err := tx.Exec(`UPDATE messages SET metadata = ?, size_estimate = ? WHERE id = ?`, string(encodedMetadata), len(filtered), id); err != nil {
+				return fmt.Errorf("update filtered ICS metadata for message %d: %w", id, err)
+			}
+		}
+	}
+}
+
+func selectSubsetICalendarMessageIDs(tx *sql.Tx, after int64, batchSize int) ([]int64, error) {
+	rows, err := tx.Query(`
+			SELECT message_id FROM message_raw
+			WHERE raw_format = 'ics' AND message_id > ?
+		ORDER BY message_id LIMIT ?`, after, batchSize)
+	if err != nil {
+		return nil, fmt.Errorf("select copied ICS messages: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck // read-only cursor
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan copied ICS message ID: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read copied ICS message IDs: %w", err)
+	}
+	return ids, nil
 }
 
 // copyPersonMergePackets copies an audit packet only when the scoped archive

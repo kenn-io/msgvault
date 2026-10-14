@@ -60,6 +60,9 @@ func (s *Store) PersistIMAPRelocationWithParticipantsContext(
 		if sourceType != "imap" {
 			return fmt.Errorf("IMAP relocation requires an IMAP source, found %q", sourceType)
 		}
+		if err := s.migrateLegacyEmailICSClaimsWith(ctx, tx, expected.ID, expected.SourceMessageID); err != nil {
+			return fmt.Errorf("migrate calendar claims before IMAP relocation: %w", err)
+		}
 		expectedRFC822MessageID = mime.NormalizeMessageID(storedRFC822MessageID.String)
 		if !storedRFC822MessageID.Valid || expectedRFC822MessageID == "" {
 			return errors.New("IMAP relocation target requires an RFC822 Message-ID")

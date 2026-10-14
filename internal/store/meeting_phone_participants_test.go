@@ -32,7 +32,7 @@ func (f phonePersistFixture) persist(
 	ctx context.Context, messageID string, participants []store.ParticipantPersistData,
 ) ([]int64, error) {
 	var resolved []int64
-	_, err := f.st.PersistMessageWithParticipantsContext(ctx, participants,
+	_, err := f.st.PersistMessageWithParticipantsContext(ctx, f.sourceID, participants,
 		func(ids []int64) *store.MessagePersistData {
 			resolved = append([]int64(nil), ids...)
 			return &store.MessagePersistData{Message: &store.Message{
@@ -110,7 +110,7 @@ func TestPersistMessageRollsBackPhoneParticipantOnFailure(t *testing.T) {
 	require := require.New(t)
 	f := newPhonePersistFixture(t)
 
-	_, err := f.st.PersistMessageWithParticipantsContext(t.Context(),
+	_, err := f.st.PersistMessageWithParticipantsContext(t.Context(), f.sourceID,
 		[]store.ParticipantPersistData{{PhoneNumber: "+16045550102"}},
 		func([]int64) *store.MessagePersistData {
 			// A message without a source is rejected after participants resolve.

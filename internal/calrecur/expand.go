@@ -92,7 +92,7 @@ func effective(s Set, e Exception, duration time.Duration, durationDays int) (Oc
 		if e.EndDate != "" {
 			o.EndDate = e.EndDate
 		}
-		o.Start, err = localDateStart(o.StartDate, zone)
+		o.Start, err = CivilDateStart(o.StartDate, zone)
 		if err != nil {
 			return Occurrence{}, unsupported("exception start date", err)
 		}
@@ -108,7 +108,7 @@ func effective(s Set, e Exception, duration time.Duration, durationDays int) (Oc
 				return Occurrence{}, unsupported("exception nominal end date", err)
 			}
 			if e.Start == nil {
-				o.Start, err = localDateStart(e.Original.Date, s.location())
+				o.Start, err = CivilDateStart(e.Original.Date, s.location())
 				if err != nil {
 					return Occurrence{}, unsupported("exception nominal start date", err)
 				}
@@ -315,21 +315,27 @@ func ConservativeEnd(ctx context.Context, s Set, duration time.Duration, duratio
 		if opt.Count == 0 && opt.Until.IsZero() {
 			return time.Time{}, false
 		}
-		until := opt.Until
-		if until.IsZero() {
-			until = time.Date(9999, 12, 31, 23, 59, 59, 0, time.UTC)
+		until := time.Date(9999, 12, 31, 23, 59, 59, 0, time.UTC)
+		if !s.AllDay {
+			until = time.Date(9999, 12, 31, 23, 59, 59, 0, s.location())
 		}
 		rule, err = s.rule(line, until)
 		if err != nil {
 			return time.Time{}, false
 		}
-		next := rule.Iterator()
+		next, err := s.instances(rule, recurrenceUntil(line, s.location()))
+		if err != nil {
+			return time.Time{}, false
+		}
 		generated := 0
 		for {
 			if ctx.Err() != nil {
 				return time.Time{}, false
 			}
-			start, ok := next()
+			start, ok, _, nextErr := next()
+			if nextErr != nil {
+				return time.Time{}, false
+			}
 			if !ok {
 				break
 			}
