@@ -280,7 +280,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	if err != nil {
 		return sum, err
 	}
-	err = scoped.store.CompleteSyncContext(ctx, runID, blob)
+	err = scoped.store.CompleteSyncAndPreserveSourceCursorContext(ctx, runID, source.ID, blob)
 	return sum, err
 }
 

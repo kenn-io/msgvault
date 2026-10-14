@@ -256,6 +256,8 @@ func TestImportCancellationPersistsOnlyDurableCursor(t *testing.T) {
 	requires := require.New(t)
 
 	imp, client, opts := importerFixture(t)
+	sourceBefore, err := imp.store.GetSourceByTypeAndIdentifier(SourceType, opts.Account.Identifier())
+	requires.NoError(err)
 	for id := int64(1); id <= 5; id++ {
 		client.messages[1] = append(client.messages[1], syntheticMessage(1, id, "history"))
 	}
@@ -273,10 +275,16 @@ func TestImportCancellationPersistsOnlyDurableCursor(t *testing.T) {
 	assertions.Equal(2, summary.MessagesAdded)
 	state := storedState(t, imp, summary.SourceID, opts.Account.Identifier())
 	assertions.Equal(int64(4), state.chat(1).HistoryBefore)
+	sourceAfter, readErr := imp.store.GetSourceByID(summary.SourceID)
+	requires.NoError(readErr)
+	assertions.Equal(sourceBefore.LastSyncAt, sourceAfter.LastSyncAt, "interrupted import must not publish a successful source timestamp")
 	client.beforePage = nil
 	resumed, err := imp.Import(t.Context(), opts)
 	requires.NoError(err)
 	assertions.Equal(3, resumed.MessagesAdded)
+	sourceAfter, readErr = imp.store.GetSourceByID(resumed.SourceID)
+	requires.NoError(readErr)
+	assertions.True(sourceAfter.LastSyncAt.Valid, "successful resume must publish source status")
 	var count int
 	requires.NoError(imp.store.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='inline'`).Scan(&count))
 	assertions.Equal(5, count)
