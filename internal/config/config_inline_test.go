@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -159,7 +160,10 @@ func TestEditInlineAccountAppendsAndRejectsInlineArrayWithoutDiscarding(t *testi
 			loaded, err := LoadConfigFile(published, "")
 			requires.NoError(err)
 			assertions.Equal([]string{"123"}, loaded.Inline.Accounts[0].ChatIDs)
-			assertions.Equal(uint32(0o600), uint32(published.Mode.Perm()))
+			if runtime.GOOS != "windows" {
+				// Windows reports synthetic mode bits; config privacy uses its DACL.
+				assertions.Equal(os.FileMode(0o600), published.Mode.Perm())
+			}
 		})
 	}
 }
