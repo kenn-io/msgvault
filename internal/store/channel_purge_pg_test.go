@@ -43,7 +43,7 @@ func TestExclusiveMaintenanceLetsScopedConversationFinish(t *testing.T) {
 				_, err := scoped.EnsureConversationWithTypeContext(ctx, retained.ID, "retained-channel", "channel", "Retained")
 				writeDone <- err
 			}()
-			writerPID := waitForPGBlockedQuery(t, ctx, st, blockerPID, "%UPDATE sync_runs%")
+			writerPID := waitForPGBlockedQuery(ctx, t, st, blockerPID, "%UPDATE sync_runs%")
 			maintenanceDone := make(chan error, 1)
 			go func() {
 				var err error
@@ -57,7 +57,7 @@ func TestExclusiveMaintenanceLetsScopedConversationFinish(t *testing.T) {
 				}
 				maintenanceDone <- err
 			}()
-			waitForPGBlockedQuery(t, ctx, st, writerPID, "LOCK TABLE %")
+			waitForPGBlockedQuery(ctx, t, st, writerPID, "LOCK TABLE %")
 			require.NoError(blocker.Commit())
 			assert.NoError(<-writeDone, "scoped conversation creation")
 			assert.NoError(<-maintenanceDone, "maintenance")
@@ -79,7 +79,7 @@ func TestExclusiveMaintenanceLetsScopedConversationFinish(t *testing.T) {
 	}
 }
 
-func waitForPGBlockedQuery(t *testing.T, ctx context.Context, st *Store, blockerPID int, query string) int {
+func waitForPGBlockedQuery(ctx context.Context, t *testing.T, st *Store, blockerPID int, query string) int {
 	t.Helper()
 	var pid int
 	require.Eventually(t, func() bool {
@@ -173,10 +173,10 @@ func TestChannelPurgeLetsOtherSourceSyncFinish(t *testing.T) {
 				}
 				syncDone <- err
 			}()
-			writerPID := waitForPGBlockedQuery(t, ctx, st, blockerPID, blockedQuery)
+			writerPID := waitForPGBlockedQuery(ctx, t, st, blockerPID, blockedQuery)
 			purgeDone := make(chan error, 1)
 			go func() { purgeDone <- st.PurgeChannelContext(ctx, removed.ID, "removed-channel") }()
-			waitForPGBlockedQuery(t, ctx, st, writerPID, "LOCK TABLE %")
+			waitForPGBlockedQuery(ctx, t, st, writerPID, "LOCK TABLE %")
 			require.NoError(blocker.Commit())
 			assert.NoError(<-syncDone, "sync operation")
 			assert.NoError(<-purgeDone, "channel purge")
