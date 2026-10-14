@@ -23,7 +23,8 @@ var agentReadPermissions = map[string]agentgrant.Permission{
 	"searchMessagesByDomains": agentgrant.PermissionSearchRead,
 	"getStats":                agentgrant.PermissionStatsRead, "getCLIStats": agentgrant.PermissionStatsRead, "getTotalStats": agentgrant.PermissionStatsRead,
 	"getCLIMessageThread": agentgrant.PermissionMessageRead,
-	"listCalendarEvents":  agentgrant.PermissionMessageRead, "getCalendarEvent": agentgrant.PermissionMessageRead,
+	"getMeeting":          agentgrant.PermissionMessageRead, "listPersonMeetings": agentgrant.PermissionMessageRead, "suggestMeetingLinks": agentgrant.PermissionMessageRead,
+	"listCalendarEvents": agentgrant.PermissionMessageRead, "getCalendarEvent": agentgrant.PermissionMessageRead,
 	"getMessage": agentgrant.PermissionMessageRead, "getCLIMessage": agentgrant.PermissionMessageRead,
 	"getAttachment": agentgrant.PermissionAttachmentRead, "getAttachmentContent": agentgrant.PermissionAttachmentRead,
 	"getCLIAttachment": agentgrant.PermissionAttachmentRead,
@@ -144,7 +145,7 @@ func (s *Server) authorizeAgentRead(r *http.Request, operation string, grant *ag
 	}
 	*r = *r.WithContext(context.WithValue(r.Context(), agentReadScopeKey{}, agentReadScope{ids: allowed}))
 	switch operation {
-	case "listCalendarEvents", "getCalendarEvent":
+	case "listCalendarEvents", "getCalendarEvent", "getMeeting", "listPersonMeetings", "suggestMeetingLinks":
 		return nil
 	case "getCLIMessageThread":
 		if account != "" && !accountGranted {

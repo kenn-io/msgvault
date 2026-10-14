@@ -13,10 +13,12 @@ import (
 )
 
 type MeetingSuggestion struct {
-	Ref                                          string
-	MemberMessageID                              int64
-	OverlapMinutes, SharedAttendees, TitleTokens int
-	Reasons                                      []string
+	Ref             string   `json:"ref"`
+	MemberMessageID int64    `json:"member_message_id"`
+	OverlapMinutes  int      `json:"overlap_minutes"`
+	SharedAttendees int      `json:"shared_attendees"`
+	TitleTokens     int      `json:"title_tokens"`
+	Reasons         []string `json:"reasons"`
 }
 
 type suggestMember struct {
@@ -163,7 +165,7 @@ func linkOccurrencesInWindow(ctx context.Context, r rowReader, rows []CalendarEv
 			}
 			continue
 		}
-		if e.Kind == "exception" {
+		if e.Kind == calendarExceptionKind {
 			hasMaster := false
 			for _, master := range rows {
 				if master.SourceID == row.SourceID && master.Event.Provider == e.Provider && master.Event.Namespace == e.Namespace && master.Event.Kind == meetingLinkSeriesKind && master.Event.ProviderEventID == e.SeriesProviderID {

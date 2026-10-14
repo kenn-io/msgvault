@@ -54,7 +54,7 @@ func (s *Store) repointMeetingLinkDecisionsWith(ctx context.Context, tx *loggedT
 		}
 		affectedMembers[member] = true
 		kind, target, _, err := ParseMeetingRef(ref)
-		if err == nil && kind == "evt" && target.MessageID == legacyID {
+		if err == nil && kind == calendarEventRefKind && target.MessageID == legacyID {
 			target.MessageID = survivorID
 			ref = FormatOccurrenceRef(target)
 		}
@@ -141,7 +141,7 @@ func (s *Store) writeMeetingLinkDecision(ctx context.Context, ref string, member
 	if err != nil {
 		return err
 	}
-	if kind != "evt" {
+	if kind != calendarEventRefKind {
 		return errors.New("meeting decision requires an event reference")
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -214,7 +214,7 @@ func replaceEquivalentMeetingDecisions(ctx context.Context, tx *loggedTx, r rowR
 	}
 	for _, ref := range refs {
 		kind, occ, _, err := ParseMeetingRef(ref)
-		if err != nil || kind != "evt" {
+		if err != nil || kind != calendarEventRefKind {
 			continue
 		}
 		resolved, err := resolveOccurrenceRefAlias(ctx, r, OwnerScope(), occ)

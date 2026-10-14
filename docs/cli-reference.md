@@ -30,9 +30,9 @@ appear in full under Inherited Flags.
 
 ## meetings
 
-Read archived meeting evidence through the selected daemon. Requires API schema
-2.27.0 or newer. See the [meeting workflow](usage/meetings.md) for coverage and
-source limits.
+Read archived meeting evidence through the selected daemon. Context, actions
+and metrics require API schema 2.27.0 or newer. Meeting records require 3.17.0. See the
+[meeting workflow](usage/meetings.md) for coverage and source limits.
 
 ```bash
 msgvault meetings context --id 42 --id 43 --format markdown --output context.md
@@ -84,6 +84,27 @@ JavaScript-safe integers. Locally deleted records are always excluded.
 
 Actions reflect the current archived source snapshot. Keep filters unchanged
 when continuing a page; refresh from page one to see newer evidence.
+
+### Meeting records (unreleased)
+
+| Command | Contract |
+|---|---|
+| `meetings show <ref>` | Read a meeting record; `--json` includes its bounded content packets |
+| `meetings suggest <ref>` | Inspect possible links; `--limit` accepts 1–100 (default 10); `--json` prints the suggestions |
+| `meetings link <evt-ref> <message-id>` | Record an owner link decision; `--json` prints the updated record |
+| `meetings unlink <evt-ref> <message-id>` | Record an owner split decision; `--json` prints the updated record |
+| `person meetings <person-ref>` | List invited occurrences and note evidence; optional RFC3339 `--from`/`--to`, `--limit` (1–500, default 100), `--cursor`, and `--json` |
+
+Meeting refs use `evt:<id>[@<original-key>]` or `msg:<id>`. Person refs accept a
+numeric saved-person ID, `person:<id>`, or `participant:<id>`. IDs must be positive
+JavaScript-safe integers. Person history defaults to the past 365 days; windows
+are positive and at most 400 days. Continue with the same ref and cursor;
+omitted dates reuse the first page's resolved window.
+
+Link and unlink require an owner API key or admitted library caller. Reads use
+`message.read` on the selected daemon's granted sources. See
+[meeting records](usage/calendar.md#read-a-meeting-record-unreleased) for content
+bounds, provenance, recordings and previous evidence.
 
 ## Global Flags
 

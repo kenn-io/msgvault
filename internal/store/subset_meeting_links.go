@@ -75,7 +75,7 @@ func subsetMeetingDecisionTarget(tx *sql.Tx, ref string) (string, bool, error) {
 	if err != nil {
 		return "", false, nil //nolint:nilerr // Invalid historical refs are omitted and counted in the subset report.
 	}
-	if kind != "evt" {
+	if kind != calendarEventRefKind {
 		return "", false, nil
 	}
 	var typ string

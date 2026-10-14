@@ -10,6 +10,9 @@ import (
 	"go.kenn.io/msgvault/internal/calrecur"
 )
 
+const calendarEventRefKind = "evt"
+const calendarExceptionKind = "exception"
+
 // OccurrenceRef identifies a standalone event or an original series occurrence.
 type OccurrenceRef struct {
 	MessageID int64
@@ -18,7 +21,7 @@ type OccurrenceRef struct {
 
 func ParseMeetingRef(ref string) (kind string, occ OccurrenceRef, msgID int64, err error) {
 	kind, value, ok := strings.Cut(ref, ":")
-	if !ok || (kind != "evt" && kind != "msg") {
+	if !ok || (kind != calendarEventRefKind && kind != "msg") {
 		return "", occ, 0, fmt.Errorf("invalid meeting ref %q", ref)
 	}
 	number, key, hasKey := strings.Cut(value, "@")
@@ -32,7 +35,7 @@ func ParseMeetingRef(ref string) (kind string, occ OccurrenceRef, msgID int64, e
 		return "", occ, 0, fmt.Errorf("invalid meeting ref %q", ref)
 	}
 	if hasKey {
-		if kind != "evt" {
+		if kind != calendarEventRefKind {
 			return "", occ, 0, fmt.Errorf("invalid meeting ref %q", ref)
 		}
 		if _, parseErr := calrecur.ParseKey(key); parseErr != nil {
@@ -63,7 +66,7 @@ func resolveOccurrenceRefAlias(ctx context.Context, r rowReader, scope SourceSco
 		return OccurrenceRef{}, sql.ErrNoRows
 	}
 	row := rows[0]
-	if row.Event.Kind != "exception" || ref.Key != "" || row.Event.Original == nil {
+	if row.Event.Kind != calendarExceptionKind || ref.Key != "" || row.Event.Original == nil {
 		return ref, nil
 	}
 	masters, err := calendarEventRowsByProviderID(ctx, r, scope, row.Event.Provider, row.Event.Namespace, row.Event.SeriesProviderID)

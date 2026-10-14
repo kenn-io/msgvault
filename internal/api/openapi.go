@@ -365,7 +365,9 @@ import (
 // reads and delta updates.
 // 3.16.0 adds archived calendar occurrence reads at GET /api/v1/calendar/events
 // and GET /api/v1/calendar/events/{ref}.
-const APISchemaVersion = "3.16.0"
+// 3.17.0 adds meeting records, person meeting history, link suggestions,
+// and owner-only meeting link decisions.
+const APISchemaVersion = "3.17.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

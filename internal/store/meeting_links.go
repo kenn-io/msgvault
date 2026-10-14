@@ -120,7 +120,7 @@ func linkKeyCandidates(ctx context.Context, r rowReader, scope SourceScope, key 
 			master := row
 			master.Event.ProviderEventID = base
 			related, tooMany, err = linkOccurrenceExceptionRows(ctx, r, scope, master, id)
-			if err == nil && !tooMany && row.Event.Kind == "exception" {
+			if err == nil && !tooMany && row.Event.Kind == calendarExceptionKind {
 				var parents []CalendarEventRow
 				parents, tooMany, err = boundedLinkEventRows(ctx, r, scope, `m.source_id = ? AND e.provider = ? AND e.namespace = ? AND e.kind = 'series' AND e.provider_event_id = ?`, []any{row.SourceID, row.Event.Provider, row.Event.Namespace, base})
 				related = append(related, parents...)
@@ -186,7 +186,7 @@ func linkExceptions(master CalendarEventRow, rows []CalendarEventRow) []calrecur
 	var out []calrecur.Exception
 	for _, row := range rows {
 		e := row.Event
-		if e.Kind == "exception" && e.Original != nil && row.SourceID == master.SourceID && e.Provider == master.Event.Provider && e.Namespace == master.Event.Namespace && e.SeriesProviderID == master.Event.ProviderEventID {
+		if e.Kind == calendarExceptionKind && e.Original != nil && row.SourceID == master.SourceID && e.Provider == master.Event.Provider && e.Namespace == master.Event.Namespace && e.SeriesProviderID == master.Event.ProviderEventID {
 			out = append(out, calrecur.Exception{Original: *e.Original, Start: e.Start, End: e.End, StartDate: e.StartDate, EndDate: e.EndDate, Cancelled: e.Status == "cancelled", Ref: row.MessageID})
 		}
 	}
@@ -523,7 +523,7 @@ func visibleLinkDecisions(ctx context.Context, r rowReader, scope SourceScope, m
 	var targets []linkOccurrence
 	for _, d := range decisions {
 		kind, ref, _, err := ParseMeetingRef(d.Ref)
-		if err != nil || kind != "evt" {
+		if err != nil || kind != calendarEventRefKind {
 			continue
 		}
 		target, err := resolveLinkOccurrence(ctx, r, scope, ref, budget)
@@ -760,7 +760,7 @@ func membersForOccurrence(ctx context.Context, r rowReader, scope SourceScope, o
 func effectiveLinkRow(master CalendarEventRow, id calrecur.Identity, rows []CalendarEventRow) CalendarEventRow {
 	for _, row := range rows {
 		e := row.Event
-		if e.Kind == "exception" && e.Original != nil && e.Original.Key() == id.Key() && row.SourceID == master.SourceID && e.Provider == master.Event.Provider && e.Namespace == master.Event.Namespace && e.SeriesProviderID == master.Event.ProviderEventID {
+		if e.Kind == calendarExceptionKind && e.Original != nil && e.Original.Key() == id.Key() && row.SourceID == master.SourceID && e.Provider == master.Event.Provider && e.Namespace == master.Event.Namespace && e.SeriesProviderID == master.Event.ProviderEventID {
 			if e.StartDate != "" || e.EndDate != "" {
 				master.Event.AllDay = true
 			} else if e.Start != nil || e.End != nil {

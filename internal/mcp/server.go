@@ -162,6 +162,7 @@ type ServeOptions struct {
 	// metric reads. Leave it nil when the daemon predates those routes.
 	Meetings              MeetingBackend
 	ArchiveCalendarEvents CalendarEventsBackend
+	MeetingRecords        MeetingRecordsBackend
 	Calendar              CalendarBackend
 	// DelegatedOnly limits an agent-delegated caller to scoped reads, calendars and drafts.
 	DelegatedOnly bool
@@ -379,6 +380,7 @@ func newMCPServerWithPolicy(
 		savedViews:            opts.SavedViews,
 		meetings:              opts.Meetings,
 		archiveCalendarEvents: opts.ArchiveCalendarEvents,
+		meetingRecords:        opts.MeetingRecords,
 		calendar:              opts.Calendar,
 		personAgendaBackend:   opts.PersonAgendaBackend,
 		kata:                  opts.Kata,
@@ -628,7 +630,7 @@ func agentReadToolPermission(name string) (agentgrant.Permission, bool) {
 	switch name {
 	case ToolSearchMessages, ToolSearchMetadata, ToolSearchMessageBodies, ToolListMessages, ToolAggregate, ToolSearchByDomains:
 		return agentgrant.PermissionSearchRead, true
-	case ToolGetMessage, ToolListThread, ToolSearchInMessage, ToolListCalendarEvents, ToolGetCalendarEvent:
+	case ToolGetMessage, ToolListThread, ToolSearchInMessage, ToolListCalendarEvents, ToolGetCalendarEvent, ToolGetMeeting, ToolListPersonMeetings, ToolSuggestMeetingLinks:
 		return agentgrant.PermissionMessageRead, true
 	case ToolGetAttachment:
 		return agentgrant.PermissionAttachmentRead, true

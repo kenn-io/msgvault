@@ -334,6 +334,43 @@ func (l LinkKataEvidencePath) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(l))
 }
 
+type GetMeetingPath struct {
+	// Ref evt:<id>[@<original-key>] or msg:<id>
+	Ref string `json:"ref" validate:"required"`
+}
+
+func (g GetMeetingPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+}
+
+type LinkMeetingPath struct {
+	// Ref evt:<id>[@<original-key>] or msg:<id>
+	Ref string `json:"ref" validate:"required"`
+}
+
+func (l LinkMeetingPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(l))
+}
+
+type UnlinkMeetingPath struct {
+	// Ref evt:<id>[@<original-key>] or msg:<id>
+	Ref       string `json:"ref" validate:"required"`
+	MessageID int64  `json:"message_id"`
+}
+
+func (u UnlinkMeetingPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(u))
+}
+
+type SuggestMeetingLinksPath struct {
+	// Ref evt:<id>[@<original-key>] or msg:<id>
+	Ref string `json:"ref" validate:"required"`
+}
+
+func (s SuggestMeetingLinksPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(s))
+}
+
 type GetMessagePath struct {
 	// ID Message ID
 	ID int64 `json:"id"`
@@ -751,6 +788,15 @@ type GetPersonTrackingPath struct {
 type SetPersonTrackingPath struct {
 	// ID Durable person ID
 	ID int64 `json:"id"`
+}
+
+type ListPersonMeetingsPath struct {
+	// Ref Numeric person ID, person:<id>, or participant:<id>
+	Ref string `json:"ref" validate:"required"`
+}
+
+func (l ListPersonMeetingsPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(l))
 }
 
 type DecidePersonMergeCandidatePath struct {

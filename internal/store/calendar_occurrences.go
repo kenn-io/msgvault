@@ -375,7 +375,7 @@ func calendarExceptions(ctx context.Context, r rowReader, rows []CalendarEventRo
 	// but message ID zero is legal in the archive.
 	byOriginal := map[string]CalendarEventRow{}
 	for _, row := range rows {
-		if row.Event.Kind != "exception" || row.Event.Original == nil || !calendarSeriesMatches(master, row) {
+		if row.Event.Kind != calendarExceptionKind || row.Event.Original == nil || !calendarSeriesMatches(master, row) {
 			continue
 		}
 		e := row.Event
@@ -438,7 +438,7 @@ func expandRowsToOccurrences(ctx context.Context, r rowReader, rows []CalendarEv
 		if row.Event.Kind == "series" {
 			masters[calendarSeriesGroup(row, row.Event.ProviderEventID)] = true
 		}
-		if row.Event.Kind == "exception" {
+		if row.Event.Kind == calendarExceptionKind {
 			key := calendarSeriesGroup(row, row.Event.SeriesProviderID)
 			exceptionRows[key] = append(exceptionRows[key], row)
 		}
@@ -447,7 +447,7 @@ func expandRowsToOccurrences(ctx context.Context, r rowReader, rows []CalendarEv
 		if err := ctx.Err(); err != nil {
 			return nil, nil, err
 		}
-		if row.Event.Kind == "exception" && masters[calendarSeriesGroup(row, row.Event.SeriesProviderID)] {
+		if row.Event.Kind == calendarExceptionKind && masters[calendarSeriesGroup(row, row.Event.SeriesProviderID)] {
 			continue
 		}
 		if row.Event.Kind != "series" {
@@ -518,16 +518,23 @@ func expandRowsToOccurrences(ctx context.Context, r rowReader, rows []CalendarEv
 }
 
 func (s *Store) GetCalendarOccurrenceContext(ctx context.Context, scope SourceScope, ref string) (CalendarOccurrence, error) {
-	kind, parsed, _, err := ParseMeetingRef(ref)
-	if err != nil || kind != "evt" {
-		return CalendarOccurrence{}, fmt.Errorf("%w: invalid occurrence ref", ErrInvalidArgument)
-	}
 	ctx, release, err := s.BeginReadSnapshotContext(ctx)
 	if err != nil {
 		return CalendarOccurrence{}, err
 	}
 	defer release()
-	r := s.snapshotReader(ctx)
+	budget := calrecur.RequestReadBudget
+	return calendarOccurrenceWithReader(ctx, s.snapshotReader(ctx), scope, ref, &budget)
+}
+
+func calendarOccurrenceWithReader(ctx context.Context, r rowReader, scope SourceScope, ref string, budget *int) (CalendarOccurrence, error) {
+	kind, parsed, _, err := ParseMeetingRef(ref)
+	if err != nil || kind != calendarEventRefKind {
+		return CalendarOccurrence{}, fmt.Errorf("%w: invalid occurrence ref", ErrInvalidArgument)
+	}
+	if err := spendLinkBudget(ctx, budget, 1); err != nil {
+		return CalendarOccurrence{}, err
+	}
 	rows, err := calendarEventRowsByMessageIDs(ctx, r, scope, []int64{parsed.MessageID})
 	if err != nil {
 		return CalendarOccurrence{}, err
@@ -536,7 +543,7 @@ func (s *Store) GetCalendarOccurrenceContext(ctx context.Context, scope SourceSc
 		return CalendarOccurrence{}, ErrNotFound
 	}
 	row := rows[0]
-	if row.Event.Kind == "exception" && parsed.Key == "" {
+	if row.Event.Kind == calendarExceptionKind && parsed.Key == "" {
 		parsed, err = resolveOccurrenceRefAlias(ctx, r, SourceScope{IDs: []int64{row.SourceID}}, parsed)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
@@ -590,7 +597,18 @@ func (s *Store) GetCalendarOccurrenceContext(ctx context.Context, scope SourceSc
 	if err != nil {
 		return CalendarOccurrence{}, err
 	}
-	exists, err := calrecur.Contains(ctx, set, exceptions, original, calrecur.SeriesReadBudget)
+	originalAt := original.Instant
+	if original.AllDay {
+		originalAt, err = time.ParseInLocation(time.DateOnly, original.Date, set.Zone)
+		if err != nil {
+			return CalendarOccurrence{}, fmt.Errorf("resolve calendar identity: %w", err)
+		}
+	}
+	allowance, err := reserveLinkRecurrence(ctx, set, originalAt, budget)
+	if err != nil {
+		return CalendarOccurrence{}, err
+	}
+	exists, err := calrecur.Contains(ctx, set, exceptions, original, allowance)
 	if err != nil {
 		if errors.Is(err, calrecur.ErrBudgetExceeded) {
 			return CalendarOccurrence{}, ErrQueryTooBroad
@@ -641,8 +659,7 @@ func (s *Store) GetCalendarOccurrenceContext(ctx context.Context, scope SourceSc
 		}
 		workUntil = to
 	}
-	budget := calrecur.RequestReadBudget
-	if err := recurrenceWork(ctx, set, workUntil, &budget); err != nil {
+	if err := recurrenceWork(ctx, set, workUntil, budget); err != nil {
 		if errors.Is(err, calrecur.ErrBudgetExceeded) {
 			return CalendarOccurrence{}, ErrQueryTooBroad
 		}

@@ -249,7 +249,7 @@ func TestDelegatedOperationAllowlistIsClosed(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	cfg := &config.Config{Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}
 	var src *store.Source
-	var id int64
+	var id, participantID int64
 	for _, account := range []string{"allowed@example.test", "outside@example.test"} {
 		subject := "glacier " + account
 		source, messageID, err := testutil.CreateIndexedSourceMessage(st, account, "message", subject, subject)
@@ -258,7 +258,7 @@ func TestDelegatedOperationAllowlistIsClosed(t *testing.T) {
 		requirements.NoError(err)
 		requirements.NoError(st.ReplaceMessageRecipients(messageID, "from", []int64{participant}, nil))
 		if src == nil {
-			src, id = source, messageID
+			src, id, participantID = source, messageID, participant
 		}
 	}
 	calendarSource, err := st.GetOrCreateSource("gcal", "calendar@example.test")
@@ -299,6 +299,9 @@ func TestDelegatedOperationAllowlistIsClosed(t *testing.T) {
 		"getCLIStats":             {"/api/v1/cli/stats", `"total_messages":2`},
 		"getTotalStats":           {"/api/v1/stats/total", `"message_count":1`},
 		"getCLIMessageThread":     {fmt.Sprintf("/api/v1/cli/message/thread?id=%d", id), src.Identifier},
+		"getMeeting":              {fmt.Sprintf("/api/v1/meetings/evt:%d", calendarID), `"subject":"Calendar fixture"`},
+		"listPersonMeetings":      {fmt.Sprintf("/api/v1/people/participant:%d/meetings?from=2027-03-01T00:00:00Z&to=2027-03-02T00:00:00Z", participantID), `"items":[]`},
+		"suggestMeetingLinks":     {fmt.Sprintf("/api/v1/meetings/evt:%d/suggestions", calendarID), `[]`},
 		"listCalendarEvents":      {"/api/v1/calendar/events?from=2027-03-01T00:00:00Z&to=2027-03-02T00:00:00Z", `"subject":"Calendar fixture"`},
 		"getCalendarEvent":        {fmt.Sprintf("/api/v1/calendar/events/evt:%d", calendarID), `"subject":"Calendar fixture"`},
 		"getMessage":              {fmt.Sprintf("/api/v1/messages/%d", id), src.Identifier},
