@@ -1292,7 +1292,7 @@ type FastSearchQuery struct {
 	// Q Search query; full text accepts standalone pipe-separated OR alternatives
 	Q string `json:"q" validate:"required"`
 
-	// ViewType Stats grouping view type
+	// ViewType Request aggregate stats grouped by this view; omit to skip stats
 	ViewType *string `json:"view_type,omitempty"`
 
 	// AccountScopes JSON list of account scopes that intersect, for structured clients

@@ -16,7 +16,6 @@ import (
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/query/querytest"
 	"go.kenn.io/msgvault/internal/savedview"
-	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
@@ -249,9 +248,6 @@ func newTask5Fixture(t *testing.T, shape string) task5Fixture {
 			Key: "example.com", Count: 2, TotalSize: 3072, AttachmentSize: int64(len(attachmentBytes)), AttachmentCount: 1, TotalUnique: 1,
 		}},
 		GmailIDs: []string{"source-message-42"},
-		SearchFastCountFunc: func(context.Context, *search.Query, query.MessageFilter) (int64, error) {
-			return 1, nil
-		},
 	}
 
 	saver := &captureDeletionManifestSaver{}
