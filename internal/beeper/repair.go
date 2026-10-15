@@ -194,14 +194,6 @@ func (imp *Importer) repairMessage(item *store.ArchivedRawMessage, sourceID int6
 		sum.BodiesRewritten++
 	}
 
-	// Fetched unconditionally: this offline pass never calls the Beeper API,
-	// so it must carry forward each attachment's not-found first-seen stamp
-	// rather than silently resetting the clock on every repair run.
-	stored, err := imp.store.MessageBeeperAttachments(item.MessageID)
-	if err != nil {
-		sum.Errors++
-		return
-	}
 	classifications := make(map[string]store.BeeperAttachmentClassification, len(m.Attachments))
 	isPreview := sharedLink(&m) != ""
 	for i := range m.Attachments {
@@ -210,21 +202,21 @@ func (imp *Importer) repairMessage(item *store.ArchivedRawMessage, sourceID int6
 		if ref == "" {
 			continue
 		}
-		sourceAttID := beeperAttachmentID(ref)
-		metadata := attachmentMetadataJSON(&m, att)
-		if previous, ok := stored[sourceAttID]; ok {
-			if seen, ok := notFoundFirstSeenIn(previous.Metadata); ok {
-				metadata = withNotFoundFirstSeen(metadata, seen)
-			}
-		}
-		classifications[sourceAttID] = store.BeeperAttachmentClassification{
-			Metadata:  metadata,
+		classifications[beeperAttachmentID(ref)] = store.BeeperAttachmentClassification{
+			Metadata:  attachmentMetadataJSON(&m, att),
 			IsPreview: isPreview,
 			IsSticker: att.IsSticker,
 		}
 	}
-	if len(classifications) == 0 && len(stored) == 0 {
-		return
+	if len(classifications) == 0 {
+		stored, err := imp.store.MessageBeeperAttachments(item.MessageID)
+		if err != nil {
+			sum.Errors++
+			return
+		}
+		if len(stored) == 0 {
+			return
+		}
 	}
 	changed, err := imp.store.SetBeeperAttachmentClassifications(item.MessageID, classifications)
 	if err != nil {
