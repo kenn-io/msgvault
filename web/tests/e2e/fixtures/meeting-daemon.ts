@@ -14,6 +14,7 @@ const userAgent = "OpenAI File Downloader, XaiImageApiFetch/1.0";
 
 type MeetingRef = { message_id: number; source_id: number };
 type SeedManifest = {
+  chatwoot: [number, number];
   meetings: Record<"granola" | "notion" | "circleback", MeetingRef>;
   participant_id: number;
 };

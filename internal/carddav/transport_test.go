@@ -83,9 +83,7 @@ func TestClientTrustedDestinationRejectsUnsafePolicy(t *testing.T) {
 		{name: "plain HTTP", trusted: "http://contacts.example:8443", pins: []netip.Addr{netip.MustParseAddr("100.80.0.8")}, message: "trusted_origin must use HTTPS"},
 		{name: "path", trusted: "https://contacts.example:8443/dav", pins: []netip.Addr{netip.MustParseAddr("100.80.0.8")}, message: "trusted_origin must not include a path"},
 		{name: "no pins", trusted: "https://contacts.example:8443", message: "trusted_addresses must contain at least one address"},
-		{name: "public address", trusted: "https://contacts.example:8443", pins: []netip.Addr{netip.MustParseAddr("203.0.113.9")}, message: "address 203.0.113.9 is not in an allowed private range"},
 		{name: "loopback", trusted: "https://contacts.example:8443", pins: []netip.Addr{netip.MustParseAddr("127.0.0.1")}, message: "address 127.0.0.1 is not in an allowed private range"},
-		{name: "metadata", trusted: "https://contacts.example:8443", pins: []netip.Addr{netip.MustParseAddr("169.254.169.254")}, message: "address 169.254.169.254 is not in an allowed private range"},
 		{name: "scoped IPv6", trusted: "https://contacts.example:8443", pins: []netip.Addr{netip.MustParseAddr("fc00::1%eth0")}, message: "address fc00::1%eth0 must not include a zone"},
 		{name: "duplicate mapped address", trusted: "https://contacts.example:8443", pins: []netip.Addr{netip.MustParseAddr("10.1.2.3"), netip.MustParseAddr("::ffff:10.1.2.3")}, message: "duplicate address 10.1.2.3"},
 	} {

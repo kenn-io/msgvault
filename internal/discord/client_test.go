@@ -580,3 +580,8 @@ func TestNewClientRejectsUnsafeBaseURL(t *testing.T) {
 		})
 	}
 }
+
+func TestNewClientAcceptsLoopbackHostnameWithTrailingDot(t *testing.T) {
+	_, err := NewClient("http://localhost./api/v10", "test-token")
+	require.NoError(t, err)
+}

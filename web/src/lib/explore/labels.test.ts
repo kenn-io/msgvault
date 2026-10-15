@@ -98,6 +98,7 @@ describe('entryKindPresentation', () => {
     ['whatsapp', 'Conversation'],
     ['slack', 'Conversation'],
     ['inline', 'Conversation'],
+    ['chatwoot', 'Conversation'],
     ['fbmessenger', 'Conversation'],
     ['matrix', 'Conversation'],
     ['chat', 'Conversation'],

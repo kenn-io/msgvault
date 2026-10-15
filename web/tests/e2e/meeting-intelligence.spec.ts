@@ -73,10 +73,10 @@ test("production imports expose archived actions, duration evidence, and exact c
     name: "Meeting activity",
     exact: true,
   });
-  await assertMetrics(panel, 4, 3, 1, "1h 40m", "33m 20s");
+  await assertMetrics(panel, 5, 4, 1, "1h 40m 45s", "25m 11s");
   const bases = panel.getByRole("table", { name: "Duration evidence" });
   await expect(
-    bases.getByRole("row", { name: "Provider duration 1 30m" }),
+    bases.getByRole("row", { name: "Provider duration 2 30m 45s" }),
   ).toBeVisible();
   await expect(
     bases.getByRole("row", { name: "Scheduled 1 1h" }),
@@ -87,7 +87,7 @@ test("production imports expose archived actions, duration evidence, and exact c
   await expect(
     panel
       .getByRole("table", { name: "Monthly meeting activity" })
-      .getByRole("row", { name: "2026-01 2 2 0 1h 30m 45m" }),
+      .getByRole("row", { name: "2026-01 3 3 0 1h 30m 45s 30m 15s" }),
   ).toBeVisible();
   await expect(
     panel.getByText("Send the Circleback recap", { exact: true }),
@@ -98,7 +98,7 @@ test("production imports expose archived actions, duration evidence, and exact c
   await expect(panel.getByText('completed (source: true)', { exact: true })).toBeVisible();
   await expect(
     panel.getByText(
-      "Coverage: 3 available · 0 partial · 1 unsupported · 0 unavailable",
+      "Coverage: 3 available · 0 partial · 2 unsupported · 0 unavailable",
       { exact: true },
     ),
   ).toBeVisible();
@@ -131,7 +131,7 @@ test("production imports expose archived actions, duration evidence, and exact c
   expect(explicit.meetings[0].content.actions).toEqual([]);
   expect(JSON.stringify(explicit)).not.toContain("Generic transcript evidence");
   await page
-    .getByRole("button", { name: "Select all 4 matching items", exact: true })
+    .getByRole("button", { name: "Select all 5 matching items", exact: true })
     .click();
   const all = await downloadContext(page, info, "all-matching-context");
   expect(
@@ -144,6 +144,7 @@ test("production imports expose archived actions, duration evidence, and exact c
   ).toEqual(
     [
       daemon.generic.message_id,
+      daemon.chatwoot[1],
       ...Object.values(daemon.meetings).map((meeting) => meeting.message_id),
     ].sort(),
   );
@@ -155,7 +156,7 @@ test("production imports expose archived actions, duration evidence, and exact c
       ),
     ),
   ).toEqual(
-    new Set(["granola", "notion_meetings", "circleback", "meeting_import"]),
+    new Set(["granola", "notion_meetings", "circleback", "meeting_import", "chatwoot"]),
   );
   await page
     .getByRole("checkbox", { name: "Include transcript", exact: true })
@@ -262,7 +263,7 @@ test("participant, domain, Directory and Relationships keep scoped meeting evide
   daemon,
 }, info) => {
   const archive = await daemon.post("meetings/metrics", { scope: {} });
-  expect((await archive.json()).totals.meeting_count).toBe(4);
+  expect((await archive.json()).totals.meeting_count).toBe(5);
   const scopes: Array<{ name: string; state: Record<string, unknown> }> = [
     {
       name: "participant",
@@ -297,7 +298,11 @@ test("participant, domain, Directory and Relationships keep scoped meeting evide
     const panel = page
       .getByRole("region", { name: "Meeting activity", exact: true })
       .last();
-    await assertMetrics(panel, 3, 3, 0, "1h 40m", "33m 20s");
+    if (scope.name === "domain") {
+      await assertMetrics(panel, 4, 4, 0, "1h 40m 45s", "25m 11s");
+    } else {
+      await assertMetrics(panel, 3, 3, 0, "1h 40m", "33m 20s");
+    }
     const source = panel
       .getByRole("link", { name: "Open archived meeting", exact: true })
       .filter({ visible: true })
@@ -350,7 +355,7 @@ test("rapid search scope changes leave only the final meeting evidence", async (
     name: "Meeting activity",
     exact: true,
   });
-  await assertMetrics(panel, 4, 3, 1, "1h 40m", "33m 20s");
+  await assertMetrics(panel, 5, 4, 1, "1h 40m 45s", "25m 11s");
   const search = page.getByRole("searchbox", {
     name: "Search everything",
     exact: true,

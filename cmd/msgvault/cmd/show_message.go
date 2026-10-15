@@ -111,6 +111,9 @@ func outputMessageText(msg *query.MessageDetail) error {
 	// Header section
 	fmt.Println("═══════════════════════════════════════════════════════════════════════════════")
 	fmt.Printf("Message ID: %d (Gmail: %s)\n", msg.ID, msg.SourceMessageID)
+	if msg.RelatedMessageID != nil {
+		fmt.Printf("Related message: %d (show-message %d)\n", *msg.RelatedMessageID, *msg.RelatedMessageID)
+	}
 	fmt.Println("───────────────────────────────────────────────────────────────────────────────")
 
 	// From
@@ -231,6 +234,9 @@ func messageJSONValue(msg *query.MessageDetail) map[string]any {
 		"body_html":              msg.BodyHTML,
 	}
 
+	if msg.RelatedMessageID != nil {
+		output["related_message_id"] = *msg.RelatedMessageID
+	}
 	if msg.WebURL != "" {
 		output["web_url"] = msg.WebURL
 	}

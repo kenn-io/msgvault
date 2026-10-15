@@ -329,6 +329,7 @@ type MessageSummary struct {
 type MessageDetail struct {
 	MessageSummary
 
+	RelatedMessageID  *int64 `json:"related_message_id,omitempty"`
 	ConversationTitle string `json:"conversation_title,omitempty" doc:"Conversation title, when available."`
 
 	Body     string `json:"body"`
@@ -556,6 +557,7 @@ func messageDetailFromQuery(qMsg *query.MessageDetail) MessageDetail {
 	}
 
 	return MessageDetail{
+		RelatedMessageID:  qMsg.RelatedMessageID,
 		ConversationTitle: qMsg.ConversationTitle,
 
 		ID:              qMsg.ID,
@@ -794,6 +796,7 @@ func (s *Server) handleGetMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	detail := MessageDetail{
+		RelatedMessageID:  msg.RelatedMessageID,
 		MessageSummary:    toMessageSummary(*msg),
 		ConversationTitle: msg.ConversationTitle,
 		Body:              msg.Body,

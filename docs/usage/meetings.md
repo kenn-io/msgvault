@@ -1,7 +1,7 @@
 ---
 last_edited: "2026-10-08"
 title: Meeting Transcripts
-description: Archive call recordings, AI meeting notes, and transcripts from Omi, Twilio, Granola, Plaud, Circleback, Notion, Muesli, and Twenty into your searchable local archive.
+description: Archive call recordings, AI meeting notes, and transcripts from Chatwoot, Omi, Twilio, Granola, Plaud, Circleback, Notion, Muesli, and Twenty into your searchable local archive.
 ---
 
 Find meeting decisions and transcripts in the same archive as your email and
@@ -15,6 +15,7 @@ emails connect meetings to the people you already know in msgvault.
 |---|---|---|
 | [Omi](#omi) | Developer API key | Completed, non-discarded, unlocked conversations exposed by the backend |
 | [Twilio](#twilio) (unreleased) | Account auth token or API key | Recordings and transcripts Twilio still retains |
+| [Chatwoot](../guides/chatwoot.md) calls (unreleased) | Account API token | Calls in selected inboxes; recordings and transcripts refresh for seven days |
 | [Granola](#granola) | API key | Requires access to Granola's public API |
 | [Notion AI Meeting Notes](#notion-ai-meeting-notes) | Meeting PAT or integration, optional users integration | At most 50 attendee-visible meetings per discovery query |
 | [Plaud](#plaud) | Browser authorization to its hosted MCP server | Requires Cloud Sync and existing Plaud transcription |

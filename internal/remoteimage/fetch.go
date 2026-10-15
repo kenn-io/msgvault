@@ -3,13 +3,13 @@ package remoteimage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/netip"
 	"net/url"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -59,10 +59,14 @@ type FetchError struct {
 // are injectable so tests can simulate DNS rebinding and private resolution
 // without real DNS; production uses the default resolver and a plain dialer.
 type Fetcher struct {
-	LookupNetIP  func(ctx context.Context, host string) ([]netip.Addr, error)
-	DialContext  func(ctx context.Context, network, address string) (net.Conn, error)
-	MaxBytes     int64
-	MaxRedirects int
+	LookupNetIP     func(ctx context.Context, host string) ([]netip.Addr, error)
+	DialContext     func(ctx context.Context, network, address string) (net.Conn, error)
+	MaxBytes        int64
+	MaxRedirects    int
+	PrivateOrigin   *url.URL // Only this configured origin may resolve to explicit private ranges or its own loopback.
+	TryAllAddresses bool
+	Accept          string
+	UserAgent       string
 }
 
 func NewFetcher() *Fetcher {
@@ -78,18 +82,16 @@ func NewFetcher() *Fetcher {
 		DialContext:  dialer.DialContext,
 		MaxBytes:     MaxImageBytes,
 		MaxRedirects: remoteImageMaxRedirects,
+		Accept:       "image/*",
+		UserAgent:    remoteImageUserAgent,
 	}
 }
 
-// validateTarget applies every pre-connection check to one URL hop and
-// returns the address the connection must be pinned to: scheme http/https,
-// no userinfo, hostname-spelling gate, private-literal rejection, and
-// validation of every resolved A/AAAA answer. Dialing only the returned
-// address closes the check-then-resolve-again (TOCTOU rebinding) window.
-func (f *Fetcher) validateTarget(
+// ValidateTarget checks every DNS answer and returns the addresses that connections must use.
+func (f *Fetcher) ValidateTarget(
 	ctx context.Context, rawURL string,
-) (*url.URL, netip.AddrPort, *FetchError) {
-	var none netip.AddrPort
+) (*url.URL, []netip.AddrPort, *FetchError) {
+	var none []netip.AddrPort
 	if len(rawURL) > remoteImageMaxURLBytes {
 		return nil, none, &FetchError{
 			http.StatusBadRequest, remoteImageErrInvalidURL, "Remote image URL is too long"}
@@ -113,27 +115,35 @@ func (f *Fetcher) validateTarget(
 		return nil, none, &FetchError{
 			http.StatusBadRequest, remoteImageErrInvalidURL, "Remote image URL has no host"}
 	}
-	port := uint16(80)
-	if scheme == "https" {
-		port = 443
+	port, err := netguard.TargetPort(target)
+	if err != nil {
+		return nil, none, &FetchError{
+			http.StatusBadRequest, remoteImageErrInvalidURL, "Remote image URL has an invalid port"}
 	}
-	if portText := target.Port(); portText != "" {
-		parsed, err := strconv.ParseUint(portText, 10, 16)
-		if err != nil || parsed == 0 {
-			return nil, none, &FetchError{
-				http.StatusBadRequest, remoteImageErrInvalidURL, "Remote image URL has an invalid port"}
+	target.Scheme = scheme
+	privateOrigin := f.PrivateOrigin != nil && strings.EqualFold(f.PrivateOrigin.Scheme, scheme) &&
+		strings.EqualFold(strings.TrimSuffix(f.PrivateOrigin.Hostname(), "."), strings.TrimSuffix(host, ".")) &&
+		netguard.EffectivePort(f.PrivateOrigin) == strconv.Itoa(int(port))
+	loopbackOrigin := privateOrigin && netguard.IsLoopbackHost(f.PrivateOrigin.Hostname())
+	allowed := func(addr netip.Addr) bool {
+		if !addr.IsValid() || addr.Zone() != "" {
+			return false
 		}
-		port = uint16(parsed)
+		addr = addr.Unmap()
+		if loopbackOrigin {
+			return addr.IsLoopback()
+		}
+		return !prohibitedRemoteIP(addr) || (privateOrigin && netguard.ExplicitPrivateAddress(addr))
 	}
 	if literal, err := netip.ParseAddr(host); err == nil {
-		if prohibitedRemoteIP(literal) {
+		if !allowed(literal) {
 			return nil, none, &FetchError{
 				http.StatusBadRequest, remoteImageErrProhibitedHost,
 				"Remote image URL targets a private or reserved address"}
 		}
-		return target, netip.AddrPortFrom(literal.Unmap(), port), nil
+		return target, []netip.AddrPort{netip.AddrPortFrom(literal.Unmap(), port)}, nil
 	}
-	if prohibitedRemoteHostname(host) {
+	if prohibitedRemoteHostname(host) && !privateOrigin {
 		return nil, none, &FetchError{
 			http.StatusBadRequest, remoteImageErrProhibitedHost,
 			"Remote image URL targets a reserved or private hostname"}
@@ -143,12 +153,24 @@ func (f *Fetcher) validateTarget(
 		return nil, none, &FetchError{
 			http.StatusBadGateway, remoteImageErrFetchFailed, "Remote image host could not be resolved"}
 	}
-	if slices.ContainsFunc(addrs, prohibitedRemoteIP) {
-		return nil, none, &FetchError{
-			http.StatusBadGateway, remoteImageErrProhibitedDest,
-			"Remote image host resolves to a private or reserved address"}
+	pinned := make([]netip.AddrPort, 0, len(addrs))
+	seen := make(map[netip.AddrPort]bool, len(addrs))
+	for _, addr := range addrs {
+		if !allowed(addr) {
+			return nil, none, &FetchError{
+				http.StatusBadGateway, remoteImageErrProhibitedDest,
+				"Remote image host resolves to a private or reserved address"}
+		}
+		candidate := netip.AddrPortFrom(addr.Unmap(), port)
+		if !seen[candidate] {
+			seen[candidate] = true
+			pinned = append(pinned, candidate)
+		}
 	}
-	return target, netip.AddrPortFrom(addrs[0].Unmap(), port), nil
+	if !f.TryAllAddresses {
+		pinned = pinned[:1]
+	}
+	return target, pinned, nil
 }
 
 // doPinned performs one GET against a single validated hop. The transport's
@@ -157,11 +179,19 @@ func (f *Fetcher) validateTarget(
 // between validation and connection. TLS verification still uses the URL
 // hostname. No cookies or stored credentials ever travel outbound.
 func (f *Fetcher) doPinned(
-	ctx context.Context, target *url.URL, pinned netip.AddrPort,
+	ctx context.Context, target *url.URL, pinned []netip.AddrPort,
 ) (*http.Response, error) {
 	transport := &http.Transport{
 		DialContext: func(dialCtx context.Context, network, _ string) (net.Conn, error) {
-			return f.DialContext(dialCtx, network, pinned.String())
+			var failures []error
+			for _, address := range pinned {
+				conn, err := f.DialContext(dialCtx, network, address.String())
+				if err == nil {
+					return conn, nil
+				}
+				failures = append(failures, err)
+			}
+			return nil, errors.Join(failures...)
 		},
 		TLSHandshakeTimeout: 10 * time.Second,
 		DisableKeepAlives:   true,
@@ -175,15 +205,19 @@ func (f *Fetcher) doPinned(
 		},
 	}
 	// The user-supplied URL is intentionally fetched: this handler IS the
-	// SSRF mitigation. validateTarget rejected private/reserved hosts and
+	// SSRF mitigation. ValidateTarget rejected private/reserved hosts and
 	// resolved addresses, and the transport above dials only the pinned,
 	// validated IP.
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
 	if err != nil {
 		return nil, fmt.Errorf("building remote image request: %w", err)
 	}
-	req.Header.Set("Accept", "image/*")
-	req.Header.Set("User-Agent", remoteImageUserAgent)
+	if f.Accept != "" {
+		req.Header.Set("Accept", f.Accept)
+	}
+	if f.UserAgent != "" {
+		req.Header.Set("User-Agent", f.UserAgent)
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("fetching remote image: %w", err)
@@ -197,15 +231,30 @@ func (f *Fetcher) doPinned(
 func (f *Fetcher) Fetch(
 	ctx context.Context, rawURL string,
 ) (contentType string, body []byte, fetchErr *FetchError) {
+	resp, ferr := f.Open(ctx, rawURL)
+	if ferr != nil {
+		return "", nil, ferr
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return "", nil, &FetchError{
+			http.StatusBadGateway, remoteImageErrUpstream,
+			fmt.Sprintf("Remote image host returned status %d", resp.StatusCode)}
+	}
+	return f.readImageBody(resp)
+}
+
+// Open returns a credential-free response after validating and pinning each redirect hop.
+func (f *Fetcher) Open(ctx context.Context, rawURL string) (*http.Response, *FetchError) {
 	current := rawURL
 	for hop := 0; ; hop++ {
-		target, pinned, ferr := f.validateTarget(ctx, current)
+		target, pinned, ferr := f.ValidateTarget(ctx, current)
 		if ferr != nil {
-			return "", nil, ferr
+			return nil, ferr
 		}
 		resp, err := f.doPinned(ctx, target, pinned)
 		if err != nil {
-			return "", nil, &FetchError{
+			return nil, &FetchError{
 				http.StatusBadGateway, remoteImageErrFetchFailed, "Remote image could not be fetched"}
 		}
 		switch resp.StatusCode {
@@ -214,25 +263,18 @@ func (f *Fetcher) Fetch(
 			location := resp.Header.Get("Location")
 			_ = resp.Body.Close()
 			if hop >= f.MaxRedirects {
-				return "", nil, &FetchError{
+				return nil, &FetchError{
 					http.StatusBadGateway, remoteImageErrTooManyRedirect, "Remote image redirected too many times"}
 			}
 			next, err := target.Parse(location)
 			if location == "" || err != nil {
-				return "", nil, &FetchError{
+				return nil, &FetchError{
 					http.StatusBadGateway, remoteImageErrFetchFailed, "Remote image redirect target is invalid"}
 			}
 			current = next.String()
 			continue
-		case http.StatusOK:
-			contentType, body, fetchErr = f.readImageBody(resp)
-			_ = resp.Body.Close()
-			return contentType, body, fetchErr
 		default:
-			_ = resp.Body.Close()
-			return "", nil, &FetchError{
-				http.StatusBadGateway, remoteImageErrUpstream,
-				fmt.Sprintf("Remote image host returned status %d", resp.StatusCode)}
+			return resp, nil
 		}
 	}
 }

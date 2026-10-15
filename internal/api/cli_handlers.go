@@ -877,6 +877,7 @@ type cliAccountResponse struct {
 }
 
 type cliMessageResponse struct {
+	RelatedMessageID     *int64                 `json:"related_message_id,omitempty"`
 	ID                   int64                  `json:"id"`
 	SourceMessageID      string                 `json:"source_message_id"`
 	RFC822MessageID      string                 `json:"rfc822_message_id,omitempty"`
@@ -1742,6 +1743,7 @@ func cliRunCommandAllowed(args []string) bool {
 		"add-matrix",
 		"add-calendar",
 		"add-circleback",
+		"add-chatwoot",
 		"add-plaud",
 		"add-twenty",
 		"add-discord",
@@ -1801,6 +1803,7 @@ func cliRunCommandAllowed(args []string) bool {
 		"sync-matrix",
 		"sync-calendar",
 		"sync-circleback",
+		"sync-chatwoot",
 		"sync-plaud",
 		"sync-twenty",
 		"sync-discord",
@@ -3695,6 +3698,7 @@ func cliMessageResponseFromQuery(msg *query.MessageDetail) cliMessageResponse {
 		SourceConversationID: msg.SourceConversationID,
 		Subject:              msg.Subject,
 		MessageType:          msg.MessageType,
+		RelatedMessageID:     msg.RelatedMessageID,
 		Snippet:              msg.Snippet,
 		SentAt:               msg.SentAt,
 		ReceivedAt:           msg.ReceivedAt,

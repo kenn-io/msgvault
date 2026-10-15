@@ -1,18 +1,18 @@
-Archive email, chats, and meetings offline. Use a local daemon
+Archive email, chats, and meetings offline. Use the daemon
 or config.toml's [remote].url; --local forces local.
 
 Start here:
   msgvault list-accounts --json    # id, email, type, counts, sync
   msgvault search 'from:alice@example.com newer_than:30d' --json
-  # "id" feeds the commands below
+  # Use an "id"
   msgvault show-message <id> --json  # body_text, attachments
-  msgvault export-eml <id> -o msg.eml  # export-attachments <id> -o DIR
+  msgvault export-eml <id> -o msg.eml
   msgvault export-messages --start 2026-09-01T00:00:00Z --end 2026-10-01T00:00:00Z
-  msgvault list-senders -n 20 --json  # also list-domains, list-labels
+  msgvault list-senders -n 20 --json
   msgvault stats
   msgvault person --help  # contacts
   msgvault daemon status
-  msgvault setup status --json  # features and next steps
+  msgvault setup status --json  # features, next steps
 
 Output:
   --json: JSON stdout (export-messages: JSON Lines). Logs/progress: stderr.
@@ -59,6 +59,7 @@ Add and sync sources:
   add-beeper             Add Beeper Desktop as an archive source
   add-calendar           Authorize Google Calendar and register its calendars
   add-carddav            Discover and configure a CardDAV account
+  add-chatwoot           Register Chatwoot inboxes
   add-circleback         Authorize a Circleback account (browser OAuth)
   add-discord            Register Discord guilds for bot-based archival
   add-granola            Register a Granola account and validate its API key
@@ -88,6 +89,7 @@ Add and sync sources:
   sync-beeper            Sync chats from Beeper Desktop (all connected networks)
   sync-calendar          Sync Google Calendar events for an account
   sync-carddav           Synchronize enabled CardDAV connections
+  sync-chatwoot          Sync Chatwoot inboxes
   sync-circleback        Sync Circleback meetings, notes, and transcripts
   sync-discord           Sync registered Discord guild history
   sync-full              Perform a full sync of Gmail accounts

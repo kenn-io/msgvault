@@ -164,7 +164,7 @@ Navigation and interaction in Text mode work the same as Email mode. Press `Ente
 
 Meetings mode is a read-only browser for archived transcripts and notes from
 [meeting sources](/docs/usage/meetings/), including Omi, Granola, Plaud, Circleback,
-Notion, Muesli, Twilio, and Twenty. It shows a flat, newest-first list
+Notion, Muesli, Twilio, Twenty, and Chatwoot. It shows a flat, newest-first list
 with each meeting's date, title, organizer, and source. Press `Enter` to open
 the transcript and notes, `Esc` or `Backspace` to return to the list, and the
 left/right arrow keys to move between meeting details.

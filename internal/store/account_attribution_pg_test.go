@@ -352,6 +352,52 @@ func TestAccountAttributionScopedParticipantMergeVsSourceRemovalPG(t *testing.T)
 	assertNoDeadlock(t, waitResult(t, removeDone, "source removal"))
 }
 
+func TestChatwootScopedIdentityWritesVsSourceRemovalPG(t *testing.T) {
+	for _, operation := range []string{"self_agents", "participant_identifier", "contact_observation", "participant_phone"} {
+		t.Run(operation, func(t *testing.T) {
+			require := require.New(t)
+			st := requirePostgreSQLStore(t)
+			source, err := st.GetOrCreateSource("chatwoot", "https://chat.example.com/accounts/1")
+			require.NoError(err)
+			victim, err := st.GetOrCreateSource("imessage", "+12025550100")
+			require.NoError(err)
+			participantID, err := st.EnsureParticipantByIdentifier("chatwoot", "https://chat.example.com/accounts/1/contact/8", "Example Contact")
+			require.NoError(err)
+			scoped := scopedSync(t, st, source.ID)
+			release := holdIdentityRow(t, st)
+			writeDone := make(chan error, 1)
+			go func() {
+				switch operation {
+				case "self_agents":
+					writeDone <- scoped.SyncChatwootSelfAgents(t.Context(), source.ID, []string{"https://chat.example.com/accounts/1/user/7"})
+				case "participant_identifier":
+					_, err := scoped.EnsureParticipantByIdentifier("chatwoot", "https://chat.example.com/accounts/1/contact/9", "Another Contact")
+					writeDone <- err
+				case "contact_observation":
+					_, err := scoped.RecordContactObservationContext(t.Context(), participantID, store.ParticipantContactObservationInput{
+						SourceID: &source.ID, AddressKind: store.ContactAddressEmail, OriginalValue: "contact@example.com",
+						Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceArchiveObservation},
+					})
+					writeDone <- err
+				case "participant_phone":
+					_, err := scoped.EnsureParticipantByPhone("+12025550101", "Example Contact", "chatwoot")
+					writeDone <- err
+				}
+			}()
+			pid := waitForLockWait(t, st, "archive_metadata", "the scoped identity write must wait for the identity row")
+			assert.False(t, holdsRelationLock(t, st, pid, "sync_runs"), "the waiting identity write must not hold sync_runs")
+			removeDone := make(chan error, 1)
+			go func() {
+				_, _, err := st.RemoveSourceSerialized(t.Context(), victim.ID)
+				removeDone <- err
+			}()
+			release()
+			assertNoDeadlock(t, waitResult(t, writeDone, "Chatwoot identity write"))
+			assertNoDeadlock(t, waitResult(t, removeDone, "source removal"))
+		})
+	}
+}
+
 func TestAccountAttributionIdentityAndDraftEntriesVsSourceRemovalPG(t *testing.T) {
 	require := require.New(t)
 	st := requirePostgreSQLStore(t)

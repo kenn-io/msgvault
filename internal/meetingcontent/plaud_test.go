@@ -24,3 +24,11 @@ func TestPlaudCanonicalMeetingProjection(t *testing.T) {
 	assert.Empty(c.SourceParticipants[0].Email)
 	assert.Equal(CoverageUnsupported, c.ActionCoverage)
 }
+
+func TestPlaudMissingDurationUsesTranscriptSpan(t *testing.T) {
+	raw := []byte(`{"duration_seconds":0,"transcript_segments":[{"speaker":"Speaker 1","text":"Start","offset_seconds":12},{"speaker":"Speaker 1","text":"End","offset_seconds":42}]}`)
+	c := Decode("plaud_json", raw, nil)
+	require.NotNil(t, c.DurationSeconds)
+	assert.InDelta(t, 30.0, *c.DurationSeconds, 1e-9)
+	assert.Equal(t, DurationTranscriptSpan, c.DurationBasis)
+}

@@ -9,8 +9,9 @@ import (
 	"fmt"
 	"math"
 	"os"
-	"regexp"
 	"strings"
+
+	"go.kenn.io/msgvault/internal/envutil"
 )
 
 const (
@@ -24,8 +25,6 @@ const (
 	defaultBatch = 20
 	maxBatch     = 100
 )
-
-var credentialEnvName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // Config contains only provider settings and a credential reference. It never
 // contains the credential value. RetentionDeclaration is the operator's exact
@@ -61,7 +60,7 @@ func (c *Config) Validate() error {
 	if c.BatchSize < 1 || c.BatchSize > maxBatch {
 		return fmt.Errorf("people.identity_scoring.batch_size must be between 1 and %d", maxBatch)
 	}
-	if c.CredentialEnv != "" && !credentialEnvName.MatchString(c.CredentialEnv) {
+	if c.CredentialEnv != "" && !envutil.ValidName(c.CredentialEnv) {
 		return errors.New("people.identity_scoring.credential_env must be an environment variable name")
 	}
 	if !c.Enabled {

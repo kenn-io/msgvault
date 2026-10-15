@@ -398,7 +398,7 @@ func (imp *Importer) ImportRemote(ctx context.Context, r RemoteRequest) (result 
 	}
 	archiver := meetingarchive.New(imp.store)
 	if !r.Full {
-		unchanged, err := archiver.Unchanged(snapshot)
+		unchanged, err := archiver.Unchanged(ctx, snapshot)
 		if err != nil {
 			return result, err
 		}

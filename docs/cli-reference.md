@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-12"
+last_edited: "2026-10-14"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -1432,6 +1432,49 @@ Backfill re-fetches each selected source message that has pending attachments
 to obtain fresh signed CDN URLs. An incomplete attachment is unrecoverable if
 the source message has since been deleted. See
 [Discord](/docs/usage/discord/#attachment-backfill-and-limits).
+
+---
+
+## add-chatwoot
+
+Register permitted Chatwoot inboxes from configured `[[chatwoot]]` profiles.
+Available on `main`. The daemon reads each profile's token environment variable
+and validates access with the account API.
+
+```bash
+msgvault add-chatwoot [identifier]
+```
+
+With no identifier, register all configured profiles. Include/exclude inbox
+filters apply; no selected inboxes is an error. Re-run after adding inboxes.
+See [Chatwoot setup](guides/chatwoot.md).
+
+---
+
+## sync-chatwoot
+
+Sync Chatwoot conversations, media, and linked voice-call meetings. Available
+on `main`. Only registered inboxes selected by the profile's filters are synced.
+No identifier selects all configured profiles. Partial success is retained and
+healthy inboxes continue after another inbox fails.
+
+```bash
+msgvault sync-chatwoot [identifier] [--inbox 7] [--limit 100] [--full] [--no-media]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--inbox` | all included registered inboxes | Numeric inbox ID to sync; repeat for multiple inboxes; requires an identifier with several profiles; excluded or unregistered IDs are rejected |
+| `--limit` | `0` | History messages per conversation this run; artifact refreshes run additionally; zero means no history limit; unfinished history resumes |
+| `--full` | `false` | Reread all available history and update existing rows in place |
+| `--no-media` | `false` | Defer attachment downloads while retaining metadata and available transcripts; recent files retry on later syncs |
+| `--build-cache` | `false` | Queue a cache refresh after the sync, even when automatic builds are disabled or the minimum rebuild interval has not elapsed |
+| `--no-build-cache` | `false` | Skip the post-sync cache refresh |
+
+See [Chatwoot](guides/chatwoot.md#understand-sync-limits) for discovery,
+refresh windows, request budgets, and how unavailable conversations are handled.
+Reconciliation defaults to every 24 hours; set `reconcile_interval_hours` in
+[Chatwoot configuration](configuration.md#chatwoot).
 
 ---
 

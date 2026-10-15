@@ -146,6 +146,7 @@ func generatedDetailToAPIMessage(m *generated.MessageDetail) *store.APIMessage {
 		}
 	}
 	msg := &store.APIMessage{
+		RelatedMessageID:  m.RelatedMessageID,
 		ConversationTitle: stringValue(m.ConversationTitle),
 
 		ID:              m.ID,
