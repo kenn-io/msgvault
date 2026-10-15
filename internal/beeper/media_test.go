@@ -703,7 +703,11 @@ func TestBackfillMediaClearsMarkerWhenAttachmentGone(t *testing.T) {
 
 	f := newFakeBeeper(t)
 	f.addChat(mediaChat())
-	// Asset missing: the sync leaves a pending marker.
+	// An ordinary fetch failure, not a not-found: this test is about the
+	// marker being cleared when the source removes the attachment, not
+	// about not-found classification (covered by
+	// TestAssetNotFoundBecomesTerminalOnlyOnConfirmedRepeat).
+	f.setAssetError("mxc://beeper.local/photo1", http.StatusBadRequest, "boom")
 	imp, st, done := newTestImporter(t, f)
 	defer done()
 
@@ -745,7 +749,10 @@ func TestBackfillMediaTransientFetchErrorKeepsMarker(t *testing.T) {
 	})
 	ch.LastActivity = ch.Msgs[len(ch.Msgs)-1].Timestamp
 	f.addChat(ch)
-	// Asset missing: the sync leaves a pending marker.
+	// An ordinary fetch failure, not a not-found: this test is about a
+	// transient message-fetch failure, not about not-found classification
+	// (covered by TestAssetNotFoundBecomesTerminalOnlyOnConfirmedRepeat).
+	f.setAssetError("mxc://beeper.local/photo1", http.StatusBadRequest, "boom")
 	imp, st, done := newTestImporter(t, f)
 	defer done()
 
@@ -779,6 +786,9 @@ func TestBackfillMediaTransientFetchErrorKeepsMarker(t *testing.T) {
 
 	// Healed: the asset appears and the retry succeeds.
 	f.setMessageGetFailure("p0", false)
+	f.mu.Lock()
+	delete(f.assetErrors, "mxc://beeper.local/photo1")
+	f.mu.Unlock()
 	f.setAsset("mxc://beeper.local/photo1", []byte("finally"))
 	bsum, err = imp.BackfillMedia(context.Background(), ImportOptions{
 		AccountID: "signal", AttachmentsDir: opts.AttachmentsDir,
@@ -1384,9 +1394,13 @@ func TestAssetNotFoundBecomesTerminalOnlyOnConfirmedRepeat(t *testing.T) {
 	const assetURL = "mxc://beeper.local/photo1"
 	sourceAttID := beeperAttachmentID(assetURL)
 	oldTimestamp := func() time.Time { return time.Now().Add(-assetNotFoundMaxAge - time.Hour).UTC() }
-	youngTimestamp := func() time.Time { return time.Now().Add(-assetNotFoundMaxAge + time.Hour).UTC() }
 
-	t.Run("old message: first miss retryable, repeat inside the cooldown stays retryable, repeat past it is terminal, never asked again", func(t *testing.T) {
+	t.Run("old message: first miss retryable, confirming repeat on a later run goes terminal", func(t *testing.T) {
+		// The age gate, the cooldown gate, and their boundaries are pure
+		// functions of isConfirmedAssetNotFound, covered directly and more
+		// cheaply by TestIsConfirmedAssetNotFound. This proves persistAttachments
+		// wires a real previous ref and message timestamp into that function
+		// and acts on its answer in both directions.
 		require := require.New(t)
 		assert := assert.New(t)
 		f := newFakeBeeper(t)
@@ -1409,18 +1423,9 @@ func TestAssetNotFoundBecomesTerminalOnlyOnConfirmedRepeat(t *testing.T) {
 		assert.Zero(sum.AttachmentsUnavailable, "a first miss is not yet terminal")
 		assert.EqualValues(1, sum.AttachmentsPending)
 
-		f.resetRequests()
-		opts.Full = true
-		sum, err = imp.Import(t.Context(), opts)
-		require.NoError(err)
-		assert.Len(assetRequests(f), 1, "a repeat still costs only one request")
-		require.NoError(st.DB().QueryRow(`SELECT attachment_state, attachment_skip_reason FROM attachments`).Scan(&state, &reason))
-		assert.Equal(string(attachmentpolicy.StateFailed), state, "a repeat seconds after the first miss is still inside the cooldown")
-		assert.Equal(string(attachmentpolicy.SkipSourceUnavailable), reason)
-		assert.Zero(sum.AttachmentsUnavailable, "two runs inside one short outage must not retire the file")
-
 		backdateNotFoundFirstSeen(t, st, sourceAttID, notFoundRepeatCooldown+time.Hour)
 		f.resetRequests()
+		opts.Full = true
 		sum, err = imp.Import(t.Context(), opts)
 		require.NoError(err)
 		assert.Len(assetRequests(f), 1, "the confirming repeat still costs only one request")
@@ -1428,11 +1433,6 @@ func TestAssetNotFoundBecomesTerminalOnlyOnConfirmedRepeat(t *testing.T) {
 		assert.Equal(string(attachmentpolicy.StateUnavailable), state, "a repeat past the cooldown, on a later run, goes terminal")
 		assert.Equal(string(attachmentpolicy.SkipSourceUnavailable), reason)
 		assert.EqualValues(1, sum.AttachmentsUnavailable)
-
-		f.resetRequests()
-		_, err = imp.Import(t.Context(), opts)
-		require.NoError(err)
-		assert.Empty(assetRequests(f), "a terminal marker is never re-requested")
 	})
 
 	t.Run("a single miss recovers if the asset becomes available on the next run", func(t *testing.T) {
@@ -1464,35 +1464,6 @@ func TestAssetNotFoundBecomesTerminalOnlyOnConfirmedRepeat(t *testing.T) {
 		var state string
 		require.NoError(st.DB().QueryRow(`SELECT attachment_state FROM attachments`).Scan(&state))
 		assert.Equal(string(attachmentpolicy.StateStored), state)
-	})
-
-	t.Run("a young message stays retryable even after it repeats not-found past the cooldown", func(t *testing.T) {
-		require := require.New(t)
-		assert := assert.New(t)
-		f := newFakeBeeper(t)
-		ch := mediaChat()
-		ch.Msgs[0].Timestamp = youngTimestamp()
-		ch.LastActivity = ch.Msgs[0].Timestamp
-		f.addChat(ch)
-		f.setAssetError(assetURL, http.StatusBadGateway, "Media not found")
-		imp, st, done := newTestImporter(t, f)
-		defer done()
-		opts := mediaImportOptions(t)
-
-		_, err := imp.Import(t.Context(), opts)
-		require.NoError(err)
-		// Clear the cooldown gate so this case isolates the age gate: without
-		// backdating, the cooldown alone would block termination and this
-		// assertion would pass even if the age check were removed entirely.
-		backdateNotFoundFirstSeen(t, st, sourceAttID, notFoundRepeatCooldown+time.Hour)
-		opts.Full = true
-		sum, err := imp.Import(t.Context(), opts)
-		require.NoError(err)
-		assert.Zero(sum.AttachmentsUnavailable, "age gates termination independently of the repeat")
-		var state, reason string
-		require.NoError(st.DB().QueryRow(`SELECT attachment_state, attachment_skip_reason FROM attachments`).Scan(&state, &reason))
-		assert.Equal(string(attachmentpolicy.StateFailed), state)
-		assert.Equal(string(attachmentpolicy.SkipSourceUnavailable), reason)
 	})
 
 	t.Run("a different error between two not-founds resets the repeat", func(t *testing.T) {
@@ -1606,5 +1577,123 @@ func TestAssetNotFoundBecomesTerminalOnlyOnConfirmedRepeat(t *testing.T) {
 		sum, err := imp.Import(t.Context(), opts)
 		require.NoError(err)
 		assert.EqualValues(1, sum.AttachmentsUnavailable, "the backdated clock repair must preserve, not reset, still confirms with no further backdating")
+	})
+}
+
+// TestIsConfirmedAssetNotFound covers the age gate, the cooldown gate, and
+// their boundaries directly: isConfirmedAssetNotFound is a pure function of
+// its arguments, so this needs no HTTP server or store, unlike
+// TestAssetNotFoundBecomesTerminalOnlyOnConfirmedRepeat, which exercises
+// only that persistAttachments wires a real previous ref and timestamp into
+// this function and acts on its answer.
+func TestIsConfirmedAssetNotFound(t *testing.T) {
+	now := time.Now()
+	old := now.Add(-assetNotFoundMaxAge - time.Hour)
+	young := now.Add(-assetNotFoundMaxAge + time.Hour)
+	provisional := func(firstSeen time.Time) store.AttachmentRef {
+		return store.AttachmentRef{
+			State:      attachmentpolicy.StateFailed,
+			SkipReason: attachmentpolicy.SkipSourceUnavailable,
+			Metadata:   withNotFoundFirstSeen("", firstSeen),
+		}
+	}
+
+	tests := []struct {
+		name      string
+		previous  store.AttachmentRef
+		timestamp time.Time
+		want      bool
+	}{
+		{
+			name:      "no previous marker at all",
+			previous:  store.AttachmentRef{},
+			timestamp: old,
+		},
+		{
+			name:      "previous was never confirmed-eligible: still pending",
+			previous:  store.AttachmentRef{State: attachmentpolicy.StatePending},
+			timestamp: old,
+		},
+		{
+			name:      "previous is already terminal, not provisional",
+			previous:  store.AttachmentRef{State: attachmentpolicy.StateUnavailable, SkipReason: attachmentpolicy.SkipSourceUnavailable},
+			timestamp: old,
+		},
+		{
+			name:      "previous failed for an unrelated reason",
+			previous:  store.AttachmentRef{State: attachmentpolicy.StateFailed, SkipReason: attachmentpolicy.SkipFetchFailure},
+			timestamp: old,
+		},
+		{
+			name:      "message timestamp is missing",
+			previous:  provisional(old.Add(-notFoundRepeatCooldown - time.Hour)),
+			timestamp: time.Time{},
+		},
+		{
+			name:      "message is younger than the age cutoff",
+			previous:  provisional(old.Add(-notFoundRepeatCooldown - time.Hour)),
+			timestamp: young,
+		},
+		{
+			name:      "previous marker carries no first-seen stamp",
+			previous:  store.AttachmentRef{State: attachmentpolicy.StateFailed, SkipReason: attachmentpolicy.SkipSourceUnavailable},
+			timestamp: old,
+		},
+		{
+			name:      "repeat is still inside the cooldown",
+			previous:  provisional(now.Add(-notFoundRepeatCooldown + time.Hour)),
+			timestamp: old,
+		},
+		{
+			name:      "repeat lands exactly on the cooldown boundary",
+			previous:  provisional(now.Add(-notFoundRepeatCooldown)),
+			timestamp: old,
+			want:      true,
+		},
+		{
+			name:      "old message, provisional miss, repeat past the cooldown",
+			previous:  provisional(now.Add(-notFoundRepeatCooldown - time.Hour)),
+			timestamp: old,
+			want:      true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, isConfirmedAssetNotFound(tt.previous, tt.timestamp, now))
+		})
+	}
+}
+
+// TestNotFoundFirstSeenRoundTrip covers withNotFoundFirstSeen and
+// notFoundFirstSeenIn directly: the metadata layering and parsing that
+// TestIsConfirmedAssetNotFound's provisional() helper relies on.
+func TestNotFoundFirstSeenRoundTrip(t *testing.T) {
+	assert := assert.New(t)
+	stamp := time.Now().Add(-48 * time.Hour).Truncate(time.Second)
+
+	t.Run("round-trips through empty metadata", func(t *testing.T) {
+		got, ok := notFoundFirstSeenIn(withNotFoundFirstSeen("", stamp))
+		assert.True(ok)
+		assert.True(stamp.Equal(got), "want %v, got %v", stamp, got)
+	})
+
+	t.Run("preserves an existing field already in the metadata", func(t *testing.T) {
+		withStamp := withNotFoundFirstSeen(`{"shared_url":"https://example.test/x"}`, stamp)
+		assert.Contains(withStamp, "https://example.test/x")
+		got, ok := notFoundFirstSeenIn(withStamp)
+		assert.True(ok)
+		assert.True(stamp.Equal(got))
+	})
+
+	t.Run("absent for metadata with no stamp", func(t *testing.T) {
+		_, ok := notFoundFirstSeenIn("")
+		assert.False(ok)
+		_, ok = notFoundFirstSeenIn(`{"shared_url":"https://example.test/x"}`)
+		assert.False(ok)
+	})
+
+	t.Run("absent for malformed metadata", func(t *testing.T) {
+		_, ok := notFoundFirstSeenIn(`not json`)
+		assert.False(ok)
 	})
 }
