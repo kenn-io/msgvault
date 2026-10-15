@@ -176,6 +176,7 @@ var KnownMessageTypes = []string{
 	"beeper",
 	"chatwoot",
 	"slack",
+	"inline",
 	"matrix",
 }
 

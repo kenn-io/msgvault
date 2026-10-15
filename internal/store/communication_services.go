@@ -492,11 +492,23 @@ func trimmedOrNil(value *string) *string {
 }
 
 func (s *Store) seedCommunicationServices(ctx context.Context) error {
+	if err := s.seedCommunicationServiceSet(ctx, communicationServicesSeedV1, seededCommunicationServices); err != nil {
+		return err
+	}
+	// A separate data seed also reaches archives that already completed v1.
+	// INSERT OR IGNORE preserves an operator's existing Inline service edits.
+	return s.seedCommunicationServiceSet(ctx, "communication_services_inline_v1", []CommunicationServiceInput{{
+		Slug: "inline", DisplayLabel: "Inline", ScopePolicy: ScopePolicyRequired,
+		DefaultScopeKind: new("server"), Normalization: NormalizationNone, NormalizationVersion: 1,
+	}})
+}
+
+func (s *Store) seedCommunicationServiceSet(ctx context.Context, seedName string, inputs []CommunicationServiceInput) error {
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
 		var applied int
 		if err := tx.QueryRowContext(ctx,
 			`SELECT COUNT(*) FROM applied_migrations WHERE name = ?`,
-			communicationServicesSeedV1,
+			seedName,
 		).Scan(&applied); err != nil {
 			return fmt.Errorf("check communication service seed: %w", err)
 		}
@@ -507,7 +519,7 @@ func (s *Store) seedCommunicationServices(ctx context.Context) error {
 			slug, display_label, scope_policy, default_scope_kind, normalization,
 			normalization_version, uri_scheme, profile_url_template, is_system
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, TRUE)`)
-		for _, input := range seededCommunicationServices {
+		for _, input := range inputs {
 			if _, err := tx.ExecContext(ctx, insert,
 				input.Slug, input.DisplayLabel, input.ScopePolicy, stringValue(input.DefaultScopeKind),
 				input.Normalization, input.NormalizationVersion, stringValue(input.URIScheme),
@@ -530,7 +542,7 @@ func (s *Store) seedCommunicationServices(ctx context.Context) error {
 		}
 		if _, err := tx.ExecContext(ctx,
 			s.dialect.InsertOrIgnore(`INSERT OR IGNORE INTO applied_migrations (name) VALUES (?)`),
-			communicationServicesSeedV1,
+			seedName,
 		); err != nil {
 			return fmt.Errorf("record communication service seed: %w", err)
 		}
