@@ -158,8 +158,9 @@ old file that later returns stays skipped, including during
 `sync-beeper --full`, and two runs close enough together to both land
 inside one brief bridge outage can retire a file the bridge would otherwise
 have recovered. Sync and backfill summaries
-report newly terminal files as "media no longer available at source". Other
-failed downloads get at most three attempts per message attachment per run and
+report newly terminal files as "media no longer available at source". A
+not-found costs exactly one request per run, never three; other failed
+downloads get at most three attempts per message attachment per run and
 stay pending for the next backfill.
 
 Because Beeper's API serves what Beeper Desktop has synced locally, archive
