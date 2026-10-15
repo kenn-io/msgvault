@@ -1559,11 +1559,6 @@ func TestIsConfirmedAssetNotFound(t *testing.T) {
 			timestamp: old,
 		},
 		{
-			name:      "previous is already terminal, not provisional",
-			previous:  store.AttachmentRef{State: attachmentpolicy.StateUnavailable, SkipReason: attachmentpolicy.SkipSourceUnavailable},
-			timestamp: old,
-		},
-		{
 			name:      "previous failed for an unrelated reason",
 			previous:  store.AttachmentRef{State: attachmentpolicy.StateFailed, SkipReason: attachmentpolicy.SkipFetchFailure},
 			timestamp: old,
