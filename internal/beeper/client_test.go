@@ -222,34 +222,131 @@ func assetServer(t *testing.T, responses ...assetResponse) (*Client, *atomic.Int
 	return c, &calls
 }
 
+// TestGetAssetBytesClassification covers every outcome fetch's asset
+// classification can reach: the two phrase-table sentinels (with their
+// precedence when a body names both), the bare-404 fallback, status codes
+// that win over the phrase table (401/429), transient retries, and 403
+// getting no special asset handling at all.
 func TestGetAssetBytesClassification(t *testing.T) {
 	tests := []struct {
 		name        string
 		responses   []assetResponse
 		wantCalls   int32
-		wantErr     bool
+		wantOK      bool
+		wantData    string
 		unavailable bool
+		notFound    bool
+		permanent   bool // no sentinel: falls through like any other 4xx
 	}{
 		{
-			name:        "permanent error is not retried",
+			name:        "definitive phrase on a 5xx is not retried",
 			responses:   []assetResponse{{status: http.StatusInternalServerError, body: expiredAssetBody}},
 			wantCalls:   1,
-			wantErr:     true,
 			unavailable: true,
 		},
 		{
-			name:        "permanent phrase on a client error",
+			name:        "definitive phrase on a client error",
 			responses:   []assetResponse{{status: http.StatusBadRequest, body: "MEDIA IS NO LONGER AVAILABLE"}},
 			wantCalls:   1,
-			wantErr:     true,
 			unavailable: true,
 		},
 		{
-			name:        "permanent phrase on not found",
+			name:        "definitive phrase wins over a bare 404",
 			responses:   []assetResponse{{status: http.StatusNotFound, body: expiredAssetBody}},
 			wantCalls:   1,
-			wantErr:     true,
 			unavailable: true,
+		},
+		{
+			name:      "bare 404 with no phrase is not-found",
+			responses: []assetResponse{{status: http.StatusNotFound}},
+			wantCalls: 1,
+			notFound:  true,
+		},
+		{
+			name:      "telegram bridge not-found wrapped in a 502",
+			responses: []assetResponse{{status: 502, body: `{"message":"Failed to download asset: Transfer failed for mxc://example.test/a downloadFileWithParams failed: Media not found","code":"SERVE_ASSET_ERROR"}`}},
+			wantCalls: 1,
+			notFound:  true,
+		},
+		{
+			name:      "matrix bridge M_NOT_FOUND wrapped in a 502",
+			responses: []assetResponse{{status: 502, body: `{"message":"Failed to download asset: Transfer failed for mxc://example.test/a downloadFileWithParams failed: failed to download file: M_NOT_FOUND (HTTP 404): ","code":"SERVE_ASSET_ERROR"}`}},
+			wantCalls: 1,
+			notFound:  true,
+		},
+		{
+			name:      "instagram bridge HTTP 404 wrapped in a 502",
+			responses: []assetResponse{{status: 502, body: `{"message":"Failed to download asset: Transfer failed for mxc://example.test/a downloadFileWithParams failed: failed to download file: HTTP 404","code":"SERVE_ASSET_ERROR"}`}},
+			wantCalls: 1,
+			notFound:  true,
+		},
+		{
+			name:      "not-found phrase match is case-insensitive",
+			responses: []assetResponse{{status: 502, body: "mEdIa NoT fOuNd"}},
+			wantCalls: 1,
+			notFound:  true,
+		},
+		{
+			name: "transient retry then not-found ends the attempt early",
+			responses: []assetResponse{
+				{status: 500},
+				{status: 502, body: "M_NOT_FOUND"},
+				{status: 200},
+			},
+			wantCalls: 2,
+			notFound:  true,
+		},
+		{
+			name:        "both phrases in one body resolve to the definitive one",
+			responses:   []assetResponse{{status: 502, body: "Media not found: Media is no longer available"}},
+			wantCalls:   1,
+			unavailable: true,
+		},
+		{
+			name:      "a successful body is never scanned",
+			responses: []assetResponse{{status: 200, body: "Media not found"}},
+			wantCalls: 1,
+			wantOK:    true,
+			wantData:  "Media not found",
+		},
+		{
+			name:      "401 wins over a not-found phrase",
+			responses: []assetResponse{{status: 401, body: "Media not found"}},
+			wantCalls: 1,
+			permanent: true,
+		},
+		{
+			name:      "429 wins over a not-found phrase",
+			responses: []assetResponse{{status: 429, body: "Media not found"}},
+			wantCalls: 3,
+		},
+		{
+			// No case singles out 403: a phraseless 403 falls through to the
+			// same default every other unhandled 4xx hits.
+			name:      "403 with no matching phrase falls through like any unhandled status",
+			responses: []assetResponse{{status: 403, body: "access denied"}},
+			wantCalls: 1,
+			permanent: true,
+		},
+		{
+			// A 403 that does carry a not-found phrase classifies the same
+			// as any other status, exactly like the pre-existing definitive
+			// phrase match (never gated on status) already did on main.
+			name:      "403 with a not-found phrase classifies like any other status",
+			responses: []assetResponse{{status: 403, body: "Media not found"}},
+			wantCalls: 1,
+			notFound:  true,
+		},
+		{
+			name:        "403 with the definitive phrase classifies like any other status",
+			responses:   []assetResponse{{status: 403, body: "Media is no longer available"}},
+			wantCalls:   1,
+			unavailable: true,
+		},
+		{
+			name:      "unrelated 502 is treated as a plain server error",
+			responses: []assetResponse{{status: 502, body: "upstream timeout"}},
+			wantCalls: 3,
 		},
 		{
 			name: "throttling is transient whatever its body says",
@@ -259,24 +356,23 @@ func TestGetAssetBytesClassification(t *testing.T) {
 				{status: http.StatusOK, body: "bytes"},
 			},
 			wantCalls: 3,
+			wantOK:    true,
+			wantData:  "bytes",
 		},
 		{
 			name:      "throttling is transient but bounded",
 			responses: []assetResponse{{status: http.StatusTooManyRequests, retryAfter: "0"}},
 			wantCalls: 3,
-			wantErr:   true,
 		},
 		{
 			name:      "unknown server errors are capped",
 			responses: []assetResponse{{status: http.StatusInternalServerError, body: `{"message":"boom"}`}},
 			wantCalls: 3,
-			wantErr:   true,
 		},
 		{
 			name:      "server Retry-After counts toward the cap",
 			responses: []assetResponse{{status: http.StatusServiceUnavailable, retryAfter: "0"}},
 			wantCalls: 3,
-			wantErr:   true,
 		},
 		{
 			name: "throttling counts toward the asset retry cap",
@@ -288,7 +384,6 @@ func TestGetAssetBytesClassification(t *testing.T) {
 				{status: http.StatusOK, body: "bytes"},
 			},
 			wantCalls: 3,
-			wantErr:   true,
 		},
 	}
 	for _, tt := range tests {
@@ -297,14 +392,20 @@ func TestGetAssetBytesClassification(t *testing.T) {
 			c, calls := assetServer(t, tt.responses...)
 			data, err := c.GetAssetBytes(context.Background(), "mxc://example.test/a", 1<<20)
 			assert.Equal(tt.wantCalls, calls.Load())
-			if !tt.wantErr {
+			if tt.wantOK {
 				require.NoError(t, err)
-				assert.Equal("bytes", string(data))
+				if tt.wantData != "" {
+					assert.Equal(tt.wantData, string(data))
+				}
 				return
 			}
 			require.Error(t, err)
-			assert.Equal(tt.unavailable, errors.Is(err, ErrAssetUnavailable), "error: %v", err)
 			assert.NotErrorIs(err, ErrAssetTooLarge)
+			assert.Equal(tt.unavailable, errors.Is(err, ErrAssetUnavailable), "error: %v", err)
+			assert.Equal(tt.notFound, errors.Is(err, ErrAssetNotFound), "error: %v", err)
+			if tt.permanent {
+				assert.ErrorIs(err, errPermanentResponse)
+			}
 		})
 	}
 }
@@ -343,51 +444,6 @@ func TestClientDoesNotSleepAfterFinalAttempt(t *testing.T) {
 	// Two capped waits (1s total) separate three attempts; a third wait
 	// after the last attempt would push this to at least 1.5s.
 	assert.Less(time.Since(start), 1400*time.Millisecond)
-}
-
-func TestGetAssetBytesNotFound(t *testing.T) {
-	for _, tt := range []struct {
-		name        string
-		responses   []assetResponse
-		calls       int32
-		missing     bool
-		unavailable bool
-	}{
-		{"telegram", []assetResponse{{status: 502, body: `{"message":"Failed to download asset: Transfer failed for mxc://example.test/a downloadFileWithParams failed: Media not found","code":"SERVE_ASSET_ERROR"}`}}, 1, true, false},
-		{"matrix", []assetResponse{{status: 502, body: `{"message":"Failed to download asset: Transfer failed for mxc://example.test/a downloadFileWithParams failed: failed to download file: M_NOT_FOUND (HTTP 404): ","code":"SERVE_ASSET_ERROR"}`}}, 1, true, false},
-		{"instagram", []assetResponse{{status: 502, body: `{"message":"Failed to download asset: Transfer failed for mxc://example.test/a downloadFileWithParams failed: failed to download file: HTTP 404","code":"SERVE_ASSET_ERROR"}`}}, 1, true, false},
-		{"direct 404", []assetResponse{{status: 404}}, 1, true, false},
-		{"mixed case", []assetResponse{{status: 502, body: "mEdIa NoT fOuNd"}}, 1, true, false},
-		{"success", []assetResponse{{status: 200, body: "Media not found"}}, 1, false, false},
-		{"unauthorized", []assetResponse{{status: 401, body: "Media not found"}}, 1, false, false},
-		{"forbidden", []assetResponse{{status: 403, body: "Media not found"}}, 1, false, false},
-		{"forbidden definitive", []assetResponse{{status: 403, body: "Media is no longer available"}}, 1, false, false},
-		{"throttled", []assetResponse{{status: 429, body: "Media not found"}}, 3, false, false},
-		{"mixed definitive", []assetResponse{{status: 502, body: "Media not found: Media is no longer available"}}, 1, false, true},
-		{"transient then missing", []assetResponse{{status: 500}, {status: 502, body: "M_NOT_FOUND"}, {status: 200}}, 2, true, false},
-		{"unrelated 502", []assetResponse{{status: 502, body: "upstream timeout"}}, 3, false, false},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			require := require.New(t)
-			assert := assert.New(t)
-			c, calls := assetServer(t, tt.responses...)
-			_, err := c.GetAssetBytes(t.Context(), "mxc://example.test/a", 16)
-			assert.Equal(tt.calls, calls.Load())
-			if tt.responses[0].status == http.StatusOK {
-				require.NoError(err)
-			} else {
-				require.Error(err)
-			}
-			// The dedicated class must differ from generic message/chat 404.
-			if tt.missing {
-				require.ErrorIs(err, ErrAssetNotFound)
-				require.NotErrorIs(err, ErrNotFound)
-			} else if err != nil {
-				require.NotErrorIs(err, ErrAssetNotFound)
-			}
-			assert.Equal(tt.unavailable, errors.Is(err, ErrAssetUnavailable))
-		})
-	}
 }
 
 func TestClientNotFoundPhraseIgnoredOffAssets(t *testing.T) {
