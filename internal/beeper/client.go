@@ -188,6 +188,12 @@ func (c *Client) fetch(ctx context.Context, path string, maxBytes int64, asset b
 		var assetErr error
 		if asset && !ok {
 			assetErr = classifyAssetError(body)
+			if assetErr == nil && resp.StatusCode == http.StatusNotFound {
+				// A bare asset 404 with no matching phrase is still a
+				// not-found; fold it into assetErr so it shares the one
+				// transient-taint check below instead of repeating it.
+				assetErr = ErrAssetNotFound
+			}
 		}
 		switch {
 		case ok:
@@ -214,13 +220,6 @@ func (c *Client) fetch(ctx context.Context, path string, maxBytes int64, asset b
 		case assetErr != nil:
 			return nil, fmt.Errorf("beeper GET %s: status %d: %s: %w",
 				reqURL, resp.StatusCode, errorSnippet(body), assetErr)
-		case asset && resp.StatusCode == http.StatusNotFound:
-			if sawTransientAssetFailure {
-				return nil, fmt.Errorf("beeper GET %s: status %d after a transient failure earlier in this attempt: %s",
-					reqURL, resp.StatusCode, errorSnippet(body))
-			}
-			return nil, fmt.Errorf("beeper GET %s: status %d: %s: %w",
-				reqURL, resp.StatusCode, errorSnippet(body), ErrAssetNotFound)
 		case resp.StatusCode == http.StatusNotFound:
 			return nil, fmt.Errorf("beeper GET %s: %w", reqURL, ErrNotFound)
 		case resp.StatusCode >= 500:

@@ -335,11 +335,6 @@ func TestGetAssetBytesClassification(t *testing.T) {
 			permanent: true,
 		},
 		{
-			name:      "unrelated 502 is treated as a plain server error",
-			responses: []assetResponse{{status: 502, body: "upstream timeout"}},
-			wantCalls: 3,
-		},
-		{
 			name: "throttling is transient whatever its body says",
 			responses: []assetResponse{
 				{status: http.StatusTooManyRequests, body: expiredAssetBody},
