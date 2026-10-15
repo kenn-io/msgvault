@@ -361,7 +361,10 @@ func TestImportMediaFailureLeavesMarkerAndBackfillRepairs(t *testing.T) {
 	ch := mediaChat()
 	ch.Msgs[0].Attachments[0]["transcription"] = map[string]any{"transcription": "pending words"}
 	f.addChat(ch)
-	// Asset intentionally missing: download fails, message still archives.
+	// An ordinary fetch failure, not a not-found: this test exercises the
+	// generic failure/repair/metadata-refresh path, not the not-found policy
+	// (covered separately by TestAssetNotFoundBecomesTerminalOnlyOnConfirmedRepeat).
+	f.setAssetError("mxc://beeper.local/photo1", http.StatusBadRequest, "boom")
 	imp, st, done := newTestImporter(t, f)
 	defer done()
 
@@ -402,7 +405,11 @@ func TestImportMediaFailureLeavesMarkerAndBackfillRepairs(t *testing.T) {
 		`SELECT COUNT(*) FROM sync_run_items WHERE error_kind = 'beeper_media_error'`).Scan(&itemCount))
 	assert.Equal(1, itemCount)
 
-	// The asset becomes available; backfill repairs the marker.
+	// The asset becomes available; backfill repairs the marker. Clear the
+	// stashed error first: the fake server checks it before serving bytes.
+	f.mu.Lock()
+	delete(f.assetErrors, "mxc://beeper.local/photo1")
+	f.mu.Unlock()
 	f.setAsset("mxc://beeper.local/photo1", []byte("late bytes"))
 	bsum, err := imp.BackfillMedia(context.Background(), ImportOptions{
 		AccountID: "signal", AttachmentsDir: opts.AttachmentsDir,
@@ -1354,18 +1361,32 @@ func TestMediaTypeOf(t *testing.T) {
 	assert.Empty(assetRef(&Attachment{}))
 }
 
+// backdateNotFoundFirstSeen rewrites a not-found marker's first-seen stamp
+// so a test can simulate the cooldown having elapsed (or not) without
+// sleeping. sourceAttID is the attachments.source_attachment_id value, e.g.
+// beeperAttachmentID(assetURL).
+func backdateNotFoundFirstSeen(t *testing.T, st *store.Store, sourceAttID string, age time.Duration) {
+	t.Helper()
+	metadata := withNotFoundFirstSeen("", time.Now().Add(-age))
+	_, err := st.DB().Exec(st.Rebind(`UPDATE attachments SET attachment_metadata = ? WHERE source_attachment_id = ?`),
+		metadata, sourceAttID)
+	require.NoError(t, err)
+}
+
 // TestAssetNotFoundBecomesTerminalOnlyOnConfirmedRepeat exercises the
 // decided policy end to end against a real store: a not-found response
 // costs one request and leaves a retryable marker; it becomes terminal only
 // once the message is old (assetNotFoundMaxAge, computed relative to that
-// constant rather than a hardcoded duration) and a separate, later run
-// repeats the same not-found outcome.
+// constant rather than a hardcoded duration), a separate, later run repeats
+// the same not-found outcome, and that repeat is at least
+// notFoundRepeatCooldown after the first miss.
 func TestAssetNotFoundBecomesTerminalOnlyOnConfirmedRepeat(t *testing.T) {
 	const assetURL = "mxc://beeper.local/photo1"
+	sourceAttID := beeperAttachmentID(assetURL)
 	oldTimestamp := func() time.Time { return time.Now().Add(-assetNotFoundMaxAge - time.Hour).UTC() }
 	youngTimestamp := func() time.Time { return time.Now().Add(-assetNotFoundMaxAge + time.Hour).UTC() }
 
-	t.Run("old message: first miss retryable, confirmed repeat is terminal, never asked again", func(t *testing.T) {
+	t.Run("old message: first miss retryable, repeat inside the cooldown stays retryable, repeat past it is terminal, never asked again", func(t *testing.T) {
 		require := require.New(t)
 		assert := assert.New(t)
 		f := newFakeBeeper(t)
@@ -1392,9 +1413,19 @@ func TestAssetNotFoundBecomesTerminalOnlyOnConfirmedRepeat(t *testing.T) {
 		opts.Full = true
 		sum, err = imp.Import(t.Context(), opts)
 		require.NoError(err)
-		assert.Len(assetRequests(f), 1, "the repeat still costs only one request")
+		assert.Len(assetRequests(f), 1, "a repeat still costs only one request")
 		require.NoError(st.DB().QueryRow(`SELECT attachment_state, attachment_skip_reason FROM attachments`).Scan(&state, &reason))
-		assert.Equal(string(attachmentpolicy.StateUnavailable), state, "a confirmed repeat on a later run goes terminal")
+		assert.Equal(string(attachmentpolicy.StateFailed), state, "a repeat seconds after the first miss is still inside the cooldown")
+		assert.Equal(string(attachmentpolicy.SkipSourceUnavailable), reason)
+		assert.Zero(sum.AttachmentsUnavailable, "two runs inside one short outage must not retire the file")
+
+		backdateNotFoundFirstSeen(t, st, sourceAttID, notFoundRepeatCooldown+time.Hour)
+		f.resetRequests()
+		sum, err = imp.Import(t.Context(), opts)
+		require.NoError(err)
+		assert.Len(assetRequests(f), 1, "the confirming repeat still costs only one request")
+		require.NoError(st.DB().QueryRow(`SELECT attachment_state, attachment_skip_reason FROM attachments`).Scan(&state, &reason))
+		assert.Equal(string(attachmentpolicy.StateUnavailable), state, "a repeat past the cooldown, on a later run, goes terminal")
 		assert.Equal(string(attachmentpolicy.SkipSourceUnavailable), reason)
 		assert.EqualValues(1, sum.AttachmentsUnavailable)
 

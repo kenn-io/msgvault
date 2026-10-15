@@ -97,8 +97,9 @@ type sourceTranscriptMetadata struct {
 }
 
 type attachmentMetadata struct {
-	SharedURL        string                    `json:"shared_url,omitempty"`
-	SourceTranscript *sourceTranscriptMetadata `json:"source_transcript,omitzero"`
+	SharedURL         string                    `json:"shared_url,omitempty"`
+	SourceTranscript  *sourceTranscriptMetadata `json:"source_transcript,omitzero"`
+	NotFoundFirstSeen string                    `json:"not_found_first_seen,omitempty"`
 }
 
 func truncateUTF8(s string, maxBytes int) (string, bool) {
@@ -140,23 +141,71 @@ func attachmentMetadataJSON(m *Message, att *Attachment) string {
 
 // assetNotFoundMaxAge gives recently sent media time to reach the bridge. A
 // message older than this that still gets a not-found response is eligible
-// to go terminal, but only once that outcome repeats on a later run (see
-// isConfirmedAssetNotFound); a message younger than this stays retryable no
-// matter how many times the not-found repeats.
+// to go terminal, but only once that outcome repeats on a later run at least
+// notFoundRepeatCooldown after the first miss (see isConfirmedAssetNotFound);
+// a message younger than this stays retryable no matter how many times the
+// not-found repeats.
 const assetNotFoundMaxAge = 30 * 24 * time.Hour
+
+// notFoundRepeatCooldown is the minimum time between the first not-found
+// miss and the repeat that confirms it. A bridge outage can answer
+// not-found for a while; two misses within one outage must not be enough to
+// retire a file that would come back once the bridge recovers.
+const notFoundRepeatCooldown = 24 * time.Hour
+
+// withNotFoundFirstSeen layers a not-found first-seen stamp onto an
+// otherwise-computed metadata JSON string, so the next run can tell a
+// repeat from a first miss. metadataJSON may be "" (attachmentMetadataJSON
+// returns "" when there is nothing else to record).
+func withNotFoundFirstSeen(metadataJSON string, firstSeen time.Time) string {
+	var metadata attachmentMetadata
+	if metadataJSON != "" {
+		if err := json.Unmarshal([]byte(metadataJSON), &metadata); err != nil {
+			metadata = attachmentMetadata{}
+		}
+	}
+	metadata.NotFoundFirstSeen = firstSeen.UTC().Format(time.RFC3339Nano)
+	b, err := json.Marshal(metadata, json.Deterministic(true))
+	if err != nil {
+		return metadataJSON
+	}
+	return string(b)
+}
+
+// notFoundFirstSeenIn reads back a stamp withNotFoundFirstSeen wrote.
+func notFoundFirstSeenIn(metadataJSON string) (time.Time, bool) {
+	if metadataJSON == "" {
+		return time.Time{}, false
+	}
+	var metadata attachmentMetadata
+	if err := json.Unmarshal([]byte(metadataJSON), &metadata); err != nil || metadata.NotFoundFirstSeen == "" {
+		return time.Time{}, false
+	}
+	seen, err := time.Parse(time.RFC3339Nano, metadata.NotFoundFirstSeen)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return seen, true
+}
 
 // isConfirmedAssetNotFound reports whether a not-found response for an old
 // message repeats a provisional miss already persisted by an earlier
-// Import/BackfillMedia call (StateFailed/SkipSourceUnavailable). A first-ever
-// miss, or a miss whose last persisted outcome was something else, is not
-// confirmed: it is recorded as an ordinary retryable failure instead.
+// Import/BackfillMedia call (StateFailed/SkipSourceUnavailable), at least
+// notFoundRepeatCooldown after that miss was first recorded. A first-ever
+// miss, a miss whose last persisted outcome was something else, or a repeat
+// still inside the cooldown is not confirmed: it is recorded as an ordinary
+// retryable failure instead.
 func isConfirmedAssetNotFound(hadPrevious bool, previous store.AttachmentRef, timestamp, now time.Time) bool {
 	if !hadPrevious ||
 		previous.State != attachmentpolicy.StateFailed ||
 		previous.SkipReason != attachmentpolicy.SkipSourceUnavailable {
 		return false
 	}
-	return !timestamp.IsZero() && !timestamp.After(now.Add(-assetNotFoundMaxAge))
+	if timestamp.IsZero() || timestamp.After(now.Add(-assetNotFoundMaxAge)) {
+		return false
+	}
+	firstSeen, ok := notFoundFirstSeenIn(previous.Metadata)
+	return ok && !now.Before(firstSeen.Add(notFoundRepeatCooldown))
 }
 
 // persistAttachments downloads a message's media into content-addressed
@@ -223,7 +272,13 @@ func (imp *Importer) persistAttachments(ctx context.Context, syncID, messageID i
 			continue
 		}
 		if failed, ok := imp.mediaFailures[attemptKey]; ok {
-			failed.Metadata = attachmentMetadataJSON(m, att)
+			metadata := attachmentMetadataJSON(m, att)
+			if seen, ok := notFoundFirstSeenIn(failed.Metadata); ok {
+				// Re-persisting this message within the same run must not
+				// drop the not-found clock this attachment already started.
+				metadata = withNotFoundFirstSeen(metadata, seen)
+			}
+			failed.Metadata = metadata
 			setBeeperAttachmentRole(&failed, att, isPreview)
 			refs = append(refs, failed)
 			continue
@@ -326,8 +381,19 @@ func (imp *Importer) persistAttachments(ctx context.Context, syncID, messageID i
 				continue
 			}
 			// First miss, or the last persisted outcome was not itself a
-			// provisional not-found: stay retryable, same as any other
-			// failure, so a later run can confirm or recover it.
+			// provisional not-found, or still inside the cooldown: stay
+			// retryable, same as any other failure, so a later run can
+			// confirm or recover it. Carry the first-seen stamp forward
+			// across repeats so the cooldown is measured from the first
+			// miss, not the latest one.
+			firstSeen := time.Now()
+			if hadPrevious && previous.State == attachmentpolicy.StateFailed &&
+				previous.SkipReason == attachmentpolicy.SkipSourceUnavailable {
+				if seen, ok := notFoundFirstSeenIn(previous.Metadata); ok {
+					firstSeen = seen
+				}
+			}
+			marker.Metadata = withNotFoundFirstSeen(marker.Metadata, firstSeen)
 			pend(store.SyncRunItemStatusError, "beeper_media_error", false, attachmentpolicy.SkipSourceUnavailable, err)
 			imp.mediaFailures[attemptKey] = refs[len(refs)-1]
 			continue
