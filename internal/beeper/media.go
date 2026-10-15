@@ -416,8 +416,15 @@ type chatRefresh struct {
 // than a type or roster the archive predates. The returned error is fatal
 // (store failure); a fetch failure is carried in the result instead.
 func (imp *Importer) refreshChatContext(
-	ctx context.Context, syncID, sourceID int64, chatID string, sum *ImportSummary,
+	ctx context.Context, syncID, sourceID, conversationID int64, chatID string, sum *ImportSummary,
 ) (*chatRefresh, error) {
+	// Media refresh does not reconcile the archived roster. Clear earlier route
+	// proof before the provider read so an interruption, a failed read, or a
+	// membership change cannot leave it verified. The next sync that visits the
+	// chat captures fresh proof.
+	if err := imp.store.InvalidateConversationMessagingRouteEvidence(ctx, conversationID); err != nil {
+		return nil, err
+	}
 	chat, gerr := imp.client.GetChat(ctx, chatID)
 	if errors.Is(gerr, ErrNotFound) {
 		return &chatRefresh{}, nil
@@ -425,6 +432,11 @@ func (imp *Importer) refreshChatContext(
 	if gerr != nil {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
+		}
+		if err := imp.store.InvalidateSourceConversationMessagingRouteEvidenceWithFailureContext(
+			ctx, sourceID, chatID, "membership_fetch_failed",
+		); err != nil {
+			return nil, err
 		}
 		imp.recordItem(syncID, chatID, "fetch", store.SyncRunItemStatusError, "beeper_fetch_error", gerr)
 		sum.FetchErrors++
@@ -528,6 +540,9 @@ func (imp *Importer) BackfillMedia(ctx context.Context, opts ImportOptions) (*Im
 		// runs. Only a pass whose remaining work was entirely excluded by the
 		// current policy can safely remain local.
 		if err = imp.verifyAnchors(ctx, syncID, src.ID, state); err != nil {
+			if errors.Is(err, ErrNeedsReanchor) {
+				err = imp.recordReanchorRequired(ctx, opts, src.ID, err)
+			}
 			return sum, err
 		}
 		// This run's state becomes the newest completed baseline: like the main
@@ -551,7 +566,7 @@ func (imp *Importer) BackfillMedia(ctx context.Context, opts ImportOptions) (*Im
 		if policy.Scope == attachmentpolicy.ScopeDirect {
 			refresh, cached := chatRefreshes[item.ChatID]
 			if !cached {
-				refresh, err = imp.refreshChatContext(ctx, syncID, src.ID, item.ChatID, sum)
+				refresh, err = imp.refreshChatContext(ctx, syncID, src.ID, item.ConversationID, item.ChatID, sum)
 				if err != nil {
 					return sum, err
 				}

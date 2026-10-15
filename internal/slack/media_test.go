@@ -486,6 +486,11 @@ func TestNoMediaDefersFilesAsPendingNotLinks(t *testing.T) {
 	pending, err := st.ListSlackPendingAttachmentMessages(src.ID)
 	require.NoError(err)
 	require.Len(pending, 1, "a --no-media deferred hosted file must stay discoverable")
+	var conversationID int64
+	require.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT conversation_id FROM messages WHERE source_id = ? AND source_message_id = ?`,
+	), src.ID, "C01:"+ts(6)).Scan(&conversationID))
+	assert.Equal(conversationID, pending[0].ConversationID)
 
 	// Enabling media and backfilling downloads it.
 	opts.NoMedia = false

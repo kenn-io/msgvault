@@ -10,11 +10,20 @@ import (
 
 // ---- Beeper Desktop API objects (see /v1/spec, "Beeper Client API") ----
 
+// AccountBridge carries the provider's authoritative service identity.
+type AccountBridge struct {
+	ID       string `json:"id"`
+	Provider string `json:"provider"`
+	Type     string `json:"type"`
+}
+
 // Account is a chat account connected to Beeper Desktop (one per network login).
 type Account struct {
-	AccountID string `json:"accountID"`
-	Network   string `json:"network"` // human-friendly name; may be empty
-	User      User   `json:"user"`
+	Bridge    *AccountBridge `json:"bridge"`
+	Status    string         `json:"status"`
+	AccountID string         `json:"accountID"`
+	Network   string         `json:"network"` // human-friendly name; may be empty
+	User      User           `json:"user"`
 	// Discovered marks an account assembled from chat data because the
 	// accounts endpoint did not report it (see DiscoverAccounts). It is never
 	// decoded from the API.
@@ -84,15 +93,23 @@ type ChatParticipants struct {
 	Total   int           `json:"total"`
 }
 
+// ChatMerge lists a merged container's underlying network chats.
+type ChatMerge struct {
+	ChatIDs       []string `json:"chatIDs"`
+	DefaultChatID string   `json:"defaultChatID"`
+}
+
 // Chat is a conversation on one account.
 type Chat struct {
-	ID           string           `json:"id"` // Matrix room ID, globally unique
-	AccountID    string           `json:"accountID"`
-	Network      string           `json:"network"`
-	Title        string           `json:"title"`
-	Type         string           `json:"type"` // "single" | "group"
-	Participants ChatParticipants `json:"participants"`
-	LastActivity time.Time        `json:"lastActivity"`
+	Merge            *ChatMerge       `json:"merge"`
+	MergedIntoChatID string           `json:"mergedIntoChatID"`
+	ID               string           `json:"id"` // Matrix room ID, globally unique
+	AccountID        string           `json:"accountID"`
+	Network          string           `json:"network"`
+	Title            string           `json:"title"`
+	Type             string           `json:"type"` // "single" | "group"
+	Participants     ChatParticipants `json:"participants"`
+	LastActivity     time.Time        `json:"lastActivity"`
 	// Draft is the composer draft as sent: absent, null, or an object.
 	Draft jsontext.Value `json:"draft"`
 }
@@ -192,6 +209,9 @@ type SearchChatsOutput struct {
 // ImportOptions configures one Import run for a single Beeper account
 // (= one msgvault source).
 type ImportOptions struct {
+	// Route proof is obtained from the exact account endpoint during this run.
+	// Neither a display label nor a user/account identifier can replace it.
+	routeAccount *Account
 	// AccountID is the Beeper account to sync (e.g. "whatsapp", "signal").
 	// It doubles as the msgvault source identifier.
 	AccountID string

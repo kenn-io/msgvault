@@ -63,6 +63,8 @@ const (
 	ToolGetPersonProfile          = "get_person_profile"
 	ToolGetPersonRelationship     = "get_person_relationship"
 	ToolGetPersonAgenda           = "get_person_agenda"
+	ToolFindContactCandidates     = "find_contact_candidates"
+	ToolGetPersonMessagingRoutes  = "get_person_messaging_routes"
 	ToolPromotePerson             = "promote_person"
 	ToolUpdatePersonNotes         = "update_person_notes"
 	ToolListSavedViews            = "list_saved_views"
@@ -123,6 +125,7 @@ type ServeOptions struct {
 	DirectoryBackend       peoplebrowser.DirectoryLister
 	PersonAgendaBackend    PersonAgendaBackend
 	Kata                   KataBackend
+	ContactRoutesBackend   ContactRoutesBackend
 	// KataLookup enables issue lookup and context reads.
 	KataLookup  bool
 	KataDocbank bool
@@ -358,35 +361,36 @@ func newMCPServerWithPolicy(
 		opts.downloads = &downloadCache{}
 	}
 	h := &handlers{
-		delegatedOnly:       opts.DelegatedOnly,
-		downloads:           opts.downloads,
-		engine:              opts.Engine,
-		archiveSQLQuerier:   opts.ArchiveSQLQuerier,
-		attachmentsDir:      opts.AttachmentsDir,
-		attachmentReader:    opts.AttachmentReader,
-		manifestSaver:       opts.ManifestSaver,
-		hybridSearcher:      opts.HybridSearcher,
-		similarSearcher:     opts.SimilarSearcher,
-		dataDir:             opts.DataDir,
-		documentSearcher:    opts.DocumentSearcher,
-		mediaSearcher:       opts.MediaSearcher,
-		personFileSearcher:  opts.PersonFileSearcher,
-		peopleBackend:       opts.PeopleBackend,
-		directoryBackend:    opts.DirectoryBackend,
-		hybridEngine:        opts.HybridEngine,
-		vectorCfg:           opts.VectorCfg,
-		backend:             opts.Backend,
-		visualSearcher:      opts.VisualSearcher,
-		savedViews:          opts.SavedViews,
-		meetings:            opts.Meetings,
-		calendar:            opts.Calendar,
-		personAgendaBackend: opts.PersonAgendaBackend,
-		kata:                opts.Kata,
-		identityReview:      opts.IdentityReview,
-		personCardDAV:       opts.PersonCardDAV,
-		messageTags:         opts.MessageTags,
-		identityScoring:     opts.IdentityScoring,
-		drafts:              opts.Drafts,
+		delegatedOnly:        opts.DelegatedOnly,
+		downloads:            opts.downloads,
+		engine:               opts.Engine,
+		archiveSQLQuerier:    opts.ArchiveSQLQuerier,
+		attachmentsDir:       opts.AttachmentsDir,
+		attachmentReader:     opts.AttachmentReader,
+		manifestSaver:        opts.ManifestSaver,
+		hybridSearcher:       opts.HybridSearcher,
+		similarSearcher:      opts.SimilarSearcher,
+		dataDir:              opts.DataDir,
+		documentSearcher:     opts.DocumentSearcher,
+		mediaSearcher:        opts.MediaSearcher,
+		personFileSearcher:   opts.PersonFileSearcher,
+		peopleBackend:        opts.PeopleBackend,
+		directoryBackend:     opts.DirectoryBackend,
+		hybridEngine:         opts.HybridEngine,
+		vectorCfg:            opts.VectorCfg,
+		backend:              opts.Backend,
+		visualSearcher:       opts.VisualSearcher,
+		savedViews:           opts.SavedViews,
+		meetings:             opts.Meetings,
+		calendar:             opts.Calendar,
+		personAgendaBackend:  opts.PersonAgendaBackend,
+		kata:                 opts.Kata,
+		identityReview:       opts.IdentityReview,
+		personCardDAV:        opts.PersonCardDAV,
+		messageTags:          opts.MessageTags,
+		identityScoring:      opts.IdentityScoring,
+		drafts:               opts.Drafts,
+		contactRoutesBackend: opts.ContactRoutesBackend,
 	}
 
 	for _, definition := range operationCatalog(opts, h) {

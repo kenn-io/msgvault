@@ -30,6 +30,9 @@ type ChatState struct {
 	// visited this chat, so a budget-limited scan resumes instead of
 	// re-probing the same chats every run.
 	TailProbed string `json:"tail_probed,omitempty"`
+	// Gone records that Beeper reported this chat missing. Unfiltered scans
+	// skip it until a chat listing returns it again.
+	Gone bool `json:"gone,omitzero"`
 }
 
 // AnchorProbe fingerprints the Beeper installation's message-ID space.
@@ -128,6 +131,7 @@ func (s *SyncState) Merge(other *SyncState) {
 			cs.PendingReplies = ocs.PendingReplies
 		}
 		cs.Done = ocs.Done
+		cs.Gone = ocs.Gone
 		if ocs.TailProbed > cs.TailProbed {
 			cs.TailProbed = ocs.TailProbed
 		}

@@ -15,6 +15,7 @@ import (
 // attachment marker that has not been downloaded yet.
 type PendingAttachmentMessage struct {
 	MessageID        int64
+	ConversationID   int64
 	SourceMessageID  string
 	ChatID           string // conversations.source_conversation_id
 	ConversationType string
@@ -106,7 +107,7 @@ func (s *Store) listRetryableAttachmentMessagesContext(ctx context.Context,
 	sourceID int64, providerPrefix string, policy attachmentpolicy.Policy,
 ) ([]PendingAttachmentMessage, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT m.id, m.source_message_id, c.source_conversation_id,
+		SELECT m.id, c.id, m.source_message_id, c.source_conversation_id,
 		       c.conversation_type, COALESCE(c.participant_count, 0),
 		       COALESCE(a.attachment_state, ''), COALESCE(a.size, 0),
 		       COALESCE(a.content_hash, ''), a.storage_path,
@@ -129,7 +130,7 @@ func (s *Store) listRetryableAttachmentMessagesContext(ctx context.Context,
 		var state attachmentpolicy.DownloadState
 		var size int64
 		var contentHash, storagePath, mediaType, conversationMetadata string
-		if err := rows.Scan(&item.MessageID, &item.SourceMessageID, &item.ChatID,
+		if err := rows.Scan(&item.MessageID, &item.ConversationID, &item.SourceMessageID, &item.ChatID,
 			&item.ConversationType, &item.ParticipantCount, &state, &size,
 			&contentHash, &storagePath, &mediaType, &conversationMetadata); err != nil {
 			return nil, err
@@ -455,7 +456,7 @@ func policyParticipantCount(
 
 func (s *Store) listPendingAttachmentMessages(sourceID int64, providerPrefix string) ([]PendingAttachmentMessage, error) {
 	rows, err := s.db.Query(`
-		SELECT m.id, m.source_message_id, c.source_conversation_id
+		SELECT m.id, c.id, m.source_message_id, c.source_conversation_id
 		FROM messages m
 		JOIN conversations c ON c.id = m.conversation_id
 		WHERE m.source_id = ?
@@ -476,7 +477,7 @@ func (s *Store) listPendingAttachmentMessages(sourceID int64, providerPrefix str
 	var items []PendingAttachmentMessage
 	for rows.Next() {
 		var item PendingAttachmentMessage
-		if err := rows.Scan(&item.MessageID, &item.SourceMessageID, &item.ChatID); err != nil {
+		if err := rows.Scan(&item.MessageID, &item.ConversationID, &item.SourceMessageID, &item.ChatID); err != nil {
 			return nil, err
 		}
 		items = append(items, item)
@@ -667,7 +668,7 @@ func (s *Store) MessageDiscordAttachmentsContext(ctx context.Context, messageID 
 // one Discord attachment that does not resolve to a trusted local CAS path.
 func (s *Store) ListDiscordPendingAttachmentMessages(sourceID int64) ([]DiscordPendingAttachmentMessage, error) {
 	rows, err := s.db.Query(`
-		SELECT m.id, m.source_message_id, c.source_conversation_id,
+		SELECT m.id, c.id, m.source_message_id, c.source_conversation_id,
 		       a.storage_path, COALESCE(a.content_hash, '')
 		FROM messages m
 		JOIN conversations c ON c.id = m.conversation_id
@@ -693,7 +694,7 @@ func (s *Store) ListDiscordPendingAttachmentMessages(sourceID int64) ([]DiscordP
 		var item DiscordPendingAttachmentMessage
 		var ref AttachmentRef
 		if err := rows.Scan(
-			&item.MessageID, &item.SourceMessageID, &item.ChatID,
+			&item.MessageID, &item.ConversationID, &item.SourceMessageID, &item.ChatID,
 			&ref.StoragePath, &ref.ContentHash,
 		); err != nil {
 			return nil, err
@@ -721,7 +722,7 @@ func (s *Store) ListDiscordPendingAttachmentMessages(sourceID int64) ([]DiscordP
 // ListDiscordPendingAttachmentMessages.
 func (s *Store) ListDiscordAttachmentMessages(sourceID int64) ([]DiscordAttachmentMessage, error) {
 	rows, err := s.db.Query(`
-		SELECT m.id, m.source_message_id, c.source_conversation_id,
+		SELECT m.id, c.id, m.source_message_id, c.source_conversation_id,
 		       c.conversation_type, COALESCE(c.participant_count, 0),
 		       COALESCE(CAST(c.metadata AS TEXT), '')
 		FROM messages m
@@ -744,7 +745,7 @@ func (s *Store) ListDiscordAttachmentMessages(sourceID int64) ([]DiscordAttachme
 	for rows.Next() {
 		var message DiscordAttachmentMessage
 		var metadata string
-		if err := rows.Scan(&message.MessageID, &message.SourceMessageID, &message.ChatID,
+		if err := rows.Scan(&message.MessageID, &message.ConversationID, &message.SourceMessageID, &message.ChatID,
 			&message.ConversationType, &message.ParticipantCount, &metadata); err != nil {
 			return nil, err
 		}

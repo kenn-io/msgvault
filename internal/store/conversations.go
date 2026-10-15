@@ -474,6 +474,9 @@ func (s *Store) MarkConversationMemberCountUnknownContext(ctx context.Context, c
 	if err != nil {
 		return err
 	}
+	if err := invalidateMessagingRouteMembership(metadata, ""); err != nil {
+		return err
+	}
 	metadata["member_count_unknown"] = jsontext.Value("true")
 	return s.writeConversationMetadataObjectContext(ctx, conversationID, metadata)
 }
@@ -530,6 +533,31 @@ func (s *Store) ListConversationIDsContext(ctx context.Context, sourceID int64) 
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("list conversations for source %d: %w", sourceID, err)
+	}
+	return ids, nil
+}
+
+// ListSourceConversationIDsContext returns nonempty provider conversation IDs
+// archived under sourceID, including conversations without messages.
+func (s *Store) ListSourceConversationIDsContext(ctx context.Context, sourceID int64) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, s.dialect.Rebind(`
+		SELECT source_conversation_id FROM conversations
+		WHERE source_id = ? AND source_conversation_id <> '' ORDER BY id
+	`), sourceID)
+	if err != nil {
+		return nil, fmt.Errorf("list provider conversations for source %d: %w", sourceID, err)
+	}
+	defer func() { _ = rows.Close() }()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan provider conversation id for source %d: %w", sourceID, err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list provider conversations for source %d: %w", sourceID, err)
 	}
 	return ids, nil
 }
