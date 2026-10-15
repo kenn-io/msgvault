@@ -141,9 +141,9 @@ it.
 
 Beeper can also report `Media not found`, `M_NOT_FOUND`, or
 `failed to download file: HTTP 404`, sometimes wrapped in an HTTP 502 response.
-A direct asset HTTP 404 follows the same policy. msgvault stops retrying that
-download for the current run as soon as it sees not-found, but the marker
-stays pending: a not-found alone never ends retries for good. It only becomes
+A plain HTTP 404 that names none of these is an ordinary failed download.
+msgvault stops retrying a not-found download for the current run, but the
+marker stays pending: a not-found alone never ends retries for good. It only becomes
 terminal once the message is at least 30 days old and a separate, later sync
 or backfill run gets not-found again for the same attachment. Anything else
 in between resets this: a successful download clears the history, and a
@@ -157,11 +157,14 @@ old missing file ever gets. Neither proves the file is permanently gone: an
 old file that later returns stays skipped, including during
 `sync-beeper --full`, and two runs close enough together to both land
 inside one brief bridge outage can retire a file the bridge would otherwise
-have recovered. Sync and backfill summaries
-report newly terminal files as "media no longer available at source". A
-not-found costs exactly one request per run, never three; other failed
-downloads get at most three attempts per message attachment per run and
-stay pending for the next backfill.
+have recovered. Sync and backfill summaries report newly terminal files as
+"media no longer available at source".
+
+A not-found costs one request per attachment per run. If a server error or
+throttling response comes before the not-found in the same run, msgvault
+records an ordinary failed download instead, and that starts the repeat count
+over. Other failed downloads get at most three attempts per attachment per run
+and stay pending for the next backfill.
 
 Because Beeper's API serves what Beeper Desktop has synced locally, archive
 depth equals your local Beeper history: a freshly added Beeper account may only

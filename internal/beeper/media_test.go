@@ -132,10 +132,9 @@ func mediaTranscriptChat() *fakeChat {
 }
 
 // mediaChat builds a chat with one image message whose asset may or may not
-// be present on the fake server. Its timestamp is inside the not-found
-// recovery window so generic missing-media fixtures remain retryable.
+// be present on the fake server.
 func mediaChat() *fakeChat {
-	base := time.Now().Add(-29 * 24 * time.Hour).UTC().Truncate(time.Second)
+	base := time.Now().Add(-30 * 24 * time.Hour).UTC().Truncate(time.Second)
 	return &fakeChat{
 		ID: "!media:beeper.local", AccountID: "signal", Network: "Signal", Title: "Media", Type: "single",
 		Participants: []map[string]any{
@@ -361,10 +360,7 @@ func TestImportMediaFailureLeavesMarkerAndBackfillRepairs(t *testing.T) {
 	ch := mediaChat()
 	ch.Msgs[0].Attachments[0]["transcription"] = map[string]any{"transcription": "pending words"}
 	f.addChat(ch)
-	// An ordinary fetch failure, not a not-found: this test exercises the
-	// generic failure/repair/metadata-refresh path, not the not-found policy
-	// (covered separately by TestAssetNotFoundBecomesTerminalOnlyOnConfirmedRepeat).
-	f.setAssetError("mxc://beeper.local/photo1", http.StatusBadRequest, "boom")
+	// Asset intentionally missing: download fails, message still archives.
 	imp, st, done := newTestImporter(t, f)
 	defer done()
 
@@ -405,11 +401,7 @@ func TestImportMediaFailureLeavesMarkerAndBackfillRepairs(t *testing.T) {
 		`SELECT COUNT(*) FROM sync_run_items WHERE error_kind = 'beeper_media_error'`).Scan(&itemCount))
 	assert.Equal(1, itemCount)
 
-	// The asset becomes available; backfill repairs the marker. Clear the
-	// stashed error first: the fake server checks it before serving bytes.
-	f.mu.Lock()
-	delete(f.assetErrors, "mxc://beeper.local/photo1")
-	f.mu.Unlock()
+	// The asset becomes available; backfill repairs the marker.
 	f.setAsset("mxc://beeper.local/photo1", []byte("late bytes"))
 	bsum, err := imp.BackfillMedia(context.Background(), ImportOptions{
 		AccountID: "signal", AttachmentsDir: opts.AttachmentsDir,
@@ -703,11 +695,7 @@ func TestBackfillMediaClearsMarkerWhenAttachmentGone(t *testing.T) {
 
 	f := newFakeBeeper(t)
 	f.addChat(mediaChat())
-	// An ordinary fetch failure, not a not-found: this test is about the
-	// marker being cleared when the source removes the attachment, not
-	// about not-found classification (covered by
-	// TestAssetNotFoundBecomesTerminalOnlyOnConfirmedRepeat).
-	f.setAssetError("mxc://beeper.local/photo1", http.StatusBadRequest, "boom")
+	// Asset missing: the sync leaves a pending marker.
 	imp, st, done := newTestImporter(t, f)
 	defer done()
 
@@ -749,10 +737,7 @@ func TestBackfillMediaTransientFetchErrorKeepsMarker(t *testing.T) {
 	})
 	ch.LastActivity = ch.Msgs[len(ch.Msgs)-1].Timestamp
 	f.addChat(ch)
-	// An ordinary fetch failure, not a not-found: this test is about a
-	// transient message-fetch failure, not about not-found classification
-	// (covered by TestAssetNotFoundBecomesTerminalOnlyOnConfirmedRepeat).
-	f.setAssetError("mxc://beeper.local/photo1", http.StatusBadRequest, "boom")
+	// Asset missing: the sync leaves a pending marker.
 	imp, st, done := newTestImporter(t, f)
 	defer done()
 
@@ -786,9 +771,6 @@ func TestBackfillMediaTransientFetchErrorKeepsMarker(t *testing.T) {
 
 	// Healed: the asset appears and the retry succeeds.
 	f.setMessageGetFailure("p0", false)
-	f.mu.Lock()
-	delete(f.assetErrors, "mxc://beeper.local/photo1")
-	f.mu.Unlock()
 	f.setAsset("mxc://beeper.local/photo1", []byte("finally"))
 	bsum, err = imp.BackfillMedia(context.Background(), ImportOptions{
 		AccountID: "signal", AttachmentsDir: opts.AttachmentsDir,
@@ -1265,18 +1247,17 @@ func TestBackfillMediaDefinitiveLossKeepsUnavailableRow(t *testing.T) {
 
 	f := newFakeBeeper(t)
 	ch := mediaChat()
-	ch.Msgs[0].Timestamp = time.Now().Add(-31 * 24 * time.Hour).UTC()
-	ch.LastActivity = ch.Msgs[0].Timestamp
+	// A recent message: definitive loss is terminal on the first miss,
+	// with no age or repeat requirement.
+	ch.Msgs[0].Timestamp = time.Now().Add(-24 * time.Hour).UTC().Truncate(time.Second)
 	ch.Msgs[0].Attachments = append(ch.Msgs[0].Attachments, map[string]any{
 		"id": "mxc://beeper.local/photo2", "type": "img", "mimeType": "image/png", "fileName": "later.png",
 	})
 	addFillerMessages(ch, 5)
 	f.addChat(ch)
-	f.setAssetError("mxc://beeper.local/photo1", http.StatusBadGateway, expiredAssetBody)
-	f.setAssetError("mxc://beeper.local/photo2", http.StatusBadGateway, "temporary failure")
+	f.setAssetError("mxc://beeper.local/photo1", http.StatusInternalServerError, expiredAssetBody)
 	imp, st, done := newTestImporter(t, f)
 	defer done()
-	imp.client.retryAfterMax = time.Millisecond
 
 	opts := mediaImportOptions(t)
 	sum, err := imp.Import(context.Background(), opts)
@@ -1371,25 +1352,15 @@ func TestMediaTypeOf(t *testing.T) {
 	assert.Empty(assetRef(&Attachment{}))
 }
 
-// TestAssetNotFoundBecomesTerminalOnlyOnConfirmedRepeat exercises the
-// decided policy end to end against a real store: a not-found response
-// costs one request and leaves a retryable marker; it becomes terminal only
-// once the message is old (assetNotFoundMaxAge, computed relative to that
-// constant rather than a hardcoded duration) and a separate, later
-// Import/BackfillMedia call repeats the same not-found outcome. Two such
-// calls close together, both landing inside one bridge outage, is an
-// accepted limit of this design (see assetNotFoundMaxAge's doc comment),
-// not a case this test guards against.
+// TestAssetNotFoundBecomesTerminalOnlyOnConfirmedRepeat runs the not-found
+// policy against a real store: a not-found costs one request and leaves a
+// retryable marker, and it becomes terminal only for an old message whose
+// not-found repeats on a separate, later run.
 func TestAssetNotFoundBecomesTerminalOnlyOnConfirmedRepeat(t *testing.T) {
 	const assetURL = "mxc://beeper.local/photo1"
 	oldTimestamp := func() time.Time { return time.Now().Add(-assetNotFoundMaxAge - time.Hour).UTC() }
 
 	t.Run("old message: first miss retryable, confirming repeat on a separate call goes terminal", func(t *testing.T) {
-		// The age gate is a pure function of isConfirmedAssetNotFound,
-		// covered directly and more cheaply by TestIsConfirmedAssetNotFound.
-		// This proves persistAttachments wires a real previous ref and
-		// message timestamp into that function and acts on its answer in
-		// both directions.
 		require := require.New(t)
 		assert := assert.New(t)
 		f := newFakeBeeper(t)
@@ -1440,9 +1411,6 @@ func TestAssetNotFoundBecomesTerminalOnlyOnConfirmedRepeat(t *testing.T) {
 		require.NoError(err)
 		assert.Zero(sum.AttachmentsUnavailable)
 
-		f.mu.Lock()
-		delete(f.assetErrors, assetURL)
-		f.mu.Unlock()
 		f.setAsset(assetURL, []byte("recovered bytes"))
 		f.resetRequests()
 		bsum, err := imp.BackfillMedia(t.Context(), opts)
@@ -1530,12 +1498,7 @@ func TestAssetNotFoundBecomesTerminalOnlyOnConfirmedRepeat(t *testing.T) {
 	})
 }
 
-// TestIsConfirmedAssetNotFound covers the age gate directly:
-// isConfirmedAssetNotFound is a pure function of its arguments, so this
-// needs no HTTP server or store, unlike
-// TestAssetNotFoundBecomesTerminalOnlyOnConfirmedRepeat, which exercises
-// only that persistAttachments wires a real previous ref and timestamp into
-// this function and acts on its answer.
+// TestIsConfirmedAssetNotFound covers the previous-marker and age checks.
 func TestIsConfirmedAssetNotFound(t *testing.T) {
 	now := time.Now()
 	old := now.Add(-assetNotFoundMaxAge - time.Hour)

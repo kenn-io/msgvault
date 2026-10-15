@@ -222,11 +222,9 @@ func assetServer(t *testing.T, responses ...assetResponse) (*Client, *atomic.Int
 	return c, &calls
 }
 
-// TestGetAssetBytesClassification covers every outcome fetch's asset
-// classification can reach: the two phrase-table sentinels (with their
-// precedence when a body names both), the bare-404 fallback, status codes
-// that win over the phrase table (401/429), transient retries, and 403
-// getting no special asset handling at all.
+// TestGetAssetBytesClassification covers the asset outcomes: the two
+// phrase-table sentinels and their precedence, a bare 404, statuses that win
+// over the phrase table, transient retries, and unhandled 4xx statuses.
 func TestGetAssetBytesClassification(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -236,6 +234,7 @@ func TestGetAssetBytesClassification(t *testing.T) {
 		wantData    string
 		unavailable bool
 		notFound    bool
+		bare404     bool // ErrNotFound: an ordinary failure, not an asset sentinel
 		permanent   bool // no sentinel: falls through like any other 4xx
 	}{
 		{
@@ -257,10 +256,10 @@ func TestGetAssetBytesClassification(t *testing.T) {
 			unavailable: true,
 		},
 		{
-			name:      "bare 404 with no phrase is not-found",
+			name:      "bare 404 with no phrase is an ordinary not-found",
 			responses: []assetResponse{{status: http.StatusNotFound}},
 			wantCalls: 1,
-			notFound:  true,
+			bare404:   true,
 		},
 		{
 			name:      "telegram bridge not-found wrapped in a 502",
@@ -323,12 +322,6 @@ func TestGetAssetBytesClassification(t *testing.T) {
 			wantCalls: 3,
 		},
 		{
-			// No case singles out 403: a phraseless 403 falls through to the
-			// same default every other unhandled 4xx hits, same as the
-			// explicit 401/429 cases show for their own statuses. A 403
-			// carrying a phrase needs no case of its own: classifyAssetError
-			// never looks at the status code, so it's reached through the
-			// same branch the 400/404/502 cases already prove.
 			name:      "403 with no matching phrase falls through like any unhandled status",
 			responses: []assetResponse{{status: 403, body: "access denied"}},
 			wantCalls: 1,
@@ -389,6 +382,7 @@ func TestGetAssetBytesClassification(t *testing.T) {
 			require.Error(err)
 			assert.Equal(tt.unavailable, errors.Is(err, ErrAssetUnavailable), "error: %v", err)
 			assert.Equal(tt.notFound, errors.Is(err, ErrAssetNotFound), "error: %v", err)
+			assert.Equal(tt.bare404, errors.Is(err, ErrNotFound), "error: %v", err)
 			if tt.permanent {
 				require.ErrorIs(err, errPermanentResponse)
 			}
@@ -432,8 +426,3 @@ func TestClientDoesNotSleepAfterFinalAttempt(t *testing.T) {
 	// after the last attempt would push this to at least 1.5s.
 	assert.Less(time.Since(start), 1400*time.Millisecond)
 }
-
-// A not-found phrase off an asset request needs no test of its own:
-// TestClientPermanentPhraseIgnoredOffAssets already proves the asset flag
-// gates classifyAssetError before any phrase is even checked, and
-// TestClientNotFound already proves a non-asset 404 resolves to ErrNotFound.

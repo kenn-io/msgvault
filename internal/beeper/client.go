@@ -124,7 +124,8 @@ func (c *Client) get(ctx context.Context, path string) ([]byte, error) {
 // against assetErrorPhrases regardless of status code (a bridge may wrap a
 // not-found outcome in a 502), with the definitive "no longer available"
 // phrase taking precedence over a not-found phrase when a body names both.
-// A bare asset 404 with no matching phrase still ends as ErrAssetNotFound.
+// A bare asset 404 with no matching phrase is ErrNotFound, an ordinary
+// failure: without a bridge's words it could be a proxy or a missing route.
 // Either sentinel ends this request's attempts without retrying; a not-found
 // is not itself terminal, and the importer decides whether its age and
 // history make the marker terminal. Transient 429/5xx responses are capped
@@ -132,13 +133,9 @@ func (c *Client) get(ctx context.Context, path string) ([]byte, error) {
 func (c *Client) fetch(ctx context.Context, path string, maxBytes int64, asset bool) ([]byte, error) {
 	reqURL := c.baseURL + path
 	assetAttempts := 0
-	// sawTransientAssetFailure tracks whether an earlier attempt in this same
-	// call hit a transient response (429, or a 5xx with no matching phrase)
-	// before a later attempt settled on not-found. That mixed outcome isn't
-	// the clean not-found the cross-run confirmation policy means to count:
-	// the importer's reset rule already treats "a different kind of error in
-	// between" as resetting a not-found streak between separate runs, and
-	// this makes that hold within one run's retries too.
+	// A not-found that follows a transient failure in the same call is not a
+	// clean miss, so it resets the importer's confirmation streak like any
+	// other intervening error.
 	sawTransientAssetFailure := false
 	for attempt := range maxRetries {
 		if err := c.limiter.Wait(ctx); err != nil {
@@ -188,12 +185,6 @@ func (c *Client) fetch(ctx context.Context, path string, maxBytes int64, asset b
 		var assetErr error
 		if asset && !ok {
 			assetErr = classifyAssetError(body)
-			if assetErr == nil && resp.StatusCode == http.StatusNotFound {
-				// A bare asset 404 with no matching phrase is still a
-				// not-found; fold it into assetErr so it shares the one
-				// transient-taint check below instead of repeating it.
-				assetErr = ErrAssetNotFound
-			}
 		}
 		switch {
 		case ok:
@@ -211,10 +202,6 @@ func (c *Client) fetch(ctx context.Context, path string, maxBytes int64, asset b
 			}
 			sawTransientAssetFailure = true
 		case errors.Is(assetErr, ErrAssetNotFound) && sawTransientAssetFailure:
-			// An earlier attempt in this same call hit a transient failure;
-			// this isn't the clean not-found the confirmation policy means
-			// to count, so report it as an ordinary retryable failure
-			// instead, same as a transient failure anywhere else would be.
 			return nil, fmt.Errorf("beeper GET %s: status %d after a transient failure earlier in this attempt: %s",
 				reqURL, resp.StatusCode, errorSnippet(body))
 		case assetErr != nil:

@@ -145,9 +145,7 @@ func attachmentMetadataJSON(m *Message, att *Attachment) string {
 // younger than this stays retryable no matter how many times the not-found
 // repeats. Accepted limit: two runs close enough together to land inside
 // one bridge outage can retire a file the bridge would otherwise have
-// recovered; closing that gap needs a persisted first-seen timestamp and a
-// minimum interval, at a cost (new state, three extra call sites to keep it
-// correct across deferrals and offline repair) this design does not pay.
+// recovered.
 const assetNotFoundMaxAge = 30 * 24 * time.Hour
 
 // isConfirmedAssetNotFound reports whether a not-found response for an old
