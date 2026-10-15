@@ -375,23 +375,24 @@ func TestGetAssetBytesClassification(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert := assert.New(t)
+			require := require.New(t)
 			c, calls := assetServer(t, tt.responses...)
 			data, err := c.GetAssetBytes(context.Background(), "mxc://example.test/a", 1<<20)
 			assert.Equal(tt.wantCalls, calls.Load())
 			if tt.wantOK {
-				require.NoError(t, err)
+				require.NoError(err)
 				if tt.wantData != "" {
 					assert.Equal(tt.wantData, string(data))
 				}
 				return
 			}
-			require.Error(t, err)
+			require.Error(err)
 			assert.Equal(tt.unavailable, errors.Is(err, ErrAssetUnavailable), "error: %v", err)
 			assert.Equal(tt.notFound, errors.Is(err, ErrAssetNotFound), "error: %v", err)
 			if tt.permanent {
-				require.ErrorIs(t, err, errPermanentResponse)
+				require.ErrorIs(err, errPermanentResponse)
 			}
-			require.NotErrorIs(t, err, ErrAssetTooLarge)
+			require.NotErrorIs(err, ErrAssetTooLarge)
 		})
 	}
 }
