@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -13,6 +14,7 @@ import (
 	"go.kenn.io/msgvault/internal/notionmeetings"
 	"go.kenn.io/msgvault/internal/omi"
 	"go.kenn.io/msgvault/internal/plaud"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/synctechsms"
 	"go.kenn.io/msgvault/internal/twenty"
 	"go.kenn.io/msgvault/internal/twilio"
@@ -39,6 +41,9 @@ const (
 	sourceTypeGmail  = "gmail"
 	sourceTypeMatrix = "matrix"
 	sourceTypeSlack  = "slack"
+
+	sourceTypeWhatsApp      = "whatsapp"
+	sourceTypeAppleMessages = "apple_messages"
 )
 
 // BeeperJobName is the single generic-job name that drives every beeper
@@ -52,6 +57,17 @@ const MatrixJobName = sourceTypeMatrix
 // SlackJobName is the single generic-job name that drives the configured
 // Slack workspace source.
 const SlackJobName = sourceTypeSlack
+
+// IMessageJobName is the singleton generic-job name that drives the local
+// macOS Messages (chat.db) import. The store identifier of an apple_messages
+// source is not stable across installs, so it does not key the job.
+const IMessageJobName = "imessage"
+
+// WhatsAppAppleJobName returns the generic-job name for the Apple WhatsApp
+// import of the account with the given phone number.
+func WhatsAppAppleJobName(phone string) string {
+	return "whatsapp-apple:" + phone
+}
 
 // CardDAVJobName is the scheduler identity for the default CardDAV connection.
 const CardDAVJobName = "carddav"
@@ -86,6 +102,32 @@ func classifySourceScheduling(sourceType, identifier string) sourceScheduleClass
 	}
 }
 
+// sourceScheduling applies the singleton import's source selection before
+// exposing a schedule or allowing a trigger.
+func (s *Server) sourceScheduling(ctx context.Context, sourceType, identifier string) (sourceScheduleClassification, error) {
+	classification := classifySourceScheduling(sourceType, identifier)
+	if sourceType != sourceTypeAppleMessages {
+		return classification, nil
+	}
+	sourceStore, ok := s.store.(SourceStatusStore)
+	if !ok {
+		return sourceScheduleClassification{}, nil
+	}
+	sources, err := sourceStore.ListSourcesContext(ctx, sourceTypeAppleMessages)
+	if err != nil {
+		return sourceScheduleClassification{}, err
+	}
+	selected := store.SelectImessageSource(sources)
+	// The singleton creates the local source on its first import.
+	if selected == nil && identifier == "local" {
+		return classification, nil
+	}
+	if selected == nil || selected.Identifier != identifier {
+		return sourceScheduleClassification{}, nil
+	}
+	return classification, nil
+}
+
 // SchedulerJobNameForSource returns the scheduler generic-job name that
 // drives syncing for a store source of the given type and identifier, and
 // whether such a job governs this source type at all. It is the single
@@ -107,6 +149,14 @@ func SchedulerJobNameForSource(sourceType, identifier string) (string, bool) {
 		// Store identifier == config OwnerPhone (see
 		// internal/synctechsms/importer.go GetOrCreateSource call).
 		return "synctech-sms:" + identifier, true
+	case sourceTypeWhatsApp:
+		// Store identifier == the import --phone (see
+		// internal/whatsapp/apple.go GetOrCreateSource call). Android
+		// imports share the source type but have no job; their status
+		// reports sync_not_configured.
+		return WhatsAppAppleJobName(identifier), true
+	case sourceTypeAppleMessages:
+		return IMessageJobName, true
 	case gcal.SourceType:
 		// Store identifier is "<accountEmail>/<calendarID>" (one store
 		// source per calendar; see internal/calsync/calsync.go

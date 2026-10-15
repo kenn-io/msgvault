@@ -10,7 +10,7 @@
   import { SvelteSet } from 'svelte/reactivity';
   import type { APIClient } from '../../api/client';
   import { scheduleSummary } from '../../settings/cron';
-  import { sourceTypeLabel, syncStatusChip, syncUnavailableLabel } from '../../sources/labels';
+  import { sourceTypeLabel, syncStatusChip, syncUnavailableLabel, unmeasuredReasonLabel } from '../../sources/labels';
   import { formatDateTime } from '../../util/format';
   import PageHeader from '../shell/PageHeader.svelte';
   import type {
@@ -271,7 +271,8 @@
   }
   function hasDetails(source: Source): boolean {
     return Boolean(
-      source.latest_sync?.error_message || source.latest_sync?.item_errors?.length || source.scheduler_last_error
+      source.latest_sync?.error_message || source.latest_sync?.item_errors?.length || source.scheduler_last_error ||
+        unmeasuredReasonLabel(source.latest_sync)
     );
   }
   function toggleDetails(id: number): void {
@@ -434,6 +435,7 @@
           <tr class="detail-row" id={detailID}>
             <td colspan="5">
               <div class="details">
+                {#if unmeasuredReasonLabel(source.latest_sync)}<p>{unmeasuredReasonLabel(source.latest_sync)}</p>{/if}
                 {#if source.latest_sync?.error_message}<p class="error-copy">{source.latest_sync.error_message}</p>{/if}
                 {#if source.scheduler_last_error}<p class="error-copy">Scheduler: {source.scheduler_last_error}</p>{/if}
                 {#if source.latest_sync?.item_errors?.length}
