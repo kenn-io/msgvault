@@ -22,7 +22,7 @@ import (
 const (
 	SourceType           = "matrix"
 	rawFormat            = "matrix_json"
-	encryptedPlaceholder = "[encrypted message — keys unavailable]"
+	encryptedPlaceholder = store.MatrixEncryptedPlaceholder
 	pageSize             = 100
 )
 
@@ -41,22 +41,38 @@ type RoomState struct {
 	DeferredRelations []string `json:"deferred_relations,omitempty"`
 }
 
+const syncStateFormatVersion = 1
+
+var errCursorVersion = errors.New("unsupported Matrix cursor format version")
+
 type SyncState struct {
-	NextBatch string                `json:"next_batch,omitempty"`
-	Rooms     map[string]*RoomState `json:"rooms"`
+	FormatVersion int                        `json:"format_version"`
+	RecoveryRooms map[string]recoveryAttempt `json:"recovery_rooms,omitzero"`
+	NextBatch     string                     `json:"next_batch,omitempty"`
+	Rooms         map[string]*RoomState      `json:"rooms"`
 }
 
 func newSyncState() *SyncState {
-	return &SyncState{Rooms: map[string]*RoomState{}}
+	return &SyncState{FormatVersion: syncStateFormatVersion, Rooms: map[string]*RoomState{}}
 }
 
 func loadSyncState(blob string) (*SyncState, error) {
 	state := newSyncState()
 	if blob != "" {
+		var version struct {
+			FormatVersion int `json:"format_version"`
+		}
+		if err := json.Unmarshal([]byte(blob), &version); err != nil {
+			return nil, fmt.Errorf("decode Matrix sync state: %w", err)
+		}
+		if version.FormatVersion > syncStateFormatVersion {
+			return nil, fmt.Errorf("%w %d", errCursorVersion, version.FormatVersion)
+		}
 		if err := json.Unmarshal([]byte(blob), state); err != nil {
 			return nil, fmt.Errorf("decode Matrix sync state: %w", err)
 		}
 	}
+	state.FormatVersion = syncStateFormatVersion
 	if state.Rooms == nil {
 		state.Rooms = map[string]*RoomState{}
 	}
@@ -69,30 +85,36 @@ func (s *SyncState) marshal() (string, error) {
 }
 
 type ImportOptions struct {
-	UserID       string
-	Full         bool
-	Rooms        []string
-	ExcludeRooms []string
-	Progress     func(string)
+	UserID        string
+	Full          bool
+	SkipKeyBackup bool
+	Rooms         []string
+	ExcludeRooms  []string
+	Progress      func(string)
 }
 
 type ImportSummary struct {
+	Recovered           int64 // Message rows replaced, excluding edits and reactions.
+	BackupFailure       error
+	PendingEncrypted    int64
 	RoomsProcessed      int64
 	MessagesProcessed   int64
 	MessagesAdded       int64
-	Undecryptable       int64
+	MessagesUpdated     int64
+	ErrorsCount         int64
 	EventsSkipped       int64
 	RelationsUnresolved int64
 }
 
 type Importer struct {
-	store   *store.Store
-	runtime *Runtime
-	users   map[id.UserID]int64
+	store    *store.Store
+	runtime  *Runtime
+	users    map[id.UserID]int64
+	newAfter map[string]int64
 }
 
 func NewImporter(s *store.Store, runtime *Runtime) *Importer {
-	return &Importer{store: s, runtime: runtime, users: map[id.UserID]int64{}}
+	return &Importer{store: s, runtime: runtime, users: map[id.UserID]int64{}, newAfter: map[string]int64{}}
 }
 
 func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *ImportSummary, err error) {
@@ -103,8 +125,9 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	if err != nil {
 		return nil, err
 	}
+	imp.runtime.backupState = backupState{key: imp.runtime.key, skipBackup: opts.SkipKeyBackup}
 	state := newSyncState()
-	if !opts.Full {
+	{
 		var encoded string
 		checkpoint, checkpointErr := imp.store.GetLatestCheckpointedSyncByType(source.ID, SourceType)
 		if checkpointErr == nil && checkpoint.CursorBefore.Valid {
@@ -121,10 +144,13 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		}
 		if encoded != "" {
 			state, err = loadSyncState(encoded)
-			if err != nil {
+			if err != nil && (!opts.Full || errors.Is(err, errCursorVersion)) {
 				return nil, err
 			}
 		}
+	}
+	if opts.Full {
+		state = newSyncState()
 	}
 	syncID, err := imp.store.StartSync(source.ID, SourceType)
 	if err != nil {
@@ -155,7 +181,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	if err != nil {
 		return sum, err
 	}
-	if err = imp.reclassifyArchivedRooms(source.ID, state, directRooms); err != nil {
+	if err = imp.reclassifyArchivedRooms(ctx, source.ID, directRooms); err != nil {
 		return sum, err
 	}
 	roomIDs := make([]id.RoomID, 0, len(resp.Rooms.Join))
@@ -171,6 +197,16 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			return sum, err
 		}
 	}
+	recoveryErr := imp.recoverPlaceholders(ctx, source.ID, state, opts, sum)
+	if recoveryErr != nil || sum.BackupFailure != nil {
+		sum.ErrorsCount++
+	}
+	if err = imp.checkpoint(syncID, state, sum); err != nil {
+		return sum, err
+	}
+	if ctx.Err() != nil {
+		return sum, errors.Join(recoveryErr, ctx.Err())
+	}
 	state.NextBatch = resp.NextBatch
 	if err = scoped.RecomputeConversationStatsContext(ctx, source.ID); err != nil {
 		return sum, fmt.Errorf("recompute Matrix conversation stats: %w", err)
@@ -183,11 +219,15 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		return sum, err
 	}
 	completed = true
-	return sum, nil
+	return sum, recoveryErr
 }
 
-func (imp *Importer) reclassifyArchivedRooms(sourceID int64, state *SyncState, directRooms map[id.RoomID]bool) error {
-	for roomID := range state.Rooms {
+func (imp *Importer) reclassifyArchivedRooms(ctx context.Context, sourceID int64, directRooms map[id.RoomID]bool) error {
+	rooms, err := imp.store.ListMatrixRoomIDsContext(ctx, sourceID)
+	if err != nil {
+		return fmt.Errorf("list archived Matrix rooms: %w", err)
+	}
+	for _, roomID := range rooms {
 		roomType := "group_chat"
 		if directRooms[id.RoomID(roomID)] {
 			roomType = "direct_chat"
@@ -224,6 +264,7 @@ func (imp *Importer) directRooms(ctx context.Context) (map[id.RoomID]bool, error
 }
 
 func (imp *Importer) importRoom(ctx context.Context, sourceID, syncID int64, roomID id.RoomID, room *mautrix.SyncJoinedRoom, nextBatch string, direct bool, state *SyncState, opts ImportOptions, sum *ImportSummary) error {
+	defer imp.runtime.releaseRoom(roomID)
 	rs := state.Rooms[roomID.String()]
 	hadRoomState := rs != nil
 	gapTo := ""
@@ -387,28 +428,21 @@ func (imp *Importer) importRoom(ctx context.Context, sourceID, syncID int64, roo
 	// /messages walks from new to old, so a relation may arrive before its
 	// target. Replay all relations after the history is present, oldest first,
 	// so neither an original body nor an older edit can overwrite the latest.
-	slices.SortFunc(deferred, func(a, b *event.Event) int {
-		if priority := cmp.Compare(relationReplayPriority(a), relationReplayPriority(b)); priority != 0 {
-			return priority
-		}
-		if a.Timestamp != b.Timestamp {
-			return cmp.Compare(a.Timestamp, b.Timestamp)
-		}
-		return strings.Compare(a.ID.String(), b.ID.String())
-	})
-	// History is complete here, so a relation whose target is still missing
-	// points at something never archived and is dropped.
+	slices.SortFunc(deferred, compareRelations)
 	for _, evt := range deferred {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if err := imp.replayDeferredRelation(ctx, sourceID, convID, evt, sum); err != nil {
+		if err := imp.persistEvent(ctx, sourceID, convID, evt, sum); err != nil {
 			if errors.Is(err, errRelationTargetMissing) {
 				sum.RelationsUnresolved++
 				continue
 			}
 			return err
 		}
+	}
+	if err := imp.resolvePendingReplies(ctx, sourceID, convID, sum); err != nil {
+		return err
 	}
 	rs.Backfilled = true
 	rs.DeferredRelations = nil
@@ -419,6 +453,16 @@ func (imp *Importer) importRoom(ctx context.Context, sourceID, syncID int64, roo
 	return imp.checkpoint(syncID, state, sum)
 }
 
+func compareRelations(a, b *event.Event) int {
+	if priority := cmp.Compare(relationReplayPriority(a), relationReplayPriority(b)); priority != 0 {
+		return priority
+	}
+	if a.Timestamp != b.Timestamp {
+		return cmp.Compare(a.Timestamp, b.Timestamp)
+	}
+	return strings.Compare(a.ID.String(), b.ID.String())
+}
+
 func relationReplayPriority(evt *event.Event) int {
 	if evt != nil && evt.Type == event.EventRedaction {
 		return 1
@@ -426,18 +470,32 @@ func relationReplayPriority(evt *event.Event) int {
 	return 0
 }
 
-func (imp *Importer) replayDeferredRelation(ctx context.Context, sourceID, convID int64, evt *event.Event, sum *ImportSummary) error {
-	if evt != nil && (evt.Type == event.EventMessage || evt.Type == event.EventSticker) {
-		if !parseContent(evt) {
-			sum.EventsSkipped++
-			return nil
+func (imp *Importer) resolvePendingReplies(ctx context.Context, sourceID, convID int64, sum *ImportSummary) error {
+	var afterID int64
+	for {
+		replies, err := imp.store.ListUnresolvedMessageRepliesAfterContext(ctx, sourceID, SourceType, afterID, pageSize, convID)
+		if err != nil || len(replies) == 0 {
+			return err
 		}
-		content := evt.Content.AsMessage()
-		if content.RelatesTo.GetReplaceID() == "" && content.RelatesTo.GetReplyTo() != "" {
-			return imp.resolveDeferredReply(ctx, sourceID, convID, evt, content.RelatesTo.GetReplyTo())
+		for _, reply := range replies {
+			afterID = reply.MessageID
+			var metadata struct {
+				Target id.EventID `json:"referenced_message_id"`
+			}
+			if err := json.Unmarshal([]byte(reply.Metadata), &metadata); err != nil {
+				return err
+			}
+			if metadata.Target == "" {
+				continue
+			}
+			err = imp.resolveDeferredReply(ctx, sourceID, convID, &event.Event{ID: id.EventID(reply.SourceMessageID)}, metadata.Target)
+			if errors.Is(err, errRelationTargetMissing) {
+				sum.RelationsUnresolved++
+			} else if err != nil {
+				return err
+			}
 		}
 	}
-	return imp.persistEvent(ctx, sourceID, convID, evt, sum)
 }
 
 func (imp *Importer) resolveDeferredReply(ctx context.Context, sourceID, convID int64, evt *event.Event, target id.EventID) error {
@@ -518,11 +576,11 @@ func shouldDeferRelation(evt *event.Event) bool {
 func decodeDeferredRelations(rawEvents []string) ([]*event.Event, error) {
 	events := make([]*event.Event, 0, len(rawEvents))
 	for _, raw := range rawEvents {
-		var evt event.Event
-		if err := json.Unmarshal([]byte(raw), &evt); err != nil {
+		evt, err := decodeArchivedEvent([]byte(raw))
+		if err != nil {
 			return nil, err
 		}
-		events = append(events, &evt)
+		events = append(events, evt)
 	}
 	return events, nil
 }
@@ -534,6 +592,7 @@ func (imp *Importer) checkpoint(syncID int64, state *SyncState, sum *ImportSumma
 	}
 	return imp.store.UpdateSyncCheckpoint(syncID, &store.Checkpoint{
 		PageToken: blob, MessagesProcessed: sum.MessagesProcessed, MessagesAdded: sum.MessagesAdded,
+		MessagesUpdated: sum.MessagesUpdated, ErrorsCount: sum.ErrorsCount,
 	})
 }
 
@@ -621,7 +680,6 @@ func (imp *Importer) persistEvent(ctx context.Context, sourceID, convID int64, e
 		return fmt.Errorf("encode Matrix event %s: %w", evt.ID, err)
 	}
 	if evt.Type == event.EventEncrypted {
-		sum.Undecryptable++
 		return imp.persistMessage(ctx, sourceID, convID, evt, raw, encryptedPlaceholder, nil, sum)
 	}
 	return imp.persistPlainEvent(ctx, sourceID, convID, evt, raw, sum)
@@ -661,8 +719,30 @@ func (imp *Importer) persistPlainEvent(ctx context.Context, sourceID, convID int
 // names in this room, and reports whether it found one.
 func (imp *Importer) redact(ctx context.Context, sourceID, convID int64, roomID id.RoomID, target id.EventID) (bool, error) {
 	deleted, err := imp.store.DeleteReactionBySourceID(sourceID, convID, target.String())
-	if err != nil || deleted {
+	if err != nil {
 		return deleted, err
+	}
+	var pendingID int64
+	if !deleted {
+		pendingID, err = imp.store.MatrixPendingEditTarget(ctx, convID, target.String())
+		if err != nil {
+			return false, err
+		}
+	}
+	if pendingID != 0 {
+		edits, err := imp.pendingEdits(pendingID)
+		if err != nil {
+			return false, err
+		}
+		edits = slices.DeleteFunc(edits, func(edit *event.Event) bool { return edit.ID == target })
+		metadata, err := imp.mergedMetadata(pendingID, map[string]any{"matrix_pending_edits": edits})
+		if err != nil {
+			return false, err
+		}
+		if err := imp.store.SetMessageMetadataContext(ctx, pendingID, sql.NullString{String: string(metadata), Valid: true}); err != nil {
+			return false, err
+		}
+		deleted = true
 	}
 	found, err := imp.store.MessageExistsBatch(sourceID, []string{target.String()})
 	if err != nil {
@@ -673,13 +753,16 @@ func (imp *Importer) redact(ctx context.Context, sourceID, convID int64, roomID 
 		if err != nil || message.ConversationID != convID {
 			return true, err
 		}
-		return true, imp.store.MarkMessageDeleted(sourceID, target.String())
+		if err := imp.store.MarkMessageDeleted(sourceID, target.String()); err != nil {
+			return true, err
+		}
+		deleted = true
 	}
 	messageID, err := imp.store.MessageIDByMetadataValue(convID, editEventKey, target.String())
 	if err != nil || messageID == 0 {
-		return false, err
+		return deleted, err
 	}
-	return true, imp.restoreAfterEditRedaction(ctx, roomID, messageID, target)
+	return true, imp.restoreAfterEditRedaction(ctx, sourceID, roomID, messageID, target)
 }
 
 func messageBody(content *event.MessageEventContent) string {
@@ -745,13 +828,13 @@ func (imp *Importer) persistMessage(ctx context.Context, sourceID, convID int64,
 	if err != nil {
 		return err
 	}
-	if existingID := existing[evt.ID.String()]; existingID != 0 {
+	if existingID := existing[evt.ID.String()]; existingID != 0 && !evt.Mautrix.WasEncrypted {
 		// Matrix events never change, so only a reply link may still be missing.
 		if replyToMessageID != 0 {
 			return imp.store.SetMessageReplyContext(ctx, existingID, replyToMessageID)
 		}
 		if replyTargetMissing {
-			return errRelationTargetMissing
+			return imp.rememberPendingReply(ctx, existingID, content.RelatesTo.GetReplyTo())
 		}
 		return nil
 	}
@@ -766,29 +849,77 @@ func (imp *Importer) persistMessage(ctx context.Context, sourceID, convID int64,
 		SenderID: sql.NullInt64{Int64: senderID, Valid: senderID != 0}, IsFromMe: evt.Sender == imp.runtime.Client.UserID,
 		Snippet: sql.NullString{String: snippet(body), Valid: body != ""}, SizeEstimate: int64(len(body)),
 	}
-	messageID, err := imp.store.PersistMessageContext(ctx, &store.MessagePersistData{
-		Message: msg, BodyText: sql.NullString{String: body, Valid: body != ""}, RawMIME: raw, RawFormat: rawFormat,
-		FTS: &store.FTSDoc{Body: body}, PreserveLabels: true,
-	})
+	persist := func() error {
+		s := imp.store
+		messageID, err := s.PersistMessageContext(ctx, &store.MessagePersistData{
+			Message: msg, BodyText: sql.NullString{String: body, Valid: body != ""}, RawMIME: raw, RawFormat: rawFormat,
+			FTS: &store.FTSDoc{Body: body}, PreserveLabels: true,
+		})
+		if err != nil {
+			return err
+		}
+		if existing[evt.ID.String()] != 0 && evt.Mautrix.WasEncrypted {
+			if err := s.AdvanceDerivedDataRevisionContext(ctx); err != nil {
+				return err
+			}
+		}
+		if evt.Type == event.EventEncrypted || body == encryptedPlaceholder {
+			metadata, err := imp.mergedMetadata(messageID, map[string]any{"matrix_event_type": evt.Type.Type})
+			if err != nil {
+				return err
+			}
+			if err := s.SetMessageMetadataContext(ctx, messageID, sql.NullString{String: string(metadata), Valid: true}); err != nil {
+				return err
+			}
+		}
+		if evt.Type == event.EventEncrypted && existing[evt.ID.String()] == 0 {
+			if _, tracked := imp.newAfter[evt.RoomID.String()]; !tracked {
+				imp.newAfter[evt.RoomID.String()] = messageID - 1
+			}
+		}
+		if replyToMessageID != 0 {
+			return s.SetMessageReplyContext(ctx, messageID, replyToMessageID)
+		}
+		if replyTargetMissing {
+			return imp.rememberPendingReply(ctx, messageID, content.RelatesTo.GetReplyTo())
+		}
+		return nil
+	}
+	err = persist()
 	if err != nil {
 		return fmt.Errorf("persist Matrix event %s: %w", evt.ID, err)
 	}
-	if replyToMessageID != 0 {
-		if err := imp.store.SetMessageReplyContext(ctx, messageID, replyToMessageID); err != nil {
-			return err
-		}
+	after, tracked := imp.newAfter[evt.RoomID.String()]
+	if !evt.Mautrix.WasEncrypted || !tracked || existing[evt.ID.String()] <= after {
+		sum.MessagesProcessed++
 	}
-	sum.MessagesProcessed++
-	sum.MessagesAdded++
-	if replyTargetMissing {
-		return errRelationTargetMissing
+	if evt.Mautrix.WasEncrypted {
+		sum.Recovered++
+		if existing[evt.ID.String()] != 0 {
+			sum.MessagesUpdated++
+		}
+	} else {
+		if evt.Type == event.EventEncrypted {
+			sum.PendingEncrypted++
+		}
+		sum.MessagesAdded++
 	}
 	return nil
+}
+
+func (imp *Importer) rememberPendingReply(ctx context.Context, messageID int64, target id.EventID) error {
+	metadata, err := imp.mergedMetadata(messageID, map[string]any{"referenced_message_id": target.String()})
+	if err != nil {
+		return err
+	}
+	return imp.store.SetMessageMetadataContext(ctx, messageID, sql.NullString{String: string(metadata), Valid: true})
 }
 
 // editEventKey names the message metadata field holding the applied edit, so
 // a later redaction of that edit can find its message.
 const editEventKey = "matrix_edit_event_id"
+
+const editTSKey = "matrix_edit_ts"
 
 type appliedEdit struct {
 	EventID string `json:"matrix_edit_event_id"`
@@ -819,6 +950,22 @@ func (imp *Importer) persistEdit(sourceID, convID int64, evt *event.Event, targe
 	if err != nil {
 		return err
 	}
+	if original.Type == event.EventEncrypted {
+		edits, err := imp.pendingEdits(messageID)
+		if err != nil {
+			return err
+		}
+		if !slices.ContainsFunc(edits, func(edit *event.Event) bool { return edit.ID == evt.ID }) {
+			metadata, err := imp.mergedMetadata(messageID, map[string]any{"matrix_pending_edits": append(edits, evt)})
+			if err != nil {
+				return err
+			}
+			if err := imp.store.SetMessageMetadata(messageID, sql.NullString{String: string(metadata), Valid: true}); err != nil {
+				return err
+			}
+		}
+		return errRelationTargetMissing
+	}
 	if !validReplacement(original, evt) {
 		return nil
 	}
@@ -826,7 +973,7 @@ func (imp *Importer) persistEdit(sourceID, convID int64, evt *event.Event, targe
 	if err != nil || !current.olderThan(evt) {
 		return err
 	}
-	return imp.applyEdit(messageID, editedBody(original, content), appliedEdit{EventID: evt.ID.String(), TS: evt.Timestamp})
+	return imp.applyEdit(messageID, editedBody(original, content), original.Type, appliedEdit{EventID: evt.ID.String(), TS: evt.Timestamp})
 }
 
 // validReplacement applies Matrix's replacement rules: same sender and event
@@ -846,13 +993,21 @@ func editedBody(original *event.Event, content *event.MessageEventContent) strin
 	return messageBody(&withRelation)
 }
 
+func decodeArchivedEvent(raw []byte) (*event.Event, error) {
+	var evt event.Event
+	if err := json.Unmarshal(raw, &evt); err != nil {
+		return nil, err
+	}
+	return &evt, nil
+}
+
 func (imp *Importer) archivedEvent(messageID int64) (*event.Event, error) {
 	raw, err := imp.store.GetMessageRaw(messageID)
 	if err != nil {
 		return nil, err
 	}
-	var original event.Event
-	if err := json.Unmarshal(raw, &original); err != nil {
+	original, err := decodeArchivedEvent(raw)
+	if err != nil {
 		return nil, fmt.Errorf("decode archived Matrix event %d: %w", messageID, err)
 	}
 	if original.Content.Parsed == nil {
@@ -860,7 +1015,7 @@ func (imp *Importer) archivedEvent(messageID int64) (*event.Event, error) {
 			return nil, fmt.Errorf("parse archived Matrix event %s: %w", original.ID, err)
 		}
 	}
-	return &original, nil
+	return original, nil
 }
 
 func (imp *Importer) appliedEdit(messageID int64) (appliedEdit, error) {
@@ -875,8 +1030,8 @@ func (imp *Importer) appliedEdit(messageID int64) (appliedEdit, error) {
 	return edit, nil
 }
 
-func (imp *Importer) applyEdit(messageID int64, body string, edit appliedEdit) error {
-	metadata, err := json.Marshal(edit, json.Deterministic(true))
+func (imp *Importer) applyEdit(messageID int64, body string, eventType event.Type, edit appliedEdit) error {
+	metadata, err := imp.mergedMetadata(messageID, map[string]any{editEventKey: edit.EventID, editTSKey: edit.TS, "matrix_event_type": eventType.Type})
 	if err != nil {
 		return err
 	}
@@ -890,6 +1045,38 @@ func (imp *Importer) applyEdit(messageID int64, body string, edit appliedEdit) e
 	return imp.store.SetMessageMetadata(messageID, sql.NullString{String: string(metadata), Valid: true})
 }
 
+func (imp *Importer) pendingEdits(messageID int64) ([]*event.Event, error) {
+	metadata, err := imp.store.GetMessageMetadata(messageID)
+	if err != nil || !metadata.Valid {
+		return nil, err
+	}
+	var pending struct {
+		Edits []*event.Event `json:"matrix_pending_edits"`
+	}
+	if err := json.Unmarshal([]byte(metadata.String), &pending); err != nil {
+		return nil, err
+	}
+	return pending.Edits, nil
+}
+
+func (imp *Importer) replayPendingEdits(ctx context.Context, sourceID, convID, messageID int64, sum *ImportSummary) error {
+	edits, err := imp.pendingEdits(messageID)
+	if err != nil || len(edits) == 0 {
+		return err
+	}
+	slices.SortFunc(edits, compareRelations)
+	for _, evt := range edits {
+		if err := imp.persistEvent(ctx, sourceID, convID, evt, sum); err != nil {
+			return err
+		}
+	}
+	metadata, err := imp.mergedMetadata(messageID, map[string]any{"matrix_pending_edits": nil})
+	if err != nil {
+		return err
+	}
+	return imp.store.SetMessageMetadataContext(ctx, messageID, sql.NullString{String: string(metadata), Valid: true})
+}
+
 func (imp *Importer) setBody(messageID int64, body string) error {
 	if err := imp.store.UpdateMessageDerivedText(messageID,
 		sql.NullString{String: body, Valid: body != ""}, sql.NullString{},
@@ -901,13 +1088,14 @@ func (imp *Importer) setBody(messageID int64, body string) error {
 
 // restoreAfterEditRedaction asks the homeserver for the original's surviving
 // edits and shows the newest one, or the original text when none is left.
-func (imp *Importer) restoreAfterEditRedaction(ctx context.Context, roomID id.RoomID, messageID int64, redacted id.EventID) error {
+func (imp *Importer) restoreAfterEditRedaction(ctx context.Context, sourceID int64, roomID id.RoomID, messageID int64, redacted id.EventID) error {
 	original, err := imp.archivedEvent(messageID)
 	if err != nil {
 		return err
 	}
 	var newest *event.Event
 	var newestContent *event.MessageEventContent
+	var claims map[string]string
 	from := ""
 	for {
 		page, err := imp.runtime.Client.GetRelations(ctx, roomID, original.ID, &mautrix.ReqGetRelations{RelationType: event.RelReplace, From: from})
@@ -915,8 +1103,27 @@ func (imp *Importer) restoreAfterEditRedaction(ctx context.Context, roomID id.Ro
 			return fmt.Errorf("list Matrix edits of %s: %w", original.ID, err)
 		}
 		for _, edit := range page.Chunk {
+			replayKey := ""
+			var conversationID int64
 			if edit == nil || edit.ID == redacted {
 				continue
+			}
+			if edit.Type == event.EventEncrypted {
+				edit.RoomID = roomID
+				target, err := imp.store.GetMessageRelationTarget(messageID)
+				if err != nil {
+					return err
+				}
+				plain, index, decryptErr := imp.runtime.decryptWithIndex(ctx, edit)
+				if decryptErr != nil {
+					if err := imp.persistEvent(ctx, sourceID, target.ConversationID, edit, &ImportSummary{}); err != nil {
+						return err
+					}
+					continue
+				}
+				replayKey = fmt.Sprintf("matrix_megolm_%s_%d", edit.Content.AsEncrypted().SessionID, index)
+				conversationID = target.ConversationID
+				edit = plain
 			}
 			if edit.Content.Parsed == nil && edit.Content.ParseRaw(edit.Type) != nil {
 				continue
@@ -924,6 +1131,15 @@ func (imp *Importer) restoreAfterEditRedaction(ctx context.Context, roomID id.Ro
 			content := edit.Content.AsMessage()
 			if content.NewContent == nil || content.RelatesTo.GetReplaceID() != original.ID || !validReplacement(original, edit) {
 				continue
+			}
+			if replayKey != "" {
+				allowed, err := imp.claimRecoveredEvent(ctx, conversationID, messageID, replayKey, edit.ID.String(), &claims)
+				if err != nil {
+					return err
+				}
+				if !allowed {
+					continue
+				}
 			}
 			if newest == nil || (appliedEdit{EventID: newest.ID.String(), TS: newest.Timestamp}).olderThan(edit) {
 				newest, newestContent = edit, content.NewContent
@@ -935,7 +1151,7 @@ func (imp *Importer) restoreAfterEditRedaction(ctx context.Context, roomID id.Ro
 		from = page.NextBatch
 	}
 	if newest != nil {
-		return imp.applyEdit(messageID, editedBody(original, newestContent), appliedEdit{EventID: newest.ID.String(), TS: newest.Timestamp})
+		return imp.applyEdit(messageID, editedBody(original, newestContent), original.Type, appliedEdit{EventID: newest.ID.String(), TS: newest.Timestamp})
 	}
 	if err := imp.setBody(messageID, messageBody(original.Content.AsMessage())); err != nil {
 		return err
@@ -943,7 +1159,11 @@ func (imp *Importer) restoreAfterEditRedaction(ctx context.Context, roomID id.Ro
 	if err := imp.store.SetMessageEditedState(messageID, false); err != nil {
 		return err
 	}
-	return imp.store.SetMessageMetadata(messageID, sql.NullString{})
+	metadata, err := imp.mergedMetadata(messageID, map[string]any{editEventKey: nil, editTSKey: nil})
+	if err != nil {
+		return err
+	}
+	return imp.store.SetMessageMetadata(messageID, sql.NullString{String: string(metadata), Valid: true})
 }
 
 func (imp *Importer) persistReaction(sourceID, convID int64, evt *event.Event) error {
@@ -978,4 +1198,25 @@ func snippet(body string) string {
 		return string(runes[:100])
 	}
 	return body
+}
+
+func (imp *Importer) mergedMetadata(messageID int64, values map[string]any) ([]byte, error) {
+	stored, err := imp.store.GetMessageMetadata(messageID)
+	if err != nil {
+		return nil, err
+	}
+	metadata := map[string]any{}
+	if stored.Valid {
+		if err := json.Unmarshal([]byte(stored.String), &metadata); err != nil {
+			return nil, err
+		}
+	}
+	for key, value := range values {
+		if value == nil {
+			delete(metadata, key)
+		} else {
+			metadata[key] = value
+		}
+	}
+	return json.Marshal(metadata, json.Deterministic(true))
 }

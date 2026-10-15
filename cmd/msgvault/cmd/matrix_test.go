@@ -78,7 +78,7 @@ func TestAddMatrixRenewsExistingAccountInPlace(t *testing.T) {
 	home := t.TempDir()
 	cfg := &config.Config{HomeDir: home, Data: config.DataConfig{DataDir: home}}
 	require.NoError(matrixsource.SaveCredentials(cfg.TokensDir(), matrixsource.Credentials{
-		Homeserver: server.URL, UserID: "@archive:example.org", DeviceID: "OLD", AccessToken: "revoked",
+		Homeserver: server.URL, UserID: "@archive:example.org", DeviceID: "OLD", AccessToken: "revoked", BackupKey: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
 	}))
 	st, err := store.Open(cfg.DatabaseDSN())
 	require.NoError(err)
@@ -103,6 +103,7 @@ func TestAddMatrixRenewsExistingAccountInPlace(t *testing.T) {
 
 	creds, err := matrixsource.LoadCredentials(cfg.TokensDir(), "@archive:example.org")
 	require.NoError(err)
+	assert.Equal("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", creds.BackupKey)
 	assert.Equal("NEW", creds.DeviceID)
 	assert.Equal([]string{"Bearer revoked"}, loggedOut)
 	st, err = store.Open(cfg.DatabaseDSN())
@@ -163,17 +164,7 @@ func TestAddMatrixKeepsOldLoginWhenPreviousLogoutFails(t *testing.T) {
 func TestAddMatrixStopsWhenExistingLoginIsUnreadable(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	var loggedOut []string
-	mux := http.NewServeMux()
-	mux.HandleFunc("POST /_matrix/client/v3/login", func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{"user_id":"@archive:example.org","device_id":"NEW","access_token":"fresh"}`))
-	})
-	mux.HandleFunc("POST /_matrix/client/v3/logout", func(w http.ResponseWriter, r *http.Request) {
-		loggedOut = append(loggedOut, r.Header.Get("Authorization"))
-		_, _ = w.Write([]byte(`{}`))
-	})
-	server := httptest.NewServer(mux)
-	defer server.Close()
+	server := newRenewalHomeserver(t)
 
 	home := t.TempDir()
 	cfg := &config.Config{HomeDir: home, Data: config.DataConfig{DataDir: home}}
@@ -198,7 +189,8 @@ func TestAddMatrixStopsWhenExistingLoginIsUnreadable(t *testing.T) {
 	data, err := os.ReadFile(matches[0])
 	require.NoError(err)
 	assert.Equal("not json", string(data), "the unreadable file is left for the user to fix")
-	assert.Equal([]string{"Bearer fresh"}, loggedOut, "only the new device is logged out again")
+	logins, _ := server.snapshot()
+	assert.Zero(logins)
 }
 
 // renewalHomeserver issues device NEW and records logouts. A logged-out token
@@ -365,7 +357,7 @@ func TestAddMatrixRenewalResumesAfterPublishFailure(t *testing.T) {
 			assert.Equal([]string{"Bearer old"}, loggedOut, "the saved new device is kept")
 
 			restoreMatrixCredentialWrites()
-			require.NoError(runAddMatrixForRenewal(t, cfg, server.URL, ""), "a retry needs no new login secret")
+			require.NoError(runAddMatrixForRenewal(t, cfg, server.URL, ""), "the retry resumes the pending login")
 			creds, err := matrixsource.LoadCredentials(cfg.TokensDir(), old.UserID)
 			require.NoError(err)
 			assert.Equal(pending, creds)
@@ -398,10 +390,15 @@ func TestAddMatrixRenewalResumesPublishedPendingLogin(t *testing.T) {
 	_, loggedOut = server.snapshot()
 	assert.Empty(loggedOut, "both logins survive a second staging failure")
 
+	pending, _, err := matrixsource.LoadPendingCredentials(cfg.TokensDir(), old.UserID)
+	require.NoError(err)
+	pending.BackupKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	require.NoError(matrixsource.SavePendingCredentials(cfg.TokensDir(), pending))
 	restoreMatrixCredentialWrites()
 	require.NoError(runAddMatrixForRenewal(t, cfg, server.URL, ""))
 	creds, err = matrixsource.LoadCredentials(cfg.TokensDir(), old.UserID)
 	require.NoError(err)
+	assert.Equal(pending.BackupKey, creds.BackupKey)
 	assert.Equal("NEW", creds.DeviceID)
 	logins, loggedOut := server.snapshot()
 	assert.Equal(1, logins)
@@ -409,26 +406,47 @@ func TestAddMatrixRenewalResumesPublishedPendingLogin(t *testing.T) {
 }
 
 func TestAddMatrixRenewalDiscardsRevokedPendingLogin(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	server, cfg, old := setupMatrixRenewal(t)
-	revoked := matrixsource.Credentials{Homeserver: server.URL, UserID: old.UserID, DeviceID: "GONE", AccessToken: "gone"}
-	require.NoError(matrixsource.SavePendingCredentials(cfg.TokensDir(), revoked))
+	for _, tc := range []struct {
+		name      string
+		secret    string
+		backupKey string
+		wantError string
+	}{
+		{name: "requires a new login", wantError: "run add-matrix again"},
+		{name: "keeps backup key", secret: "password", backupKey: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			server, cfg, old := setupMatrixRenewal(t)
+			old.BackupKey = tc.backupKey
+			require.NoError(matrixsource.SaveCredentials(cfg.TokensDir(), old))
+			revoked := matrixsource.Credentials{Homeserver: server.URL, UserID: old.UserID, DeviceID: "GONE", AccessToken: "gone"}
+			require.NoError(matrixsource.SavePendingCredentials(cfg.TokensDir(), revoked))
 
-	require.ErrorContains(runAddMatrixForRenewal(t, cfg, server.URL, ""), "run add-matrix again")
-	creds, err := matrixsource.LoadCredentials(cfg.TokensDir(), old.UserID)
-	require.NoError(err)
-	assert.Equal(old, creds, "a revoked pending login never replaces the working one")
-	_, loggedOut := server.snapshot()
-	assert.Empty(loggedOut)
-	exists, err := matrixsource.PendingCredentialsExist(cfg.TokensDir(), old.UserID)
-	require.NoError(err)
-	assert.False(exists)
-
-	require.NoError(runAddMatrixForRenewal(t, cfg, server.URL, "password"))
-	creds, err = matrixsource.LoadCredentials(cfg.TokensDir(), old.UserID)
-	require.NoError(err)
-	assert.Equal("NEW", creds.DeviceID)
+			err := runAddMatrixForRenewal(t, cfg, server.URL, tc.secret)
+			if tc.wantError != "" {
+				require.ErrorContains(err, tc.wantError)
+			} else {
+				require.NoError(err)
+			}
+			creds, err := matrixsource.LoadCredentials(cfg.TokensDir(), old.UserID)
+			require.NoError(err)
+			assert.Equal(tc.backupKey, creds.BackupKey)
+			if tc.secret == "" {
+				assert.Equal(old, creds, "a revoked pending login never replaces the working one")
+				_, loggedOut := server.snapshot()
+				assert.Empty(loggedOut)
+			} else {
+				assert.Equal("NEW", creds.DeviceID)
+				_, loggedOut := server.snapshot()
+				assert.Equal([]string{"Bearer old"}, loggedOut)
+			}
+			exists, err := matrixsource.PendingCredentialsExist(cfg.TokensDir(), old.UserID)
+			require.NoError(err)
+			assert.False(exists)
+		})
+	}
 }
 
 func TestAddMatrixRenewalLogoutTimeoutKeepsBothLoginsRecoverable(t *testing.T) {

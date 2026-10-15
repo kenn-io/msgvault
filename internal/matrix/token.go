@@ -19,6 +19,7 @@ type Credentials struct {
 	UserID      string `json:"user_id"`
 	DeviceID    string `json:"device_id"`
 	AccessToken string `json:"access_token"`
+	BackupKey   string `json:"backup_key,omitempty"`
 }
 
 var secureReplaceCredentials = fileutil.SecureReplaceFile

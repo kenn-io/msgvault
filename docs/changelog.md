@@ -8,6 +8,7 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- Matrix sync decrypts history through the account's key backup and recovers earlier placeholders, edits, reactions and reply links. First setup requires a recovery secret or `--skip-key-backup`. `add-matrix` accepts `--recovery-file`, `--recovery-passphrase` and `--skip-key-backup`. See the [Matrix guide](usage/matrix.md) for credential storage and authentication limits.
 - [Chatwoot](guides/chatwoot.md) archives shared inboxes, files, source transcripts, and linked call meetings. API schema 3.18.0 adds optional `related_message_id`, which links a Chatwoot call message and its meeting.
 - Remote edits update source-owned values on published CardDAV imports while preserving unrelated local values. Edits that would overwrite another owner create a conflict.
 - [Everything search](web-ui.md#recording-matches) shows recording transcript matches for plain-word Full text queries and supports one Person filter. API schema 3.11.0 adds `participant_id` to media search, `GET /media/search/status`, source filename, title and date to media search results and optional `conversation_title` to message detail.

@@ -199,7 +199,7 @@ func readDiscordBotToken(in io.Reader) (string, error) {
 	)
 	switch method {
 	case passwordInteractive:
-		return readPasswordInteractive("Discord bot token:", output)
+		return readPasswordInteractive("Discord bot token:", output, false)
 	case passwordPipe:
 		return readPasswordFromPipe(os.Stdin)
 	case passwordNoPrompt:

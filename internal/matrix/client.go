@@ -34,7 +34,10 @@ func validateHomeserverURL(raw string) error {
 
 // Runtime owns the mautrix client for an account.
 type Runtime struct {
-	Client *mautrix.Client
+	backupState
+
+	Client         *mautrix.Client
+	backupKeyError error
 }
 
 // Login creates a dedicated Matrix device using a password or m.login.token.
@@ -102,7 +105,9 @@ func Open(creds Credentials) (*Runtime, error) {
 		return nil, fmt.Errorf("create Matrix client: %w", err)
 	}
 	cli.DeviceID = id.DeviceID(creds.DeviceID)
-	return &Runtime{Client: cli}, nil
+	r := &Runtime{Client: cli}
+	r.backupKeyError = r.setBackupKey(creds.BackupKey)
+	return r, nil
 }
 
 // Logout deletes the dedicated Matrix device represented by creds.
