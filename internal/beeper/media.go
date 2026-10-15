@@ -195,9 +195,8 @@ func notFoundFirstSeenIn(metadataJSON string) (time.Time, bool) {
 // miss, a miss whose last persisted outcome was something else, or a repeat
 // still inside the cooldown is not confirmed: it is recorded as an ordinary
 // retryable failure instead.
-func isConfirmedAssetNotFound(hadPrevious bool, previous store.AttachmentRef, timestamp, now time.Time) bool {
-	if !hadPrevious ||
-		previous.State != attachmentpolicy.StateFailed ||
+func isConfirmedAssetNotFound(previous store.AttachmentRef, timestamp, now time.Time) bool {
+	if previous.State != attachmentpolicy.StateFailed ||
 		previous.SkipReason != attachmentpolicy.SkipSourceUnavailable {
 		return false
 	}
@@ -326,6 +325,18 @@ func (imp *Importer) persistAttachments(ctx context.Context, syncID, messageID i
 			}
 		}
 		if opts.NoMedia || opts.AttachmentsDir == "" {
+			// A deferral never fetches, so it must not erase evidence an
+			// earlier real attempt already recorded: a provisional
+			// not-found marker, and the first-seen stamp its eventual
+			// confirmation depends on, survive untouched.
+			if hadPrevious && previous.State == attachmentpolicy.StateFailed &&
+				previous.SkipReason == attachmentpolicy.SkipSourceUnavailable {
+				marker.State = previous.State
+				marker.SkipReason = previous.SkipReason
+				if seen, ok := notFoundFirstSeenIn(previous.Metadata); ok {
+					marker.Metadata = withNotFoundFirstSeen(marker.Metadata, seen)
+				}
+			}
 			refs = append(refs, marker)
 			sum.AttachmentsPending++
 			continue
@@ -376,7 +387,7 @@ func (imp *Importer) persistAttachments(ctx context.Context, syncID, messageID i
 			continue
 		}
 		if errors.Is(err, ErrAssetNotFound) {
-			if isConfirmedAssetNotFound(hadPrevious, previous, m.Timestamp, time.Now()) {
+			if isConfirmedAssetNotFound(previous, m.Timestamp, time.Now()) {
 				markUnavailable()
 				continue
 			}

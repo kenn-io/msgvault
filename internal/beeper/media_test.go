@@ -1466,7 +1466,7 @@ func TestAssetNotFoundBecomesTerminalOnlyOnConfirmedRepeat(t *testing.T) {
 		assert.Equal(string(attachmentpolicy.StateStored), state)
 	})
 
-	t.Run("a young message stays retryable even after it repeats not-found", func(t *testing.T) {
+	t.Run("a young message stays retryable even after it repeats not-found past the cooldown", func(t *testing.T) {
 		require := require.New(t)
 		assert := assert.New(t)
 		f := newFakeBeeper(t)
@@ -1481,6 +1481,10 @@ func TestAssetNotFoundBecomesTerminalOnlyOnConfirmedRepeat(t *testing.T) {
 
 		_, err := imp.Import(t.Context(), opts)
 		require.NoError(err)
+		// Clear the cooldown gate so this case isolates the age gate: without
+		// backdating, the cooldown alone would block termination and this
+		// assertion would pass even if the age check were removed entirely.
+		backdateNotFoundFirstSeen(t, st, sourceAttID, notFoundRepeatCooldown+time.Hour)
 		opts.Full = true
 		sum, err := imp.Import(t.Context(), opts)
 		require.NoError(err)
@@ -1527,5 +1531,75 @@ func TestAssetNotFoundBecomesTerminalOnlyOnConfirmedRepeat(t *testing.T) {
 		require.NoError(st.DB().QueryRow(`SELECT attachment_state, attachment_skip_reason FROM attachments`).Scan(&state, &reason))
 		assert.Equal(string(attachmentpolicy.StateFailed), state)
 		assert.Equal(string(attachmentpolicy.SkipSourceUnavailable), reason)
+	})
+
+	t.Run("a --no-media deferral between the two misses does not reset the clock", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		f := newFakeBeeper(t)
+		ch := mediaChat()
+		ch.Msgs[0].Timestamp = oldTimestamp()
+		ch.LastActivity = ch.Msgs[0].Timestamp
+		f.addChat(ch)
+		f.setAssetError(assetURL, http.StatusBadGateway, "Media not found")
+		imp, st, done := newTestImporter(t, f)
+		defer done()
+		opts := mediaImportOptions(t)
+
+		_, err := imp.Import(t.Context(), opts)
+		require.NoError(err)
+		var state, reason string
+		require.NoError(st.DB().QueryRow(`SELECT attachment_state, attachment_skip_reason FROM attachments`).Scan(&state, &reason))
+		require.Equal(string(attachmentpolicy.StateFailed), state)
+		require.Equal(string(attachmentpolicy.SkipSourceUnavailable), reason)
+
+		noMediaOpts := opts
+		noMediaOpts.Full = true
+		noMediaOpts.NoMedia = true
+		f.resetRequests()
+		_, err = imp.Import(t.Context(), noMediaOpts)
+		require.NoError(err)
+		assert.Empty(assetRequests(f), "a --no-media run never fetches")
+		require.NoError(st.DB().QueryRow(`SELECT attachment_state, attachment_skip_reason FROM attachments`).Scan(&state, &reason))
+		assert.Equal(string(attachmentpolicy.StateFailed), state, "the deferral must not reset the provisional marker to bare pending")
+		assert.Equal(string(attachmentpolicy.SkipSourceUnavailable), reason)
+
+		backdateNotFoundFirstSeen(t, st, sourceAttID, notFoundRepeatCooldown+time.Hour)
+		opts.Full = true
+		sum, err := imp.Import(t.Context(), opts)
+		require.NoError(err)
+		assert.EqualValues(1, sum.AttachmentsUnavailable, "the clock the deferral preserved still confirms once the cooldown has passed")
+	})
+
+	t.Run("an offline repair pass between the two misses does not reset the clock", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		f := newFakeBeeper(t)
+		ch := mediaChat()
+		ch.Msgs[0].Timestamp = oldTimestamp()
+		ch.LastActivity = ch.Msgs[0].Timestamp
+		f.addChat(ch)
+		f.setAssetError(assetURL, http.StatusBadGateway, "Media not found")
+		imp, st, done := newTestImporter(t, f)
+		defer done()
+		opts := mediaImportOptions(t)
+
+		_, err := imp.Import(t.Context(), opts)
+		require.NoError(err)
+		// Backdate before repair runs: if repair silently resets the clock,
+		// the next check below sees a fresh stamp instead of this old one,
+		// and the final assertion (confirmed without any further backdating)
+		// fails. This is the only way the test can tell the fix from its
+		// absence; backdating after repair would prove nothing.
+		backdateNotFoundFirstSeen(t, st, sourceAttID, notFoundRepeatCooldown+time.Hour)
+
+		rsum, err := imp.RepairSource(t.Context(), beeperSourceID(t, st), nil)
+		require.NoError(err)
+		require.Zero(rsum.Errors)
+
+		opts.Full = true
+		sum, err := imp.Import(t.Context(), opts)
+		require.NoError(err)
+		assert.EqualValues(1, sum.AttachmentsUnavailable, "the backdated clock repair must preserve, not reset, still confirms with no further backdating")
 	})
 }
