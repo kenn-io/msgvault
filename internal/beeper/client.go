@@ -210,7 +210,7 @@ func (c *Client) fetch(ctx context.Context, path string, maxBytes int64, asset b
 					reqURL, resp.StatusCode, assetAttempts, errorSnippet(body))
 			}
 			sawTransientAssetFailure = true
-		case assetErr == ErrAssetNotFound && sawTransientAssetFailure:
+		case errors.Is(assetErr, ErrAssetNotFound) && sawTransientAssetFailure:
 			// An earlier attempt in this same call hit a transient failure;
 			// this isn't the clean not-found the confirmation policy means
 			// to count, so report it as an ordinary retryable failure

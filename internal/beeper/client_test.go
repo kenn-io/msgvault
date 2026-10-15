@@ -386,12 +386,12 @@ func TestGetAssetBytesClassification(t *testing.T) {
 				return
 			}
 			require.Error(t, err)
-			assert.NotErrorIs(err, ErrAssetTooLarge)
 			assert.Equal(tt.unavailable, errors.Is(err, ErrAssetUnavailable), "error: %v", err)
 			assert.Equal(tt.notFound, errors.Is(err, ErrAssetNotFound), "error: %v", err)
 			if tt.permanent {
-				assert.ErrorIs(err, errPermanentResponse)
+				require.ErrorIs(t, err, errPermanentResponse)
 			}
+			require.NotErrorIs(t, err, ErrAssetTooLarge)
 		})
 	}
 }
