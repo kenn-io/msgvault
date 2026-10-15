@@ -51,9 +51,9 @@ type yieldingStampStore struct {
 	cancel context.CancelCauseFunc
 }
 
-func (s *yieldingStampStore) SetEmbedGenIfUnchanged(context.Context, []store.EmbedGenStamp, int64) ([]int64, error) {
+func (s *yieldingStampStore) SetEmbedGenIfUnchanged(context.Context, []store.EmbedGenStamp, int64) ([]int64, int, error) {
 	s.cancel(jobctx.ErrYieldedToWaiter)
-	return nil, errors.New("stamp operation failed")
+	return nil, 0, errors.New("stamp operation failed")
 }
 
 type captureLogHandler struct {
@@ -868,30 +868,60 @@ func TestWorker_ReclaimStaleIsNoOp(t *testing.T) {
 
 // --- Downshift / 4xx behavior ---
 
-// TestWorker_Downshift_MessageSpecific4xxStampedDropped: when a batch
-// 4xxs but singletons embed, the failing message is a message-specific
-// 4xx and gets stamped (dropped) so the run completes.
-func TestWorker_Downshift_MessageSpecific4xxStampedDropped(t *testing.T) {
-	f := newWorkerFixture(t, 3)
-	var singletonSeen int
-	f.FakeClient.OnEmbed = func(inputs []string) ([][]float32, error) {
-		if len(inputs) > 1 {
-			return nil, fmt.Errorf("embed: HTTP 400: too long: %w", ErrPermanent4xx)
-		}
-		singletonSeen++
-		if singletonSeen == 2 {
-			return nil, fmt.Errorf("embed: HTTP 400: blocked: %w", ErrPermanent4xx)
-		}
-		v := make([]float32, 4)
-		v[0] = 1
-		return [][]float32{v}, nil
+// A message-specific 4xx is recorded only if its skip stamp succeeds.
+func TestWorker_Downshift_MessageSpecific4xxSkipStamp(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		stampMiss bool
+	}{
+		{name: "stamped drop"},
+		{name: "skip-stamp CAS miss", stampMiss: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			f := newWorkerFixture(t, 3)
+			var singletonSeen int
+			f.FakeClient.OnEmbed = func(inputs []string) ([][]float32, error) {
+				if len(inputs) > 1 {
+					return nil, fmt.Errorf("embed: HTTP 400: too long: %w", ErrPermanent4xx)
+				}
+				singletonSeen++
+				if singletonSeen == 2 {
+					return nil, fmt.Errorf("embed: HTTP 400: blocked: %w", ErrPermanent4xx)
+				}
+				v := make([]float32, 4)
+				v[0] = 1
+				return [][]float32{v}, nil
+			}
+			capture := &diagnosticCapture{}
+			w := newTestWorker(f, 3)
+			w.deps.Diagnostics = capture
+			if tc.stampMiss {
+				w.deps.beforeSkipStamp = func(_ context.Context, ids []int64) {
+					for _, id := range ids {
+						_, err := f.MainDB.Exec(`UPDATE messages SET last_modified = '2099-01-01 00:00:00' WHERE id = ?`, id)
+						require.NoError(err)
+					}
+				}
+			}
+			res, err := w.RunOnce(t.Context(), f.BuildingGen, testEmbeddingPassScope())
+			require.NoError(err, "RunOnce")
+			got := capture.read(t)
+			require.NotEmpty(got.RecentBatches)
+			if tc.stampMiss {
+				assert.Nil(got.LastError, "a skip-stamp miss is not a pass failure")
+				for _, batch := range got.RecentBatches {
+					assert.Nil(batch.Error)
+				}
+			} else {
+				assert.NotNil(got.LastError)
+				assert.NotNil(got.RecentBatches[0].Error)
+				assert.Equal(0, countMissing(t, f.MainDB, int64(f.BuildingGen)), "all stamped")
+			}
+			assert.Equal(2, res.Succeeded, "Succeeded")
+		})
 	}
-	w := newTestWorker(f, 3)
-	res, err := w.RunOnce(context.Background(), f.BuildingGen, testEmbeddingPassScope())
-	require.NoError(t, err, "RunOnce")
-	assert.Equal(t, 2, res.Succeeded, "Succeeded")
-	// All three stamped (2 embedded + 1 message-specific drop).
-	assert.Equal(t, 0, countMissing(t, f.MainDB, int64(f.BuildingGen)), "all stamped")
 }
 
 // TestWorker_Downshift_AllDropNoSilentDelete: a fully misconfigured

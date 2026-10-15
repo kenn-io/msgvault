@@ -1397,6 +1397,15 @@ func (s *Server) handleCLIRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_args", "--grant-decided is not accepted through the daemon CLI runner")
 		return
 	}
+	// A proxied watch would keep a daemon subprocess polling until the
+	// request is cancelled; status callers poll the endpoint themselves. Only
+	// `embeddings status` has --watch, and a flag can precede the subcommand,
+	// so the whole group is checked.
+	if req.Args[0] == "embeddings" && cliRunArgsContainFlag(req.Args, "watch") {
+		writeError(w, http.StatusBadRequest, "invalid_args",
+			"--watch is not accepted through the daemon CLI runner; poll GET /api/v1/embeddings/status instead")
+		return
+	}
 	if proof := r.Header.Get(apiprotocol.DaemonRuntimeTokenHeader); proof != "" {
 		if req.Args[0] != "add-account" || s.shutdownToken == "" ||
 			subtle.ConstantTimeCompare([]byte(proof), []byte(s.shutdownToken)) != 1 {

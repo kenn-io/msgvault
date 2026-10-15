@@ -87,7 +87,7 @@ func TestScanForEmbeddingScopedFiltersBySource(t *testing.T) {
 	assert.Empty(none, "a source with no messages scans empty")
 }
 
-func TestCoverageCountsScopedFiltersBySource(t *testing.T) {
+func TestCoverageCountsScopedVariantsFilterBySource(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -101,6 +101,11 @@ func TestCoverageCountsScopedFiltersBySource(t *testing.T) {
 	assert.Equal(int64(3), live, "live within source A (deleted row excluded)")
 	assert.Equal(int64(2), stamped, "stamped within source A")
 	assert.Equal(int64(1), missing, "missing within source A")
+
+	// The unbounded count, used off the request path, reports the same scope.
+	live, stamped, _, missing, err = st.CoverageCountsScopedUnbounded(ctx, 7, nil, []int64{fx.srcA.ID})
+	require.NoError(err, "CoverageCountsScopedUnbounded")
+	assert.Equal([3]int64{3, 2, 1}, [3]int64{live, stamped, missing})
 
 	missingB, err := st.MissingCountScoped(ctx, 7, nil, []int64{fx.srcB.ID})
 	require.NoError(err, "MissingCountScoped")
@@ -168,4 +173,33 @@ func TestScanEmbeddingCoverageRejectsNonPositiveBatchSize(t *testing.T) {
 		VisitStamped: func([]int64) error { return nil },
 	})
 	require.ErrorContains(t, err, "batch size must be positive")
+}
+
+func TestSetEmbedGenIfUnchanged(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	id := seedMessageForLM(t, st)
+	tokenAtRead := baselineLM(t, st, id)
+
+	_, err := st.DB().Exec(st.Rebind(`UPDATE message_bodies SET body_text = ? WHERE message_id = ?`), "corrected body", id)
+	require.NoError(err)
+	missed, covered, err := st.SetEmbedGenIfUnchanged(t.Context(), []store.EmbedGenStamp{{ID: id, LastModified: tokenAtRead}}, 7)
+	require.NoError(err)
+	assert.Equal([]int64{id}, missed)
+	assert.Zero(covered)
+	assert.False(readEmbedGen(t, st, id).Valid, "a stale token must not stamp the row")
+	tokenAtRead = baselineLM(t, st, id)
+
+	missed, covered, err = st.SetEmbedGenIfUnchanged(context.Background(),
+		[]store.EmbedGenStamp{{ID: id, LastModified: tokenAtRead}}, 7)
+	require.NoError(err)
+	assert.Empty(missed)
+	assert.Equal(1, covered)
+	assert.Equal(sql.NullInt64{Int64: 7, Valid: true}, readEmbedGen(t, st, id))
+	coveredToken := readLM(t, st, id)
+	missed, covered, err = st.SetEmbedGenIfUnchanged(t.Context(), []store.EmbedGenStamp{{ID: id, LastModified: coveredToken}}, 7)
+	require.NoError(err)
+	assert.Empty(missed, "an already covered row is not a CAS miss")
+	assert.Zero(covered, "an already covered row is not newly covered")
 }

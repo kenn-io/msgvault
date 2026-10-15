@@ -39,6 +39,12 @@ All notable changes to msgvault, grouped by release.
 
 - Agent tokens grant scoped archive reads through the remote CLI and MCP, with optional `--expires`. Search responses report index uncertainty; owner searches retain automatic index repair.
 
+- `msgvault embeddings status` shows embedding coverage, whether an embedding
+  job is running or a scheduled one is queued, recent throughput with an ETA,
+  and per-batch provider and database timings with retry and rate-limit
+  counts. The same snapshot is available at `GET /api/v1/embeddings/status`
+  and through MCP `get_embeddings_status`.
+
 - Applications can compare a candidate binary's expected archive version with
   the stored version using `schema-version`, then run `migrate` before replacing
   the executable. See [the upgrade procedure](setup.md#migrate-before-replacing-the-executable).

@@ -48,6 +48,7 @@ type catalogCapabilities struct {
 	people          bool
 	directoryPeople bool
 	visualSearch    bool
+	embeddingStatus bool
 	savedViews      bool
 	meetings        bool
 	personAgenda    bool
@@ -136,6 +137,7 @@ func capabilitiesFor(opts ServeOptions) catalogCapabilities {
 		people:          opts.PeopleBackend != nil,
 		directoryPeople: opts.DirectoryBackend != nil,
 		visualSearch:    opts.VisualSearcher != nil,
+		embeddingStatus: opts.EmbeddingStatus != nil,
 		savedViews:      opts.SavedViews != nil,
 		meetings:        opts.Meetings != nil,
 		personAgenda:    opts.PersonAgendaBackend != nil,
@@ -254,6 +256,7 @@ func buildOperationCatalog(capabilities catalogCapabilities) []toolDefinition {
 		searchPeopleDefinition(nil),
 		searchPersonFilesDefinition(nil),
 		searchVisualAttachmentsDefinition(),
+		embeddingStatusDefinition(),
 		semanticSearchMessagesDefinition(nil, capabilities.semanticSearch),
 		stageDeletionDefinition(nil),
 		promotePersonDefinition(nil),

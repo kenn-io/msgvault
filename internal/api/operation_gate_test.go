@@ -249,20 +249,31 @@ func TestOperationGateMiddlewareRejectsOversizedCLIRunInspectionBody(t *testing.
 
 func TestOperationGateMiddlewareStillGatesMutatingCLIRun(t *testing.T) {
 	t.Parallel()
-	assert := assert.New(t)
-	gate := &recordingOperationGate{allow: true}
-	handler := operationGateMiddleware(gate, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusNoContent)
-	}))
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{"import", `{"args":["import-mbox","archive.mbox"]}`},
+		{"flag value matches status", `{"args":["embeddings","--config","status","build"]}`},
+		{"unknown flag", `{"args":["embeddings","--account","status","build"]}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			gate := &recordingOperationGate{allow: true}
+			handler := operationGateMiddleware(gate, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusNoContent)
+			}))
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", strings.NewReader(`{"args":["import-mbox","archive.mbox"]}`))
-	resp := httptest.NewRecorder()
-	handler.ServeHTTP(resp, req)
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", strings.NewReader(tc.body))
+			resp := httptest.NewRecorder()
+			handler.ServeHTTP(resp, req)
 
-	assert.Equal(http.StatusNoContent, resp.Code, "status")
-	begin, done := gate.counts()
-	assert.Equal(1, begin, "begin calls")
-	assert.Equal(1, done, "done calls")
+			assert.Equal(http.StatusNoContent, resp.Code, "status")
+			begin, done := gate.counts()
+			assert.Equal(1, begin, "begin calls")
+			assert.Equal(1, done, "done calls")
+		})
+	}
 }
 
 func TestOperationGateMiddlewareStillGatesMutatingDocumentCommands(t *testing.T) {
@@ -721,6 +732,7 @@ func TestOperationGateMiddlewareSkipsReadOnlyCLIRunCommands(t *testing.T) {
 		body string
 	}{
 		{"embeddings list", `{"args":["embeddings","list"]}`},
+		{"embeddings value flag before status", `{"args":["embeddings","--source","42","--json=true","status"]}`},
 		{"documents search", `{"args":["documents","search","shipping damage"]}`},
 		{"list-deletions", `{"args":["list-deletions"]}`},
 		{"show-deletion with id", `{"args":["show-deletion","batch-123"]}`},

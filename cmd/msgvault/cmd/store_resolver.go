@@ -231,6 +231,21 @@ func OpenHTTPStore(ctx context.Context, minimumSchema ...string) (*daemonclient.
 	return openHTTPStoreWithStartupCacheIntent(ctx, startupCacheBuildIntentNone, minimumSchema...)
 }
 
+// newLocalDaemonClient connects to the local daemon described by rt.
+func newLocalDaemonClient(ctx context.Context, cfg *config.Config, rt *DaemonRuntime) (*daemonclient.Client, error) {
+	st, err := newDaemonCLIClient(ctx, daemonclient.Config{
+		URL:              urlFromDaemonRuntime(rt),
+		APIKey:           cfg.Server.AuthenticationKey(),
+		LocalDaemonToken: rt.Record.Metadata[runtimeShutdownToken],
+		AllowInsecure:    true,
+	})
+	if err != nil {
+		return nil, err
+	}
+	st.SetBusyNotifier(reportDaemonBusyWait)
+	return st, nil
+}
+
 func openHTTPStoreWithStartupCacheIntent(
 	ctx context.Context,
 	intent startupCacheBuildIntent,
@@ -267,16 +282,10 @@ func openHTTPStoreWithStartupCacheIntent(
 		return nil, HTTPStoreInfo{}, fmt.Errorf("resolve server API key after local daemon startup: %w", err)
 	}
 	url := urlFromDaemonRuntime(rt)
-	st, err := newDaemonCLIClient(ctx, daemonclient.Config{
-		URL:              url,
-		APIKey:           currentCfg.Server.AuthenticationKey(),
-		LocalDaemonToken: rt.Record.Metadata[runtimeShutdownToken],
-		AllowInsecure:    true,
-	})
+	st, err := newLocalDaemonClient(ctx, currentCfg, rt)
 	if err != nil {
 		return nil, HTTPStoreInfo{}, err
 	}
-	st.SetBusyNotifier(reportDaemonBusyWait)
 	return st, HTTPStoreInfo{
 		Kind:                     HTTPStoreLocalDaemon,
 		URL:                      url,

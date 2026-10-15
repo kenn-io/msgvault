@@ -1120,6 +1120,36 @@ func TestHandleCLIRunStreamsGenericCommandOutput(t *testing.T) {
 	assert.Equal(CLIRunEvent{Type: cliStreamEventTypeComplete}, events[2], "complete event")
 }
 
+func TestHandleCLIRunRejectsEmbeddingsStatusWatch(t *testing.T) {
+	t.Parallel()
+	assert := assert.New(t)
+	runs := 0
+	st := &mockStore{runFunc: func(context.Context, CLIRunRequest, func(CLIRunEvent) error) error {
+		runs++
+		return nil
+	}}
+	srv := newCLIHandlerTestServer(st)
+	for _, args := range []string{
+		`["embeddings","status","--watch"]`,
+		`["embeddings","--watch=true","status"]`,
+	} {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", strings.NewReader(`{"args":`+args+`}`))
+		req.Header.Set("Content-Type", "application/json")
+		resp := httptest.NewRecorder()
+		srv.Router().ServeHTTP(resp, req)
+		assert.Equal(http.StatusBadRequest, resp.Code, args)
+		assert.Contains(resp.Body.String(), "invalid_args", args)
+	}
+	assert.Zero(runs, "a proxied watch must not start a subprocess")
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", strings.NewReader(`{"args":["embeddings","status","--json"]}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp := httptest.NewRecorder()
+	srv.Router().ServeHTTP(resp, req)
+	assert.Equal(http.StatusOK, resp.Code)
+	assert.Equal(1, runs, "a single status read still runs")
+}
+
 func TestHandleCLIRunProtectsAddAccountGrantDecision(t *testing.T) {
 	t.Parallel()
 	t.Run("caller supplied flag is rejected", func(t *testing.T) {

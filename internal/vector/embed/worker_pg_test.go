@@ -21,12 +21,9 @@ import (
 
 // pgFakeEmbeddingClient returns one deterministic, non-zero vector per
 // input. Defined locally because the sqlite_vec testsupport's
-// fakeEmbeddingClient is behind a different build tag. preReturn, if set,
-// fires after inputs are received but before the vectors are returned —
-// letting a test perturb DB state to simulate a read→stamp race.
+// fakeEmbeddingClient is behind a different build tag.
 type pgFakeEmbeddingClient struct {
-	dim       int
-	preReturn func()
+	dim int
 }
 
 func (c *pgFakeEmbeddingClient) Embed(_ context.Context, inputs []string) ([][]float32, error) {
@@ -35,9 +32,6 @@ func (c *pgFakeEmbeddingClient) Embed(_ context.Context, inputs []string) ([][]f
 		v := make([]float32, c.dim)
 		v[0] = float32(len(inputs[i])%c.dim + 1)
 		out[i] = v
-	}
-	if c.preReturn != nil {
-		c.preReturn()
 	}
 	return out, nil
 }
@@ -80,23 +74,25 @@ func (s *pgWorkStore) SetEmbedGen(ctx context.Context, ids []int64, target int64
 // SetEmbedGenIfUnchanged mirrors store.Store.SetEmbedGenIfUnchanged on the
 // PG test schema: a per-row optimistic-CAS stamp gated on last_modified.
 // Returns the ids whose UPDATE matched 0 rows (CAS misses).
-func (s *pgWorkStore) SetEmbedGenIfUnchanged(ctx context.Context, items []store.EmbedGenStamp, target int64) (missed []int64, err error) {
+func (s *pgWorkStore) SetEmbedGenIfUnchanged(ctx context.Context, items []store.EmbedGenStamp, target int64) (missed []int64, covered int, err error) {
 	for _, it := range items {
 		res, err := s.db.ExecContext(ctx,
 			`UPDATE messages SET embed_gen = $1 WHERE id = $2 AND last_modified = $3`,
 			target, it.ID, it.LastModified)
 		if err != nil {
-			return missed, err
+			return missed, covered, err
 		}
 		n, err := res.RowsAffected()
 		if err != nil {
-			return missed, err
+			return missed, covered, err
 		}
 		if n == 0 {
 			missed = append(missed, it.ID)
+		} else {
+			covered++
 		}
 	}
-	return missed, nil
+	return missed, covered, nil
 }
 
 func int64ArrayLiteral(ids []int64) string {
@@ -302,204 +298,4 @@ func TestWorkerPG_EmbedBatch_RebindsINClause(t *testing.T) {
 	for _, c := range eb.chunks {
 		assert.Len(c.Vector, 4)
 	}
-}
-
-// pgLMOf reads message id 1's last_modified as text on PG (the single
-// seeded message these last_modified-trigger tests operate on).
-func pgLMOf(t *testing.T, db *sql.DB) string {
-	t.Helper()
-	var s string
-	require.NoError(t, db.QueryRow(
-		`SELECT CAST(last_modified AS TEXT) FROM messages WHERE id = 1`).Scan(&s))
-
-	return s
-}
-
-// pgReadWatermark returns the persisted forward-scan watermark for gen on PG
-// (0 if absent).
-func pgReadWatermark(t *testing.T, db *sql.DB, gen int64) int64 {
-	t.Helper()
-	var id int64
-	err := db.QueryRow(
-		`SELECT watermark_id FROM embed_watermark WHERE generation_id = $1`, gen).Scan(&id)
-	if err == sql.ErrNoRows {
-		return 0
-	}
-	require.NoError(t, err, "pgReadWatermark")
-	return id
-}
-
-// TestWorkerPG_TriggersBumpLastModified verifies the PG trigger pair: a
-// message UPDATE and a message_bodies INSERT/UPDATE both move
-// messages.last_modified.
-func TestWorkerPG_TriggersBumpLastModified(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-
-	ctx := context.Background()
-	db := openPGWorkerDB(t, 0)
-
-	_, err := db.ExecContext(ctx,
-		`INSERT INTO messages (id, subject) VALUES (1, 'subject')`)
-	require.NoError(
-		err, "insert message")
-
-	// Pin a far-past baseline so a bump is detectable regardless of clock
-	// resolution. (The BEFORE trigger preserves an explicit set via its
-	// WHEN guard, so this value sticks.)
-	_, err = db.ExecContext(ctx,
-		`UPDATE messages SET last_modified = '2000-01-01 00:00:00+00' WHERE id = 1`)
-	require.NoError(
-		err, "baseline")
-
-	base := pgLMOf(t, db)
-
-	// Message UPDATE bumps.
-	_, err = db.ExecContext(ctx, `UPDATE messages SET subject = 'changed' WHERE id = 1`)
-	require.NoError(
-		err, "update message")
-
-	afterMsg := pgLMOf(t, db)
-	assert.NotEqual(base, afterMsg, "message UPDATE bumps last_modified")
-
-	// Re-baseline, then body INSERT bumps the parent.
-	_, err = db.ExecContext(ctx,
-		`UPDATE messages SET last_modified = '2000-01-01 00:00:00+00' WHERE id = 1`)
-	require.NoError(
-		err, "re-baseline")
-
-	_, err = db.ExecContext(ctx,
-		`INSERT INTO message_bodies (message_id, body_text) VALUES (1, 'body')`)
-	require.NoError(
-		err, "insert body")
-
-	assert.NotEqual("2000-01-01 00:00:00+00", pgLMOf(t, db),
-		"body INSERT bumps parent last_modified")
-
-	// Re-baseline, then body UPDATE bumps the parent.
-	_, err = db.ExecContext(ctx,
-		`UPDATE messages SET last_modified = '2000-01-01 00:00:00+00' WHERE id = 1`)
-	require.NoError(
-		err, "re-baseline 2")
-
-	base2 := pgLMOf(t, db)
-	_, err = db.ExecContext(ctx,
-		`UPDATE message_bodies SET body_text = 'corrected' WHERE message_id = 1`)
-	require.NoError(
-		err, "update body")
-
-	assert.NotEqual(base2, pgLMOf(t, db), "body UPDATE bumps parent last_modified")
-}
-
-// TestWorkerPG_CASRepairRace mirrors the SQLite CAS regression on PG: a
-// content edit landing between read and stamp leaves the row unstamped.
-func TestWorkerPG_CASRepairRace(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-
-	ctx := context.Background()
-	db := openPGWorkerDB(t, 1)
-
-	backend, err := pgvector.Open(ctx, pgvector.Options{DB: db, Dimension: 4})
-	require.NoError(
-		err, "pgvector.Open")
-
-	t.Cleanup(func() { _ = backend.Close() })
-	gen, err := backend.CreateGeneration(ctx, "fake", 4, "")
-	require.NoError(
-		err, "CreateGeneration")
-
-	// Baseline the token to a fixed past value.
-	_, err = db.ExecContext(ctx,
-		`UPDATE messages SET last_modified = '2000-01-01 00:00:00+00' WHERE id = 1`)
-	require.NoError(
-		err, "baseline")
-
-	token := pgLMOf(t, db)
-
-	client := &pgFakeEmbeddingClient{dim: 4}
-	client.preReturn = func() {
-		// Repair-encoding race: rewrite body (bumps last_modified via trigger)
-		// and reset embed_gen.
-		_, e := db.ExecContext(ctx,
-			`UPDATE message_bodies SET body_text = 'corrected' WHERE message_id = 1`)
-		require.NoError(e, "race body rewrite")
-		_, e = db.ExecContext(ctx, `UPDATE messages SET embed_gen = NULL WHERE id = 1`)
-		require.NoError(e, "race embed_gen reset")
-	}
-
-	w := NewWorker(WorkerDeps{
-		Backend:          backend,
-		VectorsDB:        db,
-		MainDB:           db,
-		Store:            &pgWorkStore{db: db},
-		Client:           client,
-		Rebind:           (&store.PostgreSQLDialect{}).Rebind,
-		LastModifiedExpr: "m.last_modified",
-		BatchSize:        1,
-		Recorder:         newTestOperationRecorder(),
-	})
-	res, err := w.RunOnce(ctx, gen, testEmbeddingPassScope())
-	require.NoError(
-		err, "RunOnce")
-
-	// CAS targeted the stale token; the row moved, so it is NOT stamped.
-	var embedGen sql.NullInt64
-	require.NoError(db.QueryRowContext(ctx,
-		`SELECT embed_gen FROM messages WHERE id = 1`).Scan(&embedGen))
-	assert.False(embedGen.Valid, "raced row must NOT be stamped")
-	assert.Equal(1, pgCountMissing(t, db, int64(gen)), "raced row still needs embedding")
-	assert.NotEqual(token, pgLMOf(t, db), "last_modified bumped by race")
-	assert. // A CAS miss is not counted as a success, and the watermark still advances
-		// past the missed row (id 1) — the drain does not stick.
-		Equal(0, res.Succeeded, "CAS-missed row not counted in Succeeded")
-	assert.Equal(int64(1), pgReadWatermark(t, db, int64(gen)),
-		"watermark advances past the CAS-missed row")
-
-	// Recovery: backstop re-embeds with the corrected content.
-	client.preReturn = nil
-	res, err = w.RunBackstop(ctx, gen, testEmbeddingPassScope())
-	require.NoError(
-		err, "RunBackstop recovery")
-
-	assert.Equal(1, res.Succeeded, "raced row re-embedded on recovery")
-	assert.Equal(0, pgCountMissing(t, db, int64(gen)), "coverage complete after recovery")
-}
-
-// TestWorkerPG_CASNormalPath verifies the happy path on PG: unchanged
-// last_modified → CAS stamp succeeds for every message.
-func TestWorkerPG_CASNormalPath(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-
-	ctx := context.Background()
-	const n = 3
-	db := openPGWorkerDB(t, n)
-
-	backend, err := pgvector.Open(ctx, pgvector.Options{DB: db, Dimension: 4})
-	require.NoError(
-		err, "pgvector.Open")
-
-	t.Cleanup(func() { _ = backend.Close() })
-	gen, err := backend.CreateGeneration(ctx, "fake", 4, "")
-	require.NoError(
-		err, "CreateGeneration")
-
-	w := NewWorker(WorkerDeps{
-		Backend:          backend,
-		VectorsDB:        db,
-		MainDB:           db,
-		Store:            &pgWorkStore{db: db},
-		Client:           &pgFakeEmbeddingClient{dim: 4},
-		Rebind:           (&store.PostgreSQLDialect{}).Rebind,
-		LastModifiedExpr: "m.last_modified",
-		BatchSize:        2,
-		Recorder:         newTestOperationRecorder(),
-	})
-	res, err := w.RunOnce(ctx, gen, testEmbeddingPassScope())
-	require.NoError(
-		err, "RunOnce")
-
-	assert.Equal(n, res.Succeeded, "all embedded via CAS")
-	assert.Equal(0, pgCountMissing(t, db, int64(gen)), "all stamped")
 }

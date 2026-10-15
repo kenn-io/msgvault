@@ -604,13 +604,14 @@ func cliRepairMessageGateDecision(r *http.Request) (label string, skip bool, err
 // cliRunReadOnlyCommands are proxied CLI commands that only read. Keys are
 // the leading command-path words of CLIRunRequest args (flags follow them).
 var cliRunReadOnlyCommands = map[string]bool{
-	"draft-get":        true,
-	"draft-send-as":    true,
-	"logs":             true,
-	"list-deletions":   true,
-	"show-deletion":    true,
-	"embeddings list":  true,
-	"documents search": true,
+	"draft-get":         true,
+	"draft-send-as":     true,
+	"logs":              true,
+	"list-deletions":    true,
+	"show-deletion":     true,
+	"embeddings list":   true,
+	"embeddings status": true,
+	"documents search":  true,
 }
 
 // cliRunSelfGatedCommands are proxied CLI commands that acquire the
@@ -669,16 +670,31 @@ var cliRunCommandGroups = map[string]bool{
 	"documents":  true,
 }
 
-// cliRunCommandWords extracts the command path from proxied args. Positional
-// values and flags follow the command path, so only a known group consumes a
-// second word.
+// cliRunCommandWords extracts the command path while consuming supported flags and their values.
 func cliRunCommandWords(args []string) string {
 	first := args[0]
 	if strings.HasPrefix(first, "-") {
 		return ""
 	}
-	if cliRunCommandGroups[first] && len(args) > 1 && !strings.HasPrefix(args[1], "-") {
-		return first + " " + args[1]
+	if !cliRunCommandGroups[first] {
+		return first
+	}
+	for i := 1; i < len(args); i++ {
+		arg := args[i]
+		if !strings.HasPrefix(arg, "-") {
+			return first + " " + arg
+		}
+		name, _, hasValue := strings.Cut(arg, "=")
+		switch name {
+		case "--json", "--watch", "--verbose", "-v", "--local", "--no-log-file", "--log-sql", "--help", "-h":
+		case "--source", "--interval", "--config", "--home", "--log-file", "--log-level", "--log-sql-slow-ms":
+			if !hasValue {
+				i++
+			}
+		default:
+			// Unknown flags stay gated because their next argument may be a value.
+			return first
+		}
 	}
 	return first
 }

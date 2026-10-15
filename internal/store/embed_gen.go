@@ -162,23 +162,24 @@ type EmbedGenMetadataVersion struct {
 // contextual document revisions include those tokens. Without the restore,
 // the worker's own coverage bookkeeping changes the revision and an initial
 // reconciliation pays to publish the same document again. The ordinary
-// per-message stamp keeps its established row-watermark behavior.
+// per-message stamp keeps its established row-watermark behavior. covered
+// counts members that were not already stamped for target.
 func (s *Store) SetEmbedGenGroupIfUnchanged(
 	ctx context.Context,
 	versions []EmbedGenStamp,
 	metadataVersion EmbedGenMetadataVersion,
 	target int64,
-) (stamped bool, retErr error) {
+) (stamped bool, covered int, retErr error) {
 	if len(versions) == 0 {
-		return false, nil
+		return false, 0, nil
 	}
 	seen := make(map[int64]struct{}, len(versions))
 	for _, version := range versions {
 		if version.ID == 0 {
-			return false, nil
+			return false, 0, nil
 		}
 		if _, duplicate := seen[version.ID]; duplicate {
-			return false, nil
+			return false, 0, nil
 		}
 		seen[version.ID] = struct{}{}
 	}
@@ -189,11 +190,11 @@ func (s *Store) SetEmbedGenGroupIfUnchanged(
 
 	conn, err := s.db.Conn(ctx)
 	if err != nil {
-		return false, fmt.Errorf("acquire embed_gen group connection: %w", err)
+		return false, 0, fmt.Errorf("acquire embed_gen group connection: %w", err)
 	}
 	defer func() { _ = conn.Close() }()
 	if _, err := conn.ExecContext(ctx, s.dialect.BeginWriteSQL()); err != nil {
-		return false, fmt.Errorf("begin embed_gen group transaction: %w", err)
+		return false, 0, fmt.Errorf("begin embed_gen group transaction: %w", err)
 	}
 	committed := false
 	defer func() {
@@ -210,7 +211,7 @@ func (s *Store) SetEmbedGenGroupIfUnchanged(
 	if s.IsPostgreSQL() {
 		if _, err := conn.ExecContext(ctx, `SELECT pg_advisory_xact_lock(
 			hashtextextended('msgvault.embedding_change_clock', 0))`); err != nil {
-			return false, fmt.Errorf("lock embed_gen group journal boundary: %w", err)
+			return false, 0, fmt.Errorf("lock embed_gen group journal boundary: %w", err)
 		}
 	}
 
@@ -218,8 +219,9 @@ func (s *Store) SetEmbedGenGroupIfUnchanged(
 	if !s.IsPostgreSQL() {
 		lastModified = "CAST(last_modified AS TEXT)"
 	}
+	newlyCovered := 0
 	for _, version := range orderedVersions {
-		query := fmt.Sprintf(`SELECT id FROM messages
+		query := fmt.Sprintf(`SELECT id, embed_gen FROM messages
 			WHERE id = ? AND %s = ?
 			  AND deleted_at IS NULL AND deleted_from_source_at IS NULL`, lastModified)
 		args := []any{version.ID, version.LastModified}
@@ -229,22 +231,26 @@ func (s *Store) SetEmbedGenGroupIfUnchanged(
 		}
 		query += s.dialect.SelectForUpdate()
 		var id int64
-		err := conn.QueryRowContext(ctx, s.dialect.Rebind(query), args...).Scan(&id)
+		var previousGen sql.NullInt64
+		err := conn.QueryRowContext(ctx, s.dialect.Rebind(query), args...).Scan(&id, &previousGen)
 		if errors.Is(err, sql.ErrNoRows) {
-			return false, nil
+			return false, 0, nil
 		}
 		if err != nil {
-			return false, fmt.Errorf("lock embed_gen group member %d: %w", version.ID, err)
+			return false, 0, fmt.Errorf("lock embed_gen group member %d: %w", version.ID, err)
+		}
+		if !previousGen.Valid || previousGen.Int64 != target {
+			newlyCovered++
 		}
 	}
 
 	if metadataVersion.ConversationID != 0 {
 		digest, found, err := s.embedGenMetadataDigest(ctx, conn, metadataVersion.ConversationID)
 		if err != nil {
-			return false, err
+			return false, 0, err
 		}
 		if !found || digest != metadataVersion.Digest {
-			return false, nil
+			return false, 0, nil
 		}
 	}
 
@@ -253,34 +259,34 @@ func (s *Store) SetEmbedGenGroupIfUnchanged(
 			`UPDATE messages SET embed_gen = ? WHERE id = ? AND last_modified = ?`),
 			target, version.ID, version.LastModified)
 		if err != nil {
-			return false, fmt.Errorf("stamp embed_gen group member %d: %w", version.ID, err)
+			return false, 0, fmt.Errorf("stamp embed_gen group member %d: %w", version.ID, err)
 		}
 		matched, err := res.RowsAffected()
 		if err != nil {
-			return false, fmt.Errorf("rows affected for embed_gen group member %d: %w", version.ID, err)
+			return false, 0, fmt.Errorf("rows affected for embed_gen group member %d: %w", version.ID, err)
 		}
 		if matched != 1 {
-			return false, nil
+			return false, 0, nil
 		}
 		restored, err := conn.ExecContext(ctx, s.dialect.Rebind(
 			`UPDATE messages SET last_modified = ? WHERE id = ? AND embed_gen = ?`),
 			version.LastModified, version.ID, target)
 		if err != nil {
-			return false, fmt.Errorf("restore embed_gen group member %d revision token: %w", version.ID, err)
+			return false, 0, fmt.Errorf("restore embed_gen group member %d revision token: %w", version.ID, err)
 		}
 		restoredRows, err := restored.RowsAffected()
 		if err != nil {
-			return false, fmt.Errorf("rows affected restoring embed_gen group member %d revision token: %w", version.ID, err)
+			return false, 0, fmt.Errorf("rows affected restoring embed_gen group member %d revision token: %w", version.ID, err)
 		}
 		if restoredRows != 1 {
-			return false, nil
+			return false, 0, nil
 		}
 	}
 	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
-		return false, fmt.Errorf("commit embed_gen group transaction: %w", err)
+		return false, 0, fmt.Errorf("commit embed_gen group transaction: %w", err)
 	}
 	committed = true
-	return true, nil
+	return true, newlyCovered, nil
 }
 
 // ParticipantRevisionSQLite and ParticipantRevisionPostgres render
@@ -376,7 +382,7 @@ func (s *Store) embedGenMetadataDigest(
 // idempotent batch). Used by the embed worker's content read→stamp path; the
 // backfill path keeps the plain SetEmbedGen (it has no read→stamp window).
 //
-// Returns the ids whose per-row UPDATE matched 0 rows — the CAS MISSES. A miss
+// Returns newly covered rows and IDs whose content token no longer matches. A miss
 // means last_modified moved between the worker's content read and this stamp
 // (a concurrent repair/edit bumped it via the DB triggers), so the row was NOT
 // stamped and stays "needs embedding". The worker surfaces these (logs them and
@@ -398,22 +404,31 @@ func (s *Store) embedGenMetadataDigest(
 // update) bumps last_modified and clears embed_gen (repair) / re-finds it, and a
 // full rebuild or the auto-backstop re-embeds it regardless. See
 // docs/usage/vector-search.md ("CAS resolution").
-func (s *Store) SetEmbedGenIfUnchanged(ctx context.Context, items []EmbedGenStamp, target int64) (missed []int64, err error) {
+func (s *Store) SetEmbedGenIfUnchanged(ctx context.Context, items []EmbedGenStamp, target int64) (missed []int64, covered int, err error) {
 	for _, it := range items {
-		q := `UPDATE messages SET embed_gen = ? WHERE id = ? AND last_modified = ?`
-		res, err := s.db.ExecContext(ctx, q, target, it.ID, it.LastModified)
+		q := `UPDATE messages SET embed_gen = ? WHERE id = ? AND last_modified = ? AND (embed_gen IS NULL OR embed_gen <> ?)`
+		res, err := s.db.ExecContext(ctx, s.dialect.Rebind(q), target, it.ID, it.LastModified, target)
 		if err != nil {
-			return missed, fmt.Errorf("set embed_gen if unchanged (id=%d): %w", it.ID, err)
+			return missed, covered, fmt.Errorf("set embed_gen if unchanged (id=%d): %w", it.ID, err)
 		}
 		n, err := res.RowsAffected()
 		if err != nil {
-			return missed, fmt.Errorf("rows affected (id=%d): %w", it.ID, err)
+			return missed, covered, fmt.Errorf("rows affected (id=%d): %w", it.ID, err)
 		}
 		if n == 0 {
-			missed = append(missed, it.ID)
+			var alreadyCovered bool
+			err := s.db.QueryRowContext(ctx, s.dialect.Rebind(`SELECT EXISTS(SELECT 1 FROM messages WHERE id = ? AND last_modified = ? AND embed_gen = ?)`), it.ID, it.LastModified, target).Scan(&alreadyCovered)
+			if err != nil {
+				return missed, covered, fmt.Errorf("read existing embed_gen (id=%d): %w", it.ID, err)
+			}
+			if !alreadyCovered {
+				missed = append(missed, it.ID)
+			}
+		} else {
+			covered++
 		}
 	}
-	return missed, nil
+	return missed, covered, nil
 }
 
 // ResetEmbedGen clears embed_gen (sets it back to NULL) on the given
@@ -558,16 +573,35 @@ func visitStampedMessages(
 // types and source IDs. Empty messageTypes and sourceIDs slices mean the
 // full live corpus.
 func (s *Store) CoverageCountsScoped(ctx context.Context, activeGen int64, messageTypes []string, sourceIDs []int64) (live, stamped, blank, missing int64, err error) {
-	liveWhere, liveArgs := liveMessagesWhereScoped(messageTypes, sourceIDs)
-	q := `SELECT COUNT(*),
-		COALESCE(SUM(CASE WHEN ? <> 0 AND embed_gen = ? THEN 1 ELSE 0 END), 0)
-		FROM messages WHERE ` + liveWhere
-	args := append([]any{activeGen, activeGen}, liveArgs...)
+	q, args := coverageCountsScopedQuery(activeGen, messageTypes, sourceIDs)
 	if err := s.db.QueryRowContext(ctx, q, args...).Scan(&live, &stamped); err != nil {
 		return 0, 0, 0, 0, fmt.Errorf("count live embedding coverage: %w", err)
 	}
 	missing = max(live-stamped, 0)
 	return live, stamped, 0, missing, nil
+}
+
+// CoverageCountsScopedUnbounded counts like CoverageCountsScoped without
+// PostgreSQL's pool-wide statement timeout, so on a large archive the count is
+// bounded only by ctx. The timeout is lifted for this transaction alone.
+func (s *Store) CoverageCountsScopedUnbounded(ctx context.Context, activeGen int64, messageTypes []string, sourceIDs []int64) (live, stamped, blank, missing int64, err error) {
+	q, args := coverageCountsScopedQuery(activeGen, messageTypes, sourceIDs)
+	err = s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+		return tx.QueryRowContext(ctx, q, args...).Scan(&live, &stamped)
+	})
+	if err != nil {
+		return 0, 0, 0, 0, fmt.Errorf("count live embedding coverage: %w", err)
+	}
+	missing = max(live-stamped, 0)
+	return live, stamped, 0, missing, nil
+}
+
+func coverageCountsScopedQuery(activeGen int64, messageTypes []string, sourceIDs []int64) (string, []any) {
+	liveWhere, liveArgs := liveMessagesWhereScoped(messageTypes, sourceIDs)
+	q := `SELECT COUNT(*),
+		COALESCE(SUM(CASE WHEN ? <> 0 AND embed_gen = ? THEN 1 ELSE 0 END), 0)
+		FROM messages WHERE ` + liveWhere
+	return q, append([]any{activeGen, activeGen}, liveArgs...)
 }
 
 // EmbeddingConvergenceCounts partitions message coverage for the contextual

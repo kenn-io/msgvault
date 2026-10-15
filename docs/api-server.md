@@ -158,7 +158,7 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.20.0**.
+it is separate from the binary release version. The current schema is **3.21.0**.
 
 Schema 3.19.0 adds pipe-separated OR in full-text message search queries.
 Upgrade clients and daemon together across incompatible schema versions,
@@ -239,6 +239,9 @@ Schema 3.14.0 adds `filename:` search filters, optional match snippets,
 attachment names and counts, and `hybrid_available` to CLI search responses.
 
 Schema 3.20.0 adds unreleased [contact route discovery](#contact-route-discovery).
+
+Schema 3.21.0 adds `GET /api/v1/embeddings/status` and MCP
+`get_embeddings_status`. See [message embedding status](#message-embedding-status).
 
 Schema 2.35.0 adds `scope_escalation_source_type` (`gmail` or `msmail`) to
 `POST /api/v1/cli/delete-staged/plan` responses that require a permission
@@ -3049,3 +3052,25 @@ policy and deletion visibility. Changes under
 | `enabled` | `true` | Whether scheduled sync is active |
 
 See the [Configuration](/docs/configuration/) page for the full config file reference.
+
+## Message embedding status
+
+`GET /api/v1/embeddings/status` returns the same generation and coverage shape
+used by `msgvault embeddings status --json`, plus live job and scheduler state,
+recent throughput, nullable ETA, and a bounded per-batch timing sample.
+`source_id` is an optional positive integer that filters `eligible`, `current`,
+and `pending`. Diagnostics, throughput, job state, and failures describe the
+whole run across sources; filtered responses have null ETA. Owner access is
+required because run diagnostics and scheduler state span sources outside a
+scoped agent grant.
+The endpoint is read-only and bypasses the scheduler slot. It returns `400`
+for invalid, repeated, unknown, or out-of-scope source IDs and `503` with `embeddings_status_unavailable` when vector search is disabled,
+required archive state cannot be read, or the read takes longer than five seconds.
+A diagnostics-only read or decode failure returns coverage and job state with
+`diagnostics=null`. `coverage_sampled_at` gives the count time; stale counts
+suppress ETA. `diagnostics_stale` marks an unfinished snapshot older than a
+minute, and an active run with that snapshot has phase `diagnostics_stale`.
+It never sends message content to a provider.
+See the [CLI field semantics](cli-reference.md#embeddings-status) and the
+[published OpenAPI schema](https://github.com/kenn-io/msgvault/blob/main/api/openapi.yaml).
+MCP exposes the same response through `get_embeddings_status` on API 3.21.0 or newer when vector search is enabled.

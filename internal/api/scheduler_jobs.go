@@ -155,6 +155,16 @@ func SchedulerJobNameForSource(sourceType, identifier string) (string, bool) {
 	}
 }
 
+// isSourceSyncJobName reports whether a generic scheduler job syncs a source.
+func isSourceSyncJobName(name string) bool {
+	kind, _, _ := strings.Cut(name, ":")
+	if kind == CardDAVJobName {
+		return true
+	}
+	_, ok := SchedulerJobNameForSource(strings.ReplaceAll(kind, "-", "_"), "source/calendar")
+	return ok
+}
+
 // gcalJobName builds the scheduler job name for a gcal account from its
 // normalized account email. Both SchedulerJobNameForSource (deriving the
 // email from a calendar's store identifier) and GCalJobNameForAccountEmail

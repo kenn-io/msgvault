@@ -26,6 +26,12 @@ by a third party, message text and semantic query text are sent there;
 use a local or self-hosted endpoint when you need the workflow to stay
 on your own machine or network.
 
+Use `msgvault embeddings status --watch` to see message coverage and diagnose
+slow embedding work. Its recent batch timings separate provider calls and retry
+waits from database writes. See [embedding status](../cli-reference.md#embeddings-status)
+for rate, ETA, and source-filter semantics. The same snapshot is available at
+`GET /api/v1/embeddings/status` and through MCP `get_embeddings_status`.
+
 Choose the index for the thing you want to find:
 
 | Content | Search command | Setup |

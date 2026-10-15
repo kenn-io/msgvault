@@ -182,6 +182,7 @@ func TestAgentToolsFollowGrantPermissions(t *testing.T) {
 			t.Cleanup(func() { _ = agent.Close() })
 			opts := agentServeOptions(t, agent)
 			opts.AttachmentReader = agent
+			opts.EmbeddingStatus = agent
 			session := task5ConnectClient(t, opts, true)
 			initialized := session.InitializeResult()
 			requirements.NotNil(initialized)
@@ -192,6 +193,7 @@ func TestAgentToolsFollowGrantPermissions(t *testing.T) {
 			requirements.NoError(err)
 			var listed []string
 			for _, tool := range tools.Tools {
+				assertions.NotEqual(ToolGetEmbeddingStatus, tool.Name, "run-wide diagnostics require owner access")
 				if slices.Contains(readTools, tool.Name) {
 					listed = append(listed, tool.Name)
 				}

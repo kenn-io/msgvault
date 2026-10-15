@@ -80,6 +80,7 @@ func (c *Client) embed(ctx context.Context, role embedconfig.Role, inputs []stri
 	if len(inputs) == 0 {
 		return nil, nil
 	}
+	ctx = withEmbeddingAttemptGroup(ctx)
 	httpClient := *c.http
 	if c.cfg.BeforeRequest != nil {
 		// Consent failure ends this call, including Kit retries. Each concrete
@@ -120,6 +121,9 @@ func (c *Client) embed(ctx context.Context, role embedconfig.Role, inputs []stri
 	}
 	vectors, err := client.EmbedTexts(ctx, role, inputs)
 	if err == nil {
+		if role == embedconfig.RoleDocument {
+			addEmbeddingPrefix(ctx, c.cfg.DocumentPrefix, len(inputs))
+		}
 		return vectors, nil
 	}
 	if cause := beforeRequestCause(err); cause != nil {

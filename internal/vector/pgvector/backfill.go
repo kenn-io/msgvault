@@ -311,6 +311,21 @@ func (b *Backend) resetOrphanedEmbedGen(ctx context.Context) error {
 		    AND embed_gen NOT IN (SELECT id FROM index_generations)`); err != nil {
 		return fmt.Errorf("reset orphaned embed_gen: clear orphaned stamps: %w", err)
 	}
+	// Batch diagnostics are keyed by generation too; a reused id must not
+	// show an earlier generation's timings. The table can be absent before
+	// store.InitSchema runs.
+	var hasDiagnostics bool
+	if err := tx.QueryRowContext(ctx,
+		`SELECT to_regclass('embedding_diagnostics') IS NOT NULL`).Scan(&hasDiagnostics); err != nil {
+		return fmt.Errorf("reset orphaned embed_gen: probe diagnostics table: %w", err)
+	}
+	if hasDiagnostics {
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM embedding_diagnostics
+			  WHERE generation_id NOT IN (SELECT id FROM index_generations)`); err != nil {
+			return fmt.Errorf("reset orphaned embed_gen: clear orphaned diagnostics: %w", err)
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("reset orphaned embed_gen: commit tx: %w", err)
 	}

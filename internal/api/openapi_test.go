@@ -28,6 +28,32 @@ const (
 	openAPIClientGeneratedDir = "../../pkg/client/generated"
 )
 
+func TestNullableObjectReferenceSchemas(t *testing.T) {
+	t.Parallel()
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	public := OpenAPIDocument().Components.Schemas.Map()
+	client := openAPIClientDocument().Components.Schemas.Map()
+	for schemaName, refs := range map[string]map[string]string{
+		"EmbeddingStatus":      {"active_generation": "EmbeddingGenerationStatus", "diagnostics": "EmbeddingDiagnostics"},
+		"EmbeddingDiagnostics": {"current_batch": "EmbeddingBatch", "last_error": "OperationPublicError"},
+		"EmbeddingBatch":       {"error": "OperationPublicError"},
+		"SourceStatus":         {"active_sync": "SyncRunStatus", "latest_sync": "SyncRunStatus", "last_successful_sync": "SyncRunStatus"},
+	} {
+		requirements.NotNil(public[schemaName], schemaName)
+		for name, ref := range refs {
+			property := public[schemaName].Properties[name]
+			requirements.NotNil(property, schemaName+"."+name)
+			requirements.Len(property.OneOf, 2, schemaName+"."+name)
+			assertions.Equal("#/components/schemas/"+ref, property.OneOf[0].Ref, schemaName+"."+name)
+			assertions.Equal("null", property.OneOf[1].Type)
+			assertions.Contains(public[schemaName].Required, name)
+			assertions.True(client[schemaName].Properties[name].Nullable)
+			assertions.NotContains(client[schemaName].Required, name)
+		}
+	}
+}
+
 func TestOpenAPIDocumentUsesAPISchemaVersion(t *testing.T) {
 	t.Parallel()
 	assert := assert.New(t)
@@ -713,22 +739,6 @@ func operationBodySchema(
 	resolved := document.Components.Schemas.Map()[strings.TrimPrefix(schema.Ref, prefix)]
 	requirements.NotNil(resolved)
 	return resolved
-}
-
-func TestSourceStatusRunReferencesAreNullable(t *testing.T) {
-	t.Parallel()
-	requirements := require.New(t)
-	assertions := assert.New(t)
-	doc := OpenAPIDocument()
-	schema := doc.Components.Schemas.Map()["SourceStatus"]
-	requirements.NotNil(schema)
-	for _, name := range []string{"active_sync", "latest_sync", "last_successful_sync"} {
-		property := schema.Properties[name]
-		requirements.NotNil(property, name)
-		requirements.Len(property.OneOf, 2, name)
-		assertions.Equal("#/components/schemas/SyncRunStatus", property.OneOf[0].Ref, name)
-		assertions.Equal("null", property.OneOf[1].Type, name)
-	}
 }
 
 func TestExploreServiceUnavailableResponseUsesNonExclusiveAlternatives(t *testing.T) {

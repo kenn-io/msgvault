@@ -120,6 +120,9 @@ func (c *VoyageClient) EmbedDocuments(ctx context.Context, documents []DocumentI
 		if err != nil {
 			return results, err
 		}
+		for _, document := range batch {
+			addEmbeddingPrefix(ctx, c.cfg.DocumentPrefix, len(document.Chunks))
+		}
 		results = append(results, batchResults...)
 	}
 	return results, nil
@@ -157,6 +160,7 @@ func (c *VoyageClient) embedRequest(ctx context.Context, inputs [][]string, inpu
 }
 
 func (c *VoyageClient) embedWithRetry(ctx context.Context, inputs [][]string, inputType string) ([][][]float32, error) {
+	ctx = withEmbeddingAttemptGroup(ctx)
 	body, err := json.Marshal(voyageRequest{
 		Inputs:             inputs,
 		Model:              c.cfg.Model,
