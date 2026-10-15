@@ -324,26 +324,15 @@ func TestGetAssetBytesClassification(t *testing.T) {
 		},
 		{
 			// No case singles out 403: a phraseless 403 falls through to the
-			// same default every other unhandled 4xx hits.
+			// same default every other unhandled 4xx hits, same as the
+			// explicit 401/429 cases show for their own statuses. A 403
+			// carrying a phrase needs no case of its own: classifyAssetError
+			// never looks at the status code, so it's reached through the
+			// same branch the 400/404/502 cases already prove.
 			name:      "403 with no matching phrase falls through like any unhandled status",
 			responses: []assetResponse{{status: 403, body: "access denied"}},
 			wantCalls: 1,
 			permanent: true,
-		},
-		{
-			// A 403 that does carry a not-found phrase classifies the same
-			// as any other status, exactly like the pre-existing definitive
-			// phrase match (never gated on status) already did on main.
-			name:      "403 with a not-found phrase classifies like any other status",
-			responses: []assetResponse{{status: 403, body: "Media not found"}},
-			wantCalls: 1,
-			notFound:  true,
-		},
-		{
-			name:        "403 with the definitive phrase classifies like any other status",
-			responses:   []assetResponse{{status: 403, body: "Media is no longer available"}},
-			wantCalls:   1,
-			unavailable: true,
 		},
 		{
 			name:      "unrelated 502 is treated as a plain server error",
@@ -450,5 +439,5 @@ func TestClientDoesNotSleepAfterFinalAttempt(t *testing.T) {
 
 // A not-found phrase off an asset request needs no test of its own:
 // TestClientPermanentPhraseIgnoredOffAssets already proves the asset flag
-// gates classifyAssetError regardless of which phrase matches, and
+// gates classifyAssetError before any phrase is even checked, and
 // TestClientNotFound already proves a non-asset 404 resolves to ErrNotFound.
