@@ -2,7 +2,7 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": ["config:recommended"],
   "dependencyDashboard": true,
-  "enabledManagers": ["dockerfile", "github-actions", "gomod"],
+  "enabledManagers": ["dockerfile", "github-actions", "gomod", "pep621"],
   "osvVulnerabilityAlerts": true,
   "minimumReleaseAge": "7 days",
   "minimumReleaseAgeBehaviour": "timestamp-required",
@@ -11,6 +11,11 @@
   "vulnerabilityAlerts": {
     "minimumReleaseAge": null,
     "prCreation": "immediate"
+  },
+  "pep621": {
+    "lockFileMaintenance": {
+      "enabled": true
+    }
   },
   "packageRules": [
     {
@@ -32,6 +37,11 @@
       "groupName": "Go dependencies",
       "groupSlug": "go-dependencies",
       "postUpdateOptions": ["gomodUpdateImportPaths", "gomodTidy"]
+    },
+    {
+      "matchManagers": ["pep621"],
+      "groupName": "Documentation dependencies",
+      "groupSlug": "docs-dependencies"
     }
   ]
 }
