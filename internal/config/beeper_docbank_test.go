@@ -26,6 +26,8 @@ enabled = true
 url = "http://127.0.0.1:8080"
 api_key_env = "DOCBANK_TEST_KEY"
 all_sources_upload_consent = true
+attachment_upload_consent = true
+attachment_folder = "/msgvault/files"
 asr_profile = "voice-asr"
 reference_consent = true
 reference_origins = ["https://cap.example.test"]
@@ -37,6 +39,7 @@ reference_origins = ["https://cap.example.test"]
 	assert.Equal(DocbankIntegrationConfig{
 		Enabled: true, URL: "http://127.0.0.1:8080",
 		APIKeyEnv: "DOCBANK_TEST_KEY", AllSourcesUploadConsent: true, ASRProfile: "voice-asr",
+		AttachmentUploadConsent: true, AttachmentFolder: "/msgvault/files",
 		ReferenceConsent: true, ReferenceOrigins: []string{"https://cap.example.test"},
 	}, cfg.Integrations.Docbank)
 	require.NoError(os.WriteFile(path, []byte("[integrations.docbank]\nreference_origins = [\"https://cap.example.test\", \"https://example.test/s/private-token\"]\n"), 0o600))
@@ -73,4 +76,30 @@ func TestBeeperDocbankConfigDefaultsDisabled(t *testing.T) {
 	require.NoError(err)
 	assert.False(cfg.Integrations.Docbank.Enabled)
 	assert.False(cfg.Integrations.Docbank.AllSourcesUploadConsent)
+	assert.Equal("/msgvault", cfg.Integrations.Docbank.MirrorFolder())
+}
+
+func TestDocbankAttachmentMirrorConfigValidation(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name      string
+		config    DocbankIntegrationConfig
+		wantError string
+	}{
+		{name: "defaults"},
+		{name: "root folder", config: DocbankIntegrationConfig{AttachmentFolder: "/"}},
+		{name: "relative folder", config: DocbankIntegrationConfig{AttachmentFolder: "msgvault"}, wantError: "attachment_folder"},
+		{name: "unclean folder", config: DocbankIntegrationConfig{AttachmentFolder: "/msgvault/../files"}, wantError: "attachment_folder"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			require := require.New(t)
+			err := tc.config.validate()
+			if tc.wantError != "" {
+				require.ErrorContains(err, tc.wantError)
+				return
+			}
+			require.NoError(err)
+		})
+	}
 }

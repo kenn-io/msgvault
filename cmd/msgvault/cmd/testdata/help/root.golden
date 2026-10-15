@@ -1,6 +1,6 @@
-msgvault keeps an offline, searchable archive of email, chat, and meeting
-records. A daemon owns the archive: commands start or reuse a local daemon,
-or use [remote].url from config.toml (--local forces the local daemon).
+msgvault archives email, chat, and meetings for offline search.
+Commands start or reuse a local daemon, or use [remote].url from config.toml.
+--local forces the local daemon.
 
 Start here:
   msgvault list-accounts --json
@@ -177,6 +177,7 @@ Setup, daemon, and integrations:
   completion   Generate shell completion script
   credentials  Manage provider credentials on the daemon host
   daemon       Manage the background daemon
+  docbank      Manage the Docbank attachment mirror
   export-token Export OAuth token to a remote msgvault instance
   help         Help about any command
   logs         View and tail msgvault's structured log files

@@ -648,6 +648,25 @@ func (d DiscoverEventType) Validate() error {
 	}
 }
 
+type DocbankAttachmentStatusState string
+
+const (
+	ConsentOff                          DocbankAttachmentStatusState = "consent_off"
+	DocbankAttachmentStatusStateRunning DocbankAttachmentStatusState = "running"
+	DocbankDisabled                     DocbankAttachmentStatusState = "docbank_disabled"
+	WorkerUnavailable                   DocbankAttachmentStatusState = "worker_unavailable"
+)
+
+// Validate checks if the DocbankAttachmentStatusState value is valid
+func (d DocbankAttachmentStatusState) Validate() error {
+	switch d {
+	case ConsentOff, DocbankAttachmentStatusStateRunning, DocbankDisabled, WorkerUnavailable:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid DocbankAttachmentStatusState value, got: %v", d))
+	}
+}
+
 type EmploymentBodySource string
 
 const (

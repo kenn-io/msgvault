@@ -12,12 +12,12 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/attachmentstore"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/deletion"
@@ -345,12 +345,13 @@ type MessageDetail struct {
 
 // AttachmentInfo represents attachment metadata in API responses.
 type AttachmentInfo struct {
-	ID          int64  `json:"id"`
-	Filename    string `json:"filename"`
-	MimeType    string `json:"mime_type"`
-	Size        int64  `json:"size_bytes"`
-	ContentHash string `json:"content_hash,omitempty"`
-	URL         string `json:"url,omitempty"`
+	Docbank     []store.DocbankAttachmentRef `json:"docbank,omitempty"`
+	ID          int64                        `json:"id"`
+	Filename    string                       `json:"filename"`
+	MimeType    string                       `json:"mime_type"`
+	Size        int64                        `json:"size_bytes"`
+	ContentHash string                       `json:"content_hash,omitempty"`
+	URL         string                       `json:"url,omitempty"`
 }
 
 func attachmentInfoFromStore(att store.APIAttachment) AttachmentInfo {
@@ -360,6 +361,7 @@ func attachmentInfoFromStore(att store.APIAttachment) AttachmentInfo {
 		MimeType:    att.MimeType,
 		Size:        att.Size,
 		ContentHash: att.ContentHash,
+		Docbank:     att.Docbank,
 		URL:         att.URL,
 	}
 }
@@ -552,6 +554,7 @@ func messageDetailFromQuery(qMsg *query.MessageDetail) MessageDetail {
 			MimeType:    att.MimeType,
 			Size:        att.Size,
 			ContentHash: att.ContentHash,
+			Docbank:     att.Docbank,
 			URL:         att.URL,
 		})
 	}
@@ -3452,6 +3455,7 @@ func (s *Server) handleGetAttachment(w http.ResponseWriter, r *http.Request) {
 		MimeType:    att.MimeType,
 		Size:        att.Size,
 		ContentHash: att.ContentHash,
+		Docbank:     att.Docbank,
 		URL:         att.URL,
 	})
 }
@@ -3533,38 +3537,20 @@ func openLooseAttachmentCandidates(
 	contentHash string,
 	attachments []query.AttachmentInfo,
 ) (io.ReadCloser, int64, *query.AttachmentInfo, error) {
-	content, contentLength, err := openLooseAttachmentContent(attachmentsDir, contentHash, "")
-	if err == nil {
-		return content, contentLength, &attachments[0], nil
-	}
-	if !errors.Is(err, os.ErrNotExist) {
+	content, contentLength, index, _, err := attachmentstore.OpenLooseCandidates(attachmentsDir, contentHash, func() ([]string, error) {
+		paths := make([]string, len(attachments))
+		for i := range attachments {
+			paths[i] = attachments[i].StoragePath
+		}
+		return paths, nil
+	})
+	if err != nil {
 		return nil, 0, nil, err
 	}
-
-	seen := make(map[string]struct{}, len(attachments))
-	var firstPathError error
-	for i := range attachments {
-		storagePath := attachments[i].StoragePath
-		if storagePath == "" {
-			continue
-		}
-		if _, ok := seen[storagePath]; ok {
-			continue
-		}
-		seen[storagePath] = struct{}{}
-
-		content, contentLength, err = openLooseAttachmentContent(attachmentsDir, contentHash, storagePath)
-		if err == nil {
-			return content, contentLength, &attachments[i], nil
-		}
-		if !errors.Is(err, os.ErrNotExist) && firstPathError == nil {
-			firstPathError = err
-		}
+	if index == -1 {
+		index = 0
 	}
-	if firstPathError != nil {
-		return nil, 0, nil, firstPathError
-	}
-	return nil, 0, nil, os.ErrNotExist
+	return content, contentLength, &attachments[index], nil
 }
 
 func openLooseAttachmentContent(attachmentsDir, contentHash, storagePath string) (io.ReadCloser, int64, error) {
@@ -3578,48 +3564,11 @@ func openLooseAttachmentContent(attachmentsDir, contentHash, storagePath string)
 	if err != nil {
 		return nil, 0, err
 	}
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, 0, err
-	}
-	info, err := f.Stat()
-	if err != nil {
-		_ = f.Close()
-		return nil, 0, err
-	}
-	if !info.Mode().IsRegular() {
-		_ = f.Close()
-		return nil, 0, fmt.Errorf("attachment storage path %q is not a regular file", storagePath)
-	}
-	return f, info.Size(), nil
+	return attachmentstore.OpenLooseFile(path)
 }
 
 func resolveRecordedAttachmentPath(attachmentsDir, storagePath string) (string, error) {
-	lowerPath := strings.ToLower(storagePath)
-	if strings.HasPrefix(lowerPath, "http://") || strings.HasPrefix(lowerPath, "https://") {
-		return "", errors.New("attachment storage path must be local")
-	}
-	localPath := filepath.Clean(filepath.FromSlash(storagePath))
-	if !filepath.IsLocal(localPath) {
-		return "", fmt.Errorf("attachment storage path %q escapes attachments directory", storagePath)
-	}
-	basePath, err := filepath.Abs(attachmentsDir)
-	if err != nil {
-		return "", fmt.Errorf("resolve attachments directory: %w", err)
-	}
-	basePath, err = filepath.EvalSymlinks(basePath)
-	if err != nil {
-		return "", fmt.Errorf("resolve attachments directory: %w", err)
-	}
-	resolvedPath, err := filepath.EvalSymlinks(filepath.Join(basePath, localPath))
-	if err != nil {
-		return "", err
-	}
-	relativePath, err := filepath.Rel(basePath, resolvedPath)
-	if err != nil || !filepath.IsLocal(relativePath) {
-		return "", fmt.Errorf("attachment storage path %q escapes attachments directory", storagePath)
-	}
-	return resolvedPath, nil
+	return attachmentstore.ResolveRecordedPath(attachmentsDir, storagePath)
 }
 
 func contentDisposition(filename string) string {

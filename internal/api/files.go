@@ -138,17 +138,18 @@ type FileGroupsHTTPResponse struct {
 }
 
 type FileMetadataResponse struct {
-	ID               int64            `json:"id"`
-	MessageID        int64            `json:"message_id"`
-	ConversationID   int64            `json:"conversation_id"`
-	EntryKey         string           `json:"entry_key"`
-	Filename         string           `json:"filename"`
-	MimeType         string           `json:"mime_type"`
-	Size             int64            `json:"size_bytes"`
-	ContentHash      string           `json:"content_hash,omitempty"`
-	URL              string           `json:"url,omitempty"`
-	ContentState     FileContentState `json:"content_state" enum:"metadata_only,url_only,missing_blob,local_content"`
-	ContentAvailable bool             `json:"content_available"`
+	Docbank          []store.DocbankAttachmentRef `json:"docbank,omitempty"`
+	ID               int64                        `json:"id"`
+	MessageID        int64                        `json:"message_id"`
+	ConversationID   int64                        `json:"conversation_id"`
+	EntryKey         string                       `json:"entry_key"`
+	Filename         string                       `json:"filename"`
+	MimeType         string                       `json:"mime_type"`
+	Size             int64                        `json:"size_bytes"`
+	ContentHash      string                       `json:"content_hash,omitempty"`
+	URL              string                       `json:"url,omitempty"`
+	ContentState     FileContentState             `json:"content_state" enum:"metadata_only,url_only,missing_blob,local_content"`
+	ContentAvailable bool                         `json:"content_available"`
 }
 
 type visualRevisionSource interface {
@@ -858,7 +859,7 @@ func (s *Server) handleGetFile(w http.ResponseWriter, r *http.Request) {
 		ID: file.ID, MessageID: file.MessageID, ConversationID: file.ConversationID,
 		EntryKey: fileEntryKey(*file),
 		Filename: file.Filename, MimeType: file.MimeType, Size: file.Size,
-		ContentHash: file.ContentHash, URL: file.URL, ContentState: state, ContentAvailable: available,
+		ContentHash: file.ContentHash, URL: file.URL, ContentState: state, ContentAvailable: available, Docbank: file.Docbank,
 	})
 }
 

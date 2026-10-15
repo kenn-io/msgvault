@@ -1265,6 +1265,62 @@ max_media_mb = 250                # per-attachment download cap (MiB)
 | `max_media_mb` | `250` | Per-attachment download cap in MiB (over-cap media is recorded as a `size_cap` skip and retried only after the cap changes) |
 | `accounts_config` | — | Per-accountID `media` and `max_media_mb` overrides |
 
+#### Mirror stored attachments to Docbank (unreleased)
+
+Msgvault can mirror stored attachment bytes from every source to a Docbank
+folder. Enable the integration and its separate attachment upload consent.
+The daemon drains the backlog at upload speed, in passes of about 50 seconds:
+
+```toml
+[integrations.docbank]
+enabled = true
+url = "http://127.0.0.1:8080"
+api_key_env = "DOCBANK_API_KEY"
+attachment_upload_consent = true
+attachment_folder = "/msgvault"
+```
+
+| Setting | Default | Effect |
+|---------|---------|--------|
+| `attachment_upload_consent` | `false` | Allow attachment bytes from all sources, including future imports, to leave msgvault. Without consent, status reports mirroring as disabled |
+| `attachment_folder` | `/msgvault` | Clean absolute virtual directory path; missing directories are created in Docbank |
+
+The mirror includes files retained after source deletion or hidden by deduplication. It excludes files whose attachment rows were removed.
+A hashless Slack or Discord attachment uses the content hash in its local storage path.
+The mirror uses the same URL and credential rules as the audio route below.
+Its consent covers file transport; Docbank controls document processing consent
+and profiles. `all_sources_upload_consent` continues to control the existing
+audio and transcript route independently.
+Audio files are mirrored as files as well as sent to the audio route when both are enabled.
+
+Run `msgvault docbank attachments status` for consent, folder, delivered, sending and failed file counts, failure reasons, and remaining distinct eligible files. Add `--json` for structured output. `msgvault docbank attachments backfill` retries failed files and discovers existing attachments. Both commands use the selected daemon. Backfill requires attachment upload consent and the attachment mirror job.
+
+The daemon discovers newly stored attachments and restored messages automatically. Discovery queues each new file as `sending` without contacting Docbank, so it finishes even while Docbank is unreachable; uploads then drain the queue. Folder errors retry automatically. Temporary I/O or upload errors wait at least five minutes before retrying; status keeps these files under `sending` with their failure reason. Attempts interrupted before recording a result show `retrying`. Missing or corrupt bytes fail only that file. Restoring a message or updating its attachment makes unavailable files eligible again. HTTP 400, 413, 415 or 422 responses and invalid receipts need backfill after you fix the cause.
+
+Purging messages from msgvault preserves mirrored copies and delivery receipts. To start over against a rebuilt Docbank at the same URL, change `attachment_folder`. Restart the daemon after changing consent or the destination.
+
+Each unique file uploads once per destination under `<first 12 hex of hash>-<sanitized basename>`.
+Docbank resolves filename collisions and replays. Attachment and message details
+show the resulting Docbank file.
+
+Each content hash has one durable delivery per archive, Docbank URL, and
+folder. Duplicate bytes in many messages share the same file. Completed
+deliveries make no further upload requests. Changing the destination
+starts a separate mirror. Disabling the mirror or changing its destination
+keeps the stored delivery records and the remote files, but attachment and
+message details show receipts only for the active destination. Re-enabling
+the same destination shows its receipts again without uploading delivered
+files.
+
+Docbank's digest-checked upload endpoint accepts one file part and does not
+accept message metadata. The upload name prefixes the first filename basename with the first 12 hex characters of the content hash and a hyphen. Control characters become underscores; invalid basenames become `attachment`.
+Msgvault retains exact filename, message, source, sender,
+and date provenance in the archive. Attachment and message details in CLI,
+HTTP API, and MCP expose `docbank` receipts containing `endpoint`, `folder`,
+`node_id`, `version_id`, and `blob_hash`, so callers can open the corresponding
+Docbank file. List and search views omit these receipts. URL-only attachments are excluded from discovery. Details recover a hashless Slack or Discord attachment's hash from its trusted CAS storage path. The mirror reads these aliases from loose files or retained pack entries and verifies their SHA-256. It sends attachment content and excludes thumbnails from `thumbnail_hash`. Missing or corrupt archive bytes fail only that file. Msgvault's
+own document indexing remains independently available.
+
 #### Send stored audio to Docbank
 
 The daemon can send stored WAV and MP3 audio from any captured source, including

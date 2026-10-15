@@ -468,6 +468,7 @@ func cliMessageAttachmentsFromGenerated(
 			MimeType:    attachment.MimeType,
 			Size:        attachment.Size,
 			ContentHash: attachment.ContentHash,
+			Docbank:     docbankRefsFromGenerated(attachment.Docbank),
 			URL:         stringValue(attachment.URL),
 		}
 	}
@@ -921,4 +922,15 @@ func intValue(value *int64) int {
 		return 0
 	}
 	return int(*value)
+}
+
+func docbankRefsFromGenerated(refs []generated.DocbankAttachmentRef) []store.DocbankAttachmentRef {
+	if refs == nil {
+		return nil
+	}
+	result := make([]store.DocbankAttachmentRef, len(refs))
+	for i, ref := range refs {
+		result[i] = store.DocbankAttachmentRef{Endpoint: ref.Endpoint, Folder: ref.Folder, NodeID: ref.NodeID, VersionID: ref.VersionID, BlobHash: ref.BlobHash}
+	}
+	return result
 }

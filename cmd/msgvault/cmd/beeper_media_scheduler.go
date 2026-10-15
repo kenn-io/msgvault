@@ -2,8 +2,11 @@ package cmd
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"log/slog"
+	"strings"
 	"time"
 
 	"go.kenn.io/msgvault/internal/api"
@@ -57,18 +60,81 @@ func configureBeeperMediaJob(
 	st *store.Store,
 	blobs *attachmentstore.Store,
 	spoolDir string,
+	attachmentsDir string,
 	cfg config.DocbankIntegrationConfig,
 	logger *slog.Logger,
 ) error {
+	// The mirror reports its own setup failure independently of the audio route.
+	_ = configureDocbankAttachmentJob(ctx, sched, gate, st, blobs, attachmentsDir, cfg, logger)
 	if !cfg.Enabled {
 		return removeBeeperMediaRoute(ctx, sched, gate, st)
 	}
 	err := addBeeperMediaRoute(ctx, sched, gate, st, blobs, spoolDir, cfg, logger)
 	if err != nil {
-		// An idle registered consumer would hold attachment change log cleanup for every provider.
-		return errors.Join(err, removeBeeperMediaRoute(ctx, sched, gate, st))
+		err = errors.Join(err, removeBeeperMediaRoute(ctx, sched, gate, st))
 	}
-	return nil
+	return err
+}
+
+// configureDocbankAttachmentJob registers the attachment mirror independently of the audio route.
+func configureDocbankAttachmentJob(
+	ctx context.Context,
+	sched *scheduler.Scheduler,
+	gate api.LabeledOperationGate,
+	st *store.Store,
+	blobs *attachmentstore.Store,
+	attachmentsDir string,
+	cfg config.DocbankIntegrationConfig,
+	logger *slog.Logger,
+) error {
+	err := func() error {
+		destination := ""
+		if cfg.Enabled && cfg.AttachmentUploadConsent {
+			var err error
+			destination, err = docbankAttachmentDestination(ctx, st, cfg)
+			if err != nil {
+				return err
+			}
+		}
+		sched.RemoveJob(api.DocbankAttachmentMirrorJob)
+		if err := withBeeperMediaGate(ctx, gate, docbankAttachmentGateLabel, func() error {
+			return st.RemoveInactiveDocbankAttachmentConsumers(ctx, destination)
+		}); err != nil {
+			return err
+		}
+		if destination == "" {
+			return nil
+		}
+		client, err := docbankmedia.NewClient(strings.TrimRight(strings.TrimSpace(cfg.URL), "/"), cfg.ResolveAPIKey)
+		if err != nil {
+			return err
+		}
+		options := beeper.AttachmentMirrorOptions{URL: cfg.URL, Folder: cfg.MirrorFolder(), AttachmentsDir: attachmentsDir}
+		mirror := beeper.NewAttachmentMirror(st, blobs, client, destination, options).
+			WithOperationGate(beeperMediaGate(gate, docbankAttachmentGateLabel))
+		return sched.AddJob(scheduler.Job{
+			Name: api.DocbankAttachmentMirrorJob, Schedule: beeperMediaSubmitCron,
+			Run: func(ctx context.Context) error {
+				return docbankAttachmentJobError(mirror.RunBatch(ctx))
+			},
+		})
+	}()
+	if err != nil && logger != nil {
+		logger.Warn("Docbank attachment mirror unavailable", "error", err)
+	}
+	return err
+}
+
+// docbankAttachmentJobError asks for a follow-up pass while keeping failures visible.
+func docbankAttachmentJobError(more bool, err error) error {
+	switch {
+	case !more:
+		return err
+	case err == nil:
+		return scheduler.ErrReschedule
+	default:
+		return &scheduler.RescheduleError{Err: err}
+	}
 }
 
 // removeBeeperMediaRoute drops the job and its journal consumer; receipts stay.
@@ -157,4 +223,30 @@ func newMessageRecordingReader(
 	}
 	reader.Client, reader.Destination, reader.UploadConsent = client, destination, cfg.AllSourcesUploadConsent
 	return reader, nil
+}
+
+const docbankAttachmentGateLabel = "docbank attachment mirror"
+
+func docbankAttachmentDestinationKey(endpoint, archiveUID, folder string) string {
+	digest := sha256.Sum256([]byte("docbank-attachments/v1\x00" + strings.TrimRight(strings.TrimSpace(endpoint), "/") + "\x00" + archiveUID + "\x00" + folder))
+	return "attachments:" + hex.EncodeToString(digest[:])
+}
+
+func newDocbankAttachmentReader(ctx context.Context, st *store.Store, cfg config.DocbankIntegrationConfig) (*api.DocbankAttachmentReader, error) {
+	if !cfg.Enabled || !cfg.AttachmentUploadConsent {
+		return nil, nil //nolint:nilnil // a nil reader means attachment mirroring is off; callers branch on it
+	}
+	destination, err := docbankAttachmentDestination(ctx, st, cfg)
+	if err != nil {
+		return nil, err
+	}
+	return &api.DocbankAttachmentReader{Store: st, Destination: destination, Folder: cfg.MirrorFolder()}, nil
+}
+
+func docbankAttachmentDestination(ctx context.Context, st *store.Store, cfg config.DocbankIntegrationConfig) (string, error) {
+	uid, err := st.ArchiveUIDContext(ctx)
+	if err != nil {
+		return "", err
+	}
+	return docbankAttachmentDestinationKey(cfg.URL, uid, cfg.MirrorFolder()), nil
 }

@@ -367,7 +367,7 @@ func (s *Store) batchPopulateAttachments(ctx context.Context, messages []APIMess
 	}
 	rows, err := s.db.QueryContext(ctx, s.dialect.Rebind(fmt.Sprintf(`
 		SELECT message_id, id, COALESCE(filename, ''), COALESCE(mime_type, ''),
-			COALESCE(size, 0), COALESCE(content_hash, ''), COALESCE(storage_path, '')
+			COALESCE(size, 0), COALESCE(content_hash, ''), COALESCE(storage_path, ''), COALESCE(source_attachment_id, '')
 		FROM attachments
 		WHERE message_id IN (%s)
 		ORDER BY message_id, id
@@ -376,23 +376,42 @@ func (s *Store) batchPopulateAttachments(ctx context.Context, messages []APIMess
 		return fmt.Errorf("get conversation attachments: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
+	var hashes []string
+	var located [][2]int
 	for rows.Next() {
 		var messageID int64
 		var attachment APIAttachment
 		var storagePath sql.NullString
+		var sourceAttachmentID string
 		if err := rows.Scan(&messageID, &attachment.ID, &attachment.Filename, &attachment.MimeType,
-			&attachment.Size, &attachment.ContentHash, &storagePath); err != nil {
+			&attachment.Size, &attachment.ContentHash, &storagePath, &sourceAttachmentID); err != nil {
 			return fmt.Errorf("scan conversation attachment: %w", err)
 		}
-		if storagePath.Valid && (strings.HasPrefix(storagePath.String, "http://") || strings.HasPrefix(storagePath.String, "https://")) {
+		receiptHash := AttachmentReceiptHash(attachment.ContentHash, storagePath.String, sourceAttachmentID)
+		if IsURLStoragePath(storagePath.String) {
 			attachment.ContentHash = ""
 			attachment.URL = storagePath.String
 		}
 		if index, ok := indexByID[messageID]; ok {
 			messages[index].Attachments = append(messages[index].Attachments, attachment)
+			located = append(located, [2]int{index, len(messages[index].Attachments) - 1})
+			hashes = append(hashes, receiptHash)
 		}
 	}
-	return rows.Err()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	refs, err := LoadDocbankAttachmentRefs(ctx, ReadDBContext(ctx, s.db.DB), s.Rebind, "", hashes)
+	if err != nil {
+		return err
+	}
+	for i, at := range located {
+		messages[at[0]].Attachments[at[1]].Docbank = refs[strings.ToLower(hashes[i])]
+	}
+	return nil
 }
 
 // SetConversationMetadata writes the conversations.metadata JSON/JSONB column.

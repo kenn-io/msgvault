@@ -47,6 +47,14 @@ var ErrYieldedToWaiter = jobctx.ErrYieldedToWaiter
 // work. It does not record a job failure or wait for the next cron tick.
 var ErrReschedule = errors.New("scheduled job has more work")
 
+// RescheduleError asks for another bounded pass like ErrReschedule and also
+// records Err as the run's failure.
+type RescheduleError struct{ Err error }
+
+func (e *RescheduleError) Error() string { return e.Err.Error() }
+
+func (e *RescheduleError) Unwrap() []error { return []error{ErrReschedule, e.Err} }
+
 // ErrDeferUntilNextTrigger finishes this attempt without an immediate follow-up.
 var ErrDeferUntilNextTrigger = errors.New("scheduled job deferred until next trigger")
 
@@ -906,6 +914,10 @@ func (s *Scheduler) runJob(name string, run func(context.Context) error) error {
 	yielded := budgetExpired || yieldedToWaiter(runCtx) || jobctx.PreemptionRequested(runCtx)
 	if errors.Is(err, ErrReschedule) {
 		s.genericPending[name] = true
+		if _, failed := errors.AsType[*RescheduleError](err); failed {
+			s.genericLastErr[name] = err
+			return err
+		}
 		s.logger.Info("scheduled job has remaining work; queued follow-up",
 			"job", name)
 		return nil

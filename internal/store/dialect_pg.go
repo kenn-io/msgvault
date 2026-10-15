@@ -1320,7 +1320,7 @@ func (d *PostgreSQLDialect) EnsureTriggers(q querier) error {
 		     AFTER UPDATE OF message_id, filename, mime_type, size, content_hash,
 		         storage_path, media_type, width, height, duration_ms,
 		         source_attachment_id, attachment_metadata, attachment_role,
-		         role_source, source_part_key, content_id, encryption_version
+		         role_source, source_part_key, content_id, encryption_version, attachment_state
 		     ON attachments FOR EACH ROW
 		     WHEN (OLD.message_id IS DISTINCT FROM NEW.message_id
 		        OR OLD.filename IS DISTINCT FROM NEW.filename
@@ -1338,7 +1338,8 @@ func (d *PostgreSQLDialect) EnsureTriggers(q querier) error {
 		        OR OLD.role_source IS DISTINCT FROM NEW.role_source
 		        OR OLD.source_part_key IS DISTINCT FROM NEW.source_part_key
 		        OR OLD.content_id IS DISTINCT FROM NEW.content_id
-		        OR OLD.encryption_version IS DISTINCT FROM NEW.encryption_version)
+		        OR OLD.encryption_version IS DISTINCT FROM NEW.encryption_version
+		        OR OLD.attachment_state IS DISTINCT FROM NEW.attachment_state)
 		     EXECUTE FUNCTION capture_attachment_change()`,
 		`DROP TRIGGER IF EXISTS trg_attachment_change_delete ON attachments`,
 		`CREATE TRIGGER trg_attachment_change_delete

@@ -283,7 +283,7 @@ func isLoopbackHost(host string) bool {
 }
 
 func (c *Client) Submit(ctx context.Context, metadata SuppliedMetadata, content io.Reader) (Receipt, error) {
-	receipt, err := c.multipart(ctx, "/api/v1/media/sources", metadata, metadata.Filename, metadata.MediaType, content)
+	receipt, err := c.mediaMultipart(ctx, "/api/v1/media/sources", metadata, metadata.Filename, metadata.MediaType, content)
 	if err = validateReceipt(receipt, metadata.OperationID, err); err != nil {
 		return Receipt{}, err
 	}
@@ -295,7 +295,7 @@ func (c *Client) Submit(ctx context.Context, metadata SuppliedMetadata, content 
 
 func (c *Client) ImportTranscript(ctx context.Context, sourceID string, metadata ArtifactMetadata, content io.Reader) (Receipt, error) {
 	endpoint := "/api/v1/media/sources/" + url.PathEscape(sourceID) + "/artifacts"
-	receipt, err := c.multipart(ctx, endpoint, metadata, metadata.Filename, metadata.MediaType, content)
+	receipt, err := c.mediaMultipart(ctx, endpoint, metadata, metadata.Filename, metadata.MediaType, content)
 	if err = validateReceipt(receipt, metadata.OperationID, err); err != nil {
 		return Receipt{}, err
 	}
@@ -371,7 +371,7 @@ func (c *Client) Transcript(
 	return transcript, nil
 }
 
-func (c *Client) multipart(
+func (c *Client) mediaMultipart(
 	ctx context.Context, endpoint string, metadata any, filename, mediaType string, content io.Reader,
 ) (Receipt, error) {
 	if content == nil || filename == "" || mediaType == "" {
@@ -385,11 +385,25 @@ func (c *Client) multipart(
 		return Receipt{}, fmt.Errorf("%w: metadata exceeds the size limit", ErrInvalidRequest)
 	}
 
+	body, err := c.multipart(ctx, endpoint, nil, func(writer *multipart.Writer) error {
+		return writeMultipart(metadataBytes, filename, mediaType, content, writer)
+	})
+	if err != nil {
+		return Receipt{}, err
+	}
+	var receipt Receipt
+	if err := json.Unmarshal(body, &receipt); err != nil {
+		return Receipt{}, fmt.Errorf("%w: undecodable response", ErrInvalidReceipt)
+	}
+	return receipt, validateReceipt(receipt, "", nil)
+}
+
+func (c *Client) multipart(ctx context.Context, endpoint string, headers http.Header, write func(*multipart.Writer) error) ([]byte, error) {
 	reader, writer := io.Pipe()
 	multipartWriter := multipart.NewWriter(writer)
 	writeResult := make(chan error, 1)
 	go func() {
-		err := writeMultipart(metadataBytes, filename, mediaType, content, multipartWriter)
+		err := write(multipartWriter)
 		_ = writer.CloseWithError(err)
 		writeResult <- err
 	}()
@@ -398,40 +412,41 @@ func (c *Client) multipart(
 	if err != nil {
 		_ = reader.CloseWithError(err)
 		<-writeResult
-		return Receipt{}, err
+		return nil, err
+	}
+	req.Header = headers.Clone()
+	if req.Header == nil {
+		req.Header = make(http.Header)
 	}
 	req.Header.Set("Content-Type", multipartWriter.FormDataContentType())
 	if err := c.setAPIKey(req); err != nil {
 		_ = reader.CloseWithError(err)
 		<-writeResult
-		return Receipt{}, err
+		return nil, err
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
 		_ = reader.CloseWithError(err)
 		<-writeResult
-		return Receipt{}, transportError(err)
+		return nil, transportError(err)
 	}
 	body, readErr := readResponse(resp, maxResponseBytes)
 	_ = resp.Body.Close()
 	if readErr != nil {
 		_ = reader.CloseWithError(readErr)
 		<-writeResult
-		return Receipt{}, readErr
+		return nil, readErr
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		_ = reader.Close()
 		<-writeResult
-		return Receipt{}, &HTTPError{Status: resp.StatusCode, Code: statusCode(resp.StatusCode)}
+		return nil, &HTTPError{Status: resp.StatusCode, Code: statusCode(resp.StatusCode)}
 	}
+	_ = reader.Close()
 	if err := <-writeResult; err != nil {
-		return Receipt{}, fmt.Errorf("write Docbank upload: %w", err)
+		return nil, fmt.Errorf("write Docbank upload: %w", err)
 	}
-	var receipt Receipt
-	if err := json.Unmarshal(body, &receipt); err != nil {
-		return Receipt{}, fmt.Errorf("%w: undecodable response", ErrInvalidReceipt)
-	}
-	return receipt, validateReceipt(receipt, "", nil)
+	return body, nil
 }
 
 func writeMultipart(
@@ -445,10 +460,7 @@ func writeMultipart(
 		_, err = part.Write(metadata)
 	}
 	if err == nil {
-		header = make(textproto.MIMEHeader)
-		header.Set("Content-Disposition", multipart.FileContentDisposition("file", filename))
-		header.Set("Content-Type", mediaType)
-		part, err = writer.CreatePart(header)
+		part, err = filePart(writer, filename, mediaType)
 	}
 	if err == nil {
 		limit := int64(maxMediaBytes)
@@ -600,4 +612,15 @@ func statusCode(status int) string {
 		}
 		return "http_error"
 	}
+}
+
+func filePart(writer *multipart.Writer, filename, mediaType string) (io.Writer, error) {
+	header := make(textproto.MIMEHeader)
+	header.Set("Content-Disposition", multipart.FileContentDisposition("file", filename))
+	header.Set("Content-Type", mediaType)
+	part, err := writer.CreatePart(header)
+	if err != nil {
+		return nil, fmt.Errorf("create upload part: %w", err)
+	}
+	return part, nil
 }

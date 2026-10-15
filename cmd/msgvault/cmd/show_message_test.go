@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 func TestOutputMessageTextSanitizesMultilineBody(t *testing.T) {
@@ -320,4 +322,25 @@ func TestOutputMessageJSONIncludesBrowserURL(t *testing.T) {
 	var result map[string]any
 	require.NoError(t, json.Unmarshal([]byte(done()), &result))
 	assert.Equal(t, "https://archive.example/messages/42", result["web_url"])
+}
+
+func TestMessageAttachmentDocbankTextView(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	done := captureStdout(t)
+	msg := &query.MessageDetail{Attachments: []query.AttachmentInfo{
+		{ID: 1, Filename: "report.pdf", Docbank: []store.DocbankAttachmentRef{{Endpoint: "https://docbank.example.com", Folder: "/msgvault\x1b[31m", NodeID: 8, BlobHash: "hash"}}},
+		{ID: 2, Filename: "photo.png", Docbank: []store.DocbankAttachmentRef{{Endpoint: "https://docbank.example.com", Folder: "/msgvault", NodeID: 9, BlobHash: "other"}}},
+	}}
+	require.NoError(outputMessageText(msg))
+	output := done()
+	first := strings.Index(output, "• report.pdf")
+	firstNode := strings.Index(output, "Docbank node 8 (https://docbank.example.com/msgvault)")
+	second := strings.Index(output, "• photo.png")
+	secondNode := strings.Index(output, "Docbank node 9 (https://docbank.example.com/msgvault)")
+	require.GreaterOrEqual(first, 0)
+	require.Greater(firstNode, first)
+	require.Greater(second, firstNode)
+	assert.Greater(secondNode, second)
+	assert.NotContains(output, "\x1b")
 }

@@ -529,6 +529,10 @@ components:
       properties:
         content_hash:
           type: string
+        docbank:
+          items:
+            $ref: "#/components/schemas/DocbankAttachmentRef"
+          type: array
         filename:
           type: string
         id:
@@ -2562,6 +2566,10 @@ components:
       properties:
         content_hash:
           type: string
+        docbank:
+          items:
+            $ref: "#/components/schemas/DocbankAttachmentRef"
+          type: array
         filename:
           type: string
         id:
@@ -3701,6 +3709,83 @@ components:
         timestamp:
           format: date-time
           type: string
+      type: object
+    DocbankAttachmentBackfillResponse:
+      additionalProperties: true
+      properties:
+        status:
+          type: string
+      required:
+        - status
+      type: object
+    DocbankAttachmentRef:
+      additionalProperties: true
+      properties:
+        blob_hash:
+          type: string
+        endpoint:
+          type: string
+        folder:
+          type: string
+        node_id:
+          format: int64
+          type: integer
+        version_id:
+          type: string
+      required:
+        - endpoint
+        - folder
+        - node_id
+        - version_id
+        - blob_hash
+      type: object
+    DocbankAttachmentStatus:
+      additionalProperties: true
+      properties:
+        counts:
+          $ref: "#/components/schemas/DocbankAttachmentSummary"
+        folder:
+          type: string
+        state:
+          enum:
+            - running
+            - docbank_disabled
+            - consent_off
+            - worker_unavailable
+          type: string
+        upload_consent:
+          type: boolean
+      required:
+        - state
+        - upload_consent
+        - folder
+      type: object
+    DocbankAttachmentSummary:
+      additionalProperties: true
+      properties:
+        delivered:
+          format: int64
+          type: integer
+        failed:
+          format: int64
+          type: integer
+        reasons:
+          additionalProperties:
+            format: int64
+            type: integer
+          type: object
+        remaining:
+          format: int64
+          type: integer
+        sending:
+          format: int64
+          type: integer
+      required:
+        - sending
+        - delivered
+        - remaining
+        - failed
+        - reasons
       type: object
     DocbankReference:
       additionalProperties: false
@@ -5631,6 +5716,10 @@ components:
         conversation_id:
           format: int64
           type: integer
+        docbank:
+          items:
+            $ref: "#/components/schemas/DocbankAttachmentRef"
+          type: array
         entry_key:
           type: string
         filename:
@@ -16436,7 +16525,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.22.0
+  version: 3.23.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -23027,6 +23116,90 @@ paths:
       security:
         - apiKey: []
       summary: Get historical import status
+      tags:
+        - API
+  /api/v1/integrations/docbank/attachments:
+    get:
+      operationId: getDocbankAttachmentStatus
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocbankAttachmentStatus"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Unauthorized
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Service Unavailable
+      security:
+        - apiKey: []
+      summary: Read attachment mirror status
+      tags:
+        - API
+  /api/v1/integrations/docbank/attachments/backfill:
+    post:
+      operationId: backfillDocbankAttachments
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocbankAttachmentBackfillResponse"
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Unauthorized
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Service Unavailable
+      security:
+        - apiKey: []
+      summary: Retry failures and restart attachment mirror discovery
       tags:
         - API
   /api/v1/integrations/kata/evidence/prepare:

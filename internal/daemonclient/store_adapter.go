@@ -186,6 +186,7 @@ func apiAttachmentsFromGenerated(attachments []generated.AttachmentInfo) []store
 			MimeType:    a.MimeType,
 			Size:        a.SizeBytes,
 			ContentHash: stringValue(a.ContentHash),
+			Docbank:     docbankRefsFromGenerated(a.Docbank),
 			URL:         stringValue(a.URL),
 		}
 	}

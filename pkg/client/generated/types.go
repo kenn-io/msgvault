@@ -465,16 +465,34 @@ func (a AppendPersonNoteRequest) Validate() error {
 }
 
 type AttachmentInfo struct {
-	ContentHash *string `json:"content_hash,omitzero"`
-	Filename    string  `json:"filename" validate:"required"`
-	ID          int64   `json:"id"`
-	MimeType    string  `json:"mime_type" validate:"required"`
-	SizeBytes   int64   `json:"size_bytes"`
-	URL         *string `json:"url,omitzero"`
+	ContentHash *string                `json:"content_hash,omitzero"`
+	Docbank     []DocbankAttachmentRef `json:"docbank,omitempty"`
+	Filename    string                 `json:"filename" validate:"required"`
+	ID          int64                  `json:"id"`
+	MimeType    string                 `json:"mime_type" validate:"required"`
+	SizeBytes   int64                  `json:"size_bytes"`
+	URL         *string                `json:"url,omitzero"`
 }
 
 func (a AttachmentInfo) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(a))
+	var errors runtime.ValidationErrors
+	for i, item := range a.Docbank {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Docbank[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(a.Filename, "required"); err != nil {
+		errors = errors.Append("Filename", err)
+	}
+	if err := typesValidator.Var(a.MimeType, "required"); err != nil {
+		errors = errors.Append("MimeType", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type AttachmentSearchResult struct {
@@ -2377,16 +2395,37 @@ func (c CliMessageAddress) Validate() error {
 }
 
 type CliMessageAttachment struct {
-	ContentHash string  `json:"content_hash" validate:"required"`
-	Filename    string  `json:"filename" validate:"required"`
-	ID          int64   `json:"id"`
-	MimeType    string  `json:"mime_type" validate:"required"`
-	Size        int64   `json:"size"`
-	URL         *string `json:"url,omitzero"`
+	ContentHash string                 `json:"content_hash" validate:"required"`
+	Docbank     []DocbankAttachmentRef `json:"docbank,omitempty"`
+	Filename    string                 `json:"filename" validate:"required"`
+	ID          int64                  `json:"id"`
+	MimeType    string                 `json:"mime_type" validate:"required"`
+	Size        int64                  `json:"size"`
+	URL         *string                `json:"url,omitzero"`
 }
 
 func (c CliMessageAttachment) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(c))
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(c.ContentHash, "required"); err != nil {
+		errors = errors.Append("ContentHash", err)
+	}
+	for i, item := range c.Docbank {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Docbank[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(c.Filename, "required"); err != nil {
+		errors = errors.Append("Filename", err)
+	}
+	if err := typesValidator.Var(c.MimeType, "required"); err != nil {
+		errors = errors.Append("MimeType", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type CliMessageResponse struct {
@@ -3429,6 +3468,64 @@ type Display struct {
 	ContainingTitle *string    `json:"containing_title,omitzero"`
 	Filename        *string    `json:"filename,omitzero"`
 	Timestamp       *time.Time `json:"timestamp,omitempty"`
+}
+
+type DocbankAttachmentBackfillResponse struct {
+	Status string `json:"status" validate:"required"`
+}
+
+func (d DocbankAttachmentBackfillResponse) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(d))
+}
+
+type DocbankAttachmentRef struct {
+	BlobHash  string `json:"blob_hash" validate:"required"`
+	Endpoint  string `json:"endpoint" validate:"required"`
+	Folder    string `json:"folder" validate:"required"`
+	NodeID    int64  `json:"node_id"`
+	VersionID string `json:"version_id" validate:"required"`
+}
+
+func (d DocbankAttachmentRef) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(d))
+}
+
+type DocbankAttachmentStatus struct {
+	Counts        *DocbankAttachmentSummary    `json:"counts,omitempty"`
+	Folder        string                       `json:"folder" validate:"required"`
+	State         DocbankAttachmentStatusState `json:"state" validate:"required"`
+	UploadConsent bool                         `json:"upload_consent"`
+}
+
+func (d DocbankAttachmentStatus) Validate() error {
+	var errors runtime.ValidationErrors
+	if d.Counts != nil {
+		if v, ok := any(d.Counts).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Counts", err)
+			}
+		}
+	}
+	if err := typesValidator.Var(d.Folder, "required"); err != nil {
+		errors = errors.Append("Folder", err)
+	}
+	if v, ok := any(d.State).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("State", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type DocbankAttachmentSummary struct {
+	Delivered int64            `json:"delivered"`
+	Failed    int64            `json:"failed"`
+	Reasons   map[string]int64 `json:"reasons"`
+	Remaining int64            `json:"remaining"`
+	Sending   int64            `json:"sending"`
 }
 
 type DocbankReference struct {
@@ -5127,6 +5224,7 @@ type FileMetadataResponse struct {
 	ContentHash      *string                          `json:"content_hash,omitzero"`
 	ContentState     FileMetadataResponseContentState `json:"content_state" validate:"required"`
 	ConversationID   int64                            `json:"conversation_id"`
+	Docbank          []DocbankAttachmentRef           `json:"docbank,omitempty"`
 	EntryKey         string                           `json:"entry_key" validate:"required"`
 	Filename         *string                          `json:"filename,omitzero" validate:"required"`
 	ID               int64                            `json:"id"`
@@ -5141,6 +5239,13 @@ func (f FileMetadataResponse) Validate() error {
 	if v, ok := any(f.ContentState).(runtime.Validator); ok {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("ContentState", err)
+		}
+	}
+	for i, item := range f.Docbank {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Docbank[%d]", i), err)
+			}
 		}
 	}
 	if err := typesValidator.Var(f.EntryKey, "required"); err != nil {

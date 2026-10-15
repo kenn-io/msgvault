@@ -362,7 +362,7 @@ func fetchParticipantsShared(ctx context.Context, db store.SQLReader, rebind reb
 // rebind rewrites the ? placeholders for the driver in use.
 func fetchAttachmentsShared(ctx context.Context, db store.SQLReader, rebind rebindFunc, tablePrefix string, msg *MessageDetail) error {
 	rows, err := db.QueryContext(ctx, rebind(fmt.Sprintf(`
-		SELECT id, COALESCE(filename, ''), COALESCE(mime_type, ''), COALESCE(size, 0), COALESCE(content_hash, ''), COALESCE(storage_path, '')
+		SELECT id, COALESCE(filename, ''), COALESCE(mime_type, ''), COALESCE(size, 0), COALESCE(content_hash, ''), COALESCE(storage_path, ''), COALESCE(source_attachment_id, '')
 		FROM %sattachments
 		WHERE message_id = ?
 	`, tablePrefix)), msg.ID)
@@ -370,43 +370,42 @@ func fetchAttachmentsShared(ctx context.Context, db store.SQLReader, rebind rebi
 		return err
 	}
 	defer func() { _ = rows.Close() }()
+	var hashes []string
 
 	for rows.Next() {
 		var att AttachmentInfo
-		var storagePath string
-		if err := rows.Scan(&att.ID, &att.Filename, &att.MimeType, &att.Size, &att.ContentHash, &storagePath); err != nil {
+		var storagePath, sourceAttachmentID string
+		if err := rows.Scan(&att.ID, &att.Filename, &att.MimeType, &att.Size, &att.ContentHash, &storagePath, &sourceAttachmentID); err != nil {
 			return err
 		}
+		var receiptHash string
+		att.ContentHash, receiptHash = store.AttachmentReadHashes(att.ContentHash, storagePath, sourceAttachmentID)
 		if isURLStoragePath(storagePath) {
 			att.URL = storagePath
 			att.ContentHash = ""
-		} else if att.ContentHash == "" {
-			if pathHash, ok := attachmentCASPathHash(storagePath); ok {
-				att.ContentHash = pathHash
-			}
 		}
 		msg.Attachments = append(msg.Attachments, att)
+		hashes = append(hashes, receiptHash)
 	}
 
-	return rows.Err()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	refs, err := store.LoadDocbankAttachmentRefs(ctx, db, rebind, tablePrefix, hashes)
+	if err != nil {
+		return err
+	}
+	for i := range msg.Attachments {
+		msg.Attachments[i].Docbank = refs[strings.ToLower(hashes[i])]
+	}
+	return nil
 }
 
 func isURLStoragePath(path string) bool {
 	return strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://")
-}
-
-func attachmentCASPathHash(storagePath string) (string, bool) {
-	if len(storagePath) != 67 || storagePath[2] != '/' {
-		return "", false
-	}
-	contentHash := storagePath[3:]
-	if contentHash != strings.ToLower(contentHash) || storagePath[:2] != contentHash[:2] {
-		return "", false
-	}
-	if _, err := hex.DecodeString(contentHash); err != nil {
-		return "", false
-	}
-	return contentHash, true
 }
 
 func attachmentCASPath(contentHash string) string {

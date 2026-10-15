@@ -52,7 +52,8 @@ const (
 	// it, leaving consumers on stale mailing-list routing data.
 	// v11: attachment media interpretation changes when a live message moves to
 	// another source or conversation, even when its attachment row is unchanged.
-	migrationMessageWatermarkTriggers       = "message_and_attachment_triggers_v11"
+	// v12: journal attachment_state changes so the Docbank mirror replays them.
+	migrationMessageWatermarkTriggers       = "message_and_attachment_triggers_v12"
 	migrationEmbeddingChangeJournalTriggers = "embedding_change_journal_triggers_v7"
 	// v2: message updates share the content-column/value guard, participant
 	// scope mirrors personscope, and metadata-only edge edits are not identity

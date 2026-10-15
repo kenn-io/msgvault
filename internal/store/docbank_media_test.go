@@ -646,6 +646,12 @@ func TestBeeperMediaDiscovery(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newBeeperMediaFixture(t)
+	initial, err := f.Store.LoadBeeperMediaScan(t.Context(), "missing")
+	require.NoError(err)
+	assert.Equal(store.BeeperMediaScan{DestinationKey: "missing"}, initial)
+	var checkpoints int
+	require.NoError(f.Store.DB().QueryRow(`SELECT COUNT(*) FROM archive_metadata WHERE key = 'beeper_media_scan:missing'`).Scan(&checkpoints))
+	assert.Zero(checkpoints, "the first audio checkpoint load writes nothing")
 	var audios []beeperAudio
 	for i := range 101 {
 		audios = append(audios, addBeeperAudio(t, f.Store, f.Source.ID, f.ConvID,
@@ -673,7 +679,8 @@ func TestBeeperMediaDiscovery(t *testing.T) {
 
 	scan, err := f.Store.LoadBeeperMediaScan(t.Context(), "discovery")
 	require.NoError(err)
-	advanced := store.BeeperMediaScan{DestinationKey: "discovery", AfterAttachmentID: page[99].AttachmentID, PassHighWater: 200}
+	advanced := scan
+	advanced.AfterAttachmentID, advanced.PassHighWater = page[99].AttachmentID, 200
 	swapped, err := f.Store.AdvanceBeeperMediaScan(t.Context(), "discovery", scan, advanced)
 	require.NoError(err)
 	assert.True(swapped)

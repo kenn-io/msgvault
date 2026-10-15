@@ -164,7 +164,7 @@ func addStoredMediaSource(
 		require.NoError(t, world.st.UpsertMessageRawWithFormat(message, raw, sourceType+"_raw"))
 	}
 	stored := &mime.Attachment{Filename: filename, ContentType: mimeType, Content: data}
-	storagePath, err := export.StoreAttachmentFile(world.dir, stored)
+	storagePath, err := export.StoreAttachmentFileIncludingEmpty(world.dir, stored)
 	require.NoError(t, err)
 	require.NoError(t, world.st.UpsertAttachmentRecord(t.Context(), message, store.AttachmentWrite{
 		Filename: filename, MIMEType: mimeType, StoragePath: storagePath,

@@ -217,6 +217,10 @@ WHERE m.message_type = 'beeper'
 GROUP BY is_share;
 ```
 
+## Mirror all attachments to Docbank (unreleased)
+
+Mirror stored attachments from all sources with [attachment upload consent](../configuration.md#mirror-stored-attachments-to-docbank-unreleased).
+
 ## Send audio to Docbank
 
 The daemon can copy stored audio from any captured source, including messaging

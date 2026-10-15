@@ -912,12 +912,13 @@ type cliMessageAddress struct {
 }
 
 type cliMessageAttachment struct {
-	ID          int64  `json:"id"`
-	Filename    string `json:"filename"`
-	MimeType    string `json:"mime_type"`
-	Size        int64  `json:"size"`
-	ContentHash string `json:"content_hash"`
-	URL         string `json:"url,omitempty"`
+	Docbank     []store.DocbankAttachmentRef `json:"docbank,omitempty"`
+	ID          int64                        `json:"id"`
+	Filename    string                       `json:"filename"`
+	MimeType    string                       `json:"mime_type"`
+	Size        int64                        `json:"size"`
+	ContentHash string                       `json:"content_hash"`
+	URL         string                       `json:"url,omitempty"`
 }
 
 type cliScope struct {
@@ -3749,6 +3750,7 @@ func cliMessageAttachments(atts []query.AttachmentInfo) []cliMessageAttachment {
 			MimeType:    att.MimeType,
 			Size:        att.Size,
 			ContentHash: att.ContentHash,
+			Docbank:     att.Docbank,
 			URL:         att.URL,
 		}
 	}

@@ -162,6 +162,9 @@ func outputMessageText(msg *query.MessageDetail) error {
 			} else {
 				fmt.Printf("  • %s (%s, %s)\n", att.Filename, att.MimeType, formatSize(att.Size))
 			}
+			for _, ref := range att.Docbank {
+				fmt.Printf("    Docbank node %d (%s)\n", ref.NodeID, textutil.SanitizeTerminal(ref.Endpoint+ref.Folder))
+			}
 		}
 	}
 
@@ -207,6 +210,9 @@ func messageJSONValue(msg *query.MessageDetail) map[string]any {
 			"mime_type":    att.MimeType,
 			"size":         att.Size,
 			"content_hash": att.ContentHash,
+		}
+		if len(att.Docbank) > 0 {
+			attachments[i]["docbank"] = att.Docbank
 		}
 		if att.URL != "" {
 			attachments[i]["url"] = att.URL

@@ -4581,7 +4581,6 @@ CREATE TABLE IF NOT EXISTS recording_references (
 CREATE INDEX IF NOT EXISTS idx_recording_references_due
     ON recording_references(destination_key, state, next_action_at);
 
-
 -- A source retirement and its report are one atomic archive mutation.
 CREATE TABLE IF NOT EXISTS source_merges (
     from_source_id INTEGER PRIMARY KEY REFERENCES sources(id) ON DELETE CASCADE,
@@ -4653,3 +4652,24 @@ CREATE TABLE IF NOT EXISTS source_merge_preserved_attachments (
 CREATE TABLE IF NOT EXISTS source_merge_preserved_labels (
     label_id INTEGER PRIMARY KEY REFERENCES labels(id) ON DELETE CASCADE
 );
+-- The attachment mirror shares the Docbank integration and receipt lifecycle.
+-- One intent and outcome row per content digest and destination.
+CREATE TABLE IF NOT EXISTS docbank_attachment_deliveries (
+ destination_key TEXT NOT NULL,
+ content_hash TEXT NOT NULL,
+ upload_name TEXT NOT NULL,
+ mime_type TEXT NOT NULL,
+ state TEXT NOT NULL CHECK (state IN ('sending', 'delivered', 'failed')),
+ reason TEXT NOT NULL DEFAULT '',
+ attempts INTEGER NOT NULL DEFAULT 0,
+ next_action_at DATETIME,
+ node_id BIGINT NOT NULL DEFAULT 0,
+ version_id TEXT NOT NULL DEFAULT '',
+ endpoint TEXT NOT NULL,
+ folder TEXT NOT NULL,
+ PRIMARY KEY (destination_key, content_hash)
+);
+CREATE INDEX IF NOT EXISTS idx_docbank_attachments_ready
+ ON docbank_attachment_deliveries(destination_key, state);
+CREATE INDEX IF NOT EXISTS idx_docbank_attachment_receipts
+ ON docbank_attachment_deliveries(content_hash, state);

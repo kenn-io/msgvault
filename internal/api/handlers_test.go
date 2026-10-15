@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
@@ -8645,6 +8646,46 @@ func TestHandleGetAttachmentContent(t *testing.T) {
 	assert.Equal(strconv.Itoa(len(content)), w.Header().Get("Content-Length"), "Content-Length")
 	assert.Equal("no-store", w.Header().Get("Cache-Control"), "Cache-Control")
 	assert.Equal(content, w.Body.Bytes(), "body")
+}
+
+func TestHandleGetAttachmentContent_HashlessAliasFallback(t *testing.T) {
+	for _, provider := range []string{"slack"} {
+		t.Run(provider, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			f := storetest.New(t)
+			cfg := &config.Config{Data: config.DataConfig{DataDir: t.TempDir()}}
+			content := []byte("retained attachment bytes")
+			hash := fmt.Sprintf("%x", sha256.Sum256(content))
+			path := hash[:2] + "/" + hash
+			donor := f.CreateMessage("donor")
+			require.NoError(f.Store.UpsertAttachment(donor, "donor.bin", "application/octet-stream", path, hash, len(content)))
+			require.NoError(f.Store.UpsertAttachmentRecord(t.Context(), f.CreateMessage("alias"), store.AttachmentWrite{
+				SourceAttachmentID: provider + ":alias", Filename: "retained.pdf", MIMEType: "application/pdf",
+				StoragePath: path, Size: int64(len(content)), State: "stored",
+			}))
+			seedAttachmentFile(t, cfg, hash, content)
+			_, err := f.Store.DB().Exec(f.Store.Rebind(`DELETE FROM messages WHERE id=?`), donor)
+			require.NoError(err)
+			bs, err := attachmentstore.New(store.NewPackCatalog(f.Store), cfg.AttachmentsDir())
+			require.NoError(err)
+			t.Cleanup(func() { assert.NoError(bs.Close()) })
+			_, _, err = bs.OpenStream(t.Context(), hash)
+			require.ErrorIs(err, os.ErrNotExist)
+			srv := NewServerWithOptions(ServerOptions{
+				Config: cfg, Store: f.Store, BlobStore: bs,
+				Engine: query.NewEngine(f.Store.DB(), f.Store.IsPostgreSQL()), Logger: testLogger(),
+			})
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/attachments/"+hash+"/content", nil)
+			w := httptest.NewRecorder()
+			srv.Router().ServeHTTP(w, req)
+			require.Equal(http.StatusOK, w.Code, w.Body.String())
+			assert.Equal("application/pdf", w.Header().Get("Content-Type"))
+			assert.Equal(`attachment; filename="retained.pdf"`, w.Header().Get("Content-Disposition"))
+			assert.Equal(strconv.Itoa(len(content)), w.Header().Get("Content-Length"))
+			assert.Equal(content, w.Body.Bytes())
+		})
+	}
 }
 
 func TestHandleGetAttachmentContent_MissingMimeAndFilename(t *testing.T) {

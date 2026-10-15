@@ -56,19 +56,28 @@ const (
 	beeperMediaPollDelay         = time.Minute
 )
 
-// attachmentBytesArchived matches attachment a when its bytes are in the archive.
-const attachmentBytesArchived = `(length(COALESCE(a.content_hash, '')) = 64
-	  AND COALESCE(a.size, 0) > 0
+const attachmentHashedBytes = `(length(COALESCE(a.content_hash, '')) = 64
 	  AND COALESCE(a.storage_path, '') <> '')`
 
-// hashlessProviderAlias matches a Slack or Discord row that older releases
-// stored without a hash for duplicate bytes. Its bytes are archived when
-// storage_path is a trusted CAS path, which only casPathHash can check.
-const hashlessProviderAlias = `(COALESCE(a.content_hash, '') = ''
-	  AND COALESCE(a.size, 0) > 0
+// Audio processing needs a positive size; the attachment mirror also accepts empty files.
+const attachmentBytesArchived = `(` + attachmentHashedBytes + ` AND COALESCE(a.size, 0) > 0)`
+
+var docbankAliasProviders = []string{sourceTypeSlack, sourceTypeDiscord}
+
+var docbankAliasProvider = func() string {
+	var aliases []string
+	for _, provider := range docbankAliasProviders {
+		aliases = append(aliases, fmt.Sprintf("SUBSTR(a.source_attachment_id,1,%d)='%s:'", len(provider)+1, provider))
+	}
+	return "(" + strings.Join(aliases, " OR ") + ")"
+}()
+
+var hashlessProviderAliasBytes = `(COALESCE(a.content_hash, '') = ''
 	  AND COALESCE(a.storage_path, '') <> ''
-	  AND (COALESCE(a.source_attachment_id, '') LIKE 'slack:%'
-	    OR COALESCE(a.source_attachment_id, '') LIKE 'discord:%'))`
+	  AND ` + docbankAliasProvider + `)`
+
+// hashlessProviderAlias needs casPathHash to verify its storage path.
+var hashlessProviderAlias = `(` + hashlessProviderAliasBytes + ` AND COALESCE(a.size, 0) > 0)`
 
 // beeperMediaEligible is the shared provider, capture and role predicate. It
 // assumes a (attachments), m (messages), cv (conversations) and src (sources).
@@ -233,6 +242,7 @@ type BeeperMediaResult struct {
 // ties a pass to the journal registration it can complete.
 type BeeperMediaScan struct {
 	DestinationKey    string    `json:"destination_key"`
+	Generation        string    `json:"generation,omitempty"`
 	AfterAttachmentID int64     `json:"after_attachment_id"`
 	PassHighWater     int64     `json:"pass_high_water"`
 	BaselineSequence  int64     `json:"baseline_sequence"`
@@ -1289,6 +1299,10 @@ func (s *Store) ReconsiderBlockedBeeperMediaOperations(ctx context.Context, dest
 
 // LoadBeeperMediaScan loads the destination-namespaced rolling checkpoint.
 func (s *Store) LoadBeeperMediaScan(ctx context.Context, destination string) (BeeperMediaScan, error) {
+	return s.loadBeeperMediaScan(ctx, destination, false)
+}
+
+func (s *Store) loadBeeperMediaScan(ctx context.Context, destination string, create bool) (BeeperMediaScan, error) {
 	if destination == "" {
 		return BeeperMediaScan{}, errors.New("beeper media destination is required")
 	}
@@ -1296,7 +1310,18 @@ func (s *Store) LoadBeeperMediaScan(ctx context.Context, destination string) (Be
 	err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT value FROM archive_metadata WHERE key = ?`),
 		beeperMediaScanKey(destination)).Scan(&encoded)
 	if errors.Is(err, sql.ErrNoRows) {
-		return BeeperMediaScan{DestinationKey: destination}, nil
+		if !create {
+			return BeeperMediaScan{DestinationKey: destination}, nil
+		}
+		// Persist a unique checkpoint before reading a page so resets reject stale commits.
+		initialValue, marshalErr := json.Marshal(BeeperMediaScan{DestinationKey: destination, Generation: uuid.NewString()})
+		if marshalErr != nil {
+			return BeeperMediaScan{}, marshalErr
+		}
+		err = s.db.QueryRowContext(ctx, s.Rebind(`
+			INSERT INTO archive_metadata (key, value) VALUES (?, ?)
+			ON CONFLICT (key) DO UPDATE SET value = archive_metadata.value
+			RETURNING value`), beeperMediaScanKey(destination), string(initialValue)).Scan(&encoded)
 	}
 	if err != nil {
 		return BeeperMediaScan{}, fmt.Errorf("read beeper media scan: %w", err)
@@ -1315,6 +1340,10 @@ func (s *Store) LoadBeeperMediaScan(ctx context.Context, destination string) (Be
 func (s *Store) AdvanceBeeperMediaScan(
 	ctx context.Context, destination string, before, after BeeperMediaScan,
 ) (bool, error) {
+	return s.advanceBeeperMediaScan(ctx, destination, before, after, true)
+}
+
+func (s *Store) advanceBeeperMediaScan(ctx context.Context, destination string, before, after BeeperMediaScan, initialize bool) (bool, error) {
 	if err := errors.Join(validateBeeperMediaScan(destination, before),
 		validateBeeperMediaScan(destination, after)); err != nil {
 		return false, err
@@ -1330,13 +1359,12 @@ func (s *Store) AdvanceBeeperMediaScan(
 	var swapped bool
 	err = s.withTxContext(ctx, func(tx *loggedTx) error {
 		q := boundQuerier{ctx: ctx, q: tx}
-		if _, err := q.Exec(`
-			INSERT INTO archive_metadata (key, value) VALUES (?, ?)
-			ON CONFLICT (key) DO NOTHING`, beeperMediaScanKey(destination), string(oldValue)); err != nil {
-			return fmt.Errorf("initialize beeper media scan: %w", err)
+		if initialize {
+			if _, err := q.Exec(`INSERT INTO archive_metadata (key, value) VALUES (?, ?) ON CONFLICT (key) DO NOTHING`, beeperMediaScanKey(destination), string(oldValue)); err != nil {
+				return fmt.Errorf("initialize beeper media scan: %w", err)
+			}
 		}
-		result, err := q.Exec(`UPDATE archive_metadata SET value = ? WHERE key = ? AND value = ?`,
-			string(newValue), beeperMediaScanKey(destination), string(oldValue))
+		result, err := q.Exec(`UPDATE archive_metadata SET value = ? WHERE key = ? AND value = ?`, string(newValue), beeperMediaScanKey(destination), string(oldValue))
 		if err != nil {
 			return fmt.Errorf("advance beeper media scan: %w", err)
 		}

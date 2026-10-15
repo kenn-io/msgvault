@@ -11,6 +11,7 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -134,6 +135,16 @@ type DocbankIntegrationConfig struct {
 	ASRProfile              string   `toml:"asr_profile"`
 	ReferenceConsent        bool     `toml:"reference_consent"`
 	ReferenceOrigins        []string `toml:"reference_origins"`
+	AttachmentUploadConsent bool     `toml:"attachment_upload_consent"`
+	AttachmentFolder        string   `toml:"attachment_folder"`
+}
+
+// MirrorFolder returns the destination virtual directory.
+func (d DocbankIntegrationConfig) MirrorFolder() string {
+	if d.AttachmentFolder == "" {
+		return "/msgvault"
+	}
+	return d.AttachmentFolder
 }
 
 func (d DocbankIntegrationConfig) validate() error {
@@ -141,6 +152,10 @@ func (d DocbankIntegrationConfig) validate() error {
 		if _, err := recordingref.CanonicalOrigin(origin); err != nil {
 			return fmt.Errorf("integrations.docbank.reference_origins[%d]: invalid origin", i+1)
 		}
+	}
+	folder := d.MirrorFolder()
+	if !strings.HasPrefix(folder, "/") || path.Clean(folder) != folder {
+		return errors.New("integrations.docbank.attachment_folder must be a clean absolute virtual path")
 	}
 	if strings.TrimSpace(d.ASRProfile) == "supplied-transcript" {
 		return errors.New(`integrations.docbank.asr_profile: "supplied-transcript" is reserved for supplied transcript input`)

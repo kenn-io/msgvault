@@ -1227,26 +1227,30 @@ func (e *SQLiteEngine) getMessageByQuery(ctx context.Context, whereClause string
 // GetAttachment retrieves attachment metadata by ID.
 func (e *SQLiteEngine) GetAttachment(ctx context.Context, id int64) (*AttachmentInfo, error) {
 	var att AttachmentInfo
+	var sourceAttachmentID string
 	err := e.queryRowContext(ctx, `
-		SELECT a.id, COALESCE(m.source_id, 0), COALESCE(a.filename, ''), COALESCE(a.mime_type, ''), COALESCE(a.size, 0), COALESCE(a.content_hash, ''), COALESCE(a.storage_path, '')
+		SELECT a.id, COALESCE(m.source_id, 0), COALESCE(a.filename, ''), COALESCE(a.mime_type, ''), COALESCE(a.size, 0), COALESCE(a.content_hash, ''), COALESCE(a.storage_path, ''), COALESCE(a.source_attachment_id, '')
 		FROM attachments a LEFT JOIN messages m ON m.id = a.message_id
 		WHERE a.id = ?
-	`, id).Scan(&att.ID, &att.SourceID, &att.Filename, &att.MimeType, &att.Size, &att.ContentHash, &att.StoragePath)
-	if err == sql.ErrNoRows {
+	`, id).Scan(&att.ID, &att.SourceID, &att.Filename, &att.MimeType, &att.Size, &att.ContentHash, &att.StoragePath, &sourceAttachmentID)
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil //nolint:nilnil // Engine.GetAttachment uses (nil, nil) for not-found; callers branch on the nil result
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get attachment: %w", err)
 	}
+	var receiptHash string
+	att.ContentHash, receiptHash = store.AttachmentReadHashes(att.ContentHash, att.StoragePath, sourceAttachmentID)
 	if isURLStoragePath(att.StoragePath) {
 		att.URL = att.StoragePath
 		att.ContentHash = ""
 		att.StoragePath = ""
-	} else if att.ContentHash == "" {
-		if pathHash, ok := attachmentCASPathHash(att.StoragePath); ok {
-			att.ContentHash = pathHash
-		}
 	}
+	refs, err := store.LoadDocbankAttachmentRefs(ctx, store.ReadDBContext(ctx, e.db), e.dialect.Rebind, "", []string{receiptHash})
+	if err != nil {
+		return nil, err
+	}
+	att.Docbank = refs[strings.ToLower(receiptHash)]
 	return &att, nil
 }
 
@@ -1270,11 +1274,7 @@ func (e *SQLiteEngine) GetAttachmentsByHash(ctx context.Context, contentHash str
 		if err := rows.Scan(&att.ID, &att.SourceID, &att.Filename, &att.MimeType, &att.Size, &att.ContentHash, &att.StoragePath); err != nil {
 			return nil, fmt.Errorf("scan attachment by hash: %w", err)
 		}
-		if att.ContentHash == "" {
-			if pathHash, ok := attachmentCASPathHash(att.StoragePath); ok {
-				att.ContentHash = pathHash
-			}
-		}
+		att.ContentHash = store.AttachmentContentHash(att.ContentHash, att.StoragePath)
 		attachments = append(attachments, att)
 	}
 	if err := rows.Err(); err != nil {

@@ -3112,6 +3112,31 @@ func TestBoundedJobReschedulesBehindWaiter(t *testing.T) {
 	})
 }
 
+func TestRescheduleErrorRecordsFailureAndQueuesFollowUp(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		failure := errors.New("synthetic upload failure")
+		var runs int
+		s := New(nil)
+		defer func() { <-s.Stop().Done() }()
+		require.NoError(s.AddJob(Job{Name: "bounded", Schedule: "0 0 * * *", Run: func(context.Context) error {
+			runs++
+			if runs == 1 {
+				return &RescheduleError{Err: failure}
+			}
+			return nil
+		}}))
+		err := s.TriggerJob("bounded")
+		require.ErrorIs(err, failure)
+		require.ErrorIs(err, ErrReschedule)
+		assert.Equal(failure.Error(), s.JobStatus()[0].LastError)
+		synctest.Wait()
+		assert.Equal(2, runs, "a failed pass with more work still gets a follow-up")
+		assert.Empty(s.JobStatus()[0].LastError)
+	})
+}
+
 func TestNoPreemptionWithoutQueuedWork(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		oldPoll := yieldPollInterval

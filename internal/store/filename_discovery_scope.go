@@ -192,7 +192,7 @@ func (s *Store) FilenameSuggestionRowsContext(ctx context.Context, ids []int64, 
 		if occurred.Valid {
 			row.OccurredAt = &occurred.Time
 		}
-		normalizeFileMetadataStorage(file)
+		normalizeFileMetadataStorage(file, "")
 		result = append(result, row)
 		messageIDs = append(messageIDs, file.MessageID)
 	}

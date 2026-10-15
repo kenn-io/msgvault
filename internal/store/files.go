@@ -29,7 +29,9 @@ type FileMetadata struct {
 	AttachmentRole   AttachmentRole
 	RoleSource       AttachmentRoleSource
 	SourcePartKey    string
+	Docbank          []DocbankAttachmentRef
 	ContentID        string
+	receiptHash      string
 }
 
 func (s *Store) GetFileMetadata(ctx context.Context, id int64) (*FileMetadata, error) {
@@ -41,10 +43,15 @@ func (s *Store) GetFileMetadata(ctx context.Context, id int64) (*FileMetadata, e
 	if !ok {
 		return nil, nil //nolint:nilnil // not-found is a normal metadata lookup result
 	}
+	refs, err := LoadDocbankAttachmentRefs(ctx, ReadDBContext(ctx, s.db.DB), s.Rebind, "", []string{file.receiptHash})
+	if err != nil {
+		return nil, err
+	}
+	file.Docbank = refs[strings.ToLower(file.receiptHash)]
 	return &file, nil
 }
 
-// GetFileMetadataBatch resolves one bounded page in one database query.
+// GetFileMetadataBatch resolves one bounded page without delivery receipts.
 // Attachments on dedup-hidden messages (deleted_at IS NOT NULL) are
 // omitted so known-ID lookups cannot resolve rows the archive hides;
 // source-deleted messages stay visible, matching archive views.
@@ -78,7 +85,7 @@ func (s *Store) GetFileMetadataBatch(ctx context.Context, ids []int64) (map[int6
 			COALESCE(a.filename, ''), COALESCE(a.mime_type, ''), COALESCE(a.size, 0),
 			COALESCE(a.content_hash, ''), COALESCE(a.storage_path, ''),
 			a.attachment_role, a.role_source,
-			COALESCE(a.source_part_key, ''), COALESCE(a.content_id, '')
+			COALESCE(a.source_part_key, ''), COALESCE(a.content_id, ''), COALESCE(a.source_attachment_id, '')
 		FROM attachments a
 		JOIN messages m ON m.id = a.message_id
 		JOIN conversations c ON c.id = m.conversation_id
@@ -91,34 +98,30 @@ func (s *Store) GetFileMetadataBatch(ctx context.Context, ids []int64) (map[int6
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var file FileMetadata
+		var sourceAttachmentID string
 		if err := rows.Scan(&file.ID, &file.MessageID, &file.ConversationID,
 			&file.SourceID, &file.SourceMessageID, &file.MessageType, &file.ConversationType,
 			&file.Filename, &file.MimeType, &file.Size, &file.ContentHash, &file.StoragePath,
-			&file.AttachmentRole, &file.RoleSource, &file.SourcePartKey, &file.ContentID); err != nil {
+			&file.AttachmentRole, &file.RoleSource, &file.SourcePartKey, &file.ContentID, &sourceAttachmentID); err != nil {
 			return nil, fmt.Errorf("scan file metadata: %w", err)
 		}
-		normalizeFileMetadataStorage(&file)
+		normalizeFileMetadataStorage(&file, sourceAttachmentID)
 		result[file.ID] = file
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate file metadata: %w", err)
 	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
 	return result, nil
 }
 
-func normalizeFileMetadataStorage(file *FileMetadata) {
-	lowerPath := strings.ToLower(file.StoragePath)
-	switch {
-	case strings.HasPrefix(lowerPath, "http://") || strings.HasPrefix(lowerPath, "https://"):
+func normalizeFileMetadataStorage(file *FileMetadata, sourceAttachmentID string) {
+	file.ContentHash, file.receiptHash = AttachmentReadHashes(file.ContentHash, file.StoragePath, sourceAttachmentID)
+	if IsURLStoragePath(file.StoragePath) {
 		file.URL = file.StoragePath
 		file.StoragePath = ""
 		file.ContentHash = ""
-	case file.ContentHash == "":
-		// Duplicate-content aliases (see normalizeDiscordAttachmentRefs)
-		// keep a trusted CAS path with an empty hash. Recover the hash so
-		// the file endpoints classify the alias as locally available.
-		if pathHash, ok := casPathHash(file.StoragePath); ok {
-			file.ContentHash = pathHash
-		}
 	}
 }

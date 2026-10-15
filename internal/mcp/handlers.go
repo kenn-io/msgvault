@@ -1993,6 +1993,7 @@ func (h *handlers) getAttachment(ctx context.Context, req toolRequest) (*toolRes
 	}
 	att := payload.metadata
 	metaObj := getAttachmentResponse{
+		Docbank:  att.Docbank,
 		Filename: att.Filename,
 		MIMEType: payload.mimeType,
 		Size:     att.Size,

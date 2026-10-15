@@ -532,7 +532,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("schedule filename discovery: %w", err)
 	}
 	if err := configureBeeperMediaJob(ctx, mediaSched, operationGate, s, blobStore,
-		filepath.Join(cfg.Data.DataDir, "tmp", "beeper-media"), cfg.Integrations.Docbank, logger); err != nil {
+		filepath.Join(cfg.Data.DataDir, "tmp", "beeper-media"), cfg.AttachmentsDir(), cfg.Integrations.Docbank, logger); err != nil {
 		logger.Warn("Beeper media submission unavailable", "error", err)
 	}
 	if err := configureRecordingReferenceJob(ctx, mediaSched, operationGate, s, cfg.Integrations.Docbank, logger); err != nil {
@@ -876,6 +876,10 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 	schedAdapter := &schedulerAdapter{scheduler: sched, media: mediaSched}
 
+	docbankAttachments, err := newDocbankAttachmentReader(ctx, s, cfg.Integrations.Docbank)
+	if err != nil {
+		logger.Warn("Attachment mirror status unavailable", "error", err)
+	}
 	messageRecordings, err := newMessageRecordingReader(ctx, s, cfg.Integrations.Docbank)
 	if err != nil {
 		logger.Warn("Message transcripts unavailable", "error", err)
@@ -912,6 +916,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		BlobStore:                     blobStore,
 		TelemetryCapture:              telemetry.CaptureHandler(telemetryReporter, cfg.Data.DataDir),
 		MessageRecordings:             messageRecordings,
+		DocbankAttachments:            docbankAttachments,
 	}
 	apiOpts.GmailProfileAddress = func(ctx context.Context, source *store.Source) (string, error) {
 		client, serviceAccount, err := newDaemonGmailClient(

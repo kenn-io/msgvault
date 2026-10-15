@@ -1058,7 +1058,7 @@ func (d *SQLiteDialect) EnsureTriggers(q querier) error {
 		    AFTER UPDATE OF message_id, filename, mime_type, size, content_hash,
 		        storage_path, media_type, width, height, duration_ms,
 		        source_attachment_id, attachment_metadata, attachment_role,
-		        role_source, source_part_key, content_id, encryption_version
+		        role_source, source_part_key, content_id, encryption_version, attachment_state
 		    ON attachments FOR EACH ROW
 		    WHEN EXISTS (SELECT 1 FROM attachment_change_consumers)
 		      AND (OLD.message_id IS NOT NEW.message_id
@@ -1077,7 +1077,8 @@ func (d *SQLiteDialect) EnsureTriggers(q querier) error {
 		        OR OLD.role_source IS NOT NEW.role_source
 		        OR OLD.source_part_key IS NOT NEW.source_part_key
 		        OR OLD.content_id IS NOT NEW.content_id
-		        OR OLD.encryption_version IS NOT NEW.encryption_version)
+		        OR OLD.encryption_version IS NOT NEW.encryption_version
+		        OR OLD.attachment_state IS NOT NEW.attachment_state)
 		    BEGIN
 		        INSERT INTO attachment_change_log
 		            (event_kind, old_message_id, new_message_id,

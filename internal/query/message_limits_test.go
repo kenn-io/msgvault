@@ -28,7 +28,7 @@ func TestBoundedDuckDBMessageDetails(t *testing.T) {
  CREATE TABLE sqlite_db.message_recipients (message_id BIGINT, participant_id BIGINT, recipient_type VARCHAR, display_name VARCHAR);
  CREATE TABLE sqlite_db.labels (id BIGINT, name VARCHAR);
  CREATE TABLE sqlite_db.message_labels (message_id BIGINT, label_id BIGINT);
- CREATE TABLE sqlite_db.attachments (id BIGINT, message_id BIGINT, filename VARCHAR, mime_type VARCHAR, size BIGINT, content_hash VARCHAR, storage_path VARCHAR);
+ CREATE TABLE sqlite_db.attachments (id BIGINT, message_id BIGINT, filename VARCHAR, mime_type VARCHAR, size BIGINT, content_hash VARCHAR, storage_path VARCHAR, source_attachment_id VARCHAR);
  INSERT INTO sqlite_db.messages (id, source_id, source_message_id, conversation_id, has_attachments) VALUES (1,1,'fixture',1,false);
  INSERT INTO sqlite_db.conversations (id, source_conversation_id) VALUES (1,'fixture-thread');`)
 	requirements.NoError(err)

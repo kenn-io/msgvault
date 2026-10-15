@@ -493,7 +493,7 @@ func (s *Store) getDocumentFileMetadataTx(
 	if err != nil {
 		return FileMetadata{}, false, fmt.Errorf("read document occurrence attachment metadata: %w", err)
 	}
-	normalizeFileMetadataStorage(&file)
+	normalizeFileMetadataStorage(&file, "")
 	return file, true, nil
 }
 

@@ -425,7 +425,8 @@ type Server struct {
 	blobStore AttachmentBlobStore
 	// messageRecordings joins recordings with Docbank transcripts. Nil serves
 	// an empty list.
-	messageRecordings *MessageRecordingReader
+	messageRecordings  *MessageRecordingReader
+	docbankAttachments *DocbankAttachmentReader
 	// remoteImages is the SSRF-hardened fetcher behind
 	// POST /api/v1/content/remote-image. Tests replace it to inject a fake
 	// resolver and dialer.
@@ -568,7 +569,8 @@ type ServerOptions struct {
 	BlobStore AttachmentBlobStore
 	// MessageRecordings reads recordings and their Docbank transcripts for
 	// GET /api/v1/messages/{id}/recordings. Nil serves an empty list.
-	MessageRecordings *MessageRecordingReader
+	MessageRecordings  *MessageRecordingReader
+	DocbankAttachments *DocbankAttachmentReader
 	// RequestTimeout caps each request by adding a deadline to the request
 	// context. Zero defaults to 60s. The underlying http.Server's WriteTimeout
 	// is set to RequestTimeout + 5s so handlers that honor cancellation can
@@ -669,6 +671,7 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 		vectorStatsTimeout: vectorStatsTimeout,
 		blobStore:          opts.BlobStore,
 		messageRecordings:  opts.MessageRecordings,
+		docbankAttachments: opts.DocbankAttachments,
 		remoteImages:       remoteimage.NewFetcher(),
 		inlineCache:        newInlineParseCache(inlineCacheMaxEntries, inlineCacheMaxBytes),
 		spaHandler:         opts.SPAHandler,

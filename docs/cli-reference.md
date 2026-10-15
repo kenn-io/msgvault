@@ -4326,6 +4326,20 @@ msgvault setup status --json
 
 ---
 
+## docbank attachments (unreleased)
+
+Manage the optional Docbank folder mirror through the selected msgvault daemon.
+
+```bash
+msgvault docbank attachments status
+msgvault docbank attachments backfill
+```
+
+`status` shows the mirror state and destination folder, delivered, sending and failed file counts, failure reasons, and all distinct eligible content hashes with no delivery record for this destination. Use
+`--json` for structured output. `backfill` restarts discovery and retries failed
+uploads. It requires attachment upload consent and a running attachment mirror
+job. Backfill resets discovery and requeues failed files with attempts reset in one transaction. The daemon drains the backlog at upload speed. The mirror includes files on dedup-hidden messages and excludes files whose attachment rows were removed. Upload names use `<first 12 hex of hash>-<sanitized basename>`. See [attachment mirror configuration](configuration.md#mirror-stored-attachments-to-docbank-unreleased).
+
 ## show-message
 
 Show full message details. On newer `main` builds, `show` is an alias.

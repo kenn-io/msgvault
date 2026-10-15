@@ -28,9 +28,9 @@ func newRootCommand() *cobra.Command {
 	root := &cobra.Command{
 		Use:   daemonService,
 		Short: "Offline email, chat, and meeting archive tool",
-		Long: `msgvault keeps an offline, searchable archive of email, chat, and meeting
-records. A daemon owns the archive: commands start or reuse a local daemon,
-or use [remote].url from config.toml (--local forces the local daemon).
+		Long: `msgvault archives email, chat, and meetings for offline search.
+Commands start or reuse a local daemon, or use [remote].url from config.toml.
+--local forces the local daemon.
 
 Start here:
   msgvault list-accounts --json

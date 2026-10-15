@@ -91,6 +91,7 @@ type MessageRecipient struct {
 
 // APIAttachment represents attachment metadata for API responses.
 type APIAttachment struct {
+	Docbank     []DocbankAttachmentRef
 	ID          int64
 	Filename    string
 	MimeType    string
@@ -331,6 +332,7 @@ func (s *Store) GetMessageContext(ctx context.Context, id int64) (*APIMessage, e
 		return nil, fmt.Errorf("get attachments: %w", err)
 	}
 	defer func() { _ = attRows.Close() }()
+	var hashes []string
 	for attRows.Next() {
 		var att APIAttachment
 		var storagePath, sourceAttachmentID string
@@ -340,27 +342,28 @@ func (s *Store) GetMessageContext(ctx context.Context, id int64) (*APIMessage, e
 		); err != nil {
 			return nil, fmt.Errorf("scan attachment: %w", err)
 		}
-		if strings.HasPrefix(storagePath, "http://") || strings.HasPrefix(storagePath, "https://") {
-			att.ContentHash = ""
+		receiptHash := AttachmentReceiptHash(att.ContentHash, storagePath, sourceAttachmentID)
+		att.ContentHash = receiptHash
+		if IsURLStoragePath(storagePath) {
 			att.URL = storagePath
-		} else if att.ContentHash == "" &&
-			(strings.HasPrefix(sourceAttachmentID, "discord:") || strings.HasPrefix(sourceAttachmentID, "slack:")) {
-			// A hashless Discord/Slack row whose storage path validates as
-			// a trusted CAS path is a duplicate-content alias; re-derive
-			// its hash so the attachment stays accessible. The provider
-			// gate is load-bearing: a Beeper hashless local path means
-			// pending/untrusted and must stay hashless (see
-			// TestBeeperHashlessLocalPathRemainsPending).
-			if pathHash, ok := casPathHash(storagePath); ok {
-				att.ContentHash = pathHash
-			}
 		}
 		m.Attachments = append(m.Attachments, att)
+		hashes = append(hashes, receiptHash)
 	}
 	if err := attRows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate attachments: %w", err)
 	}
 
+	if err := attRows.Close(); err != nil {
+		return nil, err
+	}
+	refs, err := LoadDocbankAttachmentRefs(ctx, ReadDBContext(ctx, s.db.DB), s.Rebind, "", hashes)
+	if err != nil {
+		return nil, err
+	}
+	for i := range m.Attachments {
+		m.Attachments[i].Docbank = refs[strings.ToLower(hashes[i])]
+	}
 	m.Headers = make(map[string]string)
 
 	return &m, nil

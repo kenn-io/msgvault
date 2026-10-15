@@ -15,7 +15,26 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
+
+func TestSchemaVersionDocbankUpgrade(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	_, err := f.Store.DB().Exec("DROP TABLE docbank_attachment_deliveries")
+	require.NoError(err)
+	_, err = f.Store.DB().Exec("UPDATE archive_metadata SET value='9' WHERE key='schema_version'")
+	require.NoError(err)
+	require.Error(f.Store.ValidateSchemaContext(t.Context()))
+	require.NoError(f.Store.InitSchemaContext(t.Context()))
+	version, err := f.Store.SchemaVersionContext(t.Context())
+	require.NoError(err)
+	assert.Equal(store.SchemaVersion, version)
+	var count int
+	require.NoError(f.Store.DB().QueryRow("SELECT COUNT(*) FROM docbank_attachment_deliveries").Scan(&count))
+	assert.Zero(count)
+}
 
 func TestSchemaVersionSQLiteFailedUpgrade(t *testing.T) {
 	require := require.New(t)
@@ -110,26 +129,28 @@ func TestSchemaVersionMalformedAndFuture(t *testing.T) {
 // Append only.
 var (
 	schemaContractDigests = []string{
-		1: "08c288dc75ccc5c75f4513cf92a10f34a75b5e918f7ceea83bf870040e252358",
-		2: "ad86bbf0db74619be9eaefae6f34bcaad37f3520a9a302810c0fc867735cd4c1",
-		3: "bde397bba4bf884c55327b3956af11cd69400f7fdfdf60b34a05eaeeb5534b84",
-		4: "ed0092e4f507e327350bb9bbf2f0cfcd3cb8e53c9ca57f509c514e7e3f68579e",
-		5: "ed0092e4f507e327350bb9bbf2f0cfcd3cb8e53c9ca57f509c514e7e3f68579e",
-		6: "c4e06b60819045ffe63afda9caeb916e2b5f9d3b77f7ffc7c06b037625a8a2b7",
-		7: "4556a30227e7e696a688d1e96d71c565304c6119e6964d8933085c47a42dad34",
-		8: "9580fe5b37f693d1711c74b31f6651268c99a6016039fcf023821502853793fd",
-		9: "c07287fd6b88c73e3e34d8a2b23ed064916d4ea290bbe416561860e992f4ec53",
+		1:  "08c288dc75ccc5c75f4513cf92a10f34a75b5e918f7ceea83bf870040e252358",
+		2:  "ad86bbf0db74619be9eaefae6f34bcaad37f3520a9a302810c0fc867735cd4c1",
+		3:  "bde397bba4bf884c55327b3956af11cd69400f7fdfdf60b34a05eaeeb5534b84",
+		4:  "ed0092e4f507e327350bb9bbf2f0cfcd3cb8e53c9ca57f509c514e7e3f68579e",
+		5:  "ed0092e4f507e327350bb9bbf2f0cfcd3cb8e53c9ca57f509c514e7e3f68579e",
+		6:  "c4e06b60819045ffe63afda9caeb916e2b5f9d3b77f7ffc7c06b037625a8a2b7",
+		7:  "4556a30227e7e696a688d1e96d71c565304c6119e6964d8933085c47a42dad34",
+		8:  "9580fe5b37f693d1711c74b31f6651268c99a6016039fcf023821502853793fd",
+		9:  "c07287fd6b88c73e3e34d8a2b23ed064916d4ea290bbe416561860e992f4ec53",
+		10: "da0cc2d980a72019a4b62685f0938c23248237b5dad6e98e6e58756cf0a445aa",
 	}
 	schemaContractPostgresDigests = []string{
-		1: "7c554ff06468af9bf30950e6e4f2954b52f84d7dd0e6708f4fdd932fda007ed3",
-		2: "7f207ef54527a376aebc79ee9c2217e3af0bfb1171ed98af2ef5504ea7dec7ca",
-		3: "a60a2d5f70be37cbfd6ea4bf8c264be5d70f1dec16dd87d611ead7c0b01ec823",
-		4: "68f409716bd517ddda67402e966ff5d8fb2d00326ffef42fedccb77a0f11584c",
-		5: "68f409716bd517ddda67402e966ff5d8fb2d00326ffef42fedccb77a0f11584c",
-		6: "9a63d5ae5ad40ebca9500de9b3de10cdbce185d7ca8f0039e49db3b22e2f2fc0",
-		7: "dd594306d490f5788e087fc49fb223370d2d5cf6d0d457666770d45adf59b7d5",
-		8: "eeda778f8f171d2f2eb0b1d9dd00d725a40a7c05832738f1fb295f57bb892f1d",
-		9: "3291ad98ccf60a283854288956d5784dc2c1ce122f521aa8123b200ae16791c6",
+		1:  "7c554ff06468af9bf30950e6e4f2954b52f84d7dd0e6708f4fdd932fda007ed3",
+		2:  "7f207ef54527a376aebc79ee9c2217e3af0bfb1171ed98af2ef5504ea7dec7ca",
+		3:  "a60a2d5f70be37cbfd6ea4bf8c264be5d70f1dec16dd87d611ead7c0b01ec823",
+		4:  "68f409716bd517ddda67402e966ff5d8fb2d00326ffef42fedccb77a0f11584c",
+		5:  "68f409716bd517ddda67402e966ff5d8fb2d00326ffef42fedccb77a0f11584c",
+		6:  "9a63d5ae5ad40ebca9500de9b3de10cdbce185d7ca8f0039e49db3b22e2f2fc0",
+		7:  "dd594306d490f5788e087fc49fb223370d2d5cf6d0d457666770d45adf59b7d5",
+		8:  "eeda778f8f171d2f2eb0b1d9dd00d725a40a7c05832738f1fb295f57bb892f1d",
+		9:  "3291ad98ccf60a283854288956d5784dc2c1ce122f521aa8123b200ae16791c6",
+		10: "abe822a2b3ba31bca556d4da218fd6542b3e4ba95acf4731231f47fc6a2a44f8",
 	}
 )
 
