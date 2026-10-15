@@ -287,14 +287,16 @@ func TestGetAssetBytesClassification(t *testing.T) {
 			notFound:  true,
 		},
 		{
-			name: "transient retry then not-found ends the attempt early",
+			name: "a not-found preceded by a transient failure in the same call is not a clean not-found",
 			responses: []assetResponse{
 				{status: 500},
 				{status: 502, body: "M_NOT_FOUND"},
 				{status: 200},
 			},
 			wantCalls: 2,
-			notFound:  true,
+			// Neither sentinel: a transient failure happened earlier in
+			// this same call, so the cross-run confirmation policy must
+			// not treat this as a clean repeat; it's an ordinary failure.
 		},
 		{
 			name:        "both phrases in one body resolve to the definitive one",
@@ -446,17 +448,7 @@ func TestClientDoesNotSleepAfterFinalAttempt(t *testing.T) {
 	assert.Less(time.Since(start), 1400*time.Millisecond)
 }
 
-func TestClientNotFoundPhraseIgnoredOffAssets(t *testing.T) {
-	assert := assert.New(t)
-	c, calls := assetServer(t,
-		assetResponse{status: 502, body: "M_NOT_FOUND"},
-		assetResponse{status: 200, body: `[]`},
-	)
-	accounts, err := c.ListAccounts(t.Context())
-	require.NoError(t, err)
-	assert.Empty(accounts)
-	assert.EqualValues(2, calls.Load())
-	c, _ = assetServer(t, assetResponse{status: 404, body: "Media not found"})
-	_, err = c.GetMessage(t.Context(), "chat", "message")
-	require.ErrorIs(t, err, ErrNotFound)
-}
+// A not-found phrase off an asset request needs no test of its own:
+// TestClientPermanentPhraseIgnoredOffAssets already proves the asset flag
+// gates classifyAssetError regardless of which phrase matches, and
+// TestClientNotFound already proves a non-asset 404 resolves to ErrNotFound.

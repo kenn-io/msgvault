@@ -132,6 +132,14 @@ func (c *Client) get(ctx context.Context, path string) ([]byte, error) {
 func (c *Client) fetch(ctx context.Context, path string, maxBytes int64, asset bool) ([]byte, error) {
 	reqURL := c.baseURL + path
 	assetAttempts := 0
+	// sawTransientAssetFailure tracks whether an earlier attempt in this same
+	// call hit a transient response (429, or a 5xx with no matching phrase)
+	// before a later attempt settled on not-found. That mixed outcome isn't
+	// the clean not-found the cross-run confirmation policy means to count:
+	// the importer's reset rule already treats "a different kind of error in
+	// between" as resetting a not-found streak between separate runs, and
+	// this makes that hold within one run's retries too.
+	sawTransientAssetFailure := false
 	for attempt := range maxRetries {
 		if err := c.limiter.Wait(ctx); err != nil {
 			return nil, fmt.Errorf("wait for beeper rate limit: %w", err)
@@ -195,10 +203,22 @@ func (c *Client) fetch(ctx context.Context, path string, maxBytes int64, asset b
 				return nil, fmt.Errorf("beeper GET %s: status %d after %d attempts: %s",
 					reqURL, resp.StatusCode, assetAttempts, errorSnippet(body))
 			}
+			sawTransientAssetFailure = true
+		case assetErr == ErrAssetNotFound && sawTransientAssetFailure:
+			// An earlier attempt in this same call hit a transient failure;
+			// this isn't the clean not-found the confirmation policy means
+			// to count, so report it as an ordinary retryable failure
+			// instead, same as a transient failure anywhere else would be.
+			return nil, fmt.Errorf("beeper GET %s: status %d after a transient failure earlier in this attempt: %s",
+				reqURL, resp.StatusCode, errorSnippet(body))
 		case assetErr != nil:
 			return nil, fmt.Errorf("beeper GET %s: status %d: %s: %w",
 				reqURL, resp.StatusCode, errorSnippet(body), assetErr)
 		case asset && resp.StatusCode == http.StatusNotFound:
+			if sawTransientAssetFailure {
+				return nil, fmt.Errorf("beeper GET %s: status %d after a transient failure earlier in this attempt: %s",
+					reqURL, resp.StatusCode, errorSnippet(body))
+			}
 			return nil, fmt.Errorf("beeper GET %s: status %d: %s: %w",
 				reqURL, resp.StatusCode, errorSnippet(body), ErrAssetNotFound)
 		case resp.StatusCode == http.StatusNotFound:
@@ -208,6 +228,7 @@ func (c *Client) fetch(ctx context.Context, path string, maxBytes int64, asset b
 				return nil, fmt.Errorf("beeper GET %s: status %d after %d attempts: %s",
 					reqURL, resp.StatusCode, assetAttempts, errorSnippet(body))
 			}
+			sawTransientAssetFailure = true
 		default:
 			if resp.StatusCode >= 400 && resp.StatusCode < 500 && resp.StatusCode != http.StatusRequestTimeout {
 				return nil, fmt.Errorf("beeper GET %s: status %d: %s: %w", reqURL, resp.StatusCode, string(body), errPermanentResponse)

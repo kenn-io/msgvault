@@ -1552,6 +1552,12 @@ func TestAssetNotFoundBecomesTerminalOnlyOnConfirmedRepeat(t *testing.T) {
 		require.NoError(st.DB().QueryRow(`SELECT attachment_state, attachment_skip_reason FROM attachments`).Scan(&state, &reason))
 		require.Equal(string(attachmentpolicy.StateFailed), state)
 		require.Equal(string(attachmentpolicy.SkipSourceUnavailable), reason)
+		// Backdate before the deferral runs: if the deferral resets the
+		// clock, the confirming Import below sees a fresh stamp instead of
+		// this old one and never confirms. Backdating after the deferral
+		// would prove nothing, since it would overwrite whatever the
+		// deferral left regardless of whether that was correct.
+		backdateNotFoundFirstSeen(t, st, sourceAttID, notFoundRepeatCooldown+time.Hour)
 
 		noMediaOpts := opts
 		noMediaOpts.Full = true
@@ -1564,11 +1570,10 @@ func TestAssetNotFoundBecomesTerminalOnlyOnConfirmedRepeat(t *testing.T) {
 		assert.Equal(string(attachmentpolicy.StateFailed), state, "the deferral must not reset the provisional marker to bare pending")
 		assert.Equal(string(attachmentpolicy.SkipSourceUnavailable), reason)
 
-		backdateNotFoundFirstSeen(t, st, sourceAttID, notFoundRepeatCooldown+time.Hour)
 		opts.Full = true
 		sum, err := imp.Import(t.Context(), opts)
 		require.NoError(err)
-		assert.EqualValues(1, sum.AttachmentsUnavailable, "the clock the deferral preserved still confirms once the cooldown has passed")
+		assert.EqualValues(1, sum.AttachmentsUnavailable, "the backdated clock the deferral preserved still confirms with no further backdating")
 	})
 
 	t.Run("an offline repair pass between the two misses does not reset the clock", func(t *testing.T) {
