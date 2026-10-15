@@ -53,29 +53,30 @@ var ErrAssetUnavailable = errors.New("asset no longer available at source")
 // It ends this request's retries but does not prove the asset is permanently gone.
 var ErrAssetNotFound = errors.New("asset not found at source")
 
-func isAssetNotFoundError(body []byte) bool {
-	lower := strings.ToLower(string(body))
-	return strings.Contains(lower, "media not found") ||
-		strings.Contains(lower, "m_not_found") ||
-		strings.Contains(lower, "failed to download file: http 404")
+// assetErrorPhrases are lower-cased phrases in a Beeper asset error body,
+// checked in order, that classify the failure regardless of HTTP status: a
+// bridge can wrap a not-found outcome in a 502 as readily as a 404. The
+// definitive phrase is listed first so a body naming both resolves to it.
+var assetErrorPhrases = []struct {
+	phrase string
+	err    error
+}{
+	{"media is no longer available", ErrAssetUnavailable},
+	{"media not found", ErrAssetNotFound},
+	{"m_not_found", ErrAssetNotFound},
+	{"failed to download file: http 404", ErrAssetNotFound},
 }
 
-// permanentAssetErrors are lower-cased phrases in a Beeper asset error body
-// that mean the media is gone for good.
-var permanentAssetErrors = []string{
-	"media is no longer available",
-}
-
-// isPermanentAssetError reports whether an asset error body says the media
-// can never be downloaded.
-func isPermanentAssetError(body []byte) bool {
+// classifyAssetError reports which sentinel, if any, an asset error body
+// matches. It returns nil when the body names neither outcome.
+func classifyAssetError(body []byte) error {
 	lower := strings.ToLower(string(body))
-	for _, phrase := range permanentAssetErrors {
-		if strings.Contains(lower, phrase) {
-			return true
+	for _, candidate := range assetErrorPhrases {
+		if strings.Contains(lower, candidate.phrase) {
+			return candidate.err
 		}
 	}
-	return false
+	return nil
 }
 
 // TokenFunc returns a bearer token for a Beeper Desktop API request.
@@ -119,10 +120,15 @@ func (c *Client) get(ctx context.Context, path string) ([]byte, error) {
 // read through a limited reader, so an over-cap asset costs at most
 // maxBytes+1 of memory regardless of what the server sends. The cap applies
 // to successful responses only; error bodies have their own small bound.
-// asset enables asset-specific handling: permanent source errors return
-// ErrAssetUnavailable without retrying, and transient 429/5xx responses are
-// capped at maxAssetAttempts. Not-found media ends the attempt immediately;
-// the importer decides whether its age makes the marker terminal.
+// asset enables asset-specific handling: a non-2xx asset body is classified
+// against assetErrorPhrases regardless of status code (a bridge may wrap a
+// not-found outcome in a 502), with the definitive "no longer available"
+// phrase taking precedence over a not-found phrase when a body names both.
+// A bare asset 404 with no matching phrase still ends as ErrAssetNotFound.
+// Either sentinel ends this request's attempts without retrying; a not-found
+// is not itself terminal, and the importer decides whether its age and
+// history make the marker terminal. Transient 429/5xx responses are capped
+// at maxAssetAttempts.
 func (c *Client) fetch(ctx context.Context, path string, maxBytes int64, asset bool) ([]byte, error) {
 	reqURL := c.baseURL + path
 	assetAttempts := 0
@@ -171,6 +177,10 @@ func (c *Client) fetch(ctx context.Context, path string, maxBytes int64, asset b
 			return nil, fmt.Errorf("beeper GET %s: close body: %w", reqURL, closeErr)
 		}
 
+		var assetErr error
+		if asset && !ok {
+			assetErr = classifyAssetError(body)
+		}
 		switch {
 		case ok:
 			if maxBytes > 0 && int64(len(body)) > maxBytes {
@@ -179,18 +189,16 @@ func (c *Client) fetch(ctx context.Context, path string, maxBytes int64, asset b
 			return body, nil
 		case resp.StatusCode == http.StatusUnauthorized:
 			return nil, fmt.Errorf("beeper GET %s: unauthorized (401): the access token was rejected; mint a new token in Beeper Desktop (Settings > Developer) and re-run 'msgvault add-beeper': %w", reqURL, errPermanentResponse)
-		case asset && resp.StatusCode == http.StatusForbidden:
-			return nil, fmt.Errorf("beeper GET %s: forbidden (403): %s: %w", reqURL, errorSnippet(body), errPermanentResponse)
 		case resp.StatusCode == http.StatusTooManyRequests:
 			// Throttling is transient whatever the body says.
 			if asset && assetAttempts >= maxAssetAttempts {
 				return nil, fmt.Errorf("beeper GET %s: status %d after %d attempts: %s",
 					reqURL, resp.StatusCode, assetAttempts, errorSnippet(body))
 			}
-		case asset && isPermanentAssetError(body):
+		case assetErr != nil:
 			return nil, fmt.Errorf("beeper GET %s: status %d: %s: %w",
-				reqURL, resp.StatusCode, errorSnippet(body), ErrAssetUnavailable)
-		case asset && (resp.StatusCode == http.StatusNotFound || isAssetNotFoundError(body)):
+				reqURL, resp.StatusCode, errorSnippet(body), assetErr)
+		case asset && resp.StatusCode == http.StatusNotFound:
 			return nil, fmt.Errorf("beeper GET %s: status %d: %s: %w",
 				reqURL, resp.StatusCode, errorSnippet(body), ErrAssetNotFound)
 		case resp.StatusCode == http.StatusNotFound:

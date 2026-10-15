@@ -142,13 +142,19 @@ it.
 Beeper can also report `Media not found`, `M_NOT_FOUND`, or
 `failed to download file: HTTP 404`, sometimes wrapped in an HTTP 502 response.
 A direct asset HTTP 404 follows the same policy. msgvault stops retrying that
-download as soon as it sees not-found. If the message is at least 30 days old,
-it records the same terminal marker, even on the first miss. Recent media stays
-pending and can recover on a later sync or backfill. Missing or future message
-timestamps also leave the download retryable.
+download for the current run as soon as it sees not-found, but the marker
+stays pending: a not-found alone never ends retries for good. It only becomes
+terminal once the message is at least 30 days old and a later sync or
+backfill run gets not-found again for the same attachment. Anything else in
+between resets this: a successful download clears the history, and a
+different kind of error means the next not-found starts the count over, not
+continues it. Recent media stays pending no matter how many times it
+repeats. Missing or future message timestamps also leave the download
+retryable.
 
-The 30-day cutoff limits repeated requests for old missing media. It does not
-prove the file is permanently gone: an old file that later returns will remain
+The repeat-on-a-later-run requirement limits how many requests an old missing
+file ever gets without risking a one-off network hiccup. It does not prove
+the file is permanently gone: an old file that later returns will remain
 skipped, including during `sync-beeper --full`. Sync and backfill summaries
 report newly terminal files as "media no longer available at source". Other
 failed downloads get at most three attempts per message attachment per run and

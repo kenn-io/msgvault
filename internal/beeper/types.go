@@ -280,7 +280,8 @@ type ImportSummary struct {
 	AttachmentsPending    int64
 	AttachmentsSkipped    int64
 	// AttachmentsUnavailable counts newly terminal media: definitive source
-	// loss or not-found responses for messages at least 30 days old.
+	// loss, or a not-found response that repeated on a separate, later run
+	// for a message at least 30 days old.
 	AttachmentsUnavailable int64
 	// AttachmentsOverCap is the size-specific subset of AttachmentsSkipped.
 	// AttachmentsOverCapBytes saturates while summing declared sizes or the
