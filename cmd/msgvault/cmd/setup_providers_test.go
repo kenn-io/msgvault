@@ -1666,6 +1666,7 @@ func TestSetupStatusReportsPendingLanesForPresentKeys(t *testing.T) {
 	assert.Equal("cron 17 * * * *", activity.Schedule)
 	media := findLane(t, report, laneMediaPolicy)
 	assert.Contains(media.Reason, "beeper scope all")
+	assert.Contains(media.Reason, "matrix scope")
 	assert.Equal([]string{"search_people", "get_person_notes", "get_person_relationship", "search_person_files"}, report.MCPTools)
 
 	human, err := fixture.run(t, "status")

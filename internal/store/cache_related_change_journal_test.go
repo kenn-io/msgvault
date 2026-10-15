@@ -30,6 +30,35 @@ func TestCacheRelatedChangeJournalTracksUnlinkedLabelRename(t *testing.T) {
 	assert.Positive(t, count)
 }
 
+func TestCacheMessageSizeTriggerUpgradesExistingArchive(t *testing.T) {
+	testutil.SkipIfPostgres(t, "analytics cache journal is SQLite-only")
+	req := require.New(t)
+	f := storetest.New(t)
+	s := f.Store
+	messageID, err := s.UpsertMessage(f.NewMessage().Build())
+	req.NoError(err)
+	_, err = s.DB().Exec(`DROP TRIGGER trg_cache_message_facts_update;
+		CREATE TRIGGER trg_cache_message_facts_update AFTER UPDATE OF sender_id ON messages
+		BEGIN INSERT INTO cache_related_change_journal (dataset, message_id) VALUES ('message_facts', NEW.id); END;
+		UPDATE applied_migrations SET version = 2 WHERE name = 'cache_message_source_attribution';
+		DELETE FROM cache_related_change_journal`)
+	req.NoError(err)
+	req.NoError(s.InitSchema())
+	var repaired int
+	req.NoError(s.DB().QueryRow(`SELECT COUNT(*) FROM cache_related_change_journal WHERE dataset = 'message_facts' AND message_id = 0`).Scan(&repaired))
+	assert.Equal(t, 1, repaired, "upgrade repairs facts missed by the old trigger")
+	req.NoError(s.InitSchema())
+	req.NoError(s.DB().QueryRow(`SELECT COUNT(*) FROM cache_related_change_journal WHERE dataset = 'message_facts' AND message_id = 0`).Scan(&repaired))
+	assert.Equal(t, 1, repaired, "repair runs once")
+	_, err = s.DB().Exec(`UPDATE messages SET size_estimate = 42 WHERE id = ?`, messageID)
+	req.NoError(err)
+	_, err = s.DB().Exec(`UPDATE messages SET size_estimate = 42 WHERE id = ?`, messageID)
+	req.NoError(err)
+	var changed int
+	req.NoError(s.DB().QueryRow(`SELECT COUNT(*) FROM cache_related_change_journal WHERE dataset = 'message_facts' AND message_id = ?`, messageID).Scan(&changed))
+	assert.Equal(t, 1, changed, "only changed sizes invalidate cached facts")
+}
+
 func TestCacheRelatedChangeJournalTracksChildMutations(t *testing.T) {
 	require := require.New(t)
 	testutil.SkipIfPostgres(t, "analytics cache journal is SQLite-only")

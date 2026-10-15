@@ -247,7 +247,7 @@ configure; see [Configuration](/docs/configuration/#activity).
 Chat sources cap collection by conversation size: media from rooms above 20
 participants is skipped with a typed `participant_threshold` marker, direct and
 small-group media is kept. Set `media_max_participants = 0` on a source to lift
-the cap. The per-file default is 250 MiB for Beeper, Slack, and Teams, and 50
+the cap. The per-file default is 250 MiB for Beeper, Matrix, Slack, and Teams, and 50
 MiB for Discord. These limits also apply to existing configurations that omit
 the keys; setup does not need to write them. Explicit values and per-account
 overrides keep their configured policy. See

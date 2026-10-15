@@ -3,6 +3,8 @@ package store
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -106,8 +108,19 @@ func ConfigureSQLLogging(opts SQLLogOptions) {
 type loggedDB struct {
 	*sql.DB
 
+	tx     *loggedTx
 	rebind func(string) string
 }
+
+type transactionViewConnector struct {
+	driver driver.Driver
+}
+
+func (c transactionViewConnector) Connect(context.Context) (driver.Conn, error) {
+	return nil, errors.New("transaction view has no connection pool")
+}
+
+func (c transactionViewConnector) Driver() driver.Driver { return c.driver }
 
 func newLoggedDB(db *sql.DB, rebind func(string) string) *loggedDB {
 	if rebind == nil {
@@ -136,6 +149,9 @@ func (d *loggedDB) Query(
 func (d *loggedDB) QueryContext(
 	ctx context.Context, query string, args ...any,
 ) (*loggedRows, error) {
+	if d.tx != nil {
+		return d.tx.QueryContext(ctx, query, args...)
+	}
 	query = d.rebind(query)
 	reqID := RequestIDFromContext(ctx)
 	start := time.Now()
@@ -165,6 +181,9 @@ func (d *loggedDB) QueryRow(
 func (d *loggedDB) QueryRowContext(
 	ctx context.Context, query string, args ...any,
 ) *sql.Row {
+	if d.tx != nil {
+		return d.tx.QueryRowContext(ctx, query, args...)
+	}
 	query = d.rebind(query)
 	start := time.Now()
 	row := ReadDBContext(ctx, d.DB).QueryRowContext(ctx, query, args...)
@@ -184,6 +203,9 @@ func (d *loggedDB) Exec(
 func (d *loggedDB) ExecContext(
 	ctx context.Context, query string, args ...any,
 ) (sql.Result, error) {
+	if d.tx != nil {
+		return d.tx.ExecContext(ctx, query, args...)
+	}
 	query = d.rebind(query)
 	start := time.Now()
 	res, err := d.DB.ExecContext(ctx, query, args...)
@@ -212,6 +234,9 @@ func (d *loggedDB) Begin() (*loggedTx, error) {
 func (d *loggedDB) BeginTx(
 	ctx context.Context, opts *sql.TxOptions,
 ) (*loggedTx, error) {
+	if d.tx != nil {
+		return nil, errors.New("cannot begin a transaction from a transaction view")
+	}
 	tx, err := d.DB.BeginTx(ctx, opts)
 	if err != nil {
 		return nil, err

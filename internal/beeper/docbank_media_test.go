@@ -430,6 +430,7 @@ func TestBeeperMediaStepTimeout(t *testing.T) {
 	docbank.mu.Lock()
 	docbank.hang = false
 	docbank.mu.Unlock()
+	submitter.actionTimeout = beeperMediaActionTimeout
 	runPasses(t, submitter, 3)
 
 	docbank.mu.Lock()

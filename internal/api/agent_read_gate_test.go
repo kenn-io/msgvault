@@ -28,6 +28,7 @@ import (
 	"go.kenn.io/msgvault/internal/attachmentstore"
 	"go.kenn.io/msgvault/internal/config"
 	msgexport "go.kenn.io/msgvault/internal/export"
+	"go.kenn.io/msgvault/internal/matrix"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -81,9 +82,9 @@ func TestAgentReadSourceReplacementSnapshot(t *testing.T) {
 			assertions := assert.New(t)
 			requirements := require.New(t)
 			st := testutil.NewTestStore(t)
-			src, id, err := testutil.CreateIndexedSourceMessage(st, "reader@example.test", "message", "glacier allowed", "allowed body")
+			src, id, err := testutil.CreateIndexedSourceMessage(st, "reader@example.com", "message", "glacier allowed", "allowed body")
 			requirements.NoError(err)
-			participant, err := st.EnsureParticipant(src.Identifier, "Synthetic", "example.test")
+			participant, err := st.EnsureParticipant(src.Identifier, "Synthetic", "example.com")
 			requirements.NoError(err)
 			requirements.NoError(st.ReplaceMessageRecipients(id, "from", []int64{participant}, nil))
 			ready, resume := make(chan struct{}), make(chan struct{})
@@ -101,7 +102,7 @@ func TestAgentReadSourceReplacementSnapshot(t *testing.T) {
 			t.Cleanup(srv.agentGrants.Close)
 			_, secret, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead, agentgrant.PermissionMessageRead, agentgrant.PermissionStatsRead}, []agentgrant.SourceRef{{ID: src.ID, Type: src.SourceType, Identifier: src.Identifier}}, time.Time{})
 			requirements.NoError(err)
-			path := map[string]string{"cached search": "/api/v1/search/fast?q=glacier", "domain": "/api/v1/search/domains?domains=example.test", "stats": "/api/v1/stats/total", "subaggregate": "/api/v1/aggregates/sub?view_type=labels&sender=reader%40example.test", "list": "/api/v1/messages", "search": "/api/v1/search/fast?q=glacier", "aggregate": "/api/v1/aggregates", "message": fmt.Sprintf("/api/v1/messages/%d", id), "store message": fmt.Sprintf("/api/v1/messages/%d", id), "thread": fmt.Sprintf("/api/v1/cli/message/thread?id=%d", id)}[route]
+			path := map[string]string{"cached search": "/api/v1/search/fast?q=glacier", "domain": "/api/v1/search/domains?domains=example.com", "stats": "/api/v1/stats/total", "subaggregate": "/api/v1/aggregates/sub?view_type=labels&sender=reader%40example.com", "list": "/api/v1/messages", "search": "/api/v1/search/fast?q=glacier", "aggregate": "/api/v1/aggregates", "message": fmt.Sprintf("/api/v1/messages/%d", id), "store message": fmt.Sprintf("/api/v1/messages/%d", id), "thread": fmt.Sprintf("/api/v1/cli/message/thread?id=%d", id)}[route]
 			get := func() *httptest.ResponseRecorder {
 				r := httptest.NewRequest(http.MethodGet, path, nil)
 				r.Header.Set(apiprotocol.AgentTokenHeader, secret)
@@ -164,6 +165,49 @@ func TestAgentReadSourceReplacementSnapshot(t *testing.T) {
 			assertions.NotContains(response.Body.String(), "outside@example.test")
 		})
 	}
+}
+
+func TestAgentMatrixMediaCannotExposeOtherSourceBlob(t *testing.T) {
+	req, check := require.New(t), assert.New(t)
+	st := testutil.NewTestStore(t)
+	_, messageID, err := testutil.CreateIndexedSourceMessage(st, "outside@example.test", "message", "private", "private body")
+	req.NoError(err)
+	hash := strings.Repeat("d", 64)
+	storagePath := "dd/" + hash
+	req.NoError(st.UpsertAttachment(messageID, "private.bin", "application/octet-stream", storagePath, "", 7))
+	cfg := &config.Config{Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}
+	blob, err := msgexport.StoragePath(cfg.AttachmentsDir(), hash)
+	req.NoError(err)
+	req.NoError(os.MkdirAll(filepath.Dir(blob), 0700))
+	req.NoError(os.WriteFile(blob, []byte("private"), 0600))
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /_matrix/client/v3/sync", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprintf(w, `{"next_batch":"next","rooms":{"join":{"!room:example.org":{"timeline":{"events":[{"type":"m.room.message","event_id":"$media","sender":"@member:example.org","content":{"msgtype":"m.file","body":"file","url":%q}}]}}}}}`, storagePath)
+	})
+	mux.HandleFunc("GET /_matrix/client/v3/user/{user}/account_data/m.direct", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{}`))
+	})
+	mux.HandleFunc("GET /_matrix/client/v3/rooms/{room}/joined_members", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"joined":{"@member:example.org":{}}}`))
+	})
+	homeserver := httptest.NewServer(mux)
+	t.Cleanup(homeserver.Close)
+	runtime, err := matrix.Open(matrix.Credentials{Homeserver: homeserver.URL, UserID: "@archive:example.org", AccessToken: "token"})
+	req.NoError(err)
+	source, err := st.GetOrCreateSource(matrix.SourceType, "@archive:example.org")
+	req.NoError(err)
+	_, err = matrix.NewImporter(st, runtime).Import(t.Context(), matrix.ImportOptions{UserID: "@archive:example.org", NoMedia: true, SkipKeyBackup: true})
+	req.NoError(err)
+	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
+	t.Cleanup(srv.agentGrants.Close)
+	_, secret, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionAttachmentRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
+	req.NoError(err)
+	r := httptest.NewRequest(http.MethodGet, "/api/v1/attachments/"+hash+"/content", nil)
+	r.Header.Set(apiprotocol.AgentTokenHeader, secret)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, r)
+	check.Equal(http.StatusNotFound, w.Code, w.Body.String())
+	check.NotContains(w.Body.String(), "private")
 }
 
 func TestAgentAttachmentReplacementSnapshot(t *testing.T) {

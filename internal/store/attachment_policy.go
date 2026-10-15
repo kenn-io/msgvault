@@ -54,7 +54,7 @@ func (s *Store) ListAttachmentPolicyCandidates(ctx context.Context) ([]Attachmen
 		JOIN messages m ON m.id = a.message_id
 		JOIN conversations c ON c.id = m.conversation_id
 		JOIN sources src ON src.id = m.source_id
-		WHERE src.source_type IN ('beeper', 'slack', 'slackdump', 'discord', 'teams', 'twilio', 'chatwoot')
+		WHERE src.source_type IN ('beeper', 'matrix', 'slack', 'slackdump', 'discord', 'teams', 'twilio', 'chatwoot')
 		  AND (COALESCE(a.attachment_state, '') IN (?, '')
 		       OR (src.source_type = 'chatwoot' AND COALESCE(a.content_hash, '') <> ''))
 		  AND (
@@ -116,17 +116,18 @@ func (s *Store) ExcludeAttachmentOccurrences(ctx context.Context, exclusions []A
 		return nil
 	}
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
-		messageIDs := make(map[int64]struct{})
+		messageIDs := make(map[int64]string)
 		for _, exclusion := range exclusions {
 			if exclusion.AttachmentID <= 0 || exclusion.Reason == "" || exclusion.Reason == attachmentpolicy.SkipFetchFailure {
 				return fmt.Errorf("invalid attachment exclusion: id=%d reason=%q", exclusion.AttachmentID, exclusion.Reason)
 			}
 			var messageID int64
-			var sourceAttachmentID string
+			var sourceAttachmentID, sourceType string
 			err := tx.QueryRow(`
-				SELECT message_id, COALESCE(source_attachment_id, '')
-				FROM attachments WHERE id = ?
-			`, exclusion.AttachmentID).Scan(&messageID, &sourceAttachmentID)
+				SELECT a.message_id, COALESCE(a.source_attachment_id, ''), src.source_type
+				FROM attachments a JOIN messages m ON m.id = a.message_id
+				JOIN sources src ON src.id = m.source_id WHERE a.id = ?
+			`, exclusion.AttachmentID).Scan(&messageID, &sourceAttachmentID, &sourceType)
 			if errors.Is(err, sql.ErrNoRows) {
 				return fmt.Errorf("attachment occurrence %d not found", exclusion.AttachmentID)
 			}
@@ -157,9 +158,14 @@ func (s *Store) ExcludeAttachmentOccurrences(ctx context.Context, exclusions []A
 			if changed != 1 {
 				return fmt.Errorf("exclude attachment occurrence %d: changed %d rows", exclusion.AttachmentID, changed)
 			}
-			messageIDs[messageID] = struct{}{}
+			messageIDs[messageID] = sourceType
 		}
-		for messageID := range messageIDs {
+		for messageID, sourceType := range messageIDs {
+			if sourceType == sourceTypeMatrix {
+				if err := recomputeMessageSizeEstimateWith(tx, messageID); err != nil {
+					return err
+				}
+			}
 			if _, err := tx.Exec(`
 				UPDATE messages
 				SET has_attachments = (SELECT COUNT(*) FROM attachments WHERE message_id = ?) > 0,

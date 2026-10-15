@@ -132,7 +132,7 @@ func TestScheduledOmiContinuesFullScanForOlderEdits(t *testing.T) {
 				require.True(freshness.FullRebuild)
 				assert.True(freshness.HasUpdated)
 				assert.False(freshness.HasNew)
-				assert.False(freshness.HasDerivedDataDrift)
+				assert.True(freshness.HasDerivedDataDrift)
 				result, err := buildCache(cfg.DatabaseDSN(), analyticsDir, false)
 				require.NoError(err)
 				assert.Equal(int64(2), result.ExportedCount)

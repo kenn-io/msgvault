@@ -164,7 +164,7 @@ func readCardDAVPassword() (string, error) {
 	var err error
 	switch method {
 	case passwordInteractive:
-		password, err = readPasswordInteractive("CardDAV password:", promptOut)
+		password, err = readPasswordInteractive("CardDAV password:", promptOut, false)
 	case passwordPipe:
 		password, err = readPasswordFromPipe(os.Stdin)
 	default:
