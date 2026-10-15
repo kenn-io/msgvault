@@ -54,6 +54,7 @@ type catalogCapabilities struct {
 	kata            bool
 	kataLookup      bool
 	kataDocbank     bool
+	contactRoutes   bool
 	identityReview  bool
 	personCardDAV   bool
 	messageTags     bool
@@ -141,6 +142,7 @@ func capabilitiesFor(opts ServeOptions) catalogCapabilities {
 		kata:            opts.Kata != nil,
 		kataLookup:      opts.Kata != nil && opts.KataLookup,
 		kataDocbank:     opts.Kata != nil && opts.KataDocbank,
+		contactRoutes:   opts.ContactRoutesBackend != nil,
 		identityReview:  opts.IdentityReview != nil,
 		personCardDAV:   opts.PersonCardDAV != nil,
 		messageTags:     opts.MessageTags != nil,
@@ -230,6 +232,8 @@ func buildOperationCatalog(capabilities catalogCapabilities) []toolDefinition {
 		getPersonProfileDefinition(nil),
 		getPersonRelationshipDefinition(nil),
 		getPersonAgendaDefinition(),
+		findContactCandidatesDefinition(),
+		getPersonMessagingRoutesDefinition(),
 		getSavedViewDefinition(nil),
 		getStatsDefinition(nil),
 		listMessagesDefinition(nil),
@@ -500,12 +504,14 @@ func offsetProperty() *jsonschema.Schema {
 }
 
 const (
-	searchMetadataOperatorDoc = "Supported operators: from:, to:, cc:, bcc:, subject:, label: (or l:), filename: (attachment name substring), has:attachment, " +
+	searchOperatorDoc = "Supported operators: from:, to:, cc:, bcc:, subject:, label: (or l:), filename: (attachment name substring), has:attachment, " +
 		"before:/after: (YYYY-MM-DD), older_than:/newer_than: (e.g. 7d, 2w, 1m, 1y), larger:/smaller: (e.g. 5M), " +
 		"account:, received: (exact addresses; received: excludes sent mail and calendar events). " +
 		"Bare domains on from:/to: match any address at that domain. Different operators are ANDed; " +
 		"repeated account: or received: values are ORed. " +
-		"Not supported: negation (-), OR, or parentheses grouping."
+		"Not supported: negation (-) or parentheses grouping."
+	searchMetadataOperatorDoc = searchOperatorDoc + " " +
+		"Full-text message search accepts a standalone unquoted | between complete alternatives for OR; other modes read pipes as text."
 	searchMetadataFreeTextDoc = "Free text matches subject, snippet, and sender/recipient metadata only (not bodies). " +
 		"Use search_message_bodies for body keywords or semantic_search_messages for vector/hybrid search."
 	searchMetadataPaginationDoc = "Results are ordered newest-first (by sent date); there is no sort parameter — " +
@@ -569,13 +575,13 @@ func searchMessageBodiesDefinition(_ *handlers) toolDefinition {
 		"Filter-only queries such as from:alice are rejected — use search_metadata for filter-only queries. " +
 		"Unrecognized word:value tokens (e.g. RXD2:V2) are treated as literal body text, not filters. " +
 		"Query syntax: space-separated words are ANDed (each must appear somewhere in the body); " +
-		"a double-quoted phrase is one exact phrase (e.g. \"RXD2 V2\"); OR and NOT are not supported. " +
-		searchMetadataOperatorDoc + " "
+		"a double-quoted phrase is one exact phrase (e.g. \"RXD2 V2\"); pipe OR and NOT are not supported in body-only search. " +
+		searchOperatorDoc + " "
 	queryDesc := "Body search query with at least one free-text term (bare word or quoted phrase). " +
 		"Gmail operators (from:, subject:, etc.) are metadata filters, not body search — " +
 		"subject:test alone is rejected; combine with body terms (from:alice budget) or use search_metadata for filter-only queries. " +
 		"Unrecognized word:value tokens (RXD2:V2) are literal text. " +
-		"Space-separated words are ANDed; double quotes match an exact phrase; OR/NOT unsupported."
+		"Space-separated words are ANDed; double quotes match an exact phrase; pipe OR/NOT unsupported in body-only search."
 	return readDefinition(
 		ToolSearchMessageBodies,
 		searchIntro+
@@ -613,8 +619,9 @@ func semanticSearchMessagesDefinition(_ *handlers, vectorAvailable bool) toolDef
 		"min_score filters chunk excerpts only; it does not remove or reorder ranked messages. " +
 		"Requires at least one free-text term (used to embed); filter-only queries must use search_metadata. " +
 		"Known Gmail operators (from:, subject:, label:, etc.) apply as metadata filters only. " +
-		searchMetadataOperatorDoc + " "
-	queryDesc := "Free-text query to embed (requires at least one free-text term). " +
+		"Vector and hybrid modes read pipes as text. " +
+		searchOperatorDoc + " "
+	queryDesc := "Free-text query to embed (requires at least one free-text term). Vector and hybrid modes read pipes as text. " +
 		"Gmail operators are metadata filters, not body search; combine with body terms or use search_metadata for filter-only queries."
 	mode := stringSchema("Search mode: vector (semantic only) or hybrid (BM25 + vector fused via RRF). Defaults to hybrid when omitted.", searchModeVector, searchModeHybrid)
 	mode.Default = jsontext.Value(`"hybrid"`)

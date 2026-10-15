@@ -499,7 +499,7 @@ func pgFTSVector(doc FTSDoc) (string, []any) {
 // produces the matching shape. Uses `?` placeholders; loggedDB rebinds
 // to `$N` at execution time. ts_rank needs the query term a second time,
 // so orderArgCount is 1.
-func (d *PostgreSQLDialect) FTSSearchClause() (join, where, orderBy string, orderArgCount int) {
+func (d *PostgreSQLDialect) FTSSearchClause(rowIDs bool) (join, where, orderBy string, orderArgCount int) {
 	return "",
 		"m.search_fts @@ to_tsquery('simple', ?)",
 		"ts_rank(ARRAY[0.1, 0.1, 0.4, 1.0]::real[], m.search_fts, to_tsquery('simple', ?)) DESC",
@@ -2358,7 +2358,7 @@ var exclusiveLockTables = []string{
 	// Scoped writes fence sync_runs first. Source-first sync transactions take
 	// lockSyncMaintenanceGate before their source lock, so maintenance waits
 	// here without holding tables those transactions still need.
-	"sync_runs", "sources", "conversations", "conversation_participants",
+	"sync_runs", "sources", "source_messaging_route_failures", "conversations", "conversation_participants",
 	"messages", "message_recipients", "message_labels", "message_bodies", "message_raw",
 	"message_delivery_addresses",
 	"meeting_details", "meeting_action_items",

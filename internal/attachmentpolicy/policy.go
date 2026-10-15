@@ -31,8 +31,11 @@ const (
 	SkipAccountPolicy        SkipReason = "account_policy"
 	SkipSizeCap              SkipReason = "size_cap"
 	SkipFetchFailure         SkipReason = "fetch_failure"
-	// SkipSourceUnavailable marks media the source network has permanently
-	// deleted, such as WhatsApp media past its server retention.
+	// SkipSourceUnavailable marks media the source reported missing, paired
+	// with StateUnavailable once confirmed permanently gone (such as
+	// WhatsApp media past its server retention) or with StateFailed while a
+	// provider still treats the loss as provisional and retries it. The
+	// state, not the reason alone, says which it is.
 	SkipSourceUnavailable SkipReason = "source_unavailable"
 )
 

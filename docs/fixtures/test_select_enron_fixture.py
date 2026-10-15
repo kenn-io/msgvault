@@ -8,6 +8,7 @@ import gzip
 import io
 import json
 import os
+import shutil
 import subprocess
 import tarfile
 import tempfile
@@ -113,6 +114,27 @@ def write_test_fixture(
     }
     (fixture_dir / "manifest.json").write_bytes(canonical_json(manifest) + b"\n")
     (fixture_dir / "README.md").write_text("fixture test\n", encoding="utf-8")
+    return manifest
+
+
+def write_reviewed_fixture(
+    fixture_dir: Path,
+    records: list[dict],
+    *,
+    reviewer: str = "Test reviewer",
+    reviewed_at: str = "2001-01-01T00:00:00Z",
+) -> dict:
+    manifest = write_test_fixture(fixture_dir, records)
+    fixture_digest = sha256_file(fixture_dir / "enron-web-fixture.mbox.gz")
+    manifest["manual_review"] = {
+        "status": "complete",
+        "reviewed_message_count": len(records),
+        "reviewed_fixture_sha256": fixture_digest,
+        "review_attestation_sha256": review_attestation_digest(manifest, fixture_digest),
+        "reviewer": reviewer,
+        "reviewed_at": reviewed_at,
+    }
+    (fixture_dir / "manifest.json").write_bytes(canonical_json(manifest) + b"\n")
     return manifest
 
 
@@ -694,17 +716,7 @@ class ReviewFilterTest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temporary:
             fixture_dir = Path(temporary)
-            manifest = write_test_fixture(fixture_dir, records)
-            fixture_digest = sha256_file(fixture_dir / "enron-web-fixture.mbox.gz")
-            manifest["manual_review"] = {
-                "status": "complete",
-                "reviewed_message_count": len(records),
-                "reviewed_fixture_sha256": fixture_digest,
-                "review_attestation_sha256": review_attestation_digest(manifest, fixture_digest),
-                "reviewer": "Test reviewer",
-                "reviewed_at": "2001-01-01T00:00:00Z",
-            }
-            (fixture_dir / "manifest.json").write_bytes(canonical_json(manifest) + b"\n")
+            manifest = write_reviewed_fixture(fixture_dir, records)
             validate_fixture_directory(fixture_dir)
 
             manifest["selection"]["excluded_message_ids"] = ["<not-selected@example.com>"]
@@ -716,6 +728,93 @@ class ReviewFilterTest(unittest.TestCase):
 
             with self.assertRaisesRegex(ValueError, "attestation digest"):
                 validate_fixture_directory(fixture_dir)
+
+    def test_hydrator_uses_upstream_fixture_in_fork_or_originless_checkout(self) -> None:
+        repo_root = Path(__file__).resolve().parents[2]
+        records = [
+            synthetic_record(
+                f"<hydrate-{index}@example.com>",
+                f"sender-{index}@example.com",
+                "hub@example.com",
+                f"Mon, {index + 1} Jan 2001 12:00:00 +0000",
+                f"Hydration subject {index}",
+            )
+            for index in range(5)
+        ]
+        with tempfile.TemporaryDirectory() as temporary:
+            temporary_path = Path(temporary)
+            fixture_dir = temporary_path / "upstream"
+            fixture_dir.mkdir()
+            manifest = write_reviewed_fixture(fixture_dir, records)
+            fixture_digest = manifest["manual_review"]["reviewed_fixture_sha256"]
+            validate_fixture_directory(fixture_dir)
+            environment = {
+                key: value for key, value in os.environ.items() if not key.startswith("GIT_")
+            }
+            for name in ("MSGVAULT_DOCS_FIXTURE_DIR", "MSGVAULT_DOCS_FIXTURES_OFFLINE"):
+                environment.pop(name, None)
+            environment.update(
+                GIT_CONFIG_GLOBAL=os.devnull,
+                GIT_CONFIG_SYSTEM=os.devnull,
+                GIT_ALLOW_PROTOCOL="file",
+            )
+
+            def git(directory: Path, *arguments: str) -> str:
+                return subprocess.run(
+                    ["git", "-C", str(directory), *arguments],
+                    env=environment, capture_output=True, text=True, check=True,
+                ).stdout.strip()
+
+            git(fixture_dir, "init", "--initial-branch=docs-fixtures")
+            git(fixture_dir, "add", "--", "enron-web-fixture.mbox.gz", "manifest.json", "README.md")
+            git(
+                fixture_dir, "-c", "user.name=Fixture test",
+                "-c", "user.email=fixture-test@example.com",
+                "commit", "-m", "Synthetic reviewed fixture",
+            )
+            locked_commit = git(fixture_dir, "rev-parse", "HEAD")
+            fork_dir = temporary_path / "fork.git"
+            fork_dir.mkdir()
+            git(fork_dir, "init", "--bare")
+            lock = {
+                "branch": "docs-fixtures",
+                "commit": locked_commit,
+                "sha256": fixture_digest,
+                "manifest_sha256": sha256_file(fixture_dir / "manifest.json"),
+            }
+
+            for with_origin in (True, False):
+                with self.subTest(with_origin=with_origin):
+                    checkout = temporary_path / ("fork-checkout" if with_origin else "originless-checkout")
+                    scripts = checkout / "docs" / "fixtures"
+                    scripts.mkdir(parents=True)
+                    for name in ("hydrate-fixture.sh", "validate-fixture.py", "fixture_lib.py"):
+                        shutil.copy2(repo_root / "docs" / "fixtures" / name, scripts / name)
+                    lock_path = scripts / "fixture.lock.json"
+                    lock_path.write_bytes(canonical_json(lock) + b"\n")
+                    git(checkout, "init")
+                    git(
+                        checkout, "config", f"url.{fixture_dir.as_uri()}.insteadOf",
+                        "https://github.com/kenn-io/msgvault.git",
+                    )
+                    if with_origin:
+                        git(checkout, "remote", "add", "origin", str(fork_dir))
+                    output_dir = checkout / "output"
+                    result = subprocess.run(
+                        ["bash", str(scripts / "hydrate-fixture.sh"), "--output-dir", str(output_dir), "--lock", str(lock_path)],
+                        cwd=checkout, env=environment, capture_output=True, text=True, check=False,
+                    )
+                    self.assertEqual(0, result.returncode, result.stderr)
+                    self.assertEqual(fixture_digest, sha256_file(output_dir / "enron-web-fixture.mbox.gz"))
+                    self.assertEqual(lock["manifest_sha256"], sha256_file(output_dir / "manifest.json"))
+                    self.assertEqual(
+                        locked_commit, git(checkout, "rev-parse", "refs/msgvault-fixtures/docs-fixtures"),
+                    )
+                    if with_origin:
+                        self.assertEqual(str(fork_dir), git(checkout, "remote", "get-url", "origin"))
+                        self.assertEqual("", git(checkout, "for-each-ref", "refs/remotes/origin"))
+                    else:
+                        self.assertEqual("", git(checkout, "remote"))
 
     def test_hydrator_rejects_lock_for_uncontrolled_branch(self) -> None:
         repo_root = Path(__file__).resolve().parents[2]

@@ -1,6 +1,7 @@
 package codegenfix
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 
@@ -31,6 +32,36 @@ func TestRewriteGeneratedValidatorsRepairsKnownGeneratorGaps(t *testing.T) {
 	assertions.Contains(string(got), dailyNoteDecoyValidatorBlock())
 	assertions.Contains(string(got), dailyNotePersonIDsValidatorBlock("gte=1"))
 	assertions.NotContains(string(got), dailyNotePersonIDsValidatorBlock("omitempty,gte=1"))
+	again, err := RewriteGeneratedValidators(got)
+	require.NoError(t, err)
+	if !bytes.Equal(got, again) {
+		index := firstDifference(got, again)
+		start := max(0, index-40)
+		leftEnd, rightEnd := min(len(got), index+100), min(len(again), index+100)
+		assertions.Failf("validator rewrite is not idempotent", "first difference at byte %d: got=%q again=%q", index, got[start:leftEnd], again[start:rightEnd])
+	}
+}
+
+func firstDifference(left, right []byte) int {
+	for i := range min(len(left), len(right)) {
+		if left[i] != right[i] {
+			return i
+		}
+	}
+	return min(len(left), len(right))
+}
+
+func TestRewriteGeneratedValidatorsAllowsEmptyContactRouteStrings(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	got, err := RewriteGeneratedValidators([]byte(generatedValidatorFixture()))
+	requirements.NoError(err)
+	assertions.NotContains(string(got), `typesValidator.Var(m.MergedIntoChatID, "required")`)
+	assertions.NotContains(string(got), `typesValidator.Var(m.Network, "required")`)
+	assertions.NotContains(string(got), `typesValidator.Var(m.NetworkLabel, "required")`)
+	assertions.NotContains(string(got), `typesValidator.Var(m.ProviderChatID, "required")`)
+	assertions.NotContains(string(got), `typesValidator.Var(p.AliasReason, "required")`)
+	assertions.NotContains(string(got), `typesValidator.Var(c.DisplayName, "required")`)
 }
 
 func TestRewriteRunQueryClientPreservesSynchronousResultType(t *testing.T) {
@@ -53,6 +84,9 @@ func (c *Client) RunQuery(ctx context.Context, options *RunQueryRequestOptions, 
 	assert.Equal(2, strings.Count(string(got), "resp.StatusCode != 200"))
 	assert.NotContains(string(got), "RunQueryResponseJSON")
 	assert.NotContains(string(got), "RunArchiveQueryResponseJSON")
+	again, err := RewriteRunQueryClient(got)
+	require.NoError(t, err)
+	assert.Equal(got, again)
 }
 
 func TestRewriteGeneratedValidatorsRejectsMissingGroupingValidator(t *testing.T) {
@@ -123,6 +157,9 @@ func (e ExploreCacheUnavailableResponse) Validate() error {
 	var errors runtime.ValidationErrors
 ` + exploreCacheRecoveryActionRequiredValidatorBlock() + `
 }
+type Evidence struct {
+	Excerpt string
+}
 func (e Evidence) Validate() error {
 	var errors runtime.ValidationErrors
 	if err := typesValidator.Var(e.Excerpt, "required"); err != nil {
@@ -147,7 +184,26 @@ func (c CreateDailyNoteEntryRequest) Validate() error {
 	var errors runtime.ValidationErrors
 ` + dailyNoteDecoyValidatorBlock() + dailyNotePersonIDsValidatorBlock("omitempty,gte=1") + `
 }
-`
+` + contactRouteEmptyStringValidatorFixture() + contactCandidateEmptyStringValidatorFixture()
+}
+
+func contactRouteEmptyStringValidatorFixture() string {
+	return "type MessagingRoute struct {\n\tMergedIntoChatID string\n\tNetwork          string\n\tNetworkLabel     string\n\tProviderChatID   string\n}\n" +
+		"func (m MessagingRoute) Validate() error {\n\tvar errors runtime.ValidationErrors\n" +
+		"\tif err := typesValidator.Var(m.MergedIntoChatID, \"required\"); err != nil {\n\t\terrors = errors.Append(\"MergedIntoChatID\", err)\n\t}\n" +
+		"\tif err := typesValidator.Var(m.Network, \"required\"); err != nil {\n\t\terrors = errors.Append(\"Network\", err)\n\t}\n" +
+		"\tif err := typesValidator.Var(m.NetworkLabel, \"required\"); err != nil {\n\t\terrors = errors.Append(\"NetworkLabel\", err)\n\t}\n" +
+		"\tif err := typesValidator.Var(m.ProviderChatID, \"required\"); err != nil {\n\t\terrors = errors.Append(\"ProviderChatID\", err)\n\t}\n\treturn errors\n}\n" +
+		"type PersonMessagingRoutesPage struct {\n\tAliasReason string\n}\n" +
+		"func (p PersonMessagingRoutesPage) Validate() error {\n\tvar errors runtime.ValidationErrors\n" +
+		"\tif err := typesValidator.Var(p.AliasReason, \"required\"); err != nil {\n\t\terrors = errors.Append(\"AliasReason\", err)\n\t}\n\treturn errors\n}\n"
+}
+
+func contactCandidateEmptyStringValidatorFixture() string {
+	return "type ContactCandidate struct {\n\tDisplayName string\n}\n" +
+		"func (c ContactCandidate) Validate() error {\n\tvar errors runtime.ValidationErrors\n" +
+		"\tif err := typesValidator.Var(c.DisplayName, \"required\"); err != nil {\n\t\terrors = errors.Append(\"DisplayName\", err)\n\t}\n" +
+		"\tif len(errors) == 0 {\n\t\treturn nil\n\t}\n\treturn errors\n}\n"
 }
 
 func exploreCacheRecoveryActionRequiredValidatorBlock() string {

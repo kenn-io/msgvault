@@ -81,7 +81,7 @@ jobs:
       - name: Test built CLI on a synthetic archive
         run: make test-cli-e2e MSGVAULT_E2E_BINARY="$PWD/dist/msgvault"
 
-  test:
+  checks:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -105,14 +105,6 @@ jobs:
           make lint-tools
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
-      # The three largest packages run in test-sharded below; this covers the
-      # rest. Together they are exactly `make test`.
-      - name: Test
-        run: make test-unsharded
-
-      - name: Test build without vector backends
-        run: go test -tags fts5 -run '^TestDocumentVectorStubKeepsStatusAvailableAndBuildActionable$' -count=1 ./cmd/msgvault/cmd
-
       - name: Check OpenAPI artifacts
         run: make openapi-check
 
@@ -121,6 +113,26 @@ jobs:
 
       - name: Vulnerability check
         run: make vulncheck
+
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: 'true'
+
+      - name: Install SQLite development headers
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+
+      # test-sharded runs the Makefile's SHARDED_TEST_PKGS; test-unsharded runs the rest of `make test`.
+      - name: Test
+        run: make test-unsharded
+
+      - name: Test build without vector backends
+        run: go test -tags fts5 -run '^TestDocumentVectorStubKeepsStatusAvailableAndBuildActionable$' -count=1 ./cmd/msgvault/cmd
 
   # The packages in SHARDED_TEST_PKGS (Makefile) each hold thousands of tests
   # that run one at a time inside one binary, so whole they set the wall clock
@@ -574,12 +586,8 @@ jobs:
       - name: Test (pgvector-tagged)
         run: go test -timeout 60m -p 4 -tags "fts5 sqlite_vec pgvector" -count=1 ./internal/vector/... ./internal/scheduler/... ./cmd/msgvault/cmd/...
 
-  # PostgreSQL backend lane: runs the full Go test suite against a live
-  # PostgreSQL service. Tests that use testutil.NewTestStore read
-  # MSGVAULT_TEST_DB and switch backends without a recompile. Concurrency
-  # tests use -count=5 so non-deterministic races (lost updates, missing
-  # unique constraints) surface here rather than slipping past a single
-  # pass.
+  # The shipped-build remainder runs here; test-postgres-sharded covers large packages and follow-up checks.
+  # Tests using testutil.NewTestStore read MSGVAULT_TEST_DB and switch backends without recompiling.
   test-postgres:
     runs-on: ubuntu-24.04
     services:
@@ -618,18 +626,11 @@ jobs:
       #
       # The target carries the same 60m timeout as `make test`:
       # the heavy DuckDB packages can exceed go test's 10m per-package default
-      # on a contended runner, and this lane is the slowest one there is.
+      # on a contended runner.
       # The three largest packages run in test-postgres-sharded below, each
       # against its own server; this covers the rest.
       - name: Test (PostgreSQL)
         run: make test-pg-shipped-unsharded
-
-      - name: Test PostgreSQL library without CGO
-        run: make test-pg-nocgo
-
-      - name: Concurrency tests (-count=5)
-        run: |
-          go test -tags fts5 -count=5 -run 'Concurrent' ./internal/store
 
   # test-postgres for SHARDED_TEST_PKGS: the same shard script as test-sharded,
   # one package per job, each with its own PostgreSQL service so four shards'
@@ -646,6 +647,7 @@ jobs:
             package: ./internal/store
           - name: api
             package: ./internal/api
+            followups: true
     runs-on: ubuntu-24.04
     services:
       postgres:
@@ -678,4 +680,16 @@ jobs:
       # Shipped build (no pgvector tag) against a stock postgres:16 image, as
       # in test-postgres above.
       - name: Test package in isolated shards (PostgreSQL)
+        id: postgres-shards
         run: scripts/test-package-shards.sh "${{ matrix.package }}" 4 "fts5 sqlite_vec" 60m
+
+      - name: Test PostgreSQL library without CGO
+        if: ${{ !cancelled() && matrix.followups && steps.postgres-shards.outcome != 'skipped' }}
+        run: make test-pg-nocgo
+
+      # Run store concurrency tests after the API package test, away from the store package shard.
+      # Five repetitions catch intermittent lost updates and uniqueness races.
+      - name: Concurrency tests (-count=5)
+        if: ${{ !cancelled() && matrix.followups && steps.postgres-shards.outcome != 'skipped' }}
+        run: |
+          go test -tags fts5 -count=5 -run 'Concurrent' ./internal/store

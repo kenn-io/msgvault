@@ -34,21 +34,21 @@ import (
 // to. The test never asserts on dialect-specific error text; a bug
 // would surface as a generic Scan/Exec failure on PG.
 func TestQueryEngine_PostgresPortability(t *testing.T) {
-	require := require.New(t)
+	setupRequire := require.New(t)
 	st := testutil.NewTestStore(t)
 	src, err := st.GetOrCreateSource("gmail", "pgcompat@example.com")
-	require.NoError(err, "GetOrCreateSource")
+	setupRequire.NoError(err, "GetOrCreateSource")
 
 	convID, err := st.EnsureConversation(src.ID, "thread-1", "Thread 1")
-	require.NoError(err, "EnsureConversation")
+	setupRequire.NoError(err, "EnsureConversation")
 
 	aliceID, err := st.EnsureParticipant("alice@example.com", "Alice", "example.com")
-	require.NoError(err, "EnsureParticipant alice")
+	setupRequire.NoError(err, "EnsureParticipant alice")
 	bobID, err := st.EnsureParticipant("bob@example.com", "Bob", "example.com")
-	require.NoError(err, "EnsureParticipant bob")
+	setupRequire.NoError(err, "EnsureParticipant bob")
 
 	labelID, err := st.EnsureLabel(src.ID, "Label_1", "Important", "user")
-	require.NoError(err, "EnsureLabel")
+	setupRequire.NoError(err, "EnsureLabel")
 
 	base := time.Date(2024, 6, 1, 12, 0, 0, 0, time.UTC)
 	for i := range 4 {
@@ -62,19 +62,26 @@ func TestQueryEngine_PostgresPortability(t *testing.T) {
 			Snippet:         sql.NullString{String: "snippet", Valid: true},
 			SizeEstimate:    int64(1000 + i*250),
 		})
-		require.NoError(err, "UpsertMessage")
-		require.NoError(st.ReplaceMessageRecipients(mid, "from", []int64{aliceID}, []string{"Alice"}),
+		setupRequire.NoError(err, "UpsertMessage")
+		setupRequire.NoError(st.ReplaceMessageRecipients(mid, "from", []int64{aliceID}, []string{"Alice"}),
 			"ReplaceMessageRecipients from")
 
-		require.NoError(st.ReplaceMessageRecipients(mid, "to", []int64{bobID}, []string{"Bob"}),
+		setupRequire.NoError(st.ReplaceMessageRecipients(mid, "to", []int64{bobID}, []string{"Bob"}),
 			"ReplaceMessageRecipients to")
 
-		require.NoError(st.ReplaceMessageLabels(mid, []int64{labelID}),
+		setupRequire.NoError(st.ReplaceMessageLabels(mid, []int64{labelID}),
 			"ReplaceMessageLabels")
 	}
 
 	eng := query.NewEngine(st.DB(), st.IsPostgreSQL())
 	ctx := context.Background()
+
+	t.Run("pipe_or", func(t *testing.T) {
+		require := require.New(t)
+		rows, err := eng.Search(ctx, search.ParseOR("from:alice@example.com | subject:missing"), 50, 0)
+		require.NoError(err)
+		assert.Len(t, rows, 4)
+	})
 
 	// (1) Aggregate — must not error with "syntax error near ')'" on PG.
 	t.Run("aggregate_senders", func(t *testing.T) {
@@ -83,8 +90,8 @@ func TestQueryEngine_PostgresPortability(t *testing.T) {
 			SortDirection: query.SortDesc,
 			Limit:         50,
 		})
-		require.NoError(err, "Aggregate")
-		require.NotEmpty(rows, "Aggregate returned no rows; expected at least the Alice sender bucket")
+		setupRequire.NoError(err, "Aggregate")
+		setupRequire.NotEmpty(rows, "Aggregate returned no rows; expected at least the Alice sender bucket")
 	})
 
 	// (2) GetDeletionTargetsByFilter — must not error from a SELECT DISTINCT +
@@ -100,7 +107,7 @@ func TestQueryEngine_PostgresPortability(t *testing.T) {
 			},
 		})
 
-		require.NoError(err, "GetDeletionTargetsByFilter")
+		setupRequire.NoError(err, "GetDeletionTargetsByFilter")
 		ids := make([]string, len(targets))
 		for i := range targets {
 			ids[i] = targets[i].SourceMessageID
@@ -138,7 +145,7 @@ func TestQueryEngine_PostgresPortability(t *testing.T) {
 				},
 				Pagination: query.Pagination{Limit: 50},
 			})
-			require.NoError(err, "ListMessages %s", sort.name)
+			setupRequire.NoError(err, "ListMessages %s", sort.name)
 			assert.Len(t, msgs, 4, "ListMessages %s", sort.name)
 		})
 	}
@@ -575,4 +582,112 @@ func subjectFor(i int) string {
 	default:
 		return "delta subject"
 	}
+}
+
+func TestAggregatePipeOREmailDefault(t *testing.T) {
+	require := require.New(t)
+	eng := newPipeORAggregateEngine(t)
+	runPipeORAggregateCases(t, eng)
+	opts := query.DefaultAggregateOptions()
+	opts.SearchQuery = pipeORAggregateCases[0].query
+	rows, err := eng.Aggregate(t.Context(), query.ViewSenders, opts)
+	require.NoError(err)
+	require.Len(rows, 1)
+	resolver, ok := eng.(query.DeletionTargetAggregateSearchResolver)
+	require.True(ok)
+	targets, err := resolver.GetDeletionTargetsByAggregateSearch(t.Context(), opts.SearchQuery, query.MessageFilter{}, query.ViewSenders, rows[0].Key)
+	require.NoError(err)
+	assert.Equal(t, rows[0].Count, int64(len(targets)))
+}
+
+func TestDuckDBAggregatePipeOREmailDefault(t *testing.T) {
+	runPipeORAggregateCases(t, newDuckDBPipeORAggregateEngine(t))
+}
+
+var pipeORAggregateRows = []struct{ subject, typ string }{
+	{"invoice", "email"}, {"invoice", "sms"}, {"receipt", "sms"},
+}
+
+func newPipeORAggregateEngine(t *testing.T) query.Engine {
+	t.Helper()
+	setupRequire := require.New(t)
+	st := testutil.NewTestStore(t)
+	src, err := st.GetOrCreateSource("gmail", "analytics@example.com")
+	setupRequire.NoError(err)
+	conv, err := st.EnsureConversation(src.ID, "analytics", "Analytics")
+	setupRequire.NoError(err)
+	sender, err := st.EnsureParticipant("sender@example.com", "Sender", "example.com")
+	setupRequire.NoError(err)
+	for i, row := range pipeORAggregateRows {
+		id, err := st.UpsertMessage(&store.Message{
+			SourceID: src.ID, ConversationID: conv, SourceMessageID: gmailSourceID(i),
+			Subject: sql.NullString{String: row.subject, Valid: true}, MessageType: row.typ,
+		})
+		setupRequire.NoError(err)
+		setupRequire.NoError(st.ReplaceMessageRecipients(id, "from", []int64{sender}, []string{"Sender"}))
+	}
+	_, err = st.BackfillFTS(nil)
+	setupRequire.NoError(err)
+	return query.NewEngine(st.DB(), st.IsPostgreSQL())
+}
+
+func newDuckDBPipeORAggregateEngine(t *testing.T) query.Engine {
+	t.Helper()
+	b := query.NewTestDataBuilder(t)
+	b.AddSource("analytics@example.com")
+	sender := b.AddParticipant("sender@example.com", "example.com", "Sender")
+	for _, row := range pipeORAggregateRows {
+		id := b.AddMessage(query.MessageOpt{Subject: row.subject, MessageType: row.typ})
+		b.AddFrom(id, sender, "Sender")
+	}
+	return b.BuildEngine()
+}
+
+func runPipeORAggregateCases(t *testing.T, eng query.Engine) {
+	t.Helper()
+	for _, tc := range pipeORAggregateCases {
+		t.Run(tc.query, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			opts := query.DefaultAggregateOptions()
+			opts.SearchQuery = tc.query
+			rows, err := eng.Aggregate(t.Context(), query.ViewSenders, opts)
+			require.NoError(err)
+			if tc.wantDefault == 0 {
+				assert.Empty(rows)
+			} else {
+				require.Len(rows, 1)
+				assert.Equal(tc.wantDefault, rows[0].Count)
+			}
+			rows, err = eng.SubAggregate(t.Context(), query.MessageFilter{}, query.ViewSenders, opts)
+			require.NoError(err)
+			if tc.wantDefault == 0 {
+				assert.Empty(rows)
+			} else {
+				require.Len(rows, 1)
+				assert.Equal(tc.wantDefault, rows[0].Count)
+			}
+			stats, err := eng.GetTotalStats(t.Context(), query.StatsOptions{SearchQuery: tc.query})
+			require.NoError(err)
+			assert.Equal(tc.wantDefault, stats.MessageCount)
+			stats, err = eng.GetTotalStats(t.Context(), query.StatsOptions{SearchQuery: tc.query, SearchScope: true})
+			require.NoError(err)
+			assert.Equal(tc.wantAll, stats.MessageCount)
+			stats, err = eng.GetTotalStats(t.Context(), query.StatsOptions{SearchQuery: tc.query, Filter: &query.MessageFilter{MessageType: "sms"}})
+			require.NoError(err)
+			assert.Equal(tc.wantSMS, stats.MessageCount)
+		})
+	}
+}
+
+var pipeORAggregateCases = []struct {
+	query       string
+	wantDefault int64
+	wantAll     int64
+	wantSMS     int64
+}{
+	{query: "invoice | message_type:sms subject:receipt", wantDefault: 2, wantAll: 3, wantSMS: 2},
+	{query: "message_type:sms subject:receipt | invoice", wantDefault: 2, wantAll: 3, wantSMS: 2},
+	{query: "invoice | account:missing@example.org", wantDefault: 1, wantAll: 2, wantSMS: 1},
+	{query: "invoice | subject:receipt", wantDefault: 1, wantAll: 3, wantSMS: 2},
 }

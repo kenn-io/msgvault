@@ -15,7 +15,7 @@ import (
 	"go.kenn.io/msgvault/internal/jsonexact"
 )
 
-const CurrentSavedViewSchemaVersion = 1
+const CurrentSavedViewSchemaVersion = 2
 
 var (
 	ErrSavedViewNotFound                 = errors.New("saved view not found")
@@ -25,7 +25,7 @@ var (
 	ErrSavedViewUnsupportedSchemaVersion = errors.New("unsupported saved view schema version")
 )
 
-// SavedViewStateEnvelope is the version-1 canonical analytical definition.
+// SavedViewStateEnvelope is the canonical analytical definition.
 // Every nested definition is closed and typed so result rows, bulk selection,
 // and other transient workspace state cannot hide below an allowed field.
 type SavedViewStateEnvelope struct {
@@ -201,8 +201,8 @@ func validateSavedViewInput(input SavedViewInput) (SavedViewInput, error) {
 	if input.Name == "" {
 		return SavedViewInput{}, fmt.Errorf("%w: name is required", ErrSavedViewInvalidState)
 	}
-	if input.SchemaVersion != CurrentSavedViewSchemaVersion {
-		return SavedViewInput{}, fmt.Errorf("%w: got %d, support %d",
+	if input.SchemaVersion < 1 || input.SchemaVersion > CurrentSavedViewSchemaVersion {
+		return SavedViewInput{}, fmt.Errorf("%w: got %d, support 1 through %d",
 			ErrSavedViewUnsupportedSchemaVersion, input.SchemaVersion, CurrentSavedViewSchemaVersion)
 	}
 	trimmedState := bytes.TrimSpace(input.CanonicalState)

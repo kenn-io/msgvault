@@ -947,7 +947,7 @@ func (c *Client) GetCLIStats(
 }
 
 func (c *Client) GetCLISearch(ctx context.Context, req CLISearchRequest) (*CLISearch, error) {
-	if err := c.requireListIDCapability(ctx, search.Parse(req.Query), query.MessageFilter{}); err != nil {
+	if err := c.requireListIDCapability(ctx, search.ParseOR(req.Query), query.MessageFilter{}); err != nil {
 		return nil, err
 	}
 	if req.DeletionScope != "" {

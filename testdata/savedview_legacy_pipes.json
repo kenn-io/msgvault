@@ -1,0 +1,22 @@
+[
+  {"schema_version":1,"query":"alpha | gamma","want":"alpha \"|\" gamma"},
+  {"schema_version":1,"search_mode":"full_text","query":"alpha | gamma","want":"alpha \"|\" gamma"},
+  {"schema_version":1,"search_mode":"full_text","query":"alpha |\n","want":"alpha \"|\""},
+  {"schema_version":1,"search_mode":"full_text","query":"alpha |\t","want":"alpha \"|\""},
+  {"schema_version":1,"search_mode":"full_text","query":"\u0085| alpha","want":"\"|\" alpha"},
+  {"schema_version":1,"search_mode":"full_text","query":"alpha |\u0085","want":"alpha \"|\""},
+  {"schema_version":1,"search_mode":"full_text","query":"foo\t| bar","want":"foo\t| bar"},
+  {"schema_version":1,"search_mode":"full_text","query":"foo |\tbar","want":"foo |\tbar"},
+  {"schema_version":1,"search_mode":"full_text","query":"foo\u00a0| bar","want":"foo\u00a0| bar"},
+  {"schema_version":1,"search_mode":"full_text","query":"foo |\u00a0bar","want":"foo |\u00a0bar"},
+  {"schema_version":1,"search_mode":"full_text","query":"foo\u0085| bar","want":"foo\u0085| bar"},
+  {"schema_version":1,"search_mode":"full_text","query":"foo |\u0085bar","want":"foo |\u0085bar"},
+  {"schema_version":1,"search_mode":"full_text","query":"subject:alpha\t| beta","want":"subject:alpha\t| beta"},
+  {"schema_version":1,"search_mode":"full_text","query":"\"alpha | beta\" | 'gamma | delta'","want":"\"alpha | beta\" \"|\" 'gamma | delta'"},
+  {"schema_version":1,"search_mode":"full_text","query":"\"alpha \\\" | beta\" | gamma","want":"\"alpha \\\" | beta\" \"|\" gamma"},
+  {"schema_version":1,"search_mode":"full_text","query":"| alpha || beta| |","want":"\"|\" alpha || beta| \"|\""},
+  {"schema_version":1,"search_mode":"full_text","query":"\"alpha | gamma","want":"\"alpha | gamma"},
+  {"schema_version":1,"search_mode":"semantic","query":"alpha | gamma","want":"alpha | gamma"},
+  {"schema_version":1,"search_mode":"hybrid","query":"alpha | gamma","want":"alpha | gamma"},
+  {"schema_version":2,"search_mode":"full_text","query":"alpha | gamma","want":"alpha | gamma"}
+]

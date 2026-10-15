@@ -179,7 +179,8 @@ type Dialect interface {
 	// "rank" is an implicit FTS5 column; PostgreSQL: 1 for ts_rank).
 	// Callers compose these with their own SQL and must run Rebind on the
 	// final query before execution.
-	FTSSearchClause() (join, where, orderBy string, orderArgCount int)
+	// rowIDs uses a self-contained predicate so MATCH can appear inside OR.
+	FTSSearchClause(rowIDs bool) (join, where, orderBy string, orderArgCount int)
 
 	// FTSDeleteSQL returns the SQL to remove FTS entries for messages belonging to
 	// a given source. Takes one parameter: source_id.

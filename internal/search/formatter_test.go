@@ -8,6 +8,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestFormatPipeORRoundTrip(t *testing.T) {
+	for _, input := range []string{"alpha beta | gamma", `from:a@example.org alpha | subject:"a|b"`, `"a | b"`, `'a | b'`} {
+		t.Run(input, func(t *testing.T) {
+			parsed := ParseOR(input)
+			require.NoError(t, parsed.Err())
+			formatted := Format(parsed)
+			roundTrip := ParseOR(formatted)
+			require.NoError(t, roundTrip.Err())
+			assert.Equal(t, parsed, roundTrip)
+		})
+	}
+}
+
 func TestFormatRoundTripsRepresentableQueryFields(t *testing.T) {
 	hasAttachment := true
 	after := time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC)
@@ -117,4 +130,36 @@ func TestFormatUsesDateOnlyForExactUTCMidnight(t *testing.T) {
 	formatted := Format(&Query{AfterDate: &midnightUTC, BeforeDate: &nonMidnightUTC})
 	assert.Contains(t, formatted, "after:2024-02-01")
 	assert.Contains(t, formatted, "before:2024-03-01T00:00:00.000000001Z")
+}
+
+func TestFormatPipeORIntersectsScopes(t *testing.T) {
+	for _, tc := range []struct {
+		input    string
+		scope    Query
+		want     string
+		branches int
+	}{
+		{"message_type:sms alpha | gamma message_type:mms", Query{MessageTypes: []string{"mms"}}, "message_type:mms gamma", 0},
+		{"message_type:sms alpha | gamma message_type:mms", Query{MessageTypes: []string{"email"}}, "conversation_id:" + conversationIDMatchNone, 0},
+		{"account:other@example.org | subject:invoice", Query{AccountAddrs: []string{"work@example.org"}}, "account:work@example.org subject:invoice", 0},
+		{"alpha | gamma", Query{MessageTypes: []string{"sms"}, AccountAddrs: []string{"work@example.org"}}, "account:work@example.org message_type:sms alpha | account:work@example.org message_type:sms gamma", 2},
+	} {
+		t.Run(tc.input+Format(&tc.scope), func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			q := ParseOR(tc.input)
+			q.MessageTypes, q.AccountAddrs = tc.scope.MessageTypes, tc.scope.AccountAddrs
+			formatted := Format(q)
+			assert.Equal(tc.want, formatted)
+			roundTrip := ParseOR(formatted)
+			require.NoError(roundTrip.Err())
+			if tc.branches > 0 {
+				require.Len(roundTrip.Alternatives, tc.branches)
+				for _, alternative := range roundTrip.Alternatives {
+					assert.Equal(q.MessageTypes, alternative.MessageTypes)
+					assert.Equal(q.AccountAddrs, alternative.AccountAddrs)
+				}
+			}
+		})
+	}
 }

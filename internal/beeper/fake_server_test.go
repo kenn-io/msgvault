@@ -164,11 +164,13 @@ func (f *fakeBeeper) setAssetError(url string, status int, body string) {
 	f.assetErrors[url] = fakeAssetError{status: status, body: body}
 }
 
-// setAsset makes an asset URL downloadable via /v1/assets/serve.
+// setAsset makes an asset URL downloadable via /v1/assets/serve, replacing
+// any failure set by setAssetError.
 func (f *fakeBeeper) setAsset(url string, data []byte) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.assets[url] = data
+	delete(f.assetErrors, url)
 }
 
 // addAccount makes an account visible to GET /v1/accounts.

@@ -1798,7 +1798,7 @@ func (m Model) searchInputValidationError(queryStr string) error {
 	if queryStr == "" {
 		return nil
 	}
-	parsed := search.Parse(queryStr)
+	parsed := search.ParseWithOR(queryStr, m.searchMode != searchModeSemantic)
 	if m.searchMode == searchModeSemantic {
 		if parsed.Err() == nil && len(parsed.TextTerms) == 0 {
 			return errors.New("semantic search requires free text")

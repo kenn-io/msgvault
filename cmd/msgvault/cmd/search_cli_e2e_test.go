@@ -106,6 +106,8 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 	// The stored preview lacks this term, so this proves --snippet reaches the daemon's include_snippet path.
 	out := run("search", "contextneedle", "--snippet")
 	assert.Contains(out, "contextneedle")
+	out = run("search", "contextneedle | missingterm", "--snippet")
+	assert.Contains(out, "contextneedle")
 	// These searches cover filename and metadata propagation across the CLI, daemon and retrieval adapters.
 	out = run("search", "filename:plan.pdf", "--json")
 	var fts []map[string]any

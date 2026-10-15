@@ -1231,6 +1231,145 @@ func createTestSourceDB(t *testing.T, dir string, msgCount int) string {
 	return dbPath
 }
 
+// Route freshness reads only sources.last_sync_at, which an importer sets after
+// a complete pass. Sync history can include stopped runs, so a subset must not
+// derive freshness from it.
+func TestCopySubsetCopiesStoredSourceSyncTimeOnly(t *testing.T) {
+	stored := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	completed := time.Date(2026, 1, 2, 12, 0, 0, 0, time.UTC)
+	for _, test := range []struct {
+		name          string
+		stored        *time.Time
+		completedRuns bool
+		want          sql.NullTime
+	}{
+		{"stored timestamp is copied", &stored, true, sql.NullTime{Time: stored, Valid: true}},
+		{"completed runs do not set freshness", nil, true, sql.NullTime{}},
+		{"no stored timestamp", nil, false, sql.NullTime{}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			requirements := require.New(t)
+			sourcePath := createTestSourceDB(t, t.TempDir(), 1)
+			source, err := Open(sourcePath)
+			requirements.NoError(err)
+			t.Cleanup(func() { requirements.NoError(source.Close()) })
+			_, err = source.DB().Exec(`UPDATE sources SET last_sync_at=? WHERE id=1`, test.stored)
+			requirements.NoError(err)
+			_, err = source.DB().Exec(`INSERT INTO sources (id, source_type, identifier)
+				VALUES (2, 'beeper', 'other-account')`)
+			requirements.NoError(err)
+			for _, run := range []struct {
+				sourceID int
+				status   string
+				errors   int
+			}{
+				{1, "completed", 1},
+				{1, "failed", 0},
+				{1, "cancelled", 0},
+				{2, "completed", 0},
+			} {
+				_, err = source.DB().Exec(`INSERT INTO sync_runs
+					(source_id, started_at, completed_at, status, errors_count)
+					VALUES (?, ?, ?, ?, ?)`, run.sourceID, stored, completed.Add(time.Hour), run.status, run.errors)
+				requirements.NoError(err)
+			}
+			if test.completedRuns {
+				for _, timestamp := range []time.Time{completed, stored} {
+					_, err = source.DB().Exec(`INSERT INTO sync_runs
+						(source_id, started_at, completed_at, status, errors_count)
+						VALUES (1, ?, ?, 'completed', 0)`, stored, timestamp)
+					requirements.NoError(err)
+				}
+			}
+
+			destinationDir := filepath.Join(t.TempDir(), "subset")
+			_, err = CopySubset(sourcePath, destinationDir, 1, false)
+			requirements.NoError(err)
+			destination, err := Open(filepath.Join(destinationDir, "msgvault.db"))
+			requirements.NoError(err)
+			t.Cleanup(func() { requirements.NoError(destination.Close()) })
+			copied, err := destination.GetSourceByID(1)
+			requirements.NoError(err)
+			assert.Equal(t, test.want, copied.LastSyncAt)
+		})
+	}
+}
+
+func TestCopySubsetPreservesSourceMessagingRouteFailure(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := t.Context()
+	sourcePath := createTestSourceDB(t, t.TempDir(), 5)
+	source, err := Open(sourcePath)
+	require.NoError(err)
+	_, err = source.DB().ExecContext(ctx, `
+		UPDATE sources
+		SET source_type='beeper', identifier='account-a', last_sync_at=CURRENT_TIMESTAMP
+		WHERE id=1`)
+	require.NoError(err)
+	_, err = source.DB().ExecContext(ctx, `
+		UPDATE conversations
+		SET conversation_type='direct_chat', source_conversation_id='!quiet:example.test'
+		WHERE id=1`)
+	require.NoError(err)
+	person, _, err := source.CreatePersonFromParticipant(1)
+	require.NoError(err)
+	require.NoError(source.SetConversationMessagingRouteEvidence(ctx, 1, MessagingRouteEvidence{
+		ChatID: "!quiet:example.test", AccountID: "account-a", Network: "whatsapp",
+		ProviderType: "single", ObservedAt: time.Now().UTC(), MembershipComplete: true,
+		ParticipantIDs: []int64{1, 2}, SelfParticipantIDs: []int64{}, MemberChatIDs: []string{},
+	}))
+	require.NoError(source.SetSourceMessagingRouteFailureContext(ctx, 1, "account_lookup_failed"))
+	before, err := source.GetPersonMessagingRoutesContext(ctx, PersonMessagingRouteQuery{
+		PersonUID: person.VCardUID,
+	})
+	require.NoError(err)
+	require.Len(before.Routes.Items, 1)
+	assert.Equal("unresolved", before.Routes.Items[0].Status)
+	assert.Contains(before.Routes.Items[0].Reasons, "account_lookup_failed")
+	personUID := person.VCardUID
+	require.NoError(source.Close())
+
+	destinationDir := filepath.Join(t.TempDir(), "subset")
+	_, err = CopySubsetWithOptions(sourcePath, destinationDir, 5, CopySubsetOptions{
+		IncludeIdentity: true,
+	})
+	require.NoError(err)
+	destination, err := Open(filepath.Join(destinationDir, "msgvault.db"))
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(destination.Close()) })
+	after, err := destination.GetPersonMessagingRoutesContext(ctx, PersonMessagingRouteQuery{
+		PersonUID: personUID,
+	})
+	require.NoError(err)
+	require.Len(after.Routes.Items, 1)
+	assert.Equal("unresolved", after.Routes.Items[0].Status)
+	assert.Contains(after.Routes.Items[0].Reasons, "account_lookup_failed")
+}
+
+func TestCopySubsetSupportsSourceWithoutMessagingRouteFailuresTable(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	sourcePath := createTestSourceDB(t, t.TempDir(), 5)
+	sourceDB, err := sql.Open("sqlite3", sourcePath+"?_foreign_keys=OFF")
+	require.NoError(err)
+	_, err = sourceDB.Exec(`DROP TABLE source_messaging_route_failures`)
+	require.NoError(err)
+	require.NoError(sourceDB.Close())
+
+	destinationDir := filepath.Join(t.TempDir(), "subset")
+	_, err = CopySubset(sourcePath, destinationDir, 5, false)
+	require.NoError(err)
+	destination, err := Open(filepath.Join(destinationDir, "msgvault.db"))
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(destination.Close()) })
+	var failures int
+	require.NoError(destination.DB().QueryRow(
+		`SELECT COUNT(*) FROM source_messaging_route_failures`,
+	).Scan(&failures))
+	assert.Zero(failures)
+}
+
 func seedAcceptedSubsetParticipantLink(t *testing.T, srcDB string) int64 {
 	t.Helper()
 	require := require.New(t)
@@ -5089,4 +5228,28 @@ func TestCopySubsetKeepsPendingDraftOutOfReceived(t *testing.T) {
 		Scan(&authored, &path))
 	assert.True(authored, "the subset keeps the draft mark its IMAP flag gave it")
 	assert.Equal(accountPathSent, path.String, "a copied draft is written, not received")
+}
+
+func TestCopySubsetPreservesBeeperReanchorMarker(t *testing.T) {
+	requirements := require.New(t)
+	sourcePath := createTestSourceDB(t, t.TempDir(), 1)
+	source, err := Open(sourcePath)
+	requirements.NoError(err)
+	t.Cleanup(func() { requirements.NoError(source.Close()) })
+	requirements.NoError(source.SetArchiveMarker(t.Context(), BeeperReanchorMarkerKey(1), "re-anchor required"))
+	requirements.NoError(source.SetArchiveMarker(t.Context(), BeeperReanchorMarkerKey(99), "unrelated source"))
+
+	destinationDir := filepath.Join(t.TempDir(), "subset")
+	_, err = CopySubset(sourcePath, destinationDir, 1, false)
+	requirements.NoError(err)
+	destination, err := Open(filepath.Join(destinationDir, "msgvault.db"))
+	requirements.NoError(err)
+	t.Cleanup(func() { requirements.NoError(destination.Close()) })
+	value, found, err := destination.GetArchiveMarker(t.Context(), BeeperReanchorMarkerKey(1))
+	requirements.NoError(err)
+	assert.True(t, found)
+	assert.Equal(t, "re-anchor required", value)
+	_, found, err = destination.GetArchiveMarker(t.Context(), BeeperReanchorMarkerKey(99))
+	requirements.NoError(err)
+	assert.False(t, found, "markers for sources outside the subset stay behind")
 }

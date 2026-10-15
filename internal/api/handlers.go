@@ -979,7 +979,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		messages []store.APIMessage
 		total    int64
 	)
-	useQuery := parsedQuery.HasOperators() || len(parsedQuery.AccountIDs) > 0
+	useQuery := parsedQuery.HasOR() || parsedQuery.HasOperators() || len(parsedQuery.AccountIDs) > 0
 	if searcher, ok := s.store.(ctxMessageSearcher); ok {
 		if useQuery {
 			messages, total, err = searcher.SearchMessagesQueryContext(r.Context(), parsedQuery, offset, pageSize)
@@ -1016,7 +1016,8 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 }
 
 func parseSearchQueryRequest(r *http.Request, query string) *search.Query {
-	parsed := search.Parse(query)
+	mode := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("mode")))
+	parsed := search.ParseWithOR(query, mode != "vector" && mode != exploreSearchModeHybrid)
 	for _, raw := range r.URL.Query()["message_type"] {
 		for typ := range strings.SplitSeq(raw, ",") {
 			typ = strings.TrimSpace(strings.ToLower(typ))
@@ -2455,6 +2456,9 @@ func parseAggregateOptions(r *http.Request) (query.AggregateOptions, error) {
 		opts.HideDeletedFromSource = true
 	}
 	if v := r.URL.Query().Get("search_query"); v != "" {
+		if parsed := search.ParseOR(v); parsed.HasOR() && parsed.Err() != nil {
+			return opts, newParamError("search_query", parsed.Err().Error())
+		}
 		opts.SearchQuery = v
 	}
 	if after, ok, err := queryDate(r, "after"); err != nil {
@@ -3355,7 +3359,7 @@ func (s *Server) handleGmailIDsByFilter(w http.ResponseWriter, r *http.Request) 
 		}
 		targets, err = engine.GetDeletionTargetsByFilter(r.Context(), filter)
 	} else {
-		parsed := search.Parse(searchQuery)
+		parsed := search.ParseOR(searchQuery)
 		if parseErr := parsed.Err(); parseErr != nil {
 			writeError(w, http.StatusBadRequest, "invalid_search", parseErr.Error())
 			return
@@ -3767,7 +3771,7 @@ func (s *Server) handleTotalStats(w http.ResponseWriter, r *http.Request) {
 		opts.HideDeletedFromSource = enabled
 	}
 	if v := r.URL.Query().Get("search_query"); v != "" {
-		q := search.Parse(v)
+		q := search.ParseOR(v)
 		if err := q.Err(); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_query", err.Error())
 			return
@@ -3841,7 +3845,7 @@ func (s *Server) handleFastSearch(w http.ResponseWriter, r *http.Request) {
 		s.rejectBadParam(w, err)
 		return
 	}
-	q := search.Parse(queryStr)
+	q := search.ParseOR(queryStr)
 	if err := q.Err(); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_query", err.Error())
 		return
@@ -3926,7 +3930,7 @@ func (s *Server) handleDeepSearch(w http.ResponseWriter, r *http.Request) {
 		s.rejectBadParam(w, err)
 		return
 	}
-	q := search.Parse(queryStr)
+	q := search.ParseWithOR(queryStr, scope != "body")
 	if err := q.Err(); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_query", err.Error())
 		return

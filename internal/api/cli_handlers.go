@@ -2401,7 +2401,7 @@ func (s *Server) handleCLISearch(w http.ResponseWriter, r *http.Request) {
 	offset := max(parseCLISearchInt(r.URL.Query().Get("offset"), 0), 0)
 
 	queryStr := r.URL.Query().Get("q")
-	parsed := search.Parse(queryStr)
+	parsed := search.ParseOR(queryStr)
 	if err := parsed.Err(); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_query", err.Error())
 		return

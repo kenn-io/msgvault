@@ -39,7 +39,7 @@ type GetAggregatesQuery struct {
 	// HideDeleted Exclude deleted messages
 	HideDeleted *bool `json:"hide_deleted,omitempty"`
 
-	// SearchQuery Search query
+	// SearchQuery Search query; full text accepts standalone pipe-separated OR alternatives
 	SearchQuery *string `json:"search_query,omitempty"`
 
 	// After Lower date/time bound (RFC3339 or YYYY-MM-DD)
@@ -80,7 +80,7 @@ type GetSubAggregatesQuery struct {
 	// HideDeleted Exclude deleted messages
 	HideDeleted *bool `json:"hide_deleted,omitempty"`
 
-	// SearchQuery Search query
+	// SearchQuery Search query; full text accepts standalone pipe-separated OR alternatives
 	SearchQuery *string `json:"search_query,omitempty"`
 
 	// After Lower date/time bound (RFC3339 or YYYY-MM-DD)
@@ -259,7 +259,7 @@ type SearchCLIQuery struct {
 	// IncludeSnippet Include attachment names and bounded FTS match context
 	IncludeSnippet *bool `json:"include_snippet,omitempty"`
 
-	// Q Search query
+	// Q Search query; full text accepts standalone pipe-separated OR alternatives
 	Q string `json:"q" validate:"required"`
 
 	// Limit Maximum number of rows to return
@@ -865,6 +865,17 @@ func (g GetPersonByUIDQuery) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(g))
 }
 
+type FindContactCandidatesQuery struct {
+	// Query Literal name tokens; all tokens must match. 1..256 UTF-8 bytes, at most 16 tokens. Wildcards are literal.
+	Query   string `json:"query" validate:"required"`
+	Limit   *int64 `json:"limit,omitempty" validate:"omitempty,gte=1,lte=100"`
+	AfterID *int64 `json:"after_id,omitempty" validate:"omitempty,gte=0"`
+}
+
+func (f FindContactCandidatesQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(f))
+}
+
 type ListDirectoryPeopleQuery struct {
 	// Q Lexical query over person names, contact points, and organizations
 	Q *string `json:"q,omitempty"`
@@ -910,6 +921,24 @@ func (l ListDirectoryPeopleQuery) Validate() error {
 		return nil
 	}
 	return errors
+}
+
+type GetPersonMessagingRoutesQuery struct {
+	// PersonUID Canonical or retired person UID. Tombstones return 410; unknown UIDs return 404.
+	PersonUID string `json:"person_uid" validate:"required"`
+
+	// Network Lowercase service name such as whatsapp or discord; unknown networks remain visible as unresolved.
+	Network             *string `json:"network,omitempty"`
+	SourceID            *int64  `json:"source_id,omitempty" validate:"omitempty,gte=0"`
+	Limit               *int64  `json:"limit,omitempty" validate:"omitempty,gte=1,lte=100"`
+	AfterConversationID *int64  `json:"after_conversation_id,omitempty" validate:"omitempty,gte=0"`
+	AfterContactPointID *int64  `json:"after_contact_point_id,omitempty" validate:"omitempty,gte=0"`
+	AfterObservationID  *int64  `json:"after_observation_id,omitempty" validate:"omitempty,gte=0"`
+	AfterSuggestionID   *int64  `json:"after_suggestion_id,omitempty" validate:"omitempty,gte=0"`
+}
+
+func (g GetPersonMessagingRoutesQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
 }
 
 type ListPersonAttributesQuery struct {
@@ -1103,10 +1132,10 @@ type RunArchiveQueryQuery struct {
 }
 
 type SearchMessagesQuery struct {
-	// Q Search query
+	// Q Search query; fts accepts standalone pipe-separated OR alternatives; other modes read pipes as text
 	Q string `json:"q" validate:"required"`
 
-	// Mode Search mode: fts, vector, or hybrid. conversation_id applies in every mode; other structured filter parameters require vector or hybrid
+	// Mode Search mode: fts, vector, or hybrid. fts accepts standalone pipe-separated OR alternatives; other modes read pipes as text. conversation_id applies in every mode; other structured filter parameters require vector or hybrid
 	Mode *string `json:"mode,omitempty"`
 
 	// Page One-based page number (default 1; values below 1 are clamped to 1). Non-numeric values are rejected with 400.
@@ -1181,7 +1210,7 @@ func (s SearchMessagesQuery) Validate() error {
 }
 
 type DeepSearchQuery struct {
-	// Q Search query
+	// Q Search query; full text accepts standalone pipe-separated OR alternatives
 	Q string `json:"q" validate:"required"`
 
 	// Scope Exact search scope: body; omit for composite full-text search
@@ -1289,7 +1318,7 @@ func (s SearchMessagesByDomainsQuery) Validate() error {
 }
 
 type FastSearchQuery struct {
-	// Q Search query
+	// Q Search query; full text accepts standalone pipe-separated OR alternatives
 	Q string `json:"q" validate:"required"`
 
 	// ViewType Stats grouping view type
@@ -1404,7 +1433,7 @@ type GetTotalStatsQuery struct {
 	// SourceIds Source IDs; repeat the parameter for multiple sources
 	SourceIds []int64 `json:"source_ids,omitempty"`
 
-	// SearchQuery Search query
+	// SearchQuery Search query; full text accepts standalone pipe-separated OR alternatives
 	SearchQuery *string `json:"search_query,omitempty"`
 
 	// SearchScope Include all message types when the search has no explicit message_type

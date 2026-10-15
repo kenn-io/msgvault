@@ -81,11 +81,17 @@ func TestImportStopsAtChatBoundaryAndHoldsWatermark(t *testing.T) {
 	require.NoError(err)
 	assert.Empty(state.ListWatermark, "a stopped run must not advance discovery past unvisited chats")
 	assert.Empty(state.LastTailScan)
+	stopped, err := st.GetSourceByID(src.ID)
+	require.NoError(err)
+	assert.False(stopped.LastSyncAt.Valid, "a stopped run must not advance source freshness")
 
 	sum, err = imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
 	require.NoError(err)
 	assert.False(sum.Stopped)
 	assert.Equal(15, countBeeperMessages(t, imp), "the next run visits the chats the stopped run skipped")
+	finished, err := st.GetSourceByID(src.ID)
+	require.NoError(err)
+	assert.True(finished.LastSyncAt.Valid, "a complete pass advances source freshness")
 }
 
 func TestStoppedImportUpdatesTouchedConversationStats(t *testing.T) {

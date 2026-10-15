@@ -9,6 +9,25 @@ import (
 	"go.kenn.io/msgvault/internal/search"
 )
 
+func TestDuckDBSearchFastPipeOR(t *testing.T) {
+	b := NewTestDataBuilder(t)
+	b.AddSource("test@example.com")
+	first := b.AddMessage(MessageOpt{Subject: "alpha beta"})
+	second := b.AddMessage(MessageOpt{Subject: "gamma"})
+	b.AddMessage(MessageOpt{Subject: "alpha only"})
+	other := b.AddSource("other@example.com")
+	b.AddMessage(MessageOpt{Subject: "gamma", SourceID: other})
+	engine := b.BuildEngine()
+	q := search.ParseOR("alpha beta | gamma")
+	filter := MessageFilter{SourceIDs: []int64{1}, HideDeletedFromSource: true}
+	rows, err := engine.SearchFast(t.Context(), q, filter, 50, 0)
+	require.NoError(t, err)
+	assertMessageIDs(t, rows, []int64{first, second})
+	count, err := engine.SearchFastCount(t.Context(), q, filter)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), count)
+}
+
 func TestDuckDBSearchFast_RecipientMetadata(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

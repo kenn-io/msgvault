@@ -430,6 +430,8 @@ func TestBeeperMediaStepTimeout(t *testing.T) {
 	docbank.mu.Lock()
 	docbank.hang = false
 	docbank.mu.Unlock()
+	// Only the first step must time out; healthy work uses the normal deadline.
+	submitter.actionTimeout = beeperMediaActionTimeout
 	runPasses(t, submitter, 3)
 
 	docbank.mu.Lock()

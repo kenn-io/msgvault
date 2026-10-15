@@ -1241,12 +1241,15 @@ func TestImportBoundsRepeatedAssetAttemptsAcrossIncrementalAndReconcile(t *testi
 	assert.Len(assetRequests(f), 3, "the incremental and reconcile passes share one retry budget")
 }
 
-func TestBackfillMediaGoneMessageKeepsUnavailableRow(t *testing.T) {
+func TestBackfillMediaDefinitiveLossKeepsUnavailableRow(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 
 	f := newFakeBeeper(t)
 	ch := mediaChat()
+	// A recent message: definitive loss is terminal on the first miss,
+	// with no age or repeat requirement.
+	ch.Msgs[0].Timestamp = time.Now().Add(-24 * time.Hour).UTC().Truncate(time.Second)
 	ch.Msgs[0].Attachments = append(ch.Msgs[0].Attachments, map[string]any{
 		"id": "mxc://beeper.local/photo2", "type": "img", "mimeType": "image/png", "fileName": "later.png",
 	})
@@ -1347,4 +1350,202 @@ func TestMediaTypeOf(t *testing.T) {
 	assert.Equal("mxc://x/1", assetRef(&Attachment{ID: "mxc://x/1", SrcURL: "http://y"}))
 	assert.Equal("http://y", assetRef(&Attachment{SrcURL: "http://y"}), "srcURL is the fallback when the asset ID is empty")
 	assert.Empty(assetRef(&Attachment{}))
+}
+
+// TestAssetNotFoundBecomesTerminalOnlyOnConfirmedRepeat runs the not-found
+// policy against a real store: a not-found costs one request and leaves a
+// retryable marker, and it becomes terminal only for an old message whose
+// not-found repeats on a separate, later run.
+func TestAssetNotFoundBecomesTerminalOnlyOnConfirmedRepeat(t *testing.T) {
+	const assetURL = "mxc://beeper.local/photo1"
+	oldTimestamp := func() time.Time { return time.Now().Add(-assetNotFoundMaxAge - time.Hour).UTC() }
+
+	t.Run("old message: first miss retryable, confirming repeat on a separate call goes terminal", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		f := newFakeBeeper(t)
+		ch := mediaChat()
+		ch.Msgs[0].Timestamp = oldTimestamp()
+		ch.LastActivity = ch.Msgs[0].Timestamp
+		f.addChat(ch)
+		f.setAssetError(assetURL, http.StatusBadGateway, "Media not found")
+		imp, st, done := newTestImporter(t, f)
+		defer done()
+		opts := mediaImportOptions(t)
+
+		sum, err := imp.Import(t.Context(), opts)
+		require.NoError(err)
+		assert.Len(assetRequests(f), 1, "a not-found costs one request, not maxAssetAttempts")
+		var state, reason string
+		require.NoError(st.DB().QueryRow(`SELECT attachment_state, attachment_skip_reason FROM attachments`).Scan(&state, &reason))
+		assert.Equal(string(attachmentpolicy.StateFailed), state)
+		assert.Equal(string(attachmentpolicy.SkipSourceUnavailable), reason)
+		assert.Zero(sum.AttachmentsUnavailable, "a first miss is not yet terminal")
+		assert.EqualValues(1, sum.AttachmentsPending)
+
+		f.resetRequests()
+		opts.Full = true
+		sum, err = imp.Import(t.Context(), opts)
+		require.NoError(err)
+		assert.Len(assetRequests(f), 1, "the confirming repeat still costs only one request")
+		require.NoError(st.DB().QueryRow(`SELECT attachment_state, attachment_skip_reason FROM attachments`).Scan(&state, &reason))
+		assert.Equal(string(attachmentpolicy.StateUnavailable), state, "a repeat on a separate, later run goes terminal")
+		assert.Equal(string(attachmentpolicy.SkipSourceUnavailable), reason)
+		assert.EqualValues(1, sum.AttachmentsUnavailable)
+	})
+
+	t.Run("a single miss recovers if the asset becomes available on the next run", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		f := newFakeBeeper(t)
+		ch := mediaChat()
+		ch.Msgs[0].Timestamp = oldTimestamp()
+		ch.LastActivity = ch.Msgs[0].Timestamp
+		f.addChat(ch)
+		f.setAssetError(assetURL, http.StatusBadGateway, "Media not found")
+		imp, st, done := newTestImporter(t, f)
+		defer done()
+		opts := mediaImportOptions(t)
+
+		sum, err := imp.Import(t.Context(), opts)
+		require.NoError(err)
+		assert.Zero(sum.AttachmentsUnavailable)
+
+		f.setAsset(assetURL, []byte("recovered bytes"))
+		f.resetRequests()
+		bsum, err := imp.BackfillMedia(t.Context(), opts)
+		require.NoError(err)
+		assert.EqualValues(1, bsum.AttachmentsDownloaded)
+		assert.Zero(bsum.AttachmentsUnavailable)
+		var state string
+		require.NoError(st.DB().QueryRow(`SELECT attachment_state FROM attachments`).Scan(&state))
+		assert.Equal(string(attachmentpolicy.StateStored), state)
+	})
+
+	t.Run("a different error between two not-founds resets the repeat", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		f := newFakeBeeper(t)
+		ch := mediaChat()
+		ch.Msgs[0].Timestamp = oldTimestamp()
+		ch.LastActivity = ch.Msgs[0].Timestamp
+		f.addChat(ch)
+		f.setAssetError(assetURL, http.StatusBadGateway, "Media not found")
+		imp, st, done := newTestImporter(t, f)
+		defer done()
+		imp.client.retryAfterMax = time.Millisecond
+		opts := mediaImportOptions(t)
+
+		_, err := imp.Import(t.Context(), opts)
+		require.NoError(err)
+
+		f.setAssetError(assetURL, http.StatusBadGateway, "upstream timeout")
+		f.resetRequests()
+		opts.Full = true
+		sum, err := imp.Import(t.Context(), opts)
+		require.NoError(err)
+		assert.Zero(sum.AttachmentsUnavailable)
+		var reason string
+		require.NoError(st.DB().QueryRow(`SELECT attachment_skip_reason FROM attachments`).Scan(&reason))
+		assert.Equal(string(attachmentpolicy.SkipFetchFailure), reason, "the generic failure replaces the provisional not-found marker")
+
+		f.setAssetError(assetURL, http.StatusBadGateway, "Media not found")
+		f.resetRequests()
+		sum, err = imp.Import(t.Context(), opts)
+		require.NoError(err)
+		assert.Zero(sum.AttachmentsUnavailable, "the intervening generic failure means this not-found is a first sighting again")
+		var state string
+		require.NoError(st.DB().QueryRow(`SELECT attachment_state, attachment_skip_reason FROM attachments`).Scan(&state, &reason))
+		assert.Equal(string(attachmentpolicy.StateFailed), state)
+		assert.Equal(string(attachmentpolicy.SkipSourceUnavailable), reason)
+	})
+
+	t.Run("a --no-media deferral between the two misses does not reset the marker", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		f := newFakeBeeper(t)
+		ch := mediaChat()
+		ch.Msgs[0].Timestamp = oldTimestamp()
+		ch.LastActivity = ch.Msgs[0].Timestamp
+		f.addChat(ch)
+		f.setAssetError(assetURL, http.StatusBadGateway, "Media not found")
+		imp, st, done := newTestImporter(t, f)
+		defer done()
+		opts := mediaImportOptions(t)
+
+		_, err := imp.Import(t.Context(), opts)
+		require.NoError(err)
+		var state, reason string
+		require.NoError(st.DB().QueryRow(`SELECT attachment_state, attachment_skip_reason FROM attachments`).Scan(&state, &reason))
+		require.Equal(string(attachmentpolicy.StateFailed), state)
+		require.Equal(string(attachmentpolicy.SkipSourceUnavailable), reason)
+
+		noMediaOpts := opts
+		noMediaOpts.Full = true
+		noMediaOpts.NoMedia = true
+		f.resetRequests()
+		_, err = imp.Import(t.Context(), noMediaOpts)
+		require.NoError(err)
+		assert.Empty(assetRequests(f), "a --no-media run never fetches")
+		require.NoError(st.DB().QueryRow(`SELECT attachment_state, attachment_skip_reason FROM attachments`).Scan(&state, &reason))
+		assert.Equal(string(attachmentpolicy.StateFailed), state, "the deferral must not reset the provisional marker to bare pending")
+		assert.Equal(string(attachmentpolicy.SkipSourceUnavailable), reason)
+
+		opts.Full = true
+		sum, err := imp.Import(t.Context(), opts)
+		require.NoError(err)
+		assert.EqualValues(1, sum.AttachmentsUnavailable, "the marker the deferral preserved still confirms on the next real run")
+	})
+}
+
+// TestIsConfirmedAssetNotFound covers the previous-marker and age checks.
+func TestIsConfirmedAssetNotFound(t *testing.T) {
+	now := time.Now()
+	old := now.Add(-assetNotFoundMaxAge - time.Hour)
+	young := now.Add(-assetNotFoundMaxAge + time.Hour)
+	provisional := store.AttachmentRef{State: attachmentpolicy.StateFailed, SkipReason: attachmentpolicy.SkipSourceUnavailable}
+
+	tests := []struct {
+		name      string
+		previous  store.AttachmentRef
+		timestamp time.Time
+		want      bool
+	}{
+		{
+			name:      "no previous marker at all",
+			previous:  store.AttachmentRef{},
+			timestamp: old,
+		},
+		{
+			name:      "previous was never confirmed-eligible: still pending",
+			previous:  store.AttachmentRef{State: attachmentpolicy.StatePending},
+			timestamp: old,
+		},
+		{
+			name:      "previous failed for an unrelated reason",
+			previous:  store.AttachmentRef{State: attachmentpolicy.StateFailed, SkipReason: attachmentpolicy.SkipFetchFailure},
+			timestamp: old,
+		},
+		{
+			name:      "message timestamp is missing",
+			previous:  provisional,
+			timestamp: time.Time{},
+		},
+		{
+			name:      "message is younger than the age cutoff",
+			previous:  provisional,
+			timestamp: young,
+		},
+		{
+			name:      "old message, provisional previous miss: confirmed",
+			previous:  provisional,
+			timestamp: old,
+			want:      true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, isConfirmedAssetNotFound(tt.previous, tt.timestamp, now))
+		})
+	}
 }

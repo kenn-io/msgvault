@@ -49,22 +49,34 @@ var ErrAssetTooLarge = errors.New("asset exceeds size cap")
 // succeed, so callers record it as terminal.
 var ErrAssetUnavailable = errors.New("asset no longer available at source")
 
-// permanentAssetErrors are lower-cased phrases in a Beeper asset error body
-// that mean the media is gone for good.
-var permanentAssetErrors = []string{
-	"media is no longer available",
+// ErrAssetNotFound reports media a bridge or repository cannot currently find.
+// It ends this request's retries but does not prove the asset is permanently gone.
+var ErrAssetNotFound = errors.New("asset not found at source")
+
+// assetErrorPhrases are lower-cased phrases in a Beeper asset error body,
+// checked in order, that classify the failure regardless of HTTP status: a
+// bridge can wrap a not-found outcome in a 502 as readily as a 404. The
+// definitive phrase is listed first so a body naming both resolves to it.
+var assetErrorPhrases = []struct {
+	phrase string
+	err    error
+}{
+	{"media is no longer available", ErrAssetUnavailable},
+	{"media not found", ErrAssetNotFound},
+	{"m_not_found", ErrAssetNotFound},
+	{"failed to download file: http 404", ErrAssetNotFound},
 }
 
-// isPermanentAssetError reports whether an asset error body says the media
-// can never be downloaded.
-func isPermanentAssetError(body []byte) bool {
+// classifyAssetError reports which sentinel, if any, an asset error body
+// matches. It returns nil when the body names neither outcome.
+func classifyAssetError(body []byte) error {
 	lower := strings.ToLower(string(body))
-	for _, phrase := range permanentAssetErrors {
-		if strings.Contains(lower, phrase) {
-			return true
+	for _, candidate := range assetErrorPhrases {
+		if strings.Contains(lower, candidate.phrase) {
+			return candidate.err
 		}
 	}
-	return false
+	return nil
 }
 
 // TokenFunc returns a bearer token for a Beeper Desktop API request.
@@ -108,12 +120,23 @@ func (c *Client) get(ctx context.Context, path string) ([]byte, error) {
 // read through a limited reader, so an over-cap asset costs at most
 // maxBytes+1 of memory regardless of what the server sends. The cap applies
 // to successful responses only; error bodies have their own small bound.
-// asset enables asset-specific handling: permanent source errors return
-// ErrAssetUnavailable without retrying, and transient 429/5xx responses are
-// capped at maxAssetAttempts.
+// asset enables asset-specific handling: a non-2xx asset body is classified
+// against assetErrorPhrases regardless of status code (a bridge may wrap a
+// not-found outcome in a 502), with the definitive "no longer available"
+// phrase taking precedence over a not-found phrase when a body names both.
+// A bare asset 404 with no matching phrase is ErrNotFound, an ordinary
+// failure: without a bridge's words it could be a proxy or a missing route.
+// Either sentinel ends this request's attempts without retrying; a not-found
+// is not itself terminal, and the importer decides whether its age and
+// history make the marker terminal. Transient 429/5xx responses are capped
+// at maxAssetAttempts.
 func (c *Client) fetch(ctx context.Context, path string, maxBytes int64, asset bool) ([]byte, error) {
 	reqURL := c.baseURL + path
 	assetAttempts := 0
+	// A not-found that follows a transient failure in the same call is not a
+	// clean miss, so it resets the importer's confirmation streak like any
+	// other intervening error.
+	sawTransientAssetFailure := false
 	for attempt := range maxRetries {
 		if err := c.limiter.Wait(ctx); err != nil {
 			return nil, fmt.Errorf("wait for beeper rate limit: %w", err)
@@ -159,6 +182,10 @@ func (c *Client) fetch(ctx context.Context, path string, maxBytes int64, asset b
 			return nil, fmt.Errorf("beeper GET %s: close body: %w", reqURL, closeErr)
 		}
 
+		var assetErr error
+		if asset && !ok {
+			assetErr = classifyAssetError(body)
+		}
 		switch {
 		case ok:
 			if maxBytes > 0 && int64(len(body)) > maxBytes {
@@ -173,9 +200,13 @@ func (c *Client) fetch(ctx context.Context, path string, maxBytes int64, asset b
 				return nil, fmt.Errorf("beeper GET %s: status %d after %d attempts: %s",
 					reqURL, resp.StatusCode, assetAttempts, errorSnippet(body))
 			}
-		case asset && isPermanentAssetError(body):
+			sawTransientAssetFailure = true
+		case errors.Is(assetErr, ErrAssetNotFound) && sawTransientAssetFailure:
+			return nil, fmt.Errorf("beeper GET %s: status %d after a transient failure earlier in this attempt: %s",
+				reqURL, resp.StatusCode, errorSnippet(body))
+		case assetErr != nil:
 			return nil, fmt.Errorf("beeper GET %s: status %d: %s: %w",
-				reqURL, resp.StatusCode, errorSnippet(body), ErrAssetUnavailable)
+				reqURL, resp.StatusCode, errorSnippet(body), assetErr)
 		case resp.StatusCode == http.StatusNotFound:
 			return nil, fmt.Errorf("beeper GET %s: %w", reqURL, ErrNotFound)
 		case resp.StatusCode >= 500:
@@ -183,6 +214,7 @@ func (c *Client) fetch(ctx context.Context, path string, maxBytes int64, asset b
 				return nil, fmt.Errorf("beeper GET %s: status %d after %d attempts: %s",
 					reqURL, resp.StatusCode, assetAttempts, errorSnippet(body))
 			}
+			sawTransientAssetFailure = true
 		default:
 			if resp.StatusCode >= 400 && resp.StatusCode < 500 && resp.StatusCode != http.StatusRequestTimeout {
 				return nil, fmt.Errorf("beeper GET %s: status %d: %s: %w", reqURL, resp.StatusCode, string(body), errPermanentResponse)
@@ -230,6 +262,19 @@ func (c *Client) ListAccounts(ctx context.Context) ([]Account, error) {
 		return nil, err
 	}
 	return out, nil
+}
+
+// GetAccount reads authoritative bridge metadata with a bounded response.
+func (c *Client) GetAccount(ctx context.Context, accountID string) (*Account, error) {
+	body, err := c.fetch(ctx, "/v1/accounts/"+url.PathEscape(accountID), 64<<10, false)
+	if err != nil {
+		return nil, err
+	}
+	var account Account
+	if err := json.Unmarshal(body, &account); err != nil {
+		return nil, err
+	}
+	return &account, nil
 }
 
 // SearchChatsParams filters a chat search page.

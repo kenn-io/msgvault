@@ -6011,21 +6011,34 @@ func TestDaemonAdapterListIDScopeReachesServerQueryEngine(t *testing.T) {
 func TestSearchParsedMessageTypeFilterReachesEngine(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name string
-		path string
+		name      string
+		path      string
+		wantTypes [][]string
 	}{
-		{name: "fast", path: "/api/v1/search/fast?q=message_type:sms%20hello"},
-		{name: "deep", path: "/api/v1/search/deep?q=message_type:sms%20hello"},
+		{name: "fast", path: "/api/v1/search/fast?q=message_type:sms%20hello", wantTypes: [][]string{{"sms"}}},
+		{name: "deep", path: "/api/v1/search/deep?q=message_type:sms%20hello", wantTypes: [][]string{{"sms"}}},
+		{name: "fast OR", path: "/api/v1/search/fast?q=" + url.QueryEscape("message_type:sms hello | message_type:sms gamma"), wantTypes: [][]string{nil, {"sms"}, {"sms"}}},
+		{name: "deep OR", path: "/api/v1/search/deep?q=" + url.QueryEscape("message_type:sms hello | message_type:sms gamma"), wantTypes: [][]string{nil, {"sms"}, {"sms"}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			engine := &querytest.MockEngine{
 				Stats: &query.TotalStats{},
 				SearchFastWithStatsFunc: func(_ context.Context, q *search.Query, _ string, _ query.MessageFilter, _ query.ViewType, _, _ int) (*query.SearchFastResult, error) {
-					assert.Equal(t, []string{"sms"}, q.MessageTypes, "fast MessageTypes")
+					require.NoError(t, q.Err())
+					gotTypes := [][]string{q.MessageTypes}
+					for _, parsed := range q.Alternatives {
+						gotTypes = append(gotTypes, parsed.MessageTypes)
+					}
+					assert.Equal(t, tc.wantTypes, gotTypes)
 					return &query.SearchFastResult{Stats: &query.TotalStats{}}, nil
 				},
 				SearchFunc: func(_ context.Context, q *search.Query, _, _ int) ([]query.MessageSummary, error) {
-					assert.Equal(t, []string{"sms"}, q.MessageTypes, "deep MessageTypes")
+					require.NoError(t, q.Err())
+					gotTypes := [][]string{q.MessageTypes}
+					for _, parsed := range q.Alternatives {
+						gotTypes = append(gotTypes, parsed.MessageTypes)
+					}
+					assert.Equal(t, tc.wantTypes, gotTypes)
 					return nil, nil
 				},
 			}
@@ -9064,4 +9077,37 @@ func TestHybridSearchAttachmentMetadataJSON(t *testing.T) {
 			assert.Equal(t, names, got["attachment_names"])
 		})
 	}
+}
+
+func TestParseAggregateOptionsInvalidSearchValues(t *testing.T) {
+	t.Run("alpha | before:invalid", func(t *testing.T) {
+		request := httptest.NewRequest(http.MethodGet, "/api/v1/aggregates?search_query="+url.QueryEscape("alpha | before:invalid"), nil)
+		_, err := parseAggregateOptions(request)
+		require.Error(t, err)
+	})
+	t.Run("alpha before:invalid", func(t *testing.T) {
+		text := "alpha before:invalid"
+		request := httptest.NewRequest(http.MethodGet, "/api/v1/aggregates?search_query="+url.QueryEscape(text), nil)
+		opts, err := parseAggregateOptions(request)
+		require.NoError(t, err)
+		assert.Equal(t, text, opts.SearchQuery)
+	})
+}
+
+func TestHandleSearchPipeLiteralModes(t *testing.T) {
+	srv := newReviewSemanticServer(t)
+	response := doGet(srv, "/api/v1/search?q=alpha%20%7C%20gamma&mode=vector")
+	assert.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	called := false
+	srv = newTestServerWithEngine(t, &querytest.MockEngine{
+		SearchMessageBodiesFunc: func(_ context.Context, q *search.Query, _, _ int) ([]query.MessageSummary, error) {
+			called = true
+			assert.False(t, q.HasOR())
+			assert.Equal(t, []string{"alpha", "|", "gamma"}, q.TextTerms)
+			return nil, nil
+		},
+	})
+	response = doGet(srv, "/api/v1/search/deep?q=alpha%20%7C%20gamma&scope=body")
+	assert.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	assert.True(t, called)
 }

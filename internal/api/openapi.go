@@ -366,7 +366,9 @@ import (
 // 3.16.0 adds authenticated implementation-only MCP capability discovery.
 // 3.17.0 adds bounded opt-in filename suggestions, including person scope.
 // 3.18.0 adds optional related_message_id to message detail and conversation windows.
-const APISchemaVersion = "3.18.0"
+// 3.19.0 adds pipe OR in full-text search queries.
+// 3.20.0 adds read-only durable contact candidates and archived messaging routes.
+const APISchemaVersion = "3.20.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -928,6 +930,29 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 		return
 	}
 	schemas := doc.Components.Schemas.Map()
+	// These response properties stay required in JSON, but an empty string is
+	// meaningful for canonical aliases, direct routes, unresolved routes, and
+	// candidates whose saved display name has been cleared.
+	for _, field := range []struct{ schema, property string }{
+		{"ContactCandidate", "display_name"},
+		{"MessagingRoute", "merged_into_chat_id"},
+		{"MessagingRoute", "network"},
+		{"MessagingRoute", "network_label"},
+		{"MessagingRoute", "provider_chat_id"},
+		{"PersonMessagingRoutesPage", "alias_reason"},
+	} {
+		if schema := schemas[field.schema]; schema != nil {
+			if property := schema.Properties[field.property]; property != nil {
+				if property.Extensions == nil {
+					property.Extensions = map[string]any{}
+				}
+				property.Extensions["x-omitempty"] = false
+				property.Extensions["x-oapi-codegen-extra-tags"] = map[string]any{
+					"validate": "omitempty",
+				}
+			}
+		}
+	}
 	const emailProperty = "email"
 	if input := schemas["GCalEventInput"]; input != nil {
 		for name, goType := range map[string]string{"attendees": "*[]GCalAttendee", "recurrence": "*[]string"} {

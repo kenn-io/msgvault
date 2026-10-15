@@ -119,7 +119,7 @@ func (a accountSelection) applyToQuery(q *search.Query) error {
 	}
 	if len(q.ReceivedAddrs) > 0 {
 		// received: values are alternatives; keep those the selection allows.
-		received := intersectAddresses(q.ReceivedAddrs, a.scope.Addresses)
+		received, _ := search.IntersectValues(q.ReceivedAddrs, a.scope.Addresses)
 		if len(received) == 0 {
 			return errAccountSelectionConflict
 		}
@@ -130,23 +130,12 @@ func (a accountSelection) applyToQuery(q *search.Query) error {
 		return nil
 	}
 	// account: values are alternatives, so the selection must intersect them.
-	kept := intersectAddresses(q.AccountAddrs, a.scope.Addresses)
+	kept, _ := search.IntersectValues(q.AccountAddrs, a.scope.Addresses)
 	if len(kept) == 0 {
 		return errAccountSelectionConflict
 	}
 	q.AccountAddrs = kept
 	return nil
-}
-
-// intersectAddresses returns the values that allowed also lists.
-func intersectAddresses(values, allowed []string) []string {
-	var kept []string
-	for _, address := range values {
-		if slices.Contains(allowed, address) {
-			kept = append(kept, address)
-		}
-	}
-	return kept
 }
 
 // resolveForwardedAccount resolves the account argument for requests the

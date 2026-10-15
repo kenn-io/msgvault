@@ -8,12 +8,42 @@ import (
 )
 
 // Format renders the representable fields of q as a canonical query string
-// that Parse can read back without changing their meaning. AccountIDs,
+// that ParseOR can read back without changing their meaning. AccountIDs,
 // HideDeleted, UnsupportedOperators, and parse errors are transport/context
 // state rather than query-language fields and are intentionally omitted.
 func Format(q *Query) string {
 	if q == nil {
 		return ""
+	}
+	if q.HasOR() {
+		parts := make([]string, 0, len(q.Alternatives))
+		for _, alternative := range q.Alternatives {
+			parent, branch := *q, *alternative
+			parent.Alternatives = nil
+			impossible := false
+			// Repeated type and account values union, so intersect scopes before formatting.
+			for _, values := range []struct{ scope, branch *[]string }{
+				{&parent.MessageTypes, &branch.MessageTypes},
+				{&parent.AccountAddrs, &branch.AccountAddrs},
+			} {
+				if len(*values.scope) == 0 || len(*values.branch) == 0 {
+					continue
+				}
+				*values.scope, impossible = IntersectValues(*values.branch, *values.scope)
+				if impossible {
+					break
+				}
+				*values.branch = nil
+			}
+			if impossible {
+				continue
+			}
+			parts = append(parts, strings.TrimSpace(Format(&parent)+" "+Format(&branch)))
+		}
+		if len(parts) == 0 {
+			return Format(&Query{ConversationIDs: []int64{}})
+		}
+		return strings.Join(parts, " | ")
 	}
 
 	var parts []string
@@ -79,7 +109,7 @@ func formatSearchValue(value string, standalone bool) string {
 }
 
 func searchValueNeedsQuotes(value string, standalone bool) bool {
-	if value == "" || strings.ContainsAny(value, `"\'`) {
+	if value == "" || strings.ContainsAny(value, `"\'|`) {
 		return true
 	}
 	for _, char := range value {

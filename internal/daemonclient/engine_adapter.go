@@ -30,7 +30,8 @@ const (
 
 	// listIDMinAPISchemaVersion is the first daemon contract that guarantees
 	// exact List-ID filtering on every MessageFilter endpoint.
-	listIDMinAPISchemaVersion = "2.14.0"
+	listIDMinAPISchemaVersion   = "2.14.0"
+	orSearchMinAPISchemaVersion = "3.19.0"
 
 	// accountAttributionMinAPISchemaVersion is the first daemon contract that
 	// understands account: and received:; older daemons read them as text.
@@ -678,7 +679,7 @@ func (e *Engine) Aggregate(ctx context.Context, groupBy query.ViewType, opts que
 	if opts.SourceIDs != nil && len(opts.SourceIDs) == 0 {
 		return []query.AggregateRow{}, nil
 	}
-	if err := e.requireListIDCapability(ctx, search.Parse(opts.SearchQuery), query.MessageFilter{AccountScopes: opts.AccountScopes}, groupBy); err != nil {
+	if err := e.requireListIDCapability(ctx, search.ParseOR(opts.SearchQuery), query.MessageFilter{AccountScopes: opts.AccountScopes}, groupBy); err != nil {
 		return nil, err
 	}
 	resp, err := APIResponse(e.store, func(client *apiclient.Client) (*generated.GetAggregatesResp, error) {
@@ -721,7 +722,7 @@ func (e *Engine) SubAggregate(ctx context.Context, filter query.MessageFilter, g
 		return []query.AggregateRow{}, nil
 	}
 	filter.AccountScopes = append(search.CloneAccountScopes(filter.AccountScopes), search.CloneAccountScopes(opts.AccountScopes)...)
-	if err := e.requireListIDCapability(ctx, search.Parse(opts.SearchQuery), filter, groupBy); err != nil {
+	if err := e.requireListIDCapability(ctx, search.ParseOR(opts.SearchQuery), filter, groupBy); err != nil {
 		return nil, err
 	}
 	limit := optionalPositiveInt64(filter.Pagination.Limit)
@@ -1274,7 +1275,7 @@ func (e *Engine) GetDeletionTargetsByAggregateSearch(
 	if filter.SourceIDs != nil && len(filter.SourceIDs) == 0 {
 		return []query.DeletionTarget{}, nil
 	}
-	parsed := search.Parse(searchQuery)
+	parsed := search.ParseOR(searchQuery)
 	if err := validateParsedSearchQuery(parsed); err != nil {
 		return nil, err
 	}
@@ -1339,6 +1340,15 @@ func (e *Engine) requireListIDCapability(
 func (c *Client) requireListIDCapability(
 	ctx context.Context, q *search.Query, filter query.MessageFilter, groupBy ...query.ViewType,
 ) error {
+	if q.HasOR() {
+		supported, err := c.SupportsAPISchemaVersion(ctx, orSearchMinAPISchemaVersion)
+		if err != nil {
+			return fmt.Errorf("check pipe OR capability: %w", err)
+		}
+		if !supported {
+			return fmt.Errorf("pipe OR requires daemon API schema %s or newer", orSearchMinAPISchemaVersion)
+		}
+	}
 	if q != nil && len(q.AccountScopes) > 0 {
 		// The query text cannot carry scopes, so they would be dropped.
 		return errors.New("account scopes must travel in the message filter, not the query")
@@ -1547,7 +1557,7 @@ func (e *Engine) GetTotalStats(ctx context.Context, opts query.StatsOptions) (*q
 			return nil, fmt.Errorf("complete filtered statistics require daemon API schema %s or newer", tuiSearchContractMinAPISchemaVersion)
 		}
 	}
-	if err := e.requireListIDCapability(ctx, search.Parse(opts.SearchQuery), filter, opts.GroupBy); err != nil {
+	if err := e.requireListIDCapability(ctx, search.ParseOR(opts.SearchQuery), filter, opts.GroupBy); err != nil {
 		return nil, err
 	}
 	params := &generated.GetTotalStatsQuery{

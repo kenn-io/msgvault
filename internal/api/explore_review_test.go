@@ -32,10 +32,11 @@ func TestExploreRelativeDateRevisionIgnoresParseClock(t *testing.T) {
 	t.Parallel()
 	firstNow := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
 	secondNow := firstNow.Add(time.Minute)
-	first := (&search.Parser{Now: func() time.Time { return firstNow }}).Parse("alpha newer_than:1d")
-	second := (&search.Parser{Now: func() time.Time { return secondNow }}).Parse("alpha newer_than:1d")
-
-	assert.Equal(t, canonicalParsedExploreQuery(first), canonicalParsedExploreQuery(second))
+	for _, input := range []string{"alpha newer_than:1d", "newer_than:7d foo | bar"} {
+		first := (&search.Parser{Now: func() time.Time { return firstNow }}).ParseOR(input)
+		second := (&search.Parser{Now: func() time.Time { return secondNow }}).ParseOR(input)
+		assert.Equal(t, canonicalParsedExploreQuery(first), canonicalParsedExploreQuery(second), input)
+	}
 }
 
 func TestExploreIdentityFilterRequiresMatchingSingleSource(t *testing.T) {
@@ -1860,4 +1861,91 @@ func addExploreCursor(t *testing.T, body, cursor string) string {
 	data, err := json.Marshal(object)
 	require.NoError(t, err)
 	return string(data)
+}
+
+func TestExploreSemanticAndHybridPipeLiteral(t *testing.T) {
+	for _, mode := range []string{"semantic", "hybrid"} {
+		t.Run(mode, func(t *testing.T) {
+			parsed, failure := validateExploreSearchDefinition(ExploreHTTPRequest{Query: "alpha | gamma", SearchMode: mode}, query.Context{})
+			require.Nil(t, failure)
+			assert.Equal(t, search.Parse("alpha | gamma"), parsed)
+		})
+	}
+}
+
+func TestExplorePipeORPlainHashUnchanged(t *testing.T) {
+	q := search.Parse("alpha from:a@example.org")
+	assert.Equal(t, hashCanonicalValue(q, false), canonicalParsedExploreQuery(search.ParseOR("alpha from:a@example.org")))
+}
+
+func newExploreSearchFixture(t *testing.T, subjects []string) (*store.Store, *query.DuckDBEngine) {
+	t.Helper()
+	require := require.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	source, err := st.GetOrCreateSource("gmail", "archive@example.org")
+	require.NoError(err)
+	conversation, err := st.EnsureConversation(source.ID, "explore", "Explore")
+	require.NoError(err)
+	var messages strings.Builder
+	for i, subject := range subjects {
+		sentAt := time.Date(2026, 7, 18, 10+i, 0, 0, 0, time.UTC)
+		id, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conversation,
+			SourceMessageID: fmt.Sprintf("m%d", i+1), MessageType: "email", Subject: sql.NullString{String: subject, Valid: true},
+			Snippet: sql.NullString{String: subject, Valid: true}, SentAt: sql.NullTime{Time: sentAt, Valid: true}})
+		require.NoError(err)
+		require.Equal(int64(i+1), id)
+		require.NoError(st.UpsertMessageBody(id, sql.NullString{String: subject, Valid: true}, sql.NullString{}))
+		if i > 0 {
+			messages.WriteByte(',')
+		}
+		fmt.Fprintf(&messages, `(%d::BIGINT, %d::BIGINT, 'm%d', %d::BIGINT, '%s', '%s', TIMESTAMP '%s', 0::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, NULL::BIGINT, 'email', NULL::VARCHAR, false, 2026, 7)`, id, source.ID, i+1, conversation, subject, subject, sentAt.Format("2006-01-02 15:04:05"))
+	}
+	_, err = st.BackfillFTS(nil)
+	require.NoError(err)
+	engine, _ := newExploreDuckDBFixtureWithMessages(t, messages.String(), int64(len(subjects)))
+	return st, engine
+}
+
+func TestExplorePipeORCountsAndPagination(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st, engine := newExploreSearchFixture(t, []string{"alpha beta", "gamma", "ordinary"})
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}}, Store: st,
+		Engine: engine, Logger: testLogger(),
+	})
+	state := `{"query":"alpha beta | gamma","search_mode":"full_text","limit":1}`
+	first := postExploreJSON(t, srv, "/api/v1/explore", state)
+	require.Equal(http.StatusOK, first.Code, first.Body.String())
+	var page ExploreHTTPResponse
+	require.NoError(json.Unmarshal(first.Body.Bytes(), &page))
+	require.NotNil(page.TotalCount)
+	assert.Equal(int64(2), *page.TotalCount)
+	require.Len(page.Rows, 1)
+	assert.Equal("gamma", page.Rows[0].Title)
+	assert.Equal("gamma", page.Rows[0].Preview)
+	require.NotNil(page.Rows[0].AnchorMessageID)
+	assert.Equal(int64(2), *page.Rows[0].AnchorMessageID)
+	require.NotEmpty(page.NextCursor)
+	counts := postExploreJSON(t, srv, "/api/v1/explore/match-counts", fmt.Sprintf(`{"predicate":%s,"row_keys":[%q]}`, state, page.Rows[0].Key))
+	require.Equal(http.StatusOK, counts.Code, counts.Body.String())
+	var countPage ExploreMatchCountsResponse
+	require.NoError(json.Unmarshal(counts.Body.Bytes(), &countPage))
+	require.Len(countPage.Counts, 1)
+	assert.Equal(page.Rows[0].Key, countPage.Counts[0].RowKey)
+	assert.Equal(int64(1), countPage.Counts[0].Count)
+	firstKey := page.Rows[0].Key
+	second := postExploreJSON(t, srv, "/api/v1/explore", addExploreCursor(t, state, page.NextCursor))
+	require.Equal(http.StatusOK, second.Code, second.Body.String())
+	page = ExploreHTTPResponse{}
+	require.NoError(json.Unmarshal(second.Body.Bytes(), &page))
+	require.NotNil(page.TotalCount)
+	assert.Equal(int64(2), *page.TotalCount)
+	require.Len(page.Rows, 1)
+	assert.Equal("alpha beta", page.Rows[0].Title)
+	assert.Equal("alpha beta", page.Rows[0].Preview)
+	require.NotNil(page.Rows[0].AnchorMessageID)
+	assert.Equal(int64(1), *page.Rows[0].AnchorMessageID)
+	assert.NotEqual(firstKey, page.Rows[0].Key)
+	assert.Empty(page.NextCursor)
 }

@@ -8,7 +8,7 @@ export type SearchCLIParams = {
    */
   include_snippet?: boolean;
   /**
-   * Search query
+   * Search query; full text accepts standalone pipe-separated OR alternatives
    */
   q: string;
   /**

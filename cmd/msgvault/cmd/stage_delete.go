@@ -57,7 +57,7 @@ func runStageDelete(cmd *cobra.Command, args []string) error {
 }
 
 func runStageDeleteFromQuery(cmd *cobra.Command, queryText string) error {
-	parsed := search.Parse(queryText)
+	parsed := search.ParseOR(queryText)
 	if err := parsed.Err(); err != nil {
 		return usageErr(cmd, err)
 	}

@@ -99,7 +99,7 @@ func (m Model) loadMeetingSearch(queryString string, offset int, _ bool) tea.Cmd
 	presentationGeneration := m.presentationGeneration
 	return safeCmdWithPanic(
 		func() tea.Msg {
-			parsed := search.Parse(queryString)
+			parsed := search.ParseOR(queryString)
 			if err := parsed.Err(); err != nil {
 				return meetingSearchLoadedMsg{
 					err: err, requestID: requestID, offset: offset,

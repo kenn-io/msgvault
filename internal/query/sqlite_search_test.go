@@ -14,6 +14,71 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/ptr"
 )
 
+func TestSearchPipeOR(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	env := newTestEnv(t)
+	_, err := env.DB.Exec(`UPDATE message_bodies SET body_text = CASE message_id WHEN 1 THEN 'alpha beta' WHEN 2 THEN 'gamma' ELSE 'ordinary body' END`)
+	requirements.NoError(err)
+	env.EnableFTS()
+	t.Run("empty FTS term", func(t *testing.T) {
+		assertMessageIDs(t, env.MustSearch(search.ParseOR("!!! | subject:final"), 100, 0), []int64{5})
+	})
+	t.Run("parent AccountAddrs", func(t *testing.T) {
+		require := require.New(t)
+		db := dbtest.NewTestDB(t, "../store/schema.sql")
+		source := db.AddSource(dbtest.SourceOpts{Identifier: "test@example.com"})
+		conversation := db.AddConversation(dbtest.ConversationOpts{SourceID: source})
+		_, err := db.DB.Exec(`INSERT INTO messages (source_id, conversation_id, source_message_id, message_type, subject, account_address, account_path)
+			VALUES (?, ?, 'work@example.org', 'email', 'invoice', 'work@example.org', 'inbound'), (?, ?, 'other@example.org', 'email', 'invoice', 'other@example.org', 'inbound')`, source, conversation, source, conversation)
+		require.NoError(err)
+		q := search.ParseOR("account:other@example.org | subject:invoice")
+		q.AccountAddrs = []string{"work@example.org"}
+		rows, err := NewSQLiteEngine(db.DB).SearchFast(t.Context(), q, MessageFilter{}, 100, 0)
+		require.NoError(err)
+		require.Len(rows, 1)
+		assert.Equal(t, []string{"work@example.org"}, []string{rows[0].SourceMessageID})
+	})
+	q := search.ParseOR("alpha beta | gamma")
+	rows := env.MustSearch(q, 100, 0)
+	assertMessageIDs(t, rows, []int64{1, 2})
+	_, err = env.DB.Exec(`DELETE FROM messages_fts WHERE rowid = 3`)
+	requirements.NoError(err)
+	rows = env.MustSearch(search.ParseOR("from:alice@example.com | gamma"), 100, 0)
+	assertMessageIDs(t, rows, []int64{1, 2, 3})
+	q.AccountIDs = []int64{999}
+	assertions.Empty(env.MustSearch(q, 100, 0))
+	q.AccountIDs = []int64{1}
+	assertMessageIDs(t, env.MustSearch(q, 100, 0), []int64{1, 2})
+	env.MarkDeletedByID(2)
+	q.DeletionScope = search.DeletionScopeActive
+	assertMessageIDs(t, env.MustSearch(q, 100, 0), []int64{1})
+	q.DeletionScope = search.DeletionScopeDeleted
+	assertMessageIDs(t, env.MustSearch(q, 100, 0), []int64{2})
+	q.DeletionScope = search.DeletionScopeAny
+	targets, err := env.Engine.GetDeletionTargetsBySearch(env.Ctx, q, MessageFilter{}, DeletionSearchDeep)
+	requirements.NoError(err)
+	ids := make([]int64, len(targets))
+	for i, target := range targets {
+		ids[i] = target.MessageID
+	}
+	assertions.ElementsMatch([]int64{1}, ids)
+}
+
+func TestSearchPipeORDateOrder(t *testing.T) {
+	require := require.New(t)
+	db := dbtest.NewTestDB(t, "../store/schema.sql")
+	source := db.AddSource(dbtest.SourceOpts{Identifier: "work@example.org"})
+	conversation := db.AddConversation(dbtest.ConversationOpts{SourceID: source, Title: "Staging"})
+	_, err := db.DB.Exec(`INSERT INTO messages (source_id, conversation_id, source_message_id, message_type, subject, sent_at)
+		VALUES (?, ?, 'message-1', 'email', 'first', '2026-01-01'), (?, ?, 'message-2', 'email', 'second', '2026-01-02')`, source, conversation, source, conversation)
+	require.NoError(err)
+	rows, err := NewSQLiteEngine(db.DB).SearchFast(t.Context(), search.ParseOR("subject:first | subject:second"), MessageFilter{}, 100, 0)
+	require.NoError(err)
+	require.Len(rows, 2)
+	assert.Equal(t, []string{"message-2", "message-1"}, []string{rows[0].SourceMessageID, rows[1].SourceMessageID})
+}
+
 func TestSearch_Filters(t *testing.T) {
 	after := ptr.Date(2024, 2, 1)
 	before := ptr.Date(2024, 3, 1)

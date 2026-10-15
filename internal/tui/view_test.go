@@ -1,9 +1,14 @@
 package tui
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/query/querytest"
+	"go.kenn.io/msgvault/internal/search"
 )
 
 // assertHighlight checks that applyHighlight produces the expected plain text
@@ -73,4 +78,29 @@ func TestApplyHighlightPreservesExistingANSISequences(t *testing.T) {
 	assert.Contains(result, "\x1b[1m")
 	assert.Contains(result, "\x1b[0m")
 	assert.NotEqual(text, result)
+}
+
+func TestExtractSearchTermsPipeOR(t *testing.T) {
+	assert.Equal(t, []string{"alpha", "gamma"}, extractSearchTerms("alpha | gamma"))
+}
+
+func TestSemanticSearchPipeLiteralValidation(t *testing.T) {
+	assert.NoError(t, (Model{searchMode: searchModeSemantic}).searchInputValidationError("alpha | gamma"))
+}
+
+func TestMeetingSearchPipeOR(t *testing.T) {
+	require := require.New(t)
+	var captured *search.Query
+	engine := &querytest.MockEngine{
+		SearchFunc: func(_ context.Context, q *search.Query, _, _ int) ([]query.MessageSummary, error) {
+			captured = q
+			return nil, nil
+		},
+	}
+	model := New(engine, Options{})
+	loaded, ok := model.loadMeetingSearch("alpha | gamma", 0, false)().(meetingSearchLoadedMsg)
+	require.True(ok)
+	require.NoError(loaded.err)
+	require.NotNil(captured)
+	assert.True(t, captured.HasOR())
 }

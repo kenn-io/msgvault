@@ -68,6 +68,7 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
     tzdata \
     wget \
     libstdc++6 \
+    libpcre2-8-0 \
     bubblewrap \
     && rm -rf /var/lib/apt/lists/*
 

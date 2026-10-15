@@ -3466,7 +3466,7 @@ func TestBuildSearchConditions_UsesILIKENotRegex(t *testing.T) {
 func TestBuildAggregateSearchConditions_UsesILIKENotRegex(t *testing.T) {
 	engine := &DuckDBEngine{}
 
-	conditions, args := engine.buildAggregateSearchConditions("hello world")
+	conditions, args := engine.buildAggregateSearchConditions(search.Parse("hello world"))
 	where := strings.Join(conditions, " AND ")
 
 	assert.NotContains(t, where, "regexp_matches", "aggregate search should use ILIKE, not regexp_matches")
@@ -3811,7 +3811,7 @@ func TestBuildStatsSearchConditions_PlaceholderArgCount(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			conditions, args := engine.buildStatsSearchConditions(tc.query, tc.groupBy)
+			conditions, args := engine.buildStatsSearchConditions(search.Parse(tc.query), tc.groupBy)
 			where := strings.Join(conditions, " AND ")
 			placeholders := strings.Count(where, "?")
 			assert.Equal(t, len(args), placeholders,
@@ -3849,7 +3849,7 @@ func TestBuildAggregateSearchConditions_PlaceholderArgCount(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			conditions, args := engine.buildAggregateSearchConditions(tc.query, tc.keyColumns...)
+			conditions, args := engine.buildAggregateSearchConditions(search.Parse(tc.query), tc.keyColumns...)
 			where := strings.Join(conditions, " AND ")
 			placeholders := strings.Count(where, "?")
 			assert.Equal(t, len(args), placeholders,

@@ -138,10 +138,10 @@
   function open(view: SavedView): void {
     const incompatibility = incompatibilityFor(view);
     if (incompatibility) return;
-    onOpen(exploreStateFromSavedView(view.canonical_state as CanonicalState));
+    onOpen(exploreStateFromSavedView(view.canonical_state as CanonicalState, view.schema_version));
   }
   function incompatibilityFor(view: SavedView): string {
-    if (view.schema_version !== CURRENT_SCHEMA_VERSION) {
+    if (view.schema_version < 1 || view.schema_version > CURRENT_SCHEMA_VERSION) {
       return `This view uses schema version ${view.schema_version}. Automatic migration is not supported; remove it and save the current view again.`;
     }
     return view.incompatibility_reason ?? '';

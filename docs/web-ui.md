@@ -373,9 +373,9 @@ the record revision as an optimistic-concurrency guard. If another browser
 changes the view first, msgvault reports a conflict and requires you to reload
 and review the latest revision instead of overwriting it.
 
-The daemon validates every definition against the version-1 vocabulary
-before saving it, so any stored view can be opened here, run by an API client
-through `POST /api/v1/saved-views/{id}/run`, or executed by an AI assistant
+The daemon validates new definitions against the schema 2 vocabulary. It reads
+schema 1 views with pipes as literal text. A stored view can be opened here,
+run by an API client through `POST /api/v1/saved-views/{id}/run`, or executed by an AI assistant
 with the [MCP server](/docs/usage/chat/#saved-views)'s `run_saved_view` tool.
 All three read the same records and see the same revisions.
 

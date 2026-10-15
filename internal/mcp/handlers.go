@@ -131,31 +131,32 @@ func listLimitArg(args map[string]any) int {
 }
 
 type handlers struct {
-	delegatedOnly       bool
-	downloads           *downloadCache
-	engine              query.Engine
-	archiveSQLQuerier   ArchiveSQLQuerier
-	attachmentsDir      string
-	attachmentReader    AttachmentReader
-	manifestSaver       DeletionManifestSaver
-	hybridSearcher      HybridSearcher
-	similarSearcher     SimilarSearcher
-	dataDir             string
-	documentSearcher    DocumentSearcher
-	mediaSearcher       MediaSearcher
-	personFileSearcher  PersonFileSearcher
-	peopleBackend       peoplebrowser.Backend
-	directoryBackend    peoplebrowser.DirectoryLister
-	savedViews          savedview.Service
-	meetings            MeetingBackend
-	calendar            CalendarBackend
-	personAgendaBackend PersonAgendaBackend
-	kata                KataBackend
-	identityReview      IdentityReviewBackend
-	personCardDAV       PersonCardDAVBackend
-	messageTags         MessageTagBackend
-	identityScoring     IdentityScoringBackend
-	drafts              DraftRunner
+	delegatedOnly        bool
+	downloads            *downloadCache
+	engine               query.Engine
+	archiveSQLQuerier    ArchiveSQLQuerier
+	attachmentsDir       string
+	attachmentReader     AttachmentReader
+	manifestSaver        DeletionManifestSaver
+	hybridSearcher       HybridSearcher
+	similarSearcher      SimilarSearcher
+	dataDir              string
+	documentSearcher     DocumentSearcher
+	mediaSearcher        MediaSearcher
+	personFileSearcher   PersonFileSearcher
+	peopleBackend        peoplebrowser.Backend
+	directoryBackend     peoplebrowser.DirectoryLister
+	savedViews           savedview.Service
+	meetings             MeetingBackend
+	calendar             CalendarBackend
+	personAgendaBackend  PersonAgendaBackend
+	kata                 KataBackend
+	identityReview       IdentityReviewBackend
+	personCardDAV        PersonCardDAVBackend
+	messageTags          MessageTagBackend
+	identityScoring      IdentityScoringBackend
+	drafts               DraftRunner
+	contactRoutesBackend ContactRoutesBackend
 
 	// Optional vector-search wiring. When hybridEngine is nil, the
 	// search_message_bodies handler rejects mode=vector and mode=hybrid with
@@ -745,7 +746,7 @@ func (h *handlers) searchMetadata(ctx context.Context, req toolRequest) (*toolRe
 		return toolErrorResult("query parameter is required"), nil
 	}
 
-	q := search.Parse(queryStr)
+	q := search.ParseOR(queryStr)
 	if err := q.Err(); err != nil {
 		return toolErrorResult(err.Error()), nil
 	}
@@ -2398,10 +2399,11 @@ func (h *handlers) stageDeletion(ctx context.Context, req toolRequest) (*toolRes
 
 	var targets []query.DeletionTarget
 	var description string
+	var searchNote string
 
 	if hasQuery {
 		// Query-based search
-		q := search.Parse(queryStr)
+		q := search.ParseOR(queryStr)
 		if err := q.Err(); err != nil {
 			return toolErrorResult(err.Error()), nil
 		}
@@ -2413,19 +2415,19 @@ func (h *handlers) stageDeletion(ctx context.Context, req toolRequest) (*toolRes
 			return toolErrorResult(err.Error()), nil
 		}
 
-		// Try fast search first
-		filter := query.MessageFilter{SourceID: sourceID}
-		results, err := h.engine.SearchFast(ctx, q, filter, maxStageDeletionResults, 0)
+		var results []query.MessageSummary
+		if q.HasOR() && q.HasTextTerms() {
+			results, err = h.engine.Search(ctx, q, maxStageDeletionResults, 0)
+			searchNote = "Full-text OR search includes body matches. "
+		} else {
+			filter := query.MessageFilter{SourceID: sourceID}
+			results, err = h.engine.SearchFast(ctx, q, filter, maxStageDeletionResults, 0)
+			if err == nil && len(results) == 0 && q.HasTextTerms() {
+				results, err = h.engine.Search(ctx, q, maxStageDeletionResults, 0)
+			}
+		}
 		if err != nil {
 			return nil, newInternalError("search messages for deletion", err)
-		}
-
-		// Fall back to FTS if no results and query has text terms
-		if len(results) == 0 && len(q.TextTerms) > 0 {
-			results, err = h.engine.Search(ctx, q, maxStageDeletionResults, 0)
-			if err != nil {
-				return nil, newInternalError("fallback search messages for deletion", err)
-			}
 		}
 
 		for _, msg := range results {
@@ -2540,7 +2542,7 @@ func (h *handlers) stageDeletion(ctx context.Context, req toolRequest) (*toolRes
 		BatchID:      manifest.ID,
 		MessageCount: len(gmailIDs),
 		Status:       string(manifest.Status),
-		NextStep:     "In the invoking CLI's config.toml, set '[deletion] remote_enabled = true' for durable consent and run 'msgvault delete-staged'; for one command instead, run 'MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault delete-staged'. Run 'msgvault cancel-deletion " + manifest.ID + "' to cancel",
+		NextStep:     searchNote + "In the invoking CLI's config.toml, set '[deletion] remote_enabled = true' for durable consent and run 'msgvault delete-staged'; for one command instead, run 'MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault delete-staged'. Run 'msgvault cancel-deletion " + manifest.ID + "' to cancel",
 	}
 
 	return jsonResult(resp)

@@ -14,6 +14,55 @@ import (
 	"go.kenn.io/msgvault/internal/search"
 )
 
+func TestPipeORSearchTransport(t *testing.T) {
+	var requested atomic.Bool
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/health" {
+			writeJSONResponse(t, w, map[string]any{"status": "ok", "api_schema_version": "3.19.0"})
+			return
+		}
+		requested.Store(true)
+		assert.Equal(t, "/api/v1/search/deep", r.URL.Path)
+		assert.Equal(t, "alpha | gamma", r.URL.Query().Get("q"))
+		writeJSONResponse(t, w, map[string]any{"messages": []any{}, "total_count": 0, "stats": map[string]any{}})
+	}))
+	defer server.Close()
+	engine := NewEngineAdapter(newTestStore(server, ""))
+	_, err := engine.Search(t.Context(), search.ParseOR("alpha | gamma"), 10, 0)
+	require.NoError(t, err)
+	assert.True(t, requested.Load())
+}
+
+func TestPipeORRequiresCapableDaemon(t *testing.T) {
+	calls := map[string]func(context.Context, *Client) error{
+		"pipe OR CLI search": func(ctx context.Context, c *Client) error {
+			_, err := c.GetCLISearch(ctx, CLISearchRequest{Query: "alpha | gamma"})
+			return err
+		},
+		"pipe OR search": func(ctx context.Context, c *Client) error {
+			_, err := NewEngineAdapter(c).Search(ctx, search.ParseOR("alpha | gamma"), 10, 0)
+			return err
+		},
+	}
+	for name, call := range calls {
+		t.Run(name, func(t *testing.T) {
+			var forwarded atomic.Int32
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/v1/health" {
+					writeJSONResponse(t, w, map[string]any{"status": "ok", "api_schema_version": "3.18.0"})
+					return
+				}
+				forwarded.Add(1)
+				http.NotFound(w, r)
+			}))
+			defer server.Close()
+			err := call(t.Context(), newTestStore(server, ""))
+			require.ErrorContains(t, err, "3.19.0")
+			assert.Zero(t, forwarded.Load(), "no non-health request may reach an older daemon")
+		})
+	}
+}
+
 // TestAccountScopesRequireCapableDaemon proves a daemon that predates
 // structured account scopes, which would ignore them and widen the result,
 // is refused before any request.

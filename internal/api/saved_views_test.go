@@ -442,14 +442,14 @@ func TestSavedViewsReadReportsUnsupportedSchema(t *testing.T) {
 	})
 	requirements.NoError(err)
 	// Simulate an archive containing a definition from another schema version.
-	_, err = st.DB().ExecContext(t.Context(), "UPDATE saved_views SET schema_version = 2 WHERE id = ?", view.ID)
+	_, err = st.DB().ExecContext(t.Context(), "UPDATE saved_views SET schema_version = 3 WHERE id = ?", view.ID)
 	requirements.NoError(err)
 	itemPath := savedViewsPath + "/" + strconv.FormatInt(view.ID, 10)
 	response := performSavedViewRequest(t, srv, http.MethodGet, itemPath, nil, session.headers())
 	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
 	var item SavedView
 	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &item))
-	assertions.Contains(item.IncompatibilityReason, "schema version 2")
+	assertions.Contains(item.IncompatibilityReason, "schema version 3")
 	listed := performSavedViewRequest(t, srv, http.MethodGet, savedViewsPath, nil, session.headers())
 	requirements.Equal(http.StatusOK, listed.Code, listed.Body.String())
 	var library SavedViewsResponse
@@ -466,7 +466,7 @@ func TestSavedViewsReadPreservesIncompatibleDefinitions(t *testing.T) {
 		state   string
 	}{
 		{"older sort", 1, `{"sort":[{"field":"size","direction":"asc"}]}`},
-		{"future shape", 2, `{"query":{"text":"invoice"},"layout":"future"}`},
+		{"future shape", 3, `{"query":{"text":"invoice"},"layout":"future"}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assertions := assert.New(t)

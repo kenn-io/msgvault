@@ -23,6 +23,20 @@ function savedView(overrides: Record<string, unknown> = {}) {
 }
 
 describe('SavedViewsWorkspace', () => {
+  it('opens schema 1 with its saved pipe meaning', async () => {
+    const onOpen = vi.fn();
+    render(SavedViewsWorkspace, {
+      client: createAPIClient(vi.fn<typeof fetch>(async () => Response.json({ saved_views: [savedView({
+        schema_version: 1,
+        canonical_state: { query: 'alpha | gamma', search_mode: 'full_text' }
+      })] }))), onOpen
+    });
+    await fireEvent.click(await screen.findByRole('button', { name: 'Open Invoices' }));
+    expect(onOpen).toHaveBeenCalledWith(expect.objectContaining({
+      query: 'alpha "|" gamma'
+    }));
+  });
+
   it('is a library: no save form, and an empty state that points to Save view…', async () => {
     render(SavedViewsWorkspace, {
       client: createAPIClient(vi.fn<typeof fetch>(async () => Response.json({ saved_views: [] })))

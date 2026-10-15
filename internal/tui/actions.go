@@ -218,7 +218,7 @@ func normalizeEmptyDeletionSearch(dctx DeletionContext) DeletionContext {
 		dctx.SearchQuery = ""
 		return dctx
 	}
-	parsed := search.Parse(queryString)
+	parsed := search.ParseOR(queryString)
 	if parsed.Err() == nil && search.Format(parsed) == "" {
 		dctx.SearchQuery = ""
 	}
@@ -341,7 +341,7 @@ func (c *ActionController) resolveAllMatchingDeletionTargets(
 	if dctx.SearchMode == searchModeSemantic {
 		return nil, errors.New("semantic search is ranked and bounded; switch to fast or deep search to stage every match")
 	}
-	parsed := search.Parse(dctx.SearchQuery)
+	parsed := search.ParseOR(dctx.SearchQuery)
 	if err := parsed.Err(); err != nil {
 		return nil, fmt.Errorf("invalid search query: %w", err)
 	}

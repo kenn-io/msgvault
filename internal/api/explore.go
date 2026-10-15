@@ -97,8 +97,8 @@ var exploreGroupDimensions = func() []ExploreGroupDimension {
 
 type ExploreHTTPRequest struct {
 	Filters             []ExploreFilter         `json:"filters,omitempty"`
-	Query               string                  `json:"query,omitempty"`
-	SearchMode          string                  `json:"search_mode,omitempty" enum:"full_text,semantic,hybrid"`
+	Query               string                  `json:"query,omitempty" doc:"Search query; full_text accepts standalone pipe-separated OR alternatives; other modes read pipes as text"`
+	SearchMode          string                  `json:"search_mode,omitempty" enum:"full_text,semantic,hybrid" doc:"Search mode; pipe OR is full_text only"`
 	Grouping            []ExploreGroupDimension `json:"grouping,omitempty"`
 	Presentation        string                  `json:"presentation,omitempty" enum:"table,timeline,files"`
 	Sort                []ExploreSort           `json:"sort,omitempty"`
@@ -129,8 +129,8 @@ type ExploreGroupSort struct {
 
 type ExploreGroupsHTTPRequest struct {
 	Filters      []ExploreFilter         `json:"filters,omitempty"`
-	Query        string                  `json:"query,omitempty"`
-	SearchMode   string                  `json:"search_mode,omitempty" enum:"full_text,semantic,hybrid"`
+	Query        string                  `json:"query,omitempty" doc:"Search query; full_text accepts standalone pipe-separated OR alternatives; other modes read pipes as text"`
+	SearchMode   string                  `json:"search_mode,omitempty" enum:"full_text,semantic,hybrid" doc:"Search mode; pipe OR is full_text only"`
 	Grouping     []ExploreGroupDimension `json:"grouping" minItems:"1" maxItems:"1"`
 	Presentation string                  `json:"presentation,omitempty" enum:"table"`
 	Sort         []ExploreGroupSort      `json:"sort,omitempty" maxItems:"1"`
@@ -704,7 +704,7 @@ func (s *Server) handleExploreMatchCounts(w http.ResponseWriter, r *http.Request
 	}
 	cacheRequest := predicate.request
 	cacheRequest.Query = ""
-	canonicalQueryHash := exploreCanonicalQueryHash(predicate.request.Query)
+	canonicalQueryHash := exploreCanonicalQueryHash(predicate.request.Query, predicate.request.SearchMode)
 	cacheKey := canonicalExploreHash(cacheRequest) + "|" + canonicalQueryHash + "|" + revisionProbe.CacheRevision + "|" + searchSpec.LexicalIndexRevision + "|" + hashCanonicalValue(request.RowKeys, false)
 	if cached, found := state.getMatchCounts(cacheKey); found {
 		counts := make([]ExploreRowMatchCount, len(request.RowKeys))
@@ -739,8 +739,8 @@ func (s *Server) handleExploreMatchCounts(w http.ResponseWriter, r *http.Request
 	})
 }
 
-func exploreCanonicalQueryHash(queryText string) string {
-	parsed := search.Parse(queryText)
+func exploreCanonicalQueryHash(queryText, mode string) string {
+	parsed := search.ParseWithOR(queryText, mode == exploreSearchModeFullText)
 	if parsed.Err() != nil {
 		return ""
 	}
@@ -1162,7 +1162,7 @@ func validateExploreSearchDefinition(
 	if request.SearchMode == "" {
 		return nil, nil
 	}
-	parsed := search.Parse(request.Query)
+	parsed := search.ParseWithOR(request.Query, request.SearchMode == exploreSearchModeFullText)
 	if err := parsed.Err(); err != nil {
 		return nil, &exploreSearchDefinitionError{code: "invalid_query", message: err.Error()}
 	}
@@ -1467,13 +1467,9 @@ func applyLexicalFilterPushdown(parsed *search.Query, filters query.Context) boo
 		for _, messageType := range filters.MessageTypes {
 			types = append(types, strings.ToLower(messageType))
 		}
-		if len(parsed.MessageTypes) > 0 {
-			types = slices.DeleteFunc(types, func(messageType string) bool {
-				return !slices.Contains(parsed.MessageTypes, messageType)
-			})
-			if len(types) == 0 {
-				return false
-			}
+		types, noMatches := search.IntersectValues(parsed.MessageTypes, types)
+		if noMatches {
+			return false
 		}
 		parsed.MessageTypes = types
 	}
@@ -1601,7 +1597,7 @@ func (s *Server) resolveExploreVectorSearch(ctx context.Context, w http.Response
 		// same population instead of the requested (possibly unrestricted)
 		// scope. deletion:deleted never reaches here — it was rejected above.
 		lexicalSpec, _, ok = s.resolveExploreSearch(ctx, w, ExploreHTTPRequest{
-			Query: request.Query, SearchMode: exploreSearchModeFullText,
+			Query: search.Format(parsed), SearchMode: exploreSearchModeFullText,
 			Filters: withActiveDeletionFilter(request.Filters),
 		})
 		if !ok {
@@ -1807,6 +1803,13 @@ func exploreSnapshotRequestHash(request ExploreHTTPRequest) string {
 }
 
 func canonicalParsedExploreQuery(parsed *search.Query) string {
+	return hashCanonicalValue(canonicalizeParsedExploreQuery(parsed), false)
+}
+
+func canonicalizeParsedExploreQuery(parsed *search.Query) *search.Query {
+	if parsed == nil {
+		return nil
+	}
 	canonical := *parsed
 	canonicalStrings := func(values []string) []string {
 		values = slices.Clone(values)
@@ -1826,6 +1829,10 @@ func canonicalParsedExploreQuery(parsed *search.Query) string {
 	}
 	slices.SortFunc(canonical.ListIDExactGroups, slices.Compare)
 	canonical.MessageTypes = canonicalStrings(parsed.MessageTypes)
+	canonical.Alternatives = slices.Clone(parsed.Alternatives)
+	for i, alternative := range parsed.Alternatives {
+		canonical.Alternatives[i] = canonicalizeParsedExploreQuery(alternative)
+	}
 	canonical.AccountIDs = slices.Clone(parsed.AccountIDs)
 	slices.Sort(canonical.AccountIDs)
 	canonical.AccountIDs = slices.Compact(canonical.AccountIDs)
@@ -1835,7 +1842,7 @@ func canonicalParsedExploreQuery(parsed *search.Query) string {
 	canonical.BeforeDate = nil
 	canonical.AfterDate = nil
 	canonical.UnsupportedOperators = nil
-	return hashCanonicalValue(canonical, false)
+	return &canonical
 }
 
 func (s *Server) enrichExploreSemanticRows(rows []query.EntryRow, request ExploreHTTPRequest, snapshotID string) {

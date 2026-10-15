@@ -8,7 +8,7 @@ export type GetTotalStatsParams = {
    */
   source_ids?: number[];
   /**
-   * Search query
+   * Search query; full text accepts standalone pipe-separated OR alternatives
    */
   search_query?: string;
   /**

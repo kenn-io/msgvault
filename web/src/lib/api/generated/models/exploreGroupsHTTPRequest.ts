@@ -22,7 +22,9 @@ export interface ExploreGroupsHTTPRequest {
    */
   limit?: number;
   presentation?: ExploreGroupsHTTPRequestPresentation;
+  /** Search query; full_text accepts standalone pipe-separated OR alternatives; other modes read pipes as text */
   query?: string;
+  /** Search mode; pipe OR is full_text only */
   search_mode?: ExploreGroupsHTTPRequestSearchMode;
   /** @maxItems 1 */
   sort?: ExploreGroupSort[];

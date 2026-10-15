@@ -4,7 +4,7 @@
 
 export type FastSearchParams = {
   /**
-   * Search query
+   * Search query; full text accepts standalone pipe-separated OR alternatives
    */
   q: string;
   /**

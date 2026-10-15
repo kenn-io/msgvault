@@ -314,6 +314,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	s.registerTelemetryRoutes(apiV1)
 	s.registerPersonProfileRoutes(apiV1)
 	s.registerPersonIdentityRoutes(apiV1)
+	s.registerContactRouteRoutes(apiV1)
 	s.registerPersonNetworkRoutes(apiV1)
 	s.registerPersonTrackingRoutes(apiV1)
 	s.registerEmailTagRoutes(apiV1)
@@ -810,7 +811,7 @@ func rawRouteParameters(operationID string) []*huma.Param {
 	case "searchCLI":
 		return append([]*huma.Param{
 			queryBooleanParam("include_snippet", "Include attachment names and bounded FTS match context"),
-			queryStringParam("q", "Search query", true),
+			queryStringParam("q", "Search query; full text accepts standalone pipe-separated OR alternatives", true),
 			queryIntegerParam(limitParam, "Maximum number of rows to return"),
 			queryIntegerParam("offset", "Zero-based row offset"),
 			queryStringParam("message_type", "Message type filter; repeat or comma-separate for multiple values", false),
@@ -977,8 +978,8 @@ func rawRouteParameters(operationID string) []*huma.Param {
 		}
 	case "searchMessages":
 		return mergeParams([]*huma.Param{
-			queryStringParam("q", "Search query", true),
-			queryStringParam("mode", "Search mode: fts, vector, or hybrid. conversation_id applies in every mode; other structured filter parameters require vector or hybrid", false),
+			queryStringParam("q", "Search query; fts accepts standalone pipe-separated OR alternatives; other modes read pipes as text", true),
+			queryStringParam("mode", "Search mode: fts, vector, or hybrid. fts accepts standalone pipe-separated OR alternatives; other modes read pipes as text. conversation_id applies in every mode; other structured filter parameters require vector or hybrid", false),
 			queryIntegerParam("page", "One-based page number (default 1; values below 1 are clamped to 1). Non-numeric values are rejected with 400."),
 			queryIntegerParam("page_size", "Page size (default 20, max 100; out-of-range values are clamped). Non-numeric values are rejected with 400."),
 			queryIntegerParam("offset", "Zero-based ranking offset for vector or hybrid search (default 0)"),
@@ -1034,13 +1035,13 @@ func rawRouteParameters(operationID string) []*huma.Param {
 	case "getTotalStats":
 		return mergeParams([]*huma.Param{
 			queryIntegerArrayParam("source_ids", "Source IDs; repeat the parameter for multiple sources"),
-			queryStringParam("search_query", "Search query", false),
+			queryStringParam("search_query", "Search query; full text accepts standalone pipe-separated OR alternatives", false),
 			queryBooleanParam("search_scope", "Include all message types when the search has no explicit message_type"),
 			queryStringParam("group_by", "Aggregate view type for grouping", false),
 		}, messageFilterScopeParams())
 	case "fastSearch":
 		params := append([]*huma.Param{
-			queryStringParam("q", "Search query", true),
+			queryStringParam("q", "Search query; full text accepts standalone pipe-separated OR alternatives", true),
 			queryStringParam("view_type", "Stats grouping view type", false),
 		}, messageFilterParams()...)
 		return params
@@ -1057,7 +1058,7 @@ func rawRouteParameters(operationID string) []*huma.Param {
 			}
 		}
 		return append([]*huma.Param{
-			queryStringParam("q", "Search query", true),
+			queryStringParam("q", "Search query; full text accepts standalone pipe-separated OR alternatives", true),
 			queryStringParam("scope", "Exact search scope: body; omit for composite full-text search", false),
 		}, filterParams...)
 	case "listTextConversations":
@@ -1142,7 +1143,7 @@ func aggregateOptionParams() []*huma.Param {
 		queryIntegerArrayParam("source_ids", "Source IDs; repeat or comma-separate values"),
 		queryBooleanParam("attachments_only", "Only include messages with attachments"),
 		queryBooleanParam("hide_deleted", "Exclude deleted messages"),
-		queryStringParam("search_query", "Search query", false),
+		queryStringParam("search_query", "Search query; full text accepts standalone pipe-separated OR alternatives", false),
 		queryStringParam("after", "Lower date/time bound (RFC3339 or YYYY-MM-DD)", false),
 		queryStringParam("before", "Upper date/time bound (RFC3339 or YYYY-MM-DD)", false),
 	}

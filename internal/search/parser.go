@@ -39,6 +39,9 @@ type Query struct {
 	MessageTypes    []string   // message_type filter (e.g. sms, mms, whatsapp, teams)
 	HideDeleted     bool       // exclude messages where deleted_from_source_at IS NOT NULL
 
+	// Alternatives holds parsed terms; parent criteria apply to every alternative.
+	Alternatives []*Query `json:",omitempty"`
+
 	// ListIDExactGroups carries structured exact List-Id filters. Values in
 	// each group are OR'd; groups are AND'd. The parser never populates it.
 	ListIDExactGroups [][]string
@@ -100,13 +103,16 @@ func ParseDeletionScope(value string) (DeletionScope, error) {
 	}
 }
 
-// Err returns a combined error describing every known operator that was
-// given an invalid value, or nil if the query parsed cleanly. Front doors
-// (the CLI search command and the HTTP search endpoints) call this to reject
-// a query rather than silently dropping the offending filter and returning
-// wider-than-requested results.
+// Err reports invalid operators and alternatives.
 func (q *Query) Err() error {
-	return errors.Join(q.parseErrs...)
+	if q == nil {
+		return nil
+	}
+	errs := append([]error(nil), q.parseErrs...)
+	for _, branch := range q.Alternatives {
+		errs = append(errs, branch.Err())
+	}
+	return errors.Join(errs...)
 }
 
 // operatorValueError builds the uniform message used when a known operator
@@ -124,6 +130,16 @@ type UnsupportedOperator struct {
 
 // IsEmpty returns true if the query has no search criteria.
 func (q *Query) IsEmpty() bool {
+	if q == nil {
+		return true
+	}
+	if len(q.Alternatives) > 0 {
+		for _, branch := range q.Alternatives {
+			if !branch.IsEmpty() {
+				return false
+			}
+		}
+	}
 	return len(q.AccountScopes) == 0 && len(q.TextTerms) == 0 &&
 		len(q.FromAddrs) == 0 &&
 		len(q.ToAddrs) == 0 &&
@@ -144,6 +160,27 @@ func (q *Query) IsEmpty() bool {
 		len(q.AccountIDs) == 0 &&
 		q.ConversationIDs == nil &&
 		len(q.MessageTypes) == 0
+}
+
+// HasOR reports whether the query contains multiple complete alternatives.
+func (q *Query) HasOR() bool {
+	return q != nil && len(q.Alternatives) > 0
+}
+
+// HasTextTerms reports whether the query or an alternative contains free text.
+func (q *Query) HasTextTerms() bool {
+	if q == nil {
+		return false
+	}
+	if len(q.TextTerms) > 0 {
+		return true
+	}
+	for _, alternative := range q.Alternatives {
+		if alternative.HasTextTerms() {
+			return true
+		}
+	}
+	return false
 }
 
 // operatorFn handles a parsed operator:value pair by applying it to the query.
@@ -390,6 +427,9 @@ type Parser struct {
 	Now func() time.Time // Time source (mockable for testing)
 }
 
+// MaxORBranches limits the number of alternatives in a message search.
+const MaxORBranches = 8
+
 // NewParser creates a Parser with default settings.
 func NewParser() *Parser {
 	return &Parser{Now: func() time.Time { return time.Now().UTC() }}
@@ -411,13 +451,49 @@ func NewParser() *Parser {
 //   - message_type: or message_type= - message type filter (e.g., sms)
 //   - Bare words and "quoted phrases" - full-text search
 func (p *Parser) Parse(queryStr string) *Query {
-	q := &Query{}
+	return p.parse(queryStr, false)
+}
+
+// ParseOR parses pipe alternatives for message search.
+func (p *Parser) ParseOR(queryStr string) *Query {
+	return p.parse(queryStr, true)
+}
+
+func (p *Parser) parse(queryStr string, pipeOR bool) *Query {
 	now := time.Now().UTC()
 	if p.Now != nil {
 		now = p.Now()
 	}
-	tokens := tokenize(queryStr)
+	tokens, pipes := tokenize(queryStr, pipeOR)
+	if !pipeOR {
+		return parseConjunction(tokens, now)
+	}
+	var groups [][]string
+	start := 0
+	for _, i := range pipes {
+		groups = append(groups, tokens[start:i])
+		start = i + 1
+	}
+	if len(groups) == 0 {
+		return parseConjunction(tokens, now)
+	}
+	groups = append(groups, tokens[start:])
+	q := &Query{}
+	if len(groups) > MaxORBranches {
+		q.parseErrs = append(q.parseErrs, fmt.Errorf("invalid OR query: at most %d alternatives are allowed", MaxORBranches))
+	}
+	for _, tokens := range groups {
+		branch := parseConjunction(tokens, now)
+		if branch.IsEmpty() && branch.Err() == nil {
+			branch.parseErrs = append(branch.parseErrs, errors.New("invalid OR query: every pipe must separate two non-empty searches"))
+		}
+		q.Alternatives = append(q.Alternatives, branch)
+	}
+	return q
+}
 
+func parseConjunction(tokens []string, now time.Time) *Query {
+	q := &Query{}
 	for _, token := range tokens {
 		if isQuotedPhrase(token) {
 			q.TextTerms = append(q.TextTerms, unquote(token))
@@ -455,6 +531,19 @@ func (p *Parser) Parse(queryStr string) *Query {
 // Parse is a convenience function that parses using default settings.
 func Parse(queryStr string) *Query {
 	return NewParser().Parse(queryStr)
+}
+
+// ParseOR parses pipe alternatives for message search.
+func ParseOR(queryStr string) *Query {
+	return NewParser().ParseOR(queryStr)
+}
+
+// ParseWithOR enables pipe alternatives when allowOR is true.
+func ParseWithOR(queryStr string, allowOR bool) *Query {
+	if allowOR {
+		return ParseOR(queryStr)
+	}
+	return Parse(queryStr)
 }
 
 // splitOperatorToken recognizes Gmail-style operator:value tokens and the
@@ -509,10 +598,16 @@ func isQuotedPhrase(token string) bool {
 	return len(token) > 2 && token[0] == '"' && token[len(token)-1] == '"'
 }
 
+// IsStandalonePipe reports whether the byte at i is a pipe with plain-space or string-edge boundaries.
+func IsStandalonePipe(query string, i int) bool {
+	return query[i] == '|' && (i == 0 || query[i-1] == ' ') && (i+1 == len(query) || query[i+1] == ' ')
+}
+
 // tokenize splits a query string, preserving quoted phrases and operator:value pairs.
 // Handles cases like subject:"foo bar" where the operator and quoted value should stay together.
-func tokenize(queryStr string) []string {
+func tokenize(queryStr string, pipeOR bool) ([]string, []int) {
 	var tokens []string
+	var pipes []int
 	var current strings.Builder
 	inQuotes := false
 	quoteChar := rune(0)
@@ -522,7 +617,7 @@ func tokenize(queryStr string) []string {
 	opQuoted := false
 	escaped := false
 
-	for _, char := range queryStr {
+	for i, char := range queryStr {
 		if inQuotes && escaped {
 			current.WriteRune(char)
 			escaped = false
@@ -561,6 +656,14 @@ func tokenize(queryStr string) []string {
 			}
 			quoteChar = 0
 			opQuoted = false
+		} else if pipeOR && !inQuotes && IsStandalonePipe(queryStr, i) {
+			if current.Len() > 0 {
+				tokens = append(tokens, current.String())
+				current.Reset()
+			}
+			pipes = append(pipes, len(tokens))
+			tokens = append(tokens, "|")
+			afterColon = false
 		} else if char == ' ' && !inQuotes {
 			if current.Len() > 0 {
 				tokens = append(tokens, current.String())
@@ -579,7 +682,7 @@ func tokenize(queryStr string) []string {
 		tokens = append(tokens, current.String())
 	}
 
-	return tokens
+	return tokens, pipes
 }
 
 // parseDate parses exact RFC3339 timestamps and date-only forms.

@@ -44,7 +44,7 @@ export type GetSubAggregatesParams = {
    */
   hide_deleted?: boolean;
   /**
-   * Search query
+   * Search query; full text accepts standalone pipe-separated OR alternatives
    */
   search_query?: string;
   /**

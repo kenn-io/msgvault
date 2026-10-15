@@ -13,7 +13,11 @@ import {
 } from '../explore/models';
 
 export type CanonicalState = SavedViewStateEnvelope;
-export const CURRENT_SCHEMA_VERSION = 1;
+export const CURRENT_SCHEMA_VERSION = 2;
+
+function trimGoWhitespace(query: string): string {
+  return query.replace(/^\p{White_Space}+|\p{White_Space}+$/gu, '');
+}
 
 // Saved views written before the v2 filter names still use these fields.
 const LEGACY_FILTER_FIELDS: Record<string, ExploreFilterDimension> = {
@@ -22,7 +26,7 @@ const LEGACY_FILTER_FIELDS: Record<string, ExploreFilterDimension> = {
 };
 
 export function canonicalSavedViewState(state: ExploreURLState): CanonicalState {
-  const query = state.query.trim();
+  const query = trimGoWhitespace(state.query);
   return {
     ...(query ? { query, search_mode: state.searchMode } : {}),
     filters: state.filters.map((filter) => ({
@@ -47,12 +51,37 @@ function searchMode(saved: CanonicalState): ExploreURLState['searchMode'] {
     : 'full_text';
 }
 
-export function exploreStateFromSavedView(saved: CanonicalState): Partial<ExploreURLState> {
+// Keep trimming and pipe boundaries in step with internal/savedview/service.go and search.IsStandalonePipe.
+function quoteLegacyPipes(query: string): string {
+  query = trimGoWhitespace(query);
+  let result = '';
+  let quote = '';
+  let escaped = false;
+  for (let i = 0; i < query.length; i++) {
+    const char = query[i]!;
+    if (quote) {
+      if (escaped) escaped = false;
+      else if (char === '\\') escaped = true;
+      else if (char === quote) quote = '';
+    } else if (char === '"' || char === "'") {
+      quote = char;
+    } else if (char === '|' && (i === 0 || query[i - 1] === ' ') && (i + 1 === query.length || query[i + 1] === ' ')) {
+      result += '"|"';
+      continue;
+    }
+    result += char;
+  }
+  return result;
+}
+
+export function exploreStateFromSavedView(saved: CanonicalState, schemaVersion = CURRENT_SCHEMA_VERSION): Partial<ExploreURLState> {
   const presentation = saved.presentation ?? 'table';
+  const mode = searchMode(saved);
+  const query = saved.query ?? '';
   return {
     workspace: presentation === 'files' ? 'files' : 'everything',
-    query: saved.query ?? '',
-    searchMode: searchMode(saved),
+    query: schemaVersion === 1 && mode === 'full_text' ? quoteLegacyPipes(query) : query,
+    searchMode: mode,
     filters: (saved.filters ?? []).map((filter) => ({
       dimension: filterDimension(filter.field),
       values: [...filter.values]

@@ -18,7 +18,9 @@ export interface ExploreHTTPRequest {
    */
   limit?: number;
   presentation?: ExploreHTTPRequestPresentation;
+  /** Search query; full_text accepts standalone pipe-separated OR alternatives; other modes read pipes as text */
   query?: string;
+  /** Search mode; pipe OR is full_text only */
   search_mode?: ExploreHTTPRequestSearchMode;
   sort?: ExploreSort[];
 }

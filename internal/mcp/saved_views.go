@@ -97,7 +97,7 @@ func createSavedViewDefinition(_ *handlers) toolDefinition {
 			"name":            stringSchema("Unique Saved View name"),
 			"description":     stringSchema("Optional description that helps agents choose the Saved View"),
 			"canonical_state": savedViewStateInputSchema(),
-			"schema_version":  boundedIntegerSchema("Saved View schema version; currently must be 1", 1, 1),
+			"schema_version":  boundedIntegerSchema("Use 2 for new Saved Views; 1 preserves legacy literal pipes", 1, store.CurrentSavedViewSchemaVersion),
 		}, "name", "canonical_state", "schema_version"),
 		outputSchemaFor[savedViewDefinition](),
 		(*handlers).createSavedView,
@@ -107,14 +107,14 @@ func createSavedViewDefinition(_ *handlers) toolDefinition {
 func updateSavedViewDefinition(_ *handlers) toolDefinition {
 	return savedViewTool(writeDefinition(
 		ToolUpdateSavedView,
-		"Patch mutable fields on a persistent reusable msgvault Saved View. Supply the latest revision from list_saved_views or get_saved_view; an empty description clears it. Returns the updated view.",
+		"Patch mutable fields on a persistent reusable msgvault Saved View. Supply the latest revision from list_saved_views or get_saved_view; an empty description clears it. Sending canonical_state without schema_version keeps the stored schema version, so schema 1 keeps pipes as literal text. Send schema_version 2 to adopt pipe OR. Returns the updated view.",
 		closedObject(map[string]*jsonschema.Schema{
 			"id":              safeIDSchema("Stable Saved View ID"),
 			"revision":        safeIDSchema("Latest Saved View revision for optimistic concurrency"),
 			"name":            stringSchema("Replacement Saved View name"),
 			"description":     stringSchema("Replacement description; use an empty string to clear it"),
 			"canonical_state": savedViewStateInputSchema(),
-			"schema_version":  boundedIntegerSchema("Replacement schema version; currently must be 1", 1, 1),
+			"schema_version":  boundedIntegerSchema("Omit to keep the stored schema version; send 2 to adopt pipe OR", 1, store.CurrentSavedViewSchemaVersion),
 		}, "id", "revision"),
 		outputSchemaFor[savedViewDefinition](),
 		(*handlers).updateSavedView,

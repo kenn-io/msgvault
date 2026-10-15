@@ -91,6 +91,30 @@ func TestRunSavedViewExecutesEntriesWithTheExploreContract(t *testing.T) {
 	assertions.Empty(next.NextCursor)
 }
 
+func TestRunSavedViewPreservesVersionedPipeMeaning(t *testing.T) {
+	t.Parallel()
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st, engine := newExploreSearchFixture(t, []string{"alpha | gamma", "alpha", "gamma"})
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}}, Store: st, SavedViewStore: st,
+		Engine: engine, Logger: testLogger(),
+	})
+	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.Background())) })
+	view, err := st.CreateSavedView(t.Context(), store.SavedViewInput{
+		Name: "v1 literal AND", SchemaVersion: 1,
+		CanonicalState: json.RawMessage(`{"query":"alpha | gamma","search_mode":"full_text"}`),
+	})
+	requirements.NoError(err)
+	response, page := runSavedView(t, srv, view.ID, `{"limit":1}`)
+	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+	requirements.NotNil(page.TotalCount)
+	assertions.Equal(int64(1), *page.TotalCount)
+	requirements.Len(page.Rows, 1)
+	requirements.NotNil(page.Rows[0].AnchorMessageID)
+	assertions.Equal(int64(1), *page.Rows[0].AnchorMessageID)
+}
+
 func TestRunSavedViewExecutesGroupsAtTheFirstChainLevel(t *testing.T) {
 	t.Parallel()
 	assertions := assert.New(t)
@@ -158,7 +182,7 @@ func TestRunSavedViewRelaysSavedViewAndExploreErrors(t *testing.T) {
 	assertions.Contains(badCursor.Body.String(), "invalid_cursor", "Explore errors pass through unchanged")
 
 	srv.savedViewStore = &staleSavedViewStore{view: store.SavedView{
-		ID: 1, Name: "Stale", SchemaVersion: 2, CanonicalState: json.RawMessage(`{}`), Revision: 1,
+		ID: 1, Name: "Stale", SchemaVersion: 3, CanonicalState: json.RawMessage(`{}`), Revision: 1,
 	}}
 	stale, _ := runSavedView(t, srv, 1, `{}`)
 	assertions.Equal(http.StatusBadRequest, stale.Code, stale.Body.String())

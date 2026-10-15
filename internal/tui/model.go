@@ -998,7 +998,7 @@ func (m Model) loadSearchWithOffset(queryStr string, offset int, appendResults b
 	return safeCmdWithPanic(
 		func() tea.Msg {
 			ctx := context.Background()
-			q := search.Parse(queryStr)
+			q := search.ParseOR(queryStr)
 			searchFilter := emailScopedMessageFilter(m.searchFilter)
 			m.sourceScope.apply(&searchFilter)
 
@@ -1310,7 +1310,7 @@ func emailScopedMessageFilter(filter query.MessageFilter) query.MessageFilter {
 // for conflicting message types.
 func emailScopedSearchQuery(raw string) (string, bool) {
 	merged := query.MergeFilterIntoQuery(
-		search.Parse(raw),
+		search.ParseOR(raw),
 		query.MessageFilter{MessageType: emailMessageType},
 	)
 	noMatches := merged.AccountIDs != nil && len(merged.AccountIDs) == 0

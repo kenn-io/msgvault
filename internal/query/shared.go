@@ -54,16 +54,24 @@ const emailOnlyFilterMsg = "(msg.message_type = '" + messageTypeEmail + "' OR ms
 // NULL and empty string handle old data where message_type was not yet populated.
 const emailOnlyFilterM = "(m.message_type = '" + messageTypeEmail + "' OR m.message_type IS NULL OR m.message_type = '')"
 
-// searchOverridesEmailDefault reports whether a parsed search query sets its
-// own message-type scope: message_type:, or account:, which also matches
-// calendar events. Default analytics apply the positive email-only predicate
-// only when it does not.
-func searchOverridesEmailDefault(searchQuery string) bool {
-	if searchQuery == "" {
+// defaultsToEmail leaves OR defaults to each alternative.
+func defaultsToEmail(q *search.Query, filter *MessageFilter, accountScopes []search.AccountScope) bool {
+	if len(accountScopes) > 0 || (filter != nil && (strings.TrimSpace(filter.MessageType) != "" || len(filter.AccountScopes) > 0)) {
 		return false
 	}
-	q := search.Parse(searchQuery)
-	return len(q.MessageTypes) > 0 || len(q.AccountAddrs) > 0
+	return q == nil || (!q.HasOR() && len(q.MessageTypes) == 0 && len(q.AccountAddrs) == 0)
+}
+
+func parseAnalyticsSearch(raw string, defaultEmail bool) *search.Query {
+	q := search.ParseOR(raw)
+	if defaultEmail && q.HasOR() {
+		for _, branch := range q.Alternatives {
+			if defaultsToEmail(branch, nil, nil) {
+				branch.MessageTypes = []string{messageTypeEmail}
+			}
+		}
+	}
+	return q
 }
 
 // shouldDefaultStatsToEmail reports whether a generic stats query should use
@@ -71,11 +79,7 @@ func searchOverridesEmailDefault(searchQuery string) bool {
 // message-type scope as search, while an explicit message_type remains
 // authoritative in either mode.
 func shouldDefaultStatsToEmail(opts StatsOptions) bool {
-	// An account scope selects email and calendar rows itself.
-	if opts.Filter != nil && len(opts.Filter.AccountScopes) > 0 {
-		return false
-	}
-	return !opts.SearchScope && !searchOverridesEmailDefault(opts.SearchQuery)
+	return !opts.SearchScope && defaultsToEmail(search.ParseOR(opts.SearchQuery), opts.Filter, nil)
 }
 
 // appendAccountScopeConditions adds one predicate per account scope against

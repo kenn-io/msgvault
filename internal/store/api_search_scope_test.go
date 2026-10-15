@@ -3,12 +3,59 @@ package store_test
 import (
 	"database/sql"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
+
+func TestSearchMessageIDsQueryPipeOR(t *testing.T) {
+	setupRequire := require.New(t)
+	f := storetest.New(t)
+	ids := make([]int64, 0, 2)
+	for i, body := range []string{"alpha beta", "gamma"} {
+		id := f.NewMessage().WithSourceMessageID(body).WithSubject("ordinary subject").WithSnippet("ordinary preview").WithSentAt(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)).Create(t, f.Store)
+		setupRequire.NoError(f.Store.UpsertMessageBody(id, sql.NullString{String: body, Valid: true}, sql.NullString{}))
+		ids = append(ids, id)
+		if i == 1 {
+			setupRequire.NoError(f.Store.MarkMessageDeleted(f.Source.ID, body))
+		}
+	}
+	_, err := f.Store.BackfillFTS(nil)
+	setupRequire.NoError(err)
+	for _, tc := range []struct {
+		scope search.DeletionScope
+		want  []int64
+	}{
+		{search.DeletionScopeAny, ids},
+		{search.DeletionScopeActive, ids[:1]},
+		{search.DeletionScopeDeleted, ids[1:]},
+	} {
+		t.Run(string(tc.scope), func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			q := search.ParseOR("alpha beta | gamma")
+			q.DeletionScope = tc.scope
+			got, total, err := f.Store.SearchMessageIDsQueryContext(t.Context(), q, 50)
+			require.NoError(err)
+			assert.Equal(int64(len(tc.want)), total)
+			assert.ElementsMatch(tc.want, got)
+		})
+	}
+	q := search.ParseOR("alpha beta | gamma")
+	q.DeletionScope = search.DeletionScopeAny
+	rows, total, err := f.Store.SearchMessagesQuery(q, 0, 1)
+	setupRequire.NoError(err)
+	setupRequire.Len(rows, 1)
+	assert.Equal(t, int64(2), total)
+	assert.Equal(t, ids[1], rows[0].ID)
+	rows, _, err = f.Store.SearchMessagesQuery(q, 1, 1)
+	setupRequire.NoError(err)
+	setupRequire.Len(rows, 1)
+	assert.Equal(t, ids[0], rows[0].ID)
+}
 
 // TestSearchMessagesQuery_AccountScoping verifies that Query.AccountIDs
 // restricts search results to the given source IDs. The HTTP search
@@ -199,4 +246,50 @@ func TestSearchMessagesQuery_ExplicitEmptyConversationScopeMatchesNothing(t *tes
 	require.NoError(t, err, "SearchMessagesQuery")
 	assert.Zero(t, total, "explicit empty scope total")
 	assert.Empty(t, msgs, "explicit empty scope messages")
+}
+
+func TestSearchMessagesPipeOR(t *testing.T) {
+	requirements := require.New(t)
+	f := storetest.New(t)
+	ids := make([]int64, 0, 2)
+	for _, typ := range []string{"sms", "mms"} {
+		message := f.NewMessage().WithSourceMessageID(typ).WithSubject("beta").Build()
+		message.MessageType = typ
+		id, err := f.Store.UpsertMessage(message)
+		requirements.NoError(err)
+		ids = append(ids, id)
+	}
+	_, err := f.Store.BackfillFTS(nil)
+	requirements.NoError(err)
+	t.Run("caller vs branch type", func(t *testing.T) {
+		q := search.ParseOR("alpha | beta message_type:mms")
+		q.MessageTypes = []string{"sms"}
+		rows, total, err := f.Store.SearchMessagesQuery(q, 0, 50)
+		require.NoError(t, err)
+		assert.Zero(t, total)
+		got := make([]int64, len(rows))
+		for i, row := range rows {
+			got[i] = row.ID
+		}
+		assert.Empty(t, got)
+	})
+	t.Run("empty FTS term", func(t *testing.T) {
+		rows, total, err := f.Store.SearchMessagesQuery(search.ParseOR("!!! | subject:beta"), 0, 50)
+		require.NoError(t, err)
+		assert.Equal(t, int64(len(ids)), total)
+		assert.Len(t, rows, len(ids))
+	})
+	t.Run("dropped messages_fts table", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		if f.Store.IsPostgreSQL() {
+			t.Skip("messages_fts is SQLite-only")
+		}
+		_, err := f.Store.DB().Exec("DROP TABLE messages_fts")
+		require.NoError(err)
+		rows, total, err := f.Store.SearchMessagesQuery(search.ParseOR("alpha | beta"), 0, 50)
+		require.NoError(err)
+		assert.Equal(int64(len(ids)), total)
+		assert.Len(rows, len(ids))
+	})
 }

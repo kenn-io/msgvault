@@ -23,6 +23,7 @@ whole query is optional.
 | Operator | Meaning | Value format |
 |---|---|---|
 | `from:` `to:` `cc:` `bcc:` | address filter | full email, or bare domain (`from:example.com`) |
+| `\|` | full-text OR between complete searches; up to 8 alternatives | `alpha beta \| gamma` |
 | `subject:` | subject substring | text |
 | `label:` (alias `l:`) | Gmail label | label name |
 | `list:` (alias `list-id:`) | List-Id literal substring | text; quote values containing spaces |
@@ -35,7 +36,7 @@ whole query is optional.
 | `account:` | confirmed address that received or sent it, or owns the calendar event | full email |
 
 Bare words and `"quoted phrases"` are full-text terms, matched as
-prefixes and combined with AND (no OR/NEAR support). If a search
+prefixes and combined with AND within each `|` alternative. NEAR is unsupported. If a search
 returns nothing, retry with fewer terms or fewer filters.
 
 `--account` selects a whole archive source; `account:` matches only messages

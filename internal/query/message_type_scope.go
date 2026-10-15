@@ -1,23 +1,17 @@
 package query
 
-import "slices"
-
-func containsMessageType(types []string, want string) bool {
-	return slices.Contains(types, want)
-}
+import "go.kenn.io/msgvault/internal/search"
 
 // ScopedMessageTypes intersects parsed query message types with a single
 // drill-down filter type. The returned bool is true when the intersection is
 // empty and callers should force the overall query to match no messages.
 func ScopedMessageTypes(queryTypes []string, filterType string) ([]string, bool) {
 	if filterType == "" {
-		return append([]string(nil), queryTypes...), false
+		return search.IntersectValues(queryTypes, nil)
 	}
-	if len(queryTypes) == 0 {
-		return []string{filterType}, false
+	values, noMatches := search.IntersectValues(queryTypes, []string{filterType})
+	if noMatches {
+		return []string{filterType}, true
 	}
-	if containsMessageType(queryTypes, filterType) {
-		return []string{filterType}, false
-	}
-	return []string{filterType}, true
+	return values, false
 }

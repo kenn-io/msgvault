@@ -503,20 +503,19 @@ func (s *Store) SearchMessagesQueryContext(
 }
 
 type messageSearchSQL struct {
-	join      string
-	where     string
-	orderBy   string
-	args      []any
-	orderArgs []any
-	fts       bool
+	conditions []string
+	join       string
+	where      string
+	orderBy    string
+	args       []any
+	orderArgs  []any
+	fts        bool
 }
 
 // buildMessageSearchSQL keeps candidate-only and full-message searches on the
 // same filters and ranking, including the subject/snippet fallback without FTS.
 func (s *Store) buildMessageSearchSQL(q *search.Query, ftsAvailable bool) messageSearchSQL {
-	var conditions []string
-	var args []any
-
+	var visibility string
 	// The FTS index covers source-deleted messages too: soft deletion only
 	// stamps deleted_from_source_at, leaving the FTS5 row (and the PG
 	// tsvector on the surviving messages row) intact. Honoring the
@@ -525,16 +524,35 @@ func (s *Store) buildMessageSearchSQL(q *search.Query, ftsAvailable bool) messag
 	// scope at its zero value keeps the historical active-only behavior.
 	switch q.DeletionScope {
 	case search.DeletionScopeDeleted:
-		conditions = append(conditions, SourceDeletedMessagesWhere("m"))
+		visibility = SourceDeletedMessagesWhere("m")
 	case search.DeletionScopeAny:
-		conditions = append(conditions, LiveMessagesWhere("m", false))
+		visibility = LiveMessagesWhere("m", false)
 	case search.DeletionScopeActive:
-		conditions = append(conditions, LiveMessagesWhere("m", true))
+		visibility = LiveMessagesWhere("m", true)
 	default:
-		// The zero value (no scope chosen) and unknown values fail
-		// closed to the narrowest population.
-		conditions = append(conditions, LiveMessagesWhere("m", true))
+		visibility = LiveMessagesWhere("m", true)
 	}
+
+	return s.buildMessageSearchSQLWithVisibility(q, ftsAvailable, visibility)
+}
+
+func (s *Store) buildMessageSearchSQLWithVisibility(q *search.Query, ftsAvailable bool, visibility string) messageSearchSQL {
+	plan := s.buildMessageSearchCriteria(q, ftsAvailable, false)
+	plan.conditions = append([]string{visibility}, plan.conditions...)
+	plan.where = strings.Join(plan.conditions, " AND ")
+	return plan
+}
+
+func (s *Store) buildMessageSearchCriteria(q *search.Query, ftsAvailable, rowIDs bool) messageSearchSQL {
+	if q.HasOR() {
+		conditions, args := CombineOR(q, func(branch *search.Query) ([]string, []any) {
+			plan := s.buildMessageSearchCriteria(branch, ftsAvailable, true)
+			return plan.conditions, plan.args
+		})
+		return messageSearchSQL{conditions: conditions, where: strings.Join(conditions, " AND "), args: args, orderBy: "COALESCE(m.sent_at, m.received_at, m.internal_date) DESC, m.id DESC", fts: ftsAvailable && q.HasTextTerms()}
+	}
+	var conditions []string
+	var args []any
 
 	// FTS text terms. ftsEnabled is the authoritative signal that FTS is
 	// active — ftsJoin may be empty on dialects (e.g. PostgreSQL) whose
@@ -556,7 +574,7 @@ func (s *Store) buildMessageSearchSQL(q *search.Query, ftsAvailable bool) messag
 			conditions = append(conditions, "FALSE")
 			ftsEnabled = false
 		} else {
-			join, where, orderBy, orderArgCount := s.dialect.FTSSearchClause()
+			join, where, orderBy, orderArgCount := s.dialect.FTSSearchClause(rowIDs)
 			ftsJoin = join
 			ftsOrder = orderBy
 			ftsOrderArgCount = orderArgCount
@@ -823,7 +841,7 @@ func (s *Store) buildMessageSearchSQL(q *search.Query, ftsAvailable bool) messag
 		}
 	}
 	return messageSearchSQL{
-		join: ftsJoin, where: strings.Join(conditions, " AND "), orderBy: orderBy,
+		conditions: conditions, join: ftsJoin, where: strings.Join(conditions, " AND "), orderBy: orderBy,
 		args: args, orderArgs: orderArgs, fts: ftsEnabled,
 	}
 }

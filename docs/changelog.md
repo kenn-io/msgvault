@@ -8,6 +8,9 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- Message [search](usage/searching.md#match-any-of-several-searches) accepts up to eight pipe-separated alternatives in full-text mode. API schema 3.19.0 adds support for remote clients.
+- A standalone ` | ` between searches used to be literal text and now means OR; `"a | b"` keeps it literal.
+- Saved Views written with schema version 1 keep their literal pipe meaning; new views use version 2 for pipe OR.
 - [Chatwoot](guides/chatwoot.md) archives shared inboxes, files, source transcripts, and linked call meetings. API schema 3.18.0 adds optional `related_message_id`, which links a Chatwoot call message and its meeting.
 - Remote edits update source-owned values on published CardDAV imports while preserving unrelated local values. Edits that would overwrite another owner create a conflict.
 - [Everything search](web-ui.md#recording-matches) shows recording transcript matches for plain-word Full text queries and supports one Person filter. API schema 3.11.0 adds `participant_id` to media search, `GET /media/search/status`, source filename, title and date to media search results and optional `conversation_title` to message detail.

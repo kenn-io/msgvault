@@ -13,7 +13,7 @@ import (
 )
 
 // highlightTerms applies highlight styling to all occurrences of search terms in text.
-// Terms are extracted from a search query string using search.Parse().
+// Terms are extracted from a search query string using search.ParseOR().
 // Highlighting is case-insensitive. Returns the original text with ANSI highlight codes.
 func highlightTerms(text, searchQuery string) string {
 	if searchQuery == "" || text == "" {
@@ -28,12 +28,14 @@ func highlightTerms(text, searchQuery string) string {
 
 // extractSearchTerms extracts displayable search terms from a query string.
 func extractSearchTerms(queryStr string) []string {
-	q := search.Parse(queryStr)
+	q := search.ParseOR(queryStr)
 	var terms []string
-	terms = append(terms, q.TextTerms...)
-	terms = append(terms, q.FromAddrs...)
-	terms = append(terms, q.ToAddrs...)
-	terms = append(terms, q.SubjectTerms...)
+	for _, parsed := range append([]*search.Query{q}, q.Alternatives...) {
+		terms = append(terms, parsed.TextTerms...)
+		terms = append(terms, parsed.FromAddrs...)
+		terms = append(terms, parsed.ToAddrs...)
+		terms = append(terms, parsed.SubjectTerms...)
+	}
 	// Deduplicate and filter empty
 	seen := make(map[string]bool, len(terms))
 	filtered := terms[:0]

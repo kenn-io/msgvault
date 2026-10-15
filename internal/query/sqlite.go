@@ -619,12 +619,12 @@ func (e *SQLiteEngine) SubAggregate(ctx context.Context, filter MessageFilter, g
 	optsConds, optsArgs := optsToFilterConditions(e.dialect, opts, "m.")
 	filterConditions = append(filterConditions, optsConds...)
 	args = append(args, optsArgs...)
-	if !aggregateOverridesEmailDefault(filter, opts) {
+	if defaultsToEmail(search.ParseOR(opts.SearchQuery), &filter, opts.AccountScopes) {
 		filterConditions = append(filterConditions, emailOnlyFilterM)
 	}
 
 	searchJoins, searchConds, searchArgs :=
-		e.buildAggregateSearchParts(ctx, opts.SearchQuery, groupBy)
+		e.buildAggregateSearchParts(ctx, parseAnalyticsSearch(opts.SearchQuery, defaultsToEmail(nil, &filter, opts.AccountScopes)), groupBy, false)
 	filterConditions = append(filterConditions, searchConds...)
 	args = append(args, searchArgs...)
 	if searchJoins != "" {
@@ -637,26 +637,18 @@ func (e *SQLiteEngine) SubAggregate(ctx context.Context, filter MessageFilter, g
 // Aggregate performs grouping based on the provided ViewType.
 func (e *SQLiteEngine) Aggregate(ctx context.Context, groupBy ViewType, opts AggregateOptions) ([]AggregateRow, error) {
 	conditions, args := optsToFilterConditions(e.dialect, opts, "m.")
-	if !aggregateOverridesEmailDefault(MessageFilter{}, opts) {
+	if defaultsToEmail(search.ParseOR(opts.SearchQuery), nil, opts.AccountScopes) {
 		conditions = append(conditions, emailOnlyFilterM)
 	}
 
 	searchJoins, searchConds, searchArgs :=
-		e.buildAggregateSearchParts(ctx, opts.SearchQuery, groupBy)
+		e.buildAggregateSearchParts(ctx, parseAnalyticsSearch(opts.SearchQuery, defaultsToEmail(nil, nil, opts.AccountScopes)), groupBy, false)
 	conditions = append(conditions, searchConds...)
 	args = append(args, searchArgs...)
 
 	return e.executeAggregate(
 		ctx, groupBy, opts, searchJoins, conditions, args,
 	)
-}
-
-func aggregateOverridesEmailDefault(filter MessageFilter, opts AggregateOptions) bool {
-	// An account scope selects email and calendar rows itself.
-	if strings.TrimSpace(filter.MessageType) != "" || len(filter.AccountScopes) > 0 || len(opts.AccountScopes) > 0 {
-		return true
-	}
-	return searchOverridesEmailDefault(opts.SearchQuery)
 }
 
 func sqliteMessageTypeCondition(alias string, messageTypes []string) (string, []any) {
@@ -705,13 +697,18 @@ func sqliteMessageTypeCondition(alias string, messageTypes []string) (string, []
 // and returns (joins, conditions, args). For Labels view with label
 // search, filters the grouping column directly.
 func (e *SQLiteEngine) buildAggregateSearchParts(
-	ctx context.Context, searchQuery string, groupBy ViewType,
+	ctx context.Context, q *search.Query, groupBy ViewType, rowIDs bool,
 ) (string, []string, []any) {
-	if searchQuery == "" {
+	if q.HasOR() {
+		conditions, args := store.CombineOR(q, func(branch *search.Query) ([]string, []any) {
+			_, conditions, args := e.buildAggregateSearchParts(ctx, branch, groupBy, true)
+			return conditions, args
+		})
+		return "", conditions, args
+	}
+	if q.IsEmpty() {
 		return "", nil, nil
 	}
-
-	q := search.Parse(searchQuery)
 
 	var conditions []string
 	var args []any
@@ -736,7 +733,7 @@ func (e *SQLiteEngine) buildAggregateSearchParts(
 	if len(q.TextTerms) > 0 && keyCondition != "" {
 		textTerms := q.TextTerms
 		q.TextTerms = nil
-		searchConds, searchArgs, ftsJoin := e.buildSearchQueryParts(ctx, q)
+		searchConds, searchArgs, ftsJoin := e.buildSearchCriteria(ctx, q, rowIDs)
 		conditions = append(conditions, searchConds...)
 		args = append(args, searchArgs...)
 		textConds, textArgs := e.buildAggregateTextSearchConditions(ctx, textTerms, keyCondition)
@@ -746,7 +743,7 @@ func (e *SQLiteEngine) buildAggregateSearchParts(
 	}
 
 	searchConds, searchArgs, ftsJoin :=
-		e.buildSearchQueryParts(ctx, q)
+		e.buildSearchCriteria(ctx, q, rowIDs)
 	conditions = append(conditions, searchConds...)
 	args = append(args, searchArgs...)
 
@@ -809,7 +806,7 @@ func (e *SQLiteEngine) buildAggregateTextSearchConditions(
 		if hasFTS {
 			expr, arg := e.dialect.BuildFTSTerm([]string{term})
 			if e.dialect.FTSJoin() != "" {
-				expr = "m.id IN (SELECT rowid FROM messages_fts WHERE " + expr + ")"
+				expr = store.SQLiteFTSRowIDCondition(expr)
 			}
 			textCondition = expr
 			if arg != "" {
@@ -829,9 +826,15 @@ func (e *SQLiteEngine) buildAggregateTextSearchConditions(
 }
 
 func (e *SQLiteEngine) buildAggregateStatsSearchParts(
-	ctx context.Context, searchQuery string, groupBy ViewType,
+	ctx context.Context, q *search.Query, groupBy ViewType, rowIDs bool,
 ) ([]string, []any, string) {
-	q := search.Parse(searchQuery)
+	if q.HasOR() {
+		conditions, args := store.CombineOR(q, func(branch *search.Query) ([]string, []any) {
+			conditions, args, _ := e.buildAggregateStatsSearchParts(ctx, branch, groupBy, true)
+			return conditions, args
+		})
+		return conditions, args, ""
+	}
 	keyCondition := aggregateSearchKeyCondition(e.dialect, groupBy, "mr_key", "p_key", "l_key")
 	var conditions []string
 	var args []any
@@ -859,13 +862,13 @@ func (e *SQLiteEngine) buildAggregateStatsSearchParts(
 		conditions = append(conditions,
 			aggregateStatsSearchKeyCondition(groupBy, strings.Join(labelRowConditions, " AND ")))
 		args = append(args, labelRowArgs...)
-		searchConditions, searchArgs, ftsJoin := e.buildSearchQueryParts(ctx, q)
+		searchConditions, searchArgs, ftsJoin := e.buildSearchCriteria(ctx, q, rowIDs)
 		conditions = append(conditions, searchConditions...)
 		args = append(args, searchArgs...)
 		return conditions, args, ftsJoin
 	}
 	if len(q.TextTerms) == 0 || keyCondition == "" {
-		searchConditions, searchArgs, ftsJoin := e.buildSearchQueryParts(ctx, q)
+		searchConditions, searchArgs, ftsJoin := e.buildSearchCriteria(ctx, q, rowIDs)
 		conditions = append(conditions, searchConditions...)
 		args = append(args, searchArgs...)
 		return conditions, args, ftsJoin
@@ -873,7 +876,7 @@ func (e *SQLiteEngine) buildAggregateStatsSearchParts(
 
 	textTerms := q.TextTerms
 	q.TextTerms = nil
-	searchConditions, searchArgs, ftsJoin := e.buildSearchQueryParts(ctx, q)
+	searchConditions, searchArgs, ftsJoin := e.buildSearchCriteria(ctx, q, rowIDs)
 	conditions = append(conditions, searchConditions...)
 	args = append(args, searchArgs...)
 	textConditions, textArgs := e.buildAggregateTextSearchConditions(ctx, textTerms, keyCondition)
@@ -1323,7 +1326,7 @@ func (e *SQLiteEngine) GetTotalStats(ctx context.Context, opts StatsOptions) (*T
 	var searchFTSJoin string
 	if opts.SearchQuery != "" {
 		searchConditions, searchArgs, searchFTSJoin =
-			e.buildAggregateStatsSearchParts(ctx, opts.SearchQuery, opts.GroupBy)
+			e.buildAggregateStatsSearchParts(ctx, parseAnalyticsSearch(opts.SearchQuery, !opts.SearchScope && defaultsToEmail(nil, opts.Filter, nil)), opts.GroupBy, false)
 	}
 
 	// Build WHERE clause for messages — always use m. prefix since we alias
@@ -1762,7 +1765,7 @@ func (e *SQLiteEngine) GetDeletionTargetsByAggregateSearch(
 	groupBy ViewType,
 	key string,
 ) ([]DeletionTarget, error) {
-	parsed := search.Parse(searchQuery)
+	parsed := parseAnalyticsSearch(searchQuery, defaultsToEmail(nil, &filter, nil))
 	if err := parsed.Err(); err != nil {
 		return nil, fmt.Errorf("invalid aggregate search query: %w", err)
 	}
@@ -1779,7 +1782,7 @@ func (e *SQLiteEngine) GetDeletionTargetsByAggregateSearch(
 	if err != nil {
 		return nil, err
 	}
-	searchJoin, searchConditions, searchArgs := e.buildAggregateSearchParts(ctx, searchQuery, groupBy)
+	searchJoin, searchConditions, searchArgs := e.buildAggregateSearchParts(ctx, parsed, groupBy, false)
 	conditions = append(conditions, searchConditions...)
 	args = append(args, searchArgs...)
 	if dim.whereExpr != "" {
@@ -1919,7 +1922,18 @@ func (e *SQLiteEngine) buildSearchQueryParts(ctx context.Context, q *search.Quer
 // deletion context separate from Search's explicit DeletionScope while the
 // two paths continue sharing every other structured predicate.
 func (e *SQLiteEngine) buildSearchQueryPartsWithVisibility(ctx context.Context, q *search.Query, visibility string) (conditions []string, args []any, ftsJoin string) {
-	conditions = append(conditions, visibility)
+	conditions, args, ftsJoin = e.buildSearchCriteria(ctx, q, false)
+	return append([]string{visibility}, conditions...), args, ftsJoin
+}
+
+func (e *SQLiteEngine) buildSearchCriteria(ctx context.Context, q *search.Query, rowIDs bool) (conditions []string, args []any, ftsJoin string) {
+	if q.HasOR() {
+		conditions, args := store.CombineOR(q, func(branch *search.Query) ([]string, []any) {
+			conditions, args, _ := e.buildSearchCriteria(ctx, branch, true)
+			return conditions, args
+		})
+		return conditions, args, ""
+	}
 
 	conditions, args = appendSQLiteAddressCondition(conditions, args, q.FromAddrs, "from")
 	conditions, args = appendSQLiteAddressCondition(conditions, args, q.ToAddrs, "to")
@@ -2012,6 +2026,10 @@ func (e *SQLiteEngine) buildSearchQueryPartsWithVisibility(ctx context.Context, 
 		if e.hasFTSTable(ctx) {
 			ftsJoin = e.dialect.FTSJoin()
 			expr, arg := e.dialect.BuildFTSTerm(q.TextTerms)
+			if rowIDs && ftsJoin != "" {
+				expr = store.SQLiteFTSRowIDCondition(expr)
+				ftsJoin = ""
+			}
 			conditions = append(conditions, expr)
 			if arg != "" {
 				args = append(args, arg)
@@ -2137,10 +2155,21 @@ func metadataContainsExpression(d Dialect, column string) string {
 }
 
 func (e *SQLiteEngine) buildMetadataSearchQueryParts(ctx context.Context, q *search.Query) (conditions []string, args []any, ftsJoin string) {
+	conditions, args, ftsJoin = e.buildMetadataSearchCriteria(ctx, q)
+	return append([]string{store.LiveMessagesWhere("m", q.HideDeleted)}, conditions...), args, ftsJoin
+}
+
+func (e *SQLiteEngine) buildMetadataSearchCriteria(ctx context.Context, q *search.Query) (conditions []string, args []any, ftsJoin string) {
+	if q.HasOR() {
+		conditions, args := store.CombineOR(q, func(branch *search.Query) ([]string, []any) {
+			conditions, args, _ := e.buildMetadataSearchCriteria(ctx, branch)
+			return conditions, args
+		})
+		return conditions, args, ""
+	}
 	structured := *q
 	structured.TextTerms = nil
-	conditions, args, ftsJoin = e.buildSearchQueryPartsWithVisibility(ctx, &structured,
-		store.LiveMessagesWhere("m", q.HideDeleted))
+	conditions, args, ftsJoin = e.buildSearchCriteria(ctx, &structured, false)
 
 	for _, term := range q.TextTerms {
 		pattern := "%" + escapeSQLiteLike(term) + "%"
@@ -2370,6 +2399,7 @@ func searchResultsSQL(ftsJoin, whereClause string) string {
 
 // MergeFilterIntoQuery combines a MessageFilter context with a search.Query.
 // Most context filters are appended to existing query filters.
+// For OR queries, drill-down fields land on the parent and AND with each alternative.
 //
 // Note on semantics: Appending to FromAddrs/ToAddrs produces OR semantics
 // within each dimension (IN clause). Labels use per-term EXISTS subqueries

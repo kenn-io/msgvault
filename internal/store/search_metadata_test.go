@@ -72,3 +72,32 @@ func TestSearchMetadataSkipsUnnamedAttachments(t *testing.T) {
 	assert.Equal([]string{}, metadata[id].AttachmentNames)
 	assert.Equal(2, metadata[id].AttachmentCount)
 }
+
+func TestSearchMetadataORExcerpts(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	if f.Store.IsPostgreSQL() {
+		t.Skip("match excerpts use SQLite FTS5")
+	}
+	var ids []int64
+	for _, fixture := range []struct{ subject, body string }{
+		{"First", "alpha beta evidence"},
+		{"Second", "gamma delta evidence"},
+		{"Partial", "alpha unrelated"},
+	} {
+		id := f.NewMessage().WithSubject(fixture.subject).WithSnippet("stored preview").Create(t, f.Store)
+		require.NoError(f.Store.UpsertFTS(id, fixture.subject, strings.Repeat("padding ", 50)+fixture.body, "", "", ""))
+		ids = append(ids, id)
+	}
+	q := search.ParseOR("alpha beta | gamma delta | subject:Partial")
+	messages, total, err := f.Store.SearchMessagesQueryContext(t.Context(), q, 0, 10)
+	require.NoError(err)
+	require.EqualValues(3, total)
+	require.Len(messages, 3)
+	metadata, err := f.Store.GetSearchMetadata(t.Context(), ids, q, true)
+	require.NoError(err)
+	assert.Contains(metadata[ids[0]].MatchSnippet, "alpha beta")
+	assert.Contains(metadata[ids[1]].MatchSnippet, "gamma delta")
+	assert.Empty(metadata[ids[2]].MatchSnippet, "matching one term of a conjunction is not a text match")
+}

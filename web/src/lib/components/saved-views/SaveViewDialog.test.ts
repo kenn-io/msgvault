@@ -22,7 +22,7 @@ const state: ExploreURLState = {
 function savedView() {
   return {
     id: 7, name: 'Invoices', description: 'Quarterly review', canonical_state: {},
-    schema_version: 1, revision: 1,
+    schema_version: 2, revision: 1,
     created_at: '2026-07-19T10:00:00Z', updated_at: '2026-07-19T10:00:00Z'
   };
 }
@@ -86,7 +86,7 @@ describe('SaveViewDialog', () => {
       expect(requests[0]!.method).toBe('POST');
       const body = await requests[0]!.clone().json();
       expect(body).toEqual({
-        name: 'Invoices', description: 'Quarterly review', schema_version: 1,
+        name: 'Invoices', description: 'Quarterly review', schema_version: 2,
         canonical_state: {
           query: 'invoice', search_mode: searchMode,
           filters: [{ field: 'source', operator: 'in', values: ['1'] }],

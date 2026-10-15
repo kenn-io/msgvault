@@ -137,9 +137,34 @@ excluded markers, which become eligible when the policy allows them.
 Some networks delete old media from their servers. WhatsApp, for example,
 reports `Media is no longer available`. msgvault requests such a file once,
 records it as `unavailable` with reason `source_unavailable`, and never retries
-it. Sync and backfill summaries report these as "media no longer available at
-source". Other failed downloads get at most three attempts per run and stay
-pending for the next backfill.
+it.
+
+Beeper can also report `Media not found`, `M_NOT_FOUND`, or
+`failed to download file: HTTP 404`, sometimes wrapped in an HTTP 502 response.
+A plain HTTP 404 that names none of these is an ordinary failed download.
+msgvault stops retrying a not-found download for the current run, but the
+marker stays pending: a not-found alone never ends retries for good. It only becomes
+terminal once the message is at least 30 days old and a separate, later sync
+or backfill run gets not-found again for the same attachment. Anything else
+in between resets this: a successful download clears the history, and a
+different kind of error means the next not-found starts the count over, not
+continues it. Recent media stays pending no matter how many times it
+repeats. Missing or future message timestamps also leave the download
+retryable.
+
+The age and repeat-on-a-separate-run requirement limit how many requests an
+old missing file ever gets. Neither proves the file is permanently gone: an
+old file that later returns stays skipped, including during
+`sync-beeper --full`, and two runs close enough together to both land
+inside one brief bridge outage can retire a file the bridge would otherwise
+have recovered. Sync and backfill summaries report newly terminal files as
+"media no longer available at source".
+
+A not-found costs one request per attachment per run. If a server error or
+throttling response comes before the not-found in the same run, msgvault
+records an ordinary failed download instead, and that starts the repeat count
+over. Other failed downloads get at most three attempts per attachment per run
+and stay pending for the next backfill.
 
 Because Beeper's API serves what Beeper Desktop has synced locally, archive
 depth equals your local Beeper history: a freshly added Beeper account may only

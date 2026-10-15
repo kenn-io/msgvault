@@ -947,15 +947,18 @@ func aggregateTextSearchParts(termPattern string) ([]string, []any) {
 // keyColumns are SQL expressions for the grouping dimension that text terms
 // should filter on (e.g. "p.email_address", "p.display_name"). When nil,
 // text terms search subject + sender (the default for Senders/Time views).
-func (e *DuckDBEngine) buildAggregateSearchConditions(searchQuery string, keyColumns ...string) ([]string, []any) {
-	if searchQuery == "" {
+func (e *DuckDBEngine) buildAggregateSearchConditions(q *search.Query, keyColumns ...string) ([]string, []any) {
+	if q.HasOR() {
+		return store.CombineOR(q, func(branch *search.Query) ([]string, []any) {
+			return e.buildAggregateSearchConditions(branch, keyColumns...)
+		})
+	}
+	if q.IsEmpty() {
 		return nil, nil
 	}
 
 	var conditions []string
 	var args []any
-
-	q := search.Parse(searchQuery)
 
 	// Text terms: always search subject + sender, plus the view's grouping
 	// key columns when provided (e.g., label name in Labels view).
@@ -1117,12 +1120,15 @@ func (e *DuckDBEngine) buildNonTextSearchConditions(q *search.Query, keyColumns 
 // buildStatsSearchConditions builds search conditions for GetTotalStats.
 // For 1:N views (Recipients, RecipientNames, Labels), text terms also filter
 // via EXISTS subqueries on the grouping dimension so stats match visible rows.
-func (e *DuckDBEngine) buildStatsSearchConditions(searchQuery string, groupBy ViewType) ([]string, []any) {
-	if searchQuery == "" {
+func (e *DuckDBEngine) buildStatsSearchConditions(q *search.Query, groupBy ViewType) ([]string, []any) {
+	if q.HasOR() {
+		return store.CombineOR(q, func(branch *search.Query) ([]string, []any) {
+			return e.buildStatsSearchConditions(branch, groupBy)
+		})
+	}
+	if q.IsEmpty() {
 		return nil, nil
 	}
-
-	q := search.Parse(searchQuery)
 
 	var conditions []string
 	var args []any
@@ -1214,7 +1220,7 @@ func (e *DuckDBEngine) buildWhereClause(opts AggregateOptions, keyColumns ...str
 	var conditions []string
 	var args []any
 
-	if !aggregateOverridesEmailDefault(MessageFilter{}, opts) {
+	if defaultsToEmail(search.ParseOR(opts.SearchQuery), nil, opts.AccountScopes) {
 		conditions = append(conditions, emailOnlyFilterMsg)
 	}
 	conditions = append(conditions, store.LiveMessagesWhere("msg", opts.HideDeletedFromSource))
@@ -1236,7 +1242,7 @@ func (e *DuckDBEngine) buildWhereClause(opts AggregateOptions, keyColumns ...str
 	}
 
 	// Text search filter for aggregates - filter on view's key columns
-	searchConds, searchArgs := e.buildAggregateSearchConditions(opts.SearchQuery, keyColumns...)
+	searchConds, searchArgs := e.buildAggregateSearchConditions(parseAnalyticsSearch(opts.SearchQuery, defaultsToEmail(nil, nil, opts.AccountScopes)), keyColumns...)
 	conditions = append(conditions, searchConds...)
 	args = append(args, searchArgs...)
 
@@ -1703,7 +1709,7 @@ func (e *DuckDBEngine) SubAggregate(ctx context.Context, filter MessageFilter, g
 		filter.HideDeletedFromSource = true
 	}
 	where, args := e.buildFilterConditions(filter)
-	if strings.TrimSpace(filter.MessageType) == "" && !aggregateOverridesEmailDefault(filter, opts) {
+	if defaultsToEmail(search.ParseOR(opts.SearchQuery), &filter, opts.AccountScopes) {
 		where += " AND " + emailOnlyFilterMsg
 	}
 
@@ -1726,7 +1732,7 @@ func (e *DuckDBEngine) SubAggregate(ctx context.Context, filter MessageFilter, g
 	}
 
 	// Add search query conditions using the view's key columns
-	searchConds, searchArgs := e.buildAggregateSearchConditions(opts.SearchQuery, def.keyColumns...)
+	searchConds, searchArgs := e.buildAggregateSearchConditions(parseAnalyticsSearch(opts.SearchQuery, defaultsToEmail(nil, &filter, opts.AccountScopes)), def.keyColumns...)
 	var whereSb1064 strings.Builder
 	for _, cond := range searchConds {
 		whereSb1064.WriteString(" AND " + cond)
@@ -1819,7 +1825,7 @@ func (e *DuckDBEngine) GetTotalStats(ctx context.Context, opts StatsOptions) (*T
 	// For 1:N views (Recipients, RecipientNames, Labels), filter on the
 	// grouping key columns so stats match the visible aggregate rows.
 	if opts.SearchQuery != "" {
-		searchConds, searchArgs := e.buildStatsSearchConditions(opts.SearchQuery, opts.GroupBy)
+		searchConds, searchArgs := e.buildStatsSearchConditions(parseAnalyticsSearch(opts.SearchQuery, !opts.SearchScope && defaultsToEmail(nil, opts.Filter, nil)), opts.GroupBy)
 		conditions = append(conditions, searchConds...)
 		args = append(args, searchArgs...)
 	}
@@ -2251,6 +2257,10 @@ func (e *DuckDBEngine) Search(ctx context.Context, q *search.Query, limit, offse
 	// Prefer direct SQLite for FTS5 support
 	if e.sqliteEngine != nil {
 		return e.sqliteEngine.Search(ctx, q, limit, offset)
+	}
+
+	if q.HasOR() {
+		return nil, errors.New("pipe OR requires a direct SQLite engine")
 	}
 
 	// Fall back to sqlite_scan with LIKE queries (no FTS)
@@ -3153,8 +3163,16 @@ func (e *DuckDBEngine) SearchFastWithStats(ctx context.Context, q *search.Query,
 // Note: These conditions reference msg and ms (msg_sender) CTEs.
 func (e *DuckDBEngine) buildSearchConditions(q *search.Query, filter MessageFilter) ([]string, []any) {
 	filterWhere, filterArgs := e.buildFilterConditions(filter)
-	conditions := []string{filterWhere}
-	args := append([]any(nil), filterArgs...)
+	conditions, args := e.buildSearchCriteria(q)
+	return append([]string{filterWhere}, conditions...), append(filterArgs, args...)
+}
+
+func (e *DuckDBEngine) buildSearchCriteria(q *search.Query) ([]string, []any) {
+	if q.HasOR() {
+		return store.CombineOR(q, e.buildSearchCriteria)
+	}
+	var conditions []string
+	var args []any
 
 	// Text search terms - search subject, snippet, and every participant row
 	// without consulting message bodies (fast path). The EXISTS branch includes

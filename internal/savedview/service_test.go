@@ -2,11 +2,16 @@ package savedview
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -41,9 +46,9 @@ func TestExecutableStateRejectsWhatTheStoreWouldNotPersist(t *testing.T) {
 	}{
 		{
 			name:    "unsupported schema version",
-			view:    store.SavedView{ID: 1, SchemaVersion: 2, CanonicalState: json.RawMessage(`{}`)},
+			view:    store.SavedView{ID: 1, SchemaVersion: 3, CanonicalState: json.RawMessage(`{}`)},
 			wantErr: store.ErrSavedViewUnsupportedSchemaVersion,
-			message: "schema version 2",
+			message: "schema version 3",
 		},
 		{
 			name:    "malformed state",
@@ -80,6 +85,34 @@ func TestExecutableStateRejectsWhatTheStoreWouldNotPersist(t *testing.T) {
 			_, err := ExecutableState(tc.view)
 			require.ErrorIs(t, err, tc.wantErr)
 			assert.ErrorContains(t, err, tc.message)
+		})
+	}
+}
+
+func TestExecutableStatePreservesLegacyPipes(t *testing.T) {
+	requirements := require.New(t)
+	data, err := os.ReadFile(filepath.Join("..", "..", "testdata", "savedview_legacy_pipes.json"))
+	requirements.NoError(err)
+	var cases []struct {
+		Version int    `json:"schema_version"`
+		Mode    string `json:"search_mode"`
+		Query   string `json:"query"`
+		Want    string `json:"want"`
+	}
+	requirements.NoError(json.Unmarshal(data, &cases))
+	requirements.NotEmpty(cases)
+	for _, tc := range cases {
+		t.Run(strconv.Itoa(tc.Version)+"/"+tc.Mode+"/"+tc.Query, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			raw, err := json.Marshal(store.SavedViewStateEnvelope{Query: tc.Query, SearchMode: tc.Mode})
+			requirements.NoError(err)
+			state, err := ExecutableState(store.SavedView{SchemaVersion: tc.Version, CanonicalState: raw})
+			requirements.NoError(err)
+			assertions.Equal(tc.Want, state.Query)
+			if tc.Version == 1 && (tc.Mode == "" || tc.Mode == "full_text") {
+				assertions.Equal(search.Parse(strings.TrimSpace(tc.Query)), search.ParseOR(state.Query))
+			}
 		})
 	}
 }

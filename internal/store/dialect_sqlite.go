@@ -450,11 +450,20 @@ func (d *SQLiteDialect) FTSMatches(q querier, doc FTSDoc) (bool, error) {
 // docs-site search ranking page ("Where Ordering Can Diverge") and
 // TestFTSRank_KnownDivergence for the expected-behavior pin and
 // rationale.
-func (d *SQLiteDialect) FTSSearchClause() (join, where, orderBy string, orderArgCount int) {
+func (d *SQLiteDialect) FTSSearchClause(rowIDs bool) (join, where, orderBy string, orderArgCount int) {
+	where = "messages_fts MATCH ?"
+	if rowIDs {
+		where = SQLiteFTSRowIDCondition(where)
+	}
 	return "JOIN messages_fts ON messages_fts.rowid = m.id",
-		"messages_fts MATCH ?",
+		where,
 		"bm25(messages_fts, 1.0, 10.0, 1.0, 4.0, 1.0, 1.0)",
 		0
+}
+
+// SQLiteFTSRowIDCondition matches messages through the FTS index without an outer join.
+func SQLiteFTSRowIDCondition(condition string) string {
+	return "m.id IN (SELECT rowid FROM messages_fts WHERE " + condition + ")"
 }
 
 // FTSDeleteSQL returns the SQL to delete a message's FTS5 entry.

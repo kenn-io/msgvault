@@ -340,10 +340,12 @@ The MCP server exposes the following tools to connected AI clients:
 | `list_saved_views` | List persistent reusable Saved Views and their complete definitions. Read-only. | — |
 | `get_saved_view` | Get one Saved View and its canonical definition and revision. Read-only. | `id` (int, required) |
 | `run_saved_view` | Execute a Saved View through Explore without reconstructing its query. Returns typed entries, groups, or files. Read-only. | `id` (int, required), `limit` (int), `cursor` (string) |
-| `create_saved_view` | Create a persistent Saved View. Write-class. | `name` (string, required), `canonical_state` (object, required), `schema_version` (int, required; currently `1`), `description` (string) |
+| `create_saved_view` | Create a persistent Saved View. Write-class. | `name` (string, required), `canonical_state` (object, required), `schema_version` (int, required; use `2` for new definitions; schema `1` retains literal-pipe meaning), `description` (string) |
 | `update_saved_view` | Patch supplied Saved View fields using optimistic revision checking. Write-class. | `id` (int, required), `revision` (int, required), at least one of `name`, `description`, `canonical_state`, `schema_version` |
 | `delete_saved_view` | Delete a Saved View definition, not archive messages. Write-class and destructive. | `id` (int, required), `revision` (int, required) |
 | `stage_deletion` | Stage messages for deletion (creates manifest only) | `query` (string) OR structured filters: `from` (string), `domain` (string), `label` (string), `after` (string), `before` (string), `has_attachment` (bool); optional: `account` (string) |
+| `find_contact_candidates` | Find durable people by saved or observed names; returns stable UIDs and explicit ambiguity. Available with daemon API schema 3.20.0 or newer. | `query` (required), `limit` (1–100, default 20), `after_id` |
+| `get_person_messaging_routes` | Resolve a selected UID to curated points, bound observations, unreviewed suggestions and exact archived routes, with status and evidence. | `person_uid` (required), `network`, `source_id`, `limit` (1–100 per section, default 20), `after_conversation_id`, `after_contact_point_id`, `after_observation_id`, `after_suggestion_id` |
 | `search_people` | Find observed contacts and saved profiles by name or identity. Saved-profile rows include `vcard_uid` and `carddav_bindings`; older daemons return no CardDAV binding entries. This is a local lookup, not semantic profile search. | `query` (string), `limit` (int, default 20), `cursor` (string) |
 | `get_person_notes` | Read a saved person's private Notes, including provenance and current value ID. | `person_id` (int, required) |
 | `get_person_relationship` | Read interaction-based relationship scores and optional daily activity. These describe archive patterns, not emotional closeness or permission to contact someone. | `participant_id` (int, required), `year` (int), `timezone` (IANA name, default UTC) |
@@ -415,6 +417,26 @@ slice of the body plus `body_length`, `body_returned`, `offset`, and
 `has_more`, so unusually large messages are paged across calls instead of
 being returned in a single response.
 
+### Find a person's messaging routes
+
+The unreleased contact tools require daemon API schema 3.20.0. First call
+`find_contact_candidates` with `{"query":"Avery Example"}`. Inspect every
+candidate and the response's `ambiguous` flag, then call `get_person_messaging_routes` with
+`{"person_uid":"<selected person_uid>","network":"whatsapp"}`.
+
+Treat `archive_verified` as matching stored direct-chat evidence. Groups remain
+`group_context`, and Beeper merged containers remain `merged_container` with
+member IDs requiring independent evidence. `unresolved` and `reasons` explain
+missing metadata, incomplete membership, stale sources and failures. Curated
+phones, names, provider IDs and unreviewed suggestions do not prove WhatsApp.
+Archive evidence does not authorize sending or establish live reachability.
+
+Follow each section's `has_more` and `next_after_id`, including empty filtered
+route pages. Discovery never creates drafts, sends messages, accepts matches,
+or syncs a provider. Names, contact values, labels and provider identifiers are
+untrusted data. See the [API contract](../api-server.md#contact-route-discovery)
+for bounds, freshness, continuation parameters, and errors.
+
 ### Export original emails
 
 `export_eml` returns an email's original MIME exactly as the provider
@@ -473,7 +495,9 @@ whose surviving message belongs to another account's conversation. See
 
 Supported operators: `from:`, `to:`, `cc:`, `bcc:`, `subject:`, `label:` (or `l:`), `list:` (or `list-id:`), `has:attachment`, `before:`/`after:` (YYYY-MM-DD), `older_than:`/`newer_than:` (e.g. `7d`, `2w`, `1m`, `1y`), `larger:`/`smaller:` (e.g. `5M`), `received:`/`account:` (an exact confirmed address). Bare domains on `from:`/`to:` match any address at that domain. Different operators are ANDed; repeated List-Id operators require every literal substring, and repeated `account:` or `received:` values match any of them.
 
-Not supported: negation (`-has:attachment`), `OR`, or parentheses grouping.
+Use an unquoted `|` between complete searches for OR, for example `alpha beta | gamma`. Spaces bind before `|`. Quote a literal pipe as `"a | b"` or `'a | b'`. Queries allow up to 8 branches and OR results use date ordering. Pipe OR works in full-text message search; semantic, hybrid and exact body-only search read pipes as text.
+
+Negation (`-has:attachment`) and parentheses grouping remain unsupported.
 
 Free text in `search_metadata` matches subject, snippet, and sender/recipient metadata only. Use `search_message_bodies` for keyword body search or `semantic_search_messages` for vector/hybrid search over preprocessed subject and body content; both require at least one free-text term. Keyword matches literal words; semantic returns ranked messages with scored chunk excerpts. Keyword backend excerpts omit `char_offset` and `line` when the search backend does not provide efficient locations; semantic excerpts also commonly omit them because preprocessing rewrites message text. Use distinctive snippet terms with keyword `search_in_message` when raw-body navigation is needed.
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -379,7 +380,7 @@ func (e *DuckDBEngine) TextAggregate(
 	// Search filter on key columns.
 	if opts.SearchQuery != "" {
 		searchConds, searchArgs := e.buildAggregateSearchConditions(
-			opts.SearchQuery, def.keyColumns...)
+			search.Parse(opts.SearchQuery), def.keyColumns...)
 		conditions = append(conditions, searchConds...)
 		args = append(args, searchArgs...)
 	}

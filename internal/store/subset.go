@@ -388,6 +388,29 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 	if result.Sources, err = res.RowsAffected(); err != nil {
 		return nil, fmt.Errorf("sources rows affected: %w", err)
 	}
+	hasRouteFailures, err := sourceTableExists(tx, "source_messaging_route_failures")
+	if err != nil {
+		return nil, fmt.Errorf("check source messaging route failure schema: %w", err)
+	}
+	if hasRouteFailures {
+		if _, err := copyByName(tx, "source_messaging_route_failures",
+			"source_id IN (SELECT source_id FROM selected_message_sources)"); err != nil {
+			return nil, fmt.Errorf("copy source messaging route failures: %w", err)
+		}
+	}
+	// Route lookup reports a Beeper source awaiting re-anchor from this marker.
+	hasArchiveMetadata, err := sourceTableExists(tx, "archive_metadata")
+	if err != nil {
+		return nil, fmt.Errorf("check archive metadata schema: %w", err)
+	}
+	if hasArchiveMetadata {
+		if _, err := tx.Exec(`INSERT INTO archive_metadata (key, value)
+			SELECT key, value FROM src.archive_metadata
+			WHERE key IN (SELECT ? || CAST(source_id AS TEXT) FROM selected_message_sources)
+			ON CONFLICT (key) DO UPDATE SET value = excluded.value`, beeperReanchorMarkerPrefix); err != nil {
+			return nil, fmt.Errorf("copy Beeper re-anchor markers: %w", err)
+		}
+	}
 
 	if err := tx.QueryRow(
 		"SELECT COUNT(*) FROM selected_messages",

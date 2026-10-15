@@ -9,6 +9,93 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/ptr"
 )
 
+func TestQueryPipeORRecursiveCriteria(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	q := ParseOR("alpha | from:a@example.com")
+	q.DeletionScope = DeletionScopeDeleted
+	require.NoError(q.Err())
+	assert.False(q.IsEmpty())
+	assert.True(q.HasTextTerms())
+	q = &Query{Alternatives: []*Query{{}, {}}}
+	assert.True(q.IsEmpty())
+	assert.False(q.HasTextTerms())
+	q.Alternatives[1] = Parse("before:invalid")
+	require.Error(q.Err())
+}
+
+func TestParsePipeOR(t *testing.T) {
+	for _, tc := range []struct {
+		input       string
+		branches    int
+		terms       []string
+		plain       []string
+		branchTerms [][]string
+		labels      []string
+		subjects    []string
+		lists       []string
+		invalid     bool
+		branchError string
+	}{
+		{input: "alpha beta | gamma", branches: 2, plain: []string{"alpha", "beta", "|", "gamma"}, branchTerms: [][]string{{"alpha", "beta"}, {"gamma"}}},
+		{input: "foo\tbar", terms: []string{"foo\tbar"}, plain: []string{"foo\tbar"}},
+		{input: "foo\u00a0bar", terms: []string{"foo\u00a0bar"}, plain: []string{"foo\u00a0bar"}},
+		{input: "foo\t| bar", terms: []string{"foo\t|", "bar"}, plain: []string{"foo\t|", "bar"}},
+		{input: "foo |\u00a0bar", terms: []string{"foo", "|\u00a0bar"}, plain: []string{"foo", "|\u00a0bar"}},
+		{input: "alpha|beta", terms: []string{"alpha|beta"}},
+		{input: "a | b | c | d | e | f | g | h", branches: 8},
+		{input: "alpha\t|\nbeta", terms: []string{"alpha\t|\nbeta"}},
+		{input: "alpha\u2003|\u2003beta", terms: []string{"alpha\u2003|\u2003beta"}},
+		{input: "label:a|b", labels: []string{"a|b"}},
+		{input: "subject:foo|bar", subjects: []string{"foo|bar"}},
+		{input: "list:a|b", lists: []string{"a|b"}},
+		{input: "https://example.org/a|b", terms: []string{"https://example.org/a|b"}},
+		{input: "alpha| beta", terms: []string{"alpha|", "beta"}},
+		{input: "alpha |beta", terms: []string{"alpha", "|beta"}},
+		{input: `"alpha"|`, terms: []string{"alpha", "|"}},
+		{input: `|"alpha"`, terms: []string{"|", "alpha"}},
+		{input: `"a | b"`, terms: []string{"a | b"}},
+		{input: `'a | b'`, terms: []string{"a | b"}},
+		{input: `subject:"a|b"`, subjects: []string{"a|b"}},
+		{input: `'alpha beta'`, terms: []string{"alpha beta"}},
+		{input: `alpha"beta gamma"`, terms: []string{"alpha", "beta gamma"}},
+		{input: "a |", invalid: true},
+		{input: "| a", invalid: true},
+		{input: "a || b", terms: []string{"a", "||", "b"}},
+		{input: "a | | b", invalid: true},
+		{input: "a | b | c | d | e | f | g | h | i", invalid: true},
+		{input: "a | before:2025-13-45", invalid: true, branchError: "before:"},
+		{input: "x | account:me", invalid: true, branchError: "account:"},
+		{input: "a | label:", invalid: true},
+	} {
+		t.Run(tc.input, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			q := ParseWithOR(tc.input, true)
+			if tc.invalid {
+				require.Error(q.Err())
+				if tc.branchError != "" {
+					require.ErrorContains(q.Err(), tc.branchError)
+					assert.NotContains(q.Err().Error(), "every pipe")
+				}
+				return
+			}
+			require.NoError(q.Err())
+			require.Len(q.Alternatives, tc.branches)
+			for i, terms := range tc.branchTerms {
+				assert.Equal(terms, q.Alternatives[i].TextTerms)
+			}
+			if tc.plain != nil {
+				assert.Equal(tc.plain, ParseWithOR(tc.input, false).TextTerms)
+			}
+			assert.Equal(tc.terms, q.TextTerms)
+			assert.Equal(tc.labels, q.Labels)
+			assert.Equal(tc.subjects, q.SubjectTerms)
+			assert.Equal(tc.lists, q.ListIDs)
+		})
+	}
+}
+
 func TestParse(t *testing.T) {
 	type testCase struct {
 		name  string

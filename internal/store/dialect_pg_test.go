@@ -102,7 +102,7 @@ func TestPostgreSQLDialect_InsertOrIgnoreSuffix(t *testing.T) {
 func TestPostgreSQLDialect_FTSSearchClause(t *testing.T) {
 	assert := assert.New(t)
 	d := &PostgreSQLDialect{}
-	join, where, orderBy, orderArgCount := d.FTSSearchClause()
+	join, where, orderBy, orderArgCount := d.FTSSearchClause(false)
 	assert.Empty(join, "join (PostgreSQL needs no JOIN)")
 	assert.Equal("m.search_fts @@ to_tsquery('simple', ?)", where)
 	assert.Equal("ts_rank(ARRAY[0.1, 0.1, 0.4, 1.0]::real[], m.search_fts, to_tsquery('simple', ?)) DESC", orderBy)

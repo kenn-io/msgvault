@@ -79,6 +79,7 @@ messages attributed to that address.
 List-Id values are matched as case-insensitive literal substrings. Quote values
 that contain spaces. Repeating list: or list-id: requires every value to match.
 Bare words and "quoted phrases" perform full-text search in the default mode.
+Use | between alternatives, for example invoice from:alice | receipt from:bob.
 filename: values use case-insensitive literal substring matching, including
 %, _, and backslashes. Repeat filename: to require every value to match.
 The filename operator requires daemon API schema 3.14.0 or newer.
@@ -145,17 +146,15 @@ Examples:
 		// rather than silently dropping the filter and running a wider query.
 		// Checked before the empty-query test so the user sees the offending
 		// value instead of a misleading "empty search query".
-		if err := search.Parse(queryStr).Err(); err != nil {
+		if err := search.ParseWithOR(queryStr, searchMode == "fts").Err(); err != nil {
 			return usageErr(cmd, err)
 		}
 		if searchMode == "fts" {
-			parsed := search.Parse(queryStr)
+			parsed := search.ParseOR(queryStr)
 			parsed.MessageTypes = append(parsed.MessageTypes, searchMessageTypes...)
 			if parsed.IsEmpty() && searchAccount == "" && searchCollection == "" {
 				return errors.New("empty search query")
 			}
-		}
-		if searchMode == "fts" {
 			return runHTTPSearch(cmd, queryStr)
 		}
 		if searchMode != "fts" && searchOffset > 0 {

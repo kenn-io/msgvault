@@ -44,5 +44,7 @@ func (s *Store) DeleteArchiveMarker(ctx context.Context, key string) error {
 // whose installation must be manually re-verified before scheduled syncs
 // resume.
 func BeeperReanchorMarkerKey(sourceID int64) string {
-	return fmt.Sprintf("beeper.reanchor_required:%d", sourceID)
+	return fmt.Sprintf("%s%d", beeperReanchorMarkerPrefix, sourceID)
 }
+
+const beeperReanchorMarkerPrefix = "beeper.reanchor_required:"

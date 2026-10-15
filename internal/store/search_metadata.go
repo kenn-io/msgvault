@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	"go.kenn.io/msgvault/internal/search"
@@ -43,10 +44,19 @@ func (s *Store) GetSearchMetadata(ctx context.Context, ids []int64, q *search.Qu
 	if err != nil {
 		return nil, fmt.Errorf("search attachment metadata: %w", err)
 	}
-	if !includeSnippet || q == nil || len(q.TextTerms) == 0 || s.IsPostgreSQL() || !s.FTS5Available() {
+	if !includeSnippet || !q.HasTextTerms() || s.IsPostgreSQL() || !s.FTS5Available() {
 		return result, nil
 	}
 	expression := s.dialect.BuildFTSArg(q.TextTerms)
+	if q.HasOR() {
+		var alternatives []string
+		for _, alternative := range q.Alternatives {
+			if branch := s.dialect.BuildFTSArg(slices.Concat(q.TextTerms, alternative.TextTerms)); branch != "" {
+				alternatives = append(alternatives, "("+branch+")")
+			}
+		}
+		expression = strings.Join(alternatives, " OR ")
+	}
 	if expression == "" {
 		return result, nil
 	}

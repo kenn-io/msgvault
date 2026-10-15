@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import legacyPipes from '../../../../testdata/savedview_legacy_pipes.json';
 import {
   defaultExploreURLState,
   parseExploreURLState,
@@ -28,6 +29,10 @@ function reopened(state: ExploreURLState): ExploreURLState {
 }
 
 describe('saved-view canonical state', () => {
+  it.each(legacyPipes)('opens schema $schema_version $search_mode query $query', ({ schema_version, search_mode, query, want }) => {
+    expect(exploreStateFromSavedView({ query, search_mode: search_mode as ExploreURLState['searchMode'] | undefined }, schema_version).query).toBe(want);
+  });
+
   it('round-trips an Everything view', () => {
     expect(canonicalSavedViewState(everything)).toEqual({
       query: 'invoice', search_mode: 'full_text',
