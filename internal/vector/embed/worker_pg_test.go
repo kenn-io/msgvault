@@ -72,25 +72,33 @@ func (s *pgWorkStore) SetEmbedGen(ctx context.Context, ids []int64, target int64
 }
 
 // SetEmbedGenIfUnchanged mirrors store.Store.SetEmbedGenIfUnchanged on the
-// PG test schema: a per-row optimistic-CAS stamp gated on last_modified.
-// Returns the ids whose UPDATE matched 0 rows (CAS misses).
+// PG test schema: one transaction of per-row optimistic-CAS stamps gated on
+// last_modified. Returns the ids whose UPDATE matched 0 rows (CAS misses).
 func (s *pgWorkStore) SetEmbedGenIfUnchanged(ctx context.Context, items []store.EmbedGenStamp, target int64) (missed []int64, covered int, err error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
 	for _, it := range items {
-		res, err := s.db.ExecContext(ctx,
+		res, err := tx.ExecContext(ctx,
 			`UPDATE messages SET embed_gen = $1 WHERE id = $2 AND last_modified = $3`,
 			target, it.ID, it.LastModified)
 		if err != nil {
-			return missed, covered, err
+			return nil, 0, err
 		}
 		n, err := res.RowsAffected()
 		if err != nil {
-			return missed, covered, err
+			return nil, 0, err
 		}
 		if n == 0 {
 			missed = append(missed, it.ID)
 		} else {
 			covered++
 		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, 0, err
 	}
 	return missed, covered, nil
 }

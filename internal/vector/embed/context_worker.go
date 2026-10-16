@@ -575,36 +575,24 @@ func (w *ContextWorker) drainOrdinaryDiscovery(ctx context.Context, gen vector.G
 			}
 			return nil
 		}
-		res.Claimed += len(ids)
-		snapshot, err := BeginSourceSnapshot(ctx, w.source)
+		prepared, err := w.prepareDiscoveryPage(ctx, ids)
 		if err != nil {
-			return err
-		}
-		scopes := make([]contextScope, 0, len(ids))
-		for _, id := range ids {
-			row, found, readErr := snapshot.MessageMeta(ctx, id)
-			if readErr != nil {
-				_ = snapshot.Close()
-				return readErr
-			}
-			if !found {
-				continue
-			}
-			scopes = append(scopes, liveMessageScope(row))
-		}
-		prepared, err := w.prepareScopes(ctx, snapshot, scopes)
-		if err != nil {
-			_ = snapshot.Close()
-			return err
-		}
-		if err := w.closeSnapshot(snapshot); err != nil {
+			res.Claimed += len(ids)
 			return err
 		}
 		if resumeScope != "" {
 			first := sort.Search(len(prepared), func(i int) bool { return prepared[i].key > resumeScope })
 			prepared = prepared[first:]
 		}
+		// Publication checkpoints the pass, and checkpoints cannot decrease,
+		// so claim the page only once the run budget has picked the scopes
+		// left for the next pass.
 		processed, publishErr := w.publishPreparedScopes(ctx, gen, prepared, res, batchStart)
+		claimed := len(ids)
+		if errors.Is(publishErr, errContextRunBudgetExhausted) {
+			claimed -= claimedInScopes(ids, prepared[processed:])
+		}
+		res.Claimed += claimed
 		if processed > 0 {
 			cursor := "discovery:" + strconv.FormatInt(pageAfter, 10) + "|" + prepared[processed-1].key
 			if err := w.deps.Publisher.SetDocumentReconcileCursor(ctx, gen, cursor); err != nil {
@@ -621,6 +609,53 @@ func (w *ContextWorker) drainOrdinaryDiscovery(ctx context.Context, gen vector.G
 			return fmt.Errorf("advance contextual ordinary discovery cursor: %w", err)
 		}
 	}
+}
+
+func (w *ContextWorker) prepareDiscoveryPage(ctx context.Context, ids []int64) ([]preparedScope, error) {
+	snapshot, err := BeginSourceSnapshot(ctx, w.source)
+	if err != nil {
+		return nil, err
+	}
+	scopes := make([]contextScope, 0, len(ids))
+	for _, id := range ids {
+		row, found, readErr := snapshot.MessageMeta(ctx, id)
+		if readErr != nil {
+			_ = snapshot.Close()
+			return nil, readErr
+		}
+		if !found {
+			continue
+		}
+		scopes = append(scopes, liveMessageScope(row))
+	}
+	prepared, err := w.prepareScopes(ctx, snapshot, scopes)
+	if err != nil {
+		_ = snapshot.Close()
+		return nil, err
+	}
+	if err := w.closeSnapshot(snapshot); err != nil {
+		return nil, err
+	}
+	return prepared, nil
+}
+
+// claimedInScopes counts the claimed message ids that belong to scopes. A chat
+// scope can cover messages outside this discovery page, which were not claimed.
+func claimedInScopes(ids []int64, scopes []preparedScope) int {
+	claimed := make(map[int64]struct{}, len(ids))
+	for _, id := range ids {
+		claimed[id] = struct{}{}
+	}
+	count := 0
+	for _, scope := range scopes {
+		for _, version := range scope.liveVersions {
+			if _, ok := claimed[version.MessageID]; ok {
+				delete(claimed, version.MessageID)
+				count++
+			}
+		}
+	}
+	return count
 }
 
 func (w *ContextWorker) closeSnapshot(snapshot SourceSnapshot) error {
