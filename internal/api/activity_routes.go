@@ -186,7 +186,7 @@ func activityPathIDParam() *huma.Param {
 }
 
 func activityDateParam(name, description string) *huma.Param {
-	location := "query"
+	location := queryParamLocation
 	required := false
 	if name == activityDateField {
 		location = pathKey

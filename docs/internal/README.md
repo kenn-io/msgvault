@@ -20,6 +20,7 @@ For maintenance rules, see the [documentation contributor guide](../README.md).
 | People and relationships | [Relationship index](relationship-list-index-design.md), [merge reversal](person-merge-reversal.md), [conversation brief](last-time-we-talked-design.md) | [People and profiles](../usage/people.md) |
 | Web UI navigation and visual language | [Design](web-ui-overhaul-design.md), [foundation plan](web-ui-overhaul-pr1-plan.md), [Everything and Files plan](web-ui-overhaul-pr2-plan.md), [People spec](web-ui-overhaul-pr3-spec.md), [People plan](web-ui-overhaul-pr3-plan.md), [Manage spec](web-ui-overhaul-pr4-spec.md), and [Manage plan](web-ui-overhaul-pr4-plan.md) | [Web UI](../web-ui.md) |
 | Daemon command routing | [CLI audit](daemon-cli-request-audit.md) | [Daemon guide](../guides/daemon-migration.md) |
+| MCP Events (capture and subscriptions; Phase 2 gates) | [Design](mcp-events-design.md) | [MCP server](../usage/chat.md) |
 | PostgreSQL | [Original implementation tracker](PG_STATUS.md) | [PostgreSQL backend](../architecture/postgresql.md) |
 | Recovery | [Recovery notes](recovery.md) | [Backup](../usage/backup.md) and [troubleshooting](../troubleshooting.md) |
 

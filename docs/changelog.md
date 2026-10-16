@@ -8,7 +8,7 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
-- Message [search](usage/searching.md#match-any-of-several-searches) accepts up to eight pipe-separated alternatives in full-text mode. API schema 3.19.0 adds support for remote clients.
+- Message [search](usage/searching.md#match-any-of-several-searches) accepts up to eight pipe-separated alternatives in full-text mode. API schema 3.24.0 adds support for remote clients.
 - A standalone ` | ` between searches used to be literal text and now means OR; `"a | b"` keeps it literal.
 - Saved Views written with schema version 1 keep their literal pipe meaning; new views use version 2 for pipe OR.
 - [Chatwoot](guides/chatwoot.md) archives shared inboxes, files, source transcripts, and linked call meetings. API schema 3.18.0 adds optional `related_message_id`, which links a Chatwoot call message and its meeting.
@@ -27,6 +27,14 @@ All notable changes to msgvault, grouped by release.
 - SQLite [metadata searches](usage/searching.md#search-metadata) use substring
   indexes. Archive initialization backfills metadata once; large archives need
   additional startup time and disk space.
+
+- Opt-in [MCP Events](usage/chat.md#events) let an MCP client subscribe to one
+  conversation or calendar and receive signed HTTPS callbacks when msgvault
+  archives a live Gmail or IMAP message, a Google Calendar event changes, or a
+  managed draft is created, updated, or deleted. Imports, full syncs, and
+  recovery scans stay silent. Events are off by default; enable them with
+  [`[mcp.events]`](configuration.md#mcpevents). They need the daemon owner's
+  API key on `msgvault mcp --http` and API schema 3.24.0.
 
 - Go programs can use msgvault as a library through `go.kenn.io/msgvault/pkg/archive`.
   It sets up and opens SQLite or PostgreSQL archives, runs the Slack and Discord

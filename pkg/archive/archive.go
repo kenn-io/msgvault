@@ -124,6 +124,9 @@ func Open(ctx context.Context, postgres PostgreSQL) (*Archive, error) {
 	if err == nil {
 		err = st.ValidateSchemaContext(ctx)
 	}
+	if err == nil {
+		err = recordEventsCaptureGap(ctx, st)
+	}
 	if err != nil {
 		_ = st.Close()
 		return nil, fmt.Errorf("open initialized archive: %w", err)
@@ -182,5 +185,23 @@ func OpenSQLite(ctx context.Context, path string) (*Archive, error) {
 		_ = st.Close()
 		return nil, err
 	}
+	if err = recordEventsCaptureGap(ctx, st); err != nil {
+		_ = st.Close()
+		return nil, err
+	}
 	return &Archive{store: st}, nil
+}
+
+// recordEventsCaptureGap marks this process as not capturing MCP Events. An
+// archive whose capture was on starts a new capture epoch and its active
+// subscriptions stop with capture_gap, so a later daemon cannot resume them as
+// if library writes had been delivered. The owner stays unknown, so nothing is
+// revoked. Later library mutations recheck persisted capture under the write
+// fence, including when a daemon re-enables Events while this handle stays open.
+// Opening an archive that never enabled Events only pays one read.
+func recordEventsCaptureGap(ctx context.Context, st *store.Store) error {
+	if _, err := st.ConfigureMCPEvents(ctx, store.MCPEventsConfig{}); err != nil {
+		return fmt.Errorf("record MCP Events capture gap: %w", err)
+	}
+	return nil
 }

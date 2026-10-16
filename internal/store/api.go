@@ -50,6 +50,7 @@ const participantSummarySenderSQL = participantDisplaySQL + ` as from_display,
 type APIMessage struct {
 	RelatedMessageID     *int64
 	ConversationTitle    string
+	Calendar             *CalendarProjection
 	ID                   int64
 	SourceID             int64
 	SourceMessageID      string
@@ -231,7 +232,7 @@ func (s *Store) GetMessageContext(ctx context.Context, id int64) (*APIMessage, e
 			m.size_estimate,
 			m.is_from_me,
 			m.deleted_from_source_at,
-			CASE WHEN m.message_type IN ('chatwoot', 'meeting_transcript') THEN m.metadata ELSE NULL END
+			CASE WHEN m.message_type IN ('chatwoot', 'meeting_transcript', 'calendar_event') THEN m.metadata ELSE NULL END
 		FROM messages m
 		LEFT JOIN message_recipients mr ON mr.id = (
 			SELECT mr2.id FROM message_recipients mr2
@@ -285,6 +286,9 @@ func (s *Store) GetMessageContext(ctx context.Context, id int64) (*APIMessage, e
 	}
 	m.RelatedMessageID = messages[0].RelatedMessageID
 	m.IsFromMe = isFromMe.Bool
+	if m.MessageType == messageTypeCalendarEvent {
+		m.Calendar = ParseCalendarProjection(metadata.String)
+	}
 	if sentAt.Valid {
 		m.SentAt = sentAt.Time
 	}
