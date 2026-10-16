@@ -651,6 +651,10 @@ type GetRemoteImageErrorResponseJSON415 = ErrorResponse
 
 type GetRemoteImageErrorResponseJSON502 = ErrorResponse
 
+type SearchChatsResponse = ChatDiscoveryPage
+
+type SearchChatsErrorResponse = ErrorResponse
+
 type GetConversationResponse = ConversationResponse
 
 type GetConversationErrorResponse = ErrorResponse
@@ -4483,6 +4487,13 @@ type GetRemoteImageResp struct {
 	JSON401      *GetRemoteImageErrorResponseJSON
 	JSON415      *GetRemoteImageErrorResponseJSON415
 	JSON502      *GetRemoteImageErrorResponseJSON502
+}
+
+type SearchChatsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *SearchChatsResponse
 }
 
 type GetConversationResp struct {

@@ -100,6 +100,7 @@ func daemonProxyMemoryOptions() ServeOptions {
 		IdentityScoring:      struct{ IdentityScoringBackend }{},
 		Drafts:               struct{ DraftRunner }{},
 		DraftCommands:        slices.Sorted(maps.Keys(stableDraftDefinitions)),
+		ChatDiscoveryBackend: struct{ ChatDiscoveryBackend }{},
 	}
 }
 
