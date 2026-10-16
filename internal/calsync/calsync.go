@@ -127,6 +127,10 @@ func (s *Syncer) Full(ctx context.Context) (Result, error) {
 			return result, err
 		}
 		if err := s.syncCalendarFull(ctx, cal, &result); err != nil {
+			if errors.Is(err, store.ErrSourceRetired) && !slices.Contains(s.opts.Calendars, cal.ID) {
+				s.logger.Info("skipping retired calendar source", "calendar", cal.ID)
+				continue
+			}
 			s.logger.Error("calendar full sync failed", "calendar", cal.ID, "error", err)
 			if firstErr == nil {
 				firstErr = err
@@ -498,9 +502,14 @@ func (s *Syncer) getOrCreateCalendarSource(
 
 	var source *store.Source
 	var migrate *store.Source
+	var retiredMatch bool
 	for _, src := range sources {
 		cfg := parseSourceConfig(src.SyncConfig)
 		if cfg.CalendarID != cal.ID {
+			continue
+		}
+		if src.MergedIntoSourceID != 0 {
+			retiredMatch = true
 			continue
 		}
 		if src.Identifier == identifier {
@@ -510,6 +519,9 @@ func (s *Syncer) getOrCreateCalendarSource(
 		if migrate == nil {
 			migrate = src
 		}
+	}
+	if source == nil && migrate == nil && retiredMatch {
+		return nil, fmt.Errorf("calendar source %q is retired: %w", identifier, store.ErrSourceRetired)
 	}
 	if source == nil && migrate != nil {
 		if err := s.store.UpdateSourceIdentifier(migrate.ID, identifier); err != nil {
@@ -528,6 +540,39 @@ func (s *Syncer) getOrCreateCalendarSource(
 		return nil, err
 	}
 	return source, nil
+}
+
+// ValidateWritableCalendars refuses archive writes to calendars whose only
+// matching source has been retired. It performs no source migration or other
+// archive mutation, so callers can run it before changing the provider.
+func (s *Syncer) ValidateWritableCalendars(ctx context.Context, calendarIDs []string) error {
+	sources, err := s.store.GetSourcesByTypeAndAccountContext(ctx, gcal.SourceType, s.opts.AccountEmail)
+	if err != nil {
+		return fmt.Errorf("find existing calendar sources: %w", err)
+	}
+	for _, calendarID := range calendarIDs {
+		if calendarID == "" {
+			continue
+		}
+		retiredMatch := false
+		liveMatch := false
+		for _, src := range sources {
+			if parseSourceConfig(src.SyncConfig).CalendarID != calendarID {
+				continue
+			}
+			if src.MergedIntoSourceID != 0 {
+				retiredMatch = true
+				continue
+			}
+			liveMatch = true
+			break
+		}
+		if !liveMatch && retiredMatch {
+			identifier := s.opts.AccountEmail + "/" + calendarID
+			return fmt.Errorf("calendar source %q is retired: %w", identifier, store.ErrSourceRetired)
+		}
+	}
+	return nil
 }
 
 func (s *Syncer) confirmCalendarSourceIdentity(ctx context.Context, source *store.Source) error {
@@ -562,6 +607,9 @@ func (s *Syncer) updateExistingCalendarSourceOAuthApps() error {
 		return fmt.Errorf("enumerate calendar sources: %w", err)
 	}
 	for _, src := range sources {
+		if src.MergedIntoSourceID != 0 {
+			continue
+		}
 		cfg := parseSourceConfig(src.SyncConfig)
 		if err := s.updateCalendarSourceOAuthApp(src.ID, cfg.CalendarID); err != nil {
 			return err

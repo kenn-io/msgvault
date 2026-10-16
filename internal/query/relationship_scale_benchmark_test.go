@@ -50,6 +50,7 @@ func buildRelationshipScaleCache(b *testing.B, emailCount, contactCount int) {
 	_, err = db.Exec(fmt.Sprintf(`CREATE VIEW scale_messages AS
 		SELECT i::BIGINT AS id, 1::BIGINT AS source_id,
 		       'message-' || i AS source_message_id,
+		       false AS archive_only,
 		       CASE WHEN i <= %[1]d THEN i ELSE %[1]d + 1 END::BIGINT AS conversation_id,
 		       'Synthetic message' AS subject, 'Synthetic preview' AS snippet,
 		       CASE WHEN i <= %[1]d / 2 THEN TIMESTAMP '2024-01-01' ELSE TIMESTAMP '2025-01-01' END

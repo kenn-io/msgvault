@@ -248,7 +248,8 @@ func TestInitSchemaUpgradesV9WatermarkTriggersForListID(t *testing.T) {
 	require.NoError(err, "install prior v9 message watermark trigger")
 	_, err = st.DB().Exec(`
 		DELETE FROM applied_migrations
-		WHERE name IN ('message_and_attachment_triggers_v9', 'message_and_attachment_triggers_v10')`)
+		WHERE name IN ('message_and_attachment_triggers_v9', 'message_and_attachment_triggers_v10',
+		               'message_and_attachment_triggers_v11')`)
 	require.NoError(err, "clear current watermark trigger migration records")
 	_, err = st.DB().Exec(`
 		INSERT INTO applied_migrations (name) VALUES ('message_and_attachment_triggers_v9')`)
@@ -288,7 +289,7 @@ func TestPostgresInitSchemaMigratesListIDColumn(t *testing.T) {
 	}
 	_, err := f.Store.DB().Exec(`
 		DELETE FROM applied_migrations
-		WHERE name = 'message_and_attachment_triggers_v10'`)
+		WHERE name = 'message_and_attachment_triggers_v11'`)
 	require.NoError(err, "restore the pre-List-ID trigger migration state")
 	_, err = f.Store.DB().Exec(`ALTER TABLE messages DROP COLUMN list_id`)
 	require.NoError(err, "remove column to simulate a legacy PostgreSQL archive")

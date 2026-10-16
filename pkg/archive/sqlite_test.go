@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/pkg/archive"
@@ -55,6 +56,46 @@ func TestOpenSQLiteRequiresExistingArchive(t *testing.T) {
 	_, err = archive.OpenSQLite(t.Context(), "postgres://archive.invalid/msgvault")
 	require.ErrorContains(err, "use Open for PostgreSQL")
 	require.ErrorContains(archive.SetupSQLite(t.Context(), "postgres://archive.invalid/msgvault"), "use Setup for PostgreSQL")
+}
+
+func TestSQLiteArchiveRequiresSourceLifecycleSetup(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	path := filepath.Join(t.TempDir(), "archive.db")
+	require.NoError(archive.SetupSQLite(t.Context(), path))
+	st, err := store.Open(path)
+	require.NoError(err)
+	t.Cleanup(func() { assert.NoError(st.Close()) })
+	source, err := st.GetOrCreateSource("mbox", "history@example.com")
+	require.NoError(err)
+	// Version 8 predates source lifecycle tables. Keep that historical marker
+	// literal so omitting the version bump makes runtime opening fail this test.
+	_, err = st.DB().Exec("UPDATE archive_metadata SET value = '8' WHERE key = 'schema_version'")
+	require.NoError(err)
+	_, err = st.DB().Exec("DROP TABLE source_settings")
+	require.NoError(err)
+
+	runtime, err := archive.OpenSQLite(t.Context(), path)
+	if runtime != nil {
+		t.Cleanup(func() { assert.NoError(runtime.Close()) })
+	}
+	require.ErrorContains(err, "run setup")
+	var version string
+	require.NoError(st.DB().QueryRow("SELECT value FROM archive_metadata WHERE key = 'schema_version'").Scan(&version))
+	assert.Equal("8", version, "runtime opening must not certify an upgrade")
+	var tables int
+	require.NoError(st.DB().QueryRow("SELECT count(*) FROM sqlite_master WHERE name = 'source_settings'").Scan(&tables))
+	assert.Zero(tables, "runtime opening must not create the missing table")
+
+	require.NoError(archive.SetupSQLite(t.Context(), path))
+	runtime, err = archive.OpenSQLite(t.Context(), path)
+	require.NoError(err)
+	t.Cleanup(func() { assert.NoError(runtime.Close()) })
+	sources, err := runtime.Store().ListSources("")
+	require.NoError(err)
+	require.Len(sources, 1)
+	assert.Equal(source.ID, sources[0].ID)
+	assert.Equal("history@example.com", sources[0].Identifier)
 }
 
 func TestSlackCallerSelectsPrivateConversation(t *testing.T) {

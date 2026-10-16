@@ -779,6 +779,21 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 	if err := copyMessages(tx); err != nil {
 		return nil, err
 	}
+	// Merge-protection markers are portable owning-row state. Copy them from
+	// the selected messages directly so they remain useful even when a subset
+	// omits the detailed merge provenance that originally justified them.
+	hasArchiveOnlyMarkers, err := sourceTableExists(
+		tx, "source_merge_archive_only_messages",
+	)
+	if err != nil {
+		return nil, fmt.Errorf("inspect source archive-only markers: %w", err)
+	}
+	if hasArchiveOnlyMarkers {
+		if _, err := copyByName(tx, "source_merge_archive_only_messages",
+			`message_id IN (SELECT id FROM selected_messages)`); err != nil {
+			return nil, fmt.Errorf("copy source archive-only markers: %w", err)
+		}
+	}
 
 	// The copy names content_changed_at whenever the source has it, which
 	// supplies the value explicitly and so bypasses the column's DEFAULT, and on
@@ -892,6 +907,24 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 		`message_id IN (SELECT id FROM selected_messages)`); err != nil {
 		return nil, fmt.Errorf("copy attachments: %w", err)
 	}
+	hasPreservedAttachmentMarkers, err := sourceTableExists(
+		tx, "source_merge_preserved_attachments",
+	)
+	if err != nil {
+		return nil, fmt.Errorf("inspect source preserved-attachment markers: %w", err)
+	}
+	if hasPreservedAttachmentMarkers {
+		if _, err := copyByName(tx, "source_merge_preserved_attachments",
+			`attachment_id IN (
+				SELECT id FROM src.attachments
+				WHERE message_id IN (SELECT id FROM selected_messages)
+			)`); err != nil {
+			return nil, fmt.Errorf("copy source preserved-attachment markers: %w", err)
+		}
+	}
+	if err := copySourceMergeLifecycle(tx); err != nil {
+		return nil, err
+	}
 
 	res, err = copyByName(tx, "labels", `source_id IN (SELECT source_id FROM selected_message_sources)
 		   OR id IN (
@@ -903,6 +936,14 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 	}
 	if result.Labels, err = res.RowsAffected(); err != nil {
 		return nil, fmt.Errorf("labels rows affected: %w", err)
+	}
+	if present, err := sourceTableExists(tx, "source_merge_preserved_labels"); err != nil {
+		return nil, fmt.Errorf("inspect archived label markers: %w", err)
+	} else if present {
+		if _, err := copyByName(tx, "source_merge_preserved_labels",
+			`label_id IN (SELECT id FROM labels)`); err != nil {
+			return nil, fmt.Errorf("copy archived label markers: %w", err)
+		}
 	}
 
 	if _, err := tx.Exec(`
@@ -2509,6 +2550,77 @@ func copyByName(tx *sql.Tx, table, where string, args ...any) (sql.Result, error
 		return nil, err
 	}
 	return res, nil
+}
+
+// copySourceMergeLifecycle preserves source settings and detailed merge audit
+// rows only when every foreign-key endpoint remains inside the subset. The
+// portable message and attachment markers are copied earlier by their owning
+// rows, so incomplete audit packets do not weaken merge protection.
+func copySourceMergeLifecycle(tx *sql.Tx) error {
+	hasSettings, err := sourceTableExists(tx, "source_settings")
+	if err != nil {
+		return fmt.Errorf("inspect source settings schema: %w", err)
+	}
+	if hasSettings {
+		where := `source_id IN (SELECT id FROM sources)`
+		hasMergeTarget, err := sourceColumnExists(
+			tx, "source_settings", "merged_into_source_id",
+		)
+		if err != nil {
+			return fmt.Errorf("inspect source lifecycle reference: %w", err)
+		}
+		if hasMergeTarget {
+			where += ` AND (merged_into_source_id IS NULL OR merged_into_source_id IN (
+				SELECT id FROM sources
+			))`
+		}
+		if _, err := copyByName(tx, "source_settings", where); err != nil {
+			return fmt.Errorf("copy source settings: %w", err)
+		}
+	}
+
+	for _, record := range []struct {
+		table string
+		where string
+	}{
+		{
+			table: "source_merge_messages",
+			where: `message_id IN (SELECT id FROM selected_messages)
+				AND original_source_id IN (SELECT id FROM sources)
+				AND (survivor_message_id IS NULL OR survivor_message_id IN (
+					SELECT id FROM messages
+				))`,
+		},
+		{
+			table: "source_merge_conversations",
+			where: `conversation_id IN (SELECT id FROM conversations)
+				AND original_source_id IN (SELECT id FROM sources)
+				AND destination_conversation_id IN (SELECT id FROM conversations)`,
+		},
+		{
+			table: "source_merge_attachments",
+			where: `attachment_id IN (SELECT id FROM attachments)
+				AND original_attachment_id IN (SELECT id FROM attachments)
+				AND original_source_id IN (SELECT id FROM sources)`,
+		},
+		{
+			table: "source_merges",
+			where: `from_source_id IN (SELECT id FROM sources)
+				AND into_source_id IN (SELECT id FROM sources)`,
+		},
+	} {
+		exists, err := sourceTableExists(tx, record.table)
+		if err != nil {
+			return fmt.Errorf("inspect %s schema: %w", record.table, err)
+		}
+		if !exists {
+			continue
+		}
+		if _, err := copyByName(tx, record.table, record.where); err != nil {
+			return fmt.Errorf("copy %s: %w", record.table, err)
+		}
+	}
+	return nil
 }
 
 func copyByNameWithCommunicationServiceMap(

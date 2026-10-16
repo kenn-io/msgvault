@@ -336,12 +336,23 @@ func runSyncPlaud(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	defer cleanup()
+	explicitSource := len(args) > 0
+	sources, err = resolvePlaudSyncSources(st, sources, explicitSource)
+	if err != nil {
+		return err
+	}
+	if len(sources) == 0 {
+		return nil
+	}
 	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	total := &plaud.ImportSummary{}
 	refresh := func() error { return rebuildCacheAfterManualSync(state.cfg.DatabaseDSN(), state) }
 	for _, src := range sources {
 		if err = registeredPlaudSource(st, src); err != nil {
+			if errors.Is(err, store.ErrSourceRetired) && !explicitSource {
+				continue
+			}
 			return finishPlaudImport(ctx, src.Identifier, total, err, refresh)
 		}
 		if err = ctx.Err(); err != nil {
@@ -388,11 +399,28 @@ func registeredPlaudSource(st *store.Store, src config.PlaudSource) error {
 	if err != nil {
 		return fmt.Errorf("find registered Plaud source: %w", err)
 	}
+	if registered.MergedIntoSourceID != 0 {
+		return fmt.Errorf("plaud source %q is retired: %w", registered.Identifier, store.ErrSourceRetired)
+	}
 	email, err := src.EffectiveAccountEmail()
 	if err != nil {
 		return err
 	}
 	return plaud.ValidateOwner(registered, email)
+}
+
+func resolvePlaudSyncSources(st *store.Store, sources []config.PlaudSource, explicit bool) ([]config.PlaudSource, error) {
+	active := make([]config.PlaudSource, 0, len(sources))
+	for _, src := range sources {
+		if err := registeredPlaudSource(st, src); err != nil {
+			if errors.Is(err, store.ErrSourceRetired) && !explicit {
+				continue
+			}
+			return nil, err
+		}
+		active = append(active, src)
+	}
+	return active, nil
 }
 func finishPlaudImport(ctx context.Context, identifier string, sum *plaud.ImportSummary, importErr error, refresh func() error) error {
 	operationErr := importErr
@@ -410,6 +438,9 @@ func finishPlaudImport(ctx context.Context, identifier string, sum *plaud.Import
 }
 func runConfiguredPlaudSync(ctx context.Context, st *store.Store, src config.PlaudSource) error {
 	if err := registeredPlaudSource(st, src); err != nil {
+		if errors.Is(err, store.ErrSourceRetired) {
+			return nil
+		}
 		return err
 	}
 	state := invocationFromContext(ctx)

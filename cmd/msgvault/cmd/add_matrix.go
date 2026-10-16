@@ -138,7 +138,7 @@ func addMatrixAccount(cmd *cobra.Command, state *invocation, tokensDir, loginSec
 	if err != nil {
 		return fmt.Errorf("create Matrix source: %w", err)
 	}
-	if err := s.UpdateSourceDisplayName(source.ID, "Matrix "+creds.UserID); err != nil {
+	if err := updateSourceDisplayNameForRegistration(s, source.ID, "Matrix "+creds.UserID, state.logger); err != nil {
 		return fmt.Errorf("set Matrix source name: %w", err)
 	}
 	if !noDefaultIdentityAddMatrix {

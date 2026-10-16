@@ -3,6 +3,7 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -46,6 +47,54 @@ func resolveSyncSources(
 		return nil, true, nil
 	}
 	return nil, false, err
+}
+
+func rejectExplicitlyRetiredSyncSources(
+	sources []*store.Source,
+	selector sourceops.Selector,
+	isSyncable func(*store.Source) bool,
+) error {
+	if slices.ContainsFunc(activeSyncSources(sources), isSyncable) {
+		return nil
+	}
+	for _, source := range sources {
+		if source.MergedIntoSourceID == 0 {
+			continue
+		}
+		switch source.SourceType {
+		case sourceTypeGmail, sourceTypeIMAP, sourceTypeMSMail, "":
+			return fmt.Errorf("%s is retired: %w", syncSelectorLabel(selector), store.ErrSourceRetired)
+		}
+	}
+	return nil
+}
+
+func isIncrementalSyncableSource(source *store.Source) bool {
+	switch source.SourceType {
+	case sourceTypeGmail, sourceTypeIMAP, sourceTypeMSMail, "":
+		return true
+	default:
+		return false
+	}
+}
+
+func isFullSyncableSource(source *store.Source) bool {
+	switch source.SourceType {
+	case sourceTypeGmail, sourceTypeIMAP, "":
+		return true
+	default:
+		return false
+	}
+}
+
+func activeSyncSources(sources []*store.Source) []*store.Source {
+	active := make([]*store.Source, 0, len(sources))
+	for _, source := range sources {
+		if source.MergedIntoSourceID == 0 {
+			active = append(active, source)
+		}
+	}
+	return active
 }
 
 func syncSelectorLabel(selector sourceops.Selector) string {

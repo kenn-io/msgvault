@@ -229,9 +229,12 @@ func runConfiguredGranolaSync(ctx context.Context, st *store.Store, src config.G
 	// the importer's existing-source GetOrCreateSource call.
 	notRegistered := fmt.Errorf("granola source %q is not registered; run msgvault add-granola %s",
 		src.Identifier, src.Identifier)
-	err := requireRegisteredMeetingSource(st, granola.SourceType, src.Identifier, notRegistered)
+	registered, err := requireRegisteredMeetingSource(st, granola.SourceType, src.Identifier, notRegistered)
 	if err != nil {
 		return err
+	}
+	if registered.MergedIntoSourceID != 0 {
+		return nil
 	}
 	if src.APIKey == "" {
 		return fmt.Errorf("granola source %q has no api_key", src.Identifier)

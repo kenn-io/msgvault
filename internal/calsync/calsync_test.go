@@ -82,6 +82,79 @@ func TestRegisterCalendars_ReusesMixedCaseCalendarSource(t *testing.T) {
 	assert.Len(sources, 1, "normalization must not create a duplicate gcal source")
 }
 
+func retiredCalendarSyncSource(t *testing.T, st *store.Store) *store.Source {
+	t.Helper()
+	require := require.New(t)
+	retired, err := st.GetOrCreateSource(gcal.SourceType, testAccount+"/primary")
+	require.NoError(err)
+	require.NoError(st.UpdateSourceSyncConfig(retired.ID, buildSourceConfigJSON(sourceConfig{
+		AccountEmail: testAccount, CalendarID: "primary", CalendarSummary: "Primary", AccessRole: "owner",
+	})))
+	require.NoError(st.UpdateSourceSyncCursor(retired.ID, "existing-token"))
+	active, err := st.GetOrCreateSource(gcal.SourceType, "archive@example.net/primary")
+	require.NoError(err)
+	_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{
+		FromSourceID: retired.ID,
+		IntoSourceID: active.ID,
+	})
+	require.NoError(err)
+	return retired
+}
+
+func TestFullSkipsRetiredCalendarSources(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	m := gcal.NewMockAPI()
+	m.Calendars = []gcal.Calendar{{ID: "primary", Summary: "Primary", AccessRole: "owner"}}
+	s, st := newSyncer(t, m, Options{})
+	retiredCalendarSyncSource(t, st)
+
+	result, err := s.Full(t.Context())
+	require.NoError(err)
+	assert.Zero(result.CalendarsSynced)
+	assert.Equal(1, m.ListCalendarsCalls(), "full sync still discovers newly available calendars")
+	assert.Zero(m.ListEventsCalls(), "retired calendar events are not fetched")
+}
+
+func TestIncrementalSkipsRetiredCalendarSources(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	m := gcal.NewMockAPI()
+	s, st := newSyncer(t, m, Options{})
+	retiredCalendarSyncSource(t, st)
+
+	result, err := s.Incremental(t.Context())
+	require.NoError(err)
+	assert.Zero(result.CalendarsSynced)
+	assert.Zero(m.ListEventsCalls(), "retired calendar events are not fetched")
+	var runs int
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM sync_runs`).Scan(&runs))
+	assert.Zero(runs, "a retired source does not start another sync run")
+}
+
+func TestFullRejectsExplicitRetiredCalendarSelection(t *testing.T) {
+	require := require.New(t)
+	m := gcal.NewMockAPI()
+	m.Calendars = []gcal.Calendar{{ID: "primary", Summary: "Primary", AccessRole: "owner"}}
+	s, st := newSyncer(t, m, Options{Calendars: []string{"primary"}})
+	retiredCalendarSyncSource(t, st)
+
+	_, err := s.Full(t.Context())
+	require.ErrorIs(err, store.ErrSourceRetired)
+	assert.Zero(t, m.ListEventsCalls(), "an explicitly selected retired calendar is not fetched")
+}
+
+func TestIncrementalRejectsExplicitRetiredCalendarSelection(t *testing.T) {
+	require := require.New(t)
+	m := gcal.NewMockAPI()
+	s, st := newSyncer(t, m, Options{Calendars: []string{"primary"}})
+	retiredCalendarSyncSource(t, st)
+
+	_, err := s.Incremental(t.Context())
+	require.ErrorIs(err, store.ErrSourceRetired)
+	assert.Zero(t, m.ListEventsCalls(), "an explicitly selected retired calendar is not fetched")
+}
+
 // --- read-back helpers (direct SQL through the real store) ---
 
 type msgRow struct {

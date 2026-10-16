@@ -204,7 +204,7 @@ func runAddO365Local(cmd *cobra.Command, args []string) error {
 	if err := s.UpdateSourceSyncConfig(source.ID, cfgJSON); err != nil {
 		return fmt.Errorf("store config: %w", err)
 	}
-	if err := s.UpdateSourceDisplayName(source.ID, email); err != nil {
+	if err := updateSourceDisplayNameForRegistration(s, source.ID, email, state.logger); err != nil {
 		return fmt.Errorf("set display name: %w", err)
 	}
 
@@ -306,7 +306,7 @@ func runAddO365GraphLocal(cmd *cobra.Command, email string, mailWrite bool) erro
 	if err != nil {
 		return fmt.Errorf("create source: %w", err)
 	}
-	if err := s.UpdateSourceDisplayName(source.ID, email); err != nil {
+	if err := updateSourceDisplayNameForRegistration(s, source.ID, email, state.logger); err != nil {
 		return fmt.Errorf("set display name: %w", err)
 	}
 	if err := setDefaultIdentityOptOut(cmd, s, source, noDefaultIdentityAddO365); err != nil {

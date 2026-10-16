@@ -274,6 +274,11 @@ type SimilarSearch struct {
 type CLIAccount struct {
 	VirtualAccounts []store.VirtualAccount `json:"virtual_accounts,omitempty"`
 
+	Identifier         string     `json:"identifier"`
+	Alias              string     `json:"alias"`
+	HistoryOnly        bool       `json:"history_only"`
+	ReanchorRequired   bool       `json:"reanchor_required"`
+	MergedIntoSourceID int64      `json:"merged_into_source_id"`
 	ID                 int64      `json:"id"`
 	Email              string     `json:"email"`
 	Type               string     `json:"type"`
@@ -1143,13 +1148,18 @@ func (c *Client) UpdateCLIAccount(
 	if req.SourceIDSet || req.SourceID != 0 {
 		sourceID = &req.SourceID
 	}
+	var displayName *string
+	if req.DisplayName != "" {
+		displayName = &req.DisplayName
+	}
 	resp, err := CLIResponse(c, func(client *apiclient.Client) (*generated.UpdateCLIAccountResp, error) {
 		return client.UpdateCLIAccountWithResponse(ctx, &generated.UpdateCLIAccountRequestOptions{
 			Body: &generated.UpdateCLIAccountBody{
 				Account:     account,
 				Email:       email,
 				SourceID:    sourceID,
-				DisplayName: req.DisplayName,
+				DisplayName: displayName,
+				Alias:       req.Alias, HistoryOnly: req.HistoryOnly, AcceptReanchor: &req.AcceptReanchor,
 			},
 		})
 	})
@@ -1665,6 +1675,7 @@ func cliAccountUpdateResultFromGenerated(result *generated.UpdateResult) *CLIAcc
 	return &CLIAccountUpdateResult{
 		Email:       result.Email,
 		DisplayName: result.DisplayName,
+		Identifier:  result.Identifier, Alias: result.Alias, HistoryOnly: result.HistoryOnly, ReanchorRequired: result.ReanchorRequired,
 	}
 }
 

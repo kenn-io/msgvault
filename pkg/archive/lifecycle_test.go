@@ -54,8 +54,12 @@ func TestSourceDiscoveryAndAcquisitionCancellation(t *testing.T) {
 				if strings.Contains(operation, "discord") {
 					sourceType, identifier = "discord", "200"
 				}
-				source, err := st.GetOrCreateSource(sourceType, identifier)
-				require.NoError(err)
+				var source *store.Source
+				if phase != "collection" {
+					var err error
+					source, err = st.GetOrCreateSource(sourceType, identifier)
+					require.NoError(err)
+				}
 				ctx, cancelWait := context.WithTimeout(t.Context(), 15*time.Second)
 				defer cancelWait()
 				tx, err := st.DB().BeginTx(ctx, nil)
@@ -65,9 +69,15 @@ func TestSourceDiscoveryAndAcquisitionCancellation(t *testing.T) {
 				require.NoError(tx.QueryRowContext(ctx, "SELECT pg_backend_pid()").Scan(&blockerPID))
 				switch phase {
 				case "source":
-					var id int64
-					require.NoError(tx.QueryRowContext(ctx, st.Rebind("SELECT id FROM sources WHERE id=? FOR UPDATE"), source.ID).Scan(&id))
+					if strings.HasPrefix(operation, "bind ") {
+						// Binding an existing source only reads its catalog row.
+						_, err = tx.ExecContext(ctx, "LOCK TABLE sources IN ACCESS EXCLUSIVE MODE")
+					} else {
+						var id int64
+						err = tx.QueryRowContext(ctx, st.Rebind("SELECT id FROM sources WHERE id=? FOR UPDATE"), source.ID).Scan(&id)
+					}
 				case "collection":
+					// Only a newly created source needs collection membership.
 					_, err = tx.ExecContext(ctx, "LOCK TABLE collection_sources IN ACCESS EXCLUSIVE MODE")
 				case "recovery":
 					_, err = tx.ExecContext(ctx, "LOCK TABLE sync_runs IN ACCESS EXCLUSIVE MODE")
@@ -122,6 +132,8 @@ func TestSourceDiscoveryAndAcquisitionCancellation(t *testing.T) {
 					require.NoError(ctx.Err(), "cancellation must return while the database lock remains held")
 				}
 				require.NoError(tx.Rollback())
+				source, err = st.GetOrCreateSource(sourceType, identifier)
+				require.NoError(err)
 				execution, err := st.AcquireSyncExecutionContext(t.Context(), source.ID)
 				require.NoError(err, "cancellation must release source ownership")
 				require.NoError(execution.Release())

@@ -285,3 +285,26 @@ func TestOversizedSingleMessageFailsClearly(t *testing.T) {
 	require.ErrorIs(t, err, ErrResponseTooLarge)
 	assert.Contains(t, err.Error(), "single message")
 }
+
+func TestRegisterToleratesDisplayNameAliasConflict(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	owner, err := st.GetOrCreateSource("mbox", "alias-owner@example.test")
+	require.NoError(err)
+	alias := "Support"
+	_, err = st.UpdateSourceSettingsContext(t.Context(), owner.ID, store.SourceSettingsUpdate{Alias: &alias})
+	require.NoError(err)
+	client, err := NewClient("https://chat.example.test", 3, "synthetic-token")
+	require.NoError(err)
+	imp := NewImporter(st, client)
+	for range 2 {
+		sources, err := imp.Register(t.Context(), []Inbox{{ID: 7, Name: "Support"}})
+		require.NoError(err)
+		require.Len(sources, 1)
+		assert.Empty(sources[0].DisplayName.String)
+		saved, err := st.GetSourceByID(sources[0].ID)
+		require.NoError(err)
+		assert.Empty(saved.DisplayName.String)
+	}
+}

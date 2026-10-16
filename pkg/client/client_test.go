@@ -639,6 +639,38 @@ func TestGeneratedMessageRecordingsAcceptUnnamedAudio(t *testing.T) {
 	requirements.Error(missing.Validate(), "missing required filename")
 }
 
+func TestGeneratedCLIAccountsRequireAliasPresenceButAcceptEmptyStrings(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		aliasProperty string
+		valid         bool
+	}{
+		{name: "empty", aliasProperty: `,"alias":""`, valid: true},
+		{name: "nonempty", aliasProperty: `,"alias":"archive"`, valid: true},
+		{name: "missing"},
+		{name: "null", aliasProperty: `,"alias":null`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			payload := `{"id":1,"email":"archive@example.com","type":"gmail","display_name":"Archive","identifier":"archive@example.com","last_sync":null,"message_count":0,"source_deleted_count":0,"history_only":false,"reanchor_required":false,"merged_into_source_id":0` + tc.aliasProperty + `}`
+			var account generated.CliAccountResponse
+			requirements.NoError(json.Unmarshal([]byte(payload), &account))
+			var response generated.CliAccountsResponse
+			requirements.NoError(json.Unmarshal([]byte(`{"accounts":[`+payload+`]}`), &response))
+			requirements.Len(response.Accounts, 1)
+
+			if tc.valid {
+				assertions.NoError(account.Validate())
+				assertions.NoError(response.Validate())
+			} else {
+				requirements.ErrorContains(account.Validate(), "Alias")
+				assertions.ErrorContains(response.Validate(), "Accounts[0].Alias")
+			}
+		})
+	}
+}
+
 func TestGeneratedFileMetadataRequiresPresenceButAcceptsEmptyLegacyStrings(t *testing.T) {
 	t.Run("metadata response", func(t *testing.T) {
 		assertions := assert.New(t)

@@ -146,6 +146,17 @@ func runConfiguredSynctechSMSSourceWithStore(ctx context.Context, st *store.Stor
 	return runConfiguredSynctechSMSSourceWithStoreDriveClient(ctx, st, src, nil)
 }
 
+func runScheduledSynctechSMSSource(ctx context.Context, st *store.Store, src config.SynctechSMSSource) error {
+	source, err := st.GetSourceByTypeAndIdentifier(synctechsms.SourceType, src.OwnerPhone)
+	if err != nil && !errors.Is(err, store.ErrSourceNotFound) {
+		return err
+	}
+	if source != nil && source.MergedIntoSourceID != 0 {
+		return nil
+	}
+	return runConfiguredSynctechSMSSourceWithStore(ctx, st, src)
+}
+
 func runConfiguredSynctechSMSSourceWithStoreDriveClient(ctx context.Context, st *store.Store, src config.SynctechSMSSource, driveClient synctechsms.DriveClient) error {
 	opts := synctechImportOptions(src, invocationFromContext(ctx).cfg)
 	if opts.OwnerPhone == "" {

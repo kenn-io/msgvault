@@ -2096,12 +2096,17 @@ func (c ChoiceDescriptor) Validate() error {
 }
 
 type CliAccountResponse struct {
+	Alias              *string          `json:"alias,omitzero" validate:"required"`
 	DisplayName        string           `json:"display_name" validate:"required"`
 	Email              string           `json:"email" validate:"required"`
+	HistoryOnly        bool             `json:"history_only"`
 	ID                 int64            `json:"id"`
+	Identifier         string           `json:"identifier" validate:"required"`
 	LastSync           *time.Time       `json:"last_sync,omitempty" validate:"required"`
+	MergedIntoSourceID int64            `json:"merged_into_source_id"`
 	MessageCount       int64            `json:"message_count"`
 	OauthApp           *string          `json:"oauth_app,omitzero"`
+	ReanchorRequired   bool             `json:"reanchor_required"`
 	SourceDeletedCount int64            `json:"source_deleted_count"`
 	Type               string           `json:"type" validate:"required"`
 	VirtualAccounts    []VirtualAccount `json:"virtual_accounts,omitempty"`
@@ -2109,11 +2114,17 @@ type CliAccountResponse struct {
 
 func (c CliAccountResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(c.Alias, "required"); err != nil {
+		errors = errors.Append("Alias", err)
+	}
 	if err := typesValidator.Var(c.DisplayName, "required"); err != nil {
 		errors = errors.Append("DisplayName", err)
 	}
 	if err := typesValidator.Var(c.Email, "required"); err != nil {
 		errors = errors.Append("Email", err)
+	}
+	if err := typesValidator.Var(c.Identifier, "required"); err != nil {
+		errors = errors.Append("Identifier", err)
 	}
 	if c.LastSync != nil {
 		if err := typesValidator.Var(c.LastSync, "required"); err != nil {
@@ -7231,6 +7242,14 @@ type MergeOrganizationBody struct {
 
 type MergePersonRequest struct {
 	AbsorbedPersonID int64 `json:"absorbed_person_id"`
+}
+
+type MergeRequest struct {
+	DryRun       bool    `json:"dry_run"`
+	From         *string `json:"from,omitzero"`
+	FromSourceID *int64  `json:"from_source_id,omitempty"`
+	Into         *string `json:"into,omitzero"`
+	IntoSourceID *int64  `json:"into_source_id,omitempty"`
 }
 
 type MessageDetail struct {
@@ -14153,6 +14172,20 @@ func (s SourceIdentityResponse) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(s))
 }
 
+type SourceMergeResult struct {
+	AlreadyMerged       bool  `json:"already_merged"`
+	AmbiguousMatches    int64 `json:"ambiguous_matches"`
+	AttachmentsCopied   int64 `json:"attachments_copied"`
+	CheckpointConflicts int64 `json:"checkpoint_conflicts"`
+	ConversationsMoved  int64 `json:"conversations_moved"`
+	DryRun              bool  `json:"dry_run"`
+	DuplicatesHidden    int64 `json:"duplicates_hidden"`
+	FromSourceID        int64 `json:"from_source_id"`
+	IdentitiesMerged    int64 `json:"identities_merged"`
+	IntoSourceID        int64 `json:"into_source_id"`
+	MessagesMoved       int64 `json:"messages_moved"`
+}
+
 type SourceReference struct {
 	ID         int64  `json:"id"`
 	Identifier string `json:"identifier" validate:"required"`
@@ -15187,19 +15220,22 @@ func (t TriggerSyncResponse) Validate() error {
 }
 
 type UpdateRequest struct {
-	Account     *string `json:"account,omitzero"`
-	DisplayName string  `json:"display_name" validate:"required"`
-	Email       *string `json:"email,omitzero"`
-	SourceID    *int64  `json:"source_id,omitempty"`
-}
-
-func (u UpdateRequest) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(u))
+	AcceptReanchor *bool   `json:"accept_reanchor,omitempty"`
+	Account        *string `json:"account,omitzero"`
+	Alias          *string `json:"alias,omitzero"`
+	DisplayName    *string `json:"display_name,omitzero"`
+	Email          *string `json:"email,omitzero"`
+	HistoryOnly    *bool   `json:"history_only,omitempty"`
+	SourceID       *int64  `json:"source_id,omitempty"`
 }
 
 type UpdateResult struct {
-	DisplayName string `json:"display_name" validate:"required"`
-	Email       string `json:"email" validate:"required"`
+	Alias            string `json:"alias" validate:"required"`
+	DisplayName      string `json:"display_name" validate:"required"`
+	Email            string `json:"email" validate:"required"`
+	HistoryOnly      bool   `json:"history_only"`
+	Identifier       string `json:"identifier" validate:"required"`
+	ReanchorRequired bool   `json:"reanchor_required"`
 }
 
 func (u UpdateResult) Validate() error {

@@ -158,7 +158,7 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.21.0**.
+it is separate from the binary release version. The current schema is **3.22.0**.
 
 Schema 3.19.0 adds pipe-separated OR in full-text message search queries.
 Upgrade clients and daemon together across incompatible schema versions,
@@ -172,6 +172,10 @@ See [scoped archive reads](cli-reference.md#scoped-archive-reads).
 Schema 3.3.0 adds `POST /api/v1/telemetry/events`, which the web and terminal UIs use to
 report anonymous usage events through the daemon. See
 [Telemetry](configuration.md#telemetry).
+
+Schema 3.22.0 adds account aliases and lifecycle fields, account merging, and
+owner source-maintenance requests. Existing source identifiers and account
+requests remain valid.
 
 Schema 3.0.0 removes the unguarded
 `POST /api/v1/identity/match-candidates/{id}/accept` and `/reject` routes.

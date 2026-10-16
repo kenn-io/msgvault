@@ -291,6 +291,94 @@ func TestDraftForwardHTTPPublishesManagedDraft(t *testing.T) {
 	assertions.Equal(hash, editedRefs[0].ContentHash)
 }
 
+func TestDraftForwardIgnoresPreservedHistoricalMIMEAttachments(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	fixture := newDraftReplyFixture(t)
+	attachmentContent := []byte("forwarded attachment bytes")
+	parentRaw := []byte("From: Sender <sender@example.com>\r\n" +
+		"To: " + testutil.IMAPTestUsername + "\r\n" +
+		"Subject: Question\r\n" +
+		"Message-ID: <parent@example.com>\r\n" +
+		"MIME-Version: 1.0\r\n" +
+		"Content-Type: multipart/mixed; boundary=source-boundary\r\n\r\n" +
+		"--source-boundary\r\n" +
+		"Content-Type: text/plain; charset=utf-8\r\n\r\n" +
+		"Parent body\r\n" +
+		"--source-boundary\r\n" +
+		"Content-Type: text/plain; name=source.txt\r\n" +
+		"Content-Disposition: attachment; filename=source.txt\r\n" +
+		"Content-Transfer-Encoding: base64\r\n\r\n" +
+		base64.StdEncoding.EncodeToString(attachmentContent) + "\r\n" +
+		"--source-boundary--\r\n")
+	parsedParent, err := msgmime.Parse(parentRaw)
+	requirements.NoError(err)
+	requirements.Len(parsedParent.Attachments, 1)
+	requirements.NoError(fixture.store.UpsertMessageRaw(fixture.parentID, parentRaw))
+	digest := sha256.Sum256(attachmentContent)
+	hash := hex.EncodeToString(digest[:])
+	attachmentDir := filepath.Join(t.TempDir(), "attachments")
+	relativePath := filepath.Join(hash[:2], hash)
+	requirements.NoError(os.MkdirAll(filepath.Dir(filepath.Join(attachmentDir, relativePath)), 0o700))
+	requirements.NoError(os.WriteFile(filepath.Join(attachmentDir, relativePath), attachmentContent, 0o600))
+	role, roleSource := store.AttachmentRoleFromMIME(
+		parsedParent.Attachments[0].Disposition, parsedParent.Attachments[0].IsInline, parsedParent.Attachments[0].ContentID,
+	)
+	requirements.NoError(fixture.store.UpsertAttachmentRecord(t.Context(), fixture.parentID, store.AttachmentWrite{
+		Filename: parsedParent.Attachments[0].Filename, MIMEType: parsedParent.Attachments[0].ContentType,
+		StoragePath: filepath.ToSlash(relativePath), ContentHash: hash, Size: int64(len(attachmentContent)),
+		Role: role, RoleSource: roleSource, SourcePartKey: parsedParent.Attachments[0].PartKey,
+		State: attachmentpolicy.StateStored,
+	}))
+
+	history, err := fixture.store.GetOrCreateSource("imap", "imap://history@example.test")
+	requirements.NoError(err)
+	historyConversation, err := fixture.store.EnsureConversation(history.ID, "history-thread", "Question")
+	requirements.NoError(err)
+	senderID, err := fixture.store.EnsureParticipant("sender@example.com", "Sender", "example.com")
+	requirements.NoError(err)
+	ownerID, err := fixture.store.EnsureParticipant(testutil.IMAPTestUsername, "", "example.com")
+	requirements.NoError(err)
+	historyMessageID, err := fixture.store.PersistMessage(&store.MessagePersistData{
+		Message: &store.Message{
+			SourceID: history.ID, SourceMessageID: "INBOX|10", ConversationID: historyConversation,
+			RFC822MessageID: sql.NullString{String: "parent@example.com", Valid: true},
+			MessageType:     store.MessageTypeEmail,
+			SenderID:        sql.NullInt64{Int64: senderID, Valid: true},
+			Subject:         sql.NullString{String: "Question", Valid: true},
+			SentAt:          sql.NullTime{Time: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC), Valid: true},
+		},
+		BodyText: sql.NullString{String: "Parent body", Valid: true}, RawMIME: parentRaw,
+		Recipients: []store.RecipientSet{
+			{Type: "from", ParticipantIDs: []int64{senderID}, EmailAddresses: []string{"sender@example.com"}},
+			{Type: "to", ParticipantIDs: []int64{ownerID}, EmailAddresses: []string{testutil.IMAPTestUsername}},
+		},
+	})
+	requirements.NoError(err)
+	requirements.NoError(fixture.store.UpsertAttachmentRecord(t.Context(), historyMessageID, store.AttachmentWrite{
+		Filename: "historical-copy.txt", MIMEType: parsedParent.Attachments[0].ContentType,
+		StoragePath: filepath.ToSlash(relativePath), ContentHash: hash, Size: int64(len(attachmentContent)),
+		Role: role, RoleSource: roleSource, SourcePartKey: "mime:history-copy",
+		State: attachmentpolicy.StateStored,
+	}))
+	mergeResult, err := fixture.store.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{
+		FromSourceID: history.ID, IntoSourceID: fixture.source.ID,
+	})
+	requirements.NoError(err)
+	assertions.Equal(int64(1), mergeResult.DuplicatesHidden)
+
+	maintenance, err := newAttachmentMaintenance(fixture.store, attachmentDir, slog.New(slog.DiscardHandler), true)
+	requirements.NoError(err)
+	t.Cleanup(func() { _ = maintenance.close() })
+	adapter := fixture.grantedAdapter()
+	adapter.attachmentMaintenance = maintenance
+	refs, err := fixture.store.MessageMIMEAttachmentsContext(t.Context(), fixture.parentID)
+	requirements.NoError(err)
+	attachments, problems := adapter.readForwardAttachments(t.Context(), parsedParent, refs)
+	requirements.Len(attachments, 1)
+	assertions.Empty(problems)
+}
+
 func TestDraftForwardRefusesCorruptStoredAttachmentBeforeAppend(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

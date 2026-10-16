@@ -33,17 +33,17 @@ records. A daemon owns the archive: commands start or reuse a local daemon,
 or use [remote].url from config.toml (--local forces the local daemon).
 
 Start here:
-  msgvault list-accounts --json    # id, email, type, counts, sync
+  msgvault list-accounts --json
   msgvault search 'from:alice@example.com newer_than:30d' --json
   # "id" feeds the commands below
-  msgvault show-message <id> --json  # body_text, attachments
+  msgvault show-message <id> --json
   msgvault export-eml <id> -o msg.eml
   msgvault export-messages --start 2026-09-01T00:00:00Z --end 2026-10-01T00:00:00Z
   msgvault list-senders -n 20 --json
   msgvault stats
-  msgvault person --help  # contacts
+  msgvault person --help
   msgvault daemon status
-  msgvault setup status --json  # features and next steps
+  msgvault setup status --json
 
 Output and exit status:
   --json prints JSON on stdout (export-messages prints JSON Lines). Progress and

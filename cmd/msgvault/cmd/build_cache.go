@@ -654,6 +654,8 @@ func messageExportColumns(source *cacheSourceSnapshot, ownerParticipant, attribu
 			m.has_attachments,
 			COALESCE(TRY_CAST(m.attachment_count AS INTEGER), 0) as attachment_count,
 			m.deleted_from_source_at,
+			EXISTS (SELECT 1 FROM sqlite_db.source_merge_archive_only_messages marker
+				WHERE marker.message_id = m.id) AS archive_only,
 			m.sender_id,
 			%s AS owner_participant_id,
 			COALESCE(%s, '') as message_type,
@@ -2076,6 +2078,7 @@ func (s *cacheSourceSnapshot) tables() []cacheSnapshotTable {
 		// on the sqlite_scanner path; otherwise DuckDB binds against a
 		// CSV view that lacks the column and the export fails on Windows.
 		{tableMessages, "SELECT " + messageColumns + " FROM messages WHERE sent_at IS NOT NULL", messageTypes, identityColumns("source_message_id", "rfc822_message_id", "list_id")},
+		{"source_merge_archive_only_messages", "SELECT message_id FROM source_merge_archive_only_messages", "types={'message_id': 'BIGINT'}", nil},
 		{"message_recipients", "SELECT message_id, participant_id, recipient_type, display_name, " + recipientEnvelopeColumn + ", " + recipientEnvelopePresence + " FROM message_recipients",
 			"types={'message_id': 'BIGINT', 'participant_id': 'BIGINT', 'recipient_type': 'VARCHAR', 'display_name': 'VARCHAR', 'email_address': 'VARCHAR', 'envelope_present': 'BOOLEAN'}",
 			identityColumns("recipient_type", "email_address")},

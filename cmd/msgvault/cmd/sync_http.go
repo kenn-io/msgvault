@@ -103,6 +103,7 @@ type preflightReauthManager interface {
 type preflightAccount struct {
 	ID          int64
 	Email       string
+	Alias       string
 	DisplayName string
 	OAuthApp    string
 }
@@ -157,12 +158,13 @@ func buildSyncPreflight(st *daemonclient.Client, info HTTPStoreInfo, state *invo
 			}
 			gmail := make([]preflightAccount, 0, len(accounts))
 			for _, a := range accounts {
-				if a.Type != sourceTypeGmail {
+				if a.Type != sourceTypeGmail || a.MergedIntoSourceID != 0 {
 					continue
 				}
 				gmail = append(gmail, preflightAccount{
 					ID:          a.ID,
 					Email:       a.Email,
+					Alias:       a.Alias,
 					DisplayName: a.DisplayName,
 					OAuthApp:    a.OAuthApp,
 				})
@@ -218,8 +220,8 @@ func filterPreflightAccountsByID(accounts []preflightAccount, sourceID int64) []
 	return matched
 }
 
-// filterPreflightAccounts keeps the Gmail accounts whose email OR display name
-// matches the requested identifier (case-insensitive). Both are accepted
+// filterPreflightAccounts keeps the Gmail accounts whose email, alias or display
+// name matches the requested identifier (case-insensitive). All are accepted
 // because sync/sync-full resolve their argument via
 // GetSourcesByIdentifierOrDisplayName. All matches are returned so a display
 // name shared by several accounts re-authorizes every one of them. A request
@@ -228,6 +230,7 @@ func filterPreflightAccounts(accounts []preflightAccount, reqIdentifier string) 
 	var matched []preflightAccount
 	for _, a := range accounts {
 		if strings.EqualFold(a.Email, reqIdentifier) ||
+			strings.EqualFold(a.Alias, reqIdentifier) ||
 			strings.EqualFold(a.DisplayName, reqIdentifier) {
 			matched = append(matched, a)
 		}

@@ -1475,6 +1475,7 @@ func TestGetCLIAccounts_Success(t *testing.T) {
 				"email": "alice@example.com",
 				"type": "gmail",
 				"display_name": "Alice",
+				"alias": "archive",
 				"message_count": 1234,
 				"last_sync": "2024-01-02T03:04:05Z"
 			}]
@@ -1492,6 +1493,7 @@ func TestGetCLIAccounts_Success(t *testing.T) {
 	assert.Equal("alice@example.com", accounts[0].Email, "Email")
 	assert.Equal("gmail", accounts[0].Type, "Type")
 	assert.Equal("Alice", accounts[0].DisplayName, "DisplayName")
+	assert.Equal("archive", accounts[0].Alias, "Alias")
 	assert.Equal(int64(1234), accounts[0].MessageCount, "MessageCount")
 	require.NotNil(accounts[0].LastSync, "LastSync")
 	assert.Equal("2024-01-02T03:04:05Z", accounts[0].LastSync.UTC().Format(time.RFC3339), "LastSync")

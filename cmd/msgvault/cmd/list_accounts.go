@@ -65,6 +65,11 @@ func daemonAccountsToStats(accounts []daemonclient.CLIAccount, countsPending boo
 	for i, account := range accounts {
 		stats[i] = accountStats{
 			ID:                 account.ID,
+			Identifier:         account.Identifier,
+			Alias:              account.Alias,
+			HistoryOnly:        account.HistoryOnly,
+			ReanchorRequired:   account.ReanchorRequired,
+			MergedIntoSourceID: account.MergedIntoSourceID,
 			Email:              account.Email,
 			Type:               account.Type,
 			DisplayName:        account.DisplayName,
@@ -79,7 +84,7 @@ func daemonAccountsToStats(accounts []daemonclient.CLIAccount, countsPending boo
 
 func outputAccountsTable(stats []accountStats) {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(w, "ID\tACCOUNT\tTYPE\tDISPLAY NAME\tMESSAGES\tLAST SYNC")
+	_, _ = fmt.Fprintln(w, "ID\tACCOUNT\tTYPE\tDISPLAY NAME\tMESSAGES\tLAST SYNC\tALIAS\tSTATE")
 
 	for _, s := range stats {
 		displayName := s.DisplayName
@@ -90,7 +95,7 @@ func outputAccountsTable(stats []accountStats) {
 		if s.LastSync != nil && !s.LastSync.IsZero() {
 			lastSync = s.LastSync.Format("2006-01-02 15:04")
 		}
-		_, _ = fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%s\n", s.ID, s.Email, s.Type, displayName, formatMessagesCell(s), lastSync)
+		_, _ = fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", s.ID, s.Email, s.Type, displayName, formatMessagesCell(s), lastSync, s.Alias, accountState(s))
 	}
 
 	_ = w.Flush()
@@ -115,10 +120,15 @@ func outputAccountsJSON(stats []accountStats) error {
 	output := make([]map[string]any, len(stats))
 	for i, s := range stats {
 		entry := map[string]any{
-			"id":           s.ID,
-			keyEmail:       s.Email,
-			"type":         s.Type,
-			"display_name": s.DisplayName,
+			"id":                    s.ID,
+			"identifier":            s.Identifier,
+			"alias":                 s.Alias,
+			"history_only":          s.HistoryOnly,
+			"reanchor_required":     s.ReanchorRequired,
+			"merged_into_source_id": s.MergedIntoSourceID,
+			keyEmail:                s.Email,
+			"type":                  s.Type,
+			"display_name":          s.DisplayName,
 		}
 		if s.CountsPending {
 			entry["counts_pending"] = true
@@ -159,6 +169,11 @@ func formatCount(n int64) string {
 
 type accountStats struct {
 	CountsPending      bool
+	Identifier         string
+	Alias              string
+	HistoryOnly        bool
+	ReanchorRequired   bool
+	MergedIntoSourceID int64
 	ID                 int64
 	Email              string
 	Type               string
@@ -171,4 +186,20 @@ type accountStats struct {
 func init() {
 	rootCmd.AddCommand(listAccountsCmd)
 	listAccountsCmd.Flags().BoolVar(&listAccountsJSON, flagJSON, false, "Output as JSON")
+}
+
+const accountStateActive = "active"
+
+func accountState(s accountStats) string {
+	if s.MergedIntoSourceID != 0 {
+		return fmt.Sprintf("merged into %d", s.MergedIntoSourceID)
+	}
+	state := accountStateActive
+	if s.HistoryOnly {
+		state = "history-only"
+	}
+	if s.ReanchorRequired {
+		state += "; re-anchor required"
+	}
+	return state
 }

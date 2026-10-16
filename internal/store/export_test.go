@@ -239,6 +239,13 @@ func (s *Store) SetPersonOperationBeforeIdentityLockHookForTest(fn func()) func(
 	return func() { s.personOperationBeforeIdentityLockHook = nil }
 }
 
+// SetSourceMergeAfterJournalCheckHookForTest pauses a merge after its initial
+// idempotency lookup and before it acquires source execution locks.
+func (s *Store) SetSourceMergeAfterJournalCheckHookForTest(fn func()) func() {
+	s.sourceMergeAfterJournalCheckHook = fn
+	return func() { s.sourceMergeAfterJournalCheckHook = nil }
+}
+
 // SetPersonMatchBlockingBeforeLockHookForTest runs fn after scoring candidate
 // discovery has chosen its pairs and before each pair takes the identity lock.
 func (s *Store) SetPersonMatchBlockingBeforeLockHookForTest(fn func()) func() {

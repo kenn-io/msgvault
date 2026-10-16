@@ -212,6 +212,7 @@ func createBaseViews(ctx context.Context, db *sql.DB, analyticsDir string, optCo
 					"CAST(snippet AS VARCHAR) AS snippet",
 					"CAST(size_estimate AS BIGINT) AS size_estimate",
 					"COALESCE(TRY_CAST(has_attachments AS BOOLEAN), false) AS has_attachments",
+					"CAST(archive_only AS BOOLEAN) AS archive_only",
 				},
 				optionalCols: []optionalCol{
 					{name: "account_address", replaceExpr: "CAST(account_address AS VARCHAR) AS account_address", defaultExpr: "NULL::VARCHAR AS account_address"},
@@ -550,6 +551,7 @@ func buildScalarAnalyticalEntriesCTE(name string, includeAttachmentSummary bool)
 		m.is_from_me,
 		m.size_estimate,
 		m.deleted_at IS NOT NULL AS internally_deleted,
+		m.archive_only,
 		m.deleted_from_source_at IS NOT NULL AS deleted_from_source,
 		COALESCE(m.has_attachments, false) AS has_attachments,` + attachmentColumns + `
 	FROM messages m
@@ -612,6 +614,7 @@ SELECT
     m.is_from_me,
 	m.size_estimate,
 	m.deleted_at IS NOT NULL AS internally_deleted,
+	m.archive_only,
     m.deleted_from_source_at IS NOT NULL AS deleted_from_source,
     COALESCE(m.has_attachments, false) AS has_attachments,
     COALESCE(att.attachment_count, 0) AS attachment_count,

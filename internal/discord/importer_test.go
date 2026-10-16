@@ -221,6 +221,32 @@ func newTestImporter(st *store.Store, api API) *Importer {
 	return importer
 }
 
+func TestImporterContinuesWhenGuildNameConflictsWithAccountSelector(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	selectorSource, err := st.GetOrCreateSource("gmail", "owner@example.test")
+	require.NoError(err)
+	alias := "Test Guild"
+	_, err = st.UpdateSourceSettingsContext(t.Context(), selectorSource.ID, store.SourceSettingsUpdate{Alias: &alias})
+	require.NoError(err)
+
+	api := newImporterFakeAPI(importerTestChannel("300", "general"))
+	api.messages["300"] = []Message{importerTestMessage("501", "300", "archived despite display-name conflict")}
+	summary, err := newTestImporter(st, api).Import(t.Context(), ImportOptions{GuildID: "200"})
+	require.NoError(err, "a selector collision must not prevent the guild archive from syncing")
+	assert.Equal(int64(1), summary.MessagesAdded)
+
+	source, err := st.GetSourceByTypeAndIdentifier(sourceTypeDiscord, "200")
+	require.NoError(err)
+	latest, err := st.GetLatestSync(source.ID)
+	require.NoError(err)
+	assert.Equal("completed", latest.Status)
+	ids, err := st.MessageExistsBatch(source.ID, []string{"501"})
+	require.NoError(err)
+	assert.NotZero(ids["501"])
+}
+
 func TestImporterArchivesDiscordVoiceMetadata(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

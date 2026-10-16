@@ -23,17 +23,18 @@ import (
 )
 
 type scriptedGmailDraftClient struct {
-	createDraft *gmail.Draft
-	createErr   error
-	getDraft    *gmail.Draft
-	getErr      error
-	updateDraft *gmail.Draft
-	updateErr   error
-	updateHook  func()
-	deleteErr   error
-	deleteHook  func()
-	sendAs      []gmail.SendAs
-	sendAsErr   error
+	createDraft    *gmail.Draft
+	createErr      error
+	createThreadID string
+	getDraft       *gmail.Draft
+	getErr         error
+	updateDraft    *gmail.Draft
+	updateErr      error
+	updateHook     func()
+	deleteErr      error
+	deleteHook     func()
+	sendAs         []gmail.SendAs
+	sendAsErr      error
 
 	createCalls int
 	getCalls    int
@@ -44,6 +45,7 @@ type scriptedGmailDraftClient struct {
 
 func (c *scriptedGmailDraftClient) CreateDraft(_ context.Context, raw []byte, threadID string) (*gmail.Draft, error) {
 	c.createCalls++
+	c.createThreadID = threadID
 	if c.createErr != nil {
 		return nil, c.createErr
 	}
@@ -313,6 +315,64 @@ func TestGmailDraftCreateAndSendAsUseLocalBehavior(t *testing.T) {
 	require.NoError(json.Unmarshal([]byte(sendAsEvents[0].Data), &sendAs))
 	require.Len(sendAs.Entries, 2)
 	assert.True(sendAs.Entries[0].ConfirmedIdentity)
+}
+
+func TestGmailDraftReplyOmitsArchiveOnlyProviderThread(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	fixture := newGmailDraftTestFixture(t)
+	history, err := fixture.store.GetOrCreateSource("gmail", "history@example.test")
+	require.NoError(err)
+	conversationID, err := fixture.store.EnsureConversationWithType(
+		history.ID, "gmail-history-thread", "email_thread", "Historical question",
+	)
+	require.NoError(err)
+	senderID, err := fixture.store.EnsureParticipant("sender@example.test", "Sender", "example.test")
+	require.NoError(err)
+	ownerID, err := fixture.store.EnsureParticipant(fixture.source.Identifier, "", "example.test")
+	require.NoError(err)
+	raw := []byte("From: Sender <sender@example.test>\r\n" +
+		"To: " + fixture.source.Identifier + "\r\n" +
+		"Subject: Historical question\r\n" +
+		"Message-ID: <historical-parent@example.test>\r\n\r\n" +
+		"Historical body\r\n")
+	parentID, err := fixture.store.PersistMessage(&store.MessagePersistData{
+		Message: &store.Message{
+			SourceID: history.ID, ConversationID: conversationID,
+			SourceMessageID: "gmail-history-parent", MessageType: store.MessageTypeEmail,
+			RFC822MessageID: sql.NullString{String: "historical-parent@example.test", Valid: true},
+			SenderID:        sql.NullInt64{Int64: senderID, Valid: true},
+			Subject:         sql.NullString{String: "Historical question", Valid: true},
+		},
+		BodyText: sql.NullString{String: "Historical body", Valid: true},
+		RawMIME:  raw,
+		Recipients: []store.RecipientSet{
+			{Type: "from", ParticipantIDs: []int64{senderID}, EmailAddresses: []string{"sender@example.test"}},
+			{Type: "to", ParticipantIDs: []int64{ownerID}, EmailAddresses: []string{fixture.source.Identifier}},
+		},
+	})
+	require.NoError(err)
+	_, err = fixture.store.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{
+		FromSourceID: history.ID, IntoSourceID: fixture.source.ID,
+	})
+	require.NoError(err)
+	parent, err := fixture.store.GetMessageContext(t.Context(), parentID)
+	require.NoError(err)
+	assert.True(strings.HasPrefix(parent.SourceMessageID, "msgvault-archive:"))
+	assert.True(strings.HasPrefix(parent.SourceConversationID, "msgvault-archive:"))
+
+	fixture.parentID = parentID
+	fixture.client.createDraft = &gmail.Draft{
+		ID:      "gmail-draft-created",
+		Message: gmail.RawMessage{ID: "gmail-message-created", ThreadID: "gmail-created-thread"},
+	}
+	events, err := fixture.create(t, "reply body", true)
+	require.NoError(err)
+	require.Len(events, 1)
+	assert.Empty(fixture.client.createThreadID)
+	var created gmailDraftReplyOutput
+	require.NoError(json.Unmarshal([]byte(events[0].Data), &created))
+	assert.Equal("gmail-created-thread", created.ThreadID)
 }
 
 func TestGmailDraftReplyAllInfersSenderAndIndexesCc(t *testing.T) {

@@ -268,6 +268,13 @@ Examples:
 // runConfiguredOmiSync is the daemon-scheduler entry point for one
 // [[omi]] source.
 func runConfiguredOmiSync(ctx context.Context, st *store.Store, paceDir string, src config.OmiSource) error {
+	source, err := st.GetSourceByTypeAndIdentifier(omi.SourceType, src.Identifier)
+	if err != nil && !errors.Is(err, store.ErrSourceNotFound) {
+		return err
+	}
+	if source != nil && source.MergedIntoSourceID != 0 {
+		return nil
+	}
 	if src.APIKey == "" {
 		return fmt.Errorf("omi source %q has no api_key", src.Identifier)
 	}

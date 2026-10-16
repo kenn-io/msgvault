@@ -283,6 +283,67 @@ func TestPlaudScheduledMissingSourceStopsBeforeAuth(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "add-plaud work")
 }
+
+func retiredPlaudSyncSource(t *testing.T, st *store.Store) *store.Source {
+	t.Helper()
+	require := require.New(t)
+	retired, err := st.GetOrCreateSource(sourceTypePlaud, "history")
+	require.NoError(err)
+	active, err := st.GetOrCreateSource(sourceTypePlaud, "active")
+	require.NoError(err)
+	_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{
+		FromSourceID: retired.ID,
+		IntoSourceID: active.ID,
+	})
+	require.NoError(err)
+	return retired
+}
+
+func retiredPlaudSyncConfig(t *testing.T) *config.Config {
+	t.Helper()
+	require := require.New(t)
+	dataDir := t.TempDir()
+	cfg := lifecycleTestConfig(dataDir)
+	cfg.Plaud = []config.PlaudSource{{Identifier: "history", AccountEmail: "owner@example.com"}}
+	st, err := store.Open(cfg.DatabaseDSN())
+	require.NoError(err)
+	require.NoError(st.InitSchema())
+	retiredPlaudSyncSource(t, st)
+	require.NoError(st.Close())
+	return cfg
+}
+
+func TestSyncPlaudSkipsRetiredAccountForAllConfiguredSources(t *testing.T) {
+	cfg := retiredPlaudSyncConfig(t)
+	t.Setenv(daemonCLISubprocessEnv, strconv.Itoa(os.Getppid()))
+	cmd := newSyncPlaudCmd()
+	cmd.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
+	cmd.SetArgs([]string{"--no-build-cache"})
+	require.NoError(t, cmd.Execute())
+}
+
+func TestSyncPlaudRejectsExplicitRetiredAccountBeforeCredentials(t *testing.T) {
+	cfg := retiredPlaudSyncConfig(t)
+	t.Setenv(daemonCLISubprocessEnv, strconv.Itoa(os.Getppid()))
+	cmd := newSyncPlaudCmd()
+	cmd.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
+	cmd.SetArgs([]string{"--no-build-cache", "history"})
+	require.ErrorIs(t, cmd.Execute(), store.ErrSourceRetired)
+}
+
+func TestScheduledPlaudSyncSkipsRetiredSourceBeforeCredentials(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	retired := retiredPlaudSyncSource(t, st)
+	cfg := config.NewDefaultConfig()
+	ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+
+	err := runConfiguredPlaudSync(ctx, st, config.PlaudSource{
+		Identifier: retired.Identifier, AccountEmail: "owner@example.com",
+	})
+	require.NoError(err)
+}
+
 func TestPlaudPartialCanceledImportRefreshesDetachedContext(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

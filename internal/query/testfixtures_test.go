@@ -1017,11 +1017,16 @@ func writeTableParquet(tb testing.TB, db *sql.DB, path, columns, values string, 
 	if empty {
 		whereClause = "\n\t\t\t\tWHERE false"
 	}
+	projection := "*"
+	if slices.Contains(expectedColumns, "source_message_id") && !slices.Contains(expectedColumns, "archive_only") {
+		// Ordinary fixture messages belong to their current provider account.
+		projection += ", false AS archive_only"
+	}
 	query := fmt.Sprintf(`
 			COPY (
-				SELECT * FROM (VALUES %s) AS t(%s)%s
+				SELECT %s FROM (VALUES %s) AS t(%s)%s
 			) TO '%s' (FORMAT PARQUET)
-		`, values, columns, whereClause, path)
+		`, projection, values, columns, whereClause, path)
 
 	_, err = db.Exec(query)
 	require.NoError(tb, err, "create parquet %s", path)

@@ -37,7 +37,7 @@ Examples:
 				return runDaemonCLICommandHTTPFromCobra(cmd, args)
 			}
 
-			imp, accountIDs, dbPath, cleanup, err := openBeeperImporter(backfillBeeperMediaAccounts, state)
+			imp, accountIDs, dbPath, cleanup, err := openBeeperImporter(backfillBeeperMediaAccounts, state, true)
 			if err != nil {
 				return err
 			}

@@ -433,6 +433,101 @@ func TestEngine_OptIn_StagesOnlyWithinSameSourceID(t *testing.T) {
 	assert.Empty(pending, "pending after undo")
 }
 
+func TestSourceMergeHistoryCannotStageLiveProviderCopyForRemoteDeletion(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	st := f.Store
+
+	history, err := st.GetOrCreateSource("gmail", "history@example.test")
+	require.NoError(err, "GetOrCreateSource history")
+	live, err := st.GetOrCreateSource("gmail", "live@example.test")
+	require.NoError(err, "GetOrCreateSource live")
+
+	raw := []byte("From: Sender <sender@example.test>\r\n" +
+		"To: Recipient <recipient@example.test>\r\n" +
+		"Date: Tue, 14 Jan 2020 10:00:00 +0000\r\n" +
+		"Message-ID: <merge-history@example.test>\r\n" +
+		"Subject: Archived copy followed by live import\r\n\r\n" +
+		"Synthetic message body.\r\n")
+	archivedMessageID := ingestRawMessage(
+		t, st, history, "history-provider-id", raw, time.Date(2020, 1, 14, 10, 0, 0, 0, time.UTC),
+	)
+	mergeResult, err := st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{
+		FromSourceID: history.ID,
+		IntoSourceID: live.ID,
+	})
+	require.NoError(err, "MergeSourcesContext")
+	assert.Equal(int64(1), mergeResult.MessagesMoved, "messages moved")
+
+	var archiveOnly int
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT COUNT(*) FROM source_merge_archive_only_messages WHERE message_id = ?
+	`), archivedMessageID).Scan(&archiveOnly), "check archive-only marker")
+	require.Equal(1, archiveOnly, "merged history marker")
+
+	liveMessageID := ingestRawMessage(
+		t, st, live, "live-provider-id", raw, time.Date(2020, 1, 14, 10, 0, 0, 0, time.UTC),
+	)
+	rows, err := st.GetDuplicateGroupMessages("merge-history@example.test", live.ID)
+	require.NoError(err, "GetDuplicateGroupMessages")
+	require.Len(rows, 2, "single-group query rows")
+	archiveOnlyByID := make(map[int64]bool, len(rows))
+	for _, row := range rows {
+		archiveOnlyByID[row.ID] = row.ArchiveOnly
+	}
+	assert.True(archiveOnlyByID[archivedMessageID], "single-group query archive marker")
+	assert.False(archiveOnlyByID[liveMessageID], "single-group query live status")
+
+	candidates, err := st.GetAllRawMIMECandidates(live.ID)
+	require.NoError(err, "GetAllRawMIMECandidates")
+	candidateArchiveOnlyByID := make(map[int64]bool, len(candidates))
+	for _, candidate := range candidates {
+		candidateArchiveOnlyByID[candidate.ID] = candidate.ArchiveOnly
+	}
+	assert.True(candidateArchiveOnlyByID[archivedMessageID], "content-hash query archive marker")
+	assert.False(candidateArchiveOnlyByID[liveMessageID], "content-hash query live status")
+
+	setArchivedAt(t, st, archivedMessageID, time.Date(2020, 1, 15, 0, 0, 0, 0, time.UTC))
+	setArchivedAt(t, st, liveMessageID, time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC))
+
+	eng := dedup.NewEngine(st, dedup.Config{
+		AccountSourceIDs:           []int64{live.ID},
+		Account:                    live.Identifier,
+		DeleteDupsFromSourceServer: true,
+		DeletionsDir:               filepath.Join(t.TempDir(), "deletions"),
+	}, nil)
+	report, err := eng.Scan(t.Context())
+	require.NoError(err, "Scan")
+	require.Len(report.Groups, 1, "duplicate groups")
+	group := report.Groups[0]
+	assert.Equal(liveMessageID, group.Messages[group.Survivor].ID, "live provider copy survives")
+
+	targets, err := dedup.PlannedRemoteDeletionTargets(t.Context(), report)
+	require.NoError(err, "PlannedRemoteDeletionTargets")
+	assert.Empty(targets, "source merge history must never make the live provider copy deletable")
+
+	// Even if a stale or externally constructed report chooses the archive-only
+	// row as survivor, remote deletion planning must reject the live target.
+	archiveIndex := -1
+	for i, message := range group.Messages {
+		if message.ID == archivedMessageID {
+			archiveIndex = i
+		}
+	}
+	require.NotEqual(-1, archiveIndex, "merged history row in duplicate group")
+	assert.True(group.Messages[archiveIndex].ArchiveOnly, "merged history status reaches dedupe")
+	assert.False(group.Messages[group.Survivor].ArchiveOnly, "live status reaches dedupe")
+	archiveSurvivorGroup := group
+	archiveSurvivorGroup.Messages = append([]dedup.DuplicateMessage(nil), group.Messages...)
+	archiveSurvivorGroup.Survivor = archiveIndex
+	archiveSurvivorReport := *report
+	archiveSurvivorReport.Groups = []dedup.DuplicateGroup{archiveSurvivorGroup}
+	targets, err = dedup.PlannedRemoteDeletionTargets(t.Context(), &archiveSurvivorReport)
+	require.NoError(err, "PlannedRemoteDeletionTargets with archive-only survivor")
+	assert.Empty(targets, "archive-only survivors cannot authorize provider deletion")
+}
+
 func TestEngine_OptIn_RejectsMissingSourceIdentifierBeforeMerge(t *testing.T) {
 	require := require.New(t)
 	f := storetest.New(t)

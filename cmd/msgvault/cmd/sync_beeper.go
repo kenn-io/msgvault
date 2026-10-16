@@ -59,7 +59,7 @@ Examples:
 				return runDaemonCLICommandHTTPFromCobra(cmd, args)
 			}
 
-			imp, accountIDs, dbPath, cleanup, err := openBeeperImporter(syncBeeperAccounts, state)
+			imp, accountIDs, dbPath, cleanup, err := openBeeperImporter(syncBeeperAccounts, state, false)
 			if err != nil {
 				return err
 			}
@@ -178,21 +178,40 @@ func writeBeeperMediaSkipSummary(out io.Writer, sum *beeper.ImportSummary) {
 // explicit flag values, or every registered beeper source that passes the
 // config include/exclude filters.
 func resolveBeeperSyncAccounts(s *store.Store, flagAccounts []string, cfg *config.Config) ([]string, error) {
+	return resolveBeeperAccounts(s, flagAccounts, cfg, false)
+}
+
+func resolveBeeperAccounts(s *store.Store, flagAccounts []string, cfg *config.Config, allowHistoryOnly bool) ([]string, error) {
 	sources, err := s.ListSources(sourceTypeBeeper)
 	if err != nil {
 		return nil, fmt.Errorf("list beeper sources: %w", err)
 	}
 	if len(flagAccounts) > 0 {
-		registered := make(map[string]struct{}, len(sources))
+		registered := make(map[string]*store.Source, len(sources))
+		aliases := make(map[string]*store.Source, len(sources))
 		for _, src := range sources {
-			registered[src.Identifier] = struct{}{}
+			registered[src.Identifier] = src
+			if src.Alias != "" {
+				aliases[strings.ToLower(src.Alias)] = src
+			}
 		}
 		seen := make(map[string]struct{}, len(flagAccounts))
 		out := make([]string, 0, len(flagAccounts))
 		for _, accountID := range flagAccounts {
-			if _, ok := registered[accountID]; !ok {
+			src, ok := registered[accountID]
+			if !ok {
+				src, ok = aliases[strings.ToLower(accountID)]
+			}
+			if !ok {
 				return nil, fmt.Errorf("beeper account %q is not registered (run 'add-beeper' first)", accountID)
 			}
+			if src.MergedIntoSourceID != 0 {
+				return nil, fmt.Errorf("beeper source %d: %w", src.ID, store.ErrSourceRetired)
+			}
+			if src.HistoryOnly && !allowHistoryOnly {
+				return nil, fmt.Errorf("beeper source %d is history-only; use update-account --source-id %d --history-only=false before syncing", src.ID, src.ID)
+			}
+			accountID = src.Identifier
 			if _, duplicate := seen[accountID]; duplicate {
 				continue
 			}
@@ -206,11 +225,14 @@ func resolveBeeperSyncAccounts(s *store.Store, flagAccounts []string, cfg *confi
 		return nil, errors.New("configuration is unavailable")
 	}
 	for _, src := range sources {
+		if (src.HistoryOnly && !allowHistoryOnly) || src.MergedIntoSourceID != 0 {
+			continue
+		}
 		if cfg.Beeper.AccountIncluded(src.Identifier) {
 			out = append(out, src.Identifier)
 		}
 	}
-	if len(out) == 0 {
+	if len(sources) == 0 {
 		return nil, errors.New("no Beeper accounts registered (run 'add-beeper' first)")
 	}
 	return out, nil
@@ -229,6 +251,9 @@ func filterBeeperReanchorMarkedAccounts(
 		source, err := s.GetSourceByTypeAndIdentifier(sourceTypeBeeper, accountID)
 		if err != nil {
 			return nil, fmt.Errorf("resolve beeper source %q for anchor marker: %w", accountID, err)
+		}
+		if source.HistoryOnly || source.MergedIntoSourceID != 0 {
+			continue
 		}
 		reason, marked, err := s.GetArchiveMarker(ctx, store.BeeperReanchorMarkerKey(source.ID))
 		if err != nil {
@@ -259,7 +284,7 @@ func beeperImportOptions(accountID string, cfg *config.Config) beeper.ImportOpti
 // openBeeperImporter performs the shared beeper-command prologue: open the
 // store, load the token, resolve the target accounts, and build the importer.
 // The returned cleanup closes the store.
-func openBeeperImporter(flagAccounts []string, state *invocation) (imp *beeper.Importer, accountIDs []string, dbPath string, cleanup func(), err error) {
+func openBeeperImporter(flagAccounts []string, state *invocation, allowHistoryOnly bool) (imp *beeper.Importer, accountIDs []string, dbPath string, cleanup func(), err error) {
 	if state == nil {
 		return nil, nil, "", nil, errors.New("configuration is unavailable")
 	}
@@ -273,10 +298,14 @@ func openBeeperImporter(flagAccounts []string, state *invocation) (imp *beeper.I
 		cleanup()
 		return nil, nil, "", nil, err
 	}
-	accountIDs, err = resolveBeeperSyncAccounts(s, flagAccounts, cfg)
+	accountIDs, err = resolveBeeperAccounts(s, flagAccounts, cfg, allowHistoryOnly)
 	if err != nil {
 		cleanup()
 		return nil, nil, "", nil, err
+	}
+	if len(accountIDs) == 0 {
+		cleanup()
+		return nil, nil, "", nil, errors.New("no active Beeper accounts to sync")
 	}
 	return beeper.NewImporter(s, beeperClient(cfg, token)), accountIDs, cfg.DatabaseDSN(), cleanup, nil
 }

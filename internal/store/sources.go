@@ -24,9 +24,7 @@ func (s *Store) GetSourceByID(id int64) (*Source, error) {
 // GetSourceByIDContext is the request-aware form of GetSourceByID.
 func (s *Store) GetSourceByIDContext(ctx context.Context, id int64) (*Source, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT id, source_type, identifier, display_name, google_user_id,
-		       last_sync_at, sync_cursor, sync_config, oauth_app,
-		       created_at, updated_at
+		SELECT `+sourceCatalogColumns+`
 		FROM sources
 		WHERE id = ?
 	`, id)
@@ -44,9 +42,7 @@ func (s *Store) GetSourceByIDContext(ctx context.Context, id int64) (*Source, er
 // GetSourceByTypeAndIdentifier resolves a source by its portable stable tuple.
 func (s *Store) GetSourceByTypeAndIdentifier(sourceType, identifier string) (*Source, error) {
 	row := s.db.QueryRow(`
-		SELECT id, source_type, identifier, display_name, google_user_id,
-		       last_sync_at, sync_cursor, sync_config, oauth_app,
-		       created_at, updated_at
+		SELECT `+sourceCatalogColumns+`
 		FROM sources
 		WHERE source_type = ? AND identifier = ?
 	`, sourceType, identifier)
@@ -67,9 +63,7 @@ func (s *Store) GetSourcesByIdentifier(
 	identifier string,
 ) ([]*Source, error) {
 	rows, err := s.db.Query(`
-		SELECT id, source_type, identifier, display_name,
-		       google_user_id, last_sync_at, sync_cursor, sync_config,
-		       oauth_app, created_at, updated_at
+		SELECT `+sourceCatalogColumns+`
 		FROM sources
 		WHERE identifier = ?
 		ORDER BY source_type
@@ -104,13 +98,12 @@ func (s *Store) GetSourcesByIdentifierOrDisplayNameContext(
 	query string,
 ) ([]*Source, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, source_type, identifier, display_name,
-		       google_user_id, last_sync_at, sync_cursor, sync_config,
-		       oauth_app, created_at, updated_at
+		SELECT `+sourceCatalogColumns+`
 		FROM sources
 		WHERE LOWER(identifier) = LOWER(?) OR LOWER(display_name) = LOWER(?)
+ OR EXISTS (SELECT 1 FROM source_settings WHERE source_id = sources.id AND alias_key = ?)
 		ORDER BY source_type
-	`, query, query)
+	`, query, query, strings.ToLower(query))
 	if err != nil {
 		return nil, fmt.Errorf("query sources: %w", err)
 	}
@@ -134,9 +127,7 @@ func (s *Store) GetSourcesByIdentifierOrDisplayNameContext(
 // matching rows if more than one source shares the same name.
 func (s *Store) GetSourcesByDisplayName(displayName string) ([]*Source, error) {
 	rows, err := s.db.Query(`
-		SELECT id, source_type, identifier, display_name,
-		       google_user_id, last_sync_at, sync_cursor, sync_config,
-		       oauth_app, created_at, updated_at
+		SELECT `+sourceCatalogColumns+`
 		FROM sources
 		WHERE display_name = ?
 		ORDER BY source_type
@@ -201,6 +192,45 @@ func (s *Store) GetSourcesByTypeAndAccountContext(
 	return matched, nil
 }
 
+// ErrSourceMergeParticipant protects source retirement and merge provenance.
+var ErrSourceMergeParticipant = errors.New("source has preserved merge history")
+
+// CheckSourceRemovalAllowedContext provides a read-only removal preflight.
+// Removal still checks under its identity lock before changing archive state.
+func (s *Store) CheckSourceRemovalAllowedContext(ctx context.Context, sourceID int64) error {
+	return s.requireSourceRemovalAllowed(ctx, s.db, sourceID)
+}
+
+func (s *Store) requireSourceRemovalAllowed(ctx context.Context, q contextStatementQuerier, sourceID int64) error {
+	var merged bool
+	if err := q.QueryRowContext(ctx, s.dialect.Rebind(`SELECT EXISTS (
+ SELECT 1 FROM source_merges WHERE from_source_id = ? OR into_source_id = ?
+)`), sourceID, sourceID).Scan(&merged); err != nil {
+		return fmt.Errorf("check source merge history: %w", err)
+	}
+	if merged {
+		return fmt.Errorf("source %d cannot be removed: %w", sourceID, ErrSourceMergeParticipant)
+	}
+	return nil
+}
+
+// AcquireSourceRemovalLockContext fences source merges while the caller checks
+// removal eligibility, cleans up provider credentials, and removes the source.
+// It must remain held through RemoveSourceSerialized, which rechecks eligibility
+// transactionally. Unlike sync execution acquisition, it leaves running rows
+// untouched so forced removal still observes them when deciding file cleanup.
+func (s *Store) AcquireSourceRemovalLockContext(ctx context.Context, sourceID int64) (func() error, error) {
+	lock, err := s.acquireSyncExecutionLock(ctx, sourceID)
+	if err != nil {
+		return nil, err
+	}
+	execution := &SyncExecution{store: s.withoutSyncScope(), sourceID: sourceID, lock: lock}
+	if err := s.requireSourceRemovalAllowed(ctx, s.db, sourceID); err != nil {
+		return nil, errors.Join(err, execution.Release())
+	}
+	return execution.Release, nil
+}
+
 // RemoveSource deletes a source and all its associated data.
 // FTS5 rows are cleaned up explicitly (no FK cascade for virtual tables).
 // CASCADE handles conversations, messages, labels, attachments, sync state.
@@ -249,6 +279,10 @@ func (s *Store) RemoveSourceSerialized(
 			_, _ = conn.ExecContext(ctx, "ROLLBACK")
 		}
 	}()
+
+	if err := s.requireSourceRemovalAllowed(ctx, conn, sourceID); err != nil {
+		return false, 0, err
+	}
 
 	var count int
 	if err := conn.QueryRowContext(ctx,
@@ -389,6 +423,11 @@ func (s *Store) removeSourceExec(
 	// prevents a candidate from being inserted after cleanup but before the
 	// source cascade removes its observation endpoint.
 	if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+		return err
+	}
+	// A merge holds the same lock through retirement and journal commit.
+	// Check eligibility only after any earlier merge has finished.
+	if err := s.requireSourceRemovalAllowed(ctx, tx, sourceID); err != nil {
 		return err
 	}
 	if err := s.lockProfileIdentityKeyTxContext(

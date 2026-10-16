@@ -58,6 +58,7 @@ func RewriteRunQueryClient(source []byte) ([]byte, error) {
 var optionalValueJSONTag = regexp.MustCompile("((?:\\*string|\\*?jsontext\\.Value)\\s+`json:\"[^\"]+),omitempty(\")")
 
 var requiredPointerValidators = [][3]string{
+	{"CliAccountResponse", "Alias", "c"},
 	{"FileMetadataResponse", "Filename", "f"},
 	{"FileMetadataResponse", "MimeType", "f"},
 	{"FileSearchRow", "Filename", "f"},

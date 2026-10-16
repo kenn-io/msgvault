@@ -33,6 +33,22 @@ func (s *Syncer) Incremental(ctx context.Context) (Result, error) {
 			firstErr = err
 		}
 	}
+	selectedCalendars := make(map[string]struct{}, len(s.opts.Calendars))
+	for _, calendarID := range s.opts.Calendars {
+		selectedCalendars[calendarID] = struct{}{}
+	}
+	activeSources := make([]*store.Source, 0, len(sources))
+	for _, src := range sources {
+		if src.MergedIntoSourceID != 0 {
+			cfg := parseSourceConfig(src.SyncConfig)
+			if _, selected := selectedCalendars[cfg.CalendarID]; selected {
+				recordErr(fmt.Errorf("calendar %q source is retired: %w", cfg.CalendarID, store.ErrSourceRetired))
+			}
+			continue
+		}
+		activeSources = append(activeSources, src)
+	}
+	sources = activeSources
 
 	if s.shouldPersistOAuthApp() {
 		for _, src := range sources {

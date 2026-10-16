@@ -348,7 +348,7 @@ func TestRunConfiguredSynctechSMSSourceLeavesManualSyncMessagesUnstamped(t *test
 	assert.Equal(1, unstamped, "manual sync message remains discoverable by scan-and-fill")
 }
 
-func TestConfiguredSynctechSMSCompletesAfterImport(t *testing.T) {
+func TestScheduledSynctechSMSCompletesAfterImport(t *testing.T) {
 	cfg := testConfigValue()
 
 	stubScheduledCacheBuild(t)
@@ -372,7 +372,7 @@ func TestConfiguredSynctechSMSCompletesAfterImport(t *testing.T) {
 	src.Backend = localValue
 	src.Path = xmlPath
 
-	err := runConfiguredSynctechSMSSourceWithStore(testCtx, f.Store, src)
+	err := runScheduledSynctechSMSSource(testCtx, f.Store, src)
 
 	require.NoError(err, "configured synctech-sms import")
 	source := getSynctechSource(t, f.Store, src.OwnerPhone)

@@ -707,6 +707,7 @@ func (e *DuckDBEngine) parquetCTEs() string {
 		"CAST(snippet AS VARCHAR) AS snippet",
 		"CAST(size_estimate AS BIGINT) AS size_estimate",
 		"COALESCE(TRY_CAST(has_attachments AS BOOLEAN), false) AS has_attachments",
+		"CAST(archive_only AS BOOLEAN) AS archive_only",
 	}
 	var msgExtra []string
 	if e.hasCol(datasetMessages, "attachment_count") {
@@ -2549,6 +2550,7 @@ func (e *DuckDBEngine) GetDeletionTargetsByFilter(ctx context.Context, filter Me
 	// maintaining a second, partial copy for the fallback path.
 	filter.HideDeletedFromSource = true
 	where, args := e.buildFilterConditions(filter)
+	where += " AND NOT msg.archive_only"
 
 	// Build query — JOIN src to scope to deletable sources authoritatively.
 	query := fmt.Sprintf(`
@@ -2635,7 +2637,7 @@ func (e *DuckDBEngine) deletionTargetsForMessageIDChunk(ctx context.Context, ids
 		       msg.source_message_id, msg.sent_at
 		FROM msg
 		JOIN src ON src.id = msg.source_id AND COALESCE(src.source_type, 'gmail') IN `+deletableSourceTypesSQL+`
-		       WHERE %s AND %s AND COALESCE(msg.source_message_id, '') <> '' AND msg.id IN (%s)
+		       WHERE %s AND %s AND NOT msg.archive_only AND COALESCE(msg.source_message_id, '') <> '' AND msg.id IN (%s)
 	`, e.parquetCTEs(), store.LiveMessagesWhere("msg", true), emailOnlyFilterMsg, strings.Join(placeholders, ","))
 	rows, err := e.db.QueryContext(ctx, q, args...)
 	if err != nil {

@@ -522,7 +522,7 @@ func runAddAccountLocal(cmd *cobra.Command, args []string) error {
 			}
 		}
 		if accountDisplayName != "" {
-			if saErr := s.UpdateSourceDisplayName(source.ID, accountDisplayName); saErr != nil {
+			if saErr := updateSourceDisplayNameForRegistration(s, source.ID, accountDisplayName, state.logger); saErr != nil {
 				return fmt.Errorf("set display name: %w", saErr)
 			}
 		}
@@ -610,7 +610,7 @@ func runAddAccountLocal(cmd *cobra.Command, args []string) error {
 			}
 		}
 		if accountDisplayName != "" {
-			if err := s.UpdateSourceDisplayName(source.ID, accountDisplayName); err != nil {
+			if err := updateSourceDisplayNameForRegistration(s, source.ID, accountDisplayName, state.logger); err != nil {
 				return fmt.Errorf("set display name: %w", err)
 			}
 		}
@@ -673,7 +673,7 @@ func runAddAccountLocal(cmd *cobra.Command, args []string) error {
 	}
 
 	if accountDisplayName != "" {
-		if err := s.UpdateSourceDisplayName(source.ID, accountDisplayName); err != nil {
+		if err := updateSourceDisplayNameForRegistration(s, source.ID, accountDisplayName, state.logger); err != nil {
 			return fmt.Errorf("set display name: %w", err)
 		}
 	}

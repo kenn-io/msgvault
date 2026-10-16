@@ -39,9 +39,11 @@ import (
 // Version 30 stores direct activity edges and expands conversation membership
 // from the current roster when queried.
 // Version 31 adds the message account_address and account_path projection.
+// Version 32 marks merged archive-only messages so deletion preflight counts
+// only messages that can still be deleted from their source.
 // Schema bumps force a full rebuild before readers use an older publication,
 // so committed caches never mix shards of different shapes.
-const CacheSchemaVersion = 31
+const CacheSchemaVersion = 32
 
 // CacheSyncState is the commit marker written after a complete analytics
 // cache publication. SQLite remains authoritative; these watermarks only

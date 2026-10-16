@@ -106,6 +106,15 @@ func (e *SyncExecution) Release() error {
 func (s *Store) acquireSyncExecutionLock(
 	ctx context.Context, sourceID int64,
 ) (syncExecutionLock, error) {
+	return s.acquireSyncExecutionLocks(ctx, []int64{sourceID})
+}
+
+// acquireSyncExecutionLocks reserves every source before taking backend locks.
+// PostgreSQL keeps all keys on one session, leaving a connection available for
+// lifecycle checks and the caller's transaction even with a two-connection pool.
+func (s *Store) acquireSyncExecutionLocks(
+	ctx context.Context, sourceIDs []int64,
+) (syncExecutionLock, error) {
 	base := s.withoutSyncScope()
 	state := base.syncExecutionLocks
 	if state == nil {
@@ -113,52 +122,67 @@ func (s *Store) acquireSyncExecutionLock(
 	}
 
 	state.mu.Lock()
-	if _, exists := state.bySource[sourceID]; exists {
-		state.mu.Unlock()
-		return nil, ErrSyncAlreadyActive
+	for _, sourceID := range sourceIDs {
+		if _, exists := state.bySource[sourceID]; exists {
+			state.mu.Unlock()
+			return nil, ErrSyncAlreadyActive
+		}
 	}
-	state.bySource[sourceID] = nil
+	for _, sourceID := range sourceIDs {
+		state.bySource[sourceID] = nil
+	}
 	state.mu.Unlock()
 
-	lock, err := base.acquireBackendSyncExecutionLock(ctx, sourceID)
+	lock, err := base.acquireBackendSyncExecutionLocks(ctx, sourceIDs)
+	state.mu.Lock()
+	for _, sourceID := range sourceIDs {
+		if lock == nil {
+			delete(state.bySource, sourceID)
+		} else {
+			// Failed acquisition can leave cleanup pending. Keep its owner so
+			// store cleanup can retry without admitting another execution.
+			state.bySource[sourceID] = lock
+		}
+	}
+	state.mu.Unlock()
 	if err != nil {
-		state.mu.Lock()
-		delete(state.bySource, sourceID)
-		state.mu.Unlock()
 		return nil, err
 	}
-
-	state.mu.Lock()
-	state.bySource[sourceID] = lock
-	state.mu.Unlock()
+	for _, sourceID := range sourceIDs {
+		if err := requireSourceWritableWith(boundQuerier{ctx: ctx, q: base.db}, sourceID); err != nil {
+			return nil, errors.Join(err, base.abandonSyncExecutionLocks(sourceIDs, lock))
+		}
+	}
 	return lock, nil
+}
+
+func (s *Store) acquireBackendSyncExecutionLocks(ctx context.Context, sourceIDs []int64) (syncExecutionLock, error) {
+	if s.IsPostgreSQL() {
+		return s.acquirePostgresSyncExecutionLocks(ctx, sourceIDs)
+	}
+	if len(sourceIDs) == 1 {
+		return s.acquireBackendSyncExecutionLock(ctx, sourceIDs[0])
+	}
+	group := &syncExecutionLockGroup{}
+	for _, sourceID := range sourceIDs {
+		lock, err := s.acquireBackendSyncExecutionLock(ctx, sourceID)
+		if err != nil {
+			released, releaseErr := group.release()
+			if !released {
+				return group, errors.Join(err, releaseErr)
+			}
+			return nil, errors.Join(err, releaseErr)
+		}
+		group.locks = append(group.locks, lock)
+	}
+	return group, nil
 }
 
 func (s *Store) acquireBackendSyncExecutionLock(
 	ctx context.Context, sourceID int64,
 ) (syncExecutionLock, error) {
 	if s.IsPostgreSQL() {
-		conn, err := s.db.Conn(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("acquire PostgreSQL sync lock connection: %w", err)
-		}
-		lock := &postgresSyncExecutionLock{conn: conn, sourceID: sourceID, rebind: s.Rebind}
-		var acquired bool
-		err = conn.QueryRowContext(ctx, s.Rebind(`
-			SELECT pg_try_advisory_lock(
-				hashtextextended(
-					current_schema() || ':msgvault-sync:' || CAST(CAST(? AS BIGINT) AS TEXT), 0
-				)
-			)`), sourceID).Scan(&acquired)
-		if err != nil {
-			_ = conn.Close()
-			return nil, fmt.Errorf("acquire PostgreSQL sync lock: %w", err)
-		}
-		if !acquired {
-			_ = conn.Close()
-			return nil, ErrSyncAlreadyActive
-		}
-		return lock, nil
+		return s.acquirePostgresSyncExecutionLocks(ctx, []int64{sourceID})
 	}
 
 	dbPath := s.sqliteFilesystemPath
@@ -219,10 +243,14 @@ func (s *Store) registerSyncExecutionLock(
 }
 
 func (s *Store) abandonSyncExecutionLock(sourceID int64, lock syncExecutionLock) error {
+	return s.abandonSyncExecutionLocks([]int64{sourceID}, lock)
+}
+
+func (s *Store) abandonSyncExecutionLocks(sourceIDs []int64, lock syncExecutionLock) error {
 	if lock == nil {
 		return nil
 	}
-	_, err := s.releaseOwnedSyncExecutionLock(sourceID, lock)
+	_, err := s.releaseOwnedSyncExecutionLocks(sourceIDs, lock)
 	return err
 }
 
@@ -255,7 +283,6 @@ func (s *Store) releaseSyncExecutionLock(runID int64) error {
 	for sourceID, sourceLock := range state.bySource {
 		if sourceLock == runLock.lock {
 			delete(state.bySource, sourceID)
-			break
 		}
 	}
 	state.mu.Unlock()
@@ -263,26 +290,42 @@ func (s *Store) releaseSyncExecutionLock(runID int64) error {
 }
 
 func (s *Store) releaseOwnedSyncExecutionLock(sourceID int64, lock syncExecutionLock) (bool, error) {
+	return s.releaseOwnedSyncExecutionLocks([]int64{sourceID}, lock)
+}
+
+func (s *Store) releaseOwnedSyncExecutionLocks(sourceIDs []int64, lock syncExecutionLock) (bool, error) {
 	state := s.withoutSyncScope().syncExecutionLocks
 	if state == nil {
 		return lock.release()
 	}
 	state.mu.Lock()
-	owned := state.bySource[sourceID] == lock
+	owned := false
+	for _, sourceID := range sourceIDs {
+		if state.bySource[sourceID] == lock {
+			owned = true
+			break
+		}
+	}
 	state.mu.Unlock()
 	if !owned {
 		return true, nil
 	}
 	released, err := lock.release()
 	if err != nil {
-		err = fmt.Errorf("release source %d sync execution lock: %w", sourceID, err)
+		if len(sourceIDs) == 1 {
+			err = fmt.Errorf("release source %d sync execution lock: %w", sourceIDs[0], err)
+		} else {
+			err = fmt.Errorf("release sources %v sync execution lock: %w", sourceIDs, err)
+		}
 	}
 	if !released {
 		return false, err
 	}
 	state.mu.Lock()
-	if state.bySource[sourceID] == lock {
-		delete(state.bySource, sourceID)
+	for sourceID, sourceLock := range state.bySource {
+		if sourceLock == lock {
+			delete(state.bySource, sourceID)
+		}
 	}
 	for runID, runLock := range state.byRun {
 		if runLock.lock == lock {
@@ -346,11 +389,54 @@ func (l *sqliteSyncExecutionLock) release() (bool, error) {
 }
 
 type postgresSyncExecutionLock struct {
-	conn     *sql.Conn
-	sourceID int64
-	rebind   func(string) string
-	mu       sync.Mutex
-	released bool
+	conn      *sql.Conn
+	sourceIDs []int64
+	rebind    func(string) string
+	mu        sync.Mutex
+	released  bool
+	discard   bool
+}
+
+func (s *Store) acquirePostgresSyncExecutionLocks(ctx context.Context, sourceIDs []int64) (syncExecutionLock, error) {
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("acquire PostgreSQL sync lock connection: %w", err)
+	}
+	lock := &postgresSyncExecutionLock{conn: conn, rebind: s.Rebind}
+	for _, sourceID := range sourceIDs {
+		var acquired bool
+		var acquireErr error
+		rawErr := conn.Raw(func(driverConn any) error {
+			postgresConn, ok := driverConn.(*stdlib.Conn)
+			if !ok {
+				return fmt.Errorf("unexpected PostgreSQL sync lock driver %T", driverConn)
+			}
+			acquireErr = postgresConn.Conn().QueryRow(ctx, s.Rebind(`SELECT pg_try_advisory_lock(
+				hashtextextended(
+					current_schema() || ':msgvault-sync:' || CAST(CAST(? AS BIGINT) AS TEXT), 0
+				)
+			)`), sourceID).Scan(&acquired)
+			// Retain the session for confirmed cleanup even if the query failed.
+			return nil
+		})
+		if err := errors.Join(acquireErr, rawErr); err != nil || !acquired {
+			if err != nil {
+				// Cancellation may lose the response after the key was acquired.
+				// Close the physical session and wait for all its keys to go away.
+				lock.discard = true
+				err = fmt.Errorf("acquire PostgreSQL sync lock: %w", err)
+			} else {
+				err = ErrSyncAlreadyActive
+			}
+			released, releaseErr := lock.release()
+			if !released {
+				return lock, errors.Join(err, releaseErr)
+			}
+			return nil, errors.Join(err, releaseErr)
+		}
+		lock.sourceIDs = append(lock.sourceIDs, sourceID)
+	}
+	return lock, nil
 }
 
 func (l *postgresSyncExecutionLock) release() (bool, error) {
@@ -370,21 +456,31 @@ func (l *postgresSyncExecutionLock) release() (bool, error) {
 			return fmt.Errorf("unexpected PostgreSQL sync lock driver %T", driverConn)
 		}
 		conn := postgresConn.Conn()
-		var unlocked bool
-		unlockErr = conn.QueryRow(ctx, l.rebind(`
-			SELECT pg_advisory_unlock(
-				hashtextextended(
-					current_schema() || ':msgvault-sync:' || CAST(CAST(? AS BIGINT) AS TEXT), 0
-				)
-			)`), l.sourceID).Scan(&unlocked)
-		if unlockErr == nil {
-			l.released = true
-			if !unlocked {
-				unlockErr = errors.New("PostgreSQL sync lock was not held")
+		if !l.discard {
+			for len(l.sourceIDs) > 0 {
+				sourceID := l.sourceIDs[0]
+				var unlocked bool
+				err := conn.QueryRow(ctx, l.rebind(`
+					SELECT pg_advisory_unlock(
+						hashtextextended(
+							current_schema() || ':msgvault-sync:' || CAST(CAST(? AS BIGINT) AS TEXT), 0
+						)
+					)`), sourceID).Scan(&unlocked)
+				if err != nil {
+					unlockErr = errors.Join(unlockErr, fmt.Errorf("unlock PostgreSQL sync lock: %w", err))
+					l.discard = true
+					break
+				}
+				l.sourceIDs = l.sourceIDs[1:]
+				if !unlocked {
+					unlockErr = errors.Join(unlockErr, errors.New("PostgreSQL sync lock was not held"))
+				}
 			}
-			return nil
+			if !l.discard {
+				l.released = true
+				return nil
+			}
 		}
-		unlockErr = fmt.Errorf("unlock PostgreSQL sync lock: %w", unlockErr)
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), syncExecutionLockCleanupTimeout)
 		defer cleanupCancel()
 		closeErr = conn.Close(cleanupCtx)
@@ -403,4 +499,29 @@ func (l *postgresSyncExecutionLock) release() (bool, error) {
 		closeErr = errors.Join(closeErr, l.conn.Close())
 	}
 	return l.released, errors.Join(unlockErr, closeErr, rawErr)
+}
+
+type syncExecutionLockGroup struct {
+	mu    sync.Mutex
+	locks []syncExecutionLock
+}
+
+func (g *syncExecutionLockGroup) release() (bool, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	var releaseErr error
+	released := true
+	for i := len(g.locks) - 1; i >= 0; i-- {
+		if g.locks[i] == nil {
+			continue
+		}
+		done, err := g.locks[i].release()
+		releaseErr = errors.Join(releaseErr, err)
+		if done {
+			g.locks[i] = nil
+		} else {
+			released = false
+		}
+	}
+	return released, releaseErr
 }

@@ -98,20 +98,25 @@ func resolveChatwootSyncInboxes(st *store.Store, src config.ChatwootSource, requ
 	if err != nil {
 		return nil, err
 	}
-	registered := map[int64]bool{}
+	registered := map[int64]*store.Source{}
+	retiredIncluded := false
 	var ids []int64
 	for _, source := range sources {
 		baseURL, accountID, id, ok := chatwoot.ParseSourceIdentifier(source.Identifier)
 		if !ok || baseURL != canonical || accountID != src.AccountID {
 			continue
 		}
-		registered[id] = true
+		registered[id] = source
 		if src.InboxIncluded(id) {
+			if source.MergedIntoSourceID != 0 {
+				retiredIncluded = true
+				continue
+			}
 			ids = append(ids, id)
 		}
 	}
 	for _, id := range src.Inboxes {
-		if src.InboxIncluded(id) && !registered[id] {
+		if src.InboxIncluded(id) && registered[id] == nil {
 			slog.Warn("Configured Chatwoot inbox is not registered; run add-chatwoot", "inbox", id, "profile", src.Identifier)
 		}
 	}
@@ -121,8 +126,11 @@ func resolveChatwootSyncInboxes(st *store.Store, src config.ChatwootSource, requ
 			if !src.InboxIncluded(id) {
 				return nil, fmt.Errorf("chatwoot inbox %d is excluded by profile %q", id, src.Identifier)
 			}
-			if !registered[id] {
+			if registered[id] == nil {
 				return nil, fmt.Errorf("chatwoot inbox %d is not registered; run msgvault add-chatwoot %s", id, src.Identifier)
+			}
+			if registered[id].MergedIntoSourceID != 0 {
+				return nil, fmt.Errorf("chatwoot inbox %d: %w", id, store.ErrSourceRetired)
 			}
 			if !slices.Contains(ids, id) {
 				ids = append(ids, id)
@@ -130,6 +138,9 @@ func resolveChatwootSyncInboxes(st *store.Store, src config.ChatwootSource, requ
 		}
 	}
 	if len(ids) == 0 {
+		if retiredIncluded && len(requested) == 0 {
+			return nil, nil
+		}
 		return nil, fmt.Errorf("no included Chatwoot inboxes registered for %q; run msgvault add-chatwoot %s", src.Identifier, src.Identifier)
 	}
 	slices.Sort(ids)
@@ -146,7 +157,7 @@ func chatwootImportOptions(src config.ChatwootSource, inboxID int64, cfg *config
 
 func importChatwootProfile(ctx context.Context, st *store.Store, src config.ChatwootSource, run chatwootRunOptions, cfg *config.Config) (*chatwoot.ImportSummary, error) {
 	ids, err := resolveChatwootSyncInboxes(st, src, run.Inboxes)
-	if err != nil {
+	if err != nil || len(ids) == 0 {
 		return nil, err
 	}
 	client, err := configuredChatwootClient(src)

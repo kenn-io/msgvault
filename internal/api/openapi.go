@@ -370,7 +370,10 @@ import (
 // 3.19.0 adds pipe OR in full-text search queries.
 // 3.20.0 adds read-only durable contact candidates and archived messaging routes.
 // 3.21.0 adds message embedding coverage and live batch diagnostics.
-const APISchemaVersion = "3.21.0"
+// 3.22.0 adds account aliases, source lifecycle fields, account merging, and
+// owner source-maintenance requests. Existing source identifiers and account
+// requests remain valid.
+const APISchemaVersion = "3.22.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -1095,6 +1098,10 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 		}
 	}
 
+	// An account without an alias still includes the required alias property.
+	if account := schemas["CliAccountResponse"]; account != nil && account.Properties["alias"] != nil {
+		account.Properties["alias"].Nullable = true
+	}
 	for _, schemaName := range []string{"FileSearchRow", "FileMetadataResponse", "PersonFileSearchRow", "MessageRecording"} {
 		if schema := schemas[schemaName]; schema != nil {
 			for _, property := range []string{"filename", "mime_type"} {

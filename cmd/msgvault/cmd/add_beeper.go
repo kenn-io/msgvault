@@ -107,7 +107,7 @@ Examples:
 				if err != nil {
 					return fmt.Errorf("create source for %s: %w", acct.AccountID, err)
 				}
-				if err := s.UpdateSourceDisplayName(source.ID, beeperSourceDisplayName(acct)); err != nil {
+				if err := updateSourceDisplayNameForRegistration(s, source.ID, beeperSourceDisplayName(acct), state.logger); err != nil {
 					return fmt.Errorf("set display name for %s: %w", acct.AccountID, err)
 				}
 				if !noDefaultIdentityAddBeeper {

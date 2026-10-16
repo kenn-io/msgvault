@@ -434,7 +434,15 @@ func newSyncCalendarCmd() *cobra.Command {
 	return cmd
 }
 
+type calendarSyncClientBuilder func(
+	context.Context, string, string, bool, ...bool,
+) (gcal.API, error)
+
 func newSyncCalendarLocalCmd() *cobra.Command {
+	return newSyncCalendarLocalCmdWithClientBuilder(buildCalendarClient)
+}
+
+func newSyncCalendarLocalCmdWithClientBuilder(buildClient calendarSyncClientBuilder) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "sync-calendar <name|email>",
 		Aliases: []string{"sync-calendar-incremental"},
@@ -497,13 +505,25 @@ func newSyncCalendarLocalCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("load registered calendar sources for %s: %w", email, err)
 			}
+			if err := retiredCalendarSelectionError(existing, calendars); err != nil {
+				return err
+			}
+			activeExisting := activeSyncSources(existing)
+			explicitDiscovery := calSyncFull || calSyncAll || calSyncMinRole != "" || hasFullOnlyOptions
+			// Scheduled syncs stay quiet when every registered calendar is
+			// retired. Explicit full/discovery options still enumerate the account;
+			// the syncer skips retired calendars individually while finding new ones.
+			if len(existing) > 0 && len(activeExisting) == 0 && len(calendars) == 0 && !explicitDiscovery {
+				return nil
+			}
+			existing = activeExisting
 			appDecision, err := calendarSyncOAuthAppDecision(st, email, existing, oauthApp, oauthAppProvided)
 			if err != nil {
 				return err
 			}
 			oauthApp = appDecision.OAuthApp
 
-			client, err := buildCalendarClient(ctx, email, oauthApp, interactiveStdin())
+			client, err := buildClient(ctx, email, oauthApp, interactiveStdin())
 			if err != nil {
 				return err
 			}
@@ -626,6 +646,31 @@ func calendarRegisteredIDs(sources []*store.Source) map[string]struct{} {
 		}
 	}
 	return ids
+}
+
+func retiredCalendarSelectionError(sources []*store.Source, calendarIDs []string) error {
+	if len(calendarIDs) == 0 {
+		return nil
+	}
+	selected := make(map[string]struct{}, len(calendarIDs))
+	for _, calendarID := range calendarIDs {
+		selected[calendarID] = struct{}{}
+	}
+	for _, src := range sources {
+		if src == nil || src.MergedIntoSourceID == 0 || !src.SyncConfig.Valid || src.SyncConfig.String == "" {
+			continue
+		}
+		var cfg struct {
+			CalendarID string `json:"calendar_id"`
+		}
+		if err := json.Unmarshal([]byte(src.SyncConfig.String), &cfg); err != nil {
+			continue
+		}
+		if _, ok := selected[cfg.CalendarID]; ok {
+			return fmt.Errorf("calendar %q source is retired: %w", cfg.CalendarID, store.ErrSourceRetired)
+		}
+	}
+	return nil
 }
 
 func calendarEscalationScopes(existingScopes []string, preserveGmail bool, write ...bool) []string {
@@ -1015,6 +1060,10 @@ func calendarTokenActionError(accountEmail string) error {
 // Store. The first run full-syncs (and registers calendars); later runs are
 // incremental. Embedding is picked up later by scan-and-fill via embed_gen=NULL.
 func runConfiguredGCalSync(ctx context.Context, st *store.Store, src config.GCalSource) error {
+	return runConfiguredGCalSyncWithClientBuilder(ctx, st, src, buildCalendarClient)
+}
+
+func runConfiguredGCalSyncWithClientBuilder(ctx context.Context, st *store.Store, src config.GCalSource, buildClient calendarSyncClientBuilder) error {
 	state := invocationFromContext(ctx)
 	if state == nil || state.cfg == nil || state.logger == nil {
 		return errors.New("configuration is unavailable")
@@ -1029,12 +1078,29 @@ func runConfiguredGCalSync(ctx context.Context, st *store.Store, src config.GCal
 	if err != nil {
 		return fmt.Errorf("load registered calendar sources for %s: %w", email, err)
 	}
+	activeExisting := activeSyncSources(existing)
+	if len(existing) > 0 && len(activeExisting) == 0 {
+		return nil
+	}
+	if len(src.Calendars) > 0 {
+		retiredIDs := calendarRegisteredIDs(slices.DeleteFunc(slices.Clone(existing), func(source *store.Source) bool {
+			return source.MergedIntoSourceID == 0
+		}))
+		src.Calendars = slices.DeleteFunc(slices.Clone(src.Calendars), func(id string) bool {
+			_, retired := retiredIDs[id]
+			return retired
+		})
+		if len(src.Calendars) == 0 {
+			return nil
+		}
+	}
+	existing = activeExisting
 	appDecision, err := calendarSyncOAuthAppDecision(st, email, existing, src.OAuthApp, src.OAuthApp != "")
 	if err != nil {
 		return err
 	}
 
-	client, err := buildCalendarClient(ctx, email, appDecision.OAuthApp, false)
+	client, err := buildClient(ctx, email, appDecision.OAuthApp, false)
 	if err != nil {
 		return err
 	}

@@ -88,10 +88,13 @@ func (imp *Importer) Register(ctx context.Context, inboxes []Inbox) ([]*store.So
 			return sources, err
 		}
 		if err = imp.store.UpdateSourceDisplayNameContext(ctx, source.ID, inbox.Name); err != nil {
-			return sources, err
+			if !errors.Is(err, store.ErrSourceSettingsInvalid) {
+				return sources, err
+			}
+		} else {
+			source.DisplayName.String = inbox.Name
+			source.DisplayName.Valid = inbox.Name != ""
 		}
-		source.DisplayName.String = inbox.Name
-		source.DisplayName.Valid = inbox.Name != ""
 		sources = append(sources, source)
 	}
 	if len(sources) == 0 {

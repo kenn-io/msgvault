@@ -5,6 +5,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/mail"
 	"sort"
 	"strings"
@@ -86,6 +87,21 @@ func RegisterSource(st *store.Store, identifier, email string) (*store.Source, e
 		return nil, errors.New("plaud identifier is required")
 	}
 	src, err := st.GetOrCreateSource(SourceType, identifier)
+	if errors.Is(err, store.ErrSourceSettingsInvalid) {
+		// A selector conflict should not hide an exact existing provider source
+		// during reauthorization. Keep its old display name if the refresh below
+		// is still blocked.
+		existing, lookupErr := st.GetSourceByTypeAndIdentifier(SourceType, identifier)
+		if lookupErr == nil {
+			if existing.MergedIntoSourceID != 0 {
+				return nil, fmt.Errorf("plaud source %d: %w", existing.ID, store.ErrSourceRetired)
+			}
+			src = existing
+			err = nil
+		} else if !errors.Is(lookupErr, store.ErrSourceNotFound) {
+			return nil, fmt.Errorf("look up existing Plaud source after selector conflict: %w", lookupErr)
+		}
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -95,7 +111,12 @@ func RegisterSource(st *store.Store, identifier, email string) (*store.Source, e
 		return nil, err
 	}
 	if err := st.UpdateSourceDisplayName(src.ID, identifier); err != nil {
-		return nil, err
+		if !errors.Is(err, store.ErrSourceSettingsInvalid) {
+			return nil, err
+		}
+		slog.Warn("Plaud source display name conflicts with another source selector; keeping current name",
+			"source_id", src.ID,
+		)
 	}
 	if err := st.AddAccountIdentity(src.ID, email, "account-email"); err != nil {
 		return nil, err

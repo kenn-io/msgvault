@@ -57,6 +57,16 @@ func TestRemoteRegistrationUsesOptionalDisplayName(t *testing.T) {
 		return source
 	}
 
+	owner, err := f.st.GetOrCreateSource("mbox", "alias-owner@example.test")
+	require.NoError(err)
+	alias := "Support"
+	_, err = f.st.UpdateSourceSettingsContext(t.Context(), owner.ID, store.SourceSettingsUpdate{Alias: &alias})
+	require.NoError(err)
+	for range 2 {
+		conflict := register("support-recorder", "Support")
+		assert.Empty(conflict.DisplayName.String)
+	}
+
 	defaulted := register("default-recorder", "")
 	require.True(defaulted.DisplayName.Valid)
 	assert.Equal("default-recorder", defaulted.DisplayName.String)

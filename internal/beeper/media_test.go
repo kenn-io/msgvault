@@ -401,6 +401,13 @@ func TestImportMediaFailureLeavesMarkerAndBackfillRepairs(t *testing.T) {
 		`SELECT COUNT(*) FROM sync_run_items WHERE error_kind = 'beeper_media_error'`).Scan(&itemCount))
 	assert.Equal(1, itemCount)
 
+	// History-only accounts can finish downloading already archived media.
+	historyOnly := true
+	source, err := st.GetSourceByTypeAndIdentifier("beeper", "signal")
+	require.NoError(err)
+	_, err = st.UpdateSourceSettingsContext(t.Context(), source.ID, store.SourceSettingsUpdate{HistoryOnly: &historyOnly})
+	require.NoError(err)
+
 	// The asset becomes available; backfill repairs the marker.
 	f.setAsset("mxc://beeper.local/photo1", []byte("late bytes"))
 	bsum, err := imp.BackfillMedia(context.Background(), ImportOptions{

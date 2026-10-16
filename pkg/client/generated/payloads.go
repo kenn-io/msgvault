@@ -36,6 +36,8 @@ type SyncCardDAVBody = CardDAVSyncRequest
 
 type UpdateCLIAccountBody = UpdateRequest
 
+type MergeCLIAccountsBody = MergeRequest
+
 type PlanCLIAddCalendarBody = CLIAddCalendarPlanRequest
 
 type CreateCLICollectionBody = CreateRequest

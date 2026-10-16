@@ -115,6 +115,7 @@ var topLevelCommandGroups = map[string]string{
 	"mcp":                    helpGroupOperations,
 	"media":                  helpGroupRead,
 	"meetings":               helpGroupRead,
+	"merge-account":          helpGroupSources,
 	"message-tags":           helpGroupWrite,
 	"migrate":                helpGroupMaintenance,
 	"multimodal":             helpGroupIndex,

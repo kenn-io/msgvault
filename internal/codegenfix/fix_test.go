@@ -177,6 +177,7 @@ func (f FileGroupsHTTPRequest) Validate() error {
 		pointerValidatorFixture("PersonFileSearchRow", "p") +
 		requiredStringPointerValidatorFixture("FileSuggestionRow", "f", "MimeType") +
 		requiredStringPointerValidatorFixture("PersonFileSuggestionRow", "p", "MimeType") +
+		requiredStringPointerValidatorFixture("CliAccountResponse", "c", "Alias") +
 		requiredStringPointerValidatorFixture("MessageRecording", "m", "Filename") +
 		requiredStringPointerValidatorFixture("PersonFactEvidence", "p",
 			"SourceRef", "SourceURL", "ContentSha256", "SourceVersion", "SubjectRef", "Excerpt") + `

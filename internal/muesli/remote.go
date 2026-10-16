@@ -360,7 +360,7 @@ func (imp *Importer) ImportRemote(ctx context.Context, r RemoteRequest) (result 
 			displayName = r.Source.Identifier
 		}
 		if displayName != "" && (!source.DisplayName.Valid || source.DisplayName.String != displayName) {
-			if err := imp.store.UpdateSourceDisplayNameContext(ctx, source.ID, displayName); err != nil {
+			if err := imp.store.UpdateSourceDisplayNameContext(ctx, source.ID, displayName); err != nil && !errors.Is(err, store.ErrSourceSettingsInvalid) {
 				return result, err
 			}
 		}

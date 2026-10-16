@@ -200,9 +200,17 @@ This command does not place calls or enable paid processing.`,
 		written := &twilio.ImportSummary{}
 		var errs []error
 		for _, source := range sources {
-			client, accountEmail, err := newTwilioSourceClient(source)
+			registered, err := requireTwilioRegistered(st, source.Identifier)
+			if err == nil && registered.MergedIntoSourceID != 0 {
+				if len(args) == 0 {
+					continue
+				}
+				err = fmt.Errorf("twilio source %q is retired: %w", source.Identifier, store.ErrSourceRetired)
+			}
+			var client *twilio.Client
+			var accountEmail string
 			if err == nil {
-				err = requireTwilioRegistered(st, source.Identifier)
+				client, accountEmail, err = newTwilioSourceClient(source)
 			}
 			if err != nil {
 				errs = append(errs, fmt.Errorf("twilio sync %s failed: %w", source.Identifier, err))
@@ -226,19 +234,24 @@ This command does not place calls or enable paid processing.`,
 	},
 }
 
-func requireTwilioRegistered(st *store.Store, identifier string) error {
-	if _, err := st.GetSourceByTypeAndIdentifier(twilio.SourceType, identifier); err != nil {
+func requireTwilioRegistered(st *store.Store, identifier string) (*store.Source, error) {
+	registered, err := st.GetSourceByTypeAndIdentifier(twilio.SourceType, identifier)
+	if err != nil {
 		if errors.Is(err, store.ErrSourceNotFound) {
-			return fmt.Errorf("twilio source %q is not registered; run msgvault add-twilio %s first", identifier, identifier)
+			return nil, fmt.Errorf("twilio source %q is not registered; run msgvault add-twilio %s first", identifier, identifier)
 		}
-		return err
+		return nil, err
 	}
-	return nil
+	return registered, nil
 }
 
 func runConfiguredTwilioSync(ctx context.Context, st *store.Store, source config.TwilioSource) error {
-	if err := requireTwilioRegistered(st, source.Identifier); err != nil {
+	registered, err := requireTwilioRegistered(st, source.Identifier)
+	if err != nil {
 		return err
+	}
+	if registered.MergedIntoSourceID != 0 {
+		return nil
 	}
 	state := invocationFromContext(ctx)
 	if state == nil || state.cfg == nil {

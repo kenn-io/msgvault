@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -483,13 +484,27 @@ func TestRemoveAccountSourceIDDeletesOnlyExactSource(t *testing.T) {
 	assert.ErrorIs(err, store.ErrSourceNotFound)
 }
 
-func TestRemoveAccountPromptsBeforeDaemonCLIRunner(t *testing.T) {
+type preflightConfirmationReader struct {
+	*strings.Reader
+
+	t         *testing.T
+	completed *atomic.Bool
+}
+
+func (r *preflightConfirmationReader) Read(p []byte) (int, error) {
+	r.t.Helper()
+	require.True(r.t, r.completed.Load(), "eligibility preflight must complete before confirmation is read")
+	return r.Reader.Read(p) //nolint:wrapcheck // Test reader transparently delegates after checking ordering.
+}
+
+func TestRemoveAccountChecksEligibilityBeforePrompt(t *testing.T) {
 	cfg := testConfigValue()
 	useLocal := false
 
 	require := require.New(t)
 	assert := assert.New(t)
 	requests := &atomic.Int32{}
+	preflightCompleted := &atomic.Bool{}
 
 	mux := http.NewServeMux()
 	mux.Handle("/api/ping", daemon.NewPingHandler(daemon.PingHandlerOptions{
@@ -505,6 +520,13 @@ func TestRemoveAccountPromptsBeforeDaemonCLIRunner(t *testing.T) {
 		}
 		if !assert.NoError(json.NewDecoder(r.Body).Decode(&req), "decode request") {
 			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		if requests.Load() == 1 {
+			assert.Equal([]string{"remove-account", "--dry-run", "alice@example.com"}, req.Args)
+			w.Header().Set("Content-Type", "application/x-ndjson")
+			_, _ = w.Write([]byte(`{"type":"complete"}` + "\n"))
+			preflightCompleted.Store(true)
 			return
 		}
 		assert.Equal([]string{"remove-account", "--confirmed", "alice@example.com"}, req.Args, "args")
@@ -537,14 +559,14 @@ func TestRemoveAccountPromptsBeforeDaemonCLIRunner(t *testing.T) {
 	var stderr bytes.Buffer
 	cmd := newRemoveAccountCmd()
 	cmd.SetContext(testCtx)
-	cmd.SetIn(bytes.NewBufferString("y\n"))
+	cmd.SetIn(&preflightConfirmationReader{Reader: strings.NewReader("y\n"), t: t, completed: preflightCompleted})
 	cmd.SetOut(&stdout)
 	cmd.SetErr(&stderr)
 	cmd.SetArgs([]string{"alice@example.com"})
 
 	require.NoError(cmd.Execute(), "remove-account")
 
-	assert.Equal(1, int(requests.Load()), "runner endpoint calls")
+	assert.Equal(2, int(requests.Load()), "runner endpoint calls")
 	assert.Contains(stdout.String(), "Remove this account and all its data?", "prompt")
 	assert.Contains(stdout.String(), "Account removed\n", "daemon stdout")
 	assert.Empty(stderr.String(), "stderr")
@@ -1961,4 +1983,136 @@ func TestRemoveAccountCommandStorePreservesSharedGrant(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRemoveAccountMatrixPreservesMergedDestinationCredentials(t *testing.T) {
+	for _, merged := range []bool{false, true} {
+		name := "ordinary"
+		if merged {
+			name = "merged"
+		}
+		t.Run(name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			dir := t.TempDir()
+			dbPath := filepath.Join(dir, "msgvault.db")
+			var logouts atomic.Int64
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(http.MethodPost, r.Method)
+				assert.Equal("/_matrix/client/v3/logout", r.URL.Path)
+				logouts.Add(1)
+				_, _ = w.Write([]byte(`{}`))
+			}))
+			t.Cleanup(server.Close)
+			st, err := store.Open(dbPath)
+			require.NoError(err)
+			t.Cleanup(func() { require.NoError(st.Close()) })
+			require.NoError(st.InitSchema())
+			destination, err := st.GetOrCreateSource(sourceTypeMatrix, "@archive:example.org")
+			require.NoError(err)
+			if merged {
+				history, err := st.GetOrCreateSource(sourceTypeMatrix, "@history:example.org")
+				require.NoError(err)
+				_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: history.ID, IntoSourceID: destination.ID})
+				require.NoError(err)
+			}
+			testCfg := &config.Config{HomeDir: dir, Data: config.DataConfig{DataDir: dir}}
+			credentials := matrixsource.Credentials{
+				Homeserver: server.URL, UserID: destination.Identifier,
+				DeviceID: "ARCHIVEDEVICE", AccessToken: "synthetic-token",
+			}
+			require.NoError(matrixsource.SaveCredentials(testCfg.TokensDir(), credentials))
+			root := newTestRootCmd()
+			root.SetContext(testInvocationContext(t.Context(), testCfg, invocationOptions{}))
+			root.AddCommand(newRemoveAccountLocalTestCmd())
+			root.SetArgs([]string{"remove-account", destination.Identifier, "--type", sourceTypeMatrix, "--yes"})
+
+			if merged {
+				// Refusal must precede stdin confirmation, even without --yes.
+				root.SetArgs([]string{"remove-account", destination.Identifier, "--type", sourceTypeMatrix})
+			}
+
+			removeErr := root.Execute()
+
+			_, sourceErr := st.GetSourceByID(destination.ID)
+			if merged {
+				require.ErrorIs(removeErr, store.ErrSourceMergeParticipant)
+				require.NoError(sourceErr)
+				assert.Zero(logouts.Load(), "refused removal must not revoke the device")
+				retained, err := matrixsource.LoadCredentials(testCfg.TokensDir(), destination.Identifier)
+				require.NoError(err)
+				assert.Equal(credentials, retained)
+			} else {
+				require.NoError(removeErr)
+				require.ErrorIs(sourceErr, store.ErrSourceNotFound)
+				exists, err := matrixsource.CredentialsExist(testCfg.TokensDir(), destination.Identifier)
+				require.NoError(err)
+				assert.False(exists)
+				assert.Equal(int64(1), logouts.Load())
+			}
+		})
+	}
+}
+
+func TestRemoveAccountMatrixFencesMergeDuringLogout(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "msgvault.db")
+	st, err := store.Open(dbPath)
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(st.Close()) })
+	require.NoError(st.InitSchema())
+	destination, err := st.GetOrCreateSource(sourceTypeMatrix, "@archive:example.org")
+	require.NoError(err)
+	history, err := st.GetOrCreateSource(sourceTypeMatrix, "@history:example.org")
+	require.NoError(err)
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+	logoutStarted := make(chan struct{})
+	resumeLogout := make(chan struct{})
+	releaseLogout := sync.OnceFunc(func() { close(resumeLogout) })
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(http.MethodPost, r.Method)
+		assert.Equal("/_matrix/client/v3/logout", r.URL.Path)
+		close(logoutStarted)
+		select {
+		case <-resumeLogout:
+			_, _ = w.Write([]byte(`{}`))
+		case <-ctx.Done():
+		}
+	}))
+	defer server.Close()
+	defer releaseLogout()
+	testCfg := &config.Config{HomeDir: dir, Data: config.DataConfig{DataDir: dir}}
+	require.NoError(matrixsource.SaveCredentials(testCfg.TokensDir(), matrixsource.Credentials{
+		Homeserver: server.URL, UserID: destination.Identifier,
+		DeviceID: "ARCHIVEDEVICE", AccessToken: "synthetic-token",
+	}))
+	root := newTestRootCmd()
+	root.SetContext(testInvocationContext(ctx, testCfg, invocationOptions{}))
+	root.AddCommand(newRemoveAccountLocalTestCmd())
+	root.SetArgs([]string{"remove-account", destination.Identifier, "--type", sourceTypeMatrix, "--yes"})
+	removed := make(chan error, 1)
+	go func() { removed <- root.Execute() }()
+	select {
+	case <-logoutStarted:
+	case <-ctx.Done():
+		require.FailNow("removal did not reach Matrix logout")
+	}
+
+	_, mergeErr := st.MergeSourcesContext(ctx, store.MergeSourcesRequest{FromSourceID: history.ID, IntoSourceID: destination.ID})
+	releaseLogout()
+	select {
+	case err := <-removed:
+		require.NoError(err)
+	case <-ctx.Done():
+		require.FailNow("removal did not finish after logout")
+	}
+	require.ErrorIs(mergeErr, store.ErrSyncAlreadyActive, "logout must own the destination until removal commits")
+	_, err = st.GetSourceByID(destination.ID)
+	require.ErrorIs(err, store.ErrSourceNotFound)
+	history, err = st.GetSourceByID(history.ID)
+	require.NoError(err)
+	assert.Zero(history.MergedIntoSourceID, "the refused merge must not retire its source")
 }

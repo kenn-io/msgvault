@@ -192,6 +192,60 @@ func TestPostgreSQLKeywordConnection(t *testing.T) {
 	require.NoError(instance.Close())
 }
 
+func TestPostgreSQLArchiveRequiresSourceLifecycleSetup(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	dsn := os.Getenv("MSGVAULT_TEST_DB")
+	if !store.IsPostgresURL(dsn) {
+		t.Skip("requires a disposable PostgreSQL database")
+	}
+	admin, err := sql.Open("pgx", dsn)
+	require.NoError(err)
+	t.Cleanup(func() { assert.NoError(admin.Close()) })
+	schema := "archive_" + strings.ToLower(rand.Text())
+	quotedSchema := pgx.Identifier{schema}.Sanitize()
+	t.Cleanup(func() {
+		_, err := admin.Exec("DROP SCHEMA IF EXISTS " + quotedSchema + " CASCADE")
+		assert.NoError(err)
+	})
+	opts := archive.PostgreSQL{URL: dsn, Schema: schema}
+	require.NoError(archive.Setup(t.Context(), opts))
+	seed, err := archive.Open(t.Context(), opts)
+	require.NoError(err)
+	t.Cleanup(func() { assert.NoError(seed.Close()) })
+	source, err := seed.Store().GetOrCreateSource("mbox", "history@example.com")
+	require.NoError(err)
+	require.NoError(seed.Close())
+	// Version 8 predates source lifecycle tables. Keep that historical marker
+	// literal so omitting the version bump makes runtime opening fail this test.
+	_, err = admin.Exec("UPDATE " + quotedSchema + ".archive_metadata SET value = '8' WHERE key = 'schema_version'")
+	require.NoError(err)
+	_, err = admin.Exec("DROP TABLE " + quotedSchema + ".source_settings")
+	require.NoError(err)
+
+	runtime, err := archive.Open(t.Context(), opts)
+	if runtime != nil {
+		t.Cleanup(func() { assert.NoError(runtime.Close()) })
+	}
+	require.ErrorContains(err, "run setup")
+	var version string
+	require.NoError(admin.QueryRow("SELECT value FROM " + quotedSchema + ".archive_metadata WHERE key = 'schema_version'").Scan(&version))
+	assert.Equal("8", version, "runtime opening must not certify an upgrade")
+	var exists bool
+	require.NoError(admin.QueryRow("SELECT to_regclass($1) IS NOT NULL", schema+".source_settings").Scan(&exists))
+	assert.False(exists, "runtime opening must not create the missing table")
+
+	require.NoError(archive.Setup(t.Context(), opts))
+	runtime, err = archive.Open(t.Context(), opts)
+	require.NoError(err)
+	t.Cleanup(func() { assert.NoError(runtime.Close()) })
+	sources, err := runtime.Store().ListSources("")
+	require.NoError(err)
+	require.Len(sources, 1)
+	assert.Equal(source.ID, sources[0].ID)
+	assert.Equal("history@example.com", sources[0].Identifier)
+}
+
 func archiveAPI(t *testing.T, runtime *archive.Archive) *archive.Server {
 	t.Helper()
 	server := archive.NewServer(archive.ServerOptions{Store: runtime.Store(), Engine: runtime.QueryEngine()})
