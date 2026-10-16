@@ -33,6 +33,9 @@ type ChatState struct {
 	// Gone records that Beeper reported this chat missing. Unfiltered scans
 	// skip it until a chat listing returns it again.
 	Gone bool `json:"gone,omitzero"`
+	// RosterRetryAfter backs off optional metadata repair after a failed read.
+	// It never certifies message-history coverage or changes message cursors.
+	RosterRetryAfter string `json:"roster_retry_after,omitempty"`
 }
 
 // AnchorProbe fingerprints the Beeper installation's message-ID space.
@@ -132,6 +135,7 @@ func (s *SyncState) Merge(other *SyncState) {
 		}
 		cs.Done = ocs.Done
 		cs.Gone = ocs.Gone
+		cs.RosterRetryAfter = ocs.RosterRetryAfter
 		if ocs.TailProbed > cs.TailProbed {
 			cs.TailProbed = ocs.TailProbed
 		}
