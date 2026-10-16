@@ -201,9 +201,16 @@ func (s *Store) GetCollectionByNameContext(
 	ctx context.Context,
 	name string,
 ) (*CollectionWithSources, error) {
+	// A scoped caller sees only collections with an authorized member, so a
+	// collection of other sources reads the same as a missing one.
+	authorized, authorizedArgs := sourceScopeClause(ctx, "cs.source_id")
+	if authorized != "" {
+		authorized = ` AND EXISTS (SELECT 1 FROM collection_sources cs
+		 WHERE cs.collection_id = collections.id` + authorized + `)`
+	}
 	row := s.db.QueryRowContext(ctx,
 		`SELECT id, name, description, created_at
-		 FROM collections WHERE name = ?`, name,
+		 FROM collections WHERE name = ?`+authorized, append([]any{name}, authorizedArgs...)...,
 	)
 	c, err := scanCollection(row)
 	if err != nil {
@@ -374,11 +381,12 @@ func (s *Store) hydrateCollectionContext(
 	ctx context.Context,
 	c *Collection,
 ) (*CollectionWithSources, error) {
+	authorized, authorizedArgs := sourceScopeClause(ctx, "source_id")
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT source_id FROM collection_sources
-		 WHERE collection_id = ?
+		 WHERE collection_id = ?`+authorized+`
 		 ORDER BY source_id`,
-		c.ID,
+		append([]any{c.ID}, authorizedArgs...)...,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("load sources for %s: %w", c.Name, err)

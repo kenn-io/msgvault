@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"sync"
 
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/sourcescope"
@@ -26,14 +27,28 @@ func sourceScopedOperation(r *http.Request, operation Operation) bool {
 
 // beginCallerRead keeps source selection and subsequent object hydration in
 // one snapshot. The host's separate authorization transaction stays host-owned.
-func (s *Server) beginCallerRead(r *http.Request) (func(), error) {
+// Caller-scoped and agent snapshots share one connection budget.
+func (s *Server) beginCallerRead(r *http.Request) (func(), *apiHTTPError) {
 	reader, ok := s.store.(*store.Store)
 	if !ok {
 		return nil, newAPIHTTPError(http.StatusServiceUnavailable, "source_scope_unavailable", "Source authorization is unavailable")
 	}
-	ctx, release, err := reader.BeginReadSnapshotContext(r.Context())
+	select {
+	case s.readSnapshotSlots <- struct{}{}:
+	case <-r.Context().Done():
+		return nil, newAPIHTTPError(http.StatusServiceUnavailable, "source_scope_busy", "Scoped reads are at capacity; retry later")
+	}
+	ctx, releaseSnapshot, err := reader.BeginReadSnapshotContext(r.Context())
 	if err != nil {
-		return nil, err
+		<-s.readSnapshotSlots
+		return nil, newAPIHTTPError(http.StatusServiceUnavailable, "source_scope_unavailable", "Source authorization is unavailable")
+	}
+	var once sync.Once
+	release := func() {
+		once.Do(func() {
+			releaseSnapshot()
+			<-s.readSnapshotSlots
+		})
 	}
 	if boundary, ok := r.Context().Value(readResponseKey{}).(*readResponseWriter); ok {
 		boundary.release = release

@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -87,7 +89,6 @@ func TestLibrarySourceScopeReads(t *testing.T) {
 		{"/api/v1/search?q=telescope%20%7C%20missing&page_size=1", 2},
 		{"/api/v1/search?q=missing%20%7C%20telescope&collection=both", 2},
 		{"/api/v1/search?q=telescope&collection=both", 2},
-		{"/api/v1/search?q=telescope&collection=other", 0},
 		{"/api/v1/search?q=telescope&account=reader-a@example.com", 2},
 	} {
 		t.Run(tc.path, func(t *testing.T) {
@@ -201,7 +202,7 @@ func TestLibrarySourceScopeEmptyAndUnclassified(t *testing.T) {
 	_, _, handler, sources := newSourceScopeFixture(t)
 	for _, ids := range [][]int64{nil, {}} {
 		ctx := archive.WithSourceScope(t.Context(), ids)
-		for _, path := range []string{"/api/v1/messages", "/api/v1/search?q=telescope", "/api/v1/search?q=telescope&collection=both", "/api/v1/search?q=missing%20%7C%20telescope"} {
+		for _, path := range []string{"/api/v1/messages", "/api/v1/search?q=telescope", "/api/v1/search?q=missing%20%7C%20telescope"} {
 			w := sourceScopeRequest(ctx, t, handler, path)
 			requirements.Equal(http.StatusOK, w.Code, w.Body.String())
 			var result struct {
@@ -212,7 +213,10 @@ func TestLibrarySourceScopeEmptyAndUnclassified(t *testing.T) {
 			assertions.Zero(result.Total)
 			assertions.Empty(result.Messages)
 		}
-		w := sourceScopeRequest(ctx, t, handler, "/api/v1/cli/accounts")
+		w := sourceScopeRequest(ctx, t, handler, "/api/v1/search?q=telescope&collection=both")
+		assertions.Equal(http.StatusBadRequest, w.Code, w.Body.String())
+		assertions.Contains(w.Body.String(), `"error":"invalid_scope"`)
+		w = sourceScopeRequest(ctx, t, handler, "/api/v1/cli/accounts")
 		requirements.Equal(http.StatusOK, w.Code, w.Body.String())
 		assertions.Contains(w.Body.String(), `"accounts":[]`)
 		w = sourceScopeRequest(ctx, t, handler, fmt.Sprintf("/api/v1/messages/%d", sources[0].messages[0]))
@@ -356,6 +360,61 @@ func TestLibrarySourceScopeReleasesSnapshotBeforeResponse(t *testing.T) {
 				requirements.Equal(http.StatusOK, response.Code, response.Body.String())
 				assert.NotEmpty(t, response.Body.Bytes())
 			}
+		})
+	}
+}
+
+func TestLibrarySourceScopeHidesUnauthorizedCollections(t *testing.T) {
+	assertions := assert.New(t)
+	_, _, handler, sources := newSourceScopeFixture(t)
+	ctx := archive.WithSourceScope(t.Context(), []int64{sources[0].source.ID})
+	// "other" holds only the unauthorized source, so it must read as missing.
+	for _, filter := range []string{"collection", "account"} {
+		denied := sourceScopeRequest(ctx, t, handler, "/api/v1/search?q=telescope&"+filter+"=other")
+		missing := sourceScopeRequest(ctx, t, handler, "/api/v1/search?q=telescope&"+filter+"=nosuch")
+		assertions.Equal(http.StatusBadRequest, denied.Code, denied.Body.String())
+		assertions.Equal(strings.ReplaceAll(missing.Body.String(), "nosuch", "other"), denied.Body.String())
+	}
+	w := sourceScopeRequest(t.Context(), t, handler, "/api/v1/search?q=telescope&collection=other")
+	assertions.Equal(http.StatusOK, w.Code, w.Body.String())
+	assertions.Contains(w.Body.String(), `"total":2`)
+}
+
+func TestLibrarySourceScopeHidesUnauthorizedMergeTarget(t *testing.T) {
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	retired, err := st.GetOrCreateSource("gmail", "retired@example.com")
+	requirements.NoError(err)
+	active, err := st.GetOrCreateSource("gmail", "active@example.com")
+	requirements.NoError(err)
+	_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: retired.ID, IntoSourceID: active.ID})
+	requirements.NoError(err)
+	srv := archive.NewServer(archive.ServerOptions{Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL())})
+	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.Background())) })
+	handler := srv.Handler(nil)
+	for _, tc := range []struct {
+		name       string
+		ids        []int64
+		wantTarget int64
+	}{
+		{"target unauthorized", []int64{retired.ID}, 0},
+		{"target authorized", []int64{retired.ID, active.ID}, active.ID},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requirements := require.New(t)
+			w := sourceScopeRequest(archive.WithSourceScope(t.Context(), tc.ids), t, handler, "/api/v1/cli/accounts")
+			requirements.Equal(http.StatusOK, w.Code, w.Body.String())
+			type account struct {
+				ID                 int64 `json:"id"`
+				MergedIntoSourceID int64 `json:"merged_into_source_id"`
+			}
+			var response struct {
+				Accounts []account `json:"accounts"`
+			}
+			requirements.NoError(json.Unmarshal(w.Body.Bytes(), &response))
+			merged := slices.IndexFunc(response.Accounts, func(a account) bool { return a.ID == retired.ID })
+			requirements.GreaterOrEqual(merged, 0, w.Body.String())
+			assert.Equal(t, tc.wantTarget, response.Accounts[merged].MergedIntoSourceID)
 		})
 	}
 }

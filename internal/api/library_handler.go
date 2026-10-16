@@ -58,9 +58,9 @@ func (s *Server) Handler(authorize func(http.ResponseWriter, *http.Request, Oper
 		s.timeoutMiddleware(gate(http.HandlerFunc(func(_ http.ResponseWriter, timed *http.Request) {
 			*r = *timed
 			if sourcescope.Restricted(r.Context()) {
-				release, err := s.beginCallerRead(r)
-				if err != nil {
-					writeError(w, http.StatusServiceUnavailable, "source_scope_unavailable", "Source authorization is unavailable")
+				release, apiErr := s.beginCallerRead(r)
+				if apiErr != nil {
+					writeAPIHTTPError(w, apiErr)
 					return
 				}
 				defer release()

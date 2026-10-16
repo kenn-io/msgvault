@@ -819,7 +819,7 @@ func TestAgentReadSnapshotPoolPressure(t *testing.T) {
 					responses <- w
 				}()
 			}
-			for range agentReadConcurrency {
+			for range readSnapshotConcurrency {
 				select {
 				case <-ready:
 				case <-ctx.Done():
@@ -827,7 +827,7 @@ func TestAgentReadSnapshotPoolPressure(t *testing.T) {
 				}
 			}
 			// Waiting agent reads hold no connection, so owner work keeps the rest of the pool.
-			assertions.Equal(agentReadConcurrency, st.DB().Stats().InUse)
+			assertions.Equal(readSnapshotConcurrency, st.DB().Stats().InUse)
 			ownerPath := "/api/v1/stats"
 			if tc.name == "search" {
 				ownerPath = tc.path
@@ -1035,8 +1035,8 @@ func TestAgentReadAtCapacityFailsWhenRequestEnds(t *testing.T) {
 	t.Cleanup(srv.agentGrants.Close)
 	_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionStatsRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
 	requirements.NoError(err)
-	for range agentReadConcurrency {
-		srv.agentReadSlots <- struct{}{}
+	for range readSnapshotConcurrency {
+		srv.readSnapshotSlots <- struct{}{}
 	}
 
 	ended, cancel := context.WithCancel(t.Context())
@@ -1050,5 +1050,5 @@ func TestAgentReadAtCapacityFailsWhenRequestEnds(t *testing.T) {
 	assertions.Equal(http.StatusServiceUnavailable, w.Code)
 	assertions.Contains(w.Body.String(), "agent_read_busy")
 	assertions.Zero(st.DB().Stats().InUse)
-	assertions.Len(srv.agentReadSlots, agentReadConcurrency)
+	assertions.Len(srv.readSnapshotSlots, readSnapshotConcurrency)
 }

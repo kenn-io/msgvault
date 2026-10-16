@@ -139,15 +139,22 @@ These are archive `int64` source IDs, not provider account names or identifiers.
 The function copies the IDs. Passing nil or an empty slice authorizes no
 sources; omitting the scope keeps the existing unrestricted behavior. Query
 parameters and request headers cannot create or widen this scope. Account and
-collection filters narrow the authorized source set.
+collection filters narrow the authorized source set. A collection with no
+authorized member returns the same error as a missing collection.
 
 Supply the native `Archive.Store()` in `ServerOptions.Store`. Scoped reads use
 one database snapshot and the native SQL query engine. Source predicates apply
 before totals, pagination, message bodies, conversation windows, and attachment
 metadata are read. Account discovery includes only authorized sources and
-their counts. Objects outside the scope return the same not-found response as
-missing objects. The archive releases its read snapshot before response writes,
-so slow response delivery does not occupy database connections.
+their counts. A merge target outside the scope is omitted from
+`merged_into_source_id`. Objects outside the scope return the same not-found
+response as missing objects. The archive releases its read snapshot before
+response writes, so slow response delivery does not occupy database connections.
+
+At most two scoped or agent read snapshots are open at once, which leaves
+database connections for synchronization and unrestricted reads. Additional
+scoped requests wait for a slot. A request whose context ends while waiting
+returns 503 with `source_scope_busy`.
 
 Scoped requests support these operations:
 
@@ -160,8 +167,9 @@ Scoped requests support these operations:
 | `getAttachment` | `GET /api/v1/attachments/{id}` (metadata) |
 | `listCLIAccounts` | `GET /api/v1/cli/accounts` |
 
-Other operations, including attachment downloads and vector or hybrid search,
-return 403 under a source scope. A custom store that cannot provide native
+Other operations return 403 under a source scope. These include attachment
+downloads, inline MIME parts, and vector or hybrid search. Message bodies are
+returned, but images that reference inline parts do not load under a scope. A custom store that cannot provide native
 scoped reads returns 503. The operation callback still chooses which supported
 operations the application admits. Source scopes apply to `Handler`; they do
 not turn arbitrary `Store` or `QueryEngine` calls into an authorized API.

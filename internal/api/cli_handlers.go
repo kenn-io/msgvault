@@ -2864,6 +2864,14 @@ func (s *Server) handleCLIAccounts(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if s.sourceScopedRead(r) {
+		// A merge target outside the authorized sources stays hidden.
+		for i := range accounts {
+			if !slices.ContainsFunc(sources, func(src *store.Source) bool { return src.ID == accounts[i].MergedIntoSourceID }) {
+				accounts[i].MergedIntoSourceID = 0
+			}
+		}
+	}
 	response.Accounts = accounts
 	writeJSON(w, http.StatusOK, response)
 }
