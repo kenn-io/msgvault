@@ -24,6 +24,7 @@ Usage:
   msgvault [command]
 
 Search and read:
+  find-chat     Find archived chats by name or title
   list-accounts List archive accounts with type, message count, last sync
   list-domains  List top sender domains by message count
   list-labels   List all labels with message counts

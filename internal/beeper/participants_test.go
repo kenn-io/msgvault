@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/beeperidentity"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -83,7 +84,7 @@ func TestResolveIDAdoptsLegacyUnscopedIdentifier(t *testing.T) {
 	assert.Equal(legacy, resolved,
 		"the first scoped import must retain the legacy participant and its history")
 
-	scopedID := providerFallbackUserID("account-a", rawID)
+	scopedID := beeperidentity.Fallback("account-a", rawID)
 	owner, _, err := st.ParticipantByIdentifier(participantIdentifierType, scopedID)
 	require.NoError(err)
 	assert.Equal(legacy, owner, "the scoped key must be attached to the legacy participant")
@@ -97,7 +98,7 @@ func TestResolveIDAdoptsLegacyUnscopedIdentifier(t *testing.T) {
 	assert.NotEqual(legacy, second,
 		"a second account with the same raw ID must not reuse the first account's participant")
 	secondOwner, _, err := st.ParticipantByIdentifier(
-		participantIdentifierType, providerFallbackUserID("account-b", rawID),
+		participantIdentifierType, beeperidentity.Fallback("account-b", rawID),
 	)
 	require.NoError(err)
 	assert.Equal(second, secondOwner)
@@ -118,7 +119,7 @@ func TestResolveIDRejectsAmbiguousLegacyIdentifier(t *testing.T) {
 	)
 	require.NoError(err)
 	require.NoError(st.SetParticipantIdentifier(
-		legacy, participantIdentifierType, providerFallbackUserID("account-a", rawID),
+		legacy, participantIdentifierType, beeperidentity.Fallback("account-a", rawID),
 	))
 
 	resolver := newParticipantResolver(st, "account-b")

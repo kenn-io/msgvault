@@ -62,6 +62,7 @@ import type {
   CardDAVSyncRequest,
   Catalog,
   ChangesResponse,
+  ChatDiscoveryPage,
   CheckSettingsPeopleInferenceProviderPathParameters,
   ClearOrganizationAttributeParams,
   ClearOrganizationAttributePathParameters,
@@ -408,6 +409,7 @@ import type {
   SavedViewsResponse,
   SchedulerStatusResponse,
   SearchCLIParams,
+  SearchChatsParams,
   SearchDocumentsParams,
   SearchFastResponse,
   SearchIntegrationTasksParams,
@@ -1413,6 +1415,18 @@ export const getRemoteImage = (
       data: remoteImageRequest,
       responseType: "blob",
     },
+    options,
+  );
+};
+/**
+ * @summary Find archived chats by ranked name tokens
+ */
+export const searchChats = (
+  params: SearchChatsParams,
+  options?: SecondParameter<typeof orvalFetch<ChatDiscoveryPage>>,
+) => {
+  return orvalFetch<ChatDiscoveryPage>(
+    { url: `/api/v1/conversations/search`, method: "GET", params },
     options,
   );
 };

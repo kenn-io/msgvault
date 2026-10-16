@@ -2388,6 +2388,9 @@ var exclusiveLockTables = []string{
 	// mutation, so it belongs to the same exclusive write set.
 	"activity_events", "activity_event_persons", "person_contact_state",
 	"activity_projection_queue",
+	// The chat member queue is trigger-written by message and recipient
+	// mutations; the projection cascades with conversations and participants.
+	"chat_members", "chat_members_dirty", "chat_anchors",
 	"collections", "collection_sources", "account_identities", "applied_migrations",
 	"source_merges", "source_settings", "source_merge_preserved_labels",
 	"sync_operations",
