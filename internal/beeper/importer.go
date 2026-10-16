@@ -1542,6 +1542,8 @@ func persistsMessageRow(m *Message) bool {
 // target is expected churn; other fetch failures return errRetryPage so the
 // incremental cursor does not advance past the event — the reaction would
 // otherwise be lost, since its target is outside the reconcile window.
+// Failures are recorded against the target message, which is archived, so
+// RunFailures can tie them to their chat; the REACTION event itself never is.
 func (imp *Importer) refreshReactionTarget(ctx context.Context, cc *chatScope, m *Message, sum *ImportSummary) error {
 	requestCtx, cancel := cc.opts.requestContext(ctx)
 	target, err := imp.client.GetMessage(requestCtx, cc.chatID, m.LinkedMessageID)
@@ -1552,14 +1554,14 @@ func (imp *Importer) refreshReactionTarget(ctx context.Context, cc *chatScope, m
 		return errRetryPage
 	}
 	if errors.Is(err, ErrNotFound) {
-		imp.recordItem(cc.syncID, m.ID, "reaction", store.SyncRunItemStatusSkipped, "beeper_reaction_target_missing", err)
+		imp.recordItem(cc.syncID, m.LinkedMessageID, "reaction", store.SyncRunItemStatusSkipped, "beeper_reaction_target_missing", err)
 		return nil
 	}
 	if err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		imp.recordItem(cc.syncID, m.ID, "reaction", store.SyncRunItemStatusError, "beeper_fetch_error", err)
+		imp.recordItem(cc.syncID, m.LinkedMessageID, "reaction", store.SyncRunItemStatusError, "beeper_fetch_error", err)
 		sum.FetchErrors++
 		sum.Errors++
 		return errRetryPage
