@@ -815,6 +815,17 @@ Policy changes apply to future downloads. Media already stored under an
 earlier policy stays until you run `msgvault purge-excluded-media`, which
 removes attachment bytes the current policy would no longer collect.
 
+Participant limits use provider membership, not the number of senders observed
+in archived messages. A normal Beeper sync refreshes missing or unreadable
+membership for quiet archived conversations, even when their activity has not
+changed. Repairs follow message sync in bounded batches. Failed repairs retry
+after a day and do not hold up new messages; a full sync retries sooner. Discord
+records its guild member estimate when a participant limit is configured,
+including syncs with media downloading disabled. If the provider
+still cannot report membership, `purge-excluded-media` retains that room's media
+and reports the unresolved count. Sync again after access is restored, then
+preview the purge again.
+
 ### `[log]`
 
 Structured file logging. Disabled by default. Enable it to get persistent, machine-readable logs for troubleshooting. Every CLI invocation writes a unique `run_id` on every log line so you can trace a single run across shared daily log files.
