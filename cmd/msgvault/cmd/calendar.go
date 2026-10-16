@@ -1079,9 +1079,6 @@ func runConfiguredGCalSyncWithClientBuilder(ctx context.Context, st *store.Store
 		return fmt.Errorf("load registered calendar sources for %s: %w", email, err)
 	}
 	activeExisting := activeSyncSources(existing)
-	if len(existing) > 0 && len(activeExisting) == 0 {
-		return nil
-	}
 	if len(src.Calendars) > 0 {
 		retiredIDs := calendarRegisteredIDs(slices.DeleteFunc(slices.Clone(existing), func(source *store.Source) bool {
 			return source.MergedIntoSourceID == 0
@@ -1093,6 +1090,8 @@ func runConfiguredGCalSyncWithClientBuilder(ctx context.Context, st *store.Store
 		if len(src.Calendars) == 0 {
 			return nil
 		}
+	} else if len(existing) > 0 && len(activeExisting) == 0 {
+		return nil
 	}
 	existing = activeExisting
 	appDecision, err := calendarSyncOAuthAppDecision(st, email, existing, src.OAuthApp, src.OAuthApp != "")

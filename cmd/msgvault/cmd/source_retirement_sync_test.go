@@ -193,3 +193,46 @@ func TestScheduledCalendarFiltersRetiredSelections(t *testing.T) {
 		})
 	}
 }
+
+func TestScheduledCalendarDiscoversNewSelectionAfterRetirement(t *testing.T) {
+	for _, selected := range [][]string{{"new"}, {"old", "new"}} {
+		t.Run(fmt.Sprint(selected), func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			st := testutil.NewTestStore(t)
+			retired, err := st.GetOrCreateSource(sourceTypeCalendar, "user@example.com/old")
+			require.NoError(err)
+			require.NoError(st.UpdateSourceSyncConfig(retired.ID,
+				`{"account_email":"user@example.com","calendar_id":"old","access_role":"owner"}`))
+			retireScheduledTestSource(t, st, sourceTypeCalendar, retired.Identifier, "archive@example.com/old")
+			cfg := lifecycleTestConfig(t.TempDir())
+			cfg.Analytics.AutoBuildCache = false
+			ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+			invocationFromContext(ctx).logger = testDiscardLogger()
+			client := gcal.NewMockAPI()
+			client.Calendars = []gcal.Calendar{{ID: "old", AccessRole: "owner"}, {ID: "new", AccessRole: "owner"}}
+			client.FullSyncToken["new"] = "new-calendar-token"
+			client.FullEvents["new"] = [][]gcal.Event{{{
+				ID: "new-event", Summary: "Example meeting", Status: "confirmed",
+				Start: gcal.EventDateTime{Date: "2026-01-01"},
+				End:   gcal.EventDateTime{Date: "2026-01-02"},
+			}}}
+			err = runConfiguredGCalSyncWithClientBuilder(ctx, st,
+				config.GCalSource{Name: "work", Email: "user@example.com", Calendars: selected},
+				func(context.Context, string, string, bool, ...bool) (gcal.API, error) { return client, nil })
+			require.NoError(err)
+			assert.Equal(1, client.ListCalendarsCalls(), "new configured calendars must reach discovery")
+			assert.Equal(1, client.ListEventsCalls(), "only the new calendar should sync")
+			discovered, err := st.GetSourceByTypeAndIdentifier(sourceTypeCalendar, "user@example.com/new")
+			require.NoError(err)
+			assert.Equal("new-calendar-token", discovered.SyncCursor.String)
+			var subject string
+			require.NoError(st.DB().QueryRow(st.Rebind(`SELECT subject FROM messages WHERE source_id = ?`), discovered.ID).Scan(&subject))
+			assert.Equal("Example meeting", subject)
+			assert.Contains(selected, "new", "selection must not be consumed by filtering")
+			if len(selected) == 2 {
+				assert.Equal("old", selected[0], "filtering must not mutate configuration")
+			}
+		})
+	}
+}
