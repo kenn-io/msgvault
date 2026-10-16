@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -1226,13 +1227,13 @@ func (e *SQLiteEngine) getMessageByQuery(ctx context.Context, whereClause string
 
 // GetAttachment retrieves attachment metadata by ID.
 func (e *SQLiteEngine) GetAttachment(ctx context.Context, id int64) (*AttachmentInfo, error) {
+	conditions, args := appendSourceFilter([]string{"a.id = ?"}, []any{id}, "m.", nil, sourcescope.IDs(ctx))
 	var att AttachmentInfo
 	var sourceAttachmentID string
 	err := e.queryRowContext(ctx, `
 		SELECT a.id, COALESCE(m.source_id, 0), COALESCE(a.filename, ''), COALESCE(a.mime_type, ''), COALESCE(a.size, 0), COALESCE(a.content_hash, ''), COALESCE(a.storage_path, ''), COALESCE(a.source_attachment_id, '')
 		FROM attachments a LEFT JOIN messages m ON m.id = a.message_id
-		WHERE a.id = ?
-	`, id).Scan(&att.ID, &att.SourceID, &att.Filename, &att.MimeType, &att.Size, &att.ContentHash, &att.StoragePath, &sourceAttachmentID)
+		WHERE `+strings.Join(conditions, " AND "), args...).Scan(&att.ID, &att.SourceID, &att.Filename, &att.MimeType, &att.Size, &att.ContentHash, &att.StoragePath, &sourceAttachmentID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil //nolint:nilnil // Engine.GetAttachment uses (nil, nil) for not-found; callers branch on the nil result
 	}

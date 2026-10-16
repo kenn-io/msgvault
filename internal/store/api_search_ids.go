@@ -19,7 +19,7 @@ func (s *Store) SearchMessageIDsQueryContext(
 func (s *Store) searchMessageIDsQuery(
 	ctx context.Context, q *search.Query, limit int, ftsAvailable bool,
 ) ([]int64, int64, error) {
-	plan := s.buildMessageSearchSQL(q, ftsAvailable)
+	plan := s.buildMessageSearchSQL(ctx, q, ftsAvailable)
 	from := " FROM messages m " + plan.join + " WHERE " + plan.where
 	var total int64
 	if err := s.db.QueryRowContext(

@@ -6,6 +6,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humago"
+	"go.kenn.io/msgvault/internal/sourcescope"
 )
 
 // Operation identifies a registered operation. It is never taken from headers.
@@ -28,9 +29,10 @@ type Operation struct {
 // never lifts RequestTimeout or the host server's connection deadlines: a
 // request header must not override the caller's server policy.
 //
-// An admitted request acts as the archive owner. That includes daemon
-// shutdown through ServerOptions' shutdown callback, backup freezes, and agent
-// token management, without the daemon's shutdown token or same-host checks.
+// Without a caller source scope, an admitted request acts as the archive owner.
+// That includes daemon shutdown through ServerOptions' shutdown callback, backup
+// freezes, and agent token management, without the daemon's shutdown token or
+// same-host checks.
 func (s *Server) Handler(authorize func(http.ResponseWriter, *http.Request, Operation) bool) http.Handler {
 	mux := http.NewServeMux()
 	api := s.setupHumaAPI(mux)
@@ -38,7 +40,12 @@ func (s *Server) Handler(authorize func(http.ResponseWriter, *http.Request, Oper
 	api.UseMiddleware(func(ctx huma.Context, next func(huma.Context)) {
 		r, w := humago.Unwrap(ctx)
 		op := ctx.Operation()
-		if authorize != nil && !authorize(w, r, Operation{ID: op.OperationID, Method: op.Method, Path: op.Path}) {
+		operation := Operation{ID: op.OperationID, Method: op.Method, Path: op.Path}
+		if authorize != nil && !authorize(w, r, operation) {
+			return
+		}
+		if sourcescope.Restricted(r.Context()) && !sourceScopedOperation(r, operation) {
+			writeError(w, http.StatusForbidden, "unsupported_source_scope", "This operation does not support source authorization")
 			return
 		}
 		// The humago context retains this request pointer. Update it after
@@ -50,11 +57,21 @@ func (s *Server) Handler(authorize func(http.ResponseWriter, *http.Request, Oper
 		// sync with the context and body passed through timeout and gate handling.
 		s.timeoutMiddleware(gate(http.HandlerFunc(func(_ http.ResponseWriter, timed *http.Request) {
 			*r = *timed
+			if sourcescope.Restricted(r.Context()) {
+				release, err := s.beginCallerRead(r)
+				if err != nil {
+					writeError(w, http.StatusServiceUnavailable, "source_scope_unavailable", "Source authorization is unavailable")
+					return
+				}
+				defer release()
+			}
 			next(ctx)
 		}))).ServeHTTP(w, r)
 	})
 	s.registerHumaRoutes(api, huma.NewGroup(api, "/api/v1"))
 	var h http.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		boundary := &readResponseWriter{ResponseWriter: w}
+		ctx := context.WithValue(r.Context(), readResponseKey{}, boundary)
 		scheme := "http"
 		if r.TLS != nil {
 			scheme = schemeHTTPS
@@ -62,7 +79,7 @@ func (s *Server) Handler(authorize func(http.ResponseWriter, *http.Request, Oper
 		security := requestSecurity{
 			auth: requestAuthentication{Mode: AuthModeRequired}, scheme: scheme, host: r.Host,
 		}
-		mux.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), requestSecurityContextKey{}, security)))
+		mux.ServeHTTP(boundary, r.WithContext(context.WithValue(ctx, requestSecurityContextKey{}, security)))
 	})
 	h = s.analyticsEngineMiddleware(h)
 	h = s.recoverMiddleware(h)

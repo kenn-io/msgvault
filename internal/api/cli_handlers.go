@@ -2788,7 +2788,7 @@ func (s *Server) handleCLIAccounts(w http.ResponseWriter, r *http.Request) {
 	}
 	var grouped map[int64]store.SourceMessageCounts
 	var response cliAccountsResponse
-	if counter, ok := s.store.(sourceMessageCounter); ok && s.requestAuthentication(r).Grant == nil {
+	if counter, ok := s.store.(sourceMessageCounter); ok && !s.sourceScopedRead(r) {
 		grouped, response.AsOf, response.Stale, err = s.accountCountSnapshots.get(
 			r.Context(), s.importContext, "", s.statsSnapshotWait, counter.CountMessagesBySourceContext,
 		)
@@ -2840,8 +2840,8 @@ func (s *Server) handleCLIAccounts(w http.ResponseWriter, r *http.Request) {
 		var virtual map[int64][]store.VirtualAccount
 		var stale bool
 		var err error
-		if s.requestAuthentication(r).Grant != nil {
-			// An agent reads the catalog inside its authorization snapshot:
+		if s.sourceScopedRead(r) {
+			// Scoped readers use their authorization snapshot:
 			// the shared cache may predate a source whose ID was reused.
 			virtual, err = lister.ListVirtualAccountsContext(r.Context())
 		} else {

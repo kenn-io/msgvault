@@ -864,7 +864,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		var err error
-		scope, err = resolveCLIStatsScope(cliStore, account, collection)
+		scope, err = resolveCLIStatsScope(bindCLIStoreContext(r.Context(), cliStore), account, collection)
 		if err != nil {
 			writeAPIHTTPError(w, s.cliScopeError(err))
 			return

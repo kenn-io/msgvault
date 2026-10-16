@@ -43,10 +43,11 @@ func (s *Store) ConversationExists(conversationID int64) (bool, error) {
 
 // ConversationExistsContext is the context-aware existence check.
 func (s *Store) ConversationExistsContext(ctx context.Context, conversationID int64) (bool, error) {
+	scope, scopeArgs := sourceScopeClause(ctx, "source_id")
 	var exists bool
-	err := s.db.QueryRowContext(ctx, s.dialect.Rebind(`
-		SELECT EXISTS (SELECT 1 FROM conversations WHERE id = ?)
-	`), conversationID).Scan(&exists)
+	err := s.db.QueryRowContext(ctx, s.dialect.Rebind(
+		`SELECT EXISTS (SELECT 1 FROM conversations WHERE id = ?`+scope+`)`,
+	), append([]any{conversationID}, scopeArgs...)...).Scan(&exists)
 	if err != nil {
 		return false, fmt.Errorf("check conversation: %w", err)
 	}
@@ -78,14 +79,15 @@ func conversationRangeClause(start, end *time.Time) (clause string, args []any) 
 func (s *Store) anchorTimestampInRangeContext(
 	ctx context.Context, conversationID, anchorID int64, start, end *time.Time,
 ) (inRange, exists bool, err error) {
+	scope, scopeArgs := sourceScopeClause(ctx, "m.source_id")
 	query := fmt.Sprintf(`
 		SELECT COALESCE(m.sent_at, m.received_at, m.internal_date)
 		FROM messages m
-		WHERE m.conversation_id = ? AND m.id = ? AND %s
-	`, LiveMessagesWhere("m", false))
+		WHERE m.conversation_id = ? AND m.id = ? AND %s%s
+	`, LiveMessagesWhere("m", false), scope)
 
 	var ts nullableTimestamp
-	scanErr := s.db.QueryRowContext(ctx, s.dialect.Rebind(query), conversationID, anchorID).Scan(&ts)
+	scanErr := s.db.QueryRowContext(ctx, s.dialect.Rebind(query), append([]any{conversationID, anchorID}, scopeArgs...)...).Scan(&ts)
 	if errors.Is(scanErr, sql.ErrNoRows) {
 		return false, false, nil
 	}
@@ -136,6 +138,9 @@ func (s *Store) GetConversationWindowContext(
 	}
 
 	rangeClause, rangeArgs := conversationRangeClause(start, end)
+	scope, scopeArgs := sourceScopeClause(ctx, "m.source_id")
+	rangeClause += scope
+	rangeArgs = append(rangeArgs, scopeArgs...)
 	query := fmt.Sprintf(`
 		WITH ordered AS (
 			SELECT

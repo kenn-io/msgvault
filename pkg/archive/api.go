@@ -1,11 +1,13 @@
 package archive
 
 import (
+	"context"
 	"log/slog"
 
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -26,6 +28,19 @@ type Operation = api.Operation
 
 // QueryEngine provides archive queries and aggregates.
 type QueryEngine = query.Engine
+
+// WithSourceScope restricts Handler reads to the supplied archive source IDs.
+// It copies the IDs; nil and empty both authorize no sources. Requests without
+// a scope keep their existing behavior. The caller owns authentication and
+// keeps any authorization transaction open until ServeHTTP returns.
+//
+// Scoped handlers support message lists, full-text searches, message details,
+// conversation windows, attachment metadata, and CLI account discovery. Other
+// operations are denied. ServerOptions.Store must be a native *Store. This is
+// not an authorization wrapper for arbitrary Store or QueryEngine methods.
+func WithSourceScope(ctx context.Context, sourceIDs []int64) context.Context {
+	return sourcescope.WithSourceIDs(ctx, sourceIDs)
+}
 
 // NewServer constructs the API without starting a listener. It registers the
 // same operations as the daemon; configured services determine availability.

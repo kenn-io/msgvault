@@ -97,13 +97,15 @@ func (s *Store) GetSourcesByIdentifierOrDisplayNameContext(
 	ctx context.Context,
 	query string,
 ) ([]*Source, error) {
+	authorized, sourceArgs := sourceScopeClause(ctx, "id")
+	args := append([]any{query, query, strings.ToLower(query)}, sourceArgs...)
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT `+sourceCatalogColumns+`
 		FROM sources
-		WHERE LOWER(identifier) = LOWER(?) OR LOWER(display_name) = LOWER(?)
- OR EXISTS (SELECT 1 FROM source_settings WHERE source_id = sources.id AND alias_key = ?)
+		WHERE (LOWER(identifier) = LOWER(?) OR LOWER(display_name) = LOWER(?)
+ OR EXISTS (SELECT 1 FROM source_settings WHERE source_id = sources.id AND alias_key = ?))`+authorized+`
 		ORDER BY source_type
-	`, query, query, strings.ToLower(query))
+	`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query sources: %w", err)
 	}

@@ -12,6 +12,7 @@ import (
 
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -494,6 +495,8 @@ func getMessageRawShared(ctx context.Context, db store.SQLReader, rebind rebindF
 // rebind rewrites the ? placeholders for the driver in use; it is applied
 // to every sub-query this function dispatches.
 func getMessageByQueryShared(ctx context.Context, db store.SQLReader, rebind rebindFunc, tablePrefix string, whereClause string, args ...any) (*MessageDetail, error) {
+	conditions, args := appendSourceFilter([]string{whereClause}, args, "m.", nil, sourcescope.IDs(ctx))
+	whereClause = strings.Join(conditions, " AND ")
 	query := fmt.Sprintf(`
 		SELECT
 			m.id,

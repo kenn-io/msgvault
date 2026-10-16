@@ -1785,6 +1785,7 @@ func (s *Store) ListSources(sourceType string) ([]*Source, error) {
 
 // ListSourcesContext is the request-aware form of ListSources.
 func (s *Store) ListSourcesContext(ctx context.Context, sourceType string) ([]*Source, error) {
+	scope, scopeArgs := sourceScopeClause(ctx, "id")
 	var rows *loggedRows
 	var err error
 
@@ -1792,15 +1793,16 @@ func (s *Store) ListSourcesContext(ctx context.Context, sourceType string) ([]*S
 		rows, err = s.db.QueryContext(ctx, `
 			SELECT `+sourceCatalogColumns+`
 			FROM sources
-			WHERE source_type = ?
+			WHERE source_type = ?`+scope+`
 			ORDER BY identifier
-		`, sourceType)
+		`, append([]any{sourceType}, scopeArgs...)...)
 	} else {
 		rows, err = s.db.QueryContext(ctx, `
 			SELECT `+sourceCatalogColumns+`
 			FROM sources
+			WHERE 1=1`+scope+`
 			ORDER BY identifier
-		`)
+		`, scopeArgs...)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("list sources: %w", err)

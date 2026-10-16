@@ -96,9 +96,9 @@ Applications own authentication, browser origin checks, and CSRF policy.
 The OpenAPI document and schema routes, such as `/openapi.json`, do not pass
 through the callback; wrap or mount the handler to control them.
 
-An admitted operation acts as the archive owner and does not also require
-daemon credentials. `/api/session` reports its authentication mode as
-`caller`. Owner-only operations follow the callback alone:
+Without a source scope, an admitted operation acts as the archive owner and
+does not also require daemon credentials. `/api/session` reports its
+authentication mode as `caller`. Owner-only operations follow the callback alone:
 
 - Daemon shutdown calls the server's shutdown callback without the daemon's
   shutdown token.
@@ -117,11 +117,60 @@ transport middleware is wanted.
 
 The existing `pkg/client` works with this handler. Availability of analytics,
 attachments, scheduling, and other services follows the supplied server options
-and storage backend. The library imposes no separate feature allowlist.
+and storage backend. Unrestricted requests have no separate feature allowlist.
 Stop requests and call `Shutdown` before closing the archive.
 
 `Archive.Store()` also exposes the underlying storage operations directly for
 Go callers, without requiring HTTP.
+
+### Restrict reads to authorized sources
+
+An application that shares an archive can restrict each request to sources its
+caller may read. Resolve those source IDs through the application's own access
+policy, then attach them before calling the handler:
+
+```go
+// authorizedSourceIDs comes from the application's authorization decision.
+ctx := archive.WithSourceScope(r.Context(), authorizedSourceIDs)
+handler.ServeHTTP(w, r.WithContext(ctx))
+```
+
+These are archive `int64` source IDs, not provider account names or identifiers.
+The function copies the IDs. Passing nil or an empty slice authorizes no
+sources; omitting the scope keeps the existing unrestricted behavior. Query
+parameters and request headers cannot create or widen this scope. Account and
+collection filters narrow the authorized source set.
+
+Supply the native `Archive.Store()` in `ServerOptions.Store`. Scoped reads use
+one database snapshot and the native SQL query engine. Source predicates apply
+before totals, pagination, message bodies, conversation windows, and attachment
+metadata are read. Account discovery includes only authorized sources and
+their counts. Objects outside the scope return the same not-found response as
+missing objects. The archive releases its read snapshot before response writes,
+so slow response delivery does not occupy database connections.
+
+Scoped requests support these operations:
+
+| Operation | Route |
+|---|---|
+| `listMessages` | `GET /api/v1/messages` |
+| `searchMessages` | `GET /api/v1/search` with default or `mode=fts` |
+| `getMessage` | `GET /api/v1/messages/{id}` |
+| `getConversation` | `GET /api/v1/conversations/{id}` |
+| `getAttachment` | `GET /api/v1/attachments/{id}` (metadata) |
+| `listCLIAccounts` | `GET /api/v1/cli/accounts` |
+
+Other operations, including attachment downloads and vector or hybrid search,
+return 403 under a source scope. A custom store that cannot provide native
+scoped reads returns 503. The operation callback still chooses which supported
+operations the application admits. Source scopes apply to `Handler`; they do
+not turn arbitrary `Store` or `QueryEngine` calls into an authorized API.
+
+The application owns authentication and authorization lifetime. If its decision
+uses a transaction or lock to prevent concurrent access changes, keep that
+transaction or lock until `ServeHTTP` returns. A successful authorization
+callback alone does not hold it open during the read. The archive's read
+snapshot does not replace that application-owned transaction.
 
 ## Run synchronization
 

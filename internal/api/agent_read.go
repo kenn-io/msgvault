@@ -11,6 +11,7 @@ import (
 
 	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/sourcescope"
 )
 
 // Every admitted read has either a source filter or an object-source check.
@@ -34,6 +35,9 @@ func agentReadDenied(permission agentgrant.Permission) *apiHTTPError {
 }
 
 func (s *Server) agentObjectSourceAllowed(r *http.Request, sourceID int64) bool {
+	if ids := sourcescope.IDs(r.Context()); ids != nil && !slices.Contains(ids, sourceID) {
+		return false
+	}
 	return s.requestAuthentication(r).Grant == nil || slices.Contains(agentReadSourceIDs(r), sourceID)
 }
 

@@ -77,6 +77,7 @@ func (s *Store) ListVirtualAccountsContext(ctx context.Context) (map[int64][]Vir
 func ReadVirtualAccountsContext(
 	ctx context.Context, db *sql.DB, rebind func(string) string,
 ) (map[int64][]VirtualAccount, error) {
+	scope, scopeArgs := sourceScopeClause(ctx, "m.source_id")
 	stmt := fmt.Sprintf(`
 		WITH counts AS (
 			SELECT m.source_id, m.account_address AS address,
@@ -84,7 +85,7 @@ func ReadVirtualAccountsContext(
 				SUM(CASE WHEN %s THEN 1 ELSE 0 END) AS source_deleted,
 				SUM(CASE WHEN m.account_path IS NULL AND m.deleted_at IS NULL THEN 1 ELSE 0 END) AS pending
 			FROM messages m
-			WHERE COALESCE(m.message_type, '') IN ('', 'email', 'calendar_event')
+			WHERE COALESCE(m.message_type, '') IN ('', 'email', 'calendar_event')%s
 			GROUP BY m.source_id, m.account_address
 		)
 		SELECT ai.source_id, ai.address_key, COALESCE(c.live, 0), COALESCE(c.source_deleted, 0), 0
@@ -97,11 +98,11 @@ func ReadVirtualAccountsContext(
 		FROM counts c
 		WHERE c.address IS NULL
 		ORDER BY 1, 2`,
-		LiveMessagesWhere("m", true), SourceDeletedMessagesWhere("m"))
+		LiveMessagesWhere("m", true), SourceDeletedMessagesWhere("m"), scope)
 	if rebind != nil {
 		stmt = rebind(stmt)
 	}
-	rows, err := ReadDBContext(ctx, db).QueryContext(ctx, stmt)
+	rows, err := ReadDBContext(ctx, db).QueryContext(ctx, stmt, scopeArgs...)
 	if err != nil {
 		return nil, fmt.Errorf("list virtual accounts: %w", err)
 	}

@@ -120,6 +120,9 @@ func (s *Store) ListMessagesContext(ctx context.Context, offset, limit int, sour
 		}
 		scope = " AND " + predicate
 	}
+	authorizedScope, authorizedArgs := sourceScopeClause(ctx, "m.source_id")
+	scope += authorizedScope
+	args = append(args, authorizedArgs...)
 	// Get total count. Use the canonical live-messages predicate so
 	// dedup-hidden rows (deleted_at) are excluded alongside source-
 	// deleted rows.
@@ -214,6 +217,7 @@ func (s *Store) GetMessage(id int64) (*APIMessage, error) {
 // pass the request context so the base row, recipient, label, body, and
 // attachment queries carry the request_id for SQL logging and cancel together.
 func (s *Store) GetMessageContext(ctx context.Context, id int64) (*APIMessage, error) {
+	scope, scopeArgs := sourceScopeClause(ctx, "m.source_id")
 	query := fmt.Sprintf(`
 		SELECT
 			m.id,
@@ -240,8 +244,8 @@ func (s *Store) GetMessageContext(ctx context.Context, id int64) (*APIMessage, e
 		)
 		LEFT JOIN participants p ON p.id = COALESCE(m.sender_id, mr.participant_id)
 		LEFT JOIN conversations c ON c.id = m.conversation_id
-		WHERE m.id = ?
-	`, participantSummarySenderSQL)
+		WHERE m.id = ?%s
+	`, participantSummarySenderSQL, scope)
 
 	var m APIMessage
 	// sentAt is a COALESCE expression; use nullableTimestamp so
@@ -251,7 +255,7 @@ func (s *Store) GetMessageContext(ctx context.Context, id int64) (*APIMessage, e
 	var sentAt, deletedAt nullableTimestamp
 	var isFromMe sql.NullBool
 	var metadata sql.NullString
-	err := s.db.QueryRowContext(ctx, query, id).Scan(
+	err := s.db.QueryRowContext(ctx, query, append([]any{id}, scopeArgs...)...).Scan(
 		&m.ID,
 		&m.SourceID,
 		&m.SourceMessageID,
@@ -517,7 +521,7 @@ type messageSearchSQL struct {
 
 // buildMessageSearchSQL keeps candidate-only and full-message searches on the
 // same filters and ranking, including the subject/snippet fallback without FTS.
-func (s *Store) buildMessageSearchSQL(q *search.Query, ftsAvailable bool) messageSearchSQL {
+func (s *Store) buildMessageSearchSQL(ctx context.Context, q *search.Query, ftsAvailable bool) messageSearchSQL {
 	var visibility string
 	// The FTS index covers source-deleted messages too: soft deletion only
 	// stamps deleted_from_source_at, leaving the FTS5 row (and the PG
@@ -536,7 +540,11 @@ func (s *Store) buildMessageSearchSQL(q *search.Query, ftsAvailable bool) messag
 		visibility = LiveMessagesWhere("m", true)
 	}
 
-	return s.buildMessageSearchSQLWithVisibility(q, ftsAvailable, visibility)
+	plan := s.buildMessageSearchSQLWithVisibility(q, ftsAvailable, visibility)
+	scope, scopeArgs := sourceScopeClause(ctx, "m.source_id")
+	plan.where += scope
+	plan.args = append(plan.args, scopeArgs...)
+	return plan
 }
 
 func (s *Store) buildMessageSearchSQLWithVisibility(q *search.Query, ftsAvailable bool, visibility string) messageSearchSQL {
@@ -854,7 +862,7 @@ func (s *Store) buildMessageSearchCriteria(q *search.Query, ftsAvailable, rowIDs
 func (s *Store) searchMessagesQueryImpl(
 	ctx context.Context, q *search.Query, offset, limit int, ftsAvailable bool,
 ) ([]APIMessage, int64, error) {
-	plan := s.buildMessageSearchSQL(q, ftsAvailable)
+	plan := s.buildMessageSearchSQL(ctx, q, ftsAvailable)
 
 	// Count query.
 	countSQL := fmt.Sprintf(`

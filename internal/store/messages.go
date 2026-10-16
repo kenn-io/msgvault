@@ -4555,10 +4555,7 @@ func (s *Store) EnsureParticipantByPhone(phone, displayName, identifierType stri
 // phone observed without a messaging service, such as a meeting attendee.
 func (s *Store) EnsurePhoneParticipantContext(ctx context.Context, phone, displayName string) (int64, error) {
 	var id int64
-	err := s.withTxContext(ctx, func(tx *loggedTx) error {
-		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
-			return err
-		}
+	err := s.withAttributionTxContext(ctx, attributionLock{Exclusive: true}, func(tx *loggedTx) error {
 		var err error
 		id, err = s.ensureParticipantByPhoneTx(ctx, tx, phone, displayName, PhoneIdentifierType)
 		return err
