@@ -506,6 +506,7 @@ func (imp *Importer) BackfillMedia(ctx context.Context, opts ImportOptions) (*Im
 	if err != nil {
 		return nil, err
 	}
+	sum.SyncRunID = syncID
 	imp = imp.scopedToSync(src.ID, syncID)
 	defer func() {
 		if err != nil {

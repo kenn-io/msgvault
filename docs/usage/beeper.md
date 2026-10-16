@@ -101,6 +101,24 @@ are only picked up by `--full` runs.
 | `--full` | `false` | Ignore stored cursors and re-fetch every message (repairs rows in place) |
 | `--no-media` | `false` | Skip attachment downloads for this run |
 
+### Failed chats
+
+A chat page or attachment that fails to download does not stop the sync. The
+account's summary reports an error count, followed by the chats behind it:
+
+```text
+  signal done in 2m14s: 812 chats, 5310 messages (402 added), 49 errors
+  Failed chats (49 recorded errors in 5 chats, retried next run):
+    Book Club (!abc123:beeper.local): 36 attachment error(s); last: Get "http://localhost:23373/v1/assets/...": context deadline exceeded
+    !def456:beeper.local: 2 fetch error(s); last: connect to Beeper Desktop ...
+```
+
+Each line names the chat (or shows only its Beeper chat ID when the chat has
+no archived title), how many errors it had, which step failed (`fetch` for
+message pages, `attachment` for media), and the newest error. Up to 20 chats
+are shown. The next sync retries failed message pages; pending attachments
+also retry with `msgvault backfill-beeper-media`, which prints the same list.
+
 ## What is archived
 
 - Message text, sender, timestamps, and per-network conversation threads
