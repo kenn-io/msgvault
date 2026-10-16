@@ -27,6 +27,7 @@ const (
 )
 
 const (
+	queryParamLocation   = "query"
 	apiKeySecurityScheme = "apiKey"
 	cliRouteTag          = "CLI"
 )
@@ -371,7 +372,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	registerAPIV1RawHumaJSONRoute[visual.Status](apiV1, "getVisualAttachmentStatus", http.MethodGet, "/multimodal/status", "Get visual attachment embedding status", s.handleVisualStatus)
 	embeddingStatusOp := rawAPIV1Operation("getEmbeddingStatus", http.MethodGet, "/embeddings/status", "Get message embedding coverage and live batch diagnostics")
 	minimumSourceID := float64(1)
-	embeddingStatusOp.Parameters = []*huma.Param{{Name: "source_id", In: "query", Description: "Filter eligible/current/pending by source ID; diagnostics, throughput, job, and failures remain run-wide; ETA is null", Schema: &huma.Schema{Type: "integer", Format: "int64", Minimum: &minimumSourceID}}}
+	embeddingStatusOp.Parameters = []*huma.Param{{Name: "source_id", In: queryParamLocation, Description: "Filter eligible/current/pending by source ID; diagnostics, throughput, job, and failures remain run-wide; ETA is null", Schema: &huma.Schema{Type: "integer", Format: "int64", Minimum: &minimumSourceID}}}
 	embeddingStatusOp.Responses = jsonResponsesFor[vector.EmbeddingStatus](apiV1)
 	embeddingStatusOp.Responses["400"] = errorResponseFor(apiV1)
 	embeddingStatusOp.Responses["503"] = errorResponseFor(apiV1)
@@ -1284,23 +1285,23 @@ func pathNamedIntegerParam(name, doc string) *huma.Param {
 }
 
 func queryStringParam(name, doc string, required bool) *huma.Param {
-	return param(name, "query", huma.TypeString, doc, required)
+	return param(name, queryParamLocation, huma.TypeString, doc, required)
 }
 
 func queryIntegerParam(name, doc string) *huma.Param {
-	p := param(name, "query", huma.TypeInteger, doc, false)
+	p := param(name, queryParamLocation, huma.TypeInteger, doc, false)
 	p.Schema.Format = formatInt64
 	return p
 }
 
 func queryIntegerArrayParam(name, doc string) *huma.Param {
-	p := param(name, "query", huma.TypeArray, doc, false)
+	p := param(name, queryParamLocation, huma.TypeArray, doc, false)
 	p.Schema.Items = &huma.Schema{Type: huma.TypeInteger, Format: formatInt64}
 	return p
 }
 
 func queryRefArrayParam(name, doc string) *huma.Param {
-	p := param(name, "query", huma.TypeArray, doc, false)
+	p := param(name, queryParamLocation, huma.TypeArray, doc, false)
 	p.Schema.Items = &huma.Schema{Type: huma.TypeString}
 	return p
 }
@@ -1312,11 +1313,11 @@ func queryRequiredIntegerParam(name, doc string) *huma.Param {
 }
 
 func queryBooleanParam(name, doc string) *huma.Param {
-	return param(name, "query", huma.TypeBoolean, doc, false)
+	return param(name, queryParamLocation, huma.TypeBoolean, doc, false)
 }
 
 func queryNumberParam(name, doc string) *huma.Param {
-	return param(name, "query", huma.TypeNumber, doc, false)
+	return param(name, queryParamLocation, huma.TypeNumber, doc, false)
 }
 
 func param(name, in, typ, doc string, required bool) *huma.Param {

@@ -119,7 +119,7 @@ func (s *Server) registerPersonRelationshipRoutes(api huma.API) {
 
 	listForPerson := rawAPIV1Operation("listPersonRelationships", http.MethodGet, "/people/{id}/relationships", "List one person's relationships")
 	addRelationshipIDParameter(&listForPerson, "Durable person ID")
-	listForPerson.Parameters = append(listForPerson.Parameters, &huma.Param{Name: "include_ended", In: "query", Schema: &huma.Schema{Type: huma.TypeBoolean}})
+	listForPerson.Parameters = append(listForPerson.Parameters, &huma.Param{Name: "include_ended", In: queryParamLocation, Schema: &huma.Schema{Type: huma.TypeBoolean}})
 	listForPerson.Responses = jsonResponsesFor[PersonRelationshipsResponse](api)
 	addErrorResponses(api, listForPerson.Responses, http.StatusBadRequest, http.StatusServiceUnavailable)
 	registerRawHumaRoute(api, listForPerson, s.handleListPersonRelationships)
@@ -157,8 +157,8 @@ func (s *Server) registerPersonRelationshipRoutes(api huma.API) {
 
 	listReviews := rawAPIV1Operation("listPersonRelationshipReviews", http.MethodGet, "/person-relationship-reviews", "List imported RELATED values awaiting review")
 	listReviews.Parameters = append(listReviews.Parameters,
-		&huma.Param{Name: "status", In: "query", Schema: &huma.Schema{Type: huma.TypeString, Enum: []any{"pending", "accepted", "rejected"}}},
-		&huma.Param{Name: "person_id", In: "query", Schema: &huma.Schema{Type: huma.TypeInteger, Format: formatInt64}},
+		&huma.Param{Name: "status", In: queryParamLocation, Schema: &huma.Schema{Type: huma.TypeString, Enum: []any{"pending", "accepted", "rejected"}}},
+		&huma.Param{Name: "person_id", In: queryParamLocation, Schema: &huma.Schema{Type: huma.TypeInteger, Format: formatInt64}},
 	)
 	listReviews.Responses = jsonResponsesFor[RelationshipReviewsResponse](api)
 	addErrorResponses(api, listReviews.Responses, http.StatusBadRequest, http.StatusServiceUnavailable)

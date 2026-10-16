@@ -530,7 +530,7 @@ func addPersonIDParameter(operation *huma.Operation) {
 func addPersonUIDParameter(operation *huma.Operation) {
 	minimumLength := 1
 	operation.Parameters = append(operation.Parameters, &huma.Param{
-		Name: "uid", In: "query", Required: true,
+		Name: "uid", In: queryParamLocation, Required: true,
 		Description: "Exact vCard UID or CardDAV resource UID",
 		Schema:      &huma.Schema{Type: huma.TypeString, MinLength: &minimumLength},
 	})

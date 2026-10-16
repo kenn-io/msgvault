@@ -41,7 +41,7 @@ func (s *Server) registerCommunicationServiceRoutes(api huma.API) {
 	)
 	list.Description = "Lists the small open service catalog without pagination, including aliases and normalization policy."
 	list.Parameters = append(list.Parameters, &huma.Param{
-		Name: "include_inactive", In: "query",
+		Name: "include_inactive", In: queryParamLocation,
 		Description: "Include inactive catalog entries",
 		Schema:      &huma.Schema{Type: huma.TypeBoolean, Default: false},
 	})
