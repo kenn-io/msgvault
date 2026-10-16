@@ -14,6 +14,10 @@ func TestBodyTextForEmbedding(t *testing.T) {
 	t.Run("converts HTML-only body with MIME pipeline", func(t *testing.T) {
 		assert.Equal(t, "semantic needle", BodyTextForEmbedding("", "<p>semantic <strong>needle</strong></p>"))
 	})
+
+	t.Run("preserves control character from HTML-only body", func(t *testing.T) {
+		assert.Equal(t, "\x7f", BodyTextForEmbedding("", "<p>\x7f</p>"))
+	})
 }
 
 func TestHydrationBodyText_MatchesPerFamilyAssembly(t *testing.T) {
