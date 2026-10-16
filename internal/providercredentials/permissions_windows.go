@@ -16,6 +16,30 @@ type nativePermissions struct{}
 
 const providerCredentialFileAllAccess = windows.STANDARD_RIGHTS_REQUIRED | windows.SYNCHRONIZE | 0x1FF
 
+func (nativePermissions) prepareDirectory(path string) error {
+	if err := os.MkdirAll(path, 0o700); err != nil {
+		return err
+	}
+	handle, err := openSecurityHandle(path, true, windows.READ_CONTROL)
+	if err != nil {
+		return err
+	}
+	defer windows.CloseHandle(handle) //nolint:errcheck // ownership check is authoritative
+	descriptor, err := windows.GetSecurityInfo(handle, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION)
+	if err != nil {
+		return fmt.Errorf("read credential directory owner: %w", err)
+	}
+	owner, _, err := descriptor.Owner()
+	if err != nil || owner == nil {
+		return errors.New("credential directory owner is unavailable")
+	}
+	user, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil {
+		return fmt.Errorf("get current user SID: %w", err)
+	}
+	return verifyWindowsOwner(owner, user.User.Sid)
+}
+
 func (nativePermissions) secureDirectory(path string) error {
 	if err := os.MkdirAll(path, 0o700); err != nil {
 		return err

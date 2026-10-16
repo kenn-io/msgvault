@@ -14,6 +14,20 @@ import (
 
 type nativePermissions struct{}
 
+func (nativePermissions) prepareDirectory(path string) error {
+	if err := os.MkdirAll(path, 0o700); err != nil {
+		return err
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return errors.New("provider credential directory must be a real directory")
+	}
+	return verifyCurrentOwner(info)
+}
+
 func (nativePermissions) secureDirectory(path string) error {
 	if err := os.MkdirAll(path, 0o700); err != nil {
 		return err

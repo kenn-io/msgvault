@@ -282,6 +282,13 @@ func TestWindowsProviderCredentialReparseRejection(t *testing.T) {
 	_, err = openSecurityHandle(junction, true, windows.READ_CONTROL)
 	requirements.Error(err)
 	requirements.Contains(err.Error(), "reparse point")
+	_, err = EnsureServerKey(junction)
+	require.ErrorContains(t, err, "reparse point")
+	_, err = Put(junction, "", VectorEmbeddingsID, "https://embeddings.example.test/v1", "synthetic-secret")
+	require.ErrorContains(t, err, "reparse point")
+	entries, err := os.ReadDir(target)
+	require.NoError(t, err)
+	assert.Empty(t, entries, "reject the directory before creating a lock file")
 }
 
 func currentWindowsProviderCredentialSID(t *testing.T) *windows.SID {
