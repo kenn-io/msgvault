@@ -43,32 +43,29 @@ func TestChannelPurgeDoesNotDeadlockWithSyncPhoneParticipant(t *testing.T) {
 			blocker, err := st.DB().BeginTx(ctx, nil)
 			requirements.NoError(err)
 			defer func() { _ = blocker.Rollback() }()
-			var runID int64
+			var runID, blockerPID int64
 			requirements.NoError(blocker.QueryRowContext(ctx,
-				`SELECT id FROM sync_runs WHERE id = $1 FOR UPDATE`, run,
-			).Scan(&runID))
+				`SELECT id, pg_backend_pid() FROM sync_runs WHERE id = $1 FOR UPDATE`, run,
+			).Scan(&runID, &blockerPID))
 			writeDone := make(chan error, 1)
 			go func() {
 				writeDone <- tc.write(ctx, st.ScopedToSync(writing.ID, run))
 			}()
-			// Pause the native participant write at its sync fence.
-			requirements.Eventually(func() bool {
-				var waiting bool
-				err := st.DB().QueryRowContext(ctx, `SELECT EXISTS (
-			SELECT 1 FROM pg_stat_activity WHERE wait_event_type = 'Lock'
-			AND POSITION('SET messages_processed = messages_processed' IN query) > 0)`).Scan(&waiting)
-				return err == nil && waiting
-			}, 10*time.Second, 10*time.Millisecond)
+			// Pause the native participant write at its sync fence. Matching
+			// blocking PIDs ignores waits from tests sharing the server.
+			writerPID := waitForPGBlockedQuery(ctx, t, st, int(blockerPID), "%SET messages_processed = messages_processed%")
 			purgeDone := make(chan error, 1)
 			go func() { purgeDone <- st.PurgeChannelContext(ctx, purging.ID, "remove") }()
+			// The purge waits on this writer for the identity row with the
+			// fixed order, or for the sync_runs table lock with the old one.
 			requirements.Eventually(func() bool {
 				var waiting bool
 				err := st.DB().QueryRowContext(ctx, `SELECT EXISTS (
-			SELECT 1 FROM pg_stat_activity WHERE wait_event_type = 'Lock'
-			AND (POSITION('LOCK TABLE' IN query) > 0
-			     OR POSITION('archive_metadata' IN query) > 0))`).Scan(&waiting)
+			SELECT 1 FROM pg_stat_activity
+			WHERE datname = current_database() AND $1 = ANY(pg_blocking_pids(pid))
+			AND (query LIKE '%LOCK TABLE%' OR query LIKE '%archive_metadata%'))`, writerPID).Scan(&waiting)
 				return err == nil && waiting
-			}, 10*time.Second, 10*time.Millisecond)
+			}, 15*time.Second, 10*time.Millisecond, "purge did not wait for writer %d", writerPID)
 			// Identity must precede the sync fence, or maintenance holds identity
 			// while waiting for the writer's sync-run table lock.
 			requirements.NoError(blocker.Rollback())
