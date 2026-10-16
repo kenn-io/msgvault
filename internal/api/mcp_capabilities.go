@@ -34,7 +34,7 @@ func mcpRouteDescriptors(doc *huma.OpenAPI) []apiprotocol.MCPRouteDescriptor {
 			QueryParameters: []string{}, RequestProperties: []string{},
 		}
 		for _, parameter := range operation.Parameters {
-			if parameter.In == "query" {
+			if parameter.In == queryParamLocation {
 				descriptor.QueryParameters = append(descriptor.QueryParameters, parameter.Name)
 			}
 		}
