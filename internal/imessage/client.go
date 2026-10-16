@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -150,6 +151,17 @@ func (c *Client) Import(
 	s *store.Store,
 	sourceID int64,
 ) (*ImportSummary, error) {
+	return c.ImportWithProgress(ctx, s, sourceID, nil)
+}
+
+// ImportWithProgress is Import that also calls onProgress, when non-nil, with
+// a snapshot of the running totals after each page of messages.
+func (c *Client) ImportWithProgress(
+	ctx context.Context,
+	s *store.Store,
+	sourceID int64,
+	onProgress func(ImportSummary),
+) (*ImportSummary, error) {
 	summary := &ImportSummary{}
 
 	// Pre-create iMessage and SMS labels
@@ -224,6 +236,12 @@ func (c *Client) Import(
 				break
 			}
 
+			// Advance past every message examined, including one that
+			// fails to archive: a full page of failures would otherwise
+			// be fetched again forever while the run holds the daemon's
+			// operation gate.
+			lastROWID = msg.ROWID
+
 			if err := c.importMessage(
 				ctx, s, sourceID, &msg,
 				imessageLabelID, smsLabelID,
@@ -240,7 +258,10 @@ func (c *Client) Import(
 			}
 
 			imported++
-			lastROWID = msg.ROWID
+		}
+
+		if onProgress != nil {
+			onProgress(*summary)
 		}
 
 		if pageCount < c.pageSize {
@@ -379,10 +400,11 @@ func (c *Client) importMessage(
 
 	// Extract body text
 	body := ""
-	if msg.Text != nil {
+	attributedBodyDecoded := true
+	if msg.Text != nil && *msg.Text != "" {
 		body = *msg.Text
 	} else if len(msg.AttributedBody) > 0 {
-		body = extractAttributedBodyText(msg.AttributedBody)
+		body, attributedBodyDecoded = decodeAttributedBodyText(msg.AttributedBody)
 	}
 
 	msgDate := appleTimestampToTime(msg.Date)
@@ -401,6 +423,24 @@ func (c *Client) importMessage(
 			)`), sourceID, sourceMessageID).Scan(&clearsExistingDate)
 		if err != nil {
 			return fmt.Errorf("check existing message date: %w", err)
+		}
+	}
+
+	existing, err := s.MessageExistsBatch(sourceID, []string{sourceMessageID})
+	if err != nil {
+		return fmt.Errorf("check existing message: %w", err)
+	}
+	_, alreadyArchived := existing[sourceMessageID]
+	// Reject malformed attributed bodies on both first import and reimport.
+	// An actual empty source body still clears the archive below.
+	if !attributedBodyDecoded {
+		return errors.New("decode attributed body")
+	}
+	var before string
+	if alreadyArchived {
+		before, err = archivedFingerprint(s, sourceID, sourceMessageID)
+		if err != nil {
+			return fmt.Errorf("read archived message: %w", err)
 		}
 	}
 
@@ -428,15 +468,26 @@ func (c *Client) importMessage(
 		summary.DatesCleared++
 	}
 
-	// Store body text directly (no MIME)
-	if body != "" {
-		if err := s.UpsertMessageBody(
-			msgID,
-			sql.NullString{String: body, Valid: true},
-			sql.NullString{},
-		); err != nil {
-			return fmt.Errorf("upsert body: %w", err)
+	// The message row is committed from here on, so a later write that fails
+	// leaves a changed archive behind. Count that change, otherwise the run
+	// reports it as a bare skip and the caches that key off MessagesUpdated
+	// stay stale. A new message is an addition; the caller counts the failure
+	// itself as skipped.
+	failAfterWrite := func(writeErr error) error {
+		if !alreadyArchived {
+			summary.MessagesAdded++
+		} else if after, ferr := archivedFingerprint(s, sourceID, sourceMessageID); ferr == nil && after != before {
+			summary.MessagesUpdated++
 		}
+		return writeErr
+	}
+
+	// Store body text directly (no MIME). An empty body is written too: a
+	// message that lost its text and attributed body must not keep the old
+	// content in message_bodies and the search index.
+	bodyText := sql.NullString{String: body, Valid: body != ""}
+	if err := s.UpsertMessageBody(msgID, bodyText, sql.NullString{}); err != nil {
+		return failAfterWrite(fmt.Errorf("upsert body: %w", err))
 	}
 
 	// Write message_recipients rows
@@ -444,12 +495,12 @@ func (c *Client) importMessage(
 		s, msgID, msg, senderID, ownerPID,
 		phoneCache, emailCache, summary,
 	); err != nil {
-		return fmt.Errorf("write message recipients: %w", err)
+		return failAfterWrite(fmt.Errorf("write message recipients: %w", err))
 	}
 
 	// Store raw data as JSON for completeness
 	if err := c.writeMessageRaw(s, msgID, msg, body); err != nil {
-		return fmt.Errorf("write message raw: %w", err)
+		return failAfterWrite(fmt.Errorf("write message raw: %w", err))
 	}
 
 	// Label: iMessage or SMS
@@ -458,7 +509,7 @@ func (c *Client) importMessage(
 		labelID = smsLabelID
 	}
 	if err := s.LinkMessageLabel(msgID, labelID); err != nil {
-		return fmt.Errorf("link label: %w", err)
+		return failAfterWrite(fmt.Errorf("link label: %w", err))
 	}
 
 	// Warn about attachments
@@ -470,7 +521,95 @@ func (c *Client) importMessage(
 	}
 
 	summary.MessagesImported++
+	if !alreadyArchived {
+		summary.MessagesAdded++
+	} else {
+		after, err := archivedFingerprint(s, sourceID, sourceMessageID)
+		if err != nil {
+			return fmt.Errorf("read archived message: %w", err)
+		}
+		if after != before {
+			summary.MessagesUpdated++
+		} else {
+			summary.MessagesUnchanged++
+		}
+	}
 	return nil
+}
+
+// writeFingerprintRows appends the (kind, ref) rows of query q for one
+// message to b.
+func writeFingerprintRows(s *store.Store, b *strings.Builder, q string, messageID int64) error {
+	rows, err := s.DB().Query(s.Rebind(q), messageID)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var kind string
+		var ref int64
+		if err := rows.Scan(&kind, &ref); err != nil {
+			return err
+		}
+		fmt.Fprintf(b, "%s:%d\n", kind, ref)
+	}
+	return rows.Err()
+}
+
+// archivedFingerprint renders the archived state of one message that an
+// import writes: the message row, body, recipients and labels. Comparing the
+// fingerprint before and after a rewrite tells a real change from a write of
+// identical data.
+func archivedFingerprint(s *store.Store, sourceID int64, sourceMessageID string) (string, error) {
+	var (
+		id                        int64
+		conversationID, senderID  sql.NullInt64
+		messageType, snippet      sql.NullString
+		sentAt, internalDate      sql.NullTime
+		sizeEstimate              sql.NullInt64
+		isFromMe, hasAttachments  sql.NullBool
+		deletedAt, deletedFromSrc sql.NullTime
+	)
+	err := s.DB().QueryRow(s.Rebind(`
+		SELECT id, conversation_id, message_type, sent_at, internal_date,
+		       sender_id, is_from_me, snippet, size_estimate, has_attachments,
+		       deleted_at, deleted_from_source_at
+		FROM messages WHERE source_id = ? AND source_message_id = ?`),
+		sourceID, sourceMessageID,
+	).Scan(&id, &conversationID, &messageType, &sentAt, &internalDate,
+		&senderID, &isFromMe, &snippet, &sizeEstimate, &hasAttachments,
+		&deletedAt, &deletedFromSrc)
+	if err != nil {
+		return "", err
+	}
+	var b strings.Builder
+	instant := func(t sql.NullTime) string {
+		if !t.Valid {
+			return "-"
+		}
+		return strconv.FormatInt(t.Time.UnixNano(), 10)
+	}
+	fmt.Fprintf(&b, "%d|%v|%v|%v|%s|%s|%v|%v|%v|%v|%v|%s|%s\n",
+		id, conversationID, messageType, senderID, instant(sentAt), instant(internalDate),
+		isFromMe, snippet, sizeEstimate, hasAttachments, deletedAt.Valid, instant(deletedAt), instant(deletedFromSrc))
+
+	var body sql.NullString
+	if err := s.DB().QueryRow(s.Rebind(
+		`SELECT body_text FROM message_bodies WHERE message_id = ?`), id,
+	).Scan(&body); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return "", err
+	}
+	fmt.Fprintf(&b, "body:%v\n", body)
+
+	for _, q := range []string{
+		`SELECT recipient_type, participant_id FROM message_recipients WHERE message_id = ? ORDER BY recipient_type, participant_id`,
+		`SELECT 'label', label_id FROM message_labels WHERE message_id = ? ORDER BY label_id`,
+	} {
+		if err := writeFingerprintRows(s, &b, q, id); err != nil {
+			return "", err
+		}
+	}
+	return b.String(), nil
 }
 
 // writeMessageRecipients creates from/to rows in message_recipients.
@@ -489,8 +628,8 @@ func (c *Client) writeMessageRecipients(
 	if msg.IsFromMe != 0 {
 		// Sender is the device owner
 		if ownerPID > 0 {
-			if err := s.ReplaceMessageRecipients(
-				msgID, "from", []int64{ownerPID}, nil,
+			if err := replaceImessageRecipients(s,
+				msgID, "from", []int64{ownerPID},
 			); err != nil {
 				return err
 			}
@@ -500,8 +639,8 @@ func (c *Client) writeMessageRecipients(
 			s, msg, phoneCache, emailCache, summary,
 		)
 		if len(toPIDs) > 0 {
-			if err := s.ReplaceMessageRecipients(
-				msgID, "to", toPIDs, nil,
+			if err := replaceImessageRecipients(s,
+				msgID, "to", toPIDs,
 			); err != nil {
 				return err
 			}
@@ -509,23 +648,60 @@ func (c *Client) writeMessageRecipients(
 	} else {
 		// Sender is the external handle
 		if senderID.Valid {
-			if err := s.ReplaceMessageRecipients(
+			if err := replaceImessageRecipients(s,
 				msgID, "from",
-				[]int64{senderID.Int64}, nil,
+				[]int64{senderID.Int64},
 			); err != nil {
 				return err
 			}
 		}
 		// Recipient is the device owner
 		if ownerPID > 0 {
-			if err := s.ReplaceMessageRecipients(
-				msgID, "to", []int64{ownerPID}, nil,
+			if err := replaceImessageRecipients(s,
+				msgID, "to", []int64{ownerPID},
 			); err != nil {
 				return err
 			}
 		}
 	}
 	return nil
+}
+
+// replaceImessageRecipients leaves identical recipient sets untouched: deleting
+// and reinserting a sender journals attribution changes even on an unchanged import.
+func replaceImessageRecipients(s *store.Store, messageID int64, kind string, ids []int64) error {
+	rows, err := s.DB().Query(s.Rebind(`SELECT participant_id FROM message_recipients WHERE message_id = ? AND recipient_type = ?`), messageID, kind)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+	wanted := make(map[int64]bool, len(ids))
+	for _, id := range ids {
+		wanted[id] = true
+	}
+	matches, count := true, 0
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return err
+		}
+		count++
+		if !wanted[id] {
+			matches = false
+		}
+	}
+	err = rows.Err()
+	closeErr := rows.Close()
+	if err != nil {
+		return err
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	if matches && count == len(wanted) {
+		return nil
+	}
+	return s.ReplaceMessageRecipients(messageID, kind, ids, nil)
 }
 
 // getChatParticipantIDs returns participant IDs for the chat members

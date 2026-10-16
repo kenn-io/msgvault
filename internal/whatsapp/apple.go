@@ -155,6 +155,10 @@ func (imp *Importer) importApple(
 			"skipping %d Apple text messages whose stanza IDs are duplicated",
 			duplicateRows,
 		))
+		// Duplicate-only imports may never reach a message checkpoint.
+		if err := imp.store.UpdateSyncCheckpoint(syncID, &store.Checkpoint{ErrorsCount: summary.Errors}); err != nil {
+			return summary, fmt.Errorf("checkpoint Apple import warnings: %w", err)
+		}
 	}
 
 	selfParticipantID, err := imp.store.EnsureParticipantByPhone(
@@ -409,7 +413,11 @@ func (imp *Importer) importApple(
 				if _, err := imp.store.PersistMessageContext(ctx, data); err != nil {
 					return summary, fmt.Errorf("persist Apple message: %w", err)
 				}
-				summary.MessagesAdded++
+				if _, exists := stored[sourceMessage.StanzaID]; exists {
+					summary.MessagesUpdated++
+				} else {
+					summary.MessagesAdded++
+				}
 				chatAdded++
 				totalAdded++
 			}
@@ -417,6 +425,8 @@ func (imp *Importer) importApple(
 			if err := imp.store.UpdateSyncCheckpoint(syncID, &store.Checkpoint{
 				MessagesProcessed: summary.MessagesProcessed,
 				MessagesAdded:     summary.MessagesAdded,
+				MessagesUpdated:   summary.MessagesUpdated,
+				ErrorsCount:       summary.Errors,
 			}); err != nil {
 				return summary, fmt.Errorf("checkpoint Apple import: %w", err)
 			}
