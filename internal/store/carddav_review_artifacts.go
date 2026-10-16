@@ -230,7 +230,11 @@ func (s *Store) loadCardDAVConflictReviewSourceTx(ctx context.Context, tx *logge
 	if err != nil {
 		return nil, err
 	}
-	return &CardDAVPublicationReviewSource{Person: snapshot.Profile.Person, Snapshot: snapshot, Inference: inference, ConnectionGeneration: account.ConnectionGeneration, Book: book, Publication: publication, Resource: resource, Envelope: envelope, Conflict: conflict}, nil
+	hasImportedNames, err := s.hasCardDAVImportedNameHistoryTx(ctx, tx, book.ID, *resource.PersonID, resource.Href)
+	if err != nil {
+		return nil, err
+	}
+	return &CardDAVPublicationReviewSource{Person: snapshot.Profile.Person, Snapshot: snapshot, Inference: inference, ConnectionGeneration: account.ConnectionGeneration, Book: book, Publication: publication, Resource: resource, Envelope: envelope, Conflict: conflict, HasImportedNameHistory: hasImportedNames}, nil
 }
 
 func CardDAVConflictReviewFence(source *CardDAVPublicationReviewSource, body []byte) CardDAVReviewArtifactFence {

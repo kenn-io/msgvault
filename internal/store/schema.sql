@@ -1266,6 +1266,7 @@ CREATE TABLE IF NOT EXISTS carddav_resources (
     mapping_status          TEXT NOT NULL CHECK (mapping_status IN ('mapped', 'unbound', 'ambiguous')),
     mapping_revision        INTEGER NOT NULL DEFAULT 1 CHECK (mapping_revision > 0),
     governance              TEXT NOT NULL CHECK (governance IN ('remote', 'local', 'none')),
+    locally_published       BOOLEAN NOT NULL DEFAULT FALSE,
     person_id               INTEGER REFERENCES persons(id) ON DELETE SET NULL,
     person_revision_at_bind INTEGER,
     owns_display_name       BOOLEAN NOT NULL DEFAULT FALSE,

@@ -1705,6 +1705,32 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	}); err != nil {
 		return fmt.Errorf("migrate CardDAV display-name ownership: %w", err)
 	}
+	// A local create writes its publication before its resource. SQLite
+	// timestamps have one-second resolution, so a normal publish usually stores
+	// equal values. A tie alone cannot exclude a remote match published in the
+	// same second, so it also needs the card UID to be the person's own UID,
+	// which a local create always uploads. A remote card matched by contact
+	// points carries another client's UID. Desired and pending state are checked
+	// when the marker is used and do not affect origin.
+	if err := s.runOnceMigration(ctx, migrationCardDAVLocalPublicationOrigin, 1, false, func(ctx context.Context) error {
+		return s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+			_, err := tx.ExecContext(ctx, `UPDATE carddav_resources SET locally_published = TRUE
+				WHERE EXISTS (
+					SELECT 1 FROM carddav_publications publication
+					WHERE publication.person_id = carddav_resources.person_id
+					  AND publication.address_book_id = carddav_resources.address_book_id
+					  AND publication.href = carddav_resources.href
+					  AND (publication.created_at < carddav_resources.created_at
+					    OR (publication.created_at = carddav_resources.created_at
+					        AND EXISTS (SELECT 1 FROM persons person
+					            WHERE person.id = carddav_resources.person_id
+					              AND person.vcard_uid = carddav_resources.remote_uid)))
+				)`)
+			return err
+		})
+	}); err != nil {
+		return fmt.Errorf("migrate CardDAV local publication origin: %w", err)
+	}
 
 	// Organization domains written before IDNA normalization may still contain
 	// Unicode. Canonicalize them before fact resolution compares incoming ASCII

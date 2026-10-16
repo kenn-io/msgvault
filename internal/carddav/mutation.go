@@ -240,26 +240,43 @@ func (s *Service) renderPublicationCard(
 	ctx context.Context, person store.Person, book store.CardDAVAddressBook,
 	resource *store.CardDAVResource,
 ) ([]byte, string, error) {
-	snapshot, err := s.store.LoadPersonVCardSnapshotContext(ctx, person.ID)
+	envelope, hash, err := s.renderPublicationEnvelope(ctx, person, book, resource)
 	if err != nil {
 		return nil, "", err
+	}
+	return envelope.StoredBody, hash, nil
+}
+
+// renderPublicationEnvelope returns the local card with its ownership
+// metadata and the person fingerprint it was rendered from.
+func (s *Service) renderPublicationEnvelope(
+	ctx context.Context, person store.Person, book store.CardDAVAddressBook,
+	resource *store.CardDAVResource,
+) (vcard.ResourceEnvelope, string, error) {
+	snapshot, err := s.store.LoadPersonVCardSnapshotContext(ctx, person.ID)
+	if err != nil {
+		return vcard.ResourceEnvelope{}, "", err
 	}
 	source := &store.CardDAVPublicationReviewSource{Person: snapshot.Profile.Person, Snapshot: snapshot, Book: book, Resource: resource}
 	if resource != nil {
 		source.Envelope, err = s.store.GetVCardResourceEnvelopeContext(ctx, fmt.Sprintf("carddav:%d", book.ID), resource.Href)
 		if err != nil {
-			return nil, "", err
+			return vcard.ResourceEnvelope{}, "", err
+		}
+		source.Publication, err = s.store.GetCardDAVPublicationContext(ctx, person.ID)
+		if err != nil && !errors.Is(err, store.ErrCardDAVPublicationNotFound) {
+			return vcard.ResourceEnvelope{}, "", err
+		}
+		source.HasImportedNameHistory, err = s.store.HasCardDAVImportedNameHistoryContext(ctx, book.ID, person.ID, resource.Href)
+		if err != nil {
+			return vcard.ResourceEnvelope{}, "", err
 		}
 	}
-	return s.renderPublicationSource(source)
-}
-
-func (s *Service) renderPublicationSource(source *store.CardDAVPublicationReviewSource) ([]byte, string, error) {
 	envelope, err := s.preparePublicationEnvelope(source)
 	if err != nil {
-		return nil, "", err
+		return vcard.ResourceEnvelope{}, "", err
 	}
-	return envelope.StoredBody, source.Snapshot.Fingerprint, nil
+	return envelope, snapshot.Fingerprint, nil
 }
 
 func (s *Service) preparePublicationEnvelope(source *store.CardDAVPublicationReviewSource) (vcard.ResourceEnvelope, error) {
@@ -275,17 +292,19 @@ func (s *Service) preparePublicationEnvelope(source *store.CardDAVPublicationRev
 		if envelope.RenderMetadata.StoredVersion == vcard.Version30 || envelope.RenderMetadata.StoredVersion == vcard.Version40 {
 			version = envelope.RenderMetadata.StoredVersion
 		}
+		envelope, err = adoptLegacyPublicationFullName(source, envelope)
+		if err != nil {
+			return vcard.ResourceEnvelope{}, err
+		}
 	} else {
 		href, err := s.publicationHref(book.CanonicalURL, person.VCardUID)
 		if err != nil {
 			return vcard.ResourceEnvelope{}, err
 		}
-		fullName := person.VCardUID
-		if person.DisplayName != nil && strings.TrimSpace(*person.DisplayName) != "" {
-			fullName = strings.TrimSpace(*person.DisplayName)
-		}
+		// The projector must own FN so scalar renames update it and a typed
+		// formatted name can replace it. Rendering supplies a nameless fallback.
 		raw := []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:" + vcard.EscapeText(person.VCardUID) +
-			"\r\nFN:" + vcard.EscapeText(fullName) + "\r\nEND:VCARD\r\n")
+			"\r\nEND:VCARD\r\n")
 		envelope, err = vcard.ParseResourceEnvelope(raw)
 		if err != nil {
 			return vcard.ResourceEnvelope{}, err
