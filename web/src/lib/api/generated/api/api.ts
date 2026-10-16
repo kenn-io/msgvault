@@ -197,6 +197,8 @@ import type {
   GetSettingsPeopleCodexLoginPathParameters,
   GetSettingsPeopleCodexModelsPathParameters,
   GetSubAggregatesParams,
+  GetSyncTicketParams,
+  GetSyncTicketPathParameters,
   GetTextAggregatesParams,
   GetTextStatsParams,
   GetTotalStatsParams,
@@ -451,6 +453,7 @@ import type {
   TextMessagesResponse,
   TextSearchResponse,
   ThreadPage,
+  TicketStatus,
   TokenUploadRequest,
   TotalStatsResponse,
   TriggerSyncParams,
@@ -4286,6 +4289,23 @@ export const triggerSync = (
     {
       url: `/api/v1/sync/${encodeURIComponent(String(account))}`,
       method: "POST",
+      params,
+    },
+    options,
+  );
+};
+/**
+ * @summary Get or wait for a sync ticket
+ */
+export const getSyncTicket = (
+  { account, ticket }: GetSyncTicketPathParameters,
+  params: GetSyncTicketParams,
+  options?: SecondParameter<typeof orvalFetch<TicketStatus>>,
+) => {
+  return orvalFetch<TicketStatus>(
+    {
+      url: `/api/v1/sync/${encodeURIComponent(String(account))}/tickets/${encodeURIComponent(String(ticket))}`,
+      method: "GET",
       params,
     },
     options,

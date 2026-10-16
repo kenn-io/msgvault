@@ -8962,6 +8962,37 @@ func TestOperationGateStillGatesAccountSyncTrigger(t *testing.T) { //nolint:para
 	require.Equal(http.StatusServiceUnavailable, resp.Code, resp.Body.String())
 }
 
+// TestOperationGateBypassesGenericSyncTrigger proves that a Sync now request
+// can queue its daemon-owned follow-up while another import holds the gate.
+// The scheduler, rather than the HTTP request, serializes the actual run.
+func TestOperationGateBypassesGenericSyncTrigger(t *testing.T) { //nolint:paralleltest // swaps the package-level operationGateWaitLimit
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	_, err := st.GetOrCreateSource("apple_messages", "local")
+	require.NoError(err)
+	gate := NewSerialOperationGate()
+	sched := newMockScheduler()
+	sched.scheduledJobs = map[string]bool{IMessageJobName: true}
+	srv := NewServerWithOptions(ServerOptions{
+		Config:        &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:         st,
+		Scheduler:     sched,
+		Logger:        testLogger(),
+		OperationGate: gate,
+	})
+	holderDone, ok := gate.BeginLabeledWorkContext(context.Background(), "active import")
+	require.True(ok)
+	defer holderDone()
+	orig := operationGateWaitLimit
+	operationGateWaitLimit = time.Millisecond
+	t.Cleanup(func() { operationGateWaitLimit = orig })
+
+	resp := servePOSTTestRequest(srv, "/api/v1/sync/local?source_type=apple_messages")
+
+	require.Equal(http.StatusAccepted, resp.Code, resp.Body.String())
+	require.Equal([]string{IMessageJobName}, sched.startedJobs)
+}
+
 func TestHandleSourceStatusPaused(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
