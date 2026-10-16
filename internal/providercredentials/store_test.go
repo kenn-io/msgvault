@@ -169,6 +169,21 @@ func TestStoreRejectsSymlinkAndWrongOwner(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Windows reparse-point and owner checks use the native DACL backend")
 	}
+	t.Run("directory symlink", func(t *testing.T) {
+		require := require.New(t)
+		root := t.TempDir()
+		target := filepath.Join(root, "target")
+		link := filepath.Join(root, "tokens")
+		require.NoError(os.Mkdir(target, 0o700))
+		require.NoError(os.Symlink(target, link))
+		_, err := EnsureServerKey(link)
+		require.Error(err)
+		_, err = Put(link, "", VectorEmbeddingsID, "https://embeddings.example.test/v1", "synthetic-secret")
+		require.Error(err)
+		entries, err := os.ReadDir(target)
+		require.NoError(err)
+		assert.Empty(t, entries, "reject the directory before creating a lock file")
+	})
 	t.Run("symlink", func(t *testing.T) {
 		requirements := require.New(t)
 		dir := filepath.Join(t.TempDir(), "tokens")

@@ -526,11 +526,15 @@ func mutate(tokenDir string, precondition func(Snapshot) error, mutation func(ma
 // locked runs fn against a fresh read while holding the store lock.
 func locked(tokenDir string, fn func(Snapshot, permissionBackend) (Snapshot, error)) (Snapshot, error) {
 	permissions := nativePermissions{}
-	if err := permissions.secureDirectory(tokenDir); err != nil {
-		return Snapshot{}, fmt.Errorf("secure credential directory: %w", err)
+	if err := permissions.prepareDirectory(tokenDir); err != nil {
+		return Snapshot{}, fmt.Errorf("create credential directory: %w", err)
 	}
 	var result Snapshot
 	err := withStoreLock(tokenDir, func() error {
+		// Windows directory ACL updates can propagate to a writer's new files.
+		if err := permissions.secureDirectory(tokenDir); err != nil {
+			return fmt.Errorf("secure credential directory: %w", err)
+		}
 		current, err := readWithPermissions(tokenDir, permissions)
 		if err != nil {
 			return err

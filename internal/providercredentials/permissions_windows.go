@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -15,6 +16,30 @@ import (
 type nativePermissions struct{}
 
 const providerCredentialFileAllAccess = windows.STANDARD_RIGHTS_REQUIRED | windows.SYNCHRONIZE | 0x1FF
+
+func (nativePermissions) prepareDirectory(path string) error {
+	if err := os.MkdirAll(path, 0o700); err != nil {
+		return err
+	}
+	handle, err := openSecurityHandle(path, true, windows.READ_CONTROL)
+	if err != nil {
+		return err
+	}
+	defer windows.CloseHandle(handle) //nolint:errcheck // ownership check is authoritative
+	descriptor, err := windows.GetSecurityInfo(handle, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION)
+	if err != nil {
+		return fmt.Errorf("read credential directory owner: %w", err)
+	}
+	owner, _, err := descriptor.Owner()
+	if err != nil || owner == nil {
+		return errors.New("credential directory owner is unavailable")
+	}
+	user, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil {
+		return fmt.Errorf("get current user SID: %w", err)
+	}
+	return verifyWindowsOwner(owner, user.User.Sid)
+}
 
 func (nativePermissions) secureDirectory(path string) error {
 	if err := os.MkdirAll(path, 0o700); err != nil {
@@ -193,6 +218,44 @@ func verifySecretFile(file *os.File) error {
 }
 
 func withStoreLock(tokenDir string, fn func() error) error {
+	// Directory ACL updates can propagate to a writer's unfinished candidate.
+	// Serialize repair and writes before opening the lock file, since creating
+	// that file may itself require repairing the directory's write access.
+	directory, err := openSecurityHandle(tokenDir, true, windows.READ_CONTROL|windows.WRITE_DAC)
+	if err != nil {
+		return err
+	}
+	defer windows.CloseHandle(directory) //nolint:errcheck // lock result is authoritative
+	var info windows.ByHandleFileInformation
+	if err := windows.GetFileInformationByHandle(directory, &info); err != nil {
+		return fmt.Errorf("identify provider credential directory: %w", err)
+	}
+	// Use file identity so case differences and short path aliases share a lock.
+	name, err := windows.UTF16PtrFromString(fmt.Sprintf(`Global\msgvault-provider-credentials-%08x-%08x%08x`,
+		info.VolumeSerialNumber, info.FileIndexHigh, info.FileIndexLow))
+	if err != nil {
+		return fmt.Errorf("encode provider credential mutex: %w", err)
+	}
+	mutex, err := windows.CreateMutexEx(nil, name, 0, windows.SYNCHRONIZE|windows.MUTEX_MODIFY_STATE)
+	if err != nil && !errors.Is(err, windows.ERROR_ALREADY_EXISTS) {
+		return fmt.Errorf("open provider credential mutex: %w", err)
+	}
+	defer windows.CloseHandle(mutex) //nolint:errcheck // lock result is authoritative
+	// Windows mutex ownership belongs to the OS thread, not the goroutine.
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	status, err := windows.WaitForSingleObject(mutex, windows.INFINITE)
+	if err != nil {
+		return fmt.Errorf("wait for provider credential mutex: %w", err)
+	}
+	if status != windows.WAIT_OBJECT_0 && status != windows.WAIT_ABANDONED {
+		return fmt.Errorf("unexpected provider credential mutex wait result: %d", status)
+	}
+	defer windows.ReleaseMutex(mutex) //nolint:errcheck // lock result is authoritative
+	if err := secureOwnerOnlyHandle(directory); err != nil {
+		return fmt.Errorf("secure provider credential directory: %w", err)
+	}
+
 	path := filepath.Join(tokenDir, ".provider-credentials.lock")
 	file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
 	if err != nil {

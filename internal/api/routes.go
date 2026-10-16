@@ -27,6 +27,7 @@ const (
 )
 
 const (
+	queryParamLocation   = "query"
 	apiKeySecurityScheme = "apiKey"
 	cliRouteTag          = "CLI"
 )
