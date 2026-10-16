@@ -19,6 +19,7 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/textutil"
 )
 
 var (
@@ -85,11 +86,14 @@ Examples:
 				// One broken network must not block the others; collect and
 				// keep syncing (same convention as the multi-account sync
 				// commands and the beeper scheduler path).
+				var partial *beeper.PartialSyncError
+				if sum != nil && (err == nil || errors.As(err, &partial)) {
+					printBeeperSummary(cmd, accountID, sum)
+				}
+				writeBeeperRunFailures(ctx, cmd.OutOrStdout(), imp, sum)
 				if err != nil {
 					syncErrors = append(syncErrors, fmt.Sprintf("%s: %v", accountID, err))
-					continue
 				}
-				printBeeperSummary(cmd, accountID, sum)
 			}
 
 			// Successful accounts' messages must reach the analytics cache
@@ -117,6 +121,56 @@ Examples:
 	cmd.Flags().StringArrayVar(&syncBeeperAccounts, "account", nil, "Beeper accountID to sync (repeatable; default: all registered accounts)")
 	cmd.Flags().BoolVar(&syncBeeperNoMedia, "no-media", false, "skip attachment downloads for this run")
 	return cmd
+}
+
+// beeperFailureChatLimit bounds how many failing chats a sync prints;
+// beeperFailureItemLimit bounds how many recorded error items it groups.
+const (
+	beeperFailureChatLimit = 20
+	beeperFailureItemLimit = 1000
+	beeperFailureMsgLen    = 160
+)
+
+// writeBeeperRunFailures lists the chats behind a run's error count, read
+// back from the per-item outcomes the run recorded, so a user can see which
+// chats failed rather than only how many errors occurred.
+func writeBeeperRunFailures(ctx context.Context, out io.Writer, imp *beeper.Importer, sum *beeper.ImportSummary) {
+	if sum == nil || sum.SyncRunID == 0 || sum.Errors == 0 {
+		return
+	}
+	failures, err := imp.RunFailures(ctx, sum.SourceID, sum.SyncRunID, beeperFailureItemLimit)
+	if err != nil {
+		_, _ = fmt.Fprintf(out, "  could not list failed chats: %v\n", err)
+		return
+	}
+	if failures.Total == 0 {
+		return
+	}
+	scope := ""
+	if int64(failures.Listed) < failures.Total {
+		scope = fmt.Sprintf(", newest %d grouped", failures.Listed)
+	}
+	_, _ = fmt.Fprintf(out, "  Failed chats (%d recorded errors in %d chats%s, retried next run):\n",
+		failures.Total, len(failures.Chats), scope)
+	for i, cf := range failures.Chats {
+		if i == beeperFailureChatLimit {
+			_, _ = fmt.Fprintf(out, "    ...and %d more chats\n", len(failures.Chats)-i)
+			break
+		}
+		_, _ = fmt.Fprintf(out, "    %s: %d %s error(s); last: %s\n",
+			beeperChatLabel(cf), cf.Errors, strings.Join(cf.Phases, "/"), textutil.TruncateRunes(textutil.SanitizeTerminal(cf.LastError), beeperFailureMsgLen))
+	}
+}
+
+func beeperChatLabel(cf beeper.ChatFailure) string {
+	switch {
+	case cf.ChatID == "":
+		return "(messages not yet archived)"
+	case cf.Title == "":
+		return textutil.SanitizeTerminal(cf.ChatID)
+	default:
+		return fmt.Sprintf("%s (%s)", textutil.SanitizeTerminal(cf.Title), textutil.SanitizeTerminal(cf.ChatID))
+	}
 }
 
 func printBeeperSummary(cmd *cobra.Command, accountID string, sum *beeper.ImportSummary) {

@@ -261,8 +261,11 @@ type ImportSummary struct {
 	Duration time.Duration
 	// Stopped reports that ShouldStop ended the run before every chat was
 	// visited; the remaining work resumes on the next run.
-	Stopped           bool
-	SourceID          int64
+	Stopped  bool
+	SourceID int64
+	// SyncRunID is the sync_runs row this run recorded its per-item outcomes
+	// on (see RunFailures). Zero when the run ended before starting one.
+	SyncRunID         int64
 	ChatsProcessed    int64
 	MessagesProcessed int64
 	// MessagesAdded counts messages persisted (upserted) this run, including

@@ -54,6 +54,7 @@ Examples:
 					return rebuildCacheAfterWrite(dbPath, state)
 				}
 				if err != nil {
+					writeBeeperRunFailures(ctx, cmd.OutOrStdout(), imp, sum)
 					return errors.Join(
 						fmt.Errorf("beeper media backfill failed for %s: %w", accountID, err),
 						rebuildCacheAfterWrite(dbPath, state),
@@ -61,8 +62,9 @@ Examples:
 				}
 				writeBeeperMediaBackfillSummary(cmd.OutOrStdout(), accountID, sum)
 				if sum.Errors > 0 {
-					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  %d errors — see sync run items; re-run to retry\n", sum.Errors)
+					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  %d errors; re-run to retry\n", sum.Errors)
 				}
+				writeBeeperRunFailures(ctx, cmd.OutOrStdout(), imp, sum)
 			}
 
 			return rebuildCacheAfterWrite(dbPath, state)

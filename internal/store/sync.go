@@ -1021,6 +1021,63 @@ func (s *Store) ListSyncRunItemsContext(ctx context.Context, syncRunID int64, st
 	return items, nil
 }
 
+// ConversationRef names an archived conversation by its source-assigned ID.
+type ConversationRef struct {
+	SourceConversationID string
+	Title                string
+}
+
+// ConversationsBySourceConversationIDContext returns a source's archived
+// conversations keyed by source_conversation_id. IDs with no archived
+// conversation are absent from the result.
+func (s *Store) ConversationsBySourceConversationIDContext(
+	ctx context.Context, sourceID int64, sourceConversationIDs []string,
+) (map[string]ConversationRef, error) {
+	result := make(map[string]ConversationRef, len(sourceConversationIDs))
+	err := queryInChunksContext(ctx, s.db, sourceConversationIDs, []any{sourceID},
+		`SELECT source_conversation_id, COALESCE(title, '') FROM conversations
+		WHERE source_id = ? AND source_conversation_id IN (%s)`,
+		func(rows *loggedRows) error {
+			var ref ConversationRef
+			if err := rows.Scan(&ref.SourceConversationID, &ref.Title); err != nil {
+				return err
+			}
+			result[ref.SourceConversationID] = ref
+			return nil
+		})
+	if err != nil {
+		return nil, fmt.Errorf("look up conversations: %w", err)
+	}
+	return result, nil
+}
+
+// ConversationsBySourceMessageIDContext returns the conversation holding each
+// of a source's archived messages, keyed by source_message_id. IDs with no
+// archived message are absent from the result.
+func (s *Store) ConversationsBySourceMessageIDContext(
+	ctx context.Context, sourceID int64, sourceMessageIDs []string,
+) (map[string]ConversationRef, error) {
+	result := make(map[string]ConversationRef, len(sourceMessageIDs))
+	err := queryInChunksContext(ctx, s.db, sourceMessageIDs, []any{sourceID},
+		`SELECT m.source_message_id, c.source_conversation_id, COALESCE(c.title, '')
+		FROM messages m
+		JOIN conversations c ON c.id = m.conversation_id
+		WHERE m.source_id = ? AND m.source_message_id IN (%s)`,
+		func(rows *loggedRows) error {
+			var messageID string
+			var ref ConversationRef
+			if err := rows.Scan(&messageID, &ref.SourceConversationID, &ref.Title); err != nil {
+				return err
+			}
+			result[messageID] = ref
+			return nil
+		})
+	if err != nil {
+		return nil, fmt.Errorf("look up message conversations: %w", err)
+	}
+	return result, nil
+}
+
 // CompleteSync marks a sync as successfully completed.
 func (s *Store) CompleteSync(syncID int64, finalHistoryID string) error {
 	return s.CompleteSyncContext(context.Background(), syncID, finalHistoryID)

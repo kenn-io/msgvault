@@ -1561,7 +1561,9 @@ Sync chats from Beeper Desktop for every registered Beeper account (all
 connected networks). The first run backfills full locally-available history and
 is resumable; later runs are incremental. Per-account failures do not stop the
 run: remaining accounts still sync, the analytics cache is rebuilt for the
-successful ones, and the command exits non-zero listing the failures. Without
+successful ones, and the command exits non-zero listing the failures. When an
+account reports errors, the output lists the chats they belong to (see
+[Failed chats](/docs/usage/beeper/#failed-chats)). Without
 `--account`, the `[beeper]` config `accounts`/`exclude_accounts` filters
 select which registered sources sync. See [Beeper](/docs/usage/beeper/).
 

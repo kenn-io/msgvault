@@ -324,6 +324,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	if err != nil {
 		return nil, err
 	}
+	sum.SyncRunID = syncID
 	imp = imp.scopedToSync(src.ID, syncID)
 	syncCompleted := false
 	// Failures below must ASSIGN to err (never shadow it with :=) so this
