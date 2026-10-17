@@ -119,7 +119,12 @@ func TestRemoteClientRoutes(t *testing.T) { //nolint:paralleltest // swaps the p
 	))
 
 	// Search index repair must release the gate before the busy-gate assertions.
-	require.Eventually(func() bool { return !reader.srv.ftsEnsureRunning.Load() }, 10*time.Second, time.Millisecond)
+	require.Eventually(
+		func() bool { return !reader.srv.ftsEnsureRunning.Load() },
+		10*time.Second,
+		time.Millisecond,
+		"FTS ensure worker stops running",
+	)
 
 	// Forbidden writes bypass the busy gate; permitted reader writes hide its holder.
 	orig := operationGateWaitLimit
